@@ -5,5 +5,5 @@ Many TODOs, no time
 #### Instructions?:
 1. VSCode + PlatformIO
 2. Install board?
-3. Complie & Upload
+3. Compile & Upload
 4. Have fun :)
