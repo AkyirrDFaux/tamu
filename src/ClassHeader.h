@@ -1,6 +1,7 @@
 class BaseClass;
 class Folder;
 
+class FlagClass;
 class IDClass;
 
 class ColourClass;

@@ -111,7 +111,8 @@ template <>
 Types GetType<Types>() { return Types::Type; };
 template <>
 Types GetType<Functions>() { return Types::Function; };
-// Flags
+template <>
+Types GetType<FlagClass>() { return Types::Flags; };
 template <>
 Types GetType<Status>() { return Types::Status; };
 template <>
