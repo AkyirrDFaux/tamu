@@ -78,7 +78,7 @@ bool PortAttachClass::Check(Drivers RequiredDriver)
 int32_t IDList::FirstValid(Types Filter, int32_t Start)
 {
     int32_t Index = Start;
-    while (Index <= Length && (!IsValid(Index) || (Filter != Types::Undefined && ObjectAt(Index)->Type != Filter)))
+    while (Index <= Length && (!IsValid(Index) || (Filter != Types::Undefined && At(Index)->Type != Filter)))
         Index++;
     return Index;
 };
@@ -87,7 +87,7 @@ void IDList::Iterate(int32_t *Index, Types Filter)
 {
     (*Index)++;
     // Skip to next if: A)Is invalid; B)Filter is not undefined and Type of object isn't one filtered
-    while (*Index <= Length && (!IsValid(*Index) || (Filter != Types::Undefined && ObjectAt(*Index)->Type != Filter)))
+    while (*Index <= Length && (!IsValid(*Index) || (Filter != Types::Undefined && At(*Index)->Type != Filter)))
         (*Index)++;
 };
 
@@ -95,7 +95,7 @@ bool IDList::Remove(BaseClass *RemovedObject) // Removes object, even if it is c
 {
     for (int32_t Index = 0; Index < Length; Index++)
     {
-        if (ObjectAt(Index) == RemovedObject || IDs[Index] == RemovedObject->ID)
+        if (At(Index) == RemovedObject || IDs[Index] == RemovedObject->ID)
             Remove(Index);
     }
     return true;
@@ -132,7 +132,7 @@ C *IDList::Get(int32_t Index)
     if (!IsValid(Index))
         return nullptr;
 
-    return ObjectAt(Index)->As<C>();
+    return At(Index)->As<C>();
 }
 
 template <class C>
@@ -141,7 +141,7 @@ C *IDList::GetValue(int32_t Index)
     if (!IsValid(Index))
         return nullptr;
 
-    return ObjectAt(Index)->ValueAs<C>();
+    return At(Index)->ValueAs<C>();
 };
 
 void ReportError(Status ErrorCode, String Detail)

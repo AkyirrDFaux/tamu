@@ -142,7 +142,6 @@ KEY FEATURES:
 Built-in button
 Servo
 Accelerometer + filtering/integrating
-Run function ... extend to all, add into app
 Operations without inbetween variables? Type determinition and instant execution?
 - use ValueAs for the type (it's operation only, and that is a separate type)
 
@@ -152,8 +151,8 @@ Animations & Operations
 ADJUSTMENTS:
 (ID)List, register make unsigned, for unknown index separate function
 Spread out bluetooth sending to prevent lag, use indication for max possible speed?
-Sort out reference searching
 Saving takes forever
+Map types to sizes/underlying types, works like it anyway
 
 EXTRA:
 Edit rendering to allow all-display filters

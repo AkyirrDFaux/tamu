@@ -5,14 +5,14 @@ public:
     IDClass *IDs = nullptr;
     int8_t Length = 0;
 
-    ~IDList() { RemoveAll(); }; // DO NOT PUT ANYTHING IN HERE, it breaks the deconstructors
+    ~IDList() { RemoveAll(); };
 
     IDList() {};
     IDList(const IDList &Copied);
     void operator=(const IDList &Copied);
 
     BaseClass *operator[](int32_t Index);
-    BaseClass *ObjectAt(int32_t Index);
+    BaseClass *At(int32_t Index);
 
     bool IsValid(int32_t Index);
     bool IsValidID(int32_t Index) const;
@@ -60,10 +60,10 @@ void IDList::operator=(const IDList &Copied)
 
 BaseClass *IDList::operator[](int32_t Index)
 {
-    return ObjectAt(Index);
+    return At(Index);
 };
 
-BaseClass *IDList::ObjectAt(int32_t Index) // Returns address or nullptr if invalid
+BaseClass *IDList::At(int32_t Index) // Returns address or nullptr if invalid
 {
     if (Index >= Length || Index < 0)
         return nullptr;
@@ -76,9 +76,7 @@ BaseClass *IDList::ObjectAt(int32_t Index) // Returns address or nullptr if inva
 
 bool IDList::IsValid(int32_t Index) // Returns if object at index is valid
 {
-    if (ObjectAt(Index) != nullptr)
-        return true;
-    return false;
+    return (At(Index) != nullptr);
 };
 
 bool IDList::IsValidID(int32_t Index) const
@@ -93,7 +91,7 @@ int32_t IDList::Find(BaseClass *TestObject) // Returns index of object address, 
 {
     for (int32_t Index = 0; Index < Length; Index++)
     {
-        if (ObjectAt(Index) == TestObject)
+        if (At(Index) == TestObject)
             return Index;
     }
     return -1;

@@ -8,31 +8,27 @@ public:
     ~ObjectList() { RemoveAll(); };
 
     C *operator[](int32_t Index) const;
-    C *ObjectAt(int32_t Index) const;
+    C *At(int32_t Index) const;
     bool IsValid(int32_t Index) const;
-    int32_t Find(C *TestObject) const;
     void Iterate(int32_t *Index) const;
 
     void Expand(int32_t NewLength);
     void Shorten();
 
-    bool Add(C *AddObject, int32_t Index);
-    bool Add(C *AddObject);
+    bool Add(C *AddObject, int32_t Index = -1);
     bool Remove(int32_t Index);
     bool Remove(C *RemovedObject);
-    bool RemoveAll();
-
-    bool Move(int32_t Index, int32_t NewIndex);
+    void RemoveAll();
 };
 
 template <class C>
 C *ObjectList<C>::operator[](int32_t Index) const
 {
-    return ObjectAt(Index);
+    return At(Index);
 };
 
 template <class C>
-C *ObjectList<C>::ObjectAt(int32_t Index) const // Returns address or nullptr if invalid
+C *ObjectList<C>::At(int32_t Index) const // Returns address or nullptr if invalid
 {
     if (Index >= Length || -Index > Length)
         return nullptr;
@@ -46,20 +42,7 @@ C *ObjectList<C>::ObjectAt(int32_t Index) const // Returns address or nullptr if
 template <class C>
 bool ObjectList<C>::IsValid(int32_t Index) const // Returns if object at index is valid
 {
-    if (ObjectAt(Index) != nullptr)
-        return true;
-    return false;
-};
-
-template <class C>
-int32_t ObjectList<C>::Find(C *TestObject) const // Returns index of object address, -1 if fails
-{
-    for (int32_t Index = 0; Index < Length; Index++)
-    {
-        if (ObjectAt(Index) == TestObject)
-            return Index;
-    }
-    return -1;
+    return (At(Index) != nullptr);
 };
 
 template <class C>
@@ -84,7 +67,7 @@ void ObjectList<C>::Expand(int32_t NewLength) // Expands list to new length
         NewObject[Index] = nullptr;
 
     if (Length != 0) // Replace
-        delete Object;
+        delete[] Object;
 
     Object = NewObject;
     Length = NewLength;
@@ -94,7 +77,7 @@ template <class C>
 void ObjectList<C>::Shorten()
 {
     int32_t NewLength = Length;
-    while (ObjectAt(NewLength - 1) == nullptr && NewLength > 0)
+    while (At(NewLength - 1) == nullptr && NewLength > 0)
         NewLength--;
 
     if (NewLength == Length)
@@ -106,7 +89,7 @@ void ObjectList<C>::Shorten()
         NewObject[Index] = Object[Index];
 
     if (Length != 0) // Replace
-        delete Object;
+        delete[] Object;
 
     Object = NewObject;
     Length = NewLength;
@@ -120,7 +103,7 @@ bool ObjectList<C>::Add(C *AddObject, int32_t Index) // Add an item to list, sup
 
     if (Index >= Length) // Expand if Index is too far
         Expand(Index + 1);
-    else if (ObjectAt(Index) != nullptr) // Occupied
+    else if (At(Index) != nullptr) // Occupied
         return false;
 
     Object[Index] = AddObject; // Write
@@ -128,15 +111,9 @@ bool ObjectList<C>::Add(C *AddObject, int32_t Index) // Add an item to list, sup
 };
 
 template <class C>
-bool ObjectList<C>::Add(C *AddObject) // Add an item to list, supports -1, fails if occupied
-{
-    return Add(AddObject, -1);
-};
-
-template <class C>
 bool ObjectList<C>::Remove(int32_t Index) // Removes object
 {
-    if (Index < Length && ObjectAt(Index) != nullptr && Index >= 0)
+    if (Index < Length && At(Index) != nullptr && Index >= 0)
     {
         Object[Index] = nullptr;
         Shorten();
@@ -150,17 +127,16 @@ bool ObjectList<C>::Remove(C *RemovedObject) // Removes object
 {
     for (int32_t Index = 0; Index < Length; Index++)
     {
-        if (ObjectAt(Index) == RemovedObject)
+        if (At(Index) == RemovedObject)
             Remove(Index);
     }
     return true;
 };
 
 template <class C>
-bool ObjectList<C>::RemoveAll()
+void ObjectList<C>::RemoveAll()
 {
-    for (int32_t Index = 0; Index < Length; Index++)
-        Remove(Index);
-
-    return true;
+    delete[] Object;
+    Object = nullptr;
+    Length = 0;
 };
