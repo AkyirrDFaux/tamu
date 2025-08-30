@@ -35,26 +35,27 @@ C *BaseClass::ValueAs() const
 
 ByteArray BaseClass::GetValue() const
 {
-    ByteArray Data = ByteArray(Type);
+    ByteArray Data;
     if (Type == Types::Text)
-        Data = Data << ByteArray(*ValueAs<String>());
+        Data = ByteArray(*ValueAs<String>());
     else if (GetValueSize(Type) == sizeof(uint8_t))
-        Data = Data << ByteArray(*ValueAs<uint8_t>());
+        Data = ByteArray(*ValueAs<uint8_t>());
     else if (GetValueSize(Type) == sizeof(uint32_t))
-        Data = Data << ByteArray(*ValueAs<uint32_t>());
+        Data = ByteArray(*ValueAs<uint32_t>());
     else if (GetValueSize(Type) == sizeof(Vector2D))
-        Data = Data << ByteArray(*ValueAs<Vector2D>());
+        Data = ByteArray(*ValueAs<Vector2D>());
     else if (GetValueSize(Type) == sizeof(Coord2D))
-        Data = Data << ByteArray(*ValueAs<Coord2D>());
+        Data = ByteArray(*ValueAs<Coord2D>());
     else
         return ByteArray();
-
+        
+    *(Types*)Data.Array = Type;
     return Data;
 };
 
-bool BaseClass::SetValue(ByteArray *Input)
+bool BaseClass::SetValue(ByteArray &Input)
 {
-    if (Input->Type() != Type)
+    if (Input.Type() != Type)
     {
         return false;
         ReportError(Status::InvalidType);
@@ -63,16 +64,17 @@ bool BaseClass::SetValue(ByteArray *Input)
     else if (GetValueSize(Type) == 0)
         return true;
 
+    //INCOMPLETE, needs raw data pointer
     if (Type == Types::Text)
-        *ValueAs<String>() = Input->Data<String>();
+        *ValueAs<String>() = Input.As<String>();
     else if (GetValueSize(Type) == sizeof(uint8_t))
-        *ValueAs<uint8_t>() = Input->Data<uint8_t>();
+        *ValueAs<uint8_t>() = Input.As<uint8_t>();
     else if (GetValueSize(Type) == sizeof(uint32_t))
-        *ValueAs<uint32_t>() = Input->Data<uint32_t>();
+        *ValueAs<uint32_t>() = Input.As<uint32_t>();
     else if (GetValueSize(Type) == sizeof(Vector2D))
-        *ValueAs<Vector2D>() = Input->Data<Vector2D>();
+        *ValueAs<Vector2D>() = Input.As<Vector2D>();
     else if (GetValueSize(Type) == sizeof(Coord2D))
-        *ValueAs<Coord2D>() = Input->Data<Coord2D>();
+        *ValueAs<Coord2D>() = Input.As<Coord2D>();
     else
         return false;
 

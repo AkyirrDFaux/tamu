@@ -147,9 +147,9 @@ C *IDList::GetValue(int32_t Index)
 void ReportError(Status ErrorCode, String Detail)
 {
     if (Detail.length() > 0)
-        Chirp.SendNow(Message(ErrorCode, Detail));
+        Chirp.Send("E" + String((uint8_t)ErrorCode) + " : " + Detail);
     else
-        Chirp.SendNow(Message(ErrorCode));
+        Chirp.Send("E" + String((uint8_t)ErrorCode));
 }
 
 void DefaultSetup()

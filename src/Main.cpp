@@ -15,16 +15,16 @@ uint32_t DeltaTime = 0;
 #include "Core\ValueEnums.h"
 #include "Core\Enums.h"
 #include "Core\ObjectList.h"
-// #include "Core\Map.h"
+
+#include "Core\ID.h"
 
 #include "Data\ByteArray.h"
 #include "Data\Colour.h"
 #include "Data\Vector2D.h"
 #include "Data\Coord2D.h"
 
-#include "Core\ID.h"
 #include "Core\IDList.h"
-#include "Core\Message.h"
+//#include "Core\Message.h"
 #include "Core\Chirp.h"
 ChirpClass Chirp = ChirpClass(); // Bluetooth/Serial
 
@@ -73,7 +73,7 @@ void setup()
     NotificationStartup();
     Serial.begin((long)115200);
 
-    if (true)
+    if (1)
         DefaultSetup();
     else
     {
@@ -83,11 +83,7 @@ void setup()
         {
             // Serial.println(File);
             ByteArray Data = ReadFromFile(File.substring(1));
-            Message M = Message(Data);
-            // Chirp.SendNow(M);
-            Message *Response = M.Run();
-            Chirp.Send(*Response);
-            delete Response;
+            Run(Data);
 
             File = Root.getNextFileName();
         }
@@ -95,7 +91,7 @@ void setup()
     }
 
     Chirp.Begin(Board.BTName);
-    Chirp.Send(Objects.ContentDebug());
+    Serial.println(Objects.ContentDebug());
     TimeUpdate();
     Board.BootTime = CurrentTime;
 
@@ -142,17 +138,17 @@ KEY FEATURES:
 Built-in button
 Servo
 Accelerometer + filtering/integrating
-Operations without inbetween variables? Type determinition and instant execution?
-- use ValueAs for the type (it's operation only, and that is a separate type)
+Operations without inbetween variables? Type determinition and instant execution? -> virtual Type() + conversions?
 
 App Usability/parity
+- Redo graph view, object centric with only related shown, more info
 Animations & Operations
 
 ADJUSTMENTS:
-(ID)List, register make unsigned, for unknown index separate function
-Spread out bluetooth sending to prevent lag, use indication for max possible speed?
+As (bytearray) checking not working
+Spread out bluetooth sending to prevent lag?
 Saving takes forever
-Map types to sizes/underlying types, works like it anyway
+(ID)List, register make unsigned?
 
 EXTRA:
 Edit rendering to allow all-display filters

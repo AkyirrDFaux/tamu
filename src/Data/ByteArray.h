@@ -11,25 +11,29 @@ public:
     ByteArray(const C &Data);
     ByteArray(const char *Data, int32_t DataLength);
     void operator=(const ByteArray &Other);
+    template <class C>
+    bool operator==(const C Other) const;
+    template <class C>
+    bool operator!=(const C Other) const;
 
     ByteArray operator<<(const ByteArray &Data);
-    ByteArray operator>>(const ByteArray &Data);
 
     ByteArray SubArray(int32_t Index, int32_t NewLength = -1) const;
+    ByteArray AddLength() const;
+    ByteArray ExtractMessage();
+    ByteArray ExtractPart();
+
+    Types Type() const;
+    int32_t SizeOfData() const;   // Size of data
+    int32_t SizeWithType() const; // Size of type+length+data
 
     template <class C>
     C As() const;
-
     template <class C>
     operator C() const;
 
-    template <class C>
-    C Data() const;
-
-    Types Type() const;
-    size_t SizeOfData() const;
-
     void WriteToFile(const String &FileName);
+    String ToHex();
 };
 
 ByteArray::ByteArray(const ByteArray &Copied)
@@ -48,28 +52,34 @@ ByteArray::~ByteArray()
 template <class C>
 ByteArray::ByteArray(const C &Data)
 {
-    Array = new char[sizeof(Data)];
-    memcpy(Array, &Data, sizeof(Data));
-    Length = sizeof(Data);
+    Types Type = GetType<C>();
+    Length = sizeof(Types) + sizeof(Data);
+    Array = new char[Length];
+
+    memcpy(Array, &Type, sizeof(Types));
+    memcpy(Array + sizeof(Types), &Data, sizeof(Data));
 };
 
 template <>
 ByteArray::ByteArray(const String &Data)
 {
-    u_int8_t DataLength = Data.length();
-    Array = new char[sizeof(DataLength) + DataLength];
+    Types Type = GetType<String>();
+    uint8_t DataLength = Data.length();
+    Length = sizeof(Types) + sizeof(DataLength) + DataLength;
+    Array = new char[Length];
 
-    memcpy(Array, &DataLength, sizeof(DataLength));
-    memcpy(Array + sizeof(DataLength), Data.c_str(), DataLength);
-
-    Length = DataLength + sizeof(DataLength);
+    memcpy(Array, &Type, sizeof(Types));
+    memcpy(Array + sizeof(Types), &DataLength, sizeof(DataLength));
+    memcpy(Array + sizeof(Types) + sizeof(DataLength), Data.c_str(), DataLength);
 };
 
 ByteArray::ByteArray(const char *Data, int32_t DataLength)
 {
+    if (Data == nullptr)
+        return;
+
     Array = new char[DataLength];
-    if (Data != nullptr)
-        memcpy(Array, Data, DataLength);
+    memcpy(Array, Data, DataLength);
     Length = DataLength;
 };
 
@@ -85,6 +95,20 @@ void ByteArray::operator=(const ByteArray &Other)
     Length = Other.Length;
 };
 
+template <class C>
+bool ByteArray::operator==(const C Other) const
+{
+    if (Type() != GetType<C>())
+        return false;
+    return As<C>() == Other;
+}
+
+template <class C>
+bool ByteArray::operator!=(const C Other) const
+{
+    return !(*this == Other);
+}
+
 ByteArray ByteArray::operator<<(const ByteArray &Data)
 {
     ByteArray NewArray;
@@ -96,40 +120,42 @@ ByteArray ByteArray::operator<<(const ByteArray &Data)
     return NewArray;
 };
 
-ByteArray ByteArray::operator>>(const ByteArray &Data)
-{
-    ByteArray NewArray;
-    NewArray.Length = Length + Data.Length;
-    NewArray.Array = new char[NewArray.Length];
-
-    memcpy(NewArray.Array, Data.Array, Data.Length);
-    memcpy(NewArray.Array + Data.Length, Array, Length);
-    return NewArray;
-};
-
 template <class C>
 C ByteArray::As() const
 {
-    if (Length < sizeof(C)) // Check if array is long enough
+    // IGNORED DUE TO PREVIOUS COMPATIBILITY
+    /*
+    if (Type() != GetType<C>())
     {
-        ReportError(Status::InvalidValue, "ByteArray conversion failed");
+        ReportError(Status::InvalidType, "ByteArray - invalid type conversion");
         return C();
     }
-
-    C Part;
-    memcpy(&Part, Array, sizeof(C));
-    return Part;
+    */
+    /*
+    if (Length < SizeWithType() || SizeWithType() < 0) // Check if array is long enough
+    {
+        ReportError(Status::InvalidValue, "ByteArray - value incomplete");
+        return C();
+    }
+    */
+    return *(C *)(Array + sizeof(Types));
 };
 
 template <>
 String ByteArray::As() const
 {
-    u_int8_t TextLength = *this;
-    if (Length - sizeof(u_int8_t) < TextLength)
+    if (Type() != GetType<String>())
+    {
+        ReportError(Status::InvalidType, "ByteArray - invalid type conversion");
         return "";
+    }
+    if (Length < SizeWithType() || SizeWithType() < 0) // Check if array is long enough
+    {
+        ReportError(Status::InvalidValue, "ByteArray - value incomplete");
+        return "";
+    }
 
-    String Part = String(Array + sizeof(u_int8_t), TextLength);
-    return Part;
+    return String(Array + sizeof(Types) + sizeof(uint8_t), SizeOfData());
 };
 
 template <class C>
@@ -142,44 +168,68 @@ ByteArray ByteArray::SubArray(int32_t Index, int32_t NewLength) const
 {
     if (NewLength == -1)
         NewLength = Length - Index;
-    ByteArray NewArray(Array + Index, NewLength);
-    return NewArray;
+    return ByteArray(Array + Index, NewLength);
 };
+
+ByteArray ByteArray::AddLength() const
+{
+    return ByteArray((char *)&Length, sizeof(Length)) << *this;
+}
+
+ByteArray ByteArray::ExtractMessage()
+{
+    if (Length < sizeof(uint32_t) || Length < sizeof(uint32_t) + *(uint32_t *)Array)
+        return ByteArray();
+
+    ByteArray Message = SubArray(sizeof(uint32_t), *(uint32_t *)Array);
+    *this = SubArray(sizeof(uint32_t) + *(uint32_t *)Array);
+    return Message;
+}
+
+ByteArray ByteArray::ExtractPart()
+{
+    uint32_t PartLength = SizeWithType();
+    if (PartLength < 0)
+        return ByteArray();
+    ByteArray Part = SubArray(0, PartLength);
+    *this = SubArray(PartLength);
+    return Part;
+}
 
 Types ByteArray::Type() const
 {
-    Types Type = Types::Undefined;
-    memcpy(&Type, Array, sizeof(Types));
-    return Type;
+    if (Length >= sizeof(Types))
+        return *(Types *)Array;
+
+    ReportError(Status::InvalidValue, "ByteArray - too short, no type");
+    return Types::Undefined;
 };
 
-size_t ByteArray::SizeOfData() const
+int32_t ByteArray::SizeOfData() const
 {
-    int8_t Size = GetValueSize(Type());
-    if (Size >= 0)
-        return Size;
-
-    switch (Type())
-    {
-    case Types::Text:
-        return SubArray(sizeof(Types)).As<uint8_t>() + sizeof(uint8_t);
-    case Types::IDList:
-        return SubArray(sizeof(Types)).As<int8_t>() * (sizeof(uint32_t) + sizeof(uint8_t)) + sizeof(uint8_t);
-    default:
-        ReportError(Status::InvalidType, "Unknown length data, Type:" + String((uint8_t)Type()));
-        return Length - sizeof(Types);
-    }
+    if (Type() == Types::Undefined || Length <= sizeof(Types) + sizeof(uint8_t))
+        return -1;
+    else if (Type() == Types::Text)
+        return *(uint8_t *)(Array + sizeof(Types));
+    else if (Type() == Types::IDList)
+        return (*(uint8_t *)(Array + sizeof(Types))) * sizeof(IDClass);
+    else
+        return GetValueSize(Type());
 };
 
-template <class C>
-C ByteArray::Data() const
+int32_t ByteArray::SizeWithType() const
 {
-    return SubArray(sizeof(Types)).As<C>();
+    if (SizeOfData() < 0)
+        return -1;
+    else if (Type() == Types::Text || Type() == Types::IDList)
+        return SizeOfData() + sizeof(Types) + sizeof(uint8_t);
+    else
+        return SizeOfData() + sizeof(Types);
 };
 
 void ByteArray::WriteToFile(const String &FileName)
 {
-    ByteArray Data = ByteArray(Length) << *this;
+    ByteArray Data = AddLength();
     File File = SPIFFS.open("/" + FileName, "w");
     File.print(String(Data.Array, Data.Length));
     File.close();
@@ -189,7 +239,8 @@ ByteArray ReadFromFile(const String &FileName)
 {
     File File = SPIFFS.open("/" + FileName, "r");
 
-    // Forgot to check if it opened/exists
+    if (!File)
+        return ByteArray();
 
     int32_t ReadLength = 0;
 
@@ -205,7 +256,7 @@ ByteArray ReadFromFile(const String &FileName)
     ByteArray Data = ByteArray(nullptr, Length.As<int32_t>());
 
     ReadLength = File.readBytes(Data.Array, Data.Length);
-    
+
     if (ReadLength < Data.Length)
     {
         ReportError(Status::FileError, "Corrupted file");
@@ -214,4 +265,12 @@ ByteArray ReadFromFile(const String &FileName)
 
     File.close();
     return Data;
+};
+
+String ByteArray::ToHex()
+{
+    String Text = "";
+    for (int32_t Index = 0; Index < Length; Index++)
+        Text += String(Array[Index], HEX) + " ";
+    return Text;
 };

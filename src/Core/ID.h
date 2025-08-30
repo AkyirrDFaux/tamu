@@ -14,17 +14,3 @@ public:
     bool operator==(IDClass Other) { return ID == Other.ID; };
     operator uint32_t() { return ID; };
 };
-/*
-template <>
-ByteArray::ByteArray(IDClass Data)
-{
-    *this = ByteArray(Data.ID);
-};
-
-template <>
-IDClass ByteArray::As()
-{
-    IDClass New;
-    New.ID = SubArray(0);
-    return New;
-};*/

@@ -1,12 +1,12 @@
 enum Flags : uint8_t
 {
     None = 0,
-    Auto = 0b00000001,    // No name change, cannot remove, no editing, no saving
-    RunLoop = 0b00001000, //Allow automatic run forever
-    RunOnce = 0b00010000, //Run once manually until finished, will reset the flag automatically
-    RunOnStartup = 0b00100000, //Run automatically once after board finished loading
-    Favourite = 0b01000000, // Show when filtered
-    Inactive = 0b10000000 // Ignore object
+    Auto = 0b00000001,         // No name change, cannot remove, no editing, no saving
+    RunLoop = 0b00001000,      // Allow automatic run forever
+    RunOnce = 0b00010000,      // Run once manually until finished, will reset the flag automatically
+    RunOnStartup = 0b00100000, // Run automatically once after board finished loading
+    Favourite = 0b01000000,    // Show when filtered
+    Inactive = 0b10000000      // Ignore object
 };
 
 class FlagClass
@@ -19,20 +19,6 @@ public:
     void operator+=(uint8_t Other) { Values |= Other; };
     void operator-=(uint8_t Other) { Values &= ~Other; };
     bool operator==(Flags Other) { return Values & Other; };
-};
-
-template <>
-ByteArray::ByteArray(const FlagClass &Data)
-{
-    *this = ByteArray(Data.Values);
-};
-
-template <>
-ByteArray::operator FlagClass() const
-{
-    FlagClass New;
-    New.Values = SubArray(0);
-    return New;
 };
 
 class BaseClass
@@ -65,7 +51,7 @@ public:
     C *ValueAs() const;
 
     ByteArray GetValue() const;
-    bool SetValue(ByteArray *Input);
+    bool SetValue(ByteArray &Input);
     String ContentDebug(int32_t Level);
 };
 
@@ -81,12 +67,7 @@ template <>
 ByteArray::ByteArray(const BaseClass &Data)
 {
     // Type, ID, Flags, Name, Modules,(+ values)
-    *this = ByteArray(Types::Type) << ByteArray(Data.Type);
-    *this = *this << ByteArray(Types::ID) << ByteArray(Data.ID);
-    *this = *this << ByteArray(Types::Flags) << ByteArray(Data.Flags);
-    *this = *this << ByteArray(Types::Text) << ByteArray(Data.Name);
-    *this = *this << ByteArray(Types::IDList) << ByteArray(Data.Modules);
-    *this = *this << Data.GetValue();
+    *this = ByteArray(Data.Type) << ByteArray(Data.ID) << ByteArray(Data.Flags) << ByteArray(Data.Name) << ByteArray(Data.Modules) << Data.GetValue();
 };
 
 String BaseClass::ContentDebug(int32_t Level)

@@ -1,39 +1,55 @@
-Message *ReadValue(const Message &Input)
+void ReadValue(ByteArray &Input)
 {
-    if (Input.Type(1) != Types::ID || !Objects.IsValid(Input.Data<IDClass>(1)))
-        return new Message(Status::InvalidID, Input);
-
-    BaseClass *Object = Objects[Input.Data<IDClass>(1)];
-
-    ByteArray Data = Object->GetValue();
+    ByteArray ID = Input.ExtractPart();
+    if (ID.Type() != Types::ID || !Objects.IsValid(ID))
+    {
+        Chirp.Send(ByteArray(Status::InvalidID) << Input);
+        return;
+    }
+    ByteArray Data = Objects[ID]->GetValue();
 
     if (Data.Length == 0)
-        return new Message(Status::NoValue, Input);
+    {
+        Chirp.Send(ByteArray(Status::NoValue) << Input);
+        return;
+    }
 
-    return new Message(Functions::ReadValue, Input.Data<IDClass>(1), Data);
+    Chirp.Send(ByteArray(Functions::ReadValue) << ID << Data);
 }
 
-Message *WriteValue(const Message &Input)
+void WriteValue(ByteArray &Input)
 {
-    if (Input.Type(1) != Types::ID || !Objects.IsValid(Input.Data<IDClass>(1)))
-        return new Message(Status::InvalidID, Input);
+    ByteArray ID = Input.ExtractPart();
+    ByteArray Value = Input.ExtractPart();
+    if (ID.Type() != Types::ID || !Objects.IsValid(ID))
+    {
+        Chirp.Send(ByteArray(Status::InvalidID) << Input);
+        return;
+    }
 
-    BaseClass *Object = Objects[Input.Data<IDClass>(1)];
+    BaseClass *Object = Objects[ID];
 
     if (Object->Flags == Flags::Auto)
-        return new Message(Status::AutoObject, Input);
-    else if (Input.Type(2) != Object->Type || Object->SetValue(Input.Segments[2]) == false)
-        return new Message(Status::InvalidType, Input);
-
-    ByteArray Data = Object->GetValue();
-    return new Message(Functions::WriteValue, Input.Data<IDClass>(1), Data);
+    {
+        Chirp.Send(ByteArray(Status::AutoObject) << Input);
+        return;
+    }
+    else if (Value.Type() != Object->Type || Object->SetValue(Value) == false)
+    {
+        Chirp.Send(ByteArray(Status::InvalidType) << Input);
+        return;
+    }
+    Chirp.Send(ByteArray(Functions::WriteValue) << ID << Object->GetValue());
 }
 
-Message *ReadFile(const Message &Input)
+void ReadFile(ByteArray &Input)
 {
-    if (Input.Type(1) != Types::ID)
-        return new Message(Status::InvalidID, Input);
+    ByteArray ID = Input.ExtractPart();
+    if (ID.Type() != Types::ID || !Objects.IsValid(ID))
+    {
+        Chirp.Send(ByteArray(Status::InvalidID) << Input);
+        return;
+    }
 
-    ByteArray Data = ReadFromFile(String(Input.Data<IDClass>(1)));
-    return new Message(Functions::ReadFile, Input.Data<IDClass>(1), Data);
+    Chirp.Send(ByteArray(Functions::ReadFile) << ID << ReadFromFile(String(ID.As<IDClass>())));
 }

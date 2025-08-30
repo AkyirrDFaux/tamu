@@ -24,7 +24,7 @@ public:
     void Expand(int8_t NewLength);
     void Shorten();
 
-    bool Add(IDClass ID, int32_t Index);
+    bool Add(IDClass ID, int32_t Index = -1);
     bool Add(BaseClass *AddObject, int32_t Index);
     bool Remove(int32_t Index);
     bool Remove(BaseClass *RemovedObject);
@@ -212,30 +212,32 @@ String IDList::AsString()
 template <>
 IDList ByteArray::As() const
 {
-    IDList List;
-    int32_t Number = As<int8_t>();
-    for (int32_t Index = 0; Index < Number; Index++)
-        List.Add(SubArray(Index * (sizeof(uint32_t) + sizeof(uint8_t)) + sizeof(uint8_t) * 2).As<IDClass>(),
-                 SubArray(Index * (sizeof(uint32_t) + sizeof(uint8_t)) + sizeof(uint8_t)).As<int8_t>());
+    if (Type() != GetType<IDList>())
+    {
+        ReportError(Status::InvalidType, "ByteArray - invalid type conversion");
+        return IDList();
+    }
+    if (Length < SizeWithType() || SizeWithType() < 0) // Check if array is long enough
+    {
+        ReportError(Status::InvalidValue, "ByteArray - value incomplete");
+        return IDList();
+    }
 
+    IDList List;
+    List.Length = SizeOfData()/sizeof(IDClass);
+    List.IDs = new IDClass[List.Length];
+    memcpy(List.IDs, Array + sizeof(uint8_t) * 2, SizeOfData());
     return List;
 };
 
 template <>
 ByteArray::ByteArray(const IDList &Data)
 {
-    // Index, ID
-    int8_t ValidLength = 0;
-    for (int8_t Index = 0; Index < Data.Length; Index++)
-    {
-        if (Data.IsValidID(Index))
-            ValidLength++;
-    }
+    Types Type = GetType<IDList>();
+    Length = sizeof(Types) + sizeof(uint8_t) + Data.Length * sizeof(IDClass);
+    Array = new char[Length];
 
-    *this = ByteArray(ValidLength);
-    for (int8_t Index = 0; Index < Data.Length; Index++)
-    {
-        if (Data.IsValidID(Index))
-            *this = *this << ByteArray(Index) << ByteArray(Data.IDs[Index]);
-    }
+    memcpy(Array, &Type, sizeof(Types));
+    memcpy(Array + sizeof(Types), &Data.Length, sizeof(uint8_t));
+    memcpy(Array + sizeof(Types) + sizeof(uint8_t), Data.IDs, Data.Length * sizeof(IDClass));
 };

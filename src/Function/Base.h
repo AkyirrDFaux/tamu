@@ -1,63 +1,62 @@
-Message *Message::Run()
+void Run(ByteArray &Input)
 {
-    if (Type(0) == Types::Function)
+    //Serial.println(Input.ToHex());
+    ByteArray Function = Input.ExtractPart();
+    if (Function.Type() == Types::Function)
     {
-        Functions Function = Data<Functions>(0);
         if (Function == Functions::ReadDatabase)
-            return ReadDatabase(*this);
+            ReadDatabase(Input);
         else if (Function == Functions::CreateObject)
-            return CreateObject(*this);
+            CreateObject(Input);
         else if (Function == Functions::DeleteObject)
-            return DeleteObject(*this);
+            DeleteObject(Input);
         else if (Function == Functions::WriteValue)
-            return WriteValue(*this);
+            WriteValue(Input);
         else if (Function == Functions::ReadValue)
-            return ReadValue(*this);
+            ReadValue(Input);
         else if (Function == Functions::WriteName)
-            return WriteName(*this);
+            WriteName(Input);
         else if (Function == Functions::ReadName)
-            return ReadName(*this);
+            ReadName(Input);
         else if (Function == Functions::SaveObject)
-            return SaveObject(*this);
+            SaveObject(Input);
         else if (Function == Functions::ReadFile)
-            return ReadFile(*this);
+            ReadFile(Input);
         else if (Function == Functions::SaveAll)
-            return SaveAll(*this);
+            SaveAll(Input);
         else if (Function == Functions::RunFile)
-            return RunFile(*this);
+            RunFile(Input);
         else if (Function == Functions::ReadObject)
-            return ReadObject(*this);
+            ReadObject(Input);
         else if (Function == Functions::LoadObject)
-            return LoadObject(*this);
+            LoadObject(Input);
         else if (Function == Functions::Refresh)
-            return Refresh(*this);
+            Refresh(Input);
         else if (Function == Functions::SetModules)
-            return SetModules(*this);
+            SetModules(Input);
         else if (Function == Functions::SetFlags)
-            return SetFlags(*this);
+            SetFlags(Input);
         else
-            return new Message(Status::InvalidFunction, this);
+            Chirp.Send(ByteArray(Status::InvalidFunction) << Input);
+        return;
     }
-    return new Message(Status::InvalidType, this);
+    Chirp.Send(ByteArray(Status::InvalidType) << Input);
 }
 
-Message *ReadDatabase(const Message &Input)
+void ReadDatabase(ByteArray &Input)
 {
     Serial.println(Objects.ContentDebug());
-    return new Message();
 }
 
-Message *Refresh(const Message &Input)
+void Refresh(ByteArray &Input)
 {
     for (uint32_t Index = 1; Index <= Objects.Allocated; Index++)
     {
         if (!Objects.IsValid(IDClass(Index)))
             continue;
-
-        ByteArray Data = ByteArray(*Objects[IDClass(Index)]);
-        Chirp.Send(Message(Functions::ReadObject, Data));
+        Chirp.Send(ByteArray(Functions::ReadObject) << ByteArray(*Objects[IDClass(Index)]));
     }
-    return new Message(Status::OK);
+    Chirp.Send(ByteArray(Status::OK));
 }
 
 BaseClass *CreateObject(Types Type, bool New, IDClass ID, FlagClass Flags)
@@ -130,110 +129,178 @@ BaseClass *CreateObject(Types Type, bool New, IDClass ID, FlagClass Flags)
     }
 }
 
-Message *CreateObject(const Message &Input)
+void CreateObject(ByteArray &Input)
 {
     BaseClass *Object = nullptr;
-    if (Input.Type(1) == Types::Type && Input.Type(2) == Types::ID)
+    ByteArray Type = Input.ExtractPart();
+    ByteArray ID = Input.ExtractPart();
+    if (Type.Type() == Types::Type && ID.Type() == Types::ID)
     {
-        if (!Objects.IsValid(Input.Data<IDClass>(2))) // Check for ID colision
-            Object = CreateObject(Input.Data<Types>(1), true, Input.Data<IDClass>(2));
+        if (!Objects.IsValid(ID)) // Check for ID colision
+            Object = CreateObject(Type, true, ID);
         else
-            return new Message(Status::InvalidID);
+        {
+            Chirp.Send(ByteArray(Status::InvalidID) << Input);
+            return;
+        }
     }
-    else if (Input.Type(1) == Types::Type)
-        Object = CreateObject(Input.Data<Types>(1));
+    else if (Type.Type() == Types::Type)
+        Object = CreateObject((Types)Type);
     else
-        return new Message(Status::InvalidType, Input);
+    {
+        Chirp.Send(ByteArray(Status::InvalidType) << Input);
+        return;
+    }
 
     if (Object == nullptr)
-        return new Message(Status::InvalidType, Input);
-    return new Message(Functions::CreateObject, Object->Type, Object->ID);
+        Chirp.Send(ByteArray(Status::InvalidType) << Input);
+    else
+        Chirp.Send(ByteArray(Functions::CreateObject) << ByteArray(Object->Type) << ByteArray(Object->ID));
 }
 
-Message *LoadObject(const Message &Input)
+void LoadObject(ByteArray &Input)
 {
     BaseClass *Object = nullptr;
-    if (Input.Type(1) == Types::Type && Input.Type(2) == Types::ID)
+    ByteArray Type = Input.ExtractPart();
+    ByteArray ID = Input.ExtractPart();
+    ByteArray Flags = Input.ExtractPart();
+    ByteArray Name = Input.ExtractPart();
+    ByteArray Modules = Input.ExtractPart();
+    ByteArray Value = Input.ExtractPart();
+    if (Type.Type() == Types::Type && ID.Type() == Types::ID)
     {
-        if (!Objects.IsValid(Input.Data<IDClass>(2))) // Check for ID colision
-            Object = CreateObject(Input.Data<Types>(1), false, Input.Data<IDClass>(2));
-        else if (Objects[Input.Data<IDClass>(2)]->Type == Input.Data<Types>(1)) // Overwrite the object, since the type and ID are same
-            Object = Objects[Input.Data<IDClass>(2)];
+        if (!Objects.IsValid(ID)) // Check for ID colision
+            Object = CreateObject(Type, false, ID);
+        else if (Objects[ID]->Type == (Types)Type) // Overwrite the object, since the type and ID are same
+            Object = Objects[ID];
         else
-            return new Message(Status::InvalidID);
+        {
+            Chirp.Send(ByteArray(Status::InvalidID) << Input);
+            return;
+        }
     }
     else
-        return new Message(Status::InvalidType, Input);
+    {
+        Chirp.Send(ByteArray(Status::InvalidType) << Input);
+        return;
+    }
 
     if (Object == nullptr)
-        return new Message(Status::InvalidType, Input);
+    {
+        Chirp.Send(ByteArray(Status::InvalidType) << Input);
+        return;
+    }
 
-    if (Input.Type(3) == Types::Flags)
-        Object->Flags = Input.Data<Flags>(3);
-    if (Input.Type(4) == Types::Text)
-        Object->Name = Input.Data<String>(4);
-    if (Input.Type(5) == Types::IDList)
-        Object->Modules = Input.Data<IDList>(5); // Fixed, careful
-    if (Input.Type(6) == Object->Type)
-        Object->SetValue(Input.Segments[6]);
+    if (Flags.Type() == Types::Flags)
+        Object->Flags = Flags.As<FlagClass>();
+    if (Name.Type() == Types::Text)
+        Object->Name = Name.As<String>();
+    if (Modules.Type() == Types::IDList)
+        Object->Modules = Modules.As<IDList>(); // Fixed, careful
+    if (Value.Type() == Object->Type)
+        Object->SetValue(Value);
 
-    return new Message(Functions::LoadObject, ByteArray(*Object));
+    Chirp.Send(ByteArray(Functions::LoadObject) << ByteArray(*Object));
 }
 
-Message *DeleteObject(const Message &Input)
+void DeleteObject(ByteArray &Input)
 {
-    if (Input.Type(1) != Types::ID || !Objects.IsValid(Input.Data<IDClass>(1)))
-        return new Message(Status::InvalidID, Input);
-    else if (Objects[Input.Data<IDClass>(1)]->Flags == Flags::Auto)
-        return new Message(Status::AutoObject, Input);
-    else
-        delete Objects[Input.Data<IDClass>(1)];
-    return new Message(Functions::DeleteObject, Input.Data<IDClass>(1));
+    ByteArray ID = Input.ExtractPart();
+    if (ID.Type() != Types::ID || !Objects.IsValid(ID))
+    {
+        Chirp.Send(ByteArray(Status::InvalidID) << Input);
+        return;
+    }
+    else if (Objects[ID]->Flags == Flags::Auto)
+    {
+        Chirp.Send(ByteArray(Status::AutoObject) << Input);
+        return;
+    }
+
+    delete Objects[ID];
+    Chirp.Send(ByteArray(Functions::DeleteObject) << ID);
 }
 
-Message *SetModules(const Message &Input)
+void SetModules(ByteArray &Input)
 {
-    if (Input.Type(1) != Types::ID || !Objects.IsValid(Input.Data<IDClass>(1)))
-        return new Message(Status::InvalidID, Input);
-    else if (Objects[Input.Data<IDClass>(1)]->Flags == Flags::Auto)
-        return new Message(Status::AutoObject, Input);
-    else if (Input.Type(2) == Types::IDList)
-        Objects[Input.Data<IDClass>(1)]->Modules = Input.Data<IDList>(2); // Fixed, careful
-    else
-        return new Message(Status::InvalidType, Input);
-    return new Message(Functions::SetModules, Input.Data<IDClass>(1), Objects[Input.Data<IDClass>(1)]->Modules);
+    ByteArray ID = Input.ExtractPart();
+    ByteArray Modules = Input.ExtractPart();
+
+    if (ID.Type() != Types::ID || !Objects.IsValid(ID))
+    {
+        Chirp.Send(ByteArray(Status::InvalidID) << Input);
+        return;
+    }
+    else if (Objects[ID]->Flags == Flags::Auto)
+    {
+        Chirp.Send(ByteArray(Status::AutoObject) << Input);
+        return;
+    }
+    else if (Modules.Type() != Types::IDList)
+    {
+        Chirp.Send(ByteArray(Status::InvalidType) << Input);
+        return;
+    }
+    Objects[ID]->Modules = Modules.As<IDList>();
+    Chirp.Send(ByteArray(Functions::SetModules) << ID << Modules);
 };
 
-Message *SetFlags(const Message &Input)
+void SetFlags(ByteArray &Input)
 {
-    if (Input.Type(1) != Types::ID || !Objects.IsValid(Input.Data<IDClass>(1)))
-        return new Message(Status::InvalidID, Input);
-    else if (Objects[Input.Data<IDClass>(1)]->Flags == Flags::Auto)
-        return new Message(Status::AutoObject, Input);
-    else if (Input.Type(2) == Types::Flags)
-        Objects[Input.Data<IDClass>(1)]->Flags = Input.Data<Flags>(2);
-    else
-        return new Message(Status::InvalidType, Input);
-    return new Message(Functions::SetFlags, Input.Data<IDClass>(1), Objects[Input.Data<IDClass>(1)]->Flags);
+    ByteArray ID = Input.ExtractPart();
+    ByteArray Flags = Input.ExtractPart();
+
+    if (ID.Type() != Types::ID || !Objects.IsValid(ID))
+    {
+        Chirp.Send(ByteArray(Status::InvalidID) << Input);
+        return;
+    }
+    else if (Objects[ID]->Flags == Flags::Auto)
+    {
+        Chirp.Send(ByteArray(Status::AutoObject) << Input);
+        return;
+    }
+    else if (Flags.Type() != Types::Flags)
+    {
+        Chirp.Send(ByteArray(Status::InvalidType) << Input);
+        return;
+    }
+    Objects[ID]->Flags = Flags.As<FlagClass>();
+    Chirp.Send(ByteArray(Functions::SetFlags) << ID << Flags);
 };
 
-Message *WriteName(const Message &Input)
+void WriteName(ByteArray &Input)
 {
-    if (Input.Type(1) != Types::ID || !Objects.IsValid(Input.Data<IDClass>(1)))
-        return new Message(Status::InvalidID, Input);
-    else if (Objects[Input.Data<IDClass>(1)]->Flags == Flags::Auto)
-        return new Message(Status::AutoObject, Input);
-    else if (Input.Type(2) != Types::Text)
-        return new Message(Status::InvalidType, Input);
-    else
-        Objects[Input.Data<IDClass>(1)]->Name = Input.Data<String>(2);
-    return new Message(Functions::WriteName, Input.Data<IDClass>(1), Input.Data<String>(2));
+    ByteArray ID = Input.ExtractPart();
+    ByteArray Name = Input.ExtractPart();
+
+    if (ID.Type() != Types::ID || !Objects.IsValid(ID))
+    {
+        Chirp.Send(ByteArray(Status::InvalidID) << Input);
+        return;
+    }
+    else if (Objects[ID]->Flags == Flags::Auto)
+    {
+        Chirp.Send(ByteArray(Status::AutoObject) << Input);
+        return;
+    }
+    else if (Name.Type() != Types::Text)
+    {
+        Chirp.Send(ByteArray(Status::InvalidType) << Input);
+        return;
+    }
+    Objects[ID]->Name = Name.As<String>();
+    Chirp.Send(ByteArray(Functions::WriteName) << ID << Name);
 };
 
-Message *ReadName(const Message &Input)
+void ReadName(ByteArray &Input)
 {
-    if (Input.Type(1) != Types::ID || !Objects.IsValid(Input.Data<IDClass>(1)))
-        return new Message(Status::InvalidID, Input);
+    ByteArray ID = Input.ExtractPart();
+    if (ID.Type() != Types::ID || !Objects.IsValid(ID))
+    {
+        Chirp.Send(ByteArray(Status::InvalidID) << Input);
+        return;
+    }
 
-    return new Message(Functions::ReadName, Input.Data<IDClass>(1), Objects[Input.Data<IDClass>(1)]->Name);
+    Chirp.Send(ByteArray(Functions::ReadName) << ID << ByteArray(Objects[ID]->Name));
 };

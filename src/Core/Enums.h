@@ -78,22 +78,23 @@ enum class Functions : uint8_t
     
 };
 
-Message *ReadDatabase(const Message &Input);
-Message *ReadValue(const Message &Input);
-Message *WriteValue(const Message &Input);
-Message *CreateObject(const Message &Input);
-Message *DeleteObject(const Message &Input);
-Message *SaveObject(const Message &Input);
-Message *WriteName(const Message &Input);
-Message *ReadName(const Message &Input);
-Message *ReadFile(const Message &Input);
-Message *SaveAll(const Message &Input);
-Message *ReadObject(const Message &Input);
-Message *LoadObject(const Message &Input);
-Message *RunFile(const Message &Input);
-Message *Refresh(const Message &Input);
-Message *SetModules(const Message &Input);
-Message *SetFlags(const Message &Input);
+void Run(ByteArray &Input);
+void ReadDatabase(ByteArray &Input);
+void ReadValue(ByteArray &Input);
+void WriteValue(ByteArray &Input);
+void CreateObject(ByteArray &Input);
+void DeleteObject(ByteArray &Input);
+void SaveObject(ByteArray &Input);
+void WriteName(ByteArray &Input);
+void ReadName(ByteArray &Input);
+void ReadFile(ByteArray &Input);
+void SaveAll(ByteArray &Input);
+void ReadObject(ByteArray &Input);
+void LoadObject(ByteArray &Input);
+void RunFile(ByteArray &Input);
+void Refresh(ByteArray &Input);
+void SetModules(ByteArray &Input);
+void SetFlags(ByteArray &Input);
 
 template <class C>
 Types GetType()

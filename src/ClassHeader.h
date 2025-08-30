@@ -4,6 +4,7 @@ class Folder;
 class FlagClass;
 class IDClass;
 
+class ByteArray;
 class ColourClass;
 class Vector2D;
 class Coord2D;
