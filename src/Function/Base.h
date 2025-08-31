@@ -266,6 +266,8 @@ void SetFlags(ByteArray &Input)
         return;
     }
     Objects[ID]->Flags = Flags.As<FlagClass>();
+    if (Objects[ID]->Type == Types::Program && Objects[ID]->Flags == Flags::RunOnce)
+        Objects[ID]->As<Program>()->Counter = 0;
     Chirp.Send(ByteArray(Functions::SetFlags) << ID << Flags);
 };
 

@@ -34,11 +34,12 @@ bool Program::Run()
 {
     bool HasFinished = true;
     int CounterInit = Counter;
+    Serial.println(Counter);
     switch (*Data)
     {
     case ProgramTypes::Sequence:
         HasFinished = false;
-        while (RunEntry(Counter) == true && !(HasFinished && Counter >= CounterInit))
+        while (RunEntry(Counter) == true && !(HasFinished && Counter >= CounterInit)) //Finished part or (made a step and done)
         {
             Counter++;
             if (Counter >= Modules.Length)
@@ -46,19 +47,24 @@ bool Program::Run()
                 HasFinished = true;
                 Counter = 0;
             }
+            if(HasFinished && Flags == Flags::RunOnce)
+                break;
+
+            Serial.println(Counter);
         }
         break;
     case ProgramTypes::All:
         for (int32_t Index = Modules.FirstValid(); Index < Modules.Length; Modules.Iterate(&Index))
             HasFinished = HasFinished && RunEntry(Counter);
-
         break;
     default:
         break;
     }
 
-    if ((Flags == Flags::RunOnce) && HasFinished)
+    if ((Flags == Flags::RunOnce) && HasFinished){
         Flags -= Flags::RunOnce;
+        Chirp.Send(ByteArray(Functions::SetFlags) << ID << Flags);
+    }
 
     return HasFinished;
 }
