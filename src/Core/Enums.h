@@ -20,12 +20,12 @@ enum class Types : uint8_t
     Geometry2D,
     GeometryOperation,
     Texture2D,
-    AnimationFloat,
-    AnimationVector,
-    AnimationCoord,
-    AnimationColour,
+    Removed1, //Removed AnimationFloat
+    Removed2, //AnimationVector
+    Removed3, //Removed AnimationCoord
+    Removed4, //AnimationColour
     Operation, // Enum/value, not object anymore
-    Program,   // List of Operations... execute and wait options (Sequence, All and wait, All no wait)
+    Program,
     Integer,   // int_32
     Time,      // uint_32
     Number,    // float_32
@@ -134,11 +134,6 @@ template <>
 Types GetType<GeometryOperation>() { return Types::GeometryOperation; };
 template <>
 Types GetType<Textures2D>() { return Types::Texture2D; };
-template <>
-Types GetType<FloatAnimations>() { return Types::AnimationFloat; };
-// AnimVector,Colour
-template <>
-Types GetType<CoordAnimations>() { return Types::AnimationCoord; };
 template <>
 Types GetType<Operations>() { return Types::Operation; };
 template <>

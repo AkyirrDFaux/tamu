@@ -95,12 +95,6 @@ BaseClass *CreateObject(Types Type, bool New, IDClass ID, FlagClass Flags)
         return new Texture2D(New, ID, Flags);
     case Types::Display:
         return new DisplayClass(New, ID, Flags);
-    case Types::AnimationFloat:
-        return new AnimationFloat(New, ID, Flags);
-    // case Types::AnimationVector
-    case Types::AnimationCoord:
-        return new AnimationCoord(New, ID, Flags);
-    // case Types::AnimationColour
     case Types::Operation:
         return new Variable<Operations>(Operations::None, ID, Flags);
     case Types::Program:

@@ -80,35 +80,8 @@ enum class Displays : uint8_t
 enum class LEDStrips : uint8_t
 {
     Undefined,
-    Generic
-};
-
-enum class FloatAnimations : uint8_t
-{
-    None,
-    MoveTo,
-    MoveBetween
-};
-
-enum class VectorAnimations : uint8_t
-{
-    None,
-    MoveTo,
-    MoveBetween
-};
-
-enum class CoordAnimations : uint8_t
-{
-    None,
-    MoveTo
-};
-
-enum class ColourAnimations : uint8_t
-{
-    None,
-    TimeBlend,
-    BlendLoop,
-    BlendRGB
+    GenericRGB,
+    GenericRGBW
 };
 
 enum class ProgramTypes : uint8_t
@@ -118,7 +91,7 @@ enum class ProgramTypes : uint8_t
     All
 };
 
-enum class Operations : uint8_t
+enum class Operations : uint8_t //Fix in app
 {
     None,
     Equal,
@@ -133,7 +106,9 @@ enum class Operations : uint8_t
     Absolute,
     Rotate,
     RandomBetween,//Randomize
-    AddDelay, //Create delayed time
+    MoveTo, //Animations
+    Delay, //Delay for specified amount of time (parameter), holds start time
+    AddDelay, //Create delayed time (for other operations)
     IfSwitch,//Program control (branch)
     While,
     SetActivity

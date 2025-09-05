@@ -42,11 +42,6 @@ ObjectList<> Outputs;  // Ex: Render
 #include "Object\Board.h"
 BoardClass Board;
 
-#include "Animation\Float.h"
-#include "Animation\Vector2D.h"
-#include "Animation\Coord2D.h"
-#include "Animation\Colour.h"
-
 #include "Core\Operation.h"
 #include "Core\Program.h"
 
@@ -138,23 +133,19 @@ KEY FEATURES:
 Built-in button
 Servo
 Accelerometer + filtering/integrating
-Embed operations into variables
- - embeded storing, no type confusion
- - operation given by first argument (MISO function)
- T Runloop will update automatically?
- T Merge with Animations, same principle
-Waiting object for programs
-
+Delay operation
 App Usability/parity
-Animations & Operations
+More Operations/Animations
 
 ADJUSTMENTS:
 As (bytearray) checking not working
 Spread out bluetooth sending to prevent lag?
 Saving takes forever
 (ID)List, register make unsigned?
+IsValid with type for modules (useful in operations)
 
 EXTRA:
+Variable with flag runloop will update value automatically if function
 Edit rendering to allow all-display filters
 Extra button / connection -> storageless start
 Create default configs (in app)
@@ -164,6 +155,7 @@ Separate saving breaks it
 Deletion with program running (or Board/Board component)
 Incorrect wraping of LED strip
 Only one pin valid with leds
+Stopping serial freezes board
 */
 
 // 20.07.2024 Started over >:)

@@ -16,42 +16,56 @@ bool Variable<C>::Run()
     }
     return true;
 }
-/*
-template <class C>
-bool Variable<C>::Run()
+
+template <>
+bool Variable<float>::Run()
 {
     if (Modules.IsValid(0) == false || Modules[0]->Type != Types::Operation) // No operation
         return true;
 
     switch (*Modules.GetValue<Operations>(0))
     {
-    case Operations::Equal:
-        if (Modules.IsValid(1) == false && Modules[1]->Type != Type)
-            return true;
-
-        *Data = *Modules.GetValue<C>(1);
-        return true;
-    case Operations::Add:
-        if (!Modules.IsValid(1) || Type != Modules[2]->Type)
-            return true;
-
-        *Data = 0;
+    case Operations::Equal: // Inverted hierarchy! Writes to modules instead of itself
         for (int32_t Index = Modules.FirstValid(Type, 1); Index < Modules.Length; Modules.Iterate(&Index, Type))
-            *Data += *Modules.GetValue<C>(Index);
+            *Modules.GetValue<float>(Index) = *Data;
         return true;
-    case Operations::AddDelay:
-        if (Modules.IsValid(1) == false || Type != Types::Time || Modules[1]->Type != Types::Time)
+    case Operations::MoveTo: //1 Target, 2 Time
+        if (Modules.IsValid(1) == false || Modules[1]->Type != Types::Number || Modules.IsValid(2) == false || Modules[2]->Type != Types::Time)
             return true;
 
-        *Data = *Modules.GetValue<C>(1) + CurrentTime;
-        return true;
+        *Data = TimeMove(*Data, *Modules.GetValue<float>(1), *Modules.GetValue<uint32_t>(2));
+        return (CurrentTime >= *Modules.GetValue<uint32_t>(2));
     default:
         ReportError(Status::InvalidValue, "Operation not implemeted");
         return true;
     }
     return true;
-}*/
+}
 
+template <>
+bool Variable<Coord2D>::Run()
+{
+    if (Modules.IsValid(0) == false || Modules[0]->Type != Types::Operation) // No operation
+        return true;
+
+    switch (*Modules.GetValue<Operations>(0))
+    {
+    case Operations::Equal: // Inverted hierarchy! Writes to modules instead of itself
+        for (int32_t Index = Modules.FirstValid(Type, 1); Index < Modules.Length; Modules.Iterate(&Index, Type))
+            *Modules.GetValue<Coord2D>(Index) = *Data;
+        return true;
+    case Operations::MoveTo: //1 Target, 2 Time
+        if (Modules.IsValid(1) == false || Modules[1]->Type != Types::Coord2D || Modules.IsValid(2) == false || Modules[2]->Type != Types::Time)
+            return true;
+
+        *Data = Data->TimeMove(*Modules.GetValue<Coord2D>(1), *Modules.GetValue<uint32_t>(2));
+        return (CurrentTime >= *Modules.GetValue<uint32_t>(2));
+    default:
+        ReportError(Status::InvalidValue, "Operation not implemeted");
+        return true;
+    }
+    return true;
+}
 template <>
 bool Variable<uint32_t>::Run()
 {
@@ -76,3 +90,14 @@ bool Variable<uint32_t>::Run()
     }
     return true;
 }
+
+/*
+case Operations::Add:
+        if (!Modules.IsValid(1) || Type != Modules[2]->Type)
+            return true;
+
+        *Data = 0;
+        for (int32_t Index = Modules.FirstValid(Type, 1); Index < Modules.Length; Modules.Iterate(&Index, Type))
+            *Data += *Modules.GetValue<C>(Index);
+        return true;
+*/
