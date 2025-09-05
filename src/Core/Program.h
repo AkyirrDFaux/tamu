@@ -34,7 +34,6 @@ bool Program::Run()
 {
     bool HasFinished = true;
     int CounterInit = Counter;
-    Serial.println(Counter);
     switch (*Data)
     {
     case ProgramTypes::Sequence:
@@ -49,8 +48,6 @@ bool Program::Run()
             }
             if(HasFinished && Flags == Flags::RunOnce)
                 break;
-
-            Serial.println(Counter);
         }
         break;
     case ProgramTypes::All:

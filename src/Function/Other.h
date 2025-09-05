@@ -212,44 +212,38 @@ void DefaultSetup()
     *A->ValueAs<FloatAnimations>() = FloatAnimations::MoveTo;
     A->Setup();
     A->AddModule(T1->Modules[T1->Width]);
-    //T1->Modules.Get<BaseClass>(T1->Width)->AddModule(A);
 
     Program *P = new Program();
     *P->ValueAs<ProgramTypes>() = ProgramTypes::Sequence;
     P->Flags += Flags::RunLoop;
 
     // Add equal for value
-    Operation *O1 = new Operation();
-    *O1->ValueAs<Operations>() = Operations::Equal;
     Variable<float> *V1 = new Variable<float>(0);
-    O1->AddModule(V1, 0);
-    O1->AddModule(A->Modules[A->TargetA]);
-    //A->Modules.Get<BaseClass>(A->TargetA)->AddModule(O1);
-    P->AddModule(O1, 0);
+    Variable<Operations> *O1 = new Variable<Operations>(Operations::Equal);
+    V1->AddModule(O1, 0);
+    V1->AddModule(A->Modules[A->TargetA]);
+    P->AddModule(V1, 0);
 
     // Add delay for time
-    Operation *O2 = new Operation();
-    *O2->ValueAs<Operations>() = Operations::AddDelay;
+    Variable<uint32_t> *AT = A->Modules.Get<Variable<uint32_t>>(A->Time);
+    Variable<Operations> *O2 = new Variable<Operations>(Operations::AddDelay);
     Variable<uint32_t> *V2 = new Variable<uint32_t>(2000);
-    O2->AddModule(V2, 0);
-    O2->AddModule(A->Modules[A->Time]);
-    //A->Modules.Get<BaseClass>(A->Time)->AddModule(O2);
-    P->AddModule(O2, 1);
+    AT->AddModule(O2, 0);
+    AT->AddModule(V2);
+    P->AddModule(AT, 1);
 
     // Add animation
     P->AddModule(A, 2);
 
     // Add equal for value
-    Operation *O3 = new Operation();
-    *O3->ValueAs<Operations>() = Operations::Equal;
     Variable<float> *V3 = new Variable<float>(15);
-    O3->AddModule(V3, 0);
-    O3->AddModule(A->Modules[A->TargetA]);
-    //A->Modules.Get<BaseClass>(A->TargetA)->AddModule(O3);
-    P->AddModule(O3, 3);
+    Variable<Operations> *O3 = new Variable<Operations>(Operations::Equal);
+    V3->AddModule(O3, 0);
+    V3->AddModule(A->Modules[A->TargetA]);
+    P->AddModule(V3, 3);
 
     // Add delay for time again
-    P->AddModule(O2, 4);
+    P->AddModule(AT, 4);
 
     // Animate again
     P->AddModule(A, 5);
@@ -272,59 +266,61 @@ void DefaultSetup()
     *A2->ValueAs<CoordAnimations>() = CoordAnimations::MoveTo;
     A2->Setup();
     A2->AddModule(GL->Modules[GL->Position]);
-    //GL->Modules.Get<BaseClass>(GL->Position)->AddModule(A2);
 
     Program *P2 = new Program();
     *P2->ValueAs<ProgramTypes>() = ProgramTypes::Sequence;
     P2->Flags += Flags::RunLoop;
 
-    // Add equal for value
-    Operation *O21 = new Operation();
-    *O21->ValueAs<Operations>() = Operations::Equal;
+    // Add equal for value - down position
     Variable<Coord2D> *V21 = new Variable<Coord2D>(Coord2D(0, -5, 0));
-    O21->AddModule(V21, 0);
-    O21->AddModule(A2->Modules[A2->TargetA]);
-    //A2->Modules.Get<BaseClass>(A2->TargetA)->AddModule(O21);
-    P2->AddModule(O21, 0);
+    Variable<Operations> *O21 = new Variable<Operations>(Operations::Equal);
+    V21->AddModule(O21, 0);
+    V21->AddModule(A2->Modules[A2->TargetA]);
+    P2->AddModule(V21, 0);
+
+    //Set delay - blink
+    Variable<uint32_t> *V22 = new Variable<uint32_t>(500); //To be set
+    Variable<uint32_t> *V23 = new Variable<uint32_t>(500); //Value
+    Variable<Operations> *O22 = new Variable<Operations>(Operations::Equal);
+    V23->AddModule(O22, 0);
+    V23->AddModule(V22);
+    P2->AddModule(V23, 1);
 
     // Add delay for time
-    Operation *O22 = new Operation();
-    *O22->ValueAs<Operations>() = Operations::AddDelay;
-    Variable<uint32_t> *V22 = new Variable<uint32_t>(500);
-    O22->AddModule(V22, 0);
-    O22->AddModule(A2->Modules[A2->Time]);
-    //A2->Modules.Get<BaseClass>(A2->Time)->AddModule(O22);
-    P2->AddModule(O22, 1);
+    Variable<uint32_t> *AT2 = A2->Modules.Get<Variable<uint32_t>>(A2->Time);
+    Variable<Operations> *O23 = new Variable<Operations>(Operations::AddDelay);
+    AT2->AddModule(O23, 0);
+    AT2->AddModule(V22);
+    P2->AddModule(AT2, 2);
 
-    // Add animation
-    P2->AddModule(A2, 2);
+    // Add animation - down
+    P2->AddModule(A2, 3);
 
-    // Add equal for value
-    Operation *O23 = new Operation();
-    *O23->ValueAs<Operations>() = Operations::Equal;
-    Variable<Coord2D> *V23 = new Variable<Coord2D>(Coord2D(0, 5, 0));
-    O23->AddModule(V23, 0);
-    O23->AddModule(A2->Modules[A2->TargetA]);
-    //A2->Modules.Get<BaseClass>(A2->TargetA)->AddModule(O23);
-    P2->AddModule(O23, 3);
+    // Add equal for value - up position
+    Variable<Coord2D> *V24 = new Variable<Coord2D>(Coord2D(0, 5, 0));
+    Variable<Operations> *O24 = new Variable<Operations>(Operations::Equal);
+    V24->AddModule(O24, 0);
+    V24->AddModule(A2->Modules[A2->TargetA]);
+    P2->AddModule(V24, 4);
 
     // Add delay for time again
-    P2->AddModule(O22, 4);
+    P2->AddModule(AT2, 5);
 
-    // Animate again
-    P2->AddModule(A2, 5);
+    // Animate again - up
+    P2->AddModule(A2, 6);
 
-    // Delay 2
-    Operation *O24 = new Operation();
-    *O24->ValueAs<Operations>() = Operations::AddDelay;
-    Variable<uint32_t> *V24 = new Variable<uint32_t>(5000);
-    O24->AddModule(V24, 0);
-    O24->AddModule(A2->Modules[A2->Time]);
-    //A2->Modules.Get<BaseClass>(A2->Time)->AddModule(O24);
-    P2->AddModule(O24, 6);
+    //Set delay - wait
+    Variable<uint32_t> *V25 = new Variable<uint32_t>(5000);
+    Variable<Operations> *O25 = new Variable<Operations>(Operations::Equal);
+    V25->AddModule(O25, 0);
+    V25->AddModule(V22);
+    P2->AddModule(V25, 7);
 
-    // "Animate"
-    P2->AddModule(A2, 7);
+    //Do a delay
+    P2->AddModule(AT2, 8);
+
+    // "Animate" - waiting
+    P2->AddModule(A2, 9);
 
     // FAN
     FanClass *F = new FanClass();

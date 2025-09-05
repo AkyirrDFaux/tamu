@@ -18,4 +18,6 @@ public:
     C *Get() { return Data; }
     void operator=(C Other) { *Data = Other; };
     bool operator==(C Other) { return Other == *Data; };
+
+    bool Run();
 };

@@ -24,7 +24,7 @@ enum class Types : uint8_t
     AnimationVector,
     AnimationCoord,
     AnimationColour,
-    Operation, //=,==,>,<,+,-,*,/,%,^,|x|,Size,Scale,Rotate... Randomize (between values, depending on value space), Wait (set time), If, While, Switch ... SetActivity/Flags?
+    Operation, // Enum/value, not object anymore
     Program,   // List of Operations... execute and wait options (Sequence, All and wait, All no wait)
     Integer,   // int_32
     Time,      // uint_32

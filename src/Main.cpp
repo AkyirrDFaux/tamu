@@ -47,8 +47,8 @@ BoardClass Board;
 #include "Animation\Coord2D.h"
 #include "Animation\Colour.h"
 
-#include "Program\Operation.h"
-#include "Program\Program.h"
+#include "Core\Operation.h"
+#include "Core\Program.h"
 
 #include "Object\Fan.h"
 
@@ -138,10 +138,14 @@ KEY FEATURES:
 Built-in button
 Servo
 Accelerometer + filtering/integrating
-Operations without inbetween variables? Type determinition and instant execution? -> virtual Type() + conversions?
+Embed operations into variables
+ - embeded storing, no type confusion
+ - operation given by first argument (MISO function)
+ T Runloop will update automatically?
+ T Merge with Animations, same principle
+Waiting object for programs
 
 App Usability/parity
-- Redo graph view, object centric with only related shown, more info
 Animations & Operations
 
 ADJUSTMENTS:

@@ -102,7 +102,7 @@ BaseClass *CreateObject(Types Type, bool New, IDClass ID, FlagClass Flags)
         return new AnimationCoord(New, ID, Flags);
     // case Types::AnimationColour
     case Types::Operation:
-        return new Operation(New, ID, Flags);
+        return new Variable<Operations>(Operations::None, ID, Flags);
     case Types::Program:
         return new Program(New, ID, Flags);
     case Types::Integer:
