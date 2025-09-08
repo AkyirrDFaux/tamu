@@ -22,6 +22,7 @@ uint32_t DeltaTime = 0;
 #include "Data\Colour.h"
 #include "Data\Vector2D.h"
 #include "Data\Coord2D.h"
+#include "Data\Vector3D.h"
 
 #include "Core\IDList.h"
 //#include "Core\Message.h"
@@ -135,7 +136,7 @@ KEY FEATURES:
 !!! Merge for both boards
 Built-in button
 Servo
-Accelerometer + filtering/integrating
+Accelerometer gravity compensation + orientation, filtering/integrating
 
 App Usability/parity (enums changed)
 More Operations/Animations

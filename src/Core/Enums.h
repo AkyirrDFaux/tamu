@@ -20,19 +20,20 @@ enum class Types : uint8_t
     Geometry2D,
     GeometryOperation,
     Texture2D,
-    AccGyr, //Replaced AnimationFloat
-    Removed2, //AnimationVector
-    Removed3, //Removed AnimationCoord
-    Removed4, //AnimationColour
+    AccGyr,    // Replaced AnimationFloat
+    Removed2,  // AnimationVector
+    Removed3,  // Removed AnimationCoord
+    Removed4,  // AnimationColour
     Operation, // Enum/value, not object anymore
     Program,
-    Integer,   // int_32
-    Time,      // uint_32
-    Number,    // float_32
-    ID,        // uint_32
-    Colour,    // 4 byte RGBA
+    Integer, // int_32
+    Time,    // uint_32
+    Number,  // float_32
+    ID,      // uint_32
+    Colour,  // 4 byte RGBA
     PortAttach,
     Vector2D, // 8 byte (2xFloat)
+    Vector3D, // 12 byte (3xFloat)
     Coord2D,  // 16 byte (2xVector)
     Text,     // String, variable length
     IDList,   // List, variable length
@@ -48,6 +49,8 @@ int8_t GetValueSize(Types Type)
         return sizeof(int32_t);
     else if (Type == Types::Vector2D)
         return sizeof(float) * 2;
+    else if (Type == Types::Vector3D)
+        return sizeof(float) * 3;
     else if (Type == Types::Coord2D)
         return sizeof(float) * 4;
     else
@@ -66,7 +69,7 @@ enum class Functions : uint8_t
     ReadType,
     ReadName,
     WriteName,
-    SetFlags, //Swapped
+    SetFlags, // Swapped
     ReadModules,
     SetModules,
     WriteValue,
@@ -75,7 +78,7 @@ enum class Functions : uint8_t
     ReadFile,
     RunFile,
     Refresh,
-    
+
 };
 
 void Run(ByteArray &Input);
@@ -151,6 +154,8 @@ Types GetType<ColourClass>() { return Types::Colour; };
 // Port Attach
 template <>
 Types GetType<Vector2D>() { return Types::Vector2D; };
+template <>
+Types GetType<Vector3D>() { return Types::Vector3D; };
 template <>
 Types GetType<Coord2D>() { return Types::Coord2D; };
 template <>

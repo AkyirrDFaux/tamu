@@ -44,6 +44,8 @@ ByteArray BaseClass::GetValue() const
         Data = ByteArray(*ValueAs<uint32_t>());
     else if (GetValueSize(Type) == sizeof(Vector2D))
         Data = ByteArray(*ValueAs<Vector2D>());
+    else if (GetValueSize(Type) == sizeof(Vector3D))
+        Data = ByteArray(*ValueAs<Vector3D>());
     else if (GetValueSize(Type) == sizeof(Coord2D))
         Data = ByteArray(*ValueAs<Coord2D>());
     else
