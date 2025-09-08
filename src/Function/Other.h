@@ -47,10 +47,10 @@ void PortAttachClass::Setup() // Attach to port
     if (Port != nullptr)
         Port->Detach();
 
-    if (!Board.Port.Modules.IsValid(*Data))
+    if (!Board.Devices.Modules.IsValid(*Data))
         return;
 
-    Port = Board.Port.Modules[*Data]->As<PortClass>();
+    Port = Board.Devices.Modules[*Data]->As<PortClass>();
     if (Port == nullptr || !Port->Attach(this))
         ReportError(Status::PortError, "Failed to attach");
 };
@@ -61,7 +61,7 @@ bool PortAttachClass::Check(Drivers RequiredDriver)
     {
         if (*Data < 0)
             return false;
-        if (Board.Port.Modules.IsValid(*Data))
+        if (Board.Devices.Modules.IsValid(*Data))
             Setup();
         if (Port == nullptr)
             return false;

@@ -33,12 +33,13 @@ ChirpClass Chirp = ChirpClass(); // Bluetooth/Serial
 #include "Core\Register.h"
 
 RegisterClass Objects;
-// inputs? accel/button/sensor
+ObjectList<> Sensors;  // EX: accel/button/sensor
 ObjectList<> Programs; // Ex: Emotes
 ObjectList<> Routines; // Ex: Update positions, color blends
 ObjectList<> Outputs;  // Ex: Render
 
 #include "Object\Port.h"
+#include "Object\AccGyr.h"
 #include "Object\Board.h"
 BoardClass Board;
 
@@ -106,6 +107,8 @@ void loop()
 {
     Chirp.Communicate();
 
+    for (int32_t Index = 0; Index < Sensors.Length; Sensors.Iterate(&Index))
+        Sensors[Index]->Run();
     // Serial.println("P");
     for (int32_t Index = 0; Index < Programs.Length; Programs.Iterate(&Index))
     {
@@ -138,6 +141,7 @@ App Usability/parity (enums changed)
 More Operations/Animations
 
 ADJUSTMENTS:
+Remake Port system (simplify + extend)
 As (bytearray) checking not working
 Spread out bluetooth sending to prevent lag?
 Saving takes forever

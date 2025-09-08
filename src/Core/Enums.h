@@ -20,7 +20,7 @@ enum class Types : uint8_t
     Geometry2D,
     GeometryOperation,
     Texture2D,
-    Removed1, //Removed AnimationFloat
+    AccGyr, //Replaced AnimationFloat
     Removed2, //AnimationVector
     Removed3, //Removed AnimationCoord
     Removed4, //AnimationColour

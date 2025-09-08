@@ -84,6 +84,12 @@ enum class LEDStrips : uint8_t
     GenericRGBW
 };
 
+enum class GyrAccs :uint8_t
+{
+    Undefined,
+    LSM6DS3TRC
+};
+
 enum class ProgramTypes : uint8_t
 {
     None,
