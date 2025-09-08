@@ -281,50 +281,38 @@ void DefaultSetup()
     Variable<Operations> *O21 = new Variable<Operations>(Operations::Equal);
     V21->AddModule(O21, 0);
     V21->AddModule(A2TGT);
-    P2->AddModule(V21, 0);
-
-    //Set delay - blink
-    Variable<uint32_t> *V22 = new Variable<uint32_t>(500); //To be set
-    Variable<uint32_t> *V23 = new Variable<uint32_t>(500); //Value
-    Variable<Operations> *O22 = new Variable<Operations>(Operations::Equal);
-    V23->AddModule(O22, 0);
-    V23->AddModule(V22);
-    P2->AddModule(V23, 1);
+    P2->AddModule(V21);
 
     // Add delay for time
+    Variable<uint32_t> *V22 = new Variable<uint32_t>(500); //Delay
     Variable<Operations> *O23 = new Variable<Operations>(Operations::AddDelay);
     A2T->AddModule(O23, 0);
     A2T->AddModule(V22);
-    P2->AddModule(A2T, 2);
+    P2->AddModule(A2T);
 
     // Add animation - down
-    P2->AddModule(A2, 3);
+    P2->AddModule(A2);
 
     // Add equal for value - up position
     Variable<Coord2D> *V24 = new Variable<Coord2D>(Coord2D(0, 5, 0));
     Variable<Operations> *O24 = new Variable<Operations>(Operations::Equal);
     V24->AddModule(O24, 0);
     V24->AddModule(A2TGT);
-    P2->AddModule(V24, 4);
+    P2->AddModule(V24);
 
     // Add delay for time again
-    P2->AddModule(A2T, 5);
+    P2->AddModule(A2T);
 
     // Animate again - up
-    P2->AddModule(A2, 6);
+    P2->AddModule(A2);
 
-    //Set delay - wait
-    Variable<uint32_t> *V25 = new Variable<uint32_t>(5000);
-    Variable<Operations> *O25 = new Variable<Operations>(Operations::Equal);
-    V25->AddModule(O25, 0);
-    V25->AddModule(V22);
-    P2->AddModule(V25, 7);
-
-    //Do a delay
-    P2->AddModule(A2T, 8);
-
-    // "Animate" - waiting
-    P2->AddModule(A2, 9);
+    //Delay
+    Variable<uint32_t> *V25 = new Variable<uint32_t>(0);
+    Variable<Operations> *O25 = new Variable<Operations>(Operations::Delay);
+    Variable<uint32_t> *V26 = new Variable<uint32_t>(5000);
+    V25->AddModule(O25,0);
+    V25->AddModule(V26);
+    P2->AddModule(V25);
 
     // FAN
     FanClass *F = new FanClass();

@@ -133,8 +133,8 @@ KEY FEATURES:
 Built-in button
 Servo
 Accelerometer + filtering/integrating
-Delay operation
-App Usability/parity
+
+App Usability/parity (enums changed)
 More Operations/Animations
 
 ADJUSTMENTS:
@@ -143,9 +143,10 @@ Spread out bluetooth sending to prevent lag?
 Saving takes forever
 (ID)List, register make unsigned?
 IsValid with type for modules (useful in operations)
+Test Variable with flag runloop will update value automatically if function
 
 EXTRA:
-Variable with flag runloop will update value automatically if function
+RunRead variable flag
 Edit rendering to allow all-display filters
 Extra button / connection -> storageless start
 Create default configs (in app)
@@ -172,3 +173,5 @@ Stopping serial freezes board
 // 25.02.2025 Removed references, therefore solved module-reference synchronization :D
 // 02.03.2025 Tamu v2.0 arrived! Switch to BLE, FastLED
 // 03.03.2025 BLE both ways!
+// 04.09.2025 App Improvements
+// 08.09.2025 Sorted out operations

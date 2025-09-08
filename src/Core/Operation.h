@@ -29,7 +29,7 @@ bool Variable<float>::Run()
         for (int32_t Index = Modules.FirstValid(Type, 1); Index < Modules.Length; Modules.Iterate(&Index, Type))
             *Modules.GetValue<float>(Index) = *Data;
         return true;
-    case Operations::MoveTo: //1 Target, 2 Time
+    case Operations::MoveTo: // 1 Target, 2 Time
         if (Modules.IsValid(1) == false || Modules[1]->Type != Types::Number || Modules.IsValid(2) == false || Modules[2]->Type != Types::Time)
             return true;
 
@@ -54,7 +54,7 @@ bool Variable<Coord2D>::Run()
         for (int32_t Index = Modules.FirstValid(Type, 1); Index < Modules.Length; Modules.Iterate(&Index, Type))
             *Modules.GetValue<Coord2D>(Index) = *Data;
         return true;
-    case Operations::MoveTo: //1 Target, 2 Time
+    case Operations::MoveTo: // 1 Target, 2 Time
         if (Modules.IsValid(1) == false || Modules[1]->Type != Types::Coord2D || Modules.IsValid(2) == false || Modules[2]->Type != Types::Time)
             return true;
 
@@ -79,11 +79,23 @@ bool Variable<uint32_t>::Run()
             *Modules.GetValue<uint32_t>(Index) = *Data;
         return true;
     case Operations::AddDelay:
-        if (Modules.IsValid(1) == false || Type != Types::Time || Modules[1]->Type != Types::Time)
+        if (Modules.IsValid(1) == false || Modules[1]->Type != Types::Time)
             return true;
 
         *Data = *Modules.GetValue<uint32_t>(1) + CurrentTime;
         return true;
+    case Operations::Delay: // Data is start time, Module 1 is delay
+        if (Modules.IsValid(1) == false || Modules[1]->Type != Types::Time)
+            return true;
+
+        if (*Data == 0)
+            *Data = CurrentTime;
+        else if (CurrentTime > *Data + *Modules.GetValue<uint32_t>(1))
+        {
+            *Data = 0; //Reset
+            return true; //Finished
+        }
+        return false;
     default:
         ReportError(Status::InvalidValue, "Operation not implemeted");
         return true;
