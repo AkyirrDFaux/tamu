@@ -16,7 +16,7 @@ public:
     void Disconnect(BaseClass *ThatObject);
     CRGB *GetLED(BaseClass *ThatObject);
     TwoWire *GetI2C(BaseClass *ThatObject);
-    uint8_t *GetPWM(BaseClass *ThatObject);
+    ESP32PWM *GetPWM(BaseClass *ThatObject);
 };
 
 PortClass::PortClass(uint8_t NewPin, Ports NewPortType) : Variable(NewPortType) // Created by Board

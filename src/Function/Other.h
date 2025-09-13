@@ -238,8 +238,6 @@ void DefaultSetup()
     // FAN
     FanClass *F = new FanClass();
     F->Modules.Add(Board.Devices.Modules[4],F->Port);
-    *F->ValueAs<uint8_t>() = 0;
-
     
     // LED STRIP
     LEDStripClass *L = new LEDStripClass();

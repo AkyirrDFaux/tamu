@@ -1,3 +1,4 @@
+#include <ESP32Servo.h>
 #include <FastLED.h>
 CRGB *BeginLED(uint16_t Length, uint16_t Pin);
 void EndLED(CRGB *Address);

@@ -1,4 +1,4 @@
-class FanClass : public Variable<uint8_t>
+class ServoClass : public Variable<uint8_t>
 {
 public:
     enum Module
@@ -6,8 +6,8 @@ public:
         Port,
     };
 
-    FanClass(bool New = true, IDClass ID = RandomID, FlagClass Flags = Flags::None);
-    ~FanClass();
+    ServoClass(bool New = true, IDClass ID = RandomID, FlagClass Flags = Flags::None);
+    ~ServoClass();
 
     bool Run();
 };
@@ -34,14 +34,14 @@ bool FanClass::Run()
         return true;
     }
 
-    ESP32PWM* PWM = Port->GetPWM(this);
+    uint8_t* Pin = Port->GetPWM(this);
 
-    if (PWM == nullptr)
+    if (Pin == nullptr)
     {
         ReportError(Status::PortError);
         return true;
     }
-    double Val = *Data;
-    PWM->writeScaled(Val/255);
+
+    analogWrite(*Pin, *Data);
     return true;
 };

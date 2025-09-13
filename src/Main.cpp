@@ -48,6 +48,7 @@ BoardClass Board;
 #include "Core\Program.h"
 
 #include "Object\Fan.h"
+//#include "Object\Servo.h"
 
 #include "Variable\Texture1D.h"
 #include "Variable\LEDSegment.h"
@@ -67,6 +68,10 @@ BoardClass Board;
 
 void setup()
 {
+    ESP32PWM::allocateTimer(0);
+	ESP32PWM::allocateTimer(1);
+	ESP32PWM::allocateTimer(2);
+	ESP32PWM::allocateTimer(3);
     MemoryStartup();
     NotificationStartup();
     Serial.begin((long)115200);
