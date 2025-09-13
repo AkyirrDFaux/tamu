@@ -35,7 +35,8 @@ enum class Drivers : uint8_t
     FanPWM,
     I2C,
     I2CClock,
-    Servo
+    Servo,
+    Input
 };
 
 enum class Geometries : uint8_t
@@ -93,6 +94,14 @@ enum class GyrAccs :uint8_t
 {
     Undefined,
     LSM6DS3TRC
+};
+
+enum class Inputs :uint8_t
+{
+    Undefined,
+    Button,
+    ButtonWithLED,
+    Analog
 };
 
 enum class ProgramTypes : uint8_t

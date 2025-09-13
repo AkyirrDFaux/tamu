@@ -6,11 +6,11 @@ public:
     Variable<Vector3D> AC = Variable<Vector3D>(Vector3D(0, 0, 0), RandomID, Flags::Auto);
 
     void Setup();
-    GyrAccClass(GyrAccs NewDevType);
+    GyrAccClass(GyrAccs NewDevType, bool New = true, IDClass ID = RandomID, FlagClass Flags = Flags::None);
     bool Run();
 };
 
-GyrAccClass::GyrAccClass(GyrAccs NewDevType) : Variable(NewDevType) // Created by Board
+GyrAccClass::GyrAccClass(GyrAccs NewDevType, bool New, IDClass ID, FlagClass Flags) : Variable(NewDevType, ID, Flags) // Created by Board
 {
     Type = Types::AccGyr;
     Name = "Acc&Gyr";
@@ -31,9 +31,9 @@ void GyrAccClass::Setup()
 
     TwoWire *I2C = Modules.Get<PortClass>(0)->GetI2C(this); // da 4, cl 5
 
-    if(I2C == nullptr)
+    if (I2C == nullptr)
         return;
-             
+
     if (!lsm6ds3trc.begin_I2C(0b1101011, I2C)) // 0b1101011 or 0b1101010
         Serial.println("Failed to find LSM6DS3TR-C chip");
 

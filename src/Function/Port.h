@@ -9,6 +9,7 @@ bool PortClass::CheckDriver(Drivers Driver)
     case Drivers::I2C:
     case Drivers::FanPWM:
     case Drivers::Servo:
+    case Drivers::Input:
     case Drivers::None:
         break;
     default:
@@ -28,8 +29,8 @@ void PortClass::StopDriver()
         delete (ESP32PWM *)DriverObj;
         break;
     case Drivers::Servo:
-        ((Servo*)DriverObj)->detach();
-        delete (Servo*)DriverObj;
+        ((Servo *)DriverObj)->detach();
+        delete (Servo *)DriverObj;
         break;
     case Drivers::I2C:
         if (Attached.Length != 0) // There could be a second
@@ -63,6 +64,11 @@ Drivers PortClass::StartDriver()
         ((Servo *)DriverObj)->setPeriodHertz(50);
         ((Servo *)DriverObj)->attach(Pin, 500, 2500);
         DriverType = Drivers::Servo;
+    }
+    if (Attached.IsValid(0) && Attached[0]->Type == Types::Input && Attached[0]->Modules[0] == this && *Data == Ports::GPIO)
+    {
+        pinMode(Pin,INPUT);
+        DriverType = Drivers::Input;
     }
     else if (Attached.IsValid(0) && Attached[0]->Type == Types::Display && Attached[0]->Modules[0] == this && *Data == Ports::GPIO) // Allow combining
     {
@@ -160,3 +166,20 @@ Servo *PortClass::GetServo(BaseClass *ThatObject)
 
     return nullptr;
 };
+
+uint8_t *PortClass::GetInput(BaseClass *ThatObject)
+{
+    if (Attached[0] == ThatObject && CheckDriver(Drivers::Input)) // Already there
+        return (uint8_t *)Pin.Data;
+
+    if (DriverType == Drivers::None && Attached[0] == nullptr && ThatObject->Type == Types::Input &&
+        ThatObject->Modules[0] == this && *Data == Ports::GPIO) // Suitable for attachment
+    {
+        Attached.Add(ThatObject, 0);
+        if (StartDriver() == Drivers::Input)
+            return (uint8_t *)Pin.Data;
+        Attached.Remove(ThatObject);
+    }
+
+    return nullptr;
+}

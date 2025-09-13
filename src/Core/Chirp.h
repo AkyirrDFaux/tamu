@@ -1,3 +1,5 @@
+//ESP32-C3 Warning: Stopping serial freezes board if DTR + RTS enabled
+
 #include <BLEDevice.h>
 #include <BLE2902.h>
 

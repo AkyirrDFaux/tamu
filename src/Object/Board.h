@@ -56,11 +56,15 @@ void BoardClass::Setup() // Load Presets
 
         Devices.AddModule(new PortClass(4, Ports::SDA), 8);
         Devices.AddModule(new PortClass(5, Ports::SCL), 9);
-
         Devices.AddModule(new GyrAccClass(GyrAccs::LSM6DS3TRC),10);
         Devices.Modules[10]->AddModule(Devices.Modules[8],0);
         Devices.Modules[10]->AddModule(Devices.Modules[9],1);
         Devices.Modules[10]->Setup();
+
+        Devices.AddModule(new PortClass(LED_NOTIFICATION_PIN, Ports::GPIO), 11);
+        Devices.AddModule(new InputClass(Inputs::ButtonWithLED),12);
+        Devices.Modules[12]->AddModule(Devices.Modules[11],0);
+        //Devices.Modules[12]->Setup();
     }
 };
 

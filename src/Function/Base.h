@@ -1,6 +1,6 @@
 void Run(ByteArray &Input)
 {
-    //Serial.println(Input.ToHex());
+    // Serial.println(Input.ToHex());
     ByteArray Function = Input.ExtractPart();
     if (Function.Type() == Types::Function)
     {
@@ -78,7 +78,6 @@ BaseClass *CreateObject(Types Type, bool New, IDClass ID, FlagClass Flags)
     // Status is internal
     case Types::Board:
         return new BoardClass(New, ID, Flags);
-        // PortDriver is auto
     case Types::Fan:
         return new FanClass(New, ID, Flags);
     case Types::LEDSegment:
@@ -95,6 +94,10 @@ BaseClass *CreateObject(Types Type, bool New, IDClass ID, FlagClass Flags)
         return new Texture2D(New, ID, Flags);
     case Types::Display:
         return new DisplayClass(New, ID, Flags);
+    case Types::AccGyr:
+        return new GyrAccClass(GyrAccs::Undefined, New, ID, Flags);
+    case Types::Input:
+        return new InputClass(Inputs::Undefined, New, ID, Flags);
     case Types::Operation:
         return new Variable<Operations>(Operations::None, ID, Flags);
     case Types::Program:
@@ -108,8 +111,8 @@ BaseClass *CreateObject(Types Type, bool New, IDClass ID, FlagClass Flags)
     // ID is internal
     case Types::Colour:
         return new Variable<ColourClass>(ColourClass(), ID, Flags);
-    //case Types::PortAttach:
-        //return new PortAttachClass(New, ID, Flags);
+    // case Types::PortAttach:
+    // return new PortAttachClass(New, ID, Flags);
     case Types::Vector2D:
         return new Variable<Vector2D>(Vector2D(), ID, Flags);
     case Types::Coord2D:

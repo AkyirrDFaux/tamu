@@ -41,6 +41,7 @@ ObjectList<> Outputs;  // Ex: Render
 
 #include "Object\Port.h"
 #include "Object\AccGyr.h"
+#include "Object\Input.h"
 #include "Object\Board.h"
 BoardClass Board;
 
@@ -139,12 +140,12 @@ void loop()
 
 /*TODO:
 KEY FEATURES:
-!!! Merge for both boards
-Built-in button
 Accelerometer gravity compensation + orientation, filtering/integrating
 
-App Usability/parity
 More Operations/Animations
+- Selection from/into Vectors
+App Usability/parity
+Merge for both boards
 
 ADJUSTMENTS:
 Finish port system (connecting multiple LEDS, I2C)
@@ -165,7 +166,6 @@ BUGS:
 Separate saving breaks it
 Deletion with program running (or Board/Board component)
 Incorrect wraping of LED strip
-Stopping serial freezes board
 */
 
 // 20.07.2024 Started over >:)
@@ -184,4 +184,4 @@ Stopping serial freezes board
 // 03.03.2025 BLE both ways!
 // 04.09.2025 App Improvements
 // 08.09.2025 Sorted out operations
-// 13.09.2025 New port/driver system + Servo
+// 13.09.2025 New port/driver system + Servo + Inputs

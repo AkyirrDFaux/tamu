@@ -18,6 +18,7 @@ public:
     TwoWire *GetI2C(BaseClass *ThatObject);
     ESP32PWM *GetPWM(BaseClass *ThatObject);
     Servo *GetServo(BaseClass *ThatObject);
+    uint8_t *GetInput(BaseClass *ThatObject);
 };
 
 PortClass::PortClass(uint8_t NewPin, Ports NewPortType) : Variable(NewPortType) // Created by Board
