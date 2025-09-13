@@ -253,4 +253,8 @@ void DefaultSetup()
     *LT->ValueAs<Textures1D>() = Textures1D::Full;
     LT->Setup();
     *LT->Modules.GetValue<ColourClass>(LT->ColourA) = ColourClass(255, 0, 0);
+
+    //SERVO
+    ServoClass *Ser = new ServoClass();
+    Ser->Modules.Add(Board.Devices.Modules[5],Ser->Port);
 };

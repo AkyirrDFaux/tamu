@@ -48,7 +48,7 @@ BoardClass Board;
 #include "Core\Program.h"
 
 #include "Object\Fan.h"
-//#include "Object\Servo.h"
+#include "Object\Servo.h"
 
 #include "Variable\Texture1D.h"
 #include "Variable\LEDSegment.h"
@@ -141,10 +141,9 @@ void loop()
 KEY FEATURES:
 !!! Merge for both boards
 Built-in button
-Servo
 Accelerometer gravity compensation + orientation, filtering/integrating
 
-App Usability/parity (enums changed)
+App Usability/parity
 More Operations/Animations
 
 ADJUSTMENTS:
@@ -185,4 +184,4 @@ Stopping serial freezes board
 // 03.03.2025 BLE both ways!
 // 04.09.2025 App Improvements
 // 08.09.2025 Sorted out operations
-// 13.09.2025 New port/driver system
+// 13.09.2025 New port/driver system + Servo

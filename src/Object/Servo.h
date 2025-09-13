@@ -12,19 +12,19 @@ public:
     bool Run();
 };
 
-FanClass::FanClass(bool New, IDClass ID, FlagClass Flags) : Variable(0, ID, Flags)
+ServoClass::ServoClass(bool New, IDClass ID, FlagClass Flags) : Variable(0, ID, Flags)
 {
-    BaseClass::Type = Types::Fan;
-    Name = "Fan";
+    BaseClass::Type = Types::Servo;
+    Name = "Servo";
     Outputs.Add(this);
 };
 
-FanClass::~FanClass()
+ServoClass::~ServoClass()
 {
     Outputs.Remove(this);
 };
 
-bool FanClass::Run()
+bool ServoClass::Run()
 {
     PortClass *Port = Modules.Get<PortClass>(Module::Port); // HW connection
 
@@ -34,14 +34,13 @@ bool FanClass::Run()
         return true;
     }
 
-    uint8_t* Pin = Port->GetPWM(this);
+    Servo* Driver = Port->GetServo(this);
 
-    if (Pin == nullptr)
+    if (Driver == nullptr)
     {
         ReportError(Status::PortError);
         return true;
     }
-
-    analogWrite(*Pin, *Data);
+    Driver->write(*Data);
     return true;
 };

@@ -34,7 +34,8 @@ enum class Drivers : uint8_t
     LED,
     FanPWM,
     I2C,
-    I2CClock
+    I2CClock,
+    Servo
 };
 
 enum class Geometries : uint8_t

@@ -6,10 +6,9 @@ bool PortClass::CheckDriver(Drivers Driver)
     switch (Driver)
     {
     case Drivers::LED:
-        break;
     case Drivers::I2C:
-        break;
     case Drivers::FanPWM:
+    case Drivers::Servo:
     case Drivers::None:
         break;
     default:
@@ -27,6 +26,10 @@ void PortClass::StopDriver()
     case Drivers::FanPWM:
         ((ESP32PWM *)DriverObj)->detachPin(Pin);
         delete (ESP32PWM *)DriverObj;
+        break;
+    case Drivers::Servo:
+        ((Servo*)DriverObj)->detach();
+        delete (Servo*)DriverObj;
         break;
     case Drivers::I2C:
         if (Attached.Length != 0) // There could be a second
@@ -53,6 +56,13 @@ Drivers PortClass::StartDriver()
         DriverObj = new ESP32PWM();
         ((ESP32PWM *)DriverObj)->attachPin(Pin, 25000, 8);
         DriverType = Drivers::FanPWM;
+    }
+    if (Attached.IsValid(0) && Attached[0]->Type == Types::Servo && Attached[0]->Modules[0] == this && *Data == Ports::GPIO)
+    {
+        DriverObj = new Servo();
+        ((Servo *)DriverObj)->setPeriodHertz(50);
+        ((Servo *)DriverObj)->attach(Pin, 500, 2500);
+        DriverType = Drivers::Servo;
     }
     else if (Attached.IsValid(0) && Attached[0]->Type == Types::Display && Attached[0]->Modules[0] == this && *Data == Ports::GPIO) // Allow combining
     {
@@ -120,14 +130,31 @@ TwoWire *PortClass::GetI2C(BaseClass *ThatObject)
 ESP32PWM *PortClass::GetPWM(BaseClass *ThatObject)
 {
     if (Attached[0] == ThatObject && CheckDriver(Drivers::FanPWM)) // Already there
-        return (ESP32PWM*)DriverObj;
+        return (ESP32PWM *)DriverObj;
 
     if (DriverType == Drivers::None && Attached[0] == nullptr && ThatObject->Type == Types::Fan &&
         ThatObject->Modules[0] == this && (*Data == Ports::GPIO || *Data == Ports::TOut)) // Suitable for attachment
     {
         Attached.Add(ThatObject, 0);
         if (StartDriver() == Drivers::FanPWM)
-            return (ESP32PWM*)DriverObj;
+            return (ESP32PWM *)DriverObj;
+        Attached.Remove(ThatObject);
+    }
+
+    return nullptr;
+};
+
+Servo *PortClass::GetServo(BaseClass *ThatObject)
+{
+    if (Attached[0] == ThatObject && CheckDriver(Drivers::Servo)) // Already there
+        return (Servo *)DriverObj;
+
+    if (DriverType == Drivers::None && Attached[0] == nullptr && ThatObject->Type == Types::Servo &&
+        ThatObject->Modules[0] == this && *Data == Ports::GPIO) // Suitable for attachment
+    {
+        Attached.Add(ThatObject, 0);
+        if (StartDriver() == Drivers::Servo)
+            return (Servo *)DriverObj;
         Attached.Remove(ThatObject);
     }
 

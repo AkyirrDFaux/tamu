@@ -21,7 +21,7 @@ enum class Types : uint8_t
     GeometryOperation,
     Texture2D,
     AccGyr,    // Replaced AnimationFloat
-    Removed2,  // AnimationVector
+    Servo,     // Replaced AnimationVector
     Removed3,  // Removed AnimationCoord
     Removed4,  // AnimationColour
     Operation, // Enum/value, not object anymore
@@ -137,6 +137,8 @@ template <>
 Types GetType<GeometryOperation>() { return Types::GeometryOperation; };
 template <>
 Types GetType<Textures2D>() { return Types::Texture2D; };
+template <>
+Types GetType<GyrAccs>() { return Types::AccGyr; };
 template <>
 Types GetType<Operations>() { return Types::Operation; };
 template <>
