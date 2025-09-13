@@ -4,7 +4,7 @@ public:
     byte *Layout = nullptr;
     enum Module
     {
-        DisplayPort,
+        Port,
         Length,
         Size,
         Ratio,
@@ -46,7 +46,6 @@ DisplayClass::DisplayClass(bool New, IDClass ID, FlagClass Flags) : Variable(Dis
 
     if (New)
     {
-        AddModule(new PortAttachClass(New), DisplayPort);
         AddModule(new Variable<uint8_t>(20), Brightness);
         Modules[Brightness]->Name = "Brightness";
         AddModule(new Variable<Coord2D>(Coord2D(0, 0, 0)), Offset);
@@ -83,7 +82,7 @@ DisplayClass::~DisplayClass()
 
 bool DisplayClass::Run()
 {
-    PortAttachClass *DisplayPort = Modules.Get<PortAttachClass>(Module::DisplayPort); // HW connection
+    PortClass *Port = Modules.Get<PortClass>(Module::Port); // HW connection
     int32_t *Length = Modules.GetValue<int32_t>(Module::Length);
     Vector2D *Size = Modules.GetValue<Vector2D>(Module::Size);
     float *Ratio = Modules.GetValue<float>(Module::Ratio);
@@ -91,20 +90,19 @@ bool DisplayClass::Run()
     Coord2D *Offset = Modules.GetValue<Coord2D>(Module::Offset);
     bool *Mirrored = Modules.GetValue<bool>(Module::Mirrored);
 
-    if (DisplayPort == nullptr || Length == nullptr || Size == nullptr || Ratio == nullptr ||
+    if (Port == nullptr || Length == nullptr || Size == nullptr || Ratio == nullptr ||
         Brightness == nullptr || Offset == nullptr || Mirrored == nullptr || Layout == nullptr)
     {
         ReportError(Status::MissingModule);
         return true;
     }
-    if (DisplayPort->Check(Drivers::LED) == false)
+    
+    CRGB *Pixel = Port->GetLED(this);
+    if (Pixel == nullptr)
     {
         ReportError(Status::PortError);
         return true;
     }
-
-    CRGB *Pixel = (CRGB *)DisplayPort->Port->Driver;
-    //Pixel->clear();
 
     Coord2D Transform = Coord2D(*Size * 0.5 - Vector2D(0.5, 0.5), 0).Join(*Offset);
     // Iterate over corrected pixel coords |_

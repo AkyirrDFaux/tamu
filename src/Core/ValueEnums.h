@@ -23,14 +23,18 @@ enum class Ports : uint8_t
 {
     None = 0,
     GPIO,
-    TOut
+    TOut,
+    SDA,
+    SCL
 };
 
 enum class Drivers : uint8_t
 {
     None,
     LED,
-    FanPWM
+    FanPWM,
+    I2C,
+    I2CClock
 };
 
 enum class Geometries : uint8_t

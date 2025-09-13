@@ -31,7 +31,7 @@ enum class Types : uint8_t
     Number,  // float_32
     ID,      // uint_32
     Colour,  // 4 byte RGBA
-    PortAttach,
+    Removed1, // PortAttach
     Vector2D, // 8 byte (2xFloat)
     Vector3D, // 12 byte (3xFloat)
     Coord2D,  // 16 byte (2xVector)
@@ -151,7 +151,6 @@ template <>
 Types GetType<IDClass>() { return Types::ID; };
 template <>
 Types GetType<ColourClass>() { return Types::Colour; };
-// Port Attach
 template <>
 Types GetType<Vector2D>() { return Types::Vector2D; };
 template <>

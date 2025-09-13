@@ -22,7 +22,33 @@ CRGB *BeginLED(uint16_t Length, uint16_t Pin)
     case 0:
         FastLED.addLeds<NEOPIXEL, 0>(leds, Length);
         break;
-
+    case 1:
+        FastLED.addLeds<NEOPIXEL, 1>(leds, Length);
+        break;
+    case 2:
+        FastLED.addLeds<NEOPIXEL, 2>(leds, Length);
+        break;
+    case 3:
+        FastLED.addLeds<NEOPIXEL, 3>(leds, Length);
+        break;
+    case 4:
+        FastLED.addLeds<NEOPIXEL, 4>(leds, Length);
+        break;
+    case 5:
+        FastLED.addLeds<NEOPIXEL, 5>(leds, Length);
+        break;
+    case 6:
+        FastLED.addLeds<NEOPIXEL, 7>(leds, Length);
+        break;
+    case 8:
+        FastLED.addLeds<NEOPIXEL, 8>(leds, Length);
+        break;
+    case 9:
+        FastLED.addLeds<NEOPIXEL, 9>(leds, Length);
+        break;
+    case 10:
+        FastLED.addLeds<NEOPIXEL, 10>(leds, Length);
+        break;
     default:
         break;
         Serial.println("LED pin missing: " + String(Pin));

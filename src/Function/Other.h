@@ -1,80 +1,3 @@
-void PortClass::Setup()
-{
-    if (Attached == nullptr || Attached->Key() == nullptr)
-    {
-        StopDriver();
-        return;
-    }
-    BaseClass *Key = Attached->Key();
-    
-    if (Key->Type == Types::Display && *Data == Ports::GPIO)
-    {
-        DisplayClass *Display = Key->As<DisplayClass>();
-        if (!Display->Modules.IsValid(Display->Length))
-        {
-            ReportError(Status::MissingModule);
-            return;
-        }
-
-        Driver = BeginLED(*Display->Modules.GetValue<int32_t>(Display->Length), Pin);
-        DriverType = Drivers::LED;
-    }
-    else if (Key->Type == Types::LEDStrip && *Data == Ports::GPIO)
-    {
-        LEDStripClass *Strip = Key->As<LEDStripClass>();
-        if (!Strip->Modules.IsValid(Strip->Length))
-        {
-            ReportError(Status::MissingModule);
-            return;
-        }
-
-        Driver = BeginLED(*Strip->Modules.GetValue<int32_t>(Strip->Length), Pin);
-        DriverType = Drivers::LED;
-    }
-    else if (Key->Type == Types::Fan && *Data == Ports::TOut)
-    {
-        FanClass *Fan = Key->As<FanClass>();
-
-        analogWriteFrequency((uint32_t)25000);
-        DriverType = Drivers::FanPWM;
-    }
-    else
-        StopDriver();
-}
-
-void PortAttachClass::Setup() // Attach to port
-{
-    if (Port != nullptr)
-        Port->Detach();
-
-    if (!Board.Devices.Modules.IsValid(*Data))
-        return;
-
-    Port = Board.Devices.Modules[*Data]->As<PortClass>();
-    if (Port == nullptr || !Port->Attach(this))
-        ReportError(Status::PortError, "Failed to attach");
-};
-
-bool PortAttachClass::Check(Drivers RequiredDriver)
-{
-    if (Port == nullptr)
-    {
-        if (*Data < 0)
-            return false;
-        if (Board.Devices.Modules.IsValid(*Data))
-            Setup();
-        if (Port == nullptr)
-            return false;
-    }
-    if (Port->DriverType != RequiredDriver)
-    {
-        Port->Setup();
-        if (Port->DriverType != RequiredDriver)
-            return false;
-    }
-    return true;
-};
-
 int32_t IDList::FirstValid(Types Filter, int32_t Start)
 {
     int32_t Index = Start;
@@ -161,9 +84,7 @@ void DefaultSetup()
     DisplayClass *D = new DisplayClass();
     *D->Data = Displays::Vysi_v1_0;
     D->Setup();
-    PortAttachClass *DP = D->Modules.Get<PortAttachClass>(D->DisplayPort);
-    *DP->Data = 0;
-    DP->Setup();
+    D->Modules.Add(Board.Devices.Modules[0],D->Port);
     Folder *DS = D->Modules.Get<Folder>(D->Parts);
 
     Shape2DClass *S = new Shape2DClass();
@@ -316,12 +237,14 @@ void DefaultSetup()
 
     // FAN
     FanClass *F = new FanClass();
-    *F->Modules.Get<PortAttachClass>(F->PortAttach)->Data = 4;
+    F->Modules.Add(Board.Devices.Modules[4],F->Port);
     *F->ValueAs<uint8_t>() = 0;
 
+    
     // LED STRIP
     LEDStripClass *L = new LEDStripClass();
-    *L->Modules.Get<PortAttachClass>(L->PortAttach)->Data = 1;
+    L->Modules.Add(Board.Devices.Modules[1],L->Port);
+    //*L->Modules.Get<PortAttachClass>(L->PortAttach)->Data = 1;
     *L->Modules.GetValue<int32_t>(L->Length) = 60;
 
     LEDSegmentClass *LS = new LEDSegmentClass();

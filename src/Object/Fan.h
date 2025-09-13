@@ -3,7 +3,7 @@ class FanClass : public Variable<uint8_t>
 public:
     enum Module
     {
-        PortAttach,
+        Port,
     };
 
     FanClass(bool New = true, IDClass ID = RandomID, FlagClass Flags = Flags::None);
@@ -17,9 +17,6 @@ FanClass::FanClass(bool New, IDClass ID, FlagClass Flags) : Variable(0, ID, Flag
     BaseClass::Type = Types::Fan;
     Name = "Fan";
     Outputs.Add(this);
-
-    if (New)
-        AddModule(new PortAttachClass(New), PortAttach);
 };
 
 FanClass::~FanClass()
@@ -29,20 +26,22 @@ FanClass::~FanClass()
 
 bool FanClass::Run()
 {
-    PortAttachClass *PortAttach = Modules.Get<PortAttachClass>(Module::PortAttach); // HW connection
+    PortClass *Port = Modules.Get<PortClass>(Module::Port); // HW connection
 
-    if (PortAttach == nullptr || Data == nullptr)
+    if (Port == nullptr || Data == nullptr)
     {
         ReportError(Status::MissingModule);
         return true;
     }
-    if (PortAttach->Check(Drivers::FanPWM) == false)
+
+    uint8_t* Pin = Port->GetPWM(this);
+
+    if (Pin == nullptr)
     {
         ReportError(Status::PortError);
         return true;
     }
 
-    analogWrite(PortAttach->Port->Pin, *Data);
-
+    analogWrite(*Pin, *Data);
     return true;
 };

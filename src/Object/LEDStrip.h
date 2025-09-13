@@ -3,7 +3,7 @@ class LEDStripClass : public Variable<LEDStrips>
 public:
     enum Module
     {
-        PortAttach,
+        Port,
         Length,
         Brightness,
         Parts
@@ -26,7 +26,6 @@ LEDStripClass::LEDStripClass(bool New, IDClass ID, FlagClass Flags) : Variable(L
     {
         AddModule(new Variable<int32_t>(0), Length);
         Modules[Length]->Name = "Length";
-        AddModule(new PortAttachClass(New), PortAttach);
         AddModule(new Variable<uint8_t>(20), Brightness);
         Modules[Brightness]->Name = "Brightness";
         AddModule(new Folder(true), Parts);
@@ -41,23 +40,21 @@ LEDStripClass::~LEDStripClass()
 
 bool LEDStripClass::Run()
 {
-    PortAttachClass *DisplayPort = Modules.Get<PortAttachClass>(Module::PortAttach); // HW connection
+    PortClass *Port = Modules.Get<PortClass>(Module::Port); // HW connection
     int32_t *Length = Modules.GetValue<int32_t>(Module::Length);
     uint8_t *Brightness = Modules.GetValue<uint8_t>(Module::Brightness);
 
-    if (DisplayPort == nullptr || Length == nullptr || Brightness == nullptr)
+    if (Port == nullptr || Length == nullptr || Brightness == nullptr)
     {
         ReportError(Status::MissingModule);
         return true;
     }
-    if (DisplayPort->Check(Drivers::LED) == false)
+    CRGB *Pixel = Port->GetLED(this);
+    if (Pixel == nullptr)
     {
         ReportError(Status::PortError);
         return true;
     }
-
-    CRGB *Pixel = (CRGB *)DisplayPort->Port->Driver;
-    //Pixel->clear();
 
     // Iterate over corrected pixel coords |_
     for (int32_t Index = 0; Index < *Length; Index++)

@@ -58,6 +58,7 @@ BoardClass Board;
 #include "Variable\Shape2D.h"
 #include "Object\Display.h"
 
+#include "Function\Port.h"
 #include "Function\BaseClass.h"
 #include "Function\Other.h" //Unrelated to messages
 #include "Function\Base.h"
@@ -110,20 +111,20 @@ void loop()
 
     for (int32_t Index = 0; Index < Sensors.Length; Sensors.Iterate(&Index))
         Sensors[Index]->Run();
-    // Serial.println("P");
+     //Serial.println("P");
     for (int32_t Index = 0; Index < Programs.Length; Programs.Iterate(&Index))
     {
         if ((Programs[Index]->Flags == RunLoop) || (Programs[Index]->Flags == RunOnce))
             Programs[Index]->Run();
     }
 
-    // Serial.println("R");
+     //Serial.println("R");
     for (int32_t Index = 0; Index < Routines.Length; Routines.Iterate(&Index))
         Routines[Index]->Run();
-    // Serial.println("O");
+     //Serial.println("O");
     for (int32_t Index = 0; Index < Outputs.Length; Outputs.Iterate(&Index))
         Outputs[Index]->Run();
-    // Serial.println("F");
+     //Serial.println("F");
 
     FastLED.show();
 
@@ -142,13 +143,13 @@ App Usability/parity (enums changed)
 More Operations/Animations
 
 ADJUSTMENTS:
-Remake Port system (simplify + extend)
+Finish port system (connecting multiple LEDS, I2C)
 As (bytearray) checking not working
 Spread out bluetooth sending to prevent lag?
 Saving takes forever
 (ID)List, register make unsigned?
-IsValid with type for modules (useful in operations)
-Test Variable with flag runloop will update value automatically if function
+IsValid with type for modules (useful in operations, port functions)
+Variable with flag runloop will update value automatically if function
 
 EXTRA:
 RunRead variable flag
@@ -160,7 +161,6 @@ BUGS:
 Separate saving breaks it
 Deletion with program running (or Board/Board component)
 Incorrect wraping of LED strip
-Only one pin valid with leds
 Stopping serial freezes board
 */
 
@@ -180,3 +180,4 @@ Stopping serial freezes board
 // 03.03.2025 BLE both ways!
 // 04.09.2025 App Improvements
 // 08.09.2025 Sorted out operations
+// 13.09.2025 New port/driver system

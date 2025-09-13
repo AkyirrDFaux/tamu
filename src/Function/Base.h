@@ -108,8 +108,8 @@ BaseClass *CreateObject(Types Type, bool New, IDClass ID, FlagClass Flags)
     // ID is internal
     case Types::Colour:
         return new Variable<ColourClass>(ColourClass(), ID, Flags);
-    case Types::PortAttach:
-        return new PortAttachClass(New, ID, Flags);
+    //case Types::PortAttach:
+        //return new PortAttachClass(New, ID, Flags);
     case Types::Vector2D:
         return new Variable<Vector2D>(Vector2D(), ID, Flags);
     case Types::Coord2D:
