@@ -2,6 +2,7 @@
 class GyrAccClass : public Variable<GyrAccs>
 {
 public:
+    void *Sensor = nullptr;
     Variable<Vector3D> AR = Variable<Vector3D>(Vector3D(0, 0, 0), RandomID, Flags::Auto);
     Variable<Vector3D> AC = Variable<Vector3D>(Vector3D(0, 0, 0), RandomID, Flags::Auto);
 
@@ -9,7 +10,6 @@ public:
     GyrAccClass(GyrAccs NewDevType, bool New = true, IDClass ID = RandomID, FlagClass Flags = Flags::None);
     bool Run();
 };
-
 GyrAccClass::GyrAccClass(GyrAccs NewDevType, bool New, IDClass ID, FlagClass Flags) : Variable(NewDevType, ID, Flags) // Created by Board
 {
     Type = Types::AccGyr;
@@ -34,13 +34,22 @@ void GyrAccClass::Setup()
     if (I2C == nullptr)
         return;
 
-    if (!lsm6ds3trc.begin_I2C(0b1101011, I2C)) // 0b1101011 or 0b1101010
-        Serial.println("Failed to find LSM6DS3TR-C chip");
+    switch (*Data)
+    {
+    case GyrAccs::LSM6DS3TRC:
+        Sensor = new Adafruit_LSM6DS3TRC();
+        if (!((Adafruit_LSM6DS3TRC *)Sensor)->begin_I2C(0b1101011, I2C)) // 0b1101011 or 0b1101010
+            Serial.println("Failed to find LSM6DS3TR-C chip");
 
-    lsm6ds3trc.setAccelDataRate(LSM6DS_RATE_104_HZ);
-    lsm6ds3trc.setGyroDataRate(LSM6DS_RATE_104_HZ);
-    lsm6ds3trc.setAccelRange(LSM6DS_ACCEL_RANGE_16_G);
-    lsm6ds3trc.setGyroRange(LSM6DS_GYRO_RANGE_2000_DPS);
+        ((Adafruit_LSM6DS3TRC *)Sensor)->setAccelDataRate(LSM6DS_RATE_104_HZ);
+        ((Adafruit_LSM6DS3TRC *)Sensor)->setGyroDataRate(LSM6DS_RATE_104_HZ);
+        ((Adafruit_LSM6DS3TRC *)Sensor)->setAccelRange(LSM6DS_ACCEL_RANGE_16_G);
+        ((Adafruit_LSM6DS3TRC *)Sensor)->setGyroRange(LSM6DS_GYRO_RANGE_2000_DPS);
+        break;
+
+    default:
+        break;
+    }
 }
 
 bool GyrAccClass::Run()
@@ -48,7 +57,7 @@ bool GyrAccClass::Run()
     sensors_event_t a;
     sensors_event_t g;
     sensors_event_t t;
-    if (lsm6ds3trc.getEvent(&a, &g, &t))
+    if (((Adafruit_LSM6DS3TRC *)Sensor)->getEvent(&a, &g, &t))
     {
         // Compensate for gravity
         AC = Vector3D(a.acceleration.x, a.acceleration.y, a.acceleration.z);

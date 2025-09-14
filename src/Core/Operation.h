@@ -1,7 +1,7 @@
 template <class C>
 bool Variable<C>::Run()
 {
-    if (Modules.IsValid(0) == false || Modules[0]->Type != Types::Operation) // No operation
+    if (Modules.IsValid(0,Types::Operation) == false) // No operation
         return true;
 
     switch (*Modules.GetValue<Operations>(0))
@@ -20,7 +20,7 @@ bool Variable<C>::Run()
 template <>
 bool Variable<float>::Run()
 {
-    if (Modules.IsValid(0) == false || Modules[0]->Type != Types::Operation) // No operation
+    if (Modules.IsValid(0,Types::Operation) == false) // No operation
         return true;
 
     switch (*Modules.GetValue<Operations>(0))
@@ -30,7 +30,7 @@ bool Variable<float>::Run()
             *Modules.GetValue<float>(Index) = *Data;
         return true;
     case Operations::MoveTo: // 1 Target, 2 Time
-        if (Modules.IsValid(1) == false || Modules[1]->Type != Types::Number || Modules.IsValid(2) == false || Modules[2]->Type != Types::Time)
+        if (Modules.IsValid(1,Types::Number) == false || Modules.IsValid(2,Types::Time) == false)
             return true;
 
         *Data = TimeMove(*Data, *Modules.GetValue<float>(1), *Modules.GetValue<uint32_t>(2));
@@ -45,7 +45,7 @@ bool Variable<float>::Run()
 template <>
 bool Variable<Coord2D>::Run()
 {
-    if (Modules.IsValid(0) == false || Modules[0]->Type != Types::Operation) // No operation
+    if (Modules.IsValid(0,Types::Operation) == false) // No operation
         return true;
 
     switch (*Modules.GetValue<Operations>(0))
@@ -55,7 +55,7 @@ bool Variable<Coord2D>::Run()
             *Modules.GetValue<Coord2D>(Index) = *Data;
         return true;
     case Operations::MoveTo: // 1 Target, 2 Time
-        if (Modules.IsValid(1) == false || Modules[1]->Type != Types::Coord2D || Modules.IsValid(2) == false || Modules[2]->Type != Types::Time)
+        if (Modules.IsValid(1,Types::Coord2D) == false || Modules.IsValid(2,Types::Time) == false)
             return true;
 
         *Data = Data->TimeMove(*Modules.GetValue<Coord2D>(1), *Modules.GetValue<uint32_t>(2));
@@ -69,7 +69,7 @@ bool Variable<Coord2D>::Run()
 template <>
 bool Variable<uint32_t>::Run()
 {
-    if (Modules.IsValid(0) == false || Modules[0]->Type != Types::Operation) // No operation
+    if (Modules.IsValid(0,Types::Operation) == false) // No operation
         return true;
 
     switch (*Modules.GetValue<Operations>(0))
@@ -79,13 +79,13 @@ bool Variable<uint32_t>::Run()
             *Modules.GetValue<uint32_t>(Index) = *Data;
         return true;
     case Operations::AddDelay:
-        if (Modules.IsValid(1) == false || Modules[1]->Type != Types::Time)
+        if (Modules.IsValid(1,Types::Time) == false)
             return true;
 
         *Data = *Modules.GetValue<uint32_t>(1) + CurrentTime;
         return true;
     case Operations::Delay: // Data is start time, Module 1 is delay
-        if (Modules.IsValid(1) == false || Modules[1]->Type != Types::Time)
+        if (Modules.IsValid(1,Types::Time) == false)
             return true;
 
         if (*Data == 0)

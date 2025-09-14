@@ -25,7 +25,6 @@ uint32_t DeltaTime = 0;
 #include "Data\Vector3D.h"
 
 #include "Core\IDList.h"
-//#include "Core\Message.h"
 #include "Core\Chirp.h"
 ChirpClass Chirp = ChirpClass(); // Bluetooth/Serial
 
@@ -36,7 +35,7 @@ ChirpClass Chirp = ChirpClass(); // Bluetooth/Serial
 RegisterClass Objects;
 ObjectList<> Sensors;  // EX: accel/button/sensor
 ObjectList<> Programs; // Ex: Emotes
-ObjectList<> Routines; // Ex: Update positions, color blends
+//ObjectList<> Routines; // Ex: Update positions, color blends
 ObjectList<> Outputs;  // Ex: Render
 
 #include "Object\Port.h"
@@ -60,10 +59,12 @@ BoardClass Board;
 #include "Variable\Shape2D.h"
 #include "Object\Display.h"
 
-#include "Function\Port.h"
+#include "Function\Port.h" //Unrelated to messages
 #include "Function\BaseClass.h"
-#include "Function\Other.h" //Unrelated to messages
-#include "Function\Base.h"
+#include "Function\List.h"
+#include "Function\Other.h" 
+
+#include "Function\Base.h" //Messages
 #include "Function\Save.h"
 #include "Function\Values.h"
 
@@ -125,8 +126,8 @@ void loop()
     }
 
      //Serial.println("R");
-    for (int32_t Index = 0; Index < Routines.Length; Routines.Iterate(&Index))
-        Routines[Index]->Run();
+    //for (int32_t Index = 0; Index < Routines.Length; Routines.Iterate(&Index))
+     //   Routines[Index]->Run();
      //Serial.println("O");
     for (int32_t Index = 0; Index < Outputs.Length; Outputs.Iterate(&Index))
         Outputs[Index]->Run();
@@ -146,14 +147,17 @@ More Operations/Animations
 - Selection from/into Vectors
 App Usability/parity
 Merge for both boards
+Memory
+App Presets
 
 ADJUSTMENTS:
+IsValid && FirstValid with type for Objlist (port functions)
+
 Finish port system (connecting multiple LEDS, I2C)
 As (bytearray) checking not working
 Spread out bluetooth sending to prevent lag?
 Saving takes forever
 (ID)List, register make unsigned?
-IsValid with type for modules (useful in operations, port functions)
 Variable with flag runloop will update value automatically if function
 
 EXTRA:

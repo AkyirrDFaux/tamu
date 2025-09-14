@@ -14,7 +14,7 @@ public:
     BaseClass *operator[](int32_t Index);
     BaseClass *At(int32_t Index);
 
-    bool IsValid(int32_t Index);
+    bool IsValid(int32_t Index, Types Filter = Types::Undefined);
     bool IsValidID(int32_t Index) const;
 
     int32_t Find(BaseClass *TestObject);
@@ -72,11 +72,6 @@ BaseClass *IDList::At(int32_t Index) // Returns address or nullptr if invalid
         Update(Index);
 
     return Object[Index];
-};
-
-bool IDList::IsValid(int32_t Index) // Returns if object at index is valid
-{
-    return (At(Index) != nullptr);
 };
 
 bool IDList::IsValidID(int32_t Index) const

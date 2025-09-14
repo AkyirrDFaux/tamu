@@ -1,5 +1,7 @@
 #include <ESP32Servo.h>
 #include <FastLED.h>
+#include <Adafruit_LSM6DS3TRC.h>
+
 CRGB *BeginLED(uint16_t Length, uint16_t Pin);
 void EndLED(CRGB *Address);
 
@@ -62,31 +64,3 @@ void EndLED(CRGB *Address)
 {
     delete[] Address;
 };
-
-#include <Adafruit_LSM6DS3TRC.h>
-
-Adafruit_LSM6DS3TRC lsm6ds3trc;
-
-/*
-    //Accelerometer setup
-    Wire.begin(4,5,10000);
-    if (!lsm6ds3trc.begin_I2C(0b1101011))// 0b1101011 or 0b1101010
-    {
-        Serial.println("Failed to find LSM6DS3TR-C chip");
-        while (1)
-        {
-            delay(10);
-        }
-    }
-*/
-
-/*
-//Accelerometer test
-sensors_event_t accel;
-sensors_event_t gyro;
-sensors_event_t temp;
-lsm6ds3trc.getEvent(&accel, &gyro, &temp);
-Serial.print(String(accel.acceleration.x) + "," + String(accel.acceleration.y) + "," + String(accel.acceleration.z) + ";");
-Serial.print(String(gyro.gyro.x) + "," + String(gyro.gyro.y) + "," + String(gyro.gyro.z) + ";");
-Serial.println(String(temp.temperature));
-*/
