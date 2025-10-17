@@ -10,7 +10,7 @@ void DefaultSetup()
 {
     *Board.Values.At<Boards>(Board.BoardType) = Boards::Tamu_v2_0;
     Board.Setup();
-    //*Board.Values.At<String>(Board.BTName) = "Unnamed - Default";
+    *Board.Values.At<String>(Board.BTName) = "Unnamed - Default";
 
     DisplayClass *D = new DisplayClass();
     *D->Data = Displays::Vysi_v1_0;

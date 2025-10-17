@@ -21,7 +21,7 @@ BoardClass::BoardClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags) // Bo
     Name = "Board";
 
     Values.Add(Boards::Undefined);
-    //Values.Add(String("Unnamed")); //STRING BROKEN FOR NOW
+    Values.Add(String("Unnamed")); //STRING BROKEN FOR NOW
     Values.Add((uint32_t)0, BootTime);
     Values.Add((uint32_t)0, AvgTime);
     Values.Add((uint32_t)0, MaxTime);

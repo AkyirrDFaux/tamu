@@ -39,9 +39,9 @@ ObjectList<> Programs; // Ex: Emotes
 ObjectList<> Outputs;  // Ex: Render
 
 #include "Object\Port.h"
-#include "Object\AccGyr.h" //Fix Vector3D
+#include "Object\AccGyr.h"
 #include "Object\Input.h"
-#include "Object\Board.h" //Fix name
+#include "Object\Board.h"
 BoardClass Board;
 
 #include "Core\Operation.h" //TODO later
@@ -95,8 +95,7 @@ void setup()
         Root.close();
     }
 
-    Chirp.Begin("UIIAI");
-    //Chirp.Begin(*Board.Values.At<String>(Board.BTName));
+    Chirp.Begin(*Board.Values.At<String>(Board.BTName));
 
     Serial.println(Objects.ContentDebug());
     TimeUpdate();
@@ -139,8 +138,6 @@ void loop()
 
 /*TODO:
 KEY FEATURES:
-DataList Values size > 4 bytes !!!
-
 Accelerometer gravity compensation + orientation, filtering/integrating
 
 More Operations/Animations

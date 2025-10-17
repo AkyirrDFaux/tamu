@@ -22,8 +22,8 @@ GyrAccClass::GyrAccClass(GyrAccs NewDevType, IDClass ID, FlagClass Flags) : Base
     Flags = Flags::Auto;
 
     Values.Add(NewDevType);
-    //Values.Add(Vector3D());
-    //Values.Add(Vector3D());
+    Values.Add(Vector3D());
+    Values.Add(Vector3D());
 
     Sensors.Add(this);
 };
@@ -64,8 +64,8 @@ bool GyrAccClass::Run()
     if (((Adafruit_LSM6DS3TRC *)Sensor)->getEvent(&a, &g, &t))
     {
         // Compensate for gravity
-        //*Values.At<Vector3D>(Acceleration) = Vector3D(a.acceleration.x, a.acceleration.y, a.acceleration.z);
-        //*Values.At<Vector3D>(AngularRate) = Vector3D(g.gyro.x, g.gyro.y, g.gyro.z);
+        *Values.At<Vector3D>(Acceleration) = Vector3D(a.acceleration.x, a.acceleration.y, a.acceleration.z);
+        *Values.At<Vector3D>(AngularRate) = Vector3D(g.gyro.x, g.gyro.y, g.gyro.z);
 
         // Add orientation from gravity
     }
