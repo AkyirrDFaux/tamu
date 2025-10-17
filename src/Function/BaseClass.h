@@ -44,38 +44,44 @@ ByteArray BaseClass::GetValue() const
         if (Type == Types::Text)
             Data = Data << ByteArray(*Values.At<String>(Index));
         else if (Type == Types::Undefined)
-            Data = Data << ByteArray((char*)&Type, sizeof(Types));
+            Data = Data << ByteArray((char *)&Type, sizeof(Types));
         else
-            Data = Data << ByteArray((char*)&Type, sizeof(Types)) << ByteArray((char*)Values.Data[Index], GetValueSize(Type));
+            Data = Data << ByteArray((char *)&Type, sizeof(Types)) << ByteArray((char *)Values.Data[Index], GetValueSize(Type));
     }
     return Data;
 };
 
+//Not sure this is working
 bool BaseClass::SetValue(ByteArray &Input)
 {
-    if (Input.Type() != Type)
+    ByteArray Part = Input.ExtractPart();
+    int32_t Index = 0;
+    while (Part.Length > 0)
     {
-        return false;
-        ReportError(Status::InvalidType);
+        if (Part.Type() == Types::Undefined)
+        {
+            Part = Input.ExtractPart();
+            Index++;
+            continue;
+        }
+
+        
+        if (Values.IsValid(Index) == false || Values.Type[Index] != Part.Type()) // Prepare for copying
+        {
+            if (Values.IsValid(Index)) // Already occupied, but different type
+                Values.Delete(Index);
+            else //Possibly not allocated yet
+                Values.Expand(Index + 1);
+
+            Values.Data[Index] = new char[Part.SizeOfData()]; 
+            Values.Type[Index] = Part.Type();
+        }
+
+        memcpy(Values.Data[Index],Part.Array + sizeof(Types), Part.SizeOfData());
+
+        Part = Input.ExtractPart();
+        Index++;
     }
-
-    else if (GetValueSize(Type) == 0)
-        return true;
-
-    // INCOMPLETE, needs raw data pointer
-    if (Type == Types::Text)
-        *ValueAs<String>() = Input.As<String>();
-    else if (GetValueSize(Type) == sizeof(uint8_t))
-        *ValueAs<uint8_t>() = Input.As<uint8_t>();
-    else if (GetValueSize(Type) == sizeof(uint32_t))
-        *ValueAs<uint32_t>() = Input.As<uint32_t>();
-    else if (GetValueSize(Type) == sizeof(Vector2D))
-        *ValueAs<Vector2D>() = Input.As<Vector2D>();
-    else if (GetValueSize(Type) == sizeof(Coord2D))
-        *ValueAs<Coord2D>() = Input.As<Coord2D>();
-    else
-        return false;
-
     Setup();
     return true;
 }

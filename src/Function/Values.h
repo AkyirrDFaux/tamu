@@ -20,7 +20,6 @@ void ReadValue(ByteArray &Input)
 void WriteValue(ByteArray &Input)
 {
     ByteArray ID = Input.ExtractPart();
-    ByteArray Value = Input.ExtractPart();
     if (ID.Type() != Types::ID || !Objects.IsValid(ID))
     {
         Chirp.Send(ByteArray(Status::InvalidID) << Input);
@@ -34,7 +33,7 @@ void WriteValue(ByteArray &Input)
         Chirp.Send(ByteArray(Status::AutoObject) << Input);
         return;
     }
-    else if (Value.Type() != Object->Type || Object->SetValue(Value) == false)
+    else if (Object->SetValue(Input) == false)
     {
         Chirp.Send(ByteArray(Status::InvalidType) << Input);
         return;

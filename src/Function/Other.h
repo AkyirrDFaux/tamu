@@ -15,7 +15,7 @@ void DefaultSetup()
     DisplayClass *D = new DisplayClass();
     *D->Data = Displays::Vysi_v1_0;
     D->Setup();
-    D->Modules.Add(Board.Devices.Modules[0],D->Port);
+    D->Modules.Add(Board.Modules[0],D->Port);
     Folder *DS = D->Modules.Get<Folder>(D->Parts);
 
     Shape2DClass *S = new Shape2DClass();
