@@ -77,7 +77,7 @@ BaseClass *CreateObject(Types Type, bool New, IDClass ID, FlagClass Flags)
     // Flags is internal
     // Status is internal
     case Types::Board:
-        return new BoardClass(New, ID, Flags);
+        return new BoardClass(ID, Flags);
     case Types::Fan:
         return new FanClass(New, ID, Flags);
     case Types::LEDSegment:
@@ -95,9 +95,9 @@ BaseClass *CreateObject(Types Type, bool New, IDClass ID, FlagClass Flags)
     case Types::Display:
         return new DisplayClass(New, ID, Flags);
     case Types::AccGyr:
-        return new GyrAccClass(GyrAccs::Undefined, New, ID, Flags);
+        return new GyrAccClass(GyrAccs::Undefined, ID, Flags);
     case Types::Input:
-        return new InputClass(Inputs::Undefined, New, ID, Flags);
+        return new InputClass(Inputs::Undefined, ID, Flags);
     case Types::Operation:
         return new Variable<Operations>(Operations::None, ID, Flags);
     case Types::Program:

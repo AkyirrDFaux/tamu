@@ -1,22 +1,31 @@
-class InputClass : public Variable<Inputs>
+class InputClass : public BaseClass
 {
 public:
+
+    enum Value{
+        InputType,
+        Input,
+        Indicator
+    };
     enum Module
     {
         Port,
     };
 
-    InputClass(Inputs InputType, bool New = true, IDClass ID = RandomID, FlagClass Flags = Flags::None);
+    InputClass(Inputs InputType, IDClass ID = RandomID, FlagClass Flags = Flags::None);
     ~InputClass();
     void Setup();
 
     bool Run();
 };
 
-InputClass::InputClass(Inputs InputType, bool New, IDClass ID, FlagClass Flags) : Variable(InputType, ID, Flags)
+InputClass::InputClass(Inputs InputType, IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
 {
     BaseClass::Type = Types::Input;
     Name = "Input";
+
+    Values.Add(InputType);
+
     Sensors.Add(this);
     Setup();
 };
@@ -29,18 +38,15 @@ InputClass::~InputClass()
 void InputClass::Setup()
 {
     // Deletion/Replacement of previous modules is missing
-    switch (*Data)
+    switch (*Values.At<Inputs>(InputType))
     {
     case Inputs::ButtonWithLED:
-        AddModule(new Variable<bool>(false), 2);
-        Modules[2]->Name = "Indicator Switch";
+        Values.Add(false, Indicator);
     case Inputs::Button:
-        AddModule(new Variable<bool>(false), 1);
-        Modules[1]->Name = "Input value";
+        Values.Add(false, Input);
         break;
     case Inputs::Analog:
-        AddModule(new Variable<int32_t>(0), 1);
-        Modules[1]->Name = "Input value";
+        Values.Add((int32_t)0, Input);
         break;
     default:
         break;
@@ -50,10 +56,11 @@ void InputClass::Setup()
 bool InputClass::Run()
 {
     PortClass *Port = Modules.Get<PortClass>(Module::Port); // HW connection
+    Inputs *Type = Values.At<Inputs>(InputType);
 
-    if (Port == nullptr || Data == nullptr)
+    if (Port == nullptr)
     {
-        ReportError(Status::MissingModule);
+        ReportError(Status::PortError);
         return true;
     }
 
@@ -65,16 +72,16 @@ bool InputClass::Run()
         return true;
     }
 
-    switch (*Data)
+    switch (*Type)
     {
     case Inputs::Button:
-        *Modules.GetValue<bool>(1) = !digitalRead(*Pin); //Inverted
+        *Values.At<bool>(Input) = !digitalRead(*Pin); //Inverted
         break;
     case Inputs::Analog:
-        *Modules.GetValue<int32_t>(1) = analogRead(*Pin);
+        *Values.At<int32_t>(Input) = analogRead(*Pin);
         break;
     case Inputs::ButtonWithLED:
-        if (*Modules.GetValue<bool>(2))
+        if (*Values.At<bool>(Indicator))
         {
             pinMode(*Pin, OUTPUT);
             digitalWrite(*Pin, LOW); //Inverted
@@ -82,7 +89,7 @@ bool InputClass::Run()
         else //Applies blocking
         {
             pinMode(*Pin, INPUT);
-            *Modules.GetValue<bool>(1) = !digitalRead(*Pin); //Inverted
+            *Values.At<bool>(Input) = !digitalRead(*Pin); //Inverted
         }
         break;
     default:

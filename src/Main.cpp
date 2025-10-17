@@ -24,7 +24,7 @@ uint32_t DeltaTime = 0;
 #include "Data\Coord2D.h"
 #include "Data\Vector3D.h"
 
-#include "Core\DataList.h"
+#include "Core\DataList.h" //Pointers are not pointer-ing
 #include "Core\IDList.h"
 #include "Core\Chirp.h"
 ChirpClass Chirp = ChirpClass(); // Bluetooth/Serial
@@ -39,13 +39,13 @@ ObjectList<> Programs; // Ex: Emotes
 ObjectList<> Outputs;  // Ex: Render
 
 #include "Object\Port.h"
-#include "Object\AccGyr.h"
+#include "Object\AccGyr.h" //Fix Vector3D
 #include "Object\Input.h"
-#include "Object\Board.h"
+#include "Object\Board.h" //Fix name
 BoardClass Board;
 
-#include "Core\Operation.h"
-#include "Core\Program.h"
+#include "Core\Operation.h" //TODO later
+#include "Core\Program.h" //TODO later
 
 #include "Object\Fan.h"
 #include "Object\Servo.h"
@@ -139,6 +139,8 @@ void loop()
 
 /*TODO:
 KEY FEATURES:
+DataList Values size > 4 bytes !!!
+
 Accelerometer gravity compensation + orientation, filtering/integrating
 
 More Operations/Animations

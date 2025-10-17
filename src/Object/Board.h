@@ -10,12 +10,12 @@ public:
         MaxTime
     };
 
-    BoardClass(bool New = true, IDClass ID = RandomID, FlagClass Flags = Flags::None);
+    BoardClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     void Setup();
     void UpdateLoopTime();
 };
 
-BoardClass::BoardClass(bool New, IDClass ID, FlagClass Flags) : BaseClass(ID, Flags) // Board always loads first, it takes ID 1
+BoardClass::BoardClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags) // Board always loads first, it takes ID 1
 {
     Type = Types::Board;
     Name = "Board";
