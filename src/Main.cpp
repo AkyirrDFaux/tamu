@@ -97,7 +97,7 @@ void setup()
 
     Chirp.Begin("UIIAI");
     //Chirp.Begin(*Board.Values.At<String>(Board.BTName));
-    
+
     Serial.println(Objects.ContentDebug());
     TimeUpdate();
     *Board.Values.At<uint32_t>(Board.BootTime) = CurrentTime;
@@ -126,10 +126,6 @@ void loop()
         if ((Programs[Index]->Flags == RunLoop) || (Programs[Index]->Flags == RunOnce))
             Programs[Index]->Run();
     }
-
-     //Serial.println("R");
-    //for (int32_t Index = 0; Index < Routines.Length; Routines.Iterate(&Index))
-     //   Routines[Index]->Run();
      //Serial.println("O");
     for (int32_t Index = 0; Index < Outputs.Length; Outputs.Iterate(&Index))
         Outputs[Index]->Run();
