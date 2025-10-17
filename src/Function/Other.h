@@ -8,9 +8,9 @@ void ReportError(Status ErrorCode, String Detail)
 
 void DefaultSetup()
 {
-    *Board.Data = Boards::Tamu_v2_0;
+    *Board.Values.At<Boards>(Board.BoardType) = Boards::Tamu_v2_0;
     Board.Setup();
-    Board.BTName = "Unnamed - Default";
+    //*Board.Values.At<String>(Board.BTName) = "Unnamed - Default";
 
     DisplayClass *D = new DisplayClass();
     *D->Data = Displays::Vysi_v1_0;
@@ -60,6 +60,7 @@ void DefaultSetup()
     *G2->Modules.GetValue<Coord2D>(G2->Position) = Coord2D(1, 1, 0);
 
     //Width animation
+    /*
     Variable<float> *A = T1->Modules.Get<Variable<float>>(T1->Width);
     Variable<Operations> *AO = new Variable<Operations>(Operations::MoveTo);
     Variable<float> *ATGT = new Variable<float>(0);
@@ -188,4 +189,5 @@ void DefaultSetup()
     //SERVO
     ServoClass *Ser = new ServoClass();
     Ser->Modules.Add(Board.Devices.Modules[5],Ser->Port);
+    */
 };

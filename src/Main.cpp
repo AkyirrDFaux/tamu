@@ -24,6 +24,7 @@ uint32_t DeltaTime = 0;
 #include "Data\Coord2D.h"
 #include "Data\Vector3D.h"
 
+#include "Core\DataList.h"
 #include "Core\IDList.h"
 #include "Core\Chirp.h"
 ChirpClass Chirp = ChirpClass(); // Bluetooth/Serial
@@ -35,7 +36,6 @@ ChirpClass Chirp = ChirpClass(); // Bluetooth/Serial
 RegisterClass Objects;
 ObjectList<> Sensors;  // EX: accel/button/sensor
 ObjectList<> Programs; // Ex: Emotes
-//ObjectList<> Routines; // Ex: Update positions, color blends
 ObjectList<> Outputs;  // Ex: Render
 
 #include "Object\Port.h"
@@ -95,10 +95,12 @@ void setup()
         Root.close();
     }
 
-    Chirp.Begin(Board.BTName);
+    Chirp.Begin("UIIAI");
+    //Chirp.Begin(*Board.Values.At<String>(Board.BTName));
+    
     Serial.println(Objects.ContentDebug());
     TimeUpdate();
-    Board.BootTime = CurrentTime;
+    *Board.Values.At<uint32_t>(Board.BootTime) = CurrentTime;
 
     bool AllRun = false;
     while (AllRun == false)

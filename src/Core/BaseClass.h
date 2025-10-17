@@ -33,6 +33,7 @@ public:
 
     uint32_t ReferencesCount = 0;
     IDList Modules;
+    DataList Values;
 
     BaseClass(IDClass NewID = RandomID, FlagClass NewFlags = Flags::None);
 
