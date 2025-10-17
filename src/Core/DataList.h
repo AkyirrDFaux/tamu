@@ -128,8 +128,9 @@ bool DataList::Add(C AddData, int32_t Index) // Add an item to list, supports -1
     else if (IsValid(Index) == true) // Occupied
         return false;
 
-    Data[Index] = new C*(&AddData); //With write?
+    Data[Index] = new C*;
     Type[Index] = GetType<C>();
+    *At<C>(Index) = AddData;
 
     return true;
 };
