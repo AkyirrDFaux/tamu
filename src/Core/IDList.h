@@ -34,8 +34,6 @@ public:
 
     template <class C>
     C *Get(int32_t Index);
-    template <class C>
-    C *GetValue(int32_t Index);
 
     String AsString();
 };

@@ -78,7 +78,7 @@ Drivers PortClass::StartDriver()
     }
     else if (Attached.IsValid(0) && Attached[0]->Type == Types::Display && Attached[0]->Modules[0] == this && *Port == Ports::GPIO) // Allow combining
     {
-        DriverObj = BeginLED(*Attached[0]->As<DisplayClass>()->Modules.GetValue<int32_t>(1), *Pin);
+        DriverObj = BeginLED(*Attached[0]->Values.At<int32_t>(1), *Pin);
         *Driver = Drivers::LED;
     }
     else if (Attached.IsValid(0) && Attached[0]->Type == Types::LEDStrip && Attached[0]->Modules[0] == this && *Port == Ports::GPIO) // Allow combining

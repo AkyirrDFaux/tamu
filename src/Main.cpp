@@ -30,7 +30,7 @@ uint32_t DeltaTime = 0;
 ChirpClass Chirp = ChirpClass(); // Bluetooth/Serial
 
 #include "Core\BaseClass.h"
-#include "Core\Variable.h"
+//#include "Core\Variable.h"
 #include "Core\Register.h"
 
 RegisterClass Objects;
@@ -44,8 +44,8 @@ ObjectList<> Outputs;  // Ex: Render
 #include "Object\Board.h"
 BoardClass Board;
 
-#include "Core\Operation.h" //TODO later
-#include "Core\Program.h" //TODO later
+//#include "Core\Operation.h" //TODO later
+//#include "Core\Program.h" //TODO later
 
 #include "Object\Fan.h"
 #include "Object\Servo.h"

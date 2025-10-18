@@ -62,12 +62,3 @@ C *IDList::Get(int32_t Index)
 
     return At(Index)->As<C>();
 }
-
-template <class C>
-C *IDList::GetValue(int32_t Index)
-{
-    if (!IsValid(Index))
-        return nullptr;
-
-    return At(Index)->ValueAs<C>();
-};

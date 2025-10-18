@@ -1,20 +1,22 @@
-class DisplayClass : public Variable<Displays>
+class DisplayClass : public BaseClass
 {
 public:
     byte *Layout = nullptr;
-    enum Module
-    {
-        Port,
+    enum Value{
+        DisplayType,
         Length,
         Size,
         Ratio,
         Brightness,
         Offset,
-        Mirrored,
-        Parts
+        Mirrored
+    };
+    enum Module
+    {
+        Port
     };
 
-    DisplayClass(bool New = true, IDClass ID = RandomID, FlagClass Flags = Flags::None);
+    DisplayClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     ~DisplayClass();
 
     void Setup();
@@ -22,51 +24,32 @@ public:
     ColourClass RenderPixel(Vector2D Base);
 };
 
-DisplayClass::DisplayClass(bool New, IDClass ID, FlagClass Flags) : Variable(Displays::Undefined, ID, Flags)
+DisplayClass::DisplayClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
 {
     BaseClass::Type = Types::Display;
     Name = "Display";
     Outputs.Add(this);
 
-    if (!Modules.IsValidID(Length))
-    {
-        AddModule(new Variable<int32_t>(0, RandomID, Flags::Auto), Length);
-        Modules[Length]->Name = "Length";
-    }
-    if (!Modules.IsValidID(Size))
-    {
-        AddModule(new Variable<Vector2D>(Vector2D(0, 0), RandomID, Flags::Auto), Size);
-        Modules[Size]->Name = "Size";
-    }
-    if (!Modules.IsValidID(Ratio))
-    {
-        AddModule(new Variable<float>(1, RandomID, Flags::Auto), Ratio);
-        Modules[Ratio]->Name = "Ratio";
-    }
-
-    if (New)
-    {
-        AddModule(new Variable<uint8_t>(20), Brightness);
-        Modules[Brightness]->Name = "Brightness";
-        AddModule(new Variable<Coord2D>(Coord2D(0, 0, 0)), Offset);
-        Modules[Offset]->Name = "Offset";
-        AddModule(new Variable<bool>(false), Mirrored);
-        Modules[Mirrored]->Name = "Mirrored";
-        AddModule(new Folder(true), Parts);
-        Modules[Parts]->Name = "Parts";
-    }
+    Values.Add(Displays::Undefined,DisplayType);
+    Values.Add<int32_t>(0, Length);
+    Values.Add(Vector2D(0, 0), Size);
+    Values.Add<float>(1, Ratio);
+    Values.Add<uint8_t>(20, Brightness);
+    Values.Add(Coord2D(0, 0, 0), Offset);
+    Values.Add(false, Mirrored);
 };
 
 void DisplayClass::Setup()
 {
-    int32_t *Length = Modules.GetValue<int32_t>(Module::Length);
-    Vector2D *Size = Modules.GetValue<Vector2D>(Module::Size);
-    float *Ratio = Modules.GetValue<float>(Module::Ratio);
+    Displays *Type = Values.At<Displays>(Value::DisplayType);
+    int32_t *Length = Values.At<int32_t>(Value::Length);
+    Vector2D *Size = Values.At<Vector2D>(Value::Size);
+    float *Ratio = Values.At<float>(Value::Ratio);
 
-    if (Length == nullptr || Size == nullptr || Ratio == nullptr)
+    if (Type == nullptr || Length == nullptr || Size == nullptr || Ratio == nullptr)
         return;
 
-    if (*Data == Displays::Vysi_v1_0)
+    if (*Type == Displays::Vysi_v1_0)
     {
         *Length = 86;
         *Ratio = 1;
@@ -83,12 +66,12 @@ DisplayClass::~DisplayClass()
 bool DisplayClass::Run()
 {
     PortClass *Port = Modules.Get<PortClass>(Module::Port); // HW connection
-    int32_t *Length = Modules.GetValue<int32_t>(Module::Length);
-    Vector2D *Size = Modules.GetValue<Vector2D>(Module::Size);
-    float *Ratio = Modules.GetValue<float>(Module::Ratio);
-    uint8_t *Brightness = Modules.GetValue<uint8_t>(Module::Brightness);
-    Coord2D *Offset = Modules.GetValue<Coord2D>(Module::Offset);
-    bool *Mirrored = Modules.GetValue<bool>(Module::Mirrored);
+    int32_t *Length = Values.At<int32_t>(Value::Length);
+    Vector2D *Size = Values.At<Vector2D>(Value::Size);
+    float *Ratio = Values.At<float>(Value::Ratio);
+    uint8_t *Brightness = Values.At<uint8_t>(Value::Brightness);
+    Coord2D *Offset = Values.At<Coord2D>(Value::Offset);
+    bool *Mirrored = Values.At<bool>(Value::Mirrored);
 
     if (Port == nullptr || Length == nullptr || Size == nullptr || Ratio == nullptr ||
         Brightness == nullptr || Offset == nullptr || Mirrored == nullptr || Layout == nullptr)
@@ -128,16 +111,9 @@ bool DisplayClass::Run()
 
 ColourClass DisplayClass::RenderPixel(Vector2D Centered)
 {
-    Folder *Parts = Modules.Get<Folder>(Module::Parts);
-
     ColourClass Colour = ColourClass(0, 0, 0);
-    if (Parts == nullptr)
-    {
-        ReportError(Status::MissingModule);
-        return Colour;
-    }
 
-    for (int32_t Index = Parts->Modules.FirstValid(Types::Shape2D); Index < Parts->Modules.Length; Parts->Modules.Iterate(&Index, Types::Shape2D))
-        Colour = Parts->Modules[Index]->As<Shape2DClass>()->Render(Colour, Centered);
+    for (int32_t Index = Modules.FirstValid(Types::Shape2D,1); Index < Modules.Length; Modules.Iterate(&Index, Types::Shape2D))
+        Colour = Modules[Index]->As<Shape2DClass>()->Render(Colour, Centered);
     return Colour;
 };

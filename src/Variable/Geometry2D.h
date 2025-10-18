@@ -1,64 +1,57 @@
-class Geometry2DClass : public Variable<Geometries>
+class Geometry2DClass : public BaseClass
 {
 public:
-    enum Module
+    enum Value
     {
+        Geometry,
         Operation,
         Fade,
         Position,
         Size
     };
 
-    Geometry2DClass(bool New = true, IDClass ID = RandomID, FlagClass Flags = Flags::None);
+    Geometry2DClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     void Setup();
 
     float Render(float Previous, Vector2D PixelPosition);
 };
 
-Geometry2DClass::Geometry2DClass(bool New, IDClass ID, FlagClass Flags) : Variable(Geometries::None, ID, Flags)
+Geometry2DClass::Geometry2DClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
 {
     Type = Types::Geometry2D;
     Name = "Geometry";
-    if (New)
-    {
-        AddModule(new Variable<GeometryOperation>(GeometryOperation::Add), Module::Operation);
-        Modules[Module::Operation]->Name = "Operation";
-    }
+
+    Values.Add(Geometries::None);
+    Values.Add(GeometryOperation::Add);
 };
 
 void Geometry2DClass::Setup()
 {
-    switch (*Data)
+    Geometries *Type = Values.At<Geometries>(Geometry);
+
+    switch (*Type)
     {
     case Geometries::Box:
     case Geometries::Elipse:
     case Geometries::DoubleParabola:
-        if (!Modules.IsValidID(Size))
-        {
-            AddModule(new Variable<Vector2D>(Vector2D(1, 1)), Size);
-            Modules[Size]->Name = "Size";
-        }
+        if (!Values.IsValid(Size))
+            Values.Add(Vector2D(1, 1), Size);
     case Geometries::HalfFill:
-        if (!Modules.IsValidID(Fade))
-        {
-            AddModule(new Variable<float>(1), Fade);
-            Modules[Fade]->Name = "Fade";
-        }
-        if (!Modules.IsValidID(Position))
-        {
-            AddModule(new Variable<Coord2D>(Coord2D()), Position);
-            Modules[Position]->Name = "Position";
-        }
+        if (!Values.IsValid(Fade))
+            Values.Add<float>(1, Fade);
+        if (!Values.IsValid(Position))
+            Values.Add(Coord2D(), Position);
         break;
     }
 };
 
 float Geometry2DClass::Render(float Previous, Vector2D PixelPosition)
 {
-    GeometryOperation *Operation = Modules.GetValue<GeometryOperation>(Module::Operation);
-    float *Fade = Modules.GetValue<float>(Module::Fade);
-    Coord2D *Position = Modules.GetValue<Coord2D>(Module::Position);
-    Vector2D *Size = Modules.GetValue<Vector2D>(Module::Size);
+    Geometries *Type = Values.At<Geometries>(Geometry);
+    GeometryOperation *Operation = Values.At<GeometryOperation>(Value::Operation);
+    float *Fade = Values.At<float>(Value::Fade);
+    Coord2D *Position = Values.At<Coord2D>(Value::Position);
+    Vector2D *Size = Values.At<Vector2D>(Value::Size);
 
     if (Operation == nullptr)
     {
@@ -69,7 +62,7 @@ float Geometry2DClass::Render(float Previous, Vector2D PixelPosition)
     Vector2D Local;
 
     float Overlay = 0;
-    switch (*Data)
+    switch (*Type)
     {
     case Geometries::Fill:
         Overlay = 1;
@@ -99,7 +92,7 @@ float Geometry2DClass::Render(float Previous, Vector2D PixelPosition)
         Overlay = Local.Y / *Fade + 0.5;
         break;
     default:
-        ReportError(Status::InvalidValue, "Shape : " + String(*ValueAs<uint8_t>()));
+        ReportError(Status::InvalidValue, "Shape");
         break;
     }
 

@@ -13,51 +13,53 @@ void DefaultSetup()
     *Board.Values.At<String>(Board.BTName) = "Unnamed - Default";
 
     DisplayClass *D = new DisplayClass();
-    *D->Data = Displays::Vysi_v1_0;
+    *D->Values.At<Displays>(D->DisplayType) = Displays::Vysi_v1_0;
     D->Setup();
-    D->Modules.Add(Board.Modules[0],D->Port);
-    Folder *DS = D->Modules.Get<Folder>(D->Parts);
+    D->AddModule(Board.Modules[0],D->Port);
 
     Shape2DClass *S = new Shape2DClass();
-    DS->AddModule(S);
-    Texture2D *T = S->Modules.Get<Texture2D>(S->Texture);
-    *T->Data = Textures2D::Full;
+    D->AddModule(S);
+    Texture2D *T = new Texture2D();
+    S->AddModule(T,S->Texture);
+    *T->Values.At<Textures2D>(T->Texture) = Textures2D::Full;
     T->Setup();
-    *T->Modules.GetValue<ColourClass>(T->ColourA) = ColourClass(255, 255, 255);
+    *T->Values.At<ColourClass>(T->ColourA) = ColourClass(255, 255, 255);
     Geometry2DClass *G = new Geometry2DClass();
     S->AddModule(G);
-    *G->Data = Geometries::Fill;
+    *G->Values.At<Geometries>(G->Geometry) = Geometries::Fill;
     G->Setup();
 
     Shape2DClass *S1 = new Shape2DClass();
-    DS->AddModule(S1);
-    Texture2D *T1 = S1->Modules.Get<Texture2D>(S1->Texture);
-    *T1->Data = Textures2D::BlendLinear;
+    D->AddModule(S1);
+    Texture2D *T1 = new Texture2D();
+    S1->AddModule(T1,S1->Texture);
+    *T1->Values.At<Textures2D>(T1->Texture) = Textures2D::BlendLinear;
     T1->Setup();
-    *T1->Modules.GetValue<ColourClass>(T1->ColourA) = ColourClass(0, 255, 0);
-    *T1->Modules.GetValue<ColourClass>(T1->ColourB) = ColourClass(255, 0, 0);
-    *T1->Modules.GetValue<Coord2D>(T1->Position) = Coord2D(1, 1, 0);
-    *T1->Modules.GetValue<float>(T1->Width) = 5.0F;
+    *T1->Values.At<ColourClass>(T1->ColourA) = ColourClass(0, 255, 0);
+    *T1->Values.At<ColourClass>(T1->ColourB) = ColourClass(255, 0, 0);
+    *T1->Values.At<Coord2D>(T1->Position) = Coord2D(1, 1, 0);
+    *T1->Values.At<float>(T1->Width) = 5.0F;
     Geometry2DClass *G1 = new Geometry2DClass();
     S1->AddModule(G1);
-    *G1->Data = Geometries::Elipse;
+    *G1->Values.At<Geometries>(G1->Geometry) = Geometries::Elipse;
     G1->Setup();
-    *G1->Modules.GetValue<Vector2D>(G1->Size) = Vector2D(4, 4);
-    *G1->Modules.GetValue<float>(G1->Fade) = 0.5F;
-    *G1->Modules.GetValue<Coord2D>(G1->Position) = Coord2D(1, 1, 0);
+    *G1->Values.At<Vector2D>(G1->Size) = Vector2D(4, 4);
+    *G1->Values.At<float>(G1->Fade) = 0.5F;
+    *G1->Values.At<Coord2D>(G1->Position) = Coord2D(1, 1, 0);
 
     Shape2DClass *S2 = new Shape2DClass();
-    DS->AddModule(S2);
-    Texture2D *T2 = S2->Modules.Get<Texture2D>(S2->Texture);
-    *T2->Data = Textures2D::Full;
+    D->AddModule(S2);
+    Texture2D *T2 = new Texture2D();
+    S2->AddModule(T2,S2->Texture);
+    *T2->Values.At<Textures2D>(T2->Texture) = Textures2D::Full;
     T2->Setup();
-    *T2->Modules.GetValue<ColourClass>(T2->ColourA) = ColourClass(0, 0, 0);
+    *T2->Values.At<ColourClass>(T2->ColourA) = ColourClass(0, 0, 0);
     Geometry2DClass *G2 = new Geometry2DClass();
     S2->AddModule(G2);
-    *G2->ValueAs<Geometries>() = Geometries::DoubleParabola;
+    *G2->Values.At<Geometries>(G2->Geometry) = Geometries::DoubleParabola;
     G2->Setup();
-    *G2->Modules.GetValue<Vector2D>(G2->Size) = Vector2D(2, 4);
-    *G2->Modules.GetValue<Coord2D>(G2->Position) = Coord2D(1, 1, 0);
+    *G2->Values.At<Vector2D>(G2->Size) = Vector2D(2, 4);
+    *G2->Values.At<Coord2D>(G2->Position) = Coord2D(1, 1, 0);
 
     //Width animation
     /*

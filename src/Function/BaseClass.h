@@ -28,12 +28,6 @@ BaseClass::~BaseClass()
     Objects.Unregister(this);
 };
 
-template <class C>
-C *BaseClass::ValueAs() const
-{
-    return As<Variable<C>>()->Data;
-};
-
 ByteArray BaseClass::GetValue() const
 {
     ByteArray Data = ByteArray();
