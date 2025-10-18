@@ -207,7 +207,7 @@ Types ByteArray::Type() const
 
 int32_t ByteArray::SizeOfData() const
 {
-    if (Length <= sizeof(Types) + sizeof(uint8_t))
+    if (Length < sizeof(Types) + sizeof(uint8_t))
         return -1;
     else if (Type() == Types::Text)
         return *(uint8_t *)(Array + sizeof(Types));

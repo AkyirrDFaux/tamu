@@ -53,8 +53,8 @@ public:
     template <class C>
     C *ValueAs() const;
 
-    ByteArray GetValue() const;
-    bool SetValue(ByteArray &Input);
+    ByteArray GetValue(int32_t Value = 0) const;
+    bool SetValue(ByteArray &Input, uint8_t Value = 0);
     String ContentDebug(int32_t Level);
 };
 

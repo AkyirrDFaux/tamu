@@ -33,12 +33,12 @@ void WriteValue(ByteArray &Input)
         Chirp.Send(ByteArray(Status::AutoObject) << Input);
         return;
     }
-    else if (Object->SetValue(Input) == false)
+    else if (Object->SetValue(Input, ID.As<IDClass>().Sub()) == false)
     {
         Chirp.Send(ByteArray(Status::InvalidType) << Input);
         return;
     }
-    Chirp.Send(ByteArray(Functions::WriteValue) << ID << Object->GetValue());
+    Chirp.Send(ByteArray(Functions::WriteValue) << ID << Object->GetValue(ID.As<IDClass>().Sub()));
 }
 
 void ReadFile(ByteArray &Input)

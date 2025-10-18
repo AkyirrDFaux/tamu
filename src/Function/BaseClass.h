@@ -28,11 +28,11 @@ BaseClass::~BaseClass()
     Objects.Unregister(this);
 };
 
-ByteArray BaseClass::GetValue() const
+ByteArray BaseClass::GetValue(int32_t Value) const
 {
     ByteArray Data = ByteArray();
     Types Type = Types::Undefined;
-    for (uint32_t Index = 0; Index < Values.Length; Index++)
+    for (uint32_t Index = max((int32_t)0,Value-1); Index < Values.Length; Index++)
     {
         Type = Values.Type[Index];
         if (Type == Types::Text)
@@ -41,16 +41,19 @@ ByteArray BaseClass::GetValue() const
             Data = Data << ByteArray((char *)&Type, sizeof(Types));
         else
             Data = Data << ByteArray((char *)&Type, sizeof(Types)) << ByteArray((char *)Values.Data[Index], GetValueSize(Type));
+        
+        if (Value != 0)
+            break;
     }
     return Data;
 };
 
 //Not sure this is working
-bool BaseClass::SetValue(ByteArray &Input)
+bool BaseClass::SetValue(ByteArray &Input, uint8_t Value)
 {
     ByteArray Part = Input.ExtractPart();
-    int32_t Index = 0;
-    while (Part.Length > 0)
+    int32_t Index = max(Value-1,0);
+    while (Part.Length > 0 && (Value == 0 || (Value-1 == Index && Value != 0)))
     {
         if (Part.Type() == Types::Undefined)
         {
@@ -58,19 +61,15 @@ bool BaseClass::SetValue(ByteArray &Input)
             Index++;
             continue;
         }
-
-        
-        if (Values.IsValid(Index) == false || Values.Type[Index] != Part.Type()) // Prepare for copying
+        if (Values.IsValid(Index,Part.Type()) == false) // Prepare for copying
         {
             if (Values.IsValid(Index)) // Already occupied, but different type
                 Values.Delete(Index);
             else //Possibly not allocated yet
                 Values.Expand(Index + 1);
-
             Values.Data[Index] = new char[Part.SizeOfData()]; 
             Values.Type[Index] = Part.Type();
         }
-
         memcpy(Values.Data[Index],Part.Array + sizeof(Types), Part.SizeOfData());
 
         Part = Input.ExtractPart();
