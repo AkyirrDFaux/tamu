@@ -3,7 +3,7 @@ enum Flags : uint8_t
     None = 0,
     Auto = 0b00000001,         // No name change, cannot remove, no editing, no saving
     Undefined = 0b00000010,
-    RunRead = 0b00000100,      // Run when read (Variable)
+    Undefined2 = 0b00000100,      
     RunLoop = 0b00001000,      // Allow automatic run forever
     RunOnce = 0b00010000,      // Run once manually until finished, will reset the flag automatically
     RunOnStartup = 0b00100000, // Run automatically once after board finished loading

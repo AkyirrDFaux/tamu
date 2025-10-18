@@ -102,71 +102,71 @@ void DefaultSetup()
     // Animate again
     P->AddModule(AO, 5);
     
-    /*
+   
     // EYE LID
     Shape2DClass *SL = new Shape2DClass();
-    DS->AddModule(SL);
-    Texture2D *TL = SL->Modules.Get<Texture2D>(SL->Texture);
-    *TL->Data = Textures2D::Full;
+    D->AddModule(SL);
+    Texture2D *TL = new Texture2D();
+    SL->AddModule(TL,SL->Texture);
+    *TL->Values.At<Textures2D>(TL->Texture) = Textures2D::Full;
     TL->Setup();
-    *TL->Modules.GetValue<ColourClass>(TL->ColourA) = ColourClass(0, 0, 0);
+    *TL->Values.At<ColourClass>(TL->ColourA) = ColourClass(0, 0, 0);
     Geometry2DClass *GL = new Geometry2DClass();
     SL->AddModule(GL);
-    *GL->Data = Geometries::HalfFill;
+    *GL->Values.At<Geometries>(GL->Geometry) = Geometries::HalfFill;
     GL->Setup();
-    *GL->Modules.GetValue<Coord2D>(GL->Position) = Coord2D(0, 3, 0);
+    *GL->Values.At<Coord2D>(GL->Position) = Coord2D(0, 3, 0);
 
+    
     // LID MOVEMENT
-    Variable<Coord2D> *A2 = GL->Modules.Get<Variable<Coord2D>>(GL->Position);
-    Variable<Operations> *A2O = new Variable<Operations>(Operations::MoveTo);
-    Variable<Coord2D> *A2TGT = new Variable<Coord2D>(Coord2D());
-    Variable<uint32_t> *A2T = new Variable<uint32_t>(0);
-    A2->AddModule(A2O);
-    A2->AddModule(A2TGT);
-    A2->AddModule(A2T);
-
     Program *P2 = new Program();
-    *P2->ValueAs<ProgramTypes>() = ProgramTypes::Sequence;
+    *P2->Values.At<ProgramTypes>(P2->Mode) = ProgramTypes::Sequence;
     P2->Flags += Flags::RunLoop;
 
+
+    Operation *AL = new Operation();
+    *AL->Values.At<Operations>(0) = Operations::MoveTo;
+    AL->Values.Add(Coord2D(),1);
+    AL->Values.Add<uint32_t>(0,2);
+    AL->Modules.Add(IDClass(GL->ID.Main(),GL->Position+1));
+
     // Add equal for value - down position
-    Variable<Coord2D> *V21 = new Variable<Coord2D>(Coord2D(0, -5, 0));
-    Variable<Operations> *O21 = new Variable<Operations>(Operations::Equal);
-    V21->AddModule(O21, 0);
-    V21->AddModule(A2TGT);
-    P2->AddModule(V21);
+    Operation *OL1 = new Operation();
+    *OL1->Values.At<Operations>(0) = Operations::Equal;
+    OL1->Values.Add(Coord2D(0, -5, 0),1);
+    OL1->Modules.Add(IDClass(AL->ID.Main(),1+1));
+    P2->AddModule(OL1, 0);
 
     // Add delay for time
-    Variable<uint32_t> *V22 = new Variable<uint32_t>(500); //Delay
-    Variable<Operations> *O23 = new Variable<Operations>(Operations::AddDelay);
-    A2T->AddModule(O23, 0);
-    A2T->AddModule(V22);
-    P2->AddModule(A2T);
+    Operation *OL2 = new Operation();
+    *OL2->Values.At<Operations>(0) = Operations::AddDelay;
+    OL2->Values.Add<uint32_t>(500,1);
+    OL2->Modules.Add(IDClass(AL->ID.Main(),2+1));
+    P2->AddModule(OL2, 1);
 
     // Add animation - down
-    P2->AddModule(A2);
-
+    P2->AddModule(AL, 2);
+    
     // Add equal for value - up position
-    Variable<Coord2D> *V24 = new Variable<Coord2D>(Coord2D(0, 5, 0));
-    Variable<Operations> *O24 = new Variable<Operations>(Operations::Equal);
-    V24->AddModule(O24, 0);
-    V24->AddModule(A2TGT);
-    P2->AddModule(V24);
-
+    Operation *OL3 = new Operation();
+    *OL3->Values.At<Operations>(0) = Operations::Equal;
+    OL3->Values.Add(Coord2D(0, 5, 0),1);
+    OL3->Modules.Add(IDClass(AL->ID.Main(),1+1));
+    P2->AddModule(OL3, 3);
+    
     // Add delay for time again
-    P2->AddModule(A2T);
-
+    P2->AddModule(OL2, 4);
+    
     // Animate again - up
-    P2->AddModule(A2);
+    P2->AddModule(AL, 5);
 
     //Delay
-    Variable<uint32_t> *V25 = new Variable<uint32_t>(0);
-    Variable<Operations> *O25 = new Variable<Operations>(Operations::Delay);
-    Variable<uint32_t> *V26 = new Variable<uint32_t>(5000);
-    V25->AddModule(O25,0);
-    V25->AddModule(V26);
-    P2->AddModule(V25);
-    */
+    Operation *OL4 = new Operation();
+    *OL4->Values.At<Operations>(0) = Operations::Delay;
+    OL4->Values.Add<uint32_t>(5000,1);
+    OL4->Values.Add<uint32_t>(0,2);
+    P2->AddModule(OL4, 6);
+
     // FAN
     FanClass *F = new FanClass();
     F->Modules.Add(Board.Modules[4],F->Port);

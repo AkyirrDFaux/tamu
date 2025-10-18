@@ -29,8 +29,6 @@ bool Operation::Run()
     if (Values.IsValid(OperationType, Types::Operation) == false) // No operation
         return true;
 
-    Serial.println((uint8_t)*Values.At<Operations>(OperationType));
-
     switch (*Values.At<Operations>(OperationType))
     {
     case Operations::Equal:
@@ -50,27 +48,40 @@ bool Operation::Run()
 
 bool Operation::Equal()
 {
-    float *Target = Values.At<float>(1);
-    float *Value = Modules[0]->Values.At<float>(Modules.IDs[0].Sub() - 1); // Proprietary
+    //NO VALUE CHECK
+    void *Target = Values.Data[1];
+    void *Value = Modules[0]->Values.Data[Modules.IDs[0].Sub() - 1];
 
     if (Target == nullptr || Value == nullptr)
         return true;
 
-    *Value = *Target;
+    if (Values.Type[1] != Modules[0]->Values.Type[Modules.IDs[0].Sub() - 1])
+        return true;
+
+    memcpy(Value, Target, GetValueSize(Values.Type[1]));
     return true;
 }
 
 bool Operation::MoveTo()
 {
-    float *Target = Values.At<float>(1);
+    //NO VALUE CHECK
+    void *Target = Values.Data[1];
     uint32_t *Time = Values.At<uint32_t>(2);
-
-    float *Value = Modules[0]->Values.At<float>(Modules.IDs[0].Sub() - 1); // Proprietary
+    void *Value = Modules[0]->Values.Data[Modules.IDs[0].Sub() - 1]; // Proprietary
 
     if (Target == nullptr || Time == nullptr || Value == nullptr)
         return true;
 
-    *Value = TimeMove(*Value, *Target, *Time);
+    if (Values.Type[1] != Modules[0]->Values.Type[Modules.IDs[0].Sub() - 1])
+        return true;
+
+    if (Values.Type[1] == Types::Coord2D)
+        *(Coord2D *)Value = ((Coord2D *)Value)->TimeMove(*(Coord2D *)Target, *Time);
+    else if (Values.Type[1] == Types::Number)
+        *(float *)Value = TimeMove(*(float *)Value, *(float *)Target, *Time);
+    else
+        return true;
+
     return (CurrentTime >= *Time);
 }
 
@@ -103,101 +114,3 @@ bool Operation::AddDelay()
     *Value = *Delay + CurrentTime;
     return true;
 }
-
-/*
-template <>
-bool Variable<float>::Run()
-{
-    if (Modules.IsValid(0, Types::Operation) == false) // No operation
-        return true;
-
-    switch (*Modules.GetValue<Operations>(0))
-    {
-    case Operations::Equal: // Inverted hierarchy! Writes to modules instead of itself
-        for (int32_t Index = Modules.FirstValid(Type, 1); Index < Modules.Length; Modules.Iterate(&Index, Type))
-            *Modules.GetValue<float>(Index) = *Data;
-        return true;
-    case Operations::MoveTo: // 1 Target, 2 Time
-        if (Modules.IsValid(1, Types::Number) == false || Modules.IsValid(2, Types::Time) == false)
-            return true;
-
-        *Data = TimeMove(*Data, *Modules.GetValue<float>(1), *Modules.GetValue<uint32_t>(2));
-        return (CurrentTime >= *Modules.GetValue<uint32_t>(2));
-    default:
-        ReportError(Status::InvalidValue, "Operation not implemeted");
-        return true;
-    }
-    return true;
-}
-
-template <>
-bool Variable<Coord2D>::Run()
-{
-    if (Modules.IsValid(0, Types::Operation) == false) // No operation
-        return true;
-
-    switch (*Modules.GetValue<Operations>(0))
-    {
-    case Operations::Equal: // Inverted hierarchy! Writes to modules instead of itself
-        for (int32_t Index = Modules.FirstValid(Type, 1); Index < Modules.Length; Modules.Iterate(&Index, Type))
-            *Modules.GetValue<Coord2D>(Index) = *Data;
-        return true;
-    case Operations::MoveTo: // 1 Target, 2 Time
-        if (Modules.IsValid(1, Types::Coord2D) == false || Modules.IsValid(2, Types::Time) == false)
-            return true;
-
-        *Data = Data->TimeMove(*Modules.GetValue<Coord2D>(1), *Modules.GetValue<uint32_t>(2));
-        return (CurrentTime >= *Modules.GetValue<uint32_t>(2));
-    default:
-        ReportError(Status::InvalidValue, "Operation not implemeted");
-        return true;
-    }
-    return true;
-}
-template <>
-bool Variable<uint32_t>::Run()
-{
-    if (Modules.IsValid(0, Types::Operation) == false) // No operation
-        return true;
-
-    switch (*Modules.GetValue<Operations>(0))
-    {
-    case Operations::Equal: // Inverted hierarchy! Writes to modules instead of itself
-        for (int32_t Index = Modules.FirstValid(Type, 1); Index < Modules.Length; Modules.Iterate(&Index, Type))
-            *Modules.GetValue<uint32_t>(Index) = *Data;
-        return true;
-    case Operations::AddDelay:
-        if (Modules.IsValid(1, Types::Time) == false)
-            return true;
-
-        *Data = *Modules.GetValue<uint32_t>(1) + CurrentTime;
-        return true;
-    case Operations::Delay: // Data is start time, Module 1 is delay
-        if (Modules.IsValid(1, Types::Time) == false)
-            return true;
-
-        if (*Data == 0)
-            *Data = CurrentTime;
-        else if (CurrentTime > *Data + *Modules.GetValue<uint32_t>(1))
-        {
-            *Data = 0;   // Reset
-            return true; // Finished
-        }
-        return false;
-    default:
-        ReportError(Status::InvalidValue, "Operation not implemeted");
-        return true;
-    }
-    return true;
-}
-
-/*
-case Operations::Add:
-        if (!Modules.IsValid(1) || Type != Modules[2]->Type)
-            return true;
-
-        *Data = 0;
-        for (int32_t Index = Modules.FirstValid(Type, 1); Index < Modules.Length; Modules.Iterate(&Index, Type))
-            *Data += *Modules.GetValue<C>(Index);
-        return true;
-*/

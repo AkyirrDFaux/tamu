@@ -155,12 +155,10 @@ As (bytearray) checking not working
 Spread out bluetooth sending to prevent lag?
 Saving takes forever
 (ID)List, register make unsigned?
-Variable with flag runloop will update value automatically if function
 
 EXTRA:
-RunRead variable flag
 Edit rendering to allow all-display filters
-Extra button / connection -> storageless start
+Extra button / connection -> storageless start?
 Create default configs (in app)
 
 BUGS:
@@ -186,3 +184,4 @@ Incorrect wraping of LED strip
 // 04.09.2025 App Improvements
 // 08.09.2025 Sorted out operations
 // 13.09.2025 New port/driver system + Servo + Inputs
+// 18.10.2025 DataList replaced Variables -> multi-variable objects
