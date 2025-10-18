@@ -1,20 +1,25 @@
-class ServoClass : public Variable<uint8_t>
+class ServoClass : public BaseClass
 {
 public:
+    enum Value
+    {
+        Angle,
+    };
     enum Module
     {
         Port,
     };
 
-    ServoClass(bool New = true, IDClass ID = RandomID, FlagClass Flags = Flags::None);
+    ServoClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     ~ServoClass();
 
     bool Run();
 };
 
-ServoClass::ServoClass(bool New, IDClass ID, FlagClass Flags) : Variable(0, ID, Flags)
+ServoClass::ServoClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
 {
     BaseClass::Type = Types::Servo;
+    Values.Add<uint8_t>(0);
     Name = "Servo";
     Outputs.Add(this);
 };
@@ -27,8 +32,9 @@ ServoClass::~ServoClass()
 bool ServoClass::Run()
 {
     PortClass *Port = Modules.Get<PortClass>(Module::Port); // HW connection
+    uint8_t *Angle = Values.At<uint8_t>(Value::Angle);
 
-    if (Port == nullptr || Data == nullptr)
+    if (Port == nullptr || Angle == nullptr)
     {
         ReportError(Status::MissingModule);
         return true;
@@ -41,6 +47,6 @@ bool ServoClass::Run()
         ReportError(Status::PortError);
         return true;
     }
-    Driver->write(*Data);
+    Driver->write(*Angle);
     return true;
 };

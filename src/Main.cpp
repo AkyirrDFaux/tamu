@@ -24,7 +24,7 @@ uint32_t DeltaTime = 0;
 #include "Data\Coord2D.h"
 #include "Data\Vector3D.h"
 
-#include "Core\DataList.h" //Pointers are not pointer-ing
+#include "Core\DataList.h"
 #include "Core\IDList.h"
 #include "Core\Chirp.h"
 ChirpClass Chirp = ChirpClass(); // Bluetooth/Serial

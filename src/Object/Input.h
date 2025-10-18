@@ -58,9 +58,9 @@ bool InputClass::Run()
     PortClass *Port = Modules.Get<PortClass>(Module::Port); // HW connection
     Inputs *Type = Values.At<Inputs>(InputType);
 
-    if (Port == nullptr)
+    if (Port == nullptr || Type == nullptr)
     {
-        ReportError(Status::PortError);
+        ReportError(Status::MissingModule);
         return true;
     }
 

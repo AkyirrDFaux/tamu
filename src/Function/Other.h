@@ -166,28 +166,27 @@ void DefaultSetup()
     V25->AddModule(O25,0);
     V25->AddModule(V26);
     P2->AddModule(V25);
-
+    */
     // FAN
     FanClass *F = new FanClass();
-    F->Modules.Add(Board.Devices.Modules[4],F->Port);
+    F->Modules.Add(Board.Modules[4],F->Port);
     
     // LED STRIP
     LEDStripClass *L = new LEDStripClass();
-    L->Modules.Add(Board.Devices.Modules[1],L->Port);
-    //*L->Modules.Get<PortAttachClass>(L->PortAttach)->Data = 1;
-    *L->Modules.GetValue<int32_t>(L->Length) = 60;
+    L->Modules.Add(Board.Modules[1],L->Port);
+    *L->Values.At<int32_t>(L->Length) = 60;
 
     LEDSegmentClass *LS = new LEDSegmentClass();
-    L->Modules.Get<Folder>(L->Parts)->AddModule(LS);
-    *LS->Modules.GetValue<int32_t>(LS->End) = 59;
+    L->AddModule(LS);
+    *LS->Values.At<int32_t>(LS->End) = 59;
 
     Texture1D *LT = LS->Modules.Get<Texture1D>(LS->Texture);
-    *LT->ValueAs<Textures1D>() = Textures1D::Full;
+    *LT->Values.At<Textures1D>(LT->TextureType) = Textures1D::Full;
     LT->Setup();
-    *LT->Modules.GetValue<ColourClass>(LT->ColourA) = ColourClass(255, 0, 0);
+    *LT->Values.At<ColourClass>(LT->ColourA) = ColourClass(255, 0, 0);
 
     //SERVO
     ServoClass *Ser = new ServoClass();
-    Ser->Modules.Add(Board.Devices.Modules[5],Ser->Port);
-    */
+    Ser->Modules.Add(Board.Modules[5],Ser->Port);
+    
 };

@@ -79,13 +79,13 @@ BaseClass *CreateObject(Types Type, bool New, IDClass ID, FlagClass Flags)
     case Types::Board:
         return new BoardClass(ID, Flags);
     case Types::Fan:
-        return new FanClass(New, ID, Flags);
+        return new FanClass(ID, Flags);
     case Types::LEDSegment:
-        return new LEDSegmentClass(New, ID, Flags);
+        return new LEDSegmentClass(ID, Flags);
     case Types::Texture1D:
-        return new Texture1D(New, ID, Flags);
+        return new Texture1D(ID, Flags);
     case Types::LEDStrip:
-        return new LEDStripClass(New, ID, Flags);
+        return new LEDStripClass(ID, Flags);
     case Types::Geometry2D:
         return new Geometry2DClass(New, ID, Flags);
     case Types::GeometryOperation:

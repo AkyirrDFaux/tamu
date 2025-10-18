@@ -1,12 +1,13 @@
-class Texture1D : public Variable<Textures1D>
+class Texture1D : public BaseClass
 {
 public:
-    Texture1D(bool New = true, IDClass ID = RandomID, FlagClass Flags = Flags::None);
+    Texture1D(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     void Setup();
     ColourClass Render(int32_t PixelPosition);
 
-    enum Module
+    enum Value
     {
+        TextureType,
         ColourA,
         ColourB,
         Position,
@@ -14,38 +15,29 @@ public:
     };
 };
 
-Texture1D::Texture1D(bool New, IDClass ID, FlagClass Flags) : Variable(Textures1D::None, ID, Flags)
+Texture1D::Texture1D(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
 {
     BaseClass::Type = Types::Texture1D;
+    Values.Add(Textures1D::None);
     Name = "Texture";
 };
 
 void Texture1D::Setup()
 {
-    switch (*Data)
+    Textures1D *Type = Values.At<Textures1D>(TextureType);
+    switch (*Type)
     {
     case Textures1D::Blend:
-        if (!Modules.IsValidID(ColourB))
-        {
-            AddModule(new Variable<ColourClass>(ColourClass(0, 0, 0, 255)), Module::ColourB);
-            Modules[Module::ColourB]->Name = "Colour B";
-        }
-        if (!Modules.IsValidID(Position))
-        {
-            AddModule(new Variable<float>(0), Module::Position);
-            Modules[Module::Position]->Name = "Position";
-        }
-        if (!Modules.IsValidID(Width))
-        {
-            AddModule(new Variable<float>(1), Module::Width);
-            Modules[Module::Width]->Name = "Width";
-        }
+        if (!Values.IsValid(ColourB))
+            Values.Add(ColourClass(0, 0, 0, 255), ColourB);
+        if (!Values.IsValid(Position))
+            Values.Add<float>(0, Position);
+        if (!Values.IsValid(Width))
+            Values.Add<float>(1, Width);
+
     case Textures1D::Full:
-        if (!Modules.IsValidID(ColourA))
-        {
-            AddModule(new Variable<ColourClass>(ColourClass(0, 0, 0, 255)), Module::ColourA);
-            Modules[Module::ColourA]->Name = "Colour A";
-        }
+        if (!Values.IsValid(ColourA))
+            Values.Add(ColourClass(0, 0, 0, 255), ColourA);
         break;
     default:
         break;
@@ -54,23 +46,22 @@ void Texture1D::Setup()
 
 ColourClass Texture1D::Render(int32_t PixelPosition)
 {
-    Textures1D *Texture = ValueAs<Textures1D>();
-    ColourClass *ColourA = Modules.GetValue<ColourClass>(Module::ColourA);
-    ColourClass *ColourB = Modules.GetValue<ColourClass>(Module::ColourB);
-    float *Position = Modules.GetValue<float>(Module::Position);
-    float *Width = Modules.GetValue<float>(Module::Width);
+    Textures1D *Type = Values.At<Textures1D>(TextureType);
+    ColourClass *ColourA = Values.At<ColourClass>(Value::ColourA);
+    ColourClass *ColourB = Values.At<ColourClass>(Value::ColourB);
+    float *Position = Values.At<float>(Value::Position);
+    float *Width = Values.At<float>(Value::Width);
 
     ColourClass Colour;
     float Distance;
 
-
-    if (Texture == nullptr)
+    if (Type == nullptr)
     {
         ReportError(Status::MissingModule);
         return Colour;
     }
 
-    switch (*Texture)
+    switch (*Type)
     {
     case Textures1D::Full:
         if (ColourA == nullptr)
