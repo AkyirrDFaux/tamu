@@ -80,7 +80,7 @@ String BaseClass::ContentDebug(int32_t Level)
         Text += "-..";
 
     Text += "ID: ";
-    Text += String(ID.ID);
+    Text += ID.ToString();
     Text += ", Type: ";
     Text += String((uint8_t)Type);
     Text += " , Name: ";
@@ -90,13 +90,4 @@ String BaseClass::ContentDebug(int32_t Level)
         Text += Modules[Index]->ContentDebug(Level + 1);
 
     return Text;
-};
-
-class Folder : public BaseClass
-{
-public:
-    Folder(bool New = true, IDClass ID = RandomID, FlagClass Flags = Flags::None) : BaseClass(ID, Flags)
-    {
-        Type = Types::Folder;
-    };
 };

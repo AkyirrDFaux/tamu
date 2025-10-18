@@ -52,9 +52,9 @@ void Refresh(ByteArray &Input)
 {
     for (uint32_t Index = 1; Index <= Objects.Allocated; Index++)
     {
-        if (!Objects.IsValid(IDClass(Index)))
+        if (!Objects.IsValid(IDClass(Index,0)))
             continue;
-        Chirp.Send(ByteArray(Functions::ReadObject) << ByteArray(*Objects[IDClass(Index)]));
+        Chirp.Send(ByteArray(Functions::ReadObject) << ByteArray(*Objects[IDClass(Index,0)]));
     }
     Chirp.Send(ByteArray(Status::OK));
 }

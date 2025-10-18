@@ -77,7 +77,7 @@ bool IDList::IsValidID(int32_t Index) const
     if (Index >= Length || Index < 0)
         return false;
 
-    return IDs[Index].ID != NoID;
+    return IDs[Index].Main() != NoID;
 };
 
 int32_t IDList::Find(BaseClass *TestObject) // Returns index of object address, -1 if fails

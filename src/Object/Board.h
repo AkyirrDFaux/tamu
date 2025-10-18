@@ -10,7 +10,7 @@ public:
         MaxTime
     };
 
-    BoardClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
+    BoardClass(IDClass ID = (1<<8), FlagClass Flags = Flags::None);
     void Setup();
     void UpdateLoopTime();
 };
