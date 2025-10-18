@@ -111,7 +111,7 @@ enum class ProgramTypes : uint8_t
     All
 };
 
-enum class Operations : uint8_t //Fix in app
+enum class Operations : uint8_t
 {
     None,
     Equal,

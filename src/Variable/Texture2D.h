@@ -1,12 +1,13 @@
-class Texture2D : public Variable<Textures2D>
+class Texture2D : public BaseClass
 {
 public:
-    Texture2D(bool New = true, IDClass ID = RandomID, FlagClass Flags = Flags::None);
+    Texture2D(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     void Setup();
     ColourClass Render(Vector2D PixelPosition);
 
-    enum Module
+    enum Value
     {
+        Texture,
         ColourA,
         ColourB,
         Position,
@@ -14,39 +15,30 @@ public:
     };
 };
 
-Texture2D::Texture2D(bool New, IDClass ID, FlagClass Flags) : Variable(Textures2D::None, ID, Flags)
+Texture2D::Texture2D(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
 {
     BaseClass::Type = Types::Texture2D;
     Name = "Texture";
+
+    Values.Add(Textures2D::None);
 };
 
 void Texture2D::Setup()
 {
-    switch (*Data)
+    Textures2D *Type = Values.At<Textures2D>(Texture);
+    switch (*Type)
     {
     case Textures2D::BlendLinear:
     case Textures2D::BlendCircular:
-        if (!Modules.IsValidID(ColourB))
-        {
-            AddModule(new Variable<ColourClass>(ColourClass(0, 0, 0, 255)), Module::ColourB);
-            Modules[Module::ColourB]->Name = "Colour B";
-        }
-        if (!Modules.IsValidID(Position))
-        {
-            AddModule(new Variable<Coord2D>(Coord2D()), Module::Position);
-            Modules[Module::Position]->Name = "Position";
-        }
-        if (!Modules.IsValidID(Width))
-        {
-            AddModule(new Variable<float>(1), Module::Width);
-            Modules[Module::Width]->Name = "Width";
-        }
+        if (!Values.IsValid(ColourB))
+            Values.Add(ColourClass(0, 0, 0, 255), ColourB);
+        if (!Values.IsValid(Position))
+            Values.Add(Coord2D(), Position);
+        if (!Values.IsValid(Width))
+            Values.Add<float>(1, Width);
     case Textures2D::Full:
-        if (!Modules.IsValidID(ColourA))
-        {
-            AddModule(new Variable<ColourClass>(ColourClass(0, 0, 0, 255)), Module::ColourA);
-            Modules[Module::ColourA]->Name = "Colour A";
-        }
+        if (!Values.IsValid(ColourA))
+            Values.Add(ColourClass(0, 0, 0, 255), ColourA);
         break;
     default:
         break;
@@ -55,11 +47,11 @@ void Texture2D::Setup()
 
 ColourClass Texture2D::Render(Vector2D PixelPosition)
 {
-    Textures2D *Texture = ValueAs<Textures2D>();
-    ColourClass *ColourA = Modules.GetValue<ColourClass>(Module::ColourA);
-    ColourClass *ColourB = Modules.GetValue<ColourClass>(Module::ColourB);
-    Coord2D *Position = Modules.GetValue<Coord2D>(Module::Position);
-    float *Width = Modules.GetValue<float>(Module::Width);
+    Textures2D *Texture = Values.At<Textures2D>(Value::Texture);
+    ColourClass *ColourA = Values.At<ColourClass>(Value::ColourA);
+    ColourClass *ColourB = Values.At<ColourClass>(Value::ColourB);
+    Coord2D *Position = Values.At<Coord2D>(Value::Position);
+    float *Width = Values.At<float>(Value::Width);
 
     ColourClass Colour;
     float Distance;

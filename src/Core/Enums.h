@@ -1,7 +1,7 @@
 enum class Types : uint8_t
 {
     Undefined = 0,
-    Folder, // 0 Extra bytes
+    Removed0, // Removed Folder
     Shape2D,
     Byte, // uint_8
     Bool, // 1 byte
@@ -12,7 +12,7 @@ enum class Types : uint8_t
     Board,
     Port,
     PortDriver,
-    Fan,
+    Fan, //No associated data!
     LEDStrip,
     LEDSegment,
     Texture1D,
@@ -23,15 +23,15 @@ enum class Types : uint8_t
     AccGyr,    // Replaced AnimationFloat
     Servo,     // Replaced AnimationVector
     Input,     // Replaced AnimationCoord
-    Removed4,  // AnimationColour
-    Operation, // Enum/value, not object anymore
+    Removed4,  // Removed AnimationColour
+    Operation, 
     Program,
     Integer, // int_32
     Time,    // uint_32
     Number,  // float_32
     ID,      // uint_32
     Colour,  // 4 byte RGBA
-    Removed1, // PortAttach
+    Removed1, // Removed PortAttach
     Vector2D, // 8 byte (2xFloat)
     Vector3D, // 12 byte (3xFloat)
     Coord2D,  // 16 byte (2xVector)
@@ -105,8 +105,6 @@ Types GetType()
     ReportError(Status::InvalidType, "GetType Undefined, Size:" + String(sizeof(C)));
     return Types::Undefined;
 };
-template <>
-Types GetType<Folder>() { return Types::Folder; };
 template <>
 Types GetType<u_int8_t>() { return Types::Byte; };
 template <>

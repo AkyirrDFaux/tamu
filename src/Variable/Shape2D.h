@@ -1,5 +1,3 @@
-// Replace colour with texture
-
 class Shape2DClass : public BaseClass
 {
 public:
@@ -8,20 +6,16 @@ public:
         Texture,
     };
 
-    Shape2DClass(bool New = true, IDClass ID = RandomID, FlagClass Flags = Flags::None);
+    Shape2DClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     ~Shape2DClass();
 
     ColourClass Render(ColourClass Current, Vector2D Position);
 };
 
-Shape2DClass::Shape2DClass(bool New, IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
+Shape2DClass::Shape2DClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
 {
     Type = Types::Shape2D;
     Name = "Shape";
-    if (New)
-    {
-        AddModule(new Texture2D(), Texture);
-    }
 };
 Shape2DClass::~Shape2DClass() {
 };

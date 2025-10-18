@@ -1,25 +1,29 @@
 // Temporary
-class GyrAccClass : public Variable<GyrAccs>
+class GyrAccClass : public BaseClass
 {
 public:
+enum Value
+    {
+        DeviceType,
+        AngularRate,
+        Acceleration,
+    };
+
     void *Sensor = nullptr;
-    Variable<Vector3D> AR = Variable<Vector3D>(Vector3D(0, 0, 0), RandomID, Flags::Auto);
-    Variable<Vector3D> AC = Variable<Vector3D>(Vector3D(0, 0, 0), RandomID, Flags::Auto);
 
     void Setup();
-    GyrAccClass(GyrAccs NewDevType, bool New = true, IDClass ID = RandomID, FlagClass Flags = Flags::None);
+    GyrAccClass(GyrAccs NewDevType, IDClass ID = RandomID, FlagClass Flags = Flags::None);
     bool Run();
 };
-GyrAccClass::GyrAccClass(GyrAccs NewDevType, bool New, IDClass ID, FlagClass Flags) : Variable(NewDevType, ID, Flags) // Created by Board
+GyrAccClass::GyrAccClass(GyrAccs NewDevType, IDClass ID, FlagClass Flags) : BaseClass(ID, Flags) // Created by Board
 {
     Type = Types::AccGyr;
     Name = "Acc&Gyr";
     Flags = Flags::Auto;
 
-    AddModule(&AC, 2);
-    AC.Name = "Acceleration";
-    AddModule(&AR, 3);
-    AR.Name = "Angular rate";
+    Values.Add(NewDevType);
+    Values.Add(Vector3D());
+    Values.Add(Vector3D());
 
     Sensors.Add(this);
 };
@@ -34,7 +38,7 @@ void GyrAccClass::Setup()
     if (I2C == nullptr)
         return;
 
-    switch (*Data)
+    switch (*Values.At<GyrAccs>(DeviceType))
     {
     case GyrAccs::LSM6DS3TRC:
         Sensor = new Adafruit_LSM6DS3TRC();
@@ -60,8 +64,8 @@ bool GyrAccClass::Run()
     if (((Adafruit_LSM6DS3TRC *)Sensor)->getEvent(&a, &g, &t))
     {
         // Compensate for gravity
-        AC = Vector3D(a.acceleration.x, a.acceleration.y, a.acceleration.z);
-        AR = Vector3D(g.gyro.x, g.gyro.y, g.gyro.z);
+        *Values.At<Vector3D>(Acceleration) = Vector3D(a.acceleration.x, a.acceleration.y, a.acceleration.z);
+        *Values.At<Vector3D>(AngularRate) = Vector3D(g.gyro.x, g.gyro.y, g.gyro.z);
 
         // Add orientation from gravity
     }

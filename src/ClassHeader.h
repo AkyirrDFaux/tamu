@@ -1,5 +1,4 @@
 class BaseClass;
-class Folder;
 
 class FlagClass;
 class IDClass;
@@ -19,7 +18,6 @@ class Texture2D;
 class PortClass;
 class PortAttachClass;
 class DisplayTypeClass;
-
 
 class Operation;
 

@@ -24,18 +24,18 @@ uint32_t DeltaTime = 0;
 #include "Data\Coord2D.h"
 #include "Data\Vector3D.h"
 
+#include "Core\DataList.h"
 #include "Core\IDList.h"
 #include "Core\Chirp.h"
 ChirpClass Chirp = ChirpClass(); // Bluetooth/Serial
 
 #include "Core\BaseClass.h"
-#include "Core\Variable.h"
+//#include "Core\Variable.h"
 #include "Core\Register.h"
 
 RegisterClass Objects;
 ObjectList<> Sensors;  // EX: accel/button/sensor
 ObjectList<> Programs; // Ex: Emotes
-//ObjectList<> Routines; // Ex: Update positions, color blends
 ObjectList<> Outputs;  // Ex: Render
 
 #include "Object\Port.h"
@@ -44,8 +44,8 @@ ObjectList<> Outputs;  // Ex: Render
 #include "Object\Board.h"
 BoardClass Board;
 
-#include "Core\Operation.h"
-#include "Core\Program.h"
+#include "Core\Operation.h" //TODO later
+#include "Core\Program.h" //TODO later
 
 #include "Object\Fan.h"
 #include "Object\Servo.h"
@@ -95,10 +95,11 @@ void setup()
         Root.close();
     }
 
-    Chirp.Begin(Board.BTName);
+    Chirp.Begin(*Board.Values.At<String>(Board.BTName));
+
     Serial.println(Objects.ContentDebug());
     TimeUpdate();
-    Board.BootTime = CurrentTime;
+    *Board.Values.At<uint32_t>(Board.BootTime) = CurrentTime;
 
     bool AllRun = false;
     while (AllRun == false)
@@ -124,10 +125,6 @@ void loop()
         if ((Programs[Index]->Flags == RunLoop) || (Programs[Index]->Flags == RunOnce))
             Programs[Index]->Run();
     }
-
-     //Serial.println("R");
-    //for (int32_t Index = 0; Index < Routines.Length; Routines.Iterate(&Index))
-     //   Routines[Index]->Run();
      //Serial.println("O");
     for (int32_t Index = 0; Index < Outputs.Length; Outputs.Iterate(&Index))
         Outputs[Index]->Run();
@@ -158,12 +155,10 @@ As (bytearray) checking not working
 Spread out bluetooth sending to prevent lag?
 Saving takes forever
 (ID)List, register make unsigned?
-Variable with flag runloop will update value automatically if function
 
 EXTRA:
-RunRead variable flag
 Edit rendering to allow all-display filters
-Extra button / connection -> storageless start
+Extra button / connection -> storageless start?
 Create default configs (in app)
 
 BUGS:
@@ -189,3 +184,4 @@ Incorrect wraping of LED strip
 // 04.09.2025 App Improvements
 // 08.09.2025 Sorted out operations
 // 13.09.2025 New port/driver system + Servo + Inputs
+// 18.10.2025 DataList replaced Variables -> multi-variable objects

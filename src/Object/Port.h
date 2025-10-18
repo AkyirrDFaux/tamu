@@ -1,8 +1,12 @@
-class PortClass : public Variable<Ports>
+class PortClass : public BaseClass
 {
 public:
-    Variable<uint8_t> Pin = Variable<uint8_t>(0, RandomID, Flags::Auto);
-    Variable<Drivers> DriverType = Variable<Drivers>(Drivers::None, RandomID, Flags::Auto);
+    enum Value{
+        PortType,
+        Pin,
+        DriverType
+    };
+
     void *DriverObj = nullptr;
     ObjectList<> Attached = ObjectList<>();
 
@@ -21,18 +25,15 @@ public:
     uint8_t *GetInput(BaseClass *ThatObject);
 };
 
-PortClass::PortClass(uint8_t NewPin, Ports NewPortType) : Variable(NewPortType) // Created by Board
+PortClass::PortClass(uint8_t NewPin, Ports NewPortType) : BaseClass() // Created by Board
 {
-    Pin = NewPin;
+    Values.Add(NewPortType);
+    Values.Add(NewPin);
+    Values.Add(Drivers::None);
 
     Type = Types::Port;
     Name = "Port";
     Flags = Flags::Auto;
-
-    AddModule(&Pin);
-    Pin.Name = "Pin";
-    AddModule(&DriverType);
-    DriverType.Name = "Driver";
 };
 
 PortClass::~PortClass()

@@ -3,7 +3,7 @@ enum Flags : uint8_t
     None = 0,
     Auto = 0b00000001,         // No name change, cannot remove, no editing, no saving
     Undefined = 0b00000010,
-    RunRead = 0b00000100,      // Run when read (Variable)
+    Undefined2 = 0b00000100,      
     RunLoop = 0b00001000,      // Allow automatic run forever
     RunOnce = 0b00010000,      // Run once manually until finished, will reset the flag automatically
     RunOnStartup = 0b00100000, // Run automatically once after board finished loading
@@ -33,6 +33,7 @@ public:
 
     uint32_t ReferencesCount = 0;
     IDList Modules;
+    DataList Values;
 
     BaseClass(IDClass NewID = RandomID, FlagClass NewFlags = Flags::None);
 
@@ -49,11 +50,9 @@ public:
 
     template <class C>
     C *As() const { return (C *)this; };
-    template <class C>
-    C *ValueAs() const;
 
-    ByteArray GetValue() const;
-    bool SetValue(ByteArray &Input);
+    ByteArray GetValue(int32_t Value = 0) const;
+    bool SetValue(ByteArray &Input, uint8_t Value = 0);
     String ContentDebug(int32_t Level);
 };
 
@@ -79,7 +78,7 @@ String BaseClass::ContentDebug(int32_t Level)
         Text += "-..";
 
     Text += "ID: ";
-    Text += String(ID.ID);
+    Text += ID.ToString();
     Text += ", Type: ";
     Text += String((uint8_t)Type);
     Text += " , Name: ";
@@ -89,13 +88,4 @@ String BaseClass::ContentDebug(int32_t Level)
         Text += Modules[Index]->ContentDebug(Level + 1);
 
     return Text;
-};
-
-class Folder : public BaseClass
-{
-public:
-    Folder(bool New = true, IDClass ID = RandomID, FlagClass Flags = Flags::None) : BaseClass(ID, Flags)
-    {
-        Type = Types::Folder;
-    };
 };

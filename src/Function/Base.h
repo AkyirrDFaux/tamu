@@ -52,9 +52,9 @@ void Refresh(ByteArray &Input)
 {
     for (uint32_t Index = 1; Index <= Objects.Allocated; Index++)
     {
-        if (!Objects.IsValid(IDClass(Index)))
+        if (!Objects.IsValid(IDClass(Index,0)))
             continue;
-        Chirp.Send(ByteArray(Functions::ReadObject) << ByteArray(*Objects[IDClass(Index)]));
+        Chirp.Send(ByteArray(Functions::ReadObject) << ByteArray(*Objects[IDClass(Index,0)]));
     }
     Chirp.Send(ByteArray(Status::OK));
 }
@@ -63,63 +63,49 @@ BaseClass *CreateObject(Types Type, bool New, IDClass ID, FlagClass Flags)
 {
     switch (Type)
     {
-    case Types::Folder:
-        return new Folder(New, ID, Flags);
     // Port is auto
     case Types::Shape2D:
-        return new Shape2DClass(New, ID, Flags);
-    case Types::Byte:
-        return new Variable<u_int8_t>(0, ID, Flags);
-    case Types::Bool:
-        return new Variable<bool>(0, ID, Flags);
-    // Type is internal
-    // Function is internal
-    // Flags is internal
-    // Status is internal
+        return new Shape2DClass(ID, Flags);
+    // Byte
+    // Bool
+    //  Type is internal
+    //  Function is internal
+    //  Flags is internal
+    //  Status is internal
     case Types::Board:
-        return new BoardClass(New, ID, Flags);
+        return new BoardClass(ID, Flags);
     case Types::Fan:
-        return new FanClass(New, ID, Flags);
+        return new FanClass(ID, Flags);
     case Types::LEDSegment:
-        return new LEDSegmentClass(New, ID, Flags);
+        return new LEDSegmentClass(ID, Flags);
     case Types::Texture1D:
-        return new Texture1D(New, ID, Flags);
+        return new Texture1D(ID, Flags);
     case Types::LEDStrip:
-        return new LEDStripClass(New, ID, Flags);
+        return new LEDStripClass(ID, Flags);
     case Types::Geometry2D:
-        return new Geometry2DClass(New, ID, Flags);
-    case Types::GeometryOperation:
-        return new Variable<GeometryOperation>(GeometryOperation::Add, ID, Flags);
+        return new Geometry2DClass(ID, Flags);
+    //GeometryOperation
     case Types::Texture2D:
-        return new Texture2D(New, ID, Flags);
+        return new Texture2D(ID, Flags);
     case Types::Display:
-        return new DisplayClass(New, ID, Flags);
+        return new DisplayClass(ID, Flags);
     case Types::AccGyr:
-        return new GyrAccClass(GyrAccs::Undefined, New, ID, Flags);
+        return new GyrAccClass(GyrAccs::Undefined, ID, Flags);
     case Types::Input:
-        return new InputClass(Inputs::Undefined, New, ID, Flags);
+        return new InputClass(Inputs::Undefined, ID, Flags);
     case Types::Operation:
-        return new Variable<Operations>(Operations::None, ID, Flags);
+        return new Operation(ID, Flags);
     case Types::Program:
-        return new Program(New, ID, Flags);
-    case Types::Integer:
-        return new Variable<int32_t>(0, ID, Flags);
-    case Types::Time:
-        return new Variable<u_int32_t>(0, ID, Flags);
-    case Types::Number:
-        return new Variable<float>(0.0F, ID, Flags);
+        return new Program(ID, Flags);
+    // Integer
+    // Time
+    // Number
     // ID is internal
-    case Types::Colour:
-        return new Variable<ColourClass>(ColourClass(), ID, Flags);
-    // case Types::PortAttach:
-    // return new PortAttachClass(New, ID, Flags);
-    case Types::Vector2D:
-        return new Variable<Vector2D>(Vector2D(), ID, Flags);
-    case Types::Coord2D:
-        return new Variable<Coord2D>(Coord2D(), ID, Flags);
-    case Types::Text:
-        return new Variable<String>("", ID, Flags);
-    // IDList is internal
+    // Colour
+    // Vector2D
+    // Coord2D
+    // Text
+    //  IDList is internal
     default:
         ReportError(Status::InvalidType, "Type not allowed for BaseClass creation:" + String((uint8_t)Type));
         return nullptr;
@@ -264,7 +250,7 @@ void SetFlags(ByteArray &Input)
     }
     Objects[ID]->Flags = Flags.As<FlagClass>();
     if (Objects[ID]->Type == Types::Program && Objects[ID]->Flags == Flags::RunOnce)
-        Objects[ID]->As<Program>()->Counter = 0;
+        *Objects[ID]->Values.At<uint32_t>(1) = 0; //Reset counter
     Chirp.Send(ByteArray(Functions::SetFlags) << ID << Flags);
 };
 
