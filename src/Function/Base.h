@@ -93,10 +93,10 @@ BaseClass *CreateObject(Types Type, bool New, IDClass ID, FlagClass Flags)
         return new GyrAccClass(GyrAccs::Undefined, ID, Flags);
     case Types::Input:
         return new InputClass(Inputs::Undefined, ID, Flags);
-    //case Types::Operation:
-    //    return new Variable<Operations>(Operations::None, ID, Flags);
-    //case Types::Program:
-    //    return new Program(New, ID, Flags);
+    case Types::Operation:
+        return new Operation(ID, Flags);
+    case Types::Program:
+        return new Program(ID, Flags);
     // Integer
     // Time
     // Number
@@ -249,8 +249,8 @@ void SetFlags(ByteArray &Input)
         return;
     }
     Objects[ID]->Flags = Flags.As<FlagClass>();
-    //if (Objects[ID]->Type == Types::Program && Objects[ID]->Flags == Flags::RunOnce)
-    //    Objects[ID]->As<Program>()->Counter = 0;
+    if (Objects[ID]->Type == Types::Program && Objects[ID]->Flags == Flags::RunOnce)
+        *Objects[ID]->Values.At<uint32_t>(1) = 0; //Reset counter
     Chirp.Send(ByteArray(Functions::SetFlags) << ID << Flags);
 };
 

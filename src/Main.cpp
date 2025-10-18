@@ -44,8 +44,8 @@ ObjectList<> Outputs;  // Ex: Render
 #include "Object\Board.h"
 BoardClass Board;
 
-//#include "Core\Operation.h" //TODO later
-//#include "Core\Program.h" //TODO later
+#include "Core\Operation.h" //TODO later
+#include "Core\Program.h" //TODO later
 
 #include "Object\Fan.h"
 #include "Object\Servo.h"

@@ -62,49 +62,47 @@ void DefaultSetup()
     *G2->Values.At<Coord2D>(G2->Position) = Coord2D(1, 1, 0);
 
     //Width animation
-    /*
-    Variable<float> *A = T1->Modules.Get<Variable<float>>(T1->Width);
-    Variable<Operations> *AO = new Variable<Operations>(Operations::MoveTo);
-    Variable<float> *ATGT = new Variable<float>(0);
-    Variable<uint32_t> *AT = new Variable<uint32_t>(0);
-    A->AddModule(AO);
-    A->AddModule(ATGT);
-    A->AddModule(AT);
-    
     Program *P = new Program();
-    *P->ValueAs<ProgramTypes>() = ProgramTypes::Sequence;
+    *P->Values.At<ProgramTypes>(P->Mode) = ProgramTypes::Sequence;
     P->Flags += Flags::RunLoop;
 
+    Operation *AO = new Operation();
+    *AO->Values.At<Operations>(0) = Operations::MoveTo;
+    AO->Values.Add<float>(0,1);
+    AO->Values.Add<uint32_t>(0,2);
+    AO->Modules.Add(IDClass(T1->ID.Main(),T1->Width+1));
+
     // Add equal for value
-    Variable<float> *V1 = new Variable<float>(0);
-    Variable<Operations> *O1 = new Variable<Operations>(Operations::Equal);
-    V1->AddModule(O1, 0);
-    V1->AddModule(ATGT);
-    P->AddModule(V1, 0);
+    Operation *O1 = new Operation();
+    *O1->Values.At<Operations>(0) = Operations::Equal;
+    O1->Values.Add<float>(0,1);
+    O1->Modules.Add(IDClass(AO->ID.Main(),1+1));
+    P->AddModule(O1, 0);
 
     // Add delay for time
-    Variable<Operations> *O2 = new Variable<Operations>(Operations::AddDelay);
-    Variable<uint32_t> *V2 = new Variable<uint32_t>(2000);
-    AT->AddModule(O2, 0);
-    AT->AddModule(V2);
-    P->AddModule(AT, 1);
+    Operation *O2 = new Operation();
+    *O2->Values.At<Operations>(0) = Operations::AddDelay;
+    O2->Values.Add<uint32_t>(2000,1);
+    O2->Modules.Add(IDClass(AO->ID.Main(),2+1));
+    P->AddModule(O2, 1);
 
     // Add animation
-    P->AddModule(A, 2);
+    P->AddModule(AO, 2);
 
     // Add equal for value
-    Variable<float> *V3 = new Variable<float>(15);
-    Variable<Operations> *O3 = new Variable<Operations>(Operations::Equal);
-    V3->AddModule(O3, 0);
-    V3->AddModule(ATGT);
-    P->AddModule(V3, 3);
+    Operation *O3 = new Operation();
+    *O3->Values.At<Operations>(0) = Operations::Equal;
+    O3->Values.Add<float>(15,1);
+    O3->Modules.Add(IDClass(AO->ID.Main(),1+1));
+    P->AddModule(O3, 3);
 
     // Add delay for time again
-    P->AddModule(AT, 4);
+    P->AddModule(O2, 4);
 
     // Animate again
-    P->AddModule(A, 5);
-
+    P->AddModule(AO, 5);
+    
+    /*
     // EYE LID
     Shape2DClass *SL = new Shape2DClass();
     DS->AddModule(SL);

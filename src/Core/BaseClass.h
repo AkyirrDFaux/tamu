@@ -50,8 +50,6 @@ public:
 
     template <class C>
     C *As() const { return (C *)this; };
-    template <class C>
-    C *ValueAs() const;
 
     ByteArray GetValue(int32_t Value = 0) const;
     bool SetValue(ByteArray &Input, uint8_t Value = 0);
