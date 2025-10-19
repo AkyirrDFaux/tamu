@@ -8,6 +8,8 @@ public:
 
     Vector3D();
     Vector3D(float X, float Y, float Z);
+
+    float GetByIndex(uint8_t Index);
 };
 
 Vector3D::Vector3D() {};
@@ -18,6 +20,18 @@ Vector3D::Vector3D(float X, float Y, float Z)
     this->Y = Y;
     this->Z = Z;
 };
+
+float Vector3D::GetByIndex(uint8_t Index)
+{
+    if (Index == 0)
+        return X;
+    else if (Index == 1)
+        return Y;
+    else if (Index == 2)
+        return Z;
+    else
+        return 0;
+}
 
 /*
 Vector2D Vector2D::operator+(Vector2D Other)

@@ -142,16 +142,16 @@ void loop()
 
 /*TODO:
 KEY FEATURES:
-Accelerometer gravity compensation + orientation, filtering/integrating
+Accelerometer filtering
 
 More Operations/Animations
-- Selection from/into Vectors
 App Usability/parity
 Merge for both boards
 Memory
 App Presets
 
 ADJUSTMENTS:
+Getting value from ID directly
 IsValid && FirstValid with type for Objlist (port functions)
 
 Finish port system (connecting multiple LEDS, I2C)
@@ -189,3 +189,4 @@ Incorrect wraping of LED strip
 // 08.09.2025 Sorted out operations
 // 13.09.2025 New port/driver system + Servo + Inputs
 // 18.10.2025 DataList replaced Variables -> multi-variable objects
+// 19.10.2025 Movement of eye using angular velocity

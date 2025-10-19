@@ -46,8 +46,8 @@ void GyrAccClass::Setup()
         if (!((Adafruit_LSM6DS3TRC *)Sensor)->begin_I2C(0b1101011, I2C)) // 0b1101011 or 0b1101010
             Serial.println("Failed to find LSM6DS3TR-C chip");
 
-        ((Adafruit_LSM6DS3TRC *)Sensor)->setAccelDataRate(LSM6DS_RATE_104_HZ);
-        ((Adafruit_LSM6DS3TRC *)Sensor)->setGyroDataRate(LSM6DS_RATE_104_HZ);
+        ((Adafruit_LSM6DS3TRC *)Sensor)->setAccelDataRate(LSM6DS_RATE_26_HZ);
+        ((Adafruit_LSM6DS3TRC *)Sensor)->setGyroDataRate(LSM6DS_RATE_26_HZ);
         ((Adafruit_LSM6DS3TRC *)Sensor)->setAccelRange(LSM6DS_ACCEL_RANGE_16_G);
         ((Adafruit_LSM6DS3TRC *)Sensor)->setGyroRange(LSM6DS_GYRO_RANGE_2000_DPS);
         break;
