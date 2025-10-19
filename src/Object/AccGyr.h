@@ -1,4 +1,4 @@
-// Temporary
+// This might want a custom solution, to properly use the I2C drivers
 class GyrAccClass : public BaseClass
 {
 public:
@@ -12,16 +12,15 @@ enum Value
     void *Sensor = nullptr;
 
     void Setup();
-    GyrAccClass(GyrAccs NewDevType, IDClass ID = RandomID, FlagClass Flags = Flags::None);
+    GyrAccClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     bool Run();
 };
-GyrAccClass::GyrAccClass(GyrAccs NewDevType, IDClass ID, FlagClass Flags) : BaseClass(ID, Flags) // Created by Board
+GyrAccClass::GyrAccClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags) // Created by Board
 {
     Type = Types::AccGyr;
     Name = "Acc&Gyr";
-    Flags = Flags::Auto;
 
-    Values.Add(NewDevType);
+    Values.Add(GyrAccs::Undefined);
     Values.Add(Vector3D());
     Values.Add(Vector3D());
 
@@ -30,10 +29,12 @@ GyrAccClass::GyrAccClass(GyrAccs NewDevType, IDClass ID, FlagClass Flags) : Base
 
 void GyrAccClass::Setup()
 {
-    if (!(Modules.IsValid(0) && Modules.IsValid(1) && Modules[0]->Type == Types::Port && Modules[1]->Type == Types::Port))
+    if (!(Values.IsValid(DeviceType,Types::AccGyr) && Modules.IsValid(0) && Modules.IsValid(1) && Modules[0]->Type == Types::Port && Modules[1]->Type == Types::Port))
         return;
 
-    TwoWire *I2C = Modules.Get<PortClass>(0)->GetI2C(this); // da 4, cl 5
+    //Delete previous driver, if there was any
+
+    TwoWire *I2C = Modules.Get<PortClass>(0)->GetI2C(this);
 
     if (I2C == nullptr)
         return;
@@ -61,6 +62,12 @@ bool GyrAccClass::Run()
     sensors_event_t a;
     sensors_event_t g;
     sensors_event_t t;
+
+    if (Sensor == nullptr){
+        Setup();
+        return true;   
+    }
+        
     if (((Adafruit_LSM6DS3TRC *)Sensor)->getEvent(&a, &g, &t))
     {
         // Compensate for gravity

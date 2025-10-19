@@ -12,22 +12,21 @@ public:
         Port,
     };
 
-    InputClass(Inputs InputType, IDClass ID = RandomID, FlagClass Flags = Flags::None);
+    InputClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     ~InputClass();
     void Setup();
 
     bool Run();
 };
 
-InputClass::InputClass(Inputs InputType, IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
+InputClass::InputClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
 {
     BaseClass::Type = Types::Input;
     Name = "Input";
 
-    Values.Add(InputType);
+    Values.Add(Inputs::Undefined,InputType);
 
     Sensors.Add(this);
-    Setup();
 };
 
 InputClass::~InputClass()
@@ -37,7 +36,10 @@ InputClass::~InputClass()
 
 void InputClass::Setup()
 {
-    // Deletion/Replacement of previous modules is missing
+    // Deletion of previous values
+    Values.Delete(Input);
+    Values.Delete(Indicator);
+
     switch (*Values.At<Inputs>(InputType))
     {
     case Inputs::ButtonWithLED:

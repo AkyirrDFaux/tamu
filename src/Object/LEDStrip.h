@@ -54,7 +54,7 @@ bool LEDStripClass::Run()
         return true;
     }
 
-    // Iterate over corrected pixel coords |_
+    // Iterate over corrected pixel index
     for (int32_t Index = 0; Index < *Length; Index++)
     {
         ColourClass PixelColour = RenderPixel(Index, *Length);

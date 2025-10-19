@@ -48,9 +48,8 @@ bool Operation::Run()
 
 bool Operation::Equal()
 {
-    //NO VALUE CHECK
-    void *Target = Values.Data[1];
-    void *Value = Modules[0]->Values.Data[Modules.IDs[0].Sub() - 1];
+    void *Target = Values[1];
+    void *Value = Modules[0]->Values[Modules.IDs[0].Sub() - 1];
 
     if (Target == nullptr || Value == nullptr)
         return true;
@@ -64,10 +63,9 @@ bool Operation::Equal()
 
 bool Operation::MoveTo()
 {
-    //NO VALUE CHECK
-    void *Target = Values.Data[1];
+    void *Target = Values[1];
     uint32_t *Time = Values.At<uint32_t>(2);
-    void *Value = Modules[0]->Values.Data[Modules.IDs[0].Sub() - 1]; // Proprietary
+    void *Value = Modules[0]->Values[Modules.IDs[0].Sub() - 1];
 
     if (Target == nullptr || Time == nullptr || Value == nullptr)
         return true;

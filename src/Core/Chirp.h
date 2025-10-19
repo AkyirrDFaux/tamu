@@ -46,14 +46,10 @@ class MyCallbacks : public BLECharacteristicCallbacks
 class ChirpClass
 {
 public:
-    // ByteArray BufferOut;
     void Begin(String Name);
-    // void Send(ByteArray Data);
     void Send(String Data);
     void Send(const ByteArray &Input);
-    // void SendNow(const ByteArray &Input);
     void Communicate();
-    // void Decode();
     BaseClass *DecodePart(int32_t *Start);
 };
 
@@ -82,12 +78,6 @@ void ChirpClass::Begin(String Name)
     pServer->getAdvertising()->start();
 };
 
-/*
-void ChirpClass::Send(ByteArray Data)
-{
-    BufferOut.Append(Data.Array, Data.Length);
-};
-*/
 void ChirpClass::Send(String Data)
 {
     Serial.println(Data);
@@ -108,38 +98,14 @@ void ChirpClass::Send(const ByteArray &Input)
         }
     }
 };
-/*
-void ChirpClass::SendNow(const Message &Input)
-{
-    //Serial.println(Input.AsText());
-    // delay(1000);
-};
-*/
+
 void ChirpClass::Communicate()
 {
     String Input = "";
     Input += Serial.readStringUntil('\n');
 
     // Serial
-    /*
-    if (Input.length() > 0)
-    {
-        Message *M = Deserialize(Input);
-        if (M != nullptr)
-        {
-            Send(M->AsText()); // Debug
 
-            Message *Response = M->Run();
-            if (Response != nullptr)
-            {
-                Send(*Response);
-                delete Response;
-            }
-
-            delete M;
-        }
-    }
-    */
     // BT
 
     // disconnecting
