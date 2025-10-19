@@ -115,6 +115,8 @@ enum class Operations : uint8_t
 {
     None,
     Equal,
+    Extract,
+    Combine,
     IsEqual,//Comparision
     IsGreater,
     IsSmaller,

@@ -11,6 +11,8 @@ public:
 
 private:
     bool Equal();
+    bool Extract();
+    bool Combine();
     bool MoveTo();
     bool Delay();
     bool AddDelay();
@@ -33,6 +35,10 @@ bool Operation::Run()
     {
     case Operations::Equal:
         return Equal();
+    case Operations::Extract:
+        return Extract();
+    case Operations::Combine:
+        return Combine();
     case Operations::MoveTo:
         return MoveTo();
     case Operations::Delay:
@@ -58,6 +64,26 @@ bool Operation::Equal()
         return true;
 
     memcpy(Value, Target, GetValueSize(Values.Type[1]));
+    return true;
+}
+
+bool Operation::Extract()
+{
+    void *Target = Values[1];
+    void *Value = Modules[0]->Values[Modules.IDs[0].Sub() - 1];
+
+    if (Target == nullptr || Value == nullptr)
+        return true;
+
+    if (Values.Type[1] != Modules[0]->Values.Type[Modules.IDs[0].Sub() - 1])
+        return true;
+
+    memcpy(Value, Target, GetValueSize(Values.Type[1]));
+    return true;
+}
+
+bool Operation::Combine()
+{
     return true;
 }
 
