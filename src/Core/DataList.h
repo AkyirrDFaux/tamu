@@ -25,7 +25,7 @@ public:
 
 void *DataList::operator[](int32_t Index) const
 {
-    if (IsValid(Index))
+    if (Index >= Length || -Index > Length)
         return nullptr;
 
     if (Index < 0) // From end

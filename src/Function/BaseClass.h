@@ -48,7 +48,6 @@ ByteArray BaseClass::GetValue(int32_t Value) const
     return Data;
 };
 
-//Not sure this is working
 bool BaseClass::SetValue(ByteArray &Input, uint8_t Value)
 {
     ByteArray Part = Input.ExtractPart();

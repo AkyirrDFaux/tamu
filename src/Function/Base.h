@@ -1,6 +1,5 @@
 void Run(ByteArray &Input)
 {
-    // Serial.println(Input.ToHex());
     ByteArray Function = Input.ExtractPart();
     if (Function.Type() == Types::Function)
     {
@@ -66,12 +65,6 @@ BaseClass *CreateObject(Types Type, bool New, IDClass ID, FlagClass Flags)
     // Port is auto
     case Types::Shape2D:
         return new Shape2DClass(ID, Flags);
-    // Byte
-    // Bool
-    //  Type is internal
-    //  Function is internal
-    //  Flags is internal
-    //  Status is internal
     case Types::Board:
         return new BoardClass(ID, Flags);
     case Types::Fan:
@@ -84,28 +77,18 @@ BaseClass *CreateObject(Types Type, bool New, IDClass ID, FlagClass Flags)
         return new LEDStripClass(ID, Flags);
     case Types::Geometry2D:
         return new Geometry2DClass(ID, Flags);
-    //GeometryOperation
     case Types::Texture2D:
         return new Texture2D(ID, Flags);
     case Types::Display:
         return new DisplayClass(ID, Flags);
     case Types::AccGyr:
-        return new GyrAccClass(GyrAccs::Undefined, ID, Flags);
+        return new GyrAccClass(ID, Flags);
     case Types::Input:
-        return new InputClass(Inputs::Undefined, ID, Flags);
+        return new InputClass(ID, Flags);
     case Types::Operation:
         return new Operation(ID, Flags);
     case Types::Program:
         return new Program(ID, Flags);
-    // Integer
-    // Time
-    // Number
-    // ID is internal
-    // Colour
-    // Vector2D
-    // Coord2D
-    // Text
-    //  IDList is internal
     default:
         ReportError(Status::InvalidType, "Type not allowed for BaseClass creation:" + String((uint8_t)Type));
         return nullptr;
@@ -149,7 +132,6 @@ void LoadObject(ByteArray &Input)
     ByteArray Flags = Input.ExtractPart();
     ByteArray Name = Input.ExtractPart();
     ByteArray Modules = Input.ExtractPart();
-    ByteArray Value = Input.ExtractPart();
     if (Type.Type() == Types::Type && ID.Type() == Types::ID)
     {
         if (!Objects.IsValid(ID)) // Check for ID colision
@@ -180,8 +162,7 @@ void LoadObject(ByteArray &Input)
         Object->Name = Name.As<String>();
     if (Modules.Type() == Types::IDList)
         Object->Modules = Modules.As<IDList>(); // Fixed, careful
-    if (Value.Type() == Object->Type)
-        Object->SetValue(Value);
+    Object->SetValue(Input);
 
     Chirp.Send(ByteArray(Functions::LoadObject) << ByteArray(*Object));
 }

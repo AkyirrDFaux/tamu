@@ -18,6 +18,7 @@ uint32_t DeltaTime = 0;
 
 #include "Core\ID.h"
 
+//Basic data types
 #include "Data\ByteArray.h"
 #include "Data\Colour.h"
 #include "Data\Vector2D.h"
@@ -30,13 +31,12 @@ uint32_t DeltaTime = 0;
 ChirpClass Chirp = ChirpClass(); // Bluetooth/Serial
 
 #include "Core\BaseClass.h"
-//#include "Core\Variable.h"
 #include "Core\Register.h"
 
 RegisterClass Objects;
-ObjectList<> Sensors;  // EX: accel/button/sensor
+ObjectList<> Sensors;  // EX: Sensor
 ObjectList<> Programs; // Ex: Emotes
-ObjectList<> Outputs;  // Ex: Render
+ObjectList<> Outputs;  // Ex: Display, Fan, Servo
 
 #include "Object\Port.h"
 #include "Object\AccGyr.h"
@@ -44,9 +44,11 @@ ObjectList<> Outputs;  // Ex: Render
 #include "Object\Board.h"
 BoardClass Board;
 
-#include "Core\Operation.h" //TODO later
-#include "Core\Program.h" //TODO later
+//Programs
+#include "Core\Operation.h"
+#include "Core\Program.h"
 
+//Objects
 #include "Object\Fan.h"
 #include "Object\Servo.h"
 
@@ -59,12 +61,14 @@ BoardClass Board;
 #include "Variable\Shape2D.h"
 #include "Object\Display.h"
 
-#include "Function\Port.h" //Unrelated to messages
+//Unrelated to messages
+#include "Function\Port.h" 
 #include "Function\BaseClass.h"
 #include "Function\List.h"
 #include "Function\Other.h" 
 
-#include "Function\Base.h" //Messages
+//Messages
+#include "Function\Base.h" 
 #include "Function\Save.h"
 #include "Function\Values.h"
 
