@@ -62,3 +62,57 @@ C *IDList::Get(int32_t Index)
 
     return At(Index)->As<C>();
 }
+
+Types IDList::TypeAt(int32_t Index)
+{
+    if (At(Index) == nullptr || (IsValidID(Index) && IDs->Sub() == 0)) //Invalid or reference to main obj
+        return Types::Undefined;
+
+    return At(Index)->Values.TypeAt(IDs[Index].ValueIndex());
+};
+void *IDList::ValueAt(int32_t Index) {
+    if (At(Index) == nullptr || (IsValidID(Index) && IDs->Sub() == 0)) //Invalid or reference to main obj
+        return nullptr;
+    
+     return At(Index)->Values[IDs[Index].ValueIndex()];
+};
+
+// DATALIST
+
+void *DataList::operator[](int32_t Index) const
+{
+    if (Index >= Length || -Index > Length)
+        return nullptr;
+
+    if (Index < 0) // From end
+        Index = Length + Index;
+
+    if (Type[Index] == Types::ID)
+    {
+        if (Objects.IsValid(*At<IDClass>(Index)) == false)
+            return nullptr;
+
+        return Objects.Find(*At<IDClass>(Index))->Values[At<IDClass>(Index)->ValueIndex()];
+    }
+    else
+        return Data[Index];
+};
+
+Types DataList::TypeAt(int32_t Index) const // Returns address or nullptr if invalid
+{
+    if (IsValid(Index) == false)
+        return Types::Undefined;
+
+    if (Index < 0) // From end
+        Index = Length + Index;
+
+    if (Type[Index] == Types::ID)
+    {
+        if (Objects.IsValid(*At<IDClass>(Index)) == false)
+            return Types::Undefined;
+
+        return Objects.Find(*At<IDClass>(Index))->Values.TypeAt(At<IDClass>(Index)->ValueIndex());
+    }
+    else
+        return Type[Index];
+};

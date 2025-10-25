@@ -65,25 +65,26 @@ void DefaultSetup()
     Program *P = new Program();
     *P->Values.At<ProgramTypes>(P->Mode) = ProgramTypes::Sequence;
     P->Flags += Flags::RunLoop;
+    P->Name = "Width colour animation";
 
     Operation *AO = new Operation();
     *AO->Values.At<Operations>(0) = Operations::MoveTo;
     AO->Values.Add<float>(0, 1);
     AO->Values.Add<uint32_t>(0, 2);
-    AO->Modules.Add(IDClass(T1->ID.Main(), T1->Width + 1));
+    AO->Modules.Add(IDClass(T1->ID.Base(), T1->Width + 1));
 
     // Add equal for value
     Operation *O1 = new Operation();
     *O1->Values.At<Operations>(0) = Operations::Equal;
     O1->Values.Add<float>(0, 1);
-    O1->Modules.Add(IDClass(AO->ID.Main(), 1 + 1));
+    O1->Modules.Add(IDClass(AO->ID.Base(), 1 + 1));
     P->AddModule(O1, 0);
 
     // Add delay for time
     Operation *O2 = new Operation();
     *O2->Values.At<Operations>(0) = Operations::AddDelay;
     O2->Values.Add<uint32_t>(2000, 1);
-    O2->Modules.Add(IDClass(AO->ID.Main(), 2 + 1));
+    O2->Modules.Add(IDClass(AO->ID.Base(), 2 + 1));
     P->AddModule(O2, 1);
 
     // Add animation
@@ -93,7 +94,7 @@ void DefaultSetup()
     Operation *O3 = new Operation();
     *O3->Values.At<Operations>(0) = Operations::Equal;
     O3->Values.Add<float>(15, 1);
-    O3->Modules.Add(IDClass(AO->ID.Main(), 1 + 1));
+    O3->Modules.Add(IDClass(AO->ID.Base(), 1 + 1));
     P->AddModule(O3, 3);
 
     // Add delay for time again
@@ -120,25 +121,26 @@ void DefaultSetup()
     Program *P2 = new Program();
     *P2->Values.At<ProgramTypes>(P2->Mode) = ProgramTypes::Sequence;
     P2->Flags += Flags::RunLoop;
+    P2->Name = "Blinking";
 
     Operation *AL = new Operation();
     *AL->Values.At<Operations>(0) = Operations::MoveTo;
     AL->Values.Add(Coord2D(), 1);
     AL->Values.Add<uint32_t>(0, 2);
-    AL->Modules.Add(IDClass(GL->ID.Main(), GL->Position + 1));
+    AL->Modules.Add(IDClass(GL->ID.Base(), GL->Position + 1));
 
     // Add equal for value - down position
     Operation *OL1 = new Operation();
     *OL1->Values.At<Operations>(0) = Operations::Equal;
     OL1->Values.Add(Coord2D(0, -5, 0), 1);
-    OL1->Modules.Add(IDClass(AL->ID.Main(), 1 + 1));
+    OL1->Modules.Add(IDClass(AL->ID.Base(), 1 + 1));
     P2->AddModule(OL1, 0);
 
     // Add delay for time
     Operation *OL2 = new Operation();
     *OL2->Values.At<Operations>(0) = Operations::AddDelay;
     OL2->Values.Add<uint32_t>(500, 1);
-    OL2->Modules.Add(IDClass(AL->ID.Main(), 2 + 1));
+    OL2->Modules.Add(IDClass(AL->ID.Base(), 2 + 1));
     P2->AddModule(OL2, 1);
 
     // Add animation - down
@@ -148,7 +150,7 @@ void DefaultSetup()
     Operation *OL3 = new Operation();
     *OL3->Values.At<Operations>(0) = Operations::Equal;
     OL3->Values.Add(Coord2D(0, 5, 0), 1);
-    OL3->Modules.Add(IDClass(AL->ID.Main(), 1 + 1));
+    OL3->Modules.Add(IDClass(AL->ID.Base(), 1 + 1));
     P2->AddModule(OL3, 3);
 
     // Add delay for time again
@@ -190,11 +192,12 @@ void DefaultSetup()
     Program *P3 = new Program();
     *P3->Values.At<ProgramTypes>(P2->Mode) = ProgramTypes::Sequence;
     P3->Flags += Flags::RunLoop;
+    P3->Name = "Eye movement";
 
     //Get XY from Rot. vel.
     Operation *OR1 = new Operation();
     *OR1->Values.At<Operations>(0) = Operations::Extract;
-    OR1->Values.Add(IDClass(Board.Modules[11]->ID.Main(), 1+1), 1); //GyrAcc
+    OR1->Values.Add(IDClass(Board.Modules[11]->ID.Base(), 1+1), 1); //GyrAcc
     OR1->Values.Add<uint8_t>(0, 2); //X
     OR1->Values.Add<uint8_t>(1, 3); //Y
     
@@ -218,9 +221,9 @@ void DefaultSetup()
     P3->AddModule(OR3, 2);
 
     //Outputs
-    OR1->Modules.Add(IDClass(OR2->ID.Main(), 1 + 1));
-    OR2->Modules.Add(IDClass(OR3->ID.Main(), 1 + 1));
-    OR3->Modules.Add(IDClass(T1->ID.Main(), T1->Position + 1));
-    OR3->Modules.Add(IDClass(G1->ID.Main(), G1->Position + 1));
-    OR3->Modules.Add(IDClass(G2->ID.Main(), G2->Position + 1));
+    OR1->Modules.Add(IDClass(OR2->ID.Base(), 1 + 1));
+    OR2->Modules.Add(IDClass(OR3->ID.Base(), 1 + 1));
+    OR3->Modules.Add(IDClass(T1->ID.Base(), T1->Position + 1));
+    OR3->Modules.Add(IDClass(G1->ID.Base(), G1->Position + 1));
+    OR3->Modules.Add(IDClass(G2->ID.Base(), G2->Position + 1));
 };

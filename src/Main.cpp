@@ -141,6 +141,10 @@ void loop()
 };
 
 /*TODO:
+Add 2nd eye
+Filter accelerometer data
+More expressions
+
 KEY FEATURES:
 Accelerometer filtering
 
@@ -151,17 +155,14 @@ Memory
 App Presets
 
 ADJUSTMENTS:
-Getting value from ID directly
-IsValid && FirstValid with type for Objlist (port functions)
-
+Register, IDList, DataList, ObjList cleanup
 Finish port system (connecting multiple LEDS, I2C)
 As (bytearray) checking not working
 Spread out bluetooth sending to prevent lag?
 Saving takes forever
-(ID)List, register make unsigned?
 
 EXTRA:
-Edit rendering to allow all-display filters
+Edit rendering to allow all-display filters (part first)
 Extra button / connection -> storageless start?
 Create default configs (in app)
 

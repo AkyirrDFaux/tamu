@@ -1,4 +1,4 @@
-//STRINGS & VECTOR3 ARE BROKEN
+// STRINGS & VECTOR3 ARE BROKEN
 
 class DataList
 {
@@ -12,6 +12,7 @@ public:
     void *operator[](int32_t Index) const;
     template <class C>
     C *At(int32_t Index) const;
+    Types TypeAt(int32_t Index) const;
     bool IsValid(int32_t Index, Types TypeCheck = Types::Undefined) const;
 
     void Expand(int32_t NewLength);
@@ -23,27 +24,18 @@ public:
     void DeleteAll();
 };
 
-void *DataList::operator[](int32_t Index) const
-{
-    if (Index >= Length || -Index > Length)
-        return nullptr;
 
-    if (Index < 0) // From end
-        Index = Length + Index;
-
-    return Data[Index];
-};
 
 template <class C>
 C *DataList::At(int32_t Index) const // Returns address or nullptr if invalid
 {
-    if (IsValid(Index,GetType<C>()) == false)
+    if (IsValid(Index, GetType<C>()) == false)
         return nullptr;
 
     if (Index < 0) // From end
         Index = Length + Index;
 
-    return (C*)Data[Index];
+    return (C *)Data[Index];
 };
 
 bool DataList::IsValid(int32_t Index, Types TypeCheck) const // Returns if object at index is valid
@@ -82,7 +74,7 @@ void DataList::Expand(int32_t NewLength) // Expands list to new length
         delete[] Data;
         delete[] Type;
     }
-        
+
     Data = NewData;
     Type = NewType;
     Length = NewLength;
@@ -111,7 +103,7 @@ void DataList::Shorten()
         delete[] Data;
         delete[] Type;
     }
-        
+
     Data = NewData;
     Type = NewType;
     Length = NewLength;
@@ -140,7 +132,7 @@ bool DataList::Delete(int32_t Index) // Removes object
     if (IsValid(Index) == true)
     {
         Data[Index] = nullptr;
-        //Incomplete deletion
+        // Incomplete deletion
         Type[Index] = Types::Undefined;
         Shorten();
         return true;
@@ -153,7 +145,7 @@ void DataList::DeleteAll()
     for (int32_t Index = 0; Index < Length; Index++)
         Delete(Index);
 
-    //What if already nullptr?
+    // What if already nullptr?
     delete[] Data;
     delete[] Type;
 

@@ -14,6 +14,9 @@ public:
     BaseClass *operator[](int32_t Index);
     BaseClass *At(int32_t Index);
 
+    Types TypeAt(int32_t Index);
+    void *ValueAt(int32_t Index);
+
     bool IsValid(int32_t Index, Types Filter = Types::Undefined);
     bool IsValidID(int32_t Index) const;
 
@@ -77,7 +80,7 @@ bool IDList::IsValidID(int32_t Index) const
     if (Index >= Length || Index < 0)
         return false;
 
-    return IDs[Index].Main() != NoID;
+    return IDs[Index].Base() != NoID;
 };
 
 int32_t IDList::Find(BaseClass *TestObject) // Returns index of object address, -1 if fails
@@ -217,7 +220,7 @@ IDList ByteArray::As() const
     }
 
     IDList List;
-    List.Length = SizeOfData()/sizeof(IDClass);
+    List.Length = SizeOfData() / sizeof(IDClass);
     List.IDs = new IDClass[List.Length];
     memcpy(List.IDs, Array + sizeof(uint8_t) * 2, SizeOfData());
     return List;

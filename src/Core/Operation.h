@@ -58,28 +58,28 @@ bool Operation::Run()
 bool Operation::Equal()
 {
     void *Target = Values[1];
-    void *Value = Modules[0]->Values[Modules.IDs[0].Sub() - 1];
+    void *Value = Modules.ValueAt(0);
 
     if (Target == nullptr || Value == nullptr)
         return true;
 
-    if (Values.Type[1] != Modules[0]->Values.Type[Modules.IDs[0].Sub() - 1])
+    if (Values.TypeAt(1) != Modules.TypeAt(0))
         return true;
 
-    memcpy(Value, Target, GetValueSize(Values.Type[1]));
+    memcpy(Value, Target, GetValueSize(Values.TypeAt(1)));
     return true;
 }
 
 bool Operation::Extract()
 {
-    // (ID)Value[1]  (Value(2), ...) -> Module[0]
-    void *Target = Modules[0]->Values[Modules.IDs[0].Sub() - 1];
-    void *Value = Objects.Find(*Values.At<IDClass>(1))->Values[Values.At<IDClass>(1)->Sub() - 1]; // From values[1] ID
+    // Value[1]  (Value(2), ...) -> Module[0]
+    void *Target = Modules.ValueAt(0);
+    void *Value = Values[1];
 
     if (Target == nullptr || Value == nullptr)
         return true;
 
-    if (Modules[0]->Values.Type[Modules.IDs[0].Sub() - 1] == Types::Vector2D && Objects.Find(*Values.At<IDClass>(1))->Values.Type[Values.At<IDClass>(1)->Sub() - 1] == Types::Vector3D)
+    if (Modules.TypeAt(0) == Types::Vector2D && Values.TypeAt(1) == Types::Vector3D && Values.TypeAt(2) == Types::Byte && Values.TypeAt(3) == Types::Byte)
         *(Vector2D *)Target = Vector2D(((Vector3D *)Value)->GetByIndex(*Values.At<uint8_t>(2)), ((Vector3D *)Value)->GetByIndex(*Values.At<uint8_t>(3)));
 
     return true;
@@ -91,11 +91,11 @@ bool Operation::Combine()
 
     for (int32_t Index = 0; Index < Modules.Length; Modules.Iterate(&Index))
     {
-        Target = Modules[Index]->Values[Modules.IDs[Index].Sub() - 1];
+        Target = Modules.ValueAt(Index);
         if (Target == nullptr)
             return true;
 
-        if (Modules[Index]->Values.Type[Modules.IDs[Index].Sub() - 1] == Types::Coord2D && Values.Type[1] == Types::Vector2D && Values.Type[2] == Types::Number)
+        if (Modules.TypeAt(Index) == Types::Coord2D && Values.TypeAt(1) == Types::Vector2D && Values.TypeAt(2) == Types::Number)
             *(Coord2D *)Target = Coord2D(*Values.At<Vector2D>(1), Vector2D(*Values.At<float>(2)));
     }
     return true;
@@ -103,13 +103,13 @@ bool Operation::Combine()
 
 bool Operation::Add()
 {
-    if (Values.Type[1] != Values.Type[2])
+    if (Values.TypeAt(1) != Values.TypeAt(2))
         return true;
 
     for (int32_t Index = 0; Index < Modules.Length; Modules.Iterate(&Index))
     {
-        if (Values.Type[1] == Types::Vector2D)
-            *Modules[0]->Values.At<Vector2D>(Modules.IDs[0].Sub() - 1) = *Values.At<Vector2D>(1) + *Values.At<Vector2D>(2);
+        if (Values.TypeAt(1) == Types::Vector2D && Modules.TypeAt(Index) == Types::Vector2D)
+            *(Vector2D*)Modules.ValueAt(Index) = *Values.At<Vector2D>(1) + *Values.At<Vector2D>(2);
     }
 
     return true;
@@ -119,17 +119,17 @@ bool Operation::MoveTo()
 {
     void *Target = Values[1];
     uint32_t *Time = Values.At<uint32_t>(2);
-    void *Value = Modules[0]->Values[Modules.IDs[0].Sub() - 1];
+    void *Value = Modules.ValueAt(0);
 
     if (Target == nullptr || Time == nullptr || Value == nullptr)
         return true;
 
-    if (Values.Type[1] != Modules[0]->Values.Type[Modules.IDs[0].Sub() - 1])
+    if (Values.TypeAt(1) != Modules.TypeAt(0))
         return true;
 
-    if (Values.Type[1] == Types::Coord2D)
+    if (Values.TypeAt(1) == Types::Coord2D)
         *(Coord2D *)Value = ((Coord2D *)Value)->TimeMove(*(Coord2D *)Target, *Time);
-    else if (Values.Type[1] == Types::Number)
+    else if (Values.TypeAt(1) == Types::Number)
         *(float *)Value = TimeMove(*(float *)Value, *(float *)Target, *Time);
     else
         return true;
@@ -158,9 +158,9 @@ bool Operation::Delay()
 bool Operation::AddDelay()
 {
     uint32_t *Delay = Values.At<uint32_t>(1);
+    uint32_t *Value = (uint32_t*)Modules.ValueAt(0);
 
-    uint32_t *Value = Modules[0]->Values.At<uint32_t>(Modules.IDs[0].Sub() - 1); // Proprietary
-    if (Delay == nullptr || Value == nullptr)
+    if (Delay == nullptr || Value == nullptr || Modules.TypeAt(0) != Types::Time)
         return true;
 
     *Value = *Delay + CurrentTime;

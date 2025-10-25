@@ -32,10 +32,10 @@ BaseClass *RegisterClass::operator[](IDClass ID)
 
 BaseClass *RegisterClass::Find(IDClass ID) // Returns address or nullptr if invalid
 {
-    if (ID.Main() == IDClass(NoID) || ID.Main() >= Allocated)
+    if (ID.Base() == NoID || ID.Base() >= Allocated)
         return nullptr; // Invalid ID
 
-    return Object[ID.Main()];
+    return Object[ID.Base()];
 };
 
 bool RegisterClass::IsValid(IDClass ID) // Returns if object at index is valid
@@ -89,17 +89,17 @@ void RegisterClass::Shorten()
 }
 bool RegisterClass::Register(BaseClass *AddObject, IDClass ID) // Add, return actual ID
 {
-    if (ID.Main() == NoID) // Invalid, don't do anything
+    if (ID.Base() == NoID) // Invalid, don't do anything
         return false;
 
     Unregister(AddObject); // Check if needs to be unregistered first
 
-    IDClass NewID = IDClass(ID.Main(),0);
+    IDClass NewID = ID.Main();
     while (IsValid(NewID))
         NewID.ID += (1<<8);
 
-    Expand(NewID.Main() + 1);         // Make sure there is space for it, +1!
-    Object[NewID.Main()] = AddObject; // Write
+    Expand(NewID.Base() + 1);         // Make sure there is space for it, +1!
+    Object[NewID.Base()] = AddObject; // Write
     AddObject->ID = NewID;
     Registered += 1;
     return NewID == ID;
@@ -108,7 +108,7 @@ bool RegisterClass::Register(BaseClass *AddObject, IDClass ID) // Add, return ac
 bool RegisterClass::Unregister(IDClass ID) // Removes object
 {
     Find(ID)->ID = NoID;
-    Object[ID.Main()] = nullptr;
+    Object[ID.Base()] = nullptr;
     Shorten();
     Registered -= 1;
     return true;
