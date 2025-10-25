@@ -14,6 +14,7 @@ private:
     bool Extract();
     bool Combine();
     bool Add();
+    bool Multiply();
     bool MoveTo();
     bool Delay();
     bool AddDelay();
@@ -42,6 +43,8 @@ bool Operation::Run()
         return Combine();
     case Operations::Add:
         return Add();
+    case Operations::Multiply:
+        return Multiply();
     case Operations::MoveTo:
         return MoveTo();
     case Operations::Delay:
@@ -114,6 +117,20 @@ bool Operation::Add()
     {
         if (Values.TypeAt(1) == Types::Vector2D && Modules.TypeAt(Index) == Types::Vector2D)
             *(Vector2D *)Modules.ValueAt(Index) = *Values.At<Vector2D>(1) + *Values.At<Vector2D>(2);
+    }
+
+    return true;
+}
+
+bool Operation::Multiply()
+{
+    if (Values.TypeAt(1) != Values.TypeAt(2))
+        return true;
+
+    for (int32_t Index = 0; Index < Modules.Length; Modules.Iterate(&Index))
+    {
+        if (Values.TypeAt(1) == Types::Vector2D && Modules.TypeAt(Index) == Types::Vector2D)
+            *(Vector2D *)Modules.ValueAt(Index) = (*Values.At<Vector2D>(1)) * (*Values.At<Vector2D>(2));
     }
 
     return true;

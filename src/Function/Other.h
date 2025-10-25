@@ -212,52 +212,62 @@ void DefaultSetup()
 
     P3->AddModule(OR1, 0);
 
+    //Gain
+    Operation *OR2 = new Operation();
+    *OR2->Values.At<Operations>(0) = Operations::Multiply;
+    OR2->Values.Add(Vector2D(0, 0), 1); // Variable
+    OR2->Values.Add(Vector2D(-1, 1), 2);
+
+    P3->AddModule(OR2, 1);
+
     // Add offset
-    Operation *ORL2 = new Operation();
-    *ORL2->Values.At<Operations>(0) = Operations::Add;
-
-    ORL2->Values.Add(Vector2D(0, 0), 1); // Variable
-    ORL2->Values.Add(Vector2D(1.5, 1), 2);
-
-    P3->AddModule(ORL2, 1);
-
-    Operation *ORR2 = new Operation();
-    *ORR2->Values.At<Operations>(0) = Operations::Add;
-
-    ORR2->Values.Add(Vector2D(0, 0), 1); // Variable
-    ORR2->Values.Add(Vector2D(-1.5, 1), 2);
-
-    P3->AddModule(ORR2, 2);
-
-    // Write into elements
     Operation *ORL3 = new Operation();
-    *ORL3->Values.At<Operations>(0) = Operations::Combine;
-    ORL3->Values.Add(Vector2D(), 1);
-    ORL3->Values.Add<float>(0, 2);
+    *ORL3->Values.At<Operations>(0) = Operations::Add;
 
-    P3->AddModule(ORL3, 3);
+    ORL3->Values.Add(Vector2D(0, 0), 1); // Variable
+    ORL3->Values.Add(Vector2D(1.5, 1), 2);
+
+    P3->AddModule(ORL3, 2);
 
     Operation *ORR3 = new Operation();
-    *ORR3->Values.At<Operations>(0) = Operations::Combine;
-    ORR3->Values.Add(Vector2D(), 1);
-    ORR3->Values.Add<float>(0, 2);
+    *ORR3->Values.At<Operations>(0) = Operations::Add;
 
-    P3->AddModule(ORR3, 4);
+    ORR3->Values.Add(Vector2D(0, 0), 1); // Variable
+    ORR3->Values.Add(Vector2D(-1.5, 1), 2);
+
+    P3->AddModule(ORR3, 3);
+
+    // Write into elements
+    Operation *ORL4 = new Operation();
+    *ORL4->Values.At<Operations>(0) = Operations::Combine;
+    ORL4->Values.Add(Vector2D(), 1);
+    ORL4->Values.Add<float>(0, 2);
+
+    P3->AddModule(ORL4, 4);
+
+    Operation *ORR4 = new Operation();
+    *ORR4->Values.At<Operations>(0) = Operations::Combine;
+    ORR4->Values.Add(Vector2D(), 1);
+    ORR4->Values.Add<float>(0, 2);
+
+    P3->AddModule(ORR4, 5);
 
     // Outputs
-    OR1->Modules.Add(IDClass(ORL2->ID.Base(), 1 + 1));
-    OR1->Modules.Add(IDClass(ORR2->ID.Base(), 1 + 1));
+    OR1->Modules.Add(IDClass(OR2->ID.Base(), 1 + 1));
 
-    ORL2->Modules.Add(IDClass(ORL3->ID.Base(), 1 + 1));
-    ORR2->Modules.Add(IDClass(ORR3->ID.Base(), 1 + 1));
+    OR2->Modules.Add(IDClass(ORL3->ID.Base(), 1 + 1));
+    OR2->Modules.Add(IDClass(ORR3->ID.Base(), 1 + 1));
 
-    ORL3->Modules.Add(IDClass(LT1->ID.Base(), LT1->Position + 1));
-    ORL3->Modules.Add(IDClass(LG1->ID.Base(), LG1->Position + 1));
-    ORL3->Modules.Add(IDClass(LG2->ID.Base(), LG2->Position + 1));
+    ORL3->Modules.Add(IDClass(ORL4->ID.Base(), 1 + 1));
+    ORR3->Modules.Add(IDClass(ORR4->ID.Base(), 1 + 1));
 
-    ORR3->Modules.Add(IDClass(RT1->ID.Base(), RT1->Position + 1));
-    ORR3->Modules.Add(IDClass(RG1->ID.Base(), RG1->Position + 1));
-    ORR3->Modules.Add(IDClass(RG2->ID.Base(), RG2->Position + 1));
+    ORL4->Modules.Add(IDClass(LT1->ID.Base(), LT1->Position + 1));
+    ORL4->Modules.Add(IDClass(LG1->ID.Base(), LG1->Position + 1));
+    ORL4->Modules.Add(IDClass(LG2->ID.Base(), LG2->Position + 1));
+
+    ORR4->Modules.Add(IDClass(RT1->ID.Base(), RT1->Position + 1));
+    ORR4->Modules.Add(IDClass(RG1->ID.Base(), RG1->Position + 1));
+    ORR4->Modules.Add(IDClass(RG2->ID.Base(), RG2->Position + 1));
 };
 
 /*
