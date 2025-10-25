@@ -141,7 +141,6 @@ void loop()
 };
 
 /*TODO:
-Add 2nd eye
 Filter accelerometer data
 More expressions
 
