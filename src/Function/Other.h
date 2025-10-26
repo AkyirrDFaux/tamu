@@ -142,6 +142,24 @@ void DefaultSetup()
     RG3->Setup();
     *RG3->Values.At<Coord2D>(RG3->Position) = Coord2D(0, 3, 0);
 
+    // FAN
+    FanClass *F = new FanClass();
+    F->Modules.Add(Board.Modules[4], F->Port);
+
+    // LED COLLAR
+    LEDStripClass *C = new LEDStripClass();
+    C->Modules.Add(Board.Modules[1], C->Port);
+    *C->Values.At<int32_t>(C->Length) = 13;
+
+    LEDSegmentClass *CS = new LEDSegmentClass();
+    C->AddModule(CS);
+    *CS->Values.At<int32_t>(CS->End) = 12;
+
+    Texture1D *CT = CS->Modules.Get<Texture1D>(CS->Texture);
+    *CT->Values.At<Textures1D>(CT->TextureType) = Textures1D::Full;
+    CT->Setup();
+    *CT->Values.At<ColourClass>(CT->ColourA) = ColourClass(255, 0, 0);
+
     // LID MOVEMENT
     Program *P2 = new Program();
     *P2->Values.At<ProgramTypes>(P2->Mode) = ProgramTypes::Sequence;
@@ -191,10 +209,6 @@ void DefaultSetup()
     OL4->Values.Add<uint32_t>(10000, 1);
     OL4->Values.Add<uint32_t>(0, 2);
     P2->AddModule(OL4, 6);
-
-    // FAN
-    FanClass *F = new FanClass();
-    F->Modules.Add(Board.Modules[4], F->Port);
 
     // EYE REACTION
     Program *P3 = new Program();
@@ -315,20 +329,6 @@ void DefaultSetup()
 
 
     // LED STRIP
-    LEDStripClass *L = new LEDStripClass();
-    L->Modules.Add(Board.Modules[1], L->Port);
-    *L->Values.At<int32_t>(L->Length) = 60;
-
-    LEDSegmentClass *LS = new LEDSegmentClass();
-    L->AddModule(LS);
-    *LS->Values.At<int32_t>(LS->End) = 59;
-
-    Texture1D *LT = LS->Modules.Get<Texture1D>(LS->Texture);
-    *LT->Values.At<Textures1D>(LT->TextureType) = Textures1D::Full;
-    LT->Setup();
-    *LT->Values.At<ColourClass>(LT->ColourA) = ColourClass(255, 0, 0);
-
-
 
     // SERVO
     ServoClass *Ser = new ServoClass();
