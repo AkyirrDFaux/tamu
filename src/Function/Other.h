@@ -82,7 +82,7 @@ void DefaultSetup()
     *RD->Values.At<Displays>(RD->DisplayType) = Displays::Vysi_v1_0;
     *RD->Values.At<Coord2D>(RD->Offset) = Coord2D(0, 0, 175);
     RD->Setup();
-    RD->AddModule(Board.Modules[1], RD->Port);
+    RD->AddModule(Board.Modules[7], RD->Port);
 
     Shape2DClass *RS = new Shape2DClass();
     RD->AddModule(RS);
@@ -111,7 +111,6 @@ void DefaultSetup()
     *RG1->Values.At<Geometries>(RG1->Geometry) = Geometries::Elipse;
     RG1->Setup();
     *RG1->Values.At<Vector2D>(RG1->Size) = Vector2D(4.5, 4.5);
-    ;
     *RG1->Values.At<float>(RG1->Fade) = 0.1F;
     *RG1->Values.At<Coord2D>(RG1->Position) = Coord2D(-1.5, 1, 0);
 
@@ -195,7 +194,7 @@ void DefaultSetup()
 
     // FAN
     FanClass *F = new FanClass();
-    F->Modules.Add(Board.Modules[3], F->Port);
+    F->Modules.Add(Board.Modules[4], F->Port);
 
     // EYE REACTION
     Program *P3 = new Program();
@@ -207,8 +206,8 @@ void DefaultSetup()
     Operation *OR1 = new Operation();
     *OR1->Values.At<Operations>(0) = Operations::Extract;
     OR1->Values.Add(IDClass(Board.Modules[11]->ID.Base(), 1 + 1), 1); // GyrAcc
-    OR1->Values.Add<uint8_t>(1, 2);                                   // Y
-    OR1->Values.Add<uint8_t>(0, 3);                                   // X
+    OR1->Values.Add<uint8_t>(0, 2);                                   // X
+    OR1->Values.Add<uint8_t>(1, 3);                                   // Y
 
     P3->AddModule(OR1, 0);
 
@@ -216,7 +215,7 @@ void DefaultSetup()
     Operation *OR2 = new Operation();
     *OR2->Values.At<Operations>(0) = Operations::Multiply;
     OR2->Values.Add(Vector2D(0, 0), 1); // Variable
-    OR2->Values.Add(Vector2D(-1, 1), 2);
+    OR2->Values.Add(Vector2D(1, -1), 2);
 
     P3->AddModule(OR2, 1);
 
