@@ -27,6 +27,7 @@ void Texture1D::Setup()
     Textures1D *Type = Values.At<Textures1D>(TextureType);
     switch (*Type)
     {
+    case Textures1D::Point:
     case Textures1D::Blend:
         if (!Values.IsValid(ColourB))
             Values.Add(ColourClass(0, 0, 0, 255), ColourB);
@@ -72,6 +73,14 @@ ColourClass Texture1D::Render(int32_t PixelPosition)
         if (ColourA == nullptr || ColourB == nullptr || Position == nullptr || Width == nullptr)
             break;
         Distance = PixelPosition - *Position;
+        Distance = LimitZeroToOne((Distance / *Width / 2) + 0.5);
+        Colour = *ColourB;
+        Colour.Layer(*ColourA, Distance);
+        break;
+    case Textures1D::Point:
+        if (ColourA == nullptr || ColourB == nullptr || Position == nullptr || Width == nullptr)
+            break;
+        Distance = abs(PixelPosition - *Position);
         Distance = LimitZeroToOne((Distance / *Width / 2) + 0.5);
         Colour = *ColourB;
         Colour.Layer(*ColourA, Distance);

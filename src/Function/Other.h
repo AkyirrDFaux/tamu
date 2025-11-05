@@ -74,6 +74,29 @@ void DefaultSetup()
     *LG2->Values.At<Vector2D>(LG2->Size) = Vector2D(2.3, 4.9);
     *LG2->Values.At<Coord2D>(LG2->Position) = Coord2D(1.5, 1, 0);
 
+    Shape2DClass *LS2A = new Shape2DClass();
+    LS2A->Name = "Left Pupil Arrow";
+    LS2A->Flags = Flags::Inactive;
+    LD->AddModule(LS2A);
+    LS2A->AddModule(LT2, LS2A->Texture);
+    Geometry2DClass *LG2A = new Geometry2DClass();
+    LG2A->Name = "Left Pupil Arrow";
+    LS2A->AddModule(LG2A);
+    *LG2A->Values.At<Geometries>(LG2A->Geometry) = Geometries::Triangle;
+    LG2A->Setup();
+    *LG2A->Values.At<float>(LG2A->Fade) = 1.5F;
+    *LG2A->Values.At<Vector2D>(LG2A->Size) = Vector2D(8, 8);
+    *LG2A->Values.At<Coord2D>(LG2A->Position) = Coord2D(1.5, -1.5, 0);
+    Geometry2DClass *LG2AC = new Geometry2DClass();
+    LG2AC->Name = "Left Pupil Arrow";
+    LS2A->AddModule(LG2AC);
+    *LG2AC->Values.At<Geometries>(LG2AC->Geometry) = Geometries::Triangle;
+    *LG2AC->Values.At<GeometryOperation>(LG2AC->Operation) = GeometryOperation::Cut;
+    LG2AC->Setup();
+    *LG2AC->Values.At<float>(LG2AC->Fade) = 1.5F;
+    *LG2AC->Values.At<Vector2D>(LG2AC->Size) = Vector2D(3, 3);
+    *LG2AC->Values.At<Coord2D>(LG2AC->Position) = Coord2D(1.5, -1.5, 0);
+
     Shape2DClass *LS3 = new Shape2DClass();
     LS3->Name = "Left Lid";
     LD->AddModule(LS3);
@@ -152,6 +175,29 @@ void DefaultSetup()
     *RG2->Values.At<Vector2D>(RG2->Size) = Vector2D(2.3, 4.9);
     *RG2->Values.At<Coord2D>(RG2->Position) = Coord2D(-1.5, 1, 0);
 
+    Shape2DClass *RS2A = new Shape2DClass();
+    RS2A->Name = "Right Pupil Arrow";
+    RS2A->Flags = Flags::Inactive;
+    RD->AddModule(RS2A);
+    RS2A->AddModule(RT2, RS2A->Texture);
+    Geometry2DClass *RG2A = new Geometry2DClass();
+    RG2A->Name = "Right Pupil Arrow";
+    RS2A->AddModule(RG2A);
+    *RG2A->Values.At<Geometries>(RG2A->Geometry) = Geometries::Triangle;
+    RG2A->Setup();
+    *RG2A->Values.At<float>(RG2A->Fade) = 1.5F;
+    *RG2A->Values.At<Vector2D>(RG2A->Size) = Vector2D(8, 8);
+    *RG2A->Values.At<Coord2D>(RG2A->Position) = Coord2D(-1.5, -1.5, 0);
+    Geometry2DClass *RG2AC = new Geometry2DClass();
+    RG2AC->Name = "Right Pupil Arrow";
+    RS2A->AddModule(RG2AC);
+    *RG2AC->Values.At<Geometries>(RG2AC->Geometry) = Geometries::Triangle;
+    *RG2AC->Values.At<GeometryOperation>(RG2AC->Operation) = GeometryOperation::Cut;
+    RG2AC->Setup();
+    *RG2AC->Values.At<float>(RG2AC->Fade) = 1.5F;
+    *RG2AC->Values.At<Vector2D>(RG2AC->Size) = Vector2D(3, 3);
+    *RG2AC->Values.At<Coord2D>(RG2AC->Position) = Coord2D(-1.5, -1.5, 0);
+
     Shape2DClass *RS3 = new Shape2DClass();
     RS3->Name = "Right Lid";
     RD->AddModule(RS3);
@@ -184,12 +230,14 @@ void DefaultSetup()
     CS->Name = "Collar Segment";
     C->AddModule(CS);
     *CS->Values.At<int32_t>(CS->End) = 12;
-
     Texture1D *CT = CS->Modules.Get<Texture1D>(CS->Texture);
     CT->Name = "Collar Texture";
-    *CT->Values.At<Textures1D>(CT->TextureType) = Textures1D::Full;
+    *CT->Values.At<Textures1D>(CT->TextureType) = Textures1D::Point;
     CT->Setup();
     *CT->Values.At<ColourClass>(CT->ColourA) = ColourClass(255, 0, 0);
+    *CT->Values.At<ColourClass>(CT->ColourB) = ColourClass(255, 150, 0);
+    *CT->Values.At<float>(CT->Width) = 6;
+    *CT->Values.At<float>(CT->Position) = 0;
 
     // LID MOVEMENT
     Program *P2 = new Program();
@@ -323,6 +371,133 @@ void DefaultSetup()
     ORR4->Modules.Add(IDClass(RT1->ID.Base(), RT1->Position + 1));
     ORR4->Modules.Add(IDClass(RG1->ID.Base(), RG1->Position + 1));
     ORR4->Modules.Add(IDClass(RG2->ID.Base(), RG2->Position + 1));
+
+    //Offset arrow
+    Operation *ORLA3 = new Operation();
+    ORLA3->Name = "Eye arrow offset left";
+    *ORLA3->Values.At<Operations>(0) = Operations::Add;
+
+    ORLA3->Values.Add(Vector2D(0, 0), 1); // Variable
+    ORLA3->Values.Add(Vector2D(1.5, -1.5), 2);
+
+    P3->AddModule(ORLA3, 6);
+
+    Operation *ORRA3 = new Operation();
+    ORRA3->Name = "Eye arrow offset right";
+    *ORRA3->Values.At<Operations>(0) = Operations::Add;
+
+    ORRA3->Values.Add(Vector2D(0, 0), 1); // Variable
+    ORRA3->Values.Add(Vector2D(-1.5, -1.5), 2);
+
+    P3->AddModule(ORRA3, 7);
+
+    // Write into elements
+    Operation *ORLA4 = new Operation();
+    ORLA4->Name = "Eye arrow combine left";
+    *ORLA4->Values.At<Operations>(0) = Operations::Combine;
+    ORLA4->Values.Add(Vector2D(), 1);
+    ORLA4->Values.Add<float>(0, 2);
+
+    P3->AddModule(ORLA4, 8);
+
+    Operation *ORRA4 = new Operation();
+    ORRA4->Name = "Eye arrow combine right";
+    *ORRA4->Values.At<Operations>(0) = Operations::Combine;
+    ORRA4->Values.Add(Vector2D(), 1);
+    ORRA4->Values.Add<float>(0, 2);
+
+    P3->AddModule(ORRA4, 9);
+
+    OR2->Modules.Add(IDClass(ORLA3->ID.Base(), 1 + 1));
+    OR2->Modules.Add(IDClass(ORRA3->ID.Base(), 1 + 1));
+
+    ORLA3->Modules.Add(IDClass(ORLA4->ID.Base(), 1 + 1));
+    ORRA3->Modules.Add(IDClass(ORRA4->ID.Base(), 1 + 1));
+
+    ORLA4->Modules.Add(IDClass(LG2A->ID.Base(), LG2A->Position + 1));
+    ORLA4->Modules.Add(IDClass(LG2AC->ID.Base(), LG2AC->Position + 1));
+
+    ORRA4->Modules.Add(IDClass(RG2A->ID.Base(), RG2A->Position + 1));
+    ORRA4->Modules.Add(IDClass(RG2AC->ID.Base(), RG2AC->Position + 1));
+
+    // NORMAL PUPIL SET
+    Program *PSN = new Program();
+    *PSN->Values.At<ProgramTypes>(PSN->Mode) = ProgramTypes::Sequence;
+    PSN->Flags += Flags::Favourite;
+    PSN->Name = "Normal Pupil";
+
+    Operation *OSNE = new Operation();
+    OSNE->Name = "Normal Enable";
+    *OSNE->Values.At<Operations>(0) = Operations::ResetFlags;
+    OSNE->Values.Add(FlagClass(Flags::Inactive),1);
+    OSNE->Modules.Add(RS2->ID);
+    OSNE->Modules.Add(LS2->ID);
+
+    Operation *OSND = new Operation();
+    OSND->Name = "Normal Disable";
+    *OSND->Values.At<Operations>(0) = Operations::SetFlags;
+    OSND->Values.Add(FlagClass(Flags::Inactive),1);
+    OSND->Modules.Add(RS2A->ID);
+    OSND->Modules.Add(LS2A->ID);
+
+    PSN->Modules.Add(OSNE,0);
+    PSN->Modules.Add(OSND,1);
+
+    // ARROW PUPIL SET
+    Program *PSA = new Program();
+    *PSA->Values.At<ProgramTypes>(PSA->Mode) = ProgramTypes::Sequence;
+    PSA->Flags += Flags::Favourite;
+    PSA->Name = "Arrow Pupil";
+
+    Operation *OSAE = new Operation();
+    OSAE->Name = "Arrow Enable";
+    *OSAE->Values.At<Operations>(0) = Operations::ResetFlags;
+    OSAE->Values.Add(FlagClass(Flags::Inactive),1);
+    OSAE->Modules.Add(RS2A->ID);
+    OSAE->Modules.Add(LS2A->ID);
+
+    Operation *OSAD = new Operation();
+    OSAD->Name = "Arrow Disable";
+    *OSAD->Values.At<Operations>(0) = Operations::SetFlags;
+    OSAD->Values.Add(FlagClass(Flags::Inactive),1);
+    OSAD->Modules.Add(RS2->ID);
+    OSAD->Modules.Add(LS2->ID);
+
+    PSA->Modules.Add(OSAE,0);
+    PSA->Modules.Add(OSAD,1);
+
+    Program *PC = new Program();
+    *PC->Values.At<ProgramTypes>(PC->Mode) = ProgramTypes::Sequence;
+    PC->Flags += Flags::RunLoop;
+    PC->Name = "Collar program";
+
+    // Add delay for time
+    Operation *OC1 = new Operation();
+    OC1->Name = "Collar timing";
+    *OC1->Values.At<Operations>(0) = Operations::AddDelay;
+    OC1->Values.Add<uint32_t>(0, 1);
+    PC->AddModule(OC1, 0);
+    
+    // Add equal for value - down position
+    Operation *OC2 = new Operation();
+    OC2->Name = "Collar sine";
+    *OC2->Values.At<Operations>(0) = Operations::Sine;
+    OC2->Values.Add((uint32_t)0, 1);
+    OC2->Values.Add((float)0.0005, 2);
+    OC2->Values.Add((float)0, 3);
+    OC1->Modules.Add(IDClass(OC2->ID.Base(), 1 + 1));
+    PC->AddModule(OC2, 1);
+
+    // Add equal for value - down position
+    Operation *OC3 = new Operation();
+    OC3->Name = "Collar gain";
+    *OC3->Values.At<Operations>(0) = Operations::Multiply;
+    OC3->Values.Add((float)0, 1);
+    OC3->Values.Add((float)6, 2);
+    OC2->Modules.Add(IDClass(OC3->ID.Base(), 1 + 1));
+
+    OC3->Modules.Add(IDClass(CT->ID.Base(), CT->Position + 1));
+    PC->AddModule(OC3, 2);
 };
 
 /*

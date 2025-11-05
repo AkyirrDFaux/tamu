@@ -57,6 +57,7 @@ enum class Textures1D : uint8_t
     None = 0,
     Full,
     Blend,
+    Point,
     Noise
 };
 
@@ -134,5 +135,6 @@ enum class Operations : uint8_t
     IfSwitch,//Program control (branch)
     While,
     SetFlags,
-    ResetFlags
+    ResetFlags,
+    Sine
 };

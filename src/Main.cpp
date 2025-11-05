@@ -126,7 +126,7 @@ void loop()
      //Serial.println("P");
     for (int32_t Index = 0; Index < Programs.Length; Programs.Iterate(&Index))
     {
-        if ((Programs[Index]->Flags == RunLoop) || (Programs[Index]->Flags == RunOnce))
+        if (((Programs[Index]->Flags == Inactive) == false) && ((Programs[Index]->Flags == RunLoop) || (Programs[Index]->Flags == RunOnce)))
             Programs[Index]->Run();
     }
      //Serial.println("O");

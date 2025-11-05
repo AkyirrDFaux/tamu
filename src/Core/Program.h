@@ -63,6 +63,7 @@ bool Program::Run()
         }
         break;
     case ProgramTypes::All:
+        //NOT WORKING
         for (int32_t Index = Modules.FirstValid(); Index < Modules.Length; Modules.Iterate(&Index))
             HasFinished = HasFinished && RunEntry(*Counter);
         break;
