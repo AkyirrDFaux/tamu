@@ -48,6 +48,8 @@ void GyrAccClass::Setup()
 
         ((Adafruit_LSM6DS3TRC *)Sensor)->setAccelDataRate(LSM6DS_RATE_26_HZ);
         ((Adafruit_LSM6DS3TRC *)Sensor)->setGyroDataRate(LSM6DS_RATE_26_HZ);
+        //((Adafruit_LSM6DS3TRC *)Sensor)->setAccelDataRate(LSM6DS_RATE_12_5_HZ);
+        //((Adafruit_LSM6DS3TRC *)Sensor)->setGyroDataRate(LSM6DS_RATE_12_5_HZ);
         ((Adafruit_LSM6DS3TRC *)Sensor)->setAccelRange(LSM6DS_ACCEL_RANGE_16_G);
         ((Adafruit_LSM6DS3TRC *)Sensor)->setGyroRange(LSM6DS_GYRO_RANGE_2000_DPS);
         break;

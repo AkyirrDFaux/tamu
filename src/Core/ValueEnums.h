@@ -133,5 +133,6 @@ enum class Operations : uint8_t
     AddDelay, //Create delayed time (for other operations)
     IfSwitch,//Program control (branch)
     While,
-    SetActivity
+    SetFlags,
+    ResetFlags
 };

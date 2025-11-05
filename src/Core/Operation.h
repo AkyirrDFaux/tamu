@@ -18,6 +18,8 @@ private:
     bool MoveTo();
     bool Delay();
     bool AddDelay();
+    bool SetFlags();
+    bool ResetFlags();
 };
 
 Operation::Operation(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
@@ -51,6 +53,10 @@ bool Operation::Run()
         return Delay();
     case Operations::AddDelay:
         return AddDelay();
+    case Operations::SetFlags:
+        return SetFlags();
+    case Operations::ResetFlags:
+        return ResetFlags();
     default:
         ReportError(Status::InvalidValue, "Operation not implemeted" + String((uint8_t)Type));
         return true;
@@ -187,5 +193,31 @@ bool Operation::AddDelay()
         return true;
 
     *Value = *Delay + CurrentTime;
+    return true;
+}
+
+bool Operation::SetFlags()
+{
+    FlagClass *Value = Values.At<FlagClass>(1);
+
+    if (Value == nullptr)
+        return true;
+
+    for (int32_t Index = 0; Index < Modules.Length; Modules.Iterate(&Index))
+        Modules.At(Index)->Flags += Value->Values;
+
+    return true;
+}
+
+bool Operation::ResetFlags()
+{
+    FlagClass *Value = Values.At<FlagClass>(1);
+
+    if (Value == nullptr)
+        return true;
+
+    for (int32_t Index = 0; Index < Modules.Length; Modules.Iterate(&Index))
+        Modules.At(Index)->Flags -= Value->Values;
+
     return true;
 }

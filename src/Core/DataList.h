@@ -24,8 +24,6 @@ public:
     void DeleteAll();
 };
 
-
-
 template <class C>
 C *DataList::At(int32_t Index) const // Returns address or nullptr if invalid
 {
@@ -131,8 +129,21 @@ bool DataList::Delete(int32_t Index) // Removes object
 {
     if (IsValid(Index) == true)
     {
+        // Deletion
+        if (Type[Index] < Types::Integer && Type[Index] >= Types::Byte)
+            delete (uint8_t*)Data[Index];
+        else if (Type[Index] < Types::Vector2D)
+            delete (uint32_t*)Data[Index];
+        else if (Type[Index] == Types::Vector2D)
+            delete (Vector2D*)Data[Index];
+        else if (Type[Index] == Types::Vector3D)
+            delete (Vector3D*)Data[Index];
+        else if (Type[Index] == Types::Coord2D)
+            delete (Coord2D*)Data[Index];
+        else if (Type[Index] == Types::Text)
+            delete (String*)Data[Index];
+            
         Data[Index] = nullptr;
-        // Incomplete deletion
         Type[Index] = Types::Undefined;
         Shorten();
         return true;
@@ -145,9 +156,10 @@ void DataList::DeleteAll()
     for (int32_t Index = 0; Index < Length; Index++)
         Delete(Index);
 
-    // What if already nullptr?
-    delete[] Data;
-    delete[] Type;
+    if (Data != nullptr)
+        delete[] Data;
+    if (Type != nullptr)
+        delete[] Type;
 
     Data = nullptr;
     Type = nullptr;

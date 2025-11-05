@@ -22,6 +22,9 @@ Shape2DClass::~Shape2DClass() {
 
 ColourClass Shape2DClass::Render(ColourClass Current, Vector2D Position)
 {
+    if (Flags == Flags::Inactive)
+        return Current;
+
     Texture2D *Texture = Modules.Get<Texture2D>(Module::Texture);
 
     if (Texture == nullptr)

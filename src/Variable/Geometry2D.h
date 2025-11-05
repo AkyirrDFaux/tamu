@@ -34,6 +34,7 @@ void Geometry2DClass::Setup()
     case Geometries::Box:
     case Geometries::Elipse:
     case Geometries::DoubleParabola:
+    case Geometries::Triangle:
         if (!Values.IsValid(Size))
             Values.Add(Vector2D(1, 1), Size);
     case Geometries::HalfFill:
@@ -72,6 +73,13 @@ float Geometry2DClass::Render(float Previous, Vector2D PixelPosition)
             break;
         Local = Position->TransformTo(PixelPosition);
         Overlay = min(Size->X - abs(Local.X), Size->Y - abs(Local.Y)) / *Fade + 0.5;
+        break;
+    case Geometries::Triangle:
+        if (Position == nullptr || Size == nullptr || Fade == nullptr)
+            break;
+        Local = Position->TransformTo(PixelPosition);
+        //2h|x|/w + y < h
+        Overlay = min(Size->Y - Local.Y - 2 * Size->Y * abs(Local.X) / Size->X, Local.Y) / *Fade + 0.5;
         break;
     case Geometries::Elipse:
         if (Position == nullptr || Size == nullptr || Fade == nullptr)
