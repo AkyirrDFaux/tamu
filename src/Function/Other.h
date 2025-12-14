@@ -19,6 +19,7 @@ void DefaultSetup()
     LD->Setup();
     *LD->Values.At<Coord2D>(LD->Offset) = Coord2D(0, 0, 5);
     LD->AddModule(Board.Modules[0], LD->Port);
+    *LD->Values.At<uint8_t>(LD->Brightness) = 150;
 
     Shape2DClass *LS = new Shape2DClass();
     LS->Name = "Left Background";
@@ -120,6 +121,7 @@ void DefaultSetup()
     *RD->Values.At<Coord2D>(RD->Offset) = Coord2D(0, 0, 175);
     RD->Setup();
     RD->AddModule(Board.Modules[7], RD->Port);
+    *RD->Values.At<uint8_t>(RD->Brightness) = 150;
 
     Shape2DClass *RS = new Shape2DClass();
     RS->Name = "Right Background";
@@ -219,7 +221,7 @@ void DefaultSetup()
     F->Name = "Fan";
     F->Modules.Add(Board.Modules[4], F->Port);
 
-    // LED COLLAR
+    /*// LED COLLAR
     LEDStripClass *C = new LEDStripClass();
     C->Name = "LED Collar";
     C->Modules.Add(Board.Modules[1], C->Port);
@@ -237,7 +239,7 @@ void DefaultSetup()
     *CT->Values.At<ColourClass>(CT->ColourA) = ColourClass(255, 0, 0);
     *CT->Values.At<ColourClass>(CT->ColourB) = ColourClass(255, 150, 0);
     *CT->Values.At<float>(CT->Width) = 6;
-    *CT->Values.At<float>(CT->Position) = 0;
+    *CT->Values.At<float>(CT->Position) = 0;*/
 
     // LID MOVEMENT
     Program *P2 = new Program();
@@ -466,7 +468,7 @@ void DefaultSetup()
     PSA->Modules.Add(OSAE,0);
     PSA->Modules.Add(OSAD,1);
 
-    Program *PC = new Program();
+   /* Program *PC = new Program();
     *PC->Values.At<ProgramTypes>(PC->Mode) = ProgramTypes::Sequence;
     PC->Flags += Flags::RunLoop;
     PC->Name = "Collar program";
@@ -497,7 +499,7 @@ void DefaultSetup()
     OC2->Modules.Add(IDClass(OC3->ID.Base(), 1 + 1));
 
     OC3->Modules.Add(IDClass(CT->ID.Base(), CT->Position + 1));
-    PC->AddModule(OC3, 2);
+    PC->AddModule(OC3, 2);*/
 };
 
 /*

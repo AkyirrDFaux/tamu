@@ -25,8 +25,8 @@ uint32_t DeltaTime = 0;
 #include "Data\Coord2D.h"
 #include "Data\Vector3D.h"
 
-#include "Core\DataList.h"
-#include "Core\IDList.h"
+#include "Core\DataList.h" //For simple data types
+#include "Core\IDList.h" //For objects (compound/type varying data types)
 #include "Core\Chirp.h"
 ChirpClass Chirp = ChirpClass(); // Bluetooth/Serial
 
@@ -141,33 +141,26 @@ void loop()
 };
 
 /*TODO:
-Filter accelerometer data
-More expressions
-
 KEY FEATURES:
-Accelerometer filtering
-
-More Operations/Animations
-App Usability/parity
-Merge for both boards
-Memory
-App Presets
+Type object/value split
+Setup fix
+Implement fixed point numbers
+Crash (Delete/Create) Safety
+App Programming view
+Multi-board support
+ - Display support
+Saving
+App Presets/blocks
 
 ADJUSTMENTS:
 Register, IDList, DataList, ObjList cleanup
 Finish port system (connecting multiple LEDS, I2C)
 As (bytearray) checking not working
-Spread out bluetooth sending to prevent lag?
-Saving takes forever
 
 EXTRA:
 Edit rendering to allow all-display filters (part first)
-Extra button / connection -> storageless start?
-Create default configs (in app)
 
 BUGS:
-Separate saving breaks it
-Deletion with program running (or Board/Board component)
 Incorrect wraping of LED strip
 */
 
