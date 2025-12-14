@@ -120,6 +120,6 @@ Types GetType<Textures2D>() { return Types::Texture2D; };
 template <>
 Types GetType<Operations>() { return Types::Operation; };
 template <>
-Types GetType<Types>() { return Types::Program; };
+Types GetType<ProgramTypes>() { return Types::Program; };
 
 

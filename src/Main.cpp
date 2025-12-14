@@ -126,16 +126,16 @@ void loop()
 
     for (int32_t Index = 0; Index < Sensors.Length; Sensors.Iterate(&Index))
         Sensors[Index]->Run();
-    Serial.println("P");
+    //Serial.println("P");
     for (int32_t Index = 0; Index < Programs.Length; Programs.Iterate(&Index))
     {
         if (((Programs[Index]->Flags == Inactive) == false) && ((Programs[Index]->Flags == RunLoop) || (Programs[Index]->Flags == RunOnce)))
             Programs[Index]->Run();
     }
-    Serial.println("O");
+    //Serial.println("O");
     for (int32_t Index = 0; Index < Outputs.Length; Outputs.Iterate(&Index))
         Outputs[Index]->Run();
-    Serial.println("F");
+    //Serial.println("F");
 
     FastLED.show();
 
@@ -146,7 +146,7 @@ void loop()
 /*TODO:
 KEY FEATURES:
 Type object/value split
- - issue with idlist
+ - app compatibility
 Setup fix
 Implement fixed point numbers
 Crash (Delete/Create) Safety
