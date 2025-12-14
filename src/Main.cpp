@@ -25,16 +25,18 @@ uint32_t DeltaTime = 0;
 
 #include "Data\Enum.h"
 #include "Data\ByteArray.h"
-
 #include "Core\DataList.h" //For simple data types
+
+#include "Core\Objects.h"
+RegisterClass Objects;
+
+#include "Core\Register.h"
 #include "Core\IDList.h" //For objects (compound/type varying data types)
+#include "Core\BaseClass.h"
+
 #include "Core\Chirp.h"
 ChirpClass Chirp = ChirpClass(); // Bluetooth/Serial
 
-#include "Core\BaseClass.h"
-#include "Core\Register.h"
-
-RegisterClass Objects;
 ObjectList<> Sensors;  // EX: Sensor
 ObjectList<> Programs; // Ex: Emotes
 ObjectList<> Outputs;  // Ex: Display, Fan, Servo
