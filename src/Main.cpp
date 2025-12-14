@@ -145,8 +145,6 @@ void loop()
 
 /*TODO:
 KEY FEATURES:
-Type object/value split
- - app compatibility
 Setup fix
 Implement fixed point numbers
 Crash (Delete/Create) Safety

@@ -8,7 +8,7 @@ BaseClass *RegisterClass::At(IDClass ID) const // Returns address or nullptr if 
 
 bool RegisterClass::IsValid(IDClass ID, ObjectTypes Filter) const // Returns if object at index is valid
 {
-    if (ID.Base() == NoID || ID.Base() >= Allocated)
+    if (ID.Base() == NoID || ID.Base() >= Allocated || Object[ID.Base()] == nullptr)
         return false; // Invalid ID
     if (Filter != ObjectTypes::Undefined && Object[ID.Base()]->Type != Filter)
         return false;
