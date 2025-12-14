@@ -25,7 +25,7 @@ private:
 
 Operation::Operation(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
 {
-    Type = Types::Operation;
+    Type = ObjectTypes::Operation;
     Name = "Operation";
 
     Values.Add(Operations::None);
@@ -75,10 +75,10 @@ bool Operation::Equal()
     if (Target == nullptr || Value == nullptr)
         return true;
 
-    if (Values.TypeAt(1) != Modules.TypeAt(0))
+    if (Values.TypeAt(1) != Modules.ValueTypeAt(0))
         return true;
 
-    memcpy(Value, Target, GetValueSize(Values.TypeAt(1)));
+    memcpy(Value, Target, GetDataSize(Values.TypeAt(1)));
     return true;
 }
 
@@ -95,7 +95,7 @@ bool Operation::Extract()
     {
         Target = Modules.ValueAt(Index);
 
-        if (Modules.TypeAt(Index) == Types::Vector2D && Values.TypeAt(1) == Types::Vector3D && Values.TypeAt(2) == Types::Byte && Values.TypeAt(3) == Types::Byte)
+        if (Modules.ValueTypeAt(Index) == Types::Vector2D && Values.TypeAt(1) == Types::Vector3D && Values.TypeAt(2) == Types::Byte && Values.TypeAt(3) == Types::Byte)
             *(Vector2D *)Target = Vector2D(((Vector3D *)Value)->GetByIndex(*Values.At<uint8_t>(2)), ((Vector3D *)Value)->GetByIndex(*Values.At<uint8_t>(3)));
     }
     return true;
@@ -111,7 +111,7 @@ bool Operation::Combine()
         if (Target == nullptr)
             return true;
 
-        if (Modules.TypeAt(Index) == Types::Coord2D && Values.TypeAt(1) == Types::Vector2D && Values.TypeAt(2) == Types::Number)
+        if (Modules.ValueTypeAt(Index) == Types::Coord2D && Values.TypeAt(1) == Types::Vector2D && Values.TypeAt(2) == Types::Number)
             *(Coord2D *)Target = Coord2D(*Values.At<Vector2D>(1), Vector2D(*Values.At<float>(2)));
     }
     return true;
@@ -124,7 +124,7 @@ bool Operation::Add()
 
     for (int32_t Index = 0; Index < Modules.Length; Modules.Iterate(&Index))
     {
-        if (Values.TypeAt(1) == Types::Vector2D && Modules.TypeAt(Index) == Types::Vector2D)
+        if (Values.TypeAt(1) == Types::Vector2D && Modules.ValueTypeAt(Index) == Types::Vector2D)
             *(Vector2D *)Modules.ValueAt(Index) = *Values.At<Vector2D>(1) + *Values.At<Vector2D>(2);
     }
 
@@ -138,9 +138,9 @@ bool Operation::Multiply()
 
     for (int32_t Index = 0; Index < Modules.Length; Modules.Iterate(&Index))
     {
-        if (Values.TypeAt(1) == Types::Vector2D && Modules.TypeAt(Index) == Types::Vector2D)
+        if (Values.TypeAt(1) == Types::Vector2D && Modules.ValueTypeAt(Index) == Types::Vector2D)
             *(Vector2D *)Modules.ValueAt(Index) = (*Values.At<Vector2D>(1)) * (*Values.At<Vector2D>(2));
-        if (Values.TypeAt(1) == Types::Number && Modules.TypeAt(Index) == Types::Number)
+        if (Values.TypeAt(1) == Types::Number && Modules.ValueTypeAt(Index) == Types::Number)
             *(float *)Modules.ValueAt(Index) = (*Values.At<float>(1)) * (*Values.At<float>(2));
     }
 
@@ -158,7 +158,7 @@ bool Operation::MoveTo()
 
     for (int32_t Index = 0; Index < Modules.Length; Modules.Iterate(&Index))
     {
-        if (Values.TypeAt(1) != Modules.TypeAt(Index))
+        if (Values.TypeAt(1) != Modules.ValueTypeAt(Index))
             continue;
         Value = Modules.ValueAt(Index);
 
@@ -194,7 +194,7 @@ bool Operation::AddDelay()
     uint32_t *Delay = Values.At<uint32_t>(1);
     uint32_t *Value = (uint32_t *)Modules.ValueAt(0);
 
-    if (Delay == nullptr || Value == nullptr || Modules.TypeAt(0) != Types::Time)
+    if (Delay == nullptr || Value == nullptr || Modules.ValueTypeAt(0) != Types::Time)
         return true;
 
     *Value = *Delay + CurrentTime;
@@ -242,7 +242,7 @@ bool Operation::Sine()
         Value = Modules.ValueAt(Index);
         if (Value == nullptr)
             continue;
-        if (Modules.TypeAt(Index) == Types::Number)
+        if (Modules.ValueTypeAt(Index) == Types::Number)
             *(float *)Value = sin((*Input) * (*Multiplier) + (*Phase));
     }
 

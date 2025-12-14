@@ -19,7 +19,7 @@ public:
 
 LEDSegmentClass::LEDSegmentClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
 {
-    Type = Types::LEDSegment;
+    Type = ObjectTypes::LEDSegment;
     Name = "LED Segment";
 
     Values.Add<int32_t>(0, Start);

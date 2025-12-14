@@ -19,7 +19,7 @@ public:
 
 FanClass::FanClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
 {
-    BaseClass::Type = Types::Fan;
+    BaseClass::Type = ObjectTypes::Fan;
     Name = "Fan";
 
     Values.Add<uint8_t>(0);

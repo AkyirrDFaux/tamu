@@ -1,17 +1,8 @@
 class BaseClass;
-
 class FlagClass;
 class IDClass;
-
-class ByteArray;
-class ColourClass;
-class Vector2D;
-class Coord2D;
-class Vector3D;
-
 class IDList;
-
-class Message;
+class ByteArray;
 
 class Texture2D;
 

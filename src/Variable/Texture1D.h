@@ -17,7 +17,7 @@ public:
 
 Texture1D::Texture1D(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
 {
-    BaseClass::Type = Types::Texture1D;
+    BaseClass::Type = ObjectTypes::Texture1D;
     Values.Add(Textures1D::None);
     Name = "Texture";
 };

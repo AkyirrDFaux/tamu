@@ -26,7 +26,7 @@ public:
 
 DisplayClass::DisplayClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
 {
-    BaseClass::Type = Types::Display;
+    BaseClass::Type = ObjectTypes::Display;
     Name = "Display";
     Outputs.Add(this);
 
@@ -113,7 +113,7 @@ ColourClass DisplayClass::RenderPixel(Vector2D Centered)
 {
     ColourClass Colour = ColourClass(0, 0, 0);
 
-    for (int32_t Index = Modules.FirstValid(Types::Shape2D,1); Index < Modules.Length; Modules.Iterate(&Index, Types::Shape2D))
+    for (int32_t Index = Modules.FirstValid(ObjectTypes::Shape2D,1); Index < Modules.Length; Modules.Iterate(&Index, ObjectTypes::Shape2D))
         Colour = Modules[Index]->As<Shape2DClass>()->Render(Colour, Centered);
     return Colour;
 };

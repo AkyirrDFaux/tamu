@@ -1,49 +1,38 @@
-class RegisterClass
+BaseClass *RegisterClass::At(IDClass ID) const // Returns address or nullptr if invalid
 {
-public:
-    BaseClass **Object = nullptr;
-    int32_t Allocated = 0;
-    int32_t Registered = 0;
-
-    RegisterClass();
-
-    BaseClass *operator[](IDClass ID);
-    BaseClass *Find(IDClass ID);
-    bool IsValid(IDClass ID);
-    void Expand(int32_t NewAllocated);
-    void Shorten();
-
-    bool Register(BaseClass *AddObject, IDClass ID = RandomID);
-    bool Unregister(IDClass ID);
-    bool Unregister(BaseClass *RemovedObject);
-
-    bool Move(int32_t Index, int32_t NewIndex);
-    String ContentDebug();
-};
-
-RegisterClass::RegisterClass()
-{
-};
-
-BaseClass *RegisterClass::operator[](IDClass ID)
-{
-    return Find(ID);
-};
-
-BaseClass *RegisterClass::Find(IDClass ID) // Returns address or nullptr if invalid
-{
-    if (ID.Base() == NoID || ID.Base() >= Allocated)
-        return nullptr; // Invalid ID
+    if (IsValid(ID) == false)
+        return nullptr;
 
     return Object[ID.Base()];
 };
 
-bool RegisterClass::IsValid(IDClass ID) // Returns if object at index is valid
+bool RegisterClass::IsValid(IDClass ID, ObjectTypes Filter) const // Returns if object at index is valid
 {
-    return (Find(ID) != nullptr);
+    if (ID.Base() == NoID || ID.Base() >= Allocated || Object[ID.Base()] == nullptr)
+        return false; // Invalid ID
+    if (Filter != ObjectTypes::Undefined && Object[ID.Base()]->Type != Filter)
+        return false;
+    return true;
 };
 
-void RegisterClass::Expand(int32_t NewAllocated) // Expands list to new length
+void *RegisterClass::ValueAt(IDClass ID) const // Returns address or nullptr if invalid
+{
+    if (IsValidValue(ID) == false)
+        return nullptr;
+
+    return Object[ID.Base()]->Values[ID.ValueIndex()];
+};
+
+bool RegisterClass::IsValidValue(IDClass ID, Types Filter) const // Returns if object at index is valid
+{
+    if (IsValid(ID) == false || At(ID)->Values.IsValid(ID.ValueIndex()) == false)
+        return false;
+    if (Filter != Types::Undefined && Object[ID.Base()]->Values.TypeAt(ID.ValueIndex()) != Filter)
+        return false;    
+    return true;
+};
+
+void RegisterClass::Expand(uint32_t NewAllocated) // Expands list to new length
 {
     if (NewAllocated <= Allocated)
         return;
@@ -52,9 +41,9 @@ void RegisterClass::Expand(int32_t NewAllocated) // Expands list to new length
 
     BaseClass **NewObject = new BaseClass *[NewAllocated]; // Make larger array
 
-    for (int32_t Index = 0; Index < Allocated; Index++) // Copy existing
+    for (uint32_t Index = 0; Index < Allocated; Index++) // Copy existing
         NewObject[Index] = Object[Index];
-    for (int32_t Index = Allocated; Index < NewAllocated; Index++) // Add empty to new
+    for (uint32_t Index = Allocated; Index < NewAllocated; Index++) // Add empty to new
         NewObject[Index] = nullptr;
 
     if (Allocated != 0) // Replace
@@ -69,7 +58,7 @@ void RegisterClass::Shorten()
     if (Registered > Allocated / 2) // Not worth it
         return;
 
-    int32_t NewAllocated = Allocated;
+    uint32_t NewAllocated = Allocated;
     while (IsValid(NewAllocated - 1) && NewAllocated > 0)
         NewAllocated--;
 
@@ -78,7 +67,7 @@ void RegisterClass::Shorten()
 
     BaseClass **NewObject = new BaseClass *[NewAllocated]; // New Array
 
-    for (int32_t Index = 0; Index < NewAllocated; Index++) // Copy existing
+    for (uint32_t Index = 0; Index < NewAllocated; Index++) // Copy existing
         NewObject[Index] = Object[Index];
 
     if (Allocated != 0) // Replace
@@ -107,7 +96,7 @@ bool RegisterClass::Register(BaseClass *AddObject, IDClass ID) // Add, return ac
 
 bool RegisterClass::Unregister(IDClass ID) // Removes object
 {
-    Find(ID)->ID = NoID;
+    At(ID)->ID = NoID;
     Object[ID.Base()] = nullptr;
     Shorten();
     Registered -= 1;
@@ -116,16 +105,16 @@ bool RegisterClass::Unregister(IDClass ID) // Removes object
 
 bool RegisterClass::Unregister(BaseClass *RemovedObject) // Removes object
 {
-    if (RemovedObject == Find(RemovedObject->ID)) // If ID correct, take shortcut
+    if (RemovedObject == At(RemovedObject->ID)) // If ID correct, take shortcut
         return Unregister(RemovedObject->ID);
     return false;
 };
 
-String RegisterClass::ContentDebug()
+String RegisterClass::ContentDebug() const
 {
     String Text = "";
 
-    for (int32_t Index = 1; Index <= Registered; Index++)
+    for (uint32_t Index = 1; Index <= Registered; Index++)
     {
         if (Object[Index] != nullptr && Object[Index]->ReferencesCount == 0)
             Text += Object[Index]->ContentDebug(0);

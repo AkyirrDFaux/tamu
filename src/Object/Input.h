@@ -21,7 +21,7 @@ public:
 
 InputClass::InputClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
 {
-    BaseClass::Type = Types::Input;
+    BaseClass::Type = ObjectTypes::Input;
     Name = "Input";
 
     Values.Add(Inputs::Undefined,InputType);

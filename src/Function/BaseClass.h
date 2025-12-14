@@ -40,7 +40,7 @@ ByteArray BaseClass::GetValue(int32_t Value) const
         else if (Type == Types::Undefined)
             Data = Data << ByteArray((char *)&Type, sizeof(Types));
         else
-            Data = Data << ByteArray((char *)&Type, sizeof(Types)) << ByteArray((char *)Values.Data[Index], GetValueSize(Type));
+            Data = Data << ByteArray((char *)&Type, sizeof(Types)) << ByteArray((char *)Values.Data[Index], GetDataSize(Type));
         
         if (Value != 0)
             break;

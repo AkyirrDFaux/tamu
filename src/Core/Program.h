@@ -14,7 +14,7 @@ public:
 
 Program::Program(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
 {
-    Type = Types::Program;
+    Type = ObjectTypes::Program;
     Name = "Program";
 
     Values.Add(ProgramTypes::None);

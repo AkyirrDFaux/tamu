@@ -17,7 +17,7 @@ public:
 
 BoardClass::BoardClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags) // Board always loads first, it takes ID 1
 {
-    Type = Types::Board;
+    Type = ObjectTypes::Board;
     Name = "Board";
 
     Values.Add(Boards::Undefined);
@@ -30,7 +30,7 @@ BoardClass::BoardClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags) // Bo
 
 void BoardClass::Setup() // Load Presets
 {
-    for (int32_t Index = Modules.FirstValid(Types::Port); Index < Modules.Length; Modules.Iterate(&Index, Types::Port))
+    for (int32_t Index = Modules.FirstValid(ObjectTypes::Port); Index < Modules.Length; Modules.Iterate(&Index, ObjectTypes::Port))
         delete Modules[Index];
     Modules.RemoveAll();
 

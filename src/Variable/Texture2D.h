@@ -17,7 +17,7 @@ public:
 
 Texture2D::Texture2D(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
 {
-    BaseClass::Type = Types::Texture2D;
+    BaseClass::Type = ObjectTypes::Texture2D;
     Name = "Texture";
 
     Values.Add(Textures2D::None);
