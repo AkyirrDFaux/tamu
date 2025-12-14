@@ -25,7 +25,7 @@ private:
 
 Operation::Operation(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
 {
-    Type = Types::Operation;
+    Type = ObjectTypes::Operation;
     Name = "Operation";
 
     Values.Add(Operations::None);
@@ -78,7 +78,7 @@ bool Operation::Equal()
     if (Values.TypeAt(1) != Modules.TypeAt(0))
         return true;
 
-    memcpy(Value, Target, GetValueSize(Values.TypeAt(1)));
+    memcpy(Value, Target, GetDataSize(Values.TypeAt(1)));
     return true;
 }
 

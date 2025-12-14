@@ -31,7 +31,7 @@ PortClass::PortClass(uint8_t NewPin, Ports NewPortType) : BaseClass() // Created
     Values.Add(NewPin);
     Values.Add(Drivers::None);
 
-    Type = Types::Port;
+    Type = ObjectTypes::Port;
     Name = "Port";
     Flags = Flags::Auto;
 };

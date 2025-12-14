@@ -1,21 +1,21 @@
-bool IDList::IsValid(int32_t Index, Types Filter) // Returns if object at index is valid
+bool IDList::IsValid(int32_t Index, ObjectTypes Filter) // Returns if object at index is valid
 {
-    return (At(Index) != nullptr && (Filter == Types::Undefined || At(Index)->Type == Filter));
+    return (At(Index) != nullptr && (Filter == ObjectTypes::Undefined || At(Index)->Type == Filter));
 };
 
-int32_t IDList::FirstValid(Types Filter, int32_t Start)
+int32_t IDList::FirstValid(ObjectTypes Filter, int32_t Start)
 {
     int32_t Index = Start;
-    while (Index <= Length && (!IsValid(Index) || (Filter != Types::Undefined && At(Index)->Type != Filter)))
+    while (Index <= Length && (!IsValid(Index) || (Filter != ObjectTypes::Undefined && At(Index)->Type != Filter)))
         Index++;
     return Index;
 };
 
-void IDList::Iterate(int32_t *Index, Types Filter)
+void IDList::Iterate(int32_t *Index, ObjectTypes Filter)
 {
     (*Index)++;
     // Skip to next if: A)Is invalid; B)Filter is not undefined and Type of object isn't one filtered
-    while (*Index <= Length && (!IsValid(*Index) || (Filter != Types::Undefined && At(*Index)->Type != Filter)))
+    while (*Index <= Length && (!IsValid(*Index) || (Filter != ObjectTypes::Undefined && At(*Index)->Type != Filter)))
         (*Index)++;
 };
 
@@ -63,7 +63,7 @@ C *IDList::Get(int32_t Index)
     return At(Index)->As<C>();
 }
 
-Types IDList::TypeAt(int32_t Index)
+Types IDList:: TypeAt(int32_t Index)
 {
     if (At(Index) == nullptr || (IsValidID(Index) && IDs->Sub() == 0)) //Invalid or reference to main obj
         return Types::Undefined;

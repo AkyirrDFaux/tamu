@@ -18,7 +18,7 @@ public:
 
 ServoClass::ServoClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
 {
-    BaseClass::Type = Types::Servo;
+    BaseClass::Type = ObjectTypes::Servo;
     Values.Add<uint8_t>(0);
     Name = "Servo";
     Outputs.Add(this);

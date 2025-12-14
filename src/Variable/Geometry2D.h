@@ -18,7 +18,7 @@ public:
 
 Geometry2DClass::Geometry2DClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
 {
-    Type = Types::Geometry2D;
+    Type = ObjectTypes::Geometry2D;
     Name = "Geometry";
 
     Values.Add(Geometries::None);

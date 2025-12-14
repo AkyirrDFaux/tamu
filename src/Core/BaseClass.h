@@ -26,7 +26,7 @@ public:
 class BaseClass
 {
 public:
-    Types Type = Types::Undefined;
+    ObjectTypes Type = ObjectTypes::Undefined;
     IDClass ID;
     FlagClass Flags;
     String Name = "";
@@ -56,7 +56,7 @@ public:
     String ContentDebug(int32_t Level);
 };
 
-BaseClass *CreateObject(Types Type, bool New = true, IDClass ID = RandomID, FlagClass Flags = Flags::None);
+BaseClass *CreateObject(ObjectTypes Type, bool New = true, IDClass ID = RandomID, FlagClass Flags = Flags::None);
 
 void BaseClass::AddModule(BaseClass *Object, int32_t Index)
 {

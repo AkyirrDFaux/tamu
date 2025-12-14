@@ -14,7 +14,7 @@ public:
 
 Shape2DClass::Shape2DClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
 {
-    Type = Types::Shape2D;
+    Type = ObjectTypes::Shape2D;
     Name = "Shape";
 };
 Shape2DClass::~Shape2DClass() {
@@ -32,7 +32,7 @@ ColourClass Shape2DClass::Render(ColourClass Current, Vector2D Position)
 
     float Overlay = 0;
 
-    for (int32_t Index = Modules.FirstValid(Types::Geometry2D); Index < Modules.Length; Modules.Iterate(&Index,Types::Geometry2D))
+    for (int32_t Index = Modules.FirstValid(ObjectTypes::Geometry2D); Index < Modules.Length; Modules.Iterate(&Index,ObjectTypes::Geometry2D))
             Overlay = Modules[Index]->As<Geometry2DClass>()->Render(Overlay, Position);
 
     Current.Layer(Texture->Render(Position), Overlay);

@@ -214,7 +214,7 @@ int32_t ByteArray::SizeOfData() const
     else if (Type() == Types::IDList)
         return (*(uint8_t *)(Array + sizeof(Types))) * sizeof(IDClass);
     else
-        return GetValueSize(Type());
+        return GetDataSize(Type());
 };
 
 int32_t ByteArray::SizeWithType() const

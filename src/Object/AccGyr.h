@@ -2,7 +2,7 @@
 class GyrAccClass : public BaseClass
 {
 public:
-enum Value
+    enum Value
     {
         DeviceType,
         AngularRate,
@@ -17,7 +17,7 @@ enum Value
 };
 GyrAccClass::GyrAccClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags) // Created by Board
 {
-    Type = Types::AccGyr;
+    Type = ObjectTypes::AccGyr;
     Name = "Acc&Gyr";
 
     Values.Add(GyrAccs::Undefined);
@@ -29,10 +29,10 @@ GyrAccClass::GyrAccClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags) // 
 
 void GyrAccClass::Setup()
 {
-    if (!(Values.IsValid(DeviceType,Types::AccGyr) && Modules.IsValid(0) && Modules.IsValid(1) && Modules[0]->Type == Types::Port && Modules[1]->Type == Types::Port))
+    if (!(Values.IsValid(DeviceType, Types::AccGyr) && Modules.IsValid(0) && Modules.IsValid(1) && Modules[0]->Type == ObjectTypes::Port && Modules[1]->Type == ObjectTypes::Port))
         return;
 
-    //Delete previous driver, if there was any
+    // Delete previous driver, if there was any
 
     TwoWire *I2C = Modules.Get<PortClass>(0)->GetI2C(this);
 
@@ -44,7 +44,11 @@ void GyrAccClass::Setup()
     case GyrAccs::LSM6DS3TRC:
         Sensor = new Adafruit_LSM6DS3TRC();
         if (!((Adafruit_LSM6DS3TRC *)Sensor)->begin_I2C(0b1101011, I2C)) // 0b1101011 or 0b1101010
-            Serial.println("Failed to find LSM6DS3TR-C chip");
+        {
+            Serial.println("Failed to find LSM6DS3TR-C chip (ADR:1)");
+            if (!((Adafruit_LSM6DS3TRC *)Sensor)->begin_I2C(0b1101010, I2C)) // 0b1101011 or 0b1101010
+                Serial.println("Failed to find LSM6DS3TR-C chip (ADR:0)");
+        }
 
         ((Adafruit_LSM6DS3TRC *)Sensor)->setAccelDataRate(LSM6DS_RATE_26_HZ);
         ((Adafruit_LSM6DS3TRC *)Sensor)->setGyroDataRate(LSM6DS_RATE_26_HZ);
@@ -65,11 +69,12 @@ bool GyrAccClass::Run()
     sensors_event_t g;
     sensors_event_t t;
 
-    if (Sensor == nullptr){
+    if (Sensor == nullptr)
+    {
         Setup();
-        return true;   
+        return true;
     }
-        
+
     if (((Adafruit_LSM6DS3TRC *)Sensor)->getEvent(&a, &g, &t))
     {
         // Compensate for gravity

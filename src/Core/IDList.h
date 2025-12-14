@@ -17,12 +17,12 @@ public:
     Types TypeAt(int32_t Index);
     void *ValueAt(int32_t Index);
 
-    bool IsValid(int32_t Index, Types Filter = Types::Undefined);
+    bool IsValid(int32_t Index, ObjectTypes Filter = ObjectTypes::Undefined);
     bool IsValidID(int32_t Index) const;
 
     int32_t Find(BaseClass *TestObject);
-    int32_t FirstValid(Types Filter = Types::Undefined, int32_t Start = 0);
-    void Iterate(int32_t *Index, Types Filter = Types::Undefined);
+    int32_t FirstValid(ObjectTypes Filter = ObjectTypes::Undefined, int32_t Start = 0);
+    void Iterate(int32_t *Index, ObjectTypes Filter = ObjectTypes::Undefined);
 
     void Expand(int8_t NewLength);
     void Shorten();

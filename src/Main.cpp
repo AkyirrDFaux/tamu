@@ -12,18 +12,19 @@ uint32_t DeltaTime = 0;
 #include "Basic\TypeMath.h"
 #include "Basic\Math.h"
 
-#include "Core\ValueEnums.h"
 #include "Core\Enums.h"
 #include "Core\ObjectList.h"
-
 #include "Core\ID.h"
 
 //Basic data types
-#include "Data\ByteArray.h"
+#include "Data\ValueEnums.h"
 #include "Data\Colour.h"
 #include "Data\Vector2D.h"
 #include "Data\Coord2D.h"
 #include "Data\Vector3D.h"
+
+#include "Data\Enum.h"
+#include "Data\ByteArray.h"
 
 #include "Core\DataList.h" //For simple data types
 #include "Core\IDList.h" //For objects (compound/type varying data types)
@@ -123,16 +124,16 @@ void loop()
 
     for (int32_t Index = 0; Index < Sensors.Length; Sensors.Iterate(&Index))
         Sensors[Index]->Run();
-     //Serial.println("P");
+    Serial.println("P");
     for (int32_t Index = 0; Index < Programs.Length; Programs.Iterate(&Index))
     {
         if (((Programs[Index]->Flags == Inactive) == false) && ((Programs[Index]->Flags == RunLoop) || (Programs[Index]->Flags == RunOnce)))
             Programs[Index]->Run();
     }
-     //Serial.println("O");
+    Serial.println("O");
     for (int32_t Index = 0; Index < Outputs.Length; Outputs.Iterate(&Index))
         Outputs[Index]->Run();
-     //Serial.println("F");
+    Serial.println("F");
 
     FastLED.show();
 
@@ -143,6 +144,7 @@ void loop()
 /*TODO:
 KEY FEATURES:
 Type object/value split
+ - issue with idlist
 Setup fix
 Implement fixed point numbers
 Crash (Delete/Create) Safety

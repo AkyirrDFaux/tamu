@@ -21,7 +21,7 @@ public:
 
 LEDStripClass::LEDStripClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
 {
-    BaseClass::Type = Types::LEDStrip;
+    BaseClass::Type = ObjectTypes::LEDStrip;
     Name = "LED Strip";
     Outputs.Add(this);
 
@@ -69,7 +69,7 @@ ColourClass LEDStripClass::RenderPixel(int32_t Base, int32_t Length)
 {
     ColourClass Colour = ColourClass(0, 0, 0);
 
-    for (int32_t Index = Modules.FirstValid(Types::LEDSegment,1); Index < Modules.Length; Modules.Iterate(&Index, Types::LEDSegment))
+    for (int32_t Index = Modules.FirstValid(ObjectTypes::LEDSegment,1); Index < Modules.Length; Modules.Iterate(&Index, ObjectTypes::LEDSegment))
         Colour = Modules[Index]->As<LEDSegmentClass>()->Render(Colour, Base, Length);
 
     return Colour;

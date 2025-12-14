@@ -58,36 +58,36 @@ void Refresh(ByteArray &Input)
     Chirp.Send(ByteArray(Status::OK));
 }
 
-BaseClass *CreateObject(Types Type, bool New, IDClass ID, FlagClass Flags)
+BaseClass *CreateObject(ObjectTypes Type, bool New, IDClass ID, FlagClass Flags)
 {
     switch (Type)
     {
     // Port is auto
-    case Types::Shape2D:
+    case ObjectTypes::Shape2D:
         return new Shape2DClass(ID, Flags);
-    case Types::Board:
+    case ObjectTypes::Board:
         return new BoardClass(ID, Flags);
-    case Types::Fan:
+    case ObjectTypes::Fan:
         return new FanClass(ID, Flags);
-    case Types::LEDSegment:
+    case ObjectTypes::LEDSegment:
         return new LEDSegmentClass(ID, Flags);
-    case Types::Texture1D:
+    case ObjectTypes::Texture1D:
         return new Texture1D(ID, Flags);
-    case Types::LEDStrip:
+    case ObjectTypes::LEDStrip:
         return new LEDStripClass(ID, Flags);
-    case Types::Geometry2D:
+    case ObjectTypes::Geometry2D:
         return new Geometry2DClass(ID, Flags);
-    case Types::Texture2D:
+    case ObjectTypes::Texture2D:
         return new Texture2D(ID, Flags);
-    case Types::Display:
+    case ObjectTypes::Display:
         return new DisplayClass(ID, Flags);
-    case Types::AccGyr:
+    case ObjectTypes::AccGyr:
         return new GyrAccClass(ID, Flags);
-    case Types::Input:
+    case ObjectTypes::Input:
         return new InputClass(ID, Flags);
-    case Types::Operation:
+    case ObjectTypes::Operation:
         return new Operation(ID, Flags);
-    case Types::Program:
+    case ObjectTypes::Program:
         return new Program(ID, Flags);
     default:
         ReportError(Status::InvalidType, "Type not allowed for BaseClass creation:" + String((uint8_t)Type));
@@ -100,7 +100,7 @@ void CreateObject(ByteArray &Input)
     BaseClass *Object = nullptr;
     ByteArray Type = Input.ExtractPart();
     ByteArray ID = Input.ExtractPart();
-    if (Type.Type() == Types::Type && ID.Type() == Types::ID)
+    if (Type.Type() == Types::ObjectType && ID.Type() == Types::ID)
     {
         if (!Objects.IsValid(ID)) // Check for ID colision
             Object = CreateObject(Type, true, ID);
@@ -110,8 +110,8 @@ void CreateObject(ByteArray &Input)
             return;
         }
     }
-    else if (Type.Type() == Types::Type)
-        Object = CreateObject((Types)Type);
+    else if (Type.Type() == Types::ObjectType)
+        Object = CreateObject((ObjectTypes)Type);
     else
     {
         Chirp.Send(ByteArray(Status::InvalidType) << Input);
@@ -132,11 +132,11 @@ void LoadObject(ByteArray &Input)
     ByteArray Flags = Input.ExtractPart();
     ByteArray Name = Input.ExtractPart();
     ByteArray Modules = Input.ExtractPart();
-    if (Type.Type() == Types::Type && ID.Type() == Types::ID)
+    if (Type.Type() == Types::ObjectType && ID.Type() == Types::ID)
     {
         if (!Objects.IsValid(ID)) // Check for ID colision
             Object = CreateObject(Type, false, ID);
-        else if (Objects[ID]->Type == (Types)Type) // Overwrite the object, since the type and ID are same
+        else if (Objects[ID]->Type == (ObjectTypes)Type) // Overwrite the object, since the type and ID are same
             Object = Objects[ID];
         else
         {
@@ -230,7 +230,7 @@ void SetFlags(ByteArray &Input)
         return;
     }
     Objects[ID]->Flags = Flags.As<FlagClass>();
-    if (Objects[ID]->Type == Types::Program && Objects[ID]->Flags == Flags::RunOnce)
+    if (Objects[ID]->Type == ObjectTypes::Program && Objects[ID]->Flags == Flags::RunOnce)
         *Objects[ID]->Values.At<uint32_t>(1) = 0; //Reset counter
     Chirp.Send(ByteArray(Functions::SetFlags) << ID << Flags);
 };
