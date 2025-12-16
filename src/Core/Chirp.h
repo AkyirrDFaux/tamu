@@ -88,7 +88,7 @@ void ChirpClass::Send(const ByteArray &Input)
     if (deviceConnected)
     {
         ByteArray Buffer = Input.AddLength();
-        Serial.println(Buffer.ToHex());
+        //Serial.println(Buffer.ToHex());
 
         for (int32_t Index = 0; Index < Buffer.Length; Index += BTCHUNK)
         {
