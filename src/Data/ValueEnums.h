@@ -1,8 +1,8 @@
 enum Flags : uint8_t
 {
     None = 0,
-    Auto = 0b00000001,         // No name change, cannot remove, no editing, no saving
-    Undefined = 0b00000010,
+    Auto = 0b00000001,         // No name change, cannot remove (ex. Board, Port, built-in devices)
+    System = 0b00000010,       // No value editing, no saving (ex. Port, some built-in devices)
     Undefined2 = 0b00000100,      
     RunLoop = 0b00001000,      // Allow automatic run forever
     RunOnce = 0b00010000,      // Run once manually until finished, will reset the flag automatically

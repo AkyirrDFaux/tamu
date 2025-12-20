@@ -145,7 +145,7 @@ void loop()
 
 /*TODO:
 KEY FEATURES:
-Setup fix
+Setup fix (set value callback? or store necessary values?)
 Implement fixed point numbers
 Crash (Delete/Create) Safety
 App Programming view
@@ -158,6 +158,8 @@ ADJUSTMENTS:
 Register, IDList, DataList, ObjList cleanup
 Finish port system (connecting multiple LEDS, I2C)
 As (bytearray) checking not working
+Flag clarification (Auto = nondeletable, System = noneditable?)
+Better favourites?
 
 EXTRA:
 Edit rendering to allow all-display filters (part first)
@@ -185,3 +187,4 @@ Incorrect wraping of LED strip
 // 13.09.2025 New port/driver system + Servo + Inputs
 // 18.10.2025 DataList replaced Variables -> multi-variable objects
 // 19.10.2025 Movement of eye using angular velocity
+// 17.12.2025 Split types, app on Windows
