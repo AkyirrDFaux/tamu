@@ -30,7 +30,7 @@ ColourClass Shape2DClass::Render(ColourClass Current, Vector2D Position)
     if (Texture == nullptr)
         return Current;
 
-    float Overlay = 0;
+    Number Overlay = 0;
 
     for (int32_t Index = Modules.FirstValid(ObjectTypes::Geometry2D); Index < Modules.Length; Modules.Iterate(&Index,ObjectTypes::Geometry2D))
             Overlay = Modules[Index]->As<Geometry2DClass>()->Render(Overlay, Position);

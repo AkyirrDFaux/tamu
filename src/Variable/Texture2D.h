@@ -35,7 +35,7 @@ void Texture2D::Setup()
         if (!Values.IsValid(Position))
             Values.Add(Coord2D(), Position);
         if (!Values.IsValid(Width))
-            Values.Add<float>(1, Width);
+            Values.Add<Number>(1, Width);
     case Textures2D::Full:
         if (!Values.IsValid(ColourA))
             Values.Add(ColourClass(0, 0, 0, 255), ColourA);
@@ -51,10 +51,10 @@ ColourClass Texture2D::Render(Vector2D PixelPosition)
     ColourClass *ColourA = Values.At<ColourClass>(Value::ColourA);
     ColourClass *ColourB = Values.At<ColourClass>(Value::ColourB);
     Coord2D *Position = Values.At<Coord2D>(Value::Position);
-    float *Width = Values.At<float>(Value::Width);
+    Number *Width = Values.At<Number>(Value::Width);
 
     ColourClass Colour;
-    float Distance;
+    Number Distance;
 
     if (Texture == nullptr)
     {

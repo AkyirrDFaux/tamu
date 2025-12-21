@@ -68,8 +68,13 @@ Types GetType<uint8_t>() { return Types::Byte; };
 template <>
 Types GetType<int32_t>() { return Types::Integer; };
 template <>
+#if USE_FIXED_POINT == 1
+Types GetType<Number>() { return Types::Number; };
+template <>
+#else
 Types GetType<float>() { return Types::Number; };
 template <>
+#endif
 Types GetType<uint32_t>() { return Types::Time; };
 template <>
 Types GetType<IDClass>() { return Types::ID; };

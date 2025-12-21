@@ -73,6 +73,56 @@ ByteArray::ByteArray(const String &Data)
     memcpy(Array + sizeof(Types) + sizeof(DataLength), Data.c_str(), DataLength);
 };
 
+#if USE_FIXED_POINT == 1
+template <>
+ByteArray::ByteArray(const Number &Data)
+{
+    Types Type = GetType<Number>();
+    float Value = Data;
+    Length = sizeof(Types) + sizeof(Data);
+    Array = new char[Length];
+
+    memcpy(Array, &Type, sizeof(Types));
+    memcpy(Array + sizeof(Types), &Value, sizeof(Data));
+};
+
+template <>
+ByteArray::ByteArray(const Vector2D &Data)
+{
+    Types Type = GetType<Vector2D>();
+    float Value[] = {Data.X, Data.Y};
+    Length = sizeof(Types) + sizeof(Data);
+    Array = new char[Length];
+
+    memcpy(Array, &Type, sizeof(Types));
+    memcpy(Array + sizeof(Types), Value, sizeof(Data));
+};
+
+template <>
+ByteArray::ByteArray(const Vector3D &Data)
+{
+    Types Type = GetType<Vector3D>();
+    float Value[] = {Data.X, Data.Y, Data.Z};
+    Length = sizeof(Types) + sizeof(Data);
+    Array = new char[Length];
+
+    memcpy(Array, &Type, sizeof(Types));
+    memcpy(Array + sizeof(Types), Value, sizeof(Data));
+};
+
+template <>
+ByteArray::ByteArray(const Coord2D &Data)
+{
+    Types Type = GetType<Coord2D>();
+    float Value[] = {Data.Offset.X, Data.Offset.Y, Data.Rotation.X, Data.Rotation.Y};
+    Length = sizeof(Types) + sizeof(Data);
+    Array = new char[Length];
+
+    memcpy(Array, &Type, sizeof(Types));
+    memcpy(Array + sizeof(Types), Value, sizeof(Data));
+};
+#endif
+
 ByteArray::ByteArray(const char *Data, int32_t DataLength)
 {
     if (Data == nullptr)
@@ -157,6 +207,34 @@ String ByteArray::As() const
 
     return String(Array + sizeof(Types) + sizeof(uint8_t), SizeOfData());
 };
+
+#if USE_FIXED_POINT == 1
+template <>
+Number ByteArray::As() const
+{
+    return *(float*)(Array + sizeof(Types));
+};
+
+template <>
+Vector2D ByteArray::As() const
+{
+    return Vector2D(*(float*)(Array + sizeof(Types)), *(float*)(Array + sizeof(Types) + sizeof(Number)));
+};
+
+template <>
+Vector3D ByteArray::As() const
+{
+    return Vector3D(*(float*)(Array + sizeof(Types)), *(float*)(Array + sizeof(Types) + sizeof(Number)), *(float*)(Array + sizeof(Types) + sizeof(Number)*2));
+};
+
+template <>
+Coord2D ByteArray::As() const
+{
+    Vector2D Offset = Vector2D(*(float*)(Array + sizeof(Types)), *(float*)(Array + sizeof(Types) + sizeof(Number)));
+    Vector2D Rotation = Vector2D(*(float*)(Array + sizeof(Types) + sizeof(Number) * 2), *(float*)(Array + sizeof(Types) + sizeof(Number) * 3));
+    return Coord2D(Offset, Rotation);
+};
+#endif
 
 template <class C>
 ByteArray::operator C() const

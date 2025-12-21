@@ -10,7 +10,7 @@ public:
 
     Coord2D();
     Coord2D(Vector2D NewOffset, Vector2D NewRotation);
-    Coord2D(float X, float Y, float Angle);
+    Coord2D(Number X, Number Y, Number Angle);
 
     String AsString();
 
@@ -24,7 +24,7 @@ Coord2D::Coord2D(Vector2D NewOffset, Vector2D NewRotation)
     Offset = NewOffset;
     Rotation = NewRotation;
 };
-Coord2D::Coord2D(float X, float Y, float Angle)
+Coord2D::Coord2D(Number X, Number Y, Number Angle)
 {
     Offset = Vector2D(X, Y);
     Rotation = Vector2D(Angle);
@@ -70,6 +70,6 @@ Coord2D ByteArray::As()
 {
     Coord2D New;
     New.Offset = SubArray(0);
-    New.Rotation = SubArray(sizeof(float) * 2);
+    New.Rotation = SubArray(sizeof(Number) * 2);
     return New;
 };*/

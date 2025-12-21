@@ -9,7 +9,7 @@ public:
 
     void operator=(ColourClass Colour);
 
-    void Layer(ColourClass LayerColour, float Overlap);
+    void Layer(ColourClass LayerColour, Number Overlap);
     void ToDisplay(uint8_t Brightness);
     void TimeBlend(ColourClass Target, unsigned long TargetTime);
 
@@ -33,9 +33,9 @@ void ColourClass::operator=(ColourClass Colour)
     A = Colour.A;
 };
 
-void ColourClass::Layer(ColourClass LayerColour, float Overlap)
+void ColourClass::Layer(ColourClass LayerColour, Number Overlap)
 {
-    float Opacity = Overlap * ByteToPercent(LayerColour.A);
+    Number Opacity = Overlap * ByteToPercent(LayerColour.A);
     R = LayerColour.R * Opacity + R * (1 - Opacity); // Opaque + Leftover
     G = LayerColour.G * Opacity + G * (1 - Opacity);
     B = LayerColour.B * Opacity + B * (1 - Opacity);
@@ -52,7 +52,7 @@ void ColourClass::ToDisplay(uint8_t Brightness)
 
 void ColourClass::TimeBlend(ColourClass Target, unsigned long TargetTime)
 {
-    float Step = TimeStep(TargetTime);
+    Number Step = TimeStep(TargetTime);
     R = LimitByte(R + (Target.R - R) * Step);
     G = LimitByte(G + (Target.G - G) * Step);
     B = LimitByte(B + (Target.B - B) * Step);

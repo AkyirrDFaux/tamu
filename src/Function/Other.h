@@ -19,7 +19,7 @@ void DefaultSetup()
     LD->Setup();
     *LD->Values.At<Coord2D>(LD->Offset) = Coord2D(0, 0, 5);
     LD->AddModule(Board.Modules[0], LD->Port);
-    *LD->Values.At<uint8_t>(LD->Brightness) = 150;
+    *LD->Values.At<uint8_t>(LD->Brightness) = 40;
 
     Shape2DClass *LS = new Shape2DClass();
     LS->Name = "Left Background";
@@ -47,14 +47,14 @@ void DefaultSetup()
     *LT1->Values.At<ColourClass>(LT1->ColourA) = ColourClass(0, 100, 0);
     *LT1->Values.At<ColourClass>(LT1->ColourB) = ColourClass(0, 150, 0);
     *LT1->Values.At<Coord2D>(LT1->Position) = Coord2D(1.5, 1, 0);
-    *LT1->Values.At<float>(LT1->Width) = 1.0F;
+    *LT1->Values.At<Number>(LT1->Width) = 1.0F;
     Geometry2DClass *LG1 = new Geometry2DClass();
     LG1->Name = "Left EyeColour";
     LS1->AddModule(LG1);
     *LG1->Values.At<Geometries>(LG1->Geometry) = Geometries::Elipse;
     LG1->Setup();
     *LG1->Values.At<Vector2D>(LG1->Size) = Vector2D(4.5, 4.5);
-    *LG1->Values.At<float>(LG1->Fade) = 0.1F;
+    *LG1->Values.At<Number>(LG1->Fade) = 0.1F;
     *LG1->Values.At<Coord2D>(LG1->Position) = Coord2D(1.5, 1, 0);
 
     Shape2DClass *LS2 = new Shape2DClass();
@@ -71,7 +71,7 @@ void DefaultSetup()
     LS2->AddModule(LG2);
     *LG2->Values.At<Geometries>(LG2->Geometry) = Geometries::DoubleParabola;
     LG2->Setup();
-    *LG2->Values.At<float>(LG2->Fade) = 1.5F;
+    *LG2->Values.At<Number>(LG2->Fade) = 1.5F;
     *LG2->Values.At<Vector2D>(LG2->Size) = Vector2D(2.3, 4.9);
     *LG2->Values.At<Coord2D>(LG2->Position) = Coord2D(1.5, 1, 0);
 
@@ -85,7 +85,7 @@ void DefaultSetup()
     LS2A->AddModule(LG2A);
     *LG2A->Values.At<Geometries>(LG2A->Geometry) = Geometries::Triangle;
     LG2A->Setup();
-    *LG2A->Values.At<float>(LG2A->Fade) = 1.5F;
+    *LG2A->Values.At<Number>(LG2A->Fade) = 1.5F;
     *LG2A->Values.At<Vector2D>(LG2A->Size) = Vector2D(8, 8);
     *LG2A->Values.At<Coord2D>(LG2A->Position) = Coord2D(1.5, -1.5, 0);
     Geometry2DClass *LG2AC = new Geometry2DClass();
@@ -94,7 +94,7 @@ void DefaultSetup()
     *LG2AC->Values.At<Geometries>(LG2AC->Geometry) = Geometries::Triangle;
     *LG2AC->Values.At<GeometryOperation>(LG2AC->Operation) = GeometryOperation::Cut;
     LG2AC->Setup();
-    *LG2AC->Values.At<float>(LG2AC->Fade) = 1.5F;
+    *LG2AC->Values.At<Number>(LG2AC->Fade) = 1.5F;
     *LG2AC->Values.At<Vector2D>(LG2AC->Size) = Vector2D(3, 3);
     *LG2AC->Values.At<Coord2D>(LG2AC->Position) = Coord2D(1.5, -1.5, 0);
 
@@ -121,7 +121,7 @@ void DefaultSetup()
     *RD->Values.At<Coord2D>(RD->Offset) = Coord2D(0, 0, 175);
     RD->Setup();
     RD->AddModule(Board.Modules[7], RD->Port);
-    *RD->Values.At<uint8_t>(RD->Brightness) = 150;
+    *RD->Values.At<uint8_t>(RD->Brightness) = 40;
 
     Shape2DClass *RS = new Shape2DClass();
     RS->Name = "Right Background";
@@ -149,14 +149,14 @@ void DefaultSetup()
     *RT1->Values.At<ColourClass>(RT1->ColourA) = ColourClass(0, 100, 0);
     *RT1->Values.At<ColourClass>(RT1->ColourB) = ColourClass(0, 150, 0);
     *RT1->Values.At<Coord2D>(RT1->Position) = Coord2D(-1.5, 1, 0);
-    *RT1->Values.At<float>(RT1->Width) = 1.0F;
+    *RT1->Values.At<Number>(RT1->Width) = 1.0F;
     Geometry2DClass *RG1 = new Geometry2DClass();
     RG1->Name = "Right EyeColour";
     RS1->AddModule(RG1);
     *RG1->Values.At<Geometries>(RG1->Geometry) = Geometries::Elipse;
     RG1->Setup();
     *RG1->Values.At<Vector2D>(RG1->Size) = Vector2D(4.5, 4.5);
-    *RG1->Values.At<float>(RG1->Fade) = 0.1F;
+    *RG1->Values.At<Number>(RG1->Fade) = 0.1F;
     *RG1->Values.At<Coord2D>(RG1->Position) = Coord2D(-1.5, 1, 0);
 
     Shape2DClass *RS2 = new Shape2DClass();
@@ -173,7 +173,7 @@ void DefaultSetup()
     RS2->AddModule(RG2);
     *RG2->Values.At<Geometries>(RG2->Geometry) = Geometries::DoubleParabola;
     RG2->Setup();
-    *RG2->Values.At<float>(RG2->Fade) = 1.5F;
+    *RG2->Values.At<Number>(RG2->Fade) = 1.5F;
     *RG2->Values.At<Vector2D>(RG2->Size) = Vector2D(2.3, 4.9);
     *RG2->Values.At<Coord2D>(RG2->Position) = Coord2D(-1.5, 1, 0);
 
@@ -187,7 +187,7 @@ void DefaultSetup()
     RS2A->AddModule(RG2A);
     *RG2A->Values.At<Geometries>(RG2A->Geometry) = Geometries::Triangle;
     RG2A->Setup();
-    *RG2A->Values.At<float>(RG2A->Fade) = 1.5F;
+    *RG2A->Values.At<Number>(RG2A->Fade) = 1.5F;
     *RG2A->Values.At<Vector2D>(RG2A->Size) = Vector2D(8, 8);
     *RG2A->Values.At<Coord2D>(RG2A->Position) = Coord2D(-1.5, -1.5, 0);
     Geometry2DClass *RG2AC = new Geometry2DClass();
@@ -196,7 +196,7 @@ void DefaultSetup()
     *RG2AC->Values.At<Geometries>(RG2AC->Geometry) = Geometries::Triangle;
     *RG2AC->Values.At<GeometryOperation>(RG2AC->Operation) = GeometryOperation::Cut;
     RG2AC->Setup();
-    *RG2AC->Values.At<float>(RG2AC->Fade) = 1.5F;
+    *RG2AC->Values.At<Number>(RG2AC->Fade) = 1.5F;
     *RG2AC->Values.At<Vector2D>(RG2AC->Size) = Vector2D(3, 3);
     *RG2AC->Values.At<Coord2D>(RG2AC->Position) = Coord2D(-1.5, -1.5, 0);
 
@@ -238,8 +238,8 @@ void DefaultSetup()
     CT->Setup();
     *CT->Values.At<ColourClass>(CT->ColourA) = ColourClass(255, 0, 0);
     *CT->Values.At<ColourClass>(CT->ColourB) = ColourClass(255, 150, 0);
-    *CT->Values.At<float>(CT->Width) = 6;
-    *CT->Values.At<float>(CT->Position) = 0;*/
+    *CT->Values.At<Number>(CT->Width) = 6;
+    *CT->Values.At<Number>(CT->Position) = 0;*/
 
     // LID MOVEMENT
     Program *P2 = new Program();
@@ -345,7 +345,7 @@ void DefaultSetup()
     ORL4->Name = "Eye combine left";
     *ORL4->Values.At<Operations>(0) = Operations::Combine;
     ORL4->Values.Add(Vector2D(), 1);
-    ORL4->Values.Add<float>(0, 2);
+    ORL4->Values.Add<Number>(0, 2);
 
     P3->AddModule(ORL4, 4);
 
@@ -353,7 +353,7 @@ void DefaultSetup()
     ORR4->Name = "Eye combine right";
     *ORR4->Values.At<Operations>(0) = Operations::Combine;
     ORR4->Values.Add(Vector2D(), 1);
-    ORR4->Values.Add<float>(0, 2);
+    ORR4->Values.Add<Number>(0, 2);
 
     P3->AddModule(ORR4, 5);
 
@@ -398,7 +398,7 @@ void DefaultSetup()
     ORLA4->Name = "Eye arrow combine left";
     *ORLA4->Values.At<Operations>(0) = Operations::Combine;
     ORLA4->Values.Add(Vector2D(), 1);
-    ORLA4->Values.Add<float>(0, 2);
+    ORLA4->Values.Add<Number>(0, 2);
 
     P3->AddModule(ORLA4, 8);
 
@@ -406,7 +406,7 @@ void DefaultSetup()
     ORRA4->Name = "Eye arrow combine right";
     *ORRA4->Values.At<Operations>(0) = Operations::Combine;
     ORRA4->Values.Add(Vector2D(), 1);
-    ORRA4->Values.Add<float>(0, 2);
+    ORRA4->Values.Add<Number>(0, 2);
 
     P3->AddModule(ORRA4, 9);
 
@@ -485,8 +485,8 @@ void DefaultSetup()
     OC2->Name = "Collar sine";
     *OC2->Values.At<Operations>(0) = Operations::Sine;
     OC2->Values.Add((uint32_t)0, 1);
-    OC2->Values.Add((float)0.0005, 2);
-    OC2->Values.Add((float)0, 3);
+    OC2->Values.Add((Number)0.0005, 2);
+    OC2->Values.Add((Number)0, 3);
     OC1->Modules.Add(IDClass(OC2->ID.Base(), 1 + 1));
     PC->AddModule(OC2, 1);
 
@@ -494,8 +494,8 @@ void DefaultSetup()
     Operation *OC3 = new Operation();
     OC3->Name = "Collar gain";
     *OC3->Values.At<Operations>(0) = Operations::Multiply;
-    OC3->Values.Add((float)0, 1);
-    OC3->Values.Add((float)6, 2);
+    OC3->Values.Add((Number)0, 1);
+    OC3->Values.Add((Number)6, 2);
     OC2->Modules.Add(IDClass(OC3->ID.Base(), 1 + 1));
 
     OC3->Modules.Add(IDClass(CT->ID.Base(), CT->Position + 1));
@@ -511,14 +511,14 @@ void DefaultSetup()
 
     Operation *AO = new Operation();
     *AO->Values.At<Operations>(0) = Operations::MoveTo;
-    AO->Values.Add<float>(0, 1);
+    AO->Values.Add<Number>(0, 1);
     AO->Values.Add<uint32_t>(0, 2);
     AO->Modules.Add(IDClass(T1->ID.Base(), T1->Width + 1));
 
     // Add equal for value
     Operation *O1 = new Operation();
     *O1->Values.At<Operations>(0) = Operations::Equal;
-    O1->Values.Add<float>(0, 1);
+    O1->Values.Add<Number>(0, 1);
     O1->Modules.Add(IDClass(AO->ID.Base(), 1 + 1));
     P->AddModule(O1, 0);
 
@@ -535,7 +535,7 @@ void DefaultSetup()
     // Add equal for value
     Operation *O3 = new Operation();
     *O3->Values.At<Operations>(0) = Operations::Equal;
-    O3->Values.Add<float>(15, 1);
+    O3->Values.Add<Number>(15, 1);
     O3->Modules.Add(IDClass(AO->ID.Base(), 1 + 1));
     P->AddModule(O3, 3);
 

@@ -2,25 +2,25 @@ class Vector2D
 {
 public:
     // y|_x
-    float X = 0;
-    float Y = 0;
+    Number X = 0;
+    Number Y = 0;
 
     Vector2D();
-    Vector2D(float X, float Y);
-    Vector2D(float Angle);
-    void FromAngle(float Angle);
-    float ToAngle();
+    Vector2D(Number X, Number Y);
+    Vector2D(Number Angle);
+    void FromAngle(Number Angle);
+    Number ToAngle();
 
     void operator=(Vector2D Other);
     Vector2D operator+(Vector2D Other);
     Vector2D operator-();
     Vector2D operator-(Vector2D Other);
     Vector2D operator*(Vector2D Other);
-    Vector2D operator*(float Scale);
+    Vector2D operator*(Number Scale);
 
-    float Length();
-    float Distance(Vector2D Other);
-    float DotProduct(Vector2D Other);
+    Number Length();
+    Number Distance(Vector2D Other);
+    Number DotProduct(Vector2D Other);
     Vector2D Rotate(Vector2D Other);
     Vector2D RotateInverted(Vector2D Other);
     Vector2D Mirror(Vector2D Other);
@@ -35,24 +35,24 @@ public:
 
 Vector2D::Vector2D() {};
 
-Vector2D::Vector2D(float X, float Y)
+Vector2D::Vector2D(Number X, Number Y)
 {
     this->X = X;
     this->Y = Y;
 };
 
-Vector2D::Vector2D(float Angle) // In degrees
+Vector2D::Vector2D(Number Angle) // In degrees
 {
     FromAngle(Angle);
 };
 
-void Vector2D::FromAngle(float Angle)
+void Vector2D::FromAngle(Number Angle)
 {
     X = cos(Angle * PI / 180);
     Y = sin(Angle * PI / 180);
 };
 
-float Vector2D::ToAngle() //Radians
+Number Vector2D::ToAngle() //Radians
 {
     return atan2(Y, X);
 };
@@ -83,22 +83,22 @@ Vector2D Vector2D::operator*(Vector2D Other)
     return Vector2D(X * Other.X, Y * Other.Y);
 };
 
-Vector2D Vector2D::operator*(float Scale)
+Vector2D Vector2D::operator*(Number Scale)
 {
     return Vector2D(X * Scale, Y * Scale);
 };
 
-float Vector2D::Length()
+Number Vector2D::Length()
 {
-    return sqrtf(sq(X) + sq(Y));
+    return sqrt(sq(X) + sq(Y));
 };
 
-float Vector2D::Distance(Vector2D Other)
+Number Vector2D::Distance(Vector2D Other)
 {
     return (*this - Other).Length();
 };
 
-float Vector2D::DotProduct(Vector2D Other)
+Number Vector2D::DotProduct(Vector2D Other)
 {
     return X * Other.X + Y * Other.Y; //<x,y> = x1*y1 + x2*y2
 };
@@ -125,13 +125,13 @@ Vector2D Vector2D::Abs()
 
 Vector2D Vector2D::TimeMove(Vector2D Target, unsigned long TargetTime)
 {
-    float Step = TimeStep(TargetTime);
+    Number Step = TimeStep(TargetTime);
     return *this + (Target - *this) * Step;
 };
 
 Vector2D Vector2D::TimeMoveAngle(Vector2D Target, unsigned long TargetTime)
 {
-    float Step = TimeStep(TargetTime);
+    Number Step = TimeStep(TargetTime);
     return Vector2D(this->ToAngle() + LimitPi(Target.ToAngle() - this->ToAngle()) * Step);
 }
 
@@ -156,6 +156,6 @@ Vector2D ByteArray::As()
 {
     Vector2D New;
     New.X = SubArray(0);
-    New.Y = SubArray(sizeof(float));
+    New.Y = SubArray(sizeof(Number));
     return New;
 };*/

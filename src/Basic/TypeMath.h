@@ -1,6 +1,6 @@
-float LimitZeroToOne(float Number)
+Number LimitZeroToOne(Number Value)
 {
-    return min(max(Number, (float)0), (float)1);
+    return min(max(Value, Number(0)), Number(1));
 };
 
 uint8_t LimitByte(int Number)
@@ -8,14 +8,14 @@ uint8_t LimitByte(int Number)
     return min(max(Number, 0), 255);
 };
 
-float ByteToPercent(byte Number)
+Number ByteToPercent(byte Value)
 {
-    return LimitZeroToOne((float)Number / 255);
+    return LimitZeroToOne(Number(Value) / 255);
 };
 
-uint8_t PercentToByte(float Number)
+uint8_t PercentToByte(Number Value)
 {
-    return LimitByte((int)Number * 255);
+    return LimitByte((int32_t)Value * 255);
 };
 
 uint8_t MultiplyBytePercentByte(byte Number, byte Percent)

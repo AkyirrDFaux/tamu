@@ -33,7 +33,7 @@ DisplayClass::DisplayClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
     Values.Add(Displays::Undefined,DisplayType);
     Values.Add<int32_t>(0, Length);
     Values.Add(Vector2D(0, 0), Size);
-    Values.Add<float>(1, Ratio);
+    Values.Add<Number>(1, Ratio);
     Values.Add<uint8_t>(20, Brightness);
     Values.Add(Coord2D(0, 0, 0), Offset);
     Values.Add(false, Mirrored);
@@ -44,7 +44,7 @@ void DisplayClass::Setup()
     Displays *Type = Values.At<Displays>(Value::DisplayType);
     int32_t *Length = Values.At<int32_t>(Value::Length);
     Vector2D *Size = Values.At<Vector2D>(Value::Size);
-    float *Ratio = Values.At<float>(Value::Ratio);
+    Number *Ratio = Values.At<Number>(Value::Ratio);
 
     if (Type == nullptr || Length == nullptr || Size == nullptr || Ratio == nullptr)
         return;
@@ -68,7 +68,7 @@ bool DisplayClass::Run()
     PortClass *Port = Modules.Get<PortClass>(Module::Port); // HW connection
     int32_t *Length = Values.At<int32_t>(Value::Length);
     Vector2D *Size = Values.At<Vector2D>(Value::Size);
-    float *Ratio = Values.At<float>(Value::Ratio);
+    Number *Ratio = Values.At<Number>(Value::Ratio);
     uint8_t *Brightness = Values.At<uint8_t>(Value::Brightness);
     Coord2D *Offset = Values.At<Coord2D>(Value::Offset);
     bool *Mirrored = Values.At<bool>(Value::Mirrored);
@@ -87,11 +87,11 @@ bool DisplayClass::Run()
         return true;
     }
 
-    Coord2D Transform = Coord2D(*Size * 0.5 - Vector2D(0.5, 0.5), 0).Join(*Offset);
+    Coord2D Transform = Coord2D(*Size * 0.5 - Vector2D(0.5, 0.5), Vector2D(0)).Join(*Offset);
     // Iterate over corrected pixel coords |_
-    for (int32_t Y = 0; Y < Size->Y; Y++)
+    for (int32_t Y = 0; Y < int32_t(Size->Y); Y++)
     {
-        for (int32_t X = 0; X < Size->X; X++)
+        for (int32_t X = 0; X < int32_t(Size->X); X++)
         {
             int32_t Index = (Size->Y - Y - 1) * Size->X + X; // Invert Y due to layout coords |''
             if (Layout[Index] == 0)

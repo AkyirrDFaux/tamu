@@ -112,7 +112,7 @@ bool Operation::Combine()
             return true;
 
         if (Modules.ValueTypeAt(Index) == Types::Coord2D && Values.TypeAt(1) == Types::Vector2D && Values.TypeAt(2) == Types::Number)
-            *(Coord2D *)Target = Coord2D(*Values.At<Vector2D>(1), Vector2D(*Values.At<float>(2)));
+            *(Coord2D *)Target = Coord2D(*Values.At<Vector2D>(1), Vector2D(*Values.At<Number>(2)));
     }
     return true;
 }
@@ -141,7 +141,7 @@ bool Operation::Multiply()
         if (Values.TypeAt(1) == Types::Vector2D && Modules.ValueTypeAt(Index) == Types::Vector2D)
             *(Vector2D *)Modules.ValueAt(Index) = (*Values.At<Vector2D>(1)) * (*Values.At<Vector2D>(2));
         if (Values.TypeAt(1) == Types::Number && Modules.ValueTypeAt(Index) == Types::Number)
-            *(float *)Modules.ValueAt(Index) = (*Values.At<float>(1)) * (*Values.At<float>(2));
+            *(Number *)Modules.ValueAt(Index) = (*Values.At<Number>(1)) * (*Values.At<Number>(2));
     }
 
     return true;
@@ -165,7 +165,7 @@ bool Operation::MoveTo()
         if (Values.TypeAt(1) == Types::Coord2D)
             *(Coord2D *)Value = ((Coord2D *)Value)->TimeMove(*(Coord2D *)Target, *Time);
         else if (Values.TypeAt(1) == Types::Number)
-            *(float *)Value = TimeMove(*(float *)Value, *(float *)Target, *Time);
+            *(Number *)Value = TimeMove(*(Number *)Value, *(Number *)Target, *Time);
     }
 
     return (CurrentTime >= *Time);
@@ -230,8 +230,8 @@ bool Operation::ResetFlags()
 bool Operation::Sine()
 {
     uint32_t *Input = Values.At<uint32_t>(1);
-    float *Multiplier = Values.At<float>(2);
-    float *Phase = Values.At<float>(3);
+    Number *Multiplier = Values.At<Number>(2);
+    Number *Phase = Values.At<Number>(3);
     void *Value = nullptr;
 
     if (Input == nullptr || Multiplier == nullptr || Phase == nullptr)
@@ -243,7 +243,7 @@ bool Operation::Sine()
         if (Value == nullptr)
             continue;
         if (Modules.ValueTypeAt(Index) == Types::Number)
-            *(float *)Value = sin((*Input) * (*Multiplier) + (*Phase));
+            *(Number *)Value = sin((*Input) * (*Multiplier) + (*Phase));
     }
 
     return true;

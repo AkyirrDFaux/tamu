@@ -32,9 +32,9 @@ void Texture1D::Setup()
         if (!Values.IsValid(ColourB))
             Values.Add(ColourClass(0, 0, 0, 255), ColourB);
         if (!Values.IsValid(Position))
-            Values.Add<float>(0, Position);
+            Values.Add<Number>(0, Position);
         if (!Values.IsValid(Width))
-            Values.Add<float>(1, Width);
+            Values.Add<Number>(1, Width);
 
     case Textures1D::Full:
         if (!Values.IsValid(ColourA))
@@ -50,11 +50,11 @@ ColourClass Texture1D::Render(int32_t PixelPosition)
     Textures1D *Type = Values.At<Textures1D>(TextureType);
     ColourClass *ColourA = Values.At<ColourClass>(Value::ColourA);
     ColourClass *ColourB = Values.At<ColourClass>(Value::ColourB);
-    float *Position = Values.At<float>(Value::Position);
-    float *Width = Values.At<float>(Value::Width);
+    Number *Position = Values.At<Number>(Value::Position);
+    Number *Width = Values.At<Number>(Value::Width);
 
     ColourClass Colour;
-    float Distance;
+    Number Distance;
 
     if (Type == nullptr)
     {

@@ -1,5 +1,4 @@
 #include <Arduino.h>
-
 uint32_t LastTime = 0;
 uint32_t CurrentTime = 0;
 uint32_t DeltaTime = 0;
@@ -9,14 +8,16 @@ uint32_t DeltaTime = 0;
 #include "Basic\Base.h"
 #include "Basic\Hardware.h"
 #include "Basic\Memory.h"
-#include "Basic\TypeMath.h"
-#include "Basic\Math.h"
 
 #include "Core\Enums.h"
 #include "Core\ObjectList.h"
 #include "Core\ID.h"
 
 //Basic data types
+#include "Data\Number.h"
+#include "Basic\TypeMath.h"
+#include "Basic\Math.h"
+
 #include "Data\ValueEnums.h"
 #include "Data\Colour.h"
 #include "Data\Vector2D.h"
@@ -123,7 +124,6 @@ void setup()
 void loop()
 {
     Chirp.Communicate();
-
     for (int32_t Index = 0; Index < Sensors.Length; Sensors.Iterate(&Index))
         Sensors[Index]->Run();
     //Serial.println("P");
@@ -140,13 +140,13 @@ void loop()
     FastLED.show();
 
     TimeUpdate();
+    Serial.println(DeltaTime);
     Board.UpdateLoopTime();
 };
 
 /*TODO:
 KEY FEATURES:
 Setup fix (set value callback? or store necessary values?)
-Implement fixed point numbers
 Crash (Delete/Create) Safety
 App Programming view
 Multi-board support
@@ -188,3 +188,4 @@ Incorrect wraping of LED strip
 // 18.10.2025 DataList replaced Variables -> multi-variable objects
 // 19.10.2025 Movement of eye using angular velocity
 // 17.12.2025 Split types, app on Windows
+// 22.12.2025 ? Fixed-point replacement, -40% loop time!

@@ -13,7 +13,7 @@ public:
     Geometry2DClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     void Setup();
 
-    float Render(float Previous, Vector2D PixelPosition);
+    Number Render(Number Previous, Vector2D PixelPosition);
 };
 
 Geometry2DClass::Geometry2DClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
@@ -39,18 +39,18 @@ void Geometry2DClass::Setup()
             Values.Add(Vector2D(1, 1), Size);
     case Geometries::HalfFill:
         if (!Values.IsValid(Fade))
-            Values.Add<float>(1, Fade);
+            Values.Add<Number>(1, Fade);
         if (!Values.IsValid(Position))
             Values.Add(Coord2D(), Position);
         break;
     }
 };
 
-float Geometry2DClass::Render(float Previous, Vector2D PixelPosition)
+Number Geometry2DClass::Render(Number Previous, Vector2D PixelPosition)
 {
     Geometries *Type = Values.At<Geometries>(Geometry);
     GeometryOperation *Operation = Values.At<GeometryOperation>(Value::Operation);
-    float *Fade = Values.At<float>(Value::Fade);
+    Number *Fade = Values.At<Number>(Value::Fade);
     Coord2D *Position = Values.At<Coord2D>(Value::Position);
     Vector2D *Size = Values.At<Vector2D>(Value::Size);
 
@@ -62,7 +62,7 @@ float Geometry2DClass::Render(float Previous, Vector2D PixelPosition)
 
     Vector2D Local;
 
-    float Overlay = 0;
+    Number Overlay = 0;
     switch (*Type)
     {
     case Geometries::Fill:
@@ -119,10 +119,10 @@ float Geometry2DClass::Render(float Previous, Vector2D PixelPosition)
 }
 
 /*
-float DoubleParabola(CoordClass Current, CoordClass Center,
-                     float Width, float Height, float Fade)
+Number DoubleParabola(CoordClass Current, CoordClass Center,
+                     Number Width, Number Height, Number Fade)
 {
-    float Distance = (abs(Current.X - Center.X) - Width + Square(Current.Y - Center.Y) / (Square(Height) / Width)) / Fade;
+    Number Distance = (abs(Current.X - Center.X) - Width + Square(Current.Y - Center.Y) / (Square(Height) / Width)) / Fade;
 
     return 1 - LimitZeroToOne(Distance);
 }
