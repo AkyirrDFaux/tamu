@@ -1,6 +1,6 @@
 #include <ESP32Servo.h>
 #include <FastLED.h>
-#include <Adafruit_LSM6DS3TRC.h>
+#include <Wire.h>
 
 CRGB *BeginLED(uint16_t Length, uint16_t Pin);
 void EndLED(CRGB *Address);

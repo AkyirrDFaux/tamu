@@ -10,6 +10,7 @@ public:
     Vector3D(Number X, Number Y, Number Z);
 
     Number GetByIndex(uint8_t Index);
+    String AsString();
 };
 
 Vector3D::Vector3D() {};
@@ -32,6 +33,11 @@ Number Vector3D::GetByIndex(uint8_t Index)
     else
         return 0;
 }
+
+String Vector3D::AsString()
+{
+    return (String(X) + " " + String(Y) + " " + String(Z));
+};
 
 /*
 Vector2D Vector2D::operator+(Vector2D Other)

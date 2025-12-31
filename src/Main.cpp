@@ -140,7 +140,7 @@ void loop()
     FastLED.show();
 
     TimeUpdate();
-    Serial.println(DeltaTime);
+    //Serial.println(DeltaTime);
     Board.UpdateLoopTime();
 };
 

@@ -9,7 +9,7 @@ public:
         Acceleration,
     };
 
-    void *Sensor = nullptr;
+    bool OK = false;
 
     void Setup();
     GyrAccClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
@@ -42,20 +42,20 @@ void GyrAccClass::Setup()
     switch (*Values.At<GyrAccs>(DeviceType))
     {
     case GyrAccs::LSM6DS3TRC:
-        Sensor = new Adafruit_LSM6DS3TRC();
-        if (!((Adafruit_LSM6DS3TRC *)Sensor)->begin_I2C(0b1101011, I2C)) // 0b1101011 or 0b1101010
-        {
-            Serial.println("Failed to find LSM6DS3TR-C chip (ADR:1)");
-            if (!((Adafruit_LSM6DS3TRC *)Sensor)->begin_I2C(0b1101010, I2C)) // 0b1101011 or 0b1101010
-                Serial.println("Failed to find LSM6DS3TR-C chip (ADR:0)");
-        }
+        // Initialization
+        Wire.beginTransmission(0b1101010); // 0b1101011 or 0b1101010 + write
+        Wire.write(0x10);                  // Subaddress
+        Wire.write(0b00110100);            // Acc (+-16G, 52Hz)
+        Wire.write(0b00111100);            // Gyro (+-2000dps, 52Hz)
+        Wire.endTransmission();
+        OK = true;
 
-        ((Adafruit_LSM6DS3TRC *)Sensor)->setAccelDataRate(LSM6DS_RATE_52_HZ);
-        ((Adafruit_LSM6DS3TRC *)Sensor)->setGyroDataRate(LSM6DS_RATE_52_HZ);
-        ((Adafruit_LSM6DS3TRC *)Sensor)->setAccelRange(LSM6DS_ACCEL_RANGE_16_G);
-        ((Adafruit_LSM6DS3TRC *)Sensor)->setGyroRange(LSM6DS_GYRO_RANGE_2000_DPS);
+        // Call first request
+        Wire.beginTransmission(0b1101010); // 0b1101011 or 0b1101010 + write
+        Wire.write(0x22);                  // Subaddress
+        Wire.endTransmission();
+        Wire.requestFrom(0b1101010, 12); // 0b1101011 or 0b1101010 + read
         break;
-
     default:
         break;
     }
@@ -63,23 +63,42 @@ void GyrAccClass::Setup()
 
 bool GyrAccClass::Run()
 {
-    sensors_event_t a;
-    sensors_event_t g;
-    sensors_event_t t;
+    uint8_t Buffer[12];
+    Vector3D *Acc = Values.At<Vector3D>(Acceleration);
+    Vector3D *Rot = Values.At<Vector3D>(AngularRate);
 
-    if (Sensor == nullptr)
-    {
+    if (OK == false)
         Setup();
-        return true;
-    }
 
-    if (((Adafruit_LSM6DS3TRC *)Sensor)->getEvent(&a, &g, &t))
+    if (Wire.available() >= 12) // Data ready
     {
-        // Compensate for gravity
-        *Values.At<Vector3D>(Acceleration) = Vector3D(a.acceleration.x, a.acceleration.y, a.acceleration.z);
-        *Values.At<Vector3D>(AngularRate) = Vector3D(g.gyro.x, g.gyro.y, g.gyro.z);
+        Wire.readBytes(Buffer, 12);
 
-        // Add orientation from gravity
+        // Request more
+        Wire.beginTransmission(0b1101010); // 0b1101011 or 0b1101010 + write
+        Wire.write(0x22);                  // Subaddress
+        Wire.endTransmission();
+        Wire.requestFrom(0b1101010, 12); // 0b1101011 or 0b1101010 + read
+
+        int16_t num;
+        memcpy(&num, Buffer, 2);
+        Rot->X = Number(num) / 939; // 2000 * (pi / 180) / 32 768  
+        memcpy(&num, Buffer + 2, 2);
+        Rot->Y = Number(num) / 939;
+        memcpy(&num, Buffer + 4, 2);
+        Rot->Z = Number(num) / 939;
+        memcpy(&num, Buffer + 6, 2);
+        Acc->X = Number(num) / 209; // 16 * g / 32 768 
+        memcpy(&num, Buffer + 8, 2);
+        Acc->Y = Number(num) / 209;
+        memcpy(&num, Buffer + 10, 2);
+        Acc->Z = Number(num) / 209;
+
+        //Serial.println(Rot->AsString() + " " + Acc->AsString());
     }
+
+    //*Values.At<Vector3D>(Acceleration) = Vector3D(a.acceleration.x, a.acceleration.y, a.acceleration.z);
+    //*Values.At<Vector3D>(AngularRate) = Vector3D(g.gyro.x, g.gyro.y, g.gyro.z);
+
     return true;
 }

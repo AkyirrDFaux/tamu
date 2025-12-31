@@ -92,7 +92,7 @@ Drivers PortClass::StartDriver()
     {
         Modules.Add(Attached[0]->Modules[1]->ID, 2); // Take under control
         *Attached[0]->Modules[1]->Values.At<Drivers>(DriverType) = Drivers::I2CClock;
-        Wire.begin(*Pin, *Attached[0]->Modules[1]->Values.At<uint8_t>(Value::Pin), 10000);
+        Wire.begin(*Pin, *Attached[0]->Modules[1]->Values.At<uint8_t>(Value::Pin), 100000);
         *Driver = Drivers::I2C;
     }
 
