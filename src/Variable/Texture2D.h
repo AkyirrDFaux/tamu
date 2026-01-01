@@ -2,7 +2,7 @@ class Texture2D : public BaseClass
 {
 public:
     Texture2D(IDClass ID = RandomID, FlagClass Flags = Flags::None);
-    void Setup();
+    void Setup(int32_t Index = -1);
     ColourClass Render(Vector2D PixelPosition);
 
     enum Value
@@ -23,8 +23,11 @@ Texture2D::Texture2D(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
     Values.Add(Textures2D::None);
 };
 
-void Texture2D::Setup()
+void Texture2D::Setup(int32_t Index)
 {
+    if (Index != -1 && Index != 0)
+        return;
+        
     Textures2D *Type = Values.At<Textures2D>(Texture);
     switch (*Type)
     {

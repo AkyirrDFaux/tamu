@@ -11,7 +11,7 @@ public:
     };
 
     Geometry2DClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
-    void Setup();
+    void Setup(int32_t Index = -1);
 
     Number Render(Number Previous, Vector2D PixelPosition);
 };
@@ -25,8 +25,11 @@ Geometry2DClass::Geometry2DClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Fl
     Values.Add(GeometryOperation::Add);
 };
 
-void Geometry2DClass::Setup()
+void Geometry2DClass::Setup(int32_t Index)
 {
+    if (Index != -1 && Index != 0)
+        return;
+        
     Geometries *Type = Values.At<Geometries>(Geometry);
 
     switch (*Type)

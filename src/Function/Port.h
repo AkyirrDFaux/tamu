@@ -58,36 +58,54 @@ Drivers PortClass::StartDriver()
     if (*Driver != Drivers::None)
         return *Driver;
 
-    if (Attached.IsValid(0) && Attached[0]->Type == ObjectTypes::Fan && Attached[0]->Modules[0] == this && (*Port == Ports::GPIO || *Port == Ports::TOut))
+    if (Attached.IsValid(0) &&
+        Attached[0]->Type == ObjectTypes::Fan &&
+        Attached[0]->Modules[0] == this &&
+        (*Port == Ports::GPIO || *Port == Ports::TOut))
     {
         DriverObj = new ESP32PWM();
         ((ESP32PWM *)DriverObj)->attachPin(*Pin, 25000, 8);
         *Driver = Drivers::FanPWM;
     }
-    if (Attached.IsValid(0) && Attached[0]->Type == ObjectTypes::Servo && Attached[0]->Modules[0] == this && *Port == Ports::GPIO)
+    if (Attached.IsValid(0) &&
+        Attached[0]->Type == ObjectTypes::Servo &&
+        Attached[0]->Modules[0] == this && *Port == Ports::GPIO)
     {
         DriverObj = new Servo();
         ((Servo *)DriverObj)->setPeriodHertz(50);
         ((Servo *)DriverObj)->attach(*Pin, 500, 2500);
         *Driver = Drivers::Servo;
     }
-    if (Attached.IsValid(0) && Attached[0]->Type == ObjectTypes::Input && Attached[0]->Modules[0] == this && *Port == Ports::GPIO)
+    if (Attached.IsValid(0) &&
+        Attached[0]->Type == ObjectTypes::Input &&
+        Attached[0]->Modules[0] == this && *Port == Ports::GPIO)
     {
         pinMode(*Pin, INPUT);
         *Driver = Drivers::Input;
     }
-    else if (Attached.IsValid(0) && Attached[0]->Type == ObjectTypes::Display && Attached[0]->Modules[0] == this && *Port == Ports::GPIO) // Allow combining
+    else if (Attached.IsValid(0) &&
+             Attached[0]->Type == ObjectTypes::Display &&
+             Attached[0]->Modules[0] == this &&
+             *Port == Ports::GPIO) // Allow combining
     {
         DriverObj = BeginLED(*Attached[0]->Values.At<int32_t>(1), *Pin);
         *Driver = Drivers::LED;
     }
-    else if (Attached.IsValid(0) && Attached[0]->Type == ObjectTypes::LEDStrip && Attached[0]->Modules[0] == this && *Port == Ports::GPIO) // Allow combining
+    else if (Attached.IsValid(0) &&
+             Attached[0]->Type == ObjectTypes::LEDStrip &&
+             Attached[0]->Modules[0] == this &&
+             *Port == Ports::GPIO) // Allow combining
     {
         DriverObj = BeginLED(*Attached[0]->Values.At<int32_t>(1), *Pin);
         *Driver = Drivers::LED;
     }
-    else if (Attached.IsValid(0) && Attached[0]->Type == ObjectTypes::AccGyr && Attached[0]->Modules[0] == this && (*Port == Ports::GPIO || *Port == Ports::SDA) &&
-             Attached[0]->Modules.IsValid(1) && Attached[0]->Modules[1]->Type == ObjectTypes::Port && Attached[0]->Modules[1] != this &&
+    else if (Attached.IsValid(0) &&
+             Attached[0]->Type == ObjectTypes::AccGyr &&
+             Attached[0]->Modules[0] == this &&
+             (*Port == Ports::GPIO || *Port == Ports::SDA) &&
+             Attached[0]->Modules.IsValid(1) &&
+             Attached[0]->Modules[1]->Type == ObjectTypes::Port &&
+             Attached[0]->Modules[1] != this &&
              (*Attached[0]->Modules[1]->Values.At<Ports>(PortType) == Ports::GPIO || *Attached[0]->Modules[1]->Values.At<Ports>(PortType) == Ports::SCL)) // Allow combining
     {
         Modules.Add(Attached[0]->Modules[1]->ID, 2); // Take under control
@@ -113,8 +131,11 @@ CRGB *PortClass::GetLED(BaseClass *ThatObject)
     if (Attached[0] == ThatObject && CheckDriver(Drivers::LED)) // Already there
         return (CRGB *)DriverObj;
 
-    if (*Driver == Drivers::None && Attached[0] == nullptr && (ThatObject->Type == ObjectTypes::Display || ThatObject->Type == ObjectTypes::LEDStrip) &&
-        ThatObject->Modules[0] == this && *Port == Ports::GPIO) // Suitable for attachment
+    if (*Driver == Drivers::None &&
+        Attached[0] == nullptr &&
+        (ThatObject->Type == ObjectTypes::Display || ThatObject->Type == ObjectTypes::LEDStrip) &&
+        ThatObject->Modules[0] == this &&
+        *Port == Ports::GPIO) // Suitable for attachment
     {
         Attached.Add(ThatObject, 0);
         if (StartDriver() == Drivers::LED)
@@ -131,16 +152,22 @@ TwoWire *PortClass::GetI2C(BaseClass *ThatObject)
     if ((Attached[0] == ThatObject || Attached[1] == ThatObject) && CheckDriver(Drivers::I2C)) // Already there
         return &Wire;
 
-    if (*Driver == Drivers::None && Attached[0] == nullptr && ThatObject->Type == ObjectTypes::AccGyr &&
-        ThatObject->Modules[0] == this && (*Port == Ports::GPIO || *Port == Ports::SDA)) // Suitable for attachment
+    if (*Driver == Drivers::None &&
+        Attached[0] == nullptr &&
+        ThatObject->Type == ObjectTypes::AccGyr &&
+        ThatObject->Modules[0] == this &&
+        (*Port == Ports::GPIO || *Port == Ports::SDA)) // Suitable for attachment
     {
         Attached.Add(ThatObject, 0);
         if (StartDriver() == Drivers::I2C)
             return &Wire;
         Attached.Remove(ThatObject);
     }
-    else if (*Driver == Drivers::I2C && Attached[1] == nullptr && ThatObject->Type == ObjectTypes::AccGyr &&
-             ThatObject->Modules[0] == this && ThatObject->Modules[1] == Modules[2]) // Another suitable for attachment
+    else if (*Driver == Drivers::I2C &&
+             Attached[1] == nullptr &&
+             ThatObject->Type == ObjectTypes::AccGyr &&
+             ThatObject->Modules[0] == this &&
+             ThatObject->Modules[1] == Modules[2]) // Another suitable for attachment
         Attached.Add(ThatObject, 1);
 
     return nullptr;
@@ -153,8 +180,11 @@ ESP32PWM *PortClass::GetPWM(BaseClass *ThatObject)
     if (Attached[0] == ThatObject && CheckDriver(Drivers::FanPWM)) // Already there
         return (ESP32PWM *)DriverObj;
 
-    if (*Driver == Drivers::None && Attached[0] == nullptr && ThatObject->Type == ObjectTypes::Fan &&
-        ThatObject->Modules[0] == this && (*Port == Ports::GPIO || *Port == Ports::TOut)) // Suitable for attachment
+    if (*Driver == Drivers::None &&
+        Attached[0] == nullptr &&
+        ThatObject->Type == ObjectTypes::Fan &&
+        ThatObject->Modules[0] == this &&
+        (*Port == Ports::GPIO || *Port == Ports::TOut)) // Suitable for attachment
     {
         Attached.Add(ThatObject, 0);
         if (StartDriver() == Drivers::FanPWM)
@@ -170,11 +200,14 @@ Servo *PortClass::GetServo(BaseClass *ThatObject)
     Drivers *Driver = Values.At<Drivers>(DriverType);
     Ports *Port = Values.At<Ports>(PortType);
 
-    if (Attached[0] == ThatObject && CheckDriver(Drivers::Servo)) // Already there
+    if (Attached[0] == ThatObject &&
+        CheckDriver(Drivers::Servo)) // Already there
         return (Servo *)DriverObj;
 
-    if (*Driver == Drivers::None && Attached[0] == nullptr && ThatObject->Type == ObjectTypes::Servo &&
-        ThatObject->Modules[0] == this && *Port == Ports::GPIO) // Suitable for attachment
+    if (*Driver == Drivers::None &&
+        Attached[0] == nullptr && ThatObject->Type == ObjectTypes::Servo &&
+        ThatObject->Modules[0] == this &&
+        *Port == Ports::GPIO) // Suitable for attachment
     {
         Attached.Add(ThatObject, 0);
         if (StartDriver() == Drivers::Servo)
@@ -194,8 +227,11 @@ uint8_t *PortClass::GetInput(BaseClass *ThatObject)
     if (Attached[0] == ThatObject && CheckDriver(Drivers::Input)) // Already there
         return Pin;
 
-    if (*Driver == Drivers::None && Attached[0] == nullptr && ThatObject->Type == ObjectTypes::Input &&
-        ThatObject->Modules[0] == this && *Port == Ports::GPIO) // Suitable for attachment
+    if (*Driver == Drivers::None &&
+        Attached[0] == nullptr &&
+        ThatObject->Type == ObjectTypes::Input &&
+        ThatObject->Modules[0] == this &&
+        *Port == Ports::GPIO) // Suitable for attachment
     {
         Attached.Add(ThatObject, 0);
         if (StartDriver() == Drivers::Input)

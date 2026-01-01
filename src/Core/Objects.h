@@ -92,7 +92,7 @@ public:
     BaseClass(IDClass NewID = RandomID, FlagClass NewFlags = Flags::None);
 
     virtual ~BaseClass();
-    virtual void Setup() {};
+    virtual void Setup(int32_t Index = -1) {};
     virtual bool Run()
     {
         ReportError(Status::InvalidType, "Run entry not implemented, Type:" + String((uint8_t)Type));

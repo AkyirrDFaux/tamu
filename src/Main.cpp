@@ -146,7 +146,6 @@ void loop()
 
 /*TODO:
 KEY FEATURES:
-Setup fix (set value callback)
 Crash (Delete/Create) Safety
 App Programming view
 Multi-board support

@@ -2,7 +2,8 @@ class DisplayClass : public BaseClass
 {
 public:
     byte *Layout = nullptr;
-    enum Value{
+    enum Value
+    {
         DisplayType,
         Length,
         Size,
@@ -19,7 +20,7 @@ public:
     DisplayClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     ~DisplayClass();
 
-    void Setup();
+    void Setup(int32_t Index = -1);
     bool Run();
     ColourClass RenderPixel(Vector2D Base);
 };
@@ -30,7 +31,7 @@ DisplayClass::DisplayClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
     Name = "Display";
     Outputs.Add(this);
 
-    Values.Add(Displays::Undefined,DisplayType);
+    Values.Add(Displays::Undefined, DisplayType);
     Values.Add<int32_t>(0, Length);
     Values.Add(Vector2D(0, 0), Size);
     Values.Add<Number>(1, Ratio);
@@ -39,8 +40,11 @@ DisplayClass::DisplayClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
     Values.Add(false, Mirrored);
 };
 
-void DisplayClass::Setup()
+void DisplayClass::Setup(int32_t Index)
 {
+    if (Index != -1 && Index != 0)
+        return;
+
     Displays *Type = Values.At<Displays>(Value::DisplayType);
     int32_t *Length = Values.At<int32_t>(Value::Length);
     Vector2D *Size = Values.At<Vector2D>(Value::Size);
@@ -79,7 +83,7 @@ bool DisplayClass::Run()
         ReportError(Status::MissingModule);
         return true;
     }
-    
+
     CRGB *Pixel = Port->GetLED(this);
     if (Pixel == nullptr)
     {
@@ -113,7 +117,7 @@ ColourClass DisplayClass::RenderPixel(Vector2D Centered)
 {
     ColourClass Colour = ColourClass(0, 0, 0);
 
-    for (int32_t Index = Modules.FirstValid(ObjectTypes::Shape2D,1); Index < Modules.Length; Modules.Iterate(&Index, ObjectTypes::Shape2D))
+    for (int32_t Index = Modules.FirstValid(ObjectTypes::Shape2D, 1); Index < Modules.Length; Modules.Iterate(&Index, ObjectTypes::Shape2D))
         Colour = Modules[Index]->As<Shape2DClass>()->Render(Colour, Centered);
     return Colour;
 };

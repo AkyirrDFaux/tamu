@@ -2,7 +2,7 @@ class Texture1D : public BaseClass
 {
 public:
     Texture1D(IDClass ID = RandomID, FlagClass Flags = Flags::None);
-    void Setup();
+    void Setup(int32_t Index = -1);
     ColourClass Render(int32_t PixelPosition);
 
     enum Value
@@ -22,8 +22,11 @@ Texture1D::Texture1D(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
     Name = "Texture";
 };
 
-void Texture1D::Setup()
+void Texture1D::Setup(int32_t Index)
 {
+    if (Index != -1 && Index != 0)
+        return;
+        
     Textures1D *Type = Values.At<Textures1D>(TextureType);
     switch (*Type)
     {

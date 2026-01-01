@@ -14,7 +14,7 @@ public:
 
     InputClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     ~InputClass();
-    void Setup();
+    void Setup(int32_t Index = -1);
 
     bool Run();
 };
@@ -34,8 +34,11 @@ InputClass::~InputClass()
     Sensors.Remove(this);
 };
 
-void InputClass::Setup()
+void InputClass::Setup(int32_t Index)
 {
+    if (Index != -1 && Index != 0)
+        return;
+        
     // Deletion of previous values
     Values.Delete(Input);
     Values.Delete(Indicator);

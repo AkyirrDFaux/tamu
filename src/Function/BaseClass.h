@@ -34,7 +34,8 @@ bool BaseClass::ValueSet(C Value, int32_t Index)
     if (Values.TypeAt(Index) != GetType<C>())
         return false;
 
-    memcpy((void*)Values.At<C>(Index), &Value, GetDataSize(GetType<C>()));
+    memcpy((void *)Values.At<C>(Index), &Value, GetDataSize(GetType<C>()));
+    Setup(Index);
     return true;
 }
 
@@ -72,7 +73,7 @@ ByteArray BaseClass::OutputValues(int32_t Value) const
 
 bool BaseClass::InputValues(ByteArray &Input, uint8_t Value)
 {
-    //Value == 0 is everything, > 0 only one specified
+    // Value == 0 is everything, > 0 only one specified
     ByteArray Part = Input.ExtractPart();
     int32_t Index = max(Value - 1, 0);
     while (Part.Length > 0 && (Value == 0 || (Value - 1 == Index && Value != 0)))
@@ -120,7 +121,12 @@ bool BaseClass::InputValues(ByteArray &Input, uint8_t Value)
 
         Part = Input.ExtractPart();
         Index++;
+
+        if (Value != 0)
+            Setup(Index);
     }
-    Setup();
+    if (Value == 0)
+        Setup(-1);
+
     return true;
 }

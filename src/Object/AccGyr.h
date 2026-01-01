@@ -11,7 +11,7 @@ public:
 
     bool OK = false;
 
-    void Setup();
+    void Setup(int32_t Index = -1);
     GyrAccClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     bool Run();
 };
@@ -27,12 +27,13 @@ GyrAccClass::GyrAccClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags) // 
     Sensors.Add(this);
 };
 
-void GyrAccClass::Setup()
+void GyrAccClass::Setup(int32_t Index)
 {
-    if (!(Values.IsValid(DeviceType, Types::AccGyr) && Modules.IsValid(0) && Modules.IsValid(1) && Modules[0]->Type == ObjectTypes::Port && Modules[1]->Type == ObjectTypes::Port))
+    if (Index != -1 && Index != 0)
         return;
 
-    // Delete previous driver, if there was any
+    if (!(Values.IsValid(DeviceType, Types::AccGyr) && Modules.IsValid(0) && Modules.IsValid(1) && Modules[0]->Type == ObjectTypes::Port && Modules[1]->Type == ObjectTypes::Port))
+        return;
 
     TwoWire *I2C = Modules.Get<PortClass>(0)->GetI2C(this);
 
@@ -43,18 +44,18 @@ void GyrAccClass::Setup()
     {
     case GyrAccs::LSM6DS3TRC:
         // Initialization
-        Wire.beginTransmission(0b1101010); // 0b1101011 or 0b1101010 + write
-        Wire.write(0x10);                  // Subaddress
-        Wire.write(0b00110100);            // Acc (+-16G, 52Hz)
-        Wire.write(0b00111100);            // Gyro (+-2000dps, 52Hz)
-        Wire.endTransmission();
+        I2C->beginTransmission(0b1101010); // 0b1101011 or 0b1101010 + write
+        I2C->write(0x10);                  // Subaddress
+        I2C->write(0b00110100);            // Acc (+-16G, 52Hz)
+        I2C->write(0b00111100);            // Gyro (+-2000dps, 52Hz)
+        I2C->endTransmission();
         OK = true;
 
         // Call first request
-        Wire.beginTransmission(0b1101010); // 0b1101011 or 0b1101010 + write
-        Wire.write(0x22);                  // Subaddress
-        Wire.endTransmission();
-        Wire.requestFrom(0b1101010, 12); // 0b1101011 or 0b1101010 + read
+        I2C->beginTransmission(0b1101010); // 0b1101011 or 0b1101010 + write
+        I2C->write(0x22);                  // Subaddress
+        I2C->endTransmission();
+        I2C->requestFrom(0b1101010, 12); // 0b1101011 or 0b1101010 + read
         break;
     default:
         break;
@@ -66,19 +67,23 @@ bool GyrAccClass::Run()
     uint8_t Buffer[12];
     Vector3D *Acc = Values.At<Vector3D>(Acceleration);
     Vector3D *Rot = Values.At<Vector3D>(AngularRate);
+    TwoWire *I2C = Modules.Get<PortClass>(0)->GetI2C(this);
+
+    if (I2C == nullptr)
+        return true;
 
     if (OK == false)
         Setup();
 
-    if (Wire.available() >= 12) // Data ready
+    if (I2C->available() >= 12) // Data ready
     {
-        Wire.readBytes(Buffer, 12);
+        I2C->readBytes(Buffer, 12);
 
         // Request more
-        Wire.beginTransmission(0b1101010); // 0b1101011 or 0b1101010 + write
-        Wire.write(0x22);                  // Subaddress
-        Wire.endTransmission();
-        Wire.requestFrom(0b1101010, 12); // 0b1101011 or 0b1101010 + read
+        I2C->beginTransmission(0b1101010); // 0b1101011 or 0b1101010 + write
+        I2C->write(0x22);                  // Subaddress
+        I2C->endTransmission();
+        I2C->requestFrom(0b1101010, 12); // 0b1101011 or 0b1101010 + read
 
         int16_t num;
         memcpy(&num, Buffer, 2);
@@ -96,9 +101,6 @@ bool GyrAccClass::Run()
 
         //Serial.println(Rot->AsString() + " " + Acc->AsString());
     }
-
-    //*Values.At<Vector3D>(Acceleration) = Vector3D(a.acceleration.x, a.acceleration.y, a.acceleration.z);
-    //*Values.At<Vector3D>(AngularRate) = Vector3D(g.gyro.x, g.gyro.y, g.gyro.z);
 
     return true;
 }
