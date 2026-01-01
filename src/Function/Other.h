@@ -8,7 +8,6 @@ void ReportError(Status ErrorCode, String Detail)
 
 void DefaultSetup()
 {
-    Board.ValueSet<Boards>(Boards::Tamu_v2_0, Board.BoardType);
     Board.ValueSet<String>("Akyirr", Board.BTName);
 
     // Display L

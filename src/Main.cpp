@@ -85,6 +85,7 @@ void setup()
     MemoryStartup();
     NotificationStartup();
     Serial.begin((long)115200);
+    Board.Setup(0);
 
     if (1)
         DefaultSetup();
@@ -190,3 +191,4 @@ Incorrect wraping of LED strip
 // 17.12.2025 Split types, app on Windows
 // 22.12.2025 Fixed-point replacement, -40% loop time!
 // 31.12.2025 Custom gyroscope driver
+// 01.01.2026 Setup update
