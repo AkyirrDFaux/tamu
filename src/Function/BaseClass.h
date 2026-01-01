@@ -39,6 +39,17 @@ bool BaseClass::ValueSet(C Value, int32_t Index)
     return true;
 }
 
+template <>
+bool BaseClass::ValueSet(String Value, int32_t Index)
+{
+    if (Values.TypeAt(Index) != Types::Text)
+        return false;
+
+    *Values.At<String>(Index) = Value;
+    Setup(Index);
+    return true;
+}
+
 ByteArray BaseClass::OutputValues(int32_t Value) const
 {
     ByteArray Data = ByteArray();
