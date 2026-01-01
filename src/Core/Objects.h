@@ -5,13 +5,15 @@ public:
     uint32_t Allocated = 0;
     uint32_t Registered = 0;
 
-    RegisterClass(){};
+    RegisterClass() {};
 
     BaseClass *At(IDClass ID) const;
-    BaseClass *operator[](IDClass ID) const {return At(ID);};
+    BaseClass *operator[](IDClass ID) const { return At(ID); };
     bool IsValid(IDClass ID, ObjectTypes Filter = ObjectTypes::Undefined) const;
 
     void *ValueAt(IDClass ID) const;
+    template <class C>
+    bool ValueSet(C Value, IDClass ID);
     bool IsValidValue(IDClass ID, Types Filter = Types::Undefined) const;
 
     void Expand(uint32_t NewAllocated);
@@ -37,7 +39,7 @@ public:
 
     bool IsValid(int32_t Index, ObjectTypes Filter = ObjectTypes::Undefined) const;
     BaseClass *At(int32_t Index) const;
-    BaseClass *operator[](int32_t Index) const {return At(Index);};
+    BaseClass *operator[](int32_t Index) const { return At(Index); };
     ObjectTypes TypeAt(int32_t Index) const;
     int32_t FirstValid(ObjectTypes Filter = ObjectTypes::Undefined, int32_t Start = 0) const;
     void Iterate(int32_t *Index, ObjectTypes Filter = ObjectTypes::Undefined) const;
@@ -45,6 +47,8 @@ public:
     bool IsValidValue(int32_t Index, Types Filter = Types::Undefined) const;
     Types ValueTypeAt(int32_t Index) const;
     void *ValueAt(int32_t Index) const;
+    template <class C>
+    bool ValueSet(C Value, int32_t Index);
 
     void Expand(int8_t NewLength);
     void Shorten();
@@ -101,7 +105,10 @@ public:
     template <class C>
     C *As() const { return (C *)this; };
 
-    ByteArray GetValue(int32_t Value = 0) const;
-    bool SetValue(ByteArray &Input, uint8_t Value = 0);
+    template <class C>
+    bool ValueSet(C Value, int32_t Index);
+
+    ByteArray OutputValues(int32_t Value = 0) const;
+    bool InputValues(ByteArray &Input, uint8_t Value = 0);
     String ContentDebug(int32_t Level);
 };

@@ -6,7 +6,7 @@ void ReadValue(ByteArray &Input)
         Chirp.Send(ByteArray(Status::InvalidID) << Input);
         return;
     }
-    ByteArray Data = Objects[ID]->GetValue();
+    ByteArray Data = Objects[ID]->OutputValues();
 
     if (Data.Length == 0)
     {
@@ -33,12 +33,12 @@ void WriteValue(ByteArray &Input)
         Chirp.Send(ByteArray(Status::AutoObject) << Input);
         return;
     }
-    else if (Object->SetValue(Input, ID.As<IDClass>().Sub()) == false)
+    else if (Object->InputValues(Input, ID.As<IDClass>().Sub()) == false)
     {
         Chirp.Send(ByteArray(Status::InvalidType) << Input);
         return;
     }
-    Chirp.Send(ByteArray(Functions::WriteValue) << ID << Object->GetValue(ID.As<IDClass>().Sub()));
+    Chirp.Send(ByteArray(Functions::WriteValue) << ID << Object->OutputValues(ID.As<IDClass>().Sub()));
 }
 
 void ReadFile(ByteArray &Input)

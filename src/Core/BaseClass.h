@@ -10,7 +10,7 @@ template <>
 ByteArray::ByteArray(const BaseClass &Data)
 {
     // Type, ID, Flags, Name, Modules,(+ values)
-    *this = ByteArray(Data.Type) << ByteArray(Data.ID) << ByteArray(Data.Flags) << ByteArray(Data.Name) << ByteArray(Data.Modules) << Data.GetValue();
+    *this = ByteArray(Data.Type) << ByteArray(Data.ID) << ByteArray(Data.Flags) << ByteArray(Data.Name) << ByteArray(Data.Modules) << Data.OutputValues();
 };
 
 String BaseClass::ContentDebug(int32_t Level)
@@ -31,3 +31,4 @@ String BaseClass::ContentDebug(int32_t Level)
 
     return Text;
 };
+

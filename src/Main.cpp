@@ -146,7 +146,7 @@ void loop()
 
 /*TODO:
 KEY FEATURES:
-Setup fix (set value callback? or store necessary values?)
+Setup fix (set value callback)
 Crash (Delete/Create) Safety
 App Programming view
 Multi-board support
@@ -163,6 +163,7 @@ Better favourites?
 
 EXTRA:
 Edit rendering to allow all-display filters (part first)
+Automatically converting type-data pair / bytearray improvement?
 
 BUGS:
 Incorrect wraping of LED strip
@@ -188,4 +189,5 @@ Incorrect wraping of LED strip
 // 18.10.2025 DataList replaced Variables -> multi-variable objects
 // 19.10.2025 Movement of eye using angular velocity
 // 17.12.2025 Split types, app on Windows
-// 22.12.2025 ? Fixed-point replacement, -40% loop time!
+// 22.12.2025 Fixed-point replacement, -40% loop time!
+// 31.12.2025 Custom gyroscope driver

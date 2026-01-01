@@ -23,6 +23,14 @@ void *RegisterClass::ValueAt(IDClass ID) const // Returns address or nullptr if 
     return Object[ID.Base()]->Values[ID.ValueIndex()];
 };
 
+template <class C>
+bool RegisterClass::ValueSet(C Value, IDClass ID)
+{
+    if (IsValidValue(ID) == false)
+        return false;
+    return Object[ID.Base()]->ValueSet(Value, ID.ValueIndex());
+}
+
 bool RegisterClass::IsValidValue(IDClass ID, Types Filter) const // Returns if object at index is valid
 {
     if (IsValid(ID) == false || At(ID)->Values.IsValid(ID.ValueIndex()) == false)

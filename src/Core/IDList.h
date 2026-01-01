@@ -12,7 +12,7 @@ void IDList::operator=(const IDList &Copied)
     memcpy(IDs, Copied.IDs, Length * sizeof(IDClass));
 };
 
-//OBJECTS
+// OBJECTS
 
 bool IDList::IsValid(int32_t Index, ObjectTypes Filter) const
 {
@@ -24,7 +24,7 @@ bool IDList::IsValid(int32_t Index, ObjectTypes Filter) const
 
 ObjectTypes IDList::TypeAt(int32_t Index) const
 {
-    if (IsValid(Index) == false) //Invalid or reference to main obj
+    if (IsValid(Index) == false) // Invalid or reference to main obj
         return ObjectTypes::Undefined;
 
     return At(Index)->Type;
@@ -41,7 +41,7 @@ BaseClass *IDList::At(int32_t Index) const // Returns address or nullptr if inva
 int32_t IDList::FirstValid(ObjectTypes Filter, int32_t Start) const
 {
     int32_t Index = Start;
-    while (Index <= Length && !IsValid(Index,Filter))
+    while (Index <= Length && !IsValid(Index, Filter))
         Index++;
     return Index;
 };
@@ -50,11 +50,11 @@ void IDList::Iterate(int32_t *Index, ObjectTypes Filter) const
 {
     (*Index)++;
     // Skip to next if: A)Is invalid; B)Filter is not undefined and Type of object isn't one filtered
-    while (*Index <= Length && !IsValid(*Index,Filter))
+    while (*Index <= Length && !IsValid(*Index, Filter))
         (*Index)++;
 };
 
-//VALUES
+// VALUES
 
 bool IDList::IsValidValue(int32_t Index, Types Filter) const
 {
@@ -66,7 +66,7 @@ bool IDList::IsValidValue(int32_t Index, Types Filter) const
 
 Types IDList::ValueTypeAt(int32_t Index) const
 {
-    if (IsValidValue(Index) == false) //Invalid or reference to main obj
+    if (IsValidValue(Index) == false) // Invalid or reference to main obj
         return Types::Undefined;
 
     return At(Index)->Values.TypeAt(IDs[Index].ValueIndex());
@@ -80,7 +80,15 @@ void *IDList::ValueAt(int32_t Index) const // Returns address or nullptr if inva
     return Objects.ValueAt(IDs[Index]);
 };
 
-//MEMORY MANAGEMENT
+template <class C>
+bool IDList::ValueSet(C Value, int32_t Index)
+{
+    if (IsValidValue(Index) == false)
+        return false;
+    return Objects.ValueSet(Value, IDs[Index]);
+}
+
+// MEMORY MANAGEMENT
 
 void IDList::Expand(int8_t NewLength) // Expands list to new length
 {

@@ -162,7 +162,7 @@ void LoadObject(ByteArray &Input)
         Object->Name = Name.As<String>();
     if (Modules.Type() == Types::IDList)
         Object->Modules = Modules.As<IDList>(); // Fixed, careful
-    Object->SetValue(Input);
+    Object->InputValues(Input);
 
     Chirp.Send(ByteArray(Functions::LoadObject) << ByteArray(*Object));
 }
