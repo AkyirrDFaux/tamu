@@ -147,9 +147,9 @@ void loop()
 
     FastLED.show(); //around 6s
     //Serial.println(", L:" + String(millis() - CurrentTime));
-    
+
     TimeUpdate();
-    //Serial.println(DeltaTime);
+    Serial.println(DeltaTime);
     Board.UpdateLoopTime();
 };
 
@@ -170,7 +170,7 @@ Flag clarification (Auto = nondeletable, System = noneditable?)
 Better favourites/groups?
 
 EXTRA:
-Edit rendering to allow all-display filters (part first)
+All-display filters
 Automatically converting type-data pair / bytearray improvement?
 
 BUGS:

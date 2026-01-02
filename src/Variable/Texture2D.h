@@ -56,9 +56,6 @@ void Texture2D::Render(int32_t Length, Vector2D Size, Number Ratio, Coord2D Tran
     Coord2D *Position = Values.At<Coord2D>(Value::Position);
     Number *Width = Values.At<Number>(Value::Width);
 
-    ColourClass Colour;
-    Number Distance;
-
     if (Texture == nullptr || ColourA == nullptr)
     {
         ReportError(Status::MissingModule);
@@ -88,12 +85,15 @@ void Texture2D::Render(int32_t Length, Vector2D Size, Number Ratio, Coord2D Tran
                     continue;
                 Index = Layout[Index] - 1;
 
-                if (Overlay[Index] <= Number(0)) //Skip if not visible
+                if (Overlay[Index] <= Number(0)) // Skip if not visible
                     continue;
 
                 Vector2D Centered = Transform.TransformTo(Vector2D(X, Y));
                 if (Mirrored)
                     Centered = Centered.Mirror(Vector2D(0, 1));
+
+                ColourClass Colour;
+                Number Distance;
 
                 switch (*Texture)
                 {

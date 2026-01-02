@@ -80,6 +80,11 @@ void Geometry2DClass::Render(int32_t Length, Vector2D DisplaySize, Number Ratio,
                     continue;
                 Index = Layout[Index] - 1;
 
+                if (*Operation == GeometryOperation::Add && Overlay[Index] >= Number(1))
+                    continue;
+                else if ((*Operation == GeometryOperation::Cut || *Operation == GeometryOperation::Intersect) && Overlay[Index] <= Number(0))
+                    continue;
+
                 Vector2D Centered = Transform.TransformTo(Vector2D(X, Y));
                 if (Mirrored)
                     Centered = Centered.Mirror(Vector2D(0, 1));
@@ -101,9 +106,16 @@ void Geometry2DClass::Render(int32_t Length, Vector2D DisplaySize, Number Ratio,
                     LocalOverlay = min(Size->Y - Centered.Y - 2 * Size->Y * abs(Centered.X) / Size->X, Centered.Y) / *Fade + 0.5;
                     break;
                 case Geometries::Elipse:
+                    // Size is radius
                     if (Position == nullptr || Size == nullptr || Fade == nullptr)
                         break;
-                    LocalOverlay = (1 - sqrt(sq(Centered.X) / sq(Size->X) + sq(Centered.Y) / sq(Size->Y))) / *Fade + 0.5;
+
+                    if (abs(Centered.X) > Size->X + *Fade || abs(Centered.Y) > Size->Y + *Fade) // Fast box, because sqrt is slow
+                        LocalOverlay = 0;
+                    else if (abs(Centered.X) < Size->X * 0.7 - *Fade && abs(Centered.Y) < Size->Y * 0.7 - *Fade) // Fast inner rectangle (of side size 2*r*sqrt(2))
+                        LocalOverlay = 1;
+                    else
+                        LocalOverlay = (1 - sqrt(sq(Centered.X) / sq(Size->X) + sq(Centered.Y) / sq(Size->Y))) / *Fade + 0.5;
                     break;
                 case Geometries::DoubleParabola:
                     if (Position == nullptr || Size == nullptr || Fade == nullptr)
