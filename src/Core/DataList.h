@@ -1,5 +1,3 @@
-// STRINGS & VECTOR3 ARE BROKEN
-
 class DataList
 {
 public:

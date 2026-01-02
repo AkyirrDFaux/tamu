@@ -155,11 +155,11 @@ Saving
 App Presets/blocks
 
 ADJUSTMENTS:
-Register, IDList, DataList, ObjList cleanup
+Register, IDList, DataList, ObjList cleanup (possibly make data oriented)
 Finish port system (connecting multiple LEDS, I2C)
 As (bytearray) checking not working
 Flag clarification (Auto = nondeletable, System = noneditable?)
-Better favourites?
+Better favourites/groups?
 
 EXTRA:
 Edit rendering to allow all-display filters (part first)

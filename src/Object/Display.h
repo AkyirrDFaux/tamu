@@ -91,33 +91,22 @@ bool DisplayClass::Run()
         return true;
     }
 
+    ColourClass Buffer[*Length];
     Coord2D Transform = Coord2D(*Size * 0.5 - Vector2D(0.5, 0.5), Vector2D(0)).Join(*Offset);
-    // Iterate over corrected pixel coords |_
-    for (int32_t Y = 0; Y < int32_t(Size->Y); Y++)
+    //Iterate over layers
+    for (int32_t Index = Modules.FirstValid(ObjectTypes::Shape2D, 1); Index < Modules.Length; Modules.Iterate(&Index, ObjectTypes::Shape2D))
+        Modules[Index]->As<Shape2DClass>()->Render(*Length, *Size, *Ratio, Transform, *Mirrored, Layout, Buffer);
+
+    //Final output
+    for (int32_t Index = 0; Index < *Length; Index++)
     {
-        for (int32_t X = 0; X < int32_t(Size->X); X++)
-        {
-            int32_t Index = (Size->Y - Y - 1) * Size->X + X; // Invert Y due to layout coords |''
-            if (Layout[Index] == 0)
-                continue;
-
-            Vector2D Centered = Transform.TransformTo(Vector2D(X, Y));
-            if (*Mirrored)
-                Centered = Centered.Mirror(Vector2D(0, 1));
-
-            ColourClass PixelColour = RenderPixel(Centered);
-            PixelColour.ToDisplay(*Brightness);
-            Pixel[Layout[Index] - 1].setRGB(PixelColour.R, PixelColour.G, PixelColour.B);
-        }
-    }
+        Buffer[Index].ToDisplay(*Brightness);
+        Pixel[Index].setRGB(Buffer[Index].R, Buffer[Index].G, Buffer[Index].B);
+    }     
+    
     return true;
 };
 
-ColourClass DisplayClass::RenderPixel(Vector2D Centered)
-{
-    ColourClass Colour = ColourClass(0, 0, 0);
+ColourClass DisplayClass::RenderPixel(Vector2D Centered) {
 
-    for (int32_t Index = Modules.FirstValid(ObjectTypes::Shape2D, 1); Index < Modules.Length; Modules.Iterate(&Index, ObjectTypes::Shape2D))
-        Colour = Modules[Index]->As<Shape2DClass>()->Render(Colour, Centered);
-    return Colour;
 };
