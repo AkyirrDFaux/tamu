@@ -29,8 +29,16 @@ void Shape2DClass::Render(int32_t Length, Vector2D Size, Number Ratio, Coord2D T
     if (Texture == nullptr)
         return;
 
+    Number Overlay[Length];
+    //Calculate overlays
+    for (int32_t Index = Modules.FirstValid(ObjectTypes::Geometry2D); Index < Modules.Length; Modules.Iterate(&Index, ObjectTypes::Geometry2D))
+        Modules[Index]->As<Geometry2DClass>()->Render(Length, Size, Ratio, Transform, Mirrored, Layout, Overlay);
+
+    //Apply texture
+    Texture->Render(Length, Size, Ratio, Transform, Mirrored, Layout, Overlay, Buffer);
+
     // Iterate over corrected pixel coords |_
-    for (int32_t Y = 0; Y < int32_t(Size.Y); Y++)
+    /*for (int32_t Y = 0; Y < int32_t(Size.Y); Y++)
     {
         for (int32_t X = 0; X < int32_t(Size.X); X++)
         {
@@ -42,14 +50,7 @@ void Shape2DClass::Render(int32_t Length, Vector2D Size, Number Ratio, Coord2D T
             Vector2D Centered = Transform.TransformTo(Vector2D(X, Y));
             if (Mirrored)
                 Centered = Centered.Mirror(Vector2D(0, 1));
-
-            Number Overlay = 0;
-
-            for (int32_t Index = Modules.FirstValid(ObjectTypes::Geometry2D); Index < Modules.Length; Modules.Iterate(&Index, ObjectTypes::Geometry2D))
-                Overlay = Modules[Index]->As<Geometry2DClass>()->Render(Overlay, Centered);
-
-            Buffer[Index].Layer(Texture->Render(Centered), Overlay);
         }
-    }
+    }*/
     return;
 };

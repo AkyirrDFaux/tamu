@@ -3,7 +3,7 @@ class Texture2D : public BaseClass
 public:
     Texture2D(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     void Setup(int32_t Index = -1);
-    ColourClass Render(Vector2D PixelPosition);
+    void Render(int32_t Length, Vector2D Size, Number Ratio, Coord2D Transform, bool Mirrored, byte *Layout, Number *Overlay, ColourClass *Buffer);
 
     enum Value
     {
@@ -27,7 +27,7 @@ void Texture2D::Setup(int32_t Index)
 {
     if (Index != -1 && Index != 0)
         return;
-        
+
     Textures2D *Type = Values.At<Textures2D>(Texture);
     switch (*Type)
     {
@@ -48,7 +48,7 @@ void Texture2D::Setup(int32_t Index)
     }
 };
 
-ColourClass Texture2D::Render(Vector2D PixelPosition)
+void Texture2D::Render(int32_t Length, Vector2D Size, Number Ratio, Coord2D Transform, bool Mirrored, byte *Layout, Number *Overlay, ColourClass *Buffer)
 {
     Textures2D *Texture = Values.At<Textures2D>(Value::Texture);
     ColourClass *ColourA = Values.At<ColourClass>(Value::ColourA);
@@ -62,30 +62,49 @@ ColourClass Texture2D::Render(Vector2D PixelPosition)
     if (Texture == nullptr)
     {
         ReportError(Status::MissingModule);
-        return Colour;
+        return;
     }
 
-    switch (*Texture)
+    for (int32_t Y = 0; Y < int32_t(Size.Y); Y++)
     {
-    case Textures2D::Full:
-        if (ColourA == nullptr)
-            break;
-        Colour = *ColourA;
-        break;
-    case Textures2D::BlendLinear:
-        if (ColourA == nullptr || ColourB == nullptr || Position == nullptr || Width == nullptr)
-            break;
-        Distance = Position->TransformTo(PixelPosition).X;
-        Distance = LimitZeroToOne((Distance / *Width / 2) + 0.5);
-        Colour = *ColourB;
-        Colour.Layer(*ColourA, Distance);
-        break;
-    case Textures2D::BlendCircular: // Untested
-        Distance = Position->TransformTo(PixelPosition).Length();
-        Distance = LimitZeroToOne((Distance / *Width / 2) + 0.5);
-        Colour = *ColourB;
-        Colour.Layer(*ColourA, Distance);
-        break;
+        for (int32_t X = 0; X < int32_t(Size.X); X++)
+        {
+            int32_t Index = (Size.Y - Y - 1) * Size.X + X; // Invert Y due to layout coords |''
+            if (Layout[Index] == 0)
+                continue;
+            Index = Layout[Index] - 1;
+
+            if (Overlay[Index] <= Number(0))
+                continue;
+
+            Vector2D Centered = Transform.TransformTo(Vector2D(X, Y));
+            if (Mirrored)
+                Centered = Centered.Mirror(Vector2D(0, 1));
+
+            switch (*Texture)
+            {
+            case Textures2D::Full:
+                if (ColourA == nullptr)
+                    break;
+                Colour = *ColourA;
+                break;
+            case Textures2D::BlendLinear:
+                if (ColourA == nullptr || ColourB == nullptr || Position == nullptr || Width == nullptr)
+                    break;
+                Distance = Position->TransformTo(Centered).X;
+                Distance = LimitZeroToOne((Distance / *Width / 2) + 0.5);
+                Colour = *ColourB;
+                Colour.Layer(*ColourA, Distance);
+                break;
+            case Textures2D::BlendCircular: // Untested
+                Distance = Position->TransformTo(Centered).Length();
+                Distance = LimitZeroToOne((Distance / *Width / 2) + 0.5);
+                Colour = *ColourB;
+                Colour.Layer(*ColourA, Distance);
+                break;
+            }
+            Buffer[Index].Layer(Colour, Overlay[Index]);
+        }
     }
-    return Colour;
+    return;
 };

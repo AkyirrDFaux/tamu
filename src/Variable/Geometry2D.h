@@ -13,7 +13,7 @@ public:
     Geometry2DClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     void Setup(int32_t Index = -1);
 
-    Number Render(Number Previous, Vector2D PixelPosition);
+    void Render(int32_t Length, Vector2D DisplaySize, Number Ratio, Coord2D Transform, bool Mirrored, byte *Layout, Number *Overlay);
 };
 
 Geometry2DClass::Geometry2DClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
@@ -29,7 +29,7 @@ void Geometry2DClass::Setup(int32_t Index)
 {
     if (Index != -1 && Index != 0)
         return;
-        
+
     Geometries *Type = Values.At<Geometries>(Geometry);
 
     switch (*Type)
@@ -49,7 +49,7 @@ void Geometry2DClass::Setup(int32_t Index)
     }
 };
 
-Number Geometry2DClass::Render(Number Previous, Vector2D PixelPosition)
+void Geometry2DClass::Render(int32_t Length, Vector2D DisplaySize, Number Ratio, Coord2D Transform, bool Mirrored, byte *Layout, Number *Overlay)
 {
     Geometries *Type = Values.At<Geometries>(Geometry);
     GeometryOperation *Operation = Values.At<GeometryOperation>(Value::Operation);
@@ -60,65 +60,81 @@ Number Geometry2DClass::Render(Number Previous, Vector2D PixelPosition)
     if (Operation == nullptr)
     {
         ReportError(Status::MissingModule);
-        return Previous;
+        return;
     }
 
-    Vector2D Local;
-
-    Number Overlay = 0;
-    switch (*Type)
+    for (int32_t Y = 0; Y < int32_t(DisplaySize.Y); Y++)
     {
-    case Geometries::Fill:
-        Overlay = 1;
-        break;
-    case Geometries::Box:
-        if (Position == nullptr || Size == nullptr || Fade == nullptr)
-            break;
-        Local = Position->TransformTo(PixelPosition);
-        Overlay = min(Size->X - abs(Local.X), Size->Y - abs(Local.Y)) / *Fade + 0.5;
-        break;
-    case Geometries::Triangle:
-        if (Position == nullptr || Size == nullptr || Fade == nullptr)
-            break;
-        Local = Position->TransformTo(PixelPosition);
-        //2h|x|/w + y < h
-        Overlay = min(Size->Y - Local.Y - 2 * Size->Y * abs(Local.X) / Size->X, Local.Y) / *Fade + 0.5;
-        break;
-    case Geometries::Elipse:
-        if (Position == nullptr || Size == nullptr || Fade == nullptr)
-            break;
-        Local = Position->TransformTo(PixelPosition);
-        Overlay = (1 - sqrt(sq(Local.X) / sq(Size->X) + sq(Local.Y) / sq(Size->Y))) / *Fade + 0.5;
-        break;
-    case Geometries::DoubleParabola:
-        if (Position == nullptr || Size == nullptr || Fade == nullptr)
-            break;
-        Local = Position->TransformTo(PixelPosition);
-        Overlay = -(abs(Local.X) - Size->X + sq(Local.Y) * Size->X / sq(Size->Y)) / *Fade + 0.5;
-        break;
-    case Geometries::HalfFill: // Untested
-        if (Position == nullptr || Fade == nullptr)
-            break;
-        Local = Position->TransformTo(PixelPosition);
-        Overlay = Local.Y / *Fade + 0.5;
-        break;
-    default:
-        ReportError(Status::InvalidValue, "Shape");
-        break;
+        for (int32_t X = 0; X < int32_t(DisplaySize.X); X++)
+        {
+            int32_t Index = (DisplaySize.Y - Y - 1) * DisplaySize.X + X; // Invert Y due to layout coords |''
+            if (Layout[Index] == 0)
+                continue;
+            Index = Layout[Index] - 1;
+
+            Vector2D Centered = Transform.TransformTo(Vector2D(X, Y));
+            if (Mirrored)
+                Centered = Centered.Mirror(Vector2D(0, 1));
+
+            //Calculate shape
+            Vector2D Local;
+            Number LocalOverlay = 0;
+
+            switch (*Type)
+            {
+            case Geometries::Fill:
+                LocalOverlay = 1;
+                break;
+            case Geometries::Box:
+                if (Position == nullptr || Size == nullptr || Fade == nullptr)
+                    break;
+                Local = Position->TransformTo(Centered);
+                LocalOverlay = min(Size->X - abs(Local.X), Size->Y - abs(Local.Y)) / *Fade + 0.5;
+                break;
+            case Geometries::Triangle:
+                if (Position == nullptr || Size == nullptr || Fade == nullptr)
+                    break;
+                Local = Position->TransformTo(Centered);
+                // 2h|x|/w + y < h
+                LocalOverlay = min(Size->Y - Local.Y - 2 * Size->Y * abs(Local.X) / Size->X, Local.Y) / *Fade + 0.5;
+                break;
+            case Geometries::Elipse:
+                if (Position == nullptr || Size == nullptr || Fade == nullptr)
+                    break;
+                Local = Position->TransformTo(Centered);
+                LocalOverlay = (1 - sqrt(sq(Local.X) / sq(Size->X) + sq(Local.Y) / sq(Size->Y))) / *Fade + 0.5;
+                break;
+            case Geometries::DoubleParabola:
+                if (Position == nullptr || Size == nullptr || Fade == nullptr)
+                    break;
+                Local = Position->TransformTo(Centered);
+                LocalOverlay = -(abs(Local.X) - Size->X + sq(Local.Y) * Size->X / sq(Size->Y)) / *Fade + 0.5;
+                break;
+            case Geometries::HalfFill: // Untested
+                if (Position == nullptr || Fade == nullptr)
+                    break;
+                Local = Position->TransformTo(Centered);
+                LocalOverlay = Local.Y / *Fade + 0.5;
+                break;
+            default:
+                ReportError(Status::InvalidValue, "Shape");
+                break;
+            }
+
+            LocalOverlay = LimitZeroToOne(LocalOverlay);
+
+            if (*Operation == GeometryOperation::Add)
+                Overlay[Index] = Overlay[Index] + LocalOverlay;
+            else if (*Operation == GeometryOperation::Cut)
+                Overlay[Index] = Overlay[Index] - LocalOverlay;
+            else if (*Operation == GeometryOperation::Intersect)
+                Overlay[Index] = Overlay[Index] * LocalOverlay;
+            else if (*Operation == GeometryOperation::XOR)
+                Overlay[Index] = max(Overlay[Index], LocalOverlay) - min(Overlay[Index], LocalOverlay);
+
+            Overlay[Index] = LimitZeroToOne(Overlay[Index]);
+        }
     }
-
-    Overlay = LimitZeroToOne(Overlay);
-
-    if (*Operation == GeometryOperation::Add)
-        Overlay = Previous + Overlay;
-    else if (*Operation == GeometryOperation::Cut)
-        Overlay = Previous - Overlay;
-    else if (*Operation == GeometryOperation::Intersect)
-        Overlay = Previous * Overlay;
-    else if (*Operation == GeometryOperation::XOR)
-        Overlay = max(Previous, Overlay) - min(Previous, Overlay);
-
-    return LimitZeroToOne(Overlay);
 }
 
 /*

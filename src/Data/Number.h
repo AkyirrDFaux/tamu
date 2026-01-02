@@ -8,7 +8,7 @@
 class Number
 {
 public:
-    int32_t Value;
+    int32_t Value = 0;
 
     // --- Constructors ---
     Number() : Value(0) {}
