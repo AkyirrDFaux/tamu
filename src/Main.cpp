@@ -125,23 +125,31 @@ void setup()
 void loop()
 {
     Chirp.Communicate();
+    //Serial.print("C:" + String(millis() - CurrentTime));
+
     for (int32_t Index = 0; Index < Sensors.Length; Sensors.Iterate(&Index))
         Sensors[Index]->Run();
+    //Serial.print(", S:" + String(millis() - CurrentTime));
+
     //Serial.println("P");
     for (int32_t Index = 0; Index < Programs.Length; Programs.Iterate(&Index))
     {
         if (((Programs[Index]->Flags == Inactive) == false) && ((Programs[Index]->Flags == RunLoop) || (Programs[Index]->Flags == RunOnce)))
             Programs[Index]->Run();
     }
+    //Serial.print(", P:" + String(millis() - CurrentTime));
+
     //Serial.println("O");
     for (int32_t Index = 0; Index < Outputs.Length; Outputs.Iterate(&Index))
         Outputs[Index]->Run();
-    //Serial.println("F");
+    //Serial.println("L");
+    //Serial.print(", O:" + String(millis() - CurrentTime));
 
-    FastLED.show();
-
+    FastLED.show(); //around 6s
+    //Serial.println(", L:" + String(millis() - CurrentTime));
+    
     TimeUpdate();
-    Serial.println(DeltaTime);
+    //Serial.println(DeltaTime);
     Board.UpdateLoopTime();
 };
 

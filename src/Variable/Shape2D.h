@@ -36,21 +36,5 @@ void Shape2DClass::Render(int32_t Length, Vector2D Size, Number Ratio, Coord2D T
 
     //Apply texture
     Texture->Render(Length, Size, Ratio, Transform, Mirrored, Layout, Overlay, Buffer);
-
-    // Iterate over corrected pixel coords |_
-    /*for (int32_t Y = 0; Y < int32_t(Size.Y); Y++)
-    {
-        for (int32_t X = 0; X < int32_t(Size.X); X++)
-        {
-            int32_t Index = (Size.Y - Y - 1) * Size.X + X; // Invert Y due to layout coords |''
-            if (Layout[Index] == 0)
-                continue;
-            Index = Layout[Index] - 1;
-
-            Vector2D Centered = Transform.TransformTo(Vector2D(X, Y));
-            if (Mirrored)
-                Centered = Centered.Mirror(Vector2D(0, 1));
-        }
-    }*/
     return;
 };
