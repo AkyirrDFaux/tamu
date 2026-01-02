@@ -7,6 +7,8 @@ public:
         DeviceType,
         AngularRate,
         Acceleration,
+        AngularFilter,
+        AccelerationFilter
     };
 
     bool OK = false;
@@ -23,6 +25,8 @@ GyrAccClass::GyrAccClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags) // 
     Values.Add(GyrAccs::Undefined);
     Values.Add(Vector3D());
     Values.Add(Vector3D());
+    Values.Add(Number(0.5));
+    Values.Add(Number(0.5));
 
     Sensors.Add(this);
 };
@@ -67,9 +71,11 @@ bool GyrAccClass::Run()
     uint8_t Buffer[12];
     Vector3D *Acc = Values.At<Vector3D>(Acceleration);
     Vector3D *Rot = Values.At<Vector3D>(AngularRate);
+    Number *AccFilter = Values.At<Number>(AccelerationFilter);
+    Number *RotFilter = Values.At<Number>(AngularFilter);
     TwoWire *I2C = Modules.Get<PortClass>(0)->GetI2C(this);
 
-    if (I2C == nullptr)
+    if (I2C == nullptr || Acc == nullptr || Rot == nullptr || AccFilter == nullptr || RotFilter == nullptr)
         return true;
 
     if (OK == false)
@@ -87,19 +93,19 @@ bool GyrAccClass::Run()
 
         int16_t num;
         memcpy(&num, Buffer, 2);
-        Rot->X = Number(num) / 939; // 2000 * (pi / 180) / 32 768  
+        Rot->X = (Number(num) / 939) * (1 / (1 + *RotFilter)) + Rot->X * (*RotFilter / (1 + *RotFilter)); // 2000 * (pi / 180) / 32 768
         memcpy(&num, Buffer + 2, 2);
-        Rot->Y = Number(num) / 939;
+        Rot->Y = (Number(num) / 939) * (1 / (1 + *RotFilter)) + Rot->Y * (*RotFilter / (1 + *RotFilter));
         memcpy(&num, Buffer + 4, 2);
-        Rot->Z = Number(num) / 939;
+        Rot->Z = (Number(num) / 939) * (1 / (1 + *RotFilter)) + Rot->Z * (*RotFilter / (1 + *RotFilter));
         memcpy(&num, Buffer + 6, 2);
-        Acc->X = Number(num) / 209; // 16 * g / 32 768 
+        Acc->X = (Number(num) / 209) * (1 / (1 + *AccFilter)) + Acc->X * (*AccFilter / (1 + *AccFilter)); // 16 * g / 32 768
         memcpy(&num, Buffer + 8, 2);
-        Acc->Y = Number(num) / 209;
+        Acc->Y = (Number(num) / 209) * (1 / (1 + *AccFilter)) + Acc->Y * (*AccFilter / (1 + *AccFilter));
         memcpy(&num, Buffer + 10, 2);
-        Acc->Z = Number(num) / 209;
+        Acc->Z = (Number(num) / 209) * (1 / (1 + *AccFilter)) + Acc->Z * (*AccFilter / (1 + *AccFilter));
 
-        //Serial.println(Rot->AsString() + " " + Acc->AsString());
+        // Serial.println(Rot->AsString() + " " + Acc->AsString());
     }
 
     return true;

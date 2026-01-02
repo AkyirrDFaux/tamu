@@ -149,7 +149,7 @@ void loop()
     //Serial.println(", L:" + String(millis() - CurrentTime));
 
     TimeUpdate();
-    Serial.println(DeltaTime);
+    //Serial.println(DeltaTime);
     Board.UpdateLoopTime();
 };
 
@@ -200,3 +200,4 @@ Incorrect wraping of LED strip
 // 22.12.2025 Fixed-point replacement, -40% loop time!
 // 31.12.2025 Custom gyroscope driver
 // 01.01.2026 Setup update
+// 02.01.2026 Display layer-based rendering, -30% loop time!
