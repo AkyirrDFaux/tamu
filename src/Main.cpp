@@ -152,6 +152,14 @@ void loop()
 
 /*TODO:
 KEY FEATURES:
+Condense Shape2D with Geometry and Texture
+Operation improvement
+- multiple ops. in one
+-- separated by operation type
+-- internal reference 0.X, internal temp memory for results
+-- output only first operation, call based on references
+--- max depth limit to prevent recursion
+
 Crash (Delete/Create) Safety
 Saving - fallback?
 
@@ -165,13 +173,10 @@ OLED Display support
 ADJUSTMENTS:
 Register, IDList, DataList, ObjList cleanup (possibly make data oriented)
 Finish port system (connecting multiple LEDS, I2C)
+
 Flag clarification (Auto = nondeletable, System = noneditable?, some error flags?)
 Better favourites/groups?
-Condense Shape2D with Geometry and Texture?
 Go over BLE functions, spread out sending/recieving delay, better compression
-
-EXTRA:
-Automatically converting type-data pair / bytearray improvement?
 
 BUGS:
 Incorrect wraping of LED strip
