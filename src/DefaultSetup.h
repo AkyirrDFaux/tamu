@@ -1,11 +1,3 @@
-void ReportError(Status ErrorCode, String Detail)
-{
-    if (Detail.length() > 0)
-        Chirp.Send("E" + String((uint8_t)ErrorCode) + " : " + Detail);
-    else
-        Chirp.Send("E" + String((uint8_t)ErrorCode));
-}
-
 void DefaultSetup()
 {
     Board.ValueSet<String>("Akyirr", Board.BTName);
@@ -25,7 +17,7 @@ void DefaultSetup()
     LT->Name = "Left Background";
     LS->AddModule(LT, LS->Texture);
     LT->ValueSet<Textures2D>(Textures2D::Full, LT->Texture);
-    LT->ValueSet<ColourClass>(ColourClass(255, 255, 255), LT->ColourA);
+    LT->ValueSet<ColourClass>(ColourClass(200, 200, 200), LT->ColourA);
     Geometry2DClass *LG = new Geometry2DClass();
     LG->Name = "Left Background";
     LS->AddModule(LG);
@@ -117,7 +109,7 @@ void DefaultSetup()
     RT->Name = "Right Background";
     RS->AddModule(RT, RS->Texture);
     RT->ValueSet<Textures2D>(Textures2D::Full, RT->Texture);
-    RT->ValueSet<ColourClass>(ColourClass(255, 255, 255), RT->ColourA);
+    RT->ValueSet<ColourClass>(ColourClass(200, 200, 200), RT->ColourA);
     Geometry2DClass *RG = new Geometry2DClass();
     RG->Name = "Right Background";
     RS->AddModule(RG);

@@ -53,6 +53,94 @@ int8_t GetDataSize(Types Type)
         return -1; // dynamic, check first byte
 };
 
+enum Flags : uint8_t
+{
+    None = 0,
+    Auto = 0b00000001,         // No name change, cannot remove (ex. Board, Port, built-in devices)
+    System = 0b00000010,       // No value editing, no saving (ex. Port, some built-in devices)
+    Undefined2 = 0b00000100,      
+    RunLoop = 0b00001000,      // Allow automatic run forever
+    RunOnce = 0b00010000,      // Run once manually until finished, will reset the flag automatically
+    RunOnStartup = 0b00100000, // Run automatically once after board finished loading
+    Favourite = 0b01000000,    // Show when filtered
+    Inactive = 0b10000000      // Ignore object
+};
+
+enum class Status : uint8_t
+{
+    OK = 0,
+    InvalidID,
+    InvalidType,
+    InvalidFunction,
+    InvalidValue,
+    MissingModule,
+    FileError,
+    PortError,
+    NoValue,
+    AutoObject
+};
+
+enum class ObjectTypes : uint8_t
+{
+    Undefined = 0,
+    Shape2D,
+    Board,
+    Port,
+    Fan,
+    LEDStrip,
+    LEDSegment,
+    Texture1D,
+    Display,
+    Geometry2D,
+    Texture2D,
+    AccGyr, 
+    Servo, 
+    Input, 
+    Operation, 
+    Program
+};
+
+enum class Functions : uint8_t
+{
+    None = 0,
+    CreateObject, // Create new
+    DeleteObject, // Delete object
+    SaveObject,   // Save to file
+    SaveAll,
+    LoadObject, // Create from ByteArray
+    ReadObject, // Send to app
+    ReadType,
+    ReadName,
+    WriteName,
+    SetFlags, // Swapped
+    ReadModules,
+    SetModules,
+    WriteValue,
+    ReadValue,
+    ReadDatabase, // Debug, Serial only now
+    ReadFile,
+    RunFile,
+    Refresh
+};
+
+void Run(ByteArray &Input);
+void ReadDatabase(ByteArray &Input);
+void ReadValue(ByteArray &Input);
+void WriteValue(ByteArray &Input);
+void CreateObject(ByteArray &Input);
+void DeleteObject(ByteArray &Input);
+void SaveObject(ByteArray &Input);
+void WriteName(ByteArray &Input);
+void ReadName(ByteArray &Input);
+void ReadFile(ByteArray &Input);
+void SaveAll(ByteArray &Input);
+void ReadObject(ByteArray &Input);
+void LoadObject(ByteArray &Input);
+void RunFile(ByteArray &Input);
+void Refresh(ByteArray &Input);
+void SetModules(ByteArray &Input);
+void SetFlags(ByteArray &Input);
+
 template <class C>
 Types GetType()
 {
@@ -126,5 +214,3 @@ template <>
 Types GetType<Operations>() { return Types::Operation; };
 template <>
 Types GetType<ProgramTypes>() { return Types::Program; };
-
-

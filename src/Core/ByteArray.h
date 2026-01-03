@@ -13,10 +13,8 @@ public:
     void operator=(const ByteArray &Other);
     template <class C>
     bool operator==(const C Other) const;
-    template <class C>
-    bool operator!=(const C Other) const;
 
-    ByteArray operator<<(const ByteArray &Data);
+    ByteArray operator<<(const ByteArray &Data); //Concatenation
 
     ByteArray SubArray(int32_t Index, int32_t NewLength = -1) const;
     ByteArray AddLength() const;
@@ -153,12 +151,6 @@ bool ByteArray::operator==(const C Other) const
     return As<C>() == Other;
 }
 
-template <class C>
-bool ByteArray::operator!=(const C Other) const
-{
-    return !(*this == Other);
-}
-
 ByteArray ByteArray::operator<<(const ByteArray &Data)
 {
     ByteArray NewArray;
@@ -173,21 +165,6 @@ ByteArray ByteArray::operator<<(const ByteArray &Data)
 template <class C>
 C ByteArray::As() const
 {
-    // IGNORED DUE TO PREVIOUS COMPATIBILITY
-    /*
-    if (Type() != GetType<C>())
-    {
-        ReportError(Status::InvalidType, "ByteArray - invalid type conversion");
-        return C();
-    }
-    */
-    /*
-    if (Length < SizeWithType() || SizeWithType() < 0) // Check if array is long enough
-    {
-        ReportError(Status::InvalidValue, "ByteArray - value incomplete");
-        return C();
-    }
-    */
     return *(C *)(Array + sizeof(Types));
 };
 

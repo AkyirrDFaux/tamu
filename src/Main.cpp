@@ -5,32 +5,29 @@ uint32_t DeltaTime = 0;
 
 #include "ClassHeader.h"
 
+//Hardware related
 #include "Basic\Base.h"
 #include "Basic\Hardware.h"
 #include "Basic\Memory.h"
+#include "Basic\Number.h"
+#include "Basic\MathAndType.h"
 
-#include "Core\Enums.h"
-#include "Core\ObjectList.h"
-#include "Core\ID.h"
-
-//Basic data types
-#include "Data\Number.h"
-#include "Basic\TypeMath.h"
-#include "Basic\Math.h"
-
-#include "Data\ValueEnums.h"
+//Data types
 #include "Data\Colour.h"
 #include "Data\Vector2D.h"
 #include "Data\Coord2D.h"
 #include "Data\Vector3D.h"
+#include "Data\ValueEnums.h"
 
-#include "Data\Enum.h"
-#include "Data\ByteArray.h"
-#include "Core\DataList.h" //For simple data types
-
+//Core system
+#include "Core\Enum.h"
+#include "Core\ObjectList.h"
+#include "Core\ID.h"
+#include "Core\ByteArray.h"
 #include "Core\Objects.h"
 RegisterClass Objects;
 
+#include "Core\DataList.h" //For simple data types
 #include "Core\Register.h"
 #include "Core\IDList.h" //For objects (compound/type varying data types)
 #include "Core\BaseClass.h"
@@ -42,39 +39,39 @@ ObjectList<> Sensors;  // EX: Sensor
 ObjectList<> Programs; // Ex: Emotes
 ObjectList<> Outputs;  // Ex: Display, Fan, Servo
 
+//Programs
+#include "Object\Operation.h"
+#include "Object\Program.h"
+
+//Objects
 #include "Object\Port.h"
 #include "Object\AccGyr.h"
 #include "Object\Input.h"
 #include "Object\Board.h"
 BoardClass Board;
 
-//Programs
-#include "Core\Operation.h"
-#include "Core\Program.h"
-
-//Objects
 #include "Object\Fan.h"
 #include "Object\Servo.h"
 
-#include "Variable\Texture1D.h"
-#include "Variable\LEDSegment.h"
+//LED strip
+#include "Object\Texture1D.h"
+#include "Object\LEDSegment.h"
 #include "Object\LEDStrip.h"
 
-#include "Variable\Geometry2D.h"
-#include "Variable\Texture2D.h"
-#include "Variable\Shape2D.h"
+//Display
+#include "Object\Geometry2D.h"
+#include "Object\Texture2D.h"
+#include "Object\Shape2D.h"
 #include "Object\Display.h"
 
 //Unrelated to messages
 #include "Function\Port.h" 
-#include "Function\BaseClass.h"
-#include "Function\List.h"
-#include "Function\Other.h" 
-
 //Messages
 #include "Function\Base.h" 
 #include "Function\Save.h"
 #include "Function\Values.h"
+
+#include "DefaultSetup.h" 
 
 void setup()
 {
@@ -156,21 +153,24 @@ void loop()
 /*TODO:
 KEY FEATURES:
 Crash (Delete/Create) Safety
+Saving - fallback?
+
 App Programming view
-Multi-board support
- - Display support
-Saving
 App Presets/blocks
+
+FUTURE:
+All-display filters
+OLED Display support
 
 ADJUSTMENTS:
 Register, IDList, DataList, ObjList cleanup (possibly make data oriented)
 Finish port system (connecting multiple LEDS, I2C)
-As (bytearray) checking not working
-Flag clarification (Auto = nondeletable, System = noneditable?)
+Flag clarification (Auto = nondeletable, System = noneditable?, some error flags?)
 Better favourites/groups?
+Condense Shape2D with Geometry and Texture?
+Go over BLE functions, spread out sending/recieving delay, better compression
 
 EXTRA:
-All-display filters
 Automatically converting type-data pair / bytearray improvement?
 
 BUGS:

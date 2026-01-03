@@ -270,3 +270,11 @@ void ReadName(ByteArray &Input)
 
     Chirp.Send(ByteArray(Functions::ReadName) << ID << ByteArray(Objects[ID]->Name));
 };
+
+void ReportError(Status ErrorCode, String Detail)
+{
+    if (Detail.length() > 0)
+        Chirp.Send("E" + String((uint8_t)ErrorCode) + " : " + Detail);
+    else
+        Chirp.Send("E" + String((uint8_t)ErrorCode));
+}

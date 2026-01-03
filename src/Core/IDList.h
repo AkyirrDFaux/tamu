@@ -233,3 +233,12 @@ ByteArray::ByteArray(const IDList &Data)
     memcpy(Array + sizeof(Types), &Data.Length, sizeof(uint8_t));
     memcpy(Array + sizeof(Types) + sizeof(uint8_t), Data.IDs, Data.Length * sizeof(IDClass));
 };
+
+template <class C>
+C *IDList::Get(int32_t Index)
+{
+    if (!IsValid(Index))
+        return nullptr;
+
+    return At(Index)->As<C>();
+}

@@ -1,27 +1,3 @@
-class DataList
-{
-public:
-    Types *Type = nullptr;
-    void **Data = nullptr;
-    int32_t Length = 0;
-
-    ~DataList() { DeleteAll(); };
-
-    void *operator[](int32_t Index) const;
-    template <class C>
-    C *At(int32_t Index) const;
-    Types TypeAt(int32_t Index) const;
-    bool IsValid(int32_t Index, Types TypeCheck = Types::Undefined) const;
-
-    void Expand(int32_t NewLength);
-    void Shorten();
-
-    template <class C>
-    bool Add(C AddObject, int32_t Index = -1);
-    bool Delete(int32_t Index);
-    void DeleteAll();
-};
-
 template <class C>
 C *DataList::At(int32_t Index) const // Returns address or nullptr if invalid
 {
@@ -162,4 +138,42 @@ void DataList::DeleteAll()
     Data = nullptr;
     Type = nullptr;
     Length = 0;
+};
+
+void *DataList::operator[](int32_t Index) const
+{
+    if (Index >= Length || -Index > Length)
+        return nullptr;
+
+    if (Index < 0) // From end
+        Index = Length + Index;
+
+    if (Type[Index] == Types::ID)
+    {
+        if (Objects.IsValid(*At<IDClass>(Index)) == false)
+            return nullptr;
+
+        return Objects.At(*At<IDClass>(Index))->Values[At<IDClass>(Index)->ValueIndex()];
+    }
+    else
+        return Data[Index];
+};
+
+Types DataList::TypeAt(int32_t Index) const // Returns address or nullptr if invalid
+{
+    if (IsValid(Index) == false)
+        return Types::Undefined;
+
+    if (Index < 0) // From end
+        Index = Length + Index;
+
+    if (Type[Index] == Types::ID)
+    {
+        if (Objects.IsValid(*At<IDClass>(Index)) == false)
+            return Types::Undefined;
+
+        return Objects.At(*At<IDClass>(Index))->Values.TypeAt(At<IDClass>(Index)->ValueIndex());
+    }
+    else
+        return Type[Index];
 };

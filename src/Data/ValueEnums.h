@@ -1,30 +1,3 @@
-enum Flags : uint8_t
-{
-    None = 0,
-    Auto = 0b00000001,         // No name change, cannot remove (ex. Board, Port, built-in devices)
-    System = 0b00000010,       // No value editing, no saving (ex. Port, some built-in devices)
-    Undefined2 = 0b00000100,      
-    RunLoop = 0b00001000,      // Allow automatic run forever
-    RunOnce = 0b00010000,      // Run once manually until finished, will reset the flag automatically
-    RunOnStartup = 0b00100000, // Run automatically once after board finished loading
-    Favourite = 0b01000000,    // Show when filtered
-    Inactive = 0b10000000      // Ignore object
-};
-
-enum class Status : uint8_t
-{
-    OK = 0,
-    InvalidID,
-    InvalidType,
-    InvalidFunction,
-    InvalidValue,
-    MissingModule,
-    FileError,
-    PortError,
-    NoValue,
-    AutoObject
-};
-
 enum class Boards : uint8_t
 {
     Undefined = 0,

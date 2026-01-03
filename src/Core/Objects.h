@@ -77,6 +77,30 @@ public:
     bool operator==(Flags Other) { return Values & Other; };
 };
 
+class DataList
+{
+public:
+    Types *Type = nullptr;
+    void **Data = nullptr;
+    int32_t Length = 0;
+
+    ~DataList() { DeleteAll(); };
+
+    void *operator[](int32_t Index) const;
+    template <class C>
+    C *At(int32_t Index) const;
+    Types TypeAt(int32_t Index) const;
+    bool IsValid(int32_t Index, Types TypeCheck = Types::Undefined) const;
+
+    void Expand(int32_t NewLength);
+    void Shorten();
+
+    template <class C>
+    bool Add(C AddObject, int32_t Index = -1);
+    bool Delete(int32_t Index);
+    void DeleteAll();
+};
+
 class BaseClass
 {
 public:
