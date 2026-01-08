@@ -152,7 +152,6 @@ void loop()
 
 /*TODO:
 KEY FEATURES:
-Condense Shape2D with Geometry and Texture
 Operation improvement
 - multiple ops. in one
 -- separated by operation type
@@ -173,6 +172,7 @@ OLED Display support
 ADJUSTMENTS:
 Register, IDList, DataList, ObjList cleanup (possibly make data oriented)
 Finish port system (connecting multiple LEDS, I2C)
+Condense Shape2D with Geometry and Texture?
 
 Flag clarification (Auto = nondeletable, System = noneditable?, some error flags?)
 Better favourites/groups?

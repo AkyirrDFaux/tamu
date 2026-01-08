@@ -42,12 +42,12 @@ void BoardClass::Setup(int32_t Index) // Load Presets
         *Values.At<Boards>(0) = Boards::Tamu_v2_0;
         AddModule(new PortClass(0, Ports::GPIO), 0);  // P1
         AddModule(new PortClass(1, Ports::GPIO), 1);  // P2
-        AddModule(new PortClass(9, Ports::GPIO), 2);  // P3 - S
+        AddModule(new PortClass(9, Ports::GPIO), 2);  // P3 - S, no ADC!
         AddModule(new PortClass(10, Ports::TOut), 3); // P4 - F !!! Notation of switch is inverted
 
         AddModule(new PortClass(6, Ports::TOut), 4); // P5 - F
-        AddModule(new PortClass(8, Ports::GPIO), 5); // P6 - S
-        AddModule(new PortClass(7, Ports::GPIO), 6); // P7
+        AddModule(new PortClass(8, Ports::GPIO), 5); // P6 - S , no ADC!
+        AddModule(new PortClass(7, Ports::GPIO), 6); // P7 , no ADC!
         AddModule(new PortClass(3, Ports::GPIO), 7); // P8
 
         AddModule(new PortClass(4, Ports::SDA), 8);

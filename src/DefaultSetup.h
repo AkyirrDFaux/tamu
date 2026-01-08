@@ -191,6 +191,12 @@ void DefaultSetup()
     F->Name = "Fan";
     F->Modules.Add(Board.Modules[4], F->Port);
 
+    //Light sensor
+    InputClass *I = new InputClass();
+    I->Name = "Light sensor";
+    I->Modules.Add(Board.Modules[1], I->Port);
+    I->ValueSet<Inputs>(Inputs::Analog,I->InputType);
+
     // BLINKING PROGRAM
     Program *P2 = new Program();
     P2->ValueSet<ProgramTypes>(ProgramTypes::Sequence, P2->Mode);
