@@ -99,6 +99,9 @@ public:
     bool Add(C AddObject, int32_t Index = -1);
     bool Delete(int32_t Index);
     void DeleteAll();
+
+    template <class C>
+    bool Write(C AddObject, int32_t Index = -1);
 };
 
 class BaseClass

@@ -1,13 +1,23 @@
 template <class C>
 C *DataList::At(int32_t Index) const // Returns address or nullptr if invalid
 {
-    if (IsValid(Index, GetType<C>()) == false)
-        return nullptr;
-
     if (Index < 0) // From end
         Index = Length + Index;
 
-    return (C *)Data[Index];
+    if (IsValid(Index) == false) // Anything there?
+        return nullptr;
+
+    if (IsValid(Index, GetType<C>())) // Local
+        return (C *)Data[Index];
+    else if (Type[Index] == Types::ID) // Remote
+    {
+        if (Objects.IsValid(*At<IDClass>(Index)) == false)
+            return nullptr;
+
+        return Objects.At(*At<IDClass>(Index))->Values.At<C>(At<IDClass>(Index)->ValueIndex());
+    }
+
+    return nullptr;
 };
 
 bool DataList::IsValid(int32_t Index, Types TypeCheck) const // Returns if object at index is valid
@@ -105,18 +115,18 @@ bool DataList::Delete(int32_t Index) // Removes object
     {
         // Deletion
         if (Type[Index] < Types::Integer && Type[Index] >= Types::Byte)
-            delete (uint8_t*)Data[Index];
+            delete (uint8_t *)Data[Index];
         else if (Type[Index] < Types::Vector2D)
-            delete (uint32_t*)Data[Index];
+            delete (uint32_t *)Data[Index];
         else if (Type[Index] == Types::Vector2D)
-            delete (Vector2D*)Data[Index];
+            delete (Vector2D *)Data[Index];
         else if (Type[Index] == Types::Vector3D)
-            delete (Vector3D*)Data[Index];
+            delete (Vector3D *)Data[Index];
         else if (Type[Index] == Types::Coord2D)
-            delete (Coord2D*)Data[Index];
+            delete (Coord2D *)Data[Index];
         else if (Type[Index] == Types::Text)
-            delete (String*)Data[Index];
-            
+            delete (String *)Data[Index];
+
         Data[Index] = nullptr;
         Type[Index] = Types::Undefined;
         Shorten();
@@ -177,3 +187,22 @@ Types DataList::TypeAt(int32_t Index) const // Returns address or nullptr if inv
     else
         return Type[Index];
 };
+
+template <class C>
+bool DataList::Write(C AddObject, int32_t Index)
+{
+    if (Index < 0) // From end
+        Index = Length + Index;
+
+    if (IsValid(Index, GetType<C>())) // Perfect match
+        *At<C>(Index) = AddObject;
+    else if (Add(AddObject, Index)) // Nothing there yet
+        return true;
+    else
+    {
+        Delete(Index);
+        return Add(AddObject, Index);
+    }
+
+    return true;
+}
