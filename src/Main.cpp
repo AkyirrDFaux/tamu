@@ -152,13 +152,6 @@ void loop()
 
 /*TODO:
 KEY FEATURES:
-Operation improvement
-- multiple ops. in one
--- separated by operation type
--- internal reference 0.X, internal temp memory for results
--- output only first operation, call based on references
---- max depth limit to prevent recursion
-
 Crash (Delete/Create) Safety
 Saving - fallback?
 
@@ -177,6 +170,7 @@ Condense Shape2D with Geometry and Texture?
 Flag clarification (Auto = nondeletable, System = noneditable?, some error flags?)
 Better favourites/groups?
 Go over BLE functions, spread out sending/recieving delay, better compression
+Operation - prevent recursion
 
 BUGS:
 Incorrect wraping of LED strip
@@ -206,3 +200,4 @@ Incorrect wraping of LED strip
 // 31.12.2025 Custom gyroscope driver
 // 01.01.2026 Setup update
 // 02.01.2026 Display layer-based rendering, -30% loop time!
+// 13.01.2026 Nested operations

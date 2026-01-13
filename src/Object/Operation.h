@@ -141,7 +141,7 @@ bool Operation::GetInputs(int32_t Start, Types *InputTypes, void **Inputs, int32
             int32_t NextStart = Values.At<IDClass>(Index + Start + 1)->ValueIndex();
             Done &= RunPart(NextStart);
             InputTypes[Index] = Temp.TypeAt(OperationNumber(NextStart));
-            Inputs[Index] = Values[OperationNumber(NextStart)];
+            Inputs[Index] = Temp[OperationNumber(NextStart)];
         }
         else
         {
@@ -154,8 +154,8 @@ bool Operation::GetInputs(int32_t Start, Types *InputTypes, void **Inputs, int32
 
 bool Operation::Equal(int32_t Start)
 {
-    // Replace and add fn. if equal is main op. -> num in == num out => one by one / otherwise copy first to all
-    
+    // REPLACE and add fn. if equal is main op. -> num in == num out => one by one / otherwise copy first to all
+
     void *Target = Values[1];
     void *Value = Modules.ValueAt(0);
 
@@ -171,11 +171,10 @@ bool Operation::Equal(int32_t Start)
 
 bool Operation::Extract(int32_t Start)
 {
-    // Value[1]  (Value(2), ...) -> Module[0]
     int32_t InputNumber = ParameterNumber(Start);
     Types InputTypes[InputNumber];
     void *Inputs[InputNumber];
-    GetInputs(Start, InputTypes, Inputs, InputNumber);
+    bool Done = GetInputs(Start, InputTypes, Inputs, InputNumber);
 
     if (InputTypes[0] == Types::Vector3D &&
         InputTypes[1] == Types::Byte &&
@@ -190,7 +189,7 @@ bool Operation::Combine(int32_t Start)
     int32_t InputNumber = ParameterNumber(Start);
     Types InputTypes[InputNumber];
     void *Inputs[InputNumber];
-    GetInputs(Start, InputTypes, Inputs, InputNumber);
+    bool Done = GetInputs(Start, InputTypes, Inputs, InputNumber);
 
     if (InputTypes[0] == Types::Vector2D &&
         InputTypes[1] == Types::Number)
@@ -204,7 +203,7 @@ bool Operation::Add(int32_t Start)
     int32_t InputNumber = ParameterNumber(Start);
     Types InputTypes[InputNumber];
     void *Inputs[InputNumber];
-    GetInputs(Start, InputTypes, Inputs, InputNumber);
+    bool Done = GetInputs(Start, InputTypes, Inputs, InputNumber);
 
     if (InputTypes[0] != InputTypes[1])
         return true;
@@ -220,7 +219,7 @@ bool Operation::Multiply(int32_t Start)
     int32_t InputNumber = ParameterNumber(Start);
     Types InputTypes[InputNumber];
     void *Inputs[InputNumber];
-    GetInputs(Start, InputTypes, Inputs, InputNumber);
+    bool Done = GetInputs(Start, InputTypes, Inputs, InputNumber);
 
     if (InputTypes[0] != InputTypes[1])
         return true;
@@ -235,6 +234,7 @@ bool Operation::Multiply(int32_t Start)
 
 bool Operation::MoveTo(int32_t Start)
 {
+    // REPLACE
     void *Target = Values[1];
     uint32_t *Time = Values.At<uint32_t>(2);
     void *Value = nullptr;
@@ -262,7 +262,7 @@ bool Operation::Delay(int32_t Start)
     int32_t InputNumber = ParameterNumber(Start);
     Types InputTypes[InputNumber];
     void *Inputs[InputNumber];
-    GetInputs(Start, InputTypes, Inputs, InputNumber);
+    bool Done = GetInputs(Start, InputTypes, Inputs, InputNumber);
 
     if (InputTypes[0] != Types::Time || InputTypes[1] != Types::Time) // Values not avaliable
         return true;
@@ -284,7 +284,7 @@ bool Operation::AddDelay(int32_t Start)
     int32_t InputNumber = ParameterNumber(Start);
     Types InputTypes[InputNumber];
     void *Inputs[InputNumber];
-    GetInputs(Start, InputTypes, Inputs, InputNumber);
+    bool Done = GetInputs(Start, InputTypes, Inputs, InputNumber);
 
     if (InputTypes[0] != Types::Time)
         return true;
@@ -324,7 +324,7 @@ bool Operation::Sine(int32_t Start)
     int32_t InputNumber = ParameterNumber(Start);
     Types InputTypes[InputNumber];
     void *Inputs[InputNumber];
-    GetInputs(Start, InputTypes, Inputs, InputNumber);
+    bool Done = GetInputs(Start, InputTypes, Inputs, InputNumber);
 
     // 0 = X, 1 = Multiplier, 2 = Phase
 
