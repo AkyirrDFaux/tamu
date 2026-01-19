@@ -124,8 +124,8 @@ String RegisterClass::ContentDebug() const
 
     for (uint32_t Index = 1; Index <= Registered; Index++)
     {
-        if (Object[Index] != nullptr && Object[Index]->ReferencesCount == 0)
-            Text += Object[Index]->ContentDebug(0);
+        if (Object[Index] != nullptr)
+            Text += Object[Index]->ContentDebug();
     }
     return Text;
 }

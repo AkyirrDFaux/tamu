@@ -112,7 +112,6 @@ public:
     FlagClass Flags;
     String Name = "";
 
-    uint32_t ReferencesCount = 0;
     IDList Modules;
     DataList Values;
 
@@ -137,5 +136,5 @@ public:
 
     ByteArray OutputValues(int32_t Value = 0) const;
     bool InputValues(ByteArray &Input, uint8_t Value = 0);
-    String ContentDebug(int32_t Level);
+    String ContentDebug();
 };

@@ -3,7 +3,6 @@ BaseClass *CreateObject(ObjectTypes Type, bool New = true, IDClass ID = RandomID
 void BaseClass::AddModule(BaseClass *Object, int32_t Index)
 {
     Modules.Add(Object, Index);
-    Object->ReferencesCount++;
 };
 
 template <>
@@ -13,21 +12,14 @@ ByteArray::ByteArray(const BaseClass &Data)
     *this = ByteArray(Data.Type) << ByteArray(Data.ID) << ByteArray(Data.Flags) << ByteArray(Data.Name) << ByteArray(Data.Modules) << Data.OutputValues();
 };
 
-String BaseClass::ContentDebug(int32_t Level)
+String BaseClass::ContentDebug()
 {
-    String Text = "";
-    for (int32_t Index = 0; Index < Level; Index++)
-        Text += "-..";
-
-    Text += "ID: ";
+    String Text = "ID: ";
     Text += ID.ToString();
     Text += ", Type: ";
     Text += String((uint8_t)Type);
     Text += " , Name: ";
     Text += Name + '\n';
-
-    for (int32_t Index = Modules.FirstValid(); Index < Modules.Length; Modules.Iterate(&Index))
-        Text += Modules[Index]->ContentDebug(Level + 1);
 
     return Text;
 };
@@ -43,9 +35,6 @@ BaseClass::~BaseClass()
     // Remove references to this from all modules
     for (int32_t Index = Modules.FirstValid(); Index < Modules.Length; Modules.Iterate(&Index))
     {
-        if (Modules[Index]->ReferencesCount > 0)
-            Modules[Index]->ReferencesCount--;
-
         if (Modules[Index]->Flags == Flags::Auto) // If modules are static (directly tied) deconstruct them too
             delete Modules[Index];
     }

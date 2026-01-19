@@ -136,7 +136,7 @@ bool Operation::GetInputs(int32_t Start, Types *InputTypes, void **Inputs, int32
     bool Done = true;
     for (int32_t Index = 0; Index < Length; Index++)
     {
-        if (Values.IsValid(Index + Start + 1, Types::ID) && Values.At<IDClass>(Index + Start + 1)->Base() == NoID) // Local reference
+        if (Values.IsValid(Index + Start + 1, Types::ID) && Values.At<IDClass>(Index + Start + 1)->Base() == NoID) // Local reference to another function
         {
             int32_t NextStart = Values.At<IDClass>(Index + Start + 1)->ValueIndex();
             Done &= RunPart(NextStart);

@@ -152,23 +152,30 @@ void loop()
 
 /*TODO:
 KEY FEATURES:
+Finish port system (connecting multiple LEDS, I2C/UART(/SPI?) bus object for combining ports)
+= Board -> Port -> Objects ...
+= Bus -> Ports + Objects
+- needs module setup for changes (both after-attach and pre-detach), also use final keyword
+Make port/pin types work as a flagclass (GPIO, ADC, PWM, TOut, I2C [CL, DA], UART [RX, TX], SPI [MOSI, MISO, CLK, CS] = 14 -> 32bit)
+
 Crash (Delete/Create) Safety
 Saving - fallback?
+
+All-display filters
 
 App Programming view
 App Presets/blocks
 
 FUTURE:
-All-display filters
-OLED Display support
+OLED/TFT Display support
 
 ADJUSTMENTS:
-Register, IDList, DataList, ObjList cleanup (possibly make data oriented)
-Finish port system (connecting multiple LEDS, I2C)
-Condense Shape2D with Geometry and Texture?
+Groups instead of favourites? 
+Flag clarification (Auto -> System = nondeletable, some error flags?)
+Value names?
 
-Flag clarification (Auto = nondeletable, System = noneditable?, some error flags?)
-Better favourites/groups?
+Register, IDList, DataList, ObjList cleanup (possibly make datalist data oriented, maybe delete objlist and merge to register)
+Split up individual functions in geometry, possibly combine multiple in one
 Go over BLE functions, spread out sending/recieving delay, better compression
 Operation - prevent recursion
 
