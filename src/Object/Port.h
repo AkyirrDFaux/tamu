@@ -1,7 +1,8 @@
 class PortClass : public BaseClass
 {
 public:
-    enum Value{
+    enum Value
+    {
         PortType,
         Pin,
         DriverType
@@ -39,4 +40,40 @@ PortClass::PortClass(uint8_t NewPin, Ports NewPortType) : BaseClass() // Created
 PortClass::~PortClass()
 {
     StopDriver();
+}
+
+class I2CClass : public BaseClass
+{
+public:
+    enum Value
+    {
+        SDA,
+        SCL
+    };
+    TwoWire *I2C = nullptr;
+    I2CClass();
+};
+
+I2CClass::I2CClass()
+{
+    Type = ObjectTypes::I2C;
+    Name = "I2C Bus";
+}
+
+class UARTClass : public BaseClass
+{
+public:
+    enum Value
+    {
+        TX,
+        RX
+    };
+    HardwareSerial *UART = nullptr;
+    UARTClass();
+};
+
+UARTClass::UARTClass()
+{
+    Type = ObjectTypes::UART;
+    Name = "UART Bus";
 }

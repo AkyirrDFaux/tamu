@@ -97,7 +97,10 @@ enum class ObjectTypes : uint8_t
     Servo, 
     Input, 
     Operation, 
-    Program
+    Program,
+    I2C,
+    UART,
+    SPI
 };
 
 enum class Functions : uint8_t
