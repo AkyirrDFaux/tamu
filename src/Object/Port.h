@@ -1,3 +1,16 @@
+class PortTypeClass
+{
+public:
+    uint32_t Values = Ports::None;
+    PortTypeClass() {};
+    PortTypeClass(uint32_t Input) { Values = Input; };
+    void operator=(uint32_t Other) { Values = Other; };
+    void operator+=(uint32_t Other) { Values |= Other; };
+    void operator-=(uint32_t Other) { Values &= ~Other; };
+    bool operator==(Ports::Ports Other) { return Values & Other; };
+    bool operator!=(Ports::Ports Other) { return !(Values & Other); };
+};
+
 class PortClass : public BaseClass
 {
 public:
@@ -10,14 +23,14 @@ public:
 
     void *DriverObj = nullptr;
 
-    PortClass(uint8_t NewPin, Ports NewPortType = Ports::None);
+    PortClass(uint8_t NewPin, PortTypeClass NewPortType = Ports::None);
     ~PortClass();
 
     void AddModule(BaseClass *Object, int32_t Index = -1);
     void RemoveModule(BaseClass *Object);
 };
 
-PortClass::PortClass(uint8_t NewPin, Ports NewPortType) : BaseClass() // Created by Board
+PortClass::PortClass(uint8_t NewPin, PortTypeClass NewPortType) : BaseClass() // Created by Board
 {
     Values.Add(NewPortType);
     Values.Add(NewPin);

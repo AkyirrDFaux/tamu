@@ -153,7 +153,7 @@ void loop()
 /*TODO:
 KEY FEATURES:
 Finish port system (connecting multiple LEDS, I2C)
-Make port/pin types work as a flagclass (GPIO, ADC, PWM, TOut, I2C [CL, DA], UART [RX, TX], SPI [MOSI, MISO, CLK, CS] = 14 -> 32bit)
+- add proper checks
 
 Crash (Delete/Create) Safety
 Saving - fallback?

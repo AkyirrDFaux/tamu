@@ -4,23 +4,34 @@ enum class Boards : uint8_t
     Tamu_v1_0,
     Tamu_v2_0
 };
-
-enum class Ports : uint8_t
+namespace Ports
 {
-    None = 0,
-    GPIO,
-    TOut,
-    SDA,
-    SCL
-};
+    enum Ports : uint32_t
+    {
+        None = 0,
+        GPIO = (1 << 0),
+        ADC = (1 << 1),
+        PWM = (1 << 2),
+        TOut = (1 << 3),
+        Internal = (1 << 4),
+        I2C_SDA = (1 << 8),
+        I2C_SCL = (1 << 9),
+        UART_TX = (1 << 12),
+        UART_RX = (1 << 13),
+        SPI_MOSI = (1 << 16),
+        SPI_MISO = (1 << 17),
+        SPI_CLK = (1 << 18),
+        SPI_CS = (1 << 19)
+    };
+}
 
 enum class Drivers : uint8_t
 {
     None,
     LED,
     FanPWM,
-    I2C, //Any function of bus
-    UART, //Any function of bus
+    I2C,  // Any function of bus
+    UART, // Any function of bus
     Servo,
     Input
 };
@@ -77,13 +88,13 @@ enum class LEDStrips : uint8_t
     GenericRGBW
 };
 
-enum class GyrAccs :uint8_t
+enum class GyrAccs : uint8_t
 {
     Undefined,
     LSM6DS3TRC
 };
 
-enum class Inputs :uint8_t
+enum class Inputs : uint8_t
 {
     Undefined,
     Button,
@@ -104,21 +115,21 @@ enum class Operations : uint8_t
     Equal,
     Extract,
     Combine,
-    IsEqual,//Comparision
+    IsEqual, // Comparision
     IsGreater,
     IsSmaller,
-    Add,//Math
+    Add, // Math
     Subtract,
     Multiply,
     Divide,
     Power,
     Absolute,
     Rotate,
-    RandomBetween,//Randomize
-    MoveTo, //Animations
-    Delay, //Delay for specified amount of time (parameter), holds start time
-    AddDelay, //Create delayed time (for other operations)
-    IfSwitch,//Program control (branch)
+    RandomBetween, // Randomize
+    MoveTo,        // Animations
+    Delay,         // Delay for specified amount of time (parameter), holds start time
+    AddDelay,      // Create delayed time (for other operations)
+    IfSwitch,      // Program control (branch)
     While,
     SetFlags,
     ResetFlags,

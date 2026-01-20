@@ -19,7 +19,7 @@ enum class Types : uint8_t
     Flags,
     Status,
     Board,
-    Port,
+    Removed_1,
     PortDriver,
     AccGyr,
     Input,
@@ -30,7 +30,8 @@ enum class Types : uint8_t
     GeometryOperation,
     Texture2D,
     Operation, 
-    Program
+    Program,
+    PortType = 64, //4 byte enums
 };
 
 int8_t GetDataSize(Types Type)
@@ -194,8 +195,6 @@ Types GetType<Status>() { return Types::Status; };
 template <>
 Types GetType<Boards>() { return Types::Board; };
 template <>
-Types GetType<Ports>() { return Types::Port; };
-template <>
 Types GetType<Drivers>() { return Types::PortDriver; };
 template <>
 Types GetType<GyrAccs>() { return Types::AccGyr; };
@@ -217,3 +216,5 @@ template <>
 Types GetType<Operations>() { return Types::Operation; };
 template <>
 Types GetType<ProgramTypes>() { return Types::Program; };
+template <>
+Types GetType<PortTypeClass>() { return Types::PortType; };
