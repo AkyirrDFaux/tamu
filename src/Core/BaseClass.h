@@ -1,10 +1,5 @@
 BaseClass *CreateObject(ObjectTypes Type, bool New = true, IDClass ID = RandomID, FlagClass Flags = Flags::None);
 
-void BaseClass::AddModule(BaseClass *Object, int32_t Index)
-{
-    Modules.Add(Object, Index);
-};
-
 template <>
 ByteArray::ByteArray(const BaseClass &Data)
 {

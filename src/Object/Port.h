@@ -9,21 +9,12 @@ public:
     };
 
     void *DriverObj = nullptr;
-    ObjectList<> Attached = ObjectList<>();
 
     PortClass(uint8_t NewPin, Ports NewPortType = Ports::None);
     ~PortClass();
 
-    bool CheckDriver(Drivers Driver);
-    void StopDriver();
-    Drivers StartDriver();
-
-    void Disconnect(BaseClass *ThatObject);
-    CRGB *GetLED(BaseClass *ThatObject);
-    TwoWire *GetI2C(BaseClass *ThatObject);
-    ESP32PWM *GetPWM(BaseClass *ThatObject);
-    Servo *GetServo(BaseClass *ThatObject);
-    uint8_t *GetInput(BaseClass *ThatObject);
+    void AddModule(BaseClass *Object, int32_t Index = -1);
+    void RemoveModule(BaseClass *Object);
 };
 
 PortClass::PortClass(uint8_t NewPin, Ports NewPortType) : BaseClass() // Created by Board
@@ -39,7 +30,8 @@ PortClass::PortClass(uint8_t NewPin, Ports NewPortType) : BaseClass() // Created
 
 PortClass::~PortClass()
 {
-    StopDriver();
+    for (int32_t Index = 0; Index < Modules.Length; Index++)
+        RemoveModule(Modules[Index]);
 }
 
 class I2CClass : public BaseClass
@@ -52,6 +44,9 @@ public:
     };
     TwoWire *I2C = nullptr;
     I2CClass();
+
+    void AddModule(BaseClass *Object, int32_t Index = -1);
+    void RemoveModule(BaseClass *Object);
 };
 
 I2CClass::I2CClass()
@@ -70,6 +65,7 @@ public:
     };
     HardwareSerial *UART = nullptr;
     UARTClass();
+    //Unfinished
 };
 
 UARTClass::UARTClass()

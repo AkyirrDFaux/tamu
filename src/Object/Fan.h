@@ -5,11 +5,7 @@ public:
     {
         Speed,
     };
-
-    enum Module
-    {
-        Port,
-    };
+    ESP32PWM *PWM = nullptr;
 
     FanClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     ~FanClass();
@@ -33,16 +29,13 @@ FanClass::~FanClass()
 
 bool FanClass::Run()
 {
-    PortClass *Port = Modules.Get<PortClass>(Module::Port); // HW connection
     uint8_t *Speed = Values.At<uint8_t>(Value::Speed);
 
-    if (Port == nullptr || Speed == nullptr)
+    if (Speed == nullptr)
     {
         ReportError(Status::MissingModule);
         return true;
     }
-
-    ESP32PWM *PWM = Port->GetPWM(this);
 
     if (PWM == nullptr)
     {

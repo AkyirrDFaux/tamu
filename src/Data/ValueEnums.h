@@ -19,8 +19,8 @@ enum class Drivers : uint8_t
     None,
     LED,
     FanPWM,
-    I2C,
-    I2CClock,
+    I2C, //Any function of bus
+    UART, //Any function of bus
     Servo,
     Input
 };

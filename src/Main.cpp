@@ -152,10 +152,7 @@ void loop()
 
 /*TODO:
 KEY FEATURES:
-Finish port system (connecting multiple LEDS, I2C/UART(/SPI?) bus object for combining ports)
-= Board -> Port -> Objects ...
-= Bus -> Ports + Objects
-- needs module setup for changes (both after-attach and pre-detach), also use final keyword
+Finish port system (connecting multiple LEDS, I2C)
 Make port/pin types work as a flagclass (GPIO, ADC, PWM, TOut, I2C [CL, DA], UART [RX, TX], SPI [MOSI, MISO, CLK, CS] = 14 -> 32bit)
 
 Crash (Delete/Create) Safety
@@ -170,6 +167,7 @@ FUTURE:
 OLED/TFT Display support
 
 ADJUSTMENTS:
+use final keyword
 Groups instead of favourites? 
 Flag clarification (Auto -> System = nondeletable, some error flags?)
 Value names?

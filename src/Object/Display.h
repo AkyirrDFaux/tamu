@@ -2,6 +2,7 @@ class DisplayClass : public BaseClass
 {
 public:
     byte *Layout = nullptr;
+    CRGB *LED = nullptr;
     enum Value
     {
         DisplayType,
@@ -11,10 +12,6 @@ public:
         Brightness,
         Offset,
         Mirrored
-    };
-    enum Module
-    {
-        Port
     };
 
     DisplayClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
@@ -69,7 +66,6 @@ DisplayClass::~DisplayClass()
 
 bool DisplayClass::Run()
 {
-    PortClass *Port = Modules.Get<PortClass>(Module::Port); // HW connection
     int32_t *Length = Values.At<int32_t>(Value::Length);
     Vector2D *Size = Values.At<Vector2D>(Value::Size);
     Number *Ratio = Values.At<Number>(Value::Ratio);
@@ -77,15 +73,14 @@ bool DisplayClass::Run()
     Coord2D *Offset = Values.At<Coord2D>(Value::Offset);
     bool *Mirrored = Values.At<bool>(Value::Mirrored);
 
-    if (Port == nullptr || Length == nullptr || Size == nullptr || Ratio == nullptr ||
+    if (Length == nullptr || Size == nullptr || Ratio == nullptr ||
         Brightness == nullptr || Offset == nullptr || Mirrored == nullptr || Layout == nullptr)
     {
         ReportError(Status::MissingModule);
         return true;
     }
 
-    CRGB *Pixel = Port->GetLED(this);
-    if (Pixel == nullptr)
+    if (LED == nullptr)
     {
         ReportError(Status::PortError);
         return true;
@@ -94,14 +89,14 @@ bool DisplayClass::Run()
     ColourClass Buffer[*Length];
     Coord2D Transform = Coord2D(*Size * 0.5 - Vector2D(0.5, 0.5), Vector2D(0)).Join(*Offset);
     //Iterate over layers
-    for (int32_t Index = Modules.FirstValid(ObjectTypes::Shape2D, 1); Index < Modules.Length; Modules.Iterate(&Index, ObjectTypes::Shape2D))
+    for (int32_t Index = Modules.FirstValid(ObjectTypes::Shape2D); Index < Modules.Length; Modules.Iterate(&Index, ObjectTypes::Shape2D))
         Modules[Index]->As<Shape2DClass>()->Render(*Length, *Size, *Ratio, Transform, *Mirrored, Layout, Buffer);
 
     //Final output
     for (int32_t Index = 0; Index < *Length; Index++)
     {
         Buffer[Index].ToDisplay(*Brightness);
-        Pixel[Index].setRGB(Buffer[Index].R, Buffer[Index].G, Buffer[Index].B);
+        LED[Index].setRGB(Buffer[Index].R, Buffer[Index].G, Buffer[Index].B);
     }     
     
     return true;

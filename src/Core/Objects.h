@@ -125,7 +125,8 @@ public:
         return true;
     };
 
-    void AddModule(BaseClass *Object, int32_t Index = -1);
+    virtual void AddModule(BaseClass *Object, int32_t Index = -1) { Modules.Add(Object, Index); };
+    virtual void RemoveModule(BaseClass *Object) { Modules.Remove(Object); };
     void Save();
 
     template <class C>

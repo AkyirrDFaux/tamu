@@ -7,7 +7,7 @@ void DefaultSetup()
     LD->Name = "Left Eye";
     LD->ValueSet<Displays>(Displays::Vysi_v1_0, LD->DisplayType);
     LD->ValueSet<Coord2D>(Coord2D(0, 0, 5), LD->Offset);
-    LD->AddModule(Board.Modules[0], LD->Port);
+    Board.Modules[0]->AddModule(LD);
     LD->ValueSet<uint8_t>(40, LD->Brightness);
 
     Shape2DClass *LS = new Shape2DClass();
@@ -99,7 +99,7 @@ void DefaultSetup()
     RD->Name = "Right Eye";
     RD->ValueSet<Displays>(Displays::Vysi_v1_0, RD->DisplayType);
     RD->ValueSet<Coord2D>(Coord2D(0, 0, 175), RD->Offset);
-    RD->AddModule(Board.Modules[7], RD->Port);
+    Board.Modules[7]->AddModule(RD);
     RD->ValueSet<uint8_t>(40, RD->Brightness);
 
     Shape2DClass *RS = new Shape2DClass();
@@ -189,12 +189,12 @@ void DefaultSetup()
     // FAN
     FanClass *F = new FanClass();
     F->Name = "Fan";
-    F->Modules.Add(Board.Modules[4], F->Port);
+    Board.Modules[4]->AddModule(F);
 
     // Light sensor
     InputClass *I = new InputClass();
     I->Name = "Light sensor";
-    I->Modules.Add(Board.Modules[1], I->Port);
+    Board.Modules[1]->AddModule(I);
     I->ValueSet<Inputs>(Inputs::Analog, I->InputType);
 
     // BLINKING PROGRAM
@@ -256,7 +256,7 @@ void DefaultSetup()
     OR2->Values.Add(IDClass(0, 1+3), 1);
     OR2->Values.Add(Vector2D(1, -0.5), 2);
     OR2->Values.Add(Operations::Extract, 3);
-    OR2->Values.Add(IDClass(Board.Modules[11]->ID.Base(), 1 + 1), 4);
+    OR2->Values.Add(IDClass(Board.Modules[12]->ID.Base(), 1 + 1), 4);
     OR2->Values.Add<uint8_t>(0, 5);
     OR2->Values.Add<uint8_t>(1, 6);
     P3->AddModule(OR2, 1);

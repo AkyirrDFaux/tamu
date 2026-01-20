@@ -7,10 +7,7 @@ public:
         Length,
         Brightness,
     };
-    enum Module
-    {
-        Port
-    };
+    CRGB *LED = nullptr;
 
     LEDStripClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     ~LEDStripClass();
@@ -37,18 +34,17 @@ LEDStripClass::~LEDStripClass()
 
 bool LEDStripClass::Run()
 {
-    PortClass *Port = Modules.Get<PortClass>(Module::Port); // HW connection
     LEDStrips *Type = Values.At<LEDStrips>(Value::LEDType);
     int32_t *Length = Values.At<int32_t>(Value::Length);
     uint8_t *Brightness = Values.At<uint8_t>(Value::Brightness);
 
-    if (Type == nullptr || Port == nullptr || Length == nullptr || Brightness == nullptr)
+    if (Type == nullptr || Length == nullptr || Brightness == nullptr)
     {
         ReportError(Status::MissingModule);
         return true;
     }
-    CRGB *Pixel = Port->GetLED(this);
-    if (Pixel == nullptr)
+
+    if (LED == nullptr)
     {
         ReportError(Status::PortError);
         return true;
@@ -60,7 +56,7 @@ bool LEDStripClass::Run()
         ColourClass PixelColour = RenderPixel(Index, *Length);
 
         PixelColour.ToDisplay(*Brightness);
-        Pixel[Index].setRGB(PixelColour.R, PixelColour.G, PixelColour.B);
+        LED[Index].setRGB(PixelColour.R, PixelColour.G, PixelColour.B);
     }
     return true;
 };
@@ -69,7 +65,7 @@ ColourClass LEDStripClass::RenderPixel(int32_t Base, int32_t Length)
 {
     ColourClass Colour = ColourClass(0, 0, 0);
 
-    for (int32_t Index = Modules.FirstValid(ObjectTypes::LEDSegment,1); Index < Modules.Length; Modules.Iterate(&Index, ObjectTypes::LEDSegment))
+    for (int32_t Index = Modules.FirstValid(ObjectTypes::LEDSegment); Index < Modules.Length; Modules.Iterate(&Index, ObjectTypes::LEDSegment))
         Colour = Modules[Index]->As<LEDSegmentClass>()->Render(Colour, Base, Length);
 
     return Colour;

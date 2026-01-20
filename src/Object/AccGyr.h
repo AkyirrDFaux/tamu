@@ -12,6 +12,7 @@ public:
     };
 
     bool OK = false;
+    TwoWire *I2C = nullptr;
 
     void Setup(int32_t Index = -1);
     GyrAccClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
@@ -36,12 +37,10 @@ void GyrAccClass::Setup(int32_t Index)
     if (Index != -1 && Index != 0)
         return;
 
-    if (!(Values.IsValid(DeviceType, Types::AccGyr) && Modules.IsValid(0) && Modules.IsValid(1) && Modules[0]->Type == ObjectTypes::Port && Modules[1]->Type == ObjectTypes::Port))
+    if (I2C == nullptr)
         return;
 
-    TwoWire *I2C = Modules.Get<PortClass>(0)->GetI2C(this);
-
-    if (I2C == nullptr)
+    if (!(Values.IsValid(DeviceType, Types::AccGyr)))
         return;
 
     switch (*Values.At<GyrAccs>(DeviceType))
@@ -73,7 +72,6 @@ bool GyrAccClass::Run()
     Vector3D *Rot = Values.At<Vector3D>(AngularRate);
     Number *AccFilter = Values.At<Number>(AccelerationFilter);
     Number *RotFilter = Values.At<Number>(AngularFilter);
-    TwoWire *I2C = Modules.Get<PortClass>(0)->GetI2C(this);
 
     if (I2C == nullptr || Acc == nullptr || Rot == nullptr || AccFilter == nullptr || RotFilter == nullptr)
         return true;

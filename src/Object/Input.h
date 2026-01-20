@@ -7,10 +7,7 @@ public:
         Input,
         Indicator
     };
-    enum Module
-    {
-        Port,
-    };
+    int8_t Pin = -1;
 
     InputClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     ~InputClass();
@@ -60,18 +57,15 @@ void InputClass::Setup(int32_t Index)
 
 bool InputClass::Run()
 {
-    PortClass *Port = Modules.Get<PortClass>(Module::Port); // HW connection
     Inputs *Type = Values.At<Inputs>(InputType);
 
-    if (Port == nullptr || Type == nullptr)
+    if (Type == nullptr)
     {
         ReportError(Status::MissingModule);
         return true;
     }
 
-    uint8_t *Pin = Port->GetInput(this);
-
-    if (Pin == nullptr)
+    if (Pin == -1)
     {
         ReportError(Status::PortError);
         return true;
@@ -80,21 +74,21 @@ bool InputClass::Run()
     switch (*Type)
     {
     case Inputs::Button:
-        *Values.At<bool>(Input) = !digitalRead(*Pin); //Inverted
+        *Values.At<bool>(Input) = !digitalRead(Pin); //Inverted
         break;
     case Inputs::Analog:
-        *Values.At<int32_t>(Input) = analogRead(*Pin);
+        *Values.At<int32_t>(Input) = analogRead(Pin);
         break;
     case Inputs::ButtonWithLED:
         if (*Values.At<bool>(Indicator))
         {
-            pinMode(*Pin, OUTPUT);
-            digitalWrite(*Pin, LOW); //Inverted
+            pinMode(Pin, OUTPUT);
+            digitalWrite(Pin, LOW); //Inverted
         }
         else //Applies blocking
         {
-            pinMode(*Pin, INPUT);
-            *Values.At<bool>(Input) = !digitalRead(*Pin); //Inverted
+            pinMode(Pin, INPUT);
+            *Values.At<bool>(Input) = !digitalRead(Pin); //Inverted
         }
         break;
     default:

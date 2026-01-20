@@ -5,10 +5,7 @@ public:
     {
         Angle,
     };
-    enum Module
-    {
-        Port,
-    };
+    Servo *ServoDriver;
 
     ServoClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     ~ServoClass();
@@ -31,22 +28,19 @@ ServoClass::~ServoClass()
 
 bool ServoClass::Run()
 {
-    PortClass *Port = Modules.Get<PortClass>(Module::Port); // HW connection
     uint8_t *Angle = Values.At<uint8_t>(Value::Angle);
 
-    if (Port == nullptr || Angle == nullptr)
+    if (Angle == nullptr)
     {
         ReportError(Status::MissingModule);
         return true;
     }
 
-    Servo* Driver = Port->GetServo(this);
-
-    if (Driver == nullptr)
+    if (ServoDriver == nullptr)
     {
         ReportError(Status::PortError);
         return true;
     }
-    Driver->write(*Angle);
+    ServoDriver->write(*Angle);
     return true;
 };
