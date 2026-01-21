@@ -38,7 +38,7 @@ bool ServoClass::Run()
 
     if (ServoDriver == nullptr)
     {
-        ReportError(Status::PortError);
+        ReportError(Status::PortError, "Servo");
         return true;
     }
     ServoDriver->write(*Angle);

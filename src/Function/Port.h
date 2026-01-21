@@ -13,6 +13,9 @@ void PortClass::AddModule(BaseClass *Object, int32_t Index)
     Drivers *Driver = Values.At<Drivers>(DriverType);
     PortTypeClass *Type = Values.At<PortTypeClass>(PortType);
 
+    if (Pin == nullptr || Driver == nullptr || Type == nullptr)
+        return;
+
     if (*Driver == Drivers::None)
     {
         // TODO CHECK PORT TYPE
@@ -27,7 +30,7 @@ void PortClass::AddModule(BaseClass *Object, int32_t Index)
             Object->As<FanClass>()->PWM = (ESP32PWM *)DriverObj; // Input to object
             break;
         case ObjectTypes::Input:
-            if (Index != 0 || *Type != Ports::ADC)
+            if (Index != 0 || (*Type != Ports::ADC && *Type != Ports::GPIO))
                 break;
             pinMode(*Pin, INPUT);
             *Driver = Drivers::Input;
@@ -130,36 +133,66 @@ void I2CClass::AddModule(BaseClass *Object, int32_t Index)
         if (SDAPort == nullptr || SCLPort == nullptr)
             return;
 
-        // TODO Complete checks
         if (!SDAPort->Values.IsValid(PortClass::PortType, Types::PortType) || !SCLPort->Values.IsValid(PortClass::PortType, Types::PortType) ||
             *SDAPort->Values.At<PortTypeClass>(PortClass::PortType) != Ports::I2C_SDA || *SCLPort->Values.At<PortTypeClass>(PortClass::PortType) != Ports::I2C_SCL)
             return;
 
-        if(!SDAPort->Values.IsValid(PortClass::Pin, Types::Byte) || !SDAPort->Values.IsValid(PortClass::Pin, Types::Byte))
+        if (!SDAPort->Values.IsValid(PortClass::DriverType, Types::PortDriver) || !SCLPort->Values.IsValid(PortClass::DriverType, Types::PortDriver) ||
+            *SDAPort->Values.At<Drivers>(PortClass::DriverType) != Drivers::None || *SCLPort->Values.At<Drivers>(PortClass::DriverType) != Drivers::None)
+            return;
+
+        if (!SDAPort->Values.IsValid(PortClass::Pin, Types::Byte) || !SDAPort->Values.IsValid(PortClass::Pin, Types::Byte))
             return;
 
         Wire.begin(*SDAPort->Values.At<uint8_t>(PortClass::Pin), *SCLPort->Values.At<uint8_t>(PortClass::Pin), 100000);
         I2C = &Wire;
+        SDAPort->ValueSet(Drivers::I2C, PortClass::DriverType);
+        SCLPort->ValueSet(Drivers::I2C, PortClass::DriverType);
+
+        for (int32_t Index = Modules.FirstValid(ObjectTypes::Undefined, 2); Index < Modules.Length; Modules.Iterate(&Index))
+            StartModule(Modules[Index]);
     }
     else if (I2C != nullptr)
-    {
-        switch (Object->Type)
-        {
-        case ObjectTypes::AccGyr:
-            Object->As<GyrAccClass>()->I2C = I2C;
-            break;
-        default:
-            break;
-        }
-    }
+        StartModule(Object);
 
     return;
 };
+
+void I2CClass::StartModule(BaseClass *Object)
+{
+    switch (Object->Type)
+    {
+    case ObjectTypes::AccGyr:
+        Object->As<GyrAccClass>()->I2C = I2C;
+        break;
+    default:
+        break;
+    }
+};
+
 void I2CClass::RemoveModule(BaseClass *Object)
 {
     if (Object == nullptr)
         return;
 
+    if (Object->Type == ObjectTypes::Port && I2C != nullptr && (Modules[0] == Object || Modules[1] == Object))
+    {
+        I2C->end();
+        I2C = nullptr;
+        Modules.Get<PortClass>(SDA)->ValueSet(Drivers::None, PortClass::DriverType);
+        Modules.Get<PortClass>(SCL)->ValueSet(Drivers::None, PortClass::DriverType);
+        
+        for (int32_t Index = Modules.FirstValid(ObjectTypes::Undefined, 2); Index < Modules.Length; Modules.Iterate(&Index))
+            StopModule(Modules[Index]);
+    }
+    else
+        StopModule(Object);
+
+    Modules.Remove(Object);
+};
+
+void I2CClass::StopModule(BaseClass *Object)
+{
     switch (Object->Type)
     {
     case ObjectTypes::AccGyr:
@@ -168,6 +201,4 @@ void I2CClass::RemoveModule(BaseClass *Object)
     default:
         break;
     }
-
-    Modules.Remove(Object);
 };

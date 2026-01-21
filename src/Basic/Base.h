@@ -1,4 +1,8 @@
-#define LED_NOTIFICATION_PIN 2
+#if BOARD == 1
+    #define LED_NOTIFICATION_PIN ?
+#elif BOARD == 2
+    #define LED_NOTIFICATION_PIN 2
+#endif
 
 void TimeUpdate();
 void NotificationBlink(int Amount, int Time);

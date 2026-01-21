@@ -46,7 +46,7 @@ bool LEDStripClass::Run()
 
     if (LED == nullptr)
     {
-        ReportError(Status::PortError);
+        ReportError(Status::PortError, "LED Strip");
         return true;
     }
 

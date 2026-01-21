@@ -39,7 +39,7 @@ bool FanClass::Run()
 
     if (PWM == nullptr)
     {
-        ReportError(Status::PortError);
+        ReportError(Status::PortError, "Fan");
         return true;
     }
     double Val = *Speed;

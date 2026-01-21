@@ -1,8 +1,8 @@
 class InputClass : public BaseClass
 {
 public:
-
-    enum Value{
+    enum Value
+    {
         InputType,
         Input,
         Indicator
@@ -21,7 +21,7 @@ InputClass::InputClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
     BaseClass::Type = ObjectTypes::Input;
     Name = "Input";
 
-    Values.Add(Inputs::Undefined,InputType);
+    Values.Add(Inputs::Undefined, InputType);
 
     Sensors.Add(this);
 };
@@ -35,7 +35,7 @@ void InputClass::Setup(int32_t Index)
 {
     if (Index != -1 && Index != 0)
         return;
-        
+
     // Deletion of previous values
     Values.Delete(Input);
     Values.Delete(Indicator);
@@ -64,17 +64,16 @@ bool InputClass::Run()
         ReportError(Status::MissingModule);
         return true;
     }
-
     if (Pin == -1)
     {
-        ReportError(Status::PortError);
+        ReportError(Status::PortError, "Input");
         return true;
     }
 
     switch (*Type)
     {
     case Inputs::Button:
-        *Values.At<bool>(Input) = !digitalRead(Pin); //Inverted
+        *Values.At<bool>(Input) = !digitalRead(Pin); // Inverted
         break;
     case Inputs::Analog:
         *Values.At<int32_t>(Input) = analogRead(Pin);
@@ -83,12 +82,12 @@ bool InputClass::Run()
         if (*Values.At<bool>(Indicator))
         {
             pinMode(Pin, OUTPUT);
-            digitalWrite(Pin, LOW); //Inverted
+            digitalWrite(Pin, LOW); // Inverted
         }
-        else //Applies blocking
+        else // Applies blocking
         {
             pinMode(Pin, INPUT);
-            *Values.At<bool>(Input) = !digitalRead(Pin); //Inverted
+            *Values.At<bool>(Input) = !digitalRead(Pin); // Inverted
         }
         break;
     default:

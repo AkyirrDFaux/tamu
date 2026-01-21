@@ -152,8 +152,7 @@ void loop()
 
 /*TODO:
 KEY FEATURES:
-Finish port system (connecting multiple LEDS, I2C)
-- add proper checks
+Finish port system (connecting multiple LEDS)
 
 Crash (Delete/Create) Safety
 Saving - fallback?

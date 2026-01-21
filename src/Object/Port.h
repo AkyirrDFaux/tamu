@@ -60,6 +60,9 @@ public:
 
     void AddModule(BaseClass *Object, int32_t Index = -1);
     void RemoveModule(BaseClass *Object);
+
+    void StartModule(BaseClass *Object);
+    void StopModule(BaseClass *Object);
 };
 
 I2CClass::I2CClass()

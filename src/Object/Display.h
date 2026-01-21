@@ -82,7 +82,7 @@ bool DisplayClass::Run()
 
     if (LED == nullptr)
     {
-        ReportError(Status::PortError);
+        ReportError(Status::PortError, "Display");
         return true;
     }
 
