@@ -38,9 +38,9 @@ int8_t GetDataSize(Types Type)
 {
     if (Type == Types::Undefined)
         return 0;
-    else if (Type <= Types::Byte || Type >= Types::ObjectType)
+    else if (Type <= Types::Byte || (Type >= Types::ObjectType && Type < Types::PortType)) 
         return 1;
-    else if (Type <= Types::Colour)
+    else if (Type <= Types::Colour || Type >= Types::PortType)
         return 4;
     else if (Type == Types::Vector2D)
         return 8;

@@ -65,8 +65,7 @@ BaseClass *CreateObject(ObjectTypes Type, bool New, IDClass ID, FlagClass Flags)
     // Port is auto
     case ObjectTypes::Shape2D:
         return new Shape2DClass(ID, Flags);
-    case ObjectTypes::Board:
-        return new BoardClass(ID, Flags);
+    //case ObjectTypes::Board: //Cannot create board
     case ObjectTypes::Fan:
         return new FanClass(ID, Flags);
     case ObjectTypes::LEDSegment:

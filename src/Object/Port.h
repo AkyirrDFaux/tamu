@@ -28,6 +28,9 @@ public:
 
     void AddModule(BaseClass *Object, int32_t Index = -1);
     void RemoveModule(BaseClass *Object);
+
+    int32_t CountLED();
+    void AssignLED();
 };
 
 PortClass::PortClass(uint8_t NewPin, PortTypeClass NewPortType) : BaseClass() // Created by Board

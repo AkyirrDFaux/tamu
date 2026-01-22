@@ -75,10 +75,6 @@ BoardClass Board;
 
 void setup()
 {
-    ESP32PWM::allocateTimer(0);
-	ESP32PWM::allocateTimer(1);
-	ESP32PWM::allocateTimer(2);
-	ESP32PWM::allocateTimer(3);
     MemoryStartup();
     NotificationStartup();
     Serial.begin((long)115200);
@@ -152,10 +148,8 @@ void loop()
 
 /*TODO:
 KEY FEATURES:
-Finish port system (connecting multiple LEDS)
-
 Crash (Delete/Create) Safety
-Saving - fallback?
+Saving, switch to littleFS - fallback?
 
 All-display filters
 
@@ -163,19 +157,22 @@ App Programming view
 App Presets/blocks
 
 FUTURE:
+Neopixel/FastLED switch define, ESP specific switches
 OLED/TFT Display support
+Multiple boards together
 
 ADJUSTMENTS:
 use final keyword
 Groups instead of favourites? 
 Flag clarification (Auto -> System = nondeletable, some error flags?)
-Value names?
+Value names?... send with separate fcn? or just make it fixed ahead?
 
 Register, IDList, DataList, ObjList cleanup (possibly make datalist data oriented, maybe delete objlist and merge to register)
 Split up individual functions in geometry, possibly combine multiple in one
 Go over BLE functions, spread out sending/recieving delay, better compression
 Operation - prevent recursion
 
+RAM saving - Names/Strings only on flash, F() macro
 BUGS:
 Incorrect wraping of LED strip
 */
@@ -205,3 +202,4 @@ Incorrect wraping of LED strip
 // 01.01.2026 Setup update
 // 02.01.2026 Display layer-based rendering, -30% loop time!
 // 13.01.2026 Nested operations
+// xx.0x.2026 Improved port and bus system, module attach/detach events

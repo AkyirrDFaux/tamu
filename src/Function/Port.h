@@ -18,7 +18,6 @@ void PortClass::AddModule(BaseClass *Object, int32_t Index)
 
     if (*Driver == Drivers::None)
     {
-        // TODO CHECK PORT TYPE
         switch (Object->Type)
         {
         case ObjectTypes::Fan:
@@ -45,14 +44,14 @@ void PortClass::AddModule(BaseClass *Object, int32_t Index)
             *Driver = Drivers::Servo;
             Object->As<ServoClass>()->ServoDriver = (Servo *)DriverObj; // Input to object
             break;
-        case ObjectTypes::LEDStrip:
+        case ObjectTypes::LEDStrip: // Only first one
             if (*Type != Ports::GPIO)
                 break;
             DriverObj = BeginLED(*(Object->As<LEDStripClass>()->Values.At<int32_t>(LEDStripClass::Length)), *Pin);
             *Driver = Drivers::LED;
             Object->As<LEDStripClass>()->LED = (CRGB *)DriverObj; // Input to object
             break;
-        case ObjectTypes::Display:
+        case ObjectTypes::Display: // Only first one
             if (*Type != Ports::GPIO)
                 break;
             DriverObj = BeginLED(*(Object->As<DisplayClass>()->Values.At<int32_t>(DisplayClass::Length)), *Pin);
@@ -63,10 +62,9 @@ void PortClass::AddModule(BaseClass *Object, int32_t Index)
             break;
         }
     }
-    else if (*Driver == Drivers::LED) // Extensible
-    {
-        ; // TODO
-    }
+    else if (*Driver == Drivers::LED && (Object->Type == ObjectTypes::Display || Object->Type == ObjectTypes::LEDStrip)) // Extensible
+        AssignLED();
+
     return;
 };
 void PortClass::RemoveModule(BaseClass *Object)
@@ -97,18 +95,83 @@ void PortClass::RemoveModule(BaseClass *Object)
         ((Servo *)DriverObj)->detach();
         delete (Servo *)DriverObj;
         break;
-    case Drivers::LED: // TODO: if multiple objects edit driver
+    case Drivers::LED:
         if (Object->Type == ObjectTypes::LEDStrip)
             Object->As<LEDStripClass>()->LED = nullptr; // Remove from obj
         else if (Object->Type == ObjectTypes::Display)
             Object->As<DisplayClass>()->LED = nullptr;
-        EndLED((CRGB *)DriverObj);
-        break;
+
+        Modules.Remove(Object);
+        AssignLED();
+        return;
     default:
         break;
     }
 
     Modules.Remove(Object);
+};
+
+int32_t PortClass::CountLED()
+{
+    int32_t LEDLength = 0;
+    for (int32_t Index = 0; Index < Modules.Length; Index++)
+    {
+        if (Modules.IsValid(Index) == false)
+            continue;
+
+        switch (Modules[Index]->Type)
+        {
+        case ObjectTypes::LEDStrip:
+            if (Modules[Index]->As<LEDStripClass>()->Values.IsValid(LEDStripClass::Length, Types::Integer))
+                LEDLength += *(Modules[Index]->As<LEDStripClass>()->Values.At<int32_t>(LEDStripClass::Length));
+            break;
+        case ObjectTypes::Display:
+            if (Modules[Index]->As<DisplayClass>()->Values.IsValid(DisplayClass::Length, Types::Integer))
+                LEDLength += *(Modules[Index]->As<DisplayClass>()->Values.At<int32_t>(DisplayClass::Length));
+            break;
+        default:
+            break;
+        }
+    };
+    return LEDLength;
+};
+void PortClass::AssignLED()
+{
+    uint8_t *Pin = Values.At<uint8_t>(Value::Pin);
+    int32_t LEDLength = CountLED();
+    int32_t AssignedLength = 0;
+    EndLED((CRGB *)DriverObj);
+
+    if (LEDLength <= 0)
+        return;
+
+    DriverObj = BeginLED(LEDLength, *Pin);
+
+    for (int32_t Index = 0; Index < Modules.Length; Index++)
+    {
+        if (Modules.IsValid(Index) == false)
+            continue;
+
+        switch (Modules[Index]->Type)
+        {
+        case ObjectTypes::LEDStrip:
+            if (Modules[Index]->As<DisplayClass>()->Values.IsValid(DisplayClass::Length, Types::Integer) == false)
+                continue;
+
+            Modules[Index]->As<LEDStripClass>()->LED = &((CRGB *)DriverObj)[AssignedLength]; // Input to object
+            AssignedLength += *(Modules[Index]->As<DisplayClass>()->Values.At<int32_t>(DisplayClass::Length));
+            break;
+        case ObjectTypes::Display:
+            if (Modules[Index]->As<DisplayClass>()->Values.IsValid(DisplayClass::Length, Types::Integer) == false)
+                continue;
+
+            Modules[Index]->As<DisplayClass>()->LED = &((CRGB *)DriverObj)[AssignedLength]; // Input to object
+            AssignedLength += *(Modules[Index]->As<DisplayClass>()->Values.At<int32_t>(DisplayClass::Length));
+            break;
+        default:
+            break;
+        }
+    };
 };
 
 void I2CClass::AddModule(BaseClass *Object, int32_t Index)
@@ -181,7 +244,7 @@ void I2CClass::RemoveModule(BaseClass *Object)
         I2C = nullptr;
         Modules.Get<PortClass>(SDA)->ValueSet(Drivers::None, PortClass::DriverType);
         Modules.Get<PortClass>(SCL)->ValueSet(Drivers::None, PortClass::DriverType);
-        
+
         for (int32_t Index = Modules.FirstValid(ObjectTypes::Undefined, 2); Index < Modules.Length; Modules.Iterate(&Index))
             StopModule(Modules[Index]);
     }
