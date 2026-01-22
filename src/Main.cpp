@@ -21,7 +21,6 @@ uint32_t DeltaTime = 0;
 
 //Core system
 #include "Core\Enum.h"
-#include "Core\ObjectList.h"
 #include "Core\ID.h"
 #include "Core\ByteArray.h"
 #include "Core\Objects.h"
@@ -35,9 +34,9 @@ RegisterClass Objects;
 #include "Core\Chirp.h"
 ChirpClass Chirp = ChirpClass(); // Bluetooth/Serial
 
-ObjectList<> Sensors;  // EX: Sensor
-ObjectList<> Programs; // Ex: Emotes
-ObjectList<> Outputs;  // Ex: Display, Fan, Servo
+IDList Sensors;  // EX: Sensor
+IDList Programs; // Ex: Emotes
+IDList Outputs;  // Ex: Display, Fan, Servo
 
 //Programs
 #include "Object\Operation.h"
@@ -167,12 +166,12 @@ Groups instead of favourites?
 Flag clarification (Auto -> System = nondeletable, some error flags?)
 Value names?... send with separate fcn? or just make it fixed ahead?
 
-Register, IDList, DataList, ObjList cleanup (possibly make datalist data oriented, maybe delete objlist and merge to register)
+Register, IDList, DataList cleanup (possibly make datalist data oriented)
 Split up individual functions in geometry, possibly combine multiple in one
 Go over BLE functions, spread out sending/recieving delay, better compression
 Operation - prevent recursion
 
-RAM saving - Names/Strings only on flash, F() macro
+RAM saving - Names/Strings only on flash, data-orient DataList
 BUGS:
 Incorrect wraping of LED strip
 */
@@ -202,4 +201,4 @@ Incorrect wraping of LED strip
 // 01.01.2026 Setup update
 // 02.01.2026 Display layer-based rendering, -30% loop time!
 // 13.01.2026 Nested operations
-// xx.0x.2026 Improved port and bus system, module attach/detach events
+// 22.01.2026 Improved port and bus system, module attach/detach events, removed ObjectList

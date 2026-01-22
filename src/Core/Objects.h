@@ -54,7 +54,7 @@ public:
     void Shorten();
 
     bool Add(IDClass ID, int32_t Index = -1);
-    bool Add(BaseClass *AddObject, int32_t Index);
+    bool Add(BaseClass *AddObject, int32_t Index = -1);
     bool Remove(int32_t Index);
     bool Remove(BaseClass *RemovedObject);
     bool RemoveAll();
