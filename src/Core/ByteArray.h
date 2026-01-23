@@ -285,14 +285,14 @@ int32_t ByteArray::SizeWithType() const
 void ByteArray::WriteToFile(const String &FileName)
 {
     ByteArray Data = AddLength();
-    File File = SPIFFS.open("/" + FileName, "w");
+    File File = LittleFS.open("/" + FileName, "w");
     File.print(String(Data.Array, Data.Length));
     File.close();
 };
 
 ByteArray ReadFromFile(const String &FileName)
 {
-    File File = SPIFFS.open("/" + FileName, "r");
+    File File = LittleFS.open("/" + FileName, "r");
 
     if (!File)
         return ByteArray();

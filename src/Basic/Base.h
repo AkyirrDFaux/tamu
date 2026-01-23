@@ -1,7 +1,11 @@
-#if BOARD == 1
-    #define LED_NOTIFICATION_PIN ?
-#elif BOARD == 2
+#ifdef BOARD_Tamu_v1_0
+    #define LED_NOTIFICATION_PIN LED_BUILTIN
+#endif
+#ifdef BOARD_Tamu_v2_0
     #define LED_NOTIFICATION_PIN 2
+#endif
+#ifdef BOARD_Valu_v2_0
+    #define LED_NOTIFICATION_PIN 0
 #endif
 
 void TimeUpdate();

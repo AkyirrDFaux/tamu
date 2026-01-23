@@ -1,17 +1,21 @@
-#include <SPIFFS.h>
+#if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
+#include <LittleFS.h>
+#else
+#include <lfs.h>
+#endif
 
 void MemoryStartup()
 {
-    SPIFFS.begin(true);
+    LittleFS.begin(true);
 }
 
 void MemoryReset()
 {
-    File Root = SPIFFS.open("/", "r");
+    File Root = LittleFS.open("/", "r");
     String Delete = Root.getNextFileName();
     while (Delete.length() > 0)
     {
-        SPIFFS.remove(Delete);
+        LittleFS.remove(Delete);
         Delete = Root.getNextFileName();
     }
     Root.close();

@@ -83,7 +83,7 @@ void setup()
         DefaultSetup();
     else
     {
-        File Root = SPIFFS.open("/", "r");
+        File Root = LittleFS.open("/", "r");
         String File = Root.getNextFileName();
         while (File.length() > 0)
         {
@@ -156,7 +156,7 @@ App Programming view
 App Presets/blocks
 
 FUTURE:
-Neopixel/FastLED switch define, ESP specific switches
+Generic FastLED/AdaFruit Neopixel interface
 OLED/TFT Display support
 Multiple boards together
 
@@ -166,7 +166,7 @@ Groups instead of favourites?
 Flag clarification (Auto -> System = nondeletable, some error flags?)
 Value names?... send with separate fcn? or just make it fixed ahead?
 
-Register, IDList, DataList cleanup (possibly make datalist data oriented)
+Register, IDList, DataList cleanup (possibly make datalist data oriented... that makes it ByteArray technically?)
 Split up individual functions in geometry, possibly combine multiple in one
 Go over BLE functions, spread out sending/recieving delay, better compression
 Operation - prevent recursion

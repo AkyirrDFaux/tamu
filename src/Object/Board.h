@@ -35,14 +35,15 @@ void BoardClass::Setup(int32_t Index) // Load Presets
 {
     if (Index == 0 && Values.TypeAt(0) == Types::Board && *Values.At<Boards>(0) == Boards::Undefined) // Double setup prevention
     {
-#if BOARD == 1
+#ifdef BOARD_Tamu_v1_0
         *Values.At<Boards>(0) = Boards::Tamu_v1_0;
         AddModule(new PortClass(15, Ports::GPIO), 0); // J1
         AddModule(new PortClass(13, Ports::GPIO), 1); // J2
         AddModule(new PortClass(14, Ports::GPIO), 2); // J5
         AddModule(new PortClass(2, Ports::GPIO), 3);  // J6
         AddModule(new PortClass(12, Ports::TOut), 4); // J3
-#elif BOARD == 2
+#endif
+#ifdef BOARD_Tamu_v2_0
         ESP32PWM::allocateTimer(0);
         ESP32PWM::allocateTimer(1);
         ESP32PWM::allocateTimer(2);

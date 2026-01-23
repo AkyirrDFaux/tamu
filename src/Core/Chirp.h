@@ -1,5 +1,5 @@
 //ESP32-C3 Warning: Stopping serial freezes board if DTR + RTS enabled
-
+#if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
 #include <BLEDevice.h>
 #include <BLE2902.h>
 
@@ -42,7 +42,7 @@ class MyCallbacks : public BLECharacteristicCallbacks
             
     }
 };
-
+#endif
 class ChirpClass
 {
 public:
