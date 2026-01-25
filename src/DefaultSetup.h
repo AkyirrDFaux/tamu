@@ -1,6 +1,6 @@
 void DefaultSetup()
 {
-    Board.ValueSet<String>("Akyirr", Board.BTName);
+    Board.ValueSet(String("Akyirr"), Board.BTName);
 
     // Display L
     DisplayClass *LD = new DisplayClass();
@@ -206,22 +206,22 @@ void DefaultSetup()
     Operation *AL = new Operation();
     AL->Name = "Blink animation";
     AL->ValueSet<Operations>(Operations::MoveTo, 0);
-    AL->Values.Add(Coord2D(), 1);
-    AL->Values.Add<uint32_t>(0, 2);
+    AL->ValueSet(Coord2D(), 1);
+    AL->ValueSet<uint32_t>(0, 2);
     AL->Modules.Add(IDClass(LG3->ID.Base(), LG3->Position + 1));
     AL->Modules.Add(IDClass(RG3->ID.Base(), RG3->Position + 1));
 
     Operation *OL1 = new Operation();
     OL1->Name = "Blink down";
     OL1->ValueSet<Operations>(Operations::Equal, 0);
-    OL1->Values.Add(Coord2D(0, -5, 0), 1);
+    OL1->ValueSet(Coord2D(0, -5, 0), 1);
     OL1->Modules.Add(IDClass(AL->ID.Base(), 1 + 1));
     P2->AddModule(OL1, 0);
 
     Operation *OL2 = new Operation();
     OL2->Name = "Blink timing";
     OL2->ValueSet<Operations>(Operations::AddDelay, 0);
-    OL2->Values.Add<uint32_t>(250, 1);
+    OL2->ValueSet<uint32_t>(250, 1);
     OL2->Modules.Add(IDClass(AL->ID.Base(), 2 + 1));
     P2->AddModule(OL2, 1);
 
@@ -230,7 +230,7 @@ void DefaultSetup()
     Operation *OL3 = new Operation();
     OL3->Name = "Blink up";
     OL3->ValueSet<Operations>(Operations::Equal, 0);
-    OL3->Values.Add(Coord2D(0, 5, 0), 1);
+    OL3->ValueSet(Coord2D(0, 5, 0), 1);
     OL3->Modules.Add(IDClass(AL->ID.Base(), 1 + 1));
     P2->AddModule(OL3, 3);
 
@@ -240,8 +240,8 @@ void DefaultSetup()
     Operation *OL4 = new Operation();
     OL4->Name = "Blink delay";
     OL4->ValueSet<Operations>(Operations::Delay, 0);
-    OL4->Values.Add<uint32_t>(10000, 1);
-    OL4->Values.Add<uint32_t>(0, 2);
+    OL4->ValueSet<uint32_t>(10000, 1);
+    OL4->ValueSet<uint32_t>(0, 2);
     P2->AddModule(OL4, 6);
 
     // EYE MOVEMENT PROGRAM
@@ -253,32 +253,32 @@ void DefaultSetup()
     Operation *OR2 = new Operation();
     OR2->Name = "Gyroscope gain";
     OR2->ValueSet<Operations>(Operations::Multiply, 0);
-    OR2->Values.Add(IDClass(0, 1+3), 1);
-    OR2->Values.Add(Vector2D(1, -0.5), 2);
-    OR2->Values.Add(Operations::Extract, 3);
-    OR2->Values.Add(IDClass(Board.Modules[12]->ID.Base(), 1 + 1), 4);
-    OR2->Values.Add<uint8_t>(0, 5);
-    OR2->Values.Add<uint8_t>(1, 6);
+    OR2->ValueSet(IDClass(0, 1+3), 1);
+    OR2->ValueSet(Vector2D(1, -0.5), 2);
+    OR2->ValueSet(Operations::Extract, 3);
+    OR2->ValueSet(IDClass(Board.Modules[12]->ID.Base(), 1 + 1), 4);
+    OR2->ValueSet<uint8_t>(0, 5);
+    OR2->ValueSet<uint8_t>(1, 6);
     P3->AddModule(OR2, 1);
 
     Operation *ORL4 = new Operation();
     ORL4->Name = "Eye combine left";
     ORL4->ValueSet<Operations>(Operations::Combine, 0);
-    ORL4->Values.Add(IDClass(0,3+1), 1);
-    ORL4->Values.Add<Number>(0, 2);
-    ORL4->Values.Add(Operations::Add, 3);
-    ORL4->Values.Add(Vector2D(0, 0), 4);
-    ORL4->Values.Add(Vector2D(1.5, 1), 5);
+    ORL4->ValueSet(IDClass(0,3+1), 1);
+    ORL4->ValueSet<Number>(0, 2);
+    ORL4->ValueSet(Operations::Add, 3);
+    ORL4->ValueSet(Vector2D(0, 0), 4);
+    ORL4->ValueSet(Vector2D(1.5, 1), 5);
     P3->AddModule(ORL4, 4);
 
     Operation *ORR4 = new Operation();
     ORR4->Name = "Eye combine right";
     ORR4->ValueSet<Operations>(Operations::Combine, 0);
-    ORR4->Values.Add(IDClass(0,3+1), 1);
-    ORR4->Values.Add<Number>(0, 2);
-    ORR4->Values.Add(Operations::Add, 3);
-    ORR4->Values.Add(Vector2D(0, 0), 4);
-    ORR4->Values.Add(Vector2D(-1.5, 1), 5);
+    ORR4->ValueSet(IDClass(0,3+1), 1);
+    ORR4->ValueSet<Number>(0, 2);
+    ORR4->ValueSet(Operations::Add, 3);
+    ORR4->ValueSet(Vector2D(0, 0), 4);
+    ORR4->ValueSet(Vector2D(-1.5, 1), 5);
     P3->AddModule(ORR4, 5);
 
     OR2->Modules.Add(IDClass(ORL4->ID.Base(), 1 + 4));
@@ -293,21 +293,21 @@ void DefaultSetup()
     Operation *ORLA4 = new Operation();
     ORLA4->Name = "Eye arrow combine left";
     ORLA4->ValueSet<Operations>(Operations::Combine, 0);
-    ORLA4->Values.Add(IDClass(0,3+1), 1);
-    ORLA4->Values.Add<Number>(0, 2);
-    ORLA4->Values.Add(Operations::Add, 3);
-    ORLA4->Values.Add(Vector2D(0, 0), 4);
-    ORLA4->Values.Add(Vector2D(1.5, -1.5), 5);
+    ORLA4->ValueSet(IDClass(0,3+1), 1);
+    ORLA4->ValueSet<Number>(0, 2);
+    ORLA4->ValueSet(Operations::Add, 3);
+    ORLA4->ValueSet(Vector2D(0, 0), 4);
+    ORLA4->ValueSet(Vector2D(1.5, -1.5), 5);
     P3->AddModule(ORLA4, 8);
 
     Operation *ORRA4 = new Operation();
     ORRA4->Name = "Eye arrow combine right";
     ORRA4->ValueSet<Operations>(Operations::Combine, 0);
-    ORRA4->Values.Add(IDClass(0,3+1), 1);
-    ORRA4->Values.Add<Number>(0, 2);
-    ORRA4->Values.Add(Operations::Add, 3);
-    ORRA4->Values.Add(Vector2D(0, 0), 4);
-    ORRA4->Values.Add(Vector2D(-1.5, -1.5), 5);
+    ORRA4->ValueSet(IDClass(0,3+1), 1);
+    ORRA4->ValueSet<Number>(0, 2);
+    ORRA4->ValueSet(Operations::Add, 3);
+    ORRA4->ValueSet(Vector2D(0, 0), 4);
+    ORRA4->ValueSet(Vector2D(-1.5, -1.5), 5);
     P3->AddModule(ORRA4, 9);
 
     OR2->Modules.Add(IDClass(ORLA4->ID.Base(), 1 + 4));
@@ -326,14 +326,14 @@ void DefaultSetup()
     Operation *OSNE = new Operation();
     OSNE->Name = "Normal Enable";
     OSNE->ValueSet<Operations>(Operations::ResetFlags, 0);
-    OSNE->Values.Add(FlagClass(Flags::Inactive), 1);
+    OSNE->ValueSet(FlagClass(Flags::Inactive), 1);
     OSNE->Modules.Add(RS2->ID);
     OSNE->Modules.Add(LS2->ID);
 
     Operation *OSND = new Operation();
     OSND->Name = "Normal Disable";
     OSND->ValueSet<Operations>(Operations::SetFlags, 0);
-    OSND->Values.Add(FlagClass(Flags::Inactive), 1);
+    OSND->ValueSet(FlagClass(Flags::Inactive), 1);
     OSND->Modules.Add(RS2A->ID);
     OSND->Modules.Add(LS2A->ID);
 
@@ -348,14 +348,14 @@ void DefaultSetup()
     Operation *OSAE = new Operation();
     OSAE->Name = "Arrow Enable";
     OSAE->ValueSet<Operations>(Operations::ResetFlags, 0);
-    OSAE->Values.Add(FlagClass(Flags::Inactive), 1);
+    OSAE->ValueSet(FlagClass(Flags::Inactive), 1);
     OSAE->Modules.Add(RS2A->ID);
     OSAE->Modules.Add(LS2A->ID);
 
     Operation *OSAD = new Operation();
     OSAD->Name = "Arrow Disable";
     OSAD->ValueSet<Operations>(Operations::SetFlags, 0);
-    OSAD->Values.Add(FlagClass(Flags::Inactive), 1);
+    OSAD->ValueSet(FlagClass(Flags::Inactive), 1);
     OSAD->Modules.Add(RS2->ID);
     OSAD->Modules.Add(LS2->ID);
 

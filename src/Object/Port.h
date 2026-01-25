@@ -30,14 +30,14 @@ public:
     void RemoveModule(BaseClass *Object);
 
     int32_t CountLED();
-    void AssignLED();
+    void AssignLED(uint8_t Pin);
 };
 
 PortClass::PortClass(uint8_t NewPin, PortTypeClass NewPortType) : BaseClass() // Created by Board
 {
-    Values.Add(NewPortType);
-    Values.Add(NewPin);
-    Values.Add(Drivers::None);
+    ValueSet(NewPortType);
+    ValueSet(NewPin);
+    ValueSet(Drivers::None);
 
     Type = ObjectTypes::Port;
     Name = "Port";

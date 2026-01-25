@@ -5,29 +5,27 @@ uint32_t DeltaTime = 0;
 
 #include "ClassHeader.h"
 
-//Hardware related
+// Hardware related
 #include "Basic\Base.h"
 #include "Basic\Hardware.h"
 #include "Basic\Memory.h"
 #include "Basic\Number.h"
 #include "Basic\MathAndType.h"
 
-//Data types
+// Data types
 #include "Data\Colour.h"
 #include "Data\Vector2D.h"
 #include "Data\Coord2D.h"
 #include "Data\Vector3D.h"
 #include "Data\ValueEnums.h"
 
-//Core system
+// Core system
 #include "Core\Enum.h"
 #include "Core\ID.h"
 #include "Core\ByteArray.h"
 #include "Core\Objects.h"
-RegisterClass Objects;
-
-#include "Core\DataList.h" //For simple data types
 #include "Core\Register.h"
+RegisterClass Objects;
 #include "Core\IDList.h" //For objects (compound/type varying data types)
 #include "Core\BaseClass.h"
 
@@ -38,11 +36,11 @@ IDList Sensors;  // EX: Sensor
 IDList Programs; // Ex: Emotes
 IDList Outputs;  // Ex: Display, Fan, Servo
 
-//Programs
+// Programs
 #include "Object\Operation.h"
 #include "Object\Program.h"
 
-//Objects
+// Objects
 #include "Object\Port.h"
 #include "Object\AccGyr.h"
 #include "Object\Input.h"
@@ -52,25 +50,25 @@ BoardClass Board;
 #include "Object\Fan.h"
 #include "Object\Servo.h"
 
-//LED strip
+// LED strip
 #include "Object\Texture1D.h"
 #include "Object\LEDSegment.h"
 #include "Object\LEDStrip.h"
 
-//Display
+// Display
 #include "Object\Geometry2D.h"
 #include "Object\Texture2D.h"
 #include "Object\Shape2D.h"
 #include "Object\Display.h"
 
-//Unrelated to messages
-#include "Function\Port.h" 
-//Messages
-#include "Function\Base.h" 
+// Unrelated to messages
+#include "Function\Port.h"
+// Messages
+#include "Function\Base.h"
 #include "Function\Save.h"
 #include "Function\Values.h"
 
-#include "DefaultSetup.h" 
+#include "DefaultSetup.h"
 
 void setup()
 {
@@ -79,9 +77,9 @@ void setup()
     Serial.begin((long)115200);
     Board.Setup(0);
 
-    if (1)
-        DefaultSetup();
-    else
+    // if (1)
+    DefaultSetup();
+    /*else
     {
         File Root = LittleFS.open("/", "r");
         String File = Root.getNextFileName();
@@ -94,13 +92,13 @@ void setup()
             File = Root.getNextFileName();
         }
         Root.close();
-    }
+    }*/
 
-    Chirp.Begin(*Board.Values.At<String>(Board.BTName));
+    Chirp.Begin(Board.ValueGet<String>(Board.BTName));
 
-    Serial.println(Objects.ContentDebug());
+    Objects.ContentDebug();
     TimeUpdate();
-    *Board.Values.At<uint32_t>(Board.BootTime) = CurrentTime;
+    Board.ValueSet<uint32_t>(CurrentTime,Board.BootTime);
 
     bool AllRun = false;
     while (AllRun == false)
@@ -117,31 +115,31 @@ void setup()
 void loop()
 {
     Chirp.Communicate();
-    //Serial.print("C:" + String(millis() - CurrentTime));
+    // Serial.print("C:" + String(millis() - CurrentTime));
 
     for (int32_t Index = 0; Index < Sensors.Length; Sensors.Iterate(&Index))
         Sensors[Index]->Run();
-    //Serial.print(", S:" + String(millis() - CurrentTime));
+    // Serial.print(", S:" + String(millis() - CurrentTime));
 
-    //Serial.println("P");
+    // Serial.println("P");
     for (int32_t Index = 0; Index < Programs.Length; Programs.Iterate(&Index))
     {
         if (((Programs[Index]->Flags == Inactive) == false) && ((Programs[Index]->Flags == RunLoop) || (Programs[Index]->Flags == RunOnce)))
             Programs[Index]->Run();
     }
-    //Serial.print(", P:" + String(millis() - CurrentTime));
+    // Serial.print(", P:" + String(millis() - CurrentTime));
 
-    //Serial.println("O");
+    // Serial.println("O");
     for (int32_t Index = 0; Index < Outputs.Length; Outputs.Iterate(&Index))
         Outputs[Index]->Run();
-    //Serial.println("L");
-    //Serial.print(", O:" + String(millis() - CurrentTime));
+    // Serial.println("L");
+    // Serial.print(", O:" + String(millis() - CurrentTime));
 
-    FastLED.show(); //around 6s
-    //Serial.println(", L:" + String(millis() - CurrentTime));
+    FastLED.show(); // around 6s
+    // Serial.println(", L:" + String(millis() - CurrentTime));
 
     TimeUpdate();
-    //Serial.println(DeltaTime);
+    // Serial.println(DeltaTime);
     Board.UpdateLoopTime();
 };
 
@@ -151,6 +149,7 @@ Crash (Delete/Create) Safety
 Saving, switch to littleFS - fallback?
 
 All-display filters
+Better LED strip functions
 
 App Programming view
 App Presets/blocks
@@ -161,19 +160,19 @@ OLED/TFT Display support
 Multiple boards together
 
 ADJUSTMENTS:
-use final keyword
-Groups instead of favourites? 
+use more const, final, inline keywords
+Groups instead of favourites?
 Flag clarification (Auto -> System = nondeletable, some error flags?)
-Value names?... send with separate fcn? or just make it fixed ahead?
+Value names?... send with separate fcn? or just make it fixed ahead with virtual fcn?
 
-Register, IDList, DataList cleanup (possibly make datalist data oriented... that makes it ByteArray technically?)
-Split up individual functions in geometry, possibly combine multiple in one
+Register, IDList cleanup
+Split up individual functions in geometry, possibly combine multiple in one, remove shape2D?
 Go over BLE functions, spread out sending/recieving delay, better compression
-Operation - prevent recursion
+Operation - prevent recursion, remove unnecessary loops in fuction calls
+Split up inputs and sensors into separate objects
 
-RAM saving - Names/Strings only on flash, data-orient DataList
-BUGS:
-Incorrect wraping of LED strip
+More optimised ByteArray functions (with references, GetNext, TypeNext)
+RAM saving - Names/Strings only on flash
 */
 
 // 20.07.2024 Started over >:)
@@ -202,3 +201,4 @@ Incorrect wraping of LED strip
 // 02.01.2026 Display layer-based rendering, -30% loop time!
 // 13.01.2026 Nested operations
 // 22.01.2026 Improved port and bus system, module attach/detach events, removed ObjectList
+// 25.01.2026 DataList adapted into ByteArray, -4kb RAM on ~70 Objects

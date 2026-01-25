@@ -9,26 +9,25 @@ public:
     ~ByteArray();
     template <class C>
     ByteArray(const C &Data);
-    ByteArray(const char *Data, int32_t DataLength);
-    void operator=(const ByteArray &Other);
+    ByteArray(const char *Data, int32_t DataLength); // Raw data input
+    void operator=(const ByteArray &Other);          // Copy
+
+    ByteArray operator<<(const ByteArray &Data) const; // Concatenation, creates new
+
+    int32_t GetStart(int32_t Index) const; // Get byte-index of index-th type
+    int32_t GetNumberOfValues() const;     // Length in values/types
+    int32_t DataSize(int32_t Pointer) const;
+    void Resize(int32_t Index, int32_t NewDataSize, int32_t *Start); // Prepare index-th entry for data of specified size
+    Types Type(int32_t Index) const;
     template <class C>
-    bool operator==(const C Other) const;
-
-    ByteArray operator<<(const ByteArray &Data); //Concatenation
-
-    ByteArray SubArray(int32_t Index, int32_t NewLength = -1) const;
-    ByteArray AddLength() const;
-    ByteArray ExtractMessage();
-    ByteArray ExtractPart();
-
-    Types Type() const;
-    int32_t SizeOfData() const;   // Size of data
-    int32_t SizeWithType() const; // Size of type+length+data
-
+    C Get(int32_t Index) const; // Assumes it's valid, and type is checked
     template <class C>
-    C As() const;
-    template <class C>
-    operator C() const;
+    void Set(C Data, int32_t Index = -1);
+    void Copy(ByteArray &Source, int32_t From, int32_t To); // Set, but without specified type
+
+    ByteArray SubArray(int32_t Start, int32_t NewLength = -1) const; // Creates new
+    ByteArray CreateMessage() const;                                 // Converts values + adds length
+    ByteArray ExtractMessage();                                      // Removes length + converts values
 
     void WriteToFile(const String &FileName);
     String ToHex();
@@ -71,56 +70,6 @@ ByteArray::ByteArray(const String &Data)
     memcpy(Array + sizeof(Types) + sizeof(DataLength), Data.c_str(), DataLength);
 };
 
-#if USE_FIXED_POINT == 1
-template <>
-ByteArray::ByteArray(const Number &Data)
-{
-    Types Type = GetType<Number>();
-    float Value = Data;
-    Length = sizeof(Types) + sizeof(Data);
-    Array = new char[Length];
-
-    memcpy(Array, &Type, sizeof(Types));
-    memcpy(Array + sizeof(Types), &Value, sizeof(Data));
-};
-
-template <>
-ByteArray::ByteArray(const Vector2D &Data)
-{
-    Types Type = GetType<Vector2D>();
-    float Value[] = {Data.X, Data.Y};
-    Length = sizeof(Types) + sizeof(Data);
-    Array = new char[Length];
-
-    memcpy(Array, &Type, sizeof(Types));
-    memcpy(Array + sizeof(Types), Value, sizeof(Data));
-};
-
-template <>
-ByteArray::ByteArray(const Vector3D &Data)
-{
-    Types Type = GetType<Vector3D>();
-    float Value[] = {Data.X, Data.Y, Data.Z};
-    Length = sizeof(Types) + sizeof(Data);
-    Array = new char[Length];
-
-    memcpy(Array, &Type, sizeof(Types));
-    memcpy(Array + sizeof(Types), Value, sizeof(Data));
-};
-
-template <>
-ByteArray::ByteArray(const Coord2D &Data)
-{
-    Types Type = GetType<Coord2D>();
-    float Value[] = {Data.Offset.X, Data.Offset.Y, Data.Rotation.X, Data.Rotation.Y};
-    Length = sizeof(Types) + sizeof(Data);
-    Array = new char[Length];
-
-    memcpy(Array, &Type, sizeof(Types));
-    memcpy(Array + sizeof(Types), Value, sizeof(Data));
-};
-#endif
-
 ByteArray::ByteArray(const char *Data, int32_t DataLength)
 {
     if (Data == nullptr)
@@ -133,25 +82,21 @@ ByteArray::ByteArray(const char *Data, int32_t DataLength)
 
 void ByteArray::operator=(const ByteArray &Other)
 {
+    if (this == &Other)
+        return;
+
     if (Length != Other.Length)
     {
         if (Array != nullptr)
             delete[] Array;
         Array = new char[Other.Length];
     }
-    memcpy(Array, Other.Array, Other.Length);
+    if (Other.Length > 0)
+        memcpy(Array, Other.Array, Other.Length);
     Length = Other.Length;
 };
 
-template <class C>
-bool ByteArray::operator==(const C Other) const
-{
-    if (Type() != GetType<C>())
-        return false;
-    return As<C>() == Other;
-}
-
-ByteArray ByteArray::operator<<(const ByteArray &Data)
+ByteArray ByteArray::operator<<(const ByteArray &Data) const
 {
     ByteArray NewArray;
     NewArray.Length = Length + Data.Length;
@@ -162,126 +107,279 @@ ByteArray ByteArray::operator<<(const ByteArray &Data)
     return NewArray;
 };
 
-template <class C>
-C ByteArray::As() const
+void ByteArray::Resize(int32_t Index, int32_t NewDataSize, int32_t *Start)
 {
-    return *(C *)(Array + sizeof(Types));
-};
-
-template <>
-String ByteArray::As() const
-{
-    if (Type() != GetType<String>())
+    if (Array == nullptr) // No data yet
     {
-        ReportError(Status::InvalidType, "ByteArray - invalid type conversion");
-        return "";
-    }
-    if (Length < SizeWithType() || SizeWithType() < 0) // Check if array is long enough
-    {
-        ReportError(Status::InvalidValue, "ByteArray - value incomplete");
-        return "";
+        Length = Index + (sizeof(Types) + NewDataSize); // Padding (n = Index) + Type + Data
+        Array = new char[Length];
+        for (int32_t Pad = 0; Pad <= Index; Pad++) // Reset values (including new one)
+            Array[Pad] = (char)Types::Undefined;
+        *Start = Index;
+        return;
     }
 
-    return String(Array + sizeof(Types) + sizeof(uint8_t), SizeOfData());
+    int32_t NewSize;
+    char *NewArray;
+
+    if (*Start < 0) //  Below length: 1) Create Array 2) Copy 3) Pad 4) Delete old
+    {
+        int32_t NumOfValues = GetNumberOfValues();
+        NewSize = Length + (Index - NumOfValues) + (sizeof(Types) + NewDataSize); // Existing + Padding + New
+        NewArray = new char[NewSize];
+        memcpy(NewArray, Array, Length);
+        for (int32_t Pad = Length; Pad <= Length + (Index - NumOfValues); Pad++) // Reset values (including new one)
+            NewArray[Pad] = (char)Types::Undefined;
+        *Start = Length + (Index - NumOfValues);
+    }
+    else //  Wrong size (Start => 0): 1) Create array 2) Copy before 3) Copy after 4) Delete old
+    {
+        int32_t PreviousDataSize = DataSize(*Start);
+
+        NewSize = Length - PreviousDataSize + NewDataSize; // Existing + Difference
+        NewArray = new char[NewSize];
+        memcpy(NewArray, Array, *Start); // Copy previous
+        NewArray[*Start] = (char)Types::Undefined;
+        int32_t Offset = *Start + sizeof(Types) + PreviousDataSize;
+        memcpy(NewArray + *Start + sizeof(Types) + NewDataSize, Array + Offset, Length - Offset); // Copy after
+    }
+
+    Length = NewSize;
+    delete[] Array;
+    Array = NewArray;
+}
+
+int32_t ByteArray::GetStart(int32_t Index) const
+{
+    // Current index
+    if (Array == nullptr)
+        return -1;
+
+    int32_t Pointer = 0; // Byte-index of search
+
+    for (int32_t Search = 0; Search <= Index; Search++)
+    {
+        if (Pointer >= Length) // Check if type is there, fail if overrun
+            return -1;
+
+        if (Search == Index) // Search sucessful, end
+            return Pointer;
+
+        Pointer += sizeof(Types) + DataSize(Pointer);
+    }
+    return -1;
 };
 
-#if USE_FIXED_POINT == 1
-template <>
-Number ByteArray::As() const
+int32_t ByteArray::GetNumberOfValues() const
 {
-    return *(float*)(Array + sizeof(Types));
+    if (Array == nullptr)
+        return 0;
+    // Current index
+    int32_t Pointer = 0; // Byte-index of search
+    int32_t Search = 0;
+    while (Pointer < Length)
+    {
+        Pointer += sizeof(Types) + DataSize(Pointer);
+        Search++;
+    }
+    return Search;
 };
 
-template <>
-Vector2D ByteArray::As() const
+int32_t ByteArray::DataSize(int32_t Pointer) const
 {
-    return Vector2D(*(float*)(Array + sizeof(Types)), *(float*)(Array + sizeof(Types) + sizeof(Number)));
-};
+    Types Type = (Types)Array[Pointer]; // Get type of block
+    switch (Type)                       // Increment by length of block
+    {
+    case Types::Text:
+        return sizeof(uint8_t) + (uint8_t)Array[Pointer + 1];
+    case Types::IDList:
+        return sizeof(uint8_t) + sizeof(IDClass) * (uint8_t)Array[Pointer + 1];
+    default:
+        return GetDataSize(Type);
+    }
+}
 
-template <>
-Vector3D ByteArray::As() const
+Types ByteArray::Type(int32_t Index) const
 {
-    return Vector3D(*(float*)(Array + sizeof(Types)), *(float*)(Array + sizeof(Types) + sizeof(Number)), *(float*)(Array + sizeof(Types) + sizeof(Number)*2));
-};
+    int32_t Start = GetStart(Index);
 
-template <>
-Coord2D ByteArray::As() const
-{
-    Vector2D Offset = Vector2D(*(float*)(Array + sizeof(Types)), *(float*)(Array + sizeof(Types) + sizeof(Number)));
-    Vector2D Rotation = Vector2D(*(float*)(Array + sizeof(Types) + sizeof(Number) * 2), *(float*)(Array + sizeof(Types) + sizeof(Number) * 3));
-    return Coord2D(Offset, Rotation);
+    if (Start >= 0)
+        return (Types)Array[Start];
+
+    return Types::Undefined; // Invalid
 };
-#endif
 
 template <class C>
-ByteArray::operator C() const
+C ByteArray::Get(int32_t Index) const
 {
-    return As<C>();
+    return *((C *)(Array + GetStart(Index) + sizeof(Types)));
 };
 
-ByteArray ByteArray::SubArray(int32_t Index, int32_t NewLength) const
+template <>
+String ByteArray::Get(int32_t Index) const
+{
+    int32_t Start = GetStart(Index);
+    return String(Array + Start + sizeof(Types) + sizeof(uint8_t), (uint8_t)Array[Start + sizeof(Types)]);
+};
+
+template <class C>
+void ByteArray::Set(C Data, int32_t Index)
+{
+    if (Index == -1)
+        Index = GetNumberOfValues();
+
+    int32_t Start = GetStart(Index);
+    Types CurrentType = Types::Undefined;
+
+    if (Start >= 0) //Get Type (faster)
+        CurrentType = (Types)Array[Start];
+
+    if (CurrentType == GetType<C>()) // Can simply copy, same type
+    {
+        memcpy(Array + Start + sizeof(Types), &Data, GetDataSize(GetType<C>()));
+        return;
+    }
+    else if (CurrentType == Types::Undefined || GetDataSize(CurrentType) != GetDataSize(GetType<C>())) // Wrong length
+    {
+        Resize(Index, GetDataSize(GetType<C>()), &Start);
+    }
+
+    Array[Start] = (char)GetType<C>();
+    memcpy(Array + Start + sizeof(Types), &Data, GetDataSize(GetType<C>()));
+};
+
+template <>
+void ByteArray::Set(String Data, int32_t Index)
+{
+    if (Index == -1)
+        Index = GetNumberOfValues();
+
+    int32_t Start = GetStart(Index);
+    uint8_t DataLength = Data.length();
+
+    Resize(Index, DataLength + sizeof(uint8_t), &Start);
+    Array[Start] = (char)GetType<String>();
+
+    memcpy(Array + Start + sizeof(Types), &DataLength, sizeof(DataLength));
+    memcpy(Array + Start + sizeof(Types) + sizeof(uint8_t), Data.c_str(), DataLength);
+};
+
+void ByteArray::Copy(ByteArray &Source, int32_t From, int32_t To)
+{
+    if (To == -1)
+        To = GetNumberOfValues();
+
+    int32_t FromStart = Source.GetStart(From);
+    int32_t ToStart = GetStart(To);
+    Types TargetType = Types::Undefined;
+    Types CurrentType = Types::Undefined;
+
+    if (FromStart >= 0) //Get Type (faster)
+        TargetType = (Types)Source.Array[FromStart];
+    if (TargetType == Types::Undefined)
+        return;
+    if (ToStart >= 0)
+        CurrentType = (Types)Array[ToStart];
+
+    if (CurrentType == TargetType) // Can simply copy, same type
+    {
+        memcpy(Array + ToStart + sizeof(Types), Source.Array + FromStart + sizeof(Types), Source.DataSize(FromStart));
+        return;
+    }
+    else if (CurrentType == Types::Undefined || GetDataSize(CurrentType) != GetDataSize(TargetType)) // Wrong length
+    {
+        Resize(To, Source.DataSize(FromStart), &ToStart);
+    }
+
+    Array[ToStart] = (char)TargetType;
+    memcpy(Array + ToStart + sizeof(Types), Source.Array + FromStart + sizeof(Types), Source.DataSize(FromStart));
+}
+
+ByteArray ByteArray::SubArray(int32_t Start, int32_t NewLength) const
 {
     if (NewLength == -1)
-        NewLength = Length - Index;
-    return ByteArray(Array + Index, NewLength);
+        NewLength = Length - Start;
+    return ByteArray(Array + Start, NewLength);
 };
 
-ByteArray ByteArray::AddLength() const
+ByteArray ByteArray::CreateMessage() const
 {
-    return ByteArray((char *)&Length, sizeof(Length)) << *this;
+    // TODO convert fixed types
+    ByteArray Buffer = *this;
+#if USE_FIXED_POINT == 1
+    int32_t Pointer = 0;
+    while (Pointer < Buffer.Length)
+    {
+        switch ((Types)Buffer.Array[Pointer]) // Increment by length of block
+        {
+        // case Types::Coord3D:
+        case Types::Coord2D:
+            *(float *)(Buffer.Array + Pointer + 13) = *(Number *)(Buffer.Array + Pointer + 13);
+        case Types::Vector3D:
+            *(float *)(Buffer.Array + Pointer + 9) = *(Number *)(Buffer.Array + Pointer + 9);
+        case Types::Vector2D:
+            *(float *)(Buffer.Array + Pointer + 5) = *(Number *)(Buffer.Array + Pointer + 5);
+        case Types::Number:
+            *(float *)(Buffer.Array + Pointer + 1) = *(Number *)(Buffer.Array + Pointer + 1);
+            break;
+        }
+
+        Pointer += sizeof(Types) + Buffer.DataSize(Pointer);
+    }
+#endif
+    return ByteArray((char *)&Length, sizeof(Length)) << Buffer;
 }
 
 ByteArray ByteArray::ExtractMessage()
 {
-    if (Length < sizeof(uint32_t) || Length < sizeof(uint32_t) + *(uint32_t *)Array)
+    if (Length < sizeof(uint32_t))
         return ByteArray();
 
-    ByteArray Message = SubArray(sizeof(uint32_t), *(uint32_t *)Array);
-    *this = SubArray(sizeof(uint32_t) + *(uint32_t *)Array);
+    uint32_t MessageLength;
+    memcpy(&MessageLength, Array, sizeof(uint32_t));
+
+    if (Length < sizeof(uint32_t) + MessageLength)
+        return ByteArray();
+
+    ByteArray Message = SubArray(sizeof(uint32_t), MessageLength);
+
+    int32_t NewLength = Length - MessageLength - sizeof(uint32_t);
+    char *NewArray = nullptr;
+    if (NewLength > 0)
+    {
+        NewArray = new char[NewLength];
+        memcpy(NewArray, Array + sizeof(uint32_t) + MessageLength, NewLength);
+    }
+    delete[] Array;
+    Array = NewArray;
+    Length = NewLength;
+
+#if USE_FIXED_POINT == 1
+    int32_t Pointer = 0;
+    while (Pointer < Message.Length)
+    {
+        switch ((Types)Message.Array[Pointer])
+        {
+        // case Types::Coord3D:
+        case Types::Coord2D:
+            *(Number *)(Message.Array + Pointer + 13) = *(float *)(Message.Array + Pointer + 13);
+        case Types::Vector3D:
+            *(Number *)(Message.Array + Pointer + 9) = *(float *)(Message.Array + Pointer + 9);
+        case Types::Vector2D:
+            *(Number *)(Message.Array + Pointer + 5) = *(float *)(Message.Array + Pointer + 5);
+        case Types::Number:
+            *(Number *)(Message.Array + Pointer + 1) = *(float *)(Message.Array + Pointer + 1);
+            break;
+        }
+
+        Pointer += sizeof(Types) + Message.DataSize(Pointer);
+    }
+#endif
+
     return Message;
 }
 
-ByteArray ByteArray::ExtractPart()
-{
-    uint32_t PartLength = SizeWithType();
-    if (PartLength < 0)
-        return ByteArray();
-    ByteArray Part = SubArray(0, PartLength);
-    *this = SubArray(PartLength);
-    return Part;
-}
-
-Types ByteArray::Type() const
-{
-    if (Length >= sizeof(Types))
-        return *(Types *)Array;
-
-    ReportError(Status::InvalidValue, "ByteArray - too short, no type");
-    return Types::Undefined;
-};
-
-int32_t ByteArray::SizeOfData() const
-{
-    if (Length < sizeof(Types) + sizeof(uint8_t))
-        return -1;
-    else if (Type() == Types::Text)
-        return *(uint8_t *)(Array + sizeof(Types));
-    else if (Type() == Types::IDList)
-        return (*(uint8_t *)(Array + sizeof(Types))) * sizeof(IDClass);
-    else
-        return GetDataSize(Type());
-};
-
-int32_t ByteArray::SizeWithType() const
-{
-    if (SizeOfData() < 0)
-        return -1;
-    else if (Type() == Types::Text || Type() == Types::IDList)
-        return SizeOfData() + sizeof(Types) + sizeof(uint8_t);
-    else
-        return SizeOfData() + sizeof(Types);
-};
-
+/*
 void ByteArray::WriteToFile(const String &FileName)
 {
     ByteArray Data = AddLength();
@@ -321,7 +419,7 @@ ByteArray ReadFromFile(const String &FileName)
     File.close();
     return Data;
 };
-
+*/
 String ByteArray::ToHex()
 {
     String Text = "";

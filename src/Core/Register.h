@@ -15,29 +15,25 @@ bool RegisterClass::IsValid(IDClass ID, ObjectTypes Filter) const // Returns if 
     return true;
 };
 
-void *RegisterClass::ValueAt(IDClass ID) const // Returns address or nullptr if invalid
+template <class C>
+C RegisterClass::ValueGet(IDClass ID) const // Assumes valid
 {
-    if (IsValidValue(ID) == false)
-        return nullptr;
-
-    return Object[ID.Base()]->Values[ID.ValueIndex()];
+    return Object[ID.Base()]->ValueGet<C>(ID.ValueIndex());
 };
 
 template <class C>
 bool RegisterClass::ValueSet(C Value, IDClass ID)
 {
-    if (IsValidValue(ID) == false)
+    if (IsValid(ID) == false)
         return false;
     return Object[ID.Base()]->ValueSet(Value, ID.ValueIndex());
 }
 
-bool RegisterClass::IsValidValue(IDClass ID, Types Filter) const // Returns if object at index is valid
+Types RegisterClass::ValueTypeAt(IDClass ID) const // Returns if object at index is valid
 {
-    if (IsValid(ID) == false || At(ID)->Values.IsValid(ID.ValueIndex()) == false)
-        return false;
-    if (Filter != Types::Undefined && Object[ID.Base()]->Values.TypeAt(ID.ValueIndex()) != Filter)
-        return false;    
-    return true;
+    if (IsValid(ID) == false)
+        return Types::Undefined;
+    return At(ID)->Values.Type(ID.ValueIndex());
 };
 
 void RegisterClass::Expand(uint32_t NewAllocated) // Expands list to new length
@@ -118,14 +114,11 @@ bool RegisterClass::Unregister(BaseClass *RemovedObject) // Removes object
     return false;
 };
 
-String RegisterClass::ContentDebug() const
+void RegisterClass::ContentDebug() const
 {
-    String Text = "";
-
     for (uint32_t Index = 1; Index <= Registered; Index++)
     {
         if (Object[Index] != nullptr)
-            Text += Object[Index]->ContentDebug();
+            Serial.print(Object[Index]->ContentDebug());
     }
-    return Text;
 }

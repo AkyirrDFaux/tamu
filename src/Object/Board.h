@@ -22,18 +22,18 @@ BoardClass::BoardClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags) // Bo
     Type = ObjectTypes::Board;
     Name = "Board";
 
-    Values.Add(Boards::Undefined);
-    Values.Add(String("Unnamed"));
-    Values.Add((uint32_t)0, BootTime);
-    Values.Add((uint32_t)0, AvgTime);
-    Values.Add((uint32_t)0, MaxTime);
-    Values.Add((int32_t)0, MemoryTotal);
-    Values.Add((int32_t)0, MemoryUsed);
+    ValueSet(Boards::Undefined);
+    ValueSet(String("Unnamed"));
+    ValueSet((uint32_t)0, BootTime);
+    ValueSet((uint32_t)0, AvgTime);
+    ValueSet((uint32_t)0, MaxTime);
+    ValueSet((int32_t)0, MemoryTotal);
+    ValueSet((int32_t)0, MemoryUsed);
 };
 
 void BoardClass::Setup(int32_t Index) // Load Presets
 {
-    if (Index == 0 && Values.TypeAt(0) == Types::Board && *Values.At<Boards>(0) == Boards::Undefined) // Double setup prevention
+    if (Index == 0 && Values.Type(0) == Types::Board && ValueGet<Boards>(0) == Boards::Undefined) // Double setup prevention
     {
 #ifdef BOARD_Tamu_v1_0
         *Values.At<Boards>(0) = Boards::Tamu_v1_0;
@@ -48,7 +48,7 @@ void BoardClass::Setup(int32_t Index) // Load Presets
         ESP32PWM::allocateTimer(1);
         ESP32PWM::allocateTimer(2);
         ESP32PWM::allocateTimer(3);
-        *Values.At<Boards>(0) = Boards::Tamu_v2_0;
+        ValueSet(Boards::Tamu_v2_0, BoardType);
         AddModule(new PortClass(0, Ports::GPIO | Ports::ADC | Ports::PWM), 0); // P1
         AddModule(new PortClass(1, Ports::GPIO | Ports::ADC | Ports::PWM), 1); // P2
         AddModule(new PortClass(9, Ports::GPIO | Ports::PWM), 2);              // P3 - S, no ADC!
@@ -80,18 +80,16 @@ void BoardClass::Setup(int32_t Index) // Load Presets
 
 void BoardClass::UpdateLoopTime()
 {
-    uint32_t *AvgLoopTime = Values.At<uint32_t>(AvgTime);
-    uint32_t *MaxLoopTime = Values.At<uint32_t>(MaxTime);
-    int32_t *MemUsed = Values.At<int32_t>(MemoryUsed);
-    int32_t *MemTotal = Values.At<int32_t>(MemoryTotal);
+    uint32_t AvgLoopTime = ValueGet<uint32_t>(AvgTime);
 
-    *AvgLoopTime = (DeltaTime + *AvgLoopTime * 15) / 16;
-    if (DeltaTime > *MaxLoopTime)
-        *MaxLoopTime = DeltaTime;
+    
+    ValueSet<uint32_t>((DeltaTime + AvgLoopTime * 15) / 16, AvgTime);
+    if (DeltaTime > ValueGet<uint32_t>(MaxTime))
+        ValueSet<uint32_t>(DeltaTime, MaxTime);
     else if (millis() % 20000 < 20)
     {
-        *MaxLoopTime = *AvgLoopTime; // It will copy the object otherwise
-        *MemTotal = ESP.getHeapSize();
-        *MemUsed = ESP.getHeapSize() - ESP.getFreeHeap();
+        ValueSet<uint32_t>(AvgLoopTime, MaxTime);
+        ValueSet<int32_t>(ESP.getHeapSize(), MemoryTotal);
+        ValueSet<int32_t>(ESP.getHeapSize() - ESP.getFreeHeap(), MemoryUsed);
     }
 }

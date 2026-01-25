@@ -23,11 +23,11 @@ GyrAccClass::GyrAccClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags) // 
     Type = ObjectTypes::AccGyr;
     Name = "Acc&Gyr";
 
-    Values.Add(GyrAccs::Undefined);
-    Values.Add(Vector3D());
-    Values.Add(Vector3D());
-    Values.Add(Number(0.5));
-    Values.Add(Number(0.5));
+    ValueSet(GyrAccs::Undefined);
+    ValueSet(Vector3D());
+    ValueSet(Vector3D());
+    ValueSet(Number(0.5));
+    ValueSet(Number(0.5));
 
     Sensors.Add(this);
 };
@@ -40,10 +40,10 @@ void GyrAccClass::Setup(int32_t Index)
     if (I2C == nullptr)
         return;
 
-    if (!(Values.IsValid(DeviceType, Types::AccGyr)))
+    if (Values.Type(DeviceType) != Types::AccGyr)
         return;
 
-    switch (*Values.At<GyrAccs>(DeviceType))
+    switch (ValueGet<GyrAccs>(DeviceType))
     {
     case GyrAccs::LSM6DS3TRC:
         // Initialization
@@ -67,13 +67,12 @@ void GyrAccClass::Setup(int32_t Index)
 
 bool GyrAccClass::Run()
 {
-    uint8_t Buffer[12];
-    Vector3D *Acc = Values.At<Vector3D>(Acceleration);
-    Vector3D *Rot = Values.At<Vector3D>(AngularRate);
-    Number *AccFilter = Values.At<Number>(AccelerationFilter);
-    Number *RotFilter = Values.At<Number>(AngularFilter);
+    uint16_t Buffer[6];
 
-    if (I2C == nullptr || Acc == nullptr || Rot == nullptr || AccFilter == nullptr || RotFilter == nullptr)
+    if (Values.Type(Acceleration) != Types::Vector3D || Values.Type(AngularRate) != Types::Vector3D || Values.Type(AccelerationFilter) != Types::Number || Values.Type(AngularFilter) != Types::Number)
+        return true;
+
+    if (I2C == nullptr)
         return true;
 
     if (OK == false)
@@ -81,7 +80,14 @@ bool GyrAccClass::Run()
 
     if (I2C->available() >= 12) // Data ready
     {
-        I2C->readBytes(Buffer, 12);
+        Vector3D AccTemp;
+        Vector3D RotTemp;
+        Vector3D Acc = ValueGet<Vector3D>(Acceleration);
+        Vector3D Rot = ValueGet<Vector3D>(AngularRate);
+        Number AccFilter = ValueGet<Number>(AccelerationFilter);
+        Number RotFilter = ValueGet<Number>(AngularFilter);
+
+        I2C->readBytes((uint8_t *)Buffer, 12);
 
         // Request more
         I2C->beginTransmission(0b1101010); // 0b1101011 or 0b1101010 + write
@@ -89,20 +95,15 @@ bool GyrAccClass::Run()
         I2C->endTransmission();
         I2C->requestFrom(0b1101010, 12); // 0b1101011 or 0b1101010 + read
 
-        int16_t num;
-        memcpy(&num, Buffer, 2);
-        Rot->X = (Number(num) / 939) * (1 / (1 + *RotFilter)) + Rot->X * (*RotFilter / (1 + *RotFilter)); // 2000 * (pi / 180) / 32 768
-        memcpy(&num, Buffer + 2, 2);
-        Rot->Y = (Number(num) / 939) * (1 / (1 + *RotFilter)) + Rot->Y * (*RotFilter / (1 + *RotFilter));
-        memcpy(&num, Buffer + 4, 2);
-        Rot->Z = (Number(num) / 939) * (1 / (1 + *RotFilter)) + Rot->Z * (*RotFilter / (1 + *RotFilter));
-        memcpy(&num, Buffer + 6, 2);
-        Acc->X = (Number(num) / 209) * (1 / (1 + *AccFilter)) + Acc->X * (*AccFilter / (1 + *AccFilter)); // 16 * g / 32 768
-        memcpy(&num, Buffer + 8, 2);
-        Acc->Y = (Number(num) / 209) * (1 / (1 + *AccFilter)) + Acc->Y * (*AccFilter / (1 + *AccFilter));
-        memcpy(&num, Buffer + 10, 2);
-        Acc->Z = (Number(num) / 209) * (1 / (1 + *AccFilter)) + Acc->Z * (*AccFilter / (1 + *AccFilter));
+        RotTemp.X = (Number(Buffer[0]) / 939) * (1 / (1 + RotFilter)) + Rot.X * (RotFilter / (1 + RotFilter)); // 2000 * (pi / 180) / 32 768
+        RotTemp.Y = (Number(Buffer[1]) / 939) * (1 / (1 + RotFilter)) + Rot.Y * (RotFilter / (1 + RotFilter));
+        RotTemp.Z = (Number(Buffer[2]) / 939) * (1 / (1 + RotFilter)) + Rot.Z * (RotFilter / (1 + RotFilter));
+        AccTemp.X = (Number(Buffer[3]) / 209) * (1 / (1 + AccFilter)) + Acc.X * (AccFilter / (1 + AccFilter)); // 16 * g / 32 768
+        AccTemp.Y = (Number(Buffer[4]) / 209) * (1 / (1 + AccFilter)) + Acc.Y * (AccFilter / (1 + AccFilter));
+        AccTemp.Z = (Number(Buffer[5]) / 209) * (1 / (1 + AccFilter)) + Acc.Z * (AccFilter / (1 + AccFilter));
 
+        ValueSet(RotTemp, AngularRate);
+        ValueSet(AccTemp, Acceleration);
         // Serial.println(Rot->AsString() + " " + Acc->AsString());
     }
 

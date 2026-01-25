@@ -16,7 +16,7 @@ public:
 ServoClass::ServoClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
 {
     BaseClass::Type = ObjectTypes::Servo;
-    Values.Add<uint8_t>(0);
+    ValueSet<uint8_t>(0);
     Name = "Servo";
     Outputs.Add(this);
 };
@@ -28,11 +28,9 @@ ServoClass::~ServoClass()
 
 bool ServoClass::Run()
 {
-    uint8_t *Angle = Values.At<uint8_t>(Value::Angle);
-
-    if (Angle == nullptr)
+    if (Values.Type(Angle) != Types::Byte)
     {
-        ReportError(Status::MissingModule);
+        ReportError(Status::MissingModule, "Servo");
         return true;
     }
 
@@ -41,6 +39,7 @@ bool ServoClass::Run()
         ReportError(Status::PortError, "Servo");
         return true;
     }
-    ServoDriver->write(*Angle);
+
+    ServoDriver->write(ValueGet<uint8_t>(Value::Angle));
     return true;
 };

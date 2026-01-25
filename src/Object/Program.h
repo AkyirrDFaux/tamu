@@ -8,7 +8,7 @@ public:
     };
     Program(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     ~Program();
-    bool RunEntry(uint32_t Counter);
+    bool RunEntry(int32_t Counter);
     bool Run();
 };
 
@@ -17,8 +17,8 @@ Program::Program(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
     Type = ObjectTypes::Program;
     Name = "Program";
 
-    Values.Add(ProgramTypes::None);
-    Values.Add<uint32_t>(0);
+    ValueSet(ProgramTypes::None);
+    ValueSet<int32_t>(0);
 
     Programs.Add(this);
 }
@@ -28,7 +28,7 @@ Program::~Program()
     Programs.Remove(this);
 }
 
-bool Program::RunEntry(uint32_t Counter)
+bool Program::RunEntry(int32_t Counter)
 {
     if (Modules.IsValid(Counter) == false)
         return true;
@@ -42,21 +42,23 @@ bool Program::Run()
 {
     bool HasFinished = true;
 
-    ProgramTypes *Mode = Values.At<ProgramTypes>(Value::Mode);
-    uint32_t *Counter = Values.At<uint32_t>(Value::Counter);
+    if(Values.Type(Mode) != Types::Program || Values.Type(Counter) != Types::Integer)
+        return true;
 
-    int CounterInit = *Counter;
-    switch (*Mode)
+    int32_t Counter = ValueGet<int32_t>(Value::Counter);
+
+    int CounterInit = Counter;
+    switch (ValueGet<ProgramTypes>(Value::Mode))
     {
     case ProgramTypes::Sequence:
         HasFinished = false;
-        while (RunEntry(*Counter) == true && !(HasFinished && *Counter >= CounterInit)) // Finished part or (made a step and done)
+        while (RunEntry(Counter) == true && !(HasFinished && Counter >= CounterInit)) // Finished part or (made a step and done)
         {
-            (*Counter)++;
-            if (*Counter >= Modules.Length)
+            Counter++;
+            if (Counter >= Modules.Length)
             {
                 HasFinished = true;
-                *Counter = 0;
+                Counter = 0;
             }
             if (HasFinished && Flags == Flags::RunOnce)
                 break;
@@ -65,7 +67,7 @@ bool Program::Run()
     case ProgramTypes::All:
         //NOT WORKING
         for (int32_t Index = Modules.FirstValid(); Index < Modules.Length; Modules.Iterate(&Index))
-            HasFinished = HasFinished && RunEntry(*Counter);
+            HasFinished = HasFinished && RunEntry(Counter);
         break;
     default:
         break;
@@ -76,6 +78,8 @@ bool Program::Run()
         Flags -= Flags::RunOnce;
         Chirp.Send(ByteArray(Functions::SetFlags) << ID << Flags);
     }
+
+    ValueSet(Counter,Value::Counter);
 
     return HasFinished;
 }

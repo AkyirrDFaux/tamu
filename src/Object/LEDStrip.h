@@ -22,9 +22,9 @@ LEDStripClass::LEDStripClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
     Name = "LED Strip";
     Outputs.Add(this);
 
-    Values.Add(LEDStrips::Undefined);
-    Values.Add<int32_t>(0, Length);
-    Values.Add<uint8_t>(20, Brightness);
+    ValueSet(LEDStrips::Undefined);
+    ValueSet<int32_t>(0, Length);
+    ValueSet<uint8_t>(20, Brightness);
 };
 
 LEDStripClass::~LEDStripClass()
@@ -34,13 +34,9 @@ LEDStripClass::~LEDStripClass()
 
 bool LEDStripClass::Run()
 {
-    LEDStrips *Type = Values.At<LEDStrips>(Value::LEDType);
-    int32_t *Length = Values.At<int32_t>(Value::Length);
-    uint8_t *Brightness = Values.At<uint8_t>(Value::Brightness);
-
-    if (Type == nullptr || Length == nullptr || Brightness == nullptr)
+    if (Values.Type(LEDType) != Types::LEDStrip || Values.Type(Length) != Types::Integer || Values.Type(Brightness) != Types::Byte)
     {
-        ReportError(Status::MissingModule);
+        ReportError(Status::MissingModule, "LED Strip");
         return true;
     }
 
@@ -50,12 +46,16 @@ bool LEDStripClass::Run()
         return true;
     }
 
-    // Iterate over corrected pixel index
-    for (int32_t Index = 0; Index < *Length; Index++)
-    {
-        ColourClass PixelColour = RenderPixel(Index, *Length);
+    LEDStrips Type = ValueGet<LEDStrips>(Value::LEDType);
+    int32_t Length = ValueGet<int32_t>(Value::Length);
+    uint8_t Brightness = ValueGet<uint8_t>(Value::Brightness);
 
-        PixelColour.ToDisplay(*Brightness);
+    // Iterate over corrected pixel index
+    for (int32_t Index = 0; Index < Length; Index++)
+    {
+        ColourClass PixelColour = RenderPixel(Index, Length);
+
+        PixelColour.ToDisplay(Brightness);
         LED[Index].setRGB(PixelColour.R, PixelColour.G, PixelColour.B);
     }
     return true;

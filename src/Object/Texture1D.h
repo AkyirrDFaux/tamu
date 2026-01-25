@@ -18,7 +18,7 @@ public:
 Texture1D::Texture1D(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
 {
     BaseClass::Type = ObjectTypes::Texture1D;
-    Values.Add(Textures1D::None);
+    ValueSet(Textures1D::None);
     Name = "Texture";
 };
 
@@ -26,22 +26,24 @@ void Texture1D::Setup(int32_t Index)
 {
     if (Index != -1 && Index != 0)
         return;
-        
-    Textures1D *Type = Values.At<Textures1D>(TextureType);
-    switch (*Type)
+
+    if (Values.Type(TextureType) != Types::Texture1D)
+        return;
+
+    switch (ValueGet<Textures1D>(TextureType))
     {
     case Textures1D::Point:
     case Textures1D::Blend:
-        if (!Values.IsValid(ColourB))
-            Values.Add(ColourClass(0, 0, 0, 255), ColourB);
-        if (!Values.IsValid(Position))
-            Values.Add<Number>(0, Position);
-        if (!Values.IsValid(Width))
-            Values.Add<Number>(1, Width);
+        if (Values.Type(ColourB) != Types::Colour)
+            ValueSet(ColourClass(0, 0, 0, 255), ColourB);
+        if (Values.Type(Position) != Types::Number)
+            ValueSet<Number>(0, Position);
+        if (Values.Type(Width) != Types::Number)
+            ValueSet<Number>(1, Width);
 
     case Textures1D::Full:
-        if (!Values.IsValid(ColourA))
-            Values.Add(ColourClass(0, 0, 0, 255), ColourA);
+        if (Values.Type(ColourA) != Types::Colour)
+            ValueSet(ColourClass(0, 0, 0, 255), ColourA);
         break;
     default:
         break;
@@ -50,43 +52,55 @@ void Texture1D::Setup(int32_t Index)
 
 ColourClass Texture1D::Render(int32_t PixelPosition)
 {
-    Textures1D *Type = Values.At<Textures1D>(TextureType);
-    ColourClass *ColourA = Values.At<ColourClass>(Value::ColourA);
-    ColourClass *ColourB = Values.At<ColourClass>(Value::ColourB);
-    Number *Position = Values.At<Number>(Value::Position);
-    Number *Width = Values.At<Number>(Value::Width);
+    if (Values.Type(TextureType) != Types::Texture1D)
+    {
+        ReportError(Status::MissingModule, "Texture 1D");
+        return ColourClass();
+    }
+
+    Textures1D Type = ValueGet<Textures1D>(TextureType);
+    ColourClass ColourA;
+    ColourClass ColourB;
+    Number Position;
+    Number Width;
+
+    switch (ValueGet<Textures1D>(TextureType))
+    {
+    case Textures1D::Point:
+    case Textures1D::Blend:
+        if (Values.Type(Value::ColourB) != Types::Colour || Values.Type(Value::Position) != Types::Number || Values.Type(Value::Width) != Types::Number)
+            return ColourClass();
+        ColourB = ValueGet<ColourClass>(Value::ColourB);
+        Position = ValueGet<Number>(Value::Position);
+        Width = ValueGet<Number>(Value::Width);
+    case Textures1D::Full:
+        if (Values.Type(Value::ColourA) != Types::Colour)
+            return ColourClass();
+        ColourB = ValueGet<ColourClass>(Value::ColourA);
+        break;
+    default:
+        break;
+    }
 
     ColourClass Colour;
     Number Distance;
 
-    if (Type == nullptr)
-    {
-        ReportError(Status::MissingModule);
-        return Colour;
-    }
-
-    switch (*Type)
+    switch (Type)
     {
     case Textures1D::Full:
-        if (ColourA == nullptr)
-            break;
-        Colour = *ColourA;
+        Colour = ColourA;
         break;
     case Textures1D::Blend:
-        if (ColourA == nullptr || ColourB == nullptr || Position == nullptr || Width == nullptr)
-            break;
-        Distance = PixelPosition - *Position;
-        Distance = LimitZeroToOne((Distance / *Width / 2) + 0.5);
-        Colour = *ColourB;
-        Colour.Layer(*ColourA, Distance);
+        Distance = PixelPosition - Position;
+        Distance = LimitZeroToOne((Distance / Width / 2) + 0.5);
+        Colour = ColourB;
+        Colour.Layer(ColourA, Distance);
         break;
     case Textures1D::Point:
-        if (ColourA == nullptr || ColourB == nullptr || Position == nullptr || Width == nullptr)
-            break;
-        Distance = abs(PixelPosition - *Position);
-        Distance = LimitZeroToOne((Distance / *Width / 2) + 0.5);
-        Colour = *ColourB;
-        Colour.Layer(*ColourA, Distance);
+        Distance = abs(PixelPosition - Position);
+        Distance = LimitZeroToOne((Distance / Width / 2) + 0.5);
+        Colour = ColourB;
+        Colour.Layer(ColourA, Distance);
         break;
     }
     return Colour;

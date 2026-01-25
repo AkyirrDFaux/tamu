@@ -21,7 +21,7 @@ InputClass::InputClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
     BaseClass::Type = ObjectTypes::Input;
     Name = "Input";
 
-    Values.Add(Inputs::Undefined, InputType);
+    ValueSet(Inputs::Undefined, InputType);
 
     Sensors.Add(this);
 };
@@ -36,19 +36,18 @@ void InputClass::Setup(int32_t Index)
     if (Index != -1 && Index != 0)
         return;
 
-    // Deletion of previous values
-    Values.Delete(Input);
-    Values.Delete(Indicator);
+    if (Values.Type(InputType) != Types::Input)
+        return;
 
-    switch (*Values.At<Inputs>(InputType))
+    switch (ValueGet<Inputs>(InputType))
     {
     case Inputs::ButtonWithLED:
-        Values.Add(false, Indicator);
+        ValueSet(false, Indicator);
     case Inputs::Button:
-        Values.Add(false, Input);
+        ValueSet(false, Input);
         break;
     case Inputs::Analog:
-        Values.Add((int32_t)0, Input);
+        ValueSet<int32_t>(0, Input);
         break;
     default:
         break;
@@ -57,29 +56,28 @@ void InputClass::Setup(int32_t Index)
 
 bool InputClass::Run()
 {
-    Inputs *Type = Values.At<Inputs>(InputType);
-
-    if (Type == nullptr)
+    if (Values.Type(InputType) != Types::Input)
     {
-        ReportError(Status::MissingModule);
+        ReportError(Status::MissingModule, "Input");
         return true;
     }
+
     if (Pin == -1)
     {
         ReportError(Status::PortError, "Input");
         return true;
     }
 
-    switch (*Type)
+    switch (ValueGet<Inputs>(InputType))
     {
     case Inputs::Button:
-        *Values.At<bool>(Input) = !digitalRead(Pin); // Inverted
+        ValueSet<bool>(!digitalRead(Pin), Input); // Inverted
         break;
     case Inputs::Analog:
-        *Values.At<int32_t>(Input) = analogRead(Pin);
+        ValueSet<int32_t>(analogRead(Pin), Input);
         break;
     case Inputs::ButtonWithLED:
-        if (*Values.At<bool>(Indicator))
+        if (ValueGet<bool>(Indicator))
         {
             pinMode(Pin, OUTPUT);
             digitalWrite(Pin, LOW); // Inverted
@@ -87,7 +85,7 @@ bool InputClass::Run()
         else // Applies blocking
         {
             pinMode(Pin, INPUT);
-            *Values.At<bool>(Input) = !digitalRead(Pin); // Inverted
+            ValueSet<bool>(!digitalRead(Pin), Input); // Inverted
         }
         break;
     default:

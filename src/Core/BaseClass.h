@@ -47,115 +47,48 @@ BaseClass::~BaseClass()
 };
 
 template <class C>
-bool BaseClass::ValueSet(C Value, int32_t Index)
+C BaseClass::ValueGet(int32_t Index) const
 {
-    if (Values.TypeAt(Index) != GetType<C>())
-        return false;
-
-    memcpy((void *)Values.At<C>(Index), &Value, GetDataSize(GetType<C>()));
-    Setup(Index);
-    return true;
+    return Values.Get<C>(Index);
 }
 
-template <>
-bool BaseClass::ValueSet(String Value, int32_t Index)
+template <class C>
+bool BaseClass::ValueSet(C Value, int32_t Index)
 {
-    if (Values.TypeAt(Index) != Types::Text)
-        return false;
-
-    *Values.At<String>(Index) = Value;
+    Values.Set(Value, Index);
     Setup(Index);
     return true;
 }
 
 ByteArray BaseClass::OutputValues(int32_t Value) const
 {
-    ByteArray Data = ByteArray();
-    Types Type = Types::Undefined;
-    for (uint32_t Index = max((int32_t)0, Value - 1); Index < Values.Length; Index++)
-    {
-        Type = Values.Type[Index];
-        if (Type == Types::Text)
-            Data = Data << ByteArray(*Values.At<String>(Index));
-        else if (Type == Types::IDList)
-            Data = Data << ByteArray(*Values.At<IDList>(Index));
-#if USE_FIXED_POINT == 1
-        else if (Type == Types::Number)
-            Data = Data << ByteArray(*Values.At<Number>(Index));
-        else if (Type == Types::Vector2D)
-            Data = Data << ByteArray(*Values.At<Vector2D>(Index));
-        else if (Type == Types::Vector3D)
-            Data = Data << ByteArray(*Values.At<Vector3D>(Index));
-        else if (Type == Types::Coord2D)
-            Data = Data << ByteArray(*Values.At<Coord2D>(Index));
-#endif
-        else if (Type == Types::Undefined)
-            Data = Data << ByteArray((char *)&Type, sizeof(Types));
-        else
-            Data = Data << ByteArray((char *)&Type, sizeof(Types)) << ByteArray((char *)Values.Data[Index], GetDataSize(Type));
+    if (Value == 0)
+        return Values;
 
-        if (Value != 0)
-            break;
-    }
-    return Data;
+    Value--; //ID to ValueIndex
+    int32_t Start = Values.GetStart(Value);
+    int32_t End = Values.GetStart(Value + 1);
+
+    if (Start < 0)
+        return ByteArray();
+    else if (End < 0)
+        return Values.SubArray(Start);
+    else
+        return Values.SubArray(Start, End - Start);
 };
 
-bool BaseClass::InputValues(ByteArray &Input, uint8_t Value)
+bool BaseClass::InputValues(ByteArray &Input, int32_t Index, uint8_t Value)
 {
     // Value == 0 is everything, > 0 only one specified
-    ByteArray Part = Input.ExtractPart();
-    int32_t Index = max(Value - 1, 0);
-    while (Part.Length > 0 && (Value == 0 || (Value - 1 == Index && Value != 0)))
-    {
-        if (Part.Type() == Types::Undefined)
-        {
-            Part = Input.ExtractPart();
-            Index++;
-            continue;
-        }
-
-        if (Values.IsValid(Index, Part.Type()) == false) // Prepare for copying
-        {
-            if (Values.IsValid(Index)) // Already occupied, but different type
-                Values.Delete(Index);
-            else // Possibly not allocated yet
-                Values.Expand(Index + 1);
-
-            if (Part.Type() == Types::Text)
-                Values.Data[Index] = new String;
-            else if (Part.Type() == Types::IDList)
-                Values.Data[Index] = new IDList;
-            else
-                Values.Data[Index] = new char[Part.SizeOfData()];
-
-            Values.Type[Index] = Part.Type();
-        }
-
-        if (Part.Type() == Types::Text)
-            *Values.At<String>(Index) = Part.As<String>();
-        else if (Part.Type() == Types::IDList)
-            *Values.At<IDList>(Index) = Part.As<IDList>();
-#if USE_FIXED_POINT == 1
-        else if (Part.Type() == Types::Number)
-            *Values.At<Number>(Index) = Part.As<Number>();
-        else if (Part.Type() == Types::Vector2D)
-            *Values.At<Vector2D>(Index) = Part.As<Vector2D>();
-        else if (Part.Type() == Types::Vector3D)
-            *Values.At<Vector3D>(Index) = Part.As<Vector3D>();
-        else if (Part.Type() == Types::Coord2D)
-            *Values.At<Coord2D>(Index) = Part.As<Coord2D>();
-#endif
-        else
-            memcpy(Values.Data[Index], Part.Array + sizeof(Types), Part.SizeOfData());
-
-        Part = Input.ExtractPart();
-        Index++;
-
-        if (Value != 0)
-            Setup(Index);
-    }
     if (Value == 0)
+    {
+        Values = Input.SubArray(Input.GetStart(Index));
         Setup(-1);
+        return true;
+    }
 
+    Value--; //ID to ValueIndex
+    Values.Copy(Input, Index, Value);
+    Setup(Value);
     return true;
 }

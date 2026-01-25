@@ -1,7 +1,16 @@
 void ReadValue(ByteArray &Input)
 {
-    ByteArray ID = Input.ExtractPart();
-    if (ID.Type() != Types::ID || !Objects.IsValid(ID))
+    Types IDType = Input.Type(1);
+
+    if (IDType != Types::ID)
+    {
+        Chirp.Send(ByteArray(Status::InvalidType) << Input);
+        return;
+    }
+
+    IDClass ID = Input.Get<IDClass>(1);
+
+    if (!Objects.IsValid(ID))
     {
         Chirp.Send(ByteArray(Status::InvalidID) << Input);
         return;
@@ -19,8 +28,17 @@ void ReadValue(ByteArray &Input)
 
 void WriteValue(ByteArray &Input)
 {
-    ByteArray ID = Input.ExtractPart();
-    if (ID.Type() != Types::ID || !Objects.IsValid(ID))
+    Types IDType = Input.Type(1);
+
+    if (IDType != Types::ID)
+    {
+        Chirp.Send(ByteArray(Status::InvalidType) << Input);
+        return;
+    }
+
+    IDClass ID = Input.Get<IDClass>(1);
+
+    if (!Objects.IsValid(ID))
     {
         Chirp.Send(ByteArray(Status::InvalidID) << Input);
         return;
@@ -33,14 +51,14 @@ void WriteValue(ByteArray &Input)
         Chirp.Send(ByteArray(Status::AutoObject) << Input);
         return;
     }
-    else if (Object->InputValues(Input, ID.As<IDClass>().Sub()) == false)
+    else if (Object->InputValues(Input, 2, ID.Sub()) == false)
     {
         Chirp.Send(ByteArray(Status::InvalidType) << Input);
         return;
     }
-    Chirp.Send(ByteArray(Functions::WriteValue) << ID << Object->OutputValues(ID.As<IDClass>().Sub()));
+    Chirp.Send(ByteArray(Functions::WriteValue) << ID << Object->OutputValues(ID.Sub()));
 }
-
+/*
 void ReadFile(ByteArray &Input)
 {
     ByteArray ID = Input.ExtractPart();
@@ -52,3 +70,4 @@ void ReadFile(ByteArray &Input)
 
     Chirp.Send(ByteArray(Functions::ReadFile) << ID << ReadFromFile(String(ID.As<IDClass>())));
 }
+*/

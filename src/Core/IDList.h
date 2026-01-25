@@ -1,15 +1,36 @@
-IDList::IDList(const IDList &Copied)
+inline IDList::IDList(const IDList &Copied)
 {
     Length = Copied.Length;
-    IDs = new IDClass[Length];
-    memcpy(IDs, Copied.IDs, Length * sizeof(IDClass));
+    if (Length > 0)
+    {
+        IDs = new IDClass[Length];
+        memcpy(IDs, Copied.IDs, sizeof(IDClass) * Length);
+    }
+    else
+    {
+        IDs = nullptr;
+    }
 };
 
-void IDList::operator=(const IDList &Copied)
+inline void IDList::operator=(const IDList &Copied)
+
 {
+    if (this == &Copied)
+        return;
+
+    if (IDs != nullptr)
+        delete[] IDs;
+
     Length = Copied.Length;
-    IDs = new IDClass[Length];
-    memcpy(IDs, Copied.IDs, Length * sizeof(IDClass));
+    if (Length > 0)
+    {
+        IDs = new IDClass[Length];
+        memcpy(IDs, Copied.IDs, sizeof(IDClass) * Length);
+    }
+    else
+    {
+        IDs = nullptr;
+    }
 };
 
 // OBJECTS
@@ -55,35 +76,24 @@ void IDList::Iterate(int32_t *Index, ObjectTypes Filter) const
 };
 
 // VALUES
-
-bool IDList::IsValidValue(int32_t Index, Types Filter) const
-{
-    if (Index >= Length || Index < 0)
-        return false;
-
-    return Objects.IsValidValue(IDs[Index], Filter);
-};
-
 Types IDList::ValueTypeAt(int32_t Index) const
 {
-    if (IsValidValue(Index) == false) // Invalid or reference to main obj
+    if (IsValid(Index) == false) // Invalid or reference to main obj
         return Types::Undefined;
 
-    return At(Index)->Values.TypeAt(IDs[Index].ValueIndex());
+    return At(Index)->Values.Type(IDs[Index].ValueIndex());
 };
 
-void *IDList::ValueAt(int32_t Index) const // Returns address or nullptr if invalid
+template <class C>
+C IDList::ValueGet(int32_t Index) const // Assumes valid
 {
-    if (IsValidValue(Index) == false)
-        return nullptr;
-
-    return Objects.ValueAt(IDs[Index]);
+    return Objects.ValueGet<C>(IDs[Index]);
 };
 
 template <class C>
 bool IDList::ValueSet(C Value, int32_t Index)
 {
-    if (IsValidValue(Index) == false)
+    if (IsValid(Index) == false)
         return false;
     return Objects.ValueSet(Value, IDs[Index]);
 }
@@ -202,24 +212,32 @@ String IDList::AsString()
 };
 
 template <>
-IDList ByteArray::As() const
+IDList ByteArray::Get(int32_t Index) const
 {
-    if (Type() != Types::IDList)
-    {
-        ReportError(Status::InvalidType, "ByteArray - invalid type conversion");
-        return IDList();
-    }
-    if (Length < SizeWithType() || SizeWithType() < 0) // Check if array is long enough
-    {
-        ReportError(Status::InvalidValue, "ByteArray - value incomplete");
-        return IDList();
-    }
-
+    int32_t Start = GetStart(Index);
     IDList List;
-    List.Length = SizeOfData() / sizeof(IDClass);
+    uint8_t DataLength = (uint8_t)Array[Start + sizeof(Types)];
+
+    List.Length = DataLength / sizeof(IDClass);
     List.IDs = new IDClass[List.Length];
-    memcpy(List.IDs, Array + sizeof(uint8_t) * 2, SizeOfData());
+    memcpy(List.IDs, Array + sizeof(uint8_t) * 2, DataLength);
     return List;
+};
+
+template <>
+void ByteArray::Set<IDList>(IDList Data, int32_t Index)
+{
+    if (Index == -1)
+        Index = GetNumberOfValues();
+
+    int32_t Start = GetStart(Index);
+    uint8_t DataLength = Data.Length * sizeof(IDClass);
+
+    Resize(Index, DataLength + sizeof(uint8_t), &Start);
+    
+    Array[Start] = (char)GetType<IDList>();
+    memcpy(Array + Start + sizeof(Types), &Data.Length, sizeof(uint8_t));
+    memcpy(Array + Start + sizeof(Types) + sizeof(uint8_t), Data.IDs, Data.Length * sizeof(IDClass));
 };
 
 template <>

@@ -11,10 +11,11 @@ public:
     BaseClass *operator[](IDClass ID) const { return At(ID); };
     bool IsValid(IDClass ID, ObjectTypes Filter = ObjectTypes::Undefined) const;
 
-    void *ValueAt(IDClass ID) const;
+    template <class C>
+    C ValueGet(IDClass ID) const;
     template <class C>
     bool ValueSet(C Value, IDClass ID);
-    bool IsValidValue(IDClass ID, Types Filter = Types::Undefined) const;
+    Types ValueTypeAt(IDClass ID) const;
 
     void Expand(uint32_t NewAllocated);
     void Shorten();
@@ -22,7 +23,7 @@ public:
     bool Register(BaseClass *AddObject, IDClass ID = RandomID);
     bool Unregister(IDClass ID);
     bool Unregister(BaseClass *RemovedObject);
-    String ContentDebug() const;
+    void ContentDebug() const;
 };
 
 class IDList
@@ -30,7 +31,7 @@ class IDList
 public:
     IDClass *IDs = nullptr;
     uint32_t Length = 0;
-
+    
     ~IDList() { RemoveAll(); };
 
     IDList() {};
@@ -44,9 +45,9 @@ public:
     int32_t FirstValid(ObjectTypes Filter = ObjectTypes::Undefined, int32_t Start = 0) const;
     void Iterate(int32_t *Index, ObjectTypes Filter = ObjectTypes::Undefined) const;
 
-    bool IsValidValue(int32_t Index, Types Filter = Types::Undefined) const;
     Types ValueTypeAt(int32_t Index) const;
-    void *ValueAt(int32_t Index) const;
+    template <class C>
+    C ValueGet(int32_t Index) const;
     template <class C>
     bool ValueSet(C Value, int32_t Index);
 
@@ -77,33 +78,6 @@ public:
     bool operator==(Flags Other) { return Values & Other; };
 };
 
-class DataList
-{
-public:
-    Types *Type = nullptr;
-    void **Data = nullptr;
-    int32_t Length = 0;
-
-    ~DataList() { DeleteAll(); };
-
-    void *operator[](int32_t Index) const;
-    template <class C>
-    C *At(int32_t Index) const;
-    Types TypeAt(int32_t Index) const;
-    bool IsValid(int32_t Index, Types TypeCheck = Types::Undefined) const;
-
-    void Expand(int32_t NewLength);
-    void Shorten();
-
-    template <class C>
-    bool Add(C AddObject, int32_t Index = -1);
-    bool Delete(int32_t Index);
-    void DeleteAll();
-
-    template <class C>
-    bool Write(C AddObject, int32_t Index = -1);
-};
-
 class BaseClass
 {
 public:
@@ -113,7 +87,7 @@ public:
     String Name = "";
 
     IDList Modules;
-    DataList Values;
+    ByteArray Values;
 
     BaseClass(IDClass NewID = RandomID, FlagClass NewFlags = Flags::None);
 
@@ -125,17 +99,19 @@ public:
         return true;
     };
 
+    template <class C>
+    C *As() const { return (C *)this; };
+
     virtual void AddModule(BaseClass *Object, int32_t Index = -1) { Modules.Add(Object, Index); };
     virtual void RemoveModule(BaseClass *Object) { Modules.Remove(Object); };
     void Save();
 
     template <class C>
-    C *As() const { return (C *)this; };
-
+    C ValueGet(int32_t Index) const;
     template <class C>
-    bool ValueSet(C Value, int32_t Index);
+    bool ValueSet(C Value, int32_t Index = -1);
 
     ByteArray OutputValues(int32_t Value = 0) const;
-    bool InputValues(ByteArray &Input, uint8_t Value = 0);
+    bool InputValues(ByteArray &Input, int32_t Index, uint8_t Value = 0);
     String ContentDebug();
 };

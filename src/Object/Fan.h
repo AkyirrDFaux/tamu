@@ -18,7 +18,7 @@ FanClass::FanClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
     BaseClass::Type = ObjectTypes::Fan;
     Name = "Fan";
 
-    Values.Add<uint8_t>(0);
+    ValueSet<uint8_t>(0);
     Outputs.Add(this);
 };
 
@@ -29,11 +29,9 @@ FanClass::~FanClass()
 
 bool FanClass::Run()
 {
-    uint8_t *Speed = Values.At<uint8_t>(Value::Speed);
-
-    if (Speed == nullptr)
+    if (Values.Type(Speed) != Types::Byte)
     {
-        ReportError(Status::MissingModule);
+        ReportError(Status::MissingModule, "Fan");
         return true;
     }
 
@@ -42,7 +40,12 @@ bool FanClass::Run()
         ReportError(Status::PortError, "Fan");
         return true;
     }
-    double Val = *Speed;
+
+    uint8_t Speed = ValueGet<uint8_t>(Value::Speed);
+
+    
+
+    double Val = Speed;
     PWM->writeScaled(Val / 255);
     return true;
 };
