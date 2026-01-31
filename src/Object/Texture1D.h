@@ -102,6 +102,8 @@ ColourClass Texture1D::Render(int32_t PixelPosition)
         Colour = ColourB;
         Colour.Layer(ColourA, Distance);
         break;
+    default:
+        break;
     }
     return Colour;
 };

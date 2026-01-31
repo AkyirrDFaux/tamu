@@ -23,10 +23,10 @@ void PortClass::AddModule(BaseClass *Object, int32_t Index)
         case ObjectTypes::Fan:
             if (Index != 0 || Type != Ports::TOut)
                 break;
-            DriverObj = new ESP32PWM();
-            ((ESP32PWM *)DriverObj)->attachPin(Pin, 25000, 8);
+            DriverObj = new PWMDriver();
+            ((PWMDriver *)DriverObj)->attachPin(Pin, 25000, 8);
             ValueSet(Drivers::FanPWM, Value::DriverType);
-            Object->As<FanClass>()->PWM = (ESP32PWM *)DriverObj; // Input to object
+            Object->As<FanClass>()->PWM = (PWMDriver *)DriverObj; // Input to object
             break;
         case ObjectTypes::Input:
             if (Index != 0 || (Type != Ports::ADC && Type != Ports::GPIO))
@@ -47,16 +47,16 @@ void PortClass::AddModule(BaseClass *Object, int32_t Index)
         case ObjectTypes::LEDStrip: // Only first one
             if (Type != Ports::GPIO)
                 break;
-            DriverObj = BeginLED(Object->As<LEDStripClass>()->ValueGet<int32_t>(LEDStripClass::Length), Pin);
+            DriverObj = new LEDDriver(Object->As<LEDStripClass>()->ValueGet<int32_t>(LEDStripClass::Length), Pin);
             ValueSet(Drivers::LED, Value::DriverType);
-            Object->As<LEDStripClass>()->LED = (CRGB *)DriverObj; // Input to object
+            Object->As<LEDStripClass>()->LEDs = ((LEDDriver *)DriverObj)->Offset(0); // Input to object
             break;
         case ObjectTypes::Display: // Only first one
             if (Type != Ports::GPIO)
                 break;
-            DriverObj = BeginLED(Object->As<DisplayClass>()->ValueGet<int32_t>(DisplayClass::Length), Pin);
+            DriverObj = new LEDDriver(Object->As<DisplayClass>()->ValueGet<int32_t>(DisplayClass::Length), Pin);
             ValueSet(Drivers::LED, Value::DriverType);
-            Object->As<DisplayClass>()->LED = (CRGB *)DriverObj; // Input to object
+            Object->As<DisplayClass>()->LEDs = ((LEDDriver *)DriverObj)->Offset(0); // Input to object
             break;
         default:
             break;
@@ -83,8 +83,8 @@ void PortClass::RemoveModule(BaseClass *Object)
     case Drivers::FanPWM: // If one capacity, stop driver
         if (Object != Modules.At(0))
             break;
-        ((ESP32PWM *)DriverObj)->detachPin(Pin);
-        delete (ESP32PWM *)DriverObj;
+        ((PWMDriver *)DriverObj)->detachPin(Pin);
+        delete (PWMDriver *)DriverObj;
         Object->As<FanClass>()->PWM = nullptr; // Remove from obj
         ValueSet(Drivers::None, Value::DriverType);
         break;
@@ -104,9 +104,9 @@ void PortClass::RemoveModule(BaseClass *Object)
         break;
     case Drivers::LED:
         if (Object->Type == ObjectTypes::LEDStrip)
-            Object->As<LEDStripClass>()->LED = nullptr; // Remove from obj
+            Object->As<LEDStripClass>()->LEDs = LEDDriver(); // Remove from obj
         else if (Object->Type == ObjectTypes::Display)
-            Object->As<DisplayClass>()->LED = nullptr;
+            Object->As<DisplayClass>()->LEDs = LEDDriver();
 
         Modules.Remove(Object);
         AssignLED(Pin);
@@ -146,12 +146,12 @@ void PortClass::AssignLED(uint8_t Pin)
 {
     int32_t LEDLength = CountLED();
     int32_t AssignedLength = 0;
-    EndLED((CRGB *)DriverObj);
+    delete ((LEDDriver *)DriverObj);
 
     if (LEDLength <= 0)
         return;
 
-    DriverObj = BeginLED(LEDLength, Pin);
+    DriverObj = new LEDDriver(LEDLength, Pin);
 
     for (int32_t Index = 0; Index < Modules.Length; Index++)
     {
@@ -164,14 +164,14 @@ void PortClass::AssignLED(uint8_t Pin)
             if (Modules[Index]->As<LEDStripClass>()->Values.Type(LEDStripClass::Length) != Types::Integer)
                 continue;
 
-            Modules[Index]->As<LEDStripClass>()->LED = &((CRGB *)DriverObj)[AssignedLength]; // Input to object
+            Modules[Index]->As<LEDStripClass>()->LEDs = ((LEDDriver *)DriverObj)->Offset(AssignedLength); // Input to object
             AssignedLength += Modules[Index]->As<LEDStripClass>()->ValueGet<int32_t>(LEDStripClass::Length);
             break;
         case ObjectTypes::Display:
             if (Modules[Index]->As<DisplayClass>()->Values.Type(DisplayClass::Length) != Types::Integer)
                 continue;
 
-            Modules[Index]->As<DisplayClass>()->LED = &((CRGB *)DriverObj)[AssignedLength]; // Input to object
+            Modules[Index]->As<DisplayClass>()->LEDs = ((LEDDriver *)DriverObj)->Offset(AssignedLength); // Input to object
             AssignedLength += Modules[Index]->As<DisplayClass>()->ValueGet<int32_t>(DisplayClass::Length);
             break;
         default:
@@ -271,3 +271,16 @@ void I2CClass::StopModule(BaseClass *Object)
         break;
     }
 };
+
+#if !defined BOARD_Tamu_v1_0 && !defined BOARD_Tamu_v2_0
+void UpdateLED()
+{
+    // Loop through all ports and if they're led, call show()
+    for (int32_t Index = Board.Modules.FirstValid(ObjectTypes::Port); Index < Board.Modules.Length; Board.Modules.Iterate(&Index, ObjectTypes::Port))
+    {
+        PortClass *Port = Board.Modules.Get<PortClass>(Index);
+        if (Port->ValueGet<Drivers>(PortClass::DriverType) == Drivers::LED)
+            ((LEDDriver *)Port->DriverObj)->LEDs->show();
+    }
+}
+#endif

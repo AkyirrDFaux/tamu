@@ -7,7 +7,7 @@ public:
         Length,
         Brightness,
     };
-    CRGB *LED = nullptr;
+    LEDDriver LEDs;
 
     LEDStripClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     ~LEDStripClass();
@@ -34,19 +34,18 @@ LEDStripClass::~LEDStripClass()
 
 bool LEDStripClass::Run()
 {
-    if (Values.Type(LEDType) != Types::LEDStrip || Values.Type(Length) != Types::Integer || Values.Type(Brightness) != Types::Byte)
+    if (Values.Type(Length) != Types::Integer || Values.Type(Brightness) != Types::Byte)
     {
         ReportError(Status::MissingModule, "LED Strip");
         return true;
     }
 
-    if (LED == nullptr)
+    if (LEDs.LEDs == nullptr)
     {
         ReportError(Status::PortError, "LED Strip");
         return true;
     }
 
-    LEDStrips Type = ValueGet<LEDStrips>(Value::LEDType);
     int32_t Length = ValueGet<int32_t>(Value::Length);
     uint8_t Brightness = ValueGet<uint8_t>(Value::Brightness);
 
@@ -56,7 +55,7 @@ bool LEDStripClass::Run()
         ColourClass PixelColour = RenderPixel(Index, Length);
 
         PixelColour.ToDisplay(Brightness);
-        LED[Index].setRGB(PixelColour.R, PixelColour.G, PixelColour.B);
+        LEDs.Write(Index,PixelColour);
     }
     return true;
 };

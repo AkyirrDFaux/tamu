@@ -2,7 +2,7 @@ class DisplayClass : public BaseClass
 {
 public:
     byte *Layout = nullptr;
-    CRGB *LED = nullptr;
+    LEDDriver LEDs;
     enum Value
     {
         DisplayType,
@@ -19,7 +19,6 @@ public:
 
     void Setup(int32_t Index = -1);
     bool Run();
-    ColourClass RenderPixel(Vector2D Base);
 };
 
 DisplayClass::DisplayClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
@@ -72,7 +71,7 @@ bool DisplayClass::Run()
         return true;
     }
 
-    if (LED == nullptr)
+    if (LEDs.LEDs == nullptr)
     {
         ReportError(Status::PortError, "Display");
         return true;
@@ -95,12 +94,8 @@ bool DisplayClass::Run()
     for (int32_t Index = 0; Index < Length; Index++)
     {
         Buffer[Index].ToDisplay(Brightness);
-        LED[Index].setRGB(Buffer[Index].R, Buffer[Index].G, Buffer[Index].B);
+        LEDs.Write(Index,Buffer[Index]);
     }
 
     return true;
-};
-
-ColourClass DisplayClass::RenderPixel(Vector2D Centered) {
-
 };

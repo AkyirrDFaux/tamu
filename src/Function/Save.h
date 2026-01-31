@@ -33,14 +33,14 @@ void SaveObject(ByteArray &Input)
 
 void SaveAll(ByteArray &Input)
 {
-    MemoryReset();
+    /*MemoryReset();
     for (int32_t Index = 1; Index < Objects.Allocated; Index++)
     {
         if (Objects[IDClass(Index)] == nullptr || Objects[IDClass(Index)]->Flags == Flags::Auto)
             continue;
         Objects[IDClass(Index)]->Save();
     }
-    Chirp.Send(ByteArray(Functions::SaveAll));
+    Chirp.Send(ByteArray(Functions::SaveAll));*/
 }
 
 void ReadObject(ByteArray &Input)

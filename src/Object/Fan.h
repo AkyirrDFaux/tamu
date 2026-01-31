@@ -5,7 +5,7 @@ public:
     {
         Speed,
     };
-    ESP32PWM *PWM = nullptr;
+    PWMDriver *PWM = nullptr;
 
     FanClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     ~FanClass();

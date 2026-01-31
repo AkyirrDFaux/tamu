@@ -56,6 +56,7 @@ public:
 void ChirpClass::Begin(String Name)
 {
     Serial.setTimeout(1);
+    #if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
     BLEDevice::init(std::string(Name.c_str(), Name.length()));
     pServer = BLEDevice::createServer();
     pServer->setCallbacks(new MyServerCallbacks());
@@ -76,6 +77,7 @@ void ChirpClass::Begin(String Name)
 
     // Start advertising
     pServer->getAdvertising()->start();
+    #endif
 };
 
 void ChirpClass::Send(String Data)
@@ -85,6 +87,7 @@ void ChirpClass::Send(String Data)
 
 void ChirpClass::Send(const ByteArray &Input)
 {
+    #if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
     if (deviceConnected)
     {
         ByteArray Buffer = Input.CreateMessage();
@@ -97,6 +100,7 @@ void ChirpClass::Send(const ByteArray &Input)
             delay(5);
         }
     }
+    #endif
 };
 
 void ChirpClass::Communicate()
@@ -109,6 +113,7 @@ void ChirpClass::Communicate()
     // BT
 
     // disconnecting
+    #if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
     if (!deviceConnected && oldDeviceConnected)
     {
         delay(500);                  // give the bluetooth stack the chance to get things ready
@@ -121,6 +126,8 @@ void ChirpClass::Communicate()
         oldDeviceConnected = deviceConnected;
 
     ByteArray Message = BufferIn.ExtractMessage();
+    
     if (Message.Length > 0)
         Run(Message);
+    #endif
 };

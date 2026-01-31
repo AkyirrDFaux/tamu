@@ -47,6 +47,8 @@ void Geometry2DClass::Setup(int32_t Index)
         if (Values.Type(Position) != Types::Coord2D)
             ValueSet(Coord2D(), Position);
         break;
+    default:
+        break;
     }
 };
 
@@ -78,6 +80,8 @@ void Geometry2DClass::Render(int32_t Length, Vector2D DisplaySize, Number Ratio,
             return;
         Fade = ValueGet<Number>(Value::Fade);
         Position = ValueGet<Coord2D>(Value::Position);
+        break;
+    default:
         break;
     }
 

@@ -5,24 +5,25 @@ uint32_t DeltaTime = 0;
 
 #include "ClassHeader.h"
 
-// Hardware related
-#include "Basic\Base.h"
-#include "Basic\Hardware.h"
-#include "Basic\Memory.h"
-#include "Basic\Number.h"
-#include "Basic\MathAndType.h"
-
 // Data types
+#include "Data\Number.h"
 #include "Data\Colour.h"
 #include "Data\Vector2D.h"
 #include "Data\Coord2D.h"
 #include "Data\Vector3D.h"
 #include "Data\ValueEnums.h"
 
+// Hardware related
+#include "Hardware\Base.h"
+#include "Hardware\Memory.h"
+#include "Hardware\LED.h"
+#include "Hardware\Servo.h"
+#include "Hardware\PWM.h"
+
 // Core system
 #include "Core\Enum.h"
 #include "Core\ID.h"
-#include "Core\ByteArray.h"
+#include "Core\ByteArray.h" //Simple data types (Number, vector, colour, string)
 #include "Core\Objects.h"
 #include "Core\Register.h"
 RegisterClass Objects;
@@ -68,11 +69,11 @@ BoardClass Board;
 #include "Function\Save.h"
 #include "Function\Values.h"
 
-#include "DefaultSetup.h"
+#include "DefaultSetup.h" //30kb of instructions :)
 
 void setup()
 {
-    MemoryStartup();
+    //MemoryStartup();
     NotificationStartup();
     Serial.begin((long)115200);
     Board.Setup(0);
@@ -135,7 +136,7 @@ void loop()
     // Serial.println("L");
     // Serial.print(", O:" + String(millis() - CurrentTime));
 
-    FastLED.show(); // around 6s
+    UpdateLED(); // around 6s
     // Serial.println(", L:" + String(millis() - CurrentTime));
 
     TimeUpdate();

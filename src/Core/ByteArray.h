@@ -219,7 +219,14 @@ template <>
 String ByteArray::Get(int32_t Index) const
 {
     int32_t Start = GetStart(Index);
+#if defined BOARD_Valu_v2_0
+    String Text = "";
+    for (int32_t Index = Start + sizeof(Types) + sizeof(uint8_t); Index < Start + (uint8_t)Array[Start + sizeof(Types)]; Index++)
+        Text += Array[Index];
+    return Text;
+#else
     return String(Array + Start + sizeof(Types) + sizeof(uint8_t), (uint8_t)Array[Start + sizeof(Types)]);
+#endif
 };
 
 template <class C>
@@ -231,7 +238,7 @@ void ByteArray::Set(C Data, int32_t Index)
     int32_t Start = GetStart(Index);
     Types CurrentType = Types::Undefined;
 
-    if (Start >= 0) //Get Type (faster)
+    if (Start >= 0) // Get Type (faster)
         CurrentType = (Types)Array[Start];
 
     if (CurrentType == GetType<C>()) // Can simply copy, same type
@@ -274,7 +281,7 @@ void ByteArray::Copy(ByteArray &Source, int32_t From, int32_t To)
     Types TargetType = Types::Undefined;
     Types CurrentType = Types::Undefined;
 
-    if (FromStart >= 0) //Get Type (faster)
+    if (FromStart >= 0) // Get Type (faster)
         TargetType = (Types)Source.Array[FromStart];
     if (TargetType == Types::Undefined)
         return;
@@ -321,6 +328,8 @@ ByteArray ByteArray::CreateMessage() const
             *(float *)(Buffer.Array + Pointer + 5) = *(Number *)(Buffer.Array + Pointer + 5);
         case Types::Number:
             *(float *)(Buffer.Array + Pointer + 1) = *(Number *)(Buffer.Array + Pointer + 1);
+            break;
+        default:
             break;
         }
 
@@ -369,6 +378,8 @@ ByteArray ByteArray::ExtractMessage()
             *(Number *)(Message.Array + Pointer + 5) = *(float *)(Message.Array + Pointer + 5);
         case Types::Number:
             *(Number *)(Message.Array + Pointer + 1) = *(float *)(Message.Array + Pointer + 1);
+            break;
+        default:
             break;
         }
 

@@ -89,7 +89,7 @@ void BoardClass::UpdateLoopTime()
     else if (millis() % 20000 < 20)
     {
         ValueSet<uint32_t>(AvgLoopTime, MaxTime);
-        ValueSet<int32_t>(ESP.getHeapSize(), MemoryTotal);
-        ValueSet<int32_t>(ESP.getHeapSize() - ESP.getFreeHeap(), MemoryUsed);
+        ValueSet<int32_t>(GetHeap(), MemoryTotal);
+        ValueSet<int32_t>(GetFreeHeap(), MemoryUsed);
     }
 }
