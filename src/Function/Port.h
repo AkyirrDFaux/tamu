@@ -146,12 +146,16 @@ void PortClass::AssignLED(uint8_t Pin)
 {
     int32_t LEDLength = CountLED();
     int32_t AssignedLength = 0;
-    delete ((LEDDriver *)DriverObj);
+    LEDDriver *Driver = (LEDDriver *)DriverObj;
 
-    if (LEDLength <= 0)
+    Driver->Stop();
+
+    if (LEDLength <= 0){
+        delete Driver;
         return;
-
-    DriverObj = new LEDDriver(LEDLength, Pin);
+    }
+        
+    *Driver = LEDDriver(LEDLength, Pin); //Start new
 
     for (int32_t Index = 0; Index < Modules.Length; Index++)
     {
@@ -164,14 +168,14 @@ void PortClass::AssignLED(uint8_t Pin)
             if (Modules[Index]->As<LEDStripClass>()->Values.Type(LEDStripClass::Length) != Types::Integer)
                 continue;
 
-            Modules[Index]->As<LEDStripClass>()->LEDs = ((LEDDriver *)DriverObj)->Offset(AssignedLength); // Input to object
+            Modules[Index]->As<LEDStripClass>()->LEDs = Driver->Offset(AssignedLength); // Input to object
             AssignedLength += Modules[Index]->As<LEDStripClass>()->ValueGet<int32_t>(LEDStripClass::Length);
             break;
         case ObjectTypes::Display:
             if (Modules[Index]->As<DisplayClass>()->Values.Type(DisplayClass::Length) != Types::Integer)
                 continue;
 
-            Modules[Index]->As<DisplayClass>()->LEDs = ((LEDDriver *)DriverObj)->Offset(AssignedLength); // Input to object
+            Modules[Index]->As<DisplayClass>()->LEDs = Driver->Offset(AssignedLength); // Input to object
             AssignedLength += Modules[Index]->As<DisplayClass>()->ValueGet<int32_t>(DisplayClass::Length);
             break;
         default:

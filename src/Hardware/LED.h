@@ -9,18 +9,16 @@ void UpdateLED()
 class LEDDriver
 {
 public:
-    bool Main = false;
     CRGB *LEDs = nullptr;
     LEDDriver() {};
     LEDDriver(uint16_t Length, uint16_t Pin);
-    ~LEDDriver();
     LEDDriver Offset(uint32_t Offset);
     void Write(uint32_t Index, ColourClass Colour);
+    void Stop();
 };
 
 LEDDriver::LEDDriver(uint16_t Length, uint16_t Pin)
 {
-    Main = true;
     LEDs = new CRGB[Length];
     switch (Pin)
     {
@@ -60,10 +58,9 @@ LEDDriver::LEDDriver(uint16_t Length, uint16_t Pin)
     }
 };
 
-LEDDriver::~LEDDriver()
+void LEDDriver::Stop()
 {
-    if (Main)
-        delete[] LEDs;
+    delete[] LEDs;
 };
 
 LEDDriver LEDDriver::Offset(uint32_t Offset)
@@ -84,29 +81,26 @@ inline void LEDDriver::Write(uint32_t Index, ColourClass Colour)
 class LEDDriver
 {
 public:
-    bool Main = false;
     int16_t OffsetStart = 0;
     Adafruit_NeoPixel *LEDs;
     LEDDriver() {};
     LEDDriver(uint16_t Length, uint16_t Pin);
-    ~LEDDriver();
     LEDDriver Offset(uint32_t Offset);
     void Write(uint32_t Index, ColourClass Colour);
+    void Stop();
 };
 
 LEDDriver::LEDDriver(uint16_t Length, uint16_t Pin)
 {
-    Main = true;
     LEDs = new Adafruit_NeoPixel(Length, Pin, NEO_GRB + NEO_KHZ800);
     LEDs->begin();
     LEDs->clear();
     LEDs->show();
 };
 
-LEDDriver::~LEDDriver()
+void LEDDriver::Stop()
 {
-    if (Main)
-        delete LEDs;
+    delete LEDs;
 };
 
 LEDDriver LEDDriver::Offset(uint32_t Offset)
