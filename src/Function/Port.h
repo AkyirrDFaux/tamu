@@ -29,11 +29,18 @@ void PortClass::AddModule(BaseClass *Object, int32_t Index)
             Object->As<FanClass>()->PWM = (PWMDriver *)DriverObj; // Input to object
             break;
         case ObjectTypes::Input:
-            if (Index != 0 || (Type != Ports::ADC && Type != Ports::GPIO))
+            if (Index != 0 || Type != Ports::GPIO)
                 break;
             pinMode(Pin, INPUT);
             ValueSet(Drivers::Input, Value::DriverType);
             Object->As<InputClass>()->Pin = Pin; // Input to object
+            break;
+        case ObjectTypes::Sensor:
+            if (Index != 0 || Type != Ports::ADC)
+                break;
+            pinMode(Pin, INPUT);
+            ValueSet(Drivers::Input, Value::DriverType);
+            Object->As<SensorClass>()->Pin = Pin; // Input to object
             break;
         case ObjectTypes::Servo:
             if (Index != 0 || Type != Ports::GPIO)
@@ -91,7 +98,10 @@ void PortClass::RemoveModule(BaseClass *Object)
     case Drivers::Input:
         if (Object != Modules.At(0))
             break;
-        Object->As<InputClass>()->Pin = -1; // Remove from obj
+        if (Object->Type == ObjectTypes::LEDStrip)
+            Object->As<InputClass>()->Pin = -1; // Remove from obj
+        else if (Object->Type == ObjectTypes::Display)
+            Object->As<SensorClass>()->Pin = -1;
         ValueSet(Drivers::None, Value::DriverType);
         break;
     case Drivers::Servo:
@@ -150,12 +160,13 @@ void PortClass::AssignLED(uint8_t Pin)
 
     Driver->Stop();
 
-    if (LEDLength <= 0){
+    if (LEDLength <= 0)
+    {
         delete Driver;
         return;
     }
-        
-    *Driver = LEDDriver(LEDLength, Pin); //Start new
+
+    *Driver = LEDDriver(LEDLength, Pin); // Start new
 
     for (int32_t Index = 0; Index < Modules.Length; Index++)
     {

@@ -19,7 +19,7 @@ enum class Types : uint8_t
     Flags,
     Status,
     Board,
-    Removed_1,
+    Sensor,
     PortDriver,
     AccGyr,
     Input,
@@ -101,7 +101,8 @@ enum class ObjectTypes : uint8_t
     Program,
     I2C,
     UART,
-    SPI
+    SPI,
+    Sensor
 };
 
 enum class Functions : uint8_t
@@ -194,6 +195,8 @@ template <>
 Types GetType<Status>() { return Types::Status; };
 template <>
 Types GetType<Boards>() { return Types::Board; };
+template <>
+Types GetType<SensorTypes>() { return Types::Sensor; };
 template <>
 Types GetType<Drivers>() { return Types::PortDriver; };
 template <>

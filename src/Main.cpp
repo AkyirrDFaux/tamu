@@ -45,6 +45,7 @@ IDList Outputs;  // Ex: Display, Fan, Servo
 #include "Object\Port.h"
 #include "Object\AccGyr.h"
 #include "Object\Input.h"
+#include "Object\Sensor.h"
 #include "Object\Board.h"
 BoardClass Board;
 
@@ -146,6 +147,7 @@ void loop()
 
 /*TODO:
 KEY FEATURES:
+Serial Chirp
 Crash (Delete/Create) Safety
 Saving, switch to littleFS - fallback?
 
@@ -169,9 +171,8 @@ Register, IDList cleanup
 Split up individual functions in geometry, possibly combine multiple in one, remove shape2D?
 Go over BLE functions, spread out sending/recieving delay, better compression
 Operation - prevent recursion, remove unnecessary loops in fuction calls
-Split up inputs and sensors into separate objects
 
-More optimised ByteArray functions (with references, GetNext, TypeNext)
+More optimised ByteArray functions (sequential & multiple(type + object) reading)
 RAM saving - Names/Strings only on flash
 */
 
@@ -202,3 +203,4 @@ RAM saving - Names/Strings only on flash
 // 13.01.2026 Nested operations
 // 22.01.2026 Improved port and bus system, module attach/detach events, removed ObjectList
 // 25.01.2026 DataList adapted into ByteArray, -4kb RAM on ~70 Objects
+// 31.01.2026 SensorClass created (Analog, NTC and LDR)

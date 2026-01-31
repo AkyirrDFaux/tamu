@@ -42,9 +42,13 @@ void NotificationStartup(){
 #if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
 int32_t GetHeap() { return ESP.getHeapSize(); };
 int32_t GetFreeHeap() { return ESP.getHeapSize() - ESP.getFreeHeap(); };
+
+#define VOLTAGE (3.3)
+#define ADCRES (1 << 12)
 #else
 int32_t GetHeap() { return 0; };
 int32_t GetFreeHeap() { return 0; };
 
-
+#define VOLTAGE (3.3)
+#define ADCRES (1 << 12)
 #endif

@@ -46,9 +46,6 @@ void InputClass::Setup(int32_t Index)
     case Inputs::Button:
         ValueSet(false, Input);
         break;
-    case Inputs::Analog:
-        ValueSet<int32_t>(0, Input);
-        break;
     default:
         break;
     }
@@ -72,9 +69,6 @@ bool InputClass::Run()
     {
     case Inputs::Button:
         ValueSet<bool>(!digitalRead(Pin), Input); // Inverted
-        break;
-    case Inputs::Analog:
-        ValueSet<int32_t>(analogRead(Pin), Input);
         break;
     case Inputs::ButtonWithLED:
         if (ValueGet<bool>(Indicator))

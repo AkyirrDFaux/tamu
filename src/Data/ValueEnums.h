@@ -99,7 +99,14 @@ enum class Inputs : uint8_t
     Undefined,
     Button,
     ButtonWithLED,
-    Analog
+};
+
+enum class SensorTypes : uint8_t
+{
+    Undefined,
+    AnalogVoltage,
+    TempNTC10K,
+    Light10K
 };
 
 enum class ProgramTypes : uint8_t

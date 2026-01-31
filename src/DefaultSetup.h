@@ -192,10 +192,11 @@ void DefaultSetup()
     Board.Modules[4]->AddModule(F);
 
     // Light sensor
-    InputClass *I = new InputClass();
+    SensorClass *I = new SensorClass();
     I->Name = "Light sensor";
     Board.Modules[1]->AddModule(I);
-    I->ValueSet<Inputs>(Inputs::Analog, I->InputType);
+    I->ValueSet<SensorTypes>(SensorTypes::Light10K, SensorClass::SensorType);
+    I->ValueSet<Number>(10, SensorClass::Filter);
 
     // BLINKING PROGRAM
     Program *P2 = new Program();
