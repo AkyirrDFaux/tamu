@@ -10,7 +10,6 @@ class Number
 public:
     int32_t Value = 0;
 
-    // --- Constructors ---
     Number() : Value(0) {}
     Number(int32_t NewValue) : Value(NewValue << DECIMAL) {}
     Number(uint32_t NewValue) : Value(int32_t(NewValue << DECIMAL)) {}
@@ -18,37 +17,36 @@ public:
     Number(float NewValue) : Value(int32_t(round(NewValue * (1 << DECIMAL)))) {}
     Number(double NewValue) : Value(int32_t(round(NewValue * (1 << DECIMAL)))) {}
 
-    // Conversion back to float (Keep implicit for drop-in compatibility)
-    operator float() const { return float(Value) / (1 << DECIMAL); }
+    // Conversion back to float
+    inline operator float() const { return float(Value) / (1 << DECIMAL); }
 
-    // --- Internal Arithmetic (Number vs Number) ---
-    Number &operator+=(const Number &Other)
+    inline Number &operator+=(const Number &Other)
     {
         Value += Other.Value;
         return *this;
     }
-    Number &operator-=(const Number &Other)
+    inline Number &operator-=(const Number &Other)
     {
         Value -= Other.Value;
         return *this;
     }
-    Number operator+(const Number &Other) const { return Number(*this) += Other; }
-    Number operator-(const Number &Other) const { return Number(*this) -= Other; }
-    Number operator-() const
+    inline Number operator+(const Number &Other) const { return Number(*this) += Other; }
+    inline Number operator-(const Number &Other) const { return Number(*this) -= Other; }
+    inline Number operator-() const
     {
         Number Result;
         Result.Value = -Value;
         return Result;
     }
 
-    Number operator*(const Number &Other) const
+    inline Number operator*(const Number &Other) const
     {
         Number Result;
         Result.Value = int32_t((int64_t(Value) * Other.Value) >> DECIMAL);
         return Result;
     }
 
-    Number operator/(const Number &Other) const
+    inline Number operator/(const Number &Other) const
     {
         Number Result;
         if (Other.Value == 0)
@@ -61,25 +59,25 @@ public:
     }
 
     template <typename T, typename = typename std::enable_if<std::is_arithmetic<T>::value>::type>
-    Number operator+(T Other) const { return *this + Number(Other); }
+    inline Number operator+(T Other) const { return *this + Number(Other); }
     template <typename T, typename = typename std::enable_if<std::is_arithmetic<T>::value>::type>
-    Number operator-(T Other) const { return *this - Number(Other); }
+    inline Number operator-(T Other) const { return *this - Number(Other); }
     template <typename T, typename = typename std::enable_if<std::is_arithmetic<T>::value>::type>
-    Number operator*(T Other) const { return *this * Number(Other); }
+    inline Number operator*(T Other) const { return *this * Number(Other); }
     template <typename T, typename = typename std::enable_if<std::is_arithmetic<T>::value>::type>
-    Number operator/(T Other) const { return *this / Number(Other); }
+    inline Number operator/(T Other) const { return *this / Number(Other); }
 
-    bool operator==(const Number &Other) const { return Value == Other.Value; }
-    bool operator!=(const Number &Other) const { return Value != Other.Value; }
-    bool operator<(const Number &Other) const { return Value < Other.Value; }
-    bool operator>(const Number &Other) const { return Value > Other.Value; }
-    bool operator<=(const Number &Other) const { return Value <= Other.Value; }
-    bool operator>=(const Number &Other) const { return Value >= Other.Value; }
+    inline bool operator==(const Number &Other) const { return Value == Other.Value; }
+    inline bool operator!=(const Number &Other) const { return Value != Other.Value; }
+    inline bool operator<(const Number &Other) const { return Value < Other.Value; }
+    inline bool operator>(const Number &Other) const { return Value > Other.Value; }
+    inline bool operator<=(const Number &Other) const { return Value <= Other.Value; }
+    inline bool operator>=(const Number &Other) const { return Value >= Other.Value; }
 
     template <typename T, typename = typename std::enable_if<std::is_arithmetic<T>::value>::type>
-    bool operator<(T Other) const { return *this < Number(Other); }
+    inline bool operator<(T Other) const { return *this < Number(Other); }
     template <typename T, typename = typename std::enable_if<std::is_arithmetic<T>::value>::type>
-    bool operator>(T Other) const { return *this > Number(Other); }
+    inline bool operator>(T Other) const { return *this > Number(Other); }
 };
 
 template <typename T, typename = typename std::enable_if<std::is_arithmetic<T>::value>::type>
@@ -165,27 +163,27 @@ inline Number max(Number A, Number B) { return (A.Value > B.Value) ? A : B; }
 typedef float Number;
 #endif
 
-Number LimitZeroToOne(Number Value)
+inline Number LimitZeroToOne(Number Value)
 {
     return min(max(Value, Number(0)), Number(1));
 };
 
-uint8_t LimitByte(int Number)
+inline uint8_t LimitByte(int Number)
 {
     return min(max(Number, 0), 255);
 };
 
-Number ByteToPercent(byte Value)
+inline Number ByteToPercent(byte Value)
 {
     return LimitZeroToOne(Number(Value) / 255);
 };
 
-uint8_t PercentToByte(Number Value)
+inline uint8_t PercentToByte(Number Value)
 {
     return LimitByte((int32_t)Value * 255);
 };
 
-uint8_t MultiplyBytePercentByte(byte Number, byte Percent)
+inline uint8_t MultiplyBytePercentByte(byte Number, byte Percent)
 {
     return (uint8_t)(((int)Number * (int)Percent) / 255);
 };
@@ -205,12 +203,12 @@ Number TimeStep(uint32_t TargetTime)
     return LimitZeroToOne(Prediction);
 };
 
-Number TimeMove(Number Current, Number Target, uint32_t TargetTime)
+inline Number TimeMove(Number Current, Number Target, uint32_t TargetTime)
 {
     return Current + (Target - Current) * TimeStep(TargetTime);
 };
 
-Number LimitPi(Number Value){
+inline Number LimitPi(Number Value){
     while (Value > PI)
         Value -= 2*PI;
     while (Value < -PI)

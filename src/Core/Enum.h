@@ -34,7 +34,7 @@ enum class Types : uint8_t
     PortType = 64, //4 byte enums
 };
 
-int8_t GetDataSize(Types Type)
+int8_t GetDataSize(const Types Type)
 {
     if (Type == Types::Undefined)
         return 0;

@@ -73,7 +73,7 @@ LEDDriver LEDDriver::Offset(uint32_t Offset)
     return OffsetDriver;
 }
 
-void LEDDriver::Write(uint32_t Index, ColourClass Colour)
+inline void LEDDriver::Write(uint32_t Index, ColourClass Colour)
 {
     LEDs[Index].setRGB(Colour.R, Colour.G, Colour.B);
 }
@@ -117,7 +117,7 @@ LEDDriver LEDDriver::Offset(uint32_t Offset)
     return OffsetDriver;
 }
 
-void LEDDriver::Write(uint32_t Index, ColourClass Colour)
+inline void LEDDriver::Write(uint32_t Index, ColourClass Colour)
 {
     LEDs->setPixelColor((uint16_t)(Index + OffsetStart), Colour.R, Colour.G, Colour.B);
 }

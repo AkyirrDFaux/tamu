@@ -75,7 +75,7 @@ void setup()
 {
     //MemoryStartup();
     NotificationStartup();
-    Serial.begin((long)115200);
+    Serial.begin(115200L);
     Board.Setup(0);
 
     // if (1)
@@ -140,7 +140,7 @@ void loop()
     // Serial.println(", L:" + String(millis() - CurrentTime));
 
     TimeUpdate();
-    // Serial.println(DeltaTime);
+    //Serial.println(DeltaTime);
     Board.UpdateLoopTime();
 };
 
@@ -156,7 +156,6 @@ App Programming view
 App Presets/blocks
 
 FUTURE:
-Generic FastLED/AdaFruit Neopixel interface
 OLED/TFT Display support
 Multiple boards together
 

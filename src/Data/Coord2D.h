@@ -17,30 +17,30 @@ public:
     Coord2D TimeMove(Coord2D Target, unsigned long TargetTime);
 };
 
-Coord2D::Coord2D() {};
+inline Coord2D::Coord2D() {};
 
-Coord2D::Coord2D(Vector2D NewOffset, Vector2D NewRotation)
+inline Coord2D::Coord2D(Vector2D NewOffset, Vector2D NewRotation)
 {
     Offset = NewOffset;
     Rotation = NewRotation;
 };
-Coord2D::Coord2D(Number X, Number Y, Number Angle)
+inline Coord2D::Coord2D(Number X, Number Y, Number Angle)
 {
     Offset = Vector2D(X, Y);
     Rotation = Vector2D(Angle);
 };
 
-Vector2D Coord2D::TransformFrom(Vector2D Vector)
+inline Vector2D Coord2D::TransformFrom(Vector2D Vector)
 {
     return Rotation.Rotate(Vector) + Offset;
 };
 
-Vector2D Coord2D::TransformTo(Vector2D Vector)
+inline Vector2D Coord2D::TransformTo(Vector2D Vector)
 {
     return Rotation.RotateInverted(Vector - Offset); // Check
 };
 
-Coord2D Coord2D::Join(Coord2D Other)
+inline Coord2D Coord2D::Join(Coord2D Other)
 {
     Coord2D Joined;
     Joined.Offset = Offset + Rotation.Rotate(Other.Offset);
@@ -48,28 +48,12 @@ Coord2D Coord2D::Join(Coord2D Other)
     return Joined;
 }
 
-String Coord2D::AsString()
+inline String Coord2D::AsString()
 {
     return Offset.AsString() + " " + Rotation.AsStringAngle();
 };
 
-Coord2D Coord2D::TimeMove(Coord2D Target, unsigned long TargetTime)
+inline Coord2D Coord2D::TimeMove(Coord2D Target, unsigned long TargetTime)
 {
     return Coord2D(Offset.TimeMove(Target.Offset, TargetTime), Rotation.TimeMoveAngle(Target.Rotation, TargetTime));
 };
-
-/*
-template <>
-ByteArray::ByteArray(Coord2D Data)
-{
-    *this = ByteArray(Data.Offset) << ByteArray(Data.Rotation);
-};
-
-template <>
-Coord2D ByteArray::As()
-{
-    Coord2D New;
-    New.Offset = SubArray(0);
-    New.Rotation = SubArray(sizeof(Number) * 2);
-    return New;
-};*/

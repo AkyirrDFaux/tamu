@@ -63,26 +63,3 @@ String ColourClass::AsString()
 {
     return (String(R) + " " + String(G) + " " + String(B) + " " + String(A));
 };
-/*
-ColourClass::operator String()
-{
-    return (String(R) + " " + String(G) + " " + String(B) + " " + String(A));
-};*/
-/*
-template <>
-ByteArray::ByteArray(ColourClass Data)
-{
-    *this = ByteArray(Data.R) << ByteArray(Data.G) << ByteArray(Data.B) << ByteArray(Data.A);
-};*/
-/*
-template <>
-ColourClass ByteArray::As()
-{
-    ColourClass New;
-    New.R = SubArray(0);
-    New.G = SubArray(sizeof(uint8_t));
-    New.B = SubArray(sizeof(uint8_t) * 2);
-    New.A = SubArray(sizeof(uint8_t) * 3);
-    return New;
-};
-*/

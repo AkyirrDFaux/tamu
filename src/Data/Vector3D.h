@@ -16,14 +16,14 @@ public:
 
 Vector3D::Vector3D() {};
 
-Vector3D::Vector3D(Number X, Number Y, Number Z)
+inline Vector3D::Vector3D(Number X, Number Y, Number Z)
 {
     this->X = X;
     this->Y = Y;
     this->Z = Z;
 };
 
-Number Vector3D::GetByIndex(uint8_t Index)
+inline Number Vector3D::GetByIndex(uint8_t Index)
 {
     if (Index == 0)
         return X;
@@ -35,49 +35,12 @@ Number Vector3D::GetByIndex(uint8_t Index)
         return 0;
 }
 
-Vector2D Vector3D::GetByIndex(uint8_t IndexA, uint8_t IndexB)
+inline Vector2D Vector3D::GetByIndex(uint8_t IndexA, uint8_t IndexB)
 {
     return Vector2D(GetByIndex(IndexA), GetByIndex(IndexB));
 }
 
-String Vector3D::AsString()
+inline String Vector3D::AsString()
 {
     return (String(X) + " " + String(Y) + " " + String(Z));
 };
-
-/*
-Vector2D Vector2D::operator+(Vector2D Other)
-{
-    return Vector2D(X + Other.X, Y + Other.Y);
-};
-
-Vector2D Vector2D::operator-()
-{
-    return Vector2D(-X, -Y);
-};
-
-Vector2D Vector2D::operator-(Vector2D Other)
-{
-    return Vector2D(X - Other.X, Y - Other.Y);
-};
-
-Vector2D Vector2D::operator*(Vector2D Other)
-{
-    return Vector2D(X * Other.X, Y * Other.Y);
-};
-
-Vector2D Vector2D::operator*(Number Scale)
-{
-    return Vector2D(X * Scale, Y * Scale);
-};
-
-Number Vector2D::Length()
-{
-    return sqrtf(sq(X) + sq(Y));
-};
-
-Number Vector2D::Distance(Vector2D Other)
-{
-    return (*this - Other).Length();
-};
-*/

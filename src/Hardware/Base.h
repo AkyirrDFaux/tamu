@@ -12,7 +12,7 @@ void TimeUpdate();
 void NotificationBlink(int Amount, int Time);
 void NotificationStartup();
 
-void TimeUpdate(){
+inline void TimeUpdate(){
     LastTime = CurrentTime;
     CurrentTime = millis();
     DeltaTime = CurrentTime - LastTime;
