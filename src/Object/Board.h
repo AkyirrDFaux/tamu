@@ -35,15 +35,14 @@ void BoardClass::Setup(int32_t Index) // Load Presets
 {
     if (Index == 0 && Values.Type(0) == Types::Board && ValueGet<Boards>(0) == Boards::Undefined) // Double setup prevention
     {
-#ifdef BOARD_Tamu_v1_0
+#if defined BOARD_Tamu_v1_0
         *Values.At<Boards>(0) = Boards::Tamu_v1_0;
         AddModule(new PortClass(15, Ports::GPIO), 0); // J1
         AddModule(new PortClass(13, Ports::GPIO), 1); // J2
         AddModule(new PortClass(14, Ports::GPIO), 2); // J5
         AddModule(new PortClass(2, Ports::GPIO), 3);  // J6
         AddModule(new PortClass(12, Ports::TOut), 4); // J3
-#endif
-#ifdef BOARD_Tamu_v2_0
+#elif defined BOARD_Tamu_v2_0
         ESP32PWM::allocateTimer(0);
         ESP32PWM::allocateTimer(1);
         ESP32PWM::allocateTimer(2);
@@ -74,6 +73,9 @@ void BoardClass::Setup(int32_t Index) // Load Presets
         AddModule(new InputClass(), 13);
         Modules[13]->ValueSet<Inputs>(Inputs::ButtonWithLED, 0);
         Modules[10]->AddModule(Modules[13], 0);
+#elif defined BOARD_Valu_v2_0
+        ValueSet(Boards::Valu_v2_0, BoardType);
+        
 #endif
     }
 };
@@ -82,7 +84,6 @@ void BoardClass::UpdateLoopTime()
 {
     uint32_t AvgLoopTime = ValueGet<uint32_t>(AvgTime);
 
-    
     ValueSet<uint32_t>((DeltaTime + AvgLoopTime * 15) / 16, AvgTime);
     if (DeltaTime > ValueGet<uint32_t>(MaxTime))
         ValueSet<uint32_t>(DeltaTime, MaxTime);

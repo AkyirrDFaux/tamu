@@ -2,14 +2,14 @@ class ByteArray
 {
 public:
     char *Array = nullptr;
-    int32_t Length = 0;
+    uint32_t Length = 0;
 
     ByteArray() {};
     ByteArray(const ByteArray &Copied);
     ~ByteArray();
     template <class C>
     ByteArray(const C &Data);
-    ByteArray(const char *Data, int32_t DataLength); // Raw data input
+    ByteArray(const char *Data, uint32_t DataLength); // Raw data input
     void operator=(const ByteArray &Other);          // Copy
 
     ByteArray operator<<(const ByteArray &Data) const; // Concatenation, creates new
@@ -70,7 +70,7 @@ ByteArray::ByteArray(const String &Data)
     memcpy(Array + sizeof(Types) + sizeof(DataLength), Data.c_str(), DataLength);
 };
 
-ByteArray::ByteArray(const char *Data, int32_t DataLength)
+ByteArray::ByteArray(const char *Data, uint32_t DataLength)
 {
     if (Data == nullptr)
         return;
@@ -128,7 +128,7 @@ void ByteArray::Resize(int32_t Index, int32_t NewDataSize, int32_t *Start)
         NewSize = Length + (Index - NumOfValues) + (sizeof(Types) + NewDataSize); // Existing + Padding + New
         NewArray = new char[NewSize];
         memcpy(NewArray, Array, Length);
-        for (int32_t Pad = Length; Pad <= Length + (Index - NumOfValues); Pad++) // Reset values (including new one)
+        for (uint32_t Pad = Length; Pad <= Length + (Index - NumOfValues); Pad++) // Reset values (including new one)
             NewArray[Pad] = (char)Types::Undefined;
         *Start = Length + (Index - NumOfValues);
     }
@@ -155,7 +155,7 @@ int32_t ByteArray::GetStart(int32_t Index) const
     if (Array == nullptr)
         return -1;
 
-    int32_t Pointer = 0; // Byte-index of search
+    uint32_t Pointer = 0; // Byte-index of search
 
     for (int32_t Search = 0; Search <= Index; Search++)
     {
@@ -175,7 +175,7 @@ int32_t ByteArray::GetNumberOfValues() const
     if (Array == nullptr)
         return 0;
     // Current index
-    int32_t Pointer = 0; // Byte-index of search
+    uint32_t Pointer = 0; // Byte-index of search
     int32_t Search = 0;
     while (Pointer < Length)
     {
@@ -314,7 +314,7 @@ ByteArray ByteArray::CreateMessage() const
     // TODO convert fixed types
     ByteArray Buffer = *this;
 #if USE_FIXED_POINT == 1
-    int32_t Pointer = 0;
+    uint32_t Pointer = 0;
     while (Pointer < Buffer.Length)
     {
         switch ((Types)Buffer.Array[Pointer]) // Increment by length of block
@@ -364,7 +364,7 @@ ByteArray ByteArray::ExtractMessage()
     Length = NewLength;
 
 #if USE_FIXED_POINT == 1
-    int32_t Pointer = 0;
+    uint32_t Pointer = 0;
     while (Pointer < Message.Length)
     {
         switch ((Types)Message.Array[Pointer])
@@ -434,7 +434,7 @@ ByteArray ReadFromFile(const String &FileName)
 String ByteArray::ToHex()
 {
     String Text = "";
-    for (int32_t Index = 0; Index < Length; Index++)
+    for (uint32_t Index = 0; Index < Length; Index++)
         Text += String(Array[Index], HEX) + " ";
     return Text;
 };

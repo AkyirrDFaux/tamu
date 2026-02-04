@@ -43,7 +43,7 @@ public:
     BaseClass *operator[](int32_t Index) const { return At(Index); };
     ObjectTypes TypeAt(int32_t Index) const;
     int32_t FirstValid(ObjectTypes Filter = ObjectTypes::Undefined, int32_t Start = 0) const;
-    void Iterate(int32_t *Index, ObjectTypes Filter = ObjectTypes::Undefined) const;
+    void Iterate(uint32_t *Index, ObjectTypes Filter = ObjectTypes::Undefined) const;
 
     Types ValueTypeAt(int32_t Index) const;
     template <class C>
@@ -51,7 +51,7 @@ public:
     template <class C>
     bool ValueSet(C Value, int32_t Index);
 
-    void Expand(int8_t NewLength);
+    void Expand(uint8_t NewLength);
     void Shorten();
 
     bool Add(IDClass ID, int32_t Index = -1);

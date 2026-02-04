@@ -2,7 +2,8 @@ enum class Boards : uint8_t
 {
     Undefined = 0,
     Tamu_v1_0,
-    Tamu_v2_0
+    Tamu_v2_0,
+    Valu_v2_0 = 12
 };
 namespace Ports
 {

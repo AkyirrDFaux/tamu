@@ -1,11 +1,17 @@
 #ifdef BOARD_Tamu_v1_0
     #define LED_NOTIFICATION_PIN LED_BUILTIN
+    #define ON_STATE LOW
+    #define OFF_STATE HIGH
 #endif
 #ifdef BOARD_Tamu_v2_0
     #define LED_NOTIFICATION_PIN 2
+    #define ON_STATE LOW
+    #define OFF_STATE HIGH
 #endif
 #ifdef BOARD_Valu_v2_0
-    #define LED_NOTIFICATION_PIN 0
+    #define LED_NOTIFICATION_PIN PA2
+    #define ON_STATE HIGH
+    #define OFF_STATE LOW
 #endif
 
 void TimeUpdate();
@@ -22,9 +28,9 @@ void NotificationBlink(int Amount, int Time)
 {
     for (int Iteration = 0; Iteration < Amount; Iteration++)
     {
-        digitalWrite(LED_NOTIFICATION_PIN, LOW);
+        digitalWrite(LED_NOTIFICATION_PIN, ON_STATE);
         delay(Time);
-        digitalWrite(LED_NOTIFICATION_PIN, HIGH);
+        digitalWrite(LED_NOTIFICATION_PIN, OFF_STATE);
         if (Iteration < Amount - 1)
             delay(Time);
     }
@@ -32,7 +38,7 @@ void NotificationBlink(int Amount, int Time)
 
 void NotificationStartup(){
     pinMode(LED_NOTIFICATION_PIN, OUTPUT);
-    digitalWrite(LED_NOTIFICATION_PIN, HIGH);
+    digitalWrite(LED_NOTIFICATION_PIN, OFF_STATE);
     delay(200);
     NotificationBlink(2, 200);
 };

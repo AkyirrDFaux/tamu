@@ -46,7 +46,7 @@ PortClass::PortClass(uint8_t NewPin, PortTypeClass NewPortType) : BaseClass() //
 
 PortClass::~PortClass()
 {
-    for (int32_t Index = 0; Index < Modules.Length; Index++)
+    for (uint32_t Index = 0; Index < Modules.Length; Index++)
         RemoveModule(Modules[Index]);
 }
 

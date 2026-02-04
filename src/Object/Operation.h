@@ -6,8 +6,8 @@ public:
     Operation(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     bool Run();
     bool RunPart(int32_t Start);                  // Start = operation value index
-    int32_t OperationNumber(int32_t Start) const; // Number for temp list
-    int32_t ParameterNumber(int32_t Start) const; // Length of operation value space
+    uint32_t OperationNumber(uint32_t Start) const; // Number for temp list
+    uint32_t ParameterNumber(uint32_t Start) const; // Length of operation value space
 
     // TODO
     Types TypeThrough(int32_t Index); // Type through ID, runs functions
@@ -44,7 +44,7 @@ bool Operation::Run()
     if (Type == Types::Undefined)
         return Done;
 
-    for (int32_t Index = 0; Index < Modules.Length; Modules.Iterate(&Index))
+    for (uint32_t Index = 0; Index < Modules.Length; Modules.Iterate(&Index))
     {
         if (Modules.ValueTypeAt(Index) != Type)
             continue;
@@ -111,10 +111,10 @@ bool Operation::RunPart(int32_t Start)
     return true;
 }
 
-int32_t Operation::OperationNumber(int32_t Start) const
+uint32_t Operation::OperationNumber(uint32_t Start) const
 {
     int32_t Number = 0;
-    for (int32_t Index = 0; Index < Values.Length; Index++)
+    for (uint32_t Index = 0; Index < Values.Length; Index++)
     {
         if (Index >= Start)
             break;
@@ -124,10 +124,10 @@ int32_t Operation::OperationNumber(int32_t Start) const
     return Number;
 };
 
-int32_t Operation::ParameterNumber(int32_t Start) const
+uint32_t Operation::ParameterNumber(uint32_t Start) const
 {
     int32_t Number = 0;
-    for (int32_t Index = Start + 1; Index < Values.Length; Index++)
+    for (uint32_t Index = Start + 1; Index < Values.Length; Index++)
     {
         if (Values.Type(Index) == Types::Operation)
             break;
@@ -286,7 +286,7 @@ bool Operation::MoveTo(int32_t Start)
         Vector2D Target = GetThrough<Vector2D>(Start + 1);
         Time = GetThrough<uint32_t>(Start + 2);
         Vector2D Value;
-        for (int32_t Index = 0; Index < Modules.Length; Modules.Iterate(&Index))
+        for (uint32_t Index = 0; Index < Modules.Length; Modules.Iterate(&Index))
         {
             if (Modules.ValueTypeAt(Index) != Types::Vector2D)
                 continue;
@@ -301,7 +301,7 @@ bool Operation::MoveTo(int32_t Start)
         Coord2D Target = GetThrough<Coord2D>(Start + 1);
         Time = GetThrough<uint32_t>(Start + 2);
         Coord2D Value;
-        for (int32_t Index = 0; Index < Modules.Length; Modules.Iterate(&Index))
+        for (uint32_t Index = 0; Index < Modules.Length; Modules.Iterate(&Index))
         {
             if (Modules.ValueTypeAt(Index) != Types::Coord2D)
                 continue;
@@ -316,7 +316,7 @@ bool Operation::MoveTo(int32_t Start)
         Number Target = GetThrough<Number>(Start + 1);
         Time = GetThrough<uint32_t>(Start + 2);
         Number Value;
-        for (int32_t Index = 0; Index < Modules.Length; Modules.Iterate(&Index))
+        for (uint32_t Index = 0; Index < Modules.Length; Modules.Iterate(&Index))
         {
             if (Modules.ValueTypeAt(Index) != Types::Number)
                 continue;
@@ -374,7 +374,7 @@ bool Operation::SetFlags(int32_t Start)
 
     FlagClass Value = ValueGet<FlagClass>(1);
 
-    for (int32_t Index = 0; Index < Modules.Length; Modules.Iterate(&Index))
+    for (uint32_t Index = 0; Index < Modules.Length; Modules.Iterate(&Index))
         Modules.At(Index)->Flags += Value.Values;
 
     return true;
@@ -387,7 +387,7 @@ bool Operation::ResetFlags(int32_t Start)
 
     FlagClass Value = ValueGet<FlagClass>(1);
 
-    for (int32_t Index = 0; Index < Modules.Length; Modules.Iterate(&Index))
+    for (uint32_t Index = 0; Index < Modules.Length; Modules.Iterate(&Index))
         Modules.At(Index)->Flags -= Value.Values;
 
     return true;
@@ -395,9 +395,9 @@ bool Operation::ResetFlags(int32_t Start)
 
 bool Operation::Sine(int32_t Start)
 {
-    int32_t InputNumber = ParameterNumber(Start);
+    uint32_t InputNumber = ParameterNumber(Start);
     Types InputTypes[InputNumber];
-    for (int32_t Index = 0; Index < InputNumber; Index++)
+    for (uint32_t Index = 0; Index < InputNumber; Index++)
         InputTypes[Index] = TypeThrough(Start + 1 + Index);
 
     // 0m = X, 1 = Multiplier, 2 = Phase

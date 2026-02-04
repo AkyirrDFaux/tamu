@@ -70,11 +70,15 @@ BoardClass Board;
 #include "Function\Save.h"
 #include "Function\Values.h"
 
+#ifdef BOARD_Tamu_v2_0
 #include "DefaultSetup.h" //30kb of instructions :)
+#else
+void DefaultSetup(){};
+#endif
 
 void setup()
 {
-    //MemoryStartup();
+    // MemoryStartup();
     NotificationStartup();
     Serial.begin(115200L);
     Board.Setup(0);
@@ -100,13 +104,13 @@ void setup()
 
     Objects.ContentDebug();
     TimeUpdate();
-    Board.ValueSet<uint32_t>(CurrentTime,Board.BootTime);
+    Board.ValueSet<uint32_t>(CurrentTime, Board.BootTime);
 
     bool AllRun = false;
     while (AllRun == false)
     {
         AllRun = true;
-        for (int32_t Index = 0; Index < Programs.Length; Programs.Iterate(&Index))
+        for (uint32_t Index = 0; Index < Programs.Length; Programs.Iterate(&Index))
         {
             if ((Programs[Index]->Flags == RunOnStartup))
                 AllRun &= Programs[Index]->Run();
@@ -119,12 +123,12 @@ void loop()
     Chirp.Communicate();
     // Serial.print("C:" + String(millis() - CurrentTime));
 
-    for (int32_t Index = 0; Index < Sensors.Length; Sensors.Iterate(&Index))
+    for (uint32_t Index = 0; Index < Sensors.Length; Sensors.Iterate(&Index))
         Sensors[Index]->Run();
     // Serial.print(", S:" + String(millis() - CurrentTime));
 
     // Serial.println("P");
-    for (int32_t Index = 0; Index < Programs.Length; Programs.Iterate(&Index))
+    for (uint32_t Index = 0; Index < Programs.Length; Programs.Iterate(&Index))
     {
         if (((Programs[Index]->Flags == Inactive) == false) && ((Programs[Index]->Flags == RunLoop) || (Programs[Index]->Flags == RunOnce)))
             Programs[Index]->Run();
@@ -132,7 +136,7 @@ void loop()
     // Serial.print(", P:" + String(millis() - CurrentTime));
 
     // Serial.println("O");
-    for (int32_t Index = 0; Index < Outputs.Length; Outputs.Iterate(&Index))
+    for (uint32_t Index = 0; Index < Outputs.Length; Outputs.Iterate(&Index))
         Outputs[Index]->Run();
     // Serial.println("L");
     // Serial.print(", O:" + String(millis() - CurrentTime));
@@ -204,3 +208,4 @@ RAM saving - Names/Strings only on flash
 // 22.01.2026 Improved port and bus system, module attach/detach events, removed ObjectList
 // 25.01.2026 DataList adapted into ByteArray, -4kb RAM on ~70 Objects
 // 31.01.2026 SensorClass created (Analog, NTC and LDR)
+// 03.02.2026 Valu v2.0 arrived!

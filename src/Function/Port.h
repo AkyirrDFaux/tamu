@@ -131,7 +131,7 @@ void PortClass::RemoveModule(BaseClass *Object)
 int32_t PortClass::CountLED()
 {
     int32_t LEDLength = 0;
-    for (int32_t Index = 0; Index < Modules.Length; Index++)
+    for (uint32_t Index = 0; Index < Modules.Length; Index++)
     {
         if (Modules.IsValid(Index) == false)
             continue;
@@ -168,7 +168,7 @@ void PortClass::AssignLED(uint8_t Pin)
 
     *Driver = LEDDriver(LEDLength, Pin); // Start new
 
-    for (int32_t Index = 0; Index < Modules.Length; Index++)
+    for (uint32_t Index = 0; Index < Modules.Length; Index++)
     {
         if (Modules.IsValid(Index) == false)
             continue;
@@ -233,7 +233,7 @@ void I2CClass::AddModule(BaseClass *Object, int32_t Index)
         SDAPort->ValueSet(Drivers::I2C, PortClass::DriverType);
         SCLPort->ValueSet(Drivers::I2C, PortClass::DriverType);
 
-        for (int32_t Index = Modules.FirstValid(ObjectTypes::Undefined, 2); Index < Modules.Length; Modules.Iterate(&Index))
+        for (uint32_t Index = Modules.FirstValid(ObjectTypes::Undefined, 2); Index < Modules.Length; Modules.Iterate(&Index))
             StartModule(Modules[Index]);
     }
     else if (I2C != nullptr)
@@ -266,7 +266,7 @@ void I2CClass::RemoveModule(BaseClass *Object)
         Modules.Get<PortClass>(SDA)->ValueSet(Drivers::None, PortClass::DriverType);
         Modules.Get<PortClass>(SCL)->ValueSet(Drivers::None, PortClass::DriverType);
 
-        for (int32_t Index = Modules.FirstValid(ObjectTypes::Undefined, 2); Index < Modules.Length; Modules.Iterate(&Index))
+        for (uint32_t Index = Modules.FirstValid(ObjectTypes::Undefined, 2); Index < Modules.Length; Modules.Iterate(&Index))
             StopModule(Modules[Index]);
     }
     else
@@ -291,7 +291,7 @@ void I2CClass::StopModule(BaseClass *Object)
 void UpdateLED()
 {
     // Loop through all ports and if they're led, call show()
-    for (int32_t Index = Board.Modules.FirstValid(ObjectTypes::Port); Index < Board.Modules.Length; Board.Modules.Iterate(&Index, ObjectTypes::Port))
+    for (uint32_t Index = Board.Modules.FirstValid(ObjectTypes::Port); Index < Board.Modules.Length; Board.Modules.Iterate(&Index, ObjectTypes::Port))
     {
         PortClass *Port = Board.Modules.Get<PortClass>(Index);
         if (Port->ValueGet<Drivers>(PortClass::DriverType) == Drivers::LED)

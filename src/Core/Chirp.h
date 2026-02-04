@@ -43,6 +43,7 @@ class MyCallbacks : public BLECharacteristicCallbacks
     }
 };
 #endif
+
 class ChirpClass
 {
 public:

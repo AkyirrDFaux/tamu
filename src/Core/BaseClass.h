@@ -28,13 +28,13 @@ BaseClass::BaseClass(IDClass NewID, FlagClass NewFlags)
 BaseClass::~BaseClass()
 {
     // Remove references to this from all modules
-    for (int32_t Index = Modules.FirstValid(); Index < Modules.Length; Modules.Iterate(&Index))
+    for (uint32_t Index = Modules.FirstValid(); Index < Modules.Length; Modules.Iterate(&Index))
     {
         if (Modules[Index]->Flags == Flags::Auto) // If modules are static (directly tied) deconstruct them too
             delete Modules[Index];
     }
     // Remove this as a module from all references
-    for (int32_t Index = 0; Index < Objects.Allocated; Index++)
+    for (uint32_t Index = 0; Index < Objects.Allocated; Index++)
     {
         if (Objects.IsValid(Index) == false)
             continue;

@@ -77,7 +77,7 @@ bool DisplayClass::Run()
         return true;
     }
 
-    int32_t Length = ValueGet<int32_t>(Value::Length);
+    uint32_t Length = ValueGet<int32_t>(Value::Length);
     Vector2D Size = ValueGet<Vector2D>(Value::Size);
     Number Ratio = ValueGet<Number>(Value::Ratio);
     uint8_t Brightness = ValueGet<uint8_t>(Value::Brightness);
@@ -87,11 +87,11 @@ bool DisplayClass::Run()
     ColourClass Buffer[Length];
     Coord2D Transform = Coord2D(Size * 0.5 - Vector2D(0.5, 0.5), Vector2D(0)).Join(Offset);
     // Iterate over layers
-    for (int32_t Index = Modules.FirstValid(ObjectTypes::Shape2D); Index < Modules.Length; Modules.Iterate(&Index, ObjectTypes::Shape2D))
+    for (uint32_t Index = Modules.FirstValid(ObjectTypes::Shape2D); Index < Modules.Length; Modules.Iterate(&Index, ObjectTypes::Shape2D))
         Modules[Index]->As<Shape2DClass>()->Render(Length, Size, Ratio, Transform, Mirrored, Layout, Buffer);
 
     // Final output
-    for (int32_t Index = 0; Index < Length; Index++)
+    for (uint32_t Index = 0; Index < Length; Index++)
     {
         Buffer[Index].ToDisplay(Brightness);
         LEDs.Write(Index,Buffer[Index]);

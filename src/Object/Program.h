@@ -45,9 +45,9 @@ bool Program::Run()
     if(Values.Type(Mode) != Types::Program || Values.Type(Counter) != Types::Integer)
         return true;
 
-    int32_t Counter = ValueGet<int32_t>(Value::Counter);
+    uint32_t Counter = ValueGet<int32_t>(Value::Counter);
 
-    int CounterInit = Counter;
+    uint32_t CounterInit = Counter;
     switch (ValueGet<ProgramTypes>(Value::Mode))
     {
     case ProgramTypes::Sequence:
@@ -66,7 +66,7 @@ bool Program::Run()
         break;
     case ProgramTypes::All:
         //NOT WORKING
-        for (int32_t Index = Modules.FirstValid(); Index < Modules.Length; Modules.Iterate(&Index))
+        for (uint32_t Index = Modules.FirstValid(); Index < Modules.Length; Modules.Iterate(&Index))
             HasFinished = HasFinished && RunEntry(Counter);
         break;
     default:

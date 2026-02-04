@@ -31,7 +31,7 @@ void Shape2DClass::Render(int32_t Length, Vector2D Size, Number Ratio, Coord2D T
 
     Number Overlay[Length];
     //Calculate overlays
-    for (int32_t Index = Modules.FirstValid(ObjectTypes::Geometry2D); Index < Modules.Length; Modules.Iterate(&Index, ObjectTypes::Geometry2D))
+    for (uint32_t Index = Modules.FirstValid(ObjectTypes::Geometry2D); Index < Modules.Length; Modules.Iterate(&Index, ObjectTypes::Geometry2D))
         Modules[Index]->As<Geometry2DClass>()->Render(Length, Size, Ratio, Transform, Mirrored, Layout, Overlay);
 
     //Apply texture

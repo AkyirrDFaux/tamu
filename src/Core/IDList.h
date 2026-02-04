@@ -37,7 +37,7 @@ inline void IDList::operator=(const IDList &Copied)
 
 bool IDList::IsValid(int32_t Index, ObjectTypes Filter) const
 {
-    if (Index >= Length || Index < 0)
+    if ((uint32_t)Index >= Length || Index < 0)
         return false;
 
     return Objects.IsValid(IDs[Index], Filter);
@@ -62,12 +62,12 @@ BaseClass *IDList::At(int32_t Index) const // Returns address or nullptr if inva
 int32_t IDList::FirstValid(ObjectTypes Filter, int32_t Start) const
 {
     int32_t Index = Start;
-    while (Index <= Length && !IsValid(Index, Filter))
+    while ((uint32_t)Index <= Length && !IsValid(Index, Filter))
         Index++;
     return Index;
 };
 
-void IDList::Iterate(int32_t *Index, ObjectTypes Filter) const
+void IDList::Iterate(uint32_t *Index, ObjectTypes Filter) const
 {
     (*Index)++;
     // Skip to next if: A)Is invalid; B)Filter is not undefined and Type of object isn't one filtered
@@ -100,17 +100,17 @@ bool IDList::ValueSet(C Value, int32_t Index)
 
 // MEMORY MANAGEMENT
 
-void IDList::Expand(int8_t NewLength) // Expands list to new length
+void IDList::Expand(uint8_t NewLength) // Expands list to new length
 {
     if (NewLength <= Length)
         return;
 
     IDClass *NewIDs = new IDClass[NewLength];
 
-    for (int32_t Index = 0; Index < Length; Index++) // Copy existing
+    for (uint32_t Index = 0; Index < Length; Index++) // Copy existing
         NewIDs[Index] = IDs[Index];
 
-    for (int32_t Index = Length; Index < NewLength; Index++) // Add empty to new
+    for (uint32_t Index = Length; Index < NewLength; Index++) // Add empty to new
         NewIDs[Index] = NoID;
 
     if (Length != 0) // Replace
@@ -146,7 +146,7 @@ bool IDList::Add(IDClass ID, int32_t Index) // Add an item to list, supports -1,
     if (Index == -1) // Add to end
         Index = Length;
 
-    if (Index >= Length) // Expand if Index is too far
+    if ((uint32_t)Index >= Length) // Expand if Index is too far
         Expand(Index + 1);
     else if (IsValid(Index)) // Occupied
         return false;
@@ -160,7 +160,7 @@ bool IDList::Add(BaseClass *AddObject, int32_t Index)
     if (Index == -1) // Add to end
         Index = Length;
 
-    if (Index >= Length) // Expand if Index is too far
+    if ((uint32_t)Index >= Length) // Expand if Index is too far
         Expand(Index + 1);
     else if (IsValid(Index)) // Occupied
         return false;
@@ -171,7 +171,7 @@ bool IDList::Add(BaseClass *AddObject, int32_t Index)
 
 bool IDList::Remove(int32_t Index) // Removes object
 {
-    if (Index >= Length || Index < 0)
+    if ((uint32_t)Index >= Length || Index < 0)
         return false;
 
     IDs[Index] = NoID;
@@ -181,7 +181,7 @@ bool IDList::Remove(int32_t Index) // Removes object
 
 bool IDList::Remove(BaseClass *RemovedObject) // Removes object, even if it is contained more times
 {
-    for (int32_t Index = 0; Index < Length; Index++)
+    for (uint32_t Index = 0; Index < Length; Index++)
     {
         if (At(Index) == RemovedObject || IDs[Index] == RemovedObject->ID)
             Remove(Index);
@@ -202,7 +202,7 @@ bool IDList::RemoveAll()
 String IDList::AsString()
 {
     String Text = "";
-    for (int Index = 0; Index < Length; Index++)
+    for (uint32_t Index = 0; Index < Length; Index++)
     {
         if (IsValid(Index))
             Text += String(Index) + " " + String(IDs[Index].ID) + " ";

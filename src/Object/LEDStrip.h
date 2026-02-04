@@ -64,7 +64,7 @@ ColourClass LEDStripClass::RenderPixel(int32_t Base, int32_t Length)
 {
     ColourClass Colour = ColourClass(0, 0, 0);
 
-    for (int32_t Index = Modules.FirstValid(ObjectTypes::LEDSegment); Index < Modules.Length; Modules.Iterate(&Index, ObjectTypes::LEDSegment))
+    for (uint32_t Index = Modules.FirstValid(ObjectTypes::LEDSegment); Index < Modules.Length; Modules.Iterate(&Index, ObjectTypes::LEDSegment))
         Colour = Modules[Index]->As<LEDSegmentClass>()->Render(Colour, Base, Length);
 
     return Colour;

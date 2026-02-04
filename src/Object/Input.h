@@ -68,18 +68,18 @@ bool InputClass::Run()
     switch (ValueGet<Inputs>(InputType))
     {
     case Inputs::Button:
-        ValueSet<bool>(!digitalRead(Pin), Input); // Inverted
+        ValueSet<bool>(digitalRead(Pin) == ON_STATE, Input);
         break;
     case Inputs::ButtonWithLED:
         if (ValueGet<bool>(Indicator))
         {
             pinMode(Pin, OUTPUT);
-            digitalWrite(Pin, LOW); // Inverted
+            digitalWrite(Pin, ON_STATE);
         }
         else // Applies blocking
         {
             pinMode(Pin, INPUT);
-            ValueSet<bool>(!digitalRead(Pin), Input); // Inverted
+            ValueSet<bool>(digitalRead(Pin) == ON_STATE, Input);
         }
         break;
     default:
