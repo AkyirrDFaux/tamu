@@ -45,9 +45,9 @@ bool Program::Run()
     if(Values.Type(Mode) != Types::Program || Values.Type(Counter) != Types::Integer)
         return true;
 
-    uint32_t Counter = ValueGet<int32_t>(Value::Counter);
+    int32_t Counter = ValueGet<int32_t>(Value::Counter);
 
-    uint32_t CounterInit = Counter;
+    int32_t CounterInit = Counter;
     switch (ValueGet<ProgramTypes>(Value::Mode))
     {
     case ProgramTypes::Sequence:

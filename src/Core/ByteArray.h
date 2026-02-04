@@ -10,7 +10,7 @@ public:
     template <class C>
     ByteArray(const C &Data);
     ByteArray(const char *Data, uint32_t DataLength); // Raw data input
-    void operator=(const ByteArray &Other);          // Copy
+    void operator=(const ByteArray &Other);           // Copy
 
     ByteArray operator<<(const ByteArray &Data) const; // Concatenation, creates new
 
@@ -212,21 +212,22 @@ Types ByteArray::Type(int32_t Index) const
 template <class C>
 C ByteArray::Get(int32_t Index) const
 {
-    return *((C *)(Array + GetStart(Index) + sizeof(Types)));
-};
+    C Value;
+    int32_t Start = GetStart(Index);
+    if (Start < 0) //Invalid data
+        return C();
+    memcpy(&Value, Array + Start + sizeof(Types), sizeof(C)); // Copy data, prevent %4 byte unalignment
+    return Value;
+}
 
 template <>
 String ByteArray::Get(int32_t Index) const
 {
     int32_t Start = GetStart(Index);
-#if defined BOARD_Valu_v2_0
     String Text = "";
-    for (int32_t Index = Start + sizeof(Types) + sizeof(uint8_t); Index < Start + (uint8_t)Array[Start + sizeof(Types)]; Index++)
+    for (int32_t Index = Start + sizeof(Types) + sizeof(uint8_t); Index < Start + sizeof(Types) + sizeof(uint8_t) + (uint8_t)Array[Start + sizeof(Types)]; Index++)
         Text += Array[Index];
     return Text;
-#else
-    return String(Array + Start + sizeof(Types) + sizeof(uint8_t), (uint8_t)Array[Start + sizeof(Types)]);
-#endif
 };
 
 template <class C>
@@ -317,17 +318,27 @@ ByteArray ByteArray::CreateMessage() const
     uint32_t Pointer = 0;
     while (Pointer < Buffer.Length)
     {
-        switch ((Types)Buffer.Array[Pointer]) // Increment by length of block
+        float TempFloat; //%4 byte alignment safe
+        Number TempNumber;
+
+        switch ((Types)Buffer.Array[Pointer])
         {
-        // case Types::Coord3D:
         case Types::Coord2D:
-            *(float *)(Buffer.Array + Pointer + 13) = *(Number *)(Buffer.Array + Pointer + 13);
+            memcpy(&TempNumber, Buffer.Array + Pointer + 13, sizeof(Number));
+            TempFloat = (float)TempNumber;
+            memcpy(Buffer.Array + Pointer + 13, &TempFloat, sizeof(float));
         case Types::Vector3D:
-            *(float *)(Buffer.Array + Pointer + 9) = *(Number *)(Buffer.Array + Pointer + 9);
+            memcpy(&TempNumber, Buffer.Array + Pointer + 9, sizeof(Number));
+            TempFloat = (float)TempNumber;
+            memcpy(Buffer.Array + Pointer + 9, &TempFloat, sizeof(float));
         case Types::Vector2D:
-            *(float *)(Buffer.Array + Pointer + 5) = *(Number *)(Buffer.Array + Pointer + 5);
+            memcpy(&TempNumber, Buffer.Array + Pointer + 5, sizeof(Number));
+            TempFloat = (float)TempNumber;
+            memcpy(Buffer.Array + Pointer + 5, &TempFloat, sizeof(float));
         case Types::Number:
-            *(float *)(Buffer.Array + Pointer + 1) = *(Number *)(Buffer.Array + Pointer + 1);
+            memcpy(&TempNumber, Buffer.Array + Pointer + 1, sizeof(Number));
+            TempFloat = (float)TempNumber;
+            memcpy(Buffer.Array + Pointer + 1, &TempFloat, sizeof(float));
             break;
         default:
             break;
@@ -367,17 +378,27 @@ ByteArray ByteArray::ExtractMessage()
     uint32_t Pointer = 0;
     while (Pointer < Message.Length)
     {
+        float TempFloat; //%4 byte alignment safe
+        Number TempNumber;
+
         switch ((Types)Message.Array[Pointer])
         {
-        // case Types::Coord3D:
         case Types::Coord2D:
-            *(Number *)(Message.Array + Pointer + 13) = *(float *)(Message.Array + Pointer + 13);
+            memcpy(&TempFloat, Message.Array + Pointer + 13, sizeof(float));
+            TempNumber = (Number)TempFloat;
+            memcpy(Message.Array + Pointer + 13, &TempNumber, sizeof(Number));
         case Types::Vector3D:
-            *(Number *)(Message.Array + Pointer + 9) = *(float *)(Message.Array + Pointer + 9);
+            memcpy(&TempFloat, Message.Array + Pointer + 9, sizeof(float));
+            TempNumber = (Number)TempFloat;
+            memcpy(Message.Array + Pointer + 9, &TempNumber, sizeof(Number));
         case Types::Vector2D:
-            *(Number *)(Message.Array + Pointer + 5) = *(float *)(Message.Array + Pointer + 5);
+            memcpy(&TempFloat, Message.Array + Pointer + 5, sizeof(float));
+            TempNumber = (Number)TempFloat;
+            memcpy(Message.Array + Pointer + 5, &TempNumber, sizeof(Number));
         case Types::Number:
-            *(Number *)(Message.Array + Pointer + 1) = *(float *)(Message.Array + Pointer + 1);
+            memcpy(&TempFloat, Message.Array + Pointer + 1, sizeof(float));
+            TempNumber = (Number)TempFloat;
+            memcpy(Message.Array + Pointer + 1, &TempNumber, sizeof(Number));
             break;
         default:
             break;

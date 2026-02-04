@@ -75,7 +75,32 @@ void BoardClass::Setup(int32_t Index) // Load Presets
         Modules[10]->AddModule(Modules[13], 0);
 #elif defined BOARD_Valu_v2_0
         ValueSet(Boards::Valu_v2_0, BoardType);
-        
+        AddModule(new PortClass(PA14, Ports::GPIO | Ports::PWM), 0); // L1
+        AddModule(new PortClass(PB8, Ports::GPIO | Ports::PWM), 1);  // L2
+        AddModule(new PortClass(PB10, Ports::GPIO), 2);  // L3
+        AddModule(new PortClass(PB11, Ports::GPIO), 3);  // L4
+        AddModule(new PortClass(PB1, Ports::GPIO | Ports::PWM | Ports::ADC), 4);  // L5
+        AddModule(new PortClass(PA8, Ports::TOut), 5);  // F
+
+        AddModule(new PortClass(PA6, Ports::GPIO | Ports::ADC), 6);  // S1
+        AddModule(new PortClass(PA1, Ports::GPIO | Ports::ADC), 7);  // S2
+        AddModule(new PortClass(PA0, Ports::GPIO | Ports::ADC), 8);  // S3
+
+        AddModule(new PortClass(PA10, Ports::UART_RX), 9); 
+        AddModule(new PortClass(PA9, Ports::UART_TX), 10);  
+        AddModule(new PortClass(PB6, Ports::I2C_SCL), 11);  
+        AddModule(new PortClass(PB7, Ports::I2C_SDA), 12);  
+
+        AddModule(new PortClass(PB15, Ports::GPIO | Ports::Internal), 13); //B1
+        AddModule(new PortClass(PB14, Ports::GPIO | Ports::Internal), 14); //B2
+        AddModule(new PortClass(PB13, Ports::GPIO | Ports::Internal), 15); //B3
+        AddModule(new PortClass(LED_NOTIFICATION_PIN, Ports::GPIO | Ports::Internal), 16); //B4 + LED
+
+        AddModule(new PortClass(PA5, Ports::SPI_CLK), 17); 
+        AddModule(new PortClass(PA7, Ports::SPI_MOSI), 18); 
+        AddModule(new PortClass(PA3, Ports::SPI_DRST), 19); 
+        AddModule(new PortClass(PB0, Ports::SPI_DDC), 20); 
+        AddModule(new PortClass(PA4, Ports::SPI_CS), 21); 
 #endif
     }
 };

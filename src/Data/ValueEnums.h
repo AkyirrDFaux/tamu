@@ -22,7 +22,9 @@ namespace Ports
         SPI_MOSI = (1 << 16),
         SPI_MISO = (1 << 17),
         SPI_CLK = (1 << 18),
-        SPI_CS = (1 << 19)
+        SPI_CS = (1 << 19),
+        SPI_DRST = (1 << 20),
+        SPI_DDC = (1 << 21),
     };
 }
 

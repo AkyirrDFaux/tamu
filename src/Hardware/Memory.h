@@ -17,5 +17,5 @@ void MemoryReset()
     Root.close();
 }
 #else
-#include <lfs.h>
+//#include <lfs.h>
 #endif

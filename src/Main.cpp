@@ -70,10 +70,10 @@ BoardClass Board;
 #include "Function\Save.h"
 #include "Function\Values.h"
 
-#ifdef BOARD_Tamu_v2_0
-#include "DefaultSetup.h" //30kb of instructions :)
-#else
-void DefaultSetup(){};
+#if defined BOARD_Tamu_v2_0
+#include "DefaultSetupTamuv2.0.h" //30kb of instructions :)
+#elif defined BOARD_Valu_v2_0
+#include "DefaultSetupValuv2.0.h"
 #endif
 
 void setup()
@@ -120,6 +120,10 @@ void setup()
 
 void loop()
 {
+#if defined BOARD_Valu_v2_0
+    NotificationBlink(1, 100);
+    delay(500);
+#endif
     Chirp.Communicate();
     // Serial.print("C:" + String(millis() - CurrentTime));
 
@@ -145,7 +149,7 @@ void loop()
     // Serial.println(", L:" + String(millis() - CurrentTime));
 
     TimeUpdate();
-    //Serial.println(DeltaTime);
+    // Serial.println(DeltaTime);
     Board.UpdateLoopTime();
 };
 
