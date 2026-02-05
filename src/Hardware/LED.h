@@ -76,7 +76,6 @@ inline void LEDDriver::Write(uint32_t Index, ColourClass Colour)
 }
 
 #elif defined BOARD_Valu_v2_0
-#include <Adafruit_NeoPixel.h>
 
 // Macros for PB8 - Verified working at 144MHz
 #define LED_HIGH() (*((volatile uint32_t *)0x40010C10) = (1 << 8))
@@ -96,62 +95,62 @@ inline void LEDDriver::Write(uint32_t Index, ColourClass Colour)
 class LEDDriver
 {
 public:
-    int16_t OffsetStart = 0;
-    Adafruit_NeoPixel *LEDs;
+    uint8_t *LEDs = nullptr;
+    uint32_t Length = 0;
 
-    // Pointers to the specific hardware registers for this instance
-    volatile uint32_t *setReg;
-    volatile uint32_t *clrReg;
-    uint32_t pinMask;
+    // Hardware registers
+    volatile uint32_t *SetReg = nullptr;
+    volatile uint32_t *ClearReg = nullptr;
+    uint32_t PinMask = 0;
 
-    LEDDriver() : LEDs(nullptr), setReg(nullptr), clrReg(nullptr), pinMask(0) {};
-    LEDDriver(uint16_t Length, uint16_t Pin);
+    LEDDriver(){};
+    LEDDriver(uint16_t NewLength, uint16_t Pin);
 
     LEDDriver Offset(uint32_t Offset);
     void Write(uint32_t Index, ColourClass Colour);
-    void Show(); // Bit-bang caller, native Adafruit does not work
+    void Show();
     void Stop();
 };
 
-LEDDriver::LEDDriver(uint16_t Length, uint16_t Pin)
+LEDDriver::LEDDriver(uint16_t NewLength, uint16_t Pin)
 {
-    LEDs = new Adafruit_NeoPixel(Length, Pin, NEO_GRB + NEO_KHZ800);
+    Length = NewLength;
+    LEDs = new uint8_t[Length * 3];
 
-    uint32_t portBase = 0;
-    uint8_t pinNum = 0;
+    uint32_t PortBase = 0;
+    uint8_t PinNumber = 0;
 
-    // Manual Mapping to be 100% sure
     if (Pin == PA14)
-    { // PA14
-        portBase = 0x40010800;
-        pinNum = 14;
+    {
+        PortBase = 0x40010800; // Port A
+        PinNumber = 14;
         *((volatile uint32_t *)0x40021018) |= (1 << 2);     // GPIOA Clock
         *((volatile uint32_t *)0x40021018) |= (1 << 0);     // AFIO Clock
         *((volatile uint32_t *)0x40010004) |= (0x04000000); // Remap
     }
     else if (Pin == PB1 || Pin == PB8 || Pin == PB10 || Pin == PB11)
-    { // Port B Cluster
-        portBase = 0x40010C00;
+    {
+        PortBase = 0x40010C00;                          // Port B
         *((volatile uint32_t *)0x40021018) |= (1 << 3); // GPIOB Clock
 
         if (Pin == PB1)
-            pinNum = 1;
+            PinNumber = 1;
         else if (Pin == PB8)
-            pinNum = 8;
+            PinNumber = 8;
         else if (Pin == PB10)
-            pinNum = 10;
+            PinNumber = 10;
         else if (Pin == PB11)
-            pinNum = 11;
+            PinNumber = 11;
     }
 
-    this->pinMask = (1 << pinNum);
-    this->setReg = (volatile uint32_t *)(portBase + 0x10);
-    this->clrReg = (volatile uint32_t *)(portBase + 0x14);
+    this->PinMask = (1 << PinNumber);
+    this->SetReg = (volatile uint32_t *)(PortBase + 0x10);
+    this->ClearReg = (volatile uint32_t *)(PortBase + 0x14);
 
     // CR Register Selection
     // CRL = 0x00 (Pins 0-7), CRH = 0x04 (Pins 8-15)
-    uint32_t crAddr = portBase + (pinNum < 8 ? 0x00 : 0x04);
-    uint8_t shift = (pinNum % 8) * 4;
+    uint32_t crAddr = PortBase + (PinNumber < 8 ? 0x00 : 0x04);
+    uint8_t shift = (PinNumber % 8) * 4;
 
     // Safe Register Update
     volatile uint32_t *regPtr = (volatile uint32_t *)crAddr;
@@ -165,7 +164,7 @@ void LEDDriver::Stop()
 {
     if (LEDs != nullptr)
     {
-        delete LEDs;
+        delete[] LEDs;
         LEDs = nullptr;
     }
 };
@@ -173,48 +172,52 @@ void LEDDriver::Stop()
 LEDDriver LEDDriver::Offset(uint32_t Offset)
 {
     LEDDriver OffsetDriver = LEDDriver();
-    OffsetDriver.LEDs = LEDs;
-    OffsetDriver.OffsetStart = Offset;
+    OffsetDriver.LEDs = &(LEDs[Offset * 3]);
     return OffsetDriver;
 }
 
 inline void LEDDriver::Write(uint32_t Index, ColourClass Colour)
 {
+    // Neopixels are GRB
     if (LEDs)
-        LEDs->setPixelColor((uint16_t)(Index + OffsetStart), Colour.R, Colour.G, Colour.B);
+    {
+        LEDs[Index * 3] = Colour.G;
+        LEDs[Index * 3 + 1] = Colour.R;
+        LEDs[Index * 3 + 2] = Colour.B;
+    }
 }
 
 // This replaces the standard .show() using your verified timing
 void LEDDriver::Show()
 {
-    if (!LEDs || !setReg)
+    if (!LEDs || !SetReg)
         return;
 
-    uint8_t *p = LEDs->getPixels();
-    uint16_t numBytes = LEDs->numPixels() * 3;
+    uint8_t *Pixel = LEDs;
+    uint16_t ByteLength = Length * 3;
 
     noInterrupts();
     __asm__ volatile("" : : : "memory");
 
-    while (numBytes--)
+    while (ByteLength--)
     {
-        uint8_t b = *p++;
-        for (int8_t i = 7; i >= 0; i--)
+        uint8_t Channel = *Pixel++;
+        for (int8_t Index = 7; Index >= 0; Index--)
         {
-            if (b & (1 << i))
+            if (Channel & (1 << Index))
             {
-                *setReg = pinMask; // HIGH
+                *SetReg = PinMask; // HIGH
                 NOP64();
                 NOP16();
-                *clrReg = pinMask; // LOW
+                *ClearReg = PinMask; // LOW
                 NOP64();
             }
             else
             {
-                *setReg = pinMask; // HIGH
+                *SetReg = PinMask; // HIGH
                 NOP16();
                 NOP4();
-                *clrReg = pinMask; // LOW
+                *ClearReg = PinMask; // LOW
                 NOP64();
                 NOP64();
             }

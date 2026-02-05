@@ -181,7 +181,6 @@ Split up individual functions in geometry, possibly combine multiple in one, rem
 Go over BLE functions, spread out sending/recieving delay, better compression
 Operation - prevent recursion, remove unnecessary loops in fuction calls
 
-Valu v2.0 LED driver cleanup (remove Adafruit library)
 More optimised ByteArray functions (sequential & multiple(type + object) reading)
 RAM saving - Names/Strings only on flash
 */
