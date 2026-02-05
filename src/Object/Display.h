@@ -46,6 +46,12 @@ void DisplayClass::Setup(int32_t Index)
 
     switch (ValueGet<Displays>(DisplayType))
     {
+    case Displays::GenericLEDMatrix:
+        ValueSet<int32_t>(256, Length);
+        ValueSet<Number>(1, Ratio);
+        ValueSet(Vector2D(16, 16), Size);
+        Layout = nullptr;
+        break;
     case Displays::Vysi_v1_0:
         ValueSet<int32_t>(86, Length);
         ValueSet<Number>(1, Ratio);
@@ -65,7 +71,7 @@ DisplayClass::~DisplayClass()
 bool DisplayClass::Run()
 {
     if (Values.Type(Length) != Types::Integer || Values.Type(Size) != Types::Vector2D || Values.Type(Ratio) != Types::Number ||
-        Values.Type(Brightness) != Types::Byte || Values.Type(Offset) != Types::Coord2D || Values.Type(Mirrored) != Types::Bool || Layout == nullptr)
+        Values.Type(Brightness) != Types::Byte || Values.Type(Offset) != Types::Coord2D || Values.Type(Mirrored) != Types::Bool)
     {
         ReportError(Status::MissingModule, "Display");
         return true;

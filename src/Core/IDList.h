@@ -4,7 +4,7 @@ inline IDList::IDList(const IDList &Copied)
     if (Length > 0)
     {
         IDs = new IDClass[Length];
-        memcpy(IDs, Copied.IDs, sizeof(IDClass) * Length);
+        memcpy((void*)IDs, Copied.IDs, sizeof(IDClass) * Length);
     }
     else
     {
@@ -25,7 +25,7 @@ inline void IDList::operator=(const IDList &Copied)
     if (Length > 0)
     {
         IDs = new IDClass[Length];
-        memcpy(IDs, Copied.IDs, sizeof(IDClass) * Length);
+        memcpy((void*)IDs, Copied.IDs, sizeof(IDClass) * Length);
     }
     else
     {
@@ -220,7 +220,7 @@ IDList ByteArray::Get(int32_t Index) const
 
     List.Length = DataLength / sizeof(IDClass);
     List.IDs = new IDClass[List.Length];
-    memcpy(List.IDs, Array + sizeof(uint8_t) * 2, DataLength);
+    memcpy((void*)List.IDs, Array + sizeof(uint8_t) * 2, DataLength);
     return List;
 };
 

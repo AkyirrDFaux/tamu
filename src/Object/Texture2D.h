@@ -97,9 +97,12 @@ void Texture2D::Render(int32_t Length, Vector2D Size, Number Ratio, Coord2D Tran
         for (int32_t X = 0; X < int32_t(Size.X); X++)
         {
             int32_t Index = (Size.Y - Y - 1) * Size.X + X; // Invert Y due to layout coords |''
-            if (Layout[Index] == 0)
-                continue;
-            Index = Layout[Index] - 1;
+            if (Layout != nullptr)
+            {
+                if (Layout[Index] == 0)
+                    continue;
+                Index = Layout[Index] - 1;
+            }
 
             if (Overlay[Index] <= Number(0)) // Skip if not visible
                 continue;

@@ -55,7 +55,7 @@ bool Program::Run()
         while (RunEntry(Counter) == true && !(HasFinished && Counter >= CounterInit)) // Finished part or (made a step and done)
         {
             Counter++;
-            if (Counter >= Modules.Length)
+            if ((uint32_t)Counter >= Modules.Length)
             {
                 HasFinished = true;
                 Counter = 0;

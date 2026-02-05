@@ -295,7 +295,7 @@ void UpdateLED()
     {
         PortClass *Port = Board.Modules.Get<PortClass>(Index);
         if (Port->ValueGet<Drivers>(PortClass::DriverType) == Drivers::LED)
-            ((LEDDriver *)Port->DriverObj)->LEDs->show();
+            ((LEDDriver *)Port->DriverObj)->Show();
     }
 }
 #endif

@@ -91,9 +91,12 @@ void Geometry2DClass::Render(int32_t Length, Vector2D DisplaySize, Number Ratio,
         for (int32_t X = 0; X < int32_t(DisplaySize.X); X++)
         {
             int32_t Index = (DisplaySize.Y - Y - 1) * DisplaySize.X + X; // Invert Y due to layout coords |''
-            if (Layout[Index] == 0)
-                continue;
-            Index = Layout[Index] - 1;
+            if (Layout != nullptr)
+            {
+                if (Layout[Index] == 0)
+                    continue;
+                Index = Layout[Index] - 1;
+            }
 
             if (Operation == GeometryOperation::Add && Overlay[Index] >= Number(1))
                 continue;

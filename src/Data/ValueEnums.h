@@ -81,7 +81,8 @@ enum class GeometryOperation : uint8_t
 enum class Displays : uint8_t
 {
     Undefined,
-    Vysi_v1_0
+    GenericLEDMatrix,
+    Vysi_v1_0 = 10
 };
 
 enum class LEDStrips : uint8_t

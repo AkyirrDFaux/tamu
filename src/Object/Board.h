@@ -4,7 +4,7 @@ public:
     enum Value
     {
         BoardType,
-        BTName,
+        DisplayName,
         BootTime,
         AvgTime,
         MaxTime,

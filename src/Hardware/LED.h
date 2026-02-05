@@ -75,6 +75,155 @@ inline void LEDDriver::Write(uint32_t Index, ColourClass Colour)
     LEDs[Index].setRGB(Colour.R, Colour.G, Colour.B);
 }
 
+#elif defined BOARD_Valu_v2_0
+#include <Adafruit_NeoPixel.h>
+
+// Macros for PB8 - Verified working at 144MHz
+#define LED_HIGH() (*((volatile uint32_t *)0x40010C10) = (1 << 8))
+#define LED_LOW() (*((volatile uint32_t *)0x40010C14) = (1 << 8))
+#define NOP4() __asm__ volatile("nop; nop; nop; nop;")
+#define NOP16() \
+    NOP4();     \
+    NOP4();     \
+    NOP4();     \
+    NOP4();
+#define NOP64() \
+    NOP16();    \
+    NOP16();    \
+    NOP16();    \
+    NOP16();
+
+class LEDDriver
+{
+public:
+    int16_t OffsetStart = 0;
+    Adafruit_NeoPixel *LEDs;
+
+    // Pointers to the specific hardware registers for this instance
+    volatile uint32_t *setReg;
+    volatile uint32_t *clrReg;
+    uint32_t pinMask;
+
+    LEDDriver() : LEDs(nullptr), setReg(nullptr), clrReg(nullptr), pinMask(0) {};
+    LEDDriver(uint16_t Length, uint16_t Pin);
+
+    LEDDriver Offset(uint32_t Offset);
+    void Write(uint32_t Index, ColourClass Colour);
+    void Show(); // Bit-bang caller, native Adafruit does not work
+    void Stop();
+};
+
+LEDDriver::LEDDriver(uint16_t Length, uint16_t Pin)
+{
+    LEDs = new Adafruit_NeoPixel(Length, Pin, NEO_GRB + NEO_KHZ800);
+
+    uint32_t portBase = 0;
+    uint8_t pinNum = 0;
+
+    // Manual Mapping to be 100% sure
+    if (Pin == PA14)
+    { // PA14
+        portBase = 0x40010800;
+        pinNum = 14;
+        *((volatile uint32_t *)0x40021018) |= (1 << 2);     // GPIOA Clock
+        *((volatile uint32_t *)0x40021018) |= (1 << 0);     // AFIO Clock
+        *((volatile uint32_t *)0x40010004) |= (0x04000000); // Remap
+    }
+    else if (Pin == PB1 || Pin == PB8 || Pin == PB10 || Pin == PB11)
+    { // Port B Cluster
+        portBase = 0x40010C00;
+        *((volatile uint32_t *)0x40021018) |= (1 << 3); // GPIOB Clock
+
+        if (Pin == PB1)
+            pinNum = 1;
+        else if (Pin == PB8)
+            pinNum = 8;
+        else if (Pin == PB10)
+            pinNum = 10;
+        else if (Pin == PB11)
+            pinNum = 11;
+    }
+
+    this->pinMask = (1 << pinNum);
+    this->setReg = (volatile uint32_t *)(portBase + 0x10);
+    this->clrReg = (volatile uint32_t *)(portBase + 0x14);
+
+    // CR Register Selection
+    // CRL = 0x00 (Pins 0-7), CRH = 0x04 (Pins 8-15)
+    uint32_t crAddr = portBase + (pinNum < 8 ? 0x00 : 0x04);
+    uint8_t shift = (pinNum % 8) * 4;
+
+    // Safe Register Update
+    volatile uint32_t *regPtr = (volatile uint32_t *)crAddr;
+    uint32_t cfg = *regPtr;
+    cfg &= ~(0xF << shift);
+    cfg |= (0x3 << shift); // 50MHz Out PP
+    *regPtr = cfg;
+}
+
+void LEDDriver::Stop()
+{
+    if (LEDs != nullptr)
+    {
+        delete LEDs;
+        LEDs = nullptr;
+    }
+};
+
+LEDDriver LEDDriver::Offset(uint32_t Offset)
+{
+    LEDDriver OffsetDriver = LEDDriver();
+    OffsetDriver.LEDs = LEDs;
+    OffsetDriver.OffsetStart = Offset;
+    return OffsetDriver;
+}
+
+inline void LEDDriver::Write(uint32_t Index, ColourClass Colour)
+{
+    if (LEDs)
+        LEDs->setPixelColor((uint16_t)(Index + OffsetStart), Colour.R, Colour.G, Colour.B);
+}
+
+// This replaces the standard .show() using your verified timing
+void LEDDriver::Show()
+{
+    if (!LEDs || !setReg)
+        return;
+
+    uint8_t *p = LEDs->getPixels();
+    uint16_t numBytes = LEDs->numPixels() * 3;
+
+    noInterrupts();
+    __asm__ volatile("" : : : "memory");
+
+    while (numBytes--)
+    {
+        uint8_t b = *p++;
+        for (int8_t i = 7; i >= 0; i--)
+        {
+            if (b & (1 << i))
+            {
+                *setReg = pinMask; // HIGH
+                NOP64();
+                NOP16();
+                *clrReg = pinMask; // LOW
+                NOP64();
+            }
+            else
+            {
+                *setReg = pinMask; // HIGH
+                NOP16();
+                NOP4();
+                *clrReg = pinMask; // LOW
+                NOP64();
+                NOP64();
+            }
+        }
+    }
+    interrupts();
+    delayMicroseconds(50);
+}
+
 #else
 #include <Adafruit_NeoPixel.h>
 

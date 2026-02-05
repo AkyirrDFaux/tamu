@@ -216,7 +216,7 @@ C ByteArray::Get(int32_t Index) const
     int32_t Start = GetStart(Index);
     if (Start < 0) //Invalid data
         return C();
-    memcpy(&Value, Array + Start + sizeof(Types), sizeof(C)); // Copy data, prevent %4 byte unalignment
+    memcpy((void*)&Value, Array + Start + sizeof(Types), sizeof(C)); // Copy data, prevent %4 byte unalignment
     return Value;
 }
 
@@ -224,8 +224,10 @@ template <>
 String ByteArray::Get(int32_t Index) const
 {
     int32_t Start = GetStart(Index);
+    if (Start < 0) //Invalid data
+        return String();
     String Text = "";
-    for (int32_t Index = Start + sizeof(Types) + sizeof(uint8_t); Index < Start + sizeof(Types) + sizeof(uint8_t) + (uint8_t)Array[Start + sizeof(Types)]; Index++)
+    for (uint32_t Index = Start + sizeof(Types) + sizeof(uint8_t); Index < Start + sizeof(Types) + sizeof(uint8_t) + (uint8_t)Array[Start + sizeof(Types)]; Index++)
         Text += Array[Index];
     return Text;
 };
