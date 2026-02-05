@@ -316,8 +316,9 @@ void ReadName(ByteArray &Input)
 
 void ReportError(Status ErrorCode, String Detail)
 {
+    ByteArray Report = ByteArray(ErrorCode);
     if (Detail.length() > 0)
-        Chirp.Send("E" + String((uint8_t)ErrorCode) + " : " + Detail);
-    else
-        Chirp.Send("E" + String((uint8_t)ErrorCode));
+        Report = Report << ByteArray(Detail);;
+    
+    Chirp.SendNow(Report);
 }

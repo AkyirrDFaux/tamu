@@ -1,4 +1,5 @@
-//ESP32-C3 Warning: Stopping serial freezes board if DTR + RTS enabled
+// ESP32-C3 Warning: Stopping serial freezes board if DTR + RTS enabled
+ByteArray BufferIn;
 #if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
 #include <BLEDevice.h>
 #include <BLE2902.h>
@@ -12,7 +13,7 @@ BLECharacteristic *pTxCharacteristic;
 
 bool deviceConnected = false;
 bool oldDeviceConnected = false;
-ByteArray BufferIn;
+
 
 #define BTCHUNK 512
 
@@ -35,20 +36,22 @@ class MyCallbacks : public BLECharacteristicCallbacks
     {
         std::string rxValue = pCharacteristic->getValue();
 
-        if (rxValue.length() > 0){
+        if (rxValue.length() > 0)
+        {
             BufferIn = BufferIn << ByteArray(rxValue.c_str(), rxValue.length());
             Serial.println(BufferIn.ToHex());
         }
-            
     }
 };
+#elif defined BOARD_Valu_v2_0
+
 #endif
 
 class ChirpClass
 {
 public:
     void Begin(String Name);
-    void Send(String Data);
+    void SendNow(const ByteArray &Input);
     void Send(const ByteArray &Input);
     void Communicate();
     BaseClass *DecodePart(int32_t *Start);
@@ -57,7 +60,7 @@ public:
 void ChirpClass::Begin(String Name)
 {
     Serial.setTimeout(1);
-    #if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
+#if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
     BLEDevice::init(std::string(Name.c_str(), Name.length()));
     pServer = BLEDevice::createServer();
     pServer->setCallbacks(new MyServerCallbacks());
@@ -78,21 +81,22 @@ void ChirpClass::Begin(String Name)
 
     // Start advertising
     pServer->getAdvertising()->start();
-    #endif
+#endif
 };
 
-void ChirpClass::Send(String Data)
+void ChirpClass::SendNow(const ByteArray &Input)
 {
-    Serial.println(Data);
+    ByteArray Buffer = Input.CreateMessage();
+    Serial.write(Buffer.Array, Buffer.Length);
 };
 
 void ChirpClass::Send(const ByteArray &Input)
 {
-    #if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
+#if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
     if (deviceConnected)
     {
         ByteArray Buffer = Input.CreateMessage();
-        //Serial.println(Buffer.ToHex());
+        // Serial.println(Buffer.ToHex());
 
         for (int32_t Index = 0; Index < Buffer.Length; Index += BTCHUNK)
         {
@@ -101,20 +105,30 @@ void ChirpClass::Send(const ByteArray &Input)
             delay(5);
         }
     }
-    #endif
+#else
+    SendNow(Input);
+#endif
 };
 
 void ChirpClass::Communicate()
 {
-    String Input = "";
-    Input += Serial.readStringUntil('\n');
+// Serial
+    int32_t InputLength = Serial.available();
+    if (InputLength > 0)
+    {
+        char Buffer[InputLength];
+        Serial.readBytes(Buffer, InputLength);
+        BufferIn = BufferIn << ByteArray(Buffer, InputLength);
 
-    // Serial
+        ByteArray Message = BufferIn.ExtractMessage();
 
-    // BT
+        if (Message.Length > 0)
+            Run(Message);
+    }
+// BT
 
-    // disconnecting
-    #if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
+// disconnecting
+#if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
     if (!deviceConnected && oldDeviceConnected)
     {
         delay(500);                  // give the bluetooth stack the chance to get things ready
@@ -127,8 +141,8 @@ void ChirpClass::Communicate()
         oldDeviceConnected = deviceConnected;
 
     ByteArray Message = BufferIn.ExtractMessage();
-    
+
     if (Message.Length > 0)
         Run(Message);
-    #endif
+#endif
 };

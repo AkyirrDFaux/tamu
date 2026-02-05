@@ -103,7 +103,7 @@ void setup()
 
     Chirp.Begin(Board.ValueGet<String>(Board.DisplayName));
 
-    Objects.ContentDebug();
+    //Objects.ContentDebug();
     TimeUpdate();
     Board.ValueSet<uint32_t>(CurrentTime, Board.BootTime);
 
@@ -214,3 +214,4 @@ RAM saving - Names/Strings only on flash
 // 25.01.2026 DataList adapted into ByteArray, -4kb RAM on ~70 Objects
 // 31.01.2026 SensorClass created (Analog, NTC and LDR)
 // 03.02.2026 Valu v2.0 arrived!
+// 05.02.2026 Valu v2.0 LED output
