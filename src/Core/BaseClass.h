@@ -19,11 +19,6 @@ String BaseClass::ContentDebug()
     return Text;
 };
 
-BaseClass::BaseClass(IDClass NewID, FlagClass NewFlags)
-{
-    Flags = NewFlags;
-    Objects.Register(this, NewID);
-};
 
 BaseClass::~BaseClass()
 {

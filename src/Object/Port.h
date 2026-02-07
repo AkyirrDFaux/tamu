@@ -29,11 +29,21 @@ public:
     void AddModule(BaseClass *Object, int32_t Index = -1);
     void RemoveModule(BaseClass *Object);
 
+    static void AddModuleBridge(BaseClass *Base, BaseClass *Object, int32_t Index) { static_cast<PortClass *>(Base)->AddModule(Object, Index); }
+    static void RemoveModuleBridge(BaseClass *Base, BaseClass *Object) { static_cast<PortClass *>(Base)->RemoveModule(Object); }
+    static constexpr VTable Table = {
+        .Setup = BaseClass::DefaultSetup,
+        .Run = BaseClass::DefaultRun,
+        .AddModule = PortClass::AddModuleBridge,
+        .RemoveModule = PortClass::RemoveModuleBridge};
+
     int32_t CountLED();
     void AssignLED(uint8_t Pin);
 };
 
-PortClass::PortClass(uint8_t NewPin, PortTypeClass NewPortType) : BaseClass() // Created by Board
+constexpr VTable PortClass::Table;
+
+PortClass::PortClass(uint8_t NewPin, PortTypeClass NewPortType) : BaseClass(&Table) // Created by Board
 {
     ValueSet(NewPortType);
     ValueSet(NewPin);
@@ -64,11 +74,21 @@ public:
     void AddModule(BaseClass *Object, int32_t Index = -1);
     void RemoveModule(BaseClass *Object);
 
+    static void AddModuleBridge(BaseClass *Base, BaseClass *Object, int32_t Index) { static_cast<I2CClass *>(Base)->AddModule(Object, Index); }
+    static void RemoveModuleBridge(BaseClass *Base, BaseClass *Object) { static_cast<I2CClass *>(Base)->RemoveModule(Object); }
+    static constexpr VTable Table = {
+        .Setup = BaseClass::DefaultSetup,
+        .Run = BaseClass::DefaultRun,
+        .AddModule = I2CClass::AddModuleBridge,
+        .RemoveModule = I2CClass::RemoveModuleBridge};
+
     void StartModule(BaseClass *Object);
     void StopModule(BaseClass *Object);
 };
 
-I2CClass::I2CClass()
+constexpr VTable I2CClass::Table;
+
+I2CClass::I2CClass() : BaseClass(&Table)
 {
     Type = ObjectTypes::I2C;
     Name = "I2C Bus";
@@ -84,10 +104,19 @@ public:
     };
     HardwareSerial *UART = nullptr;
     UARTClass();
-    //Unfinished
+
+    static constexpr VTable Table = {
+        .Setup = BaseClass::DefaultSetup,
+        .Run = BaseClass::DefaultRun,
+        .AddModule = BaseClass::DefaultAddModule,
+        .RemoveModule = BaseClass::DefaultRemoveModule};
+
+    // Unfinished
 };
 
-UARTClass::UARTClass()
+constexpr VTable UARTClass::Table;
+
+UARTClass::UARTClass() : BaseClass(&Table)
 {
     Type = ObjectTypes::UART;
     Name = "UART Bus";

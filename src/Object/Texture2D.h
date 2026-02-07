@@ -3,6 +3,13 @@ class Texture2D : public BaseClass
 public:
     Texture2D(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     void Setup(int32_t Index = -1);
+
+    static void SetupBridge(BaseClass *Base, int32_t Index) { static_cast<Texture2D *>(Base)->Setup(Index); }
+    static constexpr VTable Table = {
+        .Setup = Texture2D::SetupBridge,
+        .Run = BaseClass::DefaultRun,
+        .AddModule = BaseClass::DefaultAddModule,
+        .RemoveModule = BaseClass::DefaultRemoveModule};
     void Render(int32_t Length, Vector2D Size, Number Ratio, Coord2D Transform, bool Mirrored, byte *Layout, Number *Overlay, ColourClass *Buffer);
 
     enum Value
@@ -15,7 +22,9 @@ public:
     };
 };
 
-Texture2D::Texture2D(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
+constexpr VTable Texture2D::Table;
+
+Texture2D::Texture2D(IDClass ID, FlagClass Flags) : BaseClass(&Table, ID, Flags)
 {
     BaseClass::Type = ObjectTypes::Texture2D;
     Name = "Texture";
@@ -54,7 +63,7 @@ void Texture2D::Render(int32_t Length, Vector2D Size, Number Ratio, Coord2D Tran
 {
     if (Values.Type(Texture) != Types::Texture2D)
     {
-        ReportError(Status::MissingModule , "Texture 2D");
+        ReportError(Status::MissingModule, "Texture 2D");
         return;
     }
 

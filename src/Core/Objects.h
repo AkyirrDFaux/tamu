@@ -24,14 +24,14 @@ public:
     bool Unregister(IDClass ID);
     bool Unregister(BaseClass *RemovedObject);
     void ContentDebug() const;
-};
+} Objects;
 
 class IDList
 {
 public:
     IDClass *IDs = nullptr;
     uint32_t Length = 0;
-    
+
     ~IDList() { RemoveAll(); };
 
     IDList() {};
@@ -78,9 +78,18 @@ public:
     bool operator==(Flags Other) { return Values & Other; };
 };
 
+struct VTable
+{
+    void (*Setup)(BaseClass *self, int32_t Index);
+    bool (*Run)(BaseClass *self);
+    void (*AddModule)(BaseClass *self, BaseClass *Object, int32_t Index);
+    void (*RemoveModule)(BaseClass *self, BaseClass *Object);
+};
+
 class BaseClass
 {
 public:
+    const VTable *const Vptr;
     ObjectTypes Type = ObjectTypes::Undefined;
     IDClass ID;
     FlagClass Flags;
@@ -89,21 +98,36 @@ public:
     IDList Modules;
     ByteArray Values;
 
-    BaseClass(IDClass NewID = RandomID, FlagClass NewFlags = Flags::None);
-
-    virtual ~BaseClass();
-    virtual void Setup(int32_t Index = -1) {};
-    virtual bool Run()
+    BaseClass(const VTable *Table, IDClass NewID = RandomID, FlagClass NewFlags = Flags::None)
+        : Vptr(Table), ID(NewID), Flags(NewFlags)
     {
-        ReportError(Status::InvalidType, "Run entry not implemented, Type:" + String((uint8_t)Type));
+        Objects.Register(this, NewID);
+    };
+
+    ~BaseClass();
+    void Destroy();
+    void Setup(int32_t Index = -1) { Vptr->Setup(this, Index); }
+    bool Run() { return Vptr->Run(this); }
+    void AddModule(BaseClass *Object, int32_t Index = -1) { Vptr->AddModule(this, Object, Index); }
+    void RemoveModule(BaseClass *Object) { Vptr->RemoveModule(this, Object); }
+
+    static void DefaultSetup(BaseClass *self, int32_t Index) { /* Empty default */ };
+    static bool DefaultRun(BaseClass *self)
+    {
+        ReportError(Status::InvalidType, "Run not implemented, Type:" + String((uint8_t)self->Type));
         return true;
+    };
+    static void DefaultAddModule(BaseClass *self, BaseClass *Object, int32_t Index)
+    {
+        self->Modules.Add(Object, Index);
+    };
+    static void DefaultRemoveModule(BaseClass *self, BaseClass *Object)
+    {
+        self->Modules.Remove(Object);
     };
 
     template <class C>
     C *As() const { return (C *)this; };
-
-    virtual void AddModule(BaseClass *Object, int32_t Index = -1) { Modules.Add(Object, Index); };
-    virtual void RemoveModule(BaseClass *Object) { Modules.Remove(Object); };
     void Save();
 
     template <class C>

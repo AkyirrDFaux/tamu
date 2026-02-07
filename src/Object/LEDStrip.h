@@ -13,10 +13,20 @@ public:
     ~LEDStripClass();
 
     bool Run();
+
+    static bool RunBridge(BaseClass *Base) { return static_cast<LEDStripClass *>(Base)->Run(); }
+    static constexpr VTable Table = {
+        .Setup = BaseClass::DefaultSetup,
+        .Run = LEDStripClass::RunBridge,
+        .AddModule = BaseClass::DefaultAddModule,
+        .RemoveModule = BaseClass::DefaultRemoveModule};
+
     ColourClass RenderPixel(int32_t Base, int32_t Length);
 };
 
-LEDStripClass::LEDStripClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
+constexpr VTable LEDStripClass::Table;
+
+LEDStripClass::LEDStripClass(IDClass ID, FlagClass Flags) : BaseClass(&Table, ID, Flags)
 {
     BaseClass::Type = ObjectTypes::LEDStrip;
     Name = "LED Strip";
@@ -55,7 +65,7 @@ bool LEDStripClass::Run()
         ColourClass PixelColour = RenderPixel(Index, Length);
 
         PixelColour.ToDisplay(Brightness);
-        LEDs.Write(Index,PixelColour);
+        LEDs.Write(Index, PixelColour);
     }
     return true;
 };

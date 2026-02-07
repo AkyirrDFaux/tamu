@@ -1,4 +1,3 @@
-// This might want a custom solution, to properly use the I2C drivers
 class GyrAccClass : public BaseClass
 {
 public:
@@ -17,8 +16,19 @@ public:
     void Setup(int32_t Index = -1);
     GyrAccClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     bool Run();
+
+    static void SetupBridge(BaseClass *Base, int32_t Index) { static_cast<GyrAccClass *>(Base)->Setup(Index); }
+    static bool RunBridge(BaseClass *Base) { return static_cast<GyrAccClass *>(Base)->Run(); }
+    static constexpr VTable Table = {
+        .Setup = GyrAccClass::SetupBridge,
+        .Run = GyrAccClass::RunBridge,
+        .AddModule = BaseClass::DefaultAddModule,
+        .RemoveModule = BaseClass::DefaultRemoveModule};
 };
-GyrAccClass::GyrAccClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags) // Created by Board
+
+constexpr VTable GyrAccClass::Table;
+
+GyrAccClass::GyrAccClass(IDClass ID, FlagClass Flags) : BaseClass(&Table, ID, Flags) // Created by Board
 {
     Type = ObjectTypes::AccGyr;
     Name = "Acc&Gyr";

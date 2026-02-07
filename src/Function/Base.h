@@ -65,42 +65,6 @@ void Refresh(ByteArray &Input)
     Chirp.Send(ByteArray(Status::OK));
 }
 
-BaseClass *CreateObject(ObjectTypes Type, bool New, IDClass ID, FlagClass Flags)
-{
-    switch (Type)
-    {
-    // Port is auto
-    case ObjectTypes::Shape2D:
-        return new Shape2DClass(ID, Flags);
-    // case ObjectTypes::Board: //Cannot create board
-    case ObjectTypes::Fan:
-        return new FanClass(ID, Flags);
-    case ObjectTypes::LEDSegment:
-        return new LEDSegmentClass(ID, Flags);
-    case ObjectTypes::Texture1D:
-        return new Texture1D(ID, Flags);
-    case ObjectTypes::LEDStrip:
-        return new LEDStripClass(ID, Flags);
-    case ObjectTypes::Geometry2D:
-        return new Geometry2DClass(ID, Flags);
-    case ObjectTypes::Texture2D:
-        return new Texture2D(ID, Flags);
-    case ObjectTypes::Display:
-        return new DisplayClass(ID, Flags);
-    case ObjectTypes::AccGyr:
-        return new GyrAccClass(ID, Flags);
-    case ObjectTypes::Input:
-        return new InputClass(ID, Flags);
-    case ObjectTypes::Operation:
-        return new Operation(ID, Flags);
-    case ObjectTypes::Program:
-        return new Program(ID, Flags);
-    default:
-        ReportError(Status::InvalidType, "Type not allowed for BaseClass creation:" + String((uint8_t)Type));
-        return nullptr;
-    }
-}
-
 void CreateObject(ByteArray &Input)
 {
     BaseClass *Object = nullptr;

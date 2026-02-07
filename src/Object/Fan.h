@@ -11,9 +11,18 @@ public:
     ~FanClass();
 
     bool Run();
+
+    static bool RunBridge(BaseClass *Base) { return static_cast<FanClass *>(Base)->Run(); }
+    static constexpr VTable Table = {
+        .Setup = BaseClass::DefaultSetup,
+        .Run = FanClass::RunBridge,
+        .AddModule = BaseClass::DefaultAddModule,
+        .RemoveModule = BaseClass::DefaultRemoveModule};
 };
 
-FanClass::FanClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
+constexpr VTable FanClass::Table;
+
+FanClass::FanClass(IDClass ID, FlagClass Flags) : BaseClass(&Table, ID, Flags)
 {
     BaseClass::Type = ObjectTypes::Fan;
     Name = "Fan";
@@ -42,8 +51,6 @@ bool FanClass::Run()
     }
 
     uint8_t Speed = ValueGet<uint8_t>(Value::Speed);
-
-    
 
     double Val = Speed;
     PWM->writeScaled(Val / 255);

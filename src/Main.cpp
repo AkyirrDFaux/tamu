@@ -26,7 +26,6 @@ uint32_t DeltaTime = 0;
 #include "Core\ByteArray.h" //Simple data types (Number, vector, colour, string)
 #include "Core\Objects.h"
 #include "Core\Register.h"
-RegisterClass Objects;
 #include "Core\IDList.h" //For objects (compound/type varying data types)
 #include "Core\BaseClass.h"
 
@@ -65,6 +64,7 @@ BoardClass Board;
 
 // Unrelated to messages
 #include "Function\Port.h"
+#include "Function\BaseClass.h"
 // Messages
 #include "Function\Base.h"
 #include "Function\Save.h"
@@ -229,3 +229,4 @@ RAM saving - Names/Strings only on flash
 // 31.01.2026 SensorClass created (Analog, NTC and LDR)
 // 03.02.2026 Valu v2.0 arrived!
 // 05.02.2026 Valu v2.0 LED output
+// 07.02.2026 Manual VTable + Destroy Switch

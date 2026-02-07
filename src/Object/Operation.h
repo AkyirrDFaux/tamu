@@ -5,7 +5,15 @@ public:
 
     Operation(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     bool Run();
-    bool RunPart(int32_t Start);                  // Start = operation value index
+
+    static bool RunBridge(BaseClass *Base) { return static_cast<Operation *>(Base)->Run(); }
+    static constexpr VTable Table = {
+        .Setup = BaseClass::DefaultSetup,
+        .Run = Operation::RunBridge,
+        .AddModule = BaseClass::DefaultAddModule,
+        .RemoveModule = BaseClass::DefaultRemoveModule};
+
+    bool RunPart(int32_t Start);                    // Start = operation value index
     uint32_t OperationNumber(uint32_t Start) const; // Number for temp list
     uint32_t ParameterNumber(uint32_t Start) const; // Length of operation value space
 
@@ -28,7 +36,9 @@ private:
     bool Sine(int32_t Start);
 };
 
-Operation::Operation(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
+constexpr VTable Operation::Table;
+
+Operation::Operation(IDClass ID, FlagClass Flags) : BaseClass(&Table, ID, Flags)
 {
     Type = ObjectTypes::Operation;
     Name = "Operation";

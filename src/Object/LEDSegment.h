@@ -14,10 +14,18 @@ public:
     LEDSegmentClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     ~LEDSegmentClass();
 
+    static constexpr VTable Table = {
+        .Setup = BaseClass::DefaultSetup,
+        .Run = BaseClass::DefaultRun,
+        .AddModule = BaseClass::DefaultAddModule,
+        .RemoveModule = BaseClass::DefaultRemoveModule};
+
     ColourClass Render(ColourClass Current, int32_t Position, int32_t Length);
 };
 
-LEDSegmentClass::LEDSegmentClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
+constexpr VTable LEDSegmentClass::Table;
+
+LEDSegmentClass::LEDSegmentClass(IDClass ID, FlagClass Flags) : BaseClass(&Table, ID, Flags)
 {
     Type = ObjectTypes::LEDSegment;
     Name = "LED Segment";

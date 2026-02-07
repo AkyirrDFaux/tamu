@@ -10,9 +10,18 @@ public:
     ~Program();
     bool RunEntry(int32_t Counter);
     bool Run();
+
+    static bool RunBridge(BaseClass *Base) { return static_cast<Program *>(Base)->Run(); }
+    static constexpr VTable Table = {
+        .Setup = BaseClass::DefaultSetup,
+        .Run = Program::RunBridge,
+        .AddModule = BaseClass::DefaultAddModule,
+        .RemoveModule = BaseClass::DefaultRemoveModule};
 };
 
-Program::Program(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
+constexpr VTable Program::Table;
+
+Program::Program(IDClass ID, FlagClass Flags) : BaseClass(&Table, ID, Flags)
 {
     Type = ObjectTypes::Program;
     Name = "Program";
@@ -42,7 +51,7 @@ bool Program::Run()
 {
     bool HasFinished = true;
 
-    if(Values.Type(Mode) != Types::Program || Values.Type(Counter) != Types::Integer)
+    if (Values.Type(Mode) != Types::Program || Values.Type(Counter) != Types::Integer)
         return true;
 
     int32_t Counter = ValueGet<int32_t>(Value::Counter);
@@ -65,7 +74,7 @@ bool Program::Run()
         }
         break;
     case ProgramTypes::All:
-        //NOT WORKING
+        // NOT WORKING
         for (uint32_t Index = Modules.FirstValid(); Index < Modules.Length; Modules.Iterate(&Index))
             HasFinished = HasFinished && RunEntry(Counter);
         break;
@@ -79,7 +88,7 @@ bool Program::Run()
         Chirp.Send(ByteArray(Functions::SetFlags) << ID << Flags);
     }
 
-    ValueSet(Counter,Value::Counter);
+    ValueSet(Counter, Value::Counter);
 
     return HasFinished;
 }

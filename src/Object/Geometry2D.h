@@ -13,10 +13,19 @@ public:
     Geometry2DClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     void Setup(int32_t Index = -1);
 
+    static void SetupBridge(BaseClass *Base, int32_t Index) { static_cast<Geometry2DClass *>(Base)->Setup(Index); }
+    static constexpr VTable Table = {
+        .Setup = Geometry2DClass::SetupBridge,
+        .Run = BaseClass::DefaultRun,
+        .AddModule = BaseClass::DefaultAddModule,
+        .RemoveModule = BaseClass::DefaultRemoveModule};
+
     void Render(int32_t Length, Vector2D DisplaySize, Number Ratio, Coord2D Transform, bool Mirrored, byte *Layout, Number *Overlay);
 };
 
-Geometry2DClass::Geometry2DClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
+constexpr VTable Geometry2DClass::Table;
+
+Geometry2DClass::Geometry2DClass(IDClass ID, FlagClass Flags) : BaseClass(&Table, ID, Flags)
 {
     Type = ObjectTypes::Geometry2D;
     Name = "Geometry";

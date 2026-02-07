@@ -3,6 +3,14 @@ class Texture1D : public BaseClass
 public:
     Texture1D(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     void Setup(int32_t Index = -1);
+
+    static void SetupBridge(BaseClass *Base, int32_t Index) { static_cast<Texture1D *>(Base)->Setup(Index); }
+    static constexpr VTable Table = {
+        .Setup = Texture1D::SetupBridge,
+        .Run = BaseClass::DefaultRun,
+        .AddModule = BaseClass::DefaultAddModule,
+        .RemoveModule = BaseClass::DefaultRemoveModule};
+
     ColourClass Render(int32_t PixelPosition);
 
     enum Value
@@ -15,7 +23,9 @@ public:
     };
 };
 
-Texture1D::Texture1D(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
+constexpr VTable Texture1D::Table;
+
+Texture1D::Texture1D(IDClass ID, FlagClass Flags) : BaseClass(&Table, ID, Flags)
 {
     BaseClass::Type = ObjectTypes::Texture1D;
     ValueSet(Textures1D::None);

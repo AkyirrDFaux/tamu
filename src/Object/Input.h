@@ -12,11 +12,20 @@ public:
     InputClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     ~InputClass();
     void Setup(int32_t Index = -1);
-
     bool Run();
+
+    static void SetupBridge(BaseClass *Base, int32_t Index) { static_cast<InputClass *>(Base)->Setup(Index); }
+    static bool RunBridge(BaseClass *Base) { return static_cast<InputClass *>(Base)->Run(); }
+    static constexpr VTable Table = {
+        .Setup = InputClass::SetupBridge,
+        .Run = InputClass::RunBridge,
+        .AddModule = BaseClass::DefaultAddModule,
+        .RemoveModule = BaseClass::DefaultRemoveModule};
 };
 
-InputClass::InputClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
+constexpr VTable InputClass::Table;
+
+InputClass::InputClass(IDClass ID, FlagClass Flags) : BaseClass(&Table, ID, Flags)
 {
     BaseClass::Type = ObjectTypes::Input;
     Name = "Input";

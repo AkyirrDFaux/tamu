@@ -19,9 +19,19 @@ public:
 
     void Setup(int32_t Index = -1);
     bool Run();
+
+    static void SetupBridge(BaseClass *Base, int32_t Index) { static_cast<DisplayClass *>(Base)->Setup(Index); }
+    static bool RunBridge(BaseClass *Base) { return static_cast<DisplayClass *>(Base)->Run(); }
+    static constexpr VTable Table = {
+        .Setup = DisplayClass::SetupBridge,
+        .Run = DisplayClass::RunBridge,
+        .AddModule = BaseClass::DefaultAddModule,
+        .RemoveModule = BaseClass::DefaultRemoveModule};
 };
 
-DisplayClass::DisplayClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
+constexpr VTable DisplayClass::Table;
+
+DisplayClass::DisplayClass(IDClass ID, FlagClass Flags) : BaseClass(&Table, ID, Flags)
 {
     BaseClass::Type = ObjectTypes::Display;
     Name = "Display";
@@ -100,7 +110,7 @@ bool DisplayClass::Run()
     for (uint32_t Index = 0; Index < Length; Index++)
     {
         Buffer[Index].ToDisplay(Brightness);
-        LEDs.Write(Index,Buffer[Index]);
+        LEDs.Write(Index, Buffer[Index]);
     }
 
     return true;

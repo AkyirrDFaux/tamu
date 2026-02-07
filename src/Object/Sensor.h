@@ -13,9 +13,18 @@ public:
     ~SensorClass();
 
     bool Run();
+
+    static bool RunBridge(BaseClass *Base) { return static_cast<SensorClass *>(Base)->Run(); }
+    static constexpr VTable Table = {
+        .Setup = BaseClass::DefaultSetup,
+        .Run = SensorClass::RunBridge,
+        .AddModule = BaseClass::DefaultAddModule,
+        .RemoveModule = BaseClass::DefaultRemoveModule};
 };
 
-SensorClass::SensorClass(IDClass ID, FlagClass Flags) : BaseClass(ID, Flags)
+constexpr VTable SensorClass::Table;
+
+SensorClass::SensorClass(IDClass ID, FlagClass Flags) : BaseClass(&Table, ID, Flags)
 {
     BaseClass::Type = ObjectTypes::Sensor;
     Name = "Sensor";
@@ -52,7 +61,7 @@ bool SensorClass::Run()
     case SensorTypes::AnalogVoltage:
         In = In * VOLTAGE / ADCRES;
     case SensorTypes::TempNTC10K:
-        In = 1 / (0.0034 + Number(log(In / (ADCRES - In))) / 3950) - 273.15; //°C
+        In = 1 / (0.0034 + Number(log(In / (ADCRES - In))) / 3950) - 273.15; // °C
         break;
     case SensorTypes::Light10K:
         In = sq(18 * (ADCRES - In) / In); // Lux
