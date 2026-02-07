@@ -1,5 +1,9 @@
 class ByteArray
 {
+private:
+    __attribute__((noinline)) void *Get(int32_t Index, size_t Size) const;
+    __attribute__((noinline)) void Set(const void *Data, size_t Size, Types Type, int32_t Index);
+
 public:
     char *Array = nullptr;
     uint32_t Length = 0;
@@ -209,14 +213,23 @@ Types ByteArray::Type(int32_t Index) const
     return Types::Undefined; // Invalid
 };
 
+void *ByteArray::Get(int32_t Index, size_t Size) const
+{
+    int32_t Start = GetStart(Index);
+    if (Start < 0)
+        return nullptr;
+    return Array + Start + sizeof(Types);
+}
+
 template <class C>
 C ByteArray::Get(int32_t Index) const
 {
     C Value;
-    int32_t Start = GetStart(Index);
-    if (Start < 0) //Invalid data
-        return C();
-    memcpy((void*)&Value, Array + Start + sizeof(Types), sizeof(C)); // Copy data, prevent %4 byte unalignment
+    void *Pointer = Get(Index, sizeof(C));
+    if (Pointer)
+        memcpy((void*)&Value, Pointer, sizeof(C));
+    else
+        Value = C();
     return Value;
 }
 
@@ -224,7 +237,7 @@ template <>
 String ByteArray::Get(int32_t Index) const
 {
     int32_t Start = GetStart(Index);
-    if (Start < 0) //Invalid data
+    if (Start < 0) // Invalid data
         return String();
     String Text = "";
     for (uint32_t Index = Start + sizeof(Types) + sizeof(uint8_t); Index < Start + sizeof(Types) + sizeof(uint8_t) + (uint8_t)Array[Start + sizeof(Types)]; Index++)
@@ -232,30 +245,28 @@ String ByteArray::Get(int32_t Index) const
     return Text;
 };
 
-template <class C>
-void ByteArray::Set(C Data, int32_t Index)
+void ByteArray::Set(const void *Data, size_t Size, Types Type, int32_t Index)
 {
     if (Index == -1)
         Index = GetNumberOfValues();
 
     int32_t Start = GetStart(Index);
-    Types CurrentType = Types::Undefined;
+    Types CurrentType = (Start >= 0) ? (Types)Array[Start] : Types::Undefined;
 
-    if (Start >= 0) // Get Type (faster)
-        CurrentType = (Types)Array[Start];
-
-    if (CurrentType == GetType<C>()) // Can simply copy, same type
+    // Check if we can reuse existing space
+    if (CurrentType == Types::Undefined || GetDataSize(CurrentType) != GetDataSize(Type))
     {
-        memcpy(Array + Start + sizeof(Types), &Data, GetDataSize(GetType<C>()));
-        return;
-    }
-    else if (CurrentType == Types::Undefined || GetDataSize(CurrentType) != GetDataSize(GetType<C>())) // Wrong length
-    {
-        Resize(Index, GetDataSize(GetType<C>()), &Start);
+        Resize(Index, Size, &Start);
     }
 
-    Array[Start] = (char)GetType<C>();
-    memcpy(Array + Start + sizeof(Types), &Data, GetDataSize(GetType<C>()));
+    Array[Start] = (char)Type;
+    memcpy(Array + Start + sizeof(Types), Data, Size);
+}
+
+template <class C>
+void ByteArray::Set(C Data, int32_t Index)
+{
+    Set(&Data, sizeof(C), GetType<C>(), Index);
 };
 
 template <>
