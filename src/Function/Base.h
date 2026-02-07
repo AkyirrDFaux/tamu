@@ -10,6 +10,7 @@ void Run(ByteArray &Input)
 
     if (Function == Functions::ReadDatabase)
         ReadDatabase(Input);
+#if !defined BOARD_Valu_v2_0
     else if (Function == Functions::CreateObject)
         CreateObject(Input);
     else if (Function == Functions::DeleteObject)
@@ -24,22 +25,25 @@ void Run(ByteArray &Input)
         ReadName(Input);
     else if (Function == Functions::SaveObject)
         SaveObject(Input);
-    //else if (Function == Functions::ReadFile)
-    //    ReadFile(Input);
+    // else if (Function == Functions::ReadFile)
+    //     ReadFile(Input);
     else if (Function == Functions::SaveAll)
         SaveAll(Input);
-    //else if (Function == Functions::RunFile)
-    //    RunFile(Input);
+    // else if (Function == Functions::RunFile)
+    //     RunFile(Input);
     else if (Function == Functions::ReadObject)
         ReadObject(Input);
     else if (Function == Functions::LoadObject)
         LoadObject(Input);
+#endif
     else if (Function == Functions::Refresh)
         Refresh(Input);
+#if !defined BOARD_Valu_v2_0
     else if (Function == Functions::SetModules)
         SetModules(Input);
     else if (Function == Functions::SetFlags)
         SetFlags(Input);
+#endif
     else
         Chirp.Send(ByteArray(Status::InvalidFunction) << Input);
     return;
@@ -260,7 +264,7 @@ void SetFlags(ByteArray &Input)
 
     Objects[ID]->Flags = Flags;
     if (Objects[ID]->Type == ObjectTypes::Program && Objects[ID]->Flags == Flags::RunOnce)
-        Objects[ID]->ValueSet<int32_t>(0,1); // Reset counter
+        Objects[ID]->ValueSet<int32_t>(0, 1); // Reset counter
     Chirp.Send(ByteArray(Functions::SetFlags) << ID << Flags);
 };
 
@@ -318,7 +322,8 @@ void ReportError(Status ErrorCode, String Detail)
 {
     ByteArray Report = ByteArray(ErrorCode);
     if (Detail.length() > 0)
-        Report = Report << ByteArray(Detail);;
-    
+        Report = Report << ByteArray(Detail);
+    ;
+
     Chirp.SendNow(Report);
 }

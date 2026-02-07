@@ -74,6 +74,11 @@ BoardClass Board;
 #include "DefaultSetupTamuv2.0.h" //30kb of instructions :)
 #elif defined BOARD_Valu_v2_0
 #include "DefaultSetupValuv2.0.h"
+
+#include <SPI.h>
+#include <U8g2lib.h>
+
+U8G2_SH1106_128X64_NONAME_F_4W_HW_SPI u8g2(U8G2_R0, PA4, PB0, PA3);
 #endif
 
 void setup()
@@ -81,6 +86,10 @@ void setup()
     // MemoryStartup();
     NotificationStartup();
     Serial.begin(115200L);
+
+#if defined BOARD_Valu_v2_0
+    u8g2.begin();
+#endif
 
     Board.Setup(0);
 
@@ -103,7 +112,7 @@ void setup()
 
     Chirp.Begin(Board.ValueGet<String>(Board.DisplayName));
 
-    //Objects.ContentDebug();
+    // Objects.ContentDebug();
     TimeUpdate();
     Board.ValueSet<uint32_t>(CurrentTime, Board.BootTime);
 
@@ -148,7 +157,12 @@ void loop()
 
     UpdateLED(); // around 6s
     // Serial.println(", L:" + String(millis() - CurrentTime));
-
+#if defined BOARD_Valu_v2_0
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_ncenB08_tr);
+    u8g2.drawStr(0, 10, "Hello!");
+    u8g2.sendBuffer();
+#endif
     TimeUpdate();
     // Serial.println(DeltaTime);
     Board.UpdateLoopTime();
