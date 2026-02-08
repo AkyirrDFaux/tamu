@@ -20,7 +20,7 @@ public:
         .AddModule = BaseClass::DefaultAddModule,
         .RemoveModule = BaseClass::DefaultRemoveModule};
 
-    void Render(int32_t Length, Vector2D DisplaySize, Number Ratio, Coord2D Transform, bool Mirrored, byte *Layout, Number *Overlay);
+    void Render(int32_t Length, Vector2D DisplaySize, Number Ratio, Coord2D Transform, bool Mirrored, uint8_t *Layout, Number *Overlay);
 };
 
 constexpr VTable Geometry2DClass::Table;
@@ -61,11 +61,11 @@ void Geometry2DClass::Setup(int32_t Index)
     }
 };
 
-void Geometry2DClass::Render(int32_t Length, Vector2D DisplaySize, Number Ratio, Coord2D Transform, bool Mirrored, byte *Layout, Number *Overlay)
+void Geometry2DClass::Render(int32_t Length, Vector2D DisplaySize, Number Ratio, Coord2D Transform, bool Mirrored, uint8_t *Layout, Number *Overlay)
 {
     if (Values.Type(Geometry) != Types::Geometry2D || Values.Type(Operation) != Types::GeometryOperation)
     {
-        ReportError(Status::MissingModule, "Geometry2D");
+        ReportError(Status::MissingModule);
         return;
     }
     Geometries Type = ValueGet<Geometries>(Geometry);
@@ -147,7 +147,7 @@ void Geometry2DClass::Render(int32_t Length, Vector2D DisplaySize, Number Ratio,
                 LocalOverlay = 1;
                 break;
             default:
-                ReportError(Status::InvalidValue, "Shape");
+                ReportError(Status::InvalidValue);
                 break;
             }
 

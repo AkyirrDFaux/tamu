@@ -9,10 +9,9 @@ void PortClass::AddModule(BaseClass *Object, int32_t Index)
     if (Index == -1) // Get correct index
         Index = Modules.Length - 1;
 
-    if (Values.Type(PortType) != Types::PortType || Values.Type(Pin) != Types::Byte || Values.Type(DriverType) != Types::PortDriver)
+    if (Values.Type(PortType) != Types::PortType || Values.Type(DriverType) != Types::PortDriver)
         return;
 
-    uint8_t Pin = ValueGet<uint8_t>(Value::Pin);
     Drivers Driver = ValueGet<Drivers>(DriverType);
     PortTypeClass Type = ValueGet<PortTypeClass>(PortType);
 
@@ -24,44 +23,44 @@ void PortClass::AddModule(BaseClass *Object, int32_t Index)
             if (Index != 0 || Type != Ports::TOut)
                 break;
             DriverObj = new PWMDriver();
-            ((PWMDriver *)DriverObj)->attachPin(Pin, 25000, 8);
+            ((PWMDriver *)DriverObj)->attachPin(PortPin, 25000, 8);
             ValueSet(Drivers::FanPWM, Value::DriverType);
             Object->As<FanClass>()->PWM = (PWMDriver *)DriverObj; // Input to object
             break;
         case ObjectTypes::Input:
             if (Index != 0 || Type != Ports::GPIO)
                 break;
-            pinMode(Pin, INPUT);
+            HW::ModeInput(PortPin);
             ValueSet(Drivers::Input, Value::DriverType);
-            Object->As<InputClass>()->Pin = Pin; // Input to object
+            Object->As<InputClass>()->InputPin = PortPin; // Input to object
             break;
         case ObjectTypes::Sensor:
             if (Index != 0 || Type != Ports::ADC)
                 break;
-            pinMode(Pin, INPUT);
+            HW::ModeAnalog(PortPin);
             ValueSet(Drivers::Input, Value::DriverType);
-            Object->As<SensorClass>()->Pin = Pin; // Input to object
+            Object->As<SensorClass>()->MeasPin = PortPin; // Input to object
             break;
         case ObjectTypes::Servo:
             if (Index != 0 || Type != Ports::GPIO)
                 break;
             DriverObj = new Servo();
             ((Servo *)DriverObj)->setPeriodHertz(50);
-            ((Servo *)DriverObj)->attach(Pin, 500, 2500);
+            ((Servo *)DriverObj)->attach(PortPin, 500, 2500);
             ValueSet(Drivers::Servo, Value::DriverType);
             Object->As<ServoClass>()->ServoDriver = (Servo *)DriverObj; // Input to object
             break;
         case ObjectTypes::LEDStrip: // Only first one
             if (Type != Ports::GPIO)
                 break;
-            DriverObj = new LEDDriver(Object->As<LEDStripClass>()->ValueGet<int32_t>(LEDStripClass::Length), Pin);
+            DriverObj = new LEDDriver(Object->As<LEDStripClass>()->ValueGet<int32_t>(LEDStripClass::Length), PortPin);
             ValueSet(Drivers::LED, Value::DriverType);
             Object->As<LEDStripClass>()->LEDs = ((LEDDriver *)DriverObj)->Offset(0); // Input to object
             break;
         case ObjectTypes::Display: // Only first one
             if (Type != Ports::GPIO)
                 break;
-            DriverObj = new LEDDriver(Object->As<DisplayClass>()->ValueGet<int32_t>(DisplayClass::Length), Pin);
+            DriverObj = new LEDDriver(Object->As<DisplayClass>()->ValueGet<int32_t>(DisplayClass::Length), PortPin);
             ValueSet(Drivers::LED, Value::DriverType);
             Object->As<DisplayClass>()->LEDs = ((LEDDriver *)DriverObj)->Offset(0); // Input to object
             break;
@@ -70,7 +69,7 @@ void PortClass::AddModule(BaseClass *Object, int32_t Index)
         }
     }
     else if (Driver == Drivers::LED && (Object->Type == ObjectTypes::Display || Object->Type == ObjectTypes::LEDStrip)) // Extensible
-        AssignLED(Pin);
+        AssignLED(PortPin);
 
     return;
 };
@@ -79,10 +78,9 @@ void PortClass::RemoveModule(BaseClass *Object)
     if (Object == nullptr)
         return;
 
-    if (Values.Type(Pin) != Types::Byte || Values.Type(DriverType) != Types::PortDriver)
+    if (Values.Type(DriverType) != Types::PortDriver)
         return;
 
-    uint8_t Pin = ValueGet<uint8_t>(Value::Pin);
     Drivers Driver = ValueGet<Drivers>(DriverType);
 
     switch (Driver)
@@ -90,7 +88,7 @@ void PortClass::RemoveModule(BaseClass *Object)
     case Drivers::FanPWM: // If one capacity, stop driver
         if (Object != Modules.At(0))
             break;
-        ((PWMDriver *)DriverObj)->detachPin(Pin);
+        ((PWMDriver *)DriverObj)->detachPin(PortPin);
         delete (PWMDriver *)DriverObj;
         Object->As<FanClass>()->PWM = nullptr; // Remove from obj
         ValueSet(Drivers::None, Value::DriverType);
@@ -99,9 +97,9 @@ void PortClass::RemoveModule(BaseClass *Object)
         if (Object != Modules.At(0))
             break;
         if (Object->Type == ObjectTypes::LEDStrip)
-            Object->As<InputClass>()->Pin = -1; // Remove from obj
+            Object->As<InputClass>()->InputPin = INVALID_PIN; // Remove from obj
         else if (Object->Type == ObjectTypes::Display)
-            Object->As<SensorClass>()->Pin = -1;
+            Object->As<SensorClass>()->MeasPin = INVALID_PIN;
         ValueSet(Drivers::None, Value::DriverType);
         break;
     case Drivers::Servo:
@@ -119,7 +117,7 @@ void PortClass::RemoveModule(BaseClass *Object)
             Object->As<DisplayClass>()->LEDs = LEDDriver();
 
         Modules.Remove(Object);
-        AssignLED(Pin);
+        AssignLED(PortPin);
         return;
     default:
         break;
@@ -152,7 +150,7 @@ int32_t PortClass::CountLED()
     };
     return LEDLength;
 };
-void PortClass::AssignLED(uint8_t Pin)
+void PortClass::AssignLED(Pin Pin)
 {
     int32_t LEDLength = CountLED();
     int32_t AssignedLength = 0;
@@ -206,7 +204,7 @@ void I2CClass::AddModule(BaseClass *Object, int32_t Index)
     if (Index == -1) // Get correct index
         Index = Modules.Length - 1;
 
-    if (I2C == nullptr && Index <= 1) // Start driver
+    if (I2CDriver == nullptr && Index <= 1) // Start driver
     {
         if (Modules.IsValid(0, ObjectTypes::Port) == false || Modules.IsValid(1, ObjectTypes::Port) == false)
             return;
@@ -225,18 +223,20 @@ void I2CClass::AddModule(BaseClass *Object, int32_t Index)
             SDAPort->ValueGet<Drivers>(PortClass::DriverType) != Drivers::None || SCLPort->ValueGet<Drivers>(PortClass::DriverType) != Drivers::None)
             return;
 
-        if (SDAPort->Values.Type(PortClass::Pin) != Types::Byte || SDAPort->Values.Type(PortClass::Pin) != Types::Byte)
+        I2CDriver = new I2C();
+        if(I2CDriver->Begin(SDAPort->PortPin, SCLPort->PortPin, 100000) == false)
+        {
+            delete I2CDriver;
+            I2CDriver = nullptr;
             return;
-
-        Wire.begin(SDAPort->ValueGet<uint8_t>(PortClass::Pin), SCLPort->ValueGet<uint8_t>(PortClass::Pin), 100000);
-        I2C = &Wire;
+        };
         SDAPort->ValueSet(Drivers::I2C, PortClass::DriverType);
         SCLPort->ValueSet(Drivers::I2C, PortClass::DriverType);
 
         for (uint32_t Index = Modules.FirstValid(ObjectTypes::Undefined, 2); Index < Modules.Length; Modules.Iterate(&Index))
             StartModule(Modules[Index]);
     }
-    else if (I2C != nullptr)
+    else if (I2CDriver != nullptr)
         StartModule(Object);
 
     return;
@@ -247,7 +247,7 @@ void I2CClass::StartModule(BaseClass *Object)
     switch (Object->Type)
     {
     case ObjectTypes::AccGyr:
-        Object->As<GyrAccClass>()->I2C = I2C;
+        Object->As<GyrAccClass>()->I2CDriver = I2CDriver;
         break;
     default:
         break;
@@ -259,10 +259,10 @@ void I2CClass::RemoveModule(BaseClass *Object)
     if (Object == nullptr)
         return;
 
-    if (Object->Type == ObjectTypes::Port && I2C != nullptr && (Modules[0] == Object || Modules[1] == Object))
+    if (Object->Type == ObjectTypes::Port && I2CDriver != nullptr && (Modules[0] == Object || Modules[1] == Object))
     {
-        I2C->end();
-        I2C = nullptr;
+        delete I2CDriver;
+        I2CDriver = nullptr;
         Modules.Get<PortClass>(SDA)->ValueSet(Drivers::None, PortClass::DriverType);
         Modules.Get<PortClass>(SCL)->ValueSet(Drivers::None, PortClass::DriverType);
 
@@ -280,7 +280,7 @@ void I2CClass::StopModule(BaseClass *Object)
     switch (Object->Type)
     {
     case ObjectTypes::AccGyr:
-        Object->As<GyrAccClass>()->I2C = nullptr;
+        Object->As<GyrAccClass>()->I2CDriver = nullptr;
         break;
     default:
         break;

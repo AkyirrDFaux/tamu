@@ -23,7 +23,7 @@ public:
     bool Register(BaseClass *AddObject, IDClass ID = RandomID);
     bool Unregister(IDClass ID);
     bool Unregister(BaseClass *RemovedObject);
-    void ContentDebug() const;
+    //void ContentDebug() const;
 } Objects;
 
 class IDList
@@ -63,7 +63,7 @@ public:
     template <class C>
     C *Get(int32_t Index);
 
-    String AsString();
+    //String AsString();
 };
 
 class FlagClass
@@ -114,7 +114,7 @@ public:
     static void DefaultSetup(BaseClass *self, int32_t Index) { /* Empty default */ };
     static bool DefaultRun(BaseClass *self)
     {
-        ReportError(Status::InvalidType, "Run not implemented, Type:" + String((uint8_t)self->Type));
+        ReportError(Status::InvalidType);
         return true;
     };
     static void DefaultAddModule(BaseClass *self, BaseClass *Object, int32_t Index)
@@ -137,5 +137,5 @@ public:
 
     ByteArray OutputValues(int32_t Value = 0) const;
     bool InputValues(ByteArray &Input, int32_t Index, uint8_t Value = 0);
-    String ContentDebug();
+    //String ContentDebug();
 };

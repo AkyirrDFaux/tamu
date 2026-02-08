@@ -7,7 +7,7 @@ public:
         Measurement,
         Filter
     };
-    int8_t Pin = -1;
+    Pin MeasPin = INVALID_PIN;
 
     SensorClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     ~SensorClass();
@@ -42,26 +42,26 @@ SensorClass::~SensorClass()
 
 bool SensorClass::Run()
 {
-    if (Pin == -1)
+    if (MeasPin.Port == nullptr)
     {
-        ReportError(Status::PortError, "Sensor");
+        ReportError(Status::PortError);
         return true;
     }
 
     if (Values.Type(SensorType) != Types::Sensor || Values.Type(Measurement) != Types::Number || Values.Type(Filter) != Types::Number)
     {
-        ReportError(Status::MissingModule, "Sensor");
+        ReportError(Status::MissingModule);
         return true;
     }
 
     Number Filter = ValueGet<Number>(Value::Filter);
-    Number In = analogRead(Pin);
+    Number In = HW::AnalogRead(MeasPin);
     switch (ValueGet<SensorTypes>(SensorType))
     {
     case SensorTypes::AnalogVoltage:
         In = In * VOLTAGE / ADCRES;
     case SensorTypes::TempNTC10K:
-        In = 1 / (0.0034 + Number(log(In / (ADCRES - In))) / 3950) - 273.15; // °C
+        In = 1 / (0.0034 + log(In / (ADCRES - In)) / 3950) - 273.15; // °C
         break;
     case SensorTypes::Light10K:
         In = sq(18 * (ADCRES - In) / In); // Lux

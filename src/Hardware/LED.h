@@ -104,7 +104,7 @@ public:
     uint32_t PinMask = 0;
 
     LEDDriver(){};
-    LEDDriver(uint16_t NewLength, uint16_t Pin);
+    LEDDriver(uint16_t NewLength, Pin &Pin);
 
     LEDDriver Offset(uint32_t Offset);
     void Write(uint32_t Index, ColourClass Colour);
@@ -112,52 +112,16 @@ public:
     void Stop();
 };
 
-LEDDriver::LEDDriver(uint16_t NewLength, uint16_t Pin)
+LEDDriver::LEDDriver(uint16_t NewLength, Pin &Pin)
 {
     Length = NewLength;
     LEDs = new uint8_t[Length * 3];
 
-    uint32_t PortBase = 0;
-    uint8_t PinNumber = 0;
+    HW::ModeOutput(Pin);
 
-    if (Pin == PA14)
-    {
-        PortBase = 0x40010800; // Port A
-        PinNumber = 14;
-        *((volatile uint32_t *)0x40021018) |= (1 << 2);     // GPIOA Clock
-        *((volatile uint32_t *)0x40021018) |= (1 << 0);     // AFIO Clock
-        *((volatile uint32_t *)0x40010004) |= (0x04000000); // Remap
-    }
-    else if (Pin == PB1 || Pin == PB8 || Pin == PB10 || Pin == PB11)
-    {
-        PortBase = 0x40010C00;                          // Port B
-        *((volatile uint32_t *)0x40021018) |= (1 << 3); // GPIOB Clock
-
-        if (Pin == PB1)
-            PinNumber = 1;
-        else if (Pin == PB8)
-            PinNumber = 8;
-        else if (Pin == PB10)
-            PinNumber = 10;
-        else if (Pin == PB11)
-            PinNumber = 11;
-    }
-
-    this->PinMask = (1 << PinNumber);
-    this->SetReg = (volatile uint32_t *)(PortBase + 0x10);
-    this->ClearReg = (volatile uint32_t *)(PortBase + 0x14);
-
-    // CR Register Selection
-    // CRL = 0x00 (Pins 0-7), CRH = 0x04 (Pins 8-15)
-    uint32_t crAddr = PortBase + (PinNumber < 8 ? 0x00 : 0x04);
-    uint8_t shift = (PinNumber % 8) * 4;
-
-    // Safe Register Update
-    volatile uint32_t *regPtr = (volatile uint32_t *)crAddr;
-    uint32_t cfg = *regPtr;
-    cfg &= ~(0xF << shift);
-    cfg |= (0x3 << shift); // 50MHz Out PP
-    *regPtr = cfg;
+    this->PinMask = (1 << Pin.Number);
+    this->SetReg = &(Pin.Port->BSHR);
+    this->ClearReg = &(Pin.Port->BCR);
 }
 
 void LEDDriver::Stop()
@@ -196,8 +160,6 @@ void LEDDriver::Show()
     uint8_t *Pixel = LEDs;
     uint16_t ByteLength = Length * 3;
 
-    noInterrupts();
-    __asm__ volatile("" : : : "memory");
 
     while (ByteLength--)
     {
@@ -223,8 +185,7 @@ void LEDDriver::Show()
             }
         }
     }
-    interrupts();
-    delayMicroseconds(50);
+    HW::SleepMicro(50);
 }
 
 #else

@@ -134,7 +134,7 @@ inline Vector2D Vector2D::TimeMoveAngle(Vector2D Target, unsigned long TargetTim
     Number Step = TimeStep(TargetTime);
     return Vector2D(this->ToAngle() + LimitPi(Target.ToAngle() - this->ToAngle()) * Step);
 }
-
+/*
 inline String Vector2D::AsString()
 {
     return (String(X) + " " + String(Y));
@@ -143,4 +143,4 @@ inline String Vector2D::AsString()
 inline String Vector2D::AsStringAngle() // In degrees
 {
     return (String(ToAngle() * 180 / PI));
-};
+};*/

@@ -10,7 +10,6 @@ void Run(ByteArray &Input)
 
     if (Function == Functions::ReadDatabase)
         ReadDatabase(Input);
-#if !defined BOARD_Valu_v2_0
     else if (Function == Functions::CreateObject)
         CreateObject(Input);
     else if (Function == Functions::DeleteObject)
@@ -35,15 +34,12 @@ void Run(ByteArray &Input)
         ReadObject(Input);
     else if (Function == Functions::LoadObject)
         LoadObject(Input);
-#endif
     else if (Function == Functions::Refresh)
         Refresh(Input);
-#if !defined BOARD_Valu_v2_0
     else if (Function == Functions::SetModules)
         SetModules(Input);
     else if (Function == Functions::SetFlags)
         SetFlags(Input);
-#endif
     else
         Chirp.Send(ByteArray(Status::InvalidFunction) << Input);
     return;
@@ -51,7 +47,7 @@ void Run(ByteArray &Input)
 
 void ReadDatabase(ByteArray &Input)
 {
-    Objects.ContentDebug();
+    //Objects.ContentDebug();
 }
 
 void Refresh(ByteArray &Input)
@@ -282,12 +278,8 @@ void ReadName(ByteArray &Input)
     Chirp.Send(ByteArray(Functions::ReadName) << ID << ByteArray(Objects[ID]->Name));
 };
 
-void ReportError(Status ErrorCode, String Detail)
+void ReportError(Status ErrorCode)
 {
     ByteArray Report = ByteArray(ErrorCode);
-    if (Detail.length() > 0)
-        Report = Report << ByteArray(Detail);
-    ;
-
     Chirp.SendNow(Report);
 }

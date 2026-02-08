@@ -14,16 +14,16 @@ public:
 class PortClass : public BaseClass
 {
 public:
+    Pin PortPin;
     enum Value
     {
         PortType,
-        Pin,
         DriverType
     };
 
     void *DriverObj = nullptr;
 
-    PortClass(uint8_t NewPin, PortTypeClass NewPortType = Ports::None);
+    PortClass(Pin NewPin, PortTypeClass NewPortType = Ports::None);
     ~PortClass();
 
     void AddModule(BaseClass *Object, int32_t Index = -1);
@@ -38,15 +38,15 @@ public:
         .RemoveModule = PortClass::RemoveModuleBridge};
 
     int32_t CountLED();
-    void AssignLED(uint8_t Pin);
+    void AssignLED(Pin Pin);
 };
 
 constexpr VTable PortClass::Table;
 
-PortClass::PortClass(uint8_t NewPin, PortTypeClass NewPortType) : BaseClass(&Table) // Created by Board
+PortClass::PortClass(Pin NewPin, PortTypeClass NewPortType) : BaseClass(&Table) // Created by Board
 {
+    PortPin = NewPin;
     ValueSet(NewPortType);
-    ValueSet(NewPin);
     ValueSet(Drivers::None);
 
     Type = ObjectTypes::Port;
@@ -68,7 +68,7 @@ public:
         SDA,
         SCL
     };
-    TwoWire *I2C = nullptr;
+    I2C *I2CDriver = nullptr;
     I2CClass();
 
     void AddModule(BaseClass *Object, int32_t Index = -1);
@@ -102,7 +102,7 @@ public:
         TX,
         RX
     };
-    HardwareSerial *UART = nullptr;
+    // HardwareSerial *UART = nullptr;
     UARTClass();
 
     static constexpr VTable Table = {

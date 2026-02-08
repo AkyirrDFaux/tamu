@@ -77,7 +77,7 @@ bool Operation::Run()
             Modules.ValueSet(Temp.Get<Coord2D>(0), Index);
             break;
         default:
-            ReportError(Status::InvalidValue, "Operation output not implemeted" + String((uint8_t)Type));
+            ReportError(Status::InvalidValue);// + String((uint8_t)Type));
             break;
         }
     }
@@ -115,7 +115,7 @@ bool Operation::RunPart(int32_t Start)
     case Operations::Sine:
         return Sine(Start);
     default:
-        ReportError(Status::InvalidValue, "Operation not implemeted" + String((uint8_t)Type));
+        ReportError(Status::InvalidValue);
         return true;
     }
     return true;

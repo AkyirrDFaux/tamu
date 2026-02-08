@@ -39,8 +39,8 @@ inline Vector2D Vector3D::GetByIndex(uint8_t IndexA, uint8_t IndexB)
 {
     return Vector2D(GetByIndex(IndexA), GetByIndex(IndexB));
 }
-
+/*
 inline String Vector3D::AsString()
 {
     return (String(X) + " " + String(Y) + " " + String(Z));
-};
+};*/

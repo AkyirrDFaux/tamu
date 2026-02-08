@@ -6,7 +6,7 @@ ByteArray::ByteArray(const BaseClass &Data)
     // Type, ID, Flags, Name, Modules,(+ values)
     *this = ByteArray(Data.Type) << ByteArray(Data.ID) << ByteArray(Data.Flags) << ByteArray(Data.Name) << ByteArray(Data.Modules) << Data.OutputValues();
 };
-
+/*
 String BaseClass::ContentDebug()
 {
     String Text = "ID: ";
@@ -17,7 +17,7 @@ String BaseClass::ContentDebug()
     Text += Name + '\n';
 
     return Text;
-};
+};*/
 
 
 BaseClass::~BaseClass()

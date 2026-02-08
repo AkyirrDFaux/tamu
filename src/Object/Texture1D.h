@@ -64,7 +64,7 @@ ColourClass Texture1D::Render(int32_t PixelPosition)
 {
     if (Values.Type(TextureType) != Types::Texture1D)
     {
-        ReportError(Status::MissingModule, "Texture 1D");
+        ReportError(Status::MissingModule);
         return ColourClass();
     }
 

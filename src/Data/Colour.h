@@ -58,8 +58,8 @@ void ColourClass::TimeBlend(ColourClass Target, unsigned long TargetTime)
     B = LimitByte(B + (Target.B - B) * Step);
     A = LimitByte(A + (Target.A - A) * Step);
 };
-
+/*
 String ColourClass::AsString()
 {
     return (String(R) + " " + String(G) + " " + String(B) + " " + String(A));
-};
+};*/

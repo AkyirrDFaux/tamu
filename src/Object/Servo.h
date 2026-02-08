@@ -39,13 +39,13 @@ bool ServoClass::Run()
 {
     if (Values.Type(Angle) != Types::Byte)
     {
-        ReportError(Status::MissingModule, "Servo");
+        ReportError(Status::MissingModule);
         return true;
     }
 
     if (ServoDriver == nullptr)
     {
-        ReportError(Status::PortError, "Servo");
+        ReportError(Status::PortError);
         return true;
     }
 

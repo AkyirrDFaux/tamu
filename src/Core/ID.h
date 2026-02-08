@@ -20,5 +20,5 @@ public:
     IDClass Main() { return IDClass(Base(), 0); };
     uint8_t ValueIndex() { return Sub() - 1; };
 
-    String ToString() { return String(Base()) + "." + String(Sub()); }
+    //String ToString() { return String(Base()) + "." + String(Sub()); }
 };

@@ -15,7 +15,7 @@ public:
         .AddModule = BaseClass::DefaultAddModule,
         .RemoveModule = BaseClass::DefaultRemoveModule};
 
-    void Render(int32_t Length, Vector2D Size, Number Ratio, Coord2D Transform, bool Mirrored, byte *Layout, ColourClass *Buffer);
+    void Render(int32_t Length, Vector2D Size, Number Ratio, Coord2D Transform, bool Mirrored, uint8_t *Layout, ColourClass *Buffer);
 };
 
 constexpr VTable Shape2DClass::Table;
@@ -28,7 +28,7 @@ Shape2DClass::Shape2DClass(IDClass ID, FlagClass Flags) : BaseClass(&Table, ID, 
 Shape2DClass::~Shape2DClass() {
 };
 
-void Shape2DClass::Render(int32_t Length, Vector2D Size, Number Ratio, Coord2D Transform, bool Mirrored, byte *Layout, ColourClass *Buffer)
+void Shape2DClass::Render(int32_t Length, Vector2D Size, Number Ratio, Coord2D Transform, bool Mirrored, uint8_t *Layout, ColourClass *Buffer)
 {
     if (Flags == Flags::Inactive)
         return;

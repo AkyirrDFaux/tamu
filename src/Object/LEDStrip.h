@@ -46,13 +46,13 @@ bool LEDStripClass::Run()
 {
     if (Values.Type(Length) != Types::Integer || Values.Type(Brightness) != Types::Byte)
     {
-        ReportError(Status::MissingModule, "LED Strip");
+        ReportError(Status::MissingModule);
         return true;
     }
 
     if (LEDs.LEDs == nullptr)
     {
-        ReportError(Status::PortError, "LED Strip");
+        ReportError(Status::PortError);
         return true;
     }
 

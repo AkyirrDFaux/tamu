@@ -47,11 +47,11 @@ inline Coord2D Coord2D::Join(Coord2D Other)
     Joined.Rotation = Rotation.Rotate(Other.Rotation); // AAAAAAAAAAAAAAAAAAAAAAAA
     return Joined;
 }
-
+/*
 inline String Coord2D::AsString()
 {
     return Offset.AsString() + " " + Rotation.AsStringAngle();
-};
+};*/
 
 inline Coord2D Coord2D::TimeMove(Coord2D Target, unsigned long TargetTime)
 {

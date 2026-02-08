@@ -64,14 +64,14 @@ ByteArray::ByteArray(const C &Data)
 template <>
 ByteArray::ByteArray(const String &Data)
 {
-    Types Type = GetType<String>();
+    /*Types Type = GetType<String>();
     uint8_t DataLength = Data.length();
     Length = sizeof(Types) + sizeof(DataLength) + DataLength;
     Array = new char[Length];
 
     memcpy(Array, &Type, sizeof(Types));
     memcpy(Array + sizeof(Types), &DataLength, sizeof(DataLength));
-    memcpy(Array + sizeof(Types) + sizeof(DataLength), Data.c_str(), DataLength);
+    memcpy(Array + sizeof(Types) + sizeof(DataLength), Data.c_str(), DataLength);*/
 };
 
 ByteArray::ByteArray(const char *Data, uint32_t DataLength)
@@ -272,7 +272,7 @@ void ByteArray::Set(C Data, int32_t Index)
 template <>
 void ByteArray::Set(String Data, int32_t Index)
 {
-    if (Index == -1)
+    /*if (Index == -1)
         Index = GetNumberOfValues();
 
     int32_t Start = GetStart(Index);
@@ -282,7 +282,7 @@ void ByteArray::Set(String Data, int32_t Index)
     Array[Start] = (char)GetType<String>();
 
     memcpy(Array + Start + sizeof(Types), &DataLength, sizeof(DataLength));
-    memcpy(Array + Start + sizeof(Types) + sizeof(uint8_t), Data.c_str(), DataLength);
+    memcpy(Array + Start + sizeof(Types) + sizeof(uint8_t), Data.c_str(), DataLength);*/
 };
 
 void ByteArray::Copy(ByteArray &Source, int32_t From, int32_t To)
@@ -465,10 +465,11 @@ ByteArray ReadFromFile(const String &FileName)
     return Data;
 };
 */
+/*
 String ByteArray::ToHex()
 {
     String Text = "";
     for (uint32_t Index = 0; Index < Length; Index++)
         Text += String(Array[Index], HEX) + " ";
     return Text;
-};
+};*/

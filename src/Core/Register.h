@@ -113,7 +113,7 @@ bool RegisterClass::Unregister(BaseClass *RemovedObject) // Removes object
         return Unregister(RemovedObject->ID);
     return false;
 };
-
+/*
 void RegisterClass::ContentDebug() const
 {
     for (uint32_t Index = 1; Index <= Registered; Index++)
@@ -121,4 +121,4 @@ void RegisterClass::ContentDebug() const
         if (Object[Index] != nullptr)
             Serial.print(Object[Index]->ContentDebug());
     }
-}
+}*/

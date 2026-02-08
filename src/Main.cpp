@@ -1,4 +1,11 @@
-#include <Arduino.h>
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+#include <type_traits>
+
+// TEMPORARY
+typedef const char *String;
+
 uint32_t LastTime = 0;
 uint32_t CurrentTime = 0;
 uint32_t DeltaTime = 0;
@@ -15,6 +22,7 @@ uint32_t DeltaTime = 0;
 
 // Hardware related
 #include "Hardware\Base.h"
+#include "Hardware\I2C.h"
 #include "Hardware\Memory.h"
 #include "Hardware\LED.h"
 #include "Hardware\Servo.h"
@@ -75,44 +83,30 @@ BoardClass Board;
 #elif defined BOARD_Valu_v2_0
 #include "DefaultSetupValuv2.0.h"
 
-#include <SPI.h>
+/*#include <SPI.h>
 #include <U8g2lib.h>
 
-U8G2_SH1106_128X64_NONAME_F_4W_HW_SPI u8g2(U8G2_R0, PA4, PB0, PA3);
+U8G2_SH1106_128X64_NONAME_F_4W_HW_SPI u8g2(U8G2_R0, PA4, PB0, PA3);*/
 #endif
 
-void setup()
+int main()
 {
-    // MemoryStartup();
+    HW::Init();
     NotificationStartup();
-    Serial.begin(115200L);
+
+    // MemoryStartup();
+    // Serial.begin(115200L);
 
 #if defined BOARD_Valu_v2_0
-    u8g2.begin();
+    uint32_t LastSend = 0;
+    // u8g2.begin();
 #endif
 
     Board.Setup(0);
-
-    // if (1)
     DefaultSetup();
-    /*else
-    {
-        File Root = LittleFS.open("/", "r");
-        String File = Root.getNextFileName();
-        while (File.length() > 0)
-        {
-            // Serial.println(File);
-            ByteArray Data = ReadFromFile(File.substring(1));
-            Run(Data);
 
-            File = Root.getNextFileName();
-        }
-        Root.close();
-    }*/
+    // Chirp.Begin(Board.ValueGet<String>(Board.DisplayName));
 
-    Chirp.Begin(Board.ValueGet<String>(Board.DisplayName));
-
-    // Objects.ContentDebug();
     TimeUpdate();
     Board.ValueSet<uint32_t>(CurrentTime, Board.BootTime);
 
@@ -126,46 +120,43 @@ void setup()
                 AllRun &= Programs[Index]->Run();
         }
     }
-};
-
-void loop()
-{
-#if defined BOARD_Valu_v2_0
-    NotificationBlink(1, 100);
-    delay(500);
-#endif
-    Chirp.Communicate();
-    // Serial.print("C:" + String(millis() - CurrentTime));
-
-    for (uint32_t Index = 0; Index < Sensors.Length; Sensors.Iterate(&Index))
-        Sensors[Index]->Run();
-    // Serial.print(", S:" + String(millis() - CurrentTime));
-
-    // Serial.println("P");
-    for (uint32_t Index = 0; Index < Programs.Length; Programs.Iterate(&Index))
+    while (1) // MAIN LOOP
     {
-        if (((Programs[Index]->Flags == Inactive) == false) && ((Programs[Index]->Flags == RunLoop) || (Programs[Index]->Flags == RunOnce)))
-            Programs[Index]->Run();
-    }
-    // Serial.print(", P:" + String(millis() - CurrentTime));
-
-    // Serial.println("O");
-    for (uint32_t Index = 0; Index < Outputs.Length; Outputs.Iterate(&Index))
-        Outputs[Index]->Run();
-    // Serial.println("L");
-    // Serial.print(", O:" + String(millis() - CurrentTime));
-
-    UpdateLED(); // around 6s
-    // Serial.println(", L:" + String(millis() - CurrentTime));
 #if defined BOARD_Valu_v2_0
-    u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_ncenB08_tr);
-    u8g2.drawStr(0, 10, "Hello!");
-    u8g2.sendBuffer();
+        // NotificationBlink(1, 100);
+        tud_task();
+        USB_Read();
+        if (HW::Now() - LastSend > 1000)
+        {
+            LastSend = HW::Now();
+            USB_Send("Hello!\n");
+        }
 #endif
-    TimeUpdate();
-    // Serial.println(DeltaTime);
-    Board.UpdateLoopTime();
+        // Chirp.Communicate();
+
+        for (uint32_t Index = 0; Index < Sensors.Length; Sensors.Iterate(&Index))
+            Sensors[Index]->Run();
+
+        for (uint32_t Index = 0; Index < Programs.Length; Programs.Iterate(&Index))
+        {
+            if (((Programs[Index]->Flags == Inactive) == false) && ((Programs[Index]->Flags == RunLoop) || (Programs[Index]->Flags == RunOnce)))
+                Programs[Index]->Run();
+        }
+
+        for (uint32_t Index = 0; Index < Outputs.Length; Outputs.Iterate(&Index))
+            Outputs[Index]->Run();
+
+        UpdateLED();
+
+#if defined BOARD_Valu_v2_0
+        /*u8g2.clearBuffer();
+        u8g2.setFont(u8g2_font_ncenB08_tr);
+        u8g2.drawStr(0, 10, "Hello!");
+        u8g2.sendBuffer();*/
+#endif
+        TimeUpdate();
+        Board.UpdateLoopTime();
+    }
 };
 
 /*TODO:

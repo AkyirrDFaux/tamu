@@ -149,7 +149,7 @@ void SetFlags(ByteArray &Input);
 template <class C>
 Types GetType()
 {
-    ReportError(Status::InvalidType, "GetType Undefined, Size:" + String(sizeof(C)));
+    ReportError(Status::InvalidType);
     return Types::Undefined;
 };
 

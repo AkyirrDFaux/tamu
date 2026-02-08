@@ -1,7 +1,7 @@
 class DisplayClass : public BaseClass
 {
 public:
-    byte *Layout = nullptr;
+    uint8_t *Layout = nullptr;
     LEDDriver LEDs;
     enum Value
     {
@@ -83,13 +83,13 @@ bool DisplayClass::Run()
     if (Values.Type(Length) != Types::Integer || Values.Type(Size) != Types::Vector2D || Values.Type(Ratio) != Types::Number ||
         Values.Type(Brightness) != Types::Byte || Values.Type(Offset) != Types::Coord2D || Values.Type(Mirrored) != Types::Bool)
     {
-        ReportError(Status::MissingModule, "Display");
+        ReportError(Status::MissingModule);
         return true;
     }
 
     if (LEDs.LEDs == nullptr)
     {
-        ReportError(Status::PortError, "Display");
+        ReportError(Status::PortError);
         return true;
     }
 

@@ -10,7 +10,7 @@ public:
         .Run = BaseClass::DefaultRun,
         .AddModule = BaseClass::DefaultAddModule,
         .RemoveModule = BaseClass::DefaultRemoveModule};
-    void Render(int32_t Length, Vector2D Size, Number Ratio, Coord2D Transform, bool Mirrored, byte *Layout, Number *Overlay, ColourClass *Buffer);
+    void Render(int32_t Length, Vector2D Size, Number Ratio, Coord2D Transform, bool Mirrored, uint8_t *Layout, Number *Overlay, ColourClass *Buffer);
 
     enum Value
     {
@@ -59,11 +59,11 @@ void Texture2D::Setup(int32_t Index)
     }
 };
 
-void Texture2D::Render(int32_t Length, Vector2D Size, Number Ratio, Coord2D Transform, bool Mirrored, byte *Layout, Number *Overlay, ColourClass *Buffer)
+void Texture2D::Render(int32_t Length, Vector2D Size, Number Ratio, Coord2D Transform, bool Mirrored, uint8_t *Layout, Number *Overlay, ColourClass *Buffer)
 {
     if (Values.Type(Texture) != Types::Texture2D)
     {
-        ReportError(Status::MissingModule, "Texture 2D");
+        ReportError(Status::MissingModule);
         return;
     }
 
@@ -138,7 +138,7 @@ void Texture2D::Render(int32_t Length, Vector2D Size, Number Ratio, Coord2D Tran
                 Colour.Layer(ColourA, Distance);
                 break;
             default:
-                ReportError(Status::InvalidValue, "Texture");
+                ReportError(Status::InvalidValue);
                 break;
             }
             Buffer[Index].Layer(Colour, Overlay[Index]);

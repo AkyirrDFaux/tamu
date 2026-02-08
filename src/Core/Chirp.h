@@ -59,7 +59,7 @@ public:
 
 void ChirpClass::Begin(String Name)
 {
-    Serial.setTimeout(1);
+    //Serial.setTimeout(1);
 #if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
     BLEDevice::init(std::string(Name.c_str(), Name.length()));
     pServer = BLEDevice::createServer();
@@ -87,7 +87,7 @@ void ChirpClass::Begin(String Name)
 void ChirpClass::SendNow(const ByteArray &Input)
 {
     ByteArray Buffer = Input.CreateMessage();
-    Serial.write(Buffer.Array, Buffer.Length);
+    //Serial.write(Buffer.Array, Buffer.Length);
 };
 
 void ChirpClass::Send(const ByteArray &Input)
@@ -113,11 +113,11 @@ void ChirpClass::Send(const ByteArray &Input)
 void ChirpClass::Communicate()
 {
 // Serial
-    int32_t InputLength = Serial.available();
+    int32_t InputLength = 0;//Serial.available();
     if (InputLength > 0)
     {
         char Buffer[InputLength];
-        Serial.readBytes(Buffer, InputLength);
+        //Serial.readBytes(Buffer, InputLength);
         BufferIn = BufferIn << ByteArray(Buffer, InputLength);
 
         ByteArray Message = BufferIn.ExtractMessage();

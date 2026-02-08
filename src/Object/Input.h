@@ -7,7 +7,7 @@ public:
         Input,
         Indicator
     };
-    int8_t Pin = -1;
+    Pin InputPin = INVALID_PIN;
 
     InputClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     ~InputClass();
@@ -64,31 +64,31 @@ bool InputClass::Run()
 {
     if (Values.Type(InputType) != Types::Input)
     {
-        ReportError(Status::MissingModule, "Input");
+        ReportError(Status::MissingModule);
         return true;
     }
 
-    if (Pin == -1)
+    if (InputPin.Port == nullptr)
     {
-        ReportError(Status::PortError, "Input");
+        ReportError(Status::PortError);
         return true;
     }
 
     switch (ValueGet<Inputs>(InputType))
     {
     case Inputs::Button:
-        ValueSet<bool>(digitalRead(Pin) == ON_STATE, Input);
+        ValueSet<bool>(HW::Read(InputPin) == true, Input);
         break;
     case Inputs::ButtonWithLED:
         if (ValueGet<bool>(Indicator))
         {
-            pinMode(Pin, OUTPUT);
-            digitalWrite(Pin, ON_STATE);
+            HW::ModeOutput(InputPin);
+            HW::High(InputPin);
         }
         else // Applies blocking
         {
-            pinMode(Pin, INPUT);
-            ValueSet<bool>(digitalRead(Pin) == ON_STATE, Input);
+            HW::ModeInput(InputPin);
+            ValueSet<bool>(HW::Read(InputPin) == true, Input);
         }
         break;
     default:

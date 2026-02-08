@@ -6,8 +6,8 @@ typedef ESP32PWM PWMDriver;
 class PWMDriver
 {
 public:
-    void attachPin(int Pin, int Freq = 25000, int Res = 8) {};
-    void detachPin(int Pin){};
+    void attachPin(Pin Pin, int Freq = 25000, int Res = 8) {};
+    void detachPin(Pin Pin){};
     void writeScaled(float Value) {};
 };
 #endif

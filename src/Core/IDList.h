@@ -198,7 +198,7 @@ bool IDList::RemoveAll()
     Length = 0;
     return true;
 };
-
+/*
 String IDList::AsString()
 {
     String Text = "";
@@ -209,7 +209,7 @@ String IDList::AsString()
     }
 
     return Text;
-};
+};*/
 
 template <>
 IDList ByteArray::Get(int32_t Index) const

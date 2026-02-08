@@ -96,7 +96,7 @@ BaseClass *CreateObject(ObjectTypes Type, bool New, IDClass ID, FlagClass Flags)
     case ObjectTypes::Program:
         return new Program(ID, Flags);
     default:
-        ReportError(Status::InvalidType, "Type not allowed for BaseClass creation:" + String((uint8_t)Type));
+        ReportError(Status::InvalidType);
         return nullptr;
     }
 }

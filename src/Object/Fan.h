@@ -40,13 +40,13 @@ bool FanClass::Run()
 {
     if (Values.Type(Speed) != Types::Byte)
     {
-        ReportError(Status::MissingModule, "Fan");
+        ReportError(Status::MissingModule);
         return true;
     }
 
     if (PWM == nullptr)
     {
-        ReportError(Status::PortError, "Fan");
+        ReportError(Status::PortError);
         return true;
     }
 
