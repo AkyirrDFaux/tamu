@@ -14,7 +14,6 @@ BLECharacteristic *pTxCharacteristic;
 bool deviceConnected = false;
 bool oldDeviceConnected = false;
 
-
 #define BTCHUNK 512
 
 class MyServerCallbacks : public BLEServerCallbacks
@@ -44,7 +43,7 @@ class MyCallbacks : public BLECharacteristicCallbacks
     }
 };
 #elif defined BOARD_Valu_v2_0
-
+uint32_t LastSend = 0;
 #endif
 
 class ChirpClass
@@ -59,7 +58,6 @@ public:
 
 void ChirpClass::Begin(String Name)
 {
-    //Serial.setTimeout(1);
 #if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
     BLEDevice::init(std::string(Name.c_str(), Name.length()));
     pServer = BLEDevice::createServer();
@@ -81,13 +79,14 @@ void ChirpClass::Begin(String Name)
 
     // Start advertising
     pServer->getAdvertising()->start();
+#elif defined BOARD_Valu_v2_0
+    LastSend = HW::Now();
 #endif
 };
 
 void ChirpClass::SendNow(const ByteArray &Input)
 {
-    ByteArray Buffer = Input.CreateMessage();
-    //Serial.write(Buffer.Array, Buffer.Length);
+    HW::USB_Send(Input.CreateMessage());
 };
 
 void ChirpClass::Send(const ByteArray &Input)
@@ -112,16 +111,23 @@ void ChirpClass::Send(const ByteArray &Input)
 
 void ChirpClass::Communicate()
 {
-// Serial
-    int32_t InputLength = 0;//Serial.available();
-    if (InputLength > 0)
+    tud_task();
+    if (HW::Now() - LastSend > 1000)
     {
-        char Buffer[InputLength];
-        //Serial.readBytes(Buffer, InputLength);
-        BufferIn = BufferIn << ByteArray(Buffer, InputLength);
+        LastSend = HW::Now();
+        const char *Hello = "Hello!\n";
+        HW::USB_Send(ByteArray(Hello, strlen(Hello)));
+    }
 
+    ByteArray Input = HW::USB_Read();
+
+    if (Input.Length > 0)
+    {
+        if (BufferIn.Array[0] == 'b') //Test function
+            NotificationBlink(1, 50);
+
+        BufferIn = BufferIn << Input;
         ByteArray Message = BufferIn.ExtractMessage();
-
         if (Message.Length > 0)
             Run(Message);
     }

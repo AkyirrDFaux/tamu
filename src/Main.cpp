@@ -20,14 +20,6 @@ uint32_t DeltaTime = 0;
 #include "Data\Vector3D.h"
 #include "Data\ValueEnums.h"
 
-// Hardware related
-#include "Hardware\Base.h"
-#include "Hardware\I2C.h"
-#include "Hardware\Memory.h"
-#include "Hardware\LED.h"
-#include "Hardware\Servo.h"
-#include "Hardware\PWM.h"
-
 // Core system
 #include "Core\Enum.h"
 #include "Core\ID.h"
@@ -37,12 +29,19 @@ uint32_t DeltaTime = 0;
 #include "Core\IDList.h" //For objects (compound/type varying data types)
 #include "Core\BaseClass.h"
 
-#include "Core\Chirp.h"
-ChirpClass Chirp = ChirpClass(); // Bluetooth/Serial
-
 IDList Sensors;  // EX: Sensor
 IDList Programs; // Ex: Emotes
 IDList Outputs;  // Ex: Display, Fan, Servo
+
+// Hardware related
+#include "Hardware\Base.h"
+#include "Hardware\I2C.h"
+#include "Hardware\Memory.h"
+#include "Hardware\LED.h"
+#include "Hardware\Servo.h"
+#include "Hardware\PWM.h"
+#include "Hardware\Chirp.h"
+ChirpClass Chirp = ChirpClass(); // Bluetooth/Serial
 
 // Programs
 #include "Object\Operation.h"
@@ -95,23 +94,20 @@ int main()
     NotificationStartup();
 
     // MemoryStartup();
-    // Serial.begin(115200L);
-
 #if defined BOARD_Valu_v2_0
-    uint32_t LastSend = 0;
     // u8g2.begin();
 #endif
 
     Board.Setup(0);
     DefaultSetup();
-
+    Chirp.Begin("A");
     // Chirp.Begin(Board.ValueGet<String>(Board.DisplayName));
 
     TimeUpdate();
     Board.ValueSet<uint32_t>(CurrentTime, Board.BootTime);
 
     bool AllRun = false;
-    while (AllRun == false)
+    while (AllRun == false) // Start Loop
     {
         AllRun = true;
         for (uint32_t Index = 0; Index < Programs.Length; Programs.Iterate(&Index))
@@ -120,19 +116,10 @@ int main()
                 AllRun &= Programs[Index]->Run();
         }
     }
-    while (1) // MAIN LOOP
+
+    while (1) // Main Loop
     {
-#if defined BOARD_Valu_v2_0
-        // NotificationBlink(1, 100);
-        tud_task();
-        USB_Read();
-        if (HW::Now() - LastSend > 1000)
-        {
-            LastSend = HW::Now();
-            USB_Send("Hello!\n");
-        }
-#endif
-        // Chirp.Communicate();
+        Chirp.Communicate();
 
         for (uint32_t Index = 0; Index < Sensors.Length; Sensors.Iterate(&Index))
             Sensors[Index]->Run();
@@ -221,3 +208,4 @@ RAM saving - Names/Strings only on flash
 // 03.02.2026 Valu v2.0 arrived!
 // 05.02.2026 Valu v2.0 LED output
 // 07.02.2026 Manual VTable + Destroy Switch
+// 08.02.2026 De-arduino-ified Valu v2.0

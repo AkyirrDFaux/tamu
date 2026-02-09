@@ -126,21 +126,35 @@ extern "C"
         // Optional: wake up a task to read data
     }
 }
-
-void USB_Send(const char *str)
-{
-    // If the buffer is full, it means the PC isn't reading.
-    if (tud_cdc_write_available() < strlen(str))
-    {
-        return;
-    }
-
-    tud_cdc_write(str, strlen(str));
-    tud_cdc_write_flush();
-}
-
 namespace HW
 {
+    void USB_Send(const ByteArray &Data)
+    {
+        // If the buffer is full, it means the PC isn't reading.
+        if (Data.Length == 0 || tud_cdc_write_available() < Data.Length)
+            return;
+
+        tud_cdc_write(Data.Array, Data.Length);
+        tud_cdc_write_flush();
+    }
+
+    ByteArray USB_Read()
+    {
+        uint32_t Length = tud_cdc_available();
+
+        // Check if any bytes are waiting in the RX FIFO
+        if (Length > 0)
+        {
+            ByteArray Data = ByteArray();
+            Data.Array = new char[Length];
+            Data.Length = Length;
+            tud_cdc_read(Data.Array, Data.Length);
+            return Data;
+        }
+        else
+            return ByteArray();
+    }
+
     void Init()
     {
         SystemInit();
@@ -154,11 +168,11 @@ namespace HW
         SysTick->CMP = 0xFFFFFFFFFFFFFFFFULL;
 
         SysTick->CTLR = 0xF;
-        RCC->APB2PCENR |= (RCC_APB2Periph_GPIOA | RCC_APB2Periph_GPIOB); // Enable clocks for GPIO A, B
-
-        // USB
-        RCC_USBCLKConfig(RCC_USBCLKSource_PLLCLK_Div3);
         RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA, ENABLE);
+        RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOB, ENABLE);
+
+        // USB (default communication option)
+        RCC_USBCLKConfig(RCC_USBCLKSource_PLLCLK_Div3);
         RCC_APB1PeriphClockCmd(RCC_APB1Periph_USB, ENABLE);
 
         RCC_APB1PeriphResetCmd(RCC_APB1Periph_USB, ENABLE);
@@ -327,22 +341,3 @@ void NotificationStartup()
     HW::Low(LED_NOTIFICATION_PIN);
     NotificationBlink(2, 200);
 };
-
-void USB_Read() {
-
-    // Check if any bytes are waiting in the RX FIFO
-    while (tud_cdc_available()) {
-        uint8_t c;
-        // Read one byte
-        tud_cdc_read(&c, 1);
-
-        // Logic: Toggle LED on 't' or 'T'
-        if (c == 't' || c == 'T') {
-            // Adjust to your specific LED pin (using PC13 as example)
-            NotificationBlink(1,50);
-            
-            // Optional: Feedback so you know it worked
-            USB_Send("LED Blinked!\n");
-        }
-    }
-}
