@@ -14,10 +14,8 @@ public:
             delete[] Data;
     }
 
-    // Copying a string (The "=" Operator)
     Text &operator=(const char *String)
     {
-        // 1. Clean up old data
         if (Data)
         {
             delete[] Data;
@@ -26,11 +24,11 @@ public:
 
         if (String)
         {
-            // 2. Calculate and clamp length
             size_t NewLength = strlen(String);
-            Length = (NewLength > 255) ? 255 : (uint8_t)NewLength;
-
-            // 3. Allocate new RAM and copy
+            if (NewLength > 255)
+                Length = 255;
+            else
+                Length = (uint8_t)NewLength;
             Data = new char[Length];
             memcpy(Data, String, Length);
         }
@@ -39,9 +37,10 @@ public:
         return *this;
     }
 
-        Text(const Text &Other) : Data(nullptr), Length(Other.Length) // Copy Constructor
+    Text(const Text &Other) : Data(nullptr), Length(Other.Length) // Copy Constructor
     {
-        if (Other.Data){
+        if (Other.Data)
+        {
             Data = new char[Other.Length];
             memcpy(Data, Other.Data, Other.Length);
         }

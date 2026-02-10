@@ -1,4 +1,5 @@
-void DefaultSetup() {
+void DefaultSetup()
+{
     Board.ValueSet(Text("Valu v2.0 Test"), Board.DisplayName);
 
     DisplayClass *D = new DisplayClass();
@@ -19,4 +20,8 @@ void DefaultSetup() {
     G->Name = "Background";
     S->AddModule(G);
     G->ValueSet<Geometries>(Geometries::Fill, G->Geometry);
+
+    FanClass *F = new FanClass();
+    F->Name = "Fan";
+    Board.Modules[5]->AddModule(F);
 };

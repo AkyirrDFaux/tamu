@@ -22,10 +22,9 @@ void PortClass::AddModule(BaseClass *Object, int32_t Index)
         case ObjectTypes::Fan:
             if (Index != 0 || Type != Ports::TOut)
                 break;
-            DriverObj = new PWMDriver();
-            ((PWMDriver *)DriverObj)->attachPin(PortPin, 25000, 8);
+            HW::ModePWM(PortPin);
             ValueSet(Drivers::FanPWM, Value::DriverType);
-            Object->As<FanClass>()->PWM = (PWMDriver *)DriverObj; // Input to object
+            Object->As<FanClass>()->PWMPin = PortPin; // Input to object
             break;
         case ObjectTypes::Input:
             if (Index != 0 || Type != Ports::GPIO)
@@ -88,9 +87,7 @@ void PortClass::RemoveModule(BaseClass *Object)
     case Drivers::FanPWM: // If one capacity, stop driver
         if (Object != Modules.At(0))
             break;
-        ((PWMDriver *)DriverObj)->detachPin(PortPin);
-        delete (PWMDriver *)DriverObj;
-        Object->As<FanClass>()->PWM = nullptr; // Remove from obj
+        Object->As<FanClass>()->PWMPin = INVALID_PIN; // Remove from obj
         ValueSet(Drivers::None, Value::DriverType);
         break;
     case Drivers::Input:

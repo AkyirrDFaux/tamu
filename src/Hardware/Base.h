@@ -30,11 +30,13 @@ namespace HW
     void ModeOutput(const Pin &Pin);
     void ModeInput(const Pin &Pin);
     void ModeAnalog(const Pin &Pin);
+    void ModePWM(const Pin &Pin);
 
     bool Read(const Pin &Pin);
     void High(const Pin &Pin);
     void Low(const Pin &Pin);
     uint16_t AnalogRead(const Pin &Pin);
+    void PWM(const Pin &Pin, Number Percentage);
 
     // Time
     uint32_t Now();
@@ -128,50 +130,122 @@ extern "C"
 }
 namespace HW
 {
+    // Helper: Standard CRC-8 (Maxim/Dallas)
+    uint8_t crc8(const uint8_t *data, size_t len)
+    {
+        uint8_t crc = 0x00;
+        for (size_t i = 0; i < len; i++)
+        {
+            crc ^= data[i];
+            for (int j = 0; j < 8; j++)
+            {
+                if (crc & 0x80)
+                    crc = (crc << 1) ^ 0x31;
+                else
+                    crc <<= 1;
+            }
+        }
+        return crc;
+    }
+
     void USB_Send(const ByteArray &Data)
     {
         if (Data.Length == 0 || Data.Array == nullptr)
             return;
 
-        uint32_t sent = 0;
-        while (sent < Data.Length)
-        {
-            // 2. Calculate how much we can send in this "chunk"
-            uint32_t available = tud_cdc_write_available();
-            uint32_t to_send = (Data.Length - sent > available) ? available : (Data.Length - sent);
+        const uint32_t MAX_DATA = 60;
+        uint32_t offset = 0;
 
-            if (to_send > 0)
+        while (offset < Data.Length)
+        {
+            static uint8_t __attribute__((aligned(4))) packet[64];
+            memset(packet, 0, 64);
+
+            uint8_t to_copy = (uint8_t)((Data.Length - offset > MAX_DATA) ? MAX_DATA : Data.Length - offset);
+
+            packet[0] = 0xFA;
+            packet[2] = to_copy; // Length byte
+            memcpy(packet + 3, Data.Array + offset, to_copy);
+            packet[3 + to_copy] = 0xBF;
+
+            // Calculate CRC on [Len + Data]
+            // This includes packet[2] through the end of the data payload
+            packet[1] = crc8(packet + 2, to_copy + 1);
+
+            uint32_t timeout = 10000;
+            while (tud_cdc_write_available() < 64 && timeout > 0)
             {
-                tud_cdc_write(Data.Array + sent, to_send);
-                sent += to_send;
-                tud_cdc_write_flush();
+                tud_task();
+                timeout--;
             }
 
-            // 3. The "Reliability" Sleep
-            // Give the USB peripheral time to actually move data to the PC.
-            // We call tud_task() to keep the USB state machine alive.
-            HW::Sleep(1);
+            tud_cdc_write(packet, 64);
+            tud_cdc_write_flush();
+            offset += to_copy;
             tud_task();
         }
     }
+    // Static buffer to survive between USB_Read() calls
+    static uint8_t rx_buffer[128];
+    static uint32_t rx_ptr = 0;
 
     ByteArray USB_Read()
     {
-        uint32_t Length = tud_cdc_available();
-
-        // Check if any bytes are waiting in the RX FIFO
-        if (Length > 0)
+        // 1. Pull everything available from TinyUSB into our local ring buffer
+        uint32_t count = tud_cdc_available();
+        if (count > 0)
         {
-            ByteArray Data = ByteArray();
-            Data.Array = new char[Length];
-            Data.Length = Length;
-            tud_cdc_read(Data.Array, Data.Length);
-            return Data;
+            // Prevent overflow
+            if (rx_ptr + count > 128)
+                rx_ptr = 0;
+            tud_cdc_read(rx_buffer + rx_ptr, count);
+            rx_ptr += count;
         }
-        else
-            return ByteArray();
-    }
 
+        // 2. Process our local buffer for a 64-byte frame
+        while (rx_ptr >= 64)
+        {
+            if (rx_buffer[0] == 0xFA)
+            {
+                uint8_t receivedCrc = rx_buffer[1];
+                uint8_t dataLen = rx_buffer[2];
+
+                if (dataLen <= 60)
+                {
+                    // Check CRC
+                    if (crc8(rx_buffer + 2, dataLen + 1) == receivedCrc)
+                    {
+                        // Check Footer
+                        if (rx_buffer[3 + dataLen] == 0xBF)
+                        {
+
+                            // SUCCESS: Construct return object
+                            ByteArray Data;
+                            Data.Length = dataLen;
+                            Data.Array = new char[dataLen];
+                            memcpy(Data.Array, rx_buffer + 3, dataLen);
+
+                            // Shift buffer by 64
+                            memmove(rx_buffer, rx_buffer + 64, rx_ptr - 64);
+                            rx_ptr -= 64;
+                            return Data;
+                        }
+                    }
+                }
+                // If header found but check failed, slide 1 to find next 0xFA
+                memmove(rx_buffer, rx_buffer + 1, rx_ptr - 1);
+                rx_ptr--;
+            }
+            else
+            {
+                // No header at 0, slide 1
+                memmove(rx_buffer, rx_buffer + 1, rx_ptr - 1);
+                rx_ptr--;
+            }
+        }
+
+        return ByteArray(); // Nothing valid found yet
+    }
     void Init()
     {
         SystemInit();
@@ -267,6 +341,57 @@ namespace HW
             ;
     }
 
+#define PWM_25KHZ 5759
+
+    void ModePWM(const Pin &Pin)
+{
+    // 1. Enable AFIO Clock (REQUIRED for Alternate Functions like PWM)
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_AFIO, ENABLE);
+    
+    // 2. Enable Port Clock
+    if (Pin.Port == GPIOA) RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA, ENABLE);
+    if (Pin.Port == GPIOB) RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOB, ENABLE);
+
+    // 3. Enable Timer Clock
+    if (Pin.Port == GPIOA && Pin.Number == 8) RCC_APB2PeriphClockCmd(RCC_APB2Periph_TIM1, ENABLE);
+
+    // 4. Configure Pin Mode 
+    // We must convert your index '8' into a bitmask: (1 << 8) = 256
+    GPIO_InitTypeDef GPIO_InitStructure = {0};
+    GPIO_InitStructure.GPIO_Pin = (1 << Pin.Number); 
+    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;
+    GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+    GPIO_Init(Pin.Port, &GPIO_InitStructure);
+
+    // 5. Timer Time Base
+    TIM_TimeBaseInitTypeDef TIM_TimeBaseStructure = {0};
+    TIM_TimeBaseStructure.TIM_Prescaler = 0;
+    TIM_TimeBaseStructure.TIM_Period = PWM_25KHZ;
+    TIM_TimeBaseStructure.TIM_ClockDivision = TIM_CKD_DIV1;
+    TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
+    TIM_TimeBaseInit(TIM1, &TIM_TimeBaseStructure);
+
+    // 6. Channel Configuration
+    TIM_OCInitTypeDef TIM_OCInitStructure = {0};
+    TIM_OCInitStructure.TIM_OCMode = TIM_OCMode_PWM1;
+    TIM_OCInitStructure.TIM_OutputState = TIM_OutputState_Enable;
+    TIM_OCInitStructure.TIM_Pulse = 0;
+    TIM_OCInitStructure.TIM_OCPolarity = TIM_OCPolarity_High;
+
+    if (Pin.Port == GPIOA && Pin.Number == 8)
+    {
+        TIM_OC1Init(TIM1, &TIM_OCInitStructure);
+        TIM_OC1PreloadConfig(TIM1, TIM_OCPreload_Enable);
+    }
+
+    // 7. THE CRITICAL FIX: TIM1 "Main Output Enable"
+    // Without this, TIM1 will count, but the pin will stay disconnected.
+    TIM_CtrlPWMOutputs(TIM1, ENABLE); 
+    
+    // Enable Timer
+    TIM_Cmd(TIM1, ENABLE);
+}
+
     bool Read(const Pin &Pin)
     {
         return (Pin.Port->INDR & (1 << Pin.Number)) != 0;
@@ -300,6 +425,19 @@ namespace HW
         return (uint16_t)ADC1->RDATAR;
     }
 
+void PWM(const Pin &Pin, Number Percent)
+{
+    uint32_t Duty = (uint32_t)(((uint64_t)Percent.Value * PWM_25KHZ) / (100 << 16));
+    
+    if (Duty > PWM_25KHZ) Duty = PWM_25KHZ;
+
+    if (Pin.Port == GPIOA && Pin.Number == 8)
+    {
+        // Use the register directly to be fast
+        TIM1->CH1CVR = Duty;
+    }
+}
+
     uint32_t Now()
     {
         return (uint32_t)(SysTick->CNT / tick_multiplier);
@@ -326,7 +464,7 @@ namespace HW
     }
 
     extern "C" char *sbrk(int incr);
-    int32_t GetMemory() { return 0; };
+    int32_t GetMemory() { return 20 * 1024; };
     int32_t GetFreeMemory()
     {
         char top;

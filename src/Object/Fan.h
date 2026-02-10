@@ -5,7 +5,7 @@ public:
     {
         Speed,
     };
-    PWMDriver *PWM = nullptr;
+    Pin PWMPin = INVALID_PIN;
 
     FanClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
     ~FanClass();
@@ -27,7 +27,7 @@ FanClass::FanClass(IDClass ID, FlagClass Flags) : BaseClass(&Table, ID, Flags)
     BaseClass::Type = ObjectTypes::Fan;
     Name = "Fan";
 
-    ValueSet<uint8_t>(0);
+    ValueSet<Number>(0, Speed);
     Outputs.Add(this);
 };
 
@@ -38,21 +38,18 @@ FanClass::~FanClass()
 
 bool FanClass::Run()
 {
-    if (Values.Type(Speed) != Types::Byte)
-    {
-        ReportError(Status::MissingModule);
-        return true;
-    }
-
-    if (PWM == nullptr)
+    if (PWMPin.Port == nullptr)
     {
         ReportError(Status::PortError);
         return true;
     }
 
-    uint8_t Speed = ValueGet<uint8_t>(Value::Speed);
+    if (Values.Type(Speed) != Types::Number)
+    {
+        ReportError(Status::MissingModule);
+        return true;
+    }
 
-    double Val = Speed;
-    PWM->writeScaled(Val / 255);
+    HW::PWM(PWMPin, ValueGet<Number>(Speed));
     return true;
 };
