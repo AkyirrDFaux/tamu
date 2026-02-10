@@ -11,7 +11,7 @@ public:
 
     Number GetByIndex(uint8_t Index);
     Vector2D GetByIndex(uint8_t IndexA, uint8_t IndexB);
-    String AsString();
+    //Text AsString();
 };
 
 Vector3D::Vector3D() {};

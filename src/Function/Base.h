@@ -136,7 +136,7 @@ void LoadObject(ByteArray &Input)
     if (FlagsType == Types::Flags)
         Object->Flags = Input.Get<FlagClass>(3);
     if (NameType == Types::Text)
-        Object->Name = Input.Get<String>(4);
+        Object->Name = Input.Get<Text>(4);
     if (ModulesType == Types::IDList)
         Object->Modules = Input.Get<IDList>(5);
     Object->InputValues(Input, 6);
@@ -240,7 +240,7 @@ void WriteName(ByteArray &Input)
     }
 
     IDClass ID = Input.Get<IDClass>(1);
-    String Name = Input.Get<String>(2);
+    Text Name = Input.Get<Text>(2);
 
     if (!Objects.IsValid(ID))
     {

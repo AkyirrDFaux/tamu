@@ -32,7 +32,7 @@ BoardClass::BoardClass(IDClass ID, FlagClass Flags) : BaseClass(&Table, ID, Flag
     Name = "Board";
 
     ValueSet(Boards::Undefined);
-    ValueSet(String("Unnamed"));
+    ValueSet(Text("Unnamed"));
     ValueSet((uint32_t)0, BootTime);
     ValueSet((uint32_t)0, AvgTime);
     ValueSet((uint32_t)0, MaxTime);

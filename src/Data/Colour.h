@@ -13,8 +13,7 @@ public:
     void ToDisplay(uint8_t Brightness);
     void TimeBlend(ColourClass Target, unsigned long TargetTime);
 
-    String AsString();
-    //operator String();
+    //Text AsString();
 };
 
 ColourClass::ColourClass(uint8_t R, uint8_t G, uint8_t B, uint8_t A)

@@ -29,8 +29,8 @@ public:
     Vector2D TimeMove(Vector2D Target, unsigned long TargetTime);
     Vector2D TimeMoveAngle(Vector2D Target, unsigned long TargetTime);
 
-    String AsString();
-    String AsStringAngle();
+    //Text AsString();
+    //Text AsStringAngle();
 };
 
 inline Vector2D::Vector2D() {};

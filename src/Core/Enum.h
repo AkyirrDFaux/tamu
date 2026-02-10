@@ -180,7 +180,7 @@ Types GetType<Vector3D>() { return Types::Vector3D; };
 template <>
 Types GetType<Coord2D>() { return Types::Coord2D; };
 template <>
-Types GetType<String>() { return Types::Text; };
+Types GetType<Text>() { return Types::Text; };
 template <>
 Types GetType<IDList>() { return Types::IDList; };
 

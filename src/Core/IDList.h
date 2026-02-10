@@ -225,7 +225,7 @@ IDList ByteArray::Get(int32_t Index) const
 };
 
 template <>
-void ByteArray::Set<IDList>(IDList Data, int32_t Index)
+void ByteArray::Set<IDList>(const IDList &Data, int32_t Index)
 {
     if (Index == -1)
         Index = GetNumberOfValues();

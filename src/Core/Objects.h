@@ -93,7 +93,7 @@ public:
     ObjectTypes Type = ObjectTypes::Undefined;
     IDClass ID;
     FlagClass Flags;
-    String Name = "";
+    Text Name = "";
 
     IDList Modules;
     ByteArray Values;

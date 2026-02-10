@@ -1,5 +1,5 @@
 void DefaultSetup() {
-    Board.ValueSet(String("Valu v2.0 Test"), Board.DisplayName);
+    Board.ValueSet(Text("Valu v2.0 Test"), Board.DisplayName);
 
     DisplayClass *D = new DisplayClass();
     D->Name = "Display";

@@ -130,12 +130,29 @@ namespace HW
 {
     void USB_Send(const ByteArray &Data)
     {
-        // If the buffer is full, it means the PC isn't reading.
-        if (Data.Length == 0 || tud_cdc_write_available() < Data.Length)
+        if (Data.Length == 0 || Data.Array == nullptr)
             return;
 
-        tud_cdc_write(Data.Array, Data.Length);
-        tud_cdc_write_flush();
+        uint32_t sent = 0;
+        while (sent < Data.Length)
+        {
+            // 2. Calculate how much we can send in this "chunk"
+            uint32_t available = tud_cdc_write_available();
+            uint32_t to_send = (Data.Length - sent > available) ? available : (Data.Length - sent);
+
+            if (to_send > 0)
+            {
+                tud_cdc_write(Data.Array + sent, to_send);
+                sent += to_send;
+                tud_cdc_write_flush();
+            }
+
+            // 3. The "Reliability" Sleep
+            // Give the USB peripheral time to actually move data to the PC.
+            // We call tud_task() to keep the USB state machine alive.
+            HW::Sleep(1);
+            tud_task();
+        }
     }
 
     ByteArray USB_Read()

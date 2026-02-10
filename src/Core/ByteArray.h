@@ -26,15 +26,15 @@ public:
     template <class C>
     C Get(int32_t Index) const; // Assumes it's valid, and type is checked
     template <class C>
-    void Set(C Data, int32_t Index = -1);
+    void Set(const C &Data, int32_t Index = -1);
     void Copy(ByteArray &Source, int32_t From, int32_t To); // Set, but without specified type
 
     ByteArray SubArray(int32_t Start, int32_t NewLength = -1) const; // Creates new
     ByteArray CreateMessage() const;                                 // Converts values + adds length
     ByteArray ExtractMessage();                                      // Removes length + converts values
 
-    void WriteToFile(const String &FileName);
-    String ToHex();
+    // void WriteToFile(const String &FileName);
+    // String ToHex();
 };
 
 ByteArray::ByteArray(const ByteArray &Copied)
@@ -62,16 +62,15 @@ ByteArray::ByteArray(const C &Data)
 };
 
 template <>
-ByteArray::ByteArray(const String &Data)
+ByteArray::ByteArray(const Text &Data)
 {
-    /*Types Type = GetType<String>();
-    uint8_t DataLength = Data.length();
-    Length = sizeof(Types) + sizeof(DataLength) + DataLength;
+    Types Type = GetType<Text>();
+    Length = sizeof(Types) + sizeof(Data.Length) + Data.Length;
     Array = new char[Length];
 
     memcpy(Array, &Type, sizeof(Types));
-    memcpy(Array + sizeof(Types), &DataLength, sizeof(DataLength));
-    memcpy(Array + sizeof(Types) + sizeof(DataLength), Data.c_str(), DataLength);*/
+    memcpy(Array + sizeof(Types), &Data.Length, sizeof(Data.Length));
+    memcpy(Array + sizeof(Types) + sizeof(Data.Length), Data.Data, Data.Length);
 };
 
 ByteArray::ByteArray(const char *Data, uint32_t DataLength)
@@ -227,21 +226,22 @@ C ByteArray::Get(int32_t Index) const
     C Value;
     void *Pointer = Get(Index, sizeof(C));
     if (Pointer)
-        memcpy((void*)&Value, Pointer, sizeof(C));
+        memcpy((void *)&Value, Pointer, sizeof(C));
     else
         Value = C();
     return Value;
 }
 
 template <>
-String ByteArray::Get(int32_t Index) const
+Text ByteArray::Get(int32_t Index) const
 {
     int32_t Start = GetStart(Index);
     if (Start < 0) // Invalid data
-        return String();
-    String Text = "";
-    for (uint32_t Index = Start + sizeof(Types) + sizeof(uint8_t); Index < Start + sizeof(Types) + sizeof(uint8_t) + (uint8_t)Array[Start + sizeof(Types)]; Index++)
-        Text += Array[Index];
+        return Text();
+    Text Text;
+    Text.Length = (uint8_t)Array[Start + sizeof(Types)];
+    Text.Data = new char[Text.Length];
+    memcpy(Text.Data, Array + Start + sizeof(Types) + sizeof(uint8_t), Text.Length);
     return Text;
 };
 
@@ -264,25 +264,24 @@ void ByteArray::Set(const void *Data, size_t Size, Types Type, int32_t Index)
 }
 
 template <class C>
-void ByteArray::Set(C Data, int32_t Index)
+void ByteArray::Set(const C &Data, int32_t Index)
 {
     Set(&Data, sizeof(C), GetType<C>(), Index);
 };
 
 template <>
-void ByteArray::Set(String Data, int32_t Index)
+void ByteArray::Set(const Text &Data, int32_t Index)
 {
-    /*if (Index == -1)
+    if (Index == -1)
         Index = GetNumberOfValues();
 
     int32_t Start = GetStart(Index);
-    uint8_t DataLength = Data.length();
 
-    Resize(Index, DataLength + sizeof(uint8_t), &Start);
-    Array[Start] = (char)GetType<String>();
+    Resize(Index, Data.Length + sizeof(uint8_t), &Start);
+    Array[Start] = (char)GetType<Text>();
 
-    memcpy(Array + Start + sizeof(Types), &DataLength, sizeof(DataLength));
-    memcpy(Array + Start + sizeof(Types) + sizeof(uint8_t), Data.c_str(), DataLength);*/
+    memcpy(Array + Start + sizeof(Types), &Data.Length, sizeof(Data.Length));
+    memcpy(Array + Start + sizeof(Types) + sizeof(uint8_t), Data.Data, Data.Length);
 };
 
 void ByteArray::Copy(ByteArray &Source, int32_t From, int32_t To)

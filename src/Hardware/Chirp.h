@@ -49,14 +49,14 @@ uint32_t LastSend = 0;
 class ChirpClass
 {
 public:
-    void Begin(String Name);
+    void Begin(Text Name);
     void SendNow(const ByteArray &Input);
     void Send(const ByteArray &Input);
     void Communicate();
     BaseClass *DecodePart(int32_t *Start);
 };
 
-void ChirpClass::Begin(String Name)
+void ChirpClass::Begin(Text Name)
 {
 #if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
     BLEDevice::init(std::string(Name.c_str(), Name.length()));
@@ -112,19 +112,18 @@ void ChirpClass::Send(const ByteArray &Input)
 void ChirpClass::Communicate()
 {
     tud_task();
-    if (HW::Now() - LastSend > 1000)
+    /*if (HW::Now() - LastSend > 1000)
     {
         LastSend = HW::Now();
         const char *Hello = "Hello!\n";
         HW::USB_Send(ByteArray(Hello, strlen(Hello)));
-    }
+    }*/
 
     ByteArray Input = HW::USB_Read();
 
     if (Input.Length > 0)
-    {
-        if (BufferIn.Array[0] == 'b') //Test function
-            NotificationBlink(1, 50);
+    {            
+        NotificationBlink(1, 20);
 
         BufferIn = BufferIn << Input;
         ByteArray Message = BufferIn.ExtractMessage();

@@ -12,7 +12,7 @@ public:
     Coord2D(Vector2D NewOffset, Vector2D NewRotation);
     Coord2D(Number X, Number Y, Number Angle);
 
-    String AsString();
+    //Text AsString();
 
     Coord2D TimeMove(Coord2D Target, unsigned long TargetTime);
 };

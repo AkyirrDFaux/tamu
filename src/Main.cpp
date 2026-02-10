@@ -3,9 +3,6 @@
 #include <string.h>
 #include <type_traits>
 
-// TEMPORARY
-typedef const char *String;
-
 uint32_t LastTime = 0;
 uint32_t CurrentTime = 0;
 uint32_t DeltaTime = 0;
@@ -13,6 +10,7 @@ uint32_t DeltaTime = 0;
 #include "ClassHeader.h"
 
 // Data types
+#include "Data\Text.h"
 #include "Data\Number.h"
 #include "Data\Colour.h"
 #include "Data\Vector2D.h"
@@ -21,8 +19,8 @@ uint32_t DeltaTime = 0;
 #include "Data\ValueEnums.h"
 
 // Core system
-#include "Core\Enum.h"
 #include "Core\ID.h"
+#include "Core\Enum.h"
 #include "Core\ByteArray.h" //Simple data types (Number, vector, colour, string)
 #include "Core\Objects.h"
 #include "Core\Register.h"
@@ -148,7 +146,6 @@ int main()
 
 /*TODO:
 KEY FEATURES:
-Serial Chirp
 Crash (Delete/Create) Safety
 Saving, switch to littleFS - fallback?
 
@@ -163,7 +160,7 @@ OLED/TFT Display support
 Multiple boards together
 
 ADJUSTMENTS:
-use more const, final, inline keywords
+use more const, final, inline keywords, pass by reference
 Groups instead of favourites?
 Flag clarification (Auto -> System = nondeletable, some error flags?)
 Value names?... send with separate fcn? or just make it fixed ahead with virtual fcn?
@@ -209,3 +206,4 @@ RAM saving - Names/Strings only on flash
 // 05.02.2026 Valu v2.0 LED output
 // 07.02.2026 Manual VTable + Destroy Switch
 // 08.02.2026 De-arduino-ified Valu v2.0
+// 10.02.2026 Chirp over UART (Valu v2.0)
