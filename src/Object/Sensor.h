@@ -42,7 +42,7 @@ SensorClass::~SensorClass()
 
 bool SensorClass::Run()
 {
-    if (MeasPin.Port == nullptr)
+    if (HW::IsValidPin(MeasPin) == false)
     {
         ReportError(Status::PortError);
         return true;

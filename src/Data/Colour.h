@@ -5,6 +5,7 @@ public:
     uint8_t G = 0;
     uint8_t B = 0;
     uint8_t A = 0;
+    ColourClass(const ColourClass&) = default;
     ColourClass(uint8_t R = 0, uint8_t G = 0, uint8_t B = 0, uint8_t A = 255);
 
     void operator=(ColourClass Colour);

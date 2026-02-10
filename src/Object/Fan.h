@@ -38,7 +38,7 @@ FanClass::~FanClass()
 
 bool FanClass::Run()
 {
-    if (PWMPin.Port == nullptr)
+    if (HW::IsValidPin(PWMPin) == false)
     {
         ReportError(Status::PortError);
         return true;

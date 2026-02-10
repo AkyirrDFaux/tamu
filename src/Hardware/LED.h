@@ -1,78 +1,78 @@
 #if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
-#include <FastLED.h>
-
-void UpdateLED()
-{
-    FastLED.show();
-}
+#include "led_strip.h"
 
 class LEDDriver
 {
 public:
-    CRGB *LEDs = nullptr;
+    // Handle to the hardware (shared across offsets)
+    led_strip_handle_t LEDs = nullptr;
+    uint32_t OffsetStart = 0;
+
     LEDDriver() {};
-    LEDDriver(uint16_t Length, uint16_t Pin);
+    // Compatibility: Length and Pin as uint16_t
+    LEDDriver(uint16_t Length, Pin Pin);
+
     LEDDriver Offset(uint32_t Offset);
     void Write(uint32_t Index, ColourClass Colour);
+    void Show();
     void Stop();
 };
 
-LEDDriver::LEDDriver(uint16_t Length, uint16_t Pin)
+LEDDriver::LEDDriver(uint16_t Length, Pin Pin)
 {
-    LEDs = new CRGB[Length];
-    switch (Pin)
+    led_strip_config_t strip_config = {
+        .strip_gpio_num = (gpio_num_t)Pin.Number,
+        .max_leds = Length,
+        .led_model = LED_MODEL_WS2812,
+        .color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_GRB, // ADD THIS
+        .flags = {.invert_out = false}};
+
+    led_strip_rmt_config_t rmt_config = {
+        .clk_src = RMT_CLK_SRC_DEFAULT,
+        .resolution_hz = 10 * 1000 * 1000, // 10MHz
+        .mem_block_symbols = 64,           // ADD THIS (standard for WS2812)
+        .flags = {.with_dma = false}};
+
+    // Initialize hardware for this specific pin
+    esp_err_t err = led_strip_new_rmt_device(&strip_config, &rmt_config, &LEDs);
+    if (err != ESP_OK)
     {
-    case 0:
-        FastLED.addLeds<NEOPIXEL, 0>(LEDs, Length);
-        break;
-    case 1:
-        FastLED.addLeds<NEOPIXEL, 1>(LEDs, Length);
-        break;
-    case 2:
-        FastLED.addLeds<NEOPIXEL, 2>(LEDs, Length);
-        break;
-    case 3:
-        FastLED.addLeds<NEOPIXEL, 3>(LEDs, Length);
-        break;
-    case 4:
-        FastLED.addLeds<NEOPIXEL, 4>(LEDs, Length);
-        break;
-    case 5:
-        FastLED.addLeds<NEOPIXEL, 5>(LEDs, Length);
-        break;
-    case 6:
-        FastLED.addLeds<NEOPIXEL, 7>(LEDs, Length);
-        break;
-    case 8:
-        FastLED.addLeds<NEOPIXEL, 8>(LEDs, Length);
-        break;
-    case 9:
-        FastLED.addLeds<NEOPIXEL, 9>(LEDs, Length);
-        break;
-    case 10:
-        FastLED.addLeds<NEOPIXEL, 10>(LEDs, Length);
-        break;
-    default:
-        break;
-        Serial.println("LED pin missing: " + String(Pin));
+        // Log error or handle failure
     }
-};
+}
+
+void LEDDriver::Show()
+{
+    if (LEDs)
+    {
+        led_strip_refresh(LEDs);
+    }
+}
 
 void LEDDriver::Stop()
 {
-    delete[] LEDs;
-};
+    if (LEDs)
+    {
+        led_strip_del(LEDs);
+        LEDs = nullptr;
+    }
+}
 
 LEDDriver LEDDriver::Offset(uint32_t Offset)
 {
     LEDDriver OffsetDriver = LEDDriver();
-    OffsetDriver.LEDs = &(LEDs[Offset]);
+    OffsetDriver.LEDs = this->LEDs; // Pass the hardware handle
+    OffsetDriver.OffsetStart = this->OffsetStart + Offset;
     return OffsetDriver;
 }
 
 inline void LEDDriver::Write(uint32_t Index, ColourClass Colour)
 {
-    LEDs[Index].setRGB(Colour.R, Colour.G, Colour.B);
+    if (LEDs)
+    {
+        // We add the internal offset to the requested index
+        led_strip_set_pixel(LEDs, Index + OffsetStart, Colour.R, Colour.G, Colour.B);
+    }
 }
 
 #elif defined BOARD_Valu_v2_0
@@ -103,7 +103,7 @@ public:
     volatile uint32_t *ClearReg = nullptr;
     uint32_t PinMask = 0;
 
-    LEDDriver(){};
+    LEDDriver() {};
     LEDDriver(uint16_t NewLength, Pin &Pin);
 
     LEDDriver Offset(uint32_t Offset);
@@ -159,7 +159,6 @@ void LEDDriver::Show()
 
     uint8_t *Pixel = LEDs;
     uint16_t ByteLength = Length * 3;
-
 
     while (ByteLength--)
     {

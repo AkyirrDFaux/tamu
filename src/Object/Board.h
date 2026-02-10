@@ -52,23 +52,19 @@ void BoardClass::Setup(int32_t Index) // Load Presets
         AddModule(new PortClass(2, Ports::GPIO), 3);  // J6
         AddModule(new PortClass(12, Ports::TOut), 4); // J3
 #elif defined BOARD_Tamu_v2_0
-        ESP32PWM::allocateTimer(0);
-        ESP32PWM::allocateTimer(1);
-        ESP32PWM::allocateTimer(2);
-        ESP32PWM::allocateTimer(3);
         ValueSet(Boards::Tamu_v2_0, BoardType);
-        AddModule(new PortClass(0, Ports::GPIO | Ports::ADC | Ports::PWM), 0); // P1
-        AddModule(new PortClass(1, Ports::GPIO | Ports::ADC | Ports::PWM), 1); // P2
-        AddModule(new PortClass(9, Ports::GPIO | Ports::PWM), 2);              // P3 - S, no ADC!
-        AddModule(new PortClass(10, Ports::TOut | Ports::PWM), 3);             // P4 - F !!! Notation of switch is inverted
+        AddModule(new PortClass({0}, Ports::GPIO | Ports::ADC | Ports::PWM), 0); // P1
+        AddModule(new PortClass({1}, Ports::GPIO | Ports::ADC | Ports::PWM), 1); // P2
+        AddModule(new PortClass({9}, Ports::GPIO | Ports::PWM), 2);              // P3 - S, no ADC!
+        AddModule(new PortClass({10}, Ports::TOut | Ports::PWM), 3);             // P4 - F !!! Notation of switch is inverted
 
-        AddModule(new PortClass(6, Ports::TOut | Ports::PWM), 4);              // P5 - F
-        AddModule(new PortClass(8, Ports::GPIO | Ports::PWM), 5);              // P6 - S , no ADC!
-        AddModule(new PortClass(7, Ports::GPIO | Ports::PWM), 6);              // P7 , no ADC!
-        AddModule(new PortClass(3, Ports::GPIO | Ports::ADC | Ports::PWM), 7); // P8
+        AddModule(new PortClass({6}, Ports::TOut | Ports::PWM), 4);              // P5 - F
+        AddModule(new PortClass({8}, Ports::GPIO | Ports::PWM), 5);              // P6 - S , no ADC!
+        AddModule(new PortClass({7}, Ports::GPIO | Ports::PWM), 6);              // P7 , no ADC!
+        AddModule(new PortClass({3}, Ports::GPIO | Ports::ADC | Ports::PWM), 7); // P8
 
-        AddModule(new PortClass(4, Ports::I2C_SDA), 8);
-        AddModule(new PortClass(5, Ports::I2C_SCL), 9);
+        AddModule(new PortClass({4}, Ports::I2C_SDA), 8);
+        AddModule(new PortClass({5}, Ports::I2C_SCL), 9);
         AddModule(new PortClass(LED_NOTIFICATION_PIN, Ports::GPIO | Ports::Internal), 10);
 
         AddModule(new I2CClass(), 11);

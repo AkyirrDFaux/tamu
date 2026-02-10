@@ -1,5 +1,6 @@
-#if defined BOARD_Tamu_v1_0
-#elif defined BOARD_Tamu_v2_0
+#if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
+#include "driver/i2c_master.h"
+typedef i2c_master_bus_handle_t I2C_Handle;
 #elif defined BOARD_Valu_v2_0
 typedef I2C_TypeDef *I2C_Handle;
 #endif
@@ -19,16 +20,97 @@ public:
     bool Read(uint8_t Address, uint8_t Register, uint8_t *Data, uint16_t Length);
 };
 
-#if defined BOARD_Tamu_v1_0
-#elif defined BOARD_Tamu_v2_0
+#if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
+bool I2C::Begin(const Pin &SCL, const Pin &SDA, uint32_t Speed)
+{
+    gpio_reset_pin((gpio_num_t)SCL.Number);
+    gpio_reset_pin((gpio_num_t)SDA.Number);
+    gpio_set_direction((gpio_num_t)SDA.Number, GPIO_MODE_INPUT_OUTPUT_OD);
+    gpio_set_direction((gpio_num_t)SCL.Number, GPIO_MODE_INPUT_OUTPUT_OD);
+    
+    i2c_master_bus_config_t bus_config = {
+        .i2c_port = I2C_NUM_0, // C3 has one I2C peripheral (I2C_NUM_0)
+        .sda_io_num = (gpio_num_t)SDA.Number,
+        .scl_io_num = (gpio_num_t)SCL.Number,
+        .clk_source = I2C_CLK_SRC_RC_FAST,
+        .glitch_ignore_cnt = 7,
+        .intr_priority = 0,
+        .trans_queue_depth = 0, // Blocking mode
+        .flags = {.enable_internal_pullup = false}};
+
+    // Initialize the bus and store the handle
+    esp_err_t err = i2c_new_master_bus(&bus_config, &Handle);
+    return (err == ESP_OK);
+}
+
+bool I2C::Write(uint8_t Address, uint8_t Register, uint8_t *Data, uint16_t Length)
+{
+    if (!Handle) return false;
+
+    // 1. We have to "add" the device to the bus temporarily to get a dev_handle
+    i2c_device_config_t dev_cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = Address,
+        .scl_speed_hz = 100000, // Or pass your 'Speed' from Begin()
+    };
+
+    i2c_master_dev_handle_t dev_handle;
+    if (i2c_master_bus_add_device(Handle, &dev_cfg, &dev_handle) != ESP_OK) {
+        return false;
+    }
+
+    // 2. Prepare the buffer (Register + Data)
+    size_t total_len = Length + 1;
+    uint8_t *buffer = (uint8_t *)malloc(total_len);
+    if (!buffer) {
+        i2c_master_bus_rm_device(dev_handle);
+        return false;
+    }
+
+    buffer[0] = Register;
+    if (Data && Length > 0) {
+        memcpy(&buffer[1], Data, Length);
+    }
+
+    // 3. Transmit using the dev_handle
+    esp_err_t err = i2c_master_transmit(dev_handle, buffer, total_len, -1);
+    
+    // 4. Cleanup
+    free(buffer);
+    i2c_master_bus_rm_device(dev_handle); // Important! Don't leak device handles
+    
+    return (err == ESP_OK);
+}
+
+bool I2C::Read(uint8_t Address, uint8_t Register, uint8_t *Data, uint16_t Length)
+{
+    if (!Handle || !Data) return false;
+
+    i2c_device_config_t dev_cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = Address,
+        .scl_speed_hz = 400000,
+    };
+
+    i2c_master_dev_handle_t dev_handle;
+    if (i2c_master_bus_add_device(Handle, &dev_cfg, &dev_handle) != ESP_OK) {
+        return false;
+    }
+
+    // Transmit register address, then receive data
+    esp_err_t err = i2c_master_transmit_receive(dev_handle, &Register, 1, Data, Length, -1);
+
+    i2c_master_bus_rm_device(dev_handle);
+    return (err == ESP_OK);
+}
 #elif defined BOARD_Valu_v2_0
 
-#define I2C_EVENT_SB    ((uint16_t)0x0001)  // Start Bit (Master)
-#define I2C_EVENT_ADDR  ((uint16_t)0x0002)  // Address Sent
-#define I2C_EVENT_TXE   ((uint16_t)0x0080)  // Transmit Empty
-#define I2C_EVENT_RXNE  ((uint16_t)0x0040)  // Receive Not Empty
-#define I2C_EVENT_BTF   ((uint16_t)0x0004)  // Byte Transfer Finished
-#define I2C_BUSY        ((uint16_t)0x0002)  // Bus Busy (STAR2)
+#define I2C_EVENT_SB ((uint16_t)0x0001)   // Start Bit (Master)
+#define I2C_EVENT_ADDR ((uint16_t)0x0002) // Address Sent
+#define I2C_EVENT_TXE ((uint16_t)0x0080)  // Transmit Empty
+#define I2C_EVENT_RXNE ((uint16_t)0x0040) // Receive Not Empty
+#define I2C_EVENT_BTF ((uint16_t)0x0004)  // Byte Transfer Finished
+#define I2C_BUSY ((uint16_t)0x0002)       // Bus Busy (STAR2)
 
 bool I2C::Begin(const Pin &SCL, const Pin &SDA, uint32_t Speed)
 {

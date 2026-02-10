@@ -1,6 +1,3 @@
-#if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
-#include <ESP32Servo.h>
-#else
 // Placeholder
 class Servo
 {
@@ -10,4 +7,3 @@ public:
     void attach(Pin Pin, int Min = 500, int Max = 2500) {};
     void detach(){};
 };
-#endif

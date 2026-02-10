@@ -6,6 +6,7 @@ class IDClass
 public:
     uint32_t ID = NoID;
 
+    IDClass(const IDClass&) = default;
     IDClass(uint32_t Number = NoID) { ID = Number; };
     IDClass(uint32_t Main, uint8_t Sub) { ID = (Main << 8) + Sub; };
 

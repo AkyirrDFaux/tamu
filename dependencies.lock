@@ -1,0 +1,30 @@
+dependencies:
+  espressif/led_strip:
+    component_hash: 28621486f77229aaf81c71f5e15d6fbf36c2949cf11094e07090593e659e7639
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 3.0.3
+  h2zero/esp-nimble-cpp:
+    component_hash: 8d31a2fa49a30f422ca98e3df54892a19fec32e1f82926de699df508737e8522
+    dependencies: []
+    source:
+      git: https://github.com/h2zero/esp-nimble-cpp.git
+      path: .
+      type: git
+    version: afdeff7871ef2f627d5ef8638e057a10a4c4cf16
+  idf:
+    source:
+      type: idf
+    version: 5.5.0
+direct_dependencies:
+- espressif/led_strip
+- h2zero/esp-nimble-cpp
+- idf
+manifest_hash: 6fb222e56bb572d8b4df878ac6ed347415f0430a30e00f4e2b8a2cc602e220fd
+target: esp32c3
+version: 2.0.0

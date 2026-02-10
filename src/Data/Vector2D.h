@@ -6,6 +6,7 @@ public:
     Number Y = 0;
 
     Vector2D();
+    Vector2D(const Vector2D&) = default;
     Vector2D(Number X, Number Y);
     Vector2D(Number Angle);
     void FromAngle(Number Angle);

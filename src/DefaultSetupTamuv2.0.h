@@ -1,6 +1,6 @@
 void DefaultSetup()
 {
-    Board.ValueSet(String("Akyirr"), Board.DisplayName);
+    Board.ValueSet(Text("Akyirr"), Board.DisplayName);
 
     // Display L
     DisplayClass *LD = new DisplayClass();

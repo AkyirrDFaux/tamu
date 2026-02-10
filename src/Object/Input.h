@@ -68,7 +68,7 @@ bool InputClass::Run()
         return true;
     }
 
-    if (InputPin.Port == nullptr)
+    if (HW::IsValidPin(InputPin) == false)
     {
         ReportError(Status::PortError);
         return true;

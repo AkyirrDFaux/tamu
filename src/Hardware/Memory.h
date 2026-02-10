@@ -1,5 +1,5 @@
 #if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
-#include <LittleFS.h>
+/*#include <LittleFS.h>
 void MemoryStartup()
 {
     LittleFS.begin(true);
@@ -15,7 +15,7 @@ void MemoryReset()
         Delete = Root.getNextFileName();
     }
     Root.close();
-}
+}*/
 #else
 //#include <lfs.h>
 #endif

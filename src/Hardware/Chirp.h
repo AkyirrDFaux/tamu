@@ -1,11 +1,22 @@
 // ESP32-C3 Warning: Stopping serial freezes board if DTR + RTS enabled
 ByteArray BufferIn;
 #if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
-#include <BLEDevice.h>
-#include <BLE2902.h>
+#include "esp_bt.h"
+#include "esp_nimble_hci.h"
+extern "C"
+{
+    // Add these alongside your other bridges in main.cpp
+    int ble_gattc_notify_custom(uint16_t conn_handle, uint16_t char_val_handle, struct os_mbuf *om) { return 0; }
+    int ble_gattc_indicate_custom(uint16_t conn_handle, uint16_t char_val_handle, struct os_mbuf *om) { return 0; }
+}
+#include "NimBLEDevice.h"
+#include "esp_log.h"
+#include "driver/usb_serial_jtag.h" // For USB communication
 
-BLEServer *pServer = NULL;
-BLECharacteristic *pTxCharacteristic;
+static const char *TAG = "CHIRP";
+
+NimBLEServer *pServer = nullptr;
+NimBLECharacteristic *pTxCharacteristic = nullptr;
 
 #define SERVICE_UUID "6E400001-B5A3-F393-E0A9-E50E24DCCA9E" // UART service UUID
 #define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
@@ -16,29 +27,28 @@ bool oldDeviceConnected = false;
 
 #define BTCHUNK 512
 
-class MyServerCallbacks : public BLEServerCallbacks
+class MyServerCallbacks : public NimBLEServerCallbacks
 {
-    void onConnect(BLEServer *pServer)
+    void onConnect(NimBLEServer *pServer) override
     {
         deviceConnected = true;
-    };
-
-    void onDisconnect(BLEServer *pServer)
+    }
+    void onDisconnect(NimBLEServer *pServer) override
     {
         deviceConnected = false;
     }
 };
 
-class MyCallbacks : public BLECharacteristicCallbacks
+class MyCallbacks : public NimBLECharacteristicCallbacks
 {
-    void onWrite(BLECharacteristic *pCharacteristic)
+    void onWrite(NimBLECharacteristic *pCharacteristic) override
     {
         std::string rxValue = pCharacteristic->getValue();
-
         if (rxValue.length() > 0)
         {
-            BufferIn = BufferIn << ByteArray(rxValue.c_str(), rxValue.length());
-            Serial.println(BufferIn.ToHex());
+            BufferIn = BufferIn << ByteArray(rxValue.data(), rxValue.length());
+            // Replace Serial.println with ESP_LOGI
+            // ESP_LOGI(TAG, "BLE RX: %s", BufferIn.ToHex());
         }
     }
 };
@@ -59,25 +69,33 @@ public:
 void ChirpClass::Begin(Text Name)
 {
 #if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
-    BLEDevice::init(std::string(Name.c_str(), Name.length()));
-    pServer = BLEDevice::createServer();
+    // 1. Initialize USB-Serial-JTAG for Chirp communication
+    usb_serial_jtag_driver_config_t usb_config = {
+        .tx_buffer_size = 256,
+        .rx_buffer_size = 256,
+    };
+    usb_serial_jtag_driver_install(&usb_config);
+
+    // 2. Initialize NimBLE
+    NimBLEDevice::init(std::string(Name.Data, Name.Length));
+    pServer = NimBLEDevice::createServer();
     pServer->setCallbacks(new MyServerCallbacks());
-    BLEService *pService = pServer->createService(SERVICE_UUID);
+
+    NimBLEService *pService = pServer->createService(SERVICE_UUID);
+
+    // TX Characteristic (Notify)
     pTxCharacteristic = pService->createCharacteristic(
         CHARACTERISTIC_UUID_TX,
-        BLECharacteristic::PROPERTY_NOTIFY);
+        NIMBLE_PROPERTY::NOTIFY);
 
-    pTxCharacteristic->addDescriptor(new BLE2902());
-    BLECharacteristic *pRxCharacteristic = pService->createCharacteristic(
+    // RX Characteristic (Write)
+    NimBLECharacteristic *pRxCharacteristic = pService->createCharacteristic(
         CHARACTERISTIC_UUID_RX,
-        BLECharacteristic::PROPERTY_WRITE);
-
+        NIMBLE_PROPERTY::WRITE);
     pRxCharacteristic->setCallbacks(new MyCallbacks());
 
-    // Start the service
     pService->start();
-
-    // Start advertising
+    pServer->getAdvertising()->addServiceUUID(SERVICE_UUID);
     pServer->getAdvertising()->start();
 #elif defined BOARD_Valu_v2_0
     LastSend = HW::Now();
@@ -86,7 +104,9 @@ void ChirpClass::Begin(Text Name)
 
 void ChirpClass::SendNow(const ByteArray &Input)
 {
+#if defined BOARD_Valu_v2_0
     HW::USB_Send(Input.CreateMessage());
+#endif
 };
 
 void ChirpClass::Send(const ByteArray &Input)
@@ -95,15 +115,16 @@ void ChirpClass::Send(const ByteArray &Input)
     if (deviceConnected)
     {
         ByteArray Buffer = Input.CreateMessage();
-        // Serial.println(Buffer.ToHex());
-
         for (int32_t Index = 0; Index < Buffer.Length; Index += BTCHUNK)
         {
-            pTxCharacteristic->setValue((uint8_t *)Buffer.Array + Index, min((size_t)(Buffer.Length - Index), (size_t)BTCHUNK));
+            size_t chunkLen = std::min((size_t)(Buffer.Length - Index), (size_t)BTCHUNK);
+            pTxCharacteristic->setValue((uint8_t *)Buffer.Array + Index, chunkLen);
             pTxCharacteristic->notify();
-            delay(5);
+            vTaskDelay(pdMS_TO_TICKS(5));
         }
     }
+    // Also send via USB for cross-compatibility
+    usb_serial_jtag_write_bytes(Input.Array, Input.Length, pdMS_TO_TICKS(100));
 #else
     SendNow(Input);
 #endif
@@ -111,6 +132,7 @@ void ChirpClass::Send(const ByteArray &Input)
 
 void ChirpClass::Communicate()
 {
+#if defined BOARD_Valu_v2_0
     tud_task();
     /*if (HW::Now() - LastSend > 1000)
     {
@@ -122,7 +144,7 @@ void ChirpClass::Communicate()
     ByteArray Input = HW::USB_Read();
 
     if (Input.Length > 0)
-    {            
+    {
         NotificationBlink(1, 20);
 
         BufferIn = BufferIn << Input;
@@ -130,24 +152,37 @@ void ChirpClass::Communicate()
         if (Message.Length > 0)
             Run(Message);
     }
+#endif
 // BT
 
 // disconnecting
 #if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
+    // 1. Handle USB CDC Data
+    char usb_buf[128];
+    int len = usb_serial_jtag_read_bytes(usb_buf, sizeof(usb_buf), 0); // Non-blocking
+    if (len > 0)
+    {
+        BufferIn = BufferIn << ByteArray(usb_buf, len);
+    }
+
+    // 2. Handle Bluetooth Connection State
     if (!deviceConnected && oldDeviceConnected)
     {
-        delay(500);                  // give the bluetooth stack the chance to get things ready
-        pServer->startAdvertising(); // restart advertising
-        Serial.println("start advertising");
-        oldDeviceConnected = deviceConnected;
+        vTaskDelay(pdMS_TO_TICKS(500));
+        pServer->getAdvertising()->start();
+        ESP_LOGI(TAG, "Restarted Advertising");
+        oldDeviceConnected = false;
     }
-    // connecting
     if (deviceConnected && !oldDeviceConnected)
-        oldDeviceConnected = deviceConnected;
+    {
+        oldDeviceConnected = true;
+    }
 
+    // 3. Process the Protocol Buffer
     ByteArray Message = BufferIn.ExtractMessage();
-
     if (Message.Length > 0)
+    {
         Run(Message);
+    }
 #endif
 };

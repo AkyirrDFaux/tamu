@@ -97,8 +97,8 @@ int main()
 #endif
 
     Board.Setup(0);
-    DefaultSetup();
-    Chirp.Begin("A");
+    //DefaultSetup();
+    //Chirp.Begin("A");
     // Chirp.Begin(Board.ValueGet<String>(Board.DisplayName));
 
     TimeUpdate();
@@ -117,7 +117,7 @@ int main()
 
     while (1) // Main Loop
     {
-        Chirp.Communicate();
+        //Chirp.Communicate();
 
         for (uint32_t Index = 0; Index < Sensors.Length; Sensors.Iterate(&Index))
             Sensors[Index]->Run();
@@ -144,6 +144,12 @@ int main()
     }
 };
 
+#if defined BOARD_Tamu_v2_0
+extern "C"
+{
+    void app_main(void) { main(); };
+}
+#endif
 /*TODO:
 KEY FEATURES:
 Crash (Delete/Create) Safety

@@ -284,7 +284,6 @@ void I2CClass::StopModule(BaseClass *Object)
     }
 };
 
-#if !defined BOARD_Tamu_v1_0 && !defined BOARD_Tamu_v2_0
 void UpdateLED()
 {
     // Loop through all ports and if they're led, call show()
@@ -295,4 +294,3 @@ void UpdateLED()
             ((LEDDriver *)Port->DriverObj)->Show();
     }
 }
-#endif
