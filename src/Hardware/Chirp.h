@@ -1,19 +1,8 @@
 // ESP32-C3 Warning: Stopping serial freezes board if DTR + RTS enabled
 ByteArray BufferIn;
 #if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
-#include "esp_bt.h"
-#include "esp_nimble_hci.h"
-extern "C"
-{
-    // Add these alongside your other bridges in main.cpp
-    int ble_gattc_notify_custom(uint16_t conn_handle, uint16_t char_val_handle, struct os_mbuf *om) { return 0; }
-    int ble_gattc_indicate_custom(uint16_t conn_handle, uint16_t char_val_handle, struct os_mbuf *om) { return 0; }
-}
-#include "NimBLEDevice.h"
-#include "esp_log.h"
-#include "driver/usb_serial_jtag.h" // For USB communication
 
-static const char *TAG = "CHIRP";
+#include "NimBLEDevice.h"
 
 NimBLEServer *pServer = nullptr;
 NimBLECharacteristic *pTxCharacteristic = nullptr;
@@ -29,29 +18,31 @@ bool oldDeviceConnected = false;
 
 class MyServerCallbacks : public NimBLEServerCallbacks
 {
-    void onConnect(NimBLEServer *pServer) override
+    void onConnect(NimBLEServer *pServer, NimBLEConnInfo &connInfo) override
     {
+        ESP_LOGI("CHIRP", "CONNECTED: %s\n", connInfo.getAddress().toString().c_str());
         deviceConnected = true;
     }
-    void onDisconnect(NimBLEServer *pServer) override
+    void onDisconnect(NimBLEServer *pServer, NimBLEConnInfo &connInfo, int reason) override
     {
         deviceConnected = false;
     }
-};
+} staticServerCallbacks;
 
 class MyCallbacks : public NimBLECharacteristicCallbacks
 {
-    void onWrite(NimBLECharacteristic *pCharacteristic) override
+    void onWrite(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo &connInfo) override
     {
+        ESP_LOGI("CHIRP", "CALLBACK TRIGGERED\n");
         std::string rxValue = pCharacteristic->getValue();
         if (rxValue.length() > 0)
         {
+            ESP_LOG_BUFFER_HEX("CHIRP", rxValue.data(), rxValue.length());
+
             BufferIn = BufferIn << ByteArray(rxValue.data(), rxValue.length());
-            // Replace Serial.println with ESP_LOGI
-            // ESP_LOGI(TAG, "BLE RX: %s", BufferIn.ToHex());
         }
     }
-};
+} staticRxCallbacks;
 #elif defined BOARD_Valu_v2_0
 uint32_t LastSend = 0;
 #endif
@@ -69,34 +60,38 @@ public:
 void ChirpClass::Begin(Text Name)
 {
 #if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
-    // 1. Initialize USB-Serial-JTAG for Chirp communication
-    usb_serial_jtag_driver_config_t usb_config = {
-        .tx_buffer_size = 256,
-        .rx_buffer_size = 256,
-    };
-    usb_serial_jtag_driver_install(&usb_config);
-
-    // 2. Initialize NimBLE
+    // Initialize NimBLE
     NimBLEDevice::init(std::string(Name.Data, Name.Length));
     pServer = NimBLEDevice::createServer();
-    pServer->setCallbacks(new MyServerCallbacks());
+    pServer->setCallbacks(&staticServerCallbacks);
 
-    NimBLEService *pService = pServer->createService(SERVICE_UUID);
+    // Explicitly create UUID objects to verify parsing
+    NimBLEUUID svcUUID(SERVICE_UUID);
+    NimBLEUUID rxUUID(CHARACTERISTIC_UUID_RX);
+    NimBLEUUID txUUID(CHARACTERISTIC_UUID_TX);
 
-    // TX Characteristic (Notify)
+    NimBLEService *pService = pServer->createService(svcUUID);
+
+    // Define RX
+    NimBLECharacteristic *pRxCharacteristic = pService->createCharacteristic(
+        rxUUID,
+        NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
+    pRxCharacteristic->setCallbacks(&staticRxCallbacks);
+
+    // Define TX
     pTxCharacteristic = pService->createCharacteristic(
-        CHARACTERISTIC_UUID_TX,
+        txUUID,
         NIMBLE_PROPERTY::NOTIFY);
 
-    // RX Characteristic (Write)
-    NimBLECharacteristic *pRxCharacteristic = pService->createCharacteristic(
-        CHARACTERISTIC_UUID_RX,
-        NIMBLE_PROPERTY::WRITE);
-    pRxCharacteristic->setCallbacks(new MyCallbacks());
-
+    // Start Service
     pService->start();
-    pServer->getAdvertising()->addServiceUUID(SERVICE_UUID);
-    pServer->getAdvertising()->start();
+
+    // Start Advertising
+    NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
+    pAdvertising->addServiceUUID(svcUUID);
+    pAdvertising->start();
+
+    ESP_LOGI("CHIRP", "BLE Started");
 #elif defined BOARD_Valu_v2_0
     LastSend = HW::Now();
 #endif
@@ -104,9 +99,7 @@ void ChirpClass::Begin(Text Name)
 
 void ChirpClass::SendNow(const ByteArray &Input)
 {
-#if defined BOARD_Valu_v2_0
     HW::USB_Send(Input.CreateMessage());
-#endif
 };
 
 void ChirpClass::Send(const ByteArray &Input)
@@ -124,23 +117,16 @@ void ChirpClass::Send(const ByteArray &Input)
         }
     }
     // Also send via USB for cross-compatibility
-    usb_serial_jtag_write_bytes(Input.Array, Input.Length, pdMS_TO_TICKS(100));
-#else
-    SendNow(Input);
 #endif
+    SendNow(Input);
+
 };
 
 void ChirpClass::Communicate()
 {
 #if defined BOARD_Valu_v2_0
     tud_task();
-    /*if (HW::Now() - LastSend > 1000)
-    {
-        LastSend = HW::Now();
-        const char *Hello = "Hello!\n";
-        HW::USB_Send(ByteArray(Hello, strlen(Hello)));
-    }*/
-
+#endif
     ByteArray Input = HW::USB_Read();
 
     if (Input.Length > 0)
@@ -152,25 +138,25 @@ void ChirpClass::Communicate()
         if (Message.Length > 0)
             Run(Message);
     }
-#endif
+
 // BT
 
 // disconnecting
 #if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
-    // 1. Handle USB CDC Data
+    /*// 1. Handle USB CDC Data
     char usb_buf[128];
     int len = usb_serial_jtag_read_bytes(usb_buf, sizeof(usb_buf), 0); // Non-blocking
     if (len > 0)
     {
         BufferIn = BufferIn << ByteArray(usb_buf, len);
-    }
+    }*/
 
     // 2. Handle Bluetooth Connection State
     if (!deviceConnected && oldDeviceConnected)
     {
         vTaskDelay(pdMS_TO_TICKS(500));
         pServer->getAdvertising()->start();
-        ESP_LOGI(TAG, "Restarted Advertising");
+        ESP_LOGI("CHIRP", "Restarted Advertising");
         oldDeviceConnected = false;
     }
     if (deviceConnected && !oldDeviceConnected)

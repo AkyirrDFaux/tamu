@@ -34,7 +34,7 @@ public:
     ByteArray ExtractMessage();                                      // Removes length + converts values
 
     // void WriteToFile(const String &FileName);
-    // String ToHex();
+    //Text ToHex();
 };
 
 ByteArray::ByteArray(const ByteArray &Copied)
@@ -464,11 +464,20 @@ ByteArray ReadFromFile(const String &FileName)
     return Data;
 };
 */
+
 /*
-String ByteArray::ToHex()
+Text ByteArray::ToHex()
 {
-    String Text = "";
-    for (uint32_t Index = 0; Index < Length; Index++)
-        Text += String(Array[Index], HEX) + " ";
-    return Text;
+    // 2 chars per byte + 1 space + null terminator
+    char* hexBuffer = (char*)malloc(Length * 3 + 1);
+    if (!hexBuffer) return Text("");
+
+    for (uint32_t i = 0; i < Length; i++) {
+        sprintf(hexBuffer + (i * 3), "%02X ", Array[i]);
+    }
+    
+    // Convert to your 'Text' type (assuming it handles the copy/pointer)
+    Text result = Text(hexBuffer); 
+    free(hexBuffer);
+    return result;
 };*/

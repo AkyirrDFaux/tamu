@@ -67,13 +67,13 @@ void BoardClass::Setup(int32_t Index) // Load Presets
         AddModule(new PortClass({5}, Ports::I2C_SCL), 9);
         AddModule(new PortClass(LED_NOTIFICATION_PIN, Ports::GPIO | Ports::Internal), 10);
 
-        AddModule(new I2CClass(), 11);
+        /*AddModule(new I2CClass(), 11);
         Modules[11]->AddModule(Modules[8], 0);
         Modules[11]->AddModule(Modules[9], 1);
 
         AddModule(new GyrAccClass(), 12);
         Modules[12]->ValueSet<GyrAccs>(GyrAccs::LSM6DS3TRC, 0);
-        Modules[11]->AddModule(Modules[12], 2);
+        Modules[11]->AddModule(Modules[12], 2);*/
 
         AddModule(new InputClass(), 13);
         Modules[13]->ValueSet<Inputs>(Inputs::ButtonWithLED, 0);

@@ -40,13 +40,13 @@ bool FanClass::Run()
 {
     if (HW::IsValidPin(PWMPin) == false)
     {
-        ReportError(Status::PortError);
+        ReportError(Status::PortError, ID);
         return true;
     }
 
     if (Values.Type(Speed) != Types::Number)
     {
-        ReportError(Status::MissingModule);
+        ReportError(Status::MissingModule, ID);
         return true;
     }
 

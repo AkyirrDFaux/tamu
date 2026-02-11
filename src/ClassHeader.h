@@ -12,6 +12,3 @@ class PortAttachClass;
 class DisplayTypeClass;
 
 class Operation;
-
-enum class Status : uint8_t;
-void ReportError(Status ErrorCode);

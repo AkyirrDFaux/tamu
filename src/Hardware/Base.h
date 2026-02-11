@@ -2,6 +2,7 @@
 #define LED_NOTIFICATION_PIN LED_BUILTIN
 
 #elif defined BOARD_Tamu_v2_0
+#include "esp_log.h"
 #include "driver/gpio.h"
 #include "esp_adc/adc_oneshot.h"
 #include "driver/ledc.h"
@@ -52,9 +53,112 @@ namespace HW
     int32_t GetMemory();
     int32_t GetFreeMemory();
 
+    // Helper: Standard CRC-8 (Maxim/Dallas)
+    uint8_t crc8(const uint8_t *data, size_t len)
+    {
+        uint8_t crc = 0x00;
+        for (size_t i = 0; i < len; i++)
+        {
+            crc ^= data[i];
+            for (int j = 0; j < 8; j++)
+            {
+                if (crc & 0x80)
+                    crc = (crc << 1) ^ 0x31;
+                else
+                    crc <<= 1;
+            }
+        }
+        return crc;
+    }
+
 #if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
 #define VOLTAGE (3.3)
 #define ADCRES (1 << 12)
+
+#include "driver/usb_serial_jtag.h" // For USB communication
+
+    void USB_Send(const ByteArray &Data)
+    {
+        if (Data.Length == 0 || Data.Array == nullptr)
+            return;
+
+        const uint32_t MAX_DATA = 60;
+        uint32_t offset = 0;
+
+        while (offset < Data.Length)
+        {
+            uint8_t packet[64] = {0}; // Local buffer is fine on ESP32 stack
+            uint8_t to_copy = (uint8_t)((Data.Length - offset > MAX_DATA) ? MAX_DATA : Data.Length - offset);
+
+            packet[0] = 0xFA;
+            packet[2] = to_copy;
+            memcpy(packet + 3, Data.Array + offset, to_copy);
+            packet[3 + to_copy] = 0xBF;
+
+            // CRC on [Len + Data]
+            packet[1] = crc8(packet + 2, to_copy + 1);
+
+            // In ESP-IDF, this function blocks or writes to an internal ring buffer
+            usb_serial_jtag_write_bytes(packet, 64, portMAX_DELAY);
+
+            offset += to_copy;
+        }
+    }
+
+    ByteArray USB_Read()
+    {
+        static uint8_t rx_buffer[256]; // Increased for headroom
+        static uint32_t rx_ptr = 0;
+
+        // 1. Read available bytes into buffer
+        // Non-blocking read (ticks_to_wait = 0)
+        int len = usb_serial_jtag_read_bytes(rx_buffer + rx_ptr, (sizeof(rx_buffer) - rx_ptr), 0);
+        if (len > 0)
+        {
+            rx_ptr += len;
+        }
+
+        // 2. Process for 64-byte frame
+        while (rx_ptr >= 64)
+        {
+            if (rx_buffer[0] == 0xFA)
+            {
+                uint8_t receivedCrc = rx_buffer[1];
+                uint8_t dataLen = rx_buffer[2];
+
+                if (dataLen <= 60)
+                {
+                    if (crc8(rx_buffer + 2, dataLen + 1) == receivedCrc)
+                    {
+                        if (rx_buffer[3 + dataLen] == 0xBF)
+                        {
+                            // SUCCESS
+                            ByteArray Data;
+                            Data.Length = dataLen;
+                            Data.Array = new char[dataLen];
+                            memcpy(Data.Array, rx_buffer + 3, dataLen);
+
+                            // Shift buffer
+                            memmove(rx_buffer, rx_buffer + 64, rx_ptr - 64);
+                            rx_ptr -= 64;
+                            return Data;
+                        }
+                    }
+                }
+                // Invalid packet logic: slide 1
+                memmove(rx_buffer, rx_buffer + 1, rx_ptr - 1);
+                rx_ptr--;
+            }
+            else
+            {
+                // No header: slide 1
+                memmove(rx_buffer, rx_buffer + 1, rx_ptr - 1);
+                rx_ptr--;
+            }
+        }
+        return ByteArray();
+    }
+
     void Init()
     {
         esp_err_t ret = nvs_flash_init();
@@ -64,6 +168,12 @@ namespace HW
             ret = nvs_flash_init();
         }
         ESP_ERROR_CHECK(ret);
+
+        usb_serial_jtag_driver_config_t usb_config = {
+            .tx_buffer_size = 512,
+            .rx_buffer_size = 512,
+        };
+        usb_serial_jtag_driver_install(&usb_config);
     };
 
     bool IsValidPin(const Pin &Pin)
@@ -237,24 +347,6 @@ extern "C"
 }
 namespace HW
 {
-    // Helper: Standard CRC-8 (Maxim/Dallas)
-    uint8_t crc8(const uint8_t *data, size_t len)
-    {
-        uint8_t crc = 0x00;
-        for (size_t i = 0; i < len; i++)
-        {
-            crc ^= data[i];
-            for (int j = 0; j < 8; j++)
-            {
-                if (crc & 0x80)
-                    crc = (crc << 1) ^ 0x31;
-                else
-                    crc <<= 1;
-            }
-        }
-        return crc;
-    }
-
     void USB_Send(const ByteArray &Data)
     {
         if (Data.Length == 0 || Data.Array == nullptr)
@@ -353,6 +445,7 @@ namespace HW
 
         return ByteArray(); // Nothing valid found yet
     }
+
     void Init()
     {
         SystemInit();

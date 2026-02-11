@@ -283,3 +283,8 @@ void ReportError(Status ErrorCode)
     ByteArray Report = ByteArray(ErrorCode);
     Chirp.SendNow(Report);
 }
+void ReportError(Status ErrorCode, IDClass ID)
+{
+    ByteArray Report = ByteArray(ErrorCode) << ByteArray(ID);
+    Chirp.SendNow(Report);
+}

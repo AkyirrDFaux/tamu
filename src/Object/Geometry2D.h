@@ -65,7 +65,7 @@ void Geometry2DClass::Render(int32_t Length, Vector2D DisplaySize, Number Ratio,
 {
     if (Values.Type(Geometry) != Types::Geometry2D || Values.Type(Operation) != Types::GeometryOperation)
     {
-        ReportError(Status::MissingModule);
+        ReportError(Status::MissingModule, ID);
         return;
     }
     Geometries Type = ValueGet<Geometries>(Geometry);
@@ -147,7 +147,7 @@ void Geometry2DClass::Render(int32_t Length, Vector2D DisplaySize, Number Ratio,
                 LocalOverlay = 1;
                 break;
             default:
-                ReportError(Status::InvalidValue);
+                ReportError(Status::InvalidValue, ID);
                 break;
             }
 

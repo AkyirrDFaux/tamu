@@ -10,13 +10,29 @@ dependencies:
       type: service
     version: 3.0.3
   h2zero/esp-nimble-cpp:
-    component_hash: 8d31a2fa49a30f422ca98e3df54892a19fec32e1f82926de699df508737e8522
-    dependencies: []
+    component_hash: ecdcabe83333948495103f9d62e4ecb651bff866fce123d00bfc106baa383e54
+    dependencies:
+    - name: espressif/esp_hosted
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: target in [esp32p4]
+      version: '*'
+    - name: espressif/esp_wifi_remote
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: target in [esp32p4]
+      version: '>=0.5.3'
+    - name: idf
+      require: private
+      rules:
+      - if: target in [esp32p4]
+      version: '>=5.3.0'
     source:
-      git: https://github.com/h2zero/esp-nimble-cpp.git
-      path: .
-      type: git
-    version: afdeff7871ef2f627d5ef8638e057a10a4c4cf16
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 2.3.4
   idf:
     source:
       type: idf
@@ -25,6 +41,6 @@ direct_dependencies:
 - espressif/led_strip
 - h2zero/esp-nimble-cpp
 - idf
-manifest_hash: 6fb222e56bb572d8b4df878ac6ed347415f0430a30e00f4e2b8a2cc602e220fd
+manifest_hash: b726d49ccd61592c2094f52b018e25aa279e56e0ff5ecef2488a74fec5a56a36
 target: esp32c3
 version: 2.0.0

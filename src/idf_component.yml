@@ -1,6 +1,4 @@
 dependencies:
-  espressif/led_strip: "^3.0.0"
-  h2zero/esp-nimble-cpp:
-    git: https://github.com/h2zero/esp-nimble-cpp.git
-    version: "2.3.4"
-  idf: ">=5.0"
+  espressif/led_strip: "^3.0.3"
+  h2zero/esp-nimble-cpp: "^2.3.4"
+  idf: "^5.5.0"

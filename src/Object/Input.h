@@ -64,13 +64,13 @@ bool InputClass::Run()
 {
     if (Values.Type(InputType) != Types::Input)
     {
-        ReportError(Status::MissingModule);
+        ReportError(Status::MissingModule, ID);
         return true;
     }
 
     if (HW::IsValidPin(InputPin) == false)
     {
-        ReportError(Status::PortError);
+        ReportError(Status::PortError, ID);
         return true;
     }
 

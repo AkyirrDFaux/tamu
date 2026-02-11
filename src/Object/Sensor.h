@@ -44,13 +44,13 @@ bool SensorClass::Run()
 {
     if (HW::IsValidPin(MeasPin) == false)
     {
-        ReportError(Status::PortError);
+        ReportError(Status::PortError, ID);
         return true;
     }
 
     if (Values.Type(SensorType) != Types::Sensor || Values.Type(Measurement) != Types::Number || Values.Type(Filter) != Types::Number)
     {
-        ReportError(Status::MissingModule);
+        ReportError(Status::MissingModule, ID);
         return true;
     }
 

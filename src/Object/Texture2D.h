@@ -63,7 +63,7 @@ void Texture2D::Render(int32_t Length, Vector2D Size, Number Ratio, Coord2D Tran
 {
     if (Values.Type(Texture) != Types::Texture2D)
     {
-        ReportError(Status::MissingModule);
+        ReportError(Status::MissingModule, ID);
         return;
     }
 
@@ -138,7 +138,7 @@ void Texture2D::Render(int32_t Length, Vector2D Size, Number Ratio, Coord2D Tran
                 Colour.Layer(ColourA, Distance);
                 break;
             default:
-                ReportError(Status::InvalidValue);
+                ReportError(Status::InvalidValue, ID);
                 break;
             }
             Buffer[Index].Layer(Colour, Overlay[Index]);

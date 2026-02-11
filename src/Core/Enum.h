@@ -81,6 +81,9 @@ enum class Status : uint8_t
     AutoObject
 };
 
+void ReportError(Status ErrorCode);
+void ReportError(Status ErrorCode, IDClass ID);
+
 enum class ObjectTypes : uint8_t
 {
     Undefined = 0,
