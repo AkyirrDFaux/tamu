@@ -140,6 +140,7 @@ int main()
 #endif
         TimeUpdate();
         Board.UpdateLoopTime();
+        vTaskDelay(pdMS_TO_TICKS(10)); //Triggers watchdog otherwise
     }
 };
 

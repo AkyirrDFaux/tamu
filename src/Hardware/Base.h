@@ -99,7 +99,7 @@ namespace HW
             packet[1] = crc8(packet + 2, to_copy + 1);
 
             // In ESP-IDF, this function blocks or writes to an internal ring buffer
-            usb_serial_jtag_write_bytes(packet, 64, portMAX_DELAY);
+            usb_serial_jtag_write_bytes(packet, 64, pdMS_TO_TICKS(10));
 
             offset += to_copy;
         }

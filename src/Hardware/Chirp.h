@@ -1,7 +1,7 @@
 // ESP32-C3 Warning: Stopping serial freezes board if DTR + RTS enabled
-ByteArray BufferIn;
+ByteArray BufferUSBIn;
 #if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
-
+ByteArray BufferBLEIn;
 #include "NimBLEDevice.h"
 
 NimBLEServer *pServer = nullptr;
@@ -20,7 +20,7 @@ class MyServerCallbacks : public NimBLEServerCallbacks
 {
     void onConnect(NimBLEServer *pServer, NimBLEConnInfo &connInfo) override
     {
-        ESP_LOGI("CHIRP", "CONNECTED: %s\n", connInfo.getAddress().toString().c_str());
+        // ESP_LOGI("CHIRP", "CONNECTED: %s\n", connInfo.getAddress().toString().c_str());
         deviceConnected = true;
     }
     void onDisconnect(NimBLEServer *pServer, NimBLEConnInfo &connInfo, int reason) override
@@ -33,13 +33,12 @@ class MyCallbacks : public NimBLECharacteristicCallbacks
 {
     void onWrite(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo &connInfo) override
     {
-        ESP_LOGI("CHIRP", "CALLBACK TRIGGERED\n");
         std::string rxValue = pCharacteristic->getValue();
         if (rxValue.length() > 0)
         {
-            ESP_LOG_BUFFER_HEX("CHIRP", rxValue.data(), rxValue.length());
+            // ESP_LOG_BUFFER_HEX("CHIRP", rxValue.data(), rxValue.length());
 
-            BufferIn = BufferIn << ByteArray(rxValue.data(), rxValue.length());
+            BufferBLEIn = BufferBLEIn << ByteArray(rxValue.data(), rxValue.length());
         }
     }
 } staticRxCallbacks;
@@ -62,6 +61,7 @@ void ChirpClass::Begin(Text Name)
 #if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
     // Initialize NimBLE
     NimBLEDevice::init(std::string(Name.Data, Name.Length));
+    NimBLEDevice::setMTU(512);
     pServer = NimBLEDevice::createServer();
     pServer->setCallbacks(&staticServerCallbacks);
 
@@ -91,7 +91,7 @@ void ChirpClass::Begin(Text Name)
     pAdvertising->addServiceUUID(svcUUID);
     pAdvertising->start();
 
-    ESP_LOGI("CHIRP", "BLE Started");
+    // ESP_LOGI("CHIRP", "BLE Started");
 #elif defined BOARD_Valu_v2_0
     LastSend = HW::Now();
 #endif
@@ -99,7 +99,7 @@ void ChirpClass::Begin(Text Name)
 
 void ChirpClass::SendNow(const ByteArray &Input)
 {
-    HW::USB_Send(Input.CreateMessage());
+    HW::USB_Send(Input.CreateMessage()); //Freezes if not connected
 };
 
 void ChirpClass::Send(const ByteArray &Input)
@@ -113,13 +113,12 @@ void ChirpClass::Send(const ByteArray &Input)
             size_t chunkLen = std::min((size_t)(Buffer.Length - Index), (size_t)BTCHUNK);
             pTxCharacteristic->setValue((uint8_t *)Buffer.Array + Index, chunkLen);
             pTxCharacteristic->notify();
-            vTaskDelay(pdMS_TO_TICKS(5));
+            HW::Sleep(20);
         }
     }
     // Also send via USB for cross-compatibility
 #endif
-    SendNow(Input);
-
+    HW::USB_Send(Input.CreateMessage()); //Freezes if not connected
 };
 
 void ChirpClass::Communicate()
@@ -133,8 +132,8 @@ void ChirpClass::Communicate()
     {
         NotificationBlink(1, 20);
 
-        BufferIn = BufferIn << Input;
-        ByteArray Message = BufferIn.ExtractMessage();
+        BufferUSBIn = BufferUSBIn << Input;
+        ByteArray Message = BufferUSBIn.ExtractMessage();
         if (Message.Length > 0)
             Run(Message);
     }
@@ -143,20 +142,12 @@ void ChirpClass::Communicate()
 
 // disconnecting
 #if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
-    /*// 1. Handle USB CDC Data
-    char usb_buf[128];
-    int len = usb_serial_jtag_read_bytes(usb_buf, sizeof(usb_buf), 0); // Non-blocking
-    if (len > 0)
-    {
-        BufferIn = BufferIn << ByteArray(usb_buf, len);
-    }*/
-
     // 2. Handle Bluetooth Connection State
     if (!deviceConnected && oldDeviceConnected)
     {
         vTaskDelay(pdMS_TO_TICKS(500));
         pServer->getAdvertising()->start();
-        ESP_LOGI("CHIRP", "Restarted Advertising");
+        // ESP_LOGI("CHIRP", "Restarted Advertising");
         oldDeviceConnected = false;
     }
     if (deviceConnected && !oldDeviceConnected)
@@ -165,7 +156,7 @@ void ChirpClass::Communicate()
     }
 
     // 3. Process the Protocol Buffer
-    ByteArray Message = BufferIn.ExtractMessage();
+    ByteArray Message = BufferBLEIn.ExtractMessage();
     if (Message.Length > 0)
     {
         Run(Message);
