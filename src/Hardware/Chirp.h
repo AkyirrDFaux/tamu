@@ -124,13 +124,13 @@ void ChirpClass::Send(const ByteArray &Input)
 void ChirpClass::Communicate()
 {
 #if defined BOARD_Valu_v2_0
-    tud_task();
+    HW::tud_task();
 #endif
     ByteArray Input = HW::USB_Read();
 
     if (Input.Length > 0)
     {
-        NotificationBlink(1, 20);
+        HW::NotificationBlink(1, 20);
 
         BufferUSBIn = BufferUSBIn << Input;
         ByteArray Message = BufferUSBIn.ExtractMessage();

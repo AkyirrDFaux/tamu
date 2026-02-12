@@ -4,4 +4,6 @@
 .vscode/launch.json
 .vscode/ipch
 lib/tinyusb-master/*
+lib/tinyusb-master
 managed_components/*
+managed_components

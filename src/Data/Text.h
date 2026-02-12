@@ -6,7 +6,7 @@ public:
 
     Text() : Data(nullptr), Length(0) {}
 
-    Text(const char *s) : Data(nullptr), Length(0) { *this = s; }
+    Text(const char *String) : Data(nullptr), Length(0) { *this = String; }
 
     ~Text()
     {

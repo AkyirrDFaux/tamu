@@ -1,6 +1,7 @@
 class ByteArray
 {
 private:
+    //Generic Get and Set to reduce templates
     __attribute__((noinline)) void *Get(int32_t Index, size_t Size) const;
     __attribute__((noinline)) void Set(const void *Data, size_t Size, Types Type, int32_t Index);
 

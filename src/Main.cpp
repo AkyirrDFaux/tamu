@@ -33,11 +33,12 @@ IDList Outputs;  // Ex: Display, Fan, Servo
 
 // Hardware related
 #include "Hardware\Base.h"
-#include "Hardware\I2C.h"
+#include "Hardware\USB.h"
 #include "Hardware\Memory.h"
+#include "Hardware\I2C.h"
 #include "Hardware\LED.h"
 #include "Hardware\Servo.h"
-#include "Hardware\PWM.h"
+#include "Hardware\Analog&PWM.h"
 #include "Hardware\Chirp.h"
 ChirpClass Chirp = ChirpClass(); // Bluetooth/Serial
 
@@ -79,22 +80,14 @@ BoardClass Board;
 #include "DefaultSetupTamuv2.0.h" //30kb of instructions :)
 #elif defined BOARD_Valu_v2_0
 #include "DefaultSetupValuv2.0.h"
-
-/*#include <SPI.h>
-#include <U8g2lib.h>
-
-U8G2_SH1106_128X64_NONAME_F_4W_HW_SPI u8g2(U8G2_R0, PA4, PB0, PA3);*/
 #endif
 
 int main()
 {
     HW::Init();
-    NotificationStartup();
+    HW::NotificationStartup();
 
     // MemoryStartup();
-#if defined BOARD_Valu_v2_0
-    // u8g2.begin();
-#endif
     HW::Sleep(1000);
 
     Board.Setup(0);
@@ -132,16 +125,11 @@ int main()
             Outputs[Index]->Run();
 
         UpdateLED();
-
-#if defined BOARD_Valu_v2_0
-        /*u8g2.clearBuffer();
-        u8g2.setFont(u8g2_font_ncenB08_tr);
-        u8g2.drawStr(0, 10, "Hello!");
-        u8g2.sendBuffer();*/
-#endif
         TimeUpdate();
         Board.UpdateLoopTime();
+#if defined BOARD_Tamu_v2_0
         vTaskDelay(pdMS_TO_TICKS(10)); // Triggers watchdog otherwise
+#endif
     }
 };
 

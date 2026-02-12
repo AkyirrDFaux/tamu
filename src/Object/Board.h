@@ -120,7 +120,7 @@ void BoardClass::UpdateLoopTime()
     else if (HW::Now() % 20000 < 20)
     {
         ValueSet<uint32_t>(AvgLoopTime, MaxTime);
-        ValueSet<int32_t>(HW::GetMemory(), MemoryTotal);
-        ValueSet<int32_t>(HW::GetFreeMemory(), MemoryUsed);
+        ValueSet<int32_t>(HW::GetRAM(), MemoryTotal);
+        ValueSet<int32_t>(HW::GetFreeRAM(), MemoryUsed);
     }
 }

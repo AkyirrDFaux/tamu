@@ -23,7 +23,6 @@ public:
     bool Register(BaseClass *AddObject, IDClass ID = RandomID);
     bool Unregister(IDClass ID);
     bool Unregister(BaseClass *RemovedObject);
-    //void ContentDebug() const;
 } Objects;
 
 class IDList
@@ -137,5 +136,4 @@ public:
 
     ByteArray OutputValues(int32_t Value = 0) const;
     bool InputValues(ByteArray &Input, int32_t Index, uint8_t Value = 0);
-    //String ContentDebug();
 };
