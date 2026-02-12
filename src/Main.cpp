@@ -88,7 +88,6 @@ int main()
     HW::NotificationStartup();
 
     // MemoryStartup();
-    HW::Sleep(1000);
 
     Board.Setup(0);
     DefaultSetup();
@@ -127,9 +126,6 @@ int main()
         UpdateLED();
         TimeUpdate();
         Board.UpdateLoopTime();
-#if defined BOARD_Tamu_v2_0
-        vTaskDelay(pdMS_TO_TICKS(10)); // Triggers watchdog otherwise
-#endif
     }
 };
 

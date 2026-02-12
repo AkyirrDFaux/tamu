@@ -147,7 +147,7 @@ namespace HW
     {
         SystemInit();
         // Start SysTick
-        SystemCoreClockUpdate(); // Ensure this global variable is actually correct
+        SystemCoreClockUpdate();
         tick_multiplier = SystemCoreClock / 1000;
 
         SysTick->CTLR = 0;

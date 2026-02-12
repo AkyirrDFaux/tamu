@@ -1,5 +1,7 @@
 namespace HW
 {
+    #define MAX_USB_DATA 60
+    #define USB_PACKET_SIZE 64
     uint8_t CRC8(const uint8_t *Data, size_t Length)
     {
         uint8_t CRC8 = 0x00;
@@ -32,24 +34,20 @@ namespace HW
         if (Data.Length == 0 || Data.Array == nullptr)
             return;
 
-        const uint32_t MAX_DATA = 60;
         uint32_t offset = 0;
 
         while (offset < Data.Length)
         {
-            uint8_t packet[64] = {0}; // Local buffer is fine on ESP32 stack
-            uint8_t to_copy = (uint8_t)((Data.Length - offset > MAX_DATA) ? MAX_DATA : Data.Length - offset);
+            uint8_t packet[USB_PACKET_SIZE] = {0}; // Local buffer
+            uint8_t to_copy = (uint8_t)((Data.Length - offset > MAX_USB_DATA) ? MAX_USB_DATA : Data.Length - offset);
 
             packet[0] = 0xFA;
             packet[2] = to_copy;
             memcpy(packet + 3, Data.Array + offset, to_copy);
             packet[3 + to_copy] = 0xBF;
-
-            // CRC on [Len + Data]
             packet[1] = CRC8(packet + 2, to_copy + 1);
 
-            // In ESP-IDF, this function blocks or writes to an internal ring buffer
-            usb_serial_jtag_write_bytes(packet, 64, pdMS_TO_TICKS(10));
+            usb_serial_jtag_write_bytes(packet, USB_PACKET_SIZE, pdMS_TO_TICKS(10));
 
             offset += to_copy;
         }
@@ -69,14 +67,14 @@ namespace HW
         }
 
         // 2. Process for 64-byte frame
-        while (rx_ptr >= 64)
+        while (rx_ptr >= USB_PACKET_SIZE)
         {
             if (rx_buffer[0] == 0xFA)
             {
                 uint8_t receivedCrc = rx_buffer[1];
                 uint8_t dataLen = rx_buffer[2];
 
-                if (dataLen <= 60)
+                if (dataLen <= MAX_USB_DATA)
                 {
                     if (CRC8(rx_buffer + 2, dataLen + 1) == receivedCrc)
                     {
@@ -89,8 +87,8 @@ namespace HW
                             memcpy(Data.Array, rx_buffer + 3, dataLen);
 
                             // Shift buffer
-                            memmove(rx_buffer, rx_buffer + 64, rx_ptr - 64);
-                            rx_ptr -= 64;
+                            memmove(rx_buffer, rx_buffer + USB_PACKET_SIZE, rx_ptr - USB_PACKET_SIZE);
+                            rx_ptr -= USB_PACKET_SIZE;
                             return Data;
                         }
                     }
@@ -160,15 +158,14 @@ namespace HW
         if (Data.Length == 0 || Data.Array == nullptr)
             return;
 
-        const uint32_t MAX_DATA = 60;
         uint32_t offset = 0;
 
         while (offset < Data.Length)
         {
-            static uint8_t __attribute__((aligned(4))) packet[64];
-            memset(packet, 0, 64);
+            static uint8_t __attribute__((aligned(4))) packet[USB_PACKET_SIZE];
+            memset(packet, 0, USB_PACKET_SIZE);
 
-            uint8_t to_copy = (uint8_t)((Data.Length - offset > MAX_DATA) ? MAX_DATA : Data.Length - offset);
+            uint8_t to_copy = (uint8_t)((Data.Length - offset > MAX_USB_DATA) ? MAX_USB_DATA : Data.Length - offset);
 
             packet[0] = 0xFA;
             packet[2] = to_copy; // Length byte
@@ -180,13 +177,13 @@ namespace HW
             packet[1] = CRC8(packet + 2, to_copy + 1);
 
             uint32_t timeout = 10000;
-            while (tud_cdc_write_available() < 64 && timeout > 0)
+            while (tud_cdc_write_available() < USB_PACKET_SIZE && timeout > 0)
             {
                 tud_task();
                 timeout--;
             }
 
-            tud_cdc_write(packet, 64);
+            tud_cdc_write(packet, USB_PACKET_SIZE);
             tud_cdc_write_flush();
             offset += to_copy;
             tud_task();
@@ -210,14 +207,14 @@ namespace HW
         }
 
         // 2. Process our local buffer for a 64-byte frame
-        while (rx_ptr >= 64)
+        while (rx_ptr >= USB_PACKET_SIZE)
         {
             if (rx_buffer[0] == 0xFA)
             {
                 uint8_t receivedCrc = rx_buffer[1];
                 uint8_t dataLen = rx_buffer[2];
 
-                if (dataLen <= 60)
+                if (dataLen <= MAX_USB_DATA)
                 {
                     // Check CRC
                     if (CRC8(rx_buffer + 2, dataLen + 1) == receivedCrc)
@@ -233,8 +230,8 @@ namespace HW
                             memcpy(Data.Array, rx_buffer + 3, dataLen);
 
                             // Shift buffer by 64
-                            memmove(rx_buffer, rx_buffer + 64, rx_ptr - 64);
-                            rx_ptr -= 64;
+                            memmove(rx_buffer, rx_buffer + USB_PACKET_SIZE, rx_ptr - USB_PACKET_SIZE);
+                            rx_ptr -= USB_PACKET_SIZE;
                             return Data;
                         }
                     }
