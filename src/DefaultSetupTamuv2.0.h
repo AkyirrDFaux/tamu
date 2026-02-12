@@ -246,7 +246,6 @@ void DefaultSetup()
     P2->AddModule(OL4, 6);
 
     // EYE MOVEMENT PROGRAM
-    /*
     Program *P3 = new Program();
     P3->ValueSet<ProgramTypes>(ProgramTypes::Sequence, P3->Mode);
     P3->Flags += Flags::RunLoop | Flags::Favourite;
@@ -362,7 +361,7 @@ void DefaultSetup()
     OSAD->Modules.Add(LS2->ID);
 
     PSA->Modules.Add(OSAE, 0);
-    PSA->Modules.Add(OSAD, 1);*/
+    PSA->Modules.Add(OSAD, 1);
 };
 
 /*// LED COLLAR

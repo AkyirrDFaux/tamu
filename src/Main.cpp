@@ -95,6 +95,7 @@ int main()
 #if defined BOARD_Valu_v2_0
     // u8g2.begin();
 #endif
+    HW::Sleep(1000);
 
     Board.Setup(0);
     DefaultSetup();
@@ -140,7 +141,7 @@ int main()
 #endif
         TimeUpdate();
         Board.UpdateLoopTime();
-        vTaskDelay(pdMS_TO_TICKS(10)); //Triggers watchdog otherwise
+        vTaskDelay(pdMS_TO_TICKS(10)); // Triggers watchdog otherwise
     }
 };
 
@@ -212,4 +213,5 @@ RAM saving - Names/Strings only on flash
 // 05.02.2026 Valu v2.0 LED output
 // 07.02.2026 Manual VTable + Destroy Switch
 // 08.02.2026 De-arduino-ified Valu v2.0
-// 10.02.2026 Chirp over UART (Valu v2.0)
+// 10.02.2026 Chirp over UART
+// 12.02.2026 De-arduino-ified Tamu v2.0

@@ -7,10 +7,8 @@ typedef I2C_TypeDef *I2C_Handle;
 
 class I2C
 {
-private:
-    I2C_Handle Handle;
-
 public:
+    I2C_Handle Handle;
     I2C() : Handle(nullptr) {}
 
     // Auto-detects the hardware instance based on the pins provided
@@ -25,75 +23,108 @@ bool I2C::Begin(const Pin &SCL, const Pin &SDA, uint32_t Speed)
 {
     gpio_reset_pin((gpio_num_t)SCL.Number);
     gpio_reset_pin((gpio_num_t)SDA.Number);
-    gpio_set_direction((gpio_num_t)SDA.Number, GPIO_MODE_INPUT_OUTPUT_OD);
-    gpio_set_direction((gpio_num_t)SCL.Number, GPIO_MODE_INPUT_OUTPUT_OD);
-    
-    i2c_master_bus_config_t bus_config = {
-        .i2c_port = I2C_NUM_0, // C3 has one I2C peripheral (I2C_NUM_0)
-        .sda_io_num = (gpio_num_t)SDA.Number,
-        .scl_io_num = (gpio_num_t)SCL.Number,
-        .clk_source = I2C_CLK_SRC_RC_FAST,
-        .glitch_ignore_cnt = 7,
-        .intr_priority = 0,
-        .trans_queue_depth = 0, // Blocking mode
-        .flags = {.enable_internal_pullup = false}};
 
-    // Initialize the bus and store the handle
+    i2c_master_bus_config_t bus_config = {};
+    bus_config.i2c_port = I2C_NUM_0;
+    bus_config.sda_io_num = GPIO_NUM_4;
+    bus_config.scl_io_num = GPIO_NUM_5;
+    bus_config.clk_source = I2C_CLK_SRC_RC_FAST; // More stable than XTAL for timing
+    bus_config.glitch_ignore_cnt = 7;
+    bus_config.flags.enable_internal_pullup = true;
+
     esp_err_t err = i2c_new_master_bus(&bus_config, &Handle);
-    return (err == ESP_OK);
+
+    if (err != ESP_OK)
+    {
+        printf("Failed to init bus: %s\n", esp_err_to_name(err));
+        return false;
+    }
+    else
+    {
+        printf("Starting Scan (GPIO 4=SDA, 5=SCL)...\n");
+
+        // 3. The Scan Loop
+        bool found = false;
+        for (uint8_t addr = 1; addr < 127; addr++)
+        {
+            // i2c_master_probe sends the address and checks for an ACK
+            // We use a 100ms timeout to be safe
+            esp_err_t res = i2c_master_probe(Handle, addr, 100);
+
+            if (res == ESP_OK)
+            {
+                printf("Found device at: 0x%02X (Decimal: %d)\n", addr, addr);
+                found = true;
+            }
+        }
+
+        if (!found)
+        {
+            printf("No devices found on the bus.\n");
+        }
+
+        printf("Scan complete.\n");
+    }
+    return true;
 }
 
 bool I2C::Write(uint8_t Address, uint8_t Register, uint8_t *Data, uint16_t Length)
 {
-    if (!Handle) return false;
+    if (!Handle)
+        return false;
 
     // 1. We have to "add" the device to the bus temporarily to get a dev_handle
     i2c_device_config_t dev_cfg = {
         .dev_addr_length = I2C_ADDR_BIT_LEN_7,
         .device_address = Address,
         .scl_speed_hz = 100000, // Or pass your 'Speed' from Begin()
-    };
+        .scl_wait_us = 0};
 
     i2c_master_dev_handle_t dev_handle;
-    if (i2c_master_bus_add_device(Handle, &dev_cfg, &dev_handle) != ESP_OK) {
+    if (i2c_master_bus_add_device(Handle, &dev_cfg, &dev_handle) != ESP_OK)
+    {
         return false;
     }
 
     // 2. Prepare the buffer (Register + Data)
     size_t total_len = Length + 1;
     uint8_t *buffer = (uint8_t *)malloc(total_len);
-    if (!buffer) {
+    if (!buffer)
+    {
         i2c_master_bus_rm_device(dev_handle);
         return false;
     }
 
     buffer[0] = Register;
-    if (Data && Length > 0) {
+    if (Data && Length > 0)
+    {
         memcpy(&buffer[1], Data, Length);
     }
 
     // 3. Transmit using the dev_handle
     esp_err_t err = i2c_master_transmit(dev_handle, buffer, total_len, -1);
-    
+
     // 4. Cleanup
     free(buffer);
     i2c_master_bus_rm_device(dev_handle); // Important! Don't leak device handles
-    
+
     return (err == ESP_OK);
 }
 
 bool I2C::Read(uint8_t Address, uint8_t Register, uint8_t *Data, uint16_t Length)
 {
-    if (!Handle || !Data) return false;
+    if (!Handle || !Data)
+        return false;
 
     i2c_device_config_t dev_cfg = {
         .dev_addr_length = I2C_ADDR_BIT_LEN_7,
         .device_address = Address,
-        .scl_speed_hz = 400000,
-    };
+        .scl_speed_hz = 100000,
+        .scl_wait_us = 0};
 
     i2c_master_dev_handle_t dev_handle;
-    if (i2c_master_bus_add_device(Handle, &dev_cfg, &dev_handle) != ESP_OK) {
+    if (i2c_master_bus_add_device(Handle, &dev_cfg, &dev_handle) != ESP_OK)
+    {
         return false;
     }
 
