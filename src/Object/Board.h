@@ -101,11 +101,30 @@ void BoardClass::Setup(int32_t Index) // Load Presets
         AddModule(new PortClass({GPIOB, 13}, Ports::GPIO | Ports::Internal), 15);          // B3
         AddModule(new PortClass(LED_NOTIFICATION_PIN, Ports::GPIO | Ports::Internal), 16); // B4 + LED
 
-        AddModule(new PortClass({GPIOA, 5}, Ports::SPI_CLK), 17);
+        AddModule(new InputClass(), 17);
+        Modules[17]->ValueSet<Inputs>(Inputs::Button, 0);
+        Modules[13]->AddModule(Modules[17], 0);
+        AddModule(new InputClass(), 18);
+        Modules[18]->ValueSet<Inputs>(Inputs::Button, 0);
+        Modules[14]->AddModule(Modules[18], 0);
+        AddModule(new InputClass(), 19);
+        Modules[19]->ValueSet<Inputs>(Inputs::Button, 0);
+        Modules[15]->AddModule(Modules[19], 0);
+        AddModule(new InputClass(), 20);
+        Modules[20]->ValueSet<Inputs>(Inputs::ButtonWithLED, 0);
+        Modules[16]->AddModule(Modules[20], 0);
+
+        AddModule(new OLEDClass(), 21);
+        Modules[21]->AddModule(Modules[19], 0);
+        Modules[21]->AddModule(Modules[18], 1);
+        Modules[21]->AddModule(Modules[17], 2);
+        Modules[21]->AddModule(Modules[20], 3);
+
+        /*AddModule(new PortClass({GPIOA, 5}, Ports::SPI_CLK), 17);
         AddModule(new PortClass({GPIOA, 7}, Ports::SPI_MOSI), 18);
         AddModule(new PortClass({GPIOA, 3}, Ports::SPI_DRST), 19);
         AddModule(new PortClass({GPIOB, 0}, Ports::SPI_DDC), 20);
-        AddModule(new PortClass({GPIOA, 4}, Ports::SPI_CS), 21);
+        AddModule(new PortClass({GPIOA, 4}, Ports::SPI_CS), 21);*/
 #endif
     }
 };

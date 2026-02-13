@@ -51,10 +51,10 @@ extern "C"
     }
 }
 
-u8g2_t u8g2;
+
 namespace HW
 {
-    void OLED_Init()
+    void OLED_Init(u8g2_t *u8g2)
     {
         GPIO_InitTypeDef GPIO_InitStructure = {0};
         SPI_InitTypeDef SPI_InitStructure = {0};
@@ -91,9 +91,9 @@ namespace HW
         NVIC_SetPriority(SPI1_IRQn, 2);
         SPI_Cmd(SPI1, ENABLE);
 
-        u8g2_Setup_sh1106_128x64_vcomh0_f(&u8g2, U8G2_R0, u8x8_byte_ch32_hw_spi, u8x8_gpio_and_delay_ch32);
-        u8g2_InitDisplay(&u8g2);
-        u8g2_SetPowerSave(&u8g2, 0);
+        u8g2_Setup_sh1106_128x64_vcomh0_f(u8g2, U8G2_R1, u8x8_byte_ch32_hw_spi, u8x8_gpio_and_delay_ch32);
+        u8g2_InitDisplay(u8g2);
+        u8g2_SetPowerSave(u8g2, 0);
     }
 }
 #endif

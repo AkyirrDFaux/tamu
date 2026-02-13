@@ -29,7 +29,7 @@ void PortClass::AddModule(BaseClass *Object, int32_t Index)
         case ObjectTypes::Input:
             if (Index != 0 || Type != Ports::GPIO)
                 break;
-            HW::ModeInput(PortPin);
+            HW::ModeInputPullDown(PortPin);
             ValueSet(Drivers::Input, Value::DriverType);
             Object->As<InputClass>()->InputPin = PortPin; // Input to object
             break;

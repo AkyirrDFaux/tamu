@@ -204,6 +204,29 @@ namespace HW
         }
     }
 
+    void ModeInputPullDown(const Pin &Pin)
+    {
+        // 1. Calculate the shift (4 bits per pin)
+        uint32_t Shift = (Pin.Number % 8) * 4;
+
+        // 2. Configure the Control Register (CFGLR for pins 0-7, CFGHR for 8-15)
+        // Mode 00 (Input), CNF 10 (Input with pull-up/pull-down) = 0x8
+        if (Pin.Number < 8)
+        {
+            Pin.Port->CFGLR &= ~(0xF << Shift);
+            Pin.Port->CFGLR |= (0x8 << Shift);
+        }
+        else
+        {
+            Pin.Port->CFGHR &= ~(0xF << Shift);
+            Pin.Port->CFGHR |= (0x8 << Shift);
+        }
+
+        // 3. Select Pull-Down by clearing the bit in the Output Data Register (OUTDR)
+        // To activate Pull-UP instead, you would use |= (1 << Pin.Number)
+        Pin.Port->OUTDR &= ~(1 << Pin.Number);
+    }
+
     bool Read(const Pin &Pin)
     {
         return (Pin.Port->INDR & (1 << Pin.Number)) != 0;
