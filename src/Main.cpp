@@ -40,6 +40,7 @@ IDList Outputs;  // Ex: Display, Fan, Servo
 #include "Hardware\Servo.h"
 #include "Hardware\Analog&PWM.h"
 #include "Hardware\Chirp.h"
+#include "Hardware\OLED.h"
 ChirpClass Chirp = ChirpClass(); // Bluetooth/Serial
 
 // Programs
@@ -88,10 +89,12 @@ int main()
     HW::NotificationStartup();
 
     // MemoryStartup();
-
     Board.Setup(0);
     DefaultSetup();
     Chirp.Begin(Board.ValueGet<Text>(Board.DisplayName));
+#if defined BOARD_Valu_v2_0
+    HW::OLED_Init(); // Initialize U8g2
+#endif
 
     TimeUpdate();
     Board.ValueSet<uint32_t>(CurrentTime, Board.BootTime);
@@ -109,6 +112,14 @@ int main()
 
     while (1) // Main Loop
     {
+#if defined BOARD_Valu_v2_0
+        u8g2_ClearBuffer(&u8g2);
+        u8g2_SetFont(&u8g2, u8g2_font_6x10_tr); // Use a small 'r' font!
+        u8g2_DrawStr(&u8g2, 0, 10, "UiiAi");
+        u8g2_DrawFrame(&u8g2, 0, 30, 128, 30);
+        u8g2_SendBuffer(&u8g2);
+#endif
+
         Chirp.Communicate();
 
         for (uint32_t Index = 0; Index < Sensors.Length; Sensors.Iterate(&Index))
