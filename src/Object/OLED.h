@@ -1,3 +1,4 @@
+#if defined BOARD_Valu_v2_0
 #define ROWNUMBER 12
 #define ROWHEIGHT 10
 #define OLEDWIDTH 64
@@ -475,3 +476,4 @@ bool OLEDClass::Run()
     u8g2_SendBuffer(&Driver);
     return true;
 };
+#endif

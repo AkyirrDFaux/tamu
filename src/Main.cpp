@@ -89,7 +89,9 @@ int main()
     HW::Init();
     HW::NotificationStartup();
 
-    // MemoryStartup();
+    HW::FlashInit();
+    //HW::FlashFormat();
+
     Board.Setup(0);
     DefaultSetup();
     Chirp.Begin(Board.ValueGet<Text>(Board.DisplayName));

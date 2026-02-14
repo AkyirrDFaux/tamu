@@ -1,7 +1,21 @@
 void BaseClass::Save()
 {
-    ByteArray Data = ByteArray(Functions::LoadObject) << ByteArray(*this);
-    //Data.WriteToFile(String(ID.ID));
+    if (Flags == Flags::Auto)
+        return;
+
+    ByteArray Data = ByteArray(*this).SubArray(1); //Remove Type of ID
+    if (Data.Length % FLASH_PADDING != 0)
+    {
+        uint32_t NewLength = Data.Length + FLASH_PADDING - (Data.Length % FLASH_PADDING);
+        char *NewArray = new char[NewLength];
+        memcpy(NewArray, Data.Array, Data.Length);
+        delete[] Data.Array;
+        for (uint32_t Pad = Data.Length; Pad < NewLength; Pad++)
+            NewArray[Pad] = 0;
+        Data.Array = NewArray;
+        Data.Length = NewLength;
+    }
+    HW::FlashSave(Data);
 };
 
 void SaveObject(ByteArray &Input)

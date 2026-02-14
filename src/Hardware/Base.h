@@ -51,6 +51,10 @@ namespace HW
     int32_t GetRAM();
     int32_t GetFreeRAM();
 
+    // Flash
+    bool FlashSave(const ByteArray &Data);
+    ByteArray FlashLoad(IDClass ID);
+
     // USB
     void USB_Init();
     void USB_Send(const ByteArray &Data);
@@ -87,6 +91,15 @@ namespace HW
     {
         gpio_reset_pin((gpio_num_t)Pin.Number);
         gpio_set_direction((gpio_num_t)Pin.Number, GPIO_MODE_INPUT);
+    }
+
+    void ModeInputPullDown(const Pin &Pin)
+    {
+        gpio_reset_pin((gpio_num_t)Pin.Number);
+        gpio_set_direction((gpio_num_t)Pin.Number, GPIO_MODE_INPUT);
+
+        gpio_pullup_dis((gpio_num_t)Pin.Number);
+        gpio_pulldown_en((gpio_num_t)Pin.Number);
     }
 
     bool Read(const Pin &Pin)

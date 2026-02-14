@@ -58,16 +58,15 @@ void WriteValue(ByteArray &Input)
     }
     Chirp.Send(ByteArray(Functions::WriteValue) << ID << Object->OutputValues(ID.Sub()));
 }
-/*
+
 void ReadFile(ByteArray &Input)
 {
-    ByteArray ID = Input.ExtractPart();
-    if (ID.Type() != Types::ID || !Objects.IsValid(ID))
+    IDClass ID = Input.Get<IDClass>(1);
+    if (!Objects.IsValid(ID))
     {
         Chirp.Send(ByteArray(Status::InvalidID) << Input);
         return;
     }
 
-    Chirp.Send(ByteArray(Functions::ReadFile) << ID << ReadFromFile(String(ID.As<IDClass>())));
+    Chirp.Send(ByteArray(Functions::ReadFile) << ID << HW::FlashLoad(ID));
 }
-*/

@@ -24,8 +24,8 @@ void Run(ByteArray &Input)
         ReadName(Input);
     else if (Function == Functions::SaveObject)
         SaveObject(Input);
-    // else if (Function == Functions::ReadFile)
-    //     ReadFile(Input);
+    else if (Function == Functions::ReadFile)
+        ReadFile(Input);
     else if (Function == Functions::SaveAll)
         SaveAll(Input);
     // else if (Function == Functions::RunFile)

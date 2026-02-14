@@ -4,7 +4,7 @@ template <>
 ByteArray::ByteArray(const BaseClass &Data)
 {
     // Type, ID, Flags, Name, Modules,(+ values)
-    *this = ByteArray(Data.Type) << ByteArray(Data.ID) << ByteArray(Data.Flags) << ByteArray(Data.Name) << ByteArray(Data.Modules) << Data.OutputValues();
+    *this = ByteArray(Data.ID) << ByteArray(Data.Type) << ByteArray(Data.Flags) << ByteArray(Data.Name) << ByteArray(Data.Modules) << Data.OutputValues();
 };
 
 BaseClass::~BaseClass()

@@ -69,7 +69,7 @@ public:
         SCL
     };
     I2C *I2CDriver = nullptr;
-    I2CClass();
+    I2CClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
 
     void AddModule(BaseClass *Object, int32_t Index = -1);
     void RemoveModule(BaseClass *Object);
@@ -88,7 +88,7 @@ public:
 
 constexpr VTable I2CClass::Table;
 
-I2CClass::I2CClass() : BaseClass(&Table)
+I2CClass::I2CClass(IDClass ID, FlagClass Flags) : BaseClass(&Table, ID, Flags)
 {
     Type = ObjectTypes::I2C;
     Name = "I2C Bus";

@@ -78,7 +78,8 @@ enum class Status : uint8_t
     FileError,
     PortError,
     NoValue,
-    AutoObject
+    AutoObject,
+    OutOfFlash
 };
 
 void ReportError(Status ErrorCode);
