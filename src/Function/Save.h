@@ -47,9 +47,7 @@ void SaveObject(ByteArray &Input)
 
 void SaveAll(ByteArray &Input)
 {
-#if defined BOARD_Valu_v2_0
-    HW::FlashIdentityTest();
-#endif
+    HW::FlashFormat();
     /*MemoryReset();
     for (int32_t Index = 1; Index < Objects.Allocated; Index++)
     {

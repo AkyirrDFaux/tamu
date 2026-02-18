@@ -61,12 +61,13 @@ void WriteValue(ByteArray &Input)
 
 void ReadFile(ByteArray &Input)
 {
-    IDClass ID = Input.Get<IDClass>(1);
-    if (!Objects.IsValid(ID))
+    Types IDType = Input.Type(1);
+
+    if (IDType != Types::ID)
     {
-        Chirp.Send(ByteArray(Status::InvalidID) << Input);
+        Chirp.Send(ByteArray(Status::InvalidType) << Input);
         return;
     }
 
-    Chirp.Send(ByteArray(Functions::ReadFile) << ID << HW::FlashLoad(ID));
+    Chirp.Send(ByteArray(Functions::ReadFile) << HW::FlashLoad(Input.Get<IDClass>(1)));
 }
