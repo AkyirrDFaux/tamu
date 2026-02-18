@@ -65,90 +65,147 @@ namespace HW
     }
 
 #else
+// #include "ch32v20x_flash.h"
+#define CHIP_FLASH_SIZE (64 * 1024)
 #define PAGE_SIZE 256
 #define SECTOR_SIZE 4096
-#define FLASH_PADDING 2
-    uint32_t FlashStart = 0;
-    uint32_t FlashSize = (SECTOR_SIZE * 2);
+#define FLASH_PADDING 4
+
+    // Logic Helpers
+    uint32_t FlashSize = (SECTOR_SIZE * 2); // 8KB
+    uint32_t FlashStart = 0xE000;           // Relative to 0x08000000
+
+#define GET_PHYS_ADDR(off) (0x0800E000 + FlashStart + (off))
+
+    // Reserved block for the Linker
+    const uint8_t flash_reservation[8192] __attribute__((section(".fixed_data"), used)) = {0xFF};
 
     void FlashInitDevice()
     {
         FLASH_Unlock();
-        // Enable Fast Program Mode
-        FLASH_Unlock_Fast();
+        // FLASH_Unlock_Fast();
+
+        FLASH_ClearFlag(FLASH_FLAG_BSY | FLASH_FLAG_EOP | FLASH_FLAG_WRPRTERR);
+
+        FLASH->ACTLR = (FLASH->ACTLR & ~0x1F) | 0x12;
+        FLASH_Access_Clock_Cfg(SystemCoreClock);
+
+        // FLASH->CTLR |= (1 << 13);
     }
 
-    // Generic Raw Read (Memory Mapped)
     int FlashRead(uint32_t Offset, void *Buffer, uint32_t Length)
     {
-        memcpy(Buffer, (void *)(FLASH_BASE_ADDR + Offset), Length);
+        if (Offset + Length > FlashSize)
+            return -1;
+
+        FLASH->CTLR &= ~(FLASH_CTLR_PG | FLASH_CTLR_PER | FLASH_CTLR_STRT);
+
+        // Clear any leftover flags that might be blocking the bus
+        FLASH->STATR = FLASH_STATR_EOP | FLASH_STATR_WRPRTERR;
+
+        // 2. Memory barrier
+        __asm__ volatile("fence r, rw" : : : "memory");
+
+        volatile uint32_t *src = (volatile uint32_t *)GET_PHYS_ADDR(Offset);
+        uint32_t *dest = (uint32_t *)Buffer;
+        uint32_t words = (Length + 3) / 4;
+
+        for (uint32_t i = 0; i < words; i++)
+        {
+            dest[i] = src[i];
+            USB_Send(ByteArray(dest[i]).CreateMessage());
+        }
+
         return 0;
     }
 
-    // Fast Page Write
+    // 2. STANDARD WRITE: Word-by-Word (Most robust mode)
     int FlashWrite(uint32_t Offset, const void *Buffer, uint32_t Length)
     {
-        uint32_t Address = FLASH_BASE_ADDR + Offset;
-        uint8_t *DataPtr = (uint8_t *)Buffer;
-        uint32_t Remaining = Length;
-        FLASH_Status status = FLASH_COMPLETE;
+        if (Offset + Length > FlashSize)
+            return -1;
 
-        while (Remaining > 0)
+        uint32_t Address = GET_PHYS_ADDR(Offset);
+        uint32_t *DataPtr = (uint32_t *)Buffer;
+        uint32_t wordCount = (Length + 3) / 4;
+
+        for (uint32_t i = 0; i < wordCount; i++)
         {
-            // Fast program requires 256-byte alignment for the page
-            // If your data is less than 256 or spans pages,
-            // the CH32 Fast Logic usually requires a full 256-byte buffer.
+            FLASH_ClearFlag(FLASH_FLAG_BSY | FLASH_FLAG_EOP | FLASH_FLAG_WRPRTERR);
 
-            status = FLASH_BufReset(); // Reset the internal 256-byte buffer
+            FLASH_Status status = FLASH_ProgramWord(Address + (i * 4), DataPtr[i]);
+
             if (status != FLASH_COMPLETE)
                 return -1;
-
-            uint32_t Chunk = (Remaining > PAGE_SIZE) ? PAGE_SIZE : Remaining;
-
-            // Load the buffer - must be done 32-bits at a time
-            for (uint32_t i = 0; i < PAGE_SIZE; i += 4)
-            {
-                uint32_t word = 0xFFFFFFFF;
-                if (i < Chunk)
-                {
-                    memcpy(&word, &DataPtr[i], (Chunk - i >= 4) ? 4 : (Chunk - i));
-                }
-                FLASH_BufLoad(Address + i, word);
-            }
-
-            status = FLASH_PageWrite(Address); // Commit the 256-byte page
-            if (status != FLASH_COMPLETE)
-                return -1;
-
-            Address += PAGE_SIZE;
-            DataPtr += PAGE_SIZE;
-            Remaining = (Remaining > PAGE_SIZE) ? (Remaining - PAGE_SIZE) : 0;
         }
+
+        // Force CPU to see the new data
+        __asm__ volatile("fence.i" : : : "memory");
         return 0;
     }
 
-    // Fast Erase (16 pages = 4KB sector)
+    // 3. FAST ERASE: 256-byte increments (Used for targeted erasing)
     int FlashErase(uint32_t Offset, uint32_t Length)
     {
-        uint32_t Address = FLASH_BASE_ADDR + Offset;
-        FLASH_Status status = FLASH_COMPLETE;
+        uint32_t Address = GET_PHYS_ADDR(Offset);
 
-        for (uint32_t i = 0; i < Length; i += SECTOR_SIZE)
+        // Ensure Fast Mode is unlocked for this specific operation
+        FLASH_Unlock_Fast();
+
+        for (uint32_t i = 0; i < Length; i += PAGE_SIZE)
         {
-            status = FLASH_ErasePage_Fast(Address + i);
-            if (status != FLASH_COMPLETE)
-                break;
+            FLASH_ClearFlag(FLASH_FLAG_BSY | FLASH_FLAG_EOP | FLASH_FLAG_WRPRTERR);
+
+            FLASH_ErasePage_Fast(Address + i);
         }
-        return (status == FLASH_COMPLETE) ? 0 : -1;
+
+        FLASH_Lock_Fast();
+        return 0;
+    }
+
+    int FlashFormat()
+    {
+        FLASH_Unlock();
+        FLASH_ClearFlag(FLASH_FLAG_BSY | FLASH_FLAG_EOP | FLASH_FLAG_WRPRTERR);
+        uint32_t flag = FLASH_ErasePage(GET_PHYS_ADDR(0));
+        USB_Send(ByteArray(flag).CreateMessage());
+
+        FLASH_ProgramWord(GET_PHYS_ADDR(0), 0xFFFFFFFF);
+        /*
+        uint32_t c = 0xFFFFFFFF;
+        for (uint32_t i = 0; i < SECTOR_SIZE; i += 4)
+            FLASH_ProgramWord(GET_PHYS_ADDR(i), c);*/
+
+        return 0;
+    }
+
+    void FlashIdentityTest()
+    {
+        uint32_t flag = FLASH->STATR;
+        USB_Send(ByteArray(flag).CreateMessage());
+
+        uint32_t original;
+        FlashRead(0, &original, 4);
+
+        HW::FlashFormat();
+
+        flag = FLASH->STATR;
+        USB_Send(ByteArray(flag).CreateMessage());
+
+        FlashRead(0, &original, 4);
+
+        //FlashWrite(0, "TEST", 4);
+
+        //FlashRead(0, &original, 4);
     }
 #endif
 
     void FlashInit()
     {
         FlashInitDevice();
-        FlashReadHead = FlashStart;
-        FlashWriteHead = FlashStart;
-        uint32_t Current = FlashStart;
+        FlashReadHead = 0;
+        FlashWriteHead = 0;
+        uint32_t Current = 0;
         MemoryHeader Header;
 
         while (Current < FlashSize)
@@ -188,17 +245,18 @@ namespace HW
 
     int32_t FlashFind(IDClass ID)
     {
-        //ESP_LOGI("FLASH", "Searching");
+        // ESP_LOGI("FLASH", "Searching");
         uint32_t Current = FlashReadHead;
         MemoryHeader Header;
 
         while ((FlashReadHead > FlashWriteHead && (Current >= FlashReadHead || Current < FlashWriteHead)) ||
-               (FlashReadHead < FlashWriteHead && Current < FlashWriteHead))
+               (FlashReadHead <= FlashWriteHead && Current <= FlashWriteHead))
         {
+            //HW::USB_Send(ByteArray(Current).CreateMessage());
             //ESP_LOGI("FLASH", "Searching at 0x%08X", Current);
-            if (Current >= FlashStart + FlashSize && FlashReadHead > FlashWriteHead && Current > FlashReadHead) // Go to start (circular)
-                Current = FlashStart;
-            else if (Current >= FlashStart + FlashSize) // It's the end (linear)
+            if (Current >= FlashSize && FlashReadHead > FlashWriteHead && Current > FlashReadHead) // Go to start (circular)
+                Current = 0;
+            else if (Current >= FlashSize) // It's the end (linear)
                 return -1;
 
             FlashRead(Current, &Header, 12);
@@ -206,7 +264,7 @@ namespace HW
             if (Header.ID == ID.ID && Header.Status == 0xEE)
                 return Current;
             else if (Header.Status == 0xFF && FlashReadHead > FlashWriteHead && Current > FlashReadHead) // There can be a gap at the end (circular)
-                Current = FlashStart;
+                Current = 0;
             else if (Header.Status == 0xFF) // It's the end (gap or linear)
                 return -1;
 
@@ -217,11 +275,14 @@ namespace HW
 
     ByteArray FlashLoad(IDClass ID)
     {
-        //ESP_LOGI("FLASH", "Loading");
+        // ESP_LOGI("FLASH", "Loading");
         int32_t Current = FlashFind(ID);
         if (Current == -1)
+        {
+            ReportError(Status::NotInFlash);
             return ByteArray();
-        //ESP_LOGI("FLASH", "Found at 0x%08X", Current);
+        }
+        // ESP_LOGI("FLASH", "Found at 0x%08X", Current);
         uint32_t Length;
         FlashRead(Current + 4, &Length, 4);
 
@@ -254,7 +315,7 @@ namespace HW
         if (Write < Read)
             AbsoluteGap = Read - Read % PAGE_SIZE - Write;
         else
-            AbsoluteGap = (FlashSize - Write) + (Read - Read % PAGE_SIZE - FlashStart);
+            AbsoluteGap = (FlashSize - Write) + (Read - Read % PAGE_SIZE);
 
         if (AbsoluteGap <= PAGE_SIZE * 3)
             return 0;
@@ -266,7 +327,7 @@ namespace HW
         if (FlashWriteHead + Length > FlashSize)
         {
             // TODO: Near the end, defragment something first if possible
-            FlashWriteHead = FlashStart;
+            FlashWriteHead = 0;
         }
 
         uint32_t Current = FlashReadHead;
@@ -345,14 +406,17 @@ namespace HW
             ReportError(Status::OutOfFlash);
             return false; // Not enough memory
         }
-        //ESP_LOGI("FLASH", "Writing to 0x%08X, length %d", Current, Data.Length);
+        // ESP_LOGI("FLASH", "Writing to 0x%08X, length %d", Current, Data.Length);
         MemoryHeader Header;
         Header.Status = 0xEE;
         Header.Length = Data.Length;
 
-        FlashWrite(Current, &Header, 8);              // Length + Status
+        //HW::USB_Send(ByteArray(FlashWriteHead).CreateMessage());
+        FlashWrite(Current, &Header, 8);                  // Length + Status
         FlashWrite(Current + 8, Data.Array, Data.Length); // Data
         FlashWriteHead = Current + Data.Length + 8;
+        ReportError(Status::FlashWritten);
+
         return true;
     }
 }

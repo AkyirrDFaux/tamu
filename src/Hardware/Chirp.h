@@ -99,7 +99,7 @@ void ChirpClass::Begin(Text Name)
 
 void ChirpClass::SendNow(const ByteArray &Input)
 {
-    HW::USB_Send(Input.CreateMessage()); //Freezes if not connected
+    HW::USB_Send(Input.CreateMessage());
 };
 
 void ChirpClass::Send(const ByteArray &Input)
@@ -118,7 +118,7 @@ void ChirpClass::Send(const ByteArray &Input)
     }
     // Also send via USB for cross-compatibility
 #endif
-    HW::USB_Send(Input.CreateMessage()); //Freezes if not connected
+    HW::USB_Send(Input.CreateMessage());
 };
 
 void ChirpClass::Communicate()

@@ -3,7 +3,7 @@ void BaseClass::Save()
     if (Flags == Flags::Auto)
         return;
 
-    ByteArray Data = ByteArray(*this).SubArray(1); //Remove Type of ID
+    ByteArray Data = ByteArray(*this).SubArray(1); // Remove Type of ID
     if (Data.Length % FLASH_PADDING != 0)
     {
         uint32_t NewLength = Data.Length + FLASH_PADDING - (Data.Length % FLASH_PADDING);
@@ -47,6 +47,9 @@ void SaveObject(ByteArray &Input)
 
 void SaveAll(ByteArray &Input)
 {
+#if defined BOARD_Valu_v2_0
+    HW::FlashIdentityTest();
+#endif
     /*MemoryReset();
     for (int32_t Index = 1; Index < Objects.Allocated; Index++)
     {

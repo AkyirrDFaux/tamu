@@ -105,6 +105,7 @@ int main()
         AllRun = true;
         for (uint32_t Index = 0; Index < Programs.Length; Programs.Iterate(&Index))
         {
+            Chirp.Communicate();
             if ((Programs[Index]->Flags == RunOnStartup))
                 AllRun &= Programs[Index]->Run();
         }
@@ -141,7 +142,7 @@ extern "C"
 /*TODO:
 KEY FEATURES:
 Crash (Delete/Create) Safety
-Saving, switch to littleFS - fallback?
+Saving
 
 All-display filters
 Better LED strip functions
@@ -149,23 +150,25 @@ Better LED strip functions
 App Programming view
 App Presets/blocks
 
+Finish OLED menu
 FUTURE:
-OLED/TFT Display support
 Multiple boards together
 
 ADJUSTMENTS:
 use more const, final, inline keywords, pass by reference
-Groups instead of favourites?
+
 Flag clarification (Auto -> System = nondeletable, some error flags?)
+- Groups instead of favourites
+- refresh rates for loop runs
 Value names?... send with separate fcn? or just make it fixed ahead with virtual fcn?
 
-Register, IDList cleanup
-Split up individual functions in geometry, possibly combine multiple in one, remove shape2D?
-Go over BLE functions, spread out sending/recieving delay, better compression
-Operation - prevent recursion, remove unnecessary loops in fuction calls
-
-More optimised ByteArray functions (sequential & multiple(type + object) reading)
-RAM saving - Names/Strings only on flash
+Register, IDList, ByteArray cleanup
+- More optimised ByteArray functions (sequential & multiple(type + object) reading)
+Combine Texture, Geometry into Shape2D, Combine Input and Sensor (Input), Combine Fan and Servo (Output)
+Go over user functions
+Chirp spread out sending/recieving delay, better compression/buffering
+Operation - prevent recursion, remove unnecessary loops in fuction calls, add more functions
+Names in RAM/ only on flash / no names (compile option)
 */
 
 // 20.07.2024 Started over >:)
@@ -202,3 +205,5 @@ RAM saving - Names/Strings only on flash
 // 08.02.2026 De-arduino-ified Valu v2.0
 // 10.02.2026 Chirp over UART
 // 12.02.2026 De-arduino-ified Tamu v2.0
+// 13.02.2026 Valu v2.0 OLED menu test
+// 14.02.2026 Custom saving in flash
