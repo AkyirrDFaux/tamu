@@ -1,21 +1,9 @@
 enum class Types : uint8_t
 {
     Undefined = 0,
-    Bool, // 1 byte
+    Bool, // 1 byte - inside header
     Byte, // uint_8
-    Integer, // int_32
-    Number,  // float_32
-    Time,    // uint_32
-    ID,      // uint_32
-    Colour,  // 4 byte RGBA
-    Vector2D, // 8 byte (2xNumber)
-    Vector3D, // 12 byte (3xNumber)
-    Coord2D,  // 16 byte (2xVector2D)
-    Coord3D,  // 24 byte (2xVector3D)
-    Text,     // String, variable length
-    IDList,   // List, variable length
-    ObjectType = 32, //1 byte enums
-    Function,
+    Type, // 1 byte enums
     Flags,
     Status,
     Board,
@@ -29,17 +17,41 @@ enum class Types : uint8_t
     Geometry2D,
     GeometryOperation,
     Texture2D,
-    Operation, 
+    Operation,
     Program,
-    PortType = 64, //4 byte enums
+    LocalFunction,
+    Function,
+    Group,
+    Pin,       // 2 byte - outside header start
+    Integer,   // int_32
+    Number,    // float_32
+    PortType,  // 4 byte flag
+    Colour,    // 4 byte RGBA - start packed
+    Vector2D,  // 8 byte (2xNumber)
+    Vector3D,  // 12 byte (3xNumber)
+    Coord2D,   // 16 byte (2xVector2D)
+    Coord3D,   // 24 byte (2xVector3D)
+    Text,      // String, variable length
+    Reference, // variable length, byte array
 };
 
+bool IsPacked(const Types Type) // Contains subparts
+{
+    if (Type > Types::Pin)
+        return false;
+    else
+        return true;
+}
+
+/*
 int8_t GetDataSize(const Types Type)
 {
     if (Type == Types::Undefined)
         return 0;
-    else if (Type <= Types::Byte || (Type >= Types::ObjectType && Type < Types::PortType)) 
+    else if (Type < Types::Pin)
         return 1;
+    else if (Type < Types::Integer)
+        return 2;
     else if (Type <= Types::Colour || Type >= Types::PortType)
         return 4;
     else if (Type == Types::Vector2D)
@@ -52,20 +64,20 @@ int8_t GetDataSize(const Types Type)
         return 24;
     else
         return -1; // dynamic, check first byte
-};
-
+};*/
+/*
 enum Flags : uint8_t
 {
     None = 0,
     Auto = 0b00000001,         // No name change, cannot remove (ex. Board, Port, built-in devices)
     System = 0b00000010,       // No value editing, no saving (ex. Port, some built-in devices)
-    Undefined2 = 0b00000100,      
+    Undefined2 = 0b00000100,
     RunLoop = 0b00001000,      // Allow automatic run forever
     RunOnce = 0b00010000,      // Run once manually until finished, will reset the flag automatically
     RunOnStartup = 0b00100000, // Run automatically once after board finished loading
     Favourite = 0b01000000,    // Show when filtered
     Inactive = 0b10000000      // Ignore object
-};
+};*/
 
 enum class Status : uint8_t
 {
@@ -90,25 +102,25 @@ void ReportError(Status ErrorCode, IDClass ID);
 enum class ObjectTypes : uint8_t
 {
     Undefined = 0,
-    Shape2D,
+    // Shape2D,
     Board,
-    Port,
-    Fan,
+    // Port,
+    // Fan,
     LEDStrip,
-    LEDSegment,
-    Texture1D,
+    // LEDSegment,
+    // Texture1D,
     Display,
-    Geometry2D,
-    Texture2D,
-    AccGyr, 
-    Servo, 
-    Input, 
-    Operation, 
+    // Geometry2D,
+    // Texture2D,
+    // AccGyr,
+    // Servo,
+    Input,
+    // Operation,
     Program,
     I2C,
     UART,
     SPI,
-    Sensor,
+    // Sensor,
     OLED
 };
 
@@ -160,7 +172,7 @@ Types GetType()
     return Types::Undefined;
 };
 
-//Data
+// Data
 template <>
 Types GetType<bool>() { return Types::Bool; };
 template <>
@@ -169,13 +181,19 @@ template <>
 Types GetType<int32_t>() { return Types::Integer; };
 template <>
 #if USE_FIXED_POINT == 1
-Types GetType<Number>() { return Types::Number; };
+Types GetType<Number>()
+{
+    return Types::Number;
+};
 template <>
 #else
-Types GetType<float>() { return Types::Number; };
+Types GetType<float>()
+{
+    return Types::Number;
+};
 template <>
 #endif
-Types GetType<uint32_t>() { return Types::Time; };
+Types GetType<uint32_t>(){    return Types::Time;};
 template <>
 Types GetType<IDClass>() { return Types::ID; };
 template <>
@@ -188,10 +206,8 @@ template <>
 Types GetType<Coord2D>() { return Types::Coord2D; };
 template <>
 Types GetType<Text>() { return Types::Text; };
-template <>
-Types GetType<IDList>() { return Types::IDList; };
 
-//Enums
+// Enums
 template <>
 Types GetType<ObjectTypes>() { return Types::ObjectType; };
 template <>

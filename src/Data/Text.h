@@ -2,7 +2,7 @@ class Text
 {
 public:
     char *Data;
-    uint8_t Length;
+    uint16_t Length;
 
     Text() : Data(nullptr), Length(0) {}
 
@@ -24,11 +24,7 @@ public:
 
         if (String)
         {
-            size_t NewLength = strlen(String);
-            if (NewLength > 255)
-                Length = 255;
-            else
-                Length = (uint8_t)NewLength;
+            Length = strlen(String);
             Data = new char[Length];
             memcpy(Data, String, Length);
         }

@@ -19,12 +19,11 @@ uint32_t DeltaTime = 0;
 #include "Data\ValueEnums.h"
 
 // Core system
-#include "Core\ID.h"
+#include "Core\Reference.h"
 #include "Core\Enum.h"
 #include "Core\ByteArray.h" //Simple data types (Number, vector, colour, string)
 #include "Core\Objects.h"
 #include "Core\Register.h"
-#include "Core\IDList.h" //For objects (compound/type varying data types)
 #include "Core\BaseClass.h"
 
 IDList Sensors;  // EX: Sensor
