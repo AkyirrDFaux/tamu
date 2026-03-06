@@ -1,28 +1,35 @@
+struct RegisterEntry
+{
+    BaseClass *Object;
+    uint16_t Index;
+};
+
 class RegisterClass
 {
 public:
-    BaseClass **Object = nullptr;
-    uint32_t Allocated = 0;
-    uint32_t Registered = 0;
+    RegisterEntry *Object = nullptr;
+    uint16_t Allocated = 0;
+    uint16_t Registered = 0;
 
     RegisterClass() {};
 
-    BaseClass *At(IDClass ID) const;
-    BaseClass *operator[](IDClass ID) const { return At(ID); };
-    bool IsValid(IDClass ID, ObjectTypes Filter = ObjectTypes::Undefined) const;
+    int32_t Search(Reference ID) const;
+    int32_t Search(BaseClass *SearchObject) const;
+    BaseClass *At(Reference ID) const;
+    BaseClass *operator[](Reference ID) const { return At(ID); };
+    bool IsValid(Reference ID, ObjectTypes Filter = ObjectTypes::Undefined) const;
 
     template <class C>
-    C ValueGet(IDClass ID) const;
+    C *ValueGet(Reference ID) const;
     template <class C>
-    bool ValueSet(C Value, IDClass ID);
-    Types ValueTypeAt(IDClass ID) const;
+    bool ValueSet(C Value, Reference ID);
+    Types ValueTypeAt(Reference ID) const;
 
     void Expand(uint32_t NewAllocated);
     void Shorten();
 
-    bool Register(BaseClass *AddObject, Reference Ref);
-    bool Unregister(IDClass ID);
-    bool Unregister(BaseClass *RemovedObject);
+    bool Register(BaseClass *AddObject, Reference ID);
+    bool Unregister(int32_t Index);
 } Objects;
 
 class FlagClass
@@ -52,7 +59,7 @@ public:
     Text Name = "";
     ByteArray Values;
 
-    BaseClass(const VTable *Table, IDClass NewID = RandomID, FlagClass NewFlags = Flags::None)
+    BaseClass(const VTable *Table, Reference NewID = {0, nullptr}, FlagClass NewFlags = Flags::None)
         : Vptr(Table), Flags(NewFlags)
     {
         Objects.Register(this, NewID);
@@ -79,6 +86,6 @@ public:
     template <class C>
     bool ValueSet(C Value, const Reference &Reference);
 
-    //ByteArray OutputValues(int32_t Value = 0) const;
-    //bool InputValues(ByteArray &Input, int32_t Index, uint8_t Value = 0);
+    // ByteArray OutputValues(int32_t Value = 0) const;
+    // bool InputValues(ByteArray &Input, int32_t Index, uint8_t Value = 0);
 };

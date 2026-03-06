@@ -65,7 +65,7 @@ int8_t GetDataSize(const Types Type)
     else
         return -1; // dynamic, check first byte
 };*/
-/*
+
 enum Flags : uint8_t
 {
     None = 0,
@@ -77,7 +77,7 @@ enum Flags : uint8_t
     RunOnStartup = 0b00100000, // Run automatically once after board finished loading
     Favourite = 0b01000000,    // Show when filtered
     Inactive = 0b10000000      // Ignore object
-};*/
+};
 
 enum class Status : uint8_t
 {

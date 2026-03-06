@@ -1,39 +1,91 @@
-BaseClass *RegisterClass::At(IDClass ID) const // Returns address or nullptr if invalid
+int32_t RegisterClass::Search(Reference ID) const
 {
-    if (IsValid(ID) == false)
-        return nullptr;
+    // 1. Validation: Reference must have at least 3 bytes to contain Index 1 and 2
+    if (!ID.Indexing || ID.Length < 3)
+        return -1;
 
-    return Object[ID.Base()];
+    // 2. Construct the 16-bit key from the Reference path
+    // ID[1] is the high byte, ID[2] is the low byte
+    uint16_t Target = ((uint16_t)ID.Indexing[1] << 8) | ID.Indexing[2];
+
+    // 3. Standard Binary Search
+    int32_t Low = 0;
+    int32_t High = (int32_t)Registered - 1;
+
+    while (Low <= High)
+    {
+        int32_t Mid = Low + (High - Low) / 2; // Prevents overflow
+        uint16_t CurrentIndex = Object[Mid].Index;
+
+        if (CurrentIndex == Target)
+        {
+            if (Object[Mid].Object == nullptr)
+                return -1;
+            return Mid; // Found the index in the register
+        }
+        else if (CurrentIndex < Target)
+            Low = Mid + 1;
+        else
+            High = Mid - 1;
+    }
+
+    return -1; // Not found
 };
 
-bool RegisterClass::IsValid(IDClass ID, ObjectTypes Filter) const // Returns if object at index is valid
+int32_t RegisterClass::Search(BaseClass *SearchObject) const // Removes object
 {
-    if (ID.Base() == NoID || ID.Base() >= Allocated || Object[ID.Base()] == nullptr)
-        return false; // Invalid ID
-    if (Filter != ObjectTypes::Undefined && Object[ID.Base()]->Type != Filter)
+    for (uint16_t Index = 0; Index < Registered; Index++)
+    {
+        if (Object[Index].Object == SearchObject)
+            return Index;
+    }
+    return -1;
+};
+
+BaseClass *RegisterClass::At(Reference ID) const // Returns address or nullptr if invalid
+{
+    int32_t Index = Search(ID);
+    if (Index == -1)
+        return nullptr;
+
+    return Object[Index].Object;
+};
+
+bool RegisterClass::IsValid(Reference ID, ObjectTypes Filter) const // Returns if object at index is valid
+{
+    int32_t Index = Search(ID);
+    if (Index == -1)
+        return false;
+    if (Filter != ObjectTypes::Undefined && Object[Index].Object->Type != Filter)
         return false;
     return true;
 };
 
 template <class C>
-C RegisterClass::ValueGet(IDClass ID) const // Assumes valid
+C *RegisterClass::ValueGet(Reference ID) const // Assumes valid
 {
-    return Object[ID.Base()]->ValueGet<C>(ID.ValueIndex());
+    int32_t Index = Search(ID);
+    if (Index == -1)
+        return nullptr;
+    return Object[Index].Object->ValueGet<C>(ID);
 };
 
 template <class C>
-bool RegisterClass::ValueSet(C Value, IDClass ID)
+bool RegisterClass::ValueSet(C Value, Reference ID)
 {
-    if (IsValid(ID) == false)
+    int32_t Index = Search(ID);
+    if (Index == -1)
         return false;
-    return Object[ID.Base()]->ValueSet(Value, ID.ValueIndex());
+
+    return Object[Index].Object->ValueSet(Value, ID);
 }
 
-Types RegisterClass::ValueTypeAt(IDClass ID) const // Returns if object at index is valid
+Types RegisterClass::ValueTypeAt(Reference ID) const // Returns if object at index is valid
 {
-    if (IsValid(ID) == false)
+    int32_t Index = Search(ID);
+    if (Index == -1)
         return Types::Undefined;
-    return At(ID)->Values.Type(ID.ValueIndex());
+    return Object[Index].Object->Values.Type(ID);
 };
 
 void RegisterClass::Expand(uint32_t NewAllocated) // Expands list to new length
@@ -41,17 +93,15 @@ void RegisterClass::Expand(uint32_t NewAllocated) // Expands list to new length
     if (NewAllocated <= Allocated)
         return;
 
-    NewAllocated = max(NewAllocated, Allocated * 2 / 3);
+    NewAllocated = max(NewAllocated, Allocated * 3 / 2);
 
-    BaseClass **NewObject = new BaseClass *[NewAllocated]; // Make larger array
-
-    for (uint32_t Index = 0; Index < Allocated; Index++) // Copy existing
-        NewObject[Index] = Object[Index];
-    for (uint32_t Index = Allocated; Index < NewAllocated; Index++) // Add empty to new
-        NewObject[Index] = nullptr;
+    RegisterEntry *NewObject = new RegisterEntry[NewAllocated]; // Make larger array
 
     if (Allocated != 0) // Replace
+    {
+        memmove(NewObject, Object, Registered * sizeof(RegisterEntry));
         delete Object;
+    }
 
     Object = NewObject;
     Allocated = NewAllocated;
@@ -62,63 +112,49 @@ void RegisterClass::Shorten()
     if (Registered > Allocated / 2) // Not worth it
         return;
 
-    uint32_t NewAllocated = Allocated;
-    while (IsValid(NewAllocated - 1) && NewAllocated > 0)
-        NewAllocated--;
+    uint32_t NewAllocated = Registered;
 
     if (NewAllocated == Allocated)
         return;
 
-    BaseClass **NewObject = new BaseClass *[NewAllocated]; // New Array
+    RegisterEntry *NewObject = new RegisterEntry[NewAllocated]; // New Array
 
     for (uint32_t Index = 0; Index < NewAllocated; Index++) // Copy existing
         NewObject[Index] = Object[Index];
 
     if (Allocated != 0) // Replace
+    {
+        memmove(NewObject, Object, Registered * sizeof(RegisterEntry));
         delete Object;
+    }
 
     Object = NewObject;
     Allocated = NewAllocated;
 }
-bool RegisterClass::Register(BaseClass *AddObject, IDClass ID) // Add, return actual ID
+bool RegisterClass::Register(BaseClass *AddObject, Reference ID) // Add, return actual ID
 {
-    if (ID.Base() == NoID) // Invalid, don't do anything
+    if (ID.Length < 3) // Invalid, don't do anything
         return false;
 
-    Unregister(AddObject); // Check if needs to be unregistered first
+    Expand(Registered + 1);         // Make sure there is space for it
 
-    IDClass NewID = ID.Main();
-    while (IsValid(NewID))
-        NewID.ID += (1<<8);
 
-    Expand(NewID.Base() + 1);         // Make sure there is space for it, +1!
-    Object[NewID.Base()] = AddObject; // Write
+    memmove()
+
+    Object[Index].Object = AddObject; // Write
+    Object[Index].Index = ((uint16_t)ID.Indexing[1] << 8) | ID.Indexing[2];
     AddObject->ID = NewID;
     Registered += 1;
     return NewID == ID;
 };
 
-bool RegisterClass::Unregister(IDClass ID) // Removes object
+bool RegisterClass::Unregister(int32_t Index) // Removes object
 {
-    At(ID)->ID = NoID;
-    Object[ID.Base()] = nullptr;
+    if (Index >= Registered || Index < 0)
+        return false;
+
+    memmove(Object + Index, Object + Index + 1, (Registered - Index - 1) * sizeof(RegisterEntry));
     Shorten();
     Registered -= 1;
     return true;
 };
-
-bool RegisterClass::Unregister(BaseClass *RemovedObject) // Removes object
-{
-    if (RemovedObject == At(RemovedObject->ID)) // If ID correct, take shortcut
-        return Unregister(RemovedObject->ID);
-    return false;
-};
-/*
-void RegisterClass::ContentDebug() const
-{
-    for (uint32_t Index = 1; Index <= Registered; Index++)
-    {
-        if (Object[Index] != nullptr)
-            Serial.print(Object[Index]->ContentDebug());
-    }
-}*/
