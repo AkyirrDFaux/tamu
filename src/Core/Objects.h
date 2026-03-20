@@ -13,22 +13,22 @@ public:
 
     RegisterClass() {};
 
-    int32_t Search(Reference ID) const;
+    int32_t Search(const Reference &ID) const;
     int32_t Search(BaseClass *SearchObject) const;
-    BaseClass *At(Reference ID) const;
+    BaseClass *At(const Reference &ID) const;
     BaseClass *operator[](Reference ID) const { return At(ID); };
-    bool IsValid(Reference ID, ObjectTypes Filter = ObjectTypes::Undefined) const;
+    bool IsValid(const Reference &ID, ObjectTypes Filter = ObjectTypes::Undefined) const;
 
     template <class C>
-    C *ValueGet(Reference ID) const;
+    C *ValueGet(const Reference &ID) const;
     template <class C>
-    bool ValueSet(C Value, Reference ID);
-    Types ValueTypeAt(Reference ID) const;
+    bool ValueSet(C Value, const Reference &ID);
+    Types ValueTypeAt(const Reference &ID) const;
 
     void Expand(uint32_t NewAllocated);
     void Shorten();
 
-    bool Register(BaseClass *AddObject, Reference ID);
+    bool Register(BaseClass *AddObject, const Reference &ID);
     bool Unregister(int32_t Index);
 } Objects;
 
@@ -46,7 +46,7 @@ public:
 
 struct VTable
 {
-    void (*Setup)(BaseClass *self, int32_t Index);
+    void (*Setup)(BaseClass *self, Path Index);
     bool (*Run)(BaseClass *self);
 };
 
@@ -59,18 +59,18 @@ public:
     Text Name = "";
     ByteArray Values;
 
-    BaseClass(const VTable *Table, Reference NewID = {0, nullptr}, FlagClass NewFlags = Flags::None)
+    BaseClass(const VTable *Table, Reference NewID, FlagClass NewFlags = Flags::None)
         : Vptr(Table), Flags(NewFlags)
     {
         Objects.Register(this, NewID);
     };
 
-    ~BaseClass();
+    ~BaseClass() { Objects.Unregister(Objects.Search(this)); };
     void Destroy();
-    void Setup(int32_t Index = -1) { Vptr->Setup(this, Index); }
+    void Setup(Path Index) { Vptr->Setup(this, Index); }
     bool Run() { return Vptr->Run(this); }
 
-    static void DefaultSetup(BaseClass *self, int32_t Index) { /* Empty default */ };
+    static void DefaultSetup(BaseClass *self, Path Index) { /* Empty default */ };
     static bool DefaultRun(BaseClass *self)
     {
         ReportError(Status::InvalidType);
@@ -82,9 +82,9 @@ public:
     void Save();
 
     template <class C>
-    const C *ValueGet(const Reference &Reference) const;
+    Getter<C> ValueGet(const Path &Location) const;
     template <class C>
-    bool ValueSet(C Value, const Reference &Reference);
+    bool ValueSet(C Value, const Path &Location);
 
     // ByteArray OutputValues(int32_t Value = 0) const;
     // bool InputValues(ByteArray &Input, int32_t Index, uint8_t Value = 0);

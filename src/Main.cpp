@@ -2,6 +2,7 @@
 #include <stddef.h>
 #include <string.h>
 #include <type_traits>
+#include <initializer_list>
 
 uint32_t LastTime = 0;
 uint32_t CurrentTime = 0;
@@ -18,55 +19,62 @@ uint32_t DeltaTime = 0;
 #include "Data\Vector3D.h"
 #include "Data\ValueEnums.h"
 
+struct Pin
+{
+    uint8_t Number;
+    char Port = 0;
+};
+
 // Core system
 #include "Core\Reference.h"
 #include "Core\Enum.h"
-#include "Core\ByteArray.h" //Simple data types (Number, vector, colour, string)
+#include "Core\ByteArray.h" //Core functions
+#include "Core\ByteArrayValues.h" //Set & Get
 #include "Core\Objects.h"
 #include "Core\Register.h"
 #include "Core\BaseClass.h"
 
-IDList Sensors;  // EX: Sensor
-IDList Programs; // Ex: Emotes
-IDList Outputs;  // Ex: Display, Fan, Servo
+//IDList Sensors;  // EX: Sensor
+//IDList Programs; // Ex: Emotes
+//IDList Outputs;  // Ex: Display, Fan, Servo
 
 // Hardware related
 #include "Hardware\Base.h"
 #include "Hardware\USB.h"
-#include "Hardware\Memory.h"
+//#include "Hardware\Memory.h"
 #include "Hardware\I2C.h"
 #include "Hardware\LED.h"
-#include "Hardware\Servo.h"
+//#include "Hardware\Servo.h"
 #include "Hardware\Analog&PWM.h"
 #include "Hardware\Chirp.h"
 #include "Hardware\OLED.h"
 ChirpClass Chirp = ChirpClass(); // Bluetooth/Serial
 
 // Programs
-#include "Object\Operation.h"
-#include "Object\Program.h"
+//#include "Object\Operation.h"
+//#include "Object\Program.h"
 
 // Objects
-#include "Object\Port.h"
-#include "Object\AccGyr.h"
-#include "Object\Input.h"
-#include "Object\Sensor.h"
-#include "Object\OLED.h"
+#include "Object\Bus.h"
+//#include "Object\AccGyr.h"
+//#include "Object\Input.h"
+//#include "Object\Sensor.h"
+//#include "Object\OLED.h"
 #include "Object\Board.h"
-BoardClass Board;
+BoardClass Board(Reference(0,0,0));
 
-#include "Object\Fan.h"
-#include "Object\Servo.h"
+//#include "Object\Fan.h"
+//#include "Object\Servo.h"
 
 // LED strip
-#include "Object\Texture1D.h"
-#include "Object\LEDSegment.h"
-#include "Object\LEDStrip.h"
+//#include "Object\Texture1D.h"
+//#include "Object\LEDSegment.h"
+//#include "Object\LEDStrip.h"
 
 // Display
-#include "Object\Geometry2D.h"
-#include "Object\Texture2D.h"
-#include "Object\Shape2D.h"
+//#include "Object\Geometry2D.h"
+//#include "Object\Texture2D.h"
+//#include "Object\Shape2D.h"
 #include "Object\Display.h"
 
 // Unrelated to messages
@@ -74,11 +82,12 @@ BoardClass Board;
 #include "Function\BaseClass.h"
 // Messages
 #include "Function\Base.h"
-#include "Function\Save.h"
 #include "Function\Values.h"
+//#include "Function\Save.h"
+
 
 #if defined BOARD_Tamu_v2_0
-#include "DefaultSetupTamuv2.0.h" //30kb of instructions :)
+//#include "DefaultSetupTamuv2.0.h" //30kb of instructions :)
 #elif defined BOARD_Valu_v2_0
 #include "DefaultSetupValuv2.0.h"
 #endif
@@ -88,14 +97,14 @@ int main()
     HW::Init();
     HW::NotificationStartup();
 
-    HW::FlashInit();
+    //HW::FlashInit();
     //HW::FlashFormat();
 
-    Board.Setup(0);
-    DefaultSetup();
-    Chirp.Begin(Board.ValueGet<Text>(Board.DisplayName));
+    //DefaultSetup();
+    Chirp.Begin("Test");
+    //Chirp.Begin(Board.ValueGet<Text>(Board.DisplayName));
 
-    TimeUpdate();
+    /*TimeUpdate();
     Board.ValueSet<uint32_t>(CurrentTime, Board.BootTime);
 
     bool AllRun = false;
@@ -108,13 +117,13 @@ int main()
             if ((Programs[Index]->Flags == RunOnStartup))
                 AllRun &= Programs[Index]->Run();
         }
-    }
+    }*/
 
     while (1) // Main Loop
     {
         Chirp.Communicate();
-
-        for (uint32_t Index = 0; Index < Sensors.Length; Sensors.Iterate(&Index))
+        HW::Sleep(10);
+        /*for (uint32_t Index = 0; Index < Sensors.Length; Sensors.Iterate(&Index))
             Sensors[Index]->Run();
 
         for (uint32_t Index = 0; Index < Programs.Length; Programs.Iterate(&Index))
@@ -126,9 +135,9 @@ int main()
         for (uint32_t Index = 0; Index < Outputs.Length; Outputs.Iterate(&Index))
             Outputs[Index]->Run();
 
-        UpdateLED();
+        UpdateLED();*/
         TimeUpdate();
-        Board.UpdateLoopTime();
+        Board.Run();
     }
 };
 

@@ -2,47 +2,17 @@ void BaseClass::Destroy()
 {
     switch (Type)
     {
-    case ObjectTypes::Shape2D:
-        delete (Shape2DClass *)this;
-        break;
     case ObjectTypes::Board:
         delete (BoardClass *)this;
-        break;
-    case ObjectTypes::Port:
-        delete (PortClass *)this;
-        break;
-    case ObjectTypes::Fan:
-        delete (FanClass *)this;
-        break;
-    case ObjectTypes::LEDStrip:
-        delete (LEDStripClass *)this;
-        break;
-    case ObjectTypes::LEDSegment:
-        delete (LEDSegmentClass *)this;
-        break;
-    case ObjectTypes::Texture1D:
-        delete (Texture1D *)this;
         break;
     case ObjectTypes::Display:
         delete (DisplayClass *)this;
         break;
-    case ObjectTypes::Geometry2D:
-        delete (Geometry2DClass *)this;
-        break;
-    case ObjectTypes::Texture2D:
-        delete (Texture2D *)this;
-        break;
-    case ObjectTypes::AccGyr:
-        delete (GyrAccClass *)this;
-        break;
-    case ObjectTypes::Servo:
-        delete (ServoClass *)this;
+    /*case ObjectTypes::LEDStrip:
+        delete (LEDStripClass *)this;
         break;
     case ObjectTypes::Input:
         delete (InputClass *)this;
-        break;
-    case ObjectTypes::Operation:
-        delete (Operation *)this;
         break;
     case ObjectTypes::Program:
         delete (Program *)this;
@@ -55,22 +25,38 @@ void BaseClass::Destroy()
         break;
     case ObjectTypes::SPI:
         // delete (SPIClass *)this;
-        break;
-    case ObjectTypes::Sensor:
-        delete (SensorClass *)this;
-        break;
+        break;*/
     default:
         delete this;
         break;
     }
 };
 
-BaseClass *CreateObject(ObjectTypes Type, bool New, IDClass ID, FlagClass Flags)
+void BaseClass::Save()
+{
+    /*
+    ByteArray Data = ByteArray(*this).SubArray(1); // Remove Type of ID
+    if (Data.Length % FLASH_PADDING != 0)
+    {
+        uint32_t NewLength = Data.Length + FLASH_PADDING - (Data.Length % FLASH_PADDING);
+        char *NewArray = new char[NewLength];
+        memcpy(NewArray, Data.Array, Data.Length);
+        delete[] Data.Array;
+        for (uint32_t Pad = Data.Length; Pad < NewLength; Pad++)
+            NewArray[Pad] = 0;
+        Data.Array = NewArray;
+        Data.Length = NewLength;
+    }
+    HW::FlashSave(Data);
+    */
+};
+
+BaseClass *CreateObject(Reference ID, ObjectTypes Type)
 {
     switch (Type)
     {
     // Port is auto
-    case ObjectTypes::Shape2D:
+    /*case ObjectTypes::Shape2D:
         return new Shape2DClass(ID, Flags);
     // case ObjectTypes::Board: //Cannot create board
     case ObjectTypes::Fan:
@@ -84,17 +70,17 @@ BaseClass *CreateObject(ObjectTypes Type, bool New, IDClass ID, FlagClass Flags)
     case ObjectTypes::Geometry2D:
         return new Geometry2DClass(ID, Flags);
     case ObjectTypes::Texture2D:
-        return new Texture2D(ID, Flags);
+        return new Texture2D(ID, Flags);*/
     case ObjectTypes::Display:
-        return new DisplayClass(ID, Flags);
-    case ObjectTypes::AccGyr:
+        return new DisplayClass(ID);
+    /*case ObjectTypes::AccGyr:
         return new GyrAccClass(ID, Flags);
     case ObjectTypes::Input:
         return new InputClass(ID, Flags);
     case ObjectTypes::Operation:
         return new Operation(ID, Flags);
     case ObjectTypes::Program:
-        return new Program(ID, Flags);
+        return new Program(ID, Flags);*/
     default:
         ReportError(Status::InvalidType);
         return nullptr;

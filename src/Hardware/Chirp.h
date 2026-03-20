@@ -36,9 +36,10 @@ class MyCallbacks : public NimBLECharacteristicCallbacks
         std::string rxValue = pCharacteristic->getValue();
         if (rxValue.length() > 0)
         {
-            // ESP_LOG_BUFFER_HEX("CHIRP", rxValue.data(), rxValue.length());
+            ESP_LOG_BUFFER_HEX("CHIRP IN", rxValue.data(), rxValue.length());
 
-            BufferBLEIn = BufferBLEIn << ByteArray(rxValue.data(), rxValue.length());
+            BufferBLEIn += ByteArray(rxValue.data(), rxValue.length());
+            //ESP_LOGI("CHIRP IN", "Now %d bytes", BufferBLEIn.Length);
         }
     }
 } staticRxCallbacks;
@@ -115,6 +116,7 @@ void ChirpClass::Send(const ByteArray &Input)
             pTxCharacteristic->notify();
             HW::Sleep(20);
         }
+        ESP_LOG_BUFFER_HEX("CHIRP OUT", Buffer.Array, Buffer.Length);
     }
     // Also send via USB for cross-compatibility
 #endif
@@ -132,7 +134,7 @@ void ChirpClass::Communicate()
     {
         HW::NotificationBlink(1, 20);
 
-        BufferUSBIn = BufferUSBIn << Input;
+        BufferUSBIn += Input;
         ByteArray Message = BufferUSBIn.ExtractMessage();
         if (Message.Length > 0)
             Run(Message);
@@ -156,7 +158,9 @@ void ChirpClass::Communicate()
     }
 
     // 3. Process the Protocol Buffer
+    //ESP_LOGI("CHIRP", "Extracting BT");
     ByteArray Message = BufferBLEIn.ExtractMessage();
+    //ESP_LOGI("CHIRP", "Extracted BT");
     if (Message.Length > 0)
     {
         Run(Message);

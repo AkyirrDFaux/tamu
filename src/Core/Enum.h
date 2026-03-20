@@ -4,6 +4,7 @@ enum class Types : uint8_t
     Bool, // 1 byte - inside header
     Byte, // uint_8
     Type, // 1 byte enums
+    ObjectType,
     Flags,
     Status,
     Board,
@@ -22,49 +23,28 @@ enum class Types : uint8_t
     LocalFunction,
     Function,
     Group,
-    Pin,       // 2 byte - outside header start
     Integer,   // int_32
     Number,    // float_32
     PortType,  // 4 byte flag
-    Colour,    // 4 byte RGBA - start packed
+    Pin,       // 2 byte - start packed
+    Colour,    // 4 byte RGBA 
     Vector2D,  // 8 byte (2xNumber)
     Vector3D,  // 12 byte (3xNumber)
     Coord2D,   // 16 byte (2xVector2D)
     Coord3D,   // 24 byte (2xVector3D)
-    Text,      // String, variable length
-    Reference, // variable length, byte array
+    Text,      // String - variable length
+    Reference, // uint8 array
+    Path, // uint8 array, length - 3
+    Message    // raw data array
 };
 
 bool IsPacked(const Types Type) // Contains subparts
 {
-    if (Type > Types::Pin)
-        return false;
-    else
+    if (Type >= Types::Pin)
         return true;
-}
-
-/*
-int8_t GetDataSize(const Types Type)
-{
-    if (Type == Types::Undefined)
-        return 0;
-    else if (Type < Types::Pin)
-        return 1;
-    else if (Type < Types::Integer)
-        return 2;
-    else if (Type <= Types::Colour || Type >= Types::PortType)
-        return 4;
-    else if (Type == Types::Vector2D)
-        return 8;
-    else if (Type == Types::Vector3D)
-        return 12;
-    else if (Type == Types::Coord2D)
-        return 16;
-    else if (Type == Types::Coord3D)
-        return 24;
     else
-        return -1; // dynamic, check first byte
-};*/
+        return false;
+}
 
 enum Flags : uint8_t
 {
@@ -129,41 +109,35 @@ enum class Functions : uint8_t
     None = 0,
     CreateObject, // Create new
     DeleteObject, // Delete object
+    LoadObject, // Create from ByteArray
     SaveObject,   // Save to file
     SaveAll,
-    LoadObject, // Create from ByteArray
     ReadObject, // Send to app
-    ReadType,
+    Refresh,
+    ReadValue,
+    WriteValue,
     ReadName,
     WriteName,
-    SetFlags, // Swapped
-    ReadModules,
-    SetModules,
-    WriteValue,
-    ReadValue,
-    ReadDatabase, // Debug, Serial only now
-    ReadFile,
-    RunFile,
-    Refresh
+    ReadFlags, 
+    SetFlags,
+    ReadFile
 };
 
-void Run(ByteArray &Input);
-void ReadDatabase(ByteArray &Input);
-void ReadValue(ByteArray &Input);
-void WriteValue(ByteArray &Input);
-void CreateObject(ByteArray &Input);
-void DeleteObject(ByteArray &Input);
-void SaveObject(ByteArray &Input);
-void WriteName(ByteArray &Input);
-void ReadName(ByteArray &Input);
-void ReadFile(ByteArray &Input);
-void SaveAll(ByteArray &Input);
-void ReadObject(ByteArray &Input);
-void LoadObject(ByteArray &Input);
-void RunFile(ByteArray &Input);
-void Refresh(ByteArray &Input);
-void SetModules(ByteArray &Input);
-void SetFlags(ByteArray &Input);
+void Run(const ByteArray &Input); //Switcher
+void CreateObject(const ByteArray &Input);
+void DeleteObject(const ByteArray &Input);
+void LoadObject(const ByteArray &Input);
+void SaveObject(const ByteArray &Input);
+void SaveAll(const ByteArray &Input);
+void ReadObject(const ByteArray &Input);
+void Refresh(const ByteArray &Input);
+void ReadValue(const ByteArray &Input);
+void WriteValue(const ByteArray &Input);
+void ReadName(const ByteArray &Input);
+void WriteName(const ByteArray &Input);
+void ReadFlags(const ByteArray &Input);
+void SetFlags(const ByteArray &Input);
+//void ReadFile(ByteArray &Input);
 
 template <class C>
 Types GetType()
@@ -193,9 +167,7 @@ Types GetType<float>()
 };
 template <>
 #endif
-Types GetType<uint32_t>(){    return Types::Time;};
-template <>
-Types GetType<IDClass>() { return Types::ID; };
+Types GetType<Reference>() { return Types::Reference; };
 template <>
 Types GetType<ColourClass>() { return Types::Colour; };
 template <>
@@ -244,3 +216,8 @@ template <>
 Types GetType<ProgramTypes>() { return Types::Program; };
 template <>
 Types GetType<PortTypeClass>() { return Types::PortType; };
+
+template <>
+Types GetType<Pin>() { return Types::Pin; };
+template <>
+Types GetType<Path>() { return Types::Path; }

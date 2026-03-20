@@ -1,4 +1,50 @@
-void PortClass::AddModule(BaseClass *Object, int32_t Index)
+void BoardClass::RebuildChain(int32_t Port)
+{
+    if (Port < 0 || Port >= 11) return;
+
+    uint32_t TotalPixels = 0;
+    uint8_t slot = 2;
+
+    // Pass 1: Sum the lengths
+    while (true)
+    {
+        Getter<Reference> Ref = Values.Get<Reference>({1, (uint8_t)Port, slot});
+        if (!Ref.Success) break;
+
+        BaseClass* Device = Objects.At(Ref.Value);
+        if (Device != nullptr)
+        {
+            TotalPixels += (uint32_t)Device->Values.Get<int32_t>({0, 1});
+        }
+        slot++;
+    }
+
+    // Pass 2: Distribute Pointers
+    uint32_t CurrentOffset = 0;
+    uint8_t* BaseAddr = (uint8_t*)DriverArray[Port];
+    
+    // Safety check for hardware buffer
+    if (BaseAddr == nullptr) return;
+
+    slot = 2;
+    while (true)
+    {
+        Getter<Reference> Ref = Values.Get<Reference>({1, (uint8_t)Port, slot});
+        if (!Ref.Success) break;
+
+        BaseClass* Device = Objects.At(Ref.Value);
+        if (Device != nullptr && Device->Type == ObjectTypes::Display)
+        {
+            // Update the actual pointer in the Display object
+            ((DisplayClass*)Device)->LEDs = BaseAddr + (CurrentOffset * 3);
+            
+            CurrentOffset += (uint32_t)Device->Values.Get<int32_t>({0, 1});
+        }
+        slot++;
+    }
+}
+
+/*void PortClass::AddModule(BaseClass *Object, int32_t Index)
 {
     if (Object == nullptr)
         return;
@@ -293,4 +339,4 @@ void UpdateLED()
         if (Port->ValueGet<Drivers>(PortClass::DriverType) == Drivers::LED)
             ((LEDDriver *)Port->DriverObj)->Show();
     }
-}
+}*/

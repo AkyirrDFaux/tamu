@@ -1,102 +1,228 @@
-void Run(ByteArray &Input)
+void Run(const ByteArray &Input)
 {
-    if (Input.Type(0) != Types::Function)
+    Getter<Functions> Function = Input.Get<Functions>({0});
+    if (Function.Success == false)
     {
         Chirp.Send(ByteArray(Status::InvalidType) << Input);
         return;
     }
 
-    Functions Function = Input.Get<Functions>(0);
-
-    if (Function == Functions::ReadDatabase)
-        ReadDatabase(Input);
-    else if (Function == Functions::CreateObject)
+    switch (Function)
+    {
+    case Functions::CreateObject:
         CreateObject(Input);
-    else if (Function == Functions::DeleteObject)
+        break;
+    case Functions::DeleteObject:
         DeleteObject(Input);
-    else if (Function == Functions::WriteValue)
-        WriteValue(Input);
-    else if (Function == Functions::ReadValue)
-        ReadValue(Input);
-    else if (Function == Functions::WriteName)
-        WriteName(Input);
-    else if (Function == Functions::ReadName)
-        ReadName(Input);
-    else if (Function == Functions::SaveObject)
-        SaveObject(Input);
-    else if (Function == Functions::ReadFile)
-        ReadFile(Input);
-    else if (Function == Functions::SaveAll)
-        SaveAll(Input);
-    // else if (Function == Functions::RunFile)
-    //     RunFile(Input);
-    else if (Function == Functions::ReadObject)
-        ReadObject(Input);
-    else if (Function == Functions::LoadObject)
+        break;
+    case Functions::LoadObject:
         LoadObject(Input);
-    else if (Function == Functions::Refresh)
+        break;
+    case Functions::SaveObject:
+        SaveObject(Input);
+        break;
+    case Functions::SaveAll:
+        SaveAll(Input);
+        break;
+    case Functions::ReadObject:
+        ReadObject(Input);
+        break;
+    case Functions::Refresh:
         Refresh(Input);
-    else if (Function == Functions::SetModules)
-        SetModules(Input);
-    else if (Function == Functions::SetFlags)
+        break;
+    case Functions::ReadValue:
+        ReadValue(Input);
+        break;
+    case Functions::WriteValue:
+        WriteValue(Input);
+        break;
+    case Functions::ReadName:
+        ReadName(Input);
+        break;
+    case Functions::WriteName:
+        WriteName(Input);
+        break;
+    case Functions::ReadFlags:
+        ReadFlags(Input);
+        break;
+    case Functions::SetFlags:
         SetFlags(Input);
-    else
+        break;
+    default:
+        // Handle unknown or unmapped functions
         Chirp.Send(ByteArray(Status::InvalidFunction) << Input);
+        break;
+    }
     return;
 }
 
-void ReadDatabase(ByteArray &Input)
+void CreateObject(const ByteArray &Input)
 {
-    //Objects.ContentDebug();
+    // 1. Attempt to resolve the required parameters
+    Getter<Reference> ID = Input.Get<Reference>({1});
+    Getter<ObjectTypes> Type = Input.Get<ObjectTypes>({2});
+
+    // 2. Validate existence and type alignment in one go
+    if (!Type.Success || !ID.Success)
+    {
+        Chirp.Send(ByteArray(Status::InvalidType) << Input);
+        return;
+    }
+
+    // 3. Check for ID collision using the implicit conversion to Reference
+    if (Objects.At(ID) != nullptr)
+    {
+        Chirp.Send(ByteArray(Status::InvalidID) << Input);
+        return;
+    }
+
+    // 4. Create the Actual Object using implicit conversions for both Type and ID
+    BaseClass *Object = CreateObject(ID, Type);
+
+    // 5. Finalize and Respond
+    if (Object == nullptr)
+    {
+        Chirp.Send(ByteArray(Status::NoValue) << Input);
+    }
+    else
+    {
+        // Success: Echo back the Type and the Reference
+        Chirp.Send(ByteArray(Functions::CreateObject) << ByteArray(Object->Type) << ByteArray(ID.Value));
+    }
 }
 
-void Refresh(ByteArray &Input)
+void DeleteObject(const ByteArray &Input)
 {
-    for (uint32_t Index = 1; Index <= Objects.Allocated; Index++)
+    // 1. Attempt to resolve the Reference from the input
+    Getter<Reference> ID = Input.Get<Reference>({1});
+
+    // 2. Validate type alignment
+    if (!ID.Success)
     {
-        if (!Objects.IsValid(IDClass(Index, 0)))
+        Chirp.Send(ByteArray(Status::InvalidType) << Input);
+        return;
+    }
+
+    // 3. Resolve the pointer from the registry
+    BaseClass *Object = Objects.At(ID);
+
+    // 4. Verify the object exists
+    if (Object == nullptr)
+    {
+        Chirp.Send(ByteArray(Status::InvalidID) << Input);
+        return;
+    }
+
+    // 5. Check for Protected/Auto flags to prevent accidental deletion
+    if (Object->Flags == Flags::Auto)
+    {
+        Chirp.Send(ByteArray(Status::AutoObject) << Input);
+        return;
+    }
+
+    // 6. Execute high-level destruction
+    // This triggers the virtual cleanup, Disconnects from the Board,
+    // and finally removes itself from the Objects registry.
+    Object->Destroy();
+
+    // 7. Notify Success
+    Chirp.Send(ByteArray(Functions::DeleteObject) << ByteArray(ID.Value));
+}
+
+void LoadObject(const ByteArray &Input)
+{
+    //TODO, load from app
+    Chirp.Send(ByteArray(Status::InvalidFunction));
+    return;
+}
+
+void SaveObject(const ByteArray &Input)
+{
+    // 1. Resolve the Reference using the optimized Getter
+    Getter<Reference> ID = Input.Get<Reference>({1});
+
+    // 2. Validate type alignment
+    if (!ID.Success)
+    {
+        Chirp.Send(ByteArray(Status::InvalidType) << Input);
+        return;
+    }
+
+    // 3. Resolve the pointer from the registry
+    BaseClass *Object = Objects.At(ID);
+
+    // 4. Verify the object exists
+    if (Object == nullptr)
+    {
+        Chirp.Send(ByteArray(Status::InvalidID) << Input);
+        return;
+    }
+
+    // 5. Execute the Save procedure
+    // This triggers the object's internal serialization to non-volatile memory
+    Object->Save();
+
+    // 6. Notify Success
+    // Using the ID getter's implicit conversion to Reference for the response
+    Chirp.Send(ByteArray(Functions::SaveObject) << ByteArray(ID.Value));
+}
+
+void SaveAll(const ByteArray &Input)
+{
+    //TODO, First implement one-by-one correctly
+    Chirp.Send(ByteArray(Status::InvalidFunction));
+    return;
+    /*
+    HW::FlashFormat();
+    MemoryReset();
+    for (int32_t Index = 1; Index < Objects.Allocated; Index++)
+    {
+        if (Objects[IDClass(Index)] == nullptr || Objects[IDClass(Index)]->Flags == Flags::Auto)
             continue;
-        Chirp.Send(ByteArray(Functions::ReadObject) << ByteArray(*Objects[IDClass(Index, 0)]));
+        Objects[IDClass(Index)]->Save();
+    }
+    Chirp.Send(ByteArray(Functions::SaveAll));*/
+}
+void ReadObject(const ByteArray &Input)
+{
+    // 1. Get the Reference using the optimized Getter
+    Getter<Reference> ID = Input.Get<Reference>({1});
+
+    // 2. Validate existence and type in one step
+    if (!ID.Success)
+    {
+        Chirp.Send(ByteArray(Status::InvalidType) << Input);
+        return;
+    }
+
+    // 3. Resolve the object pointer from the registry
+    BaseClass *Object = Objects.At(ID);
+
+    // 4. Validate that the object actually exists
+    if (Object == nullptr)
+    {
+        Chirp.Send(ByteArray(Status::InvalidID) << Input);
+        return;
+    }
+
+    // 5. Serialize and Send the object data
+    // We dereference the pointer to pass the BaseClass instance
+    // to the ByteArray builder.
+    Chirp.Send(ByteArray(Functions::ReadObject) << ByteArray(*Object));
+}
+
+void Refresh(const ByteArray &Input)
+{
+    for (uint32_t Index = 0; Index < Objects.Registered; Index++)
+    {
+        if (Objects.Object[Index].Object == nullptr)
+            continue;
+        Chirp.Send(ByteArray(Functions::ReadObject) << ByteArray(*Objects.Object[Index].Object));
     }
     Chirp.Send(ByteArray(Status::OK));
 }
 
-void CreateObject(ByteArray &Input)
-{
-    BaseClass *Object = nullptr;
-    Types TypeType = Input.Type(1);
-    Types IDType = Input.Type(2);
-    ObjectTypes Type;
-    IDClass ID;
-    if (TypeType == Types::ObjectType && IDType == Types::ID)
-    {
-        Type = Input.Get<ObjectTypes>(1);
-        ID = Input.Get<IDClass>(2);
-        if (!Objects.IsValid(ID)) // Check for ID colision
-            Object = CreateObject(Type, true, ID);
-        else
-        {
-            Chirp.Send(ByteArray(Status::InvalidID) << Input);
-            return;
-        }
-    }
-    else if (TypeType == Types::ObjectType)
-    {
-        Type = Input.Get<ObjectTypes>(1);
-        Object = CreateObject((ObjectTypes)Type);
-    }
-
-    else
-    {
-        Chirp.Send(ByteArray(Status::InvalidType) << Input);
-        return;
-    }
-
-    if (Object == nullptr)
-        Chirp.Send(ByteArray(Status::InvalidType) << Input);
-    else
-        Chirp.Send(ByteArray(Functions::CreateObject) << ByteArray(Object->Type) << ByteArray(Object->ID));
-}
+/*
 
 void LoadObject(ByteArray &Input)
 {
@@ -144,146 +270,14 @@ void LoadObject(ByteArray &Input)
     Chirp.Send(ByteArray(Functions::LoadObject) << ByteArray(*Object));
 }
 
-void DeleteObject(ByteArray &Input)
-{
-    Types IDType = Input.Type(1);
-    if (IDType != Types::ID)
-    {
-        Chirp.Send(ByteArray(Status::InvalidType) << Input);
-        return;
-    }
-    IDClass ID = Input.Get<IDClass>(1);
-    if (!Objects.IsValid(ID))
-    {
-        Chirp.Send(ByteArray(Status::InvalidID) << Input);
-        return;
-    }
-    else if (Objects[ID]->Flags == Flags::Auto)
-    {
-        Chirp.Send(ByteArray(Status::AutoObject) << Input);
-        return;
-    }
 
-    delete Objects[ID];
-    Chirp.Send(ByteArray(Functions::DeleteObject) << ID);
-}
-
-void SetModules(ByteArray &Input)
-{
-    Types IDType = Input.Type(1);
-    Types IDListType = Input.Type(2);
-
-    if (IDType != Types::ID || IDListType != Types::IDList)
-    {
-        Chirp.Send(ByteArray(Status::InvalidType) << Input);
-        return;
-    }
-
-    IDClass ID = Input.Get<IDClass>(1);
-    IDList Modules = Input.Get<IDList>(2);
-
-    if (!Objects.IsValid(ID))
-    {
-        Chirp.Send(ByteArray(Status::InvalidID) << Input);
-        return;
-    }
-    else if (Objects[ID]->Flags == Flags::Auto)
-    {
-        Chirp.Send(ByteArray(Status::AutoObject) << Input);
-        return;
-    }
-
-    Objects[ID]->Modules = Modules;
-    Chirp.Send(ByteArray(Functions::SetModules) << ID << Modules);
-};
-
-void SetFlags(ByteArray &Input)
-{
-    Types IDType = Input.Type(1);
-    Types FlagsType = Input.Type(2);
-
-    if (IDType != Types::ID || FlagsType != Types::Flags)
-    {
-        Chirp.Send(ByteArray(Status::InvalidType) << Input);
-        return;
-    }
-
-    IDClass ID = Input.Get<IDClass>(1);
-    FlagClass Flags = Input.Get<FlagClass>(2);
-
-    if (!Objects.IsValid(ID))
-    {
-        Chirp.Send(ByteArray(Status::InvalidID) << Input);
-        return;
-    }
-    else if (Objects[ID]->Flags == Flags::Auto)
-    {
-        Chirp.Send(ByteArray(Status::AutoObject) << Input);
-        return;
-    }
-
-    Objects[ID]->Flags = Flags;
-    if (Objects[ID]->Type == ObjectTypes::Program && Objects[ID]->Flags == Flags::RunOnce)
-        Objects[ID]->ValueSet<int32_t>(0, 1); // Reset counter
-    Chirp.Send(ByteArray(Functions::SetFlags) << ID << Flags);
-};
-
-void WriteName(ByteArray &Input)
-{
-    Types IDType = Input.Type(1);
-    Types NameType = Input.Type(2);
-
-    if (IDType != Types::ID || NameType != Types::Text)
-    {
-        Chirp.Send(ByteArray(Status::InvalidType) << Input);
-        return;
-    }
-
-    IDClass ID = Input.Get<IDClass>(1);
-    Text Name = Input.Get<Text>(2);
-
-    if (!Objects.IsValid(ID))
-    {
-        Chirp.Send(ByteArray(Status::InvalidID) << Input);
-        return;
-    }
-    else if (Objects[ID]->Flags == Flags::Auto)
-    {
-        Chirp.Send(ByteArray(Status::AutoObject) << Input);
-        return;
-    }
-
-    Objects[ID]->Name = Name;
-    Chirp.Send(ByteArray(Functions::WriteName) << ID << Name);
-};
-
-void ReadName(ByteArray &Input)
-{
-    Types IDType = Input.Type(1);
-
-    if (IDType != Types::ID)
-    {
-        Chirp.Send(ByteArray(Status::InvalidType) << Input);
-        return;
-    }
-
-    IDClass ID = Input.Get<IDClass>(1);
-
-    if (!Objects.IsValid(ID))
-    {
-        Chirp.Send(ByteArray(Status::InvalidID) << Input);
-        return;
-    }
-
-    Chirp.Send(ByteArray(Functions::ReadName) << ID << ByteArray(Objects[ID]->Name));
-};
-
+*/
 void ReportError(Status ErrorCode)
 {
     ByteArray Report = ByteArray(ErrorCode);
     Chirp.SendNow(Report);
 }
-void ReportError(Status ErrorCode, IDClass ID)
+void ReportError(Status ErrorCode, Reference ID)
 {
     ByteArray Report = ByteArray(ErrorCode) << ByteArray(ID);
     Chirp.SendNow(Report);

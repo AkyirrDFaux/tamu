@@ -1,16 +1,4 @@
-class PortTypeClass
-{
-public:
-    uint32_t Values = Ports::None;
-    PortTypeClass() {};
-    PortTypeClass(uint32_t Input) { Values = Input; };
-    void operator=(uint32_t Other) { Values = Other; };
-    void operator+=(uint32_t Other) { Values |= Other; };
-    void operator-=(uint32_t Other) { Values &= ~Other; };
-    bool operator==(Ports::Ports Other) { return Values & Other; };
-    bool operator!=(Ports::Ports Other) { return !(Values & Other); };
-};
-
+/*
 class PortClass : public BaseClass
 {
 public:
@@ -59,7 +47,8 @@ PortClass::~PortClass()
     for (uint32_t Index = 0; Index < Modules.Length; Index++)
         RemoveModule(Modules[Index]);
 }
-
+*/
+/*
 class I2CClass : public BaseClass
 {
 public:
@@ -120,4 +109,4 @@ UARTClass::UARTClass() : BaseClass(&Table)
 {
     Type = ObjectTypes::UART;
     Name = "UART Bus";
-}
+}*/

@@ -31,12 +31,15 @@ namespace Ports
 enum class Drivers : uint8_t
 {
     None,
-    LED,
-    FanPWM,
-    I2C,  // Any function of bus
-    UART, // Any function of bus
+    Input,
+    Output,
+    PWM,
     Servo,
-    Input
+    LED,
+    I2C_SDA,
+    I2C_SCL,
+    UART_TX,
+    UART_RX, 
 };
 
 enum class Geometries : uint8_t

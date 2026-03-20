@@ -9,10 +9,11 @@
 #include "freertos/task.h"
 #include "esp_heap_caps.h"
 #include "nvs_flash.h"
-struct Pin
+/*struct Pin
 {
     uint8_t Number;
-};
+    char Port = 0;
+};*/
 const Pin LED_NOTIFICATION_PIN = {2};
 const Pin INVALID_PIN = {255};
 
@@ -52,8 +53,8 @@ namespace HW
     int32_t GetFreeRAM();
 
     // Flash
-    bool FlashSave(const ByteArray &Data);
-    ByteArray FlashLoad(IDClass ID);
+    //bool FlashSave(const ByteArray &Data);
+    //ByteArray FlashLoad(IDClass ID);
 
     // USB
     void USB_Init();
