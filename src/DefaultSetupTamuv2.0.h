@@ -1,63 +1,55 @@
 void DefaultSetup()
 {
-    Board.ValueSet(Text("Akyirr"), Board.DisplayName);
+    Board.Values.Set(Text("Test"), {0, 0}); // Using the Path for DisplayName
 
-    // Display L
-    DisplayClass *LD = new DisplayClass();
+    DisplayClass *LD = new DisplayClass(Reference(0, 0, 1));
     LD->Name = "Left Eye";
-    LD->ValueSet<Displays>(Displays::Vysi_v1_0, LD->DisplayType);
-    LD->ValueSet<Coord2D>(Coord2D(0, 0, 5), LD->Offset);
-    Board.Modules[0]->AddModule(LD);
-    LD->ValueSet<uint8_t>(40, LD->Brightness);
 
-    Shape2DClass *LS = new Shape2DClass();
-    LS->Name = "Left Background";
-    LD->AddModule(LS);
-    Texture2D *LT = new Texture2D();
-    LT->Name = "Left Background";
-    LS->AddModule(LT, LS->Texture);
-    LT->ValueSet<Textures2D>(Textures2D::Full, LT->Texture);
-    LT->ValueSet<ColourClass>(ColourClass(200, 200, 200), LT->ColourA);
-    Geometry2DClass *LG = new Geometry2DClass();
-    LG->Name = "Left Background";
-    LS->AddModule(LG);
-    LG->ValueSet<Geometries>(Geometries::Fill, LG->Geometry);
+    LD->ValueSetup<Displays>(Displays::Vysi_v1_0, {0});
+    LD->ValueSetup(Reference(0, 0, 0, {1, 0}), {0, 0}),
+        LD->Values.Set(Coord2D(0, 0, 5), {0, 5});
+    LD->Values.Set<uint8_t>(40, {0, 4});
 
-    Shape2DClass *LS1 = new Shape2DClass();
-    LS1->Name = "Left EyeColour";
-    LD->AddModule(LS1);
-    Texture2D *LT1 = new Texture2D();
-    LT1->Name = "Left EyeColour";
-    LS1->AddModule(LT1, LS1->Texture);
-    LT1->ValueSet<Textures2D>(Textures2D::BlendLinear, LT1->Texture);
-    LT1->ValueSet<ColourClass>(ColourClass(0, 100, 0), LT1->ColourA);
-    LT1->ValueSet<ColourClass>(ColourClass(0, 150, 0), LT1->ColourB);
-    LT1->ValueSet<Coord2D>(Coord2D(1.5, 1, 0), LT1->Position);
-    LT1->ValueSet<Number>(1.0, LT1->Width);
-    Geometry2DClass *LG1 = new Geometry2DClass();
-    LG1->Name = "Left EyeColour";
-    LS1->AddModule(LG1);
-    LG1->ValueSet<Geometries>(Geometries::Elipse, LG1->Geometry);
-    LG1->ValueSet<Vector2D>(Vector2D(4.5, 4.5), LG1->Size);
-    LG1->ValueSet<Number>(0.1, LG1->Fade);
-    LG1->ValueSet<Coord2D>(Coord2D(1.5, 1, 0), LG1->Position);
+    // --- Layer 0: Background ---
+    LD->ValueSetup<Geometries>(Geometries::Fill, {1, 0});
+    LD->Values.Set(GeometryOperation::Add, {1, 0, 0}); // Op moved to index 0
 
-    Shape2DClass *LS2 = new Shape2DClass();
-    LS2->Name = "Left Pupil";
-    LD->AddModule(LS2);
-    Texture2D *LT2 = new Texture2D();
-    LT2->Name = "Left Pupil";
-    LS2->AddModule(LT2, LS2->Texture);
-    LT2->ValueSet<Textures2D>(Textures2D::Full, LT2->Texture);
-    LT2->ValueSet<ColourClass>(ColourClass(0, 0, 0), LT2->ColourA);
-    Geometry2DClass *LG2 = new Geometry2DClass();
-    LG2->Name = "Left Pupil";
-    LS2->AddModule(LG2);
-    LG2->ValueSet<Geometries>(Geometries::DoubleParabola, LG2->Geometry);
-    LG2->ValueSet<Vector2D>(Vector2D(2.3, 4.9), LG2->Size);
-    LG2->ValueSet<Coord2D>(Coord2D(1.5, 1, 0), LG2->Position);
-    LG2->ValueSet<Number>(1.5, LG2->Fade);
+    LD->ValueSetup<Textures2D>(Textures2D::Full, {1, 1});
+    LD->Values.Set(ColourClass(200, 200, 200), {1, 1, 0}); // ColourA
 
+    // --- Layer 1: Eye Color ---
+    LD->ValueSetup<Geometries>(Geometries::Elipse, {1, 2});
+    LD->Values.Set(GeometryOperation::Add, {1, 2, 0}); // Op moved to index 0
+    LD->Values.Set(Vector2D(4.5, 4.5), {1, 2, 1});     // Size
+    LD->Values.Set<Number>(0.1, {1, 2, 2});            // Fade
+    LD->Values.Set(Coord2D(1.5, 1, 0), {1, 2, 3});     // Position
+
+    LD->ValueSetup<Textures2D>(Textures2D::BlendLinear, {1, 3});
+    LD->Values.Set(ColourClass(0, 100, 0), {1, 3, 0}); // ColourA
+    LD->Values.Set(ColourClass(0, 150, 0), {1, 3, 1}); // ColourB
+    LD->Values.Set(Coord2D(1.5, 1, 0), {1, 3, 2});     // Position
+    LD->Values.Set<Number>(1.0, {1, 3, 3});            // Width
+
+    // --- Layer 2: Pupil ---
+    LD->ValueSetup<Geometries>(Geometries::DoubleParabola, {1, 4});
+    LD->Values.Set(GeometryOperation::Add, {1, 4, 0}); // Op moved to index 0
+    LD->Values.Set(Vector2D(2.3, 4.9), {1, 4, 1});     // Size
+    LD->Values.Set<Number>(1.5, {1, 4, 2});            // Fade
+    LD->Values.Set(Coord2D(1.5, 1, 0), {1, 4, 3});     // Position
+
+    LD->ValueSetup<Textures2D>(Textures2D::Full, {1, 5});
+    LD->Values.Set(ColourClass(0, 0, 0), {1, 5, 0}); // ColourA
+    /*
+    // Geometry (Half Fill)
+    LD->ValueSetup<Geometries>(Geometries::HalfFill, {1, 6});
+    LD->Values.Set(Coord2D(0, 3, 0),               {1, 6, 0}); // Position
+
+    // Texture (Solid Black)
+    LD->ValueSetup<Textures2D>(Textures2D::Full,   {1, 7});
+    LD->Values.Set(ColourClass(0, 0, 0),           {1, 7, 0}); // ColourA
+    */
+
+    /*
     Shape2DClass *LS2A = new Shape2DClass();
     LS2A->Name = "Left Pupil Arrow";
     LS2A->Flags = Flags::Inactive;
@@ -79,20 +71,6 @@ void DefaultSetup()
     LG2AC->ValueSet<Number>(1.5F, LG2AC->Fade);
     LG2AC->ValueSet<Vector2D>(Vector2D(3, 3), LG2AC->Size);
     LG2AC->ValueSet<Coord2D>(Coord2D(1.5, -1.5, 0), LG2AC->Position);
-
-    Shape2DClass *LS3 = new Shape2DClass();
-    LS3->Name = "Left Lid";
-    LD->AddModule(LS3);
-    Texture2D *LT3 = new Texture2D();
-    LT3->Name = "Left Lid";
-    LS3->AddModule(LT3, LS3->Texture);
-    LT3->ValueSet<Textures2D>(Textures2D::Full, LT3->Texture);
-    LT3->ValueSet<ColourClass>(ColourClass(0, 0, 0), LT3->ColourA);
-    Geometry2DClass *LG3 = new Geometry2DClass();
-    LG3->Name = "Left Lid";
-    LS3->AddModule(LG3);
-    LG3->ValueSet<Geometries>(Geometries::HalfFill, LG3->Geometry);
-    LG3->ValueSet<Coord2D>(Coord2D(0, 3, 0), LG3->Position);
 
     // Display R
     DisplayClass *RD = new DisplayClass();
@@ -361,7 +339,7 @@ void DefaultSetup()
     OSAD->Modules.Add(LS2->ID);
 
     PSA->Modules.Add(OSAE, 0);
-    PSA->Modules.Add(OSAD, 1);
+    PSA->Modules.Add(OSAD, 1);*/
 };
 
 /*// LED COLLAR

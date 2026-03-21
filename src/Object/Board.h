@@ -23,7 +23,7 @@ class BoardClass : public BaseClass
 {
 public:
     void *DriverArray[11] = {nullptr};
-    BoardClass(Reference ID);
+    BoardClass(const Reference &ID);
     void Setup(Path Index);
     bool Run(); // For LED outputs
     void UpdateLoopTime();
@@ -42,7 +42,7 @@ public:
 
 constexpr VTable BoardClass::Table;
 
-BoardClass::BoardClass(Reference ID) : BaseClass(&Table, ID, {Flags::Auto, 1})
+BoardClass::BoardClass(const Reference &ID) : BaseClass(&Table, ID, {Flags::Auto, 1})
 {
     Type = ObjectTypes::Board;
     Name = "Board";

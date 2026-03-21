@@ -86,7 +86,7 @@ BoardClass Board(Reference(0, 0, 0));
 // #include "Function\Save.h"
 
 #if defined BOARD_Tamu_v2_0
-// #include "DefaultSetupTamuv2.0.h" //30kb of instructions :)
+#include "DefaultSetupTamuv2.0.h"
 #elif defined BOARD_Valu_v2_0
 #include "DefaultSetupValuv2.0.h"
 #endif
@@ -99,22 +99,24 @@ int main()
     // HW::FlashInit();
     // HW::FlashFormat();
 
-    // DefaultSetup();
-    Chirp.Begin("Test");
-    // Chirp.Begin(Board.ValueGet<Text>(Board.DisplayName));
+    ESP_LOGI("MAIN", "Setuping");
+    DefaultSetup();
+    ESP_LOGI("MAIN", "Starting Chirp");
+    Chirp.Begin(Board.ValueGet<Text>({0,0}));
 
     TimeUpdate();
-    Board.ValueSet<int32_t>(CurrentTime, {0, 1});
-    
+    Board.ValueSetup<int32_t>(CurrentTime, {0, 1});
+
+    ESP_LOGI("MAIN", "Starting");
     bool AllFinished = false;
     while (!AllFinished)
     {
         AllFinished = true;
         Chirp.Communicate();
 
-        for (int32_t i = Objects.Registered - 1; i >= 0; i--)
+        for (int32_t Index = Objects.Registered - 1; Index >= 0; Index--)
         {
-            RegisterEntry &Entry = Objects.Object[i];
+            RegisterEntry &Entry = Objects.Object[Index];
 
             // Execute if Startup is set and not Inactive
             if (!(Entry.Info.Flags == Flags::Inactive) && (Entry.Info.Flags == Flags::RunOnStartup))
@@ -129,15 +131,15 @@ int main()
     }
 
     uint32_t LoopCounter = 0;
-
+    ESP_LOGI("MAIN", "Entering Loop");
     while (1)
     {
         Chirp.Communicate();
-        HW::Sleep(10);
+        HW::Sleep(5);
 
-        for (int32_t i = Objects.Registered - 1; i >= 0; i--)
+        for (int32_t Index = Objects.Registered - 1; Index >= 0; Index--)
         {
-            RegisterEntry &Entry = Objects.Object[i];
+            RegisterEntry &Entry = Objects.Object[Index];
 
             if (Entry.Info.Flags == Flags::Inactive)
                 continue;

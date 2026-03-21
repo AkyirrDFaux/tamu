@@ -75,8 +75,6 @@ void IRAM_ATTR LEDDriver::Show()
     {
         uint8_t channel = *pixel++;
 
-        // Unrolling the bit-loop can sometimes help, but let's try
-        // a tight loop first with manual register addresses
         for (int8_t i = 7; i >= 0; i--)
         {
             if (channel & (1 << i))

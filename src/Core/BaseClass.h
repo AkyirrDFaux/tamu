@@ -20,7 +20,7 @@ Getter<C> BaseClass::ValueGet(const Path &Location) const
 }
 
 template <class C>
-bool BaseClass::ValueSet(C Value, const Path &Location)
+bool BaseClass::ValueSetup(C Value, const Path &Location)
 {
     // 1. Update the internal data tree
     Values.Set(Value, Location);

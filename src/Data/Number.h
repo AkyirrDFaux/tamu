@@ -17,7 +17,7 @@ class Number
 public:
     int32_t Value = 0;
 
-    Number() : Value(0) {}
+    Number() = default;
     Number(int32_t NewValue) : Value(NewValue << DECIMAL) {}
     Number(uint32_t NewValue) : Value(int32_t(NewValue << DECIMAL)) {}
     Number(int NewValue) : Value(NewValue << DECIMAL) {}
@@ -85,6 +85,10 @@ public:
     inline bool operator<(T Other) const { return *this < Number(Other); }
     template <typename T, typename = typename std::enable_if<std::is_arithmetic<T>::value>::type>
     inline bool operator>(T Other) const { return *this > Number(Other); }
+    template <typename T, typename = typename std::enable_if<std::is_arithmetic<T>::value>::type>
+    inline bool operator<=(T Other) const { return *this <= Number(Other); }
+    template <typename T, typename = typename std::enable_if<std::is_arithmetic<T>::value>::type>
+    inline bool operator>=(T Other) const { return *this >= Number(Other); }
 };
 
 template <typename T, typename = typename std::enable_if<std::is_arithmetic<T>::value>::type>

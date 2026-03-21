@@ -23,7 +23,7 @@ struct Getter
     bool Success;
     T Value;
 
-    operator T() const { return Value; }
+    inline operator T() const { return Value; }
 };
 
 class ByteArray

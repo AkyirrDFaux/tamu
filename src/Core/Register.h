@@ -85,7 +85,7 @@ bool RegisterClass::ValueSet(C Value, const Reference &ID)
         return false;
 
     // Hand off the Path to the internal ByteArray logic
-    return Object[Index].Object->ValueSet(Value, ID.Location);
+    return Object[Index].Object->ValueSetup(Value, ID.Location);
 }
 
 Types RegisterClass::ValueTypeAt(const Reference &ID) const
@@ -102,7 +102,9 @@ void RegisterClass::Expand(uint32_t NewAllocated)
 {
     if (NewAllocated <= Allocated)
         return;
-    NewAllocated = (Allocated == 0) ? NewAllocated : Allocated * 3 / 2;
+    
+    uint32_t Grow = (Allocated == 0) ? NewAllocated : Allocated * 3 / 2;
+    if (NewAllocated < Grow) NewAllocated = Grow;
 
     RegisterEntry *NewObject = new RegisterEntry[NewAllocated];
     if (Object != nullptr)

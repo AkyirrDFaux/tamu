@@ -11,7 +11,6 @@ public:
     void operator=(ColourClass Colour);
 
     void Layer(ColourClass LayerColour, Number Overlap);
-    void ToDisplay(uint8_t Brightness);
     void TimeBlend(ColourClass Target, unsigned long TargetTime);
 
     //Text AsString();
@@ -40,14 +39,6 @@ void ColourClass::Layer(ColourClass LayerColour, Number Overlap)
     G = LayerColour.G * Opacity + G * (1 - Opacity);
     B = LayerColour.B * Opacity + B * (1 - Opacity);
     A = LimitByte(A + (uint8_t)((255 - A) * Opacity));
-};
-
-void ColourClass::ToDisplay(uint8_t Brightness)
-{
-    A = MultiplyBytePercentByte(A, Brightness);
-    R = MultiplyBytePercentByte(R, A);
-    G = MultiplyBytePercentByte(G, A);
-    B = MultiplyBytePercentByte(B, A);
 };
 
 void ColourClass::TimeBlend(ColourClass Target, unsigned long TargetTime)

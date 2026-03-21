@@ -54,7 +54,7 @@ public:
     void Expand(uint32_t NewAllocated);
     void Shorten();
 
-    bool Register(BaseClass *AddObject, const Reference &ID, ObjectInfo Info = {Flags::None,0});
+    bool Register(BaseClass *AddObject, const Reference &ID, ObjectInfo Info = {Flags::None, 0});
     bool Unregister(int32_t Index);
 } Objects;
 
@@ -72,7 +72,7 @@ public:
     Text Name = "";
     ByteArray Values;
 
-    BaseClass(const VTable *Table, Reference NewID, ObjectInfo Info = {Flags::None,0})
+    BaseClass(const VTable *Table, const Reference &NewID, ObjectInfo Info = {Flags::None, 0})
         : Vptr(Table)
     {
         Objects.Register(this, NewID, Info);
@@ -97,5 +97,5 @@ public:
     template <class C>
     Getter<C> ValueGet(const Path &Location) const;
     template <class C>
-    bool ValueSet(C Value, const Path &Location);
+    bool ValueSetup(C Value, const Path &Location);
 };
