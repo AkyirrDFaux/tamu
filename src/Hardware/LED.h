@@ -15,8 +15,6 @@
 #include "soc/gpio_reg.h"
 #include "soc/gpio_struct.h"
 #include "esp_attr.h"
-static portMUX_TYPE my_mux = portMUX_INITIALIZER_UNLOCKED;
-
 class LEDDriver
 {
 public:
@@ -35,8 +33,7 @@ public:
     // Compatibility: Length and Pin as uint16_t
     LEDDriver(uint16_t Length, Pin Pin);
 
-    LEDDriver Offset(uint32_t Offset);
-    void Write(uint32_t Index, ColourClass Colour);
+    uint8_t *Offset(uint32_t Offset);
     void Show();
     void Stop();
 };
@@ -59,8 +56,10 @@ LEDDriver::LEDDriver(uint16_t NewLength, Pin Pin)
     this->PinMask = (1 << Pin.Number);
 }
 
-void IRAM_ATTR LEDDriver::Show() {
-    if (!LEDs) return;
+void IRAM_ATTR LEDDriver::Show()
+{
+    if (!LEDs)
+        return;
 
     // Localize variables to the stack (CPU registers) to avoid memory lookups
     uint8_t *pixel = LEDs;
@@ -69,27 +68,38 @@ void IRAM_ATTR LEDDriver::Show() {
 
     // Use a Mux to lock the core
     static portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
-    
+
     portENTER_CRITICAL(&mux);
 
-    while (byteLength--) {
+    while (byteLength--)
+    {
         uint8_t channel = *pixel++;
-        
-        // Unrolling the bit-loop can sometimes help, but let's try 
+
+        // Unrolling the bit-loop can sometimes help, but let's try
         // a tight loop first with manual register addresses
-        for (int8_t i = 7; i >= 0; i--) {
-            if (channel & (1 << i)) {
+        for (int8_t i = 7; i >= 0; i--)
+        {
+            if (channel & (1 << i))
+            {
                 // T1H
                 GPIO.out_w1ts.val = mask; // High
-                NOP64(); NOP64(); NOP16(); 
+                NOP64();
+                NOP64();
+                NOP16();
                 GPIO.out_w1tc.val = mask; // Low
-                NOP64(); 
-            } else {
+                NOP64();
+            }
+            else
+            {
                 // T0H
                 GPIO.out_w1ts.val = mask; // High
-                NOP16(); NOP16(); NOP4();
+                NOP16();
+                NOP16();
+                NOP4();
                 GPIO.out_w1tc.val = mask; // Low
-                NOP64(); NOP64(); NOP16();
+                NOP64();
+                NOP64();
+                NOP16();
             }
         }
     }
@@ -107,13 +117,12 @@ void LEDDriver::Stop()
     }
 };
 
-LEDDriver LEDDriver::Offset(uint32_t Offset)
+uint8_t *LEDDriver::Offset(uint32_t Offset)
 {
-    LEDDriver OffsetDriver = LEDDriver();
-    OffsetDriver.LEDs = &(LEDs[Offset * 3]);
-    return OffsetDriver;
+    return &(LEDs[Offset * 3]);
 }
 
+/*
 inline void LEDDriver::Write(uint32_t Index, ColourClass Colour)
 {
     // Neopixels are GRB
@@ -124,6 +133,7 @@ inline void LEDDriver::Write(uint32_t Index, ColourClass Colour)
         LEDs[Index * 3 + 2] = Colour.B;
     }
 }
+*/
 
 #elif defined BOARD_Valu_v2_0
 

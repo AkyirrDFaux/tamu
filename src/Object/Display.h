@@ -5,7 +5,7 @@ public:
     Reference CurrentLink = Reference(0,0,0);  // Backup for disconnecting
     uint8_t *LEDs = nullptr;   // Memory buffer
 
-    DisplayClass(Reference ID, FlagClass Flags = Flags::None);
+    DisplayClass(Reference ID, ObjectInfo Info = {Flags::None, 1});
     ~DisplayClass();
 
     void Setup(Path Index);
@@ -23,7 +23,7 @@ public:
 
 constexpr VTable DisplayClass::Table;
 
-DisplayClass::DisplayClass(Reference ID, FlagClass Flags) : BaseClass(&Table, ID, Flags)
+DisplayClass::DisplayClass(Reference ID, ObjectInfo Info) : BaseClass(&Table, ID, Info)
 {
     BaseClass::Type = ObjectTypes::Display;
     Name = "Display";
@@ -48,41 +48,51 @@ DisplayClass::~DisplayClass()
 
 bool DisplayClass::Connect(BaseClass *Object, int32_t Index)
 {
+    ESP_LOGI("Display","- Connect(Idx: %d)\n", Index);
     if (Object == nullptr) Object = this;
 
-    // 1. Get the Reference we are plugged into
     Getter<Reference> Link = Values.Get<Reference>({0, 0});
     if (!Link.Success || Link.Value == Reference(0,0,0)) return false;
 
-    // 2. Resolve target
     BaseClass *Target = Objects.At(Link.Value);
     if (!Target) return false;
 
-    // 3. Backup the link so we can safely disconnect later
     this->CurrentLink = Link.Value;
 
-    // 4. Handshake Upward
-    if (Target->Type == ObjectTypes::Board)
-        return static_cast<BoardClass *>(Target)->Connect(Object, Index + 1);
-    else
+    if (Target->Type == ObjectTypes::Board) {
+        // We are hitting the hardware anchor; Port is now mandatory.
+        if (Link.Value.Location.Length < 2) return false;
+        
+        uint8_t Port = Link.Value.Location.Indexing[1];
+        return static_cast<BoardClass *>(Target)->Connect(Object, Port, Index + 1);
+    } 
+    else {
+        // We are hitting another peripheral; Port is irrelevant to this hop.
         return static_cast<DisplayClass *>(Target)->Connect(Object, Index + 1);
+    }
 }
 
 bool DisplayClass::Disconnect(BaseClass *Object)
 {
     if (Object == nullptr) Object = this;
-
-    // Use the backup link in case the Value {0, 2} was already cleared/changed
     if (CurrentLink == Reference(0,0,0)) return false;
 
     BaseClass *Target = Objects.At(CurrentLink);
     if (!Target) return false;
 
     bool Success = false;
-    if (Target->Type == ObjectTypes::Board)
-        Success = static_cast<BoardClass *>(Target)->Disconnect(Object);
-    else
+
+    if (Target->Type == ObjectTypes::Board) {
+        // Port is required to tell the Board which folder to clean.
+        if (CurrentLink.Location.Length < 2) return false;
+
+        uint8_t Port = CurrentLink.Location.Indexing[1];
+        Success = static_cast<BoardClass *>(Target)->Disconnect(Object, Port);
+    } 
+    else {
+        // Handshake to the next device in the chain.
         Success = static_cast<DisplayClass *>(Target)->Disconnect(Object);
+    }
 
     if (Object == this) {
         this->LEDs = nullptr;
@@ -94,42 +104,54 @@ bool DisplayClass::Disconnect(BaseClass *Object)
 
 void DisplayClass::Setup(Path Index)
 {
-    // 1. Check what changed by looking at the Index path
+    ESP_LOGI("Display", "- Setup Triggered");
     bool HardwareChanged = false;
 
-    // If the path is {0}, the Display Type changed
+    // All relevant changes start with 0 in this object's local tree
     if (Index.Length > 0 && Index.Indexing[0] == 0)
     {
-        Displays Type = Values.Get<Displays>({0});
-
-        switch (Type)
+        // 1. If Index is just {0}, the Display Type changed
+        if (Index.Length == 1)
         {
-        case Displays::GenericLEDMatrix:
-            Values.Set<int32_t>(256, {0, 0});     // Length
-            Values.Set(Vector2D(16, 16), {0, 2}); // Size
-            Layout = nullptr;
+            Displays Type = Values.Get<Displays>({0});
+            ESP_LOGI("Display", "Type changed to %d", (int)Type);
+
+            switch (Type)
+            {
+                case Displays::GenericLEDMatrix:
+                    Values.Set<int32_t>(256, {0, 1});     // Update Length
+                    Values.Set(Vector2D(16, 16), {0, 2}); // Update Size
+                    HardwareChanged = true;
+                    break;
+                case Displays::Vysi_v1_0:
+                    Values.Set<int32_t>(86, {0, 1});
+                    Values.Set(Vector2D(11, 10), {0, 2});
+                    HardwareChanged = true;
+                    break;
+                default:
+                    break;
+            }
+        }
+        // 2. If Index is {0, 0}, the Reference (Port Link) changed
+        else if (Index.Length > 1 && Index.Indexing[1] == 0)
+        {
+            ESP_LOGI("Display", "Link/Reference changed");
             HardwareChanged = true;
-            break;
-        case Displays::Vysi_v1_0:
-            Values.Set<int32_t>(86, {0, 0});
-            Values.Set(Vector2D(11, 10), {0, 2});
-            Layout = LayoutVysiv1_0; // Presumed external constant
+        }
+        // 3. If Index is {0, 1}, the Length changed
+        else if (Index.Length > 1 && Index.Indexing[1] == 1)
+        {
+            ESP_LOGI("Display", "Chain Length changed");
             HardwareChanged = true;
-            break;
-        default:
-            break;
         }
     }
 
-    // If Port {0, 1} or Link {1} changed
-    if (Index.Indexing[0] == 1 || (Index.Indexing[0] == 0 && Index.Indexing[1] == 1))
-        HardwareChanged = true;
-
-    // 2. Perform Re-connection if needed
+    // Perform Re-connection if any critical parameters changed
     if (HardwareChanged)
     {
-        Disconnect();
-        Connect();
+        ESP_LOGI("Display", "Executing Reconnect Sequence");
+        Disconnect(); 
+        Connect();    
     }
 }
 

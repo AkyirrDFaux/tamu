@@ -77,6 +77,8 @@ void WriteValue(const ByteArray &Input)
         Ref.Value.Location
     );
 
+    Object->Setup(Ref.Value.Location);
+
     // 5. Confirmation Echo
     // We send back the current state of that specific location to confirm the write.
     Chirp.Send(
@@ -145,7 +147,7 @@ void WriteName(const ByteArray &Input)
     Chirp.Send(ByteArray(Functions::ReadName) << ByteArray(Ref.Value) << ByteArray(Object->Name));
 }
 
-void ReadFlags(const ByteArray &Input)
+void ReadInfo(const ByteArray &Input)
 {
     // 1. Resolve the Reference from Index 1
     Getter<Reference> Ref = Input.Get<Reference>({1});
@@ -158,10 +160,10 @@ void ReadFlags(const ByteArray &Input)
     }
 
     // 3. Resolve the pointer from the registry
-    BaseClass *Object = Objects.At(Ref);
+    int32_t Index = Objects.Search(Ref);
 
     // 4. Verify the object exists
-    if (Object == nullptr)
+    if (Index == -1)
     {
         Chirp.Send(ByteArray(Status::InvalidID) << Input);
         return;
@@ -169,33 +171,33 @@ void ReadFlags(const ByteArray &Input)
 
     // 5. Respond with the specific object's flags
     // Send: Function + Original Reference + Current FlagClass
-    Chirp.Send(ByteArray(Functions::ReadFlags) << ByteArray(Ref.Value) << ByteArray(Object->Flags));
+    Chirp.Send(ByteArray(Functions::ReadInfo) << ByteArray(Ref.Value) << ByteArray(Objects.Object[Index].Info));
 }
 
-void SetFlags(const ByteArray &Input)
+void SetInfo(const ByteArray &Input)
 {
     // 1. Resolve the Reference and the New Flags
     Getter<Reference> Ref = Input.Get<Reference>({1});
-    Getter<FlagClass> Flags = Input.Get<FlagClass>({2});
+    Getter<ObjectInfo> Info = Input.Get<ObjectInfo>({2});
 
     // 2. Validate types and existence
-    if (!Ref.Success || !Flags.Success)
+    if (!Ref.Success || !Info.Success)
     {
         Chirp.Send(ByteArray(Status::InvalidType) << Input);
         return;
     }
 
     // 3. Resolve the object pointer
-    BaseClass *Object = Objects.At(Ref);
+    int32_t Index = Objects.Search(Ref);
 
-    if (Object == nullptr)
+    if (Index == -1)
     {
         Chirp.Send(ByteArray(Status::InvalidID) << Input);
         return;
     }
 
     // 4. Update the Flags
-    Object->Flags = Flags;
+    Objects.Object[Index].Info = Info;
 
     // 5. Special Logic: Reset counter for RunOnce programs
     // We use the object's Values.Set to ensure the reset is tracked internally
@@ -207,5 +209,5 @@ void SetFlags(const ByteArray &Input)
 
     // 6. Confirm the update
     // Return Function, Reference, and the newly applied FlagClass
-    Chirp.Send(ByteArray(Functions::ReadFlags) << ByteArray(Ref.Value) << ByteArray(Object->Flags));
+    Chirp.Send(ByteArray(Functions::ReadInfo) << ByteArray(Ref.Value) << ByteArray(Objects.Object[Index].Info));
 }

@@ -5,7 +5,7 @@ enum class Types : uint8_t
     Byte, // uint_8
     Type, // 1 byte enums
     ObjectType,
-    Flags,
+    ObjectInfo,
     Status,
     Board,
     Sensor,
@@ -27,14 +27,14 @@ enum class Types : uint8_t
     Number,    // float_32
     PortType,  // 4 byte flag
     Pin,       // 2 byte - start packed
-    Colour,    // 4 byte RGBA 
+    Colour,    // 4 byte RGBA
     Vector2D,  // 8 byte (2xNumber)
     Vector3D,  // 12 byte (3xNumber)
     Coord2D,   // 16 byte (2xVector2D)
     Coord3D,   // 24 byte (2xVector3D)
     Text,      // String - variable length
     Reference, // uint8 array
-    Path, // uint8 array, length - 3
+    Path,      // uint8 array, length - 3
     Message    // raw data array
 };
 
@@ -49,13 +49,13 @@ bool IsPacked(const Types Type) // Contains subparts
 enum Flags : uint8_t
 {
     None = 0,
-    Auto = 0b00000001,         // No name change, cannot remove (ex. Board, Port, built-in devices)
-    System = 0b00000010,       // No value editing, no saving (ex. Port, some built-in devices)
+    Auto = 0b00000001, // Automatically created (built-in)
+    Undefined1 = 0b00000010,
     Undefined2 = 0b00000100,
-    RunLoop = 0b00001000,      // Allow automatic run forever
-    RunOnce = 0b00010000,      // Run once manually until finished, will reset the flag automatically
-    RunOnStartup = 0b00100000, // Run automatically once after board finished loading
-    Favourite = 0b01000000,    // Show when filtered
+    Undefined3 = 0b00001000,
+    Undefined4 = 0b00010000,
+    RunOnce = 0b00100000,      // Run once manually until finished, will reset the flag automatically
+    RunOnStartup = 0b01000000, // Run automatically once after board finished loading
     Inactive = 0b10000000      // Ignore object
 };
 
@@ -109,7 +109,7 @@ enum class Functions : uint8_t
     None = 0,
     CreateObject, // Create new
     DeleteObject, // Delete object
-    LoadObject, // Create from ByteArray
+    LoadObject,   // Create from ByteArray
     SaveObject,   // Save to file
     SaveAll,
     ReadObject, // Send to app
@@ -118,12 +118,12 @@ enum class Functions : uint8_t
     WriteValue,
     ReadName,
     WriteName,
-    ReadFlags, 
-    SetFlags,
+    ReadInfo,
+    SetInfo,
     ReadFile
 };
 
-void Run(const ByteArray &Input); //Switcher
+void Run(const ByteArray &Input); // Switcher
 void CreateObject(const ByteArray &Input);
 void DeleteObject(const ByteArray &Input);
 void LoadObject(const ByteArray &Input);
@@ -135,9 +135,9 @@ void ReadValue(const ByteArray &Input);
 void WriteValue(const ByteArray &Input);
 void ReadName(const ByteArray &Input);
 void WriteName(const ByteArray &Input);
-void ReadFlags(const ByteArray &Input);
-void SetFlags(const ByteArray &Input);
-//void ReadFile(ByteArray &Input);
+void ReadInfo(const ByteArray &Input);
+void SetInfo(const ByteArray &Input);
+// void ReadFile(ByteArray &Input);
 
 template <class C>
 Types GetType()
@@ -167,7 +167,10 @@ Types GetType<float>()
 };
 template <>
 #endif
-Types GetType<Reference>() { return Types::Reference; };
+Types GetType<Reference>()
+{
+    return Types::Reference;
+};
 template <>
 Types GetType<ColourClass>() { return Types::Colour; };
 template <>
@@ -185,7 +188,7 @@ Types GetType<ObjectTypes>() { return Types::ObjectType; };
 template <>
 Types GetType<Functions>() { return Types::Function; };
 template <>
-Types GetType<FlagClass>() { return Types::Flags; };
+Types GetType<ObjectInfo>() { return Types::ObjectInfo; };
 template <>
 Types GetType<Status>() { return Types::Status; };
 template <>

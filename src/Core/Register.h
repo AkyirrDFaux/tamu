@@ -11,13 +11,13 @@ int32_t RegisterClass::Search(const Reference &ID) const
     while (Low <= High)
     {
         int32_t Mid = Low + (High - Low) / 2;
-        uint16_t CurrentIndex = Object[Mid].Index;
+        uint16_t CurrentIndex = Object[Mid].ID;
 
         if (CurrentIndex == Target)
         {
             if (Object[Mid].Object == nullptr)
                 return -1;
-            return Mid; 
+            return Mid;
         }
         else if (CurrentIndex < Target)
             Low = Mid + 1;
@@ -27,7 +27,7 @@ int32_t RegisterClass::Search(const Reference &ID) const
     return -1;
 }
 
-int32_t RegisterClass::Search(BaseClass *SearchObject) const // Removes object
+int32_t RegisterClass::Search(const BaseClass *SearchObject) const // Removes object
 {
     for (uint16_t Index = 0; Index < Registered; Index++)
     {
@@ -36,6 +36,16 @@ int32_t RegisterClass::Search(BaseClass *SearchObject) const // Removes object
     }
     return -1;
 };
+
+Reference RegisterClass::GetReference(const BaseClass *SearchObject) const
+{
+    int32_t ArrayPos = Objects.Search(const_cast<BaseClass *>(SearchObject));
+
+    if (ArrayPos != -1)
+        return Reference(0, Objects.Object[ArrayPos].GroupID, Objects.Object[ArrayPos].DeviceID);
+
+    return Reference(0, 0, 0);
+}
 
 BaseClass *RegisterClass::At(const Reference &ID) const // Returns address or nullptr if invalid
 {
@@ -57,11 +67,12 @@ bool RegisterClass::IsValid(const Reference &ID, ObjectTypes Filter) const // Re
 };
 
 template <class C>
-C *RegisterClass::ValueGet(const Reference &ID) const 
+C *RegisterClass::ValueGet(const Reference &ID) const
 {
     int32_t Index = Search(ID);
-    if (Index == -1) return nullptr;
-    
+    if (Index == -1)
+        return nullptr;
+
     // IMPORTANT: Hand off ONLY the Path (Location) to the object
     return Object[Index].Object->ValueGet<C>(ID.Location);
 }
@@ -70,7 +81,8 @@ template <class C>
 bool RegisterClass::ValueSet(C Value, const Reference &ID)
 {
     int32_t Index = Search(ID);
-    if (Index == -1) return false;
+    if (Index == -1)
+        return false;
 
     // Hand off the Path to the internal ByteArray logic
     return Object[Index].Object->ValueSet(Value, ID.Location);
@@ -88,7 +100,8 @@ Types RegisterClass::ValueTypeAt(const Reference &ID) const
 
 void RegisterClass::Expand(uint32_t NewAllocated)
 {
-    if (NewAllocated <= Allocated) return;
+    if (NewAllocated <= Allocated)
+        return;
     NewAllocated = (Allocated == 0) ? NewAllocated : Allocated * 3 / 2;
 
     RegisterEntry *NewObject = new RegisterEntry[NewAllocated];
@@ -124,19 +137,20 @@ void RegisterClass::Shorten()
     Allocated = NewAllocated;
 }
 
-bool RegisterClass::Register(BaseClass *AddObject, const Reference &ID)
+bool RegisterClass::Register(BaseClass *AddObject, const Reference &ID, ObjectInfo Info)
 {
-    if (AddObject == nullptr) return false;
+    if (AddObject == nullptr)
+        return false;
 
     // Use the Reference's ID fields
     uint16_t TargetKey = ((uint16_t)ID.Group << 8) | ID.Device;
 
     uint16_t InsertAt = 0;
-    while (InsertAt < Registered && Object[InsertAt].Index < TargetKey)
+    while (InsertAt < Registered && Object[InsertAt].ID < TargetKey)
         InsertAt++;
 
-    if (InsertAt < Registered && Object[InsertAt].Index == TargetKey)
-        return false; 
+    if (InsertAt < Registered && Object[InsertAt].ID == TargetKey)
+        return false;
 
     Expand(Registered + 1);
 
@@ -146,10 +160,11 @@ bool RegisterClass::Register(BaseClass *AddObject, const Reference &ID)
     }
 
     Object[InsertAt].Object = AddObject;
-    Object[InsertAt].Index = TargetKey;
+    Object[InsertAt].ID = TargetKey;
+    Object[InsertAt].Info = Info;
 
     Registered += 1;
-    return true; 
+    return true;
 }
 
 bool RegisterClass::Unregister(int32_t Index)
@@ -160,15 +175,15 @@ bool RegisterClass::Unregister(int32_t Index)
     // Shift elements left to overwrite the removed index
     if (Index < Registered - 1)
     {
-        memmove(Object + Index, 
-                Object + Index + 1, 
+        memmove(Object + Index,
+                Object + Index + 1,
                 (Registered - Index - 1) * sizeof(RegisterEntry));
     }
 
     Registered -= 1;
-    
+
     // Attempt to shrink memory if we are now significantly under capacity
     Shorten();
-    
+
     return true;
 }

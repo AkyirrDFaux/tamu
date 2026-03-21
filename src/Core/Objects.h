@@ -1,7 +1,34 @@
+class FlagClass
+{
+public:
+    uint8_t Values = Flags::None;
+    FlagClass() {};
+    FlagClass(uint8_t Input) { Values = Input; };
+    void operator=(uint8_t Other) { Values = Other; };
+    void operator+=(uint8_t Other) { Values |= Other; };
+    void operator-=(uint8_t Other) { Values &= ~Other; };
+    bool operator==(Flags Other) { return (Values & Other) != 0; };
+};
+
+struct ObjectInfo
+{
+    FlagClass Flags = Flags::None;
+    uint8_t RunTiming = 0;
+};
+
 struct RegisterEntry
 {
     BaseClass *Object;
-    uint16_t Index;
+    union
+    {
+        uint16_t ID;
+        struct
+        {
+            uint8_t DeviceID;
+            uint8_t GroupID;
+        };
+    };
+    ObjectInfo Info;
 };
 
 class RegisterClass
@@ -10,11 +37,10 @@ public:
     RegisterEntry *Object = nullptr;
     uint16_t Allocated = 0;
     uint16_t Registered = 0;
-
     RegisterClass() {};
-
     int32_t Search(const Reference &ID) const;
-    int32_t Search(BaseClass *SearchObject) const;
+    int32_t Search(const BaseClass *SearchObject) const;
+    Reference GetReference(const BaseClass *SearchObject) const;
     BaseClass *At(const Reference &ID) const;
     BaseClass *operator[](Reference ID) const { return At(ID); };
     bool IsValid(const Reference &ID, ObjectTypes Filter = ObjectTypes::Undefined) const;
@@ -28,21 +54,9 @@ public:
     void Expand(uint32_t NewAllocated);
     void Shorten();
 
-    bool Register(BaseClass *AddObject, const Reference &ID);
+    bool Register(BaseClass *AddObject, const Reference &ID, ObjectInfo Info = {Flags::None,0});
     bool Unregister(int32_t Index);
 } Objects;
-
-class FlagClass
-{
-public:
-    uint8_t Values = Flags::None;
-    FlagClass() {};
-    FlagClass(uint8_t Input) { Values = Input; };
-    void operator=(uint8_t Other) { Values = Other; };
-    void operator+=(uint8_t Other) { Values |= Other; };
-    void operator-=(uint8_t Other) { Values &= ~Other; };
-    bool operator==(Flags Other) { return Values & Other; };
-};
 
 struct VTable
 {
@@ -55,14 +69,13 @@ class BaseClass
 public:
     const VTable *const Vptr;
     ObjectTypes Type = ObjectTypes::Undefined;
-    FlagClass Flags;
     Text Name = "";
     ByteArray Values;
 
-    BaseClass(const VTable *Table, Reference NewID, FlagClass NewFlags = Flags::None)
-        : Vptr(Table), Flags(NewFlags)
+    BaseClass(const VTable *Table, Reference NewID, ObjectInfo Info = {Flags::None,0})
+        : Vptr(Table)
     {
-        Objects.Register(this, NewID);
+        Objects.Register(this, NewID, Info);
     };
 
     ~BaseClass() { Objects.Unregister(Objects.Search(this)); };
@@ -85,7 +98,4 @@ public:
     Getter<C> ValueGet(const Path &Location) const;
     template <class C>
     bool ValueSet(C Value, const Path &Location);
-
-    // ByteArray OutputValues(int32_t Value = 0) const;
-    // bool InputValues(ByteArray &Input, int32_t Index, uint8_t Value = 0);
 };

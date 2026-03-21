@@ -42,11 +42,11 @@ void Run(const ByteArray &Input)
     case Functions::WriteName:
         WriteName(Input);
         break;
-    case Functions::ReadFlags:
-        ReadFlags(Input);
+    case Functions::ReadInfo:
+        ReadInfo(Input);
         break;
-    case Functions::SetFlags:
-        SetFlags(Input);
+    case Functions::SetInfo:
+        SetInfo(Input);
         break;
     default:
         // Handle unknown or unmapped functions
@@ -114,11 +114,11 @@ void DeleteObject(const ByteArray &Input)
     }
 
     // 5. Check for Protected/Auto flags to prevent accidental deletion
-    if (Object->Flags == Flags::Auto)
+    /*if (Object->Flags == Flags::Auto)
     {
         Chirp.Send(ByteArray(Status::AutoObject) << Input);
         return;
-    }
+    }*/
 
     // 6. Execute high-level destruction
     // This triggers the virtual cleanup, Disconnects from the Board,

@@ -110,12 +110,12 @@ namespace HW
 
     void High(const Pin &Pin)
     {
-        gpio_set_level((gpio_num_t)Pin.Number, 1);
+        gpio_set_level((gpio_num_t)Pin.Number, 0);
     }
 
     void Low(const Pin &Pin)
     {
-        gpio_set_level((gpio_num_t)Pin.Number, 0);
+        gpio_set_level((gpio_num_t)Pin.Number, 1);
     }
 
     uint32_t Now()

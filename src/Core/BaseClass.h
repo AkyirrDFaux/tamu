@@ -3,26 +3,11 @@
 template <>
 ByteArray::ByteArray(const BaseClass &Data)
 {
-    // 1. Find the ARRAY POSITION of this object
-    int32_t ArrayPos = Objects.Search(const_cast<BaseClass *>(&Data));
+    int32_t Index = Objects.Search(&Data);
 
-    uint8_t idBytes[3] = {0, 0, 0};
-
-    if (ArrayPos != -1) {
-        // 2. Get the ACTUAL stored ID Key from the Register
-        uint16_t ActualID = Objects.Object[ArrayPos].Index; 
-        
-        idBytes[0] = 0;                     // Net ID (still hardcoded 0 for now)
-        idBytes[1] = (uint8_t)(ActualID >> 8);  // Actual Group ID
-        idBytes[2] = (uint8_t)(ActualID & 0xFF); // Actual Device ID
-    }
-
-    // 3. Construct the array as before...
-    *this = ByteArray((const char *)idBytes, 3);
-    HeaderArray[0].Type = Types::Reference;
-    
+    *this = ByteArray(Reference(0,Objects.Object[Index].GroupID, Objects.Object[Index].DeviceID));
     *this = *this << ByteArray(Data.Type)
-                  << ByteArray(Data.Flags)
+                  << ByteArray(Objects.Object[Index].Info)
                   << ByteArray(Data.Name)
                   << Data.Values;
 }

@@ -1,47 +1,108 @@
-void BoardClass::RebuildChain(int32_t Port)
+void BoardClass::PortSetup(uint8_t Port)
 {
-    if (Port < 0 || Port >= 11) return;
+    if (Port >= 11)
+        return;
 
-    uint32_t TotalPixels = 0;
-    uint8_t slot = 2;
-
-    // Pass 1: Sum the lengths
-    while (true)
+    // 1. Clear existing driver to prepare for fresh detection
+    if (DriverArray[Port] != nullptr)
     {
-        Getter<Reference> Ref = Values.Get<Reference>({1, (uint8_t)Port, slot});
-        if (!Ref.Success) break;
-
-        BaseClass* Device = Objects.At(Ref.Value);
-        if (Device != nullptr)
-        {
-            TotalPixels += (uint32_t)Device->Values.Get<int32_t>({0, 1});
-        }
-        slot++;
+        delete static_cast<LEDDriver *>(DriverArray[Port]);
+        DriverArray[Port] = nullptr;
     }
 
-    // Pass 2: Distribute Pointers
-    uint32_t CurrentOffset = 0;
-    uint8_t* BaseAddr = (uint8_t*)DriverArray[Port];
-    
-    // Safety check for hardware buffer
-    if (BaseAddr == nullptr) return;
+    // 2. Get the physical Pin assigned to this port
+    Getter<Pin> PortPin = Values.Get<Pin>({1, Port, 0});
+    if (!PortPin.Success)
+        return;
 
-    slot = 2;
-    while (true)
+    // 3. Peak at the first object to determine the required Driver
+    Getter<Reference> FirstRef = Values.Get<Reference>({1, Port, 1, 0});
+    if (!FirstRef.Success)
     {
-        Getter<Reference> Ref = Values.Get<Reference>({1, (uint8_t)Port, slot});
-        if (!Ref.Success) break;
-
-        BaseClass* Device = Objects.At(Ref.Value);
-        if (Device != nullptr && Device->Type == ObjectTypes::Display)
-        {
-            // Update the actual pointer in the Display object
-            ((DisplayClass*)Device)->LEDs = BaseAddr + (CurrentOffset * 3);
-            
-            CurrentOffset += (uint32_t)Device->Values.Get<int32_t>({0, 1});
-        }
-        slot++;
+        Values.Set(Drivers::None, {1, Port, 1});
+        return; // Port is empty
     }
+
+    BaseClass *FirstObj = Objects.At(FirstRef.Value);
+    if (!FirstObj){
+        Values.Set(Drivers::None, {1, Port, 1});
+        return;
+    }
+        
+
+    // 4. AUTO-DETECTION LOGIC
+    if (FirstObj->Type == ObjectTypes::Display)
+    {
+        // Detected a Display -> We need an LED Driver
+        ESP_LOGI("Board", "Port %d: Auto-detected LED Chain", Port);
+
+        uint32_t TotalLength = 0;
+        uint8_t Slot = 0;
+
+        Values.Set(Drivers::LED, {1, Port, 1});
+
+        // Walk the chain to calculate total buffer size
+        while (true)
+        {
+            Getter<Reference> Ref = Values.Get<Reference>({1, Port, 1, Slot});
+            if (!Ref.Success)
+                break;
+
+            BaseClass *Obj = Objects.At(Ref.Value);
+            if (Obj && Obj->Type == ObjectTypes::Display)
+            {
+                Getter<int32_t> Len = Obj->Values.Get<int32_t>({0, 1});
+                if (Len.Success)
+                    TotalLength += Len.Value;
+            }
+            Slot++;
+        }
+
+        if (TotalLength > 0)
+        {
+            LEDDriver *NewDriver = new LEDDriver(TotalLength, PortPin.Value);
+            DriverArray[Port] = NewDriver;
+
+            // Inject pointers into the displays
+            uint32_t CurrentOffset = 0;
+            for (uint8_t i = 0; i < Slot; i++)
+            {
+                Getter<Reference> Ref = Values.Get<Reference>({1, Port, 1, i});
+                DisplayClass *Disp = static_cast<DisplayClass *>(Objects.At(Ref.Value));
+
+                if (Disp)
+                {
+                    Disp->LEDs = NewDriver->Offset(CurrentOffset);
+                    Getter<int32_t> Len = Disp->Values.Get<int32_t>({0, 1});
+                    if (Len.Success)
+                        CurrentOffset += Len.Value;
+                }
+            }
+        }
+    }
+    else
+        Values.Set(Drivers::None, {1, Port, 1});
+    /*else if (FirstObj->Type == ObjectTypes::Sensor)
+    {
+        // Example: Auto-detect I2C or Analog based on Sensor type
+        // DriverArray[Port] = new I2CDriver(...);
+    }*/
+}
+
+void BoardClass::PortReset(BaseClass *Object)
+{
+    // 1. Resolve the Reference to a live object
+    if (Object == nullptr)
+        return;
+
+    // 2. Clear hardware-specific pointers based on Object Type
+    if (Object->Type == ObjectTypes::Display)
+    {
+        DisplayClass *Display = static_cast<DisplayClass *>(Object);
+        Display->LEDs = nullptr;
+        ESP_LOGI("Board", "Retracted Driver from Display Object");
+    }
+    // Add other types (Sensors, Motors, etc.) as needed
 }
 
 /*void PortClass::AddModule(BaseClass *Object, int32_t Index)

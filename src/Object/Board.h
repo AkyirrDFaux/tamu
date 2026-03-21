@@ -28,9 +28,10 @@ public:
     bool Run(); // For LED outputs
     void UpdateLoopTime();
 
-    void RebuildChain(int32_t Port);
-    bool Connect(BaseClass *Object, int32_t Index = 0);
-    bool Disconnect(BaseClass *Object);
+    void PortSetup(uint8_t Port);
+    void PortReset(BaseClass *Object);
+    bool Connect(BaseClass *Object, uint8_t Port, uint8_t Index = 0);
+    bool Disconnect(BaseClass *Object, uint8_t Port);
 
     static void SetupBridge(BaseClass *Base, Path Index) { static_cast<BoardClass *>(Base)->Setup(Index); }
     static bool RunBridge(BaseClass *Base) { return static_cast<BoardClass *>(Base)->Run(); }
@@ -41,7 +42,7 @@ public:
 
 constexpr VTable BoardClass::Table;
 
-BoardClass::BoardClass(Reference ID) : BaseClass(&Table, ID, Flags::Auto) // Board always loads first, it takes ID 1
+BoardClass::BoardClass(Reference ID) : BaseClass(&Table, ID, {Flags::Auto, 1})
 {
     Type = ObjectTypes::Board;
     Name = "Board";
@@ -141,108 +142,111 @@ BoardClass::BoardClass(Reference ID) : BaseClass(&Table, ID, Flags::Auto) // Boa
 void BoardClass::Setup(Path Index) {
 };
 
-bool BoardClass::Connect(BaseClass *Object, int32_t Index)
+bool BoardClass::Connect(BaseClass *Object, uint8_t Port, uint8_t Index)
 {
-    if (Object == nullptr)
+    ESP_LOGI("Board", "- Connect(Port: %d, Idx: %d)\n", Port, Index);
+    if (Object == nullptr || Port < 0 || Port > 10)
         return false;
 
-    // 1. Find the local ID (Index) of the object in the global registry
-    int32_t ObjectIdx = Objects.Search(Object);
-    if (ObjectIdx == -1)
+    Reference ID = Objects.GetReference(Object);
+    Getter<Drivers> Driver = Values.Get<Drivers>({1, (uint8_t)Port, 1});
+    if (ID == Reference(0, 0, 0) || !Driver.Success)
         return false;
 
-    // Create the Reference using the found index (Net=0, Group=0, Device=ObjectIdx)
-    // Adjust N/G/D mapping based on your specific network architecture
-    Reference ObjectRef(0, 0, (uint8_t)ObjectIdx);
-
-    // 2. Find the Port by walking up to the Board
-    BaseClass *Current = Object;
-    while (true)
+    // 1. Bus Logic: If it's I2C, ignore the passed Index and find the first hole
+    if (Driver == Drivers::I2C_SCL || Driver == Drivers::I2C_SDA)
     {
-        Getter<Reference> Link = Current->Values.Get<Reference>({0, 0});
-        if (!Link.Success)
-            return false;
-
-        BaseClass *Upstream = Objects.At(Link.Value);
-        if (Upstream != nullptr && Upstream->Type == ObjectTypes::Board)
+        uint8_t Search = 0;
+        while (Search < 32)
         {
-            int32_t Port = (int32_t)Link.Value.Location.Indexing[1];
-
-            // 3. Register the Reference into the Board's database {1, Port, 2...}
-            // We use 'Index' passed from the peripheral to determine the slot
-            // so the order is preserved (Board <- 0 <- 1 <- 2)
-            uint8_t slot = (uint8_t)(2 + Index);
-            Values.Set<Reference>(ObjectRef, {1, (uint8_t)Port, slot});
-
-            RebuildChain(Port);
-            return true;
-        }
-        Current = Upstream;
-        if (Current == nullptr)
-            break;
-    }
-    return false;
-}
-
-bool BoardClass::Disconnect(BaseClass *Object)
-{
-    if (Object == nullptr)
-        return false;
-
-    // 1. Identify the object's unique Reference via the Registry Search
-    int32_t ObjectIdx = Objects.Search(Object);
-    if (ObjectIdx == -1)
-        return false;
-
-    Reference TargetRef(0, 0, (uint8_t)ObjectIdx);
-
-    // 2. Scan all ports to find where this Reference is stored
-    for (uint8_t p = 0; p < 11; p++)
-    {
-        uint8_t slot = 2;
-        bool found = false;
-
-        while (true)
-        {
-            Getter<Reference> CurrentSlot = Values.Get<Reference>({1, p, slot});
-            if (!CurrentSlot.Success)
-                break; // End of this port's list
-
-            if (CurrentSlot.Value == TargetRef)
+            Getter<Reference> Entry = Values.Get<Reference>({1, Port, 1, Search});
+            if (!Entry.Success)
             {
-                // 3. Found the object. Remove it from the Board's database.
-                Values.Delete({1, p, slot});
-                found = true;
-
-                // 4. Defragment the list: Shift subsequent devices down
-                // This ensures the Registry {2, 3, 4...} remains contiguous
-                uint8_t nextSlot = slot + 1;
-                while (true)
-                {
-                    Getter<Reference> NextRef = Values.Get<Reference>({1, p, nextSlot});
-                    if (!NextRef.Success)
-                        break;
-
-                    // Move the next reference into the current (now empty) slot
-                    Values.Set<Reference>(NextRef.Value, {1, p, (uint8_t)(nextSlot - 1)});
-                    Values.Delete({1, p, nextSlot});
-                    nextSlot++;
-                }
+                Index = Search;
                 break;
             }
-            slot++;
-        }
-
-        if (found)
-        {
-            // 5. Trigger a Rebuild for this port to update the remaining
-            // devices' LEDs pointers and the total driver length.
-            RebuildChain(p);
-            return true;
+            if (Entry.Value == ID)
+                return false; // Already here
+            Search++;
         }
     }
+    else
+    {
+        // 2. Direct/Chain Logic: Strict Indexing
+        // If no driver is set, we only allow raw connection at Index 0
+        if (Driver.Value == Drivers::None && Index != 0)
+            return false;
 
-    return false;
+        // Overwrite Protection: Block if this specific slot is taken
+        if (Values.Get<Reference>({1, Port, 1, Index}).Success)
+            return false;
+    }
+
+    Values.Set<Reference>(ID, {1, Port, 1, Index});
+    PortSetup(Port);
+    return true;
+}
+
+bool BoardClass::Disconnect(BaseClass *Object, uint8_t Port)
+{
+    if (Object == nullptr || Port > 10)
+        return false;
+
+    Reference ID = Objects.GetReference(Object);
+    Getter<Drivers> Driver = Values.Get<Drivers>({1, Port, 1});
+
+    // If the object reference is invalid or no driver exists on this port,
+    // there is nothing to disconnect.
+    if (ID == Reference(0, 0, 0) || !Driver.Success)
+        return false;
+
+    uint8_t Slot = 0;
+    while (Slot < 32)
+    {
+        Path SlotPath = {1, Port, 1, Slot};
+        Getter<Reference> Entry = Values.Get<Reference>(SlotPath);
+
+        if (!Entry.Success)
+            break; // Reached the end of the current driver's list
+
+        if (Entry.Value == ID)
+        {
+            // --- FOUND THE OBJECT ---
+            PortReset(Object);
+            // 1. Bus Logic: If it's I2C, perform a Shift-Left to keep it packed
+            if (Driver == Drivers::I2C_SCL || Driver == Drivers::I2C_SDA)
+            {
+                Values.Delete(SlotPath);
+                uint8_t Next = Slot + 1;
+                while (Next < 32)
+                {
+                    Getter<Reference> Upstream = Values.Get<Reference>({1, Port, 1, Next});
+                    if (!Upstream.Success)
+                        break;
+
+                    // Move upstream reference down and clear the old index
+                    Values.Set<Reference>(Upstream.Value, {1, Port, 1, (uint8_t)(Next - 1)});
+                    Values.Delete({1, Port, 1, Next});
+                    Next++;
+                }
+            }
+            else
+            {
+                // 2. Chain/Direct/None Logic: Wipe-Upstream (Scorched Earth)
+                // Deleting the target and everything following it in the chain
+                uint8_t ToWipe = Slot;
+                while (Values.Get<Reference>({1, Port, 1, ToWipe}).Success)
+                {
+                    Values.Delete({1, Port, 1, ToWipe});
+                    ToWipe++;
+                }
+            }
+            PortSetup(Port);
+            return true;
+        }
+        Slot++;
+    }
+    return false; // Object not found on this port
 }
 
 bool BoardClass::Run()
@@ -257,6 +261,16 @@ bool BoardClass::Run()
         Values.Set<int32_t>(AvgLoopTime, {0, 3});
         Values.Set<int32_t>(HW::GetRAM(), {0, 4});
         Values.Set<int32_t>(HW::GetFreeRAM(), {0, 5});
+    }
+
+    for (uint8_t i = 0; i < 11; i++)
+    {
+        if (DriverArray[i] != nullptr)
+        {
+            // We know from PortSetup that for now, these are LEDDrivers
+            LEDDriver *Driver = static_cast<LEDDriver *>(DriverArray[i]);
+            Driver->Show();
+        }
     }
     return true;
 }

@@ -1,5 +1,5 @@
 class BaseClass;
-class FlagClass;
+struct ObjectInfo;
 class IDClass;
 class IDList;
 class ByteArray;
