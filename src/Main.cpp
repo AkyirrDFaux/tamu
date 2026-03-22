@@ -60,8 +60,7 @@ BoardClass Board(Reference(0, 0, 0));
 // Objects
 // #include "Object\Input.h"
 // #include "Object\Sensor.h"
-//#include "Object\Bus.h"
-#include "Object\AccGyr.h"
+#include "Object\I2CDevice.h"
 
 // #include "Object\Fan.h"
 // #include "Object\Servo.h"
@@ -132,7 +131,6 @@ int main()
     while (1)
     {
         Chirp.Communicate();
-        //HW::Sleep(5);
 
         for (int32_t Index = Objects.Registered - 1; Index >= 0; Index--)
         {
@@ -164,34 +162,25 @@ extern "C"
 #endif
 /*TODO:
 KEY FEATURES:
-Crash (Delete/Create) Safety
+Operations and programs
 Saving
+Sensors
+OLED
+Fan, Servo
+Compile options
+App backup (json?)
 
+FUTURE:
+App Programming view
+App Presets, blocks
 All-display filters
 Better LED strip functions
-
-App Programming view
-App Presets/blocks
-
-Finish OLED menu
-FUTURE:
+Experimental paralel LED bit-banging
 Multiple boards together
 
 ADJUSTMENTS:
-use more const, final, inline keywords, pass by reference
-
-Flag clarification (Auto -> System = nondeletable, some error flags?)
-- Groups instead of favourites
-- refresh rates for loop runs
-Value names?... send with separate fcn? or just make it fixed ahead with virtual fcn?
-
-Register, IDList, ByteArray cleanup
-- More optimised ByteArray functions (sequential & multiple(type + object) reading)
-Combine Texture, Geometry into Shape2D, Combine Input and Sensor (Input), Combine Fan and Servo (Output)
-Go over user functions
+use more const, final, inline keywords, pass by reference, overall optimalizaton
 Chirp spread out sending/recieving delay, better compression/buffering
-Operation - prevent recursion, remove unnecessary loops in fuction calls, add more functions
-Names in RAM/ only on flash / no names (compile option)
 */
 
 // 20.07.2024 Started over >:)
@@ -230,3 +219,4 @@ Names in RAM/ only on flash / no names (compile option)
 // 12.02.2026 De-arduino-ified Tamu v2.0
 // 13.02.2026 Valu v2.0 OLED menu test
 // 14.02.2026 Custom saving in flash
+// 21.03.2025 New value system (layered, uses paths, no modules), app styling
