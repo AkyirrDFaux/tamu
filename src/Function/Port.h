@@ -1,34 +1,119 @@
-void BoardClass::PortSetup(uint8_t Port)
-{
-    if (Port >= 11)
-        return;
+void BoardClass::Setup(Path Index) {
+#if defined BOARD_Tamu_v2_0
+    // Initialize onboard devices only when Setup is called with root path
+    if (Index.Length == 0) {
+        I2CDeviceClass *GyroAcc = new I2CDeviceClass(Reference(0,2,0), {Flags::Auto,1});
+        GyroAcc->ValueSetup<uint8_t>(8, {0,0});
+        GyroAcc->ValueSetup<uint8_t>(9, {0,1});
+        GyroAcc->ValueSetup(I2CDevices::LSM6DS3TRC, {0});
+    }
+#endif
+};
 
-    // 1. Clear existing driver to prepare for fresh detection
-    if (DriverArray[Port] != nullptr)
+void BoardClass::DriverStop(uint8_t Port)
+{
+    if (Port >= 11) return;
+
+    Getter<Drivers> CurrentRole = Values.Get<Drivers>({1, Port, 1});
+    if (!CurrentRole.Success || CurrentRole.Value == Drivers::None) return;
+
+    // 1. Handle I2C Redirection (SCL -> SDA)
+    if (CurrentRole.Value == Drivers::I2C_SCL)
+    {
+        Getter<uint8_t> SdaPortIdx = Values.Get<uint8_t>({1, Port, 2});
+        if (SdaPortIdx.Success)
+        {
+            uint8_t SdaPort = SdaPortIdx.Value;
+            Getter<Drivers> PartnerRole = Values.Get<Drivers>({1, SdaPort, 1});
+            if (PartnerRole.Success && PartnerRole.Value == Drivers::I2C_SDA)
+            {
+                DriverStop(SdaPort);
+                return; // Redirection handled the logic
+            }
+        }
+    }
+
+    // 2. Handle SDA Deletion (The Bus Owner)
+    else if (CurrentRole.Value == Drivers::I2C_SDA)
+    {
+        bool stillInUse = false;
+        uint8_t SclPort = Values.Get<uint8_t>({1, Port, 2}).Value;
+
+        uint8_t Slot = 0;
+        while (true)
+        {
+            Getter<Reference> Entry = Values.Get<Reference>({1, Port, 1, Slot++});
+            if (!Entry.Success) break;
+
+            BaseClass *Obj = Objects.At(Entry.Value);
+            if (Obj && Obj->Type == ObjectTypes::I2C)
+            {
+                I2CDeviceClass *Sensor = static_cast<I2CDeviceClass *>(Obj);
+
+                // --- UPDATED: Direct uint8_t comparison ---
+                Getter<uint8_t> SdaTarget = Sensor->Values.Get<uint8_t>({0, 0});
+                Getter<uint8_t> SclTarget = Sensor->Values.Get<uint8_t>({0, 1});
+
+                if (SdaTarget.Success && SclTarget.Success)
+                {
+                    if (SdaTarget.Value == Port && SclTarget.Value == SclPort)
+                    {
+                        stillInUse = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (!stillInUse)
+        {
+            if (DriverArray[Port] != nullptr)
+            {
+                delete static_cast<I2C *>(DriverArray[Port]);
+                ESP_LOGI("Board", "I2C Bus stopped on ports %d (SDA) and %d (SCL)", Port, SclPort);
+            }
+
+            DriverArray[Port] = nullptr;
+            if (SclPort < 11) DriverArray[SclPort] = nullptr;
+
+            Values.Set(Drivers::None, {1, Port, 1});
+            Values.Set(Drivers::None, {1, SclPort, 1});
+            Values.Delete({1, Port, 2});
+            Values.Delete({1, SclPort, 2});
+        }
+    }
+    
+    // 3. Simple Drivers (LED)
+    else if (CurrentRole.Value == Drivers::LED && DriverArray[Port] != nullptr)
     {
         delete static_cast<LEDDriver *>(DriverArray[Port]);
         DriverArray[Port] = nullptr;
     }
+}
 
+void BoardClass::DriverStart(uint8_t Port)
+{
     // 2. Get the physical Pin assigned to this port
     Getter<Pin> PortPin = Values.Get<Pin>({1, Port, 0});
     if (!PortPin.Success)
         return;
 
     // 3. Peak at the first object to determine the required Driver
+    // 3. Peak at the first object
     Getter<Reference> FirstRef = Values.Get<Reference>({1, Port, 1, 0});
     if (!FirstRef.Success)
     {
         Values.Set(Drivers::None, {1, Port, 1});
-        return; // Port is empty
+        Values.Delete({1, Port, 2}); // Remove partner link
+        return;
     }
 
     BaseClass *FirstObj = Objects.At(FirstRef.Value);
-    if (!FirstObj){
+    if (!FirstObj)
+    {
         Values.Set(Drivers::None, {1, Port, 1});
         return;
     }
-        
 
     // 4. AUTO-DETECTION LOGIC
     if (FirstObj->Type == ObjectTypes::Display)
@@ -80,13 +165,89 @@ void BoardClass::PortSetup(uint8_t Port)
             }
         }
     }
+    // --- 2. I2C Logic (Referral System) ---
+    else if (FirstObj->Type == ObjectTypes::I2C)
+    {
+        I2CDeviceClass *Sensor = static_cast<I2CDeviceClass *>(FirstObj);
+        
+        // --- UPDATED: Get simple uint8_t indices ---
+        Getter<uint8_t> SdaIdx = Sensor->Values.Get<uint8_t>({0, 0});
+        Getter<uint8_t> SclIdx = Sensor->Values.Get<uint8_t>({0, 1});
+
+        if (!SdaIdx.Success || !SclIdx.Success) return;
+
+        // A. SCL REDIRECTION
+        if (SclIdx.Value == Port)
+        {
+            DriverStart(SdaIdx.Value);
+            return;
+        }
+
+        // B. SDA INITIALIZATION
+        else if (SdaIdx.Value == Port)
+        {
+            uint8_t SclPortIdx = SclIdx.Value;
+            Getter<Drivers> CurrentRole = Values.Get<Drivers>({1, Port, 1});
+
+            if (!CurrentRole.Success || CurrentRole.Value == Drivers::None)
+            {
+                Getter<Pin> SdaPin = Values.Get<Pin>({1, Port, 0});
+                Getter<Pin> SclPin = Values.Get<Pin>({1, SclPortIdx, 0});
+
+                if (SdaPin.Success && SclPin.Success)
+                {
+                    I2C *Bus = new I2C();
+                    if (Bus->Begin(SclPin.Value, SdaPin.Value, 400000))
+                    {
+                        Values.Set(Drivers::I2C_SDA, {1, Port, 1});
+                        Values.Set(Drivers::I2C_SCL, {1, SclPortIdx, 1});
+                        Values.Set(SclPortIdx, {1, Port, 2}); 
+                        Values.Set(Port, {1, SclPortIdx, 2}); 
+
+                        DriverArray[Port] = Bus;
+                        DriverArray[SclPortIdx] = Bus;
+                    }
+                    else { delete Bus; return; }
+                }
+            }
+
+            // C. POINTER DISTRIBUTION
+            I2C *ActiveBus = static_cast<I2C *>(DriverArray[Port]);
+            if (ActiveBus != nullptr)
+            {
+                uint8_t Slot = 0;
+                while (true)
+                {
+                    Getter<Reference> Entry = Values.Get<Reference>({1, Port, 1, Slot++});
+                    if (!Entry.Success) break;
+
+                    BaseClass *Obj = Objects.At(Entry.Value);
+                    if (Obj && Obj->Type == ObjectTypes::I2C)
+                    {
+                        I2CDeviceClass *Dev = static_cast<I2CDeviceClass *>(Obj);
+                        
+                        // --- UPDATED: Simple check if this device belongs on this SCL partner ---
+                        Getter<uint8_t> TargetScl = Dev->Values.Get<uint8_t>({0, 1});
+                        if (TargetScl.Success && TargetScl.Value == SclPortIdx)
+                        {
+                            Dev->I2CDriver = ActiveBus;
+                        }
+                    }
+                }
+            }
+        }
+    }
     else
         Values.Set(Drivers::None, {1, Port, 1});
-    /*else if (FirstObj->Type == ObjectTypes::Sensor)
-    {
-        // Example: Auto-detect I2C or Analog based on Sensor type
-        // DriverArray[Port] = new I2CDriver(...);
-    }*/
+};
+
+void BoardClass::PortSetup(uint8_t Port)
+{
+    if (Port >= 11)
+        return;
+
+    DriverStop(Port);
+    DriverStart(Port);
 }
 
 void BoardClass::PortReset(BaseClass *Object)
@@ -96,13 +257,30 @@ void BoardClass::PortReset(BaseClass *Object)
         return;
 
     // 2. Clear hardware-specific pointers based on Object Type
-    if (Object->Type == ObjectTypes::Display)
+    switch (Object->Type)
+    {
+    case ObjectTypes::Display:
     {
         DisplayClass *Display = static_cast<DisplayClass *>(Object);
         Display->LEDs = nullptr;
-        ESP_LOGI("Board", "Retracted Driver from Display Object");
+        ESP_LOGI("Board", "Retracted LED Driver from Display");
     }
-    // Add other types (Sensors, Motors, etc.) as needed
+    break;
+
+    case ObjectTypes::I2C:
+    {
+        I2CDeviceClass *Sensor = static_cast<I2CDeviceClass *>(Object);
+        // Even if only one pin (SDA or SCL) is reset,
+        // the I2C bus is no longer valid for this device.
+        Sensor->I2CDriver = nullptr;
+        ESP_LOGI("Board", "Retracted I2C Driver from Sensor");
+    }
+    break;
+
+    default:
+        // No specific driver pointers to clear for this type
+        break;
+    }
 }
 
 /*void PortClass::AddModule(BaseClass *Object, int32_t Index)

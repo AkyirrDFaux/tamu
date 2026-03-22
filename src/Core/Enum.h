@@ -198,7 +198,7 @@ Types GetType<SensorTypes>() { return Types::Sensor; };
 template <>
 Types GetType<Drivers>() { return Types::PortDriver; };
 template <>
-Types GetType<GyrAccs>() { return Types::AccGyr; };
+Types GetType<I2CDevices>() { return Types::AccGyr; };
 template <>
 Types GetType<Inputs>() { return Types::Input; };
 template <>

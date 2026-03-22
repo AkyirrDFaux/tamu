@@ -28,8 +28,11 @@ public:
     bool Run(); // For LED outputs
     void UpdateLoopTime();
 
+    void DriverStop(uint8_t Port);
+    void DriverStart(uint8_t Port);
     void PortSetup(uint8_t Port);
     void PortReset(BaseClass *Object);
+
     bool Connect(BaseClass *Object, uint8_t Port, uint8_t Index = 0);
     bool Disconnect(BaseClass *Object, uint8_t Port);
 
@@ -78,15 +81,12 @@ BoardClass::BoardClass(const Reference &ID) : BaseClass(&Table, ID, {Flags::Auto
     SET_PORT(9, Ports::I2C_SCL, 5, Drivers::None);
     SET_PORT(10, Ports::GPIO | Ports::Internal, LED_NOTIFICATION_PIN, Drivers::None);
 
-    /*AddModule(new I2CClass(RandomID, Flags::Auto), 11);
-    Modules[11]->AddModule(Modules[8], 0);
-    Modules[11]->AddModule(Modules[9], 1);
+    /*I2CDeviceClass *GyroAcc = new I2CDeviceClass(Reference(0,2,0), {Flags::Auto,1});
+    GyroAcc->ValueSetup<uint8_t>(8, {0,0});
+    GyroAcc->ValueSetup<uint8_t>(9, {0,1});
+    GyroAcc->ValueSetup(I2CDevices::LSM6DS3TRC, {0});*/
 
-    AddModule(new GyrAccClass(RandomID, Flags::Auto), 12);
-    Modules[12]->ValueSet<GyrAccs>(GyrAccs::LSM6DS3TRC, 0);
-    Modules[11]->AddModule(Modules[12], 2);
-
-    AddModule(new InputClass(RandomID, Flags::Auto), 13);
+    /*AddModule(new InputClass(RandomID, Flags::Auto), 13);
     Modules[13]->ValueSet<Inputs>(Inputs::ButtonWithLED, 0);
     Modules[10]->AddModule(Modules[13], 0);*/
 #elif defined BOARD_Valu_v2_0
@@ -139,13 +139,10 @@ BoardClass::BoardClass(const Reference &ID) : BaseClass(&Table, ID, {Flags::Auto
 #endif
 };
 
-void BoardClass::Setup(Path Index) {
-};
-
 bool BoardClass::Connect(BaseClass *Object, uint8_t Port, uint8_t Index)
 {
     ESP_LOGI("Board", "- Connect(Port: %d, Idx: %d)\n", Port, Index);
-    if (Object == nullptr || Port < 0 || Port > 10)
+    if (Object == nullptr || Port > 10)
         return false;
 
     Reference ID = Objects.GetReference(Object);
@@ -265,11 +262,16 @@ bool BoardClass::Run()
 
     for (uint8_t i = 0; i < 11; i++)
     {
-        if (DriverArray[i] != nullptr)
+        if (DriverArray[i] == nullptr) continue;
+
+        // Check the role of this port to avoid invalid casting
+        Getter<Drivers> Role = Values.Get<Drivers>({1, i, 1});
+        if (!Role.Success) continue;
+
+        if (Role.Value == Drivers::LED)
         {
-            // We know from PortSetup that for now, these are LEDDrivers
-            LEDDriver *Driver = static_cast<LEDDriver *>(DriverArray[i]);
-            Driver->Show();
+            // SAFE CAST: We know this port owns an LEDDriver
+            static_cast<LEDDriver*>(DriverArray[i])->Show();
         }
     }
     return true;

@@ -8,6 +8,9 @@ void BaseClass::Destroy()
     case ObjectTypes::Display:
         delete (DisplayClass *)this;
         break;
+    case ObjectTypes::I2C:
+        delete (DisplayClass *)this;
+        break;
     /*case ObjectTypes::LEDStrip:
         delete (LEDStripClass *)this;
         break;
@@ -73,8 +76,8 @@ BaseClass *CreateObject(Reference ID, ObjectTypes Type)
         return new Texture2D(ID, Flags);*/
     case ObjectTypes::Display:
         return new DisplayClass(ID);
-    /*case ObjectTypes::AccGyr:
-        return new GyrAccClass(ID, Flags);
+    case ObjectTypes::I2C:
+        return new I2CDeviceClass(ID);/*
     case ObjectTypes::Input:
         return new InputClass(ID, Flags);
     case ObjectTypes::Operation:

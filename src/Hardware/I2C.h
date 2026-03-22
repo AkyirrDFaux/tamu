@@ -10,6 +10,12 @@ class I2C
 public:
     I2C_Handle Handle;
     I2C() : Handle(nullptr) {}
+    ~I2C() 
+    { 
+#if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
+        if (Handle) i2c_del_master_bus(Handle); 
+#endif
+    }
 
     // Auto-detects the hardware instance based on the pins provided
     bool Begin(const Pin &SCL, const Pin &SDA, uint32_t Speed);
@@ -26,8 +32,8 @@ bool I2C::Begin(const Pin &SCL, const Pin &SDA, uint32_t Speed)
 
     i2c_master_bus_config_t bus_config = {};
     bus_config.i2c_port = I2C_NUM_0;
-    bus_config.sda_io_num = GPIO_NUM_4;
-    bus_config.scl_io_num = GPIO_NUM_5;
+    bus_config.sda_io_num = (gpio_num_t)SDA.Number;
+    bus_config.scl_io_num = (gpio_num_t)SCL.Number;
     bus_config.clk_source = I2C_CLK_SRC_RC_FAST; // More stable than XTAL for timing
     bus_config.glitch_ignore_cnt = 7;
     bus_config.flags.enable_internal_pullup = true;
@@ -41,7 +47,7 @@ bool I2C::Begin(const Pin &SCL, const Pin &SDA, uint32_t Speed)
     }
     else
     {
-        printf("Starting Scan (GPIO 4=SDA, 5=SCL)...\n");
+        /*printf("Starting Scan (GPIO 4=SDA, 5=SCL)...\n");
 
         // 3. The Scan Loop
         bool found = false;
@@ -63,7 +69,7 @@ bool I2C::Begin(const Pin &SCL, const Pin &SDA, uint32_t Speed)
             printf("No devices found on the bus.\n");
         }
 
-        printf("Scan complete.\n");
+        printf("Scan complete.\n");*/
     }
     return true;
 }
@@ -102,7 +108,7 @@ bool I2C::Write(uint8_t Address, uint8_t Register, uint8_t *Data, uint16_t Lengt
     }
 
     // 3. Transmit using the dev_handle
-    esp_err_t err = i2c_master_transmit(dev_handle, buffer, total_len, -1);
+    esp_err_t err = i2c_master_transmit(dev_handle, buffer, total_len, 1000);
 
     // 4. Cleanup
     free(buffer);
@@ -129,7 +135,7 @@ bool I2C::Read(uint8_t Address, uint8_t Register, uint8_t *Data, uint16_t Length
     }
 
     // Transmit register address, then receive data
-    esp_err_t err = i2c_master_transmit_receive(dev_handle, &Register, 1, Data, Length, -1);
+    esp_err_t err = i2c_master_transmit_receive(dev_handle, &Register, 1, Data, Length, 1000);
 
     i2c_master_bus_rm_device(dev_handle);
     return (err == ESP_OK);

@@ -260,7 +260,6 @@ void DisplayClass::RenderGeometry(uint8_t Index, int32_t Length, Vector2D Displa
 
     int32_t GridW = int32_t(DisplaySize.X);
     int32_t GridH = int32_t(DisplaySize.Y);
-    int32_t TotalGrid = GridW * GridH;
 
     for (int32_t Y = 0; Y < GridH; Y++)
     {

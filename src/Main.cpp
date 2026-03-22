@@ -54,14 +54,14 @@ ChirpClass Chirp = ChirpClass(); // Bluetooth/Serial
 // #include "Object\Operation.h"
 // #include "Object\Program.h"
 
-// Objects
-#include "Object\Bus.h"
-// #include "Object\AccGyr.h"
-// #include "Object\Input.h"
-// #include "Object\Sensor.h"
-// #include "Object\OLED.h"
 #include "Object\Board.h"
 BoardClass Board(Reference(0, 0, 0));
+
+// Objects
+// #include "Object\Input.h"
+// #include "Object\Sensor.h"
+//#include "Object\Bus.h"
+#include "Object\AccGyr.h"
 
 // #include "Object\Fan.h"
 // #include "Object\Servo.h"
@@ -70,11 +70,6 @@ BoardClass Board(Reference(0, 0, 0));
 // #include "Object\Texture1D.h"
 // #include "Object\LEDSegment.h"
 // #include "Object\LEDStrip.h"
-
-// Display
-// #include "Object\Geometry2D.h"
-// #include "Object\Texture2D.h"
-// #include "Object\Shape2D.h"
 #include "Object\Display.h"
 
 // Unrelated to messages
@@ -100,7 +95,9 @@ int main()
     // HW::FlashFormat();
 
     ESP_LOGI("MAIN", "Setuping");
+    Board.Setup({}); // Initialize devices
     DefaultSetup();
+
     ESP_LOGI("MAIN", "Starting Chirp");
     Chirp.Begin(Board.ValueGet<Text>({0,0}));
 
@@ -135,7 +132,7 @@ int main()
     while (1)
     {
         Chirp.Communicate();
-        HW::Sleep(5);
+        //HW::Sleep(5);
 
         for (int32_t Index = Objects.Registered - 1; Index >= 0; Index--)
         {
