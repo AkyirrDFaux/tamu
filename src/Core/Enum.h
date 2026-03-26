@@ -222,5 +222,3 @@ Types GetType<PortTypeClass>() { return Types::PortType; };
 
 template <>
 Types GetType<Pin>() { return Types::Pin; };
-template <>
-Types GetType<Path>() { return Types::Path; }

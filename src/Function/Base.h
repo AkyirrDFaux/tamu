@@ -7,7 +7,7 @@ void Run(const ByteArray &Input)
         return;
     }
 
-    switch (Function)
+    switch (Function.Value)
     {
     case Functions::CreateObject:
         CreateObject(Input);
@@ -213,11 +213,15 @@ void ReadObject(const ByteArray &Input)
 
 void Refresh(const ByteArray &Input)
 {
+    // Use the Registry's internal count
     for (uint32_t Index = 0; Index < Objects.Registered; Index++)
     {
-        if (Objects.Object[Index].Object == nullptr)
-            continue;
-        Chirp.Send(ByteArray(Functions::ReadObject) << ByteArray(*Objects.Object[Index].Object));
+        // Safety check: Ensure the registry slot isn't empty
+        BaseClass* Obj = Objects.Object[Index].Object;
+        if (Obj == nullptr) continue;
+
+        // Serialize the actual object data
+        Chirp.Send(ByteArray(Functions::ReadObject) << ByteArray(*Obj));
     }
     Chirp.Send(ByteArray(Status::OK));
 }

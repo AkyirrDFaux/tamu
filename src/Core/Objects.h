@@ -37,12 +37,16 @@ public:
     RegisterEntry *Object = nullptr;
     uint16_t Allocated = 0;
     uint16_t Registered = 0;
+
     RegisterClass() {};
     int32_t Search(const Reference &ID) const;
     int32_t Search(const BaseClass *SearchObject) const;
     Reference GetReference(const BaseClass *SearchObject) const;
     BaseClass *At(const Reference &ID) const;
+    
+    // Pass by value is fine for the 12-byte Reference in operators
     BaseClass *operator[](Reference ID) const { return At(ID); };
+    
     bool IsValid(const Reference &ID, ObjectTypes Filter = ObjectTypes::Undefined) const;
 
     template <class C>
@@ -60,7 +64,8 @@ public:
 
 struct VTable
 {
-    void (*Setup)(BaseClass *self, Path Index);
+    // Changed Path to Reference for consistent branch initialization
+    void (*Setup)(BaseClass *self, const Reference &Index);
     bool (*Run)(BaseClass *self);
 };
 
@@ -72,6 +77,7 @@ public:
     Text Name = "";
     ByteArray Values;
 
+    // Constructor now takes the new bit-tagged Reference
     BaseClass(const VTable *Table, const Reference &NewID, ObjectInfo Info = {Flags::None, 0})
         : Vptr(Table)
     {
@@ -79,11 +85,14 @@ public:
     };
 
     ~BaseClass() { Objects.Unregister(Objects.Search(this)); };
+    
     void Destroy();
-    void Setup(Path Index) { Vptr->Setup(this, Index); }
+    
+    // Updated Setup to use Reference
+    void Setup(const Reference &Index) { Vptr->Setup(this, Index); }
     bool Run() { return Vptr->Run(this); }
 
-    static void DefaultSetup(BaseClass *self, Path Index) { /* Empty default */ };
+    static void DefaultSetup(BaseClass *self, const Reference &Index) { /* Empty default */ };
     static bool DefaultRun(BaseClass *self)
     {
         ReportError(Status::InvalidType);
@@ -94,8 +103,9 @@ public:
     C *As() const { return (C *)this; };
     void Save();
 
+    // Value accessors now use Reference to navigate the internal ByteArray
     template <class C>
-    Getter<C> ValueGet(const Path &Location) const;
+    Getter<C> ValueGet(const Reference &Location) const;
     template <class C>
-    bool ValueSetup(C Value, const Path &Location);
+    bool ValueSetup(C Value, const Reference &Location);
 };

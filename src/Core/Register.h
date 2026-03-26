@@ -1,25 +1,25 @@
 int32_t RegisterClass::Search(const Reference &ID) const
 {
-    // 1. We use the Global Address part of the Reference for the Register
-    // Group is high byte, Device is low byte
+    // 1. Identify the unique Global ID from the Reference
+    // We compare against the 16-bit packed Group/Device key
     uint16_t Target = ((uint16_t)ID.Group << 8) | ID.Device;
 
-    // 2. Binary Search
+    // 2. Binary Search within the sorted registry
     int32_t Low = 0;
     int32_t High = (int32_t)Registered - 1;
 
     while (Low <= High)
     {
         int32_t Mid = Low + (High - Low) / 2;
-        uint16_t CurrentIndex = Object[Mid].ID;
+        uint16_t CurrentKey = Object[Mid].ID;
 
-        if (CurrentIndex == Target)
+        if (CurrentKey == Target)
         {
             if (Object[Mid].Object == nullptr)
                 return -1;
             return Mid;
         }
-        else if (CurrentIndex < Target)
+        else if (CurrentKey < Target)
             Low = Mid + 1;
         else
             High = Mid - 1;
@@ -27,7 +27,7 @@ int32_t RegisterClass::Search(const Reference &ID) const
     return -1;
 }
 
-int32_t RegisterClass::Search(const BaseClass *SearchObject) const // Removes object
+int32_t RegisterClass::Search(const BaseClass *SearchObject) const
 {
     for (uint16_t Index = 0; Index < Registered; Index++)
     {
@@ -35,36 +35,44 @@ int32_t RegisterClass::Search(const BaseClass *SearchObject) const // Removes ob
             return Index;
     }
     return -1;
-};
+}
 
 Reference RegisterClass::GetReference(const BaseClass *SearchObject) const
 {
-    int32_t ArrayPos = Objects.Search(const_cast<BaseClass *>(SearchObject));
+    int32_t ArrayPos = Search(SearchObject);
 
     if (ArrayPos != -1)
-        return Reference(0, Objects.Object[ArrayPos].GroupID, Objects.Object[ArrayPos].DeviceID);
+    {
+        // Return a Reference containing the IDs stored in the registry
+        // Note: This returns a "Base" reference (no internal path)
+        return Reference::Global(0, (uint8_t)(Object[ArrayPos].ID >> 8), (uint8_t)(Object[ArrayPos].ID & 0xFF));
+    }
 
-    return Reference(0, 0, 0);
+    return Reference(); // Returns invalid/empty reference
 }
 
-BaseClass *RegisterClass::At(const Reference &ID) const // Returns address or nullptr if invalid
+BaseClass *RegisterClass::At(const Reference &ID) const
 {
     int32_t Index = Search(ID);
     if (Index == -1)
         return nullptr;
 
     return Object[Index].Object;
-};
+}
 
-bool RegisterClass::IsValid(const Reference &ID, ObjectTypes Filter) const // Returns if object at index is valid
+bool RegisterClass::IsValid(const Reference &ID, ObjectTypes Filter) const
 {
     int32_t Index = Search(ID);
     if (Index == -1)
         return false;
+    
     if (Filter != ObjectTypes::Undefined && Object[Index].Object->Type != Filter)
         return false;
+        
     return true;
-};
+}
+
+// --- Value Accessors (Registry Level) ---
 
 template <class C>
 C *RegisterClass::ValueGet(const Reference &ID) const
@@ -73,8 +81,9 @@ C *RegisterClass::ValueGet(const Reference &ID) const
     if (Index == -1)
         return nullptr;
 
-    // IMPORTANT: Hand off ONLY the Path (Location) to the object
-    return Object[Index].Object->ValueGet<C>(ID.Location);
+    // The Reference object is passed as-is; BaseClass logic will 
+    // ignore the IDs and use the Location bits for the ByteArray search.
+    return Object[Index].Object->ValueGet<C>(ID);
 }
 
 template <class C>
@@ -84,8 +93,8 @@ bool RegisterClass::ValueSet(C Value, const Reference &ID)
     if (Index == -1)
         return false;
 
-    // Hand off the Path to the internal ByteArray logic
-    return Object[Index].Object->ValueSetup(Value, ID.Location);
+    // Pass the full Reference down to the object
+    return Object[Index].Object->ValueSetup(Value, ID);
 }
 
 Types RegisterClass::ValueTypeAt(const Reference &ID) const
@@ -94,9 +103,11 @@ Types RegisterClass::ValueTypeAt(const Reference &ID) const
     if (Index == -1)
         return Types::Undefined;
 
-    // We use ID.Location (the Path) to look up the type inside the object's ByteArray
-    return Object[Index].Object->Values.Type(ID.Location);
+    // Queries the internal ByteArray using the bit-tagged path
+    return Object[Index].Object->Values.Type(ID);
 }
+
+// --- Memory Management ---
 
 void RegisterClass::Expand(uint32_t NewAllocated)
 {
@@ -110,7 +121,7 @@ void RegisterClass::Expand(uint32_t NewAllocated)
     if (Object != nullptr)
     {
         memcpy(NewObject, Object, Registered * sizeof(RegisterEntry));
-        delete[] Object; // Corrected to array delete
+        delete[] Object; 
     }
     Object = NewObject;
     Allocated = NewAllocated;
@@ -118,39 +129,38 @@ void RegisterClass::Expand(uint32_t NewAllocated)
 
 void RegisterClass::Shorten()
 {
-    // Threshold check to avoid constant reallocations
-    if (Registered > Allocated / 2)
+    if (Registered > Allocated / 2 || Registered == 0)
         return;
 
     uint32_t NewAllocated = Registered;
-    if (NewAllocated == Allocated || NewAllocated == 0)
-        return;
-
     RegisterEntry *NewObject = new RegisterEntry[NewAllocated];
 
     if (Object != nullptr)
     {
-        // Copy the current valid entries to the new smaller buffer
         memcpy(NewObject, Object, Registered * sizeof(RegisterEntry));
-        delete[] Object; // FIXED: Must use delete[] for arrays
+        delete[] Object;
     }
 
     Object = NewObject;
     Allocated = NewAllocated;
 }
 
+// --- Lifecycle ---
+
 bool RegisterClass::Register(BaseClass *AddObject, const Reference &ID, ObjectInfo Info)
 {
     if (AddObject == nullptr)
         return false;
 
-    // Use the Reference's ID fields
+    // Pack Group and Device for the sorted Registry Key
     uint16_t TargetKey = ((uint16_t)ID.Group << 8) | ID.Device;
 
+    // Find insertion point to maintain sorted order for Binary Search
     uint16_t InsertAt = 0;
     while (InsertAt < Registered && Object[InsertAt].ID < TargetKey)
         InsertAt++;
 
+    // Prevent duplicate registration of the same ID
     if (InsertAt < Registered && Object[InsertAt].ID == TargetKey)
         return false;
 
@@ -174,7 +184,6 @@ bool RegisterClass::Unregister(int32_t Index)
     if (Index >= Registered || Index < 0)
         return false;
 
-    // Shift elements left to overwrite the removed index
     if (Index < Registered - 1)
     {
         memmove(Object + Index,
@@ -183,8 +192,6 @@ bool RegisterClass::Unregister(int32_t Index)
     }
 
     Registered -= 1;
-
-    // Attempt to shrink memory if we are now significantly under capacity
     Shorten();
 
     return true;

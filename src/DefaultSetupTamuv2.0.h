@@ -2,12 +2,12 @@ void DefaultSetup()
 {
     Board.Values.Set(Text("Test"), {0, 0}); // Using the Path for DisplayName
 
-    DisplayClass *LD = new DisplayClass(Reference(0, 0, 1));
+    DisplayClass *LD = new DisplayClass(Reference::Global(0, 0, 1));
     LD->Name = "Left Eye";
 
     LD->ValueSetup<Displays>(Displays::Vysi_v1_0, {0});
-    LD->ValueSetup(Reference(0, 0, 0, {1, 0}), {0, 0}),
-        LD->Values.Set(Coord2D(0, 0, 5), {0, 5});
+    LD->ValueSetup(Reference::Global(0, 0, 0, {1, 0}), {0, 0}),
+    LD->Values.Set(Coord2D(0, 0, 5), {0, 5});
     LD->Values.Set<uint8_t>(40, {0, 4});
 
     // --- Layer 0: Background ---

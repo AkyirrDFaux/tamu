@@ -1,26 +1,29 @@
 class DisplayClass : public BaseClass
 {
 private:
-    Number *Overlay = nullptr; // Pre-allocated mask buffer
-    int32_t MaxLength = 0;     // Current capacity of Overlay buffer
+    Number *Overlay = nullptr; 
+    int32_t MaxLength = 0;     
     void ManageOverlay(int32_t RequiredLength);
 
 public:
-    uint8_t *Layout = nullptr;                  // Layout mapping for shaped display
-    Reference CurrentLink = Reference(0, 0, 0); // Backup for disconnecting
-    uint8_t *LEDs = nullptr;                    // Memory buffer
+    uint8_t *Layout = nullptr; 
+    Reference CurrentLink = Reference(); // Default empty reference
+    uint8_t *LEDs = nullptr;             
 
     DisplayClass(const Reference &ID, ObjectInfo Info = {Flags::None, 1});
     ~DisplayClass();
 
-    void Setup(Path Index);
+    void Setup(const Reference &Index);
     bool Run();
 
     bool Connect(BaseClass *Object = nullptr, int32_t Index = -1);
     bool Disconnect(BaseClass *Object = nullptr);
 
-    static void SetupBridge(BaseClass *Base, Path Index) { static_cast<DisplayClass *>(Base)->Setup(Index); }
+    static void SetupBridge(BaseClass *Base, const Reference &Index) { 
+        static_cast<DisplayClass *>(Base)->Setup(Index); 
+    }
     static bool RunBridge(BaseClass *Base) { return static_cast<DisplayClass *>(Base)->Run(); }
+    
     static constexpr VTable Table = {
         .Setup = DisplayClass::SetupBridge,
         .Run = DisplayClass::RunBridge};
@@ -29,27 +32,25 @@ public:
                         Coord2D Transform, bool Mirrored, Number *Overlay);
     Number CalculateShapeAlpha(Geometries Type, Vector2D P, Vector2D S, Number F);
     void RenderTexture(uint8_t Index, int32_t Length, Vector2D DisplaySize,
-                       Coord2D Transform, bool Mirrored, Number *Overlay);
+                        Coord2D Transform, bool Mirrored, Number *Overlay);
 };
-
-constexpr VTable DisplayClass::Table;
 
 DisplayClass::DisplayClass(const Reference &ID, ObjectInfo Info) : BaseClass(&Table, ID, Info)
 {
     BaseClass::Type = ObjectTypes::Display;
     Name = "Display";
 
+    // Initialize local paths using the implicit list constructor
     Values.Set(Displays::Undefined, {0});
-    Values.Set<Reference>(Reference(0, 0, 0), {0, 0}); // Port Number
-    Values.Set<int32_t>(0, {0, 1});                    // Length
-    Values.Set(Vector2D(0, 0), {0, 2});                // Size
-    Values.Set<Number>(1, {0, 3});                     // Ratio
-    Values.Set<uint8_t>(20, {0, 4});                   // Brightness
-    Values.Set(Coord2D(0, 0, 0), {0, 5});              // Offset
-    Values.Set(false, {0, 6});                         // Mirroring
-    Values.Set(false, {0, 7});                         // Wraping X
-    Values.Set(false, {0, 8});                         // Wraping Y
-    // Values.Set({1}); //Render group
+    Values.Set<Reference>(Reference(), {0, 0}); // Connection Link (Port/Object)
+    Values.Set<int32_t>(0, {0, 1});             // Length
+    Values.Set(Vector2D(0, 0), {0, 2});         // Size
+    Values.Set<Number>(1, {0, 3});              // Ratio
+    Values.Set<uint8_t>(20, {0, 4});            // Brightness
+    Values.Set(Coord2D(0, 0, 0), {0, 5});       // Offset
+    Values.Set(false, {0, 6});                  // Mirroring
+    Values.Set(false, {0, 7});                  // Wrapping X
+    Values.Set(false, {0, 8});                  // Wrapping Y
 };
 
 DisplayClass::~DisplayClass()
@@ -60,82 +61,71 @@ DisplayClass::~DisplayClass()
 
 bool DisplayClass::Connect(BaseClass *Object, int32_t Index)
 {
-    ESP_LOGI("Display", "- Connect(Idx: %d)\n", Index);
-    if (Object == nullptr)
-        Object = this;
+    if (Object == nullptr) Object = this;
 
     Getter<Reference> Link = Values.Get<Reference>({0, 0});
-    if (!Link.Success || Link.Value == Reference(0, 0, 0))
+    if (!Link.Success || Link.Value == Reference())
         return false;
 
     BaseClass *Target = Objects.At(Link.Value);
-    if (!Target)
-        return false;
+    if (!Target) return false;
 
     this->CurrentLink = Link.Value;
 
     if (Target->Type == ObjectTypes::Board)
     {
-        // We are hitting the hardware anchor; Port is now mandatory.
-        if (Link.Value.Location.Length < 2)
-            return false;
+        // Reference stores path from Path[0] onwards. 
+        // Typically {1, PortIndex} for Board connections.
+        if (Link.Value.PathLen() < 2) return false;
 
-        uint8_t Port = Link.Value.Location.Indexing[1];
+        uint8_t Port = Link.Value.Path[1]; 
         return static_cast<BoardClass *>(Target)->Connect(Object, Port, Index + 1);
     }
     else
     {
-        // We are hitting another peripheral; Port is irrelevant to this hop.
         return static_cast<DisplayClass *>(Target)->Connect(Object, Index + 1);
     }
 }
 
 bool DisplayClass::Disconnect(BaseClass *Object)
 {
-    if (Object == nullptr)
-        Object = this;
-    if (CurrentLink == Reference(0, 0, 0))
-        return false;
+    if (Object == nullptr) Object = this;
+    if (CurrentLink == Reference()) return false;
 
     BaseClass *Target = Objects.At(CurrentLink);
-    if (!Target)
-        return false;
+    if (!Target) return false;
 
     bool Success = false;
-
     if (Target->Type == ObjectTypes::Board)
     {
-        // Port is required to tell the Board which folder to clean.
-        if (CurrentLink.Location.Length < 2)
-            return false;
+        if (CurrentLink.PathLen() < 2) return false;
 
-        uint8_t Port = CurrentLink.Location.Indexing[1];
+        uint8_t Port = CurrentLink.Path[1];
         Success = static_cast<BoardClass *>(Target)->Disconnect(Object, Port);
     }
     else
     {
-        // Handshake to the next device in the chain.
         Success = static_cast<DisplayClass *>(Target)->Disconnect(Object);
     }
 
     if (Object == this)
     {
         this->LEDs = nullptr;
-        this->CurrentLink = Reference(0, 0, 0);
+        this->CurrentLink = Reference();
     }
-
     return Success;
 }
-void DisplayClass::Setup(Path Index)
-{
-    ESP_LOGI("Display", "- Setup Triggered");
-    bool HardwareChanged = false;
 
-    if (Index.Length > 0 && Index.Indexing[0] == 0)
+void DisplayClass::Setup(const Reference &Index)
+{
+    bool HardwareChanged = (Index.PathLen() == 0);
+
+    // Checking specifically for hardware branch {0, ...}
+    if (!HardwareChanged && Index.PathLen() > 0 && Index.Path[0] == 0)
     {
-        if (Index.Length == 1) // Type changed
+        if (Index.PathLen() == 1) // Displays::Type changed
         {
-            Displays Type = Values.Get<Displays>({0});
+            Displays Type = Values.Get<Displays>({0}).Value;
             switch (Type)
             {
             case Displays::GenericLEDMatrix:
@@ -149,11 +139,10 @@ void DisplayClass::Setup(Path Index)
                 Layout = LayoutVysiv1_0;
                 HardwareChanged = true;
                 break;
-            default:
-                break;
+            default: break;
             }
         }
-        else if (Index.Length > 1 && (Index.Indexing[1] == 0 || Index.Indexing[1] == 1))
+        else if (Index.PathLen() > 1 && (Index.Path[1] == 0 || Index.Path[1] == 1))
         {
             HardwareChanged = true;
         }
@@ -161,12 +150,8 @@ void DisplayClass::Setup(Path Index)
 
     if (HardwareChanged)
     {
-        // Ensure our internal Overlay buffer matches the new hardware requirements
         Getter<int32_t> Length = Values.Get<int32_t>({0, 1});
-        if (Length.Success)
-            ManageOverlay(Length.Value);
-
-        ESP_LOGI("Display", "Executing Reconnect Sequence");
+        if (Length.Success) ManageOverlay(Length.Value);
         Disconnect();
         Connect();
     }
@@ -193,6 +178,7 @@ void DisplayClass::ManageOverlay(int32_t RequiredLength)
 
 bool DisplayClass::Run()
 {
+    // Access values using bit-tagged local paths
     Getter<int32_t> Length = Values.Get<int32_t>({0, 1});
     Getter<Vector2D> Size = Values.Get<Vector2D>({0, 2});
     Getter<uint8_t> Brightness = Values.Get<uint8_t>({0, 4});
@@ -205,7 +191,6 @@ bool DisplayClass::Run()
         return true;
     }
 
-    // CRITICAL: Ensure MaxLength (actual heap) is at least as big as Length.Value
     if (LEDs == nullptr || Overlay == nullptr || Length.Value <= 0 || Length.Value > MaxLength)
     {
         ReportError(Status::PortError);
@@ -229,11 +214,11 @@ bool DisplayClass::Run()
         else if (NodeType == Types::Texture2D)
         {
             RenderTexture(I, Length.Value, Size.Value, BaseTransform, Mirrored.Value, Overlay);
-            // Reset overlay for next texture/geometry group
             memset((void *)Overlay, 0, Length.Value * sizeof(Number));
         }
     }
 
+    // Global brightness scaling
     if (Brightness.Value < 255)
     {
         int32_t TotalBytes = Length.Value * 3;

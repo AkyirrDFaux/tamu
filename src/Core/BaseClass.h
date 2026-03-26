@@ -1,11 +1,18 @@
-// BaseClass *CreateObject(ObjectTypes Type, bool New = true, IDClass ID = RandomID, FlagClass Flags = Flags::None);
-
 template <>
 ByteArray::ByteArray(const BaseClass &Data)
 {
     int32_t Index = Objects.Search(&Data);
+    if (Index == -1) return;
 
-    *this = ByteArray(Reference(0,Objects.Object[Index].GroupID, Objects.Object[Index].DeviceID));
+    // 1. Initialize with the Global ID of the object
+    // Extract Group and Device from the packed 16-bit ID in the registry
+    uint8_t G = (uint8_t)(Objects.Object[Index].ID >> 8);
+    uint8_t D = (uint8_t)(Objects.Object[Index].ID & 0xFF);
+    
+    *this = ByteArray(Reference::Global(0, G, D));
+
+    // 2. Chain the object metadata and its internal Value tree
+    // This creates a contiguous "Blob" representing the entire Object state
     *this = *this << ByteArray(Data.Type)
                   << ByteArray(Objects.Object[Index].Info)
                   << ByteArray(Data.Name)
@@ -13,53 +20,21 @@ ByteArray::ByteArray(const BaseClass &Data)
 }
 
 template <class C>
-Getter<C> BaseClass::ValueGet(const Path &Location) const
+Getter<C> BaseClass::ValueGet(const Reference &Location) const
 {
-    // Direct passthrough to the internal ByteArray
+    // Direct passthrough to the internal bit-tagged ByteArray
     return Values.Get<C>(Location);
 }
 
 template <class C>
-bool BaseClass::ValueSetup(C Value, const Path &Location)
+bool BaseClass::ValueSetup(C Value, const Reference &Location)
 {
-    // 1. Update the internal data tree
+    // 1. Update the internal data tree (Handles Resize/Insert automatically)
     Values.Set(Value, Location);
 
-    // 2. Trigger any hardware or logic setup tied to this specific path
+    // 2. Trigger the VTable Setup to react to this change
+    // Useful for updating hardware pins or internal state based on the new value
     Setup(Location);
 
     return true;
 }
-
-/*ByteArray BaseClass::OutputValues(int32_t Value) const
-{
-    if (Value == 0)
-        return Values;
-
-    Value--; // ID to ValueIndex
-    int32_t Start = Values.GetStart(Value);
-    int32_t End = Values.GetStart(Value + 1);
-
-    if (Start < 0)
-        return ByteArray();
-    else if (End < 0)
-        return Values.SubArray(Start);
-    else
-        return Values.SubArray(Start, End - Start);
-};
-
-bool BaseClass::InputValues(ByteArray &Input, int32_t Index, uint8_t Value)
-{
-    // Value == 0 is everything, > 0 only one specified
-    if (Value == 0)
-    {
-        Values = Input.SubArray(Input.GetStart(Index));
-        Setup(-1);
-        return true;
-    }
-
-    Value--; // ID to ValueIndex
-    Values.Copy(Input, Index, Value);
-    Setup(Value);
-    return true;
-}*/

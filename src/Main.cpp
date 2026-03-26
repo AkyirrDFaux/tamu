@@ -34,10 +34,6 @@ struct Pin
 #include "Core\Register.h"
 #include "Core\BaseClass.h"
 
-// IDList Sensors;  // EX: Sensor
-// IDList Programs; // Ex: Emotes
-// IDList Outputs;  // Ex: Display, Fan, Servo
-
 // Hardware related
 #include "Hardware\Base.h"
 #include "Hardware\USB.h"
@@ -55,7 +51,7 @@ ChirpClass Chirp = ChirpClass(); // Bluetooth/Serial
 // #include "Object\Program.h"
 
 #include "Object\Board.h"
-BoardClass Board(Reference(0, 0, 0));
+BoardClass Board(Reference::Global(0, 0, 0));
 
 // Objects
 // #include "Object\Input.h"

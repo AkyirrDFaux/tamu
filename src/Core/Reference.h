@@ -1,117 +1,71 @@
 // 1. The Local Navigator (Used by ByteArray)
-struct Path
+#define MAX_REF_LENGTH 12
+struct Reference
 {
-    uint8_t Length;
-    uint8_t *Indexing;
-
-    Path() : Length(0), Indexing(nullptr) {}
-
-    // 1. Fix: Initializer list constructor (Deep Copy)
-    Path(std::initializer_list<uint8_t> list) : Length((uint8_t)list.size())
+    uint8_t Metadata; // Bit 7: 1=Global, 0=Local | Bits 0-6: Path Length
+    union
     {
-        if (Length > 0)
+        uint8_t Data[MAX_REF_LENGTH + 3];
+        struct
         {
-            Indexing = new uint8_t[Length];
-            // Cast the start of the list to a raw pointer and copy the bytes
-            memcpy(Indexing, list.begin(), Length);
-        }
-        else
-        {
-            Indexing = nullptr;
-        }
+            uint8_t Net, Group, Device;
+            uint8_t Path[MAX_REF_LENGTH];
+        } __attribute__((packed));
+    };
+
+    // --- Constructors ---
+    
+    // Default: Empty/Invalid
+    Reference() : Metadata(0) {
+        for (uint8_t i = 0; i < (MAX_REF_LENGTH + 3); i++) Data[i] = 0;
     }
 
-    // 2. Data constructor (Deep Copy)
-    Path(const uint8_t *data, uint8_t len) : Length(len)
-    {
-        if (len > 0 && data != nullptr)
-        {
-            Indexing = new uint8_t[len];
-            memcpy(Indexing, data, len);
-        }
-        else
-        {
-            Indexing = nullptr;
-        }
+    // Implicit List Constructor: Defaults to Local
+    // This allows: Values.Set(val, {0, 1});
+    Reference(std::initializer_list<uint8_t> p) : Metadata(0) {
+        for (uint8_t i = 0; i < (MAX_REF_LENGTH + 3); i++) Data[i] = 0;
+        uint8_t len = (uint8_t)p.size();
+        if (len > MAX_REF_LENGTH) len = MAX_REF_LENGTH;
+        
+        Metadata = len; // Global bit 7 stays 0
+        uint8_t i = 0;
+        for (uint8_t val : p) Path[i++] = val;
     }
 
-    // 3. Copy Constructor (Deep Copy)
-    Path(const Path &other) : Length(other.Length)
-    {
-        if (other.Length > 0 && other.Indexing != nullptr)
-        {
-            Indexing = new uint8_t[other.Length];
-            memcpy(Indexing, other.Indexing, other.Length);
-        }
-        else
-        {
-            Indexing = nullptr;
-        }
+    // --- Identification ---
+    inline bool IsGlobal() const { return Metadata & 0x80; }
+    inline uint8_t PathLen() const { return Metadata & 0x7F; }
+    
+    inline uint8_t TotalActiveBytes() const { 
+        return IsGlobal() ? (3 + PathLen()) : PathLen(); 
     }
 
-    // 4. Copy Assignment Operator
-    Path &operator=(const Path &other)
-    {
-        if (this != &other)
-        {
-            uint8_t *new_data = nullptr;
-            if (other.Length > 0 && other.Indexing != nullptr)
-            {
-                new_data = new uint8_t[other.Length];
-                memcpy(new_data, other.Indexing, other.Length);
-            }
-
-            delete[] Indexing; // Delete old AFTER successful allocation
-            Indexing = new_data;
-            Length = other.Length;
-        }
-        return *this;
+    // --- Factories ---
+    // Keep Local() for explicit clarity if needed
+    static Reference Local(std::initializer_list<uint8_t> p) {
+        return Reference(p);
     }
 
-    // 5. Destructor
-    ~Path()
-    {
-        delete[] Indexing;
+    static Reference Global(uint8_t n, uint8_t g, uint8_t d, std::initializer_list<uint8_t> p = {}) {
+        Reference r;
+        r.Net = n; r.Group = g; r.Device = d;
+        uint8_t len = (uint8_t)p.size();
+        if (len > MAX_REF_LENGTH) len = MAX_REF_LENGTH;
+        
+        r.Metadata = len | 0x80;
+        for (uint8_t i = 0; i < len; i++) r.Path[i] = p.begin()[i];
+        return r;
     }
 
-    bool operator==(const Path &other) const
-    {
-        if (Length != other.Length || Indexing == nullptr || other.Indexing == nullptr)
-            return false;
-        if (Length == 0)
-            return true; // Both are empty, they are equal
-        for (uint8_t i = 0; i < Length; i++)
-        {
-            if (Indexing[i] != other.Indexing[i])
-                return false;
+    // --- Equality ---
+    bool operator==(const Reference& other) const {
+        if (Metadata != other.Metadata) return false;
+        uint8_t limit = TotalActiveBytes();
+        for (uint8_t i = 0; i < limit; i++) {
+            if (Data[i] != other.Data[i]) return false;
         }
         return true;
     }
 
-    bool operator!=(const Path &other) const { return !(*this == other); }
-};
-
-// 2. The Global Address (Used for Routing/Network)
-struct Reference
-{
-    uint8_t Net, Group, Device;
-    Path Location;
-
-    // Helper to quickly get the Path part for local functions
-    Reference(uint8_t n, uint8_t d, uint8_t c, Path p = Path())
-        : Net(n), Group(d), Device(c), Location(p) {}
-
-    bool operator==(const Reference &other) const
-    {
-        return (Net == other.Net &&
-                Group == other.Group &&
-                Device == other.Device &&
-                Location == other.Location);
-    }
-
-    // Inequality operator
-    bool operator!=(const Reference &other) const
-    {
-        return !(*this == other);
-    }
+    bool operator!=(const Reference& other) const { return !(*this == other); }
 };

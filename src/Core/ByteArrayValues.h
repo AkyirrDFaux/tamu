@@ -1,133 +1,134 @@
-const void *ByteArray::Get(const Path &Location, Types Type) const
+const void *ByteArray::Get(const Reference &Location, Types Type) const
 {
     FindResult Result = Find(Location);
-    if (Result.Type != Type)
+    if (Result.Header < 0 || Result.Type != Type)
         return nullptr;
     return Result.Value;
 }
 
-// 1. Standard Template: Returns the value inside the Getter struct
 template <class C>
-Getter<C> ByteArray::Get(const Path &Location) const
+Getter<C> ByteArray::Get(const Reference &Location) const
 {
-    // Use the internal check-and-find function
     const void *ptr = Get(Location, GetType<C>());
-
     if (ptr == nullptr)
-        return {false, C()}; // Return failed status and default-constructed value
+        return {false, C()}; 
 
-    // Success: return value by copying from the buffer
     return {true, *(C *)ptr};
 }
 
 template <>
-Getter<Text> ByteArray::Get(const Path &Location) const
+Getter<Text> ByteArray::Get(const Reference &Location) const
 {
-    // 1. Find the object in the buffer
     FindResult Result = Find(Location);
-
-    // 2. Validate Type and ensure the header exists
     if (Result.Type != Types::Text || Result.Header == -1)
     {
         return {false, Text(nullptr, 0)};
     }
 
-    // 3. Access the Header to get the true stored length
     const Header &Head = HeaderArray[Result.Header];
-
-    // 4. Return the pointer from the result and the length from the header
-    // We do not need to copy the string, just point to its location in the 'Array'
+    // Return pointer to internal buffer + length from metadata
     return {true, Text((const char*)Result.Value, Head.Length)};
 }
 
 template <>
-Getter<Reference> ByteArray::Get(const Path &Location) const
+Getter<Reference> ByteArray::Get(const Reference &Location) const
 {
     FindResult Result = Find(Location);
 
-    if (Result.Type != Types::Reference || Result.Header == -1)
-        return {false, Reference(0, 0, 0)};
+    if (Result.Header == -1 || Result.Value == nullptr)
+        return {false, Reference()};
 
     const Header &Head = HeaderArray[Result.Header];
-    if (Head.Length < 3)
-        return {false, Reference(0, 0, 0)};
+    Reference ref;
 
-    const uint8_t *data = (const uint8_t *)Result.Value;
-    uint8_t net = data[0];
-    uint8_t group = data[1];
-    uint8_t device = data[2];
+    if (Result.Type == Types::Reference)
+    {
+        // 1. Global Layout: [Net][Group][Device][...Path...]
+        // Stored length in Header is (3 + PathLen)
+        uint8_t pathLen = (Head.Length >= 3) ? (uint8_t)(Head.Length - 3) : 0;
+        
+        // Directly set Metadata: Global Bit (0x80) | Path Length
+        ref.Metadata = 0x80 | (pathLen & 0x7F);
 
-    // FIX: Reference Location is a "view" into the existing Array
-    // Do NOT memcpy into path.Indexing (which is a const pointer)
-    Path path(data + 3, (uint8_t)(Head.Length - 3));
+        // Copy IDs and Path into the Data union
+        uint16_t copySize = (Head.Length > sizeof(ref.Data)) ? sizeof(ref.Data) : Head.Length;
+        memcpy(ref.Data, Result.Value, copySize);
+        
+        return {true, ref};
+    }
+    else if (Result.Type == Types::Path)
+    {
+        // 2. Local Layout: [...Path...]
+        // Stored length in Header is exactly PathLen
+        uint8_t pathLen = (uint8_t)Head.Length;
 
-    return {true, Reference(net, group, device, path)};
+        // Directly set Metadata: Global Bit is 0 | Path Length
+        ref.Metadata = (pathLen & 0x7F);
+
+        // Copy raw path bytes into the Path segment of the union
+        uint16_t copySize = (Head.Length > MAX_REF_LENGTH) ? MAX_REF_LENGTH : Head.Length;
+        memcpy(ref.Path, Result.Value, copySize);
+        
+        return {true, ref};
+    }
+
+    return {false, Reference()};
 }
 
-void ByteArray::Set(const void *Data, size_t Size, Types Type, const Path &Location)
+void ByteArray::Set(const void *Data, size_t Size, Types Type, const Reference &Location)
 {
     FindResult Found = Find(Location);
 
+    // Handle packed sub-access (e.g. accessing a byte inside a Vec3)
     if (Found.Header == -2)
-    { // Packed sub-access
+    { 
         if (Found.Value != nullptr)
             memcpy(Found.Value, Data, Size);
         return;
     }
 
+    uint16_t HIdx;
     if (Found.Header == -1)
     {
-        Found.Header = Insert(Location, Size);
+        HIdx = Insert(Location, (uint16_t)Size);
     }
-    else if (HeaderArray[Found.Header].Length != Size)
+    else
     {
-        ResizeData(Found.Header, Size);
+        HIdx = (uint16_t)Found.Header;
+        if (HeaderArray[HIdx].Length != Size)
+        {
+            ResizeData(HIdx, (uint16_t)Size);
+        }
     }
 
     // Update metadata and copy data
-    HeaderArray[Found.Header].Type = Type;
-    HeaderArray[Found.Header].Length = Size;
+    HeaderArray[HIdx].Type = Type;
+    // ResizeData already updated HeaderArray[HIdx].Length
+    
     if (Size > 0 && Data != nullptr)
     {
-        memcpy(Array + HeaderArray[Found.Header].Pointer, Data, Size);
+        memcpy(Array + HeaderArray[HIdx].Pointer, Data, Size);
     }
 }
 
 template <class C>
-void ByteArray::Set(const C &Data, const Path &Location)
+void ByteArray::Set(const C &Data, const Reference &Location)
 {
     Set(&Data, sizeof(C), GetType<C>(), Location);
-};
+}
 
 template <>
-void ByteArray::Set(const Text &Data, const Path &Location)
+void ByteArray::Set(const Text &Data, const Reference &Location)
 {
-    if (Data.Data == nullptr || Data.Length == 0)
-        return;
-
-    // Use the internal Data pointer and Length from the Text class
-    // We pass Types::Text to ensure the header is tagged correctly
+    if (Data.Data == nullptr) return;
     Set(Data.Data, Data.Length, Types::Text, Location);
 }
 
 template <>
-void ByteArray::Set(const Reference &Data, const Path &Location)
+void ByteArray::Set(const Reference &Data, const Reference &Location)
 {
-    // Total size = 3 (Net, Group, Device) + Path.Length
-    uint16_t totalSize = 3 + Data.Location.Length;
-
-    // We need a temporary buffer to pack the 3-byte header with the path
-    char *temp = new char[totalSize];
-
-    temp[0] = (char)Data.Net;
-    temp[1] = (char)Data.Group;
-    temp[2] = (char)Data.Device;
-
-    if (Data.Location.Length > 0 && Data.Location.Indexing != nullptr)
-        memcpy(temp + 3, Data.Location.Indexing, Data.Location.Length);
-
-    // Call the base Set. This handles Insert/Resize and updates the Header.Length
-    Set(temp, totalSize, Types::Reference, Location);
-
-    delete[] temp;
+    if(Data.IsGlobal())
+        Set(&Data.Data, Data.PathLen() + 3, Types::Reference, Location);
+    else
+        Set(&Data.Path, Data.PathLen(), Types::Path, Location);  
 }

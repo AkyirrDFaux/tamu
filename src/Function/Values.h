@@ -17,9 +17,9 @@ void ReadValue(const ByteArray &Input)
     ByteArray Data;
     // If Path exists in the Reference, copy just that value.
     // Otherwise, Data = Object->Values (uses the Copy Constructor).
-    if (Ref.Value.Location.Length > 0)
+    if (Ref.Value.PathLen() > 0)
     {
-        Data = Object->Values.Copy(Ref.Value.Location);
+        Data = Object->Values.Copy(Ref.Value);
     }
     else
     {
@@ -74,17 +74,17 @@ void WriteValue(const ByteArray &Input)
         Payload.Value, 
         DataHead.Length, 
         DataHead.Type, 
-        Ref.Value.Location
+        Ref.Value
     );
 
-    Object->Setup(Ref.Value.Location);
+    Object->Setup(Ref.Value);
 
     // 5. Confirmation Echo
     // We send back the current state of that specific location to confirm the write.
     Chirp.Send(
         ByteArray(Functions::ReadValue) 
         << ByteArray(Ref.Value) 
-        << Object->Values.Copy(Ref.Value.Location)
+        << Object->Values.Copy(Ref.Value)
     );
 }
 
