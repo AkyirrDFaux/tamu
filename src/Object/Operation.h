@@ -1,427 +1,236 @@
-class Operation : public BaseClass
+namespace Operation
 {
-public:
-    ByteArray Temp;
-
-    Operation(IDClass ID = RandomID, FlagClass Flags = Flags::None);
-    bool Run();
-
-    static bool RunBridge(BaseClass *Base) { return static_cast<Operation *>(Base)->Run(); }
-    static constexpr VTable Table = {
-        .Setup = BaseClass::DefaultSetup,
-        .Run = Operation::RunBridge,
-        .AddModule = BaseClass::DefaultAddModule,
-        .RemoveModule = BaseClass::DefaultRemoveModule};
-
-    bool RunPart(int32_t Start);                    // Start = operation value index
-    uint32_t OperationNumber(uint32_t Start) const; // Number for temp list
-    uint32_t ParameterNumber(uint32_t Start) const; // Length of operation value space
-
-    // TODO
-    Types TypeThrough(int32_t Index); // Type through ID, runs functions
-    template <class C>
-    C GetThrough(int32_t Index) const; // Get through ID, Assumes it's valid, and type is checked
-
-private:
-    bool Equal(int32_t Start);
-    bool Extract(int32_t Start);
-    bool Combine(int32_t Start);
-    bool Add(int32_t Start);
-    bool Multiply(int32_t Start);
-    bool MoveTo(int32_t Start);
-    bool Delay(int32_t Start);
-    bool AddDelay(int32_t Start);
-    bool SetFlags(int32_t Start);
-    bool ResetFlags(int32_t Start);
-    bool Sine(int32_t Start);
-};
-
-constexpr VTable Operation::Table;
-
-Operation::Operation(IDClass ID, FlagClass Flags) : BaseClass(&Table, ID, Flags)
-{
-    Type = ObjectTypes::Operation;
-    Name = "Operation";
-
-    ValueSet(Operations::None);
-}
-
-bool Operation::Run()
-{
-    bool Done = RunPart(0);
-    Types Type = Temp.Type(0);
-
-    if (Type == Types::Undefined)
-        return Done;
-
-    for (uint32_t Index = 0; Index < Modules.Length; Modules.Iterate(&Index))
+    bool Equal(ByteArray &Values, Reference Index)
     {
-        if (Modules.ValueTypeAt(Index) != Type)
-            continue;
+        Reference Input0 = Index.Append(1).Append(0);
+        Reference Output = Index.Append(0);
 
-        switch (Type)
+        return true;
+    }
+
+    bool Combine(ByteArray &Values, Reference Index)
+    {
+        Reference Input0 = Index.Append(1).Append(0);
+        Reference Input1 = Index.Append(1).Append(1);
+        Reference Output = Index.Append(0);
+
+        Types Type0 = Values.Type(Input0);
+        Types Type1 = Values.Type(Input1);
+
+        if (Type0 == Types::Vector2D && Type1 == Types::Number)
         {
-        case Types::Number:
-            Modules.ValueSet(Temp.Get<Number>(0), Index);
-            break;
-        case Types::Time:
-            Modules.ValueSet(Temp.Get<uint32_t>(0), Index);
-            break;
-        case Types::Vector2D:
-            Modules.ValueSet(Temp.Get<Vector2D>(0), Index);
-            break;
-        case Types::Vector3D:
-            Modules.ValueSet(Temp.Get<Vector3D>(0), Index);
-            break;
-        case Types::Coord2D:
-            Modules.ValueSet(Temp.Get<Coord2D>(0), Index);
-            break;
-        default:
-            ReportError(Status::InvalidValue, ID);// + String((uint8_t)Type));
-            break;
+            Vector2D A = Values.Get<Vector2D>(Input0).Value;
+            Number B = Values.Get<Number>(Input1).Value;
+            
+            // Combines a position (Vector2D) and rotation (Number) into Coord2D
+            Values.Set(Coord2D(A, B), Output);
         }
-    }
 
-    return Done;
-}
-
-bool Operation::RunPart(int32_t Start)
-{
-    if (Values.Type(Start) != Types::Operation) // No operation
-        return true;
-
-    switch (ValueGet<Operations>(Start))
-    {
-    case Operations::Equal:
-        return Equal(Start);
-    case Operations::Extract:
-        return Extract(Start);
-    case Operations::Combine:
-        return Combine(Start);
-    case Operations::Add:
-        return Add(Start);
-    case Operations::Multiply:
-        return Multiply(Start);
-    case Operations::MoveTo:
-        return MoveTo(Start);
-    case Operations::Delay:
-        return Delay(Start);
-    case Operations::AddDelay:
-        return AddDelay(Start);
-    case Operations::SetFlags:
-        return SetFlags(Start);
-    case Operations::ResetFlags:
-        return ResetFlags(Start);
-    case Operations::Sine:
-        return Sine(Start);
-    default:
-        ReportError(Status::InvalidValue, ID);
         return true;
     }
-    return true;
-}
 
-uint32_t Operation::OperationNumber(uint32_t Start) const
-{
-    int32_t Number = 0;
-    for (uint32_t Index = 0; Index < Values.Length; Index++)
+    bool Add(ByteArray &Values, Reference Index)
     {
-        if (Index >= Start)
-            break;
-        if (Values.Type(Index) == Types::Operation)
-            Number++;
+        Reference Input0 = Index.Append(1).Append(0);
+        Reference Input1 = Index.Append(1).Append(1);
+        Reference Output = Index.Append(0);
+
+        Types Type0 = Values.Type(Input0);
+        Types Type1 = Values.Type(Input1);
+
+        if (Type0 == Types::Number && Type1 == Types::Number)
+            Values.Set(Values.Get<Number>(Input0).Value + Values.Get<Number>(Input1).Value, Output);
+        else if (Type0 == Types::Vector2D && Type1 == Types::Vector2D)
+            Values.Set(Values.Get<Vector2D>(Input0).Value + Values.Get<Vector2D>(Input1).Value, Output);
+        return true;
     }
-    return Number;
-};
 
-uint32_t Operation::ParameterNumber(uint32_t Start) const
-{
-    int32_t Number = 0;
-    for (uint32_t Index = Start + 1; Index < Values.Length; Index++)
+    bool Multiply(ByteArray &Values, Reference Index)
     {
-        if (Values.Type(Index) == Types::Operation)
-            break;
-        Number++;
+        Reference Input0 = Index.Append(1).Append(0);
+        Reference Input1 = Index.Append(1).Append(1);
+        Reference Output = Index.Append(0);
+
+        Types Type0 = Values.Type(Input0);
+        Types Type1 = Values.Type(Input1);
+
+        if (Type0 == Types::Number && Type1 == Types::Number)
+            Values.Set(Values.Get<Number>(Input0).Value * Values.Get<Number>(Input1).Value, Output);
+        else if (Type0 == Types::Vector2D && Type1 == Types::Vector2D)
+            Values.Set(Values.Get<Vector2D>(Input0).Value * Values.Get<Vector2D>(Input1).Value, Output);
+        
+        return true;
     }
-    return Number;
-};
 
-Types Operation::TypeThrough(int32_t Index)
-{
-    Types Type = Values.Type(Index);
-    if (Type == Types::ID)
+    bool MoveTo(ByteArray &Values, Reference Index)
     {
-        IDClass ID = Values.Get<IDClass>(Index);
-        if (ID.Base() == 0) // Local reference
+        /*int32_t InputNumber = ParameterNumber(Start);
+        Types InputTypes[InputNumber];
+        for (int32_t Index = 0; Index < InputNumber; Index++)
+            InputTypes[Index] = TypeThrough(Start + 1 + Index);
+
+        uint32_t Time;
+        if (InputNumber >= 2 &&
+            InputTypes[0] == Types::Vector2D &&
+            InputTypes[1] == Types::Time)
         {
-            int32_t Ref = ID.ValueIndex();
-            Type = Values.Type(Ref);
-            if (Type == Types::Operation)
+            Vector2D Target = GetThrough<Vector2D>(Start + 1);
+            Time = GetThrough<uint32_t>(Start + 2);
+            Vector2D Value;
+            for (uint32_t Index = 0; Index < Modules.Length; Modules.Iterate(&Index))
             {
-                RunPart(Ref);
-                Type = Temp.Type(OperationNumber(Ref));
+                if (Modules.ValueTypeAt(Index) != Types::Vector2D)
+                    continue;
+                Value = Modules.ValueGet<Vector2D>(Index);
+                Modules.ValueSet<Vector2D>(Value.TimeMove(Target, Time), Index);
+            }
+        }
+        else if (InputNumber >= 2 &&
+                 InputTypes[0] == Types::Coord2D &&
+                 InputTypes[1] == Types::Time)
+        {
+            Coord2D Target = GetThrough<Coord2D>(Start + 1);
+            Time = GetThrough<uint32_t>(Start + 2);
+            Coord2D Value;
+            for (uint32_t Index = 0; Index < Modules.Length; Modules.Iterate(&Index))
+            {
+                if (Modules.ValueTypeAt(Index) != Types::Coord2D)
+                    continue;
+                Value = Modules.ValueGet<Coord2D>(Index);
+                Modules.ValueSet<Coord2D>(Value.TimeMove(Target, Time), Index);
+            }
+        }
+        else if (InputNumber >= 2 &&
+                 InputTypes[0] == Types::Number &&
+                 InputTypes[1] == Types::Time)
+        {
+            Number Target = GetThrough<Number>(Start + 1);
+            Time = GetThrough<uint32_t>(Start + 2);
+            Number Value;
+            for (uint32_t Index = 0; Index < Modules.Length; Modules.Iterate(&Index))
+            {
+                if (Modules.ValueTypeAt(Index) != Types::Number)
+                    continue;
+                Value = Modules.ValueGet<Number>(Index);
+                Modules.ValueSet<Number>(TimeMove(Value, Target, Time), Index);
             }
         }
         else
-            return Objects.ValueTypeAt(ID);
+            return true;
+        return (CurrentTime >= Time);*/
+        return true;
     }
-    return Type;
-};
-template <class C>
-C Operation::GetThrough(int32_t Index) const
-{
-    Types Type = Values.Type(Index);
-    if (Type == Types::ID)
+
+    bool Delay(ByteArray &Values, Reference Index)
     {
-        IDClass ID = Values.Get<IDClass>(Index);
-        if (ID.Base() == 0) // Local reference
+        Reference InputDelay = Index.Append(1).Append(0);
+        Reference StateTimer = Index.Append(2).Append(0); // Persistent state
+
+        if (Values.Type(InputDelay) != Types::Integer) return true;
+
+        int32_t Timer = Values.Get<int32_t>(StateTimer).Value;
+
+        if (Timer == 0)
         {
-            int32_t Ref = ID.ValueIndex();
-            Type = Values.Type(Ref);
-            if (Type == Types::Operation)
-                return Temp.Get<C>(OperationNumber(Ref));
-            else
-                return ValueGet<C>(Ref);
+            Values.Set(CurrentTime, StateTimer);
+            return false;
         }
-        else
-            return Objects.ValueGet<C>(ID);
-    }
-    return ValueGet<C>(Index);
-};
+        else if (CurrentTime > Timer + Values.Get<int32_t>(InputDelay).Value)
+        {
+            Values.Set((int32_t)0, StateTimer); // Reset for next use
+            return true; 
+        }
 
-bool Operation::Equal(int32_t Start)
-{
-    // REPLACE and add fn. if equal is main op. -> num in == num out => one by one / otherwise copy first to all
-    Temp.Copy(Values, 1, 0);
-    return true;
-}
-
-bool Operation::Extract(int32_t Start)
-{
-    int32_t InputNumber = ParameterNumber(Start);
-    Types InputTypes[InputNumber];
-    for (int32_t Index = 0; Index < InputNumber; Index++)
-        InputTypes[Index] = TypeThrough(Start + 1 + Index);
-
-    if (InputNumber >= 3 &&
-        InputTypes[0] == Types::Vector3D &&
-        InputTypes[1] == Types::Byte &&
-        InputTypes[2] == Types::Byte)
-    {
-        Vector3D Source = GetThrough<Vector3D>(Start + 1); // Needs get with IDs
-        uint8_t A = GetThrough<uint8_t>(Start + 2);
-        uint8_t B = GetThrough<uint8_t>(Start + 3);
-        Temp.Set<Vector2D>(Source.GetByIndex(A, B), OperationNumber(Start));
+        return false;
     }
 
-    return true;
-}
-
-bool Operation::Combine(int32_t Start)
-{
-    int32_t InputNumber = ParameterNumber(Start);
-    Types InputTypes[InputNumber];
-    for (int32_t Index = 0; Index < InputNumber; Index++)
-        InputTypes[Index] = TypeThrough(Start + 1 + Index);
-
-    if (InputNumber >= 2 &&
-        InputTypes[0] == Types::Vector2D &&
-        InputTypes[1] == Types::Number)
+    bool AddDelay(ByteArray &Values, Reference Index)
     {
-        Vector2D A = GetThrough<Vector2D>(Start + 1);
-        Number B = GetThrough<Number>(Start + 2);
-        Temp.Set<Coord2D>(Coord2D(A, B), OperationNumber(Start));
+        Reference Input0 = Index.Append(1).Append(0);
+        Reference Output = Index.Append(0);
+
+        if (Values.Type(Input0) != Types::Integer) return true;
+
+        Values.Set(Values.Get<int32_t>(Input0).Value + CurrentTime, Output);
+        return true;
     }
 
-    return true;
-}
-
-bool Operation::Add(int32_t Start)
-{
-    int32_t InputNumber = ParameterNumber(Start);
-    Types InputTypes[InputNumber];
-    for (int32_t Index = 0; Index < InputNumber; Index++)
-        InputTypes[Index] = TypeThrough(Start + 1 + Index);
-
-    if (InputNumber >= 2 &&
-        InputTypes[0] == Types::Vector2D &&
-        InputTypes[1] == Types::Vector2D)
+    bool SetFlags(ByteArray &Values, Reference Index)
     {
-        Vector2D A = GetThrough<Vector2D>(Start + 1);
-        Vector2D B = GetThrough<Vector2D>(Start + 2);
-        Temp.Set<Vector2D>(A + B, OperationNumber(Start));
-    }
+        /*if (Values.Type(1) != Types::Flags)
+            return true;
 
-    return true;
-}
+        FlagClass Value = ValueGet<FlagClass>(1);
 
-bool Operation::Multiply(int32_t Start)
-{
-    int32_t InputNumber = ParameterNumber(Start);
-    Types InputTypes[InputNumber];
-    for (int32_t Index = 0; Index < InputNumber; Index++)
-        InputTypes[Index] = TypeThrough(Start + 1 + Index);
-
-    if (InputNumber >= 2 &&
-        InputTypes[0] == Types::Vector2D &&
-        InputTypes[1] == Types::Vector2D)
-    {
-        Vector2D A = GetThrough<Vector2D>(Start + 1);
-        Vector2D B = GetThrough<Vector2D>(Start + 2);
-        Temp.Set<Vector2D>(A * B, OperationNumber(Start));
-    }
-    if (InputNumber >= 2 &&
-        InputTypes[0] == Types::Number &&
-        InputTypes[1] == Types::Number)
-    {
-        Number A = GetThrough<Number>(Start + 1);
-        Number B = GetThrough<Number>(Start + 2);
-        Temp.Set<Number>(A * B, OperationNumber(Start));
-    }
-    return true;
-}
-
-bool Operation::MoveTo(int32_t Start)
-{
-    int32_t InputNumber = ParameterNumber(Start);
-    Types InputTypes[InputNumber];
-    for (int32_t Index = 0; Index < InputNumber; Index++)
-        InputTypes[Index] = TypeThrough(Start + 1 + Index);
-
-    uint32_t Time;
-    if (InputNumber >= 2 &&
-        InputTypes[0] == Types::Vector2D &&
-        InputTypes[1] == Types::Time)
-    {
-        Vector2D Target = GetThrough<Vector2D>(Start + 1);
-        Time = GetThrough<uint32_t>(Start + 2);
-        Vector2D Value;
         for (uint32_t Index = 0; Index < Modules.Length; Modules.Iterate(&Index))
-        {
-            if (Modules.ValueTypeAt(Index) != Types::Vector2D)
-                continue;
-            Value = Modules.ValueGet<Vector2D>(Index);
-            Modules.ValueSet<Vector2D>(Value.TimeMove(Target, Time), Index);
-        }
+            Modules.At(Index)->Flags += Value.Values;
+        */
+        return true;
     }
-    else if (InputNumber >= 2 &&
-             InputTypes[0] == Types::Coord2D &&
-             InputTypes[1] == Types::Time)
+
+    bool ResetFlags(ByteArray &Values, Reference Index)
     {
-        Coord2D Target = GetThrough<Coord2D>(Start + 1);
-        Time = GetThrough<uint32_t>(Start + 2);
-        Coord2D Value;
+        /*if (Values.Type(1) != Types::Flags)
+            return true;
+
+        FlagClass Value = ValueGet<FlagClass>(1);
+
         for (uint32_t Index = 0; Index < Modules.Length; Modules.Iterate(&Index))
-        {
-            if (Modules.ValueTypeAt(Index) != Types::Coord2D)
-                continue;
-            Value = Modules.ValueGet<Coord2D>(Index);
-            Modules.ValueSet<Coord2D>(Value.TimeMove(Target, Time), Index);
-        }
+            Modules.At(Index)->Flags -= Value.Values;
+        */
+        return true;
     }
-    else if (InputNumber >= 2 &&
-             InputTypes[0] == Types::Number &&
-             InputTypes[1] == Types::Time)
+
+    bool Sine(ByteArray &Values, Reference Index)
     {
-        Number Target = GetThrough<Number>(Start + 1);
-        Time = GetThrough<uint32_t>(Start + 2);
-        Number Value;
-        for (uint32_t Index = 0; Index < Modules.Length; Modules.Iterate(&Index))
-        {
-            if (Modules.ValueTypeAt(Index) != Types::Number)
-                continue;
-            Value = Modules.ValueGet<Number>(Index);
-            Modules.ValueSet<Number>(TimeMove(Value, Target, Time), Index);
-        }
-    }
-    else
+        Reference InTime  = Index.Append(1).Append(0);
+        Reference InMult  = Index.Append(1).Append(1);
+        Reference InPhase = Index.Append(1).Append(2);
+        Reference Output  = Index.Append(0);
+
+        if (Values.Type(InTime) != Types::Integer) return true;
+
+        int32_t T = Values.Get<int32_t>(InTime).Value;
+        Number M = Values.Get<Number>(InMult).Value;
+        Number P = Values.Get<Number>(InPhase).Value;
+
+        Values.Set(sin(T * M + P), Output);
         return true;
-    return (CurrentTime >= Time);
+    }
 }
 
-bool Operation::Delay(int32_t Start)
+bool RunOperation(ByteArray &Values, Reference Index)
 {
-    int32_t InputNumber = ParameterNumber(Start);
-    Types InputTypes[InputNumber];
-    for (int32_t Index = 0; Index < InputNumber; Index++)
-        InputTypes[Index] = TypeThrough(Start + 1 + Index);
+    Getter<Operations> Operation = Values.Get<Operations>(Index);
 
-    // 0 = delay, 1 = timer
-    if (InputNumber < 2 || InputTypes[0] != Types::Time || InputTypes[1] != Types::Time) // Values not avaliable
+    if (Operation.Success == false) // No operation
         return true;
 
-    uint32_t Timer = Values.Get<uint32_t>(Start + 2);
-
-    if (Timer == 0)
-        Values.Set<uint32_t>(CurrentTime, Start + 2);
-    else if (CurrentTime > Timer + GetThrough<uint32_t>(Start + 1))
+    switch (Operation.Value)
     {
-        Values.Set<uint32_t>(0, Start + 2); // Reset
-        return true;                        // Finished
+    case Operations::Equal:
+        return Operation::Equal(Values, Index);
+    case Operations::Combine:
+        return Operation::Combine(Values, Index);
+    case Operations::Add:
+        return Operation::Add(Values, Index);
+    case Operations::Multiply:
+        return Operation::Multiply(Values, Index);
+    case Operations::MoveTo:
+        return Operation::MoveTo(Values, Index);
+    case Operations::Delay:
+        return Operation::Delay(Values, Index);
+    case Operations::AddDelay:
+        return Operation::AddDelay(Values, Index);
+    case Operations::SetFlags:
+        return Operation::SetFlags(Values, Index);
+    case Operations::ResetFlags:
+        return Operation::ResetFlags(Values, Index);
+    case Operations::Sine:
+        return Operation::Sine(Values, Index);
+    default:
+        ReportError(Status::InvalidValue);
+        return true;
     }
-    return false;
-}
-
-bool Operation::AddDelay(int32_t Start)
-{
-    int32_t InputNumber = ParameterNumber(Start);
-    Types InputTypes[InputNumber];
-    for (int32_t Index = 0; Index < InputNumber; Index++)
-        InputTypes[Index] = TypeThrough(Start + 1 + Index);
-
-    if (InputNumber < 1 || InputTypes[0] != Types::Time)
-        return true;
-
-    Temp.Set<uint32_t>(GetThrough<uint32_t>(Start + 1) + CurrentTime, OperationNumber(Start));
-
-    return true;
-}
-
-bool Operation::SetFlags(int32_t Start)
-{
-    if (Values.Type(1) != Types::Flags)
-        return true;
-
-    FlagClass Value = ValueGet<FlagClass>(1);
-
-    for (uint32_t Index = 0; Index < Modules.Length; Modules.Iterate(&Index))
-        Modules.At(Index)->Flags += Value.Values;
-
-    return true;
-}
-
-bool Operation::ResetFlags(int32_t Start)
-{
-    if (Values.Type(1) != Types::Flags)
-        return true;
-
-    FlagClass Value = ValueGet<FlagClass>(1);
-
-    for (uint32_t Index = 0; Index < Modules.Length; Modules.Iterate(&Index))
-        Modules.At(Index)->Flags -= Value.Values;
-
-    return true;
-}
-
-bool Operation::Sine(int32_t Start)
-{
-    uint32_t InputNumber = ParameterNumber(Start);
-    Types InputTypes[InputNumber];
-    for (uint32_t Index = 0; Index < InputNumber; Index++)
-        InputTypes[Index] = TypeThrough(Start + 1 + Index);
-
-    // 0m = X, 1 = Multiplier, 2 = Phase
-
-    if (InputNumber >= 3 &&
-        InputTypes[0] == Types::Time &&
-        InputTypes[1] == Types::Number &&
-        InputTypes[2] == Types::Number)
-    {
-        uint32_t A = GetThrough<uint32_t>(Start + 1);
-        Number B = GetThrough<Number>(Start + 2);
-        Number C = GetThrough<Number>(Start + 3);
-        Temp.Set<Number>(sin(A + C * B), OperationNumber(Start));
-    }
-
     return true;
 }

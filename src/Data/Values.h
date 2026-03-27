@@ -4,7 +4,8 @@ struct Pin
     char Port = 0;
 };
 
-struct PortNumber{
+struct PortNumber
+{
     int8_t Value;
     PortNumber(int8_t Input) : Value(Input) {};
     PortNumber() : Value(-1) {};
@@ -52,7 +53,7 @@ enum class Drivers : uint8_t
     I2C_SDA,
     I2C_SCL,
     UART_TX,
-    UART_RX, 
+    UART_RX,
 };
 
 enum class Geometries : uint8_t
@@ -140,7 +141,7 @@ enum class Operations : uint8_t
 {
     None,
     Equal,
-    Extract,
+    Unused1,
     Combine,
     IsEqual, // Comparision
     IsGreater,

@@ -1,94 +1,91 @@
 class Program : public BaseClass
 {
 public:
-    enum Value
-    {
-        Mode,
-        Counter
-    };
-    Program(IDClass ID = RandomID, FlagClass Flags = Flags::None);
+    Program(const Reference &ID, ObjectInfo Info = {Flags::None, 1});
     ~Program();
-    bool RunEntry(int32_t Counter);
+
+    bool RunEntry(uint8_t Index);
     bool Run();
 
     static bool RunBridge(BaseClass *Base) { return static_cast<Program *>(Base)->Run(); }
     static constexpr VTable Table = {
         .Setup = BaseClass::DefaultSetup,
-        .Run = Program::RunBridge,
-        .AddModule = BaseClass::DefaultAddModule,
-        .RemoveModule = BaseClass::DefaultRemoveModule};
+        .Run = Program::RunBridge};
 };
 
-constexpr VTable Program::Table;
-
-Program::Program(IDClass ID, FlagClass Flags) : BaseClass(&Table, ID, Flags)
+Program::Program(const Reference &ID, ObjectInfo Info) : BaseClass(&Table, ID, Info)
 {
     Type = ObjectTypes::Program;
     Name = "Program";
 
-    ValueSet(ProgramTypes::None);
-    ValueSet<int32_t>(0);
-
-    Programs.Add(this);
+    // Set Program Mode at {0}
+    Values.Set(ProgramTypes::Sequence, {0});
+    // Set Counter at {0, 0}
+    Values.Set((int32_t)0, {0, 0});
 }
 
-Program::~Program()
-{
-    Programs.Remove(this);
-}
+Program::~Program() {}
 
-bool Program::RunEntry(int32_t Counter)
+bool Program::RunEntry(uint8_t Index)
 {
-    if (Modules.IsValid(Counter) == false)
+    // Retrieve the entry at Path {Index} (Group 1+)
+    Getter<Operations> Item = Values.Get<Operations>({Index});
+    if (!Item.Success)
         return true;
 
-    BaseClass *Object = Modules[Counter];
-
-    return Object->Run();
+    return RunOperation(Values, {Index});
 }
 
 bool Program::Run()
 {
-    bool HasFinished = true;
+    // 1. Fetch Mode {0} and Counter {0, 0}
+    Getter<ProgramTypes> ModeEntry = Values.Get<ProgramTypes>({0});
+    Getter<int32_t> CounterEntry = Values.Get<int32_t>({0, 0});
 
-    if (Values.Type(Mode) != Types::Program || Values.Type(Counter) != Types::Integer)
+    if (!ModeEntry.Success || !CounterEntry.Success)
         return true;
 
-    int32_t Counter = ValueGet<int32_t>(Value::Counter);
+    ProgramTypes Mode = ModeEntry.Value;
+    int32_t Counter = CounterEntry.Value;
+    int32_t InitialCounter = Counter;
 
-    int32_t CounterInit = Counter;
-    switch (ValueGet<ProgramTypes>(Value::Mode))
+    bool HasFinished = false;
+
+    if (Mode == ProgramTypes::Sequence)
     {
-    case ProgramTypes::Sequence:
-        HasFinished = false;
-        while (RunEntry(Counter) == true && !(HasFinished && Counter >= CounterInit)) // Finished part or (made a step and done)
+        // Run until an entry returns 'false' (it's busy) or we loop back
+        // The Counter maps to the Path {Counter + 1}
+        while (RunEntry(Counter + 1))
         {
             Counter++;
-            if ((uint32_t)Counter >= Modules.Length)
+
+            // Check if next path exists; if not, wrap around
+            if (!Values.Get<Operations>({(uint8_t)(Counter + 1)}).Success)
             {
-                HasFinished = true;
                 Counter = 0;
+                HasFinished = true;
+                /*if (info.flags.has(Flags::runOnce))
+                    break;*/
             }
-            if (HasFinished && Flags == Flags::RunOnce)
+
+            // Safety break to prevent infinite loops in one tick
+            if (Counter == InitialCounter)
                 break;
         }
-        break;
-    case ProgramTypes::All:
-        // NOT WORKING
-        for (uint32_t Index = Modules.FirstValid(); Index < Modules.Length; Modules.Iterate(&Index))
-            HasFinished = HasFinished && RunEntry(Counter);
-        break;
-    default:
-        break;
     }
-
-    if ((Flags == Flags::RunOnce) && HasFinished)
+    /*else if (Mode == ProgramTypes::All)
     {
-        Flags -= Flags::RunOnce;
-        Chirp.Send(ByteArray(Functions::SetFlags) << ID << Flags);
-    }
+        HasFinished = true;
 
-    ValueSet(Counter, Value::Counter);
+        if (Values.Get({i}).Success)
+        {
+            if (!RunEntry(i))
+                HasFinished = false;
+        }
+    }*/
+
+    // 2. Save the updated logical Counter back to {0, 0}
+    Values.Set(Counter, {0, 0});
 
     return HasFinished;
 }

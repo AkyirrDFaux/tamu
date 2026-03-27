@@ -1,5 +1,6 @@
 class BaseClass;
 struct ObjectInfo;
+struct Reference;
 class IDClass;
 class IDList;
 class ByteArray;
@@ -11,4 +12,4 @@ class PortClass;
 class PortAttachClass;
 class DisplayTypeClass;
 
-class Operation;
+bool RunOperation(ByteArray &Values, Reference Index);

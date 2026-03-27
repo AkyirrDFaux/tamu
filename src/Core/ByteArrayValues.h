@@ -1,11 +1,3 @@
-const void *ByteArray::Get(const Reference &Location, Types Type) const
-{
-    FindResult Result = Find(Location);
-    if (Result.Header < 0 || Result.Type != Type)
-        return nullptr;
-    return Result.Value;
-}
-
 template <class C>
 Getter<C> ByteArray::Get(const Reference &Location) const
 {

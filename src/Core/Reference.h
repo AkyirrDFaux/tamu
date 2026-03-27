@@ -94,4 +94,24 @@ struct Reference
     }
 
     bool operator!=(const Reference &other) const { return !(*this == other); }
+
+    Reference Append(uint8_t part) const
+    {
+        // 1. Create a copy of the current reference
+        Reference r = *this;
+
+        // 2. Check for validity and bounds
+        uint8_t currentLen = PathLen();
+        if (!IsValid() || currentLen >= MAX_REF_LENGTH)
+            return r; // Return unchanged if invalid or full
+
+        // 3. Add the new part to the path
+        r.Path[currentLen] = part;
+
+        // 4. Increment the path length bit (bits 0-6 of Metadata)
+        // Bit 7 (Global/Local) is preserved automatically
+        r.Metadata++;
+
+        return r;
+    }
 };

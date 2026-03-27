@@ -41,8 +41,8 @@ uint32_t DeltaTime = 0;
 ChirpClass Chirp = ChirpClass(); // Bluetooth/Serial
 
 // Programs
-// #include "Object\Operation.h"
-// #include "Object\Program.h"
+#include "Object\Operation.h"
+#include "Object\Program.h"
 
 #include "Object\Board.h"
 BoardClass Board(Reference::Global(0, 0, 0));

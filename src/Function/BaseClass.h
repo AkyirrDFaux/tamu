@@ -17,14 +17,11 @@ void BaseClass::Destroy()
     case ObjectTypes::Sensor:
         delete (SensorClass *)this;
         break;
-    /*case ObjectTypes::LEDStrip:
-        delete (LEDStripClass *)this;
-        break;
     case ObjectTypes::Program:
         delete (Program *)this;
         break;
-    case ObjectTypes::I2C:
-        delete (I2CClass *)this;
+    /*case ObjectTypes::LEDStrip:
+        delete (LEDStripClass *)this;
         break;
     case ObjectTypes::UART:
         delete (UARTClass *)this;
@@ -83,9 +80,9 @@ BaseClass *CreateObject(Reference ID, ObjectTypes Type)
     case ObjectTypes::Input:
         return new InputClass(ID);
     case ObjectTypes::Sensor:
-        return new SensorClass(ID); /*
-     case ObjectTypes::Program:
-         return new Program(ID, Flags);*/
+        return new SensorClass(ID);
+    case ObjectTypes::Program:
+        return new Program(ID);
     default:
         ReportError(Status::InvalidType);
         return nullptr;
