@@ -11,7 +11,7 @@ void DefaultSetup()
     LD->Name = "Left Eye";
 
     LD->ValueSetup<Displays>(Displays::Vysi_v1_0, {0});
-    LD->ValueSetup(Reference::Global(0, 0, 0, {1, 0}), {0, 0}),
+    LD->ValueSetup<PortNumber>(0, {0, 0}),
     LD->Values.Set(Coord2D(0, 0, 5), {0, 5});
     LD->Values.Set<uint8_t>(40, {0, 4});
 

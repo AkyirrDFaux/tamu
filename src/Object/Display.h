@@ -1,14 +1,14 @@
 class DisplayClass : public BaseClass
 {
 private:
-    Number *Overlay = nullptr; 
-    int32_t MaxLength = 0;     
+    Number *Overlay = nullptr;
+    int32_t MaxLength = 0;
     void ManageOverlay(int32_t RequiredLength);
 
 public:
-    uint8_t *Layout = nullptr; 
-    Reference CurrentLink = Reference(); // Default empty reference
-    uint8_t *LEDs = nullptr;             
+    uint8_t *Layout = nullptr;
+    PortNumber CurrentLink = -1; // Default empty reference
+    uint8_t *LEDs = nullptr;
 
     DisplayClass(const Reference &ID, ObjectInfo Info = {Flags::None, 1});
     ~DisplayClass();
@@ -17,13 +17,14 @@ public:
     bool Run();
 
     bool Connect(BaseClass *Object = nullptr, int32_t Index = -1);
-    bool Disconnect(BaseClass *Object = nullptr);
+    bool Disconnect();
 
-    static void SetupBridge(BaseClass *Base, const Reference &Index) { 
-        static_cast<DisplayClass *>(Base)->Setup(Index); 
+    static void SetupBridge(BaseClass *Base, const Reference &Index)
+    {
+        static_cast<DisplayClass *>(Base)->Setup(Index);
     }
     static bool RunBridge(BaseClass *Base) { return static_cast<DisplayClass *>(Base)->Run(); }
-    
+
     static constexpr VTable Table = {
         .Setup = DisplayClass::SetupBridge,
         .Run = DisplayClass::RunBridge};
@@ -32,7 +33,7 @@ public:
                         Coord2D Transform, bool Mirrored, Number *Overlay);
     Number CalculateShapeAlpha(Geometries Type, Vector2D P, Vector2D S, Number F);
     void RenderTexture(uint8_t Index, int32_t Length, Vector2D DisplaySize,
-                        Coord2D Transform, bool Mirrored, Number *Overlay);
+                       Coord2D Transform, bool Mirrored, Number *Overlay);
 };
 
 DisplayClass::DisplayClass(const Reference &ID, ObjectInfo Info) : BaseClass(&Table, ID, Info)
@@ -42,78 +43,69 @@ DisplayClass::DisplayClass(const Reference &ID, ObjectInfo Info) : BaseClass(&Ta
 
     // Initialize local paths using the implicit list constructor
     Values.Set(Displays::Undefined, {0});
-    Values.Set<Reference>(Reference(), {0, 0}); // Connection Link (Port/Object)
-    Values.Set<int32_t>(0, {0, 1});             // Length
-    Values.Set(Vector2D(0, 0), {0, 2});         // Size
-    Values.Set<Number>(1, {0, 3});              // Ratio
-    Values.Set<uint8_t>(20, {0, 4});            // Brightness
-    Values.Set(Coord2D(0, 0, 0), {0, 5});       // Offset
-    Values.Set(false, {0, 6});                  // Mirroring
-    Values.Set(false, {0, 7});                  // Wrapping X
-    Values.Set(false, {0, 8});                  // Wrapping Y
+    Values.Set<PortNumber>(-1, {0, 0});   // Connection Link (Port/Object)
+    Values.Set<int32_t>(0, {0, 1});       // Length
+    Values.Set(Vector2D(0, 0), {0, 2});   // Size
+    Values.Set<Number>(1, {0, 3});        // Ratio
+    Values.Set<uint8_t>(20, {0, 4});      // Brightness
+    Values.Set(Coord2D(0, 0, 0), {0, 5}); // Offset
+    Values.Set(false, {0, 6});            // Mirroring
+    Values.Set(false, {0, 7});            // Wrapping X
+    Values.Set(false, {0, 8});            // Wrapping Y
 };
 
 DisplayClass::~DisplayClass()
 {
     Disconnect();
-    if (Overlay) delete[] Overlay;
+    if (Overlay)
+        delete[] Overlay;
 };
 
 bool DisplayClass::Connect(BaseClass *Object, int32_t Index)
 {
-    if (Object == nullptr) Object = this;
+    if (Object == nullptr)
+        Object = this;
 
+    // 1. Try to get the entry as a Reference (Daisy-chain)
     Getter<Reference> Link = Values.Get<Reference>({0, 0});
-    if (!Link.Success || Link.Value == Reference())
+    if (Link.Success && Link.Value.IsValid())
+    {
+        BaseClass *Target = Objects.At(Link.Value);
+        if (!Target)
+            return false;
+
+        if (Target->Type == ObjectTypes::Display)
+            return static_cast<DisplayClass *>(Target)->Connect(Object, Index + 1);
+
         return false;
-
-    BaseClass *Target = Objects.At(Link.Value);
-    if (!Target) return false;
-
-    this->CurrentLink = Link.Value;
-
-    if (Target->Type == ObjectTypes::Board)
-    {
-        // Reference stores path from Path[0] onwards. 
-        // Typically {1, PortIndex} for Board connections.
-        if (Link.Value.PathLen() < 2) return false;
-
-        uint8_t Port = Link.Value.Path[1]; 
-        return static_cast<BoardClass *>(Target)->Connect(Object, Port, Index + 1);
     }
-    else
+
+    // 2. Fallback: Try to get the entry as a PortNumber (Direct Board Connection)
+    Getter<PortNumber> Port = Values.Get<PortNumber>({0, 0});
+    if (Port.Success && Port.Value.IsValid())
     {
-        return static_cast<DisplayClass *>(Target)->Connect(Object, Index + 1);
+        if (Board.Connect(Object, Port.Value, Index + 1))
+        {
+            if (Object->Type == ObjectTypes::Display)
+                static_cast<DisplayClass *>(Object)->CurrentLink = Port.Value;
+
+            return true;
+        }
     }
+    return false;
 }
 
-bool DisplayClass::Disconnect(BaseClass *Object)
+bool DisplayClass::Disconnect()
 {
-    if (Object == nullptr) Object = this;
-    if (CurrentLink == Reference()) return false;
+    if (CurrentLink.IsValid() == false)
+        return false;
 
-    BaseClass *Target = Objects.At(CurrentLink);
-    if (!Target) return false;
-
-    bool Success = false;
-    if (Target->Type == ObjectTypes::Board)
+    if (Board.Disconnect(this, CurrentLink))
     {
-        if (CurrentLink.PathLen() < 2) return false;
-
-        uint8_t Port = CurrentLink.Path[1];
-        Success = static_cast<BoardClass *>(Target)->Disconnect(Object, Port);
+        CurrentLink = -1;
+        return true;
     }
-    else
-    {
-        Success = static_cast<DisplayClass *>(Target)->Disconnect(Object);
-    }
-
-    if (Object == this)
-    {
-        this->LEDs = nullptr;
-        this->CurrentLink = Reference();
-    }
-    return Success;
+    return false;
 }
 
 void DisplayClass::Setup(const Reference &Index)
@@ -139,7 +131,8 @@ void DisplayClass::Setup(const Reference &Index)
                 Layout = LayoutVysiv1_0;
                 HardwareChanged = true;
                 break;
-            default: break;
+            default:
+                break;
             }
         }
         else if (Index.PathLen() > 1 && (Index.Path[1] == 0 || Index.Path[1] == 1))
@@ -151,7 +144,8 @@ void DisplayClass::Setup(const Reference &Index)
     if (HardwareChanged)
     {
         Getter<int32_t> Length = Values.Get<int32_t>({0, 1});
-        if (Length.Success) ManageOverlay(Length.Value);
+        if (Length.Success)
+            ManageOverlay(Length.Value);
         Disconnect();
         Connect();
     }
@@ -159,16 +153,19 @@ void DisplayClass::Setup(const Reference &Index)
 
 void DisplayClass::ManageOverlay(int32_t RequiredLength)
 {
-    if (RequiredLength <= 0) return;
+    if (RequiredLength <= 0)
+        return;
 
     // Allocate only if current buffer is too small or null
     if (RequiredLength > MaxLength || Overlay == nullptr)
     {
         // Allocate and zero-initialize to prevent garbage values
-        Number* NewOverlay = new Number[RequiredLength]();
-        if (!NewOverlay) return; 
+        Number *NewOverlay = new Number[RequiredLength]();
+        if (!NewOverlay)
+            return;
 
-        if (Overlay != nullptr) delete[] Overlay;
+        if (Overlay != nullptr)
+            delete[] Overlay;
 
         Overlay = NewOverlay;
         MaxLength = RequiredLength;
@@ -205,7 +202,8 @@ bool DisplayClass::Run()
     for (uint8_t I = 0;; I++)
     {
         Types NodeType = Values.Type({1, I});
-        if (NodeType == Types::Undefined) break;
+        if (NodeType == Types::Undefined)
+            break;
 
         if (NodeType == Types::Geometry2D)
         {
@@ -240,7 +238,8 @@ void DisplayClass::RenderGeometry(uint8_t Index, int32_t Length, Vector2D Displa
     Number GFade = Values.Get<Number>({1, Index, 2}).Value;
     Coord2D GPos = Values.Get<Coord2D>({1, Index, 3}).Value;
 
-    if (GFade <= 0) GFade = 0.001;
+    if (GFade <= 0)
+        GFade = 0.001;
     Coord2D CurrentTransform = Transform.Join(GPos);
 
     int32_t GridW = int32_t(DisplaySize.X);
@@ -256,18 +255,23 @@ void DisplayClass::RenderGeometry(uint8_t Index, int32_t Length, Vector2D Displa
             // 1. Safety check for Layout indexing
             if (Layout != nullptr)
             {
-                if (Layout[GridIdx] == 0) continue;
+                if (Layout[GridIdx] == 0)
+                    continue;
                 PIdx = Layout[GridIdx] - 1;
             }
 
             // 2. Safety check for Overlay/LED buffer indexing
-            if (PIdx < 0 || PIdx >= Length) continue;
+            if (PIdx < 0 || PIdx >= Length)
+                continue;
 
-            if (Op == GeometryOperation::Add && Overlay[PIdx] >= 1.0) continue;
-            if ((Op == GeometryOperation::Cut || Op == GeometryOperation::Intersect) && Overlay[PIdx] <= 0) continue;
+            if (Op == GeometryOperation::Add && Overlay[PIdx] >= 1.0)
+                continue;
+            if ((Op == GeometryOperation::Cut || Op == GeometryOperation::Intersect) && Overlay[PIdx] <= 0)
+                continue;
 
             Vector2D P = CurrentTransform.TransformTo(Vector2D(X, Y));
-            if (Mirrored) P = P.Mirror(Vector2D(0, 1));
+            if (Mirrored)
+                P = P.Mirror(Vector2D(0, 1));
 
             Number LocalAlpha = CalculateShapeAlpha(Type, P, GSize, GFade);
 
@@ -338,7 +342,8 @@ Number DisplayClass::CalculateShapeAlpha(Geometries Type, Vector2D P, Vector2D S
 void DisplayClass::RenderTexture(uint8_t Index, int32_t Length, Vector2D DisplaySize,
                                  Coord2D Transform, bool Mirrored, Number *Overlay)
 {
-    if (Values.Type({1, Index}) != Types::Texture2D) return;
+    if (Values.Type({1, Index}) != Types::Texture2D)
+        return;
 
     Textures2D TextureType = Values.Get<Textures2D>({1, Index}).Value;
     ColourClass ColourA = Values.Get<ColourClass>({1, Index, 0}).Value;
@@ -347,10 +352,11 @@ void DisplayClass::RenderTexture(uint8_t Index, int32_t Length, Vector2D Display
     {
         for (int32_t I = 0; I < Length; I++)
         {
-            if (Overlay[I] <= 0) continue;
+            if (Overlay[I] <= 0)
+                continue;
             int32_t Offset = I * 3;
 
-            ColourClass Pixel(LEDs[Offset + 1], LEDs[Offset], LEDs[Offset + 2], 255); //GRB
+            ColourClass Pixel(LEDs[Offset + 1], LEDs[Offset], LEDs[Offset + 2], 255); // GRB
             Pixel.Layer(ColourA, Overlay[I]);
 
             LEDs[Offset] = Pixel.G;
@@ -363,7 +369,8 @@ void DisplayClass::RenderTexture(uint8_t Index, int32_t Length, Vector2D Display
     ColourClass ColourB = Values.Get<ColourClass>({1, Index, 1}).Value;
     Coord2D TexPos = Values.Get<Coord2D>({1, Index, 2}).Value;
     Number TexWidth = Values.Get<Number>({1, Index, 3}).Value;
-    if (TexWidth <= 0) TexWidth = 0.001;
+    if (TexWidth <= 0)
+        TexWidth = 0.001;
 
     Coord2D CurrentTransform = Transform.Join(TexPos);
     int32_t GridW = int32_t(DisplaySize.X);
@@ -378,14 +385,17 @@ void DisplayClass::RenderTexture(uint8_t Index, int32_t Length, Vector2D Display
 
             if (Layout != nullptr)
             {
-                if (Layout[GridIdx] == 0) continue;
+                if (Layout[GridIdx] == 0)
+                    continue;
                 PIdx = Layout[GridIdx] - 1;
             }
 
-            if (PIdx < 0 || PIdx >= Length || Overlay[PIdx] <= 0) continue;
+            if (PIdx < 0 || PIdx >= Length || Overlay[PIdx] <= 0)
+                continue;
 
             Vector2D P = CurrentTransform.TransformTo(Vector2D(X, Y));
-            if (Mirrored) P = P.Mirror(Vector2D(0, 1));
+            if (Mirrored)
+                P = P.Mirror(Vector2D(0, 1));
 
             ColourClass FinalColour;
             Number Distance = 0;
