@@ -14,6 +14,9 @@ void BaseClass::Destroy()
     case ObjectTypes::Input:
         delete (InputClass *)this;
         break;
+    case ObjectTypes::Sensor:
+        delete (SensorClass *)this;
+        break;
     /*case ObjectTypes::LEDStrip:
         delete (LEDStripClass *)this;
         break;
@@ -35,8 +38,7 @@ void BaseClass::Destroy()
     }
 };
 
-void BaseClass::Save()
-{
+void BaseClass::Save() {
     /*
     ByteArray Data = ByteArray(*this).SubArray(1); // Remove Type of ID
     if (Data.Length % FLASH_PADDING != 0)
@@ -79,9 +81,11 @@ BaseClass *CreateObject(Reference ID, ObjectTypes Type)
     case ObjectTypes::I2C:
         return new I2CDeviceClass(ID);
     case ObjectTypes::Input:
-        return new InputClass(ID);/*
-    case ObjectTypes::Program:
-        return new Program(ID, Flags);*/
+        return new InputClass(ID);
+    case ObjectTypes::Sensor:
+        return new SensorClass(ID); /*
+     case ObjectTypes::Program:
+         return new Program(ID, Flags);*/
     default:
         ReportError(Status::InvalidType);
         return nullptr;

@@ -32,9 +32,8 @@ enum class Drivers : uint8_t
 {
     None,
     Input,
+    Analog,
     Output,
-    PWM,
-    Servo,
     LED,
     I2C_SDA,
     I2C_SCL,

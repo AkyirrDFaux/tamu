@@ -54,8 +54,8 @@ ChirpClass Chirp = ChirpClass(); // Bluetooth/Serial
 BoardClass Board(Reference::Global(0, 0, 0));
 
 // Objects
- #include "Object\Input.h"
-// #include "Object\Sensor.h"
+#include "Object\Input.h"
+#include "Object\Sensor.h"
 #include "Object\I2CDevice.h"
 
 // #include "Object\Fan.h"

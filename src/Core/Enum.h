@@ -10,7 +10,7 @@ enum class Types : uint8_t
     Board,
     Sensor,
     PortDriver,
-    AccGyr,
+    I2CDevice,
     Input,
     LEDStrip,
     Texture1D,
@@ -82,25 +82,16 @@ void ReportError(Status ErrorCode, IDClass ID);
 enum class ObjectTypes : uint8_t
 {
     Undefined = 0,
-    // Shape2D,
     Board,
-    // Port,
-    // Fan,
     LEDStrip,
-    // LEDSegment,
-    // Texture1D,
     Display,
-    // Geometry2D,
-    // Texture2D,
-    // AccGyr,
-    // Servo,
     Input,
-    // Operation,
+    Sensor,
+    Output,
     Program,
     I2C,
     UART,
     SPI,
-    Sensor,
     OLED
 };
 
@@ -198,7 +189,7 @@ Types GetType<SensorTypes>() { return Types::Sensor; };
 template <>
 Types GetType<Drivers>() { return Types::PortDriver; };
 template <>
-Types GetType<I2CDevices>() { return Types::AccGyr; };
+Types GetType<I2CDevices>() { return Types::I2CDevice; };
 template <>
 Types GetType<Inputs>() { return Types::Input; };
 template <>

@@ -101,7 +101,7 @@ void BoardClass::DriverStop(uint8_t Port)
         DriverArray[Port] = nullptr;
         Values.Set(Drivers::None, {1, Port, 1});
     }
-    else if (CurrentRole.Value == Drivers::Input)
+    else if (CurrentRole.Value == Drivers::Input || CurrentRole.Value == Drivers::Analog)
     {
         Values.Set(Drivers::None, {1, Port, 1});
     }
@@ -180,6 +180,14 @@ void BoardClass::DriverStart(uint8_t Port)
 
         // Pass the physical Pin from the Board's Registry to the Object
         Input->InputPin = PortPin.Value;
+    }
+    else if (FirstObj->Type == ObjectTypes::Sensor)
+    {
+        SensorClass *Input = static_cast<SensorClass *>(FirstObj);
+        Values.Set(Drivers::Analog, {1, Port, 1});
+
+        // Pass the physical Pin from the Board's Registry to the Object
+        Input->MeasPin = PortPin.Value;
     }
     // 2. I2C Logic (Referral System)
     else if (FirstObj->Type == ObjectTypes::I2C)
@@ -287,6 +295,11 @@ void BoardClass::PortReset(BaseClass *Object)
     case ObjectTypes::Input:
     {
         static_cast<InputClass *>(Object)->InputPin = INVALID_PIN;
+        break;
+    }
+    case ObjectTypes::Sensor:
+    {
+        static_cast<SensorClass *>(Object)->MeasPin = INVALID_PIN;
         break;
     }
     default:
