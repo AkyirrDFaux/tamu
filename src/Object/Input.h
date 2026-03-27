@@ -1,59 +1,106 @@
 class InputClass : public BaseClass
 {
 public:
-    enum Value
-    {
-        InputType,
-        Input,
-        Indicator
-    };
     Pin InputPin = INVALID_PIN;
+    uint8_t CurrentPort = 255;
 
-    InputClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
+    InputClass(const Reference &ID, ObjectInfo Info = {Flags::None, 1});
     ~InputClass();
-    void Setup(int32_t Index = -1);
+
+    void Setup(const Reference &Index);
     bool Run();
 
-    static void SetupBridge(BaseClass *Base, int32_t Index) { static_cast<InputClass *>(Base)->Setup(Index); }
-    static bool RunBridge(BaseClass *Base) { return static_cast<InputClass *>(Base)->Run(); }
+    // Port Management
+    bool Connect();
+    bool Disconnect();
+
+    static void SetupBridge(BaseClass *Base, const Reference &Index)
+    {
+        static_cast<InputClass *>(Base)->Setup(Index);
+    }
+    static bool RunBridge(BaseClass *Base)
+    {
+        return static_cast<InputClass *>(Base)->Run();
+    }
+
     static constexpr VTable Table = {
         .Setup = InputClass::SetupBridge,
-        .Run = InputClass::RunBridge,
-        .AddModule = BaseClass::DefaultAddModule,
-        .RemoveModule = BaseClass::DefaultRemoveModule};
+        .Run = InputClass::RunBridge};
 };
 
 constexpr VTable InputClass::Table;
 
-InputClass::InputClass(IDClass ID, FlagClass Flags) : BaseClass(&Table, ID, Flags)
+InputClass::InputClass(const Reference &ID, ObjectInfo Info) : BaseClass(&Table, ID, Info)
 {
-    BaseClass::Type = ObjectTypes::Input;
+    Type = ObjectTypes::Input;
     Name = "Input";
 
-    ValueSet(Inputs::Undefined, InputType);
-
-    Sensors.Add(this);
+    // Initialize the structure
+    Values.Set(Inputs::Undefined, {0}); // {0}   : Input Mode/Type
+    Values.Set<uint8_t>(255, {0, 0});   // {0,0} : Port Index (Physical Pin)
+    Values.Set(false, {1});             // {1}   : Read Value
+    //Values.Set(false, {2});             // {2}   : Indicator State
 };
 
 InputClass::~InputClass()
 {
-    Sensors.Remove(this);
+    Disconnect();
 };
 
-void InputClass::Setup(int32_t Index)
+bool InputClass::Connect()
 {
-    if (Index != -1 && Index != 0)
+    // 1. Retrieve Port Index from {0, 0}
+    Getter<uint8_t> Port = Values.Get<uint8_t>({0, 0});
+
+    // 2. Validate (Assuming 0-10 are valid physical ports on your board)
+    if (!Port.Success || Port.Value > 10)
+    {
+        ReportError(Status::PortError);
+        return false;
+    }
+
+    // 3. Ask the Board to link this object to the physical pin
+    // Board handles pin-sharing checks and hardware Registry lookups
+    if (Board.Connect(this, Port.Value))
+    {
+        CurrentPort = Port.Value;
+        return true;
+    }
+
+    return false;
+}
+
+bool InputClass::Disconnect()
+{
+    Board.Disconnect(this, CurrentPort);
+    CurrentPort = 255;
+    return true;
+}
+
+void InputClass::Setup(const Reference &Index)
+{
+    // If the index refers to the port {0,0}, attempt reconnection
+    if (Index == Reference({0, 0}))
+    {
+        Disconnect();
+        Connect();
+        return;
+    }
+
+    if (Index != Reference({0}))
         return;
 
-    if (Values.Type(InputType) != Types::Input)
+    if (Values.Type({0}) != Types::Input)
         return;
 
-    switch (ValueGet<Inputs>(InputType))
+    // Reset values based on mode selection
+    switch (Values.Get<Inputs>({0}))
     {
     case Inputs::ButtonWithLED:
-        ValueSet(false, Indicator);
+        Values.Set(false, {2}); // Reset Indicator
+        [[fallthrough]];
     case Inputs::Button:
-        ValueSet(false, Input);
+        Values.Set(false, {1}); // Reset Value
         break;
     default:
         break;
@@ -62,37 +109,40 @@ void InputClass::Setup(int32_t Index)
 
 bool InputClass::Run()
 {
-    if (Values.Type(InputType) != Types::Input)
+    if (Values.Type({0}) != Types::Input)
     {
-        ReportError(Status::MissingModule, ID);
+        ReportError(Status::MissingModule);
         return true;
     }
 
     if (HW::IsValidPin(InputPin) == false)
     {
-        ReportError(Status::PortError, ID);
+        ReportError(Status::PortError);
         return true;
     }
 
-    switch (ValueGet<Inputs>(InputType))
+    switch (Values.Get<Inputs>({0}))
     {
     case Inputs::Button:
-        ValueSet<bool>(HW::Read(InputPin) == true, Input);
+        Values.Set<bool>(HW::Read(InputPin) == false, {1}); //Inverted logic, Low = On
         break;
+
     case Inputs::ButtonWithLED:
-        if (ValueGet<bool>(Indicator))
+        // Multiplexing logic
+        if (Values.Get<bool>({2})) // Check Indicator state
         {
             HW::ModeOutput(InputPin);
-            HW::High(InputPin);
+            HW::Low(InputPin); //Inverted logic, Low = On
         }
-        else // Applies blocking
+        else
         {
             HW::ModeInput(InputPin);
-            ValueSet<bool>(HW::Read(InputPin) == true, Input);
+            Values.Set<bool>(HW::Read(InputPin) == false, {1}); //Inverted logic, Low = On
         }
         break;
     default:
         break;
     }
+
     return true;
 };

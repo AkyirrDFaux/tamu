@@ -36,7 +36,7 @@ class MyCallbacks : public NimBLECharacteristicCallbacks
         std::string rxValue = pCharacteristic->getValue();
         if (rxValue.length() > 0)
         {
-            ESP_LOG_BUFFER_HEX("CHIRP IN", rxValue.data(), rxValue.length());
+            //ESP_LOG_BUFFER_HEX("CHIRP IN", rxValue.data(), rxValue.length());
 
             BufferBLEIn += ByteArray(rxValue.data(), rxValue.length());
             //ESP_LOGI("CHIRP IN", "Now %d bytes", BufferBLEIn.Length);
@@ -100,7 +100,7 @@ void ChirpClass::Begin(Text Name)
 
 void ChirpClass::SendNow(const ByteArray &Input)
 {
-    HW::USB_Send(Input.CreateMessage());
+    //HW::USB_Send(Input.CreateMessage());
 };
 
 void ChirpClass::Send(const ByteArray &Input)
@@ -116,11 +116,11 @@ void ChirpClass::Send(const ByteArray &Input)
             pTxCharacteristic->notify();
             HW::Sleep(20);
         }
-        ESP_LOG_BUFFER_HEX("CHIRP OUT", Buffer.Array, Buffer.Length);
+        //ESP_LOG_BUFFER_HEX("CHIRP OUT", Buffer.Array, Buffer.Length);
     }
     // Also send via USB for cross-compatibility
 #endif
-    HW::USB_Send(Input.CreateMessage());
+    //HW::USB_Send(Input.CreateMessage());
 };
 
 void ChirpClass::Communicate()
@@ -128,7 +128,7 @@ void ChirpClass::Communicate()
 #if defined BOARD_Valu_v2_0
     HW::tud_task();
 #endif
-    ByteArray Input = HW::USB_Read();
+    /*ByteArray Input = HW::USB_Read();
 
     if (Input.Length > 0)
     {
@@ -138,7 +138,7 @@ void ChirpClass::Communicate()
         ByteArray Message = BufferUSBIn.ExtractMessage();
         if (Message.Length > 0)
             Run(Message);
-    }
+    }*/
 
 // BT
 

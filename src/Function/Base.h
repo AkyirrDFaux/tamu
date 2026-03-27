@@ -279,10 +279,10 @@ void LoadObject(ByteArray &Input)
 void ReportError(Status ErrorCode)
 {
     ByteArray Report = ByteArray(ErrorCode);
-    Chirp.SendNow(Report);
+    Chirp.Send(Report);
 }
 void ReportError(Status ErrorCode, Reference ID)
 {
     ByteArray Report = ByteArray(ErrorCode) << ByteArray(ID);
-    Chirp.SendNow(Report);
+    Chirp.Send(Report);
 }

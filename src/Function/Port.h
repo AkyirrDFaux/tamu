@@ -1,28 +1,31 @@
-void BoardClass::Setup(const Reference &Index) 
+void BoardClass::Setup(const Reference &Index)
 {
 #if defined BOARD_Tamu_v2_0
     // Initialize onboard devices only when Setup is called with the root path (Length 0)
-    if (Index.PathLen() == 0) 
+    if (Index.PathLen() == 0)
     {
         // Reference(0,2,0) points to the local Gyro/Acc object
         I2CDeviceClass *GyroAcc = new I2CDeviceClass(Reference::Global(0, 2, 0), {Flags::Auto, 1});
-        
-        GyroAcc->Values.Set<uint8_t>(8, {0, 0}); // SDA Port Index
-        GyroAcc->Values.Set<uint8_t>(9, {0, 1}); // SCL Port Index
-        GyroAcc->Values.Set(I2CDevices::LSM6DS3TRC, {0});
-        
-        // Trigger initial connection
-        GyroAcc->Setup(Reference()); 
+
+        GyroAcc->ValueSetup<uint8_t>(8, {0, 0}); // SDA Port Index
+        GyroAcc->ValueSetup<uint8_t>(9, {0, 1}); // SCL Port Index
+        GyroAcc->ValueSetup(I2CDevices::LSM6DS3TRC, {0});
+
+        InputClass *Button = new InputClass(Reference::Global(0, 2, 1), {Flags::Auto, 1});
+        Button->ValueSetup<uint8_t>(10, {0,0});
+        Button->ValueSetup<Inputs>(Inputs::ButtonWithLED, {0});
     }
 #endif
 }
 
 void BoardClass::DriverStop(uint8_t Port)
 {
-    if (Port >= 11) return;
+    if (Port >= 11)
+        return;
 
     Getter<Drivers> CurrentRole = Values.Get<Drivers>({1, Port, 1});
-    if (!CurrentRole.Success || CurrentRole.Value == Drivers::None) return;
+    if (!CurrentRole.Success || CurrentRole.Value == Drivers::None)
+        return;
 
     // 1. Handle I2C Redirection (SCL -> SDA)
     if (CurrentRole.Value == Drivers::I2C_SCL)
@@ -35,7 +38,7 @@ void BoardClass::DriverStop(uint8_t Port)
             if (PartnerRole.Success && PartnerRole.Value == Drivers::I2C_SDA)
             {
                 DriverStop(SdaPort);
-                return; 
+                return;
             }
         }
     }
@@ -50,7 +53,8 @@ void BoardClass::DriverStop(uint8_t Port)
         while (true)
         {
             Getter<Reference> Entry = Values.Get<Reference>({1, Port, 1, Slot++});
-            if (!Entry.Success) break;
+            if (!Entry.Success)
+                break;
 
             BaseClass *Obj = Objects.At(Entry.Value);
             if (Obj && Obj->Type == ObjectTypes::I2C)
@@ -80,15 +84,16 @@ void BoardClass::DriverStop(uint8_t Port)
             }
 
             DriverArray[Port] = nullptr;
-            if (SclPort < 11) DriverArray[SclPort] = nullptr;
+            if (SclPort < 11)
+                DriverArray[SclPort] = nullptr;
 
-            Values.Set(Drivers::None, {1, Port, 1});
-            Values.Set(Drivers::None, {1, SclPort, 1});
             Values.Delete({1, Port, 2});
             Values.Delete({1, SclPort, 2});
+            Values.Set(Drivers::None, {1, SclPort, 1});
+            Values.Set(Drivers::None, {1, Port, 1});
         }
     }
-    
+
     // 3. Simple Drivers (LED)
     else if (CurrentRole.Value == Drivers::LED && DriverArray[Port] != nullptr)
     {
@@ -96,12 +101,17 @@ void BoardClass::DriverStop(uint8_t Port)
         DriverArray[Port] = nullptr;
         Values.Set(Drivers::None, {1, Port, 1});
     }
+    else if (CurrentRole.Value == Drivers::Input)
+    {
+        Values.Set(Drivers::None, {1, Port, 1});
+    }
 }
 
 void BoardClass::DriverStart(uint8_t Port)
 {
     Getter<Pin> PortPin = Values.Get<Pin>({1, Port, 0});
-    if (!PortPin.Success) return;
+    if (!PortPin.Success)
+        return;
 
     Getter<Reference> FirstRef = Values.Get<Reference>({1, Port, 1, 0});
     if (!FirstRef.Success)
@@ -129,13 +139,15 @@ void BoardClass::DriverStart(uint8_t Port)
         while (true)
         {
             Getter<Reference> Ref = Values.Get<Reference>({1, Port, 1, Slot});
-            if (!Ref.Success) break;
+            if (!Ref.Success)
+                break;
 
             BaseClass *Obj = Objects.At(Ref.Value);
             if (Obj && Obj->Type == ObjectTypes::Display)
             {
                 Getter<int32_t> Len = Obj->Values.Get<int32_t>({0, 1});
-                if (Len.Success) TotalLength += Len.Value;
+                if (Len.Success)
+                    TotalLength += Len.Value;
             }
             Slot++;
         }
@@ -155,10 +167,19 @@ void BoardClass::DriverStart(uint8_t Port)
                 {
                     Disp->LEDs = NewDriver->Offset(CurrentOffset);
                     Getter<int32_t> Len = Disp->Values.Get<int32_t>({0, 1});
-                    if (Len.Success) CurrentOffset += Len.Value;
+                    if (Len.Success)
+                        CurrentOffset += Len.Value;
                 }
             }
         }
+    }
+    else if (FirstObj->Type == ObjectTypes::Input)
+    {
+        InputClass *Input = static_cast<InputClass *>(FirstObj);
+        Values.Set(Drivers::Input, {1, Port, 1});
+
+        // Pass the physical Pin from the Board's Registry to the Object
+        Input->InputPin = PortPin.Value;
     }
     // 2. I2C Logic (Referral System)
     else if (FirstObj->Type == ObjectTypes::I2C)
@@ -167,7 +188,8 @@ void BoardClass::DriverStart(uint8_t Port)
         Getter<uint8_t> SdaIdx = Sensor->Values.Get<uint8_t>({0, 0});
         Getter<uint8_t> SclIdx = Sensor->Values.Get<uint8_t>({0, 1});
 
-        if (!SdaIdx.Success || !SclIdx.Success) return;
+        if (!SdaIdx.Success || !SclIdx.Success)
+            return;
 
         // A. SCL REDIRECTION
         if (SclIdx.Value == Port)
@@ -194,13 +216,17 @@ void BoardClass::DriverStart(uint8_t Port)
                     {
                         Values.Set(Drivers::I2C_SDA, {1, Port, 1});
                         Values.Set(Drivers::I2C_SCL, {1, SclPortIdx, 1});
-                        Values.Set(SclPortIdx, {1, Port, 2}); 
-                        Values.Set(Port, {1, SclPortIdx, 2}); 
+                        Values.Set(SclPortIdx, {1, Port, 2});
+                        Values.Set(Port, {1, SclPortIdx, 2});
 
                         DriverArray[Port] = Bus;
                         DriverArray[SclPortIdx] = Bus;
                     }
-                    else { delete Bus; return; }
+                    else
+                    {
+                        delete Bus;
+                        return;
+                    }
                 }
             }
 
@@ -212,7 +238,8 @@ void BoardClass::DriverStart(uint8_t Port)
                 while (true)
                 {
                     Getter<Reference> Entry = Values.Get<Reference>({1, Port, 1, Slot++});
-                    if (!Entry.Success) break;
+                    if (!Entry.Success)
+                        break;
 
                     BaseClass *Obj = Objects.At(Entry.Value);
                     if (Obj && Obj->Type == ObjectTypes::I2C)
@@ -232,14 +259,16 @@ void BoardClass::DriverStart(uint8_t Port)
 
 void BoardClass::PortSetup(uint8_t Port)
 {
-    if (Port >= 11) return;
+    if (Port >= 11)
+        return;
     DriverStop(Port);
     DriverStart(Port);
 }
 
 void BoardClass::PortReset(BaseClass *Object)
 {
-    if (Object == nullptr) return;
+    if (Object == nullptr)
+        return;
 
     switch (Object->Type)
     {
@@ -255,6 +284,12 @@ void BoardClass::PortReset(BaseClass *Object)
         Sensor->I2CDriver = nullptr;
         break;
     }
-    default: break;
+    case ObjectTypes::Input:
+    {
+        static_cast<InputClass *>(Object)->InputPin = INVALID_PIN;
+        break;
+    }
+    default:
+        break;
     }
 }

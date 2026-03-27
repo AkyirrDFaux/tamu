@@ -100,7 +100,7 @@ enum class ObjectTypes : uint8_t
     I2C,
     UART,
     SPI,
-    // Sensor,
+    Sensor,
     OLED
 };
 

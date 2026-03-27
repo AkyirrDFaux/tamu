@@ -12,12 +12,12 @@ public:
 };
 
 // Updated Macro to use the new Reference system
-#define SET_PORT(index, type, pin, driver)            \
-    do                                                \
-    {                                                 \
-        Values.Set(PortTypeClass(type), {1, index});  \
-        Values.Set(Pin(pin), {1, index, 0});          \
-        Values.Set(driver, {1, index, 1});            \
+#define SET_PORT(index, type, pin, driver)           \
+    do                                               \
+    {                                                \
+        Values.Set(PortTypeClass(type), {1, index}); \
+        Values.Set(Pin(pin), {1, index, 0});         \
+        Values.Set(driver, {1, index, 1});           \
     } while (0)
 
 class BoardClass : public BaseClass
@@ -25,10 +25,10 @@ class BoardClass : public BaseClass
 public:
     void *DriverArray[11] = {nullptr};
     BoardClass(const Reference &ID);
-    
+
     // Updated to use Reference
-    void Setup(const Reference &Index); 
-    bool Run(); 
+    void Setup(const Reference &Index);
+    bool Run();
     void UpdateLoopTime();
 
     void DriverStop(uint8_t Port);
@@ -40,17 +40,18 @@ public:
     bool Disconnect(BaseClass *Object, uint8_t Port);
 
     // Bridge functions updated for Reference
-    static void SetupBridge(BaseClass *Base, const Reference &Index) { 
-        static_cast<BoardClass *>(Base)->Setup(Index); 
+    static void SetupBridge(BaseClass *Base, const Reference &Index)
+    {
+        static_cast<BoardClass *>(Base)->Setup(Index);
     }
-    static bool RunBridge(BaseClass *Base) { 
-        return static_cast<BoardClass *>(Base)->Run(); 
+    static bool RunBridge(BaseClass *Base)
+    {
+        return static_cast<BoardClass *>(Base)->Run();
     }
-    
+
     static constexpr VTable Table = {
         .Setup = BoardClass::SetupBridge,
-        .Run = BoardClass::RunBridge
-    };
+        .Run = BoardClass::RunBridge};
 };
 
 BoardClass::BoardClass(const Reference &ID) : BaseClass(&Table, ID, {Flags::Auto, 1})
@@ -60,11 +61,11 @@ BoardClass::BoardClass(const Reference &ID) : BaseClass(&Table, ID, {Flags::Auto
 
     // Standard Board Values (Local Paths)
     Values.Set(Text("Unnamed"), {0, 0});
-    Values.Set((int32_t)0,      {0, 1});
-    Values.Set((int32_t)0,      {0, 2});
-    Values.Set((int32_t)0,      {0, 3});
-    Values.Set((int32_t)0,      {0, 4});
-    Values.Set((int32_t)0,      {0, 5});
+    Values.Set((int32_t)0, {0, 1});
+    Values.Set((int32_t)0, {0, 2});
+    Values.Set((int32_t)0, {0, 3});
+    Values.Set((int32_t)0, {0, 4});
+    Values.Set((int32_t)0, {0, 5});
 
 #if defined BOARD_Tamu_v2_0
     Values.Set(Boards::Tamu_v2_0, {0});
@@ -87,12 +88,16 @@ BoardClass::BoardClass(const Reference &ID) : BaseClass(&Table, ID, {Flags::Auto
 
 bool BoardClass::Connect(BaseClass *Object, uint8_t Port, uint8_t Index)
 {
-    if (Object == nullptr || Port > 10) return false;
+    ESP_LOGI("BOARD", "Connecting to port %d\n", Port);
+
+    if (Object == nullptr || Port > 10)
+        return false;
 
     Reference ID = Objects.GetReference(Object);
     Getter<Drivers> Driver = Values.Get<Drivers>({1, Port, 1});
-    
-    if (ID == Reference() || !Driver.Success) return false;
+
+    if (!ID.IsValid() || !Driver.Success)
+        return false;
 
     if (Driver == Drivers::I2C_SCL || Driver == Drivers::I2C_SDA)
     {
@@ -100,33 +105,42 @@ bool BoardClass::Connect(BaseClass *Object, uint8_t Port, uint8_t Index)
         while (Search < 32)
         {
             Getter<Reference> Entry = Values.Get<Reference>({1, Port, 1, Search});
-            if (!Entry.Success) {
+            if (!Entry.Success)
+            {
                 Index = Search;
                 break;
             }
-            if (Entry.Value == ID) return false; 
+            if (Entry.Value == ID)
+                return false;
             Search++;
         }
     }
     else
     {
-        if (Driver.Value == Drivers::None && Index != 0) return false;
-        if (Values.Get<Reference>({1, Port, 1, Index}).Success) return false;
+        if (Driver.Value == Drivers::None && Index != 0)
+            return false;
+        if (Values.Get<Reference>({1, Port, 1, Index}).Success)
+            return false;
     }
 
     Values.Set<Reference>(ID, {1, Port, 1, Index});
+
+    ESP_LOGI("BOARD", "Connected to port %d\n", Port);
+
     PortSetup(Port);
     return true;
 }
 
 bool BoardClass::Disconnect(BaseClass *Object, uint8_t Port)
 {
-    if (Object == nullptr || Port > 10) return false;
+    if (Object == nullptr || Port > 10)
+        return false;
 
     Reference ID = Objects.GetReference(Object);
     Getter<Drivers> Driver = Values.Get<Drivers>({1, Port, 1});
 
-    if (ID == Reference() || !Driver.Success) return false;
+    if (!ID.IsValid() || !Driver.Success)
+        return false;
 
     uint8_t Slot = 0;
     while (Slot < 32)
@@ -134,7 +148,8 @@ bool BoardClass::Disconnect(BaseClass *Object, uint8_t Port)
         Reference SlotPath = {1, Port, 1, Slot};
         Getter<Reference> Entry = Values.Get<Reference>(SlotPath);
 
-        if (!Entry.Success) break;
+        if (!Entry.Success)
+            break;
 
         if (Entry.Value == ID)
         {
@@ -146,7 +161,8 @@ bool BoardClass::Disconnect(BaseClass *Object, uint8_t Port)
                 while (Next < 32)
                 {
                     Getter<Reference> Upstream = Values.Get<Reference>({1, Port, 1, Next});
-                    if (!Upstream.Success) break;
+                    if (!Upstream.Success)
+                        break;
 
                     Values.Set<Reference>(Upstream.Value, {1, Port, 1, (uint8_t)(Next - 1)});
                     Values.Delete({1, Port, 1, Next});
@@ -176,7 +192,7 @@ bool BoardClass::Run()
     int32_t AvgLoopTime = ValueGet<int32_t>({0, 2}).Value;
 
     Values.Set<int32_t>((DeltaTime + AvgLoopTime * 15) / 16, {0, 2});
-    
+
     if (DeltaTime > ValueGet<int32_t>({0, 3}).Value)
         Values.Set<int32_t>(DeltaTime, {0, 3});
     else if (HW::Now() % 20000 < 20)
@@ -188,12 +204,13 @@ bool BoardClass::Run()
 
     for (uint8_t i = 0; i < 11; i++)
     {
-        if (DriverArray[i] == nullptr) continue;
+        if (DriverArray[i] == nullptr)
+            continue;
 
         Getter<Drivers> Role = Values.Get<Drivers>({1, i, 1});
         if (Role.Success && Role.Value == Drivers::LED)
         {
-            static_cast<LEDDriver*>(DriverArray[i])->Show();
+            static_cast<LEDDriver *>(DriverArray[i])->Show();
         }
     }
     return true;

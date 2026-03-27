@@ -11,11 +11,11 @@ void BaseClass::Destroy()
     case ObjectTypes::I2C:
         delete (DisplayClass *)this;
         break;
-    /*case ObjectTypes::LEDStrip:
-        delete (LEDStripClass *)this;
-        break;
     case ObjectTypes::Input:
         delete (InputClass *)this;
+        break;
+    /*case ObjectTypes::LEDStrip:
+        delete (LEDStripClass *)this;
         break;
     case ObjectTypes::Program:
         delete (Program *)this;
@@ -77,11 +77,9 @@ BaseClass *CreateObject(Reference ID, ObjectTypes Type)
     case ObjectTypes::Display:
         return new DisplayClass(ID);
     case ObjectTypes::I2C:
-        return new I2CDeviceClass(ID);/*
+        return new I2CDeviceClass(ID);
     case ObjectTypes::Input:
-        return new InputClass(ID, Flags);
-    case ObjectTypes::Operation:
-        return new Operation(ID, Flags);
+        return new InputClass(ID);/*
     case ObjectTypes::Program:
         return new Program(ID, Flags);*/
     default:

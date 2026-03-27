@@ -54,7 +54,7 @@ ChirpClass Chirp = ChirpClass(); // Bluetooth/Serial
 BoardClass Board(Reference::Global(0, 0, 0));
 
 // Objects
-// #include "Object\Input.h"
+ #include "Object\Input.h"
 // #include "Object\Sensor.h"
 #include "Object\I2CDevice.h"
 
@@ -90,7 +90,7 @@ int main()
     // HW::FlashFormat();
 
     ESP_LOGI("MAIN", "Setuping");
-    Board.Setup({}); // Initialize devices
+    Board.Setup(Reference::Global(0, 0, 0)); // Initialize devices
     DefaultSetup();
 
     ESP_LOGI("MAIN", "Starting Chirp");
@@ -147,6 +147,7 @@ int main()
 
         LoopCounter++;
         TimeUpdate();
+        HW::Sleep(10);
     }
 };
 

@@ -110,12 +110,12 @@ namespace HW
 
     void High(const Pin &Pin)
     {
-        gpio_set_level((gpio_num_t)Pin.Number, 0);
+        gpio_set_level((gpio_num_t)Pin.Number, 1);
     }
 
     void Low(const Pin &Pin)
     {
-        gpio_set_level((gpio_num_t)Pin.Number, 1);
+        gpio_set_level((gpio_num_t)Pin.Number, 0);
     }
 
     uint32_t Now()
@@ -294,9 +294,9 @@ namespace HW
     {
         for (int Iteration = 0; Iteration < Amount; Iteration++)
         {
-            HW::High(LED_NOTIFICATION_PIN);
+            HW::Low(LED_NOTIFICATION_PIN); //On
             HW::Sleep(200);
-            HW::Low(LED_NOTIFICATION_PIN);
+            HW::High(LED_NOTIFICATION_PIN); //Off
             if (Iteration < Amount - 1)
                 HW::Sleep(200);
         }
@@ -304,7 +304,7 @@ namespace HW
     void NotificationStartup()
     {
         HW::ModeOutput(LED_NOTIFICATION_PIN);
-        HW::Low(LED_NOTIFICATION_PIN);
+        HW::High(LED_NOTIFICATION_PIN); //Inverted logic
         NotificationBlink(2, 200);
     };
 

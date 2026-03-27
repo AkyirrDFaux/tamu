@@ -48,7 +48,7 @@ Reference RegisterClass::GetReference(const BaseClass *SearchObject) const
         return Reference::Global(0, (uint8_t)(Object[ArrayPos].ID >> 8), (uint8_t)(Object[ArrayPos].ID & 0xFF));
     }
 
-    return Reference(); // Returns invalid/empty reference
+    return Reference(); // Returns invalid reference
 }
 
 BaseClass *RegisterClass::At(const Reference &ID) const
