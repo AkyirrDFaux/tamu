@@ -2,7 +2,7 @@ class SensorClass : public BaseClass
 {
 public:
     Pin MeasPin = INVALID_PIN;
-    uint8_t CurrentPort = 255;
+    PortNumber CurrentPort = 255;
 
     SensorClass(const Reference &ID, ObjectInfo Info = {Flags::None, 1});
     ~SensorClass();
@@ -36,7 +36,7 @@ SensorClass::SensorClass(const Reference &ID, ObjectInfo Info) : BaseClass(&Tabl
 
     // Initialize the structure based on your reference
     Values.Set(SensorTypes::Undefined, {0}); // {0}   : SensorType
-    Values.Set<uint8_t>(255, {0, 0});        // {0,0} : Port Index
+    Values.Set<PortNumber>(-1, {0, 0});        // {0,0} : Port Index
     Values.Set<Number>(0, {1});             // {1}   : Measurement
     Values.Set<Number>(1, {2});              // {2}   : Filter
 };
@@ -48,7 +48,7 @@ SensorClass::~SensorClass()
 
 bool SensorClass::Connect()
 {
-    Getter<uint8_t> Port = Values.Get<uint8_t>({0, 0});
+    Getter<PortNumber> Port = Values.Get<PortNumber>({0, 0});
 
     if (!Port.Success || Port.Value > 10)
     {
@@ -56,7 +56,7 @@ bool SensorClass::Connect()
         return false;
     }
 
-    if (Board.Connect(this, Port.Value))
+    if (Board.Connect(this, Port))
     {
         CurrentPort = Port.Value;
         HW::ModeAnalog(MeasPin);
@@ -69,7 +69,7 @@ bool SensorClass::Connect()
 bool SensorClass::Disconnect()
 {
     Board.Disconnect(this, CurrentPort);
-    CurrentPort = 255;
+    CurrentPort = -1;
     return true;
 }
 

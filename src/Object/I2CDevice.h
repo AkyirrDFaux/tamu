@@ -2,8 +2,8 @@ class I2CDeviceClass : public BaseClass
 {
 public:
     I2C *I2CDriver = nullptr;
-    uint8_t CurrentSDA = 255;
-    uint8_t CurrentSCL = 255;
+    PortNumber CurrentSDA = -1;
+    PortNumber CurrentSCL = -1;
 
     // Updated to use Reference
     void Setup(const Reference &Index); 
@@ -34,15 +34,15 @@ I2CDeviceClass::I2CDeviceClass(const Reference &ID, ObjectInfo Info) : BaseClass
 
     // Initializer lists {} now automatically create Local References
     Values.Set(I2CDevices::Undefined, {0});
-    Values.Set<uint8_t>(255, {0, 0}); // SDA Port Index
-    Values.Set<uint8_t>(255, {0, 1}); // SCL Port Index
+    Values.Set<PortNumber>(-1, {0, 0}); // SDA Port Index
+    Values.Set<PortNumber>(-1, {0, 1}); // SCL Port Index
     Values.Set<uint8_t>(0,   {0, 2}); // I2C Address
 };
 
 bool I2CDeviceClass::Connect()
 {
-    Getter<uint8_t> SDA = Values.Get<uint8_t>({0, 0});
-    Getter<uint8_t> SCL = Values.Get<uint8_t>({0, 1});
+    Getter<PortNumber> SDA = Values.Get<PortNumber>({0, 0});
+    Getter<PortNumber> SCL = Values.Get<PortNumber>({0, 1});
 
     if (!SDA.Success || !SCL.Success || SDA.Value > 10 || SCL.Value > 10)
         return false;
@@ -68,11 +68,11 @@ bool I2CDeviceClass::Disconnect()
 {
     I2CDriver = nullptr;
 
-    if (CurrentSDA <= 10) Board.Disconnect(this, CurrentSDA);
-    if (CurrentSCL <= 10) Board.Disconnect(this, CurrentSCL);
+    Board.Disconnect(this, CurrentSDA);
+    Board.Disconnect(this, CurrentSCL);
 
-    CurrentSDA = 255;
-    CurrentSCL = 255;
+    CurrentSDA = -1;
+    CurrentSCL = -1;
     return true;
 }
 

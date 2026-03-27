@@ -17,13 +17,7 @@ uint32_t DeltaTime = 0;
 #include "Data\Vector2D.h"
 #include "Data\Coord2D.h"
 #include "Data\Vector3D.h"
-#include "Data\ValueEnums.h"
-
-struct Pin
-{
-    uint8_t Number;
-    char Port = 0;
-};
+#include "Data\Values.h"
 
 // Core system
 #include "Core\Reference.h"

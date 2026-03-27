@@ -1,3 +1,17 @@
+struct Pin
+{
+    uint8_t Number;
+    char Port = 0;
+};
+
+struct PortNumber{
+    int8_t Value;
+    PortNumber(int8_t Input) : Value(Input) {};
+    PortNumber() : Value(-1) {};
+    operator uint8_t() const { return (uint8_t)Value; }
+    bool IsValid() const { return Value >= 0; }
+};
+
 enum class Boards : uint8_t
 {
     Undefined = 0,

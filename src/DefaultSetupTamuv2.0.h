@@ -4,7 +4,7 @@ void DefaultSetup()
 
     SensorClass *S = new SensorClass(Reference::Global(0, 2, 2));
     S->ValueSetup(SensorTypes::Light10K, {0});
-    S->ValueSetup<uint8_t>(1, {0,0});
+    S->ValueSetup<PortNumber>(1, {0,0});
     S->Values.Set<Number>(20, {2});
 
     DisplayClass *LD = new DisplayClass(Reference::Global(0, 0, 1));

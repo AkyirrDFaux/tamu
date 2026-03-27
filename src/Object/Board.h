@@ -31,13 +31,13 @@ public:
     bool Run();
     void UpdateLoopTime();
 
-    void DriverStop(uint8_t Port);
-    void DriverStart(uint8_t Port);
-    void PortSetup(uint8_t Port);
+    void DriverStop(PortNumber Port);
+    void DriverStart(PortNumber Port);
+    void PortSetup(PortNumber Port);
     void PortReset(BaseClass *Object);
 
-    bool Connect(BaseClass *Object, uint8_t Port, uint8_t Index = 0);
-    bool Disconnect(BaseClass *Object, uint8_t Port);
+    bool Connect(BaseClass *Object, PortNumber Port, uint8_t Index = 0);
+    bool Disconnect(BaseClass *Object, PortNumber Port);
 
     // Bridge functions updated for Reference
     static void SetupBridge(BaseClass *Base, const Reference &Index)
@@ -86,7 +86,7 @@ BoardClass::BoardClass(const Reference &ID) : BaseClass(&Table, ID, {Flags::Auto
 #endif
 };
 
-bool BoardClass::Connect(BaseClass *Object, uint8_t Port, uint8_t Index)
+bool BoardClass::Connect(BaseClass *Object, PortNumber Port, uint8_t Index)
 {
     ESP_LOGI("BOARD", "Connecting to port %d\n", Port);
 
@@ -131,7 +131,7 @@ bool BoardClass::Connect(BaseClass *Object, uint8_t Port, uint8_t Index)
     return true;
 }
 
-bool BoardClass::Disconnect(BaseClass *Object, uint8_t Port)
+bool BoardClass::Disconnect(BaseClass *Object, PortNumber Port)
 {
     if (Object == nullptr || Port > 10)
         return false;

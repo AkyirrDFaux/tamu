@@ -1,8 +1,9 @@
 enum class Types : uint8_t
 {
     Undefined = 0,
-    Bool, // 1 byte - inside header
+    Bool, // 1 byte
     Byte, // uint_8
+    PortNumber, // int_8
     Type, // 1 byte enums
     ObjectType,
     ObjectInfo,
@@ -213,3 +214,5 @@ Types GetType<PortTypeClass>() { return Types::PortType; };
 
 template <>
 Types GetType<Pin>() { return Types::Pin; };
+template <>
+Types GetType<PortNumber>() { return Types::PortNumber; };

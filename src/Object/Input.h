@@ -2,7 +2,7 @@ class InputClass : public BaseClass
 {
 public:
     Pin InputPin = INVALID_PIN;
-    uint8_t CurrentPort = 255;
+    PortNumber CurrentPort = -1;
 
     InputClass(const Reference &ID, ObjectInfo Info = {Flags::None, 1});
     ~InputClass();
@@ -37,7 +37,7 @@ InputClass::InputClass(const Reference &ID, ObjectInfo Info) : BaseClass(&Table,
 
     // Initialize the structure
     Values.Set(Inputs::Undefined, {0}); // {0}   : Input Mode/Type
-    Values.Set<uint8_t>(255, {0, 0});   // {0,0} : Port Index (Physical Pin)
+    Values.Set<PortNumber>(-1, {0, 0});   // {0,0} : Port Index (Physical Pin)
     Values.Set(false, {1});             // {1}   : Read Value
     //Values.Set(false, {2});             // {2}   : Indicator State
 };
@@ -50,7 +50,7 @@ InputClass::~InputClass()
 bool InputClass::Connect()
 {
     // 1. Retrieve Port Index from {0, 0}
-    Getter<uint8_t> Port = Values.Get<uint8_t>({0, 0});
+    Getter<PortNumber> Port = Values.Get<PortNumber>({0, 0});
 
     // 2. Validate (Assuming 0-10 are valid physical ports on your board)
     if (!Port.Success || Port.Value > 10)
@@ -61,9 +61,9 @@ bool InputClass::Connect()
 
     // 3. Ask the Board to link this object to the physical pin
     // Board handles pin-sharing checks and hardware Registry lookups
-    if (Board.Connect(this, Port.Value))
+    if (Board.Connect(this, Port))
     {
-        CurrentPort = Port.Value;
+        CurrentPort = Port;
         return true;
     }
 
@@ -73,7 +73,7 @@ bool InputClass::Connect()
 bool InputClass::Disconnect()
 {
     Board.Disconnect(this, CurrentPort);
-    CurrentPort = 255;
+    CurrentPort = -1;
     return true;
 }
 
