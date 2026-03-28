@@ -17,6 +17,9 @@ void BaseClass::Destroy()
     case ObjectTypes::Sensor:
         delete (SensorClass *)this;
         break;
+    case ObjectTypes::Output:
+        delete (OutputClass *)this;
+        break;
     case ObjectTypes::Program:
         delete (Program *)this;
         break;
@@ -57,22 +60,8 @@ BaseClass *CreateObject(Reference ID, ObjectTypes Type)
 {
     switch (Type)
     {
-    // Port is auto
-    /*case ObjectTypes::Shape2D:
-        return new Shape2DClass(ID, Flags);
-    // case ObjectTypes::Board: //Cannot create board
-    case ObjectTypes::Fan:
-        return new FanClass(ID, Flags);
-    case ObjectTypes::LEDSegment:
-        return new LEDSegmentClass(ID, Flags);
-    case ObjectTypes::Texture1D:
-        return new Texture1D(ID, Flags);
-    case ObjectTypes::LEDStrip:
-        return new LEDStripClass(ID, Flags);
-    case ObjectTypes::Geometry2D:
-        return new Geometry2DClass(ID, Flags);
-    case ObjectTypes::Texture2D:
-        return new Texture2D(ID, Flags);*/
+    /*    case ObjectTypes::LEDStrip:
+        return new LEDStripClass(ID, Flags);*/
     case ObjectTypes::Display:
         return new DisplayClass(ID);
     case ObjectTypes::I2C:
@@ -81,6 +70,8 @@ BaseClass *CreateObject(Reference ID, ObjectTypes Type)
         return new InputClass(ID);
     case ObjectTypes::Sensor:
         return new SensorClass(ID);
+    case ObjectTypes::Output:
+        return new OutputClass(ID);
     case ObjectTypes::Program:
         return new Program(ID);
     default:

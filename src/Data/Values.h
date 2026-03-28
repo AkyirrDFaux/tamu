@@ -130,6 +130,13 @@ enum class SensorTypes : uint8_t
     Light10K
 };
 
+enum class Outputs : uint8_t
+{
+    Undefined,
+    PWM,
+    Servo
+};
+
 enum class ProgramTypes : uint8_t
 {
     None,

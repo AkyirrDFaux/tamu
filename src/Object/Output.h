@@ -1,55 +1,141 @@
-class FanClass : public BaseClass
+class OutputClass : public BaseClass
 {
 public:
-    enum Value
-    {
-        Speed,
-    };
     Pin PWMPin = INVALID_PIN;
+    PortNumber CurrentPort = -1;
 
-    FanClass(IDClass ID = RandomID, FlagClass Flags = Flags::None);
-    ~FanClass();
+    OutputClass(const Reference &ID, ObjectInfo Info = {Flags::None, 1});
+    ~OutputClass();
 
+    void Setup(const Reference &Index);
     bool Run();
 
-    static bool RunBridge(BaseClass *Base) { return static_cast<FanClass *>(Base)->Run(); }
+    bool Connect();
+    bool Disconnect();
+
+    static void SetupBridge(BaseClass *Base, const Reference &Index)
+    {
+        static_cast<OutputClass *>(Base)->Setup(Index);
+    }
+    static bool RunBridge(BaseClass *Base)
+    {
+        return static_cast<OutputClass *>(Base)->Run();
+    }
+
     static constexpr VTable Table = {
-        .Setup = BaseClass::DefaultSetup,
-        .Run = FanClass::RunBridge,
-        .AddModule = BaseClass::DefaultAddModule,
-        .RemoveModule = BaseClass::DefaultRemoveModule};
+        .Setup = OutputClass::SetupBridge,
+        .Run = OutputClass::RunBridge};
 };
 
-constexpr VTable FanClass::Table;
-
-FanClass::FanClass(IDClass ID, FlagClass Flags) : BaseClass(&Table, ID, Flags)
+OutputClass::OutputClass(const Reference &ID, ObjectInfo Info) : BaseClass(&Table, ID, Info)
 {
-    BaseClass::Type = ObjectTypes::Fan;
-    Name = "Fan";
+    Type = ObjectTypes::Output;
+    Name = "Output";
 
-    ValueSet<Number>(0, Speed);
-    Outputs.Add(this);
+    // Structure:
+    // {0}   : Mode (PWM / Servo)
+    // {0,0} : Port Index
+    // {1}   : Target Value (Speed/Angle)
+    // {1,0} : Frequency (Hz)
+
+    Values.Set(Outputs::Undefined, {0});
+    Values.Set<PortNumber>(-1, {0, 0});
+    Values.Set((Number)0, {1});
+    Values.Set((int32_t)25000, {1, 0}); // Default 25kHz
 };
 
-FanClass::~FanClass()
+OutputClass::~OutputClass()
 {
-    Outputs.Remove(this);
+    Disconnect();
 };
 
-bool FanClass::Run()
+bool OutputClass::Connect()
 {
-    if (HW::IsValidPin(PWMPin) == false)
+    Getter<PortNumber> Port = Values.Get<PortNumber>({0, 0});
+
+    if (!Port.Success || Port.Value > 10)
     {
-        ReportError(Status::PortError, ID);
+        ReportError(Status::PortError);
+        return false;
+    }
+
+    if (Board.ConnectPin(this, Port))
+    {
+        CurrentPort = Port.Value;
+
+        // Immediate hardware mode setup upon connection
+        Setup(Reference({0}));
         return true;
     }
 
-    if (Values.Type(Speed) != Types::Number)
+    return false;
+}
+
+bool OutputClass::Disconnect()
+{
+    if (CurrentPort.IsValid())
     {
-        ReportError(Status::MissingModule, ID);
-        return true;
+        // Safety: Turn off output before disconnecting
+        if (HW::IsValidPin(PWMPin))
+            HW::PWM(PWMPin, 0);
+
+        Board.DisconnectPin(this, CurrentPort);
+        CurrentPort = -1;
+        PWMPin = INVALID_PIN;
+    }
+    return true;
+}
+
+void OutputClass::Setup(const Reference &Index)
+{
+    // Reconnect on Port change
+    if (Index == Reference({0, 0}))
+    {
+        Disconnect();
+        Connect();
+        return;
     }
 
-    HW::PWM(PWMPin, ValueGet<Number>(Speed));
+    // Update Hardware Mode if enum {0} or frequency {1,0} changes
+    if (Index == Reference({0}) || Index == Reference({0, 0}) || Index == Reference({1, 0}))
+    {
+        if (!HW::IsValidPin(PWMPin))
+            return;
+
+        Outputs Mode = Values.Get<Outputs>({0}).Value;
+        int32_t Freq = Values.Get<int32_t>({1, 0}).Value;
+
+        if (Mode == Outputs::PWM)
+        {
+            HW::ModePWM(PWMPin, Freq);
+        }
+        /*else if (Mode == Outputs::Servo)
+        {
+            // Servos are almost always 50Hz, usually ignored but can be set here
+            HW::ModeServo(PWMPin, Freq);
+        }*/
+    }
+}
+
+bool OutputClass::Run()
+{
+    if (!HW::IsValidPin(PWMPin))
+        return true;
+
+    Getter<Number> Target = Values.Get<Number>({1});
+    Getter<Outputs> Mode = Values.Get<Outputs>({0});
+
+    if (!Target.Success || !Mode.Success)
+        return true;
+
+    if (Mode.Value == Outputs::PWM)
+    {
+        HW::PWM(PWMPin, Target.Value);
+    }
+    /*else if (Mode.Value == Outputs::Servo)
+    {
+        HW::Servo(PWMPin, Target.Value);
+    }*/
+
     return true;
 };

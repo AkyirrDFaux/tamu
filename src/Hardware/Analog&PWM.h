@@ -2,8 +2,8 @@ namespace HW
 {
 
 #if defined BOARD_Tamu_v2_0
-    #include "esp_adc/adc_oneshot.h"
-    #include "driver/ledc.h"
+#include "esp_adc/adc_oneshot.h"
+#include "driver/ledc.h"
     static adc_oneshot_unit_handle_t adc_handle;
     static bool adc_init_done = false;
 
@@ -42,17 +42,20 @@ namespace HW
         return (uint16_t)raw_out;
     }
 
-    void ModePWM(const Pin &Pin)
+    void ModePWM(const Pin &Pin, uint32_t Frequency = 25000)
     {
-        // 1. Timer Config (25kHz)
+        // 1. Timer Config
+        // Use the specific Enum for speed_mode to satisfy the C++ type checker
         ledc_timer_config_t ledc_timer = {
             .speed_mode = LEDC_LOW_SPEED_MODE,
             .duty_resolution = LEDC_TIMER_10_BIT,
             .timer_num = LEDC_TIMER_0,
-            .freq_hz = 25000,
+            .freq_hz = Frequency,
             .clk_cfg = LEDC_AUTO_CLK,
-            .deconfigure = false // ADD THIS
-        };
+            .deconfigure = false};
+        // Explicitly zero out any hidden flags if the warning persists
+        // ledc_timer.flags.output_invert = 0;
+
         ledc_timer_config(&ledc_timer);
 
         // 2. Channel Config
@@ -64,8 +67,12 @@ namespace HW
             .timer_sel = LEDC_TIMER_0,
             .duty = 0,
             .hpoint = 0,
-            .sleep_mode = LEDC_SLEEP_MODE_NO_ALIVE_NO_PD // ADD THIS
+            .sleep_mode = LEDC_SLEEP_MODE_NO_ALIVE_NO_PD,
+            .flags = {0}
         };
+        // If your IDF version has the .flags struct, initialize it specifically:
+        // .flags = { .output_invert = 0 }
+
         ledc_channel_config(&ledc_channel);
     }
 

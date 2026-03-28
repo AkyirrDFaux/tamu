@@ -21,7 +21,7 @@ enum class Types : uint8_t
     Texture2D,
     Operation,
     Program,
-    LocalFunction,
+    Output,
     Function,
     Group,
     Integer,   // int_32
@@ -215,3 +215,5 @@ template <>
 Types GetType<Pin>() { return Types::Pin; };
 template <>
 Types GetType<PortNumber>() { return Types::PortNumber; };
+template <>
+Types GetType<Outputs>() { return Types::Output; };

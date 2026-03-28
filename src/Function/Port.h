@@ -21,12 +21,16 @@ void BoardClass::Setup(const Reference &Index)
 bool BoardClass::ConnectPin(BaseClass *Object, PortNumber Port)
 {
     if (Object == nullptr || Port > 10) return false;
-    if (Object->Type != ObjectTypes::Input && Object->Type != ObjectTypes::Sensor) return false;
+    
+    // Check for all supported single-pin types
+    if (Object->Type != ObjectTypes::Input && 
+        Object->Type != ObjectTypes::Sensor && 
+        Object->Type != ObjectTypes::Output) 
+        return false;
 
     Reference ID = Objects.GetReference(Object);
     if (!ID.IsValid()) return false;
 
-    // Path {0, 0, Port, 1, 0} is the single slot for Pin objects
     if (Values.Get<Reference>({0, 0, Port, 1, 0}).Success) return false;
 
     Values.Set<Reference>(ID, {0, 0, Port, 1, 0});
@@ -58,6 +62,12 @@ void BoardClass::DriverPin(PortNumber Port)
         Values.Set(Drivers::Analog, {0, 0, Port, 1});
         static_cast<SensorClass *>(Obj)->MeasPin = PortPin.Value;
     }
+    else if (Obj->Type == ObjectTypes::Output)
+    {
+        // For OutputClass, we set the driver to Output (PWM/Servo handled by object)
+        Values.Set(Drivers::Output, {0, 0, Port, 1});
+        static_cast<OutputClass *>(Obj)->PWMPin = PortPin.Value;
+    }
 }
 
 bool BoardClass::DisconnectPin(BaseClass *Object, PortNumber Port)
@@ -74,6 +84,8 @@ bool BoardClass::DisconnectPin(BaseClass *Object, PortNumber Port)
             static_cast<InputClass *>(Object)->InputPin = INVALID_PIN;
         else if (Object->Type == ObjectTypes::Sensor)
             static_cast<SensorClass *>(Object)->MeasPin = INVALID_PIN;
+        else if (Object->Type == ObjectTypes::Output)
+            static_cast<OutputClass *>(Object)->PWMPin = INVALID_PIN;
 
         Values.Delete(SlotPath);
         Values.Set(Drivers::None, {0, 0, Port, 1});
