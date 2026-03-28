@@ -88,3 +88,102 @@ BaseClass *CreateObject(Reference ID, ObjectTypes Type)
         return nullptr;
     }
 }
+
+FindResult ByteArray::Find(const Reference &Location, bool StopAtReferences) const
+{
+    // 1. Setup the mutable search state
+    const ByteArray *CurrentMap = this;
+    Reference CurrentPath = Location;
+    uint8_t JumpCount = 0;
+    const uint8_t MaxJumps = 10; // Vital safety guard
+
+    // THE MASTER CONTROL LOOP
+    while (JumpCount < MaxJumps)
+    {
+        uint8_t depth = CurrentPath.PathLen();
+        if (CurrentMap->Array == nullptr || CurrentMap->HeaderArray == nullptr || depth == 0)
+            return {-1, Types::Undefined, nullptr};
+
+        uint16_t Pointer = 0;
+        uint16_t End = CurrentMap->HeaderAllocated;
+
+        bool pathResolved = false;
+
+        for (uint8_t Layer = 0; Layer < depth; Layer++)
+        {
+            bool layerFound = false;
+            uint8_t targetIdx = CurrentPath.Path[Layer];
+
+            for (uint16_t Search = 0; Search <= targetIdx; Search++)
+            {
+                if (Pointer >= End)
+                    return {-1, Types::Undefined, nullptr};
+                Header &header = CurrentMap->HeaderArray[Pointer];
+
+                if (Search == targetIdx)
+                {
+                    // --- TERMINAL/JUNCTION LOGIC ---
+                    if (header.Type == Types::Reference)
+                    {
+                        if (Layer < depth - 1 || !StopAtReferences)
+                        {
+                            // 1. Extract the Link data
+                            Reference Link;
+                            uint16_t copySize = (header.Length > sizeof(Reference)) ? sizeof(Reference) : header.Length;
+                            memcpy(&Link, CurrentMap->Array + header.Pointer, copySize);
+
+                            // 2. Reconstruct Path (Tail matching)
+                            for (uint8_t r = Layer + 1; r < depth; r++)
+                                Link = Link.Append(CurrentPath.Path[r]);
+
+                            // 3. Prepare for next "Inception" level
+                            if (Link.IsGlobal())
+                            {
+                                // ESP_LOGI("ByteArray", "Global Jump: %d", Link.Device);
+                                BaseClass *TargetObj = Objects.At(Link);
+                                if (!TargetObj)
+                                    return {-1, Types::Undefined, nullptr};
+
+                                // SWAP CONTEXT: Move to the new object's map
+                                CurrentMap = &TargetObj->Values;
+                            }
+                            else
+                            {
+                                // ESP_LOGI("ByteArray", "Local Jump");
+                                //  STAY IN CONTEXT: Just update path
+                            }
+
+                            CurrentPath = Link;
+                            JumpCount++;
+                            pathResolved = true; // Trigger restart of the While loop
+                            goto break_search;
+                        }
+                    }
+
+                    // Found the actual leaf
+                    if (Layer == depth - 1)
+                    {
+                        return {(int16_t)Pointer, header.Type, CurrentMap->Array + header.Pointer};
+                    }
+
+                    // Descend
+                    Pointer++;
+                    End = Pointer + header.Skip;
+                    layerFound = true;
+                    break;
+                }
+                Pointer += header.Skip + 1;
+            }
+            if (!layerFound)
+                return {-1, Types::Undefined, nullptr};
+        }
+
+    break_search:
+        if (!pathResolved)
+            break; // We exhausted the path or found a non-ref leaf
+    }
+
+    if (JumpCount >= MaxJumps)
+        ReportError(Status::InvalidValue);
+    return {-1, Types::Undefined, nullptr};
+}

@@ -54,6 +54,17 @@ void DefaultSetup()
     LD->Values.Set(ColourClass(0, 0, 0),           {1, 7, 0}); // ColourA
     */
 
+    Program *P = new Program(Reference::Global(0, 1, 0));
+
+    // Path {1}: The Operation itself
+    P->Values.Set<Operations>(Operations::Add, {1});
+    P->Values.Set<Number>(0.25, {1, 1, 0});
+    P->Values.Set<Number>(0.5, {1, 1, 1});
+
+    P->Values.Set<Operations>(Operations::Add, {2});
+    P->Values.Set<Reference>(Reference({1,1,0}), {2, 1, 0});
+    P->Values.Set<Number>(0.75, {2, 1, 1});
+
     /*
     Shape2DClass *LS2A = new Shape2DClass();
     LS2A->Name = "Left Pupil Arrow";

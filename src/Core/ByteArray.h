@@ -32,8 +32,8 @@ public:
     Header *HeaderArray = nullptr;
     uint16_t HeaderAllocated = 0;
     char *Array = nullptr;
-    uint16_t Length = 0;     // Current tight length
-    uint16_t Allocated = 0;  // Capacity, aligned to 4
+    uint16_t Length = 0;    // Current tight length
+    uint16_t Allocated = 0; // Capacity, aligned to 4
 
     ByteArray() {};
     ByteArray(const ByteArray &Copied);
@@ -48,7 +48,7 @@ public:
     ByteArray &operator+=(const ByteArray &Data);
 
     // --- Core Navigation (Uses Reference) ---
-    FindResult Find(const Reference &Location) const;
+    FindResult Find(const Reference &Location, bool StopAtReferences = true) const;
     void UpdateSkip();
     void ResizeData(uint16_t HIdx, uint16_t NewSize);
     void Delete(const Reference &Location);
@@ -58,12 +58,12 @@ public:
 
     // --- Template Accessors (Reference) ---
     __attribute__((noinline)) const void *Get(const Reference &Location, Types Type) const;
-    
+
     template <class C>
     Getter<C> Get(const Reference &Location) const;
 
     __attribute__((noinline)) void Set(const void *Data, size_t Size, Types Type, const Reference &Location);
-    
+
     template <class C>
     void Set(const C &Data, const Reference &Location);
 
@@ -170,11 +170,11 @@ ByteArray &ByteArray::operator+=(const ByteArray &Data)
     {
         uint16_t NewAlloc = Align(RequiredLength + 16);
         char *NewData = new char[NewAlloc];
-        
+
         // Use NewData consistently
         if (Array)
             memcpy(NewData, Array, Length);
-            
+
         delete[] Array;
         Array = NewData;
         Allocated = NewAlloc;
@@ -218,7 +218,8 @@ ByteArray &ByteArray::operator<<(const ByteArray &Data)
     {
         uint16_t NewAlloc = Align(RequiredLength + 16);
         char *NewData = new char[NewAlloc];
-        if (Array) memcpy(NewData, Array, Length);
+        if (Array)
+            memcpy(NewData, Array, Length);
         delete[] Array;
         Array = NewData;
         Allocated = NewAlloc;
@@ -228,7 +229,7 @@ ByteArray &ByteArray::operator<<(const ByteArray &Data)
     for (uint16_t i = 0; i < Data.HeaderAllocated; i++)
     {
         Header h = Data.HeaderArray[i];
-        h.Pointer += DataOffset; 
+        h.Pointer += DataOffset;
         NewHeaders[HeaderAllocated + i] = h;
     }
 
@@ -280,14 +281,14 @@ void ByteArray::Delete(const Reference &Location)
         return;
 
     uint16_t HIdx = (uint16_t)Found.Header;
-    
+
     // 2. Determine the scope of the deletion
     // NodesToRemove includes the parent and all its children (via the Skip count)
     uint16_t NodesToRemove = HeaderArray[HIdx].Skip + 1;
 
     // 3. Remove all associated data in the blob
-    // We process this backwards so that ResizeData (which shifts memory and 
-    // updates pointers) doesn't invalidate the addresses of trailing nodes 
+    // We process this backwards so that ResizeData (which shifts memory and
+    // updates pointers) doesn't invalidate the addresses of trailing nodes
     // before they are also deleted.
     for (int i = NodesToRemove - 1; i >= 0; i--)
     {
@@ -377,14 +378,14 @@ void ByteArray::ResizeData(uint16_t HIdx, uint16_t NewSize)
         }
         Length = NewTotalLength;
     }
-    
+
     // Header always stores the TIGHT (logical) length
     HeaderArray[HIdx].Length = NewSize;
 }
 
 void ByteArray::InsertAtIndex(uint16_t Idx, Types Type, uint8_t Depth, uint16_t Size)
 {
-    // Find where the data should start. 
+    // Find where the data should start.
     // If middle, take existing pointer. If end, take Length.
     uint16_t DataPointer = (Idx < HeaderAllocated) ? HeaderArray[Idx].Pointer : Length;
 
@@ -410,17 +411,21 @@ void ByteArray::InsertAtIndex(uint16_t Idx, Types Type, uint8_t Depth, uint16_t 
         ResizeData(Idx, Size);
 }
 
-uint16_t ByteArray::Insert(const Reference &Location, int16_t NewDataSize) {
+uint16_t ByteArray::Insert(const Reference &Location, int16_t NewDataSize)
+{
     uint16_t CurrentIdx = 0;
     uint8_t totalDepth = Location.PathLen();
 
-    for (uint8_t Layer = 0; Layer < totalDepth; Layer++) {
+    for (uint8_t Layer = 0; Layer < totalDepth; Layer++)
+    {
         uint8_t TargetSibling = Location.Path[Layer];
         uint16_t SiblingCount = 0;
 
         // Move through siblings
-        while (SiblingCount < TargetSibling) {
-            if (CurrentIdx >= HeaderAllocated || HeaderArray[CurrentIdx].Depth < Layer) {
+        while (SiblingCount < TargetSibling)
+        {
+            if (CurrentIdx >= HeaderAllocated || HeaderArray[CurrentIdx].Depth < Layer)
+            {
                 InsertAtIndex(CurrentIdx, Types::Undefined, Layer, 0);
             }
             CurrentIdx += HeaderArray[CurrentIdx].Skip + 1;
@@ -428,8 +433,10 @@ uint16_t ByteArray::Insert(const Reference &Location, int16_t NewDataSize) {
         }
 
         // Prepare to descend
-        if (Layer < totalDepth - 1) {
-            if (CurrentIdx >= HeaderAllocated || HeaderArray[CurrentIdx].Depth < Layer) {
+        if (Layer < totalDepth - 1)
+        {
+            if (CurrentIdx >= HeaderAllocated || HeaderArray[CurrentIdx].Depth < Layer)
+            {
                 InsertAtIndex(CurrentIdx, Types::Undefined, Layer, 0);
             }
             CurrentIdx++; // Move to first child slot
@@ -438,64 +445,27 @@ uint16_t ByteArray::Insert(const Reference &Location, int16_t NewDataSize) {
 
     // Final node placement
     uint8_t TargetDepth = totalDepth - 1;
-    if (CurrentIdx >= HeaderAllocated || HeaderArray[CurrentIdx].Depth != TargetDepth) {
+    if (CurrentIdx >= HeaderAllocated || HeaderArray[CurrentIdx].Depth != TargetDepth)
+    {
         InsertAtIndex(CurrentIdx, Types::Undefined, TargetDepth, NewDataSize);
     }
 
     return CurrentIdx;
 }
 
-FindResult ByteArray::Find(const Reference &Location) const {
-    // 1. Safety check
-    uint8_t depth = Location.PathLen();
-    if (Array == nullptr || HeaderArray == nullptr || depth == 0)
-        return {-1, Types::Undefined, nullptr};
-
-    uint16_t Pointer = 0;
-    uint16_t End = HeaderAllocated;
-
-    // 2. Iterate through layers defined in Reference.Path
-    for (uint8_t Layer = 0; Layer < depth; Layer++) {
-        bool layerFound = false;
-        uint8_t targetIdx = Location.Path[Layer]; // Use the Path array from Reference
-
-        for (uint16_t Search = 0; Search <= targetIdx; Search++) {
-            if (Pointer >= End) return {-1, Types::Undefined, nullptr};
-
-            Header &header = HeaderArray[Pointer];
-
-            if (Search == targetIdx) {
-                // Match found at this layer
-                if (Layer == depth - 1) {
-                    return {(int16_t)Pointer, header.Type, Array + header.Pointer};
-                }
-
-                // Descend into children
-                Pointer++; 
-                End = Pointer + header.Skip;
-                layerFound = true;
-                break;
-            }
-
-            // Skip sibling subtree
-            Pointer += header.Skip + 1;
-        }
-
-        if (!layerFound) return {-1, Types::Undefined, nullptr};
-    }
-    return {-1, Types::Undefined, nullptr};
+Types ByteArray::Type(const Reference &Location) const
+{
+    return Find(Location, false).Type;
 }
 
-Types ByteArray::Type(const Reference &Location) const {
-    return Find(Location).Type;
-}
-
-ByteArray ByteArray::Copy(const Reference &Location) const {
+ByteArray ByteArray::Copy(const Reference &Location) const
+{
     // 1. Locate the item in the current database
     FindResult Result = Find(Location);
 
     // 2. If not found, return an empty ByteArray
-    if (Result.Header == -1 || Result.Value == nullptr) {
+    if (Result.Header == -1 || Result.Value == nullptr)
+    {
         return ByteArray();
     }
 
@@ -507,13 +477,14 @@ ByteArray ByteArray::Copy(const Reference &Location) const {
 
     // Reset navigation fields for the new root
     NewArray.HeaderArray[0].Type = TargetHeader.Type;
-    NewArray.HeaderArray[0].Depth = 0; 
+    NewArray.HeaderArray[0].Depth = 0;
     NewArray.HeaderArray[0].Length = TargetHeader.Length;
-    NewArray.HeaderArray[0].Pointer = 0; 
-    NewArray.HeaderArray[0].Skip = 0;    
+    NewArray.HeaderArray[0].Pointer = 0;
+    NewArray.HeaderArray[0].Skip = 0;
 
     NewArray.Allocated = Align(TargetHeader.Length);
-    if (NewArray.Allocated > 0) {
+    if (NewArray.Allocated > 0)
+    {
         NewArray.Array = new char[NewArray.Allocated];
         memcpy(NewArray.Array, Result.Value, TargetHeader.Length);
         NewArray.Length = TargetHeader.Length;
@@ -564,12 +535,14 @@ ByteArray ByteArray::CreateMessage() const
 
 ByteArray ByteArray::ExtractMessage()
 {
-    if (Length < 4) return ByteArray();
+    if (Length < 4)
+        return ByteArray();
 
     uint16_t totalWireSize = *(uint16_t *)Array;
     uint16_t count = *(uint16_t *)(Array + 2);
 
-    if (Length < totalWireSize) return ByteArray();
+    if (Length < totalWireSize)
+        return ByteArray();
 
     ByteArray res;
     res.HeaderAllocated = count;
@@ -586,7 +559,7 @@ ByteArray ByteArray::ExtractMessage()
         res.HeaderArray[i].Depth = hRead[1];
         memcpy(&res.HeaderArray[i].Length, hRead + 2, 2);
         hRead += 4;
-        
+
         res.HeaderArray[i].Pointer = internalPtr;
         // The core fix: internal buffer is PADDED
         internalPtr += Align(res.HeaderArray[i].Length);
@@ -613,7 +586,8 @@ ByteArray ByteArray::ExtractMessage()
         memmove(Array, Array + totalWireSize, remaining);
         Length = remaining;
     }
-    else Length = 0;
+    else
+        Length = 0;
 
     return res;
 }

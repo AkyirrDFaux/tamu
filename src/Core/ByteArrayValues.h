@@ -1,3 +1,11 @@
+const void *ByteArray::Get(const Reference &Location, Types Type) const
+{
+    FindResult Result = Find(Location, false);
+    if (Result.Header < 0 || Result.Type != Type)
+        return nullptr;
+    return Result.Value;
+}
+
 template <class C>
 Getter<C> ByteArray::Get(const Reference &Location) const
 {
@@ -11,7 +19,7 @@ Getter<C> ByteArray::Get(const Reference &Location) const
 template <>
 Getter<Text> ByteArray::Get(const Reference &Location) const
 {
-    FindResult Result = Find(Location);
+    FindResult Result = Find(Location, false);
     if (Result.Type != Types::Text || Result.Header == -1)
     {
         return {false, Text(nullptr, 0)};
@@ -27,44 +35,24 @@ Getter<Reference> ByteArray::Get(const Reference &Location) const
 {
     FindResult Result = Find(Location);
 
-    if (Result.Header == -1 || Result.Value == nullptr)
+    // 1. Basic validation
+    if (Result.Header < 0 || Result.Type != Types::Reference)
         return {false, Reference()};
 
-    const Header &Head = HeaderArray[Result.Header];
+    // 2. Initialize a clean Reference (zeros out the union)
     Reference ref;
 
-    if (Result.Type == Types::Reference)
-    {
-        // 1. Global Layout: [Net][Group][Device][...Path...]
-        // Stored length in Header is (3 + PathLen)
-        uint8_t pathLen = (Head.Length >= 3) ? (uint8_t)(Head.Length - 3) : 0;
-        
-        // Directly set Metadata: Global Bit (0x80) | Path Length
-        ref.Metadata = 0x80 | (pathLen & 0x7F);
+    // 3. Determine how much to copy
+    // We only copy what is available in the ByteArray, 
+    // but never more than the size of our struct (16 bytes).
+    uint16_t storedSize = HeaderArray[Result.Header].Length;
+    uint16_t copySize = (storedSize > sizeof(Reference)) ? sizeof(Reference) : storedSize;
 
-        // Copy IDs and Path into the Data union
-        uint16_t copySize = (Head.Length > sizeof(ref.Data)) ? sizeof(ref.Data) : Head.Length;
-        memcpy(ref.Data, Result.Value, copySize);
-        
-        return {true, ref};
-    }
-    else if (Result.Type == Types::Path)
-    {
-        // 2. Local Layout: [...Path...]
-        // Stored length in Header is exactly PathLen
-        uint8_t pathLen = (uint8_t)Head.Length;
+    // 4. Copy the raw bytes directly into the struct
+    // This works because the struct is packed and starts with Metadata
+    memcpy(&ref, Result.Value, copySize);
 
-        // Directly set Metadata: Global Bit is 0 | Path Length
-        ref.Metadata = (pathLen & 0x7F);
-
-        // Copy raw path bytes into the Path segment of the union
-        uint16_t copySize = (Head.Length > MAX_REF_LENGTH) ? MAX_REF_LENGTH : Head.Length;
-        memcpy(ref.Path, Result.Value, copySize);
-        
-        return {true, ref};
-    }
-
-    return {false, Reference()};
+    return {true, ref};
 }
 
 void ByteArray::Set(const void *Data, size_t Size, Types Type, const Reference &Location)
@@ -119,8 +107,5 @@ void ByteArray::Set(const Text &Data, const Reference &Location)
 template <>
 void ByteArray::Set(const Reference &Data, const Reference &Location)
 {
-    if(Data.IsGlobal())
-        Set(&Data.Data, Data.PathLen() + 3, Types::Reference, Location);
-    else
-        Set(&Data.Path, Data.PathLen(), Types::Path, Location);  
+    Set(&Data, Data.PathLen() + 4, Types::Reference, Location);
 }

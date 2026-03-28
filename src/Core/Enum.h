@@ -35,7 +35,6 @@ enum class Types : uint8_t
     Coord3D,   // 24 byte (2xVector3D)
     Text,      // String - variable length
     Reference, // uint8 array
-    Path,      // uint8 array, length - 3
     Message    // raw data array
 };
 
