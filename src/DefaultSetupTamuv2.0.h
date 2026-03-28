@@ -12,38 +12,38 @@ void DefaultSetup()
 
     LD->ValueSetup<Displays>(Displays::Vysi_v1_0, {0});
     LD->ValueSetup<PortNumber>(0, {0, 0}),
-    LD->Values.Set(Coord2D(0, 0, 5), {0, 5});
-    LD->Values.Set<uint8_t>(40, {0, 4});
+    LD->Values.Set(Coord2D(0, 0, 5), {1, 0});
+    LD->Values.Set<uint8_t>(40, {1});
 
     // --- Layer 0: Background ---
-    LD->ValueSetup<Geometries>(Geometries::Fill, {1, 0});
-    LD->Values.Set(GeometryOperation::Add, {1, 0, 0}); // Op moved to index 0
+    LD->ValueSetup<Geometries>(Geometries::Fill, {2, 0});
+    LD->Values.Set(GeometryOperation::Add, {2, 0, 0}); // Op moved to index 0
 
-    LD->ValueSetup<Textures2D>(Textures2D::Full, {1, 1});
-    LD->Values.Set(ColourClass(200, 200, 200), {1, 1, 0}); // ColourA
+    LD->ValueSetup<Textures2D>(Textures2D::Full, {2, 1});
+    LD->Values.Set(ColourClass(200, 200, 200), {2, 1, 0}); // ColourA
 
     // --- Layer 1: Eye Color ---
-    LD->ValueSetup<Geometries>(Geometries::Elipse, {1, 2});
-    LD->Values.Set(GeometryOperation::Add, {1, 2, 0}); // Op moved to index 0
-    LD->Values.Set(Vector2D(4.5, 4.5), {1, 2, 1});     // Size
-    LD->Values.Set<Number>(0.1, {1, 2, 2});            // Fade
-    LD->Values.Set(Coord2D(1.5, 1, 0), {1, 2, 3});     // Position
+    LD->ValueSetup<Geometries>(Geometries::Elipse, {2, 2});
+    LD->Values.Set(GeometryOperation::Add, {2, 2, 0}); // Op moved to index 0
+    LD->Values.Set(Vector2D(4.5, 4.5), {2, 2, 1});     // Size
+    LD->Values.Set<Number>(0.1, {2, 2, 2});            // Fade
+    LD->Values.Set(Coord2D(1.5, 1, 0), {2, 2, 3});     // Position
 
-    LD->ValueSetup<Textures2D>(Textures2D::BlendLinear, {1, 3});
-    LD->Values.Set(ColourClass(0, 100, 0), {1, 3, 0}); // ColourA
-    LD->Values.Set(ColourClass(0, 150, 0), {1, 3, 1}); // ColourB
-    LD->Values.Set(Coord2D(1.5, 1, 0), {1, 3, 2});     // Position
-    LD->Values.Set<Number>(1.0, {1, 3, 3});            // Width
+    LD->ValueSetup<Textures2D>(Textures2D::BlendLinear, {2, 3});
+    LD->Values.Set(ColourClass(0, 100, 0), {2, 3, 0}); // ColourA
+    LD->Values.Set(ColourClass(0, 150, 0), {2, 3, 1}); // ColourB
+    LD->Values.Set(Coord2D(1.5, 1, 0), {2, 3, 2});     // Position
+    LD->Values.Set<Number>(1.0, {2, 3, 3});            // Width
 
     // --- Layer 2: Pupil ---
-    LD->ValueSetup<Geometries>(Geometries::DoubleParabola, {1, 4});
-    LD->Values.Set(GeometryOperation::Add, {1, 4, 0}); // Op moved to index 0
-    LD->Values.Set(Vector2D(2.3, 4.9), {1, 4, 1});     // Size
-    LD->Values.Set<Number>(1.5, {1, 4, 2});            // Fade
-    LD->Values.Set(Coord2D(1.5, 1, 0), {1, 4, 3});     // Position
+    LD->ValueSetup<Geometries>(Geometries::DoubleParabola, {2, 4});
+    LD->Values.Set(GeometryOperation::Add, {2, 4, 0}); // Op moved to index 0
+    LD->Values.Set(Vector2D(2.3, 4.9), {2, 4, 1});     // Size
+    LD->Values.Set<Number>(1.5, {2, 4, 2});            // Fade
+    LD->Values.Set(Coord2D(1.5, 1, 0), {2, 4, 3});     // Position
 
-    LD->ValueSetup<Textures2D>(Textures2D::Full, {1, 5});
-    LD->Values.Set(ColourClass(0, 0, 0), {1, 5, 0}); // ColourA
+    LD->ValueSetup<Textures2D>(Textures2D::Full, {2, 5});
+    LD->Values.Set(ColourClass(0, 0, 0), {2, 5, 0}); // ColourA
     /*
     // Geometry (Half Fill)
     LD->ValueSetup<Geometries>(Geometries::HalfFill, {1, 6});
