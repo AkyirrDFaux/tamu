@@ -35,9 +35,9 @@ public:
     void DriverLED(PortNumber Port);
     bool DisconnectLED(BaseClass *Object, PortNumber Port);
 
-    bool ConnectI2C(BaseClass *Object, PortNumber Port);
-    void DriverI2C(PortNumber Port);
-    bool DisconnectI2C(BaseClass *Object, PortNumber Port);
+    bool ConnectI2C(BaseClass *Object, PortNumber SDA, PortNumber SCL);
+    void DriverI2C(PortNumber SDA, PortNumber SCL);
+    bool DisconnectI2C(BaseClass *Object, PortNumber SDA, PortNumber SCL);
 
     bool ConnectPin(BaseClass *Object, PortNumber Port);
     void DriverPin(PortNumber Port);
