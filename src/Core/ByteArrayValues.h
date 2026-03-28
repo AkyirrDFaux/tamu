@@ -1,7 +1,7 @@
 const void *ByteArray::Get(const Reference &Location, Types Type) const
 {
     FindResult Result = Find(Location, false);
-    if (Result.Header < 0 || Result.Type != Type)
+    if (Result.Header == -1 || Result.Type != Type)
         return nullptr;
     return Result.Value;
 }
@@ -20,7 +20,7 @@ template <>
 Getter<Text> ByteArray::Get(const Reference &Location) const
 {
     FindResult Result = Find(Location, false);
-    if (Result.Type != Types::Text || Result.Header == -1)
+    if (Result.Header == -1 || Result.Type != Types::Text)
     {
         return {false, Text(nullptr, 0)};
     }
@@ -36,7 +36,7 @@ Getter<Reference> ByteArray::Get(const Reference &Location) const
     FindResult Result = Find(Location);
 
     // 1. Basic validation
-    if (Result.Header < 0 || Result.Type != Types::Reference)
+    if (Result.Header == -1 || Result.Type != Types::Reference)
         return {false, Reference()};
 
     // 2. Initialize a clean Reference (zeros out the union)
@@ -62,7 +62,7 @@ void ByteArray::Set(const void *Data, size_t Size, Types Type, const Reference &
     // Handle packed sub-access (e.g. accessing a byte inside a Vec3)
     if (Found.Header == -2)
     { 
-        if (Found.Value != nullptr)
+        if (Found.Value != nullptr && Found.Type == Type)
             memcpy(Found.Value, Data, Size);
         return;
     }

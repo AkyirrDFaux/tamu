@@ -163,3 +163,39 @@ enum class Operations : uint8_t
     ResetFlags,
     Sine
 };
+
+/*
+enum class Operations : uint8_t
+{
+    // ... your existing ops ...
+    
+    // Advanced Math & Mapping
+    Map,            // (Value, InMin, InMax, OutMin, OutMax)
+    Clamp,          // (Value, Min, Max)
+    Lerp,           // (A, B, Alpha)
+    
+    // Logic & Bitwise
+    And,
+    Or,
+    Not,
+    RisingEdge,     // Detect 0 -> 1 transition
+    
+    // Vector Ops
+    Magnitude,      // Length of Vector3D
+    Distance,       // Dist between two Coords
+    Normalize,
+    
+    // Signal Processing
+    Deadzone,       // (Value, Threshold)
+    Smooth,         // Rolling average / Low-pass filter
+    
+    // Trigger / State
+    Toggle,         // Flip-flop state on trigger
+    Step,           // Increment a value on trigger
+    
+    // Waveforms
+    Sine,
+    Square,         // Oscillate between two values
+    Sawtooth        // Ramp up and reset
+};
+*/

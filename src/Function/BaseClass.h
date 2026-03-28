@@ -166,6 +166,30 @@ FindResult ByteArray::Find(const Reference &Location, bool StopAtReferences) con
                         return {(int16_t)Pointer, header.Type, CurrentMap->Array + header.Pointer};
                     }
 
+                    if (Layer == depth - 2 && IsPacked(header.Type))
+                    {
+                        uint8_t subIdx = CurrentPath.Path[Layer + 1];
+                        char *dataPtr = CurrentMap->Array + header.Pointer;
+
+                        switch (header.Type)
+                        {
+                        case Types::Text:
+                        case Types::Colour:
+                            // Return as a single Byte at the offset
+                            return {-2, Types::Byte, dataPtr + subIdx};
+
+                        case Types::Vector2D:
+                        case Types::Vector3D:
+                        case Types::Coord2D:
+                        case Types::Coord3D:
+                            // Return as a Number at the float-offset
+                            return {-2, Types::Number, dataPtr + (subIdx * sizeof(Number))};
+
+                        default:
+                            return {-1, Types::Undefined, nullptr};
+                        }
+                    }
+
                     // Descend
                     Pointer++;
                     End = Pointer + header.Skip;
