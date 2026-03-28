@@ -61,7 +61,7 @@ bool InputClass::Connect()
 
     // 3. Ask the Board to link this object to the physical pin
     // Board handles pin-sharing checks and hardware Registry lookups
-    if (Board.Connect(this, Port))
+    if (Board.ConnectPin(this, Port))
     {
         CurrentPort = Port;
         return true;
@@ -72,7 +72,7 @@ bool InputClass::Connect()
 
 bool InputClass::Disconnect()
 {
-    Board.Disconnect(this, CurrentPort);
+    Board.DisconnectPin(this, CurrentPort);
     CurrentPort = -1;
     return true;
 }

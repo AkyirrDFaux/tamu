@@ -48,8 +48,8 @@ bool I2CDeviceClass::Connect()
         return false;
 
     // Board.Connect now takes 'this' and uses the Registry to find our Global ID
-    bool SdaOk = Board.Connect(this, SDA.Value);
-    bool SclOk = Board.Connect(this, SCL.Value);
+    bool SdaOk = Board.ConnectI2C(this, SDA.Value);
+    bool SclOk = Board.ConnectI2C(this, SCL.Value);
 
     if (SdaOk && SclOk)
     {
@@ -58,8 +58,8 @@ bool I2CDeviceClass::Connect()
         return true;
     }
 
-    if (SdaOk) Board.Disconnect(this, SDA.Value);
-    if (SclOk) Board.Disconnect(this, SCL.Value);
+    if (SdaOk) Board.DisconnectI2C(this, SDA.Value);
+    if (SclOk) Board.DisconnectI2C(this, SCL.Value);
 
     return false;
 }
@@ -68,8 +68,8 @@ bool I2CDeviceClass::Disconnect()
 {
     I2CDriver = nullptr;
 
-    Board.Disconnect(this, CurrentSDA);
-    Board.Disconnect(this, CurrentSCL);
+    Board.DisconnectI2C(this, CurrentSDA);
+    Board.DisconnectI2C(this, CurrentSCL);
 
     CurrentSDA = -1;
     CurrentSCL = -1;

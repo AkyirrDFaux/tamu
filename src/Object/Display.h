@@ -86,7 +86,7 @@ bool DisplayClass::Connect(BaseClass *Object, int32_t Index)
     Getter<PortNumber> Port = Values.Get<PortNumber>({0, 0});
     if (Port.Success && Port.Value.IsValid())
     {
-        if (Board.Connect(Object, Port.Value, Index + 1))
+        if (Board.ConnectLED(Object, Port.Value, Index + 1))
         {
             if (Object->Type == ObjectTypes::Display)
                 static_cast<DisplayClass *>(Object)->CurrentLink = Port.Value;
@@ -102,7 +102,7 @@ bool DisplayClass::Disconnect()
     if (CurrentLink.IsValid() == false)
         return false;
 
-    if (Board.Disconnect(this, CurrentLink))
+    if (Board.DisconnectLED(this, CurrentLink))
     {
         CurrentLink = -1;
         return true;

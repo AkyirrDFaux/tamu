@@ -56,7 +56,7 @@ bool SensorClass::Connect()
         return false;
     }
 
-    if (Board.Connect(this, Port))
+    if (Board.ConnectPin(this, Port))
     {
         CurrentPort = Port.Value;
         HW::ModeAnalog(MeasPin);
@@ -68,7 +68,7 @@ bool SensorClass::Connect()
 
 bool SensorClass::Disconnect()
 {
-    Board.Disconnect(this, CurrentPort);
+    Board.DisconnectPin(this, CurrentPort);
     CurrentPort = -1;
     return true;
 }

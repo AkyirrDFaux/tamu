@@ -12,12 +12,12 @@ public:
 };
 
 // Updated Macro to use the new Reference system
-#define SET_PORT(index, type, pin, driver)            \
-    do                                                \
-    {                                                 \
+#define SET_PORT(index, type, pin, driver)              \
+    do                                                  \
+    {                                                   \
         Values.Set(PortTypeClass(type), {0, 0, index}); \
-        Values.Set(Pin(pin), {0, 0, index, 0});       \
-        Values.Set(driver, {0, 0, index, 1});         \
+        Values.Set(Pin(pin), {0, 0, index, 0});         \
+        Values.Set(driver, {0, 0, index, 1});           \
     } while (0)
 
 class BoardClass : public BaseClass
@@ -31,13 +31,17 @@ public:
     bool Run();
     void UpdateLoopTime();
 
-    void DriverStop(PortNumber Port);
-    void DriverStart(PortNumber Port);
-    void PortSetup(PortNumber Port);
-    void PortReset(BaseClass *Object);
+    bool ConnectLED(BaseClass *Object, PortNumber Port, uint8_t Index = 0);
+    void DriverLED(PortNumber Port);
+    bool DisconnectLED(BaseClass *Object, PortNumber Port);
 
-    bool Connect(BaseClass *Object, PortNumber Port, uint8_t Index = 0);
-    bool Disconnect(BaseClass *Object, PortNumber Port);
+    bool ConnectI2C(BaseClass *Object, PortNumber Port);
+    void DriverI2C(PortNumber Port);
+    bool DisconnectI2C(BaseClass *Object, PortNumber Port);
+
+    bool ConnectPin(BaseClass *Object, PortNumber Port);
+    void DriverPin(PortNumber Port);
+    bool DisconnectPin(BaseClass *Object, PortNumber Port);
 
     // Bridge functions updated for Reference
     static void SetupBridge(BaseClass *Base, const Reference &Index)
@@ -86,6 +90,7 @@ BoardClass::BoardClass(const Reference &ID) : BaseClass(&Table, ID, {Flags::Auto
     Values.Set(Text("Board"), {1});
 };
 
+/*
 bool BoardClass::Connect(BaseClass *Object, PortNumber Port, uint8_t Index)
 {
     ESP_LOGI("BOARD", "Connecting to port %d\n", Port);
@@ -94,7 +99,7 @@ bool BoardClass::Connect(BaseClass *Object, PortNumber Port, uint8_t Index)
         return false;
 
     Reference ID = Objects.GetReference(Object);
-    
+
     // Path follows SET_PORT: {0, 0, index, 1} for the driver/connection slot
     Getter<Drivers> Driver = Values.Get<Drivers>({0, 0, Port, 1});
 
@@ -151,7 +156,8 @@ bool BoardClass::Disconnect(BaseClass *Object, PortNumber Port)
         Reference SlotPath = {0, 0, Port, 1, Slot};
         Getter<Reference> Entry = Values.Get<Reference>(SlotPath);
 
-        if (!Entry.Success) break;
+        if (!Entry.Success)
+            break;
 
         if (Entry.Value == ID)
         {
@@ -163,7 +169,8 @@ bool BoardClass::Disconnect(BaseClass *Object, PortNumber Port)
                 while (Next < 32)
                 {
                     Getter<Reference> Upstream = Values.Get<Reference>({0, 0, Port, 1, Next});
-                    if (!Upstream.Success) break;
+                    if (!Upstream.Success)
+                        break;
 
                     Values.Set<Reference>(Upstream.Value, {0, 0, Port, 1, (uint8_t)(Next - 1)});
                     Values.Delete({0, 0, Port, 1, Next});
@@ -186,6 +193,7 @@ bool BoardClass::Disconnect(BaseClass *Object, PortNumber Port)
     }
     return false;
 }
+*/
 
 bool BoardClass::Run()
 {
@@ -204,7 +212,8 @@ bool BoardClass::Run()
 
     for (uint8_t i = 0; i < 11; i++)
     {
-        if (DriverArray[i] == nullptr) continue;
+        if (DriverArray[i] == nullptr)
+            continue;
 
         // Hardware Space: Check if port is configured as LED
         Getter<Drivers> Role = Values.Get<Drivers>({0, 0, i, 1});
