@@ -88,7 +88,7 @@ int main()
     DefaultSetup();
 
     ESP_LOGI("MAIN", "Starting Chirp");
-    Chirp.Begin(Board.ValueGet<Text>({0,0}));
+    Chirp.Begin(Board.ValueGet<Text>({1}));
 
     TimeUpdate();
     Board.ValueSetup<int32_t>(CurrentTime, {0, 1});

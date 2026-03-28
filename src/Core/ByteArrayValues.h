@@ -11,7 +11,7 @@ Getter<C> ByteArray::Get(const Reference &Location) const
 {
     const void *ptr = Get(Location, GetType<C>());
     if (ptr == nullptr)
-        return {false, C()}; 
+        return {false, C()};
 
     return {true, *(C *)ptr};
 }
@@ -27,7 +27,7 @@ Getter<Text> ByteArray::Get(const Reference &Location) const
 
     const Header &Head = HeaderArray[Result.Header];
     // Return pointer to internal buffer + length from metadata
-    return {true, Text((const char*)Result.Value, Head.Length)};
+    return {true, Text((const char *)Result.Value, Head.Length)};
 }
 
 template <>
@@ -43,7 +43,7 @@ Getter<Reference> ByteArray::Get(const Reference &Location) const
     Reference ref;
 
     // 3. Determine how much to copy
-    // We only copy what is available in the ByteArray, 
+    // We only copy what is available in the ByteArray,
     // but never more than the size of our struct (16 bytes).
     uint16_t storedSize = HeaderArray[Result.Header].Length;
     uint16_t copySize = (storedSize > sizeof(Reference)) ? sizeof(Reference) : storedSize;
@@ -61,7 +61,7 @@ void ByteArray::Set(const void *Data, size_t Size, Types Type, const Reference &
 
     // Handle packed sub-access (e.g. accessing a byte inside a Vec3)
     if (Found.Header == -2)
-    { 
+    {
         if (Found.Value != nullptr && Found.Type == Type)
             memcpy(Found.Value, Data, Size);
         return;
@@ -84,7 +84,7 @@ void ByteArray::Set(const void *Data, size_t Size, Types Type, const Reference &
     // Update metadata and copy data
     HeaderArray[HIdx].Type = Type;
     // ResizeData already updated HeaderArray[HIdx].Length
-    
+
     if (Size > 0 && Data != nullptr)
     {
         memcpy(Array + HeaderArray[HIdx].Pointer, Data, Size);
@@ -100,7 +100,8 @@ void ByteArray::Set(const C &Data, const Reference &Location)
 template <>
 void ByteArray::Set(const Text &Data, const Reference &Location)
 {
-    if (Data.Data == nullptr) return;
+    if (Data.Data == nullptr)
+        return;
     Set(Data.Data, Data.Length, Types::Text, Location);
 }
 

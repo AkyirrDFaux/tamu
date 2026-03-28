@@ -23,6 +23,7 @@ void BoardClass::DriverStop(PortNumber Port)
     if (Port >= 11)
         return;
 
+    // Board config still lives in Board-Branch {1}
     Getter<Drivers> CurrentRole = Values.Get<Drivers>({1, Port, 1});
     if (!CurrentRole.Success || CurrentRole.Value == Drivers::None)
         return;
@@ -60,6 +61,7 @@ void BoardClass::DriverStop(PortNumber Port)
             {
                 I2CDeviceClass *Sensor = static_cast<I2CDeviceClass *>(Obj);
 
+                // I2C Hardware config is still at {0, 0} and {0, 1}
                 Getter<PortNumber> SdaTarget = Sensor->Values.Get<PortNumber>({0, 0});
                 Getter<PortNumber> SclTarget = Sensor->Values.Get<PortNumber>({0, 1});
 
@@ -144,6 +146,7 @@ void BoardClass::DriverStart(PortNumber Port)
             BaseClass *Obj = Objects.At(Ref.Value);
             if (Obj && Obj->Type == ObjectTypes::Display)
             {
+                // INDEX UPDATE: Display Length is now in Branch {0, 1}
                 Getter<int32_t> Len = Obj->Values.Get<int32_t>({0, 1});
                 if (Len.Success)
                     TotalLength += Len.Value;
@@ -165,6 +168,7 @@ void BoardClass::DriverStart(PortNumber Port)
                 if (Disp)
                 {
                     Disp->LEDs = NewDriver->Offset(CurrentOffset);
+                    // INDEX UPDATE: Display Length is now in Branch {0, 1}
                     Getter<int32_t> Len = Disp->Values.Get<int32_t>({0, 1});
                     if (Len.Success)
                         CurrentOffset += Len.Value;
@@ -176,36 +180,30 @@ void BoardClass::DriverStart(PortNumber Port)
     {
         InputClass *Input = static_cast<InputClass *>(FirstObj);
         Values.Set(Drivers::Input, {1, Port, 1});
-
-        // Pass the physical Pin from the Board's Registry to the Object
         Input->InputPin = PortPin.Value;
     }
     else if (FirstObj->Type == ObjectTypes::Sensor)
     {
         SensorClass *Input = static_cast<SensorClass *>(FirstObj);
         Values.Set(Drivers::Analog, {1, Port, 1});
-
-        // Pass the physical Pin from the Board's Registry to the Object
         Input->MeasPin = PortPin.Value;
     }
     // 2. I2C Logic (Referral System)
     else if (FirstObj->Type == ObjectTypes::I2C)
     {
         I2CDeviceClass *Sensor = static_cast<I2CDeviceClass *>(FirstObj);
+        // I2C configuration is at {0, 0} and {0, 1}
         Getter<PortNumber> SdaPort = Sensor->Values.Get<PortNumber>({0, 0});
         Getter<PortNumber> SclPort = Sensor->Values.Get<PortNumber>({0, 1});
 
         if (!SdaPort.Success || !SclPort.Success)
             return;
 
-        // A. SCL REDIRECTION
         if (SclPort.Value == Port)
         {
             DriverStart(SdaPort.Value);
             return;
         }
-
-        // B. SDA INITIALIZATION
         else if (SdaPort.Value == Port)
         {
             Getter<Drivers> CurrentRole = Values.Get<Drivers>({1, Port, 1});
@@ -236,7 +234,6 @@ void BoardClass::DriverStart(PortNumber Port)
                 }
             }
 
-            // C. POINTER DISTRIBUTION
             I2C *ActiveBus = static_cast<I2C *>(DriverArray[Port]);
             if (ActiveBus != nullptr)
             {

@@ -1,6 +1,6 @@
 void DefaultSetup()
 {
-    Board.Values.Set(Text("Test"), {0, 0}); // Using the Path for DisplayName
+    Board.Values.Set(Text("Test"), {1}); // Using the Path for DisplayName
 
     SensorClass *S = new SensorClass(Reference::Global(0, 2, 2));
     S->ValueSetup(SensorTypes::Light10K, {0});

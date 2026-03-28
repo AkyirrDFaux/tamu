@@ -199,14 +199,9 @@ namespace Operation
     }
 }
 
-bool RunOperation(ByteArray &Values, Reference Index)
+bool RunOperation(Operations Operation, ByteArray &Values, Reference Index)
 {
-    Getter<Operations> Operation = Values.Get<Operations>(Index);
-
-    if (Operation.Success == false) // No operation
-        return true;
-
-    switch (Operation.Value)
+    switch (Operation)
     {
     case Operations::Equal:
         return Operation::Equal(Values, Index);

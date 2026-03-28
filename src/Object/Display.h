@@ -41,17 +41,19 @@ DisplayClass::DisplayClass(const Reference &ID, ObjectInfo Info) : BaseClass(&Ta
     BaseClass::Type = ObjectTypes::Display;
     Name = "Display";
 
-    // Initialize local paths using the implicit list constructor
+    // Branch {0}: Hardware / Physical Definition (Static)
     Values.Set(Displays::Undefined, {0});
-    Values.Set<PortNumber>(-1, {0, 0});   // Connection Link (Port/Object)
-    Values.Set<int32_t>(0, {0, 1});       // Length
-    Values.Set(Vector2D(0, 0), {0, 2});   // Size
-    Values.Set<Number>(1, {0, 3});        // Ratio
-    Values.Set<uint8_t>(20, {0, 4});      // Brightness
-    Values.Set(Coord2D(0, 0, 0), {0, 5}); // Offset
-    Values.Set(false, {0, 6});            // Mirroring
-    Values.Set(false, {0, 7});            // Wrapping X
-    Values.Set(false, {0, 8});            // Wrapping Y
+    Values.Set<PortNumber>(-1, {0, 0}); // Connection Link
+    Values.Set<int32_t>(0, {0, 1});     // Length
+    Values.Set(Vector2D(0, 0), {0, 2}); // Size
+    Values.Set<Number>(1, {0, 3});      // Ratio
+
+    // Branch {1}: Global Parameters / Control (Volatile)
+    Values.Set<uint8_t>(20, {1});         // Brightness (Root of {1})
+    Values.Set(Coord2D(0, 0, 0), {1, 0}); // Offset
+    Values.Set(false, {1, 1});            // Mirroring
+    Values.Set(false, {1, 2});            // Wrapping X
+    Values.Set(false, {1, 3});            // Wrapping Y
 };
 
 DisplayClass::~DisplayClass()
@@ -175,12 +177,14 @@ void DisplayClass::ManageOverlay(int32_t RequiredLength)
 
 bool DisplayClass::Run()
 {
-    // Access values using bit-tagged local paths
+    // Hardware {0}
     Getter<int32_t> Length = Values.Get<int32_t>({0, 1});
     Getter<Vector2D> Size = Values.Get<Vector2D>({0, 2});
-    Getter<uint8_t> Brightness = Values.Get<uint8_t>({0, 4});
-    Getter<Coord2D> Offset = Values.Get<Coord2D>({0, 5});
-    Getter<bool> Mirrored = Values.Get<bool>({0, 6});
+
+    // Control {1}
+    Getter<uint8_t> Brightness = Values.Get<uint8_t>({1});
+    Getter<Coord2D> Offset = Values.Get<Coord2D>({1, 0});
+    Getter<bool> Mirrored = Values.Get<bool>({1, 1});
 
     if (!Length.Success || !Size.Success || !Brightness.Success || !Offset.Success)
     {
@@ -188,27 +192,24 @@ bool DisplayClass::Run()
         return true;
     }
 
-    if (LEDs == nullptr || Overlay == nullptr || Length.Value <= 0 || Length.Value > MaxLength)
-    {
-        ReportError(Status::PortError);
+    if (LEDs == nullptr || Overlay == nullptr || Length.Value <= 0)
         return true;
-    }
 
+    // Calculate the base coordinate system using Control branch values
     Coord2D BaseTransform = Coord2D(Size.Value * 0.5 - Vector2D(0.5, 0.5), Vector2D(0)).Join(Offset.Value);
 
     memset(LEDs, 0, Length.Value * 3);
     memset((void *)Overlay, 0, Length.Value * sizeof(Number));
 
+    // Render Stack {2}
     for (uint8_t I = 0;; I++)
     {
-        Types NodeType = Values.Type({1, I});
+        Types NodeType = Values.Type({2, I});
         if (NodeType == Types::Undefined)
             break;
 
         if (NodeType == Types::Geometry2D)
-        {
             RenderGeometry(I, Length.Value, Size.Value, BaseTransform, Mirrored.Value, Overlay);
-        }
         else if (NodeType == Types::Texture2D)
         {
             RenderTexture(I, Length.Value, Size.Value, BaseTransform, Mirrored.Value, Overlay);
@@ -216,14 +217,12 @@ bool DisplayClass::Run()
         }
     }
 
-    // Global brightness scaling
+    // Global brightness scaling from {1}
     if (Brightness.Value < 255)
     {
         int32_t TotalBytes = Length.Value * 3;
         for (int32_t I = 0; I < TotalBytes; I++)
-        {
             LEDs[I] = MultiplyBytePercentByte(LEDs[I], Brightness.Value);
-        }
     }
 
     return true;
@@ -232,11 +231,12 @@ bool DisplayClass::Run()
 void DisplayClass::RenderGeometry(uint8_t Index, int32_t Length, Vector2D DisplaySize,
                                   Coord2D Transform, bool Mirrored, Number *Overlay)
 {
-    Geometries Type = Values.Get<Geometries>({1, Index}).Value;
-    GeometryOperation Op = Values.Get<GeometryOperation>({1, Index, 0}).Value;
-    Vector2D GSize = Values.Get<Vector2D>({1, Index, 1}).Value;
-    Number GFade = Values.Get<Number>({1, Index, 2}).Value;
-    Coord2D GPos = Values.Get<Coord2D>({1, Index, 3}).Value;
+    // Attributes for this specific shape live at {2, Index, ...}
+    Geometries Type = Values.Get<Geometries>({2, Index}).Value;
+    GeometryOperation Op = Values.Get<GeometryOperation>({2, Index, 0}).Value;
+    Vector2D GSize = Values.Get<Vector2D>({2, Index, 1}).Value;
+    Number GFade = Values.Get<Number>({2, Index, 2}).Value;
+    Coord2D GPos = Values.Get<Coord2D>({2, Index, 3}).Value;
 
     if (GFade <= 0)
         GFade = 0.001;
@@ -252,7 +252,6 @@ void DisplayClass::RenderGeometry(uint8_t Index, int32_t Length, Vector2D Displa
             int32_t GridIdx = (GridH - Y - 1) * GridW + X;
             int32_t PIdx = GridIdx;
 
-            // 1. Safety check for Layout indexing
             if (Layout != nullptr)
             {
                 if (Layout[GridIdx] == 0)
@@ -260,7 +259,6 @@ void DisplayClass::RenderGeometry(uint8_t Index, int32_t Length, Vector2D Displa
                 PIdx = Layout[GridIdx] - 1;
             }
 
-            // 2. Safety check for Overlay/LED buffer indexing
             if (PIdx < 0 || PIdx >= Length)
                 continue;
 
@@ -342,11 +340,12 @@ Number DisplayClass::CalculateShapeAlpha(Geometries Type, Vector2D P, Vector2D S
 void DisplayClass::RenderTexture(uint8_t Index, int32_t Length, Vector2D DisplaySize,
                                  Coord2D Transform, bool Mirrored, Number *Overlay)
 {
-    if (Values.Type({1, Index}) != Types::Texture2D)
+    // Texture definition lives at {2, Index}
+    if (Values.Type({2, Index}) != Types::Texture2D)
         return;
 
-    Textures2D TextureType = Values.Get<Textures2D>({1, Index}).Value;
-    ColourClass ColourA = Values.Get<ColourClass>({1, Index, 0}).Value;
+    Textures2D TextureType = Values.Get<Textures2D>({2, Index}).Value;
+    ColourClass ColourA = Values.Get<ColourClass>({2, Index, 0}).Value;
 
     if (TextureType == Textures2D::Full)
     {
@@ -366,9 +365,9 @@ void DisplayClass::RenderTexture(uint8_t Index, int32_t Length, Vector2D Display
         return;
     }
 
-    ColourClass ColourB = Values.Get<ColourClass>({1, Index, 1}).Value;
-    Coord2D TexPos = Values.Get<Coord2D>({1, Index, 2}).Value;
-    Number TexWidth = Values.Get<Number>({1, Index, 3}).Value;
+    ColourClass ColourB = Values.Get<ColourClass>({2, Index, 1}).Value;
+    Coord2D TexPos = Values.Get<Coord2D>({2, Index, 2}).Value;
+    Number TexWidth = Values.Get<Number>({2, Index, 3}).Value;
     if (TexWidth <= 0)
         TexWidth = 0.001;
 
