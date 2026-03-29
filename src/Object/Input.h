@@ -30,16 +30,20 @@ public:
 
 constexpr VTable InputClass::Table;
 
-InputClass::InputClass(const Reference &ID, ObjectInfo Info) : BaseClass(&Table, ID, Info)
+InputClass::InputClass(const Reference &ID, ObjectInfo Info) : BaseClass(&InputClass::Table, ID, Info)
 {
     Type = ObjectTypes::Input;
     Name = "Input";
 
-    // Initialize the structure
-    Values.Set(Inputs::Undefined, {0}); // {0}   : Input Mode/Type
-    Values.Set<PortNumber>(-1, {0, 0});   // {0,0} : Port Index (Physical Pin)
-    Values.Set(false, {1});             // {1}   : Read Value
-    //Values.Set(false, {2});             // {2}   : Indicator State
+    // Initialize using direct ByteArray access
+    Inputs initialMode = Inputs::Undefined;
+    Values.Set(&initialMode, sizeof(Inputs), Types::Input, Reference({0}));
+
+    PortNumber initialPort = -1;
+    Values.Set(&initialPort, sizeof(PortNumber), Types::PortNumber, Reference({0, 0}));
+
+    bool initialState = false;
+    Values.Set(&initialState, sizeof(bool), Types::Bool, Reference({1}));
 };
 
 InputClass::~InputClass()
@@ -49,18 +53,23 @@ InputClass::~InputClass()
 
 bool InputClass::Connect()
 {
-    // 1. Retrieve Port Index from {0, 0}
-    Getter<PortNumber> Port = Values.Get<PortNumber>({0, 0});
+    // Search directly in the local ByteArray
+    SearchResult res = Values.Find(Reference({0, 0}), true);
 
-    // 2. Validate (Assuming 0-10 are valid physical ports on your board)
-    if (!Port.Success || Port.Value > 10)
+    if (res.Length < sizeof(PortNumber) || !res.Value)
     {
         ReportError(Status::PortError);
         return false;
     }
 
-    // 3. Ask the Board to link this object to the physical pin
-    // Board handles pin-sharing checks and hardware Registry lookups
+    PortNumber Port = *(PortNumber*)res.Value;
+
+    if (Port > 10)
+    {
+        ReportError(Status::PortError);
+        return false;
+    }
+
     if (Board.ConnectPin(this, Port))
     {
         CurrentPort = Port;
@@ -79,7 +88,6 @@ bool InputClass::Disconnect()
 
 void InputClass::Setup(const Reference &Index)
 {
-    // If the index refers to the port {0,0}, attempt reconnection
     if (Index == Reference({0, 0}))
     {
         Disconnect();
@@ -87,20 +95,22 @@ void InputClass::Setup(const Reference &Index)
         return;
     }
 
-    if (Index != Reference({0}))
-        return;
+    if (Index != Reference({0})) return;
 
-    if (Values.Type({0}) != Types::Input)
-        return;
+    // Use local Find to check the mode
+    SearchResult res = Values.Find(Reference({0}), true);
+    if (res.Type != Types::Input || !res.Value) return;
 
-    // Reset values based on mode selection
-    switch (Values.Get<Inputs>({0}))
+    Inputs mode = *(Inputs*)res.Value;
+    bool resetVal = false;
+
+    switch (mode)
     {
     case Inputs::ButtonWithLED:
-        Values.Set(false, {2}); // Reset Indicator
+        Values.Set(&resetVal, sizeof(bool), Types::Bool, Reference({2}));
         [[fallthrough]];
     case Inputs::Button:
-        Values.Set(false, {1}); // Reset Value
+        Values.Set(&resetVal, sizeof(bool), Types::Bool, Reference({1}));
         break;
     default:
         break;
@@ -109,37 +119,49 @@ void InputClass::Setup(const Reference &Index)
 
 bool InputClass::Run()
 {
-    if (Values.Type({0}) != Types::Input)
+    // Local Find calls avoid the Object Registry "Search" loop entirely
+    SearchResult modeRes = Values.Find(Reference({0}), true);
+    SearchResult valRes  = Values.Find(Reference({1}));
+
+    if (modeRes.Type != Types::Input || !valRes.Value)
     {
         ReportError(Status::MissingModule);
         return true;
     }
 
-    if (HW::IsValidPin(InputPin) == false)
+    if (!HW::IsValidPin(InputPin))
     {
         ReportError(Status::PortError);
         return true;
     }
 
-    switch (Values.Get<Inputs>({0}))
+    Inputs mode = *(Inputs*)modeRes.Value;
+    bool* statePtr = (bool*)valRes.Value; 
+
+    switch (mode)
     {
     case Inputs::Button:
-        Values.Set<bool>(HW::Read(InputPin) == false, {1}); //Inverted logic, Low = On
+        *statePtr = (HW::Read(InputPin) == false); 
         break;
 
     case Inputs::ButtonWithLED:
-        // Multiplexing logic
-        if (Values.Get<bool>({2})) // Check Indicator state
+    {
+        // Reference {2} is the Indicator State
+        SearchResult ledRes = Values.Find(Reference({2}));
+        bool ledOn = (ledRes.Value) ? *(bool*)ledRes.Value : false;
+
+        if (ledOn)
         {
             HW::ModeOutput(InputPin);
-            HW::Low(InputPin); //Inverted logic, Low = On
+            HW::Low(InputPin); 
         }
         else
         {
             HW::ModeInput(InputPin);
-            Values.Set<bool>(HW::Read(InputPin) == false, {1}); //Inverted logic, Low = On
+            *statePtr = (HW::Read(InputPin) == false);
         }
         break;
+    }
     default:
         break;
     }

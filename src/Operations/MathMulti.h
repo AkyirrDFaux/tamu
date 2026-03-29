@@ -51,100 +51,122 @@ void Arithmetic::Apply(const Arithmetic &Next, Operations Op)
 bool ExecuteMathMulti(ByteArray &Values, Reference Index, Operations Op)
 {
     Reference OutPath = Index.Append(0);
-    Reference InPath = Index.Append(1);
 
-    // --- PASS 1: Determine Dominant Type ---
-    Types Target = Types::Byte; // Start with lowest possible
+    // 1. Locate the Input Branch 
+    SearchResult BranchRes = Values.Find(Index.Append(1));
+    if (!BranchRes.Location.Map) return true;
+    
+    Bookmark InBranch = BranchRes.Location;
+    Types Target = Types::Undefined;
     uint8_t count = 0;
 
+    // --- PASS 1: Identify Target Type ---
     while (true)
     {
-        Types T = Values.Type(InPath.Append(count));
-        if (T == Types::Undefined)
-            break;
+        SearchResult res = Values.Find(InBranch, Reference({count}));
+        if (res.Type == Types::Undefined || !res.Value) break;
 
-        if (count == 0)
-            Target = T;
-        else
-            Target = MergeTypes(Target, T);
+        if (Target == Types::Undefined) Target = res.Type;
+        else Target = MergeTypes(Target, res.Type);
 
-        // If at any point the types are incompatible, bail early
-        if (Target == Types::Undefined)
-            return true;
-
+        if (Target == Types::Undefined) return true;
         count++;
     }
 
-    if (count == 0)
-        return true;
+    if (count == 0 || Target == Types::Undefined) return true;
 
     // --- PASS 2: Accumulate ---
-    Arithmetic Result = Fetch(Values, InPath.Append(0), Target);
+    // Pass the Bookmark and the relative index {i}
+    Arithmetic Result = Fetch(Values, InBranch, Reference({0}), Target);
 
     for (uint8_t i = 1; i < count; i++)
     {
-        Arithmetic Next = Fetch(Values, InPath.Append(i), Target);
+        Arithmetic Next = Fetch(Values, InBranch, Reference({i}), Target);
         Result.Apply(Next, Op);
 
-        if (Result.Type == Types::Undefined)
-            return true;
+        if (Result.Type == Types::Undefined) return true;
     }
 
-    // --- FINAL PASS: Store Result ---
-    if (Result.Type == Types::Undefined)
-        return true;
-
+    // --- PASS 3: Store ---
     StoreArithmetic(Values, OutPath, Result);
-
     return true;
 }
 
 bool Min(ByteArray &Values, Reference Index)
 {
-    Reference Output = Index.Append(0);
-    Reference InputBase = Index.Append(1);
+    Reference OutPath = Index.Append(0);
+    SearchResult BranchRes = Values.Find(Index.Append(1));
 
-    Getter<Number> First = Values.Get<Number>(InputBase.Append(0));
-    if (!First.Success)
-        return true;
+    if (!BranchRes.Location.Map) return true;
+    Bookmark InBranch = BranchRes.Location;
 
-    Number Result = First.Value;
-    uint8_t i = 1;
+    Number Result = 0;
+    bool foundFirst = false;
 
-    while (true)
+    for (uint8_t i = 0; i < 255; i++)
     {
-        Getter<Number> Next = Values.Get<Number>(InputBase.Append(i++));
-        if (!Next.Success)
-            break;
-        if (Next.Value < Result)
-            Result = Next.Value;
+        // New Find dives automatically: i=0 is the first child
+        SearchResult res = Values.Find(InBranch, Reference({i}));
+        if (res.Type == Types::Undefined || !res.Value) break;
+
+        Number currentVal = 0;
+        bool isScalar = true;
+
+        if (res.Type == Types::Number)           currentVal = *(Number *)res.Value;
+        else if (res.Type == Types::Integer)     currentVal = (Number)(*(int32_t *)res.Value);
+        else if (res.Type == Types::Byte || res.Type == Types::Bool) 
+                                                 currentVal = (Number)(*(uint8_t *)res.Value);
+        else isScalar = false;
+
+        if (isScalar) {
+            if (!foundFirst) {
+                Result = currentVal;
+                foundFirst = true;
+            } else if (currentVal < Result) {
+                Result = currentVal;
+            }
+        }
     }
 
-    Values.Set(Result, Output);
+    if (foundFirst) Values.Set(&Result, sizeof(Number), Types::Number, OutPath);
     return true;
 }
 
 bool Max(ByteArray &Values, Reference Index)
 {
-    Reference Output = Index.Append(0);
-    Reference InputBase = Index.Append(1);
+    Reference OutPath = Index.Append(0);
+    SearchResult BranchRes = Values.Find(Index.Append(1));
 
-    Getter<Number> First = Values.Get<Number>(InputBase.Append(0));
-    if (!First.Success)
-        return true;
+    if (!BranchRes.Location.Map) return true;
+    Bookmark InBranch = BranchRes.Location;
 
-    Number Result = First.Value;
-    uint8_t i = 1;
+    Number Result = 0;
+    bool foundFirst = false;
 
-    while (true)
+    for (uint8_t i = 0; i < 255; i++)
     {
-        Getter<Number> Next = Values.Get<Number>(InputBase.Append(i++));
-        if (!Next.Success)
-            break;
-        if (Next.Value > Result)
-            Result = Next.Value;
+        SearchResult res = Values.Find(InBranch, Reference({i}));
+        if (res.Type == Types::Undefined || !res.Value) break;
+
+        Number currentVal = 0;
+        bool isScalar = true;
+
+        if (res.Type == Types::Number)           currentVal = *(Number *)res.Value;
+        else if (res.Type == Types::Integer)     currentVal = (Number)(*(int32_t *)res.Value);
+        else if (res.Type == Types::Byte || res.Type == Types::Bool) 
+                                                 currentVal = (Number)(*(uint8_t *)res.Value);
+        else isScalar = false;
+
+        if (isScalar) {
+            if (!foundFirst) {
+                Result = currentVal;
+                foundFirst = true;
+            } else if (currentVal > Result) {
+                Result = currentVal;
+            }
+        }
     }
 
-    Values.Set(Result, Output);
+    if (foundFirst) Values.Set(&Result, sizeof(Number), Types::Number, OutPath);
     return true;
 }

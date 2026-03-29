@@ -1,213 +1,189 @@
 void ReadValue(const ByteArray &Input)
 {
-    Getter<Reference> Ref = Input.Get<Reference>({1});
-    if (!Ref.Success)
+    SearchResult idRes = Input.Find({1}, true);
+    if (idRes.Length == 0 || idRes.Type != Types::Reference)
     {
-        Chirp.Send(ByteArray(Status::InvalidType) << Input);
+        Status err = Status::InvalidType;
+        Chirp.Send(ByteArray(&err, sizeof(Status), Types::Status) << Input);
         return;
     }
 
-    BaseClass *Object = Objects.At(Ref);
+    Reference ID = *(Reference*)idRes.Value;
+    BaseClass *Object = Objects.At(ID);
+
     if (!Object)
     {
-        Chirp.Send(ByteArray(Status::InvalidID) << Input);
+        Status err = Status::InvalidID;
+        Chirp.Send(ByteArray(&err, sizeof(Status), Types::Status) << Input);
         return;
     }
 
     ByteArray Data;
-    // If Path exists in the Reference, copy just that value.
-    // Otherwise, Data = Object->Values (uses the Copy Constructor).
-    if (Ref.Value.PathLen() > 0)
-    {
-        Data = Object->Values.Copy(Ref.Value);
-    }
-    else
-    {
-        Data = Object->Values;
-    }
+    // If Path exists in the Reference, copy just that sub-node.
+    if (ID.PathLen() > 0) Data = Object->Values.Copy(ID);
+    else Data = Object->Values; // Otherwise copy the whole tree
 
     if (Data.Length == 0)
     {
-        Chirp.Send(ByteArray(Status::NoValue) << Input);
+        Status err = Status::NoValue;
+        Chirp.Send(ByteArray(&err, sizeof(Status), Types::Status) << Input);
         return;
     }
 
-    Chirp.Send(ByteArray(Functions::ReadValue) << ByteArray(Ref) << Data);
+    Functions func = Functions::ReadValue;
+    Chirp.Send(ByteArray(&func, sizeof(Functions), Types::Function) << ByteArray(&ID, sizeof(Reference), Types::Reference) << Data);
 }
 
 void WriteValue(const ByteArray &Input)
 {
-    // 1. Resolve the Reference (Target Object + Target Path)
-    // Segment {0} is Function, Segment {1} is Reference
-    Getter<Reference> Ref = Input.Get<Reference>({1});
-
-    if (!Ref.Success)
+    SearchResult idRes = Input.Find({1}, true);
+    if (idRes.Length == 0 || idRes.Type != Types::Reference)
     {
-        Chirp.Send(ByteArray(Status::InvalidType) << Input);
+        Status err = Status::InvalidType;
+        Chirp.Send(ByteArray(&err, sizeof(Status), Types::Status) << Input);
         return;
     }
 
-    // 2. Resolve the Object Pointer from the Register
-    BaseClass *Object = Objects.At(Ref);
+    Reference ID = *(Reference*)idRes.Value;
+    BaseClass *Object = Objects.At(ID);
     if (Object == nullptr)
     {
-        Chirp.Send(ByteArray(Status::InvalidID) << Input);
+        Status err = Status::InvalidID;
+        Chirp.Send(ByteArray(&err, sizeof(Status), Types::Status) << Input);
         return;
     }
 
-    // 3. Locate the SINGLE New Data payload at Index {2}
-    FindResult Payload = Input.Find({2});
-
-    // Guard: If there is no data at index 2, or if the header is invalid, abort.
-    if (Payload.Header == -1)
+    // Locate the payload at index {2}
+    SearchResult payload = Input.Find({2}, true);
+    if (payload.Length == 0)
     {
-        Chirp.Send(ByteArray(Status::NoValue) << Input);
+        Status err = Status::NoValue;
+        Chirp.Send(ByteArray(&err, sizeof(Status), Types::Status) << Input);
         return;
     }
 
-    // 4. Update the Object's internal Values (Strictly one entry)
-    const Header &DataHead = Input.HeaderArray[Payload.Header];
+    // Update the Object's internal Values at the path specified by the Reference
+    Object->ValueSetup(payload.Value, payload.Length, payload.Type, ID);
 
-    // Note: We use Ref.Value.Location (the internal path) to ensure 
-    // we are writing to the exact node intended by the Reference.
-    Object->Values.Set(
-        Payload.Value, 
-        DataHead.Length, 
-        DataHead.Type, 
-        Ref.Value
-    );
-
-    Object->Setup(Ref.Value);
-
-    // 5. Confirmation Echo
-    // We send back the current state of that specific location to confirm the write.
-    Chirp.Send(
-        ByteArray(Functions::ReadValue) 
-        << ByteArray(Ref.Value) 
-        << Object->Values.Copy(Ref.Value)
-    );
+    // Confirmation Echo: Function + Reference + Current State
+    Functions func = Functions::ReadValue;
+    Chirp.Send(ByteArray(&func, sizeof(Functions), Types::Function) << 
+               ByteArray(&ID, sizeof(Reference), Types::Reference) << 
+               Object->Values.Copy(ID));
 }
 
 void ReadName(const ByteArray &Input)
 {
-    // 1. Resolve the Reference using the optimized Getter
-    Getter<Reference> Ref = Input.Get<Reference>({1});
-
-    // 2. Validate type alignment (merges Type check and Existence)
-    if (!Ref.Success)
+    SearchResult idRes = Input.Find({1}, true);
+    if (idRes.Length == 0 || idRes.Type != Types::Reference)
     {
-        Chirp.Send(ByteArray(Status::InvalidType) << Input);
+        Status err = Status::InvalidType;
+        Chirp.Send(ByteArray(&err, sizeof(Status), Types::Status) << Input);
         return;
     }
 
-    // 3. Resolve the pointer from the registry
-    BaseClass *Object = Objects.At(Ref);
+    Reference ID = *(Reference*)idRes.Value;
+    BaseClass *Object = Objects.At(ID);
 
-    // 4. Verify the object exists
     if (Object == nullptr)
     {
-        Chirp.Send(ByteArray(Status::InvalidID) << Input);
+        Status err = Status::InvalidID;
+        Chirp.Send(ByteArray(&err, sizeof(Status), Types::Status) << Input);
         return;
     }
 
-    // 5. Send the Name back
-    // We pass the Reference back so the Flutter app knows which name belongs to which ID
-    Chirp.Send(ByteArray(Functions::ReadName) << ByteArray(Ref.Value) << ByteArray(Object->Name));
+    Functions func = Functions::ReadName;
+    Chirp.Send(ByteArray(&func, sizeof(Functions), Types::Function) << 
+               ByteArray(&ID, sizeof(Reference), Types::Reference) << 
+               ByteArray(Object->Name.Data, Object->Name.Length, Types::Text));
 }
 
 void WriteName(const ByteArray &Input)
 {
-    // 1. Resolve the Reference and the New Name
-    Getter<Reference> Ref = Input.Get<Reference>({1});
-    Getter<Text> NewName = Input.Get<Text>({2});
+    SearchResult idRes = Input.Find({1}, true);
+    SearchResult nameRes = Input.Find({2}, true);
 
-    // 2. Validate types and existence in one go
-    if (!Ref.Success || !NewName.Success)
+    if (idRes.Length == 0 || nameRes.Length == 0 || idRes.Type != Types::Reference)
     {
-        Chirp.Send(ByteArray(Status::InvalidType) << Input);
+        Status err = Status::InvalidType;
+        Chirp.Send(ByteArray(&err, sizeof(Status), Types::Status) << Input);
         return;
     }
 
-    // 3. Resolve the pointer from the registry
-    BaseClass *Object = Objects.At(Ref);
+    Reference ID = *(Reference*)idRes.Value;
+    BaseClass *Object = Objects.At(ID);
 
-    // 4. Verify the object exists
     if (Object == nullptr)
     {
-        Chirp.Send(ByteArray(Status::InvalidID) << Input);
+        Status err = Status::InvalidID;
+        Chirp.Send(ByteArray(&err, sizeof(Status), Types::Status) << Input);
         return;
     }
 
-    // 5. Update the object's name
-    // Assuming Text has an assignment operator or internal buffer update
-    Object->Name = NewName;
+    // Direct update to the Text object (assuming internal buffer management)
+    Object->Name = *(Text*)nameRes.Value;
 
-    // 6. Confirm the update
-    // Send back the Function, the Reference, and the confirmed Name
-    Chirp.Send(ByteArray(Functions::ReadName) << ByteArray(Ref.Value) << ByteArray(Object->Name));
+    Functions func = Functions::ReadName;
+    Chirp.Send(ByteArray(&func, sizeof(Functions), Types::Function) << 
+               ByteArray(&ID, sizeof(Reference), Types::Reference) << 
+               ByteArray(Object->Name.Data, Object->Name.Length, Types::Text));
 }
 
 void ReadInfo(const ByteArray &Input)
 {
-    // 1. Resolve the Reference from Index 1
-    Getter<Reference> Ref = Input.Get<Reference>({1});
-
-    // 2. Validate type alignment
-    if (!Ref.Success)
+    SearchResult idRes = Input.Find({1}, true);
+    if (idRes.Length == 0 || idRes.Type != Types::Reference)
     {
-        Chirp.Send(ByteArray(Status::InvalidType) << Input);
+        Status err = Status::InvalidType;
+        Chirp.Send(ByteArray(&err, sizeof(Status), Types::Status) << Input);
         return;
     }
 
-    // 3. Resolve the pointer from the registry
-    int32_t Index = Objects.Search(Ref);
+    Reference ID = *(Reference*)idRes.Value;
+    int32_t Index = Objects.Search(ID);
 
-    // 4. Verify the object exists
     if (Index == -1)
     {
-        Chirp.Send(ByteArray(Status::InvalidID) << Input);
+        Status err = Status::InvalidID;
+        Chirp.Send(ByteArray(&err, sizeof(Status), Types::Status) << Input);
         return;
     }
 
-    // 5. Respond with the specific object's flags
-    // Send: Function + Original Reference + Current FlagClass
-    Chirp.Send(ByteArray(Functions::ReadInfo) << ByteArray(Ref.Value) << ByteArray(Objects.Object[Index].Info));
+    Functions func = Functions::ReadInfo;
+    ObjectInfo info = Objects.Object[Index].Info;
+    Chirp.Send(ByteArray(&func, sizeof(Functions), Types::Function) << 
+               ByteArray(&ID, sizeof(Reference), Types::Reference) << 
+               ByteArray(&info, sizeof(ObjectInfo), Types::ObjectInfo));
 }
 
 void SetInfo(const ByteArray &Input)
 {
-    // 1. Resolve the Reference and the New Flags
-    Getter<Reference> Ref = Input.Get<Reference>({1});
-    Getter<ObjectInfo> Info = Input.Get<ObjectInfo>({2});
+    SearchResult idRes = Input.Find({1}, true);
+    SearchResult infoRes = Input.Find({2}, true);
 
-    // 2. Validate types and existence
-    if (!Ref.Success || !Info.Success)
+    if (idRes.Length == 0 || infoRes.Length == 0 || idRes.Type != Types::Reference)
     {
-        Chirp.Send(ByteArray(Status::InvalidType) << Input);
+        Status err = Status::InvalidType;
+        Chirp.Send(ByteArray(&err, sizeof(Status), Types::Status) << Input);
         return;
     }
 
-    // 3. Resolve the object pointer
-    int32_t Index = Objects.Search(Ref);
+    Reference ID = *(Reference*)idRes.Value;
+    int32_t Index = Objects.Search(ID);
 
     if (Index == -1)
     {
-        Chirp.Send(ByteArray(Status::InvalidID) << Input);
+        Status err = Status::InvalidID;
+        Chirp.Send(ByteArray(&err, sizeof(Status), Types::Status) << Input);
         return;
     }
 
-    // 4. Update the Flags
-    Objects.Object[Index].Info = Info;
+    // Update the internal registry info
+    Objects.Object[Index].Info = *(ObjectInfo*)infoRes.Value;
 
-    // 5. Special Logic: Reset counter for RunOnce programs
-    // We use the object's Values.Set to ensure the reset is tracked internally
-    /*if (Object->Type == ObjectTypes::Program && Object->Flags == Flags::RunOnce)
-    {
-        int32_t ResetValue = 0;
-        Object->Values.Set(&ResetValue, sizeof(int32_t), Types::Integer, {1});
-    }*/
-
-    // 6. Confirm the update
-    // Return Function, Reference, and the newly applied FlagClass
-    Chirp.Send(ByteArray(Functions::ReadInfo) << ByteArray(Ref.Value) << ByteArray(Objects.Object[Index].Info));
+    Functions func = Functions::ReadInfo;
+    ObjectInfo currentInfo = Objects.Object[Index].Info;
+    Chirp.Send(ByteArray(&func, sizeof(Functions), Types::Function) << 
+               ByteArray(&ID, sizeof(Reference), Types::Reference) << 
+               ByteArray(&currentInfo, sizeof(ObjectInfo), Types::ObjectInfo));
 }

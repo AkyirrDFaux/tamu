@@ -74,37 +74,21 @@ bool RegisterClass::IsValid(const Reference &ID, ObjectTypes Filter) const
 
 // --- Value Accessors (Registry Level) ---
 
-template <class C>
-C *RegisterClass::ValueGet(const Reference &ID) const
-{
-    int32_t Index = Search(ID);
-    if (Index == -1)
-        return nullptr;
+SearchResult RegisterClass::Find(const Reference &Location, bool StopAtReferences) const {
+    // 1. Resolve which BaseClass owns this Reference
+    BaseClass* target = At(Location);
+    if (!target) return {};
 
-    // The Reference object is passed as-is; BaseClass logic will 
-    // ignore the IDs and use the Location bits for the ByteArray search.
-    return Object[Index].Object->ValueGet<C>(ID);
+    // 2. Hand off to the object's local search logic.
+    // We pass {&target->Values, 0} as the root Bookmark.
+    return target->Values.Find(Location, StopAtReferences);
 }
 
-template <class C>
-bool RegisterClass::ValueSet(C Value, const Reference &ID)
-{
-    int32_t Index = Search(ID);
-    if (Index == -1)
-        return false;
-
-    // Pass the full Reference down to the object
-    return Object[Index].Object->ValueSetup(Value, ID);
-}
-
-Types RegisterClass::ValueTypeAt(const Reference &ID) const
-{
-    int32_t Index = Search(ID);
-    if (Index == -1)
-        return Types::Undefined;
-
-    // Queries the internal ByteArray using the bit-tagged path
-    return Object[Index].Object->Values.Type(ID);
+void RegisterClass::ValueSetup(const void *Data, size_t Size, Types Type, const Reference &Location) {
+    BaseClass* target = At(Location);
+    if (target) {
+        target->ValueSetup(Data, Size, Type, Location);
+    }
 }
 
 // --- Memory Management ---

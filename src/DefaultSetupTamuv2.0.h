@@ -1,49 +1,94 @@
 void DefaultSetup()
 {
-    Board.Values.Set(Text("Test"), {1}); // Using the Path for DisplayName
+    // --- Board Metadata ---
+    Text boardName = "Test";
+    Board.Values.Set(boardName.Data, boardName.Length, Types::Text, {1});
 
+    // --- Sensor Initialization ---
     SensorClass *S = new SensorClass(Reference::Global(0, 2, 2));
-    S->ValueSetup(SensorTypes::Light10K, {0});
-    S->ValueSetup<PortNumber>(1, {0,0});
-    S->Values.Set<Number>(20, {2});
 
+    SensorTypes sType = SensorTypes::Light10K;
+    S->ValueSetup(&sType, sizeof(SensorTypes), Types::Sensor, {0});
+
+    PortNumber sPin = 1;
+    S->ValueSetup(&sPin, sizeof(PortNumber), Types::PortNumber, {0, 0});
+
+    Number sThreshold = 20;
+    S->Values.Set(&sThreshold, sizeof(Number), Types::Number, {2});
+
+    // --- Display Initialization ---
     DisplayClass *LD = new DisplayClass(Reference::Global(0, 0, 1));
     LD->Name = "Left Eye";
 
-    LD->ValueSetup<Displays>(Displays::Vysi_v1_0, {0});
-    LD->ValueSetup<PortNumber>(0, {0, 0}),
-    LD->Values.Set(Coord2D(0, 0, 5), {1, 0});
-    LD->Values.Set<uint8_t>(40, {1});
+    Displays dModel = Displays::Vysi_v1_0;
+    LD->ValueSetup(&dModel, sizeof(Displays), Types::Display, {0});
+
+    PortNumber dPort = 0;
+    LD->ValueSetup(&dPort, sizeof(PortNumber), Types::PortNumber, {0, 0});
+
+    Coord2D dRes(0, 0, 5);
+    LD->Values.Set(&dRes, sizeof(Coord2D), Types::Coord2D, {1, 0});
+
+    uint8_t dBrightness = 40;
+    LD->Values.Set(&dBrightness, sizeof(uint8_t), Types::Byte, {1});
 
     // --- Layer 0: Background ---
-    LD->ValueSetup<Geometries>(Geometries::Fill, {2, 0});
-    LD->Values.Set(GeometryOperation::Add, {2, 0, 0}); // Op moved to index 0
+    Geometries gFill = Geometries::Fill;
+    LD->ValueSetup(&gFill, sizeof(Geometries), Types::Geometry2D, {2, 0});
 
-    LD->ValueSetup<Textures2D>(Textures2D::Full, {2, 1});
-    LD->Values.Set(ColourClass(200, 200, 200), {2, 1, 0}); // ColourA
+    GeometryOperation opAdd = GeometryOperation::Add;
+    LD->Values.Set(&opAdd, sizeof(GeometryOperation), Types::GeometryOperation, {2, 0, 0});
+
+    Textures2D tFull = Textures2D::Full;
+    LD->ValueSetup(&tFull, sizeof(Textures2D), Types::Texture2D, {2, 1});
+
+    ColourClass cGrey(200, 200, 200);
+    LD->Values.Set(&cGrey, sizeof(ColourClass), Types::Colour, {2, 1, 0});
 
     // --- Layer 1: Eye Color ---
-    LD->ValueSetup<Geometries>(Geometries::Elipse, {2, 2});
-    LD->Values.Set(GeometryOperation::Add, {2, 2, 0}); // Op moved to index 0
-    LD->Values.Set(Vector2D(4.5, 4.5), {2, 2, 1});     // Size
-    LD->Values.Set<Number>(0.1, {2, 2, 2});            // Fade
-    LD->Values.Set(Coord2D(1.5, 1, 0), {2, 2, 3});     // Position
+    Geometries gIris = Geometries::Elipse;
+    LD->ValueSetup(&gIris, sizeof(Geometries), Types::Geometry2D, {2, 2});
+    LD->Values.Set(&opAdd, sizeof(GeometryOperation), Types::GeometryOperation, {2, 2, 0});
 
-    LD->ValueSetup<Textures2D>(Textures2D::BlendLinear, {2, 3});
-    LD->Values.Set(ColourClass(0, 100, 0), {2, 3, 0}); // ColourA
-    LD->Values.Set(ColourClass(0, 150, 0), {2, 3, 1}); // ColourB
-    LD->Values.Set(Coord2D(1.5, 1, 0), {2, 3, 2});     // Position
-    LD->Values.Set<Number>(1.0, {2, 3, 3});            // Width
+    Vector2D irisSize(4.5, 4.5);
+    LD->Values.Set(&irisSize, sizeof(Vector2D), Types::Vector2D, {2, 2, 1});
+
+    Number irisFade = 0.1;
+    LD->Values.Set(&irisFade, sizeof(Number), Types::Number, {2, 2, 2});
+
+    Coord2D irisPos(1.5, 1, 0);
+    LD->Values.Set(&irisPos, sizeof(Coord2D), Types::Coord2D, {2, 2, 3});
+
+    Textures2D tIris = Textures2D::BlendLinear;
+    LD->ValueSetup(&tIris, sizeof(Textures2D), Types::Texture2D, {2, 3});
+
+    ColourClass cDarkGreen(0, 100, 0);
+    LD->Values.Set(&cDarkGreen, sizeof(ColourClass), Types::Colour, {2, 3, 0});
+
+    ColourClass cMidGreen(0, 150, 0);
+    LD->Values.Set(&cMidGreen, sizeof(ColourClass), Types::Colour, {2, 3, 1});
+    LD->Values.Set(&irisPos, sizeof(Coord2D), Types::Coord2D, {2, 3, 2});
+
+    Number irisWidth = 1.0;
+    LD->Values.Set(&irisWidth, sizeof(Number), Types::Number, {2, 3, 3});
 
     // --- Layer 2: Pupil ---
-    LD->ValueSetup<Geometries>(Geometries::DoubleParabola, {2, 4});
-    LD->Values.Set(GeometryOperation::Add, {2, 4, 0}); // Op moved to index 0
-    LD->Values.Set(Vector2D(2.3, 4.9), {2, 4, 1});     // Size
-    LD->Values.Set<Number>(1.5, {2, 4, 2});            // Fade
-    LD->Values.Set(Coord2D(1.5, 1, 0), {2, 4, 3});     // Position
+    Geometries gPupil = Geometries::DoubleParabola;
+    LD->ValueSetup(&gPupil, sizeof(Geometries), Types::Geometry2D, {2, 4});
+    LD->Values.Set(&opAdd, sizeof(GeometryOperation), Types::GeometryOperation, {2, 4, 0});
 
-    LD->ValueSetup<Textures2D>(Textures2D::Full, {2, 5});
-    LD->Values.Set(ColourClass(0, 0, 0), {2, 5, 0}); // ColourA
+    Vector2D pupilSize(2.3, 4.9);
+    LD->Values.Set(&pupilSize, sizeof(Vector2D), Types::Vector2D, {2, 4, 1});
+
+    Number pupilFade = 1.5;
+    LD->Values.Set(&pupilFade, sizeof(Number), Types::Number, {2, 4, 2});
+    LD->Values.Set(&irisPos, sizeof(Coord2D), Types::Coord2D, {2, 4, 3});
+
+    LD->ValueSetup(&tFull, sizeof(Textures2D), Types::Texture2D, {2, 5});
+
+    ColourClass cBlack(0, 0, 0);
+    LD->Values.Set(&cBlack, sizeof(ColourClass), Types::Colour, {2, 5, 0});
+
     /*
     // Geometry (Half Fill)
     LD->ValueSetup<Geometries>(Geometries::HalfFill, {1, 6});
@@ -56,14 +101,26 @@ void DefaultSetup()
 
     Program *P = new Program(Reference::Global(0, 1, 0));
 
-    // Path {1}: The Operation itself
-    P->Values.Set<Operations>(Operations::Add, {1});
-    P->Values.Set<Number>(0.25, {1, 1, 0});
-    P->Values.Set<Number>(0.5, {1, 1, 1});
+    // --- Operation 1: Base Addition ---
+    Operations opAddP = Operations::Add;
+    P->Values.Set(&opAddP, sizeof(Operations), Types::Operation, {1});
 
-    P->Values.Set<Operations>(Operations::Add, {2});
-    P->Values.Set<Reference>(Reference({1,1,0}), {2, 1, 0});
-    P->Values.Set<Number>(0.75, {2, 1, 1});
+    Number valA1 = 0.25;
+    P->Values.Set(&valA1, sizeof(Number), Types::Number, {1, 1, 0});
+
+    Number valB1 = 0.5;
+    P->Values.Set(&valB1, sizeof(Number), Types::Number, {1, 1, 1});
+
+    // --- Operation 2: Chained Addition ---
+    // Reusing opAdd anchor
+    P->Values.Set(&opAddP, sizeof(Operations), Types::Operation, {2});
+
+    // Link: Target index {2, 1, 0} points back to the result of {1, 1, 0}
+    Reference linkRef({1, 1, 0});
+    P->Values.Set(&linkRef, sizeof(Reference), Types::Reference, {2, 1, 0});
+
+    Number valB2 = 0.75;
+    P->Values.Set(&valB2, sizeof(Number), Types::Number, {2, 1, 1});
 
     /*
     Shape2DClass *LS2A = new Shape2DClass();

@@ -1,40 +1,41 @@
-template <>
-ByteArray::ByteArray(const BaseClass &Data)
+ByteArray BaseClass::Compress() const
 {
-    int32_t Index = Objects.Search(&Data);
-    if (Index == -1) return;
+    int32_t Index = Objects.Search(this);
+    if (Index == -1)
+        return ByteArray();
 
-    // 1. Initialize with the Global ID of the object
-    // Extract Group and Device from the packed 16-bit ID in the registry
-    uint8_t G = (uint8_t)(Objects.Object[Index].ID >> 8);
-    uint8_t D = (uint8_t)(Objects.Object[Index].ID & 0xFF);
-    
-    *this = ByteArray(Reference::Global(0, G, D));
+    uint8_t G = Objects.Object[Index].GroupID;
+    uint8_t D = Objects.Object[Index].DeviceID;
+    Reference SelfRef = Reference::Global(0, G, D);
 
-    // 2. Chain the object metadata and its internal Value tree
-    // This creates a contiguous "Blob" representing the entire Object state
-    *this = *this << ByteArray(Data.Type)
-                  << ByteArray(Objects.Object[Index].Info)
-                  << ByteArray(Data.Name)
-                  << Data.Values;
+    // Start the blob with the Reference type
+    ByteArray Blob(&SelfRef, SelfRef.PathLen() + 4, Types::Reference);
+
+    // Chain the rest of the object data
+    Blob << ByteArray(&Type, sizeof(ObjectTypes), Types::ObjectType)
+         << ByteArray(&Objects.Object[Index].Info, sizeof(ObjectInfo), Types::ObjectInfo)
+         << ByteArray(Name.Data, Name.Length, Types::Text)
+         << Values;
+
+    return Blob;
 }
 
-template <class C>
-Getter<C> BaseClass::ValueGet(const Reference &Location) const
+SearchResult BaseClass::Find(const Bookmark &Parent, const Reference &RelativeLocation, bool StopAtReferences) const
 {
-    // Direct passthrough to the internal bit-tagged ByteArray
-    return Values.Get<C>(Location);
+    // Use the internal ByteArray logic
+    return Values.Find(Parent, RelativeLocation, StopAtReferences);
 }
 
-template <class C>
-bool BaseClass::ValueSetup(C Value, const Reference &Location)
+void BaseClass::ValueSetup(const void *Data, size_t Size, Types Type, const Reference &Location)
 {
-    // 1. Update the internal data tree (Handles Resize/Insert automatically)
-    Values.Set(Value, Location);
-
-    // 2. Trigger the VTable Setup to react to this change
-    // Useful for updating hardware pins or internal state based on the new value
+    // Logic nodes calling MyObj.ValueSetup(...)
+    Values.Set(Data, Size, Type, Location);
     Setup(Location);
+}
 
-    return true;
+void BaseClass::ValueSetupDirect(const void *Data, size_t Size, Types Type, const Bookmark &Point)
+{
+    // Logic nodes calling MyObj.ValueSetup with a cached Bookmark
+    if (Point.Map)
+        Point.Map->SetDirect(Data, Size, Type, Point);
 }

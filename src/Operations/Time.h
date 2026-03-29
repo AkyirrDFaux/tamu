@@ -1,35 +1,51 @@
 bool Delay(ByteArray &Values, Reference Index)
 {
-    Reference InputDelay = Index.Append(1).Append(0);
-    Reference StateTimer = Index.Append(2).Append(0); // Persistent state
+    Reference InputPath = Index.Append(1).Append(0);
+    Reference StatePath = Index.Append(2).Append(0); // Persistent state
 
-    if (Values.Type(InputDelay) != Types::Integer)
+    SearchResult DelayRes = Values.Find(InputPath);
+    SearchResult StateRes = Values.Find(StatePath, true);
+
+    // If input isn't an integer or doesn't exist, skip the delay
+    if (DelayRes.Type != Types::Integer || !DelayRes.Value)
         return true;
 
-    int32_t Timer = Values.Get<int32_t>(StateTimer).Value;
+    // Default timer to 0 if not yet initialized or invalid
+    int32_t Timer = (StateRes.Type == Types::Integer && StateRes.Value) ? *(int32_t*)StateRes.Value : 0;
+    int32_t DelayMs = *(int32_t*)DelayRes.Value;
 
     if (Timer == 0)
     {
-        Values.Set(CurrentTime, StateTimer);
+        // First hit: Capture start time and block execution
+        Values.Set(&CurrentTime, sizeof(int32_t), Types::Integer, StatePath);
         return false;
     }
-    else if (CurrentTime > Timer + Values.Get<int32_t>(InputDelay).Value)
+    
+    if (CurrentTime >= (Timer + DelayMs))
     {
-        Values.Set((int32_t)0, StateTimer); // Reset for next use
+        // Time elapsed: Reset timer for next cycle and allow execution
+        int32_t Reset = 0;
+        Values.Set(&Reset, sizeof(int32_t), Types::Integer, StatePath);
         return true;
     }
 
+    // Still waiting
     return false;
 }
 
 bool AddDelay(ByteArray &Values, Reference Index)
 {
-    Reference Input0 = Index.Append(1).Append(0);
-    Reference Output = Index.Append(0);
+    Reference InputPath = Index.Append(1).Append(0);
+    Reference OutPath   = Index.Append(0);
 
-    if (Values.Type(Input0) != Types::Integer)
+    SearchResult InputRes = Values.Find(InputPath);
+
+    if (InputRes.Type != Types::Integer || !InputRes.Value)
         return true;
 
-    Values.Set(Values.Get<int32_t>(Input0).Value + CurrentTime, Output);
+    // Calculate future timestamp: Input offset + Current system time
+    int32_t FutureTime = *(int32_t*)InputRes.Value + CurrentTime;
+    
+    Values.Set(&FutureTime, sizeof(int32_t), Types::Integer, OutPath);
     return true;
 }

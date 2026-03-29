@@ -29,16 +29,23 @@ public:
 
 constexpr VTable SensorClass::Table;
 
-SensorClass::SensorClass(const Reference &ID, ObjectInfo Info) : BaseClass(&Table, ID, Info)
+SensorClass::SensorClass(const Reference &ID, ObjectInfo Info) : BaseClass(&SensorClass::Table, ID, Info)
 {
     Type = ObjectTypes::Sensor;
     Name = "Sensor";
 
-    // Initialize the structure based on your reference
-    Values.Set(SensorTypes::Undefined, {0}); // {0}   : SensorType
-    Values.Set<PortNumber>(-1, {0, 0});        // {0,0} : Port Index
-    Values.Set<Number>(0, {1});             // {1}   : Measurement
-    Values.Set<Number>(1, {2});              // {2}   : Filter
+    // Initialize using direct local Set calls
+    SensorTypes initialType = SensorTypes::Undefined;
+    Values.Set(&initialType, sizeof(SensorTypes), Types::Sensor, Reference({0}));
+
+    PortNumber initialPort = -1;
+    Values.Set(&initialPort, sizeof(PortNumber), Types::Byte, Reference({0, 0}));
+
+    Number zero = 0;
+    Values.Set(&zero, sizeof(Number), Types::Number, Reference({1})); // Measurement
+
+    Number defaultFilter = 1;
+    Values.Set(&defaultFilter, sizeof(Number), Types::Number, Reference({2})); // Filter
 };
 
 SensorClass::~SensorClass()
@@ -48,9 +55,18 @@ SensorClass::~SensorClass()
 
 bool SensorClass::Connect()
 {
-    Getter<PortNumber> Port = Values.Get<PortNumber>({0, 0});
+    // Direct local Find for port resolution
+    SearchResult res = Values.Find(Reference({0, 0}), true);
 
-    if (!Port.Success || Port.Value > 10)
+    if (res.Length < sizeof(PortNumber) || !res.Value)
+    {
+        ReportError(Status::PortError);
+        return false;
+    }
+
+    PortNumber Port = *(PortNumber*)res.Value;
+
+    if (Port > 10)
     {
         ReportError(Status::PortError);
         return false;
@@ -58,7 +74,7 @@ bool SensorClass::Connect()
 
     if (Board.ConnectPin(this, Port))
     {
-        CurrentPort = Port.Value;
+        CurrentPort = Port;
         HW::ModeAnalog(MeasPin);
         return true;
     }
@@ -81,51 +97,57 @@ void SensorClass::Setup(const Reference &Index)
         Connect();
         return;
     }
-
-    if (Index != Reference({0}))
-        return;
-
-    // Reset logic if needed when type changes
-};
+    // Type change logic can be added here if needed
+}
 
 bool SensorClass::Run()
 {
-    if (HW::IsValidPin(MeasPin) == false)
+    if (!HW::IsValidPin(MeasPin))
     {
         ReportError(Status::PortError);
         return true;
     }
 
-    // Validation of paths {0}, {1}, and {2}
-    if (Values.Type({0}) != Types::Sensor || Values.Type({1}) != Types::Number || Values.Type({2}) != Types::Number)
+    // Direct local Find calls for performance
+    SearchResult typeRes   = Values.Find(Reference({0}));
+    SearchResult measRes   = Values.Find(Reference({1}));
+    SearchResult filterRes = Values.Find(Reference({2}));
+
+    if (!typeRes.Value || !measRes.Value || !filterRes.Value)
     {
         ReportError(Status::MissingModule);
         return true;
     }
 
-    Number Filter = Values.Get<Number>({2});
+    // Map internal memory to local pointers for the math block
+    SensorTypes mode = *(SensorTypes*)typeRes.Value;
+    Number* measurementPtr = (Number*)measRes.Value;
+    Number filterVal = *(Number*)filterRes.Value;
+
+    // 1. Raw Read
     Number In = HW::AnalogRead(MeasPin);
 
-    switch (Values.Get<SensorTypes>({0}))
+    // 2. Transformation based on SensorType
+    switch (mode)
     {
     case SensorTypes::AnalogVoltage:
         In = In * VOLTAGE / ADCRES;
         break;
     case SensorTypes::TempNTC10K:
-        In = 1 / (0.0034 + log(In / (ADCRES - In)) / 3950) - 273.15; // °C
+        // Steinhart-Hart simplified
+        In = 1 / (0.0034 + log(In / (ADCRES - In)) / 3950) - 273.15;
         break;
     case SensorTypes::Light10K:
-        In = sq(18 * (ADCRES - In) / In); // Lux
+        In = sq(18 * (ADCRES - In) / In);
         break;
     default:
         break;
     }
 
-    // Original Filter Math: In * (1 / (1 + Filter)) + LastValue * (Filter / (1 + Filter))
-    Number lastMeasurement = Values.Get<Number>({1});
-    Number filteredResult = In * (1 / (1 + Filter)) + lastMeasurement * (Filter / (1 + Filter));
-
-    Values.Set<Number>(filteredResult, {1});
+    // 3. Filter calculation and direct memory update
+    // Formula: In * (1 / (1 + Filter)) + LastValue * (Filter / (1 + Filter))
+    Number invFilter = 1.0f / (1.0f + filterVal);
+    *measurementPtr = (In * invFilter) + (*measurementPtr * (filterVal * invFilter));
 
     return true;
 };

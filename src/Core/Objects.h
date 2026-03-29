@@ -43,17 +43,14 @@ public:
     int32_t Search(const BaseClass *SearchObject) const;
     Reference GetReference(const BaseClass *SearchObject) const;
     BaseClass *At(const Reference &ID) const;
-    
+
     // Pass by value is fine for the 12-byte Reference in operators
     BaseClass *operator[](Reference ID) const { return At(ID); };
-    
+
     bool IsValid(const Reference &ID, ObjectTypes Filter = ObjectTypes::Undefined) const;
 
-    template <class C>
-    C *ValueGet(const Reference &ID) const;
-    template <class C>
-    bool ValueSet(C Value, const Reference &ID);
-    Types ValueTypeAt(const Reference &ID) const;
+    SearchResult Find(const Reference &Location, bool StopAtReferences = false) const;
+    void ValueSetup(const void *Data, size_t Size, Types Type, const Reference &Location);
 
     void Expand(uint32_t NewAllocated);
     void Shorten();
@@ -85,9 +82,9 @@ public:
     };
 
     ~BaseClass() { Objects.Unregister(Objects.Search(this)); };
-    
+
     void Destroy();
-    
+
     // Updated Setup to use Reference
     void Setup(const Reference &Index) { Vptr->Setup(this, Index); }
     bool Run() { return Vptr->Run(this); }
@@ -103,9 +100,8 @@ public:
     C *As() const { return (C *)this; };
     void Save();
 
-    // Value accessors now use Reference to navigate the internal ByteArray
-    template <class C>
-    Getter<C> ValueGet(const Reference &Location) const;
-    template <class C>
-    bool ValueSetup(C Value, const Reference &Location);
+    SearchResult Find(const Bookmark &Parent, const Reference &RelativeLocation, bool StopAtReferences = false) const;
+    void ValueSetupDirect(const void *Data, size_t Size, Types Type, const Bookmark &Point);
+    void ValueSetup(const void *Data, size_t Size, Types Type, const Reference &Location);
+    ByteArray Compress() const;
 };

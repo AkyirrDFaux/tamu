@@ -9,7 +9,7 @@ public:
     {
         if (Buffer && Len > 0) 
         {
-            Length = Len;
+            Length = Len+1;
             Data = new char[Length + 1]; // +1 for safety/null termination
             memcpy(Data, Buffer, Length);
             Data[Length] = '\0'; 
@@ -35,7 +35,7 @@ public:
     {
         // 1. Get length
         uint16_t rawLen = strlen(String);
-        Length = rawLen; 
+        Length = rawLen+1; 
         
         // 2. Allocate space for the chars AND the null terminator
         // Even if you don't send the \0, having it here prevents 

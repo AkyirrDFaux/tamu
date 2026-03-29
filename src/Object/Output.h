@@ -32,16 +32,18 @@ OutputClass::OutputClass(const Reference &ID, ObjectInfo Info) : BaseClass(&Tabl
     Type = ObjectTypes::Output;
     Name = "Output";
 
-    // Structure:
-    // {0}   : Mode (PWM / Servo)
-    // {0,0} : Port Index
-    // {1}   : Target Value (Speed/Angle)
-    // {1,0} : Frequency (Hz)
+    // Initialize the structure using direct ByteArray Set
+    Outputs initialMode = Outputs::Undefined;
+    Values.Set(&initialMode, sizeof(Outputs), Types::Output, Reference({0}));
 
-    Values.Set(Outputs::Undefined, {0});
-    Values.Set<PortNumber>(-1, {0, 0});
-    Values.Set((Number)0, {1});
-    Values.Set((int32_t)25000, {1, 0}); // Default 25kHz
+    PortNumber initialPort = -1;
+    Values.Set(&initialPort, sizeof(PortNumber), Types::Byte, Reference({0, 0}));
+
+    Number initialTarget = 0;
+    Values.Set(&initialTarget, sizeof(Number), Types::Number, Reference({1}));
+
+    int32_t initialFreq = 25000;
+    Values.Set(&initialFreq, sizeof(int32_t), Types::Integer, Reference({1, 0}));
 };
 
 OutputClass::~OutputClass()
@@ -51,9 +53,17 @@ OutputClass::~OutputClass()
 
 bool OutputClass::Connect()
 {
-    Getter<PortNumber> Port = Values.Get<PortNumber>({0, 0});
+    SearchResult res = Values.Find(Reference({0, 0}), true);
 
-    if (!Port.Success || Port.Value > 10)
+    if (res.Length < sizeof(PortNumber) || !res.Value)
+    {
+        ReportError(Status::PortError);
+        return false;
+    }
+
+    PortNumber Port = *(PortNumber*)res.Value;
+
+    if (Port > 10)
     {
         ReportError(Status::PortError);
         return false;
@@ -61,9 +71,8 @@ bool OutputClass::Connect()
 
     if (Board.ConnectPin(this, Port))
     {
-        CurrentPort = Port.Value;
-
-        // Immediate hardware mode setup upon connection
+        CurrentPort = Port;
+        // Trigger hardware mode setup
         Setup(Reference({0}));
         return true;
     }
@@ -96,24 +105,26 @@ void OutputClass::Setup(const Reference &Index)
         return;
     }
 
-    // Update Hardware Mode if enum {0} or frequency {1,0} changes
-    if (Index == Reference({0}) || Index == Reference({0, 0}) || Index == Reference({1, 0}))
+    // Update Hardware Mode if Mode {0} or frequency {1,0} changes
+    if (Index == Reference({0}) || Index == Reference({1, 0}))
     {
         if (!HW::IsValidPin(PWMPin))
             return;
 
-        Outputs Mode = Values.Get<Outputs>({0}).Value;
-        int32_t Freq = Values.Get<int32_t>({1, 0}).Value;
+        SearchResult modeRes = Values.Find(Reference({0}), true);
+        SearchResult freqRes = Values.Find(Reference({1, 0}), true);
 
-        if (Mode == Outputs::PWM)
+        if (modeRes.Value && freqRes.Value)
         {
-            HW::ModePWM(PWMPin, Freq);
+            Outputs Mode = *(Outputs*)modeRes.Value;
+            int32_t Freq = *(int32_t*)freqRes.Value;
+
+            if (Mode == Outputs::PWM)
+            {
+                HW::ModePWM(PWMPin, Freq);
+            }
+            // else if (Mode == Outputs::Servo) { ... }
         }
-        /*else if (Mode == Outputs::Servo)
-        {
-            // Servos are almost always 50Hz, usually ignored but can be set here
-            HW::ModeServo(PWMPin, Freq);
-        }*/
     }
 }
 
@@ -122,20 +133,21 @@ bool OutputClass::Run()
     if (!HW::IsValidPin(PWMPin))
         return true;
 
-    Getter<Number> Target = Values.Get<Number>({1});
-    Getter<Outputs> Mode = Values.Get<Outputs>({0});
+    // Direct search for the target value and mode
+    SearchResult targetRes = Values.Find(Reference({1}));
+    SearchResult modeRes   = Values.Find(Reference({0}), true);
 
-    if (!Target.Success || !Mode.Success)
+    if (!targetRes.Value || !modeRes.Value)
         return true;
 
-    if (Mode.Value == Outputs::PWM)
+    Outputs Mode  = *(Outputs*)modeRes.Value;
+    Number Target = *(Number*)targetRes.Value;
+
+    if (Mode == Outputs::PWM)
     {
-        HW::PWM(PWMPin, Target.Value);
+        HW::PWM(PWMPin, Target);
     }
-    /*else if (Mode.Value == Outputs::Servo)
-    {
-        HW::Servo(PWMPin, Target.Value);
-    }*/
+    // else if (Mode == Outputs::Servo) { ... }
 
     return true;
 };

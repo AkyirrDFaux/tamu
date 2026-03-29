@@ -22,8 +22,7 @@ uint32_t DeltaTime = 0;
 // Core system
 #include "Core\Reference.h"
 #include "Core\Enum.h"
-#include "Core\ByteArray.h"       //Core functions
-#include "Core\ByteArrayValues.h" //Set & Get
+#include "Core\ByteArray.h" //Core functions
 #include "Core\Objects.h"
 #include "Core\Register.h"
 #include "Core\BaseClass.h"
@@ -96,10 +95,14 @@ int main()
     DefaultSetup();
 
     ESP_LOGI("MAIN", "Starting Chirp");
-    Chirp.Begin(Board.ValueGet<Text>({1}));
+    SearchResult nameRes = Board.Values.Find({1});
+    if (nameRes.Length > 0 && nameRes.Type == Types::Text)
+        Chirp.Begin(Text((char *)nameRes.Value, nameRes.Length));
 
+    // 2. Update the internal clock
     TimeUpdate();
-    Board.ValueSetup<int32_t>(CurrentTime, {0, 1});
+
+    Board.ValueSetup(&CurrentTime, sizeof(int32_t), Types::Integer, {0, 1});
 
     ESP_LOGI("MAIN", "Starting");
     bool AllFinished = false;
@@ -149,7 +152,7 @@ int main()
 
         LoopCounter++;
         TimeUpdate();
-        HW::Sleep(10);
+        HW::Sleep(5);
     }
 };
 
