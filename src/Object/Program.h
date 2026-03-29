@@ -33,7 +33,7 @@ bool Program::RunEntry(uint8_t Index)
     if (!Item.Success)
         return true;
 
-    return RunOperation(Item.Value, Values, {Index});
+    return Operation::Run(Item.Value, Values, this, {Index});
 }
 
 bool Program::Run()

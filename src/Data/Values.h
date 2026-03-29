@@ -148,7 +148,6 @@ enum class Operations : uint8_t
 {
     None,
     Equal,
-    Unused1,
     Combine,
     IsEqual, // Comparision
     IsGreater,
@@ -159,50 +158,31 @@ enum class Operations : uint8_t
     Divide,
     Power,
     Absolute,
-    Rotate,
-    RandomBetween, // Randomize
-    MoveTo,        // Animations
-    Delay,         // Delay for specified amount of time (parameter), holds start time
-    AddDelay,      // Create delayed time (for other operations)
-    IfSwitch,      // Program control (branch)
+    Min,    
+    Max,    
+    Modulo, 
+    Sine,   // Waveform
+    Square,
+    Sawtooth,
+    Magnitude, // Vector math
+    Angle,
+    Normalize,
+    DotProduct,
+    CrossProduct,
+    Map, // Mapping
+    Clamp,
+    Deadzone,
+    LinInterpolation,
+    And, // Logic
+    Or,
+    Not,
+    Edge,
+    SetReset,
+    Random,   // Randomize (Min, Max)
+    Delay,    // Delay for specified amount of time (parameter), holds start time
+    AddDelay, // Create delayed moment from now
+    IfSwitch, // Program control (branch)
     While,
     SetFlags,
     ResetFlags,
-    Sine
 };
-
-/*
-enum class Operations : uint8_t
-{
-    // ... your existing ops ...
-    
-    // Advanced Math & Mapping
-    Map,            // (Value, InMin, InMax, OutMin, OutMax)
-    Clamp,          // (Value, Min, Max)
-    Lerp,           // (A, B, Alpha)
-    
-    // Logic & Bitwise
-    And,
-    Or,
-    Not,
-    RisingEdge,     // Detect 0 -> 1 transition
-    
-    // Vector Ops
-    Magnitude,      // Length of Vector3D
-    Distance,       // Dist between two Coords
-    Normalize,
-    
-    // Signal Processing
-    Deadzone,       // (Value, Threshold)
-    Smooth,         // Rolling average / Low-pass filter
-    
-    // Trigger / State
-    Toggle,         // Flip-flop state on trigger
-    Step,           // Increment a value on trigger
-    
-    // Waveforms
-    Sine,
-    Square,         // Oscillate between two values
-    Sawtooth        // Ramp up and reset
-};
-*/

@@ -6,7 +6,7 @@ public:
     Number Y = 0;
 
     Vector2D();
-    Vector2D(const Vector2D&) = default;
+    Vector2D(const Vector2D &) = default;
     Vector2D(Number X, Number Y);
     Vector2D(Number Angle);
     void FromAngle(Number Angle);
@@ -30,8 +30,8 @@ public:
     Vector2D TimeMove(Vector2D Target, unsigned long TargetTime);
     Vector2D TimeMoveAngle(Vector2D Target, unsigned long TargetTime);
 
-    //Text AsString();
-    //Text AsStringAngle();
+    // Text AsString();
+    // Text AsStringAngle();
 };
 
 inline Vector2D::Vector2D() {};
@@ -53,7 +53,7 @@ inline void Vector2D::FromAngle(Number Angle)
     Y = sin(Angle * PI / 180);
 };
 
-inline Number Vector2D::ToAngle() //Radians
+inline Number Vector2D::ToAngle() // Radians
 {
     return atan2(Y, X);
 };
@@ -88,6 +88,14 @@ inline Vector2D Vector2D::operator*(Number Scale)
 {
     return Vector2D(X * Scale, Y * Scale);
 };
+
+inline Vector2D operator/(const Vector2D &a, const Vector2D &b)
+{
+    // Component-wise division with safety checks
+    return Vector2D(
+        (b.X != Number(0)) ? a.X / b.X : a.X,
+        (b.Y != Number(0)) ? a.Y / b.Y : a.Y);
+}
 
 inline Number Vector2D::Length()
 {

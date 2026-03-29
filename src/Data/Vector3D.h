@@ -8,10 +8,6 @@ public:
 
     Vector3D();
     Vector3D(Number X, Number Y, Number Z);
-
-    Number GetByIndex(uint8_t Index);
-    Vector2D GetByIndex(uint8_t IndexA, uint8_t IndexB);
-    //Text AsString();
 };
 
 Vector3D::Vector3D() {};
@@ -23,24 +19,33 @@ inline Vector3D::Vector3D(Number X, Number Y, Number Z)
     this->Z = Z;
 };
 
-inline Number Vector3D::GetByIndex(uint8_t Index)
-{
-    if (Index == 0)
-        return X;
-    else if (Index == 1)
-        return Y;
-    else if (Index == 2)
-        return Z;
-    else
-        return 0;
+// Basic Arithmetic Operators
+inline Vector3D operator+(const Vector3D& a, const Vector3D& b) {
+    return Vector3D(a.X + b.X, a.Y + b.Y, a.Z + b.Z);
 }
 
-inline Vector2D Vector3D::GetByIndex(uint8_t IndexA, uint8_t IndexB)
-{
-    return Vector2D(GetByIndex(IndexA), GetByIndex(IndexB));
+inline Vector3D operator-(const Vector3D& a, const Vector3D& b) {
+    return Vector3D(a.X - b.X, a.Y - b.Y, a.Z - b.Z);
 }
-/*
-inline String Vector3D::AsString()
-{
-    return (String(X) + " " + String(Y) + " " + String(Z));
-};*/
+
+inline Vector3D operator*(const Vector3D& a, const Vector3D& b) {
+    return Vector3D(a.X * b.X, a.Y * b.Y, a.Z * b.Z);
+}
+
+inline Vector3D operator/(const Vector3D& a, const Vector3D& b) {
+    // Component-wise division with safety checks
+    return Vector3D(
+        (b.X != Number(0)) ? a.X / b.X : a.X,
+        (b.Y != Number(0)) ? a.Y / b.Y : a.Y,
+        (b.Z != Number(0)) ? a.Z / b.Z : a.Z
+    );
+}
+
+// Equality Operators (Useful for Comparison Blocks later)
+inline bool operator==(const Vector3D& a, const Vector3D& b) {
+    return (a.X == b.X && a.Y == b.Y && a.Z == b.Z);
+}
+
+inline bool operator!=(const Vector3D& a, const Vector3D& b) {
+    return !(a == b);
+}

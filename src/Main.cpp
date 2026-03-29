@@ -41,7 +41,16 @@ uint32_t DeltaTime = 0;
 ChirpClass Chirp = ChirpClass(); // Bluetooth/Serial
 
 // Programs
-#include "Object\Operation.h"
+namespace Operation
+{
+    #include "Operations\MathCore.h"
+    #include "Operations\MathMulti.h"
+    #include "Operations\MathBinary.h"
+    #include "Operations\MathForm.h"
+    #include "Operations\Time.h"
+    #include "Operations\Flow.h"
+    #include "Operations\Base.h"
+}
 #include "Object\Program.h"
 
 #include "Object\Board.h"
@@ -152,13 +161,16 @@ extern "C"
 #endif
 /*TODO:
 KEY FEATURES:
-Operations and programs
 Saving
-Sensors
 OLED
-Fan, Servo
+LED strip
+Servo
 Compile options
 App backup (json?)
+
+Program Start and Stop section
+Button callback, press detection
+More operations
 
 FUTURE:
 App Programming view
