@@ -95,10 +95,8 @@ bool Run(Operations Operation, ByteArray &Values, BaseClass *Object, Reference I
         Done = Operation::ExecuteMathMulti(Values, Index, Operation);
         break;
     case Operations::Min:
-        Done = Operation::Min(Values, Index);
-        break;
     case Operations::Max:
-        Done = Operation::Max(Values, Index);
+        Done = Operation::ExecuteExtreme(Values, Index, Operation == Operations::Max);
         break;
     case Operations::Delay:
         Done = Operation::Delay(Values, Index);
@@ -113,7 +111,7 @@ bool Run(Operations Operation, ByteArray &Values, BaseClass *Object, Reference I
         Done = Operation::ResetFlags(Values, Index);
         break;
     case Operations::Sine:
-        Done = Operation::Sine(Values, Index);
+        Done = Operation::ExecuteSine(Values, Index);
         break;
     default:
         ReportError(Status::InvalidValue);

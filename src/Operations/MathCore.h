@@ -71,104 +71,22 @@ bool StoreArithmetic(ByteArray &Values, Reference Path, const Arithmetic &Data)
     }
 }
 
-Arithmetic Fetch(ByteArray &Values, Reference Path, Types TargetType)
+Arithmetic Fetch(ByteArray &Values, const Bookmark &Location, Types TargetType)
 {
     Arithmetic acc;
     acc.Type = TargetType;
 
-    // 1. Single walk to find the data
-    SearchResult Source = Values.Find(Path);
+    // 1. Resolve the data (This handles both POD and References)
+    SearchResult Source = Values.This(Location);
 
-    // If data doesn't exist or is invalid
+    // If data doesn't exist or resolution failed
     if (!Source.Value || Source.Length == 0)
     {
         acc.Type = Types::Undefined;
         return acc;
     }
 
-    // Manual scalar extraction (replacing the lambda/auto)
-    Number sourceAsNumber = 0.0f;
-    bool isScalar = false;
-
-    if (Source.Type == Types::Number) {
-        sourceAsNumber = *(Number*)Source.Value;
-        isScalar = true;
-    } else if (Source.Type == Types::Integer) {
-        sourceAsNumber = (Number)(*(int32_t*)Source.Value);
-        isScalar = true;
-    } else if (Source.Type == Types::Byte) {
-        sourceAsNumber = (Number)(*(uint8_t*)Source.Value);
-        isScalar = true;
-    }
-
-    // 2. Target Mapping Logic
-    if (TargetType == Types::Vector3D)
-    {
-        if (Source.Type == Types::Vector3D) {
-            acc.Value.v3 = *(Vector3D*)Source.Value;
-        } else if (isScalar) {
-            acc.Value.v3 = Vector3D(sourceAsNumber, sourceAsNumber, sourceAsNumber);
-        } else {
-            acc.Type = Types::Undefined;
-        }
-    }
-    else if (TargetType == Types::Vector2D)
-    {
-        if (Source.Type == Types::Vector2D) {
-            acc.Value.v2 = *(Vector2D*)Source.Value;
-        } else if (isScalar) {
-            acc.Value.v2 = Vector2D(sourceAsNumber, sourceAsNumber);
-        } else {
-            acc.Type = Types::Undefined;
-        }
-    }
-    else if (TargetType == Types::Number)
-    {
-        if (isScalar) {
-            acc.Value.n = sourceAsNumber;
-        } else {
-            acc.Type = Types::Undefined;
-        }
-    }
-    else if (TargetType == Types::Integer)
-    {
-        if (Source.Type == Types::Integer) {
-            acc.Value.i = *(int32_t*)Source.Value;
-        } else if (Source.Type == Types::Byte) {
-            acc.Value.i = (int32_t)(*(uint8_t*)Source.Value);
-        } else {
-            acc.Type = Types::Undefined;
-        }
-    }
-    else if (TargetType == Types::Byte)
-    {
-        if (Source.Type == Types::Byte) {
-            acc.Value.b = *(uint8_t*)Source.Value;
-        } else {
-            acc.Type = Types::Undefined;
-        }
-    }
-
-    return acc;
-}
-
-Arithmetic Fetch(ByteArray &Values, const Bookmark &Parent, Reference RelativePath, Types TargetType)
-{
-    Arithmetic acc;
-    acc.Type = TargetType;
-
-    // 1. Single walk relative to the Parent Bookmark
-    // Our new Find handles the Dive into Parent automatically
-    SearchResult Source = Values.Find(Parent, RelativePath);
-
-    // If data doesn't exist or is invalid
-    if (!Source.Value || Source.Length == 0)
-    {
-        acc.Type = Types::Undefined;
-        return acc;
-    }
-
-    // Manual scalar extraction
+    // Manual scalar extraction (The "Source" value as a float for conversion)
     Number sourceAsNumber = 0.0f;
     bool isScalar = false;
 
@@ -183,7 +101,7 @@ Arithmetic Fetch(ByteArray &Values, const Bookmark &Parent, Reference RelativePa
         isScalar = true;
     }
 
-    // 2. Target Mapping Logic
+    // 2. Target Mapping Logic (Converting Source to acc.Value)
     if (TargetType == Types::Vector3D)
     {
         if (Source.Type == Types::Vector3D) {

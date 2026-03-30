@@ -45,15 +45,11 @@ public:
     ByteArray &operator+=(const ByteArray &Data);
 
     // --- Core Navigation (The New Standard) ---
-    // Use Find to get the initial SearchResult/Bookmark
-    SearchResult Find(const Reference &Location, bool StopAtReferences = false) const
-    {
-        return Find({nullptr, 0}, Location, StopAtReferences);
-    }
-
-    // 2. The Master: Searches relative to a bookmark
-    // This handles local tree-walking AND global Reference jumps
-    SearchResult Find(const Bookmark &Parent, const Reference &RelativeLocation, bool StopAtReferences = false) const;
+    // Use Find to get the initial SearchResult
+    SearchResult Find(const Reference &Location, bool StopAtReferences = false) const;
+    SearchResult Next(const Bookmark &Parent) const;  // Never evaluates references
+    SearchResult Child(const Bookmark &Parent) const; // Never evaluates references
+    SearchResult This(const Bookmark &Parent) const;  // Always evaluates references
 
     // --- Data Manipulation ---
     void UpdateSkip();
@@ -416,11 +412,12 @@ uint16_t ByteArray::Insert(const Reference &Location, int16_t NewDataSize)
             {
                 InsertAtIndex(CurrentIdx, Types::Undefined, Layer, 0);
             }
-            
-            // If the node at CurrentIdx is at a HIGHER depth (Parent level), 
+
+            // If the node at CurrentIdx is at a HIGHER depth (Parent level),
             // it means there are no siblings here at all. Insert one.
-            if (HeaderArray[CurrentIdx].Depth < Layer) {
-                 InsertAtIndex(CurrentIdx, Types::Undefined, Layer, 0);
+            if (HeaderArray[CurrentIdx].Depth < Layer)
+            {
+                InsertAtIndex(CurrentIdx, Types::Undefined, Layer, 0);
             }
 
             // Skip the current sibling and all its children to find the next sibling
@@ -439,11 +436,11 @@ uint16_t ByteArray::Insert(const Reference &Location, int16_t NewDataSize)
         // If there are more layers in the path, move CurrentIdx to the first child slot.
         if (Layer < totalDepth - 1)
         {
-            CurrentIdx++; 
+            CurrentIdx++;
         }
     }
 
-    // 4. We have arrived at the exact HIdx for the Location. 
+    // 4. We have arrived at the exact HIdx for the Location.
     // Resize it to the requested data size.
     if (NewDataSize > 0)
         ResizeData(CurrentIdx, NewDataSize);
@@ -592,7 +589,7 @@ void ByteArray::SetDirect(const void *Data, size_t Size, Types Type, const Bookm
 
 void ByteArray::Set(const void *Data, size_t Size, Types Type, const Reference &Location)
 {
-    SearchResult Found = Find(Location);
+    SearchResult Found = Find(Location, true);
 
     // If it's a packed sub-value (Vector component), we write directly to memory
     // Note: SearchResult.Location for packed items points to the PARENT header
@@ -610,3 +607,53 @@ void ByteArray::Set(const void *Data, size_t Size, Types Type, const Reference &
     uint16_t HIdx = (Found.Length == 0) ? Insert(Location, (uint16_t)Size) : Found.Location.HeaderIdx;
     SetDirect(Data, Size, Type, {this, HIdx});
 }
+
+SearchResult ByteArray::Next(const Bookmark &Parent) const
+{
+    if (!Parent.Map || Parent.HeaderIdx >= Parent.Map->HeaderAllocated)
+        return {};
+
+    Header &h = Parent.Map->HeaderArray[Parent.HeaderIdx];
+    uint16_t nextIdx = Parent.HeaderIdx + h.Skip + 1;
+
+    // Boundary check
+    if (nextIdx >= Parent.Map->HeaderAllocated)
+        return {};
+
+    Header &nextH = Parent.Map->HeaderArray[nextIdx];
+
+    // Sibling check: Must be at the same depth to be a true sibling
+    if (nextH.Depth != h.Depth)
+        return {};
+
+    return {
+        Parent.Map->Array + nextH.Pointer,
+        nextH.Type,
+        nextH.Length,
+        {Parent.Map, nextIdx}};
+}
+
+SearchResult ByteArray::Child(const Bookmark &Parent) const
+{
+    if (!Parent.Map)
+        return {};
+
+    Header &h = Parent.Map->HeaderArray[Parent.HeaderIdx];
+
+    // If Skip is 0, this is a leaf node (no children)
+    if (h.Skip == 0)
+        return {};
+
+    uint16_t childIdx = Parent.HeaderIdx + 1;
+    if (childIdx >= Parent.Map->HeaderAllocated)
+        return {};
+
+    Header &childH = Parent.Map->HeaderArray[childIdx];
+
+    return {
+        Parent.Map->Array + childH.Pointer,
+        childH.Type,
+        childH.Length,
+        {Parent.Map, childIdx}};
+}
+

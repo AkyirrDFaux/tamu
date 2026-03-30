@@ -1,35 +1,40 @@
-bool Sine(ByteArray &Values, Reference Index)
+bool ExecuteSine(ByteArray &Values, Reference Index)
 {
-    Reference OutPath = Index.Append(0);
+    // 1. Locate the operation base to get the output bookmark
+    SearchResult Base = Values.Find(Index);
+    if (!Base.Value) return true;
     
-    // 1. Get the Bookmark for the input branch {Index, 1}
-    SearchResult BranchRes = Values.Find(Index.Append(1));
-    if (BranchRes.Length == 0) return true;
-    
-    Bookmark InBranch = BranchRes.Location;
+    // Parameter branch is at relative {1}
+    SearchResult ParamBranch = Values.Find(Index.Append({1}), true);
+    if (!ParamBranch.Value) return true;
 
-    // 2. Fetch inputs relative to the bookmark
-    // We expect: {1, 0} = Time (Int), {1, 1} = Multiplier (Number), {1, 2} = Phase (Number)
-    SearchResult S_Time  = Values.Find(InBranch, Reference({0}));
-    SearchResult S_Mult  = Values.Find(InBranch, Reference({1}));
-    SearchResult S_Phase = Values.Find(InBranch, Reference({2}));
+    // 2. Linear traversal of parameters: {1, 0} Time, {1, 1} Mult, {1, 2} Phase
+    SearchResult S_Time  = Values.Child(ParamBranch.Location);
+    SearchResult S_Mult  = Values.Next(S_Time.Location);
+    SearchResult S_Phase = Values.Next(S_Mult.Location);
 
-    // 3. Validation and Extraction
-    // Time is usually an Integer (system ticks)
-    if (S_Time.Type != Types::Integer || !S_Time.Value) return true;
-    int32_t T = *(int32_t*)S_Time.Value;
+    // 3. Resolve and Extract
+    // Resolve Time (Expected Integer)
+    SearchResult TimeActual = Values.This(S_Time.Location);
+    if (TimeActual.Type != Types::Integer || !TimeActual.Value) return true;
+    int32_t T = *(int32_t*)TimeActual.Value;
 
-    // Mult and Phase are usually Numbers (floats)
-    // We provide defaults (1.0 and 0.0) if they are missing or wrong type
-    Number M = (S_Mult.Type == Types::Number && S_Mult.Value) ? *(Number*)S_Mult.Value : Number(1.0f);
-    Number P = (S_Phase.Type == Types::Number && S_Phase.Value) ? *(Number*)S_Phase.Value : Number(0.0f);
+    // Resolve Mult and Phase (Expected Numbers)
+    // We use This() to allow these to be references to other objects
+    SearchResult MultActual  = Values.This(S_Mult.Location);
+    SearchResult PhaseActual = Values.This(S_Phase.Location);
+
+    Number M = (MultActual.Type == Types::Number && MultActual.Value) ? *(Number*)MultActual.Value : Number(1.0f);
+    Number P = (PhaseActual.Type == Types::Number && PhaseActual.Value) ? *(Number*)PhaseActual.Value : Number(0.0f);
 
     // 4. Calculation
-    // Using standard sinf for performance on embedded (assuming Number is float)
     Number Result = sin((Number)T * M + P);
 
-    // 5. Store Result
-    Values.Set(&Result, sizeof(Number), Types::Number, OutPath);
+    // 5. Optimized Store at relative {0}
+    SearchResult S_Out = Values.Child(Base.Location);
+    if (S_Out.Value) {
+        Values.SetDirect(&Result, sizeof(Number), Types::Number, S_Out.Location);
+    }
 
     return true;
 }

@@ -20,10 +20,9 @@ ByteArray BaseClass::Compress() const
     return Blob;
 }
 
-SearchResult BaseClass::Find(const Bookmark &Parent, const Reference &RelativeLocation, bool StopAtReferences) const
+SearchResult BaseClass::Find(const Reference &Location, bool StopAtReferences) const
 {
-    // Use the internal ByteArray logic
-    return Values.Find(Parent, RelativeLocation, StopAtReferences);
+    return Values.Find(Location, StopAtReferences);
 }
 
 void BaseClass::ValueSetup(const void *Data, size_t Size, Types Type, const Reference &Location)

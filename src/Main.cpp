@@ -42,6 +42,7 @@ ChirpClass Chirp = ChirpClass(); // Bluetooth/Serial
 // Programs
 namespace Operation
 {
+    //TODO Cleanup, fix & optimize
     #include "Operations\MathCore.h"
     #include "Operations\MathMulti.h"
     #include "Operations\MathBinary.h"

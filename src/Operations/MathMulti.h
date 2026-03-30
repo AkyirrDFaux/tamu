@@ -52,39 +52,49 @@ bool ExecuteMathMulti(ByteArray &Values, Reference Index, Operations Op)
 {
     Reference OutPath = Index.Append(0);
 
-    // 1. Locate the Input Branch 
-    SearchResult BranchRes = Values.Find(Index.Append(1));
-    if (!BranchRes.Location.Map) return true;
-    
-    Bookmark InBranch = BranchRes.Location;
+    // 1. Locate the first parameter (Index + {1, 0})
+    // This starts the search at the input branch and dives to the first child
+    SearchResult FirstParam = Values.Find(Index.Append(1).Append(0), true);
+    if (!FirstParam.Value) return true;
+
     Types Target = Types::Undefined;
-    uint8_t count = 0;
 
     // --- PASS 1: Identify Target Type ---
-    while (true)
+    // Walk siblings using the Next() primitive
+    SearchResult it = FirstParam;
+    while (it.Value)
     {
-        SearchResult res = Values.Find(InBranch, Reference({count}));
-        if (res.Type == Types::Undefined || !res.Value) break;
-
-        if (Target == Types::Undefined) Target = res.Type;
-        else Target = MergeTypes(Target, res.Type);
+        // Resolve references to see the underlying data type
+        SearchResult actual = Values.This(it.Location);
+        
+        if (Target == Types::Undefined) Target = actual.Type;
+        else Target = MergeTypes(Target, actual.Type);
 
         if (Target == Types::Undefined) return true;
-        count++;
+        
+        it = Values.Next(it.Location);
     }
 
-    if (count == 0 || Target == Types::Undefined) return true;
+    if (Target == Types::Undefined) return true;
 
     // --- PASS 2: Accumulate ---
-    // Pass the Bookmark and the relative index {i}
-    Arithmetic Result = Fetch(Values, InBranch, Reference({0}), Target);
+    // Start again at the first parameter
+    it = FirstParam;
+    
+    // Initialize accumulator with the first value
+    Arithmetic Result = Fetch(Values, it.Location, Target);
+    
+    // Move to second sibling to start the loop
+    it = Values.Next(it.Location);
 
-    for (uint8_t i = 1; i < count; i++)
+    while (it.Value)
     {
-        Arithmetic Next = Fetch(Values, InBranch, Reference({i}), Target);
-        Result.Apply(Next, Op);
+        Arithmetic NextVal = Fetch(Values, it.Location, Target);
+        Result.Apply(NextVal, Op);
 
         if (Result.Type == Types::Undefined) return true;
+        
+        it = Values.Next(it.Location);
     }
 
     // --- PASS 3: Store ---
@@ -92,81 +102,58 @@ bool ExecuteMathMulti(ByteArray &Values, Reference Index, Operations Op)
     return true;
 }
 
-bool Min(ByteArray &Values, Reference Index)
+bool ExecuteExtreme(ByteArray &Values, Reference Index, bool IsMax)
 {
     Reference OutPath = Index.Append(0);
-    SearchResult BranchRes = Values.Find(Index.Append(1));
 
-    if (!BranchRes.Location.Map) return true;
-    Bookmark InBranch = BranchRes.Location;
+    // 1. Locate the first parameter (Index + {1, 0})
+    SearchResult it = Values.Find(Index.Append(1).Append(0), true);
+    if (!it.Value) return true;
 
-    Number Result = 0;
+    Number result = 0;
     bool foundFirst = false;
 
-    for (uint8_t i = 0; i < 255; i++)
+    // 2. Iterate siblings using Next()
+    while (it.Value)
     {
-        // New Find dives automatically: i=0 is the first child
-        SearchResult res = Values.Find(InBranch, Reference({i}));
-        if (res.Type == Types::Undefined || !res.Value) break;
-
+        // Resolve references (local or global) to get actual POD data
+        SearchResult actual = Values.This(it.Location);
+        
         Number currentVal = 0;
         bool isScalar = true;
 
-        if (res.Type == Types::Number)           currentVal = *(Number *)res.Value;
-        else if (res.Type == Types::Integer)     currentVal = (Number)(*(int32_t *)res.Value);
-        else if (res.Type == Types::Byte || res.Type == Types::Bool) 
-                                                 currentVal = (Number)(*(uint8_t *)res.Value);
-        else isScalar = false;
+        // Scalar Extraction
+        if (actual.Type == Types::Number) {
+            currentVal = *(Number *)actual.Value;
+        } else if (actual.Type == Types::Integer) {
+            currentVal = (Number)(*(int32_t *)actual.Value);
+        } else if (actual.Type == Types::Byte || actual.Type == Types::Bool) {
+            currentVal = (Number)(*(uint8_t *)actual.Value);
+        } else {
+            isScalar = false;
+        }
 
         if (isScalar) {
             if (!foundFirst) {
-                Result = currentVal;
+                result = currentVal;
                 foundFirst = true;
-            } else if (currentVal < Result) {
-                Result = currentVal;
+            } else {
+                if (IsMax) {
+                    if (currentVal > result) result = currentVal;
+                } else {
+                    if (currentVal < result) result = currentVal;
+                }
             }
         }
+
+        // Move to the next sibling at the same depth
+        it = Values.Next(it.Location);
     }
 
-    if (foundFirst) Values.Set(&Result, sizeof(Number), Types::Number, OutPath);
-    return true;
-}
-
-bool Max(ByteArray &Values, Reference Index)
-{
-    Reference OutPath = Index.Append(0);
-    SearchResult BranchRes = Values.Find(Index.Append(1));
-
-    if (!BranchRes.Location.Map) return true;
-    Bookmark InBranch = BranchRes.Location;
-
-    Number Result = 0;
-    bool foundFirst = false;
-
-    for (uint8_t i = 0; i < 255; i++)
-    {
-        SearchResult res = Values.Find(InBranch, Reference({i}));
-        if (res.Type == Types::Undefined || !res.Value) break;
-
-        Number currentVal = 0;
-        bool isScalar = true;
-
-        if (res.Type == Types::Number)           currentVal = *(Number *)res.Value;
-        else if (res.Type == Types::Integer)     currentVal = (Number)(*(int32_t *)res.Value);
-        else if (res.Type == Types::Byte || res.Type == Types::Bool) 
-                                                 currentVal = (Number)(*(uint8_t *)res.Value);
-        else isScalar = false;
-
-        if (isScalar) {
-            if (!foundFirst) {
-                Result = currentVal;
-                foundFirst = true;
-            } else if (currentVal > Result) {
-                Result = currentVal;
-            }
-        }
+    // 3. Store result if at least one valid scalar was found
+    if (foundFirst) {
+        Values.Set(&result, sizeof(Number), Types::Number, OutPath);
     }
 
-    if (foundFirst) Values.Set(&Result, sizeof(Number), Types::Number, OutPath);
     return true;
 }

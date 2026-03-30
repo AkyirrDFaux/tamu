@@ -80,78 +80,78 @@ BaseClass *CreateObject(Reference ID, ObjectTypes Type)
     }
 }
 
-SearchResult ByteArray::Find(const Bookmark &Parent, const Reference &RelativeLocation, bool StopAtReferences) const
+SearchResult ByteArray::This(const Bookmark &Parent) const
 {
-    const ByteArray *CurrentMap = Parent.Map;
-    uint16_t currentHIdx = Parent.HeaderIdx;
-    Reference CurrentPath = RelativeLocation;
+    if (!Parent.Map || Parent.HeaderIdx >= Parent.Map->HeaderAllocated)
+        return {};
 
+    Header &h = Parent.Map->HeaderArray[Parent.HeaderIdx];
+
+    // If it's a reference, we must resolve it
+    if (h.Type == Types::Reference)
+    {
+        Reference Link = Reference();
+        // Extract the stored Reference from the data array
+        memcpy(&Link, Parent.Map->Array + h.Pointer, h.Length);
+
+        if (!Link.IsValid())
+            return {};
+
+        // If it's Global, we leverage the Find logic which knows how
+        // to switch between different ByteArray instances (Objects)
+        if (Link.IsGlobal())
+            return Objects.Find(Link);
+        else
+            return Parent.Map->Find(Link);
+    }
+
+    // If it's NOT a reference, return the current data immediately
+    return {
+        Parent.Map->Array + h.Pointer,
+        h.Type,
+        h.Length,
+        Parent};
+}
+
+SearchResult ByteArray::Find(const Reference &Location, bool StopAtReferences) const
+{
+    // 1. Setup the mutable search state
+    const ByteArray *CurrentMap = this;
+    Reference CurrentPath = Location;
     uint8_t JumpCount = 0;
-    const uint8_t MaxJumps = 10;
-
-    // Track if we started with a valid bookmark or a root search
-    bool startedFromBookmark = (Parent.Map != nullptr);
+    const uint8_t MaxJumps = 10; 
 
     while (JumpCount < MaxJumps)
     {
-        // If no map is provided, default to 'this' and start at the root
-        if (!CurrentMap)
-        {
-            CurrentMap = this;
-            currentHIdx = 0;
-            startedFromBookmark = false;
-        }
-
         uint8_t depth = CurrentPath.PathLen();
-        if (!CurrentMap->Array || !CurrentMap->HeaderArray || depth == 0)
-            return {};
+        if (CurrentMap->Array == nullptr || CurrentMap->HeaderArray == nullptr || depth == 0)
+            return {}; // Returns null value and Undefined type
 
-        // --- SEARCH BOUNDARY SETUP ---
-        uint16_t Pointer;
-        uint16_t End;
-
-        // Logic: Use the Bookmark offset ONLY on the first iteration.
-        // If we have jumped via a Reference (JumpCount > 0), we are 
-        // effectively starting a new search at the root of a different map.
-        if (startedFromBookmark && JumpCount == 0)
-        {
-            // Start at the first child of the bookmark
-            Pointer = currentHIdx + 1;
-            // Limit search to the parent's subtree
-            End = currentHIdx + CurrentMap->HeaderArray[currentHIdx].Skip + 1;
-        }
-        else
-        {
-            // Standard Root Search
-            Pointer = 0;
-            End = CurrentMap->HeaderAllocated;
-        }
+        uint16_t Pointer = 0;
+        uint16_t End = CurrentMap->HeaderAllocated;
+        bool pathResolved = false;
 
         for (uint8_t Layer = 0; Layer < depth; Layer++)
         {
             bool layerFound = false;
             uint8_t targetIdx = CurrentPath.Path[Layer];
-            uint8_t currentSibling = 0;
 
-            // DIVE CORRECTION:
-            // Layer 0 starts at the Pointer determined above.
-            // Layers 1+ must move to the first child of the node found in the previous layer.
-            if (Layer > 0)
-                Pointer++;
-
-            while (Pointer < End)
+            // Iterate siblings to find the one at targetIdx
+            for (uint16_t Search = 0; Search <= targetIdx; Search++)
             {
-                Header &h = CurrentMap->HeaderArray[Pointer];
+                if (Pointer >= End) return {};
+                Header &header = CurrentMap->HeaderArray[Pointer];
 
-                if (currentSibling == targetIdx)
+                if (Search == targetIdx)
                 {
-                    // 1. Reference Logic (The "Teleport")
-                    if (h.Type == Types::Reference && (Layer < depth - 1 || !StopAtReferences))
+                    // --- REFERENCE TELEPORT ---
+                    if (header.Type == Types::Reference && (Layer < depth - 1 || !StopAtReferences))
                     {
                         Reference Link;
-                        memcpy(&Link, CurrentMap->Array + h.Pointer, sizeof(Reference));
-                        
-                        // Append remaining path parts to the link
+                        uint16_t copySize = (header.Length > sizeof(Reference)) ? sizeof(Reference) : header.Length;
+                        memcpy(&Link, CurrentMap->Array + header.Pointer, copySize);
+
+                        // Reconstruct Tail
                         for (uint8_t r = Layer + 1; r < depth; r++)
                             Link = Link.Append(CurrentPath.Path[r]);
 
@@ -161,52 +161,59 @@ SearchResult ByteArray::Find(const Bookmark &Parent, const Reference &RelativeLo
                             if (!TargetObj) return {};
                             CurrentMap = &TargetObj->Values;
                         }
-                        
-                        // Update search state for the next iteration
+
                         CurrentPath = Link;
-                        currentHIdx = 0; 
                         JumpCount++;
-                        goto restart_inception;
+                        pathResolved = true; 
+                        goto break_search;
                     }
 
-                    // 2. Terminal Logic (Found the exact node)
+                    // --- TERMINAL LEAF ---
                     if (Layer == depth - 1)
                     {
-                        return {CurrentMap->Array + h.Pointer, h.Type, h.Length, {(ByteArray *)CurrentMap, Pointer}};
+                        return { 
+                            CurrentMap->Array + header.Pointer, 
+                            header.Type, 
+                            header.Length, 
+                            {(ByteArray*)CurrentMap, Pointer} 
+                        };
                     }
 
-                    // 3. Packed Logic (Sub-indexing into Text, Color, or Vectors)
-                    if (Layer == depth - 2 && IsPacked(h.Type))
+                    // --- PACKED SUB-INDEXING (Vectors, Text, Colour) ---
+                    if (Layer == depth - 2 && IsPacked(header.Type))
                     {
                         uint8_t subIdx = CurrentPath.Path[Layer + 1];
-                        char *baseData = CurrentMap->Array + h.Pointer;
+                        char *dataPtr = CurrentMap->Array + header.Pointer;
 
-                        if (h.Type == Types::Text || h.Type == Types::Colour)
+                        if (header.Type == Types::Text || header.Type == Types::Colour)
                         {
-                            if (subIdx >= h.Length) return {};
-                            return {baseData + subIdx, Types::Byte, 1, {(ByteArray *)CurrentMap, Pointer}};
+                            if (subIdx >= header.Length) return {};
+                            return { dataPtr + subIdx, Types::Byte, 1, {(ByteArray*)CurrentMap, Pointer} };
                         }
-                        else
+                        else // Numbers (Vectors/Coords)
                         {
-                            if ((subIdx + 1) * 4 > h.Length) return {};
-                            return {baseData + (subIdx * 4), Types::Number, 4, {(ByteArray *)CurrentMap, Pointer}};
+                            if ((subIdx + 1) * sizeof(Number) > header.Length) return {};
+                            return { dataPtr + (subIdx * sizeof(Number)), Types::Number, (uint16_t)sizeof(Number), {(ByteArray*)CurrentMap, Pointer} };
                         }
                     }
 
-                    // 4. Descend Prep (Moving into children of this node)
-                    End = Pointer + h.Skip + 1;
+                    // --- DESCEND ---
+                    Pointer++; // Move to first child
+                    End = Pointer + header.Skip; // Narrow boundary to this node's subtree
                     layerFound = true;
                     break;
                 }
-
-                // Move to next sibling by skipping current sibling's entire subtree
-                Pointer += h.Skip + 1;
-                currentSibling++;
+                
+                // Jump over the entire sibling's subtree to reach the next sibling
+                Pointer += header.Skip + 1;
             }
             if (!layerFound) return {};
         }
-        break;
-    restart_inception:;
+
+    break_search:
+        if (!pathResolved) break;
     }
+
+    if (JumpCount >= MaxJumps) ReportError(Status::InvalidValue);
     return {};
 }
