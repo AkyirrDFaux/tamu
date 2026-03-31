@@ -6,74 +6,44 @@ bool ExecuteCompare(ByteArray &Values, Reference Index, Operations Op)
     Bookmark OpPoint = Base.Location;
 
     // --- INPUT RESOLUTION ---
-    // Goal: Parameter A is at Index + {1, 0}
-    // Goal: Parameter B is at Index + {1, 1}
-
-    // Step 1: Move to the 'Inputs' folder at relative {1}
-    SearchResult InputsFolder = Values.Child(OpPoint);      // Move to {0} (Output)
-    InputsFolder = Values.Next(InputsFolder.Location);      // Move to {1} (Inputs Folder)
+    // Dive to {0} (Output), then Step to {1} (Inputs Folder)
+    SearchResult InputsFolder = Values.Child(OpPoint);
+    InputsFolder = Values.Next(InputsFolder.Location);
     if (!InputsFolder.Value) return true;
 
-    // Step 2: Dive into the Inputs folder to find the first parameter {1, 0}
-    SearchResult S_A = Values.Child(InputsFolder.Location); // Move to {1, 0}
-    
-    // Step 3: Move to the second parameter {1, 1}
-    SearchResult S_B = Values.Next(S_A.Location);           // Move to {1, 1}
+    // Dive into Inputs to find {1, 0} (A) and Step to {1, 1} (B)
+    SearchResult S_A = Values.Child(InputsFolder.Location);
+    SearchResult S_B = Values.Next(S_A.Location);
 
     if (!S_A.Value || !S_B.Value) return true;
 
-    // --- DATA RESOLUTION ---
-    // 3. Resolve Reference Types to determine actual POD data
-    // Use the map from the bookmark to handle potential global references
-    SearchResult A_Actual = S_A.Location.Map->This(S_A.Location);
-    SearchResult B_Actual = S_B.Location.Map->This(S_B.Location);
-
-    // Strict Scalar Check: No Vectors allowed for these comparison ops
-    if (A_Actual.Type == Types::Vector2D || A_Actual.Type == Types::Vector3D ||
-        B_Actual.Type == Types::Vector2D || B_Actual.Type == Types::Vector3D)
+    // --- DATA VALIDATION ---
+    // Strict Scalar Check: Reject if either input is not a scalar (Vector, etc.)
+    if (!IsScalar(S_A.Location.Map->This(S_A.Location).Type) || 
+        !IsScalar(S_B.Location.Map->This(S_B.Location).Type))
         return true;
 
-    // 4. Determine Comparison Type (Upcasting)
-    Types CompareType = MergeTypes(A_Actual.Type, B_Actual.Type);
-    if (CompareType == Types::Undefined) return true;
-
-    // 5. Fetch and Promote (Pass the specific Map from the Bookmark)
-    Arithmetic Left = Fetch(*S_A.Location.Map, S_A.Location, CompareType);
-    Arithmetic Right = Fetch(*S_B.Location.Map, S_B.Location, CompareType);
-
+    // --- EXECUTION ---
+    // Promote both to Number for a unified comparison lane
+    Number Left = GetAsNumber(S_A.Location);
+    Number Right = GetAsNumber(S_B.Location);
     bool result = false;
 
-    // 6. Concrete Scalar Comparison
     switch (Op)
     {
-    case Operations::IsEqual:
-        if (CompareType == Types::Number) result = (Left.Value.n == Right.Value.n);
-        else if (CompareType == Types::Integer) result = (Left.Value.i == Right.Value.i);
-        else result = (Left.Value.b == Right.Value.b);
-        break;
-
-    case Operations::IsGreater:
-        if (CompareType == Types::Number) result = (Left.Value.n > Right.Value.n);
-        else if (CompareType == Types::Integer) result = (Left.Value.i > Right.Value.i);
-        else result = (Left.Value.b > Right.Value.b);
-        break;
-
-    case Operations::IsSmaller:
-        if (CompareType == Types::Number) result = (Left.Value.n < Right.Value.n);
-        else if (CompareType == Types::Integer) result = (Left.Value.i < Right.Value.i);
-        else result = (Left.Value.b < Right.Value.b);
-        break;
-
+    case Operations::IsEqual:   result = (Left == Right); break;
+    case Operations::IsGreater: result = (Left > Right);  break;
+    case Operations::IsSmaller: result = (Left < Right);  break;
     default: return true;
     }
 
     // --- OUTPUT STORAGE ---
-    // 7. Store result as a Boolean Byte at relative {0}
-    SearchResult S_Out = Values.Child(OpPoint); // Output is always at {0}
+    // Output is always at relative {0}
+    SearchResult S_Out = Values.Child(OpPoint);
     if (S_Out.Value)
     {
         uint8_t val = result ? 1 : 0;
-        // Use SetDirect to write to the specifically located Bookmark
+        // Result of a comparison is always a 1-byte Boolean
         Values.SetDirect(&val, 1, Types::Bool, S_Out.Location);
     }
 

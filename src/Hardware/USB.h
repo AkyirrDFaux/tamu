@@ -1,7 +1,7 @@
 namespace HW
 {
-    #define MAX_USB_DATA 60
-    #define USB_PACKET_SIZE 64
+#define MAX_USB_DATA 60
+#define USB_PACKET_SIZE 64
     uint8_t CRC8(const uint8_t *Data, size_t Length)
     {
         uint8_t CRC8 = 0x00;
@@ -23,8 +23,8 @@ namespace HW
     void USB_Init()
     {
         usb_serial_jtag_driver_config_t usb_config = {
-            .tx_buffer_size = 512,
-            .rx_buffer_size = 512,
+            .tx_buffer_size = 1024,
+            .rx_buffer_size = 1024,
         };
         usb_serial_jtag_driver_install(&usb_config);
     }
@@ -35,10 +35,10 @@ namespace HW
             return;
 
         uint32_t offset = 0;
+        uint8_t packet[USB_PACKET_SIZE]; // Don't zero-init inside the loop
 
         while (offset < Data.Length)
         {
-            uint8_t packet[USB_PACKET_SIZE] = {0}; // Local buffer
             uint8_t to_copy = (uint8_t)((Data.Length - offset > MAX_USB_DATA) ? MAX_USB_DATA : Data.Length - offset);
 
             packet[0] = 0xFA;
@@ -47,7 +47,12 @@ namespace HW
             packet[3 + to_copy] = 0xBF;
             packet[1] = CRC8(packet + 2, to_copy + 1);
 
-            usb_serial_jtag_write_bytes(packet, USB_PACKET_SIZE, pdMS_TO_TICKS(10));
+            // Faster: No blocking wait unless necessary.
+            // Monitor return value to ensure all bytes actually went out.
+            int sent = usb_serial_jtag_write_bytes(packet, USB_PACKET_SIZE, pdMS_TO_TICKS(10));
+
+            if (sent <= 0)
+                break; // USB Disconnected or Buffer Full
 
             offset += to_copy;
         }
@@ -55,55 +60,70 @@ namespace HW
 
     ByteArray USB_Read()
     {
-        static uint8_t rx_buffer[256]; // Increased for headroom
+        static uint8_t rx_buffer[512];
         static uint32_t rx_ptr = 0;
 
-        // 1. Read available bytes into buffer
-        // Non-blocking read (ticks_to_wait = 0)
+        // 1. Pull new data from hardware
         int len = usb_serial_jtag_read_bytes(rx_buffer + rx_ptr, (sizeof(rx_buffer) - rx_ptr), 0);
         if (len > 0)
-        {
             rx_ptr += len;
-        }
 
-        // 2. Process for 64-byte frame
-        while (rx_ptr >= USB_PACKET_SIZE)
+        uint32_t cursor = 0;
+
+        // 2. Scan through the buffer using the cursor
+        while (cursor + USB_PACKET_SIZE <= rx_ptr)
         {
-            if (rx_buffer[0] == 0xFA)
+            // Hunt for header
+            if (rx_buffer[cursor] != 0xFA)
             {
-                uint8_t receivedCrc = rx_buffer[1];
-                uint8_t dataLen = rx_buffer[2];
-
-                if (dataLen <= MAX_USB_DATA)
-                {
-                    if (CRC8(rx_buffer + 2, dataLen + 1) == receivedCrc)
-                    {
-                        if (rx_buffer[3 + dataLen] == 0xBF)
-                        {
-                            // SUCCESS
-                            ByteArray Data;
-                            Data.Length = dataLen;
-                            Data.Array = new char[dataLen];
-                            memcpy(Data.Array, rx_buffer + 3, dataLen);
-
-                            // Shift buffer
-                            memmove(rx_buffer, rx_buffer + USB_PACKET_SIZE, rx_ptr - USB_PACKET_SIZE);
-                            rx_ptr -= USB_PACKET_SIZE;
-                            return Data;
-                        }
-                    }
-                }
-                // Invalid packet logic: slide 1
-                memmove(rx_buffer, rx_buffer + 1, rx_ptr - 1);
-                rx_ptr--;
+                cursor++;
+                continue;
             }
-            else
+
+            // Potential Header found at cursor[0]
+            uint8_t receivedCrc = rx_buffer[cursor + 1];
+            uint8_t dataLen = rx_buffer[cursor + 2];
+
+            // Validate structure (Length and Footer)
+            if (dataLen <= MAX_USB_DATA && rx_buffer[cursor + 3 + dataLen] == 0xBF)
             {
-                // No header: slide 1
-                memmove(rx_buffer, rx_buffer + 1, rx_ptr - 1);
-                rx_ptr--;
+                // Verify CRC8
+                if (CRC8(rx_buffer + cursor + 2, dataLen + 1) == receivedCrc)
+                {
+                    // --- VALID PACKET FOUND ---
+                    ByteArray Data;
+                    Data.Length = dataLen;
+                    Data.Array = new char[dataLen];
+                    memcpy(Data.Array, rx_buffer + cursor + 3, dataLen);
+
+                    // Calculate how much to "eat"
+                    // We consume the 64-byte frame plus all the junk before it
+                    uint32_t total_consumed = cursor + USB_PACKET_SIZE;
+
+                    rx_ptr -= total_consumed;
+                    if (rx_ptr > 0)
+                    {
+                        memmove(rx_buffer, rx_buffer + total_consumed, rx_ptr);
+                    }
+                    // Reset cursor for next call (or recursion, but we return here)
+                    return Data;
+                }
+            }
+
+            // Not a real packet (False positive 0xFA). Skip this byte and keep hunting.
+            cursor++;
+        }
+
+        // 3. Maintenance: If we scanned past junk, slide the buffer once to free up space
+        if (cursor > 0)
+        {
+            rx_ptr -= cursor;
+            if (rx_ptr > 0)
+            {
+                memmove(rx_buffer, rx_buffer + cursor, rx_ptr);
             }
         }
+
         return ByteArray();
     }
 

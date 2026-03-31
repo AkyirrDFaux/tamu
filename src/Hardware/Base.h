@@ -292,14 +292,16 @@ namespace HW
 
     void NotificationBlink(int Amount, int Time)
     {
+        HW::ModeOutput(LED_NOTIFICATION_PIN);
         for (int Iteration = 0; Iteration < Amount; Iteration++)
         {
             HW::Low(LED_NOTIFICATION_PIN); //On
-            HW::Sleep(200);
+            HW::Sleep(Time);
             HW::High(LED_NOTIFICATION_PIN); //Off
             if (Iteration < Amount - 1)
-                HW::Sleep(200);
+                HW::Sleep(Time);
         }
+        HW::ModeInput(LED_NOTIFICATION_PIN);
     };
     void NotificationStartup()
     {

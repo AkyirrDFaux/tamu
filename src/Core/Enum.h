@@ -1,10 +1,10 @@
 enum class Types : uint8_t
 {
     Undefined = 0,
-    Bool, // 1 byte
-    Byte, // uint_8
+    Bool,       // 1 byte
+    Byte,       // uint_8
     PortNumber, // int_8
-    Type, // 1 byte enums
+    Type,       // 1 byte enums
     ObjectType,
     ObjectInfo,
     Status,
@@ -44,6 +44,12 @@ bool IsPacked(const Types Type) // Contains subparts
         return true;
     else
         return false;
+}
+// Returns true if the type is a POD scalar
+inline bool IsScalar(Types T)
+{
+    return (T == Types::Number || T == Types::Integer ||
+            T == Types::Byte || T == Types::Bool);
 }
 
 enum Flags : uint8_t

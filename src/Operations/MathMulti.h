@@ -1,159 +1,141 @@
-template <typename T>
-T Calculate(T a, T b, Operations Op)
+bool ExecuteVector3DMulti(ByteArray &Values, SearchResult it, Reference Path, Operations Op)
 {
-    switch (Op)
-    {
-    case Operations::Add:
-        return a + b;
-    case Operations::Subtract:
-        return a - b;
-    case Operations::Multiply:
-        return a * b;
-    case Operations::Divide:
-        return a / b;
-    default:
-        return a;
-    }
-};
+    Vector3D acc = *(Vector3D *)it.Location.Map->This(it.Location).Value;
 
-void Arithmetic::Apply(const Arithmetic &Next, Operations Op)
+    it = it.Location.Map->Next(it.Location);
+    while (it.Value)
+    {
+        SearchResult actual = it.Location.Map->This(it.Location);
+        if (actual.Type != Types::Vector3D)
+            return true;
+
+        Vector3D nextVal = *(Vector3D *)actual.Value;
+        switch (Op)
+        {
+        case Operations::Add:
+            acc = acc + nextVal;
+            break;
+        case Operations::Subtract:
+            acc = acc - nextVal;
+            break;
+        case Operations::Multiply:
+            acc = acc * nextVal;
+            break;
+        case Operations::Divide:
+            acc = acc / nextVal;
+            break;
+        default:
+            return true;
+        }
+        it = it.Location.Map->Next(it.Location);
+    }
+
+    Values.Set(&acc, sizeof(Vector3D), Types::Vector3D, Path);
+    return true;
+}
+
+bool ExecuteVector2DMulti(ByteArray &Values, SearchResult it, Reference Path, Operations Op)
 {
-    // If either side is Undefined, the result is Undefined
-    if (Type == Types::Undefined || Next.Type == Types::Undefined)
+    Vector2D acc = *(Vector2D *)it.Location.Map->This(it.Location).Value;
+
+    it = it.Location.Map->Next(it.Location);
+    while (it.Value)
     {
-        Type = Types::Undefined;
-        return;
+        SearchResult actual = it.Location.Map->This(it.Location);
+        if (actual.Type != Types::Vector2D)
+            return true;
+
+        Vector2D nextVal = *(Vector2D *)actual.Value;
+        switch (Op)
+        {
+        case Operations::Add:
+            acc = acc + nextVal;
+            break;
+        case Operations::Subtract:
+            acc = acc - nextVal;
+            break;
+        case Operations::Multiply:
+            acc = acc * nextVal;
+            break;
+        case Operations::Divide:
+            acc = acc / nextVal;
+            break;
+        default:
+            return true;
+        }
+        it = it.Location.Map->Next(it.Location);
     }
 
-    switch (Type)
-    {
-    case Types::Vector3D:
-        Value.v3 = Calculate(Value.v3, Next.Value.v3, Op);
-        break;
-    case Types::Vector2D:
-        Value.v2 = Calculate(Value.v2, Next.Value.v2, Op);
-        break;
-    case Types::Number:
-        Value.n = Calculate(Value.n, Next.Value.n, Op);
-        break;
-    case Types::Integer:
-        Value.i = Calculate(Value.i, Next.Value.i, Op);
-        break;
-    case Types::Byte:
-        // Promote to int32 for calculation to prevent overflow wrap-around during intermediate steps
-        Value.b = (uint8_t)Calculate((int32_t)Value.b, (int32_t)Next.Value.b, Op);
-        break;
-    default:
-        break;
-    }
+    Values.Set(&acc, sizeof(Vector2D), Types::Vector2D, Path);
+    return true;
 }
 
 bool ExecuteMathMulti(ByteArray &Values, Reference Index, Operations Op)
 {
     Reference OutPath = Index.Append(0);
 
-    // 1. Locate the first parameter (Index + {1, 0})
-    // This starts the search at the input branch and dives to the first child
-    SearchResult FirstParam = Values.Find(Index.Append(1).Append(0), true);
-    if (!FirstParam.Value) return true;
-
-    Types Target = Types::Undefined;
-
-    // --- PASS 1: Identify Target Type ---
-    // Walk siblings using the Next() primitive
-    SearchResult it = FirstParam;
-    while (it.Value)
-    {
-        // Resolve references to see the underlying data type
-        SearchResult actual = Values.This(it.Location);
-        
-        if (Target == Types::Undefined) Target = actual.Type;
-        else Target = MergeTypes(Target, actual.Type);
-
-        if (Target == Types::Undefined) return true;
-        
-        it = Values.Next(it.Location);
-    }
-
-    if (Target == Types::Undefined) return true;
-
-    // --- PASS 2: Accumulate ---
-    // Start again at the first parameter
-    it = FirstParam;
-    
-    // Initialize accumulator with the first value
-    Arithmetic Result = Fetch(Values, it.Location, Target);
-    
-    // Move to second sibling to start the loop
-    it = Values.Next(it.Location);
-
-    while (it.Value)
-    {
-        Arithmetic NextVal = Fetch(Values, it.Location, Target);
-        Result.Apply(NextVal, Op);
-
-        if (Result.Type == Types::Undefined) return true;
-        
-        it = Values.Next(it.Location);
-    }
-
-    // --- PASS 3: Store ---
-    StoreArithmetic(Values, OutPath, Result);
-    return true;
-}
-
-bool ExecuteExtreme(ByteArray &Values, Reference Index, bool IsMax)
-{
-    Reference OutPath = Index.Append(0);
-
-    // 1. Locate the first parameter (Index + {1, 0})
     SearchResult it = Values.Find(Index.Append(1).Append(0), true);
-    if (!it.Value) return true;
+    if (!it.Value)
+        return true;
 
-    Number result = 0;
-    bool foundFirst = false;
+    SearchResult firstActual = it.Location.Map->This(it.Location);
+    if (!firstActual.Value)
+        return true;
 
-    // 2. Iterate siblings using Next()
+    Types targetType = firstActual.Type;
+
+    // Delegate if it's a vector lane
+    if (targetType == Types::Vector3D)
+        return ExecuteVector3DMulti(Values, it, OutPath, Op);
+    if (targetType == Types::Vector2D)
+        return ExecuteVector2DMulti(Values, it, OutPath, Op);
+
+    // Reject if the first element isn't a scalar either
+    if (!IsScalar(targetType))
+        return true;
+
+    Number acc = GetAsNumber(it.Location);
+
+    it = it.Location.Map->Next(it.Location);
     while (it.Value)
     {
-        // Resolve references (local or global) to get actual POD data
-        SearchResult actual = Values.This(it.Location);
-        
-        Number currentVal = 0;
-        bool isScalar = true;
+        SearchResult actual = it.Location.Map->This(it.Location);
 
-        // Scalar Extraction
-        if (actual.Type == Types::Number) {
-            currentVal = *(Number *)actual.Value;
-        } else if (actual.Type == Types::Integer) {
-            currentVal = (Number)(*(int32_t *)actual.Value);
-        } else if (actual.Type == Types::Byte || actual.Type == Types::Bool) {
-            currentVal = (Number)(*(uint8_t *)actual.Value);
-        } else {
-            isScalar = false;
+        // "Is Not Scalar" rejection
+        if (!IsScalar(actual.Type))
+            return true;
+
+        Number nextVal = GetAsNumber(it.Location);
+
+        switch (Op)
+        {
+        case Operations::Add:
+            acc += nextVal;
+            break;
+        case Operations::Subtract:
+            acc -= nextVal;
+            break;
+        case Operations::Multiply:
+            acc = acc * nextVal;
+            break;
+        case Operations::Divide:
+            acc = acc / nextVal;
+            break;
+        case Operations::Max:
+            if (nextVal > acc)
+                acc = nextVal;
+            break;
+        case Operations::Min:
+            if (nextVal < acc)
+                acc = nextVal;
+            break;
+        default:
+            return true;
         }
 
-        if (isScalar) {
-            if (!foundFirst) {
-                result = currentVal;
-                foundFirst = true;
-            } else {
-                if (IsMax) {
-                    if (currentVal > result) result = currentVal;
-                } else {
-                    if (currentVal < result) result = currentVal;
-                }
-            }
-        }
-
-        // Move to the next sibling at the same depth
-        it = Values.Next(it.Location);
+        it = it.Location.Map->Next(it.Location);
     }
 
-    // 3. Store result if at least one valid scalar was found
-    if (foundFirst) {
-        Values.Set(&result, sizeof(Number), Types::Number, OutPath);
-    }
-
+    StoreScalar(Values, OutPath, acc, targetType);
     return true;
 }

@@ -119,7 +119,7 @@ void ChirpClass::Send(const ByteArray &Input)
     }
     // Also send via USB for cross-compatibility
 #endif
-    // HW::USB_Send(Input.CreateMessage());
+    HW::USB_Send(Input.CreateMessage());
 };
 
 void ChirpClass::Communicate()
@@ -127,17 +127,21 @@ void ChirpClass::Communicate()
 #if defined BOARD_Valu_v2_0
     HW::tud_task();
 #endif
-    /*ByteArray Input = HW::USB_Read();
+    ByteArray Input = HW::USB_Read();
 
     if (Input.Length > 0)
     {
-        HW::NotificationBlink(1, 20);
+        HW::ModeOutput(LED_NOTIFICATION_PIN);
+        HW::Low(LED_NOTIFICATION_PIN); // On
 
         BufferUSBIn += Input;
         ByteArray Message = BufferUSBIn.ExtractMessage();
         if (Message.Length > 0)
             Run(Message);
-    }*/
+
+        HW::High(LED_NOTIFICATION_PIN); // Off
+        HW::ModeInput(LED_NOTIFICATION_PIN);
+    }
 
 // BT
 
@@ -162,7 +166,11 @@ void ChirpClass::Communicate()
     // ESP_LOGI("CHIRP", "Extracted BT");
     if (Message.Length > 0)
     {
+        HW::ModeOutput(LED_NOTIFICATION_PIN);
+        HW::Low(LED_NOTIFICATION_PIN); // On
         Run(Message);
+        HW::High(LED_NOTIFICATION_PIN); // Off
+        HW::ModeInput(LED_NOTIFICATION_PIN);
     }
 #endif
 };
