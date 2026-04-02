@@ -5,7 +5,7 @@ void BoardClass::Setup(const Reference &Index)
     if (Index.PathLen() == 0)
     {
         // Reference(0,2,0) points to the local Gyro/Acc object
-        I2CDeviceClass *GyroAcc = new I2CDeviceClass(Reference::Global(0, 2, 0), {Flags::Auto, 1});
+        I2CDeviceClass *GyroAcc = new I2CDeviceClass(Reference::Global(0, 2, 0), Flags::Auto | Flags::RunLoop);
 
         PortNumber sda = 8, scl = 9;
         GyroAcc->ValueSetup(&sda, sizeof(PortNumber), Types::PortNumber, {0, 0});
@@ -14,7 +14,7 @@ void BoardClass::Setup(const Reference &Index)
         I2CDevices model = I2CDevices::LSM6DS3TRC;
         GyroAcc->ValueSetup(&model, sizeof(I2CDevices), Types::I2CDevice, {0});
 
-        InputClass *Button = new InputClass(Reference::Global(0, 2, 1), {Flags::Auto, 1});
+        InputClass *Button = new InputClass(Reference::Global(0, 2, 1), Flags::Auto | Flags::RunLoop);
         PortNumber btnPin = 10;
         Button->ValueSetup(&btnPin, sizeof(PortNumber), Types::PortNumber, {0, 0});
 

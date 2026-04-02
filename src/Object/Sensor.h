@@ -4,7 +4,7 @@ public:
     Pin MeasPin = INVALID_PIN;
     PortNumber CurrentPort = 255;
 
-    SensorClass(const Reference &ID, ObjectInfo Info = {Flags::None, 1});
+    SensorClass(const Reference &ID, FlagClass Flags = Flags::RunLoop, RunInfo Info = {1,0});
     ~SensorClass();
 
     void Setup(const Reference &Index);
@@ -29,7 +29,7 @@ public:
 
 constexpr VTable SensorClass::Table;
 
-SensorClass::SensorClass(const Reference &ID, ObjectInfo Info) : BaseClass(&SensorClass::Table, ID, Info)
+SensorClass::SensorClass(const Reference &ID, FlagClass Flags, RunInfo Info) : BaseClass(&SensorClass::Table, ID, Flags, Info)
 {
     Type = ObjectTypes::Sensor;
     Name = "Sensor";

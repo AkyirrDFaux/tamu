@@ -60,7 +60,7 @@ public:
         .Run = BoardClass::RunBridge};
 };
 
-BoardClass::BoardClass(const Reference &ID) : BaseClass(&Table, ID, {Flags::Auto, 1})
+BoardClass::BoardClass(const Reference &ID) : BaseClass(&Table, ID, Flags::Auto | Flags::RunLoop, {1, 0})
 {
     Type = ObjectTypes::Board;
     Name = "Board";

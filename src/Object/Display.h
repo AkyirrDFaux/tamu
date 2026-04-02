@@ -10,7 +10,7 @@ public:
     PortNumber CurrentLink = -1; // Default empty reference
     uint8_t *LEDs = nullptr;
 
-    DisplayClass(const Reference &ID, ObjectInfo Info = {Flags::None, 1});
+    DisplayClass(const Reference &ID, FlagClass Flags = Flags::RunLoop, RunInfo Info = {1,0});
     ~DisplayClass();
 
     void Setup(const Reference &Index);
@@ -36,7 +36,7 @@ public:
                        Coord2D Transform, bool Mirrored, Number *Overlay);
 };
 
-DisplayClass::DisplayClass(const Reference &ID, ObjectInfo Info) : BaseClass(&Table, ID, Info)
+DisplayClass::DisplayClass(const Reference &ID, FlagClass Flags, RunInfo Info) : BaseClass(&Table, ID, Flags, Info)
 {
     Type = ObjectTypes::Display;
     Name = "Display";

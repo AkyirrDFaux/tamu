@@ -11,13 +11,19 @@ namespace HW
 
     typedef struct
     {
-        uint8_t Status;    // 0xEE (Valid), 0x88 (Stale), 0xFF (Empty), 0x00 (Erased),
+        uint8_t Status;    // 0xFF (Empty), 0xEE (Valid), 0x88 (Stale), 0x00 (Erased),
         uint8_t Checksum;  // CRC8
-        uint16_t reserved; // Padding
-        uint32_t Length;
-        uint32_t ID; // Part of data
-        // uint8_t Data[];
+        uint8_t Group; //ID
+        uint8_t Device;
+        uint16_t Length;
+        uint16_t HeaderLength;
     } __attribute__((packed)) MemoryHeader;
+
+//TODO:
+//Split into custom chunks, keep track of how full they are, if low on space fix accordingly
+//Never cross a boundary for simpler tracking, packed tight within chunk
+
+//Needs to store ObjectType (1), ObjectInfo (3), Name (x+1), Values(HL+x)
 
 #if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
 #include "esp_partition.h"

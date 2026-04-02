@@ -8,7 +8,7 @@ void ReadValue(const ByteArray &Input)
         return;
     }
 
-    Reference ID = *(Reference*)idRes.Value;
+    Reference ID = *(Reference *)idRes.Value;
     BaseClass *Object = Objects.At(ID);
 
     if (!Object)
@@ -20,8 +20,10 @@ void ReadValue(const ByteArray &Input)
 
     ByteArray Data;
     // If Path exists in the Reference, copy just that sub-node.
-    if (ID.PathLen() > 0) Data = Object->Values.Copy(ID);
-    else Data = Object->Values; // Otherwise copy the whole tree
+    if (ID.PathLen() > 0)
+        Data = Object->Values.Copy(ID);
+    else
+        Data = Object->Values; // Otherwise copy the whole tree
 
     if (Data.Length == 0)
     {
@@ -44,7 +46,7 @@ void WriteValue(const ByteArray &Input)
         return;
     }
 
-    Reference ID = *(Reference*)idRes.Value;
+    Reference ID = *(Reference *)idRes.Value;
     BaseClass *Object = Objects.At(ID);
     if (Object == nullptr)
     {
@@ -67,9 +69,7 @@ void WriteValue(const ByteArray &Input)
 
     // Confirmation Echo: Function + Reference + Current State
     Functions func = Functions::ReadValue;
-    Chirp.Send(ByteArray(&func, sizeof(Functions), Types::Function) << 
-               ByteArray(&ID, sizeof(Reference), Types::Reference) << 
-               Object->Values.Copy(ID));
+    Chirp.Send(ByteArray(&func, sizeof(Functions), Types::Function) << ByteArray(&ID, sizeof(Reference), Types::Reference) << Object->Values.Copy(ID));
 }
 
 void ReadName(const ByteArray &Input)
@@ -82,7 +82,7 @@ void ReadName(const ByteArray &Input)
         return;
     }
 
-    Reference ID = *(Reference*)idRes.Value;
+    Reference ID = *(Reference *)idRes.Value;
     BaseClass *Object = Objects.At(ID);
 
     if (Object == nullptr)
@@ -93,9 +93,7 @@ void ReadName(const ByteArray &Input)
     }
 
     Functions func = Functions::ReadName;
-    Chirp.Send(ByteArray(&func, sizeof(Functions), Types::Function) << 
-               ByteArray(&ID, sizeof(Reference), Types::Reference) << 
-               ByteArray(Object->Name.Data, Object->Name.Length, Types::Text));
+    Chirp.Send(ByteArray(&func, sizeof(Functions), Types::Function) << ByteArray(&ID, sizeof(Reference), Types::Reference) << ByteArray(Object->Name.Data, Object->Name.Length, Types::Text));
 }
 
 void WriteName(const ByteArray &Input)
@@ -110,7 +108,7 @@ void WriteName(const ByteArray &Input)
         return;
     }
 
-    Reference ID = *(Reference*)idRes.Value;
+    Reference ID = *(Reference *)idRes.Value;
     BaseClass *Object = Objects.At(ID);
 
     if (Object == nullptr)
@@ -121,12 +119,10 @@ void WriteName(const ByteArray &Input)
     }
 
     // Direct update to the Text object (assuming internal buffer management)
-    Object->Name = *(Text*)nameRes.Value;
+    Object->Name = *(Text *)nameRes.Value;
 
     Functions func = Functions::ReadName;
-    Chirp.Send(ByteArray(&func, sizeof(Functions), Types::Function) << 
-               ByteArray(&ID, sizeof(Reference), Types::Reference) << 
-               ByteArray(Object->Name.Data, Object->Name.Length, Types::Text));
+    Chirp.Send(ByteArray(&func, sizeof(Functions), Types::Function) << ByteArray(&ID, sizeof(Reference), Types::Reference) << ByteArray(Object->Name.Data, Object->Name.Length, Types::Text));
 }
 
 void ReadInfo(const ByteArray &Input)
@@ -139,7 +135,7 @@ void ReadInfo(const ByteArray &Input)
         return;
     }
 
-    Reference ID = *(Reference*)idRes.Value;
+    Reference ID = *(Reference *)idRes.Value;
     int32_t Index = Objects.Search(ID);
 
     if (Index == -1)
@@ -150,10 +146,7 @@ void ReadInfo(const ByteArray &Input)
     }
 
     Functions func = Functions::ReadInfo;
-    ObjectInfo info = Objects.Object[Index].Info;
-    Chirp.Send(ByteArray(&func, sizeof(Functions), Types::Function) << 
-               ByteArray(&ID, sizeof(Reference), Types::Reference) << 
-               ByteArray(&info, sizeof(ObjectInfo), Types::ObjectInfo));
+    Chirp.Send(ByteArray(&func, sizeof(Functions), Types::Function) << ByteArray(&ID, sizeof(Reference), Types::Reference) << ByteArray(&Objects.Object[Index].Object->Flags, 3, Types::ObjectInfo));
 }
 
 void SetInfo(const ByteArray &Input)
@@ -168,7 +161,7 @@ void SetInfo(const ByteArray &Input)
         return;
     }
 
-    Reference ID = *(Reference*)idRes.Value;
+    Reference ID = *(Reference *)idRes.Value;
     int32_t Index = Objects.Search(ID);
 
     if (Index == -1)
@@ -179,11 +172,12 @@ void SetInfo(const ByteArray &Input)
     }
 
     // Update the internal registry info
-    Objects.Object[Index].Info = *(ObjectInfo*)infoRes.Value;
+    Objects.Object[Index].Object->Flags = ((FlagClass *)infoRes.Value)[0];
+    Objects.Object[Index].Object->RunPeriod = ((uint8_t *)infoRes.Value)[1];
+    Objects.Object[Index].Object->RunPhase = ((uint8_t *)infoRes.Value)[2];
+    //Update the runner registry
+    Objects.Object[Index].Info = {Objects.Object[Index].Object->RunPeriod, Objects.Object[Index].Object->RunPhase};
 
     Functions func = Functions::ReadInfo;
-    ObjectInfo currentInfo = Objects.Object[Index].Info;
-    Chirp.Send(ByteArray(&func, sizeof(Functions), Types::Function) << 
-               ByteArray(&ID, sizeof(Reference), Types::Reference) << 
-               ByteArray(&currentInfo, sizeof(ObjectInfo), Types::ObjectInfo));
+    Chirp.Send(ByteArray(&func, sizeof(Functions), Types::Function) << ByteArray(&ID, sizeof(Reference), Types::Reference) << ByteArray(&Objects.Object[Index].Object->Flags, 3, Types::ObjectInfo));
 }

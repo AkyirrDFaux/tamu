@@ -59,7 +59,7 @@ enum Flags : uint8_t
     Undefined1 = 0b00000010,
     Undefined2 = 0b00000100,
     Undefined3 = 0b00001000,
-    Undefined4 = 0b00010000,
+    RunLoop = 0b00010000,
     RunOnce = 0b00100000,      // Run once manually until finished, will reset the flag automatically
     RunOnStartup = 0b01000000, // Run automatically once after board finished loading
     Inactive = 0b10000000      // Ignore object

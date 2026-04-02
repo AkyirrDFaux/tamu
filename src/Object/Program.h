@@ -1,7 +1,7 @@
 class Program : public BaseClass
 {
 public:
-    Program(const Reference &ID, ObjectInfo Info = {Flags::None, 1});
+    Program(const Reference &ID, FlagClass Flags = Flags::RunLoop, RunInfo Info = {1, 0});
     ~Program();
 
     bool RunEntry(uint8_t Index);
@@ -13,7 +13,7 @@ public:
         .Run = Program::RunBridge};
 };
 
-Program::Program(const Reference &ID, ObjectInfo Info) : BaseClass(&Table, ID, Info)
+Program::Program(const Reference &ID, FlagClass Flags, RunInfo Info) : BaseClass(&Table, ID, Flags, Info)
 {
     Type = ObjectTypes::Program;
     Name = "Program";
@@ -76,7 +76,7 @@ bool Program::Run()
                 HasFinished = true;
 
                 // If the object info says RunOnce, we stop the loop here
-                //if (Info.Flags == Flags::RunOnce)
+                // if (Info.Flags == Flags::RunOnce)
                 //    break;
             }
 

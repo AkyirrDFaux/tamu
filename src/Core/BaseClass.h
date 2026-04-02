@@ -1,19 +1,13 @@
 ByteArray BaseClass::Compress() const
 {
-    int32_t Index = Objects.Search(this);
-    if (Index == -1)
-        return ByteArray();
-
-    uint8_t G = Objects.Object[Index].GroupID;
-    uint8_t D = Objects.Object[Index].DeviceID;
-    Reference SelfRef = Reference::Global(0, G, D);
+    Reference SelfRef = Objects.GetReference(this);
 
     // Start the blob with the Reference type
     ByteArray Blob(&SelfRef, SelfRef.PathLen() + 4, Types::Reference);
 
     // Chain the rest of the object data
     Blob << ByteArray(&Type, sizeof(ObjectTypes), Types::ObjectType)
-         << ByteArray(&Objects.Object[Index].Info, sizeof(ObjectInfo), Types::ObjectInfo)
+         << ByteArray(&Flags, 3, Types::ObjectInfo) //Temporary fix
          << ByteArray(Name.Data, Name.Length, Types::Text)
          << Values;
 

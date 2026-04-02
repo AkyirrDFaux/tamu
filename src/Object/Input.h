@@ -4,7 +4,7 @@ public:
     Pin InputPin = INVALID_PIN;
     PortNumber CurrentPort = -1;
 
-    InputClass(const Reference &ID, ObjectInfo Info = {Flags::None, 1});
+    InputClass(const Reference &ID, FlagClass Flags = Flags::RunLoop, RunInfo Info = {1,0});
     ~InputClass();
 
     void Setup(const Reference &Index);
@@ -30,7 +30,7 @@ public:
 
 constexpr VTable InputClass::Table;
 
-InputClass::InputClass(const Reference &ID, ObjectInfo Info) : BaseClass(&InputClass::Table, ID, Info)
+InputClass::InputClass(const Reference &ID, FlagClass Flags, RunInfo Info) : BaseClass(&InputClass::Table, ID, Flags, Info)
 {
     Type = ObjectTypes::Input;
     Name = "Input";

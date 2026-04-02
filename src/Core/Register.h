@@ -131,7 +131,7 @@ void RegisterClass::Shorten()
 
 // --- Lifecycle ---
 
-bool RegisterClass::Register(BaseClass *AddObject, const Reference &ID, ObjectInfo Info)
+bool RegisterClass::Register(BaseClass *AddObject, const Reference &ID, RunInfo Info)
 {
     if (AddObject == nullptr)
         return false;

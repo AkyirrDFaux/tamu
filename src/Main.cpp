@@ -1,6 +1,6 @@
-#include <stdint.h>
-#include <stddef.h>
-#include <string.h>
+#include <cstdint>
+#include <cstddef>
+#include <cstring>
 #include <type_traits>
 #include <initializer_list>
 
@@ -42,14 +42,14 @@ ChirpClass Chirp = ChirpClass(); // Bluetooth/Serial
 // Programs
 namespace Operation
 {
-    //TODO Cleanup, fix & optimize
-    #include "Operations\MathCore.h"
-    #include "Operations\MathMulti.h"
-    #include "Operations\MathBinary.h"
-    #include "Operations\MathForm.h"
-    #include "Operations\Time.h"
-    #include "Operations\Flow.h"
-    #include "Operations\Base.h"
+// TODO Cleanup, fix & optimize
+#include "Operations\MathCore.h"
+#include "Operations\MathMulti.h"
+#include "Operations\MathBinary.h"
+#include "Operations\MathForm.h"
+#include "Operations\Time.h"
+#include "Operations\Flow.h"
+#include "Operations\Base.h"
 }
 #include "Object\Program.h"
 
@@ -106,7 +106,7 @@ int main()
     Board.ValueSetup(&CurrentTime, sizeof(int32_t), Types::Integer, {0, 1});
 
     ESP_LOGI("MAIN", "Starting");
-    bool AllFinished = false;
+    /*bool AllFinished = false;
     while (!AllFinished)
     {
         AllFinished = true;
@@ -115,18 +115,15 @@ int main()
         for (int32_t Index = Objects.Registered - 1; Index >= 0; Index--)
         {
             RegisterEntry &Entry = Objects.Object[Index];
-
-            // Execute if Startup is set and not Inactive
-            if (!(Entry.Info.Flags == Flags::Inactive) && (Entry.Info.Flags == Flags::RunOnStartup))
+            if (Entry.Info.Period > 0)
             {
-                // If any object returns false, the whole startup phase continues
-                if (!Entry.Object->Run())
-                {
+                RunInfo Status = Entry.Object->Run(Flags::RunOnStartup);
+                if (Status.Period > 0)
                     AllFinished = false;
-                }
+                Entry.Info = Status;
             }
         }
-    }
+    }*/
 
     uint32_t LoopCounter = 0;
     ESP_LOGI("MAIN", "Entering Loop");
@@ -137,17 +134,10 @@ int main()
         for (int32_t Index = Objects.Registered - 1; Index >= 0; Index--)
         {
             RegisterEntry &Entry = Objects.Object[Index];
-
-            if (Entry.Info.Flags == Flags::Inactive)
-                continue;
-
-            if (Entry.Info.Flags == Flags::RunOnce || ((Entry.Info.RunTiming > 0) && (LoopCounter % Entry.Info.RunTiming == 0)))
+            if (Entry.Info.Period > 0 && (LoopCounter + Entry.Info.Phase) % Entry.Info.Period == 0)
             {
-                bool Finished = Entry.Object->Run();
-
-                // Only auto-reset the RunOnce trigger bit
-                if (Finished && Entry.Info.Flags == Flags::RunOnce)
-                    Entry.Info.Flags -= Flags::RunOnce;
+                RunInfo Status = Entry.Object->Run(Flags::RunLoop | Flags::RunOnce);
+                Entry.Info = Status;
             }
         }
 
@@ -165,6 +155,8 @@ extern "C"
 #endif
 /*TODO:
 KEY FEATURES:
+-- Make a lighter bytearray for data transfer/storage?
+-- Functions with less headers?
 Saving
 OLED
 LED strip

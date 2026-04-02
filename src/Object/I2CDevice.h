@@ -7,7 +7,7 @@ public:
 
     // Updated to use Reference
     void Setup(const Reference &Index); 
-    I2CDeviceClass(const Reference &ID, ObjectInfo Info = {Flags::None, 1});
+    I2CDeviceClass(const Reference &ID, FlagClass Flags = Flags::RunLoop, RunInfo Info = {1,0});
     bool Run();
 
     bool Connect();
@@ -27,7 +27,7 @@ public:
     };
 };
 
-I2CDeviceClass::I2CDeviceClass(const Reference &ID, ObjectInfo Info) : BaseClass(&Table, ID, Info)
+I2CDeviceClass::I2CDeviceClass(const Reference &ID, FlagClass Flags, RunInfo Info) : BaseClass(&Table, ID, Flags, Info)
 {
     Type = ObjectTypes::I2C;
     Name = "I2C Device";

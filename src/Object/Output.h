@@ -4,7 +4,7 @@ public:
     Pin PWMPin = INVALID_PIN;
     PortNumber CurrentPort = -1;
 
-    OutputClass(const Reference &ID, ObjectInfo Info = {Flags::None, 1});
+    OutputClass(const Reference &ID, FlagClass Flags = Flags::RunLoop, RunInfo Info = {1,0});
     ~OutputClass();
 
     void Setup(const Reference &Index);
@@ -27,7 +27,7 @@ public:
         .Run = OutputClass::RunBridge};
 };
 
-OutputClass::OutputClass(const Reference &ID, ObjectInfo Info) : BaseClass(&Table, ID, Info)
+OutputClass::OutputClass(const Reference &ID, FlagClass Flags, RunInfo Info) : BaseClass(&Table, ID, Flags, Info)
 {
     Type = ObjectTypes::Output;
     Name = "Output";
