@@ -1,4 +1,4 @@
-bool ExecuteCompare(ByteArray &Values, Reference Index, Operations Op)
+bool ExecuteCompare(ValueTree &Values, Reference Index, Operations Op)
 {
     // 1. Locate the operation base
     SearchResult Base = Values.Find(Index);

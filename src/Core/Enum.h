@@ -104,9 +104,10 @@ enum class ObjectTypes : uint8_t
 enum class Functions : uint8_t
 {
     None = 0,
+    Report,
     CreateObject, // Create new
     DeleteObject, // Delete object
-    LoadObject,   // Create from ByteArray
+    LoadObject,   // Create from ValueTree
     SaveObject,   // Save to file
     SaveAll,
     ReadObject, // Send to app
@@ -120,21 +121,21 @@ enum class Functions : uint8_t
     ReadFile
 };
 
-void Run(const ByteArray &Input); // Switcher
-void CreateObject(const ByteArray &Input);
-void DeleteObject(const ByteArray &Input);
-void LoadObject(const ByteArray &Input);
-void SaveObject(const ByteArray &Input);
-void SaveAll(const ByteArray &Input);
-void ReadObject(const ByteArray &Input);
-void Refresh(const ByteArray &Input);
-void ReadValue(const ByteArray &Input);
-void WriteValue(const ByteArray &Input);
-void ReadName(const ByteArray &Input);
-void WriteName(const ByteArray &Input);
-void ReadInfo(const ByteArray &Input);
-void SetInfo(const ByteArray &Input);
-// void ReadFile(ByteArray &Input);
+void Run(const FlexArray &Input); // Switcher
+void CreateObject(const FlexArray &Input);
+void DeleteObject(const FlexArray &Input);
+void LoadObject(const FlexArray &Input);
+void SaveObject(const FlexArray &Input);
+void SaveAll(const FlexArray &Input);
+void ReadObject(const FlexArray &Input);
+void Refresh(const FlexArray &Input);
+void ReadValue(const FlexArray &Input);
+void WriteValue(const FlexArray &Input);
+void ReadName(const FlexArray &Input);
+void WriteName(const FlexArray &Input);
+void ReadInfo(const FlexArray &Input);
+void SetInfo(const FlexArray &Input);
+// void ReadFile(ValueTree &Input);
 
 template <class C>
 Types GetType()

@@ -76,7 +76,7 @@ public:
     uint8_t RunPeriod = 0;
     uint8_t RunPhase = 0;
     Text Name = "";
-    ByteArray Values;
+    ValueTree Values;
 
     // Constructor now takes the new bit-tagged Reference
     BaseClass(const VTable *Table, const Reference &NewID, FlagClass Flags = Flags::None, RunInfo Info = {0, 0})
@@ -124,5 +124,5 @@ public:
     SearchResult Find(const Reference &Location, bool StopAtReferences = false) const;
     void ValueSetupDirect(const void *Data, size_t Size, Types Type, const Bookmark &Point);
     void ValueSetup(const void *Data, size_t Size, Types Type, const Reference &Location);
-    ByteArray Compress() const;
+    FlexArray Compress() const;
 };

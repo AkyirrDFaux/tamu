@@ -1,4 +1,4 @@
-bool Delay(ByteArray &Values, Reference Index)
+bool Delay(ValueTree &Values, Reference Index)
 {
     Reference InputPath = Index.Append(1).Append(0);
     Reference StatePath = Index.Append(2).Append(0); // Persistent state
@@ -33,7 +33,7 @@ bool Delay(ByteArray &Values, Reference Index)
     return false;
 }
 
-bool AddDelay(ByteArray &Values, Reference Index)
+bool AddDelay(ValueTree &Values, Reference Index)
 {
     Reference InputPath = Index.Append(1).Append(0);
     Reference OutPath   = Index.Append(0);

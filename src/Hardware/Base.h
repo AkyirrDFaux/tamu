@@ -53,13 +53,13 @@ namespace HW
     int32_t GetFreeRAM();
 
     // Flash
-    //bool FlashSave(const ByteArray &Data);
+    //bool FlashSave(const ValueTree &Data);
     //ByteArray FlashLoad(IDClass ID);
 
     // USB
     void USB_Init();
-    void USB_Send(const ByteArray &Data);
-    ByteArray USB_Read();
+    void USB_Send(const FlexArray &Data);
+    FlexArray USB_Read();
     uint8_t CRC8(const uint8_t *Data, size_t Length); // Standard CRC-8 (Maxim/Dallas)
 
 #if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0

@@ -3,7 +3,8 @@ struct ObjectInfo;
 struct Reference;
 class IDClass;
 class IDList;
-class ByteArray;
+class FlexArray;
+class ValueTree;
 
 class PortTypeClass;
 class Texture2D;
@@ -12,4 +13,4 @@ class PortClass;
 class PortAttachClass;
 class DisplayTypeClass;
 
-bool RunOperation(ByteArray &Values, Reference Index);
+bool RunOperation(ValueTree &Values, Reference Index);

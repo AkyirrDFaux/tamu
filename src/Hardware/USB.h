@@ -29,92 +29,92 @@ namespace HW
         usb_serial_jtag_driver_install(&usb_config);
     }
 
-    void USB_Send(const ByteArray &Data)
+    void USB_Send(const FlexArray &Data)
     {
         if (Data.Length == 0 || Data.Array == nullptr)
             return;
 
         uint32_t offset = 0;
-        uint8_t packet[USB_PACKET_SIZE]; // Don't zero-init inside the loop
+        uint8_t packet[USB_PACKET_SIZE];
 
         while (offset < Data.Length)
         {
+            // Calculate payload size for this packet
             uint8_t to_copy = (uint8_t)((Data.Length - offset > MAX_USB_DATA) ? MAX_USB_DATA : Data.Length - offset);
 
-            packet[0] = 0xFA;
-            packet[2] = to_copy;
+            // --- PACKET CONSTRUCION ---
+            packet[0] = 0xFA;    // Header
+            packet[2] = to_copy; // Payload Length
             memcpy(packet + 3, Data.Array + offset, to_copy);
-            packet[3 + to_copy] = 0xBF;
+            packet[3 + to_copy] = 0xBF; // Footer
+
+            // CRC8 covers the length byte and the payload
             packet[1] = CRC8(packet + 2, to_copy + 1);
 
-            // Faster: No blocking wait unless necessary.
-            // Monitor return value to ensure all bytes actually went out.
+            // Non-blocking write with 10ms timeout
             int sent = usb_serial_jtag_write_bytes(packet, USB_PACKET_SIZE, pdMS_TO_TICKS(10));
 
             if (sent <= 0)
-                break; // USB Disconnected or Buffer Full
+                break; // Device disconnected or buffer full
 
             offset += to_copy;
         }
     }
 
-    ByteArray USB_Read()
+    FlexArray USB_Read()
     {
         static uint8_t rx_buffer[512];
         static uint32_t rx_ptr = 0;
 
-        // 1. Pull new data from hardware
+        // 1. Pull new data from hardware into the static buffer
         int len = usb_serial_jtag_read_bytes(rx_buffer + rx_ptr, (sizeof(rx_buffer) - rx_ptr), 0);
         if (len > 0)
             rx_ptr += len;
 
         uint32_t cursor = 0;
 
-        // 2. Scan through the buffer using the cursor
+        // 2. Scan through the buffer for a full USB packet
         while (cursor + USB_PACKET_SIZE <= rx_ptr)
         {
-            // Hunt for header
+            // Hunt for Start-of-Frame (0xFA)
             if (rx_buffer[cursor] != 0xFA)
             {
                 cursor++;
                 continue;
             }
 
-            // Potential Header found at cursor[0]
             uint8_t receivedCrc = rx_buffer[cursor + 1];
             uint8_t dataLen = rx_buffer[cursor + 2];
 
-            // Validate structure (Length and Footer)
+            // Validate structure (Length sanity and Footer 0xBF)
             if (dataLen <= MAX_USB_DATA && rx_buffer[cursor + 3 + dataLen] == 0xBF)
             {
-                // Verify CRC8
+                // Verify checksum
                 if (CRC8(rx_buffer + cursor + 2, dataLen + 1) == receivedCrc)
                 {
+
                     // --- VALID PACKET FOUND ---
-                    ByteArray Data;
-                    Data.Length = dataLen;
-                    Data.Array = new char[dataLen];
-                    memcpy(Data.Array, rx_buffer + cursor + 3, dataLen);
+                    // Create the FlexArray using the (char*, size) constructor
+                    FlexArray result((const char *)(rx_buffer + cursor + 3), dataLen);
 
-                    // Calculate how much to "eat"
-                    // We consume the 64-byte frame plus all the junk before it
+                    // Consume the 64-byte frame plus any junk bytes found before it
                     uint32_t total_consumed = cursor + USB_PACKET_SIZE;
-
                     rx_ptr -= total_consumed;
+
                     if (rx_ptr > 0)
                     {
                         memmove(rx_buffer, rx_buffer + total_consumed, rx_ptr);
                     }
-                    // Reset cursor for next call (or recursion, but we return here)
-                    return Data;
+
+                    return result;
                 }
             }
 
-            // Not a real packet (False positive 0xFA). Skip this byte and keep hunting.
+            // False positive or corrupt packet: skip the header byte and keep hunting
             cursor++;
         }
 
-        // 3. Maintenance: If we scanned past junk, slide the buffer once to free up space
+        // 3. Maintenance: Slide buffer to remove scanned junk bytes
         if (cursor > 0)
         {
             rx_ptr -= cursor;
@@ -124,7 +124,7 @@ namespace HW
             }
         }
 
-        return ByteArray();
+        return FlexArray(); // Returns empty (Array=nullptr, Length=0)
     }
 
 #elif defined BOARD_Valu_v2_0

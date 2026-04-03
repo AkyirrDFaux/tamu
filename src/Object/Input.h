@@ -35,7 +35,7 @@ InputClass::InputClass(const Reference &ID, FlagClass Flags, RunInfo Info) : Bas
     Type = ObjectTypes::Input;
     Name = "Input";
 
-    // Initialize using direct ByteArray access
+    // Initialize using direct ValueTree access
     Inputs initialMode = Inputs::Undefined;
     Values.Set(&initialMode, sizeof(Inputs), Types::Input, Reference({0}));
 
@@ -53,7 +53,7 @@ InputClass::~InputClass()
 
 bool InputClass::Connect()
 {
-    // Search directly in the local ByteArray
+    // Search directly in the local ValueTree
     SearchResult res = Values.Find(Reference({0, 0}), true);
 
     if (res.Length < sizeof(PortNumber) || !res.Value)

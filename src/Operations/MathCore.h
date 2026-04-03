@@ -25,7 +25,7 @@ Number GetAsNumber(const Bookmark &Location)
     }
 }
 
-void StoreScalar(ByteArray &Values, Reference Path, Number Result, Types T)
+void StoreScalar(ValueTree &Values, Reference Path, Number Result, Types T)
 {
     size_t sz = sizeof(Number);
     if (T == Types::Integer)

@@ -9,8 +9,8 @@ public:
     {
         if (Buffer && Len > 0) 
         {
-            Length = Len+1;
-            Data = new char[Length + 1]; // +1 for safety/null termination
+            Length = Len+1; // +1 for safety/null termination
+            Data = new char[Length]; 
             memcpy(Data, Buffer, Length);
             Data[Length] = '\0'; 
         }

@@ -13,7 +13,7 @@ struct Header
 // Layer 1: The Handle (The "Where")
 struct Bookmark
 {
-    ByteArray *Map = nullptr;
+    ValueTree *Map = nullptr;
     uint16_t HeaderIdx = 0;
 };
 
@@ -26,7 +26,7 @@ struct SearchResult
     Bookmark Location;   // Attached handle for restarting/storing
 };
 
-class ByteArray
+class ValueTree
 {
 public:
     Header *HeaderArray = nullptr;
@@ -35,14 +35,14 @@ public:
     uint16_t Length = 0;
     uint16_t Allocated = 0;
 
-    ByteArray() {};
-    ByteArray(const ByteArray &Copied);
-    ~ByteArray();
-    ByteArray(const void *data, uint16_t size, Types Type);
+    ValueTree() {};
+    ValueTree(const ValueTree &Copied);
+    ~ValueTree();
+    ValueTree(const void *data, uint16_t size, Types Type);
 
-    void operator=(const ByteArray &Other);
-    ByteArray &operator<<(const ByteArray &Data);
-    ByteArray &operator+=(const ByteArray &Data);
+    void operator=(const ValueTree &Other);
+    ValueTree &operator<<(const ValueTree &Data);
+    ValueTree &operator+=(const ValueTree &Data);
 
     // --- Core Navigation (The New Standard) ---
     // Use Find to get the initial SearchResult
@@ -64,14 +64,14 @@ public:
     void SetDirect(const void *Data, size_t Size, Types Type, const Bookmark &Point);
     void Set(const void *Data, size_t Size, Types Type, const Reference &Location);
 
-    ByteArray Copy(const Reference &Location) const;
+    ValueTree Copy(const Reference &Location) const;
 
     // --- Protocol Logic ---
-    ByteArray CreateMessage() const;
-    ByteArray ExtractMessage();
+    FlexArray Serialize() const;
+    ValueTree Deserialize(const FlexArray& in, uint16_t startIndex);
 };
 
-ByteArray::ByteArray(const ByteArray &Copied)
+ValueTree::ValueTree(const ValueTree &Copied)
 {
     HeaderAllocated = Copied.HeaderAllocated;
     HeaderArray = new Header[HeaderAllocated];
@@ -82,7 +82,7 @@ ByteArray::ByteArray(const ByteArray &Copied)
     memcpy(Array, Copied.Array, Length);
 };
 
-ByteArray::~ByteArray()
+ValueTree::~ValueTree()
 {
     if (HeaderArray != nullptr)
         delete[] HeaderArray;
@@ -90,7 +90,7 @@ ByteArray::~ByteArray()
         delete[] Array;
 };
 
-ByteArray::ByteArray(const void *data, uint16_t size, Types Type)
+ValueTree::ValueTree(const void *data, uint16_t size, Types Type)
 {
     Length = size;
     Allocated = Align(Length);
@@ -131,7 +131,7 @@ ByteArray::ByteArray(const void *data, uint16_t size, Types Type)
     }
 }
 
-void ByteArray::operator=(const ByteArray &Other)
+void ValueTree::operator=(const ValueTree &Other)
 {
     if (this == &Other)
         return;
@@ -154,7 +154,7 @@ void ByteArray::operator=(const ByteArray &Other)
     Length = Other.Length;
 };
 
-ByteArray &ByteArray::operator+=(const ByteArray &Data)
+ValueTree &ValueTree::operator+=(const ValueTree &Data)
 {
     if (Data.Length == 0 || Data.Array == nullptr)
         return *this;
@@ -196,7 +196,7 @@ ByteArray &ByteArray::operator+=(const ByteArray &Data)
     return *this;
 }
 
-ByteArray &ByteArray::operator<<(const ByteArray &Data)
+ValueTree &ValueTree::operator<<(const ValueTree &Data)
 {
     if (Data.HeaderAllocated == 0 || Data.Array == nullptr)
         return *this;
@@ -248,7 +248,7 @@ ByteArray &ByteArray::operator<<(const ByteArray &Data)
     return *this;
 }
 
-void ByteArray::UpdateSkip()
+void ValueTree::UpdateSkip()
 {
     if (HeaderAllocated == 0 || !HeaderArray)
         return;
@@ -275,7 +275,7 @@ void ByteArray::UpdateSkip()
     }
 }
 
-void ByteArray::Delete(const Reference &Location)
+void ValueTree::Delete(const Reference &Location)
 {
     SearchResult Found = Find(Location, true);
     if (Found.Length == 0)
@@ -312,7 +312,7 @@ void ByteArray::Delete(const Reference &Location)
     UpdateSkip();
 }
 
-void ByteArray::ResizeData(uint16_t HIdx, uint16_t NewSize)
+void ValueTree::ResizeData(uint16_t HIdx, uint16_t NewSize)
 {
     // 1. Calculate the Aligned Difference
     // Internal buffer ALWAYS keeps data on 4-byte boundaries
@@ -364,7 +364,7 @@ void ByteArray::ResizeData(uint16_t HIdx, uint16_t NewSize)
     HeaderArray[HIdx].Length = NewSize;
 }
 
-void ByteArray::InsertAtIndex(uint16_t Idx, Types Type, uint8_t Depth, uint16_t Size)
+void ValueTree::InsertAtIndex(uint16_t Idx, Types Type, uint8_t Depth, uint16_t Size)
 {
     uint16_t DataPointer = (Idx < HeaderAllocated) ? HeaderArray[Idx].Pointer : Length;
 
@@ -394,7 +394,7 @@ void ByteArray::InsertAtIndex(uint16_t Idx, Types Type, uint8_t Depth, uint16_t 
         ResizeData(Idx, Size);
 }
 
-uint16_t ByteArray::Insert(const Reference &Location, int16_t NewDataSize)
+uint16_t ValueTree::Insert(const Reference &Location, int16_t NewDataSize)
 {
     uint16_t CurrentIdx = 0;
     uint8_t totalDepth = Location.PathLen();
@@ -448,14 +448,14 @@ uint16_t ByteArray::Insert(const Reference &Location, int16_t NewDataSize)
     return CurrentIdx;
 }
 
-ByteArray ByteArray::Copy(const Reference &Location) const
+ValueTree ValueTree::Copy(const Reference &Location) const
 {
     SearchResult res = Find(Location);
     if (res.Length == 0)
-        return ByteArray();
+        return ValueTree();
 
     const Header &h = res.Location.Map->HeaderArray[res.Location.HeaderIdx];
-    ByteArray NewArray;
+    ValueTree NewArray;
     NewArray.HeaderArray = new Header[1];
     NewArray.HeaderAllocated = 1;
     NewArray.HeaderArray[0] = {h.Type, 0, h.Length, 0, 0};
@@ -470,106 +470,93 @@ ByteArray ByteArray::Copy(const Reference &Location) const
     return NewArray;
 }
 
-ByteArray ByteArray::CreateMessage() const
-{
-    // Calculates PACKED size for the wire (no padding)
+FlexArray ValueTree::Serialize() const {
+    // 1. Calculate Packed Wire Sizes
     uint16_t packedDataSize = 0;
-    for (uint16_t i = 0; i < HeaderAllocated; i++)
+    for (uint16_t i = 0; i < HeaderAllocated; i++) {
         packedDataSize += HeaderArray[i].Length;
+    }
 
     uint16_t headerAreaSize = HeaderAllocated * 4;
     uint16_t totalSize = 4 + headerAreaSize + packedDataSize;
 
-    ByteArray msg;
-    msg.Array = new char[totalSize];
-    msg.Length = totalSize;
-    msg.Allocated = totalSize;
+    // 2. Create and Allocate the FlexArray
+    FlexArray result(totalSize);
+    result.Length = totalSize;
 
-    // 1. Prefix
-    memcpy(msg.Array, &totalSize, 2);
-    memcpy(msg.Array + 2, &HeaderAllocated, 2);
+    // 3. Write Metadata (Total Size & Header Count)
+    memcpy(result.Array, &totalSize, 2);
+    memcpy(result.Array + 2, &HeaderAllocated, 2);
 
-    char *hPtr = msg.Array + 4;
-    char *dPtr = msg.Array + 4 + headerAreaSize;
+    char *hPtr = result.Array + 4;
+    char *dPtr = result.Array + 4 + headerAreaSize;
 
-    // 2. Pack
-    for (uint16_t i = 0; i < HeaderAllocated; i++)
-    {
+    // 4. Pack Headers and Data
+    for (uint16_t i = 0; i < HeaderAllocated; i++) {
         hPtr[0] = (uint8_t)HeaderArray[i].Type;
         hPtr[1] = HeaderArray[i].Depth;
         memcpy(hPtr + 2, &HeaderArray[i].Length, 2);
         hPtr += 4;
 
-        if (HeaderArray[i].Length > 0)
-        {
-            // Pull from our PADDED internal buffer
+        if (HeaderArray[i].Length > 0) {
+            // Copy from internal padded buffer to wire packed buffer
             memcpy(dPtr, Array + HeaderArray[i].Pointer, HeaderArray[i].Length);
             dPtr += HeaderArray[i].Length;
         }
     }
-    return msg;
+
+    return result; // NRVO (Named Return Value Optimization) makes this efficient
 }
 
-ByteArray ByteArray::ExtractMessage()
-{
-    if (Length < 4)
-        return ByteArray();
+ValueTree ValueTree::Deserialize(const FlexArray& in, uint16_t startIndex) {
+    // 1. Basic Bounds Check
+    if (startIndex + 4 > in.Length) return ValueTree();
 
-    uint16_t totalWireSize = *(uint16_t *)Array;
-    uint16_t count = *(uint16_t *)(Array + 2);
+    // 2. Read Metadata from the specified start index
+    char* src = in.Array + startIndex;
+    uint16_t totalWireSize = *(uint16_t*)src;
+    uint16_t count = *(uint16_t*)(src + 2);
 
-    if (Length < totalWireSize)
-        return ByteArray();
+    // 3. Verify total message is within the FlexArray bounds
+    if (startIndex + totalWireSize > in.Length) return ValueTree();
 
-    ByteArray res;
+    ValueTree res;
     res.HeaderAllocated = count;
     res.HeaderArray = new Header[count];
 
-    char *hRead = Array + 4;
-    char *dRead = Array + 4 + (count * 4);
+    char *hRead = src + 4;
+    char *dRead = src + 4 + (count * 4);
     uint16_t internalPtr = 0;
 
-    // Convert PACKED wire data to PADDED internal data
-    for (uint16_t i = 0; i < count; i++)
-    {
+    // 4. Map Packed Wire Headers to Padded Internal Headers
+    for (uint16_t i = 0; i < count; i++) {
         res.HeaderArray[i].Type = (Types)hRead[0];
         res.HeaderArray[i].Depth = hRead[1];
         memcpy(&res.HeaderArray[i].Length, hRead + 2, 2);
         hRead += 4;
 
         res.HeaderArray[i].Pointer = internalPtr;
-        // The core fix: internal buffer is PADDED
-        internalPtr += Align(res.HeaderArray[i].Length);
+        internalPtr += Align(res.HeaderArray[i].Length); // Re-apply padding for MCU
     }
 
+    // 5. Allocate the internal padded buffer
     res.Length = internalPtr;
     res.Allocated = Align(res.Length);
-    res.Array = new char[res.Allocated];
+    res.Array = (char*)malloc(res.Allocated);
 
-    for (uint16_t i = 0; i < count; i++)
-    {
-        if (res.HeaderArray[i].Length > 0)
-        {
+    // 6. Copy Data from packed wire format to padded internal format
+    for (uint16_t i = 0; i < count; i++) {
+        if (res.HeaderArray[i].Length > 0) {
             memcpy(res.Array + res.HeaderArray[i].Pointer, dRead, res.HeaderArray[i].Length);
             dRead += res.HeaderArray[i].Length;
         }
     }
+
     res.UpdateSkip();
-
-    // Consume bytes from input stream
-    uint16_t remaining = Length - totalWireSize;
-    if (remaining > 0)
-    {
-        memmove(Array, Array + totalWireSize, remaining);
-        Length = remaining;
-    }
-    else
-        Length = 0;
-
     return res;
 }
 
-void ByteArray::SetDirect(const void *Data, size_t Size, Types Type, const Bookmark &Point)
+void ValueTree::SetDirect(const void *Data, size_t Size, Types Type, const Bookmark &Point)
 {
     if (!Point.Map)
         return;
@@ -587,7 +574,7 @@ void ByteArray::SetDirect(const void *Data, size_t Size, Types Type, const Bookm
     }
 }
 
-void ByteArray::Set(const void *Data, size_t Size, Types Type, const Reference &Location)
+void ValueTree::Set(const void *Data, size_t Size, Types Type, const Reference &Location)
 {
     SearchResult Found = Find(Location, true);
 
@@ -608,7 +595,7 @@ void ByteArray::Set(const void *Data, size_t Size, Types Type, const Reference &
     SetDirect(Data, Size, Type, {this, HIdx});
 }
 
-SearchResult ByteArray::Next(const Bookmark &Parent) const
+SearchResult ValueTree::Next(const Bookmark &Parent) const
 {
     if (!Parent.Map || Parent.HeaderIdx >= Parent.Map->HeaderAllocated)
         return {};
@@ -633,7 +620,7 @@ SearchResult ByteArray::Next(const Bookmark &Parent) const
         {Parent.Map, nextIdx}};
 }
 
-SearchResult ByteArray::Child(const Bookmark &Parent) const
+SearchResult ValueTree::Child(const Bookmark &Parent) const
 {
     if (!Parent.Map)
         return {};

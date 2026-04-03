@@ -32,7 +32,7 @@ OutputClass::OutputClass(const Reference &ID, FlagClass Flags, RunInfo Info) : B
     Type = ObjectTypes::Output;
     Name = "Output";
 
-    // Initialize the structure using direct ByteArray Set
+    // Initialize the structure using direct ValueTree Set
     Outputs initialMode = Outputs::Undefined;
     Values.Set(&initialMode, sizeof(Outputs), Types::Output, Reference({0}));
 

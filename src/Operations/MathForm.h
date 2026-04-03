@@ -1,4 +1,4 @@
-bool ExecuteSine(ByteArray &Values, Reference Index)
+bool ExecuteSine(ValueTree &Values, Reference Index)
 {
     // 1. Locate the Inputs folder {1, 0}
     SearchResult it = Values.Find(Index.Append(1).Append(0), true);
@@ -26,7 +26,7 @@ bool ExecuteSine(ByteArray &Values, Reference Index)
     return true;
 }
 
-bool ExecuteClamp(ByteArray &Values, Reference Index)
+bool ExecuteClamp(ValueTree &Values, Reference Index)
 {
     SearchResult it = Values.Find(Index.Append(1).Append(0), true);
     if (!it.Value) return true;
@@ -56,7 +56,7 @@ bool ExecuteClamp(ByteArray &Values, Reference Index)
     return true;
 }
 
-bool ExecuteLerp(ByteArray &Values, Reference Index)
+bool ExecuteLerp(ValueTree &Values, Reference Index)
 {
     SearchResult it = Values.Find(Index.Append(1).Append(0), true);
     if (!it.Value) return true;

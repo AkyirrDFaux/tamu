@@ -1,4 +1,4 @@
-bool ExecuteVector3DMulti(ByteArray &Values, SearchResult it, Reference Path, Operations Op)
+bool ExecuteVector3DMulti(ValueTree &Values, SearchResult it, Reference Path, Operations Op)
 {
     Vector3D acc = *(Vector3D *)it.Location.Map->This(it.Location).Value;
 
@@ -34,7 +34,7 @@ bool ExecuteVector3DMulti(ByteArray &Values, SearchResult it, Reference Path, Op
     return true;
 }
 
-bool ExecuteVector2DMulti(ByteArray &Values, SearchResult it, Reference Path, Operations Op)
+bool ExecuteVector2DMulti(ValueTree &Values, SearchResult it, Reference Path, Operations Op)
 {
     Vector2D acc = *(Vector2D *)it.Location.Map->This(it.Location).Value;
 
@@ -70,7 +70,7 @@ bool ExecuteVector2DMulti(ByteArray &Values, SearchResult it, Reference Path, Op
     return true;
 }
 
-bool ExecuteMathMulti(ByteArray &Values, Reference Index, Operations Op)
+bool ExecuteMathMulti(ValueTree &Values, Reference Index, Operations Op)
 {
     Reference OutPath = Index.Append(0);
 

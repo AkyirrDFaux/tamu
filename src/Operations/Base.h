@@ -1,4 +1,4 @@
-bool Equal(ByteArray &Values, Reference Index)
+bool Equal(ValueTree &Values, Reference Index)
 {
     // Source: {1, 0}, Destination: {0}
     SearchResult Source = Values.Find(Index.Append(1).Append(0));
@@ -11,7 +11,7 @@ bool Equal(ByteArray &Values, Reference Index)
     return false;
 }
 
-bool Combine(ByteArray &Values, Reference Index)
+bool Combine(ValueTree &Values, Reference Index)
 {
     Reference OutPath = Index.Append(0);
     Reference InPath = Index.Append(1);
@@ -77,7 +77,7 @@ bool Combine(ByteArray &Values, Reference Index)
     return false;
 }
 
-bool Run(Operations Operation, ByteArray &Values, BaseClass *Object, Reference Index)
+bool Run(Operations Operation, ValueTree &Values, BaseClass *Object, Reference Index)
 {
     bool Done = true;
 

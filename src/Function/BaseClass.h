@@ -80,7 +80,7 @@ BaseClass *CreateObject(Reference ID, ObjectTypes Type)
     }
 }
 
-SearchResult ByteArray::This(const Bookmark &Parent) const
+SearchResult ValueTree::This(const Bookmark &Parent) const
 {
     if (!Parent.Map || Parent.HeaderIdx >= Parent.Map->HeaderAllocated)
         return {};
@@ -113,10 +113,10 @@ SearchResult ByteArray::This(const Bookmark &Parent) const
         Parent};
 }
 
-SearchResult ByteArray::Find(const Reference &Location, bool StopAtReferences) const
+SearchResult ValueTree::Find(const Reference &Location, bool StopAtReferences) const
 {
     // 1. Setup the mutable search state
-    const ByteArray *CurrentMap = this;
+    const ValueTree *CurrentMap = this;
     Reference CurrentPath = Location;
     uint8_t JumpCount = 0;
     const uint8_t MaxJumps = 10; 
@@ -175,7 +175,7 @@ SearchResult ByteArray::Find(const Reference &Location, bool StopAtReferences) c
                             CurrentMap->Array + header.Pointer, 
                             header.Type, 
                             header.Length, 
-                            {(ByteArray*)CurrentMap, Pointer} 
+                            {(ValueTree*)CurrentMap, Pointer} 
                         };
                     }
 
@@ -188,12 +188,12 @@ SearchResult ByteArray::Find(const Reference &Location, bool StopAtReferences) c
                         if (header.Type == Types::Text || header.Type == Types::Colour)
                         {
                             if (subIdx >= header.Length) return {};
-                            return { dataPtr + subIdx, Types::Byte, 1, {(ByteArray*)CurrentMap, Pointer} };
+                            return { dataPtr + subIdx, Types::Byte, 1, {(ValueTree*)CurrentMap, Pointer} };
                         }
                         else // Numbers (Vectors/Coords)
                         {
                             if ((subIdx + 1) * sizeof(Number) > header.Length) return {};
-                            return { dataPtr + (subIdx * sizeof(Number)), Types::Number, (uint16_t)sizeof(Number), {(ByteArray*)CurrentMap, Pointer} };
+                            return { dataPtr + (subIdx * sizeof(Number)), Types::Number, (uint16_t)sizeof(Number), {(ValueTree*)CurrentMap, Pointer} };
                         }
                     }
 

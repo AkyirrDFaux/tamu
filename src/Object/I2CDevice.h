@@ -149,7 +149,7 @@ bool I2CDeviceClass::Run()
     int16_t RawBuffer[6];
     if (!I2CDriver->Read(Addr, 0x22, (uint8_t *)RawBuffer, 12)) return true;
 
-    // Get direct pointers to the Vector3D data in the ByteArray
+    // Get direct pointers to the Vector3D data in the ValueTree
     SearchResult accVRes = Values.Find(Reference({1, 0}));
     SearchResult rotVRes = Values.Find(Reference({1, 1}));
 
@@ -166,7 +166,7 @@ bool I2CDeviceClass::Run()
     Number RotInvW = One / (One + RotFilter);
     Number RotW    = RotFilter * RotInvW;
 
-    // Apply Filter directly to ByteArray memory (Zero-Copy)
+    // Apply Filter directly to ValueTree memory (Zero-Copy)
     Rot->X = (Number(RawBuffer[0]) / 939.0f) * RotInvW + Rot->X * RotW;
     Rot->Y = (Number(RawBuffer[1]) / 939.0f) * RotInvW + Rot->Y * RotW;
     Rot->Z = (Number(RawBuffer[2]) / 939.0f) * RotInvW + Rot->Z * RotW;

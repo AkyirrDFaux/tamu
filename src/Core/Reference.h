@@ -1,4 +1,4 @@
-// 1. The Local Navigator (Used by ByteArray)
+// 1. The Local Navigator (Used by ValueTree)
 #define MAX_REF_LENGTH 12
 struct Reference
 {

@@ -1,15 +1,13 @@
-void Run(const ByteArray &Input)
+void Run(const FlexArray &Input)
 {
-    SearchResult funcRes = Input.Find({0});
-
-    if (funcRes.Length == 0 || funcRes.Type != Types::Function)
+    if (Input.Length < 1)
     {
-        Status err = Status::InvalidType;
-        Chirp.Send(ByteArray(&err, sizeof(Status), Types::Status) << Input);
+        char Response[2] = {(char)Functions::Report, (char)Status::InvalidType};
+        Chirp.Send(FlexArray(Response, sizeof(Response)) += Input);
         return;
     }
 
-    Functions Function = *(Functions *)funcRes.Value;
+    Functions Function = (Functions)Input.Array[0];
 
     switch (Function)
     {
@@ -54,139 +52,143 @@ void Run(const ByteArray &Input)
         break;
 
     default:
-        Status err = Status::InvalidFunction;
-        Chirp.Send(ByteArray(&err, sizeof(Status), Types::Status) << Input);
+        char Response[2] = {(char)Functions::Report, (char)Status::InvalidFunction};
+        Chirp.Send(FlexArray(Response, sizeof(Response)) += Input);
         break;
     }
 }
 
-void CreateObject(const ByteArray &Input)
+void CreateObject(const FlexArray &Input)
 {
-    SearchResult idRes   = Input.Find({1}, true);
-    SearchResult typeRes = Input.Find({2});
-
-    if (idRes.Length == 0 || typeRes.Length == 0 || 
-        idRes.Type != Types::Reference || typeRes.Type != Types::ObjectType)
+    // 1. Validation: Need at least Function(1) + Ref(3) + ObjectType(1) = 5 bytes
+    if (Input.Length < 5)
     {
-        Status err = Status::InvalidType;
-        Chirp.Send(ByteArray(&err, sizeof(Status), Types::Status) << Input);
+        char Response[2] = {(char)Functions::Report, (char)Status::InvalidType};
+        Chirp.Send(FlexArray(Response, 2) += Input);
         return;
     }
 
-    Reference ID = *(Reference*)idRes.Value;
-    ObjectTypes Type = *(ObjectTypes*)typeRes.Value;
+    // 2. Extract ID (Offset 1)
+    // We cast the pointer to get the ID.
+    Reference ID = Reference::Global(Input.Array[1], Input.Array[2], Input.Array[3]);
+    ObjectTypes Type = (ObjectTypes)Input.Array[4];
 
+    // 4. Check Registry for Duplicate ID
     if (Objects.At(ID) != nullptr)
     {
-        Status err = Status::InvalidID;
-        Chirp.Send(ByteArray(&err, sizeof(Status), Types::Status) << Input);
+        char Response[2] = {(char)Functions::Report, (char)Status::InvalidID};
+        Chirp.Send(FlexArray(Response, 2) += Input);
         return;
     }
 
+    // 5. Create the Object
     BaseClass *Object = CreateObject(ID, Type);
 
     if (Object == nullptr)
     {
-        Status err = Status::NoValue;
-        Chirp.Send(ByteArray(&err, sizeof(Status), Types::Status) << Input);
+        char Response[2] = {(char)Functions::Report, (char)Status::NoValue};
+        Chirp.Send(FlexArray(Response, 2) += Input);
     }
     else
     {
-        // Define local variables for the response
-        Functions funcCode = Functions::CreateObject;
-        ObjectTypes objType = Object->Type;
+        // 6. Success Response: [Function][Type][ID...]
+        char SuccessHeader[2] = {(char)Functions::CreateObject, (char)Object->Type};
+        FlexArray Response(SuccessHeader, 2);
 
-        ByteArray Response(&funcCode, sizeof(Functions), Types::Function);
-        Response << ByteArray(&objType, sizeof(ObjectTypes), Types::ObjectType);
-        Response << ByteArray(&ID, sizeof(Reference), Types::Reference);
-        
+        // Append the variable-length ID
+        Response += FlexArray((char *)ID.Data, 3);
+
         Chirp.Send(Response);
     }
 }
 
-void DeleteObject(const ByteArray &Input)
+void DeleteObject(const FlexArray &Input)
 {
-    // 1. Resolve Reference {1}
-    SearchResult idRes = Input.Find({1}, true);
-
-    // 2. Validate existence and type
-    if (idRes.Length == 0 || idRes.Type != Types::Reference)
+    // 1. Validation: We need 1 byte for Function + 3 bytes for Reference
+    if (Input.Length < 4)
     {
-        Status err = Status::InvalidType;
-        Chirp.Send(ByteArray(&err, sizeof(Status), Types::Status) << Input);
+        char Response[2] = {(char)Functions::Report, (char)Status::InvalidType};
+        // Echo back the short/broken packet for debugging
+        Chirp.Send(FlexArray(Response, 2) += Input);
         return;
     }
 
-    Reference ID = *(Reference*)idRes.Value;
+    // 2. Map the Reference directly from the buffer offset
+    // This is O(1) - essentially free CPU-wise
+    Reference ID = Reference::Global(Input.Array[1], Input.Array[2], Input.Array[3]);
+
+    // 3. Resolve from the registry
+    // Assuming your Registry 'Objects.At' is updated to take the 3-byte Reference
+    BaseClass *Object = Objects.At(ID);
+
+    // 4. Verify existence
+    if (Object == nullptr)
+    {
+        char Response[2] = {(char)Functions::Report, (char)Status::InvalidID};
+        Chirp.Send(FlexArray(Response, 2) += Input);
+        return;
+    }
+
+    // 5. Execute hardware/registry cleanup
+    Object->Destroy();
+
+    // 6. Notify Success
+    // Send back [DeleteObjectCode][Net][Group][Device]
+    char SuccessHeader[1] = {(char)Functions::DeleteObject};
+    FlexArray Success(SuccessHeader, 1);
+    Success += FlexArray((char *)ID.Data, 3);
+
+    Chirp.Send(Success);
+}
+
+void LoadObject(const FlexArray &Input)
+{
+    // Placeholder logic for app-side loading
+    // Status err = Status::InvalidFunction;
+    // Chirp.Send(ValueTree(&err, sizeof(Status), Types::Status));
+}
+
+void SaveObject(const FlexArray &Input)
+{
+    // 1. Validation: Need 1 byte for Function + 3 bytes for Reference
+    if (Input.Length < 4)
+    {
+        char Response[2] = {(char)Functions::Report, (char)Status::InvalidType};
+        Chirp.Send(FlexArray(Response, 2) += Input);
+        return;
+    }
+
+    // 2. Map the Reference directly (O(1) access)
+    Reference ID = Reference::Global(Input.Array[1], Input.Array[2], Input.Array[3]);
 
     // 3. Resolve the pointer from the registry
     BaseClass *Object = Objects.At(ID);
 
-    // 4. Verify the object exists
+    // 4. Verify existence
     if (Object == nullptr)
     {
-        Status err = Status::InvalidID;
-        Chirp.Send(ByteArray(&err, sizeof(Status), Types::Status) << Input);
+        char Response[2] = {(char)Functions::Report, (char)Status::InvalidID};
+        Chirp.Send(FlexArray(Response, 2) += Input);
         return;
     }
 
-    // 5. Check for Protected flags (if uncommented in the future)
-    /* if (Object->Flags == Flags::Auto) { ... } */
-
-    // 6. Execute destruction
-    // This handles hardware disconnection and registry removal
-    Object->Destroy();
-
-    // 7. Notify Success
-    Functions funcCode = Functions::DeleteObject;
-    Chirp.Send(ByteArray(&funcCode, sizeof(Functions), Types::Function) << ByteArray(&ID, sizeof(Reference), Types::Reference));
-}
-
-void LoadObject(const ByteArray &Input)
-{
-    // Placeholder logic for app-side loading
-    Status err = Status::InvalidFunction;
-    Chirp.Send(ByteArray(&err, sizeof(Status), Types::Status));
-}
-
-void SaveObject(const ByteArray &Input)
-{
-    // 1. Resolve Reference {1}
-    SearchResult idRes = Input.Find({1}, true);
-
-    // 2. Validate type
-    if (idRes.Length == 0 || idRes.Type != Types::Reference)
-    {
-        Status err = Status::InvalidType;
-        Chirp.Send(ByteArray(&err, sizeof(Status), Types::Status) << Input);
-        return;
-    }
-
-    Reference ID = *(Reference*)idRes.Value;
-
-    // 3. Resolve the pointer
-    BaseClass *Object = Objects.At(ID);
-
-    // 4. Verify the object exists
-    if (Object == nullptr)
-    {
-        Status err = Status::InvalidID;
-        Chirp.Send(ByteArray(&err, sizeof(Status), Types::Status) << Input);
-        return;
-    }
-
-    // 5. Execute Save (Serializes to Flash/EEPROM)
+    // 5. Execute Save (Internal serialization to Flash/NVS)
     Object->Save();
 
-    // 6. Notify Success
-    Functions funcCode = Functions::SaveObject;
-    Chirp.Send(ByteArray(&funcCode, sizeof(Functions), Types::Function) << ByteArray(&ID, sizeof(Reference), Types::Reference));
+    // 6. Notify Success: [SaveObjectCode][ReferenceData...]
+    char SuccessHeader[1] = {(char)Functions::SaveObject};
+    FlexArray Success(SuccessHeader, 1);
+
+    // Append the variable-length ID as confirmation
+    Success += FlexArray((char *)ID.Data, 3);
+
+    Chirp.Send(Success);
 }
 
-void SaveAll(const ByteArray &Input)
+void SaveAll(const FlexArray &Input)
 {
     // TODO, First implement one-by-one correctly
-    /*    
+    /*
     HW::FlashFormat();
     MemoryReset();
     for (int32_t Index = 1; Index < Objects.Allocated; Index++)
@@ -195,61 +197,68 @@ void SaveAll(const ByteArray &Input)
             continue;
         Objects[IDClass(Index)]->Save();
     }
-    Chirp.Send(ByteArray(Functions::SaveAll));*/
+    Chirp.Send(ValueTree(Functions::SaveAll));*/
     return;
 }
-void ReadObject(const ByteArray &Input)
-{
-    // 1. Resolve Reference {1}
-    SearchResult idRes = Input.Find({1}, true);
 
-    // 2. Validate existence and type
-    if (idRes.Length == 0 || idRes.Type != Types::Reference)
+void ReadObject(const FlexArray &Input)
+{
+    // 1. Validation: Need 1 byte for Function + 3 bytes for Reference
+    if (Input.Length < 4)
     {
-        Status err = Status::InvalidType;
-        Chirp.Send(ByteArray(&err, sizeof(Status), Types::Status) << Input);
+        char Response[2] = {(char)Functions::Report, (char)Status::InvalidType};
+        Chirp.Send(FlexArray(Response, 2) += Input);
         return;
     }
 
-    Reference ID = *(Reference*)idRes.Value;
+    // 2. Map the Reference directly (Offset 1)
+    Reference ID = Reference::Global(Input.Array[1], Input.Array[2], Input.Array[3]);
 
-    // 3. Resolve the object pointer from the registry
+    // 3. Resolve from the registry
     BaseClass *Object = Objects.At(ID);
 
-    // 4. Validate that the object actually exists
+    // 4. Verify the object exists
     if (Object == nullptr)
     {
-        Status err = Status::InvalidID;
-        Chirp.Send(ByteArray(&err, sizeof(Status), Types::Status) << Input);
+        char Response[2] = {(char)Functions::Report, (char)Status::InvalidID};
+        Chirp.Send(FlexArray(Response, 2) += Input);
         return;
     }
 
-    // 5. Serialize and Send the object data
-    // We create a success header using local variables
-    Functions funcCode = Functions::ReadObject;
-    Chirp.Send(ByteArray(&funcCode, sizeof(Functions), Types::Function) << Object->Compress());
+    // 5. Build Success Response: [ReadObjectCode][CompressedData...]
+    char SuccessHeader[1] = {(char)Functions::ReadObject};
+    FlexArray Response(SuccessHeader, 1);
+
+    // Concatenate the object's serialized state
+    // This uses the Move Constructor if Compress() returns by value!
+    Response += Object->Compress();
+
+    Chirp.Send(Response);
 }
 
-void Refresh(const ByteArray &Input)
+void Refresh(const FlexArray &Input)
 {
-    // Local variable for the repeated header
-    Functions funcCode = Functions::ReadObject;
+    // 1. Prepare the standard header once
+    char funcHeader[1] = {(char)Functions::ReadObject};
 
-    // Use the Registry's internal count to iterate all objects
+    // 2. Iterate through the Registry
     for (uint32_t Index = 0; Index < Objects.Registered; Index++)
     {
-        // Access the internal registry structure
         BaseClass *Obj = Objects.Object[Index].Object;
         if (Obj == nullptr)
             continue;
 
-        // Push each object individually as a ReadObject message
-        Chirp.Send(ByteArray(&funcCode, sizeof(Functions), Types::Function) << Obj->Compress());
+        // 3. Create a clean message for this specific object
+        // [ReadObjectCode][CompressedData...]
+        FlexArray msg(funcHeader, 1);
+        msg += Obj->Compress(); // Efficiently appends the object's data
+
+        Chirp.Send(msg);
     }
 
-    // Signal completion of the sync burst
-    Status ok = Status::OK;
-    Chirp.Send(ByteArray(&ok, sizeof(Status), Types::Status));
+    // 4. Signal completion of the sync burst
+    char statusHeader[2] = {(char)Functions::Report, (char)Status::OK};
+    Chirp.Send(FlexArray(statusHeader, 2));
 }
 
 /*
@@ -304,21 +313,10 @@ void LoadObject(ByteArray &Input)
 */
 void ReportError(Status ErrorCode)
 {
-    // Anchor the enum in a variable to provide a memory address
-    Status err = ErrorCode;
-    ByteArray Report(&err, sizeof(Status), Types::Status);
-    
-    Chirp.Send(Report);
-}
+    // 1. Create a 2-byte stack buffer: [ReportCode][StatusCode]
+    char Response[2] = {(char)Functions::Report, (char)ErrorCode};
 
-void ReportError(Status ErrorCode, Reference ID)
-{
-    // Anchor both the status and the reference
-    Status err = ErrorCode;
-    Reference ref = ID;
-
-    ByteArray Report(&err, sizeof(Status), Types::Status);
-    Report << ByteArray(&ref, sizeof(Reference), Types::Reference);
-    
-    Chirp.Send(Report);
+    // 2. Wrap in a FlexArray and send
+    // This uses the (char*, size) constructor to copy the 2 bytes and ship them.
+    Chirp.Send(FlexArray(Response, 2));
 }

@@ -1,4 +1,4 @@
-bool SetFlags(ByteArray &Values, Reference Index)
+bool SetFlags(ValueTree &Values, Reference Index)
 {
     /*if (Values.Type(1) != Types::Flags)
         return true;
@@ -11,7 +11,7 @@ bool SetFlags(ByteArray &Values, Reference Index)
     return true;
 }
 
-bool ResetFlags(ByteArray &Values, Reference Index)
+bool ResetFlags(ValueTree &Values, Reference Index)
 {
     /*if (Values.Type(1) != Types::Flags)
         return true;

@@ -22,7 +22,8 @@ uint32_t DeltaTime = 0;
 // Core system
 #include "Core\Reference.h"
 #include "Core\Enum.h"
-#include "Core\ByteArray.h" //Core functions
+#include "Core\FlexArray.h"
+#include "Core\ValueTree.h" //Main storage for values
 #include "Core\Objects.h"
 #include "Core\Register.h"
 #include "Core\BaseClass.h"
@@ -155,8 +156,6 @@ extern "C"
 #endif
 /*TODO:
 KEY FEATURES:
--- Make a lighter bytearray for data transfer/storage?
--- Functions with less headers?
 Saving
 OLED
 LED strip
