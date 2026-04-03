@@ -68,8 +68,7 @@ namespace HW
             .duty = 0,
             .hpoint = 0,
             .sleep_mode = LEDC_SLEEP_MODE_NO_ALIVE_NO_PD,
-            .flags = {0}
-        };
+            .flags = {0}};
         // If your IDF version has the .flags struct, initialize it specifically:
         // .flags = { .output_invert = 0 }
 
@@ -90,27 +89,34 @@ namespace HW
     }
 #elif defined BOARD_Valu_v2_0
 
-    void ModeAnalog(const Pin &Pin)
+    void ModeAnalog(const Pin &pin)
     {
+        GPIO_TypeDef *port = GetPort(pin.Port);
+
         // 1. Set pin to Analog Input (0x0 in CFGLR/CFGHR)
-        uint32_t shift = (Pin.Number % 8) * 4;
-        if (Pin.Number < 8)
+        // Each pin takes 4 bits in the Configuration Register
+        uint32_t shift = (pin.Number % 8) * 4;
+
+        if (pin.Number < 8)
         {
-            Pin.Port->CFGLR &= ~(0xF << shift);
+            port->CFGLR &= ~(0xF << shift);
         }
         else
         {
-            Pin.Port->CFGHR &= ~(0xF << shift);
+            port->CFGHR &= ~(0xF << shift);
         }
 
-        // 2. Enable ADC1 Clock and Reset
+        // 2. Enable ADC1 Clock and Wake up
+        // Note: You may also need to enable the clock for the GPIO Port itself
+        // (e.g., RCC->APB2PCENR |= RCC_APB2Periph_GPIOA)
         RCC->APB2PCENR |= RCC_APB2Periph_ADC1;
-        ADC1->CTLR2 |= ADC_ADON; // Wake up ADC
+        ADC1->CTLR2 |= ADC_ADON;
 
-        // Calibration (Optional but recommended once at boot)
+        // Calibration (Recommended after power-on)
         ADC1->CTLR2 |= ADC_RSTCAL;
         while (ADC1->CTLR2 & ADC_RSTCAL)
             ;
+
         ADC1->CTLR2 |= ADC_CAL;
         while (ADC1->CTLR2 & ADC_CAL)
             ;
@@ -134,71 +140,81 @@ namespace HW
         return (uint16_t)ADC1->RDATAR;
     }
 
-#define PWM_25KHZ 5759
-
-    void ModePWM(const Pin &Pin)
+    void ModePWM(const Pin &pin, uint32_t Frequency = 25000)
     {
-        // 1. Enable AFIO Clock (REQUIRED for Alternate Functions like PWM)
-        RCC_APB2PeriphClockCmd(RCC_APB2Periph_AFIO, ENABLE);
+        // 1. Map char Port to Register Address
+        GPIO_TypeDef *port = GetPort(pin.Port);
 
-        // 2. Enable Port Clock
-        if (Pin.Port == GPIOA)
+        // 2. Enable Clocks (144MHz usually means APB2 is at full speed)
+        RCC_APB2PeriphClockCmd(RCC_APB2Periph_AFIO, ENABLE);
+        if (pin.Port == 'A')
             RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA, ENABLE);
-        if (Pin.Port == GPIOB)
+        if (pin.Port == 'B')
             RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOB, ENABLE);
 
-        // 3. Enable Timer Clock
-        if (Pin.Port == GPIOA && Pin.Number == 8)
+        // 3. Enable Timer 1 Clock (Specific to PA8)
+        if (pin.Port == 'A' && pin.Number == 8)
             RCC_APB2PeriphClockCmd(RCC_APB2Periph_TIM1, ENABLE);
 
-        // 4. Configure Pin Mode
-        // We must convert your index '8' into a bitmask: (1 << 8) = 256
+        // 4. GPIO Init
         GPIO_InitTypeDef GPIO_InitStructure = {0};
-        GPIO_InitStructure.GPIO_Pin = (1 << Pin.Number);
+        GPIO_InitStructure.GPIO_Pin = (1 << pin.Number);
         GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;
         GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
-        GPIO_Init(Pin.Port, &GPIO_InitStructure);
+        GPIO_Init(port, &GPIO_InitStructure);
 
-        // 5. Timer Time Base
+        // 5. Dynamic Period Calculation
+        // Formula: (144,000,000 / Frequency) - 1
+        // For 25kHz, this results in 5759.
+        uint32_t systemClock = 144000000;
+        uint32_t period = (systemClock / Frequency) - 1;
+
+        // Safety check for 16-bit timer limits
+        if (period > 65535)
+            period = 65535;
+
         TIM_TimeBaseInitTypeDef TIM_TimeBaseStructure = {0};
-        TIM_TimeBaseStructure.TIM_Prescaler = 0;
-        TIM_TimeBaseStructure.TIM_Period = PWM_25KHZ;
+        TIM_TimeBaseStructure.TIM_Prescaler = 0; // High speed, no prescaler
+        TIM_TimeBaseStructure.TIM_Period = period;
         TIM_TimeBaseStructure.TIM_ClockDivision = TIM_CKD_DIV1;
         TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
         TIM_TimeBaseInit(TIM1, &TIM_TimeBaseStructure);
 
-        // 6. Channel Configuration
+        // 6. Channel Init (PWM Mode 1)
         TIM_OCInitTypeDef TIM_OCInitStructure = {0};
         TIM_OCInitStructure.TIM_OCMode = TIM_OCMode_PWM1;
         TIM_OCInitStructure.TIM_OutputState = TIM_OutputState_Enable;
         TIM_OCInitStructure.TIM_Pulse = 0;
         TIM_OCInitStructure.TIM_OCPolarity = TIM_OCPolarity_High;
 
-        if (Pin.Port == GPIOA && Pin.Number == 8)
+        if (pin.Port == 'A' && pin.Number == 8)
         {
             TIM_OC1Init(TIM1, &TIM_OCInitStructure);
             TIM_OC1PreloadConfig(TIM1, TIM_OCPreload_Enable);
         }
 
-        // 7. THE CRITICAL FIX: TIM1 "Main Output Enable"
-        // Without this, TIM1 will count, but the pin will stay disconnected.
+        // 7. TIM1 "Main Output Enable" (MOE bit)
+        // Essential for Advanced Timers like TIM1/TIM8
         TIM_CtrlPWMOutputs(TIM1, ENABLE);
-
-        // Enable Timer
         TIM_Cmd(TIM1, ENABLE);
     }
 
-    void PWM(const Pin &Pin, Number Percent)
+    void PWM(const Pin &pin, Number Percentage)
     {
-        uint32_t Duty = (uint32_t)(((uint64_t)Percent.Value * PWM_25KHZ) / (100 << 16));
+        // Fetch current Auto-Reload Value (Period) from the register
+        uint32_t period = TIM1->ATRLR;
 
-        if (Duty > PWM_25KHZ)
-            Duty = PWM_25KHZ;
+        // Convert 16.16 Fixed Point to Duty Cycle
+        // Duty = (Percentage.Value * period) / (100 * 65536)
+        uint32_t duty = (uint32_t)(((uint64_t)Percentage.Value * period) / (100 << 16));
 
-        if (Pin.Port == GPIOA && Pin.Number == 8)
+        if (duty > period)
+            duty = period;
+
+        if (pin.Port == 'A' && pin.Number == 8)
         {
-            // Use the register directly to be fast
-            TIM1->CH1CVR = Duty;
+            // Write directly to Capture/Compare Register 1
+            TIM1->CH1CVR = duty;
         }
     }
 #endif

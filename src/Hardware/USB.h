@@ -173,102 +173,124 @@ namespace HW
         (EXTEN->EXTEN_CTR) |= EXTEN_USBD_PU_EN; // Pullup D+
     }
 
-    void USB_Send(const ByteArray &Data)
+    void USB_Send(const FlexArray &Data)
     {
         if (Data.Length == 0 || Data.Array == nullptr)
             return;
 
         uint32_t offset = 0;
+        // TinyUSB usually benefits from 4-byte alignment for DMA
+        static uint8_t __attribute__((aligned(4))) packet[USB_PACKET_SIZE];
 
         while (offset < Data.Length)
         {
-            static uint8_t __attribute__((aligned(4))) packet[USB_PACKET_SIZE];
             memset(packet, 0, USB_PACKET_SIZE);
 
+            // Calculate payload size
             uint8_t to_copy = (uint8_t)((Data.Length - offset > MAX_USB_DATA) ? MAX_USB_DATA : Data.Length - offset);
 
-            packet[0] = 0xFA;
-            packet[2] = to_copy; // Length byte
+            // --- PACKET CONSTRUCTION ---
+            packet[0] = 0xFA;    // Header
+            packet[2] = to_copy; // Payload Length
             memcpy(packet + 3, Data.Array + offset, to_copy);
-            packet[3 + to_copy] = 0xBF;
+            packet[3 + to_copy] = 0xBF; // Footer
 
-            // Calculate CRC on [Len + Data]
-            // This includes packet[2] through the end of the data payload
+            // CRC8 covers the length byte and the payload
             packet[1] = CRC8(packet + 2, to_copy + 1);
 
-            uint32_t timeout = 10000;
+            // Wait for space in the TinyUSB TX buffer
+            uint32_t timeout = 1000; // Safety timeout
             while (tud_cdc_write_available() < USB_PACKET_SIZE && timeout > 0)
             {
-                tud_task();
+                tud_task(); // Keep USB stack alive
                 timeout--;
             }
 
+            if (timeout == 0)
+                break; // Failed to send
+
             tud_cdc_write(packet, USB_PACKET_SIZE);
             tud_cdc_write_flush();
+
             offset += to_copy;
             tud_task();
         }
     }
-    // Static buffer to survive between USB_Read() calls
-    static uint8_t rx_buffer[128];
-    static uint32_t rx_ptr = 0;
 
-    ByteArray USB_Read()
+    FlexArray USB_Read()
     {
-        // 1. Pull everything available from TinyUSB into our local ring buffer
-        uint32_t count = tud_cdc_available();
-        if (count > 0)
+        static uint8_t rx_buffer[512]; // Increased buffer size for reliability
+        static uint32_t rx_ptr = 0;
+
+        // 1. Pull new data from TinyUSB into the static buffer
+        uint32_t available = tud_cdc_available();
+        if (available > 0)
         {
-            // Prevent overflow
-            if (rx_ptr + count > 128)
-                rx_ptr = 0;
-            tud_cdc_read(rx_buffer + rx_ptr, count);
-            rx_ptr += count;
+            // Calculate how much we can safely read
+            uint32_t space = sizeof(rx_buffer) - rx_ptr;
+            uint32_t to_read = (available > space) ? space : available;
+
+            if (to_read > 0)
+            {
+                tud_cdc_read(rx_buffer + rx_ptr, to_read);
+                rx_ptr += to_read;
+            }
         }
 
-        // 2. Process our local buffer for a 64-byte frame
-        while (rx_ptr >= USB_PACKET_SIZE)
-        {
-            if (rx_buffer[0] == 0xFA)
-            {
-                uint8_t receivedCrc = rx_buffer[1];
-                uint8_t dataLen = rx_buffer[2];
+        uint32_t cursor = 0;
 
-                if (dataLen <= MAX_USB_DATA)
+        // 2. Scan through the buffer for a full USB packet
+        while (cursor + USB_PACKET_SIZE <= rx_ptr)
+        {
+            // Hunt for Start-of-Frame (0xFA)
+            if (rx_buffer[cursor] != 0xFA)
+            {
+                cursor++;
+                continue;
+            }
+
+            uint8_t receivedCrc = rx_buffer[cursor + 1];
+            uint8_t dataLen = rx_buffer[cursor + 2];
+
+            // Validate structure (Length sanity and Footer 0xBF)
+            if (dataLen <= MAX_USB_DATA && rx_buffer[cursor + 3 + dataLen] == 0xBF)
+            {
+                // Verify checksum
+                if (CRC8(rx_buffer + cursor + 2, dataLen + 1) == receivedCrc)
                 {
-                    // Check CRC
-                    if (CRC8(rx_buffer + 2, dataLen + 1) == receivedCrc)
+                    // --- VALID PACKET FOUND ---
+                    // Construct FlexArray from the validated slice
+                    FlexArray result((const char *)(rx_buffer + cursor + 3), dataLen);
+
+                    // Consume the 64-byte frame plus any leading junk
+                    uint32_t total_consumed = cursor + USB_PACKET_SIZE;
+
+                    // Shift remaining data to the front
+                    rx_ptr -= total_consumed;
+                    if (rx_ptr > 0)
                     {
-                        // Check Footer
-                        if (rx_buffer[3 + dataLen] == 0xBF)
-                        {
-
-                            // SUCCESS: Construct return object
-                            ByteArray Data;
-                            Data.Length = dataLen;
-                            Data.Array = new char[dataLen];
-                            memcpy(Data.Array, rx_buffer + 3, dataLen);
-
-                            // Shift buffer by 64
-                            memmove(rx_buffer, rx_buffer + USB_PACKET_SIZE, rx_ptr - USB_PACKET_SIZE);
-                            rx_ptr -= USB_PACKET_SIZE;
-                            return Data;
-                        }
+                        memmove(rx_buffer, rx_buffer + total_consumed, rx_ptr);
                     }
+
+                    return result;
                 }
-                // If header found but check failed, slide 1 to find next 0xFA
-                memmove(rx_buffer, rx_buffer + 1, rx_ptr - 1);
-                rx_ptr--;
             }
-            else
+
+            // False positive: skip header and keep hunting
+            cursor++;
+        }
+
+        // 3. Maintenance: Slide buffer to remove scanned junk bytes
+        if (cursor > 0)
+        {
+            rx_ptr -= cursor;
+            if (rx_ptr > 0)
             {
-                // No header at 0, slide 1
-                memmove(rx_buffer, rx_buffer + 1, rx_ptr - 1);
-                rx_ptr--;
+                memmove(rx_buffer, rx_buffer + cursor, rx_ptr);
             }
         }
 
-        return ByteArray(); // Nothing valid found yet
+        return FlexArray(); // Empty return
     }
 
 #endif

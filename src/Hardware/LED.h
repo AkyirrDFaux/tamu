@@ -120,22 +120,8 @@ uint8_t *LEDDriver::Offset(uint32_t Offset)
     return &(LEDs[Offset * 3]);
 }
 
-/*
-inline void LEDDriver::Write(uint32_t Index, ColourClass Colour)
-{
-    // Neopixels are GRB
-    if (LEDs)
-    {
-        LEDs[Index * 3] = Colour.G;
-        LEDs[Index * 3 + 1] = Colour.R;
-        LEDs[Index * 3 + 2] = Colour.B;
-    }
-}
-*/
-
 #elif defined BOARD_Valu_v2_0
 
-// Macros for PB8 - Verified working at 144MHz
 #define LED_HIGH() (*((volatile uint32_t *)0x40010C10) = (1 << 8))
 #define LED_LOW() (*((volatile uint32_t *)0x40010C14) = (1 << 8))
 
@@ -145,30 +131,36 @@ public:
     uint8_t *LEDs = nullptr;
     uint32_t Length = 0;
 
-    // Hardware registers
+    // Hardware registers resolved at construction
     volatile uint32_t *SetReg = nullptr;
     volatile uint32_t *ClearReg = nullptr;
     uint32_t PinMask = 0;
 
     LEDDriver() {};
-    LEDDriver(uint16_t NewLength, Pin &Pin);
+    LEDDriver(uint16_t NewLength, Pin pin);
 
-    LEDDriver Offset(uint32_t Offset);
-    void Write(uint32_t Index, ColourClass Colour);
+    // Navigation and Data Write
+    uint8_t* Offset(uint32_t Offset);
+    
     void Show();
     void Stop();
 };
 
-LEDDriver::LEDDriver(uint16_t NewLength, Pin &Pin)
+LEDDriver::LEDDriver(uint16_t NewLength, Pin pin)
 {
-    Length = NewLength;
-    LEDs = new uint8_t[Length * 3];
+    this->Length = NewLength;
+    this->LEDs = new uint8_t[Length * 3];
+    memset(LEDs, 0, Length * 3);
 
-    HW::ModeOutput(Pin);
+    // 1. Initialize the GPIO Hardware using the existing ModeOutput
+    HW::ModeOutput(pin);
 
-    this->PinMask = (1 << Pin.Number);
-    this->SetReg = &(Pin.Port->BSHR);
-    this->ClearReg = &(Pin.Port->BCR);
+    // 2. Resolve the registers using our char Port helper
+    GPIO_TypeDef* port = GetPort(pin.Port);
+    
+    this->PinMask = (1 << pin.Number);
+    this->SetReg = &(port->BSHR);
+    this->ClearReg = &(port->BCR);
 }
 
 void LEDDriver::Stop()
@@ -180,22 +172,10 @@ void LEDDriver::Stop()
     }
 };
 
-LEDDriver LEDDriver::Offset(uint32_t Offset)
+uint8_t* LEDDriver::Offset(uint32_t Offset)
 {
-    LEDDriver OffsetDriver = LEDDriver();
-    OffsetDriver.LEDs = &(LEDs[Offset * 3]);
-    return OffsetDriver;
-}
-
-inline void LEDDriver::Write(uint32_t Index, ColourClass Colour)
-{
-    // Neopixels are GRB
-    if (LEDs)
-    {
-        LEDs[Index * 3] = Colour.G;
-        LEDs[Index * 3 + 1] = Colour.R;
-        LEDs[Index * 3 + 2] = Colour.B;
-    }
+    // Returns the memory address for a sub-strip
+    return &(LEDs[Offset * 3]);
 }
 
 // This replaces the standard .show() using your verified timing
@@ -204,75 +184,48 @@ void LEDDriver::Show()
     if (!LEDs || !SetReg)
         return;
 
-    uint8_t *Pixel = LEDs;
-    uint16_t ByteLength = Length * 3;
+    // Localize variables to CPU registers for maximum speed
+    uint8_t *pixel = LEDs;
+    uint32_t byteLength = Length * 3;
+    uint32_t mask = PinMask;
+    volatile uint32_t *sReg = SetReg;
+    volatile uint32_t *cReg = ClearReg;
 
-    while (ByteLength--)
+    // Disable interrupts here if your platform supports it (e.g., __disable_irq())
+    // to prevent timing glitches during the burst
+    
+    while (byteLength--)
     {
-        uint8_t Channel = *Pixel++;
-        for (int8_t Index = 7; Index >= 0; Index--)
+        uint8_t channel = *pixel++;
+
+        for (int8_t i = 7; i >= 0; i--)
         {
-            if (Channel & (1 << Index))
+            if (channel & (1 << i))
             {
-                *SetReg = PinMask; // HIGH
+                // Logic 1 timing from original
+                *sReg = mask; // HIGH
                 NOP64();
                 NOP16();
-                *ClearReg = PinMask; // LOW
+                *cReg = mask; // LOW
                 NOP64();
             }
             else
             {
-                *SetReg = PinMask; // HIGH
+                // Logic 0 timing from original
+                *sReg = mask; // HIGH
                 NOP16();
                 NOP4();
-                *ClearReg = PinMask; // LOW
+                *cReg = mask; // LOW
                 NOP64();
                 NOP64();
             }
         }
     }
+
+    // Re-enable interrupts here (__enable_irq())
+    
+    // Reset pulse (Latch)
     HW::SleepMicro(50);
-}
-
-#else
-#include <Adafruit_NeoPixel.h>
-
-class LEDDriver
-{
-public:
-    int16_t OffsetStart = 0;
-    Adafruit_NeoPixel *LEDs;
-    LEDDriver() {};
-    LEDDriver(uint16_t Length, uint16_t Pin);
-    LEDDriver Offset(uint32_t Offset);
-    void Write(uint32_t Index, ColourClass Colour);
-    void Stop();
-};
-
-LEDDriver::LEDDriver(uint16_t Length, uint16_t Pin)
-{
-    LEDs = new Adafruit_NeoPixel(Length, Pin, NEO_GRB + NEO_KHZ800);
-    LEDs->begin();
-    LEDs->clear();
-    LEDs->show();
-};
-
-void LEDDriver::Stop()
-{
-    delete LEDs;
-};
-
-LEDDriver LEDDriver::Offset(uint32_t Offset)
-{
-    LEDDriver OffsetDriver = LEDDriver();
-    OffsetDriver.LEDs = LEDs;
-    OffsetDriver.OffsetStart = Offset;
-    return OffsetDriver;
-}
-
-inline void LEDDriver::Write(uint32_t Index, ColourClass Colour)
-{
-    LEDs->setPixelColor((uint16_t)(Index + OffsetStart), Colour.R, Colour.G, Colour.B);
 }
 #endif
 

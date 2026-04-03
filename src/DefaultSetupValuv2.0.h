@@ -1,6 +1,6 @@
 void DefaultSetup()
 {
-    Board.ValueSet(Text("Valu v2.0 Test"), Board.DisplayName);
+    /*Board.ValueSet(Text("Valu v2.0 Test"), Board.DisplayName);
 
     DisplayClass *D = new DisplayClass();
     D->Name = "Display";
@@ -23,5 +23,5 @@ void DefaultSetup()
 
     FanClass *F = new FanClass();
     F->Name = "Fan";
-    Board.Modules[5]->AddModule(F);
+    Board.Modules[5]->AddModule(F);*/
 };

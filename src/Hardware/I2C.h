@@ -152,25 +152,27 @@ bool I2C::Read(uint8_t Address, uint8_t Register, uint8_t *Data, uint16_t Length
 bool I2C::Begin(const Pin &SCL, const Pin &SDA, uint32_t Speed)
 {
     // 1. Auto-Detection Logic
-    if (SCL.Port == GPIOB && SCL.Number == 6 && SDA.Port == GPIOB && SDA.Number == 7)
+    if (SCL.Port == 'B' && SCL.Number == 6 && SDA.Port == 'B' && SDA.Number == 7)
     {
         Handle = I2C1;
         RCC->APB1PCENR |= RCC_APB1Periph_I2C1;
         RCC->APB2PCENR |= RCC_APB2Periph_GPIOB;
 
-        // PB6, PB7: AF Open-Drain
-        SCL.Port->CFGHR &= ~(0xFF << 24);
-        SCL.Port->CFGHR |= (0xEE << 24);
+        // PB6, PB7: AF Open-Drain (using GetPort to resolve 'B')
+        GPIO_TypeDef* port = GetPort(SCL.Port);
+        port->CFGHR &= ~(0xFF << 24);
+        port->CFGHR |= (0xEE << 24);
     }
-    else if (SCL.Port == GPIOB && SCL.Number == 10 && SDA.Port == GPIOB && SDA.Number == 11)
+    else if (SCL.Port == 'B' && SCL.Number == 10 && SDA.Port == 'B' && SDA.Number == 11)
     {
         Handle = I2C2;
         RCC->APB1PCENR |= RCC_APB1Periph_I2C2;
         RCC->APB2PCENR |= RCC_APB2Periph_GPIOB;
 
         // PB10, PB11: AF Open-Drain
-        SCL.Port->CFGHR &= ~(0xFF << 8);
-        SCL.Port->CFGHR |= (0xEE << 8);
+        GPIO_TypeDef* port = GetPort(SCL.Port);
+        port->CFGHR &= ~(0xFF << 8);
+        port->CFGHR |= (0xEE << 8);
     }
     else
     {

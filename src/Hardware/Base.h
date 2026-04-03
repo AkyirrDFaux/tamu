@@ -9,23 +9,29 @@
 #include "freertos/task.h"
 #include "esp_heap_caps.h"
 #include "nvs_flash.h"
-/*struct Pin
-{
-    uint8_t Number;
-    char Port = 0;
-};*/
 const Pin LED_NOTIFICATION_PIN = {2};
 const Pin INVALID_PIN = {255};
 
 #elif defined BOARD_Valu_v2_0
 #include "ch32v20x.h"
-struct Pin
+GPIO_TypeDef *GetPort(char portChar)
 {
-    GPIO_TypeDef *Port;
-    uint16_t Number;
-};
-const Pin INVALID_PIN = {nullptr, 0};
-const Pin LED_NOTIFICATION_PIN = {GPIOA, 2};
+    switch (portChar)
+    {
+    case 'A':
+        return GPIOA;
+    case 'B':
+        return GPIOB;
+    case 'C':
+        return GPIOC;
+    case 'D':
+        return GPIOD;
+    default:
+        return GPIOA; // Fallback
+    }
+}
+const Pin INVALID_PIN = {0, 0};
+const Pin LED_NOTIFICATION_PIN = {2, 'A'};
 #endif
 namespace HW
 {
@@ -53,8 +59,8 @@ namespace HW
     int32_t GetFreeRAM();
 
     // Flash
-    //bool FlashSave(const ValueTree &Data);
-    //ByteArray FlashLoad(IDClass ID);
+    // bool FlashSave(const ValueTree &Data);
+    // ByteArray FlashLoad(IDClass ID);
 
     // USB
     void USB_Init();
@@ -178,82 +184,102 @@ namespace HW
 
     bool IsValidPin(const Pin &Pin)
     {
-        return Pin.Port != nullptr;
+        return Pin.Port != 0;
     };
 
-    void ModeOutput(const Pin &Pin)
+    // Helper to enable clock based on char
+    void EnablePortClock(char portChar)
     {
-        if (Pin.Port == GPIOA && Pin.Number == 14)
+        if (portChar == 'A')
+            RCC->APB2PCENR |= RCC_APB2Periph_GPIOA;
+        else if (portChar == 'B')
+            RCC->APB2PCENR |= RCC_APB2Periph_GPIOB;
+        else if (portChar == 'C')
+            RCC->APB2PCENR |= RCC_APB2Periph_GPIOC;
+        else if (portChar == 'D')
+            RCC->APB2PCENR |= RCC_APB2Periph_GPIOD;
+    }
+
+    void ModeOutput(const Pin &pin)
+    {
+        GPIO_TypeDef *port = GetPort(pin.Port);
+        EnablePortClock(pin.Port);
+
+        // Special case for PA14 (usually SWCLK)
+        if (pin.Port == 'A' && pin.Number == 14)
         {
-            RCC->APB2PCENR |= RCC_APB2Periph_AFIO; // Power AFIO
-            AFIO->PCFR1 |= (1 << 24);              // Disable SWD, keep JTAG-DP
+            RCC->APB2PCENR |= RCC_APB2Periph_AFIO;
+            AFIO->PCFR1 |= (1 << 24); // Disable SWD to free the pin
         }
-        uint32_t Shift = (Pin.Number % 8) * 4;
-        if (Pin.Number < 8)
+
+        uint32_t shift = (pin.Number % 8) * 4;
+        if (pin.Number < 8)
         {
-            Pin.Port->CFGLR &= ~(0xF << Shift);
-            Pin.Port->CFGLR |= (0x3 << Shift); // Output 50MHz, Push-Pull
+            port->CFGLR &= ~(0xF << shift);
+            port->CFGLR |= (0x3 << shift); // Output 50MHz, Push-Pull
         }
         else
         {
-            uint32_t ShiftH = ((Pin.Number - 8) % 8) * 4;
-            Pin.Port->CFGHR &= ~(0xF << ShiftH);
-            Pin.Port->CFGHR |= (0x3 << ShiftH);
+            port->CFGHR &= ~(0xF << shift);
+            port->CFGHR |= (0x3 << shift);
         }
     }
 
-    void ModeInput(const Pin &Pin)
+    void ModeInput(const Pin &pin)
     {
-        uint32_t Shift = (Pin.Number % 8) * 4;
-        if (Pin.Number < 8)
+        GPIO_TypeDef *port = GetPort(pin.Port);
+        EnablePortClock(pin.Port);
+
+        uint32_t shift = (pin.Number % 8) * 4;
+        if (pin.Number < 8)
         {
-            Pin.Port->CFGLR &= ~(0xF << Shift);
-            Pin.Port->CFGLR |= (0x4 << Shift); // Floating Input
+            port->CFGLR &= ~(0xF << shift);
+            port->CFGLR |= (0x4 << shift); // Floating Input
         }
         else
         {
-            uint32_t ShiftH = ((Pin.Number - 8) % 8) * 4;
-            Pin.Port->CFGHR &= ~(0xF << ShiftH);
-            Pin.Port->CFGHR |= (0x4 << ShiftH);
+            port->CFGHR &= ~(0xF << shift);
+            port->CFGHR |= (0x4 << shift);
         }
     }
 
-    void ModeInputPullDown(const Pin &Pin)
+    void ModeInputPullDown(const Pin &pin)
     {
-        // 1. Calculate the shift (4 bits per pin)
-        uint32_t Shift = (Pin.Number % 8) * 4;
+        GPIO_TypeDef *port = GetPort(pin.Port);
+        EnablePortClock(pin.Port);
 
-        // 2. Configure the Control Register (CFGLR for pins 0-7, CFGHR for 8-15)
-        // Mode 00 (Input), CNF 10 (Input with pull-up/pull-down) = 0x8
-        if (Pin.Number < 8)
+        uint32_t shift = (pin.Number % 8) * 4;
+        // Mode 00 (Input), CNF 10 (Pull-up/down) = 0x8
+        if (pin.Number < 8)
         {
-            Pin.Port->CFGLR &= ~(0xF << Shift);
-            Pin.Port->CFGLR |= (0x8 << Shift);
+            port->CFGLR &= ~(0xF << shift);
+            port->CFGLR |= (0x8 << shift);
         }
         else
         {
-            Pin.Port->CFGHR &= ~(0xF << Shift);
-            Pin.Port->CFGHR |= (0x8 << Shift);
+            port->CFGHR &= ~(0xF << shift);
+            port->CFGHR |= (0x8 << shift);
         }
 
-        // 3. Select Pull-Down by clearing the bit in the Output Data Register (OUTDR)
-        // To activate Pull-UP instead, you would use |= (1 << Pin.Number)
-        Pin.Port->OUTDR &= ~(1 << Pin.Number);
+        // ODR = 0 for Pull-Down, ODR = 1 for Pull-Up
+        port->OUTDR &= ~(1 << pin.Number);
     }
 
-    bool Read(const Pin &Pin)
+    bool Read(const Pin &pin)
     {
-        return (Pin.Port->INDR & (1 << Pin.Number)) != 0;
+        return (GetPort(pin.Port)->INDR & (1 << pin.Number)) != 0;
     }
 
-    void High(const Pin &Pin)
+    void High(const Pin &pin)
     {
-        Pin.Port->BSHR = (1 << Pin.Number);
+        // BSHR is the "Bit Set High Register"
+        GetPort(pin.Port)->BSHR = (1 << pin.Number);
     }
 
-    void Low(const Pin &Pin)
+    void Low(const Pin &pin)
     {
-        Pin.Port->BCR = (1 << Pin.Number);
+        // BCR is the "Bit Clear Register"
+        GetPort(pin.Port)->BCR = (1 << pin.Number);
     }
 
     uint32_t Now()
@@ -295,9 +321,9 @@ namespace HW
         HW::ModeOutput(LED_NOTIFICATION_PIN);
         for (int Iteration = 0; Iteration < Amount; Iteration++)
         {
-            HW::Low(LED_NOTIFICATION_PIN); //On
+            HW::Low(LED_NOTIFICATION_PIN); // On
             HW::Sleep(Time);
-            HW::High(LED_NOTIFICATION_PIN); //Off
+            HW::High(LED_NOTIFICATION_PIN); // Off
             if (Iteration < Amount - 1)
                 HW::Sleep(Time);
         }
@@ -306,7 +332,7 @@ namespace HW
     void NotificationStartup()
     {
         HW::ModeOutput(LED_NOTIFICATION_PIN);
-        HW::High(LED_NOTIFICATION_PIN); //Inverted logic
+        HW::High(LED_NOTIFICATION_PIN); // Inverted logic
         NotificationBlink(2, 200);
     };
 

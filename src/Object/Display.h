@@ -197,7 +197,7 @@ void DisplayClass::ManageOverlay(int32_t RequiredLength)
 
         Overlay = NewOverlay;
         MaxLength = RequiredLength;
-        ESP_LOGI("Display", "Overlay buffer allocated: %d elements", RequiredLength);
+        //ESP_LOGI("Display", "Overlay buffer allocated: %d elements", RequiredLength);
     }
 }
 

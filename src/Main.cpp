@@ -1,6 +1,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include <cstdlib>
 #include <type_traits>
 #include <initializer_list>
 
@@ -92,11 +93,11 @@ int main()
     // HW::FlashInit();
     // HW::FlashFormat();
 
-    ESP_LOGI("MAIN", "Setuping");
+    //ESP_LOGI("MAIN", "Setuping");
     Board.Setup(Reference::Global(0, 0, 0)); // Initialize devices
     DefaultSetup();
 
-    ESP_LOGI("MAIN", "Starting Chirp");
+    //ESP_LOGI("MAIN", "Starting Chirp");
     SearchResult nameRes = Board.Values.Find({1});
     if (nameRes.Length > 0 && nameRes.Type == Types::Text)
         Chirp.Begin(Text((char *)nameRes.Value, nameRes.Length));
@@ -106,7 +107,7 @@ int main()
 
     Board.ValueSetup(&CurrentTime, sizeof(int32_t), Types::Integer, {0, 1});
 
-    ESP_LOGI("MAIN", "Starting");
+    //ESP_LOGI("MAIN", "Starting");
     /*bool AllFinished = false;
     while (!AllFinished)
     {
@@ -127,7 +128,7 @@ int main()
     }*/
 
     uint32_t LoopCounter = 0;
-    ESP_LOGI("MAIN", "Entering Loop");
+    //ESP_LOGI("MAIN", "Entering Loop");
     while (1)
     {
         Chirp.Communicate();
