@@ -9,8 +9,8 @@
 #include "freertos/task.h"
 #include "esp_heap_caps.h"
 #include "nvs_flash.h"
-const Pin LED_NOTIFICATION_PIN = {2};
-const Pin INVALID_PIN = {255};
+const Pin LED_NOTIFICATION_PIN = {2,0};
+const Pin INVALID_PIN = {255,0};
 
 #elif defined BOARD_Valu_v2_0
 #include "ch32v20x.h"

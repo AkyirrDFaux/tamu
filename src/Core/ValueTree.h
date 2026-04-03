@@ -28,6 +28,10 @@ struct SearchResult
 
 class ValueTree
 {
+private:
+    void EnsureCapacity(uint16_t required);
+    void EnsureHeaderCapacity(uint16_t count);
+    
 public:
     Header *HeaderArray = nullptr;
     uint16_t HeaderAllocated = 0;
@@ -42,7 +46,6 @@ public:
 
     void operator=(const ValueTree &Other);
     ValueTree &operator<<(const ValueTree &Data);
-    ValueTree &operator+=(const ValueTree &Data);
 
     // --- Core Navigation (The New Standard) ---
     // Use Find to get the initial SearchResult
@@ -63,71 +66,75 @@ public:
     // Logic: Use SearchResult.Value for reading, SetDirect for writing.
     void SetDirect(const void *Data, size_t Size, Types Type, const Bookmark &Point);
     void Set(const void *Data, size_t Size, Types Type, const Reference &Location);
+    uint16_t InsertNext(const void *Data, uint16_t Size, Types Type, uint16_t CurrentIdx);
+    uint16_t InsertChild(const void *Data, uint16_t Size, Types Type, uint16_t ParentIdx);
 
     ValueTree Copy(const Reference &Location) const;
 
     // --- Protocol Logic ---
     FlexArray Serialize() const;
-    ValueTree Deserialize(const FlexArray& in, uint16_t startIndex);
+    ValueTree Deserialize(const FlexArray &in, uint16_t startIndex);
 };
+
+void ValueTree::EnsureCapacity(uint16_t required)
+{
+    if (required <= Allocated)
+        return;
+
+    // Add a small buffer (16 bytes) to prevent constant reallocs
+    uint16_t newAlloc = Align(required + 16);
+
+    // realloc handles:
+    // 1. Allocating if Array is null
+    // 2. Copying old data to new location
+    // 3. Freeing old location
+    void *newArray = realloc(Array, newAlloc);
+    if (newArray)
+    {
+        Array = (char *)newArray;
+        Allocated = newAlloc;
+    }
+}
+
+// Ensures the Header Array can hold N headers
+void ValueTree::EnsureHeaderCapacity(uint16_t count)
+{
+    // We use exact sizing for headers to save RAM,
+    // but you can add slack here if you insert often.
+    void *newHeaders = realloc(HeaderArray, count * sizeof(Header));
+    if (newHeaders)
+    {
+        HeaderArray = (Header *)newHeaders;
+    }
+}
 
 ValueTree::ValueTree(const ValueTree &Copied)
 {
-    HeaderAllocated = Copied.HeaderAllocated;
-    HeaderArray = new Header[HeaderAllocated];
-    memcpy(HeaderArray, Copied.HeaderArray, HeaderAllocated * sizeof(Header));
-    Length = Copied.Length;
-    Allocated = Align(Length);
-    Array = new char[Allocated];
-    memcpy(Array, Copied.Array, Length);
-};
+    *this = Copied; // Reuse the assignment operator logic
+}
 
 ValueTree::~ValueTree()
 {
-    if (HeaderArray != nullptr)
-        delete[] HeaderArray;
-    if (Array != nullptr)
-        delete[] Array;
-};
+    free(HeaderArray); // free(nullptr) is safe in C/C++
+    free(Array);
+    HeaderArray = nullptr;
+    Array = nullptr;
+}
 
 ValueTree::ValueTree(const void *data, uint16_t size, Types Type)
 {
-    Length = size;
-    Allocated = Align(Length);
-
-    // Safety: Handle empty initialization
-    if (Allocated == 0)
+    if (size > 0 || Type != Types::Undefined)
     {
-        HeaderAllocated = 0;
-        HeaderArray = nullptr;
-        Array = nullptr;
-        return;
-    }
+        EnsureHeaderCapacity(1);
+        HeaderAllocated = 1;
+        HeaderArray[0] = {Type, 0, size, 0, 0};
 
-    // Initialize the root header with the specific Type
-    HeaderAllocated = 1;
-    HeaderArray = new Header[1];
-    HeaderArray[0].Type = Type;
-    HeaderArray[0].Depth = 0;
-    HeaderArray[0].Length = size;
-    HeaderArray[0].Pointer = 0;
-    HeaderArray[0].Skip = 0;
-
-    // Allocate the aligned data buffer
-    Array = new char[Allocated];
-
-    if (size > 0)
-    {
-        if (data != nullptr)
-        {
+        Length = size;
+        EnsureCapacity(size);
+        if (data && Array)
             memcpy(Array, data, size);
-        }
-        else
-        {
-            // If size is requested but data is null,
-            // zero-initialize the buffer for safety.
+        else if (Array)
             memset(Array, 0, size);
-        }
     }
 }
 
@@ -136,113 +143,42 @@ void ValueTree::operator=(const ValueTree &Other)
     if (this == &Other)
         return;
 
-    if (HeaderArray != nullptr)
-        delete[] HeaderArray;
+    EnsureHeaderCapacity(Other.HeaderAllocated);
     HeaderAllocated = Other.HeaderAllocated;
-    HeaderArray = new Header[HeaderAllocated];
     memcpy(HeaderArray, Other.HeaderArray, HeaderAllocated * sizeof(Header));
 
-    if (Allocated < Other.Length)
-    {
-        if (Array != nullptr)
-            delete[] Array;
-        Allocated = Align(Other.Length);
-        Array = new char[Allocated];
-    }
-    if (Other.Length > 0)
-        memcpy(Array, Other.Array, Other.Length);
     Length = Other.Length;
-};
-
-ValueTree &ValueTree::operator+=(const ValueTree &Data)
-{
-    if (Data.Length == 0 || Data.Array == nullptr)
-        return *this;
-
-    // If we are empty, just become the other data
-    if (Length == 0)
-    {
-        *this = Data;
-        return *this;
-    }
-
-    uint16_t RequiredLength = Length + Data.Length;
-
-    // 1. Expand Data Array capacity if needed
-    if (RequiredLength > Allocated)
-    {
-        uint16_t NewAlloc = Align(RequiredLength + 16);
-        char *NewData = new char[NewAlloc];
-
-        // Use NewData consistently
-        if (Array)
-            memcpy(NewData, Array, Length);
-
-        delete[] Array;
-        Array = NewData;
-        Allocated = NewAlloc;
-    }
-
-    // 2. Raw append: no alignment, no header logic
-    memcpy(Array + Length, Data.Array, Data.Length);
-    Length = RequiredLength;
-
-    // 3. Update the very first header's length to encompass the new data
-    if (HeaderAllocated > 0)
-    {
-        HeaderArray[0].Length = Length;
-    }
-
-    return *this;
+    EnsureCapacity(Length);
+    if (Other.Array && Array)
+        memcpy(Array, Other.Array, Length);
 }
 
 ValueTree &ValueTree::operator<<(const ValueTree &Data)
 {
     if (Data.HeaderAllocated == 0 || Data.Array == nullptr)
         return *this;
-
-    if (HeaderAllocated == 0 || HeaderArray == nullptr)
+    if (HeaderAllocated == 0)
     {
         *this = Data;
         return *this;
     }
 
-    // ALWAYS APPEND as a new set of headers
     uint16_t DataOffset = Align(Length);
-    uint16_t RequiredLength = DataOffset + Data.Length;
+    uint16_t NewCount = HeaderAllocated + Data.HeaderAllocated;
 
-    // 1. Expand Header Array
-    uint16_t NewHeaderCount = HeaderAllocated + Data.HeaderAllocated;
-    Header *NewHeaders = new Header[NewHeaderCount];
-    memcpy(NewHeaders, HeaderArray, HeaderAllocated * sizeof(Header));
+    EnsureCapacity(DataOffset + Data.Length);
+    EnsureHeaderCapacity(NewCount);
 
-    // 2. Expand Data Array capacity if needed
-    if (RequiredLength > Allocated)
-    {
-        uint16_t NewAlloc = Align(RequiredLength + 16);
-        char *NewData = new char[NewAlloc];
-        if (Array)
-            memcpy(NewData, Array, Length);
-        delete[] Array;
-        Array = NewData;
-        Allocated = NewAlloc;
-    }
-
-    // 3. Map new headers with the aligned offset
     for (uint16_t i = 0; i < Data.HeaderAllocated; i++)
     {
         Header h = Data.HeaderArray[i];
         h.Pointer += DataOffset;
-        NewHeaders[HeaderAllocated + i] = h;
+        HeaderArray[HeaderAllocated + i] = h;
     }
 
-    // 4. Copy actual bytes
     memcpy(Array + DataOffset, Data.Array, Data.Length);
-
-    delete[] HeaderArray;
-    HeaderArray = NewHeaders;
-    HeaderAllocated = NewHeaderCount;
-    Length = RequiredLength;
+    HeaderAllocated = NewCount;
+    Length = DataOffset + Data.Length;
 
     UpdateSkip();
     return *this;
@@ -284,83 +220,53 @@ void ValueTree::Delete(const Reference &Location)
     uint16_t HIdx = Found.Location.HeaderIdx;
     uint16_t NodesToRemove = HeaderArray[HIdx].Skip + 1;
 
+    // Shrink data for all nodes being removed
     for (int i = NodesToRemove - 1; i >= 0; i--)
     {
         ResizeData(HIdx + i, 0);
     }
 
-    uint16_t NewCount = HeaderAllocated - NodesToRemove;
-    if (NewCount > 0)
+    // Shift headers left and shrink array
+    if (HIdx + NodesToRemove < HeaderAllocated)
     {
-        Header *NewHeaders = new Header[NewCount];
-        if (HIdx > 0)
-            memcpy(NewHeaders, HeaderArray, HIdx * sizeof(Header));
-        if (HIdx + NodesToRemove < HeaderAllocated)
-        {
-            memcpy(NewHeaders + HIdx, HeaderArray + HIdx + NodesToRemove, (HeaderAllocated - (HIdx + NodesToRemove)) * sizeof(Header));
-        }
-        delete[] HeaderArray;
-        HeaderArray = NewHeaders;
-        HeaderAllocated = NewCount;
+        memmove(HeaderArray + HIdx, HeaderArray + HIdx + NodesToRemove,
+                (HeaderAllocated - (HIdx + NodesToRemove)) * sizeof(Header));
     }
-    else
-    {
-        delete[] HeaderArray;
-        HeaderArray = nullptr;
-        HeaderAllocated = 0;
-    }
+
+    HeaderAllocated -= NodesToRemove;
+    EnsureHeaderCapacity(HeaderAllocated);
     UpdateSkip();
 }
 
 void ValueTree::ResizeData(uint16_t HIdx, uint16_t NewSize)
 {
-    // 1. Calculate the Aligned Difference
-    // Internal buffer ALWAYS keeps data on 4-byte boundaries
     uint16_t AlignedOld = Align(HeaderArray[HIdx].Length);
     uint16_t AlignedNew = Align(NewSize);
     int16_t Diff = (int16_t)AlignedNew - (int16_t)AlignedOld;
 
     if (Diff != 0)
     {
-        uint16_t TargetPointer = HeaderArray[HIdx].Pointer;
-        uint16_t OldDataEnd = TargetPointer + AlignedOld;
-        uint16_t NewTotalLength = Length + Diff;
+        uint16_t TargetPtr = HeaderArray[HIdx].Pointer;
+        uint16_t OldEnd = TargetPtr + AlignedOld;
 
-        // 2. Manage Buffer Capacity
-        if (NewTotalLength > Allocated)
+        EnsureCapacity(Length + Diff);
+
+        // Slide the tail of the data buffer
+        if (Length > OldEnd)
         {
-            uint16_t NewAlloc = Align(NewTotalLength + 16);
-            char *NewArray = new char[NewAlloc];
-            if (Array)
-            {
-                memcpy(NewArray, Array, TargetPointer);
-                if (Length > OldDataEnd)
-                    memcpy(NewArray + TargetPointer + AlignedNew, Array + OldDataEnd, Length - OldDataEnd);
-                delete[] Array;
-            }
-            Array = NewArray;
-            Allocated = NewAlloc;
-        }
-        else
-        {
-            // Move tail data forward or backward
-            if (Length > OldDataEnd)
-                memmove(Array + TargetPointer + AlignedNew, Array + OldDataEnd, Length - OldDataEnd);
+            memmove(Array + TargetPtr + AlignedNew, Array + OldEnd, Length - OldEnd);
         }
 
-        // 3. Update Pointers
-        // We shift any pointer that starts AFTER or AT the same spot (except ourselves)
+        // Shift all subsequent pointers
         for (uint16_t i = 0; i < HeaderAllocated; i++)
         {
-            if (i != HIdx && HeaderArray[i].Pointer >= TargetPointer)
+            if (i != HIdx && HeaderArray[i].Pointer >= TargetPtr)
             {
                 HeaderArray[i].Pointer += Diff;
             }
         }
-        Length = NewTotalLength;
+        Length += Diff;
     }
-
-    // Header always stores the TIGHT (logical) length
     HeaderArray[HIdx].Length = NewSize;
 }
 
@@ -368,28 +274,17 @@ void ValueTree::InsertAtIndex(uint16_t Idx, Types Type, uint8_t Depth, uint16_t 
 {
     uint16_t DataPointer = (Idx < HeaderAllocated) ? HeaderArray[Idx].Pointer : Length;
 
-    Header *NewHeaders = new Header[HeaderAllocated + 1];
-    if (HeaderArray)
+    // Expand header array and shift existing headers right using memmove
+    EnsureHeaderCapacity(HeaderAllocated + 1);
+    if (Idx < HeaderAllocated)
     {
-        if (Idx > 0)
-            memcpy(NewHeaders, HeaderArray, Idx * sizeof(Header));
-        if (Idx < HeaderAllocated)
-            memcpy(NewHeaders + Idx + 1, HeaderArray + Idx, (HeaderAllocated - Idx) * sizeof(Header));
-        delete[] HeaderArray;
+        memmove(HeaderArray + Idx + 1, HeaderArray + Idx, (HeaderAllocated - Idx) * sizeof(Header));
     }
-    HeaderArray = NewHeaders;
     HeaderAllocated++;
 
-    // Correctly initialize the NEW header
-    HeaderArray[Idx].Type = Type;
-    HeaderArray[Idx].Depth = Depth;
-    HeaderArray[Idx].Length = 0;
-    HeaderArray[Idx].Pointer = DataPointer;
-    HeaderArray[Idx].Skip = 0;
+    HeaderArray[Idx] = {Type, Depth, 0, DataPointer, 0};
 
-    // Skip calculation must happen BEFORE ResizeData shifts pointers
     UpdateSkip();
-
     if (Size > 0)
         ResizeData(Idx, Size);
 }
@@ -470,85 +365,93 @@ ValueTree ValueTree::Copy(const Reference &Location) const
     return NewArray;
 }
 
-FlexArray ValueTree::Serialize() const {
-    // 1. Calculate Packed Wire Sizes
+FlexArray ValueTree::Serialize() const
+{
     uint16_t packedDataSize = 0;
-    for (uint16_t i = 0; i < HeaderAllocated; i++) {
+    for (uint16_t i = 0; i < HeaderAllocated; i++)
         packedDataSize += HeaderArray[i].Length;
-    }
 
     uint16_t headerAreaSize = HeaderAllocated * 4;
     uint16_t totalSize = 4 + headerAreaSize + packedDataSize;
 
-    // 2. Create and Allocate the FlexArray
     FlexArray result(totalSize);
     result.Length = totalSize;
 
-    // 3. Write Metadata (Total Size & Header Count)
-    memcpy(result.Array, &totalSize, 2);
-    memcpy(result.Array + 2, &HeaderAllocated, 2);
+    // Use a single pointer and offsets to keep logic tight
+    char *base = result.Array;
+    memcpy(base, &totalSize, 2);
+    memcpy(base + 2, &HeaderAllocated, 2);
 
-    char *hPtr = result.Array + 4;
-    char *dPtr = result.Array + 4 + headerAreaSize;
+    char *hPtr = base + 4;
+    char *dPtr = base + 4 + headerAreaSize;
 
-    // 4. Pack Headers and Data
-    for (uint16_t i = 0; i < HeaderAllocated; i++) {
-        hPtr[0] = (uint8_t)HeaderArray[i].Type;
-        hPtr[1] = HeaderArray[i].Depth;
-        memcpy(hPtr + 2, &HeaderArray[i].Length, 2);
+    for (uint16_t i = 0; i < HeaderAllocated; i++)
+    {
+        const Header& h = HeaderArray[i];
+        
+        // Manual packing into the 4-byte wire format
+        hPtr[0] = (uint8_t)h.Type;
+        hPtr[1] = h.Depth;
+        memcpy(hPtr + 2, &h.Length, 2);
         hPtr += 4;
 
-        if (HeaderArray[i].Length > 0) {
-            // Copy from internal padded buffer to wire packed buffer
-            memcpy(dPtr, Array + HeaderArray[i].Pointer, HeaderArray[i].Length);
-            dPtr += HeaderArray[i].Length;
+        if (h.Length > 0)
+        {
+            memcpy(dPtr, Array + h.Pointer, h.Length);
+            dPtr += h.Length;
         }
     }
 
-    return result; // NRVO (Named Return Value Optimization) makes this efficient
+    return result;
 }
 
-ValueTree ValueTree::Deserialize(const FlexArray& in, uint16_t startIndex) {
-    // 1. Basic Bounds Check
-    if (startIndex + 4 > in.Length) return ValueTree();
+ValueTree ValueTree::Deserialize(const FlexArray &in, uint16_t startIndex)
+{
+    // Bounds check for metadata
+    if (startIndex + 4 > in.Length) return {};
 
-    // 2. Read Metadata from the specified start index
-    char* src = in.Array + startIndex;
-    uint16_t totalWireSize = *(uint16_t*)src;
-    uint16_t count = *(uint16_t*)(src + 2);
+    const char *src = in.Array + startIndex;
+    uint16_t totalWireSize = *(uint16_t *)src;
+    uint16_t count = *(uint16_t *)(src + 2);
 
-    // 3. Verify total message is within the FlexArray bounds
-    if (startIndex + totalWireSize > in.Length) return ValueTree();
+    // Bounds check for full payload
+    if (startIndex + totalWireSize > in.Length) return {};
 
     ValueTree res;
+    if (count == 0) return res;
+
+    // Use our standardized allocation helpers
+    res.EnsureHeaderCapacity(count);
     res.HeaderAllocated = count;
-    res.HeaderArray = new Header[count];
 
-    char *hRead = src + 4;
-    char *dRead = src + 4 + (count * 4);
-    uint16_t internalPtr = 0;
+    const char *hRead = src + 4;
+    const char *dRead = src + 4 + (count * 4);
+    uint16_t internalOffset = 0;
 
-    // 4. Map Packed Wire Headers to Padded Internal Headers
-    for (uint16_t i = 0; i < count; i++) {
-        res.HeaderArray[i].Type = (Types)hRead[0];
-        res.HeaderArray[i].Depth = hRead[1];
-        memcpy(&res.HeaderArray[i].Length, hRead + 2, 2);
+    // Pass 1: Setup Headers and calculate internal required length
+    for (uint16_t i = 0; i < count; i++)
+    {
+        Header& h = res.HeaderArray[i];
+        h.Type = (Types)hRead[0];
+        h.Depth = hRead[1];
+        memcpy(&h.Length, hRead + 2, 2);
         hRead += 4;
 
-        res.HeaderArray[i].Pointer = internalPtr;
-        internalPtr += Align(res.HeaderArray[i].Length); // Re-apply padding for MCU
+        h.Pointer = internalOffset;
+        internalOffset += Align(h.Length); 
     }
 
-    // 5. Allocate the internal padded buffer
-    res.Length = internalPtr;
-    res.Allocated = Align(res.Length);
-    res.Array = (char*)malloc(res.Allocated);
+    // Pass 2: Allocate data buffer once and copy data chunks
+    res.Length = internalOffset;
+    res.EnsureCapacity(res.Length);
 
-    // 6. Copy Data from packed wire format to padded internal format
-    for (uint16_t i = 0; i < count; i++) {
-        if (res.HeaderArray[i].Length > 0) {
-            memcpy(res.Array + res.HeaderArray[i].Pointer, dRead, res.HeaderArray[i].Length);
-            dRead += res.HeaderArray[i].Length;
+    for (uint16_t i = 0; i < count; i++)
+    {
+        uint16_t len = res.HeaderArray[i].Length;
+        if (len > 0)
+        {
+            memcpy(res.Array + res.HeaderArray[i].Pointer, dRead, len);
+            dRead += len;
         }
     }
 
@@ -644,3 +547,24 @@ SearchResult ValueTree::Child(const Bookmark &Parent) const
         {Parent.Map, childIdx}};
 }
 
+uint16_t ValueTree::InsertNext(const void *Data, uint16_t Size, Types Type, uint16_t CurrentIdx)
+{
+    uint16_t nextIdx = CurrentIdx + HeaderArray[CurrentIdx].Skip + 1;
+    uint8_t depth = HeaderArray[CurrentIdx].Depth;
+
+    InsertAtIndex(nextIdx, Type, depth, Size);
+    if (Data && Size > 0) memcpy(Array + HeaderArray[nextIdx].Pointer, Data, Size);
+    
+    return nextIdx;
+}
+
+uint16_t ValueTree::InsertChild(const void *Data, uint16_t Size, Types Type, uint16_t ParentIdx)
+{
+    uint16_t childIdx = (ParentIdx == 0xFFFF) ? 0 : ParentIdx + 1;
+    uint8_t depth = (ParentIdx == 0xFFFF) ? 0 : HeaderArray[ParentIdx].Depth + 1;
+
+    InsertAtIndex(childIdx, Type, depth, Size);
+    if (Data && Size > 0) memcpy(Array + HeaderArray[childIdx].Pointer, Data, Size);
+    
+    return childIdx;
+}

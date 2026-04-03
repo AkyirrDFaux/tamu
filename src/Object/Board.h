@@ -11,16 +11,27 @@ public:
     bool operator!=(Ports::Ports Other) const { return !(Values & Other); };
 };
 
-#define SET_PORT(index, type, pin, driver)                                      \
-    do                                                                          \
-    {                                                                           \
-        PortTypeClass pt(type);                                                 \
-        Values.Set(&pt, sizeof(PortTypeClass), Types::PortType, {0, 0, index}); \
-        Pin p(pin);                                                             \
-        Values.Set(&p, sizeof(Pin), Types::Pin, {0, 0, index, 0});              \
-        Drivers d = driver;                                                     \
-        Values.Set(&d, sizeof(Drivers), Types::PortDriver, {0, 0, index, 1});   \
-    } while (0)
+struct PortDefinition
+{
+    uint32_t Type;
+    Pin PinID;
+    Drivers Driver;
+};
+
+#if defined BOARD_Tamu_v2_0
+static const PortDefinition Tamu_Ports[] = {
+    {Ports::GPIO | Ports::ADC | Ports::PWM, {0,0}, Drivers::None},
+    {Ports::GPIO | Ports::ADC | Ports::PWM, {1,0}, Drivers::None},
+    {Ports::GPIO | Ports::PWM, {9,0}, Drivers::None},
+    {Ports::TOut | Ports::PWM, {10,0}, Drivers::None},
+    {Ports::TOut | Ports::PWM, {6,0}, Drivers::None},
+    {Ports::GPIO | Ports::PWM, {8,0}, Drivers::None},
+    {Ports::GPIO | Ports::PWM, {7,0}, Drivers::None},
+    {Ports::GPIO | Ports::ADC | Ports::PWM, {3,0}, Drivers::None},
+    {Ports::I2C_SDA, {4,0}, Drivers::None},
+    {Ports::I2C_SCL, {5,0}, Drivers::None},
+    {Ports::GPIO | Ports::Internal, LED_NOTIFICATION_PIN, Drivers::None}};
+#endif
 
 class BoardClass : public BaseClass
 {
@@ -67,71 +78,103 @@ BoardClass::BoardClass(const Reference &ID) : BaseClass(&Table, ID, Flags::Auto 
 
 #if defined BOARD_Tamu_v2_0
     Boards model = Boards::Tamu_v2_0;
-    Values.Set(&model, sizeof(Boards), Types::Board, {0});
+    
+    // 1. Root node (Index 0). Passing 0xFFFF as parent signals root.
+    uint16_t system = Values.InsertChild(&model, sizeof(Boards), Types::Board, 0xFFFF);
 
-    SET_PORT(0, Ports::GPIO | Ports::ADC | Ports::PWM, 0, Drivers::None);
-    SET_PORT(1, Ports::GPIO | Ports::ADC | Ports::PWM, 1, Drivers::None);
-    SET_PORT(2, Ports::GPIO | Ports::PWM, 9, Drivers::None);
-    SET_PORT(3, Ports::TOut | Ports::PWM, 10, Drivers::None);
-    SET_PORT(4, Ports::TOut | Ports::PWM, 6, Drivers::None);
-    SET_PORT(5, Ports::GPIO | Ports::PWM, 8, Drivers::None);
-    SET_PORT(6, Ports::GPIO | Ports::PWM, 7, Drivers::None);
-    SET_PORT(7, Ports::GPIO | Ports::ADC | Ports::PWM, 3, Drivers::None);
-    SET_PORT(8, Ports::I2C_SDA, 4, Drivers::None);
-    SET_PORT(9, Ports::I2C_SCL, 5, Drivers::None);
-    SET_PORT(10, Ports::GPIO | Ports::Internal, LED_NOTIFICATION_PIN, Drivers::None);
-#endif
+    // 2. "Ports" container {0, 0}
+    uint16_t ports = Values.InsertChild(nullptr, 0, Types::Undefined, system);
 
-    // Standard Board Values (Local Paths)
+    uint16_t lastPort = 0; 
+    for (uint8_t i = 0; i < (sizeof(Tamu_Ports) / sizeof(PortDefinition)); i++)
+    {
+        const PortDefinition &p = Tamu_Ports[i];
+
+        // 3. Port Type {0, 0, i}
+        uint16_t pNode = (i == 0) 
+            ? Values.InsertChild(&p.Type, sizeof(PortTypeClass), Types::PortType, ports)
+            : Values.InsertNext(&p.Type, sizeof(PortTypeClass), Types::PortType, lastPort);
+
+        // 4. Pin {0, 0, i, 0}
+        uint16_t pin = Values.InsertChild(&p.PinID, sizeof(Pin), Types::Pin, pNode);
+
+        // 5. Driver {0, 0, i, 1}
+        Values.InsertNext(&p.Driver, sizeof(Drivers), Types::PortDriver, pin);
+
+        lastPort = pNode; 
+    }
+
+    // 6. Telemetry: {0, 1} through {0, 5} (Siblings of ports container)
     int32_t zero = 0;
-    Values.Set(&zero, sizeof(int32_t), Types::Integer, {0, 1}); // Boot Time
-    Values.Set(&zero, sizeof(int32_t), Types::Integer, {0, 2}); // Avg Loop
-    Values.Set(&zero, sizeof(int32_t), Types::Integer, {0, 3}); // Max Loop
-    Values.Set(&zero, sizeof(int32_t), Types::Integer, {0, 4}); // RAM Total
-    Values.Set(&zero, sizeof(int32_t), Types::Integer, {0, 5}); // RAM Free
+    uint16_t lastTele = ports;
+    for (uint8_t i = 0; i < 5; i++)
+    {
+        lastTele = Values.InsertNext(&zero, 4, Types::Integer, lastTele);
+    }
 
-    Values.Set(Name.Data, Name.Length, Types::Text, {1});
-};
-
+    // 7. Name {1} (Sibling of system {0})
+    Values.InsertNext(Name.Data, Name.Length, Types::Text, system);
+#endif
+}
 bool BoardClass::Run()
 {
-    // 1. Update Telemetry using local SearchResults
-    SearchResult avgRes = Values.Find({0, 2}, true);
-    SearchResult maxRes = Values.Find({0, 3}, true);
+    // 1. Navigation: Navigate to the "System" node (0)
+    SearchResult system = Values.Find({0}, true);
+    if (!system.Value) return false;
+
+    // Grab bookmarks for Telemetry (Siblings of the first child of System)
+    // Path {0, 1} is usually the first child
+    SearchResult bootTime = Values.Child(system.Location);
+    SearchResult avgRes   = Values.Next(bootTime.Location); // {0, 2}
+    SearchResult maxRes   = Values.Next(avgRes.Location);   // {0, 3}
+    SearchResult ramTotal = Values.Next(maxRes.Location);   // {0, 4}
+    SearchResult ramFree  = Values.Next(ramTotal.Location); // {0, 5}
 
     if (avgRes.Value && maxRes.Value)
     {
         int32_t *avg = (int32_t *)avgRes.Value;
         int32_t *max = (int32_t *)maxRes.Value;
 
-        // Exponential moving average for loop timing
         *avg = (DeltaTime + (*avg * 15)) / 16;
 
-        if (DeltaTime > *max)
-        {
+        if (DeltaTime > *max) {
             *max = DeltaTime;
         }
-        else if (HW::Now() % 20000 < 20) // Periodic update of RAM stats
-        {
-            *max = *avg; // Reset max peak occasionally
+        else if (HW::Now() % 20000 < 20) {
+            *max = *avg;
             int32_t totalRam = HW::GetRAM();
             int32_t freeRam = HW::GetFreeRAM();
-            Values.Set(&totalRam, sizeof(int32_t), Types::Integer, {0, 4});
-            Values.Set(&freeRam, sizeof(int32_t), Types::Integer, {0, 5});
+            
+            // SetDirect is much faster here than Values.Set with a Reference
+            Values.SetDirect(&totalRam, 4, Types::Integer, ramTotal.Location);
+            Values.SetDirect(&freeRam, 4, Types::Integer, ramFree.Location);
         }
     }
 
-    // 2. Driver Servicing
+    // 2. Optimized Driver Servicing
+    // Navigate to the Ports array: root -> child (0:System) -> child (0, 0:Ports)
+    SearchResult portsNode = Values.Child(system.Location); // This is {0, 0}
+    SearchResult currentPort = Values.Child(portsNode.Location); // This is {0, 0, 0}
+
     for (uint8_t i = 0; i < 11; i++)
     {
-        if (DriverArray[i] == nullptr)
-            continue;
-
-        SearchResult roleRes = Values.Find({0, 0, i, 1}, true);
-        if (roleRes.Value && *(Drivers *)roleRes.Value == Drivers::LED)
+        if (DriverArray[i] != nullptr && currentPort.Value)
         {
-            static_cast<LEDDriver *>(DriverArray[i])->Show();
+            // The Driver is at {0, 0, i, 1}. 
+            // In the tree: PortNode -> Child (Pin: 0) -> Next (Driver: 1)
+            SearchResult pinNode = Values.Child(currentPort.Location);
+            SearchResult roleRes = Values.Next(pinNode.Location);
+
+            if (roleRes.Value && *(Drivers *)roleRes.Value == Drivers::LED)
+            {
+                static_cast<LEDDriver *>(DriverArray[i])->Show();
+            }
         }
+        
+        // Move to the next port sibling {0, 0, i+1}
+        currentPort = Values.Next(currentPort.Location);
+        if (!currentPort.Value) break; 
     }
+
     return true;
 }
