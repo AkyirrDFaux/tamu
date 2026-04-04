@@ -1,32 +1,32 @@
-bool ExecuteCompare(ValueTree &Values, Reference Index, Operations Op)
+bool ExecuteCompare(const Bookmark &OpPoint, Operations Op)
 {
-    // 1. Locate the operation base
-    SearchResult Base = Values.Find(Index);
-    if (!Base.Value) return true;
-    Bookmark OpPoint = Base.Location;
+    // 1. Navigation from OpPoint root
+    // Relative {0} is the Output, {1} is the Inputs Folder
+    Bookmark OutMark = OpPoint.Map->Child(OpPoint);
+    if (OutMark.Index == INVALID_HEADER) return true;
 
-    // --- INPUT RESOLUTION ---
-    // Dive to {0} (Output), then Step to {1} (Inputs Folder)
-    SearchResult InputsFolder = Values.Child(OpPoint);
-    InputsFolder = Values.Next(InputsFolder.Location);
-    if (!InputsFolder.Value) return true;
+    Bookmark InputsFolder = OpPoint.Map->Next(OutMark);
+    if (InputsFolder.Index == INVALID_HEADER) return true;
 
-    // Dive into Inputs to find {1, 0} (A) and Step to {1, 1} (B)
-    SearchResult S_A = Values.Child(InputsFolder.Location);
-    SearchResult S_B = Values.Next(S_A.Location);
+    // Dive into Inputs folder to find {1, 0} (A) and Step to {1, 1} (B)
+    Bookmark Mark_A = OpPoint.Map->Child(InputsFolder);
+    if (Mark_A.Index == INVALID_HEADER) return true;
 
-    if (!S_A.Value || !S_B.Value) return true;
+    Bookmark Mark_B = OpPoint.Map->Next(Mark_A);
+    if (Mark_B.Index == INVALID_HEADER) return true;
 
     // --- DATA VALIDATION ---
-    // Strict Scalar Check: Reject if either input is not a scalar (Vector, etc.)
-    if (!IsScalar(S_A.Location.Map->This(S_A.Location).Type) || 
-        !IsScalar(S_B.Location.Map->This(S_B.Location).Type))
+    // Use the Map to resolve the Results for metadata checks
+    Result Res_A = OpPoint.Map->GetThis(Mark_A);
+    Result Res_B = OpPoint.Map->GetThis(Mark_B);
+
+    if (!IsScalar(Res_A.Type) || !IsScalar(Res_B.Type))
         return true;
 
     // --- EXECUTION ---
-    // Promote both to Number for a unified comparison lane
-    Number Left = GetAsNumber(S_A.Location);
-    Number Right = GetAsNumber(S_B.Location);
+    // GetAsNumber works directly with Bookmarks
+    Number Left  = GetAsNumber(Mark_A);
+    Number Right = GetAsNumber(Mark_B);
     bool result = false;
 
     switch (Op)
@@ -38,14 +38,8 @@ bool ExecuteCompare(ValueTree &Values, Reference Index, Operations Op)
     }
 
     // --- OUTPUT STORAGE ---
-    // Output is always at relative {0}
-    SearchResult S_Out = Values.Child(OpPoint);
-    if (S_Out.Value)
-    {
-        uint8_t val = result ? 1 : 0;
-        // Result of a comparison is always a 1-byte Boolean
-        Values.SetDirect(&val, 1, Types::Bool, S_Out.Location);
-    }
+    // Direct set using the Output node's index
+    OpPoint.Map->Set(&result, sizeof(bool), Types::Bool, OutMark.Index);
 
     return true;
 }

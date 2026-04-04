@@ -25,17 +25,18 @@ void ReadValue(const FlexArray &Input)
     FlexArray Data;
     if (pID->PathLen() > 0)
     {
-        SearchResult Found = Object->Values.Find(*pID, true);
+        Bookmark Found = Object->Values.Find(*pID, true);
+        Result FoundData = Object->Values.Get(Found);
         
-        if (Found.Value != nullptr && Found.Length > 0)
+        if (FoundData.Value != nullptr && FoundData.Length > 0)
         {
             // Efficiency: Reserve space for [Type(1)][Length(2)][Payload(N)]
             // This prevents multiple reallocs during the += chain
-            Data.Reserve(1 + 2 + Found.Length);
+            Data.Reserve(1 + 2 + FoundData.Length);
             
-            Data += FlexArray((char *)&Found.Type, 1);       // Pack Type
-            Data += FlexArray((char *)&Found.Length, 2);     // Pack Length
-            Data += FlexArray((char *)Found.Value, Found.Length);
+            Data += FlexArray((char *)&FoundData.Type, 1);       // Pack Type
+            Data += FlexArray((char *)&FoundData.Length, 2);     // Pack Length
+            Data += FlexArray((char *)FoundData.Value, FoundData.Length);
         }
     }
 

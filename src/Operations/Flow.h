@@ -1,4 +1,4 @@
-bool SetFlags(ValueTree &Values, Reference Index)
+bool SetFlags(const Bookmark &OpPoint)
 {
     /*if (Values.Type(1) != Types::Flags)
         return true;
@@ -11,7 +11,7 @@ bool SetFlags(ValueTree &Values, Reference Index)
     return true;
 }
 
-bool ResetFlags(ValueTree &Values, Reference Index)
+bool ResetFlags(const Bookmark &OpPoint)
 {
     /*if (Values.Type(1) != Types::Flags)
         return true;

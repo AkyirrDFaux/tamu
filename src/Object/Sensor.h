@@ -55,8 +55,9 @@ SensorClass::~SensorClass()
 
 bool SensorClass::Connect()
 {
-    // Direct local Find for port resolution
-    SearchResult res = Values.Find(Reference({0, 0}), true);
+    // Direct local Find for port resolution using Bookmark
+    Bookmark portMark = Values.Find({0, 0}, true);
+    Result res = Values.Get(portMark);
 
     if (res.Length < sizeof(PortNumber) || !res.Value)
     {
@@ -75,6 +76,7 @@ bool SensorClass::Connect()
     if (Board.ConnectPin(this, Port))
     {
         CurrentPort = Port;
+        // Ensure hardware is set to Analog mode
         HW::ModeAnalog(MeasPin);
         return true;
     }
@@ -91,13 +93,13 @@ bool SensorClass::Disconnect()
 
 void SensorClass::Setup(const Reference &Index)
 {
+    // Reconnect if the physical port {0, 0} changes
     if (Index == Reference({0, 0}))
     {
         Disconnect();
         Connect();
         return;
     }
-    // Type change logic can be added here if needed
 }
 
 bool SensorClass::Run()
@@ -108,10 +110,15 @@ bool SensorClass::Run()
         return true;
     }
 
-    // Direct local Find calls for performance
-    SearchResult typeRes   = Values.Find(Reference({0}));
-    SearchResult measRes   = Values.Find(Reference({1}));
-    SearchResult filterRes = Values.Find(Reference({2}));
+    // 1. Fetch Bookmarks for core parameters
+    Bookmark typeMark   = Values.Find({0}, true);
+    Bookmark measMark   = Values.Find({1}, true);
+    Bookmark filterMark = Values.Find({2}, true);
+
+    // 2. Resolve Results
+    Result typeRes   = Values.Get(typeMark);
+    Result measRes   = Values.Get(measMark);
+    Result filterRes = Values.Get(filterMark);
 
     if (!typeRes.Value || !measRes.Value || !filterRes.Value)
     {
@@ -119,35 +126,44 @@ bool SensorClass::Run()
         return true;
     }
 
-    // Map internal memory to local pointers for the math block
+    // Map internal memory to local pointers for zero-copy math
     SensorTypes mode = *(SensorTypes*)typeRes.Value;
     Number* measurementPtr = (Number*)measRes.Value;
     Number filterVal = *(Number*)filterRes.Value;
 
-    // 1. Raw Read
+    // 3. Raw Hardware Read
     Number In = HW::AnalogRead(MeasPin);
 
-    // 2. Transformation based on SensorType
+    // 4. Transformation Logic
     switch (mode)
     {
     case SensorTypes::AnalogVoltage:
         In = In * VOLTAGE / ADCRES;
         break;
+        
     case SensorTypes::TempNTC10K:
-        // Steinhart-Hart simplified
-        In = 1 / (0.0034 + log(In / (ADCRES - In)) / 3950) - 273.15;
+        // Steinhart-Hart simplified: 1/T = 1/T0 + 1/B * ln(R/R0)
+        // Note: Using ADCRES for the voltage divider ratio
+        In = 1.0f / (0.0034f + log(In / (ADCRES - In)) / 3950.0f) - 273.15f;
         break;
+        
     case SensorTypes::Light10K:
-        In = sq(18 * (ADCRES - In) / In);
+        // Power curve approximation for LDR
+        In = sq(18.0f * (ADCRES - In) / In);
         break;
+        
     default:
         break;
     }
 
-    // 3. Filter calculation and direct memory update
-    // Formula: In * (1 / (1 + Filter)) + LastValue * (Filter / (1 + Filter))
-    Number invFilter = 1.0f / (1.0f + filterVal);
-    *measurementPtr = (In * invFilter) + (*measurementPtr * (filterVal * invFilter));
+    // 5. Exponential Moving Average Filter
+    // Efficient weight distribution to avoid multiple divisions
+    Number invFilterTotal = 1.0f / (1.0f + filterVal);
+    Number weightNew      = invFilterTotal;
+    Number weightOld      = filterVal * invFilterTotal;
+
+    // Apply Filter directly to ValueTree memory
+    *measurementPtr = (In * weightNew) + (*measurementPtr * weightOld);
 
     return true;
-};
+}

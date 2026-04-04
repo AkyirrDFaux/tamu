@@ -1,5 +1,6 @@
 // Align to multiple of 4
 #define Align(x) (((x) + 3) & ~3)
+#define INVALID_HEADER 0xFFFF
 
 struct Header
 {
@@ -11,19 +12,17 @@ struct Header
 };
 
 // Layer 1: The Handle (The "Where")
+struct Result
+{
+    void *Value = nullptr;
+    uint16_t Length = 0;
+    Types Type = Types::Undefined;
+};
+
 struct Bookmark
 {
     ValueTree *Map = nullptr;
-    uint16_t HeaderIdx = 0;
-};
-
-// Layer 2: The Value Snapshot (The "What")
-struct SearchResult
-{
-    void *Value = nullptr; // Direct pointer to the POD data
-    Types Type = Types::Undefined;
-    uint16_t Length = 0; // 0 = Failure
-    Bookmark Location;   // Attached handle for restarting/storing
+    uint16_t Index = INVALID_HEADER;
 };
 
 class ValueTree
@@ -31,7 +30,7 @@ class ValueTree
 private:
     void EnsureCapacity(uint16_t required);
     void EnsureHeaderCapacity(uint16_t count);
-    
+
 public:
     Header *HeaderArray = nullptr;
     uint16_t HeaderAllocated = 0;
@@ -47,12 +46,20 @@ public:
     void operator=(const ValueTree &Other);
     ValueTree &operator<<(const ValueTree &Data);
 
-    // --- Core Navigation (The New Standard) ---
-    // Use Find to get the initial SearchResult
-    SearchResult Find(const Reference &Location, bool StopAtReferences = false) const;
-    SearchResult Next(const Bookmark &Parent) const;  // Never evaluates references
-    SearchResult Child(const Bookmark &Parent) const; // Never evaluates references
-    SearchResult This(const Bookmark &Parent) const;  // Always evaluates references
+    Result Get(uint16_t Index) const;
+    Result Get(const Bookmark &Sibling) const;
+    Result GetThis(uint16_t Index) const;
+    Result GetThis(const Bookmark &Sibling) const;
+
+    // Core Navigation
+    uint16_t Next(uint16_t Sibling) const; // Never evaluates references
+    uint16_t Child(uint16_t Parent) const; // Never evaluates references
+    Bookmark Next(const Bookmark &Sibling) const;
+    Bookmark Child(const Bookmark &Parent) const;
+
+    Bookmark This(uint16_t Index) const; // Always evaluates references
+    Bookmark This(const Bookmark &Parent) const;
+    Bookmark Find(const Reference &Location, bool StopAtReferences = false) const;
 
     // --- Data Manipulation ---
     void UpdateSkip();
@@ -61,13 +68,14 @@ public:
     void InsertAtIndex(uint16_t Idx, Types Type, uint8_t Depth, uint16_t Size);
     uint16_t Insert(const Reference &Location, int16_t NewDataSize);
 
-    // --- Optimized Accessors ---
-    // Replaces the old templated Get/Set.
-    // Logic: Use SearchResult.Value for reading, SetDirect for writing.
-    void SetDirect(const void *Data, size_t Size, Types Type, const Bookmark &Point);
+    // Setters
+    void Set(const void *Data, size_t Size, Types Type, uint16_t Index);
+    void Set(const void *Data, size_t Size, Types Type, const Bookmark &Point);
     void Set(const void *Data, size_t Size, Types Type, const Reference &Location);
     uint16_t InsertNext(const void *Data, uint16_t Size, Types Type, uint16_t CurrentIdx);
     uint16_t InsertChild(const void *Data, uint16_t Size, Types Type, uint16_t ParentIdx);
+    Bookmark InsertNext(const void *Data, uint16_t Size, Types Type, const Bookmark &CurrentIdx);
+    Bookmark InsertChild(const void *Data, uint16_t Size, Types Type, const Bookmark &ParentIdx);
 
     ValueTree Copy(const Reference &Location) const;
 
@@ -213,11 +221,11 @@ void ValueTree::UpdateSkip()
 
 void ValueTree::Delete(const Reference &Location)
 {
-    SearchResult Found = Find(Location, true);
-    if (Found.Length == 0)
+    Bookmark Found = Find(Location, true);
+    if (Found.Index == INVALID_HEADER)
         return;
 
-    uint16_t HIdx = Found.Location.HeaderIdx;
+    uint16_t HIdx = Found.Index;
     uint16_t NodesToRemove = HeaderArray[HIdx].Skip + 1;
 
     // Shrink data for all nodes being removed
@@ -345,11 +353,11 @@ uint16_t ValueTree::Insert(const Reference &Location, int16_t NewDataSize)
 
 ValueTree ValueTree::Copy(const Reference &Location) const
 {
-    SearchResult res = Find(Location);
-    if (res.Length == 0)
+    Bookmark res = Find(Location);
+    if (res.Index == INVALID_HEADER)
         return ValueTree();
 
-    const Header &h = res.Location.Map->HeaderArray[res.Location.HeaderIdx];
+    const Header &h = res.Map->HeaderArray[res.Index];
     ValueTree NewArray;
     NewArray.HeaderArray = new Header[1];
     NewArray.HeaderAllocated = 1;
@@ -360,7 +368,7 @@ ValueTree ValueTree::Copy(const Reference &Location) const
     if (NewArray.Allocated > 0)
     {
         NewArray.Array = new char[NewArray.Allocated];
-        memcpy(NewArray.Array, res.Value, h.Length);
+        memcpy(NewArray.Array, h.Pointer + res.Map->Array, h.Length);
     }
     return NewArray;
 }
@@ -387,8 +395,8 @@ FlexArray ValueTree::Serialize() const
 
     for (uint16_t i = 0; i < HeaderAllocated; i++)
     {
-        const Header& h = HeaderArray[i];
-        
+        const Header &h = HeaderArray[i];
+
         // Manual packing into the 4-byte wire format
         hPtr[0] = (uint8_t)h.Type;
         hPtr[1] = h.Depth;
@@ -408,17 +416,20 @@ FlexArray ValueTree::Serialize() const
 ValueTree ValueTree::Deserialize(const FlexArray &in, uint16_t startIndex)
 {
     // Bounds check for metadata
-    if (startIndex + 4 > in.Length) return {};
+    if (startIndex + 4 > in.Length)
+        return {};
 
     const char *src = in.Array + startIndex;
     uint16_t totalWireSize = *(uint16_t *)src;
     uint16_t count = *(uint16_t *)(src + 2);
 
     // Bounds check for full payload
-    if (startIndex + totalWireSize > in.Length) return {};
+    if (startIndex + totalWireSize > in.Length)
+        return {};
 
     ValueTree res;
-    if (count == 0) return res;
+    if (count == 0)
+        return res;
 
     // Use our standardized allocation helpers
     res.EnsureHeaderCapacity(count);
@@ -431,14 +442,14 @@ ValueTree ValueTree::Deserialize(const FlexArray &in, uint16_t startIndex)
     // Pass 1: Setup Headers and calculate internal required length
     for (uint16_t i = 0; i < count; i++)
     {
-        Header& h = res.HeaderArray[i];
+        Header &h = res.HeaderArray[i];
         h.Type = (Types)hRead[0];
         h.Depth = hRead[1];
         memcpy(&h.Length, hRead + 2, 2);
         hRead += 4;
 
         h.Pointer = internalOffset;
-        internalOffset += Align(h.Length); 
+        internalOffset += Align(h.Length);
     }
 
     // Pass 2: Allocate data buffer once and copy data chunks
@@ -459,112 +470,184 @@ ValueTree ValueTree::Deserialize(const FlexArray &in, uint16_t startIndex)
     return res;
 }
 
-void ValueTree::SetDirect(const void *Data, size_t Size, Types Type, const Bookmark &Point)
+// Thin calls
+
+inline Result ValueTree::Get(uint16_t Index) const
+{
+    if (Index >= HeaderAllocated)
+        return {};
+    const Header &h = HeaderArray[Index];
+    return {Array + h.Pointer, h.Length, h.Type};
+}
+
+inline Result ValueTree::Get(const Bookmark &Point) const
 {
     if (!Point.Map)
-        return;
-
-    // If the size is different, we must trigger a re-allocation/shift
-    if (Point.Map->HeaderArray[Point.HeaderIdx].Length != Size)
-    {
-        Point.Map->ResizeData(Point.HeaderIdx, (uint16_t)Size);
-    }
-
-    Point.Map->HeaderArray[Point.HeaderIdx].Type = Type;
-    if (Size > 0 && Data != nullptr)
-    {
-        memcpy(Point.Map->Array + Point.Map->HeaderArray[Point.HeaderIdx].Pointer, Data, Size);
-    }
+        return {};
+    return Point.Map->Get(Point.Index);
 }
 
-void ValueTree::Set(const void *Data, size_t Size, Types Type, const Reference &Location)
+inline Result ValueTree::GetThis(uint16_t Index) const
 {
-    SearchResult Found = Find(Location, true);
+    Bookmark Value = This(Index);
+    if (Value.Index == INVALID_HEADER)
+        return {};
+    const Header &h = Value.Map->HeaderArray[Value.Index];
 
-    // If it's a packed sub-value (Vector component), we write directly to memory
-    // Note: SearchResult.Location for packed items points to the PARENT header
-    if (Found.Length > 0 && Found.Location.HeaderIdx != 0xFFFF)
-    {
-        // If the type matches the packed expectation, copy directly
-        if (Found.Type == Type)
-        {
-            memcpy(Found.Value, Data, Size);
-            return;
-        }
-    }
-
-    // If not found, insert. If found, update.
-    uint16_t HIdx = (Found.Length == 0) ? Insert(Location, (uint16_t)Size) : Found.Location.HeaderIdx;
-    SetDirect(Data, Size, Type, {this, HIdx});
+    return {Value.Map->Array + h.Pointer, h.Length, h.Type};
 }
 
-SearchResult ValueTree::Next(const Bookmark &Parent) const
+inline Result ValueTree::GetThis(const Bookmark &Point) const
 {
-    if (!Parent.Map || Parent.HeaderIdx >= Parent.Map->HeaderAllocated)
+    if (!Point.Map)
         return {};
-
-    Header &h = Parent.Map->HeaderArray[Parent.HeaderIdx];
-    uint16_t nextIdx = Parent.HeaderIdx + h.Skip + 1;
-
-    // Boundary check
-    if (nextIdx >= Parent.Map->HeaderAllocated)
-        return {};
-
-    Header &nextH = Parent.Map->HeaderArray[nextIdx];
-
-    // Sibling check: Must be at the same depth to be a true sibling
-    if (nextH.Depth != h.Depth)
-        return {};
-
-    return {
-        Parent.Map->Array + nextH.Pointer,
-        nextH.Type,
-        nextH.Length,
-        {Parent.Map, nextIdx}};
+    return Point.Map->GetThis(Point.Index);
 }
 
-SearchResult ValueTree::Child(const Bookmark &Parent) const
+inline Bookmark ValueTree::Next(const Bookmark &Sibling) const
+{
+    if (!Sibling.Map)
+        return {};
+    return {Sibling.Map, Sibling.Map->Next(Sibling.Index)};
+}
+
+inline Bookmark ValueTree::Child(const Bookmark &Parent) const
 {
     if (!Parent.Map)
         return {};
+    return {Parent.Map, Parent.Map->Child(Parent.Index)};
+}
 
-    Header &h = Parent.Map->HeaderArray[Parent.HeaderIdx];
-
-    // If Skip is 0, this is a leaf node (no children)
-    if (h.Skip == 0)
+inline Bookmark ValueTree::This(const Bookmark &Point) const
+{
+    if (!Point.Map)
         return {};
+    return Point.Map->This(Point.Index);
+}
 
-    uint16_t childIdx = Parent.HeaderIdx + 1;
-    if (childIdx >= Parent.Map->HeaderAllocated)
+inline void ValueTree::Set(const void *Data, size_t Size, Types Type, const Bookmark &Point)
+{
+    if (Point.Map)
+        Point.Map->Set(Data, Size, Type, Point.Index);
+}
+
+inline void ValueTree::Set(const void *Data, size_t Size, Types Type, const Reference &Location)
+{
+    Bookmark target = Find(Location, true);
+    if (target.Index == INVALID_HEADER)
+    {
+        Insert(Location, (int16_t)Size); // Use your existing path-builder
+        // After insert, we have to find it again or have Insert return the index
+        target = Find(Location, true);
+    }
+    Set(Data, Size, Type, target.Index);
+}
+
+inline Bookmark ValueTree::InsertNext(const void *Data, uint16_t Size, Types Type, const Bookmark &Point)
+{
+    if (!Point.Map)
         return {};
+    return {Point.Map, Point.Map->InsertNext(Data, Size, Type, Point.Index)};
+}
 
-    Header &childH = Parent.Map->HeaderArray[childIdx];
+inline Bookmark ValueTree::InsertChild(const void *Data, uint16_t Size, Types Type, const Bookmark &Point)
+{
+    if (!Point.Map)
+        return {};
+    return {Point.Map, Point.Map->InsertChild(Data, Size, Type, Point.Index)};
+}
 
-    return {
-        Parent.Map->Array + childH.Pointer,
-        childH.Type,
-        childH.Length,
-        {Parent.Map, childIdx}};
+// Functions themselves
+// --- Navigation (Raw uint16_t) ---
+
+uint16_t ValueTree::Next(uint16_t Sibling) const
+{
+    if (Sibling >= HeaderAllocated)
+        return INVALID_HEADER;
+
+    uint16_t nextIdx = Sibling + HeaderArray[Sibling].Skip + 1;
+
+    // Boundary and Depth check: If depth changes, it's not a sibling
+    if (nextIdx >= HeaderAllocated || HeaderArray[nextIdx].Depth != HeaderArray[Sibling].Depth)
+        return INVALID_HEADER;
+
+    return nextIdx;
+}
+
+uint16_t ValueTree::Child(uint16_t Parent) const
+{
+    if (Parent >= HeaderAllocated || HeaderArray[Parent].Skip == 0)
+        return INVALID_HEADER;
+
+    uint16_t childIdx = Parent + 1;
+
+    // A child must be exactly one level deeper than the parent
+    if (childIdx >= HeaderAllocated || HeaderArray[childIdx].Depth != HeaderArray[Parent].Depth + 1)
+        return INVALID_HEADER;
+
+    return childIdx;
+}
+
+void ValueTree::Set(const void *Data, size_t Size, Types Type, uint16_t Index)
+{
+    if (Index >= HeaderAllocated)
+        return;
+
+    // 1. Check if we need to resize the existing data slot
+    if (HeaderArray[Index].Length != (uint16_t)Size)
+    {
+        ResizeData(Index, (uint16_t)Size);
+    }
+
+    // 2. Update Metadata
+    HeaderArray[Index].Type = Type;
+
+    // 3. Copy Data
+    if (Data && Size > 0)
+    {
+        memcpy(Array + HeaderArray[Index].Pointer, Data, Size);
+    }
 }
 
 uint16_t ValueTree::InsertNext(const void *Data, uint16_t Size, Types Type, uint16_t CurrentIdx)
 {
+    if (CurrentIdx >= HeaderAllocated)
+        return INVALID_HEADER;
+
+    // Calculate where the next sibling should live
     uint16_t nextIdx = CurrentIdx + HeaderArray[CurrentIdx].Skip + 1;
     uint8_t depth = HeaderArray[CurrentIdx].Depth;
 
     InsertAtIndex(nextIdx, Type, depth, Size);
-    if (Data && Size > 0) memcpy(Array + HeaderArray[nextIdx].Pointer, Data, Size);
-    
+
+    if (Data && Size > 0)
+        memcpy(Array + HeaderArray[nextIdx].Pointer, Data, Size);
+
     return nextIdx;
 }
 
 uint16_t ValueTree::InsertChild(const void *Data, uint16_t Size, Types Type, uint16_t ParentIdx)
 {
-    uint16_t childIdx = (ParentIdx == 0xFFFF) ? 0 : ParentIdx + 1;
-    uint8_t depth = (ParentIdx == 0xFFFF) ? 0 : HeaderArray[ParentIdx].Depth + 1;
+    uint16_t childIdx;
+    uint8_t depth;
+
+    if (ParentIdx == INVALID_HEADER) // Root Case
+    {
+        childIdx = 0;
+        depth = 0;
+    }
+    else
+    {
+        if (ParentIdx >= HeaderAllocated)
+            return INVALID_HEADER;
+        childIdx = ParentIdx + 1;
+        depth = HeaderArray[ParentIdx].Depth + 1;
+    }
 
     InsertAtIndex(childIdx, Type, depth, Size);
-    if (Data && Size > 0) memcpy(Array + HeaderArray[childIdx].Pointer, Data, Size);
-    
+
+    if (Data && Size > 0)
+        memcpy(Array + HeaderArray[childIdx].Pointer, Data, Size);
+
     return childIdx;
 }

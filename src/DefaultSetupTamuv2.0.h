@@ -2,35 +2,35 @@ void DefaultSetup()
 {
     // --- Board Metadata ---
     Text boardName = "Test";
-    Board.Values.Set(boardName.Data, boardName.Length, Types::Text, {1});
+    Board.Values.Set(boardName.Data, boardName.Length, Types::Text, Reference({1}));
 
     // --- Sensor Initialization ---
     SensorClass *S = new SensorClass(Reference::Global(0, 2, 2));
 
     SensorTypes sType = SensorTypes::Light10K;
-    S->ValueSetup(&sType, sizeof(SensorTypes), Types::Sensor, {0});
+    S->ValueSetup(&sType, sizeof(SensorTypes), Types::Sensor, Reference({0}));
 
     PortNumber sPin = 1;
-    S->ValueSetup(&sPin, sizeof(PortNumber), Types::PortNumber, {0, 0});
+    S->ValueSetup(&sPin, sizeof(PortNumber), Types::PortNumber, Reference({0, 0}));
 
     Number sThreshold = 20;
-    S->Values.Set(&sThreshold, sizeof(Number), Types::Number, {2});
+    S->Values.Set(&sThreshold, sizeof(Number), Types::Number, Reference({2}));
 
     // --- Display Initialization ---
     DisplayClass *LD = new DisplayClass(Reference::Global(0, 0, 1));
     LD->Name = "Left Eye";
 
     Displays dModel = Displays::Vysi_v1_0;
-    LD->ValueSetup(&dModel, sizeof(Displays), Types::Display, {0});
+    LD->ValueSetup(&dModel, sizeof(Displays), Types::Display, Reference({0}));
 
     PortNumber dPort = 0;
-    LD->ValueSetup(&dPort, sizeof(PortNumber), Types::PortNumber, {0, 0});
+    LD->ValueSetup(&dPort, sizeof(PortNumber), Types::PortNumber, Reference({0, 0}));
 
     Coord2D dRes(0, 0, 5);
     LD->Values.Set(&dRes, sizeof(Coord2D), Types::Coord2D, {1, 0});
 
     uint8_t dBrightness = 40;
-    LD->Values.Set(&dBrightness, sizeof(uint8_t), Types::Byte, {1});
+    LD->Values.Set(&dBrightness, sizeof(uint8_t), Types::Byte, Reference({1}));
 
     // --- Layer 0: Background ---
     Geometries gFill = Geometries::Fill;
@@ -103,7 +103,7 @@ void DefaultSetup()
 
     // --- Operation 1: Base Addition ---
     Operations opAddP = Operations::Add;
-    P->Values.Set(&opAddP, sizeof(Operations), Types::Operation, {1});
+    P->Values.Set(&opAddP, sizeof(Operations), Types::Operation, Reference({1}));
 
     Number valA1 = 0.25;
     P->Values.Set(&valA1, sizeof(Number), Types::Number, {1, 1, 0});
@@ -113,7 +113,7 @@ void DefaultSetup()
 
     // --- Operation 2: Chained Addition ---
     // Reusing opAdd anchor
-    P->Values.Set(&opAddP, sizeof(Operations), Types::Operation, {2});
+    P->Values.Set(&opAddP, sizeof(Operations), Types::Operation, Reference({2}));
 
     // Link: Target index {2, 1, 0} points back to the result of {1, 1, 0}
     Reference linkRef({1, 1, 0});

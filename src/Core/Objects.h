@@ -50,7 +50,7 @@ public:
 
     bool IsValid(const Reference &ID, ObjectTypes Filter = ObjectTypes::Undefined) const;
 
-    SearchResult Find(const Reference &Location, bool StopAtReferences = false) const;
+    Bookmark Find(const Reference &Location, bool StopAtReferences = false) const;
     void ValueSetup(const void *Data, size_t Size, Types Type, const Reference &Location);
 
     void Expand(uint32_t NewAllocated);
@@ -121,8 +121,8 @@ public:
     C *As() const { return (C *)this; };
     void Save();
 
-    SearchResult Find(const Reference &Location, bool StopAtReferences = false) const;
-    void ValueSetupDirect(const void *Data, size_t Size, Types Type, const Bookmark &Point);
+    Bookmark Find(const Reference &Location, bool StopAtReferences = false) const;
+    void ValueSetup(const void *Data, size_t Size, Types Type, const Bookmark &Point);
     void ValueSetup(const void *Data, size_t Size, Types Type, const Reference &Location);
     FlexArray Compress() const;
 };

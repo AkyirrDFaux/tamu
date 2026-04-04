@@ -4,7 +4,7 @@ public:
     Pin PWMPin = INVALID_PIN;
     PortNumber CurrentPort = -1;
 
-    OutputClass(const Reference &ID, FlagClass Flags = Flags::RunLoop, RunInfo Info = {1,0});
+    OutputClass(const Reference &ID, FlagClass Flags = Flags::RunLoop, RunInfo Info = {1, 0});
     ~OutputClass();
 
     void Setup(const Reference &Index);
@@ -53,7 +53,9 @@ OutputClass::~OutputClass()
 
 bool OutputClass::Connect()
 {
-    SearchResult res = Values.Find(Reference({0, 0}), true);
+    // Direct search for Port using Bookmark
+    Bookmark portMark = Values.Find({0, 0}, true);
+    Result res = Values.Get(portMark);
 
     if (res.Length < sizeof(PortNumber) || !res.Value)
     {
@@ -61,7 +63,7 @@ bool OutputClass::Connect()
         return false;
     }
 
-    PortNumber Port = *(PortNumber*)res.Value;
+    PortNumber Port = *(PortNumber *)res.Value;
 
     if (Port > 10)
     {
@@ -72,7 +74,7 @@ bool OutputClass::Connect()
     if (Board.ConnectPin(this, Port))
     {
         CurrentPort = Port;
-        // Trigger hardware mode setup
+        // Trigger hardware mode setup using the base Mode reference
         Setup(Reference({0}));
         return true;
     }
@@ -97,7 +99,7 @@ bool OutputClass::Disconnect()
 
 void OutputClass::Setup(const Reference &Index)
 {
-    // Reconnect on Port change
+    // Reconnect on Port change {0, 0}
     if (Index == Reference({0, 0}))
     {
         Disconnect();
@@ -105,19 +107,22 @@ void OutputClass::Setup(const Reference &Index)
         return;
     }
 
-    // Update Hardware Mode if Mode {0} or frequency {1,0} changes
+    // Update Hardware Mode if Mode {0} or frequency {1, 0} changes
     if (Index == Reference({0}) || Index == Reference({1, 0}))
     {
         if (!HW::IsValidPin(PWMPin))
             return;
 
-        SearchResult modeRes = Values.Find(Reference({0}), true);
-        SearchResult freqRes = Values.Find(Reference({1, 0}), true);
+        Bookmark modeMark = Values.Find({0}, true);
+        Bookmark freqMark = Values.Find({1, 0}, true);
+
+        Result modeRes = Values.Get(modeMark);
+        Result freqRes = Values.Get(freqMark);
 
         if (modeRes.Value && freqRes.Value)
         {
-            Outputs Mode = *(Outputs*)modeRes.Value;
-            int32_t Freq = *(int32_t*)freqRes.Value;
+            Outputs Mode = *(Outputs *)modeRes.Value;
+            int32_t Freq = *(int32_t *)freqRes.Value;
 
             if (Mode == Outputs::PWM)
             {
@@ -133,21 +138,25 @@ bool OutputClass::Run()
     if (!HW::IsValidPin(PWMPin))
         return true;
 
-    // Direct search for the target value and mode
-    SearchResult targetRes = Values.Find(Reference({1}));
-    SearchResult modeRes   = Values.Find(Reference({0}), true);
+    // Use Bookmarks for high-frequency access in Run loop
+    Bookmark targetMark = Values.Find({1}, true);
+    Bookmark modeMark = Values.Find({0}, true);
+
+    Result targetRes = Values.Get(targetMark);
+    Result modeRes = Values.Get(modeMark);
 
     if (!targetRes.Value || !modeRes.Value)
         return true;
 
-    Outputs Mode  = *(Outputs*)modeRes.Value;
-    Number Target = *(Number*)targetRes.Value;
+    Outputs Mode = *(Outputs *)modeRes.Value;
+    Number Target = *(Number *)targetRes.Value;
 
     if (Mode == Outputs::PWM)
     {
+        // Hardware write - Target is treated as 0.0 to 1.0 percent
         HW::PWM(PWMPin, Target);
     }
     // else if (Mode == Outputs::Servo) { ... }
 
     return true;
-};
+}

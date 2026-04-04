@@ -79,7 +79,7 @@ BoardClass::BoardClass(const Reference &ID) : BaseClass(&Table, ID, Flags::Auto 
 #if defined BOARD_Tamu_v2_0
     Boards model = Boards::Tamu_v2_0;
     
-    // 1. Root node (Index 0). Passing 0xFFFF as parent signals root.
+    // 1. Root node (Index 0).
     uint16_t system = Values.InsertChild(&model, sizeof(Boards), Types::Board, 0xFFFF);
 
     // 2. "Ports" container {0, 0}
@@ -104,7 +104,7 @@ BoardClass::BoardClass(const Reference &ID) : BaseClass(&Table, ID, Flags::Auto 
         lastPort = pNode; 
     }
 
-    // 6. Telemetry: {0, 1} through {0, 5} (Siblings of ports container)
+    // 6. Telemetry: {0, 1} through {0, 5}
     int32_t zero = 0;
     uint16_t lastTele = ports;
     for (uint8_t i = 0; i < 5; i++)
@@ -116,19 +116,24 @@ BoardClass::BoardClass(const Reference &ID) : BaseClass(&Table, ID, Flags::Auto 
     Values.InsertNext(Name.Data, Name.Length, Types::Text, system);
 #endif
 }
+
 bool BoardClass::Run()
 {
-    // 1. Navigation: Navigate to the "System" node (0)
-    SearchResult system = Values.Find({0}, true);
-    if (!system.Value) return false;
+    // 1. Fast Navigation via Indices
+    // We know 'System' is index 0. If you wanted to be safe, you'd use Find.
+    uint16_t systemIdx = 0; 
+    
+    // Grab Telemetry indices using lean Next/Child
+    uint16_t portsIdx    = Values.Child(systemIdx);
+    uint16_t bootTimeIdx = Values.Next(portsIdx);
+    uint16_t avgIdx      = Values.Next(bootTimeIdx);
+    uint16_t maxIdx      = Values.Next(avgIdx);
+    uint16_t ramTotalIdx = Values.Next(maxIdx);
+    uint16_t ramFreeIdx  = Values.Next(ramTotalIdx);
 
-    // Grab bookmarks for Telemetry (Siblings of the first child of System)
-    // Path {0, 1} is usually the first child
-    SearchResult bootTime = Values.Child(system.Location);
-    SearchResult avgRes   = Values.Next(bootTime.Location); // {0, 2}
-    SearchResult maxRes   = Values.Next(avgRes.Location);   // {0, 3}
-    SearchResult ramTotal = Values.Next(maxRes.Location);   // {0, 4}
-    SearchResult ramFree  = Values.Next(ramTotal.Location); // {0, 5}
+    // Resolve values for math
+    Result avgRes = Values.Get(avgIdx);
+    Result maxRes = Values.Get(maxIdx);
 
     if (avgRes.Value && maxRes.Value)
     {
@@ -145,35 +150,37 @@ bool BoardClass::Run()
             int32_t totalRam = HW::GetRAM();
             int32_t freeRam = HW::GetFreeRAM();
             
-            // SetDirect is much faster here than Values.Set with a Reference
-            Values.SetDirect(&totalRam, 4, Types::Integer, ramTotal.Location);
-            Values.SetDirect(&freeRam, 4, Types::Integer, ramFree.Location);
+            // Using the updated Set(index) which handles direct writes
+            Values.Set(&totalRam, 4, Types::Integer, ramTotalIdx);
+            Values.Set(&freeRam, 4, Types::Integer, ramFreeIdx);
         }
     }
 
-    // 2. Optimized Driver Servicing
-    // Navigate to the Ports array: root -> child (0:System) -> child (0, 0:Ports)
-    SearchResult portsNode = Values.Child(system.Location); // This is {0, 0}
-    SearchResult currentPort = Values.Child(portsNode.Location); // This is {0, 0, 0}
+    // 2. Driver Servicing Loop
+    // Navigate: System -> Ports -> First Port
+    uint16_t currentPort = Values.Child(portsIdx);
 
     for (uint8_t i = 0; i < 11; i++)
     {
-        if (DriverArray[i] != nullptr && currentPort.Value)
-        {
-            // The Driver is at {0, 0, i, 1}. 
-            // In the tree: PortNode -> Child (Pin: 0) -> Next (Driver: 1)
-            SearchResult pinNode = Values.Child(currentPort.Location);
-            SearchResult roleRes = Values.Next(pinNode.Location);
+        if (currentPort == 0xFFFF) break;
 
-            if (roleRes.Value && *(Drivers *)roleRes.Value == Drivers::LED)
+        if (DriverArray[i] != nullptr)
+        {
+            // Driver is at {0, 0, i, 1}
+            // Logic: currentPort -> Child (Pin) -> Next (Driver)
+            uint16_t pinIdx = Values.Child(currentPort);
+            uint16_t roleIdx = Values.Next(pinIdx);
+            
+            Result role = Values.Get(roleIdx);
+
+            if (role.Value && *(Drivers *)role.Value == Drivers::LED)
             {
                 static_cast<LEDDriver *>(DriverArray[i])->Show();
             }
         }
         
-        // Move to the next port sibling {0, 0, i+1}
-        currentPort = Values.Next(currentPort.Location);
-        if (!currentPort.Value) break; 
+        // Move to next port sibling
+        currentPort = Values.Next(currentPort);
     }
 
     return true;

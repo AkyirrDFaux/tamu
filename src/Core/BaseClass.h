@@ -25,7 +25,7 @@ FlexArray BaseClass::Compress() const
     return Blob;
 }
 
-SearchResult BaseClass::Find(const Reference &Location, bool StopAtReferences) const
+Bookmark BaseClass::Find(const Reference &Location, bool StopAtReferences) const
 {
     return Values.Find(Location, StopAtReferences);
 }
@@ -37,9 +37,9 @@ void BaseClass::ValueSetup(const void *Data, size_t Size, Types Type, const Refe
     Setup(Location);
 }
 
-void BaseClass::ValueSetupDirect(const void *Data, size_t Size, Types Type, const Bookmark &Point)
+void BaseClass::ValueSetup(const void *Data, size_t Size, Types Type, const Bookmark &Point)
 {
     // Logic nodes calling MyObj.ValueSetup with a cached Bookmark
     if (Point.Map)
-        Point.Map->SetDirect(Data, Size, Type, Point);
+        Point.Map->Set(Data, Size, Type, Point);
 }

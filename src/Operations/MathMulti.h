@@ -1,12 +1,13 @@
-bool ExecuteVector3DMulti(ValueTree &Values, SearchResult it, Reference Path, Operations Op)
+bool ExecuteVector3DMulti(const Bookmark &itStart, uint32_t OutIndex, Operations Op)
 {
-    Vector3D acc = *(Vector3D *)it.Location.Map->This(it.Location).Value;
+    Result first = itStart.Map->GetThis(itStart);
+    Vector3D acc = *(Vector3D *)first.Value;
 
-    it = it.Location.Map->Next(it.Location);
-    while (it.Value)
+    Bookmark it = itStart.Map->Next(itStart);
+    while (it.Index != INVALID_HEADER)
     {
-        SearchResult actual = it.Location.Map->This(it.Location);
-        if (actual.Type != Types::Vector3D)
+        Result actual = it.Map->GetThis(it);
+        if (actual.Type != Types::Vector3D || !actual.Value)
             return true;
 
         Vector3D nextVal = *(Vector3D *)actual.Value;
@@ -27,22 +28,23 @@ bool ExecuteVector3DMulti(ValueTree &Values, SearchResult it, Reference Path, Op
         default:
             return true;
         }
-        it = it.Location.Map->Next(it.Location);
+        it = it.Map->Next(it);
     }
 
-    Values.Set(&acc, sizeof(Vector3D), Types::Vector3D, Path);
+    itStart.Map->Set(&acc, sizeof(Vector3D), Types::Vector3D, OutIndex);
     return true;
 }
 
-bool ExecuteVector2DMulti(ValueTree &Values, SearchResult it, Reference Path, Operations Op)
+bool ExecuteVector2DMulti(const Bookmark &itStart, uint32_t OutIndex, Operations Op)
 {
-    Vector2D acc = *(Vector2D *)it.Location.Map->This(it.Location).Value;
+    Result first = itStart.Map->GetThis(itStart);
+    Vector2D acc = *(Vector2D *)first.Value;
 
-    it = it.Location.Map->Next(it.Location);
-    while (it.Value)
+    Bookmark it = itStart.Map->Next(itStart);
+    while (it.Index != INVALID_HEADER)
     {
-        SearchResult actual = it.Location.Map->This(it.Location);
-        if (actual.Type != Types::Vector2D)
+        Result actual = it.Map->GetThis(it);
+        if (actual.Type != Types::Vector2D || !actual.Value)
             return true;
 
         Vector2D nextVal = *(Vector2D *)actual.Value;
@@ -63,49 +65,54 @@ bool ExecuteVector2DMulti(ValueTree &Values, SearchResult it, Reference Path, Op
         default:
             return true;
         }
-        it = it.Location.Map->Next(it.Location);
+        it = it.Map->Next(it);
     }
 
-    Values.Set(&acc, sizeof(Vector2D), Types::Vector2D, Path);
+    itStart.Map->Set(&acc, sizeof(Vector2D), Types::Vector2D, OutIndex);
     return true;
 }
 
-bool ExecuteMathMulti(ValueTree &Values, Reference Index, Operations Op)
+bool ExecuteMathMulti(const Bookmark &OpPoint, Operations Op)
 {
-    Reference OutPath = Index.Append(0);
+    // 1. Navigation: {0} is Output, {1} is Inputs folder
+    Bookmark OutMark = OpPoint.Map->Child(OpPoint);
+    Bookmark InFolder = OpPoint.Map->Next(OutMark);
 
-    SearchResult it = Values.Find(Index.Append(1).Append(0), true);
-    if (!it.Value)
+    if (OutMark.Index == INVALID_HEADER || InFolder.Index == INVALID_HEADER)
         return true;
 
-    SearchResult firstActual = it.Location.Map->This(it.Location);
+    // 2. Find the first input at {1, 0}
+    Bookmark it = OpPoint.Map->Child(InFolder);
+    if (it.Index == INVALID_HEADER)
+        return true;
+
+    Result firstActual = OpPoint.Map->GetThis(it);
     if (!firstActual.Value)
         return true;
 
     Types targetType = firstActual.Type;
 
-    // Delegate if it's a vector lane
+    // 3. Delegate if it's a vector lane
     if (targetType == Types::Vector3D)
-        return ExecuteVector3DMulti(Values, it, OutPath, Op);
+        return ExecuteVector3DMulti(it, OutMark.Index, Op);
     if (targetType == Types::Vector2D)
-        return ExecuteVector2DMulti(Values, it, OutPath, Op);
+        return ExecuteVector2DMulti(it, OutMark.Index, Op);
 
-    // Reject if the first element isn't a scalar either
+    // 4. Scalar Lane
     if (!IsScalar(targetType))
         return true;
 
-    Number acc = GetAsNumber(it.Location);
+    Number acc = GetAsNumber(it);
 
-    it = it.Location.Map->Next(it.Location);
-    while (it.Value)
+    it = OpPoint.Map->Next(it);
+    while (it.Index != INVALID_HEADER)
     {
-        SearchResult actual = it.Location.Map->This(it.Location);
+        Result actual = OpPoint.Map->GetThis(it);
 
-        // "Is Not Scalar" rejection
         if (!IsScalar(actual.Type))
             return true;
 
-        Number nextVal = GetAsNumber(it.Location);
+        Number nextVal = GetAsNumber(it);
 
         switch (Op)
         {
@@ -133,9 +140,10 @@ bool ExecuteMathMulti(ValueTree &Values, Reference Index, Operations Op)
             return true;
         }
 
-        it = it.Location.Map->Next(it.Location);
+        it = OpPoint.Map->Next(it);
     }
 
-    StoreScalar(Values, OutPath, acc, targetType);
+    // 5. Final storage using updated StoreScalar
+    StoreScalar(OutMark, acc, targetType);
     return true;
 }

@@ -74,7 +74,7 @@ bool RegisterClass::IsValid(const Reference &ID, ObjectTypes Filter) const
 
 // --- Value Accessors (Registry Level) ---
 
-SearchResult RegisterClass::Find(const Reference &Location, bool StopAtReferences) const {
+Bookmark RegisterClass::Find(const Reference &Location, bool StopAtReferences) const {
     // 1. Resolve which BaseClass owns this Reference
     BaseClass* target = At(Location);
     if (!target) return {};

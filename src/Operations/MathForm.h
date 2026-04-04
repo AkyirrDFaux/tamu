@@ -1,92 +1,108 @@
-bool ExecuteSine(ValueTree &Values, Reference Index)
+bool ExecuteSine(const Bookmark &OpPoint)
 {
-    // 1. Locate the Inputs folder {1, 0}
-    SearchResult it = Values.Find(Index.Append(1).Append(0), true);
-    if (!it.Value) return true;
+    // 1. Navigation: {0} is Output, {1} is Inputs folder, {1, 0} is first input
+    Bookmark OutMark = OpPoint.Map->Child(OpPoint);
+    Bookmark InFolder = OpPoint.Map->Next(OutMark);
+    if (InFolder.Index == INVALID_HEADER) return true;
 
-    // 2. Extract Parameters
-    SearchResult S_Time  = it;
-    SearchResult S_Mult  = Values.Next(S_Time.Location);
-    SearchResult S_Phase = Values.Next(S_Mult.Location);
+    Bookmark markTime = OpPoint.Map->Child(InFolder);
+    if (markTime.Index == INVALID_HEADER) return true;
 
-    if (!S_Time.Value || !S_Mult.Value || !S_Phase.Value) return true;
+    // 2. Extract Parameters using sibling traversal
+    Bookmark markMult  = OpPoint.Map->Next(markTime);
+    Bookmark markPhase = OpPoint.Map->Next(markMult);
+
+    if (markMult.Index == INVALID_HEADER || markPhase.Index == INVALID_HEADER)
+        return true;
 
     // 3. Calculation
-    // GetAsNumber handles reference resolution and promotes any scalar to Number
-    Number T = GetAsNumber(S_Time.Location);
-    Number M = GetAsNumber(S_Mult.Location);
-    Number P = GetAsNumber(S_Phase.Location);
-    
+    Number T = GetAsNumber(markTime);
+    Number M = GetAsNumber(markMult);
+    Number P = GetAsNumber(markPhase);
+
     Number Result = sin(T * M + P);
 
-    // 4. Store result at relative {0}
-    // Sine results are always stored as the full Number type
-    Values.Set(&Result, sizeof(Number), Types::Number, Index.Append(0));
-    
+    // 4. Store result at relative {0} using the Output index
+    OpPoint.Map->Set(&Result, sizeof(Number), Types::Number, OutMark.Index);
+
     return true;
 }
 
-bool ExecuteClamp(ValueTree &Values, Reference Index)
+bool ExecuteClamp(const Bookmark &OpPoint)
 {
-    SearchResult it = Values.Find(Index.Append(1).Append(0), true);
-    if (!it.Value) return true;
+    // 1. Navigation
+    Bookmark OutMark = OpPoint.Map->Child(OpPoint);
+    Bookmark InFolder = OpPoint.Map->Next(OutMark);
+    if (InFolder.Index == INVALID_HEADER) return true;
 
-    SearchResult S_Val = it;
-    SearchResult S_Min = Values.Next(S_Val.Location);
-    SearchResult S_Max = Values.Next(S_Min.Location);
+    Bookmark markVal = OpPoint.Map->Child(InFolder);
+    if (markVal.Index == INVALID_HEADER) return true;
 
-    if (!S_Val.Value || !S_Min.Value || !S_Max.Value) return true;
+    Bookmark markMin = OpPoint.Map->Next(markVal);
+    Bookmark markMax = OpPoint.Map->Next(markMin);
 
-    Types targetType = Values.This(S_Val.Location).Type;
-
-    // Strict Scalar Check
-    if (!IsScalar(targetType) || 
-        !IsScalar(Values.This(S_Min.Location).Type) || 
-        !IsScalar(Values.This(S_Max.Location).Type))
+    if (markMin.Index == INVALID_HEADER || markMax.Index == INVALID_HEADER)
         return true;
 
-    Number V = GetAsNumber(S_Val.Location);
-    Number Low = GetAsNumber(S_Min.Location);
-    Number High = GetAsNumber(S_Max.Location);
+    // 2. Resolve Results for type checking
+    Result resVal = OpPoint.Map->GetThis(markVal);
+    Result resMin = OpPoint.Map->GetThis(markMin);
+    Result resMax = OpPoint.Map->GetThis(markMax);
+
+    // Strict Scalar Check
+    if (!IsScalar(resVal.Type) || !IsScalar(resMin.Type) || !IsScalar(resMax.Type))
+        return true;
+
+    Number V = GetAsNumber(markVal);
+    Number Low = GetAsNumber(markMin);
+    Number High = GetAsNumber(markMax);
 
     if (V < Low) V = Low;
     if (V > High) V = High;
 
-    StoreScalar(Values, Index.Append(0), V, targetType);
+    // 3. Store back using Output node index and the original input type
+    StoreScalar(OutMark, V, resVal.Type);
     return true;
 }
 
-bool ExecuteLerp(ValueTree &Values, Reference Index)
+bool ExecuteLerp(const Bookmark &OpPoint)
 {
-    SearchResult it = Values.Find(Index.Append(1).Append(0), true);
-    if (!it.Value) return true;
+    // 1. Navigation
+    Bookmark OutMark = OpPoint.Map->Child(OpPoint);
+    Bookmark InFolder = OpPoint.Map->Next(OutMark);
+    if (InFolder.Index == INVALID_HEADER) return true;
 
-    SearchResult S_Low   = it;
-    SearchResult S_High  = Values.Next(S_Low.Location);
-    SearchResult S_Alpha = Values.Next(S_High.Location);
-    SearchResult S_Scale = Values.Next(S_Alpha.Location);
+    Bookmark markLow = OpPoint.Map->Child(InFolder);
+    if (markLow.Index == INVALID_HEADER) return true;
 
-    if (!S_Low.Value || !S_High.Value || !S_Alpha.Value) return true;
+    Bookmark markHigh  = OpPoint.Map->Next(markLow);
+    Bookmark markAlpha = OpPoint.Map->Next(markHigh);
+    Bookmark markScale = OpPoint.Map->Next(markAlpha);
 
-    Types targetType = Values.This(S_Low.Location).Type;
-
-    // Reject if Low or High are not scalars
-    if (!IsScalar(targetType) || !IsScalar(Values.This(S_High.Location).Type))
+    if (markHigh.Index == INVALID_HEADER || markAlpha.Index == INVALID_HEADER)
         return true;
 
-    Number A = GetAsNumber(S_Low.Location);
-    Number B = GetAsNumber(S_High.Location);
-    Number T = GetAsNumber(S_Alpha.Location);
-    
+    Result resLow  = OpPoint.Map->GetThis(markLow);
+    Result resHigh = OpPoint.Map->GetThis(markHigh);
+
+    // Reject if Low or High are not scalars
+    if (!IsScalar(resLow.Type) || !IsScalar(resHigh.Type))
+        return true;
+
+    Number A = GetAsNumber(markLow);
+    Number B = GetAsNumber(markHigh);
+    Number T = GetAsNumber(markAlpha);
+
     Number Scale = 1.0f;
-    if (S_Scale.Value)
+    if (markScale.Index != INVALID_HEADER)
     {
-        Scale = GetAsNumber(S_Scale.Location);
+        Scale = GetAsNumber(markScale);
         if (Scale == Number(0.0f)) Scale = 1.0f;
     }
 
     Number Result = A + (T / Scale) * (B - A);
 
-    StoreScalar(Values, Index.Append(0), Result, targetType);
+    // 2. Store result at {0} using Output node index and target type
+    StoreScalar(OutMark, Result, resLow.Type);
     return true;
 }

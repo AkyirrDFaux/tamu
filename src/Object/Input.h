@@ -4,7 +4,7 @@ public:
     Pin InputPin = INVALID_PIN;
     PortNumber CurrentPort = -1;
 
-    InputClass(const Reference &ID, FlagClass Flags = Flags::RunLoop, RunInfo Info = {1,0});
+    InputClass(const Reference &ID, FlagClass Flags = Flags::RunLoop, RunInfo Info = {1, 0});
     ~InputClass();
 
     void Setup(const Reference &Index);
@@ -28,14 +28,12 @@ public:
         .Run = InputClass::RunBridge};
 };
 
-constexpr VTable InputClass::Table;
-
-InputClass::InputClass(const Reference &ID, FlagClass Flags, RunInfo Info) : BaseClass(&InputClass::Table, ID, Flags, Info)
+InputClass::InputClass(const Reference &ID, FlagClass Flags, RunInfo Info) : BaseClass(&Table, ID, Flags, Info)
 {
     Type = ObjectTypes::Input;
     Name = "Input";
 
-    // Initialize using direct ValueTree access
+    // Initialize using compact path arrays
     Inputs initialMode = Inputs::Undefined;
     Values.Set(&initialMode, sizeof(Inputs), Types::Input, Reference({0}));
 
@@ -53,8 +51,9 @@ InputClass::~InputClass()
 
 bool InputClass::Connect()
 {
-    // Search directly in the local ValueTree
-    SearchResult res = Values.Find(Reference({0, 0}), true);
+    // Search directly in the local ValueTree using Bookmark
+    Bookmark portMark = Values.Find({0, 0}, true);
+    Result res = Values.Get(portMark);
 
     if (res.Length < sizeof(PortNumber) || !res.Value)
     {
@@ -62,7 +61,7 @@ bool InputClass::Connect()
         return false;
     }
 
-    PortNumber Port = *(PortNumber*)res.Value;
+    PortNumber Port = *(PortNumber *)res.Value;
 
     if (Port > 10)
     {
@@ -88,6 +87,7 @@ bool InputClass::Disconnect()
 
 void InputClass::Setup(const Reference &Index)
 {
+    // Check if the hardware port specifically changed
     if (Index == Reference({0, 0}))
     {
         Disconnect();
@@ -95,13 +95,17 @@ void InputClass::Setup(const Reference &Index)
         return;
     }
 
-    if (Index != Reference({0})) return;
+    // Only proceed if the base mode changed
+    if (Index != Reference({0}))
+        return;
 
-    // Use local Find to check the mode
-    SearchResult res = Values.Find(Reference({0}), true);
-    if (res.Type != Types::Input || !res.Value) return;
+    Bookmark modeMark = Values.Find({0}, true);
+    Result res = Values.Get(modeMark);
 
-    Inputs mode = *(Inputs*)res.Value;
+    if (res.Type != Types::Input || !res.Value)
+        return;
+
+    Inputs mode = *(Inputs *)res.Value;
     bool resetVal = false;
 
     switch (mode)
@@ -119,9 +123,12 @@ void InputClass::Setup(const Reference &Index)
 
 bool InputClass::Run()
 {
-    // Local Find calls avoid the Object Registry "Search" loop entirely
-    SearchResult modeRes = Values.Find(Reference({0}), true);
-    SearchResult valRes  = Values.Find(Reference({1}));
+    // Use Bookmarks for efficiency in the hot-loop
+    Bookmark modeMark = Values.Find({0}, true);
+    Bookmark valMark = Values.Find({1}, true);
+
+    Result modeRes = Values.Get(modeMark);
+    Result valRes = Values.Get(valMark);
 
     if (modeRes.Type != Types::Input || !valRes.Value)
     {
@@ -135,29 +142,31 @@ bool InputClass::Run()
         return true;
     }
 
-    Inputs mode = *(Inputs*)modeRes.Value;
-    bool* statePtr = (bool*)valRes.Value; 
+    Inputs mode = *(Inputs *)modeRes.Value;
+    bool *statePtr = (bool *)valRes.Value;
 
     switch (mode)
     {
     case Inputs::Button:
-        *statePtr = (HW::Read(InputPin) == false); 
+        *statePtr = (HW::Read(InputPin) == false);
         break;
 
     case Inputs::ButtonWithLED:
     {
         // Reference {2} is the Indicator State
-        SearchResult ledRes = Values.Find(Reference({2}));
-        bool ledOn = (ledRes.Value) ? *(bool*)ledRes.Value : false;
+        Bookmark ledMark = Values.Find({2}, true);
+        Result ledRes = Values.Get(ledMark);
+        bool ledOn = (ledRes.Value) ? *(bool *)ledRes.Value : false;
 
         if (ledOn)
         {
             HW::ModeOutput(InputPin);
-            HW::Low(InputPin); 
+            HW::Low(InputPin);
         }
         else
         {
             HW::ModeInput(InputPin);
+            // Pulse read: Input is active low
             *statePtr = (HW::Read(InputPin) == false);
         }
         break;

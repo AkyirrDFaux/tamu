@@ -7,10 +7,10 @@ private:
 
 public:
     uint8_t *Layout = nullptr;
-    PortNumber CurrentLink = -1; // Default empty reference
+    PortNumber CurrentLink = -1;
     uint8_t *LEDs = nullptr;
 
-    DisplayClass(const Reference &ID, FlagClass Flags = Flags::RunLoop, RunInfo Info = {1,0});
+    DisplayClass(const Reference &ID, FlagClass Flags = Flags::RunLoop, RunInfo Info = {1, 0});
     ~DisplayClass();
 
     void Setup(const Reference &Index);
@@ -29,10 +29,10 @@ public:
         .Setup = DisplayClass::SetupBridge,
         .Run = DisplayClass::RunBridge};
 
-    void RenderGeometry(uint8_t Index, int32_t Length, Vector2D DisplaySize,
+    void RenderGeometry(uint16_t NodeIdx, int32_t Length, Vector2D DisplaySize,
                         Coord2D Transform, bool Mirrored, Number *Overlay);
     Number CalculateShapeAlpha(Geometries Type, Vector2D P, Vector2D S, Number F);
-    void RenderTexture(uint8_t Index, int32_t Length, Vector2D DisplaySize,
+    void RenderTexture(uint16_t NodeIdx, int32_t Length, Vector2D DisplaySize,
                        Coord2D Transform, bool Mirrored, Number *Overlay);
 };
 
@@ -43,26 +43,26 @@ DisplayClass::DisplayClass(const Reference &ID, FlagClass Flags, RunInfo Info) :
 
     // Branch {0}: Hardware Definition
     Displays initType = Displays::Undefined;
-    Values.Set(&initType, sizeof(Displays), Types::Byte, {0});
+    Values.Set(&initType, sizeof(Displays), Types::Byte, Reference({0}));
 
     PortNumber initPort = -1;
-    Values.Set(&initPort, sizeof(PortNumber), Types::PortNumber, {0, 0});
+    Values.Set(&initPort, sizeof(PortNumber), Types::PortNumber, Reference({0, 0}));
 
     int32_t initLen = 0;
-    Values.Set(&initLen, sizeof(int32_t), Types::Integer, {0, 1});
+    Values.Set(&initLen, sizeof(int32_t), Types::Integer, Reference({0, 1}));
 
     Vector2D initSize(0, 0);
-    Values.Set(&initSize, sizeof(Vector2D), Types::Vector2D, {0, 2});
+    Values.Set(&initSize, sizeof(Vector2D), Types::Vector2D, Reference({0, 2}));
 
     Number initRatio = 1.0f;
-    Values.Set(&initRatio, sizeof(Number), Types::Number, {0, 3});
+    Values.Set(&initRatio, sizeof(Number), Types::Number, Reference({0, 3}));
 
     // Branch {1}: Control
     uint8_t initBright = 20;
-    Values.Set(&initBright, sizeof(uint8_t), Types::Byte, {1});
+    Values.Set(&initBright, sizeof(uint8_t), Types::Byte, Reference({1}));
 
     Coord2D initOffset(0, 0, 0);
-    Values.Set(&initOffset, sizeof(Coord2D), Types::Coord2D, {1, 0});
+    Values.Set(&initOffset, sizeof(Coord2D), Types::Coord2D, Reference({1, 0}));
 
     bool initFalse = false;
     Values.Set(&initFalse, sizeof(bool), Types::Bool, {1, 1}); // Mirror
@@ -82,10 +82,11 @@ bool DisplayClass::Connect(BaseClass *Object, int32_t Index)
     if (Object == nullptr)
         Object = this;
 
-    // Direct local find
-    SearchResult linkRes = Values.Find({0, 0}, true);
-    if (!linkRes.Value)
+    Bookmark linkMark = Values.Find({0, 0}, true);
+    if (linkMark.Index == 0xFFFF)
         return false;
+
+    Result linkRes = Values.Get(linkMark);
 
     // 1. Try Daisy-chain (Reference)
     if (linkRes.Type == Types::Reference)
@@ -135,7 +136,8 @@ void DisplayClass::Setup(const Reference &Index)
     {
         if (Index.PathLen() == 1) // Displays::Type changed
         {
-            SearchResult res = Values.Find({0}, true);
+            Bookmark resMark = Values.Find({0}, true);
+            Result res = Values.Get(resMark);
             if (res.Value)
             {
                 Displays Type = *(Displays *)res.Value;
@@ -157,8 +159,8 @@ void DisplayClass::Setup(const Reference &Index)
 
                 if (newLen > 0)
                 {
-                    Values.Set(&newLen, sizeof(int32_t), Types::Integer, {0, 1});
-                    Values.Set(&newSize, sizeof(Vector2D), Types::Vector2D, {0, 2});
+                    Values.Set(&newLen, sizeof(int32_t), Types::Integer, Reference({0, 1}));
+                    Values.Set(&newSize, sizeof(Vector2D), Types::Vector2D, Reference({0, 2}));
                     HardwareChanged = true;
                 }
             }
@@ -171,7 +173,8 @@ void DisplayClass::Setup(const Reference &Index)
 
     if (HardwareChanged)
     {
-        SearchResult lenRes = Values.Find({0, 1}, true);
+        Bookmark lenMark = Values.Find({0, 1}, true);
+        Result lenRes = Values.Get(lenMark);
         if (lenRes.Value)
             ManageOverlay(*(int32_t *)lenRes.Value);
         Disconnect();
@@ -183,32 +186,31 @@ void DisplayClass::ManageOverlay(int32_t RequiredLength)
 {
     if (RequiredLength <= 0)
         return;
-
-    // Allocate only if current buffer is too small or null
     if (RequiredLength > MaxLength || Overlay == nullptr)
     {
-        // Allocate and zero-initialize to prevent garbage values
         Number *NewOverlay = new Number[RequiredLength]();
         if (!NewOverlay)
             return;
 
         if (Overlay != nullptr)
             delete[] Overlay;
-
         Overlay = NewOverlay;
         MaxLength = RequiredLength;
-        //ESP_LOGI("Display", "Overlay buffer allocated: %d elements", RequiredLength);
     }
 }
 
 bool DisplayClass::Run()
 {
-    // Fetch all control parameters once at start of frame
-    SearchResult lenRes = Values.Find({0, 1}, true);
-    SearchResult sizeRes = Values.Find({0, 2}, true);
-    SearchResult brightRes = Values.Find({1});
-    SearchResult offRes = Values.Find({1, 0});
-    SearchResult mirRes = Values.Find({1, 1});
+    // Step 1: Bookmark parameters
+    Bookmark lenMark = Values.Find({0, 1}, true);
+    Bookmark sizeMark = Values.Find({0, 2}, true);
+    Bookmark brightMark = Values.Find({1}, true);
+    Bookmark offMark = Values.Find({1, 0}, true);
+    Bookmark mirMark = Values.Find({1, 1}, true);
+
+    Result lenRes = Values.Get(lenMark);
+    Result sizeRes = Values.Get(sizeMark);
+    Result brightRes = Values.Get(brightMark);
 
     if (!lenRes.Value || !sizeRes.Value || !brightRes.Value)
         return true;
@@ -216,8 +218,8 @@ bool DisplayClass::Run()
     int32_t Length = *(int32_t *)lenRes.Value;
     Vector2D Size = *(Vector2D *)sizeRes.Value;
     uint8_t Bright = *(uint8_t *)brightRes.Value;
-    Coord2D Offset = *(Coord2D *)offRes.Value;
-    bool Mirrored = *(bool *)mirRes.Value;
+    Coord2D Offset = *(Coord2D *)Values.Get(offMark).Value;
+    bool Mirrored = *(bool *)Values.Get(mirMark).Value;
 
     if (LEDs == nullptr || Overlay == nullptr || Length <= 0)
         return true;
@@ -227,23 +229,27 @@ bool DisplayClass::Run()
     memset(LEDs, 0, Length * 3);
     memset((void *)Overlay, 0, Length * sizeof(Number));
 
-    // Render Stack {2}
-    for (uint8_t I = 0;; I++)
+    // Step 2: Iterate Render Stack {2}
+    Bookmark stackRoot = Values.Find({2}, true);
+    if (stackRoot.Index != 0xFFFF)
     {
-        SearchResult node = Values.Find({2, I});
-        if (node.Type == Types::Undefined || !node.Value || node.Length == 0)
-            break;
-
-        if (node.Type == Types::Geometry2D)
-            RenderGeometry(I, Length, Size, BaseTransform, Mirrored, Overlay);
-        else if (node.Type == Types::Texture2D)
+        uint16_t nodeIdx = Values.Child(stackRoot.Index);
+        while (nodeIdx != 0xFFFF)
         {
-            RenderTexture(I, Length, Size, BaseTransform, Mirrored, Overlay);
-            memset((void *)Overlay, 0, Length * sizeof(Number)); // Clear alpha for next texture layer
+            Result node = Values.Get(nodeIdx);
+            if (node.Type == Types::Geometry2D)
+            {
+                RenderGeometry(nodeIdx, Length, Size, BaseTransform, Mirrored, Overlay);
+            }
+            else if (node.Type == Types::Texture2D)
+            {
+                RenderTexture(nodeIdx, Length, Size, BaseTransform, Mirrored, Overlay);
+                memset((void *)Overlay, 0, Length * sizeof(Number)); // Clear alpha for next texture
+            }
+            nodeIdx = Values.Next(nodeIdx);
         }
     }
 
-    // Final scaling
     if (Bright < 255)
     {
         for (int32_t I = 0; I < Length * 3; I++)
@@ -253,89 +259,66 @@ bool DisplayClass::Run()
     return true;
 }
 
-void DisplayClass::RenderGeometry(uint8_t Index, int32_t Length, Vector2D DisplaySize,
+void DisplayClass::RenderGeometry(uint16_t NodeIdx, int32_t Length, Vector2D DisplaySize,
                                   Coord2D Transform, bool Mirrored, Number *Overlay)
 {
-    // 1. Parameter Extraction
-    SearchResult typeRes = Values.Find({2, Index});
-    SearchResult opRes   = Values.Find({2, Index, 0});
-    SearchResult sizeRes = Values.Find({2, Index, 1});
-    SearchResult fadeRes = Values.Find({2, Index, 2});
-    SearchResult posRes  = Values.Find({2, Index, 3});
+    Result typeRes = Values.Get(NodeIdx);
+    if (!typeRes.Value)
+        return;
 
-    // If the base node doesn't exist, exit immediately
-    if (!typeRes.Value || typeRes.Type == Types::Undefined) return;
+    // Use fast child/next navigation instead of Find paths
+    uint16_t opIdx = Values.Child(NodeIdx);
+    uint16_t sizeIdx = Values.Next(opIdx);
+    uint16_t fadeIdx = Values.Next(sizeIdx);
+    uint16_t posIdx = Values.Next(fadeIdx);
 
-    // Use safe defaults if sub-parameters are missing
-    Geometries Type      = *(Geometries*)typeRes.Value;
-    GeometryOperation Op = opRes.Value ? *(GeometryOperation*)opRes.Value : GeometryOperation::Add;
-    Vector2D GSize       = sizeRes.Value ? *(Vector2D*)sizeRes.Value : Vector2D(1, 1);
-    Number GFade         = fadeRes.Value ? *(Number*)fadeRes.Value : Number(0.001f);
-    Coord2D GPos         = posRes.Value ? *(Coord2D*)posRes.Value : Coord2D(0, 0, 0);
+    Geometries Type = *(Geometries *)typeRes.Value;
+    GeometryOperation Op = (opIdx != 0xFFFF) ? *(GeometryOperation *)Values.Get(opIdx).Value : GeometryOperation::Add;
+    Vector2D GSize = (sizeIdx != 0xFFFF) ? *(Vector2D *)Values.Get(sizeIdx).Value : Vector2D(1, 1);
+    Number GFade = (fadeIdx != 0xFFFF) ? *(Number *)Values.Get(fadeIdx).Value : Number(0.001f);
+    Coord2D GPos = (posIdx != 0xFFFF) ? *(Coord2D *)Values.Get(posIdx).Value : Coord2D(0, 0, 0);
 
-    if (GFade <= 0) GFade = 0.001f;
+    if (GFade <= 0)
+        GFade = 0.001f;
     Coord2D CurrentTransform = Transform.Join(GPos);
 
     int32_t GridW = (int32_t)DisplaySize.X;
     int32_t GridH = (int32_t)DisplaySize.Y;
 
-    // 2. Grid Iteration
     for (int32_t Y = 0; Y < GridH; Y++)
     {
         for (int32_t X = 0; X < GridW; X++)
         {
-            // Calculate index in the 2D grid
             int32_t GridIdx = (GridH - Y - 1) * GridW + X;
-            int32_t PIdx = -1;
+            int32_t PIdx = (Layout != nullptr) ? (int32_t)Layout[GridIdx] - 1 : GridIdx;
 
-            // 3. Layout Mapping & Bounds Safety
-            if (Layout != nullptr)
-            {
-                // Ensure we don't read past the end of the Layout mapping table
-                // For Vysi 1.0, this table MUST be at least GridW * GridH (110) bytes
-                if (GridIdx >= (GridW * GridH)) continue;
-
-                uint8_t LayoutVal = Layout[GridIdx];
-                
-                // If Layout value is 0, there is no physical LED at this grid coordinate
-                if (LayoutVal == 0) continue;
-                
-                PIdx = (int32_t)LayoutVal - 1;
-            }
-            else
-            {
-                PIdx = GridIdx;
-            }
-
-            // Final safety check: Is the calculated pixel index within the allocated Overlay/LED buffers?
-            if (PIdx < 0 || PIdx >= Length) continue;
-
-            // 4. Rendering Logic
-            // Performance optimization: skip if adding to a pixel that's already full
-            if (Op == GeometryOperation::Add && Overlay[PIdx] >= 1.0f) continue;
+            if (PIdx < 0 || PIdx >= Length)
+                continue;
+            if (Op == GeometryOperation::Add && Overlay[PIdx] >= 1.0f)
+                continue;
 
             Vector2D P = CurrentTransform.TransformTo(Vector2D(X, Y));
-            if (Mirrored) P = P.Mirror(Vector2D(0, 1));
+            if (Mirrored)
+                P = P.Mirror(Vector2D(0, 1));
 
             Number LocalAlpha = CalculateShapeAlpha(Type, P, GSize, GFade);
-            if (LocalAlpha <= 0) continue;
+            if (LocalAlpha <= 0)
+                continue;
 
-            // 5. Blending Operations
             switch (Op)
             {
-                case GeometryOperation::Add:
-                    Overlay[PIdx] = LimitZeroToOne(Overlay[PIdx] + LocalAlpha);
-                    break;
-                case GeometryOperation::Cut:
-                    Overlay[PIdx] = LimitZeroToOne(Overlay[PIdx] - LocalAlpha);
-                    break;
-                case GeometryOperation::Intersect:
-                    Overlay[PIdx] = LimitZeroToOne(Overlay[PIdx] * LocalAlpha);
-                    break;
-                case GeometryOperation::XOR:
-                    // Using standard XOR logic: |A - B|
-                    Overlay[PIdx] = abs(Overlay[PIdx] - LocalAlpha);
-                    break;
+            case GeometryOperation::Add:
+                Overlay[PIdx] = LimitZeroToOne(Overlay[PIdx] + LocalAlpha);
+                break;
+            case GeometryOperation::Cut:
+                Overlay[PIdx] = LimitZeroToOne(Overlay[PIdx] - LocalAlpha);
+                break;
+            case GeometryOperation::Intersect:
+                Overlay[PIdx] = LimitZeroToOne(Overlay[PIdx] * LocalAlpha);
+                break;
+            case GeometryOperation::XOR:
+                Overlay[PIdx] = abs(Overlay[PIdx] - LocalAlpha);
+                break;
             }
         }
     }
@@ -386,47 +369,30 @@ Number DisplayClass::CalculateShapeAlpha(Geometries Type, Vector2D P, Vector2D S
     return LimitZeroToOne(Distance / F + 0.5);
 }
 
-void DisplayClass::RenderTexture(uint8_t Index, int32_t Length, Vector2D DisplaySize,
+void DisplayClass::RenderTexture(uint16_t NodeIdx, int32_t Length, Vector2D DisplaySize,
                                  Coord2D Transform, bool Mirrored, Number *Overlay)
 {
-    // 1. Safety Gate: Ensure buffers exist before any logic
-    if (!LEDs || !Overlay || Length <= 0)
+    Result texRes = Values.Get(NodeIdx);
+    if (!texRes.Value)
         return;
 
-    // 2. Initial Type and Value Check
-    SearchResult texRes = Values.Find({2, Index});
-    if (texRes.Type != Types::Texture2D || !texRes.Value)
+    uint16_t colAIdx = Values.Child(NodeIdx);
+    Result colARes = Values.Get(colAIdx);
+    if (!colARes.Value)
         return;
 
     Textures2D TextureType = *(Textures2D *)texRes.Value;
-
-    // 3. Fetch primary attributes
-    SearchResult colARes = Values.Find({2, Index, 0});
-    if (!colARes.Value)
-        return;
     ColourClass ColourA = *(ColourClass *)colARes.Value;
 
-    // --- Fast Path: Full Fill ---
     if (TextureType == Textures2D::Full)
     {
         for (int32_t I = 0; I < Length; I++)
         {
-            // Only process pixels with geometry alpha
             if (Overlay[I] <= 0)
                 continue;
-
             int32_t Offset = I * 3;
-
-            // Check bounds for the +2 offset to prevent heap corruption/exception
-            if (Offset + 2 >= Length * 3)
-                break;
-
-            // Map current GRB from buffer to a temporary Pixel (R, G, B)
-            // Note: LEDs[Offset] is G, LEDs[Offset+1] is R, LEDs[Offset+2] is B
             ColourClass Pixel(LEDs[Offset + 1], LEDs[Offset], LEDs[Offset + 2], 255);
             Pixel.Layer(ColourA, Overlay[I]);
-
-            // Write back in GRB format
             LEDs[Offset] = Pixel.G;
             LEDs[Offset + 1] = Pixel.R;
             LEDs[Offset + 2] = Pixel.B;
@@ -434,17 +400,13 @@ void DisplayClass::RenderTexture(uint8_t Index, int32_t Length, Vector2D Display
         return;
     }
 
-    // --- Complex Path: Linear/Circular ---
-    SearchResult colBRes = Values.Find({2, Index, 1});
-    SearchResult texPosRes = Values.Find({2, Index, 2});
-    SearchResult texWidRes = Values.Find({2, Index, 3});
+    uint16_t colBIdx = Values.Next(colAIdx);
+    uint16_t texPosIdx = Values.Next(colBIdx);
+    uint16_t texWidIdx = Values.Next(texPosIdx);
 
-    if (!colBRes.Value || !texPosRes.Value || !texWidRes.Value)
-        return;
-
-    ColourClass ColourB = *(ColourClass *)colBRes.Value;
-    Coord2D TexPos = *(Coord2D *)texPosRes.Value;
-    Number TexWidth = *(Number *)texWidRes.Value;
+    ColourClass ColourB = *(ColourClass *)Values.Get(colBIdx).Value;
+    Coord2D TexPos = *(Coord2D *)Values.Get(texPosIdx).Value;
+    Number TexWidth = *(Number *)Values.Get(texWidIdx).Value;
 
     if (TexWidth <= 0)
         TexWidth = 0.001f;
@@ -459,12 +421,8 @@ void DisplayClass::RenderTexture(uint8_t Index, int32_t Length, Vector2D Display
         for (int32_t X = 0; X < GridW; X++)
         {
             int32_t GridIdx = (GridH - Y - 1) * GridW + X;
-
-            // Layout Safety: Ensure GridIdx doesn't exceed the layout array itself
-            // If the grid is 11x10, Layout must be at least 110 bytes.
             int32_t PIdx = (Layout != nullptr) ? (int32_t)Layout[GridIdx] - 1 : GridIdx;
 
-            // CRITICAL: PIdx bounds check MUST happen before accessing Overlay[PIdx]
             if (PIdx < 0 || PIdx >= Length || Overlay[PIdx] <= 0)
                 continue;
 
@@ -473,27 +431,14 @@ void DisplayClass::RenderTexture(uint8_t Index, int32_t Length, Vector2D Display
                 P = P.Mirror(Vector2D(0, 1));
 
             ColourClass FinalColour = ColourB;
-            Number Distance = 0;
-
             if (TextureType == Textures2D::BlendLinear)
-            {
-                Distance = LimitZeroToOne((P.X * invTexWidthScaled) + 0.5f);
-                FinalColour.Layer(ColourA, Distance);
-            }
+                FinalColour.Layer(ColourA, LimitZeroToOne((P.X * invTexWidthScaled) + 0.5f));
             else if (TextureType == Textures2D::BlendCircular)
-            {
-                Distance = LimitZeroToOne((P.Length() * invTexWidthScaled) + 0.5f);
-                FinalColour.Layer(ColourA, Distance);
-            }
+                FinalColour.Layer(ColourA, LimitZeroToOne((P.Length() * invTexWidthScaled) + 0.5f));
 
             int32_t Offset = PIdx * 3;
-            if (Offset + 2 >= Length * 3)
-                continue;
-
-            // Consistent GRB Mapping
             ColourClass Pixel(LEDs[Offset + 1], LEDs[Offset], LEDs[Offset + 2], 255);
             Pixel.Layer(FinalColour, Overlay[PIdx]);
-
             LEDs[Offset] = Pixel.G;
             LEDs[Offset + 1] = Pixel.R;
             LEDs[Offset + 2] = Pixel.B;

@@ -1,36 +1,58 @@
 Number GetAsNumber(const Bookmark &Location)
 {
-    // 1. Resolve the data (Handles POD and Reference teleportation)
-    // We use the Map stored in the bookmark to ensure context-safety
-    SearchResult Source = Location.Map->This(Location);
+    // 1. Guard against invalid bookmarks
+    if (Location.Index == INVALID_HEADER)
+        return 0.0f;
 
-    // 2. If resolution fails or it's not a scalar-compatible type, return 0
+    // 2. Resolve the data Result via the Map stored in the bookmark
+    // This handles the raw memory access and type metadata
+    Result Source = Location.Map->GetThis(Location);
+
+    // 3. If resolution fails or data is missing, return 0
     if (!Source.Value || Source.Type == Types::Undefined)
         return 0.0f;
 
-    // 3. Strict Scalar Extraction with promotion to 'Number'
+    // 4. Scalar Extraction with promotion to 'Number'
     switch (Source.Type)
     {
     case Types::Number:
         return *(Number *)Source.Value;
+
     case Types::Integer:
+        // Promote 32-bit signed integer to floating-point Number
         return (Number)(*(int32_t *)Source.Value);
+
     case Types::Byte:
     case Types::Bool:
+        // Promote 8-bit unsigned types to floating-point Number
         return (Number)(*(uint8_t *)Source.Value);
 
-    // Vectors are treated separately (not scalars), so they return 0 here
+    // Complex types (Vectors, Colors, etc.) are not scalars, return 0
     default:
         return 0.0f;
     }
 }
 
-void StoreScalar(ValueTree &Values, Reference Path, Number Result, Types T)
+void StoreScalar(const Bookmark &Target, Number Result, Types T)
 {
-    size_t sz = sizeof(Number);
+    // 1. Safety check for the bookmark index
+    if (Target.Index == INVALID_HEADER)
+        return;
+
+    // 2. Branching and Casting based on the target Type
     if (T == Types::Integer)
-        sz = sizeof(int32_t);
+    {
+        int32_t val = (int32_t)Result;
+        Target.Map->Set(&val, sizeof(int32_t), T, Target.Index);
+    }
     else if (T == Types::Byte || T == Types::Bool)
-        sz = 1;
-    Values.Set(&Result, sz, T, Path);
+    {
+        uint8_t val = (uint8_t)Result;
+        Target.Map->Set(&val, 1, T, Target.Index);
+    }
+    else if (T == Types::Number)
+    {
+        // Standard Number type (usually float or double)
+        Target.Map->Set(&Result, sizeof(Number), T, Target.Index);
+    }
 }
