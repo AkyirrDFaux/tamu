@@ -1,7 +1,9 @@
 // ESP32-C3 Warning: Stopping serial freezes board if DTR + RTS enabled
 FlexArray BufferUSBIn;
 #if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
+uint32_t LastSendBT = 0;
 FlexArray BufferBLEIn;
+FlexArray BufferBLEOut;
 #include "NimBLEDevice.h"
 
 NimBLEServer *pServer = nullptr;
@@ -14,7 +16,8 @@ NimBLECharacteristic *pTxCharacteristic = nullptr;
 bool deviceConnected = false;
 bool oldDeviceConnected = false;
 
-#define BTCHUNK 512
+#define BTCHUNK 500
+#define BTDELAY 20
 
 class MyServerCallbacks : public NimBLEServerCallbacks
 {
@@ -38,23 +41,22 @@ class MyCallbacks : public NimBLECharacteristicCallbacks
         {
             // ESP_LOG_BUFFER_HEX("CHIRP IN", rxValue.data(), rxValue.length());
 
-            BufferBLEIn += FlexArray(rxValue.data(), rxValue.length());
+            BufferBLEIn.Append(rxValue.data(), rxValue.length());
             // ESP_LOGI("CHIRP IN", "Now %d bytes", BufferBLEIn.Length);
         }
     }
 } staticRxCallbacks;
-#elif defined BOARD_Valu_v2_0
-uint32_t LastSend = 0;
 #endif
 
 class ChirpClass
 {
 public:
     void Begin(Text Name);
-    void SendNow(const FlexArray &Input);
     void Send(const FlexArray &Input);
     void Communicate();
-    BaseClass *DecodePart(int32_t *Start);
+#if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
+    void SendBTChunk();
+#endif
 };
 
 void ChirpClass::Begin(Text Name)
@@ -98,9 +100,28 @@ void ChirpClass::Begin(Text Name)
 #endif
 };
 
-void ChirpClass::SendNow(const FlexArray &Input) {
-    // HW::USB_Send(Input.CreateMessage());
-};
+#if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
+void ChirpClass::SendBTChunk()
+{
+    // 1. Data & Timing Check
+    if (BufferBLEOut.Length == 0 || HW::Now() - LastSendBT < BTDELAY)
+        return;
+
+    // 2. MTU/Chunk Safety
+    // If setMTU is 512, safe payload is 509. Let's use 500 to be safe.
+    size_t chunkLen = (BufferBLEOut.Length > BTCHUNK) ? BTCHUNK : BufferBLEOut.Length;
+
+    // 3. Set Value and Notify
+    pTxCharacteristic->setValue((uint8_t *)BufferBLEOut.Array, chunkLen);
+
+    // 4. Only clear the data we actually SENT
+    if (pTxCharacteristic->notify())
+    {
+        BufferBLEOut.Consume(chunkLen); // This moves the remaining data to the front
+        LastSendBT = HW::Now();
+    }
+}
+#endif
 
 void ChirpClass::Send(const FlexArray &Input)
 {
@@ -108,15 +129,8 @@ void ChirpClass::Send(const FlexArray &Input)
 #if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
     if (deviceConnected)
     {
-
-        for (int32_t Index = 0; Index < Buffer.Length; Index += BTCHUNK)
-        {
-            size_t chunkLen = std::min((size_t)(Buffer.Length - Index), (size_t)BTCHUNK);
-            pTxCharacteristic->setValue((uint8_t *)Buffer.Array + Index, chunkLen);
-            pTxCharacteristic->notify();
-            HW::Sleep(20);
-        }
-        // ESP_LOG_BUFFER_HEX("CHIRP OUT", Buffer.Array, Buffer.Length);
+        BufferBLEOut += Buffer;
+        SendBTChunk();
     }
 #endif
     HW::USB_Send(Buffer);
@@ -127,14 +141,11 @@ void ChirpClass::Communicate()
 #if defined BOARD_Valu_v2_0
     HW::tud_task();
 #endif
-    FlexArray Input = HW::USB_Read();
-
-    if (Input.Length > 0)
+    if (HW::USB_Read(BufferUSBIn) > 0)
     {
         HW::ModeOutput(LED_NOTIFICATION_PIN);
         HW::Low(LED_NOTIFICATION_PIN); // On
 
-        BufferUSBIn += Input;
         FlexArray Message = BufferUSBIn.ExtractByLength();
         if (Message.Length > 0)
             Run(Message);
@@ -160,17 +171,22 @@ void ChirpClass::Communicate()
         oldDeviceConnected = true;
     }
 
-    // 3. Process the Protocol Buffer
-    // ESP_LOGI("CHIRP", "Extracting BT");
-    FlexArray Message = BufferBLEIn.ExtractByLength();
-    // ESP_LOGI("CHIRP", "Extracted BT");
-    if (Message.Length > 0)
+    if (deviceConnected)
     {
-        HW::ModeOutput(LED_NOTIFICATION_PIN);
-        HW::Low(LED_NOTIFICATION_PIN); // On
-        Run(Message);
-        HW::High(LED_NOTIFICATION_PIN); // Off
-        HW::ModeInput(LED_NOTIFICATION_PIN);
+        SendBTChunk();
+
+        // 3. Process the Protocol Buffer
+        // ESP_LOGI("CHIRP", "Extracting BT");
+        FlexArray Message = BufferBLEIn.ExtractByLength();
+        // ESP_LOGI("CHIRP", "Extracted BT");
+        if (Message.Length > 0)
+        {
+            HW::ModeOutput(LED_NOTIFICATION_PIN);
+            HW::Low(LED_NOTIFICATION_PIN); // On
+            Run(Message);
+            HW::High(LED_NOTIFICATION_PIN); // Off
+            HW::ModeInput(LED_NOTIFICATION_PIN);
+        }
     }
 #endif
 };

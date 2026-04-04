@@ -178,7 +178,6 @@ Multiple boards together
 
 ADJUSTMENTS:
 use more const, final, inline keywords, pass by reference, overall optimalizaton
-Chirp spread out sending/recieving delay, better compression/buffering
 */
 
 // 20.07.2024 Started over >:)

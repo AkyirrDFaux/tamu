@@ -31,7 +31,7 @@ namespace HW
 
     void USB_Send(const FlexArray &Data)
     {
-        if (Data.Length == 0 || Data.Array == nullptr)
+        if (Data.Length == 0 || Data.Array == nullptr || !usb_serial_jtag_is_connected())
             return;
 
         uint32_t offset = 0;
@@ -61,12 +61,12 @@ namespace HW
         }
     }
 
-    FlexArray USB_Read()
+    uint16_t USB_Read(FlexArray &OutBuffer)
     {
         static uint8_t rx_buffer[512];
         static uint32_t rx_ptr = 0;
 
-        // 1. Pull new data from hardware into the static buffer
+        // 1. Pull new data from hardware into the static circular-ish buffer
         int len = usb_serial_jtag_read_bytes(rx_buffer + rx_ptr, (sizeof(rx_buffer) - rx_ptr), 0);
         if (len > 0)
             rx_ptr += len;
@@ -89,15 +89,14 @@ namespace HW
             // Validate structure (Length sanity and Footer 0xBF)
             if (dataLen <= MAX_USB_DATA && rx_buffer[cursor + 3 + dataLen] == 0xBF)
             {
-                // Verify checksum
+                // Verify checksum (CRC usually covers Length + Data)
                 if (CRC8(rx_buffer + cursor + 2, dataLen + 1) == receivedCrc)
                 {
-
                     // --- VALID PACKET FOUND ---
-                    // Create the FlexArray using the (char*, size) constructor
-                    FlexArray result((const char *)(rx_buffer + cursor + 3), dataLen);
+                    // Append directly to the passed reference
+                    OutBuffer.Append((const char *)(rx_buffer + cursor + 3), dataLen);
 
-                    // Consume the 64-byte frame plus any junk bytes found before it
+                    // Consume the fixed-size frame
                     uint32_t total_consumed = cursor + USB_PACKET_SIZE;
                     rx_ptr -= total_consumed;
 
@@ -106,15 +105,15 @@ namespace HW
                         memmove(rx_buffer, rx_buffer + total_consumed, rx_ptr);
                     }
 
-                    return result;
+                    return (uint16_t)dataLen;
                 }
             }
 
-            // False positive or corrupt packet: skip the header byte and keep hunting
+            // False positive: skip header and keep hunting
             cursor++;
         }
 
-        // 3. Maintenance: Slide buffer to remove scanned junk bytes
+        // 3. Maintenance: Clear scanned junk
         if (cursor > 0)
         {
             rx_ptr -= cursor;
@@ -124,7 +123,7 @@ namespace HW
             }
         }
 
-        return FlexArray(); // Returns empty (Array=nullptr, Length=0)
+        return 0;
     }
 
 #elif defined BOARD_Valu_v2_0
@@ -217,81 +216,81 @@ namespace HW
         }
     }
 
-    FlexArray USB_Read()
+    uint16_t USB_Read(FlexArray &OutBuffer)
+{
+    static uint8_t rx_buffer[512];
+    static uint32_t rx_ptr = 0;
+
+    // 1. Pull new data from TinyUSB into the static buffer
+    uint32_t available = tud_cdc_available();
+    if (available > 0)
     {
-        static uint8_t rx_buffer[512]; // Increased buffer size for reliability
-        static uint32_t rx_ptr = 0;
+        uint32_t space = sizeof(rx_buffer) - rx_ptr;
+        uint32_t to_read = (available > space) ? space : available;
 
-        // 1. Pull new data from TinyUSB into the static buffer
-        uint32_t available = tud_cdc_available();
-        if (available > 0)
+        if (to_read > 0)
         {
-            // Calculate how much we can safely read
-            uint32_t space = sizeof(rx_buffer) - rx_ptr;
-            uint32_t to_read = (available > space) ? space : available;
-
-            if (to_read > 0)
-            {
-                tud_cdc_read(rx_buffer + rx_ptr, to_read);
-                rx_ptr += to_read;
-            }
+            // Direct read into our processing buffer
+            tud_cdc_read(rx_buffer + rx_ptr, to_read);
+            rx_ptr += to_read;
         }
-
-        uint32_t cursor = 0;
-
-        // 2. Scan through the buffer for a full USB packet
-        while (cursor + USB_PACKET_SIZE <= rx_ptr)
-        {
-            // Hunt for Start-of-Frame (0xFA)
-            if (rx_buffer[cursor] != 0xFA)
-            {
-                cursor++;
-                continue;
-            }
-
-            uint8_t receivedCrc = rx_buffer[cursor + 1];
-            uint8_t dataLen = rx_buffer[cursor + 2];
-
-            // Validate structure (Length sanity and Footer 0xBF)
-            if (dataLen <= MAX_USB_DATA && rx_buffer[cursor + 3 + dataLen] == 0xBF)
-            {
-                // Verify checksum
-                if (CRC8(rx_buffer + cursor + 2, dataLen + 1) == receivedCrc)
-                {
-                    // --- VALID PACKET FOUND ---
-                    // Construct FlexArray from the validated slice
-                    FlexArray result((const char *)(rx_buffer + cursor + 3), dataLen);
-
-                    // Consume the 64-byte frame plus any leading junk
-                    uint32_t total_consumed = cursor + USB_PACKET_SIZE;
-
-                    // Shift remaining data to the front
-                    rx_ptr -= total_consumed;
-                    if (rx_ptr > 0)
-                    {
-                        memmove(rx_buffer, rx_buffer + total_consumed, rx_ptr);
-                    }
-
-                    return result;
-                }
-            }
-
-            // False positive: skip header and keep hunting
-            cursor++;
-        }
-
-        // 3. Maintenance: Slide buffer to remove scanned junk bytes
-        if (cursor > 0)
-        {
-            rx_ptr -= cursor;
-            if (rx_ptr > 0)
-            {
-                memmove(rx_buffer, rx_buffer + cursor, rx_ptr);
-            }
-        }
-
-        return FlexArray(); // Empty return
     }
+
+    uint32_t cursor = 0;
+
+    // 2. Scan through the buffer for a full USB packet
+    while (cursor + USB_PACKET_SIZE <= rx_ptr)
+    {
+        // Hunt for Start-of-Frame (0xFA)
+        if (rx_buffer[cursor] != 0xFA)
+        {
+            cursor++;
+            continue;
+        }
+
+        uint8_t receivedCrc = rx_buffer[cursor + 1];
+        uint8_t dataLen     = rx_buffer[cursor + 2];
+
+        // Validate structure (Length sanity and Footer 0xBF)
+        // Check footer relative to the frame start (cursor + 3 + dataLen)
+        if (dataLen <= MAX_USB_DATA && rx_buffer[cursor + 3 + dataLen] == 0xBF)
+        {
+            // Verify checksum
+            if (CRC8(rx_buffer + cursor + 2, dataLen + 1) == receivedCrc)
+            {
+                // --- VALID PACKET FOUND ---
+                // Append payload directly to the persistent buffer
+                OutBuffer.Append((const char *)(rx_buffer + cursor + 3), dataLen);
+
+                // Consume the full frame (usually 64 bytes)
+                uint32_t total_consumed = cursor + USB_PACKET_SIZE;
+                rx_ptr -= total_consumed;
+
+                if (rx_ptr > 0)
+                {
+                    memmove(rx_buffer, rx_buffer + total_consumed, rx_ptr);
+                }
+
+                return (uint16_t)dataLen;
+            }
+        }
+
+        // False positive: skip header and keep hunting
+        cursor++;
+    }
+
+    // 3. Maintenance: Clear scanned junk
+    if (cursor > 0)
+    {
+        rx_ptr -= cursor;
+        if (rx_ptr > 0)
+        {
+            memmove(rx_buffer, rx_buffer + cursor, rx_ptr);
+        }
+    }
+
+    return 0;
+}
 
 #endif
 }

@@ -17,8 +17,10 @@ public:
     // Move Constructor (High Performance)
     FlexArray(FlexArray &&other) noexcept;
 
+    void Append(const char *source, uint16_t length);
     // The Concatenation Operator
     FlexArray &operator+=(const FlexArray &other);
+    void Consume(uint16_t n);
 
     // Helper to ensure capacity
     bool Reserve(uint16_t totalRequired);
@@ -30,22 +32,28 @@ FlexArray::FlexArray() : Array(nullptr), Length(0), Allocated(0)
 {
 }
 
-FlexArray::FlexArray(const FlexArray &other) {
-    if (other.Array && other.Length > 0) {
+FlexArray::FlexArray(const FlexArray &other)
+{
+    if (other.Array && other.Length > 0)
+    {
         Array = (char *)malloc(other.Length);
-        if (Array) {
+        if (Array)
+        {
             memcpy(Array, other.Array, other.Length);
             Length = other.Length;
             Allocated = other.Length;
         }
-    } else {
+    }
+    else
+    {
         Array = nullptr;
         Length = 0;
         Allocated = 0;
     }
 }
 
-FlexArray::FlexArray(FlexArray &&other) noexcept {
+FlexArray::FlexArray(FlexArray &&other) noexcept
+{
     // Steal the pointers
     Array = other.Array;
     Length = other.Length;
@@ -57,21 +65,28 @@ FlexArray::FlexArray(FlexArray &&other) noexcept {
     other.Allocated = 0;
 }
 
-FlexArray &FlexArray::operator=(const FlexArray &other) {
-    if (this == &other) return *this; // Self-assignment check
+FlexArray &FlexArray::operator=(const FlexArray &other)
+{
+    if (this == &other)
+        return *this; // Self-assignment check
 
     // 1. Clean up existing memory
-    if (Array) free(Array);
+    if (Array)
+        free(Array);
 
     // 2. Duplicate the other array
-    if (other.Array && other.Length > 0) {
+    if (other.Array && other.Length > 0)
+    {
         Array = (char *)malloc(other.Length);
-        if (Array) {
+        if (Array)
+        {
             memcpy(Array, other.Array, other.Length);
             Length = other.Length;
             Allocated = other.Length;
         }
-    } else {
+    }
+    else
+    {
         Array = nullptr;
         Length = 0;
         Allocated = 0;
@@ -95,36 +110,9 @@ FlexArray::FlexArray(uint16_t Preallocate)
     }
 }
 
-FlexArray::FlexArray(const char *source, uint16_t size)
+FlexArray::FlexArray(const char *source, uint16_t size) : Array(nullptr), Length(0), Allocated(0)
 {
-    if (source != nullptr && size > 0)
-    {
-        // 1. Allocate the exact size needed
-        Array = (char *)malloc(size);
-
-        if (Array != nullptr)
-        {
-            // 2. Copy the bytes into our new internal buffer
-            memcpy(Array, source, size);
-
-            // 3. Set the metadata
-            Length = size;
-            Allocated = size;
-        }
-        else
-        {
-            // Handle Out of Memory
-            Length = 0;
-            Allocated = 0;
-        }
-    }
-    else
-    {
-        // Fallback for null pointers or zero size
-        Array = nullptr;
-        Length = 0;
-        Allocated = 0;
-    }
+    Append(source, size);
 }
 
 FlexArray::~FlexArray()
@@ -136,28 +124,55 @@ FlexArray::~FlexArray()
     }
 }
 
-FlexArray &FlexArray::operator+=(const FlexArray &other)
+void FlexArray::Append(const char *source, uint16_t length)
 {
-    // 1. If the other array is empty, do nothing
-    if (other.Length == 0 || other.Array == nullptr)
+    // 1. Safety check: Nothing to add
+    if (source == nullptr || length == 0)
     {
-        return *this;
+        return;
     }
 
-    // 2. Calculate the new required length
-    uint16_t newLength = Length + other.Length;
+    // 2. Calculate the new total logical length
+    uint16_t newLength = Length + length;
 
-    // 3. Ensure we have enough physical space
+    // 3. Ensure the physical buffer is large enough
     if (Reserve(newLength))
     {
-        // 4. Copy the data from the other array to the end of this one
-        memcpy(Array + Length, other.Array, other.Length);
+        // 4. Copy new data starting at the current end (Length)
+        memcpy(Array + Length, source, length);
 
-        // 5. Update the logical length
+        // 5. Update the logical length tracker
         Length = newLength;
     }
+}
 
+FlexArray &FlexArray::operator+=(const FlexArray &other)
+{
+    Append(other.Array, other.Length);
     return *this;
+}
+
+void FlexArray::Consume(uint16_t n)
+{
+    // 1. If we are consuming more than or equal to what we have, just reset
+    if (n >= Length)
+    {
+        Length = 0;
+        return;
+    }
+
+    // 2. If n is 0, do nothing
+    if (n == 0) return;
+
+    // 3. Calculate remaining bytes
+    uint16_t remaining = Length - n;
+
+    // 4. Shift the data: [Current Data + n] moves to [Current Data]
+    // memmove is mandatory here because source and destination overlap
+    memmove(Array, Array + n, remaining);
+
+    // 5. Update logical length
+    Length = remaining;
 }
 
 bool FlexArray::Reserve(uint16_t totalRequired)
@@ -179,8 +194,10 @@ bool FlexArray::Reserve(uint16_t totalRequired)
     return false; // Out of Memory
 }
 
-FlexArray FlexArray::PrependLength() const {
-    if (Length == 0) return FlexArray();
+FlexArray FlexArray::PrependLength() const
+{
+    if (Length == 0)
+        return FlexArray();
 
     // 1. Create a new array with space for header + data
     uint16_t totalSize = Length + 2;
@@ -197,32 +214,19 @@ FlexArray FlexArray::PrependLength() const {
     return result;
 }
 
-FlexArray FlexArray::ExtractByLength() {
-    // 1. Minimum check: Need 2 bytes to even know the length
+FlexArray FlexArray::ExtractByLength()
+{
     if (Length < 2) return FlexArray();
 
-    // 2. Read expected payload length from the start
-    uint16_t payloadLen = *(uint16_t*)Array;
+    uint16_t payloadLen = *(uint16_t *)Array;
 
-    // 3. Check if we actually have that much data yet
-    if (Length < (payloadLen + 2)) {
-        return FlexArray(); // Incomplete message
-    }
+    if (Length < (payloadLen + 2)) return FlexArray();
 
-    // 4. Create the result (copying the payload only)
+    // Create the result from the payload (skipping the 2-byte header)
     FlexArray result(Array + 2, payloadLen);
 
-    // 5. Consume the bytes from THIS array
-    uint16_t totalConsumed = payloadLen + 2;
-    uint16_t remaining = Length - totalConsumed;
-
-    if (remaining > 0) {
-        // Shift trailing data (e.g., the start of a second message) to index 0
-        memmove(Array, Array + totalConsumed, remaining);
-        Length = remaining;
-    } else {
-        Length = 0;
-    }
+    // Use our new method to clean up the front of the array
+    Consume(payloadLen + 2);
 
     return result;
 }
