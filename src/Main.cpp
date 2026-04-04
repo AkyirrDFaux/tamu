@@ -98,15 +98,14 @@ int main()
     DefaultSetup();
 
     //ESP_LOGI("MAIN", "Starting Chirp");
-    Bookmark nameRes = Board.Values.Find({1}, true);
-    Result name = Board.Values.Get(nameRes);
+    Result name = Board.Values.Get(Board.Values.Next(0));
     if (name.Length > 0 && name.Type == Types::Text)
         Chirp.Begin(Text((char *)name.Value, name.Length));
 
     // 2. Update the internal clock
     TimeUpdate();
 
-    Board.Values.Set(&CurrentTime, sizeof(int32_t), Types::Integer, Reference({0, 1}));
+    Board.Values.Set(&CurrentTime, sizeof(int32_t), Types::Integer, Board.Values.Next(Board.Values.Child(0)));
 
     //ESP_LOGI("MAIN", "Starting");
     /*bool AllFinished = false;

@@ -13,18 +13,19 @@ public:
         .Run = Program::RunBridge};
 };
 
-Program::Program(const Reference &ID, FlagClass Flags, RunInfo Info) : BaseClass(&Table, ID, Flags, Info)
+Program::Program(const Reference &ID, FlagClass Flags, RunInfo Info) 
+    : BaseClass(&Table, ID, Flags, Info)
 {
     Type = ObjectTypes::Program;
     Name = "Program";
 
-    // Set Program Mode at {0}
+    // 1. Root {0}: Program Mode
     ProgramTypes mode = ProgramTypes::Sequence;
-    Values.Set(&mode, sizeof(ProgramTypes), Types::Program, Reference({0}));
+    Values.Set(&mode, sizeof(ProgramTypes), Types::Program, 0);
 
-    // Set Counter at {0, 0}
+    // 2. Child of Mode {0, 0}: Counter
     int32_t counter = 0;
-    Values.Set(&counter, sizeof(int32_t), Types::Integer, Reference({0, 0}));
+    Values.InsertChild(&counter, sizeof(int32_t), Types::Integer, 0);
 }
 
 Program::~Program() {}
@@ -47,75 +48,69 @@ bool Program::RunEntry(uint16_t Index)
 
 bool Program::Run()
 {
-    // 1. Fetch Mode {0} and Counter {0, 0} via Bookmarks
-    Bookmark modeMark = Values.Find({0}, true);
-    Bookmark countMark = Values.Find({0, 0}, true);
+    // 1. Resolve Control Logic via direct indexing
+    uint16_t modeIdx = 0;
+    uint16_t countIdx = Values.Child(modeIdx);
 
-    Result modeRes = Values.Get(modeMark);
-    Result countRes = Values.Get(countMark);
+    Result modeRes = Values.Get(modeIdx);
+    Result countRes = Values.Get(countIdx);
 
-    if (modeRes.Length == 0 || countRes.Length == 0)
+    if (!modeRes.Value || !countRes.Value)
         return true;
 
     ProgramTypes Mode = *(ProgramTypes *)modeRes.Value;
-    int32_t Counter = *(int32_t *)countRes.Value;
-    int32_t InitialCounter = Counter;
+    int32_t* counterPtr = (int32_t *)countRes.Value; // Get pointer to update directly
+    int32_t InitialCounter = *counterPtr;
 
     bool HasFinished = false;
 
-    // Retrieve the root of the executable entries (Branch {1} and above)
-    // We assume executable logic starts at the first child after the control branch {0}
-    uint16_t entryIdx = 0;
-
+    // 2. Execution Logic
     if (Mode == ProgramTypes::Sequence)
     {
-        // Skip branch {0} (Control) to get to executable steps
-        entryIdx = Values.Next(entryIdx);
-        // Advance to the current step indicated by Counter
-        for (int32_t i = 0; i < Counter && entryIdx != 0xFFFF; i++)
+        // First executable entry is the sibling after the Mode branch {0}
+        uint16_t entryIdx = Values.Next(modeIdx);
+
+        // Fast-forward to the current step (Counter)
+        for (int32_t i = 0; i < *counterPtr && entryIdx != 0xFFFF; i++)
         {
             entryIdx = Values.Next(entryIdx);
         }
 
-        // Run until an entry returns 'false' (it's busy) or we wrap
-        while (entryIdx != 0xFFFF && RunEntry(entryIdx))
+        // Execution Loop
+        while (entryIdx != 0xFFFF)
         {
-            Counter++;
+            if (!RunEntry(entryIdx)) 
+                break; // Current entry is busy/blocking
+
+            (*counterPtr)++;
             entryIdx = Values.Next(entryIdx);
 
-            // If we hit the end of the list, wrap back to the first executable entry
+            // Wrap-around logic
             if (entryIdx == 0xFFFF)
             {
-                Counter = 0;
-                entryIdx = Values.Next(0); // Reset to first step (skip {0})
+                *counterPtr = 0;
+                entryIdx = Values.Next(modeIdx);
                 HasFinished = true;
 
-                // Safety: break if we've cycled back to where we started in one tick
-                if (Counter == InitialCounter)
-                    break;
+                // Safety: Avoid infinite loop if all entries return true instantly
+                if (*counterPtr == InitialCounter) break;
             }
         }
     }
     else if (Mode == ProgramTypes::All)
     {
         HasFinished = true;
-
-        // Start at the first executable entry (Skip control branch {0})
-        entryIdx = Values.Next(Values.Child(0xFFFF));
+        // Run every sibling after the Mode branch
+        uint16_t entryIdx = Values.Next(modeIdx);
 
         while (entryIdx != 0xFFFF)
         {
-            // If any entry returns false (busy), the whole program isn't "finished"
             if (!RunEntry(entryIdx))
-            {
                 HasFinished = false;
-            }
+            
             entryIdx = Values.Next(entryIdx);
         }
     }
-
-    // 2. Save the updated logical Counter back to {0, 0}
-    Values.Set(&Counter, sizeof(int32_t), Types::Integer, Reference({0, 0}));
 
     return HasFinished;
 }

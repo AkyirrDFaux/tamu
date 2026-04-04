@@ -28,21 +28,25 @@ public:
         .Run = InputClass::RunBridge};
 };
 
-InputClass::InputClass(const Reference &ID, FlagClass Flags, RunInfo Info) : BaseClass(&Table, ID, Flags, Info)
+InputClass::InputClass(const Reference &ID, FlagClass Flags, RunInfo Info) 
+    : BaseClass(&Table, ID, Flags, Info)
 {
     Type = ObjectTypes::Input;
     Name = "Input";
 
-    // Initialize using compact path arrays
+    // Build the structure linearly:
+    // 1. Root {0}: Mode
     Inputs initialMode = Inputs::Undefined;
-    Values.Set(&initialMode, sizeof(Inputs), Types::Input, Reference({0}));
+    Values.Set(&initialMode, sizeof(Inputs), Types::Input, 0);
 
+    // 2. Child of Mode {0, 0}: Port
     PortNumber initialPort = -1;
-    Values.Set(&initialPort, sizeof(PortNumber), Types::PortNumber, Reference({0, 0}));
+    Values.InsertChild(&initialPort, sizeof(PortNumber), Types::PortNumber, 0);
 
+    // 3. Sibling of Mode {1}: Value
     bool initialState = false;
-    Values.Set(&initialState, sizeof(bool), Types::Bool, Reference({1}));
-};
+    Values.InsertNext(&initialState, sizeof(bool), Types::Bool, 0);
+}
 
 InputClass::~InputClass()
 {
@@ -51,11 +55,11 @@ InputClass::~InputClass()
 
 bool InputClass::Connect()
 {
-    // Search directly in the local ValueTree using Bookmark
-    Bookmark portMark = Values.Find({0, 0}, true);
-    Result res = Values.Get(portMark);
+    // Mode is 0. Port {0, 0} is the first child of Mode.
+    uint16_t portIdx = Values.Child(0);
+    Result res = Values.Get(portIdx); // GetThis in case Port is referenced
 
-    if (res.Length < sizeof(PortNumber) || !res.Value)
+    if (!res.Value || res.Length < sizeof(PortNumber))
     {
         ReportError(Status::PortError);
         return false;
@@ -87,21 +91,20 @@ bool InputClass::Disconnect()
 
 void InputClass::Setup(const Reference &Index)
 {
-    // Check if the hardware port specifically changed
-    if (Index == Reference({0, 0}))
+    // Path {0, 0}: Port changed
+    if (Index.PathLen() == 2 && Index.Path[0] == 0 && Index.Path[1] == 0)
     {
         Disconnect();
         Connect();
         return;
     }
 
-    // Only proceed if the base mode changed
-    if (Index != Reference({0}))
+    // Only proceed if the base mode {0} changed
+    if (Index.PathLen() != 1 || Index.Path[0] != 0)
         return;
 
-    Bookmark modeMark = Values.Find({0}, true);
-    Result res = Values.Get(modeMark);
-
+    // Mode is at index 0
+    Result res = Values.Get(0);
     if (res.Type != Types::Input || !res.Value)
         return;
 
@@ -119,17 +122,19 @@ void InputClass::Setup(const Reference &Index)
     default:
         break;
     }
-};
+}
 
 bool InputClass::Run()
 {
-    // Use Bookmarks for efficiency in the hot-loop
-    Bookmark modeMark = Values.Find({0}, true);
-    Bookmark valMark = Values.Find({1}, true);
+    // 1. Root is 0. Mode {0} is the first child of the root.
+    uint16_t modeIdx = 0;
+    Result modeRes = Values.Get(modeIdx);
 
-    Result modeRes = Values.Get(modeMark);
-    Result valRes = Values.Get(valMark);
+    // 2. Value {1} is the sibling immediately following Mode.
+    uint16_t valIdx = Values.Next(modeIdx);
+    Result valRes = Values.Get(valIdx);
 
+    // Fast validation
     if (modeRes.Type != Types::Input || !valRes.Value)
     {
         ReportError(Status::MissingModule);
@@ -153,9 +158,10 @@ bool InputClass::Run()
 
     case Inputs::ButtonWithLED:
     {
-        // Reference {2} is the Indicator State
-        Bookmark ledMark = Values.Find({2}, true);
-        Result ledRes = Values.Get(ledMark);
+        // 3. LED State {2} is the sibling immediately following Value.
+        uint16_t ledIdx = Values.Next(valIdx);
+        Result ledRes = Values.GetThis(ledIdx);
+        
         bool ledOn = (ledRes.Value) ? *(bool *)ledRes.Value : false;
 
         if (ledOn)
@@ -166,7 +172,6 @@ bool InputClass::Run()
         else
         {
             HW::ModeInput(InputPin);
-            // Pulse read: Input is active low
             *statePtr = (HW::Read(InputPin) == false);
         }
         break;
@@ -176,4 +181,4 @@ bool InputClass::Run()
     }
 
     return true;
-};
+}

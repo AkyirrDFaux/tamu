@@ -24,95 +24,101 @@ void BoardClass::Setup(const Reference &Index)
 #endif
 }
 
+PortMap BoardClass::GetPortMap(PortNumber Port)
+{
+    PortMap Map = {0xFFFF, 0xFFFF, 0xFFFF};
+
+    // Navigate to Ports branch: {0, 0}
+    uint16_t idx = Values.Child(Values.Child(0));
+
+    // Jump to specific Port sibling
+    for (PortNumber i = 0; i < Port && idx != 0xFFFF; i.Value++)
+    {
+        idx = Values.Next(idx);
+    }
+
+    if (idx != 0xFFFF)
+    {
+        Map.Port = idx;
+        // Port Child is Pin {0}, Pin Sibling is Driver {1}
+        Map.Driver = Values.Next(Values.Child(idx));
+        // Driver Child is the Reference {0}
+        Map.Ref = Values.Child(Map.Driver);
+    }
+    return Map;
+}
+
 // --- PIN CONNECTIONS ---
+
+void SyncObjectPin(BaseClass *Obj, ::Pin P)
+{
+    if (Obj->Type == ObjectTypes::Input)
+        static_cast<InputClass *>(Obj)->InputPin = P;
+    else if (Obj->Type == ObjectTypes::Sensor)
+        static_cast<SensorClass *>(Obj)->MeasPin = P;
+    else if (Obj->Type == ObjectTypes::Output)
+        static_cast<OutputClass *>(Obj)->PWMPin = P;
+}
 
 bool BoardClass::ConnectPin(BaseClass *Object, PortNumber Port)
 {
-    if (Object == nullptr || Port > 10) return false;
-
-    if (Object->Type != ObjectTypes::Input &&
-        Object->Type != ObjectTypes::Sensor &&
-        Object->Type != ObjectTypes::Output)
+    // Use the core Reference path logic to handle everything.
+    // It's already in flash; calling it once is cheaper than local logic.
+    if (!Object || Port > 10 || Values.Find({0, 0, Port, 1, 0}, true).Index != INVALID_HEADER)
         return false;
 
     Reference ID = Objects.GetReference(Object);
-    if (!ID.IsValid()) return false;
-
-    // Check if slot {0, 0, Port, 1, 0} is already taken
-    if (Values.Find({0, 0, Port, 1, 0}, true).Index != 0xFFFF)
-        return false;
-
-    // Set uses Reference overload to find/insert path automatically
     Values.Set(&ID, sizeof(Reference), Types::Reference, {0, 0, Port, 1, 0});
-    
+
     DriverPin(Port);
     return true;
 }
 
 void BoardClass::DriverPin(PortNumber Port)
 {
-    Bookmark pinMark = Values.Find({0, 0, Port, 0}, true);
-    Bookmark refMark = Values.Find({0, 0, Port, 1, 0}, true);
-
-    if (pinMark.Index == 0xFFFF || refMark.Index == 0xFFFF)
-    {
-        Drivers none = Drivers::None;
-        Values.Set(&none, sizeof(Drivers), Types::PortDriver, {0, 0, Port, 1});
+    PortMap Map = GetPortMap(Port);
+    if (Map.Port == INVALID_HEADER)
         return;
-    }
 
-    Result pinRes = Values.Get(pinMark);
-    Result refRes = Values.Get(refMark);
-
-    ::Pin PortPin = *(::Pin *)pinRes.Value;
-    BaseClass *Obj = Objects.At(*(Reference *)refRes.Value);
-    if (!Obj) return;
+    Result pinRes = Values.Get(Values.Child(Map.Port));
+    Result refRes = Values.Get(Map.Ref);
 
     Drivers role = Drivers::None;
+    ::Pin portPin = (pinRes.Value) ? *(::Pin *)pinRes.Value : INVALID_PIN;
 
-    if (Obj->Type == ObjectTypes::Input)
+    if (refRes.Value && HW::IsValidPin(portPin))
     {
-        role = Drivers::Input;
-        static_cast<InputClass *>(Obj)->InputPin = PortPin;
-    }
-    else if (Obj->Type == ObjectTypes::Sensor)
-    {
-        role = Drivers::Analog;
-        static_cast<SensorClass *>(Obj)->MeasPin = PortPin;
-    }
-    else if (Obj->Type == ObjectTypes::Output)
-    {
-        role = Drivers::Output;
-        static_cast<OutputClass *>(Obj)->PWMPin = PortPin;
+        BaseClass *Obj = Objects.At(*(Reference *)refRes.Value);
+        if (Obj)
+        {
+            SyncObjectPin(Obj, portPin);
+            // Derive role from Type to potentially avoid a switch-case
+            if (Obj->Type == ObjectTypes::Input)
+                role = Drivers::Input;
+            else if (Obj->Type == ObjectTypes::Sensor)
+                role = Drivers::Analog;
+            else if (Obj->Type == ObjectTypes::Output)
+                role = Drivers::Output;
+        }
     }
 
-    if (role != Drivers::None)
-    {
-        Values.Set(&role, sizeof(Drivers), Types::PortDriver, {0, 0, Port, 1});
-    }
+    Values.Set(&role, sizeof(Drivers), Types::PortDriver, Map.Driver);
 }
 
 bool BoardClass::DisconnectPin(BaseClass *Object, PortNumber Port)
 {
-    if (Object == nullptr || Port > 10) return false;
-
-    Reference ID = Objects.GetReference(Object);
-    Bookmark refMark = Values.Find({0, 0, Port, 1, 0}, true);
-    Result refRes = Values.Get(refMark);
-
-    if (refRes.Value && *(Reference *)refRes.Value == ID)
+    PortMap Map = GetPortMap(Port);
+    // Combined null check and reference comparison
+    if (Map.Ref != INVALID_HEADER)
     {
-        if (Object->Type == ObjectTypes::Input)
-            static_cast<InputClass *>(Object)->InputPin = INVALID_PIN;
-        else if (Object->Type == ObjectTypes::Sensor)
-            static_cast<SensorClass *>(Object)->MeasPin = INVALID_PIN;
-        else if (Object->Type == ObjectTypes::Output)
-            static_cast<OutputClass *>(Object)->PWMPin = INVALID_PIN;
-
-        Values.Delete({0, 0, Port, 1, 0});
-        Drivers none = Drivers::None;
-        Values.Set(&none, sizeof(Drivers), Types::PortDriver, {0, 0, Port, 1});
-        return true;
+        Result res = Values.Get(Map.Ref);
+        if (res.Value && *(Reference *)res.Value == Objects.GetReference(Object))
+        {
+            SyncObjectPin(Object, INVALID_PIN);
+            Values.Delete(Map.Ref);
+            DriverPin(Port);
+            return true;
+        }
     }
     return false;
 }
@@ -121,118 +127,129 @@ bool BoardClass::DisconnectPin(BaseClass *Object, PortNumber Port)
 
 bool BoardClass::ConnectLED(BaseClass *Object, PortNumber Port, uint8_t Index)
 {
-    if (Object == nullptr || Port > 10 || Object->Type != ObjectTypes::Display)
+    // Combined guard clause saves jump instructions
+    if (!Object || Port > 10 || Object->Type != ObjectTypes::Display)
         return false;
 
     Reference ID = Objects.GetReference(Object);
-    if (!ID.IsValid()) return false;
-
-    if (Values.Find({0, 0, Port, 1, Index}, true).Index != 0xFFFF)
+    if (!ID.IsValid())
         return false;
 
+    // Direct path-based check
+    // We use the Reference overload because it's already compiled in ValueTree
+    if (Values.Find({0, 0, Port, 1, Index}, true).Index != INVALID_HEADER)
+        return false;
+
+    // Single call to handle insertion/setting
     Values.Set(&ID, sizeof(Reference), Types::Reference, {0, 0, Port, 1, Index});
+
     DriverLED(Port);
     return true;
 }
 
 void BoardClass::DriverLED(PortNumber Port)
 {
-    Bookmark pinMark = Values.Find({0, 0, Port, 0}, true);
-    if (pinMark.Index == 0xFFFF) return;
-    ::Pin PortPin = *(::Pin *)Values.Get(pinMark).Value;
+    PortMap Map = GetPortMap(Port);
+    if (Map.Port == INVALID_HEADER)
+        return;
+
+    // Pin is the first child of Port {0, 0, Port, 0}
+    Result pinRes = Values.Get(Values.Child(Map.Port));
+    if (!pinRes.Value)
+        return;
+    ::Pin PortPin = *(::Pin *)pinRes.Value;
 
     uint32_t TotalLength = 0;
-    uint8_t y = 0;
 
-    // 1. Calculate combined length
-    while (true)
+    // Pass 1: Linear walk of the Driver's children to get total length
+    uint16_t current = Map.Ref; // Map.Ref is the first child of the Driver node
+    while (current != INVALID_HEADER)
     {
-        Bookmark refMark = Values.Find({0, 0, Port, 1, y}, true);
-        if (refMark.Index == 0xFFFF) break;
-
-        BaseClass *Obj = Objects.At(*(Reference *)Values.Get(refMark).Value);
+        BaseClass *Obj = Objects.At(*(Reference *)Values.Get(current).Value);
+        // Use a single check for validity and type
         if (Obj && Obj->Type == ObjectTypes::Display)
         {
-            Result lenRes = Obj->Values.Get(Obj->Values.Find({0, 1}, true));
-            if (lenRes.Value) TotalLength += *(int32_t *)lenRes.Value;
+            // Display length is always at {0, 1}
+            Result lenRes = Obj->Values.Get(Obj->Values.Next(Obj->Values.Child(0)));
+            if (lenRes.Value)
+                TotalLength += *(int32_t *)lenRes.Value;
         }
-        y++;
+        current = Values.Next(current);
     }
 
+    // Pass 2: Rebuild Hardware Driver
+    if (DriverArray[Port])
+        delete (LEDDriver *)DriverArray[Port];
+
+    Drivers role = Drivers::None;
     if (TotalLength > 0)
     {
-        if (DriverArray[Port]) delete static_cast<LEDDriver *>(DriverArray[Port]);
-
+        role = Drivers::LED;
         LEDDriver *NewDriver = new LEDDriver(TotalLength, PortPin);
         DriverArray[Port] = NewDriver;
 
-        Drivers role = Drivers::LED;
-        Values.Set(&role, sizeof(Drivers), Types::PortDriver, {0, 0, Port, 1});
-
-        // 2. Distribute segment offsets
+        // Pass 3: Distribute offsets using the same linear walk
         uint32_t CurrentOffset = 0;
-        for (uint8_t i = 0; i < y; i++)
+        current = Map.Ref;
+        while (current != INVALID_HEADER)
         {
-            Bookmark segMark = Values.Find({0, 0, Port, 1, i}, true);
-            DisplayClass *Disp = static_cast<DisplayClass *>(Objects.At(*(Reference *)Values.Get(segMark).Value));
+            DisplayClass *Disp = (DisplayClass *)Objects.At(*(Reference *)Values.Get(current).Value);
             if (Disp)
             {
                 Disp->LEDs = NewDriver->Offset(CurrentOffset);
-                Result subLen = Disp->Values.Get(Disp->Values.Find({0, 1}, true));
-                if (subLen.Value) CurrentOffset += *(int32_t *)subLen.Value;
+                Result subLen = Disp->Values.Get(Disp->Values.Next(Disp->Values.Child(0)));
+                if (subLen.Value)
+                    CurrentOffset += *(int32_t *)subLen.Value;
             }
+            current = Values.Next(current);
         }
     }
+    else
+        DriverArray[Port] = nullptr;
+
+    // Update the Driver node role once at the end
+    Values.Set(&role, sizeof(Drivers), Types::PortDriver, Map.Driver);
 }
 
 bool BoardClass::DisconnectLED(BaseClass *Object, PortNumber Port)
 {
-    if (Object == nullptr || Port > 10) return false;
+    PortMap Map = GetPortMap(Port);
+    if (Map.Driver == INVALID_HEADER) return false;
+
     Reference ID = Objects.GetReference(Object);
-    uint8_t y = 0;
-    bool found = false;
+    uint16_t current = Map.Ref; // Map.Ref is the first child of the Driver node
 
-    while (y < 32)
+    // Linear walk to find the target object
+    while (current != INVALID_HEADER)
     {
-        Bookmark resMark = Values.Find({0, 0, Port, 1, y}, true);
-        if (resMark.Index == 0xFFFF) break;
-
-        if (*(Reference *)Values.Get(resMark).Value == ID)
+        Result res = Values.Get(current);
+        if (res.Value && *(Reference *)res.Value == ID)
         {
+            // Reset object state
             static_cast<DisplayClass *>(Object)->LEDs = nullptr;
-            Values.Delete({0, 0, Port, 1, y});
-            found = true;
 
-            // Shift contiguous list
-            uint8_t next = y + 1;
-            while (true)
+            // Delete the node. The ValueTree handles header shifting internally.
+            Values.Delete(current);
+
+            // Check if the list is now empty (Driver has no children)
+            if (Values.Child(Map.Driver) == INVALID_HEADER)
             {
-                Bookmark upMark = Values.Find({0, 0, Port, 1, next}, true);
-                if (upMark.Index == 0xFFFF) break;
+                if (DriverArray[Port]) delete (LEDDriver *)DriverArray[Port];
+                DriverArray[Port] = nullptr;
 
-                Reference upRef = *(Reference *)Values.Get(upMark).Value;
-                Values.Set(&upRef, sizeof(Reference), Types::Reference, {0, 0, Port, 1, (uint8_t)(next - 1)});
-                Values.Delete({0, 0, Port, 1, next});
-                next++;
+                Drivers none = Drivers::None;
+                Values.Set(&none, sizeof(Drivers), Types::PortDriver, Map.Driver);
             }
-            break;
+            else
+            {
+                // Re-calculate lengths and offsets for remaining segments
+                DriverLED(Port);
+            }
+            return true;
         }
-        y++;
+        current = Values.Next(current);
     }
 
-    if (found)
-    {
-        if (Values.Find({0, 0, Port, 1, 0}, true).Index == 0xFFFF)
-        {
-            if (DriverArray[Port]) delete static_cast<LEDDriver *>(DriverArray[Port]);
-            DriverArray[Port] = nullptr;
-            Drivers none = Drivers::None;
-            Values.Set(&none, sizeof(Drivers), Types::PortDriver, {0, 0, Port, 1});
-        }
-        else DriverLED(Port);
-        
-        return true;
-    }
     return false;
 }
 
@@ -240,24 +257,37 @@ bool BoardClass::DisconnectLED(BaseClass *Object, PortNumber Port)
 
 bool BoardClass::ConnectI2C(BaseClass *Object, PortNumber SDA, PortNumber SCL)
 {
-    if (Object == nullptr || SDA > 10 || SCL > 10 || Object->Type != ObjectTypes::I2C)
+    if (!Object || SDA > 10 || SCL > 10 || Object->Type != ObjectTypes::I2C)
         return false;
 
     Reference ID = Objects.GetReference(Object);
-    if (!ID.IsValid()) return false;
+    PortMap MapSDA = GetPortMap(SDA);
+    if (MapSDA.Driver == INVALID_HEADER) return false;
 
-    uint8_t y = 0;
-    while (y < 32)
+    // 1. Check if already connected by walking the SDA driver list
+    uint16_t current = MapSDA.Ref;
+    uint16_t last = INVALID_HEADER;
+    while (current != INVALID_HEADER)
     {
-        Bookmark resMark = Values.Find({0, 0, SDA, 1, y}, true);
-        if (resMark.Index == 0xFFFF) break;
-        if (*(Reference *)Values.Get(resMark).Value == ID) return true; 
-        y++;
+        if (*(Reference *)Values.Get(current).Value == ID) return true;
+        last = current;
+        current = Values.Next(current);
     }
 
-    Values.Set(&ID, sizeof(Reference), Types::Reference, {0, 0, SDA, 1, y});
-    Values.Set(&SCL, sizeof(PortNumber), Types::PortNumber, {0, 0, SDA, 2});
-    Values.Set(&SDA, sizeof(PortNumber), Types::PortNumber, {0, 0, SCL, 2});
+    // 2. Add Object to SDA list (Index 'y' is effectively InsertNext after 'last')
+    if (last == INVALID_HEADER) 
+        Values.InsertChild(&ID, sizeof(Reference), Types::Reference, MapSDA.Driver);
+    else 
+        Values.InsertNext(&ID, sizeof(Reference), Types::Reference, last);
+
+    // 3. Link SDA and SCL ports (Paths: {0,0,SDA,2} and {0,0,SCL,2})
+    // Path {0,0,P,2} is the Sibling of Driver {0,0,P,1}
+    uint16_t sdaLink = Values.Next(MapSDA.Driver);
+    Values.Set(&SCL, sizeof(PortNumber), Types::PortNumber, sdaLink);
+
+    PortMap MapSCL = GetPortMap(SCL);
+    uint16_t sclLink = Values.Next(MapSCL.Driver);
+    Values.Set(&SDA, sizeof(PortNumber), Types::PortNumber, sclLink);
 
     DriverI2C(SDA, SCL);
     return true;
@@ -265,84 +295,95 @@ bool BoardClass::ConnectI2C(BaseClass *Object, PortNumber SDA, PortNumber SCL)
 
 void BoardClass::DriverI2C(PortNumber SDA, PortNumber SCL)
 {
+    PortMap MapSDA = GetPortMap(SDA);
+    PortMap MapSCL = GetPortMap(SCL);
+
+    // Guard: Ensure both ports are valid
+    if (MapSDA.Port == INVALID_HEADER || MapSCL.Port == INVALID_HEADER)
+        return;
+
     if (DriverArray[SDA] == nullptr)
     {
-        Bookmark sdaMark = Values.Find({0, 0, SDA, 0}, true);
-        Bookmark sclMark = Values.Find({0, 0, SCL, 0}, true);
+        // Resolve Pins: Child(Port) is always index 0 {0,0,P,0}
+        ::Pin sdaPin = *(::Pin *)Values.Get(Values.Child(MapSDA.Port)).Value;
+        ::Pin sclPin = *(::Pin *)Values.Get(Values.Child(MapSCL.Port)).Value;
 
-        if (sdaMark.Index != 0xFFFF && sclMark.Index != 0xFFFF)
+        ::I2C *Bus = new ::I2C();
+        // Speed 400kHz hardcoded to save a variable/stack space
+        if (Bus->Begin(sclPin, sdaPin, 400000))
         {
-            ::I2C *Bus = new ::I2C();
-            if (Bus->Begin(*(::Pin *)Values.Get(sclMark).Value, *(::Pin *)Values.Get(sdaMark).Value, 400000))
-            {
-                DriverArray[SDA] = Bus;
-                DriverArray[SCL] = Bus;
-                Drivers dSDA = Drivers::I2C_SDA, dSCL = Drivers::I2C_SCL;
-                Values.Set(&dSDA, sizeof(Drivers), Types::PortDriver, {0, 0, SDA, 1});
-                Values.Set(&dSCL, sizeof(Drivers), Types::PortDriver, {0, 0, SCL, 1});
-            }
-            else { delete Bus; return; }
+            DriverArray[SDA] = Bus;
+            DriverArray[SCL] = Bus;
+            
+            Drivers dSDA = Drivers::I2C_SDA;
+            Drivers dSCL = Drivers::I2C_SCL;
+            Values.Set(&dSDA, sizeof(Drivers), Types::PortDriver, MapSDA.Driver);
+            Values.Set(&dSCL, sizeof(Drivers), Types::PortDriver, MapSCL.Driver);
+        }
+        else
+        {
+            delete Bus;
+            return;
         }
     }
 
-    ::I2C *ActiveBus = static_cast<::I2C *>(DriverArray[SDA]);
-    uint8_t y = 0;
-    while (true)
-    {
-        Bookmark devMark = Values.Find({0, 0, SDA, 1, y++}, true);
-        if (devMark.Index == 0xFFFF) break;
+    // Distribute the Bus pointer to all connected objects
+    ::I2C *ActiveBus = (::I2C *)DriverArray[SDA];
+    uint16_t current = MapSDA.Ref; // Start of the SDA object list
 
-        I2CDeviceClass *Dev = static_cast<I2CDeviceClass *>(Objects.At(*(Reference *)Values.Get(devMark).Value));
+    while (current != INVALID_HEADER)
+    {
+        I2CDeviceClass *Dev = (I2CDeviceClass *)Objects.At(*(Reference *)Values.Get(current).Value);
         if (Dev) Dev->I2CDriver = ActiveBus;
+        
+        current = Values.Next(current);
     }
 }
 
 bool BoardClass::DisconnectI2C(BaseClass *Object, PortNumber SDA, PortNumber SCL)
 {
-    if (!Object || SDA > 10 || SCL > 10) return false;
+    if (!Object || SDA > 10 || SCL > 10)
+        return false;
+
+    PortMap MapSDA = GetPortMap(SDA);
+    if (MapSDA.Driver == INVALID_HEADER) return false;
+
     Reference ID = Objects.GetReference(Object);
-    uint8_t y = 0;
-    bool found = false;
+    uint16_t current = MapSDA.Ref;
 
-    while (y < 32)
+    // Linear walk to find the device
+    while (current != INVALID_HEADER)
     {
-        Bookmark resMark = Values.Find({0, 0, SDA, 1, y}, true);
-        if (resMark.Index == 0xFFFF) break;
-
-        if (*(Reference *)Values.Get(resMark).Value == ID)
+        Result res = Values.Get(current);
+        if (res.Value && *(Reference *)res.Value == ID)
         {
-            static_cast<I2CDeviceClass *>(Object)->I2CDriver = nullptr;
-            Values.Delete({0, 0, SDA, 1, y});
-            found = true;
+            // Reset object pointer
+            ((I2CDeviceClass *)Object)->I2CDriver = nullptr;
 
-            uint8_t next = y + 1;
-            while (true)
+            // Delete the node; ValueTree automatically shifts siblings left
+            Values.Delete(current);
+
+            // Check if the bus is now empty
+            if (Values.Child(MapSDA.Driver) == INVALID_HEADER)
             {
-                Bookmark upMark = Values.Find({0, 0, SDA, 1, next}, true);
-                if (upMark.Index == 0xFFFF) break;
+                if (DriverArray[SDA]) delete (::I2C *)DriverArray[SDA];
+                DriverArray[SDA] = nullptr;
+                DriverArray[SCL] = nullptr;
 
-                Reference upRef = *(Reference *)Values.Get(upMark).Value;
-                Values.Set(&upRef, sizeof(Reference), Types::Reference, {0, 0, SDA, 1, (uint8_t)(next - 1)});
-                Values.Delete({0, 0, SDA, 1, next});
-                next++;
+                Drivers none = Drivers::None;
+                Values.Set(&none, sizeof(Drivers), Types::PortDriver, MapSDA.Driver);
+                
+                PortMap MapSCL = GetPortMap(SCL);
+                Values.Set(&none, sizeof(Drivers), Types::PortDriver, MapSCL.Driver);
+
+                // Delete the Bus-Link nodes ({0,0,P,2}) which are siblings of the Driver
+                Values.Delete(Values.Next(MapSDA.Driver));
+                Values.Delete(Values.Next(MapSCL.Driver));
             }
-            break;
+            return true;
         }
-        y++;
+        current = Values.Next(current);
     }
 
-    if (found && Values.Find({0, 0, SDA, 1, 0}, true).Index == 0xFFFF)
-    {
-        if (DriverArray[SDA]) delete static_cast<::I2C *>(DriverArray[SDA]);
-        DriverArray[SDA] = nullptr;
-        DriverArray[SCL] = nullptr;
-
-        Drivers none = Drivers::None;
-        Values.Set(&none, sizeof(Drivers), Types::PortDriver, {0, 0, SDA, 1});
-        Values.Set(&none, sizeof(Drivers), Types::PortDriver, {0, 0, SCL, 1});
-        Values.Delete({0, 0, SDA, 2});
-        Values.Delete({0, 0, SCL, 2});
-    }
-
-    return found;
+    return false;
 }

@@ -64,6 +64,7 @@ public:
     // --- Data Manipulation ---
     void UpdateSkip();
     void ResizeData(uint16_t HIdx, uint16_t NewSize);
+    void Delete(uint16_t Index);
     void Delete(const Reference &Location);
     void InsertAtIndex(uint16_t Idx, Types Type, uint8_t Depth, uint16_t Size);
     uint16_t Insert(const Reference &Location, int16_t NewDataSize);
@@ -221,27 +222,61 @@ void ValueTree::UpdateSkip()
 
 void ValueTree::Delete(const Reference &Location)
 {
+    // The Reference version now just resolves the index and hands off to the core
     Bookmark Found = Find(Location, true);
-    if (Found.Index == INVALID_HEADER)
-        return;
-
-    uint16_t HIdx = Found.Index;
-    uint16_t NodesToRemove = HeaderArray[HIdx].Skip + 1;
-
-    // Shrink data for all nodes being removed
-    for (int i = NodesToRemove - 1; i >= 0; i--)
+    if (Found.Index != INVALID_HEADER)
     {
-        ResizeData(HIdx + i, 0);
+        Delete(Found.Index);
+    }
+}
+
+void ValueTree::Delete(uint16_t Index)
+{
+    if (Index >= HeaderAllocated) return;
+
+    // 1. Identify the entire range of nodes (Parent + all children)
+    uint16_t NodesToRemove = HeaderArray[Index].Skip + 1;
+    uint16_t RangeEndIdx = Index + NodesToRemove;
+
+    // 2. Identify the data block to remove
+    // The data for this tree segment starts at the first node's pointer
+    // and ends at the end of the last descendant's data.
+    uint16_t DataStart = HeaderArray[Index].Pointer;
+    
+    // To find the total data size of this branch, we find the 
+    // pointer of the node immediately AFTER this branch.
+    uint16_t DataEnd;
+    if (RangeEndIdx < HeaderAllocated)
+        DataEnd = HeaderArray[RangeEndIdx].Pointer;
+    else
+        DataEnd = Length;
+
+    uint16_t DataBytesToRemove = DataEnd - DataStart;
+
+    // 3. Shift the Data Array (Close the gap)
+    if (DataBytesToRemove > 0 && DataEnd < Length)
+    {
+        memmove(Array + DataStart, Array + DataEnd, Length - DataEnd);
+    }
+    Length -= DataBytesToRemove;
+
+    // 4. Update all remaining Headers' pointers
+    for (uint16_t i = RangeEndIdx; i < HeaderAllocated; i++)
+    {
+        HeaderArray[i].Pointer -= DataBytesToRemove;
     }
 
-    // Shift headers left and shrink array
-    if (HIdx + NodesToRemove < HeaderAllocated)
+    // 5. Shift the Header Array
+    if (RangeEndIdx < HeaderAllocated)
     {
-        memmove(HeaderArray + HIdx, HeaderArray + HIdx + NodesToRemove,
-                (HeaderAllocated - (HIdx + NodesToRemove)) * sizeof(Header));
+        memmove(HeaderArray + Index, 
+                HeaderArray + RangeEndIdx, 
+                (HeaderAllocated - RangeEndIdx) * sizeof(Header));
     }
 
     HeaderAllocated -= NodesToRemove;
+
+    // 6. Finalize
     EnsureHeaderCapacity(HeaderAllocated);
     UpdateSkip();
 }
@@ -591,7 +626,15 @@ uint16_t ValueTree::Child(uint16_t Parent) const
 void ValueTree::Set(const void *Data, size_t Size, Types Type, uint16_t Index)
 {
     if (Index >= HeaderAllocated)
-        return;
+    {
+        if (Index == 0 && Size > 0 && Data != nullptr)
+        {
+            InsertAtIndex(0, Type, 0, Size);
+            memcpy(Array + HeaderArray[Index].Pointer, Data, Size);
+        }
+        else
+            return;
+    }
 
     // 1. Check if we need to resize the existing data slot
     if (HeaderArray[Index].Length != (uint16_t)Size)

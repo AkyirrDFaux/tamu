@@ -120,78 +120,74 @@ Bookmark ValueTree::Find(const Reference &Location, bool StopAtReferences) const
     const ValueTree *CurrentMap = this;
     Reference CurrentPath = Location;
     uint8_t JumpCount = 0;
-    const uint8_t MaxJumps = 10; 
+    const uint8_t MaxJumps = 10;
 
     while (JumpCount < MaxJumps)
     {
         uint8_t depth = CurrentPath.PathLen();
-        if (CurrentMap->HeaderAllocated == 0 || depth == 0) return {};
+        if (CurrentMap->HeaderAllocated == 0 || depth == 0)
+            return {};
 
-        uint16_t Pointer = 0;
-        uint16_t End = CurrentMap->HeaderAllocated;
+        // Start at the root (0xFFFF is the virtual parent of index 0)
+        uint16_t currentPointer = 0;
         bool pathJumped = false;
 
         for (uint8_t Layer = 0; Layer < depth; Layer++)
         {
             uint8_t targetSibling = CurrentPath.Path[Layer];
-            uint16_t currentSearchIdx = Pointer;
-            bool layerFound = false;
 
-            // Iterate siblings to find the one at targetIdx
-            for (uint8_t s = 0; s <= targetSibling; s++)
+            // Use Next() to walk siblings
+            for (uint8_t s = 0; s < targetSibling; s++)
             {
-                if (currentSearchIdx >= End) return {};
-                const Header &h = CurrentMap->HeaderArray[currentSearchIdx];
-
-                if (s == targetSibling)
-                {
-                    // --- REFERENCE TELEPORT ---
-                    // If we hit a reference mid-path, or we aren't stopping at them
-                    if (h.Type == Types::Reference && (Layer < depth - 1 || !StopAtReferences))
-                    {
-                        Reference Link;
-                        memcpy(&Link, CurrentMap->Array + h.Pointer, 
-                               (h.Length > sizeof(Reference)) ? sizeof(Reference) : h.Length);
-
-                        // Reconstruct Path: [Link Target] + [Remaining Path Layers]
-                        for (uint8_t r = Layer + 1; r < depth; r++)
-                            Link = Link.Append(CurrentPath.Path[r]);
-
-                        if (Link.IsGlobal())
-                        {
-                            BaseClass* Obj = Objects.At(Link);
-                            if (!Obj) return {};
-                            CurrentMap = &Obj->Values;
-                        }
-
-                        CurrentPath = Link;
-                        JumpCount++;
-                        pathJumped = true; 
-                        goto restart_search;
-                    }
-
-                    // --- TERMINAL REACHED ---
-                    if (Layer == depth - 1)
-                    {
-                        return { (ValueTree*)CurrentMap, currentSearchIdx };
-                    }
-
-                    // --- DESCEND TO CHILD ---
-                    Pointer = currentSearchIdx + 1;
-                    End = Pointer + h.Skip;
-                    layerFound = true;
-                    break;
-                }
-                
-                // Move to next sibling in the current map
-                currentSearchIdx += h.Skip + 1;
+                currentPointer = CurrentMap->Next(currentPointer);
+                if (currentPointer == INVALID_HEADER)
+                    return {}; // Ran out of siblings
             }
-            if (!layerFound) return {};
+
+            // We are now at the specific sibling for this layer
+            const Header &h = CurrentMap->HeaderArray[currentPointer];
+
+            // --- REFERENCE TELEPORT ---
+            if (h.Type == Types::Reference && (Layer < depth - 1 || !StopAtReferences))
+            {
+                Reference Link;
+                memcpy(&Link, CurrentMap->Array + h.Pointer,
+                       (h.Length > sizeof(Reference)) ? sizeof(Reference) : h.Length);
+
+                // Reconstruct Path: [Link Target] + [Remaining Path Layers]
+                for (uint8_t r = Layer + 1; r < depth; r++)
+                    Link = Link.Append(CurrentPath.Path[r]);
+
+                if (Link.IsGlobal())
+                {
+                    BaseClass *Obj = Objects.At(Link);
+                    if (!Obj)
+                        return {};
+                    CurrentMap = &Obj->Values;
+                }
+
+                CurrentPath = Link;
+                JumpCount++;
+                pathJumped = true;
+                goto restart_search;
+            }
+
+            // --- TERMINAL REACHED ---
+            if (Layer == depth - 1)
+            {
+                return {(ValueTree *)CurrentMap, currentPointer};
+            }
+
+            // --- DESCEND TO CHILD ---
+            currentPointer = CurrentMap->Child(currentPointer);
+            if (currentPointer == INVALID_HEADER)
+                return {}; // No children to descend into
         }
 
     restart_search:
-        if (!pathJumped) break;
+        if (!pathJumped)
+            break;
     }
 
-    return {}; // Not found or MaxJumps exceeded
+    return {};
 }

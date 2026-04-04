@@ -36,39 +36,43 @@ public:
                        Coord2D Transform, bool Mirrored, Number *Overlay);
 };
 
-DisplayClass::DisplayClass(const Reference &ID, FlagClass Flags, RunInfo Info) : BaseClass(&Table, ID, Flags, Info)
+DisplayClass::DisplayClass(const Reference &ID, FlagClass Flags, RunInfo Info)
+    : BaseClass(&Table, ID, Flags, Info)
 {
     Type = ObjectTypes::Display;
     Name = "Display";
 
-    // Branch {0}: Hardware Definition
+    // Values starts empty. We build it linearly to avoid path parsing.
+
+    // --- Branch {0}: Hardware Definition ---
     Displays initType = Displays::Undefined;
-    Values.Set(&initType, sizeof(Displays), Types::Byte, Reference({0}));
+    Values.Set(&initType, sizeof(Displays), Types::Display, 0); // {0}
 
     PortNumber initPort = -1;
-    Values.Set(&initPort, sizeof(PortNumber), Types::PortNumber, Reference({0, 0}));
+    uint16_t b0 = Values.InsertChild(&initPort, sizeof(PortNumber), Types::PortNumber, 0); // {0, 0}
 
     int32_t initLen = 0;
-    Values.Set(&initLen, sizeof(int32_t), Types::Integer, Reference({0, 1}));
+    uint16_t b0_1 = Values.InsertNext(&initLen, sizeof(int32_t), Types::Integer, b0); // {0, 1}
 
     Vector2D initSize(0, 0);
-    Values.Set(&initSize, sizeof(Vector2D), Types::Vector2D, Reference({0, 2}));
+    uint16_t b0_2 = Values.InsertNext(&initSize, sizeof(Vector2D), Types::Vector2D, b0_1); // {0, 2}
 
     Number initRatio = 1.0f;
-    Values.Set(&initRatio, sizeof(Number), Types::Number, Reference({0, 3}));
+    Values.InsertNext(&initRatio, sizeof(Number), Types::Number, b0_2); // {0, 3}
 
-    // Branch {1}: Control
+    // --- Branch {1}: Control ---
     uint8_t initBright = 20;
-    Values.Set(&initBright, sizeof(uint8_t), Types::Byte, Reference({1}));
+    // InsertNext after the end of Branch {0}. Skip logic handles finding the end.
+    uint16_t b1 = Values.InsertNext(&initBright, sizeof(uint8_t), Types::Byte, 0); // {1}
 
     Coord2D initOffset(0, 0, 0);
-    Values.Set(&initOffset, sizeof(Coord2D), Types::Coord2D, Reference({1, 0}));
+    uint16_t b1_0 = Values.InsertChild(&initOffset, sizeof(Coord2D), Types::Coord2D, b1); // {1, 0}
 
     bool initFalse = false;
-    Values.Set(&initFalse, sizeof(bool), Types::Bool, {1, 1}); // Mirror
-    Values.Set(&initFalse, sizeof(bool), Types::Bool, {1, 2}); // WrapX
-    Values.Set(&initFalse, sizeof(bool), Types::Bool, {1, 3}); // WrapY
-};
+    uint16_t b1_1 = Values.InsertNext(&initFalse, sizeof(bool), Types::Bool, b1_0); // {1, 1}
+    uint16_t b1_2 = Values.InsertNext(&initFalse, sizeof(bool), Types::Bool, b1_1); // {1, 2}
+    Values.InsertNext(&initFalse, sizeof(bool), Types::Bool, b1_2);                 // {1, 3}
+}
 
 DisplayClass::~DisplayClass()
 {
@@ -79,39 +83,38 @@ DisplayClass::~DisplayClass()
 
 bool DisplayClass::Connect(BaseClass *Object, int32_t Index)
 {
-    if (Object == nullptr)
+    if (!Object)
         Object = this;
 
-    Bookmark linkMark = Values.Find({0, 0}, true);
-    if (linkMark.Index == 0xFFFF)
+    // Hardcoded index for {0, 0} based on the constructor's linear build.
+    // Child of Root(0) is index 1.
+    uint16_t linkIdx = 1;
+    Result linkRes = Values.Get(linkIdx);
+
+    if (!linkRes.Value)
         return false;
 
-    Result linkRes = Values.Get(linkMark);
-
-    // 1. Try Daisy-chain (Reference)
+    // 1. Daisy-chain (Reference)
     if (linkRes.Type == Types::Reference)
     {
-        Reference Link = *(Reference *)linkRes.Value;
-        if (Link.IsValid())
-        {
-            BaseClass *Target = Objects.At(Link);
-            if (Target && Target->Type == ObjectTypes::Display)
-                return static_cast<DisplayClass *>(Target)->Connect(Object, Index + 1);
-        }
+        BaseClass *Target = Objects.At(*(Reference *)linkRes.Value);
+        // Direct cast and recursion
+        if (Target && Target->Type == ObjectTypes::Display)
+            return ((DisplayClass *)Target)->Connect(Object, Index + 1);
+
         return false;
     }
 
-    // 2. Try Direct Board Connection (PortNumber)
+    // 2. Direct Board Connection (PortNumber)
+    // We only reach this if the first display in the chain is hit
     PortNumber Port = *(PortNumber *)linkRes.Value;
-    if (Port.IsValid())
+    if (Port.IsValid() && Board.ConnectLED(Object, Port, Index + 1))
     {
-        if (Board.ConnectLED(Object, Port, Index + 1))
-        {
-            if (Object->Type == ObjectTypes::Display)
-                static_cast<DisplayClass *>(Object)->CurrentLink = Port;
-            return true;
-        }
+        if (Object->Type == ObjectTypes::Display)
+            ((DisplayClass *)Object)->CurrentLink = Port;
+        return true;
     }
+
     return false;
 }
 
@@ -130,14 +133,21 @@ bool DisplayClass::Disconnect()
 
 void DisplayClass::Setup(const Reference &Index)
 {
-    bool HardwareChanged = (Index.PathLen() == 0);
+    // PathLen is a function call; storing it once saves bytes
+    uint8_t len = Index.PathLen();
+    bool HardwareChanged = (len == 0);
 
-    if (!HardwareChanged && Index.PathLen() > 0 && Index.Path[0] == 0)
+    // Hardcoded indices from the linear constructor:
+    // {0}   = Index 0 (Displays Type)
+    // {0, 0} = Index 1 (Port)
+    // {0, 1} = Index 2 (Length)
+    // {0, 2} = Index 3 (Size)
+
+    if (!HardwareChanged && len > 0 && Index.Path[0] == 0)
     {
-        if (Index.PathLen() == 1) // Displays::Type changed
+        if (len == 1) // Displays::Type changed ({0})
         {
-            Bookmark resMark = Values.Find({0}, true);
-            Result res = Values.Get(resMark);
+            Result res = Values.Get(0);
             if (res.Value)
             {
                 Displays Type = *(Displays *)res.Value;
@@ -159,13 +169,14 @@ void DisplayClass::Setup(const Reference &Index)
 
                 if (newLen > 0)
                 {
-                    Values.Set(&newLen, sizeof(int32_t), Types::Integer, Reference({0, 1}));
-                    Values.Set(&newSize, sizeof(Vector2D), Types::Vector2D, Reference({0, 2}));
+                    Values.Set(&newLen, sizeof(int32_t), Types::Integer, 2);    // {0, 1}
+                    Values.Set(&newSize, sizeof(Vector2D), Types::Vector2D, 3); // {0, 2}
                     HardwareChanged = true;
                 }
             }
         }
-        else if (Index.PathLen() > 1 && (Index.Path[1] == 0 || Index.Path[1] == 1))
+        // Check if Port {0,0} or Length {0,1} changed
+        else if (len > 1 && (Index.Path[1] == 0 || Index.Path[1] == 1))
         {
             HardwareChanged = true;
         }
@@ -173,10 +184,10 @@ void DisplayClass::Setup(const Reference &Index)
 
     if (HardwareChanged)
     {
-        Bookmark lenMark = Values.Find({0, 1}, true);
-        Result lenRes = Values.Get(lenMark);
+        Result lenRes = Values.Get(2); // {0, 1}
         if (lenRes.Value)
             ManageOverlay(*(int32_t *)lenRes.Value);
+
         Disconnect();
         Connect();
     }
@@ -201,55 +212,56 @@ void DisplayClass::ManageOverlay(int32_t RequiredLength)
 
 bool DisplayClass::Run()
 {
-    // Step 1: Bookmark parameters
-    Bookmark lenMark = Values.Find({0, 1}, true);
-    Bookmark sizeMark = Values.Find({0, 2}, true);
-    Bookmark brightMark = Values.Find({1}, true);
-    Bookmark offMark = Values.Find({1, 0}, true);
-    Bookmark mirMark = Values.Find({1, 1}, true);
+    // Step 1: Direct Index Access (Zero Path Parsing)
+    // 0 = Type, 1 = Port, 2 = Length, 3 = Size, 4 = Ratio
+    // 5 = Bright, 6 = Offset, 7 = Mirror, 8 = WrapX, 9 = WrapY
 
-    Result lenRes = Values.Get(lenMark);
-    Result sizeRes = Values.Get(sizeMark);
-    Result brightRes = Values.Get(brightMark);
+    Result lenRes = Values.Get(2);
+    Result sizeRes = Values.Get(3);
+    Result brightRes = Values.Get(5);
 
-    if (!lenRes.Value || !sizeRes.Value || !brightRes.Value)
+    if (!lenRes.Value || !sizeRes.Value || !brightRes.Value || !LEDs || !Overlay)
         return true;
 
     int32_t Length = *(int32_t *)lenRes.Value;
-    Vector2D Size = *(Vector2D *)sizeRes.Value;
-    uint8_t Bright = *(uint8_t *)brightRes.Value;
-    Coord2D Offset = *(Coord2D *)Values.Get(offMark).Value;
-    bool Mirrored = *(bool *)Values.Get(mirMark).Value;
-
-    if (LEDs == nullptr || Overlay == nullptr || Length <= 0)
+    if (Length <= 0)
         return true;
 
+    Vector2D Size = *(Vector2D *)sizeRes.Value;
+    uint8_t Bright = *(uint8_t *)brightRes.Value;
+    Coord2D Offset = *(Coord2D *)Values.Get(6).Value;
+    bool Mirrored = *(bool *)Values.Get(7).Value;
+
+    // Pre-calculate transform
     Coord2D BaseTransform = Coord2D(Size * 0.5 - Vector2D(0.5, 0.5), Vector2D(0)).Join(Offset);
 
+    // Efficient clear
     memset(LEDs, 0, Length * 3);
     memset((void *)Overlay, 0, Length * sizeof(Number));
 
-    // Step 2: Iterate Render Stack {2}
-    Bookmark stackRoot = Values.Find({2}, true);
-    if (stackRoot.Index != 0xFFFF)
+    // Step 2: Iterate Render Stack
+    // Based on constructor: {0} is idx 0, {1} is idx 5.
+    // Therefore, Branch {2} (Render Stack) starts after the last child of {1}.
+    // If the constructor ended at index 9, Branch {2} is Index 10.
+    uint16_t stackIdx = 10;
+    uint16_t nodeIdx = Values.Child(stackIdx);
+
+    while (nodeIdx != INVALID_HEADER)
     {
-        uint16_t nodeIdx = Values.Child(stackRoot.Index);
-        while (nodeIdx != 0xFFFF)
+        Result node = Values.Get(nodeIdx);
+        if (node.Type == Types::Geometry2D)
         {
-            Result node = Values.Get(nodeIdx);
-            if (node.Type == Types::Geometry2D)
-            {
-                RenderGeometry(nodeIdx, Length, Size, BaseTransform, Mirrored, Overlay);
-            }
-            else if (node.Type == Types::Texture2D)
-            {
-                RenderTexture(nodeIdx, Length, Size, BaseTransform, Mirrored, Overlay);
-                memset((void *)Overlay, 0, Length * sizeof(Number)); // Clear alpha for next texture
-            }
-            nodeIdx = Values.Next(nodeIdx);
+            RenderGeometry(nodeIdx, Length, Size, BaseTransform, Mirrored, Overlay);
         }
+        else if (node.Type == Types::Texture2D)
+        {
+            RenderTexture(nodeIdx, Length, Size, BaseTransform, Mirrored, Overlay);
+            memset((void *)Overlay, 0, Length * sizeof(Number));
+        }
+        nodeIdx = Values.Next(nodeIdx);
     }
 
+    // Final Brightness Pass
     if (Bright < 255)
     {
         for (int32_t I = 0; I < Length * 3; I++)

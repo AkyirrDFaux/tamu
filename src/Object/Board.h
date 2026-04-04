@@ -18,6 +18,12 @@ struct PortDefinition
     Drivers Driver;
 };
 
+struct PortMap {
+    uint16_t Port;   // Index of {0, 0, Port}
+    uint16_t Driver; // Index of {0, 0, Port, 1}
+    uint16_t Ref;    // Index of {0, 0, Port, 1, 0}
+};
+
 #if defined BOARD_Tamu_v2_0
 static const PortDefinition Tamu_Ports[] = {
     {Ports::GPIO | Ports::ADC | Ports::PWM, {0,0}, Drivers::None},
@@ -43,6 +49,8 @@ public:
     void Setup(const Reference &Index);
     bool Run();
     void UpdateLoopTime();
+
+    PortMap GetPortMap(PortNumber Port);
 
     bool ConnectLED(BaseClass *Object, PortNumber Port, uint8_t Index = 0);
     void DriverLED(PortNumber Port);
@@ -80,10 +88,10 @@ BoardClass::BoardClass(const Reference &ID) : BaseClass(&Table, ID, Flags::Auto 
     Boards model = Boards::Tamu_v2_0;
     
     // 1. Root node (Index 0).
-    uint16_t system = Values.InsertChild(&model, sizeof(Boards), Types::Board, 0xFFFF);
+    Values.Set(&model, sizeof(Boards), Types::Board, 0);
 
     // 2. "Ports" container {0, 0}
-    uint16_t ports = Values.InsertChild(nullptr, 0, Types::Undefined, system);
+    uint16_t ports = Values.InsertChild(nullptr, 0, Types::Undefined, 0);
 
     uint16_t lastPort = 0; 
     for (uint8_t i = 0; i < (sizeof(Tamu_Ports) / sizeof(PortDefinition)); i++)
@@ -113,7 +121,7 @@ BoardClass::BoardClass(const Reference &ID) : BaseClass(&Table, ID, Flags::Auto 
     }
 
     // 7. Name {1} (Sibling of system {0})
-    Values.InsertNext(Name.Data, Name.Length, Types::Text, system);
+    Values.InsertNext(Name.Data, Name.Length, Types::Text, 0);
 #endif
 }
 

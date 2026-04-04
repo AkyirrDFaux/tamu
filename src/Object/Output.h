@@ -27,24 +27,28 @@ public:
         .Run = OutputClass::RunBridge};
 };
 
-OutputClass::OutputClass(const Reference &ID, FlagClass Flags, RunInfo Info) : BaseClass(&Table, ID, Flags, Info)
+OutputClass::OutputClass(const Reference &ID, FlagClass Flags, RunInfo Info)
+    : BaseClass(&Table, ID, Flags, Info)
 {
     Type = ObjectTypes::Output;
     Name = "Output";
 
-    // Initialize the structure using direct ValueTree Set
+    // 1. Root {0}: Mode
     Outputs initialMode = Outputs::Undefined;
-    Values.Set(&initialMode, sizeof(Outputs), Types::Output, Reference({0}));
+    Values.Set(&initialMode, sizeof(Outputs), Types::Output, 0);
 
+    // 2. Child of Mode {0, 0}: Port
     PortNumber initialPort = -1;
-    Values.Set(&initialPort, sizeof(PortNumber), Types::Byte, Reference({0, 0}));
+    Values.InsertChild(&initialPort, sizeof(PortNumber), Types::PortNumber, 0);
 
+    // 3. Sibling of Mode {1}: Target (Value)
     Number initialTarget = 0;
-    Values.Set(&initialTarget, sizeof(Number), Types::Number, Reference({1}));
+    uint16_t targetIdx = Values.InsertNext(&initialTarget, sizeof(Number), Types::Number, 0);
 
+    // 4. Child of Target {1, 0}: Frequency
     int32_t initialFreq = 25000;
-    Values.Set(&initialFreq, sizeof(int32_t), Types::Integer, Reference({1, 0}));
-};
+    Values.InsertChild(&initialFreq, sizeof(int32_t), Types::Integer, targetIdx);
+}
 
 OutputClass::~OutputClass()
 {
@@ -53,29 +57,24 @@ OutputClass::~OutputClass()
 
 bool OutputClass::Connect()
 {
-    // Direct search for Port using Bookmark
-    Bookmark portMark = Values.Find({0, 0}, true);
-    Result res = Values.Get(portMark);
+    // Mode is 0. Port {0, 0} is the first child of Mode.
+    uint16_t portIdx = Values.Child(0);
+    Result res = Values.Get(portIdx);
 
-    if (res.Length < sizeof(PortNumber) || !res.Value)
+    if (!res.Value || res.Length < sizeof(PortNumber))
     {
         ReportError(Status::PortError);
         return false;
     }
 
     PortNumber Port = *(PortNumber *)res.Value;
-
     if (Port > 10)
-    {
-        ReportError(Status::PortError);
         return false;
-    }
 
     if (Board.ConnectPin(this, Port))
     {
         CurrentPort = Port;
-        // Trigger hardware mode setup using the base Mode reference
-        Setup(Reference({0}));
+        Setup(Reference({0})); // Initialize hardware settings
         return true;
     }
 
@@ -99,25 +98,27 @@ bool OutputClass::Disconnect()
 
 void OutputClass::Setup(const Reference &Index)
 {
-    // Reconnect on Port change {0, 0}
-    if (Index == Reference({0, 0}))
+    // Port change {0, 0}
+    if (Index.PathLen() == 2 && Index.Path[0] == 0 && Index.Path[1] == 0)
     {
         Disconnect();
         Connect();
         return;
     }
 
-    // Update Hardware Mode if Mode {0} or frequency {1, 0} changes
-    if (Index == Reference({0}) || Index == Reference({1, 0}))
+    // Mode {0} or Frequency {1, 0} change
+    bool isMode = (Index.PathLen() == 1 && Index.Path[0] == 0);
+    bool isFreq = (Index.PathLen() == 2 && Index.Path[0] == 1 && Index.Path[1] == 0);
+
+    if (isMode || isFreq)
     {
         if (!HW::IsValidPin(PWMPin))
             return;
 
-        Bookmark modeMark = Values.Find({0}, true);
-        Bookmark freqMark = Values.Find({1, 0}, true);
+        uint16_t targetIdx = Values.Next(0);
 
-        Result modeRes = Values.Get(modeMark);
-        Result freqRes = Values.Get(freqMark);
+        Result modeRes = Values.Get(0);
+        Result freqRes = Values.Get(Values.Child(targetIdx)); // Freq is child of Target
 
         if (modeRes.Value && freqRes.Value)
         {
@@ -125,10 +126,7 @@ void OutputClass::Setup(const Reference &Index)
             int32_t Freq = *(int32_t *)freqRes.Value;
 
             if (Mode == Outputs::PWM)
-            {
                 HW::ModePWM(PWMPin, Freq);
-            }
-            // else if (Mode == Outputs::Servo) { ... }
         }
     }
 }
@@ -138,14 +136,14 @@ bool OutputClass::Run()
     if (!HW::IsValidPin(PWMPin))
         return true;
 
-    // Use Bookmarks for high-frequency access in Run loop
-    Bookmark targetMark = Values.Find({1}, true);
-    Bookmark modeMark = Values.Find({0}, true);
+    // Linear navigation: 0 (Mode) -> Next (Target)
+    uint16_t modeIdx = 0;
+    uint16_t targetIdx = Values.Next(modeIdx);
 
-    Result targetRes = Values.Get(targetMark);
-    Result modeRes = Values.Get(modeMark);
+    Result modeRes = Values.Get(modeIdx);
+    Result targetRes = Values.GetThis(targetIdx); // GetThis in case Target is linked
 
-    if (!targetRes.Value || !modeRes.Value)
+    if (!modeRes.Value || !targetRes.Value)
         return true;
 
     Outputs Mode = *(Outputs *)modeRes.Value;
@@ -153,10 +151,8 @@ bool OutputClass::Run()
 
     if (Mode == Outputs::PWM)
     {
-        // Hardware write - Target is treated as 0.0 to 1.0 percent
         HW::PWM(PWMPin, Target);
     }
-    // else if (Mode == Outputs::Servo) { ... }
 
     return true;
 }
