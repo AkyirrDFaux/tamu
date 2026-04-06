@@ -1,8 +1,8 @@
 void DefaultSetup()
 {
     // --- Board Metadata ---
-    Text boardName = "Test";
-    Board.Values.Set(boardName.Data, boardName.Length, Types::Text, Reference({1}));
+    //Text boardName = "Test";
+    //Board.Values.Set(boardName.Data, boardName.Length, Types::Text, Reference({1}));
 
     // --- Sensor Initialization ---
     /*SensorClass *S = new SensorClass(Reference::Global(0, 2, 2));

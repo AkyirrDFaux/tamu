@@ -39,8 +39,8 @@ namespace HW
         Partition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
                                              ESP_PARTITION_SUBTYPE_DATA_SPIFFS,
                                              "storage");
-        // FlashSize = Partition->size;
-        FlashSize = PAGE_SIZE * 4;
+        FlashSize = Partition->size;
+        // FlashSize = PAGE_SIZE * 4;
         FreeSpace = new uint16_t[FlashSize / SEGMENT_SIZE];
     }
 
@@ -82,15 +82,15 @@ namespace HW
     }
 
 #else
-// #include "ch32v20x_flash.h"
 #define CHIP_FLASH_SIZE (64 * 1024)
 #define PAGE_SIZE 256
 #define SECTOR_SIZE 4096
-#define FLASH_PADDING 4
+#define SEGMENT_SIZE (PAGE_SIZE * 4)
 
     // Logic Helpers
-    uint32_t FlashSize = (SECTOR_SIZE * 2); // 8KB
-    uint32_t FlashStart = 0xE000;           // Relative to 0x08000000
+    const uint32_t FlashStart = 0xE000;           // Relative to 0x08000000
+    const uint32_t FlashSize = (SECTOR_SIZE * 2); // 8KB
+    uint16_t FreeSpace[FlashSize / SEGMENT_SIZE];
 
 #define GET_PHYS_ADDR(off) (0x0800E000 + FlashStart + (off))
 
@@ -201,6 +201,10 @@ namespace HW
                     FLASH_ProgramWord(GET_PHYS_ADDR(Sector + Word), 0xFFFFFFFF); // Prevent incorrect reading
             }
         }
+
+        GapPointer = 0;
+        for (int i = 0; i < FlashSize / SEGMENT_SIZE; i++)
+            FreeSpace[i] = SEGMENT_SIZE;
 
         return 0;
     }
@@ -436,7 +440,7 @@ namespace HW
 
             // 3. Finalize segment cleaning
             FlashErase(targetIdx * SEGMENT_SIZE, SEGMENT_SIZE);
-            ESP_LOGI("MEM", "Cleaned segment %d (%d)", targetIdx, targetIdx * SEGMENT_SIZE);
+            // ESP_LOGI("MEM", "Cleaned segment %d (%d)", targetIdx, targetIdx * SEGMENT_SIZE);
             FreeSpace[targetIdx] = SEGMENT_SIZE;
             emptyCount++;
         }
@@ -446,14 +450,14 @@ namespace HW
     {
         uint32_t cursor = 0xFFFFFFFF; // Start signal for FindNextEntry
 
-        ESP_LOGI("MEM", "Starting LoadAll");
+        // ESP_LOGI("MEM", "Starting LoadAll");
 
         while (true)
         {
             // 1. Find the next valid (0xEE) entry
             cursor = FindNextEntry(cursor);
 
-            ESP_LOGI("MEM", "Loading %d", cursor);
+            // ESP_LOGI("MEM", "Loading %d", cursor);
 
             // 2. If no more valid entries are found, we are done
             if (cursor == 0xFFFFFFFF)
@@ -470,10 +474,16 @@ namespace HW
             FlashRead(cursor + sizeof(MemoryHeader), dataBuffer.Array, head.Length);
             dataBuffer.Length = head.Length;
 
-            ESP_LOGI("MEM", "Loaded %d, length %d", cursor, head.Length + sizeof(MemoryHeader));
-            // 6. Factory Instantiation
-            // Assuming Objects.Create takes the Type and the Payload to rebuild the class
-            BaseClass *Object = CreateObject(Reference::Global(0, head.GroupID, head.DeviceID), (ObjectTypes)head.Type);
+            // ESP_LOGI("MEM", "Loaded %d, length %d", cursor, head.Length + sizeof(MemoryHeader));
+            //  6. Factory Instantiation
+            //  Assuming Objects.Create takes the Type and the Payload to rebuild the class
+            BaseClass *Object = nullptr;
+            int32_t Existing = Objects.Search(Reference::Global(0, head.GroupID, head.DeviceID));
+            if (Existing != -1)
+                Object = Objects.Object[Existing].Object;
+            else
+                Object = CreateObject(Reference::Global(0, head.GroupID, head.DeviceID), (ObjectTypes)head.Type);
+
             if (Object == nullptr)
                 continue;
 
@@ -504,19 +514,30 @@ namespace HW
             uint8_t staleStatus = 0x88;
             if (FlashWrite(oldAddr, &staleStatus, 1) == 0)
             {
-                ESP_LOGI("MEM", "Invalidated version of ID %d.%d at %d", ID.Group, ID.Device, oldAddr);
+                // ESP_LOGI("MEM", "Invalidated version of ID %d.%d at %d", ID.Group, ID.Device, oldAddr);
                 foundAny = true;
             }
             else
             {
-                ESP_LOGE("MEM", "Flash Write Failure during Invalidation!");
+                // ESP_LOGE("MEM", "Flash Write Failure during Invalidation!");
                 break;
             }
         }
         return foundAny;
     }
 
-    bool Save(Reference &ID)
+    void InvalidateAll()
+    {
+        uint32_t Addr = FindNextEntry(0xFFFFFFFF);
+        while (Addr != 0xFFFFFFFF)
+        {
+            uint8_t staleStatus = 0x88;
+            FlashWrite(Addr, &staleStatus, 1);
+            Addr = FindNextEntry(Addr);
+        }
+    }
+
+    bool Save(const Reference &ID)
     {
         // Saves specific object
         BaseClass *Object = Objects.At(ID);
@@ -526,11 +547,11 @@ namespace HW
             return false;
         }
 
-        if (Object->Flags == Flags::Auto)
+        /*if (Object->Flags == Flags::Auto)
         {
             ReportError(Status::AutoObject);
             return false;
-        }
+        }*/
 
         FlexArray Payload = Object->Compress();
         MemoryHeader Header = {
@@ -556,7 +577,7 @@ namespace HW
             return false;
         }
         FlashWrite(writeAddr, Data.Array, Data.Length);
-        ESP_LOGI("MEM", "Saved at %d, length %d", writeAddr, Data.Length);
+        // ESP_LOGI("MEM", "Saved at %d, length %d", writeAddr, Data.Length);
 
         // Note: FindSpace already updated FreeSpace[s] for us.
         return true;

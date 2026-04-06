@@ -78,88 +78,6 @@ BoardClass Board(Reference::Global(0, 0, 0));
 #include "Function\Base.h"
 #include "Function\Values.h"
 
-#if defined BOARD_Tamu_v2_0
-#include "DefaultSetupTamuv2.0.h"
-#elif defined BOARD_Valu_v2_0
-#include "DefaultSetupValuv2.0.h"
-#endif
-
-bool ValueTree::Deserialize(const FlexArray &in, uint16_t startIndex)
-{
-    // 1. Bounds check for metadata (TotalSize [2] + HeaderCount [2])
-
-    ESP_LOGI("VT", "Length %d, Index %d", in.Length, startIndex);
-    if (startIndex + 4 > in.Length)
-        return false;
-
-    const char *src = in.Array + startIndex;
-    uint16_t totalWireSize;
-    uint16_t count;
-    
-    memcpy(&totalWireSize, src, 2);
-    memcpy(&count, src + 2, 2);
-
-    ESP_LOGI("VT", "Size %d, Headers %d", totalWireSize, count);
-
-    // 2. Bounds check for the full payload to prevent memory overflow
-    if (startIndex + totalWireSize > in.Length)
-        return false;
-
-    // 3. Reset and Prepare Headers
-    this->EnsureHeaderCapacity(count);
-    this->HeaderAllocated = count; // Logic assumes Allocated == Count for this operation
-
-    const char *hRead = src + 4;
-    const char *dRead = src + 4 + (count * 4);
-    uint32_t internalOffset = 0;
-
-    // --- Pass 1: Setup Headers and calculate required RAM alignment ---
-    for (uint16_t i = 0; i < count; i++)
-    {
-        Header &h = this->HeaderArray[i];
-        
-        // Unpack wire format (Type[1], Depth[1], Length[2])
-        h.Type = (Types)hRead[0];
-        h.Depth = hRead[1];
-        memcpy(&h.Length, hRead + 2, 2);
-        hRead += 4;
-
-        // Map internal pointer using Align() to satisfy CPU/Logic requirements
-        h.Pointer = internalOffset;
-        internalOffset += Align(h.Length); 
-    }
-
-    // --- Pass 2: Reallocate and Clean Data Buffer ---
-    this->Length = internalOffset;
-    this->EnsureCapacity(this->Length); 
-    
-    // CRITICAL: Zero out the buffer. 
-    // Since Serialize packs tightly but RAM aligns, we must wipe the "gaps"
-    // created by Align(h.Length) so they don't contain old memory noise.
-    if (this->Array && this->Length > 0)
-        memset(this->Array, 0, this->Length);
-
-    // --- Pass 3: Copy Packed Data into Aligned RAM ---
-    const char *currentDataPtr = dRead;
-    for (uint16_t i = 0; i < count; i++)
-    {
-        Header &h = this->HeaderArray[i];
-        if (h.Length > 0)
-        {
-            // Copy exactly h.Length from the PACKED wire source
-            // into the ALIGNED internal Pointer
-            memcpy(this->Array + h.Pointer, currentDataPtr, h.Length);
-            
-            // Advance the source pointer by the packed length (no padding in Flash)
-            currentDataPtr += h.Length;
-        }
-    }
-
-    // --- Pass 4: Finalize ---
-    this->UpdateSkip(); // Refresh jump pointers for navigation/tree logic
-    return true;
-}
-
 int main()
 {
     HW::Init();
@@ -170,7 +88,7 @@ int main()
 
     //ESP_LOGI("MAIN", "Setuping");
     Board.Setup(Reference::Global(0, 0, 0)); // Initialize devices
-    DefaultSetup();
+    //DefaultSetup();
     HW::LoadAll();
 
     //ESP_LOGI("MAIN", "Starting Chirp");
@@ -233,7 +151,7 @@ extern "C"
 #endif
 /*TODO:
 KEY FEATURES:
-Saving
+More operations
 OLED
 LED strip
 Servo
@@ -242,13 +160,11 @@ App backup (json?)
 
 Program Start and Stop section
 Button callback, press detection
-More operations
 
 FUTURE:
 App Programming view
 App Presets, blocks
 All-display filters
-Better LED strip functions
 Experimental paralel LED bit-banging
 Multiple boards together
 

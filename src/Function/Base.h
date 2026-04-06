@@ -176,20 +176,21 @@ void SaveObject(const FlexArray &Input)
 
 void SaveAll(const FlexArray &Input)
 {
-    HW::FlashFormat();
-    /*MemoryReset();
-    for (int32_t Index = 1; Index < Objects.Allocated; Index++)
+    HW::InvalidateAll();
+
+    // 2. Iterate through the Registry
+    for (uint32_t Index = 0; Index < Objects.Registered; Index++)
     {
-        if (Objects[IDClass(Index)] == nullptr || Objects[IDClass(Index)]->Flags == Flags::Auto)
+        RegisterEntry Obj = Objects.Object[Index];
+        if (Obj.Object == nullptr)
             continue;
-        Objects[IDClass(Index)]->Save();
+
+        HW::Save(Reference::Global(0, Obj.GroupID, Obj.DeviceID));
     }
-    Chirp.Send(ValueTree(Functions::SaveAll));*/
 
     char SuccessHeader[1] = {(char)Functions::SaveAll};
     FlexArray Success(SuccessHeader, 1);
     Chirp.Send(Success);
-    return;
 }
 
 void ReadObject(const FlexArray &Input)

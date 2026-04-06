@@ -95,8 +95,6 @@ void ChirpClass::Begin(Text Name)
     pAdvertising->start();
 
     // ESP_LOGI("CHIRP", "BLE Started");
-#elif defined BOARD_Valu_v2_0
-    LastSend = HW::Now();
 #endif
 };
 
