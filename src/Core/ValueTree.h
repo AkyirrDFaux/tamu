@@ -82,7 +82,7 @@ public:
 
     // --- Protocol Logic ---
     FlexArray Serialize() const;
-    ValueTree Deserialize(const FlexArray &in, uint16_t startIndex);
+    bool Deserialize(const FlexArray &in, uint16_t startIndex);
 };
 
 void ValueTree::EnsureCapacity(uint16_t required)
@@ -446,63 +446,6 @@ FlexArray ValueTree::Serialize() const
     }
 
     return result;
-}
-
-ValueTree ValueTree::Deserialize(const FlexArray &in, uint16_t startIndex)
-{
-    // Bounds check for metadata
-    if (startIndex + 4 > in.Length)
-        return {};
-
-    const char *src = in.Array + startIndex;
-    uint16_t totalWireSize = *(uint16_t *)src;
-    uint16_t count = *(uint16_t *)(src + 2);
-
-    // Bounds check for full payload
-    if (startIndex + totalWireSize > in.Length)
-        return {};
-
-    ValueTree res;
-    if (count == 0)
-        return res;
-
-    // Use our standardized allocation helpers
-    res.EnsureHeaderCapacity(count);
-    res.HeaderAllocated = count;
-
-    const char *hRead = src + 4;
-    const char *dRead = src + 4 + (count * 4);
-    uint16_t internalOffset = 0;
-
-    // Pass 1: Setup Headers and calculate internal required length
-    for (uint16_t i = 0; i < count; i++)
-    {
-        Header &h = res.HeaderArray[i];
-        h.Type = (Types)hRead[0];
-        h.Depth = hRead[1];
-        memcpy(&h.Length, hRead + 2, 2);
-        hRead += 4;
-
-        h.Pointer = internalOffset;
-        internalOffset += Align(h.Length);
-    }
-
-    // Pass 2: Allocate data buffer once and copy data chunks
-    res.Length = internalOffset;
-    res.EnsureCapacity(res.Length);
-
-    for (uint16_t i = 0; i < count; i++)
-    {
-        uint16_t len = res.HeaderArray[i].Length;
-        if (len > 0)
-        {
-            memcpy(res.Array + res.HeaderArray[i].Pointer, dRead, len);
-            dRead += len;
-        }
-    }
-
-    res.UpdateSkip();
-    return res;
 }
 
 // Thin calls

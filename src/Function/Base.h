@@ -161,36 +161,23 @@ void SaveObject(const FlexArray &Input)
     // 2. Map the Reference directly (O(1) access)
     Reference ID = Reference::Global(Input.Array[1], Input.Array[2], Input.Array[3]);
 
-    // 3. Resolve the pointer from the registry
-    BaseClass *Object = Objects.At(ID);
-
-    // 4. Verify existence
-    if (Object == nullptr)
+    if (HW::Save(ID))
     {
-        char Response[2] = {(char)Functions::Report, (char)Status::InvalidID};
-        Chirp.Send(FlexArray(Response, 2) += Input);
-        return;
+        // 6. Notify Success: [SaveObjectCode][ReferenceData...]
+        char SuccessHeader[1] = {(char)Functions::SaveObject};
+        FlexArray Success(SuccessHeader, 1);
+
+        // Append the variable-length ID as confirmation
+        Success += FlexArray((char *)ID.Data, 3);
+
+        Chirp.Send(Success);
     }
-
-    // 5. Execute Save (Internal serialization to Flash/NVS)
-    Object->Save();
-
-    // 6. Notify Success: [SaveObjectCode][ReferenceData...]
-    char SuccessHeader[1] = {(char)Functions::SaveObject};
-    FlexArray Success(SuccessHeader, 1);
-
-    // Append the variable-length ID as confirmation
-    Success += FlexArray((char *)ID.Data, 3);
-
-    Chirp.Send(Success);
 }
 
 void SaveAll(const FlexArray &Input)
 {
-    // TODO, First implement one-by-one correctly
-    /*
     HW::FlashFormat();
-    MemoryReset();
+    /*MemoryReset();
     for (int32_t Index = 1; Index < Objects.Allocated; Index++)
     {
         if (Objects[IDClass(Index)] == nullptr || Objects[IDClass(Index)]->Flags == Flags::Auto)
@@ -198,6 +185,10 @@ void SaveAll(const FlexArray &Input)
         Objects[IDClass(Index)]->Save();
     }
     Chirp.Send(ValueTree(Functions::SaveAll));*/
+
+    char SuccessHeader[1] = {(char)Functions::SaveAll};
+    FlexArray Success(SuccessHeader, 1);
+    Chirp.Send(Success);
     return;
 }
 

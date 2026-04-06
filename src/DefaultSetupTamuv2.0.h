@@ -5,7 +5,7 @@ void DefaultSetup()
     Board.Values.Set(boardName.Data, boardName.Length, Types::Text, Reference({1}));
 
     // --- Sensor Initialization ---
-    SensorClass *S = new SensorClass(Reference::Global(0, 2, 2));
+    /*SensorClass *S = new SensorClass(Reference::Global(0, 2, 2));
 
     SensorTypes sType = SensorTypes::Light10K;
     S->ValueSetup(&sType, sizeof(SensorTypes), Types::Sensor, Reference({0}));
@@ -88,7 +88,7 @@ void DefaultSetup()
 
     ColourClass cBlack(0, 0, 0);
     LD->Values.Set(&cBlack, sizeof(ColourClass), Types::Colour, {2, 5, 0});
-
+    */
     /*
     // Geometry (Half Fill)
     LD->ValueSetup<Geometries>(Geometries::HalfFill, {1, 6});
@@ -98,7 +98,7 @@ void DefaultSetup()
     LD->ValueSetup<Textures2D>(Textures2D::Full,   {1, 7});
     LD->Values.Set(ColourClass(0, 0, 0),           {1, 7, 0}); // ColourA
     */
-
+    /*
     Program *P = new Program(Reference::Global(0, 1, 0));
 
     // --- Operation 1: Base Addition ---
@@ -121,7 +121,7 @@ void DefaultSetup()
 
     Number valB2 = 0.75;
     P->Values.Set(&valB2, sizeof(Number), Types::Number, {2, 1, 1});
-
+    */
     /*
     Shape2DClass *LS2A = new Shape2DClass();
     LS2A->Name = "Left Pupil Arrow";

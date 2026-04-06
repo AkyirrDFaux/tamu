@@ -1,36 +1,37 @@
 namespace HW
 {
-    uint32_t FlashWriteHead = 0;
-    uint32_t FlashReadHead = 0;
-
     void FlashInitDevice();
     void FlashInit();
+    // Raw functions
     int FlashRead(uint32_t Offset, void *Buffer, uint32_t Length);
     int FlashWrite(uint32_t Offset, const void *Buffer, uint32_t Length);
     int FlashErase(uint32_t Offset, uint32_t Length);
+    uint16_t GapPointer = 0; // Tracks our "Current" position in the circle
 
     typedef struct
     {
-        uint8_t Status;    // 0xFF (Empty), 0xEE (Valid), 0x88 (Stale), 0x00 (Erased),
-        uint8_t Checksum;  // CRC8
-        uint8_t Group; //ID
-        uint8_t Device;
+        uint8_t Status;   // 0xFF (Empty), 0xEE (Valid), 0x88 (Stale), 0x00 (Erased),
+        uint8_t Checksum; // CRC8
         uint16_t Length;
-        uint16_t HeaderLength;
+        union // This is start of Baseclass.Compress() (Net/first byte ignored)
+        {
+            uint16_t ID;
+            struct
+            {
+                uint8_t GroupID;
+                uint8_t DeviceID;
+            };
+        };
+        uint8_t Type;
+        uint8_t Flags;
     } __attribute__((packed)) MemoryHeader;
-
-//TODO:
-//Split into custom chunks, keep track of how full they are, if low on space fix accordingly
-//Never cross a boundary for simpler tracking, packed tight within chunk
-
-//Needs to store ObjectType (1), ObjectInfo (3), Name (x+1), Values(HL+x)
 
 #if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
 #include "esp_partition.h"
-#define PAGE_SIZE 4096
-#define FLASH_PADDING 4
-    uint32_t FlashStart = 0;
-    uint32_t FlashSize = 0xED000;
+#define PAGE_SIZE 4096         // Hardware limitation
+#define SEGMENT_SIZE PAGE_SIZE // Custom segmentation, must be multiple of page size (incl. 1)
+    uint32_t FlashSize = 0;
+    uint16_t *FreeSpace = nullptr;
     static const esp_partition_t *Partition = NULL;
 
     void FlashInitDevice()
@@ -38,7 +39,9 @@ namespace HW
         Partition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
                                              ESP_PARTITION_SUBTYPE_DATA_SPIFFS,
                                              "storage");
-        FlashSize = Partition->size;
+        // FlashSize = Partition->size;
+        FlashSize = PAGE_SIZE * 4;
+        FreeSpace = new uint16_t[FlashSize / SEGMENT_SIZE];
     }
 
     // Generic Raw Read
@@ -59,7 +62,13 @@ namespace HW
         // Erasing from 0 to FlashSize wipes everything
         esp_err_t res = esp_partition_erase_range(Partition, 0, FlashSize);
         if (res == ESP_OK)
+        {
+            GapPointer = 0;
+            for (int i = 0; i < FlashSize / SEGMENT_SIZE; i++)
+                FreeSpace[i] = SEGMENT_SIZE;
             return true;
+        }
+
         return false;
     }
 
@@ -67,7 +76,9 @@ namespace HW
     int FlashErase(uint32_t Offset, uint32_t Length)
     {
         // Length must be a multiple of Sector Size
-        return esp_partition_erase_range(Partition, Offset, Length) == ESP_OK ? 0 : -1;
+        if (esp_partition_erase_range(Partition, Offset, Length) == ESP_OK)
+            return 0;
+        return -1;
     }
 
 #else
@@ -135,7 +146,7 @@ namespace HW
         uint32_t Address = GET_PHYS_ADDR(Offset);
         uint32_t *DataPtr = (uint32_t *)Buffer;
 
-        for (uint32_t Index = 0; Index < Length/4; Index++)
+        for (uint32_t Index = 0; Index < Length / 4; Index++)
         {
             FLASH_ClearFlag(FLASH_FLAG_BSY | FLASH_FLAG_EOP | FLASH_FLAG_WRPRTERR);
 
@@ -193,230 +204,361 @@ namespace HW
 
         return 0;
     }
-    
+
 #endif
 
     void FlashInit()
     {
         FlashInitDevice();
-        FlashReadHead = 0;
-        FlashWriteHead = 0;
-        uint32_t Current = 0;
-        MemoryHeader Header;
-        
-        while (Current < FlashSize)
+        uint32_t numSegments = FlashSize / SEGMENT_SIZE;
+        GapPointer = 0; // Default to start
+
+        for (int s = 0; s < numSegments; s++)
         {
-            FlashRead(Current, &Header, 8);
-            if (Header.Status == 0xFF) // Found gap
+            uint32_t cursor = s * SEGMENT_SIZE;
+            uint32_t segmentEnd = cursor + SEGMENT_SIZE;
+
+            // 1. Scan headers in the current segment
+            while (cursor + sizeof(MemoryHeader) <= segmentEnd)
             {
-                FlashWriteHead = Current;
-                break;
+                MemoryHeader head;
+                FlashRead(cursor, &head, sizeof(MemoryHeader));
+
+                if (head.Status == 0xFF)
+                    break; // End of data in this segment
+
+                cursor += sizeof(MemoryHeader) + Align(head.Length);
             }
-            Current += Header.Length + 8;
-        }
 
-        while (Current < FlashSize)
-        {
-            FlashRead(Current, &Header, 4);
-            if (Header.Status != 0xFF) // Found erased or something
-                break;
-            Current = Current + (PAGE_SIZE - (Current % PAGE_SIZE)); // Go to next start of sector
-        }
+            // 2. Store the calculated free space
+            FreeSpace[s] = (uint16_t)(segmentEnd - cursor);
 
-        while (Current < FlashSize)
-        {
-            FlashRead(Current, &Header, 4);
-            if (Header.Status != 0x00) // Found first packet after gap
+            // 3. Logic to find the Gap:
+            // If this segment is 100% empty, and the previous one was NOT,
+            // then this is the leading edge of our empty Gap.
+            if (s > 0)
             {
-                FlashReadHead = Current;
-                break;
-            }
-            Current = Current + 4; // Continue
-        }
-        /*ESP_LOGI("FLASH", "Init Complete:");
-        ESP_LOGI("FLASH", "  > Start:      0x%08X", FlashStart);
-        ESP_LOGI("FLASH", "  > Read Head:  0x%08X", FlashReadHead);
-        ESP_LOGI("FLASH", "  > Write Head: 0x%08X", FlashWriteHead);*/
-    }
-
-    int32_t FlashFind(IDClass ID)
-    {
-        // ESP_LOGI("FLASH", "Searching");
-        uint32_t Current = FlashReadHead;
-        MemoryHeader Header;
-        // HW::USB_Send(ByteArray(Current).CreateMessage());
-        while ((FlashReadHead > FlashWriteHead && (Current >= FlashReadHead || Current < FlashWriteHead)) ||
-               (FlashReadHead <= FlashWriteHead && Current <= FlashWriteHead))
-        {
-            // HW::USB_Send(ByteArray(Current).CreateMessage());
-            //  ESP_LOGI("FLASH", "Searching at 0x%08X", Current);
-            if (Current >= FlashSize && FlashReadHead > FlashWriteHead && Current > FlashReadHead) // Go to start (circular)
-                Current = 0;
-            else if (Current >= FlashSize) // It's the end (linear)
-                return -1;
-
-            FlashRead(Current, &Header, 12);
-            // ESP_LOGI("FLASH", "Searching Header Status 0x%02X, ID 0x%08X", Header.Status, Header.ID);
-            // HW::USB_Send(ByteArray(Header.Status).CreateMessage());
-            if (Header.ID == ID.ID && Header.Status == 0xEE)
-                return Current;
-            else if (Header.Status == 0xFF && FlashReadHead > FlashWriteHead && Current > FlashReadHead) // There can be a gap at the end (circular)
-                Current = 0;
-            else if (Header.Status == 0xFF) // It's the end (gap or linear)
-                return -1;
-
-            Current += Header.Length + 8;
-        }
-        return -1;
-    }
-
-    ByteArray FlashLoad(IDClass ID)
-    {
-        // ESP_LOGI("FLASH", "Loading");
-        // HW::USB_Send(ByteArray(ID).CreateMessage());
-        int32_t Current = FlashFind(ID);
-        if (Current == -1)
-        {
-            ReportError(Status::NotInFlash);
-            return ByteArray();
-        }
-        // ESP_LOGI("FLASH", "Found at 0x%08X", Current);
-        // HW::USB_Send(ByteArray(Current).CreateMessage());
-
-        uint32_t Length;
-        FlashRead(Current + 4, &Length, 4);
-
-        ByteArray Data = ByteArray();
-        Data.Length = Length + 4; // Need to add back ID type, Would be + 1, but needs aligned to 4
-        Data.Array = new char[Length + 4];
-        FlashRead(Current + 8, Data.Array + 4, Length);
-        Data.Array[3] = (char)Types::ID;
-        return Data.SubArray(3, Length + 1);
-    }
-
-    bool FlashMatch(uint32_t Offset, const ByteArray &Data)
-    {
-        MemoryHeader Header;
-        FlashRead(Offset, &Header, 8);
-        if (Header.Length != Data.Length)
-            return false;
-
-        char *Buf = new char[Data.Length];
-        FlashRead(Offset + 8, Buf, Data.Length);
-        int Res = memcmp(Buf, Data.Array, Data.Length);
-        delete[] Buf;
-        return Res == 0;
-    };
-
-    uint32_t GetWritableSpace(uint32_t Write, uint32_t Read)
-    {
-        uint32_t AbsoluteGap;
-
-        if (Write < Read)
-            AbsoluteGap = Read - Read % PAGE_SIZE - Write;
-        else
-            AbsoluteGap = (FlashSize - Write) + (Read - Read % PAGE_SIZE);
-
-        if (AbsoluteGap <= PAGE_SIZE * 3)
-            return 0;
-        return AbsoluteGap - PAGE_SIZE * 3;
-    }
-
-    bool FlashPrepare(int32_t &Offset, uint32_t Length)
-    {
-        if (FlashWriteHead + Length > FlashSize)
-        {
-            // TODO: Near the end, defragment something first if possible
-            FlashWriteHead = 0;
-        }
-
-        uint32_t Current = FlashReadHead;
-        MemoryHeader Header;
-        // If not, start defragmenting
-        while (GetWritableSpace(FlashWriteHead, FlashReadHead) <= 0) // Real writable space
-        {
-            FlashRead(Current, &Header, 8);
-            if (Header.Status == 0xEE) // Find non-stale
-            {
-                if (GetWritableSpace(FlashWriteHead, Current) > 0) // Done
+                if (FreeSpace[s] == SEGMENT_SIZE && FreeSpace[s - 1] < SEGMENT_SIZE)
                 {
-                    for (uint32_t Sector = FlashReadHead / PAGE_SIZE; Sector < Current / PAGE_SIZE; Sector++) // Erase stale{}
-                        FlashErase(Sector * PAGE_SIZE, PAGE_SIZE);
-
-                    uint32_t Empty = 0;
-                    for (uint32_t Index = Current - Current % PAGE_SIZE; Index < Current; Index += 4) // Mark Empty
-                        FlashWrite(Index, &Empty, 4);
-
-                    FlashReadHead = Current;
-                    break;
+                    GapPointer = (uint16_t)s;
                 }
-                else
-                {
-                    // Copy
-                    uint32_t Source = Current;
-                    uint32_t Dest = FlashWriteHead;
-                    uint32_t Remaining = Header.Length + 8;
-                    uint8_t Buf[64];
+            }
+        }
 
-                    while (Remaining > 0)
+        // 4. Wrap-around check:
+        // If Segment 0 is empty but the last segment has data,
+        // the gap actually starts at index 0.
+        if (FreeSpace[0] == SEGMENT_SIZE && FreeSpace[numSegments - 1] < SEGMENT_SIZE)
+        {
+            GapPointer = 0;
+        }
+    }
+
+    uint32_t FindNextEntry(uint32_t Last)
+    {
+        // If Last is 0xFFFFFFFF, start at 0, otherwise start after the current entry
+        uint32_t cursor = (Last == 0xFFFFFFFF) ? 0 : Last;
+
+        // If we were given a real address, we need to skip the current entry's header + data
+        if (Last != 0xFFFFFFFF)
+        {
+            MemoryHeader lastHead;
+            if (FlashRead(Last, &lastHead, sizeof(MemoryHeader)) != 0)
+                return 0xFFFFFFFF;
+            cursor += sizeof(MemoryHeader) + Align(lastHead.Length);
+        }
+
+        while (cursor + sizeof(MemoryHeader) <= FlashSize)
+        {
+            // ESP_LOGI("MEM", "Searching valid next entry %d\n", cursor);
+            //  Handle segment boundaries: if a header can't fit at the end of a segment,
+            //  move to the start of the next segment.
+            uint32_t remainingInSegment = SEGMENT_SIZE - (cursor % SEGMENT_SIZE);
+            if (remainingInSegment < sizeof(MemoryHeader))
+            {
+                cursor += remainingInSegment;
+                continue;
+            }
+
+            MemoryHeader head;
+            if (FlashRead(cursor, &head, sizeof(MemoryHeader)) != 0)
+                break;
+
+            if (head.Status == 0xEE)
+            { // Valid Entry Found
+                // ESP_LOGI("MEM", "Found valid next entry %d", cursor);
+                return cursor;
+            }
+
+            if (head.Status == 0xFF)
+            {
+                // Reached empty space in this segment. Skip to the next segment start.
+                // ESP_LOGI("MEM", "Empty next entry %d", cursor);
+                cursor += remainingInSegment;
+                continue;
+            }
+
+            // It's Stale (0x88) or Erased (0x00), skip to next entry in this segment
+            cursor += sizeof(MemoryHeader) + Align(head.Length);
+        }
+
+        return 0xFFFFFFFF; // Nothing found
+    }
+
+    uint32_t FindEntry(uint16_t ID)
+    {
+        uint32_t cursor = 0;
+
+        while (cursor + sizeof(MemoryHeader) <= FlashSize)
+        {
+            // ESP_LOGI("MEM", "Searching valid entry %d", cursor);
+            uint32_t remainingInSegment = SEGMENT_SIZE - (cursor % SEGMENT_SIZE);
+
+            if (remainingInSegment < sizeof(MemoryHeader))
+            {
+                cursor += remainingInSegment;
+                continue;
+            }
+
+            MemoryHeader head;
+            if (FlashRead(cursor, &head, sizeof(MemoryHeader)) != 0)
+                break;
+
+            if (head.Status == 0xFF)
+            {
+                // End of data in this segment
+                // ESP_LOGI("MEM", "Empty entry %d", cursor);
+                cursor += remainingInSegment;
+                continue;
+            }
+
+            if (head.Status == 0xEE && head.ID == ID)
+            {
+                // ESP_LOGI("MEM", "Found ID %d at %d", ID, cursor);
+                return cursor; // Found it!
+            }
+
+            // Move to next entry
+            cursor += sizeof(MemoryHeader) + Align(head.Length);
+        }
+
+        return 0xFFFFFFFF;
+    }
+
+    uint32_t FindSpace(uint16_t Length)
+    {
+        // Important: We must use the same alignment as FlashInit
+        uint16_t totalNeeded = Align(Length);
+        uint32_t numSegments = FlashSize / SEGMENT_SIZE;
+
+        // A) Scan all for partials
+        for (uint32_t s = 0; s < numSegments; s++)
+        {
+            if (FreeSpace[s] >= totalNeeded && FreeSpace[s] < SEGMENT_SIZE)
+            {
+                uint32_t offset = (s * SEGMENT_SIZE) + (SEGMENT_SIZE - FreeSpace[s]);
+                FreeSpace[s] -= totalNeeded; // RAM Update
+                // ESP_LOGI("MEM", "Found space in segment %d at %d", s, offset);
+                return offset;
+            }
+        }
+
+        // B) Use Gap
+        if (FreeSpace[GapPointer] == SEGMENT_SIZE)
+        {
+            uint32_t offset = (GapPointer * SEGMENT_SIZE);
+            FreeSpace[GapPointer] -= totalNeeded;
+            // ESP_LOGI("MEM", "Found empty segment %d at %d", GapPointer, offset);
+            GapPointer = (GapPointer + 1) % numSegments; // Move Gap
+            return offset;
+        }
+
+        return 0xFFFFFFFF;
+    }
+
+    void CleanMemory()
+    {
+        uint32_t numSegments = FlashSize / SEGMENT_SIZE;
+        uint16_t emptyCount = 0;
+
+        // 1. Count current empty segments
+        for (int i = 0; i < numSegments; i++)
+        {
+            if (FreeSpace[i] == SEGMENT_SIZE)
+                emptyCount++;
+        }
+
+        // 2. The "Snowplow" Logic: Start at GapPointer and move forward
+        for (uint32_t i = 0; i < numSegments; i++)
+        {
+            // Stop if we've recovered enough breathing room
+            if (emptyCount >= 2)
+                break;
+
+            uint32_t targetIdx = (GapPointer + i) % numSegments;
+
+            // Skip segments that are already empty
+            if (FreeSpace[targetIdx] == SEGMENT_SIZE)
+                continue;
+
+            // --- Forced Defragmentation / Evacuation ---
+            uint32_t cursor = targetIdx * SEGMENT_SIZE;
+            uint32_t segmentEnd = cursor + SEGMENT_SIZE;
+
+            while (cursor + sizeof(MemoryHeader) <= segmentEnd)
+            {
+                MemoryHeader head;
+                FlashRead(cursor, &head, sizeof(MemoryHeader));
+
+                if (head.Status == 0xFF)
+                    break; // End of data in this segment
+
+                if (head.Status == 0xEE) // Valid Entry Found
+                {
+                    // Read existing data
+                    FlexArray data(head.Length);
+                    FlashRead(cursor + sizeof(MemoryHeader), data.Array, head.Length);
+                    data.Length = head.Length;
+
+                    // Relocate data to a new segment
+                    uint32_t newAddr = FindSpace(head.Length + sizeof(MemoryHeader));
+                    if (newAddr != 0xFFFFFFFF)
                     {
-                        uint32_t Chunk = (Remaining > 64) ? 64 : Remaining;
-                        FlashRead(Source, Buf, Chunk);
-                        FlashWrite(Dest, Buf, Chunk);
-                        Source += Chunk;
-                        Dest += Chunk;
-                        Remaining -= Chunk;
+                        head.Status = 0xEE;
+                        FlashWrite(newAddr, &head, sizeof(MemoryHeader));
+                        FlashWrite(newAddr + sizeof(MemoryHeader), data.Array, head.Length);
                     }
-                    FlashWriteHead = Dest;
-                    // Mark as stale
-                    Header.Status = 0x88;
-                    FlashWrite(Current, &Header, 4);
                 }
+
+                // Move to next entry in the current target segment
+                cursor += sizeof(MemoryHeader) + Align(head.Length);
             }
-            for (uint32_t Sector = FlashReadHead / PAGE_SIZE; Sector < Current / PAGE_SIZE; Sector++) // Erase stale{}
-                FlashErase(Sector * PAGE_SIZE, PAGE_SIZE);
-            FlashReadHead = Current;
 
-            Current += Header.Length + 8;
+            // 3. Finalize segment cleaning
+            FlashErase(targetIdx * SEGMENT_SIZE, SEGMENT_SIZE);
+            ESP_LOGI("MEM", "Cleaned segment %d (%d)", targetIdx, targetIdx * SEGMENT_SIZE);
+            FreeSpace[targetIdx] = SEGMENT_SIZE;
+            emptyCount++;
         }
-        Offset = FlashWriteHead;
-        return true;
-    };
+    }
 
-    bool FlashSave(const ByteArray &Data)
+    void LoadAll()
     {
-        IDClass ID;
-        memcpy((void *)&ID, Data.Array, sizeof(IDClass));
-        int32_t Current = FlashFind(ID);
+        uint32_t cursor = 0xFFFFFFFF; // Start signal for FindNextEntry
 
-        if (Current != -1)
+        ESP_LOGI("MEM", "Starting LoadAll");
+
+        while (true)
         {
-            if (FlashMatch(Current, Data))
-                return true;
+            // 1. Find the next valid (0xEE) entry
+            cursor = FindNextEntry(cursor);
+
+            ESP_LOGI("MEM", "Loading %d", cursor);
+
+            // 2. If no more valid entries are found, we are done
+            if (cursor == 0xFFFFFFFF)
+                break;
+
+            // 3. Read the header to get metadata (ID, Type, Length)
+            MemoryHeader head;
+            if (FlashRead(cursor, &head, sizeof(MemoryHeader)) != 0)
+                break;
+
+            // 4. Integrity Check: Verify Checksum before instantiating
+            // We read the data into a temporary buffer to check CRC
+            FlexArray dataBuffer(head.Length);
+            FlashRead(cursor + sizeof(MemoryHeader), dataBuffer.Array, head.Length);
+            dataBuffer.Length = head.Length;
+
+            ESP_LOGI("MEM", "Loaded %d, length %d", cursor, head.Length + sizeof(MemoryHeader));
+            // 6. Factory Instantiation
+            // Assuming Objects.Create takes the Type and the Payload to rebuild the class
+            BaseClass *Object = CreateObject(Reference::Global(0, head.GroupID, head.DeviceID), (ObjectTypes)head.Type);
+            if (Object == nullptr)
+                continue;
+
+            Object->Flags = (FlagClass)head.Flags;
+            memcpy(&Object->RunPeriod, dataBuffer.Array, 2);
+            uint16_t NameLength = dataBuffer.Array[2];
+            if (NameLength > 0)
+                Object->Name = Text(dataBuffer.Array + 3, NameLength);
+
+            Object->Values.Deserialize(dataBuffer, 3 + NameLength);
+        }
+    }
+
+    bool Invalidate(const Reference &ID)
+    {
+        // ID mapping: Group is low byte, Device is high byte (Little Endian)
+        uint16_t lookupID = ((uint16_t)ID.Device << 8) | ID.Group;
+        bool foundAny = false;
+
+        // We must loop because multiple valid versions might exist
+        // due to interrupted maintenance cycles.
+        while (true)
+        {
+            uint32_t oldAddr = FindEntry(lookupID);
+            if (oldAddr == 0xFFFFFFFF)
+                break;
+
+            uint8_t staleStatus = 0x88;
+            if (FlashWrite(oldAddr, &staleStatus, 1) == 0)
+            {
+                ESP_LOGI("MEM", "Invalidated version of ID %d.%d at %d", ID.Group, ID.Device, oldAddr);
+                foundAny = true;
+            }
             else
             {
-                MemoryHeader Header;
-                Header.Status = 0x88;
-                FlashWrite(Current, &Header, 4); // Mark as stale
+                ESP_LOGE("MEM", "Flash Write Failure during Invalidation!");
+                break;
             }
         }
+        return foundAny;
+    }
 
-        if (FlashPrepare(Current, Data.Length + 8) == false)
+    bool Save(Reference &ID)
+    {
+        // Saves specific object
+        BaseClass *Object = Objects.At(ID);
+        if (Object == nullptr)
         {
-            ReportError(Status::OutOfFlash);
-            return false; // Not enough memory
+            ReportError(Status::InvalidID);
+            return false;
         }
-        // ESP_LOGI("FLASH", "Writing to 0x%08X, length %d", Current, Data.Length);
-        MemoryHeader Header;
-        Header.Status = 0xEE;
-        Header.Length = Data.Length;
 
-        // HW::USB_Send(ByteArray(FlashWriteHead).CreateMessage());
-        FlashWrite(Current, &Header, 8);                  // Length + Status
-        FlashWrite(Current + 8, Data.Array, Data.Length); // Data
-        FlashWriteHead = Current + Data.Length + 8;
-        ReportError(Status::FlashWritten);
+        if (Object->Flags == Flags::Auto)
+        {
+            ReportError(Status::AutoObject);
+            return false;
+        }
 
+        FlexArray Payload = Object->Compress();
+        MemoryHeader Header = {
+            .Status = 0xEE,
+            .Checksum = 0x00,
+            .Length = (uint16_t)(Payload.Length - 5) // ID, Type and flags are in header (-4), net is ignored (-1)
+        };
+        FlexArray Data = FlexArray((char *)&Header, 4);
+        Data.Append(Payload.Array + 1, Payload.Length - 1); // Net is ignored
+
+        Invalidate(ID);
+
+        // 4. Ensure we have room (Maintenance)
+        // If we are low on empty segments, push the Gap forward
+        CleanMemory();
+
+        // 5. Find Space
+        uint32_t writeAddr = FindSpace(Data.Length);
+        if (writeAddr == 0xFFFFFFFF)
+        {
+            // If still no space after cleaning, we are truly full
+            ReportError(Status::OutOfFlash);
+            return false;
+        }
+        FlashWrite(writeAddr, Data.Array, Data.Length);
+        ESP_LOGI("MEM", "Saved at %d, length %d", writeAddr, Data.Length);
+
+        // Note: FindSpace already updated FreeSpace[s] for us.
         return true;
     }
 }

@@ -85,7 +85,7 @@ public:
         Objects.Register(this, NewID, Info);
     };
 
-    ~BaseClass() { Objects.Unregister(Objects.Search(this)); };
+    ~BaseClass();
 
     void Destroy();
 
@@ -93,7 +93,7 @@ public:
     void Setup(const Reference &Index) { Vptr->Setup(this, Index); }
     RunInfo Run(FlagClass RunFlags)
     {
-        if (Flags == Flags::Inactive)// || !(Flags == RunFlags)) // Should not run
+        if (Flags == Flags::Inactive) // || !(Flags == RunFlags)) // Should not run
             return {0, 0};
 
         if (Vptr->Run(this)) // Finished
@@ -101,7 +101,7 @@ public:
             if (Flags == Flags::RunOnce)
                 Flags -= Flags::RunOnce;
 
-            if (Flags == Flags::RunLoop)// && RunFlags == RunLoop)
+            if (Flags == Flags::RunLoop) // && RunFlags == RunLoop)
                 return {RunPeriod, RunPhase};
             else
                 return {0, 0};
@@ -119,10 +119,11 @@ public:
 
     template <class C>
     C *As() const { return (C *)this; };
-    void Save();
 
     Bookmark Find(const Reference &Location, bool StopAtReferences = false) const;
     void ValueSetup(const void *Data, size_t Size, Types Type, const Bookmark &Point);
     void ValueSetup(const void *Data, size_t Size, Types Type, const Reference &Location);
     FlexArray Compress() const;
 };
+
+BaseClass *CreateObject(Reference ID, ObjectTypes Type);
