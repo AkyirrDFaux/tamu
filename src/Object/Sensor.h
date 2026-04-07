@@ -37,11 +37,11 @@ SensorClass::SensorClass(const Reference &ID, FlagClass Flags, RunInfo Info)
 
     // 1. Root {0}: Sensor Type
     SensorTypes initialType = SensorTypes::Undefined;
-    Values.Set(&initialType, sizeof(SensorTypes), Types::Sensor, 0);
+    Values.Set(&initialType, sizeof(SensorTypes), Types::Sensor, 0, false, true);
 
     // 2. Child of Type {0, 0}: Port
     PortNumber initialPort = -1;
-    Values.InsertChild(&initialPort, sizeof(PortNumber), Types::Byte, 0);
+    Values.InsertChild(&initialPort, sizeof(PortNumber), Types::Byte, 0, false, true);
 
     // 3. Sibling of Type {1}: Measurement
     Number zero = 0;

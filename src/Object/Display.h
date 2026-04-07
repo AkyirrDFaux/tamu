@@ -46,13 +46,13 @@ DisplayClass::DisplayClass(const Reference &ID, FlagClass Flags, RunInfo Info)
 
     // --- Branch {0}: Hardware Definition ---
     Displays initType = Displays::Undefined;
-    Values.Set(&initType, sizeof(Displays), Types::Display, 0); // {0}
+    Values.Set(&initType, sizeof(Displays), Types::Display, 0, false, true); // {0}
 
     PortNumber initPort = -1;
-    uint16_t b0 = Values.InsertChild(&initPort, sizeof(PortNumber), Types::PortNumber, 0); // {0, 0}
+    uint16_t b0 = Values.InsertChild(&initPort, sizeof(PortNumber), Types::PortNumber, 0, false, true); // {0, 0}
 
     int32_t initLen = 0;
-    uint16_t b0_1 = Values.InsertNext(&initLen, sizeof(int32_t), Types::Integer, b0); // {0, 1}
+    uint16_t b0_1 = Values.InsertNext(&initLen, sizeof(int32_t), Types::Integer, b0, false, true); // {0, 1}
 
     Vector2D initSize(0, 0);
     uint16_t b0_2 = Values.InsertNext(&initSize, sizeof(Vector2D), Types::Vector2D, b0_1); // {0, 2}
@@ -134,7 +134,7 @@ bool DisplayClass::Disconnect()
 void DisplayClass::Setup(uint16_t Index)
 {
     // PathLen is a function call; storing it once saves bytes
-    bool HardwareChanged = (Index <= 2);
+    bool HardwareChanged = false;
 
     // Hardcoded indices from the linear constructor:
     // {0}   = Index 0 (Displays Type)
@@ -142,43 +142,40 @@ void DisplayClass::Setup(uint16_t Index)
     // {0, 1} = Index 2 (Length)
     // {0, 2} = Index 3 (Size)
 
-    if (!HardwareChanged)
+    if (Index == 0) // Displays::Type changed ({0})
     {
-        if (Index == 0) // Displays::Type changed ({0})
+        Result res = Values.Get(0);
+        if (res.Value)
         {
-            Result res = Values.Get(0);
-            if (res.Value)
+            Displays Type = *(Displays *)res.Value;
+            int32_t newLen = 0;
+            Vector2D newSize(0, 0);
+
+            if (Type == Displays::GenericLEDMatrix)
             {
-                Displays Type = *(Displays *)res.Value;
-                int32_t newLen = 0;
-                Vector2D newSize(0, 0);
+                newLen = 256;
+                newSize = Vector2D(16, 16);
+                Layout = nullptr;
+            }
+            else if (Type == Displays::Vysi_v1_0)
+            {
+                newLen = 86;
+                newSize = Vector2D(11, 10);
+                Layout = LayoutVysiv1_0;
+            }
 
-                if (Type == Displays::GenericLEDMatrix)
-                {
-                    newLen = 256;
-                    newSize = Vector2D(16, 16);
-                    Layout = nullptr;
-                }
-                else if (Type == Displays::Vysi_v1_0)
-                {
-                    newLen = 86;
-                    newSize = Vector2D(11, 10);
-                    Layout = LayoutVysiv1_0;
-                }
-
-                if (newLen > 0)
-                {
-                    Values.Set(&newLen, sizeof(int32_t), Types::Integer, 2);    // {0, 1}
-                    Values.Set(&newSize, sizeof(Vector2D), Types::Vector2D, 3); // {0, 2}
-                    HardwareChanged = true;
-                }
+            if (newLen > 0)
+            {
+                Values.Set(&newLen, sizeof(int32_t), Types::Integer, 2);    // {0, 1}
+                Values.Set(&newSize, sizeof(Vector2D), Types::Vector2D, 3); // {0, 2}
+                HardwareChanged = true;
             }
         }
-        // Check if Port {0,0} or Length {0,1} changed
-        else
-        {
-            HardwareChanged = true;
-        }
+    }
+    // Check if Port {0,0} or Length {0,1} changed
+    else if (Index == 1 || Index == 2)
+    {
+        HardwareChanged = true;
     }
 
     if (HardwareChanged)
