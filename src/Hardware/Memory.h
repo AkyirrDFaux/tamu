@@ -552,15 +552,15 @@ namespace HW
             ReportError(Status::AutoObject);
             return false;
         }*/
-
-        FlexArray Payload = Object->Compress(true);
+        Object->Flags -= Flags::Dirty;
+        FlexArray Payload = Object->Compress(true); //Ignores net
         MemoryHeader Header = {
             .Status = 0xEE,
             .Checksum = 0x00,
-            .Length = (uint16_t)(Payload.Length - 5) // ID, Type and flags are in header (-4), net is ignored (-1)
+            .Length = (uint16_t)(Payload.Length - 4) // ID, Type and flags are in header (-4)
         };
         FlexArray Data = FlexArray((char *)&Header, 4);
-        Data.Append(Payload.Array + 1, Payload.Length - 1); // Net is ignored
+        Data.Append(Payload.Array, Payload.Length); // Net is ignored
 
         Invalidate(ID);
 
@@ -578,7 +578,6 @@ namespace HW
         }
         FlashWrite(writeAddr, Data.Array, Data.Length);
         // ESP_LOGI("MEM", "Saved at %d, length %d", writeAddr, Data.Length);
-
         // Note: FindSpace already updated FreeSpace[s] for us.
         return true;
     }

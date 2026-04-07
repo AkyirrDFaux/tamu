@@ -56,7 +56,7 @@ enum Flags : uint8_t
 {
     None = 0,
     Auto = 0b00000001, // Automatically created (built-in)
-    Undefined1 = 0b00000010,
+    Dirty = 0b00000010, //Made a non-read only change
     Undefined2 = 0b00000100,
     Undefined3 = 0b00001000,
     RunLoop = 0b00010000,

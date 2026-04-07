@@ -185,7 +185,8 @@ void SaveAll(const FlexArray &Input)
         if (Obj.Object == nullptr)
             continue;
 
-        HW::Save(Reference::Global(0, Obj.GroupID, Obj.DeviceID));
+        if (Obj.Object->Flags == Flags::Dirty)
+            HW::Save(Reference::Global(0, Obj.GroupID, Obj.DeviceID));
     }
 
     char SuccessHeader[1] = {(char)Functions::SaveAll};

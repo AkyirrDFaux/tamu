@@ -13,13 +13,14 @@ void BoardClass::Setup(uint16_t Index)
 
         I2CDevices model = I2CDevices::LSM6DS3TRC;
         GyroAcc->Values.Set(&model, sizeof(I2CDevices), Types::I2CDevice, 0, true, true);
-
+        GyroAcc->Flags -= Flags::Dirty;
         InputClass *Button = new InputClass(Reference::Global(0, 2, 1), Flags::Auto | Flags::RunLoop);
         PortNumber btnPin = 10;
         Button->Values.Set(&btnPin, sizeof(PortNumber), Types::PortNumber, 1, true, true);
 
         Inputs inType = Inputs::ButtonWithLED;
         Button->Values.Set(&inType, sizeof(Inputs), Types::Input, 0, true, true);
+        Button->Flags -= Flags::Dirty;
     }
 #endif
 }

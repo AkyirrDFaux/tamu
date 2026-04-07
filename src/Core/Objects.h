@@ -51,7 +51,7 @@ public:
     bool IsValid(const Reference &ID, ObjectTypes Filter = ObjectTypes::Undefined) const;
 
     Bookmark Find(const Reference &Location, bool StopAtReferences = false) const;
-    //void ValueSetup(const void *Data, size_t Size, Types Type, const Reference &Location);
+    // void ValueSetup(const void *Data, size_t Size, Types Type, const Reference &Location);
 
     void Expand(uint32_t NewAllocated);
     void Shorten();
@@ -133,17 +133,21 @@ FlexArray BaseClass::Compress(bool Storage) const
 
     // 2. Start the FlexArray with exactly 3 bytes from the Reference data
     // This assumes Reference.Data is the internal pointer to [Net, Group, Device]
-    FlexArray Blob((const char *)SelfRef.Data, 3);
+    FlexArray Blob;
+    if (Storage)
+        Blob = FlexArray((const char *)SelfRef.Data + 1, 2);
+    else
+        Blob = FlexArray((const char *)SelfRef.Data, 3);
 
     // 3. Append ObjectType + Flags + Info (4 byte consecutive)
-    Blob += FlexArray((char *)&Type, 4);
+    Blob.Append((char *)&Type, 4);
 
     // 5. Append Name (1-byte length prefix + data)
     uint8_t nameLen = (Name.Length > 255) ? 255 : (uint8_t)Name.Length - 1;
-    Blob += FlexArray((char *)&nameLen, 1);
+    Blob.Append((char *)&nameLen, 1);
     if (nameLen > 0)
     {
-        Blob += FlexArray(Name.Data, nameLen);
+        Blob.Append(Name.Data, nameLen);
     }
 
     // 6. Serialize and Append Values
@@ -162,4 +166,10 @@ void ValueTree::TriggerSetup(uint16_t index)
 {
     if (Context != nullptr)
         Context->Setup(index);
+}
+
+void ValueTree::MarkDirty()
+{
+    if (Context != nullptr)
+        Context->Flags += Flags::Dirty;
 }

@@ -129,12 +129,11 @@ public:
     Bookmark InsertNext(const void *Data, uint16_t Size, Types Type, const Bookmark &CurrentIdx, bool ReadOnly = false, bool SetupCall = false);
     Bookmark InsertChild(const void *Data, uint16_t Size, Types Type, const Bookmark &ParentIdx, bool ReadOnly = false, bool SetupCall = false);
 
-    ValueTree Copy(const Reference &Location) const;
-
     // --- Protocol Logic ---
     FlexArray Serialize(bool ExtraCompression = false) const;
     bool Deserialize(const FlexArray &in, uint16_t startIndex, bool ExtraCompression = false);
     void TriggerSetup(uint16_t index);
+    void MarkDirty();
 };
 
 void ValueTree::EnsureCapacity(uint16_t required)
@@ -439,28 +438,6 @@ uint16_t ValueTree::Insert(const Reference &Location, int16_t NewDataSize)
     return CurrentIdx;
 }
 
-ValueTree ValueTree::Copy(const Reference &Location) const
-{
-    Bookmark res = Find(Location);
-    if (res.Index == INVALID_HEADER)
-        return ValueTree();
-
-    const Header &h = res.Map->HeaderArray[res.Index];
-    ValueTree NewArray;
-    NewArray.HeaderArray = new Header[1];
-    NewArray.HeaderAllocated = 1;
-    NewArray.HeaderArray[0] = {h.Type, 0, h.Length, 0, 0};
-
-    NewArray.Length = h.Length;
-    NewArray.Allocated = Align(h.Length);
-    if (NewArray.Allocated > 0)
-    {
-        NewArray.Array = new char[NewArray.Allocated];
-        memcpy(NewArray.Array, h.Pointer + res.Map->Array, h.Length);
-    }
-    return NewArray;
-}
-
 FlexArray ValueTree::Serialize(bool ExtraCompression) const
 {
     uint16_t packedDataSize = 0;
@@ -509,17 +486,20 @@ FlexArray ValueTree::Serialize(bool ExtraCompression) const
 
 bool ValueTree::Deserialize(const FlexArray &in, uint16_t startIndex, bool ExtraCompression)
 {
-    if (startIndex + 4 > in.Length) return false;
+    if (startIndex + 4 > in.Length)
+        return false;
 
     const char *src = in.Array + startIndex;
     uint16_t totalWireSize, wireCount;
     memcpy(&totalWireSize, src, 2);
     memcpy(&wireCount, src + 2, 2);
 
-    if (startIndex + totalWireSize > in.Length) return false;
+    if (startIndex + totalWireSize > in.Length)
+        return false;
 
     // Surgical mode usually requires the skeleton to match.
-    if (ExtraCompression && wireCount != HeaderAllocated) return false;
+    if (ExtraCompression && wireCount != HeaderAllocated)
+        return false;
 
     const char *hRead = src + 4;
     const char *dRead = src + 4 + (wireCount * 4);
@@ -538,11 +518,12 @@ bool ValueTree::Deserialize(const FlexArray &in, uint16_t startIndex, bool Extra
         // --- 1. COMPRESSION SKIP ---
         if (ExtraCompression && wireType == Types::Undefined)
         {
-            // If it's a "Keep Local" signal, we skip data copy but 
+            // If it's a "Keep Local" signal, we skip data copy but
             // check if the local node ALREADY has a setup flag that needs firing.
             // (Optional: usually you only trigger on change, but this is safer)
-            if (h.IsSetupCall()) TriggerSetup(i);
-            continue; 
+            if (h.IsSetupCall())
+                TriggerSetup(i);
+            continue;
         }
 
         // --- 2. SURGICAL RESIZE ---
@@ -564,10 +545,10 @@ bool ValueTree::Deserialize(const FlexArray &in, uint16_t startIndex, bool Extra
 
         // --- 5. SETUP TRIGGER ---
         // If the node (either from wire or local flags) is a Setup Call, fire it now.
-        if (h.IsSetupCall())
-        {
+        if (h.IsSetupCall() && h.IsReadOnly() == false)
             this->TriggerSetup(i);
-        }
+        if (h.IsReadOnly() == false && ExtraCompression == false)
+            MarkDirty();
     }
 
     this->UpdateSkip();
@@ -724,6 +705,9 @@ void ValueTree::Set(const void *Data, size_t Size, Types Type, uint16_t Index, b
 
     if (SetupCall)
         TriggerSetup(Index);
+
+    if (ReadOnly == false)
+        MarkDirty();
 }
 
 uint16_t ValueTree::InsertNext(const void *Data, uint16_t Size, Types Type, uint16_t CurrentIdx, bool ReadOnly, bool SetupCall)
@@ -745,6 +729,9 @@ uint16_t ValueTree::InsertNext(const void *Data, uint16_t Size, Types Type, uint
 
     if (SetupCall)
         TriggerSetup(nextIdx);
+
+    if (ReadOnly == false)
+        MarkDirty();
 
     return nextIdx;
 }
@@ -777,6 +764,9 @@ uint16_t ValueTree::InsertChild(const void *Data, uint16_t Size, Types Type, uin
 
     if (SetupCall)
         TriggerSetup(childIdx);
+
+    if (ReadOnly == false)
+        MarkDirty();
 
     return childIdx;
 }

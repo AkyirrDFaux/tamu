@@ -67,7 +67,6 @@ void ChirpClass::Begin(Text Name)
     NimBLEDevice::setMTU(512);
     pServer = NimBLEDevice::createServer();
     pServer->setCallbacks(&staticServerCallbacks);
-
     // Explicitly create UUID objects to verify parsing
     NimBLEUUID svcUUID(SERVICE_UUID);
     NimBLEUUID rxUUID(CHARACTERISTIC_UUID_RX);
