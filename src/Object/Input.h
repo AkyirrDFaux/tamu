@@ -7,14 +7,14 @@ public:
     InputClass(const Reference &ID, FlagClass Flags = Flags::RunLoop, RunInfo Info = {1, 0});
     ~InputClass();
 
-    void Setup(const Reference &Index);
+    void Setup(uint16_t Index);
     bool Run();
 
     // Port Management
     bool Connect();
     bool Disconnect();
 
-    static void SetupBridge(BaseClass *Base, const Reference &Index)
+    static void SetupBridge(BaseClass *Base, uint16_t Index)
     {
         static_cast<InputClass *>(Base)->Setup(Index);
     }
@@ -90,10 +90,10 @@ bool InputClass::Disconnect()
     return true;
 }
 
-void InputClass::Setup(const Reference &Index)
+void InputClass::Setup(uint16_t Index)
 {
     // Path {0, 0}: Port changed
-    if (Index.PathLen() == 2 && Index.Path[0] == 0 && Index.Path[1] == 0)
+    if (Index == 1)
     {
         Disconnect();
         Connect();
@@ -101,7 +101,7 @@ void InputClass::Setup(const Reference &Index)
     }
 
     // Only proceed if the base mode {0} changed
-    if (Index.PathLen() != 1 || Index.Path[0] != 0)
+    if (Index != 0)
         return;
 
     // Mode is at index 0

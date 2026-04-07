@@ -13,13 +13,13 @@ public:
     DisplayClass(const Reference &ID, FlagClass Flags = Flags::RunLoop, RunInfo Info = {1, 0});
     ~DisplayClass();
 
-    void Setup(const Reference &Index);
+    void Setup(uint16_t Index);
     bool Run();
 
     bool Connect(BaseClass *Object = nullptr, int32_t Index = -1);
     bool Disconnect();
 
-    static void SetupBridge(BaseClass *Base, const Reference &Index)
+    static void SetupBridge(BaseClass *Base, uint16_t Index)
     {
         static_cast<DisplayClass *>(Base)->Setup(Index);
     }
@@ -131,11 +131,10 @@ bool DisplayClass::Disconnect()
     return false;
 }
 
-void DisplayClass::Setup(const Reference &Index)
+void DisplayClass::Setup(uint16_t Index)
 {
     // PathLen is a function call; storing it once saves bytes
-    uint8_t len = Index.PathLen();
-    bool HardwareChanged = (len == 0);
+    bool HardwareChanged = (Index <= 2);
 
     // Hardcoded indices from the linear constructor:
     // {0}   = Index 0 (Displays Type)
@@ -143,9 +142,9 @@ void DisplayClass::Setup(const Reference &Index)
     // {0, 1} = Index 2 (Length)
     // {0, 2} = Index 3 (Size)
 
-    if (!HardwareChanged && len > 0 && Index.Path[0] == 0)
+    if (!HardwareChanged)
     {
-        if (len == 1) // Displays::Type changed ({0})
+        if (Index == 0) // Displays::Type changed ({0})
         {
             Result res = Values.Get(0);
             if (res.Value)
@@ -176,7 +175,7 @@ void DisplayClass::Setup(const Reference &Index)
             }
         }
         // Check if Port {0,0} or Length {0,1} changed
-        else if (len > 1 && (Index.Path[1] == 0 || Index.Path[1] == 1))
+        else
         {
             HardwareChanged = true;
         }

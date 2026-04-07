@@ -7,13 +7,13 @@ public:
     SensorClass(const Reference &ID, FlagClass Flags = Flags::RunLoop, RunInfo Info = {1, 0});
     ~SensorClass();
 
-    void Setup(const Reference &Index);
+    void Setup(uint16_t Index);
     bool Run();
 
     bool Connect();
     bool Disconnect();
 
-    static void SetupBridge(BaseClass *Base, const Reference &Index)
+    static void SetupBridge(BaseClass *Base, uint16_t Index)
     {
         static_cast<SensorClass *>(Base)->Setup(Index);
     }
@@ -89,10 +89,10 @@ bool SensorClass::Disconnect()
     return true;
 }
 
-void SensorClass::Setup(const Reference &Index)
+void SensorClass::Setup(uint16_t Index)
 {
     // Reconnect if the physical port {0, 0} changes
-    if (Index == Reference({0, 0}))
+    if (Index == 1)
     {
         Disconnect();
         Connect();

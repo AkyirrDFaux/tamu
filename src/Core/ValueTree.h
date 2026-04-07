@@ -80,6 +80,7 @@ private:
     void EnsureCapacity(uint16_t required);
     void EnsureHeaderCapacity(uint16_t count);
 
+    BaseClass *Context = nullptr; // The stored callback
 public:
     Header *HeaderArray = nullptr;
     uint16_t HeaderAllocated = 0;
@@ -87,7 +88,8 @@ public:
     uint16_t Length = 0;
     uint16_t Allocated = 0;
 
-    ValueTree() {};
+    ValueTree() : Context(nullptr) {};
+    ValueTree(BaseClass* Context) : Context(Context) {}
     ValueTree(const ValueTree &Copied);
     ~ValueTree();
     ValueTree(const void *data, uint16_t size, Types Type);
@@ -132,6 +134,7 @@ public:
     // --- Protocol Logic ---
     FlexArray Serialize() const;
     bool Deserialize(const FlexArray &in, uint16_t startIndex);
+    void TriggerSetup(uint16_t index);
 };
 
 void ValueTree::EnsureCapacity(uint16_t required)
@@ -717,6 +720,9 @@ void ValueTree::Set(const void *Data, size_t Size, Types Type, uint16_t Index, b
     {
         memcpy(Array + HeaderArray[Index].Pointer, Data, Size);
     }
+
+    if (SetupCall)
+        TriggerSetup(Index);
 }
 
 uint16_t ValueTree::InsertNext(const void *Data, uint16_t Size, Types Type, uint16_t CurrentIdx, bool ReadOnly, bool SetupCall)
@@ -735,6 +741,9 @@ uint16_t ValueTree::InsertNext(const void *Data, uint16_t Size, Types Type, uint
 
     HeaderArray[nextIdx].SetReadOnly(ReadOnly);
     HeaderArray[nextIdx].SetSetupCall(SetupCall);
+
+    if (SetupCall)
+        TriggerSetup(nextIdx);
 
     return nextIdx;
 }
@@ -764,6 +773,9 @@ uint16_t ValueTree::InsertChild(const void *Data, uint16_t Size, Types Type, uin
 
     HeaderArray[childIdx].SetReadOnly(ReadOnly);
     HeaderArray[childIdx].SetSetupCall(SetupCall);
+
+    if (SetupCall)
+        TriggerSetup(childIdx);
 
     return childIdx;
 }

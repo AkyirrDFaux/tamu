@@ -51,7 +51,7 @@ public:
     bool IsValid(const Reference &ID, ObjectTypes Filter = ObjectTypes::Undefined) const;
 
     Bookmark Find(const Reference &Location, bool StopAtReferences = false) const;
-    void ValueSetup(const void *Data, size_t Size, Types Type, const Reference &Location);
+    //void ValueSetup(const void *Data, size_t Size, Types Type, const Reference &Location);
 
     void Expand(uint32_t NewAllocated);
     void Shorten();
@@ -63,7 +63,7 @@ public:
 struct VTable
 {
     // Changed Path to Reference for consistent branch initialization
-    void (*Setup)(BaseClass *self, const Reference &Index);
+    void (*Setup)(BaseClass *self, uint16_t Index);
     bool (*Run)(BaseClass *self);
 };
 
@@ -80,7 +80,7 @@ public:
 
     // Constructor now takes the new bit-tagged Reference
     BaseClass(const VTable *Table, const Reference &NewID, FlagClass Flags = Flags::None, RunInfo Info = {0, 0})
-        : Vptr(Table), Flags(Flags), RunPeriod(Info.Period)
+        : Vptr(Table), Flags(Flags), RunPeriod(Info.Period), Values(this)
     {
         Objects.Register(this, NewID, Info);
     };
@@ -90,7 +90,7 @@ public:
     void Destroy();
 
     // Updated Setup to use Reference
-    void Setup(const Reference &Index) { Vptr->Setup(this, Index); }
+    void Setup(uint16_t Index) { Vptr->Setup(this, Index); }
     RunInfo Run(FlagClass RunFlags)
     {
         if (Flags == Flags::Inactive) // || !(Flags == RunFlags)) // Should not run
@@ -110,7 +110,7 @@ public:
             return {RunPeriod == 0 ? (uint8_t)1 : RunPeriod, RunPhase};
     }
 
-    static void DefaultSetup(BaseClass *self, const Reference &Index) { /* Empty default */ };
+    static void DefaultSetup(BaseClass *self, uint16_t Index) { /* Empty default */ };
     static bool DefaultRun(BaseClass *self)
     {
         // ReportError(Status::InvalidType);
@@ -121,9 +121,45 @@ public:
     C *As() const { return (C *)this; };
 
     Bookmark Find(const Reference &Location, bool StopAtReferences = false) const;
-    void ValueSetup(const void *Data, size_t Size, Types Type, const Bookmark &Point);
-    void ValueSetup(const void *Data, size_t Size, Types Type, const Reference &Location);
     FlexArray Compress() const;
 };
 
 BaseClass *CreateObject(Reference ID, ObjectTypes Type);
+
+FlexArray BaseClass::Compress() const
+{
+    // 1. Get the Reference struct/object
+    Reference SelfRef = Objects.GetReference(this);
+
+    // 2. Start the FlexArray with exactly 3 bytes from the Reference data
+    // This assumes Reference.Data is the internal pointer to [Net, Group, Device]
+    FlexArray Blob((const char *)SelfRef.Data, 3);
+
+    // 3. Append ObjectType + Flags + Info (4 byte consecutive)
+    Blob += FlexArray((char *)&Type, 4);
+
+    // 5. Append Name (1-byte length prefix + data)
+    uint8_t nameLen = (Name.Length > 255) ? 255 : (uint8_t)Name.Length - 1;
+    Blob += FlexArray((char *)&nameLen, 1);
+    if (nameLen > 0)
+    {
+        Blob += FlexArray(Name.Data, nameLen);
+    }
+
+    // 6. Serialize and Append Values
+    // This calls the loop-based serialization we discussed
+    Blob += Values.Serialize();
+
+    return Blob;
+}
+
+Bookmark BaseClass::Find(const Reference &Location, bool StopAtReferences) const
+{
+    return Values.Find(Location, StopAtReferences);
+}
+
+void ValueTree::TriggerSetup(uint16_t index)
+{
+    if (Context != nullptr)
+        Context->Setup(index);
+}

@@ -84,12 +84,12 @@ Bookmark RegisterClass::Find(const Reference &Location, bool StopAtReferences) c
     return target->Values.Find(Location, StopAtReferences);
 }
 
-void RegisterClass::ValueSetup(const void *Data, size_t Size, Types Type, const Reference &Location) {
+/*void RegisterClass::ValueSetup(const void *Data, size_t Size, Types Type, const Reference &Location) {
     BaseClass* target = At(Location);
     if (target) {
         target->ValueSetup(Data, Size, Type, Location);
     }
-}
+}*/
 
 // --- Memory Management ---
 

@@ -27,7 +27,6 @@ uint32_t DeltaTime = 0;
 #include "Core\ValueTree.h" //Main storage for values
 #include "Core\Objects.h"
 #include "Core\Register.h"
-#include "Core\BaseClass.h"
 
 // Hardware related
 #include "Hardware\Base.h"
@@ -87,7 +86,7 @@ int main()
     // HW::FlashFormat();
 
     //ESP_LOGI("MAIN", "Setuping");
-    Board.Setup(Reference::Global(0, 0, 0)); // Initialize devices
+    Board.Setup(0); // Initialize devices
     //DefaultSetup();
     //HW::LoadAll();
 
@@ -151,7 +150,6 @@ extern "C"
 #endif
 /*TODO:
 KEY FEATURES:
-Fix Setups
 More operations
 OLED
 LED strip

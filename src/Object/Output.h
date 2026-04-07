@@ -7,13 +7,13 @@ public:
     OutputClass(const Reference &ID, FlagClass Flags = Flags::RunLoop, RunInfo Info = {1, 0});
     ~OutputClass();
 
-    void Setup(const Reference &Index);
+    void Setup(uint16_t Index);
     bool Run();
 
     bool Connect();
     bool Disconnect();
 
-    static void SetupBridge(BaseClass *Base, const Reference &Index)
+    static void SetupBridge(BaseClass *Base, uint16_t Index)
     {
         static_cast<OutputClass *>(Base)->Setup(Index);
     }
@@ -35,11 +35,11 @@ OutputClass::OutputClass(const Reference &ID, FlagClass Flags, RunInfo Info)
 
     // 1. Root {0}: Mode
     Outputs initialMode = Outputs::Undefined;
-    Values.Set(&initialMode, sizeof(Outputs), Types::Output, 0);
+    Values.Set(&initialMode, sizeof(Outputs), Types::Output, 0, false, true);
 
     // 2. Child of Mode {0, 0}: Port
     PortNumber initialPort = -1;
-    Values.InsertChild(&initialPort, sizeof(PortNumber), Types::PortNumber, 0);
+    Values.InsertChild(&initialPort, sizeof(PortNumber), Types::PortNumber, 0, false, true);
 
     // 3. Sibling of Mode {1}: Target (Value)
     Number initialTarget = 0;
@@ -47,7 +47,7 @@ OutputClass::OutputClass(const Reference &ID, FlagClass Flags, RunInfo Info)
 
     // 4. Child of Target {1, 0}: Frequency
     int32_t initialFreq = 25000;
-    Values.InsertChild(&initialFreq, sizeof(int32_t), Types::Integer, targetIdx);
+    Values.InsertChild(&initialFreq, sizeof(int32_t), Types::Integer, targetIdx, false, true);
 }
 
 OutputClass::~OutputClass()
@@ -74,7 +74,7 @@ bool OutputClass::Connect()
     if (Board.ConnectPin(this, Port))
     {
         CurrentPort = Port;
-        Setup(Reference({0})); // Initialize hardware settings
+        Setup(0); // Initialize hardware settings
         return true;
     }
 
@@ -96,10 +96,10 @@ bool OutputClass::Disconnect()
     return true;
 }
 
-void OutputClass::Setup(const Reference &Index)
+void OutputClass::Setup(uint16_t Index)
 {
     // Port change {0, 0}
-    if (Index.PathLen() == 2 && Index.Path[0] == 0 && Index.Path[1] == 0)
+    if (Index == 1)
     {
         Disconnect();
         Connect();
@@ -107,8 +107,8 @@ void OutputClass::Setup(const Reference &Index)
     }
 
     // Mode {0} or Frequency {1, 0} change
-    bool isMode = (Index.PathLen() == 1 && Index.Path[0] == 0);
-    bool isFreq = (Index.PathLen() == 2 && Index.Path[0] == 1 && Index.Path[1] == 0);
+    bool isMode = (Index == 0);
+    bool isFreq = (Index == 3);
 
     if (isMode || isFreq)
     {

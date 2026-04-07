@@ -107,7 +107,10 @@ void WriteValue(const FlexArray &Input)
     }
 
     // 5. Update Object State
-    Object->ValueSetup(pData, pLen, pType, *pID);
+    Bookmark Index = Object->Values.Find(*pID, true);
+
+    bool WasSetup = Object->Values.HeaderArray[Index.Index].IsSetupCall();
+    Object->Values.Set(pData, pLen, pType, *pID, false, WasSetup);
 
     ReadValue(Input);
 }

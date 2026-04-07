@@ -7,13 +7,13 @@ public:
 
     I2CDeviceClass(const Reference &ID, FlagClass Flags = Flags::RunLoop, RunInfo Info = {1, 0});
 
-    void Setup(const Reference &Index);
+    void Setup(uint16_t Index);
     bool Run();
 
     bool Connect();
     bool Disconnect();
 
-    static void SetupBridge(BaseClass *Base, const Reference &Index)
+    static void SetupBridge(BaseClass *Base, uint16_t Index)
     {
         static_cast<I2CDeviceClass *>(Base)->Setup(Index);
     }
@@ -85,13 +85,13 @@ bool I2CDeviceClass::Disconnect()
     return true;
 }
 
-void I2CDeviceClass::Setup(const Reference &Index)
+void I2CDeviceClass::Setup(uint16_t Index)
 {
-    if (Index.PathLen() > 0 && Index.Path[0] != 0) // Only setup in first group
+    if (Index > 3) // Only setup in first group
         return;
 
     // Check if we need to reconnect (Port change)
-    if (Index.PathLen() == 0 || (Index.PathLen() >= 2 && Index.Path[0] == 0 && Index.Path[1] < 2))
+    if (Index == 1 || Index == 2)
     {
         Disconnect();
         if (!Connect())

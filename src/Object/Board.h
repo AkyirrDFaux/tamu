@@ -46,7 +46,7 @@ public:
     BoardClass(const Reference &ID);
 
     // Updated to use Reference
-    void Setup(const Reference &Index);
+    void Setup(uint16_t Index);
     bool Run();
     void UpdateLoopTime();
 
@@ -65,7 +65,7 @@ public:
     bool DisconnectPin(BaseClass *Object, PortNumber Port);
 
     // Bridge functions updated for Reference
-    static void SetupBridge(BaseClass *Base, const Reference &Index)
+    static void SetupBridge(BaseClass *Base, uint16_t Index)
     {
         static_cast<BoardClass *>(Base)->Setup(Index);
     }

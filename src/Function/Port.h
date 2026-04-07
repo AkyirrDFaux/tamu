@@ -1,25 +1,25 @@
-void BoardClass::Setup(const Reference &Index)
+void BoardClass::Setup(uint16_t Index)
 {
 #if defined BOARD_Tamu_v2_0
     // Initialize onboard devices on root setup
-    if (Index.PathLen() == 0)
+    if (Index == 0)
     {
         // Reference(0,2,0) points to the local Gyro/Acc object
         I2CDeviceClass *GyroAcc = new I2CDeviceClass(Reference::Global(0, 2, 0), Flags::Auto | Flags::RunLoop);
 
         PortNumber sda = 8, scl = 9;
-        GyroAcc->ValueSetup(&sda, sizeof(PortNumber), Types::PortNumber, Reference({0, 0}));
-        GyroAcc->ValueSetup(&scl, sizeof(PortNumber), Types::PortNumber, Reference({0, 1}));
+        GyroAcc->Values.Set(&sda, sizeof(PortNumber), Types::PortNumber, 1, true, true);
+        GyroAcc->Values.Set(&scl, sizeof(PortNumber), Types::PortNumber, 2, true, true);
 
         I2CDevices model = I2CDevices::LSM6DS3TRC;
-        GyroAcc->ValueSetup(&model, sizeof(I2CDevices), Types::I2CDevice, Reference({0}));
+        GyroAcc->Values.Set(&model, sizeof(I2CDevices), Types::I2CDevice, 0, true, true);
 
         InputClass *Button = new InputClass(Reference::Global(0, 2, 1), Flags::Auto | Flags::RunLoop);
         PortNumber btnPin = 10;
-        Button->ValueSetup(&btnPin, sizeof(PortNumber), Types::PortNumber, Reference({0, 0}));
+        Button->Values.Set(&btnPin, sizeof(PortNumber), Types::PortNumber, 1, true, true);
 
         Inputs inType = Inputs::ButtonWithLED;
-        Button->ValueSetup(&inType, sizeof(Inputs), Types::Input, Reference({0}));
+        Button->Values.Set(&inType, sizeof(Inputs), Types::Input, 0, true, true);
     }
 #endif
 }
