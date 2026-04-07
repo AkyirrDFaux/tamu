@@ -151,7 +151,13 @@ extern "C"
 /*TODO:
 KEY FEATURES:
 More operations
+ - move inputs to {1}, {2} ...
+ - Delay with output (elapsed/remaining)
+ - Extract, convert
+Value Deletion from app
 OLED
+ - Bind inputs
+ - Use references as entries in list
 LED strip
 Servo
 Compile options
@@ -168,6 +174,7 @@ Experimental paralel LED bit-banging
 Multiple boards together
 
 ADJUSTMENTS:
+Better compression in storage (Undefined with span of N indexes)
 use more const, final, inline keywords, pass by reference, overall optimalizaton
 */
 

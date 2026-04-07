@@ -72,6 +72,16 @@ struct Bookmark
 {
     ValueTree *Map = nullptr;
     uint16_t Index = INVALID_HEADER;
+
+    Result Get() const;
+    Result GetThis() const;
+    Bookmark Next() const;
+    Bookmark Child() const;
+    Bookmark This() const;
+
+    void Set(const void *Data, size_t Size, Types Type, bool ReadOnly = false, bool SetupCall = false) const;
+    Bookmark InsertNext(const void *Data, uint16_t Size, Types Type, bool ReadOnly = false, bool SetupCall = false);
+    Bookmark InsertChild(const void *Data, uint16_t Size, Types Type, bool ReadOnly = false, bool SetupCall = false);
 };
 
 class ValueTree
@@ -98,18 +108,12 @@ public:
     ValueTree &operator<<(const ValueTree &Data);
 
     Result Get(uint16_t Index) const;
-    Result Get(const Bookmark &Sibling) const;
     Result GetThis(uint16_t Index) const;
-    Result GetThis(const Bookmark &Sibling) const;
-
     // Core Navigation
     uint16_t Next(uint16_t Sibling) const; // Never evaluates references
     uint16_t Child(uint16_t Parent) const; // Never evaluates references
-    Bookmark Next(const Bookmark &Sibling) const;
-    Bookmark Child(const Bookmark &Parent) const;
+    Bookmark This(uint16_t Index) const;   // Always evaluates references
 
-    Bookmark This(uint16_t Index) const; // Always evaluates references
-    Bookmark This(const Bookmark &Parent) const;
     Bookmark Find(const Reference &Location, bool StopAtReferences = false) const;
 
     // --- Data Manipulation ---
@@ -122,12 +126,9 @@ public:
 
     // Setters
     void Set(const void *Data, size_t Size, Types Type, uint16_t Index, bool ReadOnly = false, bool SetupCall = false);
-    void Set(const void *Data, size_t Size, Types Type, const Bookmark &Point, bool ReadOnly = false, bool SetupCall = false);
     void Set(const void *Data, size_t Size, Types Type, const Reference &Location, bool ReadOnly = false, bool SetupCall = false);
     uint16_t InsertNext(const void *Data, uint16_t Size, Types Type, uint16_t CurrentIdx, bool ReadOnly = false, bool SetupCall = false);
     uint16_t InsertChild(const void *Data, uint16_t Size, Types Type, uint16_t ParentIdx, bool ReadOnly = false, bool SetupCall = false);
-    Bookmark InsertNext(const void *Data, uint16_t Size, Types Type, const Bookmark &CurrentIdx, bool ReadOnly = false, bool SetupCall = false);
-    Bookmark InsertChild(const void *Data, uint16_t Size, Types Type, const Bookmark &ParentIdx, bool ReadOnly = false, bool SetupCall = false);
 
     // --- Protocol Logic ---
     FlexArray Serialize(bool ExtraCompression = false) const;
@@ -565,13 +566,6 @@ inline Result ValueTree::Get(uint16_t Index) const
     return {Array + h.Pointer, h.Length, h.Type};
 }
 
-inline Result ValueTree::Get(const Bookmark &Point) const
-{
-    if (!Point.Map)
-        return {};
-    return Point.Map->Get(Point.Index);
-}
-
 inline Result ValueTree::GetThis(uint16_t Index) const
 {
     Bookmark Value = This(Index);
@@ -580,40 +574,6 @@ inline Result ValueTree::GetThis(uint16_t Index) const
     const Header &h = Value.Map->HeaderArray[Value.Index];
 
     return {Value.Map->Array + h.Pointer, h.Length, h.Type};
-}
-
-inline Result ValueTree::GetThis(const Bookmark &Point) const
-{
-    if (!Point.Map)
-        return {};
-    return Point.Map->GetThis(Point.Index);
-}
-
-inline Bookmark ValueTree::Next(const Bookmark &Sibling) const
-{
-    if (!Sibling.Map)
-        return {};
-    return {Sibling.Map, Sibling.Map->Next(Sibling.Index)};
-}
-
-inline Bookmark ValueTree::Child(const Bookmark &Parent) const
-{
-    if (!Parent.Map)
-        return {};
-    return {Parent.Map, Parent.Map->Child(Parent.Index)};
-}
-
-inline Bookmark ValueTree::This(const Bookmark &Point) const
-{
-    if (!Point.Map)
-        return {};
-    return Point.Map->This(Point.Index);
-}
-
-inline void ValueTree::Set(const void *Data, size_t Size, Types Type, const Bookmark &Point, bool ReadOnly, bool SetupCall)
-{
-    if (Point.Map)
-        Point.Map->Set(Data, Size, Type, Point.Index, ReadOnly, SetupCall);
 }
 
 inline void ValueTree::Set(const void *Data, size_t Size, Types Type, const Reference &Location, bool ReadOnly, bool SetupCall)
@@ -626,20 +586,6 @@ inline void ValueTree::Set(const void *Data, size_t Size, Types Type, const Refe
         target = Find(Location, true);
     }
     Set(Data, Size, Type, target.Index, ReadOnly, SetupCall);
-}
-
-inline Bookmark ValueTree::InsertNext(const void *Data, uint16_t Size, Types Type, const Bookmark &Point, bool ReadOnly, bool SetupCall)
-{
-    if (!Point.Map)
-        return {};
-    return {Point.Map, Point.Map->InsertNext(Data, Size, Type, Point.Index, ReadOnly, SetupCall)};
-}
-
-inline Bookmark ValueTree::InsertChild(const void *Data, uint16_t Size, Types Type, const Bookmark &Point, bool ReadOnly, bool SetupCall)
-{
-    if (!Point.Map)
-        return {};
-    return {Point.Map, Point.Map->InsertChild(Data, Size, Type, Point.Index, ReadOnly, SetupCall)};
 }
 
 // Functions themselves
@@ -769,4 +715,60 @@ uint16_t ValueTree::InsertChild(const void *Data, uint16_t Size, Types Type, uin
         MarkDirty();
 
     return childIdx;
+}
+
+// Bookmark
+inline Result Bookmark::Get() const
+{
+    if (!Map)
+        return {};
+    return Map->Get(Index);
+}
+
+inline Result Bookmark::GetThis() const
+{
+    if (!Map)
+        return {};
+    return Map->GetThis(Index);
+}
+
+inline Bookmark Bookmark::Next() const
+{
+    if (!Map)
+        return {};
+    return {Map, Map->Next(Index)};
+}
+
+inline Bookmark Bookmark::Child() const
+{
+    if (!Map)
+        return {};
+    return {Map, Map->Child(Index)};
+}
+
+inline Bookmark Bookmark::This() const
+{
+    if (!Map)
+        return {};
+    return Map->This(Index);
+}
+
+inline void Bookmark::Set(const void *Data, size_t Size, Types Type, bool ReadOnly, bool SetupCall) const
+{
+    if (Map)
+        Map->Set(Data, Size, Type, Index, ReadOnly, SetupCall);
+}
+
+inline Bookmark Bookmark::InsertNext(const void *Data, uint16_t Size, Types Type, bool ReadOnly, bool SetupCall)
+{
+    if (!Map)
+        return {};
+    return {Map, Map->InsertNext(Data, Size, Type, Index, ReadOnly, SetupCall)};
+}
+
+inline Bookmark Bookmark::InsertChild(const void *Data, uint16_t Size, Types Type, bool ReadOnly, bool SetupCall)
+{
+    if (!Map)
+        return {};
+    return {Map, Map->InsertChild(Data, Size, Type, Index, ReadOnly, SetupCall)};
 }

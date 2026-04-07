@@ -26,7 +26,7 @@ void ReadValue(const FlexArray &Input)
     if (pID->PathLen() > 0)
     {
         Bookmark Found = Object->Values.Find(*pID, true);
-        Result FoundData = Object->Values.Get(Found);
+        Result FoundData = Found.Get();
         
         if (FoundData.Value != nullptr && FoundData.Length > 0)
         {

@@ -6,7 +6,7 @@ Number GetAsNumber(const Bookmark &Location)
 
     // 2. Resolve the data Result via the Map stored in the bookmark
     // This handles the raw memory access and type metadata
-    Result Source = Location.Map->GetThis(Location);
+    Result Source = Location.GetThis();
 
     // 3. If resolution fails or data is missing, return 0
     if (!Source.Value || Source.Type == Types::Undefined)
@@ -43,16 +43,16 @@ void StoreScalar(const Bookmark &Target, Number Result, Types T)
     if (T == Types::Integer)
     {
         int32_t val = (int32_t)Result;
-        Target.Map->Set(&val, sizeof(int32_t), T, Target.Index);
+        Target.Set(&val, sizeof(int32_t), T, true);
     }
     else if (T == Types::Byte || T == Types::Bool)
     {
         uint8_t val = (uint8_t)Result;
-        Target.Map->Set(&val, 1, T, Target.Index);
+        Target.Set(&val, 1, T, true);
     }
     else if (T == Types::Number)
     {
         // Standard Number type (usually float or double)
-        Target.Map->Set(&Result, sizeof(Number), T, Target.Index);
+        Target.Set(&Result, sizeof(Number), T, true);
     }
 }

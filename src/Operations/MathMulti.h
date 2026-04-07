@@ -1,12 +1,12 @@
-bool ExecuteVector3DMulti(const Bookmark &itStart, uint32_t OutIndex, Operations Op)
+bool ExecuteVector3DMulti(const Bookmark &itStart, const Bookmark &Out, Operations Op)
 {
-    Result first = itStart.Map->GetThis(itStart);
+    Result first = itStart.GetThis();
     Vector3D acc = *(Vector3D *)first.Value;
 
-    Bookmark it = itStart.Map->Next(itStart);
+    Bookmark it = itStart.Next();
     while (it.Index != INVALID_HEADER)
     {
-        Result actual = it.Map->GetThis(it);
+        Result actual = it.GetThis();
         if (actual.Type != Types::Vector3D || !actual.Value)
             return true;
 
@@ -28,22 +28,22 @@ bool ExecuteVector3DMulti(const Bookmark &itStart, uint32_t OutIndex, Operations
         default:
             return true;
         }
-        it = it.Map->Next(it);
+        it = it.Next();
     }
 
-    itStart.Map->Set(&acc, sizeof(Vector3D), Types::Vector3D, OutIndex);
+    Out.Set(&acc, sizeof(Vector3D), Types::Vector3D, true);
     return true;
 }
 
-bool ExecuteVector2DMulti(const Bookmark &itStart, uint32_t OutIndex, Operations Op)
+bool ExecuteVector2DMulti(const Bookmark &itStart, const Bookmark &Out, Operations Op)
 {
-    Result first = itStart.Map->GetThis(itStart);
+    Result first = itStart.GetThis();
     Vector2D acc = *(Vector2D *)first.Value;
 
-    Bookmark it = itStart.Map->Next(itStart);
+    Bookmark it = itStart.Next();
     while (it.Index != INVALID_HEADER)
     {
-        Result actual = it.Map->GetThis(it);
+        Result actual = it.GetThis();
         if (actual.Type != Types::Vector2D || !actual.Value)
             return true;
 
@@ -65,28 +65,28 @@ bool ExecuteVector2DMulti(const Bookmark &itStart, uint32_t OutIndex, Operations
         default:
             return true;
         }
-        it = it.Map->Next(it);
+        it = it.Next();
     }
 
-    itStart.Map->Set(&acc, sizeof(Vector2D), Types::Vector2D, OutIndex);
+    Out.Set(&acc, sizeof(Vector2D), Types::Vector2D, true);
     return true;
 }
 
 bool ExecuteMathMulti(const Bookmark &OpPoint, Operations Op)
 {
     // 1. Navigation: {0} is Output, {1} is Inputs folder
-    Bookmark OutMark = OpPoint.Map->Child(OpPoint);
-    Bookmark InFolder = OpPoint.Map->Next(OutMark);
+    Bookmark OutMark = OpPoint.Child();
+    Bookmark InFolder = OutMark.Next();
 
     if (OutMark.Index == INVALID_HEADER || InFolder.Index == INVALID_HEADER)
         return true;
 
     // 2. Find the first input at {1, 0}
-    Bookmark it = OpPoint.Map->Child(InFolder);
+    Bookmark it = InFolder.Child();
     if (it.Index == INVALID_HEADER)
         return true;
 
-    Result firstActual = OpPoint.Map->GetThis(it);
+    Result firstActual = it.GetThis();
     if (!firstActual.Value)
         return true;
 
@@ -94,9 +94,9 @@ bool ExecuteMathMulti(const Bookmark &OpPoint, Operations Op)
 
     // 3. Delegate if it's a vector lane
     if (targetType == Types::Vector3D)
-        return ExecuteVector3DMulti(it, OutMark.Index, Op);
+        return ExecuteVector3DMulti(it, OutMark, Op);
     if (targetType == Types::Vector2D)
-        return ExecuteVector2DMulti(it, OutMark.Index, Op);
+        return ExecuteVector2DMulti(it, OutMark, Op);
 
     // 4. Scalar Lane
     if (!IsScalar(targetType))
@@ -104,10 +104,10 @@ bool ExecuteMathMulti(const Bookmark &OpPoint, Operations Op)
 
     Number acc = GetAsNumber(it);
 
-    it = OpPoint.Map->Next(it);
+    it = it.Next();
     while (it.Index != INVALID_HEADER)
     {
-        Result actual = OpPoint.Map->GetThis(it);
+        Result actual = it.GetThis();
 
         if (!IsScalar(actual.Type))
             return true;
@@ -140,7 +140,7 @@ bool ExecuteMathMulti(const Bookmark &OpPoint, Operations Op)
             return true;
         }
 
-        it = OpPoint.Map->Next(it);
+        it = it.Next();
     }
 
     // 5. Final storage using updated StoreScalar

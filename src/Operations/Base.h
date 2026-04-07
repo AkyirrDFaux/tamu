@@ -1,20 +1,20 @@
 bool Equal(const Bookmark &OpPoint)
 {
     // 1. Navigation: Output is {0}, Inputs Folder is {1}
-    Bookmark OutMark = OpPoint.Map->Child(OpPoint);
-    Bookmark InFolder = OpPoint.Map->Next(OutMark);
+    Bookmark OutMark = OpPoint.Child();
+    Bookmark InFolder = OutMark.Next();
 
     if (InFolder.Index == INVALID_HEADER || OutMark.Index == INVALID_HEADER)
         return false;
 
     // 2. Source is the first child of the Inputs Folder {1, 0}
-    Bookmark SrcMark = OpPoint.Map->Child(InFolder);
-    Result Source = OpPoint.Map->GetThis(SrcMark);
+    Bookmark SrcMark = InFolder.Child();
+    Result Source = SrcMark.GetThis();
 
     if (Source.Value && Source.Length > 0)
     {
         // 3. Direct write to the Output node using its Index
-        OpPoint.Map->Set(Source.Value, Source.Length, Source.Type, OutMark.Index);
+        OutMark.Set(Source.Value, Source.Length, Source.Type, true);
         return true;
     }
     return false;
@@ -23,8 +23,8 @@ bool Equal(const Bookmark &OpPoint)
 bool Combine(const Bookmark &OpPoint)
 {
     // 1. Navigation
-    Bookmark OutMark = OpPoint.Map->Child(OpPoint);
-    Bookmark InFolder = OpPoint.Map->Next(OutMark);
+    Bookmark OutMark = OpPoint.Child();
+    Bookmark InFolder = OutMark.Next();
     
     if (InFolder.Index == INVALID_HEADER || OutMark.Index == INVALID_HEADER) 
         return false;
@@ -33,14 +33,14 @@ bool Combine(const Bookmark &OpPoint)
     Bookmark Marks[4];
     Result S[4];
 
-    Marks[0] = OpPoint.Map->Child(InFolder);
+    Marks[0] = InFolder.Child();
     for (uint8_t i = 1; i < 4; i++)
-        Marks[i] = OpPoint.Map->Next(Marks[i-1]);
+        Marks[i] = Marks[i-1].Next();
 
     for (uint8_t i = 0; i < 4; i++)
     {
         if (Marks[i].Index != INVALID_HEADER)
-            S[i] = OpPoint.Map->GetThis(Marks[i]);
+            S[i] = Marks[i].GetThis();
     }
 
     // 3. Pattern Matching and Direct Set
@@ -55,7 +55,7 @@ bool Combine(const Bookmark &OpPoint)
         uint8_t b3 = (S[3].Type == Types::Byte) ? (uint8_t)GetAsNumber(Marks[3]) : 255;
 
         ColourClass col(b0, b1, b2, b3);
-        OpPoint.Map->Set(&col, sizeof(ColourClass), Types::Colour, OutMark.Index);
+        OutMark.Set(&col, sizeof(ColourClass), Types::Colour, true);
         return true;
     }
 
@@ -63,7 +63,7 @@ bool Combine(const Bookmark &OpPoint)
     if (S[0].Type == Types::Vector2D && S[1].Type == Types::Vector2D)
     {
         Coord2D c(*(Vector2D *)S[0].Value, *(Vector2D *)S[1].Value);
-        OpPoint.Map->Set(&c, sizeof(Coord2D), Types::Coord2D, OutMark.Index);
+        OutMark.Set(&c, sizeof(Coord2D), Types::Coord2D, true);
         return true;
     }
 
@@ -71,7 +71,7 @@ bool Combine(const Bookmark &OpPoint)
     if (S[0].Type == Types::Vector2D && IsScalar(S[1].Type))
     {
         Coord2D c(*(Vector2D *)S[0].Value, GetAsNumber(Marks[1]));
-        OpPoint.Map->Set(&c, sizeof(Coord2D), Types::Coord2D, OutMark.Index);
+        OutMark.Set(&c, sizeof(Coord2D), Types::Coord2D, true);
         return true;
     }
 
@@ -79,7 +79,7 @@ bool Combine(const Bookmark &OpPoint)
     if (IsScalar(S[0].Type) && IsScalar(S[1].Type) && IsScalar(S[2].Type))
     {
         Vector3D v(GetAsNumber(Marks[0]), GetAsNumber(Marks[1]), GetAsNumber(Marks[2]));
-        OpPoint.Map->Set(&v, sizeof(Vector3D), Types::Vector3D, OutMark.Index);
+        OutMark.Set(&v, sizeof(Vector3D), Types::Vector3D, true);
         return true;
     }
 
@@ -87,7 +87,7 @@ bool Combine(const Bookmark &OpPoint)
     if (IsScalar(S[0].Type) && IsScalar(S[1].Type))
     {
         Vector2D v(GetAsNumber(Marks[0]), GetAsNumber(Marks[1]));
-        OpPoint.Map->Set(&v, sizeof(Vector2D), Types::Vector2D, OutMark.Index);
+        OutMark.Set(&v, sizeof(Vector2D), Types::Vector2D, true);
         return true;
     }
 
@@ -147,19 +147,19 @@ bool Run(Operations OpCode, const Bookmark &Index)
     }
 
     // 2. Broadcast Output
-    Bookmark outMark = Index.Map->Child(Index);
-    Result Payload = Index.Map->Get(outMark);
+    Bookmark outMark = Index.Child();
+    Result Payload = outMark.Get();
 
     if (Payload.Length == 0 || !Payload.Value)
         return true;
 
-    Bookmark linkMark = Index.Map->Child(outMark);
+    Bookmark linkMark = outMark.Child();
 
     // 3. Dispatch to outputs
     for (uint8_t i = 0;; i++)
     {
 
-        Result Link = Index.Map->Get(linkMark);
+        Result Link = linkMark.Get();
 
         if (Link.Length == 0 || Link.Type != Types::Reference)
             break;
@@ -170,7 +170,7 @@ bool Run(Operations OpCode, const Bookmark &Index)
 
         Index.Map->Set(Payload.Value, Payload.Length, Payload.Type, TargetPath);
 
-        linkMark = Index.Map->Next(linkMark);
+        linkMark = linkMark.Next();
     }
 
     return Done;
