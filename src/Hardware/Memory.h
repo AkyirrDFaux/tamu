@@ -493,7 +493,7 @@ namespace HW
             if (NameLength > 0)
                 Object->Name = Text(dataBuffer.Array + 3, NameLength);
 
-            Object->Values.Deserialize(dataBuffer, 3 + NameLength);
+            Object->Values.Deserialize(dataBuffer, 3 + NameLength, true);
         }
     }
 
@@ -553,7 +553,7 @@ namespace HW
             return false;
         }*/
 
-        FlexArray Payload = Object->Compress();
+        FlexArray Payload = Object->Compress(true);
         MemoryHeader Header = {
             .Status = 0xEE,
             .Checksum = 0x00,

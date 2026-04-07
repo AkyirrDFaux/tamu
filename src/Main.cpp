@@ -88,7 +88,7 @@ int main()
     //ESP_LOGI("MAIN", "Setuping");
     Board.Setup(0); // Initialize devices
     //DefaultSetup();
-    //HW::LoadAll();
+    HW::LoadAll();
 
     //ESP_LOGI("MAIN", "Starting Chirp");
     Result name = Board.Values.Get(Board.Values.Next(0));

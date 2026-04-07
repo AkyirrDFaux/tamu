@@ -89,7 +89,7 @@ public:
     uint16_t Allocated = 0;
 
     ValueTree() : Context(nullptr) {};
-    ValueTree(BaseClass* Context) : Context(Context) {}
+    ValueTree(BaseClass *Context) : Context(Context) {}
     ValueTree(const ValueTree &Copied);
     ~ValueTree();
     ValueTree(const void *data, uint16_t size, Types Type);
@@ -132,8 +132,8 @@ public:
     ValueTree Copy(const Reference &Location) const;
 
     // --- Protocol Logic ---
-    FlexArray Serialize() const;
-    bool Deserialize(const FlexArray &in, uint16_t startIndex);
+    FlexArray Serialize(bool ExtraCompression = false) const;
+    bool Deserialize(const FlexArray &in, uint16_t startIndex, bool ExtraCompression = false);
     void TriggerSetup(uint16_t index);
 };
 
@@ -461,11 +461,16 @@ ValueTree ValueTree::Copy(const Reference &Location) const
     return NewArray;
 }
 
-FlexArray ValueTree::Serialize() const
+FlexArray ValueTree::Serialize(bool ExtraCompression) const
 {
     uint16_t packedDataSize = 0;
     for (uint16_t i = 0; i < HeaderAllocated; i++)
+    {
+        // If compressing, ReadOnly data is omitted from the total size
+        if (ExtraCompression && HeaderArray[i].IsReadOnly())
+            continue;
         packedDataSize += HeaderArray[i].Length;
+    }
 
     uint16_t headerAreaSize = HeaderAllocated * 4;
     uint16_t totalSize = 4 + headerAreaSize + packedDataSize;
@@ -473,7 +478,6 @@ FlexArray ValueTree::Serialize() const
     FlexArray result(totalSize);
     result.Length = totalSize;
 
-    // Use a single pointer and offsets to keep logic tight
     char *base = result.Array;
     memcpy(base, &totalSize, 2);
     memcpy(base + 2, &HeaderAllocated, 2);
@@ -484,92 +488,89 @@ FlexArray ValueTree::Serialize() const
     for (uint16_t i = 0; i < HeaderAllocated; i++)
     {
         const Header &h = HeaderArray[i];
+        bool maskAsUndefined = ExtraCompression && h.IsReadOnly();
 
-        // Manual packing into the 4-byte wire format
-        hPtr[0] = (uint8_t)h.Type;
+        hPtr[0] = maskAsUndefined ? (uint8_t)Types::Undefined : (uint8_t)h.Type;
         hPtr[1] = h.Depth;
-        memcpy(hPtr + 2, &h.Length, 2);
+
+        uint16_t wireLen = maskAsUndefined ? 0 : h.Length;
+        memcpy(hPtr + 2, &wireLen, 2);
         hPtr += 4;
 
-        if (h.Length > 0)
+        if (wireLen > 0)
         {
-            memcpy(dPtr, Array + h.Pointer, h.Length);
-            dPtr += h.Length;
+            memcpy(dPtr, Array + h.Pointer, wireLen);
+            dPtr += wireLen;
         }
     }
 
     return result;
 }
 
-bool ValueTree::Deserialize(const FlexArray &in, uint16_t startIndex)
+bool ValueTree::Deserialize(const FlexArray &in, uint16_t startIndex, bool ExtraCompression)
 {
-    // 1. Bounds check for metadata (TotalSize [2] + HeaderCount [2])
-    if (startIndex + 4 > in.Length)
-        return false;
+    if (startIndex + 4 > in.Length) return false;
 
     const char *src = in.Array + startIndex;
-    uint16_t totalWireSize;
-    uint16_t count;
-
+    uint16_t totalWireSize, wireCount;
     memcpy(&totalWireSize, src, 2);
-    memcpy(&count, src + 2, 2);
+    memcpy(&wireCount, src + 2, 2);
 
-    // 2. Bounds check for the full payload to prevent memory overflow
-    if (startIndex + totalWireSize > in.Length)
-        return false;
+    if (startIndex + totalWireSize > in.Length) return false;
 
-    // 3. Reset and Prepare Headers
-    this->EnsureHeaderCapacity(count);
-    this->HeaderAllocated = count; // Logic assumes Allocated == Count for this operation
+    // Surgical mode usually requires the skeleton to match.
+    if (ExtraCompression && wireCount != HeaderAllocated) return false;
 
     const char *hRead = src + 4;
-    const char *dRead = src + 4 + (count * 4);
-    uint32_t internalOffset = 0;
+    const char *dRead = src + 4 + (wireCount * 4);
+    const char *currentDataPtr = dRead;
 
-    // --- Pass 1: Setup Headers and calculate required RAM alignment ---
-    for (uint16_t i = 0; i < count; i++)
+    for (uint16_t i = 0; i < wireCount; i++)
     {
-        Header &h = this->HeaderArray[i];
-
-        // Unpack wire format (Type[1], Depth[1], Length[2])
-        h.Type = (Types)hRead[0];
-        h.Depth = hRead[1];
-        memcpy(&h.Length, hRead + 2, 2);
+        Types wireType = (Types)hRead[0];
+        uint8_t wireDepth = hRead[1];
+        uint16_t wireLen;
+        memcpy(&wireLen, hRead + 2, 2);
         hRead += 4;
 
-        // Map internal pointer using Align() to satisfy CPU/Logic requirements
-        h.Pointer = internalOffset;
-        internalOffset += Align(h.Length);
-    }
-
-    // --- Pass 2: Reallocate and Clean Data Buffer ---
-    this->Length = internalOffset;
-    this->EnsureCapacity(this->Length);
-
-    // CRITICAL: Zero out the buffer.
-    // Since Serialize packs tightly but RAM aligns, we must wipe the "gaps"
-    // created by Align(h.Length) so they don't contain old memory noise.
-    if (this->Array && this->Length > 0)
-        memset(this->Array, 0, this->Length);
-
-    // --- Pass 3: Copy Packed Data into Aligned RAM ---
-    const char *currentDataPtr = dRead;
-    for (uint16_t i = 0; i < count; i++)
-    {
         Header &h = this->HeaderArray[i];
-        if (h.Length > 0)
-        {
-            // Copy exactly h.Length from the PACKED wire source
-            // into the ALIGNED internal Pointer
-            memcpy(this->Array + h.Pointer, currentDataPtr, h.Length);
 
-            // Advance the source pointer by the packed length (no padding in Flash)
-            currentDataPtr += h.Length;
+        // --- 1. COMPRESSION SKIP ---
+        if (ExtraCompression && wireType == Types::Undefined)
+        {
+            // If it's a "Keep Local" signal, we skip data copy but 
+            // check if the local node ALREADY has a setup flag that needs firing.
+            // (Optional: usually you only trigger on change, but this is safer)
+            if (h.IsSetupCall()) TriggerSetup(i);
+            continue; 
+        }
+
+        // --- 2. SURGICAL RESIZE ---
+        if (h.Length != wireLen)
+        {
+            this->ResizeData(i, wireLen);
+        }
+
+        // --- 3. METADATA UPDATE ---
+        h.Type = wireType;
+        h.Depth = wireDepth;
+
+        // --- 4. DATA COPY ---
+        if (wireLen > 0)
+        {
+            memcpy(this->Array + h.Pointer, currentDataPtr, wireLen);
+            currentDataPtr += wireLen;
+        }
+
+        // --- 5. SETUP TRIGGER ---
+        // If the node (either from wire or local flags) is a Setup Call, fire it now.
+        if (h.IsSetupCall())
+        {
+            this->TriggerSetup(i);
         }
     }
 
-    // --- Pass 4: Finalize ---
-    this->UpdateSkip(); // Refresh jump pointers for navigation/tree logic
+    this->UpdateSkip();
     return true;
 }
 

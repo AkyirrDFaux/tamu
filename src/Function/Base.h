@@ -223,7 +223,7 @@ void ReadObject(const FlexArray &Input)
 
     // Concatenate the object's serialized state
     // This uses the Move Constructor if Compress() returns by value!
-    Response += Object->Compress();
+    Response += Object->Compress(false);
 
     Chirp.Send(Response);
 }
@@ -243,7 +243,7 @@ void Refresh(const FlexArray &Input)
         // 3. Create a clean message for this specific object
         // [ReadObjectCode][CompressedData...]
         FlexArray msg(funcHeader, 1);
-        msg += Obj->Compress(); // Efficiently appends the object's data
+        msg += Obj->Compress(false); // Efficiently appends the object's data
 
         Chirp.Send(msg);
     }

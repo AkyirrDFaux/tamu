@@ -121,12 +121,12 @@ public:
     C *As() const { return (C *)this; };
 
     Bookmark Find(const Reference &Location, bool StopAtReferences = false) const;
-    FlexArray Compress() const;
+    FlexArray Compress(bool Storage) const;
 };
 
 BaseClass *CreateObject(Reference ID, ObjectTypes Type);
 
-FlexArray BaseClass::Compress() const
+FlexArray BaseClass::Compress(bool Storage) const
 {
     // 1. Get the Reference struct/object
     Reference SelfRef = Objects.GetReference(this);
@@ -148,7 +148,7 @@ FlexArray BaseClass::Compress() const
 
     // 6. Serialize and Append Values
     // This calls the loop-based serialization we discussed
-    Blob += Values.Serialize();
+    Blob += Values.Serialize(Storage);
 
     return Blob;
 }
