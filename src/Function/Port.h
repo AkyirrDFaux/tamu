@@ -68,7 +68,7 @@ bool BoardClass::ConnectPin(BaseClass *Object, PortNumber Port)
         return false;
 
     Reference ID = Objects.GetReference(Object);
-    Values.Set(&ID, sizeof(Reference), Types::Reference, {0, 0, Port, 1, 0});
+    Values.Set(&ID, sizeof(Reference), Types::Reference, {0, 0, Port, 1, 0}, true);
 
     DriverPin(Port);
     return true;
@@ -102,7 +102,7 @@ void BoardClass::DriverPin(PortNumber Port)
         }
     }
 
-    Values.Set(&role, sizeof(Drivers), Types::PortDriver, Map.Driver);
+    Values.Set(&role, sizeof(Drivers), Types::PortDriver, Map.Driver, true);
 }
 
 bool BoardClass::DisconnectPin(BaseClass *Object, PortNumber Port)
@@ -141,7 +141,7 @@ bool BoardClass::ConnectLED(BaseClass *Object, PortNumber Port, uint8_t Index)
         return false;
 
     // Single call to handle insertion/setting
-    Values.Set(&ID, sizeof(Reference), Types::Reference, {0, 0, Port, 1, Index});
+    Values.Set(&ID, sizeof(Reference), Types::Reference, {0, 0, Port, 1, Index}, true);
 
     DriverLED(Port);
     return true;
@@ -208,7 +208,7 @@ void BoardClass::DriverLED(PortNumber Port)
         DriverArray[Port] = nullptr;
 
     // Update the Driver node role once at the end
-    Values.Set(&role, sizeof(Drivers), Types::PortDriver, Map.Driver);
+    Values.Set(&role, sizeof(Drivers), Types::PortDriver, Map.Driver, true);
 }
 
 bool BoardClass::DisconnectLED(BaseClass *Object, PortNumber Port)
@@ -238,7 +238,7 @@ bool BoardClass::DisconnectLED(BaseClass *Object, PortNumber Port)
                 DriverArray[Port] = nullptr;
 
                 Drivers none = Drivers::None;
-                Values.Set(&none, sizeof(Drivers), Types::PortDriver, Map.Driver);
+                Values.Set(&none, sizeof(Drivers), Types::PortDriver, Map.Driver, true);
             }
             else
             {
@@ -276,18 +276,18 @@ bool BoardClass::ConnectI2C(BaseClass *Object, PortNumber SDA, PortNumber SCL)
 
     // 2. Add Object to SDA list (Index 'y' is effectively InsertNext after 'last')
     if (last == INVALID_HEADER) 
-        Values.InsertChild(&ID, sizeof(Reference), Types::Reference, MapSDA.Driver);
+        Values.InsertChild(&ID, sizeof(Reference), Types::Reference, MapSDA.Driver, true);
     else 
-        Values.InsertNext(&ID, sizeof(Reference), Types::Reference, last);
+        Values.InsertNext(&ID, sizeof(Reference), Types::Reference, last, true);
 
     // 3. Link SDA and SCL ports (Paths: {0,0,SDA,2} and {0,0,SCL,2})
     // Path {0,0,P,2} is the Sibling of Driver {0,0,P,1}
     uint16_t sdaLink = Values.Next(MapSDA.Driver);
-    Values.Set(&SCL, sizeof(PortNumber), Types::PortNumber, sdaLink);
+    Values.Set(&SCL, sizeof(PortNumber), Types::PortNumber, sdaLink, true);
 
     PortMap MapSCL = GetPortMap(SCL);
     uint16_t sclLink = Values.Next(MapSCL.Driver);
-    Values.Set(&SDA, sizeof(PortNumber), Types::PortNumber, sclLink);
+    Values.Set(&SDA, sizeof(PortNumber), Types::PortNumber, sclLink, true);
 
     DriverI2C(SDA, SCL);
     return true;
@@ -317,8 +317,8 @@ void BoardClass::DriverI2C(PortNumber SDA, PortNumber SCL)
             
             Drivers dSDA = Drivers::I2C_SDA;
             Drivers dSCL = Drivers::I2C_SCL;
-            Values.Set(&dSDA, sizeof(Drivers), Types::PortDriver, MapSDA.Driver);
-            Values.Set(&dSCL, sizeof(Drivers), Types::PortDriver, MapSCL.Driver);
+            Values.Set(&dSDA, sizeof(Drivers), Types::PortDriver, MapSDA.Driver, true);
+            Values.Set(&dSCL, sizeof(Drivers), Types::PortDriver, MapSCL.Driver, true);
         }
         else
         {
@@ -371,10 +371,10 @@ bool BoardClass::DisconnectI2C(BaseClass *Object, PortNumber SDA, PortNumber SCL
                 DriverArray[SCL] = nullptr;
 
                 Drivers none = Drivers::None;
-                Values.Set(&none, sizeof(Drivers), Types::PortDriver, MapSDA.Driver);
+                Values.Set(&none, sizeof(Drivers), Types::PortDriver, MapSDA.Driver, true);
                 
                 PortMap MapSCL = GetPortMap(SCL);
-                Values.Set(&none, sizeof(Drivers), Types::PortDriver, MapSCL.Driver);
+                Values.Set(&none, sizeof(Drivers), Types::PortDriver, MapSCL.Driver, true);
 
                 // Delete the Bus-Link nodes ({0,0,P,2}) which are siblings of the Driver
                 Values.Delete(Values.Next(MapSDA.Driver));

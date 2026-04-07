@@ -2,13 +2,62 @@
 #define Align(x) (((x) + 3) & ~3)
 #define INVALID_HEADER 0xFFFF
 
+// Bit masks for 2-bit flag logic
+#define MASK_DEPTH 0x3F     // 00111111 (Max depth 63)
+#define FLAG_READONLY 0x40  // 01000000 (Bit 6)
+#define FLAG_SETUPCALL 0x80 // 10000000 (Bit 7)
+
 struct Header
 {
     Types Type = Types::Undefined;
-    uint8_t Depth = 0;
+    uint8_t Depth = 0; // [Setup][Read-Only][Depth: 6-bits]
     uint16_t Length = 0;
     uint16_t Pointer = 0;
     uint16_t Skip = 0;
+
+    // --- Depth Logic ---
+
+    // Returns depth 0-63, ignoring flags
+    uint8_t GetDepth() const
+    {
+        return Depth & MASK_DEPTH;
+    }
+
+    // Sets depth while preserving current flags
+    void SetDepth(uint8_t d)
+    {
+        Depth = (Depth & ~MASK_DEPTH) | (d & MASK_DEPTH);
+    }
+
+    // --- Read-Only Flag ---
+
+    bool IsReadOnly() const
+    {
+        return (Depth & FLAG_READONLY) != 0;
+    }
+
+    void SetReadOnly(bool enabled)
+    {
+        if (enabled)
+            Depth |= FLAG_READONLY;
+        else
+            Depth &= ~FLAG_READONLY;
+    }
+
+    // --- Setup-Call Flag ---
+
+    bool IsSetupCall() const
+    {
+        return (Depth & FLAG_SETUPCALL) != 0;
+    }
+
+    void SetSetupCall(bool enabled)
+    {
+        if (enabled)
+            Depth |= FLAG_SETUPCALL;
+        else
+            Depth &= ~FLAG_SETUPCALL;
+    }
 };
 
 // Layer 1: The Handle (The "Where")
@@ -70,13 +119,13 @@ public:
     uint16_t Insert(const Reference &Location, int16_t NewDataSize);
 
     // Setters
-    void Set(const void *Data, size_t Size, Types Type, uint16_t Index);
-    void Set(const void *Data, size_t Size, Types Type, const Bookmark &Point);
-    void Set(const void *Data, size_t Size, Types Type, const Reference &Location);
-    uint16_t InsertNext(const void *Data, uint16_t Size, Types Type, uint16_t CurrentIdx);
-    uint16_t InsertChild(const void *Data, uint16_t Size, Types Type, uint16_t ParentIdx);
-    Bookmark InsertNext(const void *Data, uint16_t Size, Types Type, const Bookmark &CurrentIdx);
-    Bookmark InsertChild(const void *Data, uint16_t Size, Types Type, const Bookmark &ParentIdx);
+    void Set(const void *Data, size_t Size, Types Type, uint16_t Index, bool ReadOnly = false, bool SetupCall = false);
+    void Set(const void *Data, size_t Size, Types Type, const Bookmark &Point, bool ReadOnly = false, bool SetupCall = false);
+    void Set(const void *Data, size_t Size, Types Type, const Reference &Location, bool ReadOnly = false, bool SetupCall = false);
+    uint16_t InsertNext(const void *Data, uint16_t Size, Types Type, uint16_t CurrentIdx, bool ReadOnly = false, bool SetupCall = false);
+    uint16_t InsertChild(const void *Data, uint16_t Size, Types Type, uint16_t ParentIdx, bool ReadOnly = false, bool SetupCall = false);
+    Bookmark InsertNext(const void *Data, uint16_t Size, Types Type, const Bookmark &CurrentIdx, bool ReadOnly = false, bool SetupCall = false);
+    Bookmark InsertChild(const void *Data, uint16_t Size, Types Type, const Bookmark &ParentIdx, bool ReadOnly = false, bool SetupCall = false);
 
     ValueTree Copy(const Reference &Location) const;
 
@@ -203,18 +252,18 @@ void ValueTree::UpdateSkip()
 
     for (int i = HeaderAllocated - 1; i > 0; i--)
     {
-        if (HeaderArray[i].Depth == 0)
+        if (HeaderArray[i].GetDepth() == 0)
             continue;
 
-        uint8_t targetParentDepth = HeaderArray[i].Depth - 1;
+        uint8_t targetParentDepth = HeaderArray[i].GetDepth() - 1;
         for (int p = i - 1; p >= 0; p--)
         {
-            if (HeaderArray[p].Depth == targetParentDepth)
+            if (HeaderArray[p].GetDepth() == targetParentDepth)
             {
                 HeaderArray[p].Skip += (HeaderArray[i].Skip + 1);
                 break;
             }
-            if (HeaderArray[p].Depth < targetParentDepth)
+            if (HeaderArray[p].GetDepth() < targetParentDepth)
                 break;
         }
     }
@@ -232,7 +281,8 @@ void ValueTree::Delete(const Reference &Location)
 
 void ValueTree::Delete(uint16_t Index)
 {
-    if (Index >= HeaderAllocated) return;
+    if (Index >= HeaderAllocated)
+        return;
 
     // 1. Identify the entire range of nodes (Parent + all children)
     uint16_t NodesToRemove = HeaderArray[Index].Skip + 1;
@@ -242,8 +292,8 @@ void ValueTree::Delete(uint16_t Index)
     // The data for this tree segment starts at the first node's pointer
     // and ends at the end of the last descendant's data.
     uint16_t DataStart = HeaderArray[Index].Pointer;
-    
-    // To find the total data size of this branch, we find the 
+
+    // To find the total data size of this branch, we find the
     // pointer of the node immediately AFTER this branch.
     uint16_t DataEnd;
     if (RangeEndIdx < HeaderAllocated)
@@ -269,8 +319,8 @@ void ValueTree::Delete(uint16_t Index)
     // 5. Shift the Header Array
     if (RangeEndIdx < HeaderAllocated)
     {
-        memmove(HeaderArray + Index, 
-                HeaderArray + RangeEndIdx, 
+        memmove(HeaderArray + Index,
+                HeaderArray + RangeEndIdx,
                 (HeaderAllocated - RangeEndIdx) * sizeof(Header));
     }
 
@@ -346,14 +396,14 @@ uint16_t ValueTree::Insert(const Reference &Location, int16_t NewDataSize)
         while (currentSiblingCount < TargetSibling)
         {
             // If we run out of headers at this level, we must insert a "filler" sibling
-            if (CurrentIdx >= HeaderAllocated || HeaderArray[CurrentIdx].Depth < Layer)
+            if (CurrentIdx >= HeaderAllocated || HeaderArray[CurrentIdx].GetDepth() < Layer)
             {
                 InsertAtIndex(CurrentIdx, Types::Undefined, Layer, 0);
             }
 
             // If the node at CurrentIdx is at a HIGHER depth (Parent level),
             // it means there are no siblings here at all. Insert one.
-            if (HeaderArray[CurrentIdx].Depth < Layer)
+            if (HeaderArray[CurrentIdx].GetDepth() < Layer)
             {
                 InsertAtIndex(CurrentIdx, Types::Undefined, Layer, 0);
             }
@@ -365,7 +415,7 @@ uint16_t ValueTree::Insert(const Reference &Location, int16_t NewDataSize)
 
         // 2. We are now at the correct Sibling index for this Layer.
         // Check if we need to create this node because it doesn't exist yet.
-        if (CurrentIdx >= HeaderAllocated || HeaderArray[CurrentIdx].Depth != Layer)
+        if (CurrentIdx >= HeaderAllocated || HeaderArray[CurrentIdx].GetDepth() != Layer)
         {
             InsertAtIndex(CurrentIdx, Types::Undefined, Layer, 0);
         }
@@ -457,7 +507,7 @@ bool ValueTree::Deserialize(const FlexArray &in, uint16_t startIndex)
     const char *src = in.Array + startIndex;
     uint16_t totalWireSize;
     uint16_t count;
-    
+
     memcpy(&totalWireSize, src, 2);
     memcpy(&count, src + 2, 2);
 
@@ -477,7 +527,7 @@ bool ValueTree::Deserialize(const FlexArray &in, uint16_t startIndex)
     for (uint16_t i = 0; i < count; i++)
     {
         Header &h = this->HeaderArray[i];
-        
+
         // Unpack wire format (Type[1], Depth[1], Length[2])
         h.Type = (Types)hRead[0];
         h.Depth = hRead[1];
@@ -486,14 +536,14 @@ bool ValueTree::Deserialize(const FlexArray &in, uint16_t startIndex)
 
         // Map internal pointer using Align() to satisfy CPU/Logic requirements
         h.Pointer = internalOffset;
-        internalOffset += Align(h.Length); 
+        internalOffset += Align(h.Length);
     }
 
     // --- Pass 2: Reallocate and Clean Data Buffer ---
     this->Length = internalOffset;
-    this->EnsureCapacity(this->Length); 
-    
-    // CRITICAL: Zero out the buffer. 
+    this->EnsureCapacity(this->Length);
+
+    // CRITICAL: Zero out the buffer.
     // Since Serialize packs tightly but RAM aligns, we must wipe the "gaps"
     // created by Align(h.Length) so they don't contain old memory noise.
     if (this->Array && this->Length > 0)
@@ -509,7 +559,7 @@ bool ValueTree::Deserialize(const FlexArray &in, uint16_t startIndex)
             // Copy exactly h.Length from the PACKED wire source
             // into the ALIGNED internal Pointer
             memcpy(this->Array + h.Pointer, currentDataPtr, h.Length);
-            
+
             // Advance the source pointer by the packed length (no padding in Flash)
             currentDataPtr += h.Length;
         }
@@ -575,13 +625,13 @@ inline Bookmark ValueTree::This(const Bookmark &Point) const
     return Point.Map->This(Point.Index);
 }
 
-inline void ValueTree::Set(const void *Data, size_t Size, Types Type, const Bookmark &Point)
+inline void ValueTree::Set(const void *Data, size_t Size, Types Type, const Bookmark &Point, bool ReadOnly, bool SetupCall)
 {
     if (Point.Map)
-        Point.Map->Set(Data, Size, Type, Point.Index);
+        Point.Map->Set(Data, Size, Type, Point.Index, ReadOnly, SetupCall);
 }
 
-inline void ValueTree::Set(const void *Data, size_t Size, Types Type, const Reference &Location)
+inline void ValueTree::Set(const void *Data, size_t Size, Types Type, const Reference &Location, bool ReadOnly, bool SetupCall)
 {
     Bookmark target = Find(Location, true);
     if (target.Index == INVALID_HEADER)
@@ -590,21 +640,21 @@ inline void ValueTree::Set(const void *Data, size_t Size, Types Type, const Refe
         // After insert, we have to find it again or have Insert return the index
         target = Find(Location, true);
     }
-    Set(Data, Size, Type, target.Index);
+    Set(Data, Size, Type, target.Index, ReadOnly, SetupCall);
 }
 
-inline Bookmark ValueTree::InsertNext(const void *Data, uint16_t Size, Types Type, const Bookmark &Point)
+inline Bookmark ValueTree::InsertNext(const void *Data, uint16_t Size, Types Type, const Bookmark &Point, bool ReadOnly, bool SetupCall)
 {
     if (!Point.Map)
         return {};
-    return {Point.Map, Point.Map->InsertNext(Data, Size, Type, Point.Index)};
+    return {Point.Map, Point.Map->InsertNext(Data, Size, Type, Point.Index, ReadOnly, SetupCall)};
 }
 
-inline Bookmark ValueTree::InsertChild(const void *Data, uint16_t Size, Types Type, const Bookmark &Point)
+inline Bookmark ValueTree::InsertChild(const void *Data, uint16_t Size, Types Type, const Bookmark &Point, bool ReadOnly, bool SetupCall)
 {
     if (!Point.Map)
         return {};
-    return {Point.Map, Point.Map->InsertChild(Data, Size, Type, Point.Index)};
+    return {Point.Map, Point.Map->InsertChild(Data, Size, Type, Point.Index, ReadOnly, SetupCall)};
 }
 
 // Functions themselves
@@ -618,7 +668,7 @@ uint16_t ValueTree::Next(uint16_t Sibling) const
     uint16_t nextIdx = Sibling + HeaderArray[Sibling].Skip + 1;
 
     // Boundary and Depth check: If depth changes, it's not a sibling
-    if (nextIdx >= HeaderAllocated || HeaderArray[nextIdx].Depth != HeaderArray[Sibling].Depth)
+    if (nextIdx >= HeaderAllocated || HeaderArray[nextIdx].GetDepth() != HeaderArray[Sibling].GetDepth())
         return INVALID_HEADER;
 
     return nextIdx;
@@ -632,13 +682,13 @@ uint16_t ValueTree::Child(uint16_t Parent) const
     uint16_t childIdx = Parent + 1;
 
     // A child must be exactly one level deeper than the parent
-    if (childIdx >= HeaderAllocated || HeaderArray[childIdx].Depth != HeaderArray[Parent].Depth + 1)
+    if (childIdx >= HeaderAllocated || HeaderArray[childIdx].GetDepth() != HeaderArray[Parent].GetDepth() + 1)
         return INVALID_HEADER;
 
     return childIdx;
 }
 
-void ValueTree::Set(const void *Data, size_t Size, Types Type, uint16_t Index)
+void ValueTree::Set(const void *Data, size_t Size, Types Type, uint16_t Index, bool ReadOnly, bool SetupCall)
 {
     if (Index >= HeaderAllocated)
     {
@@ -659,6 +709,8 @@ void ValueTree::Set(const void *Data, size_t Size, Types Type, uint16_t Index)
 
     // 2. Update Metadata
     HeaderArray[Index].Type = Type;
+    HeaderArray[Index].SetReadOnly(ReadOnly);
+    HeaderArray[Index].SetSetupCall(SetupCall);
 
     // 3. Copy Data
     if (Data && Size > 0)
@@ -667,24 +719,27 @@ void ValueTree::Set(const void *Data, size_t Size, Types Type, uint16_t Index)
     }
 }
 
-uint16_t ValueTree::InsertNext(const void *Data, uint16_t Size, Types Type, uint16_t CurrentIdx)
+uint16_t ValueTree::InsertNext(const void *Data, uint16_t Size, Types Type, uint16_t CurrentIdx, bool ReadOnly, bool SetupCall)
 {
     if (CurrentIdx >= HeaderAllocated)
         return INVALID_HEADER;
 
     // Calculate where the next sibling should live
     uint16_t nextIdx = CurrentIdx + HeaderArray[CurrentIdx].Skip + 1;
-    uint8_t depth = HeaderArray[CurrentIdx].Depth;
+    uint8_t depth = HeaderArray[CurrentIdx].GetDepth();
 
     InsertAtIndex(nextIdx, Type, depth, Size);
 
     if (Data && Size > 0)
         memcpy(Array + HeaderArray[nextIdx].Pointer, Data, Size);
 
+    HeaderArray[nextIdx].SetReadOnly(ReadOnly);
+    HeaderArray[nextIdx].SetSetupCall(SetupCall);
+
     return nextIdx;
 }
 
-uint16_t ValueTree::InsertChild(const void *Data, uint16_t Size, Types Type, uint16_t ParentIdx)
+uint16_t ValueTree::InsertChild(const void *Data, uint16_t Size, Types Type, uint16_t ParentIdx, bool ReadOnly, bool SetupCall)
 {
     uint16_t childIdx;
     uint8_t depth;
@@ -699,13 +754,16 @@ uint16_t ValueTree::InsertChild(const void *Data, uint16_t Size, Types Type, uin
         if (ParentIdx >= HeaderAllocated)
             return INVALID_HEADER;
         childIdx = ParentIdx + 1;
-        depth = HeaderArray[ParentIdx].Depth + 1;
+        depth = HeaderArray[ParentIdx].GetDepth() + 1;
     }
 
     InsertAtIndex(childIdx, Type, depth, Size);
 
     if (Data && Size > 0)
         memcpy(Array + HeaderArray[childIdx].Pointer, Data, Size);
+
+    HeaderArray[childIdx].SetReadOnly(ReadOnly);
+    HeaderArray[childIdx].SetSetupCall(SetupCall);
 
     return childIdx;
 }

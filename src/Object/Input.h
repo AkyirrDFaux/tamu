@@ -34,18 +34,19 @@ InputClass::InputClass(const Reference &ID, FlagClass Flags, RunInfo Info)
     Type = ObjectTypes::Input;
     Name = "Input";
 
+    bool ReadOnly = (this->Flags == Flags::Auto);
     // Build the structure linearly:
     // 1. Root {0}: Mode
     Inputs initialMode = Inputs::Undefined;
-    Values.Set(&initialMode, sizeof(Inputs), Types::Input, 0);
+    Values.Set(&initialMode, sizeof(Inputs), Types::Input, 0, ReadOnly, true);
 
     // 2. Child of Mode {0, 0}: Port
     PortNumber initialPort = -1;
-    Values.InsertChild(&initialPort, sizeof(PortNumber), Types::PortNumber, 0);
+    Values.InsertChild(&initialPort, sizeof(PortNumber), Types::PortNumber, 0, ReadOnly, true);
 
     // 3. Sibling of Mode {1}: Value
     bool initialState = false;
-    Values.InsertNext(&initialState, sizeof(bool), Types::Bool, 0);
+    Values.InsertNext(&initialState, sizeof(bool), Types::Bool, 0, true);
 }
 
 InputClass::~InputClass()
@@ -117,7 +118,7 @@ void InputClass::Setup(const Reference &Index)
         Values.Set(&resetVal, sizeof(bool), Types::Bool, Reference({2}));
         [[fallthrough]];
     case Inputs::Button:
-        Values.Set(&resetVal, sizeof(bool), Types::Bool, Reference({1}));
+        Values.Set(&resetVal, sizeof(bool), Types::Bool, Reference({1}), true);
         break;
     default:
         break;

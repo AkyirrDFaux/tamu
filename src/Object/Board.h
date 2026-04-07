@@ -88,10 +88,10 @@ BoardClass::BoardClass(const Reference &ID) : BaseClass(&Table, ID, Flags::Auto 
     Boards model = Boards::Tamu_v2_0;
     
     // 1. Root node (Index 0).
-    Values.Set(&model, sizeof(Boards), Types::Board, 0);
+    Values.Set(&model, sizeof(Boards), Types::Board, 0, true);
 
     // 2. "Ports" container {0, 0}
-    uint16_t ports = Values.InsertChild(nullptr, 0, Types::Undefined, 0);
+    uint16_t ports = Values.InsertChild(nullptr, 0, Types::Undefined, 0, true);
 
     uint16_t lastPort = 0; 
     for (uint8_t i = 0; i < (sizeof(Tamu_Ports) / sizeof(PortDefinition)); i++)
@@ -100,14 +100,14 @@ BoardClass::BoardClass(const Reference &ID) : BaseClass(&Table, ID, Flags::Auto 
 
         // 3. Port Type {0, 0, i}
         uint16_t pNode = (i == 0) 
-            ? Values.InsertChild(&p.Type, sizeof(PortTypeClass), Types::PortType, ports)
-            : Values.InsertNext(&p.Type, sizeof(PortTypeClass), Types::PortType, lastPort);
+            ? Values.InsertChild(&p.Type, sizeof(PortTypeClass), Types::PortType, ports, true)
+            : Values.InsertNext(&p.Type, sizeof(PortTypeClass), Types::PortType, lastPort, true);
 
         // 4. Pin {0, 0, i, 0}
-        uint16_t pin = Values.InsertChild(&p.PinID, sizeof(Pin), Types::Pin, pNode);
+        uint16_t pin = Values.InsertChild(&p.PinID, sizeof(Pin), Types::Pin, pNode, true);
 
         // 5. Driver {0, 0, i, 1}
-        Values.InsertNext(&p.Driver, sizeof(Drivers), Types::PortDriver, pin);
+        Values.InsertNext(&p.Driver, sizeof(Drivers), Types::PortDriver, pin, true);
 
         lastPort = pNode; 
     }
@@ -117,11 +117,11 @@ BoardClass::BoardClass(const Reference &ID) : BaseClass(&Table, ID, Flags::Auto 
     uint16_t lastTele = ports;
     for (uint8_t i = 0; i < 5; i++)
     {
-        lastTele = Values.InsertNext(&zero, 4, Types::Integer, lastTele);
+        lastTele = Values.InsertNext(&zero, 4, Types::Integer, lastTele, true);
     }
 
     // 7. Name {1} (Sibling of system {0})
-    Values.InsertNext(Name.Data, Name.Length, Types::Text, 0);
+    Values.InsertNext(Name.Data, Name.Length, Types::Text, 0, false, true);
 #endif
 }
 
@@ -159,8 +159,8 @@ bool BoardClass::Run()
             int32_t freeRam = HW::GetFreeRAM();
             
             // Using the updated Set(index) which handles direct writes
-            Values.Set(&totalRam, 4, Types::Integer, ramTotalIdx);
-            Values.Set(&freeRam, 4, Types::Integer, ramFreeIdx);
+            Values.Set(&totalRam, 4, Types::Integer, ramTotalIdx, true);
+            Values.Set(&freeRam, 4, Types::Integer, ramFreeIdx, true);
         }
     }
 

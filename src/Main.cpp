@@ -89,7 +89,7 @@ int main()
     //ESP_LOGI("MAIN", "Setuping");
     Board.Setup(Reference::Global(0, 0, 0)); // Initialize devices
     //DefaultSetup();
-    HW::LoadAll();
+    //HW::LoadAll();
 
     //ESP_LOGI("MAIN", "Starting Chirp");
     Result name = Board.Values.Get(Board.Values.Next(0));
@@ -99,7 +99,7 @@ int main()
     // 2. Update the internal clock
     TimeUpdate();
 
-    Board.Values.Set(&CurrentTime, sizeof(int32_t), Types::Integer, Board.Values.Next(Board.Values.Child(0)));
+    Board.Values.Set(&CurrentTime, sizeof(int32_t), Types::Integer, Board.Values.Next(Board.Values.Child(0)), true);
 
     //ESP_LOGI("MAIN", "Starting");
     /*bool AllFinished = false;
@@ -151,6 +151,7 @@ extern "C"
 #endif
 /*TODO:
 KEY FEATURES:
+Fix Setups
 More operations
 OLED
 LED strip
