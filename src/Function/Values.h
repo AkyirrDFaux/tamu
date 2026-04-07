@@ -61,8 +61,8 @@ void ReadValue(const FlexArray &Input)
 void WriteValue(const FlexArray &Input)
 {
     // 1. Minimum Size Validation
-    // [Func(1)] + [MinRef(4)] + [Type(1)] + [Len(2)] = 8 bytes minimum
-    if (Input.Length < 8)
+    // [Func(1)] + [MinRef(4)] + ([Type(1)] + [Len(2)]) = 5 bytes minimum
+    if (Input.Length < 5)
     {
         char Resp[2] = {(char)Functions::Report, (char)Status::InvalidType};
         Chirp.Send(FlexArray(Resp, 2) += Input);
@@ -84,6 +84,16 @@ void WriteValue(const FlexArray &Input)
 
     // 4. Extract Payload Header (Following the Reference)
     // Layout: [Ref...][Type(1)][Len(2)][Data...]
+
+    Bookmark Index = Object->Values.Find(*pID, true);
+
+    if (Input.Length == idSize + 1) //If no data then delete
+    {
+        Object->Values.Delete(Index.Index);
+        //TODO refresh whole object
+        return;
+    }
+
     uint16_t payloadOffset = 1 + idSize;
     
     // Safety check to ensure we don't read past the end of Input
@@ -107,11 +117,10 @@ void WriteValue(const FlexArray &Input)
     }
 
     // 5. Update Object State
-    Bookmark Index = Object->Values.Find(*pID, true);
-
     bool WasSetup = Object->Values.HeaderArray[Index.Index].IsSetupCall();
     Object->Values.Set(pData, pLen, pType, *pID, false, WasSetup);
 
+    //TODO refresh whole object if setup
     ReadValue(Input);
 }
 

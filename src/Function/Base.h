@@ -50,6 +50,9 @@ void Run(const FlexArray &Input)
     case Functions::SetInfo:
         SetInfo(Input);
         break;
+    case Functions::Format:
+        Format(Input);
+        break;
 
     default:
         char Response[2] = {(char)Functions::Report, (char)Status::InvalidFunction};
@@ -190,6 +193,25 @@ void SaveAll(const FlexArray &Input)
     }
 
     char SuccessHeader[1] = {(char)Functions::SaveAll};
+    FlexArray Success(SuccessHeader, 1);
+    Chirp.Send(Success);
+}
+
+void Format(const FlexArray &Input)
+{
+    HW::FlashFormat();
+
+    // 2. Iterate through the Registry
+    for (uint32_t Index = 0; Index < Objects.Registered; Index++)
+    {
+        RegisterEntry Obj = Objects.Object[Index];
+        if (Obj.Object == nullptr)
+            continue;
+
+        Obj.Object->Flags += Flags::Dirty;
+    }
+
+    char SuccessHeader[1] = {(char)Functions::Format};
     FlexArray Success(SuccessHeader, 1);
     Chirp.Send(Success);
 }

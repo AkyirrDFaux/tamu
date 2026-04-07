@@ -1,29 +1,26 @@
 bool ExecuteSine(const Bookmark &OpPoint)
 {
-    // 1. Navigation: {0} is Output, {1} is Inputs folder, {1, 0} is first input
+    // 1. Navigation: {0} is Output, {1} is Time, {2} is Mult, {3} is Phase
     Bookmark OutMark = OpPoint.Child();
-    Bookmark InFolder = OutMark.Next();
-    if (InFolder.Index == INVALID_HEADER) return true;
-
-    Bookmark markTime = InFolder.Child();
-    if (markTime.Index == INVALID_HEADER) return true;
-
-    // 2. Extract Parameters using sibling traversal
-    Bookmark markMult  = markTime.Next();
-    Bookmark markPhase = markMult.Next();
-
-    if (markMult.Index == INVALID_HEADER || markPhase.Index == INVALID_HEADER)
+    if (OutMark.Index == INVALID_HEADER)
         return true;
 
-    // 3. Calculation
+    Bookmark markTime = OutMark.Next();
+    Bookmark markMult = markTime.Next();
+    Bookmark markPhase = markMult.Next();
+
+    if (markTime.Index == INVALID_HEADER || markMult.Index == INVALID_HEADER || markPhase.Index == INVALID_HEADER)
+        return true;
+
+    // 2. Calculation
     Number T = GetAsNumber(markTime);
     Number M = GetAsNumber(markMult);
     Number P = GetAsNumber(markPhase);
 
-    Number Result = sin(T * M + P);
+    Number ResultValue = sin(T * M + P);
 
-    // 4. Store result at relative {0} using the Output index
-    OpPoint.Map->Set(&Result, sizeof(Number), Types::Number, OutMark.Index);
+    // 3. Store result
+    OutMark.Set(&ResultValue, sizeof(Number), Types::Number, true);
 
     return true;
 }
@@ -32,26 +29,18 @@ bool ExecuteClamp(const Bookmark &OpPoint)
 {
     // 1. Navigation
     Bookmark OutMark = OpPoint.Child();
-    Bookmark InFolder = OutMark.Next();
-    if (InFolder.Index == INVALID_HEADER) return true;
+    if (OutMark.Index == INVALID_HEADER) return true;
 
-    Bookmark markVal = InFolder.Child();
-    if (markVal.Index == INVALID_HEADER) return true;
+    Bookmark markVal = OutMark.Next(); 
+    Bookmark markMin = markVal.Next(); 
+    Bookmark markMax = markMin.Next(); 
 
-    Bookmark markMin = markVal.Next();
-    Bookmark markMax = markMin.Next();
-
-    if (markMin.Index == INVALID_HEADER || markMax.Index == INVALID_HEADER)
+    if (markVal.Index == INVALID_HEADER || markMin.Index == INVALID_HEADER || markMax.Index == INVALID_HEADER)
         return true;
 
-    // 2. Resolve Results for type checking
+    // 2. Resolve for Type Persistence
     Result resVal = markVal.GetThis();
-    Result resMin = markMin.GetThis();
-    Result resMax = markMax.GetThis();
-
-    // Strict Scalar Check
-    if (!IsScalar(resVal.Type) || !IsScalar(resMin.Type) || !IsScalar(resMax.Type))
-        return true;
+    if (!IsScalar(resVal.Type)) return true;
 
     Number V = GetAsNumber(markVal);
     Number Low = GetAsNumber(markMin);
@@ -60,7 +49,7 @@ bool ExecuteClamp(const Bookmark &OpPoint)
     if (V < Low) V = Low;
     if (V > High) V = High;
 
-    // 3. Store back using Output node index and the original input type
+    // 3. Store back using original type
     StoreScalar(OutMark, V, resVal.Type);
     return true;
 }
@@ -69,25 +58,18 @@ bool ExecuteLerp(const Bookmark &OpPoint)
 {
     // 1. Navigation
     Bookmark OutMark = OpPoint.Child();
-    Bookmark InFolder = OutMark.Next();
-    if (InFolder.Index == INVALID_HEADER) return true;
+    if (OutMark.Index == INVALID_HEADER) return true;
 
-    Bookmark markLow = InFolder.Child();
-    if (markLow.Index == INVALID_HEADER) return true;
+    Bookmark markLow   = OutMark.Next(); 
+    Bookmark markHigh  = markLow.Next();  
+    Bookmark markAlpha = markHigh.Next(); 
+    Bookmark markScale = markAlpha.Next(); 
 
-    Bookmark markHigh  = markLow.Next();
-    Bookmark markAlpha = markHigh.Next();
-    Bookmark markScale = markAlpha.Next();
-
-    if (markHigh.Index == INVALID_HEADER || markAlpha.Index == INVALID_HEADER)
+    if (markLow.Index == INVALID_HEADER || markHigh.Index == INVALID_HEADER || markAlpha.Index == INVALID_HEADER)
         return true;
 
-    Result resLow  = markLow.GetThis();
-    Result resHigh = markHigh.GetThis();
-
-    // Reject if Low or High are not scalars
-    if (!IsScalar(resLow.Type) || !IsScalar(resHigh.Type))
-        return true;
+    Result resLow = markLow.GetThis();
+    if (!IsScalar(resLow.Type)) return true;
 
     Number A = GetAsNumber(markLow);
     Number B = GetAsNumber(markHigh);
@@ -100,9 +82,9 @@ bool ExecuteLerp(const Bookmark &OpPoint)
         if (Scale == Number(0.0f)) Scale = 1.0f;
     }
 
-    Number Result = A + (T / Scale) * (B - A);
+    Number ResultValue = A + (T / Scale) * (B - A);
 
-    // 2. Store result at {0} using Output node index and target type
-    StoreScalar(OutMark, Result, resLow.Type);
+    // 2. Store result
+    StoreScalar(OutMark, ResultValue, resLow.Type);
     return true;
 }

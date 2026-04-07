@@ -118,7 +118,7 @@ enum class Functions : uint8_t
     WriteName,
     ReadInfo,
     SetInfo,
-    ReadFile
+    Format
 };
 
 void Run(const FlexArray &Input); // Switcher
@@ -135,7 +135,7 @@ void ReadName(const FlexArray &Input);
 void WriteName(const FlexArray &Input);
 void ReadInfo(const FlexArray &Input);
 void SetInfo(const FlexArray &Input);
-// void ReadFile(ValueTree &Input);
+void Format(const FlexArray &Input);
 
 template <class C>
 Types GetType()

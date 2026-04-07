@@ -149,6 +149,8 @@ enum class Operations : uint8_t
     None,
     Equal,
     Combine,
+    Extract,
+    Convert,
     IsEqual, // Comparision
     IsGreater,
     IsSmaller,
@@ -180,7 +182,6 @@ enum class Operations : uint8_t
     SetReset,
     Random,   // Randomize (Min, Max)
     Delay,    // Delay for specified amount of time (parameter), holds start time
-    AddDelay, // Create delayed moment from now
     IfSwitch, // Program control (branch)
     While,
     SetFlags,
