@@ -166,6 +166,7 @@ void ValueTree::EnsureHeaderCapacity(uint16_t count)
     if (newHeaders)
     {
         HeaderArray = (Header *)newHeaders;
+        memset((void *)(HeaderArray + HeaderAllocated), 0, (count - HeaderAllocated) * sizeof(Header)); // clear out new space
     }
 }
 
@@ -490,34 +491,37 @@ bool ValueTree::Deserialize(const FlexArray &in, uint16_t startIndex, bool Extra
     if (startIndex + 4 > in.Length)
         return false;
 
-    const char *src = in.Array + startIndex;
-    uint16_t totalWireSize, wireCount;
-    memcpy(&totalWireSize, src, 2);
-    memcpy(&wireCount, src + 2, 2);
+    const char *InputSource = in.Array + startIndex;
+    uint16_t TotalInSize, InHeaderCount;
+    memcpy(&TotalInSize, InputSource, 2);
+    memcpy(&InHeaderCount, InputSource + 2, 2);
 
-    if (startIndex + totalWireSize > in.Length)
+    if (startIndex + TotalInSize > in.Length)
         return false;
 
-    // Surgical mode usually requires the skeleton to match.
-    if (ExtraCompression && wireCount != HeaderAllocated)
-        return false;
-
-    const char *hRead = src + 4;
-    const char *dRead = src + 4 + (wireCount * 4);
-    const char *currentDataPtr = dRead;
-
-    for (uint16_t i = 0; i < wireCount; i++)
+    if (InHeaderCount > HeaderAllocated)
     {
-        Types wireType = (Types)hRead[0];
-        uint8_t wireDepth = hRead[1];
+        EnsureHeaderCapacity(InHeaderCount);
+        HeaderAllocated = InHeaderCount;
+    }
+
+
+    const char *HeaderInRead = InputSource + 4;
+    const char *DataInRead = InputSource + 4 + (InHeaderCount * 4);
+    const char *currentDataPtr = DataInRead;
+
+    for (uint16_t i = 0; i < InHeaderCount; i++)
+    {
+        Types wireType = (Types)HeaderInRead[0];
+        uint8_t wireDepth = HeaderInRead[1];
         uint16_t wireLen;
-        memcpy(&wireLen, hRead + 2, 2);
-        hRead += 4;
+        memcpy(&wireLen, HeaderInRead + 2, 2);
+        HeaderInRead += 4;
 
         Header &h = this->HeaderArray[i];
 
         // --- 1. COMPRESSION SKIP ---
-        if (ExtraCompression && wireType == Types::Undefined)
+        if (ExtraCompression && h.IsReadOnly() == true)
         {
             // If it's a "Keep Local" signal, we skip data copy but
             // check if the local node ALREADY has a setup flag that needs firing.

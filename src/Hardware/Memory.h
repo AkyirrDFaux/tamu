@@ -457,7 +457,7 @@ namespace HW
             // 1. Find the next valid (0xEE) entry
             cursor = FindNextEntry(cursor);
 
-            // ESP_LOGI("MEM", "Loading %d", cursor);
+            //ESP_LOGI("MEM", "Loading %d", cursor);
 
             // 2. If no more valid entries are found, we are done
             if (cursor == 0xFFFFFFFF)
@@ -474,7 +474,7 @@ namespace HW
             FlashRead(cursor + sizeof(MemoryHeader), dataBuffer.Array, head.Length);
             dataBuffer.Length = head.Length;
 
-            // ESP_LOGI("MEM", "Loaded %d, length %d", cursor, head.Length + sizeof(MemoryHeader));
+            //ESP_LOGI("MEM", "Loaded %d, length %d", cursor, head.Length + sizeof(MemoryHeader));
             //  6. Factory Instantiation
             //  Assuming Objects.Create takes the Type and the Payload to rebuild the class
             BaseClass *Object = nullptr;
@@ -492,7 +492,7 @@ namespace HW
             uint16_t NameLength = dataBuffer.Array[2];
             if (NameLength > 0)
                 Object->Name = Text(dataBuffer.Array + 3, NameLength);
-
+            //ESP_LOGI("MEM", "Deserializing (%d.%d)", head.GroupID, head.DeviceID);
             Object->Values.Deserialize(dataBuffer, 3 + NameLength, true);
         }
     }

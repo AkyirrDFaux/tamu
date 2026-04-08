@@ -150,11 +150,10 @@ extern "C"
 #endif
 /*TODO:
 KEY FEATURES:
-FIX MEMORY
-Value Deletion from app
 OLED
  - Bind inputs
  - Use references as entries in list
+Port type connect blocking
 LED strip
 Servo
 Compile options
@@ -212,3 +211,4 @@ use more const, final, inline keywords, pass by reference, overall optimalizaton
 // 13.02.2026 Valu v2.0 OLED menu test
 // 14.02.2026 Custom saving in flash
 // 21.03.2025 New value system (layered, uses paths, no modules), app styling
+// 08.04.2025 Corrected saving, read-only, new setup, more operations, functions, commmunication improvements

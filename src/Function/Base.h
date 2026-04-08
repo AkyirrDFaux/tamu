@@ -179,8 +179,6 @@ void SaveObject(const FlexArray &Input)
 
 void SaveAll(const FlexArray &Input)
 {
-    HW::InvalidateAll();
-
     // 2. Iterate through the Registry
     for (uint32_t Index = 0; Index < Objects.Registered; Index++)
     {
@@ -189,7 +187,8 @@ void SaveAll(const FlexArray &Input)
             continue;
 
         if (Obj.Object->Flags == Flags::Dirty)
-            HW::Save(Reference::Global(0, Obj.GroupID, Obj.DeviceID));
+            HW::Save(Reference::Global(0, Obj.GroupID, Obj.DeviceID)); //Invalidates interanally
+            
     }
 
     char SuccessHeader[1] = {(char)Functions::SaveAll};
