@@ -105,7 +105,6 @@ public:
     ValueTree(const void *data, uint16_t size, Types Type);
 
     void operator=(const ValueTree &Other);
-    ValueTree &operator<<(const ValueTree &Data);
 
     Result Get(uint16_t Index) const;
     Result GetThis(uint16_t Index) const;
@@ -213,37 +212,6 @@ void ValueTree::operator=(const ValueTree &Other)
     EnsureCapacity(Length);
     if (Other.Array && Array)
         memcpy(Array, Other.Array, Length);
-}
-
-ValueTree &ValueTree::operator<<(const ValueTree &Data)
-{
-    if (Data.HeaderAllocated == 0 || Data.Array == nullptr)
-        return *this;
-    if (HeaderAllocated == 0)
-    {
-        *this = Data;
-        return *this;
-    }
-
-    uint16_t DataOffset = Align(Length);
-    uint16_t NewCount = HeaderAllocated + Data.HeaderAllocated;
-
-    EnsureCapacity(DataOffset + Data.Length);
-    EnsureHeaderCapacity(NewCount);
-
-    for (uint16_t i = 0; i < Data.HeaderAllocated; i++)
-    {
-        Header h = Data.HeaderArray[i];
-        h.Pointer += DataOffset;
-        HeaderArray[HeaderAllocated + i] = h;
-    }
-
-    memcpy(Array + DataOffset, Data.Array, Data.Length);
-    HeaderAllocated = NewCount;
-    Length = DataOffset + Data.Length;
-
-    UpdateSkip();
-    return *this;
 }
 
 void ValueTree::UpdateSkip()

@@ -87,7 +87,6 @@ int main()
 
     //ESP_LOGI("MAIN", "Setuping");
     Board.Setup(0); // Initialize devices
-    //DefaultSetup();
     HW::LoadAll();
 
     //ESP_LOGI("MAIN", "Starting Chirp");

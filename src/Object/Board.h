@@ -18,25 +18,56 @@ struct PortDefinition
     Drivers Driver;
 };
 
-struct PortMap {
+struct PortMap
+{
     uint16_t Port;   // Index of {0, 0, Port}
     uint16_t Driver; // Index of {0, 0, Port, 1}
     uint16_t Ref;    // Index of {0, 0, Port, 1, 0}
 };
 
 #if defined BOARD_Tamu_v2_0
-static const PortDefinition Tamu_Ports[] = {
-    {Ports::GPIO | Ports::ADC | Ports::PWM, {0,0}, Drivers::None},
-    {Ports::GPIO | Ports::ADC | Ports::PWM, {1,0}, Drivers::None},
-    {Ports::GPIO | Ports::PWM, {9,0}, Drivers::None},
-    {Ports::TOut | Ports::PWM, {10,0}, Drivers::None},
-    {Ports::TOut | Ports::PWM, {6,0}, Drivers::None},
-    {Ports::GPIO | Ports::PWM, {8,0}, Drivers::None},
-    {Ports::GPIO | Ports::PWM, {7,0}, Drivers::None},
-    {Ports::GPIO | Ports::ADC | Ports::PWM, {3,0}, Drivers::None},
-    {Ports::I2C_SDA, {4,0}, Drivers::None},
-    {Ports::I2C_SCL, {5,0}, Drivers::None},
+static const PortDefinition Port_Table[] = {
+    {Ports::GPIO | Ports::ADC | Ports::PWM, {0, 0}, Drivers::None},
+    {Ports::GPIO | Ports::ADC | Ports::PWM, {1, 0}, Drivers::None},
+    {Ports::GPIO | Ports::PWM, {9, 0}, Drivers::None},
+    {Ports::TOut | Ports::PWM, {10, 0}, Drivers::None},
+    {Ports::TOut | Ports::PWM, {6, 0}, Drivers::None},
+    {Ports::GPIO | Ports::PWM, {8, 0}, Drivers::None},
+    {Ports::GPIO | Ports::PWM, {7, 0}, Drivers::None},
+    {Ports::GPIO | Ports::ADC | Ports::PWM, {3, 0}, Drivers::None},
+    {Ports::I2C_SDA, {4, 0}, Drivers::None},
+    {Ports::I2C_SCL, {5, 0}, Drivers::None},
     {Ports::GPIO | Ports::Internal, LED_NOTIFICATION_PIN, Drivers::None}};
+#elif defined BOARD_Valu_v2_0
+static const PortDefinition Port_Table[] = {
+    // Port Type                              Pin {Index, Port}        Driver
+    {Ports::GPIO | Ports::PWM, {14, 'A'}, Drivers::None},             // L1
+    {Ports::GPIO | Ports::PWM, {8, 'B'}, Drivers::None},              // L2
+    {Ports::GPIO, {10, 'B'}, Drivers::None},                          // L3
+    {Ports::GPIO, {11, 'B'}, Drivers::None},                          // L4
+    {Ports::GPIO | Ports::PWM | Ports::ADC, {1, 'B'}, Drivers::None}, // L5
+    {Ports::TOut, {8, 'A'}, Drivers::None},                           // F
+
+    {Ports::GPIO | Ports::ADC, {6, 'A'}, Drivers::None}, // S1
+    {Ports::GPIO | Ports::ADC, {1, 'A'}, Drivers::None}, // S2
+    {Ports::GPIO | Ports::ADC, {0, 'A'}, Drivers::None}, // S3
+
+    {Ports::UART_RX, {10, 'A'}, Drivers::None}, // RX
+    {Ports::UART_TX, {9, 'A'}, Drivers::None},  // TX
+    {Ports::I2C_SCL, {6, 'B'}, Drivers::None},  // SCL
+    {Ports::I2C_SDA, {7, 'B'}, Drivers::None},  // SDA
+
+    {Ports::GPIO | Ports::Internal, {15, 'B'}, Drivers::None},            // B1
+    {Ports::GPIO | Ports::Internal, {14, 'B'}, Drivers::None},            // B2
+    {Ports::GPIO | Ports::Internal, {13, 'B'}, Drivers::None},            // B3
+    {Ports::GPIO | Ports::Internal, LED_NOTIFICATION_PIN, Drivers::None}, // B4/LED
+
+    {Ports::SPI_CLK, {5, 'A'}, Drivers::None},  // CLK
+    {Ports::SPI_MOSI, {7, 'A'}, Drivers::None}, // MOSI
+    {Ports::SPI_DRST, {3, 'A'}, Drivers::None}, // DRST
+    {Ports::SPI_DDC, {0, 'B'}, Drivers::None},  // DDC
+    {Ports::SPI_CS, {4, 'A'}, Drivers::None}    // CS
+};
 #endif
 
 class BoardClass : public BaseClass
@@ -86,22 +117,24 @@ BoardClass::BoardClass(const Reference &ID) : BaseClass(&Table, ID, Flags::Auto 
 
 #if defined BOARD_Tamu_v2_0
     Boards model = Boards::Tamu_v2_0;
-    
+#elif defined BOARD_Valu_v2_0
+    Boards model = Boards::Valu_v2_0;
+#endif
     // 1. Root node (Index 0).
     Values.Set(&model, sizeof(Boards), Types::Board, 0, true);
 
     // 2. "Ports" container {0, 0}
     uint16_t ports = Values.InsertChild(nullptr, 0, Types::Undefined, 0, true);
 
-    uint16_t lastPort = 0; 
-    for (uint8_t i = 0; i < (sizeof(Tamu_Ports) / sizeof(PortDefinition)); i++)
+    uint16_t lastPort = 0;
+    for (uint8_t i = 0; i < (sizeof(Port_Table) / sizeof(PortDefinition)); i++)
     {
-        const PortDefinition &p = Tamu_Ports[i];
+        const PortDefinition &p = Port_Table[i];
 
         // 3. Port Type {0, 0, i}
-        uint16_t pNode = (i == 0) 
-            ? Values.InsertChild(&p.Type, sizeof(PortTypeClass), Types::PortType, ports, true)
-            : Values.InsertNext(&p.Type, sizeof(PortTypeClass), Types::PortType, lastPort, true);
+        uint16_t pNode = (i == 0)
+                             ? Values.InsertChild(&p.Type, sizeof(PortTypeClass), Types::PortType, ports, true)
+                             : Values.InsertNext(&p.Type, sizeof(PortTypeClass), Types::PortType, lastPort, true);
 
         // 4. Pin {0, 0, i, 0}
         uint16_t pin = Values.InsertChild(&p.PinID, sizeof(Pin), Types::Pin, pNode, true);
@@ -109,7 +142,7 @@ BoardClass::BoardClass(const Reference &ID) : BaseClass(&Table, ID, Flags::Auto 
         // 5. Driver {0, 0, i, 1}
         Values.InsertNext(&p.Driver, sizeof(Drivers), Types::PortDriver, pin, true);
 
-        lastPort = pNode; 
+        lastPort = pNode;
     }
 
     // 6. Telemetry: {0, 1} through {0, 5}
@@ -119,7 +152,7 @@ BoardClass::BoardClass(const Reference &ID) : BaseClass(&Table, ID, Flags::Auto 
     {
         lastTele = Values.InsertNext(&zero, 4, Types::Integer, lastTele, true);
     }
-
+#if defined BOARD_Tamu_v2_0
     // 7. Name {1} (Sibling of system {0})
     Values.InsertNext(Name.Data, Name.Length, Types::Text, 0, false, true);
 #endif
@@ -129,15 +162,15 @@ bool BoardClass::Run()
 {
     // 1. Fast Navigation via Indices
     // We know 'System' is index 0. If you wanted to be safe, you'd use Find.
-    uint16_t systemIdx = 0; 
-    
+    uint16_t systemIdx = 0;
+
     // Grab Telemetry indices using lean Next/Child
-    uint16_t portsIdx    = Values.Child(systemIdx);
+    uint16_t portsIdx = Values.Child(systemIdx);
     uint16_t bootTimeIdx = Values.Next(portsIdx);
-    uint16_t avgIdx      = Values.Next(bootTimeIdx);
-    uint16_t maxIdx      = Values.Next(avgIdx);
+    uint16_t avgIdx = Values.Next(bootTimeIdx);
+    uint16_t maxIdx = Values.Next(avgIdx);
     uint16_t ramTotalIdx = Values.Next(maxIdx);
-    uint16_t ramFreeIdx  = Values.Next(ramTotalIdx);
+    uint16_t ramFreeIdx = Values.Next(ramTotalIdx);
 
     // Resolve values for math
     Result avgRes = Values.Get(avgIdx);
@@ -150,14 +183,16 @@ bool BoardClass::Run()
 
         *avg = (DeltaTime + (*avg * 15)) / 16;
 
-        if (DeltaTime > *max) {
+        if (DeltaTime > *max)
+        {
             *max = DeltaTime;
         }
-        else if (HW::Now() % 20000 < 20) {
+        else if (HW::Now() % 20000 < 20)
+        {
             *max = *avg;
             int32_t totalRam = HW::GetRAM();
             int32_t freeRam = HW::GetFreeRAM();
-            
+
             // Using the updated Set(index) which handles direct writes
             Values.Set(&totalRam, 4, Types::Integer, ramTotalIdx, true);
             Values.Set(&freeRam, 4, Types::Integer, ramFreeIdx, true);
@@ -170,7 +205,8 @@ bool BoardClass::Run()
 
     for (uint8_t i = 0; i < 11; i++)
     {
-        if (currentPort == 0xFFFF) break;
+        if (currentPort == 0xFFFF)
+            break;
 
         if (DriverArray[i] != nullptr)
         {
@@ -178,7 +214,7 @@ bool BoardClass::Run()
             // Logic: currentPort -> Child (Pin) -> Next (Driver)
             uint16_t pinIdx = Values.Child(currentPort);
             uint16_t roleIdx = Values.Next(pinIdx);
-            
+
             Result role = Values.Get(roleIdx);
 
             if (role.Value && *(Drivers *)role.Value == Drivers::LED)
@@ -186,7 +222,7 @@ bool BoardClass::Run()
                 static_cast<LEDDriver *>(DriverArray[i])->Show();
             }
         }
-        
+
         // Move to next port sibling
         currentPort = Values.Next(currentPort);
     }
