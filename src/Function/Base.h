@@ -215,6 +215,20 @@ void Format(const FlexArray &Input)
     Chirp.Send(Success);
 }
 
+void SendUpdate(BaseClass* Object)
+{
+    if (Object == nullptr) return;
+
+    // Standard Protocol: [ReadObjectCode][CompressedData...]
+    char SuccessHeader[1] = {(char)Functions::ReadObject};
+    FlexArray Response(SuccessHeader, 1);
+
+    // Concatenate the object's serialized state
+    Response += Object->Compress(false);
+
+    Chirp.Send(Response);
+}
+
 void ReadObject(const FlexArray &Input)
 {
     // 1. Validation: Need 1 byte for Function + 3 bytes for Reference
@@ -225,52 +239,35 @@ void ReadObject(const FlexArray &Input)
         return;
     }
 
-    // 2. Map the Reference directly (Offset 1)
+    // 2. Map & Resolve
     Reference ID = Reference::Global(Input.Array[1], Input.Array[2], Input.Array[3]);
-
-    // 3. Resolve from the registry
     BaseClass *Object = Objects.At(ID);
 
-    // 4. Verify the object exists
+    // 3. Verify and Execute
     if (Object == nullptr)
     {
         char Response[2] = {(char)Functions::Report, (char)Status::InvalidID};
         Chirp.Send(FlexArray(Response, 2) += Input);
-        return;
     }
-
-    // 5. Build Success Response: [ReadObjectCode][CompressedData...]
-    char SuccessHeader[1] = {(char)Functions::ReadObject};
-    FlexArray Response(SuccessHeader, 1);
-
-    // Concatenate the object's serialized state
-    // This uses the Move Constructor if Compress() returns by value!
-    Response += Object->Compress(false);
-
-    Chirp.Send(Response);
+    else
+    {
+        SendUpdate(Object);
+    }
 }
 
 void Refresh(const FlexArray &Input)
 {
-    // 1. Prepare the standard header once
-    char funcHeader[1] = {(char)Functions::ReadObject};
-
-    // 2. Iterate through the Registry
+    // 1. Iterate through the Registry and trigger individual updates
     for (uint32_t Index = 0; Index < Objects.Registered; Index++)
     {
         BaseClass *Obj = Objects.Object[Index].Object;
-        if (Obj == nullptr)
-            continue;
-
-        // 3. Create a clean message for this specific object
-        // [ReadObjectCode][CompressedData...]
-        FlexArray msg(funcHeader, 1);
-        msg += Obj->Compress(false); // Efficiently appends the object's data
-
-        Chirp.Send(msg);
+        if (Obj != nullptr)
+        {
+            SendUpdate(Obj);
+        }
     }
 
-    // 4. Signal completion of the sync burst
+    // 2. Signal completion of the sync burst
     char statusHeader[2] = {(char)Functions::Report, (char)Status::OK};
     Chirp.Send(FlexArray(statusHeader, 2));
 }

@@ -27,15 +27,15 @@ void ReadValue(const FlexArray &Input)
     {
         Bookmark Found = Object->Values.Find(*pID, true);
         Result FoundData = Found.Get();
-        
+
         if (FoundData.Value != nullptr && FoundData.Length > 0)
         {
             // Efficiency: Reserve space for [Type(1)][Length(2)][Payload(N)]
             // This prevents multiple reallocs during the += chain
             Data.Reserve(1 + 2 + FoundData.Length);
-            
-            Data += FlexArray((char *)&FoundData.Type, 1);       // Pack Type
-            Data += FlexArray((char *)&FoundData.Length, 2);     // Pack Length
+
+            Data += FlexArray((char *)&FoundData.Type, 1);   // Pack Type
+            Data += FlexArray((char *)&FoundData.Length, 2); // Pack Length
             Data += FlexArray((char *)FoundData.Value, FoundData.Length);
         }
     }
@@ -51,7 +51,7 @@ void ReadValue(const FlexArray &Input)
     // 6. Assembly & Transmission
     char funcCode = (char)Functions::ReadValue;
     FlexArray Response(&funcCode, 1);
-    
+
     Response += FlexArray((char *)pID, idSize); // Confirming which ID we read
     Response += Data;                           // Append the payload
 
@@ -87,15 +87,15 @@ void WriteValue(const FlexArray &Input)
 
     Bookmark Index = Object->Values.Find(*pID, true);
 
-    if (Input.Length == idSize + 1) //If no data then delete
+    if (Input.Length == idSize + 1) // If no data then delete
     {
         Object->Values.Delete(Index.Index);
-        //TODO refresh whole object
+        SendUpdate(Object);
         return;
     }
 
     uint16_t payloadOffset = 1 + idSize;
-    
+
     // Safety check to ensure we don't read past the end of Input
     if (payloadOffset + 3 > Input.Length)
     {
@@ -119,9 +119,10 @@ void WriteValue(const FlexArray &Input)
     // 5. Update Object State
     bool WasSetup = Object->Values.HeaderArray[Index.Index].IsSetupCall();
     Object->Values.Set(pData, pLen, pType, *pID, false, WasSetup);
-
-    //TODO refresh whole object if setup
-    ReadValue(Input);
+    if (WasSetup || Index.Index == INVALID_HEADER)
+        SendUpdate(Object);
+    else
+        ReadValue(Input);
 }
 
 void ReadName(const FlexArray &Input)
@@ -150,10 +151,11 @@ void ReadName(const FlexArray &Input)
     char funcCode = (char)Functions::ReadName;
     FlexArray Response(&funcCode, 1);
     Response += FlexArray((char *)ID.Data, 3);
-    
+
     uint8_t nameLen = (Object->Name.Length > 255) ? 255 : (uint8_t)Object->Name.Length;
     Response += FlexArray((char *)&nameLen, 1);
-    if (nameLen > 0) Response += FlexArray(Object->Name.Data, nameLen);
+    if (nameLen > 0)
+        Response += FlexArray(Object->Name.Data, nameLen);
 
     Chirp.Send(Response);
 }
@@ -169,7 +171,7 @@ void WriteName(const FlexArray &Input)
     }
 
     // 2. Map Reference
-   Reference ID = Reference::Global(Input.Array[1], Input.Array[2], Input.Array[3]);
+    Reference ID = Reference::Global(Input.Array[1], Input.Array[2], Input.Array[3]);
 
     // 3. Resolve Object
     BaseClass *Object = Objects.At(ID);
@@ -181,10 +183,11 @@ void WriteName(const FlexArray &Input)
     }
 
     uint8_t incomingLen = (uint8_t)Input.Array[4];
-    char* incomingData = Input.Array + 5;
+    char *incomingData = Input.Array + 5;
 
     // Safety check for string length
-    if (5 + incomingLen > Input.Length) {
+    if (5 + incomingLen > Input.Length)
+    {
         char Resp[2] = {(char)Functions::Report, (char)Status::InvalidType};
         Chirp.Send(FlexArray(Resp, 2) += Input);
         return;
@@ -195,7 +198,7 @@ void WriteName(const FlexArray &Input)
     Object->Name = Text(incomingData, incomingLen);
 
     // 6. Confirmation Echo (Reuse ReadName logic)
-    ReadName(Input); 
+    ReadName(Input);
 }
 
 void ReadInfo(const FlexArray &Input)
@@ -224,7 +227,7 @@ void ReadInfo(const FlexArray &Input)
     char funcCode = (char)Functions::ReadInfo;
     FlexArray Response(&funcCode, 1);
     Response += FlexArray((char *)ID.Data, 3);
-    
+
     // Append the 3 bytes of Info (Flags, RunPeriod, RunPhase)
     Response += FlexArray((char *)&Objects.Object[Index].Object->Flags, 3);
 
@@ -254,13 +257,13 @@ void SetInfo(const FlexArray &Input)
     }
 
     // 5. Update the Object and the Runner Registry
-    BaseClass* Obj = Objects.Object[Index].Object;
+    BaseClass *Obj = Objects.Object[Index].Object;
     Obj->Flags = (FlagClass)Input.Array[4];
     Obj->RunPeriod = Input.Array[5];
     Obj->RunPhase = Input.Array[6];
 
     // Sync the runner info
-    Objects.Object[Index].Info = { Obj->RunPeriod, Obj->RunPhase };
+    Objects.Object[Index].Info = {Obj->RunPeriod, Obj->RunPhase};
 
     // 6. Confirmation Echo
     // Reuse ReadInfo logic to send back the updated state

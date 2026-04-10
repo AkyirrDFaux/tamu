@@ -271,11 +271,9 @@ bool Run(Operations OpCode, const Bookmark &Index)
         if (Link.Length == 0 || Link.Type != Types::Reference)
             break;
 
-        Reference TargetPath = *(Reference *)Link.Value;
-        if (!TargetPath.IsValid())
-            continue;
+        Bookmark Target = linkMark.This();
 
-        Index.Map->Set(Payload.Value, Payload.Length, Payload.Type, TargetPath);
+        Target.Map->Set(Payload.Value, Payload.Length, Payload.Type, Target.Index);
 
         linkMark = linkMark.Next();
     }

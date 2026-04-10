@@ -32,7 +32,9 @@ bool Delay(const Bookmark &OpPoint)
     {
         // First hit: Capture start time
         markState.Set(&CurrentTime, sizeof(int32_t), Types::Integer, true);
-        return false; 
+        int32_t InitialOut = (resMode.Type == Types::Bool && *(bool*)resMode.Value) ? 0 : DelayMs;
+        OutMark.Set(&InitialOut, sizeof(int32_t), Types::Integer, true);
+        return false;
     }
 
     int32_t Elapsed = CurrentTime - StartTime;
