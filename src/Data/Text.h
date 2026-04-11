@@ -1,7 +1,7 @@
 class Text
 {
 public:
-    char *Data;
+    char *Data = nullptr;
     uint16_t Length;
 
     // Add this to your Text class
@@ -11,8 +11,8 @@ public:
         {
             Length = Len+1; // +1 for safety/null termination
             Data = new char[Length]; 
-            memcpy(Data, Buffer, Length);
-            Data[Length] = '\0'; 
+            memcpy(Data, Buffer, Length-1);
+            Data[Length-1] = '\0'; 
         }
     }
 

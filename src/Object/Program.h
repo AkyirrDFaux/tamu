@@ -43,7 +43,7 @@ bool Program::RunEntry(uint16_t Index)
 
     // Direct pointer cast to the Operations enum
     Operations op = *(Operations *)item.Value;
-
+    
     // Operation::Run now takes the raw enum and the values tree
     return Operation::Run(op, {&Values, Index});
 }
@@ -64,8 +64,8 @@ bool Program::Run()
     }
 
     ProgramTypes Mode = *(ProgramTypes *)modeRes.Value;
-    int32_t *counterPtr = (int32_t *)countRes.Value;
-    int32_t InitialCounter = *counterPtr;
+    int32_t counter = *(int32_t *)countRes.Value; //Pointer can CHANGE during execution!!!
+    int32_t InitialCounter = counter;
 
     bool HasFinished = false;
 
@@ -76,7 +76,7 @@ bool Program::Run()
         uint16_t entryIdx = 2;
 
         // Fast-forward to the current step (O(N) search, but starting from known Index 2)
-        for (int32_t i = 0; i < *counterPtr && entryIdx != INVALID_HEADER; i++)
+        for (int32_t i = 0; i < counter && entryIdx != INVALID_HEADER; i++)
         {
             entryIdx = Values.Next(entryIdx);
         }
@@ -84,19 +84,19 @@ bool Program::Run()
         // Execution Loop
         while (entryIdx != INVALID_HEADER)
         {
-            if (*counterPtr >= InitialCounter && HasFinished)
+            if (counter >= InitialCounter && HasFinished)
                     break;
 
             if (!RunEntry(entryIdx))
                 break; // Current entry is busy/blocking (e.g., a Wait command)
 
-            (*counterPtr)++;
+            counter++;
             entryIdx = Values.Next(entryIdx);
 
             // Wrap-around logic
             if (entryIdx == INVALID_HEADER)
             {
-                *counterPtr = 0;
+                counter = 0;
                 entryIdx = 2; // Jump back to the first entry
                 HasFinished = true;
             }
@@ -116,6 +116,7 @@ bool Program::Run()
             entryIdx = Values.Next(entryIdx);
         }
     }
+    Values.SetExisting(&counter, sizeof(int32_t), Types::Integer, 1);
 
     return HasFinished;
 }

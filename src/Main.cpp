@@ -5,6 +5,16 @@
 #include <type_traits>
 #include <initializer_list>
 
+//Helpful debugging snippet :)
+/*#include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+void checkHeap(const char* label) {
+    if (!heap_caps_check_integrity_all(true)) {
+        ESP_LOGD("HEAP","!!! HEAP CORRUPT AT: %s !!!\n", label);
+        while(1) { vTaskDelay(pdMS_TO_TICKS(1000)); } // Stop here so we can see the label
+    }
+}*/
+
 uint32_t LastTime = 0;
 uint32_t CurrentTime = 0;
 uint32_t DeltaTime = 0;
