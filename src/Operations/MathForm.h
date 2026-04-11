@@ -20,7 +20,7 @@ bool ExecuteSine(const Bookmark &OpPoint)
     Number ResultValue = sin(T * M + P);
 
     // 3. Store result
-    OutMark.Set(&ResultValue, sizeof(Number), Types::Number, true);
+    OutMark.SetCurrent(&ResultValue, sizeof(Number), Types::Number);
 
     return true;
 }

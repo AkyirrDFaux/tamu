@@ -35,21 +35,24 @@ SensorClass::SensorClass(const Reference &ID, FlagClass Flags, RunInfo Info)
     Type = ObjectTypes::Sensor;
     Name = "Sensor";
 
-    // 1. Root {0}: Sensor Type
+    uint16_t cursor = 0;
+    Tri ReadOnly = (this->Flags == Flags::Auto) ? Tri::Set : Tri::Reset;
+
+    // Index 0: Sensor Type {0} (Depth 0)
     SensorTypes initialType = SensorTypes::Undefined;
-    Values.Set(&initialType, sizeof(SensorTypes), Types::Sensor, 0, false, true);
+    Values.Set(&initialType, sizeof(SensorTypes), Types::Sensor, cursor++, 0, ReadOnly, Tri::Set);
 
-    // 2. Child of Type {0, 0}: Port
+    // Index 1: Port {0, 0} (Depth 1) - Child of Type
     PortNumber initialPort = -1;
-    Values.InsertChild(&initialPort, sizeof(PortNumber), Types::Byte, 0, false, true);
+    Values.Set(&initialPort, sizeof(PortNumber), Types::PortNumber, cursor++, 1, ReadOnly, Tri::Set);
 
-    // 3. Sibling of Type {1}: Measurement
-    Number zero = 0;
-    uint16_t measIdx = Values.InsertNext(&zero, sizeof(Number), Types::Number, 0);
+    // Index 2: Measurement {1} (Depth 0) - Sibling of Type
+    Number zero = 0.0;
+    Values.Set(&zero, sizeof(Number), Types::Number, cursor++, 0, Tri::Set, Tri::Reset);
 
-    // 4. Sibling of Measurement {2}: Filter
-    Number defaultFilter = 1;
-    Values.InsertNext(&defaultFilter, sizeof(Number), Types::Number, measIdx);
+    // Index 3: Filter {2} (Depth 0) - Sibling of Measurement
+    Number defaultFilter = 1.0;
+    Values.Set(&defaultFilter, sizeof(Number), Types::Number, cursor++, 0, Tri::Reset, Tri::Reset);
 }
 
 SensorClass::~SensorClass()
@@ -108,14 +111,14 @@ bool SensorClass::Run()
         return true;
     }
 
-    // Linear navigation: 0 -> Next -> Next
-    uint16_t typeIdx = 0;
-    uint16_t measIdx = Values.Next(typeIdx);
-    uint16_t filtIdx = Values.Next(measIdx);
-
-    Result typeRes  = Values.Get(typeIdx);
-    Result measRes  = Values.Get(measIdx);
-    Result filtRes  = Values.Get(filtIdx);
+    // Hard-indexed mapping:
+    // 0: Type {0}
+    // 2: Measurement {1}
+    // 3: Filter {2}
+    
+    Result typeRes = Values.Get(0);
+    Result measRes = Values.Get(2);
+    Result filtRes = Values.Get(3);
 
     if (!typeRes.Value || !measRes.Value || !filtRes.Value)
     {
@@ -123,9 +126,9 @@ bool SensorClass::Run()
         return true;
     }
 
-    SensorTypes mode = *(SensorTypes*)typeRes.Value;
+    SensorTypes mode      = *(SensorTypes*)typeRes.Value;
     Number* measurementPtr = (Number*)measRes.Value;
-    Number filterVal = *(Number*)filtRes.Value;
+    Number filterVal       = *(Number*)filtRes.Value;
 
     // Raw Hardware Read
     Number In = HW::AnalogRead(MeasPin);
@@ -139,10 +142,12 @@ bool SensorClass::Run()
         
     case SensorTypes::TempNTC10K:
         // Steinhart-Hart simplified
+        // Note: Number class should handle the log() conversion or casting to float
         In = 1.0f / (0.0034f + log(In / (ADCRES - In)) / 3950.0f) - 273.15f;
         break;
         
     case SensorTypes::Light10K:
+        // Inverse square law approximation for photoresistors
         In = sq(18.0f * (ADCRES - In) / In);
         break;
         
@@ -151,10 +156,11 @@ bool SensorClass::Run()
     }
 
     // Exponential Moving Average Filter
-    // We update the ValueTree memory directly
+    // Using your established weight logic
     Number weightNew = 1.0f / (1.0f + filterVal);
     Number weightOld = 1.0f - weightNew;
 
+    // Zero-copy update directly into DataArray
     *measurementPtr = (In * weightNew) + (*measurementPtr * weightOld);
 
     return true;

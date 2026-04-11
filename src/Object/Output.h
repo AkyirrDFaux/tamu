@@ -33,21 +33,24 @@ OutputClass::OutputClass(const Reference &ID, FlagClass Flags, RunInfo Info)
     Type = ObjectTypes::Output;
     Name = "Output";
 
-    // 1. Root {0}: Mode
+    uint16_t cursor = 0;
+    Tri ReadOnly = (this->Flags == Flags::Auto) ? Tri::Set : Tri::Reset;
+
+    // Index 0: Mode {0} (Depth 0)
     Outputs initialMode = Outputs::Undefined;
-    Values.Set(&initialMode, sizeof(Outputs), Types::Output, 0, false, true);
+    Values.Set(&initialMode, sizeof(Outputs), Types::Output, cursor++, 0, ReadOnly, Tri::Set);
 
-    // 2. Child of Mode {0, 0}: Port
+    // Index 1: Port {0, 0} (Depth 1)
     PortNumber initialPort = -1;
-    Values.InsertChild(&initialPort, sizeof(PortNumber), Types::PortNumber, 0, false, true);
+    Values.Set(&initialPort, sizeof(PortNumber), Types::PortNumber, cursor++, 1, ReadOnly, Tri::Set);
 
-    // 3. Sibling of Mode {1}: Target (Value)
-    Number initialTarget = 0;
-    uint16_t targetIdx = Values.InsertNext(&initialTarget, sizeof(Number), Types::Number, 0);
+    // Index 2: Target/Value {1} (Depth 0)
+    Number initialTarget = 0.0;
+    Values.Set(&initialTarget, sizeof(Number), Types::Number, cursor++, 0, Tri::Reset, Tri::Reset);
 
-    // 4. Child of Target {1, 0}: Frequency
+    // Index 3: Frequency {1, 0} (Depth 1) - Child of Target
     int32_t initialFreq = 25000;
-    Values.InsertChild(&initialFreq, sizeof(int32_t), Types::Integer, targetIdx, false, true);
+    Values.Set(&initialFreq, sizeof(int32_t), Types::Integer, cursor++, 1, ReadOnly, Tri::Set);
 }
 
 OutputClass::~OutputClass()
@@ -98,7 +101,13 @@ bool OutputClass::Disconnect()
 
 void OutputClass::Setup(uint16_t Index)
 {
-    // Port change {0, 0}
+    // Hard-indexed mapping:
+    // 0: Mode {0}
+    // 1: Port {0, 0}
+    // 2: Target {1}
+    // 3: Frequency {1, 0}
+
+    // 1. Port changed: Re-link hardware
     if (Index == 1)
     {
         Disconnect();
@@ -106,19 +115,14 @@ void OutputClass::Setup(uint16_t Index)
         return;
     }
 
-    // Mode {0} or Frequency {1, 0} change
-    bool isMode = (Index == 0);
-    bool isFreq = (Index == 3);
-
-    if (isMode || isFreq)
+    // 2. Mode or Frequency changed
+    if (Index == 0 || Index == 3)
     {
         if (!HW::IsValidPin(PWMPin))
             return;
 
-        uint16_t targetIdx = Values.Next(0);
-
         Result modeRes = Values.Get(0);
-        Result freqRes = Values.Get(Values.Child(targetIdx)); // Freq is child of Target
+        Result freqRes = Values.Get(3);
 
         if (modeRes.Value && freqRes.Value)
         {
@@ -136,12 +140,9 @@ bool OutputClass::Run()
     if (!HW::IsValidPin(PWMPin))
         return true;
 
-    // Linear navigation: 0 (Mode) -> Next (Target)
-    uint16_t modeIdx = 0;
-    uint16_t targetIdx = Values.Next(modeIdx);
-
-    Result modeRes = Values.Get(modeIdx);
-    Result targetRes = Values.GetThis(targetIdx); // GetThis in case Target is linked
+    // Direct jump to Mode and Target (O(1))
+    Result modeRes = Values.Get(0);
+    Result targetRes = Values.Get(2); // Index 2 is Target {1}
 
     if (!modeRes.Value || !targetRes.Value)
         return true;
@@ -151,6 +152,7 @@ bool OutputClass::Run()
 
     if (Mode == Outputs::PWM)
     {
+        // Write duty cycle to timer compare register
         HW::PWM(PWMPin, Target);
     }
 

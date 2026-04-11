@@ -42,36 +42,37 @@ DisplayClass::DisplayClass(const Reference &ID, FlagClass Flags, RunInfo Info)
     Type = ObjectTypes::Display;
     Name = "Display";
 
-    // Values starts empty. We build it linearly to avoid path parsing.
+    uint16_t cursor = 0;
 
-    // --- Branch {0}: Hardware Definition ---
+    // --- Branch {0}: Hardware Definition (Depth 0) ---
     Displays initType = Displays::Undefined;
-    Values.Set(&initType, sizeof(Displays), Types::Display, 0, false, true); // {0}
+    Values.Set(&initType, sizeof(Displays), Types::Display, cursor++, 0, Tri::Reset, Tri::Set); // {0}
 
+    // --- Branch {0} Children (Depth 1) ---
     PortNumber initPort = -1;
-    uint16_t b0 = Values.InsertChild(&initPort, sizeof(PortNumber), Types::PortNumber, 0, false, true); // {0, 0}
+    Values.Set(&initPort, sizeof(PortNumber), Types::PortNumber, cursor++, 1, Tri::Reset, Tri::Set); // {0, 0}
 
     int32_t initLen = 0;
-    uint16_t b0_1 = Values.InsertNext(&initLen, sizeof(int32_t), Types::Integer, b0, false, true); // {0, 1}
+    Values.Set(&initLen, sizeof(int32_t), Types::Integer, cursor++, 1, Tri::Reset, Tri::Set); // {0, 1}
 
     Vector2D initSize(0, 0);
-    uint16_t b0_2 = Values.InsertNext(&initSize, sizeof(Vector2D), Types::Vector2D, b0_1); // {0, 2}
+    Values.Set(&initSize, sizeof(Vector2D), Types::Vector2D, cursor++, 1, Tri::Reset, Tri::Reset); // {0, 2}
 
-    Number initRatio = 1.0f;
-    Values.InsertNext(&initRatio, sizeof(Number), Types::Number, b0_2); // {0, 3}
+    Number initRatio = 1.0;
+    Values.Set(&initRatio, sizeof(Number), Types::Number, cursor++, 1, Tri::Reset, Tri::Reset); // {0, 3}
 
-    // --- Branch {1}: Control ---
+    // --- Branch {1}: Control (Depth 0 - Sibling of {0}) ---
     uint8_t initBright = 20;
-    // InsertNext after the end of Branch {0}. Skip logic handles finding the end.
-    uint16_t b1 = Values.InsertNext(&initBright, sizeof(uint8_t), Types::Byte, 0); // {1}
+    Values.Set(&initBright, sizeof(uint8_t), Types::Byte, cursor++, 0, Tri::Reset, Tri::Reset); // {1}
 
+    // --- Branch {1} Children (Depth 1) ---
     Coord2D initOffset(0, 0, 0);
-    uint16_t b1_0 = Values.InsertChild(&initOffset, sizeof(Coord2D), Types::Coord2D, b1); // {1, 0}
+    Values.Set(&initOffset, sizeof(Coord2D), Types::Coord2D, cursor++, 1, Tri::Reset, Tri::Reset); // {1, 0}
 
     bool initFalse = false;
-    uint16_t b1_1 = Values.InsertNext(&initFalse, sizeof(bool), Types::Bool, b1_0); // {1, 1}
-    uint16_t b1_2 = Values.InsertNext(&initFalse, sizeof(bool), Types::Bool, b1_1); // {1, 2}
-    Values.InsertNext(&initFalse, sizeof(bool), Types::Bool, b1_2);                 // {1, 3}
+    Values.Set(&initFalse, sizeof(bool), Types::Bool, cursor++, 1, Tri::Reset, Tri::Reset); // {1, 1}
+    Values.Set(&initFalse, sizeof(bool), Types::Bool, cursor++, 1, Tri::Reset, Tri::Reset); // {1, 2}
+    Values.Set(&initFalse, sizeof(bool), Types::Bool, cursor++, 1, Tri::Reset, Tri::Reset); // {1, 3}
 }
 
 DisplayClass::~DisplayClass()
@@ -133,16 +134,15 @@ bool DisplayClass::Disconnect()
 
 void DisplayClass::Setup(uint16_t Index)
 {
-    // PathLen is a function call; storing it once saves bytes
     bool HardwareChanged = false;
 
-    // Hardcoded indices from the linear constructor:
-    // {0}   = Index 0 (Displays Type)
-    // {0, 0} = Index 1 (Port)
-    // {0, 1} = Index 2 (Length)
-    // {0, 2} = Index 3 (Size)
+    // Direct Index Access (O(1)) based on Linear Constructor:
+    // 0: Type {0}
+    // 1: Port {0, 0}
+    // 2: Length {0, 1}
+    // 3: Size {0, 2}
 
-    if (Index == 0) // Displays::Type changed ({0})
+    if (Index == 0) // Displays::Type changed
     {
         Result res = Values.Get(0);
         if (res.Value)
@@ -166,13 +166,14 @@ void DisplayClass::Setup(uint16_t Index)
 
             if (newLen > 0)
             {
-                Values.Set(&newLen, sizeof(int32_t), Types::Integer, 2);    // {0, 1}
-                Values.Set(&newSize, sizeof(Vector2D), Types::Vector2D, 3); // {0, 2}
+                // SetExisting is safer here since the nodes already exist
+                Values.SetExisting(&newLen, sizeof(int32_t), Types::Integer, 2);    // {0, 1}
+                Values.SetExisting(&newSize, sizeof(Vector2D), Types::Vector2D, 3); // {0, 2}
                 HardwareChanged = true;
             }
         }
     }
-    // Check if Port {0,0} or Length {0,1} changed
+    // If Port {0,0} or Length {0,1} were manually updated via Serial/UI
     else if (Index == 1 || Index == 2)
     {
         HardwareChanged = true;
@@ -180,12 +181,21 @@ void DisplayClass::Setup(uint16_t Index)
 
     if (HardwareChanged)
     {
-        Result lenRes = Values.Get(2); // {0, 1}
-        if (lenRes.Value)
-            ManageOverlay(*(int32_t *)lenRes.Value);
+        Result portRes = Values.Get(1); // {0, 0}
+        Result lenRes = Values.Get(2);  // {0, 1}
 
-        Disconnect();
-        Connect();
+        if (lenRes.Value)
+        {
+            // Re-allocate or resize the drawing buffer
+            ManageOverlay(*(int32_t *)lenRes.Value);
+        }
+
+        // Only cycle hardware connection if we have a valid port assignment
+        if (portRes.Value && (*(PortNumber *)portRes.Value).IsValid())
+        {
+            Disconnect();
+            Connect();
+        }
     }
 }
 
@@ -280,11 +290,18 @@ void DisplayClass::RenderGeometry(uint16_t NodeIdx, int32_t Length, Vector2D Dis
     uint16_t fadeIdx = Values.Next(sizeIdx);
     uint16_t posIdx = Values.Next(fadeIdx);
 
-    Geometries Type = *(Geometries *)typeRes.Value;
-    GeometryOperation Op = (opIdx != 0xFFFF) ? *(GeometryOperation *)Values.Get(opIdx).Value : GeometryOperation::Add;
-    Vector2D GSize = (sizeIdx != 0xFFFF) ? *(Vector2D *)Values.Get(sizeIdx).Value : Vector2D(1, 1);
-    Number GFade = (fadeIdx != 0xFFFF) ? *(Number *)Values.Get(fadeIdx).Value : Number(0.001f);
-    Coord2D GPos = (posIdx != 0xFFFF) ? *(Coord2D *)Values.Get(posIdx).Value : Coord2D(0, 0, 0);
+    // 1. Get the Results first so we can check their internal Value pointers
+    Result opRes = (opIdx != 0xFFFF) ? Values.Get(opIdx) : Result();
+    Result sizeRes = (sizeIdx != 0xFFFF) ? Values.Get(sizeIdx) : Result();
+    Result fadeRes = (fadeIdx != 0xFFFF) ? Values.Get(fadeIdx) : Result();
+    Result posRes = (posIdx != 0xFFFF) ? Values.Get(posIdx) : Result();
+
+    // 2. Extract types safely. If .Value is null (restoration in progress), use fallbacks.
+    Geometries Type = *(Geometries *)typeRes.Value; // Already null-checked at start of function
+    GeometryOperation Op = (opRes.Value) ? *(GeometryOperation *)opRes.Value : GeometryOperation::Add;
+    Vector2D GSize = (sizeRes.Value) ? *(Vector2D *)sizeRes.Value : Vector2D(1, 1);
+    Number GFade = (fadeRes.Value) ? *(Number *)fadeRes.Value : Number(0.001f);
+    Coord2D GPos = (posRes.Value) ? *(Coord2D *)posRes.Value : Coord2D(0, 0, 0);
 
     if (GFade <= 0)
         GFade = 0.001f;
@@ -412,9 +429,16 @@ void DisplayClass::RenderTexture(uint16_t NodeIdx, int32_t Length, Vector2D Disp
     uint16_t texPosIdx = Values.Next(colBIdx);
     uint16_t texWidIdx = Values.Next(texPosIdx);
 
-    ColourClass ColourB = *(ColourClass *)Values.Get(colBIdx).Value;
-    Coord2D TexPos = *(Coord2D *)Values.Get(texPosIdx).Value;
-    Number TexWidth = *(Number *)Values.Get(texWidIdx).Value;
+    // 1. Fetch results
+    Result resB = (colBIdx != 0xFFFF) ? Values.Get(colBIdx) : Result();
+    Result resPos = (texPosIdx != 0xFFFF) ? Values.Get(texPosIdx) : Result();
+    Result resWid = (texWidIdx != 0xFFFF) ? Values.Get(texWidIdx) : Result();
+
+    // 2. Safe dereference with fallbacks
+    // (Assuming black/transparent, zeroed coordinates, and 1.0 width as safe defaults)
+    ColourClass ColourB = (resB.Value) ? *(ColourClass *)resB.Value : ColourClass(0, 0, 0, 0);
+    Coord2D TexPos = (resPos.Value) ? *(Coord2D *)resPos.Value : Coord2D(0, 0, 0);
+    Number TexWidth = (resWid.Value) ? *(Number *)resWid.Value : Number(1.0f);
 
     if (TexWidth <= 0)
         TexWidth = 0.001f;

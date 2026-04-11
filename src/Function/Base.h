@@ -225,7 +225,6 @@ void SendUpdate(BaseClass* Object)
 
     // Concatenate the object's serialized state
     Response += Object->Compress(false);
-
     Chirp.Send(Response);
 }
 

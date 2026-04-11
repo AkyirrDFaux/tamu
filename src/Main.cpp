@@ -142,9 +142,29 @@ int main()
 };
 
 #if defined BOARD_Tamu_v2_0
+
+// 1. The Task Function
+void application_task(void *pvParameters) 
+{
+    // Call your existing main() logic
+    // Note: If your main() has an infinite loop, it stays here.
+    main(); 
+
+    // Safety: FreeRTOS tasks must never return. 
+    // If main() ever exits, we must delete the task.
+    vTaskDelete(NULL); 
+}
+
 extern "C"
 {
-    void app_main(void) { main(); };
+    void app_main(void) 
+    {
+        // 2. Create the task
+        // Name: "app_task"
+        // Stack: 8192 bytes (Adjust as needed, C3 is limited)
+        // Priority: 5 (Standard priority)
+        xTaskCreate(application_task, "app_task", 8192, NULL, 5, NULL);
+    };
 }
 #endif
 /*TODO:

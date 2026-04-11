@@ -8,18 +8,18 @@ void BoardClass::Setup(uint16_t Index)
         I2CDeviceClass *GyroAcc = new I2CDeviceClass(Reference::Global(0, 2, 0), Flags::Auto | Flags::RunLoop);
 
         PortNumber sda = 8, scl = 9;
-        GyroAcc->Values.Set(&sda, sizeof(PortNumber), Types::PortNumber, 1, true, true);
-        GyroAcc->Values.Set(&scl, sizeof(PortNumber), Types::PortNumber, 2, true, true);
+        GyroAcc->Values.SetExisting(&sda, sizeof(PortNumber), Types::PortNumber, 1);
+        GyroAcc->Values.SetExisting(&scl, sizeof(PortNumber), Types::PortNumber, 2);
 
         I2CDevices model = I2CDevices::LSM6DS3TRC;
-        GyroAcc->Values.Set(&model, sizeof(I2CDevices), Types::I2CDevice, 0, true, true);
+        GyroAcc->Values.SetExisting(&model, sizeof(I2CDevices), Types::I2CDevice, 0);
         GyroAcc->Flags -= Flags::Dirty;
         InputClass *Button = new InputClass(Reference::Global(0, 2, 1), Flags::Auto | Flags::RunLoop);
         PortNumber btnPin = 10;
-        Button->Values.Set(&btnPin, sizeof(PortNumber), Types::PortNumber, 1, true, true);
+        Button->Values.SetExisting(&btnPin, sizeof(PortNumber), Types::PortNumber, 1);
 
         Inputs inType = Inputs::ButtonWithLED;
-        Button->Values.Set(&inType, sizeof(Inputs), Types::Input, 0, true, true);
+        Button->Values.SetExisting(&inType, sizeof(Inputs), Types::Input, 0);
         Button->Flags -= Flags::Dirty;
     }
 #endif
@@ -27,32 +27,33 @@ void BoardClass::Setup(uint16_t Index)
 
 PortMap BoardClass::GetPortMap(PortNumber Port)
 {
-    PortMap Map = {0xFFFF, 0xFFFF, 0xFFFF};
+    uint16_t portsIdx = Values.Child(0);
+    uint16_t currentPort = Values.Child(portsIdx);
 
-    // Navigate to Ports branch: {0, 0}
-    uint16_t idx = Values.Child(Values.Child(0));
-
-    // Jump to specific Port sibling
-    for (PortNumber i = 0; i < Port && idx != 0xFFFF; i.Value++)
+    // Walk to the correct port sibling
+    for (uint16_t i = 0; i < Port; i++)
     {
-        idx = Values.Next(idx);
+        currentPort = Values.Next(currentPort);
+        if (currentPort == INVALID_HEADER)
+            return {INVALID_HEADER, INVALID_HEADER, INVALID_HEADER, INVALID_HEADER};
     }
 
-    if (idx != 0xFFFF)
-    {
-        Map.Port = idx;
-        // Port Child is Pin {0}, Pin Sibling is Driver {1}
-        Map.Driver = Values.Next(Values.Child(idx));
-        // Driver Child is the Reference {0}
-        Map.Ref = Values.Child(Map.Driver);
-    }
-    return Map;
+    uint16_t pinIdx = Values.Child(currentPort);
+    uint16_t driverIdx = Values.Next(pinIdx);
+
+    // Check if there is a Reference node attached to the driver
+    uint16_t refIdx = Values.Child(driverIdx);
+
+    return {currentPort, pinIdx, driverIdx, refIdx};
 }
 
 // --- PIN CONNECTIONS ---
 
 void SyncObjectPin(BaseClass *Obj, ::Pin P)
 {
+    if (!Obj)
+        return;
+
     if (Obj->Type == ObjectTypes::Input)
         static_cast<InputClass *>(Obj)->InputPin = P;
     else if (Obj->Type == ObjectTypes::Sensor)
@@ -63,60 +64,90 @@ void SyncObjectPin(BaseClass *Obj, ::Pin P)
 
 bool BoardClass::ConnectPin(BaseClass *Object, PortNumber Port)
 {
-    // Use the core Reference path logic to handle everything.
-    // It's already in flash; calling it once is cheaper than local logic.
-    if (!Object || Port > 10 || Values.Find({0, 0, Port, 1, 0}, true).Index != INVALID_HEADER)
+    if (!Object || Port >= PORT_COUNT)
         return false;
 
-    Reference ID = Objects.GetReference(Object);
-    Values.Set(&ID, sizeof(Reference), Types::Reference, {0, 0, Port, 1, 0}, true);
+    // 1. Get the map for this port
+    PortMap map = GetPortMap(Port);
+    if (map.Port == INVALID_HEADER || map.Driver == INVALID_HEADER || map.Pin == INVALID_HEADER)
+        return false;
 
+    // 2. Check if a Reference already exists at {0, 0, Port, 1, 0}
+    // In our linear tree, if the node exists, it will be at map.Driver + 1
+    // provided its depth is 4.
+    if (map.Ref != INVALID_HEADER)
+        return false;
+
+    // 3. Create the Reference to the Object
+    Reference TargetID = Objects.GetReference(Object);
+
+    // We insert a child under the Driver node {0, 0, Port, 1}
+    // Depth is 4. ReadOnly = Set.
+    Values.SetChild(&TargetID, sizeof(Reference), Types::Reference, map.Driver, Tri::Set);
+
+    // 4. Update the Hardware Driver
     DriverPin(Port);
+
     return true;
 }
 
 void BoardClass::DriverPin(PortNumber Port)
 {
+    // Always discover fresh; structural changes may have occurred
     PortMap Map = GetPortMap(Port);
     if (Map.Port == INVALID_HEADER)
         return;
 
-    Result pinRes = Values.Get(Values.Child(Map.Port));
-    Result refRes = Values.Get(Map.Ref);
+    Result pinRes = Values.Get(Map.Pin);
 
     Drivers role = Drivers::None;
-    ::Pin portPin = (pinRes.Value) ? *(::Pin *)pinRes.Value : INVALID_PIN;
+    DriverArray[Port] = nullptr;
 
-    if (refRes.Value && HW::IsValidPin(portPin))
+    // Only attempt to link if the Reference node actually exists
+    if (Map.Ref != INVALID_HEADER)
     {
-        BaseClass *Obj = Objects.At(*(Reference *)refRes.Value);
-        if (Obj)
+        Result refRes = Values.Get(Map.Ref);
+        if (refRes.Value && pinRes.Value)
         {
-            SyncObjectPin(Obj, portPin);
-            // Derive role from Type to potentially avoid a switch-case
-            if (Obj->Type == ObjectTypes::Input)
-                role = Drivers::Input;
-            else if (Obj->Type == ObjectTypes::Sensor)
-                role = Drivers::Analog;
-            else if (Obj->Type == ObjectTypes::Output)
-                role = Drivers::Output;
+            ::Pin portPin = *(::Pin *)pinRes.Value;
+            BaseClass *Obj = Objects.At(*(Reference *)refRes.Value);
+
+            if (Obj && HW::IsValidPin(portPin))
+            {
+                SyncObjectPin(Obj, portPin);
+                DriverArray[Port] = Obj;
+
+                if (Obj->Type == ObjectTypes::Input)
+                    role = Drivers::Input;
+                else if (Obj->Type == ObjectTypes::Sensor)
+                    role = Drivers::Analog;
+                else if (Obj->Type == ObjectTypes::Output)
+                    role = Drivers::Output;
+            }
         }
     }
 
-    Values.Set(&role, sizeof(Drivers), Types::PortDriver, Map.Driver, true);
+    // Update the Driver role node (always exists)
+    Values.SetExisting(&role, sizeof(Drivers), Types::PortDriver, Map.Driver);
 }
 
 bool BoardClass::DisconnectPin(BaseClass *Object, PortNumber Port)
 {
+    // 1. Fresh discovery because previous deletions might have shifted indices
     PortMap Map = GetPortMap(Port);
-    // Combined null check and reference comparison
+
     if (Map.Ref != INVALID_HEADER)
     {
         Result res = Values.Get(Map.Ref);
         if (res.Value && *(Reference *)res.Value == Objects.GetReference(Object))
         {
+            // 2. Clear hardware links first
             SyncObjectPin(Object, INVALID_PIN);
+
+            // 3. Delete the node (this shifts HeaderArray and DataArray)
             Values.Delete(Map.Ref);
+
+            // 4. Update hardware state and local DriverArray
             DriverPin(Port);
             return true;
         }
@@ -128,21 +159,51 @@ bool BoardClass::DisconnectPin(BaseClass *Object, PortNumber Port)
 
 bool BoardClass::ConnectLED(BaseClass *Object, PortNumber Port, uint8_t Index)
 {
-    // Combined guard clause saves jump instructions
-    if (!Object || Port > 10 || Object->Type != ObjectTypes::Display)
+    if (!Object || Port >= PORT_COUNT || Object->Type != ObjectTypes::Display)
         return false;
 
     Reference ID = Objects.GetReference(Object);
     if (!ID.IsValid())
         return false;
 
-    // Direct path-based check
-    // We use the Reference overload because it's already compiled in ValueTree
-    if (Values.Find({0, 0, Port, 1, Index}, true).Index != INVALID_HEADER)
+    PortMap Map = GetPortMap(Port);
+    if (Map.Driver == INVALID_HEADER)
         return false;
 
-    // Single call to handle insertion/setting
-    Values.Set(&ID, sizeof(Reference), Types::Reference, {0, 0, Port, 1, Index}, true);
+    // 1. Capability check 
+    Result typeRes = Values.Get(Map.Port);
+    if (typeRes.Value && *(PortTypeClass *)typeRes.Value != Ports::GPIO)
+    {
+        return false;
+    }
+
+    // 2. Manual Iteration to check for Index occupancy
+    // We assume the children of the Driver node are stored in order of their Index.
+    uint16_t currentChild = Values.Child(Map.Driver);
+    uint16_t prevChild = INVALID_HEADER;
+    uint8_t count = 0;
+
+    while (currentChild != INVALID_HEADER)
+    {
+        if (count == Index)
+            return false; // Slot already taken
+        prevChild = currentChild;
+        currentChild = Values.Next(currentChild);
+        count++;
+    }
+
+    // 3. Insertion via SetChild/SetNext
+    // If Index is 0 and no children exist, use SetChild.
+    // Otherwise, we'd need to fill gaps or append.
+    // For simplicity, we append to the end of the driver's child list.
+    if (prevChild == INVALID_HEADER)
+    {
+        Values.SetChild(&ID, sizeof(Reference), Types::Reference, Map.Driver, Tri::Set);
+    }
+    else
+    {
+        Values.SetNext(&ID, sizeof(Reference), Types::Reference, prevChild, Tri::Set);
+    }
 
     DriverLED(Port);
     return true;
@@ -151,26 +212,23 @@ bool BoardClass::ConnectLED(BaseClass *Object, PortNumber Port, uint8_t Index)
 void BoardClass::DriverLED(PortNumber Port)
 {
     PortMap Map = GetPortMap(Port);
-    if (Map.Port == INVALID_HEADER)
-        return;
+    if (Map.Port == INVALID_HEADER) return;
 
-    // Pin is the first child of Port {0, 0, Port, 0}
-    Result pinRes = Values.Get(Values.Child(Map.Port));
-    if (!pinRes.Value)
-        return;
-    ::Pin PortPin = *(::Pin *)pinRes.Value;
+    // Use PortMap to get the Pin directly
+    Result pinRes = Values.Get(Map.Pin);
+    if (!pinRes.Value) return;
+    Pin PortPin = *(Pin *)pinRes.Value;
 
     uint32_t TotalLength = 0;
 
-    // Pass 1: Linear walk of the Driver's children to get total length
-    uint16_t current = Map.Ref; // Map.Ref is the first child of the Driver node
+    // Pass 1: Sum up lengths of all attached Displays
+    uint16_t current = Values.Child(Map.Driver); 
     while (current != INVALID_HEADER)
     {
         BaseClass *Obj = Objects.At(*(Reference *)Values.Get(current).Value);
-        // Use a single check for validity and type
         if (Obj && Obj->Type == ObjectTypes::Display)
         {
-            // Display length is always at {0, 1}
+            // Jump to Display length: Child(0) is Root, Next(Root) is Length
             Result lenRes = Obj->Values.Get(Obj->Values.Next(Obj->Values.Child(0)));
             if (lenRes.Value)
                 TotalLength += *(int32_t *)lenRes.Value;
@@ -178,9 +236,12 @@ void BoardClass::DriverLED(PortNumber Port)
         current = Values.Next(current);
     }
 
-    // Pass 2: Rebuild Hardware Driver
+    // Pass 2: Rebuild/Cleanup the Driver
     if (DriverArray[Port])
+    {
         delete (LEDDriver *)DriverArray[Port];
+        DriverArray[Port] = nullptr;
+    }
 
     Drivers role = Drivers::None;
     if (TotalLength > 0)
@@ -189,9 +250,9 @@ void BoardClass::DriverLED(PortNumber Port)
         LEDDriver *NewDriver = new LEDDriver(TotalLength, PortPin);
         DriverArray[Port] = NewDriver;
 
-        // Pass 3: Distribute offsets using the same linear walk
+        // Pass 3: Distribute DMA buffer offsets to each Display
         uint32_t CurrentOffset = 0;
-        current = Map.Ref;
+        current = Values.Child(Map.Driver);
         while (current != INVALID_HEADER)
         {
             DisplayClass *Disp = (DisplayClass *)Objects.At(*(Reference *)Values.Get(current).Value);
@@ -205,47 +266,38 @@ void BoardClass::DriverLED(PortNumber Port)
             current = Values.Next(current);
         }
     }
-    else
-        DriverArray[Port] = nullptr;
 
-    // Update the Driver node role once at the end
-    Values.Set(&role, sizeof(Drivers), Types::PortDriver, Map.Driver, true);
+    // Sync role to tree
+    Values.SetExisting(&role, sizeof(Drivers), Types::PortDriver, Map.Driver);
 }
 
 bool BoardClass::DisconnectLED(BaseClass *Object, PortNumber Port)
 {
     PortMap Map = GetPortMap(Port);
-    if (Map.Driver == INVALID_HEADER) return false;
+    if (Map.Driver == INVALID_HEADER)
+        return false;
 
     Reference ID = Objects.GetReference(Object);
-    uint16_t current = Map.Ref; // Map.Ref is the first child of the Driver node
+    
+    // Use fresh child discovery to ensure we are at the head of the list
+    uint16_t current = Values.Child(Map.Driver);
 
-    // Linear walk to find the target object
     while (current != INVALID_HEADER)
     {
         Result res = Values.Get(current);
         if (res.Value && *(Reference *)res.Value == ID)
         {
-            // Reset object state
+            // 1. Detach the hardware buffer from the specific display
             static_cast<DisplayClass *>(Object)->LEDs = nullptr;
 
-            // Delete the node. The ValueTree handles header shifting internally.
+            // 2. Remove from tree (shifts subsequent nodes)
             Values.Delete(current);
 
-            // Check if the list is now empty (Driver has no children)
-            if (Values.Child(Map.Driver) == INVALID_HEADER)
-            {
-                if (DriverArray[Port]) delete (LEDDriver *)DriverArray[Port];
-                DriverArray[Port] = nullptr;
-
-                Drivers none = Drivers::None;
-                Values.Set(&none, sizeof(Drivers), Types::PortDriver, Map.Driver, true);
-            }
-            else
-            {
-                // Re-calculate lengths and offsets for remaining segments
-                DriverLED(Port);
-            }
+            // 3. Rebuild or Clear
+            // DriverLED handles the delete/nulling of DriverArray and Role update
+            // if the child list is now empty.
+            DriverLED(Port);
+            
             return true;
         }
         current = Values.Next(current);
@@ -258,37 +310,53 @@ bool BoardClass::DisconnectLED(BaseClass *Object, PortNumber Port)
 
 bool BoardClass::ConnectI2C(BaseClass *Object, PortNumber SDA, PortNumber SCL)
 {
-    if (!Object || SDA > 10 || SCL > 10 || Object->Type != ObjectTypes::I2C)
+    // 1. Basic Guards
+    if (!Object || SDA >= PORT_COUNT || SCL >= PORT_COUNT || Object->Type != ObjectTypes::I2C)
         return false;
 
     Reference ID = Objects.GetReference(Object);
     PortMap MapSDA = GetPortMap(SDA);
-    if (MapSDA.Driver == INVALID_HEADER) return false;
+    PortMap MapSCL = GetPortMap(SCL);
 
-    // 1. Check if already connected by walking the SDA driver list
-    uint16_t current = MapSDA.Ref;
+    if (MapSDA.Driver == INVALID_HEADER || MapSCL.Driver == INVALID_HEADER)
+        return false;
+
+    // 2. Capability check: Ensure SDA supports I2C_SDA and SCL supports I2C_SCL
+    // (Optional but highly recommended for CH32 hardware muxing)
+
+    // 3. Search for existing connection on SDA
+    uint16_t current = Values.Child(MapSDA.Driver);
     uint16_t last = INVALID_HEADER;
     while (current != INVALID_HEADER)
     {
-        if (*(Reference *)Values.Get(current).Value == ID) return true;
+        Result res = Values.Get(current);
+        if (res.Value && *(Reference *)res.Value == ID)
+            return true; // Already connected
+        
         last = current;
         current = Values.Next(current);
     }
 
-    // 2. Add Object to SDA list (Index 'y' is effectively InsertNext after 'last')
-    if (last == INVALID_HEADER) 
-        Values.InsertChild(&ID, sizeof(Reference), Types::Reference, MapSDA.Driver, true);
-    else 
-        Values.InsertNext(&ID, sizeof(Reference), Types::Reference, last, true);
+    // 4. Attach Object to SDA Driver list
+    if (last == INVALID_HEADER)
+        Values.SetChild(&ID, sizeof(Reference), Types::Reference, MapSDA.Driver, Tri::Set);
+    else
+        Values.SetNext(&ID, sizeof(Reference), Types::Reference, last, Tri::Set);
 
-    // 3. Link SDA and SCL ports (Paths: {0,0,SDA,2} and {0,0,SCL,2})
-    // Path {0,0,P,2} is the Sibling of Driver {0,0,P,1}
+    // 5. Cross-Link the Ports
+    // In our structure: {0,0,P,0}=Pin, {0,0,P,1}=Driver. 
+    // If we want a {0,0,P,2} for the link, we append it after the Driver.
     uint16_t sdaLink = Values.Next(MapSDA.Driver);
-    Values.Set(&SCL, sizeof(PortNumber), Types::PortNumber, sdaLink, true);
+    if (sdaLink == INVALID_HEADER) // Doesn't exist yet, create it
+        Values.SetNext(&SCL, sizeof(PortNumber), Types::PortNumber, MapSDA.Driver, Tri::Set);
+    else
+        Values.SetExisting(&SCL, sizeof(PortNumber), Types::PortNumber, sdaLink);
 
-    PortMap MapSCL = GetPortMap(SCL);
     uint16_t sclLink = Values.Next(MapSCL.Driver);
-    Values.Set(&SDA, sizeof(PortNumber), Types::PortNumber, sclLink, true);
+    if (sclLink == INVALID_HEADER)
+        Values.SetNext(&SDA, sizeof(PortNumber), Types::PortNumber, MapSCL.Driver, Tri::Set);
+    else
+        Values.SetExisting(&SDA, sizeof(PortNumber), Types::PortNumber, sclLink);
 
     DriverI2C(SDA, SCL);
     return true;
@@ -305,21 +373,24 @@ void BoardClass::DriverI2C(PortNumber SDA, PortNumber SCL)
 
     if (DriverArray[SDA] == nullptr)
     {
-        // Resolve Pins: Child(Port) is always index 0 {0,0,P,0}
-        ::Pin sdaPin = *(::Pin *)Values.Get(Values.Child(MapSDA.Port)).Value;
-        ::Pin sclPin = *(::Pin *)Values.Get(Values.Child(MapSCL.Port)).Value;
+        // Use Map.Pin directly instead of re-finding child
+        ::Pin sdaPin = *(::Pin *)Values.Get(MapSDA.Pin).Value;
+        ::Pin sclPin = *(::Pin *)Values.Get(MapSCL.Pin).Value;
 
         ::I2C *Bus = new ::I2C();
-        // Speed 400kHz hardcoded to save a variable/stack space
+        
+        // 400kHz Hardcoded
         if (Bus->Begin(sclPin, sdaPin, 400000))
         {
             DriverArray[SDA] = Bus;
             DriverArray[SCL] = Bus;
-            
+
             Drivers dSDA = Drivers::I2C_SDA;
             Drivers dSCL = Drivers::I2C_SCL;
-            Values.Set(&dSDA, sizeof(Drivers), Types::PortDriver, MapSDA.Driver, true);
-            Values.Set(&dSCL, sizeof(Drivers), Types::PortDriver, MapSCL.Driver, true);
+            
+            // Sync tree roles
+            Values.SetExisting(&dSDA, sizeof(Drivers), Types::PortDriver, MapSDA.Driver);
+            Values.SetExisting(&dSCL, sizeof(Drivers), Types::PortDriver, MapSCL.Driver);
         }
         else
         {
@@ -330,56 +401,75 @@ void BoardClass::DriverI2C(PortNumber SDA, PortNumber SCL)
 
     // Distribute the Bus pointer to all connected objects
     ::I2C *ActiveBus = (::I2C *)DriverArray[SDA];
-    uint16_t current = MapSDA.Ref; // Start of the SDA object list
+    
+    // Safety check for the head of the reference list
+    uint16_t current = Values.Child(MapSDA.Driver); 
 
     while (current != INVALID_HEADER)
     {
-        I2CDeviceClass *Dev = (I2CDeviceClass *)Objects.At(*(Reference *)Values.Get(current).Value);
-        if (Dev) Dev->I2CDriver = ActiveBus;
-        
+        Result res = Values.Get(current);
+        if (res.Value)
+        {
+            I2CDeviceClass *Dev = (I2CDeviceClass *)Objects.At(*(Reference *)res.Value);
+            // Verify object type before assigning driver
+            if (Dev && Dev->Type == ObjectTypes::I2C)
+                Dev->I2CDriver = ActiveBus;
+        }
         current = Values.Next(current);
     }
 }
 
 bool BoardClass::DisconnectI2C(BaseClass *Object, PortNumber SDA, PortNumber SCL)
 {
-    if (!Object || SDA > 10 || SCL > 10)
+    if (!Object || SDA >= PORT_COUNT || SCL >= PORT_COUNT)
         return false;
 
     PortMap MapSDA = GetPortMap(SDA);
-    if (MapSDA.Driver == INVALID_HEADER) return false;
+    if (MapSDA.Driver == INVALID_HEADER)
+        return false;
 
     Reference ID = Objects.GetReference(Object);
-    uint16_t current = MapSDA.Ref;
+    // Start discovery at the actual child of the driver
+    uint16_t current = Values.Child(MapSDA.Driver);
 
-    // Linear walk to find the device
     while (current != INVALID_HEADER)
     {
         Result res = Values.Get(current);
         if (res.Value && *(Reference *)res.Value == ID)
         {
-            // Reset object pointer
+            // 1. Detach Object
             ((I2CDeviceClass *)Object)->I2CDriver = nullptr;
 
-            // Delete the node; ValueTree automatically shifts siblings left
+            // 2. Remove Device from Tree
             Values.Delete(current);
 
-            // Check if the bus is now empty
+            // 3. Conditional Bus Tear-down
             if (Values.Child(MapSDA.Driver) == INVALID_HEADER)
             {
-                if (DriverArray[SDA]) delete (::I2C *)DriverArray[SDA];
-                DriverArray[SDA] = nullptr;
-                DriverArray[SCL] = nullptr;
+                // Clean up hardware instance
+                if (DriverArray[SDA])
+                {
+                    delete (::I2C *)DriverArray[SDA];
+                    DriverArray[SDA] = nullptr;
+                    DriverArray[SCL] = nullptr;
+                }
 
                 Drivers none = Drivers::None;
-                Values.Set(&none, sizeof(Drivers), Types::PortDriver, MapSDA.Driver, true);
+                Values.SetExisting(&none, sizeof(Drivers), Types::PortDriver, MapSDA.Driver);
                 
+                // Refresh MapSCL because the SDA Delete might have shifted indices
                 PortMap MapSCL = GetPortMap(SCL);
-                Values.Set(&none, sizeof(Drivers), Types::PortDriver, MapSCL.Driver, true);
+                Values.SetExisting(&none, sizeof(Drivers), Types::PortDriver, MapSCL.Driver);
 
-                // Delete the Bus-Link nodes ({0,0,P,2}) which are siblings of the Driver
-                Values.Delete(Values.Next(MapSDA.Driver));
-                Values.Delete(Values.Next(MapSCL.Driver));
+                // 4. Delete the Port Link nodes {0,0,P,2}
+                // We find them by looking for the sibling immediately following the Driver node
+                uint16_t sdaLink = Values.Next(MapSDA.Driver);
+                if (sdaLink != INVALID_HEADER) Values.Delete(sdaLink);
+
+                // Re-fetch SCL one last time for safety before final delete
+                MapSCL = GetPortMap(SCL);
+                uint16_t sclLink = Values.Next(MapSCL.Driver);
+                if (sclLink != INVALID_HEADER) Values.Delete(sclLink);
             }
             return true;
         }

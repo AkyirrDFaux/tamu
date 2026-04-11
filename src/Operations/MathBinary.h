@@ -35,6 +35,6 @@ bool ExecuteCompare(const Bookmark &OpPoint, Operations Op)
         return true;
     }
 
-    OutMark.Set(&result, sizeof(bool), Types::Bool, true);
+    OutMark.SetCurrent(&result, sizeof(bool), Types::Bool);
     return true;
 }

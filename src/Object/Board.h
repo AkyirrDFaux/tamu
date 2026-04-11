@@ -21,6 +21,7 @@ struct PortDefinition
 struct PortMap
 {
     uint16_t Port;   // Index of {0, 0, Port}
+    uint16_t Pin;    // Index of {0, 0, Port, 0}
     uint16_t Driver; // Index of {0, 0, Port, 1}
     uint16_t Ref;    // Index of {0, 0, Port, 1, 0}
 };
@@ -70,10 +71,12 @@ static const PortDefinition Port_Table[] = {
 };
 #endif
 
+#define PORT_COUNT (sizeof(Port_Table) / sizeof(Port_Table[0]))
+
 class BoardClass : public BaseClass
 {
 public:
-    void *DriverArray[11] = {nullptr};
+    void *DriverArray[PORT_COUNT] = {nullptr};
     BoardClass(const Reference &ID);
 
     // Updated to use Reference
@@ -120,110 +123,115 @@ BoardClass::BoardClass(const Reference &ID) : BaseClass(&Table, ID, Flags::Auto 
 #elif defined BOARD_Valu_v2_0
     Boards model = Boards::Valu_v2_0;
 #endif
-    // 1. Root node (Index 0).
-    Values.Set(&model, sizeof(Boards), Types::Board, 0, true);
 
-    // 2. "Ports" container {0, 0}
-    uint16_t ports = Values.InsertChild(nullptr, 0, Types::Undefined, 0, true);
+    // The cursor tracks the physical Index in the HeaderArray.
+    // We populate them in perfect linear order (0, 1, 2, 3...)
+    uint16_t cursor = 0;
 
-    uint16_t lastPort = 0;
-    for (uint8_t i = 0; i < (sizeof(Port_Table) / sizeof(PortDefinition)); i++)
+    // 1. Root Node {0} - Depth 0
+    Values.Set(&model, sizeof(Boards), Types::Board, cursor++, 0, Tri::Set, Tri::Reset);
+
+    // 2. Ports Container {0, 0} - Depth 1
+    // This is the first child of the Root.
+    Values.Set(nullptr, 0, Types::Undefined, cursor++, 1, Tri::Set, Tri::Reset);
+
+    // 3. Port Definitions
+    // Each port entry consists of a Type (Depth 2), Pin (Depth 3), and Driver (Depth 3).
+    for (uint16_t i = 0; i < PORT_COUNT; i++)
     {
         const PortDefinition &p = Port_Table[i];
 
-        // 3. Port Type {0, 0, i}
-        uint16_t pNode = (i == 0)
-                             ? Values.InsertChild(&p.Type, sizeof(PortTypeClass), Types::PortType, ports, true)
-                             : Values.InsertNext(&p.Type, sizeof(PortTypeClass), Types::PortType, lastPort, true);
+        // Port Type Node {0, 0, i}
+        Values.Set(&p.Type, sizeof(PortTypeClass), Types::PortType, cursor++, 2, Tri::Set, Tri::Reset);
 
-        // 4. Pin {0, 0, i, 0}
-        uint16_t pin = Values.InsertChild(&p.PinID, sizeof(Pin), Types::Pin, pNode, true);
+        // Pin Node {0, 0, i, 0} (Child of Type)
+        Values.Set(&p.PinID, sizeof(Pin), Types::Pin, cursor++, 3, Tri::Set, Tri::Reset);
 
-        // 5. Driver {0, 0, i, 1}
-        Values.InsertNext(&p.Driver, sizeof(Drivers), Types::PortDriver, pin, true);
-
-        lastPort = pNode;
+        // Driver Node {0, 0, i, 1} (Sibling of Pin)
+        Values.Set(&p.Driver, sizeof(Drivers), Types::PortDriver, cursor++, 3, Tri::Set, Tri::Reset);
     }
 
-    // 6. Telemetry: {0, 1} through {0, 5}
-    int32_t zero = 0;
-    uint16_t lastTele = ports;
-    for (uint8_t i = 0; i < 5; i++)
-    {
-        lastTele = Values.InsertNext(&zero, 4, Types::Integer, lastTele, true);
-    }
+    // 4. Telemetry: {0, 1} through {0, 5}
+    int32_t zeroI = 0;
+    Number zeroN(0.0);
+
+    // Boot Time {0, 1} -> Integer
+    Values.Set(&zeroI, 4, Types::Integer, cursor++, 1, Tri::Set, Tri::Reset);
+
+    // Avg Time {0, 2} and Max Time {0, 3} -> Number
+    Values.Set(&zeroN, sizeof(Number), Types::Number, cursor++, 1, Tri::Set, Tri::Reset);
+    Values.Set(&zeroN, sizeof(Number), Types::Number, cursor++, 1, Tri::Set, Tri::Reset);
+
+    // RAM Total {0, 4} and RAM Free {0, 5} -> Integer
+    Values.Set(&zeroI, 4, Types::Integer, cursor++, 1, Tri::Set, Tri::Reset);
+    Values.Set(&zeroI, 4, Types::Integer, cursor++, 1, Tri::Set, Tri::Reset);
+
 #if defined BOARD_Tamu_v2_0
-    // 7. Name {1} (Sibling of system {0})
-    Values.InsertNext(Name.Data, Name.Length, Types::Text, 0, false, true);
+    // 5. Name {1} - Depth 0
+    // This is a sibling of the Root System node {0}.
+    Values.Set(Name.Data, Name.Length, Types::Text, cursor++, 0, Tri::Reset, Tri::Set);
 #endif
+
+    // Note: UpdateSkip() is called inside Set() automatically,
+    // but since we filled it linearly, the math is extremely fast.
 }
 
 bool BoardClass::Run()
 {
-    // 1. Fast Navigation via Indices
-    // We know 'System' is index 0. If you wanted to be safe, you'd use Find.
-    uint16_t systemIdx = 0;
+    // Anchor Discovery
+    uint16_t portsIdx = Values.Child(0); 
+    uint16_t bootTimeIdx = Values.Next(portsIdx); 
 
-    // Grab Telemetry indices using lean Next/Child
-    uint16_t portsIdx = Values.Child(systemIdx);
-    uint16_t bootTimeIdx = Values.Next(portsIdx);
-    uint16_t avgIdx = Values.Next(bootTimeIdx);
-    uint16_t maxIdx = Values.Next(avgIdx);
-    uint16_t ramTotalIdx = Values.Next(maxIdx);
-    uint16_t ramFreeIdx = Values.Next(ramTotalIdx);
+    // Indices relative to the anchor
+    uint16_t avgIdx = bootTimeIdx + 1;
+    uint16_t maxIdx = bootTimeIdx + 2;
 
-    // Resolve values for math
     Result avgRes = Values.Get(avgIdx);
     Result maxRes = Values.Get(maxIdx);
 
     if (avgRes.Value && maxRes.Value)
     {
-        int32_t *avg = (int32_t *)avgRes.Value;
-        int32_t *max = (int32_t *)maxRes.Value;
+        // Use references to the Number class instances in the ValueTree
+        Number &avg = *(Number *)avgRes.Value;
+        Number &max = *(Number *)maxRes.Value;
 
-        *avg = (DeltaTime + (*avg * 15)) / 16;
+        // avg = (avg * 15 + current) / 16
+        avg = (avg * 0.9375) + (Number(DeltaTime) * 0.0625);
 
-        if (DeltaTime > *max)
+        if (Number(DeltaTime) > max)
         {
-            *max = DeltaTime;
+            max = Number(DeltaTime);
         }
         else if (HW::Now() % 20000 < 20)
         {
-            *max = *avg;
+            max = avg; // Reset max to current avg for long-term windowing
+
+            // Update RAM Telemetry (bootTimeIdx + 3 and + 4)
             int32_t totalRam = HW::GetRAM();
             int32_t freeRam = HW::GetFreeRAM();
-
-            // Using the updated Set(index) which handles direct writes
-            Values.Set(&totalRam, 4, Types::Integer, ramTotalIdx, true);
-            Values.Set(&freeRam, 4, Types::Integer, ramFreeIdx, true);
+            Values.SetExisting(&totalRam, 4, Types::Integer, bootTimeIdx + 3);
+            Values.SetExisting(&freeRam, 4, Types::Integer, bootTimeIdx + 4);
         }
     }
 
-    // 2. Driver Servicing Loop
-    // Navigate: System -> Ports -> First Port
+    // 3. Driver Servicing Loop (Structural Navigation)
     uint16_t currentPort = Values.Child(portsIdx);
-
-    for (uint8_t i = 0; i < 11; i++)
+    for (uint16_t i = 0; i < PORT_COUNT; i++)
     {
-        if (currentPort == 0xFFFF)
-            break;
+        if (currentPort == INVALID_HEADER) break;
 
         if (DriverArray[i] != nullptr)
         {
-            // Driver is at {0, 0, i, 1}
-            // Logic: currentPort -> Child (Pin) -> Next (Driver)
+            // Standard Driver structure: Port -> Pin -> Driver
             uint16_t pinIdx = Values.Child(currentPort);
             uint16_t roleIdx = Values.Next(pinIdx);
 
             Result role = Values.Get(roleIdx);
-
             if (role.Value && *(Drivers *)role.Value == Drivers::LED)
             {
                 static_cast<LEDDriver *>(DriverArray[i])->Show();
             }
         }
-
-        // Move to next port sibling
         currentPort = Values.Next(currentPort);
     }
 

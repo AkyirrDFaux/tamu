@@ -20,6 +20,13 @@ bool Delay(const Bookmark &OpPoint)
 
     int32_t DelayMs = *(int32_t*)resDelay.Value;
     int32_t StartTime = (resState.Type == Types::Integer && resState.Value) ? *(int32_t*)resState.Value : 0;
+
+    if (StartTime > CurrentTime)
+    {
+        StartTime = 0;
+        int32_t Reset = 0;
+        markState.SetCurrent(&Reset, sizeof(int32_t), Types::Integer);
+    }
     
     // Resolve Mode (default to Remaining if node missing or false)
     bool isElapsedMode = false;
@@ -31,9 +38,9 @@ bool Delay(const Bookmark &OpPoint)
     if (StartTime == 0)
     {
         // First hit: Capture start time
-        markState.Set(&CurrentTime, sizeof(int32_t), Types::Integer, true);
+        markState.SetCurrent(&CurrentTime, sizeof(int32_t), Types::Integer);
         int32_t InitialOut = (resMode.Type == Types::Bool && *(bool*)resMode.Value) ? 0 : DelayMs;
-        OutMark.Set(&InitialOut, sizeof(int32_t), Types::Integer, true);
+        OutMark.SetCurrent(&InitialOut, sizeof(int32_t), Types::Integer);
         return false;
     }
 
@@ -43,18 +50,18 @@ bool Delay(const Bookmark &OpPoint)
     {
         // Time Finished: Reset state and allow execution
         int32_t Reset = 0;
-        markState.Set(&Reset, sizeof(int32_t), Types::Integer, true);
+        markState.SetCurrent(&Reset, sizeof(int32_t), Types::Integer);
         
         // Output final state (0 remaining or Max elapsed)
         int32_t FinalOut = isElapsedMode ? DelayMs : 0;
-        OutMark.Set(&FinalOut, sizeof(int32_t), Types::Integer, true);
+        OutMark.SetCurrent(&FinalOut, sizeof(int32_t), Types::Integer);
         
         return true;
     }
 
     // 4. Update Output node while waiting
     int32_t CalculatedOut = isElapsedMode ? Elapsed : (DelayMs - Elapsed);
-    OutMark.Set(&CalculatedOut, sizeof(int32_t), Types::Integer, true);
+    OutMark.SetCurrent(&CalculatedOut, sizeof(int32_t), Types::Integer);
 
     // Still waiting: block execution chain
     return false;

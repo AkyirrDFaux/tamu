@@ -12,7 +12,7 @@ bool Equal(const Bookmark &OpPoint)
     if (Source.Value && Source.Length > 0)
     {
         // Direct write to {0} using the value from {1}
-        OutMark.Set(Source.Value, Source.Length, Source.Type, true);
+        OutMark.SetCurrent(Source.Value, Source.Length, Source.Type);
         return true;
     }
     return true;
@@ -43,24 +43,24 @@ bool Convert(const Bookmark &OpPoint)
     case Types::Byte:
     {
         uint8_t b = (uint8_t)val;
-        Out0.Set(&b, 1, Types::Byte, true);
+        Out0.SetCurrent(&b, 1, Types::Byte);
         break;
     }
     case Types::Integer:
     {
         int32_t i = (int32_t)val;
-        Out0.Set(&i, 4, Types::Integer, true);
+        Out0.SetCurrent(&i, 4, Types::Integer);
         break;
     }
     case Types::Number:
     {
-        Out0.Set(&val, 4, Types::Number, true);
+        Out0.SetCurrent(&val, 4, Types::Number);
         break;
     }
     case Types::Bool:
     {
         bool b = val > 0.5f;
-        Out0.Set(&b, 1, Types::Bool, true);
+        Out0.SetCurrent(&b, 1, Types::Bool);
         break;
     }
     default:
@@ -72,66 +72,89 @@ bool Convert(const Bookmark &OpPoint)
 
 bool Combine(const Bookmark &OpPoint)
 {
-    // Output is {0}
+    // 1. Setup Output {0}
     Bookmark OutMark = OpPoint.Child();
     if (OutMark.Index == INVALID_HEADER)
         return true;
 
-    // Collect up to 4 input siblings starting from {1}
+    // 2. Collect up to 4 input siblings {1, 2, 3, 4}
     Bookmark Marks[4];
     Result S[4];
-
-    Marks[0] = OutMark.Next(); // This is index {1}
+    // --- FIX: Explicitly initialize the first input sibling ---
+    Marks[0] = OutMark.Next(); 
     for (uint8_t i = 1; i < 4; i++)
-        Marks[i] = Marks[i - 1].Next();
-
+    {
+        if (Marks[i - 1].Index == INVALID_HEADER)
+            Marks[i].Index = INVALID_HEADER;
+        else
+            Marks[i] = Marks[i - 1].Next();
+    }
+    // Capture results and ensure we have actual data
     for (uint8_t i = 0; i < 4; i++)
     {
         if (Marks[i].Index != INVALID_HEADER)
             S[i] = Marks[i].GetThis();
+        else
+            S[i] = Result(); // Defaults to nullptr and 0 length
     }
 
-    // --- Pattern: 3 or 4 Bytes -> Colour ---
-    if (S[0].Type == Types::Byte && S[1].Type == Types::Byte && S[2].Type == Types::Byte)
-    {
-        uint8_t b3 = (S[3].Type == Types::Byte) ? (uint8_t)GetAsNumber(Marks[3]) : 255;
-        ColourClass col((uint8_t)GetAsNumber(Marks[0]),
-                        (uint8_t)GetAsNumber(Marks[1]),
-                        (uint8_t)GetAsNumber(Marks[2]), b3);
-
-        OutMark.Set(&col, sizeof(ColourClass), Types::Colour, true);
-        return true;
-    }
-
+    // 3. Pattern Matching (Check .Value to avoid null dereference)
     // --- Pattern: 2 Vector2D -> Coord2D ---
     if (S[0].Type == Types::Vector2D && S[1].Type == Types::Vector2D)
     {
-        Coord2D c(*(Vector2D *)S[0].Value, *(Vector2D *)S[1].Value);
-        OutMark.Set(&c, sizeof(Coord2D), Types::Coord2D, true);
+        if (S[0].Value && S[1].Value)
+        {
+            Coord2D c(*(Vector2D *)S[0].Value, *(Vector2D *)S[1].Value);
+            OutMark.SetCurrent(&c, sizeof(Coord2D), Types::Coord2D);
+        }
         return true;
     }
 
     // --- Pattern: Vector2D + Scalar -> Coord2D ---
     if (S[0].Type == Types::Vector2D && IsScalar(S[1].Type))
     {
-        Coord2D c(*(Vector2D *)S[0].Value, GetAsNumber(Marks[1]));
-        OutMark.Set(&c, sizeof(Coord2D), Types::Coord2D, true);
+        if (S[0].Value && S[1].Value)
+        {
+            Coord2D c(*(Vector2D *)S[0].Value, GetAsNumber(Marks[1]));
+            OutMark.SetCurrent(&c, sizeof(Coord2D), Types::Coord2D);
+        }
         return true;
     }
 
     // --- Pattern: 3 Scalars -> Vector3D ---
     if (IsScalar(S[0].Type) && IsScalar(S[1].Type) && IsScalar(S[2].Type))
     {
-        Vector3D v(GetAsNumber(Marks[0]), GetAsNumber(Marks[1]), GetAsNumber(Marks[2]));
-        OutMark.Set(&v, sizeof(Vector3D), Types::Vector3D, true);
+        if (S[0].Value && S[1].Value && S[2].Value)
+        {
+            Vector3D v(GetAsNumber(Marks[0]), GetAsNumber(Marks[1]), GetAsNumber(Marks[2]));
+            OutMark.SetCurrent(&v, sizeof(Vector3D), Types::Vector3D);
+        }
+        return true;
+    }
+
+    // --- Pattern: 3 or 4 Bytes -> Colour ---
+    if (S[0].Type == Types::Byte && S[1].Type == Types::Byte && S[2].Type == Types::Byte)
+    {
+        if (S[0].Value && S[1].Value && S[2].Value)
+        {
+            uint8_t b3 = (S[3].Type == Types::Byte && S[3].Value) ? (uint8_t)GetAsNumber(Marks[3]) : 255;
+            ColourClass col((uint8_t)GetAsNumber(Marks[0]),
+                            (uint8_t)GetAsNumber(Marks[1]),
+                            (uint8_t)GetAsNumber(Marks[2]), b3);
+
+            OutMark.SetCurrent(&col, sizeof(ColourClass), Types::Colour);
+        }
         return true;
     }
 
     // --- Pattern: 2 Scalars -> Vector2D ---
     if (IsScalar(S[0].Type) && IsScalar(S[1].Type))
     {
-        Vector2D v(GetAsNumber(Marks[0]), GetAsNumber(Marks[1]));
-        OutMark.Set(&v, sizeof(Vector2D), Types::Vector2D, true);
+        if (S[0].Value && S[1].Value)
+        {
+            Vector2D v(GetAsNumber(Marks[0]), GetAsNumber(Marks[1]));
+            OutMark.SetCurrent(&v, sizeof(Vector2D), Types::Vector2D);
+        }
         return true;
     }
 
@@ -163,7 +186,7 @@ bool Extract(const Bookmark &OpPoint)
 
         if (componentIdx < max)
         {
-            Out0.Set(&v[componentIdx], 4, Types::Number, true);
+            Out0.SetCurrent(&v[componentIdx], 4, Types::Number);
             return true;
         }
     }
@@ -174,7 +197,7 @@ bool Extract(const Bookmark &OpPoint)
         uint8_t *c = (uint8_t *)S.Value; // R, G, B, A
         if (componentIdx < 4)
         {
-            Out0.Set(&c[componentIdx], 1, Types::Byte, true);
+            Out0.SetCurrent(&c[componentIdx], 1, Types::Byte);
             return true;
         }
     }
@@ -185,12 +208,12 @@ bool Extract(const Bookmark &OpPoint)
         Coord2D *coord = (Coord2D *)S.Value;
         if (componentIdx == 0)
         {
-            Out0.Set(&coord->Offset, sizeof(Vector2D), Types::Vector2D, true);
+            Out0.SetCurrent(&coord->Offset, sizeof(Vector2D), Types::Vector2D);
             return true;
         }
         else if (componentIdx == 1)
         {
-            Out0.Set(&coord->Rotation, sizeof(Vector2D), Types::Vector2D, true);
+            Out0.SetCurrent(&coord->Rotation, sizeof(Vector2D), Types::Vector2D);
             return true;
         }
     }
@@ -265,6 +288,8 @@ bool Run(Operations OpCode, const Bookmark &Index)
     // 3. Dispatch to outputs
     for (uint8_t i = 0;; i++)
     {
+        if (linkMark.Index == INVALID_HEADER)
+            break;
 
         Result Link = linkMark.Get();
 
@@ -273,7 +298,10 @@ bool Run(Operations OpCode, const Bookmark &Index)
 
         Bookmark Target = linkMark.This();
 
-        Target.Map->Set(Payload.Value, Payload.Length, Payload.Type, Target.Index);
+        if (Target.Map != nullptr && Target.Index != INVALID_HEADER)
+        {
+            Target.Map->SetExisting(Payload.Value, Payload.Length, Payload.Type, Target.Index);
+        }
 
         linkMark = linkMark.Next();
     }

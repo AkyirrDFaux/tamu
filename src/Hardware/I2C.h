@@ -45,32 +45,6 @@ bool I2C::Begin(const Pin &SCL, const Pin &SDA, uint32_t Speed)
         printf("Failed to init bus: %s\n", esp_err_to_name(err));
         return false;
     }
-    else
-    {
-        /*printf("Starting Scan (GPIO 4=SDA, 5=SCL)...\n");
-
-        // 3. The Scan Loop
-        bool found = false;
-        for (uint8_t addr = 1; addr < 127; addr++)
-        {
-            // i2c_master_probe sends the address and checks for an ACK
-            // We use a 100ms timeout to be safe
-            esp_err_t res = i2c_master_probe(Handle, addr, 100);
-
-            if (res == ESP_OK)
-            {
-                printf("Found device at: 0x%02X (Decimal: %d)\n", addr, addr);
-                found = true;
-            }
-        }
-
-        if (!found)
-        {
-            printf("No devices found on the bus.\n");
-        }
-
-        printf("Scan complete.\n");*/
-    }
     return true;
 }
 

@@ -43,16 +43,16 @@ void StoreScalar(const Bookmark &Target, Number Result, Types T)
     if (T == Types::Integer)
     {
         int32_t val = (int32_t)Result;
-        Target.Set(&val, sizeof(int32_t), T, true);
+        Target.SetCurrent(&val, sizeof(int32_t), T);
     }
     else if (T == Types::Byte || T == Types::Bool)
     {
         uint8_t val = (uint8_t)Result;
-        Target.Set(&val, 1, T, true);
+        Target.SetCurrent(&val, 1, T);
     }
     else if (T == Types::Number)
     {
         // Standard Number type (usually float or double)
-        Target.Set(&Result, sizeof(Number), T, true);
+        Target.SetCurrent(&Result, sizeof(Number), T);
     }
 }

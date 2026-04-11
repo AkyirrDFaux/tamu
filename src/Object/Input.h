@@ -28,25 +28,27 @@ public:
         .Run = InputClass::RunBridge};
 };
 
-InputClass::InputClass(const Reference &ID, FlagClass Flags, RunInfo Info) 
+InputClass::InputClass(const Reference &ID, FlagClass Flags, RunInfo Info)
     : BaseClass(&Table, ID, Flags, Info)
 {
     Type = ObjectTypes::Input;
     Name = "Input";
 
-    bool ReadOnly = (this->Flags == Flags::Auto);
-    // Build the structure linearly:
-    // 1. Root {0}: Mode
+    uint16_t cursor = 0;
+    Tri ReadOnly = (this->Flags == Flags::Auto) ? Tri::Set : Tri::Reset;
+
+    // --- Branch {0}: Configuration (Depth 0) ---
     Inputs initialMode = Inputs::Undefined;
-    Values.Set(&initialMode, sizeof(Inputs), Types::Input, 0, ReadOnly, true);
+    Values.Set(&initialMode, sizeof(Inputs), Types::Input, cursor++, 0, ReadOnly, Tri::Set); // Index 0: {0}
 
-    // 2. Child of Mode {0, 0}: Port
+    // --- Branch {0} Children (Depth 1) ---
     PortNumber initialPort = -1;
-    Values.InsertChild(&initialPort, sizeof(PortNumber), Types::PortNumber, 0, ReadOnly, true);
+    Values.Set(&initialPort, sizeof(PortNumber), Types::PortNumber, cursor++, 1, ReadOnly, Tri::Set); // Index 1: {0, 0}
 
-    // 3. Sibling of Mode {1}: Value
+    // --- Branch {1}: State (Depth 0 - Sibling of {0}) ---
+    // Note: Marked ReadOnly=Set because this is driven by hardware, not user writes.
     bool initialState = false;
-    Values.InsertNext(&initialState, sizeof(bool), Types::Bool, 0, true);
+    Values.Set(&initialState, sizeof(bool), Types::Bool, cursor++, 0, Tri::Set, Tri::Reset); // Index 2: {1}
 }
 
 InputClass::~InputClass()
@@ -92,7 +94,7 @@ bool InputClass::Disconnect()
 
 void InputClass::Setup(uint16_t Index)
 {
-    // Path {0, 0}: Port changed
+    // Index 1: Port {0, 0}
     if (Index == 1)
     {
         Disconnect();
@@ -100,14 +102,12 @@ void InputClass::Setup(uint16_t Index)
         return;
     }
 
-    // Only proceed if the base mode {0} changed
+    // Index 0: Mode {0}
     if (Index != 0)
         return;
 
-    // Mode is at index 0
     Result res = Values.Get(0);
-    if (res.Type != Types::Input || !res.Value)
-        return;
+    if (!res.Value) return;
 
     Inputs mode = *(Inputs *)res.Value;
     bool resetVal = false;
@@ -115,27 +115,48 @@ void InputClass::Setup(uint16_t Index)
     switch (mode)
     {
     case Inputs::ButtonWithLED:
-        Values.Set(&resetVal, sizeof(bool), Types::Bool, Reference({2}));
+        // Ensure Index 3 exists. Set() handles the insertion if missing.
+        // This is Branch {2}.
+        Values.Set(&resetVal, sizeof(bool), Types::Bool, 3, 0); 
         [[fallthrough]];
+
     case Inputs::Button:
-        Values.Set(&resetVal, sizeof(bool), Types::Bool, Reference({1}), true);
+        // Reset Primary Value at Index 2 (Branch {1})
+        Values.SetExisting(&resetVal, sizeof(bool), Types::Bool, 2);
+        
+        // Pruning logic: If we are in standard Button mode, 
+        // but a node exists after Index 2, kill it.
+        if (mode == Inputs::Button)
+        {
+            uint16_t extra = Values.Next(2);
+            if (extra != INVALID_HEADER)
+                Values.Delete(extra);
+        }
         break;
+
     default:
+        // Clean up everything after the core hardware config/value
+        uint16_t extra = Values.Next(2);
+        if (extra != INVALID_HEADER)
+            Values.Delete(extra);
         break;
     }
+
+    Disconnect();
+    Connect();
 }
 
 bool InputClass::Run()
 {
-    // 1. Root is 0. Mode {0} is the first child of the root.
-    uint16_t modeIdx = 0;
-    Result modeRes = Values.Get(modeIdx);
+    // Hard-indexed mapping (O(1) access):
+    // 0: Mode {0}
+    // 1: Port {0, 0} (Ignored in Run, used in Setup)
+    // 2: Value {1}
+    // 3: LED State {2} (Only for ButtonWithLED)
 
-    // 2. Value {1} is the sibling immediately following Mode.
-    uint16_t valIdx = Values.Next(modeIdx);
-    Result valRes = Values.Get(valIdx);
+    Result modeRes = Values.Get(0);
+    Result valRes  = Values.Get(2);
 
-    // Fast validation
     if (modeRes.Type != Types::Input || !valRes.Value)
     {
         ReportError(Status::MissingModule);
@@ -148,30 +169,31 @@ bool InputClass::Run()
         return true;
     }
 
-    Inputs mode = *(Inputs *)modeRes.Value;
+    Inputs mode    = *(Inputs *)modeRes.Value;
     bool *statePtr = (bool *)valRes.Value;
 
     switch (mode)
     {
     case Inputs::Button:
+        // Direct read, zero-copy update to ValueTree Index 2
         *statePtr = (HW::Read(InputPin) == false);
         break;
 
     case Inputs::ButtonWithLED:
     {
-        // 3. LED State {2} is the sibling immediately following Value.
-        uint16_t ledIdx = Values.Next(valIdx);
-        Result ledRes = Values.GetThis(ledIdx);
-        
+        // Direct access to LED state at Index 3
+        Result ledRes = Values.Get(3);
         bool ledOn = (ledRes.Value) ? *(bool *)ledRes.Value : false;
 
         if (ledOn)
         {
+            // Pin Multiplexing: Drive the LED low
             HW::ModeOutput(InputPin);
             HW::Low(InputPin);
         }
         else
         {
+            // Pin Multiplexing: Release to Input and read the button
             HW::ModeInput(InputPin);
             *statePtr = (HW::Read(InputPin) == false);
         }

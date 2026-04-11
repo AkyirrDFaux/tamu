@@ -13,19 +13,21 @@ public:
         .Run = Program::RunBridge};
 };
 
-Program::Program(const Reference &ID, FlagClass Flags, RunInfo Info) 
+Program::Program(const Reference &ID, FlagClass Flags, RunInfo Info)
     : BaseClass(&Table, ID, Flags, Info)
 {
     Type = ObjectTypes::Program;
     Name = "Program";
 
-    // 1. Root {0}: Program Mode
-    ProgramTypes mode = ProgramTypes::Sequence;
-    Values.Set(&mode, sizeof(ProgramTypes), Types::Program, 0);
+    uint16_t cursor = 0;
 
-    // 2. Child of Mode {0, 0}: Counter
+    // Index 0: Program Mode {0} (Depth 0)
+    ProgramTypes mode = ProgramTypes::Sequence;
+    Values.Set(&mode, sizeof(ProgramTypes), Types::Program, cursor++, 0);
+
+    // Index 1: Counter {0, 0} (Depth 1)
     int32_t counter = 0;
-    Values.InsertChild(&counter, sizeof(int32_t), Types::Integer, 0);
+    Values.Set(&counter, sizeof(int32_t), Types::Integer, cursor++, 1);
 }
 
 Program::~Program() {}
@@ -43,23 +45,26 @@ bool Program::RunEntry(uint16_t Index)
     Operations op = *(Operations *)item.Value;
 
     // Operation::Run now takes the raw enum and the values tree
-    return Operation::Run(op, {&Values,Index});
+    return Operation::Run(op, {&Values, Index});
 }
 
 bool Program::Run()
 {
-    // 1. Resolve Control Logic via direct indexing
-    uint16_t modeIdx = 0;
-    uint16_t countIdx = Values.Child(modeIdx);
+    // 1. Direct access to Control Logic
+    // Index 0: Mode {0}
+    // Index 1: Counter {0, 0}
 
-    Result modeRes = Values.Get(modeIdx);
-    Result countRes = Values.Get(countIdx);
+    Result modeRes = Values.Get(0);
+    Result countRes = Values.Get(1);
 
     if (!modeRes.Value || !countRes.Value)
+    {
+        ReportError(Status::MissingModule);
         return true;
+    }
 
     ProgramTypes Mode = *(ProgramTypes *)modeRes.Value;
-    int32_t* counterPtr = (int32_t *)countRes.Value; // Get pointer to update directly
+    int32_t *counterPtr = (int32_t *)countRes.Value;
     int32_t InitialCounter = *counterPtr;
 
     bool HasFinished = false;
@@ -67,47 +72,47 @@ bool Program::Run()
     // 2. Execution Logic
     if (Mode == ProgramTypes::Sequence)
     {
-        // First executable entry is the sibling after the Mode branch {0}
-        uint16_t entryIdx = Values.Next(modeIdx);
+        // First executable entry is always Index 2 (The sibling after Branch {0})
+        uint16_t entryIdx = 2;
 
-        // Fast-forward to the current step (Counter)
-        for (int32_t i = 0; i < *counterPtr && entryIdx != 0xFFFF; i++)
+        // Fast-forward to the current step (O(N) search, but starting from known Index 2)
+        for (int32_t i = 0; i < *counterPtr && entryIdx != INVALID_HEADER; i++)
         {
             entryIdx = Values.Next(entryIdx);
         }
 
         // Execution Loop
-        while (entryIdx != 0xFFFF)
+        while (entryIdx != INVALID_HEADER)
         {
-            if (!RunEntry(entryIdx)) 
-                break; // Current entry is busy/blocking
+            if (*counterPtr >= InitialCounter && HasFinished)
+                    break;
+
+            if (!RunEntry(entryIdx))
+                break; // Current entry is busy/blocking (e.g., a Wait command)
 
             (*counterPtr)++;
             entryIdx = Values.Next(entryIdx);
 
             // Wrap-around logic
-            if (entryIdx == 0xFFFF)
+            if (entryIdx == INVALID_HEADER)
             {
                 *counterPtr = 0;
-                entryIdx = Values.Next(modeIdx);
+                entryIdx = 2; // Jump back to the first entry
                 HasFinished = true;
-
-                // Safety: Avoid infinite loop if all entries return true instantly
-                if (*counterPtr == InitialCounter) break;
             }
         }
     }
     else if (Mode == ProgramTypes::All)
     {
         HasFinished = true;
-        // Run every sibling after the Mode branch
-        uint16_t entryIdx = Values.Next(modeIdx);
+        // Start parallel execution from the first entry (Index 2)
+        uint16_t entryIdx = 2;
 
-        while (entryIdx != 0xFFFF)
+        while (entryIdx != INVALID_HEADER)
         {
             if (!RunEntry(entryIdx))
-                HasFinished = false;
-            
+                HasFinished = false; // At least one entry is still working
+
             entryIdx = Values.Next(entryIdx);
         }
     }

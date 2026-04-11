@@ -117,9 +117,8 @@ void WriteValue(const FlexArray &Input)
     }
 
     // 5. Update Object State
-    bool WasSetup = Object->Values.HeaderArray[Index.Index].IsSetupCall();
-    Object->Values.Set(pData, pLen, pType, *pID, false, WasSetup);
-    if (WasSetup || Index.Index == INVALID_HEADER)
+    Object->Values.Set(pData, pLen, pType, *pID, Tri::Keep, Tri::Keep);
+    if (Index.Index == INVALID_HEADER || Object->Values.HeaderArray[Index.Index].IsSetupCall())
         SendUpdate(Object);
     else
         ReadValue(Input);

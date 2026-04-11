@@ -35,7 +35,7 @@ bool ExecuteVector3DMulti(const Bookmark &itStart, const Bookmark &Out, Operatio
         it = it.Next();
     }
 
-    Out.Set(&acc, sizeof(Vector3D), Types::Vector3D, true);
+    Out.SetCurrent(&acc, sizeof(Vector3D), Types::Vector3D);
     return true;
 }
 
@@ -75,7 +75,7 @@ bool ExecuteVector2DMulti(const Bookmark &itStart, const Bookmark &Out, Operatio
         it = it.Next();
     }
 
-    Out.Set(&acc, sizeof(Vector2D), Types::Vector2D, true);
+    Out.SetCurrent(&acc, sizeof(Vector2D), Types::Vector2D);
     return true;
 }
 

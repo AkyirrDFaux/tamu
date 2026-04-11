@@ -33,21 +33,22 @@ I2CDeviceClass::I2CDeviceClass(const Reference &ID, FlagClass Flags, RunInfo Inf
     Type = ObjectTypes::I2C;
     Name = "I2C Device";
 
-    bool ReadOnly = (this->Flags == Flags::Auto);
+    uint16_t cursor = 0;
+    Tri ReadOnly = (this->Flags == Flags::Auto) ? Tri::Set : Tri::Reset;
 
-    // 1. Root {0}: Device Type
+    // --- Branch {0}: Hardware Configuration (Depth 0) ---
     I2CDevices initialDev = I2CDevices::Undefined;
-    Values.Set(&initialDev, sizeof(I2CDevices), Types::I2CDevice, 0, ReadOnly, true);
+    Values.Set(&initialDev, sizeof(I2CDevices), Types::I2CDevice, cursor++, 0, ReadOnly, Tri::Set); // {0}
 
-    // 2. Configuration Group {0, x}
+    // --- Branch {0} Children (Depth 1) ---
     PortNumber negOne = -1;
     uint8_t zeroAddr = 0;
-    // Note: Child(0) is SDA, Next(SDA) is SCL, Next(SCL) is Addr
-    uint16_t sdaIdx = Values.InsertChild(&negOne, sizeof(PortNumber), Types::PortNumber, 0, ReadOnly, true);     // SDA {0,0}
-    uint16_t sclIdx = Values.InsertNext(&negOne, sizeof(PortNumber), Types::PortNumber, sdaIdx, ReadOnly, true); // SCL {0,1}
-    Values.InsertNext(&zeroAddr, sizeof(uint8_t), Types::Byte, sclIdx, ReadOnly, true);                          // Addr {0,2}
 
-    // 3. Data Group {1} will be built in Setup() based on the Device Type
+    Values.Set(&negOne, sizeof(PortNumber), Types::PortNumber, cursor++, 1, ReadOnly, Tri::Set);   // SDA {0,0}
+    Values.Set(&negOne, sizeof(PortNumber), Types::PortNumber, cursor++, 1, ReadOnly, Tri::Set);   // SCL {0,1}
+    Values.Set(&zeroAddr, sizeof(uint8_t), Types::Byte, cursor++, 1, ReadOnly, Tri::Set);         // Addr {0,2}
+
+    // Branch {1} is left empty for Setup() to populate via specific sensor logic.
 }
 
 bool I2CDeviceClass::Connect()
@@ -87,50 +88,59 @@ bool I2CDeviceClass::Disconnect()
 
 void I2CDeviceClass::Setup(uint16_t Index)
 {
-    if (Index > 3) // Only setup in first group
-        return;
+    // Hard-indexed logic:
+    // 0: Type
+    // 1: SDA Port
+    // 2: SCL Port
+    // 3: Address
 
-    // Check if we need to reconnect (Port change)
+    if (Index > 3) return; // Ignore updates to the Data Group (1,x)
+
+    // 1. Port Change: Trigger Hardware Re-link
     if (Index == 1 || Index == 2)
     {
         Disconnect();
-        if (!Connect())
-            return;
+        if (!Connect()) return;
     }
 
+    // 2. Hardware Driver exists: Initialize sensor registers and data structure
     if (I2CDriver != nullptr)
     {
-        // Mode is at 0, Address is the 2nd sibling of Mode's first child
-        uint16_t addrIdx = Values.Next(Values.Next(Values.Child(0)));
         Result typeRes = Values.Get(0);
-        Result addrRes = Values.Get(addrIdx);
+        Result addrRes = Values.Get(3); // Direct access to {0,2} via Index 3
 
-        if (!typeRes.Value || !addrRes.Value)
-            return;
+        if (!typeRes.Value || !addrRes.Value) return;
 
         I2CDevices DevType = *(I2CDevices *)typeRes.Value;
         uint8_t *AddrPtr = (uint8_t *)addrRes.Value;
 
         if (DevType == I2CDevices::LSM6DS3TRC)
         {
-            if (*AddrPtr == 0)
-                *AddrPtr = 0x6A;
+            // Default address for LSM6DS3TR-C if not set
+            if (*AddrPtr == 0) *AddrPtr = 0x6A;
 
+            // Configure IMU: Accel @ 104Hz, Gyro @ 104Hz
             uint8_t Config[2] = {0b01000100, 0b01001100};
             I2CDriver->Write(*AddrPtr, 0x10, Config, 2);
 
-            // Build Data Group {1}
+            // 3. Build Data Group {1} using Linear Cursor (starting at index 4)
+            // This replaces the path-based Reference({1, x}) logic.
             Vector3D zeroVec = {0, 0, 0};
-            Number zeroNum = 0;
-            // Linear insertion for Group 1
-            Values.Set(&zeroVec, sizeof(Vector3D), Types::Vector3D, Reference({1, 0}), true);
-            Values.Set(&zeroVec, sizeof(Vector3D), Types::Vector3D, Reference({1, 1}), true);
-            Values.Set(&zeroNum, sizeof(Number), Types::Number, Reference({1, 2}));
-            Values.Set(&zeroNum, sizeof(Number), Types::Number, Reference({1, 3}));
+            Number zeroNum = 0.0;
+            
+            // Depth 0 for the Group Header, Depth 1 for Children
+            // Using cursor index 4 as the start of Branch {1}
+            Values.Set(nullptr, 0, Types::Undefined, 4, 0); // {1} Root
+            Values.Set(&zeroVec, sizeof(Vector3D), Types::Vector3D, 5, 1); // {1,0} Accel
+            Values.Set(&zeroVec, sizeof(Vector3D), Types::Vector3D, 6, 1); // {1,1} Gyro
+            Values.Set(&zeroNum, sizeof(Number), Types::Number, 7, 1);    // {1,2} Temp
+            Values.Set(&zeroNum, sizeof(Number), Types::Number, 8, 1);    // {1,3} Timestamp
         }
         else
         {
-            Values.Delete(Reference({1})); // Wipe the whole data group
+            // Wipe the Data Group if type becomes Undefined/Unsupported
+            // Starting from index 4 (the head of branch {1})
+            Values.Delete(4); 
         }
     }
 }
@@ -140,53 +150,53 @@ bool I2CDeviceClass::Run()
     if (I2CDriver == nullptr)
         return true;
 
-    // Navigation:
-    // Config: 0 -> Child -> Next -> Next (Address)
-    // Data: Next(0) is Group {1}. Group 1 Child is Acc, Next is Rot, etc.
-    uint16_t addrIdx = Values.Next(Values.Next(Values.Child(0)));
-    uint16_t group1 = Values.Next(0);
+    // Direct Index Access (Zero Navigation Overhead)
+    // 3: Address {0,2}
+    // 5: Accel Vector {1,0}
+    // 6: Gyro Vector {1,1}
+    // 7: Accel Filter {1,2}
+    // 8: Gyro Filter {1,3}
 
-    uint16_t accVIdx = Values.Child(group1);
-    uint16_t rotVIdx = Values.Next(accVIdx);
-    uint16_t accFIdx = Values.Next(rotVIdx);
-    uint16_t rotFIdx = Values.Next(accFIdx);
-
-    Result addrRes = Values.Get(addrIdx);
-    Result accVRes = Values.Get(accVIdx);
-    Result rotVRes = Values.Get(rotVIdx);
-    Result accFRes = Values.Get(accFIdx);
-    Result rotFRes = Values.Get(rotFIdx);
-
+    Result addrRes = Values.Get(3);
+    Result accVRes = Values.Get(5);
+    Result rotVRes = Values.Get(6);
+    
+    // Safety check: if the sensor was just reconfigured, indices might be invalid
     if (!addrRes.Value || !accVRes.Value || !rotVRes.Value)
         return true;
 
-    uint8_t Addr = *(uint8_t *)addrRes.Value;
-    Vector3D *Acc = (Vector3D *)accVRes.Value;
-    Vector3D *Rot = (Vector3D *)rotVRes.Value;
+    uint8_t Addr    = *(uint8_t *)addrRes.Value;
+    Vector3D *Acc   = (Vector3D *)accVRes.Value;
+    Vector3D *Rot   = (Vector3D *)rotVRes.Value;
 
-    // Default filters if missing
-    Number AccFilter = (accFRes.Value) ? *(Number *)accFRes.Value : Number(0.5f);
-    Number RotFilter = (rotFRes.Value) ? *(Number *)rotFRes.Value : Number(0.5f);
+    // Fetch filters from hard indices 7 and 8
+    Result accFRes = Values.Get(7);
+    Result rotFRes = Values.Get(8);
+    Number AccFilter = (accFRes.Value) ? *(Number *)accFRes.Value : Number(0);
+    Number RotFilter = (rotFRes.Value) ? *(Number *)rotFRes.Value : Number(0);
 
-    // Hardware I/O
-    int16_t RawBuffer[6];
-    if (!I2CDriver->Read(Addr, 0x22, (uint8_t *)RawBuffer, 12))
+    // 1. Hardware I/O
+    int16_t Raw[6]; // LSM6DS3 registers 0x22-0x2D (Gyro X through Accel Z)
+    if (!I2CDriver->Read(Addr, 0x22, (uint8_t *)Raw, 12))
         return true;
 
-    // Filtering logic
-    Number AccInvW = 1.0f / (1.0f + AccFilter);
-    Number AccW = 1.0f - AccInvW;
-    Number RotInvW = 1.0f / (1.0f + RotFilter);
-    Number RotW = 1.0f - RotInvW;
+    // 2. Pre-calculate filter weights
+    // (Optimization: If filters don't change often, calculate these in Setup)
+    Number AccInvW = 1.0 / (1.0 + AccFilter);
+    Number AccW    = 1.0 - AccInvW;
+    Number RotInvW = 1.0 / (1.0 + RotFilter);
+    Number RotW    = 1.0 - RotInvW;
 
-    // Apply to ValueTree memory (Zero-copy)
-    Rot->X = (Number(RawBuffer[0]) / 939.0f) * RotInvW + Rot->X * RotW;
-    Rot->Y = (Number(RawBuffer[1]) / 939.0f) * RotInvW + Rot->Y * RotW;
-    Rot->Z = (Number(RawBuffer[2]) / 939.0f) * RotInvW + Rot->Z * RotW;
+    // 3. Zero-Copy Update (Writing directly into the ValueTree's DataArray)
+    // Sensitivity: Gyro @ 2000dps (939 LSB/dps), Accel @ 16g (209 LSB/mg)
+    
+    Rot->X = (Number(Raw[0]) / 939.0) * RotInvW + (Rot->X * RotW);
+    Rot->Y = (Number(Raw[1]) / 939.0) * RotInvW + (Rot->Y * RotW);
+    Rot->Z = (Number(Raw[2]) / 939.0) * RotInvW + (Rot->Z * RotW);
 
-    Acc->X = (Number(RawBuffer[3]) / 209.0f) * AccInvW + Acc->X * AccW;
-    Acc->Y = (Number(RawBuffer[4]) / 209.0f) * AccInvW + Acc->Y * AccW;
-    Acc->Z = (Number(RawBuffer[5]) / 209.0f) * AccInvW + Acc->Z * AccW;
+    Acc->X = (Number(Raw[3]) / 209.0) * AccInvW + (Acc->X * AccW);
+    Acc->Y = (Number(Raw[4]) / 209.0) * AccInvW + (Acc->Y * AccW);
+    Acc->Z = (Number(Raw[5]) / 209.0) * AccInvW + (Acc->Z * AccW);
 
     return true;
 }
