@@ -1,32 +1,66 @@
 #if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
-#include "driver/i2c_master.h"
-typedef i2c_master_bus_handle_t I2C_Handle;
+    #include "driver/i2c_master.h"
+    typedef i2c_master_bus_handle_t I2C_Handle;
+    struct I2C_Device {
+        uint8_t Address;
+        i2c_master_dev_handle_t DevHandle;
+    };
 #elif defined BOARD_Valu_v2_0
-typedef I2C_TypeDef *I2C_Handle;
+    typedef I2C_TypeDef *I2C_Handle;
 #endif
 
 class I2C
 {
 public:
     I2C_Handle Handle;
-    I2C() : Handle(nullptr) {}
-    ~I2C() 
-    { 
-#if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
-        if (Handle) i2c_del_master_bus(Handle); 
-#endif
-    }
+    uint32_t BusSpeed;
 
-    // Auto-detects the hardware instance based on the pins provided
+    I2C();
+    ~I2C();
+
     bool Begin(const Pin &SCL, const Pin &SDA, uint32_t Speed);
-
     bool Write(uint8_t Address, uint8_t Register, uint8_t *Data, uint16_t Length);
     bool Read(uint8_t Address, uint8_t Register, uint8_t *Data, uint16_t Length);
-};
 
 #if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
+    I2C_Device Devices[8];
+    uint8_t DeviceCount;
+private:
+    i2c_master_dev_handle_t GetOrCreateDevice(uint8_t Address);
+#endif
+};
+
+
+#if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
+
+I2C::I2C() : Handle(nullptr), DeviceCount(0) 
+{
+    for(int i = 0; i < 8; i++) Devices[i] = {0, nullptr};
+}
+
+I2C::~I2C() 
+{ 
+    if (Handle) 
+    {
+        // Remove all cached devices first
+        for (uint8_t i = 0; i < DeviceCount; i++) 
+        {
+            if (Devices[i].DevHandle) 
+            {
+                i2c_master_bus_rm_device(Devices[i].DevHandle);
+                Devices[i].DevHandle = nullptr;
+            }
+        }
+        
+        // Now it's safe to delete the bus
+        i2c_del_master_bus(Handle); 
+        Handle = nullptr;
+    }
+}
+
 bool I2C::Begin(const Pin &SCL, const Pin &SDA, uint32_t Speed)
 {
+    BusSpeed = Speed;
     gpio_reset_pin((gpio_num_t)SCL.Number);
     gpio_reset_pin((gpio_num_t)SDA.Number);
 
@@ -34,86 +68,64 @@ bool I2C::Begin(const Pin &SCL, const Pin &SDA, uint32_t Speed)
     bus_config.i2c_port = I2C_NUM_0;
     bus_config.sda_io_num = (gpio_num_t)SDA.Number;
     bus_config.scl_io_num = (gpio_num_t)SCL.Number;
-    bus_config.clk_source = I2C_CLK_SRC_RC_FAST; // More stable than XTAL for timing
+    bus_config.clk_source = I2C_CLK_SRC_RC_FAST;
     bus_config.glitch_ignore_cnt = 7;
     bus_config.flags.enable_internal_pullup = true;
 
-    esp_err_t err = i2c_new_master_bus(&bus_config, &Handle);
+    return (i2c_new_master_bus(&bus_config, &Handle) == ESP_OK);
+}
 
-    if (err != ESP_OK)
-    {
-        printf("Failed to init bus: %s\n", esp_err_to_name(err));
-        return false;
+i2c_master_dev_handle_t I2C::GetOrCreateDevice(uint8_t Address) 
+{
+    for (uint8_t i = 0; i < DeviceCount; i++) {
+        if (Devices[i].Address == Address) return Devices[i].DevHandle;
     }
-    return true;
+
+    if (DeviceCount < 8) {
+        i2c_device_config_t dev_cfg = {
+            .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+            .device_address = Address,
+            .scl_speed_hz = BusSpeed,
+            .scl_wait_us = 0
+        };
+
+        if (i2c_master_bus_add_device(Handle, &dev_cfg, &Devices[DeviceCount].DevHandle) == ESP_OK) {
+            Devices[DeviceCount].Address = Address;
+            return Devices[DeviceCount++].DevHandle;
+        }
+    }
+    return nullptr;
 }
 
 bool I2C::Write(uint8_t Address, uint8_t Register, uint8_t *Data, uint16_t Length)
 {
-    if (!Handle)
-        return false;
+    if (!Handle) return false;
 
-    // 1. We have to "add" the device to the bus temporarily to get a dev_handle
-    i2c_device_config_t dev_cfg = {
-        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-        .device_address = Address,
-        .scl_speed_hz = 100000, // Or pass your 'Speed' from Begin()
-        .scl_wait_us = 0};
+    // Stack buffer within the write function as requested
+    uint8_t LocalWriteBuffer[256]; 
+    if (Length >= sizeof(LocalWriteBuffer)) return false;
 
-    i2c_master_dev_handle_t dev_handle;
-    if (i2c_master_bus_add_device(Handle, &dev_cfg, &dev_handle) != ESP_OK)
-    {
-        return false;
+    i2c_master_dev_handle_t dev_handle = GetOrCreateDevice(Address);
+    if (!dev_handle) return false;
+
+    LocalWriteBuffer[0] = Register;
+    if (Data && Length > 0) {
+        memcpy(&LocalWriteBuffer[1], Data, Length);
     }
 
-    // 2. Prepare the buffer (Register + Data)
-    size_t total_len = Length + 1;
-    uint8_t *buffer = (uint8_t *)malloc(total_len);
-    if (!buffer)
-    {
-        i2c_master_bus_rm_device(dev_handle);
-        return false;
-    }
-
-    buffer[0] = Register;
-    if (Data && Length > 0)
-    {
-        memcpy(&buffer[1], Data, Length);
-    }
-
-    // 3. Transmit using the dev_handle
-    esp_err_t err = i2c_master_transmit(dev_handle, buffer, total_len, 1000);
-
-    // 4. Cleanup
-    free(buffer);
-    i2c_master_bus_rm_device(dev_handle); // Important! Don't leak device handles
-
-    return (err == ESP_OK);
+    return (i2c_master_transmit(dev_handle, LocalWriteBuffer, Length + 1, 1000) == ESP_OK);
 }
 
 bool I2C::Read(uint8_t Address, uint8_t Register, uint8_t *Data, uint16_t Length)
 {
-    if (!Handle || !Data)
-        return false;
+    if (!Handle || !Data) return false;
 
-    i2c_device_config_t dev_cfg = {
-        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-        .device_address = Address,
-        .scl_speed_hz = 100000,
-        .scl_wait_us = 0};
+    i2c_master_dev_handle_t dev_handle = GetOrCreateDevice(Address);
+    if (!dev_handle) return false;
 
-    i2c_master_dev_handle_t dev_handle;
-    if (i2c_master_bus_add_device(Handle, &dev_cfg, &dev_handle) != ESP_OK)
-    {
-        return false;
-    }
-
-    // Transmit register address, then receive data
-    esp_err_t err = i2c_master_transmit_receive(dev_handle, &Register, 1, Data, Length, 1000);
-
-    i2c_master_bus_rm_device(dev_handle);
-    return (err == ESP_OK);
+    return (i2c_master_transmit_receive(dev_handle, &Register, 1, Data, Length, 1000) == ESP_OK);
 }
+
 #elif defined BOARD_Valu_v2_0
 
 #define I2C_EVENT_SB ((uint16_t)0x0001)   // Start Bit (Master)

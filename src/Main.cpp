@@ -5,16 +5,6 @@
 #include <type_traits>
 #include <initializer_list>
 
-//Helpful debugging snippet :)
-/*#include "esp_log.h"
-#include "freertos/FreeRTOS.h"
-void checkHeap(const char* label) {
-    if (!heap_caps_check_integrity_all(true)) {
-        ESP_LOGD("HEAP","!!! HEAP CORRUPT AT: %s !!!\n", label);
-        while(1) { vTaskDelay(pdMS_TO_TICKS(1000)); } // Stop here so we can see the label
-    }
-}*/
-
 uint32_t LastTime = 0;
 uint32_t CurrentTime = 0;
 uint32_t DeltaTime = 0;
@@ -179,6 +169,7 @@ extern "C"
 #endif
 /*TODO:
 KEY FEATURES:
+Valu v2.0 working fully
 OLED
  - Bind inputs
  - Use references as entries in list
@@ -186,19 +177,18 @@ Port type connect blocking
 LED strip
 Servo
 Compile options
-App backup (json?)
 
 Program Start and Stop section
 Button callback, press detection
 
 FUTURE:
 App Programming view
-App Presets, blocks
 All-display filters
 Experimental paralel LED bit-banging
 Multiple boards together
 
 ADJUSTMENTS:
+Save file on Android in app
 Better compression in storage (Undefined with span of N indexes)
 use more const, final, inline keywords, pass by reference, overall optimalizaton
 */
@@ -239,5 +229,16 @@ use more const, final, inline keywords, pass by reference, overall optimalizaton
 // 12.02.2026 De-arduino-ified Tamu v2.0
 // 13.02.2026 Valu v2.0 OLED menu test
 // 14.02.2026 Custom saving in flash
-// 21.03.2025 New value system (layered, uses paths, no modules), app styling
-// 08.04.2025 Corrected saving, read-only, new setup, more operations, functions, commmunication improvements
+// 21.03.2026 New value system (layered, uses paths, no modules), app styling
+// 08.04.2026 Corrected saving, read-only, new setup, more operations, functions, commmunication improvements
+// 11.04.2026 Large bugfix, ValueTree rewrite, Akyirr on new version, File backup
+
+//Helpful debugging snippet :)
+/*#include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+void checkHeap(const char* label) {
+    if (!heap_caps_check_integrity_all(true)) {
+        ESP_LOGD("HEAP","!!! HEAP CORRUPT AT: %s !!!\n", label);
+        while(1) { vTaskDelay(pdMS_TO_TICKS(1000)); } // Stop here so we can see the label
+    }
+}*/
