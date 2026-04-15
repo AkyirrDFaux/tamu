@@ -140,8 +140,8 @@ public:
     LEDDriver(uint16_t NewLength, Pin pin);
 
     // Navigation and Data Write
-    uint8_t* Offset(uint32_t Offset);
-    
+    uint8_t *Offset(uint32_t Offset);
+
     void Show();
     void Stop();
 };
@@ -156,8 +156,8 @@ LEDDriver::LEDDriver(uint16_t NewLength, Pin pin)
     HW::ModeOutput(pin);
 
     // 2. Resolve the registers using our char Port helper
-    GPIO_TypeDef* port = GetPort(pin.Port);
-    
+    GPIO_TypeDef *port = GetPort(pin.Port);
+
     this->PinMask = (1 << pin.Number);
     this->SetReg = &(port->BSHR);
     this->ClearReg = &(port->BCR);
@@ -172,7 +172,7 @@ void LEDDriver::Stop()
     }
 };
 
-uint8_t* LEDDriver::Offset(uint32_t Offset)
+uint8_t *LEDDriver::Offset(uint32_t Offset)
 {
     // Returns the memory address for a sub-strip
     return &(LEDs[Offset * 3]);
@@ -181,7 +181,7 @@ uint8_t* LEDDriver::Offset(uint32_t Offset)
 // This replaces the standard .show() using your verified timing
 void LEDDriver::Show()
 {
-    if (!LEDs || !SetReg)
+    if (!LEDs || !SetReg || !ClearReg)
         return;
 
     // Localize variables to CPU registers for maximum speed
@@ -191,13 +191,13 @@ void LEDDriver::Show()
     volatile uint32_t *sReg = SetReg;
     volatile uint32_t *cReg = ClearReg;
 
-    // Disable interrupts here if your platform supports it (e.g., __disable_irq())
-    // to prevent timing glitches during the burst
-    
+    //__disable_irq();
+
     while (byteLength--)
     {
         uint8_t channel = *pixel++;
-
+        if (byteLength % 3 == 0)
+            HW::tud_task(); //Needs keep-alive, transfers won't be active if really used
         for (int8_t i = 7; i >= 0; i--)
         {
             if (channel & (1 << i))
@@ -222,10 +222,10 @@ void LEDDriver::Show()
         }
     }
 
-    // Re-enable interrupts here (__enable_irq())
-    
+    //__enable_irq();
+
     // Reset pulse (Latch)
-    HW::SleepMicro(50);
+    // HW::SleepMicro(50);
 }
 #endif
 

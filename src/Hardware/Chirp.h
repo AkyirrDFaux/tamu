@@ -141,13 +141,21 @@ void ChirpClass::Communicate()
     if (HW::USB_Read(BufferUSBIn) > 0)
     {
         HW::ModeOutput(LED_NOTIFICATION_PIN);
+#if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
         HW::Low(LED_NOTIFICATION_PIN); // On
+#else
+        HW::High(LED_NOTIFICATION_PIN); // On
+#endif
 
         FlexArray Message = BufferUSBIn.ExtractByLength();
         if (Message.Length > 0)
             Run(Message);
 
+#if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
         HW::High(LED_NOTIFICATION_PIN); // Off
+#else
+        HW::Low(LED_NOTIFICATION_PIN); // Off
+#endif
         HW::ModeInput(LED_NOTIFICATION_PIN);
     }
 

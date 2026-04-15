@@ -81,15 +81,14 @@ int main()
 {
     HW::Init();
     HW::NotificationStartup();
-
     HW::FlashInit();
     // HW::FlashFormat();
 
-    //ESP_LOGI("MAIN", "Setuping");
+    // ESP_LOGI("MAIN", "Setuping");
     Board.Setup(0); // Initialize devices
     HW::LoadAll();
 
-    //ESP_LOGI("MAIN", "Starting Chirp");
+    // ESP_LOGI("MAIN", "Starting Chirp");
     Result name = Board.Values.Get(Board.Values.Next(0));
     if (name.Length > 0 && name.Type == Types::Text)
         Chirp.Begin(Text((char *)name.Value, name.Length));
@@ -99,7 +98,7 @@ int main()
 
     Board.Values.Set(&CurrentTime, sizeof(int32_t), Types::Integer, Board.Values.Next(Board.Values.Child(0)), true);
 
-    //ESP_LOGI("MAIN", "Starting");
+    // ESP_LOGI("MAIN", "Starting");
     /*bool AllFinished = false;
     while (!AllFinished)
     {
@@ -118,13 +117,11 @@ int main()
             }
         }
     }*/
-
     uint32_t LoopCounter = 0;
-    //ESP_LOGI("MAIN", "Entering Loop");
+    // ESP_LOGI("MAIN", "Entering Loop");
     while (1)
     {
         Chirp.Communicate();
-
         for (int32_t Index = Objects.Registered - 1; Index >= 0; Index--)
         {
             RegisterEntry &Entry = Objects.Object[Index];
@@ -137,27 +134,29 @@ int main()
 
         LoopCounter++;
         TimeUpdate();
+#if defined BOARD_Tamu_v2_0
         HW::Sleep(5);
+#endif
     }
 };
 
 #if defined BOARD_Tamu_v2_0
 
 // 1. The Task Function
-void application_task(void *pvParameters) 
+void application_task(void *pvParameters)
 {
     // Call your existing main() logic
     // Note: If your main() has an infinite loop, it stays here.
-    main(); 
+    main();
 
-    // Safety: FreeRTOS tasks must never return. 
+    // Safety: FreeRTOS tasks must never return.
     // If main() ever exits, we must delete the task.
-    vTaskDelete(NULL); 
+    vTaskDelete(NULL);
 }
 
 extern "C"
 {
-    void app_main(void) 
+    void app_main(void)
     {
         // 2. Create the task
         // Name: "app_task"
@@ -170,6 +169,7 @@ extern "C"
 /*TODO:
 KEY FEATURES:
 Valu v2.0 working fully
+- port 0 (pin A14) output
 OLED
  - Bind inputs
  - Use references as entries in list
@@ -233,7 +233,7 @@ use more const, final, inline keywords, pass by reference, overall optimalizaton
 // 08.04.2026 Corrected saving, read-only, new setup, more operations, functions, commmunication improvements
 // 11.04.2026 Large bugfix, ValueTree rewrite, Akyirr on new version, File backup
 
-//Helpful debugging snippet :)
+// Helpful debugging snippet :)
 /*#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 void checkHeap(const char* label) {

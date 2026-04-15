@@ -83,7 +83,7 @@ enum class Status : uint8_t
 };
 
 void ReportError(Status ErrorCode);
-void ReportError(Status ErrorCode, IDClass ID);
+void ReportError(Status ErrorCode, uint8_t Length, char* Message);
 
 enum class ObjectTypes : uint8_t
 {

@@ -213,7 +213,7 @@ bool BoardClass::Run()
             Values.SetExisting(&freeRam, 4, Types::Integer, bootTimeIdx + 4);
         }
     }
-
+    
     // 3. Driver Servicing Loop (Structural Navigation)
     uint16_t currentPort = Values.Child(portsIdx);
     for (uint16_t i = 0; i < PORT_COUNT; i++)

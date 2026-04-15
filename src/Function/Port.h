@@ -170,7 +170,7 @@ bool BoardClass::ConnectLED(BaseClass *Object, PortNumber Port, uint8_t Index)
     if (Map.Driver == INVALID_HEADER)
         return false;
 
-    // 1. Capability check 
+    // 1. Capability check
     Result typeRes = Values.Get(Map.Port);
     if (typeRes.Value && *(PortTypeClass *)typeRes.Value != Ports::GPIO)
     {
@@ -212,17 +212,19 @@ bool BoardClass::ConnectLED(BaseClass *Object, PortNumber Port, uint8_t Index)
 void BoardClass::DriverLED(PortNumber Port)
 {
     PortMap Map = GetPortMap(Port);
-    if (Map.Port == INVALID_HEADER) return;
+    if (Map.Port == INVALID_HEADER)
+        return;
 
     // Use PortMap to get the Pin directly
     Result pinRes = Values.Get(Map.Pin);
-    if (!pinRes.Value) return;
+    if (!pinRes.Value)
+        return;
     Pin PortPin = *(Pin *)pinRes.Value;
 
     uint32_t TotalLength = 0;
 
     // Pass 1: Sum up lengths of all attached Displays
-    uint16_t current = Values.Child(Map.Driver); 
+    uint16_t current = Values.Child(Map.Driver);
     while (current != INVALID_HEADER)
     {
         BaseClass *Obj = Objects.At(*(Reference *)Values.Get(current).Value);
@@ -278,7 +280,7 @@ bool BoardClass::DisconnectLED(BaseClass *Object, PortNumber Port)
         return false;
 
     Reference ID = Objects.GetReference(Object);
-    
+
     // Use fresh child discovery to ensure we are at the head of the list
     uint16_t current = Values.Child(Map.Driver);
 
@@ -297,7 +299,7 @@ bool BoardClass::DisconnectLED(BaseClass *Object, PortNumber Port)
             // DriverLED handles the delete/nulling of DriverArray and Role update
             // if the child list is now empty.
             DriverLED(Port);
-            
+
             return true;
         }
         current = Values.Next(current);
@@ -332,7 +334,7 @@ bool BoardClass::ConnectI2C(BaseClass *Object, PortNumber SDA, PortNumber SCL)
         Result res = Values.Get(current);
         if (res.Value && *(Reference *)res.Value == ID)
             return true; // Already connected
-        
+
         last = current;
         current = Values.Next(current);
     }
@@ -344,7 +346,7 @@ bool BoardClass::ConnectI2C(BaseClass *Object, PortNumber SDA, PortNumber SCL)
         Values.SetNext(&ID, sizeof(Reference), Types::Reference, last, Tri::Set);
 
     // 5. Cross-Link the Ports
-    // In our structure: {0,0,P,0}=Pin, {0,0,P,1}=Driver. 
+    // In our structure: {0,0,P,0}=Pin, {0,0,P,1}=Driver.
     // If we want a {0,0,P,2} for the link, we append it after the Driver.
     uint16_t sdaLink = Values.Next(MapSDA.Driver);
     if (sdaLink == INVALID_HEADER) // Doesn't exist yet, create it
@@ -378,9 +380,13 @@ void BoardClass::DriverI2C(PortNumber SDA, PortNumber SCL)
         ::Pin sclPin = *(::Pin *)Values.Get(MapSCL.Pin).Value;
 
         ::I2C *Bus = new ::I2C();
-        
-        // 400kHz Hardcoded
-        if (Bus->Begin(sclPin, sdaPin, 400000))
+
+
+#if defined BOARD_Tamu_v2_0
+        if (Bus->Begin(sclPin, sdaPin, 400000))// 400kHz Hardcoded
+#else
+        if (Bus->Begin(sclPin, sdaPin, 100000))// 100kHz Hardcoded
+#endif
         {
             DriverArray[SDA] = Bus;
             DriverArray[SCL] = Bus;

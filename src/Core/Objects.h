@@ -93,7 +93,8 @@ public:
     void Setup(uint16_t Index) { Vptr->Setup(this, Index); }
     RunInfo Run(FlagClass RunFlags)
     {
-        if (Flags == Flags::Inactive) // || !(Flags == RunFlags)) // Should not run
+        if (Flags == Flags::Inactive ||
+            !(Flags == Flags::RunLoop || Flags == Flags::RunOnce || Flags == Flags::RunOnStartup)) // || !(Flags == RunFlags)) // Should not run
             return {0, 0};
 
         if (Vptr->Run(this)) // Finished

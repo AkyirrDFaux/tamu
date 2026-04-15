@@ -187,8 +187,7 @@ void SaveAll(const FlexArray &Input)
             continue;
 
         if (Obj.Object->Flags == Flags::Dirty)
-            HW::Save(Reference::Global(0, Obj.GroupID, Obj.DeviceID)); //Invalidates interanally
-            
+            HW::Save(Reference::Global(0, Obj.GroupID, Obj.DeviceID)); // Invalidates interanally
     }
 
     char SuccessHeader[1] = {(char)Functions::SaveAll};
@@ -215,9 +214,10 @@ void Format(const FlexArray &Input)
     Chirp.Send(Success);
 }
 
-void SendUpdate(BaseClass* Object)
+void SendUpdate(BaseClass *Object)
 {
-    if (Object == nullptr) return;
+    if (Object == nullptr)
+        return;
 
     // Standard Protocol: [ReadObjectCode][CompressedData...]
     char SuccessHeader[1] = {(char)Functions::ReadObject};
@@ -329,4 +329,33 @@ void ReportError(Status ErrorCode)
     // 2. Wrap in a FlexArray and send
     // This uses the (char*, size) constructor to copy the 2 bytes and ship them.
     Chirp.Send(FlexArray(Response, 2));
+}
+
+void ReportError(Status ErrorCode, uint8_t Length, char* Message)
+{
+    // 1. Calculate total size: 
+    // [Func (1)] + [Status (1)] + [Length (1)] + [Message (Length)]
+    uint16_t totalSize = 3 + Length;
+
+    // 2. Create a stack buffer
+    // On a 144MHz chip like the V307, the stack is usually plenty large 
+    // for a 256-byte buffer.
+    char Response[totalSize];
+
+    // 3. Populate headers
+    Response[0] = (char)Functions::Report;
+    Response[1] = (char)ErrorCode;
+    Response[2] = (char)Length; // Pre-pended length byte
+
+    // 4. Copy the message text
+    if (Message != nullptr && Length > 0)
+    {
+        for (uint8_t i = 0; i < Length; i++)
+        {
+            Response[3 + i] = Message[i];
+        }
+    }
+
+    // 5. Send the packet
+    Chirp.Send(FlexArray(Response, totalSize));
 }

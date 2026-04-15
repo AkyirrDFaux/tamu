@@ -105,7 +105,8 @@ void WriteValue(const FlexArray &Input)
     }
 
     Types pType = (Types)Input.Array[payloadOffset];
-    uint16_t pLen = *(uint16_t *)(Input.Array + payloadOffset + 1);
+    uint16_t pLen;
+    memcpy(&pLen, Input.Array + payloadOffset + 1, 2); //Unaligned!
     char *pData = Input.Array + payloadOffset + 3;
 
     // Final bounds check for the actual data payload

@@ -9,8 +9,8 @@
 #include "freertos/task.h"
 #include "esp_heap_caps.h"
 #include "nvs_flash.h"
-const Pin LED_NOTIFICATION_PIN = {2,0};
-const Pin INVALID_PIN = {255,0};
+const Pin LED_NOTIFICATION_PIN = {2, 0};
+const Pin INVALID_PIN = {255, 0};
 
 #elif defined BOARD_Valu_v2_0
 #include "ch32v20x.h"
@@ -67,10 +67,12 @@ namespace HW
     void USB_Send(const FlexArray &Data);
     FlexArray USB_Read();
     uint8_t CRC8(const uint8_t *Data, size_t Length); // Standard CRC-8 (Maxim/Dallas)
-
+}
 #if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
 #define VOLTAGE (3.3)
 #define ADCRES (1 << 12)
+namespace HW
+{
     void Init()
     {
         esp_err_t ret = nvs_flash_init();
@@ -150,10 +152,31 @@ namespace HW
         // Current free heap
         return (int32_t)heap_caps_get_free_size(MALLOC_CAP_8BIT);
     }
+
+    void NotificationBlink(int Amount, int Time)
+    {
+        HW::ModeOutput(LED_NOTIFICATION_PIN);
+        for (int Iteration = 0; Iteration < Amount; Iteration++)
+        {
+            HW::Low(LED_NOTIFICATION_PIN); // On
+            HW::Sleep(Time);
+            HW::High(LED_NOTIFICATION_PIN); // Off
+            if (Iteration < Amount - 1)
+                HW::Sleep(Time);
+        }
+        HW::ModeInput(LED_NOTIFICATION_PIN);
+    };
+    void NotificationStartup()
+    {
+        HW::ModeOutput(LED_NOTIFICATION_PIN);
+        HW::High(LED_NOTIFICATION_PIN); // Inverted logic
+        NotificationBlink(2, 200);
+    };
+}
 #elif defined BOARD_Valu_v2_0
 #define VOLTAGE (3.3)
 #define ADCRES (1 << 12)
-}
+
 static uint64_t tick_multiplier = 0;
 
 extern "C"
@@ -205,11 +228,10 @@ namespace HW
         GPIO_TypeDef *port = GetPort(pin.Port);
         EnablePortClock(pin.Port);
 
-        // Special case for PA14 (usually SWCLK)
+        // PA14/PB5/SWC
         if (pin.Port == 'A' && pin.Number == 14)
         {
-            RCC->APB2PCENR |= RCC_APB2Periph_AFIO;
-            AFIO->PCFR1 |= (1 << 24); // Disable SWD to free the pin
+            //BROKEN
         }
 
         uint32_t shift = (pin.Number % 8) * 4;
@@ -314,16 +336,15 @@ namespace HW
         char top;
         return &top - reinterpret_cast<char *>(sbrk(0));
     };
-#endif
 
     void NotificationBlink(int Amount, int Time)
     {
         HW::ModeOutput(LED_NOTIFICATION_PIN);
         for (int Iteration = 0; Iteration < Amount; Iteration++)
         {
-            HW::Low(LED_NOTIFICATION_PIN); // On
+            HW::High(LED_NOTIFICATION_PIN); // On
             HW::Sleep(Time);
-            HW::High(LED_NOTIFICATION_PIN); // Off
+            HW::Low(LED_NOTIFICATION_PIN); // Off
             if (Iteration < Amount - 1)
                 HW::Sleep(Time);
         }
@@ -332,11 +353,11 @@ namespace HW
     void NotificationStartup()
     {
         HW::ModeOutput(LED_NOTIFICATION_PIN);
-        HW::High(LED_NOTIFICATION_PIN); // Inverted logic
+        HW::Low(LED_NOTIFICATION_PIN);
         NotificationBlink(2, 200);
     };
-
 }
+#endif
 
 inline void TimeUpdate()
 {

@@ -112,7 +112,8 @@ enum class LEDStrips : uint8_t
 enum class I2CDevices : uint8_t
 {
     Undefined,
-    LSM6DS3TRC
+    LSM6DS3TRC,
+    BMI160
 };
 
 enum class Inputs : uint8_t

@@ -21,7 +21,7 @@ bool Delay(const Bookmark &OpPoint)
     int32_t DelayMs = *(int32_t*)resDelay.Value;
     int32_t StartTime = (resState.Type == Types::Integer && resState.Value) ? *(int32_t*)resState.Value : 0;
 
-    if (StartTime > CurrentTime)
+    if ((uint32_t)StartTime > CurrentTime)
     {
         StartTime = 0;
         int32_t Reset = 0;

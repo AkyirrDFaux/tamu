@@ -123,23 +123,15 @@ namespace HW
         // 2. Memory barrier
         __asm__ volatile("fence r, rw" : : : "memory");
 
-        // ByteArray B = ByteArray();
-
-        volatile uint32_t *src = (volatile uint32_t *)GET_PHYS_ADDR(Offset);
-        uint32_t *dest = (uint32_t *)Buffer;
-
-        for (uint32_t i = 0; i < Length / 4; i++)
-        {
-            dest[i] = src[i];
-            // B = B << ByteArray(dest[i]);
-        }
-        // USB_Send(B.CreateMessage());
+        uint32_t *src = (uint32_t *)GET_PHYS_ADDR(Offset);
+        memcpy(Buffer, src, Length);
         return 0;
     }
 
     // 2. STANDARD WRITE: Word-by-Word (Most robust mode)
     int FlashWrite(uint32_t Offset, const void *Buffer, uint32_t Length)
     {
+        Length = Align(Length);
         if (Offset + Length > FlashSize)
             return -1;
 
@@ -203,7 +195,7 @@ namespace HW
         }
 
         GapPointer = 0;
-        for (int i = 0; i < FlashSize / SEGMENT_SIZE; i++)
+        for (uint32_t i = 0; i < FlashSize / SEGMENT_SIZE; i++)
             FreeSpace[i] = SEGMENT_SIZE;
 
         return 0;
@@ -217,7 +209,7 @@ namespace HW
         uint32_t numSegments = FlashSize / SEGMENT_SIZE;
         GapPointer = 0; // Default to start
 
-        for (int s = 0; s < numSegments; s++)
+        for (uint32_t s = 0; s < numSegments; s++)
         {
             uint32_t cursor = s * SEGMENT_SIZE;
             uint32_t segmentEnd = cursor + SEGMENT_SIZE;
@@ -386,7 +378,7 @@ namespace HW
         uint16_t emptyCount = 0;
 
         // 1. Count current empty segments
-        for (int i = 0; i < numSegments; i++)
+        for (uint32_t i = 0; i < numSegments; i++)
         {
             if (FreeSpace[i] == SEGMENT_SIZE)
                 emptyCount++;
@@ -457,7 +449,7 @@ namespace HW
             // 1. Find the next valid (0xEE) entry
             cursor = FindNextEntry(cursor);
 
-            //ESP_LOGI("MEM", "Loading %d", cursor);
+            // ESP_LOGI("MEM", "Loading %d", cursor);
 
             // 2. If no more valid entries are found, we are done
             if (cursor == 0xFFFFFFFF)
@@ -474,9 +466,9 @@ namespace HW
             FlashRead(cursor + sizeof(MemoryHeader), dataBuffer.Array, head.Length);
             dataBuffer.Length = head.Length;
 
-            //ESP_LOGI("MEM", "Loaded %d, length %d", cursor, head.Length + sizeof(MemoryHeader));
-            //  6. Factory Instantiation
-            //  Assuming Objects.Create takes the Type and the Payload to rebuild the class
+            // ESP_LOGI("MEM", "Loaded %d, length %d", cursor, head.Length + sizeof(MemoryHeader));
+            //   6. Factory Instantiation
+            //   Assuming Objects.Create takes the Type and the Payload to rebuild the class
             BaseClass *Object = nullptr;
             int32_t Existing = Objects.Search(Reference::Global(0, head.GroupID, head.DeviceID));
             if (Existing != -1)
@@ -492,7 +484,7 @@ namespace HW
             uint16_t NameLength = dataBuffer.Array[2];
             if (NameLength > 0)
                 Object->Name = Text(dataBuffer.Array + 3, NameLength);
-            //ESP_LOGI("MEM", "Deserializing (%d.%d)", head.GroupID, head.DeviceID);
+            // ESP_LOGI("MEM", "Deserializing (%d.%d)", head.GroupID, head.DeviceID);
             Object->Values.Deserialize(dataBuffer, 3 + NameLength, true);
         }
     }
@@ -503,24 +495,33 @@ namespace HW
         uint16_t lookupID = ((uint16_t)ID.Device << 8) | ID.Group;
         bool foundAny = false;
 
-        // We must loop because multiple valid versions might exist
-        // due to interrupted maintenance cycles.
         while (true)
         {
             uint32_t oldAddr = FindEntry(lookupID);
             if (oldAddr == 0xFFFFFFFF)
                 break;
 
-            uint8_t staleStatus = 0x88;
-            if (FlashWrite(oldAddr, &staleStatus, 1) == 0)
+            // 1. Read the existing first word of the header
+            uint32_t firstWord;
+            if (FlashRead(oldAddr, &firstWord, 4) == 0)
             {
-                // ESP_LOGI("MEM", "Invalidated version of ID %d.%d at %d", ID.Group, ID.Device, oldAddr);
-                foundAny = true;
+                // 2. Modify only the Status byte (first byte of MemoryHeader)
+                // Mask out bits 7:0 and set them to 0x88 (Stale)
+                firstWord = (firstWord & 0xFFFFFF00) | 0x88;
+
+                // 3. Write the full 4-byte word back
+                if (FlashWrite(oldAddr, &firstWord, 4) == 0)
+                {
+                    foundAny = true;
+                }
+                else
+                {
+                    break; // Flash Write Failure
+                }
             }
             else
             {
-                // ESP_LOGE("MEM", "Flash Write Failure during Invalidation!");
-                break;
+                break; // Flash Read Failure
             }
         }
         return foundAny;
@@ -531,8 +532,17 @@ namespace HW
         uint32_t Addr = FindNextEntry(0xFFFFFFFF);
         while (Addr != 0xFFFFFFFF)
         {
-            uint8_t staleStatus = 0x88;
-            FlashWrite(Addr, &staleStatus, 1);
+            // 1. Read existing word
+            uint32_t firstWord;
+            if (FlashRead(Addr, &firstWord, 4) == 0)
+            {
+                // 2. Modify Status byte to 0x88
+                firstWord = (firstWord & 0xFFFFFF00) | 0x88;
+
+                // 3. Write back the full word
+                FlashWrite(Addr, &firstWord, 4);
+            }
+
             Addr = FindNextEntry(Addr);
         }
     }
@@ -547,13 +557,8 @@ namespace HW
             return false;
         }
 
-        /*if (Object->Flags == Flags::Auto)
-        {
-            ReportError(Status::AutoObject);
-            return false;
-        }*/
         Object->Flags -= Flags::Dirty;
-        FlexArray Payload = Object->Compress(true); //Ignores net
+        FlexArray Payload = Object->Compress(true); // Ignores net
         MemoryHeader Header = {
             .Status = 0xEE,
             .Checksum = 0x00,
