@@ -137,6 +137,10 @@ void ChirpClass::Communicate()
 {
 #if defined BOARD_Valu_v2_0
     HW::tud_task();
+
+    if(HW::tud_mounted() == false && HW::Now() > 1000)
+        HW::USB_Ready = false;
+
 #endif
     if (HW::USB_Read(BufferUSBIn) > 0)
     {

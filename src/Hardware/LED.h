@@ -4,6 +4,9 @@
     NOP4();     \
     NOP4();     \
     NOP4();
+#define NOP32() \
+    NOP16();    \
+    NOP16();
 #define NOP64() \
     NOP16();    \
     NOP16();    \
@@ -191,38 +194,47 @@ void LEDDriver::Show()
     volatile uint32_t *sReg = SetReg;
     volatile uint32_t *cReg = ClearReg;
 
-    //__disable_irq();
+    __disable_irq();
 
     while (byteLength--)
     {
         uint8_t channel = *pixel++;
-        if (byteLength % 3 == 0)
-            HW::tud_task(); //Needs keep-alive, transfers won't be active if really used
+        if (byteLength % 3 == 0 && HW::USB_Ready){
+            __enable_irq();
+            HW::tud_task(); // Needs keep-alive, transfers won't be active if really used
+            __disable_irq();
+        }
+            
         for (int8_t i = 7; i >= 0; i--)
         {
             if (channel & (1 << i))
             {
-                // Logic 1 timing from original
-                *sReg = mask; // HIGH
+                // --- Logic 1: Target H:700ns (102 nops), L:600ns (87 nops) ---
+                *sReg = mask;
+                NOP64();
+                NOP32();
+                NOP4(); // ~100 nops (690ns)
+                *cReg = mask;
                 NOP64();
                 NOP16();
-                *cReg = mask; // LOW
-                NOP64();
+                NOP4(); // ~84 nops (580ns)
             }
             else
             {
-                // Logic 0 timing from original
-                *sReg = mask; // HIGH
+                // --- Logic 0: Target H:350ns (51 nops), L:800ns (116 nops) ---
+                *sReg = mask;
+                NOP32();
                 NOP16();
-                NOP4();
-                *cReg = mask; // LOW
+                NOP4(); // ~52 nops (358ns)
+                *cReg = mask;
                 NOP64();
-                NOP64();
+                NOP32();
+                NOP16(); // ~112 nops (772ns)
             }
         }
     }
 
-    //__enable_irq();
+     __enable_irq();
 
     // Reset pulse (Latch)
     // HW::SleepMicro(50);

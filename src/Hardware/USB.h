@@ -291,6 +291,7 @@ namespace HW
 
     return 0;
 }
+    bool USB_Ready = true;
 
 #endif
 }
