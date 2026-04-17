@@ -35,20 +35,20 @@ bool Convert(const Bookmark &OpPoint)
         return true;
 
     // Use the type defined in {2} to determine how to cast the value in {1}
-    float val = GetAsNumber(In1);
+    Number val = GetAsNumber(In1);
     Types targetType = *(Types *)TargetSpec.Value;
 
     switch (targetType)
     {
     case Types::Byte:
     {
-        uint8_t b = (uint8_t)val;
+        uint8_t b = val.RoundToInt();
         Out0.SetCurrent(&b, 1, Types::Byte);
         break;
     }
     case Types::Integer:
     {
-        int32_t i = (int32_t)val;
+        int32_t i = val.RoundToInt();
         Out0.SetCurrent(&i, 4, Types::Integer);
         break;
     }
@@ -126,7 +126,7 @@ bool Combine(const Bookmark &OpPoint)
     {
         if (S[0].Value && S[1].Value && S[2].Value)
         {
-            Vector3D v(GetAsNumber(Marks[0]), GetAsNumber(Marks[1]), GetAsNumber(Marks[2]));
+            Vector3D v(GetAsNumber(Marks[0]).RoundToInt(), GetAsNumber(Marks[1]).RoundToInt(), GetAsNumber(Marks[2]).RoundToInt());
             OutMark.SetCurrent(&v, sizeof(Vector3D), Types::Vector3D);
         }
         return true;
@@ -137,10 +137,10 @@ bool Combine(const Bookmark &OpPoint)
     {
         if (S[0].Value && S[1].Value && S[2].Value)
         {
-            uint8_t b3 = (S[3].Type == Types::Byte && S[3].Value) ? (uint8_t)GetAsNumber(Marks[3]) : 255;
-            ColourClass col((uint8_t)GetAsNumber(Marks[0]),
-                            (uint8_t)GetAsNumber(Marks[1]),
-                            (uint8_t)GetAsNumber(Marks[2]), b3);
+            uint8_t b3 = (S[3].Type == Types::Byte && S[3].Value) ? (uint8_t)GetAsNumber(Marks[3]).RoundToInt() : 255;
+            ColourClass col((uint8_t)GetAsNumber(Marks[0]).RoundToInt(),
+                            (uint8_t)GetAsNumber(Marks[1]).RoundToInt(),
+                            (uint8_t)GetAsNumber(Marks[2]).RoundToInt(), b3);
 
             OutMark.SetCurrent(&col, sizeof(ColourClass), Types::Colour);
         }
@@ -152,7 +152,7 @@ bool Combine(const Bookmark &OpPoint)
     {
         if (S[0].Value && S[1].Value)
         {
-            Vector2D v(GetAsNumber(Marks[0]), GetAsNumber(Marks[1]));
+            Vector2D v(GetAsNumber(Marks[0]).RoundToInt(), GetAsNumber(Marks[1]).RoundToInt());
             OutMark.SetCurrent(&v, sizeof(Vector2D), Types::Vector2D);
         }
         return true;
@@ -176,7 +176,7 @@ bool Extract(const Bookmark &OpPoint)
         return true;
 
     // Get the requested index (e.g., 0 for X/R, 1 for Y/G, etc.)
-    uint8_t componentIdx = (uint8_t)GetAsNumber(Idx2);
+    uint8_t componentIdx = GetAsNumber(Idx2).RoundToInt();
 
     // --- Vector2D/3D Extraction ---
     if (S.Type == Types::Vector2D || S.Type == Types::Vector3D)

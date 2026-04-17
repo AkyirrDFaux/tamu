@@ -6,7 +6,9 @@ private:
     void ManageOverlay(int32_t RequiredLength);
 
 public:
+#if defined O_LAYOUT_USED
     uint8_t *Layout = nullptr;
+#endif
     PortNumber CurrentLink = -1;
     uint8_t *LEDs = nullptr;
 
@@ -58,7 +60,7 @@ DisplayClass::DisplayClass(const Reference &ID, FlagClass Flags, RunInfo Info)
     Vector2D initSize(0, 0);
     Values.Set(&initSize, sizeof(Vector2D), Types::Vector2D, cursor++, 1, Tri::Reset, Tri::Reset); // {0, 2}
 
-    Number initRatio = 1.0;
+    Number initRatio = N(1.0);
     Values.Set(&initRatio, sizeof(Number), Types::Number, cursor++, 1, Tri::Reset, Tri::Reset); // {0, 3}
 
     // --- Branch {1}: Control (Depth 0 - Sibling of {0}) ---
@@ -155,14 +157,19 @@ void DisplayClass::Setup(uint16_t Index)
             {
                 newLen = 256;
                 newSize = Vector2D(16, 16);
+#if defined O_LAYOUT_USED
                 Layout = nullptr;
+#endif
             }
-            else if (Type == Displays::Vysi_v1_0)
+
+#if defined O_VYSI_V1_0
+            if (Type == Displays::Vysi_v1_0)
             {
                 newLen = 86;
                 newSize = Vector2D(11, 10);
                 Layout = LayoutVysiv1_0;
             }
+#endif
 
             if (newLen > 0)
             {
@@ -239,7 +246,7 @@ bool DisplayClass::Run()
     bool Mirrored = *(bool *)Values.Get(7).Value;
 
     // Pre-calculate transform
-    Coord2D BaseTransform = Coord2D(Size * 0.5 - Vector2D(0.5, 0.5), Vector2D(0)).Join(Offset);
+    Coord2D BaseTransform = Coord2D(Size * N(0.5) - Vector2D(N(0.5), N(0.5)), Vector2D(0)).Join(Offset);
 
     // Efficient clear
     memset(LEDs, 0, Length * 3);
@@ -300,26 +307,30 @@ void DisplayClass::RenderGeometry(uint16_t NodeIdx, int32_t Length, Vector2D Dis
     Geometries Type = *(Geometries *)typeRes.Value; // Already null-checked at start of function
     GeometryOperation Op = (opRes.Value) ? *(GeometryOperation *)opRes.Value : GeometryOperation::Add;
     Vector2D GSize = (sizeRes.Value) ? *(Vector2D *)sizeRes.Value : Vector2D(1, 1);
-    Number GFade = (fadeRes.Value) ? *(Number *)fadeRes.Value : Number(0.001f);
+    Number GFade = (fadeRes.Value) ? *(Number *)fadeRes.Value : N(0.001);
     Coord2D GPos = (posRes.Value) ? *(Coord2D *)posRes.Value : Coord2D(0, 0, 0);
 
     if (GFade <= 0)
-        GFade = 0.001f;
+        GFade = N(0.001);
     Coord2D CurrentTransform = Transform.Join(GPos);
 
-    int32_t GridW = (int32_t)DisplaySize.X;
-    int32_t GridH = (int32_t)DisplaySize.Y;
+    int32_t GridW = DisplaySize.X.ToInt();
+    int32_t GridH = DisplaySize.Y.ToInt();
 
     for (int32_t Y = 0; Y < GridH; Y++)
     {
         for (int32_t X = 0; X < GridW; X++)
         {
             int32_t GridIdx = (GridH - Y - 1) * GridW + X;
+#if defined O_LAYOUT_USED
             int32_t PIdx = (Layout != nullptr) ? (int32_t)Layout[GridIdx] - 1 : GridIdx;
+#else
+            int32_t PIdx = GridIdx;
+#endif
 
             if (PIdx < 0 || PIdx >= Length)
                 continue;
-            if (Op == GeometryOperation::Add && Overlay[PIdx] >= 1.0f)
+            if (Op == GeometryOperation::Add && Overlay[PIdx] >= 1.0)
                 continue;
 
             Vector2D P = CurrentTransform.TransformTo(Vector2D(X, Y));
@@ -384,7 +395,7 @@ Number DisplayClass::CalculateShapeAlpha(Geometries Type, Vector2D P, Vector2D S
         return LimitZeroToOne(P.Y / F + 0.5);
 
     case Geometries::Fill:
-        return 1.0;
+        return N(1.0);
 
     default:
         return 0;
@@ -438,22 +449,26 @@ void DisplayClass::RenderTexture(uint16_t NodeIdx, int32_t Length, Vector2D Disp
     // (Assuming black/transparent, zeroed coordinates, and 1.0 width as safe defaults)
     ColourClass ColourB = (resB.Value) ? *(ColourClass *)resB.Value : ColourClass(0, 0, 0, 0);
     Coord2D TexPos = (resPos.Value) ? *(Coord2D *)resPos.Value : Coord2D(0, 0, 0);
-    Number TexWidth = (resWid.Value) ? *(Number *)resWid.Value : Number(1.0f);
+    Number TexWidth = (resWid.Value) ? *(Number *)resWid.Value : N(1.0);
 
     if (TexWidth <= 0)
-        TexWidth = 0.001f;
+        TexWidth = N(0.001);
 
     Coord2D CurrentTransform = Transform.Join(TexPos);
-    int32_t GridW = (int32_t)DisplaySize.X;
-    int32_t GridH = (int32_t)DisplaySize.Y;
-    Number invTexWidthScaled = 1.0f / (TexWidth * 2.0f);
+    int32_t GridW = DisplaySize.X.ToInt();
+    int32_t GridH = DisplaySize.Y.ToInt();
+    Number invTexWidthScaled = 1.0 / (TexWidth * 2.0);
 
     for (int32_t Y = 0; Y < GridH; Y++)
     {
         for (int32_t X = 0; X < GridW; X++)
         {
             int32_t GridIdx = (GridH - Y - 1) * GridW + X;
+#if defined O_LAYOUT_USED
             int32_t PIdx = (Layout != nullptr) ? (int32_t)Layout[GridIdx] - 1 : GridIdx;
+#else
+            int32_t PIdx = GridIdx;
+#endif
 
             if (PIdx < 0 || PIdx >= Length || Overlay[PIdx] <= 0)
                 continue;
@@ -464,9 +479,9 @@ void DisplayClass::RenderTexture(uint16_t NodeIdx, int32_t Length, Vector2D Disp
 
             ColourClass FinalColour = ColourB;
             if (TextureType == Textures2D::BlendLinear)
-                FinalColour.Layer(ColourA, LimitZeroToOne((P.X * invTexWidthScaled) + 0.5f));
+                FinalColour.Layer(ColourA, LimitZeroToOne((P.X * invTexWidthScaled) + 0.5));
             else if (TextureType == Textures2D::BlendCircular)
-                FinalColour.Layer(ColourA, LimitZeroToOne((P.Length() * invTexWidthScaled) + 0.5f));
+                FinalColour.Layer(ColourA, LimitZeroToOne((P.Length() * invTexWidthScaled) + 0.5));
 
             int32_t Offset = PIdx * 3;
             ColourClass Pixel(LEDs[Offset + 1], LEDs[Offset], LEDs[Offset + 2], 255);

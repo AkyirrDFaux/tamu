@@ -45,7 +45,7 @@ OutputClass::OutputClass(const Reference &ID, FlagClass Flags, RunInfo Info)
     Values.Set(&initialPort, sizeof(PortNumber), Types::PortNumber, cursor++, 1, ReadOnly, Tri::Set);
 
     // Index 2: Target/Value {1} (Depth 0)
-    Number initialTarget = 0.0;
+    Number initialTarget = N(0.0);
     Values.Set(&initialTarget, sizeof(Number), Types::Number, cursor++, 0, Tri::Reset, Tri::Reset);
 
     // Index 3: Frequency {1, 0} (Depth 1) - Child of Target

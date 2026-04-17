@@ -11,8 +11,6 @@ public:
     void operator=(ColourClass Colour);
 
     void Layer(ColourClass LayerColour, Number Overlap);
-    void TimeBlend(ColourClass Target, unsigned long TargetTime);
-
     //Text AsString();
 };
 
@@ -35,20 +33,12 @@ void ColourClass::operator=(ColourClass Colour)
 void ColourClass::Layer(ColourClass LayerColour, Number Overlap)
 {
     Number Opacity = Overlap * ByteToPercent(LayerColour.A);
-    R = LayerColour.R * Opacity + R * (1 - Opacity); // Opaque + Leftover
-    G = LayerColour.G * Opacity + G * (1 - Opacity);
-    B = LayerColour.B * Opacity + B * (1 - Opacity);
-    A = LimitByte(A + (uint8_t)((255 - A) * Opacity));
+    R = (LayerColour.R * Opacity + R * (1 - Opacity)).RoundToInt(); // Opaque + Leftover
+    G = (LayerColour.G * Opacity + G * (1 - Opacity)).RoundToInt();
+    B = (LayerColour.B * Opacity + B * (1 - Opacity)).RoundToInt();
+    A = LimitByte(A + ((255 - A) * Opacity).RoundToInt());
 };
 
-void ColourClass::TimeBlend(ColourClass Target, unsigned long TargetTime)
-{
-    Number Step = TimeStep(TargetTime);
-    R = LimitByte(R + (Target.R - R) * Step);
-    G = LimitByte(G + (Target.G - G) * Step);
-    B = LimitByte(B + (Target.B - B) * Step);
-    A = LimitByte(A + (Target.A - A) * Step);
-};
 /*
 String ColourClass::AsString()
 {

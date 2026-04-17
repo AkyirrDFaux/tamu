@@ -88,14 +88,8 @@ bool I2CDeviceClass::Disconnect()
 
 void I2CDeviceClass::Setup(uint16_t Index)
 {
-    // Hard-indexed logic:
-    // 0: Type
-    // 1: SDA Port
-    // 2: SCL Port
-    // 3: Address
-
     if (Index > 3)
-        return; // Ignore updates to the Data Group (1,x)
+        return;
 
     // 1. Port Change: Trigger Hardware Re-link
     if (Index == 1 || Index == 2)
@@ -105,57 +99,55 @@ void I2CDeviceClass::Setup(uint16_t Index)
             return;
     }
 
-    // 2. Hardware Driver exists: Initialize sensor registers and data structure
     if (I2CDriver != nullptr)
     {
         Result typeRes = Values.Get(0);
-        Result addrRes = Values.Get(3); // Direct access to {0,2} via Index 3
+        Result addrRes = Values.Get(3);
 
         if (!typeRes.Value || !addrRes.Value)
             return;
 
         I2CDevices DevType = *(I2CDevices *)typeRes.Value;
         uint8_t *AddrPtr = (uint8_t *)addrRes.Value;
-        Vector3D zeroVec = {0, 0, 0};
-        Number zeroNum = 0.0;
 
+        // These are only used if an IMU is configured
+        Vector3D zeroVec = {0, 0, 0};
+        Number zeroNum = N(0.0);
+
+// --- LSM6DS3TR-C Implementation ---
+#if defined O_I2C_LSM6DS3TRC
         if (DevType == I2CDevices::LSM6DS3TRC)
         {
-            // Default address for LSM6DS3TR-C if not set
             if (*AddrPtr == 0)
                 *AddrPtr = 0x6A;
 
-            // Configure IMU: Accel @ 104Hz, Gyro @ 104Hz
             uint8_t Config[2] = {0b01000100, 0b01001100};
             I2CDriver->Write(*AddrPtr, 0x10, Config, 2);
 
-            // 3. Build Data Group {1} using Linear Cursor (starting at index 4)
-            // This replaces the path-based Reference({1, x}) logic.
-
-            // Depth 0 for the Group Header, Depth 1 for Children
-            // Using cursor index 4 as the start of Branch {1}
-            Values.Set(nullptr, 0, Types::Undefined, 4, 0);                // {1} Root
-            Values.Set(&zeroVec, sizeof(Vector3D), Types::Vector3D, 5, 1); // {1,0} Accel
-            Values.Set(&zeroVec, sizeof(Vector3D), Types::Vector3D, 6, 1); // {1,1} Gyro
-            Values.Set(&zeroNum, sizeof(Number), Types::Number, 7, 1);     // {1,2} FilterAcc
-            Values.Set(&zeroNum, sizeof(Number), Types::Number, 8, 1);     // {1,3} FilterGyr
+            Values.Set(nullptr, 0, Types::Undefined, 4, 0);
+            Values.Set(&zeroVec, sizeof(Vector3D), Types::Vector3D, 5, 1);
+            Values.Set(&zeroVec, sizeof(Vector3D), Types::Vector3D, 6, 1);
+            Values.Set(&zeroNum, sizeof(Number), Types::Number, 7, 1);
+            Values.Set(&zeroNum, sizeof(Number), Types::Number, 8, 1);
+            return; // Early exit to save jumping through other checks
         }
-        else if (DevType == I2CDevices::BMI160)
+#endif
+
+// --- BMI160 Implementation ---
+#if defined O_I2C_BMI160
+        if (DevType == I2CDevices::BMI160)
         {
             if (*AddrPtr == 0)
                 *AddrPtr = 0x69;
 
-            // 1. Power Up Accel
             uint8_t pwrAcc = 0x11;
             I2CDriver->Write(*AddrPtr, 0x7E, &pwrAcc, 1);
-            HW::SleepMicro(5000); // Increased to 5ms for power stabilization
+            HW::SleepMicro(5000);
 
-            // 2. Power Up Gyro
             uint8_t pwrGyr = 0x15;
             I2CDriver->Write(*AddrPtr, 0x7E, &pwrGyr, 1);
-            HW::SleepMicro(10000); // Gyro needs more time
+            HW::SleepMicro(10000);
 
-            // 3. Configure ODR
             uint8_t Config[2] = {0x28, 0x28};
             I2CDriver->Write(*AddrPtr, 0x40, Config, 2);
 
@@ -164,13 +156,12 @@ void I2CDeviceClass::Setup(uint16_t Index)
             Values.Set(&zeroVec, sizeof(Vector3D), Types::Vector3D, 6, 1);
             Values.Set(&zeroNum, sizeof(Number), Types::Number, 7, 1);
             Values.Set(&zeroNum, sizeof(Number), Types::Number, 8, 1);
+            return;
         }
-        else
-        {
-            // Wipe the Data Group if type becomes Undefined/Unsupported
-            // Starting from index 4 (the head of branch {1})
-            Values.Delete(4);
-        }
+#endif
+
+        // Default: If no drivers matched (or were compiled in)
+        Values.Delete(4);
     }
 }
 
@@ -200,39 +191,46 @@ bool I2CDeviceClass::Run()
     int16_t Raw[6];
     Number accSens, gyrSens;
 
-    if (DevType == I2CDevices::LSM6DS3TRC)
+    bool processed = false;
+
+// --- LSM6DS3TR-C ---
+#if defined O_I2C_LSM6DS3TRC
+    if (!processed && DevType == I2CDevices::LSM6DS3TRC)
     {
         if (!I2CDriver->Read(Addr, 0x22, (uint8_t *)Raw, 12))
             return true;
-        gyrSens = 939.0; // 2000dps
-        accSens = 209.0; // 16g
+        gyrSens = N(939.0);
+        accSens = N(209.0);
+        processed = true;
     }
-    else if (DevType == I2CDevices::BMI160)
+#endif
+
+// --- BMI160 ---
+#if defined O_I2C_BMI160
+    if (!processed && DevType == I2CDevices::BMI160)
     {
         static bool identified = false;
-
-        // 1. One-time Check: WhoAmI (Register 0x00)
         if (!identified)
         {
             uint8_t chipID = 0;
             if (!I2CDriver->Read(Addr, 0x00, &chipID, 1))
                 return true;
-
             identified = true;
         }
 
-        // 2. Try to read Gyro
         if (!I2CDriver->Read(Addr, 0x0C, (uint8_t *)&Raw[0], 6))
             return true;
-
-        // 3. Try to read Accel
         if (!I2CDriver->Read(Addr, 0x12, (uint8_t *)&Raw[3], 6))
             return true;
 
-        accSens = 939.0;
-        gyrSens = 209.0;
+        accSens = N(939.0);
+        gyrSens = N(209.0);
+        processed = true;
     }
-    else
+#endif
+
+    // Final Fallback
+    if (!processed)
         return true;
 
     // Filter Logic

@@ -1,8 +1,8 @@
+#include "CompileOptions.h"
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
 #include <cstdlib>
-#include <type_traits>
 #include <initializer_list>
 
 uint32_t LastTime = 0;
@@ -176,7 +176,6 @@ OLED
 Port type connect blocking
 LED strip
 Servo
-Compile options
 
 Program Start and Stop section
 Button callback, press detection
@@ -190,7 +189,6 @@ Multiple boards together
 ADJUSTMENTS:
 Save file on Android in app
 Better compression in storage (Undefined with span of N indexes)
-use more const, final, inline keywords, pass by reference, overall optimalizaton
 */
 
 // 20.07.2024 Started over >:)

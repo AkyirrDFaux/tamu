@@ -47,11 +47,11 @@ SensorClass::SensorClass(const Reference &ID, FlagClass Flags, RunInfo Info)
     Values.Set(&initialPort, sizeof(PortNumber), Types::PortNumber, cursor++, 1, ReadOnly, Tri::Set);
 
     // Index 2: Measurement {1} (Depth 0) - Sibling of Type
-    Number zero = 0.0;
+    Number zero = N(0.0);
     Values.Set(&zero, sizeof(Number), Types::Number, cursor++, 0, Tri::Set, Tri::Reset);
 
     // Index 3: Filter {2} (Depth 0) - Sibling of Measurement
-    Number defaultFilter = 1.0;
+    Number defaultFilter = N(1.0);
     Values.Set(&defaultFilter, sizeof(Number), Types::Number, cursor++, 0, Tri::Reset, Tri::Reset);
 }
 
@@ -143,12 +143,12 @@ bool SensorClass::Run()
     case SensorTypes::TempNTC10K:
         // Steinhart-Hart simplified
         // Note: Number class should handle the log() conversion or casting to float
-        In = 1.0f / (0.0034f + log(In / (ADCRES - In)) / 3950.0f) - 273.15f;
+        In = 1.0 / (0.0034 + log(In / (ADCRES - In)) / 3950.0) - 273.15;
         break;
         
     case SensorTypes::Light10K:
         // Inverse square law approximation for photoresistors
-        In = sq(18.0f * (ADCRES - In) / In);
+        In = sq(18.0 * (ADCRES - In) / In);
         break;
         
     default:
@@ -157,8 +157,8 @@ bool SensorClass::Run()
 
     // Exponential Moving Average Filter
     // Using your established weight logic
-    Number weightNew = 1.0f / (1.0f + filterVal);
-    Number weightOld = 1.0f - weightNew;
+    Number weightNew = 1.0 / (1.0 + filterVal);
+    Number weightOld = 1.0 - weightNew;
 
     // Zero-copy update directly into DataArray
     *measurementPtr = (In * weightNew) + (*measurementPtr * weightOld);

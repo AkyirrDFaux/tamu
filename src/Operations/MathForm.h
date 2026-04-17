@@ -75,11 +75,11 @@ bool ExecuteLerp(const Bookmark &OpPoint)
     Number B = GetAsNumber(markHigh);
     Number T = GetAsNumber(markAlpha);
 
-    Number Scale = 1.0f;
+    Number Scale = N(1.0);
     if (markScale.Index != INVALID_HEADER)
     {
         Scale = GetAsNumber(markScale);
-        if (Scale == Number(0.0f)) Scale = 1.0f;
+        if (Scale == N(0.0)) Scale = N(1.0);
     }
 
     Number ResultValue = A + (T / Scale) * (B - A);

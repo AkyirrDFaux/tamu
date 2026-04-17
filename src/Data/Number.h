@@ -1,16 +1,7 @@
-#define PI 3.14159265358979323846f
-#define sq(a)  ((a)*(a))
-
-inline long round(float x) {
-    return (x >= 0) ? (long)(x + 0.5f) : (long)(x - 0.5f);
-}
+#define sq(a) ((a) * (a))
 
 #if USE_FIXED_POINT == 1
 #define DECIMAL 16
-
-#define PI_F (PI * (1 << DECIMAL))
-#define SIN_B ((4 << DECIMAL) / PI)
-#define SIN_C ((4 << DECIMAL) / sq(PI))
 
 class Number
 {
@@ -18,14 +9,31 @@ public:
     int32_t Value = 0;
 
     Number() = default;
-    Number(int32_t NewValue) : Value(NewValue << DECIMAL) {}
-    Number(uint32_t NewValue) : Value(int32_t(NewValue << DECIMAL)) {}
-    Number(int NewValue) : Value(NewValue << DECIMAL) {}
-    Number(float NewValue) : Value(int32_t(round(NewValue * (1 << DECIMAL)))) {}
-    Number(double NewValue) : Value(int32_t(round(NewValue * (1 << DECIMAL)))) {}
+    constexpr Number(int32_t NewValue) : Value(NewValue << DECIMAL) {}
+    constexpr Number(uint32_t NewValue) : Value(int32_t(NewValue << DECIMAL)) {}
+    constexpr Number(int NewValue) : Value(NewValue << DECIMAL) {}
 
-    // Conversion back to float
-    inline operator float() const { return float(Value) / (1 << DECIMAL); }
+    static constexpr Number FromRaw(int32_t raw)
+    {
+        Number n;
+        n.Value = raw;
+        return n;
+    }
+
+    inline int32_t ToInt() const
+    {
+        return Value >> DECIMAL;
+    }
+
+    // 2. Round to Nearest (Most Accurate)
+    // Example: 1.5 becomes 2, 1.4 becomes 1
+    inline int32_t RoundToInt() const
+    {
+        if (Value >= 0)
+            return (Value + (1 << (DECIMAL - 1))) >> DECIMAL;
+        else
+            return (Value - (1 << (DECIMAL - 1))) >> DECIMAL;
+    }
 
     inline Number &operator+=(const Number &Other)
     {
@@ -65,14 +73,11 @@ public:
         return Result;
     }
 
-    template <typename T, typename = typename std::enable_if<std::is_arithmetic<T>::value>::type>
-    inline Number operator+(T Other) const { return *this + Number(Other); }
-    template <typename T, typename = typename std::enable_if<std::is_arithmetic<T>::value>::type>
-    inline Number operator-(T Other) const { return *this - Number(Other); }
-    template <typename T, typename = typename std::enable_if<std::is_arithmetic<T>::value>::type>
-    inline Number operator*(T Other) const { return *this * Number(Other); }
-    template <typename T, typename = typename std::enable_if<std::is_arithmetic<T>::value>::type>
-    inline Number operator/(T Other) const { return *this / Number(Other); }
+    // Integer Overloads (replaces templates)
+    inline Number operator+(int32_t Other) const { return *this + Number(Other); }
+    inline Number operator-(int32_t Other) const { return *this - Number(Other); }
+    inline Number operator*(int32_t Other) const { return *this * Number(Other); }
+    inline Number operator/(int32_t Other) const { return *this / Number(Other); }
 
     inline bool operator==(const Number &Other) const { return Value == Other.Value; }
     inline bool operator!=(const Number &Other) const { return Value != Other.Value; }
@@ -81,24 +86,20 @@ public:
     inline bool operator<=(const Number &Other) const { return Value <= Other.Value; }
     inline bool operator>=(const Number &Other) const { return Value >= Other.Value; }
 
-    template <typename T, typename = typename std::enable_if<std::is_arithmetic<T>::value>::type>
-    inline bool operator<(T Other) const { return *this < Number(Other); }
-    template <typename T, typename = typename std::enable_if<std::is_arithmetic<T>::value>::type>
-    inline bool operator>(T Other) const { return *this > Number(Other); }
-    template <typename T, typename = typename std::enable_if<std::is_arithmetic<T>::value>::type>
-    inline bool operator<=(T Other) const { return *this <= Number(Other); }
-    template <typename T, typename = typename std::enable_if<std::is_arithmetic<T>::value>::type>
-    inline bool operator>=(T Other) const { return *this >= Number(Other); }
+    // Integer Comparisons
+    inline bool operator<(int32_t Other) const { return *this < Number(Other); }
+    inline bool operator>(int32_t Other) const { return *this > Number(Other); }
+    inline bool operator<=(int32_t Other) const { return *this <= Number(Other); }
+    inline bool operator>=(int32_t Other) const { return *this >= Number(Other); }
 };
 
-template <typename T, typename = typename std::enable_if<std::is_arithmetic<T>::value>::type>
-inline Number operator+(T A, const Number &B) { return Number(A) + B; }
-template <typename T, typename = typename std::enable_if<std::is_arithmetic<T>::value>::type>
-inline Number operator-(T A, const Number &B) { return Number(A) - B; }
-template <typename T, typename = typename std::enable_if<std::is_arithmetic<T>::value>::type>
-inline Number operator*(T A, const Number &B) { return Number(A) * B; }
-template <typename T, typename = typename std::enable_if<std::is_arithmetic<T>::value>::type>
-inline Number operator/(T A, const Number &B) { return Number(A) / B; }
+#define N(n) (Number::FromRaw((int32_t)((n) * (1 << DECIMAL))))
+
+// Global Integer Helpers (replaces templates)
+inline Number operator+(int32_t A, const Number &B) { return Number(A) + B; }
+inline Number operator-(int32_t A, const Number &B) { return Number(A) - B; }
+inline Number operator*(int32_t A, const Number &B) { return Number(A) * B; }
+inline Number operator/(int32_t A, const Number &B) { return Number(A) / B; }
 
 inline Number abs(Number A)
 {
@@ -109,53 +110,69 @@ inline Number abs(Number A)
 
 Number sqrt(Number A)
 {
-    // Digit by digit algorithm
-    uint64_t Temp = (uint64_t)A.Value << 16;
-    uint64_t Result = 0;
-    uint64_t Bit = (uint64_t)1 << 62;
-    Number Return;
+    uint32_t temp = (uint32_t)A.Value;
+    uint32_t res = 0;
+    uint32_t bit = 1 << 30; // 32-bit bitmask
 
-    // Skip inital zeros
-    while (Bit > Temp)
-        Bit >>= 2;
+    while (bit > temp)
+        bit >>= 2;
 
-    while (Bit != 0)
+    while (bit != 0)
     {
-        if (Temp >= Result + Bit)
+        if (temp >= res + bit)
         {
-            Temp -= Result + Bit;
-            Result = (Result >> 1) + Bit;
+            temp -= res + bit;
+            res = (res >> 1) + bit;
         }
         else
-            Result >>= 1;
-        Bit >>= 2;
+        {
+            res >>= 1;
+        }
+        bit >>= 2;
     }
-    Return.Value = (uint32_t)Result;
-    return Return;
+    // Result is in 16.16 format already? No, adjust shift if needed
+    return Number::FromRaw(res << 8); // Adjust based on your DECIMAL
 }
+
+#define RAW_PI 205887
+static const Number PI = Number::FromRaw(RAW_PI);
+#define RAW_TWO_PI 411774
+#define RAW_HALF_PI 102943 // PI / 2 in 16.16
+#define RAW_SIN_B 83443    // Fixed-point 16.16 for 4/pi
+#define RAW_SIN_C 26561    // Fixed-point 16.16 for 4/pi^2
 
 Number sin(Number X)
 {
     int32_t x = X.Value;
-    Number Result;
 
-    x = x % int32_t(2 * PI_F);
-    if (x > PI_F)
-        x -= 2 * PI_F;
-    else if (x < -PI_F)
-        x += 2 * PI_F;
+    // 2. Range reduction: x = x % (2*PI)
+    // Note: % is expensive on some RISC-V, but for 32-bit it's usually acceptable.
+    // If you only pass small values, an 'if' is faster.
+    x %= RAW_TWO_PI;
 
-    int32_t P1 = ((int64_t)SIN_B * x) >> 16;
-    int32_t P2 = ((int64_t)SIN_C * (((int64_t)x * ((x < 0) ? -x : x)) >> 16)) >> 16;
+    if (x > RAW_PI)
+        x -= RAW_TWO_PI;
+    else if (x < -RAW_PI)
+        x += RAW_TWO_PI;
 
-    Result.Value = P1 - P2;
-    return Result;
-};
+    // 3. Parabola approximation: y = Bx + Cx|x|
+    // We use int64_t to prevent overflow during the multiplication before shifting back
+    int32_t P1 = (int32_t)(((int64_t)RAW_SIN_B * x) >> 16);
+
+    // Calculate x * |x|
+    int32_t xAbs = (x < 0) ? -x : x;
+    int32_t xSquared = (int32_t)(((int64_t)x * xAbs) >> 16);
+
+    int32_t P2 = (int32_t)(((int64_t)RAW_SIN_C * xSquared) >> 16);
+
+    return Number::FromRaw(P1 - P2);
+}
 
 inline Number cos(Number X)
 {
-    return sin(X + PI / 2);
-};
+    // Directly add the raw value to avoid a Number constructor call
+    return sin(Number::FromRaw(X.Value + RAW_HALF_PI));
+}
 
 Number atan2(Number Y, Number X)
 {
@@ -167,54 +184,53 @@ Number atan2(Number Y, Number X)
         return Sign * (PI / 4 - PI / 4 * ((X - abs(Y)) / (X + abs(Y))));
 };
 
-static Number log(Number x) 
+Number log(Number x)
 {
-    // ln(x) is undefined for x <= 0
-    if (x.Value <= 0) return 0;
+    if (x.Value <= 0)
+        return Number::FromRaw(0);
 
     int32_t val = x.Value;
     int32_t log2_count = 0;
 
-    // 1. Range Reduction: Bring x into [1, 2)
-    // Formula: ln(x) = ln(m * 2^n) = ln(m) + n*ln(2)
-    if (val >= 0x10000) {
-        while (val >= 0x20000) {
+    // 1. Range Reduction
+    if (val >= 0x10000)
+    {
+        while (val >= 0x20000)
+        {
             val >>= 1;
             log2_count++;
         }
-    } else {
-        while (val < 0x10000) {
+    }
+    else
+    {
+        while (val < 0x10000)
+        {
             val <<= 1;
             log2_count--;
         }
     }
 
-    // 2. Polynomial Approximation for ln(m) on [1, 2)
-    // Optimization: ln(x) ≈ -1.7417 + 2.8212x - 1.4699x² + 0.4471x³ - 0.0565x⁴
-    // We use y = val - 1.0 (the fractional part) for the Taylor series
-    int64_t y = val - 0x10000;
-    int64_t res;
+    // 2. Polynomial Approximation using Horner's Method
+    // Target: y - y²/2 + y³/3 - y⁴/4  =>  y * (1 - y * (1/2 - y * (1/3 - y/4)))
+    int32_t y = val - 0x10000;
 
-    // Fixed-point coefficients (shifted by 16)
-    // res = y * (1 - y/2 + y²/3 - y³/4)
-    res = (y * y) >> 16;             // y²
-    int64_t y3 = (res * y) >> 16;    // y³
-    int64_t y4 = (y3 * y) >> 16;     // y⁴
+    // Constants in 16.16 fixed point
+    // 1/4 = 0x4000, 1/3 = 0x5555, 1/2 = 0x8000, 1 = 0x10000
 
-    int64_t term1 = y;
-    int64_t term2 = res / 2;
-    int64_t term3 = y3 / 3;
-    int64_t term4 = y4 / 4;
+    // We compute from the inside out:
+    // a = (1/3 - y/4)
+    int32_t a = 0x5555 - (y >> 2);
+    // b = (1/2 - y*a)
+    int32_t b = 0x8000 - (int32_t)(((int64_t)y * a) >> 16);
+    // c = (1 - y*b)
+    int32_t c = 0x10000 - (int32_t)(((int64_t)y * b) >> 16);
+    // ln_m = y * c
+    int32_t ln_m = (int32_t)(((int64_t)y * c) >> 16);
 
-    int32_t ln_m = (int32_t)(term1 - term2 + term3 - term4);
-
-    // 3. Final Reconstruction: n*ln(2) + ln(m)
-    // ln(2) is approximately 0.693147 -> 45426 in 16.16
+    // 3. Final Reconstruction
     const int32_t LN2 = 45426;
-    
-    Number Result;
-    Result.Value = (log2_count * LN2) + ln_m;
-    return Result;
+
+    return Number::FromRaw((log2_count * LN2) + ln_m);
 }
 
 inline Number min(Number A, Number B) { return (A.Value < B.Value) ? A : B; }
@@ -231,7 +247,7 @@ inline Number LimitZeroToOne(Number Value)
 
 inline uint8_t LimitByte(int Number)
 {
-    return min(max(Number, 0), 255);
+    return min(max(Number, 0), 255).ToInt();
 };
 
 inline Number ByteToPercent(uint8_t Value)
@@ -241,7 +257,7 @@ inline Number ByteToPercent(uint8_t Value)
 
 inline uint8_t PercentToByte(Number Value)
 {
-    return LimitByte((int32_t)Value * 255);
+    return LimitByte(Value.ToInt() * 255);
 };
 
 inline uint8_t MultiplyBytePercentByte(uint8_t Number, uint8_t Percent)
@@ -249,30 +265,11 @@ inline uint8_t MultiplyBytePercentByte(uint8_t Number, uint8_t Percent)
     return (uint8_t)(((int)Number * (int)Percent) / 255);
 };
 
-Number TimeStep(uint32_t TargetTime)
+inline Number LimitPi(Number Value)
 {
-    if (CurrentTime >= TargetTime)
-        return 1;
-
-    uint32_t RemainingTime = TargetTime - CurrentTime;
-
-    if (RemainingTime == 0)
-        return 0;
-
-    Number Prediction = Number(DeltaTime) / Number(RemainingTime);
-
-    return LimitZeroToOne(Prediction);
-};
-
-inline Number TimeMove(Number Current, Number Target, uint32_t TargetTime)
-{
-    return Current + (Target - Current) * TimeStep(TargetTime);
-};
-
-inline Number LimitPi(Number Value){
     while (Value > PI)
-        Value -= 2*PI;
+        Value -= 2 * PI;
     while (Value < -PI)
-        Value += 2*PI;
+        Value += 2 * PI;
     return Value;
 }

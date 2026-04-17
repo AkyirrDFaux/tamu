@@ -199,12 +199,13 @@ void LEDDriver::Show()
     while (byteLength--)
     {
         uint8_t channel = *pixel++;
-        if (byteLength % 3 == 0 && HW::USB_Ready){
+        if (byteLength % 3 == 0 && HW::USB_Ready)
+        {
             __enable_irq();
             HW::tud_task(); // Needs keep-alive, transfers won't be active if really used
             __disable_irq();
         }
-            
+
         for (int8_t i = 7; i >= 0; i--)
         {
             if (channel & (1 << i))
@@ -234,13 +235,14 @@ void LEDDriver::Show()
         }
     }
 
-     __enable_irq();
+    __enable_irq();
 
     // Reset pulse (Latch)
     // HW::SleepMicro(50);
 }
 #endif
 
+#if defined O_VYSI_V1_0
 uint8_t LayoutVysiv1_0[10 * 11]{
     0, 0, 0, 28, 29, 48, 49, 68, 0, 0, 0,
     0, 0, 11, 27, 30, 47, 50, 67, 69, 0, 0,
@@ -252,3 +254,4 @@ uint8_t LayoutVysiv1_0[10 * 11]{
     0, 5, 17, 21, 36, 41, 56, 61, 75, 77, 0,
     0, 0, 18, 20, 37, 40, 57, 60, 76, 0, 0,
     0, 0, 0, 19, 38, 39, 58, 59, 0, 0, 0};
+#endif

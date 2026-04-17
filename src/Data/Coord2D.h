@@ -13,8 +13,6 @@ public:
     Coord2D(Number X, Number Y, Number Angle);
 
     //Text AsString();
-
-    Coord2D TimeMove(Coord2D Target, unsigned long TargetTime);
 };
 
 inline Coord2D::Coord2D() {};
@@ -52,8 +50,3 @@ inline String Coord2D::AsString()
 {
     return Offset.AsString() + " " + Rotation.AsStringAngle();
 };*/
-
-inline Coord2D Coord2D::TimeMove(Coord2D Target, unsigned long TargetTime)
-{
-    return Coord2D(Offset.TimeMove(Target.Offset, TargetTime), Rotation.TimeMoveAngle(Target.Rotation, TargetTime));
-};

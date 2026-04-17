@@ -27,9 +27,6 @@ public:
     Vector2D Mirror(Vector2D Other);
     Vector2D Abs();
 
-    Vector2D TimeMove(Vector2D Target, unsigned long TargetTime);
-    Vector2D TimeMoveAngle(Vector2D Target, unsigned long TargetTime);
-
     // Text AsString();
     // Text AsStringAngle();
 };
@@ -132,17 +129,6 @@ inline Vector2D Vector2D::Abs()
     return Vector2D(abs(X), abs(Y));
 };
 
-inline Vector2D Vector2D::TimeMove(Vector2D Target, unsigned long TargetTime)
-{
-    Number Step = TimeStep(TargetTime);
-    return *this + (Target - *this) * Step;
-};
-
-inline Vector2D Vector2D::TimeMoveAngle(Vector2D Target, unsigned long TargetTime)
-{
-    Number Step = TimeStep(TargetTime);
-    return Vector2D(this->ToAngle() + LimitPi(Target.ToAngle() - this->ToAngle()) * Step);
-}
 /*
 inline String Vector2D::AsString()
 {

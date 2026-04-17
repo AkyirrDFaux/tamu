@@ -153,7 +153,7 @@ BoardClass::BoardClass(const Reference &ID) : BaseClass(&Table, ID, Flags::Auto 
 
     // 4. Telemetry: {0, 1} through {0, 5}
     int32_t zeroI = 0;
-    Number zeroN(0.0);
+    Number zeroN = N(0.0);
 
     // Boot Time {0, 1} -> Integer
     Values.Set(&zeroI, 4, Types::Integer, cursor++, 1, Tri::Set, Tri::Reset);
@@ -179,8 +179,8 @@ BoardClass::BoardClass(const Reference &ID) : BaseClass(&Table, ID, Flags::Auto 
 bool BoardClass::Run()
 {
     // Anchor Discovery
-    uint16_t portsIdx = Values.Child(0); 
-    uint16_t bootTimeIdx = Values.Next(portsIdx); 
+    uint16_t portsIdx = Values.Child(0);
+    uint16_t bootTimeIdx = Values.Next(portsIdx);
 
     // Indices relative to the anchor
     uint16_t avgIdx = bootTimeIdx + 1;
@@ -213,12 +213,13 @@ bool BoardClass::Run()
             Values.SetExisting(&freeRam, 4, Types::Integer, bootTimeIdx + 4);
         }
     }
-    
+
     // 3. Driver Servicing Loop (Structural Navigation)
     uint16_t currentPort = Values.Child(portsIdx);
     for (uint16_t i = 0; i < PORT_COUNT; i++)
     {
-        if (currentPort == INVALID_HEADER) break;
+        if (currentPort == INVALID_HEADER)
+            break;
 
         if (DriverArray[i] != nullptr)
         {
