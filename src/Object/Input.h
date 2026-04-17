@@ -97,13 +97,14 @@ void InputClass::Setup(uint16_t Index)
     if (Index > 1)
         return;
 
+    Result res = Values.Get(0);
+    Inputs mode = *(Inputs *)res.Value;
+
     if (Index == 0)
     {
-        Result res = Values.Get(0);
         if (!res.Value)
             return;
 
-        Inputs mode = *(Inputs *)res.Value;
         bool resetVal = false;
 
         switch (mode)
@@ -139,6 +140,9 @@ void InputClass::Setup(uint16_t Index)
 
     Disconnect();
     Connect();
+
+    if (HW::IsValidPin(InputPin) && mode == Inputs::Button)
+        HW::ModeInputPullDown(InputPin);
 }
 
 bool InputClass::Run()
@@ -160,7 +164,7 @@ bool InputClass::Run()
 
     Inputs mode = *(Inputs *)modeRes.Value;
     bool *statePtr = (bool *)valRes.Value;
-    
+
     // Determine inversion status
     bool inverted = (mode == Inputs::ButtonInverted || mode == Inputs::ButtonWithLEDInverted);
 
