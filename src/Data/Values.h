@@ -120,7 +120,9 @@ enum class Inputs : uint8_t
 {
     Undefined,
     Button,
+    ButtonInverted,
     ButtonWithLED,
+    ButtonWithLEDInverted
 };
 
 enum class SensorTypes : uint8_t

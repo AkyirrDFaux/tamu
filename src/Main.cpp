@@ -64,6 +64,8 @@ BoardClass Board(Reference::Global(0, 0, 0));
 
 #include "Object\I2CDevice.h"
 
+#include "Object\OLED.h"
+
 // LED strip
 // #include "Object\Texture1D.h"
 // #include "Object\LEDSegment.h"

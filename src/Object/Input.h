@@ -70,7 +70,7 @@ bool InputClass::Connect()
 
     PortNumber Port = *(PortNumber *)res.Value;
 
-    if (Port > 10)
+    if (Port > PORT_COUNT)
     {
         ReportError(Status::PortError);
         return false;
@@ -94,52 +94,47 @@ bool InputClass::Disconnect()
 
 void InputClass::Setup(uint16_t Index)
 {
-    // Index 1: Port {0, 0}
-    if (Index == 1)
-    {
-        Disconnect();
-        Connect();
-        return;
-    }
-
-    // Index 0: Mode {0}
-    if (Index != 0)
+    if (Index > 1)
         return;
 
-    Result res = Values.Get(0);
-    if (!res.Value) return;
-
-    Inputs mode = *(Inputs *)res.Value;
-    bool resetVal = false;
-
-    switch (mode)
+    if (Index == 0)
     {
-    case Inputs::ButtonWithLED:
-        // Ensure Index 3 exists. Set() handles the insertion if missing.
-        // This is Branch {2}.
-        Values.Set(&resetVal, sizeof(bool), Types::Bool, 3, 0); 
-        [[fallthrough]];
+        Result res = Values.Get(0);
+        if (!res.Value)
+            return;
 
-    case Inputs::Button:
-        // Reset Primary Value at Index 2 (Branch {1})
-        Values.SetExisting(&resetVal, sizeof(bool), Types::Bool, 2);
-        
-        // Pruning logic: If we are in standard Button mode, 
-        // but a node exists after Index 2, kill it.
-        if (mode == Inputs::Button)
+        Inputs mode = *(Inputs *)res.Value;
+        bool resetVal = false;
+
+        switch (mode)
         {
+        case Inputs::ButtonWithLED:
+        case Inputs::ButtonWithLEDInverted:
+            // Node {2} at Index 3 for LED control
+            Values.Set(&resetVal, sizeof(bool), Types::Bool, 3, 0);
+            [[fallthrough]];
+
+        case Inputs::Button:
+        case Inputs::ButtonInverted:
+            // Node {1} at Index 2 for Primary State
+            Values.SetExisting(&resetVal, sizeof(bool), Types::Bool, 2);
+
+            // Clean up if moving from LED mode back to standard Button
+            if (mode == Inputs::Button || mode == Inputs::ButtonInverted)
+            {
+                uint16_t extra = Values.Next(2);
+                if (extra != INVALID_HEADER)
+                    Values.Delete(extra);
+            }
+            break;
+
+        default:
+            // Cleanup everything after the core value
             uint16_t extra = Values.Next(2);
             if (extra != INVALID_HEADER)
                 Values.Delete(extra);
+            break;
         }
-        break;
-
-    default:
-        // Clean up everything after the core hardware config/value
-        uint16_t extra = Values.Next(2);
-        if (extra != INVALID_HEADER)
-            Values.Delete(extra);
-        break;
     }
 
     Disconnect();
@@ -148,14 +143,8 @@ void InputClass::Setup(uint16_t Index)
 
 bool InputClass::Run()
 {
-    // Hard-indexed mapping (O(1) access):
-    // 0: Mode {0}
-    // 1: Port {0, 0} (Ignored in Run, used in Setup)
-    // 2: Value {1}
-    // 3: LED State {2} (Only for ButtonWithLED)
-
     Result modeRes = Values.Get(0);
-    Result valRes  = Values.Get(2);
+    Result valRes = Values.Get(2);
 
     if (modeRes.Type != Types::Input || !valRes.Value)
     {
@@ -169,33 +158,37 @@ bool InputClass::Run()
         return true;
     }
 
-    Inputs mode    = *(Inputs *)modeRes.Value;
+    Inputs mode = *(Inputs *)modeRes.Value;
     bool *statePtr = (bool *)valRes.Value;
+    
+    // Determine inversion status
+    bool inverted = (mode == Inputs::ButtonInverted || mode == Inputs::ButtonWithLEDInverted);
 
     switch (mode)
     {
     case Inputs::Button:
-        // Direct read, zero-copy update to ValueTree Index 2
-        *statePtr = (HW::Read(InputPin) == false);
+    case Inputs::ButtonInverted:
+        // Normal logic: High == true. Inverted logic: High == false.
+        *statePtr = inverted ? (HW::Read(InputPin) == false) : (HW::Read(InputPin) == true);
         break;
 
     case Inputs::ButtonWithLED:
+    case Inputs::ButtonWithLEDInverted:
     {
-        // Direct access to LED state at Index 3
         Result ledRes = Values.Get(3);
         bool ledOn = (ledRes.Value) ? *(bool *)ledRes.Value : false;
 
         if (ledOn)
         {
-            // Pin Multiplexing: Drive the LED low
+            // Drive LED (Active Low assumed for most shared LED/Buttons)
             HW::ModeOutput(InputPin);
-            HW::Low(InputPin);
+            inverted ? HW::Low(InputPin) : HW::High(InputPin);
         }
         else
         {
-            // Pin Multiplexing: Release to Input and read the button
             HW::ModeInput(InputPin);
-            *statePtr = (HW::Read(InputPin) == false);
+            // Read button with appropriate logic
+            *statePtr = inverted ? (HW::Read(InputPin) == false) : (HW::Read(InputPin) == true);
         }
         break;
     }

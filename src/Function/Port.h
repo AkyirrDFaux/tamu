@@ -22,6 +22,56 @@ void BoardClass::Setup(uint16_t Index)
         Button->Values.SetExisting(&inType, sizeof(Inputs), Types::Input, 0);
         Button->Flags -= Flags::Dirty;
     }
+    #elif defined BOARD_Valu_v2_0
+    // --- 1. OLED Display Setup ---
+    // Reference(0,2,0) for the Display
+    OLEDClass* Display = new OLEDClass(Reference::Global(0, 2, 0), Flags::Auto | Flags::RunLoop);
+    
+    // Wire the OLED internal state to the buttons we are about to create
+    // Up: B1, Down: B2, Enter: B3, Back: B4
+    Reference b1Ref = Reference::Global(0, 2, 1).Append(1); // Points to Value {1} of Input 1
+    Reference b2Ref = Reference::Global(0, 2, 2).Append(1); // Points to Value {1} of Input 2
+    Reference b3Ref = Reference::Global(0, 2, 3).Append(1); // Points to Value {1} of Input 3
+    Reference b4Ref = Reference::Global(0, 2, 4).Append(1); // Points to Value {1} of Input 4
+
+    Display->Values.SetExisting(&b3Ref, sizeof(Reference), Types::Reference, 1);
+    Display->Values.SetExisting(&b1Ref, sizeof(Reference), Types::Reference, 2);
+    Display->Values.SetExisting(&b2Ref, sizeof(Reference), Types::Reference, 3);
+    Display->Values.SetExisting(&b4Ref, sizeof(Reference), Types::Reference, 4);
+    Display->Flags -= Flags::Dirty;
+
+    // --- 2. Internal Buttons Setup ---
+    Inputs typeBtn = Inputs::Button;
+    Inputs typeBtnLed = Inputs::ButtonWithLED;
+
+    // B1: Port 13
+    InputClass* B1 = new InputClass(Reference::Global(0, 2, 1), Flags::Auto | Flags::RunLoop);
+    PortNumber p1 = 13;
+    B1->Values.SetExisting(&typeBtn, sizeof(Inputs), Types::Input, 0);
+    B1->Values.SetExisting(&p1, sizeof(PortNumber), Types::PortNumber, 1);
+    B1->Flags -= Flags::Dirty;
+
+    // B2: Port 14
+    InputClass* B2 = new InputClass(Reference::Global(0, 2, 2), Flags::Auto | Flags::RunLoop);
+    PortNumber p2 = 14;
+    B2->Values.SetExisting(&typeBtn, sizeof(Inputs), Types::Input, 0);
+    B2->Values.SetExisting(&p2, sizeof(PortNumber), Types::PortNumber, 1);
+    B2->Flags -= Flags::Dirty;
+
+    // B3: Port 15
+    InputClass* B3 = new InputClass(Reference::Global(0, 2, 3), Flags::Auto | Flags::RunLoop);
+    PortNumber p3 = 15;
+    B3->Values.SetExisting(&typeBtn, sizeof(Inputs), Types::Input, 0);
+    B3->Values.SetExisting(&p3, sizeof(PortNumber), Types::PortNumber, 1);
+    B3->Flags -= Flags::Dirty;
+
+    // B4: Port 16 (The LED-Button combo)
+    InputClass* B4 = new InputClass(Reference::Global(0, 2, 4), Flags::Auto | Flags::RunLoop);
+    PortNumber p4 = 16;
+    B4->Values.SetExisting(&typeBtnLed, sizeof(Inputs), Types::Input, 0);
+    B4->Values.SetExisting(&p4, sizeof(PortNumber), Types::PortNumber, 1);
+    B4->Flags -= Flags::Dirty;
+
 #endif
 }
 
