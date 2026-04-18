@@ -71,31 +71,6 @@ bool ExecuteSet(OpContext &ctx)
     return true;
 }
 
-bool ExecuteSetReference(OpContext &ctx)
-{
-    // ctx.Args[0] is the Source (The Reference we want to copy)
-    // ctx.Args[1] is the Target (The Bookmark where we want to store it)
-    
-    // We check ArgMarks[0] because we need the raw reference data, 
-    // not the resolved value that GetArgs might have already fetched.
-    Result Ref = ctx.ArgMarks[0].Get();
-    if (Ref.Type != Types::Reference)
-    {
-        // If the source isn't actually a reference, we can't 'SetReference'
-        return false; 
-    }
-
-    // Directly copy the Reference data (usually the ID or Path string)
-    // We use the size of the source to ensure we get the full Reference handle
-    ctx.Out.SetCurrent(
-        Ref.Value, 
-        Ref.Length, 
-        Types::Reference
-    );
-
-    return true;
-}
-
 bool ExecuteDelete(OpContext &ctx)
 {
     // ctx.ArgMarks[0...7] = Bookmarks to the targets we want to delete

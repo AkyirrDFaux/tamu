@@ -134,7 +134,7 @@ bool RunOperation(const Bookmark &Index)
         break;
 
     case Operations::SetReference:
-        Done = ExecuteSetReference(ctx);
+        Done = true;
         break;
     default:
         ReportError(Status::InvalidValue);
