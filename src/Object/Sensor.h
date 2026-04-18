@@ -148,7 +148,7 @@ bool SensorClass::Run()
         
     case SensorTypes::Light10K:
         // Inverse square law approximation for photoresistors
-        In = sq(18.0 * (ADCRES - In) / In);
+        In = 18.0 * ((ADCRES - In) / In);
         break;
         
     default:

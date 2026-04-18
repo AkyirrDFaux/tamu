@@ -133,32 +133,43 @@ void I2CDeviceClass::Setup(uint16_t Index)
         }
 #endif
 
-// --- BMI160 Implementation ---
-#if defined O_I2C_BMI160
+        // --- BMI160 Implementation ---
         if (DevType == I2CDevices::BMI160)
         {
             if (*AddrPtr == 0)
                 *AddrPtr = 0x69;
 
-            uint8_t pwrAcc = 0x11;
+            // --- Power Up ---
+            uint8_t pwrAcc = 0x11; // Accel normal mode
             I2CDriver->Write(*AddrPtr, 0x7E, &pwrAcc, 1);
             HW::SleepMicro(5000);
 
-            uint8_t pwrGyr = 0x15;
+            uint8_t pwrGyr = 0x15; // Gyro normal mode
             I2CDriver->Write(*AddrPtr, 0x7E, &pwrGyr, 1);
             HW::SleepMicro(10000);
 
-            uint8_t Config[2] = {0x28, 0x28};
-            I2CDriver->Write(*AddrPtr, 0x40, Config, 2);
+            // --- Scaling & Config ---
+            // 0x41: ACC_RANGE -> 0x0C = ±16g
+            uint8_t accRange = 0x0C;
+            I2CDriver->Write(*AddrPtr, 0x41, &accRange, 1);
 
+            // 0x43: GYR_RANGE -> 0x00 = ±2000°/s
+            uint8_t gyrRange = 0x00;
+            I2CDriver->Write(*AddrPtr, 0x43, &gyrRange, 1);
+
+            // 0x40 & 0x42: ODR/Bandwidth (Optional, but 0x28 is a solid 100Hz default)
+            uint8_t filterConf = 0x28;
+            I2CDriver->Write(*AddrPtr, 0x40, &filterConf, 1); // Accel Conf
+            I2CDriver->Write(*AddrPtr, 0x42, &filterConf, 1); // Gyro Conf
+
+            // --- Value Definitions ---
             Values.Set(nullptr, 0, Types::Undefined, 4, 0);
-            Values.Set(&zeroVec, sizeof(Vector3D), Types::Vector3D, 5, 1);
-            Values.Set(&zeroVec, sizeof(Vector3D), Types::Vector3D, 6, 1);
-            Values.Set(&zeroNum, sizeof(Number), Types::Number, 7, 1);
-            Values.Set(&zeroNum, sizeof(Number), Types::Number, 8, 1);
+            Values.Set(&zeroVec, sizeof(Vector3D), Types::Vector3D, 5, 1); // Accel
+            Values.Set(&zeroVec, sizeof(Vector3D), Types::Vector3D, 6, 1); // Gyro
+            Values.Set(&zeroNum, sizeof(Number), Types::Number, 7, 1);     // Roll/Pitch?
+            Values.Set(&zeroNum, sizeof(Number), Types::Number, 8, 1);     // Temp?
             return;
         }
-#endif
 
         // Default: If no drivers matched (or were compiled in)
         Values.Delete(4);
@@ -199,8 +210,8 @@ bool I2CDeviceClass::Run()
     {
         if (!I2CDriver->Read(Addr, 0x22, (uint8_t *)Raw, 12))
             return true;
-        gyrSens = N(939.0);
         accSens = N(209.0);
+        gyrSens = N(939.0);
         processed = true;
     }
 #endif
@@ -223,8 +234,8 @@ bool I2CDeviceClass::Run()
         if (!I2CDriver->Read(Addr, 0x12, (uint8_t *)&Raw[3], 6))
             return true;
 
-        accSens = N(939.0);
-        gyrSens = N(209.0);
+        accSens = N(209.0);
+        gyrSens = N(939.0);
         processed = true;
     }
 #endif
