@@ -40,18 +40,18 @@ uint32_t DeltaTime = 0;
 #include "Hardware\OLED.h"
 ChirpClass Chirp = ChirpClass(); // Bluetooth/Serial
 
-// Programs
-namespace Operation
-{
-// TODO Cleanup, fix & optimize
-#include "Operations\MathCore.h"
-#include "Operations\MathMulti.h"
+// Programs and operations
+
+#include "Operations\Core.h"
+#include "Operations\Convert.h"
 #include "Operations\MathBinary.h"
+#include "Operations\MathMulti.h"
 #include "Operations\MathForm.h"
 #include "Operations\Time.h"
 #include "Operations\Flow.h"
-#include "Operations\Base.h"
-}
+#include "Operations\Other.h"
+#include "Operations\Exec.h"
+
 #include "Object\Program.h"
 
 #include "Object\Board.h"
@@ -170,17 +170,11 @@ extern "C"
 #endif
 /*TODO:
 KEY FEATURES:
-Valu v2.0 working fully
-- port 0 (pin A14) output
-OLED
- - Bind inputs
- - Use references as entries in list
+Valu v2.0 - port 0 (pin A14) output
 Port type connect blocking
 LED strip
 Servo
-
-Program Start and Stop section
-Button callback, press detection
+Startup programs
 
 FUTURE:
 App Programming view

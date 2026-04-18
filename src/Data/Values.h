@@ -151,10 +151,18 @@ enum class ProgramTypes : uint8_t
 enum class Operations : uint8_t
 {
     None,
-    Equal,
-    Combine,
+    Set,
+    Delete,
+    ToBool,
+    ToByte,
+    ToInt,
+    ToNumber,
+    ToVector2D,
+    ToVector3D,
+    ToCoord2D,
+    ToColour,
+    ToColourHSV,
     Extract,
-    Convert,
     IsEqual, // Comparision
     IsGreater,
     IsSmaller,
@@ -167,6 +175,7 @@ enum class Operations : uint8_t
     Min,    
     Max,    
     Modulo, 
+    Random,   // Randomize (Min, Max)
     Sine,   // Waveform
     Square,
     Sawtooth,
@@ -175,8 +184,7 @@ enum class Operations : uint8_t
     Normalize,
     DotProduct,
     CrossProduct,
-    Map, // Mapping
-    Clamp,
+    Clamp, // Mapping
     Deadzone,
     LinInterpolation,
     And, // Logic
@@ -184,10 +192,9 @@ enum class Operations : uint8_t
     Not,
     Edge,
     SetReset,
-    Random,   // Randomize (Min, Max)
     Delay,    // Delay for specified amount of time (parameter), holds start time
     IfSwitch, // Program control (branch)
-    While,
-    SetFlags,
-    ResetFlags,
+    SetRunOnce,
+    SetRunLoop,
+    SetReference,
 };

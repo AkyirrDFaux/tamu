@@ -40,12 +40,9 @@ bool Program::RunEntry(uint16_t Index)
     // If no operation is found, we consider this entry "complete"
     if (item.Length == 0 || item.Type != Types::Operation)
         return true;
-
-    // Direct pointer cast to the Operations enum
-    Operations op = *(Operations *)item.Value;
     
     // Operation::Run now takes the raw enum and the values tree
-    return Operation::Run(op, {&Values, Index});
+    return RunOperation({&Values, Index});
 }
 
 bool Program::Run()

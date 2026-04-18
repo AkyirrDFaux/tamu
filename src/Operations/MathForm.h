@@ -1,90 +1,130 @@
-bool ExecuteSine(const Bookmark &OpPoint)
+bool ExecuteWaveforms(OpContext &ctx)
 {
-    // 1. Navigation: {0} is Output, {1} is Time, {2} is Mult, {3} is Phase
-    Bookmark OutMark = OpPoint.Child();
-    if (OutMark.Index == INVALID_HEADER)
-        return true;
+    // ctx.Args[0] = Time/Input, [1] = Frequency/Multiplier, [2] = Phase
+    Number T = GetAsNumber(ctx.Args[0]);
+    Number M = GetAsNumber(ctx.Args[1]);
+    Number P = GetAsNumber(ctx.Args[2]);
+    Number PhaseTime = (T * M) + P;
 
-    Bookmark markTime = OutMark.Next();
-    Bookmark markMult = markTime.Next();
-    Bookmark markPhase = markMult.Next();
+    Number result = N(0.0);
 
-    if (markTime.Index == INVALID_HEADER || markMult.Index == INVALID_HEADER || markPhase.Index == INVALID_HEADER)
-        return true;
-
-    // 2. Calculation
-    Number T = GetAsNumber(markTime);
-    Number M = GetAsNumber(markMult);
-    Number P = GetAsNumber(markPhase);
-
-    Number ResultValue = sin(T * M + P);
-
-    // 3. Store result
-    OutMark.SetCurrent(&ResultValue, sizeof(Number), Types::Number);
-
-    return true;
-}
-
-bool ExecuteClamp(const Bookmark &OpPoint)
-{
-    // 1. Navigation
-    Bookmark OutMark = OpPoint.Child();
-    if (OutMark.Index == INVALID_HEADER) return true;
-
-    Bookmark markVal = OutMark.Next(); 
-    Bookmark markMin = markVal.Next(); 
-    Bookmark markMax = markMin.Next(); 
-
-    if (markVal.Index == INVALID_HEADER || markMin.Index == INVALID_HEADER || markMax.Index == INVALID_HEADER)
-        return true;
-
-    // 2. Resolve for Type Persistence
-    Result resVal = markVal.GetThis();
-    if (!IsScalar(resVal.Type)) return true;
-
-    Number V = GetAsNumber(markVal);
-    Number Low = GetAsNumber(markMin);
-    Number High = GetAsNumber(markMax);
-
-    if (V < Low) V = Low;
-    if (V > High) V = High;
-
-    // 3. Store back using original type
-    StoreScalar(OutMark, V, resVal.Type);
-    return true;
-}
-
-bool ExecuteLerp(const Bookmark &OpPoint)
-{
-    // 1. Navigation
-    Bookmark OutMark = OpPoint.Child();
-    if (OutMark.Index == INVALID_HEADER) return true;
-
-    Bookmark markLow   = OutMark.Next(); 
-    Bookmark markHigh  = markLow.Next();  
-    Bookmark markAlpha = markHigh.Next(); 
-    Bookmark markScale = markAlpha.Next(); 
-
-    if (markLow.Index == INVALID_HEADER || markHigh.Index == INVALID_HEADER || markAlpha.Index == INVALID_HEADER)
-        return true;
-
-    Result resLow = markLow.GetThis();
-    if (!IsScalar(resLow.Type)) return true;
-
-    Number A = GetAsNumber(markLow);
-    Number B = GetAsNumber(markHigh);
-    Number T = GetAsNumber(markAlpha);
-
-    Number Scale = N(1.0);
-    if (markScale.Index != INVALID_HEADER)
+    switch (ctx.Op)
     {
-        Scale = GetAsNumber(markScale);
-        if (Scale == N(0.0)) Scale = N(1.0);
+    case Operations::Sine:
+        // Assuming your 'Number' lib has sin or you use math.h
+        result = Number(sin(PhaseTime));
+        break;
+
+    case Operations::Square:
+        // Simple sign-based square wave
+        result = (Number(sin(PhaseTime)) >= N(0.0)) ? N(1.0) : N(-1.0);
+        break;
+
+    case Operations::Sawtooth:
+        // Simple (T % 1.0) normalized sawtooth
+        result = PhaseTime - PhaseTime.ToInt();
+        break;
+
+    default:
+        break;
     }
+
+    ctx.Out.SetCurrent(&result, sizeof(Number), Types::Number);
+    return true;
+}
+
+bool ExecuteRandom(OpContext &ctx)
+{
+    // Default to 0 and 1 if arguments are missing
+    Number minRange = (ctx.Args[0].Value) ? *(Number *)ctx.Args[0].Value : Number(0);
+    Number maxRange = (ctx.Args[1].Value) ? *(Number *)ctx.Args[1].Value : Number(1);
+
+    if (minRange >= maxRange)
+    {
+        ctx.Out.SetCurrent(&minRange, sizeof(Number), Types::Number);
+        return true;
+    }
+
+    // Calculation: Result = Min + ((Max - Min) * (RandomValue / 1.0))
+    // To avoid float, we use the raw random bits as the fraction.
+
+    uint32_t range = (uint32_t)(maxRange.Value - minRange.Value);
+
+    // Perform a fixed-point multiplication of the range and a random fraction
+    // (RawRand() & 0xFFFF) acts as a value between 0 and 65535
+    uint32_t fraction = RawRand() & 0xFFFF;
+    uint32_t offset = (uint32_t)(((uint64_t)range * fraction) >> 16);
+
+    Number result = Number::FromRaw(minRange.Value + (int32_t)offset);
+
+    ctx.Out.SetCurrent(&result, sizeof(Number), Types::Number);
+    return true;
+}
+
+bool ExecuteClamp(OpContext &ctx)
+{
+    // ctx.Args[0] = Value, [1] = Min, [2] = Max
+    if (!IsScalar(ctx.Args[0].Type))
+        return true;
+
+    Number V = GetAsNumber(ctx.Args[0]);
+    Number Low = GetAsNumber(ctx.Args[1]);
+    Number High = GetAsNumber(ctx.Args[2]);
+
+    if (V < Low)
+        V = Low;
+    else if (V > High)
+        V = High;
+
+    StoreScalar(ctx.Out, V, ctx.Args[0].Type);
+    return true;
+}
+
+bool ExecuteDeadzone(OpContext &ctx)
+{
+    // ctx.Args[0] = Value, [1] = Threshold
+    if (!IsScalar(ctx.Args[0].Type))
+        return true;
+
+    Number V = GetAsNumber(ctx.Args[0]);
+    Number Threshold = abs(GetAsNumber(ctx.Args[1])); // Ensure positive
+
+    Number Result = V;
+
+    if (abs(V) < Threshold)
+    {
+        Result = N(0.0);
+    }
+    else if (V > N(0.0))
+    {
+        Result = (V - Threshold);
+    }
+    else
+    {
+        Result = (V + Threshold);
+    }
+
+    StoreScalar(ctx.Out, Result, ctx.Args[0].Type);
+    return true;
+}
+
+bool ExecuteLerp(OpContext &ctx)
+{
+    // ctx.Args[0]=Low, [1]=High, [2]=Alpha, [3]=Scale (Optional)
+    if (!IsScalar(ctx.Args[0].Type))
+        return true;
+
+    Number A = GetAsNumber(ctx.Args[0]);
+    Number B = GetAsNumber(ctx.Args[1]);
+    Number T = GetAsNumber(ctx.Args[2]);
+
+    // Handle optional scale parameter
+    Number Scale = (ctx.Args[3].Value) ? GetAsNumber(ctx.Args[3]) : N(1.0);
+    if (Scale == N(0.0))
+        Scale = N(1.0); // Div zero safety
 
     Number ResultValue = A + (T / Scale) * (B - A);
 
-    // 2. Store result
-    StoreScalar(OutMark, ResultValue, resLow.Type);
+    StoreScalar(ctx.Out, ResultValue, ctx.Args[0].Type);
     return true;
 }

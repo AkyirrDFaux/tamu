@@ -110,28 +110,25 @@ inline Number abs(Number A)
 
 Number sqrt(Number A)
 {
-    uint32_t temp = (uint32_t)A.Value;
-    uint32_t res = 0;
-    uint32_t bit = 1 << 30; // 32-bit bitmask
+    if (A.Value <= 0)
+        return Number(0);
 
-    while (bit > temp)
-        bit >>= 2;
+    uint64_t val = (uint64_t)A.Value << 16; // Shift up to maintain 16.16 precision
+    uint64_t res = 0;
+    uint64_t add = (uint64_t)1 << 46; // Start at a high bit
 
-    while (bit != 0)
+    for (int i = 0; i < 24; i++)
     {
-        if (temp >= res + bit)
+        uint64_t temp = res + add;
+        res >>= 1;
+        if (val >= temp)
         {
-            temp -= res + bit;
-            res = (res >> 1) + bit;
+            val -= temp;
+            res += add;
         }
-        else
-        {
-            res >>= 1;
-        }
-        bit >>= 2;
+        add >>= 2;
     }
-    // Result is in 16.16 format already? No, adjust shift if needed
-    return Number::FromRaw(res << 8); // Adjust based on your DECIMAL
+    return Number::FromRaw((int32_t)res);
 }
 
 #define RAW_PI 205887
@@ -235,6 +232,23 @@ Number log(Number x)
 
 inline Number min(Number A, Number B) { return (A.Value < B.Value) ? A : B; }
 inline Number max(Number A, Number B) { return (A.Value > B.Value) ? A : B; }
+
+static uint32_t _next_rand = 1; // Seed this with AnalogRead or CurrentTime
+
+// Internal helper to get a raw pseudo-random 32-bit integer
+inline uint32_t RawRand()
+{
+    _next_rand = _next_rand * 1103515245 + 12345;
+    return _next_rand;
+}
+
+// Returns a Number between 0.0 and 1.0
+Number RandomPercent()
+{
+    // We take the top 16 bits of the random result and place them
+    // into the fractional part of our 16.16 Number.
+    return Number::FromRaw(RawRand() & 0xFFFF);
+}
 
 #else
 typedef float Number;

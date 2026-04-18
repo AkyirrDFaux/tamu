@@ -88,14 +88,14 @@ namespace HW
 #define SEGMENT_SIZE (PAGE_SIZE * 4)
 
     // Logic Helpers
-    const uint32_t FlashStart = 0xE000;           // Relative to 0x08000000
-    const uint32_t FlashSize = (SECTOR_SIZE * 2); // 8KB
+    const uint32_t FlashStart = 0xD000;           // Relative to 0x08000000
+    const uint32_t FlashSize = (SECTOR_SIZE * 3); // 12KB
     uint16_t FreeSpace[FlashSize / SEGMENT_SIZE];
 
-#define GET_PHYS_ADDR(off) (0x0800E000 + FlashStart + (off))
+#define GET_PHYS_ADDR(off) (0x08000000 + FlashStart + (off))
 
     // Reserved block for the Linker
-    const uint8_t flash_reservation[8192] __attribute__((section(".fixed_data"), used)) = {0xFF};
+    const uint8_t flash_reservation[SECTOR_SIZE*3] __attribute__((section(".fixed_data"), used)) = {0xFF};
 
     void FlashInitDevice()
     {
@@ -585,5 +585,18 @@ namespace HW
         // ESP_LOGI("MEM", "Saved at %d, length %d", writeAddr, Data.Length);
         // Note: FindSpace already updated FreeSpace[s] for us.
         return true;
+    }
+
+    int32_t GetFreeFlash()
+    {
+        int32_t total = 0;
+        const size_t numSegments = sizeof(FreeSpace) / sizeof(FreeSpace[0]);
+
+        for (size_t i = 0; i < numSegments; i++)
+        {
+            total += FreeSpace[i];
+        }
+
+        return total;
     }
 }

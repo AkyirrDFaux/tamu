@@ -163,7 +163,12 @@ BoardClass::BoardClass(const Reference &ID) : BaseClass(&Table, ID, Flags::Auto 
     Values.Set(&zeroN, sizeof(Number), Types::Number, cursor++, 1, Tri::Set, Tri::Reset);
 
     // RAM Total {0, 4} and RAM Free {0, 5} -> Integer
+    int32_t totalRam = HW::GetRAM();
+    Values.Set(&totalRam, 4, Types::Integer, cursor++, 1, Tri::Set, Tri::Reset);
     Values.Set(&zeroI, 4, Types::Integer, cursor++, 1, Tri::Set, Tri::Reset);
+
+    // Flash Total {0, 6} and Flash Free {0, 7} -> Integer
+    Values.Set(&HW::FlashSize, 4, Types::Integer, cursor++, 1, Tri::Set, Tri::Reset);
     Values.Set(&zeroI, 4, Types::Integer, cursor++, 1, Tri::Set, Tri::Reset);
 
 #if defined BOARD_Tamu_v2_0
@@ -196,7 +201,7 @@ bool BoardClass::Run()
         Number &max = *(Number *)maxRes.Value;
 
         // avg = (avg * 15 + current) / 16
-        avg = (avg * 0.9375) + (Number(DeltaTime) * 0.0625);
+        avg = (avg * N(0.9375)) + (Number(DeltaTime) * N(0.0625));
 
         if (Number(DeltaTime) > max)
         {
@@ -206,11 +211,12 @@ bool BoardClass::Run()
         {
             max = avg; // Reset max to current avg for long-term windowing
 
-            // Update RAM Telemetry (bootTimeIdx + 3 and + 4)
-            int32_t totalRam = HW::GetRAM();
+            
+            // Update RAM Telemetry (bootTimeIdx + 4)
             int32_t freeRam = HW::GetFreeRAM();
-            Values.SetExisting(&totalRam, 4, Types::Integer, bootTimeIdx + 3);
             Values.SetExisting(&freeRam, 4, Types::Integer, bootTimeIdx + 4);
+            int32_t freeFlash = HW::GetFreeFlash();
+            Values.SetExisting(&freeFlash, 4, Types::Integer, bootTimeIdx + 6);
         }
     }
 
