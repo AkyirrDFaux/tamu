@@ -164,12 +164,15 @@ bool RunOperation(const Bookmark &Index)
         if (Link.Length == 0 || Link.Type != Types::Reference)
             break;
 
-        Bookmark Target = linkMark.This();
-        if (Target.Map != nullptr && Target.Index != INVALID_HEADER)
+        Reference TargetRef = *(Reference *)Link.Value;
+        if (TargetRef.IsGlobal())
         {
-            // Even if this call reallocates memory, safeBuffer remains valid
-            Target.Map->SetExisting(safeBuffer, safeLen, safeType, Target.Index);
+            BaseClass *TargetObj = Objects.At(TargetRef);
+            if (TargetObj != nullptr)
+                TargetObj->Values.Set(safeBuffer, safeLen, safeType, TargetRef);
         }
+        else //Skip long search
+            Index.Map->Set(safeBuffer, safeLen, safeType, TargetRef);
 
         linkMark = linkMark.Next();
     }
