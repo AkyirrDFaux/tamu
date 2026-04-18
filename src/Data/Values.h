@@ -99,6 +99,7 @@ enum class Displays : uint8_t
 {
     Undefined,
     GenericLEDMatrix,
+    GenericLEDMatrixWeave,
     Vysi_v1_0 = 10
 };
 

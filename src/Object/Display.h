@@ -153,7 +153,7 @@ void DisplayClass::Setup(uint16_t Index)
             int32_t newLen = 0;
             Vector2D newSize(0, 0);
 
-            if (Type == Displays::GenericLEDMatrix)
+            if (Type == Displays::GenericLEDMatrix || Type == Displays::GenericLEDMatrixWeave)
             {
                 newLen = 256;
                 newSize = Vector2D(16, 16);
@@ -321,7 +321,21 @@ void DisplayClass::RenderGeometry(uint16_t NodeIdx, int32_t Length, Vector2D Dis
     {
         for (int32_t X = 0; X < GridW; X++)
         {
-            int32_t GridIdx = (GridH - Y - 1) * GridW + X;
+            // --- New Layout Resolution Switch ---
+            int32_t GridIdx;
+            uint32_t rowOffset = (GridH - Y - 1) * GridW;
+
+            switch (Values.Get(0).Value ? *(Displays *)Values.Get(0).Value : Displays::Undefined) // Assuming DisplayType is stored in your class
+            {
+            case Displays::GenericLEDMatrixWeave:
+                // Row (GridH - Y - 1) is what we check for odd/even to snake
+                GridIdx = rowOffset + (((GridH - Y - 1) & 1) ? (GridW - 1 - X) : X);
+                break;
+
+            default:
+                GridIdx = rowOffset + X;
+                break;
+            }
 #if defined O_LAYOUT_USED
             int32_t PIdx = (Layout != nullptr) ? (int32_t)Layout[GridIdx] - 1 : GridIdx;
 #else
@@ -463,7 +477,21 @@ void DisplayClass::RenderTexture(uint16_t NodeIdx, int32_t Length, Vector2D Disp
     {
         for (int32_t X = 0; X < GridW; X++)
         {
-            int32_t GridIdx = (GridH - Y - 1) * GridW + X;
+            // --- New Layout Resolution Switch ---
+            int32_t GridIdx;
+            uint32_t rowOffset = (GridH - Y - 1) * GridW;
+
+            switch (Values.Get(0).Value ? *(Displays *)Values.Get(0).Value : Displays::Undefined) // Assuming DisplayType is stored in your class
+            {
+            case Displays::GenericLEDMatrixWeave:
+                // Row (GridH - Y - 1) is what we check for odd/even to snake
+                GridIdx = rowOffset + (((GridH - Y - 1) & 1) ? (GridW - 1 - X) : X);
+                break;
+
+            default:
+                GridIdx = rowOffset + X;
+                break;
+            }
 #if defined O_LAYOUT_USED
             int32_t PIdx = (Layout != nullptr) ? (int32_t)Layout[GridIdx] - 1 : GridIdx;
 #else
