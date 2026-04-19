@@ -56,8 +56,8 @@ public:
     void RenderScreensaver();
     void RenderMenu();
 
-    uint16_t GetPageRoot(); // Helper to find the current page node
-    uint16_t GetEntryByIndex(uint8_t index);
+    Bookmark GetPageRoot(); // Helper to find the current page node
+    Bookmark GetEntryByIndex(uint8_t index);
 
     static bool RunBridge(BaseClass *Base) { return static_cast<OLEDClass *>(Base)->Run(); }
 
@@ -187,171 +187,208 @@ uint8_t GetPartCount(Types type)
     return 0;
 }
 
-void OLEDClass::RenderMenu() {
-    uint16_t pageRoot = GetPageRoot();
-    if (pageRoot == INVALID_HEADER) return;
+void OLEDClass::RenderMenu()
+{
+    Bookmark pageRoot = GetPageRoot();
+    if (pageRoot.Index == INVALID_HEADER)
+        return;
 
-    // 1. Calculate Total Items (1 Virtual + Real Children)
-    uint16_t entryStartIdx = Values.Child(pageRoot);
+    // 1. Calculate Total Items (1 Virtual Page Switcher + Children)
+    uint16_t entryStartIdx = Values.Child(pageRoot.Index);
     uint16_t countIdx = entryStartIdx;
-    uint8_t totalItems = 1; 
-    while (countIdx != INVALID_HEADER) {
+    uint8_t totalItems = 1;
+    while (countIdx != INVALID_HEADER)
+    {
         countIdx = Values.Next(countIdx);
         totalItems++;
     }
 
-    uint8_t screenRow = 0;
-    uint8_t logicalItem = 0;
+    uint8_t screenRow = 0, logicalItem = 0;
     uint16_t currentIdx = entryStartIdx;
 
     // 2. Advance pointers to ScrollOffset
-    // If we scroll past the virtual item (0), we must advance the tree pointer
-    while (logicalItem < ScrollOffset) {
-        if (logicalItem > 0 && currentIdx != INVALID_HEADER) {
+    while (logicalItem < ScrollOffset)
+    {
+        if (logicalItem > 0 && currentIdx != INVALID_HEADER)
             currentIdx = Values.Next(currentIdx);
-        }
         logicalItem++;
     }
 
     // 3. Draw Loop
-    while (screenRow < ROWNUMBER && logicalItem < totalItems) {
+    while (screenRow < ROWNUMBER && logicalItem < totalItems)
+    {
         int16_t y = (screenRow + 1) * ROWHEIGHT;
 
-        if (logicalItem == 0) {
+        if (logicalItem == 0)
+        {
             // --- VIRTUAL PAGE SWITCHER (P#:Name) ---
-            if (MenuIndex == 0) {
+            if (MenuIndex == 0)
+            {
                 u8g2_DrawStr(&Driver, 0, y, (Mode == DisplayMode::Edit) ? "X" : ">");
             }
-            
-            char pBuf[24]; 
+
+            char pBuf[24];
             pBuf[0] = 'P';
             char numBuf[4];
             raw_ltoa(PageIndex + 1, numBuf);
-            
+
             uint8_t pos = 1;
-            for(uint8_t i = 0; numBuf[i] != '\0' && pos < 5; i++) pBuf[pos++] = numBuf[i];
+            for (uint8_t i = 0; numBuf[i] != '\0' && pos < 5; i++)
+                pBuf[pos++] = numBuf[i];
             pBuf[pos++] = ':';
-            
-            Result pageRes = Values.Get(pageRoot);
-            if (pageRes.Value) {
+
+            Result pageRes = pageRoot.Get();
+            if (pageRes.Value)
+            {
                 uint16_t nameLen = (pageRes.Length < (23 - pos)) ? pageRes.Length : (23 - pos);
                 memcpy(&pBuf[pos], pageRes.Value, nameLen);
                 pBuf[pos + nameLen] = '\0';
-            } else {
+            }
+            else
+            {
                 pBuf[pos] = '\0';
             }
 
             u8g2_DrawStr(&Driver, 10, y, pBuf);
             u8g2_DrawHLine(&Driver, 10, y + 2, 100);
         }
-        else {
+        else
+        {
             // --- REAL ENTRIES ---
-            if (currentIdx != INVALID_HEADER) {
-                Result labelRes = Values.Get(currentIdx);
-                
-                if (logicalItem == MenuIndex) {
-                    const char* cur = (Mode == DisplayMode::Edit) ? "X" : (Mode == DisplayMode::Part ? "#" : ">");
+            if (currentIdx != INVALID_HEADER)
+            {
+                Bookmark entry = Values.This(currentIdx);
+                Result labelRes = entry.Get();
+
+                // Draw Selection Indicator
+                if (logicalItem == MenuIndex)
+                {
+                    const char *cur = (Mode == DisplayMode::Edit) ? "X" : (Mode == DisplayMode::Part ? "#" : ">");
                     u8g2_DrawStr(&Driver, 0, y, cur);
                 }
 
+                // Draw Entry Label
                 char labelBuf[20];
                 uint16_t len = (labelRes.Length < 19) ? labelRes.Length : 19;
                 memcpy(labelBuf, labelRes.Value, len);
                 labelBuf[len] = '\0';
                 u8g2_DrawStr(&Driver, 10, y, labelBuf);
 
-                uint16_t valIdx = Values.Child(currentIdx);
-                if (valIdx != INVALID_HEADER) {
-                    Result v = Values.GetThis(valIdx);
+                // Check for Value (Child of current entry)
+                Bookmark valBookmark = entry.Child();
+                if (valBookmark.Index != INVALID_HEADER)
+                {
+                    Result v = valBookmark.GetThis();
                     screenRow++;
                     if (screenRow >= ROWNUMBER) break;
+
                     int16_t valY = (screenRow + 1) * ROWHEIGHT;
-                    
                     char vBuf[16];
-                    if (logicalItem == MenuIndex && Mode == DisplayMode::Edit) {
+
+                    // Draw Step/Edit Indicator
+                    if (logicalItem == MenuIndex && Mode == DisplayMode::Edit)
+                    {
                         const char *sym = (Step == N(0.01)) ? ":" : (Step == N(0.1) ? "." : (Step == N(1.0) ? "-" : (Step == N(10.0) ? "o" : "O")));
                         u8g2_DrawStr(&Driver, 0, valY, sym);
                     }
 
-                    if (v.Type == Types::Bool) {
-                        if (logicalItem == MenuIndex && Mode == DisplayMode::Edit) u8g2_DrawHLine(&Driver, 20, valY + 1, 18);
+                    // Render Value based on Type
+                    if (v.Type == Types::Bool)
+                    {
+                        if (logicalItem == MenuIndex && Mode == DisplayMode::Edit)
+                            u8g2_DrawHLine(&Driver, 20, valY + 1, 18);
                         u8g2_DrawStr(&Driver, 20, valY, *(bool *)v.Value ? "ON" : "OFF");
-                    } else if (v.Type == Types::Byte || v.Type == Types::Integer) {
+                    }
+                    else if (v.Type == Types::Byte || v.Type == Types::Integer)
+                    {
                         raw_ltoa((v.Type == Types::Byte) ? *(uint8_t *)v.Value : *(int32_t *)v.Value, vBuf);
-                        if (logicalItem == MenuIndex && Mode == DisplayMode::Edit) u8g2_DrawHLine(&Driver, 20, valY + 1, 25);
+                        if (logicalItem == MenuIndex && Mode == DisplayMode::Edit)
+                            u8g2_DrawHLine(&Driver, 20, valY + 1, 25);
                         u8g2_DrawStr(&Driver, 20, valY, vBuf);
-                    } else if (v.Type == Types::Number || IsPacked(v.Type)) {
+                    }
+                    else if (v.Type == Types::Number || IsPacked(v.Type))
+                    {
                         uint8_t parts = (v.Type == Types::Number) ? 1 : GetPartCount(v.Type);
                         int16_t xOff = 20;
-                        for (uint8_t i = 0; i < parts; i++) {
+                        for (uint8_t i = 0; i < parts; i++)
+                        {
                             Number n = (v.Type == Types::Number) ? *(Number *)v.Value : ((Number *)v.Value)[i];
                             raw_ntoa(n, vBuf);
+                            
+                            // Highlight specific part if in Part/Edit mode
                             if (logicalItem == MenuIndex && i == PartIndex && (Mode == DisplayMode::Part || Mode == DisplayMode::Edit))
                                 u8g2_DrawHLine(&Driver, xOff, valY + 1, 30);
+                            
                             u8g2_DrawStr(&Driver, xOff, valY, vBuf);
                             xOff += 36;
                         }
                     }
                 }
-                currentIdx = Values.Next(currentIdx); 
+                currentIdx = Values.Next(currentIdx);
             }
         }
         logicalItem++;
         screenRow++;
     }
 
-    // Scrollbar Logic
+    // --- SCROLLBAR ---
     int handleH = 64 / totalItems;
     if (handleH < 6) handleH = 6;
     int handleY = (ScrollOffset * (64 - handleH)) / (totalItems > 1 ? (totalItems - 1) : 1);
     u8g2_DrawVLine(&Driver, 127, handleY, handleH);
 }
 
-uint16_t OLEDClass::GetPageRoot()
+Bookmark OLEDClass::GetPageRoot()
 {
     uint16_t curr = 5; // Absolute root of all pages
     for (uint8_t i = 0; i < PageIndex && curr != INVALID_HEADER; i++)
     {
         curr = Values.Next(curr);
     }
-    return curr;
+    return Values.This(curr); // Returns a Bookmark (Map + Index)
 }
 
-uint16_t OLEDClass::GetEntryByIndex(uint8_t index)
+Bookmark OLEDClass::GetEntryByIndex(uint8_t index)
 {
-    uint16_t root = GetPageRoot();
-    if (root == INVALID_HEADER)
-        return INVALID_HEADER;
+    Bookmark root = GetPageRoot();
+    if (root.Index == INVALID_HEADER)
+        return root;
 
-    uint16_t curr = Values.Child(root);
+    uint16_t curr = Values.Child(root.Index);
     for (uint8_t i = 0; i < index && curr != INVALID_HEADER; i++)
     {
         curr = Values.Next(curr);
     }
-    return curr;
+    return Values.This(curr);
 }
 
-bool OLEDClass::Run() {
+bool OLEDClass::Run()
+{
     bool btnUp = Values.GetThis(1).Value ? *(bool *)Values.GetThis(1).Value : false;
     bool btnDown = Values.GetThis(2).Value ? *(bool *)Values.GetThis(2).Value : false;
     bool btnEnter = Values.GetThis(3).Value ? *(bool *)Values.GetThis(3).Value : false;
     bool btnBack = Values.GetThis(4).Value ? *(bool *)Values.GetThis(4).Value : false;
 
-    if (CurrentTime - Cooldown < 250) return true;
+    if (CurrentTime - Cooldown < 250)
+        return true;
 
     if (btnUp || btnDown || btnEnter || btnBack) {
         Cooldown = CurrentTime;
 
-        uint16_t entryIdx = (MenuIndex > 0) ? GetEntryByIndex(MenuIndex - 1) : INVALID_HEADER;
-        uint16_t valIdx = (entryIdx != INVALID_HEADER) ? Values.Child(entryIdx) : INVALID_HEADER;
-        Result v = (valIdx != INVALID_HEADER) ? Values.GetThis(valIdx) : Result{nullptr, 0, Types::Undefined};
+        // Fetch current context using Bookmarks
+        Bookmark entry = (MenuIndex > 0) ? GetEntryByIndex(MenuIndex - 1) : Bookmark{nullptr, INVALID_HEADER};
+        Bookmark valBookmark = entry.Child();
+        Result v = valBookmark.GetThis();
 
         if (Mode == DisplayMode::Menu) {
-            if (btnDown && MenuIndex > 0) MenuIndex--;
+            if (btnDown && MenuIndex > 0) {
+                MenuIndex--;
+            }
             if (btnUp) {
                 if (MenuIndex == 0) {
-                    if (Values.Child(GetPageRoot()) != INVALID_HEADER) MenuIndex++;
-                } else if (entryIdx != INVALID_HEADER && Values.Next(entryIdx) != INVALID_HEADER) {
+                    // Peek if there is at least one child entry to move into
+                    if (Values.Child(GetPageRoot().Index) != INVALID_HEADER) MenuIndex++;
+                } else if (entry.Next().Index != INVALID_HEADER) {
                     MenuIndex++;
                 }
             }
@@ -361,137 +398,86 @@ bool OLEDClass::Run() {
             }
             if (btnBack) Mode = DisplayMode::Screensaver;
 
+            // Update Scrolling
             if (MenuIndex < ScrollOffset) ScrollOffset = MenuIndex;
             else if (MenuIndex >= ScrollOffset + VISIBLE_ROWS) ScrollOffset = MenuIndex - VISIBLE_ROWS + 1;
         }
-        else if (Mode == DisplayMode::Part)
-        {
-            // --- MULTI-PART NAVIGATION (Vector/Color) ---
+        else if (Mode == DisplayMode::Part) {
             uint8_t maxParts = GetPartCount(v.Type);
-            if (btnDown && PartIndex > 0)
-                PartIndex--;
-            if (btnUp && PartIndex < (maxParts - 1))
-                PartIndex++;
-            if (btnEnter)
-                Mode = DisplayMode::Edit;
-            if (btnBack)
-                Mode = DisplayMode::Menu;
+            if (btnDown && PartIndex > 0) PartIndex--;
+            if (btnUp && PartIndex < (maxParts - 1)) PartIndex++;
+            if (btnEnter) Mode = DisplayMode::Edit;
+            if (btnBack) Mode = DisplayMode::Menu;
         }
-        else if (Mode == DisplayMode::Edit)
-        {
-            // --- EDITING LOGIC ---
-            if (MenuIndex == 0)
-            {
-                // SPECIAL CASE: Page Switcher
-                if (btnUp)
-                {
+        else if (Mode == DisplayMode::Edit) {
+            if (MenuIndex == 0) {
+                // --- PAGE SWITCHING ---
+                if (btnUp) {
                     uint8_t oldPage = PageIndex;
                     PageIndex++;
-                    // If the new page is empty/invalid, revert
-                    if (GetPageRoot() == INVALID_HEADER)
-                        PageIndex = oldPage;
-                    else
-                    {
-                        ScrollOffset = 0;
-                        MenuIndex = 0;
-                    }
+                    if (GetPageRoot().Index == INVALID_HEADER) PageIndex = oldPage;
+                    else { ScrollOffset = 0; MenuIndex = 0; }
                 }
-                if (btnDown && PageIndex > 0)
-                {
+                if (btnDown && PageIndex > 0) {
                     PageIndex--;
                     ScrollOffset = 0;
                     MenuIndex = 0;
                 }
             }
-            else if (v.Value)
-            {
-                // STANDARD VALUES: Step Cycling
-                if (btnEnter)
-                {
-                    if (v.Type == Types::Number || v.Type == Types::Vector2D ||
-                        v.Type == Types::Vector3D || v.Type == Types::Coord2D)
-                    {
-                        if (Step == N(0.01))
-                            Step = N(0.1);
-                        else if (Step == N(0.1))
-                            Step = N(1.0);
-                        else if (Step == N(1.0))
-                            Step = N(10.0);
-                        else if (Step == N(10.0))
-                            Step = N(100.0);
-                        else
-                            Step = N(0.01);
-                    }
-                    else
-                    {
-                        if (Step == N(1.0))
-                            Step = N(10.0);
-                        else if (Step == N(10.0))
-                            Step = N(100.0);
-                        else
-                            Step = N(1.0);
+            else if (v.Value) {
+                // --- VALUE ADJUSTMENT ---
+                if (btnEnter) {
+                    // Step Cycling Logic
+                    if (v.Type == Types::Number || IsPacked(v.Type)) {
+                        if (Step == N(0.01)) Step = N(0.1);
+                        else if (Step == N(0.1)) Step = N(1.0);
+                        else if (Step == N(1.0)) Step = N(10.0);
+                        else if (Step == N(10.0)) Step = N(100.0);
+                        else Step = N(0.01);
+                    } else {
+                        if (Step == N(1.0)) Step = N(10.0);
+                        else if (Step == N(10.0)) Step = N(100.0);
+                        else Step = N(1.0);
                     }
                 }
 
-                // STANDARD VALUES: Apply Modification
-                if (v.Type == Types::Vector2D || v.Type == Types::Vector3D || v.Type == Types::Coord2D)
-                {
-                    Number *target = &((Number *)v.Value)[PartIndex];
-                    if (btnUp)
-                        *target += Step;
-                    if (btnDown)
-                        *target -= Step;
+                // Apply Changes
+                if (v.Type == Types::Number || IsPacked(v.Type)) {
+                    Number *target = (v.Type == Types::Number) ? (Number *)v.Value : &((Number *)v.Value)[PartIndex];
+                    if (btnUp) *target += Step;
+                    if (btnDown) *target -= Step;
                 }
-                else if (v.Type == Types::Number)
-                {
-                    Number *target = (Number *)v.Value;
-                    if (btnUp)
-                        *target += Step;
-                    if (btnDown)
-                        *target -= Step;
-                }
-                else if (v.Type == Types::Colour || v.Type == Types::Byte)
-                {
+                else if (v.Type == Types::Byte || v.Type == Types::Colour) {
                     uint8_t *target = (v.Type == Types::Colour) ? &((uint8_t *)v.Value)[PartIndex] : (uint8_t *)v.Value;
                     int16_t stepVal = (int16_t)Step.RoundToInt();
-                    if (btnUp)
-                        *target += stepVal;
-                    if (btnDown)
-                        *target -= stepVal;
+                    if (btnUp) *target += stepVal;
+                    if (btnDown) *target -= stepVal;
                 }
-                else if (v.Type == Types::Integer)
-                {
+                else if (v.Type == Types::Integer) {
                     int32_t *target = (int32_t *)v.Value;
-                    if (btnUp)
-                        *target += Step.RoundToInt();
-                    if (btnDown)
-                        *target -= Step.RoundToInt();
+                    if (btnUp) *target += Step.RoundToInt();
+                    if (btnDown) *target -= Step.RoundToInt();
                 }
-                else if (v.Type == Types::Bool && (btnUp || btnDown))
-                {
+                else if (v.Type == Types::Bool && (btnUp || btnDown)) {
                     *(bool *)v.Value = !(*(bool *)v.Value);
                 }
             }
 
-            // --- EXIT EDIT MODE ---
-            if (btnBack)
-            {
+            if (btnBack) {
                 Mode = (MenuIndex == 0) ? DisplayMode::Menu : (IsPacked(v.Type) ? DisplayMode::Part : DisplayMode::Menu);
                 Step = N(1.0);
 
-                // Trigger Callback if it's a real value
-                if (MenuIndex > 0 && valIdx != INVALID_HEADER)
-                {
-                    uint16_t callbackIdx = Values.Next(valIdx);
-                    if (callbackIdx != INVALID_HEADER)
-                    {
-                        RunOperation(Values.This(callbackIdx));
+                // --- CALLBACK TRIGGER ---
+                if (MenuIndex > 0 && valBookmark.Index != INVALID_HEADER) {
+                    // The operation/callback is the sibling of the value
+                    Bookmark callback = valBookmark.Next();
+                    if (callback.Index != INVALID_HEADER) {
+                        RunOperation(callback);
                     }
                 }
             }
         }
-        else if (Mode == DisplayMode::Screensaver && btnEnter)
-        {
+        else if (Mode == DisplayMode::Screensaver && btnEnter) {
             Mode = DisplayMode::Menu;
         }
     }

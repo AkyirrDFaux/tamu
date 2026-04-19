@@ -111,12 +111,8 @@ public:
             return {RunPeriod == 0 ? (uint8_t)1 : RunPeriod, RunPhase};
     }
 
-    static void DefaultSetup(BaseClass *self, uint16_t Index) { /* Empty default */ };
-    static bool DefaultRun(BaseClass *self)
-    {
-        // ReportError(Status::InvalidType);
-        return true;
-    };
+    static void DefaultSetup(BaseClass *self, uint16_t Index) {};
+    static bool DefaultRun(BaseClass *self) { return true; };
 
     template <class C>
     C *As() const { return (C *)this; };
@@ -124,6 +120,10 @@ public:
     Bookmark Find(const Reference &Location, bool StopAtReferences = false) const;
     FlexArray Compress(bool Storage) const;
 };
+
+static constexpr VTable DefaultTable = {
+    .Setup = BaseClass::DefaultSetup,
+    .Run = BaseClass::DefaultRun};
 
 BaseClass *CreateObject(Reference ID, ObjectTypes Type);
 

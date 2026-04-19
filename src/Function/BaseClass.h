@@ -48,6 +48,8 @@ BaseClass *CreateObject(Reference ID, ObjectTypes Type)
 {
     switch (Type)
     {
+    case ObjectTypes::Undefined:
+        return new BaseClass(&DefaultTable,ID);
     /*    case ObjectTypes::LEDStrip:
         return new LEDStripClass(ID, Flags);*/
     case ObjectTypes::Display:
@@ -63,7 +65,6 @@ BaseClass *CreateObject(Reference ID, ObjectTypes Type)
     case ObjectTypes::Program:
         return new Program(ID);
     default:
-        ReportError(Status::InvalidType);
         return nullptr;
     }
 }
