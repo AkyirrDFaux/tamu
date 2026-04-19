@@ -394,10 +394,10 @@ Number DisplayClass::CalculateShapeAlpha(Geometries Type, Vector2D P, Vector2D S
         if (abs(P.X) > S.X + F || abs(P.Y) > S.Y + F)
             return 0;
         // Inner Fast Optimization: Full opacity if safely inside
-        if (abs(P.X) < S.X * 0.7 - F && abs(P.Y) < S.Y * 0.7 - F)
+        if (abs(P.X) < S.X * N(0.7) - F && abs(P.Y) < S.Y * N(0.7) - F)
             return 1;
 
-        Distance = 1.0 - sqrt(sq(P.X) / sq(S.X) + sq(P.Y) / sq(S.Y));
+        Distance = 1 - sqrt(sq(P.X) / sq(S.X) + sq(P.Y) / sq(S.Y));
         break;
 
     case Geometries::DoubleParabola:
@@ -406,7 +406,7 @@ Number DisplayClass::CalculateShapeAlpha(Geometries Type, Vector2D P, Vector2D S
         break;
 
     case Geometries::HalfFill:
-        return LimitZeroToOne(P.Y / F + 0.5);
+        return LimitZeroToOne(P.Y / F + N(0.5));
 
     case Geometries::Fill:
         return N(1.0);
@@ -416,7 +416,7 @@ Number DisplayClass::CalculateShapeAlpha(Geometries Type, Vector2D P, Vector2D S
     }
 
     // Convert Distance to 0.0-1.0 alpha based on Fade
-    return LimitZeroToOne(Distance / F + 0.5);
+    return LimitZeroToOne(Distance / F + N(0.5));
 }
 
 void DisplayClass::RenderTexture(uint16_t NodeIdx, int32_t Length, Vector2D DisplaySize,
@@ -471,7 +471,7 @@ void DisplayClass::RenderTexture(uint16_t NodeIdx, int32_t Length, Vector2D Disp
     Coord2D CurrentTransform = Transform.Join(TexPos);
     int32_t GridW = DisplaySize.X.ToInt();
     int32_t GridH = DisplaySize.Y.ToInt();
-    Number invTexWidthScaled = 1.0 / (TexWidth * 2.0);
+    Number invTexWidthScaled = 1 / (TexWidth * 2);
 
     for (int32_t Y = 0; Y < GridH; Y++)
     {

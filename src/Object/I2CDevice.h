@@ -245,10 +245,10 @@ bool I2CDeviceClass::Run()
         return true;
 
     // Filter Logic
-    Number AccInvW = 1.0 / (1.0 + AccFilter);
-    Number AccW = 1.0 - AccInvW;
-    Number RotInvW = 1.0 / (1.0 + RotFilter);
-    Number RotW = 1.0 - RotInvW;
+    Number AccInvW = 1 / (1 + AccFilter);
+    Number AccW = 1 - AccInvW;
+    Number RotInvW = 1 / (1 + RotFilter);
+    Number RotW = 1 - RotInvW;
 
     Rot->X = (Number(Raw[0]) / gyrSens) * RotInvW + (Rot->X * RotW);
     Rot->Y = (Number(Raw[1]) / gyrSens) * RotInvW + (Rot->Y * RotW);

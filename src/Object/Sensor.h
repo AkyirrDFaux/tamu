@@ -143,12 +143,12 @@ bool SensorClass::Run()
     case SensorTypes::TempNTC10K:
         // Steinhart-Hart simplified
         // Note: Number class should handle the log() conversion or casting to float
-        In = 1.0 / (0.0034 + log(In / (ADCRES - In)) / 3950.0) - 273.15;
+        In = 1 / (N(0.0034) + log(In / (ADCRES - In)) / 3950) - N(273.15);
         break;
         
     case SensorTypes::Light10K:
         // Inverse square law approximation for photoresistors
-        In = 18.0 * ((ADCRES - In) / In);
+        In = N(18.0) * ((ADCRES - In) / In);
         break;
         
     default:
@@ -157,8 +157,8 @@ bool SensorClass::Run()
 
     // Exponential Moving Average Filter
     // Using your established weight logic
-    Number weightNew = 1.0 / (1.0 + filterVal);
-    Number weightOld = 1.0 - weightNew;
+    Number weightNew = 1 / (1 + filterVal);
+    Number weightOld = 1 - weightNew;
 
     // Zero-copy update directly into DataArray
     *measurementPtr = (In * weightNew) + (*measurementPtr * weightOld);

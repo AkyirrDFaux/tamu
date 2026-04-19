@@ -7,7 +7,7 @@ bool ExecuteToType(OpContext &ctx)
     {
     case Operations::ToBool:
     {
-        bool b = GetAsNumber(ctx.Args[0]) > 0.5f;
+        bool b = GetAsNumber(ctx.Args[0]) > N(0.5);
         ctx.Out.SetCurrent(&b, 1, Types::Bool);
     }
     break;
