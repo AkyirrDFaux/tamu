@@ -13,8 +13,8 @@ enum class Types : uint8_t
     PortDriver,
     I2CDevice,
     Input,
-    LEDStrip,
-    Texture1D,
+    LEDStrip, //Reserved
+    Texture1D, //Reserved
     Display,
     Geometry2D,
     GeometryOperation,
@@ -23,7 +23,7 @@ enum class Types : uint8_t
     Program,
     Output,
     Function,
-    Group,
+    Effect2D, //Unused
     Integer,   // int_32
     Number,    // float_32
     PortType,  // 4 byte flag

@@ -35,17 +35,17 @@ bool ExecuteToType(OpContext &ctx)
 
     case Operations::ToVector2D:
     {
-        Vector2D v(GetAsNumber(ctx.Args[0]).RoundToInt(),
-                   GetAsNumber(ctx.Args[1]).RoundToInt());
+        Vector2D v(GetAsNumber(ctx.Args[0]),
+                   GetAsNumber(ctx.Args[1]));
         ctx.Out.SetCurrent(&v, sizeof(Vector2D), Types::Vector2D);
     }
     break;
 
     case Operations::ToVector3D:
     {
-        Vector3D v(GetAsNumber(ctx.Args[0]).RoundToInt(),
-                   GetAsNumber(ctx.Args[1]).RoundToInt(),
-                   GetAsNumber(ctx.Args[2]).RoundToInt());
+        Vector3D v(GetAsNumber(ctx.Args[0]),
+                   GetAsNumber(ctx.Args[1]),
+                   GetAsNumber(ctx.Args[2]));
         ctx.Out.SetCurrent(&v, sizeof(Vector3D), Types::Vector3D);
     }
     break;
@@ -56,14 +56,13 @@ bool ExecuteToType(OpContext &ctx)
         if (ctx.Args[0].Type == Types::Vector2D)
         {
             Vector2D pos = *(Vector2D *)ctx.Args[0].Value;
+            Coord2D c;
             if (ctx.Args[1].Type == Types::Vector2D)
-            {
-                ctx.Out.SetCurrent(new Coord2D(pos, *(Vector2D *)ctx.Args[1].Value), sizeof(Coord2D), Types::Coord2D);
-            }
+                c = Coord2D(pos, *(Vector2D *)ctx.Args[1].Value);
             else
-            {
-                ctx.Out.SetCurrent(new Coord2D(pos, GetAsNumber(ctx.Args[1])), sizeof(Coord2D), Types::Coord2D);
-            }
+                c = Coord2D(pos, GetAsNumber(ctx.Args[1]));
+
+            ctx.Out.SetCurrent(&c, sizeof(Coord2D), Types::Coord2D);
         }
     }
     break;
@@ -84,8 +83,8 @@ bool ExecuteToType(OpContext &ctx)
         // Args 0,1,2 = H,S,V. Arg 3 = Alpha
         uint8_t a = (ctx.Args[3].Value) ? (uint8_t)GetAsNumber(ctx.Args[3]).RoundToInt() : 255;
         ColourClass col = ColourClass::FromHSV(GetAsNumber(ctx.Args[0]),
-                                                GetAsNumber(ctx.Args[1]),
-                                                GetAsNumber(ctx.Args[2]), a);
+                                               GetAsNumber(ctx.Args[1]),
+                                               GetAsNumber(ctx.Args[2]), a);
         ctx.Out.SetCurrent(&col, sizeof(ColourClass), Types::Colour);
     }
     break;

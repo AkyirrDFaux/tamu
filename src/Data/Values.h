@@ -197,4 +197,5 @@ enum class Operations : uint8_t
     SetRunOnce,
     SetRunLoop,
     SetReference,
+    Save,
 };

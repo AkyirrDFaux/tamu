@@ -136,6 +136,9 @@ bool RunOperation(const Bookmark &Index)
     case Operations::SetReference:
         Done = true;
         break;
+    case Operations::Save:
+        Done = ExecuteSave(ctx);
+        break;
     default:
         ReportError(Status::InvalidValue);
         return true;
@@ -171,7 +174,7 @@ bool RunOperation(const Bookmark &Index)
             if (TargetObj != nullptr)
                 TargetObj->Values.Set(safeBuffer, safeLen, safeType, TargetRef);
         }
-        else //Skip long search
+        else // Skip long search
             Index.Map->Set(safeBuffer, safeLen, safeType, TargetRef);
 
         linkMark = linkMark.Next();

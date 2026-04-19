@@ -426,7 +426,12 @@ bool OLEDClass::Run()
                 if (MenuIndex == 0)
                     Mode = DisplayMode::Edit;
                 else if (v.Value)
-                    Mode = IsPacked(v.Type) ? DisplayMode::Part : DisplayMode::Edit;
+                {
+                    if (v.Type == Types::Operation)
+                        RunOperation(valBookmark);
+                    else
+                        Mode = IsPacked(v.Type) ? DisplayMode::Part : DisplayMode::Edit;
+                }
             }
             if (btnBack)
                 Mode = DisplayMode::Screensaver;

@@ -81,3 +81,26 @@ bool ExecuteSetRun(OpContext &ctx)
 
     return true;
 }
+
+bool ExecuteSave(OpContext &ctx)
+{
+    // 2. Iterate through ctx.ArgMarks[0...7] for objects to save
+    for (uint8_t i = 0; i < 8; i++)
+    {
+        if (ctx.ArgMarks[i].Index == INVALID_HEADER)
+            continue;
+
+        // Get the Reference (the address of the object) from the argument
+        Result refRes = ctx.ArgMarks[i].Get();
+        if (refRes.Type != Types::Reference || !refRes.Value)
+            continue;
+
+        Reference targetID = *(Reference *)refRes.Value;
+
+        // 4. Trigger the Hardware Save
+        // This writes the current object state (values/info) to non-volatile memory
+        HW::Save(targetID);
+    }
+
+    return true;
+}
