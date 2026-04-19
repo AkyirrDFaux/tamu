@@ -5,6 +5,26 @@
 #define OLEDHEIGHT 64
 #define VISIBLE_ROWS 3
 
+static const unsigned char logoV2_48px[] = {
+    0x0c, 0x00, 0x00, 0x00, 0x00, 0x30, 0x1c, 0x00, 0x00, 0x00, 0x00, 0x38, 0x3c, 0x00, 0x00, 0x00,
+    0x00, 0x3c, 0x78, 0x00, 0x00, 0x00, 0x00, 0x1e, 0xf8, 0x00, 0x00, 0x00, 0x00, 0x1f, 0xf8, 0x01,
+    0x00, 0x00, 0x80, 0x1f, 0xf0, 0x03, 0x00, 0x00, 0xc0, 0x0f, 0xb0, 0x07, 0x00, 0x00, 0xe0, 0x0d,
+    0x30, 0x0f, 0x00, 0x00, 0xf0, 0x0c, 0x60, 0x1e, 0x00, 0x00, 0x78, 0x06, 0x60, 0x3e, 0x00, 0x00,
+    0x7c, 0x06, 0x60, 0x7c, 0x00, 0x00, 0x3e, 0x06, 0xc0, 0xfc, 0x00, 0x00, 0x3f, 0x03, 0xc0, 0xfc,
+    0x01, 0x80, 0x3f, 0x03, 0xc0, 0xf9, 0x03, 0xc0, 0x9f, 0x03, 0x80, 0xf9, 0xff, 0xff, 0x9f, 0x01,
+    0x80, 0xf1, 0xff, 0xff, 0x8f, 0x01, 0x80, 0xf3, 0xff, 0xff, 0xcf, 0x01, 0x00, 0xf3, 0xff, 0xff,
+    0xcf, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0xfe, 0xff, 0xff, 0x7f, 0x00, 0x00, 0xff,
+    0xff, 0xff, 0xff, 0x00, 0x80, 0xff, 0xff, 0xff, 0xff, 0x01, 0xc0, 0xff, 0xff, 0xff, 0xff, 0x03,
+    0xc0, 0xff, 0xff, 0xff, 0xff, 0x03, 0x80, 0x1f, 0xf8, 0x1f, 0xf8, 0x01, 0x00, 0xff, 0xf1, 0x8f,
+    0xff, 0x00, 0x00, 0xfe, 0xe5, 0xa7, 0x7f, 0x00, 0x00, 0xfc, 0xed, 0xb7, 0x3f, 0x00, 0x00, 0xf8,
+    0xff, 0xff, 0x1f, 0x00, 0x00, 0xf0, 0xff, 0xff, 0x0f, 0x00, 0x00, 0xe0, 0xff, 0xff, 0x07, 0x00,
+    0x00, 0xc0, 0xff, 0xff, 0x03, 0x00, 0x00, 0x80, 0xff, 0xff, 0x01, 0x00, 0x00, 0x00, 0xff, 0xff,
+    0x00, 0x00, 0x00, 0x00, 0xfe, 0x7f, 0x00, 0x00, 0x00, 0x00, 0xfc, 0x3f, 0x00, 0x00, 0x00, 0x80,
+    0x39, 0x9c, 0x01, 0x00, 0x00, 0x80, 0xd1, 0x8b, 0x01, 0x00, 0x00, 0x00, 0xc0, 0x03, 0x00, 0x00,
+    0x00, 0x80, 0x9f, 0xf9, 0x01, 0x00, 0x00, 0x80, 0x7f, 0xfe, 0x01, 0x00, 0x00, 0x80, 0xff, 0xff,
+    0x01, 0x00, 0x00, 0x80, 0xff, 0xff, 0x01, 0x00, 0x00, 0x80, 0xff, 0xff, 0x01, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x99, 0x99, 0x01, 0x00, 0x00, 0x80, 0x99, 0x99, 0x01, 0x00};
+
 enum class DisplayMode : uint8_t
 {
     Screensaver = 0,
@@ -25,6 +45,7 @@ public:
     uint32_t Cooldown = 0;
     uint8_t ScrollOffset = 0;
     Number Step = N(1.0);
+    uint8_t PageIndex = 0;
 
     OLEDClass(const Reference &ID, FlagClass Flags = Flags::RunLoop, RunInfo Info = {1, 0});
 
@@ -35,6 +56,7 @@ public:
     void RenderScreensaver();
     void RenderMenu();
 
+    uint16_t GetPageRoot(); // Helper to find the current page node
     uint16_t GetEntryByIndex(uint8_t index);
 
     static bool RunBridge(BaseClass *Base) { return static_cast<OLEDClass *>(Base)->Run(); }
@@ -165,125 +187,103 @@ uint8_t GetPartCount(Types type)
     return 0;
 }
 
-void OLEDClass::RenderMenu()
-{
-    // --- 1. Pre-calculation for Scaling Scrollbar ---
-    uint16_t countIdx = 5;
-    uint8_t totalItems = 0;
-    while (countIdx != INVALID_HEADER)
-    {
+void OLEDClass::RenderMenu() {
+    uint16_t pageRoot = GetPageRoot();
+    if (pageRoot == INVALID_HEADER) return;
+
+    // 1. Calculate Total Items (1 Virtual + Real Children)
+    uint16_t entryStartIdx = Values.Child(pageRoot);
+    uint16_t countIdx = entryStartIdx;
+    uint8_t totalItems = 1; 
+    while (countIdx != INVALID_HEADER) {
         countIdx = Values.Next(countIdx);
         totalItems++;
     }
-    if (totalItems == 0)
-        totalItems = 1;
 
-    uint16_t currentIdx = 5;
-    uint8_t logicalItem = 0;
     uint8_t screenRow = 0;
+    uint8_t logicalItem = 0;
+    uint16_t currentIdx = entryStartIdx;
 
-    while (currentIdx != INVALID_HEADER && logicalItem < ScrollOffset)
-    {
-        currentIdx = Values.Next(currentIdx);
+    // 2. Advance pointers to ScrollOffset
+    // If we scroll past the virtual item (0), we must advance the tree pointer
+    while (logicalItem < ScrollOffset) {
+        if (logicalItem > 0 && currentIdx != INVALID_HEADER) {
+            currentIdx = Values.Next(currentIdx);
+        }
         logicalItem++;
     }
 
-    // --- 2. Draw Loop ---
-    while (currentIdx != INVALID_HEADER && screenRow < ROWNUMBER)
-    {
-        Result labelRes = Values.Get(currentIdx);
-        if (labelRes.Value)
-        {
-            int16_t y = (screenRow + 1) * ROWHEIGHT;
+    // 3. Draw Loop
+    while (screenRow < ROWNUMBER && logicalItem < totalItems) {
+        int16_t y = (screenRow + 1) * ROWHEIGHT;
 
-            // Main Cursor Column (X=0)
-            if (logicalItem == MenuIndex)
-            {
-                if (Mode == DisplayMode::Edit)
-                    u8g2_DrawStr(&Driver, 0, y, "X");
-                else if (Mode == DisplayMode::Part)
-                    u8g2_DrawStr(&Driver, 0, y, "#");
-                else
-                    u8g2_DrawStr(&Driver, 0, y, ">");
+        if (logicalItem == 0) {
+            // --- VIRTUAL PAGE SWITCHER (P#:Name) ---
+            if (MenuIndex == 0) {
+                u8g2_DrawStr(&Driver, 0, y, (Mode == DisplayMode::Edit) ? "X" : ">");
+            }
+            
+            char pBuf[24]; 
+            pBuf[0] = 'P';
+            char numBuf[4];
+            raw_ltoa(PageIndex + 1, numBuf);
+            
+            uint8_t pos = 1;
+            for(uint8_t i = 0; numBuf[i] != '\0' && pos < 5; i++) pBuf[pos++] = numBuf[i];
+            pBuf[pos++] = ':';
+            
+            Result pageRes = Values.Get(pageRoot);
+            if (pageRes.Value) {
+                uint16_t nameLen = (pageRes.Length < (23 - pos)) ? pageRes.Length : (23 - pos);
+                memcpy(&pBuf[pos], pageRes.Value, nameLen);
+                pBuf[pos + nameLen] = '\0';
+            } else {
+                pBuf[pos] = '\0';
             }
 
-            // Draw Label
-            char labelBuf[20];
-            uint16_t len = (labelRes.Length < 19) ? labelRes.Length : 19;
-            memcpy(labelBuf, labelRes.Value, len);
-            labelBuf[len] = '\0';
-            u8g2_DrawStr(&Driver, 10, y, labelBuf);
+            u8g2_DrawStr(&Driver, 10, y, pBuf);
+            u8g2_DrawHLine(&Driver, 10, y + 2, 100);
+        }
+        else {
+            // --- REAL ENTRIES ---
+            if (currentIdx != INVALID_HEADER) {
+                Result labelRes = Values.Get(currentIdx);
+                
+                if (logicalItem == MenuIndex) {
+                    const char* cur = (Mode == DisplayMode::Edit) ? "X" : (Mode == DisplayMode::Part ? "#" : ">");
+                    u8g2_DrawStr(&Driver, 0, y, cur);
+                }
 
-            // Draw Value Row
-            uint16_t valIdx = Values.Child(currentIdx);
-            if (valIdx != INVALID_HEADER)
-            {
-                Result v = Values.GetThis(valIdx);
-                if (v.Value)
-                {
+                char labelBuf[20];
+                uint16_t len = (labelRes.Length < 19) ? labelRes.Length : 19;
+                memcpy(labelBuf, labelRes.Value, len);
+                labelBuf[len] = '\0';
+                u8g2_DrawStr(&Driver, 10, y, labelBuf);
+
+                uint16_t valIdx = Values.Child(currentIdx);
+                if (valIdx != INVALID_HEADER) {
+                    Result v = Values.GetThis(valIdx);
                     screenRow++;
-                    if (screenRow >= ROWNUMBER)
-                        break;
+                    if (screenRow >= ROWNUMBER) break;
                     int16_t valY = (screenRow + 1) * ROWHEIGHT;
+                    
                     char vBuf[16];
-
-                    // --- NEW: Step Symbol under the Cursor ---
-                    if (logicalItem == MenuIndex && Mode == DisplayMode::Edit)
-                    {
-                        const char *sym = "o";
-                        if (Step == N(0.01))
-                            sym = ":";
-                        else if (Step == N(0.1))
-                            sym = ".";
-                        else if (Step == N(1.0))
-                            sym = "-";
-                        else if (Step == N(10.0))
-                            sym = "o";
-                        else if (Step == N(100.0))
-                            sym = "O";
-                        // Drawn at X=0, same column as the cursor but on the value's line
+                    if (logicalItem == MenuIndex && Mode == DisplayMode::Edit) {
+                        const char *sym = (Step == N(0.01)) ? ":" : (Step == N(0.1) ? "." : (Step == N(1.0) ? "-" : (Step == N(10.0) ? "o" : "O")));
                         u8g2_DrawStr(&Driver, 0, valY, sym);
                     }
 
-                    switch (v.Type)
-                    {
-                    case Types::Bool:
-                        if (logicalItem == MenuIndex && Mode == DisplayMode::Edit)
-                            u8g2_DrawHLine(&Driver, 20, valY + 1, 18);
+                    if (v.Type == Types::Bool) {
+                        if (logicalItem == MenuIndex && Mode == DisplayMode::Edit) u8g2_DrawHLine(&Driver, 20, valY + 1, 18);
                         u8g2_DrawStr(&Driver, 20, valY, *(bool *)v.Value ? "ON" : "OFF");
-                        break;
-
-                    case Types::Byte:
-                    case Types::Integer:
+                    } else if (v.Type == Types::Byte || v.Type == Types::Integer) {
                         raw_ltoa((v.Type == Types::Byte) ? *(uint8_t *)v.Value : *(int32_t *)v.Value, vBuf);
-                        if (logicalItem == MenuIndex && Mode == DisplayMode::Edit)
-                            u8g2_DrawHLine(&Driver, 20, valY + 1, 25);
+                        if (logicalItem == MenuIndex && Mode == DisplayMode::Edit) u8g2_DrawHLine(&Driver, 20, valY + 1, 25);
                         u8g2_DrawStr(&Driver, 20, valY, vBuf);
-                        break;
-
-                    case Types::Colour:
-                    {
-                        int16_t xOff = 20;
-                        for (uint8_t i = 0; i < 4; i++)
-                        {
-                            raw_ltoa(((uint8_t *)v.Value)[i], vBuf);
-                            if (logicalItem == MenuIndex && i == PartIndex && (Mode == DisplayMode::Part || Mode == DisplayMode::Edit))
-                                u8g2_DrawHLine(&Driver, xOff, valY + 1, 16);
-                            u8g2_DrawStr(&Driver, xOff, valY, vBuf);
-                            xOff += 22;
-                        }
-                        break;
-                    }
-
-                    case Types::Vector2D:
-                    case Types::Vector3D:
-                    case Types::Coord2D:
-                    case Types::Number:
-                    {
+                    } else if (v.Type == Types::Number || IsPacked(v.Type)) {
                         uint8_t parts = (v.Type == Types::Number) ? 1 : GetPartCount(v.Type);
                         int16_t xOff = 20;
-                        for (uint8_t i = 0; i < parts; i++)
-                        {
+                        for (uint8_t i = 0; i < parts; i++) {
                             Number n = (v.Type == Types::Number) ? *(Number *)v.Value : ((Number *)v.Value)[i];
                             raw_ntoa(n, vBuf);
                             if (logicalItem == MenuIndex && i == PartIndex && (Mode == DisplayMode::Part || Mode == DisplayMode::Edit))
@@ -291,34 +291,39 @@ void OLEDClass::RenderMenu()
                             u8g2_DrawStr(&Driver, xOff, valY, vBuf);
                             xOff += 36;
                         }
-                        break;
-                    }
-                    default:
-                        break;
                     }
                 }
+                currentIdx = Values.Next(currentIdx); 
             }
         }
-        currentIdx = Values.Next(currentIdx);
         logicalItem++;
         screenRow++;
     }
 
-    // --- 3. Dynamic Scrollbar Logic ---
+    // Scrollbar Logic
     int handleH = 64 / totalItems;
-    if (handleH < 6)
-        handleH = 6; // Minimum grip size
-    // Calculate Y based on the range (0 to 64-handleH)
-    int scrollRange = 64 - handleH;
-    int handleY = (ScrollOffset * scrollRange) / (totalItems > 1 ? (totalItems - 1) : 1);
-
+    if (handleH < 6) handleH = 6;
+    int handleY = (ScrollOffset * (64 - handleH)) / (totalItems > 1 ? (totalItems - 1) : 1);
     u8g2_DrawVLine(&Driver, 127, handleY, handleH);
-    u8g2_DrawVLine(&Driver, 126, handleY, handleH);
+}
+
+uint16_t OLEDClass::GetPageRoot()
+{
+    uint16_t curr = 5; // Absolute root of all pages
+    for (uint8_t i = 0; i < PageIndex && curr != INVALID_HEADER; i++)
+    {
+        curr = Values.Next(curr);
+    }
+    return curr;
 }
 
 uint16_t OLEDClass::GetEntryByIndex(uint8_t index)
 {
-    uint16_t curr = 5; // Start of menu
+    uint16_t root = GetPageRoot();
+    if (root == INVALID_HEADER)
+        return INVALID_HEADER;
+
+    uint16_t curr = Values.Child(root);
     for (uint8_t i = 0; i < index && curr != INVALID_HEADER; i++)
     {
         curr = Values.Next(curr);
@@ -326,69 +331,46 @@ uint16_t OLEDClass::GetEntryByIndex(uint8_t index)
     return curr;
 }
 
-static const unsigned char logoV2_48px[] = {
-    0x0c, 0x00, 0x00, 0x00, 0x00, 0x30, 0x1c, 0x00, 0x00, 0x00, 0x00, 0x38, 0x3c, 0x00, 0x00, 0x00,
-    0x00, 0x3c, 0x78, 0x00, 0x00, 0x00, 0x00, 0x1e, 0xf8, 0x00, 0x00, 0x00, 0x00, 0x1f, 0xf8, 0x01,
-    0x00, 0x00, 0x80, 0x1f, 0xf0, 0x03, 0x00, 0x00, 0xc0, 0x0f, 0xb0, 0x07, 0x00, 0x00, 0xe0, 0x0d,
-    0x30, 0x0f, 0x00, 0x00, 0xf0, 0x0c, 0x60, 0x1e, 0x00, 0x00, 0x78, 0x06, 0x60, 0x3e, 0x00, 0x00,
-    0x7c, 0x06, 0x60, 0x7c, 0x00, 0x00, 0x3e, 0x06, 0xc0, 0xfc, 0x00, 0x00, 0x3f, 0x03, 0xc0, 0xfc,
-    0x01, 0x80, 0x3f, 0x03, 0xc0, 0xf9, 0x03, 0xc0, 0x9f, 0x03, 0x80, 0xf9, 0xff, 0xff, 0x9f, 0x01,
-    0x80, 0xf1, 0xff, 0xff, 0x8f, 0x01, 0x80, 0xf3, 0xff, 0xff, 0xcf, 0x01, 0x00, 0xf3, 0xff, 0xff,
-    0xcf, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0xfe, 0xff, 0xff, 0x7f, 0x00, 0x00, 0xff,
-    0xff, 0xff, 0xff, 0x00, 0x80, 0xff, 0xff, 0xff, 0xff, 0x01, 0xc0, 0xff, 0xff, 0xff, 0xff, 0x03,
-    0xc0, 0xff, 0xff, 0xff, 0xff, 0x03, 0x80, 0x1f, 0xf8, 0x1f, 0xf8, 0x01, 0x00, 0xff, 0xf1, 0x8f,
-    0xff, 0x00, 0x00, 0xfe, 0xe5, 0xa7, 0x7f, 0x00, 0x00, 0xfc, 0xed, 0xb7, 0x3f, 0x00, 0x00, 0xf8,
-    0xff, 0xff, 0x1f, 0x00, 0x00, 0xf0, 0xff, 0xff, 0x0f, 0x00, 0x00, 0xe0, 0xff, 0xff, 0x07, 0x00,
-    0x00, 0xc0, 0xff, 0xff, 0x03, 0x00, 0x00, 0x80, 0xff, 0xff, 0x01, 0x00, 0x00, 0x00, 0xff, 0xff,
-    0x00, 0x00, 0x00, 0x00, 0xfe, 0x7f, 0x00, 0x00, 0x00, 0x00, 0xfc, 0x3f, 0x00, 0x00, 0x00, 0x80,
-    0x39, 0x9c, 0x01, 0x00, 0x00, 0x80, 0xd1, 0x8b, 0x01, 0x00, 0x00, 0x00, 0xc0, 0x03, 0x00, 0x00,
-    0x00, 0x80, 0x9f, 0xf9, 0x01, 0x00, 0x00, 0x80, 0x7f, 0xfe, 0x01, 0x00, 0x00, 0x80, 0xff, 0xff,
-    0x01, 0x00, 0x00, 0x80, 0xff, 0xff, 0x01, 0x00, 0x00, 0x80, 0xff, 0xff, 0x01, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x99, 0x99, 0x01, 0x00, 0x00, 0x80, 0x99, 0x99, 0x01, 0x00};
-
-bool OLEDClass::Run()
-{
-    // 1. Resolve Inputs
+bool OLEDClass::Run() {
     bool btnUp = Values.GetThis(1).Value ? *(bool *)Values.GetThis(1).Value : false;
     bool btnDown = Values.GetThis(2).Value ? *(bool *)Values.GetThis(2).Value : false;
     bool btnEnter = Values.GetThis(3).Value ? *(bool *)Values.GetThis(3).Value : false;
     bool btnBack = Values.GetThis(4).Value ? *(bool *)Values.GetThis(4).Value : false;
 
-    if (CurrentTime - Cooldown < 250)
-        return true; // Slightly faster for editing
+    if (CurrentTime - Cooldown < 250) return true;
 
-    if (btnUp || btnDown || btnEnter || btnBack)
-    {
+    if (btnUp || btnDown || btnEnter || btnBack) {
         Cooldown = CurrentTime;
-        uint16_t entryIdx = GetEntryByIndex(MenuIndex);
+
+        uint16_t entryIdx = (MenuIndex > 0) ? GetEntryByIndex(MenuIndex - 1) : INVALID_HEADER;
         uint16_t valIdx = (entryIdx != INVALID_HEADER) ? Values.Child(entryIdx) : INVALID_HEADER;
         Result v = (valIdx != INVALID_HEADER) ? Values.GetThis(valIdx) : Result{nullptr, 0, Types::Undefined};
 
-        if (Mode == DisplayMode::Menu)
-        {
-            if (btnDown && MenuIndex > 0)
-                MenuIndex--;
-            if (btnUp && entryIdx != INVALID_HEADER && Values.Next(entryIdx) != INVALID_HEADER)
-                MenuIndex++;
-            if (btnEnter && v.Value)
-                Mode = IsPacked(v.Type) ? DisplayMode::Part : DisplayMode::Edit;
-            if (btnBack)
-                Mode = DisplayMode::Screensaver;
+        if (Mode == DisplayMode::Menu) {
+            if (btnDown && MenuIndex > 0) MenuIndex--;
+            if (btnUp) {
+                if (MenuIndex == 0) {
+                    if (Values.Child(GetPageRoot()) != INVALID_HEADER) MenuIndex++;
+                } else if (entryIdx != INVALID_HEADER && Values.Next(entryIdx) != INVALID_HEADER) {
+                    MenuIndex++;
+                }
+            }
+            if (btnEnter) {
+                if (MenuIndex == 0) Mode = DisplayMode::Edit;
+                else if (v.Value) Mode = IsPacked(v.Type) ? DisplayMode::Part : DisplayMode::Edit;
+            }
+            if (btnBack) Mode = DisplayMode::Screensaver;
 
-            if (MenuIndex < ScrollOffset)
-            {
-                ScrollOffset = MenuIndex;
-            }
-            else if (MenuIndex >= ScrollOffset + VISIBLE_ROWS)
-            {
-                ScrollOffset = MenuIndex - VISIBLE_ROWS + 1;
-            }
+            if (MenuIndex < ScrollOffset) ScrollOffset = MenuIndex;
+            else if (MenuIndex >= ScrollOffset + VISIBLE_ROWS) ScrollOffset = MenuIndex - VISIBLE_ROWS + 1;
         }
         else if (Mode == DisplayMode::Part)
         {
+            // --- MULTI-PART NAVIGATION (Vector/Color) ---
+            uint8_t maxParts = GetPartCount(v.Type);
             if (btnDown && PartIndex > 0)
                 PartIndex--;
-            if (btnUp && PartIndex < 2)
+            if (btnUp && PartIndex < (maxParts - 1))
                 PartIndex++;
             if (btnEnter)
                 Mode = DisplayMode::Edit;
@@ -397,9 +379,33 @@ bool OLEDClass::Run()
         }
         else if (Mode == DisplayMode::Edit)
         {
-            if (v.Value)
+            // --- EDITING LOGIC ---
+            if (MenuIndex == 0)
             {
-                // --- Enter Cycles Step ---
+                // SPECIAL CASE: Page Switcher
+                if (btnUp)
+                {
+                    uint8_t oldPage = PageIndex;
+                    PageIndex++;
+                    // If the new page is empty/invalid, revert
+                    if (GetPageRoot() == INVALID_HEADER)
+                        PageIndex = oldPage;
+                    else
+                    {
+                        ScrollOffset = 0;
+                        MenuIndex = 0;
+                    }
+                }
+                if (btnDown && PageIndex > 0)
+                {
+                    PageIndex--;
+                    ScrollOffset = 0;
+                    MenuIndex = 0;
+                }
+            }
+            else if (v.Value)
+            {
+                // STANDARD VALUES: Step Cycling
                 if (btnEnter)
                 {
                     if (v.Type == Types::Number || v.Type == Types::Vector2D ||
@@ -418,7 +424,6 @@ bool OLEDClass::Run()
                     }
                     else
                     {
-                        // Integer types (Byte/Int) don't support < 1
                         if (Step == N(1.0))
                             Step = N(10.0);
                         else if (Step == N(10.0))
@@ -428,7 +433,7 @@ bool OLEDClass::Run()
                     }
                 }
 
-                // --- Apply Logic ---
+                // STANDARD VALUES: Apply Modification
                 if (v.Type == Types::Vector2D || v.Type == Types::Vector3D || v.Type == Types::Coord2D)
                 {
                     Number *target = &((Number *)v.Value)[PartIndex];
@@ -468,14 +473,27 @@ bool OLEDClass::Run()
                 }
             }
 
+            // --- EXIT EDIT MODE ---
             if (btnBack)
             {
-                Mode = IsPacked(v.Type) ? DisplayMode::Part : DisplayMode::Menu;
+                Mode = (MenuIndex == 0) ? DisplayMode::Menu : (IsPacked(v.Type) ? DisplayMode::Part : DisplayMode::Menu);
                 Step = N(1.0);
+
+                // Trigger Callback if it's a real value
+                if (MenuIndex > 0 && valIdx != INVALID_HEADER)
+                {
+                    uint16_t callbackIdx = Values.Next(valIdx);
+                    if (callbackIdx != INVALID_HEADER)
+                    {
+                        RunOperation(Values.This(callbackIdx));
+                    }
+                }
             }
         }
         else if (Mode == DisplayMode::Screensaver && btnEnter)
+        {
             Mode = DisplayMode::Menu;
+        }
     }
 
     // --- Add this right before u8g2_ClearBuffer ---
@@ -487,9 +505,6 @@ bool OLEDClass::Run()
     {
         u8g2_SetContrast(&Driver, 255); // Max brightness for UI
     }
-
-    // 3. Render
-    u8g2_ClearBuffer(&Driver);
 
     // 3. Render
     u8g2_ClearBuffer(&Driver);

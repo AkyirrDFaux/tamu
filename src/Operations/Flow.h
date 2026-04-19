@@ -1,71 +1,81 @@
 bool ExecuteIfSwitch(OpContext &ctx)
 {
-    // ctx.Args[0] = {1} Index Selector (Integer)
-    // ctx.Args[1...7] = {2...8} Potential Data Sources
-
-    if (ctx.Args[0].Type != Types::Integer || !ctx.Args[0].Value)
+    // 1. The Selector index is now stored in this block's Out node
+    Result outRes = ctx.Out.Get();
+    if (outRes.Type != Types::Integer || !outRes.Value)
         return true;
 
-    int32_t selector = *(int32_t *)ctx.Args[0].Value;
+    int32_t selector = *(int32_t *)outRes.Value;
 
-    // Boundary check: we only pre-fetched 7 data options (index 1 to 7)
-    if (selector < 0 || selector > 6)
+    // Boundary check for Args[0...7] (which are the bookmarks)
+    if (selector < 0 || selector > 7)
         return true;
 
-    // Offset by 1 because the selector is at Args[0]
-    uint8_t sourceIdx = (uint8_t)selector + 1;
-    Result selected = ctx.Args[sourceIdx];
+    // 2. The arguments are strictly bookmarks to operations
+    Bookmark targetMark = ctx.ArgMarks[selector];
 
-    if (selected.Value && selected.Length > 0)
+    if (targetMark.Index != INVALID_HEADER)
     {
-        // Route the chosen input data to the output node
-        ctx.Out.SetCurrent(selected.Value, selected.Length, selected.Type);
+        // 3. Trigger the selected operation
+        // This executes the logic branch. We do not set ctx.Out to the result,
+        // as the Out node is reserved for the selector value itself.
+        RunOperation(targetMark);
     }
 
     return true;
 }
 
+// TODO move bool to output (both)
+
 bool ExecuteSetRun(OpContext &ctx)
 {
-    // ctx.Args[0] = {1} Trigger/Enable (Bool)
-    // ctx.ArgMarks[1...7] = {2...8} Bookmarks to target Operations
-
-    if (ctx.Args[0].Type != Types::Bool || !ctx.Args[0].Value)
+    // 1. The 'active' bool is now moved to the Out node
+    // This allows the SetRun state itself to be a data source for others
+    Result outRes = ctx.Out.Get();
+    if (outRes.Type != Types::Bool || !outRes.Value)
         return true;
 
-    bool active = *(bool *)ctx.Args[0].Value;
+    bool active = *(bool *)outRes.Value;
 
-    for (uint8_t i = 1; i < 8; i++)
+    // ctx.ArgMarks[1...7] = Operations to enable/disable
+    for (uint8_t i = 0; i < 8; i++)
     {
         if (ctx.ArgMarks[i].Index == INVALID_HEADER)
             continue;
 
-        // 1. Get the Reference ID from the Bookmark
-        // (Assuming Bookmark has access to the Reference it represents)
-        Reference ID = *(Reference *)ctx.ArgMarks[i].Get().Value;
+        // Get the Reference from the Bookmark
+        Result refRes = ctx.ArgMarks[i].Get();
+        if (refRes.Type != Types::Reference || !refRes.Value)
+            continue;
 
-        // 2. Locate in the Object Registry
+        Reference ID = *(Reference *)refRes.Value;
+
+        // Locate in Registry
         int32_t regIdx = Objects.Search(ID);
         if (regIdx == -1)
             continue;
 
         BaseClass *Obj = Objects.Object[regIdx].Object;
-
         if (!Obj)
             continue;
 
-        // 3. Apply the Timing Logic
+        // 3. Apply Flags
         if (ctx.Op == Operations::SetRunOnce)
         {
-            active ? Obj->Flags += Flags::RunOnce : Obj->Flags -= Flags::RunOnce;
+            if (active)
+                Obj->Flags += Flags::RunOnce;
+            else
+                Obj->Flags -= Flags::RunOnce;
         }
         else if (ctx.Op == Operations::SetRunLoop)
         {
-            active ? Obj->Flags += Flags::RunLoop : Obj->Flags -= Flags::RunLoop;
+            if (active)
+                Obj->Flags += Flags::RunLoop;
+            else
+                Obj->Flags -= Flags::RunLoop;
         }
 
-        // 4. Critical: Sync the Runner Registry
-        // This ensures the hardware scheduler sees the change immediately
+        // 4. Sync Hardware Scheduler
         Objects.Object[regIdx].Info = {Obj->RunPeriod, Obj->RunPhase};
     }
 

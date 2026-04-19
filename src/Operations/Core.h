@@ -1,3 +1,5 @@
+bool RunOperation(const Bookmark &Index);
+
 struct OpContext {
     Bookmark Out;           // {0} Output node
     Result Args[8];         // Raw data/metadata for quick access
