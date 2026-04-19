@@ -507,9 +507,9 @@ void DisplayClass::RenderTexture(uint16_t NodeIdx, int32_t Length, Vector2D Disp
 
             ColourClass FinalColour = ColourB;
             if (TextureType == Textures2D::BlendLinear)
-                FinalColour.Layer(ColourA, LimitZeroToOne((P.X * invTexWidthScaled) + 0.5));
+                FinalColour.Layer(ColourA, LimitZeroToOne((P.X * invTexWidthScaled) + N(0.5)));
             else if (TextureType == Textures2D::BlendCircular)
-                FinalColour.Layer(ColourA, LimitZeroToOne((P.Length() * invTexWidthScaled) + 0.5));
+                FinalColour.Layer(ColourA, LimitZeroToOne((P.Length() * invTexWidthScaled) + N(0.5)));
 
             int32_t Offset = PIdx * 3;
             ColourClass Pixel(LEDs[Offset + 1], LEDs[Offset], LEDs[Offset + 2], 255);

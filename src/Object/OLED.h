@@ -115,21 +115,42 @@ int raw_ltoa(int32_t n, char *str)
     return j;
 }
 
-// Minimal Number to string (0.01 precision)
 int raw_ntoa(Number n, char *str)
 {
-    int32_t integral = n.RoundToInt();
-    Number fracPart = n - Number(integral);
-    if (fracPart < N(0))
-        fracPart = N(0) - fracPart;
+    int pos = 0;
 
+    // 1. Handle the negative sign separately for the whole number
+    if (n < N(0))
+    {
+        str[pos++] = '-';
+        n = N(0) - n; // Work with absolute value from here on
+    }
+
+    // 2. Truncate to get the whole number
+    int32_t integral = n.ToInt();
+    Number fracPart = n - Number(integral);
+
+    // 3. Round the fraction to 2 decimal places
     int32_t fracInt = (fracPart * N(100)).RoundToInt();
 
-    int pos = raw_ltoa(integral, str);
+    // 4. Handle rounding overflow (e.g., 0.999 -> 1.00)
+    if (fracInt >= 100)
+    {
+        integral += 1;
+        fracInt = 0;
+    }
+
+    // 5. Convert integral part
+    pos += raw_ltoa(integral, str + pos);
+
+    // 6. Append decimal and fraction
     str[pos++] = '.';
     if (fracInt < 10)
         str[pos++] = '0';
+
     pos += raw_ltoa(fracInt, str + pos);
+
+    str[pos] = '\0'; // Always null-terminate for safety
     return pos;
 }
 
