@@ -194,23 +194,23 @@ void OLEDClass::RenderMenu()
         return;
 
     // 1. Calculate Total Items (1 Virtual Page Switcher + Children)
-    uint16_t entryStartIdx = Values.Child(pageRoot.Index);
-    uint16_t countIdx = entryStartIdx;
+    Bookmark entryStartIdx = pageRoot.Child();
+    uint16_t countIdx = entryStartIdx.Index;
     uint8_t totalItems = 1;
     while (countIdx != INVALID_HEADER)
     {
-        countIdx = Values.Next(countIdx);
+        countIdx = pageRoot.Map->Next(countIdx);
         totalItems++;
     }
 
     uint8_t screenRow = 0, logicalItem = 0;
-    uint16_t currentIdx = entryStartIdx;
+    uint16_t currentIdx = entryStartIdx.Index;
 
     // 2. Advance pointers to ScrollOffset
     while (logicalItem < ScrollOffset)
     {
         if (logicalItem > 0 && currentIdx != INVALID_HEADER)
-            currentIdx = Values.Next(currentIdx);
+            currentIdx = pageRoot.Map->Next(currentIdx);
         logicalItem++;
     }
 
@@ -257,7 +257,7 @@ void OLEDClass::RenderMenu()
             // --- REAL ENTRIES ---
             if (currentIdx != INVALID_HEADER)
             {
-                Bookmark entry = Values.This(currentIdx);
+                Bookmark entry = pageRoot.Map->This(currentIdx);
                 Result labelRes = entry.Get();
 
                 // Draw Selection Indicator
@@ -324,7 +324,7 @@ void OLEDClass::RenderMenu()
                         }
                     }
                 }
-                currentIdx = Values.Next(currentIdx);
+                currentIdx = pageRoot.Map->Next(currentIdx);
             }
         }
         logicalItem++;
@@ -354,12 +354,12 @@ Bookmark OLEDClass::GetEntryByIndex(uint8_t index)
     if (root.Index == INVALID_HEADER)
         return root;
 
-    uint16_t curr = Values.Child(root.Index);
-    for (uint8_t i = 0; i < index && curr != INVALID_HEADER; i++)
+    Bookmark curr = root.Child();
+    for (uint8_t i = 0; i < index && curr.Index != INVALID_HEADER; i++)
     {
-        curr = Values.Next(curr);
+        curr = curr.Next();
     }
-    return Values.This(curr);
+    return curr.This();
 }
 
 bool OLEDClass::Run()
