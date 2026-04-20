@@ -1,5 +1,5 @@
 # Tamu
-Firmware / Micro-OS for 32-bit microcontroller boards
+Firmware / Micro-OS for 32-bit microcontroller boards\
 Complementary app: https://github.com/AkyirrDFaux/tamuapp
 
 # Operation Manual
@@ -7,7 +7,7 @@ Complementary app: https://github.com/AkyirrDFaux/tamuapp
 If any references are under output {0} node, the value will be copied there.
 
 **Set** - Copies a source value to the output destination.\
-Any | (Reference)
+Any | (Any)
 
 **Delete** - Deletes the values or objects at the specified locations.\
 None | Reference [N]
@@ -81,13 +81,13 @@ Vector3D | Vector3D [N]
 -Missing-
 
 **Min** - Returns the smaller of two values.\
-Scalar | Scalar [N]\
+Scalar | Scalar [N]
 
 **Max** - Returns the larger of two values.\
-Scalar | Scalar [N]\
+Scalar | Scalar [N]
 
 **Modulo** - Returns the remainder of a division.\
-Scalar | Scalar [N]\
+Scalar | Scalar [N]
 
 **Random** - Generates a random number within a range.\
 Number | Number (Min), Number (Max)

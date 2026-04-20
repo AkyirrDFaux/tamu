@@ -91,6 +91,15 @@ void ChirpClass::Begin(Text Name)
     // Start Advertising
     NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
     pAdvertising->addServiceUUID(svcUUID);
+
+    NimBLEAdvertisementData scanResponseData;
+    scanResponseData.setName(std::string(Name.Data, Name.Length));
+    pAdvertising->setScanResponseData(scanResponseData);
+
+    // 3. Optional: If the name is long, enable Scan Response
+    // If the packet exceeds 31 bytes (UUID + Name), the name moves to Scan Response
+    pAdvertising->enableScanResponse(true);
+
     pAdvertising->start();
 
     // ESP_LOGI("CHIRP", "BLE Started");
