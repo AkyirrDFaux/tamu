@@ -95,7 +95,7 @@ namespace HW
 #define GET_PHYS_ADDR(off) (0x08000000 + FlashStart + (off))
 
     // Reserved block for the Linker
-    const uint8_t flash_reservation[SECTOR_SIZE*3] __attribute__((section(".fixed_data"), used)) = {0xFF};
+    const uint8_t flash_reservation[SECTOR_SIZE * 3] __attribute__((section(".fixed_data"), used)) = {0xFF};
 
     void FlashInitDevice()
     {
@@ -587,6 +587,20 @@ namespace HW
         return true;
     }
 
+#if defined BOARD_Tamu_v1_0 || defined BOARD_Tamu_v2_0
+    int32_t GetFreeFlash()
+    {
+        int32_t total = 0;
+        size_t numSegments = FlashSize / SEGMENT_SIZE;
+
+        for (size_t i = 0; i < numSegments; i++)
+        {
+            total += FreeSpace[i];
+        }
+
+        return total;
+    }
+#else
     int32_t GetFreeFlash()
     {
         int32_t total = 0;
@@ -599,4 +613,5 @@ namespace HW
 
         return total;
     }
+#endif
 }

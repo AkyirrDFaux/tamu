@@ -226,6 +226,7 @@ Better compression in storage (Undefined with span of N indexes)
 // 21.03.2026 New value system (layered, uses paths, no modules), app styling
 // 08.04.2026 Corrected saving, read-only, new setup, more operations, functions, commmunication improvements
 // 11.04.2026 Large bugfix, ValueTree rewrite, Akyirr on new version, File backup
+// 19.04.2026 Many bugfixes, a lot of operations, OLED on Valu v2.0
 
 // Helpful debugging snippet :)
 /*#include "esp_log.h"

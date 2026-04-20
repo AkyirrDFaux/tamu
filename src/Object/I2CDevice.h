@@ -121,6 +121,13 @@ void I2CDeviceClass::Setup(uint16_t Index)
             if (*AddrPtr == 0)
                 *AddrPtr = 0x6A;
 
+            uint8_t resetCmd = 0b10000001;
+            I2CDriver->Write(*AddrPtr, 0x12, &resetCmd, 1);
+
+            // 2. CRITICAL: Wait for the sensor to wake up
+            // The LSM6DS3 needs roughly 15-50ms to reboot.
+            HW::Sleep(10);
+
             uint8_t Config[2] = {0b01000100, 0b01001100};
             I2CDriver->Write(*AddrPtr, 0x10, Config, 2);
 
@@ -132,6 +139,7 @@ void I2CDeviceClass::Setup(uint16_t Index)
             return; // Early exit to save jumping through other checks
         }
 #endif
+#if defined O_I2C_BMI160
 
         // --- BMI160 Implementation ---
         if (DevType == I2CDevices::BMI160)
@@ -170,6 +178,7 @@ void I2CDeviceClass::Setup(uint16_t Index)
             Values.Set(&zeroNum, sizeof(Number), Types::Number, 8, 1);     // Temp?
             return;
         }
+#endif
 
         // Default: If no drivers matched (or were compiled in)
         Values.Delete(4);
