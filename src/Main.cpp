@@ -183,7 +183,6 @@ Experimental paralel LED bit-banging
 Multiple boards together
 
 ADJUSTMENTS:
-Save file on Android in app
 Better compression in storage (Undefined with span of N indexes)
 */
 

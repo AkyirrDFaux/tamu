@@ -18,7 +18,7 @@ void BoardClass::Setup(uint16_t Index)
         PortNumber btnPin = 10;
         Button->Values.SetExisting(&btnPin, sizeof(PortNumber), Types::PortNumber, 1);
 
-        Inputs inType = Inputs::ButtonWithLED;
+        Inputs inType = Inputs::ButtonWithLEDInverted;
         Button->Values.SetExisting(&inType, sizeof(Inputs), Types::Input, 0);
         Button->Flags -= Flags::Dirty;
     }
