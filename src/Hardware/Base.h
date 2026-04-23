@@ -231,7 +231,8 @@ namespace HW
         // PA14/PB5/SWC
         if (pin.Port == 'A' && pin.Number == 14)
         {
-            //BROKEN
+            RCC->APB2PCENR |= RCC_APB2Periph_AFIO;
+            GPIO_PinRemapConfig(GPIO_Remap_SWJ_Disable, ENABLE);
         }
 
         uint32_t shift = (pin.Number % 8) * 4;

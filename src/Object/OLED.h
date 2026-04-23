@@ -60,9 +60,10 @@ public:
     Bookmark GetEntryByIndex(uint8_t index);
 
     static bool RunBridge(BaseClass *Base) { return static_cast<OLEDClass *>(Base)->Run(); }
+    static void SetupBridge(BaseClass *Base, uint16_t Index) { static_cast<OLEDClass *>(Base)->Setup(Index); }
 
     static constexpr VTable Table = {
-        .Setup = BaseClass::DefaultSetup,
+        .Setup = OLEDClass::SetupBridge,
         .Run = OLEDClass::RunBridge};
 };
 
@@ -82,13 +83,29 @@ OLEDClass::OLEDClass(const Reference &ID, FlagClass Flags, RunInfo Info)
     // Root Node {0}
     Values.Set(nullptr, 0, Types::Undefined, cursor++, 0);
 
-    // Input Wiring {0, 0} to {0, 3} - Depth 1
-    // These store References (Paths) to the actual button objects/values
+    // Flip Control {0, 0}
+    bool initialFlip = false;
+    Values.Set(&initialFlip, sizeof(bool), Types::Bool, cursor++, 1, Tri::Reset, Tri::Set);
+
+    // Input Wiring {0, 1} to {0, 4} - Depth 1 (Shifted by 1)
     Reference nullRef;
-    Values.Set(&nullRef, sizeof(Reference), Types::Reference, cursor++, 1, Tri::Reset, Tri::Set); // Up
-    Values.Set(&nullRef, sizeof(Reference), Types::Reference, cursor++, 1, Tri::Reset, Tri::Set); // Down
-    Values.Set(&nullRef, sizeof(Reference), Types::Reference, cursor++, 1, Tri::Reset, Tri::Set); // Enter
-    Values.Set(&nullRef, sizeof(Reference), Types::Reference, cursor++, 1, Tri::Reset, Tri::Set); // Back
+    Values.Set(&nullRef, sizeof(Reference), Types::Reference, cursor++, 1, Tri::Reset, Tri::Reset); // Up
+    Values.Set(&nullRef, sizeof(Reference), Types::Reference, cursor++, 1, Tri::Reset, Tri::Reset); // Down
+    Values.Set(&nullRef, sizeof(Reference), Types::Reference, cursor++, 1, Tri::Reset, Tri::Reset); // Enter
+    Values.Set(&nullRef, sizeof(Reference), Types::Reference, cursor++, 1, Tri::Reset, Tri::Reset); // Back
+}
+
+void OLEDClass::Setup(uint16_t Index)
+{
+    // Index 0 is the root, Index 1 is our Flip bool
+    // If Index is 0xFFFF (initial setup) or 1 (value changed), update orientation
+    if (Index == 1)
+    {
+        bool isFlipped = Values.GetThis(1).Value ? *(bool *)Values.GetThis(1).Value : false;
+
+        // No need to call HW::OLED_Init again; just update the driver's coordinate mapping
+        u8g2_SetDisplayRotation(&Driver, isFlipped ? U8G2_R2 : U8G2_R0);
+    }
 }
 
 // Helper to flip a string in place
@@ -361,10 +378,13 @@ void OLEDClass::RenderMenu()
 
 Bookmark OLEDClass::GetPageRoot()
 {
-    uint16_t curr = 5; // Absolute root of all pages
+    uint16_t curr = 6; // Absolute root of all pages
     for (uint8_t i = 0; i < PageIndex && curr != INVALID_HEADER; i++)
     {
-        curr = Values.Next(curr);
+        uint16_t next = Values.Next(curr);
+        if (next == INVALID_HEADER)
+            break; // Don't go further than exists
+        curr = next;
     }
     return Values.This(curr); // Returns a Bookmark (Map + Index)
 }
@@ -385,10 +405,15 @@ Bookmark OLEDClass::GetEntryByIndex(uint8_t index)
 
 bool OLEDClass::Run()
 {
-    bool btnUp = Values.GetThis(1).Value ? *(bool *)Values.GetThis(1).Value : false;
-    bool btnDown = Values.GetThis(2).Value ? *(bool *)Values.GetThis(2).Value : false;
-    bool btnEnter = Values.GetThis(3).Value ? *(bool *)Values.GetThis(3).Value : false;
-    bool btnBack = Values.GetThis(4).Value ? *(bool *)Values.GetThis(4).Value : false;
+    bool isFlipped = Values.GetThis(1).Value ? *(bool *)Values.GetThis(1).Value : false;
+
+    bool rawUp = Values.GetThis(2).Value ? *(bool *)Values.GetThis(2).Value : false;    // Index 2
+    bool rawDown = Values.GetThis(3).Value ? *(bool *)Values.GetThis(3).Value : false;  // Index 3
+    bool btnEnter = Values.GetThis(4).Value ? *(bool *)Values.GetThis(4).Value : false; // Index 4
+    bool btnBack = Values.GetThis(5).Value ? *(bool *)Values.GetThis(5).Value : false;  // Index 5
+
+    bool btnUp = isFlipped ? rawDown : rawUp;
+    bool btnDown = isFlipped ? rawUp : rawDown;
 
     if (CurrentTime - Cooldown < 250)
         return true;
@@ -404,21 +429,29 @@ bool OLEDClass::Run()
 
         if (Mode == DisplayMode::Menu)
         {
-            if (btnDown && MenuIndex > 0)
+            if (btnUp && MenuIndex > 0)
             {
                 MenuIndex--;
             }
-            if (btnUp)
+            if (btnDown)
             {
                 if (MenuIndex == 0)
                 {
-                    // Peek if there is at least one child entry to move into
-                    if (Values.Child(GetPageRoot().Index) != INVALID_HEADER)
+                    // Use your GetPageRoot helper properly
+                    Bookmark root = GetPageRoot();
+                    if (root.Child().Index != INVALID_HEADER) // Check the child of the root
+                    {
                         MenuIndex++;
+                    }
                 }
-                else if (entry.Next().Index != INVALID_HEADER)
+                else
                 {
-                    MenuIndex++;
+                    // For items > 0, check if the NEXT entry exists
+                    Bookmark entry = GetEntryByIndex(MenuIndex - 1);
+                    if (entry.Next().Index != INVALID_HEADER)
+                    {
+                        MenuIndex++;
+                    }
                 }
             }
             if (btnEnter)

@@ -170,7 +170,6 @@ extern "C"
 #endif
 /*TODO:
 KEY FEATURES:
-Valu v2.0 - port 0 (pin A14) output
 Port type connect blocking
 LED strip
 Servo

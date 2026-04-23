@@ -34,10 +34,10 @@ void BoardClass::Setup(uint16_t Index)
     Reference b3Ref = Reference::Global(0, 2, 3).Append(1); // Points to Value {1} of Input 3
     Reference b4Ref = Reference::Global(0, 2, 4).Append(1); // Points to Value {1} of Input 4
 
-    Display->Values.SetExisting(&b3Ref, sizeof(Reference), Types::Reference, 1);
-    Display->Values.SetExisting(&b1Ref, sizeof(Reference), Types::Reference, 2);
-    Display->Values.SetExisting(&b2Ref, sizeof(Reference), Types::Reference, 3);
-    Display->Values.SetExisting(&b4Ref, sizeof(Reference), Types::Reference, 4);
+    Display->Values.SetExisting(&b3Ref, sizeof(Reference), Types::Reference, 2);
+    Display->Values.SetExisting(&b1Ref, sizeof(Reference), Types::Reference, 3);
+    Display->Values.SetExisting(&b2Ref, sizeof(Reference), Types::Reference, 4);
+    Display->Values.SetExisting(&b4Ref, sizeof(Reference), Types::Reference, 5);
     Display->Flags -= Flags::Dirty;
 
     // --- 2. Internal Buttons Setup ---
