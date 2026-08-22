@@ -1,0 +1,222 @@
+{
+  "main": {
+    "id": "61e649e00a2bb527",
+    "type": "split",
+    "children": [
+      {
+        "id": "8d86e2e125dc3b6b",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "b5d589722d88df54",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "Services/Log Handler.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "Log Handler"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "e3e889af160a8ba2",
+    "type": "split",
+    "children": [
+      {
+        "id": "80b078e0c6106d0d",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "311ee9a9ad953fb1",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Průzkumník souborů"
+            }
+          },
+          {
+            "id": "6af63b26cca5e6bb",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Hledat"
+            }
+          },
+          {
+            "id": "db1c91354500bf26",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-bookmark",
+              "title": "Záložky"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "bfd7ad878e5e4e7e",
+    "type": "split",
+    "children": [
+      {
+        "id": "eef61cc1c19b04c5",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "aa7d452ae4850c5e",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "Services/Log Handler.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Zpětné odkazy"
+            }
+          },
+          {
+            "id": "e003399666b7a56b",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "Services/Log Handler.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Odchozí odkazy"
+            }
+          },
+          {
+            "id": "25c5c262178917e7",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Štítky"
+            }
+          },
+          {
+            "id": "3f5b910c9cff0f75",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "Všechny vlastnosti"
+            }
+          },
+          {
+            "id": "8472f01bedc67cd5",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Přehled"
+            }
+          }
+        ],
+        "currentTab": 2
+      }
+    ],
+    "direction": "horizontal",
+    "width": 200,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Otevřít rychlé přepínání": false,
+      "graph:Otevřít graf": false,
+      "canvas:Vytvořit nový canvas": false,
+      "daily-notes:Otevřít dnešní poznámku": false,
+      "templates:Vložit šablonu": false,
+      "command-palette:Otevřít paletu příkazů": false,
+      "bases:Vytvořit novou základnu": false
+    }
+  },
+  "active": "b5d589722d88df54",
+  "lastOpenFiles": [
+    "Services/Storage.md",
+    "Services/Device service.md",
+    "Data Formats.md",
+    "Improve.md",
+    "Issues.md",
+    "RealHW.md",
+    "RSBus.md",
+    "Devices.md",
+    "Services/System Memory.md",
+    "Services/App Interface.md",
+    "App/General info.md",
+    "App/Settings.md",
+    "App/Device view.md",
+    "App/Devices.md",
+    "App/Service views/System Memory.md",
+    "App/Service views/Storage.md",
+    "General architecture.md",
+    "App/Service views",
+    "App/Backup.md",
+    "App/Connection.md",
+    "Modules/Generic system blocks.md",
+    "Services/CLI.md",
+    "App",
+    "Services/Dynamic Memory.md",
+    "Services/Keyed Memory.md",
+    "Modules/LED display.md",
+    "Services/Log Handler.md",
+    "Progress.md"
+  ]
+}

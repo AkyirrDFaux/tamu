@@ -1,0 +1,459 @@
+#pragma once
+
+#include "Block.h"
+#include "SNDB.h"
+#include "Core/Services/LogHandler.h"
+#include "Core/Functions/Storage.h"
+#include "esp_console.h"
+#include <cstring>
+#include <cstdlib>
+
+// Prints the log records kept in RAM on the core device
+static int CmdLogs(int argc, char **argv)
+{
+#ifdef TYPE_CORE
+    EnsureLogStorage();
+    if (!LogBuffer) { printf("No log storage available.\n"); return 0; }
+    bool any = false;
+    for (int i = 0; i < MAX_LOG_RECORDS; i++)
+    {
+        if (LogUsed[i])
+        {
+            const LogMessage &m = LogBuffer[i].msg;
+            printf("[%03d] Dev %d | %s | Src 0x%04X | Code 0x%04X | Count %u | t=%lums\n",
+                   i, LogBuffer[i].device_id, LogIsBlock(m) ? "Block" : "Svc",
+                   LogSourceId(m), LogCode(m), LogBuffer[i].count,
+                   (unsigned long)m.timestamp);
+            any = true;
+        }
+    }
+    if (!any)
+        printf("No logs recorded.\n");
+#else
+    printf("Log records are only available on the core device.\n");
+#endif
+    return 0;
+}
+
+// log <is_block> <source_id_hex> <code_hex> : Send a log/error report to the Log Handler service
+static int CmdLog(int argc, char **argv)
+{
+    if (argc < 4) { printf("Usage: log <is_block> <source_id_hex> <code_hex>\n"); return 1; }
+
+    bool is_block = (atoi(argv[1]) != 0);
+    uint16_t source_id = (uint16_t)strtoul(argv[2], nullptr, 16);
+    uint16_t code = (uint16_t)strtoul(argv[3], nullptr, 16);
+
+    printf("Sending log is_block=%d source_id=0x%04X code=0x%04X\n",
+           (int)is_block, source_id, code);
+    ReportLog(MakeLog(is_block, source_id, code, 0));
+    return 0;
+}
+
+// Sends a memory-service extra command (Create/Delete/Save/Recall/Read backup).
+// cli_srv_cid: 0 = response prints block fields, 2 = response prints a status byte.
+static int SendMemoryExtra(uint16_t addr, uint8_t block, ServiceType service, uint8_t cid, uint8_t cli_srv_cid)
+{
+    BlockIndex idx = {block, INVALID_INDEX, INVALID_INDEX};
+    PacketFrame req;
+    PacketConstruct(&req, addr,
+                     MakeService(service, cid),
+                     MakeService(ServiceType::CLI, cli_srv_cid),
+                     FLAG_REQACK | FLAG_START | FLAG_STOP,
+                     (const uint8_t *)&idx, sizeof(BlockIndex));
+    DispatchPacket(req);
+    return 0;
+}
+
+// save <addr> [svc] [block|-] : Save a block (or everything) of a service to its backup file
+static int CmdSave(int argc, char **argv)
+{
+    if (argc < 2) { printf("Usage: save <addr> [svc] [block|-]\n"); return 1; }
+    uint16_t addr = atoi(argv[1]);
+    ServiceType svc = (argc > 2) ? ParseService(argv[2]) : ServiceType::DynamicMemory;
+    uint8_t block = (argc > 3 && strcmp(argv[3], "-") != 0) ? (uint8_t)atoi(argv[3]) : INVALID_BLOCK;
+    printf("Saving block %d of service %d on device %d...\n", block, (int)svc, addr);
+    return SendMemoryExtra(addr, block, svc, 5, 2);
+}
+
+// recall <addr> [svc] [block|-] : Recall a block (or everything) of a service from its backup file
+static int CmdRecall(int argc, char **argv)
+{
+    if (argc < 2) { printf("Usage: recall <addr> [svc] [block|-]\n"); return 1; }
+    uint16_t addr = atoi(argv[1]);
+    ServiceType svc = (argc > 2) ? ParseService(argv[2]) : ServiceType::DynamicMemory;
+    uint8_t block = (argc > 3 && strcmp(argv[3], "-") != 0) ? (uint8_t)atoi(argv[3]) : INVALID_BLOCK;
+    printf("Recalling block %d of service %d on device %d...\n", block, (int)svc, addr);
+    return SendMemoryExtra(addr, block, svc, 6, 2);
+}
+
+// rmem <addr> [svc] <block> : Read a block from its service's backup file (prints via tree handler)
+static int CmdReadMemory(int argc, char **argv)
+{
+    if (argc < 3) { printf("Usage: rmem <addr> [svc] <block>\n"); return 1; }
+    uint16_t addr = atoi(argv[1]);
+    ServiceType svc = (argc > 3) ? ParseService(argv[2]) : ServiceType::DynamicMemory;
+    uint8_t block = (uint8_t)atoi(argv[(argc > 3) ? 3 : 2]);
+    printf("Reading backup of block %d of service %d on device %d...\n", block, (int)svc, addr);
+    return SendMemoryExtra(addr, block, svc, 4, 0);
+}
+
+// create <addr> <svc> <type_hex> <name> : Create a new dynamic/keyed block
+static int CmdCreate(int argc, char **argv)
+{
+    if (argc < 5) { printf("Usage: create <addr> <svc> <type_hex> <name>\n"); return 1; }
+    uint16_t addr = atoi(argv[1]);
+    ServiceType svc = ParseService(argv[2]);
+    if (svc == ServiceType::SystemMemory)
+    {
+        printf("Error: System Memory blocks are compiled in and cannot be created.\n");
+        return 1;
+    }
+    uint16_t type = (uint16_t)strtoul(argv[3], nullptr, 16);
+    const char *name = argv[4];
+    uint16_t name_len = (uint16_t)strlen(name);
+    if (name_len > BLOCK_NAME_LEN - 1) name_len = BLOCK_NAME_LEN - 1;
+
+    BlockIndex idx = {INVALID_BLOCK, INVALID_INDEX, INVALID_INDEX};
+    BlockMeta desc;
+    desc.FlagsAndType = type;
+    desc.Key = INVALID_INDEX;
+    desc.Size = (uint8_t)name_len;
+
+    uint8_t payload[MAX_PAYLOAD_SIZE];
+    uint16_t plen = 0;
+    memcpy(payload + plen, &idx, sizeof(BlockIndex)); plen += sizeof(BlockIndex);
+    memcpy(payload + plen, &desc, sizeof(BlockMeta)); plen += sizeof(BlockMeta);
+    memcpy(payload + plen, name, name_len); plen += name_len;
+
+    printf("Creating %s block (Type 0x%03X) named \"%s\" on device %d...\n",
+           (svc == ServiceType::KeyedMemory) ? "keyed" : "dynamic", type, name, addr);
+
+    PacketFrame req;
+    PacketConstruct(&req, addr,
+                     MakeService(svc, 0),
+                     MakeService(ServiceType::CLI, 5),
+                     FLAG_REQACK | FLAG_START | FLAG_STOP,
+                     payload, plen);
+    DispatchPacket(req);
+    return 0;
+}
+
+// delete <addr> <svc> <block> : Delete a dynamic/keyed block (deallocated on next save)
+static int CmdDelete(int argc, char **argv)
+{
+    if (argc < 4) { printf("Usage: delete <addr> <svc> <block>\n"); return 1; }
+    uint16_t addr = atoi(argv[1]);
+    ServiceType svc = ParseService(argv[2]);
+    uint8_t block = (uint8_t)atoi(argv[3]);
+    printf("Deleting block %d of service %d on device %d...\n", block, (int)svc, addr);
+    return SendMemoryExtra(addr, block, svc, 1, 2);
+}
+
+// Sends a Device service request to `addr` and routes the reply to the CLI (cid 3).
+// Device service CIDs: 0 Discover, 1 Ping, 2 Type, 3 SN, 4 Version, 5 Capability, 6 Read Name, 7 Set Name, 8 Uptime, 9 Loop, 10 Time sync.
+static int CmdDevice(int argc, char **argv)
+{
+    // Usage: dev <addr> <discover|ping|type|sn|version|cap|name [newname]|uptime|loop|time>
+    if (argc < 3) { printf("Usage: dev <addr> <discover|ping|type|sn|version|cap|name [newname]|uptime|loop|time>\n"); return 1; }
+    uint16_t addr = (uint16_t)atoi(argv[1]);
+    const char *cmd = argv[2];
+
+    uint8_t cid = 0;
+    uint8_t payload[32] = {0};
+    uint8_t plen = 0;
+
+    if (strcmp(cmd, "discover") == 0)
+    {
+        cid = 0;
+        memcpy(payload, &GetSerialNumber(), sizeof(SerialNumber));
+        plen = sizeof(SerialNumber);
+    }
+    else if (strcmp(cmd, "ping") == 0) { cid = 1; }
+    else if (strcmp(cmd, "type") == 0) { cid = 2; }
+    else if (strcmp(cmd, "sn") == 0) { cid = 3; }
+    else if (strcmp(cmd, "version") == 0) { cid = 4; }
+    else if (strcmp(cmd, "cap") == 0) { cid = 5; }
+    else if (strcmp(cmd, "name") == 0)
+    {
+        if (argc > 3)
+        {
+            cid = 7; // Set Name
+            plen = (uint8_t)strlen(argv[3]);
+            if (plen > 23) plen = 23;
+            memcpy(payload, argv[3], plen);
+        }
+        else
+        {
+            cid = 6; // Read Name
+        }
+    }
+    else if (strcmp(cmd, "uptime") == 0) { cid = 8; }
+    else if (strcmp(cmd, "loop") == 0) { cid = 9; }
+    else if (strcmp(cmd, "time") == 0)
+    {
+        // Time sync request: payload carries the local send timestamp (t0). Without it the
+        // node would reply with t0=0 and the offset estimate would be off by half the uptime.
+        cid = 10;
+        uint32_t t0 = DeviceStatus.UptimeMs;
+        memcpy(payload, &t0, 4);
+        plen = 4;
+    }
+    else { printf("Unknown dev command: %s\n", cmd); return 1; }
+
+    printf("Device service '%s' dispatched to node %d...\n", cmd, addr);
+
+    PacketFrame req;
+    PacketConstruct(&req, addr,
+                     MakeService(ServiceType::Device, cid),
+                     MakeService(ServiceType::CLI, 3),
+                     FLAG_REQACK | FLAG_START | FLAG_STOP,
+                     payload, plen);
+    DispatchPacket(req);
+    return 0;
+}
+
+// Sends a Storage service request to `addr` and routes the reply to the CLI (cid 4).
+// Storage service CIDs: 0 File Table, 1 Read File, 2 Create, 3 Delete, 4 Resize.
+static int CmdFile(int argc, char **argv)
+{
+    // Usage: file <addr> <table|read|create|delete|resize> [args]
+    if (argc < 3) { printf("Usage: file <addr> <table|read|create|delete|resize> [args]\n"); return 1; }
+    uint16_t addr = (uint16_t)atoi(argv[1]);
+    const char *cmd = argv[2];
+
+    uint8_t cid = 0;
+    uint8_t payload[32] = {0};
+    uint8_t plen = 0;
+    char name8[8] = {0};
+
+    if (strcmp(cmd, "table") == 0) { cid = 0; }
+    else if (strcmp(cmd, "read") == 0)
+    {
+        // file <addr> read <name> <offset> <num>
+        if (argc < 6) { printf("Usage: file <addr> read <name> <offset> <num>\n"); return 1; }
+        cid = 5; // Read File (docs)
+        PackName(argv[3], name8);
+        uint32_t off = (uint32_t)strtoul(argv[4], nullptr, 10);
+        uint32_t num = (uint32_t)strtoul(argv[5], nullptr, 10);
+        memcpy(payload, name8, 8);
+        memcpy(payload + 8, &off, 4);
+        memcpy(payload + 8 + 4, &num, 4);
+        plen = 8 + 8;
+    }
+    else if (strcmp(cmd, "create") == 0)
+    {
+        // file <addr> create <name> <size>
+        if (argc < 5) { printf("Usage: file <addr> create <name> <size>\n"); return 1; }
+        cid = 2;
+        PackName(argv[3], name8);
+        uint32_t size = (uint32_t)strtoul(argv[4], nullptr, 10);
+        memcpy(payload, name8, 8);
+        memcpy(payload + 8, &size, 4);
+        plen = 8 + 4;
+    }
+    else if (strcmp(cmd, "delete") == 0)
+    {
+        // file <addr> delete <name>
+        if (argc < 4) { printf("Usage: file <addr> delete <name>\n"); return 1; }
+        cid = 3;
+        PackName(argv[3], name8);
+        memcpy(payload, name8, 8);
+        plen = 8;
+    }
+    else if (strcmp(cmd, "resize") == 0)
+    {
+        // file <addr> resize <name> <newsize>
+        if (argc < 5) { printf("Usage: file <addr> resize <name> <newsize>\n"); return 1; }
+        cid = 4;
+        PackName(argv[3], name8);
+        uint32_t size = (uint32_t)strtoul(argv[4], nullptr, 10);
+        memcpy(payload, name8, 8);
+        memcpy(payload + 8, &size, 4);
+        plen = 8 + 4;
+    }
+    else { printf("Unknown file command: %s\n", cmd); return 1; }
+
+    printf("Storage service '%s' dispatched to node %d...\n", cmd, addr);
+
+    PacketFrame req;
+    PacketConstruct(&req, addr,
+                     MakeService(ServiceType::Storage, cid),
+                     MakeService(ServiceType::CLI, 4),
+                     FLAG_REQACK | FLAG_START | FLAG_STOP,
+                     payload, plen);
+    DispatchPacket(req);
+    return 0;
+}
+
+// Sets up the USB Serial/JTAG console REPL and registers all CLI commands (tree, read, write, sndb, logs, save, recall, rmem, dev, file).
+void StartCLI(void)
+{
+    // 1. Configure the REPL. The default task stack (4096 B) is too small for the
+    // nested local dispatch: a CLI command builds a PacketFrame (268 B), the local
+    // request handler another 256 B payload buffer, and the response handler a second
+    // PacketFrame, all recursively on the REPL task's stack (HW stack guard panics).
+    // Save/Recall additionally nest a 2048 B backup buffer, so 16 KB is needed.
+    esp_console_repl_config_t repl_config = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
+    repl_config.task_stack_size = 16384;
+    repl_config.prompt = "tamu> ";
+    repl_config.max_cmdline_length = 256;
+
+    // 2. Configure USB Serial/JTAG
+    esp_console_dev_usb_serial_jtag_config_t usj_config = ESP_CONSOLE_DEV_USB_SERIAL_JTAG_CONFIG_DEFAULT();
+
+    // 3. Initialize the console using the USB peripheral
+    esp_console_repl_t *repl = NULL;
+    ESP_ERROR_CHECK(esp_console_new_repl_usb_serial_jtag(&usj_config, &repl_config, &repl));
+
+    // 4. Register commands
+    ESP_ERROR_CHECK(esp_console_register_help_command());
+
+    const esp_console_cmd_t tree_cmd = {
+        .command = "tree",
+        .help    = "List all devices, their blocks, and fields",
+        .hint    = "[addr]",
+        .func    = &CmdTree,
+        .argtable = nullptr,
+        .func_w_context = nullptr,
+        .context = nullptr,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&tree_cmd));
+
+    const esp_console_cmd_t read_cmd = {
+        .command = "read",
+        .help    = "Read a specific block or field from a device",
+        .hint    = "<addr> [svc] [block] [field] [key]",
+        .func    = &CmdRead,
+        .argtable = nullptr,
+        .func_w_context = nullptr,
+        .context = nullptr,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&read_cmd));
+
+    const esp_console_cmd_t write_cmd = {
+        .command = "write",
+        .help    = "Write a value to a block field",
+        .hint    = "<addr> [svc] <block> <field> [key] <type_hex> <value>",
+        .func    = &CmdWrite,
+        .argtable = nullptr,
+        .func_w_context = nullptr,
+        .context = nullptr,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&write_cmd));
+
+    const esp_console_cmd_t sndb_cmd = {
+        .command = "sndb",
+        .help    = "SNDB management: read_one, read_all, write",
+        .hint    = "<target_addr> <cmd> [id]",
+        .func    = &DispatchSNDBCommand,
+        .argtable = nullptr,
+        .func_w_context = nullptr,
+        .context = nullptr,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&sndb_cmd));
+
+    const esp_console_cmd_t logs_cmd = {
+        .command = "logs",
+        .help    = "Show logs and errors collected from the network",
+        .hint    = "",
+        .func    = &CmdLogs,
+        .argtable = nullptr,
+        .func_w_context = nullptr,
+        .context = nullptr,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&logs_cmd));
+
+    const esp_console_cmd_t save_cmd = {
+        .command = "save",
+        .help    = "Save a memory block to its backup file",
+        .hint    = "<addr> [svc] [block|-]",
+        .func    = &CmdSave,
+        .argtable = nullptr,
+        .func_w_context = nullptr,
+        .context = nullptr,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&save_cmd));
+
+    const esp_console_cmd_t recall_cmd = {
+        .command = "recall",
+        .help    = "Recall a memory block from its backup file",
+        .hint    = "<addr> [svc] [block|-]",
+        .func    = &CmdRecall,
+        .argtable = nullptr,
+        .func_w_context = nullptr,
+        .context = nullptr,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&recall_cmd));
+
+    const esp_console_cmd_t rmem_cmd = {
+        .command = "rmem",
+        .help    = "Read a memory block directly from its backup file",
+        .hint    = "<addr> [svc] <block>",
+        .func    = &CmdReadMemory,
+        .argtable = nullptr,
+        .func_w_context = nullptr,
+        .context = nullptr,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&rmem_cmd));
+
+    const esp_console_cmd_t dev_cmd = {
+        .command = "dev",
+        .help    = "Query the Device service of a node",
+        .hint    = "<addr> <discover|ping|type|sn|version|cap|name [newname]|uptime|loop|time>",
+        .func    = &CmdDevice,
+        .argtable = nullptr,
+        .func_w_context = nullptr,
+        .context = nullptr,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&dev_cmd));
+
+    const esp_console_cmd_t create_cmd = {
+        .command = "create",
+        .help    = "Create a new dynamic/keyed memory block",
+        .hint    = "<addr> <svc> <type_hex> <name>",
+        .func    = &CmdCreate,
+        .argtable = nullptr,
+        .func_w_context = nullptr,
+        .context = nullptr,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&create_cmd));
+
+    const esp_console_cmd_t delete_cmd = {
+        .command = "delete",
+        .help    = "Delete a dynamic/keyed memory block (deallocated on next save)",
+        .hint    = "<addr> <svc> <block>",
+        .func    = &CmdDelete,
+        .argtable = nullptr,
+        .func_w_context = nullptr,
+        .context = nullptr,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&delete_cmd));
+
+    const esp_console_cmd_t log_cmd = {
+        .command = "log",
+        .help    = "Send a log/error report to the Log Handler service",
+        .hint    = "<is_block> <source_id_hex> <code_hex>",
+        .func    = &CmdLog,
+        .argtable = nullptr,
+        .func_w_context = nullptr,
+        .context = nullptr,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&log_cmd));
+
+    const esp_console_cmd_t file_cmd = {
+        .command = "file",
+        .help    = "Access the Storage service of a node",
+        .hint    = "<addr> <table|read|create|delete|resize> [args]",
+        .func    = &CmdFile,
+        .argtable = nullptr,
+        .func_w_context = nullptr,
+        .context = nullptr,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&file_cmd));
+
+    // 5. Start the REPL
+    ESP_ERROR_CHECK(esp_console_start_repl(repl));
+
+    ESP_LOGI("CLI", "Console initialized over USB Serial/JTAG.");
+}

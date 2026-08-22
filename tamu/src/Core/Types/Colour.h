@@ -1,0 +1,92 @@
+#pragma once
+
+class ColourClass
+{
+public:
+    uint8_t R = 0;
+    uint8_t G = 0;
+    uint8_t B = 0;
+    uint8_t A = 0;
+    // Copy constructor
+    ColourClass(const ColourClass&) = default;
+    // Constructs a colour from RGBA components (defaults to opaque white)
+    ColourClass(uint8_t R = 0, uint8_t G = 0, uint8_t B = 0, uint8_t A = 255);
+    // Builds a colour from hue/saturation/value (0-255 each) with optional alpha
+    static ColourClass FromHSV(Number H, Number S, Number V, uint8_t Alpha = 255);
+
+    // Copies the RGBA components of `Colour` into this colour
+    void operator=(ColourClass Colour);
+
+    // Overlays `LayerColour` onto this colour by `Overlap` (0.0-1.0), blending channels and alpha
+    void Layer(ColourClass LayerColour, Number Overlap);
+};
+
+// Stores the given RGBA components into the colour
+ColourClass::ColourClass(uint8_t R, uint8_t G, uint8_t B, uint8_t A)
+{
+    this->R = R;
+    this->G = G;
+    this->B = B;
+    this->A = A;
+};
+
+// Converts HSV (0-255 each) to an RGBA colour using integer sector math
+ColourClass ColourClass::FromHSV(Number H, Number S, Number V, uint8_t Alpha)
+{
+    // Convert inputs to 8-bit integers for high-speed bitwise math
+    uint8_t h = (uint8_t)H.RoundToInt();
+    uint8_t s = (uint8_t)S.RoundToInt();
+    uint8_t v = (uint8_t)V.RoundToInt();
+
+    uint8_t r, g, b;
+
+    if (s == 0) 
+    {
+        // Achromatic (Grey)
+        r = g = b = v;
+    }
+    else 
+    {
+        // Sector is 0-5
+        uint8_t sector = h / 43; 
+        // Fractional part of sector
+        uint8_t remainder = (h - (sector * 43)) * 6; 
+
+        uint8_t p = (v * (255 - s)) >> 8;
+        uint8_t q = (v * (255 - ((s * remainder) >> 8))) >> 8;
+        uint8_t t = (v * (255 - ((s * (255 - remainder)) >> 8))) >> 8;
+
+        switch (sector) 
+        {
+            case 0: r = v; g = t; b = p; break;
+            case 1: r = q; g = v; b = p; break;
+            case 2: r = p; g = v; b = t; break;
+            case 3: r = p; g = q; b = v; break;
+            case 4: r = t; g = p; b = v; break;
+            default: r = v; g = p; b = q; break;
+        }
+    }
+
+    return ColourClass(r, g, b, Alpha);
+}
+
+// Assigns the RGBA components of `Colour` to this colour
+void ColourClass::operator=(ColourClass Colour)
+{
+    R = Colour.R;
+    G = Colour.G;
+    B = Colour.B;
+    A = Colour.A;
+};
+
+// Blends `LayerColour` over this colour by `Overlap` (0.0-1.0), including alpha accumulation
+void ColourClass::Layer(ColourClass LayerColour, Number Overlap)
+{
+    Number Opacity = Overlap * ByteToPercent(LayerColour.A);
+    // Clamp the blended channels: an Out-of-range Overlap (>1) would otherwise extrapolate
+    // past 0..255 and wrap in the uint8_t fields.
+    R = (uint8_t)LimitByte((LayerColour.R * Opacity + R * (1 - Opacity)).RoundToInt());
+    G = (uint8_t)LimitByte((LayerColour.G * Opacity + G * (1 - Opacity)).RoundToInt());
+    B = (uint8_t)LimitByte((LayerColour.B * Opacity + B * (1 - Opacity)).RoundToInt());
+    A = LimitByte(A + ((255 - A) * Opacity).RoundToInt());
+};

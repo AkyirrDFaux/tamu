@@ -1,0 +1,4 @@
+dependencies:
+  espressif/led_strip: "^3.0.3"
+  h2zero/esp-nimble-cpp: "^2.3.4"
+  idf: "^5.5.0"
