@@ -23,10 +23,6 @@
 #define MAX_STREAMS STORAGE_MAX_STREAMS
 #define PAGE_SIZE STORAGE_BLOCK_SIZE
 
-// Bytes at the end of the storage partition reserved for other subsystems (e.g. the SNDB
-// registry on Tamu). File allocations never extend into this region. Defined per device.
-uint32_t Storage_FlashReserve();
-
 // --- Flash access (implemented per device, see Devices/<device>/Storage.h) ---
 bool Storage_FlashInit();                              // find/open the storage partition
 uint32_t Storage_FlashSize();                          // total flash bytes available
@@ -562,11 +558,10 @@ private:
     // Returns the first flash offset of the file data area (after the pointer page).
     uint32_t DataStart() const { return PAGE_SIZE; }
 
-    // Returns the exclusive end of the file data area (flash minus the reserved tail).
+    // Returns the exclusive end of the file data area (the full flash region).
     uint32_t DataEnd() const
     {
-        uint32_t reserve = Storage_FlashReserve();
-        return (STORAGE_FLASH_SIZE > reserve) ? (STORAGE_FLASH_SIZE - reserve) : 0;
+        return STORAGE_FLASH_SIZE;
     }
 
     // Reads a single table entry from the current table.

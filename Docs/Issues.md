@@ -148,6 +148,19 @@ The serial-number database lived in `Devices/Tamu/SNDB.h` and talked to flash th
 (`Storage_FlashReserve` bytes) and accesses it through the shared `Storage_FlashRead/Write/
 Erase` functions. The device-specific file was removed.
 
+### SNDB migrated to the storage file system (refactor)
+The serial-number registry no longer uses a reserved tail of the storage region
+(`Storage_FlashReserve` was removed from both device Storage.h files and from
+`Core/Functions/Storage.h`; the file data area is now the full flash region). The registry
+is stored as a log-structured file named `SNREG` in the filesystem (`Core/Functions/SNDB.h`),
+using only the public file API (`FileExists`/`CreateFile`/`DeleteFile`/`ReadFromFile`/
+`WriteToFile`): new entries are appended, removed entries are tombstoned (valid 0x55AA ->
+0x0000), and when the file fills up `Compact()` rewrites it densely (delete + recreate +
+write valid entries). Appends are crash-safe (body written with an EMPTY marker, then the
+VALID marker last), and `RecoverState()` treats only fully-erased (0xFF) slots as the append
+head. Capacity is `SNDB_MAX_ENTRIES` (128 by default, override via build flag); the DAS
+never compiles SNDB.h (no TYPE_CORE), so it is unaffected.
+
 ### Storage WriteTable no longer snapshots on every write (refactor)
 `WriteTable` always buffered the whole file table into a `FileEntry[MAX_FILES]` stack array
 (112 B on the DAS's 256 B stack, 896 B on the Tamu) even when writing to a fresh table
@@ -305,6 +318,128 @@ Script, App Interface, Router.
 ## On hold
 - **LED display block**: the renderer is wired to the hardware, but the documented Layout File
   Name + Refresh Rate fields are still missing.
+
+## Open (firmware code review, 2026-08-22)
+
+Full pass over `tamu/src` (Core, Blocks, Devices). Findings verified against source;
+prior audit results are not repeated here.
+
+### Bugs — LED / display
+
+- **GammaTable has only 240 entries** (`Blocks/Vysi1Display.h:9-24`): the initializer list
+  ends at index 239 (`..., 198, 199, 200`), so entries 240-255 are zero-initialized and any
+  channel value ≥ 240 snaps to black - the brightest pixels go dark. The table also caps at
+  200 instead of ~255, so it is not a valid gamma-1.8 curve even for indices it covers.
+  Regenerate the full 256-entry table.
+- **DoubleParabola reads uninitialized geometry data**: `ResolveGeometryDefinition()`
+  (`Vysi1Display.h:143-149`) has no case for `Geometries::DoubleParabola`, but
+  `CalculateShapeAlpha()` reads `def.Data.Basic.Width/Height/EdgeFade` for it
+  (`Render.h:193-196`). Those union members are never initialized, so the rasterizer reads
+  indeterminate memory. Either add the resolution case or reject the geometry.
+- **Negative Brightness wraps** (`Vysi1Display.h:106`): `(Brightness * 255 / 100).ToInt()`
+  converted to `uint32_t brightness_scale` turns a negative field value into a huge scale,
+  producing garbage colours through `(scale * alpha) >> 8`. Clamp Brightness to [0, 100].
+
+### Bugs — packet / bus
+
+- **Crc8 length truncates mod 256**: `Crc8(const uint8_t*, uint8_t len)`
+  (`Core/Functions/Packet.h:46`) is called with `11 + payload_len` (up to 266) at
+  `Packet.h:114`, `Packet.h:151`, `Tamu_v2.0A/RSBus.h:86`, `Tamu_v2.0A/RSBus.h:159`,
+  `DAS_v0.1/RSBus.h:218`. For any frame with `payload_len >= 245` the length wraps and the
+  CRC silently covers only a few payload bytes - integrity protection vanishes exactly for
+  the largest (file-transfer) frames. Widen `Crc8`'s length parameter to `uint16_t`.
+- **DAS RX ISR tests the wrong constant**: `USART1->STATR & USART_IT_RXNE`
+  (`DAS_v0.1/RSBus.h:19`) uses the interrupt-*config* encoding (0x0525) as a status mask; it
+  matches PE/NE/LBD/RXNE simultaneously, so error bytes are pushed into the RX ring instead
+  of discarded. Use `USART_FLAG_RXNE` (0x0020). Related no-op: `STATR &= ~(ORE|FE|NE)` at
+  lines 34-36 cannot clear rc_w0 flags (harmless only because the DATAR read clears them).
+- **Storage table read drops FLAG_STOP** (`Core/Services/Storage.h:47-61`, CID 0): when a
+  `ReadFileEntry` fails mid-table the loop `continue`s without incrementing `sent`, so no
+  packet ever carries FLAG_STOP and the requester's stream reassembly stalls. Count the
+  entry as sent (or track "last emitted" separately) so the stream terminates.
+- **Storage file read with num_bytes == 0 sends nothing** (`Core/Services/Storage.h:113-153`,
+  CID 5): a valid name/offset but zero length skips the chunk loop entirely - neither data
+  nor an empty START|STOP ack is sent, hanging the client.
+
+### Bugs — storage / SNDB
+
+- **SNDB erased-slot pattern is wrong** (`Core/Functions/SNDB.h:115`):
+  `static const uint8_t ff[sizeof(RegistryEntry)] = {0xFF};` sets only `ff[0]`; the rest is
+  zero-filled, so the memcmp looks for `FF 00 00...` and never matches a real erased slot.
+  `RecoverState()` therefore never finds the append head, `write_head` stays at its default
+  end-of-file value, and the first `AddDevice` after every boot triggers a pointless
+  `Compact()`. Fix the initializer.
+- **SNDB Compact is non-atomic** (`Core/Functions/SNDB.h:265-275`): the registry file is
+  deleted and recreated before any valid entry is rewritten; power loss mid-compaction loses
+  the whole registry. Write a fresh temp file completely, then swap.
+- **Table move can land on pending file data** (`Core/Functions/Storage.h`, CreateFile /
+  ResizeFile copy path): the data area is chosen via `FindSpace()` and erased, but the
+  committing record isn't written until `WriteFilerecord()`; if that call finds the table
+  full, `MoveFiletable()` → `FindSpace(new_table_size)` does not see the uncommitted area
+  and can place the new file table exactly over the freshly erased file data. Reserve the
+  pending allocation during the move (edge case, but real corruption).
+- **Keyed/dynamic field delete always reports success**: if the field index is out of range
+  (`DynamicMemory.h:548-553`) or `RemoveKey` fails (`KeyedMemory.h:165-170`), the handler
+  still answers status OK. Reflect the actual result, matching the Set paths.
+- **GetKey walks dictionary entries without bounds checks** (`Core/Functions/Memory.h:308-322`):
+  unlike `SetKey` and `ListKeys`, one corrupt/truncated entry makes the cursor advance past
+  the field and return a pointer into foreign memory. Share one bounds-checked cursor helper.
+
+### Bugs — dynamic memory registry
+
+- **CopyBlockInto leaves stale pointers for empty blocks**
+  (`Core/Services/DynamicMemory.h:206-225`): when `source.map_count == 0` or
+  `source.length == 0`, the malloc branches are skipped and the destination slot keeps
+  whatever descriptors the shift loop / `AddBlock` left there - aliased with the shifted
+  copy at `index+1` or dangling from a previously released block. A later Remove/Release
+  double-frees them. Zero `map/data_ptr/map_count/length` unconditionally before the
+  allocation branches.
+- **First per-block Save fails while the backup file doesn't exist**
+  (`Core/Services/DynamicMemory.h:240-258`): with `ReadBackupFile == 0`, `temp_registry` is
+  empty and `CopyBlockInto(temp_registry, block > 0, ...)` rejects `index > block_count`,
+  so saving block N fails until block 0 was saved once. Append unconditionally when the
+  file is absent.
+
+### Bugs — DAS node
+
+- **ProcessBus runs only ~once per second** (`Devices/DAS_v0.1/Main.h:118-122`): the LED
+  blink blocks with two `Sleep(500)` per loop iteration, so incoming requests sit in (or
+  overflow) the 256-byte ring at 115200 baud and replies lag up to a second. Make the blink
+  non-blocking (millis-based toggle).
+- **Auto-range switch corrupts the measurement filter** (`Devices/DAS_v0.1/Measuring.h:145-153`):
+  the low-pass filter keeps integrating across range switches even though the excitation
+  circuit changed scale, so MeasuredValue/CurrentRange stay wrong for many samples after
+  each switch; range thresholds also use the *unfiltered* sample, so noisy inputs chatter
+  between ranges. Reset the filter state on transition and threshold on the filtered value.
+- **Meas2.SamplingRate is dead configuration** (`Devices/DAS_v0.1/Main.h:107-116`): the
+  sample interval derives solely from Meas1; both channels are sampled at Meas1's rate.
+
+### Bugs — CLI / misc
+
+- **CLI matrix 'T' mode crashes on short input** (`Devices/Tamu_v2.0A/CLI/Block.h:254-262`):
+  five unchecked `atof(strtok(nullptr, ","))` calls; input like `matrix T,1` makes strtok
+  return NULL and `atof(NULL)` dereferences it. The 'R' branch already checks - do the same.
+- **AccGyr filter divide-by-zero**: `1 / (1 + AccGyr.AccFilter)`
+  (`Devices/Tamu_v2.0A/AccGyr.h:156-159`) divides by zero if the remotely-writable field is
+  set to -1. Clamp on write or before use.
+- **No allocator-failure handling in log DB init**: `EnsureLogStorage`
+  (`Core/Functions/Log.h:46-53`) ignores malloc/calloc failure; `LogHandler.h:20` checks
+  `LogBuffer` but not `LogUsed` (a failed calloc would null-deref at line 32).
+
+### Uncertain / needs confirmation
+
+- **LED-off leaves button line floating**: turning the LED off does `PinHigh` +
+  `PinModeInput` (`Devices/Tamu_v2.0A/Button.h:14-17`); `gpio_reset_pin` inside strips pull
+  config. If the board has no external bias, `PinModeInputPullDown` (exists, unused) seems
+  intended.
+- **Blocking loops without timeout**: `RS485_WaitForSilence` (both RSBus.h files) and
+  `Meas_AdcRead`'s EOC wait spin forever on a wedged/shorted bus or stuck ADC.
+- **Blocks metadata offsets all 0x00**: `Blocks/PWM.h`, `AccGyr.h`, `Vysi1Display.h`
+  BlockMeta tables list offset 0x00 for every field, contradicting the actual struct layout
+  (`PWMStruct.Duty` is at offset 4). Harmless today only if nothing addresses fields by these
+  offsets - verify and fix or document.
+- **Keyed field Size is uint8_t**: accumulating dictionary entries past 255 total bytes
+  wraps silently (`Memory.h:383-384`). Add an explicit cap.
 
 ## Open (app rewrite, 2026-08-22)
 

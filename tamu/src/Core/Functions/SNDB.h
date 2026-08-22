@@ -17,10 +17,18 @@ typedef struct __attribute__((packed, aligned(4)))
 #define STATE_VALID    0x55AA
 #define STATE_REMOVED  0x0000
 
+// Registry capacity (entries). The registry file is created with this many 32-byte slots
+// (SNDB_MAX_ENTRIES * 32 bytes). Override via build flag on RAM-starved devices.
+#ifndef SNDB_MAX_ENTRIES
+#define SNDB_MAX_ENTRIES 128
+#endif
+
 // Serial-number database (mandatory for core, see Docs/Services/Device service.md).
-// Single shared implementation: the registry lives in the reserved tail of the storage
-// region (Storage_FlashReserve bytes, see Core/Functions/Storage.h) and is accessed through
-// the Storage_Flash* functions, so no device-specific code is required.
+// Single shared implementation: the registry is a log-structured FILE in the storage
+// filesystem (a file named "SNREG"), so no device-specific code and no reserved flash
+// region is required. New entries are appended to the file, removed entries are
+// tombstoned (valid 0x55AA -> 0x0000), and when the file fills up it is compacted by
+// rewriting it with only the valid entries (delete + recreate + write).
 class SNDB
 {
 public:
@@ -47,99 +55,84 @@ private:
     static bool RemoveDevice(uint16_t short_id);
     static bool Available();
 
-    static uint32_t registry_offset; // Flash offset of the registry window within the storage region
-    static uint32_t registry_size;   // Size of the registry window in bytes
-    static uint32_t write_head;      // Write cursor (window-relative)
-    static uint32_t read_tail;       // Oldest entry (window-relative)
+    static uint32_t registry_size;   // Actual registry file size in bytes
+    static uint32_t write_head;      // Next append offset (file-relative)
     static int32_t active_count;     // Number of valid entries
-    static size_t iter_pos;          // Iteration cursor (window-relative)
-    static bool recovered;           // State already recovered from flash
+    static size_t iter_pos;          // Iteration cursor (slot index)
+    static bool recovered;           // State already recovered from the file
+    static RegistryEntry compact_buf[SNDB_MAX_ENTRIES]; // Compaction scratch (dense rewrite)
 };
 
-uint32_t SNDB::registry_offset = 0;
 uint32_t SNDB::registry_size = 0;
 uint32_t SNDB::write_head = 0;
-uint32_t SNDB::read_tail = 0;
 int32_t SNDB::active_count = 0;
 size_t SNDB::iter_pos = 0;
 bool SNDB::recovered = false;
+RegistryEntry SNDB::compact_buf[SNDB_MAX_ENTRIES] = {};
 
-// Returns the registry window located at the end of the storage region. A device without a
-// reserved tail (Storage_FlashReserve() == 0) has no registry and reports empty.
+// Registry file name (8 plain-text characters, space padded).
+static const char *SNDBFileName()
+{
+    static constexpr char name[8] = {'S', 'N', 'R', 'E', 'G', ' ', ' ', ' '};
+    return name;
+}
+
+// Ensures the registry file exists (creating it on first use) and returns true when usable.
+// After a Storage.Format() the file is gone and gets recreated here, so cached state is
+// reset to force a fresh recovery scan.
 bool SNDB::Available()
 {
-    if (registry_size == 0 && Storage_FlashReserve() > 0)
+    uint32_t sz = Storage.FileExists(SNDBFileName());
+    if (sz == 0xFFFFFFFF)
     {
-        registry_size = Storage_FlashReserve();
-        registry_offset = (STORAGE_FLASH_SIZE >= registry_size)
-                              ? (STORAGE_FLASH_SIZE - registry_size)
-                              : 0;
+        if (!Storage.CreateFile(SNDBFileName(), SNDB_MAX_ENTRIES * sizeof(RegistryEntry)))
+        {
+            DeviceLog("SNDB", "Registry file creation failed!");
+            return false;
+        }
+        sz = Storage.FileExists(SNDBFileName());
+        if (sz == 0xFFFFFFFF)
+            return false;
+        recovered = false;   // freshly erased file: rescan (finds empty)
+        write_head = 0;
+        active_count = 0;
+        iter_pos = 0;
     }
+    registry_size = sz;
     return registry_size >= sizeof(RegistryEntry);
 }
 
-// Scans the registry to rebuild the write head, read tail and active device count after boot.
+// Scans the registry file to rebuild the write head and the active device count after boot.
+// The log is linear (appends always go forward, tombstones leave holes), so the first
+// fully-erased (0xFF) slot is the append position. A torn append body (valid field still
+// 0xFFFF but some data programmed) is skipped like a hole; compaction reclaims it.
 void SNDB::RecoverState()
 {
     active_count = 0;
-    size_t num_entries = registry_size / sizeof(RegistryEntry);
+    write_head = registry_size; // default: file full -> compact on next add
+    uint32_t num_entries = registry_size / sizeof(RegistryEntry);
 
-    size_t first_empty_idx = num_entries;
-    size_t first_occ_after_empty_idx = num_entries;
-    bool found_empty = false;
-
-    for (size_t i = 0; i < num_entries; i++)
+    static const uint8_t ff[sizeof(RegistryEntry)] = {0xFF};
+    for (uint32_t i = 0; i < num_entries; i++)
     {
-        uint16_t state;
-        Storage_FlashRead(registry_offset + i * sizeof(RegistryEntry), &state, sizeof(uint16_t));
-
-        if (state == STATE_VALID)
+        RegistryEntry entry;
+        if (Storage.ReadFromFile(SNDBFileName(), i * sizeof(RegistryEntry),
+                                 sizeof(entry), (char *)&entry) != sizeof(entry))
+            break;
+        if (memcmp(&entry, ff, sizeof(entry)) == 0)
+        {
+            write_head = i * sizeof(RegistryEntry);
+            break;
+        }
+        if (entry.valid == STATE_VALID)
             active_count++;
-
-        if (state == STATE_EMPTY)
-        {
-            if (!found_empty)
-            {
-                first_empty_idx = i;
-                found_empty = true;
-            }
-        }
-        else
-        {
-            if (found_empty && first_occ_after_empty_idx == num_entries)
-                first_occ_after_empty_idx = i;
-        }
     }
 
-    if (!found_empty)
-    {
-        read_tail = 0;
-        write_head = 0;
-    }
-    else if (first_occ_after_empty_idx == num_entries)
-    {
-        read_tail = 0;
-        write_head = first_empty_idx * sizeof(RegistryEntry);
-    }
-    else
-    {
-        read_tail = first_occ_after_empty_idx * sizeof(RegistryEntry);
-        size_t last_empty_idx = first_occ_after_empty_idx - 1;
-        while (last_empty_idx > first_empty_idx)
-        {
-            uint16_t state;
-            Storage_FlashRead(registry_offset + last_empty_idx * sizeof(RegistryEntry), &state, sizeof(uint16_t));
-            if (state != STATE_EMPTY) break;
-            last_empty_idx--;
-        }
-        write_head = (last_empty_idx + 1) * sizeof(RegistryEntry);
-    }
-
-    DeviceLog("SNDB", "State Recovered. Head: %d, Tail: %d, Active Devices: %d",
-              (int)write_head, (int)read_tail, (int)active_count);
+    DeviceLog("SNDB", "State Recovered. Head: %d, Active Devices: %d",
+              (int)write_head, (int)active_count);
 }
 
-// Walks the registry backwards from the write head looking for `serial`; returns its short ID or ADDR_INVALID.
+// Walks the file looking for `serial`; returns its short ID or ADDR_INVALID.
 uint16_t SNDB::FindShortID(const SerialNumber &serial)
 {
     if (!Available())
@@ -149,27 +142,18 @@ uint16_t SNDB::FindShortID(const SerialNumber &serial)
         RecoverState();
         recovered = true;
     }
-    if (write_head == read_tail && active_count == 0)
+    if (active_count == 0)
         return ADDR_INVALID;
 
-    size_t current = write_head;
-    size_t num_entries = registry_size / sizeof(RegistryEntry);
-
-    for (size_t i = 0; i < num_entries; i++)
+    uint32_t num_entries = registry_size / sizeof(RegistryEntry);
+    for (uint32_t i = 0; i < num_entries; i++)
     {
-        if (current < sizeof(RegistryEntry))
-            current = registry_size;
-        current -= sizeof(RegistryEntry);
-
         RegistryEntry entry;
-        Storage_FlashRead(registry_offset + current, &entry, sizeof(RegistryEntry));
-
-        if (entry.valid == STATE_VALID)
-        {
-            if (memcmp(entry.uid.bytes, serial.bytes, 14) == 0)
-                return entry.shortID;
-        }
-        if (current == read_tail) break;
+        if (Storage.ReadFromFile(SNDBFileName(), i * sizeof(RegistryEntry),
+                                 sizeof(entry), (char *)&entry) != sizeof(entry))
+            break;
+        if (entry.valid == STATE_VALID && memcmp(entry.uid.bytes, serial.bytes, 14) == 0)
+            return entry.shortID;
     }
     return ADDR_INVALID;
 }
@@ -200,65 +184,30 @@ bool SNDB::AddDevice(const SerialNumber &serial, uint16_t short_id)
     new_entry.uid = serial;
     memset(new_entry.reserved, 0, 12);
 
-    if (Storage_FlashWrite(registry_offset + write_head, &new_entry, sizeof(RegistryEntry)))
-    {
-        write_head = (write_head + sizeof(RegistryEntry)) % registry_size;
-        active_count++;
-        return true;
-    }
-    return false;
-}
+    if (write_head + sizeof(RegistryEntry) > registry_size)
+        return false;
 
-// Relocates valid entries out of the block at the read tail, erases it, then advances the tail.
-bool SNDB::Compact()
-{
-    while (IsFull())
-    {
-        size_t block_size = STORAGE_BLOCK_SIZE;
-        size_t block_start = (read_tail / block_size) * block_size;
+    // Crash-safe append: write the body with an EMPTY marker first, then program the
+    // VALID marker last. A torn write leaves the slot EMPTY and is ignored on recovery.
+    RegistryEntry body = new_entry;
+    body.valid = STATE_EMPTY;
+    if (!Storage.WriteToFile(SNDBFileName(), write_head, sizeof(RegistryEntry),
+                             (const char *)&body))
+        return false;
+    uint16_t marker = STATE_VALID;
+    if (!Storage.WriteToFile(SNDBFileName(), write_head, sizeof(marker),
+                             (const char *)&marker))
+        return false;
 
-        if (write_head >= block_start && write_head < (block_start + block_size))
-        {
-            DeviceLog("SNDB", "Compaction deadlock! Write head inside target clean block.");
-            return false;
-        }
-
-        for (size_t i = 0; i < (block_size / sizeof(RegistryEntry)); i++)
-        {
-            size_t addr = block_start + (i * sizeof(RegistryEntry));
-            if (addr >= registry_size) break;
-
-            RegistryEntry entry;
-            Storage_FlashRead(registry_offset + addr, &entry, sizeof(RegistryEntry));
-
-            if (entry.valid == STATE_VALID)
-            {
-                Storage_FlashWrite(registry_offset + write_head, &entry, sizeof(RegistryEntry));
-                write_head = (write_head + sizeof(RegistryEntry)) % registry_size;
-            }
-        }
-
-        Storage_FlashErase(registry_offset + block_start, block_size);
-        read_tail = (block_start + block_size) % registry_size;
-    }
+    write_head += sizeof(RegistryEntry);
+    active_count++;
     return true;
 }
 
-// Returns true when free space between the write head and read tail is below one erase block.
+// Returns true when there is no room for another entry in the registry file.
 bool SNDB::IsFull()
 {
-    size_t free_space = 0;
-    if (write_head >= read_tail)
-    {
-        free_space = registry_size - (write_head - read_tail);
-        if (write_head == read_tail && active_count > 0)
-            free_space = 0;
-    }
-    else
-    {
-        free_space = read_tail - write_head;
-    }
-    return free_space < STORAGE_BLOCK_SIZE;
+    return write_head + sizeof(RegistryEntry) > registry_size;
 }
 
 // Marks every entry with the given short ID as removed (tombstone) and decrements the active count.
@@ -271,29 +220,67 @@ bool SNDB::RemoveDevice(uint16_t short_id)
         RecoverState();
         recovered = true;
     }
-    if (write_head == read_tail && active_count == 0)
+    if (active_count == 0)
         return false;
 
-    size_t scan = read_tail;
+    uint32_t num_entries = registry_size / sizeof(RegistryEntry);
     bool found = false;
-
-    while (scan != write_head)
+    for (uint32_t i = 0; i < num_entries; i++)
     {
         RegistryEntry entry;
-        Storage_FlashRead(registry_offset + scan, &entry, sizeof(RegistryEntry));
-
+        if (Storage.ReadFromFile(SNDBFileName(), i * sizeof(RegistryEntry),
+                                 sizeof(entry), (char *)&entry) != sizeof(entry))
+            break;
         if (entry.valid == STATE_VALID && entry.shortID == short_id)
         {
             uint16_t tombstone = STATE_REMOVED;
-            if (Storage_FlashWrite(registry_offset + scan, &tombstone, sizeof(uint16_t)))
+            if (Storage.WriteToFile(SNDBFileName(), i * sizeof(RegistryEntry),
+                                    sizeof(uint16_t), (const char *)&tombstone))
             {
                 active_count--;
                 found = true;
             }
         }
-        scan = (scan + sizeof(RegistryEntry)) % registry_size;
     }
     return found;
+}
+
+// Rewrites the registry file densely with only the valid entries. Called when the log is
+// full of entries/tombstones; the freshly created file is erased, then the valid entries
+// are written back.
+bool SNDB::Compact()
+{
+    uint32_t count = 0;
+    uint32_t num_entries = registry_size / sizeof(RegistryEntry);
+    for (uint32_t i = 0; i < num_entries; i++)
+    {
+        RegistryEntry entry;
+        if (Storage.ReadFromFile(SNDBFileName(), i * sizeof(RegistryEntry),
+                                 sizeof(entry), (char *)&entry) != sizeof(entry))
+            break;
+        if (entry.valid == STATE_VALID && count < SNDB_MAX_ENTRIES)
+            compact_buf[count++] = entry;
+    }
+
+    if (!Storage.DeleteFile(SNDBFileName()))
+        return false;
+    if (!Storage.CreateFile(SNDBFileName(), SNDB_MAX_ENTRIES * sizeof(RegistryEntry)))
+        return false;
+
+    for (uint32_t i = 0; i < count; i++)
+    {
+        if (!Storage.WriteToFile(SNDBFileName(), i * sizeof(RegistryEntry),
+                                 sizeof(RegistryEntry), (const char *)&compact_buf[i]))
+            return false;
+    }
+
+    active_count = (int32_t)count;
+    write_head = count * sizeof(RegistryEntry);
+    registry_size = SNDB_MAX_ENTRIES * sizeof(RegistryEntry);
+    iter_pos = 0;
+    recovered = true;
+    DeviceLog("SNDB", "Compacted, %d entries", (int)count);
+    return true;
 }
 
 // Scans the registry for the lowest unused short ID starting from 2 (ID 1 is reserved for the core).
@@ -304,19 +291,18 @@ uint16_t SNDB::FindLowestAvailableID()
     while (candidate < 0xFFFF)
     {
         bool collision = false;
-        size_t scan = read_tail;
-
-        while (scan != write_head)
+        uint32_t num_entries = registry_size / sizeof(RegistryEntry);
+        for (uint32_t i = 0; i < num_entries; i++)
         {
             RegistryEntry entry;
-            Storage_FlashRead(registry_offset + scan, &entry, sizeof(RegistryEntry));
-
+            if (Storage.ReadFromFile(SNDBFileName(), i * sizeof(RegistryEntry),
+                                     sizeof(entry), (char *)&entry) != sizeof(entry))
+                break;
             if (entry.valid == STATE_VALID && entry.shortID == candidate)
             {
                 collision = true;
                 break;
             }
-            scan = (scan + sizeof(RegistryEntry)) % registry_size;
         }
 
         if (!collision)
@@ -357,16 +343,21 @@ bool SNDB::GetEntry(uint16_t short_id, RegistryEntry &out_entry)
         RecoverState();
         recovered = true;
     }
-    if (write_head == read_tail && active_count == 0)
+    if (active_count == 0)
         return false;
 
-    size_t scan = read_tail;
-    while (scan != write_head)
+    uint32_t num_entries = registry_size / sizeof(RegistryEntry);
+    for (uint32_t i = 0; i < num_entries; i++)
     {
-        Storage_FlashRead(registry_offset + scan, &out_entry, sizeof(RegistryEntry));
-        if (out_entry.valid == STATE_VALID && out_entry.shortID == short_id)
+        RegistryEntry entry;
+        if (Storage.ReadFromFile(SNDBFileName(), i * sizeof(RegistryEntry),
+                                 sizeof(entry), (char *)&entry) != sizeof(entry))
+            break;
+        if (entry.valid == STATE_VALID && entry.shortID == short_id)
+        {
+            out_entry = entry;
             return true;
-        scan = (scan + sizeof(RegistryEntry)) % registry_size;
+        }
     }
     return false;
 }
@@ -384,7 +375,7 @@ int32_t SNDB::ActiveCount()
     return active_count;
 }
 
-// Resets the iteration cursor to the first (tail) registry entry.
+// Resets the iteration cursor to the first registry entry.
 void SNDB::IterReset()
 {
     if (!Available())
@@ -394,10 +385,10 @@ void SNDB::IterReset()
         RecoverState();
         recovered = true;
     }
-    iter_pos = read_tail;
+    iter_pos = 0;
 }
 
-// Returns the next valid registry entry via `out_entry`, or false when the head is reached.
+// Returns the next valid registry entry via `out_entry`, or false when the file is exhausted.
 bool SNDB::IterNext(RegistryEntry &out_entry)
 {
     if (!Available())
@@ -407,12 +398,23 @@ bool SNDB::IterNext(RegistryEntry &out_entry)
         RecoverState();
         recovered = true;
     }
-    while (iter_pos != write_head)
+
+    uint32_t num_entries = registry_size / sizeof(RegistryEntry);
+    while (iter_pos < num_entries)
     {
-        Storage_FlashRead(registry_offset + iter_pos, &out_entry, sizeof(RegistryEntry));
-        iter_pos = (iter_pos + sizeof(RegistryEntry)) % registry_size;
-        if (out_entry.valid == STATE_VALID)
+        RegistryEntry entry;
+        if (Storage.ReadFromFile(SNDBFileName(), iter_pos * sizeof(RegistryEntry),
+                                 sizeof(entry), (char *)&entry) != sizeof(entry))
+        {
+            iter_pos = num_entries;
+            return false;
+        }
+        iter_pos++;
+        if (entry.valid == STATE_VALID)
+        {
+            out_entry = entry;
             return true;
+        }
     }
     return false;
 }

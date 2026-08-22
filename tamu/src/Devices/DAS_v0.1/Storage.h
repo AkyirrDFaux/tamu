@@ -25,12 +25,6 @@ static_assert(STORAGE_CHIP_BASE + STORAGE_FLASH_SIZE == CHIP_FLASH_SIZE,
 
 #include "Core/Services/Storage.h"
 
-// Returns the number of reserved bytes at the end of the storage region (none on DAS).
-uint32_t Storage_FlashReserve()
-{
-    return 0;
-}
-
 // Pinned at flash 0x3800 by -Wl,--section-start=.fixed_data=0x3800. The region is erased
 // (normalised to 0xFF) by Storage.Format() before any use; a code-size overflow fails the
 // link instead of corrupting the storage region at runtime.

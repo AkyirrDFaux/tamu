@@ -4,13 +4,6 @@
 
 #define STORAGE_PARTITION_NAME "storage"
 
-// Returns the number of bytes at the end of the storage partition reserved for the SNDB
-// registry, which shares the same partition (see Core/Functions/SNDB.h).
-uint32_t Storage_FlashReserve()
-{
-    return 0x10000;
-}
-
 #include "Core/Services/Storage.h"
 
 static const esp_partition_t *g_storage_part = nullptr;
