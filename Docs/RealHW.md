@@ -1,98 +1,76 @@
 # Real Hardware Verification - Tamu v2.0A + DAS v0.1
 
-Final verified session 2026-08-23 (firmware updated: storage block size 64 B, `-flto`, core
-capability bit, non-blocking LED blink, accumulating time-sync offset). Two devices on the
-RS-485 RSBus:
+Final verification state 2026-08-23. Two devices on the RS-485 RSBus:
 
 - **Tamu v2.0A** (ESP32-C3, USB `/dev/ttyACM0`, console + RSBus) - core, SNDB ID 1, SN `E4B063C820700000000000000000`.
 - **DAS v0.1** (CH32V003, WCH-Link `/dev/ttyACM1`, no console) - SNDB ID 2, SN `CDABBD6400000000000000000000`.
 
-The DAS has no console output; it is reached exclusively over the RSBus through the Tamu console
+The DAS has no console; it is reached exclusively over the RSBus through the Tamu console
 (DAS upload: `pio run -e DAS_v0_1 -t upload --upload-port /dev/ttyACM1`). Re-flashing the DAS
 rewrites the whole chip flash, so its storage filesystem is reformatted on every upload.
 
-## Tamu v2.0A (ID 1) - service checklist
+## Session issues and their resolution
 
-| Service / test | Command | Result |
+| # | Issue | Resolution |
 | --- | --- | --- |
-| Device: ping | `dev 1 ping` | PASS |
-| Device: type | `dev 1 type` | PASS (0x0001 Tamu_v2_0A) |
-| Device: serial number | `dev 1 sn` | PASS |
-| Device: version | `dev 1 version` | PASS ("Tamu v2.0A") |
-| Device: name | `dev 1 name` | PASS ("Tamu Node") |
-| Device: uptime | `dev 1 uptime` | PASS |
-| Device: loop time | `dev 1 loop` | PASS (avg 10 ms) |
-| Device: time sync | `dev 1 time` | PASS (offset ~0 ms) |
-| Device: capability | `dev 1 cap` | PASS (0x00000001, CORE bit set) |
-| Device: discover (self) | `dev 1 discover` | PASS (re-registers as ID 1) |
-| System Memory: LED-Button (b0) read | `read 1 s 0 0` / `read 1 s 0 1` | PASS |
-| System Memory: Fan PWM (b1/b2) read | `read 1 s 1/2 0` / `read 1 s 1/2 1` | PASS (25 kHz, duty 0) |
-| System Memory: Acc&Gyr (b3) read | `read 1 s 3 1` / `read 1 s 3 2` | PASS (live accel + gyro) |
-| System Memory: LED Display (b4/b5) read | `read 1 s 4 0` / `read 1 s 5 0` | PASS |
-| System Memory: fan duty write + callback | `write 1 s 1 1 0x003 0.5` | PASS (fan spins; value persists) |
-| System Memory: LED write + callback | `write 1 s 0 0 0x006 1` | PASS (LED toggles) |
-| System Memory: backup (save/rmem/recall) | `save/rmem/recall 1 s ...` | PASS |
-| Dynamic Memory CRUD | `create/save/rmem/recall/delete 1 d 0x100 dynblock` | PASS |
-| Keyed Memory CRUD | `create 1 k 0x101`, `write 1 k 0 0 1 0x003 123`, read/save/rmem/recall/delete | PASS (key persists) |
-| Storage: file table | `file 1 table` | PASS |
-| Storage: create/read/resize/delete | `file 1 create/read/resize/delete TESTF` | PASS |
-| Topology dump | `tree 1` | PASS (System 6, Dynamic 0, Keyed 0) |
-| SNDB | `sndb 1 read_all` | PASS (ID 1 core, ID 2 DAS) |
-| Log service | `logs` | PASS |
+| 1 | Deleted files `ZERO`(0)/`ALPHA`(100) reappeared in the DAS table at session start | **CLOSED - not reproducible.** Exhaustive stress (create/delete/reboot cycles, pointer-page exhaustion to 13/16 slots with several stale table generations left in flash, storage-full state) never reproduced it; WCH-Link pointer-page + table dumps matched the display byte-for-byte. Pointer-page last-valid-wins invalidation verified sound. |
+| 2 | Meas Number fields stored out-of-range values verbatim (DAS) | **FIXED + VERIFIED.** Write triggers clamp SamplingRate to [1,1000] Hz and FilterCoeff to [0,1] at write time; stored value now equals applied (2.5->1.0, -0.5->0, 1e6->1000, -1->1). |
+| 3 | Fan duty >100 % accepted | **NOT A BUG** - duty is specified in percent (2.0 = 2 %). >100 clamps to 100 and the clamped value is stored; the field is committed only after `ledc_update_duty` succeeds. |
+| 4 | Deleted dynamic/keyed blocks readable until the next save | **FIXED + VERIFIED.** Reads/writes on `Deleted`-flagged blocks now fail; topology summaries count only visible blocks. |
+| 5 | Silent timeouts for dead addresses / missing services | **FIXED + VERIFIED.** CLI commands wait 500 ms and print "no response from device N (timeout)"; live devices unaffected. |
+| 6 | Garbage number strings silently parsed as 0 (CLI) | **FIXED + VERIFIED.** Strict `strtod` with full-consumption check; rejects hex (`0x10`) and garbage (`abc`) with "Failed to parse value"; `2.5`, `1e3`, `.5`, `-0.25` accepted. |
+| 7 | Size-0 files did not occupy their reserved block (NEW, found while stress-testing #1) | **FIXED + VERIFIED.** `BlockUsed` now clamps the block count to >= 1, so a size-0 file's single block is reserved. Reproduced the corruption first (ZERO@512 + BETA@512 aliasing; resizing ZERO up shadowed BETA), then proved the fix removes it. |
 
-## DAS v0.1 (ID 2) - service checklist
+## Size-0 fix regression (DAS)
 
-| Service / test | Command | Result |
-| --- | --- | --- |
-| Discovery | boot | PASS (assigned ID 2) |
-| Device: ping | `dev 2 ping` | PASS |
-| Device: type | `dev 2 type` | PASS (0x0003 DualAnalogSensor) |
-| Device: serial number | `dev 2 sn` | PASS (CDABBD64...) |
-| Device: version | `dev 2 version` | PASS ("DAS v0.1") |
-| Device: name | `dev 2 name` | PASS ("DAS v0.1") |
-| Device: uptime | `dev 2 uptime` | PASS (tracks real time after sync) |
-| Device: loop time | `dev 2 loop` | PASS (avg 0.05 ms - non-blocking blink) |
-| Device: time sync | `dev 2 time` | PASS (converges to the core time) |
-| Device: capability | `dev 2 cap` | PASS (0x00000000 - node has no core bit, expected) |
-| System Memory: Meas1 read | `read 2 s 0 0..4` | PASS |
-| System Memory: Meas2 read | `read 2 s 1 3` / `read 2 s 1 4` | PASS |
-| Measuring (open input) | `read 2 s 0 3` / `read 2 s 0 4` | PASS (~1023 raw, 330 kOhm auto-range) |
-| System Memory: write | `write 2 s 0 1 0x003 0.8` | PASS |
-| System Memory: backup (save/recall) | `save/recall 2 s -` | PASS (recall restores value) |
-| Storage: file create | `file 2 create <name> <size>` | PASS (no longer hangs; multiple files ok) |
-| Storage: file table | `file 2 table` | PASS (lists .TABLE + all files) |
-| Storage: table growth/move | create > 3 files | PASS (table grows from 64 to 128 B and moves) |
-| Storage: file read | `file 2 read <name> 0 5` | PASS |
-| Storage: file resize | `file 2 resize <name> <size>` | PASS |
-| Storage: file delete | `file 2 delete <name>` | PASS (entry removed) |
-| Storage: reboot persistence | reboot, `file 2 table` | PASS (files survive a reboot) |
-| Topology dump | `tree 2` | PASS (System 2 blocks) - fixed |
-| Log service | `logs` | PASS (core keeps a small log buffer) |
+| Case | Result |
+| --- | --- |
+| `create X 0` then `create Y 64` | PASS - Y gets a distinct block (was aliasing X) |
+| `create G 200`, `resize G 0`, then `create D 64` | PASS - G keeps its block; D goes elsewhere |
+| `resize Z 0 -> 200` with a live file in the path | PASS - fails cleanly (was silently shadowing) |
+| `resize Z 0 -> 192` with free space | PASS - succeeds |
+| Table moves, delete, reboot persistence | PASS - unaffected |
 
-## Notes
+## Verified correct (regression evidence)
 
-1. **`tree 2` was fixed this session.** The topology dump for the DAS returned nothing because
-   the CLI `tree` command fires three memory-read requests 100 ms apart, and on the half-duplex
-   RS-485 bus the DAS's slower reply (CSMA + echo-verify) collides with the next request. The
-   gap in `CmdTree` (`Devices/Tamu_v2.0A/CLI/Block.h`) was raised from 100 ms to 400 ms; the DAS
-   now answers `Registry Summary [System]: 2 blocks`.
+### Storage edge cases (DAS, `file 2 ...`)
 
-2. **Earlier storage failures were transient and are not reproducible.** During the previous
-   session (with WCH-Link `-a`/`-e` debugger reboots interleaved) the DAS file table appeared to
-   lose entries and resize/delete failed. Re-tested on a clean flash with no debugger interference
-   (full create / table / resize / delete / read battery, table growth, and a reboot), the storage
-   filesystem behaves correctly: entries are preserved, the table grows and moves, resize updates
-   the size, delete removes the entry, and files survive a reboot.
+| Test | Result |
+| --- | --- |
+| Create size 0 / duplicate name / 8-char-truncated name | PASS (truncated duplicates rejected) |
+| Table growth (>75 % full) and move (self-describing entry0 + pointer page) | PASS (flash-dump verified) |
+| Resize up in place / out of space / to 0 / zero-size up | PASS (failed resize leaves file unchanged) |
+| Delete existing / non-existent | PASS |
+| Read non-existent / at EOF / far beyond (999 B) | PASS (clamped, no overrun) |
+| Out-of-space create (fragmented) | PASS (no partial record) |
+| Reboot persistence across stress states | PASS |
 
-3. **Firmware-update fixes verified:** DAS storage `create` no longer hangs the node; the Tamu
-   reports `0x00000001` (CORE capability); the DAS loop is ~0.05 ms (bus serviced every loop);
-   the DAS time sync accumulates the correction and converges to the core time; DAS name is
-   "DAS v0.1".
+### Memory / Number edge cases (DAS + Tamu)
+
+| Test | Result |
+| --- | --- |
+| Type mismatch (Number/Integer/Colour into wrong field) | PASS (rejected, even in-range) |
+| Write to RO field / enum out of range / invalid index / wrong key | PASS (rejected) |
+| Large Number saturates at Q16.16 max | PASS |
+| Dynamic/Keyed create/write/save/rmem/recall; purge on save | PASS |
+| Fan duty clamp (>100 -> 100, -5 -> 0) | PASS |
+
+### Device / infrastructure
+
+| Test | Result |
+| --- | --- |
+| Name truncation to 23 chars | PASS |
+| Uptime sanity after reboot (no 4.29 G corruption) | PASS |
+| First time-sync after reboot: large offset, converges over rounds | PASS |
+| `tree 1` / `tree 2` | PASS (2 blocks on DAS) |
+| SNDB registry intact (ID 1 core, ID 2 DAS) | PASS |
+| DAS loop avg 0.06 ms; measurement ~1023 raw open input | PASS |
+| Tamu/DAS full system backups | PASS |
 
 ## Test artifacts left on the devices
 
 - SNDB: core as ID 1, DAS as ID 2 (expected).
-- Tamu storage: `DYNMEM`, `KEYMEM`, `SYSMEM` backup files (expected).
-- DAS storage: `.TABLE` + `SYSMEM` backup (Meas1/Meas2 writable fields, `FilterCoeff` at the
-  default 0.5).
+- Tamu: no dynamic/keyed blocks; fan duty 0; `SYSMEM`/`DYNMEM`/`KEYMEM` backup files (expected).
+- DAS storage: `.TABLE` + `SYSMEM` only (defaults restored: FilterCoeff 0.5, SamplingRate 10 on
+  both Meas blocks, saved to SYSMEM).
 - Device names in RAM: "Tamu Node" (core), "DAS v0.1" (DAS) - RAM only.

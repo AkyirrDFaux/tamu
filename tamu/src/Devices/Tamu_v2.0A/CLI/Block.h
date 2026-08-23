@@ -233,7 +233,17 @@ bool ParseCLIValue(uint16_t type, const char *val_str, void *out_buffer, uint8_t
     }
     case DataType::Number:
     {
-        Number number = FloatToNumber(static_cast<float>(atof(val_str)));
+        // Strict decimal float parsing: atof would silently turn "abc" into 0.0 and
+        // accept hex ("0x10" -> 16.0). Require a full, non-hex conversion.
+        if (!val_str || val_str[0] == '\0')
+            return false;
+        if (val_str[0] == '0' && (val_str[1] == 'x' || val_str[1] == 'X'))
+            return false;
+        char *end = nullptr;
+        double parsed = strtod(val_str, &end);
+        if (end == val_str || *end != '\0')
+            return false;
+        Number number = FloatToNumber(static_cast<float>(parsed));
         memcpy(out_buffer, &number, sizeof(Number));
         out_len = sizeof(Number);
         return true;

@@ -52,6 +52,8 @@ static int CmdLog(int argc, char **argv)
 
 // Sends a memory-service extra command (Create/Delete/Save/Recall/Read backup).
 // cli_srv_cid: 0 = response prints block fields, 2 = response prints a status byte.
+// Waits briefly for the asynchronous reply so a dead address or a service that is not
+// compiled into the target produces a timeout error instead of silence.
 static int SendMemoryExtra(uint16_t addr, uint8_t block, ServiceType service, uint8_t cid, uint8_t cli_srv_cid)
 {
     BlockIndex idx = {block, INVALID_INDEX, INVALID_INDEX};
@@ -61,7 +63,11 @@ static int SendMemoryExtra(uint16_t addr, uint8_t block, ServiceType service, ui
                      MakeService(ServiceType::CLI, cli_srv_cid),
                      FLAG_REQACK | FLAG_START | FLAG_STOP,
                      (const uint8_t *)&idx, sizeof(BlockIndex));
+    g_cli_response_seen = false;
     DispatchPacket(req);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    if (!g_cli_response_seen)
+        printf("Error: no response from device %d (timeout) - service missing on the node?\n", addr);
     return 0;
 }
 
@@ -209,7 +215,14 @@ static int CmdDevice(int argc, char **argv)
                      MakeService(ServiceType::CLI, 3),
                      FLAG_REQACK | FLAG_START | FLAG_STOP,
                      payload, plen);
+    g_cli_response_seen = false;
     DispatchPacket(req);
+
+    // Wait briefly for the asynchronous reply so a dead address produces an error
+    // message instead of silence.
+    vTaskDelay(pdMS_TO_TICKS(500));
+    if (!g_cli_response_seen)
+        printf("Error: no response from device %d (timeout).\n", addr);
     return 0;
 }
 

@@ -85,7 +85,9 @@ bool OnPWMFrequencyChange(const StaticBlockDescriptor &block, uint16_t index, co
     return true;
 }
 
-// Clamps the new duty (0-100%), converts it to the LEDC duty value and applies it to the fan's PWM channel.
+// Clamps the new duty (specified in %, valid range 0-100), converts it to the LEDC duty
+// value and applies it to the fan's PWM channel. The block field stores the CLAMPED value,
+// so read-back always matches what was applied.
 bool OnPWMDutyChange(const StaticBlockDescriptor &block, uint16_t index, const void *data, uint16_t data_len)
 {
     Number new_duty = *static_cast<const Number *>(data);
@@ -104,10 +106,14 @@ bool OnPWMDutyChange(const StaticBlockDescriptor &block, uint16_t index, const v
     ledc_channel_t channel = (block.Data == &Fan1) ? LEDC_CHANNEL_0 : LEDC_CHANNEL_1;
 
     ledc_set_duty(LEDC_LOW_SPEED_MODE, channel, duty);
+    bool applied = (ledc_update_duty(LEDC_LOW_SPEED_MODE, channel) == ESP_OK);
 
-    // Update RAM state
-    auto *fan = static_cast<PWMStruct *>(block.Data);
-    fan->Duty = new_duty;
-
-    return (ledc_update_duty(LEDC_LOW_SPEED_MODE, channel) == ESP_OK);
+    // Only commit the block state once the hardware actually took the value; otherwise
+    // the field would claim a duty the fan is not running.
+    if (applied)
+    {
+        auto *fan = static_cast<PWMStruct *>(block.Data);
+        fan->Duty = new_duty;
+    }
+    return applied;
 }

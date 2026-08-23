@@ -6,11 +6,18 @@
 // Defined in Block.h (included after this file)
 void PrintField(const BlockMeta &desc, const void *data_ptr, uint16_t index, bool is_key);
 
+// Set to true by every CLI response handler when a reply arrives. Command functions clear
+// it right before dispatching and wait briefly afterwards, so a missing reply (dead
+// address, service not compiled into the node) produces a timeout error instead of
+// silence.
+bool g_cli_response_seen = false;
+
 // Response handler: receives memory read responses from the network and prints them
 void HandleCLIService(const PacketFrame &frame)
 {
     if (!(frame.flags & FLAG_TYPE))
         return; // Only handle responses
+    g_cli_response_seen = true;
 
     // A single status byte means the operation failed (RespondStatus); it is not a
     // BlockIndex payload, so print it directly instead of misparsing it as a read reply.
@@ -92,6 +99,7 @@ void HandleCLI_StatusResponse(const PacketFrame &frame)
 {
     if (!(frame.flags & FLAG_TYPE))
         return; // Only handle responses
+    g_cli_response_seen = true;
 
     if (frame.payload_len >= 1)
     {
@@ -112,6 +120,7 @@ void HandleCLI_CreateResponse(const PacketFrame &frame)
 {
     if (!(frame.flags & FLAG_TYPE))
         return; // Only handle responses
+    g_cli_response_seen = true;
 
     if (frame.payload_len < sizeof(BlockIndex) + sizeof(BlockMeta))
     {
@@ -143,6 +152,7 @@ void HandleCLI_DeviceResponse(const PacketFrame &frame)
 {
     if (!(frame.flags & FLAG_TYPE))
         return; // Only handle responses
+    g_cli_response_seen = true;
 
     uint8_t cid = GetServiceCID(frame.srv_src);
 
@@ -242,6 +252,7 @@ void HandleCLI_StorageResponse(const PacketFrame &frame)
 {
     if (!(frame.flags & FLAG_TYPE))
         return; // Only handle responses
+    g_cli_response_seen = true;
 
     uint8_t cid = GetServiceCID(frame.srv_src);
 

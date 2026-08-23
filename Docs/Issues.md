@@ -520,6 +520,53 @@ Second pass focused on node-reachable service code and DAS flash size
 - **SendDeviceReply reuses the caller's reply frame**: removes a second full PacketFrame
   (~270 B) from the Device-service stack chain on the node, where these handlers run too.
 
+## Fixed/Closed (RealHW 2026-08-23 edge-case session)
+
+- **BUG 2 - Meas Number fields stored out-of-range values verbatim**: the DAS
+  `ResistiveMeas_Schema` gained write triggers that clamp at write time, so the STORED value
+  now always equals the APPLIED value: Sampling Rate clamped to [1, 1000] Hz (the loop
+  divides by it), Filter Coefficient clamped to [0, 1]. The runtime clamps in
+  `Measuring_Update`/`SampleIntervalMs` remain as defense in depth (recall bypasses
+  triggers by design - direct field memcpy - but the loop still sanitizes).
+- **BUG 3 - Fan duty**: not actually a bug - duty is specified in **percent**, so the
+  tester's `2.0` was correctly stored and applied as 2 % (the report assumed a 0-1
+  fraction). Verified the whole pipeline: `OnPWMDutyChange` clamps to [0, 100] and stores
+  the clamped value, so >100 writes already read back as 100. Hardened while there: the
+  block field is only committed after `ledc_update_duty` succeeds (previously a failed HW
+  update still updated the field).
+- **BUG 4 - deleted blocks visible until next save**: reads and topology summaries of the
+  Dynamic/Keyed Memory services now skip `Deleted`-flagged blocks (read returns status
+  failure, summary counts only visible blocks), so delete-then-read no longer shows stale
+  data. Purge-on-save semantics unchanged per docs; writes to deleted blocks are rejected.
+- **BUG 5 - silent timeouts**: every CLI response handler now sets a shared flag, and the
+  command functions (`dev`, `save`, `recall`, `delete`, `rmem`, `create`, `sndb`) wait 500 ms
+  for it before returning - printing "no response from device N (timeout)" when the target
+  is dead or the service is missing on the node. (`tree` stays asynchronous by design.)
+- **BUG 6 - garbage Number strings parsed as 0**: CLI Number parsing now uses strict
+  `strtod` with full-consumption check and rejects hex strings ("0x10" previously became
+  16.0, "abc" became 0.0); malformed values produce "Failed to parse value" instead of
+  writing silently wrong data.
+- **BUG 1 - deleted files reappeared in the DAS file table (CLOSED, not reproducible)**:
+  at the start of a session the table contained `ZERO`(size 0) and `ALPHA`(size 100) that had
+  been deleted - and verified clean - at the end of the previous session, with no writes in
+  between. Could never be reproduced afterwards: create/delete/reboot cycles, a multi-file
+  fill/stress state, pointer-page exhaustion (13/16 slots used, several stale table
+  generations left in flash) and storage-full states all persisted correctly, and WCH-Link
+  dumps of the pointer page + table matched the display byte-for-byte. The pointer-page
+  last-valid-wins recovery is verified sound. **Closed as irreproducible.** If it ever
+  recurs, dump flash 0x3800-0x383F plus all candidate table regions before any filesystem
+  operation.
+- **Size-0 files did not occupy their reserved block (fixed)**: `CreateFile(name, 0)` and
+  `ResizeFile(name, 0)` reserve (and erase) one block, but `BlockUsed` computed a size-0
+  file's coverage as `offset + 0`, so the block looked free. `FindSpace` then handed it to
+  another file -> two live records aliased the same flash (reproduced on hardware:
+  `ZERO`@512 + `BETA`@512; after resizing `ZERO` up to 200 B it silently shadowed `BETA`'s
+  data region). Fixed by clamping the block count to >= 1 in `BlockUsed`
+  (`Core/Functions/Storage.h`), matching `CreateFile`/`ResizeFile`/`FindSpace`. Verified on
+  hardware: create-to-0 reserves the block (the next file gets a distinct block), resize-to-0
+  keeps the block reserved, resize-from-0 is blocked when the extension would overlap a live
+  file and succeeds when space is free; table moves and reboot persistence are unaffected.
+
 ## Open (firmware code review follow-ups)
 
 - **GammaTable has only 240 entries** (`Blocks/Vysi1Display.h:9-24`): the initializer list

@@ -25,12 +25,44 @@ const BlockMeta ResistiveMeas_Map[] = {
     {DataType::Number | FieldFlags::ReadOnly, 0x00, sizeof(Number)},
 };
 
+// Write-time clamping for the writable Meas fields, so the STORED value always equals the
+// APPLIED value (the sampling loop additionally defends in depth). Without this, an
+// out-of-range write is stored verbatim while the loop silently clamps it - read-back
+// would mislead.
+static bool OnMeasFieldWrite(const StaticBlockDescriptor &block, uint16_t index, const void *data, uint16_t len)
+{
+    auto *m = static_cast<ResistiveMeasStruct *>(block.Data);
+    if (len != sizeof(Number)) return false;
+    Number v = *static_cast<const Number *>(data);
+
+    switch (index)
+    {
+    case 0: // Sampling Rate (Hz): the loop divides by it, keep >= 1 Hz and bounded
+        if (v < N(1)) v = N(1);
+        if (v > N(1000)) v = N(1000);
+        m->SamplingRate = v;
+        return true;
+
+    case 1: // Filter Coefficient: the low-pass only converges within [0,1]
+        if (v.Value < 0) v.Value = 0;
+        if (v.Value > (1 << DECIMAL)) v.Value = (1 << DECIMAL);
+        m->FilterCoeff = v;
+        return true;
+    }
+    return false;
+}
+
+const TriggerEntry ResistiveMeas_callbacks[] = {
+    {OnMeasFieldWrite, 0},
+    {OnMeasFieldWrite, 1},
+};
+
 const BlockSchema ResistiveMeas_Schema = {
     .Map = ResistiveMeas_Map,
-    .Triggers = nullptr,
+    .Triggers = ResistiveMeas_callbacks,
     .Type = BlockType::ResistiveMeasure,
     .MapCount = sizeof(ResistiveMeas_Map) / sizeof(BlockMeta),
-    .TriggerCount = 0,
+    .TriggerCount = sizeof(ResistiveMeas_callbacks) / sizeof(TriggerEntry),
 };
 
 // Range selector pins (Docs/Devices.md): each channel picks a reference resistor

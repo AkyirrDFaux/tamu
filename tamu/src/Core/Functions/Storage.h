@@ -651,7 +651,15 @@ private:
                 return true;
             if (FileSlotIsFree(entry.offset)) continue;
             uint32_t start = entry.offset;
-            uint32_t end = entry.offset + ((entry.size + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;
+            // A file always occupies at least one block, even when its size is 0:
+            // CreateFile/ResizeFile reserve (and erase) one block for a zero-size file,
+            // so BlockUsed must report it as used. Without this clamp a size-0 file's
+            // block looks free and FindSpace hands it to another file -> two live records
+            // alias the same flash (observed on hardware: ZERO@512 + BETA@512, and after
+            // resizing ZERO up, ZERO shadowed BETA's data region).
+            uint32_t blocks = (entry.size + PAGE_SIZE - 1) / PAGE_SIZE;
+            if (blocks == 0) blocks = 1;
+            uint32_t end = entry.offset + blocks * PAGE_SIZE;
             if (offset >= start && offset < end)
                 return true;
         }

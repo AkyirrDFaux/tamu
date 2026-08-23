@@ -8,6 +8,7 @@
 void HandleCLI_SNDBResponse(const PacketFrame &frame)
 {
     if (!(frame.flags & FLAG_TYPE)) return;
+    g_cli_response_seen = true;
 
     if (frame.payload_len == 0) {
         printf("SNDB: No entry found or empty result.\n");
@@ -81,6 +82,7 @@ static int DispatchSNDBCommand(int argc, char **argv)
         return 1;
     }
 
+    g_cli_response_seen = false;
     PacketConstruct(&req_packet, target_addr,
                      MakeService(ServiceType::Device, cid),
                      MakeService(ServiceType::CLI, 1),
@@ -89,5 +91,10 @@ static int DispatchSNDBCommand(int argc, char **argv)
 
     DispatchPacket(req_packet);
     printf("SNDB command '%s' dispatched to node %d\n", cmd_str, target_addr);
+
+    // Warn when the target never answers (dead address / service missing on the node).
+    vTaskDelay(pdMS_TO_TICKS(500));
+    if (!g_cli_response_seen)
+        printf("Error: no response from device %d (timeout).\n", target_addr);
     return 0;
 }

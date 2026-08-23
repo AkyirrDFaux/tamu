@@ -60,17 +60,21 @@ void HandleKeyedMemory(const PacketFrame &frame)
     }
     case 2: // Read
     {
-        if (idx->Block == INVALID_BLOCK) // summary: count of blocks
+        if (idx->Block == INVALID_BLOCK) // summary: count of visible (non-deleted) blocks
         {
+            uint16_t visible = 0;
+            for (uint16_t i = 0; i < keyed_block_registry.block_count; i++)
+                if (keyed_block_registry.GetBlock(i)->type != BlockType::Deleted)
+                    visible++;
             uint8_t payload[sizeof(BlockIndex) + 1];
             BlockIndex out_index = {INVALID_BLOCK, INVALID_INDEX, INVALID_INDEX};
             memcpy(payload, &out_index, sizeof(BlockIndex));
-            payload[sizeof(BlockIndex)] = (uint8_t)keyed_block_registry.block_count;
+            payload[sizeof(BlockIndex)] = (uint8_t)visible;
             SendResponse(frame, payload, sizeof(BlockIndex) + 1);
             break;
         }
         KeyedBlockDescriptor *block = keyed_block_registry.GetBlock(idx->Block);
-        if (!block) { RespondStatus(frame, false); break; }
+        if (!block || block->type == BlockType::Deleted) { RespondStatus(frame, false); break; }
         if (idx->Field == INVALID_INDEX) // block meta + name
         {
             uint8_t payload[MAX_PAYLOAD_SIZE];
@@ -130,7 +134,7 @@ void HandleKeyedMemory(const PacketFrame &frame)
             break;
         }
         KeyedBlockDescriptor *block = keyed_block_registry.GetBlock(idx->Block);
-        if (!block) { RespondStatus(frame, false); break; }
+        if (!block || block->type == BlockType::Deleted) { RespondStatus(frame, false); break; }
 
         if (idx->Field == INVALID_INDEX) // set block name
         {
