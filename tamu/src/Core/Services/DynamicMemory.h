@@ -204,6 +204,15 @@ static bool CopyBlockInto(BlockRegistry<T> &destination, uint16_t index, const D
         destination.blocks[i] = destination.blocks[i - 1];
 
     T &new_block = *destination.GetBlock(index);
+    // Zero the slot unconditionally: after the shift it may still hold aliased or stale
+    // pointers from the moved neighbour (or a previously released block), which would be
+    // double-freed later if the source block has no map/data of its own.
+    new_block.data_ptr = nullptr;
+    new_block.map = nullptr;
+    new_block.length = 0;
+    new_block.allocated = 0;
+    new_block.map_count = 0;
+    new_block.map_allocated = 0;
     new_block.type = source.type;
     uint16_t name_len = (uint16_t)strlen(source.Name);
     if (name_len > BLOCK_NAME_LEN - 1) name_len = BLOCK_NAME_LEN - 1;
@@ -240,10 +249,18 @@ static bool SaveRegistryBlock(BlockRegistry<T> &registry, uint8_t block, const c
     if (block >= registry.block_count)
         return false;
 
-uint8_t buf[MEMORY_BACKUP_CAP];
+    uint8_t buf[MEMORY_BACKUP_CAP];
     BlockRegistry<T> temp_registry;
     uint16_t count = ReadBackupFile(fname, buf, sizeof(buf));
-    if (count > 0 && !DeserializeRegistry(temp_registry, buf, count))
+    if (count == 0)
+    {
+        // No backup file yet: store the whole registry so the stored block indices stay
+        // aligned with the live ones (a lone block N saved at index 0 would desync every
+        // later per-block save).
+        count = SerializeRegistry(registry, buf, sizeof(buf));
+        return count > 0 && WriteBackupFile(fname, buf, count);
+    }
+    if (!DeserializeRegistry(temp_registry, buf, count))
     {
         FreeRegistry(temp_registry);
         return false;
@@ -417,7 +434,8 @@ static uint16_t BackupBlockPayload(const BlockIndex *idx, const uint8_t *buf, ui
         if (sizeof(BlockIndex) + 1 > cap) return 0;
         BlockIndex out_index = {INVALID_BLOCK, INVALID_INDEX, INVALID_INDEX};
         memcpy(out, &out_index, sizeof(BlockIndex));
-        out[sizeof(BlockIndex)] = (uint8_t)count;
+        // Saturate rather than wrap: the summary byte cannot represent > 255 blocks.
+        out[sizeof(BlockIndex)] = (count > 0xFF) ? 0xFF : (uint8_t)count;
         return sizeof(BlockIndex) + 1;
     }
 
@@ -497,14 +515,12 @@ void HandleDynamicMemory(const PacketFrame &frame)
         if (idx->Field == INVALID_INDEX) // block meta + name
         {
             uint8_t payload[MAX_PAYLOAD_SIZE];
-            uint16_t cursor = 0;
-            BlockIndex out_index = {idx->Block, INVALID_INDEX, INVALID_INDEX};
-            memcpy(payload + cursor, &out_index, sizeof(BlockIndex)); cursor += sizeof(BlockIndex);
-            BlockMeta meta; meta.FlagsAndType = (uint16_t)block->type; meta.Key = INVALID_INDEX; meta.Size = (uint8_t)block->map_count;
-            memcpy(payload + cursor, &meta, sizeof(BlockMeta)); cursor += sizeof(BlockMeta);
-            uint8_t name_len = (uint8_t)strlen(block->Name);
-            memcpy(payload + cursor, block->Name, name_len); cursor += name_len;
-            SendResponse(frame, payload, (uint8_t)cursor);
+            uint16_t plen = MakeBlockMetaPayload(idx->Block, (uint16_t)block->type,
+                                                 block->map_count, block->Name,
+                                                 (uint8_t)strlen(block->Name),
+                                                 payload, sizeof(payload));
+            if (plen == 0) { RespondStatus(frame, false); break; }
+            SendResponse(frame, payload, (uint8_t)plen);
             break;
         }
         FieldResult field_result = block->Get(idx->Field);
@@ -547,8 +563,9 @@ void HandleDynamicMemory(const PacketFrame &frame)
 
         if (BlockMetaType(desc->FlagsAndType) == (uint16_t)DataType::Deleted)
         {
-            if (idx->Field < block->map_count) block->Remove(idx->Field);
-            RespondStatus(frame, true);
+            bool removed = idx->Field < block->map_count;
+            if (removed) block->Remove(idx->Field);
+            RespondStatus(frame, removed);
             break;
         }
 
@@ -575,7 +592,8 @@ void HandleDynamicMemory(const PacketFrame &frame)
             RespondStatus(frame, false);
             break;
         }
-        RespondEcho(frame, idx, *desc, value, value_len);
+        // Success echo: the request payload already IS BlockIndex + BlockMeta + value.
+        SendResponse(frame, frame.payload, frame.payload_len);
         break;
     }
     case 4: // Read backup (direct file parse, no heap)

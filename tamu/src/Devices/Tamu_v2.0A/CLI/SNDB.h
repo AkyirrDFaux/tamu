@@ -2,7 +2,7 @@
 
 #include "Core/Functions/Packet.h"
 #include "esp_log.h"
-#include <string>
+#include <string.h>
 
 // Receives SNDB response packets and prints entries to console
 void HandleCLI_SNDBResponse(const PacketFrame &frame)
@@ -14,9 +14,16 @@ void HandleCLI_SNDBResponse(const PacketFrame &frame)
         return;
     }
 
+    // 1-byte failure statuses (RespondStatus) would otherwise print nothing at all.
+    if (frame.payload_len == 1) {
+        printf("SNDB: Operation FAILED (status %d).\n", frame.payload[0]);
+        return;
+    }
+
     if (frame.payload_len >= 16) {
         const uint8_t *sn_bytes = frame.payload;
-        uint16_t short_id = *reinterpret_cast<const uint16_t *>(frame.payload + 14);
+        uint16_t short_id;
+        memcpy(&short_id, frame.payload + 14, sizeof(short_id));
 
         char sn_str[29] = {0};
         for (int i = 0; i < 14; i++)
@@ -36,19 +43,19 @@ static int DispatchSNDBCommand(int argc, char **argv)
     }
 
     uint16_t target_addr = (uint16_t)atoi(argv[1]);
-    std::string cmd_str = argv[2];
+    const char *cmd_str = argv[2];
 
     PacketFrame req_packet;
     uint8_t payload[20] = {0};
     uint8_t payload_len = 0;
     uint8_t cid = 0;
 
-    if (cmd_str == "read_all") {
+    if (strcmp(cmd_str, "read_all") == 0) {
         // CID 12: No payload
         cid = 12;
         payload_len = 0;
     }
-    else if (cmd_str == "read_one") {
+    else if (strcmp(cmd_str, "read_one") == 0) {
         // CID 13: ID (2 bytes) or SN (14 bytes)
         if (argc < 4) { printf("Missing ID\n"); return 1; }
         cid = 13;
@@ -56,7 +63,7 @@ static int DispatchSNDBCommand(int argc, char **argv)
         memcpy(payload, &lookup_id, 2);
         payload_len = 2;
     }
-    else if (cmd_str == "write") {
+    else if (strcmp(cmd_str, "write") == 0) {
         // CID 14: SN (14 bytes) + ID (2 bytes)
         if (argc < 5) { printf("Usage: sndb <addr> write <id> <sn_hex>\n"); return 1; }
         cid = 14;
@@ -70,7 +77,7 @@ static int DispatchSNDBCommand(int argc, char **argv)
         payload_len = 16;
     }
     else {
-        printf("Unknown SNDB command: %s\n", cmd_str.c_str());
+        printf("Unknown SNDB command: %s\n", cmd_str);
         return 1;
     }
 
@@ -81,6 +88,6 @@ static int DispatchSNDBCommand(int argc, char **argv)
                      payload, payload_len);
 
     DispatchPacket(req_packet);
-    printf("SNDB command '%s' dispatched to node %d\n", cmd_str.c_str(), target_addr);
+    printf("SNDB command '%s' dispatched to node %d\n", cmd_str, target_addr);
     return 0;
 }

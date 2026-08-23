@@ -18,8 +18,11 @@ void HandleStorageService(const PacketFrame &frame)
         uint8_t stream_idx = cid - 64;
         if (stream_idx < MAX_STREAMS && Storage.streams[stream_idx].active) {
             WriteStream &stream = Storage.streams[stream_idx];
-            uint32_t file_offset, file_size;
-            if (Storage.GetFileInfo(stream.name, &file_offset, &file_size)) {
+            // File info is cached at stream open (offset/size); a full table walk per
+            // packet would cost O(table) flash reads on every single write chunk.
+            uint32_t file_offset = stream.file_offset;
+            uint32_t file_size = stream.file_size;
+            {
                 // Clamp the write so a stream can never overwrite flash beyond the file
                 // (the file table or an adjacent file).
                 if (stream.current_offset < file_size) {
@@ -27,6 +30,8 @@ void HandleStorageService(const PacketFrame &frame)
                     if (stream.current_offset + chunk_len > file_size) chunk_len = file_size - stream.current_offset;
                     Storage_FlashWrite(file_offset + stream.current_offset, frame.payload, chunk_len);
                     stream.current_offset += chunk_len;
+                    if (stream.current_offset >= file_size)
+                        stream.active = false; // file complete: stop accepting packets
                 }
             }
         }
@@ -48,11 +53,19 @@ void HandleStorageService(const PacketFrame &frame)
             for (uint8_t index = 0; index < active_count; index++) {
                 FileEntry entry;
                 if (!Storage.ReadFileEntry(index, &entry))
-                    continue;
+                    break; // table unreadable: stop; the final packet below still carries FLAG_STOP
                 sent++;
+            }
+
+            // Emit the entries as a stream. `sent` counts what was actually read so the
+            // last packet always carries FLAG_STOP even if a late entry read failed.
+            for (uint8_t index = 0; index < sent; index++) {
+                FileEntry entry;
+                if (!Storage.ReadFileEntry(index, &entry))
+                    break;
                 uint8_t flags = FLAG_TYPE;
-                if (sent == 1) flags |= FLAG_START;
-                if (sent == active_count) flags |= FLAG_STOP;
+                if (index == 0) flags |= FLAG_START;
+                if (index == sent - 1) flags |= FLAG_STOP;
 
                 PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
                                  flags, (const uint8_t *)&entry, sizeof(FileEntry));
@@ -122,10 +135,18 @@ void HandleStorageService(const PacketFrame &frame)
                     if (num_bytes > remaining) num_bytes = remaining;
 
                     uint32_t read_ptr = file_offset + offset;
-                    
-                    // Stream response back in chunks
+
+                    // Stream response back in chunks. A zero-length read still answers
+                    // with an empty START|STOP frame so the client never hangs.
                     uint32_t sent_bytes = 0;
-                    while (sent_bytes < num_bytes) {
+                    do {
+                        if (num_bytes == 0) {
+                            PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
+                                             FLAG_TYPE | FLAG_START | FLAG_STOP, nullptr, 0);
+                            DispatchPacket(reply);
+                            break;
+                        }
+
                         uint32_t chunk = num_bytes - sent_bytes;
                         if (chunk > MAX_PAYLOAD_SIZE - 1) chunk = MAX_PAYLOAD_SIZE - 1;
 
@@ -142,7 +163,7 @@ void HandleStorageService(const PacketFrame &frame)
                         DispatchPacket(reply);
 
                         sent_bytes += chunk;
-                    }
+                    } while (sent_bytes < num_bytes);
                 } else {
                     // File not found or invalid offset
                     PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
@@ -158,15 +179,24 @@ void HandleStorageService(const PacketFrame &frame)
                 const char *name = reinterpret_cast<const char *>(frame.payload);
                 uint32_t offset = *reinterpret_cast<const uint32_t *>(frame.payload + 8);
 
+                // Resolve and cache the file location once, at stream open.
+                uint32_t file_offset = 0, file_size = 0;
+                bool file_ok = Storage.GetFileInfo(name, &file_offset, &file_size);
+                if (file_ok && offset > file_size) file_ok = false; // start beyond EOF
+
                 uint8_t cid_assigned = 0;
-                for (int stream_idx = 0; stream_idx < MAX_STREAMS; stream_idx++) {
-                    if (!Storage.streams[stream_idx].active) {
-                        Storage.streams[stream_idx].active = true;
-                        Storage.streams[stream_idx].cid = 64 + stream_idx;
-                        memcpy(Storage.streams[stream_idx].name, name, 8);
-                        Storage.streams[stream_idx].current_offset = offset;
-                        cid_assigned = Storage.streams[stream_idx].cid;
-                        break;
+                if (file_ok) {
+                    for (int stream_idx = 0; stream_idx < MAX_STREAMS; stream_idx++) {
+                        if (!Storage.streams[stream_idx].active) {
+                            Storage.streams[stream_idx].active = true;
+                            Storage.streams[stream_idx].cid = 64 + stream_idx;
+                            memcpy(Storage.streams[stream_idx].name, name, 8);
+                            Storage.streams[stream_idx].current_offset = offset;
+                            Storage.streams[stream_idx].file_offset = file_offset;
+                            Storage.streams[stream_idx].file_size = file_size;
+                            cid_assigned = Storage.streams[stream_idx].cid;
+                            break;
+                        }
                     }
                 }
 

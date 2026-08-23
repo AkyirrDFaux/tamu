@@ -11,29 +11,14 @@
 
 struct SerialNumber{
     uint8_t bytes[14];
-    // Default constructor leaves the 14 bytes uninitialised.
-    SerialNumber() = default;
-    // Equality: compares the 14 ID bytes.
+    // Equality: compares the ID bytes.
     bool operator==(const SerialNumber& other) const {
-        return memcmp(this->bytes, other.bytes, 14) == 0;
+        return memcmp(this->bytes, other.bytes, sizeof(bytes)) == 0;
     }
 
     // Inequality Operator: Often good practice to include if defining ==
     bool operator!=(const SerialNumber& other) const {
         return !(*this == other);
-    }
-
-    // Assignment Operator: Copies the 14 bytes from other to this
-    SerialNumber& operator=(const SerialNumber& other) {
-        if (this != &other) { // Protect against self-assignment
-            memcpy(this->bytes, other.bytes, 14);
-        }
-        return *this;
-    }
-
-    // Copy constructor: copies the 14 bytes from `other`.
-    SerialNumber(const SerialNumber& other) {
-        memcpy(this->bytes, other.bytes, 14);
     }
 } __attribute__((packed));
 

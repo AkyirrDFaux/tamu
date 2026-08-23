@@ -123,7 +123,8 @@ void DispatchPacket(const PacketFrame &frame)
     }
 }
 
-// Processes the bus input queue, dispatching every received packet to the local handlers.
+// Processes the bus input queue, dispatching one received frame per call to the local
+// handlers (the main loop calls this repeatedly to drain the queue).
 void ProcessBus()
 {
     static PacketFrame rx_frame __attribute__((aligned(4)));

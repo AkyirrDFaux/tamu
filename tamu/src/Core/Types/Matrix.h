@@ -125,12 +125,16 @@ public:
         return mat;
     }
 
-    // Returns the inverse of this 2D transformation matrix
+    // Returns the inverse of this 2D transformation matrix. A singular (or near-singular)
+    // matrix returns the identity instead of a zero/garbage inverse.
     Matrix<3, 3> InverseTransform2D() const
     {
         Number a = (*this)(0, 0), b = (*this)(0, 1), c = (*this)(0, 2);
         Number d = (*this)(1, 0), e = (*this)(1, 1), f = (*this)(1, 2);
         Number det = a * e - b * d;
+
+        if (det == Number(0))
+            return Identity();
 
         Matrix<3, 3> inv;
         inv(0, 0) = e / det;

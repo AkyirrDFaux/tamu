@@ -194,7 +194,10 @@ inline Number abs(Number A)
     return Result;
 }
 
-// Fixed-point square root via binary digit-by-digit extraction (returns 0 for non-positive input)
+// Fixed-point square root via binary digit-by-digit extraction (returns 0 for non-positive input).
+// NOTE: uses uint64_t intermediates by necessity (48+ bit working value); it is only linked
+// where called, so keep it out of flash-constrained node images unless 64-bit helpers are
+// already present.
 inline Number sqrt(Number A)
 {
     if (A.Value <= 0)
@@ -219,7 +222,13 @@ inline Number sqrt(Number A)
 }
 
 #define RAW_PI 205887
-static const Number PI = Number::FromRaw(RAW_PI);
+// Single shared PI instance: a plain namespace-scope `static const Number` would be
+// duplicated (with internal linkage) in every translation unit including this header.
+inline const Number &GetPI()
+{
+    static const Number pi = Number::FromRaw(RAW_PI);
+    return pi;
+}
 #define RAW_TWO_PI 411774
 #define RAW_HALF_PI 102943 // PI / 2 in 16.16
 #define RAW_SIN_B 83443    // Fixed-point 16.16 for 4/pi
@@ -241,14 +250,15 @@ inline Number sin(Number X)
         x += RAW_TWO_PI;
 
     // 3. Parabola approximation: y = Bx + Cx|x|
-    // We use int64_t to prevent overflow during the multiplication before shifting back
-    int32_t P1 = (int32_t)(((int64_t)RAW_SIN_B * x) >> 16);
+    // FixedMul32 computes (a*b)>>16 exactly (32-bit only), so no 64-bit multiply
+    // helper (__muldi3) can be pulled in even without NUMBER_ONLY_32BIT.
+    int32_t P1 = FixedMul32(RAW_SIN_B, x);
 
     // Calculate x * |x|
     int32_t xAbs = (x < 0) ? -x : x;
-    int32_t xSquared = (int32_t)(((int64_t)x * xAbs) >> 16);
+    int32_t xSquared = FixedMul32(x, xAbs);
 
-    int32_t P2 = (int32_t)(((int64_t)RAW_SIN_C * xSquared) >> 16);
+    int32_t P2 = FixedMul32(RAW_SIN_C, xSquared);
 
     return Number::FromRaw(P1 - P2);
 }
@@ -266,9 +276,9 @@ inline Number atan2(Number Y, Number X)
     // This is not very accurate
     int32_t Sign = Y > 0 ? 1 : -1;
     if (X < 0)
-        return Sign * (3 * PI / 4 - PI / 4 * ((X + abs(Y)) / (abs(Y) - X)));
+        return Sign * (3 * GetPI() / 4 - GetPI() / 4 * ((X + abs(Y)) / (abs(Y) - X)));
     else
-        return Sign * (PI / 4 - PI / 4 * ((X - abs(Y)) / (X + abs(Y))));
+        return Sign * (GetPI() / 4 - GetPI() / 4 * ((X - abs(Y)) / (X + abs(Y))));
 };
 
 // Fixed-point natural logarithm via range reduction plus a Horner polynomial (returns 0 for non-positive input)
@@ -305,15 +315,15 @@ inline Number log(Number x)
     // Constants in 16.16 fixed point
     // 1/4 = 0x4000, 1/3 = 0x5555, 1/2 = 0x8000, 1 = 0x10000
 
-    // We compute from the inside out:
+    // We compute from the inside out (FixedMul32 = exact (a*b)>>16, 32-bit only):
     // a = (1/3 - y/4)
     int32_t a = 0x5555 - (y >> 2);
     // b = (1/2 - y*a)
-    int32_t b = 0x8000 - (int32_t)(((int64_t)y * a) >> 16);
+    int32_t b = 0x8000 - FixedMul32(y, a);
     // c = (1 - y*b)
-    int32_t c = 0x10000 - (int32_t)(((int64_t)y * b) >> 16);
+    int32_t c = 0x10000 - FixedMul32(y, b);
     // ln_m = y * c
-    int32_t ln_m = (int32_t)(((int64_t)y * c) >> 16);
+    int32_t ln_m = FixedMul32(y, c);
 
     // 3. Final Reconstruction
     const int32_t LN2 = 45426;
@@ -326,13 +336,14 @@ inline Number min(Number A, Number B) { return (A.Value < B.Value) ? A : B; }
 // Returns the larger of `A` and `B` (fixed-point)
 inline Number max(Number A, Number B) { return (A.Value > B.Value) ? A : B; }
 
-static uint32_t _next_rand = 1; // Seed this with AnalogRead or CurrentTime
-
-// Internal helper to get a raw pseudo-random 32-bit integer
+// Internal helper to get a raw pseudo-random 32-bit integer. The state is a
+// function-local static so every translation unit shares one sequence (a
+// namespace-scope static in a header would give each TU its own RNG).
 inline uint32_t RawRand()
 {
-    _next_rand = _next_rand * 1103515245 + 12345;
-    return _next_rand;
+    static uint32_t next_rand = 1; // Seed this with AnalogRead or CurrentTime
+    next_rand = next_rand * 1103515245 + 12345;
+    return next_rand;
 }
 
 // Returns a Number between 0.0 and 1.0
@@ -350,9 +361,9 @@ inline Number LimitZeroToOne(Number Value)
 };
 
 // Clamps an integer into the byte range [0, 255]
-inline uint8_t LimitByte(int Number)
+inline uint8_t LimitByte(int Value)
 {
-    return min(max(Number, 0), 255).ToInt();
+    return min(max(Value, 0), 255).ToInt();
 };
 
 // Converts an 8-bit value (0-255) to a Number fraction (0.0-1.0)
@@ -370,18 +381,18 @@ inline uint8_t PercentToByte(Number Value)
 };
 
 // Multiplies two byte-percent values (0-255 each) and returns the byte result
-inline uint8_t MultiplyBytePercentByte(uint8_t Number, uint8_t Percent)
+inline uint8_t MultiplyBytePercentByte(uint8_t ByteValue, uint8_t Percent)
 {
-    return (uint8_t)(((int)Number * (int)Percent) / 255);
+    return (uint8_t)(((int)ByteValue * (int)Percent) / 255);
 };
 
 // Wraps `Value` into the range [-PI, PI]
 inline Number LimitPi(Number Value)
 {
-    while (Value > PI)
-        Value -= 2 * PI;
-    while (Value < -PI)
-        Value += 2 * PI;
+    while (Value > GetPI())
+        Value -= 2 * GetPI();
+    while (Value < -GetPI())
+        Value += 2 * GetPI();
     return Value;
 }
 

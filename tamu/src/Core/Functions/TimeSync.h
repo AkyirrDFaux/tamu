@@ -19,14 +19,16 @@ public:
     enum State { Idle, Waiting };
 
     // Called on the main loop; starts a sync round when due and sends/retries samples while waiting.
+    // Scheduling uses signed differences of the uint32 millisecond counters so the
+    // comparisons stay correct across UptimeMs wraparound.
     void Tick(uint32_t now_ms)
     {
         if (state == Idle)
         {
-            if (now_ms >= round_due_ms)
+            if ((int32_t)(now_ms - round_due_ms) >= 0)
                 BeginRound();
         }
-        else if (now_ms >= next_send_ms)
+        else if ((int32_t)(now_ms - next_send_ms) >= 0)
         {
             if (missed >= TIMESYNC_SAMPLES)
                 NextTarget();

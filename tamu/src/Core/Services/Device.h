@@ -11,9 +11,11 @@
 #endif
 
 // Sends a single-packet Device service reply back to the requester (src mirrored).
-static inline void SendDeviceReply(const PacketFrame &frame, const void *payload, uint8_t len)
+// `reply` must be a PacketFrame provided by the caller: allocating one here would nest a
+// second full frame (~270 B) on top of the caller's own frame on the small node stack.
+static inline void SendDeviceReply(const PacketFrame &frame, PacketFrame &reply,
+                                   const void *payload, uint8_t len)
 {
-    PacketFrame reply;
     PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
                      FLAG_TYPE | FLAG_START | FLAG_STOP,
                      (const uint8_t *)payload, len);
@@ -173,7 +175,9 @@ void HandleDeviceService(const PacketFrame &frame)
         case 0: // Discover
         {
 #ifdef TYPE_CORE
-            if (DeviceStatus.ShortAddress != 1)
+            // Per the docs, ID assignment is a *core capability*: only answer when we
+            // report the CORE bit and hold a valid short address.
+            if (!(kCapabilities & Capabilities::Core) || DeviceStatus.ShortAddress != 1)
                 return;
 
             if (frame.payload_len < sizeof(SerialNumber))
@@ -181,7 +185,7 @@ void HandleDeviceService(const PacketFrame &frame)
 
             char sn_str[29];
             const SerialNumber *incoming_sn = reinterpret_cast<const SerialNumber *>(frame.payload);
-            SerialNumberToString(*incoming_sn, sn_str);
+            SerialNumberToString(*incoming_sn, sn_str, sizeof(sn_str));
 
             uint16_t NewAddr = SNDB::FindShortID(*incoming_sn);
 
@@ -219,33 +223,33 @@ void HandleDeviceService(const PacketFrame &frame)
         }
 
         case 1: // Ping
-            SendDeviceReply(frame, nullptr, 0);
+            SendDeviceReply(frame, reply, nullptr, 0);
             break;
 
         case 2: // Device type
         {
             uint16_t dev_type = (uint16_t)kDeviceType;
-            SendDeviceReply(frame, &dev_type, sizeof(dev_type));
+            SendDeviceReply(frame, reply, &dev_type, sizeof(dev_type));
             break;
         }
 
         case 3: // Serial number
-            SendDeviceReply(frame, &GetSerialNumber(), sizeof(SerialNumber));
+            SendDeviceReply(frame, reply, &GetSerialNumber(), sizeof(SerialNumber));
             break;
 
         case 4: // Software version
-            SendDeviceReply(frame, DeviceVersion, (uint8_t)strlen(DeviceVersion));
+            SendDeviceReply(frame, reply, DeviceVersion, (uint8_t)strlen(DeviceVersion));
             break;
 
         case 5: // Capability
         {
             uint32_t cap = kCapabilities;
-            SendDeviceReply(frame, &cap, sizeof(cap));
+            SendDeviceReply(frame, reply, &cap, sizeof(cap));
             break;
         }
 
         case 6: // Read Name
-            SendDeviceReply(frame, DeviceName, (uint8_t)strlen(DeviceName));
+            SendDeviceReply(frame, reply, DeviceName, (uint8_t)strlen(DeviceName));
             break;
 
         case 7: // Set Name (respond only if requested)
@@ -257,21 +261,21 @@ void HandleDeviceService(const PacketFrame &frame)
                 DeviceNameBuffer[len] = '\0';
             }
             if (frame.flags & FLAG_REQACK)
-                SendDeviceReply(frame, DeviceName, (uint8_t)strlen(DeviceName));
+                SendDeviceReply(frame, reply, DeviceName, (uint8_t)strlen(DeviceName));
             break;
         }
 
         case 8: // Uptime
         {
             uint32_t uptime = DeviceStatus.UptimeMs;
-            SendDeviceReply(frame, &uptime, sizeof(uptime));
+            SendDeviceReply(frame, reply, &uptime, sizeof(uptime));
             break;
         }
 
         case 9: // Loop Time: average + maximum loop time (2x Number)
         {
             Number loop[2] = {DeviceStatus.AvgLoopTimeMs, DeviceStatus.MaxLoopTimeMs};
-            SendDeviceReply(frame, loop, sizeof(loop));
+            SendDeviceReply(frame, reply, loop, sizeof(loop));
             break;
         }
 
@@ -303,11 +307,14 @@ void HandleDeviceService(const PacketFrame &frame)
         {
             if (frame.payload_len >= 4)
             {
+                int32_t theta;
+                memcpy(&theta, frame.payload, sizeof(theta));
                 // The core pushes the NTP-style offset theta = node_time - core_time
-                // (positive when the node is ahead). Because UptimeMs = Now() + TimeOffsetMs,
-                // the correction that aligns this node must be -theta; adding +theta instead
-                // doubles the error every 5-minute sync round and diverges exponentially.
-                TimeOffsetMs = -(*reinterpret_cast<const int32_t *>(frame.payload));
+                // measured on the node's *displayed* time (which already includes the old
+                // offset). The correction therefore accumulates: subtracting theta from
+                // the current offset converges to zero error; assigning -theta would keep
+                // the previous round's residual alive forever.
+                TimeOffsetMs -= theta;
             }
             break;
         }

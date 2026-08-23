@@ -30,6 +30,8 @@ void HandleCLIService(const PacketFrame &frame)
 
     if (idx->Block == INVALID_BLOCK)
     {
+        if (frame.payload_len < sizeof(BlockIndex) + 1)
+            return; // truncated summary reply
         const char *svc_name = "?";
         switch (GetServiceType(frame.srv_src))
         {
@@ -42,6 +44,8 @@ void HandleCLIService(const PacketFrame &frame)
     }
     else if (idx->Field != INVALID_INDEX)
     {
+        if (frame.payload_len < sizeof(BlockIndex) + sizeof(BlockMeta))
+            return; // truncated field reply: avoid underflowing the length math below
         const BlockMeta *desc = reinterpret_cast<const BlockMeta *>(data_ptr);
         const void *data = (const void *)(data_ptr + sizeof(BlockMeta));
 
@@ -72,6 +76,8 @@ void HandleCLIService(const PacketFrame &frame)
     }
     else
     {
+        if (frame.payload_len < sizeof(BlockIndex) + sizeof(BlockMeta))
+            return; // truncated meta reply
         const BlockMeta *meta = reinterpret_cast<const BlockMeta *>(data_ptr);
         printf("Block [%02d] | Type: 0x%04X | Size: %d\n",
                idx->Block, BlockMetaType(meta->FlagsAndType), meta->Size);
@@ -147,7 +153,7 @@ void HandleCLI_DeviceResponse(const PacketFrame &frame)
             {
                 const AssignPayload *p = reinterpret_cast<const AssignPayload *>(frame.payload);
                 char sn_str[29];
-                SerialNumberToString(p->sn, sn_str);
+                SerialNumberToString(p->sn, sn_str, sizeof(sn_str));
                 printf("Device %d: Discover -> SN %s, ID 0x%04X\n", frame.id_src, sn_str, p->new_addr);
             }
             break;
@@ -168,7 +174,7 @@ void HandleCLI_DeviceResponse(const PacketFrame &frame)
             if (frame.payload_len >= 14)
             {
                 char sn_str[29] = {0};
-                SerialNumberToString(*reinterpret_cast<const SerialNumber *>(frame.payload), sn_str);
+                SerialNumberToString(*reinterpret_cast<const SerialNumber *>(frame.payload), sn_str, sizeof(sn_str));
                 printf("Device %d: SN %s\n", frame.id_src, sn_str);
             }
             break;

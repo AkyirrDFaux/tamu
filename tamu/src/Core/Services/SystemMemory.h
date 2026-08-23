@@ -5,13 +5,20 @@
 // System Memory service (static/compiled-in blocks, block numbers local to this service):
 // Read (2), Write (3), Backup (4), Save (5), Recall (6).
 
+// Number of writable (non-ReadOnly) fields in a block's schema (shared helper).
+static uint16_t CountWritableFields(const BlockSchema *schema)
+{
+    uint16_t count = 0;
+    for (uint16_t i = 0; i < schema->MapCount; i++)
+        if (!(schema->Map[i].FlagsAndType & FieldFlags::ReadOnly))
+            count++;
+    return count;
+}
+
 // True if the block has at least one writable (non-ReadOnly) field.
 static bool SystemBlockWritable(const StaticBlockDescriptor &block)
 {
-    for (uint16_t i = 0; i < block.Schema->MapCount; i++)
-        if (!(block.Schema->Map[i].FlagsAndType & FieldFlags::ReadOnly))
-            return true;
-    return false;
+    return CountWritableFields(block.Schema) > 0;
 }
 
 // Encoded Storage file name holding this service's backup registry.
@@ -37,10 +44,7 @@ static uint16_t SerializeSystemBlocks(uint8_t *out, uint16_t cap)
     for (uint16_t block_index = 0; block_index < static_block_num; block_index++)
     {
         const StaticBlockDescriptor &block = static_block_registry[block_index];
-        uint16_t writable_count = 0;
-        for (uint16_t i = 0; i < block.Schema->MapCount; i++)
-            if (!(block.Schema->Map[i].FlagsAndType & FieldFlags::ReadOnly))
-                writable_count++;
+        uint16_t writable_count = CountWritableFields(block.Schema);
         if (writable_count == 0) continue;
 
         if (cursor + 2 + 2 > cap) return 0;
@@ -110,10 +114,7 @@ static uint16_t SerializeSystemBlock(const StaticBlockDescriptor &block, uint16_
                                      uint8_t *out, uint16_t cap)
 {
     uint16_t cursor = 0;
-    uint16_t writable_count = 0;
-    for (uint16_t i = 0; i < block.Schema->MapCount; i++)
-        if (!(block.Schema->Map[i].FlagsAndType & FieldFlags::ReadOnly))
-            writable_count++;
+    uint16_t writable_count = CountWritableFields(block.Schema);
     if (writable_count == 0) return 0;
 
     if (cursor + 2 + 2 > cap) return 0;
@@ -213,13 +214,21 @@ static uint16_t SystemBackupPayload(const BlockIndex *idx, const uint8_t *buffer
 
 // Writes the current writable fields of one static block into the backup file, keeping every
 // other stored block untouched (per-entry Save).
+//
+// With large backup caps (core default 2048) the merge buffers are static instead of stack
+// locals: 2 x MEMORY_BACKUP_CAP on the handler stack would be fatal. Small-cap node builds
+// (DAS, 64) keep them on the stack - they are cheap there and do not eat scarce static RAM.
 static bool SaveSystemBlockToFile(const StaticBlockDescriptor &block, uint16_t block_index,
                                   const char *fname)
 {
+#if MEMORY_BACKUP_CAP > 128
+    static uint8_t file_buf[MEMORY_BACKUP_CAP];
+    static uint8_t out[MEMORY_BACKUP_CAP];
+#else
     uint8_t file_buf[MEMORY_BACKUP_CAP];
-    uint16_t count = ReadBackupFile(fname, file_buf, sizeof(file_buf));
-
     uint8_t out[MEMORY_BACKUP_CAP];
+#endif
+    uint16_t count = ReadBackupFile(fname, file_buf, sizeof(file_buf));
     uint16_t op = 2; // block-count placeholder, written last
     uint16_t stored_blocks = 0;
     bool replaced = false;
@@ -295,14 +304,12 @@ void HandleSystemMemory(const PacketFrame &frame)
         if (idx->Field == INVALID_INDEX) // block meta + name
         {
             uint8_t payload[MAX_PAYLOAD_SIZE];
-            uint16_t cursor = 0;
-            BlockIndex out_index = {idx->Block, INVALID_INDEX, INVALID_INDEX};
-            memcpy(payload + cursor, &out_index, sizeof(BlockIndex)); cursor += sizeof(BlockIndex);
-            BlockMeta meta; meta.FlagsAndType = (uint16_t)block.Schema->Type; meta.Key = INVALID_INDEX; meta.Size = (uint8_t)block.Schema->MapCount;
-            memcpy(payload + cursor, &meta, sizeof(BlockMeta)); cursor += sizeof(BlockMeta);
-            uint8_t name_len = (uint8_t)strlen(block.Name);
-            memcpy(payload + cursor, block.Name, name_len); cursor += name_len;
-            SendResponse(frame, payload, (uint8_t)cursor);
+            uint16_t plen = MakeBlockMetaPayload(idx->Block, (uint16_t)block.Schema->Type,
+                                                 block.Schema->MapCount, block.Name,
+                                                 (uint8_t)strlen(block.Name),
+                                                 payload, sizeof(payload));
+            if (plen == 0) { RespondStatus(frame, false); break; }
+            SendResponse(frame, payload, (uint8_t)plen);
             break;
         }
         FieldResult field_result = block.Get(idx->Field);
@@ -331,14 +338,9 @@ void HandleSystemMemory(const PacketFrame &frame)
             RespondStatus(frame, false);
             break;
         }
-        uint8_t payload[MAX_PAYLOAD_SIZE];
-        uint16_t cursor = 0;
-        memcpy(payload + cursor, idx, sizeof(BlockIndex)); cursor += sizeof(BlockIndex);
-        memcpy(payload + cursor, desc, sizeof(BlockMeta)); cursor += sizeof(BlockMeta);
-        uint16_t len = value_len;
-        if (cursor + len > sizeof(payload)) len = sizeof(payload) - cursor;
-        memcpy(payload + cursor, value, len); cursor += len;
-        SendResponse(frame, payload, (uint8_t)cursor);
+        // Success echo: the request payload already IS BlockIndex + BlockMeta + value,
+        // so reply with it verbatim instead of re-assembling a copy.
+        SendResponse(frame, frame.payload, frame.payload_len);
         break;
     }
     case 4: // Read backup (writable fields as stored in the backup file)

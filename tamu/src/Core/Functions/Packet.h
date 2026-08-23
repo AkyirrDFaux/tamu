@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstddef>
 #include <cstring>
 
 #define MAX_PAYLOAD_SIZE 256
@@ -42,11 +43,19 @@ struct PacketFrame
     uint8_t payload[MAX_PAYLOAD_SIZE];
 } __attribute__((packed));
 
-// Computes the CRC8 checksum over `len` bytes of `data` (polynomial 0x07, init 0x00)
-inline uint8_t Crc8(const uint8_t *data, uint8_t len)
+// Direct word/halfword reads from frame.payload (e.g. payload[0], payload+8 as uint32_t)
+// rely on this alignment; RV32EC would fault on a misaligned load. If the header layout
+// ever changes, convert those call sites to memcpy instead.
+static_assert(offsetof(PacketFrame, payload) % 4 == 0,
+              "payload must stay 4-byte aligned for direct word reads");
+
+// Computes the CRC8 checksum over `len` bytes of `data` (polynomial 0x07, init 0x00).
+// The length is 16-bit: frames carry up to 11 + 255 = 266 covered bytes, which a
+// uint8_t would truncate mod 256.
+inline uint8_t Crc8(const uint8_t *data, uint16_t len)
 {
     uint8_t crc = 0x00;
-    for (uint8_t i = 0; i < len; i++)
+    for (uint16_t i = 0; i < len; i++)
     {
         crc ^= data[i];
         for (uint8_t j = 0; j < 8; j++)
@@ -95,11 +104,11 @@ inline void PacketConstruct(PacketFrame *frame,
     if (len > MAX_PAYLOAD_SIZE - 1)
         len = MAX_PAYLOAD_SIZE - 1;
 
-    memset(frame, 0, sizeof(PacketFrame));
-
+    // Clear only the header: the payload beyond payload_len is never read (the CRC
+    // covers 11 + payload_len bytes), so a full ~264 B memset is wasted work.
     frame->flags = flags;
     frame->frag_id = 0;
-    frame->payload_len = len; // len is uint8_t, payload buffer is MAX_PAYLOAD_SIZE
+    frame->payload_len = len;
     frame->id_tgt = dest_addr;
     frame->id_src = DeviceStatus.ShortAddress;
     frame->srv_tgt = dest_srv;
@@ -111,7 +120,7 @@ inline void PacketConstruct(PacketFrame *frame,
     }
     
     // CRC8 calculation covers everything after the crc8 field
-    uint8_t crc_len = 11 + frame->payload_len; // flags, frag_id, payload_len, target/source IDs/SRVs
+    uint16_t crc_len = 11 + frame->payload_len; // flags, frag_id, payload_len, target/source IDs/SRVs
     frame->crc8 = Crc8(&frame->flags, crc_len);
 }
 
@@ -148,7 +157,7 @@ inline bool PacketAppend(PacketFrame *frame, const uint8_t *data, uint8_t len)
     memcpy(&frame->payload[frame->payload_len], data, len);
     frame->payload_len += len;
     
-    uint8_t crc_len = 11 + frame->payload_len;
+    uint16_t crc_len = 11 + frame->payload_len;
     frame->crc8 = Crc8(&frame->flags, crc_len);
     return true;
 }

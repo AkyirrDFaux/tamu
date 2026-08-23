@@ -11,7 +11,8 @@
 #define STORAGE_FLASH_SIZE 0x10000
 #endif
 // Filesystem block/page size: allocation granularity and erase unit. Defined per device
-// (4096 on ESP32-based devices, 256 on the flash-starved CH32V003 DAS node).
+// (4096 on ESP32-based devices; 64 on the CH32V003 DAS node, matching its hardware erase
+// page).
 #ifndef STORAGE_BLOCK_SIZE
 #define STORAGE_BLOCK_SIZE 4096
 #endif
@@ -22,6 +23,10 @@
 #endif
 #define MAX_STREAMS STORAGE_MAX_STREAMS
 #define PAGE_SIZE STORAGE_BLOCK_SIZE
+
+// Upper bound on allocatable data pages (worst-case flash geometry); sizes the per-call
+// usage bitmap in FindSpace (STORAGE_FLASH_SIZE / PAGE_SIZE bits).
+#define STORAGE_MAX_BLOCKS ((STORAGE_FLASH_SIZE / PAGE_SIZE) + 1)
 
 // --- Flash access (implemented per device, see Devices/<device>/Storage.h) ---
 bool Storage_FlashInit();                              // find/open the storage partition
@@ -45,12 +50,15 @@ struct FileEntry
 // Number of 32-bit pointer slots in the first (pointer) page
 #define PTR_SLOTS (PAGE_SIZE / 4)
 
-// Write stream (CID 64+); name is 8 plain-text characters.
+// Write stream (CID 64+); name is 8 plain-text characters. The file's offset/size are
+// cached at stream open so every write packet does not have to re-walk the file table.
 struct WriteStream
 {
     uint8_t cid;
     char name[8];
     uint32_t current_offset;
+    uint32_t file_offset;
+    uint32_t file_size;
     bool active;
 };
 
@@ -108,19 +116,24 @@ public:
             Format();
     }
 
-    // Reads the current file table pointer from the first page. Slots are scanned one at a
+    // Returns the current file table pointer from the first page. Slots are scanned one at a
     // time so a large pointer page (4096 B on the Tamu) never needs a matching stack buffer.
+    // Returns the LAST valid slot, not the first: WriteTablePointer appends the new pointer
+    // before invalidating the older ones, so after an interrupted update both can be valid
+    // and the newest (highest slot) must win - otherwise a crash would silently boot the
+    // stale table while FindSpace considers the new table's pages free.
     uint32_t FindFiletable()
     {
         uint32_t slot = 0;
+        uint32_t newest = 0;
         for (uint32_t i = 0; i < PTR_SLOTS; i++) {
             if (Storage_FlashRead(i * 4, &slot, sizeof(slot)) != sizeof(slot))
-                return 0;
-            // Find first valid slot (neither 0x00000000 nor 0xFFFFFFFF)
+                return newest;
+            // Track each valid slot (neither 0x00000000 nor 0xFFFFFFFF); later slots are newer.
             if (slot != 0x00000000 && slot != 0xFFFFFFFF)
-                return slot;
+                newest = slot;
         }
-        return 0;
+        return newest;
     }
 
     // Updates the pointer in the first page to point to a new table. The block is erased
@@ -293,6 +306,15 @@ public:
         if (blocks > num_blocks)
             return 0;
 
+        // Build the usage bitmap once: BlockUsed() rescans the whole file table per
+        // block, so the previous per-candidate probing was O(blocks x table) flash reads.
+        uint8_t used_bitmap[(STORAGE_MAX_BLOCKS + 7) / 8] = {0};
+        for (uint32_t i = 0; i < num_blocks; i++)
+        {
+            if (BlockUsed(data_start + i * PAGE_SIZE) || RangeIsPending(data_start + i * PAGE_SIZE))
+                used_bitmap[i >> 3] |= (uint8_t)(1u << (i & 7));
+        }
+
         uint32_t best_offset = 0;
         uint32_t best_run = 0;
 
@@ -302,15 +324,20 @@ public:
             uint32_t idx = (wear_cursor + scanned) % num_blocks;
             uint32_t block_offset = data_start + idx * PAGE_SIZE;
 
-            if (BlockUsed(block_offset)) {
+            if (used_bitmap[idx >> 3] & (1u << (idx & 7))) {
                 scanned++;
                 continue;
             }
 
             // Measure the contiguous free run starting here (allowing wrap-around).
             uint32_t run = 0;
-            while (run < num_blocks && !BlockUsed(data_start + ((idx + run) % num_blocks) * PAGE_SIZE))
+            while (run < num_blocks)
+            {
+                uint32_t probe = (idx + run) % num_blocks;
+                if (used_bitmap[probe >> 3] & (1u << (probe & 7)))
+                    break;
                 run++;
+            }
 
             if (run >= blocks && (best_offset == 0 || run < best_run)) {
                 best_offset = block_offset;
@@ -346,7 +373,16 @@ public:
         new_record.offset = data_offset;
         new_record.size = size;
         memcpy(new_record.name, name, 8);
-        return WriteFilerecord(new_record);
+
+        // The committing record is not in the table yet. Reserve the area so a table
+        // move triggered by WriteFilerecord can never relocate the file table onto
+        // this freshly erased (and invisible) space.
+        pending_offset = data_offset;
+        pending_blocks = data_blocks;
+        bool ok = WriteFilerecord(new_record);
+        pending_offset = 0;
+        pending_blocks = 0;
+        return ok;
     }
 
     // Invalidates the file table entry for `name`; true if it existed (or was already gone).
@@ -412,23 +448,38 @@ public:
         if (!Storage_FlashErase(new_offset, new_blocks * PAGE_SIZE))
             return false;
 
+        // Reserve the destination while the committing record is still unwritten, so a
+        // table move inside WriteFilerecord cannot land on this erased area.
+        pending_offset = new_offset;
+        pending_blocks = new_blocks;
+
         uint8_t chunk[64];
         uint32_t remaining = entry.size;
         uint32_t source = entry.offset;
         uint32_t destination = new_offset;
+        bool copy_ok = true;
         while (remaining > 0) {
             uint32_t chunk_size = (remaining > sizeof(chunk)) ? sizeof(chunk) : remaining;
-            if (Storage_FlashRead(source, chunk, chunk_size) != chunk_size) return false;
-            if (!Storage_FlashWrite(destination, chunk, chunk_size)) return false;
+            if (Storage_FlashRead(source, chunk, chunk_size) != chunk_size) { copy_ok = false; break; }
+            if (!Storage_FlashWrite(destination, chunk, chunk_size)) { copy_ok = false; break; }
             source += chunk_size;
             destination += chunk_size;
             remaining -= chunk_size;
         }
 
-        FileEntry new_record = entry;
-        new_record.offset = new_offset;
-        new_record.size = new_size;
-        if (!WriteFilerecord(new_record))
+        bool ok = false;
+        if (copy_ok)
+        {
+            FileEntry new_record = entry;
+            new_record.offset = new_offset;
+            new_record.size = new_size;
+            ok = WriteFilerecord(new_record);
+        }
+
+        pending_offset = 0;
+        pending_blocks = 0;
+
+        if (!ok)
             return false;
         DeleteFilerecord(name);
         return true;
@@ -555,6 +606,22 @@ public:
     }
 
 private:
+    // Pending (reserved) allocation: a data area that has been erased for a new/moved
+    // file but whose committing table record is not written yet. Treated as used so a
+    // concurrent table move can never be placed over it.
+    uint32_t pending_offset = 0;
+    uint32_t pending_blocks = 0;
+
+    // True when the page at `offset` overlaps the pending reservation.
+    bool RangeIsPending(uint32_t offset) const
+    {
+        if (pending_blocks == 0)
+            return false;
+        uint32_t start = pending_offset;
+        uint32_t end = pending_offset + pending_blocks * PAGE_SIZE;
+        return offset >= start && offset < end;
+    }
+
     // Returns the first flash offset of the file data area (after the pointer page).
     uint32_t DataStart() const { return PAGE_SIZE; }
 
@@ -572,10 +639,11 @@ private:
         return Storage_FlashRead(file_table_offset + idx * TABLE_ENTRY_SIZE, entry, TABLE_ENTRY_SIZE) == TABLE_ENTRY_SIZE;
     }
 
-    // True when any valid file entry covers the page at `offset`.
+    // True when any valid file entry (or the pending reservation) covers the page at `offset`.
     bool BlockUsed(uint32_t offset)
     {
-        if (file_table_offset == 0) return false;
+        if (file_table_offset == 0)
+            return RangeIsPending(offset);
         uint32_t capacity = TableCapacity();
         for (uint32_t i = 0; i < capacity; i++) {
             FileEntry entry;
@@ -587,7 +655,7 @@ private:
             if (offset >= start && offset < end)
                 return true;
         }
-        return false;
+        return RangeIsPending(offset);
     }
 
     // Validates the current table (entry 0 must point to itself with correct size) and

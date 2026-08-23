@@ -1,3 +1,5 @@
+#pragma once
+
 #include "driver/i2c_master.h"
 #include "driver/gpio.h"
 #include "Core/Functions/Packet.h"
@@ -94,7 +96,8 @@ void InitLSM6DS3() {
         .clk_source = I2C_CLK_SRC_RC_FAST,
         .glitch_ignore_cnt = 7,
         .intr_priority = 0,
-        .flags = {.enable_internal_pullup = true},
+        .trans_queue_depth = 0, // synchronous transfers only
+        .flags = {.enable_internal_pullup = true, .allow_pd = false},
     };
     if (i2c_new_master_bus(&bus_cfg, &i2c_bus_handle) != ESP_OK) {
         ReportAccGyrError(ErrBusGeneric);
@@ -152,10 +155,19 @@ bool ReadIMUData() {
         return false;
     }
 
-    // Data Processing (scale factors /209 and /939 match the previously-working driver)
-    Number AccInvW = 1 / (1 + AccGyr.AccFilter);
+    // Data Processing (scale factors /209 and /939 match the previously-working driver).
+    // Clamp the filter coefficients: a remotely-written AccFilter/GyroFilter of -1 would
+    // divide by zero, and values outside 0..1 make the low-pass diverge.
+    Number acc_filter = AccGyr.AccFilter;
+    if (acc_filter < N(0)) acc_filter = N(0);
+    if (acc_filter > N(1)) acc_filter = N(1);
+    Number gyro_filter = AccGyr.GyroFilter;
+    if (gyro_filter < N(0)) gyro_filter = N(0);
+    if (gyro_filter > N(1)) gyro_filter = N(1);
+
+    Number AccInvW = 1 / (1 + acc_filter);
     Number AccW = 1 - AccInvW;
-    Number RotInvW = 1 / (1 + AccGyr.GyroFilter);
+    Number RotInvW = 1 / (1 + gyro_filter);
     Number RotW = 1 - RotInvW;
 
     AccGyr.AngularVelocity.Data[0] = (Number(Raw[0]) / N(939.0)) * RotInvW + (AccGyr.AngularVelocity.Data[0] * RotW);

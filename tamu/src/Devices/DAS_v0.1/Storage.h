@@ -12,13 +12,20 @@
 // reservation array into this region via -Wl,--section-start=.fixed_data=0x3800, so code that
 // ever grows into it fails to link. STORAGE_FLASH_SIZE/STORAGE_BLOCK_SIZE are defined by the
 // DAS build flags (platformio.ini); the derived bases below keep the layout at the very end
-// no matter the size.
-#define STORAGE_PAGE_SIZE    64u   // CH32V00x fast-mode erase granularity (1page = 64Byte)
+// no matter the size. STORAGE_BLOCK_SIZE must equal the hardware erase page so every
+// allocation block is erasable as a whole.
 
 // The chip executes code from the 0x00000000 mapping; the flash controller programs/erases
 // through the 0x08000000 alias domain (see ch32v00x_flash.c, ValidAddrStart/End).
 #define STORAGE_CHIP_BASE    (CHIP_FLASH_SIZE - STORAGE_FLASH_SIZE)
 #define STORAGE_FLASH_BASE   (0x08000000u + STORAGE_CHIP_BASE)
+
+// Hardware erase page of the CH32V003 (datasheet / ch32v00x_flash.h): 64 bytes.
+#define FLASH_ERASE_PAGE_SIZE 64u
+
+// The allocation unit must match the hardware erase page exactly.
+static_assert(STORAGE_BLOCK_SIZE == FLASH_ERASE_PAGE_SIZE,
+              "STORAGE_BLOCK_SIZE must equal the CH32V003 64-byte erase page");
 
 static_assert(STORAGE_CHIP_BASE + STORAGE_FLASH_SIZE == CHIP_FLASH_SIZE,
               "Storage must be flush against the end of the chip flash");
@@ -49,10 +56,8 @@ bool Storage_FlashInit()
         DeviceLog("STORAGE", "Code overlaps the storage region!");
         return false;
     }
-    FLASH_Unlock();
-    FLASH_Unlock_Fast();
-    FLASH_Lock_Fast();
-    FLASH_Lock();
+    // NOTE: no global unlock here - the write/erase paths below lock/unlock the
+    // controller themselves, and a redundant Unlock/Lock dance only costs flash.
     return true;
 }
 
@@ -104,20 +109,24 @@ bool Storage_FlashWrite(uint32_t offset, const void *data, uint32_t size)
     return true;
 }
 
-// Erases `size` bytes of flash at `offset` (256-byte aligned, one page per storage block).
-// Uses the *normal* page erase (FLASH_ErasePage), not the fast erase: fast erase is an
-// unbounded `while(BSY)` busy-wait and leaves cells at 0x00 on the CH32V003, and flash can
-// only program 1->0, so "programming 0xFFFFFFFF back" cannot restore the 0xFF erase state.
-// The normal erase restores 0xFF and is bounded by FLASH_WaitForLastOperation.
+// Erases `size` bytes of flash at `offset` (STORAGE_BLOCK_SIZE aligned). The hardware erase
+// page on the CH32V003 is 64 BYTES (datasheet / ch32v00x_flash.h), so one FLASH_ErasePage
+// call per allocation block would leave 3/4 of each 256 B block unerased - the loop steps in
+// 64 B hardware pages. Uses the *normal* page erase, not the fast erase: fast erase is an
+// unbounded `while(BSY)` busy-wait and leaves cells at 0x00, and flash can only program
+// 1->0, so "programming 0xFFFFFFFF back" cannot restore the 0xFF erase state. The normal
+// erase restores 0xFF and is bounded by FLASH_WaitForLastOperation.
+#define FLASH_ERASE_PAGE_SIZE 64u // CH32V00x hardware erase page (see ch32v00x_flash.h)
+
 bool Storage_FlashErase(uint32_t offset, uint32_t size)
 {
-    if ((offset & (STORAGE_BLOCK_SIZE - 1)) || (size & (STORAGE_BLOCK_SIZE - 1)))
+    if ((offset & (FLASH_ERASE_PAGE_SIZE - 1)) || (size & (FLASH_ERASE_PAGE_SIZE - 1)))
         return false;
     if (offset + size > STORAGE_FLASH_SIZE)
         return false;
 
     FLASH_Unlock();
-    for (uint32_t o = offset; o < offset + size; o += STORAGE_BLOCK_SIZE) {
+    for (uint32_t o = offset; o < offset + size; o += FLASH_ERASE_PAGE_SIZE) {
         if (FLASH_ErasePage(STORAGE_FLASH_BASE + o) != FLASH_COMPLETE) {
             FLASH_Lock();
             return false;
@@ -127,11 +136,11 @@ bool Storage_FlashErase(uint32_t offset, uint32_t size)
     return true;
 }
 
-// Wipes the entire storage region (all pages, including the pointer page).
+// Wipes the entire storage region (all hardware pages, including the pointer page).
 bool Storage_FlashFormat()
 {
     FLASH_Unlock();
-    for (uint32_t o = 0; o < STORAGE_FLASH_SIZE; o += STORAGE_BLOCK_SIZE) {
+    for (uint32_t o = 0; o < STORAGE_FLASH_SIZE; o += FLASH_ERASE_PAGE_SIZE) {
         if (FLASH_ErasePage(STORAGE_FLASH_BASE + o) != FLASH_COMPLETE) {
             FLASH_Lock();
             return false;

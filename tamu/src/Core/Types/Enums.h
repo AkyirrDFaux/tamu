@@ -7,6 +7,13 @@ enum class DeviceType : uint16_t {
     DualAnalogSensor = 0x03,
 };
 
+// Capability bitfield (Device service CID 5, Docs/Services/Device service.md).
+// "If device has core capability, it can assign IDs, and store them in the registry."
+namespace Capabilities {
+    constexpr uint32_t None = 0x00000000;
+    constexpr uint32_t Core = 1u << 0; // assigns IDs, keeps the SN registry, provides time sync
+}
+
 enum FieldFlags : uint16_t {
     None          = 0x0000,
     Valid         = 0x0400, // Flash only: if 0, a newer version exists, ignore this entry

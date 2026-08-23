@@ -7,103 +7,49 @@ firmware code review (2026-08-22). Items already fixed are tracked in `Issues.md
 
 ## Firmware code review (2026-08-22)
 
+Findings from this pass were fixed in the same session (both environments build clean;
+details in `Issues.md` "Fixed (firmware code review)"). Implemented: FindSpace usage bitmap,
+one-pass FindLowestAvailableID, header-only PacketConstruct init, const-ref renderer
+params + sq double-evaluation fix, blend fast-path skip, SaveSystemBlockToFile buffers
+(static above cap 128, stack below), CountWritableFields helper, write-stream file-info
+caching + EOF auto-close, 32-bit-only sin/log math, SNDB EnsureRecovered + shared
+KeyedEntryFits walker, MakeBlockMetaPayload reply helper, Script not-implemented statuses,
+Colour/Vysi1Display inline, function-local RNG state + GetPI, include guards for
+PWM/AccGyr/Button blocks, exact PWM duty math, parameter-shadow renames, SerialNumber
+copy-ctor removal, Vector insert/remove index clamps, SerialNumberToString size param,
+ReportLog const&, dead-code removal (vTaskDelete, ADCRES, stale DAS comment), real-SP
+GetFreeRAM on the DAS, LEDButton static_assert, InverseTransform2D singular guard.
+
+Deferred on purpose:
+
+- **Tamu/DAS RSBus near-duplicate transport**: extracting a shared transport layer is an
+  architectural refactor across both boards; deferred until the next bus-layer change.
+- **`Matrix<R,C>` runtime dims header**: removing the `{height,width}` header would change
+  the serialised Matrix layout stored in keyed/dynamic block data (and every saved backup),
+  so it needs a migration decision first.
+- **Blocks metadata offsets all 0x00**: verified harmless - `StaticBlockDescriptor::Get()`
+  derives offsets from aligned schema sizes; the BlockMeta offset byte is unused there.
+
 ### Performance / footprint
 
-- **`FindSpace` is O(blocks x capacity) flash reads** (`Core/Functions/Storage.h:283-329`,
-  `576-591`): each candidate block calls `BlockUsed()`, which rescans and re-reads the whole
-  file table from flash. Worst case (table move on a fragmented volume) is thousands of
-  single-entry reads. Build a usage bitmap once per call (STORAGE_FLASH_SIZE / PAGE_SIZE bits
-  = 16 bytes at 64 KB / 4 KB) and scan that.
-- **`FindLowestAvailableID` rescans per candidate** (`Core/Functions/SNDB.h:287-313`): O(n^2)
-  flash reads (~126 x 128 x 32 B worst case). One pass building a used-ID bitmask (64 B)
-  fixes it.
-- **`PacketConstruct` memsets the full ~264 B frame** (`Core/Functions/Packet.h:98`): only
-  header + `payload_len` bytes are ever read (CRC covers 11 + len); clearing just the header
-  fields removes ~250 B of memset per packet - relevant on the CH32V003.
-- **Per-pixel pass-by-value in the renderer**: `CalculateShapeAlpha(GeometryDefinition def, ...)`
-  copies a ~28-byte struct for every pixel of every geometry every frame
-  (`Blocks/Vysi1Display.h:153`, `211`); `RenderGeometry`/`RenderTexture` copy `Matrix<3,3>`
-  by value too. Pass by const ref. The `sq(P[0])` macro also evaluates `P[0]` (an
-  `operator[]` call) twice.
-- **Blend path ignores the cheap fast path** (`Blocks/Vysi1Display.h:350-377`):
-  `Buffer[PIdx].Layer(blendCol, Overlay[PIdx])` runs even when `Overlay[PIdx] <= 0`
-  (the `Full` branch at line 342 checks). Skip Layer when overlap is zero.
-- **`SaveSystemBlockToFile` stacks two backup buffers**
-  (`Core/Services/SystemMemory.h:216-270`): unlike `SaveRegistryBlock`, it holds
-  `file_buf` + `out` (2 x MEMORY_BACKUP_CAP) simultaneously, and `HandleSystemMemory` is
-  dispatched unconditionally (`Dispatcher.h:69-70`) - fatal on a 256-byte-stack node build if
-  this service is ever targeted there. Reuse one buffer or guard the dispatch.
-- **Redundant writable-count walks** (`SystemMemory.h:27-67` vs `107-135`):
-  `SerializeSystemBlocks` re-walks each schema to count writable fields, duplicating
-  `SerializeSystemBlock`'s body. Factor a `CountWritableFields(block)` helper used by all
-  three sites.
-- **`GetFileInfo` table walk per write-stream packet** (`Core/Services/Storage.h:19-31`):
-  every stream write re-scans the whole file table just to clamp the offset. Cache
-  offset/size at stream open (invalidate on resize/delete). Also: writes silently dropped at
-  EOF leave the stream active forever - consider closing it or flagging overflow.
-- **64-bit math not gated by NUMBER_ONLY_32BIT** (`Core/Types/Number.h`): `sin()`/`log()`
-  use `(int64_t)a * b >> 16` and `sqrt()` works in uint64_t; if these ever link into the DAS
-  image they pull libgcc 64-bit helpers despite the gate's purpose (~2.5 KB). Convert to
-  MulHigh32/FixedMul32.
-- **`Matrix<R,C>` stores runtime dims** (`Core/Types/Matrix.h:7-12`, `30-38`): a 4-byte
-  `{height,width}` header per instance plus runtime multiplies in `operator()`, although the
-  dims are template parameters. Pure overhead on the 2 KB-RAM node - and a corrupted embedded
-  header enables OOB writes via `operator()` if matrices are ever deserialized with dims.
-
-### Duplication / streamlining
-
-- **Tamu and DAS RSBus are near-duplicates**: `ReceivePacket`, CSMA constants and echo-verify
-  logic exist twice, differing only in transport primitives - and drift already produced the
-  identical Crc8-length bug in both copies (see Issues). Extract a core transport layer
-  parameterised by the send/recv primitives.
-- **SNDB recovery prologue copy-pasted 7x**: `Available(); if (!recovered) { RecoverState();
-  recovered = true; }` opens every public method; extract `EnsureRecovered()`. The same
-  file's keyed-entry walkers (`GetKey/SetKey/ListKeys/RemoveKey` in `Functions/Memory.h`)
-  should share one cursor-advance helper (also fixes the GetKey bounds gap uniformly).
-- **Block-meta + name reply payload built three times**: the identical BlockIndex + BlockMeta
-  + name construction appears in `DynamicMemory.h:497-508`, `KeyedMemory.h:74-85` and
-  `SystemMemory.h:295-306`; the "field read with size clamp" tail repeats as often. Two shared
-  helpers next to RespondCreate/RespondEcho would cover all of them.
-- **Script service stubs ACK success** (`Core/Services/Script.h`): cases 1/4/5 respond success
-  without doing anything and `default:` ACKs unknown CIDs - clients can't distinguish "done"
-  from "not implemented". Return an explicit failure/not-implemented status until implemented.
-- **ColourClass / Vysi1Display out-of-class definitions lack `inline`**
-  (`Core/Types/Colour.h:25-92`, six `Vysi1Display::` methods): harmless in today's single-TU
-  build, but an ODR / multiple-definition trap the moment anything splits into a second TU.
-- **Header-local statics duplicated per TU**: `_next_rand` (`Number.h:329`) gives every
-  translation unit its own RNG state generating the same sequence; `PI` (`Number.h:222`) is
-  likewise duplicated. Use function-local statics.
-- **Include-order-dependent Blocks**: `PWM.h`, `AccGyr.h`, `Button.h` have no include guards
-  and don't include their dependencies (`BlockSchema`, `StaticBlockDescriptor`, `Number`);
-  double inclusion or a different include order breaks the build. Add guards/includes like
-  `DeviceInfo.h`/`Render.h`.
-- **`ProcessBus` dispatches one frame per call** (`Dispatcher.h:127-136`) despite its comment
-  claiming "every received packet" - loop or fix the comment.
-
-### Minor / hygiene
-
-- **PWM duty truncation order** (`Devices/Tamu_v2.0A/PWM.h:98`):
-  `(duty / 100 * 1023) >> 16` truncates Q16.16 before scaling, losing up to ~1.5 LSB and
-  rounding tiny duties to 0. Compute `((int32_t)duty * 1023) / (100 << 16)` instead.
-- **Parameter named `Number` shadows the class** (`Number.h:353-356`, `373`): `LimitByte(int
-  Number)` only compiles via implicit int->Number conversion through min/max macros; rename.
-- **DeviceInfo hand-written copy ctor/assignment** (`Core/Types/DeviceInfo.h:15-37`) exactly
-  replicate implicit behaviour and suppress trivial-copyability; delete them.
-- **`Vector::insert` doesn't validate pos** (`Core/Types/Vector.h:57-69`): a bad index is a
-  silent OOB stack write; a debug assert costs nothing.
-- **`SerialNumberToString` has no buffer-size parameter** (`Functions/Device.h:13`) and the
-  serial length 14 is hardcoded in SNDB's memcmp instead of a constant.
-- **`ReportLog(LogMessage log)` takes its argument by value** (`Functions/Log.h:16`), copying
-  the message before a second copy into the packet; take const&.
-- **Dead code / stale comments**: unreachable `vTaskDelete(NULL)` after `while(1)`
-  (`Tamu_v2.0A/Main.h:121`); unused `ADCRES` macro in both Base.h files; stale
-  "Fix crashes / Implement measuring..." comment at the end of `DAS_v0.1/Main.h`;
-  `GetFreeRAM`'s comment claims live stack pointer but returns the boot-time linker symbol
-  (`DAS_v0.1/Base.h:66-73`).
-- **Lock in the LEDButton padding**: add `static_assert(offsetof(LEDButtonStruct,
-  ButtonState) == 4)` so the alignment fix can't silently regress.
-- **`InverseTransform2D` divides without a degenerate check** (`Core/Types/Matrix.h:129-144`):
-  a singular matrix silently yields an all-zero inverse; return bool or assert.
+- **`FindSpace` was O(blocks x capacity) flash reads** - FIXED: builds a per-call usage
+  bitmap (`Core/Functions/Storage.h`).
+- **`FindLowestAvailableID` rescanned per candidate** - FIXED: one pass marks used IDs in a
+  bitset (`SNDB.h`).
+- **`PacketConstruct` memset the full ~264 B frame** - FIXED: only header fields are written.
+- **Per-pixel pass-by-value in the renderer** - FIXED: `CalculateShapeAlpha` takes the
+  geometry by const ref; `RenderGeometry`/`RenderTexture` take transforms by const ref; the
+  `sq(P[i])` double evaluation uses local copies.
+- **Blend path ignored the cheap fast path** - FIXED: `Layer()` is skipped when overlap <= 0.
+- **`SaveSystemBlockToFile` stacked two backup buffers** - FIXED: static above cap 128,
+  stack locals on small-cap node builds.
+- **Redundant writable-count walks** - FIXED: shared `CountWritableFields()` helper.
+- **`GetFileInfo` table walk per write-stream packet** - FIXED: offset/size cached at stream
+  open; streams also deactivate when they reach EOF.
+- **64-bit math not gated by NUMBER_ONLY_32BIT** - FIXED for `sin()`/`log()`
+  (FixedMul32 replacements); `sqrt()` needs uint64_t intermediates and carries a comment -
+  keep it out of node images unless 64-bit helpers are already linked.
+- **`Matrix<R,C>` stores runtime dims**: DEFERRED (see above).
 
 ## Stack discipline (DAS, 256 B stack / 2 KB RAM)
 
@@ -148,9 +94,10 @@ firmware code review (2026-08-22). Items already fixed are tracked in `Issues.md
 - **Per-stream FragID**: `NextFragmentId()` keeps one shared static counter on the core; two
   interleaved multi-packet streams would produce colliding/incorrect fragment numbers. Give each
   stream (or sender CID) its own counter.
-- **Node packet desync**: `RecievePacket` consumes the 0xAA sync byte and then returns 0 on a
-  partial/invalid header, so the frame is lost and the stream must re-sync on the next 0xAA.
-  Consider buffering until a full frame is present instead of discarding.
+- **Node packet desync**: the DAS `ReceivePacket` now keeps assembly state across polls
+  (fixed); the Tamu side still consumes-and-discards on an incomplete header/payload - a
+  frame split across two `ProcessBus()` polls loses its bytes there too. A persistent
+  assembly buffer would fix the core as well.
 - **DAS RX ring can be flooded by the node's own echoes**: `SendAndVerifyPacket`'s echo verify
   reads `total_tx_size` bytes straight out of the shared 256-byte RX ring, and
   `RS485_WaitForSilence` drains it. If a node transmits frequently (observed while debugging:
@@ -172,13 +119,20 @@ firmware code review (2026-08-22). Items already fixed are tracked in `Issues.md
   service but not reachable from the CLI. The local `logs` command already dumps the core's
   own RAM DB (fed by inbound CID 0 reports), so these network commands are only needed to
   query a *remote* core's DB; add `logs <addr>` if that use case appears.
+- Cleanup candidates from review round 2: `CmdSave`/`CmdRecall` (Entry.h) are identical except
+  for the CID - collapse into one helper taking the CID; the thirteen `esp_console_cmd_t`
+  registrations could become a static table + loop; SN hex formatting/parsing is duplicated in
+  CLI/Block.h and CLI/SNDB.h despite `SerialNumberToString`; WS2812 bit timing in `LED.h`
+  matches spec only at 160 MHz and its comments' ns arithmetic doesn't match the NOP counts -
+  derive cycles from `ets_get_cpu_frequency` or pin the assumption before anyone changes the
+  clock.
 
 ## Device specifics
 
-- **DAS flash budget**: at ~75.5 % flash with the SensorType switch, System Memory backup
-  helpers and NUMBER_ONLY_32BIT compiled in. Watch this headroom if more DAS features are
-  added; prefer 32-bit math (a single 64-bit division pulls ~2.5 KB of `__divdi3` helpers
-  back in).
+- **DAS flash budget**: at ~67.9 % flash (11,120 B of 16 KB) after the round-2 review
+  (-flto, textless DeviceLog, table-driven range select, payload-verbatim echoes). Watch this
+  headroom if more DAS features are added; prefer 32-bit math (a single 64-bit division pulls
+  ~2.5 KB of `__divdi3` helpers back in).
 - **DAS sensor math**: the Raw Voltage / resistance conversions and auto-range thresholds still
   need calibration against the real sensor (see Issues "Needs hardware verification").
 - **LED transmission disables interrupts**: `LEDDriver::Send` bit-bangs 86 WS2812 pixels with

@@ -1,3 +1,5 @@
+#pragma once
+
 struct PWMStruct {
     uint32_t PWMFreq = 25000;
     Number Duty = 0;

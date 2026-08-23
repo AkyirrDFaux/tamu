@@ -57,8 +57,9 @@ struct GeometryDefinition
         HalfPlaneShape HalfPlane;
 
         // Unions need a constructor if members are non-trivial
-        // Default-constructs the active union member.
-        GeometryData() {}
+        // Default-constructs (zeroes) the Basic member so no geometry reads
+        // indeterminate memory before ResolveGeometryDefinition fills it in.
+        GeometryData() : Basic{} {}
         // Trivial destructor required by the non-trivial union members.
         ~GeometryData() {}
     } Data;
@@ -106,8 +107,9 @@ struct TextureDefinition
         Blend2Def Blend2;
 
         // Unions need a constructor if members are non-trivial
-        // Default-constructs the active union member.
-        TextureData() {}
+        // Default-constructs (zeroes) the Fill member so no texture reads
+        // indeterminate memory before ResolveTextureDefinition fills it in.
+        TextureData() : Fill{} {}
         // Trivial destructor required by the non-trivial union members.
         ~TextureData() {}
     } Data;

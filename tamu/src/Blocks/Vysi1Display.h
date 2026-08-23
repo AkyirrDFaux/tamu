@@ -65,14 +65,14 @@ public:
 
     void Render();
     void ResolveGeometryDefinition(KeyedBlockDescriptor *block, uint16_t index, GeometryDefinition &def);
-    Number CalculateShapeAlpha(GeometryDefinition def, Vector<2> P);
-    void RenderGeometry(KeyedBlockDescriptor *block, uint16_t index, Matrix<3, 3> BaseTransform, Number *Overlay);
+    Number CalculateShapeAlpha(const GeometryDefinition &def, Vector<2> P);
+    void RenderGeometry(KeyedBlockDescriptor *block, uint16_t index, const Matrix<3, 3> &BaseTransform, Number *Overlay);
     void ResolveTextureDefinition(KeyedBlockDescriptor *block, uint16_t index, TextureDefinition &def);
-    void RenderTexture(KeyedBlockDescriptor *block, uint16_t index, Matrix<3, 3> BaseTransform, Number *Overlay);
+    void RenderTexture(KeyedBlockDescriptor *block, uint16_t index, const Matrix<3, 3> &BaseTransform, Number *Overlay);
 };
 
 // Renders the configured render block into the LED buffer, applying brightness and gamma correction.
-void Vysi1Display::Render()
+inline void Vysi1Display::Render()
 {
     // Textures apply into the LED buffer ("texture always clears the buffer and
     // applies the texture in the given areas"), so the buffer must be cleared every
@@ -103,7 +103,11 @@ void Vysi1Display::Render()
         }
     }
 
-    uint32_t brightness_scale = (Data.Brightness >= 100) ? 255 : ((Data.Brightness * 255) / 100).ToInt();
+    // Clamp Brightness into [0, 100]: a negative value would wrap through the
+    // uint32_t scale below and produce garbage colours instead of black.
+    Number brightness = Data.Brightness;
+    if (brightness < N(0)) brightness = N(0);
+    uint32_t brightness_scale = (brightness >= 100) ? 255 : ((brightness * 255) / 100).ToInt();
 
     for (uint16_t i = 0; i < LedNum; i++)
     {
@@ -121,7 +125,7 @@ void Vysi1Display::Render()
 }
 
 // Fills `def` with the geometry parameters (dimensions, radius, edge fade) stored in the given block entry.
-void Vysi1Display::ResolveGeometryDefinition(KeyedBlockDescriptor *block, uint16_t index, GeometryDefinition &def)
+inline void Vysi1Display::ResolveGeometryDefinition(KeyedBlockDescriptor *block, uint16_t index, GeometryDefinition &def)
 {
     switch (def.Type)
     {
@@ -144,13 +148,19 @@ void Vysi1Display::ResolveGeometryDefinition(KeyedBlockDescriptor *block, uint16
         def.Data.HalfPlane.EdgeFade = block->GetKeyValue<Number>(index, (uint8_t)GeometryKey::EdgeFade, DataType::Number, N(0.05));
         break;
 
+    case Geometries::DoubleParabola:
+        def.Data.Basic.Width = block->GetKeyValue<Number>(index, (uint8_t)GeometryKey::Width, DataType::Number, N(0.0));
+        def.Data.Basic.Height = block->GetKeyValue<Number>(index, (uint8_t)GeometryKey::Height, DataType::Number, N(0.0));
+        def.Data.Basic.EdgeFade = block->GetKeyValue<Number>(index, (uint8_t)GeometryKey::EdgeFade, DataType::Number, N(0.05));
+        break;
+
     default:
         break;
     }
 }
 
 // Computes the coverage alpha (0.0-1.0) of the given shape at point `P` in shape-local space.
-Number Vysi1Display::CalculateShapeAlpha(GeometryDefinition def, Vector<2> P)
+Number Vysi1Display::CalculateShapeAlpha(const GeometryDefinition &def, Vector<2> P)
 {
     Number Distance = 0;
     Number F = N(0.001); // Default fade
@@ -172,6 +182,7 @@ Number Vysi1Display::CalculateShapeAlpha(GeometryDefinition def, Vector<2> P)
         break;
 
     case Geometries::Elipse:
+    {
         F = def.Data.Basic.EdgeFade;
         // Bounding box + fade optimization
         if (abs(P[0]) > def.Data.Basic.Width + F || abs(P[1]) > def.Data.Basic.Height + F)
@@ -180,15 +191,21 @@ Number Vysi1Display::CalculateShapeAlpha(GeometryDefinition def, Vector<2> P)
         if (abs(P[0]) < def.Data.Basic.Width * N(0.7) - F && abs(P[1]) < def.Data.Basic.Height * N(0.7) - F)
             return 1;
 
-        Distance = 1 - sqrt(sq(P[0]) / sq(def.Data.Basic.Width) + sq(P[1]) / sq(def.Data.Basic.Height));
+        // Local copies: the sq() macro would evaluate each subscript twice
+        Number px = P[0], py = P[1];
+        Distance = 1 - sqrt(sq(px) / sq(def.Data.Basic.Width) + sq(py) / sq(def.Data.Basic.Height));
         break;
+    }
 
     case Geometries::Star: // Assuming Star logic uses Polygon params
     case Geometries::Polygon:
+    {
         F = def.Data.Polygon.EdgeFade;
         // Example logic for radial polygons/stars
-        Distance = def.Data.Polygon.Radius - sqrt(sq(P[0]) + sq(P[1]));
+        Number pr = P[0], ppr = P[1];
+        Distance = def.Data.Polygon.Radius - sqrt(sq(pr) + sq(ppr));
         break;
+    }
 
     case Geometries::DoubleParabola:
         F = def.Data.Basic.EdgeFade;
@@ -208,7 +225,7 @@ Number Vysi1Display::CalculateShapeAlpha(GeometryDefinition def, Vector<2> P)
 }
 
 // Rasterises the geometry block entry into the LED `Overlay` buffer, combining transforms and applying the operation.
-void Vysi1Display::RenderGeometry(KeyedBlockDescriptor *block, uint16_t index, Matrix<3, 3> BaseTransform, Number *Overlay)
+inline void Vysi1Display::RenderGeometry(KeyedBlockDescriptor *block, uint16_t index, const Matrix<3, 3> &BaseTransform, Number *Overlay)
 {
     // 1. Resolve Parameters with Defaults
     GeometryDefinition def;
@@ -292,7 +309,7 @@ void Vysi1Display::RenderGeometry(KeyedBlockDescriptor *block, uint16_t index, M
 }
 
 // Fills `def` with the texture parameters (colours, blend width) stored in the given block entry.
-void Vysi1Display::ResolveTextureDefinition(KeyedBlockDescriptor *block, uint16_t index, TextureDefinition &def)
+inline void Vysi1Display::ResolveTextureDefinition(KeyedBlockDescriptor *block, uint16_t index, TextureDefinition &def)
 {
     // Fetch Type: Default to None if not found
     def.Type = block->GetKeyValue<Textures2D>(index, (uint8_t)TextureKey::Type, DataType::Enum, Textures2D::None);
@@ -320,7 +337,7 @@ void Vysi1Display::ResolveTextureDefinition(KeyedBlockDescriptor *block, uint16_
 }
 
 // Layers the texture block entry's colours onto the LED buffer using the `Overlay` intensities.
-void Vysi1Display::RenderTexture(KeyedBlockDescriptor *block, uint16_t index, Matrix<3, 3> BaseTransform, Number *Overlay)
+inline void Vysi1Display::RenderTexture(KeyedBlockDescriptor *block, uint16_t index, const Matrix<3, 3> &BaseTransform, Number *Overlay)
 {
     TextureDefinition def;
     ResolveTextureDefinition(block, index, def);
@@ -372,7 +389,10 @@ void Vysi1Display::RenderTexture(KeyedBlockDescriptor *block, uint16_t index, Ma
 
             blendCol.Layer(def.Data.Blend2.Colour1, LimitZeroToOne(lerpVal));
 
-            // Apply to buffer with Overlay intensity
+            // Apply to buffer with Overlay intensity (skip zero overlap - Layer would
+            // recompute all four channels for no effect)
+            if (Overlay[PIdx] <= 0)
+                continue;
             Buffer[PIdx].Layer(blendCol, Overlay[PIdx]);
         }
     }

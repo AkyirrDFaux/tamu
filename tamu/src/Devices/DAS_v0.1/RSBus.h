@@ -15,13 +15,14 @@ extern "C" {
     void USART1_IRQHandler(void) __attribute__((interrupt("WCH-Interrupt-fast")));
     // USART1 interrupt handler: stores received bytes in the ring buffer and clears error flags.
     void USART1_IRQHandler(void) {
-        // Clear RXNE flag by reading data
-        if (USART1->STATR & USART_IT_RXNE) {
+        // Test the RXNE *status* flag (USART_IT_RXNE is an interrupt-config constant
+        // whose encoding also matches PE/NE/LBD bits and would admit error bytes).
+        if (USART1->STATR & USART_FLAG_RXNE) {
             uint8_t data = (uint8_t)USART1->DATAR;
-            
+
             // Calculate next position
             uint16_t next_head = (head + 1) % BUFFER_SIZE;
-            
+
             // Only write if buffer is not full
             if (next_head != tail) {
                 rx_buffer[head] = data;
@@ -29,11 +30,11 @@ extern "C" {
             }
             // Optional: Handle overflow here if needed
         }
-        
-        // Clear Error Flags
+
+        // Clear Error Flags (ORE/FE/NE are cleared by reading STATR followed by DATAR;
+        // they are rc_w0/read-to-clear, so writing 0s back is a no-op)
         if (USART1->STATR & (USART_FLAG_ORE | USART_FLAG_FE | USART_FLAG_NE)) {
             (void)USART1->DATAR;
-            USART1->STATR &= ~(uint16_t)(USART_FLAG_ORE | USART_FLAG_FE | USART_FLAG_NE);
         }
     }
 }
@@ -48,15 +49,6 @@ uint8_t UART_ReadByte() {
     uint8_t data = rx_buffer[tail];
     tail = (tail + 1) % BUFFER_SIZE;
     return data;
-}
-
-// Reads up to 'len' bytes into 'buffer'. Returns actual bytes read.
-size_t UART_ReadBuffer(uint8_t *buffer, size_t len) {
-    size_t count = 0;
-    while (count < len && UART_Available()) {
-        buffer[count++] = UART_ReadByte();
-    }
-    return count;
 }
 
 // Configures GPIO, USART1, and interrupts for half-duplex RS485 communication.
@@ -111,10 +103,15 @@ static uint32_t RS485_Micros()
 }
 
 // Wait for the line to be silent for 8 bytes + a random 0-7 byte backoff.
+// Bounded to RS485_SILENCE_TIMEOUT_MS so a continuously-busy or shorted bus
+// cannot wedge the caller forever.
+#define RS485_SILENCE_TIMEOUT_MS 100
+
 static void RS485_WaitForSilence()
 {
     uint32_t silence_us = (RS485_SILENCE_BYTES + (RawRand() % 8)) * RS485_BYTE_TIME_US;
     uint32_t idle_since = RS485_Micros();
+    uint32_t wait_start = Now();
 
     for (;;)
     {
@@ -124,10 +121,11 @@ static void RS485_WaitForSilence()
             while (UART_Available())
                 UART_ReadByte();
             idle_since = RS485_Micros();
-            continue;
         }
         if ((RS485_Micros() - idle_since) >= silence_us)
             return;
+        if ((Now() - wait_start) >= RS485_SILENCE_TIMEOUT_MS)
+            return; // Give up: transmit into the best window we had
     }
 }
 
@@ -188,35 +186,81 @@ bool SendAndVerifyPacket(const PacketFrame &Data) {
 
 /**
  * @brief Receives and validates a full PacketFrame.
- * @param Data Pointer to the struct where the packet will be stored.
- * @return Total bytes read if successful, 0 if failed or incomplete.
+ * @param Data Pointer to the struct where the packet will be stored. Assembly writes
+ *             directly into it, so the caller must pass the same buffer every call
+ *             (ProcessBus uses a single static frame).
+ * @return Total bytes read if successful (including start byte), 0 while incomplete.
+ *
+ * The assembly state persists across calls: a frame split across two ProcessBus()
+ * polls continues where it left off instead of being consumed and discarded. Bytes
+ * are only "spent" once; garbage before a 0xAA sync byte is skipped. If a sender
+ * aborts mid-frame, the stale stage consumes following bytes until length/CRC checks
+ * fail and the machine falls back to RX_SYNC (same recovery as before, but partial
+ * *transfers* now complete correctly).
  */
+static int RxValidate(PacketFrame *Data)
+{
+    // CRC covers everything from flags through the end of the payload.
+    if (Crc8(&Data->flags, (uint16_t)(11 + Data->payload_len)) != Data->crc8)
+        return 0; // corrupted: keep scanning for the next 0xAA
+    return (int)(1 + 12 + Data->payload_len);
+}
+
 int ReceivePacket(PacketFrame *Data) {
     if (!Data) return 0;
 
-    // 1. Synchronize (Find 0xAA)
-    // We only proceed if we find the start code
-    while (UART_Available()) {
-        if (UART_ReadByte() == 0xAA)
-            goto found_sync;
-    }
-    return 0; // Sync not found
+    enum RxStage : uint8_t { RX_SYNC, RX_HEADER, RX_PAYLOAD };
+    static uint8_t stage = RX_SYNC;
+    static uint16_t got = 0; // bytes of the current stage stored so far
 
-found_sync:
-    // 2. Read Packet Header (12 bytes: crc8 up to srv_src)
-    if (UART_ReadBuffer((uint8_t*)Data, 12) != 12) return 0;
-    
-    // 3. Safety check
-    if (Data->payload_len > MAX_PAYLOAD_SIZE) return 0;
-    
-    // 4. Read Payload
-    if (Data->payload_len > 0) {
-        if (UART_ReadBuffer(Data->payload, Data->payload_len) != Data->payload_len) return 0;
-    }
-    
-    // 5. CRC Validation
-    uint8_t calc_crc = Crc8(&Data->flags, 11 + Data->payload_len);
-    if (calc_crc != Data->crc8) return 0;
+    while (UART_Available())
+    {
+        uint8_t b = UART_ReadByte();
 
-    return (int)(1 + 12 + Data->payload_len); // Return total bytes read (including start byte)
+        switch (stage)
+        {
+        case RX_SYNC:
+            if (b == 0xAA)
+            {
+                stage = RX_HEADER;
+                got = 0;
+            }
+            // else: inter-frame garbage, skip
+            break;
+
+        case RX_HEADER:
+            ((uint8_t *)Data)[got++] = b;
+            if (got < 12)
+                break;
+
+            // Header complete: validate length before entering the payload stage.
+            stage = RX_PAYLOAD;
+            got = 0;
+            if (Data->payload_len > MAX_PAYLOAD_SIZE)
+            {
+                stage = RX_SYNC; // corrupt frame: resync on the next 0xAA
+                break;
+            }
+            if (Data->payload_len == 0)
+            {
+                // Zero-payload frames finish here.
+                stage = RX_SYNC;
+                int total = RxValidate(Data);
+                if (total > 0) return total;
+            }
+            break;
+
+        case RX_PAYLOAD:
+            Data->payload[got++] = b;
+            if (got >= Data->payload_len)
+            {
+                stage = RX_SYNC;
+                got = 0;
+                int total = RxValidate(Data);
+                if (total > 0) return total;
+            }
+            break;
+        }
+    }
+    return 0; // incomplete: more bytes pending on the bus
 }

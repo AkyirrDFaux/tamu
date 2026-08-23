@@ -22,7 +22,7 @@ public:
 };
 
 // Stores the given RGBA components into the colour
-ColourClass::ColourClass(uint8_t R, uint8_t G, uint8_t B, uint8_t A)
+inline ColourClass::ColourClass(uint8_t R, uint8_t G, uint8_t B, uint8_t A)
 {
     this->R = R;
     this->G = G;
@@ -31,7 +31,7 @@ ColourClass::ColourClass(uint8_t R, uint8_t G, uint8_t B, uint8_t A)
 };
 
 // Converts HSV (0-255 each) to an RGBA colour using integer sector math
-ColourClass ColourClass::FromHSV(Number H, Number S, Number V, uint8_t Alpha)
+inline ColourClass ColourClass::FromHSV(Number H, Number S, Number V, uint8_t Alpha)
 {
     // Convert inputs to 8-bit integers for high-speed bitwise math
     uint8_t h = (uint8_t)H.RoundToInt();
@@ -71,7 +71,7 @@ ColourClass ColourClass::FromHSV(Number H, Number S, Number V, uint8_t Alpha)
 }
 
 // Assigns the RGBA components of `Colour` to this colour
-void ColourClass::operator=(ColourClass Colour)
+inline void ColourClass::operator=(ColourClass Colour)
 {
     R = Colour.R;
     G = Colour.G;
@@ -80,7 +80,7 @@ void ColourClass::operator=(ColourClass Colour)
 };
 
 // Blends `LayerColour` over this colour by `Overlap` (0.0-1.0), including alpha accumulation
-void ColourClass::Layer(ColourClass LayerColour, Number Overlap)
+inline void ColourClass::Layer(ColourClass LayerColour, Number Overlap)
 {
     Number Opacity = Overlap * ByteToPercent(LayerColour.A);
     // Clamp the blended channels: an Out-of-range Overlap (>1) would otherwise extrapolate

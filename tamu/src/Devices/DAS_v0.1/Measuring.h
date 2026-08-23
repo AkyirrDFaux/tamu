@@ -34,26 +34,36 @@ const BlockSchema ResistiveMeas_Schema = {
 };
 
 // Range selector pins (Docs/Devices.md): each channel picks a reference resistor
-// between 330 Ohm / 10 kOhm / 330 kOhm.
-#define RNG1_LO   GPIOA, GPIO_Pin_2   // 330R
-#define RNG1_MID  GPIOC, GPIO_Pin_7   // 10k
-#define RNG1_HI   GPIOD, GPIO_Pin_3   // 330k
-#define RNG2_LO   GPIOC, GPIO_Pin_1   // 330R
-#define RNG2_MID  GPIOC, GPIO_Pin_2   // 10k
-#define RNG2_HI   GPIOC, GPIO_Pin_3   // 330k
+// between 330 Ohm / 10 kOhm / 330 kOhm. Table-driven: {port, pin} per channel x range.
+struct MeasRangePin
+{
+    GPIO_TypeDef *port;
+    uint16_t pin;
+};
+static const MeasRangePin s_range_pins[2][3] = {
+    // 330R              10k                330k
+    {{GPIOA, GPIO_Pin_2}, {GPIOC, GPIO_Pin_7}, {GPIOD, GPIO_Pin_3}}, // channel 1
+    {{GPIOC, GPIO_Pin_1}, {GPIOC, GPIO_Pin_2}, {GPIOC, GPIO_Pin_3}}, // channel 2
+};
 
 // Measuring input ADC channels (Docs/Devices.md): Measuring 1 = PD2 (A3), Measuring 2 = PC4 (A2).
 #define MEAS_ADC ADC1
 #define MEAS1_ADC_CH ADC_Channel_3   // PD2 (A3)
 #define MEAS2_ADC_CH ADC_Channel_2   // PC4 (A2)
 
-// Reads one 10-bit ADC sample from `channel`.
+// Reads one 10-bit ADC sample from `channel`. Bounded by ADC_EOC_TIMEOUT_CYCLES so a
+// stuck ADC cannot spin forever; returns the last conversion result on timeout.
+#define ADC_EOC_TIMEOUT_CYCLES 480000UL // ~10 ms at 48 MHz
+
 static uint16_t Meas_AdcRead(uint8_t channel)
 {
     ADC_RegularChannelConfig(MEAS_ADC, channel, 1, ADC_SampleTime_73Cycles);
     ADC_SoftwareStartConvCmd(MEAS_ADC, ENABLE);
+    uint32_t start = SysTick->CNT;
     while (!ADC_GetFlagStatus(MEAS_ADC, ADC_FLAG_EOC))
     {
+        if ((SysTick->CNT - start) > ADC_EOC_TIMEOUT_CYCLES)
+            break;
     }
     return ADC_GetConversionValue(MEAS_ADC);
 }
@@ -61,20 +71,11 @@ static uint16_t Meas_AdcRead(uint8_t channel)
 // Selects the reference resistor for measurement channel `index` (0 = 330R, 1 = 10k, 2 = 330k).
 static void Meas_SelectRange(uint8_t index, uint8_t range)
 {
-    if (index == 0)
-    {
-        PinHigh(RNG1_LO); PinHigh(RNG1_MID); PinHigh(RNG1_HI);
-        if (range == 0) { PinLow(RNG1_LO); PinHigh(RNG1_MID); PinHigh(RNG1_HI); }
-        else if (range == 1) { PinHigh(RNG1_LO); PinLow(RNG1_MID); PinHigh(RNG1_HI); }
-        else { PinHigh(RNG1_LO); PinHigh(RNG1_MID); PinLow(RNG1_HI); }
-    }
-    else
-    {
-        PinHigh(RNG2_LO); PinHigh(RNG2_MID); PinHigh(RNG2_HI);
-        if (range == 0) { PinLow(RNG2_LO); PinHigh(RNG2_MID); PinHigh(RNG2_HI); }
-        else if (range == 1) { PinHigh(RNG2_LO); PinLow(RNG2_MID); PinHigh(RNG2_HI); }
-        else { PinHigh(RNG2_LO); PinHigh(RNG2_MID); PinLow(RNG2_HI); }
-    }
+    if (index > 1) return;
+    for (uint8_t r = 0; r < 3; r++)
+        PinHigh(s_range_pins[index][r].port, s_range_pins[index][r].pin);
+    if (range < 3)
+        PinLow(s_range_pins[index][range].port, s_range_pins[index][range].pin);
 }
 
 // Configures the ADC and the range-selector GPIOs for both measurement channels.
@@ -84,8 +85,9 @@ void Measuring_Init()
                            RCC_APB2Periph_GPIOD | RCC_APB2Periph_ADC1, ENABLE);
 
     // Range selectors as push-pull outputs.
-    PinModeOutput(RNG1_LO); PinModeOutput(RNG1_MID); PinModeOutput(RNG1_HI);
-    PinModeOutput(RNG2_LO); PinModeOutput(RNG2_MID); PinModeOutput(RNG2_HI);
+    for (uint8_t c = 0; c < 2; c++)
+        for (uint8_t r = 0; r < 3; r++)
+            PinModeOutput(s_range_pins[c][r].port, s_range_pins[c][r].pin);
 
     // Measuring pins as analog inputs (PD2 and PC4).
     GPIO_InitTypeDef GPIO_InitStructure = {0};
@@ -129,8 +131,12 @@ enum MeasSensorType : uint8_t
 };
 
 // Low-pass filter state for each channel (kept outside the block so the block layout stays
-// exactly the five documented fields).
+// exactly the five documented fields), plus the range each filter is valid for: switching
+// the reference resistor changes the excitation scale, so the filter history must be
+// re-seeded on every range transition.
 static Number s_meas_filtered[2];
+static uint8_t s_meas_range[2] = {1, 1}; // matches Measuring_Init's mid-range selection
+static bool s_meas_seeded[2] = {false, false};
 
 // Samples one measurement channel and updates the block outputs. `index` selects the
 // channel (0/1). Measured Value and Current Range are reported in kOhm so that the
@@ -141,12 +147,34 @@ static void Measuring_Update(uint8_t index, ResistiveMeasStruct *m, uint16_t raw
 {
     if (index > 1) return;
 
-    // Low-pass filter the raw 10-bit sample using FilterCoeff (0..1).
-    s_meas_filtered[index] = (Number(raw) * m->FilterCoeff) +
-                             (s_meas_filtered[index] * (N(1) - m->FilterCoeff));
+    // Clamp FilterCoeff to [0,1]: a coefficient outside this range makes the
+    // low-pass diverge instead of converge.
+    Number coeff = m->FilterCoeff;
+    if (coeff.Value < 0) coeff.Value = 0;
+    if (coeff.Value > (1 << 16)) coeff.Value = (1 << 16);
 
-    // Auto-range: select the reference resistor that keeps the reading mid-scale.
-    uint8_t range = (raw > 850) ? 2 : ((raw < 200) ? 0 : 1);
+    // Auto-range from the *filtered* value so noisy inputs near a threshold do not
+    // chatter between ranges. On a range switch the old history belongs to another
+    // excitation scale, so re-seed the filter with the current raw sample.
+    bool seeded = s_meas_seeded[index];
+    if (!seeded)
+    {
+        s_meas_filtered[index] = Number(raw);
+        s_meas_seeded[index] = true;
+    }
+    else
+    {
+        s_meas_filtered[index] = (Number(raw) * coeff) +
+                                 (s_meas_filtered[index] * (N(1) - coeff));
+    }
+
+    uint16_t filtered = (uint16_t)(s_meas_filtered[index].Value >> 16);
+    uint8_t range = (filtered > 850) ? 2 : ((filtered < 200) ? 0 : 1);
+    if (range != s_meas_range[index])
+    {
+        s_meas_range[index] = range;
+        s_meas_filtered[index] = Number(raw); // discard stale-scale history
+    }
     Meas_SelectRange(index, range);
 
     const Number Rref_kohm[3] = {N(0.33), N(10.0), N(330.0)};

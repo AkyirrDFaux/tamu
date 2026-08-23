@@ -30,6 +30,18 @@ constexpr char DecodeNameChar(uint8_t v)
     return '.';
 }
 
+// Bit-packing core shared by EncodeName and StoredName (constexpr so compile-time
+// users bake it into read-only data; one implementation, no drift).
+constexpr void PackNameBytes(const uint8_t codes[NAME_CHARS], uint8_t out[NAME_BYTES])
+{
+    out[0] = (uint8_t)((codes[0] << 2) | (codes[1] >> 4));
+    out[1] = (uint8_t)(((codes[1] & 0x0F) << 4) | (codes[2] >> 2));
+    out[2] = (uint8_t)(((codes[2] & 0x03) << 6) | codes[3]);
+    out[3] = (uint8_t)((codes[4] << 2) | (codes[5] >> 4));
+    out[4] = (uint8_t)(((codes[5] & 0x0F) << 4) | (codes[6] >> 2));
+    out[5] = (uint8_t)(((codes[6] & 0x03) << 6) | codes[7]);
+}
+
 // Packs an 8-char name (padded with spaces) into the 6-byte stored form
 inline void EncodeName(const char *plain, uint8_t out[NAME_BYTES])
 {
@@ -37,12 +49,7 @@ inline void EncodeName(const char *plain, uint8_t out[NAME_BYTES])
     for (int i = 0; i < NAME_CHARS && plain[i]; i++)
         codes[i] = EncodeNameChar(plain[i]);
 
-    out[0] = (codes[0] << 2) | (codes[1] >> 4);
-    out[1] = ((codes[1] & 0x0F) << 4) | (codes[2] >> 2);
-    out[2] = ((codes[2] & 0x03) << 6) | codes[3];
-    out[3] = (codes[4] << 2) | (codes[5] >> 4);
-    out[4] = ((codes[5] & 0x0F) << 4) | (codes[6] >> 2);
-    out[5] = ((codes[6] & 0x03) << 6) | codes[7];
+    PackNameBytes(codes, out);
 }
 
 // Unpacks the 6-byte stored form back into an 8-char name (plus null)
@@ -82,12 +89,7 @@ struct StoredName
         for (size_t i = 0; i < NAME_CHARS && i < N && plain[i]; i++)
             codes[i] = EncodeNameChar(plain[i]);
 
-        bytes[0] = (uint8_t)((codes[0] << 2) | (codes[1] >> 4));
-        bytes[1] = (uint8_t)(((codes[1] & 0x0F) << 4) | (codes[2] >> 2));
-        bytes[2] = (uint8_t)(((codes[2] & 0x03) << 6) | codes[3]);
-        bytes[3] = (uint8_t)((codes[4] << 2) | (codes[5] >> 4));
-        bytes[4] = (uint8_t)(((codes[5] & 0x0F) << 4) | (codes[6] >> 2));
-        bytes[5] = (uint8_t)(((codes[6] & 0x03) << 6) | codes[7]);
+        PackNameBytes(codes, bytes);
     }
 
     // Returns the packed bytes.

@@ -2,11 +2,18 @@
 
 #include "Handler.h"
 
-// Converts a float to a fixed-point Number (Q16.16) with rounding.
+// Converts a float to a fixed-point Number (Q16.16) with rounding. Saturates instead of
+// invoking UB through an out-of-range int32_t cast.
 Number FloatToNumber(float f)
 {
     Number number;
-    number.Value = static_cast<int32_t>(f * 65536.0f + (f >= 0 ? 0.5f : -0.5f));
+    float scaled = f * 65536.0f + (f >= 0 ? 0.5f : -0.5f);
+    if (scaled >= 2147483647.0f)
+        number.Value = 2147483647;
+    else if (scaled <= -2147483648.0f)
+        number.Value = -2147483648;
+    else
+        number.Value = static_cast<int32_t>(scaled);
     return number;
 }
 
@@ -75,6 +82,11 @@ void PrintValue(uint16_t type_id, const void *data_ptr, uint16_t data_len)
             uint16_t h, w;
             Number d[9];
         };
+        if (data_len < sizeof(MatrixHeader))
+        {
+            printf("Matrix: (truncated, %u bytes)\n", data_len);
+            break;
+        }
         const MatrixHeader *m = static_cast<const MatrixHeader *>(data_ptr);
         printf("Matrix [%dx%d] Data: ", m->h, m->w);
         for (int i = 0; i < (m->h * m->w) && i < 9; ++i)
@@ -253,12 +265,19 @@ bool ParseCLIValue(uint16_t type, const char *val_str, void *out_buffer, uint8_t
         }
         else if (mode == 'T')
         {
-            float rot = atof(strtok(nullptr, ","));
-            float ox  = atof(strtok(nullptr, ","));
-            float oy  = atof(strtok(nullptr, ","));
-            float sx  = atof(strtok(nullptr, ","));
-            float sy  = atof(strtok(nullptr, ","));
-            mat = Matrix<3, 3>::CreateTransform2D(N(rot), {N(ox), N(oy)}, {N(sx), N(sy)});
+            bool ok = true;
+            float args[5];
+            for (int a = 0; a < 5 && ok; a++)
+            {
+                token = strtok(nullptr, ",");
+                if (!token)
+                    ok = false;
+                else
+                    args[a] = atof(token);
+            }
+            if (!ok)
+                return false;
+            mat = Matrix<3, 3>::CreateTransform2D(N(args[0]), {N(args[1]), N(args[2])}, {N(args[3]), N(args[4])});
         }
         else
         {

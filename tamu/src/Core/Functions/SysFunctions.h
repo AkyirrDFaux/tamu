@@ -40,8 +40,10 @@ inline void TimeUpdate()
 {
     // Prime on the first call: before any tick, UptimeMs and LastTime are both 0,
     // so a naive DeltaTime would equal the entire boot time and skew the loop stats.
-    if (DeviceStatus.UptimeMs == 0 && LastTime == 0)
+    static bool primed = false;
+    if (!primed)
     {
+        primed = true;
         LastTime = Now() + TimeOffsetMs;
         DeviceStatus.UptimeMs = LastTime;
         DeltaTime = 0;
@@ -56,7 +58,15 @@ inline void TimeUpdate()
 
     if (Number(DeltaTime) > DeviceStatus.MaxLoopTimeMs)
         DeviceStatus.MaxLoopTimeMs = Number(DeltaTime);
-    else if (DeviceStatus.UptimeMs % 20000 < 20)
-        DeviceStatus.MaxLoopTimeMs = DeviceStatus.AvgLoopTimeMs; // Reset max to current avg for long-term windowing
+
+    // Long-term windowing: every 20 s the max decays back to the average. A window
+    // counter is deterministic (a `UptimeMs % 20000 < 20` test can be missed entirely
+    // when ticks are slower than 20 ms).
+    static uint32_t max_window_start = 0;
+    if ((uint32_t)(DeviceStatus.UptimeMs - max_window_start) >= 20000)
+    {
+        max_window_start = DeviceStatus.UptimeMs;
+        DeviceStatus.MaxLoopTimeMs = DeviceStatus.AvgLoopTimeMs;
+    }
 };
 

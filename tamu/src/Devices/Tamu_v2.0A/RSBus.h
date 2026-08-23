@@ -43,10 +43,15 @@ void SetupRS485()
 
 // Wait for the line to be silent for 8 bytes + a random 0-7 byte backoff.
 // Any received byte resets the silence counter (someone else is transmitting).
+// Bounded to RS485_SILENCE_TIMEOUT_MS so a continuously-busy or shorted bus
+// cannot wedge the caller forever.
+#define RS485_SILENCE_TIMEOUT_MS 100
+
 static void RS485_WaitForSilence()
 {
     int64_t idle_since = esp_timer_get_time();
     uint32_t silence_us = (RS485_SILENCE_BYTES + (RawRand() % 8)) * RS485_BYTE_TIME_US;
+    int64_t wait_start = idle_since;
 
     for (;;)
     {
@@ -71,6 +76,8 @@ static void RS485_WaitForSilence()
         }
         if ((esp_timer_get_time() - idle_since) >= (int64_t)silence_us)
             return;
+        if ((esp_timer_get_time() - wait_start) >= RS485_SILENCE_TIMEOUT_MS * 1000LL)
+            return; // Give up: transmit into the best window we had
         vTaskDelay(pdMS_TO_TICKS(1));
     }
 }
@@ -82,7 +89,7 @@ bool SendAndVerifyPacket(const PacketFrame &Data)
     PacketFrame tx_frame = Data;
 
     // 2. Finalize CRC (Calculated over all fields starting at flags)
-    uint8_t crc_len = 11 + tx_frame.payload_len;
+    uint16_t crc_len = 11 + tx_frame.payload_len;
     tx_frame.crc8 = Crc8(&tx_frame.flags, crc_len);
 
     // 3. Prepare for transmission (12 bytes header + payload_len)
@@ -156,7 +163,8 @@ int ReceivePacket(PacketFrame *Data) {
     }
     
     // 5. Validate CRC
-    uint8_t calc_crc = Crc8(&Data->flags, 11 + Data->payload_len); 
+    uint16_t calc_crc_len = 11 + Data->payload_len;
+    uint8_t calc_crc = Crc8(&Data->flags, calc_crc_len);
     
     if (calc_crc != Data->crc8) {
         ESP_LOGE("RS485", "CRC Mismatch! Expected 0x%02X, Got 0x%02X", Data->crc8, calc_crc);

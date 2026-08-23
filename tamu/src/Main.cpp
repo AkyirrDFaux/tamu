@@ -3,9 +3,22 @@
 #include <cstring>
 #include <cstdlib>
 
-uint32_t DeltaTime = 0;
-uint32_t LastTime = 0;
-int32_t TimeOffsetMs = 0;
+// The DAS reduces every DeviceLog to a structured LogHandler broadcast without free text
+// (see Devices/DAS_v0.1/Log.h), so the diagnostic format strings/varargs are pure flash
+// waste on this 16 KB part. The no-op macros must come before ANY Core include.
+#if defined BOARD_DAS_v0_1
+#define DEVICE_LOG_TEXTLESS 1
+#define DeviceLog(...) ((void)0)
+#define DeviceLogHex(...) ((void)0)
+#endif
+
+// 1. Prepare the instances
+#ifdef BOARD_DAS_v0_1
+char DeviceNameBuffer[24] = "DAS v0.1";
+#else
+char DeviceNameBuffer[24] = "Tamu Node";
+#endif
+const char* DeviceName = DeviceNameBuffer;
 
 #include "Core/Types/Number.h"
 #include "Core/Types/Colour.h"
@@ -16,14 +29,10 @@ int32_t TimeOffsetMs = 0;
 
 #include "Blocks/DeviceInfo.h"
 
-// 1. Prepare the instances
 DeviceStatusStruct DeviceStatus;
-#ifdef BOARD_DAS_v0_1
-char DeviceNameBuffer[24] = "DAS v0.1";
-#else
-char DeviceNameBuffer[24] = "Tamu Node";
-#endif
-const char* DeviceName = DeviceNameBuffer;
+uint32_t DeltaTime = 0;      // defined here (declared in Core/Functions/SysFunctions.h)
+uint32_t LastTime = 0;
+int32_t TimeOffsetMs = 0;
 
 #include "Core/Functions/Packet.h"
 #include "Core/Functions/SysFunctions.h"

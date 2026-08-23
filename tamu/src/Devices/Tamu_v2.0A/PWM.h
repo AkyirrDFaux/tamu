@@ -1,3 +1,5 @@
+#pragma once
+
 #include "driver/ledc.h"
 
 // Configures LEDC timers and channels for both fans (25 kHz PWM on pins 6 and 10).
@@ -94,8 +96,9 @@ bool OnPWMDutyChange(const StaticBlockDescriptor &block, uint16_t index, const v
     else if (new_duty < N(0))
         new_duty = N(0);
 
-    // Calculate duty cycle: (new_duty / 100 * 1023) >> 16
-    uint32_t duty = (new_duty.Value / 100 * 1023) >> 16;
+    // Calculate duty cycle: (new_duty / 100) * 1023 computed in one 64-bit step
+    // (ESP32-only file), so no precision is lost to early truncation.
+    uint32_t duty = (uint32_t)(((int64_t)new_duty.Value * 1023) / (100 << DECIMAL));
 
     // Map data_ptr to channel
     ledc_channel_t channel = (block.Data == &Fan1) ? LEDC_CHANNEL_0 : LEDC_CHANNEL_1;

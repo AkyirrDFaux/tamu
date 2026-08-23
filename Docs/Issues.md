@@ -263,6 +263,50 @@ The storage layer was rewritten to match the updated `Docs/Services/Storage.md`:
   at 0x00 (flash can only program 1->0, so "re-programming 0xFFFFFFFF" cannot restore the erase
   state) - this is correct but did not resolve the hang.
 
+  **Re-investigation (static, 2026-08-22 evening, no hardware):** the code that hung no longer
+  exists - the name `AllocateContiguousBlocks` is not in any commit (the storage layer was
+  rewritten to FindSpace/MoveFiletable before the first commit), and the current paths have been
+  hardened further since the report. Verified against the actual LTO binary
+  (`.pio/build/DAS_v0_1`):
+  - **Every loop terminates**: FindSpace's bitmap scan advances monotonically; table walks are
+    capped by TableCapacity (<= 128 entries); SDK `FLASH_ErasePage`/`ProgramWord` use
+    loop-counter timeouts (`EraseTimeout`/`ProgramTimeout`), never bare `while(BSY)`.
+  - **Every wait is bounded**: `RS485_WaitForSilence` caps at 100 ms, echo verify at 50 ms x 3
+    retries (both were unbounded when the hang was reported).
+  - **Stack chain measured from the disassembly** (deepest create path):
+    main 296 + DispatchPacket 32 + HandleStorageService 552 + CreateFile 24 +
+    WriteFilerecord/MoveFiletable 52 + erase ~32 = **~990 B vs 1,264 B** above `_ebss`
+    (~270 B margin). The old build stacked much more here (unbounded CSMA wait, staging
+    buffers); overflow is no longer the plausible mechanism.
+  - **UART loss during multi-page erase degrades gracefully now** (ISR stalls while flash is
+    busy; the new ReceivePacket state machine + CRC resync instead of wedging).
+
+  Conclusion: every hang mechanism identifiable from the original report is fixed or bounded in
+  the current tree; whether *the* bug persists can only be answered on hardware. Retest recipe:
+  1. `file 2 create t1 256` (single block) -> expect status 1; `file 2 table` shows the entry.
+  2. Dump the storage region and verify the whole file area reads back as programmed (with the
+     64 B erase-page fix, erased-state assumptions now actually hold; before it, only every
+     fourth 64 B page of a block was truly erased).
+  3. `delete`, then `resize` grow on an existing file (exercises the copy path + pending-area
+     reservation separately).
+  4. If even `ping` misbehaves after flashing, first rebuild WITHOUT `-flto` to rule out the new
+     LTO pass (only change affecting everything at once).
+
+  Residual risks found during this analysis:
+  - (a) ~~SDK self-contradicts on erase granularity~~ **FIXED**: the datasheet confirms the
+    CH32V003 hardware erase page is 64 bytes (`ch32v00x_flash.h` agrees; only the copied
+    docstring in `ch32v00x_flash.c` wrongly says 1KB). `Storage_FlashErase`/`FlashFormat`
+    previously stepped one `FLASH_ErasePage` per 256 B allocation block, erasing only the
+    first 64 B of each - fresh-area assumptions (CreateFile, WriteBackupFile) were silently
+    violated. STORAGE_BLOCK_SIZE is now set to 64 B (= hardware erase page, enforced by a
+    static_assert), so every allocation block is exactly one erasable page; the erase loops
+    step the same 64 B pages. Note: existing DAS filesystems formatted with 256 B blocks
+    happen to stay readable (256 is a multiple of 64) but any `Format()` now rebuilds with
+    the 64 B geometry.
+  - (b) `HandleStorageService`'s single frame is 552 B (reply PacketFrame + the CID 5 read
+    `temp_buf[256]` share one allocation). Fits today; shrinking it is the easiest future win if
+    margin matters.
+
 ## Open issues (service audit, 2026-08-21)
 
 Services verified against `Docs/Services/*.md`, `Docs/Data Formats.md`, `Docs/RSBus.md`,
@@ -319,127 +363,191 @@ Script, App Interface, Router.
 - **LED display block**: the renderer is wired to the hardware, but the documented Layout File
   Name + Refresh Rate fields are still missing.
 
-## Open (firmware code review, 2026-08-22)
+## Fixed (firmware code review, 2026-08-22)
 
-Full pass over `tamu/src` (Core, Blocks, Devices). Findings verified against source;
-prior audit results are not repeated here.
+Full pass over `tamu/src` (Core, Blocks, Devices); findings were verified against source,
+then fixed in the same session. Both environments build clean after every fix
+(DAS_v0_1: RAM ~51 % / flash ~78 %; Tamu_v2_0A: clean).
 
-### Bugs — LED / display
+### LED / display
+
+- **DoubleParabola read uninitialized geometry data**: `ResolveGeometryDefinition()` gained a
+  `DoubleParabola` case (Width/Height/EdgeFade), and both `GeometryData`/`TextureData` union
+  constructors now zero-initialise their active member so no rasterizer path can read
+  indeterminate memory (`Vysi1Display.h`, `Render.h`).
+- **Negative Brightness wrapped**: Brightness is clamped to [0, 100] before the uint32_t
+  brightness scale is computed.
+
+### Packet / bus
+
+- **Crc8 length truncation**: `Crc8` now takes a `uint16_t` length; all call sites
+  (`PacketConstruct`, `PacketAppend`, both RSBus send/verify paths) use it, so frames with
+  payload >= 245 B no longer lose CRC coverage.
+- **DAS RX ISR tested the wrong constant**: `USART_IT_RXNE` (interrupt-config encoding) was
+  replaced with `USART_FLAG_RXNE`; the no-op `STATR &= ~(...)` write was removed (the flags
+  are read-to-clear via DATAR).
+- **Storage table read dropped FLAG_STOP** (CID 0): entries are counted first, then emitted,
+  so the final packet always carries FLAG_STOP even if a late entry read fails.
+- **Storage file read with num_bytes == 0 sent nothing** (CID 5): an empty START|STOP frame
+  is answered so the client never hangs.
+- **Blocking loops without timeout bounded**: `RS485_WaitForSilence` on both devices gives up
+  after RS485_SILENCE_TIMEOUT_MS (100 ms), and the DAS ADC EOC wait is bounded (~10 ms).
+
+### Storage / SNDB
+
+- **SNDB erased-slot pattern was wrong**: the `{0xFF}` array initializer only set byte 0;
+  `RecoverState()` now builds a fully erased comparison buffer with `memset`.
+- **SNDB Compact was non-atomic**: compaction stages valid entries in a temp file
+  (`SNRTMP`) while SNREG stays intact; SNREG is swapped last. A power failure mid-compaction
+  is repaired by `Available()`, which rebuilds SNREG from the temp file.
+- **Table move could land on pending file data**: `CreateFile`/`ResizeFile` copy path reserve
+  the freshly-erased area via new `pending_offset/pending_blocks` members; `FindSpace`,
+  `BlockUsed` treat reserved pages as used until the committing record is written.
+- **Field/key delete always reported success**: Dynamic Memory field delete (Deleted type)
+  and Keyed Memory `RemoveKey` now report the actual result.
+- **Keyed Size uint8_t wrap**: `SetKey` refuses to grow a dictionary field past 255 bytes.
+- **GetKey walked dictionary entries without bounds checks**: a shared `KeyedEntryFits()`
+  helper is now used by `GetKey`/`SetKey`/`ListKeys`/`RemoveKey`; corrupt/truncated entries
+  end the walk instead of stepping into foreign memory.
+
+### Dynamic memory registry
+
+- **CopyBlockInto left stale pointers for empty blocks**: the destination slot's
+  map/data_ptr/lengths are zeroed unconditionally before the allocation branches - no more
+  aliased/dangling descriptors that would double-free later.
+- **First per-block Save failed while the backup file didn't exist**: with no backup file,
+  the whole registry is stored once so stored block indices stay aligned with live ones.
+
+### DAS node
+
+- **ProcessBus ran only ~once per second**: the LED blink is non-blocking (millis-based
+  toggle), so the main loop services the bus continuously.
+- **Auto-range switch corrupted the measurement filter**: filter state is re-seeded with the
+  raw sample on every range transition, range thresholds use the *filtered* value (no
+  chatter near thresholds), and FilterCoeff is clamped to [0,1].
+- **Meas2.SamplingRate was dead configuration**: each channel samples at its own configured
+  rate (`SampleIntervalMs()`).
+
+### CLI / misc
+
+- **CLI matrix 'T' mode crashed on short input**: strtok results are NULL-checked like the
+  'R' branch.
+- **AccGyr filter divide-by-zero**: AccFilter/GyroFilter are clamped to [0,1] before the
+  filter weights are computed.
+- **No allocator-failure handling in log DB init**: `EnsureLogStorage` frees and nulls both
+  allocations if either fails; `HandleLogHandler` checks `LogUsed` too.
+- **CLI keyed-field reply length underflow**: `HandleCLIService` requires BlockIndex +
+  BlockMeta bytes before doing pointer arithmetic on field replies.
+- **LED-off left the button line floating**: turning the LED off now switches the shared
+  pin to pull-down input (`PinModeInputPullDown`), matching the active-high button read in
+  `ButtonUpdate()`.
+
+### Investigated, no change needed
+
+- **Blocks metadata offsets all 0x00**: harmless by design - `StaticBlockDescriptor::Get()`
+  derives field offsets from aligned schema sizes and ignores the metadata offset byte
+  (it is the keyed-entry Key field elsewhere). Documented here so nobody "fixes" it blindly.
+
+## Fixed (firmware code review round 2, 2026-08-22)
+
+Second pass focused on node-reachable service code and DAS flash size
+(12,744 -> 11,120 bytes, 77.8 % -> 67.9 %; RAM 1,056 -> 1,036 B).
+
+### Follow-up fixes (same day, third pass)
+
+- **DAS `ReceivePacket` no longer discards partial frames**: reworked as a persistent
+  SYNC/HEADER/PAYLOAD assembly state machine that writes directly into the caller's static
+  frame and survives across `ProcessBus()` polls - a frame split mid-transfer now completes
+  instead of being consumed and lost. The unused `UART_ReadBuffer` helper was removed with
+  it. Residual limitation (documented in code): a sender aborting mid-frame desyncs until
+  length/CRC checks fail, same recovery as before.
+- **Capability bitfield implemented** (`Core/Types/Enums.h`): `Capabilities::Core = bit 0`
+  per the Device service doc ("if device has core capability, it can assign IDs and store
+  them in the registry"). The Tamu reports it (`kCapabilities = Capabilities::Core`), the
+  DAS reports none, and the Discover handler now gates ID assignment on the reported CORE
+  bit in addition to the short address, so behaviour matches the advertised capability.
+- **Tamu app task stack raised 8192 -> 16384 bytes**: `LoadAllBackups` places a 2 KB buffer
+  on this stack plus ProcessBus dispatch recursion (matching the REPL task sizing rationale).
+- DAS flash after these changes: 11,128 B (67.9 %), RAM 1,040 B.
+
+### Correctness
+
+- **Time-sync offset assignment never converged** (`Core/Services/Device.h` CID 11): theta is
+  measured against the node's *displayed* time (which already contains the old offset), so
+  the correction must accumulate - `TimeOffsetMs -= theta`. The previous `= -theta` left the
+  previous round's residual alive forever (error oscillated between +/- one sync-interval of
+  drift instead of settling at 0).
+- **File-table pointer recovery picked stale tables** (`Core/Functions/Storage.h`):
+  `WriteTablePointer` writes the new pointer *before* invalidating older slots (the safer
+  order - invalidating first would risk booting into a Format() wipe), but `FindFiletable`
+  returned the FIRST valid slot. After an interrupted update both old and new slots are
+  valid, so a crash could silently boot the stale table while `FindSpace` considers the new
+  table's pages free and reallocates over them. `FindFiletable` now returns the LAST valid
+  slot (slots fill sequentially within a page generation, so highest = newest).
+- **TimeSync scheduling broke on UptimeMs wraparound** (`Core/Functions/TimeSync.h`): bare
+  `now_ms >= due_ms` comparisons stop firing for ~49 days after wrap; switched to signed
+  differences `(int32_t)(now_ms - due_ms) >= 0`.
+- **Max-loop-time reset could be missed entirely** (`SysFunctions.h::TimeUpdate`): the old
+  `UptimeMs % 20000 < 20` test only fires if a tick lands inside a 20 ms window; ticks slower
+  than 20 ms never reset the max. Replaced with a deterministic 20 s window counter. The
+  first-call prime condition also uses a bool flag now (an uptime that ever passes through
+  exactly 0 would have re-triggered it).
+- **CLI reply parsers read past truncated payloads** (`Devices/Tamu_v2.0A/CLI/Handler.h`): the
+  registry-summary branch indexed `data_ptr[0]` with only BlockIndex-length guaranteed, and
+  the block-meta branch dereferenced a full BlockMeta under the same guard. Both now verify
+  the payload actually carries those bytes.
+- **CLI Matrix print ignored data_len** (`Devices/Tamu_v2.0A/CLI/Block.h`): a truncated reply
+  would print garbage matrix dimensions/values; guarded now. `FloatToNumber` also saturates
+  instead of invoking UB through an out-of-range int32 cast.
+- **CLI SNDB responses vanished silently** (`Devices/Tamu_v2.0A/CLI/SNDB.h`): 1-byte failure
+  statuses printed nothing; they now report like the main CLI handler. The command parser
+  also dropped its per-command `std::string` heap allocation for plain `strcmp`.
+
+### Robustness guards
+
+- **Payload alignment invariant pinned** (`Core/Functions/Packet.h`): direct word reads out
+  of `frame.payload` are only legal because the packed header is exactly 12 bytes
+  (`static_assert(offsetof(PacketFrame, payload) % 4 == 0)`) - RV32EC faults on misaligned
+  loads. If the header ever changes, those call sites must switch to memcpy.
+- **Main.cpp global definitions moved below their headers**: `DeltaTime`/`LastTime`/
+  `TimeOffsetMs` were defined before the headers declaring them (include-order fragility).
+- **StoredName ctor duplicated EncodeName's bit packing** (`Core/Types/Name.h`): factored into
+  a shared constexpr `PackNameBytes`.
+
+### DAS flash size (-1,624 B)
+
+- **`-flto` enabled** for `env:DAS_v0_1` (-1,212 B): the single-TU header build cross-inlines
+  heavily; verified after enabling that `USART1_IRQHandler` stays a global symbol and
+  `.fixed_data` remains pinned at 0x3800 (~3.2 KB headroom before the storage region).
+- **DeviceLog call sites compiled out** (-376 B incl. the next item): the DAS log format
+  carries no free text, so every formatted diagnostic was string-literal rodata plus vararg
+  setup feeding a function that discards its arguments. `DEVICE_LOG_TEXTLESS` (Main.cpp,
+  board-guarded) maps `DeviceLog`/`DeviceLogHex` to no-ops before any Core include;
+  `ReportLog(MakeLog(...))` calls remain for real error reporting.
+- **No-op FLASH unlock dance removed** from `Storage_FlashInit` (write/erase paths lock/unlock
+  themselves).
+- **`Meas_SelectRange` table-driven** (was 210 B of duplicated PinHigh/PinLow sequences; now
+  one loop over a `{port, pin}` table, shared by `Measuring_Init`).
+- **Memory-service write echoes simplified**: System/Dynamic/Keyed write success replies echo
+  the request payload verbatim (it already IS BlockIndex + BlockMeta + value) instead of
+  re-assembling a copy - less flash and fewer large stack buffers in the handlers.
+- **SendDeviceReply reuses the caller's reply frame**: removes a second full PacketFrame
+  (~270 B) from the Device-service stack chain on the node, where these handlers run too.
+
+## Open (firmware code review follow-ups)
 
 - **GammaTable has only 240 entries** (`Blocks/Vysi1Display.h:9-24`): the initializer list
-  ends at index 239 (`..., 198, 199, 200`), so entries 240-255 are zero-initialized and any
-  channel value ≥ 240 snaps to black - the brightest pixels go dark. The table also caps at
-  200 instead of ~255, so it is not a valid gamma-1.8 curve even for indices it covers.
-  Regenerate the full 256-entry table.
-- **DoubleParabola reads uninitialized geometry data**: `ResolveGeometryDefinition()`
-  (`Vysi1Display.h:143-149`) has no case for `Geometries::DoubleParabola`, but
-  `CalculateShapeAlpha()` reads `def.Data.Basic.Width/Height/EdgeFade` for it
-  (`Render.h:193-196`). Those union members are never initialized, so the rasterizer reads
-  indeterminate memory. Either add the resolution case or reject the geometry.
-- **Negative Brightness wraps** (`Vysi1Display.h:106`): `(Brightness * 255 / 100).ToInt()`
-  converted to `uint32_t brightness_scale` turns a negative field value into a huge scale,
-  producing garbage colours through `(scale * alpha) >> 8`. Clamp Brightness to [0, 100].
-
-### Bugs — packet / bus
-
-- **Crc8 length truncates mod 256**: `Crc8(const uint8_t*, uint8_t len)`
-  (`Core/Functions/Packet.h:46`) is called with `11 + payload_len` (up to 266) at
-  `Packet.h:114`, `Packet.h:151`, `Tamu_v2.0A/RSBus.h:86`, `Tamu_v2.0A/RSBus.h:159`,
-  `DAS_v0.1/RSBus.h:218`. For any frame with `payload_len >= 245` the length wraps and the
-  CRC silently covers only a few payload bytes - integrity protection vanishes exactly for
-  the largest (file-transfer) frames. Widen `Crc8`'s length parameter to `uint16_t`.
-- **DAS RX ISR tests the wrong constant**: `USART1->STATR & USART_IT_RXNE`
-  (`DAS_v0.1/RSBus.h:19`) uses the interrupt-*config* encoding (0x0525) as a status mask; it
-  matches PE/NE/LBD/RXNE simultaneously, so error bytes are pushed into the RX ring instead
-  of discarded. Use `USART_FLAG_RXNE` (0x0020). Related no-op: `STATR &= ~(ORE|FE|NE)` at
-  lines 34-36 cannot clear rc_w0 flags (harmless only because the DATAR read clears them).
-- **Storage table read drops FLAG_STOP** (`Core/Services/Storage.h:47-61`, CID 0): when a
-  `ReadFileEntry` fails mid-table the loop `continue`s without incrementing `sent`, so no
-  packet ever carries FLAG_STOP and the requester's stream reassembly stalls. Count the
-  entry as sent (or track "last emitted" separately) so the stream terminates.
-- **Storage file read with num_bytes == 0 sends nothing** (`Core/Services/Storage.h:113-153`,
-  CID 5): a valid name/offset but zero length skips the chunk loop entirely - neither data
-  nor an empty START|STOP ack is sent, hanging the client.
-
-### Bugs — storage / SNDB
-
-- **SNDB erased-slot pattern is wrong** (`Core/Functions/SNDB.h:115`):
-  `static const uint8_t ff[sizeof(RegistryEntry)] = {0xFF};` sets only `ff[0]`; the rest is
-  zero-filled, so the memcmp looks for `FF 00 00...` and never matches a real erased slot.
-  `RecoverState()` therefore never finds the append head, `write_head` stays at its default
-  end-of-file value, and the first `AddDevice` after every boot triggers a pointless
-  `Compact()`. Fix the initializer.
-- **SNDB Compact is non-atomic** (`Core/Functions/SNDB.h:265-275`): the registry file is
-  deleted and recreated before any valid entry is rewritten; power loss mid-compaction loses
-  the whole registry. Write a fresh temp file completely, then swap.
-- **Table move can land on pending file data** (`Core/Functions/Storage.h`, CreateFile /
-  ResizeFile copy path): the data area is chosen via `FindSpace()` and erased, but the
-  committing record isn't written until `WriteFilerecord()`; if that call finds the table
-  full, `MoveFiletable()` → `FindSpace(new_table_size)` does not see the uncommitted area
-  and can place the new file table exactly over the freshly erased file data. Reserve the
-  pending allocation during the move (edge case, but real corruption).
-- **Keyed/dynamic field delete always reports success**: if the field index is out of range
-  (`DynamicMemory.h:548-553`) or `RemoveKey` fails (`KeyedMemory.h:165-170`), the handler
-  still answers status OK. Reflect the actual result, matching the Set paths.
-- **GetKey walks dictionary entries without bounds checks** (`Core/Functions/Memory.h:308-322`):
-  unlike `SetKey` and `ListKeys`, one corrupt/truncated entry makes the cursor advance past
-  the field and return a pointer into foreign memory. Share one bounds-checked cursor helper.
-
-### Bugs — dynamic memory registry
-
-- **CopyBlockInto leaves stale pointers for empty blocks**
-  (`Core/Services/DynamicMemory.h:206-225`): when `source.map_count == 0` or
-  `source.length == 0`, the malloc branches are skipped and the destination slot keeps
-  whatever descriptors the shift loop / `AddBlock` left there - aliased with the shifted
-  copy at `index+1` or dangling from a previously released block. A later Remove/Release
-  double-frees them. Zero `map/data_ptr/map_count/length` unconditionally before the
-  allocation branches.
-- **First per-block Save fails while the backup file doesn't exist**
-  (`Core/Services/DynamicMemory.h:240-258`): with `ReadBackupFile == 0`, `temp_registry` is
-  empty and `CopyBlockInto(temp_registry, block > 0, ...)` rejects `index > block_count`,
-  so saving block N fails until block 0 was saved once. Append unconditionally when the
-  file is absent.
-
-### Bugs — DAS node
-
-- **ProcessBus runs only ~once per second** (`Devices/DAS_v0.1/Main.h:118-122`): the LED
-  blink blocks with two `Sleep(500)` per loop iteration, so incoming requests sit in (or
-  overflow) the 256-byte ring at 115200 baud and replies lag up to a second. Make the blink
-  non-blocking (millis-based toggle).
-- **Auto-range switch corrupts the measurement filter** (`Devices/DAS_v0.1/Measuring.h:145-153`):
-  the low-pass filter keeps integrating across range switches even though the excitation
-  circuit changed scale, so MeasuredValue/CurrentRange stay wrong for many samples after
-  each switch; range thresholds also use the *unfiltered* sample, so noisy inputs chatter
-  between ranges. Reset the filter state on transition and threshold on the filtered value.
-- **Meas2.SamplingRate is dead configuration** (`Devices/DAS_v0.1/Main.h:107-116`): the
-  sample interval derives solely from Meas1; both channels are sampled at Meas1's rate.
-
-### Bugs — CLI / misc
-
-- **CLI matrix 'T' mode crashes on short input** (`Devices/Tamu_v2.0A/CLI/Block.h:254-262`):
-  five unchecked `atof(strtok(nullptr, ","))` calls; input like `matrix T,1` makes strtok
-  return NULL and `atof(NULL)` dereferences it. The 'R' branch already checks - do the same.
-- **AccGyr filter divide-by-zero**: `1 / (1 + AccGyr.AccFilter)`
-  (`Devices/Tamu_v2.0A/AccGyr.h:156-159`) divides by zero if the remotely-writable field is
-  set to -1. Clamp on write or before use.
-- **No allocator-failure handling in log DB init**: `EnsureLogStorage`
-  (`Core/Functions/Log.h:46-53`) ignores malloc/calloc failure; `LogHandler.h:20` checks
-  `LogBuffer` but not `LogUsed` (a failed calloc would null-deref at line 32).
-
-### Uncertain / needs confirmation
-
-- **LED-off leaves button line floating**: turning the LED off does `PinHigh` +
-  `PinModeInput` (`Devices/Tamu_v2.0A/Button.h:14-17`); `gpio_reset_pin` inside strips pull
-  config. If the board has no external bias, `PinModeInputPullDown` (exists, unused) seems
-  intended.
-- **Blocking loops without timeout**: `RS485_WaitForSilence` (both RSBus.h files) and
-  `Meas_AdcRead`'s EOC wait spin forever on a wedged/shorted bus or stuck ADC.
-- **Blocks metadata offsets all 0x00**: `Blocks/PWM.h`, `AccGyr.h`, `Vysi1Display.h`
-  BlockMeta tables list offset 0x00 for every field, contradicting the actual struct layout
-  (`PWMStruct.Duty` is at offset 4). Harmless today only if nothing addresses fields by these
-  offsets - verify and fix or document.
-- **Keyed field Size is uint8_t**: accumulating dictionary entries past 255 total bytes
-  wraps silently (`Memory.h:383-384`). Add an explicit cap.
+  ends at index 239, so entries 240-255 are zero-initialized and any channel value ≥ 240
+  snaps to black - the brightest pixels go dark. The table also caps at 200 instead of ~255,
+  so it is not a valid gamma-1.8 curve even for indices it covers. Regenerate the full
+  256-entry table. (Intentionally not yet fixed.)
+- **Tamu serial number carries only 48 real bits** (`Devices/Tamu_v2.0A/Main.h`): the factory
+  MAC fills bytes 0-5; bytes 6-13 stay zero, so all Tamu SNs share an 8-zero suffix. Confirm
+  whether the docs promise a full 14-byte unique SN; if so, pad from additional eFuse fields.
+- **Tamu `ReceivePacket` still discards partial frames**: the ESP32 side reads via
+  `uart_read_bytes` with short timeouts and returns 0 on an incomplete header/payload; the
+  DAS side got the persistent state machine, the core has not (needs the same treatment if
+  bus-load frame splits ever appear there).
 
 ## Open (app rewrite, 2026-08-22)
 

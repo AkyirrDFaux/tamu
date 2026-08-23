@@ -56,6 +56,8 @@ public:
     // Returns a NEW vector of size N+1 with `val` inserted at position `pos`
     Vector<N + 1> insert(size_t pos, Number val) const
     {
+        if (pos > N)
+            pos = N; // clamp: a bad index would be a silent out-of-bounds write
         Vector<N + 1> next_vec;
         for (size_t i = 0; i < pos; ++i)
             next_vec.Data[i] = this->Data[i];
@@ -72,6 +74,8 @@ public:
     // Note: Requires template specialization or conditional check for N > 0
     Vector<N - 1> remove(size_t pos) const
     {
+        if (pos >= N)
+            pos = N - 1; // clamp: a bad index would be a silent out-of-bounds read
         Vector<N - 1> next_vec;
         for (size_t i = 0; i < pos; ++i)
             next_vec.Data[i] = this->Data[i];

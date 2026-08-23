@@ -18,7 +18,7 @@ void LoadAllBackups();
 
 // Device identity (mandatory, see Core/Functions/Device.h).
 extern const DeviceType kDeviceType = DeviceType::Tamu_v2_0A;
-extern const uint32_t kCapabilities = 0;
+extern const uint32_t kCapabilities = Capabilities::Core; // assigns IDs, SN registry, time sync
 
 // Reads the factory MAC from eFuse as the 14-byte serial number (cached).
 const SerialNumber &GetSerialNumber()
@@ -118,7 +118,6 @@ while (1)
         TimeUpdate();
         TimeSync.Tick(DeviceStatus.UptimeMs);
     }
-    vTaskDelete(NULL);
 }
 
 extern "C"
@@ -126,6 +125,8 @@ extern "C"
     // FreeRTOS entry point: spawns the application task.
     void app_main(void)
     {
-        xTaskCreate(ApplicationTask, "app_task", 8192, NULL, 5, NULL);
+        // 16 KB: LoadAllBackups places a MEMORY_BACKUP_CAP-sized buffer on this stack and
+        // ProcessBus dispatches full request/response chains recursively beneath it.
+        xTaskCreate(ApplicationTask, "app_task", 16384, NULL, 5, NULL);
     };
 }

@@ -2,7 +2,6 @@
 #define LEDR GPIOA, GPIO_Pin_1
 
 #define VOLTAGE (3.3)
-#define ADCRES (1 << 10) // CH32V003 is 10-bit
 
 static uint32_t ms_accum = 0;
 static uint32_t last_cnt = 0;
@@ -63,13 +62,14 @@ void SleepMicro(uint32_t us)
     }
 }
 
-// Returns the approximate free RAM (bytes) between the end of BSS and the stack pointer.
+// Returns the approximate free RAM (bytes) between the end of BSS and the current
+// stack pointer (read live from SP, not the boot-time linker symbol).
 int32_t GetFreeRAM()
 {
     extern uint32_t _ebss;
-    extern uint32_t _stack_ptr;
-    // Difference between end of BSS and current stack pointer
-    return (int32_t)((uint32_t)&_stack_ptr - (uint32_t)&_ebss);
+    uint32_t sp;
+    __asm__ volatile("mv %0, sp" : "=r"(sp));
+    return (int32_t)(sp - (uint32_t)&_ebss);
 }
 
 // Configures the given GPIO pin as a push-pull output.

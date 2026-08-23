@@ -4,7 +4,6 @@
 const gpio_num_t LED_NOTIFICATION_PIN = GPIO_NUM_2;
 
 #define VOLTAGE (3.3)
-#define ADCRES (1 << 12)
 
 // Returns the current uptime in milliseconds.
 uint32_t Now()

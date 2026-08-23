@@ -17,7 +17,7 @@ void HandleLogHandler(const PacketFrame &frame)
     (void)cid;
 #else
     EnsureLogStorage();
-    if (!LogBuffer) return; // Heap allocation failed
+    if (!LogBuffer || !LogUsed) return; // Heap allocation failed
 
     if (cid == 0)
     {

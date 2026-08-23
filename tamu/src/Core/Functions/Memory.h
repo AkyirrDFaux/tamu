@@ -53,6 +53,27 @@ inline void RespondStatus(const PacketFrame &frame, bool ok)
     SendResponse(frame, &status, 1);
 }
 
+// Fills `out` with BlockIndex(block, invalid, invalid) + BlockMeta(flags_and_type,
+// key = invalid, size = map_count) + name - the shared "block meta + name" reply
+// payload of the Dynamic/Keyed/System memory services. Returns the payload length.
+inline uint16_t MakeBlockMetaPayload(uint8_t block, uint16_t flags_and_type, uint16_t map_count,
+                                     const char *name, uint8_t name_len,
+                                     uint8_t *out, uint16_t cap)
+{
+    if ((uint32_t)sizeof(BlockIndex) + sizeof(BlockMeta) + name_len > cap)
+        return 0;
+    uint16_t cursor = 0;
+    BlockIndex out_index = {block, INVALID_INDEX, INVALID_INDEX};
+    memcpy(out + cursor, &out_index, sizeof(BlockIndex)); cursor += sizeof(BlockIndex);
+    BlockMeta meta;
+    meta.FlagsAndType = flags_and_type;
+    meta.Key = INVALID_INDEX;
+    meta.Size = (uint8_t)map_count;
+    memcpy(out + cursor, &meta, sizeof(BlockMeta)); cursor += sizeof(BlockMeta);
+    if (name_len) { memcpy(out + cursor, name, name_len); cursor += name_len; }
+    return cursor;
+}
+
 // Writes `len` bytes to a backup file (creating/resizing it as needed).
 inline bool WriteBackupFile(const char name[8], const uint8_t *data, uint16_t len)
 {
@@ -291,6 +312,14 @@ struct KeyResult
     uint16_t data_len = 0;
 };
 
+// True when a complete keyed entry (meta + value) starting at `start` fits inside a
+// dictionary field of length `field_len`. Shared by every keyed-entry walker so one
+// corrupt/truncated entry can never make the walk run into the next field's data.
+static inline bool KeyedEntryFits(uint8_t val_size, uint16_t start, uint16_t field_len)
+{
+    return (uint32_t)start + sizeof(BlockMeta) + val_size <= (uint32_t)field_len;
+}
+
 // Keyed memory block. Storage layout is inherited from DynamicBlockDescriptor, but keyed
 // fields additionally store (Key, Value) entries addressed through the block/field/key
 // BlockIndex of the Keyed Memory service.
@@ -315,6 +344,10 @@ struct KeyedBlockDescriptor : public DynamicBlockDescriptor
                 res.data_len = m->Size;
                 return res;
             }
+            // Bounds check: a corrupt/truncated entry must end the walk, not step
+            // into the next field's data (or past the allocation).
+            if (!KeyedEntryFits(m->Size, processed, field.Descriptor.Size))
+                break;
             uint16_t entry_size = sizeof(BlockMeta) + m->Size;
             uint16_t step = AlignTo4(entry_size);
             cursor += step;
@@ -343,7 +376,7 @@ struct KeyedBlockDescriptor : public DynamicBlockDescriptor
             while (offset + sizeof(BlockMeta) <= field_len)
             {
                 BlockMeta *m = reinterpret_cast<BlockMeta *>(cursor + offset);
-                if (offset + sizeof(BlockMeta) + m->Size > field_len)
+                if (!KeyedEntryFits(m->Size, offset, field_len))
                     break;
                 if (m->Key == key)
                 {
@@ -357,6 +390,12 @@ struct KeyedBlockDescriptor : public DynamicBlockDescriptor
         uint16_t old_entry_size = found ? AlignTo4(sizeof(BlockMeta) + ((BlockMeta *)(cursor + offset))->Size) : 0;
         uint16_t new_entry_size = AlignTo4(sizeof(BlockMeta) + val_len);
         int16_t size_diff = (int16_t)new_entry_size - (int16_t)old_entry_size;
+
+        // BlockMeta.Size is a single byte: refuse to grow the dictionary field past
+        // its representable size instead of silently wrapping.
+        if ((int32_t)map[field_idx].Size + size_diff > 0xFF)
+            return false;
+
         if (!EnsureCapacity(size_diff))
             return false;
 
@@ -409,7 +448,7 @@ struct KeyedBlockDescriptor : public DynamicBlockDescriptor
         {
             BlockMeta *m = reinterpret_cast<BlockMeta *>(cursor + offset);
             uint16_t entry_size = AlignTo4(sizeof(BlockMeta) + m->Size);
-            if (offset + entry_size > field.Descriptor.Size)
+            if (!KeyedEntryFits(m->Size, offset, field.Descriptor.Size))
                 break;
             if (count < cap)
                 keys[count] = m->Key;
@@ -431,7 +470,7 @@ struct KeyedBlockDescriptor : public DynamicBlockDescriptor
         {
             BlockMeta *m = reinterpret_cast<BlockMeta *>(cursor + offset);
             uint16_t entry_size = AlignTo4(sizeof(BlockMeta) + m->Size);
-            if (offset + entry_size > field.Descriptor.Size)
+            if (!KeyedEntryFits(m->Size, offset, field.Descriptor.Size))
                 break;
             if (m->Key == key)
             {

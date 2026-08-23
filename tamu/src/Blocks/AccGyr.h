@@ -1,3 +1,5 @@
+#pragma once
+
 enum AccGyrError : uint16_t {
     ErrNone            = 0x0000,
     ErrBusGeneric      = 0x0001, // Failed to transmit/receive

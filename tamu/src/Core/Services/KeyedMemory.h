@@ -74,14 +74,12 @@ void HandleKeyedMemory(const PacketFrame &frame)
         if (idx->Field == INVALID_INDEX) // block meta + name
         {
             uint8_t payload[MAX_PAYLOAD_SIZE];
-            uint16_t cursor = 0;
-            BlockIndex out_index = {idx->Block, INVALID_INDEX, INVALID_INDEX};
-            memcpy(payload + cursor, &out_index, sizeof(BlockIndex)); cursor += sizeof(BlockIndex);
-            BlockMeta meta; meta.FlagsAndType = (uint16_t)block->type; meta.Key = INVALID_INDEX; meta.Size = (uint8_t)block->map_count;
-            memcpy(payload + cursor, &meta, sizeof(BlockMeta)); cursor += sizeof(BlockMeta);
-            uint8_t name_len = (uint8_t)strlen(block->Name);
-            memcpy(payload + cursor, block->Name, name_len); cursor += name_len;
-            SendResponse(frame, payload, (uint8_t)cursor);
+            uint16_t plen = MakeBlockMetaPayload(idx->Block, (uint16_t)block->type,
+                                                 block->map_count, block->Name,
+                                                 (uint8_t)strlen(block->Name),
+                                                 payload, sizeof(payload));
+            if (plen == 0) { RespondStatus(frame, false); break; }
+            SendResponse(frame, payload, (uint8_t)plen);
             break;
         }
         FieldResult field_result = block->Get(idx->Field);
@@ -158,14 +156,15 @@ void HandleKeyedMemory(const PacketFrame &frame)
         if (idx->Key == INVALID_INDEX) // dictionary itself: update its type only
         {
             block->map[idx->Field].FlagsAndType = desc->FlagsAndType;
-            RespondEcho(frame, idx, *desc, value, value_len);
+            // Request payload already IS the echo (BlockIndex + BlockMeta + value).
+            SendResponse(frame, frame.payload, frame.payload_len);
             break;
         }
 
         if (BlockMetaType(desc->FlagsAndType) == (uint16_t)DataType::Deleted)
         {
-            block->RemoveKey(idx->Field, idx->Key);
-            RespondStatus(frame, true);
+            bool removed = block->RemoveKey(idx->Field, idx->Key);
+            RespondStatus(frame, removed);
             break;
         }
 
@@ -174,7 +173,8 @@ void HandleKeyedMemory(const PacketFrame &frame)
             RespondStatus(frame, false);
             break;
         }
-        RespondEcho(frame, idx, *desc, value, value_len);
+        // Success echo: the request payload already IS BlockIndex + BlockMeta + value.
+        SendResponse(frame, frame.payload, frame.payload_len);
         break;
     }
     case 4: // Read backup (direct file parse, no heap)

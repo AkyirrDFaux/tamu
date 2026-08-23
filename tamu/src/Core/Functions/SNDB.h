@@ -54,6 +54,8 @@ private:
     static bool IsFull();
     static bool RemoveDevice(uint16_t short_id);
     static bool Available();
+    // Ensures state was recovered from the file (shared prologue of every public method).
+    static bool EnsureRecovered();
 
     static uint32_t registry_size;   // Actual registry file size in bytes
     static uint32_t write_head;      // Next append offset (file-relative)
@@ -77,26 +79,73 @@ static const char *SNDBFileName()
     return name;
 }
 
+// Temporary file used during compaction: entries are staged here before the main
+// registry is swapped, so a power loss mid-compaction never loses the registry
+// (recovery rebuilds SNREG from the temp file).
+static const char *SNDBTempName()
+{
+    static constexpr char name[8] = {'S', 'N', 'R', 'T', 'M', 'P', ' ', ' '};
+    return name;
+}
+
 // Ensures the registry file exists (creating it on first use) and returns true when usable.
 // After a Storage.Format() the file is gone and gets recreated here, so cached state is
-// reset to force a fresh recovery scan.
+// reset to force a fresh recovery scan. If a previous compaction was interrupted (SNREG
+// missing but the temp file present), the registry is rebuilt from the temp file.
 bool SNDB::Available()
 {
     uint32_t sz = Storage.FileExists(SNDBFileName());
     if (sz == 0xFFFFFFFF)
     {
-        if (!Storage.CreateFile(SNDBFileName(), SNDB_MAX_ENTRIES * sizeof(RegistryEntry)))
+        bool recreated = false;
+        uint32_t temp_sz = Storage.FileExists(SNDBTempName());
+        if (temp_sz != 0xFFFFFFFF)
         {
-            DeviceLog("SNDB", "Registry file creation failed!");
-            return false;
+            // Interrupted compaction: restore every valid entry from the temp file.
+            DeviceLog("SNDB", "Restoring registry from interrupted compaction");
+            recreated = Storage.CreateFile(SNDBFileName(),
+                                           SNDB_MAX_ENTRIES * sizeof(RegistryEntry));
+            if (recreated)
+            {
+                int32_t restored = 0;
+                uint32_t num_entries = temp_sz / sizeof(RegistryEntry);
+                for (uint32_t i = 0; i < num_entries && restored < SNDB_MAX_ENTRIES; i++)
+                {
+                    RegistryEntry entry;
+                    if (Storage.ReadFromFile(SNDBTempName(), i * sizeof(RegistryEntry),
+                                             sizeof(entry), (char *)&entry) != sizeof(entry))
+                        break;
+                    if (entry.valid != STATE_VALID)
+                        continue;
+                    Storage.WriteToFile(SNDBFileName(),
+                                        (uint32_t)restored * sizeof(RegistryEntry),
+                                        sizeof(RegistryEntry), (const char *)&entry);
+                    restored++;
+                }
+                recovered = false; // freshly written file: rescan
+                write_head = 0;
+                active_count = 0;
+                iter_pos = 0;
+            }
+            Storage.DeleteFile(SNDBTempName());
         }
+
+        if (!recreated)
+        {
+            if (!Storage.CreateFile(SNDBFileName(), SNDB_MAX_ENTRIES * sizeof(RegistryEntry)))
+            {
+                DeviceLog("SNDB", "Registry file creation failed!");
+                return false;
+            }
+            recovered = false;   // freshly erased file: rescan
+            write_head = 0;
+            active_count = 0;
+            iter_pos = 0;
+        }
+
         sz = Storage.FileExists(SNDBFileName());
         if (sz == 0xFFFFFFFF)
             return false;
-        recovered = false;   // freshly erased file: rescan (finds empty)
-        write_head = 0;
-        active_count = 0;
-        iter_pos = 0;
     }
     registry_size = sz;
     return registry_size >= sizeof(RegistryEntry);
@@ -112,7 +161,10 @@ void SNDB::RecoverState()
     write_head = registry_size; // default: file full -> compact on next add
     uint32_t num_entries = registry_size / sizeof(RegistryEntry);
 
-    static const uint8_t ff[sizeof(RegistryEntry)] = {0xFF};
+    // Fully-erased slot pattern (all 0xFF). Built at runtime: an array initializer
+    // `{0xFF}` would zero-fill the remaining bytes and never match.
+    uint8_t ff[sizeof(RegistryEntry)];
+    memset(ff, 0xFF, sizeof(ff));
     for (uint32_t i = 0; i < num_entries; i++)
     {
         RegistryEntry entry;
@@ -132,16 +184,25 @@ void SNDB::RecoverState()
               (int)write_head, (int)active_count);
 }
 
-// Walks the file looking for `serial`; returns its short ID or ADDR_INVALID.
-uint16_t SNDB::FindShortID(const SerialNumber &serial)
+// Shared prologue of every public method: makes sure the registry file is usable and
+// its state has been recovered from flash.
+bool SNDB::EnsureRecovered()
 {
     if (!Available())
-        return ADDR_INVALID;
+        return false;
     if (!recovered)
     {
         RecoverState();
         recovered = true;
     }
+    return true;
+}
+
+// Walks the file looking for `serial`; returns its short ID or ADDR_INVALID.
+uint16_t SNDB::FindShortID(const SerialNumber &serial)
+{
+    if (!EnsureRecovered())
+        return ADDR_INVALID;
     if (active_count == 0)
         return ADDR_INVALID;
 
@@ -152,7 +213,8 @@ uint16_t SNDB::FindShortID(const SerialNumber &serial)
         if (Storage.ReadFromFile(SNDBFileName(), i * sizeof(RegistryEntry),
                                  sizeof(entry), (char *)&entry) != sizeof(entry))
             break;
-        if (entry.valid == STATE_VALID && memcmp(entry.uid.bytes, serial.bytes, 14) == 0)
+        if (entry.valid == STATE_VALID &&
+            memcmp(entry.uid.bytes, serial.bytes, sizeof(serial.bytes)) == 0)
             return entry.shortID;
     }
     return ADDR_INVALID;
@@ -161,13 +223,8 @@ uint16_t SNDB::FindShortID(const SerialNumber &serial)
 // Registers a serial number with a short ID, removing any prior entry and compacting if full.
 bool SNDB::AddDevice(const SerialNumber &serial, uint16_t short_id)
 {
-    if (!Available())
+    if (!EnsureRecovered())
         return false;
-    if (!recovered)
-    {
-        RecoverState();
-        recovered = true;
-    }
 
     uint16_t existing_id = FindShortID(serial);
     if (existing_id != ADDR_INVALID)
@@ -213,13 +270,8 @@ bool SNDB::IsFull()
 // Marks every entry with the given short ID as removed (tombstone) and decrements the active count.
 bool SNDB::RemoveDevice(uint16_t short_id)
 {
-    if (!Available())
+    if (!EnsureRecovered())
         return false;
-    if (!recovered)
-    {
-        RecoverState();
-        recovered = true;
-    }
     if (active_count == 0)
         return false;
 
@@ -246,8 +298,12 @@ bool SNDB::RemoveDevice(uint16_t short_id)
 }
 
 // Rewrites the registry file densely with only the valid entries. Called when the log is
-// full of entries/tombstones; the freshly created file is erased, then the valid entries
-// are written back.
+// full of entries/tombstones.
+//
+// Crash-safe order: the valid entries are staged into a temp file first while SNREG stays
+// untouched, then SNREG is swapped for a fresh file and rewritten from RAM. A power loss
+// before the delete leaves both files intact; a power loss after it is repaired by
+// Available(), which rebuilds SNREG from the temp file.
 bool SNDB::Compact()
 {
     uint32_t count = 0;
@@ -262,17 +318,37 @@ bool SNDB::Compact()
             compact_buf[count++] = entry;
     }
 
-    if (!Storage.DeleteFile(SNDBFileName()))
+    // 1. Stage all valid entries in the temp file (SNREG still intact).
+    if (!Storage.DeleteFile(SNDBTempName()))
         return false;
-    if (!Storage.CreateFile(SNDBFileName(), SNDB_MAX_ENTRIES * sizeof(RegistryEntry)))
+    if (!Storage.CreateFile(SNDBTempName(), SNDB_MAX_ENTRIES * sizeof(RegistryEntry)))
         return false;
-
     for (uint32_t i = 0; i < count; i++)
     {
-        if (!Storage.WriteToFile(SNDBFileName(), i * sizeof(RegistryEntry),
+        if (!Storage.WriteToFile(SNDBTempName(), i * sizeof(RegistryEntry),
                                  sizeof(RegistryEntry), (const char *)&compact_buf[i]))
+        {
+            Storage.DeleteFile(SNDBTempName());
             return false;
+        }
     }
+
+    // 2. Swap: replace SNREG with a fresh file and write the staged entries back.
+    if (!Storage.DeleteFile(SNDBFileName()))
+        return false; // temp file remains -> next boot restores from it
+    if (!Storage.CreateFile(SNDBFileName(), SNDB_MAX_ENTRIES * sizeof(RegistryEntry)))
+        return false;
+    bool ok = true;
+    for (uint32_t i = 0; i < count && ok; i++)
+    {
+        ok = Storage.WriteToFile(SNDBFileName(), i * sizeof(RegistryEntry),
+                                 sizeof(RegistryEntry), (const char *)&compact_buf[i]);
+    }
+
+    // 3. Compaction complete on this boot: drop the staging file.
+    Storage.DeleteFile(SNDBTempName());
+    if (!ok)
+        return false;
 
     active_count = (int32_t)count;
     write_head = count * sizeof(RegistryEntry);
@@ -286,26 +362,31 @@ bool SNDB::Compact()
 // Scans the registry for the lowest unused short ID starting from 2 (ID 1 is reserved for the core).
 uint16_t SNDB::FindLowestAvailableID()
 {
+    // One pass over the registry marks every used ID below ID_SCAN_LIMIT. The lowest
+    // available ID can never exceed active_count + 2 <= SNDB_MAX_ENTRIES + 2, so the
+    // limit comfortably covers all reachable candidates.
+    const uint16_t ID_SCAN_LIMIT = 512;
+    uint8_t used[(ID_SCAN_LIMIT + 7) / 8] = {0};
+
     uint16_t candidate = 2; // ID 1 reserved for Master/Core Node
+
+    uint32_t num_entries = registry_size / sizeof(RegistryEntry);
+    for (uint32_t i = 0; i < num_entries; i++)
+    {
+        RegistryEntry entry;
+        if (Storage.ReadFromFile(SNDBFileName(), i * sizeof(RegistryEntry),
+                                 sizeof(entry), (char *)&entry) != sizeof(entry))
+            break;
+        if (entry.valid == STATE_VALID && entry.shortID < ID_SCAN_LIMIT)
+        {
+            uint16_t id = entry.shortID;
+            used[id >> 3] |= (uint8_t)(1u << (id & 7));
+        }
+    }
 
     while (candidate < 0xFFFF)
     {
-        bool collision = false;
-        uint32_t num_entries = registry_size / sizeof(RegistryEntry);
-        for (uint32_t i = 0; i < num_entries; i++)
-        {
-            RegistryEntry entry;
-            if (Storage.ReadFromFile(SNDBFileName(), i * sizeof(RegistryEntry),
-                                     sizeof(entry), (char *)&entry) != sizeof(entry))
-                break;
-            if (entry.valid == STATE_VALID && entry.shortID == candidate)
-            {
-                collision = true;
-                break;
-            }
-        }
-
-        if (!collision)
+        if (candidate >= ID_SCAN_LIMIT || !(used[candidate >> 3] & (1u << (candidate & 7))))
             return candidate;
         candidate++;
     }
@@ -315,13 +396,8 @@ uint16_t SNDB::FindLowestAvailableID()
 // Allocates the lowest available short ID for `serial` and registers it; returns the new ID or ADDR_INVALID.
 uint16_t SNDB::NewDevice(const SerialNumber &serial)
 {
-    if (!Available())
+    if (!EnsureRecovered())
         return ADDR_INVALID;
-    if (!recovered)
-    {
-        RecoverState();
-        recovered = true;
-    }
 
     uint16_t id = FindLowestAvailableID();
     if (id == ADDR_INVALID)
@@ -336,13 +412,8 @@ uint16_t SNDB::NewDevice(const SerialNumber &serial)
 // Fills `out_entry` with the registry entry matching `short_id`; returns false if not found.
 bool SNDB::GetEntry(uint16_t short_id, RegistryEntry &out_entry)
 {
-    if (!Available())
+    if (!EnsureRecovered())
         return false;
-    if (!recovered)
-    {
-        RecoverState();
-        recovered = true;
-    }
     if (active_count == 0)
         return false;
 
@@ -365,39 +436,24 @@ bool SNDB::GetEntry(uint16_t short_id, RegistryEntry &out_entry)
 // Returns the number of active (registered) devices.
 int32_t SNDB::ActiveCount()
 {
-    if (!Available())
+    if (!EnsureRecovered())
         return 0;
-    if (!recovered)
-    {
-        RecoverState();
-        recovered = true;
-    }
     return active_count;
 }
 
 // Resets the iteration cursor to the first registry entry.
 void SNDB::IterReset()
 {
-    if (!Available())
+    if (!EnsureRecovered())
         return;
-    if (!recovered)
-    {
-        RecoverState();
-        recovered = true;
-    }
     iter_pos = 0;
 }
 
 // Returns the next valid registry entry via `out_entry`, or false when the file is exhausted.
 bool SNDB::IterNext(RegistryEntry &out_entry)
 {
-    if (!Available())
+    if (!EnsureRecovered())
         return false;
-    if (!recovered)
-    {
-        RecoverState();
-        recovered = true;
-    }
 
     uint32_t num_entries = registry_size / sizeof(RegistryEntry);
     while (iter_pos < num_entries)

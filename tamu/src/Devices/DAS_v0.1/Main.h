@@ -1,6 +1,9 @@
 #include "ch32v00x.h"
 #include "debug.h"
 
+// NOTE: DeviceLog/DeviceLogHex are compiled out via no-op macros in src/Main.cpp
+// (DEVICE_LOG_TEXTLESS) - the DAS log format carries no free text, see Log.h.
+
 // Forward declaration for LoadAllBackups function
 void LoadAllBackups();
 
@@ -25,7 +28,7 @@ void LoadAllBackups() {
 
 // Device identity (mandatory, see Core/Functions/Device.h).
 extern const DeviceType kDeviceType = DeviceType::DualAnalogSensor;
-extern const uint32_t kCapabilities = 0;
+extern const uint32_t kCapabilities = Capabilities::None; // plain node: no core capability
 
 // Reads the CH32V003 32-bit unique chip ID as the 14-byte serial number (cached).
 const SerialNumber &GetSerialNumber()
@@ -52,6 +55,15 @@ const StaticBlockDescriptor static_block_registry[] = {
 const size_t static_block_num = sizeof(static_block_registry) / sizeof(StaticBlockDescriptor);
 
 const char* DeviceVersion = "DAS v0.1";
+
+// Converts a configured sampling rate (Hz) into the loop interval in ms (>= 1 ms).
+static inline uint32_t SampleIntervalMs(Number rate)
+{
+    int32_t hz = rate.Value >> 16; // integer Hz
+    if (hz <= 0) return 100;       // disabled / invalid -> default 10 Hz
+    uint32_t interval = 1000u / (uint32_t)hz;
+    return interval == 0 ? 1 : interval;
+}
 
 // Device entry point: initialises hardware, discovers its short address over RS485, then blinks the status LED.
 int main(void)
@@ -97,33 +109,34 @@ int main(void)
     PinLow(LEDR);
 
     uint32_t last_sample_ms = 0;
+    uint32_t last_sample2_ms = 0;
+    uint32_t last_blink_ms = 0;
+    bool blink_high = false;
 
     while (1)
     {
         TimeUpdate();
         ProcessBus();
 
-        // Sample the resistive measurement channels at the configured rate.
-        uint32_t interval = (Meas1.SamplingRate.ToInt() > 0)
-                                ? (1000u / (uint32_t)Meas1.SamplingRate.ToInt())
-                                : 100u;
-        if (interval == 0) interval = 1;
-        if ((Now() - last_sample_ms) >= interval)
+        // Sample each resistive measurement channel at its own configured rate.
+        uint32_t now_ms = Now();
+        if ((now_ms - last_sample_ms) >= SampleIntervalMs(Meas1.SamplingRate))
         {
-            last_sample_ms = Now();
+            last_sample_ms = now_ms;
             Measuring_Update(0, &Meas1, Meas_AdcRead(MEAS1_ADC_CH));
+        }
+        if ((now_ms - last_sample2_ms) >= SampleIntervalMs(Meas2.SamplingRate))
+        {
+            last_sample2_ms = now_ms;
             Measuring_Update(1, &Meas2, Meas_AdcRead(MEAS2_ADC_CH));
         }
 
-        // Simple LED pattern for minimal version
-        PinHigh(LEDR);
-        Sleep(500);
-        PinLow(LEDR);
-        Sleep(500);
+        // Non-blocking LED blink so ProcessBus keeps servicing the bus every loop.
+        if ((now_ms - last_blink_ms) >= 500)
+        {
+            last_blink_ms = now_ms;
+            blink_high = !blink_high;
+            if (blink_high) PinHigh(LEDR); else PinLow(LEDR);
+        }
     }
 }
-
-/*
-Fix crashes
-Implement measuring and struct for sensor
-*/
