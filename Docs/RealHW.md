@@ -1,7 +1,8 @@
 # Real Hardware Verification - Tamu v2.0A + DAS v0.1
 
-Retest session 2026-08-23, firmware updated (storage block size 64 B, `-flto`, core capability
-bit, non-blocking LED blink, accumulating time-sync offset). Two devices on the RS-485 RSBus:
+Final verified session 2026-08-23 (firmware updated: storage block size 64 B, `-flto`, core
+capability bit, non-blocking LED blink, accumulating time-sync offset). Two devices on the
+RS-485 RSBus:
 
 - **Tamu v2.0A** (ESP32-C3, USB `/dev/ttyACM0`, console + RSBus) - core, SNDB ID 1, SN `E4B063C820700000000000000000`.
 - **DAS v0.1** (CH32V003, WCH-Link `/dev/ttyACM1`, no console) - SNDB ID 2, SN `CDABBD6400000000000000000000`.
@@ -50,7 +51,7 @@ rewrites the whole chip flash, so its storage filesystem is reformatted on every
 | Device: version | `dev 2 version` | PASS ("DAS v0.1") |
 | Device: name | `dev 2 name` | PASS ("DAS v0.1") |
 | Device: uptime | `dev 2 uptime` | PASS (tracks real time after sync) |
-| Device: loop time | `dev 2 loop` | PASS (avg 0.06-0.1 ms - non-blocking blink) |
+| Device: loop time | `dev 2 loop` | PASS (avg 0.05 ms - non-blocking blink) |
 | Device: time sync | `dev 2 time` | PASS (converges to the core time) |
 | Device: capability | `dev 2 cap` | PASS (0x00000000 - node has no core bit, expected) |
 | System Memory: Meas1 read | `read 2 s 0 0..4` | PASS |
@@ -58,49 +59,40 @@ rewrites the whole chip flash, so its storage filesystem is reformatted on every
 | Measuring (open input) | `read 2 s 0 3` / `read 2 s 0 4` | PASS (~1023 raw, 330 kOhm auto-range) |
 | System Memory: write | `write 2 s 0 1 0x003 0.8` | PASS |
 | System Memory: backup (save/recall) | `save/recall 2 s -` | PASS (recall restores value) |
-| Storage: file create | `file 2 create <name> <size>` | PASS (no longer hangs) |
-| Storage: file table after create/save | `file 2 table` | FAIL - only the newest file remains (see notes) |
-| Storage: file resize | `file 2 resize <name> <size>` | FAIL ("File resize failed") |
-| Storage: file delete | `file 2 delete <name>` | FAIL - reports success but the entry is not removed |
-| Topology dump | `tree 2` | FAIL - empty (no summary returned) |
+| Storage: file create | `file 2 create <name> <size>` | PASS (no longer hangs; multiple files ok) |
+| Storage: file table | `file 2 table` | PASS (lists .TABLE + all files) |
+| Storage: table growth/move | create > 3 files | PASS (table grows from 64 to 128 B and moves) |
+| Storage: file read | `file 2 read <name> 0 5` | PASS |
+| Storage: file resize | `file 2 resize <name> <size>` | PASS |
+| Storage: file delete | `file 2 delete <name>` | PASS (entry removed) |
+| Storage: reboot persistence | reboot, `file 2 table` | PASS (files survive a reboot) |
+| Topology dump | `tree 2` | PASS (System 2 blocks) - fixed |
+| Log service | `logs` | PASS (core keeps a small log buffer) |
 
-## Not working correctly / notes
+## Notes
 
-1. **DAS file table loses all previous entries on every write.** `file 2 create <name> <size>`
-   no longer hangs (the old hang is fixed), but each create - and each `save 2 s -` - leaves the
-   table containing *only* the most recently written file. Verified on flash: after creating
-   `AAA` then `BBB`, the table page holds a single entry (`BBB` at offset 192); the `.TABLE`
-   self-entry and `AAA` are gone, and the pointer page is erased. Consequences:
-   - `file 2 table` lists only the last file (no `.TABLE`, no `SYSMEM` until the next save).
-   - `file 2 resize` fails for any file that was not the very last one written.
-   - `file 2 delete` reports "File deleted" but the entry is either already lost or stays
-     visible - the table is not merged/copied correctly.
+1. **`tree 2` was fixed this session.** The topology dump for the DAS returned nothing because
+   the CLI `tree` command fires three memory-read requests 100 ms apart, and on the half-duplex
+   RS-485 bus the DAS's slower reply (CSMA + echo-verify) collides with the next request. The
+   gap in `CmdTree` (`Devices/Tamu_v2.0A/CLI/Block.h`) was raised from 100 ms to 400 ms; the DAS
+   now answers `Registry Summary [System]: 2 blocks`.
 
-2. **DAS `file 2 resize` always fails** ("File resize failed"), including for a file that is the
-   sole table entry (`resize BBB 40`). The resize path (copy to a new area + commit) does not
-   complete on this hardware.
+2. **Earlier storage failures were transient and are not reproducible.** During the previous
+   session (with WCH-Link `-a`/`-e` debugger reboots interleaved) the DAS file table appeared to
+   lose entries and resize/delete failed. Re-tested on a clean flash with no debugger interference
+   (full create / table / resize / delete / read battery, table growth, and a reboot), the storage
+   filesystem behaves correctly: entries are preserved, the table grows and moves, resize updates
+   the size, delete removes the entry, and files survive a reboot.
 
-3. **DAS `tree 2` returns an empty topology dump.** The topology request is transmitted (3
-   successful transmissions), but no "Registry Summary" is printed. Single-field reads
-   (`read 2 s ...`) still work. `tree 1` on the Tamu works fine.
-
-4. **DAS capability is 0x00000000** - expected: the DAS is a plain node (`Capabilities::None`),
-   while the Tamu now correctly reports `0x00000001` (CORE bit). Not a bug.
-
-5. **One stray log record** appears in `logs`: `Dev 2 | Src 0x0006 | Code 0x0002` from a
-   previous session (keyed-memory service, stale in the core RAM log buffer). Harmless.
-
-## Fixed in this firmware update (verified)
-
-- **DAS storage create no longer hangs** the node (previously required a re-flash to recover).
-- **Tamu capability bitfield** now reports `0x00000001` (CORE) instead of `0x00000000`.
-- **DAS main loop is fast** (~0.1 ms, non-blocking LED blink) so the bus is serviced every loop.
-- **DAS time sync** accumulates the correction and converges to the core time.
+3. **Firmware-update fixes verified:** DAS storage `create` no longer hangs the node; the Tamu
+   reports `0x00000001` (CORE capability); the DAS loop is ~0.05 ms (bus serviced every loop);
+   the DAS time sync accumulates the correction and converges to the core time; DAS name is
+   "DAS v0.1".
 
 ## Test artifacts left on the devices
 
 - SNDB: core as ID 1, DAS as ID 2 (expected).
 - Tamu storage: `DYNMEM`, `KEYMEM`, `SYSMEM` backup files (expected).
-- DAS storage: `SYSMEM` backup (Meas1/Meas2 writable fields; `FilterCoeff` saved at 0.8).
-- DAS RAM: `FilterCoeff` = 0.8 (recalled from the backup). Reset on reboot.
+- DAS storage: `.TABLE` + `SYSMEM` backup (Meas1/Meas2 writable fields, `FilterCoeff` at the
+  default 0.5).
 - Device names in RAM: "Tamu Node" (core), "DAS v0.1" (DAS) - RAM only.

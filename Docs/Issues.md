@@ -240,72 +240,58 @@ The storage layer was rewritten to match the updated `Docs/Services/Storage.md`:
   counter is not guaranteed to start at 0 after a debugger reboot-into-halt/resume, and the
   `ms_rem`-based `Now()` started from `last_cnt = 0`, adding the stale counter value as a bogus
   uptime chunk. The first `Now()` call now primes `last_cnt` from the live counter.
-- **DAS storage flash fast-erase left cells at 0x00 (fixed)**: `Storage_FlashErase` used
-  `FLASH_ErasePage_Fast` (which leaves cells at 0x00 on the CH32V003) then "restored" 0xFF by
-  programming 0xFFFFFFFF - which does nothing, since flash can only program 1->0. Every erased
-  block ended up 0x00 (observed in the flash dump), corrupting the filesystem's erased-state
-  expectations. Replaced with the bounded normal `FLASH_ErasePage` (256 B pages, 0xFF result).
+- **DAS storage erase op selection (fixed)**: early debugging mis-attributed the storage
+  corruption to "fast erase leaving cells at 0x00"; the real root cause (see the next section)
+  was using the 1 KB `FLASH_ErasePage` sector erase per 64 B allocation block, which wiped the
+  pointer page and file table. The current code uses the 64 B `FLASH_ErasePage_Fast` page erase
+  for file operations and the 1 KB sector erase only in `Format()`, with `STORAGE_BLOCK_SIZE`
+  asserted equal to the 64 B erase page.
 - **DAS now verified working on hardware**: discovery (ID 2), ping, type/sn/version, System
   Memory block reads/writes, and the resistive measurement loop (ADC sample + auto-range +
   kOhm conversion) all respond over RSBus through the Tamu. `Meas1/Meas2` report ~1022 raw
   (open input -> 330 kOhm auto-range, ~13750 kOhm computed) as expected with nothing wired.
 
-## Open (needs root cause, real hardware 2026-08-22)
+## Fixed (RealHW 2026-08-23 bug report - DAS storage corruption)
 
-- **DAS storage `create`/`resize`/`delete` hang the DAS.** `file 2 create <name> <size>` (and
-  `resize`/`delete`) make the CH32V003 stop responding to anything on the bus until re-flashed.
-  `save 2 s -` (System Memory backup) and `file 2 table` work, so the flash controller and table
-  reads are fine; the failure is in `CreateFile`/`WriteTable`. Bisection on hardware: the request
-  is received and dispatched (Storage service, CID 2), then the DAS hangs inside
-  `AllocateContiguousBlocks`/the write path; a stack overflow is unlikely (the measured ~850 B
-  chain fits the 256 B stack + ~1 KB RAM headroom, and enlarging the stack did not help). The DAS
-  fast-erase was also replaced with the bounded normal erase because the fast erase leaves cells
-  at 0x00 (flash can only program 1->0, so "re-programming 0xFFFFFFFF" cannot restore the erase
-  state) - this is correct but did not resolve the hang.
+**Root cause of "every create/save leaves only the newest file": the wrong erase
+operation.** The CH32V003 flash controller has two distinct erase ops (`ch32v00x_flash.c`,
+`ROM_ERASE`):
+- `CR_PAGE_ER` / `FLASH_ErasePage_Fast` = **64-byte page erase** (the application-note
+  mechanism for regular operation),
+- `CR_PER` / `FLASH_ErasePage` = **1 KB sector erase** (its docstring "page(1KB)" was
+  literally correct).
 
-  **Re-investigation (static, 2026-08-22 evening, no hardware):** the code that hung no longer
-  exists - the name `AllocateContiguousBlocks` is not in any commit (the storage layer was
-  rewritten to FindSpace/MoveFiletable before the first commit), and the current paths have been
-  hardened further since the report. Verified against the actual LTO binary
-  (`.pio/build/DAS_v0_1`):
-  - **Every loop terminates**: FindSpace's bitmap scan advances monotonically; table walks are
-    capped by TableCapacity (<= 128 entries); SDK `FLASH_ErasePage`/`ProgramWord` use
-    loop-counter timeouts (`EraseTimeout`/`ProgramTimeout`), never bare `while(BSY)`.
-  - **Every wait is bounded**: `RS485_WaitForSilence` caps at 100 ms, echo verify at 50 ms x 3
-    retries (both were unbounded when the hang was reported).
-  - **Stack chain measured from the disassembly** (deepest create path):
-    main 296 + DispatchPacket 32 + HandleStorageService 552 + CreateFile 24 +
-    WriteFilerecord/MoveFiletable 52 + erase ~32 = **~990 B vs 1,264 B** above `_ebss`
-    (~270 B margin). The old build stacked much more here (unbounded CSMA wait, staging
-    buffers); overflow is no longer the plausible mechanism.
-  - **UART loss during multi-page erase degrades gracefully now** (ISR stalls while flash is
-    busy; the new ReceivePacket state machine + CRC resync instead of wedging).
+All previous storage code used `FLASH_ErasePage` (the 1 KB op) per allocation block - first
+at 256 B steps, then (after the block-size change) at 64 B steps. Every file-data erase
+therefore wiped an entire kilobyte around it, taking the pointer page and file table with it
+whenever the data area shared that sector. The reported flash dump is reproduced exactly:
+BBB's erase at [192,256) destroyed offsets 0..256 (pointer + `.TABLE` + AAA), after which
+`WriteFilerecord`'s re-scan saw an "empty" table and appended BBB's record cleanly at slot 0.
+`resize` failing and `delete` misbehaving are downstream casualties: resize's append-then-
+invalidate sequence programs records over non-erased cells (NOR 1->0 violation ->
+`FLASH_ProgramWord` error -> "File resize failed"), and delete operated on already-wiped
+records.
 
-  Conclusion: every hang mechanism identifiable from the original report is fixed or bounded in
-  the current tree; whether *the* bug persists can only be answered on hardware. Retest recipe:
-  1. `file 2 create t1 256` (single block) -> expect status 1; `file 2 table` shows the entry.
-  2. Dump the storage region and verify the whole file area reads back as programmed (with the
-     64 B erase-page fix, erased-state assumptions now actually hold; before it, only every
-     fourth 64 B page of a block was truly erased).
-  3. `delete`, then `resize` grow on an existing file (exercises the copy path + pending-area
-     reservation separately).
-  4. If even `ping` misbehaves after flashing, first rebuild WITHOUT `-flto` to rule out the new
-     LTO pass (only change affecting everything at once).
+Fixes:
+- `Storage_FlashErase` now uses `FLASH_ErasePage_Fast` (64 B `CR_PAGE_ER`) with both standard
+  and fast-mode unlocks, one page per allocation block. `STORAGE_BLOCK_SIZE` stays 64 B,
+  enforced equal to `FLASH_ERASE_PAGE_SIZE` by static_assert.
+- `Storage_FlashFormat` deliberately uses the coarse `CR_PER` 1 KB sector erase (two calls
+  cover the whole region) - appropriate for format only, per the application note.
+- **DAS `tree 2` empty dump**: `CmdTree` sent its three summary reads back-to-back; on the
+  half-duplex bus the node's answer to request 1 collided with the core's transmission of
+  request 2 (the node's CSMA gives up after its bounded wait and transmits into a busy
+  window), so the System summary reply was lost while lone `read` commands (clean turnaround)
+  kept working. The CLI now spaces the three requests **400 ms** apart (100 ms was still too
+  short for the DAS's slower reply; verified on hardware that 400 ms works). Dynamic/Keyed
+  summaries legitimately get no answer from a node (services not compiled in).
 
-  Residual risks found during this analysis:
-  - (a) ~~SDK self-contradicts on erase granularity~~ **FIXED**: the datasheet confirms the
-    CH32V003 hardware erase page is 64 bytes (`ch32v00x_flash.h` agrees; only the copied
-    docstring in `ch32v00x_flash.c` wrongly says 1KB). `Storage_FlashErase`/`FlashFormat`
-    previously stepped one `FLASH_ErasePage` per 256 B allocation block, erasing only the
-    first 64 B of each - fresh-area assumptions (CreateFile, WriteBackupFile) were silently
-    violated. STORAGE_BLOCK_SIZE is now set to 64 B (= hardware erase page, enforced by a
-    static_assert), so every allocation block is exactly one erasable page; the erase loops
-    step the same 64 B pages. Note: existing DAS filesystems formatted with 256 B blocks
-    happen to stay readable (256 is a multiple of 64) but any `Format()` now rebuilds with
-    the 64 B geometry.
-  - (b) `HandleStorageService`'s single frame is 552 B (reply PacketFrame + the CID 5 read
-    `temp_buf[256]` share one allocation). Fits today; shrinking it is the easiest future win if
-    margin matters.
+Needs hardware verification: that the fast page erase (with the full KEYR+MODEKEYR unlock
+sequence) restores cells to 0xFF - the earlier session's "fast erase leaves 0x00" observation
+predates this analysis and may itself have been caused by the missing/mismatched unlock
+sequence or by reading back through the same confusion. Retest recipe unchanged (create ->
+verify table -> dump region -> resize grow -> delete), plus confirm `tree 2` prints the
+System summary.
 
 ## Open issues (service audit, 2026-08-21)
 

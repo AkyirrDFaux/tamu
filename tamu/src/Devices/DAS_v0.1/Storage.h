@@ -8,31 +8,35 @@
 #define CHIP_FLASH_SIZE      0x4000u
 
 // The storage filesystem lives in the top STORAGE_FLASH_SIZE bytes of the chip flash, flush
-// against the end (0x4000): STORAGE_CHIP_BASE = 0x4000 - STORAGE_FLASH_SIZE. The build links a
-// reservation array into this region via -Wl,--section-start=.fixed_data=0x3800, so code that
-// ever grows into it fails to link. STORAGE_FLASH_SIZE/STORAGE_BLOCK_SIZE are defined by the
-// DAS build flags (platformio.ini); the derived bases below keep the layout at the very end
-// no matter the size. STORAGE_BLOCK_SIZE must equal the hardware erase page so every
-// allocation block is erasable as a whole.
+// against the end. The build links a reservation array into this region via
+// -Wl,--section-start=.fixed_data, so code that ever grows into it fails to link.
+// STORAGE_FLASH_SIZE/STORAGE_BLOCK_SIZE are defined by the DAS build flags (platformio.ini).
 
 // The chip executes code from the 0x00000000 mapping; the flash controller programs/erases
 // through the 0x08000000 alias domain (see ch32v00x_flash.c, ValidAddrStart/End).
 #define STORAGE_CHIP_BASE    (CHIP_FLASH_SIZE - STORAGE_FLASH_SIZE)
 #define STORAGE_FLASH_BASE   (0x08000000u + STORAGE_CHIP_BASE)
 
-// Hardware erase page of the CH32V003 (datasheet / ch32v00x_flash.h): 64 bytes.
+// Erase operations on the CH32V003 (see ch32v00x_flash.c, ROM_ERASE):
+//   CR_PAGE_ER (FLASH_ErasePage_Fast) -> 64 BYTE page erase  <- used for all file operations
+//   CR_PER (FLASH_ErasePage)          -> 1 KB sector erase   <- used only by Format()
+// They are different ops, not synonyms: using FLASH_ErasePage for small blocks wipes a whole
+// kilobyte around them - that is exactly what corrupted the pointer page + file table on
+// RealHW 2026-08-23 (every create/save left only the newest file). Per the CH32V003
+// application note, the 64-byte page erase is the intended mechanism for regular operation.
+// The filesystem allocation unit MUST equal the 64-byte PAGE_ER page so each block erases as
+// one unit and no two structures share an erase unit.
 #define FLASH_ERASE_PAGE_SIZE 64u
 
-// The allocation unit must match the hardware erase page exactly.
 static_assert(STORAGE_BLOCK_SIZE == FLASH_ERASE_PAGE_SIZE,
-              "STORAGE_BLOCK_SIZE must equal the CH32V003 64-byte erase page");
+              "STORAGE_BLOCK_SIZE must equal the 64-byte PAGE_ER erase page");
 
 static_assert(STORAGE_CHIP_BASE + STORAGE_FLASH_SIZE == CHIP_FLASH_SIZE,
               "Storage must be flush against the end of the chip flash");
 
 #include "Core/Services/Storage.h"
 
-// Pinned at flash 0x3800 by -Wl,--section-start=.fixed_data=0x3800. The region is erased
+// Pinned at flash 0x3000 by -Wl,--section-start=.fixed_data=0x3000. The region is erased
 // (normalised to 0xFF) by Storage.Format() before any use; a code-size overflow fails the
 // link instead of corrupting the storage region at runtime.
 __attribute__((section(".fixed_data"), used))
@@ -109,15 +113,11 @@ bool Storage_FlashWrite(uint32_t offset, const void *data, uint32_t size)
     return true;
 }
 
-// Erases `size` bytes of flash at `offset` (STORAGE_BLOCK_SIZE aligned). The hardware erase
-// page on the CH32V003 is 64 BYTES (datasheet / ch32v00x_flash.h), so one FLASH_ErasePage
-// call per allocation block would leave 3/4 of each 256 B block unerased - the loop steps in
-// 64 B hardware pages. Uses the *normal* page erase, not the fast erase: fast erase is an
-// unbounded `while(BSY)` busy-wait and leaves cells at 0x00, and flash can only program
-// 1->0, so "programming 0xFFFFFFFF back" cannot restore the 0xFF erase state. The normal
-// erase restores 0xFF and is bounded by FLASH_WaitForLastOperation.
-#define FLASH_ERASE_PAGE_SIZE 64u // CH32V00x hardware erase page (see ch32v00x_flash.h)
-
+// Erases `size` bytes of flash at `offset` (STORAGE_BLOCK_SIZE aligned, one PAGE_ER page per
+// allocation block). Uses the 64-byte CR_PAGE_ER operation (FLASH_ErasePage_Fast), NOT
+// FLASH_ErasePage: that is the 1 KB CR_PER sector erase and wipes every other structure
+// sharing its kilobyte (the RealHW 2026-08-23 table-loss bug). The BSY wait mirrors the SDK's
+// ROM_ERASE; the controller requires both standard and fast-mode unlocks.
 bool Storage_FlashErase(uint32_t offset, uint32_t size)
 {
     if ((offset & (FLASH_ERASE_PAGE_SIZE - 1)) || (size & (FLASH_ERASE_PAGE_SIZE - 1)))
@@ -126,21 +126,23 @@ bool Storage_FlashErase(uint32_t offset, uint32_t size)
         return false;
 
     FLASH_Unlock();
+    FLASH_Unlock_Fast();
     for (uint32_t o = offset; o < offset + size; o += FLASH_ERASE_PAGE_SIZE) {
-        if (FLASH_ErasePage(STORAGE_FLASH_BASE + o) != FLASH_COMPLETE) {
-            FLASH_Lock();
-            return false;
-        }
+        FLASH_ErasePage_Fast(STORAGE_FLASH_BASE + o);
     }
+    FLASH_Lock_Fast();
     FLASH_Lock();
     return true;
 }
 
-// Wipes the entire storage region (all hardware pages, including the pointer page).
+// Wipes the entire storage region. Format is the one place where the coarse 1 KB CR_PER
+// sector erase (FLASH_ErasePage) is appropriate: the whole region goes anyway, and two
+// sector erases beat thirty-two page erases. The region base (0x3800) is 1 KB-aligned.
 bool Storage_FlashFormat()
 {
+    static_assert(STORAGE_FLASH_SIZE % 1024 == 0, "Region must be sector-aligned");
     FLASH_Unlock();
-    for (uint32_t o = 0; o < STORAGE_FLASH_SIZE; o += FLASH_ERASE_PAGE_SIZE) {
+    for (uint32_t o = 0; o < STORAGE_FLASH_SIZE; o += 1024u) {
         if (FLASH_ErasePage(STORAGE_FLASH_BASE + o) != FLASH_COMPLETE) {
             FLASH_Lock();
             return false;

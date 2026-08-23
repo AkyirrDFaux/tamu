@@ -343,8 +343,15 @@ static int CmdTree(int argc, char **argv)
     printf("Requesting full topology dump from Device %d...\n", cli_target_addr);
 
     BlockIndex summary = {.Block = INVALID_BLOCK, .Field = INVALID_INDEX, .Key = INVALID_INDEX};
+    // Space the requests out: back-to-back transmissions collide with the responder's
+    // replies on the half-duplex bus (the node answers request 1 while we transmit
+    // request 2), losing the responses. The 100 ms gap is enough for the core (10 ms
+    // loop) but too short for slow nodes like the DAS (its CSMA + echo-verify reply
+    // takes longer), so use a larger gap that also works for them.
     SendMemoryRead(cli_target_addr, ServiceType::SystemMemory, summary);
+    Sleep(400);
     SendMemoryRead(cli_target_addr, ServiceType::DynamicMemory, summary);
+    Sleep(400);
     SendMemoryRead(cli_target_addr, ServiceType::KeyedMemory, summary);
     return 0;
 }
