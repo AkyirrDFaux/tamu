@@ -181,7 +181,49 @@ bool ReadIMUData() {
     return true;
 }
 
-// Placeholder callback for accelerometer frequency changes; currently accepts all changes.
+// Applies a new output data rate to both accel (CTRL1_XL) and gyro (CTRL2_G). The value
+// is snapped to the nearest LSM6DS3-supported ODR so the stored field always equals what
+// the sensor actually runs at. Returns false when the I2C write or read-back fails.
 bool OnAccGyrFrequencyChange(const StaticBlockDescriptor& block, uint16_t index, const void* data, uint16_t data_len) {
+    if (data_len != sizeof(Number)) return false;
+
+    // Supported ODRs (Hz) and their CTRL register codes (bits 7:4 of CTRL1_XL / CTRL2_G).
+    static const Number odr_hz[] = {N(12.5), N(26), N(52), N(104), N(208), N(416), N(833), N(1660)};
+    static const uint8_t odr_code[] = {0b0001, 0b0010, 0b0011, 0b0100, 0b0101, 0b0110, 0b0111, 0b1000};
+    const int odr_count = sizeof(odr_hz) / sizeof(odr_hz[0]);
+
+    Number requested = *static_cast<const Number *>(data);
+
+    // Snap to the nearest supported ODR.
+    int best = 0;
+    Number best_diff = abs(requested - odr_hz[0]);
+    for (int i = 1; i < odr_count; i++)
+    {
+        Number diff = abs(requested - odr_hz[i]);
+        if (diff < best_diff) { best_diff = diff; best = i; }
+    }
+    Number applied_rate = odr_hz[best];
+    uint8_t code = (uint8_t)(odr_code[best] << 4);
+
+    // Preserve the full-scale bits already configured: accel {0x44} keeps +/-2 g,
+    // gyro {0x4C} keeps +/-2000 dps; only the ODR nibble changes.
+    uint8_t ctrl1 = 0, ctrl2 = 0;
+    if (LSM6DS3ReadRegs(0x10, &ctrl1, 1) != ESP_OK) return false;
+    if (LSM6DS3ReadRegs(0x11, &ctrl2, 1) != ESP_OK) return false;
+
+    uint8_t cmd1[] = {0x10, (uint8_t)(code | (ctrl1 & 0x0F))}; // CTRL1_XL
+    uint8_t cmd2[] = {0x11, (uint8_t)(code | (ctrl2 & 0x0F))}; // CTRL2_G
+    if (i2c_master_transmit(lsm6ds3_handle, cmd1, 2, 1000) != ESP_OK)
+        return false;
+    if (i2c_master_transmit(lsm6ds3_handle, cmd2, 2, 1000) != ESP_OK)
+        return false;
+
+    // Verify both registers took the new rate.
+    ctrl1 = 0; ctrl2 = 0;
+    if (LSM6DS3ReadRegs(0x10, &ctrl1, 1) != ESP_OK) return false;
+    if (LSM6DS3ReadRegs(0x11, &ctrl2, 1) != ESP_OK) return false;
+    if (ctrl1 != cmd1[0] || ctrl2 != cmd2[0]) return false;
+
+    AccGyr.SamplingRate = applied_rate;
     return true;
 }

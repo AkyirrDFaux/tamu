@@ -40,28 +40,43 @@ struct Vysi1Struct
     Number Brightness = 30; //%
     Matrix<3, 3> Offset = Matrix<3, 3>::Identity();
     uint32_t RenderBlock = 0;
+    // Layout File Name: plain 8-char storage file name, space padded. Default is blank =
+    // built-in default layout. Written via trigger, which loads the layout file
+    // immediately (write is rejected if the file cannot be loaded).
+    char LayoutFile[8] = {' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '};
+    Number RefreshRate;     // Out: achieved render rate in FPS (averaged)
 };
 
 const BlockMeta Vysi1_Map[] = {
-    {DataType::Number | FieldFlags::None, 0x00, sizeof(Number)},
-    {DataType::Matrix | FieldFlags::None, 0x00, sizeof(Matrix<3, 3>)},
-    {DataType::Uint32 | FieldFlags::None, 0x00, sizeof(uint32_t)}};
+    {DataType::Number | FieldFlags::None, 0x00, sizeof(Number)},      // Brightness
+    {DataType::Matrix | FieldFlags::None, 0x00, sizeof(Matrix<3, 3>)},// Offset
+    {DataType::Uint32 | FieldFlags::None, 0x00, sizeof(uint32_t)},    // Render KeyedBlock Index
+    {DataType::String | FieldFlags::None, 0x00, 8},                   // Layout File Name
+    {DataType::Number | FieldFlags::ReadOnly, 0x00, sizeof(Number)},  // Refresh Rate
+};
 
-const BlockSchema Vysi1_Schema = {
-    .Map = Vysi1_Map,
-    .Triggers = nullptr,
-    .Type = BlockType::Vysi1Display,
-    .MapCount = sizeof(Vysi1_Map) / sizeof(BlockMeta),
-    .TriggerCount = 0};
+// Layout-file write trigger: stores the new Name and loads the layout file immediately
+// so the stored name always matches the layout in use. `block.Data` is the first member
+// of the owning Vysi1Display instance (Main.h registers &DisplayN.Data), which recovers
+// the per-display runtime layout.
+// The layout-file write trigger (index 3) and the schema are defined after the class:
+// the trigger loads through the owning Vysi1Display instance.
 
 class Vysi1Display
 {
 public:
-    Vysi1Struct Data;
+    // Runtime LED-index table loaded from a layout file (Docs/Modules/LED display.md):
+    // row-first W x H uint16 entries, 0xFFFF = missing LED, indexes are 0-based.
+    static const uint32_t MaxLayoutEntries = 256;
     static const uint32_t LedNum = 86;
-    static const uint32_t Width = 11;
-    static const uint32_t Height = 10;
+
+    Vysi1Struct Data;
+    uint16_t Layout[MaxLayoutEntries];
+    uint8_t Lw = 11;
+    uint8_t Lh = 10;
     ColourClass Buffer[LedNum];
+
+    Vysi1Display() { LoadDefaultLayout(); }
 
     void Render();
     void ResolveGeometryDefinition(KeyedBlockDescriptor *block, uint16_t index, GeometryDefinition &def);
@@ -69,7 +84,79 @@ public:
     void RenderGeometry(KeyedBlockDescriptor *block, uint16_t index, const Matrix<3, 3> &BaseTransform, Number *Overlay);
     void ResolveTextureDefinition(KeyedBlockDescriptor *block, uint16_t index, TextureDefinition &def);
     void RenderTexture(KeyedBlockDescriptor *block, uint16_t index, const Matrix<3, 3> &BaseTransform, Number *Overlay);
+
+    // Reverts to the compiled-in default layout (11x10, 0=missing converted to FFFF).
+    void LoadDefaultLayout()
+    {
+        Lw = 11;
+        Lh = 10;
+        for (uint32_t i = 0; i < MaxLayoutEntries; i++)
+            Layout[i] = 0xFFFF;
+        for (uint32_t i = 0; i < Lw * Lh && i < MaxLayoutEntries; i++)
+            Layout[i] = (LayoutVysiv1_0[i] == 0) ? 0xFFFF : (uint16_t)(LayoutVysiv1_0[i] - 1);
+    }
+
+    // Loads the layout file named by Data.LayoutFile (8-char storage name form).
+    // Rejects files that are malformed or whose LED indexes exceed this display.
+    bool LoadLayoutFromStorage()
+    {
+        // Blank name (all spaces) -> built-in default layout.
+        bool empty = true;
+        for (int i = 0; i < 8; i++)
+            if (Data.LayoutFile[i] != ' ' && Data.LayoutFile[i] != '\0') empty = false;
+        if (empty)
+        {
+            LoadDefaultLayout();
+            return true;
+        }
+
+        char n8[8];
+        PackName(Data.LayoutFile, n8); // normalize to space-padded form
+        uint32_t off, size;
+        if (!Storage.GetFileInfo(n8, &off, &size))
+            return false;
+        if (size < 2)
+            return false;
+
+        uint8_t hdr[2]; // width, height
+        Storage_FlashRead(off, hdr, 2);
+        uint32_t entries = (uint32_t)hdr[0] * hdr[1];
+        if (hdr[0] == 0 || hdr[1] == 0 || entries > MaxLayoutEntries ||
+            size < 2 + entries * 2)
+            return false;
+
+        Storage_FlashRead(off + 2, (void *)Layout, entries * 2);
+        for (uint32_t i = 0; i < entries; i++)
+            if (Layout[i] != 0xFFFF && Layout[i] >= LedNum)
+                Layout[i] = 0xFFFF; // index beyond this display's chain
+        Lw = hdr[0];
+        Lh = hdr[1];
+        return true;
+    }
 };
+
+// Layout-file write trigger: stores the new Name and loads the layout file immediately
+// so the stored name always matches the layout in use. `block.Data` is the first member
+// of the owning Vysi1Display instance (Main.h registers &DisplayN.Data), which recovers
+// the per-display runtime layout.
+inline bool OnVysi1FieldWrite(const StaticBlockDescriptor& block, uint16_t index, const void* data, uint16_t len)
+{
+    if (index != 3 || len != 8)
+        return false;
+    auto* disp = reinterpret_cast<Vysi1Display*>(block.Data); // Data is the first member
+    memcpy(disp->Data.LayoutFile, data, 8);
+    return disp->LoadLayoutFromStorage();
+}
+
+const TriggerEntry Vysi1_callbacks[] = {
+    {OnVysi1FieldWrite, 3}};
+
+const BlockSchema Vysi1_Schema = {
+    .Map = Vysi1_Map,
+    .Triggers = Vysi1_callbacks,
+    .Type = BlockType::Vysi1Display,
+    .MapCount = sizeof(Vysi1_Map) / sizeof(BlockMeta),
+    .TriggerCount = sizeof(Vysi1_callbacks) / sizeof(TriggerEntry)};
 
 // Renders the configured render block into the LED buffer, applying brightness and gamma correction.
 inline void Vysi1Display::Render()
@@ -83,7 +170,7 @@ inline void Vysi1Display::Render()
     memset((void *)Overlay, 0, LedNum * sizeof(Number));
 
     // Example: Center origin, flip Y, and zoom out (scale 0.5)
-    Matrix<3, 3> BaseTransform = Data.Offset * Matrix<3, 3>::CreateTransform2D(N(0), {-(N(Width) / N(2.0) - N(0.5)), -(N(Height) / N(2.0) - N(0.5))}, {N(1.0), N(1.0)});
+    Matrix<3, 3> BaseTransform = Data.Offset * Matrix<3, 3>::CreateTransform2D(N(0), {-(N(Lw) / N(2.0) - N(0.5)), -(N(Lh) / N(2.0) - N(0.5))}, {N(1.0), N(1.0)});
 
     // Shapes and texturesF
     if (Data.RenderBlock >= keyed_block_registry.block_count)
@@ -270,16 +357,16 @@ inline void Vysi1Display::RenderGeometry(KeyedBlockDescriptor *block, uint16_t i
     Matrix<3, 3> CombinedTransform = LocalTransform * BaseTransform;
 
     // 3. Rasterization Loop
-    for (int32_t Y = 0; Y < (int32_t)Height; Y++)
+    for (int32_t Y = 0; Y < (int32_t)Lh; Y++)
     {
-        for (int32_t X = 0; X < (int32_t)Width; X++)
+        for (int32_t X = 0; X < (int32_t)Lw; X++)
         {
-            uint32_t arrayIdx = ((Height - 1 - Y) * Width) + X;
-            uint8_t rawLedVal = LayoutVysiv1_0[arrayIdx];
+            uint32_t arrayIdx = ((Lh - 1 - Y) * Lw) + X;
+            uint16_t ledIdx = Layout[arrayIdx];
 
-            if (rawLedVal == 0)
+            if (ledIdx == 0xFFFF) // missing LED
                 continue;
-            uint32_t PIdx = rawLedVal - 1;
+            uint32_t PIdx = ledIdx;
 
             Vector<3> homo_pt = {Number(X), Number(Y), Number(1)};
             Vector<3> transformed = CombinedTransform * homo_pt;
@@ -349,7 +436,9 @@ inline void Vysi1Display::RenderTexture(KeyedBlockDescriptor *block, uint16_t in
     Matrix<3, 3> LocalTransform = block->GetKeyValue<Matrix<3, 3>>(
         index, (uint8_t)TextureKey::Transformation, DataType::Matrix, Matrix<3, 3>::Identity());
 
-    Matrix<3, 3> Combined = BaseTransform * LocalTransform;
+    // Compose the same way as the geometry pass (Local * Base) so textures and their
+    // covering geometries are evaluated in the same coordinate space.
+    Matrix<3, 3> Combined = LocalTransform * BaseTransform;
 
     // Handle "Full" texture as a fast path
     if (def.Type == Textures2D::Full)
@@ -366,16 +455,16 @@ inline void Vysi1Display::RenderTexture(KeyedBlockDescriptor *block, uint16_t in
     // Rasterization Loop for Blends
     Number invWidth = N(1.0) / (def.Data.Blend2.Width * N(2.0));
 
-    for (int32_t Y = 0; Y < (int32_t)Height; Y++)
+    for (int32_t Y = 0; Y < (int32_t)Lh; Y++)
     {
-        for (int32_t X = 0; X < (int32_t)Width; X++)
+        for (int32_t X = 0; X < (int32_t)Lw; X++)
         {
-            uint32_t arrayIdx = ((Height - 1 - Y) * Width) + X;
-            uint8_t rawLedVal = LayoutVysiv1_0[arrayIdx];
+            uint32_t arrayIdx = ((Lh - 1 - Y) * Lw) + X;
+            uint16_t ledIdx = Layout[arrayIdx];
 
-            if (rawLedVal == 0)
+            if (ledIdx == 0xFFFF) // missing LED
                 continue;
-            uint32_t PIdx = rawLedVal - 1;
+            uint32_t PIdx = ledIdx;
 
             Vector<3> transformed = Combined * Vector<3>{Number(X), Number(Y), N(1)};
 

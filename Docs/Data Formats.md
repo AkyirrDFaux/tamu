@@ -18,7 +18,7 @@
 
 | CRC8 | Flags | FragID | Payload Len | ID TGT | ID SRC | SRV TGT | SRV SRC | Payload |
 | ---- | ----- | ------ | ----------- | ------ | ------ | ------- | ------- | ------- |
-| 1    | 1     | 1      | 1           | 2      | 2      | 2       | 2       | ...256  |
+| 1    | 1     | 1      | 1           | 2      | 2      | 2       | 2       | 0-255   |
 - CRC8 (covers everything after)
 - Flags : REQACK (request response), START (first), STOP (last), TYPE (Request/Response)
 - FragID : Sequential number, 0 default

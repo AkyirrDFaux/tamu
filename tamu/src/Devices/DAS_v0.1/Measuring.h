@@ -43,9 +43,9 @@ static bool OnMeasFieldWrite(const StaticBlockDescriptor &block, uint16_t index,
         m->SamplingRate = v;
         return true;
 
-    case 1: // Filter Coefficient: the low-pass only converges within [0,1]
+    case 1: // Filter Coefficient (Sensors.h weight semantics: 1/(1+f)) - any f >= 0 is
+            // valid, larger values average more samples
         if (v.Value < 0) v.Value = 0;
-        if (v.Value > (1 << DECIMAL)) v.Value = (1 << DECIMAL);
         m->FilterCoeff = v;
         return true;
     }
@@ -162,13 +162,13 @@ enum MeasSensorType : uint8_t
     MeasNTC10K = 4,
 };
 
-// Low-pass filter state for each channel (kept outside the block so the block layout stays
-// exactly the five documented fields), plus the range each filter is valid for: switching
-// the reference resistor changes the excitation scale, so the filter history must be
-// re-seeded on every range transition.
+// Filter state for each channel (kept outside the block so the block layout stays exactly
+// the five documented fields). The CONVERTED measurement is EMA-filtered; the history is
+// re-seeded whenever the auto-range switches the excitation scale.
 static Number s_meas_filtered[2];
-static uint8_t s_meas_range[2] = {1, 1}; // matches Measuring_Init's mid-range selection
-static bool s_meas_seeded[2] = {false, false};
+static uint8_t s_meas_range[2] = {1, 1}; // currently selected range (matches Measuring_Init)
+static uint8_t s_filt_range[2] = {1, 1}; // range the filter history belongs to
+static bool s_conv_seeded[2] = {false, false};
 
 // Samples one measurement channel and updates the block outputs. `index` selects the
 // channel (0/1). Measured Value and Current Range are reported in kOhm so that the
@@ -179,59 +179,70 @@ static void Measuring_Update(uint8_t index, ResistiveMeasStruct *m, uint16_t raw
 {
     if (index > 1) return;
 
-    // Clamp FilterCoeff to [0,1]: a coefficient outside this range makes the
-    // low-pass diverge instead of converge.
+    // Filter weight per the Sensors.h reference: weightNew = 1/(1 + FilterCoeff).
+    // Clamp FilterCoeff to >= 0 so the weight stays in (0, 1].
     Number coeff = m->FilterCoeff;
     if (coeff.Value < 0) coeff.Value = 0;
-    if (coeff.Value > (1 << 16)) coeff.Value = (1 << 16);
+    Number weight_new = N(1) / (N(1) + coeff);
 
-    // Auto-range from the *filtered* value so noisy inputs near a threshold do not
-    // chatter between ranges. On a range switch the old history belongs to another
-    // excitation scale, so re-seed the filter with the current raw sample.
-    bool seeded = s_meas_seeded[index];
-    if (!seeded)
-    {
-        s_meas_filtered[index] = Number(raw);
-        s_meas_seeded[index] = true;
-    }
-    else
-    {
-        s_meas_filtered[index] = (Number(raw) * coeff) +
-                                 (s_meas_filtered[index] * (N(1) - coeff));
-    }
-
-    uint16_t filtered = (uint16_t)(s_meas_filtered[index].Value >> 16);
-    uint8_t range = (filtered > 850) ? 2 : ((filtered < 200) ? 0 : 1);
-    if (range != s_meas_range[index])
-    {
-        s_meas_range[index] = range;
-        s_meas_filtered[index] = Number(raw); // discard stale-scale history
-    }
+    // Auto-range from the raw sample; on a range switch the old history belongs to
+    // another excitation scale, so the filter is re-seeded below.
+    uint8_t range = (raw > 850) ? 2 : ((raw < 200) ? 0 : 1);
+    s_meas_range[index] = range;
     Meas_SelectRange(index, range);
 
     const Number Rref_kohm[3] = {N(0.33), N(10.0), N(330.0)};
     m->CurrentRange = Rref_kohm[range];
 
-    // Report the value according to the selected sensor type.
+    // Transformations operate on the RAW sample, exactly like the Sensors.h reference
+    // ("SensorClass::Run"); the converted value is then EMA-filtered into MeasuredValue.
+    const Number ADCRES = N(1023);
+    Number in = Number(raw);
+
     switch (m->SensorType)
     {
-    case MeasRawMeasurement: // filtered ADC sample (0..1023)
-        m->MeasuredValue = s_meas_filtered[index];
+    case MeasRawMeasurement: // raw counts
         break;
-    case MeasRawVoltage: // filtered sample as volts (0..3.3), 32-bit math only
-        m->MeasuredValue = Number::FromRaw(
-            FixedMul32(s_meas_filtered[index].Value / 1023, N(VOLTAGE).Value));
+
+    case MeasRawVoltage: // volts
+        in = in * VOLTAGE / ADCRES;
         break;
-    default: // Raw Resistance, LDR 10K, NTC 10K -> resistance in kOhm
+
+    case MeasRawResistance: // kOhm: R = Rref * V / (1 - V)
     {
-        // Resistance (kOhm) = Rref * V / (1 - V).
-        int32_t vi = s_meas_filtered[index].Value >> 16; // integer part of the filtered sample (0..1024)
-        if (vi > 1000) vi = 1000;                        // keep the divider from collapsing
-        if (vi < 1) vi = 1;
-        int32_t denom = 1024 - vi;
-        int32_t ratio = ((int32_t)(vi << 16)) / denom;   // Q16.16 ratio, 32-bit division
-        m->MeasuredValue.Value = FixedMul32(Rref_kohm[range].Value, ratio);
+        if (in >= ADCRES) in = N(1022);
+        if (in < N(1)) in = N(1);
+        in = Rref_kohm[range] * in / (ADCRES - in);
         break;
     }
+
+    case MeasLDR10K: // lux, inverse-relation approximation for a 10k divider (Sensors.h)
+    {
+        if (in < N(1)) in = N(1);
+        in = N(18.0) * ((ADCRES - in) / in);
+        break;
     }
+
+    case MeasNTC10K: // degC, Steinhart-Hart simplified for a 10k divider (Sensors.h)
+    {
+        if (in >= ADCRES) in = N(1022);
+        if (in < N(1)) in = N(1);
+        in = N(1) / (N(0.0034) + log(in / (ADCRES - in)) / N(3950)) - N(273.15);
+        break;
+    }
+
+    default:
+        break;
+    }
+
+    // EMA filter over the CONVERTED value.
+    if (range != s_filt_range[index] || !s_conv_seeded[index])
+        s_meas_filtered[index] = in; // re-seed after an excitation switch / first sample
+    else
+        s_meas_filtered[index] = (in * weight_new) +
+                                 (s_meas_filtered[index] * (N(1) - weight_new));
+    s_filt_range[index] = range;
+    s_conv_seeded[index] = true;
+
+    m->MeasuredValue = s_meas_filtered[index];
 }

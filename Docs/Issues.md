@@ -251,7 +251,7 @@ The storage layer was rewritten to match the updated `Docs/Services/Storage.md`:
   kOhm conversion) all respond over RSBus through the Tamu. `Meas1/Meas2` report ~1022 raw
   (open input -> 330 kOhm auto-range, ~13750 kOhm computed) as expected with nothing wired.
 
-## Fixed (RealHW 2026-08-23 bug report - DAS storage corruption)
+## Fixed (RealHW 2026-08-23 bug report - storage corruption)
 
 **Root cause of "every create/save leaves only the newest file": the wrong erase
 operation.** The CH32V003 flash controller has two distinct erase ops (`ch32v00x_flash.c`,
@@ -293,6 +293,23 @@ sequence or by reading back through the same confusion. Retest recipe unchanged 
 verify table -> dump region -> resize grow -> delete), plus confirm `tree 2` prints the
 System summary.
 
+## Fixed (RemoteOrigin deprecation + Log DB rework, 2026-08-23)
+
+- **`FieldFlags::RemoteOrigin` deprecated and removed** (per updated docs): dropped from
+  Enums.h and the CLI flag printer. Bit 15 is now free for future use.
+- **Log DB reworked per the updated Log Handler doc**:
+  - Lives on the heap and GROWS when full (initial 32 records, +16 per growth, hard cap
+    512); only when the heap cannot provide more room is the OLDEST record dropped -
+    never the new one. Each record carries a RAM-only monotonic sequence number so
+    "oldest" is well defined even with dedup-in-place (the seq array is not transmitted;
+    GetLogs still streams plain documented LogRecords).
+  - ClearReadLogs now clears the N most recently RECEIVED records (by sequence), since
+    slot order stopped tracking age once evictions became possible.
+  - GetLogs/ClearReadLogs are now reachable over the bus: the CLI gained `logget [addr]`
+    and `logclear [addr] [count]` (responses routed via srv_src = CLI CID 6; timeout
+    errors like every other command). The App can consume the same CIDs.
+  - Local `logs` command prints chronologically (sequence order) instead of slot order.
+
 ## Open issues (service audit, 2026-08-21)
 
 Services verified against `Docs/Services/*.md`, `Docs/Data Formats.md`, `Docs/RSBus.md`,
@@ -324,10 +341,8 @@ Script, App Interface, Router.
 
 ### Remaining doc mismatches (intentionally left open)
 
-- **Capability bitfield is empty**: both devices define `kCapabilities = 0` while the Tamu is a
-  core (TYPE_CORE). The Capability function (CID 5) reports no capability at all. Either define
-  capability bits (e.g. a CORE bit) or document that TYPE_CORE is the sole core marker.
-  (Left open per decision to defer the capability bitfield.)
+- ~~Capability bitfield is empty~~ **RESOLVED**: `Capabilities::Core = bit 0` implemented;
+  Tamu reports it, DAS reports none, Discover gating uses the bit (2026-08-22).
 
 ### Cleanup / dead code
 
@@ -346,8 +361,8 @@ Script, App Interface, Router.
   pass against a known reference.
 
 ## On hold
-- **LED display block**: the renderer is wired to the hardware, but the documented Layout File
-  Name + Refresh Rate fields are still missing.
+- ~~LED display block Layout File Name + Refresh Rate fields~~ **IMPLEMENTED** (2026-08-23,
+  see the docs-vs-code audit implementation round). Nothing on hold.
 
 ## Fixed (firmware code review, 2026-08-22)
 
@@ -567,6 +582,129 @@ Second pass focused on node-reachable service code and DAS flash size
   keeps the block reserved, resize-from-0 is blocked when the extension would overlap a live
   file and succeeds when space is free; table moves and reboot persistence are unaffected.
 
+## Docs-vs-code audit (2026-08-23)
+
+Full comparison of `Docs/{Data Formats,General architecture,RSBus}.md`, `Services/*.md`,
+`Modules/*.md` against `src/`. Fixed immediately:
+
+- **Stream packets with FragID >= 1 failed CRC on receivers**: `PacketConstruct` computes
+  the checksum while frag_id is still 0 and four stream senders patched frag_id afterwards
+  without refreshing it (SNDB Read All, LogHandler GetLogs, Storage table/file streams).
+  Invisible locally (DispatchPacket calls handlers directly, no RX validation) but any
+  remote receiver of a core-originated multi-packet stream silently dropped packet 2+.
+  Fixed via `PacketSetFragId()` which patches and recomputes.
+- **Storage table never shrank**: Storage.md specifies "<25% full -> decrease by one page
+  (minimum one page)"; implemented in `MoveFiletable`.
+- **DAS `Storage_FlashErase` reported success unconditionally**: `FLASH_ErasePage_Fast`
+  returns no status; each page is now verified by reading back 0xFFFFFFFF.
+- **Button polarity inverted**: pull-down line idles LOW, so `!PinRead` reported "pressed"
+  at idle. Now active-high (`PinRead`). Implemented the documented "pushing the button
+  triggers the LED": rising edge while the LED is off lights it (the shared line cannot be
+  read while the LED is driven - turn off remotely/by field write).
+- **Texture transform order mismatched geometry pass**: textures composed
+  `Base*Local`, geometries `Local*Base`; aligned to `Local*Base`.
+- **CLI comment claimed wrong Storage CIDs** ("1 Read File"); corrected to the real table
+  (0 table, 1 format, 2 create, 3 delete, 4 resize, 5 read, 6/7 stream open/close).
+
+### Doc updates needed ([doc-bug]s; Docs are off-limits to code sessions)
+
+- Data Formats.md: broadcast written `0xFFFFFFFF` but the ID field is 16-bit (code uses
+  0xFFFF); Payload Len is 1 byte so payload maxes at 255, not "...256"; BlockMeta flag list
+  lacks the implemented `RemoteOrigin` (bit 15); BlockIndex "Padding unspecified = 0xFF"
+  vs code default 0x00.
+- Device service.md: "provides time synchronization to core" - direction is core->node;
+  sample gap is 1.5 s vs doc's "few seconds"; discover response is sent as broadcast
+  (nodes filter by SN); software-version reply has no documented encoding; SNDB Read
+  not-found = empty response (undocumented); core address hard-coded to 1 (undocumented
+  constant alongside the capability bit).
+- Wire constants worth pinning in docs: service-type numbers (Device 0x01 ... CLI 0x09),
+  RSBus start/sync byte 0xAA, log notifications are TYPE=0 frames without REQACK, CLI
+  responses ride `srv_src = CLI` with CIDs 0-5 (undocumented wire persona of the console).
+- Dynamic/Keyed/System Memory docs: block-name width self-contradiction ("16char/12byte");
+  the backup-record table does not match the actual serialized backup layout (count-prefixed
+  TLV-style, not `BlockIndex|BlockMeta|Values` rows) - clarify whether that table was meant
+  as wire payload or record format; "Create ... the part it's in must exist" vs Create only
+  handling whole blocks; field/key deletion takes effect immediately while the docs say
+  deletion is deferred to Save (only whole-block delete defers); keyed dictionary meta Size
+  stores BYTES, doc reads like key count; "separate value and metadata arrays" is actually
+  interleaved `[meta][value]` entries; block indices RENUMBER when purged on save (no
+  documented contract).
+- Storage.md: pointer recovery uses the LAST valid first-page slot (crash-safe ordering);
+  `Erase` has no default argument.
+
+### Design decisions / documented-but-unimplemented (triage list)
+
+Status after the implementation round: collision-abort, Acc&Gyr Sampling Rate callback,
+LDR/NTC units, key-cap question, Uptime semantics and the LED display Layout/Refresh fields
+are DONE (see the section above). Still open:
+
+- **Atomic backup updates**: DONE via `Storage::RenameFile` copy-and-swap (see above).
+- RSBus net/device ID split (4-bit net + 12-bit device) unimplemented - flat 16-bit
+  addresses; presumably deferred until Router.
+- Resistive sensor constants (LDR curve C/exponent, NTC B value) still need hardware
+  calibration; conversions themselves are implemented.
+- Star geometry ignores PointNumber (identical to Polygon/circle).
+- Texture rendering blends over existing buffer content; doc says "texture always clears
+  the buffer and applies the texture in the given areas" - decide intended layering.
+- **Log DB (B14)**: capacity capped at 32 records with silent drop on overflow;
+  ClearReadLogs "from end" is ill-defined given dedup-in-place; GetLogs/ClearReadLogs have
+  no bus consumer yet (CLI reads the core-local DB directly).
+- App "Service views": value-entry names/units metadata will be hardcoded APP-side per
+  BlockType (decision recorded above); no firmware work.
+- Doc updates from this audit remain to be applied by a docs pass (broadcast value,
+  payload 255-vs-256, RemoteOrigin flag, time-sync direction, backup-record table,
+  name width, pointer-selection wording, wire constants).
+
+## Fixed (docs-vs-code audit implementation round, 2026-08-23)
+
+Implements the accepted audit items; the rest remain in the triage list below.
+
+- **A3 - Tamu `ReceivePacket`**: ported the DAS persistent SYNC/HEADER/PAYLOAD assembly
+  state machine (bytes pulled one at a time from the UART driver buffer, frame assembled
+  across ProcessBus polls, CRC validated on completion).
+- **Storage CIDs renumbered per the updated Storage.md** (Rename=5 inserted): Read File 5->6,
+  Write Stream Open 6->7, Close 7->8. New CID 5 Rename handler (OldName+NewName -> bool).
+  CLI gained `file <addr> rename <old> <new>`; read uses CID 6.
+- **B5 - atomic backup updates**: new `Storage::RenameFile` per Storage.md (append record
+  under the new name for the same data area, invalidate superseded records - each step an
+  append-only NOR write or 1->0 invalidation). `WriteBackupFile` now stages the new
+  generation in a temp file (`NAME...~`), then renames it onto the live backup name.
+  Readers always resolve a complete generation; power-cut windows leave the previous
+  backup intact. Replaces the erase-then-rewrite that could destroy the sole copy.
+- **B6 - collision abort during transmit** (RSBus.md "verify while sending"): Tamu sends in
+  16-byte chunks and compares each chunk's echo as it returns, aborting mid-frame on
+  mismatch; DAS drains and verifies echoed bytes between byte transmissions with the same
+  early-abort. Both keep full-frame verification and random backoff retries.
+- **B8 - Acc&Gyr Sampling Rate callback is real**: snaps the requested rate to the nearest
+  LSM6DS3 ODR (12.5..1660 Hz), rewrites CTRL1_XL/CTRL2_G preserving full-scale bits,
+  verifies by read-back, stores the applied ODR in the block field.
+- **B9 - LDR/NTC conversions implemented per the `Sensor.h` reference**: transformations
+  operate on the RAW ADC sample and the CONVERTED value is EMA-filtered afterwards
+  (weight = 1/(1 + FilterCoeff), matching `SensorClass::Run`):
+  TempNTC10K degC = 1/(0.0034 + ln(raw/(1023-raw))/3950) - 273.15;
+  Light10K lux = 18 * ((1023-raw)/raw). The Filter Coefficient write trigger now clamps
+  only f >= 0 (any f is a valid averaging weight). The resistive/voltage modes keep their
+  existing math. Constants still flagged for hardware calibration.
+- **B12 corrected**: dictionaries hold up to 256 keys (key ids 0..255) - the previous
+  255-byte field-size cap was removed from SetKey; the key-list response buffer grew to
+  256 with payload-space clamping (a single packet carries at most ~247 keys).
+- **B13 reworked**: `Now()` returns the SYNCHRONIZED time (raw timer + core-pushed
+  offset); new `TimeFromBoot()` returns raw ms since boot on both devices. TimeUpdate,
+  scheduling and timestamps all use `Now()`; the Device service Uptime (CID 8) reports
+  `TimeFromBoot()`.
+- **E - LED display Layout File Name + Refresh Rate fields implemented**:
+  Layout File Name = plain 8-char storage file name (`DataType::String`; the Name data
+  type was deprecated and removed along with Core/Types/Name.h); write trigger loads the
+  layout file immediately (Docs/Modules/LED display.md format: u8 width, u8 height,
+  W x H uint16 indexes, FFFF=missing, 0-based, row-first) and rejects the write if the
+  file cannot be loaded; blank name reverts to the built-in layout. Each display carries
+  a runtime index table (256-entry cap) used by both rasterization passes.
+  Refresh Rate = Read-Only Number reporting the achieved FPS (exponentially averaged),
+  measured per display around Render+Send in the main loop.
+- **B15 decision**: value-entry names/units metadata will live in the APP (hardcoded per
+  BlockType), not on devices - no schema changes to save flash. Recorded here and in the
+  triage list below.
+
 ## Open (firmware code review follow-ups)
 
 - **GammaTable has only 240 entries** (`Blocks/Vysi1Display.h:9-24`): the initializer list
@@ -577,10 +715,6 @@ Second pass focused on node-reachable service code and DAS flash size
 - **Tamu serial number carries only 48 real bits** (`Devices/Tamu_v2.0A/Main.h`): the factory
   MAC fills bytes 0-5; bytes 6-13 stay zero, so all Tamu SNs share an 8-zero suffix. Confirm
   whether the docs promise a full 14-byte unique SN; if so, pad from additional eFuse fields.
-- **Tamu `ReceivePacket` still discards partial frames**: the ESP32 side reads via
-  `uart_read_bytes` with short timeouts and returns 0 on an incomplete header/payload; the
-  DAS side got the persistent state machine, the core has not (needs the same treatment if
-  bus-load frame splits ever appear there).
 
 ## Open (app rewrite, 2026-08-22)
 

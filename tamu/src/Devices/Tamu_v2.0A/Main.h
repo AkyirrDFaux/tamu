@@ -108,11 +108,24 @@ while (1)
         ReadIMUData();
 
         // Render the configured render block (Vysi1Display, driven by the LEDDisplay
-        // static block's Brightness/Offset/RenderBlock fields) to both LED strips (pins 0,3).
+        // static block's Brightness/Offset/RenderBlock fields) to both LED strips (pins
+        // 0,3) and track each display's achieved refresh rate (FPS, averaged) in its
+        // Read-Only Refresh Rate field.
+        int64_t rt = esp_timer_get_time();
         Display1.Render();
         LED1.Send(Display1.Buffer, Vysi1Display::LedNum);
+        {
+            Number inst = N(1000000.0f) / N((float)(esp_timer_get_time() - rt));
+            Display1.Data.RefreshRate = Display1.Data.RefreshRate * N(0.9f) + inst * N(0.1f);
+        }
+
+        rt = esp_timer_get_time();
         Display2.Render();
         LED2.Send(Display2.Buffer, Vysi1Display::LedNum);
+        {
+            Number inst = N(1000000.0f) / N((float)(esp_timer_get_time() - rt));
+            Display2.Data.RefreshRate = Display2.Data.RefreshRate * N(0.9f) + inst * N(0.1f);
+        }
 
         Sleep(10);
         TimeUpdate();

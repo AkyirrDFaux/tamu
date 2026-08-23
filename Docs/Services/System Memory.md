@@ -2,7 +2,8 @@ Mostly I/O blocks, simple settings.
 Each module has one memory block.
 One implementation for all devices.
 
-Type, name (16char/12byte), structure of block, value types and lengths are fully defined and compiled in.
+Type, structure of block, value types and lengths are fully defined and compiled in.
+Has no name.
 Option for a callback function on change.
 Value and metadata flags in ram and values also in backup in storage file.
 

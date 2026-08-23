@@ -19,8 +19,7 @@ enum FieldFlags : uint16_t {
     Valid         = 0x0400, // Flash only: if 0, a newer version exists, ignore this entry
     ReadOnly      = 0x1000,
     NotSaved      = 0x2000,
-    ScriptUpdated = 0x4000,
-    RemoteOrigin  = 0x8000
+    ScriptUpdated = 0x4000
 };
 
 enum class DataType : uint16_t {

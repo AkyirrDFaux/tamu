@@ -69,7 +69,7 @@ void HandleStorageService(const PacketFrame &frame)
 
                 PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
                                  flags, (const uint8_t *)&entry, sizeof(FileEntry));
-                reply.frag_id = NextFragmentId(reply.flags);
+                PacketSetFragId(&reply, NextFragmentId(reply.flags));
                 DispatchPacket(reply);
             }
             break;
@@ -123,7 +123,21 @@ void HandleStorageService(const PacketFrame &frame)
             break;
         }
 
-        case 5: { // Read File (Request: Name (8 bytes) + Offset start (4 bytes) + Number of bytes (4 bytes))
+        case 5: { // Rename File (Request: Old Name (8 bytes) + New Name (8 bytes))
+            if (frame.payload_len >= 16) {
+                const char *old_name = reinterpret_cast<const char *>(frame.payload);
+                const char *new_name = reinterpret_cast<const char *>(frame.payload + 8);
+
+                bool ok = Storage.RenameFile(old_name, new_name);
+                uint8_t status = ok ? 0x01 : 0x00;
+                PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
+                                 FLAG_TYPE | FLAG_START | FLAG_STOP, &status, 1);
+                DispatchPacket(reply);
+            }
+            break;
+        }
+
+        case 6: { // Read File (Request: Name (8 bytes) + Offset start (4 bytes) + Number of bytes (4 bytes))
             if (frame.payload_len >= 16) {
                 const char *name = reinterpret_cast<const char *>(frame.payload);
                 uint32_t offset = *reinterpret_cast<const uint32_t *>(frame.payload + 8);
@@ -159,7 +173,7 @@ void HandleStorageService(const PacketFrame &frame)
 
                         PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
                                      flags, temp_buf, chunk);
-                        reply.frag_id = NextFragmentId(reply.flags);
+                        PacketSetFragId(&reply, NextFragmentId(reply.flags));
                         DispatchPacket(reply);
 
                         sent_bytes += chunk;
@@ -174,7 +188,7 @@ void HandleStorageService(const PacketFrame &frame)
             break;
         }
 
-        case 6: { // Write Stream Open (Request: Name (8 bytes) + Offset start (4 bytes))
+        case 7: { // Write Stream Open (Request: Name (8 bytes) + Offset start (4 bytes))
             if (frame.payload_len >= 12) {
                 const char *name = reinterpret_cast<const char *>(frame.payload);
                 uint32_t offset = *reinterpret_cast<const uint32_t *>(frame.payload + 8);
@@ -207,7 +221,7 @@ void HandleStorageService(const PacketFrame &frame)
             break;
         }
 
-        case 7: { // Write Stream Close (Request: CID stream (1 byte))
+        case 8: { // Write Stream Close (Request: CID stream (1 byte))
             if (frame.payload_len >= 1) {
                 uint8_t cid_close = frame.payload[0];
                 for (int stream_idx = 0; stream_idx < MAX_STREAMS; stream_idx++) {

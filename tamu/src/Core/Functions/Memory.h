@@ -74,38 +74,49 @@ inline uint16_t MakeBlockMetaPayload(uint8_t block, uint16_t flags_and_type, uin
     return cursor;
 }
 
-// Writes `len` bytes to a backup file (creating/resizing it as needed).
+// Derives the staging-file name for an atomic backup update: the last character of the
+// padded 8-byte name becomes '~' ("SYSMEM " -> "SYSMEM~"). Backup names never end in '~'.
+inline void BackupTempName(const char name[8], char out[8])
+{
+    memcpy(out, name, 8);
+    out[7] = '~';
+}
+
+// Writes `data` to the backup file `name` atomically (NOR-safe copy-and-rename):
+//
+//   1. The new contents are written to a staging file (`name` with last char '~').
+//      A power cut here leaves the previous backup untouched and a stale staging file,
+//      which is removed on the next update.
+//   2. Commit via Storage.RenameFile: a new record for `name` is appended pointing at
+//      the staged area and superseded records are invalidated - each step an append-only
+//      NOR write or a 1->0 invalidation.
+//
+// A reader therefore always resolves `name` to either the complete previous or the
+// complete new generation, never a half-written file.
 inline bool WriteBackupFile(const char name[8], const uint8_t *data, uint16_t len)
 {
-    uint32_t off, sz;
-    bool existed = Storage.GetFileInfo(name, &off, &sz);
-    if (!existed)
-    {
-        if (!Storage.CreateFile(name, len))
-            return false;
-        if (!Storage.GetFileInfo(name, &off, &sz))
-            return false;
-    }
-    else if (sz != len)
-    {
-        if (!Storage.ResizeFile(name, len))
-            return false;
-        if (!Storage.GetFileInfo(name, &off, &sz))
-            return false;
-    }
+    char tmp[8];
+    BackupTempName(name, tmp);
+    if (memcmp(name, tmp, 8) == 0)
+        return false; // naming convention violation guard
 
-    // NOR flash can only program 1s to 0s, so rewriting a file that already holds
-    // data (same size, a shrink that kept its blocks, or the copy left by a grow)
-    // requires erasing its data area first; otherwise bits that must go back to 1
-    // stay 0 and the backup corrupts.
-    if (existed)
+    // Remove a staging file left over from an interrupted update.
+    if (Storage.FileExists(tmp) != 0xFFFFFFFF)
+        Storage.DeleteFile(tmp);
+
+    // Stage the new generation in its own file (CreateFile provides freshly erased blocks).
+    if (!Storage.CreateFile(tmp, len))
+        return false;
+    if (!Storage.WriteToFile(tmp, 0, len, (const char *)data))
+        return false;
+
+    // Commit atomically: the staging file becomes the live backup under its final name.
+    if (!Storage.RenameFile(tmp, name))
     {
-        uint32_t blocks = (len + STORAGE_BLOCK_SIZE - 1) / STORAGE_BLOCK_SIZE;
-        if (blocks == 0) blocks = 1;
-        if (!Storage_FlashErase(off, blocks * STORAGE_BLOCK_SIZE))
-            return false;
+        Storage.DeleteFile(tmp);
+        return false;
     }
-    return Storage_FlashWrite(off, data, len);
+    return true;
 }
 
 // Reads a backup file into `out`; returns the byte count (0 if absent or too large).
@@ -390,11 +401,6 @@ struct KeyedBlockDescriptor : public DynamicBlockDescriptor
         uint16_t old_entry_size = found ? AlignTo4(sizeof(BlockMeta) + ((BlockMeta *)(cursor + offset))->Size) : 0;
         uint16_t new_entry_size = AlignTo4(sizeof(BlockMeta) + val_len);
         int16_t size_diff = (int16_t)new_entry_size - (int16_t)old_entry_size;
-
-        // BlockMeta.Size is a single byte: refuse to grow the dictionary field past
-        // its representable size instead of silently wrapping.
-        if ((int32_t)map[field_idx].Size + size_diff > 0xFF)
-            return false;
 
         if (!EnsureCapacity(size_diff))
             return false;

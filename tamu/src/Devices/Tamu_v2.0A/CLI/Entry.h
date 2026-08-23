@@ -8,30 +8,84 @@
 #include <cstring>
 #include <cstdlib>
 
-// Prints the log records kept in RAM on the core device
+// Prints the log records kept in RAM on the core device, oldest first (by sequence).
 static int CmdLogs(int argc, char **argv)
 {
 #ifdef TYPE_CORE
     EnsureLogStorage();
-    if (!LogBuffer) { printf("No log storage available.\n"); return 0; }
+    if (!LogBuffer || !LogUsed || !LogSeq) { printf("No log storage available.\n"); return 0; }
+
+    // Print in chronological order: repeatedly pick the smallest sequence number
+    // above the last printed one.
+    uint32_t printed = 0, last_seq = 0;
     bool any = false;
-    for (int i = 0; i < MAX_LOG_RECORDS; i++)
+    for (;;)
     {
-        if (LogUsed[i])
+        int best = -1;
+        uint32_t best_seq = 0xFFFFFFFF;
+        for (uint32_t i = 0; i < LogCount; i++)
         {
-            const LogMessage &m = LogBuffer[i].msg;
-            printf("[%03d] Dev %d | %s | Src 0x%04X | Code 0x%04X | Count %u | t=%lums\n",
-                   i, LogBuffer[i].device_id, LogIsBlock(m) ? "Block" : "Svc",
-                   LogSourceId(m), LogCode(m), LogBuffer[i].count,
-                   (unsigned long)m.timestamp);
-            any = true;
+            if (LogUsed[i] && LogSeq[i] > last_seq && LogSeq[i] < best_seq)
+            {
+                best_seq = LogSeq[i];
+                best = (int)i;
+            }
         }
+        if (best < 0) break;
+
+        const LogMessage &m = LogBuffer[best].msg;
+        printf("[%03u] Dev %d | %s | Src 0x%04X | Code 0x%04X | Count %lu | t=%lums\n",
+               (unsigned)printed++, LogBuffer[best].device_id, LogIsBlock(m) ? "Block" : "Svc",
+               LogSourceId(m), LogCode(m), (unsigned long)LogBuffer[best].count,
+               (unsigned long)m.timestamp);
+        last_seq = best_seq;
+        any = true;
     }
     if (!any)
         printf("No logs recorded.\n");
 #else
     printf("Log records are only available on the core device.\n");
 #endif
+    return 0;
+}
+
+// logget [addr] : fetch a device's log database over the bus via the GetLogs CID.
+static int CmdLogGet(int argc, char **argv)
+{
+    uint16_t addr = (argc > 1) ? (uint16_t)atoi(argv[1]) : 1;
+    printf("Requesting logs from device %d...\n", addr);
+
+    PacketFrame req;
+    PacketConstruct(&req, addr,
+                     MakeService(ServiceType::LogHandler, 1),
+                     MakeService(ServiceType::CLI, 6),
+                     FLAG_REQACK | FLAG_START | FLAG_STOP, nullptr, 0);
+    g_cli_response_seen = false;
+    DispatchPacket(req);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    if (!g_cli_response_seen)
+        printf("Error: no response from device %d (timeout).\n", addr);
+    return 0;
+}
+
+// logclear [addr] [count] : clear the N most recent logs on a device via ClearReadLogs.
+static int CmdLogClear(int argc, char **argv)
+{
+    uint16_t addr = (argc > 1) ? (uint16_t)atoi(argv[1]) : 1;
+    uint32_t count = (argc > 2) ? (uint32_t)strtoul(argv[2], nullptr, 10) : 32;
+    printf("Clearing %lu logs on device %d...\n", (unsigned long)count, addr);
+
+    PacketFrame req;
+    PacketConstruct(&req, addr,
+                     MakeService(ServiceType::LogHandler, 2),
+                     MakeService(ServiceType::CLI, 6),
+                     FLAG_REQACK | FLAG_START | FLAG_STOP,
+                     (const uint8_t *)&count, sizeof(count));
+    g_cli_response_seen = false;
+    DispatchPacket(req);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    if (!g_cli_response_seen)
+        printf("Error: no response from device %d (timeout).\n", addr);
     return 0;
 }
 
@@ -227,11 +281,12 @@ static int CmdDevice(int argc, char **argv)
 }
 
 // Sends a Storage service request to `addr` and routes the reply to the CLI (cid 4).
-// Storage service CIDs: 0 File Table, 1 Read File, 2 Create, 3 Delete, 4 Resize.
+// Storage service CIDs (Docs/Services/Storage.md): 0 File Table, 1 Format, 2 Create,
+// 3 Delete, 4 Resize, 5 Rename, 6 Read File, 7 Write Stream Open, 8 Write Stream Close.
 static int CmdFile(int argc, char **argv)
 {
-    // Usage: file <addr> <table|read|create|delete|resize> [args]
-    if (argc < 3) { printf("Usage: file <addr> <table|read|create|delete|resize> [args]\n"); return 1; }
+    // Usage: file <addr> <table|read|create|delete|resize|rename> [args]
+    if (argc < 3) { printf("Usage: file <addr> <table|read|create|delete|resize|rename> [args]\n"); return 1; }
     uint16_t addr = (uint16_t)atoi(argv[1]);
     const char *cmd = argv[2];
 
@@ -245,13 +300,13 @@ static int CmdFile(int argc, char **argv)
     {
         // file <addr> read <name> <offset> <num>
         if (argc < 6) { printf("Usage: file <addr> read <name> <offset> <num>\n"); return 1; }
-        cid = 5; // Read File (docs)
+        cid = 6; // Read File
         PackName(argv[3], name8);
         uint32_t off = (uint32_t)strtoul(argv[4], nullptr, 10);
         uint32_t num = (uint32_t)strtoul(argv[5], nullptr, 10);
         memcpy(payload, name8, 8);
         memcpy(payload + 8, &off, 4);
-        memcpy(payload + 8 + 4, &num, 4);
+        memcpy(payload + 12, &num, 4);
         plen = 8 + 8;
     }
     else if (strcmp(cmd, "create") == 0)
@@ -284,6 +339,18 @@ static int CmdFile(int argc, char **argv)
         memcpy(payload, name8, 8);
         memcpy(payload + 8, &size, 4);
         plen = 8 + 4;
+    }
+    else if (strcmp(cmd, "rename") == 0)
+    {
+        // file <addr> rename <oldname> <newname>
+        if (argc < 5) { printf("Usage: file <addr> rename <oldname> <newname>\n"); return 1; }
+        cid = 5;
+        char new8[8] = {0};
+        PackName(argv[3], name8);
+        PackName(argv[4], new8);
+        memcpy(payload, name8, 8);
+        memcpy(payload + 8, new8, 8);
+        plen = 16;
     }
     else { printf("Unknown file command: %s\n", cmd); return 1; }
 
@@ -368,7 +435,7 @@ void StartCLI(void)
 
     const esp_console_cmd_t logs_cmd = {
         .command = "logs",
-        .help    = "Show logs and errors collected from the network",
+        .help    = "Show logs collected from the network (local database)",
         .hint    = "",
         .func    = &CmdLogs,
         .argtable = nullptr,
@@ -376,6 +443,28 @@ void StartCLI(void)
         .context = nullptr,
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&logs_cmd));
+
+    const esp_console_cmd_t logget_cmd = {
+        .command = "logget",
+        .help    = "Fetch a device's log database over the bus (GetLogs)",
+        .hint    = "[addr]",
+        .func    = &CmdLogGet,
+        .argtable = nullptr,
+        .func_w_context = nullptr,
+        .context = nullptr,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&logget_cmd));
+
+    const esp_console_cmd_t logclear_cmd = {
+        .command = "logclear",
+        .help    = "Clear the N most recent logs on a device (ClearReadLogs)",
+        .hint    = "[addr] [count]",
+        .func    = &CmdLogClear,
+        .argtable = nullptr,
+        .func_w_context = nullptr,
+        .context = nullptr,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&logclear_cmd));
 
     const esp_console_cmd_t save_cmd = {
         .command = "save",

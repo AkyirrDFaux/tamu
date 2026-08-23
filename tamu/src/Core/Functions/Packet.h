@@ -144,6 +144,15 @@ inline uint8_t NextFragmentId(uint8_t flags)
 #endif
 }
 
+// Assigns a stream FragID AFTER PacketConstruct and refreshes the CRC: PacketConstruct
+// computes the checksum while frag_id is still 0, so patching it without this helper would
+// make every non-first packet of a stream fail CRC validation on the receiver.
+inline void PacketSetFragId(PacketFrame *frame, uint8_t frag_id)
+{
+    frame->frag_id = frag_id;
+    frame->crc8 = Crc8(&frame->flags, (uint16_t)(11 + frame->payload_len));
+}
+
 // Appends `len` bytes of `data` to the frame payload (returns false if it would overflow) and recomputes CRC8
 inline bool PacketAppend(PacketFrame *frame, const uint8_t *data, uint8_t len)
 {

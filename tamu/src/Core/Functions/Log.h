@@ -39,28 +39,47 @@ typedef struct __attribute__((packed))
     LogMessage msg;
 } LogRecord;
 
-#define MAX_LOG_RECORDS 32
+// Heap-backed database sizing (Docs/Services/Log Handler.md): the database lives on the
+// heap and GROWS when full; only when the heap cannot provide more room is the OLDEST
+// record dropped to make space for the new one.
+#define LOG_INITIAL_CAPACITY 32
+#define LOG_GROW_STEP        16
+#define LOG_MAX_CAPACITY     512 // hard safety cap
 
 #ifdef TYPE_CORE
-// RAM log database on core devices, kept on the heap per Docs/Services/Log Handler.md.
+// RAM log database on core devices, kept on the heap (Docs/Services/Log Handler.md).
 // Defined in Functions/Dispatcher.h; allocated lazily by EnsureLogStorage() on first use.
+// LogSeq holds a monotonic sequence number per record so "oldest" is well defined
+// (RAM-only bookkeeping; never transmitted - GetLogs streams plain LogRecords).
 extern LogRecord *LogBuffer;
 extern bool *LogUsed;
+extern uint32_t *LogSeq;
+extern uint32_t LogCapacity; // allocated slots
+extern uint32_t LogCount;    // high-water mark of ever-used slots
+extern uint32_t *LogSeq;
+extern uint32_t LogCapacity;
 
-// Allocates the heap-backed log database on first use (no-op afterwards).
+// Allocates the initial database on first use (no-op afterwards).
 inline void EnsureLogStorage()
 {
     if (!LogBuffer)
     {
-        LogBuffer = (LogRecord *)malloc(MAX_LOG_RECORDS * sizeof(LogRecord));
-        LogUsed = (bool *)calloc(MAX_LOG_RECORDS, sizeof(bool));
-        if (!LogBuffer || !LogUsed)
+        LogBuffer = (LogRecord *)malloc(LOG_INITIAL_CAPACITY * sizeof(LogRecord));
+        LogUsed = (bool *)calloc(LOG_INITIAL_CAPACITY, sizeof(bool));
+        LogSeq = (uint32_t *)calloc(LOG_INITIAL_CAPACITY, sizeof(uint32_t));
+        if (!LogBuffer || !LogUsed || !LogSeq)
         {
             // Half-initialised state would null-deref later; free and bail out.
             free(LogBuffer);
             free(LogUsed);
+            free(LogSeq);
             LogBuffer = nullptr;
             LogUsed = nullptr;
+            LogSeq = nullptr;
+        }
+        else
+        {
+            LogCapacity = LOG_INITIAL_CAPACITY;
         }
     }
 }

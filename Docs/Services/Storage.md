@@ -31,13 +31,14 @@ File is given off to have data stored or read by other functions, it has it's ow
 | Function           | CID | Payload In                          | Payload out                 | Note                                             |
 | ------------------ | --- | ----------------------------------- | --------------------------- | ------------------------------------------------ |
 | Read File Table    | 0   | -                                   | File table entries (stream) |                                                  |
-| Format Filesystem  | 1   | -                                   | -                           |                                                  |
-| Create File        | 2   | Name, Size                          | Success (bool)              |                                                  |
-| Delete File        | 3   | Name                                | -                           |                                                  |
-| Resize File        | 4   | Name, New Size                      | Success (bool)              |                                                  |
-| Read File          | 5   | Name, Offset start, Number of bytes | Binary (Stream)             |                                                  |
-| Write Stream Open  | 6   | Name, Offset start                  | CID stream                  | Opens a new CID explicitly to write to that file |
-| Write Stream Close | 7   | CID stream                          | -                           |                                                  |
+| Format Filesystem  | 1   | -                                   | Success (bool)              | respond only if requested                        |
+| Create File        | 2   | Name, Size                          | Success (bool)              | respond only if requested                        |
+| Delete File        | 3   | Name                                | Success (bool)              | respond only if requested                        |
+| Resize File        | 4   | Name, New Size                      | Success (bool)              | respond only if requested                        |
+| Rename File        | 5   | Old Name, New Name                  | Success (bool)              | respond only if requested                        |
+| Read File          | 6   | Name, Offset start, Number of bytes | Binary (Stream)             |                                                  |
+| Write Stream Open  | 7   | Name, Offset start                  | CID stream                  | Opens a new CID explicitly to write to that file |
+| Write Stream Close | 8   | CID stream                          | -                           |                                                  |
 | Write Stream       | 64+ | Binary (Stream)                     |                             |                                                  |
 
 ### Functions to implement
@@ -74,6 +75,8 @@ File is given off to have data stored or read by other functions, it has it's ow
 - `bool ResizeFile(char[8] Filename, uint32 NewLength, bool CopyIfFailed = false)`
 	Tries to change the file length by just extending/shrinking it, checks the filetable if it can. If possible, only write a new (with increased length) filetable entry and invalidate old one. Shrinking is always possible.
 	Copy the file into a new larger place only if specified, most usecases might want to reduce the filesize first based on the file usage (invalidated entries etc.).
+-  `bool RenameFile(char [8] OldFilename, char [8] NewFilename)`
+	Creates a new record with new name for the same file, deletes the old one.
 - `uint32_t ReadFromFile(char[8] Filename, uint32_t Offset, uint32_t Length, char* Buffer)`
 	Utility wrapper for the `Read`.
 	Offset is from file start.

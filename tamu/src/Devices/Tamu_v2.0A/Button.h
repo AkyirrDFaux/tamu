@@ -25,8 +25,29 @@ bool OnLEDStateChange(const StaticBlockDescriptor& block, uint16_t index, const 
 }
 
 // Samples the notification pin and updates the button state while the LED is off.
+// Polarity per the hardware: pull-down input floats LOW when idle (ButtonState = false)
+// and a button press pulls the line HIGH (ButtonState = true).
+// Per Docs/Modules/Generic system blocks.md, pushing the button triggers the LED: a
+// rising edge while the LED is off lights it. (The shared line cannot be read while the
+// LED is driven, so "press again to turn off" is not detectable - turn it off remotely
+// or via the LED write field.)
 void ButtonUpdate()
 {
-    if (LedButton.LEDState == false)
-            LedButton.ButtonState = !PinRead(LED_NOTIFICATION_PIN);
+    static bool prev_pressed = false;
+
+    if (LedButton.LEDState != false)
+    {
+        prev_pressed = false;
+        return;
+    }
+
+    bool pressed = PinRead(LED_NOTIFICATION_PIN);
+    LedButton.ButtonState = pressed;
+
+    if (pressed && !prev_pressed)
+    {
+        bool led_on = true;
+        OnLEDStateChange(static_block_registry[0], 0, &led_on, sizeof(led_on));
+    }
+    prev_pressed = pressed;
 }

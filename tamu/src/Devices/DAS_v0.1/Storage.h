@@ -116,7 +116,9 @@ bool Storage_FlashWrite(uint32_t offset, const void *data, uint32_t size)
 // Erases `size` bytes of flash at `offset` (STORAGE_BLOCK_SIZE aligned, one PAGE_ER page per
 // allocation block). Uses the 64-byte CR_PAGE_ER operation (FLASH_ErasePage_Fast), NOT
 // FLASH_ErasePage: that is the 1 KB CR_PER sector erase and wipes every other structure
-// sharing its kilobyte (the RealHW 2026-08-23 table-loss bug). The BSY wait mirrors the SDK's
+// sharing its kilobyte (the RealHW 2026-08-23 table-loss bug). FLASH_ErasePage_Fast returns
+// no status, so each erased page is verified by reading back its first word - a failed erase
+// must not be reported as success into table/file commits. The BSY wait mirrors the SDK's
 // ROM_ERASE; the controller requires both standard and fast-mode unlocks.
 bool Storage_FlashErase(uint32_t offset, uint32_t size)
 {
@@ -129,6 +131,13 @@ bool Storage_FlashErase(uint32_t offset, uint32_t size)
     FLASH_Unlock_Fast();
     for (uint32_t o = offset; o < offset + size; o += FLASH_ERASE_PAGE_SIZE) {
         FLASH_ErasePage_Fast(STORAGE_FLASH_BASE + o);
+        uint32_t check = 0;
+        memcpy(&check, (const void *)(STORAGE_CHIP_BASE + o), sizeof(check));
+        if (check != 0xFFFFFFFFu) {
+            FLASH_Lock_Fast();
+            FLASH_Lock();
+            return false;
+        }
     }
     FLASH_Lock_Fast();
     FLASH_Lock();

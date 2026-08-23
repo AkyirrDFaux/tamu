@@ -65,7 +65,7 @@ void HandleSNDB(const PacketFrame &frame)
 
                 PacketConstruct(&response, frame.id_src, frame.srv_src, frame.srv_tgt,
                                  flags, payload, 16);
-                response.frag_id = NextFragmentId(response.flags);
+                PacketSetFragId(&response, NextFragmentId(response.flags));
                 DispatchPacket(response);
             }
             break;
@@ -265,9 +265,10 @@ void HandleDeviceService(const PacketFrame &frame)
             break;
         }
 
-        case 8: // Uptime
+        case 8: // Uptime: raw time since boot (Device service doc semantics), NOT the
+                // synchronized clock that Now()/DeviceStatus.UptimeMs carry.
         {
-            uint32_t uptime = DeviceStatus.UptimeMs;
+            uint32_t uptime = TimeFromBoot();
             SendDeviceReply(frame, reply, &uptime, sizeof(uptime));
             break;
         }

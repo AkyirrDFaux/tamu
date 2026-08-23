@@ -94,6 +94,43 @@ void HandleCLIService(const PacketFrame &frame)
         printf("--- Topology Dump Complete ---\n");
 }
 
+// Response handler: prints LogHandler service replies (GetLogs record stream from a
+// remote device, ClearReadLogs status).
+void HandleCLI_LogResponse(const PacketFrame &frame)
+{
+    if (!(frame.flags & FLAG_TYPE))
+        return; // Only handle responses
+    g_cli_response_seen = true;
+
+    if (frame.payload_len == 0)
+    {
+        if (frame.flags & FLAG_START)
+            printf("No logs on device %d.\n", frame.id_src);
+        else
+            printf("--- Log Dump Complete ---\n");
+        return;
+    }
+
+    if (frame.payload_len == 1)
+    {
+        printf("Device %d: Log clear %s (status %d)\n",
+               frame.id_src, frame.payload[0] == 0 ? "OK" : "FAILED", frame.payload[0]);
+        return;
+    }
+
+    if (frame.payload_len >= sizeof(LogRecord) && (frame.flags & FLAG_START))
+        printf("--- Logs from Device %d ---\n", frame.id_src);
+
+    if (frame.payload_len >= sizeof(LogRecord))
+    {
+        const LogRecord *r = reinterpret_cast<const LogRecord *>(frame.payload);
+        const LogMessage &m = r->msg;
+        printf("Dev %d | %s | Src 0x%04X | Code 0x%04X | Count %u | t=%lums\n",
+               r->device_id, LogIsBlock(m) ? "Block" : "Svc",
+               LogSourceId(m), LogCode(m), r->count, (unsigned long)m.timestamp);
+    }
+}
+
 // Response handler: prints a single-byte status (Save/Recall/Delete results)
 void HandleCLI_StatusResponse(const PacketFrame &frame)
 {

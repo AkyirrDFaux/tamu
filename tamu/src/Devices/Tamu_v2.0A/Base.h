@@ -5,10 +5,17 @@ const gpio_num_t LED_NOTIFICATION_PIN = GPIO_NUM_2;
 
 #define VOLTAGE (3.3)
 
-// Returns the current uptime in milliseconds.
-uint32_t Now()
+// Returns the RAW time since boot in milliseconds, unaffected by any time offset.
+uint32_t TimeFromBoot()
 {
     return (uint32_t)(esp_timer_get_time() / 1000);
+}
+
+// Returns the current SYNCHRONIZED time in milliseconds (raw timer + time offset pushed
+// by the core via Device service CID 11).
+uint32_t Now()
+{
+    return TimeFromBoot() + TimeOffsetMs;
 }
 
 // Blocks the task for `ms` milliseconds.

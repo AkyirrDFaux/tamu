@@ -233,14 +233,11 @@ int ReceivePacket(PacketFrame *Data) {
             if (got < 12)
                 break;
 
-            // Header complete: validate length before entering the payload stage.
+            // Header complete: payload_len is a single byte (<=255) and the payload
+            // buffer holds 256, so no length guard is needed - proceed to the payload
+            // stage (CRC validates the frame on completion).
             stage = RX_PAYLOAD;
             got = 0;
-            if (Data->payload_len > MAX_PAYLOAD_SIZE)
-            {
-                stage = RX_SYNC; // corrupt frame: resync on the next 0xAA
-                break;
-            }
             if (Data->payload_len == 0)
             {
                 // Zero-payload frames finish here.

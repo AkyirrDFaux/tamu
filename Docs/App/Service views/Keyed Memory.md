@@ -1,4 +1,4 @@
-Access to all avaliable system blocks
+Access to all avaliable keyed blocks
 Automatically refreshes the visible view (0.5s)
 ### Appbar
 - (right) Current/Backup view
@@ -9,7 +9,8 @@ Automatically refreshes the visible view (0.5s)
 - List containing nested lists
 	- Main list entries show block name, block type and flags
 	- Sublist contain block's entries
-		- Show type and flags and value of each entry
-- Editable values can be edited when tapped (current)
-- Saveable values show a Save button (current) /Recall button (backup)
-- Show block and value entry names and units based on the block types, enums and indexes.
+		- Show type and flags of each entry
+			- Show each key entry's key, type, flags and values
+- Values and blocks can be edited when tapped (current)
+- Values show a Save button (current) /Recall button (backup)
+- Show value entry names and units based on the value and block types, enums, keys and indexes.

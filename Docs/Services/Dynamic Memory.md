@@ -2,7 +2,7 @@ Same idea as [[System Memory]], but user editable.
 One implementation for all devices.
 Use define USE_DYNAMIC_MEMORY
 
-Type, name (16char/12byte), structure of block, values, their types and metadata flags are user editable.
+Type, name (16char), structure of block, values, their types and metadata flags are user editable.
 Name is treated as the value of the block itself, is part of definition.
 Everything resides in ram and in backup storage file.
 No callback functions.

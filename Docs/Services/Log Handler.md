@@ -17,8 +17,8 @@ Log Database Entry:
 
 Errors logs are accessible via the service, app should be able to decode into readable text.
 
-| Function       | CID | **Payload In**                                 | **Payload out**               | **Note**                                                                                       |
-| -------------- | --- | ---------------------------------------------- | ----------------------------- | ---------------------------------------------------------------------------------------------- |
-| Error reporter | 0   | -                                              | Log Struct                    | Outbound only for non-core devices (Log reporter). Core devices only inbound (Database input). |
-| GetLogs        | 1   | -                                              | Stream of LogDatabase entries | Core only.                                                                                     |
-| ClearReadLogs  | 2   | Number of logs to be cleared from end (uint32) | Confirmation                  | Core only. Reply only if needed.                                                               |
+| Function       | CID | **Payload In**                                              | **Payload out**                             | **Note**                                                                                       |
+| -------------- | --- | ----------------------------------------------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Error reporter | 0   | -                                                           | Log Struct                                  | Outbound only for non-core devices (Log reporter). Core devices only inbound (Database input). |
+| GetLogs        | 1   | -                                                           | Stream of LogDatabase entries, oldest first | Core only.                                                                                     |
+| ClearReadLogs  | 2   | Number of logs to be cleared, starting from oldest (uint32) | Confirmation                                | Core only. Reply only if needed.                                                               |

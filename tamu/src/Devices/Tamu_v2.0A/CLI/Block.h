@@ -107,7 +107,6 @@ void PrintField(const BlockMeta &desc, const void *data_ptr, uint16_t index, boo
     if (flags & FieldFlags::ReadOnly)     strcat(flag_str, "[RO] ");
     if (flags & FieldFlags::NotSaved)     strcat(flag_str, "[NS] ");
     if (flags & FieldFlags::ScriptUpdated) strcat(flag_str, "[SC] ");
-    if (flags & FieldFlags::RemoteOrigin) strcat(flag_str, "[RM] ");
 
     if (is_key)
         printf("    |-- Key [%02d]: ", index);

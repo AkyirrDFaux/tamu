@@ -4,8 +4,12 @@
 #include "Blocks/DeviceInfo.h"
 #include "Core/Functions/Packet.h"
 
-// Returns the current time in milliseconds
+// Returns the current SYNCHRONIZED time in milliseconds (raw timer + time offset pushed
+// by the core). All scheduling and timestamps use this.
 uint32_t Now();
+// Returns the RAW time since boot in milliseconds, unaffected by any time offset
+// (reported by the Device service Uptime function).
+uint32_t TimeFromBoot();
 // Blocks for `ms` milliseconds
 void Sleep(uint32_t ms);
 // Blocks for `us` microseconds
@@ -44,14 +48,14 @@ inline void TimeUpdate()
     if (!primed)
     {
         primed = true;
-        LastTime = Now() + TimeOffsetMs;
+        LastTime = Now();
         DeviceStatus.UptimeMs = LastTime;
         DeltaTime = 0;
         return;
     }
 
     LastTime = DeviceStatus.UptimeMs;
-    DeviceStatus.UptimeMs = Now() + TimeOffsetMs;
+    DeviceStatus.UptimeMs = Now();
     DeltaTime = DeviceStatus.UptimeMs - LastTime;
 
     DeviceStatus.AvgLoopTimeMs = (DeviceStatus.AvgLoopTimeMs * N(0.9375)) + (Number(DeltaTime) * N(0.0625));

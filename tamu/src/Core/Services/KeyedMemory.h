@@ -91,18 +91,21 @@ void HandleKeyedMemory(const PacketFrame &frame)
 
         if (idx->Key == INVALID_INDEX) // dictionary: BlockMeta + keys array
         {
-            uint8_t keys[64];
+            // A dictionary holds up to 256 keys (key ids 0..255). The response payload
+            // cannot carry all of them at once, so the copy is clamped to what fits.
+            uint8_t keys[256];
             uint16_t key_count = block->ListKeys(idx->Field, keys, sizeof(keys));
             uint8_t payload[MAX_PAYLOAD_SIZE];
             uint16_t cursor = 0;
             BlockIndex out_index = {idx->Block, idx->Field, INVALID_INDEX};
             memcpy(payload + cursor, &out_index, sizeof(BlockIndex)); cursor += sizeof(BlockIndex);
-            // ListKeys fills only `sizeof(keys)` entries but counts all of them, so the
-            // copy length must be clamped to what actually landed in the stack buffer.
+            // ListKeys fills at most `sizeof(keys)` entries but counts all of them; the
+            // response payload caps what can be sent in one packet (255 - headers).
             uint16_t keys_len = (key_count > sizeof(keys)) ? sizeof(keys) : key_count;
+            uint16_t payload_space = sizeof(payload) - cursor - sizeof(BlockMeta);
+            if (keys_len > payload_space) keys_len = payload_space;
             BlockMeta desc_meta = field_result.Descriptor; desc_meta.Size = (uint8_t)keys_len;
             memcpy(payload + cursor, &desc_meta, sizeof(BlockMeta)); cursor += sizeof(BlockMeta);
-            if (cursor + keys_len > sizeof(payload)) keys_len = sizeof(payload) - cursor;
             memcpy(payload + cursor, keys, keys_len); cursor += keys_len;
             SendResponse(frame, payload, (uint8_t)cursor);
             break;

@@ -7,18 +7,19 @@ static uint32_t ms_accum = 0;
 static uint32_t last_cnt = 0;
 static uint32_t ms_rem = 0; // fractional milliseconds (cycles) carried between calls
 
-// Returns the number of milliseconds elapsed since power-on, tracking SysTick rollovers.
-// Uses only 32-bit math so the 64-bit division helper (__udivdi3) is not pulled in.
+// Returns the RAW time since boot in milliseconds, tracking SysTick rollovers and
+// unaffected by any time offset. Uses only 32-bit math so the 64-bit division helper
+// (__udivdi3) is not pulled in.
 // The SysTick counter runs freely up at HCLK (48 MHz) with CMP = 0, so a single call may
 // only span a few hundred cycles. A plain "elapsed / 48000" would truncate that to zero
 // every call and freeze ms_accum in tight loops (e.g. Sleep). A remainder accumulator keeps
 // the fractional cycles so the millisecond count advances correctly however often we're polled.
-uint32_t Now(void) {
+uint32_t TimeFromBoot(void) {
     static bool s_inited = false;
     uint32_t current_cnt = SysTick->CNT;
     // Prime the baseline on the first call. The WCH SysTick counter is not guaranteed to
     // start from 0 on every reset (debugger halt/resume, bootloader re-entry, etc.), so
-    // anchoring to the live value keeps the very first Now() from adding a bogus chunk.
+    // anchoring to the live value keeps the very first TimeFromBoot() from adding a bogus chunk.
     if (!s_inited)
     {
         last_cnt = current_cnt;
@@ -33,6 +34,13 @@ uint32_t Now(void) {
     ms_rem = total % divisor;
     ms_accum += total / divisor;
     return ms_accum;
+}
+
+// Returns the current SYNCHRONIZED time in milliseconds (raw timer + time offset pushed
+// by the core via Device service CID 11). TimeOffsetMs is declared in Core/Functions/
+// SysFunctions.h, which is always included before this header in the translation unit.
+uint32_t Now(void) {
+    return TimeFromBoot() + TimeOffsetMs;
 }
 
 // Non-blocking busy-wait delay for `ms` milliseconds based on the SysTick counter.

@@ -17,7 +17,9 @@ void HandleLogHandler(const PacketFrame &frame)
     (void)cid;
 #else
     EnsureLogStorage();
-    if (!LogBuffer || !LogUsed) return; // Heap allocation failed
+    if (!LogBuffer || !LogUsed || !LogSeq) return; // Heap allocation failed
+
+    static uint32_t log_clock = 0; // monotonic sequence source for "oldest" tracking
 
     if (cid == 0)
     {
@@ -25,35 +27,80 @@ void HandleLogHandler(const PacketFrame &frame)
         if (frame.payload_len < sizeof(LogMessage))
             return;
         const LogMessage *msg = reinterpret_cast<const LogMessage *>(frame.payload);
+        uint32_t seq = ++log_clock;
 
         int free_slot = -1;
-        for (int i = 0; i < MAX_LOG_RECORDS; i++)
+        int oldest_slot = -1;
+        uint32_t oldest_seq = 0xFFFFFFFF;
+        for (uint32_t i = 0; i < LogCapacity; i++)
         {
-            if (LogUsed[i] &&
-                LogBuffer[i].device_id == frame.id_src &&
-                LogBuffer[i].msg.src_and_code == msg->src_and_code)
+            if (i < LogCount && LogUsed[i])
             {
-                LogBuffer[i].count++;
-                LogBuffer[i].msg.timestamp = msg->timestamp;
-                return;
+                if (LogBuffer[i].device_id == frame.id_src &&
+                    LogBuffer[i].msg.src_and_code == msg->src_and_code)
+                {
+                    // Dedup hit: refresh in place, newest wins the sequence number.
+                    LogBuffer[i].count++;
+                    LogBuffer[i].msg.timestamp = msg->timestamp;
+                    LogSeq[i] = seq;
+                    return;
+                }
+                if (LogSeq[i] < oldest_seq)
+                {
+                    oldest_seq = LogSeq[i];
+                    oldest_slot = (int)i;
+                }
             }
-            if (!LogUsed[i] && free_slot == -1)
-                free_slot = i;
+            else if (free_slot == -1 && i >= LogCount)
+                free_slot = (int)i;
         }
-        if (free_slot != -1)
+
+        uint32_t slot;
+        if (free_slot >= 0)
         {
-            LogBuffer[free_slot].device_id = frame.id_src;
-            LogBuffer[free_slot].count = 1;
-            LogBuffer[free_slot].msg = *msg;
-            LogUsed[free_slot] = true;
+            slot = (uint32_t)free_slot;
         }
+        else
+        {
+            // Database full: try to GROW it on the heap first; only when the heap cannot
+            // provide more room, drop the OLDEST record to make space for this one.
+            if (LogCapacity < LOG_MAX_CAPACITY)
+            {
+                LogRecord *nb = (LogRecord *)realloc(LogBuffer, (LogCapacity + LOG_GROW_STEP) * sizeof(LogRecord));
+                bool *nu = (bool *)realloc(LogUsed, (LogCapacity + LOG_GROW_STEP) * sizeof(bool));
+                uint32_t *ns = (uint32_t *)realloc(LogSeq, (LogCapacity + LOG_GROW_STEP) * sizeof(uint32_t));
+                if (nb && nu && ns)
+                {
+                    memset(nu + LogCapacity, 0, LOG_GROW_STEP * sizeof(bool));
+                    LogBuffer = nb; LogUsed = nu; LogSeq = ns;
+                    LogCapacity += LOG_GROW_STEP;
+                    slot = LogCount++;
+                }
+                else
+                {
+                    free(nb); free(nu); free(ns); // partial failure: keep the old buffers
+                    slot = (uint32_t)oldest_slot; // drop the oldest record
+                }
+            }
+            else
+            {
+                slot = (uint32_t)oldest_slot; // hard cap reached: drop the oldest record
+            }
+        }
+
+        LogBuffer[slot].device_id = frame.id_src;
+        LogBuffer[slot].count = 1;
+        LogBuffer[slot].msg = *msg;
+        LogUsed[slot] = true;
+        LogSeq[slot] = seq;
+        if ((uint32_t)slot >= LogCount) LogCount = slot + 1;
         return;
     }
 
     if (cid == 1) // GetLogs: stream every stored LogRecord entry
     {
         uint8_t active = 0;
-        for (int i = 0; i < MAX_LOG_RECORDS; i++)
+        for (uint32_t i = 0; i < LogCount; i++)
             if (LogUsed[i])
                 active++;
 
@@ -67,7 +114,7 @@ void HandleLogHandler(const PacketFrame &frame)
         }
 
         uint8_t sent = 0;
-        for (int i = 0; i < MAX_LOG_RECORDS; i++)
+        for (uint32_t i = 0; i < LogCount; i++)
         {
             if (!LogUsed[i])
                 continue;
@@ -79,25 +126,36 @@ void HandleLogHandler(const PacketFrame &frame)
             PacketFrame reply;
             PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
                              flags, (const uint8_t *)&LogBuffer[i], sizeof(LogRecord));
-            reply.frag_id = NextFragmentId(reply.flags);
+            PacketSetFragId(&reply, NextFragmentId(reply.flags));
             DispatchPacket(reply);
         }
         return;
     }
 
-    if (cid == 2) // ClearReadLogs: clear `n` logs from the end of the buffer
+    if (cid == 2) // ClearReadLogs: clear the `n` most recently received logs
     {
         uint32_t n = (frame.payload_len >= 4)
                          ? *reinterpret_cast<const uint32_t *>(frame.payload)
                          : 0;
-        // Clear the last n occupied entries (highest indices are the most recently added).
-        for (int i = MAX_LOG_RECORDS - 1; i >= 0 && n > 0; i--)
+        // Clear the n entries with the HIGHEST sequence number (the newest). Slot order
+        // no longer tracks age once evictions/compaction have scrambled it, so selection
+        // goes by LogSeq.
+        while (n > 0)
         {
-            if (LogUsed[i])
+            int newest = -1;
+            uint32_t newest_seq = 0;
+            for (uint32_t i = 0; i < LogCount; i++)
             {
-                LogUsed[i] = false;
-                n--;
+                if (LogUsed[i] && LogSeq[i] > newest_seq)
+                {
+                    newest_seq = LogSeq[i];
+                    newest = (int)i;
+                }
             }
+            if (newest < 0)
+                break; // database empty
+            LogUsed[newest] = false;
+            n--;
         }
         if (frame.flags & FLAG_REQACK)
         {

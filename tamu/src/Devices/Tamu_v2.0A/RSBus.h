@@ -82,8 +82,12 @@ static void RS485_WaitForSilence()
     }
 }
 
-// Sends `Data` over the RS-485 bus with CSMA/CD collision avoidance and verifies the transmitted frame via echo-check; retries up to RS485_RETRIES times.
-bool SendAndVerifyPacket(const PacketFrame &Data) 
+// Sends `Data` over the RS-485 bus with CSMA/CD collision avoidance. Per Docs/RSBus.md the
+// sent data is verified WHILE sending: frames go out in small chunks and each chunk's echo
+// is compared as it returns, so a collision aborts mid-frame (only the queued remainder,
+// <= one chunk, still leaves the wire) instead of after the whole frame. Unbounded retry
+// count RS485_RETRIES with random backoff.
+bool SendAndVerifyPacket(const PacketFrame &Data)
 {
     // 1. Create a working copy
     PacketFrame tx_frame = Data;
@@ -99,7 +103,8 @@ bool SendAndVerifyPacket(const PacketFrame &Data)
     tx_buffer[0] = 0xAA;
     memcpy(&tx_buffer[1], &tx_frame, packet_size);
 
-    uint8_t rx_buffer[256 + 13];
+    const size_t CHUNK = 16;               // ~1.4 ms of line time per chunk
+    uint8_t rx_chunk[CHUNK];
 
     for (int attempt = 0; attempt < RS485_RETRIES; attempt++) {
         // CSMA/CD: only transmit once the line has been silent
@@ -108,69 +113,123 @@ bool SendAndVerifyPacket(const PacketFrame &Data)
         // Prepare bus for transmission
         gpio_set_level(RS485_EN_PIN, 1);
         uart_flush_input(UART_NUM_1);
-        
-        // Write the finalized start byte and struct to the bus
-        uart_write_bytes(UART_NUM_1, (const char*)tx_buffer, total_tx_size);
+
+        bool collided = false;
+        size_t verified = 0;
+
+        for (size_t off = 0; off < total_tx_size; off += CHUNK)
+        {
+            size_t n = (total_tx_size - off < CHUNK) ? total_tx_size - off : CHUNK;
+            uart_write_bytes(UART_NUM_1, (const char *)(tx_buffer + off), n);
+
+            // The echo of this chunk must come back intact while we keep sending.
+            int got = uart_read_bytes(UART_NUM_1, rx_chunk, n, pdMS_TO_TICKS(20));
+            if (got != (int)n || memcmp(tx_buffer + off, rx_chunk, n) != 0)
+            {
+                collided = true;
+                break;
+            }
+            verified += n;
+        }
+
         uart_wait_tx_done(UART_NUM_1, pdMS_TO_TICKS(100));
-        
-        // Switch to RX mode to listen for our own transmission (Echo-Check)
+
+        // Switch back to RX mode
         gpio_set_level(RS485_EN_PIN, 0);
-        
-        // Read response
-        int bytes_read = uart_read_bytes(UART_NUM_1, rx_buffer, total_tx_size, pdMS_TO_TICKS(50));
-        
-        // Verification: Validate that the hardware looped back the exact frame
-        if (bytes_read == (int)total_tx_size && memcmp(tx_buffer, rx_buffer, total_tx_size) == 0) {
+
+        if (!collided && verified == total_tx_size)
+        {
             ESP_LOGI("RS485", "Transmission successful on attempt %d", attempt + 1);
             return true;
         }
 
         // Collision or failed echo: back off with a fresh random delay
         uint32_t backoff_ms = (RawRand() % 16) + 1;
-        ESP_LOGW("RS485", "Attempt %d failed (collision?), backoff %lums", attempt + 1, (unsigned long)backoff_ms);
+        ESP_LOGW("RS485", "Attempt %d failed (%s), backoff %lums", attempt + 1,
+                 collided ? "collision" : "echo incomplete", (unsigned long)backoff_ms);
         vTaskDelay(pdMS_TO_TICKS(backoff_ms));
     }
-    
+
     ESP_LOGE("RS485", "Transmission failed after %d attempts", RS485_RETRIES);
     return false;
 }
 
 /**
  * @brief Receives and validates a full PacketFrame.
- * @param Data Pointer to the struct where the packet will be stored.
- * @return Total bytes read if successful, 0 if failed or incomplete.
+ * @param Data Pointer to the struct where the packet will be stored. Assembly writes
+ *             directly into it, so the caller must pass the same buffer every call
+ *             (ProcessBus uses a single static frame).
+ * @return Total bytes read if successful (including start byte), 0 while incomplete.
+ *
+ * The assembly state persists across calls: a frame split across two ProcessBus()
+ * polls continues where it left off instead of being consumed and discarded (bytes
+ * are pulled from the UART driver's RX buffer one at a time). If a sender aborts
+ * mid-frame, the stale stage consumes following bytes until length/CRC checks fail
+ * and the machine falls back to sync-scanning.
  */
-int ReceivePacket(PacketFrame *Data) {
+static int RxValidate(PacketFrame *Data)
+{
+    // CRC covers everything from flags through the end of the payload.
+    if (Crc8(&Data->flags, (uint16_t)(11 + Data->payload_len)) != Data->crc8)
+        return 0; // corrupted: keep scanning for the next 0xAA
+    return (int)(1 + 12 + Data->payload_len);
+}
+
+int ReceivePacket(PacketFrame *Data)
+{
     if (!Data) return 0;
 
-    uint8_t sync;
-    // 1. Synchronize: Find the Start Code (0xAA)
-    if (uart_read_bytes(UART_NUM_1, &sync, 1, 0) != 1 || sync != 0xAA) {
-        return 0;
-    }
-    
-    // 2. Read the Packet Header (12 bytes: crc8 up to srv_src)
-    uint8_t *header_ptr = (uint8_t*)Data;
-    if (uart_read_bytes(UART_NUM_1, header_ptr, 12, pdMS_TO_TICKS(10)) != 12) {
-        return 0;
-    }
-    
-    // 4. Read the Payload
-    if (Data->payload_len > 0) {
-        if (uart_read_bytes(UART_NUM_1, Data->payload, Data->payload_len, pdMS_TO_TICKS(20)) != Data->payload_len) {
-            return 0;
+    enum RxStage : uint8_t { RX_SYNC, RX_HEADER, RX_PAYLOAD };
+    static uint8_t stage = RX_SYNC;
+    static uint16_t got = 0; // bytes of the current stage stored so far
+
+    for (;;)
+    {
+        uint8_t b = 0;
+        if (uart_read_bytes(UART_NUM_1, &b, 1, 0) != 1)
+            break; // driver RX buffer drained
+
+        switch (stage)
+        {
+        case RX_SYNC:
+            if (b == 0xAA)
+            {
+                stage = RX_HEADER;
+                got = 0;
+            }
+            // else: inter-frame garbage, skip
+            break;
+
+        case RX_HEADER:
+            ((uint8_t *)Data)[got++] = b;
+            if (got < 12)
+                break;
+
+            // Header complete: payload_len is a single byte (<=255) and the payload
+            // buffer holds 256, so no length guard is needed - proceed to the payload
+            // stage (CRC validates the frame on completion).
+            stage = RX_PAYLOAD;
+            got = 0;
+            if (Data->payload_len == 0)
+            {
+                // Zero-payload frames finish here.
+                stage = RX_SYNC;
+                int total = RxValidate(Data);
+                if (total > 0) return total;
+            }
+            break;
+
+        case RX_PAYLOAD:
+            Data->payload[got++] = b;
+            if (got >= Data->payload_len)
+            {
+                stage = RX_SYNC;
+                got = 0;
+                int total = RxValidate(Data);
+                if (total > 0) return total;
+            }
+            break;
         }
     }
-    
-    // 5. Validate CRC
-    uint16_t calc_crc_len = 11 + Data->payload_len;
-    uint8_t calc_crc = Crc8(&Data->flags, calc_crc_len);
-    
-    if (calc_crc != Data->crc8) {
-        ESP_LOGE("RS485", "CRC Mismatch! Expected 0x%02X, Got 0x%02X", Data->crc8, calc_crc);
-        ESP_LOG_BUFFER_HEX("RS485_FRAME", (uint8_t*)Data, 12 + Data->payload_len); 
-        return 0; 
-    }
-    
-    return (int)(1 + 12 + Data->payload_len); // Return total bytes read (including start byte)
+    return 0; // incomplete: more bytes may arrive later
 }

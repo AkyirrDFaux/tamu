@@ -18,8 +18,13 @@
 #ifdef TYPE_CORE
 // Log records live in RAM on core devices, on the heap (Docs/Services/Log Handler.md).
 // Allocated lazily by EnsureLogStorage() on first use (declared extern in Functions/Log.h).
+// LogSeq carries a per-record monotonic sequence number so "drop oldest first" is well
+// defined; LogCapacity is the current number of allocated slots.
 LogRecord *LogBuffer = nullptr;
 bool *LogUsed = nullptr;
+uint32_t *LogSeq = nullptr;
+uint32_t LogCapacity = 0;
+uint32_t LogCount = 0;
 #endif
 
 // CLI response handlers are device-specific (implemented per device, e.g. Devices/Tamu_v2.0A/CLI/Handler.h).
@@ -28,6 +33,7 @@ bool *LogUsed = nullptr;
 void HandleCLIService(const PacketFrame &frame);
 void HandleCLI_SNDBResponse(const PacketFrame &frame);
 void HandleCLI_StatusResponse(const PacketFrame &frame);
+void HandleCLI_LogResponse(const PacketFrame &frame);
 void HandleCLI_DeviceResponse(const PacketFrame &frame);
 void HandleCLI_StorageResponse(const PacketFrame &frame);
 void HandleCLI_CreateResponse(const PacketFrame &frame);
@@ -106,6 +112,8 @@ void DispatchPacket(const PacketFrame &frame)
                     HandleCLI_StorageResponse(frame); // Storage service responses
                 else if (cid == 5)
                     HandleCLI_CreateResponse(frame); // Dynamic/Keyed create responses
+                else if (cid == 6)
+                    HandleCLI_LogResponse(frame); // LogHandler GetLogs/ClearReadLogs responses
                 break;
 #endif
 

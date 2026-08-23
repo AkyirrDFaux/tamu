@@ -229,9 +229,50 @@ public:
         return Storage_FlashWrite(file_table_offset + idx * TABLE_ENTRY_SIZE, &zero, sizeof(zero));
     }
 
-    // Counts valid entries; if more than 75% of the table is full the table grows by one
-    // page. Finds a new space, writes a self-describing entry 0 and copies the valid entries,
-    // then updates the first-page pointer and invalidates the old pointer slot.
+    // Renames `old_name` to `new_name`: appends a record with the new name for the same
+    // data area, then invalidates the superseded records (Docs/Services/Storage.md).
+    //
+    // Crash-safe by construction - each step is an append-only NOR write or a 1->0
+    // record invalidation, so a power cut leaves readers resolving either the old or the
+    // new name to a complete file. An existing `new_name` is replaced (its previous data
+    // area becomes unreferenced and therefore free for future allocation).
+    bool RenameFile(const char old_name[8], const char new_name[8])
+    {
+        uint32_t src = FindInFiletable(old_name);
+        if (src == 0xFFFFFFFF || src == 0) return false; // missing / the table itself
+
+        FileEntry entry;
+        if (!ReadTableEntry(src, &entry)) return false;
+
+        FileEntry rec = entry;
+        memcpy(rec.name, new_name, 8);
+        if (!WriteFilerecord(rec))
+            return false;
+
+        // The appended record sits at the current end; invalidate every OTHER valid
+        // record still carrying either name (the previous generation under each).
+        uint32_t appended = GetEndOfFiletable() - 1;
+        uint32_t capacity = TableCapacity();
+        uint32_t zero = 0x00000000;
+        for (uint32_t i = 0; i < capacity; i++) {
+            if (i == appended) continue;
+            FileEntry e;
+            if (!ReadTableEntry(i, &e))
+                break;
+            if (FileSlotIsFree(e.offset)) continue;
+            if (memcmp(e.name, old_name, 8) == 0 || memcmp(e.name, new_name, 8) == 0) {
+                if (!Storage_FlashWrite(file_table_offset + i * TABLE_ENTRY_SIZE,
+                                        &zero, sizeof(zero)))
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    // Counts valid entries; keeps the table between 25% and 75% full by growing or
+    // shrinking one page per move (one page minimum). Finds a new space, writes a
+    // self-describing entry 0 and copies the valid entries, then updates the first-page
+    // pointer and invalidates the old pointer slot.
     bool MoveFiletable()
     {
         uint32_t capacity = TableCapacity();
@@ -247,8 +288,10 @@ public:
         }
 
         uint32_t new_size = file_table_size;
-        if (valid_count * 4 > capacity * 3) // > 75% full
+        if (valid_count * 4 > capacity * 3) // > 75% full: grow by one page
             new_size += PAGE_SIZE;
+        else if (valid_count * 4 < capacity && new_size > PAGE_SIZE) // < 25% full: shrink
+            new_size -= PAGE_SIZE;
 
         uint32_t new_offset = FindSpace(new_size);
         if (new_offset == 0) return false; // Out of space
