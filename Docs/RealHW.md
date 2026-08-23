@@ -9,6 +9,37 @@ The DAS has no console; it is reached exclusively over the RSBus through the Tam
 (DAS upload: `pio run -e DAS_v0_1 -t upload --upload-port /dev/ttyACM1`). Re-flashing the DAS
 rewrites the whole chip flash, so its storage filesystem is reformatted on every upload.
 
+## App ↔ hardware integration (2026-08-23)
+
+First live run of the companion Flutter app's real core stack (`app/test/hil_live_test.dart`,
+driving `UsbTransport` → `ConnectionManager` → `DeviceDatabase` / `SystemMemoryClient` /
+`StorageClient` over `/dev/ttyACM0`). Eight root causes were found and fixed on the way
+(full write-ups in Issues.md); final state:
+
+| Check | Result |
+| --- | --- |
+| Link up + core ping | PASS |
+| Network discovery via SNDB: core + DAS identity, capability bits | PASS |
+| Runtime probes: uptime / loop time / time offset sane | PASS |
+| System Memory walk: 6 blocks (core), 2 blocks (DAS) | PASS |
+| Fan duty write round-trip; DAS FilterCoeff/SamplingRate clamps | PASS |
+| Storage client: table, create, duplicate reject, delete | PASS |
+| 8 concurrent transactions, none lost | PASS ×3 runs |
+| Request to absent device times out cleanly | PASS |
+| SNDB dump + per-ID lookup consistent | PASS |
+| CLI regression battery (`testsuite.py`) after firmware changes | PASS 98/98 |
+
+Operational notes for future sessions:
+
+- Opening/closing the USB port pulses DTR/RTS, which resets the ESP32-C3. The app holds
+  both lines asserted for the session; expect a device reboot at session close and use the
+  settle-ping before assuming the network is ready.
+- A flaky USB connector presents as an endless reboot storm (`rst:0x8 TG1WDT` markers,
+  constant re-enumeration, port number churn). Reseating the cable resolved it - check the
+  physical link before debugging firmware.
+- The custom console requires `esp_console_init()` (now in `StartCLI`); without it all
+  command lookups fail silently with uninitialized-stack return codes.
+
 ## Session issues and their resolution
 
 | # | Issue | Resolution |

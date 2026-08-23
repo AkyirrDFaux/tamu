@@ -139,18 +139,25 @@ bool SendAndVerifyPacket(const PacketFrame &Data)
 
         if (!collided && verified == total_tx_size)
         {
-            ESP_LOGI("RS485", "Transmission successful on attempt %d", attempt + 1);
+            // NOTE: no ESP_LOG here - the log goes to the USB console, and in USB APP
+            // mode that byte stream belongs to the attached app (text would corrupt it).
             return true;
         }
 
         // Collision or failed echo: back off with a fresh random delay
         uint32_t backoff_ms = (RawRand() % 16) + 1;
-        ESP_LOGW("RS485", "Attempt %d failed (%s), backoff %lums", attempt + 1,
-                 collided ? "collision" : "echo incomplete", (unsigned long)backoff_ms);
+        if (!AppConnected) // diagnostics only when no app is attached to the console
+        {
+            ESP_LOGW("RS485", "Attempt %d failed (%s), backoff %lums", attempt + 1,
+                     collided ? "collision" : "echo incomplete", (unsigned long)backoff_ms);
+        }
         vTaskDelay(pdMS_TO_TICKS(backoff_ms));
     }
 
-    ESP_LOGE("RS485", "Transmission failed after %d attempts", RS485_RETRIES);
+    if (!AppConnected)
+    {
+        ESP_LOGE("RS485", "Transmission failed after %d attempts", RS485_RETRIES);
+    }
     return false;
 }
 

@@ -82,12 +82,14 @@ class BleLengthParser {
     return _out.takeBytes();
   }
 
-  /// Splits an outgoing stream into BLE writes with a length prefix each,
-  /// sized to the negotiated MTU (payload = MTU - 2 per the docs).
+  /// Splits an outgoing stream into BLE writes with a length prefix each, sized so
+  /// the whole write (prefix + payload) fits the negotiated MTU minus the 3-byte
+  /// ATT header.
   static List<Uint8List> chunkOutgoing(List<int> streamBytes, {int mtu = 247}) {
     const headerSize = 2;
-    var maxChunk = mtu - headerSize;
-    if (maxChunk <= 0) maxChunk = 20;
+    // Total per write: headerSize + part <= mtu - 3.
+    var maxChunk = mtu - 3 - headerSize;
+    if (maxChunk < 1) maxChunk = 1; // degenerate MTUs: minimal chunks
     final chunks = <Uint8List>[];
     for (var offset = 0; offset < streamBytes.length; offset += maxChunk) {
       final end = (offset + maxChunk).clamp(offset, streamBytes.length);

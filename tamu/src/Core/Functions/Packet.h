@@ -26,6 +26,8 @@ enum class ServiceType : uint8_t
     DynamicMemory = 0x05,
     KeyedMemory = 0x06,
     Script = 0x07,
+    App = 0x08, // App Interface: the app's identity is this service type (SRV SRC high byte),
+                // the CID byte is an app-managed transaction ID. No dedicated network address.
     CLI = 0x09
 };
 
@@ -169,5 +171,21 @@ inline bool PacketAppend(PacketFrame *frame, const uint8_t *data, uint8_t len)
     uint16_t crc_len = 11 + frame->payload_len;
     frame->crc8 = Crc8(&frame->flags, crc_len);
     return true;
+}
+
+// On-wire size of a frame: 12 header bytes (crc8 + flags + frag_id + payload_len +
+// 2x id + 2x srv) followed by payload_len payload bytes. The trailing unused bytes of
+// the PacketFrame struct are NOT transmitted.
+inline uint16_t PacketWireSize(const PacketFrame *frame)
+{
+    return (uint16_t)(12 + frame->payload_len);
+}
+
+// Serializes a frame into `out` (must hold PacketWireSize(frame) bytes). The layout
+// equals the RSBus wire format minus the leading sync byte: crc8 first, then the raw
+// struct bytes. The app's PacketStreamParser expects exactly this layout.
+inline void PacketToWire(const PacketFrame *frame, uint8_t *out)
+{
+    memcpy(out, frame, PacketWireSize(frame));
 }
 

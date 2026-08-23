@@ -85,16 +85,17 @@ void main() {
   group('BLE framing', () {
     test('length-prefixed chunks round-trip', () {
       final parser = BleLengthParser();
-      final chunks =
-          BleLengthParser.chunkOutgoing([1, 2, 3, 4, 5], mtu: 5);
-      // MTU 5 -> max 3 payload bytes per chunk.
+      final chunks = BleLengthParser.chunkOutgoing(
+          [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+          mtu: 13);
+      // MTU 13: total per write <= mtu - 3 -> payload <= 8 bytes per chunk.
       expect(chunks.length, 2);
       Uint8List assembled = Uint8List(0);
       for (final chunk in chunks) {
         final out = parser.feed(chunk);
         assembled = Uint8List.fromList([...assembled, ...out]);
       }
-      expect(assembled, [1, 2, 3, 4, 5]);
+      expect(assembled, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     });
   });
 }

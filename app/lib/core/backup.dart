@@ -24,18 +24,31 @@ List<int> readPlatformFile(String path) => File(path).readAsBytesSync();
 class BackupField {
   final int index;
   final int flagsAndType; // type + flags as stored on the wire
+  final int size; // value length on the wire (BlockMeta.Size)
   final String valueHex;
 
-  BackupField({required this.index, required this.flagsAndType, required this.valueHex});
+  BackupField(
+      {required this.index,
+      required this.flagsAndType,
+      required this.size,
+      required this.valueHex});
 
   Map<String, dynamic> toJson() =>
-      {'i': index, 'm': flagsAndType, 'v': valueHex};
+      {'i': index, 'm': flagsAndType, 's': size, 'v': valueHex};
 
   static BackupField fromJson(Map<String, dynamic> json) => BackupField(
         index: json['i'] as int,
         flagsAndType: json['m'] as int,
+        // Older archives (format 1 without 's') carry no size: fall back to the
+        // hex payload length so restore keeps working for them.
+        size: (json['s'] as int?) ?? _hexLength(json['v'] as String? ?? ''),
         valueHex: json['v'] as String,
       );
+
+  static int _hexLength(String hex) {
+    final clean = hex.replaceAll(RegExp(r'[^0-9a-fA-F]'), '');
+    return clean.length ~/ 2;
+  }
 
   Uint8List get bytes {
     final clean = valueHex.replaceAll(RegExp(r'[^0-9a-fA-F]'), '');
@@ -127,6 +140,7 @@ Future<BackupDevice?> captureDevice(int deviceId) async {
       fields.add(BackupField(
           index: f,
           flagsAndType: field.meta.flagsAndType,
+          size: field.meta.size,
           valueHex:
               field.value.map((b) => b.toRadixString(16).padLeft(2, '0')).join()));
     }

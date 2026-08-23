@@ -17,8 +17,8 @@ const int flagType = 1 << 3; // 0 = request, 1 = response
 const int addrInvalid = 0x0000;
 const int addrBroadcast = 0xFFFF;
 
-/// Source ID used by the app. The app is not an assigned network device, so it
-/// uses a fixed ID outside the normal assignment range (net 15).
+/// Legacy placeholder address. The firmware rewrites id_src on app frames (the core
+/// proxies the app), so this value is inert - kept only as a safe default.
 const int appSourceId = 0xFFFE;
 
 /// Service types (Docs/General architecture.md, matches the firmware enum).
@@ -30,6 +30,7 @@ enum ServiceType {
   dynamicMemory(0x05),
   keyedMemory(0x06),
   script(0x07),
+  app(0x08),
   cli(0x09);
 
   final int value;
@@ -123,7 +124,9 @@ class PacketFrame {
     );
   }
 
-  /// Builds a single-packet frame (START|STOP set, FragID 0).
+  /// Builds a single-packet frame (START|STOP set, FragID 0). Requests carry
+  /// REQACK: several services (System/Dynamic/Keyed Memory) respond only when it
+  /// is set.
   factory PacketFrame.single({
     required int targetId,
     required int srvTarget,
@@ -132,7 +135,7 @@ class PacketFrame {
     List<int> payload = const [],
   }) {
     return PacketFrame(
-      flags: flagStart | flagStop | (response ? flagType : 0),
+      flags: flagStart | flagStop | flagReqAck | (response ? flagType : 0),
       fragId: 0,
       idTarget: targetId,
       idSource: appSourceId,

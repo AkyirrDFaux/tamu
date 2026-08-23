@@ -117,7 +117,6 @@ void HandleCLI_LogResponse(const PacketFrame &frame)
                frame.id_src, frame.payload[0] == 0 ? "OK" : "FAILED", frame.payload[0]);
         return;
     }
-
     if (frame.payload_len >= sizeof(LogRecord) && (frame.flags & FLAG_START))
         printf("--- Logs from Device %d ---\n", frame.id_src);
 
@@ -320,7 +319,7 @@ void HandleCLI_StorageResponse(const PacketFrame &frame)
             printf("Device %d: Filesystem formatted\n", frame.id_src);
             break;
 
-        case 5: // File data stream
+        case 6: // File data stream (Read File, Docs/Services/Storage.md CID 6)
             if (frame.flags & FLAG_START)
                 printf("--- File Data from Device %d ---\n", frame.id_src);
             for (uint8_t i = 0; i < frame.payload_len; i++)
@@ -346,6 +345,13 @@ void HandleCLI_StorageResponse(const PacketFrame &frame)
                 printf("Device %d: File resized\n", frame.id_src);
             else
                 printf("Device %d: File resize failed\n", frame.id_src);
+            break;
+
+        case 5: // Rename file (status byte)
+            if (frame.payload_len >= 1 && frame.payload[0] != 0)
+                printf("Device %d: File renamed\n", frame.id_src);
+            else
+                printf("Device %d: File rename failed\n", frame.id_src);
             break;
 
         default:

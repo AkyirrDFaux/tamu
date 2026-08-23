@@ -1,6 +1,9 @@
 #pragma once
 
 #include "Core/Functions/Packet.h"
+#ifdef USE_APP_INTERFACE
+#include "Core/Functions/AppInterface.h"
+#endif
 #include "Core/Services/Device.h"
 #include "Core/Services/LogHandler.h"
 #ifdef USE_SCRIPT
@@ -97,6 +100,16 @@ void DispatchPacket(const PacketFrame &frame)
             case ServiceType::Storage:
                 HandleStorageService(frame);
                 break;
+
+#ifdef USE_APP_INTERFACE
+            case ServiceType::App:
+                // Responses to app transactions (SRV TGT type == App, CID = the app's
+                // transaction ID). Forward to the attached app's TX stream; silently
+                // count strays when no link is active.
+                if (!AppInterfaceSend(frame))
+                    AppStrayFrames++;
+                break;
+#endif
 
             #ifdef TYPE_CORE
             case ServiceType::CLI:

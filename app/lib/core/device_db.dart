@@ -8,10 +8,14 @@ library;
 import 'package:flutter/foundation.dart';
 
 import 'connection.dart';
+import 'diagnostics.dart';
 import 'protocol.dart';
 import 'types.dart';
 
 const int coreId = 1;
+
+/// App session start (wall clock): reference for the relative time-offset probe.
+final int _sessionStartMs = DateTime.now().millisecondsSinceEpoch;
 
 /// Everything known about one network device.
 class DeviceEntry {
@@ -24,6 +28,7 @@ class DeviceEntry {
   int? uptimeMs;
   double? avgLoopTimeMs;
   double? maxLoopTimeMs;
+  int? timeOffsetMs;
   DateTime lastSeen;
 
   DeviceEntry({required this.id})
@@ -72,8 +77,8 @@ class DeviceDatabase extends ChangeNotifier {
       return await _link.request(targetId, service, cid,
           payload: payload, timeout: timeout);
     } catch (error) {
-      debugPrint(
-          'DB request dev ${idToString(targetId)} $service/$cid failed: $error');
+      AppDiagnostics.log('db',
+          'dev ${idToString(targetId)} $service/$cid failed: $error');
       return null;
     }
   }
@@ -141,6 +146,20 @@ class DeviceDatabase extends ChangeNotifier {
       entry.avgLoopTimeMs = numberFromBytes(loopReply, 0);
       entry.maxLoopTimeMs = numberFromBytes(loopReply, 4);
     }
+
+    // Time offset (Device view): NTP-style estimate from a Time sync probe
+    // (CID 10). The reply carries {time sent, t1, t2} in DEVICE uptime ms;
+    // theta = (t1 + t2)/2 - t_app tells how the device clock relates to the
+    // app session clock.
+    final tApp = DateTime.now().millisecondsSinceEpoch - _sessionStartMs;
+    final syncReply = await _request(id, ServiceType.device, 10,
+        payload: uint32ToBytes(tApp & 0xFFFFFFFF));
+    if (syncReply != null && syncReply.length >= 12) {
+      final t1 = uint32FromBytes(syncReply, 4);
+      final t2 = uint32FromBytes(syncReply, 8);
+      entry.timeOffsetMs = ((t1 + t2) >> 1) - tApp;
+    }
+
     entry.lastSeen = DateTime.now();
     notifyListeners();
   }
@@ -207,6 +226,20 @@ class DeviceDatabase extends ChangeNotifier {
         payload: [id & 0xFF, (id >> 8) & 0xFF]);
     if (reply == null || reply.length < 14) return null;
     return serialNumberToHex(reply.sublist(0, 14));
+  }
+
+  /// Full SNDB dump for the SNDB viewer: [id, serial hex] pairs.
+  Future<List<(int, String)>> sndbEntries() async {
+    final reply = await _request(coreId, ServiceType.device, 12,
+        timeout: const Duration(seconds: 5));
+    final entries = <(int, String)>[];
+    if (reply == null) return entries;
+    for (var offset = 0; offset + 16 <= reply.length; offset += 16) {
+      final id = reply[offset + 14] | (reply[offset + 15] << 8);
+      final sn = serialNumberToHex(reply.sublist(offset, offset + 14));
+      entries.add((id, sn));
+    }
+    return entries;
   }
 }
 

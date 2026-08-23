@@ -13,6 +13,7 @@ import 'package:flutter_libserialport/flutter_libserialport.dart'
 import 'package:universal_ble/universal_ble.dart';
 
 import 'ble_transport.dart';
+import 'diagnostics.dart';
 import 'protocol.dart';
 import 'transport.dart';
 import 'usb_transport.dart';
@@ -217,8 +218,10 @@ class ConnectionManager extends ChangeNotifier {
           transport = usb;
       }
       await _attach(transport);
+      AppDiagnostics.log('link', 'connected: ${transport.displayName}');
       return null;
     } catch (error) {
+      AppDiagnostics.log('link', 'connect failed: $error');
       return error.toString();
     }
   }
@@ -240,6 +243,9 @@ class ConnectionManager extends ChangeNotifier {
   }
 
   Future<void> _detach() async {
+    if (_transport != null) {
+      AppDiagnostics.log('link', 'disconnected from ${_transport!.displayName}');
+    }
     await _streamSub?.cancel();
     _streamSub = null;
     for (final completer in _pending.values) {
@@ -266,7 +272,7 @@ class ConnectionManager extends ChangeNotifier {
     try {
       frames = _parser.feed(bytes);
     } catch (error) {
-      debugPrint('Packet parse error: $error');
+      AppDiagnostics.log('link', 'packet parse error: $error');
       return;
     }
     for (final frame in frames) {
@@ -309,7 +315,10 @@ class ConnectionManager extends ChangeNotifier {
     final frame = PacketFrame.single(
       targetId: targetId,
       srvTarget: makeService(service, functionCid),
-      srvSource: makeService(service, txId),
+      // The app's identity is the App Interface service type (0x08); the CID byte
+      // carries our transaction ID. The device routes replies back purely by this
+      // service type (it rewrites id_src as a proxy, so no app address is needed).
+      srvSource: makeService(ServiceType.app, txId),
       response: false,
       payload: payload,
     );
@@ -322,6 +331,9 @@ class ConnectionManager extends ChangeNotifier {
       return await completer.future.timeout(timeout, onTimeout: () {
         _pending.remove(txId);
         _rxBuffers.remove(txId);
+        AppDiagnostics.log('link',
+            'timeout: ${service.name} CID $functionCid to dev $targetId '
+            '(txId $txId, ${timeout.inMilliseconds} ms)');
         throw TransportException(
             '${service.name} CID $functionCid request timed out');
       });

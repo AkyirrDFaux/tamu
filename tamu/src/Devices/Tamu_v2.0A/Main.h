@@ -66,6 +66,8 @@ const size_t static_block_num = sizeof(static_block_registry) / sizeof(StaticBlo
 LEDDriver LED1(3);
 LEDDriver LED2(0);
 
+#include "AppUSB.h"
+#include "AppBLE.h"
 #include "CLI/Entry.h"
 #include "CLI/Handler.h"
 #include "RSBus.h"
@@ -79,6 +81,11 @@ PinModeOutput(LED_NOTIFICATION_PIN);
 
     Storage.Init();
     LoadAllBackups();
+    AppInterfaceInit();
+
+    // BLE app link (Nordic UART service); advertised under the device version string.
+    AppBLEInit(DeviceVersion);
+
     StartCLI();
 
     SetupRS485();
@@ -104,6 +111,7 @@ LED2.Setup();
 while (1)
     {
         ProcessBus();
+        AppInterfacePump();
         ButtonUpdate();
         ReadIMUData();
 

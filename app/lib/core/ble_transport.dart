@@ -8,12 +8,11 @@ import 'package:universal_ble/universal_ble.dart';
 
 import 'transport.dart';
 
-/// The device's App Interface GATT service. The firmware side is not
-/// implemented yet (see Docs/Issues.md); these UUIDs are placeholders that the
-/// firmware must match.
-const String appServiceUuid = '8e7c1a10-9d36-4b5a-b0c2-2f5f4a9d0001';
-const String appWriteCharUuid = '8e7c1a10-9d36-4b5a-b0c2-2f5f4a9d0002';
-const String appNotifyCharUuid = '8e7c1a10-9d36-4b5a-b0c2-2f5f4a9d0003';
+/// The device's App Interface GATT service: Nordic UART style UUIDs, matching the
+/// firmware implementation (tamu/src/Devices/Tamu_v2.0A/AppBLE.h).
+const String appServiceUuid = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+const String appWriteCharUuid = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
+const String appNotifyCharUuid = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
 
 /// A device discovered during a BLE scan.
 class BleScanEntry {
@@ -50,10 +49,12 @@ class BleTransport implements Transport {
     final services = await UniversalBle.discoverServices(deviceId);
     BleCharacteristic? notifyChar;
     for (final service in services) {
-      if (service.uuid != appServiceUuid) continue;
+      // Platform-reported UUID casing varies; compare normalized.
+      if (service.uuid.toLowerCase() != appServiceUuid) continue;
       for (final characteristic in service.characteristics) {
-        if (characteristic.uuid == appNotifyCharUuid) notifyChar = characteristic;
-        if (characteristic.uuid == appWriteCharUuid) _mtu = _mtu; // keep default
+        if (characteristic.uuid.toLowerCase() == appNotifyCharUuid) {
+          notifyChar = characteristic;
+        }
       }
     }
     if (notifyChar == null) {
@@ -62,10 +63,16 @@ class BleTransport implements Transport {
     }
     await UniversalBle.subscribeNotifications(
         deviceId, appServiceUuid, appNotifyCharUuid);
-    _notifySub = UniversalBle.characteristicValueStream(deviceId, appNotifyCharUuid)
+    _notifySub = UniversalBle.characteristicValueStream(deviceId, appServiceUuid)
         .listen((value) {
       if (!_closed) _linkController.add(value);
     });
+    // Negotiate a large MTU so stream chunks stay big; fall back silently on
+    // platforms that ignore the request (iOS negotiates automatically).
+    try {
+      final negotiated = await UniversalBle.requestMtu(deviceId, 512);
+      if (negotiated >= 23) _mtu = negotiated;
+    } catch (_) {}
   }
 
   @override

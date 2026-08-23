@@ -2,6 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../core/device_db.dart';
 import '../core/types.dart';
+import 'dynmem_page.dart';
+import 'keyedmem_page.dart';
+import 'log_page.dart';
+import 'storage_page.dart';
 import 'sysmem_page.dart';
 import 'theme.dart';
 
@@ -85,6 +89,10 @@ class _DeviceViewPageState extends State<DeviceViewPage> {
                         entry.avgLoopTimeMs?.toStringAsFixed(2) ?? '-'),
                     _row('Max loop time',
                         entry.maxLoopTimeMs?.toStringAsFixed(2) ?? '-'),
+                    _row('Time offset',
+                        entry.timeOffsetMs == null
+                            ? '-'
+                            : '${entry.timeOffsetMs! >= 0 ? '+' : ''}${entry.timeOffsetMs} ms'),
                   ]),
                   const SizedBox(height: 4),
                   _row('Capabilities', Capability.describe(entry.capabilities).isEmpty
@@ -92,19 +100,79 @@ class _DeviceViewPageState extends State<DeviceViewPage> {
                       : Capability.describe(entry.capabilities).join(', ')),
                   const Divider(height: 24),
                   _card(context, 'Services', [
-                    ListTile(
-                      dense: true,
-                      leading: const Icon(Icons.memory),
-                      title: const Text('System Memory'),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () =>
-                          Navigator.of(context).push(MaterialPageRoute(
-                              builder: (_) => SystemMemoryPage(
-                                  deviceId: widget.deviceId))),
-                    ),
+                    // Per Docs/App/Device view.md: hide unavailable services
+                    // based on the device's capability field. System Memory,
+                    // Storage and Logs are mandatory; SNDB is core-only.
+                    // Router table and Script editor await their firmware services.
+                    _serviceTile(context, Icons.memory, 'System Memory',
+                        () => SystemMemoryPage(deviceId: widget.deviceId)),
+                    if (entry.capabilities & Capability.dynamicMemory != 0)
+                      _serviceTile(
+                          context,
+                          Icons.dashboard_customize,
+                          'Dynamic Memory',
+                          () => DynamicMemoryPage(deviceId: widget.deviceId)),
+                    if (entry.capabilities & Capability.keyedMemory != 0)
+                      _serviceTile(
+                          context,
+                          Icons.vpn_key_outlined,
+                          'Keyed Memory',
+                          () => KeyedMemoryPage(deviceId: widget.deviceId)),
+                    _serviceTile(context, Icons.save_outlined, 'Storage',
+                        () => StoragePage(deviceId: widget.deviceId)),
+                    if (entry.isCore)
+                      ListTile(
+                        dense: true,
+                        leading: const Icon(Icons.format_list_numbered),
+                        title: const Text('SNDB'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => _showSndb(),
+                      ),
+                    _serviceTile(context, Icons.article_outlined, 'Logs',
+                        () => LogViewerPage(deviceId: widget.deviceId)),
                   ]),
                 ],
               ),
+      ),
+    );
+  }
+
+  Widget _serviceTile(BuildContext context, IconData icon, String title,
+      Widget Function() page) {
+    return ListTile(
+      dense: true,
+      leading: Icon(icon),
+      title: Text(title),
+      trailing: const Icon(Icons.chevron_right),
+      onTap: () => Navigator.of(context)
+          .push(MaterialPageRoute(builder: (_) => page())),
+    );
+  }
+
+  Future<void> _showSndb() async {
+    final rows = await _db.sndbEntries();
+    if (!mounted) return;
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => SafeArea(
+        child: ListView(children: [
+          Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text('Serial number database',
+                  style: TextStyle(
+                      color: kOrange, fontWeight: FontWeight.w600))),
+          for (final (id, sn) in rows)
+            ListTile(
+              dense: true,
+              leading: Text(idToString(id)),
+              title: Text(sn,
+                  style:
+                      const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+            ),
+          if (rows.isEmpty)
+            const Padding(
+                padding: EdgeInsets.all(12), child: Text('Database empty')),
+        ]),
       ),
     );
   }

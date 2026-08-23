@@ -366,27 +366,22 @@ static int CmdFile(int argc, char **argv)
     return 0;
 }
 
-// Sets up the USB Serial/JTAG console REPL and registers all CLI commands (tree, read, write, sndb, logs, save, recall, rmem, dev, file).
+// Sets up the CLI command registry and starts the USB console/app mode task
+// (see AppUSB.h). Commands: tree, read, write, sndb, logs, logget, logclear, save,
+// recall, rmem, dev, create, delete, log, file.
 void StartCLI(void)
 {
-    // 1. Configure the REPL. The default task stack (4096 B) is too small for the
-    // nested local dispatch: a CLI command builds a PacketFrame (268 B), the local
-    // request handler another 256 B payload buffer, and the response handler a second
-    // PacketFrame, all recursively on the REPL task's stack (HW stack guard panics).
-    // Save/Recall additionally nest a 2048 B backup buffer, so 16 KB is needed.
-    esp_console_repl_config_t repl_config = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
-    repl_config.task_stack_size = 16384;
-    repl_config.prompt = "tamu> ";
-    repl_config.max_cmdline_length = 256;
+    // Initialize the console module. The old REPL setup used to do this
+    // internally (esp_console_new_repl_usb_serial_jtag); now that the console
+    // runs on our own task, initialization must be explicit - without it every
+    // esp_console_run() takes the "not found" exit and never writes cmd_ret.
+    esp_console_config_t console_config = {
+        .max_cmdline_length = 256,
+        .max_cmdline_args = 16,
+    };
+    ESP_ERROR_CHECK(esp_console_init(&console_config));
 
-    // 2. Configure USB Serial/JTAG
-    esp_console_dev_usb_serial_jtag_config_t usj_config = ESP_CONSOLE_DEV_USB_SERIAL_JTAG_CONFIG_DEFAULT();
-
-    // 3. Initialize the console using the USB peripheral
-    esp_console_repl_t *repl = NULL;
-    ESP_ERROR_CHECK(esp_console_new_repl_usb_serial_jtag(&usj_config, &repl_config, &repl));
-
-    // 4. Register commands
+    // Register commands
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
     const esp_console_cmd_t tree_cmd = {
@@ -554,8 +549,11 @@ void StartCLI(void)
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&file_cmd));
 
-    // 5. Start the REPL
-    ESP_ERROR_CHECK(esp_console_start_repl(repl));
+    // 5. Bring up the USB port (driver + VFS stdio) and run the console/app mode
+    // machine on its own task. Same stack sizing rationale as the old REPL config:
+    // nested local dispatch chains need the headroom.
+    AppUSBInit();
+    xTaskCreate(ConsoleTask, "console", 16384, NULL, 5, NULL);
 
     ESP_LOGI("CLI", "Console initialized over USB Serial/JTAG.");
 }

@@ -293,6 +293,42 @@ sequence or by reading back through the same confusion. Retest recipe unchanged 
 verify table -> dump region -> resize grow -> delete), plus confirm `tree 2` prints the
 System summary.
 
+## Fixed (App Interface implementation + device/app interaction audit, 2026-08-23)
+
+Firmware (`USE_APP_INTERFACE`, core only):
+- **App Interface service implemented**: identity = `ServiceType::App (0x08)` in SRV SRC
+  (CID byte = app transaction ID); no app network address - the core rewrites
+  `id_src` on ingress (proxy) so responses route back by service type alone
+  (`Dispatcher.h` case App -> TX stream). Wire helpers `PacketWireSize/PacketToWire`
+  added to Packet.h.
+- **Core routing module** `Core/Functions/AppInterface.h`: global `AppConnected`,
+  heap TX ring (2048 B, drop-newest when full), inbound frame queue dispatched from a
+  single task, session-scoped TX flush on attach/detach.
+- **USB exclusive mode machine** (`AppUSB.h` + reworked CLI): own USJ driver + VFS
+  stdio; CLI mode (line editor + shadow sniffer, candidate bytes withheld from the
+  line editor so embedded \n cannot execute garbage commands) vs APP mode (all bytes
+  to the app, CLI fully ignored); app has priority (first valid link frame attaches);
+  detach on physical USB loss (`usb_serial_jtag_is_connected`, SOF-based); comm LED
+  pulses on RX/TX bursts only.
+- **BLE link** (`AppBLE.h`): Nordic UART UUIDs, uint16-LE length-prefixed transfers,
+  negotiated-MTU-aware notification chunking, 20 ms pacing with notify backpressure
+  (no data loss), deferred advertising restart retried until it succeeds.
+
+App:
+- Requests now carry REQACK (**critical fix** - System/Dynamic/Keyed Memory services
+  respond only when it is set; without it every memory request timed out).
+- `srvSource` switched to the App service type (0x08); BLE UUIDs replaced with the
+  final Nordic UART values; MTU properly negotiated via `UniversalBle.requestMtu`;
+  BLE outgoing chunking fixed to respect ATT MTU - 3 (test updated accordingly).
+- New service clients and pages: Dynamic Memory, Keyed Memory, Storage (file table +
+  file preview), Log viewer, SNDB viewer; Device view gained the documented time
+  offset row (CID 10 probe) and capability-gated service links.
+- **Backup restore bug**: BlockMeta.Size was never serialized, so the restore
+  compatibility check compared against 0 and silently skipped every field; size now
+  stored in the archive (older archives fall back to payload length).
+
+Router table viewer and Script editor remain open until their firmware services exist.
+
 ## Fixed (RemoteOrigin deprecation + Log DB rework, 2026-08-23)
 
 - **`FieldFlags::RemoteOrigin` deprecated and removed** (per updated docs): dropped from
@@ -351,7 +387,13 @@ Script, App Interface, Router.
   (RSTest.h, VysiTest.h, `_todo/*`, `LEDDisplay.h` and the `[env:Valu_v2_0]` build were removed.)
 
 ## Needs hardware verification
-- **Measurement calibration**: `Measuring_Update` reports resistance in kOhm (so 330 kOhm fits
+
+- App Interface end-to-end: USB CLI -> attach app mid-session (priority switch), detach
+  on unplug back to CLI; USB and BLE sessions each running memory/storage/log reads;
+  BLE MTU negotiation chunk sizes; comm LED activity pulses.
+- Measurement constants (NTC/LDR/auto-range thresholds) · IMU scales · **fast-erase restores 0xFF**
+  (underpins the storage fix) · full storage flow incl. rename + backup power-cut behavior ·
+  app_task/console task stack HWM.- **Measurement calibration**: `Measuring_Update` reports resistance in kOhm (so 330 kOhm fits
   Q16.16) and uses a simple auto-range heuristic; divider constants and thresholds need tuning
   against the real sensor.
 - **IMU scale/units calibration**: the accel/gyro work on hardware now; a stationary unit reads
@@ -705,6 +747,56 @@ Implements the accepted audit items; the rest remain in the triage list below.
   BlockType), not on devices - no schema changes to save flash. Recorded here and in the
   triage list below.
 
+## Fixed (app ↔ hardware integration debugging, 2026-08-23)
+
+First end-to-end bring-up of the app's real core stack against live hardware (new HIL test
+harness `app/test/hil_live_test.dart`, run with `TAMU_HIL=/dev/ttyACM0` and
+`LIBSERIALPORT_PATH` pointing at the bundled `libserialport.so`). Eight root causes found
+and fixed; the suite passes 8/8 repeatedly and the CLI battery 98/98.
+
+- **Firmware: USB replies had no START byte** (`Devices/Tamu_v2.0A/AppUSB.h::AppUSBSend`):
+  the builder wrote START to `frame[0]`, then overwrote it with the CRC - every device→app
+  frame went out as `CRC|LEN|payload|STOP` and the host parser (which scans for 0xFA) could
+  never sync. The app has never received a single reply because of this. Fixed to the
+  documented layout `START|CRC8|Length|Payload|STOP` (buffer grown accordingly). Verified:
+  replies now arrive well-formed with the transaction ID echoed.
+- **App: libserialport `sp_new_config()` leaves `xon_xoff` uninitialized** - every other
+  field is set to -1 ("unchanged"), so an unset config randomly fails `sp_set_config` with
+  SP_ERR_ARG depending on heap garbage; connect failures were intermittent by construction.
+  Fixed by always setting `SerialPortXonXoff.disabled`. Also added a bounded config retry
+  (opening pulses DTR/RTS which resets the ESP32-C3; its USB CDC rejects line-coding until
+  re-enumerated) and closed the port-handle leak on config failure (device stayed busy).
+- **Control-line ownership**: the app now asserts and holds both DTR/RTS for the whole
+  session (the state the board runs stably in). Note the ESP32-C3 USJ decodes DTR/RTS
+  transitions into reset/boot actions: every port open/close pulses them, so a flaky
+  connector manifests as an apparent reboot storm (observed and misdiagnosed as firmware).
+- **Firmware: app RX queue too shallow for concurrent transactions**
+  (`APP_RX_QUEUE_DEPTH` 6 → 12): firing 8 parallel requests dropped exactly the frames
+  beyond depth 6 (verified per-txId forensics via the new AppDiagnostics ring).
+- **App: Storage delete misread success as failure** - delete replies carry an EMPTY
+  payload on success, unlike create/resize status bytes; the client required
+  `reply[0] != 0`. Also raised storage request timeouts to 6 s (flash erases on slow nodes
+  exceed the 2 s default).
+- **CLI storage responses aligned to Docs/Services/Storage.md CIDs** (`CLI/Handler.h`):
+  Read File moved to CID 6 (file-data stream), Rename File added at CID 5 (status byte);
+  previously a `file read` printed "Unknown Storage response CID 6".
+- **Firmware/app: custom console never initialized esp_console** (`CLI/Entry.h
+  ::StartCLI`): replacing the stock REPL removed the implicit `esp_console_init`; every
+  command lookup took the "not found" exit which does not write `cmd_ret`, so the console
+  printed uninitialized stack values ("Command returned 1107297998") for ALL commands
+  including built-in help. Fixed with explicit `esp_console_init` (+ max_cmdline_args 16;
+  the initial value of 8 truncated longer command lines mid-arguments, silently shifting
+  write parameters).
+- **Firmware: APP mode is now escapable from the terminal side** - a CR/LF outside any app
+  frame cannot be app traffic, so it reverts the port to CLI mode. A software-only host
+  close does not drop the USJ connection state, so without this the console stayed dead
+  until the cable was replugged.
+- **Permanent diagnostics added** (replacing throwaway debug prints): app-side
+  `core/diagnostics.dart` ring (timeouts, parse errors, link state changes - dumped in
+  test failure output), firmware-side `DeviceLog` hooks for app session start/end,
+  malformed-frame rejects and queue/ring overflow drops (visible via the existing Log
+  Handler service).
+
 ## Open (firmware code review follow-ups)
 
 - **GammaTable has only 240 entries** (`Blocks/Vysi1Display.h:9-24`): the initializer list
@@ -726,15 +818,23 @@ rewrite:
 
 - **App Interface: USB CRC8 coverage is undefined.** The doc gives the frame
   layout (`0xFA | CRC8 | Length | Payload | 0xBF`) but not which bytes the CRC8
-  covers. The app assumes CRC8 over Length + Payload. The firmware side of the
-  App Interface is not implemented yet; when it is, both sides must agree here.
-- **App Interface: BLE GATT UUIDs are undocumented.** No service/characteristic
-  UUIDs are specified for the BLE packet pipe. The app uses placeholders in
-  `tamuapp/lib/core/ble_transport.dart` (`appServiceUuid`/`appWriteCharUuid`/
-  `appNotifyCharUuid`) that the firmware must match.
-- **App source ID is undefined.** Docs define device IDs but not what ID the app
-  itself should use as ID SRC. The app uses a fixed net-15 address `0xFFFE`
-  (`protocol.dart appSourceId`), chosen to never collide with assigned devices.
+  covers. RESOLVED by implementation (2026-08-23): both sides use CRC8 over
+  Length + Payload (firmware `AppUSB.h` / app `transport.dart`). Doc still worth
+  updating with this detail.
+- **App Interface: BLE GATT UUIDs are undocumented.** RESOLVED (2026-08-23):
+  firmware and app agreed on the Nordic UART style UUIDs (service
+  `6E400001-B5A3-F393-E0A9-E50E24DCCA9E`, write char `…0002`, notify char
+  `…0003`), implemented in `AppBLE.h` / `ble_transport.dart`. Docs should record
+  these as final.
+- **App source ID is undefined.** RESOLVED differently than assumed (2026-08-23):
+  the app has NO network address at all. Its identity is the App Interface service
+  type (`ServiceType::App = 0x08`) in SRV SRC, with the CID byte used as an
+  app-managed transaction ID. The core rewrites `id_src` on app-originated frames
+  to its own short address (proxy), so responses - local or relayed from the bus -
+  return addressed to the core and are forwarded to the app by service type. The
+  app's old `appSourceId = 0xFFFE` is inert. Also note: USB serves the CLI or the
+  app EXCLUSIVELY (app priority; entering app mode happens on first valid link
+  frame, leaving it on physical unplug).
 - **Data Formats.md broadcast value inconsistency**: "ID - 16bit" but broadcast
   is written as `0xFFFFFFFF`; firmware uses `0xFFFF`. App follows the firmware.
 - **System Memory block-meta read returns the block name appended after

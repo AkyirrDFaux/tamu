@@ -5,6 +5,7 @@
 library;
 
 import 'connection.dart';
+import 'diagnostics.dart';
 import 'protocol.dart';
 import 'types.dart';
 
@@ -47,7 +48,8 @@ class SystemMemoryClient {
     try {
       return await _link.request(deviceId, ServiceType.systemMemory, cid,
           payload: payload);
-    } catch (_) {
+    } catch (error) {
+      AppDiagnostics.log('sysmem', 'request failed: $error');
       return null;
     }
   }

@@ -207,6 +207,14 @@ def test_das_system_memory(cli):
 
 def test_dynamic_keyed_memory(cli):
     """Dynamic + Keyed memory CRUD, save/recall, delete-visibility (BUG 4 fix)."""
+    # Idempotency: purge any blocks left over from earlier (failed) runs so the
+    # created block always lands at a known index.
+    for i in range(8):
+        cli.send(f"delete 1 d {i}")
+        cli.send(f"delete 1 k {i}")
+    cli.send("save 1 d -")
+    cli.send("save 1 k -")
+
     cli.send("create 1 d 0x100 TSDY")
     r = cli.send("write 1 d 0 0 0x003 42")
     report("dynamic write 42", "Number: 42.0000" in r)

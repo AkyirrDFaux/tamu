@@ -142,7 +142,7 @@ class FieldFlags {
   static const readOnly = 0x1000;
   static const notSaved = 0x2000;
   static const scriptUpdated = 0x4000;
-  static const remoteOrigin = 0x8000;
+  // Bit 15 (RemoteOrigin) is deprecated in the firmware and unused.
 
   static List<String> describe(int flags) {
     final names = <String>[];
