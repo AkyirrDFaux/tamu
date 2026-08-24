@@ -843,6 +843,33 @@ still served commands - only that task was wedged).
   that "ignores" resets may simply never have rebooted.
 - Verified: two consecutive full HIL battery passes (8/8) over BLE after the fix, plus soak.
 
+## Fixed (BLE latency + MTU, 2026-08-24)
+
+User-reported high BLE latency. Measured ping round trip (app transaction layer, flutter
+test probe): USB median 6 ms vs BLE median ~60 ms. Improvements landed on both sides.
+
+- **Firmware** (`Devices/Tamu_v2.0A/AppBLE.h`, `sdkconfig.Tamu_v2_0A`): preferred ATT MTU
+  256 -> 512 (negotiated dynamically; BlueZ confirms mtu=512 in the new conn-params
+  breadcrumb); connection parameters requested on connect (7.5..15 ms interval, latency 0,
+  4 s supervision) replacing the BlueZ default of ~30-60 ms; notification pacing
+  BLE_PACE_MS 20 -> 4 ms with BLE_CHUNK 180 -> 480 B so large responses stream in few
+  notifications (chunk/pkt buffers made static - too large for the task stack).
+- **App** (`core/ble_transport.dart`): unchanged - already negotiates MTU dynamically and
+  chunks to the negotiated size.
+- **Boot advertising race** (`AppBLEInit`): the initial advertisement was started before the
+  controller finished syncing, so start() succeeded while nothing reached the air; hosts saw
+  no device until the 120 s watchdog rebuilt it. Initial start is now deferred to AppBLETick.
+- **Diagnostics**: permanent breadcrumbs - conn-params update log (interval+MTU), first-write
+  per session, notify-backpressure counter (escalating log), session start/end.
+- **Result**: BLE RTT median ~60 ms (min ~36 ms) at 11.25 ms measured connection interval;
+  meets the <100 ms requirement. The remaining budget is air time (2 x conn event) plus
+  per-message D-Bus cost in BlueZ (~15-25 ms each way); going materially below ~30 ms would
+  require fd-passing (AcquireWrite/AcquireNotify), which universal_ble does not expose.
+- **Operational note**: a test process that dies without disconnecting leaves a zombie BlueZ
+  connection that survives even `bluetoothctl remove`; the device then won't advertise or
+  answer. Recovery: power-cycle the adapter (`bluetoothctl power off/on`). HIL tests now
+  register disconnect teardowns immediately after connecting.
+
 ## Open (firmware code review follow-ups)
 
 - **GammaTable has only 240 entries** (`Blocks/Vysi1Display.h:9-24`): the initializer list

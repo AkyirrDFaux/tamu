@@ -13,12 +13,21 @@
 #define BLE_RX_CHAR_UUID "6E400002-B5A3-F393-E0A9-E50E24DCCA9E" // app writes here
 #define BLE_TX_CHAR_UUID "6E400003-B5A3-F393-E0A9-E50E24DCCA9E" // device notifies
 
-#define BLE_CHUNK 180          // stream bytes per notification (+2 byte length prefix);
+#define BLE_CHUNK 480          // stream bytes per notification (+2 byte length prefix);
                                // fits the Android default ATT MTU of 185
-#define BLE_PACE_MS 20         // min spacing between notifications (Chirp heritage)
+#define BLE_PACE_MS 4          // min spacing between notifications
 
 static NimBLEServer *BleServer = nullptr;
 static NimBLECharacteristic *BleTx = nullptr;
+static uint32_t s_notifyFails = 0;   // consecutive failed notify() calls
+
+static bool s_loggedFirstWrite = false;
+
+void appbleResetSessionBreadcrumbs()
+{
+    s_notifyFails = 0;
+    s_loggedFirstWrite = false;
+}
 static volatile bool BleConnected = false;
 static bool BleOldConnected = false;   // for deferred advertising restart
 static bool BleAdvRestart = false;     // advertising must be restarted
@@ -70,6 +79,10 @@ class BleServerCallbacks : public NimBLEServerCallbacks
     {
         BleMtu = connInfo.getMTU();
         BleConnected = true;
+        // BlueZ defaults to a long connection interval (~30-60 ms); request a
+        // fast one so transactions do not wait multiple connection events.
+        // Units: interval 1.25 ms (6..12 -> 7.5..15 ms), timeout 10 ms (400 -> 4 s).
+        pServer->updateConnParams(connInfo.getConnHandle(), 6, 12, 0, 400);
     }
 
     void onDisconnect(NimBLEServer *pServer, NimBLEConnInfo &connInfo, int reason) override
@@ -77,11 +90,23 @@ class BleServerCallbacks : public NimBLEServerCallbacks
         BleConnected = false;
         BleMtu = 23;
         AppTxFlushAll(); // pending responses belong to the dead session
+        extern void appbleResetSessionBreadcrumbs();
+        appbleResetSessionBreadcrumbs();
     }
 
     void onMTUChange(uint16_t MTU, NimBLEConnInfo &connInfo) override
     {
         BleMtu = MTU;
+    }
+
+    void onConnParamsUpdate(NimBLEConnInfo &connInfo) override
+    {
+        // Diagnostic breadcrumb: confirms the fast-interval request was accepted
+        // by the central (7..15 ms keeps transaction round trips short).
+        DeviceLog("APPBLE", "conn params: itvl=%u.%02u ms mtu=%u",
+                  connInfo.getConnInterval() * 125 / 100,
+                  connInfo.getConnInterval() * 125 % 100,
+                  connInfo.getMTU());
     }
 } staticBleServerCallbacks;
 
@@ -95,6 +120,11 @@ class BleTxCallbacks : public NimBLECharacteristicCallbacks
     {
         std::string v = pCharacteristic->getValue();
         size_t n = v.length();
+        if (!s_loggedFirstWrite)
+        {
+            s_loggedFirstWrite = true;
+            DeviceLog("APPBLE", "first write: %u bytes", (unsigned)n);
+        }
 
         for (size_t i = 0; i < n; i++)
         {
@@ -143,7 +173,7 @@ static void StartAppAdvertising()
 void AppBLEInit(const char *DeviceName)
 {
     NimBLEDevice::init(DeviceName);
-    NimBLEDevice::setMTU(256);
+    NimBLEDevice::setMTU(512);
 
     BleServer = NimBLEDevice::createServer();
     BleServer->setCallbacks(&staticBleServerCallbacks);
@@ -159,7 +189,10 @@ void AppBLEInit(const char *DeviceName)
 
     svc->start();
 
-    StartAppAdvertising();
+    // Do NOT start advertising here: the controller may not have synced with
+    // the radio yet, and start() then succeeds while nothing reaches the air.
+    // Defer to AppBLETick (runs once the host is fully up).
+    BleAdvRestart = true;
 }
 
 bool AppBLEActive()
@@ -240,12 +273,12 @@ void AppBLETick()
         budget = 3 + 2 + BLE_CHUNK;
     uint16_t chunkCap = budget - 3 - 2;
 
-    uint8_t chunk[BLE_CHUNK];
+    static uint8_t chunk[BLE_CHUNK];   // static: ~1 KB, too big for the task stack slice
     uint16_t n = AppTxPeek(chunk, chunkCap);
     if (n == 0)
         return;
 
-    uint8_t pkt[2 + BLE_CHUNK];
+    static uint8_t pkt[2 + BLE_CHUNK]; // only touched here (single app-task context)
     pkt[0] = (uint8_t)(n & 0xFF);
     pkt[1] = (uint8_t)(n >> 8);
     memcpy(&pkt[2], chunk, n);
@@ -255,6 +288,13 @@ void AppBLETick()
         AppTxCommit(n); // consumed only when the stack accepted the notification
         CommLed(true);
         LastBleSend = now;
+        s_notifyFails = 0;
     }
-    // else: backpressure - retry on the next tick without losing data
+    else
+    {
+        // backpressure - retry on the next tick without losing data; log only
+        // when it persists so a wedged TX path becomes visible in diagnostics
+        if (++s_notifyFails == 100 || (s_notifyFails > 100 && s_notifyFails % 500 == 0))
+            DeviceLog("APPBLE", "notify backpressure x%u", (unsigned)s_notifyFails);
+    }
 }

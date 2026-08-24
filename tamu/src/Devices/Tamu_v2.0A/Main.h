@@ -135,7 +135,7 @@ while (1)
             Display2.Data.RefreshRate = Display2.Data.RefreshRate * N(0.9f) + inst * N(0.1f);
         }
 
-        Sleep(10);
+        Sleep(2); // short heartbeat: BLE request/response latency scales with this loop period
         TimeUpdate();
         TimeSync.Tick(DeviceStatus.UptimeMs);
     }
