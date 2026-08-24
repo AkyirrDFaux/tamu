@@ -14,6 +14,7 @@ import 'package:universal_ble/universal_ble.dart';
 
 import 'ble_transport.dart';
 import 'diagnostics.dart';
+import 'device_db.dart';
 import 'protocol.dart';
 import 'transport.dart';
 import 'usb_transport.dart';
@@ -63,15 +64,22 @@ class ConnectionManager extends ChangeNotifier {
   /// The visible list: remaining devices, sorted as selected.
   List<DiscoveredLink> get discoveredLinks {
     final links = <DiscoveredLink>[];
+    // The connected device is represented by the connected-session banner, not
+    // as a tappable list row.
+    void addIfActive(DiscoveredLink l) {
+      final active = _activeLink;
+      if (active != null && active.type == l.type && active.id == l.id) return;
+      links.add(l);
+    }
     if (source != LinkSource.usb) {
       for (final e in _bleEntries) {
-        links.add(DiscoveredLink(
+        addIfActive(DiscoveredLink(
             id: e.deviceId, type: LinkType.ble, name: e.name, rssi: e.rssi));
       }
     }
     if (source != LinkSource.ble) {
       for (final p in _usbEntries) {
-        links.add(DiscoveredLink(
+        addIfActive(DiscoveredLink(
             id: p.portName,
             type: LinkType.usb,
             name:
@@ -90,8 +98,17 @@ class ConnectionManager extends ChangeNotifier {
 
   // --- Connection state -----------------------------------------------------
   Transport? _transport;
+  DiscoveredLink? _activeLink;
+  bool _connecting = false;
+
   String? get connectedName => _transport?.displayName;
   bool get isConnected => _transport != null;
+
+  /// True while a connect attempt is in flight (BLE connect + service discovery
+  /// + MTU negotiation takes several seconds - the UI must show progress).
+  bool get isConnecting => _connecting;
+  String? _connectingTarget;
+  String? get connectingTarget => _connectingTarget;
 
   final PacketStreamParser _parser = PacketStreamParser();
   StreamSubscription<Uint8List>? _streamSub;
@@ -104,6 +121,14 @@ class ConnectionManager extends ChangeNotifier {
   // ===========================================================================
 
   Future<void> refresh() async {
+    // A connected session owns the link: scanning (especially BlueZ discovery)
+    // alongside live GATT traffic starves the connection and stalls requests,
+    // so enumeration is paused until disconnect.
+    if (_transport != null) return;
+    // NOTE: BLE entries are MERGED, not cleared, on every refresh: the BlueZ
+    // backend only emits a device when its RSSI property CHANGES, so a
+    // stationary close-range device stays silent in later scans and clearing
+    // here would make previously-found devices vanish from the list.
     if (source != LinkSource.usb) await _refreshBle();
     if (source != LinkSource.ble) await _refreshUsb();
     notifyListeners();
@@ -146,18 +171,31 @@ class ConnectionManager extends ChangeNotifier {
       if (!_bleScanActive) {
         await _scanSub?.cancel();
         await UniversalBle.stopScan();
-        _bleEntries.clear();
+        // NOTE: deliberately NOT clearing _bleEntries here. The BlueZ backend
+        // only emits a scan event when a device's RSSI property CHANGES, so a
+        // stationary close-range device stays silent in later scans - clearing
+        // would make previously-found devices vanish mid-session.
         _scanSub = UniversalBle.scanStream.listen((device) {
-          if (device.name == null || device.name!.isEmpty) return;
+          // A missing/unknown name must not disqualify a device: BlueZ caches
+          // stale names (or none), so identify OUR devices by the advertised
+          // App Interface service instead.
+          final advertisesAppService = device.services.any(
+              (s) => s.toLowerCase().contains('6e400001'));
+          final name = (device.name == null || device.name!.isEmpty)
+              ? 'BLE device ${device.deviceId}'
+              : device.name!;
+          if (device.name == null || device.name!.isEmpty) {
+            if (!advertisesAppService) return;
+          }
           final existing =
               _bleEntries.where((e) => e.deviceId == device.deviceId).toList();
           if (existing.isNotEmpty) {
             existing.first
               ..rssi = device.rssi
-              ..name = device.name!;
+              ..name = name;
           } else {
             _bleEntries.add(BleScanEntry(
-                deviceId: device.deviceId, name: device.name!, rssi: device.rssi));
+                deviceId: device.deviceId, name: name, rssi: device.rssi));
           }
           notifyListeners();
         });
@@ -205,6 +243,12 @@ class ConnectionManager extends ChangeNotifier {
 
   /// Returns null on success or an error message.
   Future<String?> connectTo(DiscoveredLink link) async {
+    if (_connecting) return 'Already connecting';
+    if (_transport != null) return 'Already connected - disconnect first';
+
+    _connecting = true;
+    _connectingTarget = link.name;
+    notifyListeners();
     try {
       final Transport transport;
       switch (link.type) {
@@ -218,11 +262,18 @@ class ConnectionManager extends ChangeNotifier {
           transport = usb;
       }
       await _attach(transport);
+      _activeLink = link;
+      // Keep the connection-list identity stable for the session (the reported
+      // device name may differ from the advertised one).
+      DeviceDatabase.instance.seedLinkName(link.name);
       AppDiagnostics.log('link', 'connected: ${transport.displayName}');
       return null;
     } catch (error) {
       AppDiagnostics.log('link', 'connect failed: $error');
       return error.toString();
+    } finally {
+      _connecting = false;
+      notifyListeners();
     }
   }
 
@@ -248,6 +299,7 @@ class ConnectionManager extends ChangeNotifier {
     }
     await _streamSub?.cancel();
     _streamSub = null;
+    _activeLink = null; // re-list the device once the session ends
     for (final completer in _pending.values) {
       if (!completer.isCompleted) {
         completer.completeError(const TransportException('Disconnected'));

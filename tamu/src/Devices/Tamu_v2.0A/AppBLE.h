@@ -16,7 +16,6 @@
 #define BLE_CHUNK 180          // stream bytes per notification (+2 byte length prefix);
                                // fits the Android default ATT MTU of 185
 #define BLE_PACE_MS 20         // min spacing between notifications (Chirp heritage)
-#define BLE_RX_RING_SIZE 1024
 
 static NimBLEServer *BleServer = nullptr;
 static NimBLECharacteristic *BleTx = nullptr;
@@ -26,11 +25,44 @@ static bool BleAdvRestart = false;     // advertising must be restarted
 static volatile uint16_t BleMtu = 23;  // negotiated ATT MTU (ATT default)
 static uint32_t LastBleSend = 0;
 
-static uint8_t BleRxRing[BLE_RX_RING_SIZE];
-static volatile uint16_t BleRxHead = 0, BleRxTail = 0;
-static portMUX_TYPE BleRxMux = portMUX_INITIALIZER_UNLOCKED;
-
 static WireStreamParser s_ble_parser; // ApplicationTask-context only
+
+// Reassembles the length-prefixed BLE chunks (uint16 LE + stream). BlueZ may
+// deliver characteristic writes fragmented or coalesced arbitrarily, so this
+// cannot assume one onWrite == one complete chunk.
+struct BleRxAssembler
+{
+    uint16_t need      = 0;   // stream bytes of the current chunk
+    uint16_t got       = 0;   // stream bytes accumulated so far
+    bool     haveLen   = false;
+    uint8_t  lenBuf[2] = {0, 0};
+    uint32_t malformed = 0;   // diagnostics: chunks dropped for zero length
+
+    // Feeds one raw byte; returns true when a stream byte should go into the RX ring.
+    inline bool feed(uint8_t b, uint8_t *out)
+    {
+        if (!haveLen)
+        {
+            lenBuf[got++] = b;
+            if (got == 2)
+            {
+                need   = (uint16_t)(lenBuf[0] | (lenBuf[1] << 8));
+                got    = 0;
+                haveLen= true;
+                if (need == 0) { malformed++; DeviceLog("APPBLE", "Zero-length BLE chunk dropped"); haveLen = false; }
+            }
+            return false;
+        }
+
+        *out = b;
+        if (++got >= need)
+        {
+            got = 0;
+            haveLen = false;
+        }
+        return true;
+    }
+} staticBleRxAssembler;
 
 class BleServerCallbacks : public NimBLEServerCallbacks
 {
@@ -56,27 +88,57 @@ class BleServerCallbacks : public NimBLEServerCallbacks
 class BleTxCallbacks : public NimBLECharacteristicCallbacks
 {
     // App -> device bytes arrive from the NimBLE host task: buffer only, no processing.
+    // Writes carry length-prefixed chunks (uint16 LE + stream, Docs/Services/App
+    // Interface.md) but BlueZ may deliver them fragmented or coalesced arbitrarily,
+    // so every byte goes through the reassembler instead of assuming write==chunk.
     void onWrite(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo &connInfo) override
     {
         std::string v = pCharacteristic->getValue();
         size_t n = v.length();
-        if (n == 0)
-            return;
 
-        portENTER_CRITICAL(&BleRxMux);
         for (size_t i = 0; i < n; i++)
         {
-            uint16_t used = (uint16_t)(BleRxHead - BleRxTail);
-            if (used >= BLE_RX_RING_SIZE - 1)
-                break; // ring full: drop the rest of this write
-            BleRxRing[BleRxHead % BLE_RX_RING_SIZE] = (uint8_t)v[i];
-            BleRxHead = (uint16_t)(BleRxHead + 1);
+            uint8_t b;
+            if (!staticBleRxAssembler.feed((uint8_t)v[i], &b))
+                continue;
+            // Assembled stream bytes go straight into the wire-stream parser;
+            // complete frames are queued for the pump (no intermediate buffer).
+            if (s_ble_parser.Feed(b))
+            {
+                AppInterfaceEnqueue(s_ble_parser.frame);
+                s_ble_parser.Reset();
+            }
+            else if (s_ble_parser.full)
+            {
+                DeviceLog("APPBLE", "Rejected malformed app frame (CRC)");
+                s_ble_parser.Reset(); // CRC failure: resync
+            }
         }
-        portEXIT_CRITICAL(&BleRxMux);
 
         CommLed(true);
     }
 } staticBleTxCallbacks;
+
+
+// Rebuilds and starts the advertisement from scratch. Used for the initial
+// start AND every post-session restart: restarting the previous instance can
+// leave an active-but-invisible advertisement (observed on hardware).
+static void StartAppAdvertising()
+{
+    NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
+    if (!adv)
+        return;
+
+    adv->stop();
+    adv->clearData();
+    adv->removeServices();
+    bool uuidOk = adv->addServiceUUID(BLE_SERVICE_UUID);
+    adv->enableScanResponse(true); // must precede setName (see ordering note)
+    bool nameOk = adv->setName(DeviceName);
+    bool started = adv->start();
+    DeviceLog("APPBLE", "adv restart: uuid=%d name=%d started=%d",
+              uuidOk, nameOk, started);
+}
 
 void AppBLEInit(const char *DeviceName)
 {
@@ -97,10 +159,7 @@ void AppBLEInit(const char *DeviceName)
 
     svc->start();
 
-    NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
-    adv->addServiceUUID(BLE_SERVICE_UUID);
-    adv->enableScanResponse(true);
-    adv->start();
+    StartAppAdvertising();
 }
 
 bool AppBLEActive()
@@ -119,48 +178,52 @@ void AppBLETick()
         BleAdvRestart = true;
         s_ble_parser.Reset();
     }
+    bool wasConnected = BleOldConnected;
     BleOldConnected = BleConnected;
+    if (wasConnected && !BleConnected)
+        DeviceLog("APPBLE", "BLE session ended");
+    else if (!wasConnected && BleConnected)
+        DeviceLog("APPBLE", "BLE session started");
+
+    NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
+
+    // Deferred restart after a clean disconnect.
     if (BleAdvRestart && !BleConnected)
     {
-        NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
-        if (adv && adv->start())
-            BleAdvRestart = false;
+        BleAdvRestart = false;
+        StartAppAdvertising();
     }
+
+    // Self-healing watchdog. Rebuilding advertising tears the GATT service
+    // registration down and back up; doing that on a timer wedges the host
+    // stack after enough cycles, so only act on evidence:
+    //  - stack admits the outage (isAdvertising()==false): rebuild promptly;
+    //  - stale advertising instance claiming to run with no session ever
+    //    arriving: one conservative rebuild as a last resort (long interval).
+    static uint32_t idle_since = 0;
+    if (!BleConnected && !BleOldConnected)
+    {
+        const bool advUp = adv && adv->isAdvertising();
+        if (idle_since == 0) idle_since = TimeFromBoot();
+        const uint32_t idleMs = TimeFromBoot() - idle_since;
+        if (!advUp && idleMs > 3000)
+        {
+            DeviceLog("APPBLE", "advertising down %u ms, rebuilding", idleMs);
+            idle_since = TimeFromBoot();
+            StartAppAdvertising();
+        }
+        else if (advUp && idleMs > 120000)
+        {
+            DeviceLog("APPBLE", "no BLE session for 120 s, forcing adv rebuild");
+            idle_since = TimeFromBoot();
+            StartAppAdvertising();
+        }
+    }
+    else
+        idle_since = 0;
 
     if (!BleConnected)
         return;
-
-    // ---- RX ----
-    uint8_t buf[128];
-    for (;;)
-    {
-        uint16_t n = 0;
-        portENTER_CRITICAL(&BleRxMux);
-        uint16_t used = (uint16_t)(BleRxHead - BleRxTail);
-        if (used > sizeof(buf))
-            used = sizeof(buf);
-        for (n = 0; n < used; n++)
-            buf[n] = BleRxRing[BleRxTail % BLE_RX_RING_SIZE];
-        portEXIT_CRITICAL(&BleRxMux);
-
-        if (n == 0)
-            break;
-        BleRxTail = (uint16_t)(BleRxTail + n);
-        CommLed(false); // burst done
-
-        for (uint16_t i = 0; i < n; i++)
-        {
-            if (s_ble_parser.Feed(buf[i]))
-            {
-                AppInterfaceEnqueue(s_ble_parser.frame);
-                s_ble_parser.Reset();
-            }
-            else if (s_ble_parser.full)
-            {
-                s_ble_parser.Reset(); // CRC failure: resync
-            }
-        }
-    }
 
     // ---- TX (paced) ----
     uint32_t now = TimeFromBoot();

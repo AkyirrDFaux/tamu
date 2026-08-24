@@ -21,6 +21,12 @@ final int _sessionStartMs = DateTime.now().millisecondsSinceEpoch;
 class DeviceEntry {
   final int id;
   String name;
+  /// Name the transport link was established under (e.g. the BLE advertisement
+  /// name). When set it wins for display, keeping the identity the user picked
+  /// in the connection list stable even though the reported device name (CID 6)
+  /// may differ.
+  String? linkName;
+  String get displayName => linkName ?? name;
   DeviceType type;
   String? serialNumber; // 28-char hex
   String? softwareVersion;
@@ -80,6 +86,16 @@ class DeviceDatabase extends ChangeNotifier {
       AppDiagnostics.log('db',
           'dev ${idToString(targetId)} $service/$cid failed: $error');
       return null;
+    }
+  }
+
+  /// Seeds the name the transport link was established under (connection-list
+  /// identity) for the core device.
+  void seedLinkName(String name) {
+    final entry = _devices.putIfAbsent(coreId, () => DeviceEntry(id: coreId));
+    if (entry.linkName != name) {
+      entry.linkName = name;
+      notifyListeners();
     }
   }
 

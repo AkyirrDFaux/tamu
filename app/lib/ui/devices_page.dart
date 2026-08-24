@@ -37,7 +37,7 @@ class _DevicesPageState extends State<DevicesPage> {
       case _DeviceSort.id:
         devices.sort((a, b) => a.id.compareTo(b.id));
       case _DeviceSort.name:
-        devices.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        devices.sort((a, b) => a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()));
       case _DeviceSort.deviceType:
         devices.sort((a, b) => a.type.value.compareTo(b.type.value));
     }
@@ -118,7 +118,7 @@ class _DevicesPageState extends State<DevicesPage> {
   Widget _deviceTile(BuildContext context, DeviceEntry device) {
     return ListTile(
       leading: Icon(deviceTypeIcon(device.type)),
-      title: Text(device.name + (device.stale ? ' (stale)' : '')),
+      title: Text(device.displayName + (device.stale ? ' (stale)' : '')),
       subtitle: Text('${idToString(device.id)} - ${device.type.label}'),
       trailing: device.isCore ? const Icon(Icons.star, color: kOrange, size: 18) : null,
       onTap: () => Navigator.of(context).push(MaterialPageRoute(
@@ -245,7 +245,7 @@ class GraphView extends StatelessWidget {
             children: [
               Icon(deviceTypeIcon(device.type), color: kOrange),
               const SizedBox(height: 6),
-              Text(device.name,
+              Text(device.displayName,
                   maxLines: 1, overflow: TextOverflow.ellipsis),
               Text('${idToString(device.id)} - ${device.type.label}',
                   style: Theme.of(context).textTheme.bodySmall),

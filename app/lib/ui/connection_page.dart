@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/connection.dart';
+import '../core/device_db.dart';
 import 'theme.dart';
 
 /// Connection page (Docs/App/Connection.md).
@@ -94,11 +95,22 @@ class _ConnectionPageState extends State<ConnectionPage> {
           ),
           body: Column(
             children: [
+              if (_manager.isConnecting)
+                ListTile(
+                  leading: const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2)),
+                  title: Text('Connecting to ${_manager.connectingTarget ?? ''}'),
+                  subtitle: const Text('Establishing session...'),
+                ),
               if (_manager.isConnected)
                 ListTile(
                   leading: const Icon(Icons.link, color: kOrange),
-                  title: Text(_manager.connectedName ?? ''),
-                  subtitle: const Text('Connected'),
+                  title: Text(DeviceDatabase.instance.byId(1)?.displayName ??
+                      _manager.connectedName ??
+                      ''),
+                  subtitle: Text(_manager.connectedName ?? 'Connected'),
                   trailing: IconButton(
                     icon: const Icon(Icons.link_off),
                     tooltip: 'Disconnect',
@@ -137,6 +149,7 @@ class _ConnectionPageState extends State<ConnectionPage> {
             ])
           : null,
       onTap: () async {
+        if (_manager.isConnecting || _manager.isConnected) return;
         final error = await _manager.connectTo(link);
         if (!context.mounted) return;
         if (error != null) {

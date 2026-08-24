@@ -11,6 +11,7 @@
 /// stays green on machines without hardware.
 library;
 
+import 'package:flutter/foundation.dart';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -22,22 +23,55 @@ import 'package:tamuapp/core/sysmem.dart';
 import 'package:tamuapp/core/types.dart';
 
 const int dasId = 2;
-final Timeout hilTimeout = const Timeout(Duration(seconds: 15));
+/// The core's BLE MAC (matches the Bluetooth MAC printed at boot).
+const String kCoreBleMacAddress = 'E4:B0:63:C8:20:72';
+final Timeout hilTimeout = const Timeout(Duration(seconds: 75));
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  // Route universal_ble to its pure-Dart BlueZ implementation under flutter
+  // test (the default target platform would otherwise select a plugin channel
+  // that does not exist outside a real app shell).
+  debugDefaultTargetPlatformOverride = TargetPlatform.linux;
 
-  final portName = Platform.environment['TAMU_HIL'] ?? '/dev/ttyACM0';
-  // Hardware-in-the-loop tests only run when TAMU_HIL names the core's port;
-  // plain `flutter test` skips them so CI machines stay green.
-  final skipReason =
-      Platform.environment.containsKey('TAMU_HIL') ? false : 'TAMU_HIL not set';
+  // TAMU_HIL selects the run mode:
+  //   unset            -> skip (CI machines stay green)
+  //   /dev/ttyACMx     -> USB transport
+  //   ble              -> BLE transport (scans for a device named "Tamu")
+  final hilTarget = Platform.environment['TAMU_HIL'];
+  final useBle = hilTarget == 'ble';
+  final skipReason = hilTarget == null ? 'TAMU_HIL not set' : false;
 
   Future<void> connectApp() async {
     final mgr = ConnectionManager.instance;
-    final err = await mgr.connectTo(DiscoveredLink(
-        id: portName, type: LinkType.usb, name: 'Tamu core'));
-    if (err != null) fail('connect failed: $err');
+    if (useBle) {
+      mgr.source = LinkSource.ble;
+      await mgr.setAutoRefresh(false);
+      // BLE scan results can be sparse right after a session close (BlueZ
+      // suppression + the device restarting advertising), so retry the scan.
+      DiscoveredLink? link;
+      for (var round = 0; round < 3 && link == null; round++) {
+        await mgr.refresh();
+        final deadline = DateTime.now().add(const Duration(seconds: 12));
+        while (link == null && DateTime.now().isBefore(deadline)) {
+          await Future<void>.delayed(const Duration(milliseconds: 500));
+          final bleCandidates = mgr.discoveredLinks
+              .where((l) => l.type == LinkType.ble)
+              .toList();
+          link = bleCandidates
+              .where((l) => l.id == kCoreBleMacAddress)
+              .firstOrNull;
+        }
+        await mgr.stopScan();
+      }
+      if (link == null) fail('Tamu not found during BLE scan');
+      final err = await mgr.connectTo(link);
+      if (err != null) fail('BLE connect failed: $err');
+    } else {
+      final err = await mgr.connectTo(DiscoveredLink(
+          id: hilTarget!, type: LinkType.usb, name: 'Tamu core'));
+      if (err != null) fail('connect failed: $err');
+    }
     // Opening/closing the port pulses DTR/RTS which resets the ESP32-C3, so a
     // fresh session may start while the core is still booting: wait until it
     // actually answers before letting a test proceed.

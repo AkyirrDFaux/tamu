@@ -63,7 +63,9 @@ class BleTransport implements Transport {
     }
     await UniversalBle.subscribeNotifications(
         deviceId, appServiceUuid, appNotifyCharUuid);
-    _notifySub = UniversalBle.characteristicValueStream(deviceId, appServiceUuid)
+    // The value stream filters by CHARACTERISTIC id - passing the service uuid
+    // here would silently drop every notification.
+    _notifySub = UniversalBle.characteristicValueStream(deviceId, appNotifyCharUuid)
         .listen((value) {
       if (!_closed) _linkController.add(value);
     });

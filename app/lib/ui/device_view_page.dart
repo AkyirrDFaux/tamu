@@ -53,7 +53,7 @@ class _DeviceViewPageState extends State<DeviceViewPage> {
           title: InkWell(
             onTap: () => setState(() => _renaming = true),
             child: Row(mainAxisSize: MainAxisSize.min, children: [
-              Text(entry?.name ?? 'Device'),
+              Text(entry?.displayName ?? 'Device'),
               const SizedBox(width: 6),
               const Icon(Icons.edit, size: 16),
             ]),
@@ -69,7 +69,7 @@ class _DeviceViewPageState extends State<DeviceViewPage> {
                 children: [
                   if (_renaming) ...[
                     RenameField(
-                        currentName: entry.name,
+                        currentName: entry.name, // rename flow edits the REPORTED name
                         onDone: (name) async {
                           setState(() => _renaming = false);
                           if (name != null && name.isNotEmpty) {

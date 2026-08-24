@@ -28,6 +28,7 @@ driving `UsbTransport` → `ConnectionManager` → `DeviceDatabase` / `SystemMem
 | Request to absent device times out cleanly | PASS |
 | SNDB dump + per-ID lookup consistent | PASS |
 | CLI regression battery (`testsuite.py`) after firmware changes | PASS 98/98 |
+| Same battery over BLE transport (advertisement name fix, length-prefix reassembler, notify-stream filter fix) | PASS 8/8 |
 
 Operational notes for future sessions:
 

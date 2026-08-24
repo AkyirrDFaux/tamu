@@ -797,6 +797,52 @@ and fixed; the suite passes 8/8 repeatedly and the CLI battery 98/98.
   malformed-frame rejects and queue/ring overflow drops (visible via the existing Log
   Handler service).
 
+## Fixed (BLE transport bring-up, 2026-08-23)
+
+First over-the-air validation of the app's BLE transport against the core's Nordic-UART-style
+GATT service. Three defects fixed; the full HIL battery now passes over BOTH transports.
+
+- **Firmware: advertisement carried no device name** (`Devices/Tamu_v2.0A/AppBLE.h`): hosts
+  saw only the raw MAC ("E4-B0-63-C8-20-72") and could not identify the device. Root cause:
+  ordering - `setName()` routes the name into the scan-response data ONLY when scan response
+  is already enabled; called before `enableScanResponse(true)` it lands in the main ADV
+  payload where FLAGS(3)+UUID128(18)+NAME(12) exceeds the 31-byte legacy limit and is
+  silently dropped. Fixed by enabling scan response first.
+- **Firmware: BLE writes were parsed with their length prefix attached**
+  (`AppBLE.h::onWrite`): each characteristic write carries a uint16 LE length prefix, but
+  every byte was fed straight into the wire-stream parser - shifting all bytes so no frame
+  ever validated. Fixed with a small reassembler state machine that also tolerates BlueZ
+  delivering writes fragmented or coalesced.
+- **App: notification stream filtered by the wrong UUID** (`core/ble_transport.dart`):
+  `characteristicValueStream(deviceId, characteristicId)` filters per CHARACTERISTIC, but the
+  transport subscribed with the SERVICE uuid - every notify was silently dropped. Fixed to
+  pass the notify-characteristic uuid.
+- **Robustness**: the RX ring round-trip between the NimBLE host task and the application
+  task was replaced by direct parser feed + enqueue from onWrite (the pump still routes),
+  removing a cross-task buffer whose drain raced the producer. NimBLE host task stack raised
+  4096 -> 8192 B and event/ACL pool counts increased for bursty app sessions.
+- Verified end-to-end over the air: scan by name, connect, PONG x4, version string, plus the
+  complete HIL battery (discovery, sysmem walk, storage CRUD, concurrent transactions,
+  timeouts, SNDB) passing 8/8 over BLE and 8/8 over USB.
+
+## Fixed (BLE advertising watchdog wedge, 2026-08-24)
+
+After ~20-40 min of runtime the core stopped advertising entirely: no advertisement over the
+air, silent failure on direct connects, and the application task stopped logging (USB console
+still served commands - only that task was wedged).
+
+- **Root cause** (`Devices/Tamu_v2.0A/AppBLE.h::AppBLETick`): the self-healing watchdog
+  forced a FULL advertising teardown/rebuild (`clearData` + `removeServices` + service re-add)
+  every 15 s of idle, unconditionally. After roughly a hundred cycles the repeated GATT
+  service de/registration wedged the NimBLE host stack and blocked the application task.
+- **Fix**: rebuild only on evidence - promptly (3 s) when `isAdvertising()` reports down with
+  no session, or once per 120 s of session-less idle as a last resort against a stale
+  advertising instance that claims to run. Healthy operation now performs zero teardowns.
+- Operational note: reset attempts via `esptool.py` failed silently ("Operation not permitted"
+  - lost exec bit); invoke it as `~/.platformio/penv/bin/python .../esptool.py ...`. A board
+  that "ignores" resets may simply never have rebooted.
+- Verified: two consecutive full HIL battery passes (8/8) over BLE after the fix, plus soak.
+
 ## Open (firmware code review follow-ups)
 
 - **GammaTable has only 240 entries** (`Blocks/Vysi1Display.h:9-24`): the initializer list

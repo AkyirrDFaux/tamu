@@ -79,18 +79,18 @@ PinModeOutput(LED_NOTIFICATION_PIN);
     PinLow(LED_NOTIFICATION_PIN);
     DeviceStatus.ShortAddress = 0;
 
-    Storage.Init();
-    LoadAllBackups();
-    AppInterfaceInit();
+ESP_LOGI("INIT","b1 storage"); Storage.Init();
+ESP_LOGI("INIT","b2 backups"); LoadAllBackups();
+ESP_LOGI("INIT","b3 appif"); AppInterfaceInit();
 
     // BLE app link (Nordic UART service); advertised under the device version string.
-    AppBLEInit(DeviceVersion);
+ESP_LOGI("INIT","b4 ble"); AppBLEInit(DeviceVersion);
 
-    StartCLI();
+ESP_LOGI("INIT","b5 cli"); StartCLI();
 
-    SetupRS485();
-    SetupFanPWM();
-    InitLSM6DS3();
+ESP_LOGI("INIT","b6 rs485"); SetupRS485();
+ESP_LOGI("INIT","b7 pwm"); SetupFanPWM();
+ESP_LOGI("INIT","b8 imu"); InitLSM6DS3();
 LED1.Setup();
 LED2.Setup();
 
