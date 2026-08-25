@@ -4,6 +4,144 @@ Status of items from the docs-vs-implementation audit and follow-up work.
 
 ## Resolved (code)
 
+### Vysi v1.0 display layout file preloaded (2026-08-25)
+
+- **The layout-file mechanism was already implemented** (`Vysi1Display::LoadLayoutFromStorage`,
+  format per Docs/Modules/LED display.md: `u8 width | u8 height | w*h u16 LE 0-based LED
+  indices`, 0xFFFF = unused; the `LayoutFile` field's write trigger validates the file loads
+  before committing). What was missing was an actual FILE on the device - only a compiled-in
+  default (`LayoutVysiv1_0`) existed.
+- **New `layouts/` directory in the project root** with `Vysi v1.0.lay` (the 11x10 layout,
+  222 bytes, matching the compiled-in default) and a README describing the format.
+- **Preloaded to the Tamu v2.0A**: `PreloadVysiLayout()` (in Vysi1Display.h) creates the
+  `VYSIV1  ` file in storage on first boot when absent (never overwrites a user layout);
+  called from the Tamu boot sequence after storage init. Verified live: the file appears in
+  the file table (222 B), reads back byte-identical to the project file, and setting the
+  LEDDisplay block's LayoutFile to `VYSIV1` loads it successfully.
+- **CLI now prints String fields**: `PrintValue` had no String case, so every string field
+  (e.g. the layout name) read back as "Unknown (0x00C)". It now prints the value with
+  trailing space-padding trimmed. Also confirmed the short-string write path works end to
+  end (`write 1 s 4 3 0x0C VYSIV1` -> field reads back `"VYSIV1"`).
+- Note: this session's first (buggy) preload wrote a malformed `VYSIV1 \0` file (name byte 7
+  was a NUL instead of a space), which the app could not delete (its delete pads names with
+  spaces, and both entries decoded to the same trimmed name). `PreloadVysiLayout()` now
+  heals such devices by deleting the legacy NUL-named entry (unconditionally, so already-
+  preloaded devices are cleaned too). Verified: the file table now shows only the single
+  correct `VYSIV1  `. The app's Storage page does expose delete (row popup menu ->
+  `StorageClient.deleteFile`, CID 3); it works for the space-padded file.
+
+### Device name persisted to a standalone file (2026-08-25)
+
+Per the updated Device service doc ("Device name is stored in standalone file to allow
+persistence"):
+- **The device name now lives in a dedicated storage file** (`DEVNAME `, 24 bytes) instead
+  of being RAM-only. `LoadPersistedDeviceName()` (idempotent, safe pre-storage-init)
+  restores it at boot on BOTH the Tamu and the DAS; `PersistDeviceName()` saves on every
+  Set-Name (CID 7), written NOR-safely (stage in `DEVNAME~`, rename into place - the same
+  pattern the memory backups use, so a power cut never leaves a torn name).
+- **BLE advertising follows the persisted name**: the advertise name already used
+  `DeviceName` (`adv->setName(DeviceName)`), so once the name is loaded at boot it is what
+  scans see. Verified live: renamed to `MYTEST` -> BLE scan showed `MYTEST`; hard reset
+  kept it; deleting `DEVNAME` and rebooting fell back to the built-in `Tamu v2.0A`.
+- **USB name**: the ESP32-C3's USB Serial/JTAG string descriptors are fixed in the
+  controller (no custom descriptor path in the IDF driver), so the OS always shows the
+  device as "USB JTAG/serial debug unit". The app's connected banner already shows the
+  device's reported (now persisted) name instead. Not feasible without a custom USB stack.
+- **CLI note**: `dev <addr> name <newname>` splits on spaces, so a name containing spaces
+  (e.g. "Tamu v2.0A") can only be set via the app (CID 7 carries the full string).
+
+### CLI discover, string writes, device name (2026-08-25)
+
+- **CLI `dev <addr> discover` never showed a result (fixed)**: nodes ignore Discover and
+  the core dropped its own broadcast, so the subcommand always ended in "no response" even
+  though registration happened. The core's Discover request handler now answers the CLI
+  directly (srv_tgt = CLI CID 3, id_src = the assigned ID) when the request came from the
+  CLI, so `dev 1 discover` prints the SN + assigned ID. Verified live.
+- **Short strings to fixed-size String fields now work (fixed)**: `StaticBlockDescriptor::Set`
+  rejected any length that was not exactly the field size, so the CLI (and app) could not
+  write "SNAKE" to the 8-byte layout-name field. String fields now accept shorter input,
+  space-padded to the field size (bounded pad buffer so the DAS's small stack is safe); the
+  write then only fails if the referenced layout file actually does not exist.
+- **Tamu's reported device name was "Tamu Node" (fixed)**: `Main.cpp` defaulted the non-DAS
+  name to "Tamu Node"; per Docs/Devices.md the Tamu is "Tamu v2.0A". The banner also now
+  shows the device's REPORTED name with the link as the subtitle, instead of the same text
+  twice.
+- **Whole-device backup no longer captures script-updated fields**: Docs/Data Formats.md
+  says ScriptUpdated values are stored only when the user requests that specific entry;
+  `captureDevice` now skips them.
+
+### Debugging + doc-alignment round 2026-08-25 (measurement, renderer, backup views)
+
+Firmware:
+- **`LoadAllBackups` now works on ALL devices, not just the core**: the shared version in
+  `Dispatcher.h` was `#ifdef TYPE_CORE`, forcing the DAS to carry a private duplicate that
+  only restored System Memory. The guard is removed (the `USE_DYNAMIC_MEMORY`/
+  `USE_KEYED_MEMORY` guards stay), so any node that compiles a memory service restores its
+  backup at boot through one shared function; the DAS's duplicate definition was deleted
+  (its forward declaration + call remain).
+- **DAS auto-range had no hysteresis (fixed)**: `raw > 850 ? 2 : (raw < 200 ? 0 : 1)` was
+  applied every sample regardless of the current reference, so an unknown resistor near a
+  boundary oscillated between the 330R and 330k references every loop - re-seeding the EMA
+  filter each iteration (zero smoothing) and flickering `CurrentRange`. Each range now only
+  leaves via its own threshold (330R->10k >400, 10k->330k >850, 10k->330R <150, 330k->10k
+  <600), which cannot oscillate for a stable input.
+- **LDR/NTC conversions ignored the auto-range reference (fixed)**: `MeasLDR10K` and
+  `MeasNTC10K` computed lux/degC from `(ADCRES-in)/in`, which equals R/10k only on the 10k
+  reference - when auto-range selected 330R or 330k the reported values were wrong (e.g. a
+  1.5k NTC on the 330R range reported ~-9 degC instead of ~+30). Both now normalize the
+  ratio to the 10k reference by the actual Rref.
+- **Vysi1Display Polygon/Star rendered as discs (fixed)**: `CalculateShapeAlpha` only
+  computed `Radius - r`, ignoring `PointNumber`, so every polygon/star drew as a filled
+  circle. It now renders a regular n-gon (Polygon) and an n-point star (alternating R/R/2
+  vertices) via the signed distance from the angular position within each vertex sector
+  (fixed-point atan2/cos; `Number::operator/` guards the divisor).
+- **Keyed backup read (CID 4) walked from the wrong data offset (fixed)**: the keyed
+  branches of `BuildBackupPayload` scanned `data + 0` bounded by `fd.Size`, but a
+  dictionary's entries live at the sum of the PRECEDING fields' aligned sizes - so any
+  dict beyond field 0 (and every per-key read) failed with a status byte. It now offsets by
+  `AlignTo4(sum of map[i].Size)` like the dynamic branch. Verified live: after save, a
+  keyed backup entry and a dynamic backup field read back correctly.
+- **CLI `ParseService` misread hex selectors (fixed)**: `atoi("0x05")` returns 0, so the
+  documented `0x05`/`0x06` service spellings silently fell through to System Memory; only
+  decimal `5`/`6` worked. Now `strtol(str, 0)` accepts both forms.
+- **NTP offset arithmetic wrapped on counter rollover (fixed)**: `(int64_t)(t1 - t0)` used
+  unsigned uint32 differences, so ~49.7-day wrap made a small negative interval a huge
+  positive one. Both Device service and CLI time-sync now widen signed `(int32_t)` deltas
+  first (matching TimeSync's own wrap-safe convention).
+- **`OnVysi1FieldWrite` mutated the layout name before validating (fixed)**: it copied the
+  new `LayoutFile` into the block and only then loaded the layout; a failed load reported
+  failure but left the stored name pointing at an unapplied layout. It now loads through a
+  temporary and reverts the RAM field on failure (stored == applied).
+- **CLI field/meta replies were printed without size validation (fixed)**: the handler
+  passed `desc->Size` straight to the value printer, so a truncated reply printed garbage
+  past the payload. The descriptor size is now clamped to the bytes actually present.
+
+App:
+- **Memory "Backup" views actually show the backup now**: the Current/Backup toggles
+  existed but every read used CID 2 (live values) - the toggle was cosmetic. The memory
+  clients re-gained CID-4 backup reads (`readBackupField`/`readBackupEntry`/
+  `readBackupValue`), the Sys/Dyn/Keyed pages load backup values in Backup view, the Keyed
+  page gained the documented Current/Backup toggle + per-entry recall, and per-entry Recall
+  re-reads the backup value it just restored.
+- **Autorefresh now starts at launch**: the doc says "automatically on" (1 s), but the
+  periodic timer only started on the first tab switch. The Connection page starts it in
+  `initState`.
+- **SNDB entries with ID 0 no longer create a phantom device**: the SNDB walk added every
+  entry's ID (including unassigned 0) to the refresh set, creating a bogus "device" and
+  firing requests at an invalid target each sweep. ID 0 is skipped.
+- **Vector editor no longer hardcodes 3 components**: `Docs/Data Formats.md` defines Vector
+  as size-flexible; the editor now follows the current value's length (falling back to 3
+  for a new entry).
+
+Notes (calibration / known):
+- **AccGyr scale factors**: the `/209` (accel) and `/939` (gyro) divisors match the
+  previously-working driver but are not the datasheet sensitivities for the programmed
+  +/-2 g / +/-2000 dps ranges; reported units are board-calibrated, not physical - worth a
+  calibration pass against a reference.
+- **CLI `dev <addr> discover`**: nodes ignore Discover and the core drops its own reply, so
+  the subcommand ends in "no response" even though registration happens (the SNDB entry is
+  visible via `sndb`).
+
 ### Dictionary types + key-addressed entries + service error logging (2026-08-25)
 
 - **Dictionary type is now settable in the app**: keyed dictionaries previously had no

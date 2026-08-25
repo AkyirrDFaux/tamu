@@ -158,8 +158,9 @@ void ProcessBus()
     DispatchPacket(rx_frame);
 }
 
-#ifdef TYPE_CORE
-// Restores every memory service from its backup file at boot (System, Dynamic, Keyed).
+// Restores every memory service from its backup file at boot (System, and Dynamic/Keyed
+// when compiled in). Not core-only: nodes with System Memory (e.g. the DAS restores
+// Meas1/Meas2) reuse the same path instead of duplicating it per device.
 void LoadAllBackups()
 {
     uint8_t buf[MEMORY_BACKUP_CAP];
@@ -176,5 +177,4 @@ void LoadAllBackups()
     if (n > 0) DeserializeRegistry(keyed_block_registry, buf, n);
 #endif
 }
-#endif
 

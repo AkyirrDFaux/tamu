@@ -75,6 +75,15 @@ abstract class MemoryClientBase {
     return reply.sublist(8);
   }
 
+  /// Backup value read (CID 4): the value as STORED in the device's backup file
+  /// (not the live value). Reply is BlockIndex + BlockMeta + value, like CID 2.
+  Future<({BlockMeta meta, List<int> value})?> readBackupValue(
+      BlockIndex index) async {
+    final reply = await request(4, payload: index.toBytes());
+    if (reply == null || reply.length < 8) return null;
+    return (meta: BlockMeta.fromBytes(reply, 4), value: reply.sublist(8).toList());
+  }
+
   /// Save (CID 5) / Recall (CID 6) with an invalid block = whole registry.
   /// The device answers with a single status byte: 0 on success, 0xFF on failure.
   Future<bool> memoryOp(int cid, int? block) async {

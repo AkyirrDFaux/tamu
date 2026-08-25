@@ -16,7 +16,7 @@
 #ifdef BOARD_DAS_v0_1
 char DeviceNameBuffer[24] = "DAS v0.1";
 #else
-char DeviceNameBuffer[24] = "Tamu Node";
+char DeviceNameBuffer[24] = "Tamu v2.0A";
 #endif
 const char* DeviceName = DeviceNameBuffer;
 

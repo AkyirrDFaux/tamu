@@ -83,10 +83,15 @@ class _SystemMemoryPageState extends State<SystemMemoryPage>
   }
 
   Future<void> _loadFields(SysBlock block) async {
-    if (_backupView) return; // backup values are read on demand per entry
     final count = block.meta.size; // block meta carries the field count
     for (var f = 0; f < count; f++) {
-      await _client.readField(block, f);
+      // Backup view reads what is STORED in the backup file (CID 4); the
+      // current view reads the live value (CID 2).
+      if (_backupView) {
+        await _client.readBackupField(block, f);
+      } else {
+        await _client.readField(block, f);
+      }
     }
   }
 

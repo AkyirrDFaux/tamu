@@ -371,10 +371,12 @@ Future<List<int>?> _editDevType(
   );
 }
 
-/// Vector (N Numbers): one numeric field per component.
+/// Vector (N Numbers): one numeric field per component. Vectors are
+  /// size-flexible per Docs/Data Formats.md, so the component count follows the
+  /// current value length (falling back to 3 for a brand-new entry).
 Future<List<int>?> _editVector(
     BuildContext context, FieldInfo? info, List<int> current) {
-  const n = 3; // firmware uses Vector<3>
+  final n = current.length >= 4 ? (current.length ~/ 4) : 3;
   // A brand-new entry carries no value yet: start from zeros instead of
   // falling back to the raw-hex editor.
   final hasValue = current.length >= n * 4;

@@ -11,10 +11,14 @@
             "id": "107e2aee0126b714",
             "type": "leaf",
             "state": {
-              "type": "empty",
-              "state": {},
+              "type": "markdown",
+              "state": {
+                "file": "Issues.md",
+                "mode": "source",
+                "source": false
+              },
               "icon": "lucide-file",
-              "title": "Nová karta"
+              "title": "Issues"
             }
           }
         ]
@@ -186,6 +190,8 @@
   },
   "active": "107e2aee0126b714",
   "lastOpenFiles": [
+    "Modules/LED display.md",
+    "Services/Device service.md",
     "App/Service views/Dynamic Memory.md",
     "App/Service views/Keyed Memory.md",
     "App/Service views/Storage.md",
@@ -198,7 +204,6 @@
     "Services/Keyed Memory.md",
     "Services/Dynamic Memory.md",
     "Services/App Interface.md",
-    "Services/Device service.md",
     "General architecture.md",
     "Improve.md",
     "Issues.md",
@@ -212,7 +217,6 @@
     "RealHW.md",
     "RSBus.md",
     "App/Service views",
-    "App/Connection.md",
     "App"
   ]
 }

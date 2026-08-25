@@ -27,6 +27,9 @@ Specific packet function is defined as an enum in the service custom identifier 
 | SNDB Read All    | 12      | -                          | SN + ID stream                                                 | Core only                                  |
 | SNDB Read        | 13      | ID or SN (based on length) | SN + ID                                                        | Core only                                  |
 | SNDB Write       | 14      | SN + ID                    | SN + ID                                                        | Core only, setting ID to 0 works as delete |
+Device name is stored in standalone file to allow persistence.
+If possible, the device name is shown in BLE advertising and on USB.
+
 Core implements SN Database
 Has it's own file.
 Stores (permanent) Serial number + ID pairs

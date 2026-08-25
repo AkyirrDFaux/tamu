@@ -84,7 +84,7 @@ struct StaticBlockDescriptor
         FieldResult Field = Get(Index);
 
         // 1. Basic structural checks
-        if (!Field.Data || Length != Field.Descriptor.Size)
+        if (!Field.Data)
             return false;
 
         // 2. Security: Read-Only check
@@ -95,17 +95,36 @@ struct StaticBlockDescriptor
         if (BlockMetaType(Field.Descriptor.FlagsAndType) != BlockMetaType(InputTypeAndFlag))
             return false;
 
-        // 4. Trigger/Validator Gatekeeper
+        // 4. String fields accept SHORTER input, space-padded to the field size
+        //    (the CLI/app can write "SNAKE" to an 8-byte layout name). The pad
+        //    buffer is bounded so this stays small on the DAS's tiny stack.
+        uint8_t pad_buf[32];
+        const void *data = Input;
+        uint16_t data_len = Length;
+        if (BlockMetaType(Field.Descriptor.FlagsAndType) == (uint16_t)DataType::String &&
+            Length < Field.Descriptor.Size && Field.Descriptor.Size <= sizeof(pad_buf))
+        {
+            memset(pad_buf, ' ', sizeof(pad_buf));
+            memcpy(pad_buf, Input, Length);
+            data = pad_buf;
+            data_len = Field.Descriptor.Size;
+        }
+        else if (Length != Field.Descriptor.Size)
+        {
+            return false;
+        }
+
+        // 5. Trigger/Validator Gatekeeper (sees the padded length)
         if (Schema->Triggers != nullptr) {
             for (uint16_t i = 0; i < Schema->TriggerCount; ++i) {
                 if (Schema->Triggers[i].Index == Index) {
-                    return Schema->Triggers[i].Trigger(*this, Index, Input, Length);
+                    return Schema->Triggers[i].Trigger(*this, Index, data, data_len);
                 }
             }
         }
 
-        // 5. Final commit
-        memcpy(Field.Data, Input, Field.Descriptor.Size);
+        // 6. Final commit
+        memcpy(Field.Data, data, Field.Descriptor.Size);
         return true;
     }
 };

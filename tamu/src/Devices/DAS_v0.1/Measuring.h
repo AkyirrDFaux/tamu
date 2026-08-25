@@ -185,9 +185,24 @@ static void Measuring_Update(uint8_t index, ResistiveMeasStruct *m, uint16_t raw
     if (coeff.Value < 0) coeff.Value = 0;
     Number weight_new = N(1) / (N(1) + coeff);
 
-    // Auto-range from the raw sample; on a range switch the old history belongs to
-    // another excitation scale, so the filter is re-seeded below.
-    uint8_t range = (raw > 850) ? 2 : ((raw < 200) ? 0 : 1);
+    // Auto-range from the raw sample with HYSTERESIS: each range only leaves via its
+    // own threshold, so a raw sitting near a boundary cannot oscillate between two
+    // references (which would re-seed the EMA filter every loop and flicker
+    // CurrentRange). Range 0 = 330R, 1 = 10k, 2 = 330k reference.
+    uint8_t range = s_meas_range[index];
+    if (range == 0)
+    {
+        if (raw > 400) range = 1; // leave 330R once comfortably above
+    }
+    else if (range == 1)
+    {
+        if (raw > 850) range = 2;      // too hot for 10k -> 330k
+        else if (raw < 150) range = 0; // too cold for 10k -> 330R
+    }
+    else
+    {
+        if (raw < 600) range = 1; // leave 330k once comfortably below
+    }
     s_meas_range[index] = range;
     Meas_SelectRange(index, range);
 
@@ -219,7 +234,10 @@ static void Measuring_Update(uint8_t index, ResistiveMeasStruct *m, uint16_t raw
     case MeasLDR10K: // lux, inverse-relation approximation for a 10k divider (Sensors.h)
     {
         if (in < N(1)) in = N(1);
-        in = N(18.0) * ((ADCRES - in) / in);
+        // (ADCRES - in)/in = R_ref/R_sensor. Auto-range can select the 330R or
+        // 330k reference, so normalize the ratio back to the 10k reference the
+        // formula assumes: * (10k / Rref_actual).
+        in = N(18.0) * ((ADCRES - in) / in) * (N(10.0) / Rref_kohm[range]);
         break;
     }
 
@@ -227,7 +245,8 @@ static void Measuring_Update(uint8_t index, ResistiveMeasStruct *m, uint16_t raw
     {
         if (in >= ADCRES) in = N(1022);
         if (in < N(1)) in = N(1);
-        in = N(1) / (N(0.0034) + log(in / (ADCRES - in)) / N(3950)) - N(273.15);
+        // in/(ADCRES - in) = R_sensor/R_ref; normalize to R_sensor/10k.
+        in = N(1) / (N(0.0034) + log((in / (ADCRES - in)) * (Rref_kohm[range] / N(10.0))) / N(3950)) - N(273.15);
         break;
     }
 

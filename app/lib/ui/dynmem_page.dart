@@ -70,7 +70,7 @@ class _DynamicMemoryPageState extends State<DynamicMemoryPage>
 
   Future<void> _loadVisibleFields() async {
     final blocks = _blocks;
-    if (blocks == null || _backupView) return;
+    if (blocks == null) return;
     for (final block in blocks) {
       if (!_expanded.contains(block.index)) continue;
       await _loadBlockFields(block);
@@ -79,9 +79,14 @@ class _DynamicMemoryPageState extends State<DynamicMemoryPage>
   }
 
   Future<void> _loadBlockFields(DynBlock block) async {
-    if (_backupView) return; // backup values are read on demand per entry
     for (var f = 0; f < block.fieldCount; f++) {
-      await _client.readField(block, f);
+      // Backup view reads what is STORED in the backup file (CID 4); the
+      // current view reads the live value (CID 2).
+      if (_backupView) {
+        await _client.readBackupField(block, f);
+      } else {
+        await _client.readField(block, f);
+      }
     }
   }
 
@@ -438,7 +443,8 @@ class _DynamicMemoryPageState extends State<DynamicMemoryPage>
                 if (!mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                     content: Text(ok ? 'Recalled' : 'Recall failed')));
-                await _client.readField(block, field.index);
+                // Refresh the shown (backup) value now that recall rewrote it.
+                await _client.readBackupField(block, field.index);
                 if (mounted) setState(() {});
               },
             )

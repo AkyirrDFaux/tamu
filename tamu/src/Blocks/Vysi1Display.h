@@ -35,6 +35,36 @@ const uint8_t LayoutVysiv1_0[10 * 11]{
     0, 0, 18, 20, 37, 40, 57, 60, 76, 0, 0,
     0, 0, 0, 19, 38, 39, 58, 59, 0, 0, 0};
 
+// Preloads the Vysi v1.0 layout file into storage on first boot (the project's
+// layouts/ directory holds the same bytes). Only created when absent, so a user's
+// customized layout is never overwritten. File format per Docs/Modules/LED display.md:
+// u8 width, u8 height, then w*h u16 LE 0-based LED indices (0xFFFF = unused).
+inline void PreloadVysiLayout()
+{
+    // Heal devices flashed with the first (buggy) preload: it wrote the name as
+    // "VYSIV1 \0" (NUL in byte 7) instead of the space-padded form, leaving an
+    // orphan entry that the app cannot delete (its delete pads with spaces).
+    const char legacy[8] = "VYSIV1 ";
+    if (Storage.FileExists(legacy) != 0xFFFFFFFF)
+        Storage.DeleteFile(legacy);
+
+    char name[8];
+    PackName("VYSIV1", name); // space-padded 8-byte storage name ("VYSIV1  ")
+    if (Storage.FileExists(name) != 0xFFFFFFFF)
+        return; // already present
+
+    uint8_t buf[2 + 11 * 10 * 2];
+    buf[0] = 11; // width
+    buf[1] = 10; // height
+    uint16_t *idx = reinterpret_cast<uint16_t *>(buf + 2);
+    for (uint32_t i = 0; i < 11 * 10; i++)
+        idx[i] = (LayoutVysiv1_0[i] == 0) ? 0xFFFF : (uint16_t)(LayoutVysiv1_0[i] - 1);
+
+    if (!Storage.CreateFile(name, sizeof(buf)))
+        return;
+    Storage.WriteToFile(name, 0, sizeof(buf), (const char *)buf);
+}
+
 struct Vysi1Struct
 {
     Number Brightness = 30; //%
@@ -144,8 +174,19 @@ inline bool OnVysi1FieldWrite(const StaticBlockDescriptor& block, uint16_t index
     if (index != 3 || len != 8)
         return false;
     auto* disp = reinterpret_cast<Vysi1Display*>(block.Data); // Data is the first member
-    memcpy(disp->Data.LayoutFile, data, 8);
-    return disp->LoadLayoutFromStorage();
+    // Validate against the NEW name before committing it, so a failed layout
+    // load leaves the stored name matching the layout actually in use
+    // ("stored value equals applied value"). LoadLayoutFromStorage reads
+    // Data.LayoutFile, so load through a temporary and only copy on success.
+    char pending[8];
+    memcpy(pending, data, 8);
+    char saved[8];
+    memcpy(saved, disp->Data.LayoutFile, 8);
+    memcpy(disp->Data.LayoutFile, pending, 8);
+    bool ok = disp->LoadLayoutFromStorage();
+    if (!ok)
+        memcpy(disp->Data.LayoutFile, saved, 8); // revert the RAM field
+    return ok;
 }
 
 const TriggerEntry Vysi1_callbacks[] = {
@@ -284,13 +325,46 @@ Number Vysi1Display::CalculateShapeAlpha(const GeometryDefinition &def, Vector<2
         break;
     }
 
-    case Geometries::Star: // Assuming Star logic uses Polygon params
+    case Geometries::Star:
     case Geometries::Polygon:
     {
         F = def.Data.Polygon.EdgeFade;
-        // Example logic for radial polygons/stars
+        // Signed distance to a regular n-gon (Polygon) or n-point star, from the
+        // angular position of P inside its vertex sector: at angle `ang` off the
+        // vertex, the radial extent is v * cos(half) / cos(ang) (v = vertex radius).
+        Number R = def.Data.Polygon.Radius;
+        if (R <= N(0)) { Distance = N(-1); break; } // unconfigured: draw nothing
+        int n = def.Data.Polygon.PointNumber.RoundToInt();
+        if (n < 3) n = 3;
+        if (n > 32) n = 32;
+        const Number n_num = Number(n);
+
         Number pr = P[0], ppr = P[1];
-        Distance = def.Data.Polygon.Radius - sqrt(sq(pr) + sq(ppr));
+        Number r = sqrt(sq(pr) + sq(ppr));
+        if (r <= N(0)) { Distance = R; break; } // centre is always inside
+
+        // Polar angle of P in [0, 2PI) (atan2 returns -PI..PI).
+        Number theta = atan2(ppr, pr);
+        if (theta.Value < 0) theta = theta + 2 * GetPI();
+
+        Number sector, half, v;
+        if (def.Type == Geometries::Polygon)
+        {
+            sector = 2 * GetPI() / n_num;
+            v = R;
+        }
+        else
+        {
+            // Star: 2n vertices alternating outer R / inner R/2.
+            sector = 2 * GetPI() / (n_num * N(2.0));
+            uint16_t vi = (uint16_t)(theta / sector).ToInt();
+            v = (vi & 1) ? R * N(0.5) : R;
+        }
+        half = sector / N(2.0);
+        // Position within the vertex sector, measured from the vertex (cos(ang)
+        // is never 0 here: |ang| <= half <= PI/3).
+        Number ang = (theta - Number((theta / sector).ToInt()) * sector) - half;
+        Distance = (v * cos(half) / cos(ang)) - r;
         break;
     }
 

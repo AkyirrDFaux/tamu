@@ -136,7 +136,10 @@ Future<BackupDevice?> captureDevice(int deviceId) async {
     for (var f = 0; f < block.meta.size; f++) {
       final field = await client.readField(block, f);
       if (field == null) continue;
-      if (field.readOnly || !field.valid) continue; // RAM-only values never backup
+      // RAM-only values never backup. Script-updated values are stored only
+      // when the user requests that specific entry (Data Formats.md), so a
+      // whole-device capture must not include them.
+      if (field.readOnly || !field.valid || field.scriptUpdated) continue;
       fields.add(BackupField(
           index: f,
           flagsAndType: field.meta.flagsAndType,

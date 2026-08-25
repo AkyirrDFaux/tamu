@@ -132,6 +132,59 @@ void HandleSNDB(const PacketFrame &frame)
 }
 #endif // TYPE_CORE
 
+// --- Device name persistence ---
+// Docs/Services/Device service.md: "Device name is stored in standalone file to allow
+// persistence." The name lives in a dedicated storage file ("DEVNAME ") updated
+// NOR-safely (stage in a temp file, rename into place) so a power cut never leaves a
+// torn name. Loading is idempotent and safe before storage is ready (FileExists
+// reports not-found while the table is uninitialized).
+#define DEVICE_NAME_FILE      "DEVNAME "
+#define DEVICE_NAME_FILE_SIZE 24 // max name (23) + NUL
+
+static bool s_device_name_loaded = false;
+
+void LoadPersistedDeviceName()
+{
+    if (s_device_name_loaded) return;
+    s_device_name_loaded = true;
+
+    uint32_t sz = Storage.FileExists(DEVICE_NAME_FILE);
+    if (sz == 0xFFFFFFFF || sz == 0) return; // none persisted: keep the built-in default
+    uint8_t buf[DEVICE_NAME_FILE_SIZE];
+    uint32_t n = Storage.ReadFromFile(DEVICE_NAME_FILE, 0, sizeof(buf), (char *)buf);
+    if (n == 0 || buf[0] == '\0') return;
+    uint32_t len = n < sizeof(DeviceNameBuffer) - 1 ? n : sizeof(DeviceNameBuffer) - 1;
+    memcpy(DeviceNameBuffer, buf, len);
+    DeviceNameBuffer[len] = '\0';
+}
+
+bool PersistDeviceName()
+{
+    uint8_t buf[DEVICE_NAME_FILE_SIZE] = {0};
+    uint16_t len = (uint16_t)strlen(DeviceName);
+    if (len >= DEVICE_NAME_FILE_SIZE) len = DEVICE_NAME_FILE_SIZE - 1;
+    memcpy(buf, DeviceName, len);
+
+    char tmp[8];
+    memcpy(tmp, DEVICE_NAME_FILE, 8);
+    tmp[7] = '~'; // staging name ("DEVNAME~")
+    if (Storage.FileExists(tmp) != 0xFFFFFFFF)
+        Storage.DeleteFile(tmp); // clear a stale staging file from an interrupted update
+    if (!Storage.CreateFile(tmp, DEVICE_NAME_FILE_SIZE))
+        return false;
+    if (!Storage.WriteToFile(tmp, 0, DEVICE_NAME_FILE_SIZE, (const char *)buf))
+    {
+        Storage.DeleteFile(tmp);
+        return false;
+    }
+    if (!Storage.RenameFile(tmp, DEVICE_NAME_FILE))
+    {
+        Storage.DeleteFile(tmp);
+        return false;
+    }
+    return true;
+}
+
 // Handles Device service requests (Discover, Ping, Type, SN, Version, Capability, Name, Uptime, Time sync/offset, SNDB).
 void HandleDeviceService(const PacketFrame &frame)
 {
@@ -168,7 +221,9 @@ void HandleDeviceService(const PacketFrame &frame)
                 uint32_t t3 = DeviceStatus.UptimeMs;
 
                 // Standard NTP-style offset: ((t1 - t0) + (t2 - t3)) / 2
-                int32_t offset = (int32_t)(((int64_t)(t1 - t0) + (int64_t)(t2 - t3)) / 2);
+                // Counters wrap at 2^32 (~49.7 days); take signed deltas BEFORE widening so a
+                // wrap is interpreted as a small negative interval, not a huge positive one.
+                int32_t offset = (int32_t)(((int64_t)(int32_t)(t1 - t0) + (int64_t)(int32_t)(t2 - t3)) / 2);
 
                 TimeSync.HandleResponse(frame.id_src, offset);
             }
@@ -227,6 +282,22 @@ void HandleDeviceService(const PacketFrame &frame)
                              (uint8_t *)&response_data, sizeof(AssignPayload));
 
             DispatchPacket(reply);
+
+            // The CLI's `dev 1 discover` asks the CORE to register this SN and show
+            // the assigned ID. The broadcast above is consumed by the target node,
+            // and the core's own response handler drops it, so answer the CLI
+            // directly (srv_tgt = CLI CID 3 -> HandleCLI_DeviceResponse).
+            if (GetServiceType(frame.srv_src) == ServiceType::CLI)
+            {
+                PacketFrame cli_reply;
+                PacketConstruct(&cli_reply, DeviceStatus.ShortAddress,
+                                 MakeService(ServiceType::CLI, GetServiceCID(frame.srv_src)),
+                                 MakeService(ServiceType::Device, 0),
+                                 FLAG_TYPE | FLAG_START | FLAG_STOP,
+                                 (uint8_t *)&response_data, sizeof(AssignPayload));
+                cli_reply.id_src = NewAddr; // the CLI prints id_src as the device
+                DispatchPacket(cli_reply);
+            }
 #endif
             break;
         }
@@ -258,6 +329,7 @@ void HandleDeviceService(const PacketFrame &frame)
         }
 
         case 6: // Read Name
+            LoadPersistedDeviceName();
             SendDeviceReply(frame, reply, DeviceName, (uint8_t)strlen(DeviceName));
             break;
 
@@ -269,6 +341,8 @@ void HandleDeviceService(const PacketFrame &frame)
                 memcpy(DeviceNameBuffer, frame.payload, len);
                 DeviceNameBuffer[len] = '\0';
             }
+            // Persist the new name (standalone file) so it survives reboots.
+            PersistDeviceName();
             if (frame.flags & FLAG_REQACK)
                 SendDeviceReply(frame, reply, DeviceName, (uint8_t)strlen(DeviceName));
             break;

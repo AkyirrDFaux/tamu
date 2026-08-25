@@ -75,14 +75,28 @@ class DynamicMemoryClient extends MemoryClientBase {
     final payload =
         await readValue(BlockIndex(block: block.index, field: field));
     if (payload == null) return null;
+    return _storeField(block, field, payload.meta, payload.value);
+  }
+
+  /// Reads one entry's BACKUP value (CID 4) into `block.fields` (what is stored
+  /// in the device's backup file, not the live value).
+  Future<DynField?> readBackupField(DynBlock block, int field) async {
+    final payload = await readBackupValue(
+        BlockIndex(block: block.index, field: field));
+    if (payload == null) return null;
+    return _storeField(block, field, payload.meta, payload.value);
+  }
+
+  DynField _storeField(
+      DynBlock block, int field, BlockMeta meta, List<int> value) {
     final existing = block.fields[field];
     if (existing != null) {
       existing
-        ..meta = payload.meta
-        ..value = payload.value;
+        ..meta = meta
+        ..value = value;
       return existing;
     }
-    final result = DynField(index: field, meta: payload.meta, value: payload.value);
+    final result = DynField(index: field, meta: meta, value: value);
     block.fields[field] = result;
     return result;
   }

@@ -17,15 +17,6 @@ void LoadAllBackups();
 
 #define CHIP_ID_ADDR  0x1FFFF7E8 // Fixed memory-mapped location of the chip's unique ID
 
-// Restores the saved System Memory values (Meas1/Meas2 writable fields) from the backup
-// file at boot, the same way the core does. The buffer size follows MEMORY_BACKUP_CAP,
-// which the DAS build keeps small (256) to fit the 2 KB RAM.
-void LoadAllBackups() {
-    uint8_t buf[MEMORY_BACKUP_CAP];
-    uint16_t n = ReadBackupFile(SystemBackupName(), buf, sizeof(buf));
-    if (n > 0) DeserializeSystemBlocks(buf, n);
-}
-
 // Device identity (mandatory, see Core/Functions/Device.h).
 extern const DeviceType kDeviceType = DeviceType::DualAnalogSensor;
 extern const uint32_t kCapabilities = Capabilities::None; // plain node: no core capability
@@ -91,6 +82,7 @@ int main(void)
     // gets a fresh registration (SNumber/name persistence still works).
     Storage.Init();
     LoadAllBackups();
+    LoadPersistedDeviceName(); // persisted name active from boot
     DeviceStatus.ShortAddress = 0;
 
     // Core distinction loop

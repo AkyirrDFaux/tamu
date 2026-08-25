@@ -36,6 +36,12 @@ const SerialNumber &GetSerialNumber();
 // Global device name string (set per device, e.g. Main.cpp)
 extern const char* DeviceName;
 extern char DeviceNameBuffer[24];
+// Device name persistence (Docs/Services/Device service.md: "Device name is stored in
+// standalone file to allow persistence"). Implemented in Core/Services/Device.h.
+// Call LoadPersistedDeviceName() at boot once storage is ready so the persisted name
+// is active before BLE advertising starts; PersistDeviceName() saves a rename.
+void LoadPersistedDeviceName();
+bool PersistDeviceName();
 // Device software version string (provided per device, e.g. Devices/<device>/Main.h)
 extern const char* DeviceVersion;
 

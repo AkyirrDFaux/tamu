@@ -55,19 +55,24 @@ void HandleCLIService(const PacketFrame &frame)
             return; // truncated field reply: avoid underflowing the length math below
         const BlockMeta *desc = reinterpret_cast<const BlockMeta *>(data_ptr);
         const void *data = (const void *)(data_ptr + sizeof(BlockMeta));
+        // Clamp the descriptor size to the bytes actually present so a truncated
+        // reply cannot make the printer read past the payload.
+        BlockMeta clamped = *desc;
+        uint16_t avail = frame.payload_len - sizeof(BlockIndex) - sizeof(BlockMeta);
+        if (clamped.Size > avail) clamped.Size = avail;
 
         if (idx->Key != INVALID_INDEX)
         {
-            PrintField(*desc, data, idx->Key, true);
+            PrintField(clamped, data, idx->Key, true);
         }
         else if (IsKeyedType((DataType)BlockMetaType(desc->FlagsAndType)))
         {
             uint16_t type_id = BlockMetaType(desc->FlagsAndType);
             printf("  |-- Field [%02d]: (Keyed Field, Type: 0x%03X)\n", idx->Field, type_id);
             const uint8_t *keys = static_cast<const uint8_t *>(data);
-            uint16_t key_count = desc->Size;
-            if (key_count > frame.payload_len - sizeof(BlockIndex) - sizeof(BlockMeta))
-                key_count = frame.payload_len - sizeof(BlockIndex) - sizeof(BlockMeta);
+            uint16_t key_count = clamped.Size;
+            if (key_count > avail)
+                key_count = avail;
             if (key_count > 0)
             {
                 printf("       Keys:");
@@ -78,7 +83,7 @@ void HandleCLIService(const PacketFrame &frame)
         }
         else
         {
-            PrintField(*desc, data, idx->Field, false);
+            PrintField(clamped, data, idx->Field, false);
         }
     }
     else
@@ -270,7 +275,9 @@ void HandleCLI_DeviceResponse(const PacketFrame &frame)
                 memcpy(&t1, frame.payload + 4, 4);
                 memcpy(&t2, frame.payload + 8, 4);
                 uint32_t t3 = DeviceStatus.UptimeMs; // local time the reply was received
-                int32_t offset = (int32_t)(((int64_t)(t1 - t0) + (int64_t)(t2 - t3)) / 2);
+                // Counters wrap at 2^32 (~49.7 days); take signed deltas BEFORE widening so a
+                // wrap is interpreted as a small negative interval, not a huge positive one.
+                int32_t offset = (int32_t)(((int64_t)(int32_t)(t1 - t0) + (int64_t)(int32_t)(t2 - t3)) / 2);
                 printf("Device %d: Time sync t0=%lu t1=%lu t2=%lu (est. offset %ld ms)\n",
                        frame.id_src, (unsigned long)t0, (unsigned long)t1, (unsigned long)t2, (long)offset);
             }

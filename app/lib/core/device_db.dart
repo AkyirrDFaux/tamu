@@ -238,7 +238,11 @@ class DeviceDatabase extends ChangeNotifier {
       }
       final ids = <int>{coreId};
       for (var offset = 0; offset + 16 <= sndbReply.length; offset += 16) {
-        ids.add(sndbReply[offset + 14] | (sndbReply[offset + 15] << 8));
+        final id = sndbReply[offset + 14] | (sndbReply[offset + 15] << 8);
+        // ID 0 marks an unassigned entry; skip it so no phantom "device" is
+        // created and no requests are fired at an invalid target.
+        if (id == 0) continue;
+        ids.add(id);
       }
       for (final id in ids) {
         if (_devices[id] == null || _devices[id]!.serialNumber == null) {

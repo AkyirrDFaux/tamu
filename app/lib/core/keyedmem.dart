@@ -240,6 +240,26 @@ class KeyedMemoryClient extends MemoryClientBase {
     return reply != null;
   }
 
+  /// Reads one keyed entry's BACKUP value (CID 4) into `block.entries` (what is
+  /// stored in the device's backup file, not the live value).
+  Future<KeyedEntry?> readBackupEntry(
+      KeyedBlock block, int dict, int key) async {
+    final payload = await readBackupValue(
+        BlockIndex(block: block.index, field: dict, key: key));
+    if (payload == null) return null;
+    final existing = block.entries[dict]?[key];
+    if (existing != null) {
+      existing
+        ..meta = payload.meta
+        ..value = payload.value;
+      return existing;
+    }
+    final result =
+        KeyedEntry(key: key, meta: payload.meta, value: payload.value);
+    block.entries.putIfAbsent(dict, () => {})[key] = result;
+    return result;
+  }
+
   Future<bool> save({int? block}) => memoryOp(5, block);
 
   Future<bool> recall({int? block}) => memoryOp(6, block);

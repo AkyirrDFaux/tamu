@@ -26,6 +26,9 @@ class _ConnectionPageState extends State<ConnectionPage> {
     super.initState();
     ShellTabs.instance.addListener(_onTabChanged);
     _refreshOnce();
+    // Autorefresh is "automatically on" (docs, 1 s period): start the periodic
+    // timer now, not only on the first tab switch.
+    _onTabChanged();
   }
 
   @override
@@ -173,9 +176,13 @@ class _ConnectionPageState extends State<ConnectionPage> {
               if (_manager.isConnected)
                 ListTile(
                   leading: const Icon(Icons.link, color: kOrange),
-                  title: Text(DeviceDatabase.instance.byId(1)?.displayName ??
-                      _manager.connectedName ??
-                      ''),
+                  // The device's REPORTED name (from the Device service), with
+                  // the link as the subtitle - not two copies of the same text.
+                  title: Text(DeviceDatabase.instance.byId(1)?.name.isNotEmpty ==
+                              true
+                          ? DeviceDatabase.instance.byId(1)!.name
+                          : _manager.connectedName ??
+                              ''),
                   subtitle: Text(_manager.connectedName ?? 'Connected'),
                   trailing: Row(mainAxisSize: MainAxisSize.min, children: [
                     IconButton(

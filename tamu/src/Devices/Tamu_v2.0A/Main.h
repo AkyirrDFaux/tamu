@@ -85,6 +85,8 @@ PinModeOutput(LED_NOTIFICATION_PIN);
 
 ESP_LOGI("INIT","b1 storage"); Storage.Init();
 ESP_LOGI("INIT","b2 backups"); LoadAllBackups();
+LoadPersistedDeviceName(); // persisted name active before BLE advertising starts
+PreloadVysiLayout();       // Vysi v1.0 layout file (layouts/ dir) into storage
 ESP_LOGI("INIT","b3 appif"); AppInterfaceInit();
 
     // BLE app link (Nordic UART service); advertised under the device version string.

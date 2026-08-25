@@ -99,6 +99,16 @@ void main() {
     expect(d3?.meta.dataType, DataType.colour,
         reason: 'append-with-type did not stick');
 
+    // ---- backup value read (CID 4) ----
+    await keyed.save();
+    final bkEntry = await keyed.readBackupEntry(fresh2, 1, 3);
+    // ignore: avoid_print
+    print('[K] backup entry(d1,k3)=${bkEntry == null ? "NULL" : bkEntry.value} '
+        'type=${bkEntry?.meta.dataType}');
+    expect(bkEntry, isNotNull, reason: 'keyed backup read returned null');
+    expect(bkEntry?.meta.dataType, DataType.bool_,
+        reason: 'keyed backup entry type mismatch');
+
     // ---- dynmem type change ----
     final dyn = DynamicMemoryClient(deviceId: 1);
     final dExisting = await dyn.readBlocks();
@@ -109,6 +119,26 @@ void main() {
     final didx = await dyn.createBlock(BlockType.undefined, 'DPROBE');
     // ignore: avoid_print
     print('[D] created block index=$didx');
+    // ---- backup value read (CID 4) ----
+    final dBlocks = await dyn.readBlocks();
+    final dBk = dBlocks?.firstOrNull;
+    if (dBk != null) {
+      await dyn.writeField(
+          dBk,
+          DynField(index: 0,
+              meta: BlockMeta(flagsAndType: DataType.number.value),
+              value: numberToBytes(2.5)),
+          numberToBytes(2.5));
+      await dyn.save();
+      final bkField = await dyn.readBackupField(dBk, 0);
+      // ignore: avoid_print
+      print('[D] backup field0=${bkField == null ? "NULL" : numberFromBytes(bkField.value)}');
+      expect(bkField, isNotNull, reason: 'dyn backup read returned null');
+      if (bkField != null) {
+        expect(numberFromBytes(bkField.value), closeTo(2.5, 0.01),
+            reason: 'dyn backup value mismatch');
+      }
+    }
     // ---- multi-block delete semantics (dyn) ----
     await dyn.save();
     final iA = await dyn.createBlock(BlockType.undefined, 'AAA');

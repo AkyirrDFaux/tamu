@@ -75,6 +75,17 @@ void PrintValue(uint16_t type_id, const void *data_ptr, uint16_t data_len)
         printf("Colour: R:%d G:%d B:%d A:%d\n", c->R, c->G, c->B, c->A);
         break;
     }
+    case DataType::String:
+    {
+        // Fixed-size string fields are space-padded, not NUL-terminated.
+        char tmp[64];
+        uint16_t n = data_len > sizeof(tmp) - 1 ? sizeof(tmp) - 1 : data_len;
+        memcpy(tmp, data_ptr, n);
+        tmp[n] = '\0';
+        while (n > 0 && tmp[n - 1] == ' ') tmp[--n] = '\0';
+        printf("String: \"%s\"\n", tmp);
+        break;
+    }
     case DataType::Matrix:
     {
         struct MatrixHeader
@@ -328,7 +339,8 @@ ServiceType ParseService(const char *str)
         case 'd': return ServiceType::DynamicMemory;
         case 'k': return ServiceType::KeyedMemory;
         default:
-            switch (atoi(str))
+            // strtol with base 0 accepts "0x05" (hex) AND "5" (decimal).
+            switch ((int)strtol(str, nullptr, 0))
             {
                 case 0x05: return ServiceType::DynamicMemory;
                 case 0x06: return ServiceType::KeyedMemory;

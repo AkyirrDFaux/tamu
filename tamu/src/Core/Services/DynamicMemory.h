@@ -356,10 +356,17 @@ static uint16_t BuildBackupPayload(const BlockIndex *idx,
 
     if (idx->Key == INVALID_INDEX) // dictionary: field meta + key list
     {
+        // The dict's entries live at the sum of the preceding fields' aligned
+        // sizes within the block's data (same offset rule as the dynamic branch).
+        uint16_t base = 0;
+        for (uint16_t i = 0; i < idx->Field; i++) base += AlignTo4(map[i].Size);
+        if (base + fd.Size > data_length) return 0;
+        const uint8_t *dict_data = data + base;
+
         uint16_t key_offset = 0, key_count = 0;
         while (key_offset + sizeof(BlockMeta) <= fd.Size)
         {
-            const BlockMeta *meta = (const BlockMeta *)(data + key_offset);
+            const BlockMeta *meta = (const BlockMeta *)(dict_data + key_offset);
             uint16_t entry_size = AlignTo4(sizeof(BlockMeta) + meta->Size);
             if (key_offset + entry_size > fd.Size) break;
             key_count++;
@@ -373,7 +380,7 @@ static uint16_t BuildBackupPayload(const BlockIndex *idx,
         key_offset = 0;
         while (key_offset + sizeof(BlockMeta) <= fd.Size)
         {
-            const BlockMeta *meta = (const BlockMeta *)(data + key_offset);
+            const BlockMeta *meta = (const BlockMeta *)(dict_data + key_offset);
             uint16_t entry_size = AlignTo4(sizeof(BlockMeta) + meta->Size);
             if (key_offset + entry_size > fd.Size) break;
             out[cursor++] = meta->Key;
@@ -383,10 +390,14 @@ static uint16_t BuildBackupPayload(const BlockIndex *idx,
     }
 
     // Keyed entry lookup.
+    uint16_t base = 0;
+    for (uint16_t i = 0; i < idx->Field; i++) base += AlignTo4(map[i].Size);
+    if (base + fd.Size > data_length) return 0;
+    const uint8_t *dict_data = data + base;
     uint16_t key_offset = 0;
     while (key_offset + sizeof(BlockMeta) <= fd.Size)
     {
-        const BlockMeta *meta = (const BlockMeta *)(data + key_offset);
+        const BlockMeta *meta = (const BlockMeta *)(dict_data + key_offset);
         uint16_t entry_size = AlignTo4(sizeof(BlockMeta) + meta->Size);
         if (key_offset + entry_size > fd.Size) break;
         if (meta->Key == idx->Key)
@@ -394,7 +405,7 @@ static uint16_t BuildBackupPayload(const BlockIndex *idx,
             if (cursor + sizeof(BlockIndex) + sizeof(BlockMeta) + meta->Size > cap) return 0;
             memcpy(out + cursor, idx, sizeof(BlockIndex)); cursor += sizeof(BlockIndex);
             memcpy(out + cursor, meta, sizeof(BlockMeta)); cursor += sizeof(BlockMeta);
-            memcpy(out + cursor, data + key_offset + sizeof(BlockMeta), meta->Size); cursor += meta->Size;
+            memcpy(out + cursor, dict_data + key_offset + sizeof(BlockMeta), meta->Size); cursor += meta->Size;
             return cursor;
         }
         key_offset += entry_size;

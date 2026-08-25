@@ -31,6 +31,7 @@ class _KeyedMemoryPageState extends State<KeyedMemoryPage>
   String? _error;
   final Set<int> _openBlocks = {};
   final Set<int> _openDicts = {};
+  bool _backupView = false;
 
 
   @override
@@ -74,8 +75,15 @@ class _KeyedMemoryPageState extends State<KeyedMemoryPage>
   }
 
   Future<void> _loadDictEntries(KeyedBlock block, KeyedDict dict) async {
-    // Batch: read all entries in a single round trip (CID 7) - per-key reads
-    // were slow over BLE for any dictionary with more than a few keys.
+    if (_backupView) {
+      // Backup view: per-key CID 4 reads (what is stored in the backup file).
+      for (final key in dict.keys) {
+        await _client.readBackupEntry(block, dict.index, key);
+      }
+      return;
+    }
+    // Current view: batch read all entries in a single round trip (CID 7) -
+    // per-key reads were slow over BLE for any dictionary with more than a few keys.
     final entries = await _client.readAllDictEntries(block, dict.index);
     if (entries != null) return;
     // Fallback: per-key reads (older firmware without CID 7).
@@ -317,21 +325,32 @@ class _KeyedMemoryPageState extends State<KeyedMemoryPage>
       appBar: AppBar(
         title: Text('Keyed Memory - ${idToString(widget.deviceId)}'),
         actions: [
-          IconButton(
-            tooltip: 'Save everything to backup',
-            icon: const Icon(Icons.save),
-            onPressed: () async {
-              final ok = await _client.save();
-              _snack(ok ? 'Saved' : 'Operation failed');
+          SegmentedButton<bool>(
+            showSelectedIcon: false,
+            style: const ButtonStyle(
+                visualDensity: VisualDensity.compact,
+                textStyle: WidgetStatePropertyAll(TextStyle(fontSize: 12))),
+            segments: const [
+              ButtonSegment(value: false, label: Text('Current')),
+              ButtonSegment(value: true, label: Text('Backup')),
+            ],
+            selected: {_backupView},
+            onSelectionChanged: (selection) {
+              setState(() => _backupView = selection.first);
+              _refresh();
             },
           ),
           IconButton(
-            tooltip: 'Recall everything from backup',
-            icon: const Icon(Icons.restore),
+            tooltip: _backupView
+                ? 'Recall everything from backup'
+                : 'Save everything to backup',
+            icon: Icon(_backupView ? Icons.restore : Icons.save),
             onPressed: () async {
-              final ok = await _client.recall();
-              _snack(ok ? 'Recalled' : 'Operation failed');
-              await _refresh();
+              final ok = _backupView
+                  ? await _client.recall()
+                  : await _client.save();
+              _snack(ok ? (_backupView ? 'Recalled' : 'Saved') : 'Operation failed');
+              if (ok && !_backupView) await _refresh();
             },
           ),
           IconButton(
@@ -589,12 +608,26 @@ class _KeyedMemoryPageState extends State<KeyedMemoryPage>
       onTap: !entry.readOnly
           ? () => _editValue(block, dict, entry)
           : null,
-      trailing: IconButton(
-        icon: const Icon(Icons.delete_outline,
-            size: 17, color: Colors.white38),
-        tooltip: 'Delete entry (marks None in place)',
-        onPressed: () => _deleteEntry(block, dict, entry),
-      ),
+      trailing: _backupView
+        ? IconButton(
+            icon: const Icon(Icons.restore_outlined,
+                size: 17, color: Colors.white38),
+            tooltip: 'Recall entry',
+            onPressed: () async {
+              final ok = await _client.recall(block: block.index);
+              _snack(ok ? 'Recalled' : 'Recall failed');
+              if (!ok) return;
+              final fresh = block.dicts[dict.index];
+              if (fresh != null) await _loadDictEntries(block, fresh);
+              if (mounted) setState(() {});
+            },
+          )
+        : IconButton(
+            icon: const Icon(Icons.delete_outline,
+                size: 17, color: Colors.white38),
+            tooltip: 'Delete entry (marks None in place)',
+            onPressed: () => _deleteEntry(block, dict, entry),
+          ),
     );
   }
 

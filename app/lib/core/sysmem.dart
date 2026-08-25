@@ -69,14 +69,28 @@ class SystemMemoryClient extends MemoryClientBase {
     final payload =
         await readValue(BlockIndex(block: block.index, field: field));
     if (payload == null) return null;
+    return _storeField(block, field, payload.meta, payload.value);
+  }
+
+  /// Reads one field's BACKUP value (CID 4) into `block.fields` (what is stored
+  /// in the device's backup file, not the live value).
+  Future<SysField?> readBackupField(SysBlock block, int field) async {
+    final payload = await readBackupValue(
+        BlockIndex(block: block.index, field: field));
+    if (payload == null) return null;
+    return _storeField(block, field, payload.meta, payload.value);
+  }
+
+  SysField _storeField(
+      SysBlock block, int field, BlockMeta meta, List<int> value) {
     final existing = block.fields[field];
     if (existing != null) {
       existing
-        ..meta = payload.meta
-        ..value = payload.value;
+        ..meta = meta
+        ..value = value;
       return existing;
     }
-    final result = SysField(index: field, meta: payload.meta, value: payload.value);
+    final result = SysField(index: field, meta: meta, value: value);
     block.fields[field] = result;
     return result;
   }
