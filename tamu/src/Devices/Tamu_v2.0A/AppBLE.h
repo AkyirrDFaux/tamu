@@ -14,7 +14,8 @@
 #define BLE_TX_CHAR_UUID "6E400003-B5A3-F393-E0A9-E50E24DCCA9E" // device notifies
 
 #define BLE_CHUNK 480          // stream bytes per notification (+2 byte length prefix);
-                               // fits the Android default ATT MTU of 185
+                               // the actual chunk cap is BleMtu - 5 (ATT header + length
+                               // prefix), so 480 is only the static buffer size
 #define BLE_PACE_MS 0          // no artificial pacing; the app-task loop (~2 ms) throttles
 
 static NimBLEServer *BleServer = nullptr;
@@ -214,6 +215,10 @@ bool AppBLEActive()
 // a disconnect (deferred out of the BLE callback context, retried until it succeeds).
 void AppBLETick()
 {
+    // Comm LED is a per-burst pulse: RX/TX below turn it on, and this tick turns
+    // it back off at the start so an idle session does not leave it lit.
+    CommLed(false);
+
     // Deferred advertising restart.
     if (!BleConnected && BleOldConnected)
     {

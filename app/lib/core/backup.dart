@@ -207,7 +207,9 @@ Future<int> restoreDevice(BackupDevice backup) async {
         await client.readField(live, field.index);
       }
       final liveField = live.fields[field.index];
-      if (liveField == null || liveField.meta.size != meta.size) {
+      // The stored value must be the same length as the live field's value
+      // (the captured `field.size`, NOT a freshly-built meta whose size is 0).
+      if (liveField == null || liveField.meta.size != field.size) {
         continue; // incompatible structure
       }
       final confirmed = await client.writeField(live, liveField, field.bytes);

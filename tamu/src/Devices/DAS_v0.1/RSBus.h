@@ -10,6 +10,7 @@ volatile uint16_t tail = 0; // Main reads here
 static bool g_rs485_ready = false;
 
 #include "Core/Functions/Packet.h"
+#include "Core/Functions/Bus.h"
 
 extern "C" {
     void USART1_IRQHandler(void) __attribute__((interrupt("WCH-Interrupt-fast")));
@@ -184,80 +185,13 @@ bool SendAndVerifyPacket(const PacketFrame &Data) {
     return false;
 }
 
-/**
- * @brief Receives and validates a full PacketFrame.
- * @param Data Pointer to the struct where the packet will be stored. Assembly writes
- *             directly into it, so the caller must pass the same buffer every call
- *             (ProcessBus uses a single static frame).
- * @return Total bytes read if successful (including start byte), 0 while incomplete.
- *
- * The assembly state persists across calls: a frame split across two ProcessBus()
- * polls continues where it left off instead of being consumed and discarded. Bytes
- * are only "spent" once; garbage before a 0xAA sync byte is skipped. If a sender
- * aborts mid-frame, the stale stage consumes following bytes until length/CRC checks
- * fail and the machine falls back to RX_SYNC (same recovery as before, but partial
- * *transfers* now complete correctly).
- */
-static int RxValidate(PacketFrame *Data)
+// Receives and validates a full PacketFrame using the shared bus assembler
+// (Core/Functions/Bus.h); the byte source pulls from the DAS ring buffer.
+int ReceivePacket(PacketFrame *Data)
 {
-    // CRC covers everything from flags through the end of the payload.
-    if (Crc8(&Data->flags, (uint16_t)(11 + Data->payload_len)) != Data->crc8)
-        return 0; // corrupted: keep scanning for the next 0xAA
-    return (int)(1 + 12 + Data->payload_len);
-}
-
-int ReceivePacket(PacketFrame *Data) {
-    if (!Data) return 0;
-
-    enum RxStage : uint8_t { RX_SYNC, RX_HEADER, RX_PAYLOAD };
-    static uint8_t stage = RX_SYNC;
-    static uint16_t got = 0; // bytes of the current stage stored so far
-
-    while (UART_Available())
-    {
-        uint8_t b = UART_ReadByte();
-
-        switch (stage)
-        {
-        case RX_SYNC:
-            if (b == 0xAA)
-            {
-                stage = RX_HEADER;
-                got = 0;
-            }
-            // else: inter-frame garbage, skip
-            break;
-
-        case RX_HEADER:
-            ((uint8_t *)Data)[got++] = b;
-            if (got < 12)
-                break;
-
-            // Header complete: payload_len is a single byte (<=255) and the payload
-            // buffer holds 256, so no length guard is needed - proceed to the payload
-            // stage (CRC validates the frame on completion).
-            stage = RX_PAYLOAD;
-            got = 0;
-            if (Data->payload_len == 0)
-            {
-                // Zero-payload frames finish here.
-                stage = RX_SYNC;
-                int total = RxValidate(Data);
-                if (total > 0) return total;
-            }
-            break;
-
-        case RX_PAYLOAD:
-            Data->payload[got++] = b;
-            if (got >= Data->payload_len)
-            {
-                stage = RX_SYNC;
-                got = 0;
-                int total = RxValidate(Data);
-                if (total > 0) return total;
-            }
-            break;
-        }
-    }
-    return 0; // incomplete: more bytes pending on the bus
+    return ReceivePacketFrame(Data, [](uint8_t &b) -> bool {
+        if (!UART_Available()) return false;
+        b = UART_ReadByte();
+        return true;
+    });
 }

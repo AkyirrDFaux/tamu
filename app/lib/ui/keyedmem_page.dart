@@ -22,7 +22,8 @@ class KeyedMemoryPage extends StatefulWidget {
   State<KeyedMemoryPage> createState() => _KeyedMemoryPageState();
 }
 
-class _KeyedMemoryPageState extends State<KeyedMemoryPage> {
+class _KeyedMemoryPageState extends State<KeyedMemoryPage>
+    with AutoRefreshMixin<KeyedMemoryPage> {
   late final KeyedMemoryClient _client =
       KeyedMemoryClient(deviceId: widget.deviceId);
 
@@ -31,8 +32,6 @@ class _KeyedMemoryPageState extends State<KeyedMemoryPage> {
   final Set<int> _openBlocks = {};
   final Set<int> _openDicts = {};
 
-  Timer? _autoTimer;
-  Duration? _autoInterval;
 
   @override
   void initState() {
@@ -41,20 +40,9 @@ class _KeyedMemoryPageState extends State<KeyedMemoryPage> {
   }
 
   @override
-  void dispose() {
-    _autoTimer?.cancel();
-    super.dispose();
-  }
+  Future<void> onAutoRefresh() => _refresh();
 
-  void _applyAuto(Duration? interval) {
-    _autoTimer?.cancel();
-    _autoTimer = null;
-    setState(() => _autoInterval =
-        interval == null || interval == Duration.zero ? null : interval);
-    if (_autoInterval != null) {
-      _autoTimer = Timer.periodic(_autoInterval!, (_) => _refresh());
-    }
-  }
+
 
   void _snack(String message) {
     if (!mounted) return;
@@ -100,83 +88,19 @@ class _KeyedMemoryPageState extends State<KeyedMemoryPage> {
   // Actions
   // ---------------------------------------------------------------------------
 
-  Future<(String, BlockType?, int?)?> _promptNameAndType(
-      {String initialName = '',
-      BlockType? initialType,
-      required String title,
-      bool withIndex = false}) async {
-    final nameController = TextEditingController(text: initialName);
-    final indexController = TextEditingController();
-    BlockType selected = initialType ?? BlockType.undefined;
-    return await showDialog<(String, BlockType, int?)>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: Text(title),
-          content: Column(mainAxisSize: MainAxisSize.min, children: [
-            TextField(
-              controller: nameController,
-              autofocus: true,
-              maxLength: 16,
-              decoration: const InputDecoration(labelText: 'Block name'),
-            ),
-            if (withIndex) ...[
-              const SizedBox(height: 8),
-              TextField(
-                controller: indexController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                    labelText: 'Index (empty = append)',
-                    helperText: 'Fills a deleted (None) slot when given'),
-              ),
-            ],
-            const SizedBox(height: 8),
-            DropdownButtonFormField<BlockType>(
-              initialValue: selected,
-              decoration: const InputDecoration(labelText: 'Block type'),
-              items: [
-                for (final t in BlockType.values)
-                  if (t != BlockType.deleted)
-                    DropdownMenuItem(value: t, child: Text(t.label)),
-              ],
-              onChanged: (t) => setState(() => selected = t ?? BlockType.undefined),
-            ),
-          ]),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancel')),
-            FilledButton(
-              onPressed: () {
-                final name = nameController.text.trim();
-                if (name.isEmpty) return;
-                final idxText = indexController.text.trim();
-                final idx =
-                    idxText.isEmpty ? null : int.tryParse(idxText);
-                if (idxText.isNotEmpty && idx == null) return;
-                Navigator.pop(context, (name, selected, idx));
-              },
-              child: const Text('OK'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Future<void> _createBlock() async {
-    final result =
-        await _promptNameAndType(title: 'New keyed block', withIndex: true);
+    final result = await promptBlockNameAndType(context,
+        title: 'New keyed block', withIndex: true);
     if (result == null || !mounted) return;
     final (name, type, index) = result;
     final created =
-        await _client.createBlock(type ?? BlockType.undefined, name, index: index);
+        await _client.createBlock(type, name, index: index);
     _snack(created != null ? 'Block created' : 'Create failed');
     await _refresh();
   }
 
   Future<void> _editBlock(KeyedBlock block) async {
-    final result = await _promptNameAndType(
+    final result = await promptBlockNameAndType(context,
         title: 'Edit block', initialName: block.name, initialType: block.blockType);
     if (result == null || !mounted) return;
     final (name, type, _) = result;
@@ -198,10 +122,12 @@ class _KeyedMemoryPageState extends State<KeyedMemoryPage> {
     final fresh = await _client.refreshBlockMeta(block) ?? block;
     final index = await _promptDictIndex(fresh.dictCount);
     if (index == _promptCancelled) return;
+    final dataType = await _pickDataType(allowUndefined: true);
+    if (dataType == null || !mounted) return;
     // A plain append (null index) fills the FIRST deleted (None) dictionary
     // placeholder so the block does not accumulate uneditable None rows.
     final target = index ?? _firstNoneDict(block);
-    final ok = await _client.appendDict(fresh, index: target);
+    final ok = await _client.appendDict(fresh, index: target, type: dataType);
     _snack(ok ? 'Dictionary added' : 'Add failed');
     await _refresh();
     if (_openBlocks.contains(block.index) && mounted) {
@@ -267,15 +193,36 @@ class _KeyedMemoryPageState extends State<KeyedMemoryPage> {
     await _refresh();
   }
 
-  /// Adds a keyed entry to a dictionary: pick data type + key id, edit value.
-  Future<void> _addEntry(KeyedBlock block, KeyedDict dict) async {
-    final dataType = await showDialog<DataType>(
+  /// Changes a dictionary's data type (the firmware updates the dict meta in
+  /// place; a None-marked dict is recreated fresh, dropping stale entries).
+  Future<void> _changeDictType(KeyedBlock block, KeyedDict dict) async {
+    final dataType = await _pickDataType(allowUndefined: true);
+    if (dataType == null || !mounted) return;
+    final ok = await _client.writeDictMeta(block, dict.index, dataType);
+    _snack(ok
+        ? 'Dictionary type: ${dataTypeLabel(dataType)}'
+        : 'Type change failed');
+    // Re-read the dict so its meta type refreshes.
+    final fresh = await _client.readDict(block, dict.index);
+    if (fresh != null && _openDicts.contains(dict.index)) {
+      await _loadDictEntries(block, fresh);
+    }
+    if (mounted) setState(() {});
+  }
+
+  /// Picks a data type from a simple dialog; `allowUndefined` offers the
+  /// "Undefined" option (used for dictionaries), otherwise it is excluded
+  /// (entries need a concrete type). Returns null when cancelled.
+  Future<DataType?> _pickDataType({bool allowUndefined = false}) {
+    return showDialog<DataType>(
       context: context,
       builder: (context) => SimpleDialog(
-        title: const Text('Entry data type'),
+        title: const Text('Data type'),
         children: [
           for (final t in DataType.values)
-            if (t != DataType.deleted && t != DataType.none && t != DataType.undefined)
+            if (t != DataType.deleted &&
+                t != DataType.none &&
+                (allowUndefined || t != DataType.undefined))
               SimpleDialogOption(
                 onPressed: () => Navigator.pop(context, t),
                 child: Text(dataTypeLabel(t)),
@@ -283,6 +230,13 @@ class _KeyedMemoryPageState extends State<KeyedMemoryPage> {
         ],
       ),
     );
+  }
+
+  /// Adds a keyed entry to a dictionary: pick data type + key id, edit value.
+  /// Entries are KEY-addressed (a key identifies its value); position/order in
+  /// the dictionary is irrelevant.
+  Future<void> _addEntry(KeyedBlock block, KeyedDict dict) async {
+    final dataType = await _pickDataType();
     if (dataType == null || !mounted) return;
     final keyText = await showDialog<String>(
       context: context,
@@ -290,10 +244,16 @@ class _KeyedMemoryPageState extends State<KeyedMemoryPage> {
         final controller = TextEditingController(
             text: dict.keys.isEmpty
                 ? '00'
-                : (dict.keys.reduce((a, b) => a > b ? a : b) + 1)
-                    .toRadixString(16)
-                    .padLeft(2, '0')
-                    .toUpperCase());
+                : (() {
+                    // Keys are byte values; a max key of 0xFF must not suggest
+                    // 0x100 ("100") - the field is capped at 2 hex chars.
+                    final next =
+                        dict.keys.reduce((a, b) => a > b ? a : b) + 1;
+                    return (next > 0xFF ? 0xFF : next)
+                        .toRadixString(16)
+                        .padLeft(2, '0')
+                        .toUpperCase();
+                  })());
         return AlertDialog(
           title: const Text('Key (hex byte)'),
           content:
@@ -380,11 +340,11 @@ class _KeyedMemoryPageState extends State<KeyedMemoryPage> {
               onPressed: _createBlock),
           RefreshButton(
             onRefresh: _refresh,
-            autoActive: _autoInterval != null,
+            autoActive: autoRefreshActive,
             refreshing: false,
             error: _error != null,
-            selectedInterval: _autoInterval,
-            onSelectAuto: _applyAuto,
+            selectedInterval: selectedInterval,
+            onSelectAuto: applyAuto,
           ),
         ],
       ),
@@ -533,8 +493,19 @@ class _KeyedMemoryPageState extends State<KeyedMemoryPage> {
               style: const TextStyle(fontSize: 13)),
           const SizedBox(width: 8),
           ChipLabel('${dict.keys.length} keys', subtle: true),
+          const SizedBox(width: 6),
+          // Dictionaries are typed; tapping edits the type (undefined = not set).
+          InkWell(
+            onTap: () => _changeDictType(block, dict),
+            child: ChipLabel(dataTypeLabel(dict.meta.dataType), subtle: true),
+          ),
         ]),
         trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+          IconButton(
+            icon: const Icon(Icons.tune, size: 18),
+            tooltip: 'Dictionary type',
+            onPressed: () => _changeDictType(block, dict),
+          ),
           IconButton(
             icon: const Icon(Icons.delete_outline, size: 18),
             tooltip: 'Delete dictionary',
@@ -562,7 +533,7 @@ class _KeyedMemoryPageState extends State<KeyedMemoryPage> {
         Material(
           color: Colors.black12,
           child: Column(children: [
-            for (final key in dict.keys)
+            for (final key in dict.sortedKeys)
               _entryTile(block, dict, block.entries[dict.index]?[key]),
             ListTile(
               dense: true,
@@ -621,7 +592,7 @@ class _KeyedMemoryPageState extends State<KeyedMemoryPage> {
       trailing: IconButton(
         icon: const Icon(Icons.delete_outline,
             size: 17, color: Colors.white38),
-        tooltip: 'Delete entry (marks None, indexes stay)',
+        tooltip: 'Delete entry (marks None in place)',
         onPressed: () => _deleteEntry(block, dict, entry),
       ),
     );
@@ -635,8 +606,8 @@ class _KeyedMemoryPageState extends State<KeyedMemoryPage> {
       builder: (context) => AlertDialog(
         title: Text('Delete entry ${keyLabel(entry.key)}?'),
         content: const Text(
-            'The slot is marked None in place - remaining keys keep their '
-            'indexes until the next save.'),
+            'The key is marked None in place - other keys keep their values. '
+            'Re-add the same key to restore it.'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -649,7 +620,7 @@ class _KeyedMemoryPageState extends State<KeyedMemoryPage> {
     );
     if (confirmed != true) return;
     // Real delete (CID 1): the firmware marks the key's meta None in place -
-    // no shifting (Docs/Data Formats.md).
+    // keys are content-addressed, so nothing shifts (Docs/Data Formats.md).
     final ok = await _client.delete(block: block.index, dict: dict.index, key: entry.key);
     if (!ok) {
       _snack('Delete failed');
@@ -663,7 +634,7 @@ class _KeyedMemoryPageState extends State<KeyedMemoryPage> {
       await _loadDictEntries(block, fresh);
     }
     if (mounted) setState(() {});
-    _snack('Entry marked None (save to reclaim)');
+    _snack('Entry marked None (save to reclaim space)');
   }
 
   static String keyLabel(int key) =>

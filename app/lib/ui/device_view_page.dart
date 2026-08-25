@@ -23,11 +23,10 @@ class DeviceViewPage extends StatefulWidget {
   State<DeviceViewPage> createState() => _DeviceViewPageState();
 }
 
-class _DeviceViewPageState extends State<DeviceViewPage> {
+class _DeviceViewPageState extends State<DeviceViewPage>
+    with AutoRefreshMixin<DeviceViewPage> {
   final _db = DeviceDatabase.instance;
   bool _renaming = false;
-  Timer? _autoTimer;
-  Duration? _autoInterval;
   bool _refreshing = false;
 
   @override
@@ -37,23 +36,11 @@ class _DeviceViewPageState extends State<DeviceViewPage> {
   }
 
   @override
-  void dispose() {
-    // Closing the page always stops its autorefresh.
-    _autoTimer?.cancel();
-    super.dispose();
-  }
+  Future<void> onAutoRefresh() => _refresh();
 
-  void _applyAuto(Duration? interval) {
-    _autoTimer?.cancel();
-    _autoTimer = null;
-    setState(() =>
-        _autoInterval = interval == null || interval == Duration.zero
-            ? null
-            : interval);
-    if (_autoInterval != null) {
-      _autoTimer = Timer.periodic(_autoInterval!, (_) => _refresh());
-      _refresh();
-    }
+  @override
+  void onAutoRefreshStarted() {
+    _refresh();
   }
 
   Future<void> _refresh() async {
@@ -67,14 +54,8 @@ class _DeviceViewPageState extends State<DeviceViewPage> {
     }
   }
 
-  String _formatUptime(int? ms) {
-    if (ms == null) return '-';
-    final seconds = ms ~/ 1000;
-    final h = seconds ~/ 3600;
-    final m = (seconds % 3600) ~/ 60;
-    final s = seconds % 60;
-    return '${h}h ${m}m ${s}s';
-  }
+  String _formatUptime(int? ms) =>
+      ms == null ? '-' : formatUptimeMs(ms);
 
   @override
   Widget build(BuildContext context) {
@@ -94,12 +75,11 @@ class _DeviceViewPageState extends State<DeviceViewPage> {
           actions: [
             RefreshButton(
               onRefresh: _refresh,
-              autoActive: _autoTimer != null,
+              autoActive: autoRefreshActive,
               refreshing: _refreshing,
               error: false,
-              selectedInterval:
-                  _autoTimer != null ? _autoInterval : null,
-              onSelectAuto: _applyAuto,
+              selectedInterval: selectedInterval,
+              onSelectAuto: applyAuto,
             ),
           ],
         ),

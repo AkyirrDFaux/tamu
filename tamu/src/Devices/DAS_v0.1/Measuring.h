@@ -205,7 +205,7 @@ static void Measuring_Update(uint8_t index, ResistiveMeasStruct *m, uint16_t raw
         break;
 
     case MeasRawVoltage: // volts
-        in = in * VOLTAGE / ADCRES;
+        in = in * N(VOLTAGE) / ADCRES;
         break;
 
     case MeasRawResistance: // kOhm: R = Rref * V / (1 - V)

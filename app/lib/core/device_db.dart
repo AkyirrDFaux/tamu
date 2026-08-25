@@ -164,16 +164,17 @@ class DeviceDatabase extends ChangeNotifier {
     }
 
     // Time offset (Device view): NTP-style estimate from a Time sync probe
-    // (CID 10). The reply carries {time sent, t1, t2} in DEVICE uptime ms;
-    // theta = (t1 + t2)/2 - t_app tells how the device clock relates to the
-    // app session clock.
-    final tApp = DateTime.now().millisecondsSinceEpoch - _sessionStartMs;
+    // (CID 10). The device replies {time sent, t1 (device rx), t2 (device tx)}
+    // in its synced-clock ms; the app stamps t0 (send) and t3 (reply rx) on
+    // its own session clock, then offset = ((t1 - t0) + (t2 - t3)) / 2.
+    final t0 = DateTime.now().millisecondsSinceEpoch - _sessionStartMs;
     final syncReply = await _request(id, ServiceType.device, 10,
-        payload: uint32ToBytes(tApp & 0xFFFFFFFF));
+        payload: uint32ToBytes(t0 & 0xFFFFFFFF));
     if (syncReply != null && syncReply.length >= 12) {
       final t1 = uint32FromBytes(syncReply, 4);
       final t2 = uint32FromBytes(syncReply, 8);
-      entry.timeOffsetMs = ((t1 + t2) >> 1) - tApp;
+      final t3 = DateTime.now().millisecondsSinceEpoch - _sessionStartMs;
+      entry.timeOffsetMs = (((t1 - t0) + (t2 - t3)) / 2).round();
     }
 
     entry.lastSeen = DateTime.now();
@@ -197,8 +198,28 @@ class DeviceDatabase extends ChangeNotifier {
 
   /// Full sweep: query the core, then walk every registered device from the
   /// SNDB (Device service CID 12). Safe to call repeatedly.
+  Future<void>? _refreshInFlight;
+
   Future<void> refreshNetwork() async {
-    if (_refreshing || !_link.isConnected) return;
+    if (!_link.isConnected) return;
+    // Coalesce concurrent refreshes: `connectTo` kicks one off and page code may
+    // trigger another while it is still running. Returning the in-flight future
+    // means callers actually wait for the full refresh instead of racing ahead
+    // on half-populated entries.
+    final inFlight = _refreshInFlight;
+    if (inFlight != null) {
+      return inFlight;
+    }
+    final run = _doRefresh();
+    _refreshInFlight = run;
+    try {
+      await run;
+    } finally {
+      if (_refreshInFlight == run) _refreshInFlight = null;
+    }
+  }
+
+  Future<void> _doRefresh() async {
     _refreshing = true;
     lastError = null;
     notifyListeners();

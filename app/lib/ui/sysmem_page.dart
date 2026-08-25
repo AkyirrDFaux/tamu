@@ -23,7 +23,8 @@ class SystemMemoryPage extends StatefulWidget {
   State<SystemMemoryPage> createState() => _SystemMemoryPageState();
 }
 
-class _SystemMemoryPageState extends State<SystemMemoryPage> {
+class _SystemMemoryPageState extends State<SystemMemoryPage>
+    with AutoRefreshMixin<SystemMemoryPage> {
   late final SystemMemoryClient _client =
       SystemMemoryClient(deviceId: widget.deviceId);
 
@@ -32,9 +33,6 @@ class _SystemMemoryPageState extends State<SystemMemoryPage> {
   String? _error;
   final Set<int> _expanded = {};
 
-  Timer? _autoTimer;
-  Duration? _autoInterval;
-
   @override
   void initState() {
     super.initState();
@@ -42,10 +40,7 @@ class _SystemMemoryPageState extends State<SystemMemoryPage> {
   }
 
   @override
-  void dispose() {
-    _autoTimer?.cancel();
-    super.dispose();
-  }
+  Future<void> onAutoRefresh() => _refresh();
 
   void _snack(String message) {
     if (!mounted) return;
@@ -73,7 +68,7 @@ class _SystemMemoryPageState extends State<SystemMemoryPage> {
         _blocks = kept;
       }
     });
-    if (_autoTimer == null) await _loadVisibleFields();
+    if (!autoRefreshActive) await _loadVisibleFields();
   }
 
   /// Loads every visible (expanded) block's current values.
@@ -93,16 +88,6 @@ class _SystemMemoryPageState extends State<SystemMemoryPage> {
     for (var f = 0; f < count; f++) {
       await _client.readField(block, f);
     }
-  }
-
-  void _setAutoRefresh(Duration? interval) {
-    _autoTimer?.cancel();
-    _autoTimer = null;
-    _autoInterval = interval;
-    if (interval != null) {
-      _autoTimer = Timer.periodic(interval, (_) => _refresh());
-    }
-    setState(() {});
   }
 
   @override
@@ -143,12 +128,11 @@ class _SystemMemoryPageState extends State<SystemMemoryPage> {
           ),
           RefreshButton(
             onRefresh: _refresh,
-            autoActive: _autoInterval != null,
+            autoActive: autoRefreshActive,
             refreshing: false,
             error: _error != null,
-            selectedInterval: _autoInterval,
-            onSelectAuto: (interval) =>
-                _setAutoRefresh(interval == Duration.zero ? null : interval),
+            selectedInterval: selectedInterval,
+            onSelectAuto: applyAuto,
           ),
         ],
       ),

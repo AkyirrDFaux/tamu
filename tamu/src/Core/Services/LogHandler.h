@@ -17,7 +17,7 @@ void HandleLogHandler(const PacketFrame &frame)
     (void)cid;
 #else
     EnsureLogStorage();
-    if (!LogBuffer || !LogUsed || !LogSeq) return; // Heap allocation failed
+    if (!LogBuffer || !LogUsed || !LogSeq) { DeviceLog("LOGH", "log DB allocation failed"); return; } // Heap allocation failed
 
     static uint32_t log_clock = 0; // monotonic sequence source for "oldest" tracking
 
@@ -51,8 +51,8 @@ void HandleLogHandler(const PacketFrame &frame)
                     oldest_slot = (int)i;
                 }
             }
-            else if (free_slot == -1 && i >= LogCount)
-                free_slot = (int)i;
+            else if (free_slot == -1)
+                free_slot = (int)i; // any unused slot: tail or a cleared-by-ClearReadLogs hole
         }
 
         uint32_t slot;

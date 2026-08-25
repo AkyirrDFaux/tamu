@@ -30,13 +30,6 @@ void SleepMicro(uint32_t us)
     esp_rom_delay_us(us);
 }
 
-// Returns the total amount of DRAM available on the device.
-int32_t GetRAM()
-{
-    // Total DRAM available
-    return (int32_t)heap_caps_get_total_size(MALLOC_CAP_8BIT);
-}
-
 // Returns the current amount of free heap memory.
 int32_t GetFreeRAM()
 {

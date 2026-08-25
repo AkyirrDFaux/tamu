@@ -47,6 +47,20 @@ struct FileEntry
 
 #define TABLE_ENTRY_SIZE sizeof(FileEntry)
 
+// Number of whole pages a byte size occupies, clamped to [1, MAX_DATA_BLOCKS].
+// Plain `(size + PAGE_SIZE - 1) / PAGE_SIZE` overflows uint32 for sizes near
+// 0xFFFFFFFF (the Storage service passes untrusted sizes straight in), silently
+// yielding a tiny block count for a huge file.
+static inline uint32_t BlocksForSize(uint32_t size)
+{
+    if (size > (0xFFFFFFFFu - PAGE_SIZE + 1))
+        return (0xFFFFFFFFu / PAGE_SIZE) + 1; // saturate: no overflow
+    uint32_t blocks = (size + PAGE_SIZE - 1) / PAGE_SIZE;
+    if (blocks == 0) blocks = 1;
+    if (blocks > STORAGE_MAX_BLOCKS) blocks = STORAGE_MAX_BLOCKS;
+    return blocks;
+}
+
 // Number of 32-bit pointer slots in the first (pointer) page
 #define PTR_SLOTS (PAGE_SIZE / 4)
 
@@ -338,8 +352,7 @@ public:
     // existing files and the pointer page. A rotating cursor spreads wear across the storage.
     uint32_t FindSpace(uint32_t size_bytes)
     {
-        uint32_t blocks = (size_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
-        if (blocks == 0) blocks = 1;
+        uint32_t blocks = BlocksForSize(size_bytes);
 
         uint32_t data_start = DataStart();
         uint32_t data_end = DataEnd();
@@ -372,11 +385,17 @@ public:
                 continue;
             }
 
-            // Measure the contiguous free run starting here (allowing wrap-around).
+            // Measure the contiguous free run starting here. The address space is
+            // LINEAR (files are a contiguous [offset, offset+blocks*PAGE) range), so a
+            // run must NOT wrap past the end of the data area: a wrapped run would
+            // allocate pages that physically live at the start of storage, outside the
+            // file's linear range - invisible to BlockUsed (double-allocation) and
+            // unreadable/unwritable through the file API.
             uint32_t run = 0;
             while (run < num_blocks)
             {
-                uint32_t probe = (idx + run) % num_blocks;
+                uint32_t probe = idx + run;
+                if (probe >= num_blocks) break;
                 if (used_bitmap[probe >> 3] & (1u << (probe & 7)))
                     break;
                 run++;
@@ -407,8 +426,7 @@ public:
         uint32_t data_offset = FindSpace(size);
         if (data_offset == 0) return false; // Out of space
 
-        uint32_t data_blocks = (size + PAGE_SIZE - 1) / PAGE_SIZE;
-        if (data_blocks == 0) data_blocks = 1;
+        uint32_t data_blocks = BlocksForSize(size);
         if (!Storage_FlashErase(data_offset, data_blocks * PAGE_SIZE))
             return false;
 
@@ -446,10 +464,8 @@ public:
         if (!ReadTableEntry(idx, &entry))
             return false;
 
-        uint32_t current_blocks = (entry.size + PAGE_SIZE - 1) / PAGE_SIZE;
-        uint32_t new_blocks = (new_size + PAGE_SIZE - 1) / PAGE_SIZE;
-        if (current_blocks == 0) current_blocks = 1;
-        if (new_blocks == 0) new_blocks = 1;
+        uint32_t current_blocks = BlocksForSize(entry.size);
+        uint32_t new_blocks = BlocksForSize(new_size);
 
         if (new_blocks <= current_blocks) {
             // Shrink or same size: same offset, new size record, invalidate old one.
@@ -471,13 +487,20 @@ public:
         }
         if (can_extend) {
             // Erase the newly-added tail pages (they are free, so erasing is safe).
-            if (!Storage_FlashErase(entry.offset + current_blocks * PAGE_SIZE,
-                                    (new_blocks - current_blocks) * PAGE_SIZE))
+            uint32_t tail_offset = entry.offset + current_blocks * PAGE_SIZE;
+            uint32_t tail_blocks = new_blocks - current_blocks;
+            if (!Storage_FlashErase(tail_offset, tail_blocks * PAGE_SIZE))
                 return false;
             FileEntry new_record = entry;
             new_record.size = new_size;
-            if (!WriteFilerecord(new_record))
-                return false;
+            // Reserve the erased tail so a table move triggered by WriteFilerecord
+            // cannot relocate the table onto it (same rule as CreateFile).
+            pending_offset = tail_offset;
+            pending_blocks = tail_blocks;
+            bool ok = WriteFilerecord(new_record);
+            pending_offset = 0;
+            pending_blocks = 0;
+            if (!ok) return false;
             DeleteFilerecord(name);
             return true;
         }
@@ -700,7 +723,7 @@ private:
             // block looks free and FindSpace hands it to another file -> two live records
             // alias the same flash (observed on hardware: ZERO@512 + BETA@512, and after
             // resizing ZERO up, ZERO shadowed BETA's data region).
-            uint32_t blocks = (entry.size + PAGE_SIZE - 1) / PAGE_SIZE;
+            uint32_t blocks = BlocksForSize(entry.size);
             if (blocks == 0) blocks = 1;
             uint32_t end = entry.offset + blocks * PAGE_SIZE;
             if (offset >= start && offset < end)

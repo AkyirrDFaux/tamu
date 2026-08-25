@@ -283,7 +283,7 @@ void HandleSystemMemory(const PacketFrame &frame)
     uint8_t cid = GetServiceCID(frame.srv_tgt);
     if (frame.flags & FLAG_TYPE) return; // Ignore responses
 
-    if (frame.payload_len < sizeof(BlockIndex)) return;
+    if (frame.payload_len < sizeof(BlockIndex)) { DeviceLog("SYSMEM", "short payload (%u B)", (unsigned)frame.payload_len); return; }
     const BlockIndex *idx = reinterpret_cast<const BlockIndex *>(frame.payload);
 
     switch (cid)

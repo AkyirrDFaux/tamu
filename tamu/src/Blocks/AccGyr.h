@@ -13,7 +13,7 @@ struct AccGyrStruct {
     Vector<3> Acceleration;
     Vector<3> AngularVelocity;
     Number AccFilter;
-    Number GyroFilter;
+    Number AngFilter;
 };
 
 const BlockMeta AccGyr_Map[] = {

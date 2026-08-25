@@ -91,63 +91,62 @@ static const char *SNDBTempName()
 
 // Ensures the registry file exists (creating it on first use) and returns true when usable.
 // After a Storage.Format() the file is gone and gets recreated here, so cached state is
-// reset to force a fresh recovery scan. If a previous compaction was interrupted (SNREG
-// missing but the temp file present), the registry is rebuilt from the temp file.
+// reset to force a fresh recovery scan. If a previous compaction was interrupted at ANY
+// stage, the temp file is still present and holds the complete staged set (it is written
+// before SNREG is touched), so the registry is rebuilt from it - whether SNREG is missing,
+// freshly created, or partially rewritten.
 bool SNDB::Available()
 {
     uint32_t sz = Storage.FileExists(SNDBFileName());
-    if (sz == 0xFFFFFFFF)
+    uint32_t temp_sz = Storage.FileExists(SNDBTempName());
+    if (temp_sz != 0xFFFFFFFF)
     {
-        bool recreated = false;
-        uint32_t temp_sz = Storage.FileExists(SNDBTempName());
-        if (temp_sz != 0xFFFFFFFF)
-        {
-            // Interrupted compaction: restore every valid entry from the temp file.
-            DeviceLog("SNDB", "Restoring registry from interrupted compaction");
-            recreated = Storage.CreateFile(SNDBFileName(),
+        // Interrupted compaction: rebuild SNREG from the staged temp file. The temp
+        // always contains the full set, so it is authoritative at every crash window.
+        DeviceLog("SNDB", "Restoring registry from interrupted compaction");
+        Storage.DeleteFile(SNDBFileName());
+        bool recreated = Storage.CreateFile(SNDBFileName(),
                                            SNDB_MAX_ENTRIES * sizeof(RegistryEntry));
-            if (recreated)
-            {
-                int32_t restored = 0;
-                uint32_t num_entries = temp_sz / sizeof(RegistryEntry);
-                for (uint32_t i = 0; i < num_entries && restored < SNDB_MAX_ENTRIES; i++)
-                {
-                    RegistryEntry entry;
-                    if (Storage.ReadFromFile(SNDBTempName(), i * sizeof(RegistryEntry),
-                                             sizeof(entry), (char *)&entry) != sizeof(entry))
-                        break;
-                    if (entry.valid != STATE_VALID)
-                        continue;
-                    Storage.WriteToFile(SNDBFileName(),
-                                        (uint32_t)restored * sizeof(RegistryEntry),
-                                        sizeof(RegistryEntry), (const char *)&entry);
-                    restored++;
-                }
-                recovered = false; // freshly written file: rescan
-                write_head = 0;
-                active_count = 0;
-                iter_pos = 0;
-            }
-            Storage.DeleteFile(SNDBTempName());
-        }
-
-        if (!recreated)
+        if (recreated)
         {
-            if (!Storage.CreateFile(SNDBFileName(), SNDB_MAX_ENTRIES * sizeof(RegistryEntry)))
+            int32_t restored = 0;
+            uint32_t num_entries = temp_sz / sizeof(RegistryEntry);
+            for (uint32_t i = 0; i < num_entries && restored < SNDB_MAX_ENTRIES; i++)
             {
-                DeviceLog("SNDB", "Registry file creation failed!");
-                return false;
+                RegistryEntry entry;
+                if (Storage.ReadFromFile(SNDBTempName(), i * sizeof(RegistryEntry),
+                                         sizeof(entry), (char *)&entry) != sizeof(entry))
+                    break;
+                if (entry.valid != STATE_VALID)
+                    continue;
+                Storage.WriteToFile(SNDBFileName(),
+                                    (uint32_t)restored * sizeof(RegistryEntry),
+                                    sizeof(RegistryEntry), (const char *)&entry);
+                restored++;
             }
-            recovered = false;   // freshly erased file: rescan
-            write_head = 0;
-            active_count = 0;
-            iter_pos = 0;
         }
-
-        sz = Storage.FileExists(SNDBFileName());
-        if (sz == 0xFFFFFFFF)
-            return false;
+        Storage.DeleteFile(SNDBTempName());
+        recovered = false; // freshly written file: rescan
+        write_head = 0;
+        active_count = 0;
+        iter_pos = 0;
     }
+    else if (sz == 0xFFFFFFFF)
+    {
+        if (!Storage.CreateFile(SNDBFileName(), SNDB_MAX_ENTRIES * sizeof(RegistryEntry)))
+        {
+            DeviceLog("SNDB", "Registry file creation failed!");
+            return false;
+        }
+        recovered = false;   // freshly erased file: rescan
+        write_head = 0;
+        active_count = 0;
+        iter_pos = 0;
+    }
+
+    sz = Storage.FileExists(SNDBFileName());
+    if (sz == 0xFFFFFFFF)
+        return false;
     registry_size = sz;
     return registry_size >= sizeof(RegistryEntry);
 }
@@ -346,10 +345,11 @@ bool SNDB::Compact()
                                  sizeof(RegistryEntry), (const char *)&compact_buf[i]);
     }
 
-    // 3. Compaction complete on this boot: drop the staging file.
-    Storage.DeleteFile(SNDBTempName());
+    // 3. Compaction complete on this boot: drop the staging file only AFTER every
+    //    entry was written - it is the intact copy if this boot loses power mid-swap.
     if (!ok)
-        return false;
+        return false; // temp file remains -> next boot restores from it
+    Storage.DeleteFile(SNDBTempName());
 
     active_count = (int32_t)count;
     write_head = count * sizeof(RegistryEntry);

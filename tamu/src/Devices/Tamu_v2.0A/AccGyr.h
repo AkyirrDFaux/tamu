@@ -156,12 +156,12 @@ bool ReadIMUData() {
     }
 
     // Data Processing (scale factors /209 and /939 match the previously-working driver).
-    // Clamp the filter coefficients: a remotely-written AccFilter/GyroFilter of -1 would
+    // Clamp the filter coefficients: a remotely-written AccFilter/AngFilter of -1 would
     // divide by zero, and values outside 0..1 make the low-pass diverge.
     Number acc_filter = AccGyr.AccFilter;
     if (acc_filter < N(0)) acc_filter = N(0);
     if (acc_filter > N(1)) acc_filter = N(1);
-    Number gyro_filter = AccGyr.GyroFilter;
+    Number gyro_filter = AccGyr.AngFilter;
     if (gyro_filter < N(0)) gyro_filter = N(0);
     if (gyro_filter > N(1)) gyro_filter = N(1);
 
@@ -222,7 +222,7 @@ bool OnAccGyrFrequencyChange(const StaticBlockDescriptor& block, uint16_t index,
     ctrl1 = 0; ctrl2 = 0;
     if (LSM6DS3ReadRegs(0x10, &ctrl1, 1) != ESP_OK) return false;
     if (LSM6DS3ReadRegs(0x11, &ctrl2, 1) != ESP_OK) return false;
-    if (ctrl1 != cmd1[0] || ctrl2 != cmd2[0]) return false;
+    if (ctrl1 != cmd1[1] || ctrl2 != cmd2[1]) return false;
 
     AccGyr.SamplingRate = applied_rate;
     return true;

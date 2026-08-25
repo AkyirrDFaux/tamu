@@ -95,12 +95,6 @@ class StorageClient {
     return reply != null;
   }
 
-  Future<bool> resizeFile(String name, int newSize) async {
-    final payload = <int>[...padName(name), ...uint32ToBytes(newSize)];
-    final reply = await _request(4, payload: payload);
-    return reply != null && reply.isNotEmpty && reply[0] != 0;
-  }
-
   Future<bool> renameFile(String oldName, String newName) async {
     final payload = <int>[...padName(oldName), ...padName(newName)];
     final reply = await _request(5, payload: payload);

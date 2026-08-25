@@ -63,11 +63,13 @@ class _BackupPageState extends State<BackupPage> {
       allowedExtensions: ['zip'],
       withData: true,
     );
-    final path = result?.files.singleOrNull?.path;
-    if (path == null) return;
+    final file = result?.files.singleOrNull;
+    if (file == null) return;
     setState(() => _busy = true);
     try {
-      final bytes = readPlatformFile(path);
+      // withData:true puts the content in `bytes`; fall back to reading the
+      // path only when the picker did not return in-memory data.
+      final bytes = file.bytes ?? readPlatformFile(file.path ?? '');
       final backups = parseBackupZip(bytes);
       var totalFields = 0;
       var restoredDevices = 0;

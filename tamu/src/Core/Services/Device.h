@@ -95,6 +95,7 @@ void HandleSNDB(const PacketFrame &frame)
                 DispatchPacket(response);
             } else {
                 // Send an empty response to indicate not found
+                DeviceLog("DEVICE", "SNDB lookup miss (id or sn)");
                 PacketConstruct(&response, frame.id_src, frame.srv_src, frame.srv_tgt,
                                  FLAG_TYPE | FLAG_START | FLAG_STOP, nullptr, 0);
                 DispatchPacket(response);
@@ -113,6 +114,9 @@ void HandleSNDB(const PacketFrame &frame)
                                    ? SNDB::AddDevice(*write_sn, write_id)
                                    : SNDB::RemoveDevice(
                                          SNDB::FindShortID(*write_sn));
+                if (!success) {
+                    DeviceLog("DEVICE", "SNDB write id %u failed", (unsigned)write_id);
+                }
                 // Always acknowledge (empty frame = failure, like the CID 13 not-found case).
                 PacketConstruct(&response, frame.id_src, frame.srv_src, frame.srv_tgt,
                                  FLAG_TYPE | FLAG_START | FLAG_STOP,

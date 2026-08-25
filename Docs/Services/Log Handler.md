@@ -5,7 +5,7 @@ Log Struct:
 | Source is Service (0) or Block (1) | Source Block/Service ID | LogCode | Timestamp (synced) |
 | ---------------------------------- | ----------------------- | ------- | ------------------ |
 | 1 bit                              | 15 bit                  | 16 bit  | 32bit              |
-Error code can be comprised of several segments, origin specific. Usually 8 bit x2.
+Log code can be comprised of several segments, origin specific. Usually 8 bit x2 (category + specific).
 The log handler service sends the log imediately.
 
 If the device is core, it keeps the errors in RAM, with the device of origin, occurance count, and latest timestamp. Database is on heap.

@@ -1,5 +1,6 @@
 #include "driver/uart.h"
 #include <string.h>
+#include "Core/Functions/Bus.h"
 
 #define TXD_PIN (GPIO_NUM_21) // Change to your TX pin
 #define RXD_PIN (GPIO_NUM_20) // Change to your RX pin
@@ -99,6 +100,9 @@ bool SendAndVerifyPacket(const PacketFrame &Data)
     // 3. Prepare for transmission (12 bytes header + payload_len)
     size_t packet_size = 12 + tx_frame.payload_len;
     size_t total_tx_size = 1 + packet_size; // Start byte (0xAA) + packet_size
+    // Start byte + header + payload; the payload is a single wire byte (<= 255),
+    // so the largest frame is 268 bytes. Guarded against PacketConstruct changing.
+    static_assert(MAX_PAYLOAD_SIZE <= 256, "RSBus TX buffer assumes a byte payload len");
     uint8_t tx_buffer[256 + 13];
     tx_buffer[0] = 0xAA;
     memcpy(&tx_buffer[1], &tx_frame, packet_size);
@@ -161,82 +165,11 @@ bool SendAndVerifyPacket(const PacketFrame &Data)
     return false;
 }
 
-/**
- * @brief Receives and validates a full PacketFrame.
- * @param Data Pointer to the struct where the packet will be stored. Assembly writes
- *             directly into it, so the caller must pass the same buffer every call
- *             (ProcessBus uses a single static frame).
- * @return Total bytes read if successful (including start byte), 0 while incomplete.
- *
- * The assembly state persists across calls: a frame split across two ProcessBus()
- * polls continues where it left off instead of being consumed and discarded (bytes
- * are pulled from the UART driver's RX buffer one at a time). If a sender aborts
- * mid-frame, the stale stage consumes following bytes until length/CRC checks fail
- * and the machine falls back to sync-scanning.
- */
-static int RxValidate(PacketFrame *Data)
-{
-    // CRC covers everything from flags through the end of the payload.
-    if (Crc8(&Data->flags, (uint16_t)(11 + Data->payload_len)) != Data->crc8)
-        return 0; // corrupted: keep scanning for the next 0xAA
-    return (int)(1 + 12 + Data->payload_len);
-}
-
+// Receives and validates a full PacketFrame using the shared bus assembler
+// (Core/Functions/Bus.h); the byte source pulls from the ESP32 UART driver.
 int ReceivePacket(PacketFrame *Data)
 {
-    if (!Data) return 0;
-
-    enum RxStage : uint8_t { RX_SYNC, RX_HEADER, RX_PAYLOAD };
-    static uint8_t stage = RX_SYNC;
-    static uint16_t got = 0; // bytes of the current stage stored so far
-
-    for (;;)
-    {
-        uint8_t b = 0;
-        if (uart_read_bytes(UART_NUM_1, &b, 1, 0) != 1)
-            break; // driver RX buffer drained
-
-        switch (stage)
-        {
-        case RX_SYNC:
-            if (b == 0xAA)
-            {
-                stage = RX_HEADER;
-                got = 0;
-            }
-            // else: inter-frame garbage, skip
-            break;
-
-        case RX_HEADER:
-            ((uint8_t *)Data)[got++] = b;
-            if (got < 12)
-                break;
-
-            // Header complete: payload_len is a single byte (<=255) and the payload
-            // buffer holds 256, so no length guard is needed - proceed to the payload
-            // stage (CRC validates the frame on completion).
-            stage = RX_PAYLOAD;
-            got = 0;
-            if (Data->payload_len == 0)
-            {
-                // Zero-payload frames finish here.
-                stage = RX_SYNC;
-                int total = RxValidate(Data);
-                if (total > 0) return total;
-            }
-            break;
-
-        case RX_PAYLOAD:
-            Data->payload[got++] = b;
-            if (got >= Data->payload_len)
-            {
-                stage = RX_SYNC;
-                got = 0;
-                int total = RxValidate(Data);
-                if (total > 0) return total;
-            }
-            break;
-        }
-    }
-    return 0; // incomplete: more bytes may arrive later
+    return ReceivePacketFrame(Data, [](uint8_t &b) -> bool {
+        return uart_read_bytes(UART_NUM_1, &b, 1, 0) == 1;
+    });
 }

@@ -96,8 +96,9 @@ Future<List<int>?> _editSerialNumber(
         FilledButton(
           onPressed: () {
             final hex = controller.text.trim().toUpperCase();
-            if (hex.length != 28 ||
-                int.tryParse(hex.substring(0, 8), radix: 16) == null) {
+            // 28 hex chars = 112 bits; int.tryParse would overflow int64, so
+            // validate the whole string with a regex before parsing the bytes.
+            if (!RegExp(r'^[0-9A-F]{28}$').hasMatch(hex)) {
               return;
             }
             Navigator.pop(context, [

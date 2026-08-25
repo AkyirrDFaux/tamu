@@ -66,10 +66,6 @@ class ConnectionManager extends ChangeNotifier {
   DateTime? _autoConnectSuppressedUntil;
   bool _bleScanActive = false;
 
-  /// True while a scan source is actively being refreshed (green dot).
-  bool get isRefreshing =>
-      _bleScanActive || (_autoTimer != null && source != LinkSource.ble);
-
   /// The visible list: remaining devices, sorted as selected.
   List<DiscoveredLink> get discoveredLinks {
     final links = <DiscoveredLink>[];
@@ -132,8 +128,10 @@ class ConnectionManager extends ChangeNotifier {
   Future<void> refresh() async {
     // A connected session owns the link: scanning (especially BlueZ discovery)
     // alongside live GATT traffic starves the connection and stalls requests,
-    // so enumeration is paused until disconnect.
-    if (_transport != null) return;
+    // so enumeration is paused until disconnect. Also pause while a connect is
+    // still being established (_transport is only set after BLE connect +
+    // service discovery + MTU, which can take seconds).
+    if (_transport != null || _connecting) return;
     // NOTE: BLE entries are MERGED, not cleared, on every refresh: the BlueZ
     // backend only emits a device when its RSSI property CHANGES, so a
     // stationary close-range device stays silent in later scans and clearing
@@ -344,11 +342,11 @@ class ConnectionManager extends ChangeNotifier {
       _onStreamBytes,
       onError: (Object error) {
         AppDiagnostics.log('link', 'packet stream error: $error -> disconnect');
-        disconnect();
+        unawaited(disconnect());
       },
       onDone: () {
         AppDiagnostics.log('link', 'packet stream done -> disconnect');
-        disconnect();
+        unawaited(disconnect());
       },
     );
     notifyListeners();
@@ -419,10 +417,15 @@ class ConnectionManager extends ChangeNotifier {
   }
 
   int _takeTxId() {
-    final txId = _nextTxId;
-    _nextTxId = (_nextTxId + 1) & 0xFF; // full CID range as transaction IDs
-    if (_nextTxId == 0) _nextTxId = 1;
-    return txId;
+    // The CID byte wraps at 256; skip any id still pending so a slow request
+    // can never have its slot silently re-used by a later one.
+    for (var guard = 0; guard < 255; guard++) {
+      final txId = _nextTxId;
+      _nextTxId = (_nextTxId + 1) & 0xFF; // full CID range as transaction IDs
+      if (_nextTxId == 0) _nextTxId = 1;
+      if (!_pending.containsKey(txId)) return txId;
+    }
+    throw const TransportException('No free transaction IDs');
   }
 
   /// Sends a single-packet request to `targetId` and waits for its response

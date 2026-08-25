@@ -119,9 +119,6 @@ void PrintField(const BlockMeta &desc, const void *data_ptr, uint16_t index, boo
         printf("(No Data)\n");
 }
 
-#include <string>
-#include <sstream>
-
 // Helper function to parse CLI strings into raw data buffers
 bool ParseCLIValue(uint16_t type, const char *val_str, void *out_buffer, uint8_t &out_len)
 {
@@ -304,9 +301,6 @@ bool ParseCLIValue(uint16_t type, const char *val_str, void *out_buffer, uint8_t
 
 #include "esp_console.h"
 #include "esp_log.h"
-#include "esp_vfs_dev.h"
-#include "driver/uart.h"
-#include "linenoise/linenoise.h"
 
 // Send a memory read request using the new SRV-based routing
 void SendMemoryRead(uint16_t target, ServiceType svc, BlockIndex idx)

@@ -14,6 +14,7 @@
 - Colour - 4xUint8, RGBA
 - String - Text (8bit per character, standard)
 - Enum - Generic enum, used in dictionaries
+
 ### Generic packet
 
 | CRC8 | Flags | FragID | Payload Len | ID TGT | ID SRC | SRV TGT | SRV SRC | Payload |

@@ -16,8 +16,11 @@ void HandleStorageService(const PacketFrame &frame)
     if (cid >= 64) {
         // --- Write Stream ---
         uint8_t stream_idx = cid - 64;
-        if (stream_idx < MAX_STREAMS && Storage.streams[stream_idx].active) {
-            WriteStream &stream = Storage.streams[stream_idx];
+        if (stream_idx >= MAX_STREAMS || !Storage.streams[stream_idx].active) {
+            DeviceLog("STORAGE", "write to inactive stream %u (CID %u)", (unsigned)stream_idx, (unsigned)cid);
+            return;
+        }
+        WriteStream &stream = Storage.streams[stream_idx];
             // File info is cached at stream open (offset/size); a full table walk per
             // packet would cost O(table) flash reads on every single write chunk.
             uint32_t file_offset = stream.file_offset;
@@ -28,13 +31,17 @@ void HandleStorageService(const PacketFrame &frame)
                 if (stream.current_offset < file_size) {
                     uint32_t chunk_len = frame.payload_len;
                     if (stream.current_offset + chunk_len > file_size) chunk_len = file_size - stream.current_offset;
-                    Storage_FlashWrite(file_offset + stream.current_offset, frame.payload, chunk_len);
+                    if (!Storage_FlashWrite(file_offset + stream.current_offset, frame.payload, chunk_len)) {
+                        DeviceLog("STORAGE", "stream %u flash write failed at %u", (unsigned)stream_idx, (unsigned)stream.current_offset);
+                    }
                     stream.current_offset += chunk_len;
                     if (stream.current_offset >= file_size)
                         stream.active = false; // file complete: stop accepting packets
+                } else {
+                    DeviceLog("STORAGE", "stream %u write past EOF (offset %u >= size %u)",
+                              (unsigned)stream_idx, (unsigned)stream.current_offset, (unsigned)file_size);
                 }
             }
-        }
         return;
     }
 
@@ -89,10 +96,13 @@ void HandleStorageService(const PacketFrame &frame)
                 uint32_t size = *reinterpret_cast<const uint32_t *>(frame.payload + 8);
 
                 bool ok = Storage.CreateFile(name, size);
+                if (!ok) DeviceLog("STORAGE", "create '%.8s' size %u failed", name, (unsigned)size);
                 uint8_t status = ok ? 0x01 : 0x00;
                 PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
                                  FLAG_TYPE | FLAG_START | FLAG_STOP, &status, 1);
                 DispatchPacket(reply);
+            } else {
+                DeviceLog("STORAGE", "create short payload (%u B)", (unsigned)frame.payload_len);
             }
             break;
         }
@@ -115,10 +125,13 @@ void HandleStorageService(const PacketFrame &frame)
                 uint32_t new_size = *reinterpret_cast<const uint32_t *>(frame.payload + 8);
 
                 bool ok = Storage.ResizeFile(name, new_size);
+                if (!ok) DeviceLog("STORAGE", "resize '%.8s' -> %u failed", name, (unsigned)new_size);
                 uint8_t status = ok ? 0x01 : 0x00;
                 PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
                                  FLAG_TYPE | FLAG_START | FLAG_STOP, &status, 1);
                 DispatchPacket(reply);
+            } else {
+                DeviceLog("STORAGE", "resize short payload (%u B)", (unsigned)frame.payload_len);
             }
             break;
         }
@@ -129,10 +142,13 @@ void HandleStorageService(const PacketFrame &frame)
                 const char *new_name = reinterpret_cast<const char *>(frame.payload + 8);
 
                 bool ok = Storage.RenameFile(old_name, new_name);
+                if (!ok) DeviceLog("STORAGE", "rename '%.8s' -> '%.8s' failed", old_name, new_name);
                 uint8_t status = ok ? 0x01 : 0x00;
                 PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
                                  FLAG_TYPE | FLAG_START | FLAG_STOP, &status, 1);
                 DispatchPacket(reply);
+            } else {
+                DeviceLog("STORAGE", "rename short payload (%u B)", (unsigned)frame.payload_len);
             }
             break;
         }
@@ -180,6 +196,7 @@ void HandleStorageService(const PacketFrame &frame)
                     } while (sent_bytes < num_bytes);
                 } else {
                     // File not found or invalid offset
+                    DeviceLog("STORAGE", "read '%.8s' offset %u failed", name, (unsigned)offset);
                     PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
                                      FLAG_TYPE | FLAG_START | FLAG_STOP, nullptr, 0);
                     DispatchPacket(reply);
@@ -196,10 +213,15 @@ void HandleStorageService(const PacketFrame &frame)
                 // Resolve and cache the file location once, at stream open.
                 uint32_t file_offset = 0, file_size = 0;
                 bool file_ok = Storage.GetFileInfo(name, &file_offset, &file_size);
-                if (file_ok && offset > file_size) file_ok = false; // start beyond EOF
+                // A write stream only fills an existing file's bounds; opening at
+                // (or past) EOF leaves every chunk dropped by the write path below,
+                // so reject it instead of handing out a silently-dead stream.
+                if (file_ok && offset >= file_size) file_ok = false;
 
                 uint8_t cid_assigned = 0;
-                if (file_ok) {
+                if (!file_ok) {
+                    DeviceLog("STORAGE", "stream open '%.8s'@%u rejected", name, (unsigned)offset);
+                } else if (file_ok) {
                     for (int stream_idx = 0; stream_idx < MAX_STREAMS; stream_idx++) {
                         if (!Storage.streams[stream_idx].active) {
                             Storage.streams[stream_idx].active = true;
@@ -211,6 +233,9 @@ void HandleStorageService(const PacketFrame &frame)
                             cid_assigned = Storage.streams[stream_idx].cid;
                             break;
                         }
+                    }
+                    if (cid_assigned == 0) {
+                        DeviceLog("STORAGE", "stream open '%.8s': no free stream slot", name);
                     }
                 }
 

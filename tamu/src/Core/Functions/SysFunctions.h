@@ -14,8 +14,6 @@ uint32_t TimeFromBoot();
 void Sleep(uint32_t ms);
 // Blocks for `us` microseconds
 void SleepMicro(uint32_t us);
-// Returns the total system RAM in bytes
-int32_t GetRAM();
 // Returns the amount of free RAM in bytes
 int32_t GetFreeRAM();
 // Sends a packet over the bus and waits for acknowledgement; returns true on success

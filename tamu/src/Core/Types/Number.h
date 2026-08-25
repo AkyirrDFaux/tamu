@@ -346,14 +346,6 @@ inline uint32_t RawRand()
     return next_rand;
 }
 
-// Returns a Number between 0.0 and 1.0
-inline Number RandomPercent()
-{
-    // We take the top 16 bits of the random result and place them
-    // into the fractional part of our 16.16 Number.
-    return Number::FromRaw(RawRand() >> 16);
-}
-
 // Clamps `Value` into the range [0, 1]
 inline Number LimitZeroToOne(Number Value)
 {
@@ -371,28 +363,4 @@ inline Number ByteToPercent(uint8_t Value)
 {
     return LimitZeroToOne(Number(Value) / 255);
 };
-
-// Converts a Number fraction (0.0-1.0) to an 8-bit value (0-255).
-// Scales before truncating so fractions below 1.0 still map correctly
-// (e.g. 0.5 -> 127, not 0).
-inline uint8_t PercentToByte(Number Value)
-{
-    return LimitByte((Value * 255).ToInt());
-};
-
-// Multiplies two byte-percent values (0-255 each) and returns the byte result
-inline uint8_t MultiplyBytePercentByte(uint8_t ByteValue, uint8_t Percent)
-{
-    return (uint8_t)(((int)ByteValue * (int)Percent) / 255);
-};
-
-// Wraps `Value` into the range [-PI, PI]
-inline Number LimitPi(Number Value)
-{
-    while (Value > GetPI())
-        Value -= 2 * GetPI();
-    while (Value < -GetPI())
-        Value += 2 * GetPI();
-    return Value;
-}
 

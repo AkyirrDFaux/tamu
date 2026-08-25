@@ -4,8 +4,8 @@
 /// number of blocks, the second a block's meta + name, the third a field value.
 library;
 
-import 'connection.dart';
-import 'diagnostics.dart';
+
+import 'memory_client.dart';
 import 'protocol.dart';
 import 'types.dart';
 
@@ -37,27 +37,18 @@ class SysBlock {
   BlockType get blockType => meta.blockType;
 }
 
-class SystemMemoryClient {
-  final int deviceId;
+class SystemMemoryClient extends MemoryClientBase {
+  SystemMemoryClient({required super.deviceId});
 
-  SystemMemoryClient({required this.deviceId});
-
-  ConnectionManager get _link => ConnectionManager.instance;
-
-  Future<List<int>?> _request(int cid, {List<int> payload = const []}) async {
-    try {
-      return await _link.request(deviceId, ServiceType.systemMemory, cid,
-          payload: payload);
-    } catch (error) {
-      AppDiagnostics.log('sysmem', 'request failed: $error');
-      return null;
-    }
-  }
+  @override
+  ServiceType get service => ServiceType.systemMemory;
+  @override
+  String get logTag => 'sysmem';
 
   /// Reads the block list (block count + per-block meta and name).
   Future<List<SysBlock>?> readBlocks() async {
-    final summary = await _request(2, payload: const BlockIndex().toBytes());    if (summary == null || summary.length < 5) return null;
-    final count = summary[4];
+    final count = await readBlockCount();
+    if (count == null) return null;
     final blocks = <SysBlock>[];
     for (var i = 0; i < count; i++) {
       final block = await readBlockMeta(i);
@@ -68,35 +59,24 @@ class SystemMemoryClient {
 
   /// Reads one block's meta + name.
   Future<SysBlock?> readBlockMeta(int block) async {
-    final reply = await _request(2,
-        payload: BlockIndex(block: block).toBytes());
-    if (reply == null) return null;
-    var offset = 4; // BlockIndex echo
-    if (reply.length < offset + 4) return null;
-    final meta = BlockMeta.fromBytes(reply, offset);
-    offset += 4;
-    final name = reply.length > offset
-        ? String.fromCharCodes(reply.sublist(offset))
-        : 'Block $block';
-    return SysBlock(index: block, meta: meta, name: name);
+    final payload = await readBlockMetaPayload(block);
+    if (payload == null) return null;
+    return SysBlock(index: block, meta: payload.meta, name: payload.name);
   }
 
   /// Reads one field's current value into `block.fields`.
   Future<SysField?> readField(SysBlock block, int field) async {
-    final reply = await _request(2,
-        payload: BlockIndex(block: block.index, field: field).toBytes());
-    if (reply == null || reply.length < 8) return null;
-    final meta = BlockMeta.fromBytes(reply, 4);
-    final value = reply.sublist(8).toList();
+    final payload =
+        await readValue(BlockIndex(block: block.index, field: field));
+    if (payload == null) return null;
     final existing = block.fields[field];
     if (existing != null) {
       existing
-        ..meta = meta
-        ..value = value;
+        ..meta = payload.meta
+        ..value = payload.value;
       return existing;
     }
-    final result =
-        SysField(index: field, meta: meta, value: value);
+    final result = SysField(index: field, meta: payload.meta, value: payload.value);
     block.fields[field] = result;
     return result;
   }
@@ -104,36 +84,15 @@ class SystemMemoryClient {
   /// Writes a field's value (CID 3). Returns the confirmed value or null.
   Future<List<int>?> writeField(
       SysBlock block, SysField field, List<int> newValue) async {
-    final payload = <int>[
-      ...BlockIndex(block: block.index, field: field.index).toBytes(),
-      ...field.meta.toBytes(),
-      ...newValue,
-    ];
-    final reply = await _request(3, payload: payload);
-    if (reply == null || reply.length <= 8) return null;
-    return reply.sublist(8);
+    return writeValue(
+        BlockIndex(block: block.index, field: field.index), field.meta, newValue);
   }
 
   // --- Backup access ---------------------------------------------------------
 
-  /// Reads one field's backup value (CID 4); null when not stored.
-  Future<List<int>?> readBackupField(SysBlock block, int field) async {
-    final reply = await _request(4,
-        payload: BlockIndex(block: block.index, field: field).toBytes());
-    if (reply == null || reply.length < 8) return null;
-    return reply.sublist(8);
-  }
-
   /// Save (CID 5): invalid block saves everything.
-  Future<bool> save({int? block}) =>
-      _memoryOp(5, block);
+  Future<bool> save({int? block}) => memoryOp(5, block);
 
   /// Recall (CID 6): invalid block recalls everything.
-  Future<bool> recall({int? block}) => _memoryOp(6, block);
-
-  Future<bool> _memoryOp(int cid, int? block) async {
-    final reply = await _request(cid,
-        payload: BlockIndex(block: block ?? invalidBlock).toBytes());
-    return reply != null && reply.isNotEmpty && reply[0] == 0;
-  }
+  Future<bool> recall({int? block}) => memoryOp(6, block);
 }

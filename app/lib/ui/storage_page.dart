@@ -24,14 +24,13 @@ class StoragePage extends StatefulWidget {
   State<StoragePage> createState() => _StoragePageState();
 }
 
-class _StoragePageState extends State<StoragePage> {
+class _StoragePageState extends State<StoragePage>
+    with AutoRefreshMixin<StoragePage> {
   late final StorageClient _client = StorageClient(deviceId: widget.deviceId);
 
   List<FileRecord>? _files;
   String? _error;
   bool _refreshing = false;
-  Timer? _autoTimer;
-  Duration? _autoInterval;
 
   @override
   void initState() {
@@ -40,20 +39,9 @@ class _StoragePageState extends State<StoragePage> {
   }
 
   @override
-  void dispose() {
-    _autoTimer?.cancel();
-    super.dispose();
-  }
+  Future<void> onAutoRefresh() => _refresh();
 
-  void _applyAuto(Duration? interval) {
-    _autoTimer?.cancel();
-    _autoTimer = null;
-    setState(() => _autoInterval =
-        interval == null || interval == Duration.zero ? null : interval);
-    if (_autoInterval != null) {
-      _autoTimer = Timer.periodic(_autoInterval!, (_) => _refresh());
-    }
-  }
+
 
   void _snack(String message) {
     if (!mounted) return;
@@ -194,11 +182,11 @@ class _StoragePageState extends State<StoragePage> {
               icon: const Icon(Icons.create_new_folder_outlined)),
           RefreshButton(
             onRefresh: _refresh,
-            autoActive: _autoInterval != null,
+            autoActive: autoRefreshActive,
             refreshing: _refreshing,
             error: _error != null,
-            selectedInterval: _autoInterval,
-            onSelectAuto: _applyAuto,
+            selectedInterval: selectedInterval,
+            onSelectAuto: applyAuto,
           ),
         ],
       ),
@@ -271,14 +259,12 @@ class _StoragePageState extends State<StoragePage> {
     );
   }
 
-  static String _hex32(int value) =>
-      '0x${value.toRadixString(16).padLeft(8, '0').toUpperCase()}';
-
   /// The file table itself, decoded: one row per Filerecord.
   Future<void> _showTable(FileRecord table) async {
     _snack('Reading file table...');
-    final data = await _client.readFile(table.name,
-        maxBytes: 4096);
+    // The table can span several pages; read it all so the decoded view agrees
+    // with the CID-0 file list (a 4096-byte cap truncates >256-record tables).
+    final data = await _client.readFile(table.name, maxBytes: table.size);
     if (!mounted) return;
     Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => FileTableViewPage(
@@ -438,9 +424,6 @@ class _TableBodyState extends State<_TableBody> {
       ],
     ]);
   }
-
-  static String _hex32(int value) =>
-      '0x${value.toRadixString(16).padLeft(8, '0').toUpperCase()}';
 }
 
 /// Formatted preview of one file's content. Known types render decoded:
@@ -802,3 +785,7 @@ class MemoryBackupView extends StatelessWidget {
         children: [for (final r in rows) r]);
   }
 }
+
+/// 32-bit hex formatting shared by the storage page rows and backup decoder.
+String _hex32(int value) =>
+    '0x${value.toRadixString(16).padLeft(8, '0').toUpperCase()}';

@@ -47,8 +47,36 @@ inline void SendResponse(const PacketFrame &frame, const uint8_t *payload, uint8
 }
 
 // Sends a one-byte status response (0 = OK, otherwise a non-zero failure code).
+// Failures are logged on the core (DeviceLog is a no-op on textless nodes): the
+// service tag, CID and the request's block/field/key give a full audit trail for
+// every rejected memory operation without per-call-site logging.
 inline void RespondStatus(const PacketFrame &frame, bool ok)
 {
+    if (!ok)
+    {
+        const char *tag = "MEM";
+        uint8_t svc = (uint8_t)GetServiceType(frame.srv_tgt);
+        switch (GetServiceType(frame.srv_tgt))
+        {
+            case ServiceType::SystemMemory:   tag = "SYSMEM"; break;
+            case ServiceType::DynamicMemory:  tag = "DYNMEM"; break;
+            case ServiceType::KeyedMemory:    tag = "KEYMEM"; break;
+            case ServiceType::Storage:        tag = "STORAGE"; break;
+            default: break;
+        }
+        uint16_t block = INVALID_INDEX, field = INVALID_INDEX, key = INVALID_INDEX;
+        if (frame.payload_len >= sizeof(BlockIndex))
+        {
+            const BlockIndex *idx = reinterpret_cast<const BlockIndex *>(frame.payload);
+            block = idx->Block; field = idx->Field; key = idx->Key;
+        }
+        DeviceLog(tag, "CID %u failed block=%u field=%u key=%u",
+                  (unsigned)GetServiceCID(frame.srv_tgt),
+                  (unsigned)block, (unsigned)field, (unsigned)key);
+        // Structured report (LogHandler CID 0): reaches the core's log DB even
+        // from textless nodes; code = CID so failures dedup per service+op.
+        ReportLog(MakeLog(false, svc, GetServiceCID(frame.srv_tgt), 0));
+    }
     uint8_t status = ok ? 0 : 0xFF;
     SendResponse(frame, &status, 1);
 }
@@ -220,7 +248,8 @@ struct DynamicBlockDescriptor
         return true;
     }
 
-    // Removes the field at `index`, compacting the data and map arrays.
+    // Removes the field at `index`, compacting the data and map arrays (used to clear
+    // a deleted keyed dictionary's stale entries before re-inserting it fresh).
     bool Remove(uint16_t index)
     {
         if (index >= map_count)
@@ -498,34 +527,6 @@ struct KeyedBlockDescriptor : public DynamicBlockDescriptor
                 return true;
             }
             offset += AlignTo4(sizeof(BlockMeta) + m->Size);
-        }
-        return false;
-    }
-
-    // Removes the keyed entry `key` from dictionary field `field_idx`.
-    bool RemoveKey(uint16_t field_idx, uint8_t key)
-    {
-        FieldResult field = this->Get(field_idx);
-        if (!field.Data)
-            return false;
-        uint8_t *cursor = static_cast<uint8_t *>(field.Data);
-        uint16_t offset = 0;
-        while (offset + sizeof(BlockMeta) <= field.Descriptor.Size)
-        {
-            BlockMeta *m = reinterpret_cast<BlockMeta *>(cursor + offset);
-            uint16_t entry_size = AlignTo4(sizeof(BlockMeta) + m->Size);
-            if (!KeyedEntryFits(m->Size, offset, field.Descriptor.Size))
-                break;
-            if (m->Key == key)
-            {
-                uint16_t tail = field.Descriptor.Size - (offset + entry_size);
-                if (tail > 0)
-                    memmove(cursor + offset, cursor + offset + entry_size, tail);
-                this->map[field_idx].Size -= entry_size;
-                this->length -= entry_size;
-                return true;
-            }
-            offset += entry_size;
         }
         return false;
     }

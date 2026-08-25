@@ -22,7 +22,8 @@ class DynamicMemoryPage extends StatefulWidget {
   State<DynamicMemoryPage> createState() => _DynamicMemoryPageState();
 }
 
-class _DynamicMemoryPageState extends State<DynamicMemoryPage> {
+class _DynamicMemoryPageState extends State<DynamicMemoryPage>
+    with AutoRefreshMixin<DynamicMemoryPage> {
   late final DynamicMemoryClient _client =
       DynamicMemoryClient(deviceId: widget.deviceId);
 
@@ -31,8 +32,6 @@ class _DynamicMemoryPageState extends State<DynamicMemoryPage> {
   String? _error;
   final Set<int> _expanded = {};
 
-  Timer? _autoTimer;
-  Duration? _autoInterval;
 
   @override
   void initState() {
@@ -41,10 +40,8 @@ class _DynamicMemoryPageState extends State<DynamicMemoryPage> {
   }
 
   @override
-  void dispose() {
-    _autoTimer?.cancel();
-    super.dispose();
-  }
+  Future<void> onAutoRefresh() => _refresh();
+
 
   void _snack(String message) {
     if (!mounted) return;
@@ -68,7 +65,7 @@ class _DynamicMemoryPageState extends State<DynamicMemoryPage> {
         _blocks = kept;
       }
     });
-    if (_autoTimer == null) await _loadVisibleFields();
+    if (!autoRefreshActive) await _loadVisibleFields();
   }
 
   Future<void> _loadVisibleFields() async {
@@ -88,101 +85,24 @@ class _DynamicMemoryPageState extends State<DynamicMemoryPage> {
     }
   }
 
-  void _applyAuto(Duration? interval) {
-    _autoTimer?.cancel();
-    _autoTimer = null;
-    setState(() => _autoInterval =
-        interval == null || interval == Duration.zero ? null : interval);
-    if (_autoInterval != null) {
-      _autoTimer = Timer.periodic(_autoInterval!, (_) => _refresh());
-    }
-  }
 
   // ---------------------------------------------------------------------------
   // Actions
   // ---------------------------------------------------------------------------
 
-  /// Name + block-type prompt shared by create and edit flows. With `withIndex`
-  /// the user may pin the new block to an explicit index (filling a None
-  /// placeholder); an empty index appends.
-  Future<(String, BlockType?, int?)?> _promptNameAndType(
-      {String initialName = '',
-      BlockType? initialType,
-      required String title,
-      bool withIndex = false}) async {
-    final nameController = TextEditingController(text: initialName);
-    final indexController = TextEditingController();
-    BlockType selected = initialType ?? BlockType.undefined;
-    return await showDialog<(String, BlockType, int?)>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: Text(title),
-          content: Column(mainAxisSize: MainAxisSize.min, children: [
-            TextField(
-              controller: nameController,
-              autofocus: true,
-              maxLength: 16,
-              decoration: const InputDecoration(labelText: 'Block name'),
-            ),
-            if (withIndex) ...[
-              const SizedBox(height: 8),
-              TextField(
-                controller: indexController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                    labelText: 'Index (empty = append)',
-                    helperText: 'Fills a deleted (None) slot when given'),
-              ),
-            ],
-            const SizedBox(height: 8),
-            DropdownButtonFormField<BlockType>(
-              initialValue: selected,
-              decoration: const InputDecoration(labelText: 'Block type'),
-              items: [
-                for (final t in BlockType.values)
-                  if (t != BlockType.deleted)
-                    DropdownMenuItem(value: t, child: Text(t.label)),
-              ],
-              onChanged: (t) => setState(() => selected = t ?? BlockType.undefined),
-            ),
-          ]),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancel')),
-            FilledButton(
-              onPressed: () {
-                final name = nameController.text.trim();
-                if (name.isEmpty) return;
-                final idxText = indexController.text.trim();
-                final idx = idxText.isEmpty
-                    ? null
-                    : int.tryParse(idxText);
-                if (idxText.isNotEmpty && idx == null) return;
-                Navigator.pop(context, (name, selected, idx));
-              },
-              child: const Text('OK'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Future<void> _createBlock() async {
-    final result =
-        await _promptNameAndType(title: 'New dynamic block', withIndex: true);
+    final result = await promptBlockNameAndType(context,
+        title: 'New dynamic block', withIndex: true);
     if (result == null || !mounted) return;
     final (name, type, index) = result;
-    final created = await _client.createBlock(
-        type ?? BlockType.undefined, name, index: index);
+    final created =
+        await _client.createBlock(type, name, index: index);
     _snack(created != null ? 'Block created' : 'Create failed');
     await _refresh();
   }
 
   Future<void> _editBlock(DynBlock block) async {
-    final result = await _promptNameAndType(
+    final result = await promptBlockNameAndType(context,
         title: 'Edit block', initialName: block.name, initialType: block.blockType);
     if (result == null || !mounted) return;
     final (name, type, _) = result;
@@ -219,8 +139,11 @@ class _DynamicMemoryPageState extends State<DynamicMemoryPage> {
         index: target);
     _snack(confirmed != null ? 'Entry added' : 'Add failed');
     await _refresh();
-    if (_expanded.contains(block.index)) {
-      await _loadBlockFields(block);
+    // _refresh() swaps in fresh DynBlock objects; reload into the fresh one so
+    // the new entry renders instead of a detached copy's spinner.
+    final fresh = _blocks?.where((b) => b.index == block.index).firstOrNull;
+    if (fresh != null && _expanded.contains(fresh.index)) {
+      await _loadBlockFields(fresh);
       if (mounted) setState(() {});
     }
   }
@@ -336,11 +259,11 @@ class _DynamicMemoryPageState extends State<DynamicMemoryPage> {
               onPressed: _createBlock),
           RefreshButton(
             onRefresh: _refresh,
-            autoActive: _autoInterval != null,
+            autoActive: autoRefreshActive,
             refreshing: false,
             error: _error != null,
-            selectedInterval: _autoInterval,
-            onSelectAuto: _applyAuto,
+            selectedInterval: selectedInterval,
+            onSelectAuto: applyAuto,
           ),
         ],
       ),
@@ -568,8 +491,10 @@ class _DynamicMemoryPageState extends State<DynamicMemoryPage> {
         await _client.delete(block: block.index, field: field.index);
     _snack(ok ? 'Entry deleted' : 'Delete failed');
     await _refresh();
-    if (_expanded.contains(block.index)) {
-      await _loadBlockFields(block);
+    // Reload into the fresh block from _blocks (the captured one is detached).
+    final fresh = _blocks?.where((b) => b.index == block.index).firstOrNull;
+    if (fresh != null && _expanded.contains(fresh.index)) {
+      await _loadBlockFields(fresh);
       if (mounted) setState(() {});
     }
   }

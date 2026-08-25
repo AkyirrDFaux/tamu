@@ -4,6 +4,213 @@ Status of items from the docs-vs-implementation audit and follow-up work.
 
 ## Resolved (code)
 
+### Dictionary types + key-addressed entries + service error logging (2026-08-25)
+
+- **Dictionary type is now settable in the app**: keyed dictionaries previously had no
+  type affordance (they were created as `undefined` and immutable). The client gained
+  `writeDictMeta` (CID 3, key invalid - the firmware's "update the dictionary's type"
+  branch, which also clears a deleted dict's stale entries when filling it) and
+  `appendDict` now takes an optional `type`. The dict tile shows the type (tappable chip +
+  a "tune" icon) and the add-dictionary flow asks for a type. Verified live: type write
+  sticks (`undefined -> integer`), append-with-type sticks (`colour`).
+- **Keyed entries are key-addressed (order irrelevant)**: the delete-entry confirmation
+  and tooltip claimed "indexes stay" - wrong framing for keyed entries, which are
+  identified by their key (0x00-0xFF), not position. Re-worded to "the key is marked None
+  in place; re-add the same key to restore it". The entry list now renders keys in
+  ascending order (via `KeyedDict.sortedKeys`) for a stable display, since storage order
+  carries no meaning.
+- **Every service/module logs its errors**: the memory services previously had zero
+  logging. `RespondStatus` now logs every failure on the core (DeviceLog with service tag,
+  CID, and the request's block/field/key) AND broadcasts a structured LogHandler report
+  (source = service, code = CID) so failures from textless nodes (DAS) reach the core's
+  log DB too. Short-payload (no-BlockIndex) requests log in each memory service. The
+  Storage service logs create/resize/rename/read failures, stream opens rejected or on a
+  full/inactive/completed stream, and flash-write failures. Device service logs SNDB
+  lookup misses and write failures. LogHandler logs allocation failures. Dispatcher logs
+  unhandled services. SNDB already logged its own failures. CLI suite still 98/98 (the
+  `logs` test now sees device entries from the newly-logged failures).
+
+### Deep bug-hunt round 2026-08-25 (storage, SNDB, transports)
+
+Firmware:
+- **FindSpace allocated wrapped runs past the end of the data area (fixed)**: a free run
+  spanning the end of flash and wrapping back to the start was measured as contiguous
+  (`probe = (idx + run) % num_blocks`), so the file's linear
+  `[offset, offset + blocks*PAGE)` range extended past `DataEnd` while the wrapped pages
+  physically live at the START of storage - invisible to `BlockUsed` (double-allocation)
+  and unreadable through the file API. Runs are now measured linearly (no wrap).
+- **ResizeFile grow-in-place skipped the pending reservation (fixed)**: `CreateFile` and
+  the resize-copy path reserve the freshly-erased area (`pending_offset/pending_blocks`)
+  before `WriteFilerecord`, but the grow-in-place path erased its new tail pages and wrote
+  the record without reserving them - a table move triggered by a full table could relocate
+  onto the erased tail. Now reserved like `CreateFile`.
+- **Block-count math overflowed for huge sizes (fixed)**: `(size + PAGE_SIZE - 1) / PAGE_SIZE`
+  wraps in uint32 for sizes near 0xFFFFFFFF (the Storage service accepts untrusted sizes),
+  silently yielding a 1-block allocation for a giant file. All four call sites
+  (`FindSpace`/`CreateFile`/`ResizeFile`/`BlockUsed`) now use `BlocksForSize()`, which
+  saturates and clamps.
+- **SNDB compaction recovery only triggered when SNREG was missing (fixed)**: `Available()`
+  rebuilt from the temp file only when `FileExists(SNREG)` failed, so a power loss during
+  the mid-swap entry rewrite (SNREG freshly created/partially written, temp still present)
+  permanently lost the staged entries. Recovery now restores from the temp whenever it
+  exists (it is written before SNREG is touched, so it is authoritative at every crash
+  window), and `Compact()` deletes the temp only after every entry is confirmed written.
+- **AccGyr ODR write was never verified (fixed)**: `OnAccGyrFrequencyChange` compared the
+  read-back config register against `cmd1[0]`/`cmd2[0]` - the *register addresses*
+  (0x10/0x11), never the written values - so it always failed and `SamplingRate` never
+  updated even though the ODR write succeeded. Now compares against `cmd1[1]`/`cmd2[1]`.
+- **Comm LED stuck on after BLE activity (fixed)**: the BLE RX (`onWrite`) and TX notify
+  paths turned the activity LED on but nothing ever turned it off. `AppBLETick` now turns
+  it off at the start of every tick, making it a per-burst pulse like the USB path.
+- **Dead `RemoveKey` removed** (the keyed None-in-place deletion replaced it); `Remove`
+  stays - the keyed dict-fill path uses it to clear a deleted dictionary's stale entries.
+
+App:
+- **Backup restore wrote nothing (fixed)**: `restoreDevice`'s compatibility check built a
+  `BlockMeta` from `flagsAndType` only, so its `size` defaulted to 0 and `liveField.meta.size
+  != 0` skipped every non-empty field. It now compares against the captured `field.size`.
+- **Dynamic Memory page reloaded fields into a detached block (fixed)**: after `_refresh()`
+  swapped in fresh `DynBlock` objects, `_addEntry`/`_deleteEntry` called `_loadBlockFields`
+  on the captured pre-refresh block, so new entries showed a permanent spinner and deleted
+  entries kept their old value. Both now re-look-up the fresh block from `_blocks`.
+- **Remote link loss now tears the session down (fixed)**: BLE never surfaced a remote
+  disconnect (the `characteristicValueStream` has no completion), so the app stayed
+  "connected" to a dead link. The BLE transport now listens to
+  `UniversalBle.connectionStream(deviceId)` and raises a "BLE link lost" error on a remote
+  drop; the USB transport forwards the reader stream's `onDone` (clean port close/unplug).
+  Both transports guard against double-closing their stream controllers.
+- **Autorefresh menu dismissal no longer disables autorefresh (fixed)**: "Off" popped `null`
+  - indistinguishable from a barrier dismissal - so cancelling the dialog turned the
+  setting off. "Off" now pops `Duration.zero`; a dismissal (`null`) leaves the setting
+  untouched.
+- **Backup restore used the picker path instead of in-memory bytes (fixed)**: with
+  `withData: true` the content is in `file.bytes`; the code re-read `file.path`, which can
+  be ephemeral/absent. Uses `bytes` with a path fallback.
+- **Keyed next-key suggestion could overflow the 2-char field (fixed)**: a max key of 0xFF
+  suggested 0x100, truncated by `maxLength: 2` to "10" (a potential collision). The
+  suggestion is now clamped to 0xFF.
+- **Storage table preview no longer capped at 4096 bytes (fixed)**: `_showTable` read only
+  4 KB, truncating >256-record tables so the decoded view disagreed with the CID-0 list;
+  it now reads the table's full size.
+
+Investigated, no change needed:
+- **DAS `Storage_FlashWrite` unaligned read-modify-write**: the preserve-the-surrounding-
+  bytes read uses `maddr[byte_addr - faddr]`, which for the leading partial word indexes
+  negative and wraps. In practice offsets are always >= one page in the real flows, so the
+  wraparound reads the correct preceding flash byte; it is technically UB but works on the
+  current hardware and was verified on it. Documented here rather than risk touching the
+  verified flash path.
+- **Vysi1Display shape divisions by unconfigured dimensions**: `Number::operator/` returns
+  0 on a zero divisor, so an unconfigured geometry renders as a dot/black rather than
+  NaN/crash - not a fault.
+- **`FileCount()`/`ReadFileEntry` 8-bit width**: bounded by real storage geometry (Tamu
+  ~237 pages, DAS 32), so >255 files cannot occur; no wire change needed.
+- **SNDB `FindLowestAvailableID` vs explicit IDs >= 512**: unreachable (max 128 entries can
+  never fill the 512-ID bitmap; explicit large IDs don't collide with the <512 scan).
+- **Backup-view toggle shows current (not backup) values** on the memory pages: the backup
+  values were only reachable via the (removed) CID-4 readers; the toggle switches the
+  save/recall actions. Worth clarifying in the page, not a data-loss bug.
+
+### Streamlining round 2026-08-25 (dead code removed, autorefresh unified)
+
+Firmware (behavior-neutral; verified by the fast USB HIL 8/8 after reflash):
+- **DAS `Log.h` dead branch removed**: every DAS build defines `DEVICE_LOG_TEXTLESS`
+  (Main.cpp), so the `#ifndef` DeviceLog/DeviceLogHex definitions were never compiled
+  and only duplicated the no-op macros. The file is now just the explanatory comment.
+- **`GetRAM()` removed** (Tamu Base.h + SysFunctions.h declaration): no caller existed
+  anywhere, and the DAS never implemented it (any future call would fail to link).
+- **`DeviceType::Valu_v2_0` removed** (firmware Enums.h + app `DeviceType.valuV20` +
+  its icon): no Valu firmware/env exists; undocumented in Docs/Devices.md. 0x02 is now
+  an unused value.
+- **Unused fixed-point helpers removed**: `RandomPercent`, `PercentToByte`,
+  `MultiplyBytePercentByte`, `LimitPi` (Number.h), `CreateRotation2D`,
+  `InverseTransform2D` (Matrix.h), `ColourClass::FromHSV` (Colour.h). Zero callers;
+  `CreateTransform2D` (used by the LED display + CLI) was kept.
+- **RSBus TX buffer guarded**: `static_assert(MAX_PAYLOAD_SIZE <= 256, ...)` in the
+  Tamu `SendAndVerifyPacket` so the 269-byte staging buffer can never silently
+  overflow if the payload cap ever grows.
+
+App:
+- **Autorefresh unified into `AutoRefreshMixin`** (widgets.dart): the Devices,
+  Device-view, System/Dynamic/Keyed Memory, Storage, Log and SNDB pages each carried
+  their own `Timer` + `_autoInterval` + `_applyAuto` + (for the Devices tab) ShellTabs
+  listener. The mixin owns the timer, remembers the interval, pauses tab pages while
+  hidden, and re-runs an immediate refresh on enable; pages only override
+  `onAutoRefresh`, `onAutoRefreshStarted` and `shellTabIndex`. The Connection page
+  keeps its distinct ConnectionManager-driven timer.
+- **Dead client code removed**: the CID-4 backup-value readers
+  (`readBackupField`/`readBackupEntry`/`readBackupValue`) had no caller (backup uses
+  live `readField` + `save`), and `StorageClient.resizeFile` had no UI (the App Storage
+  doc only promises upload/download).
+- **Transaction-ID reuse guarded**: `_takeTxId()` skips IDs still in `_pending`, so a
+  slow request can never have its 8-bit CID slot silently re-used by a later one
+  (worst case with all 255 IDs in flight it throws instead of colliding).
+
+### Consolidation + audit round 2026-08-25 (bugs fixed, code streamlined)
+
+Firmware:
+- **DAS Raw-Voltage scale bug (fixed)**: `MeasRawVoltage` multiplied the raw ADC sample by the
+  `double` literal `VOLTAGE` (`3.3`); `Number` has no `double` overload, so the implicit
+  double->int32 conversion truncated 3.3 to 3 and every voltage reading was ~9 % low. Now
+  `N(VOLTAGE)`.
+- **Storage write stream at EOF silently dropped data (fixed)**: Write Stream Open (CID 7)
+  accepted `offset == file_size`, but the write path only programs while
+  `current_offset < file_size`, so every chunk was discarded and the stream never closed.
+  Open now rejects `offset >= file_size`.
+- **RSBus receive path consolidated (refactor)**: the byte-identical
+  SYNC/HEADER/PAYLOAD assembler + CRC validation lived twice (`Tamu_v2.0A/RSBus.h` and
+  `DAS_v0.1/RSBus.h`). It now lives once in `Core/Functions/Bus.h`
+  (`RxValidateFrame` + `ReceivePacketFrame<ReadByte>`); each device keeps a tiny byte-source
+  lambda. Verified live (CLI 98/98, both buses).
+- **Log DB never reused cleared holes (fixed)**: the free-slot scan only picked slots
+  `>= LogCount`, so `ClearReadLogs` holes below it were never reused and the heap database
+  grew to `LOG_MAX_CAPACITY` even with free slots. Any unused slot is now eligible.
+- **AccGyr field renamed to match the doc**: `GyroFilter` -> `AngFilter` (Docs/Modules/
+  Generic system blocks.md names the field AngFilter; schema is index-addressed so no wire
+  impact).
+- Small hygiene: `BLE_CHUNK` comment corrected (480 is a buffer cap, not the MTU-185
+  payload); duplicate `extern LogSeq/LogCapacity` removed from Functions/Log.h; unused
+  `<string>`/`<sstream>` and `esp_vfs_dev`/`driver/uart`/`linenoise` includes removed from
+  the Tamu CLI Block.h.
+
+App:
+- **Memory clients consolidated (refactor)**: System/Dynamic/Keyed clients duplicated the
+  same request/read-block/read-value/write-value/backup-read/save-recall plumbing. A shared
+  `MemoryClientBase` (`lib/core/memory_client.dart`) now carries it; each client keeps only
+  its model types and type-specific ops.
+- **Save/Recall success semantics unified (bug fixed)**: the firmware answers Save/Recall
+  with a single status byte (0 = ok, 0xFF = failure). sysmem checked `reply[0] == 0`, but
+  dynmem/keyedmem treated ANY reply (including 0xFF) as success - a failed save/recall was
+  reported as OK. All three now use the status byte.
+- **Refresh no longer races a connect in flight (bug fixed)**: `refresh()` only paused while
+  `_transport != null`, but `_transport` is assigned only AFTER BLE connect + discovery +
+  MTU (seconds); the 1 s autorefresh kept re-enumerating mid-connect, which can starve the
+  GATT session. Now paused while `_connecting` too.
+- **Time-offset estimate was not the NTP formula (bug fixed)**: the CID 10 probe averaged
+  `(t1 + t2)/2` (t2 is a single-sample reply's second stamp) and never captured t3. Now
+  `offset = ((t1 - t0) + (t2 - t3)) / 2` with t0/t3 stamped on the app clock.
+- **Serial-number editor could crash (bug fixed)**: the OK handler validated only the first
+  8 hex chars then `int.parse`'d every later pair, throwing `FormatException` on a bad tail;
+  the whole 28-char string is now regex-validated (a whole-string `int.tryParse` would
+  overflow int64 on 112 bits).
+- **Autoconnect help text now matches behaviour**: the Settings page documents
+  "Long-press a device on the Connection page to set it" - long-press on a connection tile
+  now sets that device as the autoconnect target (previously only the connected banner's
+  autorenew icon did).
+- **Refresh button while connected now does something**: the manager pauses scanning while
+  connected, so the connection-page refresh now re-pulls the network
+  (`DeviceDatabase.refreshNetwork()`) instead of spinning up and doing nothing.
+- **`refreshNetwork()` coalesces concurrent calls (fixed)**: `connectTo` kicks one off
+  unawaited, and page code can trigger another while it is still running; the second call
+  used to no-op on the `_refreshing` guard and callers then read half-populated entries
+  (the HIL "network discovery" test saw a type/capability-less core). Concurrent callers
+  now await the in-flight refresh. USB HIL 8/8 after this fix.
+- **Shared helpers**: `promptBlockNameAndType` (Dynamic/Keyed create/edit dialogs were
+  byte-identical), `formatUptimeMs` (Device view + Log page), single `_hex32` in the storage
+  page. Dead code removed: `ConnectionManager.isRefreshing`, `addrInvalid`/`addrBroadcast`
+  constants. Unawaited futures in the connection page / `_attach` teardown are now
+  `unawaited(...)`.
+
 ### BLE session dead after switching from USB (fixed, 2026-08-25)
 
 - **Root cause**: after the app closed its USB port (link switch / manual
@@ -551,6 +758,13 @@ Script, App Interface, Router.
 
 ## Needs hardware verification
 
+- BLE HIL back-to-back flakiness (known, pre-existing): running the whole
+  `hil_live_test.dart` suite over BLE stresses the link with rapid connect ->
+  work -> disconnect -> reconnect cycles (the device defers its advertising
+  restart). Tests intermittently drop mid-session ("Disconnected"), and the
+  failing test rotates between runs. The isolated user-facing flows
+  (`ble_ping_test`, `ble_switch_test`, `ble_scan_probe_test`) pass reliably
+  every time, and the USB HIL suite is 8/8.
 - App Interface end-to-end: USB CLI -> attach app mid-session (priority switch), detach
   on unplug back to CLI; USB and BLE sessions each running memory/storage/log reads;
   BLE MTU negotiation chunk sizes; comm LED activity pulses.

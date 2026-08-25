@@ -21,41 +21,27 @@ class DevicesPage extends StatefulWidget {
 
 enum _ViewMode { list, graph }
 
-class _DevicesPageState extends State<DevicesPage> {
+class _DevicesPageState extends State<DevicesPage>
+    with AutoRefreshMixin<DevicesPage> {
   final _db = DeviceDatabase.instance;
   _ViewMode _mode = _ViewMode.list;
-  Timer? _autoTimer;
-  Duration? _autoInterval;
   bool _refreshing = false;
+
+  @override
+  int? get shellTabIndex => 1; // Devices tab
 
   @override
   void initState() {
     super.initState();
-    ShellTabs.instance.addListener(_onTabChanged);
     _refresh();
   }
 
   @override
-  void dispose() {
-    ShellTabs.instance.removeListener(_onTabChanged);
-    _autoTimer?.cancel();
-    super.dispose();
-  }
+  Future<void> onAutoRefresh() => _refresh();
 
-  /// Autorefresh only runs while the Devices tab is visible.
-  void _onTabChanged() {
-    final visible = ShellTabs.instance.index == 1;
-    _applyAuto(visible ? _autoInterval : null, remember: false);
-  }
-
-  void _applyAuto(Duration? interval, {bool remember = true}) {
-    _autoTimer?.cancel();
-    _autoTimer = null;
-    if (remember) setState(() => _autoInterval = interval);
-    if (interval != null && interval != Duration.zero) {
-      _autoTimer = Timer.periodic(interval, (_) => _refresh());
-      if (!_db.isRefreshing) _refresh();
-    }
+  @override
+  void onAutoRefreshStarted() {
+    if (!_db.isRefreshing) _refresh();
   }
 
   // Filters (Docs/App/Devices.md bottom of screen).
@@ -110,13 +96,11 @@ class _DevicesPageState extends State<DevicesPage> {
           actions: [
             RefreshButton(
               onRefresh: _refresh,
-              autoActive: _autoTimer != null,
+              autoActive: autoRefreshActive,
               refreshing: _db.isRefreshing || _refreshing,
               error: _db.lastError != null,
-              selectedInterval:
-                  _autoTimer != null ? _autoInterval : null,
-              onSelectAuto: (interval) =>
-                  _applyAuto(interval == Duration.zero ? null : interval),
+              selectedInterval: selectedInterval,
+              onSelectAuto: applyAuto,
             ),
           ],
         ),

@@ -73,11 +73,29 @@ class _ConnectionPageState extends State<ConnectionPage> {
             '${_manager.connectedName}')));
   }
 
+  Future<void> _setAutoConnectFor(DiscoveredLink link) async {
+    final settings = AppSettings.instance;
+    await settings.load();
+    settings.update(() {
+      settings.autoConnect = true;
+      settings.autoConnectDeviceId = link.id;
+    });
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Autoconnect target set: ${link.name}')));
+  }
+
   Future<void> _refreshOnce() async {
     if (_refreshing) return;
     setState(() => _refreshing = true);
     try {
-      await _manager.refresh();
+      // While connected the manager pauses scanning; a manual refresh then means
+      // re-pulling the live network instead of re-scanning the air.
+      if (_manager.isConnected) {
+        await DeviceDatabase.instance.refreshNetwork();
+      } else {
+        await _manager.refresh();
+      }
     } finally {
       if (mounted) setState(() => _refreshing = false);
     }
@@ -176,7 +194,8 @@ class _ConnectionPageState extends State<ConnectionPage> {
                     IconButton(
                       icon: const Icon(Icons.link_off),
                       tooltip: 'Disconnect',
-                      onPressed: () => _manager.disconnect(manual: true),
+                      onPressed: () =>
+                          unawaited(_manager.disconnect(manual: true)),
                     ),
                   ]),
                 ),
@@ -226,8 +245,11 @@ class _ConnectionPageState extends State<ConnectionPage> {
           return;
         }
         // Populate the Devices page as soon as a session is up.
-        DeviceDatabase.instance.refreshNetwork();
+        unawaited(DeviceDatabase.instance.refreshNetwork());
       },
+      // Long-press picks this device as the autoconnect target (Settings page
+      // documents "Long-press a device on the Connection page to set it").
+      onLongPress: () => _setAutoConnectFor(link),
     );
   }
 }

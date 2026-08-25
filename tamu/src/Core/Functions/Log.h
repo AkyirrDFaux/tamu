@@ -56,8 +56,6 @@ extern bool *LogUsed;
 extern uint32_t *LogSeq;
 extern uint32_t LogCapacity; // allocated slots
 extern uint32_t LogCount;    // high-water mark of ever-used slots
-extern uint32_t *LogSeq;
-extern uint32_t LogCapacity;
 
 // Allocates the initial database on first use (no-op afterwards).
 inline void EnsureLogStorage()

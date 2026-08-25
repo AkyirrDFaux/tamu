@@ -28,6 +28,7 @@ class BleTransport implements Transport {
   final _linkController = StreamController<Uint8List>.broadcast();
   final BleLengthParser _parser = BleLengthParser();
   StreamSubscription<Uint8List>? _notifySub;
+  StreamSubscription<bool>? _connSub;
   int _mtu = 247;
   bool _closed = false;
 
@@ -93,6 +94,15 @@ class BleTransport implements Transport {
         .listen((value) {
       if (!_closed) _linkController.add(value);
     });
+    // Surface a REMOTE link loss (device moved out of range, powered off, ...).
+    // connectionStream emits false on disconnect; our own close() sets _closed
+    // first so the teardown is never mistaken for a drop. The error propagates
+    // through packetStream to ConnectionManager's onError -> session teardown.
+    _connSub = UniversalBle.connectionStream(deviceId).listen((connected) {
+      if (!connected && !_closed) {
+        _linkController.addError(const TransportException('BLE link lost'));
+      }
+    });
     // Negotiate a large MTU so stream chunks stay big; fall back silently on
     // platforms that ignore the request (iOS negotiates automatically).
     try {
@@ -113,9 +123,10 @@ class BleTransport implements Transport {
   Future<void> close() async {
     _closed = true;
     await _notifySub?.cancel();
+    await _connSub?.cancel();
     try {
       await UniversalBle.disconnect(deviceId);
     } catch (_) {}
-    await _linkController.close();
+    if (!_linkController.isClosed) await _linkController.close();
   }
 }

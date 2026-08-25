@@ -105,6 +105,11 @@ class UsbTransport implements Transport {
         }
       },
       onError: (Object error) => _streamController.addError(error),
+      // A clean port close/unplug completes the stream; completing packetStream
+      // lets ConnectionManager's onDone tear the session down (like a BLE drop).
+      onDone: () {
+        if (!_streamController.isClosed) _streamController.close();
+      },
     );
   }
 
@@ -127,7 +132,7 @@ class UsbTransport implements Transport {
     _port?.close();
     _port?.dispose();
     _port = null;
-    await _linkController.close();
-    await _streamController.close();
+    if (!_linkController.isClosed) await _linkController.close();
+    if (!_streamController.isClosed) await _streamController.close();
   }
 }

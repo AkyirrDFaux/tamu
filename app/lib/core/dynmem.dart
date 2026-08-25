@@ -5,8 +5,8 @@
 /// the number of entries (map count).
 library;
 
-import 'connection.dart';
-import 'diagnostics.dart';
+
+import 'memory_client.dart';
 import 'protocol.dart';
 import 'types.dart';
 
@@ -37,30 +37,18 @@ class DynBlock {
   int get fieldCount => meta.size;
 }
 
-class DynamicMemoryClient {
-  final int deviceId;
+class DynamicMemoryClient extends MemoryClientBase {
+  DynamicMemoryClient({required super.deviceId});
 
-  DynamicMemoryClient({required this.deviceId});
-
-  ConnectionManager get _link => ConnectionManager.instance;
-
-  Future<List<int>?> _request(int cid,
-      {List<int> payload = const [], Duration timeout = const Duration(seconds: 2)}) async {
-    try {
-      return await _link.request(deviceId, ServiceType.dynamicMemory, cid,
-          payload: payload, timeout: timeout);
-    } catch (error) {
-      AppDiagnostics.log('dynmem', 'request failed: $error');
-      return null;
-    }
-  }
+  @override
+  ServiceType get service => ServiceType.dynamicMemory;
+  @override
+  String get logTag => 'dynmem';
 
   /// Reads the block list. The summary reply is BlockIndex + 1 byte count.
   Future<List<DynBlock>?> readBlocks() async {
-    final summary =
-        await _request(2, payload: const BlockIndex().toBytes());
-    if (summary == null || summary.length < 5) return null;
-    final count = summary[4];
+    final count = await readBlockCount();
+    if (count == null) return null;
     final blocks = <DynBlock>[];
     for (var i = 0; i < count; i++) {
       final block = await readBlockMeta(i);
@@ -77,33 +65,24 @@ class DynamicMemoryClient {
 
   /// Reads one block's meta + name (field index invalid in the request).
   Future<DynBlock?> readBlockMeta(int block) async {
-    final reply = await _request(2,
-        payload: BlockIndex(block: block).toBytes());
-    if (reply == null || reply.length < 8) return null;
-    var offset = 4; // BlockIndex echo
-    final meta = BlockMeta.fromBytes(reply, offset);
-    offset += 4;
-    final name = reply.length > offset
-        ? String.fromCharCodes(reply.sublist(offset))
-        : 'Block $block';
-    return DynBlock(index: block, meta: meta, name: name);
+    final payload = await readBlockMetaPayload(block);
+    if (payload == null) return null;
+    return DynBlock(index: block, meta: payload.meta, name: payload.name);
   }
 
   /// Reads one entry's current value into `block.fields`.
   Future<DynField?> readField(DynBlock block, int field) async {
-    final reply = await _request(2,
-        payload: BlockIndex(block: block.index, field: field).toBytes());
-    if (reply == null || reply.length < 8) return null;
-    final meta = BlockMeta.fromBytes(reply, 4);
-    final value = reply.sublist(8).toList();
+    final payload =
+        await readValue(BlockIndex(block: block.index, field: field));
+    if (payload == null) return null;
     final existing = block.fields[field];
     if (existing != null) {
       existing
-        ..meta = meta
-        ..value = value;
+        ..meta = payload.meta
+        ..value = payload.value;
       return existing;
     }
-    final result = DynField(index: field, meta: meta, value: value);
+    final result = DynField(index: field, meta: payload.meta, value: payload.value);
     block.fields[field] = result;
     return result;
   }
@@ -123,14 +102,7 @@ class DynamicMemoryClient {
         size: newValue.length,
       );
     }
-    final payload = <int>[
-      ...BlockIndex(block: block.index, field: field.index).toBytes(),
-      ...meta.toBytes(),
-      ...newValue,
-    ];
-    final reply = await _request(3, payload: payload);
-    if (reply == null || reply.length < 8) return null;
-    return reply.sublist(8);
+    return writeValue(BlockIndex(block: block.index, field: field.index), meta, newValue);
   }
 
   /// Creates a new block whose value/name is `name` (CID 3, invalid block).
@@ -141,7 +113,7 @@ class DynamicMemoryClient {
       flagsAndType: type.value,
       size: nameBytes.length,
     );
-    final reply = await _request(index != null ? 0 : 3,
+    final reply = await request(index != null ? 0 : 3,
         payload: [
           ...BlockIndex(block: index ?? invalidIndex).toBytes(),
           ...desc.toBytes(),
@@ -159,7 +131,7 @@ class DynamicMemoryClient {
       flagsAndType: (type ?? block.blockType).value,
       size: nameBytes.length,
     );
-    final reply = await _request(3, payload: [
+    final reply = await request(3, payload: [
       ...BlockIndex(block: block.index).toBytes(),
       ...desc.toBytes(),
       ...nameBytes,
@@ -177,21 +149,16 @@ class DynamicMemoryClient {
   /// type and flags; `value` the initial bytes.
   Future<List<int>?> appendEntry(DynBlock block, BlockMeta meta, List<int> value,
       {int? index}) async {
-    final payload = <int>[
-      ...BlockIndex(block: block.index,
-          field: index ?? block.fieldCount).toBytes(),
-      ...meta.toBytes(),
-      ...value,
-    ];
-    final reply = await _request(3,
-        payload: payload, timeout: const Duration(seconds: 4));
-    if (reply == null || reply.length < 8) return null;
-    return reply.sublist(8);
+    return writeValue(
+        BlockIndex(block: block.index, field: index ?? block.fieldCount),
+        meta,
+        value,
+        timeout: const Duration(seconds: 4));
   }
 
   /// Deletes a block / entry (marked Deleted; deallocated on save).
   Future<bool> delete({required int block, int? field}) async {
-    final reply = await _request(1,
+    final reply = await request(1,
         payload:
             BlockIndex(block: block, field: field ?? invalidIndex).toBytes());
     // Success signalling varies by level (empty vs single-status payloads);
@@ -199,25 +166,9 @@ class DynamicMemoryClient {
     return reply != null;
   }
 
-  /// Reads one entry's backup value (CID 4); null when not stored.
-  Future<List<int>?> readBackupField(DynBlock block, int field) async {
-    final reply = await _request(4,
-        payload: BlockIndex(block: block.index, field: field).toBytes());
-    if (reply == null || reply.length < 8) return null;
-    return reply.sublist(8);
-  }
-
   /// Save (CID 5): invalid block saves everything.
-  Future<bool> save({int? block}) => _memoryOp(5, block);
+  Future<bool> save({int? block}) => memoryOp(5, block);
 
   /// Recall (CID 6): invalid block recalls everything.
-  Future<bool> recall({int? block}) => _memoryOp(6, block);
-
-  Future<bool> _memoryOp(int cid, int? block) async {
-    final reply = await _request(cid,
-        payload: BlockIndex(block: block ?? invalidBlock).toBytes());
-    // Success signalling varies by level (empty vs single-status payloads);
-    // any answer at all means the device processed the request.
-    return reply != null;
-  }
+  Future<bool> recall({int? block}) => memoryOp(6, block);
 }

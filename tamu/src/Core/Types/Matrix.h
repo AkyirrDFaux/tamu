@@ -79,22 +79,6 @@ public:
         return result;
     }
 
-    // Static helper to create a 2D rotation matrix
-    static Matrix<2, 2> CreateRotation2D(Number radians)
-    {
-        Matrix<2, 2> mat;
-
-        Number c = cos(radians);
-        Number s = sin(radians);
-
-        mat(0, 0) = c;
-        mat(0, 1) = s * Number(-1); // -sin(theta)
-        mat(1, 0) = s;
-        mat(1, 1) = c;
-
-        return mat;
-    }
-
     // Builds a 3x3 homogeneous transformation matrix from a rotation angle, translation and scale
     static Matrix<3, 3> CreateTransform2D(Number angle, const Vector<2> &translation, const Vector<2> &scale = {N(1.0), N(1.0)})
     {
@@ -123,28 +107,6 @@ public:
         mat(1, 2) = (r10 * translation[0]) + (r11 * translation[1]);
 
         return mat;
-    }
-
-    // Returns the inverse of this 2D transformation matrix. A singular (or near-singular)
-    // matrix returns the identity instead of a zero/garbage inverse.
-    Matrix<3, 3> InverseTransform2D() const
-    {
-        Number a = (*this)(0, 0), b = (*this)(0, 1), c = (*this)(0, 2);
-        Number d = (*this)(1, 0), e = (*this)(1, 1), f = (*this)(1, 2);
-        Number det = a * e - b * d;
-
-        if (det == Number(0))
-            return Identity();
-
-        Matrix<3, 3> inv;
-        inv(0, 0) = e / det;
-        inv(0, 1) = -b / det;
-        inv(0, 2) = (b * f - c * e) / det;
-        inv(1, 0) = -d / det;
-        inv(1, 1) = a / det;
-        inv(1, 2) = (c * d - a * f) / det;
-        inv(2, 2) = 1; // Homogeneous
-        return inv;
     }
 
     // Static factory for Identity Matrix

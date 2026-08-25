@@ -6,8 +6,8 @@
 /// dictionary BlockMeta followed by the contained key ids as a byte array.
 library;
 
-import 'connection.dart';
-import 'diagnostics.dart';
+
+import 'memory_client.dart';
 import 'protocol.dart';
 import 'types.dart';
 
@@ -32,6 +32,10 @@ class KeyedDict {
   KeyedDict({required this.index, required this.meta, required this.keys});
 
   int get entryCount => meta.size;
+
+  /// Keys in ascending order for a stable display (entries are key-addressed;
+  /// the storage order is irrelevant, so the UI sorts for readability).
+  List<int> get sortedKeys => [...keys]..sort();
 }
 
 /// A user-created keyed block.
@@ -52,30 +56,18 @@ class KeyedBlock {
   int get dictCount => meta.size;
 }
 
-class KeyedMemoryClient {
-  final int deviceId;
+class KeyedMemoryClient extends MemoryClientBase {
+  KeyedMemoryClient({required super.deviceId});
 
-  KeyedMemoryClient({required this.deviceId});
-
-  ConnectionManager get _link => ConnectionManager.instance;
-
-  Future<List<int>?> _request(int cid,
-      {List<int> payload = const [], Duration timeout = const Duration(seconds: 2)}) async {
-    try {
-      return await _link.request(deviceId, ServiceType.keyedMemory, cid,
-          payload: payload, timeout: timeout);
-    } catch (error) {
-      AppDiagnostics.log('keyedmem', 'request failed: $error');
-      return null;
-    }
-  }
+  @override
+  ServiceType get service => ServiceType.keyedMemory;
+  @override
+  String get logTag => 'keyedmem';
 
   /// Reads the block list (summary reply: BlockIndex + 1 byte count).
   Future<List<KeyedBlock>?> readBlocks() async {
-    final summary =
-        await _request(2, payload: const BlockIndex().toBytes());
-    if (summary == null || summary.length < 5) return null;
-    final count = summary[4];
+    final count = await readBlockCount();
+    if (count == null) return null;
     final blocks = <KeyedBlock>[];
     for (var i = 0; i < count; i++) {
       final block = await readBlockMeta(i);
@@ -91,46 +83,34 @@ class KeyedMemoryClient {
   }
 
   Future<KeyedBlock?> readBlockMeta(int block) async {
-    final reply =
-        await _request(2, payload: BlockIndex(block: block).toBytes());
-    if (reply == null || reply.length < 8) return null;
-    var offset = 4;
-    final meta = BlockMeta.fromBytes(reply, offset);
-    offset += 4;
-    final name = reply.length > offset
-        ? String.fromCharCodes(reply.sublist(offset))
-        : 'Block $block';
-    return KeyedBlock(index: block, meta: meta, name: name);
+    final payload = await readBlockMetaPayload(block);
+    if (payload == null) return null;
+    return KeyedBlock(index: block, meta: payload.meta, name: payload.name);
   }
 
   /// Reads one dictionary: its BlockMeta (Size = number of keys) + key id array.
   Future<KeyedDict?> readDict(KeyedBlock block, int dict) async {
-    final reply = await _request(2,
-        payload: BlockIndex(block: block.index, field: dict).toBytes());
-    if (reply == null || reply.length < 8) return null;
-    final meta = BlockMeta.fromBytes(reply, 4);
-    final keys = reply.sublist(8).toList();
-    final result = KeyedDict(index: dict, meta: meta, keys: keys);
+    final payload =
+        await readValue(BlockIndex(block: block.index, field: dict));
+    if (payload == null) return null;
+    final result = KeyedDict(index: dict, meta: payload.meta, keys: payload.value);
     block.dicts[dict] = result;
     return result;
   }
 
   /// Reads one keyed entry's value into `block.entries`.
   Future<KeyedEntry?> readEntry(KeyedBlock block, int dict, int key) async {
-    final reply = await _request(2,
-        payload:
-            BlockIndex(block: block.index, field: dict, key: key).toBytes());
-    if (reply == null || reply.length < 8) return null;
-    final meta = BlockMeta.fromBytes(reply, 4);
-    final value = reply.sublist(8).toList();
+    final payload = await readValue(
+        BlockIndex(block: block.index, field: dict, key: key));
+    if (payload == null) return null;
     final existing = block.entries[dict]?[key];
     if (existing != null) {
       existing
-        ..meta = meta
-        ..value = value;
+        ..meta = payload.meta
+        ..value = payload.value;
       return existing;
     }
-    final result = KeyedEntry(key: key, meta: meta, value: value);
+    final result = KeyedEntry(key: key, meta: payload.meta, value: payload.value);
     block.entries.putIfAbsent(dict, () => {})[key] = result;
     return result;
   }
@@ -138,14 +118,10 @@ class KeyedMemoryClient {
   /// Writes a keyed entry (CID 3); creates it when missing. Returns confirmed bytes.
   Future<List<int>?> writeEntry(
       KeyedBlock block, int dict, KeyedEntry entry, List<int> newValue) async {
-    final payload = <int>[
-      ...BlockIndex(block: block.index, field: dict, key: entry.key).toBytes(),
-      ...entry.meta.toBytes(),
-      ...newValue,
-    ];
-    final reply = await _request(3, payload: payload);
-    if (reply == null || reply.length < 8) return null;
-    return reply.sublist(8);
+    return writeValue(
+        BlockIndex(block: block.index, field: dict, key: entry.key),
+        entry.meta,
+        newValue);
   }
 
   /// Creates a new keyed block named by `name`. Returns assigned index or null.
@@ -154,7 +130,7 @@ class KeyedMemoryClient {
   Future<int?> createBlock(BlockType type, String name, {int? index}) async {
     final nameBytes = name.codeUnits.take(16).toList();
     final desc = BlockMeta(flagsAndType: type.value, size: nameBytes.length);
-    final reply = await _request(index != null ? 0 : 3, payload: [
+    final reply = await request(index != null ? 0 : 3, payload: [
       ...BlockIndex(block: index ?? invalidIndex).toBytes(),
       ...desc.toBytes(),
       ...nameBytes,
@@ -175,7 +151,7 @@ class KeyedMemoryClient {
       flagsAndType: (type ?? block.blockType).value,
       size: nameBytes.length,
     );
-    final reply = await _request(3, payload: [
+    final reply = await request(3, payload: [
       ...BlockIndex(block: block.index).toBytes(),
       ...desc.toBytes(),
       ...nameBytes,
@@ -183,17 +159,30 @@ class KeyedMemoryClient {
     return reply != null && reply.length >= 8;
   }
 
-  /// Appends an empty dictionary to a block (CID 3 at dict index == map_count),
-  /// or fills a None placeholder at `index` when given (indexes stay stable).
-  Future<bool> appendDict(KeyedBlock block, {int? index}) async {
-    final reply = await _request(
+  /// Appends a dictionary to a block (CID 3 at dict index == map_count), or
+  /// fills a None placeholder at `index` when given (dict indexes stay stable).
+  /// The dictionary's initial type is `undefined` unless `type` is given.
+  Future<bool> appendDict(KeyedBlock block, {int? index, DataType? type}) async {
+    final reply = await request(
         3,
         payload: [
           ...BlockIndex(block: block.index,
               field: index ?? block.dictCount).toBytes(),
-          ...BlockMeta(flagsAndType: DataType.undefined.value).toBytes(),
+          ...BlockMeta(
+              flagsAndType: (type ?? DataType.undefined).value).toBytes(),
         ],
         timeout: const Duration(seconds: 4));
+    return reply != null && reply.length >= 8;
+  }
+
+  /// Sets a dictionary's data type (CID 3 with key invalid - the firmware's
+  /// "dictionary itself: update its type only" branch). Returns true when the
+  /// device echoes the write.
+  Future<bool> writeDictMeta(KeyedBlock block, int dict, DataType type) async {
+    final reply = await request(3, payload: [
+      ...BlockIndex(block: block.index, field: dict).toBytes(),
+      ...BlockMeta(flagsAndType: type.value).toBytes(),
+    ], timeout: const Duration(seconds: 4));
     return reply != null && reply.length >= 8;
   }
 
@@ -201,7 +190,7 @@ class KeyedMemoryClient {
   /// carries the dict BlockMeta followed by aligned [BlockMeta + value] pairs.
   /// Returns entries (including None-marked placeholders) or null.
   Future<List<KeyedEntry>?> readAllDictEntries(KeyedBlock block, int dict) async {
-    final reply = await _request(7,
+    final reply = await request(7,
         payload: BlockIndex(block: block.index, field: dict).toBytes(),
         timeout: const Duration(seconds: 4));
     if (reply == null || reply.length < 8) return null;
@@ -233,20 +222,16 @@ class KeyedMemoryClient {
   /// A None-typed meta with no value marks the key deleted in place.
   Future<List<int>?> writeKeyValue(
       KeyedBlock block, int dict, int key, BlockMeta meta, List<int> value) async {
-    final reply = await _request(3, payload: [
-      ...BlockIndex(block: block.index, field: dict, key: key).toBytes(),
-      ...meta.toBytes(),
-      ...value,
-    ], timeout: const Duration(seconds: 4));
-    // Success echo = BlockIndex(4) + BlockMeta(4) + value; an empty-value
-    // (None delete) write legitimately echoes exactly 8 bytes.
-    if (reply == null || reply.length < 8) return null;
-    return reply.sublist(8);
+    return writeValue(
+        BlockIndex(block: block.index, field: dict, key: key),
+        meta,
+        value,
+        timeout: const Duration(seconds: 4));
   }
 
   /// Deletes a block / dictionary / keyed entry (whichever levels are valid).
   Future<bool> delete({required int block, int? dict, int? key}) async {
-    final reply = await _request(1,
+    final reply = await request(1,
         payload: BlockIndex(
                 block: block, field: dict ?? invalidIndex, key: key ?? invalidIndex)
             .toBytes());
@@ -255,25 +240,7 @@ class KeyedMemoryClient {
     return reply != null;
   }
 
-  /// Reads one keyed entry's backup value (CID 4); null when not stored.
-  Future<List<int>?> readBackupEntry(
-      KeyedBlock block, int dict, int key) async {
-    final reply = await _request(4,
-        payload:
-            BlockIndex(block: block.index, field: dict, key: key).toBytes());
-    if (reply == null || reply.length < 8) return null;
-    return reply.sublist(8);
-  }
+  Future<bool> save({int? block}) => memoryOp(5, block);
 
-  Future<bool> save({int? block}) => _memoryOp(5, block);
-
-  Future<bool> recall({int? block}) => _memoryOp(6, block);
-
-  Future<bool> _memoryOp(int cid, int? block) async {
-    final reply = await _request(cid,
-        payload: BlockIndex(block: block ?? invalidBlock).toBytes());
-    // Success signalling varies by level (empty vs single-status payloads);
-    // any answer at all means the device processed the request.
-    return reply != null;
-  }
+  Future<bool> recall({int? block}) => memoryOp(6, block);
 }

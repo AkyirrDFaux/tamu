@@ -13,10 +13,6 @@ const int flagStart = 1 << 1;
 const int flagStop = 1 << 2;
 const int flagType = 1 << 3; // 0 = request, 1 = response
 
-// Address constants.
-const int addrInvalid = 0x0000;
-const int addrBroadcast = 0xFFFF;
-
 /// Legacy placeholder address. The firmware rewrites id_src on app frames (the core
 /// proxies the app), so this value is inert - kept only as a safe default.
 const int appSourceId = 0xFFFE;

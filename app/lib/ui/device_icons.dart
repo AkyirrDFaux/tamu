@@ -6,7 +6,6 @@ import '../core/types.dart';
 /// types").
 IconData deviceTypeIcon(DeviceType type) => switch (type) {
       DeviceType.tamuV20A => Icons.developer_board,
-      DeviceType.valuV20 => Icons.tv,
       DeviceType.dualAnalogSensor => Icons.sensors,
       DeviceType.unknown => Icons.devices_other,
     };

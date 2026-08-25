@@ -20,12 +20,11 @@ class LogViewerPage extends StatefulWidget {
   State<LogViewerPage> createState() => _LogViewerPageState();
 }
 
-class _LogViewerPageState extends State<LogViewerPage> {
+class _LogViewerPageState extends State<LogViewerPage>
+    with AutoRefreshMixin<LogViewerPage> {
   List<LogEntry>? _logs;
   String? _error;
   bool _loading = false;
-  Timer? _autoTimer;
-  Duration? _autoInterval;
 
   /// null = show every device's entries.
   int? _deviceFilter;
@@ -37,20 +36,9 @@ class _LogViewerPageState extends State<LogViewerPage> {
   }
 
   @override
-  void dispose() {
-    _autoTimer?.cancel();
-    super.dispose();
-  }
+  Future<void> onAutoRefresh() => _fetch();
 
-  void _applyAuto(Duration? interval) {
-    _autoTimer?.cancel();
-    _autoTimer = null;
-    setState(() => _autoInterval =
-        interval == null || interval == Duration.zero ? null : interval);
-    if (_autoInterval != null) {
-      _autoTimer = Timer.periodic(_autoInterval!, (_) => _fetch());
-    }
-  }
+
 
   Future<void> _fetch() async {
     if (!ConnectionManager.instance.isConnected || _loading) return;
@@ -143,11 +131,11 @@ class _LogViewerPageState extends State<LogViewerPage> {
               icon: const Icon(Icons.delete_sweep_outlined)),
           RefreshButton(
             onRefresh: _fetch,
-            autoActive: _autoInterval != null,
+            autoActive: autoRefreshActive,
             refreshing: _loading,
             error: _error != null,
-            selectedInterval: _autoInterval,
-            onSelectAuto: _applyAuto,
+            selectedInterval: selectedInterval,
+            onSelectAuto: applyAuto,
           ),
         ],
       ),
@@ -268,11 +256,5 @@ class LogEntry {
 
   String codeText() => '0x${code.toRadixString(16).padLeft(4, '0').toUpperCase()}';
 
-  static String formatUptime(int ms) {
-    final seconds = ms ~/ 1000;
-    final h = seconds ~/ 3600;
-    final m = (seconds % 3600) ~/ 60;
-    final s = seconds % 60;
-    return '${h}h ${m}m ${s}s';
-  }
+  static String formatUptime(int ms) => formatUptimeMs(ms);
 }

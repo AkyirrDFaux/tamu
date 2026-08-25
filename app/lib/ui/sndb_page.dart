@@ -17,13 +17,12 @@ class SndbPage extends StatefulWidget {
   State<SndbPage> createState() => _SndbPageState();
 }
 
-class _SndbPageState extends State<SndbPage> {
+class _SndbPageState extends State<SndbPage>
+    with AutoRefreshMixin<SndbPage> {
   final _db = DeviceDatabase.instance;
   List<(int, String)>? _entries;
   String? _error;
   bool _refreshing = false;
-  Timer? _autoTimer;
-  Duration? _autoInterval;
 
   @override
   void initState() {
@@ -32,20 +31,9 @@ class _SndbPageState extends State<SndbPage> {
   }
 
   @override
-  void dispose() {
-    _autoTimer?.cancel();
-    super.dispose();
-  }
+  Future<void> onAutoRefresh() => _refresh();
 
-  void _applyAuto(Duration? interval) {
-    _autoTimer?.cancel();
-    _autoTimer = null;
-    setState(() => _autoInterval =
-        interval == null || interval == Duration.zero ? null : interval);
-    if (_autoInterval != null) {
-      _autoTimer = Timer.periodic(_autoInterval!, (_) => _refresh());
-    }
-  }
+
 
   Future<void> _refresh() async {
     if (!ConnectionManager.instance.isConnected || _refreshing) return;
@@ -161,11 +149,11 @@ class _SndbPageState extends State<SndbPage> {
               icon: const Icon(Icons.person_add_alt_1_outlined)),
           RefreshButton(
             onRefresh: _refresh,
-            autoActive: _autoInterval != null,
+            autoActive: autoRefreshActive,
             refreshing: _refreshing,
             error: _error != null,
-            selectedInterval: _autoInterval,
-            onSelectAuto: _applyAuto,
+            selectedInterval: selectedInterval,
+            onSelectAuto: applyAuto,
           ),
         ],
       ),

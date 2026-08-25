@@ -131,6 +131,7 @@ void DispatchPacket(const PacketFrame &frame)
 #endif
 
             default:
+                DeviceLog("DISP", "unhandled service %u CID %u", (unsigned)target_srv, (unsigned)cid);
                 ReportLog(MakeLog(false, (uint16_t)target_srv, cid, 0));
                 break;
         }

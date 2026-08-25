@@ -83,6 +83,22 @@ void main() {
     print('[K] entry(d1,k3)=${e2 == null ? "NULL" : e2.value} '
         'dict1 after=${d1b == null ? "NULL" : d1b.keys}');
 
+    // ---- dictionary type set + append-with-type ----
+    final typeSet = await keyed.writeDictMeta(fresh2, 1, DataType.integer);
+    final d1Typed = await keyed.readDict(fresh2, 1);
+    // ignore: avoid_print
+    print('[K] dict1 type set=$typeSet readback=${d1Typed?.meta.dataType}');
+    expect(typeSet, isTrue, reason: 'dict type write failed');
+    expect(d1Typed?.meta.dataType, DataType.integer,
+        reason: 'dict type did not stick');
+    final dictWithType = await keyed.appendDict(fresh2, type: DataType.colour);
+    final fresh3 = (await keyed.readBlocks())!.first;
+    final d3 = await keyed.readDict(fresh3, fresh3.dictCount - 1);
+    // ignore: avoid_print
+    print('[K] append-with-type=$dictWithType type=${d3?.meta.dataType}');
+    expect(d3?.meta.dataType, DataType.colour,
+        reason: 'append-with-type did not stick');
+
     // ---- dynmem type change ----
     final dyn = DynamicMemoryClient(deviceId: 1);
     final dExisting = await dyn.readBlocks();
