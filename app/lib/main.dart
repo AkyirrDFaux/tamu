@@ -1,13 +1,17 @@
 import 'package:flutter/material.dart';
 
 import 'core/connection.dart';
+import 'core/settings.dart';
 import 'ui/backup_page.dart';
 import 'ui/connection_page.dart';
 import 'ui/devices_page.dart';
 import 'ui/settings_page.dart';
 import 'ui/theme.dart';
+import 'ui/widgets.dart';
 
 void main() {
+  // Load persisted settings (autoconnect target etc.) before the UI starts.
+  AppSettings.instance.load();
   runApp(const TamuApp());
 }
 
@@ -56,7 +60,10 @@ class _ShellPageState extends State<ShellPage> {
               final connected = ConnectionManager.instance.isConnected;
               return NavigationRail(
                 selectedIndex: _index,
-                onDestinationSelected: (i) => setState(() => _index = i),
+                onDestinationSelected: (i) {
+                  setState(() => _index = i);
+                  ShellTabs.instance.update(i);
+                },
                 labelType: NavigationRailLabelType.all,
                 leading: Padding(
                   padding: const EdgeInsets.symmetric(vertical: 12),

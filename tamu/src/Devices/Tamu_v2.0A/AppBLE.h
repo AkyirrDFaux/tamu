@@ -15,7 +15,7 @@
 
 #define BLE_CHUNK 480          // stream bytes per notification (+2 byte length prefix);
                                // fits the Android default ATT MTU of 185
-#define BLE_PACE_MS 4          // min spacing between notifications
+#define BLE_PACE_MS 0          // no artificial pacing; the app-task loop (~2 ms) throttles
 
 static NimBLEServer *BleServer = nullptr;
 static NimBLECharacteristic *BleTx = nullptr;
@@ -79,6 +79,10 @@ class BleServerCallbacks : public NimBLEServerCallbacks
     {
         BleMtu = connInfo.getMTU();
         BleConnected = true;
+        // Prefer 2M PHY when the central supports it: halves air time per packet
+        // (helps multi-notification transfers); stays at 1M otherwise.
+        pServer->updatePhy(connInfo.getConnHandle(),
+                           BLE_GAP_LE_PHY_2M_MASK, BLE_GAP_LE_PHY_2M_MASK, 0);
         // BlueZ defaults to a long connection interval (~30-60 ms); request a
         // fast one so transactions do not wait multiple connection events.
         // Units: interval 1.25 ms (6..12 -> 7.5..15 ms), timeout 10 ms (400 -> 4 s).
@@ -97,6 +101,11 @@ class BleServerCallbacks : public NimBLEServerCallbacks
     void onMTUChange(uint16_t MTU, NimBLEConnInfo &connInfo) override
     {
         BleMtu = MTU;
+    }
+
+    void onPhyUpdate(NimBLEConnInfo &connInfo, uint8_t txPhy, uint8_t rxPhy) override
+    {
+        DeviceLog("APPBLE", "phy updated: tx=%u rx=%u", txPhy, rxPhy);
     }
 
     void onConnParamsUpdate(NimBLEConnInfo &connInfo) override
@@ -260,7 +269,11 @@ void AppBLETick()
 
     // ---- TX (paced) ----
     uint32_t now = TimeFromBoot();
-    if (now - LastBleSend < BLE_PACE_MS || !AppTxRing)
+#if BLE_PACE_MS > 0
+    if (now - LastBleSend < BLE_PACE_MS)
+        return;
+#endif
+    if (!AppTxRing)
         return;
 
     // Notification payload must fit the NEGOTIATED ATT MTU: mtu - 3 for the ATT

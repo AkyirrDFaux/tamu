@@ -2,14 +2,17 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../core/block_registry.dart';
 import '../core/connection.dart';
 import '../core/dynmem.dart';
 import '../core/types.dart';
-import 'sysmem_page.dart' show formatValue, showValueEditor, dataTypeLabel;
 import 'theme.dart';
+import 'value_editor.dart' show dataTypeLabel, formatValue, showValueEditor;
+import 'widgets.dart';
 
 /// Dynamic Memory service view (Docs/App/Service views/Dynamic Memory.md):
-/// nested list of user blocks and entries with editing, save/recall, create/delete.
+/// nested list of user blocks and entries with editing, save/recall,
+/// create/delete and per-block type/name editing.
 class DynamicMemoryPage extends StatefulWidget {
   final int deviceId;
 
@@ -73,86 +76,223 @@ class _DynamicMemoryPageState extends State<DynamicMemoryPage> {
     if (blocks == null || _backupView) return;
     for (final block in blocks) {
       if (!_expanded.contains(block.index)) continue;
-      for (var f = 0; f < block.fieldCount; f++) {
-        await _client.readField(block, f);
-      }
+      await _loadBlockFields(block);
     }
     if (mounted) setState(() {});
   }
 
-  void _setAutoRefresh(Duration? interval) {
+  Future<void> _loadBlockFields(DynBlock block) async {
+    if (_backupView) return; // backup values are read on demand per entry
+    for (var f = 0; f < block.fieldCount; f++) {
+      await _client.readField(block, f);
+    }
+  }
+
+  void _applyAuto(Duration? interval) {
     _autoTimer?.cancel();
     _autoTimer = null;
-    _autoInterval = interval;
-    if (interval != null) {
-      _autoTimer = Timer.periodic(interval, (_) => _refresh());
+    setState(() => _autoInterval =
+        interval == null || interval == Duration.zero ? null : interval);
+    if (_autoInterval != null) {
+      _autoTimer = Timer.periodic(_autoInterval!, (_) => _refresh());
     }
-    setState(() {});
   }
 
-  Future<void> _showAutorefreshDialog() async {
-    final selected = await showDialog<Duration>(
+  // ---------------------------------------------------------------------------
+  // Actions
+  // ---------------------------------------------------------------------------
+
+  /// Name + block-type prompt shared by create and edit flows. With `withIndex`
+  /// the user may pin the new block to an explicit index (filling a None
+  /// placeholder); an empty index appends.
+  Future<(String, BlockType?, int?)?> _promptNameAndType(
+      {String initialName = '',
+      BlockType? initialType,
+      required String title,
+      bool withIndex = false}) async {
+    final nameController = TextEditingController(text: initialName);
+    final indexController = TextEditingController();
+    BlockType selected = initialType ?? BlockType.undefined;
+    return await showDialog<(String, BlockType, int?)>(
       context: context,
-      builder: (context) => SimpleDialog(
-        title: const Text('Autorefresh'),
-        children: [
-          for (final (interval, label) in const [
-            (null, 'Off'),
-            (Duration(seconds: 1), '1 s'),
-            (Duration(seconds: 2), '2 s'),
-            (Duration(seconds: 5), '5 s'),
-            (Duration(seconds: 10), '10 s'),
-          ])
-            SimpleDialogOption(
-              onPressed: () =>
-                  Navigator.pop(context, interval ?? Duration.zero),
-              child: Row(children: [
-                Text(label),
-                const Spacer(),
-                if (_autoInterval == interval ||
-                    (interval == null && _autoInterval == null))
-                  const Padding(
-                      padding: EdgeInsets.only(left: 8),
-                      child:
-                          Icon(Icons.check, size: 16, color: kOrange)),
-              ]),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: Text(title),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(
+              controller: nameController,
+              autofocus: true,
+              maxLength: 16,
+              decoration: const InputDecoration(labelText: 'Block name'),
             ),
-        ],
-      ),
-    );
-    if (!mounted) return;
-    if (selected == null) {
-      await _refresh();
-    } else {
-      _setAutoRefresh(selected == Duration.zero ? null : selected);
-    }
-  }
-
-  Future<void> _createBlock() async {
-    final name = await showDialog<String>(
-      context: context,
-      builder: (context) {
-        final controller = TextEditingController();
-        return AlertDialog(
-          title: const Text('New block name'),
-          content:
-              TextField(controller: controller, autofocus: true, maxLength: 16),
+            if (withIndex) ...[
+              const SizedBox(height: 8),
+              TextField(
+                controller: indexController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                    labelText: 'Index (empty = append)',
+                    helperText: 'Fills a deleted (None) slot when given'),
+              ),
+            ],
+            const SizedBox(height: 8),
+            DropdownButtonFormField<BlockType>(
+              initialValue: selected,
+              decoration: const InputDecoration(labelText: 'Block type'),
+              items: [
+                for (final t in BlockType.values)
+                  if (t != BlockType.deleted)
+                    DropdownMenuItem(value: t, child: Text(t.label)),
+              ],
+              onChanged: (t) => setState(() => selected = t ?? BlockType.undefined),
+            ),
+          ]),
           actions: [
             TextButton(
                 onPressed: () => Navigator.pop(context),
                 child: const Text('Cancel')),
             FilledButton(
-                onPressed: () => Navigator.pop(context, controller.text.trim()),
-                child: const Text('OK')),
+              onPressed: () {
+                final name = nameController.text.trim();
+                if (name.isEmpty) return;
+                final idxText = indexController.text.trim();
+                final idx = idxText.isEmpty
+                    ? null
+                    : int.tryParse(idxText);
+                if (idxText.isNotEmpty && idx == null) return;
+                Navigator.pop(context, (name, selected, idx));
+              },
+              child: const Text('OK'),
+            ),
           ],
-        );
-      },
+        ),
+      ),
     );
-    if (name == null || name.isEmpty) return;
-    final index = await _client.createBlock(BlockType.unknown, name);
-    _snack(index != null ? 'Block created' : 'Create failed');
+  }
+
+  Future<void> _createBlock() async {
+    final result =
+        await _promptNameAndType(title: 'New dynamic block', withIndex: true);
+    if (result == null || !mounted) return;
+    final (name, type, index) = result;
+    final created = await _client.createBlock(
+        type ?? BlockType.undefined, name, index: index);
+    _snack(created != null ? 'Block created' : 'Create failed');
     await _refresh();
   }
+
+  Future<void> _editBlock(DynBlock block) async {
+    final result = await _promptNameAndType(
+        title: 'Edit block', initialName: block.name, initialType: block.blockType);
+    if (result == null || !mounted) return;
+    final (name, type, _) = result;
+    final ok = await _client.writeBlockMeta(block, name, type);
+    _snack(ok ? 'Block updated' : 'Update failed');
+    await _refresh();
+  }
+
+  Future<void> _deleteBlock(DynBlock block) async {
+    final ok = await _client.delete(block: block.index);
+    _snack(ok ? 'Block deleted (save to free)' : 'Delete failed');
+    await _refresh();
+  }
+
+  /// Appends an entry: pick a data type, enter its initial value.
+  Future<void> _addEntry(DynBlock block) async {
+    final dataType = await _pickDataType();
+    if (dataType == null || !mounted) return;
+    // Initial value via the type's editor (empty current bytes).
+    final seed = await showValueEditor(context, dataType, []);
+    if (seed == null || !mounted) return;
+    // Optional explicit index fills a None placeholder instead of appending.
+    final index = await _promptIndex(block.fieldCount);
+    if (index == _promptCancelled) return;
+    final live = await _client.refreshBlockMeta(block) ?? block;
+    // A plain append (null index) fills the FIRST deleted (None) placeholder so
+    // the block does not accumulate uneditable None rows; otherwise it lands at
+    // the end.
+    final target = index ?? _firstNoneField(block, live.fieldCount);
+    final confirmed = await _client.appendEntry(
+        live,
+        BlockMeta(flagsAndType: dataType.value, size: seed.length),
+        seed,
+        index: target);
+    _snack(confirmed != null ? 'Entry added' : 'Add failed');
+    await _refresh();
+    if (_expanded.contains(block.index)) {
+      await _loadBlockFields(block);
+      if (mounted) setState(() {});
+    }
+  }
+
+  /// The lowest None-marked field index (a deleted slot to fill), or null.
+  int? _firstNoneField(DynBlock block, int count) {
+    for (var f = 0; f < count; f++) {
+      final existing = block.fields[f];
+      if (existing != null && existing.meta.dataType == DataType.none) return f;
+    }
+    return null;
+  }
+
+  static const _promptCancelled = -2;
+
+  /// Asks for an optional entry index; null appends, -1 skips the prompt.
+  Future<int?> _promptIndex(int maxAppend) async {
+    final controller = TextEditingController();
+    final choice = await showDialog<int?>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Entry index'),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.number,
+          decoration: InputDecoration(
+              labelText: 'Index (empty = append at $maxAppend)',
+              helperText: 'Fills a deleted (None) slot when given'),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, _promptCancelled),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, null),
+              child: const Text('Append')),
+          FilledButton(
+            onPressed: () {
+              final t = controller.text.trim();
+              if (t.isEmpty) { Navigator.pop(context, null); return; }
+              final v = int.tryParse(t);
+              if (v == null || v < 0) return;
+              Navigator.pop(context, v);
+            },
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+    return choice;
+  }
+
+  Future<DataType?> _pickDataType() {
+    return showDialog<DataType>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Entry data type'),
+        children: [
+          for (final t in DataType.values)
+            if (t != DataType.deleted && t != DataType.none && t != DataType.undefined)
+              SimpleDialogOption(
+                onPressed: () => Navigator.pop(context, t),
+                child: Text(dataTypeLabel(t)),
+              ),
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Build
+  // ---------------------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
@@ -194,22 +334,13 @@ class _DynamicMemoryPageState extends State<DynamicMemoryPage> {
               tooltip: 'New block',
               icon: const Icon(Icons.add),
               onPressed: _createBlock),
-          IconButton(
-            onPressed: _showAutorefreshDialog,
-            tooltip: 'Refresh',
-            icon: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                const Icon(Icons.refresh),
-                if (_autoInterval != null)
-                  const Positioned(
-                    right: -3,
-                    bottom: -3,
-                    child: Icon(Icons.circle,
-                        size: 9, color: Colors.greenAccent),
-                  ),
-              ],
-            ),
+          RefreshButton(
+            onRefresh: _refresh,
+            autoActive: _autoInterval != null,
+            refreshing: false,
+            error: _error != null,
+            selectedInterval: _autoInterval,
+            onSelectAuto: _applyAuto,
           ),
         ],
       ),
@@ -218,75 +349,108 @@ class _DynamicMemoryPageState extends State<DynamicMemoryPage> {
   }
 
   Widget _buildBody() {
-    if (_blocks == null) {
+    final blocks = _blocks;
+    if (blocks == null) {
       return Center(child: Text(_error ?? 'Loading...'));
     }
-    if (_blocks!.isEmpty) {
-      return const Center(child: Text('No dynamic blocks'));
+    if (blocks.isEmpty) {
+      return Center(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+        const Text('No dynamic blocks'),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+            onPressed: _createBlock,
+            icon: const Icon(Icons.add),
+            label: const Text('Create one')),
+      ]));
     }
-    return ListView.builder(
-      itemCount: _blocks!.length,
-      itemBuilder: (context, index) {
-        final block = _blocks![index];
-        final isExpanded = _expanded.contains(block.index);
-        return Column(children: [
-          ListTile(
-            leading: Icon(isExpanded ? Icons.folder_open : Icons.folder),
-            title: Text(block.name),
-            subtitle: Text(
-                '${block.blockType.label}   ${FieldFlags.describe(block.meta.flags).join(" ")}'),
-            trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-              IconButton(
-                icon: const Icon(Icons.delete_outline, size: 20),
-                tooltip: 'Delete block',
-                onPressed: () async {
-                  final ok = await _client.delete(block: block.index);
-                  _snack(ok ? 'Block deleted (save to free)' : 'Delete failed');
-                  await _refresh();
-                },
-              ),
-              if (!_backupView)
-                IconButton(
-                  icon: const Icon(Icons.save_outlined, size: 20),
-                  tooltip: 'Save block',
-                  onPressed: () async {
-                    final ok = await _client.save(block: block.index);
-                    _snack(ok ? 'Block saved' : 'Save failed');
-                  },
-                )
-              else
-                IconButton(
-                  icon: const Icon(Icons.restore_outlined, size: 20),
-                  tooltip: 'Recall block',
-                  onPressed: () async {
-                    final ok = await _client.recall(block: block.index);
-                    _snack(ok ? 'Block recalled' : 'Recall failed');
-                  },
-                ),
-              Icon(isExpanded ? Icons.expand_less : Icons.expand_more),
+    return ListView.separated(
+      padding: const EdgeInsets.fromLTRB(10, 10, 10, 24),
+      itemCount: blocks.length,
+      separatorBuilder: (_, _) => const SizedBox(height: 6),
+      itemBuilder: (context, index) =>
+          _blockCard(context, blocks[index]),
+    );
+  }
+
+  Widget _blockCard(BuildContext context, DynBlock block) {
+    final isExpanded = _expanded.contains(block.index);
+    final flags = FieldFlags.describe(block.meta.flags);
+    return Card(
+      color: kSurfaceAlt,
+      margin: EdgeInsets.zero,
+      clipBehavior: Clip.antiAlias,
+      child: Column(children: [
+        ListTile(
+          leading: Icon(isExpanded ? Icons.folder_open : Icons.folder,
+              color: kOrange),
+          title: Row(children: [
+            Expanded(
+                child: Text(block.name,
+                    style: const TextStyle(fontWeight: FontWeight.w600))),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+              decoration: BoxDecoration(
+                  color: Colors.white.withAlpha(20),
+                  borderRadius: BorderRadius.circular(4)),
+              child: Text('#${block.index}',
+                  style: const TextStyle(fontSize: 10, color: Colors.white54)),
+            ),
+          ]),
+          subtitle: Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Wrap(spacing: 6, runSpacing: 2, children: [
+              ChipLabel(block.blockType.label),
+              for (final flag in flags) ChipLabel(flag, subtle: flag != 'RO'),
+              ChipLabel('${block.fieldCount} entries', subtle: true),
             ]),
-            onTap: () async {
-              setState(() {
-                if (isExpanded) {
-                  _expanded.remove(block.index);
-                } else {
-                  _expanded.add(block.index);
-                }
-              });
-              if (_expanded.contains(block.index)) {
-                for (var f = 0; f < block.fieldCount; f++) {
-                  await _client.readField(block, f);
-                }
-                if (mounted) setState(() {});
+          ),
+          trailing: PopupMenuButton<String>(
+            tooltip: 'Block actions',
+            onSelected: (action) {
+              switch (action) {
+                case 'edit':
+                  _editBlock(block);
+                case 'delete':
+                  _deleteBlock(block);
               }
             },
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'edit', child: Text('Rename / set type')),
+              PopupMenuItem(value: 'delete', child: Text('Delete')),
+            ],
           ),
-          if (isExpanded)
-            for (var f = 0; f < block.fieldCount; f++)
-              _fieldTile(block, block.fields[f]),
-          const Divider(height: 1),
-        ]);
-      },
+          onTap: () async {
+            setState(() {
+              isExpanded
+                  ? _expanded.remove(block.index)
+                  : _expanded.add(block.index);
+            });
+            if (_expanded.contains(block.index)) {
+              await _loadBlockFields(block);
+              if (mounted) setState(() {});
+            }
+          },
+        ),
+        if (isExpanded)
+          Material(
+            color: Colors.black26,
+            child: Column(children: [
+              const Divider(height: 1),
+              if (!_backupView && block.fieldCount > 0)
+                for (var f = 0; f < block.fieldCount; f++)
+                  _fieldTile(block, block.fields[f]),
+              ListTile(
+                dense: true,
+                contentPadding: const EdgeInsets.only(left: 40, right: 12),
+                leading: const Icon(Icons.add, size: 18, color: kOrange),
+                title: const Text('Add entry',
+                    style: TextStyle(fontSize: 13, color: kOrange)),
+                onTap: () => _addEntry(block),
+              ),
+            ]),
+          ),
+      ]),
     );
   }
 
@@ -295,28 +459,53 @@ class _DynamicMemoryPageState extends State<DynamicMemoryPage> {
       return const ListTile(
           dense: true,
           leading: SizedBox(
-              width: 16,
-              height: 16,
+              width: 14,
+              height: 14,
               child: CircularProgressIndicator(strokeWidth: 2)),
-          title: Text('...'));
+          title: Text('...',
+              style: TextStyle(fontSize: 13, color: Colors.white38)));
+    }
+    // A None-marked field is a deleted/empty placeholder: not editable, but the
+    // next "Add entry" fills it (indexes never move - Docs/Data Formats.md).
+    if (field.meta.dataType == DataType.none) {
+      return ListTile(
+        dense: true,
+        contentPadding: const EdgeInsets.only(left: 40, right: 12),
+        leading: const Icon(Icons.delete_outline, size: 18, color: Colors.white24),
+        title: Text('Entry ${field.index} (deleted)',
+            style: const TextStyle(fontSize: 12, color: Colors.white38)),
+        subtitle: const Text('Add entry fills this slot',
+            style: TextStyle(fontSize: 10, color: Colors.white24)),
+      );
     }
     final flags = FieldFlags.describe(field.meta.flags);
-    final valueText = formatValue(field.meta.dataType, field.value);
+    final info = blockInfoFor(block.blockType)?.field(field.index);
+    final valueText =
+        valueWithUnit(formatValue(field.meta.dataType, field.value), info);
     return ListTile(
       dense: true,
       contentPadding: const EdgeInsets.only(left: 40, right: 12),
       title: Row(children: [
-        Expanded(child: Text(valueText)),
+        SizedBox(
+            width: 120,
+            child: Text(info?.name ?? 'Entry ${field.index}',
+                style: const TextStyle(fontSize: 12, color: Colors.white54))),
+        Expanded(
+            child: Text(valueText,
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 13))),
         for (final flag in flags)
           Padding(
             padding: const EdgeInsets.only(left: 4),
             child: Text(flag,
                 style: TextStyle(
-                    fontSize: 10,
-                    color: flag == 'RO' ? kOrange : Colors.white54)),
+                    fontSize: 9,
+                    fontWeight: FontWeight.w700,
+                    color: flag == 'RO' ? kOrange : Colors.white38)),
           ),
       ]),
-      subtitle: Text(dataTypeLabel(field.meta.dataType)),
+      subtitle: Text('${dataTypeLabel(field.meta.dataType)}'
+              '${info?.unit == null ? '' : ' [${info!.unit}]'}',
+          style: const TextStyle(fontSize: 11)),
       trailing: _backupView
           ? IconButton(
               icon: const Icon(Icons.restore_outlined, size: 18),
@@ -330,16 +519,27 @@ class _DynamicMemoryPageState extends State<DynamicMemoryPage> {
                 if (mounted) setState(() {});
               },
             )
-          : IconButton(
-              icon: const Icon(Icons.delete_outline, size: 18),
-              tooltip: 'Delete entry',
-              onPressed: () async {
-                final ok =
-                    await _client.delete(block: block.index, field: field.index);
-                _snack(ok ? 'Entry deleted' : 'Delete failed');
-                await _client.readField(block, field.index);
-                if (mounted) setState(() {});
+          : PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert, size: 18),
+              tooltip: 'Entry actions',
+              onSelected: (action) {
+                switch (action) {
+                  case 'edit':
+                    _editValue(block, field);
+                  case 'type':
+                    _changeType(block, field);
+                  case 'delete':
+                    _deleteEntry(block, field);
+                }
               },
+              itemBuilder: (_) => [
+                if (!field.readOnly)
+                  const PopupMenuItem(value: 'edit', child: Text('Edit value')),
+                if (!field.readOnly)
+                  const PopupMenuItem(
+                      value: 'type', child: Text('Change type')),
+                const PopupMenuItem(value: 'delete', child: Text('Delete')),
+              ],
             ),
       onTap: (!_backupView && !field.readOnly)
           ? () => _editValue(block, field)
@@ -347,15 +547,67 @@ class _DynamicMemoryPageState extends State<DynamicMemoryPage> {
     );
   }
 
+  Future<void> _changeType(DynBlock block, DynField field) async {
+    final dataType = await _pickDataType();
+    if (dataType == null || !mounted) return;
+    // Seed a fresh value of the new type via its editor.
+    final seed = await showValueEditor(context, dataType, []);
+    if (seed == null || !mounted) return;
+    final confirmed = await _client.writeField(block, field, seed,
+        newType: dataType);
+    _snack(confirmed != null ? 'Type changed' : 'Write failed');
+    if (confirmed != null) {
+      setState(() => field.value = confirmed);
+      await _client.readField(block, field.index);
+      if (mounted) setState(() {});
+    }
+  }
+
+  Future<void> _deleteEntry(DynBlock block, DynField field) async {
+    final ok =
+        await _client.delete(block: block.index, field: field.index);
+    _snack(ok ? 'Entry deleted' : 'Delete failed');
+    await _refresh();
+    if (_expanded.contains(block.index)) {
+      await _loadBlockFields(block);
+      if (mounted) setState(() {});
+    }
+  }
+
   Future<void> _editValue(DynBlock block, DynField field) async {
     if (!mounted) return;
-    final newValue =
-        await showValueEditor(context, field.meta.dataType, field.value);
+    final newValue = await showValueEditor(
+        context, field.meta.dataType, field.value,
+        info: blockInfoFor(block.blockType)?.field(field.index));
     if (newValue == null) return;
     final confirmed = await _client.writeField(block, field, newValue);
     _snack(confirmed != null ? 'Value written' : 'Write failed');
     if (confirmed != null) {
       setState(() => field.value = confirmed);
     }
+  }
+}
+
+/// Small rounded label chip used across the memory pages.
+class ChipLabel extends StatelessWidget {
+  final String text;
+  final bool subtle;
+
+  const ChipLabel(this.text, {super.key, this.subtle = false});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: subtle ? Colors.white.withAlpha(14) : kOrange.withAlpha(46),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(text,
+          style: TextStyle(
+              fontSize: 10,
+              color: subtle ? Colors.white54 : kOrange,
+              fontWeight: subtle ? FontWeight.w400 : FontWeight.w600)),
+    );
   }
 }

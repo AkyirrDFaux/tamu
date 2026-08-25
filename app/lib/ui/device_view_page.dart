@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../core/device_db.dart';
@@ -5,9 +7,11 @@ import '../core/types.dart';
 import 'dynmem_page.dart';
 import 'keyedmem_page.dart';
 import 'log_page.dart';
+import 'sndb_page.dart';
 import 'storage_page.dart';
 import 'sysmem_page.dart';
 import 'theme.dart';
+import 'widgets.dart';
 
 /// Device view (Docs/App/Device view.md): known facts about one device.
 class DeviceViewPage extends StatefulWidget {
@@ -22,6 +26,9 @@ class DeviceViewPage extends StatefulWidget {
 class _DeviceViewPageState extends State<DeviceViewPage> {
   final _db = DeviceDatabase.instance;
   bool _renaming = false;
+  Timer? _autoTimer;
+  Duration? _autoInterval;
+  bool _refreshing = false;
 
   @override
   void initState() {
@@ -29,9 +36,35 @@ class _DeviceViewPageState extends State<DeviceViewPage> {
     _refresh();
   }
 
+  @override
+  void dispose() {
+    // Closing the page always stops its autorefresh.
+    _autoTimer?.cancel();
+    super.dispose();
+  }
+
+  void _applyAuto(Duration? interval) {
+    _autoTimer?.cancel();
+    _autoTimer = null;
+    setState(() =>
+        _autoInterval = interval == null || interval == Duration.zero
+            ? null
+            : interval);
+    if (_autoInterval != null) {
+      _autoTimer = Timer.periodic(_autoInterval!, (_) => _refresh());
+      _refresh();
+    }
+  }
+
   Future<void> _refresh() async {
-    await _db.refreshDevice(widget.deviceId);
-    await _db.refreshRuntime(widget.deviceId);
+    if (_refreshing) return;
+    setState(() => _refreshing = true);
+    try {
+      await _db.refreshDevice(widget.deviceId);
+      await _db.refreshRuntime(widget.deviceId);
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
   }
 
   String _formatUptime(int? ms) {
@@ -59,7 +92,15 @@ class _DeviceViewPageState extends State<DeviceViewPage> {
             ]),
           ),
           actions: [
-            IconButton(icon: const Icon(Icons.refresh), onPressed: _refresh),
+            RefreshButton(
+              onRefresh: _refresh,
+              autoActive: _autoTimer != null,
+              refreshing: _refreshing,
+              error: false,
+              selectedInterval:
+                  _autoTimer != null ? _autoInterval : null,
+              onSelectAuto: _applyAuto,
+            ),
           ],
         ),
         body: entry == null
@@ -120,16 +161,14 @@ class _DeviceViewPageState extends State<DeviceViewPage> {
                           () => KeyedMemoryPage(deviceId: widget.deviceId)),
                     _serviceTile(context, Icons.save_outlined, 'Storage',
                         () => StoragePage(deviceId: widget.deviceId)),
-                    if (entry.isCore)
-                      ListTile(
-                        dense: true,
-                        leading: const Icon(Icons.format_list_numbered),
-                        title: const Text('SNDB'),
-                        trailing: const Icon(Icons.chevron_right),
-                        onTap: () => _showSndb(),
-                      ),
-                    _serviceTile(context, Icons.article_outlined, 'Logs',
-                        () => LogViewerPage(deviceId: widget.deviceId)),
+                    if (entry.isCore) ...[
+                      _serviceTile(context, Icons.format_list_numbered,
+                          'SN Database', () => const SndbPage()),
+                      // The log DATABASE lives on cores only (Docs/Services/
+                      // Log Handler.md); non-core views get no logs entry.
+                      _serviceTile(context, Icons.article_outlined, 'Logs',
+                          () => LogViewerPage(deviceId: widget.deviceId)),
+                    ],
                   ]),
                 ],
               ),
@@ -146,34 +185,6 @@ class _DeviceViewPageState extends State<DeviceViewPage> {
       trailing: const Icon(Icons.chevron_right),
       onTap: () => Navigator.of(context)
           .push(MaterialPageRoute(builder: (_) => page())),
-    );
-  }
-
-  Future<void> _showSndb() async {
-    final rows = await _db.sndbEntries();
-    if (!mounted) return;
-    showModalBottomSheet(
-      context: context,
-      builder: (context) => SafeArea(
-        child: ListView(children: [
-          Padding(
-              padding: const EdgeInsets.all(12),
-              child: Text('Serial number database',
-                  style: TextStyle(
-                      color: kOrange, fontWeight: FontWeight.w600))),
-          for (final (id, sn) in rows)
-            ListTile(
-              dense: true,
-              leading: Text(idToString(id)),
-              title: Text(sn,
-                  style:
-                      const TextStyle(fontFamily: 'monospace', fontSize: 12)),
-            ),
-          if (rows.isEmpty)
-            const Padding(
-                padding: EdgeInsets.all(12), child: Text('Database empty')),
-        ]),
-      ),
     );
   }
 

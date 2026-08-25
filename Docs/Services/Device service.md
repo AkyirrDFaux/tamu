@@ -10,23 +10,23 @@ Specific packet function is defined as an enum in the service custom identifier 
 
 ### Service CIDs
 
-| Function         | SRV CID | Content request            | Content response                                               | Note                      |
-| ---------------- | ------- | -------------------------- | -------------------------------------------------------------- | ------------------------- |
-| Discover         | 0       | SN (from node)             | SN (of node) + ID (from core)                                  |                           |
-| Ping             | 1       | -                          | -                                                              | Empty packet              |
-| Device type      | 2       | -                          | Device type enum                                               |                           |
-| Serial number    | 3       | -                          | SN                                                             |                           |
-| Software version | 4       | -                          | Software version                                               |                           |
-| Capability       | 5       | -                          | Capability bitfield                                            |                           |
-| Read Name        | 6       | -                          | Name                                                           |                           |
-| Set Name         | 7       | Name                       | Name                                                           | Respond only if requested |
-| Uptime           | 8       | -                          | Uptime (uint32)                                                | ms                        |
-| Loop Time        | 9       | -                          | Average and Maximum loop time (2x Number)                      | ms                        |
-| Time sync        | 10      | Time sent                  | Original time sent, Local time recieved, Local time reply sent |                           |
-| Set time offset  | 11      | Time offset (int32)        | -                                                              | ms                        |
-| SNDB Read All    | 12      | -                          | SN + ID stream                                                 | Core only                 |
-| SNDB Read        | 13      | ID or SN (based on length) | SN + ID                                                        | Core only                 |
-| SNDB Write       | 14      | SN + ID                    | SN + ID                                                        | Core only                 |
+| Function         | SRV CID | Content request            | Content response                                               | Note                                       |
+| ---------------- | ------- | -------------------------- | -------------------------------------------------------------- | ------------------------------------------ |
+| Discover         | 0       | SN (from node)             | SN (of node) + ID (from core)                                  |                                            |
+| Ping             | 1       | -                          | -                                                              | Empty packet                               |
+| Device type      | 2       | -                          | Device type enum                                               |                                            |
+| Serial number    | 3       | -                          | SN                                                             |                                            |
+| Software version | 4       | -                          | Software version                                               |                                            |
+| Capability       | 5       | -                          | Capability bitfield                                            |                                            |
+| Read Name        | 6       | -                          | Name                                                           |                                            |
+| Set Name         | 7       | Name                       | Name                                                           | Respond only if requested                  |
+| Uptime           | 8       | -                          | Uptime (uint32)                                                | ms                                         |
+| Loop Time        | 9       | -                          | Average and Maximum loop time (2x Number)                      | ms                                         |
+| Time sync        | 10      | Time sent                  | Original time sent, Local time recieved, Local time reply sent |                                            |
+| Set time offset  | 11      | Time offset (int32)        | -                                                              | ms                                         |
+| SNDB Read All    | 12      | -                          | SN + ID stream                                                 | Core only                                  |
+| SNDB Read        | 13      | ID or SN (based on length) | SN + ID                                                        | Core only                                  |
+| SNDB Write       | 14      | SN + ID                    | SN + ID                                                        | Core only, setting ID to 0 works as delete |
 Core implements SN Database
 Has it's own file.
 Stores (permanent) Serial number + ID pairs

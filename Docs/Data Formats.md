@@ -1,6 +1,6 @@
 ### Basic types
+- None (No value there, a placeholder/spacer metadata or a deleted entry)
 - Undefined (Don't know yet, display in hex format if there is anything)
-- Deleted (Pending change, value invalidated)
 - Serial Number - 14 byte UUID
 - ID - 16bit (4 bit net + 12 bit device) 
 	- 0 = Invalid/Unassigned

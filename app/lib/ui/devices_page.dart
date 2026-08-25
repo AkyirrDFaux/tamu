@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../core/connection.dart';
@@ -6,6 +8,7 @@ import '../core/types.dart';
 import 'device_icons.dart';
 import 'device_view_page.dart';
 import 'theme.dart';
+import 'widgets.dart';
 
 /// Devices page (Docs/App/Devices.md): main interaction layer with list and
 /// graph views.
@@ -21,6 +24,39 @@ enum _ViewMode { list, graph }
 class _DevicesPageState extends State<DevicesPage> {
   final _db = DeviceDatabase.instance;
   _ViewMode _mode = _ViewMode.list;
+  Timer? _autoTimer;
+  Duration? _autoInterval;
+  bool _refreshing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    ShellTabs.instance.addListener(_onTabChanged);
+    _refresh();
+  }
+
+  @override
+  void dispose() {
+    ShellTabs.instance.removeListener(_onTabChanged);
+    _autoTimer?.cancel();
+    super.dispose();
+  }
+
+  /// Autorefresh only runs while the Devices tab is visible.
+  void _onTabChanged() {
+    final visible = ShellTabs.instance.index == 1;
+    _applyAuto(visible ? _autoInterval : null, remember: false);
+  }
+
+  void _applyAuto(Duration? interval, {bool remember = true}) {
+    _autoTimer?.cancel();
+    _autoTimer = null;
+    if (remember) setState(() => _autoInterval = interval);
+    if (interval != null && interval != Duration.zero) {
+      _autoTimer = Timer.periodic(interval, (_) => _refresh());
+      if (!_db.isRefreshing) _refresh();
+    }
+  }
 
   // Filters (Docs/App/Devices.md bottom of screen).
   int? _netFilter;
@@ -44,14 +80,14 @@ class _DevicesPageState extends State<DevicesPage> {
     return devices;
   }
 
-  @override
-  void initState() {
-    super.initState();
-    _refresh();
-  }
-
   Future<void> _refresh() async {
-    await _db.refreshNetwork();
+    if (_refreshing || !ConnectionManager.instance.isConnected) return;
+    setState(() => _refreshing = true);
+    try {
+      await _db.refreshNetwork();
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
   }
 
   @override
@@ -72,14 +108,15 @@ class _DevicesPageState extends State<DevicesPage> {
             ],
           ),
           actions: [
-            IconButton(
-              icon: _db.isRefreshing
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.refresh),
-              onPressed: _db.isRefreshing ? null : _refresh,
+            RefreshButton(
+              onRefresh: _refresh,
+              autoActive: _autoTimer != null,
+              refreshing: _db.isRefreshing || _refreshing,
+              error: _db.lastError != null,
+              selectedInterval:
+                  _autoTimer != null ? _autoInterval : null,
+              onSelectAuto: (interval) =>
+                  _applyAuto(interval == Duration.zero ? null : interval),
             ),
           ],
         ),

@@ -35,6 +35,9 @@ class UsbTransport implements Transport {
   String get displayName => 'USB $portName';
 
   @override
+  String get id => portName;
+
+  @override
   Stream<Uint8List> get linkBytes => _linkController.stream;
 
   @override
@@ -47,6 +50,7 @@ class UsbTransport implements Transport {
       port.dispose();
       throw TransportException('Cannot open $portName: $error');
     }
+
     // Opening the port asserts DTR/RTS, which resets the ESP32-C3 core; its USB
     // CDC rejects line-coding updates until it has re-enumerated, so applying
     // the configuration can fail transiently right after open. Retry a few

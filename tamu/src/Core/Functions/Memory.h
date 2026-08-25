@@ -158,7 +158,7 @@ struct DynamicBlockDescriptor
     {
         if (delta < 0)
         {
-            if ((uint16_t)(-delta) > length)
+            if ((int32_t)length + delta < 0)
                 return false;
             return true;
         }
@@ -348,6 +348,10 @@ struct KeyedBlockDescriptor : public DynamicBlockDescriptor
         while (processed + sizeof(BlockMeta) <= field.Descriptor.Size)
         {
             BlockMeta *m = reinterpret_cast<BlockMeta *>(cursor);
+            // None-marked placeholders are invisible to reads.
+            if (m->Key == target_key &&
+                ((uint16_t)m->FlagsAndType & 0x03FF) == (uint16_t)DataType::None)
+                return res; // not found
             if (m->Key == target_key)
             {
                 res.meta = *m;
@@ -406,10 +410,15 @@ struct KeyedBlockDescriptor : public DynamicBlockDescriptor
             return false;
 
         cursor = GetFieldBase();
-        if (found && size_diff != 0)
+        if (size_diff != 0)
         {
+            // Shift the WHOLE tail of the block after this entry, not just the
+            // current field's: later fields' data lives after this field too.
+            // Covers replaced entries (found) AND newly-added entries at the
+            // end of a non-last field (offset = end of the field's data).
             size_t tail_start = offset + old_entry_size;
-            size_t tail_len = map[field_idx].Size - tail_start;
+            uint8_t *data_end = static_cast<uint8_t *>(data_ptr) + length;
+            size_t tail_len = data_end - (cursor + tail_start);
             if (tail_len > 0)
                 memmove(cursor + offset + new_entry_size, cursor + tail_start, tail_len);
         }
@@ -456,12 +465,41 @@ struct KeyedBlockDescriptor : public DynamicBlockDescriptor
             uint16_t entry_size = AlignTo4(sizeof(BlockMeta) + m->Size);
             if (!KeyedEntryFits(m->Size, offset, field.Descriptor.Size))
                 break;
-            if (count < cap)
-                keys[count] = m->Key;
-            count++;
+            // None-marked entries are placeholders: invisible but stable.
+            if (((uint16_t)m->FlagsAndType & 0x03FF) != (uint16_t)DataType::None)
+            {
+                if (count < cap)
+                    keys[count] = m->Key;
+                count++;
+            }
             offset += entry_size;
         }
         return count;
+    }
+
+    // Marks the keyed entry `key` as None IN PLACE without resizing: the slot
+    // stays (key identity and size preserved), but ListKeys/GetKey ignore it.
+    bool MarkKey(uint16_t field_idx, uint8_t key)
+    {
+        FieldResult field = this->Get(field_idx);
+        if (!field.Data)
+            return false;
+        uint8_t *cursor = static_cast<uint8_t *>(field.Data);
+        uint16_t offset = 0;
+        while (offset + sizeof(BlockMeta) <= field.Descriptor.Size)
+        {
+            BlockMeta *m = reinterpret_cast<BlockMeta *>(cursor + offset);
+            if (!KeyedEntryFits(m->Size, offset, field.Descriptor.Size))
+                break;
+            if (m->Key == key)
+            {
+                m->FlagsAndType = (m->FlagsAndType & BLOCK_META_FLAGS_MASK) |
+                                  (uint16_t)DataType::None;
+                return true;
+            }
+            offset += AlignTo4(sizeof(BlockMeta) + m->Size);
+        }
+        return false;
     }
 
     // Removes the keyed entry `key` from dictionary field `field_idx`.

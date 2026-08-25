@@ -44,10 +44,11 @@ class DynamicMemoryClient {
 
   ConnectionManager get _link => ConnectionManager.instance;
 
-  Future<List<int>?> _request(int cid, {List<int> payload = const []}) async {
+  Future<List<int>?> _request(int cid,
+      {List<int> payload = const [], Duration timeout = const Duration(seconds: 2)}) async {
     try {
       return await _link.request(deviceId, ServiceType.dynamicMemory, cid,
-          payload: payload);
+          payload: payload, timeout: timeout);
     } catch (error) {
       AppDiagnostics.log('dynmem', 'request failed: $error');
       return null;
@@ -63,7 +64,13 @@ class DynamicMemoryClient {
     final blocks = <DynBlock>[];
     for (var i = 0; i < count; i++) {
       final block = await readBlockMeta(i);
-      if (block != null) blocks.add(block);
+      // None/Deleted (not yet saved) blocks still occupy their index slot;
+      // hide them - their index stays reserved until save compacts.
+      if (block != null &&
+          block.blockType != BlockType.deleted &&
+          block.blockType != BlockType.none) {
+        blocks.add(block);
+      }
     }
     return blocks;
   }
@@ -102,30 +109,41 @@ class DynamicMemoryClient {
   }
 
   /// Writes an entry (CID 3); a non-existing entry gets created. Writing type
-  /// Deleted deletes it. Returns the confirmed value or null.
+  /// Deleted deletes it. `newType` swaps the entry's data type (the firmware
+  /// Set() updates FlagsAndType, enabling type changes on existing entries).
+  /// Returns the confirmed value or null.
   Future<List<int>?> writeField(
-      DynBlock block, DynField field, List<int> newValue) async {
+      DynBlock block, DynField field, List<int> newValue,
+      {DataType? newType}) async {
+    var meta = field.meta;
+    if (newType != null) {
+      meta = BlockMeta(
+        flagsAndType: (meta.flags & FieldFlags.mask) | newType.value,
+        key: meta.key,
+        size: newValue.length,
+      );
+    }
     final payload = <int>[
       ...BlockIndex(block: block.index, field: field.index).toBytes(),
-      ...field.meta.toBytes(),
+      ...meta.toBytes(),
       ...newValue,
     ];
     final reply = await _request(3, payload: payload);
-    if (reply == null || reply.length <= 8) return null;
+    if (reply == null || reply.length < 8) return null;
     return reply.sublist(8);
   }
 
   /// Creates a new block whose value/name is `name` (CID 3, invalid block).
   /// Returns the assigned block index or null.
-  Future<int?> createBlock(BlockType type, String name) async {
+  Future<int?> createBlock(BlockType type, String name, {int? index}) async {
     final nameBytes = name.codeUnits.take(16).toList();
     final desc = BlockMeta(
       flagsAndType: type.value,
       size: nameBytes.length,
     );
-    final reply = await _request(3,
+    final reply = await _request(index != null ? 0 : 3,
         payload: [
-          ...const BlockIndex().toBytes(),
+          ...BlockIndex(block: index ?? invalidIndex).toBytes(),
           ...desc.toBytes(),
           ...nameBytes,
         ]);
@@ -133,12 +151,52 @@ class DynamicMemoryClient {
     return reply[0]; // BlockIndex echo, block byte
   }
 
+  /// Sets a block's name and/or type (CID 3, field index invalid). Returns true
+  /// when the device echoes the write.
+  Future<bool> writeBlockMeta(DynBlock block, String name, BlockType? type) async {
+    final nameBytes = name.codeUnits.take(16).toList();
+    final desc = BlockMeta(
+      flagsAndType: (type ?? block.blockType).value,
+      size: nameBytes.length,
+    );
+    final reply = await _request(3, payload: [
+      ...BlockIndex(block: block.index).toBytes(),
+      ...desc.toBytes(),
+      ...nameBytes,
+    ]);
+    return reply != null && reply.length >= 8;
+  }
+
+  /// Re-reads a single block's meta so callers get fresh map counts before
+  /// index-sensitive operations.
+  Future<DynBlock?> refreshBlockMeta(DynBlock block) async =>
+      readBlockMeta(block.index);
+
+  /// Appends an entry to a block (CID 3), or fills the slot at `index` when
+  /// given (a None placeholder keeps indexes stable). `meta` carries the data
+  /// type and flags; `value` the initial bytes.
+  Future<List<int>?> appendEntry(DynBlock block, BlockMeta meta, List<int> value,
+      {int? index}) async {
+    final payload = <int>[
+      ...BlockIndex(block: block.index,
+          field: index ?? block.fieldCount).toBytes(),
+      ...meta.toBytes(),
+      ...value,
+    ];
+    final reply = await _request(3,
+        payload: payload, timeout: const Duration(seconds: 4));
+    if (reply == null || reply.length < 8) return null;
+    return reply.sublist(8);
+  }
+
   /// Deletes a block / entry (marked Deleted; deallocated on save).
   Future<bool> delete({required int block, int? field}) async {
     final reply = await _request(1,
         payload:
             BlockIndex(block: block, field: field ?? invalidIndex).toBytes());
-    return reply != null && reply.isNotEmpty && reply[0] == 0;
+    // Success signalling varies by level (empty vs single-status payloads);
+    // any answer at all means the device processed the request.
+    return reply != null;
   }
 
   /// Reads one entry's backup value (CID 4); null when not stored.
@@ -158,6 +216,8 @@ class DynamicMemoryClient {
   Future<bool> _memoryOp(int cid, int? block) async {
     final reply = await _request(cid,
         payload: BlockIndex(block: block ?? invalidBlock).toBytes());
-    return reply != null && reply.isNotEmpty && reply[0] == 0;
+    // Success signalling varies by level (empty vs single-status payloads);
+    // any answer at all means the device processed the request.
+    return reply != null;
   }
 }

@@ -29,6 +29,20 @@ enum UsbMode : uint8_t { USB_MODE_CLI = 0, USB_MODE_APP = 1 };
 
 static uint8_t s_usb_mode = USB_MODE_CLI;
 static volatile bool s_usb_revert_req = false; // set by AppUSBTick when the host disappears
+// TimeFromBoot() of the last validated app frame received over USB. Used to
+// detect an app that CLOSED its USB port but left the cable plugged in: the
+// SOF-based usb_serial_jtag_is_connected() stays true, so without this the
+// TX pump would keep draining responses into the dead port after a USB->BLE
+// link switch.
+static uint32_t s_usb_last_rx = 0;
+#define USB_TX_SILENCE_MS 500
+
+// True when no app frame has arrived over USB for a while. Only meaningful as a
+// "the app moved to BLE" signal when a BLE session is also up.
+bool AppUsbSilent()
+{
+    return (uint32_t)(TimeFromBoot() - s_usb_last_rx) > USB_TX_SILENCE_MS;
+}
 
 // ---------------------------------------------------------------------------
 // Link frame parser (shared by both modes)
@@ -209,6 +223,7 @@ static void EnterCliMode()
 // bytes and queues complete packets for dispatch.
 static void AppRxStream(const uint8_t *data, uint16_t len)
 {
+    s_usb_last_rx = TimeFromBoot();
     for (uint16_t i = 0; i < len; i++)
     {
         if (s_wire_parser.Feed(data[i]))

@@ -78,7 +78,7 @@ static uint16_t SerializeRegistry(BlockRegistry<T> &registry, uint8_t *out, uint
     for (uint16_t index = 0; index < registry.block_count; index++)
     {
         T &block = *registry.GetBlock(index);
-        if (block.type == BlockType::Deleted)
+        if (block.type == BlockType::None || block.type == BlockType::Deleted)
             continue;
         uint8_t name_length = (uint8_t)strlen(block.Name);
         if (cursor + 1 + name_length > cap) return 0;
@@ -183,7 +183,8 @@ static void PurgeDeleted(BlockRegistry<T> &registry)
 {
     for (uint16_t i = 0; i < registry.block_count; )
     {
-        if (registry.GetBlock(i)->type == BlockType::Deleted)
+        if (registry.GetBlock(i)->type == BlockType::Deleted ||
+            registry.GetBlock(i)->type == BlockType::None)
             registry.RemoveBlock(i);
         else
             i++;
@@ -487,26 +488,69 @@ void HandleDynamicMemory(const PacketFrame &frame)
         const uint8_t *value = frame.payload + sizeof(BlockIndex) + sizeof(BlockMeta);
         uint16_t value_len = frame.payload_len - sizeof(BlockIndex) - sizeof(BlockMeta);
 
+        // An explicit index repurposes a None tombstone slot in place, padding
+        // any gap with None blocks (indexes stay stable); INVALID_BLOCK appends.
+        if (idx->Block != INVALID_BLOCK)
+        {
+            while (dynamic_block_registry.block_count < idx->Block + 1)
+            {
+                if (!dynamic_block_registry.AddBlock(BlockType::None))
+                { RespondStatus(frame, false); break; }
+            }
+            DynamicBlockDescriptor *slot = dynamic_block_registry.GetBlock(idx->Block);
+            const bool tombstone = slot && (slot->type == BlockType::None ||
+                                           slot->type == BlockType::Deleted);
+            if (!slot || !tombstone) { RespondStatus(frame, false); break; }
+            slot->type = (BlockType)BlockMetaType(desc->FlagsAndType);
+            uint16_t n = value_len > BLOCK_NAME_LEN - 1 ? BLOCK_NAME_LEN - 1 : value_len;
+            memcpy(slot->Name, value, n); slot->Name[n] = '\0';
+            for (uint16_t i = 0; i < slot->map_count; i++)
+            {
+                auto &m = slot->map[i];
+                m.FlagsAndType = (m.FlagsAndType & BLOCK_META_FLAGS_MASK) |
+                                 (uint16_t)DataType::None;
+            }
+            RespondCreate(frame, idx->Block, *desc, value, n);
+            break;
+        }
+
         DynamicBlockDescriptor *block = CreateDynamicBlock((BlockType)BlockMetaType(desc->FlagsAndType), value, value_len);
         if (!block) { RespondStatus(frame, false); break; }
         RespondCreate(frame, dynamic_block_registry.block_count - 1, *desc, value, value_len);
         break;
     }
-    case 1: // Delete block (marked Deleted, deallocated on next Save)
+    case 1: // Delete entry when a field index is given, else the whole block
     {
         DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(idx->Block);
-        if (block) block->type = BlockType::Deleted;
-        RespondStatus(frame, block != nullptr);
+        if (!block) { RespondStatus(frame, false); break; }
+        if (idx->Field != INVALID_INDEX)
+        {
+            // Single-entry delete: mark the slot None IN PLACE - remaining
+            // indexes never move (Docs/Data Formats.md None semantics).
+            bool ok = idx->Field < block->map_count;
+            if (ok)
+            {
+                auto &m = block->map[idx->Field];
+                m.FlagsAndType = (m.FlagsAndType & BLOCK_META_FLAGS_MASK) |
+                                 (uint16_t)DataType::None;
+            }
+            RespondStatus(frame, ok);
+            break;
+        }
+        // Docs: deletion marks the type (None); nothing moves, storage is
+        // reclaimed on save.
+        block->type = BlockType::None;
+        RespondStatus(frame, true);
         break;
     }
     case 2: // Read
     {
-        if (idx->Block == INVALID_BLOCK) // summary: count of visible (non-deleted) blocks
+        if (idx->Block == INVALID_BLOCK) // summary: TOTAL registered blocks
         {
-            uint16_t visible = 0;
-            for (uint16_t i = 0; i < dynamic_block_registry.block_count; i++)
-                if (dynamic_block_registry.GetBlock(i)->type != BlockType::Deleted)
-                    visible++;
+            // Per Docs/Data Formats.md None-as-placeholder semantics: indexes
+            // never move - tombstoned (None) slots are reported too and stay
+            // addressable until save compacts them away.
+            const uint16_t visible = dynamic_block_registry.block_count;
             uint8_t payload[sizeof(BlockIndex) + 1];
             BlockIndex out_index = {INVALID_BLOCK, INVALID_INDEX, INVALID_INDEX};
             memcpy(payload, &out_index, sizeof(BlockIndex));
@@ -515,13 +559,22 @@ void HandleDynamicMemory(const PacketFrame &frame)
             break;
         }
         DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(idx->Block);
-        if (!block || block->type == BlockType::Deleted) { RespondStatus(frame, false); break; }
+        if (!block) { RespondStatus(frame, false); break; }
+        // Tombstoned (None) blocks still answer their META read so block
+        // indexes stay aligned with the summary count until save compacts
+        // them away; their entries are unreachable.
+        const bool deleted = block->type == BlockType::None ||
+                             block->type == BlockType::Deleted;
+        if (deleted && idx->Field != INVALID_INDEX) { RespondStatus(frame, false); break; }
         if (idx->Field == INVALID_INDEX) // block meta + name
         {
             uint8_t payload[MAX_PAYLOAD_SIZE];
-            uint16_t plen = MakeBlockMetaPayload(idx->Block, (uint16_t)block->type,
-                                                 block->map_count, block->Name,
-                                                 (uint8_t)strlen(block->Name),
+            uint16_t plen = MakeBlockMetaPayload(idx->Block,
+                                                 deleted ? (uint16_t)BlockType::None
+                                                         : (uint16_t)block->type,
+                                                 deleted ? 0 : block->map_count,
+                                                 block->Name,
+                                                 deleted ? 0 : (uint8_t)strlen(block->Name),
                                                  payload, sizeof(payload));
             if (plen == 0) { RespondStatus(frame, false); break; }
             SendResponse(frame, payload, (uint8_t)plen);
@@ -556,20 +609,14 @@ void HandleDynamicMemory(const PacketFrame &frame)
         DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(idx->Block);
         if (!block || block->type == BlockType::Deleted) { RespondStatus(frame, false); break; }
 
-        if (idx->Field == INVALID_INDEX) // set block name
+        if (idx->Field == INVALID_INDEX) // set block name and/or type
         {
+            // Both are user editable per Docs/Services/Dynamic Memory.md.
+            block->type = (BlockType)BlockMetaType(desc->FlagsAndType);
             uint16_t name_len = value_len;
             if (name_len > BLOCK_NAME_LEN - 1) name_len = BLOCK_NAME_LEN - 1;
             memcpy(block->Name, value, name_len); block->Name[name_len] = '\0';
             RespondEcho(frame, idx, *desc, value, name_len);
-            break;
-        }
-
-        if (BlockMetaType(desc->FlagsAndType) == (uint16_t)DataType::Deleted)
-        {
-            bool removed = idx->Field < block->map_count;
-            if (removed) block->Remove(idx->Field);
-            RespondStatus(frame, removed);
             break;
         }
 
@@ -593,8 +640,25 @@ void HandleDynamicMemory(const PacketFrame &frame)
         }
         else
         {
-            RespondStatus(frame, false);
-            break;
+            // Gap index: pad the missing slots with None placeholders so the
+            // requested index lands (Docs/Data Formats.md None = spacer).
+            while (block->map_count < idx->Field)
+            {
+                BlockMeta pad = {}; pad.FlagsAndType = (uint16_t)DataType::None;
+                if (!block->InsertField(block->map_count, pad))
+                {
+                    RespondStatus(frame, false);
+                    break;
+                }
+            }
+            if (block->map_count != idx->Field) { RespondStatus(frame, false); break; }
+            BlockMeta meta = *desc; meta.Size = (uint8_t)value_len;
+            if (!block->InsertField(idx->Field, meta) ||
+                !block->Set(idx->Field, value, value_len, desc->FlagsAndType))
+            {
+                RespondStatus(frame, false);
+                break;
+            }
         }
         // Success echo: the request payload already IS BlockIndex + BlockMeta + value.
         SendResponse(frame, frame.payload, frame.payload_len);

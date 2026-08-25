@@ -7,6 +7,8 @@
 library;
 
 import 'dart:async';
+
+import 'settings.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_libserialport/flutter_libserialport.dart'
     show SerialPort;
@@ -49,12 +51,19 @@ class ConnectionManager extends ChangeNotifier {
   LinkSource source = LinkSource.all;
   DeviceSort sort = DeviceSort.alphabetical;
   bool autoRefresh = true; // automatically on per the docs
+
+  /// Identity of the current session's link (MAC or serial path), for
+  /// autoconnect targeting.
+  String? connectedId;
+  Duration autoInterval = const Duration(seconds: 1); // docs default
   bool refreshError = false;
 
   final List<BleScanEntry> _bleEntries = [];
   List<UsbPortEntry> _usbEntries = [];
   StreamSubscription<BleDevice>? _scanSub;
   Timer? _autoTimer;
+  Timer? _autoConnectRetry;
+  DateTime? _autoConnectSuppressedUntil;
   bool _bleScanActive = false;
 
   /// True while a scan source is actively being refreshed (green dot).
@@ -132,12 +141,58 @@ class ConnectionManager extends ChangeNotifier {
     if (source != LinkSource.usb) await _refreshBle();
     if (source != LinkSource.ble) await _refreshUsb();
     notifyListeners();
+    unawaited(_maybeAutoConnect());
   }
 
-  Future<void> setAutoRefresh(bool enabled) async {
+  Future<void> setAutoRefresh(bool enabled, {Duration? interval}) async {
     autoRefresh = enabled;
+    if (interval != null) autoInterval = interval;
     await _syncAutoTimer();
     notifyListeners();
+  }
+
+  /// Autoconnect (Docs/App/Settings.md): when enabled with a target device,
+  /// connect to it as soon as discovery sees it - at startup or whenever a
+  /// refresh finds the link while disconnected. If the target is not in the
+  /// current scan results yet, keep scanning on a short timer until it appears
+  /// (the discovery stream may not have emitted it on the first pass).
+  Future<void> _maybeAutoConnect() async {
+    final settings = AppSettings.instance;
+    if (!settings.autoConnect ||
+        settings.autoConnectDeviceId.isEmpty ||
+        isConnected ||
+        isConnecting) {
+      _autoConnectRetry?.cancel();
+      _autoConnectRetry = null;
+      return;
+    }
+    // After a manual disconnect, leave the device alone for a while; resume
+    // autoconnect once the window expires.
+    final suppressed = _autoConnectSuppressedUntil;
+    if (suppressed != null && DateTime.now().isBefore(suppressed)) {
+      final remaining = suppressed.difference(DateTime.now());
+      _autoConnectRetry?.cancel();
+      _autoConnectRetry = Timer(remaining, () {
+        _autoConnectRetry = null;
+        refresh();
+      });
+      return;
+    }
+    final target = discoveredLinks.where((l) =>
+        l.id == settings.autoConnectDeviceId ||
+        l.name == settings.autoConnectDeviceId).firstOrNull;
+    if (target == null) {
+      _autoConnectRetry?.cancel();
+      _autoConnectRetry = Timer(const Duration(seconds: 3), () {
+        _autoConnectRetry = null;
+        refresh();
+      });
+      return;
+    }
+    _autoConnectRetry?.cancel();
+    _autoConnectRetry = null;
+    AppDiagnostics.log('link', 'autoconnecting to ${target.name}');
+    await connectTo(target);
   }
 
   Future<void> setSource(LinkSource newSource) async {
@@ -155,7 +210,8 @@ class ConnectionManager extends ChangeNotifier {
   /// (1 s period per the docs).
   Future<void> _syncAutoTimer() async {
     if (autoRefresh) {
-      _autoTimer ??= Timer.periodic(const Duration(seconds: 1), (_) => refresh());
+      _autoTimer?.cancel();
+      _autoTimer = Timer.periodic(autoInterval, (_) => refresh());
       await refresh();
     } else {
       _autoTimer?.cancel();
@@ -266,6 +322,9 @@ class ConnectionManager extends ChangeNotifier {
       // Keep the connection-list identity stable for the session (the reported
       // device name may differ from the advertised one).
       DeviceDatabase.instance.seedLinkName(link.name);
+      // Pull the live network (core + SNDB devices) now that the link is up,
+      // so the UI shows real data immediately after an autoconnect.
+      unawaited(DeviceDatabase.instance.refreshNetwork());
       AppDiagnostics.log('link', 'connected: ${transport.displayName}');
       return null;
     } catch (error) {
@@ -280,15 +339,29 @@ class ConnectionManager extends ChangeNotifier {
   Future<void> _attach(Transport transport) async {
     await _detach();
     _transport = transport;
+    connectedId = transport.id;
     _streamSub = transport.packetStream.listen(
       _onStreamBytes,
-      onError: (Object error) => disconnect(),
-      onDone: () => disconnect(),
+      onError: (Object error) {
+        AppDiagnostics.log('link', 'packet stream error: $error -> disconnect');
+        disconnect();
+      },
+      onDone: () {
+        AppDiagnostics.log('link', 'packet stream done -> disconnect');
+        disconnect();
+      },
     );
     notifyListeners();
   }
 
-  Future<void> disconnect() async {
+  Future<void> disconnect({bool manual = false}) async {
+    // A manual disconnect (disconnect button / switching to another device)
+    // must not be immediately undone by autoconnect: suppress it briefly so
+    // the user stays disconnected (Docs/App/Settings.md).
+    if (manual) {
+      _autoConnectSuppressedUntil =
+          DateTime.now().add(const Duration(seconds: 30));
+    }
     await _detach();
     notifyListeners();
   }
@@ -300,6 +373,7 @@ class ConnectionManager extends ChangeNotifier {
     await _streamSub?.cancel();
     _streamSub = null;
     _activeLink = null; // re-list the device once the session ends
+    connectedId = null;
     for (final completer in _pending.values) {
       if (!completer.isCompleted) {
         completer.completeError(const TransportException('Disconnected'));

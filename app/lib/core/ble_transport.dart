@@ -37,6 +37,9 @@ class BleTransport implements Transport {
   String get displayName => 'BLE $deviceId';
 
   @override
+  String get id => deviceId;
+
+  @override
   Stream<Uint8List> get linkBytes => _linkController.stream;
 
   @override
@@ -45,6 +48,27 @@ class BleTransport implements Transport {
 
   /// Connects, discovers the App service and subscribes to notifications.
   Future<void> connect() async {
+    // BLE connections can fail transiently (ATT error 0x0e) when the device is
+    // mid-advertising-restart right after a disconnect; retry a couple of times.
+    Object? lastError;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) {
+        await Future<void>.delayed(Duration(milliseconds: 600 * attempt));
+      }
+      try {
+        await _connectOnce();
+        return;
+      } catch (error) {
+        lastError = error;
+        try {
+          await UniversalBle.disconnect(deviceId);
+        } catch (_) {}
+      }
+    }
+    throw TransportException('BLE connect failed: $lastError');
+  }
+
+  Future<void> _connectOnce() async {
     await UniversalBle.connect(deviceId);
     final services = await UniversalBle.discoverServices(deviceId);
     BleCharacteristic? notifyChar;

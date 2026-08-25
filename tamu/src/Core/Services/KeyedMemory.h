@@ -46,26 +46,67 @@ void HandleKeyedMemory(const PacketFrame &frame)
         const uint8_t *value = frame.payload + sizeof(BlockIndex) + sizeof(BlockMeta);
         uint16_t value_len = frame.payload_len - sizeof(BlockIndex) - sizeof(BlockMeta);
 
+        // An explicit index repurposes a None tombstone slot in place, padding
+        // any gap with None blocks (indexes stay stable); INVALID_BLOCK appends.
+        if (idx->Block != INVALID_BLOCK)
+        {
+            while (keyed_block_registry.block_count < idx->Block + 1)
+            {
+                if (!keyed_block_registry.AddBlock(BlockType::None))
+                { RespondStatus(frame, false); break; }
+            }
+            KeyedBlockDescriptor *slot = keyed_block_registry.GetBlock(idx->Block);
+            const bool tombstone = slot && (slot->type == BlockType::None ||
+                                           slot->type == BlockType::Deleted);
+            if (!slot || !tombstone) { RespondStatus(frame, false); break; }
+            slot->type = (BlockType)BlockMetaType(desc->FlagsAndType);
+            uint16_t n = value_len > BLOCK_NAME_LEN - 1 ? BLOCK_NAME_LEN - 1 : value_len;
+            memcpy(slot->Name, value, n); slot->Name[n] = '\0';
+            // Any leftover entries were unreachable under the tombstone; leave
+            // them as None placeholders so dict indices stay stable too.
+            for (uint16_t i = 0; i < slot->map_count; i++)
+            {
+                auto &m = slot->map[i];
+                m.FlagsAndType = (m.FlagsAndType & BLOCK_META_FLAGS_MASK) |
+                                 (uint16_t)DataType::None;
+            }
+            RespondCreate(frame, idx->Block, *desc, value, n);
+            break;
+        }
+
         KeyedBlockDescriptor *block = CreateKeyedBlock((BlockType)BlockMetaType(desc->FlagsAndType), value, value_len);
         if (!block) { RespondStatus(frame, false); break; }
         RespondCreate(frame, keyed_block_registry.block_count - 1, *desc, value, value_len);
         break;
     }
-    case 1: // Delete block (marked Deleted, deallocated on next Save)
+    case 1: // Delete: mark None IN PLACE; reclaimed on save (Docs/Data Formats.md)
     {
         KeyedBlockDescriptor *block = keyed_block_registry.GetBlock(idx->Block);
-        if (block) block->type = BlockType::Deleted;
-        RespondStatus(frame, block != nullptr);
+        if (!block) { RespondStatus(frame, false); break; }
+        if (idx->Field == INVALID_INDEX) // whole block
+        {
+            block->type = BlockType::None;
+            RespondStatus(frame, true);
+            break;
+        }
+        if (idx->Field >= block->map_count) { RespondStatus(frame, false); break; }
+        if (idx->Key == INVALID_INDEX) // whole dictionary: mark its meta None
+        {
+            auto &m = block->map[idx->Field];
+            m.FlagsAndType = (m.FlagsAndType & BLOCK_META_FLAGS_MASK) |
+                             (uint16_t)DataType::None;
+            RespondStatus(frame, true);
+            break;
+        }
+        // single keyed entry: mark its meta None in place (no shift)
+        RespondStatus(frame, block->MarkKey(idx->Field, idx->Key));
         break;
     }
     case 2: // Read
     {
-        if (idx->Block == INVALID_BLOCK) // summary: count of visible (non-deleted) blocks
+        if (idx->Block == INVALID_BLOCK) // summary: TOTAL registered blocks
         {
-            uint16_t visible = 0;
-            for (uint16_t i = 0; i < keyed_block_registry.block_count; i++)
-                if (keyed_block_registry.GetBlock(i)->type != BlockType::Deleted)
-                    visible++;
+            const uint16_t visible = keyed_block_registry.block_count;
             uint8_t payload[sizeof(BlockIndex) + 1];
             BlockIndex out_index = {INVALID_BLOCK, INVALID_INDEX, INVALID_INDEX};
             memcpy(payload, &out_index, sizeof(BlockIndex));
@@ -74,7 +115,7 @@ void HandleKeyedMemory(const PacketFrame &frame)
             break;
         }
         KeyedBlockDescriptor *block = keyed_block_registry.GetBlock(idx->Block);
-        if (!block || block->type == BlockType::Deleted) { RespondStatus(frame, false); break; }
+        if (!block) { RespondStatus(frame, false); break; }
         if (idx->Field == INVALID_INDEX) // block meta + name
         {
             uint8_t payload[MAX_PAYLOAD_SIZE];
@@ -86,15 +127,23 @@ void HandleKeyedMemory(const PacketFrame &frame)
             SendResponse(frame, payload, (uint8_t)plen);
             break;
         }
+        if (idx->Field >= block->map_count) { RespondStatus(frame, false); break; }
         FieldResult field_result = block->Get(idx->Field);
-        if (!field_result.Data) { RespondStatus(frame, false); break; }
+        // NOTE: an EMPTY dictionary has no backing storage yet (Data == null)
+        // but its metadata is still valid, so validity is checked via
+        // map_count above - not via field_result.Data.
+
+        // A None-marked dictionary is a deleted placeholder: report it as
+        // empty so indexes stay aligned without exposing its old contents.
+        const bool dictGone = BlockMetaType(field_result.Descriptor.FlagsAndType) ==
+                              (uint16_t)DataType::None;
 
         if (idx->Key == INVALID_INDEX) // dictionary: BlockMeta + keys array
         {
             // A dictionary holds up to 256 keys (key ids 0..255). The response payload
             // cannot carry all of them at once, so the copy is clamped to what fits.
             uint8_t keys[256];
-            uint16_t key_count = block->ListKeys(idx->Field, keys, sizeof(keys));
+            uint16_t key_count = dictGone ? 0 : block->ListKeys(idx->Field, keys, sizeof(keys));
             uint8_t payload[MAX_PAYLOAD_SIZE];
             uint16_t cursor = 0;
             BlockIndex out_index = {idx->Block, idx->Field, INVALID_INDEX};
@@ -111,7 +160,7 @@ void HandleKeyedMemory(const PacketFrame &frame)
             break;
         }
         KeyResult key_result = block->GetKey(idx->Field, idx->Key); // keyed entry
-        if (!key_result.data_ptr) { RespondStatus(frame, false); break; }
+        if (dictGone || !key_result.data_ptr) { RespondStatus(frame, false); break; }
         uint8_t payload[MAX_PAYLOAD_SIZE];
         uint16_t cursor = 0;
         memcpy(payload + cursor, idx, sizeof(BlockIndex)); cursor += sizeof(BlockIndex);
@@ -137,10 +186,25 @@ void HandleKeyedMemory(const PacketFrame &frame)
             break;
         }
         KeyedBlockDescriptor *block = keyed_block_registry.GetBlock(idx->Block);
-        if (!block || block->type == BlockType::Deleted) { RespondStatus(frame, false); break; }
+        const bool blockGone = !block || block->type == BlockType::None ||
+                               block->type == BlockType::Deleted;
+        if (blockGone) {
+            if (block && idx->Field == INVALID_INDEX) {
+                // Tombstone meta so indexes stay aligned until save.
+                uint8_t payload[MAX_PAYLOAD_SIZE];
+                uint16_t plen = MakeBlockMetaPayload(
+                    idx->Block, (uint16_t)BlockType::None, 0, block->Name, 0,
+                    payload, sizeof(payload));
+                if (plen) { SendResponse(frame, payload, (uint8_t)plen); break; }
+            }
+            RespondStatus(frame, false);
+            break;
+        }
 
-        if (idx->Field == INVALID_INDEX) // set block name
+        if (idx->Field == INVALID_INDEX) // set block name and/or type
         {
+            // Both are user editable per Docs/Services/Keyed Memory.md.
+            block->type = (BlockType)BlockMetaType(desc->FlagsAndType);
             uint16_t name_len = value_len;
             if (name_len > BLOCK_NAME_LEN - 1) name_len = BLOCK_NAME_LEN - 1;
             memcpy(block->Name, value, name_len); block->Name[name_len] = '\0';
@@ -148,30 +212,51 @@ void HandleKeyedMemory(const PacketFrame &frame)
             break;
         }
 
-        // Ensure the dictionary field exists.
-        if (idx->Field == block->map_count)
+        // Ensure the dictionary field exists (padding any gap with None placeholders
+        // so an explicit index lands - Docs/Data Formats.md None = spacer).
+        if (idx->Field >= block->map_count)
         {
-            BlockMeta meta = *desc; meta.Size = 0;
-            if (!block->InsertField(idx->Field, meta))
+            while (block->map_count < idx->Field)
             {
-                RespondStatus(frame, false);
-                break;
+                BlockMeta pad = {}; pad.FlagsAndType = (uint16_t)DataType::None;
+                if (!block->InsertField(block->map_count, pad))
+                {
+                    RespondStatus(frame, false);
+                    break;
+                }
+            }
+            if (block->map_count < idx->Field) { RespondStatus(frame, false); break; }
+            if (block->map_count == idx->Field)
+            {
+                BlockMeta meta = *desc; meta.Size = 0;
+                if (!block->InsertField(idx->Field, meta))
+                {
+                    RespondStatus(frame, false);
+                    break;
+                }
             }
         }
-        if (idx->Field >= block->map_count) { RespondStatus(frame, false); break; }
 
         if (idx->Key == INVALID_INDEX) // dictionary itself: update its type only
         {
-            block->map[idx->Field].FlagsAndType = desc->FlagsAndType;
+            // Filling a deleted (None) dictionary also clears its stale
+            // entries, so the re-added dictionary starts empty.
+            if (BlockMetaType(block->map[idx->Field].FlagsAndType) == (uint16_t)DataType::None)
+            {
+                block->Remove(idx->Field);
+                BlockMeta fresh = {}; fresh.FlagsAndType = desc->FlagsAndType;
+                if (!block->InsertField(idx->Field, fresh))
+                {
+                    RespondStatus(frame, false);
+                    break;
+                }
+            }
+            else
+            {
+                block->map[idx->Field].FlagsAndType = desc->FlagsAndType;
+            }
             // Request payload already IS the echo (BlockIndex + BlockMeta + value).
             SendResponse(frame, frame.payload, frame.payload_len);
-            break;
-        }
-
-        if (BlockMetaType(desc->FlagsAndType) == (uint16_t)DataType::Deleted)
-        {
-            bool removed = block->RemoveKey(idx->Field, idx->Key);
-            RespondStatus(frame, removed);
             break;
         }
 
@@ -211,6 +296,60 @@ void HandleKeyedMemory(const PacketFrame &frame)
     case 6: // Recall: restore a block (or the whole registry when the block is invalid)
     {
         RespondStatus(frame, RecallRegistryBlock(keyed_block_registry, idx->Block, KeyedBackupName()));
+        break;
+    }
+    case 7: // Read all entries of a dictionary in ONE round trip
+    {
+        KeyedBlockDescriptor *block = keyed_block_registry.GetBlock(idx->Block);
+        if (!block || idx->Field == INVALID_INDEX || idx->Field >= block->map_count)
+        { RespondStatus(frame, false); break; }
+        FieldResult field_result = block->Get(idx->Field);
+        if (BlockMetaType(field_result.Descriptor.FlagsAndType) == (uint16_t)DataType::None)
+        { RespondStatus(frame, false); break; }
+
+        uint8_t payload[MAX_PAYLOAD_SIZE];
+        uint16_t cursor = 0;
+        BlockIndex out_index = {idx->Block, idx->Field, INVALID_INDEX};
+        memcpy(payload + cursor, &out_index, sizeof(BlockIndex)); cursor += sizeof(BlockIndex);
+
+        // Count visible entries first (None-marked keys are skipped).
+        uint16_t visible = 0;
+        if (field_result.Data)
+        {
+            uint8_t *p = static_cast<uint8_t *>(field_result.Data);
+            uint16_t off = 0;
+            while (off + sizeof(BlockMeta) <= field_result.Descriptor.Size)
+            {
+                BlockMeta *m = reinterpret_cast<BlockMeta *>(p + off);
+                if (!KeyedEntryFits(m->Size, off, field_result.Descriptor.Size)) break;
+                if (((uint16_t)m->FlagsAndType & 0x03FF) != (uint16_t)DataType::None)
+                    visible++;
+                off += AlignTo4(sizeof(BlockMeta) + m->Size);
+            }
+        }
+        BlockMeta dict_meta = field_result.Descriptor;
+        dict_meta.Size = (uint8_t)visible;
+        memcpy(payload + cursor, &dict_meta, sizeof(BlockMeta)); cursor += sizeof(BlockMeta);
+
+        // Stream entry metas + values, aligned like the on-disk layout.
+        if (field_result.Data)
+        {
+            uint8_t *p = static_cast<uint8_t *>(field_result.Data);
+            uint16_t off = 0;
+            while (off + sizeof(BlockMeta) <= field_result.Descriptor.Size)
+            {
+                BlockMeta *m = reinterpret_cast<BlockMeta *>(p + off);
+                if (!KeyedEntryFits(m->Size, off, field_result.Descriptor.Size)) break;
+                if (((uint16_t)m->FlagsAndType & 0x03FF) != (uint16_t)DataType::None)
+                {
+                    uint16_t entry_size = sizeof(BlockMeta) + m->Size;
+                    if (cursor + entry_size > sizeof(payload)) break;
+                    memcpy(payload + cursor, m, entry_size); cursor += entry_size;
+                }
+                off += AlignTo4(sizeof(BlockMeta) + m->Size);
+            }
+        }
+        SendResponse(frame, payload, (uint8_t)cursor);
         break;
     }
     default:

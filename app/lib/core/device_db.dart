@@ -244,6 +244,25 @@ class DeviceDatabase extends ChangeNotifier {
     return serialNumberToHex(reply.sublist(0, 14));
   }
 
+  /// SNDB Write (CID 14): assigns `sn` (14 bytes) the short ID. Returns true
+  /// when the device echoes the entry back.
+  Future<bool> sndbWrite(List<int> sn, int id) async {
+    final reply = await _request(coreId, ServiceType.device, 14,
+        payload: [...sn, id & 0xFF, (id >> 8) & 0xFF],
+        timeout: const Duration(seconds: 3));
+    return reply != null && reply.length >= 16;
+  }
+
+  /// SNDB Delete (Docs/Services/Device service.md): SNDB Write (CID 14) with
+  /// ID 0 tombstones the entry carrying that serial number.
+  Future<bool> sndbDelete(List<int> sn) async {
+    if (sn.length < 14) return false;
+    final reply = await _request(coreId, ServiceType.device, 14,
+        payload: [...sn.take(14), 0, 0],
+        timeout: const Duration(seconds: 3));
+    return reply != null && reply.length >= 16;
+  }
+
   /// Full SNDB dump for the SNDB viewer: [id, serial hex] pairs.
   Future<List<(int, String)>> sndbEntries() async {
     final reply = await _request(coreId, ServiceType.device, 12,

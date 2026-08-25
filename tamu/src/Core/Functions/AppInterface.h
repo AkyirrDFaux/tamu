@@ -17,12 +17,21 @@
 #include "freertos/FreeRTOS.h"
 #include "Core/Functions/Packet.h"
 
+// Defined in the device AppUSB.h (included after this header); used by the TX
+// pump to stop draining responses into a USB port the app has stopped reading.
+bool AppUsbSilent();
+
 // Doc requirement: global status bool reporting whether an app is actually connected
 // (either link active).
 bool AppConnected = false;
 
 // Outgoing stream ring: serialized frames waiting to be flushed to the app links.
-#define APP_TX_RING_SIZE 2048
+// A synchronous service reply (e.g. Storage Read File, which streams a whole
+// file in one handler) can legitimately burst well past a small ring before
+// AppInterfacePump drains it. Sized to hold a full 4 KiB file read (~4.5 KB of
+// wire frames); larger reads would still truncate, so the app reads files in
+// 4 KiB slices.
+#define APP_TX_RING_SIZE 8192
 
 // Inbound frame queue depth: frames parsed by the link readers, dispatched by the pump
 // in ApplicationTask context so ALL routing happens on one task (no concurrent dispatch).
@@ -177,8 +186,10 @@ void AppInterfacePump()
 
     // Flush as many 60-byte USB link frames as possible. AppUSBSend blocks briefly
     // (bounded) until the bytes are in the driver's TX buffer, so everything popped
-    // here is considered delivered.
-    if (AppUSBActive() && AppTxRing)
+    // here is considered delivered. When a BLE session is up and USB has been
+    // silent, the app has switched links (closed its USB port, cable still
+    // plugged): skip USB so responses route to BLE.
+    if (AppUSBActive() && AppTxRing && !(AppBLEActive() && AppUsbSilent()))
     {
         uint8_t chunk[60];
         uint16_t n = AppTxPop(chunk, sizeof(chunk));

@@ -107,7 +107,12 @@ void HandleSNDB(const PacketFrame &frame)
                 const SerialNumber *write_sn = reinterpret_cast<const SerialNumber *>(frame.payload);
                 uint16_t write_id = *reinterpret_cast<const uint16_t *>(frame.payload + 14);
 
-                bool success = SNDB::AddDevice(*write_sn, write_id);
+                // Per Docs/Services/Device service.md: ID 0 = delete the
+                // entry carrying this serial number.
+                bool success = (write_id != 0)
+                                   ? SNDB::AddDevice(*write_sn, write_id)
+                                   : SNDB::RemoveDevice(
+                                         SNDB::FindShortID(*write_sn));
                 // Always acknowledge (empty frame = failure, like the CID 13 not-found case).
                 PacketConstruct(&response, frame.id_src, frame.srv_src, frame.srv_tgt,
                                  FLAG_TYPE | FLAG_START | FLAG_STOP,

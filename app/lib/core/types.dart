@@ -17,12 +17,15 @@ int idNet(int id) => (id >> 12) & 0xF;
 int idDevice(int id) => id & 0xFFF;
 String idToString(int id) => '${idNet(id)}:${idDevice(id).toRadixString(16).padLeft(3, '0')}';
 
-/// Number: 16.16 signed fixed point.
+/// Sign-extends a 32 bit little-endian value (Dart ints are 64 bit, so the
+/// sign bit must be expanded manually).
+int _signExtend32(int raw) => (raw & 0x80000000) != 0 ? raw - 0x100000000 : raw;
+
+/// Number: 16.16 SIGNED fixed point.
 double numberFromBytes(List<int> bytes, [int offset = 0]) {
-  final raw = (bytes[offset] | (bytes[offset + 1] << 8) |
-          (bytes[offset + 2] << 16) | (bytes[offset + 3] << 24)) |
-      0;
-  return raw / 65536.0;
+  final raw = bytes[offset] | (bytes[offset + 1] << 8) |
+          (bytes[offset + 2] << 16) | (bytes[offset + 3] << 24);
+  return _signExtend32(raw) / 65536.0;
 }
 
 Uint8List numberToBytes(double value) {
@@ -32,9 +35,8 @@ Uint8List numberToBytes(double value) {
 }
 
 int int32FromBytes(List<int> bytes, [int offset = 0]) =>
-    (bytes[offset] | (bytes[offset + 1] << 8) |
-        (bytes[offset + 2] << 16) | (bytes[offset + 3] << 24)) |
-    0;
+    _signExtend32(bytes[offset] | (bytes[offset + 1] << 8) |
+        (bytes[offset + 2] << 16) | (bytes[offset + 3] << 24));
 
 int uint32FromBytes(List<int> bytes, [int offset = 0]) =>
     bytes[offset] | (bytes[offset + 1] << 8) |
@@ -78,7 +80,10 @@ enum DeviceType {
 }
 
 enum DataType {
-  unknown(0x00),
+  // None (0x00): placeholder/spacer or deleted entry - indexes never move
+  // (Docs/Data Formats.md "Basic types").
+  none(0x00),
+  undefined(0x0E), // valid entry whose type is not specified yet
   sn(0x01),
   uint32(0x02),
   number(0x03),
@@ -100,12 +105,13 @@ enum DataType {
     for (final type in DataType.values) {
       if (type.value == value) return type;
     }
-    return DataType.unknown;
+    return DataType.none;
   }
 }
 
 enum BlockType {
-  unknown(0x00),
+  none(0x00), // tombstone: no block here; stable until save compacts
+  undefined(0x01), // valid block, type not yet specified
   ledButton(0x03),
   pwm(0x04),
   accGyr(0x05),
@@ -121,11 +127,12 @@ enum BlockType {
     for (final type in BlockType.values) {
       if (type.value == value) return type;
     }
-    return BlockType.unknown;
+    return BlockType.undefined;
   }
 
   String get label => switch (this) {
-        BlockType.unknown => 'Unknown',
+        BlockType.none => 'None',
+        BlockType.undefined => 'Undefined',
         BlockType.ledButton => 'LED/Button',
         BlockType.pwm => 'PWM',
         BlockType.accGyr => 'Acc/Gyr',
@@ -138,6 +145,7 @@ enum BlockType {
 
 /// Field/block flag bits (bits 10-15 of BlockMeta.FlagsAndType).
 class FieldFlags {
+  static const mask = 0xFC00; // flags occupy bits 10-15 of FlagsAndType
   static const valid = 0x0400; // Flash only: newer version exists when 0
   static const readOnly = 0x1000;
   static const notSaved = 0x2000;

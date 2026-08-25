@@ -20,7 +20,26 @@ import subprocess
 import sys
 import time
 
-PORT = "/dev/ttyACM0"
+def detect_port(vendor_id):
+    """Finds a ttyACM port whose USB device carries `vendor_id` (e.g. '303a'
+    for Espressif / the Tamu console, '1a86' for WCH-Link / the DAS).
+    USB enumeration order is not stable, so paths must never be hardcoded."""
+    import glob, os
+    for tty in sorted(glob.glob('/sys/class/tty/ttyACM*')):
+        p = os.path.realpath(f'{tty}/device')
+        for _ in range(4):
+            if os.path.exists(f'{p}/idVendor'):
+                try:
+                    with open(f'{p}/idVendor') as f:
+                        if f.read().strip().lower() == vendor_id:
+                            return f'/dev/{os.path.basename(tty)}'
+                except OSError:
+                    pass
+                break
+            p = os.path.dirname(p)
+    return None
+
+TAMU_PORT = detect_port('303a') or '/dev/ttyACM0'
 BAUD = 115200
 WLINK = os.path.expanduser("~/.platformio/packages/tool-wlink/wlink")
 WLINK_CHIP = "CH32V003"
@@ -39,7 +58,7 @@ def report(name, ok, detail=""):
 class Cli:
     """Wraps the Tamu USB serial console with a command/read + retry loop."""
 
-    def __init__(self, port=PORT, baud=BAUD, timeout=3.0):
+    def __init__(self, port=TAMU_PORT, baud=BAUD, timeout=6.0):
         self.ser = serial.Serial(port, baud, timeout=0.2)
         self.timeout = timeout
 
@@ -49,27 +68,62 @@ class Cli:
         except Exception:
             pass
 
-    def _read_until(self, dur):
-        deadline = time.time() + dur
-        buf = b""
-        while time.time() < deadline:
-            chunk = self.ser.read(self.ser.in_waiting or 1)
-            if chunk:
-                buf += chunk
-        return buf
+    def send(self, command, timeout=None, retries=1, idle=None):
+        """Send a command and return its complete reply text.
 
-    def send(self, command, timeout=None, retries=1):
-        """Send a command and return the reply text. Retries once if the command was
-        not echoed or the prompt did not come back (known first-command garbling)."""
+        Completion = the echoed command is present AND the stream has stayed
+        silent for `idle` seconds. Prompts cannot mark completion: the console
+        prints them BEFORE asynchronous result lines ('dispatched...' ->
+        prompt -> 'PONG'), and slow NOR-flash operations stall the output
+        arbitrarily long, so the idle threshold has to cover the operation,
+        not just the line transfer. RS-Bus round trips (device 2 / DAS) need
+        `idle=4`; local reads are fine with the default."""
         t = timeout or self.timeout
+        gap = self.IDLE_GAP if idle is None else idle
+        # Mutating commands hit NOR flash (erase/compaction can stall output for
+        # seconds); reads only wait for the wire.
+        if idle is None and command.split() and \
+                command.split()[0] in self.MUTATING_VERBS:
+            gap = max(gap, 4.0)
+        marker = command.strip()
         for _ in range(retries + 1):
+            # Wait until the board stopped emitting before typing: the USJ CDC
+            # link can drop incoming bytes while a previous response is still
+            # being flushed, which would garble the command line.
+            quiet_deadline = time.time() + 2
+            while time.time() < quiet_deadline:
+                if self.ser.in_waiting == 0:
+                    time.sleep(0.05)
+                    if self.ser.in_waiting == 0:
+                        break
+                else:
+                    self.ser.read(self.ser.in_waiting)
+                    time.sleep(0.02)
             self.ser.reset_input_buffer()
             self.ser.write((command + "\n").encode())
-            text = self._read_until(t).decode("utf-8", "replace")
-            if command.strip() in text and "tamu>" in text:
+            buf = b""
+            deadline = time.time() + t
+            last_data = None
+            while time.time() < deadline:
+                n = self.ser.in_waiting
+                if n:
+                    buf += self.ser.read(n)
+                    last_data = time.time()
+                elif last_data is not None \
+                        and marker in buf.decode("utf-8", "replace") \
+                        and time.time() - last_data > gap:
+                    break  # echo seen and the reply went quiet: done
+                else:
+                    time.sleep(0.005)
+            text = buf.decode("utf-8", "replace")
+            if marker in text:
                 return text
             time.sleep(0.2)
         return text
+
+    IDLE_GAP = 1.0
+    MUTATING_VERBS = {"save", "recall", "create", "delete", "rename",
+                      "format", "write"}
 
 
 def parse_table(text):
@@ -98,34 +152,38 @@ def reboot_das():
 def test_device_service(cli):
     """Device service: ping/type/sn/version/name/uptime/loop/time/cap on both devices."""
     for dev in (1, 2):
-        r = cli.send(f"dev {dev} ping")
+        idle = None if dev == 1 else 4.0  # RS-Bus round trips to the DAS are slow
+        r = cli.send(f"dev {dev} ping", idle=idle)
         report(f"dev {dev} ping", "PONG" in r, r.strip().splitlines()[-1] if r else "no reply")
 
-        r = cli.send(f"dev {dev} type")
+        r = cli.send(f"dev {dev} type", idle=idle)
         ok = bool(re.search(r"Type 0x[0-9A-Fa-f]{4}", r))
         report(f"dev {dev} type", ok, "0x0001" in r and dev == 1 or "0x0003" in r and dev == 2)
 
-        r = cli.send(f"dev {dev} sn")
+        r = cli.send(f"dev {dev} sn", idle=idle)
         report(f"dev {dev} sn", "SN " in r)
 
-        r = cli.send(f"dev {dev} version")
+        r = cli.send(f"dev {dev} version", idle=idle)
         report(f"dev {dev} version", "Version" in r)
 
-        r = cli.send(f"dev {dev} name")
+        r = cli.send(f"dev {dev} name", idle=idle)
         report(f"dev {dev} name", "Name" in r)
 
-        r = cli.send(f"dev {dev} uptime")
+        r = cli.send(f"dev {dev} uptime", idle=idle)
         report(f"dev {dev} uptime", bool(re.search(r"Uptime \d+ ms", r)))
 
-        r = cli.send(f"dev {dev} loop")
+        r = cli.send(f"dev {dev} loop", idle=idle)
         report(f"dev {dev} loop", "Loop avg" in r)
 
-        r = cli.send(f"dev {dev} time")
+        r = cli.send(f"dev {dev} time", idle=idle)
         report(f"dev {dev} time", "Time sync" in r)
 
-        r = cli.send(f"dev {dev} cap")
+        # Tamu reports Core|CLI|DynamicMemory|KeyedMemory (0b1101 = 0xD);
+        # DAS is a plain node with no capability bits. The RSBus round trip to
+        # node 2 can take several seconds - give it a longer read window.
+        r = cli.send(f"dev {dev} cap", timeout=10, idle=idle)
         report(f"dev {dev} cap",
-               ("0x00000001" in r and dev == 1) or ("0x00000000" in r and dev == 2))
+               ("0x0000001D" in r and dev == 1) or ("0x00000000" in r and dev == 2))
 
 
 def test_tamu_system_memory(cli):
@@ -167,41 +225,41 @@ def test_tamu_system_memory(cli):
 
 def test_das_system_memory(cli):
     """DAS System Memory: measurement fields, writable fields, clamping."""
-    r = cli.send("read 2 s 0 3")
+    r = cli.send("read 2 s 0 3", idle=4)
     report("read MeasuredValue (s 0 3)", "Field [03]" in r and "[RO]" in r)
 
-    r = cli.send("read 2 s 0 4")
+    r = cli.send("read 2 s 0 4", idle=4)
     report("read CurrentRange (s 0 4)", "Field [04]" in r)
 
-    r = cli.send("read 2 s 1 3")
+    r = cli.send("read 2 s 1 3", idle=4)
     report("read Meas2 MeasuredValue (s 1 3)", "Field [03]" in r)
 
-    r = cli.send("write 2 s 0 1 0x003 0.5")
+    r = cli.send("write 2 s 0 1 0x003 0.5", idle=4)
     report("write FilterCoeff 0.5", "Number: 0.5000" in r)
-    r = cli.send("write 2 s 0 0 0x003 10")
+    r = cli.send("write 2 s 0 0 0x003 10", idle=4)
     report("write SamplingRate 10", "Number: 10.0000" in r)
 
     # Write-time clamping (BUG 2 fix)
-    cli.send("write 2 s 0 1 0x003 2.5")
-    r = cli.send("read 2 s 0 1")
+    cli.send("write 2 s 0 1 0x003 2.5", idle=4)
+    r = cli.send("read 2 s 0 1", idle=4)
     report("FilterCoeff 2.5 clamps to 1.0", "Number: 1.0000" in r)
-    cli.send("write 2 s 0 1 0x003 -0.5")
-    r = cli.send("read 2 s 0 1")
+    cli.send("write 2 s 0 1 0x003 -0.5", idle=4)
+    r = cli.send("read 2 s 0 1", idle=4)
     report("FilterCoeff -0.5 clamps to 0.0", "Number: 0.0000" in r)
-    cli.send("write 2 s 0 0 0x003 1000000")
-    r = cli.send("read 2 s 0 0")
+    cli.send("write 2 s 0 0 0x003 1000000", idle=4)
+    r = cli.send("read 2 s 0 0", idle=4)
     report("SamplingRate 1e6 clamps to 1000", "Number: 1000.0000" in r)
-    cli.send("write 2 s 0 0 0x003 -1")
-    r = cli.send("read 2 s 0 0")
+    cli.send("write 2 s 0 0 0x003 -1", idle=4)
+    r = cli.send("read 2 s 0 0", idle=4)
     report("SamplingRate -1 clamps to 1", "Number: 1.0000" in r)
 
-    cli.send("write 2 s 0 1 0x003 0.5")
-    cli.send("write 2 s 0 0 0x003 10")
-    cli.send("write 2 s 1 1 0x003 0.5")
-    cli.send("write 2 s 1 0 0x003 10")
-    r = cli.send("save 2 s -")
+    cli.send("write 2 s 0 1 0x003 0.5", idle=4)
+    cli.send("write 2 s 0 0 0x003 10", idle=4)
+    cli.send("write 2 s 1 1 0x003 0.5", idle=4)
+    cli.send("write 2 s 1 0 0x003 10", idle=4)
+    r = cli.send("save 2 s -", idle=4)
     report("save 2 s -", "Operation OK" in r)
-    r = cli.send("file 2 table")
+    r = cli.send("file 2 table", idle=4)
     report("SYSMEM backup created", "SYSMEM" in r)
 
 
@@ -335,7 +393,7 @@ def test_memory_edge_cases(cli):
         ("write 2 s 9 0 0x003 5",            "write invalid block rejected"),
     ]
     for cmd, desc in cases:
-        r = cli.send(cmd)
+        r = cli.send(cmd, idle=4 if " 2 " in cmd else None)
         report(desc, "Operation FAILED" in r, r.strip().splitlines()[-1] if r else "")
 
 
@@ -347,7 +405,7 @@ def test_device_edge_cases(cli):
     r = cli.send("dev 5 uptime")
     report("dead address uptime -> timeout", "no response from device 5" in r)
 
-    r = cli.send("save 2 d -")
+    r = cli.send("save 2 d -", timeout=14, idle=6)
     report("save missing service -> timeout", "no response from device 2" in r)
 
     long_name = "TOOLONGNAME_123456789012345678901234567"
@@ -422,14 +480,31 @@ DEFAULT_ORDER = ["device", "tamu", "das", "dynamic", "storage",
 
 def main():
     ap = argparse.ArgumentParser(description="Automated Tamu/DAS hardware test battery")
-    ap.add_argument("--port", default=PORT, help="Tamu USB serial port")
+    ap.add_argument("--port", default=TAMU_PORT, help="Tamu USB serial port (auto-detected by USB vendor when omitted)")
     ap.add_argument("--baud", type=int, default=BAUD)
     ap.add_argument("--timeout", type=float, default=3.0, help="per-command reply window (s)")
     ap.add_argument("--reboot", action="store_true", help="include the storage reboot-persistence test")
     ap.add_argument("--only", help="comma-separated group names to run")
+    ap.add_argument("--core", action="store_true",
+                    help="Tamu-local groups only (device, memory, cli, edge cases)")
+    ap.add_argument("--node", action="store_true",
+                    help="DAS-bound groups only (RS-485 round trips)")
+    ap.add_argument("--storage", action="store_true",
+                    help="storage-related groups only")
     args = ap.parse_args()
 
-    order = [g for g in DEFAULT_ORDER if args.only is None or g in args.only.split(",")]
+    presets = {
+        "--core": ["device", "tamu", "dynamic", "memory", "device_edge", "parse"],
+        "--node": ["das"],
+        "--storage": ["storage", "dynamic", "memory"]
+        + (["reboot"] if args.reboot else []),
+    }
+    for flag, groups in presets.items():
+        if getattr(args, flag[2:]):
+            args.only = ",".join(groups)
+            break
+    order = [g for g in DEFAULT_ORDER
+             if args.only is None or g in args.only.split(",")]
     if not args.reboot and "reboot" in order:
         order.remove("reboot")
     if not order:
@@ -437,7 +512,12 @@ def main():
         sys.exit(2)
 
     print(f"=== Tamu/DAS test battery (port {args.port}, groups: {', '.join(order)}) ===")
-    cli = Cli(args.port, args.baud, args.timeout)
+    try:
+        cli = Cli(args.port, args.baud, args.timeout)
+    except serial.SerialException as e:
+        print(f"Cannot open {args.port}: {e}\n"
+              "The Tamu app may be running and holding the port - close it first.")
+        sys.exit(2)
     try:
         # Warm up the console: the very first command on a fresh port is often garbled
         # (known quirk) and would otherwise fail its assertion.

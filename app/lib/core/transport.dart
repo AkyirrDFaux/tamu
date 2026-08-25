@@ -109,6 +109,10 @@ class BleLengthParser {
 abstract class Transport {
   String get displayName;
 
+  /// Stable identity used for autoconnect targeting (USB: port path,
+  /// BLE: MAC address).
+  String get id;
+
   /// Raw link bytes (USB frames / BLE notifications before de-framing is done
   /// internally by the implementation).
   Stream<Uint8List> get linkBytes;

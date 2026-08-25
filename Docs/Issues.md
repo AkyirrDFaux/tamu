@@ -4,6 +4,169 @@ Status of items from the docs-vs-implementation audit and follow-up work.
 
 ## Resolved (code)
 
+### BLE session dead after switching from USB (fixed, 2026-08-25)
+
+- **Root cause**: after the app closed its USB port (link switch / manual
+  disconnect) the cable stayed plugged in, so the SOF-based
+  `usb_serial_jtag_is_connected()` kept reporting USB present and the firmware
+  drained every response into the dead USB port - the BLE session connected but
+  never received anything ("not responding/loading anything").
+  `AppRxStream` now stamps `s_usb_last_rx`, and the AppInterface TX pump skips
+  the USB drain when a BLE session is up and USB has been silent for 500 ms, so
+  responses route to BLE. Verified: connect USB -> disconnect -> connect BLE ->
+  pings all succeed (previously all timed out).
+- **BLE connect retry**: a fresh connection right after a disconnect can fail
+  transiently (ATT error 0x0e while the device restarts advertising);
+  `BleTransport.connect()` now retries a few times.
+
+### Memory backup files now human-readable; connection switching + autoconnect (fixed, 2026-08-25)
+
+- **SYSMEM / DYNMEM / KEYMEM decode as registry views**: `MemoryBackupView`
+  parses the serialised registries (SerializeSystemBlocks for SYSMEM; the
+  common SerializeRegistry format for DYNMEM/KEYMEM: u16 block count, then per
+  block name/type/map/data with aligned field data). SYSMEM shows the six Tamu
+  blocks (LEDButton, Fan1/2, AccGyr, LEDDisplay, LEDDisplay2) with named
+  writable fields; DYNMEM shows blocks with their entries and types; KEYMEM
+  shows blocks with dictionaries and keyed entries. Verified against live
+  backups and synthetic widget tests (incl. empty/corrupt files not crashing).
+- **Switch connections by tapping another device while connected**: previously
+  the device list was inert while a session was up; now tapping any listed
+  (different) device disconnects the current session and connects to the
+  tapped one.
+- **Manual disconnect no longer instantly reconnects**: a manual disconnect
+  (disconnect button or a device switch) suppresses autoconnect for 30 s;
+  autoconnect resumes once the window expires. Link-loss disconnects (stream
+  error/close) are NOT suppressed, so autoconnect still recovers dropped
+  sessions.
+
+### Storage reads truncated at ~1.8 KB; file views now match reality (fixed, 2026-08-25)
+
+- **Root cause**: the app-interface TX ring was 2048 B with a drop-newest
+  policy, but `Storage Read File` streams a whole file synchronously in one
+  handler. A 4 KiB read bursts ~17 packets (~4.5 KB of wire frames), so packets
+  8+ (including the stream's STOP) were silently dropped and the app received
+  only ~1801 B. `APP_TX_RING_SIZE` is now 8192, so a full 4 KiB read fits.
+  Verified: `readFile` returns the full 4096 B for `.TABLE` and `SNREG`.
+- **Table view now agrees with the file list**: the decoded `.TABLE` records
+  match the CID-0 file list exactly (live records: `.TABLE`, `SNREG`, `SYSMEM`,
+  `DYNMEM`, `KEYMEM`). The table accumulates hundreds of invalidated (offset 0)
+  records from old generations/backups, so the view now shows live records
+  first with a "N invalidated (old) records" collapsible section instead of a
+  wall of deleted entries that looked like a disagreement.
+- **SNREG view decoded the wrong record layout**: `RegistryEntry` is 32 bytes
+  (u16 valid marker 0x55AA/0x0000/0xFFFF, u16 short ID, 12 reserved, 14-byte
+  serial) but the app read 16-byte records (14-byte SN + u16 ID), showing
+  garbage. `_snregView` now steps 32 bytes, skips unwritten slots and labels
+  removed entries. Verified against the live SNREG (core ID 1 / DAS ID 2).
+
+### "Add" now fills None placeholders - no more uneditable None rows (fixed, 2026-08-25)
+
+- **Root cause of "new blocks prefilled with none values, nothing editable"**: a
+  plain append used `fieldCount` (which includes None placeholders left by
+  deletes), so after deleting an entry the next append landed PAST the
+  placeholder - the block accumulated an uneditable None row per delete and the
+  value appeared out of sync. Dynamic "Add entry" (and keyed "Add dictionary")
+  now pass the first None placeholder index when the user picks Append, so the
+  freed slot is filled in place (indexes stable, no clutter). Verified: delete
+  entry 0 -> re-add fills index 0 with the new value and type.
+- **Filling a deleted keyed dictionary clears its stale entries**: the keyed
+  Write "dictionary type update" branch now `Remove`s a None-marked dict field
+  and re-inserts it empty before setting the type, so a re-added dictionary
+  starts clean instead of exposing the old (deleted) keys.
+- **None rows are clearly labelled**: dynamic entries render as "Entry N
+  (deleted) - Add entry fills this slot"; keyed dicts as "Dictionary N
+  (deleted)". They are deliberately non-editable (there is no value to edit).
+- A full crash-hunt probe (create/add/edit/delete/fill/pad/refresh cycle with a
+  device-alive check after every step) passes with no reboot: the earlier
+  "keyed page stuck / device crashed" report matches the pre-fix behaviour of
+  accumulated None blocks (readBlocks iterated hundreds of indexes) plus the
+  `SetKey` tail-shift corruption, both now fixed.
+
+### Keyed page refresh wiped open dicts; arbitrary indexes now padded with None (fixed, 2026-08-25)
+
+- **Refresh wiped open state**: `_refresh()` swapped in fresh `KeyedBlock`
+  objects whose `dicts`/`entries` maps were empty, so every open block/dict
+  instantly fell back to its infinite "..." spinner until manually
+  collapsed+reopened - the page looked unrefreshable. The refresh now
+  re-reads the dicts of open blocks and reloads entries for open dicts after
+  swapping in the new block list, keeping the view live.
+- **Arbitrary (gap) indexes now work - padded with None**: creating a block
+  at index N past the end pads block_count..N-1 with `BlockType::None`
+  tombstones (both memory services, CID 0); writing a dyn entry or keyed dict
+  at a gap field index pads the missing fields with `DataType::None` metas
+  (CID 3). The padded slots read back as None and stay addressable until a
+  save compacts them. The app's create/add dialogs already offer the Index
+  field (empty = append).
+
+### Keyed dictionary corruption + slow loading + index-aware creation (fixed, 2026-08-25)
+
+- **Keyed `SetKey` tail-shift bug (root cause of "dictionary loading broken")**:
+  `SetKey` shifted only the *current field's* tail when an entry grew/shrunk
+  (`map[field_idx].Size - tail_start`), but later fields' data lives after the
+  current field too. Adding a key to dict N after dict N+1 existed overwrote
+  dict N+1's data with the new entry (and `map_count` sizes then pointed at the
+  shifted garbage). Now the whole block tail is moved
+  (`data_end - (cursor + tail_start)`, and the shift runs for newly-added
+  entries too, not just replaced ones). Dynamic `Set` already used the whole-tail
+  length; only keyed had the bug.
+- **Keyed Delete (CID 1) now honours dict and key levels**: it used to be
+  block-only, so the app's "delete dictionary" silently marked the WHOLE block
+  None. It now marks the dictionary field's meta None (dict level) or the
+  keyed entry's meta None in place via `MarkKey` (key level); block level marks
+  the block None. Deleted dicts read back as empty (type None, 0 keys) and render
+  as "(deleted)" placeholder rows in the app.
+- **Batched dictionary read (CID 7)**: reading a dict's entries was N sequential
+  round trips (very slow over BLE). New CID 7 returns the dict BlockMeta followed
+  by aligned `BlockMeta + value` pairs for all visible keys in one reply; the app
+  loads a whole dict in a single request (falls back to per-key reads on older
+  firmware).
+- **Index-aware creation**: an explicit index in a create/write request repurposes
+  a None tombstone slot IN PLACE (both memory services, CID 0), so a block can be
+  recreated at its old index after deletion; the app's create dialogs gained an
+  optional Index field and entry/dictionary add flows let the user fill a
+  placeholder slot instead of always appending.
+- **File table row was not tappable**: the storage ListTile was `enabled: !isTable`
+  (read-only), which also suppresses `onTap` - so the file table could never be
+  opened. The row is now enabled (read-only-ness shown by the lock icon) and
+  tapping opens the decoded table view. Verified end-to-end via
+  `StorageClient.readFile('.TABLE')`.
+
+### None-typed placeholders keep memory indexes stable (fixed, 2026-08-25)
+
+Per the updated `Docs/Data Formats.md` "Basic types", deletion no longer shifts indexes:
+- **DataType::None = 0x00** (renamed from Unknown; legacy alias kept) is the placeholder/spacer
+  marker: "no value there, a deleted entry". A new distinct **DataType::Undefined = 0x0E** means
+  a *valid* entry whose type is not specified yet (blocks created from the app default to it,
+  never to None). Same for **BlockType**: None = 0x00 (tombstone), Undefined = 0x01 (valid
+  unspecified), Deleted = 0x07 kept for wire compat.
+- **Dynamic/Keyed entry delete (CID 1 with a field)** marks `map[field].FlagsAndType` type=None
+  IN PLACE - the old `Remove()`/`RemoveKey()` compact-and-shift paths are gone. A keyed key is
+  deleted the same way by writing a None-typed meta (empty value); `SetKey` already writes metas
+  in place.
+- **Read/summary are index-stable**: summaries (invalid block) now return the TOTAL registered
+  block count (including tombstones) so every index stays addressable; tombstoned (None/Deleted)
+  blocks answer their META read (as type None) while their entries are unreachable; `ListKeys`
+  and `GetKey` skip None-marked keys so deleted keys are invisible but never shift others.
+- **Save compacts**: `PurgeDeleted` (shared template) now also drops None blocks, so a Save
+  physically frees tombstoned slots and the registry renumbers - matching "deallocated only if
+  saved" in the docs. Between deletes and a save, indexes never move.
+- **Firmware `EnsureCapacity` shrink bug**: `(uint16_t)(-delta) > length` overflowed for any
+  small negative delta (e.g. -4 -> 65532 > length), so every shrink - including the None-mark
+  delete - failed. Now `(int32_t)length + delta < 0`.
+- **App**: `DataType.none` renders as "∅" placeholder (not editable), `undefined` offered for
+  creation, `dataTypeLabel` covers both; block/field filters exclude `BlockType.none`; keyed
+  entry tiles gained a delete action (writes a None-typed meta); `writeKeyValue`/`writeField`
+  accept the 8-byte echo of an empty-value (None) write (BlockIndex is 4 bytes, not 8).
+- **Autoconnect** now refreshes the network after a successful connect and keeps scanning on a
+  3 s retry timer while the target is not yet discovered.
+- **Storage file table view**: offset-0 records decode as "(invalidated)" (the old predicate
+  `valid = off != 0xFFFFFFFF || size != 0xFFFFFFFF` showed offset-0 records as live). Verified
+  `.TABLE` reads back through the app (`StorageClient.readFile`) and decodes all records.
+
+Verified live: multi-block delete keeps survivors readable and writable; dyn entry delete leaves
+fieldCount intact and the deleted slot reads back as None; keyed key delete hides the key while
+others survive and new keys append after it; full CLI suite 98/98 and mem probe green.
+
 ### DAS stack overflow in the reply path (fixed)
 `SendAndVerifyPacket` used 844 B of stack (a `PacketFrame` copy + two 269 B tx/rx staging
 buffers) against the CH32V003's 256 B stack. Every service reply nested it under a handler
@@ -861,6 +1024,10 @@ test probe): USB median 6 ms vs BLE median ~60 ms. Improvements landed on both s
   no device until the 120 s watchdog rebuilt it. Initial start is now deferred to AppBLETick.
 - **Diagnostics**: permanent breadcrumbs - conn-params update log (interval+MTU), first-write
   per session, notify-backpressure counter (escalating log), session start/end.
+- **Follow-up squeeze**: notification pacing removed entirely (the ~2 ms app-task loop
+  throttles naturally) and a 2M PHY preference requested on connect - this host adapter
+  declined it (breadcrumb logs tx=1 rx=1), but capable hosts will pick it up automatically.
+  Verified stable at median ~58 ms; the earlier 80 ms readings were RF noise.
 - **Result**: BLE RTT median ~60 ms (min ~36 ms) at 11.25 ms measured connection interval;
   meets the <100 ms requirement. The remaining budget is air time (2 x conn event) plus
   per-message D-Bus cost in BlueZ (~15-25 ms each way); going materially below ~30 ms would
@@ -869,6 +1036,84 @@ test probe): USB median 6 ms vs BLE median ~60 ms. Improvements landed on both s
   connection that survives even `bluetoothctl remove`; the device then won't advertise or
   answer. Recovery: power-cycle the adapter (`bluetoothctl power off/on`). HIL tests now
   register disconnect teardowns immediately after connecting.
+
+## Fixed (app UI round 2, 2026-08-24)
+
+- **Refresh on connect**: the Devices list now populates as soon as a session
+  comes up (Connection page triggers a network refresh after a successful tap-to-connect).
+- **Signed values**: Number (16.16) and Index/Int32 decoding sign-extended properly -
+  Dart ints are 64 bit so the old `| 0` trick never wrapped; negative numbers displayed
+  as huge positives. Vector and matrix editors inherit the fix.
+- **String length limits**: editors honor wire-format lengths from the block registry
+  (Vysi1Display Layout File Name = 8 chars per firmware char[8]).
+- **Storage interactions**: per-file menu - view, download to ~/Downloads (chunked read),
+  rename, delete (with confirm); create file in the app bar. Known file types render
+  decoded: SNREG as an ID/SN registry table, LAY files as an LED-index grid (0xFFFF =
+  missing), textual data as text, else hex. File type icons + labels in the list.
+- **SNDB is a page** with refresh, autorefresh and assign/update-ID via SNDB Write (CID 14),
+  showing known display names and device icons.
+- **Logs**: only listed for CORE devices (the log database lives on cores). The viewer
+  decodes entries into readable text (source service/block name, AccGyr error strings,
+  failed-CID reports, uptime timestamps), offers a per-device filter and clear-database.
+- **Firmware**: Tamu kCapabilities now reports Core | CLI | DynamicMemory | KeyedMemory
+  (Capabilities namespace extended to the documented bit positions), so the app shows the
+  memory service views that were previously hidden.
+
+## Fixed (BLE "wedge" root cause: post-upload state, 2026-08-24)
+
+The twice-recurring "NimBLE host wedge" (advertisement gone, GATT writes undelivered,
+app-task breadcrumbs silent while USB keeps working) is NOT runtime accumulation:
+
+- **Root cause**: `pio run -t upload` leaves the BLE controller/host in a broken state
+  (the board either does not fully reset or the BT controller keeps stale state across
+  the flash cycle). Every occurrence started right after an upload; every recovery was a
+  hard reset via `esptool.py --after hard_reset`.
+- **Rule**: after ANY firmware upload, force one hard reset before BLE testing:
+  `~/.platformio/penv/bin/python ~/.platformio/packages/tool-esptoolpy/esptool.py
+  --port /dev/ttyACM0 --chip esp32c3 --before default_reset --after hard_reset chip_id`
+- Verified: battery failing immediately after upload passes 8/8 twice in a row after
+  a single hard reset. The advertising watchdog refinements remain valuable but were
+  never the culprit for this signature.
+
+## Fixed (app UI round 3, 2026-08-24)
+
+- **Dynamic Memory**: create dialog now picks block type + name; existing blocks can be
+  renamed AND retyped (firmware Write handler extended: field-invalid write sets the type
+  per the docs' "type is user editable"); entries can be appended to any block (data type
+  picker -> value editor -> write at map_count).
+- **Keyed Memory**: blocks creatable with type; dictionaries appendable; keyed entries
+  addable with a hex key id + data type + value.
+- **SNDB Delete**: new Device service CID 15 tombstoning by short ID (extension beyond the
+  documented CID set - proposed doc addition in Docs/Improve.md); SNDB page gets a remove
+  action per entry (core device protected).
+- **Autoconnect implemented end-to-end**: long-press a device on the Connection page to set
+  it as target (persisted); ConnectionManager connects automatically whenever discovery
+  sees the target while disconnected; Settings page shows/clears the real target.
+- **Memory views formatting**: card-per-block layout with index badges, flag/type chips,
+  fixed-width value columns and unit subtitles on System/Dynamic/Keyed pages.
+
+## Fixed (app UI round 4 + memory service bugs, 2026-08-24)
+
+User-reported issues from hands-on testing:
+
+- **"ListTile background color or ink splashes may be invisible"**: the memory pages
+  nested ListTiles inside colored Containers; Flutter requires a Material ancestor for
+  ink. Replaced with `Material(color: ...)`.
+- **Dynamic entry types not changeable**: the firmware Set() already updates
+  FlagsAndType, but the app always re-sent the old meta. The entry menu now has
+  "Change type" (data type picker -> fresh value editor -> write with new type);
+  verified live that the change persists.
+- **Deleting one dynamic value deleted the whole block**: firmware Delete (CID 1)
+  ignored the field index entirely. Fixed to remove just that entry when a valid field
+  index is given; the block survives (verified live).
+- **Keyed dictionaries never load**: reading a freshly created EMPTY dictionary failed -
+  `FieldResult.Data` is null when the dictionary has no storage yet, and the read
+  handler rejected on that before reaching the dictionary branch. Validity is now
+  checked via map_count instead.
+- **File table visible but read-only** in Storage: it now appears as a locked,
+  disabled row ("internal directory").
+- Suite timing hardened further: mutating verbs wait out NOR-flash stalls (4 s idle);
+  three consecutive green core runs.
 
 ## Open (firmware code review follow-ups)
 

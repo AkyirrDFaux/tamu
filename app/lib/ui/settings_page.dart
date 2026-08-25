@@ -41,10 +41,13 @@ class _SettingsPageState extends State<SettingsPage> {
             ListTile(
               enabled: _settings.autoConnect,
               title: const Text('Autoconnect device'),
-              subtitle: const Text('Pick from the Connection page after connecting'),
+              subtitle: Text(_settings.autoConnectDeviceId.isEmpty
+                  ? 'Long-press a device on the Connection page to set it'
+                  : 'Target: ${_settings.autoConnectDeviceId}'),
               trailing: TextButton(
                 onPressed: _settings.autoConnect && _settings.autoConnectDeviceId.isNotEmpty
                     ? () => _settings.update(() {
+                          _settings.autoConnect = false;
                           _settings.autoConnectDeviceId = '';
                         })
                     : null,

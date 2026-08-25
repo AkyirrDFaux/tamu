@@ -42,6 +42,8 @@ public:
     static bool AddDevice(const SerialNumber &serial, uint16_t short_id);
     // Reads the registry entry for a short ID
     static bool GetEntry(uint16_t short_id, RegistryEntry &out_entry);
+    // Tombstones every entry with the given short ID (SNDB Delete)
+    static bool RemoveDevice(uint16_t short_id);
     // Resets iteration to the first entry
     static void IterReset();
     // Fetches the next entry during iteration
@@ -52,7 +54,6 @@ private:
     static uint16_t FindLowestAvailableID();
     static bool Compact();
     static bool IsFull();
-    static bool RemoveDevice(uint16_t short_id);
     static bool Available();
     // Ensures state was recovered from the file (shared prologue of every public method).
     static bool EnsureRecovered();

@@ -9,9 +9,15 @@ enum class DeviceType : uint16_t {
 
 // Capability bitfield (Device service CID 5, Docs/Services/Device service.md).
 // "If device has core capability, it can assign IDs, and store them in the registry."
+// Capability bit positions per Docs/Data Formats.md / Device service CID 5.
 namespace Capabilities {
     constexpr uint32_t None = 0x00000000;
-    constexpr uint32_t Core = 1u << 0; // assigns IDs, keeps the SN registry, provides time sync
+    constexpr uint32_t Core = 1u << 0;          // assigns IDs, keeps the SN registry, provides time sync
+    constexpr uint32_t Router = 1u << 1;
+    constexpr uint32_t Cli = 1u << 2;
+    constexpr uint32_t DynamicMemory = 1u << 3;
+    constexpr uint32_t KeyedMemory = 1u << 4;
+    constexpr uint32_t Scripts = 1u << 5;
 }
 
 enum FieldFlags : uint16_t {
@@ -23,7 +29,11 @@ enum FieldFlags : uint16_t {
 };
 
 enum class DataType : uint16_t {
-    Unknown = 0x00,
+    // None (0x00): nothing there - placeholder/spacer metadata or a deleted
+    // entry (Docs/Data Formats.md "Basic types"). Indexes never move.
+    None = 0x00,
+    Unknown = 0x00, // legacy alias
+    Undefined = 0x0E, // valid entry whose type is not specified yet
     SN      = 0x001,
     Uint32  = 0x002,
     Number  = 0x003,
@@ -52,7 +62,10 @@ inline bool IsKeyedType(DataType Type){
 }
 
 enum class BlockType : uint16_t {
-    Unknown  = 0x00,
+    // None (0x00): no block here - tombstone; indexes stay stable until save.
+    None     = 0x00,
+    Unknown  = 0x00, // legacy alias
+    Undefined = 0x01, // valid block, type not yet specified
     LEDButton = 0x03,
     PWM = 0x04,
     AccGyr = 0x05,

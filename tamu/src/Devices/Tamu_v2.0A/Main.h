@@ -18,7 +18,11 @@ void LoadAllBackups();
 
 // Device identity (mandatory, see Core/Functions/Device.h).
 extern const DeviceType kDeviceType = DeviceType::Tamu_v2_0A;
-extern const uint32_t kCapabilities = Capabilities::Core; // assigns IDs, SN registry, time sync
+// Core (ID assignment, SN registry, time sync), CLI console, and both user
+// memory services - matching the USE_* build flags so the app shows their views.
+extern const uint32_t kCapabilities = Capabilities::Core | Capabilities::Cli |
+                                       Capabilities::DynamicMemory |
+                                       Capabilities::KeyedMemory;
 
 // Reads the factory MAC from eFuse as the 14-byte serial number (cached).
 const SerialNumber &GetSerialNumber()

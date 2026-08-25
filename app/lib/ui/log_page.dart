@@ -1,12 +1,16 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../core/connection.dart';
 import '../core/protocol.dart';
 import '../core/types.dart';
 import 'theme.dart';
+import 'widgets.dart';
 
-/// Log viewer: fetches the connected device's RAM log database via the
-/// Log Handler GetLogs CID (streamed LogRecords).
+/// Log viewer for CORE devices (Docs/Services/Log Handler.md): fetches the RAM
+/// log database (GetLogs CID 1) streamed as LogDatabase entries, decodes them
+/// into readable text, offers a per-device filter and clearing.
 class LogViewerPage extends StatefulWidget {
   final int deviceId;
 
@@ -20,6 +24,11 @@ class _LogViewerPageState extends State<LogViewerPage> {
   List<LogEntry>? _logs;
   String? _error;
   bool _loading = false;
+  Timer? _autoTimer;
+  Duration? _autoInterval;
+
+  /// null = show every device's entries.
+  int? _deviceFilter;
 
   @override
   void initState() {
@@ -27,11 +36,25 @@ class _LogViewerPageState extends State<LogViewerPage> {
     _fetch();
   }
 
+  @override
+  void dispose() {
+    _autoTimer?.cancel();
+    super.dispose();
+  }
+
+  void _applyAuto(Duration? interval) {
+    _autoTimer?.cancel();
+    _autoTimer = null;
+    setState(() => _autoInterval =
+        interval == null || interval == Duration.zero ? null : interval);
+    if (_autoInterval != null) {
+      _autoTimer = Timer.periodic(_autoInterval!, (_) => _fetch());
+    }
+  }
+
   Future<void> _fetch() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+    if (!ConnectionManager.instance.isConnected || _loading) return;
+    setState(() => _loading = true);
     List<int>? reply;
     try {
       reply = await ConnectionManager.instance
@@ -54,52 +77,128 @@ class _LogViewerPageState extends State<LogViewerPage> {
     });
   }
 
-  static String _hex(int value, int digits) =>
-      value.toRadixString(16).padLeft(digits, '0').toUpperCase();
+  Future<void> _clearAll() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Clear log database'),
+        content: const Text('Remove all stored log entries from the core?'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Clear')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    // ClearReadLogs CID 2: count of oldest entries to drop; 0xFFFFFFFF = all.
+    try {
+      await ConnectionManager.instance.request(
+          widget.deviceId, ServiceType.logHandler, 2,
+          payload: [...uint32ToBytes(0xFFFFFFFF)],
+          timeout: const Duration(seconds: 5));
+    } catch (_) {}
+    await _fetch();
+  }
+
+  List<LogEntry> get _filtered {
+    final logs = _logs;
+    if (logs == null) return const [];
+    if (_deviceFilter == null) return logs;
+    return logs.where((l) => l.deviceId == _deviceFilter).toList();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final devices = _logs?.map((l) => l.deviceId).toSet().toList();
+    devices?.sort();
     return Scaffold(
       appBar: AppBar(
         title: Text('Logs - ${idToString(widget.deviceId)}'),
         actions: [
+          if (devices != null && devices.length > 1)
+            PopupMenuButton<int?>(
+              tooltip: 'Filter by device',
+              icon: Badge(
+                isLabelVisible: _deviceFilter != null,
+                smallSize: 8,
+                child:
+                    const Icon(Icons.filter_alt_outlined),
+              ),
+              initialValue: _deviceFilter,
+              onSelected: (id) => setState(() => _deviceFilter = id),
+              itemBuilder: (_) => [
+                const PopupMenuItem(value: null, child: Text('All devices')),
+                for (final id in devices)
+                  PopupMenuItem(
+                      value: id, child: Text('Device ${idToString(id)}')),
+              ],
+            ),
           IconButton(
-              onPressed: _loading ? null : _fetch,
-              tooltip: 'Refresh',
-              icon: const Icon(Icons.refresh)),
+              onPressed: _clearAll,
+              tooltip: 'Clear database',
+              icon: const Icon(Icons.delete_sweep_outlined)),
+          RefreshButton(
+            onRefresh: _fetch,
+            autoActive: _autoInterval != null,
+            refreshing: _loading,
+            error: _error != null,
+            selectedInterval: _autoInterval,
+            onSelectAuto: _applyAuto,
+          ),
         ],
       ),
-      body: _buildBody(),
+      body: _buildBody(devices),
     );
   }
 
-  Widget _buildBody() {
-    if (_loading) return const Center(child: CircularProgressIndicator());
-    if (_error != null) return Center(child: Text(_error!));
-    final logs = _logs;
-    if (logs == null) return const SizedBox.shrink();
-    if (logs.isEmpty) return const Center(child: Text('No logs recorded'));
-    return ListView.separated(
-      itemCount: logs.length,
-      separatorBuilder: (_, _) => const Divider(height: 1),
-      itemBuilder: (context, index) {
-        final log = logs[index];
-        return ListTile(
-          dense: true,
-          leading: Icon(
-              log.isBlock ? Icons.widgets_outlined : Icons.settings_suggest,
-              size: 20,
-              color: kOrange),
-          title: Text(
-              '${log.isBlock ? 'Block' : 'Service'} 0x${_hex(log.sourceId, 4)}  Code 0x${_hex(log.code, 4)}'),
-          subtitle: Text(
-              'Device ${log.deviceId}   x${log.count}   t=${log.timestampMs} ms'),
-        );
-      },
-    );
+  Widget _buildBody(List<int>? devices) {
+    if (_loading && _logs == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_error != null && _logs == null) return Center(child: Text(_error!));
+    final logs = _filtered;
+    if (logs.isEmpty) {
+      return Center(
+          child: Text(_logs == null || _logs!.isEmpty
+              ? 'No logs recorded'
+              : 'No logs match the filter'));
+    }
+    return Column(children: [
+      Expanded(
+        child: ListView.separated(
+          itemCount: logs.length,
+          separatorBuilder: (_, _) => const Divider(height: 1),
+          itemBuilder: (context, index) {
+            final log = logs[index];
+            return ListTile(
+              dense: true,
+              leading: Icon(
+                  log.isBlock ? Icons.widgets_outlined : Icons.settings_suggest,
+                  size: 20,
+                  color: kOrange),
+              title: Text(log.describe()),
+              subtitle: Text(log.detail()),
+            );
+          },
+        ),
+      ),
+      if (devices != null)
+        Padding(
+          padding: const EdgeInsets.all(6),
+          child: Text('${_logs!.length} entr${_logs!.length == 1 ? 'y' : 'ies'}'
+                  ' from ${devices.length} device${devices.length == 1 ? '' : 's'}',
+              style: const TextStyle(fontSize: 11, color: Colors.white38)),
+        ),
+    ]);
   }
 }
 
+/// One LogDatabase entry (Docs/Services/Log Handler.md):
+/// Source Device u16 | Count u16 | Log Struct (src_and_code u32 + timestamp u32).
 class LogEntry {
   final int deviceId;
   final int count;
@@ -122,4 +221,58 @@ class LogEntry {
   bool get isBlock => srcAndCode & 0x1 != 0;
   int get sourceId => (srcAndCode >> 1) & 0x7FFF;
   int get code => (srcAndCode >> 16) & 0xFFFF;
+
+  /// Human-readable one-liner, resolved from the firmware's known sources.
+  String describe() {
+    final source = sourceName();
+    final meaning = codeMeaning();
+    return meaning ?? '$source reported code ${codeText()}';
+  }
+
+  String detail() =>
+      '${isBlock ? 'Block' : 'Service'} $sourceName   '
+      '${deviceId == 0xFFFF ? 'broadcast' : idToString(deviceId)}   '
+      'x$count   ${formatUptime(timestampMs)}';
+
+  String sourceName() {
+    if (isBlock) {
+      return BlockType.fromValue(sourceId).label;
+    }
+    final service = ServiceType.fromValue(sourceId & 0xFF);
+    return service?.name ?? 'Service ${sourceId & 0xFF}';
+  }
+
+  /// Decoded code where the firmware defines one, else raw hex.
+  String? codeMeaning() {
+    if (!isBlock) {
+      // Dispatcher reports MakeLog(false, service, cid, 0) when a request
+      // could not be routed/handled; code 0 marks boot reports.
+      if (code == 0) return 'Reported without a code';
+      final service = ServiceType.fromValue(sourceId & 0xFF);
+      return '${service == null ? 'Service' : service.name} CID $code failed';
+    }
+    switch (BlockType.fromValue(sourceId)) {
+      case BlockType.accGyr:
+        const errors = [
+          'No error',
+          'Bus transmit/receive failed',
+          'Sensor not found (ACK/power)',
+          'Init sequence failed',
+          'Transaction timed out',
+        ];
+        return 'Acc/Gyr: ${code < errors.length ? errors[code] : codeText()}';
+      default:
+        return null;
+    }
+  }
+
+  String codeText() => '0x${code.toRadixString(16).padLeft(4, '0').toUpperCase()}';
+
+  static String formatUptime(int ms) {
+    final seconds = ms ~/ 1000;
+    final h = seconds ~/ 3600;
+    final m = (seconds % 3600) ~/ 60;
+    final s = seconds % 60;
+    return '${h}h ${m}m ${s}s';
+  }
 }

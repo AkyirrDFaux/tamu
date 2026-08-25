@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Services/Log Handler.md",
+                "file": "Services/Keyed Memory.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Log Handler"
+              "title": "Keyed Memory"
             }
           }
         ]
@@ -190,7 +190,15 @@
   },
   "active": "b5d589722d88df54",
   "lastOpenFiles": [
+    "Services/Dynamic Memory.md",
+    "Services/App Interface.md",
+    "Services/Device service.md",
     "Data Formats.md",
+    "General architecture.md",
+    "Improve.md",
+    "Issues.md",
+    "Services/Keyed Memory.md",
+    "Services/Log Handler.md",
     "Devices.md",
     "Services/Storage.md",
     "App/Service views/Storage.md",
@@ -200,19 +208,11 @@
     "App/Settings.md",
     "App/Devices.md",
     "App/Service views/Dynamic Memory.md",
-    "Services/Device service.md",
     "App/Service views/Keyed Memory.md",
     "App/Service views/System Memory.md",
-    "Services/Dynamic Memory.md",
-    "Services/Keyed Memory.md",
     "Services/System Memory.md",
     "RealHW.md",
-    "Issues.md",
-    "Services/Log Handler.md",
-    "Improve.md",
     "RSBus.md",
-    "Services/App Interface.md",
-    "General architecture.md",
     "App/Service views",
     "App/Connection.md",
     "Modules/Generic system blocks.md",
