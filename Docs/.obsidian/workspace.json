@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Issues.md",
+                "file": "Services/Script.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Issues"
+              "title": "Script"
             }
           }
         ]
@@ -190,32 +190,32 @@
   },
   "active": "107e2aee0126b714",
   "lastOpenFiles": [
-    "Modules/LED display.md",
-    "Services/Device service.md",
-    "App/Service views/Dynamic Memory.md",
-    "App/Service views/Keyed Memory.md",
-    "App/Service views/Storage.md",
-    "App/Service views/System Memory.md",
-    "Services/Script.md",
-    "Services/Storage.md",
-    "Data Formats.md",
-    "Services/Log Handler.md",
     "Services/Router.md",
+    "Services/Log Handler.md",
     "Services/Keyed Memory.md",
     "Services/Dynamic Memory.md",
+    "Services/Device service.md",
+    "Services/CLI.md",
+    "App/Device view.md",
+    "App/Connection.md",
+    "Data Formats.md",
+    "Services/Script.md",
+    "App/Service views/Script.md",
+    "App/Service views/Dynamic Memory.md",
+    "App/Service views/Keyed Memory.md",
+    "App/Devices.md",
+    "Services/Storage.md",
+    "Devices.md",
+    "Services/System Memory.md",
     "Services/App Interface.md",
+    "Issues.md",
+    "Modules/LED display.md",
+    "App/Service views/Storage.md",
+    "App/Service views/System Memory.md",
     "General architecture.md",
     "Improve.md",
-    "Issues.md",
-    "Devices.md",
     "App/Backup.md",
-    "App/Device view.md",
     "App/General info.md",
-    "App/Settings.md",
-    "App/Devices.md",
-    "Services/System Memory.md",
-    "RealHW.md",
-    "RSBus.md",
     "App/Service views",
     "App"
   ]

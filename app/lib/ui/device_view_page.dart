@@ -114,11 +114,11 @@ class _DeviceViewPageState extends State<DeviceViewPage>
                         entry.timeOffsetMs == null
                             ? '-'
                             : '${entry.timeOffsetMs! >= 0 ? '+' : ''}${entry.timeOffsetMs} ms'),
+                    _row('Capabilities',
+                        Capability.describe(entry.capabilities).isEmpty
+                            ? '-'
+                            : Capability.describe(entry.capabilities).join(', ')),
                   ]),
-                  const SizedBox(height: 4),
-                  _row('Capabilities', Capability.describe(entry.capabilities).isEmpty
-                      ? '-'
-                      : Capability.describe(entry.capabilities).join(', ')),
                   const Divider(height: 24),
                   _card(context, 'Services', [
                     // Per Docs/App/Device view.md: hide unavailable services

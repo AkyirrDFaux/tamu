@@ -13,8 +13,9 @@
 - Matrix - Size flexible (Template) 2D array of numbers, first 32 bits is size (uint16 height + width)
 - Colour - 4xUint8, RGBA
 - String - Text (8bit per character, standard)
+- BlockIndex (uint8 x4) - Block, Field/Dictionary, Key, (Padding)
+	Unspecified is 0xFF
 - Enum - Generic enum, used in dictionaries
-
 ### Generic packet
 
 | CRC8 | Flags | FragID | Payload Len | ID TGT | ID SRC | SRV TGT | SRV SRC | Payload |
@@ -24,8 +25,6 @@
 - Flags : REQACK (request response), START (first), STOP (last), TYPE (Request/Response)
 - FragID : Sequential number, 0 default
 ### Common structs
-- BlockIndex (uint8 x4) - Block, Field/Dictionary, Key, (Padding)
-	Unspecified is 0xFF
 - BlockMeta (6bit, 10bit , 8bit x2) - Flags, Type, (Padding OR Key), Length of Value
 	Flags:
 	- ReadOnly - RAM only (non-writable through network, only by direct function, never save)

@@ -18,4 +18,4 @@ Per services avaliable, hide unavaliable (based on capabilities device field), l
 - SNDB viewer (Core only)
 - Router table viewer (Router only)
 - Log viewer
-- Script editor
+- [[App/Service views/Script|Script]]

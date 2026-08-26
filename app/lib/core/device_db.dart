@@ -9,6 +9,7 @@ import 'package:flutter/foundation.dart';
 
 import 'connection.dart';
 import 'diagnostics.dart';
+import 'notifications.dart';
 import 'protocol.dart';
 import 'types.dart';
 
@@ -224,6 +225,10 @@ class DeviceDatabase extends ChangeNotifier {
     lastError = null;
     notifyListeners();
 
+    // Reachable devices at the start of this sweep (for lost/discovered events).
+    final reachableBefore =
+        _devices.entries.where((e) => !e.value.stale).map((e) => e.key).toSet();
+
     try {
       for (final device in _devices.values) {
         device.stale = true;
@@ -251,6 +256,21 @@ class DeviceDatabase extends ChangeNotifier {
           final entry = _devices[id]!;
           entry.stale = false;
           entry.lastSeen = DateTime.now();
+        }
+      }
+
+      // In-app notifications (Docs/App/Settings.md events):
+      //   - a device that was unknown becomes a "discovered" event;
+      //   - a device that was reachable but failed this sweep is "lost".
+      for (final id in _devices.keys) {
+        final entry = _devices[id]!;
+        if (!reachableBefore.contains(id)) {
+          if (!entry.stale) {
+            notifyAppEvent(
+                'Device discovered', '${entry.displayName} discovered');
+          }
+        } else if (entry.stale) {
+          notifyAppEvent('Device lost', '${entry.displayName} lost');
         }
       }
     } catch (error) {

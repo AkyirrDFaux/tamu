@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'core/connection.dart';
+import 'core/notifications.dart';
 import 'core/settings.dart';
 import 'ui/backup_page.dart';
 import 'ui/connection_page.dart';
@@ -25,6 +26,7 @@ class TamuApp extends StatelessWidget {
       title: 'Tamu',
       theme: buildTheme(),
       themeMode: ThemeMode.dark,
+      scaffoldMessengerKey: appMessengerKey,
       home: const ShellPage(),
     );
   }

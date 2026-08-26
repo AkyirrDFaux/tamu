@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../core/backup.dart';
 import '../core/connection.dart';
 import '../core/device_db.dart';
+import '../core/notifications.dart';
 import '../core/types.dart';
 import 'device_icons.dart';
 
@@ -50,6 +51,7 @@ class _BackupPageState extends State<BackupPage> {
       // write manually for reliability.
       await writePlatformFile(target, zip);
       _snack('Backup saved (${devices.length} device(s))');
+      notifyAppEvent('Backup finished', 'Backup saved (${devices.length} device(s))');
     } catch (error) {
       _snack('Backup failed: $error');
     } finally {

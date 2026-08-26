@@ -4,6 +4,27 @@ Status of items from the docs-vs-implementation audit and follow-up work.
 
 ## Resolved (code)
 
+### In-app notifications + small UI consistency (2026-08-25)
+
+- **Settings notifications were stored but never fired (doc gap closed)**: Docs/App/
+  Settings.md documents "Allow notifications (When app open) - per event selection" with
+  the events Device discovered / Device lost / Backup finished. The app persisted the
+  toggles but nothing consumed them. New `core/notifications.dart` (`notifyAppEvent` +
+  a global `appMessengerKey`) shows an in-app SnackBar for an event only when the settings
+  allow it; wired into `MaterialApp`. Events fire from: `DeviceDatabase._doRefresh`
+  (a device unknown this sweep -> "discovered"; a previously reachable device that goes
+  stale -> "lost") and the Backup page on a successful save ("Backup finished"). OS
+  notifications (the "To OS" settings) remain a platform feature (flutter_local_notifications
+  is not a dependency) - noted in Improve.md.
+- **Device view "Capabilities" row was floating outside the Device info card**; moved it
+  inside the card with the other rows.
+- **System Memory block-level Recall in backup view refreshed nothing**: after recalling a
+  block the shown (backup) values stayed stale until the next refresh; it now reloads the
+  block's fields.
+- Verified the static-block backup serialization (`SerializeSystemBlocks`/
+  `DeserializeSystemBlocks`): `writable_count` matches the non-ReadOnly field count exactly
+  and all reads are bounds-checked (no change needed).
+
 ### Vysi v1.0 display layout file preloaded (2026-08-25)
 
 - **The layout-file mechanism was already implemented** (`Vysi1Display::LoadLayoutFromStorage`,

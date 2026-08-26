@@ -209,6 +209,11 @@ class _SystemMemoryPageState extends State<SystemMemoryPage>
                 onPressed: () async {
                   final ok = await _client.recall(block: block.index);
                   _snack(ok ? 'Block recalled' : 'Recall failed');
+                  if (ok) {
+                    // Recall rewrote the backup values; refresh the shown ones.
+                    await _loadFields(block);
+                    if (mounted) setState(() {});
+                  }
                 },
               ),
             Icon(isExpanded ? Icons.expand_less : Icons.expand_more),
