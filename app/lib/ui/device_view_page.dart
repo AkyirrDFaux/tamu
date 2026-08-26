@@ -7,6 +7,7 @@ import '../core/types.dart';
 import 'dynmem_page.dart';
 import 'keyedmem_page.dart';
 import 'log_page.dart';
+import 'script_page.dart';
 import 'sndb_page.dart';
 import 'storage_page.dart';
 import 'sysmem_page.dart';
@@ -139,6 +140,12 @@ class _DeviceViewPageState extends State<DeviceViewPage>
                           Icons.vpn_key_outlined,
                           'Keyed Memory',
                           () => KeyedMemoryPage(deviceId: widget.deviceId)),
+                    if (entry.capabilities & Capability.scripts != 0)
+                      _serviceTile(
+                          context,
+                          Icons.menu_book_outlined,
+                          'Scripts',
+                          () => ScriptPage(deviceId: widget.deviceId)),
                     _serviceTile(context, Icons.save_outlined, 'Storage',
                         () => StoragePage(deviceId: widget.deviceId)),
                     if (entry.isCore) ...[

@@ -1,5 +1,48 @@
 # Improvement suggestions
 
+## New 2026-08-26 (script editor rebuild)
+
+- **Script.md "File blocks" input meta now carries an interaction-style byte per input**
+  (5 B/input: dict BlockMeta + per-input [key BlockMeta + style byte]); legacy 4 B/input
+  files still parse. The doc's "Input definition meta length" table row should mention the
+  per-input style byte.
+- **Input interaction styles** are persisted but not yet rendered anywhere outside the
+  editor - a future "run" view should show inputs as Button/Switch/Picker/Slider per the
+  style. Automatic maps Bool->Switch, Enum->Picker, String->Text, Number->Slider.
+- **The editor auto-declares referenced constants with a Number-0 default**; there is no
+  way yet to define a constant's value inline in an instruction (constants must be edited
+  in the Constants card). The State/Type/MathOp predefine literals are pickable but have
+  no presets.
+- **MacroCall** has no authoring UI beyond a plain instruction line (pick MacroCall and
+  set the target script id via the operand picker - the operand is a Number that holds the
+  script id).
+
+## New 2026-08-26 (script service implementation)
+
+- **Script.md's symbol example is illustrative, not a program** (it chains an output
+  into another op, which line 51 forbids). The implemented grammar is
+  `[Output][Instruction][Operands...] EndLine`; IF/WHILE embed a math/logic condition
+  expression. Consider rewriting the example to a valid program.
+- **Script.md "Create script | 13 | Script ID | Success"**: the implementation returns
+  the *assigned* Script ID (1 byte, 0 = failure) instead of a plain success byte so the
+  app can use an auto-assigned ID; the doc should say so.
+- **Script "Read script" (CID 15)** streams the whole file; the app reassembles it.
+  Script editing rewrites the whole file each save (open stream with expected size ->
+  chunks -> close), so a script larger than free storage fails at Open. A block-level
+  patch/diff editor would avoid the rewrite.
+- **Script MemWrite to static (System Memory) blocks cannot set the ScriptUpdated flag**
+  - the schema flags are const; a script write to a static field would be captured by a
+  backup. Either document it or add a side-table of script-touched static fields to skip
+  in SerializeSystemBlocks.
+- **RAM preload**: scripts are always preloaded to heap at start; if the heap is
+  insufficient the start fails. The doc's "run from file with read-only pointers"
+  fallback is not implemented.
+- **Editor gaps**: input/constant defaults are edited as hex; the editor cannot yet
+  express State/Type/MathOp predefine literals (only Bool/Char/Index); MacroCall lines
+  are editable as text but there is no macro authoring UI.
+- **OS notifications** ("Allow notifications (To OS)" in Settings) still have no
+  consumer - in-app notifications now fire (Device discovered/lost, Backup finished).
+
 ## New 2026-08-25 (consolidation/audit round)
 
 - **Data Formats.md ID model is internally inconsistent**: it says "16bit

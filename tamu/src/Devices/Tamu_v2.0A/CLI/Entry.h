@@ -4,6 +4,7 @@
 #include "SNDB.h"
 #include "Core/Services/LogHandler.h"
 #include "Core/Functions/Storage.h"
+#include "Core/Functions/Script.h"
 #include "esp_console.h"
 #include <cstring>
 #include <cstdlib>
@@ -366,6 +367,162 @@ static int CmdFile(int argc, char **argv)
     return 0;
 }
 
+// Sends a Script service request to the core (the script service is local) and routes the
+// reply to the CLI (cid 7). Script manager CIDs per Docs/Services/Script.md.
+static int SendScriptRequest(uint8_t cid, const uint8_t *payload, uint8_t plen)
+{
+    PacketFrame req;
+    PacketConstruct(&req, 1,
+                     MakeService(ServiceType::Script, cid),
+                     MakeService(ServiceType::CLI, 7),
+                     FLAG_REQACK | FLAG_START | FLAG_STOP, payload, plen);
+    g_cli_response_seen = false;
+    DispatchPacket(req);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    if (!g_cli_response_seen)
+        printf("Error: no response from the script service (timeout).\n");
+    return 0;
+}
+
+static const char *ScriptOpName(uint8_t op)
+{
+    switch (op)
+    {
+        case OP_ADD: return "ADD"; case OP_SUB: return "SUB";
+        case OP_MUL: return "MUL"; case OP_DIV: return "DIV";
+        case OP_NEG: return "NEG";
+        case OP_AND: return "AND"; case OP_OR: return "OR"; case OP_NOT: return "NOT";
+        case OP_CMP_EQ: return "EQ"; case OP_CMP_NE: return "NE";
+        case OP_CMP_LT: return "LT"; case OP_CMP_LE: return "LE";
+        case OP_CMP_GT: return "GT"; case OP_CMP_GE: return "GE";
+        case OP_COMPOSE_VEC: return "COMPOSE_VEC"; case OP_COMPOSE_COLOUR: return "COMPOSE_COLOR";
+        case OP_EXTRACT: return "EXTRACT";
+        case OP_MEM_READ: return "MEM_READ"; case OP_MEM_WRITE: return "MEM_WRITE";
+        case OP_IF: return "IF"; case OP_WHILE: return "WHILE";
+        case OP_END_IF: return "END_IF"; case OP_END_WHILE: return "END_WHILE"; case OP_END: return "END";
+        case OP_DELAY: return "DELAY"; case OP_GET_TIME: return "GET_TIME";
+        case OP_PAUSE: return "PAUSE"; case OP_RESUME: return "RESUME";
+        case OP_TERMINATE: return "TERMINATE"; case OP_RESTART: return "RESTART";
+        case OP_INFO_REPORT: return "INFO_REPORT"; case OP_ERROR_HALT: return "ERROR_HALT";
+        case OP_MACRO_CALL: return "MACRO_CALL";
+        default: return "?";
+    }
+}
+
+static void ScriptPrintSymbol(const ScriptSymbol &s)
+{
+    switch (s.type)
+    {
+        case SYM_INSTRUCTION:
+            printf(" %s", ScriptOpName(s.subtype));
+            if (s.value) printf("(%u)", s.value);
+            break;
+        case SYM_INPUT: printf(" In%u", s.value); break;
+        case SYM_OUTPUT: printf(" Out%u", s.value); break;
+        case SYM_VARIABLE: printf(" Var%u", s.value); break;
+        case SYM_CONSTANT: printf(" Const%u", s.value); break;
+        case SYM_PREDEFINE: printf(" Pre{%u,%u}", s.subtype, s.value); break;
+        default: break;
+    }
+}
+
+// script <list|read <id>|create <id|auto>|delete <id>|start <id>|stop <id>|state <id>>
+static int CmdScript(int argc, char **argv)
+{
+    if (argc < 2)
+    {
+        printf("Usage: script <list|read <id>|create <id|auto>|delete <id>|start <id>|stop <id>|state <id>>\n");
+        return 1;
+    }
+    const char *cmd = argv[1];
+
+    if (strcmp(cmd, "list") == 0)
+    {
+        uint8_t n = ScriptFileCount();
+        printf("%u script(s):\n", n);
+        for (uint16_t id = 1; id <= 255; id++)
+        {
+            char fname[8];
+            ScriptFileIdToName(id, fname);
+            if (Storage.FileExists(fname) == 0xFFFFFFFF) continue;
+            uint32_t off, sz;
+            if (!Storage.GetFileInfo(fname, &off, &sz) || sz < ScriptHeaderSize()) continue;
+            char name[17] = {0};
+            Storage_FlashRead(off, name, 16);
+            printf("  Script %u: \"%s\" (%lu B)\n", id, name, (unsigned long)sz);
+        }
+        return 0;
+    }
+
+    if (strcmp(cmd, "read") == 0)
+    {
+        if (argc < 3) { printf("Usage: script read <id>\n"); return 1; }
+        uint8_t id = (uint8_t)atoi(argv[2]);
+        ScriptProgram p;
+        if (!LoadScriptProgram(id, p))
+        {
+            printf("Script %u: load failed.\n", id);
+            return 1;
+        }
+        if (!ValidateScriptProgram(p))
+        {
+            printf("Script %u: invalid program (unbalanced flow / no End / bad operand).\n", id);
+            p.Release();
+            return 1;
+        }
+        printf("Script %u: name \"%.*s\" in=%u out=%u var=%u const=%u lines=%u\n",
+               id, 16, p.header.name, p.header.input_count, p.header.output_count,
+               p.header.variable_count, p.header.constant_count, p.line_count);
+        uint32_t offset = 0;
+        for (uint32_t line = 0; line < p.line_count; line++)
+        {
+            printf("  %3lu:", (unsigned long)line);
+            for (;;)
+            {
+                ScriptSymbol s;
+                if (!ScriptSymbolRead(p.instructions, p.header.instruction_len, offset, &s)) break;
+                offset += 4;
+                if (s.type == SYM_ENDLINE) break;
+                ScriptPrintSymbol(s);
+            }
+            printf("\n");
+        }
+        p.Release();
+        return 0;
+    }
+
+    if (argc < 3) { printf("Usage: script <%s> <id>\n", cmd); return 1; }
+
+    if (strcmp(cmd, "create") == 0)
+    {
+        uint8_t payload[1] = {(uint8_t)((strcmp(argv[2], "auto") == 0) ? 0xFF : (uint8_t)atoi(argv[2]))};
+        return SendScriptRequest(13, payload, 1);
+    }
+    if (strcmp(cmd, "delete") == 0)
+    {
+        uint8_t payload[1] = {(uint8_t)atoi(argv[2])};
+        return SendScriptRequest(14, payload, 1);
+    }
+    if (strcmp(cmd, "start") == 0)
+    {
+        uint8_t payload[2] = {(uint8_t)atoi(argv[2]), SCRIPT_RUNNING};
+        return SendScriptRequest(4, payload, 2);
+    }
+    if (strcmp(cmd, "stop") == 0)
+    {
+        uint8_t payload[2] = {(uint8_t)atoi(argv[2]), SCRIPT_STOPPED};
+        return SendScriptRequest(4, payload, 2);
+    }
+    if (strcmp(cmd, "state") == 0)
+    {
+        uint8_t payload[1] = {(uint8_t)atoi(argv[2])};
+        return SendScriptRequest(3, payload, 1);
+    }
+
+    printf("Unknown script command: %s\n", cmd);
+    return 1;
+}
+
 // Sets up the CLI command registry and starts the USB console/app mode task
 // (see AppUSB.h). Commands: tree, read, write, sndb, logs, logget, logclear, save,
 // recall, rmem, dev, create, delete, log, file.
@@ -548,6 +705,17 @@ void StartCLI(void)
         .context = nullptr,
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&file_cmd));
+
+    const esp_console_cmd_t script_cmd = {
+        .command = "script",
+        .help    = "Script service: list, read, create, delete, start, stop, state",
+        .hint    = "<list|read <id>|create <id|auto>|delete <id>|start <id>|stop <id>|state <id>>",
+        .func    = &CmdScript,
+        .argtable = nullptr,
+        .func_w_context = nullptr,
+        .context = nullptr,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&script_cmd));
 
     // 5. Bring up the USB port (driver + VFS stdio) and run the console/app mode
     // machine on its own task. Same stack sizing rationale as the old REPL config:

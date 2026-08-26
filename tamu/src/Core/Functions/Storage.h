@@ -755,3 +755,67 @@ private:
 
     uint32_t wear_cursor;  // Rotating allocation cursor for even wear (in data pages)
 } Storage;
+
+// Allocates a write stream (CID 64+) for an existing file at `offset` and caches the file
+// location. Returns the stream CID (64+) or 0 when the file is missing or no slot is free.
+static inline uint8_t StorageStreamOpen(const char name[8], uint32_t offset)
+{
+    uint32_t file_offset = 0, file_size = 0;
+    if (!Storage.GetFileInfo(name, &file_offset, &file_size))
+        return 0;
+    if (offset >= file_size)
+        return 0; // a stream only fills an existing file's bounds
+    for (int i = 0; i < MAX_STREAMS; i++)
+    {
+        if (!Storage.streams[i].active)
+        {
+            Storage.streams[i].active = true;
+            Storage.streams[i].cid = 64 + i;
+            memcpy(Storage.streams[i].name, name, 8);
+            Storage.streams[i].current_offset = offset;
+            Storage.streams[i].file_offset = file_offset;
+            Storage.streams[i].file_size = file_size;
+            return Storage.streams[i].cid;
+        }
+    }
+    return 0;
+}
+
+// Writes `len` payload bytes to the stream `stream_idx` (CID 64+). Chunks are clamped to
+// the cached file size so a stream can never overwrite flash beyond the file.
+static inline void StorageStreamWrite(uint8_t stream_idx, const uint8_t *payload, uint8_t len)
+{
+    if (stream_idx >= MAX_STREAMS || !Storage.streams[stream_idx].active)
+    {
+        DeviceLog("STORAGE", "write to inactive stream %u", (unsigned)stream_idx);
+        return;
+    }
+    WriteStream &stream = Storage.streams[stream_idx];
+    uint32_t file_offset = stream.file_offset;
+    uint32_t file_size = stream.file_size;
+    if (stream.current_offset < file_size)
+    {
+        uint32_t chunk_len = len;
+        if (stream.current_offset + chunk_len > file_size)
+            chunk_len = file_size - stream.current_offset;
+        if (!Storage_FlashWrite(file_offset + stream.current_offset, payload, chunk_len))
+            DeviceLog("STORAGE", "stream %u flash write failed at %u", (unsigned)stream_idx,
+                      (unsigned)stream.current_offset);
+        stream.current_offset += chunk_len;
+        if (stream.current_offset >= file_size)
+            stream.active = false; // file complete: stop accepting packets
+    }
+    else
+    {
+        DeviceLog("STORAGE", "stream %u write past EOF (offset %u >= size %u)",
+                  (unsigned)stream_idx, (unsigned)stream.current_offset, (unsigned)file_size);
+    }
+}
+
+// Closes the stream with CID `cid` (64+), if active.
+static inline void StorageStreamClose(uint8_t cid)
+{
+    for (int i = 0; i < MAX_STREAMS; i++)
+        if (Storage.streams[i].active && Storage.streams[i].cid == cid)
+            Storage.streams[i].active = false;
+}

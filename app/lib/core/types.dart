@@ -51,6 +51,8 @@ Uint8List uint32ToBytes(int value) {
     ..[3] = (v >> 24) & 0xFF;
 }
 
+Uint8List int32ToBytes(int value) => uint32ToBytes(value);
+
 // ---------------------------------------------------------------------------
 // Enums (mirror Core/Types/Enums.h)
 // ---------------------------------------------------------------------------

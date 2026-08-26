@@ -15,6 +15,11 @@
 
 // Function declarations
 void LoadAllBackups();
+#ifdef USE_SCRIPTS
+// Script scheduler (defined in Core/Services/Script.h via Dispatcher.h, included after
+// this file in Main.cpp - forward-declared here for the loop below).
+void ScriptTick();
+#endif
 
 // Device identity (mandatory, see Core/Functions/Device.h).
 extern const DeviceType kDeviceType = DeviceType::Tamu_v2_0A;
@@ -22,7 +27,8 @@ extern const DeviceType kDeviceType = DeviceType::Tamu_v2_0A;
 // memory services - matching the USE_* build flags so the app shows their views.
 extern const uint32_t kCapabilities = Capabilities::Core | Capabilities::Cli |
                                        Capabilities::DynamicMemory |
-                                       Capabilities::KeyedMemory;
+                                       Capabilities::KeyedMemory |
+                                       Capabilities::Scripts;
 
 // Reads the factory MAC from eFuse as the 14-byte serial number (cached).
 const SerialNumber &GetSerialNumber()
@@ -140,6 +146,10 @@ while (1)
             Number inst = N(1000000.0f) / N((float)(esp_timer_get_time() - rt));
             Display2.Data.RefreshRate = Display2.Data.RefreshRate * N(0.9f) + inst * N(0.1f);
         }
+
+#ifdef USE_SCRIPTS
+        ScriptTick(); // advance running/waiting scripts (bounded per main-loop tick)
+#endif
 
         Sleep(2); // short heartbeat: BLE request/response latency scales with this loop period
         TimeUpdate();

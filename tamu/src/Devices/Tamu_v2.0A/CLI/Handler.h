@@ -135,6 +135,55 @@ void HandleCLI_LogResponse(const PacketFrame &frame)
     }
 }
 
+// Response handler: prints Script service replies (Docs/Services/Script.md).
+void HandleCLI_ScriptResponse(const PacketFrame &frame)
+{
+    if (!(frame.flags & FLAG_TYPE))
+        return; // Only handle responses
+    g_cli_response_seen = true;
+
+    uint8_t cid = GetServiceCID(frame.srv_src);
+
+    switch (cid)
+    {
+        case 0: // Get number of scripts
+            if (frame.payload_len >= 1)
+                printf("Device %d: %u script(s)\n", frame.id_src, frame.payload[0]);
+            break;
+        case 1: // Read Name
+            printf("Device %d: Script name \"%.*s\"\n", frame.id_src, frame.payload_len,
+                   (const char *)frame.payload);
+            break;
+        case 3: // Read state
+            if (frame.payload_len >= 1)
+            {
+                static const char *states[] = {"Stopped", "Running", "Paused", "Waiting",
+                                               "Finished", "Error"};
+                uint8_t s = frame.payload[0];
+                printf("Device %d: State %s\n", frame.id_src,
+                       s < 6 ? states[s] : "?");
+            }
+            break;
+        case 4: // Set state
+        case 10:
+        case 12:
+        case 14:
+            if (frame.payload_len >= 1)
+                printf("Device %d: Script op %s (status %d)\n", frame.id_src,
+                       frame.payload[0] == 0 ? "OK" : "FAILED", frame.payload[0]);
+            break;
+        case 13: // Create script -> assigned id
+            if (frame.payload_len >= 1 && frame.payload[0] != 0)
+                printf("Device %d: Script %u created\n", frame.id_src, frame.payload[0]);
+            else
+                printf("Device %d: Script create FAILED\n", frame.id_src);
+            break;
+        default:
+            printf("Device %d: Unknown Script response CID %u\n", frame.id_src, cid);
+            break;
+    }
+}
+
 // Response handler: prints a single-byte status (Save/Recall/Delete results)
 void HandleCLI_StatusResponse(const PacketFrame &frame)
 {

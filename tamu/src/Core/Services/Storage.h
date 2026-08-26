@@ -15,33 +15,7 @@ void HandleStorageService(const PacketFrame &frame)
 
     if (cid >= 64) {
         // --- Write Stream ---
-        uint8_t stream_idx = cid - 64;
-        if (stream_idx >= MAX_STREAMS || !Storage.streams[stream_idx].active) {
-            DeviceLog("STORAGE", "write to inactive stream %u (CID %u)", (unsigned)stream_idx, (unsigned)cid);
-            return;
-        }
-        WriteStream &stream = Storage.streams[stream_idx];
-            // File info is cached at stream open (offset/size); a full table walk per
-            // packet would cost O(table) flash reads on every single write chunk.
-            uint32_t file_offset = stream.file_offset;
-            uint32_t file_size = stream.file_size;
-            {
-                // Clamp the write so a stream can never overwrite flash beyond the file
-                // (the file table or an adjacent file).
-                if (stream.current_offset < file_size) {
-                    uint32_t chunk_len = frame.payload_len;
-                    if (stream.current_offset + chunk_len > file_size) chunk_len = file_size - stream.current_offset;
-                    if (!Storage_FlashWrite(file_offset + stream.current_offset, frame.payload, chunk_len)) {
-                        DeviceLog("STORAGE", "stream %u flash write failed at %u", (unsigned)stream_idx, (unsigned)stream.current_offset);
-                    }
-                    stream.current_offset += chunk_len;
-                    if (stream.current_offset >= file_size)
-                        stream.active = false; // file complete: stop accepting packets
-                } else {
-                    DeviceLog("STORAGE", "stream %u write past EOF (offset %u >= size %u)",
-                              (unsigned)stream_idx, (unsigned)stream.current_offset, (unsigned)file_size);
-                }
-            }
+        StorageStreamWrite(cid - 64, frame.payload, frame.payload_len);
         return;
     }
 
@@ -210,34 +184,9 @@ void HandleStorageService(const PacketFrame &frame)
                 const char *name = reinterpret_cast<const char *>(frame.payload);
                 uint32_t offset = *reinterpret_cast<const uint32_t *>(frame.payload + 8);
 
-                // Resolve and cache the file location once, at stream open.
-                uint32_t file_offset = 0, file_size = 0;
-                bool file_ok = Storage.GetFileInfo(name, &file_offset, &file_size);
-                // A write stream only fills an existing file's bounds; opening at
-                // (or past) EOF leaves every chunk dropped by the write path below,
-                // so reject it instead of handing out a silently-dead stream.
-                if (file_ok && offset >= file_size) file_ok = false;
-
-                uint8_t cid_assigned = 0;
-                if (!file_ok) {
+                uint8_t cid_assigned = StorageStreamOpen(name, offset);
+                if (cid_assigned == 0)
                     DeviceLog("STORAGE", "stream open '%.8s'@%u rejected", name, (unsigned)offset);
-                } else if (file_ok) {
-                    for (int stream_idx = 0; stream_idx < MAX_STREAMS; stream_idx++) {
-                        if (!Storage.streams[stream_idx].active) {
-                            Storage.streams[stream_idx].active = true;
-                            Storage.streams[stream_idx].cid = 64 + stream_idx;
-                            memcpy(Storage.streams[stream_idx].name, name, 8);
-                            Storage.streams[stream_idx].current_offset = offset;
-                            Storage.streams[stream_idx].file_offset = file_offset;
-                            Storage.streams[stream_idx].file_size = file_size;
-                            cid_assigned = Storage.streams[stream_idx].cid;
-                            break;
-                        }
-                    }
-                    if (cid_assigned == 0) {
-                        DeviceLog("STORAGE", "stream open '%.8s': no free stream slot", name);
-                    }
-                }
 
                 PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
                                  FLAG_TYPE | FLAG_START | FLAG_STOP, &cid_assigned, 1);
@@ -248,13 +197,7 @@ void HandleStorageService(const PacketFrame &frame)
 
         case 8: { // Write Stream Close (Request: CID stream (1 byte))
             if (frame.payload_len >= 1) {
-                uint8_t cid_close = frame.payload[0];
-                for (int stream_idx = 0; stream_idx < MAX_STREAMS; stream_idx++) {
-                    if (Storage.streams[stream_idx].active && Storage.streams[stream_idx].cid == cid_close) {
-                        Storage.streams[stream_idx].active = false;
-                        break;
-                    }
-                }
+                StorageStreamClose(frame.payload[0]);
                 PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
                                  FLAG_TYPE | FLAG_START | FLAG_STOP, nullptr, 0);
                 DispatchPacket(reply);

@@ -428,8 +428,8 @@ class ConnectionManager extends ChangeNotifier {
     throw const TransportException('No free transaction IDs');
   }
 
-  /// Sends a single-packet request to `targetId` and waits for its response
-  /// payload (REQACK is always set). Throws [TransportException] on timeout.
+  /// Sends a single-packet request and waits for its response payload (REQACK is
+  /// always set). Throws [TransportException] on timeout.
   Future<List<int>> request(
     int targetId,
     ServiceType service,
@@ -471,6 +471,27 @@ class ConnectionManager extends ChangeNotifier {
       _rxBuffers.remove(txId);
       rethrow;
     }
+  }
+
+  /// Sends a single-packet request without waiting for a reply (fire-and-forget).
+  /// Used for write-stream chunks that the device acknowledges implicitly by
+  /// completing the file; txId 0 is never used by [request], so no collision.
+  Future<void> sendNoReply(
+    int targetId,
+    ServiceType service,
+    int functionCid, {
+    List<int> payload = const [],
+  }) async {
+    final transport = _transport;
+    if (transport == null) throw const TransportException('Not connected');
+    final frame = PacketFrame.single(
+      targetId: targetId,
+      srvTarget: makeService(service, functionCid),
+      srvSource: makeService(ServiceType.app, 0),
+      response: false,
+      payload: payload,
+    );
+    await transport.send(frame.toBytes());
   }
 
   @override

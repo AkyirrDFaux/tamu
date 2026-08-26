@@ -6,7 +6,7 @@
 #endif
 #include "Core/Services/Device.h"
 #include "Core/Services/LogHandler.h"
-#ifdef USE_SCRIPT
+#ifdef USE_SCRIPTS
 #include "Core/Services/Script.h"
 #endif
 #include "Core/Services/Storage.h"
@@ -40,6 +40,7 @@ void HandleCLI_LogResponse(const PacketFrame &frame);
 void HandleCLI_DeviceResponse(const PacketFrame &frame);
 void HandleCLI_StorageResponse(const PacketFrame &frame);
 void HandleCLI_CreateResponse(const PacketFrame &frame);
+void HandleCLI_ScriptResponse(const PacketFrame &frame);
 #endif
 
 // Forward declaration for HandleSystemMemory (defined in Core/Services/SystemMemory.h).
@@ -79,7 +80,7 @@ void DispatchPacket(const PacketFrame &frame)
                 HandleSystemMemory(frame);
                 break;
 
-            #ifdef USE_SCRIPT
+            #ifdef USE_SCRIPTS
             case ServiceType::Script:
                 HandleScriptService(frame);
                 break;
@@ -127,6 +128,8 @@ void DispatchPacket(const PacketFrame &frame)
                     HandleCLI_CreateResponse(frame); // Dynamic/Keyed create responses
                 else if (cid == 6)
                     HandleCLI_LogResponse(frame); // LogHandler GetLogs/ClearReadLogs responses
+                else if (cid == 7)
+                    HandleCLI_ScriptResponse(frame); // Script service responses
                 break;
 #endif
 

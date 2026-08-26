@@ -4,6 +4,146 @@ Status of items from the docs-vs-implementation audit and follow-up work.
 
 ## Resolved (code)
 
+### Input switch/slider no longer "returns" (2026-08-26)
+
+- Root cause: the input controls were *controlled* purely by the live value, so after a
+  toggle the poll (1 s) rebuild with a stale live value (or the default for stopped
+  scripts) snapped the control back. `ScriptInputControl` is now stateful and keeps the
+  value the user last set as a `_pending` until the device echoes it (or a differing live
+  value arrives). Applies to the Switch, Picker, Slider and value-editor fallback.
+- Verified with widget tests (`script_input_widget_test.dart`): switch commits + stays
+  toggled across a stale rebuild then tracks the echo; slider commits on release, thumb
+  follows the drag, and keeps its position while the live value lags. Offline suite 48/48;
+  GUI rebuilt + relaunched.
+
+### Script slider drag + input controls in the editor (2026-08-26)
+
+- The slider thumb follows the finger during the drag (local drag state) and, on
+  release, **keeps the committed value until the device echoes it back** - the 1 s poll's
+  rebuild with a stale (or default-for-stopped-scripts) live value no longer resets the
+  thumb. Verified by three widget tests (`script_input_widget_test.dart`): commit on
+  release, thumb-follows-before-release, and keeps-committed-value-while-live-lags.
+  Offline suite 45/45; GUI rebuilt + relaunched.
+
+### Script slider drag + input controls in the editor (2026-08-26)
+
+- **Slider now slides**: the slider thumb follows the finger while dragging (local drag
+  state in a dedicated `_ScriptSlider`) and only commits the value to the script on
+  release, instead of snapping back because the committed value never changed.
+- **The same interaction controls are available in the editor**: each Input card in the
+  editor now renders its live `ScriptInputControl` (Button/Switch/Picker/Slider/Text)
+  below the definition row, wired to writeInput - so an input can be driven from the
+  editor while the script runs, alongside the definition editing (key/type/default/style).
+- Verified: `flutter analyze` clean, offline suite 42/42, GUI rebuilt + relaunched.
+
+### Script list: expandable rows with live input controls (2026-08-26)
+
+- **Script rows unfold** to a detailed view (chevron or tapping the row) that renders the
+  inputs as their interaction controls - Button (momentary press writes true/1), Switch
+  (toggles), Picker (dropdown), Slider, Text field - wired to writeInput, plus live
+  output/variable values and an "Open editor" action. A script can be driven from the
+  list without opening the editor.
+- The expanded scripts are polled (1 s) for state + live input/output/variable values; the
+  header state badge and Start/Pause/Stop controls update live.
+- New `script_input_widget.dart` maps a ScriptInput's (resolved) style + type to a control.
+- Verified: `flutter analyze` clean, offline suite 42/42, GUI rebuilt + relaunched.
+
+### Script editor live preview + script list controls (2026-08-26)
+
+- **Editor live preview**: while the editor is open it polls (1 s) the script's state,
+  current instruction and the real input/variable/output values. Variables and outputs
+  rows show the live value; the current instruction line is highlighted in the
+  instruction editor (orange border + ▶ marker).
+- **More editing options**: inputs and variables can be written live (type-aware value
+  editor -> writeInput/writeVariable, which also wakes a Waiting script); instruction
+  lines can be duplicated; outputs show live values read-only.
+- **Script list page**: each row now shows the input/output definitions in the script's
+  format (input types + output names, read from the file) and inline state controls
+  (Start/Pause/Stop) alongside the state badge.
+- Verified: `flutter analyze` clean, offline suite 42/42, GUI rebuilt + relaunched.
+
+### Script editor pickers refined (2026-08-26)
+
+- **Expected type dictates interaction styles**: the input dialog's style dropdown is
+  filtered by the data type (`InputStyle.allowedFor`); changing the type clamps a now
+  incompatible style back to the type's automatic default. Automatic maps Bool->Switch,
+  Enum->Picker, Number/Index->Slider, Colour->Picker, String/other->Text.
+- **Operand/output selection is name-based, not index-based**: the picker first chooses a
+  category (Inputs/Outputs/Variables/Constants/Predefine), then lists the already-declared
+  entries by name/type/value, with an "add new" entry that auto-declares. No raw index
+  entry field. Symbol chips for named variables/outputs show the name.
+- **Instruction picker is two-level**: recommended instructions are listed first, then
+  per-category buttons (Math/Logic/Compare/Compose/Memory/Flow/Time/State/Macro) that open
+  the smaller category lists; search still finds anything.
+- Verified: `flutter analyze` clean, offline suite 42/42 (added input-style tests), GUI
+  rebuilt + relaunched.
+
+### Script editor rebuilt (symbol-based) + input dictionary (2026-08-26)
+
+- **Input dictionary**: each input is edited as a dictionary entry with key, expected
+  type, default value (type-aware editor) and an interaction style (Automatic / Button /
+  Switch / Picker / Slider / Text). The style is persisted in the script file: the input
+  meta now carries one style byte per input (5 B/input) after the legacy 4 B/input layout;
+  both formats parse and the firmware reads either (RuntimeSeed, manager CID 5).
+- **Symbol-based instruction editor** (at the bottom of the editor page): every line is a
+  row of pickable chips `[Output] [Op] [Operands...]` - no text editing. The opcode picker
+  is searchable, grouped by category (Math/Logic/Compare/Compose/Memory/Flow/Time/State/
+  Macro) with per-op hints and a "Recommended" section (not limiting). Operand/output
+  pickers select kind + index; predefine literals get a subtype + value picker.
+- **Auto-compile**: referencing an undeclared `InN/OutN/VarN/ConstN` in an instruction
+  auto-declares it (input with next free key, named variable/output, Number-0 constant) -
+  both when picking a symbol and on save. Line templates (ADD/compare/IF/WHILE/delay/
+  mem read-write/get time/END) plus reorder/delete per line.
+
+### Script editor fixed for fresh scripts (2026-08-26)
+
+- A freshly created script only **reserves** the Script ID - the file is not created
+  until the first save (write-stream open). The editor previously showed "corrupt
+  file"/"could not read" and was unusable. It now starts from a blank script (default
+  `END` line) when the file does not exist yet, and a corrupt file is overwritten on
+  save.
+- `ScriptClient.readName`/`readScriptFile` now treat a 1-byte status reply (missing
+  file) as null; the list page falls back to "Script N" for unnamed scripts.
+- New HIL test covering the exact editor save path: create -> no file -> save a blank
+  script -> read back -> run to Finished -> delete. HIL script suite now 3/3.
+
+### Script service implemented end-to-end (2026-08-26)
+
+- **Script manager service** (Docs/Services/Script.md CIDs 0-17, 64+): Get number of
+  scripts, Read Name, Read I/O size, Read state, Set state, Read/Write input, Read
+  output, Get info, Read/Write Variable, Get/Set current instruction, Create, Delete,
+  Read script (streamed), Open/Close/Write script write-stream (the stream reuses the
+  Storage write-stream machinery via new `StorageStreamOpen/Write/Close` helpers).
+  File name scheme `SCR` + 3-digit id (`SCR001  `), id 0 = invalid, 0xFF = auto-assign.
+- **Instruction set / VM** (Core/Functions/Script.h): 4-byte symbols
+  `[Type][Subtype][Value u16 LE]`; line = `[Output][Instruction][Input...] EndLine`;
+  math/logic (Number fixed-point), comparisons, Compose/Extract (Vector/Colour),
+  MemRead/MemWrite, If/While with embedded M&L condition expressions (end-matching
+  jump targets patched at load), Delay/GetTime, Pause/Resume/Terminate/Restart/
+  InfoReport/ErrorHalt, MacroCall (cross-script, depth-limited 4). Predefines:
+  Bool/Char/Index/State/Type/MathOp. States per the doc; scheduler runs in the main
+  loop (ScriptTick) executing forward until loop-back, wait or finish.
+- **MemWrite sets ScriptUpdated** on dynamic/keyed target fields (Data Formats.md);
+  static-block targets keep their const schema flags (limitation documented). Dynamic
+  MemWrite creates a missing contiguous field (like the Dynamic Memory Write service).
+- **v1 interpretations** (the doc's example was illustrative, not a literal program):
+  no top-level instruction chaining (line 51); IF/WHILE conditions embed ops;
+  degenerate `[EndIf|EndWhile|End] EndLine` lines; one body iteration per main-loop
+  tick; RAM preload always (fallback to run-from-file not implemented); input-write
+  wakes a Waiting script; the "instruction service" is internal (VM memory ops), the
+  manager is the only user-facing service.
+- **App**: `script_client.dart` (all CIDs + write stream), `script_file.dart`
+  (parse/build), `script_asm.dart` (compile/decompile/validate), Scripts page
+  (list/create/delete) + script editor (name, instructions with token highlighting,
+  inputs/outputs/variables/constants, save via stream). Script tile gated on
+  `Capability.scripts`.
+- **CLI**: `script list|read|create|delete|start|stop|state` + decompiler.
+- **Guard aligned** to the doc: `USE_SCRIPTS` (was `USE_SCRIPT`); added to the Tamu
+  env; `Capabilities::Scripts` in `kCapabilities`.
+- **Verified**: builds clean (Tamu + DAS), `flutter analyze` clean, offline tests
+  36/36 incl. new `script_test.dart` (16), USB HIL script tests 2/2 + full fast HIL
+  8/8.
+
 ### In-app notifications + small UI consistency (2026-08-25)
 
 - **Settings notifications were stored but never fired (doc gap closed)**: Docs/App/

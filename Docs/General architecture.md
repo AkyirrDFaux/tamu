@@ -27,6 +27,7 @@
 Sets of predefined memory blocks, and functions to provide an unified overall feature to the device. Included per device by it's capabilities, almost always has device specific implementations at least partially.
 
 Unknowns:
+	Selfupdater over RSBus for non USB devices.
 	Subscriptions?
 
 ### Code rules:
