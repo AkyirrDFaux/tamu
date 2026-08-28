@@ -1,17 +1,22 @@
 /// Generic packet protocol (Docs/Data Formats.md).
 ///
-/// Wire layout: CRC8 | Flags | FragID | PayloadLen | ID TGT | ID SRC | SRV TGT | SRV SRC | Payload
+/// Wire layout: CRC8 | Flags | Priority | PayloadLen | ID TGT | ID SRC | SRV TGT | SRV SRC | Payload
+/// PayloadLen is in 4-byte units (max 73 = 292 bytes); the payload is padded to 4 on the wire.
 library;
 
 import 'dart:typed_data';
 
-const int maxPayloadSize = 255;
+const int maxPayloadSize = 292;
 
 // Flag bitmasks.
 const int flagReqAck = 1 << 0;
 const int flagStart = 1 << 1;
 const int flagStop = 1 << 2;
 const int flagType = 1 << 3; // 0 = request, 1 = response
+const int flagFrag = 1 << 4; // first 4 payload bytes = fragmentation info (u16 current + u16 total)
+
+/// Default priority byte (0 = highest, default 128).
+const int defaultPriority = 128;
 
 /// Legacy placeholder address. The firmware rewrites id_src on app frames (the core
 /// proxies the app), so this value is inert - kept only as a safe default.
@@ -56,10 +61,21 @@ int crc8(List<int> data) {
   return crc;
 }
 
+/// Builds the 4-byte fragmentation info (u16 current fragment + u16 total fragments)
+/// that prefixes every FRAG-flagged packet's payload (Data Formats.md).
+Uint8List writeFragInfo(int current, int total) =>
+    Uint8List.fromList([current & 0xFF, (current >> 8) & 0xFF, total & 0xFF, (total >> 8) & 0xFF]);
+
+/// Parses the fragmentation info from the first 4 payload bytes of a FRAG packet.
+({int current, int total}) fragInfoOf(List<int> payload) => (
+      current: payload[0] | (payload[1] << 8),
+      total: payload[2] | (payload[3] << 8),
+    );
+
 /// A single parsed packet frame.
 class PacketFrame {
   final int flags;
-  final int fragId;
+  final int priority;
   final int idTarget;
   final int idSource;
   final int srvTarget;
@@ -68,7 +84,7 @@ class PacketFrame {
 
   PacketFrame({
     required this.flags,
-    required this.fragId,
+    required this.priority,
     required this.idTarget,
     required this.idSource,
     required this.srvTarget,
@@ -79,29 +95,37 @@ class PacketFrame {
   bool get isResponse => (flags & flagType) != 0;
   bool get isStart => (flags & flagStart) != 0;
   bool get isStop => (flags & flagStop) != 0;
+  bool get isFrag => (flags & flagFrag) != 0;
   bool get isSingle => isStart && isStop;
 
-  /// Serialises the frame including the CRC8 header byte.
+  /// Serialises the frame including the CRC8 header byte. The payload is padded to a
+  /// multiple of 4 and PayloadLen carries the padded size in 4-byte units.
   Uint8List toBytes() {
-    final bytes = ByteData(12 + payload.length);
+    final padded = (payload.length + 3) & ~3;
+    final bytes = ByteData(12 + padded);
     bytes.setUint8(0, 0); // CRC placeholder, patched below
     bytes.setUint8(1, flags);
-    bytes.setUint8(2, fragId);
-    bytes.setUint8(3, payload.length);
+    bytes.setUint8(2, priority);
+    bytes.setUint8(3, padded ~/ 4);
     bytes.setUint16(4, idTarget, Endian.little);
     bytes.setUint16(6, idSource, Endian.little);
     bytes.setUint16(8, srvTarget, Endian.little);
     bytes.setUint16(10, srvSource, Endian.little);
-    bytes.buffer.asUint8List().setAll(12, payload);
-    bytes.setUint8(0, crc8(bytes.buffer.asUint8List(1)));
-    return bytes.buffer.asUint8List();
+    final out = bytes.buffer.asUint8List();
+    out.setAll(12, payload);
+    for (var i = payload.length; i < padded; i++) {
+      out[12 + i] = 0;
+    }
+    bytes.setUint8(0, crc8(out.sublist(1)));
+    return out;
   }
 
   /// Parses a frame from `data` starting at `offset`. Returns null if there is
   /// not enough data yet. Throws FormatException on a CRC mismatch.
   static PacketFrame? tryParse(List<int> data, int offset) {
     if (data.length - offset < 12) return null;
-    final len = data[offset + 3];
+    final units = data[offset + 3];
+    final len = units * 4;
     if (data.length - offset < 12 + len) return null;
     final body = data.sublist(offset + 1, offset + 12 + len);
     if (crc8(body) != data[offset]) {
@@ -111,7 +135,7 @@ class PacketFrame {
         len > 0 ? Uint8List.fromList(data.sublist(offset + 12, offset + 12 + len)) : Uint8List(0);
     return PacketFrame(
       flags: data[offset + 1],
-      fragId: data[offset + 2],
+      priority: data[offset + 2],
       idTarget: data[offset + 4] | (data[offset + 5] << 8),
       idSource: data[offset + 6] | (data[offset + 7] << 8),
       srvTarget: data[offset + 8] | (data[offset + 9] << 8),
@@ -120,19 +144,24 @@ class PacketFrame {
     );
   }
 
-  /// Builds a single-packet frame (START|STOP set, FragID 0). Requests carry
-  /// REQACK: several services (System/Dynamic/Keyed Memory) respond only when it
-  /// is set.
+  /// Builds a single-packet frame (START|STOP set, default priority). Requests carry
+  /// REQACK: several services (System/Dynamic/Keyed Memory) respond only when it is set.
+  /// Set [frag] to flag the payload as carrying 4 bytes of fragmentation info first.
   factory PacketFrame.single({
     required int targetId,
     required int srvTarget,
     required int srvSource,
     required bool response,
     List<int> payload = const [],
+    bool frag = false,
   }) {
     return PacketFrame(
-      flags: flagStart | flagStop | flagReqAck | (response ? flagType : 0),
-      fragId: 0,
+      flags: flagStart |
+          flagStop |
+          flagReqAck |
+          (response ? flagType : 0) |
+          (frag ? flagFrag : 0),
+      priority: defaultPriority,
       idTarget: targetId,
       idSource: appSourceId,
       srvTarget: srvTarget,
@@ -155,7 +184,8 @@ class PacketStreamParser {
     while (true) {
       final remaining = _buffer.length - offset;
       if (remaining < 12) break;
-      final len = _buffer[offset + 3];
+      final units = _buffer[offset + 3];
+      final len = units * 4;
       if (remaining < 12 + len) break;
       final PacketFrame frame;
       try {

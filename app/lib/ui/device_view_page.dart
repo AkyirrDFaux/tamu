@@ -74,6 +74,18 @@ class _DeviceViewPageState extends State<DeviceViewPage>
             ]),
           ),
           actions: [
+            IconButton(
+              tooltip: 'Identify device (blink its LED)',
+              icon: const Icon(Icons.visibility_outlined),
+              onPressed: () async {
+                final messenger = ScaffoldMessenger.of(context);
+                final ok = await _db.identify(widget.deviceId);
+                if (mounted && !ok) {
+                  messenger.showSnackBar(
+                      const SnackBar(content: Text('Identify request failed')));
+                }
+              },
+            ),
             RefreshButton(
               onRefresh: _refresh,
               autoActive: autoRefreshActive,

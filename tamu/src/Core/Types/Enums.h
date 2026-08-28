@@ -17,6 +17,7 @@ namespace Capabilities {
     constexpr uint32_t DynamicMemory = 1u << 3;
     constexpr uint32_t KeyedMemory = 1u << 4;
     constexpr uint32_t Scripts = 1u << 5;
+    constexpr uint32_t Bootloader = 1u << 6;    // self-updates over RSBus (mandatory without USB)
 }
 
 enum FieldFlags : uint16_t {

@@ -1,4 +1,5 @@
-#define BUFFER_SIZE 256
+// Sized to hold a full frame echo: max frame = 0xAA + 12 header + 292 payload = 305 bytes.
+#define BUFFER_SIZE 320
 #define RS485_EN_PORT GPIOD
 #define RS485_EN_PIN GPIO_Pin_4
 // Circular Buffer structure
@@ -135,7 +136,7 @@ static void RS485_WaitForSilence()
 // DAS's small stack is not exhausted even when called from a service handler that already
 // holds its own frame (the frame's CRC is set by PacketConstruct/Append before we get here).
 bool SendAndVerifyPacket(const PacketFrame &Data) {
-    size_t packet_size = 12 + Data.payload_len;       // Header + payload (packed struct)
+    size_t packet_size = 12 + PayloadBytes(Data);       // Header + payload (packed struct)
     size_t total_tx_size = 1 + packet_size;           // Start byte (0xAA) + packet
     const uint8_t *bytes = (const uint8_t *)&Data;
 

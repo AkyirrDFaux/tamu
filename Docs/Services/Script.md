@@ -83,26 +83,25 @@ Execution done in main loop. Run all instructions until the same instruction rea
 
 ### Service CIDs (manager)
 
-| Function                   | CID | Payload In                                        | Payload out                       | Note           |
-| -------------------------- | --- | ------------------------------------------------- | --------------------------------- | -------------- |
-| Get number of scripts      | 0   | -                                                 | uint8                             |                |
-| Read Name                  | 1   | Script ID                                         | `char[16]`                        |                |
-| Read I/O size              | 2   | Script ID                                         | Input and output size (uint8 x 2) |                |
-| Read state                 | 3   | Script ID                                         | State                             |                |
-| Set state                  | 4   | Script ID, new state                              |                                   |                |
-| Read input                 | 5   | Script ID, input index                            | BlockMeta, value                  |                |
-| Write input                | 6   | Script ID, input index, padding, BlockMeta, value |                                   |                |
-| Read output                | 7   | Script ID, output index                           | BlockMeta, value                  |                |
-| Get info                   | 8   | Script ID                                         | Variable count, instruction count | (editor debug) |
-| Read Variable              | 9   | Script ID, Variable ID                            | Block Meta, Value                 | (editor debug) |
-| Write Variable             | 10  | Script ID, Variable ID, Block Meta, Value         |                                   | (editor debug) |
-| Get current instruction    | 11  | Script ID                                         | instruction number                | (editor debug) |
-| Move to instruction        | 12  | Script ID, instruction number                     |                                   | (editor debug) |
-| Create script              | 13  | Script ID                                         | Success                           | (file access)  |
-| Delete script              | 14  | Script ID                                         | Success                           | (file access)  |
-| Read script                | 15  | Script ID                                         | Stream (binary)                   | (file access)  |
-| Open script write stream   | 16  | Script ID, expected size (uint32)                 | CID of opened stream              | (file access)  |
-| Close script  write stream | 17  | Script ID                                         |                                   | (file access)  |
-| Write script stream        | 64+ | Stream (binary)                                   |                                   | (file access)  |
+| Function                | CID | Payload In                                        | Payload out                                  | Note                                     |
+| ----------------------- | --- | ------------------------------------------------- | -------------------------------------------- | ---------------------------------------- |
+| Get number of scripts   | 0   | -                                                 | uint8                                        |                                          |
+| Read Name               | 1   | Script ID                                         | `char[16]`                                   |                                          |
+| Read I/O size           | 2   | Script ID                                         | Input and output size (uint8 x 2)            |                                          |
+| Read state              | 3   | Script ID                                         | State                                        |                                          |
+| Set state               | 4   | Script ID, new state                              |                                              |                                          |
+| Read input              | 5   | Script ID, input index                            | BlockMeta, value                             |                                          |
+| Write input             | 6   | Script ID, input index, padding, BlockMeta, value |                                              |                                          |
+| Read output             | 7   | Script ID, output index                           | BlockMeta, value                             |                                          |
+| Get info                | 8   | Script ID                                         | Variable count, instruction count            | (editor debug)                           |
+| Read Variable           | 9   | Script ID, Variable ID                            | Block Meta, Value                            | (editor debug)                           |
+| Write Variable          | 10  | Script ID, Variable ID, Block Meta, Value         |                                              | (editor debug)                           |
+| Get current instruction | 11  | Script ID                                         | instruction number                           | (editor debug)                           |
+| Move to instruction     | 12  | Script ID, instruction number                     |                                              | (editor debug)                           |
+| Create script           | 13  | Script ID                                         | Success                                      | (file access), respond only if requested |
+| Delete script           | 14  | Script ID                                         | Success                                      | (file access), respond only if requested |
+| Read script             | 15  | Script ID                                         | ScriptID, Fragmentation, Contents (stream)   | (file access)                            |
+| Write script            | 16  | Script ID, Fragmentation, Contents (stream)       | Last sequential fragmentation index written. | (file access) respond only if requested  |
+
 ### Service CIDs (instruction I/O)
 Service CID for script functionality is equal to ScriptID

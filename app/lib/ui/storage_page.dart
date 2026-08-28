@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
@@ -149,24 +148,15 @@ class _StoragePageState extends State<StoragePage>
   /// Downloads the whole file to the host (~/Downloads by default).
   Future<void> _downloadFile(FileRecord file) async {
     _snack('Downloading ${file.name}...');
-    final chunks = BytesBuilder();
-    const chunkSize = 4096;
-    for (var offset = 0; offset < file.size; offset += chunkSize) {
-      final take = (chunkSize + offset > file.size)
-          ? file.size - offset
-          : chunkSize;
-      final data = await _client.readFile(file.name,
-          offset: offset, maxBytes: take);
-      if (data == null) {
-        _snack('Download failed at offset $offset');
-        return;
-      }
-      chunks.add(data);
+    final data = await _client.readFile(file.name, size: file.size);
+    if (data == null) {
+      _snack('Download failed');
+      return;
     }
     final dir = Directory('${Platform.environment['HOME']}/Downloads');
     if (!await dir.exists()) await dir.create(recursive: true);
     final target = '${dir.path}/${file.name}_download.bin';
-    await File(target).writeAsBytes(chunks.toBytes(), flush: true);
+    await File(target).writeAsBytes(data, flush: true);
     _snack('Saved to $target');
   }
 
@@ -264,7 +254,7 @@ class _StoragePageState extends State<StoragePage>
     _snack('Reading file table...');
     // The table can span several pages; read it all so the decoded view agrees
     // with the CID-0 file list (a 4096-byte cap truncates >256-record tables).
-    final data = await _client.readFile(table.name, maxBytes: table.size);
+    final data = await _client.readFile(table.name, size: table.size);
     if (!mounted) return;
     Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => FileTableViewPage(
@@ -274,7 +264,7 @@ class _StoragePageState extends State<StoragePage>
   Future<void> _showFile(FileRecord file) async {
     _snack('Reading ${file.name}...');
     final data =
-        await _client.readFile(file.name, maxBytes: 4096);
+        await _client.readFile(file.name, size: file.size);
     if (!mounted) return;
     Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => FileViewPage(deviceId: widget.deviceId,

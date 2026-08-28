@@ -34,17 +34,25 @@ void HandleKeyedMemory(const PacketFrame &frame)
     uint8_t cid = GetServiceCID(frame.srv_tgt);
     if (frame.flags & FLAG_TYPE) return; // Ignore responses
 
-    if (frame.payload_len < sizeof(BlockIndex)) { DeviceLog("KEYMEM", "short payload (%u B)", (unsigned)frame.payload_len); return; }
+    if (PayloadBytes(frame) < sizeof(BlockIndex)) { DeviceLog("KEYMEM", "short payload (%u B)", (unsigned)PayloadBytes(frame)); return; }
     const BlockIndex *idx = reinterpret_cast<const BlockIndex *>(frame.payload);
+
+    // Single scratch buffer shared by every reply-building case (hoisted so the
+    // compiler allocates it once - keeps the DAS's 2 KB stack sane).
+    uint8_t payload[MAX_PAYLOAD_SIZE];
 
     switch (cid)
     {
     case 0: // Create block (BlockIndex + BlockMeta + value/name)
     {
-        if (frame.payload_len < sizeof(BlockIndex) + sizeof(BlockMeta)) { RespondStatus(frame, false); break; }
+        if (PayloadBytes(frame) < sizeof(BlockIndex) + sizeof(BlockMeta)) { RespondStatus(frame, false); break; }
         const BlockMeta *desc = reinterpret_cast<const BlockMeta *>(frame.payload + sizeof(BlockIndex));
         const uint8_t *value = frame.payload + sizeof(BlockIndex) + sizeof(BlockMeta);
-        uint16_t value_len = frame.payload_len - sizeof(BlockIndex) - sizeof(BlockMeta);
+        // The real value length is carried by the descriptor's Size field; the wire
+        // payload is padded to 4 bytes, so never derive lengths from payload_len.
+        uint16_t value_len = desc->Size;
+        uint16_t avail = PayloadBytes(frame) - sizeof(BlockIndex) - sizeof(BlockMeta);
+        if (value_len > avail) value_len = avail;
 
         // An explicit index repurposes a None tombstone slot in place, padding
         // any gap with None blocks (indexes stay stable); INVALID_BLOCK appends.
@@ -118,13 +126,12 @@ void HandleKeyedMemory(const PacketFrame &frame)
         if (!block) { RespondStatus(frame, false); break; }
         if (idx->Field == INVALID_INDEX) // block meta + name
         {
-            uint8_t payload[MAX_PAYLOAD_SIZE];
             uint16_t plen = MakeBlockMetaPayload(idx->Block, (uint16_t)block->type,
                                                  block->map_count, block->Name,
                                                  (uint8_t)strlen(block->Name),
                                                  payload, sizeof(payload));
             if (plen == 0) { RespondStatus(frame, false); break; }
-            SendResponse(frame, payload, (uint8_t)plen);
+            SendResponse(frame, payload, plen);
             break;
         }
         if (idx->Field >= block->map_count) { RespondStatus(frame, false); break; }
@@ -144,7 +151,6 @@ void HandleKeyedMemory(const PacketFrame &frame)
             // cannot carry all of them at once, so the copy is clamped to what fits.
             uint8_t keys[256];
             uint16_t key_count = dictGone ? 0 : block->ListKeys(idx->Field, keys, sizeof(keys));
-            uint8_t payload[MAX_PAYLOAD_SIZE];
             uint16_t cursor = 0;
             BlockIndex out_index = {idx->Block, idx->Field, INVALID_INDEX};
             memcpy(payload + cursor, &out_index, sizeof(BlockIndex)); cursor += sizeof(BlockIndex);
@@ -156,27 +162,28 @@ void HandleKeyedMemory(const PacketFrame &frame)
             BlockMeta desc_meta = field_result.Descriptor; desc_meta.Size = (uint8_t)keys_len;
             memcpy(payload + cursor, &desc_meta, sizeof(BlockMeta)); cursor += sizeof(BlockMeta);
             memcpy(payload + cursor, keys, keys_len); cursor += keys_len;
-            SendResponse(frame, payload, (uint8_t)cursor);
+            SendResponse(frame, payload, cursor);
             break;
         }
         KeyResult key_result = block->GetKey(idx->Field, idx->Key); // keyed entry
         if (dictGone || !key_result.data_ptr) { RespondStatus(frame, false); break; }
-        uint8_t payload[MAX_PAYLOAD_SIZE];
         uint16_t cursor = 0;
         memcpy(payload + cursor, idx, sizeof(BlockIndex)); cursor += sizeof(BlockIndex);
         memcpy(payload + cursor, &key_result.meta, sizeof(BlockMeta)); cursor += sizeof(BlockMeta);
         uint16_t size = key_result.data_len;
         if (cursor + size > sizeof(payload)) size = sizeof(payload) - cursor;
         memcpy(payload + cursor, key_result.data_ptr, size); cursor += size;
-        SendResponse(frame, payload, (uint8_t)cursor);
+        SendResponse(frame, payload, cursor);
         break;
     }
     case 3: // Write (BlockIndex + BlockMeta + value); creates if it does not exist
     {
-        if (frame.payload_len < sizeof(BlockIndex) + sizeof(BlockMeta)) { RespondStatus(frame, false); break; }
+        if (PayloadBytes(frame) < sizeof(BlockIndex) + sizeof(BlockMeta)) { RespondStatus(frame, false); break; }
         const BlockMeta *desc = reinterpret_cast<const BlockMeta *>(frame.payload + sizeof(BlockIndex));
         const uint8_t *value = frame.payload + sizeof(BlockIndex) + sizeof(BlockMeta);
-        uint16_t value_len = frame.payload_len - sizeof(BlockIndex) - sizeof(BlockMeta);
+        uint16_t value_len = desc->Size;
+        uint16_t avail = PayloadBytes(frame) - sizeof(BlockIndex) - sizeof(BlockMeta);
+        if (value_len > avail) value_len = avail;
 
         if (idx->Block == INVALID_BLOCK) // create new block named by the value
         {
@@ -191,11 +198,10 @@ void HandleKeyedMemory(const PacketFrame &frame)
         if (blockGone) {
             if (block && idx->Field == INVALID_INDEX) {
                 // Tombstone meta so indexes stay aligned until save.
-                uint8_t payload[MAX_PAYLOAD_SIZE];
                 uint16_t plen = MakeBlockMetaPayload(
                     idx->Block, (uint16_t)BlockType::None, 0, block->Name, 0,
                     payload, sizeof(payload));
-                if (plen) { SendResponse(frame, payload, (uint8_t)plen); break; }
+                if (plen) { SendResponse(frame, payload, plen); break; }
             }
             RespondStatus(frame, false);
             break;
@@ -256,7 +262,7 @@ void HandleKeyedMemory(const PacketFrame &frame)
                 block->map[idx->Field].FlagsAndType = desc->FlagsAndType;
             }
             // Request payload already IS the echo (BlockIndex + BlockMeta + value).
-            SendResponse(frame, frame.payload, frame.payload_len);
+            SendResponse(frame, frame.payload, PayloadBytes(frame));
             break;
         }
 
@@ -266,7 +272,7 @@ void HandleKeyedMemory(const PacketFrame &frame)
             break;
         }
         // Success echo: the request payload already IS BlockIndex + BlockMeta + value.
-        SendResponse(frame, frame.payload, frame.payload_len);
+        SendResponse(frame, frame.payload, PayloadBytes(frame));
         break;
     }
     case 4: // Read backup (direct file parse, no heap)
@@ -274,10 +280,9 @@ void HandleKeyedMemory(const PacketFrame &frame)
         uint8_t buffer[MEMORY_BACKUP_CAP];
         uint16_t count = ReadBackupFile(KeyedBackupName(), buffer, sizeof(buffer));
         if (count == 0) { RespondStatus(frame, false); break; }
-        uint8_t payload[MAX_PAYLOAD_SIZE];
         uint16_t plen = BackupBlockPayload(idx, buffer, count, true, payload, sizeof(payload));
         if (plen == 0) { RespondStatus(frame, false); break; }
-        SendResponse(frame, payload, (uint8_t)plen);
+        SendResponse(frame, payload, plen);
         break;
     }
     case 5: // Save block (or everything when the block is invalid) to its backup file
@@ -307,7 +312,6 @@ void HandleKeyedMemory(const PacketFrame &frame)
         if (BlockMetaType(field_result.Descriptor.FlagsAndType) == (uint16_t)DataType::None)
         { RespondStatus(frame, false); break; }
 
-        uint8_t payload[MAX_PAYLOAD_SIZE];
         uint16_t cursor = 0;
         BlockIndex out_index = {idx->Block, idx->Field, INVALID_INDEX};
         memcpy(payload + cursor, &out_index, sizeof(BlockIndex)); cursor += sizeof(BlockIndex);
@@ -349,7 +353,7 @@ void HandleKeyedMemory(const PacketFrame &frame)
                 off += AlignTo4(sizeof(BlockMeta) + m->Size);
             }
         }
-        SendResponse(frame, payload, (uint8_t)cursor);
+        SendResponse(frame, payload, cursor);
         break;
     }
     default:

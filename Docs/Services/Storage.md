@@ -28,18 +28,17 @@ File table contains file records. It's a file itself managed by this service, fi
 File is given off to have data stored or read by other functions, it has it's own format.
 ### Service CIDs
 
-| Function           | CID | Payload In                          | Payload out                 | Note                                             |
-| ------------------ | --- | ----------------------------------- | --------------------------- | ------------------------------------------------ |
-| Read File Table    | 0   | -                                   | File table entries (stream) |                                                  |
-| Format Filesystem  | 1   | -                                   | Success (bool)              | respond only if requested                        |
-| Create File        | 2   | Name, Size                          | Success (bool)              | respond only if requested                        |
-| Delete File        | 3   | Name                                | Success (bool)              | respond only if requested                        |
-| Resize File        | 4   | Name, New Size                      | Success (bool)              | respond only if requested                        |
-| Rename File        | 5   | Old Name, New Name                  | Success (bool)              | respond only if requested                        |
-| Read File          | 6   | Name, Offset start, Number of bytes | Binary (Stream)             |                                                  |
-| Write Stream Open  | 7   | Name, Offset start                  | CID stream                  | Opens a new CID explicitly to write to that file |
-| Write Stream Close | 8   | CID stream                          | -                           |                                                  |
-| Write Stream       | 64+ | Binary (Stream)                     |                             |                                                  |
+| Function          | CID | Payload In                                  | Payload out                                  | Note                      |
+| ----------------- | --- | ------------------------------------------- | -------------------------------------------- | ------------------------- |
+| Read File Table   | 0   | -                                           | Fragmentation, File table entries (stream)   |                           |
+| Format Filesystem | 1   | -                                           | Success (bool)                               | respond only if requested |
+| Create File       | 2   | Name, Size                                  | Success (bool)                               | respond only if requested |
+| Delete File       | 3   | Name                                        | Success (bool)                               | respond only if requested |
+| Resize File       | 4   | Name, New Size                              | Success (bool)                               | respond only if requested |
+| Rename File       | 5   | Old Name, New Name                          | Success (bool)                               | respond only if requested |
+| Read File         | 6   | Name                                        | Name, Fragmentation, File contents (stream)  |                           |
+| Write File        | 7   | Name, Fragmentation, File contents (stream) | Last sequential fragmentation index written. | respond only if requested |
+
 
 ### Functions to implement
 #### Main functions (implement per device, prefferably do not expose)

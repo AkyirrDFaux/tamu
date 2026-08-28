@@ -144,27 +144,12 @@ struct WireStreamParser
             return false;
 
         full = true;
-        bool ok = Crc8(&frame.flags, (uint16_t)(11 + frame.payload_len)) == frame.crc8;
+        bool ok = Crc8(&frame.flags, (uint16_t)(11 + PayloadBytes(frame))) == frame.crc8;
         return ok; // invalid CRC: caller should Reset() and resync
     }
 };
 
 static WireStreamParser s_wire_parser;
-
-// ---------------------------------------------------------------------------
-// Communication LED: pulses on every RX/TX burst on any app link (active low).
-// ---------------------------------------------------------------------------
-
-static void CommLedInit()
-{
-    PinModeOutput(LED_NOTIFICATION_PIN);
-    PinHigh(LED_NOTIFICATION_PIN); // off
-}
-
-static void CommLed(bool on)
-{
-    gpio_set_level(LED_NOTIFICATION_PIN, on ? 0 : 1);
-}
 
 // Installs the USJ driver (the CLI no longer uses the stock REPL) and routes the
 // VFS stdio to it so printf output reaches the USB host.
@@ -178,7 +163,6 @@ void AppUSBInit()
         usb_serial_jtag_driver_install(&cfg);
     }
     usb_serial_jtag_vfs_use_driver();
-    CommLedInit();
 }
 
 // ---------------------------------------------------------------------------
@@ -295,7 +279,6 @@ void ConsoleTask(void *)
         if (n <= 0)
             continue;
 
-        CommLed(true);
 
         // Per-byte mode dispatch: a mode switch (CLI -> APP) can happen mid-batch,
         // and the remaining bytes of the batch already belong to the app stream.
@@ -359,7 +342,6 @@ void ConsoleTask(void *)
             CliLineByte(b);
         }
 
-        CommLed(false);
     }
 }
 
@@ -393,10 +375,8 @@ void AppUSBSend(const uint8_t *data, uint16_t len)
         frame[1] = Crc8(&frame[2], (uint16_t)(1 + chunk)); // CRC8 over Length + Payload
 
         usb_serial_jtag_write_bytes(frame, (size_t)(4 + chunk), pdMS_TO_TICKS(50));
-        CommLed(true);
         off += chunk;
     }
-    CommLed(false);
 }
 
 // Called from the pump (ApplicationTask). Watches the physical USB link: when the host

@@ -51,8 +51,10 @@ abstract class MemoryClientBase {
     final reply = await request(2, payload: BlockIndex(block: block).toBytes());
     if (reply == null || reply.length < 8) return null;
     final meta = BlockMeta.fromBytes(reply, 4);
+    // BlockMeta.Size here is the field map count, NOT the name length; the name
+    // fills the rest of the payload. Strip the 4-byte wire padding (NUL bytes).
     final name = reply.length > 8
-        ? String.fromCharCodes(reply.sublist(8))
+        ? String.fromCharCodes(reply.sublist(8)).replaceAll('\x00', '')
         : 'Block $block';
     return (meta: meta, name: name);
   }
@@ -61,7 +63,8 @@ abstract class MemoryClientBase {
   Future<({BlockMeta meta, List<int> value})?> readValue(BlockIndex index) async {
     final reply = await request(2, payload: index.toBytes());
     if (reply == null || reply.length < 8) return null;
-    return (meta: BlockMeta.fromBytes(reply, 4), value: reply.sublist(8).toList());
+    final meta = BlockMeta.fromBytes(reply, 4);
+    return (meta: meta, value: _valueSlice(reply, meta.size));
   }
 
   /// Value write (CID 3): BlockIndex + BlockMeta + value. Returns the confirmed
@@ -72,7 +75,8 @@ abstract class MemoryClientBase {
         payload: [...index.toBytes(), ...meta.toBytes(), ...value],
         timeout: timeout);
     if (reply == null || reply.length < 8) return null;
-    return reply.sublist(8);
+    final echoMeta = BlockMeta.fromBytes(reply, 4);
+    return _valueSlice(reply, echoMeta.size);
   }
 
   /// Backup value read (CID 4): the value as STORED in the device's backup file
@@ -81,7 +85,16 @@ abstract class MemoryClientBase {
       BlockIndex index) async {
     final reply = await request(4, payload: index.toBytes());
     if (reply == null || reply.length < 8) return null;
-    return (meta: BlockMeta.fromBytes(reply, 4), value: reply.sublist(8).toList());
+    final meta = BlockMeta.fromBytes(reply, 4);
+    return (meta: meta, value: _valueSlice(reply, meta.size));
+  }
+
+  /// Slices the value bytes after the [BlockIndex + BlockMeta] header, clamped to the
+  /// declared [size] (the wire payload is padded to 4 bytes).
+  List<int> _valueSlice(List<int> reply, int size) {
+    if (size <= 0) return <int>[];
+    final avail = reply.length - 8;
+    return reply.sublist(8, 8 + ((size > avail) ? avail : size));
   }
 
   /// Save (CID 5) / Recall (CID 6) with an invalid block = whole registry.

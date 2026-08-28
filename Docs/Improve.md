@@ -1,5 +1,34 @@
 # Improvement suggestions
 
+## New 2026-08-28 (packet type + FRAG rework)
+
+- **DAS Button module (Docs/Devices.md "Button | PC0") is not implemented**: the doc lists a
+  Button module for the DAS but no firmware exists (no button block, no pin handling). The
+  button's function is unspecified - decide what it should do (a static Block? a boot
+  trigger?) before implementing.
+- **Service ID table.md disagrees with the firmware enum**: it lists Storage=4, System
+  Memory=5, ..., Router=16, App interface=17, CLI=18, but the firmware (`ServiceType` in
+  Core/Functions/Packet.h) uses Device=1, LogHandler=2, Storage=3, SystemMemory=4,
+  DynamicMemory=5, KeyedMemory=6, Script=7, App=8, CLI=9 (and no Bootloader/Router
+  service IDs). The wire format follows the firmware enum - either align the table with it
+  or renumber the firmware (a breaking change).
+- **DAS caps incoming payloads at 128 B** (`MAX_PAYLOAD_SIZE=128` keeps its 2 KB stack
+  sane), below the app's standard 256-B write chunk - the app never writes DAS files
+  today, but the RSBus bootloader (a later session, mandatory for devices without USB)
+  needs to receive 256-B chunks. Revisit the DAS frame/stack budget when implementing it
+  (e.g. run the bootloader with a larger `MAX_PAYLOAD_SIZE` and compact handlers).
+- **No per-device max-payload negotiation**: the app's `writeFile`/`writeScriptFile` chunk
+  at 256 B regardless of the target's frame capacity. A device with a smaller
+  `MAX_PAYLOAD_SIZE` silently drops the over-size fragments (timeout). Either expose a
+  "max payload" capability bit or have the clients fall back to a smaller chunk size.
+- **FRAG "Information" is service-specific**: the reassembler strips only the fixed 4-B
+  FRAG info; the stream header (file name / script ID) is stripped by each client using
+  the known format. A generic "strip the stream header" helper could remove the
+  duplication between `storage_client` and `script_client`.
+- **Last-fragment padding**: single (non-FRAG) replies and the final FRAG fragment are
+  padded to 4 on the wire; clients trim with the known file size. The `readFile(size:)`
+  callers must keep passing the file size - a wrong/absent size returns padded bytes.
+
 ## New 2026-08-26 (script editor rebuild)
 
 - **Script.md "File blocks" input meta now carries an interaction-style byte per input**
@@ -56,8 +85,9 @@
   backup. The app currently archives/restores System Memory blocks only (per-device JSON
   zip + live restore). Either trim the doc to what exists or track the rest as a feature.
 - **Docs/App/Service views/Storage.md mentions uploading files** from the host; the app only
-  downloads/previews (the firmware has Write Stream Open/Close/Write CIDs 7/8/64+, so upload
-  is implementable).
+  downloads/previews. The firmware now has a single Write File (CID 7, FRAG stream) that
+  the app exposes via `StorageClient.writeFile` - upload is implementable (the app-side
+  client exists, the Storage page has no upload UI yet).
 - **Docs/App/Settings.md describes in-app and OS notifications**, but the app only persists
   the preference toggles - nothing consumes them. Either implement the notification feed or
   mark the feature not-yet-implemented in the doc.

@@ -4,6 +4,113 @@ Status of items from the docs-vs-implementation audit and follow-up work.
 
 ## Resolved (code)
 
+### Memory views flickered on the (new) auto-refresh (2026-08-28)
+
+- After the memory views started auto-refreshing at the documented 0.5 s, the pages rebuilt
+  aggressively and flickered: the Keyed page swapped in fresh block objects with EMPTY
+  dicts/entries on every tick (blanking open dictionaries before reloading them), and the
+  System/Dynamic pages did an extra rebuild per tick.
+- **Fixed**: the Keyed page now preserves the previous blocks' open dicts/entries onto the
+  fresh objects before the reload (values update in place, never blank); all three pages
+  guard against overlapping refreshes (a tick in flight is skipped, so a slow BLE refresh
+  never stacks) and rebuild once per tick after the reload instead of twice.
+- Verified: `flutter analyze` clean, offline suite 50 passing, GUI rebuilt + relaunched.
+
+### Memory views showed stale field values; autorefresh was off by default (2026-08-28)
+
+- **Field values went stale**: the System/Dynamic Memory pages loaded a block's entries only
+  once when it was expanded (`if (!autoRefreshActive) await _loadVisibleFields()`), and the
+  auto-refresh tick re-read only the block LIST while preserving the old field values - so a
+  live read-only value (the LEDButton's Button state) never updated after the first expand.
+- **Autorefresh did not match the docs**: Docs/App/Service views/{System,Dynamic,Keyed}
+  Memory.md all say "Automatically refreshes the visible view (0.5s)", but the pages started
+  with the timer off until the user opened the refresh menu (only the Connection page
+  started on by default). 
+- **Fixed**: every refresh now reloads the visible (expanded) blocks' values (the Keyed page
+  already did for its open dicts), and all three memory views start auto-refreshing at the
+  documented 0.5 s on page open (started post-frame so the mixin's setState is legal). The
+  LED/Button's Button field now tracks the physical button while the LED is off.
+- Verified: `flutter analyze` clean, offline suite 50 passing, GUI rebuilt + relaunched.
+
+### Tamu LED-Button: LED state never matched the real LED (2026-08-28)
+
+- **Button read inverted (root cause)**: the button is active-LOW (line idles HIGH via the
+  pull-up; a press pulls it LOW), but `ButtonUpdate` read `PinRead()` directly (HIGH =
+  pressed). The internal pull-down the OFF path enabled could not beat the board's external
+  pull-up, so the line idled HIGH -> a permanent false press -> the LED auto-triggered and
+  could not be turned off ("given LED state does not correspond to the real state").
+- **Fixed**: `ButtonUpdate` now reads active-LOW (`pressed = !PinRead(...)`), and the LED
+  OFF path configures the pin as an input **with pull-up** (`PinModeInputPullUp`, new in
+  Base.h) matching the external pull-up - idle HIGH = LED off + button readable.
+- **The button only reports its state** (Button out field) - pressing it no longer drives
+  the LED (a previous iteration of the fix auto-triggered the LED on a press, so the
+  button's state was hidden once the LED lit). While the LED is on the shared line is
+  driven and cannot be sampled, so ButtonState reads false.
+- **Persisted LEDState now re-applies at boot**: LEDState is a writable static-block field
+  saved in the SYSMEM backup; the restore wrote the RAM field but never re-ran its write
+  trigger, so after a reboot the block said "on" while the pin stayed high-Z. The Tamu boot
+  sequence re-applies the restored LED state (`OnLEDStateChange`) after the init blink;
+  the identify blink also restores it on exit.
+- **Removed the comm-LED contention**: `CommLed()` (AppUSB/AppBLE) pulsed the same pin as a
+  link-activity indicator, fighting the LED-state writes whenever the app was connected.
+  The white/notification LED is documented as missing hardware, so the activity indicator
+  is gone; the LED-Button module owns the pin.
+- Hardware topology documented in Docs/Modules/Generic system blocks.md (LED + button in
+  series, pin in the middle, button to GND, LED to VCC via resistor, external pull-up).
+- Verified live: boot matches the persisted state, write-on sticks, write-off sticks, idle
+  button reads false. HIL 8/8 + script HIL 3/3 still green after the changes.
+
+### Packet protocol upgraded to the new packet type (2026-08-28)
+
+Implemented the redesigned packet format (Docs/Data Formats.md) end-to-end (firmware +
+app) and reworked the file-transfer services around the new FRAG fragmentation:
+
+- **Header**: byte 2 is now Priority (default 128); Payload Length is in 4-byte units
+  (max 73 units = 292 B, frame max 304 B). Payloads are zero-padded to 4 on the wire;
+  real lengths are derived from format fields (BlockMeta.Size etc.), never
+  `payload_len - fixed`. `PayloadBytes()` converts the stored units to bytes.
+- **FRAG** (flag bit 4): the first 4 payload bytes are `u16 current + u16 total
+  fragments`; non-last fragments carry a full 256-B actual payload, the last is the
+  (padded) remainder. Stream headers (file name / script ID) ride in the Information
+  section of fragment 0.
+- **Storage service** (per Storage.md): CID 0 Read File Table streams entries as FRAG;
+  CID 6 Read File streams the whole file (`Name` -> `Name + FRAG + contents`); new CID 7
+  Write File streams `Name + FRAG + contents` and answers each acknowledged fragment with
+  the last sequential fragmentation index written (u16). The old Write Stream
+  Open/Close/64+ CIDs and the `StorageStream*` helpers were removed.
+- **Script service** (per Script.md): CID 15 Read script streams `ScriptID + FRAG +
+  contents`; CID 16 Write script streams `ScriptID + FRAG + contents` (the device creates
+  the file on fragment 0 and shrinks it to the real length on the last); CIDs 17/64+
+  removed.
+- **Device service renumbered** (per Device service.md): new CID 2 Identify (blinks the
+  red LED fast); Type->3, SN->4, Version->5, Capability->6, Read Name->7, Set Name->8,
+  Uptime->9, Loop->10, Time sync->11, Set time offset->12, SNDB Read All->13 (now FRAG),
+  SNDB Read->14, SNDB Write->15. `Capabilities::Bootloader` bit added (not yet set by any
+  device - the bootloader is a later session).
+- **Other stream senders moved to FRAG**: SNDB Read All, LogHandler GetLogs, Storage file
+  table/read, Script read.
+- **DAS stack fixes**: `PacketFrame` grew to 304 B, overflowing the CH32V003's 256-B
+  stack (service replies crashed the node into a watchdog reset on any SystemMemory read).
+  The DAS now builds with `MAX_PAYLOAD_SIZE=128` (node frame = 140 B), hoisted
+  per-handler response buffers, a 768-B stack and a 320-B RS485 echo ring. Verified:
+  no crashes under repeated service traffic.
+- **App**: `protocol.dart` (units, padding, FRAG), `connection.dart` FRAG reassembly
+  (strips the 4-B info per fragment; clients trim the last fragment via the known file
+  size), memory clients slice values by BlockMeta.Size, `storage_client`/`script_client`
+  reworked to the new CIDs, `sendNoReply` retired. App write fragments set the FRAG flag.
+- **CLI**: response handlers use `PayloadBytes()`; FRAG streams strip the info; Device
+  commands renumbered; new `dev <addr> identify [on|off]`.
+- **Fixed during bring-up**: a corrupt `payload_len` (up to 255 units = 1020 B) could
+  overflow the RX payload buffer - the shared assembler now rejects frames larger than
+  `MAX_PAYLOAD_SIZE`; the write handlers' `s_write_seq + 1` wrap comparison promoted to
+  `int` (0xFFFF + 1 = 65536, not 0) and is now cast to uint16.
+- **testsuite.py's FilterCoeff expectations were stale** (they assumed a [0,1] clamp;
+  Devices/DAS_v0.1/Measuring.h bounds it to >= 0) - updated to match the firmware; the
+  app HIL test was updated the same way.
+- Verified: both boards build + flash, `flutter analyze` clean, offline suite 50 passing
+  (2 new protocol tests), USB HIL 8/8 + script HIL 3/3 (incl. a 600-B writeFile->readFile
+  round trip on the core), CLI identify + renumbered commands + sndb live.
+
 ### Input switch/slider no longer "returns" (2026-08-26)
 
 - Root cause: the input controls were *controlled* purely by the live value, so after a
@@ -299,9 +406,6 @@ Notes (calibration / known):
   previously-working driver but are not the datasheet sensitivities for the programmed
   +/-2 g / +/-2000 dps ranges; reported units are board-calibrated, not physical - worth a
   calibration pass against a reference.
-- **CLI `dev <addr> discover`**: nodes ignore Discover and the core drops its own reply, so
-  the subcommand ends in "no response" even though registration happens (the SNDB entry is
-  visible via `sndb`).
 
 ### Dictionary types + key-addressed entries + service error logging (2026-08-25)
 

@@ -31,12 +31,19 @@ class _DynamicMemoryPageState extends State<DynamicMemoryPage>
   List<DynBlock>? _blocks;
   String? _error;
   final Set<int> _expanded = {};
+  bool _refreshing = false;
 
 
   @override
   void initState() {
     super.initState();
     _refresh();
+    // Docs: "Automatically refreshes the visible view (0.5s)" - start the timer now
+    // (post-frame so applyAuto's setState is legal) instead of waiting for the user
+    // to open the refresh menu, so live values track the hardware.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) applyAuto(const Duration(milliseconds: 500));
+    });
   }
 
   @override
@@ -50,22 +57,32 @@ class _DynamicMemoryPageState extends State<DynamicMemoryPage>
   }
 
   Future<void> _refresh() async {
-    if (!ConnectionManager.instance.isConnected) return;
-    final blocks = await _client.readBlocks();
-    if (!mounted) return;
-    setState(() {
-      _error = blocks == null ? 'Device did not respond' : null;
-      if (blocks != null) {
-        final kept = <DynBlock>[];
-        for (final fresh in blocks) {
-          final old = _blocks?.where((b) => b.index == fresh.index).firstOrNull;
-          if (old != null) fresh.fields.addAll(old.fields);
-          kept.add(fresh);
-        }
-        _blocks = kept;
+    if (_refreshing) return; // skip a tick while one is still in flight
+    _refreshing = true;
+    try {
+      if (!ConnectionManager.instance.isConnected) return;
+      final blocks = await _client.readBlocks();
+      if (!mounted) return;
+      if (blocks == null) {
+        setState(() => _error = 'Device did not respond');
+        return;
       }
-    });
-    if (!autoRefreshActive) await _loadVisibleFields();
+      _error = null;
+      // Keep already-loaded field values of blocks that still exist so the visible
+      // (expanded) blocks keep their content during the reload (no flicker).
+      final kept = <DynBlock>[];
+      for (final fresh in blocks) {
+        final old = _blocks?.where((b) => b.index == fresh.index).firstOrNull;
+        if (old != null) fresh.fields.addAll(old.fields);
+        kept.add(fresh);
+      }
+      _blocks = kept;
+      // Reload every visible (expanded) block's entries so live values track the
+      // hardware, then rebuild once (_loadVisibleFields ends with setState).
+      await _loadVisibleFields();
+    } finally {
+      _refreshing = false;
+    }
   }
 
   Future<void> _loadVisibleFields() async {

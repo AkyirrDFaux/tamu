@@ -94,16 +94,16 @@ bool SendAndVerifyPacket(const PacketFrame &Data)
     PacketFrame tx_frame = Data;
 
     // 2. Finalize CRC (Calculated over all fields starting at flags)
-    uint16_t crc_len = 11 + tx_frame.payload_len;
+    uint16_t crc_len = 11 + PayloadBytes(tx_frame);
     tx_frame.crc8 = Crc8(&tx_frame.flags, crc_len);
 
-    // 3. Prepare for transmission (12 bytes header + payload_len)
-    size_t packet_size = 12 + tx_frame.payload_len;
+    // 3. Prepare for transmission (12 bytes header + payload bytes)
+    size_t packet_size = 12 + PayloadBytes(tx_frame);
     size_t total_tx_size = 1 + packet_size; // Start byte (0xAA) + packet_size
-    // Start byte + header + payload; the payload is a single wire byte (<= 255),
-    // so the largest frame is 268 bytes. Guarded against PacketConstruct changing.
-    static_assert(MAX_PAYLOAD_SIZE <= 256, "RSBus TX buffer assumes a byte payload len");
-    uint8_t tx_buffer[256 + 13];
+    // Start byte + header + payload; payload_len is a wire byte in 4-byte units
+    // (max 73 units = 292 bytes), so the largest frame is 305 bytes.
+    static_assert(MAX_PAYLOAD_SIZE <= 292, "RSBus TX buffer assumes a 292-byte payload");
+    uint8_t tx_buffer[320];
     tx_buffer[0] = 0xAA;
     memcpy(&tx_buffer[1], &tx_frame, packet_size);
 

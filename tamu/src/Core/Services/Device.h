@@ -34,7 +34,7 @@ void HandleSNDB(const PacketFrame &frame)
     PacketFrame response;
 
     switch (cid) {
-        case 12: { // SNDB Read All
+        case 13: { // SNDB Read All
             // Count the entries IterNext will actually yield so the stream reliably
             // terminates with STOP even if ActiveCount() ever desyncs from the scan.
             SNDB::IterReset();
@@ -50,35 +50,45 @@ void HandleSNDB(const PacketFrame &frame)
                 break;
             }
 
+            // Stream every entry as a FRAG stream (Docs/Services/Device service.md:
+            // "Fragmentation, SN + ID stream"). Each fragment carries up to 256 bytes
+            // of 16-byte (SN + ID) entries; the fragmentation info is the first 4
+            // payload bytes (u16 current + u16 total fragments).
             SNDB::IterReset();
+            uint32_t total = (uint32_t)count * 16;
+            uint16_t total_frags = (uint16_t)((total + 255) / 256);
+            uint8_t buf[MAX_PAYLOAD_SIZE];
             int32_t sent = 0;
-            while (SNDB::IterNext(entry)) {
-                sent++;
-                uint8_t flags = FLAG_TYPE;
-                if (sent == 1) flags |= FLAG_START;
-                if (sent == count) flags |= FLAG_STOP;
-
-                // Payload is SN (14 bytes) + ID (2 bytes) = 16 bytes
-                uint8_t payload[16];
-                memcpy(payload, entry.uid.bytes, 14);
-                memcpy(payload + 14, &entry.shortID, 2);
-
+            for (uint16_t f = 0; f < total_frags; f++) {
+                uint8_t flags = FLAG_TYPE | FLAG_FRAG;
+                if (f == 0) flags |= FLAG_START;
+                WriteFragInfo(buf, f, total_frags);
+                uint16_t off = 4;
+                while (off - 4 < 256 && sent < count && SNDB::IterNext(entry)) {
+                    memcpy(buf + off, entry.uid.bytes, 14);
+                    memcpy(buf + off + 14, &entry.shortID, 2);
+                    off += 16;
+                    sent++;
+                }
+                if (sent >= count || f == total_frags - 1) flags |= FLAG_STOP;
                 PacketConstruct(&response, frame.id_src, frame.srv_src, frame.srv_tgt,
-                                 flags, payload, 16);
-                PacketSetFragId(&response, NextFragmentId(response.flags));
+                                 flags, buf, off);
                 DispatchPacket(response);
+                if (sent >= count) break;
             }
             break;
         }
 
-        case 13: { // SNDB Read (by ID or SN)
+        case 14: { // SNDB Read (by ID or SN)
             RegistryEntry entry;
             bool found = false;
 
-            if (frame.payload_len == 2) {
+            // The wire pads payloads to 4 bytes: an ID request (2 B) arrives as 4,
+            // an SN request (14 B) as 16. Disambiguate by the padded byte count.
+            if (PayloadBytes(frame) == 4) {
                 uint16_t lookup_id = *reinterpret_cast<const uint16_t *>(frame.payload);
                 found = SNDB::GetEntry(lookup_id, entry);
-            } else if (frame.payload_len == 14) {
+            } else if (PayloadBytes(frame) == 16) {
                 const SerialNumber *lookup_sn = reinterpret_cast<const SerialNumber *>(frame.payload);
                 uint16_t lookup_id = SNDB::FindShortID(*lookup_sn);
                 if (lookup_id != ADDR_INVALID) {
@@ -103,8 +113,8 @@ void HandleSNDB(const PacketFrame &frame)
             break;
         }
 
-        case 14: { // SNDB Write (SN + ID)
-            if (frame.payload_len >= 16) {
+        case 15: { // SNDB Write (SN + ID)
+            if (PayloadBytes(frame) >= 16) {
                 const SerialNumber *write_sn = reinterpret_cast<const SerialNumber *>(frame.payload);
                 uint16_t write_id = *reinterpret_cast<const uint16_t *>(frame.payload + 14);
 
@@ -185,7 +195,7 @@ bool PersistDeviceName()
     return true;
 }
 
-// Handles Device service requests (Discover, Ping, Type, SN, Version, Capability, Name, Uptime, Time sync/offset, SNDB).
+// Handles Device service requests (Discover, Ping, Identify, Type, SN, Version, Capability, Name, Uptime, Time sync/offset, SNDB).
 void HandleDeviceService(const PacketFrame &frame)
 {
     uint8_t cid = GetServiceCID(frame.srv_tgt);
@@ -199,7 +209,7 @@ void HandleDeviceService(const PacketFrame &frame)
             if (DeviceStatus.ShortAddress == 1) // Is core
                 return;
 #endif
-            if (frame.payload_len >= sizeof(AssignPayload))
+            if (PayloadBytes(frame) >= sizeof(AssignPayload))
             {
                 const AssignPayload *assign = reinterpret_cast<const AssignPayload *>(frame.payload);
 
@@ -209,10 +219,10 @@ void HandleDeviceService(const PacketFrame &frame)
                 }
             }
         }
-        else if (cid == 10) // Time sync response -> core averages samples and pushes the offset to the node
+        else if (cid == 11) // Time sync response -> core averages samples and pushes the offset to the node
         {
 #ifdef TYPE_CORE
-            if (frame.payload_len >= 12)
+            if (PayloadBytes(frame) >= 12)
             {
                 uint32_t t0, t1, t2;
                 memcpy(&t0, frame.payload, 4);
@@ -244,7 +254,7 @@ void HandleDeviceService(const PacketFrame &frame)
             if (!(kCapabilities & Capabilities::Core) || DeviceStatus.ShortAddress != 1)
                 return;
 
-            if (frame.payload_len < sizeof(SerialNumber))
+            if (PayloadBytes(frame) < sizeof(SerialNumber))
                 return;
 
             char sn_str[29];
@@ -306,38 +316,46 @@ void HandleDeviceService(const PacketFrame &frame)
             SendDeviceReply(frame, reply, nullptr, 0);
             break;
 
-        case 2: // Device type
+        case 2: // Identify (Bool: blink the red LED fast while true)
+        {
+            DeviceIdentifyStart((PayloadBytes(frame) > 0 && frame.payload[0] != 0),
+                                DeviceStatus.UptimeMs);
+            SendDeviceReply(frame, reply, nullptr, 0);
+            break;
+        }
+
+        case 3: // Device type
         {
             uint16_t dev_type = (uint16_t)kDeviceType;
             SendDeviceReply(frame, reply, &dev_type, sizeof(dev_type));
             break;
         }
 
-        case 3: // Serial number
+        case 4: // Serial number
             SendDeviceReply(frame, reply, &GetSerialNumber(), sizeof(SerialNumber));
             break;
 
-        case 4: // Software version
+        case 5: // Software version
             SendDeviceReply(frame, reply, DeviceVersion, (uint8_t)strlen(DeviceVersion));
             break;
 
-        case 5: // Capability
+        case 6: // Capability
         {
             uint32_t cap = kCapabilities;
             SendDeviceReply(frame, reply, &cap, sizeof(cap));
             break;
         }
 
-        case 6: // Read Name
+        case 7: // Read Name
             LoadPersistedDeviceName();
             SendDeviceReply(frame, reply, DeviceName, (uint8_t)strlen(DeviceName));
             break;
 
-        case 7: // Set Name (respond only if requested)
+        case 8: // Set Name (respond only if requested)
         {
-            if (frame.payload_len > 0)
+            if (PayloadBytes(frame) > 0)
             {
-                uint16_t len = (frame.payload_len > 23) ? 23 : frame.payload_len;
+                uint16_t len = (PayloadBytes(frame) > 23) ? 23 : PayloadBytes(frame);
                 memcpy(DeviceNameBuffer, frame.payload, len);
                 DeviceNameBuffer[len] = '\0';
             }
@@ -348,7 +366,7 @@ void HandleDeviceService(const PacketFrame &frame)
             break;
         }
 
-        case 8: // Uptime: raw time since boot (Device service doc semantics), NOT the
+        case 9: // Uptime: raw time since boot (Device service doc semantics), NOT the
                 // synchronized clock that Now()/DeviceStatus.UptimeMs carry.
         {
             uint32_t uptime = TimeFromBoot();
@@ -356,16 +374,16 @@ void HandleDeviceService(const PacketFrame &frame)
             break;
         }
 
-        case 9: // Loop Time: average + maximum loop time (2x Number)
+        case 10: // Loop Time: average + maximum loop time (2x Number)
         {
             Number loop[2] = {DeviceStatus.AvgLoopTimeMs, DeviceStatus.MaxLoopTimeMs};
             SendDeviceReply(frame, reply, loop, sizeof(loop));
             break;
         }
 
-        case 10: // Time sync: reply with { time sent, local time received, local time reply sent }
+        case 11: // Time sync: reply with { time sent, local time received, local time reply sent }
         {
-            if (frame.payload_len >= 4)
+            if (PayloadBytes(frame) >= 4)
             {
                 uint32_t time_sent = *reinterpret_cast<const uint32_t *>(frame.payload);
                 uint32_t t1 = DeviceStatus.UptimeMs; // local time the request was received
@@ -380,16 +398,16 @@ void HandleDeviceService(const PacketFrame &frame)
                 // Sample t2 as close to the actual send as possible, patched after construction.
                 uint32_t t2 = DeviceStatus.UptimeMs;
                 memcpy(reply.payload + 8, &t2, sizeof(t2));
-                reply.crc8 = Crc8(&reply.flags, 11 + reply.payload_len);
+                reply.crc8 = Crc8(&reply.flags, (uint16_t)(11 + PayloadBytes(reply)));
 
                 DispatchPacket(reply);
             }
             break;
         }
 
-        case 11: // Set time offset (core -> node: int32 offset ms)
+        case 12: // Set time offset (core -> node: int32 offset ms)
         {
-            if (frame.payload_len >= 4)
+            if (PayloadBytes(frame) >= 4)
             {
                 int32_t theta;
                 memcpy(&theta, frame.payload, sizeof(theta));
@@ -404,9 +422,9 @@ void HandleDeviceService(const PacketFrame &frame)
         }
 
 #ifdef TYPE_CORE
-        case 12: // SNDB Read All
-        case 13: // SNDB Read
-        case 14: // SNDB Write
+        case 13: // SNDB Read All
+        case 14: // SNDB Read
+        case 15: // SNDB Write
         {
             HandleSNDB(frame);
             break;

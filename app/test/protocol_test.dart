@@ -6,7 +6,7 @@ import 'package:tamuapp/core/transport.dart';
 
 void main() {
   group('PacketFrame', () {
-    test('round-trips a frame', () {
+    test('round-trips a frame (payload padded to 4)', () {
       final frame = PacketFrame.single(
         targetId: 0x0002,
         srvTarget: makeService(ServiceType.device, 3),
@@ -16,13 +16,40 @@ void main() {
       );
       final bytes = frame.toBytes();
       expect(bytes[0], crc8(bytes.sublist(1)));
+      // Header: crc8 | flags | priority | payload_len(units) | ids/srvs.
+      expect(bytes[2], defaultPriority);
+      expect(bytes[3], 1, reason: '3-byte payload padded to 4 -> 1 unit');
 
       final parsed = PacketFrame.tryParse(bytes, 0)!;
       expect(parsed.flags, frame.flags);
+      expect(parsed.priority, defaultPriority);
       expect(parsed.idTarget, 0x0002);
       expect(parsed.srvTarget, frame.srvTarget);
       expect(parsed.srvSource, frame.srvSource);
-      expect(parsed.payload, [1, 2, 3]);
+      expect(parsed.payload, [1, 2, 3, 0], reason: 'wire payload is padded to 4');
+    });
+
+    test('a 292-byte payload fits (max payload size)', () {
+      final payload = List<int>.generate(292, (i) => i & 0xFF);
+      final frame = PacketFrame.single(
+        targetId: 1,
+        srvTarget: makeService(ServiceType.storage, 6),
+        srvSource: makeService(ServiceType.app, 1),
+        response: false,
+        payload: payload,
+      );
+      final bytes = frame.toBytes();
+      expect(bytes[3], 73, reason: '292 bytes / 4 = 73 units');
+      final parsed = PacketFrame.tryParse(bytes, 0)!;
+      expect(parsed.payload, payload);
+    });
+
+    test('FRAG info helpers round-trip', () {
+      final info = writeFragInfo(2, 17);
+      expect(info, [2, 0, 17, 0]);
+      final parsed = fragInfoOf(info);
+      expect(parsed.current, 2);
+      expect(parsed.total, 17);
     });
 
     test('detects CRC corruption', () {
@@ -58,7 +85,7 @@ void main() {
       expect(frames, isEmpty);
       frames = parser.feed(all.sublist(10));
       expect(frames.length, 2);
-      expect(frames[0].payload, [9, 9]);
+      expect(frames[0].payload, [9, 9, 0, 0], reason: 'wire payload is padded to 4');
       expect(frames[1].payload, isEmpty);
     });
   });

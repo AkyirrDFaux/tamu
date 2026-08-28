@@ -1,5 +1,5 @@
 /// Storage service client (Docs/Services/Storage.md): file table access and
-/// file create/delete/resize/rename/read.
+/// file create/delete/resize/rename/read/write.
 library;
 
 import 'dart:typed_data';
@@ -25,6 +25,10 @@ class FileRecord {
   bool get isFiletable => index == 0;
 }
 
+/// Contents chunk size per stream fragment (the max actual payload of a FRAG
+/// packet, Data Formats.md).
+const int fileFragContentSize = 256;
+
 class StorageClient {
   final int deviceId;
 
@@ -32,12 +36,15 @@ class StorageClient {
 
   ConnectionManager get _link => ConnectionManager.instance;
 
-  Future<List<int>?> _request(int cid, {List<int> payload = const []}) async {
+  Future<List<int>?> _request(int cid,
+      {List<int> payload = const [], Duration? timeout, bool frag = false}) async {
     try {
       // Mutating ops (create/resize/delete) trigger flash erases on slow nodes
       // and can legitimately exceed the default transaction timeout.
       return await _link.request(deviceId, ServiceType.storage, cid,
-          payload: payload, timeout: const Duration(seconds: 6));
+          payload: payload,
+          timeout: timeout ?? const Duration(seconds: 6),
+          frag: frag);
     } catch (error) {
       AppDiagnostics.log('storage', 'request failed: $error');
       return null;
@@ -61,7 +68,7 @@ class StorageClient {
     return text.replaceAll(' ', '').trim();
   }
 
-  /// Reads the whole file table (CID 0, streamed Filerecords of 16 bytes each).
+  /// Reads the whole file table (CID 0, FRAG-streamed Filerecords of 16 bytes each).
   Future<List<FileRecord>?> readFileTable() async {
     final reply = await _request(0, payload: []);
     if (reply == null) return null;
@@ -101,14 +108,49 @@ class StorageClient {
     return reply != null && reply.isNotEmpty && reply[0] != 0;
   }
 
-  /// Reads up to `maxBytes` of a file starting at `offset` (CID 6).
-  Future<List<int>?> readFile(String name,
-      {int offset = 0, int maxBytes = 4096}) async {
-    final payload = <int>[
-      ...padName(name),
-      ...uint32ToBytes(offset),
-      ...uint32ToBytes(maxBytes),
-    ];
-    return await _request(6, payload: payload);
+  /// Reads the whole file (CID 6, FRAG stream). The reply carries the echoed
+  /// name followed by the file contents; the last fragment's 4-byte wire padding
+  /// is trimmed using [size] (the file size, e.g. from the file table). Pass
+  /// [size] to get exact contents.
+  Future<List<int>?> readFile(String name, {int? size}) async {
+    final reply = await _request(6, payload: padName(name),
+        timeout: const Duration(seconds: 10));
+    if (reply == null || reply.length < nameLength) return null;
+    // The response stream = [name echo (8)][contents...] (the reassembly layer
+    // already stripped the fragmentation info from every fragment).
+    var contents = reply.sublist(nameLength);
+    if (size != null && contents.length > size) {
+      contents = contents.sublist(0, size);
+    }
+    return contents;
+  }
+
+  /// Writes a whole file (CID 7, FRAG stream). Deletes any existing file, creates it
+  /// with the exact size (the device clamps fragment writes to it), then streams the
+  /// contents in 256-byte fragments, each acknowledged with the last sequential
+  /// fragment index written. Returns true when every fragment was written.
+  Future<bool> writeFile(String name, List<int> bytes) async {
+    await deleteFile(name); // overwrite semantics
+    if (!await createFile(name, bytes.length)) return false;
+    final totalFrags = (bytes.length + fileFragContentSize - 1) ~/ fileFragContentSize;
+    if (totalFrags == 0) return true; // empty file: nothing to stream
+    var next = 0;
+    while (next < totalFrags) {
+      final start = next * fileFragContentSize;
+      final end = (start + fileFragContentSize > bytes.length)
+          ? bytes.length
+          : start + fileFragContentSize;
+      final payload = <int>[
+        ...writeFragInfo(next, totalFrags),
+        if (next == 0) ...padName(name),
+        ...bytes.sublist(start, end),
+      ];
+      final reply = await _request(7, payload: payload, frag: true);
+      if (reply == null || reply.length < 2) return false;
+      final lastSeq = reply[0] | (reply[1] << 8);
+      if (lastSeq == 0xFFFF) return false; // device reported no writable target
+      next = lastSeq + 1;
+    }
+    return true;
   }
 }

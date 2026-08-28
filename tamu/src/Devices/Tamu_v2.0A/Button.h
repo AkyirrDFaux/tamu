@@ -8,46 +8,35 @@ bool OnLEDStateChange(const StaticBlockDescriptor& block, uint16_t index, const 
     // Access the structure using a safe static_cast
     auto* led_data = static_cast<LEDButtonStruct*>(block.Data);
 
-    // Perform hardware action
+    // Perform hardware action. The LED is active-LOW (lights when the pin is
+    // driven low; the button's pull-up holds the line high = LED off).
     if (new_state) {
         PinModeOutput(LED_NOTIFICATION_PIN);
         led_data->ButtonState = false;
         PinLow(LED_NOTIFICATION_PIN);
     } else {
-        PinHigh(LED_NOTIFICATION_PIN);
-        // Pull-down input: the shared LED/button line floats low when idle, and a
-        // button press pulls it high (ButtonUpdate reads active-high inverted).
-        PinModeInputPullDown(LED_NOTIFICATION_PIN);
+        // Input with pull-up (active-low button: the line idles HIGH = LED off and
+        // a press pulls it LOW). The internal pull-up guarantees a defined idle level
+        // even if the board pull-up is absent.
+        PinModeInputPullUp(LED_NOTIFICATION_PIN);
     }
 
     led_data->LEDState = new_state;
     return true;
 }
 
-// Samples the notification pin and updates the button state while the LED is off.
-// Polarity per the hardware: pull-down input floats LOW when idle (ButtonState = false)
-// and a button press pulls the line HIGH (ButtonState = true).
-// Per Docs/Modules/Generic system blocks.md, pushing the button triggers the LED: a
-// rising edge while the LED is off lights it. (The shared line cannot be read while the
-// LED is driven, so "press again to turn off" is not detectable - turn it off remotely
-// or via the LED write field.)
+// Samples the notification pin and reports the button state while the LED is off.
+// Polarity per the hardware: pulling the pin LOW lights the LED and reads as the
+// button pressed (the line idles HIGH via the pull-up, so ButtonState = false at rest).
+// The button only reports its state (Out field) - it does not drive the LED. While the
+// LED is on the shared line is driven, so the button cannot be read (ButtonState = false).
 void ButtonUpdate()
 {
-    static bool prev_pressed = false;
-
     if (LedButton.LEDState != false)
     {
-        prev_pressed = false;
+        LedButton.ButtonState = false; // line is driven by the LED: not readable
         return;
     }
 
-    bool pressed = PinRead(LED_NOTIFICATION_PIN);
-    LedButton.ButtonState = pressed;
-
-    if (pressed && !prev_pressed)
-    {
-        bool led_on = true;
-        OnLEDStateChange(static_block_registry[0], 0, &led_on, sizeof(led_on));
-    }
-    prev_pressed = pressed;
+    LedButton.ButtonState = !PinRead(LED_NOTIFICATION_PIN);
 }

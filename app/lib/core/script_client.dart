@@ -39,14 +39,22 @@ class ScriptClient {
   ConnectionManager get _link => ConnectionManager.instance;
   Duration get _timeout => const Duration(seconds: 6);
 
-  Future<List<int>?> _request(int cid, {List<int> payload = const []}) async {
+  Future<List<int>?> _request(int cid, {List<int> payload = const [], Duration? timeout, bool frag = false}) async {
     try {
       return await _link.request(deviceId, ServiceType.script, cid,
-          payload: payload, timeout: _timeout);
+          payload: payload, timeout: timeout ?? _timeout, frag: frag);
     } catch (error) {
       AppDiagnostics.log('script', 'request failed: $error');
       return null;
     }
+  }
+
+  /// Slices the value bytes after a BlockMeta header, clamped to the declared size
+  /// (the wire payload is padded to 4 bytes).
+  List<int> _valueSlice(List<int> reply, int size) {
+    if (size <= 0) return <int>[];
+    final avail = reply.length - 4;
+    return reply.sublist(4, 4 + ((size > avail) ? avail : size));
   }
 
   /// Script IDs present in the storage file table (hole-tolerant).
@@ -100,7 +108,8 @@ class ScriptClient {
   Future<({BlockMeta meta, List<int> value})?> readInput(int id, int idx) async {
     final reply = await _request(5, payload: [id, idx]);
     if (reply == null || reply.length < 4) return null;
-    return (meta: BlockMeta.fromBytes(reply, 0), value: reply.sublist(4));
+    final meta = BlockMeta.fromBytes(reply, 0);
+    return (meta: meta, value: _valueSlice(reply, meta.size));
   }
 
   Future<bool> writeInput(
@@ -113,7 +122,8 @@ class ScriptClient {
   Future<({BlockMeta meta, List<int> value})?> readOutput(int id, int idx) async {
     final reply = await _request(7, payload: [id, idx]);
     if (reply == null || reply.length < 4) return null;
-    return (meta: BlockMeta.fromBytes(reply, 0), value: reply.sublist(4));
+    final meta = BlockMeta.fromBytes(reply, 0);
+    return (meta: meta, value: _valueSlice(reply, meta.size));
   }
 
   Future<({int variables, int instructions})?> getInfo(int id) async {
@@ -129,7 +139,8 @@ class ScriptClient {
       int id, int idx) async {
     final reply = await _request(9, payload: [id, idx]);
     if (reply == null || reply.length < 4) return null;
-    return (meta: BlockMeta.fromBytes(reply, 0), value: reply.sublist(4));
+    final meta = BlockMeta.fromBytes(reply, 0);
+    return (meta: meta, value: _valueSlice(reply, meta.size));
   }
 
   Future<bool> writeVariable(
@@ -163,38 +174,43 @@ class ScriptClient {
     return reply != null && reply.isNotEmpty && reply[0] == 0;
   }
 
-  /// Reads the whole script file (CID 15, streamed; reassembled by the link layer).
-  /// Returns null when there is no script file yet (a status reply is not a file;
-  /// every valid script file is at least the 32-byte header).
-  Future<List<int>?> readScriptFile(int id) async {
-    final reply = await _request(15, payload: [id]);
-    if (reply == null || reply.length < 32) return null;
-    return reply;
+/// Reads the whole script file (CID 15, FRAG stream). The reply carries the echoed
+/// script ID followed by the file contents (the reassembly layer strips the
+/// fragmentation info). Returns null when there is no script file yet (a status reply
+/// is not a file; every valid script file is at least the 32-byte header).
+Future<List<int>?> readScriptFile(int id) async {
+  final reply = await _request(15, payload: [id],
+      timeout: const Duration(seconds: 10));
+  if (reply == null || reply.length < 32) return null;
+  // Fragment 0 carries the echoed script ID (1 byte) before the contents.
+  return reply.sublist(1);
+}
+
+/// Rewrites the whole script file (CID 16, FRAG stream). Fragment 0 carries the
+/// script ID (the device creates the file); every fragment is acknowledged with the
+/// last sequential fragmentation index written, so a lost fragment is resent from
+/// that index. Returns true when every fragment was written.
+Future<bool> writeScriptFile(int id, List<int> bytes) async {
+  const contentSize = 256;
+  var totalFrags = (bytes.length + contentSize - 1) ~/ contentSize;
+  if (totalFrags == 0) totalFrags = 1; // empty script: still create the file
+  var next = 0;
+  while (next < totalFrags) {
+    final start = next * contentSize;
+    final end = (start + contentSize > bytes.length)
+        ? bytes.length
+        : start + contentSize;
+    final payload = <int>[
+      ...writeFragInfo(next, totalFrags),
+      if (next == 0) id,
+      ...bytes.sublist(start, end),
+    ];
+    final reply = await _request(16, payload: payload, frag: true);
+    if (reply == null || reply.length < 2) return false;
+    final lastSeq = reply[0] | (reply[1] << 8);
+    if (lastSeq == 0xFFFF) return false; // device could not create/write the file
+    next = lastSeq + 1;
   }
-
-  /// Rewrites the whole script file (open stream with expected size -> chunks ->
-  /// close). Returns true when the close confirms the stream completed.
-  Future<bool> writeScriptFile(int id, List<int> bytes) async {
-    final reply = await _request(16,
-        payload: [id, ...uint32ToBytes(bytes.length)]);
-    if (reply == null || reply.isEmpty || reply[0] == 0) return false;
-    final streamCid = reply[0];
-
-    const chunkSize = 240;
-    for (var offset = 0; offset < bytes.length; offset += chunkSize) {
-      final end = (offset + chunkSize > bytes.length)
-          ? bytes.length
-          : offset + chunkSize;
-      try {
-        await _link.sendNoReply(deviceId, ServiceType.script, streamCid,
-            payload: bytes.sublist(offset, end));
-      } catch (error) {
-        AppDiagnostics.log('script', 'stream write failed: $error');
-        return false;
-      }
-    }
-
-    final close = await _request(17, payload: [id]);
-    return close != null;
-  }
+  return true;
+}
 }

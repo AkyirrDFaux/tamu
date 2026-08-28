@@ -404,9 +404,16 @@ class ConnectionManager extends ChangeNotifier {
       final txId = frame.srvTarget & 0xFF;
       final completer = _pending.remove(txId);
       if (completer == null || completer.isCompleted) continue;
-      // Multi-packet streams accumulate until the fragment with STOP set.
+      // Multi-packet streams accumulate until the fragment with STOP set. FRAG packets
+      // carry 4 bytes of fragmentation info (u16 current + u16 total) at the start of the
+      // payload; it is stripped here so streams reassemble into the raw service data.
+      // Non-FRAG single packets are padded to 4 bytes on the wire - clients slice the
+      // real lengths via the format fields (BlockMeta.Size etc.).
       final buffer = _rxBuffers.putIfAbsent(txId, () => <int>[]);
-      buffer.addAll(frame.payload);
+      final data = frame.isFrag && frame.payload.length >= 4
+          ? frame.payload.sublist(4)
+          : frame.payload;
+      buffer.addAll(data);
       if (frame.isStop) {
         _rxBuffers.remove(txId);
         completer.complete(buffer);
@@ -436,6 +443,7 @@ class ConnectionManager extends ChangeNotifier {
     int functionCid, {
     List<int> payload = const [],
     Duration timeout = const Duration(seconds: 2),
+    bool frag = false,
   }) async {
     final transport = _transport;
     if (transport == null) throw const TransportException('Not connected');
@@ -450,6 +458,7 @@ class ConnectionManager extends ChangeNotifier {
       srvSource: makeService(ServiceType.app, txId),
       response: false,
       payload: payload,
+      frag: frag,
     );
 
     final completer = Completer<List<int>>();
@@ -471,27 +480,6 @@ class ConnectionManager extends ChangeNotifier {
       _rxBuffers.remove(txId);
       rethrow;
     }
-  }
-
-  /// Sends a single-packet request without waiting for a reply (fire-and-forget).
-  /// Used for write-stream chunks that the device acknowledges implicitly by
-  /// completing the file; txId 0 is never used by [request], so no collision.
-  Future<void> sendNoReply(
-    int targetId,
-    ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-  }) async {
-    final transport = _transport;
-    if (transport == null) throw const TransportException('Not connected');
-    final frame = PacketFrame.single(
-      targetId: targetId,
-      srvTarget: makeService(service, functionCid),
-      srvSource: makeService(ServiceType.app, 0),
-      response: false,
-      payload: payload,
-    );
-    await transport.send(frame.toBytes());
   }
 
   @override

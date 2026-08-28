@@ -24,7 +24,7 @@ void HandleLogHandler(const PacketFrame &frame)
     if (cid == 0)
     {
         // Inbound log report -> keep in RAM, deduplicated per device + source + code.
-        if (frame.payload_len < sizeof(LogMessage))
+        if (PayloadBytes(frame) < sizeof(LogMessage))
             return;
         const LogMessage *msg = reinterpret_cast<const LogMessage *>(frame.payload);
         uint32_t seq = ++log_clock;
@@ -113,28 +113,43 @@ void HandleLogHandler(const PacketFrame &frame)
             return;
         }
 
+        // Stream every record as a FRAG stream (Docs/Services/Log Handler.md:
+        // "Fragmentation, entries"). Each fragment carries up to 256 bytes of
+        // LogRecords; the fragmentation info is the first 4 payload bytes.
+        uint32_t total = (uint32_t)active * sizeof(LogRecord);
+        uint16_t total_frags = (uint16_t)((total + 255) / 256);
+        uint8_t buf[MAX_PAYLOAD_SIZE];
         uint8_t sent = 0;
-        for (uint32_t i = 0; i < LogCount; i++)
+        uint32_t scan = 0;
+        for (uint16_t f = 0; f < total_frags && sent < active; f++)
         {
-            if (!LogUsed[i])
-                continue;
-            sent++;
-            uint8_t flags = FLAG_TYPE;
-            if (sent == 1) flags |= FLAG_START;
-            if (sent == active) flags |= FLAG_STOP;
+            uint8_t flags = FLAG_TYPE | FLAG_FRAG;
+            if (f == 0) flags |= FLAG_START;
+            WriteFragInfo(buf, f, total_frags);
+            uint16_t off = 4;
+            while (off - 4 + sizeof(LogRecord) <= 256 && sent < active)
+            {
+                while (scan < LogCount && !LogUsed[scan]) scan++;
+                if (scan >= LogCount) break;
+                memcpy(buf + off, &LogBuffer[scan], sizeof(LogRecord));
+                off += sizeof(LogRecord);
+                scan++;
+                sent++;
+            }
+            if (sent >= active || f == total_frags - 1) flags |= FLAG_STOP;
 
             PacketFrame reply;
             PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
-                             flags, (const uint8_t *)&LogBuffer[i], sizeof(LogRecord));
-            PacketSetFragId(&reply, NextFragmentId(reply.flags));
+                             flags, buf, off);
             DispatchPacket(reply);
+            if (sent >= active) break;
         }
         return;
     }
 
     if (cid == 2) // ClearReadLogs: clear the `n` most recently received logs
     {
-        uint32_t n = (frame.payload_len >= 4)
+        uint32_t n = (PayloadBytes(frame) >= 4)
                          ? *reinterpret_cast<const uint32_t *>(frame.payload)
                          : 0;
         // Clear the n entries with the HIGHEST sequence number (the newest). Slot order

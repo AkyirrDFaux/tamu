@@ -12,7 +12,7 @@
 
 // Core provides periodic time sync (Docs/Services/Device service.md):
 // about once per few minutes, at least 3 samples with a short delay are
-// taken and averaged before the offset is pushed to the node (CID 11).
+// taken and averaged before the offset is pushed to the node (CID 12).
 class TimeSyncService
 {
 public:
@@ -95,7 +95,7 @@ private:
         SendSample();
     }
 
-    // Sends one time-sample request (CID 10) to the current target and schedules the retry.
+    // Sends one time-sample request (CID 11) to the current target and schedules the retry.
     void SendSample()
     {
         if (current_target >= target_count)
@@ -104,8 +104,8 @@ private:
         PacketFrame packet;
         uint32_t sent_time = DeviceStatus.UptimeMs;
         PacketConstruct(&packet, targets[current_target],
-                         MakeService(ServiceType::Device, 10),
-                         MakeService(ServiceType::Device, 10),
+                         MakeService(ServiceType::Device, 12),
+                         MakeService(ServiceType::Device, 12),
                          FLAG_REQACK | FLAG_START | FLAG_STOP,
                          (const uint8_t *)&sent_time, sizeof(uint32_t));
         DispatchPacket(packet);
@@ -136,13 +136,13 @@ private:
         }
     }
 
-    // Sends the computed time offset (CID 11) to a single node.
+    // Sends the computed time offset (CID 12) to a single node.
     void SendTimeOffset(uint16_t target, int32_t offset)
     {
         PacketFrame packet;
         PacketConstruct(&packet, target,
-                         MakeService(ServiceType::Device, 11),
-                         MakeService(ServiceType::Device, 11),
+                         MakeService(ServiceType::Device, 12),
+                         MakeService(ServiceType::Device, 12),
                          FLAG_START | FLAG_STOP,
                          (const uint8_t *)&offset, sizeof(int32_t));
         DispatchPacket(packet);

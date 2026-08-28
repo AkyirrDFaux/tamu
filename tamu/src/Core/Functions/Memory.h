@@ -36,7 +36,7 @@ struct BlockIndex
 };
 
 // Sends a single response packet back to the requester (only if REQACK was set).
-inline void SendResponse(const PacketFrame &frame, const uint8_t *payload, uint8_t len)
+inline void SendResponse(const PacketFrame &frame, const uint8_t *payload, uint16_t len)
 {
     if (!(frame.flags & FLAG_REQACK))
         return;
@@ -65,7 +65,7 @@ inline void RespondStatus(const PacketFrame &frame, bool ok)
             default: break;
         }
         uint16_t block = INVALID_INDEX, field = INVALID_INDEX, key = INVALID_INDEX;
-        if (frame.payload_len >= sizeof(BlockIndex))
+        if (PayloadBytes(frame) >= sizeof(BlockIndex))
         {
             const BlockIndex *idx = reinterpret_cast<const BlockIndex *>(frame.payload);
             block = idx->Block; field = idx->Field; key = idx->Key;

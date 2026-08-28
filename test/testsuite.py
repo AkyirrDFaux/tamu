@@ -239,10 +239,11 @@ def test_das_system_memory(cli):
     r = cli.send("write 2 s 0 0 0x003 10", idle=4)
     report("write SamplingRate 10", "Number: 10.0000" in r)
 
-    # Write-time clamping (BUG 2 fix)
+    # Write-time clamping (BUG 2 fix). FilterCoeff is bounded to >= 0 (higher values
+    # average more samples, per Devices/DAS_v0.1/Measuring.h); SamplingRate to [1,1000].
     cli.send("write 2 s 0 1 0x003 2.5", idle=4)
     r = cli.send("read 2 s 0 1", idle=4)
-    report("FilterCoeff 2.5 clamps to 1.0", "Number: 1.0000" in r)
+    report("FilterCoeff 2.5 stored verbatim", "Number: 2.5000" in r)
     cli.send("write 2 s 0 1 0x003 -0.5", idle=4)
     r = cli.send("read 2 s 0 1", idle=4)
     report("FilterCoeff -0.5 clamps to 0.0", "Number: 0.0000" in r)

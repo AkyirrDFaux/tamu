@@ -487,17 +487,25 @@ void HandleDynamicMemory(const PacketFrame &frame)
     uint8_t cid = GetServiceCID(frame.srv_tgt);
     if (frame.flags & FLAG_TYPE) return; // Ignore responses
 
-    if (frame.payload_len < sizeof(BlockIndex)) { DeviceLog("DYNMEM", "short payload (%u B)", (unsigned)frame.payload_len); return; }
+    if (PayloadBytes(frame) < sizeof(BlockIndex)) { DeviceLog("DYNMEM", "short payload (%u B)", (unsigned)PayloadBytes(frame)); return; }
     const BlockIndex *idx = reinterpret_cast<const BlockIndex *>(frame.payload);
+
+    // Single scratch buffer shared by every reply-building case (hoisted so the
+    // compiler allocates it once - keeps the DAS's 2 KB stack sane).
+    uint8_t payload[MAX_PAYLOAD_SIZE];
 
     switch (cid)
     {
     case 0: // Create block (BlockIndex + BlockMeta + value/name)
     {
-        if (frame.payload_len < sizeof(BlockIndex) + sizeof(BlockMeta)) { RespondStatus(frame, false); break; }
+        if (PayloadBytes(frame) < sizeof(BlockIndex) + sizeof(BlockMeta)) { RespondStatus(frame, false); break; }
         const BlockMeta *desc = reinterpret_cast<const BlockMeta *>(frame.payload + sizeof(BlockIndex));
         const uint8_t *value = frame.payload + sizeof(BlockIndex) + sizeof(BlockMeta);
-        uint16_t value_len = frame.payload_len - sizeof(BlockIndex) - sizeof(BlockMeta);
+        // The real value length is carried by the descriptor's Size field; the wire
+        // payload is padded to 4 bytes, so never derive lengths from payload_len.
+        uint16_t value_len = desc->Size;
+        uint16_t avail = PayloadBytes(frame) - sizeof(BlockIndex) - sizeof(BlockMeta);
+        if (value_len > avail) value_len = avail;
 
         // An explicit index repurposes a None tombstone slot in place, padding
         // any gap with None blocks (indexes stay stable); INVALID_BLOCK appends.
@@ -579,7 +587,6 @@ void HandleDynamicMemory(const PacketFrame &frame)
         if (deleted && idx->Field != INVALID_INDEX) { RespondStatus(frame, false); break; }
         if (idx->Field == INVALID_INDEX) // block meta + name
         {
-            uint8_t payload[MAX_PAYLOAD_SIZE];
             uint16_t plen = MakeBlockMetaPayload(idx->Block,
                                                  deleted ? (uint16_t)BlockType::None
                                                          : (uint16_t)block->type,
@@ -588,27 +595,28 @@ void HandleDynamicMemory(const PacketFrame &frame)
                                                  deleted ? 0 : (uint8_t)strlen(block->Name),
                                                  payload, sizeof(payload));
             if (plen == 0) { RespondStatus(frame, false); break; }
-            SendResponse(frame, payload, (uint8_t)plen);
+            SendResponse(frame, payload, plen);
             break;
         }
         FieldResult field_result = block->Get(idx->Field);
         if (!field_result.Data) { RespondStatus(frame, false); break; }
-        uint8_t payload[MAX_PAYLOAD_SIZE];
         uint16_t cursor = 0;
         memcpy(payload + cursor, idx, sizeof(BlockIndex)); cursor += sizeof(BlockIndex);
         memcpy(payload + cursor, &field_result.Descriptor, sizeof(BlockMeta)); cursor += sizeof(BlockMeta);
         uint16_t size = field_result.Descriptor.Size;
         if (cursor + size > sizeof(payload)) size = sizeof(payload) - cursor;
         memcpy(payload + cursor, field_result.Data, size); cursor += size;
-        SendResponse(frame, payload, (uint8_t)cursor);
+        SendResponse(frame, payload, cursor);
         break;
     }
     case 3: // Write (BlockIndex + BlockMeta + value); creates if it does not exist
     {
-        if (frame.payload_len < sizeof(BlockIndex) + sizeof(BlockMeta)) { RespondStatus(frame, false); break; }
+        if (PayloadBytes(frame) < sizeof(BlockIndex) + sizeof(BlockMeta)) { RespondStatus(frame, false); break; }
         const BlockMeta *desc = reinterpret_cast<const BlockMeta *>(frame.payload + sizeof(BlockIndex));
         const uint8_t *value = frame.payload + sizeof(BlockIndex) + sizeof(BlockMeta);
-        uint16_t value_len = frame.payload_len - sizeof(BlockIndex) - sizeof(BlockMeta);
+        uint16_t value_len = desc->Size;
+        uint16_t avail = PayloadBytes(frame) - sizeof(BlockIndex) - sizeof(BlockMeta);
+        if (value_len > avail) value_len = avail;
 
         if (idx->Block == INVALID_BLOCK) // create new block named by the value
         {
@@ -672,7 +680,7 @@ void HandleDynamicMemory(const PacketFrame &frame)
             }
         }
         // Success echo: the request payload already IS BlockIndex + BlockMeta + value.
-        SendResponse(frame, frame.payload, frame.payload_len);
+        SendResponse(frame, frame.payload, PayloadBytes(frame));
         break;
     }
     case 4: // Read backup (direct file parse, no heap)
@@ -680,10 +688,9 @@ void HandleDynamicMemory(const PacketFrame &frame)
         uint8_t buf[MEMORY_BACKUP_CAP];
         uint16_t count = ReadBackupFile(DynamicBackupName(), buf, sizeof(buf));
         if (count == 0) { RespondStatus(frame, false); break; }
-        uint8_t payload[MAX_PAYLOAD_SIZE];
         uint16_t plen = BackupBlockPayload(idx, buf, count, false, payload, sizeof(payload));
         if (plen == 0) { RespondStatus(frame, false); break; }
-        SendResponse(frame, payload, (uint8_t)plen);
+        SendResponse(frame, payload, plen);
         break;
     }
     case 5: // Save block (or everything when the block is invalid) to its backup file

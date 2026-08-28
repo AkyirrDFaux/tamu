@@ -31,7 +31,8 @@ Page size: 4096 Bytes
 | Measuring 1      | PD2 (A3)                 |                           |
 | Measuring 2      | PC4 (A2)                 |                           |
 Services:
-- Only Mandatory services
+- Mandatory services + bootloader
 Modules:
 - Resistive measurement x2
-Page size: 64 Bytes
+- Button
+Page size: 64 Bytes (Fast mode)

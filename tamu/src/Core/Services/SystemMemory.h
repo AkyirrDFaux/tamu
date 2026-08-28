@@ -283,8 +283,12 @@ void HandleSystemMemory(const PacketFrame &frame)
     uint8_t cid = GetServiceCID(frame.srv_tgt);
     if (frame.flags & FLAG_TYPE) return; // Ignore responses
 
-    if (frame.payload_len < sizeof(BlockIndex)) { DeviceLog("SYSMEM", "short payload (%u B)", (unsigned)frame.payload_len); return; }
+    if (PayloadBytes(frame) < sizeof(BlockIndex)) { DeviceLog("SYSMEM", "short payload (%u B)", (unsigned)PayloadBytes(frame)); return; }
     const BlockIndex *idx = reinterpret_cast<const BlockIndex *>(frame.payload);
+
+    // Single scratch buffer shared by every reply-building case (hoisted so the
+    // compiler allocates it once - keeps the DAS's 2 KB stack sane).
+    uint8_t payload[MAX_PAYLOAD_SIZE];
 
     switch (cid)
     {
@@ -292,7 +296,6 @@ void HandleSystemMemory(const PacketFrame &frame)
     {
         if (idx->Block == INVALID_BLOCK) // summary: count of blocks
         {
-            uint8_t payload[sizeof(BlockIndex) + 1];
             BlockIndex out_index = {INVALID_BLOCK, INVALID_INDEX, INVALID_INDEX};
             memcpy(payload, &out_index, sizeof(BlockIndex));
             payload[sizeof(BlockIndex)] = (uint8_t)static_block_num;
@@ -303,34 +306,36 @@ void HandleSystemMemory(const PacketFrame &frame)
         const StaticBlockDescriptor &block = static_block_registry[idx->Block];
         if (idx->Field == INVALID_INDEX) // block meta + name
         {
-            uint8_t payload[MAX_PAYLOAD_SIZE];
             uint16_t plen = MakeBlockMetaPayload(idx->Block, (uint16_t)block.Schema->Type,
                                                  block.Schema->MapCount, block.Name,
                                                  (uint8_t)strlen(block.Name),
                                                  payload, sizeof(payload));
             if (plen == 0) { RespondStatus(frame, false); break; }
-            SendResponse(frame, payload, (uint8_t)plen);
+            SendResponse(frame, payload, plen);
             break;
         }
         FieldResult field_result = block.Get(idx->Field);
         if (!field_result.Data) { RespondStatus(frame, false); break; }
-        uint8_t payload[MAX_PAYLOAD_SIZE];
         uint16_t cursor = 0;
         memcpy(payload + cursor, idx, sizeof(BlockIndex)); cursor += sizeof(BlockIndex);
         memcpy(payload + cursor, &field_result.Descriptor, sizeof(BlockMeta)); cursor += sizeof(BlockMeta);
         uint16_t size = field_result.Descriptor.Size;
         if (cursor + size > sizeof(payload)) size = sizeof(payload) - cursor;
         memcpy(payload + cursor, field_result.Data, size); cursor += size;
-        SendResponse(frame, payload, (uint8_t)cursor);
+        SendResponse(frame, payload, cursor);
         break;
     }
     case 3: // Write
     {
-        if (frame.payload_len < sizeof(BlockIndex) + sizeof(BlockMeta)) { RespondStatus(frame, false); break; }
+        if (PayloadBytes(frame) < sizeof(BlockIndex) + sizeof(BlockMeta)) { RespondStatus(frame, false); break; }
         if (idx->Block >= static_block_num) { RespondStatus(frame, false); break; }
         const BlockMeta *desc = reinterpret_cast<const BlockMeta *>(frame.payload + sizeof(BlockIndex));
         const uint8_t *value = frame.payload + sizeof(BlockIndex) + sizeof(BlockMeta);
-        uint16_t value_len = frame.payload_len - sizeof(BlockIndex) - sizeof(BlockMeta);
+        // The real value length is carried by the descriptor's Size field; the wire
+        // payload is padded to 4 bytes, so never derive lengths from payload_len.
+        uint16_t value_len = desc->Size;
+        uint16_t avail = PayloadBytes(frame) - sizeof(BlockIndex) - sizeof(BlockMeta);
+        if (value_len > avail) value_len = avail;
 
         const StaticBlockDescriptor &block = static_block_registry[idx->Block];
         if (!block.Set(idx->Field, value, value_len, desc->FlagsAndType))
@@ -340,7 +345,7 @@ void HandleSystemMemory(const PacketFrame &frame)
         }
         // Success echo: the request payload already IS BlockIndex + BlockMeta + value,
         // so reply with it verbatim instead of re-assembling a copy.
-        SendResponse(frame, frame.payload, frame.payload_len);
+        SendResponse(frame, frame.payload, PayloadBytes(frame));
         break;
     }
     case 4: // Read backup (writable fields as stored in the backup file)
@@ -348,10 +353,9 @@ void HandleSystemMemory(const PacketFrame &frame)
         uint8_t buffer[MEMORY_BACKUP_CAP];
         uint16_t count = ReadBackupFile(SystemBackupName(), buffer, sizeof(buffer));
         if (count == 0) { RespondStatus(frame, false); break; }
-        uint8_t payload[MAX_PAYLOAD_SIZE];
         uint16_t plen = SystemBackupPayload(idx, buffer, count, payload, sizeof(payload));
         if (plen == 0) { RespondStatus(frame, false); break; }
-        SendResponse(frame, payload, (uint8_t)plen);
+        SendResponse(frame, payload, plen);
         break;
     }
     case 5: // Save a block (or everything when the block is invalid) to its backup file

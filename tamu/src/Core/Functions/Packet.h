@@ -4,13 +4,23 @@
 #include <cstddef>
 #include <cstring>
 
-#define MAX_PAYLOAD_SIZE 256
+// Max payload = max Information (36) + max Actual payload (256) = 292 bytes,
+// frame total = 12 header + 292 = 304 (Data Formats.md). RAM-starved nodes (the DAS)
+// build with a smaller value via the MAX_PAYLOAD_SIZE build flag so their PacketFrame
+// and response buffers fit the 2 KB stack; the protocol allows any payload <= 292.
+#ifndef MAX_PAYLOAD_SIZE
+#define MAX_PAYLOAD_SIZE 292
+#endif
 
 // Flag bitmasks (from Data Formats.md)
 #define FLAG_REQACK (1 << 0)
 #define FLAG_START  (1 << 1)
 #define FLAG_STOP   (1 << 2)
 #define FLAG_TYPE   (1 << 3) // 0 = Request, 1 = Response
+#define FLAG_FRAG   (1 << 4) // first 4 payload bytes = fragmentation info (u16 current + u16 total)
+
+// Priority byte: 0 = highest, default 128 (Data Formats.md).
+#define DEFAULT_PRIORITY 128
 
 // Address constants
 #define ADDR_INVALID   0x0000
@@ -31,12 +41,13 @@ enum class ServiceType : uint8_t
     CLI = 0x09
 };
 
-// Packets structure
+// Packets structure. payload_len holds the WIRE value (in 4-byte units, Data
+// Formats.md "in multiples of 4 bytes"); use PayloadBytes() for the byte count.
 struct PacketFrame
 {
     uint8_t crc8;
     uint8_t flags;
-    uint8_t frag_id;
+    uint8_t priority;
     uint8_t payload_len;
     uint16_t id_tgt;
     uint16_t id_src;
@@ -52,7 +63,7 @@ static_assert(offsetof(PacketFrame, payload) % 4 == 0,
               "payload must stay 4-byte aligned for direct word reads");
 
 // Computes the CRC8 checksum over `len` bytes of `data` (polynomial 0x07, init 0x00).
-// The length is 16-bit: frames carry up to 11 + 255 = 266 covered bytes, which a
+// The length is 16-bit: frames carry up to 11 + 292 = 303 covered bytes, which a
 // uint8_t would truncate mod 256.
 inline uint8_t Crc8(const uint8_t *data, uint16_t len)
 {
@@ -92,100 +103,85 @@ inline uint8_t GetServiceCID(uint16_t srv)
 // Global reference for device status (struct defined in Blocks/DeviceInfo.h)
 extern DeviceStatusStruct DeviceStatus;
 
-// Builds a packet frame with header fields filled and CRC8 computed over the header + payload
-inline void PacketConstruct(PacketFrame *frame,
-                             uint16_t dest_addr,
-                             uint16_t dest_srv,
-                             uint16_t src_srv,
-                             uint8_t flags,
-                             const uint8_t *payload,
-                             uint8_t len)
+// Byte count of a frame's payload. payload_len is stored as the wire value (4-byte
+// units); every consumer that needs a byte length must go through this helper - the
+// wire length only ever describes 4-byte multiples (payloads are padded to 4).
+inline uint16_t PayloadBytes(const PacketFrame &frame)
 {
-    // payload_len is a single wire byte, so more than 255 payload bytes cannot be
-    // represented; clamp rather than silently truncating to 0.
-    if (len > MAX_PAYLOAD_SIZE - 1)
-        len = MAX_PAYLOAD_SIZE - 1;
+    return (uint16_t)frame.payload_len * 4;
+}
 
-    // Clear only the header: the payload beyond payload_len is never read (the CRC
-    // covers 11 + payload_len bytes), so a full ~264 B memset is wasted work.
+// Builds a packet frame with header fields filled and CRC8 computed over the header + payload.
+// The payload is zero-padded to a multiple of 4 and payload_len stores the padded size in
+// 4-byte units (Data Formats.md: Payload Length in multiples of 4, max 73 units).
+inline void PacketConstruct(PacketFrame *frame,
+                            uint16_t dest_addr,
+                            uint16_t dest_srv,
+                            uint16_t src_srv,
+                            uint8_t flags,
+                            const uint8_t *payload,
+                            uint16_t len)
+{
+    if (len > MAX_PAYLOAD_SIZE)
+        len = MAX_PAYLOAD_SIZE;
+    uint16_t padded = (uint16_t)((len + 3u) & ~3u);
+
     frame->flags = flags;
-    frame->frag_id = 0;
-    frame->payload_len = len;
+    frame->priority = DEFAULT_PRIORITY;
     frame->id_tgt = dest_addr;
     frame->id_src = DeviceStatus.ShortAddress;
     frame->srv_tgt = dest_srv;
     frame->srv_src = src_srv;
 
-    if (payload && frame->payload_len > 0)
-    {
-        memcpy(frame->payload, payload, frame->payload_len);
-    }
-    
-    // CRC8 calculation covers everything after the crc8 field
-    uint16_t crc_len = 11 + frame->payload_len; // flags, frag_id, payload_len, target/source IDs/SRVs
-    frame->crc8 = Crc8(&frame->flags, crc_len);
+    if (payload && len > 0)
+        memcpy(frame->payload, payload, len);
+    // The CRC covers the padded payload, so the padding must be well-defined.
+    if (padded > len)
+        memset(frame->payload + len, 0, padded - len);
+
+    frame->payload_len = (uint8_t)(padded / 4);
+    frame->crc8 = Crc8(&frame->flags, (uint16_t)(11 + padded));
 }
 
-// Returns the sequential FragID for a multi-packet stream (Data Formats.md: "FragID -
-// Sequential number, 0 default"). Resets to 0 for the START packet and increments for each
-// following packet, so every packet of a stream carries a monotonic fragment number. Single
-// packets (START|STOP) always get 0. The counter is only kept on the core, which is the main
-// sender of multi-packet streams (topology/registry/file/backup dumps); RAM-starved nodes
-// keep 0 and only ever reply with single packets.
-inline uint8_t NextFragmentId(uint8_t flags)
+// Writes the 4-byte fragmentation info (u16 current fragment + u16 total fragments)
+// at `out` (Data Formats.md: FRAG = first 4 payload bytes).
+inline void WriteFragInfo(uint8_t *out, uint16_t current, uint16_t total)
 {
-#ifdef TYPE_CORE
-    static uint8_t frag_id = 0;
-    if (flags & FLAG_START)
-        frag_id = 0;
-    else
-        frag_id++;
-    return frag_id;
-#else
-    return 0;
-#endif
+    out[0] = (uint8_t)current;
+    out[1] = (uint8_t)(current >> 8);
+    out[2] = (uint8_t)total;
+    out[3] = (uint8_t)(total >> 8);
 }
 
-// Assigns a stream FragID AFTER PacketConstruct and refreshes the CRC: PacketConstruct
-// computes the checksum while frag_id is still 0, so patching it without this helper would
-// make every non-first packet of a stream fail CRC validation on the receiver.
-inline void PacketSetFragId(PacketFrame *frame, uint8_t frag_id)
+// Fragmentation info parsed from the first 4 payload bytes of a FRAG-flagged frame.
+struct PacketFragInfo
 {
-    frame->frag_id = frag_id;
-    frame->crc8 = Crc8(&frame->flags, (uint16_t)(11 + frame->payload_len));
-}
+    uint16_t current;
+    uint16_t total;
+};
 
-// Appends `len` bytes of `data` to the frame payload (returns false if it would overflow) and recomputes CRC8
-inline bool PacketAppend(PacketFrame *frame, const uint8_t *data, uint8_t len)
+// Reads the fragmentation info from the first 4 payload bytes of a FRAG-flagged frame.
+inline PacketFragInfo PacketGetFrag(const PacketFrame &frame)
 {
-    // payload_len is a uint8_t, so the wire cannot carry more than 255 payload bytes
-    // (MAX_PAYLOAD_SIZE is only the buffer size).
-    if ((frame->payload_len + len) > (MAX_PAYLOAD_SIZE - 1))
-    {
-        return false;
-    }
-
-    memcpy(&frame->payload[frame->payload_len], data, len);
-    frame->payload_len += len;
-    
-    uint16_t crc_len = 11 + frame->payload_len;
-    frame->crc8 = Crc8(&frame->flags, crc_len);
-    return true;
+    PacketFragInfo fi;
+    fi.current = (uint16_t)(frame.payload[0] | (frame.payload[1] << 8));
+    fi.total = (uint16_t)(frame.payload[2] | (frame.payload[3] << 8));
+    return fi;
 }
 
-// On-wire size of a frame: 12 header bytes (crc8 + flags + frag_id + payload_len +
-// 2x id + 2x srv) followed by payload_len payload bytes. The trailing unused bytes of
-// the PacketFrame struct are NOT transmitted.
+// On-wire size of a frame: 12 header bytes (crc8 + flags + priority + payload_len +
+// 2x id + 2x srv) followed by PayloadBytes() payload bytes. The trailing unused bytes
+// of the PacketFrame struct are NOT transmitted.
 inline uint16_t PacketWireSize(const PacketFrame *frame)
 {
-    return (uint16_t)(12 + frame->payload_len);
+    return (uint16_t)(12 + PayloadBytes(*frame));
 }
 
 // Serializes a frame into `out` (must hold PacketWireSize(frame) bytes). The layout
 // equals the RSBus wire format minus the leading sync byte: crc8 first, then the raw
-// struct bytes. The app's PacketStreamParser expects exactly this layout.
+// struct bytes (payload_len already holds the wire value in units). The app's
+// PacketStreamParser expects exactly this layout.
 inline void PacketToWire(const PacketFrame *frame, uint8_t *out)
 {
     memcpy(out, frame, PacketWireSize(frame));
 }
-

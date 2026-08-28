@@ -8,13 +8,31 @@
         "type": "tabs",
         "children": [
           {
-            "id": "243fd0c982fb243e",
+            "id": "7712251b840e352d",
             "type": "leaf",
             "state": {
-              "type": "empty",
-              "state": {},
+              "type": "markdown",
+              "state": {
+                "file": "App/Service views/Script.md",
+                "mode": "source",
+                "source": false
+              },
               "icon": "lucide-file",
-              "title": "Nová karta"
+              "title": "Script"
+            }
+          },
+          {
+            "id": "bd20f2c370cbba32",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "Services/Router.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "Router"
             }
           }
         ]
@@ -184,34 +202,34 @@
       "bases:Vytvořit novou základnu": false
     }
   },
-  "active": "243fd0c982fb243e",
+  "active": "7712251b840e352d",
   "lastOpenFiles": [
     "General architecture.md",
-    "Services/Script.md",
     "Services/Router.md",
+    "Services/Script.md",
     "Services/Log Handler.md",
-    "Services/Keyed Memory.md",
-    "Services/Dynamic Memory.md",
+    "Services/Storage.md",
+    "Services/System Memory.md",
+    "Data Formats.md",
+    "Devices.md",
+    "Improve.md",
+    "Issues.md",
+    "RealHW.md",
+    "RSBus.md",
+    "Service ID table.md",
+    "Services/Bootloader.md",
     "Services/Device service.md",
     "Services/CLI.md",
+    "Services/App Interface.md",
+    "Services/Dynamic Memory.md",
+    "Services/Keyed Memory.md",
     "App/Device view.md",
     "App/Connection.md",
-    "Data Formats.md",
     "App/Service views/Script.md",
     "App/Service views/Dynamic Memory.md",
     "App/Service views/Keyed Memory.md",
     "App/Devices.md",
-    "Services/Storage.md",
-    "Devices.md",
-    "Services/System Memory.md",
-    "Services/App Interface.md",
-    "Issues.md",
     "Modules/LED display.md",
-    "App/Service views/Storage.md",
-    "App/Service views/System Memory.md",
-    "Improve.md",
-    "App/Backup.md",
-    "App/General info.md",
     "App/Service views",
     "App"
   ]

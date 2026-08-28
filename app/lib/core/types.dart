@@ -170,6 +170,7 @@ class Capability {
   static const dynamicMemory = 1 << 3;
   static const keyedMemory = 1 << 4;
   static const scripts = 1 << 5;
+  static const bootloader = 1 << 6; // self-updates over RSBus (mandatory without USB)
 
   static List<String> describe(int caps) {
     final names = <String>[];
@@ -179,6 +180,7 @@ class Capability {
     if (caps & dynamicMemory != 0) names.add('DynMem');
     if (caps & keyedMemory != 0) names.add('KeyMem');
     if (caps & scripts != 0) names.add('Scripts');
+    if (caps & bootloader != 0) names.add('Bootloader');
     return names;
   }
 }

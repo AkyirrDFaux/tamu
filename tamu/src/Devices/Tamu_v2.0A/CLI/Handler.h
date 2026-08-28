@@ -19,14 +19,15 @@ void HandleCLIService(const PacketFrame &frame)
         return; // Only handle responses
     g_cli_response_seen = true;
 
-    // A single status byte means the operation failed (RespondStatus); it is not a
-    // BlockIndex payload, so print it directly instead of misparsing it as a read reply.
-    if (frame.payload_len == 1)
+    // A single status byte (padded to 4 on the wire) means the operation failed
+    // (RespondStatus); it is not a BlockIndex payload, so print it directly instead
+    // of misparsing it as a read reply.
+    if (PayloadBytes(frame) == 4)
     {
         printf("Device %d: Operation FAILED (status %d)\n", frame.id_src, frame.payload[0]);
         return;
     }
-    if (frame.payload_len < sizeof(BlockIndex))
+    if (PayloadBytes(frame) < sizeof(BlockIndex))
         return;
 
     if (frame.flags & FLAG_START)
@@ -37,7 +38,7 @@ void HandleCLIService(const PacketFrame &frame)
 
     if (idx->Block == INVALID_BLOCK)
     {
-        if (frame.payload_len < sizeof(BlockIndex) + 1)
+        if (PayloadBytes(frame) < sizeof(BlockIndex) + 1)
             return; // truncated summary reply
         const char *svc_name = "?";
         switch (GetServiceType(frame.srv_src))
@@ -51,14 +52,14 @@ void HandleCLIService(const PacketFrame &frame)
     }
     else if (idx->Field != INVALID_INDEX)
     {
-        if (frame.payload_len < sizeof(BlockIndex) + sizeof(BlockMeta))
+        if (PayloadBytes(frame) < sizeof(BlockIndex) + sizeof(BlockMeta))
             return; // truncated field reply: avoid underflowing the length math below
         const BlockMeta *desc = reinterpret_cast<const BlockMeta *>(data_ptr);
         const void *data = (const void *)(data_ptr + sizeof(BlockMeta));
         // Clamp the descriptor size to the bytes actually present so a truncated
         // reply cannot make the printer read past the payload.
         BlockMeta clamped = *desc;
-        uint16_t avail = frame.payload_len - sizeof(BlockIndex) - sizeof(BlockMeta);
+        uint16_t avail = PayloadBytes(frame) - sizeof(BlockIndex) - sizeof(BlockMeta);
         if (clamped.Size > avail) clamped.Size = avail;
 
         if (idx->Key != INVALID_INDEX)
@@ -88,7 +89,7 @@ void HandleCLIService(const PacketFrame &frame)
     }
     else
     {
-        if (frame.payload_len < sizeof(BlockIndex) + sizeof(BlockMeta))
+        if (PayloadBytes(frame) < sizeof(BlockIndex) + sizeof(BlockMeta))
             return; // truncated meta reply
         const BlockMeta *meta = reinterpret_cast<const BlockMeta *>(data_ptr);
         printf("Block [%02d] | Type: 0x%04X | Size: %d\n",
@@ -107,7 +108,7 @@ void HandleCLI_LogResponse(const PacketFrame &frame)
         return; // Only handle responses
     g_cli_response_seen = true;
 
-    if (frame.payload_len == 0)
+    if (PayloadBytes(frame) == 0)
     {
         if (frame.flags & FLAG_START)
             printf("No logs on device %d.\n", frame.id_src);
@@ -116,22 +117,36 @@ void HandleCLI_LogResponse(const PacketFrame &frame)
         return;
     }
 
-    if (frame.payload_len == 1)
+    if (PayloadBytes(frame) == 4)
     {
         printf("Device %d: Log clear %s (status %d)\n",
                frame.id_src, frame.payload[0] == 0 ? "OK" : "FAILED", frame.payload[0]);
         return;
     }
-    if (frame.payload_len >= sizeof(LogRecord) && (frame.flags & FLAG_START))
+
+    // GetLogs streams LogRecords as FRAG packets: the first 4 payload bytes are the
+    // fragmentation info, followed by one or more 12-byte records.
+    const uint8_t *data = frame.payload;
+    uint16_t avail = PayloadBytes(frame);
+    if (frame.flags & FLAG_FRAG)
+    {
+        if (avail <= 4) return;
+        data += 4;
+        avail -= 4;
+    }
+
+    if (avail >= sizeof(LogRecord) && (frame.flags & FLAG_START))
         printf("--- Logs from Device %d ---\n", frame.id_src);
 
-    if (frame.payload_len >= sizeof(LogRecord))
+    while (avail >= sizeof(LogRecord))
     {
-        const LogRecord *r = reinterpret_cast<const LogRecord *>(frame.payload);
+        const LogRecord *r = reinterpret_cast<const LogRecord *>(data);
         const LogMessage &m = r->msg;
         printf("Dev %d | %s | Src 0x%04X | Code 0x%04X | Count %u | t=%lums\n",
                r->device_id, LogIsBlock(m) ? "Block" : "Svc",
                LogSourceId(m), LogCode(m), r->count, (unsigned long)m.timestamp);
+        data += sizeof(LogRecord);
+        avail -= sizeof(LogRecord);
     }
 }
 
@@ -147,15 +162,15 @@ void HandleCLI_ScriptResponse(const PacketFrame &frame)
     switch (cid)
     {
         case 0: // Get number of scripts
-            if (frame.payload_len >= 1)
+            if (PayloadBytes(frame) >= 1)
                 printf("Device %d: %u script(s)\n", frame.id_src, frame.payload[0]);
             break;
         case 1: // Read Name
-            printf("Device %d: Script name \"%.*s\"\n", frame.id_src, frame.payload_len,
+            printf("Device %d: Script name \"%.*s\"\n", frame.id_src, (int)PayloadBytes(frame),
                    (const char *)frame.payload);
             break;
         case 3: // Read state
-            if (frame.payload_len >= 1)
+            if (PayloadBytes(frame) >= 1)
             {
                 static const char *states[] = {"Stopped", "Running", "Paused", "Waiting",
                                                "Finished", "Error"};
@@ -168,12 +183,12 @@ void HandleCLI_ScriptResponse(const PacketFrame &frame)
         case 10:
         case 12:
         case 14:
-            if (frame.payload_len >= 1)
+            if (PayloadBytes(frame) >= 1)
                 printf("Device %d: Script op %s (status %d)\n", frame.id_src,
                        frame.payload[0] == 0 ? "OK" : "FAILED", frame.payload[0]);
             break;
         case 13: // Create script -> assigned id
-            if (frame.payload_len >= 1 && frame.payload[0] != 0)
+            if (PayloadBytes(frame) >= 1 && frame.payload[0] != 0)
                 printf("Device %d: Script %u created\n", frame.id_src, frame.payload[0]);
             else
                 printf("Device %d: Script create FAILED\n", frame.id_src);
@@ -191,7 +206,7 @@ void HandleCLI_StatusResponse(const PacketFrame &frame)
         return; // Only handle responses
     g_cli_response_seen = true;
 
-    if (frame.payload_len >= 1)
+    if (PayloadBytes(frame) >= 1)
     {
         uint8_t status = frame.payload[0];
         if (status == 0)
@@ -212,7 +227,7 @@ void HandleCLI_CreateResponse(const PacketFrame &frame)
         return; // Only handle responses
     g_cli_response_seen = true;
 
-    if (frame.payload_len < sizeof(BlockIndex) + sizeof(BlockMeta))
+    if (PayloadBytes(frame) < sizeof(BlockIndex) + sizeof(BlockMeta))
     {
         printf("Device %d: Invalid create response\n", frame.id_src);
         return;
@@ -222,8 +237,9 @@ void HandleCLI_CreateResponse(const PacketFrame &frame)
     const BlockMeta *desc = reinterpret_cast<const BlockMeta *>(frame.payload + sizeof(BlockIndex));
     const uint8_t *value = frame.payload + sizeof(BlockIndex) + sizeof(BlockMeta);
     uint16_t value_len = desc->Size;
-    if (value_len > frame.payload_len - sizeof(BlockIndex) - sizeof(BlockMeta))
-        value_len = frame.payload_len - sizeof(BlockIndex) - sizeof(BlockMeta);
+    uint16_t avail = PayloadBytes(frame) - sizeof(BlockIndex) - sizeof(BlockMeta);
+    if (value_len > avail)
+        value_len = avail;
 
     if (idx->Block == INVALID_BLOCK)
     {
@@ -249,7 +265,7 @@ void HandleCLI_DeviceResponse(const PacketFrame &frame)
     switch (cid)
     {
         case 0: // Discover response (SN + ID)
-            if (frame.payload_len >= sizeof(AssignPayload))
+            if (PayloadBytes(frame) >= sizeof(AssignPayload))
             {
                 const AssignPayload *p = reinterpret_cast<const AssignPayload *>(frame.payload);
                 char sn_str[29];
@@ -262,16 +278,20 @@ void HandleCLI_DeviceResponse(const PacketFrame &frame)
             printf("Device %d: PONG\n", frame.id_src);
             break;
 
-        case 2: // Type
-            if (frame.payload_len >= 2)
+        case 2: // Identify
+            printf("Device %d: Identify sent\n", frame.id_src);
+            break;
+
+        case 3: // Type
+            if (PayloadBytes(frame) >= 2)
             {
                 uint16_t dev_type = *reinterpret_cast<const uint16_t *>(frame.payload);
                 printf("Device %d: Type 0x%04X\n", frame.id_src, dev_type);
             }
             break;
 
-        case 3: // Serial number
-            if (frame.payload_len >= 14)
+        case 4: // Serial number
+            if (PayloadBytes(frame) >= 14)
             {
                 char sn_str[29] = {0};
                 SerialNumberToString(*reinterpret_cast<const SerialNumber *>(frame.payload), sn_str, sizeof(sn_str));
@@ -279,36 +299,36 @@ void HandleCLI_DeviceResponse(const PacketFrame &frame)
             }
             break;
 
-        case 4: // Version
-            printf("Device %d: Version %.*s\n", frame.id_src, frame.payload_len, (const char *)frame.payload);
+        case 5: // Version
+            printf("Device %d: Version %.*s\n", frame.id_src, (int)PayloadBytes(frame), (const char *)frame.payload);
             break;
 
-        case 5: // Capability
-            if (frame.payload_len >= 4)
+        case 6: // Capability
+            if (PayloadBytes(frame) >= 4)
             {
                 uint32_t cap = *reinterpret_cast<const uint32_t *>(frame.payload);
                 printf("Device %d: Capability 0x%08lX\n", frame.id_src, (unsigned long)cap);
             }
             break;
 
-        case 6: // Read Name
-            printf("Device %d: Name \"%.*s\"\n", frame.id_src, frame.payload_len, (const char *)frame.payload);
+        case 7: // Read Name
+            printf("Device %d: Name \"%.*s\"\n", frame.id_src, (int)PayloadBytes(frame), (const char *)frame.payload);
             break;
 
-        case 7: // Set Name
-            printf("Device %d: Name set to \"%.*s\"\n", frame.id_src, frame.payload_len, (const char *)frame.payload);
+        case 8: // Set Name
+            printf("Device %d: Name set to \"%.*s\"\n", frame.id_src, (int)PayloadBytes(frame), (const char *)frame.payload);
             break;
 
-        case 8: // Uptime
-            if (frame.payload_len >= 4)
+        case 9: // Uptime
+            if (PayloadBytes(frame) >= 4)
             {
                 uint32_t uptime = *reinterpret_cast<const uint32_t *>(frame.payload);
                 printf("Device %d: Uptime %lu ms\n", frame.id_src, (unsigned long)uptime);
             }
             break;
 
-        case 9: // Loop Time (avg, max as 2x Number)
-            if (frame.payload_len >= 2 * sizeof(Number))
+        case 10: // Loop Time (avg, max as 2x Number)
+            if (PayloadBytes(frame) >= 2 * sizeof(Number))
             {
                 const Number *lp = reinterpret_cast<const Number *>(frame.payload);
                 printf("Device %d: Loop avg %.2f ms, max %.2f ms\n",
@@ -316,8 +336,8 @@ void HandleCLI_DeviceResponse(const PacketFrame &frame)
             }
             break;
 
-        case 10: // Time sync (t0,t1,t2) -> report round-trip and offset estimate
-            if (frame.payload_len >= 12)
+        case 11: // Time sync (t0,t1,t2) -> report round-trip and offset estimate
+            if (PayloadBytes(frame) >= 12)
             {
                 uint32_t t0, t1, t2;
                 memcpy(&t0, frame.payload, 4);
@@ -350,21 +370,32 @@ void HandleCLI_StorageResponse(const PacketFrame &frame)
 
     switch (cid)
     {
-        case 0: // File table stream
+        case 0: // File table stream (FRAG packets: info (4) + one or more entries)
             if (frame.flags & FLAG_START)
                 printf("--- File Table from Device %d ---\n", frame.id_src);
 
-            if (frame.payload_len >= sizeof(FileEntry))
-            {
-                const FileEntry *e = reinterpret_cast<const FileEntry *>(frame.payload);
-                char name[9] = {0};
-                memcpy(name, e->name, 8);
-                printf("File \"%s\" | Offset %lu | Size %lu\n",
-                       name, (unsigned long)e->offset, (unsigned long)e->size);
-            }
-            else if (frame.payload_len == 0)
-            {
+            if (PayloadBytes(frame) == 0)
                 printf("Device %d: No files stored.\n", frame.id_src);
+
+            {
+                const uint8_t *data = frame.payload;
+                uint16_t avail = PayloadBytes(frame);
+                if (frame.flags & FLAG_FRAG)
+                {
+                    if (avail <= 4) break;
+                    data += 4;
+                    avail -= 4;
+                }
+                while (avail >= sizeof(FileEntry))
+                {
+                    const FileEntry *e = reinterpret_cast<const FileEntry *>(data);
+                    char name[9] = {0};
+                    memcpy(name, e->name, 8);
+                    printf("File \"%s\" | Offset %lu | Size %lu\n",
+                           name, (unsigned long)e->offset, (unsigned long)e->size);
+                    data += sizeof(FileEntry);
+                    avail -= sizeof(FileEntry);
+                }
             }
 
             if (frame.flags & FLAG_STOP)
@@ -378,15 +409,32 @@ void HandleCLI_StorageResponse(const PacketFrame &frame)
         case 6: // File data stream (Read File, Docs/Services/Storage.md CID 6)
             if (frame.flags & FLAG_START)
                 printf("--- File Data from Device %d ---\n", frame.id_src);
-            for (uint8_t i = 0; i < frame.payload_len; i++)
-                printf("%02X ", frame.payload[i]);
-            printf("\n");
+            {
+                // FRAG packets: info (4), plus the echoed name on fragment 0.
+                const uint8_t *data = frame.payload;
+                uint16_t avail = PayloadBytes(frame);
+                if (frame.flags & FLAG_FRAG)
+                {
+                    if (avail <= 4) break;
+                    data += 4;
+                    avail -= 4;
+                    if (frame.payload[0] == 0 && frame.payload[1] == 0 && avail >= 8)
+                    {
+                        // fragment 0: skip the echoed 8-byte name
+                        data += 8;
+                        avail -= 8;
+                    }
+                }
+                for (uint16_t i = 0; i < avail; i++)
+                    printf("%02X ", data[i]);
+                printf("\n");
+            }
             if (frame.flags & FLAG_STOP)
                 printf("--- File Data Complete ---\n");
             break;
 
         case 2: // Create file
-            if (frame.payload_len >= 1 && frame.payload[0] != 0)
+            if (PayloadBytes(frame) >= 1 && frame.payload[0] != 0)
                 printf("Device %d: File created\n", frame.id_src);
             else
                 printf("Device %d: File create failed\n", frame.id_src);
@@ -397,14 +445,14 @@ void HandleCLI_StorageResponse(const PacketFrame &frame)
             break;
 
         case 4: // Resize file
-            if (frame.payload_len >= 1 && frame.payload[0] != 0)
+            if (PayloadBytes(frame) >= 1 && frame.payload[0] != 0)
                 printf("Device %d: File resized\n", frame.id_src);
             else
                 printf("Device %d: File resize failed\n", frame.id_src);
             break;
 
         case 5: // Rename file (status byte)
-            if (frame.payload_len >= 1 && frame.payload[0] != 0)
+            if (PayloadBytes(frame) >= 1 && frame.payload[0] != 0)
                 printf("Device %d: File renamed\n", frame.id_src);
             else
                 printf("Device %d: File rename failed\n", frame.id_src);

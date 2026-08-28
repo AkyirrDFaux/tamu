@@ -159,11 +159,17 @@ void main() {
     final meas1 = dasBlocks.firstWhere((b) => b.index == 0);
     final coeff = await dasMem.readField(meas1, 1);
     expect(coeff, isNotNull, reason: 'FilterCoeff field read');
-    // Out-of-range write must be clamped to [0,1] at write time.
+    // FilterCoeff is bounded to >= 0 (higher values average more samples, per
+    // Devices/DAS_v0.1/Measuring.h); a negative write clamps to 0, a positive one
+    // is stored verbatim.
     await dasMem.writeField(meas1, coeff!, numberToBytes(2.5));
-    final clamped = await dasMem.readField(meas1, 1);
-    final value = numberFromBytes(clamped!.value, 0);
-    expect(value, closeTo(1.0, 0.001), reason: 'FilterCoeff clamp');
+    final stored = await dasMem.readField(meas1, 1);
+    expect(numberFromBytes(stored!.value, 0), closeTo(2.5, 0.001),
+        reason: 'FilterCoeff > 0 stored verbatim');
+    await dasMem.writeField(meas1, coeff, numberToBytes(-0.5));
+    final clampedNeg = await dasMem.readField(meas1, 1);
+    expect(numberFromBytes(clampedNeg!.value, 0), closeTo(0.0, 0.001),
+        reason: 'FilterCoeff negative clamps to 0');
     // Restore defaults and persist.
     await dasMem.writeField(meas1, coeff, numberToBytes(0.5));
     final rate = await dasMem.readField(meas1, 0);
@@ -196,6 +202,18 @@ void main() {
     expect(await storage.deleteFile('TSAPP'), isTrue);
     final cleaned = await storage.readFileTable();
     expect(cleaned!.any((f) => f.name == 'TSAPP'), isFalse);
+
+    // writeFile (CID 7 FRAG stream) -> readFile round trip on the CORE (the DAS's
+    // compact node frames cap incoming payloads below the standard 256-byte write
+    // chunk; the app never writes DAS files today). Spans several 256-byte
+    // fragments so the last fragment's padding is exercised.
+    final coreStorage = StorageClient(deviceId: 1);
+    final payload = List<int>.generate(600, (i) => i & 0xFF);
+    expect(await coreStorage.writeFile('TSW', payload), isTrue,
+        reason: 'write file stream');
+    final back = await coreStorage.readFile('TSW', size: payload.length);
+    expect(back, payload, reason: 'read-back matches written payload');
+    expect(await coreStorage.deleteFile('TSW'), isTrue);
   }, timeout: hilTimeout, skip: skipReason);
 
   test('HIL: transaction layer handles concurrent requests', () async {

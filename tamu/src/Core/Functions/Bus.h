@@ -11,12 +11,13 @@
 // device gets its own independent machine.
 
 // CRC + length validation for a fully-assembled frame (RX side).
-// CRC covers everything from flags through the end of the payload.
+// CRC covers everything from flags through the end of the payload (the payload_len
+// field is the wire value in 4-byte units, so the byte count is PayloadBytes()).
 inline int RxValidateFrame(PacketFrame *Data)
 {
-    if (Crc8(&Data->flags, (uint16_t)(11 + Data->payload_len)) != Data->crc8)
+    if (Crc8(&Data->flags, (uint16_t)(11 + PayloadBytes(*Data))) != Data->crc8)
         return 0; // corrupted: keep scanning for the next 0xAA
-    return (int)(1 + 12 + Data->payload_len);
+    return (int)(1 + 12 + PayloadBytes(*Data));
 }
 
 // @param Data Pointer to the struct where the packet will be stored. Assembly writes
@@ -62,9 +63,16 @@ int ReceivePacketFrame(PacketFrame *Data, ReadByte read_byte)
             if (got < 12)
                 break;
 
-            // Header complete: payload_len is a single byte (<=255) and the payload
-            // buffer holds 256, so no length guard is needed - proceed to the payload
-            // stage (CRC validates the frame on completion).
+            // Header complete: payload_len holds the wire value in 4-byte units.
+            // A corrupt length could claim up to 255 units (= 1020 bytes), far beyond
+            // the payload buffer, so reject such frames instead of overflowing.
+            if (PayloadBytes(*Data) > MAX_PAYLOAD_SIZE)
+            {
+                stage = RX_SYNC;
+                got = 0;
+                break;
+            }
+
             stage = RX_PAYLOAD;
             got = 0;
             if (Data->payload_len == 0)
@@ -78,7 +86,7 @@ int ReceivePacketFrame(PacketFrame *Data, ReadByte read_byte)
 
         case RX_PAYLOAD:
             Data->payload[got++] = b;
-            if (got >= Data->payload_len)
+            if (got >= PayloadBytes(*Data))
             {
                 stage = RX_SYNC;
                 got = 0;

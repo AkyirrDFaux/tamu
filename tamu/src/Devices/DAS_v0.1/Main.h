@@ -124,7 +124,17 @@ int main(void)
         }
 
         // Non-blocking LED blink so ProcessBus keeps servicing the bus every loop.
-        if ((now_ms - last_blink_ms) >= 500)
+        // Identify (Device CID 2) blinks the red LED fast (~10 Hz) instead.
+        if (DeviceIdentifyActive(now_ms))
+        {
+            if ((now_ms - last_blink_ms) >= 100)
+            {
+                last_blink_ms = now_ms;
+                blink_high = !blink_high;
+                if (blink_high) PinHigh(LEDR); else PinLow(LEDR);
+            }
+        }
+        else if ((now_ms - last_blink_ms) >= 500)
         {
             last_blink_ms = now_ms;
             blink_high = !blink_high;

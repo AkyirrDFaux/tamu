@@ -5,7 +5,7 @@
 // Each transfer carries a uint16 LE length prefix followed by that many packet-stream
 // bytes (Docs/Services/App Interface.md BLE packet layout).
 //
-// Requires AppUSB.h to be included first (shares CommLed + WireStreamParser).
+// Requires AppUSB.h to be included first (shares WireStreamParser).
 
 #include "NimBLEDevice.h"
 
@@ -155,7 +155,6 @@ class BleTxCallbacks : public NimBLECharacteristicCallbacks
             }
         }
 
-        CommLed(true);
     }
 } staticBleTxCallbacks;
 
@@ -217,7 +216,6 @@ void AppBLETick()
 {
     // Comm LED is a per-burst pulse: RX/TX below turn it on, and this tick turns
     // it back off at the start so an idle session does not leave it lit.
-    CommLed(false);
 
     // Deferred advertising restart.
     if (!BleConnected && BleOldConnected)
@@ -304,7 +302,6 @@ void AppBLETick()
     if (BleTx && BleTx->notify(pkt, (size_t)(2 + n)))
     {
         AppTxCommit(n); // consumed only when the stack accepted the notification
-        CommLed(true);
         LastBleSend = now;
         s_notifyFails = 0;
     }

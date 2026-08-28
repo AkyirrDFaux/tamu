@@ -45,3 +45,32 @@ bool PersistDeviceName();
 // Device software version string (provided per device, e.g. Devices/<device>/Main.h)
 extern const char* DeviceVersion;
 
+// Identify (Device service CID 2, Docs/Services/Device service.md): "True = blink red
+// led fast, False = leave led alone". The flag is set by the Device service handler and
+// expires after a short window; each device's main loop blinks its red/notification LED
+// while DeviceIdentifyActive() is true. Function-local statics in inline functions are
+// guaranteed to be a single shared instance across all translation units.
+inline bool &DeviceIdentifyRequested()
+{
+    static bool requested = false;
+    return requested;
+}
+inline uint32_t &DeviceIdentifyUntil()
+{
+    static uint32_t until = 0;
+    return until;
+}
+inline void DeviceIdentifyStart(bool on, uint32_t now_ms)
+{
+    DeviceIdentifyRequested() = on;
+    if (on)
+        DeviceIdentifyUntil() = now_ms + 3000; // blink for ~3 s
+}
+inline bool DeviceIdentifyActive(uint32_t now_ms)
+{
+    bool &requested = DeviceIdentifyRequested();
+    if (requested && (int32_t)(now_ms - DeviceIdentifyUntil()) >= 0)
+        requested = false; // window expired
+    return requested;
+}
+

@@ -32,12 +32,19 @@ class _KeyedMemoryPageState extends State<KeyedMemoryPage>
   final Set<int> _openBlocks = {};
   final Set<int> _openDicts = {};
   bool _backupView = false;
+  bool _refreshing = false;
 
 
   @override
   void initState() {
     super.initState();
     _refresh();
+    // Docs: "Automatically refreshes the visible view (0.5s)" - start the timer now
+    // (post-frame so applyAuto's setState is legal) instead of waiting for the user
+    // to open the refresh menu, so live values track the hardware.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) applyAuto(const Duration(milliseconds: 500));
+    });
   }
 
   @override
@@ -52,26 +59,42 @@ class _KeyedMemoryPageState extends State<KeyedMemoryPage>
   }
 
   Future<void> _refresh() async {
-    if (!ConnectionManager.instance.isConnected) return;
-    final blocks = await _client.readBlocks();
-    if (!mounted) return;
-    setState(() {
-      _error = blocks == null ? 'Device did not respond' : null;
-      if (blocks != null) _blocks = blocks;
-    });
-    if (blocks == null) return;
-    // A refresh swaps in FRESH KeyedBlock objects whose dicts/entries are empty;
-    // re-load the open ones so the page stays live instead of showing spinners.
-    for (final b in blocks) {
-      if (!_openBlocks.contains(b.index)) continue;
-      for (var d = 0; d < b.dictCount; d++) {
-        final dict = await _client.readDict(b, d);
-        if (dict != null && _openDicts.contains(dict.index)) {
-          await _loadDictEntries(b, dict);
+    if (_refreshing) return; // skip a tick while one is still in flight
+    _refreshing = true;
+    try {
+      if (!ConnectionManager.instance.isConnected) return;
+      final blocks = await _client.readBlocks();
+      if (!mounted) return;
+      if (blocks == null) {
+        setState(() => _error = 'Device did not respond');
+        return;
+      }
+      _error = null;
+      // Preserve the open dicts/entries from the previous blocks so a refresh does
+      // not blank the expanded view (no flicker); the reload below updates them in
+      // place.
+      for (final fresh in blocks) {
+        final old = _blocks?.where((b) => b.index == fresh.index).firstOrNull;
+        if (old != null) {
+          fresh.dicts.addAll(old.dicts);
+          fresh.entries.addAll(old.entries);
         }
       }
+      _blocks = blocks;
+      // Reload the open dicts' entries, then rebuild once.
+      for (final b in blocks) {
+        if (!_openBlocks.contains(b.index)) continue;
+        for (var d = 0; d < b.dictCount; d++) {
+          final dict = await _client.readDict(b, d);
+          if (dict != null && _openDicts.contains(dict.index)) {
+            await _loadDictEntries(b, dict);
+          }
+        }
+      }
+      if (mounted) setState(() {});
+    } finally {
+      _refreshing = false;
     }
-    if (mounted) setState(() {});
   }
 
   Future<void> _loadDictEntries(KeyedBlock block, KeyedDict dict) async {

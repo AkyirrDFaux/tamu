@@ -109,6 +109,11 @@ LED2.Setup();
     PinHigh(LED_NOTIFICATION_PIN);
     PinModeInput(LED_NOTIFICATION_PIN);
 
+    // The LED state is a writable static-block field persisted in the SYSMEM backup;
+    // the boot restore writes the RAM field but does not re-run its write trigger, so
+    // re-apply it to drive the pin to match the restored value (LED off by default).
+    OnLEDStateChange(static_block_registry[0], 0, (const void *)&LedButton.LEDState, sizeof(bool));
+
     // The Tamu is always the core (ID 1): no discovery needed, no button check.
     DeviceStatus.ShortAddress = 1;
 
@@ -122,6 +127,21 @@ LED2.Setup();
 
 while (1)
     {
+        // Identify (Device CID 2): blink the notification LED fast (~5 Hz) while a
+        // host asks us to identify ourselves, then re-apply the LED-button state.
+        static bool s_identify_prev = false;
+        bool ident = DeviceIdentifyActive(DeviceStatus.UptimeMs);
+        if (ident != s_identify_prev)
+        {
+            if (ident)
+                PinModeOutput(LED_NOTIFICATION_PIN);
+            else
+                OnLEDStateChange(static_block_registry[0], 0, (const void *)&LedButton.LEDState, sizeof(bool));
+            s_identify_prev = ident;
+        }
+        if (ident)
+            gpio_set_level(LED_NOTIFICATION_PIN, ((DeviceStatus.UptimeMs / 100) & 1) ? 1 : 0);
+
         ProcessBus();
         AppInterfacePump();
         ButtonUpdate();

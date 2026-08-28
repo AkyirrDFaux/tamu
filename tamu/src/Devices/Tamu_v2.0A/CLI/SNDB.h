@@ -10,27 +10,41 @@ void HandleCLI_SNDBResponse(const PacketFrame &frame)
     if (!(frame.flags & FLAG_TYPE)) return;
     g_cli_response_seen = true;
 
-    if (frame.payload_len == 0) {
+    if (PayloadBytes(frame) == 0) {
         printf("SNDB: No entry found or empty result.\n");
         return;
     }
 
-    // 1-byte failure statuses (RespondStatus) would otherwise print nothing at all.
-    if (frame.payload_len == 1) {
+    // A 1-byte failure status (padded to 4) would otherwise print nothing at all.
+    if (PayloadBytes(frame) == 4) {
         printf("SNDB: Operation FAILED (status %d).\n", frame.payload[0]);
         return;
     }
 
-    if (frame.payload_len >= 16) {
-        const uint8_t *sn_bytes = frame.payload;
+    // Read All streams entries as FRAG packets: info (4) + one or more 16-byte
+    // (SN + ID) entries.
+    const uint8_t *data = frame.payload;
+    uint16_t avail = PayloadBytes(frame);
+    if (frame.flags & FLAG_FRAG)
+    {
+        if (avail <= 4) return;
+        data += 4;
+        avail -= 4;
+    }
+
+    while (avail >= 16)
+    {
+        const uint8_t *sn_bytes = data;
         uint16_t short_id;
-        memcpy(&short_id, frame.payload + 14, sizeof(short_id));
+        memcpy(&short_id, data + 14, sizeof(short_id));
 
         char sn_str[29] = {0};
         for (int i = 0; i < 14; i++)
             snprintf(&sn_str[i * 2], 3, "%02X", sn_bytes[i]);
 
         printf("SNDB Entry | ID: 0x%04X | SN: %s\n", short_id, sn_str);
+        data += 16;
+        avail -= 16;
     }
 }
 
@@ -52,22 +66,22 @@ static int DispatchSNDBCommand(int argc, char **argv)
     uint8_t cid = 0;
 
     if (strcmp(cmd_str, "read_all") == 0) {
-        // CID 12: No payload
-        cid = 12;
+        // CID 13: No payload
+        cid = 13;
         payload_len = 0;
     }
     else if (strcmp(cmd_str, "read_one") == 0) {
-        // CID 13: ID (2 bytes) or SN (14 bytes)
+        // CID 14: ID (2 bytes) or SN (14 bytes)
         if (argc < 4) { printf("Missing ID\n"); return 1; }
-        cid = 13;
+        cid = 14;
         uint16_t lookup_id = (uint16_t)atoi(argv[3]);
         memcpy(payload, &lookup_id, 2);
         payload_len = 2;
     }
     else if (strcmp(cmd_str, "write") == 0) {
-        // CID 14: SN (14 bytes) + ID (2 bytes)
+        // CID 15: SN (14 bytes) + ID (2 bytes)
         if (argc < 5) { printf("Usage: sndb <addr> write <id> <sn_hex>\n"); return 1; }
-        cid = 14;
+        cid = 15;
         uint16_t write_id = (uint16_t)atoi(argv[3]);
         const char *sn_hex = argv[4];
         for (int i = 0; i < 14 && sn_hex[i*2] != '\0'; i++) {

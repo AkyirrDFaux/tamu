@@ -14,6 +14,14 @@
 // compile scripts in - nodes without USE_SCRIPTS never reference it).
 static ScriptInstance script_instances[MAX_SCRIPT_INSTANCES];
 
+// Write script (CID 16) streaming context. The script ID arrives in fragment 0 only,
+// so later fragments are associated through this single in-flight record: the app
+// writes sequentially (each fragment acknowledged before the next), which makes the
+// single-context model safe. Fragment 0 of a new stream replaces the context.
+static bool s_write_script_active = false;
+static uint8_t s_write_script_id = 0;
+static uint16_t s_write_script_seq = 0; // last contiguous fragment index written
+
 // ---------------------------------------------------------------------------
 // Instance lifecycle
 // ---------------------------------------------------------------------------
@@ -243,13 +251,6 @@ void HandleScriptService(const PacketFrame &frame)
     uint8_t cid = GetServiceCID(frame.srv_tgt);
     if (frame.flags & FLAG_TYPE) return; // Script service only processes requests
 
-    // Write stream (CID 64+): forward to the storage stream writer.
-    if (cid >= 64)
-    {
-        StorageStreamWrite(cid - 64, frame.payload, frame.payload_len);
-        return;
-    }
-
     PacketFrame reply;
 
     switch (cid)
@@ -263,7 +264,7 @@ void HandleScriptService(const PacketFrame &frame)
 
         case 1: // Read Name (Script ID -> char[16])
         {
-            if (frame.payload_len < 1) break;
+            if (PayloadBytes(frame) < 1) break;
             ScriptFileHeader h;
             if (!ScriptReadHeader(frame.payload[0], h))
             {
@@ -276,7 +277,7 @@ void HandleScriptService(const PacketFrame &frame)
 
         case 2: // Read I/O size (Script ID -> uint8 x2)
         {
-            if (frame.payload_len < 1) break;
+            if (PayloadBytes(frame) < 1) break;
             ScriptFileHeader h;
             if (!ScriptReadHeader(frame.payload[0], h))
             {
@@ -290,7 +291,7 @@ void HandleScriptService(const PacketFrame &frame)
 
         case 3: // Read state
         {
-            if (frame.payload_len < 1) break;
+            if (PayloadBytes(frame) < 1) break;
             uint8_t state = ScriptState(frame.payload[0]);
             SendResponse(frame, &state, 1);
             break;
@@ -298,7 +299,7 @@ void HandleScriptService(const PacketFrame &frame)
 
         case 4: // Set state (Script ID, new state)
         {
-            if (frame.payload_len < 2) break;
+            if (PayloadBytes(frame) < 2) break;
             uint8_t id = frame.payload[0];
             uint8_t new_state = frame.payload[1];
             bool ok = false;
@@ -323,7 +324,7 @@ void HandleScriptService(const PacketFrame &frame)
 
         case 5: // Read input (Script ID, input index -> BlockMeta + value)
         {
-            if (frame.payload_len < 2) break;
+            if (PayloadBytes(frame) < 2) break;
             uint8_t id = frame.payload[0];
             uint8_t idx = frame.payload[1];
             ScriptInstance *inst = ScriptFindInstance(id);
@@ -365,26 +366,28 @@ void HandleScriptService(const PacketFrame &frame)
                 if (4 + vlen > sizeof(payload)) { tmp.Release(); RespondStatus(frame, false); break; }
                 memcpy(payload, &meta, 4);
                 memcpy(payload + 4, val, vlen);
-                SendResponse(frame, payload, (uint8_t)(4 + vlen));
+                SendResponse(frame, payload, 4 + vlen);
                 tmp.Release();
                 break;
             }
-            uint8_t payload[MAX_PAYLOAD_SIZE];
+uint8_t payload[MAX_PAYLOAD_SIZE];
             if (4 + vlen > sizeof(payload)) { RespondStatus(frame, false); break; }
             memcpy(payload, &meta, 4);
-            memcpy(payload + 4, val, vlen);
-            SendResponse(frame, payload, (uint8_t)(4 + vlen));
+            if (vlen) memcpy(payload + 4, val, vlen);
+            SendResponse(frame, payload, 4 + vlen);
             break;
         }
 
         case 6: // Write input (Script ID, input index, padding, BlockMeta, value)
         {
-            if (frame.payload_len < 2 + 4) break;
+            if (PayloadBytes(frame) < 2 + 4) break;
             uint8_t id = frame.payload[0];
             uint8_t idx = frame.payload[1];
             const BlockMeta *desc = reinterpret_cast<const BlockMeta *>(frame.payload + 2);
             const uint8_t *value = frame.payload + 2 + sizeof(BlockMeta);
-            uint16_t value_len = frame.payload_len - 2 - sizeof(BlockMeta);
+            uint16_t value_len = desc->Size;
+            uint16_t avail = PayloadBytes(frame) - 2 - sizeof(BlockMeta);
+            if (value_len > avail) value_len = avail;
 
             ScriptInstance *inst = ScriptFindInstance(id);
             if (!inst)
@@ -412,7 +415,7 @@ void HandleScriptService(const PacketFrame &frame)
 
         case 7: // Read output (Script ID, output index -> BlockMeta + value)
         {
-            if (frame.payload_len < 2) break;
+            if (PayloadBytes(frame) < 2) break;
             uint8_t id = frame.payload[0];
             uint8_t idx = frame.payload[1];
             ScriptInstance *inst = ScriptFindInstance(id);
@@ -440,7 +443,7 @@ void HandleScriptService(const PacketFrame &frame)
 
         case 8: // Get info (Script ID -> variable count u8, instruction count u16)
         {
-            if (frame.payload_len < 1) break;
+            if (PayloadBytes(frame) < 1) break;
             uint8_t id = frame.payload[0];
             ScriptFileHeader h;
             if (!ScriptReadHeader(id, h))
@@ -456,7 +459,7 @@ void HandleScriptService(const PacketFrame &frame)
 
         case 9: // Read Variable (Script ID, Variable ID -> BlockMeta + value)
         {
-            if (frame.payload_len < 2) break;
+            if (PayloadBytes(frame) < 2) break;
             uint8_t id = frame.payload[0];
             uint8_t idx = frame.payload[1];
             ScriptInstance *inst = ScriptFindInstance(id);
@@ -479,18 +482,20 @@ void HandleScriptService(const PacketFrame &frame)
             if (4 + vlen > sizeof(payload)) { RespondStatus(frame, false); break; }
             memcpy(payload, &meta, 4);
             if (vlen) memcpy(payload + 4, val, vlen);
-            SendResponse(frame, payload, (uint8_t)(4 + vlen));
+            SendResponse(frame, payload, 4 + vlen);
             break;
         }
 
         case 10: // Write Variable (Script ID, Variable ID, BlockMeta, value)
         {
-            if (frame.payload_len < 2 + 4) break;
+            if (PayloadBytes(frame) < 2 + 4) break;
             uint8_t id = frame.payload[0];
             uint8_t idx = frame.payload[1];
             const BlockMeta *desc = reinterpret_cast<const BlockMeta *>(frame.payload + 2);
             const uint8_t *value = frame.payload + 2 + sizeof(BlockMeta);
-            uint16_t value_len = frame.payload_len - 2 - sizeof(BlockMeta);
+            uint16_t value_len = desc->Size;
+            uint16_t avail = PayloadBytes(frame) - 2 - sizeof(BlockMeta);
+            if (value_len > avail) value_len = avail;
 
             ScriptInstance *inst = ScriptFindInstance(id);
             if (!inst || idx >= inst->program.header.variable_count)
@@ -510,7 +515,7 @@ void HandleScriptService(const PacketFrame &frame)
 
         case 11: // Get current instruction (Script ID -> u16 line number)
         {
-            if (frame.payload_len < 1) break;
+            if (PayloadBytes(frame) < 1) break;
             ScriptInstance *inst = ScriptFindInstance(frame.payload[0]);
             uint32_t counter = inst ? inst->counter : 0;
             uint8_t payload[2] = {(uint8_t)(counter & 0xFF), (uint8_t)(counter >> 8)};
@@ -520,7 +525,7 @@ void HandleScriptService(const PacketFrame &frame)
 
         case 12: // Move to instruction (Script ID, instruction number)
         {
-            if (frame.payload_len < 3) break;
+            if (PayloadBytes(frame) < 3) break;
             uint8_t id = frame.payload[0];
             uint32_t target = (uint32_t)(frame.payload[1] | (frame.payload[2] << 8));
             ScriptInstance *inst = ScriptFindInstance(id);
@@ -537,7 +542,7 @@ void HandleScriptService(const PacketFrame &frame)
 
         case 13: // Create script (Script ID, 0xFF = auto-assign lowest free)
         {
-            if (frame.payload_len < 1) break;
+            if (PayloadBytes(frame) < 1) break;
             uint8_t requested = frame.payload[0];
             uint8_t id = requested;
             if (id == 0xFF)
@@ -562,15 +567,15 @@ void HandleScriptService(const PacketFrame &frame)
                 ScriptFileIdToName(id, fname);
                 if (Storage.FileExists(fname) != 0xFFFFFFFF) { RespondStatus(frame, false); break; }
             }
-            // The actual file is created by the write stream open (CID 16); the ID is
-            // reserved here so the app gets a stable handle for the editor.
+            // The actual file is created by the write stream (CID 16) on its first
+            // fragment; the ID is reserved here so the app gets a stable handle.
             SendResponse(frame, &id, 1);
             break;
         }
 
         case 14: // Delete script (Script ID)
         {
-            if (frame.payload_len < 1) break;
+            if (PayloadBytes(frame) < 1) break;
             uint8_t id = frame.payload[0];
             ScriptTerminate(id);
             char fname[8];
@@ -580,9 +585,12 @@ void HandleScriptService(const PacketFrame &frame)
             break;
         }
 
-        case 15: // Read script (Script ID -> whole file as a stream)
+        case 15: // Read script (Script ID -> whole file as a FRAG stream)
         {
-            if (frame.payload_len < 1) break;
+            // Response stream: fragment 0 = [frag info][script id (1)][contents], later
+            // fragments = [frag info][contents]. The app knows the script file size
+            // (from the storage file table) and trims the last fragment's wire padding.
+            if (PayloadBytes(frame) < 1) break;
             uint8_t id = frame.payload[0];
             char fname[8];
             ScriptFileIdToName(id, fname);
@@ -592,59 +600,119 @@ void HandleScriptService(const PacketFrame &frame)
                 RespondStatus(frame, false);
                 break;
             }
-            uint32_t sent = 0;
-            do
-            {
-                uint32_t chunk = sz - sent;
-                if (chunk > MAX_PAYLOAD_SIZE - 1) chunk = MAX_PAYLOAD_SIZE - 1;
-                uint8_t flags = FLAG_TYPE;
-                if (sent == 0) flags |= FLAG_START;
-                if (sent + chunk == sz) flags |= FLAG_STOP;
+            uint32_t total_content = sz;
+            uint16_t total_frags = (uint16_t)((total_content + 255) / 256);
+            if (total_frags == 0) total_frags = 1; // empty file: single fragment
 
-                uint8_t buf[MAX_PAYLOAD_SIZE];
-                Storage_FlashRead(off + sent, buf, chunk);
-                PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt, flags, buf, chunk);
-                PacketSetFragId(&reply, NextFragmentId(reply.flags));
+            uint8_t buf[MAX_PAYLOAD_SIZE];
+            for (uint16_t f = 0; f < total_frags; f++)
+            {
+                uint8_t flags = FLAG_TYPE | FLAG_FRAG;
+                if (f == 0) flags |= FLAG_START;
+                if (f == total_frags - 1) flags |= FLAG_STOP;
+                WriteFragInfo(buf, f, total_frags);
+                uint16_t head = (f == 0) ? 1 : 0;
+                if (head) buf[4] = id;
+                uint32_t content_off = (uint32_t)f * 256;
+                uint16_t content_len = (total_content - content_off > 256)
+                                           ? 256
+                                           : (uint16_t)(total_content - content_off);
+                if (content_len)
+                    Storage_FlashRead(off + content_off, buf + 4 + head, content_len);
+                PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
+                                 flags, buf, 4 + head + content_len);
                 DispatchPacket(reply);
-                sent += chunk;
-            } while (sent < sz);
-            break;
-        }
-
-        case 16: // Open script write stream (Script ID, expected size u32 -> stream CID)
-        {
-            if (frame.payload_len < 5) break;
-            uint8_t id = frame.payload[0];
-            uint32_t size = *reinterpret_cast<const uint32_t *>(frame.payload + 1);
-            char fname[8];
-            ScriptFileIdToName(id, fname);
-
-            // The whole script is rewritten on each save: replace any existing file.
-            if (Storage.FileExists(fname) != 0xFFFFFFFF)
-                Storage.DeleteFile(fname);
-            bool ok = Storage.CreateFile(fname, size);
-            uint8_t stream_cid = 0;
-            if (ok)
-                stream_cid = StorageStreamOpen(fname, 0);
-            if (!ok || stream_cid == 0)
-                DeviceLog("SCRIPT", "open write stream script %u size %lu failed", (unsigned)id,
-                          (unsigned long)size);
-            SendResponse(frame, &stream_cid, 1);
-            break;
-        }
-
-        case 17: // Close script write stream (Script ID)
-        {
-            if (frame.payload_len < 1) break;
-            uint8_t id = frame.payload[0];
-            char fname[8];
-            ScriptFileIdToName(id, fname);
-            for (int i = 0; i < MAX_STREAMS; i++)
-            {
-                if (Storage.streams[i].active && memcmp(Storage.streams[i].name, fname, 8) == 0)
-                    Storage.streams[i].active = false;
             }
-            SendResponse(frame, nullptr, 0);
+            break;
+        }
+
+        case 16: // Write script (stream: Script ID, Fragmentation, Contents)
+        {
+            // Request stream: fragment 0 = [frag info][script id (1)][contents], later
+            // fragments = [frag info][contents]. The whole script is rewritten on each
+            // save: fragment 0 deletes any existing file and creates it at total*256,
+            // contents are written at offset current*256, and the last fragment shrinks
+            // the file to the real (4-byte padded) content length. Each acknowledged
+            // fragment is answered with the last sequential fragmentation index written.
+            if (!(frame.flags & FLAG_FRAG)) break;
+            PacketFragInfo frag = PacketGetFrag(frame);
+            uint16_t plen = PayloadBytes(frame);
+
+            uint8_t id;
+            const uint8_t *contents;
+            uint16_t content_len;
+            if (frag.current == 0)
+            {
+                if (plen < 5) break; // [frag info (4)][script id (1)]
+                id = frame.payload[4];
+                contents = frame.payload + 5;
+                content_len = plen - 5;
+                // (Re)start the write context.
+                char fname[8];
+                ScriptFileIdToName(id, fname);
+                if (Storage.FileExists(fname) != 0xFFFFFFFF)
+                    Storage.DeleteFile(fname);
+                uint32_t reserved = (uint32_t)frag.total * 256;
+                if (!Storage.CreateFile(fname, reserved))
+                {
+                    DeviceLog("SCRIPT", "write script %u: create %lu B failed", (unsigned)id,
+                              (unsigned long)reserved);
+                    s_write_script_active = false;
+                    s_write_script_seq = 0xFFFF;
+                    break; // cannot continue the stream
+                }
+                s_write_script_active = true;
+                s_write_script_id = id;
+                s_write_script_seq = 0xFFFF; // so current == seq + 1 holds for fragment 0
+            }
+            else
+            {
+                if (!s_write_script_active) break; // fragment 0 never arrived
+                id = s_write_script_id;
+                contents = frame.payload + 4;
+                content_len = plen - 4;
+            }
+
+            char fname[8];
+            ScriptFileIdToName(id, fname);
+            uint32_t file_offset, file_size;
+            if (Storage.GetFileInfo(fname, &file_offset, &file_size))
+            {
+                // Write contiguously: a resend of the last index is idempotent, anything
+                // ahead of it is a gap (respond with the last written index unchanged).
+                if (frag.current == (uint16_t)(s_write_script_seq + 1))
+                {
+                    uint32_t write_off = (uint32_t)frag.current * 256;
+                    uint32_t room = (write_off < file_size) ? (file_size - write_off) : 0;
+                    uint32_t chunk = content_len;
+                    if (chunk > room) chunk = room;
+                    bool ok = (chunk == 0) ||
+                              Storage_FlashWrite(file_offset + write_off, contents, chunk);
+                    if (ok)
+                    {
+                        s_write_script_seq = frag.current;
+                        // Last fragment: shrink the file to the real content length
+                        // (the last fragment's wire content is padded to 4 bytes).
+                        if (frag.total > 0 && frag.current == frag.total - 1)
+                        {
+                            uint32_t real_size = (uint32_t)(frag.total - 1) * 256 + content_len;
+                            if (real_size > file_size) real_size = file_size;
+                            Storage.ResizeFile(fname, real_size);
+                        }
+                    }
+                    else
+                    {
+                        DeviceLog("SCRIPT", "write script %u flash write failed", (unsigned)id);
+                    }
+                }
+            }
+
+            if (frame.flags & FLAG_REQACK)
+            {
+                uint8_t ack[2] = {(uint8_t)(s_write_script_seq & 0xFF),
+                                  (uint8_t)(s_write_script_seq >> 8)};
+                SendResponse(frame, ack, 2);
+            }
             break;
         }
 

@@ -212,11 +212,12 @@ static int CmdDelete(int argc, char **argv)
 }
 
 // Sends a Device service request to `addr` and routes the reply to the CLI (cid 3).
-// Device service CIDs: 0 Discover, 1 Ping, 2 Type, 3 SN, 4 Version, 5 Capability, 6 Read Name, 7 Set Name, 8 Uptime, 9 Loop, 10 Time sync.
+// Device service CIDs (Docs/Services/Device service.md): 0 Discover, 1 Ping, 2 Identify,
+// 3 Type, 4 SN, 5 Version, 6 Capability, 7 Read Name, 8 Set Name, 9 Uptime, 10 Loop, 11 Time sync.
 static int CmdDevice(int argc, char **argv)
 {
-    // Usage: dev <addr> <discover|ping|type|sn|version|cap|name [newname]|uptime|loop|time>
-    if (argc < 3) { printf("Usage: dev <addr> <discover|ping|type|sn|version|cap|name [newname]|uptime|loop|time>\n"); return 1; }
+    // Usage: dev <addr> <discover|ping|identify|type|sn|version|cap|name [newname]|uptime|loop|time>
+    if (argc < 3) { printf("Usage: dev <addr> <discover|ping|identify [on|off]|type|sn|version|cap|name [newname]|uptime|loop|time>\n"); return 1; }
     uint16_t addr = (uint16_t)atoi(argv[1]);
     const char *cmd = argv[2];
 
@@ -231,31 +232,39 @@ static int CmdDevice(int argc, char **argv)
         plen = sizeof(SerialNumber);
     }
     else if (strcmp(cmd, "ping") == 0) { cid = 1; }
-    else if (strcmp(cmd, "type") == 0) { cid = 2; }
-    else if (strcmp(cmd, "sn") == 0) { cid = 3; }
-    else if (strcmp(cmd, "version") == 0) { cid = 4; }
-    else if (strcmp(cmd, "cap") == 0) { cid = 5; }
+    else if (strcmp(cmd, "identify") == 0)
+    {
+        // dev <addr> identify [on|off]: blink the red LED fast (default on).
+        cid = 2;
+        uint8_t on = (argc > 3) ? (strcmp(argv[3], "off") != 0) : 1;
+        payload[0] = on;
+        plen = 1;
+    }
+    else if (strcmp(cmd, "type") == 0) { cid = 3; }
+    else if (strcmp(cmd, "sn") == 0) { cid = 4; }
+    else if (strcmp(cmd, "version") == 0) { cid = 5; }
+    else if (strcmp(cmd, "cap") == 0) { cid = 6; }
     else if (strcmp(cmd, "name") == 0)
     {
         if (argc > 3)
         {
-            cid = 7; // Set Name
+            cid = 8; // Set Name
             plen = (uint8_t)strlen(argv[3]);
             if (plen > 23) plen = 23;
             memcpy(payload, argv[3], plen);
         }
         else
         {
-            cid = 6; // Read Name
+            cid = 7; // Read Name
         }
     }
-    else if (strcmp(cmd, "uptime") == 0) { cid = 8; }
-    else if (strcmp(cmd, "loop") == 0) { cid = 9; }
+    else if (strcmp(cmd, "uptime") == 0) { cid = 9; }
+    else if (strcmp(cmd, "loop") == 0) { cid = 10; }
     else if (strcmp(cmd, "time") == 0)
     {
         // Time sync request: payload carries the local send timestamp (t0). Without it the
         // node would reply with t0=0 and the offset estimate would be off by half the uptime.
-        cid = 10;
+        cid = 11;
         uint32_t t0 = DeviceStatus.UptimeMs;
         memcpy(payload, &t0, 4);
         plen = 4;

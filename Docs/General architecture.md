@@ -6,6 +6,7 @@
 - Red error LED and white communication LED
 
 ## Services:
+[[Service ID table]]
 #### Mandatory:
  - [[Device service]]
  - [[Log Handler]]
@@ -15,6 +16,8 @@
 - SN Database (under [[Device service]])
 - App service (route to USB/BLE, TODO later)
 - [[CLI]] (ESP32 only)
+#### Mandatory for devices without USB:
+- [[Bootloader]]
 ####  Optional:
  - [[Dynamic Memory]]
  - [[Keyed Memory]]
@@ -27,7 +30,6 @@
 Sets of predefined memory blocks, and functions to provide an unified overall feature to the device. Included per device by it's capabilities, almost always has device specific implementations at least partially.
 
 Unknowns:
-	Selfupdater over RSBus for non USB devices.
 	Subscriptions?
 
 ### Code rules:
@@ -38,7 +40,7 @@ Use structs for data organization (packets).
 Use malloc/realloc/free instead of new and delete.
 Keep functions moderate in length (20ish lines).
 Device specific implementations should have separate folders.
-Do not import new libraries or use float/double type (not even standard ones, except for `<cstdint><cstddef><cstring><cstdlib>` and ones required witin ESP32 scope).
+Do not import new libraries or use float/double type (not even standard ones, except for `<cstdint><cstddef><cstring><cstdlib>` and ones required within ESP32 scope).
 Remember that this is an embedded system with limited resources
 
 Code structure (inside src)

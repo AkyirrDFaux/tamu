@@ -42,13 +42,14 @@ void main() {
     final tableRec = files.first;
     // ignore: avoid_print
     print('[S] table record: name=${tableRec.name} isFiletable=${tableRec.isFiletable}');
-    final data = await st.readFile(tableRec.name, maxBytes: 4096);
+    final data = await st.readFile(tableRec.name, size: tableRec.size);
     // ignore: avoid_print
     print('[S] readFile(.TABLE) bytes=${data?.length}');
-    final data64 = await st.readFile(tableRec.name, maxBytes: 64);
+    final data64 = await st.readFile(tableRec.name);
     // ignore: avoid_print
     print('[S] readFile(.TABLE) maxBytes=64 -> ${data64?.length}');
-    final data64o = await st.readFile(tableRec.name, offset: 64, maxBytes: 64);
+    // whole-file read (offset/bytes no longer part of the request)
+    final data64o = await st.readFile(tableRec.name);
     // ignore: avoid_print
     print('[S] readFile(.TABLE) off=64 max64 -> ${data64o?.length}');
     if (data != null) {
@@ -59,7 +60,7 @@ void main() {
     }
     final snreg = files.where((f) => f.name == 'SNREG').firstOrNull;
     if (snreg != null) {
-      final d2 = await st.readFile(snreg.name, maxBytes: 4096);
+      final d2 = await st.readFile(snreg.name, size: snreg.size);
       // ignore: avoid_print
       print('[S] readFile(SNREG) bytes=${d2?.length}');
       if (d2 != null) {
@@ -81,7 +82,7 @@ void main() {
     for (final backupName in ['SYSMEM', 'DYNMEM', 'KEYMEM']) {
       final rec = files.where((f) => f.name == backupName).firstOrNull;
       if (rec == null) continue;
-      final d = await st.readFile(rec.name, maxBytes: 4096);
+      final d = await st.readFile(rec.name, size: rec.size);
       if (d == null || d.length < 4) {
         // ignore: avoid_print
         print('[S] $backupName: read ${d?.length} bytes (unexpected)');
@@ -163,7 +164,7 @@ void main() {
     for (final backupName in ['DYNMEM', 'KEYMEM']) {
       final rec = freshFiles?.where((f) => f.name == backupName).firstOrNull;
       if (rec == null) continue;
-      final d = await st.readFile(rec.name, maxBytes: 4096);
+      final d = await st.readFile(rec.name, size: rec.size);
       if (d == null || d.length < 4) continue;
       final bc = u16(d, 0);
       var c = 2;

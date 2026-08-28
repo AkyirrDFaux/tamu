@@ -113,7 +113,7 @@ class DeviceDatabase extends ChangeNotifier {
     final entry = _devices.putIfAbsent(id, () => DeviceEntry(id: id));
 
     final snReply =
-        await _request(id, ServiceType.device, 3, timeout: const Duration(seconds: 2));
+        await _request(id, ServiceType.device, 4, timeout: const Duration(seconds: 2));
     if (snReply == null) {
       entry.stale = true;
       notifyListeners();
@@ -125,24 +125,28 @@ class DeviceDatabase extends ChangeNotifier {
       entry.serialNumber = serialNumberToHex(snReply.sublist(0, 14));
     }
 
-    final typeReply = await _request(id, ServiceType.device, 2);
+    final typeReply = await _request(id, ServiceType.device, 3);
     if (typeReply != null && typeReply.length >= 2) {
       entry.type = DeviceType.fromValue(typeReply[0] | (typeReply[1] << 8));
     }
 
-    final versionReply = await _request(id, ServiceType.device, 4);
+    final versionReply = await _request(id, ServiceType.device, 5);
     if (versionReply != null && versionReply.isNotEmpty) {
-      entry.softwareVersion = String.fromCharCodes(versionReply);
+      // The wire payload is padded to 4 bytes; strip trailing NUL padding.
+      entry.softwareVersion =
+          String.fromCharCodes(versionReply).replaceAll('\x00', '').trim();
     }
 
-    final capReply = await _request(id, ServiceType.device, 5);
+    final capReply = await _request(id, ServiceType.device, 6);
     if (capReply != null && capReply.length >= 4) {
       entry.capabilities = uint32FromBytes(capReply);
     }
 
-    final nameReply = await _request(id, ServiceType.device, 6);
+    final nameReply = await _request(id, ServiceType.device, 7);
     if (nameReply != null && nameReply.isNotEmpty) {
-      entry.name = String.fromCharCodes(nameReply);
+      // The wire payload is padded to 4 bytes; strip trailing NUL padding.
+      entry.name =
+          String.fromCharCodes(nameReply).replaceAll('\x00', '').trim();
     }
 
     notifyListeners();
@@ -154,11 +158,11 @@ class DeviceDatabase extends ChangeNotifier {
     final entry = _devices[id];
     if (entry == null) return;
 
-    final uptimeReply = await _request(id, ServiceType.device, 8);
+    final uptimeReply = await _request(id, ServiceType.device, 9);
     if (uptimeReply != null && uptimeReply.length >= 4) {
       entry.uptimeMs = uint32FromBytes(uptimeReply);
     }
-    final loopReply = await _request(id, ServiceType.device, 9);
+    final loopReply = await _request(id, ServiceType.device, 10);
     if (loopReply != null && loopReply.length >= 8) {
       entry.avgLoopTimeMs = numberFromBytes(loopReply, 0);
       entry.maxLoopTimeMs = numberFromBytes(loopReply, 4);
@@ -169,7 +173,7 @@ class DeviceDatabase extends ChangeNotifier {
     // in its synced-clock ms; the app stamps t0 (send) and t3 (reply rx) on
     // its own session clock, then offset = ((t1 - t0) + (t2 - t3)) / 2.
     final t0 = DateTime.now().millisecondsSinceEpoch - _sessionStartMs;
-    final syncReply = await _request(id, ServiceType.device, 10,
+    final syncReply = await _request(id, ServiceType.device, 11,
         payload: uint32ToBytes(t0 & 0xFFFFFFFF));
     if (syncReply != null && syncReply.length >= 12) {
       final t1 = uint32FromBytes(syncReply, 4);
@@ -182,15 +186,25 @@ class DeviceDatabase extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Renames a device (Device service CID 7) and updates the database.
+  /// Renames a device (Device service CID 8) and updates the database.
   Future<bool> setName(int id, String name) async {
     final bytes = name.codeUnits.take(23).toList();
-    final reply = await _request(id, ServiceType.device, 7, payload: bytes);
+    final reply = await _request(id, ServiceType.device, 8, payload: bytes);
     if (reply == null) return false;
     final entry = _devices[id];
-    if (entry != null) entry.name = String.fromCharCodes(reply);
+    if (entry != null) {
+      entry.name = String.fromCharCodes(reply).replaceAll('\x00', '').trim();
+    }
     notifyListeners();
     return true;
+  }
+
+  /// Asks a device to identify itself (Device service CID 2): blink its red LED
+  /// fast for a few seconds. Returns true when the device acknowledged.
+  Future<bool> identify(int id, {bool on = true}) async {
+    final reply =
+        await _request(id, ServiceType.device, 2, payload: [on ? 1 : 0]);
+    return reply != null;
   }
 
   // ===========================================================================
@@ -236,7 +250,7 @@ class DeviceDatabase extends ChangeNotifier {
 
       await refreshDevice(coreId);
 
-      final sndbReply = await _request(coreId, ServiceType.device, 12,
+      final sndbReply = await _request(coreId, ServiceType.device, 13,
           timeout: const Duration(seconds: 5));
       if (sndbReply == null) {
         throw Exception('SNDB read failed');
@@ -283,26 +297,26 @@ class DeviceDatabase extends ChangeNotifier {
 
   /// Looks up which serial number belongs to an ID (SNDB Read CID 13).
   Future<String?> serialNumberOf(int id) async {
-    final reply = await _request(coreId, ServiceType.device, 13,
+    final reply = await _request(coreId, ServiceType.device, 14,
         payload: [id & 0xFF, (id >> 8) & 0xFF]);
     if (reply == null || reply.length < 14) return null;
     return serialNumberToHex(reply.sublist(0, 14));
   }
 
-  /// SNDB Write (CID 14): assigns `sn` (14 bytes) the short ID. Returns true
+  /// SNDB Write (CID 15): assigns `sn` (14 bytes) the short ID. Returns true
   /// when the device echoes the entry back.
   Future<bool> sndbWrite(List<int> sn, int id) async {
-    final reply = await _request(coreId, ServiceType.device, 14,
+    final reply = await _request(coreId, ServiceType.device, 15,
         payload: [...sn, id & 0xFF, (id >> 8) & 0xFF],
         timeout: const Duration(seconds: 3));
     return reply != null && reply.length >= 16;
   }
 
-  /// SNDB Delete (Docs/Services/Device service.md): SNDB Write (CID 14) with
+  /// SNDB Delete (Docs/Services/Device service.md): SNDB Write (CID 15) with
   /// ID 0 tombstones the entry carrying that serial number.
   Future<bool> sndbDelete(List<int> sn) async {
     if (sn.length < 14) return false;
-    final reply = await _request(coreId, ServiceType.device, 14,
+    final reply = await _request(coreId, ServiceType.device, 15,
         payload: [...sn.take(14), 0, 0],
         timeout: const Duration(seconds: 3));
     return reply != null && reply.length >= 16;
@@ -310,7 +324,7 @@ class DeviceDatabase extends ChangeNotifier {
 
   /// Full SNDB dump for the SNDB viewer: [id, serial hex] pairs.
   Future<List<(int, String)>> sndbEntries() async {
-    final reply = await _request(coreId, ServiceType.device, 12,
+    final reply = await _request(coreId, ServiceType.device, 13,
         timeout: const Duration(seconds: 5));
     final entries = <(int, String)>[];
     if (reply == null) return entries;
