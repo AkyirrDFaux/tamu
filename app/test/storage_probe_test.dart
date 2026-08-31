@@ -1,3 +1,6 @@
+@Tags(['hil'])
+library;
+
 import 'package:flutter/foundation.dart';
 import 'dart:io';
 
@@ -13,8 +16,9 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   debugDefaultTargetPlatformOverride = TargetPlatform.linux;
 
+  final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
+
   test('storage probe', () async {
-    if (Platform.environment['TAMU_HIL'] == null) return;
     final mgr = ConnectionManager.instance;
     await mgr.setAutoRefresh(false);
     final port = Platform.environment['TAMU_HIL']!;
@@ -219,5 +223,5 @@ void main() {
       // ignore: avoid_print
       print('[S] in-file-but-not-CID0: ${agree.toList()}');
     }
-  }, timeout: const Timeout(Duration(minutes: 2)));
+  }, timeout: const Timeout(Duration(minutes: 2)), skip: skipReason);
 }

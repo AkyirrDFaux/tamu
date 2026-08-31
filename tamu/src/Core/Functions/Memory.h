@@ -54,8 +54,8 @@ inline void RespondStatus(const PacketFrame &frame, bool ok)
 {
     if (!ok)
     {
+#ifndef DEVICE_LOG_TEXTLESS
         const char *tag = "MEM";
-        uint8_t svc = (uint8_t)GetServiceType(frame.srv_tgt);
         switch (GetServiceType(frame.srv_tgt))
         {
             case ServiceType::SystemMemory:   tag = "SYSMEM"; break;
@@ -73,9 +73,10 @@ inline void RespondStatus(const PacketFrame &frame, bool ok)
         DeviceLog(tag, "CID %u failed block=%u field=%u key=%u",
                   (unsigned)GetServiceCID(frame.srv_tgt),
                   (unsigned)block, (unsigned)field, (unsigned)key);
+#endif
         // Structured report (LogHandler CID 0): reaches the core's log DB even
         // from textless nodes; code = CID so failures dedup per service+op.
-        ReportLog(MakeLog(false, svc, GetServiceCID(frame.srv_tgt), 0));
+        ReportLog(MakeLog(false, (uint8_t)GetServiceType(frame.srv_tgt), GetServiceCID(frame.srv_tgt), 0));
     }
     uint8_t status = ok ? 0 : 0xFF;
     SendResponse(frame, &status, 1);

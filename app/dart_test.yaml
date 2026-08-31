@@ -1,0 +1,5 @@
+tags:
+  hil:
+    description: Tests requiring physical hardware via serial/USB (TAMU_HIL env var).
+  ble:
+    description: Tests requiring a BLE adapter and a nearby Tamu device.

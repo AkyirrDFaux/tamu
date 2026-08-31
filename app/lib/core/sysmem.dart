@@ -98,8 +98,13 @@ class SystemMemoryClient extends MemoryClientBase {
   /// Writes a field's value (CID 3). Returns the confirmed value or null.
   Future<List<int>?> writeField(
       SysBlock block, SysField field, List<int> newValue) async {
+    final sizedMeta = BlockMeta(
+      flagsAndType: field.meta.flagsAndType,
+      key: field.meta.key,
+      size: newValue.length,
+    );
     return writeValue(
-        BlockIndex(block: block.index, field: field.index), field.meta, newValue);
+        BlockIndex(block: block.index, field: field.index), sizedMeta, newValue);
   }
 
   // --- Backup access ---------------------------------------------------------

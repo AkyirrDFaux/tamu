@@ -1,10 +1,17 @@
+@Tags(['ble'])
+library;
+
 import 'package:flutter/foundation.dart';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:universal_ble/universal_ble.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+
+  final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
 
   test('scan with services', () async {
     final seen = <String, List<String>>{};
@@ -19,5 +26,5 @@ void main() {
       // ignore: avoid_print
       print('SCAN ${e.key} services=${e.value}');
     }
-  }, timeout: const Timeout(Duration(seconds: 40)));
+  }, timeout: const Timeout(Duration(seconds: 40)), skip: skipReason);
 }

@@ -10,7 +10,7 @@ void PrintField(const BlockMeta &desc, const void *data_ptr, uint16_t index, boo
 // it right before dispatching and wait briefly afterwards, so a missing reply (dead
 // address, service not compiled into the node) produces a timeout error instead of
 // silence.
-bool g_cli_response_seen = false;
+volatile bool g_cli_response_seen = false;
 
 // Response handler: receives memory read responses from the network and prints them
 void HandleCLIService(const PacketFrame &frame)
@@ -440,8 +440,11 @@ void HandleCLI_StorageResponse(const PacketFrame &frame)
                 printf("Device %d: File create failed\n", frame.id_src);
             break;
 
-        case 3: // Delete file
-            printf("Device %d: File deleted\n", frame.id_src);
+        case 3: // Delete file (status byte when protected, empty = success)
+            if (PayloadBytes(frame) >= 1 && frame.payload[0] == 0)
+                printf("Device %d: File delete failed\n", frame.id_src);
+            else
+                printf("Device %d: File deleted\n", frame.id_src);
             break;
 
         case 4: // Resize file

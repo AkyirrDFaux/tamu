@@ -9,6 +9,7 @@
 /// ```
 /// Skipped automatically when TAMU_HIL is not set, so plain `flutter test`
 /// stays green on machines without hardware.
+@Tags(['hil'])
 library;
 
 import 'package:flutter/foundation.dart';

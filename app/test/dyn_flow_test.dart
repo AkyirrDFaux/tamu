@@ -1,3 +1,6 @@
+@Tags(['hil'])
+library;
+
 import 'package:flutter/foundation.dart';
 import 'dart:io';
 
@@ -14,8 +17,9 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   debugDefaultTargetPlatformOverride = TargetPlatform.linux;
 
+  final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
+
   test('dynamic page flow', () async {
-    if (Platform.environment['TAMU_HIL'] == null) return;
     final mgr = ConnectionManager.instance;
     await mgr.setAutoRefresh(false);
     final port = Platform.environment['TAMU_HIL']!;
@@ -94,5 +98,5 @@ void main() {
     await dyn.save();
     // ignore: avoid_print
     print('[F] done');
-  }, timeout: const Timeout(Duration(minutes: 3)));
+  }, timeout: const Timeout(Duration(minutes: 3)), skip: skipReason);
 }

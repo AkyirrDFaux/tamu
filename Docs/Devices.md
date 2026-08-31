@@ -13,7 +13,7 @@ Use BOARD_DeviceName for code guarding device specific implementations.
 Services:
 - Mandatory and Core (including CLI)
 - Dynamic and Keyed memory
-- TODO (Script) 
+- Script
 Modules: 
  - LED Display x2
  - Fan Output x2

@@ -118,9 +118,14 @@ class KeyedMemoryClient extends MemoryClientBase {
   /// Writes a keyed entry (CID 3); creates it when missing. Returns confirmed bytes.
   Future<List<int>?> writeEntry(
       KeyedBlock block, int dict, KeyedEntry entry, List<int> newValue) async {
+    final sizedMeta = BlockMeta(
+      flagsAndType: entry.meta.flagsAndType,
+      key: entry.meta.key,
+      size: newValue.length,
+    );
     return writeValue(
         BlockIndex(block: block.index, field: dict, key: entry.key),
-        entry.meta,
+        sizedMeta,
         newValue);
   }
 
@@ -186,45 +191,18 @@ class KeyedMemoryClient extends MemoryClientBase {
     return reply != null && reply.length >= 8;
   }
 
-  /// Reads ALL entries of a dictionary in one round trip (CID 7): the reply
-  /// carries the dict BlockMeta followed by aligned [BlockMeta + value] pairs.
-  /// Returns entries (including None-marked placeholders) or null.
-  Future<List<KeyedEntry>?> readAllDictEntries(KeyedBlock block, int dict) async {
-    final reply = await request(7,
-        payload: BlockIndex(block: block.index, field: dict).toBytes(),
-        timeout: const Duration(seconds: 4));
-    if (reply == null || reply.length < 8) return null;
-    final dictMeta = BlockMeta.fromBytes(reply, 4);
-    final entries = <KeyedEntry>[];
-    var offset = 8;
-    while (offset + 4 <= reply.length) {
-      final meta = BlockMeta.fromBytes(reply, offset);
-      offset += 4;
-      final valueLen = meta.size;
-      if (offset + valueLen > reply.length) break;
-      entries.add(KeyedEntry(
-          key: meta.key, meta: meta, value: reply.sublist(offset, offset + valueLen)));
-      offset += valueLen;
-      while (offset % 4 != 0 && offset < reply.length) {
-        offset++;
-      }
-    }
-    final dictObj = KeyedDict(index: dict, meta: dictMeta, keys: [
-      for (final e in entries)
-        if (e.meta.typeValue != DataType.none.value) e.key
-    ]);
-    block.dicts[dict] = dictObj;
-    block.entries[dict] = {for (final e in entries) e.key: e};
-    return entries;
-  }
-
   /// Writes a keyed entry by key id (CID 3); the firmware creates missing keys.
   /// A None-typed meta with no value marks the key deleted in place.
   Future<List<int>?> writeKeyValue(
       KeyedBlock block, int dict, int key, BlockMeta meta, List<int> value) async {
+    final sizedMeta = BlockMeta(
+      flagsAndType: meta.flagsAndType,
+      key: meta.key,
+      size: value.length,
+    );
     return writeValue(
         BlockIndex(block: block.index, field: dict, key: key),
-        meta,
+        sizedMeta,
         value,
         timeout: const Duration(seconds: 4));
   }

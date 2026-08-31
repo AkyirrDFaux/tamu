@@ -14,21 +14,7 @@
   Button module for the DAS but no firmware exists (no button block, no pin handling). The
   button's function is unspecified - decide what it should do (a static Block? a boot
   trigger?) before implementing.
-- **Service ID table.md disagrees with the firmware enum**: it lists Storage=4, System
-  Memory=5, ..., Router=16, App interface=17, CLI=18, but the firmware (`ServiceType` in
-  Core/Functions/Packet.h) uses Device=1, LogHandler=2, Storage=3, SystemMemory=4,
-  DynamicMemory=5, KeyedMemory=6, Script=7, App=8, CLI=9 (and no Bootloader/Router
-  service IDs). The wire format follows the firmware enum - either align the table with it
-  or renumber the firmware (a breaking change).
-- **DAS caps incoming payloads at 128 B** (`MAX_PAYLOAD_SIZE=128` keeps its 2 KB stack
-  sane), below the app's standard 256-B write chunk - the app never writes DAS files
-  today, but the RSBus bootloader (a later session, mandatory for devices without USB)
-  needs to receive 256-B chunks. Revisit the DAS frame/stack budget when implementing it
-  (e.g. run the bootloader with a larger `MAX_PAYLOAD_SIZE` and compact handlers).
-- **No per-device max-payload negotiation**: the app's `writeFile`/`writeScriptFile` chunk
-  at 256 B regardless of the target's frame capacity. A device with a smaller
-  `MAX_PAYLOAD_SIZE` silently drops the over-size fragments (timeout). Either expose a
-  "max payload" capability bit or have the clients fall back to a smaller chunk size.
+- **No per-device max-payload negotiation (resolved 2026-08-31: all devices now handle the full 276-B payload/288-B frame, so no negotiation needed)**: the previous `MAX_PAYLOAD_SIZE=128` DAS cap is gone; keep the constant uniform across devices per Data Formats.md.
 - **FRAG "Information" is service-specific**: the reassembler strips only the fixed 4-B
   FRAG info; the stream header (file name / script ID) is stripped by each client using
   the known format. A generic "strip the stream header" helper could remove the

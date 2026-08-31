@@ -544,6 +544,9 @@ void StartCLI(void)
     esp_console_config_t console_config = {
         .max_cmdline_length = 256,
         .max_cmdline_args = 16,
+        .heap_alloc_caps = MALLOC_CAP_DEFAULT,
+        .hint_color = 0,
+        .hint_bold = 0,
     };
     ESP_ERROR_CHECK(esp_console_init(&console_config));
 

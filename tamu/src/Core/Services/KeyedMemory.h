@@ -303,59 +303,6 @@ void HandleKeyedMemory(const PacketFrame &frame)
         RespondStatus(frame, RecallRegistryBlock(keyed_block_registry, idx->Block, KeyedBackupName()));
         break;
     }
-    case 7: // Read all entries of a dictionary in ONE round trip
-    {
-        KeyedBlockDescriptor *block = keyed_block_registry.GetBlock(idx->Block);
-        if (!block || idx->Field == INVALID_INDEX || idx->Field >= block->map_count)
-        { RespondStatus(frame, false); break; }
-        FieldResult field_result = block->Get(idx->Field);
-        if (BlockMetaType(field_result.Descriptor.FlagsAndType) == (uint16_t)DataType::None)
-        { RespondStatus(frame, false); break; }
-
-        uint16_t cursor = 0;
-        BlockIndex out_index = {idx->Block, idx->Field, INVALID_INDEX};
-        memcpy(payload + cursor, &out_index, sizeof(BlockIndex)); cursor += sizeof(BlockIndex);
-
-        // Count visible entries first (None-marked keys are skipped).
-        uint16_t visible = 0;
-        if (field_result.Data)
-        {
-            uint8_t *p = static_cast<uint8_t *>(field_result.Data);
-            uint16_t off = 0;
-            while (off + sizeof(BlockMeta) <= field_result.Descriptor.Size)
-            {
-                BlockMeta *m = reinterpret_cast<BlockMeta *>(p + off);
-                if (!KeyedEntryFits(m->Size, off, field_result.Descriptor.Size)) break;
-                if (((uint16_t)m->FlagsAndType & 0x03FF) != (uint16_t)DataType::None)
-                    visible++;
-                off += AlignTo4(sizeof(BlockMeta) + m->Size);
-            }
-        }
-        BlockMeta dict_meta = field_result.Descriptor;
-        dict_meta.Size = (uint8_t)visible;
-        memcpy(payload + cursor, &dict_meta, sizeof(BlockMeta)); cursor += sizeof(BlockMeta);
-
-        // Stream entry metas + values, aligned like the on-disk layout.
-        if (field_result.Data)
-        {
-            uint8_t *p = static_cast<uint8_t *>(field_result.Data);
-            uint16_t off = 0;
-            while (off + sizeof(BlockMeta) <= field_result.Descriptor.Size)
-            {
-                BlockMeta *m = reinterpret_cast<BlockMeta *>(p + off);
-                if (!KeyedEntryFits(m->Size, off, field_result.Descriptor.Size)) break;
-                if (((uint16_t)m->FlagsAndType & 0x03FF) != (uint16_t)DataType::None)
-                {
-                    uint16_t entry_size = sizeof(BlockMeta) + m->Size;
-                    if (cursor + entry_size > sizeof(payload)) break;
-                    memcpy(payload + cursor, m, entry_size); cursor += entry_size;
-                }
-                off += AlignTo4(sizeof(BlockMeta) + m->Size);
-            }
-        }
-        SendResponse(frame, payload, cursor);
-        break;
-    }
     default:
         break;
     }

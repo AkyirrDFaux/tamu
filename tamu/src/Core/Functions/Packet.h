@@ -11,6 +11,11 @@
 #define MAX_PAYLOAD_SIZE 276
 #endif
 
+// Maximum actual payload bytes per FRAG fragment (Data Formats.md: "Actual payload max 256 bytes").
+// The 4-byte fragmentation info goes in the Information section; remaining payload capacity is larger
+// but the spec caps actual payload at 256 to ensure all implementations can handle it.
+#define MAX_FRAG_CONTENT_SIZE 256
+
 // Flag bitmasks (from Data Formats.md)
 #define FLAG_REQACK (1 << 0)
 #define FLAG_START  (1 << 1)
@@ -25,19 +30,22 @@
 #define ADDR_INVALID   0x0000
 #define ADDR_BROADCAST 0xFFFF
 
-// Service Types (from General architecture.md)
+// Service Types (from Docs/Service ID table.md)
 enum class ServiceType : uint8_t
 {
+    Bootloader = 0x00,
     Device = 0x01,
     LogHandler = 0x02,
-    Storage = 0x03,
-    SystemMemory = 0x04,
-    DynamicMemory = 0x05,
-    KeyedMemory = 0x06,
-    Script = 0x07,
-    App = 0x08, // App Interface: the app's identity is this service type (SRV SRC high byte),
+    Storage = 0x04,
+    SystemMemory = 0x05,
+    DynamicMemory = 0x06,
+    KeyedMemory = 0x07,
+    Script = 0x08,
+    ScriptInstructions = 0x09,
+    Router = 0x10,
+    App = 0x11, // App Interface: the app's identity is this service type (SRV SRC high byte),
                 // the CID byte is an app-managed transaction ID. No dedicated network address.
-    CLI = 0x09
+    CLI = 0x12
 };
 
 // Packets structure. payload_len holds the WIRE value (in 4-byte units, Data
@@ -110,6 +118,15 @@ inline uint16_t PayloadBytes(const PacketFrame &frame)
     return (uint16_t)frame.payload_len * 4;
 }
 
+// Shared helper: pad `len` bytes already in `frame->payload` to 4, set payload_len and CRC.
+inline void PacketFinalize(PacketFrame *frame, uint16_t len)
+{
+    uint16_t padded = (uint16_t)((len + 3u) & ~3u);
+    if (padded > len) memset(frame->payload + len, 0, padded - len);
+    frame->payload_len = (uint8_t)(padded / 4);
+    frame->crc8 = Crc8(&frame->flags, (uint16_t)(11 + padded));
+}
+
 // Builds a packet frame with header fields filled and CRC8 computed over the header + payload.
 // The payload is zero-padded to a multiple of 4 and payload_len stores the padded size in
 // 4-byte units (Data Formats.md: Payload Length in multiples of 4, max 69 units).
@@ -123,23 +140,15 @@ inline void PacketConstruct(PacketFrame *frame,
 {
     if (len > MAX_PAYLOAD_SIZE)
         len = MAX_PAYLOAD_SIZE;
-    uint16_t padded = (uint16_t)((len + 3u) & ~3u);
-
     frame->flags = flags;
     frame->priority = DEFAULT_PRIORITY;
     frame->id_tgt = dest_addr;
     frame->id_src = DeviceStatus.ShortAddress;
     frame->srv_tgt = dest_srv;
     frame->srv_src = src_srv;
-
     if (payload && len > 0)
         memcpy(frame->payload, payload, len);
-    // The CRC covers the padded payload, so the padding must be well-defined.
-    if (padded > len)
-        memset(frame->payload + len, 0, padded - len);
-
-    frame->payload_len = (uint8_t)(padded / 4);
-    frame->crc8 = Crc8(&frame->flags, (uint16_t)(11 + padded));
+    PacketFinalize(frame, len);
 }
 
 // Finalises a response whose contents were packed directly into `reply.payload`
@@ -154,10 +163,7 @@ inline void FinalizeReply(PacketFrame &reply, const PacketFrame &req,
     reply.id_src = DeviceStatus.ShortAddress;
     reply.srv_tgt = req.srv_src;
     reply.srv_src = req.srv_tgt;
-    uint16_t padded = (uint16_t)((len + 3u) & ~3u);
-    if (padded > len) memset(reply.payload + len, 0, padded - len);
-    reply.payload_len = (uint8_t)(padded / 4);
-    reply.crc8 = Crc8(&reply.flags, (uint16_t)(11 + padded));
+    PacketFinalize(&reply, len);
 }
 
 // Writes the 4-byte fragmentation info (u16 current fragment + u16 total fragments)

@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Data Formats.md",
+                "file": "Services/Keyed Memory.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Data Formats"
+              "title": "Keyed Memory"
             }
           },
           {
@@ -204,20 +204,20 @@
   },
   "active": "7712251b840e352d",
   "lastOpenFiles": [
-    "Services/Router.md",
-    "Data Formats.md",
     "Services/App Interface.md",
+    "Devices.md",
+    "Data Formats.md",
+    "Services/Keyed Memory.md",
+    "Services/Dynamic Memory.md",
+    "Services/Router.md",
     "Services/Bootloader.md",
     "Services/CLI.md",
     "Services/Device service.md",
-    "Services/Dynamic Memory.md",
-    "Services/Keyed Memory.md",
     "Services/Log Handler.md",
     "Services/Script.md",
     "Services/Storage.md",
     "Services/System Memory.md",
     "General architecture.md",
-    "Devices.md",
     "RSBus.md",
     "RealHW.md",
     "Issues.md",

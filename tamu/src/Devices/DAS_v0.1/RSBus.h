@@ -30,7 +30,6 @@ extern "C" {
                 rx_buffer[head] = data;
                 head = next_head;
             }
-            // Optional: Handle overflow here if needed
         }
 
         // Clear Error Flags (ORE/FE/NE are cleared by reading STATR followed by DATAR;
@@ -46,10 +45,12 @@ bool UART_Available() {
     return (head != tail);
 }
 
-// Function to read one byte from the buffer
+// Function to read one byte from the buffer (tail update guarded against ISR race)
 uint8_t UART_ReadByte() {
+    __disable_irq();
     uint8_t data = rx_buffer[tail];
     tail = (tail + 1) % BUFFER_SIZE;
+    __enable_irq();
     return data;
 }
 
@@ -101,7 +102,8 @@ void SetupRS485()
 // Microsecond timestamp from the SysTick counter (32-bit math, no 64-bit division helper).
 static uint32_t RS485_Micros()
 {
-    return SysTick->CNT / (SystemCoreClock / 1000000);
+    const uint32_t cycles_per_us = SystemCoreClock / 1000000;
+    return SysTick->CNT / cycles_per_us;
 }
 
 // Wait for the line to be silent for 8 bytes + a random 0-7 byte backoff.

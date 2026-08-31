@@ -1,4 +1,8 @@
+@Tags(['ble'])
+library;
+
 import 'package:flutter/foundation.dart';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/connection.dart';
@@ -8,6 +12,8 @@ import 'package:tamuapp/core/diagnostics.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+
+  final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
 
   test('ble ping x10', () async {
     final mgr = ConnectionManager.instance;
@@ -71,5 +77,5 @@ void main() {
         List.generate(8, (_) => db.pingCore().catchError((e) => false)));
     // ignore: avoid_print
     print('[B] concurrent 8 pings: ok=${concurrent.where((x) => x).length}/8');
-  }, timeout: const Timeout(Duration(minutes: 2)));
+  }, timeout: const Timeout(Duration(minutes: 2)), skip: skipReason);
 }

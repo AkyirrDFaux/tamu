@@ -90,24 +90,29 @@ class _ScriptPageState extends State<ScriptPage> with AutoRefreshMixin<ScriptPag
   /// and output/variable previews stay current without opening the editor).
   Future<void> _pollExpanded() async {
     if (_polling || _refreshing || !ConnectionManager.instance.isConnected) return;
-    if (_expanded.isEmpty) return;
+    if (_expanded.isEmpty || _entries == null) return;
     _polling = true;
     try {
       for (final id in _expanded.toList()) {
+        final entry = _entries!.where((e) => e.id == id).firstOrNull;
+        if (entry == null) continue;
         final state = await _client.readState(id);
         final inputs = <int, ({BlockMeta meta, List<int> value})>{};
         final outputs = <int, ({BlockMeta meta, List<int> value})>{};
         final vars = <int, ({BlockMeta meta, List<int> value})>{};
         if (state != null && state != ScriptStateCode.stopped) {
-          for (var i = 0; i < (_liveInputs[id]?.length ?? 0); i++) {
+          final nInputs = entry.file?.inputCount ?? 0;
+          final nOutputs = entry.file?.outputCount ?? 0;
+          final nVars = entry.file?.variableCount ?? 0;
+          for (var i = 0; i < nInputs; i++) {
             final v = await _client.readInput(id, i);
             if (v != null) inputs[i] = v;
           }
-          for (var i = 0; i < (_liveOutputs[id]?.length ?? 0); i++) {
+          for (var i = 0; i < nOutputs; i++) {
             final v = await _client.readOutput(id, i);
             if (v != null) outputs[i] = v;
           }
-          for (var i = 0; i < (_liveVars[id]?.length ?? 0); i++) {
+          for (var i = 0; i < nVars; i++) {
             final v = await _client.readVariable(id, i);
             if (v != null) vars[i] = v;
           }

@@ -1,3 +1,6 @@
+@Tags(['hil'])
+library;
+
 import 'package:flutter/foundation.dart';
 import 'dart:io';
 
@@ -14,8 +17,9 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   debugDefaultTargetPlatformOverride = TargetPlatform.linux;
 
+  final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
+
   test('keyed/dynmem client probe', () async {
-    if (Platform.environment['TAMU_HIL'] == null) return;
     final mgr = ConnectionManager.instance;
     await mgr.setAutoRefresh(false);
     final port = Platform.environment['TAMU_HIL']!;
@@ -60,9 +64,9 @@ void main() {
     // ignore: avoid_print
     print('[K] readDict: ${dict == null ? "NULL" : "keys=${dict.keys} meta=${dict.meta.flagsAndType}"}');
     final w = await keyed.writeKeyValue(
-        fresh, 0, 7, BlockMeta(flagsAndType: DataType.number.value, key: 7), numberToBytes(1.5));
+        fresh, 0, 7, BlockMeta(flagsAndType: DataType.number.value, size: 4), numberToBytes(1.5));
     // ignore: avoid_print
-    print('[K] writeKeyValue=${w != null ? numberFromBytes(w) : "NULL"}');
+    print('[K] writeKeyValue=${w != null && w.isNotEmpty ? numberFromBytes(w) : "NULL"}');
     final entry = await keyed.readEntry(fresh, 0, 7);
     // ignore: avoid_print
     print('[K] readEntry: ${entry == null ? "NULL" : numberFromBytes(entry.value)}');
@@ -238,12 +242,6 @@ void main() {
     print('[K] add key9 after delete: ok=${dictType != null} '
         'keys=${d0d == null ? "NULL" : d0d.keys}');
 
-    // ---- CID 7 batched dict read (one round trip for all entries) ----
-    final allEntries = await keyed.readAllDictEntries(kprobe, 0);
-    // ignore: avoid_print
-    print('[K] batched dict0: '
-        '${allEntries?.map((e) => "k${e.key}:${dataTypeLabel(e.meta.dataType)}").toList()}');
-
     // ---- keyed delete via CID 1 (key level) ----
     final delKeyCid1 = await keyed.delete(block: kprobe.index, dict: 1, key: 3);
     final d1c = await keyed.readDict(kprobe, 1);
@@ -322,7 +320,7 @@ void main() {
       await dyn.delete(block: b.index);
     }
     await dyn.save();
-  }, timeout: const Timeout(Duration(minutes: 3)));
+  }, timeout: const Timeout(Duration(minutes: 3)), skip: skipReason);
 }
 
 String formatProbe(DataType type, List<int> bytes) {

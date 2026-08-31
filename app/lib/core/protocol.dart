@@ -22,17 +22,20 @@ const int defaultPriority = 128;
 /// proxies the app), so this value is inert - kept only as a safe default.
 const int appSourceId = 0xFFFE;
 
-/// Service types (Docs/General architecture.md, matches the firmware enum).
+/// Service types (Docs/Service ID table.md, matches the firmware enum).
 enum ServiceType {
+  bootloader(0x00),
   device(0x01),
   logHandler(0x02),
-  storage(0x03),
-  systemMemory(0x04),
-  dynamicMemory(0x05),
-  keyedMemory(0x06),
-  script(0x07),
-  app(0x08),
-  cli(0x09);
+  storage(0x04),
+  systemMemory(0x05),
+  dynamicMemory(0x06),
+  keyedMemory(0x07),
+  script(0x08),
+  scriptInstructions(0x09),
+  router(0x10),
+  app(0x11),
+  cli(0x12);
 
   final int value;
   const ServiceType(this.value);
@@ -101,6 +104,8 @@ class PacketFrame {
   /// Serialises the frame including the CRC8 header byte. The payload is padded to a
   /// multiple of 4 and PayloadLen carries the padded size in 4-byte units.
   Uint8List toBytes() {
+    assert(payload.length <= maxPayloadSize,
+        'payload ${payload.length} exceeds max $maxPayloadSize');
     final padded = (payload.length + 3) & ~3;
     final bytes = ByteData(12 + padded);
     bytes.setUint8(0, 0); // CRC placeholder, patched below
@@ -186,6 +191,11 @@ class PacketStreamParser {
       if (remaining < 12) break;
       final units = _buffer[offset + 3];
       final len = units * 4;
+      if (len > maxPayloadSize) {
+        // Corrupt length (would stall waiting for ~1kB that will never arrive) — resync.
+        offset++;
+        continue;
+      }
       if (remaining < 12 + len) break;
       final PacketFrame frame;
       try {

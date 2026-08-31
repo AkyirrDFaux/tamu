@@ -1,3 +1,5 @@
+#pragma once
+
 #include "ch32v00x.h"
 #include "debug.h"
 
@@ -73,6 +75,9 @@ int main(void)
     PinHigh(LEDR);
 
     DeviceStatus.ShortAddress = 0;
+
+    // Seed PRNG with SysTick counter (unique per power-on) for CSMA backoff randomisation.
+    SeedRand(SysTick->CNT);
 
     SetupRS485();
     Measuring_Init();

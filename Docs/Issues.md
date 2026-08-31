@@ -4,6 +4,20 @@ Status of items from the docs-vs-implementation audit and follow-up work.
 
 ## Resolved (code)
 
+### Service ID table alignment + FRAG fragment cap (2026-08-31)
+
+- **Service IDs updated to match Docs/Service ID table.md**: the `ServiceType` enum in
+  `Packet.h` and `app/lib/core/protocol.dart` now matches the documented values exactly:
+  Bootloader=0, Device=1, LogHandler=2, Storage=4, SystemMemory=5, DynamicMemory=6,
+  KeyedMemory=7, Script=8, ScriptInstructions=9, Router=16, App=17, CLI=18. The CLI
+  `ParseService` helper was updated to accept the new numeric values (0x05/0x06/0x07).
+  All verified paths (testsuite 98/98, HIL, app discovery) use the new numbering.
+- **FRAG fragment actual payload capped at 256 B per spec**: added `MAX_FRAG_CONTENT_SIZE = 256`
+  constant; Storage (CID 0/6/7) and Script (CID 15/16) read/write paths now use this
+  instead of `MAX_PAYLOAD_SIZE - 4` (272 B) or `MAX_PAYLOAD_SIZE - 12` (264 B), eliminating
+  a read/write offset mismatch for large files/scripts. Both firmware builds warning-free;
+  testsuite 98/98, HIL 8/8 + 3/3 green.
+
 ### Payload re-sized to the 288-B frame; DAS runs the full payload + RS-485 large-frame loss (2026-08-31)
 
 - **Payload max reduced per the updated Data Formats.md**: Information is now 5 units = 20 B
@@ -1218,6 +1232,40 @@ Script, App Interface, Router.
   resulting physical units vs the LSM6DS3-family datasheet sensitivities deserve a calibration
   pass against a known reference.
 
+## Open (docs-vs-code audit, 2026-08-31)
+
+### Doc misalignments (reported, not yet fixed — Docs are off-limits to code sessions)
+
+- **Data Formats.md line 30**: the last row in the addressing table reads `SRC | SRC` but the
+  actual protocol field is **SRV** (service type, 8-bit service + 8-bit custom ID). The doc's
+  own line 43 defines "SRV - 16bit (8bit service type + 8bit custom identifier)" but the
+  table uses "SRC" for this field. Fix: rename line 30 `SRC` to `SRV`.
+- **App Interface.md line 20**: the BLE packet table says `(MTU - 2) bytes max` but the real
+  overhead is 3 (ATT header) + 2 (length prefix) = 5 bytes, leaving **MTU - 5** bytes per
+  notification. The code (`transport.dart:88-91`) confirms this: `maxChunk = mtu - 3 - 2`.
+  The doc's own line 24 says this correctly. Fix: line 20 should read
+  `(MTU - 5) bytes max`.
+- **Devices.md line 16**: "TODO (Script)" is stale — scripts are fully implemented (firmware
+  `Core/Functions/Script.h`, app `script_client.dart` + `script_editor_page.dart`). Fix:
+  replace with "Scripts".
+
+### Code fixes applied this session
+
+- **Keyed Memory CID 7 removed (batched dictionary read)**: this CID was implemented in
+  both firmware (`KeyedMemory.h` case 7) and app (`keyedmem.dart` readAllDictEntries) but
+  was never specified in `Docs/Services/Keyed Memory.md`. Removed from: firmware handler,
+  app client method, UI fallback path in `keyedmem_page.dart`, and all test call sites
+  (`mem_probe_test`, `keyed_crash_test`, `keyed_refresh_test`). Dictionary entries are now
+  loaded via per-key CID 2 reads only.
+- **`script_editor_page.dart`**: removing an output or variable by index no longer silently
+  breaks instruction references. The delete button is now disabled (with a tooltip) when any
+  instruction uses that output/variable index as a destination or operand. New helper
+  `_outputOrVarReferenced` scans all lines for references.
+- **`connection_page.dart`**: replaced hardcoded `byId(1)` with `byId(coreId)` (the named
+  constant from `device_db.dart`) for clarity and consistency.
+- **Documentation fixes**: see the issues above (reported here per AGENTS.md; not applied to
+  the doc files themselves).
+
 ## On hold
 - ~~LED display block Layout File Name + Refresh Rate fields~~ **IMPLEMENTED** (2026-08-23,
   see the docs-vs-code audit implementation round). Nothing on hold.
@@ -1475,9 +1523,9 @@ Full comparison of `Docs/{Data Formats,General architecture,RSBus}.md`, `Service
   (nodes filter by SN); software-version reply has no documented encoding; SNDB Read
   not-found = empty response (undocumented); core address hard-coded to 1 (undocumented
   constant alongside the capability bit).
-- Wire constants worth pinning in docs: service-type numbers (Device 0x01 ... CLI 0x09),
-  RSBus start/sync byte 0xAA, log notifications are TYPE=0 frames without REQACK, CLI
-  responses ride `srv_src = CLI` with CIDs 0-5 (undocumented wire persona of the console).
+- Wire constants worth pinning in docs: RSBus start/sync byte 0xAA, log notifications are
+  TYPE=0 frames without REQACK, CLI responses ride `srv_src = CLI` with CIDs 0-5 (undocumented
+  wire persona of the console).
 - Dynamic/Keyed/System Memory docs: block-name width self-contradiction ("16char/12byte");
   the backup-record table does not match the actual serialized backup layout (count-prefixed
   TLV-style, not `BlockIndex|BlockMeta|Values` rows) - clarify whether that table was meant

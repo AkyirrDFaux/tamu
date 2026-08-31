@@ -339,9 +339,25 @@ inline Number max(Number A, Number B) { return (A.Value > B.Value) ? A : B; }
 // Internal helper to get a raw pseudo-random 32-bit integer. The state is a
 // function-local static so every translation unit shares one sequence (a
 // namespace-scope static in a header would give each TU its own RNG).
+// PRNG state shared by SeedRand() and RawRand(). All TUs that include this
+// header share the same object because it's declared `inline` (C++17).
+inline uint32_t &RandState()
+{
+    static uint32_t state = 1;
+    return state;
+}
+
+// Seed the PRNG from a platform entropy source. Call once at boot before any
+// RawRand() usage. The seed is XOR'd into the state so calling multiple times
+// (e.g. from different subsystems) mixes entropy rather than resetting it.
+inline void SeedRand(uint32_t seed)
+{
+    RandState() ^= seed;
+}
+
 inline uint32_t RawRand()
 {
-    static uint32_t next_rand = 1; // Seed this with AnalogRead or CurrentTime
+    uint32_t &next_rand = RandState();
     next_rand = next_rand * 1103515245 + 12345;
     return next_rand;
 }

@@ -108,14 +108,13 @@ class DynamicMemoryClient extends MemoryClientBase {
   Future<List<int>?> writeField(
       DynBlock block, DynField field, List<int> newValue,
       {DataType? newType}) async {
-    var meta = field.meta;
-    if (newType != null) {
-      meta = BlockMeta(
-        flagsAndType: (meta.flags & FieldFlags.mask) | newType.value,
-        key: meta.key,
-        size: newValue.length,
-      );
-    }
+    var meta = BlockMeta(
+      flagsAndType: newType != null
+          ? (field.meta.flags & FieldFlags.mask) | newType.value
+          : field.meta.flagsAndType,
+      key: field.meta.key,
+      size: newValue.length,
+    );
     return writeValue(BlockIndex(block: block.index, field: field.index), meta, newValue);
   }
 
@@ -163,9 +162,14 @@ class DynamicMemoryClient extends MemoryClientBase {
   /// type and flags; `value` the initial bytes.
   Future<List<int>?> appendEntry(DynBlock block, BlockMeta meta, List<int> value,
       {int? index}) async {
+    final sizedMeta = BlockMeta(
+      flagsAndType: meta.flagsAndType,
+      key: meta.key,
+      size: value.length,
+    );
     return writeValue(
         BlockIndex(block: block.index, field: index ?? block.fieldCount),
-        meta,
+        sizedMeta,
         value,
         timeout: const Duration(seconds: 4));
   }

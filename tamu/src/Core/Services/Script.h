@@ -145,7 +145,7 @@ static bool ScriptTerminate(uint8_t id)
 static uint8_t ScriptState(uint8_t id)
 {
     ScriptInstance *inst = ScriptFindInstance(id);
-    return inst ? inst->state : SCRIPT_STOPPED;
+    return inst ? inst->state : (uint8_t)SCRIPT_STOPPED;
 }
 
 // Reads a script file's fixed header (32 bytes).
@@ -370,7 +370,7 @@ void HandleScriptService(const PacketFrame &frame)
                 tmp.Release();
                 break;
             }
-uint8_t payload[MAX_PAYLOAD_SIZE];
+            uint8_t payload[MAX_PAYLOAD_SIZE];
             if (4 + vlen > sizeof(payload)) { RespondStatus(frame, false); break; }
             memcpy(payload, &meta, 4);
             if (vlen) memcpy(payload + 4, val, vlen);
@@ -601,9 +601,9 @@ uint8_t payload[MAX_PAYLOAD_SIZE];
                 break;
             }
             uint32_t total_content = sz;
-            // Chunk size = payload capacity minus [frag info + script id]
-            // (MAX_PAYLOAD_SIZE; every node builds with the full value).
-            uint16_t contentCap = (uint16_t)(MAX_PAYLOAD_SIZE - 4 - 1);
+            // Chunk size = max actual payload per FRAG fragment (Data Formats.md: 256 bytes).
+            // Fragment 0 includes the 1-byte script ID in the Information section.
+            uint16_t contentCap = MAX_FRAG_CONTENT_SIZE;
             uint16_t total_frags = (uint16_t)((total_content + contentCap - 1) / contentCap);
             if (total_frags == 0) total_frags = 1; // empty file: single fragment
 
@@ -633,8 +633,8 @@ uint8_t payload[MAX_PAYLOAD_SIZE];
         {
             // Request stream: fragment 0 = [frag info][script id (1)][contents], later
             // fragments = [frag info][contents]. The whole script is rewritten on each
-            // save: fragment 0 deletes any existing file and creates it at total*256,
-            // contents are written at offset current*256, and the last fragment shrinks
+            // save: fragment 0 deletes any existing file and creates it at total*MAX_FRAG_CONTENT_SIZE,
+            // contents are written at offset current*MAX_FRAG_CONTENT_SIZE, and the last fragment shrinks
             // the file to the real (4-byte padded) content length. Each acknowledged
             // fragment is answered with the last sequential fragmentation index written.
             if (!(frame.flags & FLAG_FRAG)) break;
@@ -655,7 +655,7 @@ uint8_t payload[MAX_PAYLOAD_SIZE];
                 ScriptFileIdToName(id, fname);
                 if (Storage.FileExists(fname) != 0xFFFFFFFF)
                     Storage.DeleteFile(fname);
-                uint32_t reserved = (uint32_t)frag.total * 256;
+                uint32_t reserved = (uint32_t)frag.total * MAX_FRAG_CONTENT_SIZE;
                 if (!Storage.CreateFile(fname, reserved))
                 {
                     DeviceLog("SCRIPT", "write script %u: create %lu B failed", (unsigned)id,
@@ -685,7 +685,7 @@ uint8_t payload[MAX_PAYLOAD_SIZE];
                 // ahead of it is a gap (respond with the last written index unchanged).
                 if (frag.current == (uint16_t)(s_write_script_seq + 1))
                 {
-                    uint32_t write_off = (uint32_t)frag.current * 256;
+                    uint32_t write_off = (uint32_t)frag.current * MAX_FRAG_CONTENT_SIZE;
                     uint32_t room = (write_off < file_size) ? (file_size - write_off) : 0;
                     uint32_t chunk = content_len;
                     if (chunk > room) chunk = room;
@@ -698,7 +698,7 @@ uint8_t payload[MAX_PAYLOAD_SIZE];
                         // (the last fragment's wire content is padded to 4 bytes).
                         if (frag.total > 0 && frag.current == frag.total - 1)
                         {
-                            uint32_t real_size = (uint32_t)(frag.total - 1) * 256 + content_len;
+                            uint32_t real_size = (uint32_t)(frag.total - 1) * MAX_FRAG_CONTENT_SIZE + content_len;
                             if (real_size > file_size) real_size = file_size;
                             Storage.ResizeFile(fname, real_size);
                         }

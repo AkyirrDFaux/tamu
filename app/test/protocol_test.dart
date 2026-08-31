@@ -29,8 +29,8 @@ void main() {
       expect(parsed.payload, [1, 2, 3, 0], reason: 'wire payload is padded to 4');
     });
 
-    test('a 292-byte payload fits (max payload size)', () {
-      final payload = List<int>.generate(292, (i) => i & 0xFF);
+    test('a 276-byte payload fits (max payload size)', () {
+      final payload = List<int>.generate(276, (i) => i & 0xFF);
       final frame = PacketFrame.single(
         targetId: 1,
         srvTarget: makeService(ServiceType.storage, 6),
@@ -39,7 +39,7 @@ void main() {
         payload: payload,
       );
       final bytes = frame.toBytes();
-      expect(bytes[3], 73, reason: '292 bytes / 4 = 73 units');
+      expect(bytes[3], 69, reason: '276 bytes / 4 = 69 units');
       final parsed = PacketFrame.tryParse(bytes, 0)!;
       expect(parsed.payload, payload);
     });

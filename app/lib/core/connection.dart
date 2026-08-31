@@ -452,7 +452,7 @@ class ConnectionManager extends ChangeNotifier {
     final frame = PacketFrame.single(
       targetId: targetId,
       srvTarget: makeService(service, functionCid),
-      // The app's identity is the App Interface service type (0x08); the CID byte
+      // The app's identity is the App Interface service type (0x11); the CID byte
       // carries our transaction ID. The device routes replies back purely by this
       // service type (it rewrites id_src as a proxy, so no app address is needed).
       srvSource: makeService(ServiceType.app, txId),

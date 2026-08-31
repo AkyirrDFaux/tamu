@@ -47,6 +47,19 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
   /// One entry per instruction line; each line is its symbols WITHOUT the EndLine.
   List<List<ScriptSymbol>> _lines = [];
 
+  /// Returns true if any instruction references the given output index as either
+  /// an output destination or an operand.
+  bool _outputOrVarReferenced(ScriptSymbolType type, int index) {
+    for (final line in _lines) {
+      if (line.isEmpty) continue;
+      if (line.first.type == type && line.first.value == index) return true;
+      for (var i = 1; i < line.length; i++) {
+        if (line[i].type == type && line[i].value == index) return true;
+      }
+    }
+    return false;
+  }
+
   // Live-run state polled while the editor is open (state, current instruction and
   // the real input/variable/output values).
   Timer? _liveTimer;
@@ -762,7 +775,12 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
             onPressed: () => _renameName(_outputNames, index)),
         IconButton(
             icon: const Icon(Icons.delete_outline, size: 18),
-            onPressed: () => setState(() => _outputNames.removeAt(index))),
+            tooltip: _outputOrVarReferenced(ScriptSymbolType.output, index)
+                ? 'Remove instruction references first'
+                : 'Remove output',
+            onPressed: _outputOrVarReferenced(ScriptSymbolType.output, index)
+                ? null
+                : () => setState(() => _outputNames.removeAt(index))),
       ]),
     );
   }
@@ -793,7 +811,12 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
             onPressed: () => _renameName(_variableNames, index)),
         IconButton(
             icon: const Icon(Icons.delete_outline, size: 18),
-            onPressed: () => setState(() => _variableNames.removeAt(index))),
+            tooltip: _outputOrVarReferenced(ScriptSymbolType.variable, index)
+                ? 'Remove instruction references first'
+                : 'Remove variable',
+            onPressed: _outputOrVarReferenced(ScriptSymbolType.variable, index)
+                ? null
+                : () => setState(() => _variableNames.removeAt(index))),
       ]),
     );
   }
@@ -825,6 +848,7 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
         ],
       ),
     );
+    controller.dispose();
     if (result == null || !mounted) return;
     setState(() => list.add(result.trim()));
   }
@@ -844,6 +868,7 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
         ],
       ),
     );
+    controller.dispose();
     if (result == null || !mounted) return;
     setState(() => list[index] = result.trim());
   }

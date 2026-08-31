@@ -402,7 +402,7 @@ Future<List<int>?> _editVector(
               child: TextField(
                 controller: controllers[i],
                 keyboardType: TextInputType.number,
-                decoration: InputDecoration(labelText: 'XYZ'[i]),
+                decoration: InputDecoration(labelText: i < 3 ? 'XYZ'[i] : '$i'),
               ),
             ),
         ],

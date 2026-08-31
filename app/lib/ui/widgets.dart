@@ -89,7 +89,7 @@ Future<(String, BlockType, int?)?> promptBlockNameAndType(
   final nameController = TextEditingController(text: initialName);
   final indexController = TextEditingController();
   BlockType selected = initialType ?? BlockType.undefined;
-  return await showDialog<(String, BlockType, int?)>(
+  final result = await showDialog<(String, BlockType, int?)>(
     context: context,
     builder: (context) => StatefulBuilder(
       builder: (context, setState) => AlertDialog(
@@ -142,6 +142,9 @@ Future<(String, BlockType, int?)?> promptBlockNameAndType(
       ),
     ),
   );
+  nameController.dispose();
+  indexController.dispose();
+  return result;
 }
 
 /// Tracks which shell tab is currently visible. Pages hosting periodic work

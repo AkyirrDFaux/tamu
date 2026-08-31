@@ -215,6 +215,7 @@ class _DynamicMemoryPageState extends State<DynamicMemoryPage>
         ],
       ),
     );
+    controller.dispose();
     return choice;
   }
 

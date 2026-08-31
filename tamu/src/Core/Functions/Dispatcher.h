@@ -32,7 +32,7 @@ uint32_t LogCount = 0;
 
 // CLI response handlers are device-specific (implemented per device, e.g. Devices/Tamu_v2.0A/CLI/Handler.h).
 // The CLI service is only available on ESP32 devices
-#ifdef ESP32
+#ifdef TYPE_CORE
 void HandleCLIService(const PacketFrame &frame);
 void HandleCLI_SNDBResponse(const PacketFrame &frame);
 void HandleCLI_StatusResponse(const PacketFrame &frame);
@@ -133,6 +133,11 @@ void DispatchPacket(const PacketFrame &frame)
                 break;
 #endif
 
+            case ServiceType::Bootloader:
+            case ServiceType::ScriptInstructions:
+            case ServiceType::Router:
+                // Documented but not yet implemented (bootloader later session, router TODO) — silently drop.
+                break;
             default:
                 DeviceLog("DISP", "unhandled service %u CID %u", (unsigned)target_srv, (unsigned)cid);
                 ReportLog(MakeLog(false, (uint16_t)target_srv, cid, 0));

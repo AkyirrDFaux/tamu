@@ -42,11 +42,11 @@ void HandleStorageService(const PacketFrame &frame)
 
             // Stream every entry as a FRAG stream (Docs/Services/Storage.md:
             // "Fragmentation, File table entries"). Each fragment carries up to
-            // MAX_PAYLOAD_SIZE - 4 bytes of 16-byte entries; the fragmentation info
-            // is the first 4 payload bytes. `sent` counts what was actually read so
-            // the stream always terminates with STOP even if a late entry read fails.
+            // MAX_FRAG_CONTENT_SIZE (256) bytes of 16-byte entries; the fragmentation
+            // info is the first 4 payload bytes. `sent` counts what was actually read
+            // so the stream always terminates with STOP even if a late entry read fails.
             uint32_t total = (uint32_t)active_count * sizeof(FileEntry);
-            uint16_t frag_content_cap = (uint16_t)(MAX_PAYLOAD_SIZE - 4);
+            uint16_t frag_content_cap = MAX_FRAG_CONTENT_SIZE;
             uint16_t total_frags = (uint16_t)((total + frag_content_cap - 1) / frag_content_cap);
             uint8_t sent = 0;
             for (uint16_t f = 0; f < total_frags && sent < active_count; f++) {
@@ -54,7 +54,7 @@ void HandleStorageService(const PacketFrame &frame)
                 if (f == 0) flags |= FLAG_START;
                 WriteFragInfo(reply.payload, f, total_frags);
                 uint16_t off = 4;
-                while (off + sizeof(FileEntry) <= 4 + frag_content_cap && sent < active_count) {
+                while (off + sizeof(FileEntry) <= (uint16_t)(4 + frag_content_cap) && sent < active_count) {
                     FileEntry entry;
                     if (!Storage.ReadFileEntry(sent, &entry))
                         break; // table unreadable: stop; STOP still set below
@@ -81,7 +81,7 @@ void HandleStorageService(const PacketFrame &frame)
         case 2: { // Create File (Request: Name (8 bytes) + Size (4 bytes))
             if (PayloadBytes(frame) >= 12) {
                 const char *name = reinterpret_cast<const char *>(frame.payload);
-                uint32_t size = *reinterpret_cast<const uint32_t *>(frame.payload + 8);
+                uint32_t size; memcpy(&size, frame.payload + 8, sizeof(size));
 
                 bool ok = Storage.CreateFile(name, size);
                 if (!ok) DeviceLog("STORAGE", "create '%.8s' size %u failed", name, (unsigned)size);
@@ -98,10 +98,15 @@ void HandleStorageService(const PacketFrame &frame)
         case 3: { // Delete File (Request: Name (8 bytes))
             if (PayloadBytes(frame) >= 8) {
                 const char *name = reinterpret_cast<const char *>(frame.payload);
-                Storage.DeleteFile(name);
-
+                bool ok = Storage.DeleteFile(name);
+                // DeleteFile returns false only for the protected ".TABLE" entry.
+                // Always answer with a status byte (consistent with Create/Resize/Rename).
+                // The CLI now checks the byte; the app's StorageClient still treats any
+                // reply (empty or status) as success for already-gone files, but a 0
+                // status correctly surfaces table-protection failures.
+                uint8_t status = ok ? 0x01 : 0x00;
                 PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
-                                 FLAG_TYPE | FLAG_START | FLAG_STOP, nullptr, 0);
+                                 FLAG_TYPE | FLAG_START | FLAG_STOP, &status, 1);
                 DispatchPacket(reply);
             }
             break;
@@ -110,7 +115,7 @@ void HandleStorageService(const PacketFrame &frame)
         case 4: { // Resize File (Request: Name (8 bytes) + New Size (4 bytes))
             if (PayloadBytes(frame) >= 12) {
                 const char *name = reinterpret_cast<const char *>(frame.payload);
-                uint32_t new_size = *reinterpret_cast<const uint32_t *>(frame.payload + 8);
+                uint32_t new_size; memcpy(&new_size, frame.payload + 8, sizeof(new_size));
 
                 bool ok = Storage.ResizeFile(name, new_size);
                 if (!ok) DeviceLog("STORAGE", "resize '%.8s' -> %u failed", name, (unsigned)new_size);
@@ -149,10 +154,10 @@ void HandleStorageService(const PacketFrame &frame)
                 const char *name = reinterpret_cast<const char *>(frame.payload);
                 uint32_t file_offset, file_size;
                 if (Storage.GetFileInfo(name, &file_offset, &file_size)) {
-                    // Chunk size = the payload capacity minus [frag info + name]
-                    // (MAX_PAYLOAD_SIZE; every node builds with the full value).
+                    // Chunk size = max actual payload per fragment (Data Formats.md: 256 bytes).
+                    // Fragment 0 includes the 8-byte name in the Information section.
                     uint32_t total_content = file_size;
-                    uint16_t contentCap = (uint16_t)(MAX_PAYLOAD_SIZE - 4 - 8);
+                    uint16_t contentCap = MAX_FRAG_CONTENT_SIZE;
                     uint16_t total_frags = (uint16_t)((total_content + contentCap - 1) / contentCap);
                     if (total_frags == 0) total_frags = 1; // empty file: single fragment
 
@@ -188,8 +193,8 @@ void HandleStorageService(const PacketFrame &frame)
         case 7: { // Write File (stream: Name, Fragmentation, File contents)
             // Request stream: fragment 0 = [frag info][name (8)][contents], later
             // fragments = [frag info][contents]. The app creates the file first (CID 2,
-            // with the exact size); contents are written at offset current*256, clamped
-            // to the file size. Each acknowledged fragment is answered with the last
+            // with the exact size); contents are written at offset current*MAX_FRAG_CONTENT_SIZE,
+            // clamped to the file size. Each acknowledged fragment is answered with the last
             // sequential fragmentation index written (u16) so the app can resume after
             // a lost fragment.
             if (!(frame.flags & FLAG_FRAG)) break;
@@ -220,7 +225,7 @@ void HandleStorageService(const PacketFrame &frame)
                 // Write contiguously: a resend of the last index is idempotent, anything
                 // ahead of it is a gap (respond with the last written index unchanged).
                 if (frag.current == (uint16_t)(s_write_seq + 1)) {
-                    uint32_t write_off = (uint32_t)frag.current * 256;
+                    uint32_t write_off = (uint32_t)frag.current * MAX_FRAG_CONTENT_SIZE;
                     uint32_t room = (write_off < file_size) ? (file_size - write_off) : 0;
                     uint32_t chunk = content_len;
                     if (chunk > room) chunk = room;

@@ -26,7 +26,7 @@
 |         | Payload Length | uint8                | in multiples of 4 bytes (for 32bit alignment), max 5+64, includes payload information                  |
 | ID      | TGT            | uint16               |                                                                                                        |
 |         | SRC            | uint16               |                                                                                                        |
-| SRC     | TGT            | uint16               |                                                                                                        |
+| SRV     | TGT            | uint16               |                                                                                                        |
 |         | SRC            | uint16               |                                                                                                        |
 | Payload | Information    | max 5 * 4 = 20 bytes | Flexible size, can be ommited, service specific. Example: fragmentation, indexing, metadata, filename. |
 |         | Actual payload | max 256 bytes        | Flexible size, service specific.                                                                       |

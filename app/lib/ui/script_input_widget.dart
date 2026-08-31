@@ -41,6 +41,10 @@ class _ScriptInputControlState extends State<ScriptInputControl> {
   /// or slider does not "return" until the device confirms.
   List<int>? _pending;
 
+  /// Controller for the text input tile. Created once and synced in didUpdateWidget
+  /// only when the value changes from the device side (not from user typing).
+  late TextEditingController _textController;
+
   List<int> get _current =>
       _pending ?? widget.liveValue ?? widget.input.defaultValue;
 
@@ -50,6 +54,18 @@ class _ScriptInputControlState extends State<ScriptInputControl> {
       widget.input.style == InputStyle.automatic
           ? InputStyle.forType(_type)
           : widget.input.style;
+
+  @override
+  void initState() {
+    super.initState();
+    _textController = TextEditingController(text: String.fromCharCodes(_current));
+  }
+
+  @override
+  void dispose() {
+    _textController.dispose();
+    super.dispose();
+  }
 
   void _write(List<int> value) {
     setState(() => _pending = value);
@@ -73,6 +89,14 @@ class _ScriptInputControlState extends State<ScriptInputControl> {
         setState(() => _pending = null); // the device echoed our value
       }
       // Otherwise keep the pending value - the device has not confirmed it yet.
+    }
+    // Sync the text controller when the value changes from the device side
+    // (not from user typing — _pending stays non-null while typing).
+    if (_pending == null) {
+      final newText = String.fromCharCodes(_current);
+      if (_textController.text != newText) {
+        _textController.text = newText;
+      }
     }
   }
 
@@ -193,15 +217,13 @@ class _ScriptInputControlState extends State<ScriptInputControl> {
   }
 
   Widget _textTile(BuildContext context, String label) {
-    final controller =
-        TextEditingController(text: String.fromCharCodes(_current));
     return ListTile(
       dense: true,
       contentPadding: EdgeInsets.zero,
       leading: const Icon(Icons.text_fields, size: 18, color: kOrange),
       title: Text(label, style: const TextStyle(fontSize: 13)),
       subtitle: TextField(
-        controller: controller,
+        controller: _textController,
         style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
         onSubmitted: (v) => _write(v.codeUnits),
       ),

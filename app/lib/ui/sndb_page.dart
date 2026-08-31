@@ -84,9 +84,11 @@ class _SndbPageState extends State<SndbPage>
         ],
       ),
     );
-    if (ok != true) return;
     final hex = snController.text.trim().toUpperCase();
     final id = int.tryParse(idController.text.trim());
+    snController.dispose();
+    idController.dispose();
+    if (ok != true) return;
     if (hex.length != 28 || int.tryParse(hex, radix: 16) == null) {
       _snack('Invalid serial number');
       return;

@@ -8,6 +8,7 @@
 /// TAMU_HIL=/dev/ttyACM0 flutter test test/hil_script_test.dart
 /// ```
 /// Skipped automatically when TAMU_HIL is not set.
+@Tags(['hil'])
 library;
 
 import 'dart:io';

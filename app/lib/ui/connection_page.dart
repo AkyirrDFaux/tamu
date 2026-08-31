@@ -178,9 +178,9 @@ class _ConnectionPageState extends State<ConnectionPage> {
                   leading: const Icon(Icons.link, color: kOrange),
                   // The device's REPORTED name (from the Device service), with
                   // the link as the subtitle - not two copies of the same text.
-                  title: Text(DeviceDatabase.instance.byId(1)?.name.isNotEmpty ==
+                  title: Text(DeviceDatabase.instance.byId(coreId)?.name.isNotEmpty ==
                               true
-                          ? DeviceDatabase.instance.byId(1)!.name
+                          ? DeviceDatabase.instance.byId(coreId)!.name
                           : _manager.connectedName ??
                               ''),
                   subtitle: Text(_manager.connectedName ?? 'Connected'),

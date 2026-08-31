@@ -1,3 +1,5 @@
+#pragma once
+
 #define LEDW GPIOD, GPIO_Pin_0
 #define LEDR GPIOA, GPIO_Pin_1
 
@@ -47,8 +49,6 @@ uint32_t Now(void) {
 void Sleep(uint32_t ms) {
     uint32_t start = Now();
     while ((Now() - start) < ms) {
-        // Optional: Add a __WFI() (Wait For Interrupt) 
-        // to save power while spinning if needed
     }
 }
 

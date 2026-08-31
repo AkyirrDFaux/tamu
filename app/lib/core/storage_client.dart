@@ -97,9 +97,9 @@ class StorageClient {
 
   Future<bool> deleteFile(String name) async {
     final reply = await _request(3, payload: padName(name));
-    // Delete replies carry an EMPTY payload on success (unlike create/resize,
-    // which return a status byte); null still means no answer at all.
-    return reply != null;
+    // The device always sends a status byte: 0x01 success, 0x00 failure
+    // (e.g. table self-entry protection). null means no answer at all.
+    return reply != null && reply.isNotEmpty && reply[0] != 0;
   }
 
   Future<bool> renameFile(String oldName, String newName) async {

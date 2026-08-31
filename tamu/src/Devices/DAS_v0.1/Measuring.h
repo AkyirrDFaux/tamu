@@ -43,7 +43,7 @@ static bool OnMeasFieldWrite(const StaticBlockDescriptor &block, uint16_t index,
         m->SamplingRate = v;
         return true;
 
-    case 1: // Filter Coefficient (Sensors.h weight semantics: 1/(1+f)) - any f >= 0 is
+    case 1: // Filter Coefficient (EMA weight semantics: 1/(1+f)) - any f >= 0 is
             // valid, larger values average more samples
         if (v.Value < 0) v.Value = 0;
         m->FilterCoeff = v;
@@ -241,12 +241,12 @@ static void Measuring_Update(uint8_t index, ResistiveMeasStruct *m, uint16_t raw
         break;
     }
 
-    case MeasNTC10K: // degC, Steinhart-Hart simplified for a 10k divider (Sensors.h)
+    case MeasNTC10K: // degC, Steinhart-Hart simplified for a 10k divider
     {
         if (in >= ADCRES) in = N(1022);
         if (in < N(1)) in = N(1);
         // in/(ADCRES - in) = R_sensor/R_ref; normalize to R_sensor/10k.
-        in = N(1) / (N(0.0034) + log((in / (ADCRES - in)) * (Rref_kohm[range] / N(10.0))) / N(3950)) - N(273.15);
+        in = N(1) / (N(0.003354) + log((in / (ADCRES - in)) * (Rref_kohm[range] / N(10.0))) / N(3950)) - N(273.15);
         break;
     }
 

@@ -1,3 +1,6 @@
+@Tags(['hil'])
+library;
+
 import 'package:flutter/foundation.dart';
 import 'dart:io';
 
@@ -12,8 +15,9 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   debugDefaultTargetPlatformOverride = TargetPlatform.linux;
 
+  final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
+
   test('keyed page refresh probe', () async {
-    if (Platform.environment['TAMU_HIL'] == null) return;
     final mgr = ConnectionManager.instance;
     await mgr.setAutoRefresh(false);
     final port = Platform.environment['TAMU_HIL']!;
@@ -72,23 +76,11 @@ void main() {
 
     for (final block in blocks) {
       for (var d = 0; d < block.dictCount; d++) {
-        // page flow: readDict then load entries
         final dict = await keyed.readDict(block, d);
-        final loaded = await keyed.readAllDictEntries(block, d);
-        final entryKeys = loaded?.map((e) => e.key).toList();
-        final visibleKeys = dict?.keys;
         // ignore: avoid_print
         print('[R] block ${block.index} dict $d: '
             'metaType=${dict == null ? "NULL" : dataTypeOf(dict)} '
-            'visible=$visibleKeys entries=$entryKeys');
-        if (loaded != null && visibleKeys != null) {
-          for (final k in visibleKeys) {
-            if (!loaded.any((e) => e.key == k)) {
-              // ignore: avoid_print
-              print('[R] MISSING entry for visible key $k');
-            }
-          }
-        }
+            'visible=${dict?.keys}');
       }
     }
 
@@ -108,7 +100,7 @@ void main() {
     await keyed.save();
     // ignore: avoid_print
     print('[R] done');
-  }, timeout: const Timeout(Duration(minutes: 3)));
+  }, timeout: const Timeout(Duration(minutes: 3)), skip: skipReason);
 }
 
 String dataTypeOf(KeyedDict d) =>

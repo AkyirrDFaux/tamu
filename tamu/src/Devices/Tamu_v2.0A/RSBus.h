@@ -63,19 +63,19 @@ static void RS485_WaitForSilence()
 
     for (;;)
     {
-        int len = 0;
-        uart_get_buffered_data_len(UART_NUM_1, (size_t *)&len);
+        size_t len = 0;
+        uart_get_buffered_data_len(UART_NUM_1, &len);
         if (len > 0)
         {
             // Bus activity: drain and restart the silence window
             uint8_t drain[32];
             while (len > 0)
             {
-                int chunk = len > (int)sizeof(drain) ? (int)sizeof(drain) : len;
+                size_t chunk = len > sizeof(drain) ? sizeof(drain) : len;
                 uart_read_bytes(UART_NUM_1, drain, chunk, 0);
                 len -= chunk;
-                int avail = 0;
-                uart_get_buffered_data_len(UART_NUM_1, (size_t *)&avail);
+                size_t avail = 0;
+                uart_get_buffered_data_len(UART_NUM_1, &avail);
                 if (avail == 0) break;
                 len = avail;
             }

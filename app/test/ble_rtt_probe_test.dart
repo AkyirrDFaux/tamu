@@ -1,3 +1,6 @@
+@Tags(['hil', 'ble'])
+library;
+
 import 'package:flutter/foundation.dart';
 import 'dart:io';
 
@@ -11,9 +14,10 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   debugDefaultTargetPlatformOverride = TargetPlatform.linux;
 
+  final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
+
   test('ping RTT probe', () async {
-    final mode = Platform.environment['TAMU_HIL'];
-    if (mode == null) return; // skip on CI machines without hardware
+    final mode = Platform.environment['TAMU_HIL']!;
 
     final mgr = ConnectionManager.instance;
     await mgr.setAutoRefresh(false);
@@ -66,5 +70,5 @@ void main() {
     print('[RTT] min=${rtts.first} median=${rtts[rtts.length ~/ 2]} '
         'max=${rtts.last} '
         'avg=${rtts.reduce((a, b) => a + b) ~/ rtts.length} ms');
-  }, timeout: const Timeout(Duration(minutes: 3)));
+  }, timeout: const Timeout(Duration(minutes: 3)), skip: skipReason);
 }

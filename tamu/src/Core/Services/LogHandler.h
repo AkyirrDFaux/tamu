@@ -99,7 +99,7 @@ void HandleLogHandler(const PacketFrame &frame)
 
     if (cid == 1) // GetLogs: stream every stored LogRecord entry
     {
-        uint8_t active = 0;
+        uint16_t active = 0;
         for (uint32_t i = 0; i < LogCount; i++)
             if (LogUsed[i])
                 active++;
@@ -119,7 +119,7 @@ void HandleLogHandler(const PacketFrame &frame)
         uint32_t total = (uint32_t)active * sizeof(LogRecord);
         uint16_t total_frags = (uint16_t)((total + 255) / 256);
         uint8_t buf[MAX_PAYLOAD_SIZE];
-        uint8_t sent = 0;
+        uint16_t sent = 0;
         uint32_t scan = 0;
         for (uint16_t f = 0; f < total_frags && sent < active; f++)
         {
@@ -147,17 +147,11 @@ void HandleLogHandler(const PacketFrame &frame)
         return;
     }
 
-    if (cid == 2) // ClearReadLogs: clear the `n` most recently received logs
+    if (cid == 2) // ClearReadLogs: clear the `n` OLDEST entries (lowest seq), per Log Handler.md
     {
-        uint32_t n = (PayloadBytes(frame) >= 4)
-                         ? *reinterpret_cast<const uint32_t *>(frame.payload)
-                         : 0;
-        // Clear the n entries with the HIGHEST sequence number (the newest). Slot order
-        // no longer tracks age once evictions/compaction have scrambled it, so selection
-        // goes by LogSeq.
-        // Clear the `n` OLDEST entries (lowest sequence number), per Docs/Services/Log
-        // Handler.md "ClearReadLogs: starting from oldest". Slot order no longer tracks
-        // age once evictions/compaction have scrambled it, so selection goes by LogSeq.
+        uint32_t n = 0;
+        if (PayloadBytes(frame) >= 4)
+            memcpy(&n, frame.payload, sizeof(n));
         while (n > 0)
         {
             int oldest = -1;

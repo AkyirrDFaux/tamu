@@ -69,7 +69,7 @@ class AppSettings extends ChangeNotifier {
     if (file == null) return;
     try {
       file.createSync(recursive: true);
-      file.writeAsStringSync(jsonEncode({
+      await file.writeAsString(jsonEncode({
         'autoConnect': autoConnect,
         'autoConnectDeviceId': autoConnectDeviceId,
         'notifyInApp': notifyInApp,

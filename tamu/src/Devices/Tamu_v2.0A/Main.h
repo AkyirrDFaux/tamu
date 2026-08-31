@@ -1,4 +1,5 @@
 #include "esp_log.h"
+#include "esp_random.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_heap_caps.h"
@@ -99,6 +100,9 @@ ESP_LOGI("INIT","b3 appif"); AppInterfaceInit();
 ESP_LOGI("INIT","b4 ble"); AppBLEInit(DeviceVersion);
 
 ESP_LOGI("INIT","b5 cli"); StartCLI();
+
+    // Seed PRNG with hardware RNG for CSMA backoff randomisation.
+    SeedRand(esp_random());
 
 ESP_LOGI("INIT","b6 rs485"); SetupRS485();
 ESP_LOGI("INIT","b7 pwm"); SetupFanPWM();

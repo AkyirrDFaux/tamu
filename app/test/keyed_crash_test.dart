@@ -1,3 +1,6 @@
+@Tags(['hil'])
+library;
+
 import 'package:flutter/foundation.dart';
 import 'dart:io';
 
@@ -13,8 +16,9 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   debugDefaultTargetPlatformOverride = TargetPlatform.linux;
 
+  final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
+
   test('keyed crash hunt', () async {
-    if (Platform.environment['TAMU_HIL'] == null) return;
     final mgr = ConnectionManager.instance;
     await mgr.setAutoRefresh(false);
     final port = Platform.environment['TAMU_HIL']!;
@@ -91,17 +95,6 @@ void main() {
       }
     });
 
-    // open dict0 entries (batched CID 7)
-    await step('batched load dict0', () async {
-      await keyed.readAllDictEntries(b3, 0);
-    });
-    await step('batched load dict1', () async {
-      await keyed.readAllDictEntries(b3, 1);
-    });
-    await step('batched load dict2', () async {
-      await keyed.readAllDictEntries(b3, 2);
-    });
-
     // add a few more entries to stress SetKey
     await step('write k3 d0', () async {
       await keyed.writeKeyValue(
@@ -125,9 +118,8 @@ void main() {
     await step('delete dict1', () async {
       await keyed.delete(block: b3.index, dict: 1);
     });
-    await step('reload dict0 batched', () async {
-      final d = await keyed.readDict(b3, 0);
-      if (d != null) await keyed.readAllDictEntries(b3, 0);
+    await step('reload dict0', () async {
+      await keyed.readDict(b3, 0);
     });
 
     // fill the deleted dict1 slot (index 1): must start EMPTY, not expose the
@@ -181,7 +173,7 @@ void main() {
     });
     // ignore: avoid_print
     print('[C] done');
-  }, timeout: const Timeout(Duration(minutes: 4)));
+  }, timeout: const Timeout(Duration(minutes: 4)), skip: skipReason);
 }
 String dataTypeOf(KeyedDict d) =>
     d.meta.typeValue == DataType.none.value

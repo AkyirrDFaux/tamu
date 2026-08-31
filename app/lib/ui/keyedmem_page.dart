@@ -99,17 +99,11 @@ class _KeyedMemoryPageState extends State<KeyedMemoryPage>
 
   Future<void> _loadDictEntries(KeyedBlock block, KeyedDict dict) async {
     if (_backupView) {
-      // Backup view: per-key CID 4 reads (what is stored in the backup file).
       for (final key in dict.keys) {
         await _client.readBackupEntry(block, dict.index, key);
       }
       return;
     }
-    // Current view: batch read all entries in a single round trip (CID 7) -
-    // per-key reads were slow over BLE for any dictionary with more than a few keys.
-    final entries = await _client.readAllDictEntries(block, dict.index);
-    if (entries != null) return;
-    // Fallback: per-key reads (older firmware without CID 7).
     for (final key in dict.keys) {
       await _client.readEntry(block, dict.index, key);
     }
@@ -185,7 +179,7 @@ class _KeyedMemoryPageState extends State<KeyedMemoryPage>
   /// Optional dictionary index (empty = append); -2 = cancelled.
   Future<int?> _promptDictIndex(int maxAppend) async {
     final controller = TextEditingController();
-    return await showDialog<int?>(
+    final result = await showDialog<int?>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Dictionary index'),
@@ -216,6 +210,8 @@ class _KeyedMemoryPageState extends State<KeyedMemoryPage>
         ],
       ),
     );
+    controller.dispose();
+    return result;
   }
 
   Future<void> _deleteDict(KeyedBlock block, KeyedDict dict) async {
