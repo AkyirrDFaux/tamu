@@ -3,6 +3,15 @@
 #include "Core/Functions/Packet.h"
 #include "Core/Functions/Storage.h"
 
+// Sends a single no-fragment reply reusing the caller's frame (no extra PacketFrame on stack).
+static void StorageReply(PacketFrame &reply, const PacketFrame &req,
+                          const uint8_t *payload, uint16_t len)
+{
+    PacketConstruct(&reply, req.id_src, req.srv_src, req.srv_tgt,
+                     FLAG_TYPE | FLAG_START | FLAG_STOP, payload, len);
+    DispatchPacket(reply);
+}
+
 // Handles Storage service requests (Docs/Services/Storage.md): file table/read/create/
 // delete/resize/rename and the fragmented Read/Write File streams.
 //
@@ -26,17 +35,16 @@ void HandleStorageService(const PacketFrame &frame)
 
     if (is_response) return; // Storage service only processes requests
 
-    PacketFrame reply;
     // NOTE: no separate scratch buffer - stream fragments are packed straight into
-    // reply.payload (see FinalizeReply) so the DAS's 2 KB stack stays shallow.
+    // tx_frame.payload (see FinalizeReply) so the DAS's 2 KB stack stays shallow.
 
     switch (cid) {
         case 0: { // Read File Table (FRAG stream of File entries)
             uint8_t active_count = Storage.FileCount();
 
             if (active_count == 0) {
-                FinalizeReply(reply, frame, FLAG_TYPE | FLAG_START | FLAG_STOP, 0);
-                DispatchPacket(reply);
+                FinalizeReply(tx_frame, frame, FLAG_TYPE | FLAG_START | FLAG_STOP, 0);
+                DispatchPacket(tx_frame);
                 break;
             }
 
@@ -52,19 +60,19 @@ void HandleStorageService(const PacketFrame &frame)
             for (uint16_t f = 0; f < total_frags && sent < active_count; f++) {
                 uint8_t flags = FLAG_TYPE | FLAG_FRAG;
                 if (f == 0) flags |= FLAG_START;
-                WriteFragInfo(reply.payload, f, total_frags);
+                WriteFragInfo(tx_frame.payload, f, total_frags);
                 uint16_t off = 4;
                 while (off + sizeof(FileEntry) <= (uint16_t)(4 + frag_content_cap) && sent < active_count) {
                     FileEntry entry;
                     if (!Storage.ReadFileEntry(sent, &entry))
                         break; // table unreadable: stop; STOP still set below
-                    memcpy(reply.payload + off, &entry, sizeof(FileEntry));
+                    memcpy(tx_frame.payload + off, &entry, sizeof(FileEntry));
                     off += sizeof(FileEntry);
                     sent++;
                 }
                 if (sent >= active_count || f == total_frags - 1) flags |= FLAG_STOP;
-                FinalizeReply(reply, frame, flags, off);
-                DispatchPacket(reply);
+                FinalizeReply(tx_frame, frame, flags, off);
+                DispatchPacket(tx_frame);
                 if (sent >= active_count) break;
             }
             break;
@@ -72,9 +80,7 @@ void HandleStorageService(const PacketFrame &frame)
 
         case 1: { // Format Filesystem
             Storage.Format();
-            PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
-                             FLAG_TYPE | FLAG_START | FLAG_STOP, nullptr, 0);
-            DispatchPacket(reply);
+            StorageReply(tx_frame, frame, nullptr, 0);
             break;
         }
 
@@ -86,9 +92,7 @@ void HandleStorageService(const PacketFrame &frame)
                 bool ok = Storage.CreateFile(name, size);
                 if (!ok) DeviceLog("STORAGE", "create '%.8s' size %u failed", name, (unsigned)size);
                 uint8_t status = ok ? 0x01 : 0x00;
-                PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
-                                 FLAG_TYPE | FLAG_START | FLAG_STOP, &status, 1);
-                DispatchPacket(reply);
+                StorageReply(tx_frame, frame, &status, 1);
             } else {
                 DeviceLog("STORAGE", "create short payload (%u B)", (unsigned)PayloadBytes(frame));
             }
@@ -105,9 +109,7 @@ void HandleStorageService(const PacketFrame &frame)
                 // reply (empty or status) as success for already-gone files, but a 0
                 // status correctly surfaces table-protection failures.
                 uint8_t status = ok ? 0x01 : 0x00;
-                PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
-                                 FLAG_TYPE | FLAG_START | FLAG_STOP, &status, 1);
-                DispatchPacket(reply);
+                StorageReply(tx_frame, frame, &status, 1);
             }
             break;
         }
@@ -120,9 +122,7 @@ void HandleStorageService(const PacketFrame &frame)
                 bool ok = Storage.ResizeFile(name, new_size);
                 if (!ok) DeviceLog("STORAGE", "resize '%.8s' -> %u failed", name, (unsigned)new_size);
                 uint8_t status = ok ? 0x01 : 0x00;
-                PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
-                                 FLAG_TYPE | FLAG_START | FLAG_STOP, &status, 1);
-                DispatchPacket(reply);
+                StorageReply(tx_frame, frame, &status, 1);
             } else {
                 DeviceLog("STORAGE", "resize short payload (%u B)", (unsigned)PayloadBytes(frame));
             }
@@ -137,9 +137,7 @@ void HandleStorageService(const PacketFrame &frame)
                 bool ok = Storage.RenameFile(old_name, new_name);
                 if (!ok) DeviceLog("STORAGE", "rename '%.8s' -> '%.8s' failed", old_name, new_name);
                 uint8_t status = ok ? 0x01 : 0x00;
-                PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
-                                 FLAG_TYPE | FLAG_START | FLAG_STOP, &status, 1);
-                DispatchPacket(reply);
+                StorageReply(tx_frame, frame, &status, 1);
             } else {
                 DeviceLog("STORAGE", "rename short payload (%u B)", (unsigned)PayloadBytes(frame));
             }
@@ -165,26 +163,22 @@ void HandleStorageService(const PacketFrame &frame)
                         uint8_t flags = FLAG_TYPE | FLAG_FRAG;
                         if (f == 0) flags |= FLAG_START;
                         if (f == total_frags - 1) flags |= FLAG_STOP;
-                        WriteFragInfo(reply.payload, f, total_frags);
+                        WriteFragInfo(tx_frame.payload, f, total_frags);
                         uint16_t head = (f == 0) ? 8 : 0;
-                        if (head) memcpy(reply.payload + 4, name, 8);
+                        if (head) memcpy(tx_frame.payload + 4, name, 8);
                         uint32_t content_off = (uint32_t)f * contentCap;
                         uint16_t content_len = (total_content - content_off > contentCap)
                                                    ? contentCap
                                                    : (uint16_t)(total_content - content_off);
-                        if (content_len + 4 + head > MAX_PAYLOAD_SIZE)
-                            content_len = (uint16_t)(MAX_PAYLOAD_SIZE - 4 - head);
                         if (content_len)
-                            Storage_FlashRead(file_offset + content_off, reply.payload + 4 + head, content_len);
-                        FinalizeReply(reply, frame, flags, (uint16_t)(4 + head + content_len));
-                        DispatchPacket(reply);
+                            Storage_FlashRead(file_offset + content_off, tx_frame.payload + 4 + head, content_len);
+                        FinalizeReply(tx_frame, frame, flags, (uint16_t)(4 + head + content_len));
+                        DispatchPacket(tx_frame);
                     }
                 } else {
                     // File not found
                     DeviceLog("STORAGE", "read '%.8s' failed", name);
-                    PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
-                                     FLAG_TYPE | FLAG_START | FLAG_STOP, nullptr, 0);
-                    DispatchPacket(reply);
+                    StorageReply(tx_frame, frame, nullptr, 0);
                 }
             }
             break;
@@ -244,9 +238,7 @@ void HandleStorageService(const PacketFrame &frame)
 
             if (frame.flags & FLAG_REQACK) {
                 uint8_t ack[2] = {(uint8_t)(s_write_seq & 0xFF), (uint8_t)(s_write_seq >> 8)};
-                PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
-                                 FLAG_TYPE | FLAG_START | FLAG_STOP, ack, 2);
-                DispatchPacket(reply);
+                StorageReply(tx_frame, frame, ack, 2);
             }
             break;
         }

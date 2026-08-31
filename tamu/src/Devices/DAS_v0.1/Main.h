@@ -93,17 +93,31 @@ int main(void)
     // Core distinction loop
     while (DeviceStatus.ShortAddress == 0)
     {
-        PacketFrame frame;
-        PacketConstruct(&frame, ADDR_BROADCAST,
+        PacketConstruct(&tx_frame, ADDR_BROADCAST,
                          MakeService(ServiceType::Device, 0),
                          MakeService(ServiceType::Device, 0),
                          FLAG_REQACK | FLAG_START | FLAG_STOP,
                          (const uint8_t *)&GetSerialNumber(), sizeof(SerialNumber));
-        DispatchPacket(frame);
+        DispatchPacket(tx_frame);
         Sleep(500);
         ProcessBus();
     }
     PinLow(LEDR);
+
+    // Initial time sync: send CID 11 to the core so it replies with its own
+    // timestamps and we can compute the offset locally (Docs/Services/Device
+    // service.md: "the newly discovered device sends a single initial timesync
+    // packet to the core to sync it's own time").
+    {
+        uint32_t time_sent = TimeFromBoot();
+        PacketConstruct(&tx_frame, 1,
+                         MakeService(ServiceType::Device, 11),
+                         MakeService(ServiceType::Device, 11),
+                         FLAG_REQACK | FLAG_START | FLAG_STOP,
+                         (const uint8_t *)&time_sent, sizeof(uint32_t));
+        DispatchPacket(tx_frame);
+        // ProcessBus() in the main loop will handle the reply.
+    }
 
     uint32_t last_sample_ms = 0;
     uint32_t last_sample2_ms = 0;

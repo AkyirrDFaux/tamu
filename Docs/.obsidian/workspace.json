@@ -13,26 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Services/Keyed Memory.md",
+                "file": "Services/Device service.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Keyed Memory"
-            }
-          },
-          {
-            "id": "bd20f2c370cbba32",
-            "type": "leaf",
-            "state": {
-              "type": "markdown",
-              "state": {
-                "file": "Services/Router.md",
-                "mode": "source",
-                "source": false
-              },
-              "icon": "lucide-file",
-              "title": "Router"
+              "title": "Device service"
             }
           }
         ]
@@ -204,27 +190,27 @@
   },
   "active": "7712251b840e352d",
   "lastOpenFiles": [
+    "RSBus.md",
+    "Services/Dynamic Memory.md",
+    "General architecture.md",
+    "Services/Router.md",
+    "Data Formats.md",
+    "Issues.md",
+    "RealHW.md",
+    "Service ID table.md",
+    "Services/Device service.md",
+    "Services/Keyed Memory.md",
     "Services/App Interface.md",
     "Devices.md",
-    "Data Formats.md",
-    "Services/Keyed Memory.md",
-    "Services/Dynamic Memory.md",
-    "Services/Router.md",
     "Services/Bootloader.md",
     "Services/CLI.md",
-    "Services/Device service.md",
     "Services/Log Handler.md",
     "Services/Script.md",
     "Services/Storage.md",
     "Services/System Memory.md",
-    "General architecture.md",
-    "RSBus.md",
-    "RealHW.md",
-    "Issues.md",
     "Improve.md",
     "App/Devices.md",
     "App/Service views/Script.md",
-    "Service ID table.md",
     "App/Device view.md",
     "App/Connection.md",
     "App/Service views/Dynamic Memory.md",

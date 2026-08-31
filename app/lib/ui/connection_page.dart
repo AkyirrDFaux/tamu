@@ -172,6 +172,12 @@ class _ConnectionPageState extends State<ConnectionPage> {
                       child: CircularProgressIndicator(strokeWidth: 2)),
                   title: Text('Connecting to ${_manager.connectingTarget ?? ''}'),
                   subtitle: const Text('Establishing session...'),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.close),
+                    tooltip: 'Cancel',
+                    onPressed: () =>
+                        unawaited(_manager.disconnect(manual: true)),
+                  ),
                 ),
               if (_manager.isConnected)
                 ListTile(

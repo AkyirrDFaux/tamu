@@ -195,9 +195,37 @@ inline Number abs(Number A)
 }
 
 // Fixed-point square root via binary digit-by-digit extraction (returns 0 for non-positive input).
-// NOTE: uses uint64_t intermediates by necessity (48+ bit working value); it is only linked
-// where called, so keep it out of flash-constrained node images unless 64-bit helpers are
-// already present.
+#ifdef NUMBER_ONLY_32BIT
+// 32-bit-only variant: decompose into integer sqrt then shift.
+// For 16.16 fixed point: sqrt(x_16.16) = isqrt32(x) << 8.
+inline uint32_t isqrt32(uint32_t x)
+{
+    if (x == 0) return 0;
+    uint32_t result = 0;
+    uint32_t bit = 1u << 30;
+    while (bit > x) bit >>= 2;
+    while (bit != 0)
+    {
+        if (x >= result + bit)
+        {
+            x -= result + bit;
+            result = (result >> 1) + bit;
+        }
+        else
+        {
+            result >>= 1;
+        }
+        bit >>= 2;
+    }
+    return result;
+}
+inline Number sqrt(Number A)
+{
+    if (A.Value <= 0) return Number(0);
+    return Number::FromRaw((int32_t)(isqrt32((uint32_t)A.Value) << 8));
+}
+#else
+// 64-bit variant: full precision, used by ESP32 core.
 inline Number sqrt(Number A)
 {
     if (A.Value <= 0)
@@ -220,6 +248,7 @@ inline Number sqrt(Number A)
     }
     return Number::FromRaw((int32_t)res);
 }
+#endif
 
 #define RAW_PI 205887
 // Single shared PI instance: a plain namespace-scope `static const Number` would be

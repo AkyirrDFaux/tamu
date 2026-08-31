@@ -126,7 +126,7 @@ class _DeviceViewPageState extends State<DeviceViewPage>
                     _row('Time offset',
                         entry.timeOffsetMs == null
                             ? '-'
-                            : '${entry.timeOffsetMs! >= 0 ? '+' : ''}${entry.timeOffsetMs} ms'),
+                            : formatOffsetMs(entry.timeOffsetMs!)),
                     _row('Capabilities',
                         Capability.describe(entry.capabilities).isEmpty
                             ? '-'

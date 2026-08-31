@@ -106,10 +106,9 @@ void HandleLogHandler(const PacketFrame &frame)
 
         if (active == 0)
         {
-            PacketFrame reply;
-            PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
+            PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.srv_tgt,
                              FLAG_TYPE | FLAG_START | FLAG_STOP, nullptr, 0);
-            DispatchPacket(reply);
+            DispatchPacket(tx_frame);
             return;
         }
 
@@ -138,10 +137,9 @@ void HandleLogHandler(const PacketFrame &frame)
             }
             if (sent >= active || f == total_frags - 1) flags |= FLAG_STOP;
 
-            PacketFrame reply;
-            PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
+            PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.srv_tgt,
                              flags, buf, off);
-            DispatchPacket(reply);
+            DispatchPacket(tx_frame);
             if (sent >= active) break;
         }
         return;
@@ -172,10 +170,9 @@ void HandleLogHandler(const PacketFrame &frame)
         if (frame.flags & FLAG_REQACK)
         {
             uint8_t status = 0;
-            PacketFrame reply;
-            PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
+            PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.srv_tgt,
                              FLAG_TYPE | FLAG_START | FLAG_STOP, &status, 1);
-            DispatchPacket(reply);
+            DispatchPacket(tx_frame);
         }
     }
 #endif

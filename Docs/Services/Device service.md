@@ -34,6 +34,6 @@ If possible, the device name is shown in BLE advertising and on USB.
 Every core implements SN Database.
 The SNDB has it's own file, which stores (persistent) Serial number + ID pairs
 
-Core also provides time sync reference. After ID assignment, the newly discovered device sends a single initial timesync packet to the core to sync it's time.
+Core also provides time sync reference. After recieving ID assignment, the newly discovered device sends a single initial timesync packet to the core to sync it's own time.
 
-The core then randomly syncs other devices if idle.
+The core then randomly syncs other devices if idle to maintain synchronization.

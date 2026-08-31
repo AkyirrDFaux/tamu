@@ -1,5 +1,6 @@
-// Sized to hold a full frame echo: max frame = 0xAA + 12 header + 276 payload = 289 bytes.
-#define BUFFER_SIZE 320
+// Sized to hold at least two full frames: max frame = 0xAA + 12 header + 276 payload = 289
+// bytes; two frames = 578 bytes, rounded up to a power-of-two-friendly 592.
+#define BUFFER_SIZE 592
 #define RS485_EN_PORT GPIOD
 #define RS485_EN_PIN GPIO_Pin_4
 // Circular Buffer structure

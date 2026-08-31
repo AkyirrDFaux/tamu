@@ -31,8 +31,6 @@ void HandleSNDB(const PacketFrame &frame)
 
     if (is_response) return; // Core only handles requests
 
-    PacketFrame response;
-
     switch (cid) {
         case 13: { // SNDB Read All
             // Count the entries IterNext will actually yield so the stream reliably
@@ -44,9 +42,9 @@ void HandleSNDB(const PacketFrame &frame)
 
             if (count == 0) {
                 // Send an empty stop packet
-                PacketConstruct(&response, frame.id_src, frame.srv_src, frame.srv_tgt,
+                PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.srv_tgt,
                                  FLAG_TYPE | FLAG_START | FLAG_STOP, nullptr, 0);
-                DispatchPacket(response);
+                DispatchPacket(tx_frame);
                 break;
             }
 
@@ -71,9 +69,9 @@ void HandleSNDB(const PacketFrame &frame)
                     sent++;
                 }
                 if (sent >= count || f == total_frags - 1) flags |= FLAG_STOP;
-                PacketConstruct(&response, frame.id_src, frame.srv_src, frame.srv_tgt,
+                PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.srv_tgt,
                                  flags, buf, off);
-                DispatchPacket(response);
+                DispatchPacket(tx_frame);
                 if (sent >= count) break;
             }
             break;
@@ -100,15 +98,15 @@ void HandleSNDB(const PacketFrame &frame)
                 uint8_t payload[16];
                 memcpy(payload, entry.uid.bytes, 14);
                 memcpy(payload + 14, &entry.shortID, 2);
-                PacketConstruct(&response, frame.id_src, frame.srv_src, frame.srv_tgt,
+                PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.srv_tgt,
                                  FLAG_TYPE | FLAG_START | FLAG_STOP, payload, 16);
-                DispatchPacket(response);
+                DispatchPacket(tx_frame);
             } else {
                 // Send an empty response to indicate not found
                 DeviceLog("DEVICE", "SNDB lookup miss (id or sn)");
-                PacketConstruct(&response, frame.id_src, frame.srv_src, frame.srv_tgt,
+                PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.srv_tgt,
                                  FLAG_TYPE | FLAG_START | FLAG_STOP, nullptr, 0);
-                DispatchPacket(response);
+                DispatchPacket(tx_frame);
             }
             break;
         }
@@ -128,10 +126,10 @@ void HandleSNDB(const PacketFrame &frame)
                     DeviceLog("DEVICE", "SNDB write id %u failed", (unsigned)write_id);
                 }
                 // Always acknowledge (empty frame = failure, like the CID 13 not-found case).
-                PacketConstruct(&response, frame.id_src, frame.srv_src, frame.srv_tgt,
+                PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.srv_tgt,
                                  FLAG_TYPE | FLAG_START | FLAG_STOP,
                                  success ? frame.payload : nullptr, success ? 16 : 0);
-                DispatchPacket(response);
+                DispatchPacket(tx_frame);
             }
             break;
         }
@@ -219,7 +217,7 @@ void HandleDeviceService(const PacketFrame &frame)
                 }
             }
         }
-        else if (cid == 11) // Time sync response -> core averages samples and pushes the offset to the node
+        else if (cid == 11) // Time sync response
         {
 #ifdef TYPE_CORE
             if (PayloadBytes(frame) >= 12)
@@ -228,7 +226,7 @@ void HandleDeviceService(const PacketFrame &frame)
                 memcpy(&t0, frame.payload, 4);
                 memcpy(&t1, frame.payload + 4, 4);
                 memcpy(&t2, frame.payload + 8, 4);
-                uint32_t t3 = DeviceStatus.UptimeMs;
+                uint32_t t3 = TimeFromBoot(); // raw uptime when the response was received
 
                 // Standard NTP-style offset: ((t1 - t0) + (t2 - t3)) / 2
                 // Counters wrap at 2^32 (~49.7 days); take signed deltas BEFORE widening so a
@@ -237,13 +235,33 @@ void HandleDeviceService(const PacketFrame &frame)
 
                 TimeSync.HandleResponse(frame.id_src, offset);
             }
+#else
+            // Non-core device: initial time sync response.  The node sent CID 11
+            // to the core right after ID assignment (see DAS Main.h).  We compute
+            // the offset locally — no CID 12 push needed.
+            if (PayloadBytes(frame) >= 12)
+            {
+                uint32_t t0, t1, t2;
+                memcpy(&t0, frame.payload, 4);
+                memcpy(&t1, frame.payload + 4, 4);
+                memcpy(&t2, frame.payload + 8, 4);
+                uint32_t t3 = TimeFromBoot();
+
+                // offset = core_time - device_time (how far ahead the core is).
+                // Both deltas are sub-second (round-trip time), safe in 32-bit.
+                int32_t d1 = (int32_t)(t1 - t0);
+                int32_t d2 = (int32_t)(t2 - t3);
+                int32_t offset = (d1 + d2) / 2;
+
+                // Apply: TimeOffsetMs += offset so that Now() = TimeFromBoot() + TimeOffsetMs ≈ core_time.
+                TimeOffsetMs += offset;
+            }
 #endif
         }
         return;
     }
 
     // Requests:
-    PacketFrame reply;
     switch (cid)
     {
         case 0: // Discover
@@ -285,13 +303,13 @@ void HandleDeviceService(const PacketFrame &frame)
             response_data.sn = *incoming_sn;
             response_data.new_addr = NewAddr;
 
-            PacketConstruct(&reply, ADDR_BROADCAST,
+            PacketConstruct(&tx_frame, ADDR_BROADCAST,
                              MakeService(ServiceType::Device, 0),
                              MakeService(ServiceType::Device, 0),
                              FLAG_TYPE | FLAG_START | FLAG_STOP,
                              (uint8_t *)&response_data, sizeof(AssignPayload));
 
-            DispatchPacket(reply);
+            DispatchPacket(tx_frame);
 
             // The CLI's `dev 1 discover` asks the CORE to register this SN and show
             // the assigned ID. The broadcast above is consumed by the target node,
@@ -299,56 +317,55 @@ void HandleDeviceService(const PacketFrame &frame)
             // directly (srv_tgt = CLI CID 3 -> HandleCLI_DeviceResponse).
             if (GetServiceType(frame.srv_src) == ServiceType::CLI)
             {
-                PacketFrame cli_reply;
-                PacketConstruct(&cli_reply, DeviceStatus.ShortAddress,
+                PacketConstruct(&tx_frame, DeviceStatus.ShortAddress,
                                  MakeService(ServiceType::CLI, GetServiceCID(frame.srv_src)),
                                  MakeService(ServiceType::Device, 0),
                                  FLAG_TYPE | FLAG_START | FLAG_STOP,
                                  (uint8_t *)&response_data, sizeof(AssignPayload));
-                cli_reply.id_src = NewAddr; // the CLI prints id_src as the device
-                DispatchPacket(cli_reply);
+                tx_frame.id_src = NewAddr; // the CLI prints id_src as the device
+                DispatchPacket(tx_frame);
             }
 #endif
             break;
         }
 
         case 1: // Ping
-            SendDeviceReply(frame, reply, nullptr, 0);
+            SendDeviceReply(frame, tx_frame, nullptr, 0);
             break;
 
         case 2: // Identify (Bool: blink the red LED fast while true)
         {
             DeviceIdentifyStart((PayloadBytes(frame) > 0 && frame.payload[0] != 0),
                                 DeviceStatus.UptimeMs);
-            SendDeviceReply(frame, reply, nullptr, 0);
+            SendDeviceReply(frame, tx_frame, nullptr, 0);
             break;
         }
 
         case 3: // Device type
         {
             uint16_t dev_type = (uint16_t)kDeviceType;
-            SendDeviceReply(frame, reply, &dev_type, sizeof(dev_type));
+            SendDeviceReply(frame, tx_frame, &dev_type, sizeof(dev_type));
             break;
         }
 
         case 4: // Serial number
-            SendDeviceReply(frame, reply, &GetSerialNumber(), sizeof(SerialNumber));
+            SendDeviceReply(frame, tx_frame, &GetSerialNumber(), sizeof(SerialNumber));
             break;
 
         case 5: // Software version
-            SendDeviceReply(frame, reply, DeviceVersion, (uint8_t)strlen(DeviceVersion));
+            SendDeviceReply(frame, tx_frame, DeviceVersion, (uint8_t)strlen(DeviceVersion));
             break;
 
         case 6: // Capability
         {
             uint32_t cap = kCapabilities;
-            SendDeviceReply(frame, reply, &cap, sizeof(cap));
+            SendDeviceReply(frame, tx_frame, &cap, sizeof(cap));
             break;
         }
 
         case 7: // Read Name
             LoadPersistedDeviceName();
-            SendDeviceReply(frame, reply, DeviceName, (uint8_t)strlen(DeviceName));
+            SendDeviceReply(frame, tx_frame, DeviceName, (uint8_t)strlen(DeviceName));
             break;
 
         case 8: // Set Name (respond only if requested)
@@ -362,7 +379,7 @@ void HandleDeviceService(const PacketFrame &frame)
             // Persist the new name (standalone file) so it survives reboots.
             PersistDeviceName();
             if (frame.flags & FLAG_REQACK)
-                SendDeviceReply(frame, reply, DeviceName, (uint8_t)strlen(DeviceName));
+                SendDeviceReply(frame, tx_frame, DeviceName, (uint8_t)strlen(DeviceName));
             break;
         }
 
@@ -370,14 +387,14 @@ void HandleDeviceService(const PacketFrame &frame)
                 // synchronized clock that Now()/DeviceStatus.UptimeMs carry.
         {
             uint32_t uptime = TimeFromBoot();
-            SendDeviceReply(frame, reply, &uptime, sizeof(uptime));
+            SendDeviceReply(frame, tx_frame, &uptime, sizeof(uptime));
             break;
         }
 
         case 10: // Loop Time: average + maximum loop time (2x Number)
         {
             Number loop[2] = {DeviceStatus.AvgLoopTimeMs, DeviceStatus.MaxLoopTimeMs};
-            SendDeviceReply(frame, reply, loop, sizeof(loop));
+            SendDeviceReply(frame, tx_frame, loop, sizeof(loop));
             break;
         }
 
@@ -386,21 +403,22 @@ void HandleDeviceService(const PacketFrame &frame)
             if (PayloadBytes(frame) >= 4)
             {
                 uint32_t time_sent = *reinterpret_cast<const uint32_t *>(frame.payload);
-                uint32_t t1 = DeviceStatus.UptimeMs; // local time the request was received
-                uint32_t reply_payload[3] = { time_sent, t1, 0 };
+                uint32_t t1 = TimeFromBoot(); // raw uptime when the request was received
 
-                PacketConstruct(&reply, frame.id_src,
+                PacketConstruct(&tx_frame, frame.id_src,
                                  frame.srv_src,
                                  frame.srv_tgt,
                                  FLAG_TYPE | FLAG_START | FLAG_STOP,
-                                 (const uint8_t *)reply_payload, sizeof(reply_payload));
+                                 nullptr, 0);
 
-                // Sample t2 as close to the actual send as possible, patched after construction.
-                uint32_t t2 = DeviceStatus.UptimeMs;
-                memcpy(reply.payload + 8, &t2, sizeof(t2));
-                reply.crc8 = Crc8(&reply.flags, (uint16_t)(11 + PayloadBytes(reply)));
+                memcpy(tx_frame.payload + 0, &time_sent, 4);
+                memcpy(tx_frame.payload + 4, &t1, 4);
+                uint32_t t2 = TimeFromBoot();
+                memcpy(tx_frame.payload + 8, &t2, 4);
+                tx_frame.payload_len = (uint8_t)(12 / 4);
+                tx_frame.crc8 = Crc8(&tx_frame.flags, (uint16_t)(11 + PayloadBytes(tx_frame)));
 
-                DispatchPacket(reply);
+                DispatchPacket(tx_frame);
             }
             break;
         }

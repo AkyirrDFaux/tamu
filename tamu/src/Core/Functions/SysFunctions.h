@@ -37,6 +37,9 @@ extern uint32_t DeltaTime;
 // Time offset in ms set by the core via Device service CID 12 (Set time offset)
 extern int32_t TimeOffsetMs;
 
+// Single shared output buffer — all handlers build replies here instead of stack-allocating.
+extern PacketFrame tx_frame;
+
 // Updates uptime/delta time bookkeeping and the loop-time statistics each main-loop tick
 inline void TimeUpdate()
 {

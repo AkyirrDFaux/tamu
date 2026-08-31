@@ -1859,3 +1859,6 @@ rewrite:
 - **System Memory block-meta read returns the block name appended after
   BlockMeta** (firmware behaviour, used by the app) - this extra name string is
   not mentioned in `Docs/Services/System Memory.md`.
+- **Device service.md line 37 misleading**: ✅ FIXED — device now sends CID 11
+  to core after ID assignment; offset computed locally on the device. Doc matches
+  implementation.

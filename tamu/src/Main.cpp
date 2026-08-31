@@ -35,6 +35,8 @@ uint32_t LastTime = 0;
 int32_t TimeOffsetMs = 0;
 
 #include "Core/Functions/Packet.h"
+
+PacketFrame tx_frame;        // single shared output buffer — no handler needs its own
 #include "Core/Functions/SysFunctions.h"
 #include "Core/Functions/Memory.h"
 

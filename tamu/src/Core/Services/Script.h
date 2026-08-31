@@ -251,8 +251,6 @@ void HandleScriptService(const PacketFrame &frame)
     uint8_t cid = GetServiceCID(frame.srv_tgt);
     if (frame.flags & FLAG_TYPE) return; // Script service only processes requests
 
-    PacketFrame reply;
-
     switch (cid)
     {
         case 0: // Get number of scripts
@@ -612,9 +610,9 @@ void HandleScriptService(const PacketFrame &frame)
                 uint8_t flags = FLAG_TYPE | FLAG_FRAG;
                 if (f == 0) flags |= FLAG_START;
                 if (f == total_frags - 1) flags |= FLAG_STOP;
-                WriteFragInfo(reply.payload, f, total_frags);
+                WriteFragInfo(tx_frame.payload, f, total_frags);
                 uint16_t head = (f == 0) ? 1 : 0;
-                if (head) reply.payload[4] = id;
+                if (head) tx_frame.payload[4] = id;
                 uint32_t content_off = (uint32_t)f * contentCap;
                 uint16_t content_len = (total_content - content_off > contentCap)
                                            ? contentCap
@@ -622,9 +620,9 @@ void HandleScriptService(const PacketFrame &frame)
                 if (content_len + 4 + head > MAX_PAYLOAD_SIZE)
                     content_len = (uint16_t)(MAX_PAYLOAD_SIZE - 4 - head);
                 if (content_len)
-                    Storage_FlashRead(off + content_off, reply.payload + 4 + head, content_len);
-                FinalizeReply(reply, frame, flags, (uint16_t)(4 + head + content_len));
-                DispatchPacket(reply);
+                    Storage_FlashRead(off + content_off, tx_frame.payload + 4 + head, content_len);
+                FinalizeReply(tx_frame, frame, flags, (uint16_t)(4 + head + content_len));
+                DispatchPacket(tx_frame);
             }
             break;
         }

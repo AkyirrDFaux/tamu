@@ -206,12 +206,12 @@ static void Measuring_Update(uint8_t index, ResistiveMeasStruct *m, uint16_t raw
     s_meas_range[index] = range;
     Meas_SelectRange(index, range);
 
-    const Number Rref_kohm[3] = {N(0.33), N(10.0), N(330.0)};
+    static const Number Rref_kohm[3] = {N(0.33), N(10.0), N(330.0)};
     m->CurrentRange = Rref_kohm[range];
 
     // Transformations operate on the RAW sample, exactly like the Sensors.h reference
     // ("SensorClass::Run"); the converted value is then EMA-filtered into MeasuredValue.
-    const Number ADCRES = N(1023);
+    static const Number ADCRES = N(1023);
     Number in = Number(raw);
 
     switch (m->SensorType)

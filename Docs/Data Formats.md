@@ -3,9 +3,19 @@
 - Undefined (Don't know yet, display in hex format if there is anything)
 - Serial Number - 14 byte UUID
 - ID - 16bit (4 bit net + 12 bit device) 
-	- 0 = Invalid/Unassigned
-	- 0xFFFFFFFF = Broadcast
-	- Net 0 = local
+	- Net
+		- 0 = Net Broadcast
+		- 15 valid nets
+	- Device
+		- 0 = Unassigned
+		- 0xFFFFFF = Broadcast
+		- 4094 (4096 - 2) maximum valid devices
+		- 1 is always core
+	- Example:
+		- 0.0 = All unassigned devices
+		- 0.1 = All cores
+		- 0.FFFFFF = All devices
+		- 3.2 = Device 2 in net 3
 - Bool - true/false
 - Index  - 32bit signed integer
 - Number - 16.16 signed fixed point

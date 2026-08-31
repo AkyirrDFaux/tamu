@@ -28,45 +28,53 @@ static const char *SystemBackupName()
     return name;
 }
 
+// Serialises the writable (non-ReadOnly) fields of a single static block into `out`.
+// Returns the byte count (0 on overflow or if the block has no writable fields).
+static uint16_t SerializeSystemBlock(const StaticBlockDescriptor &block, uint16_t block_index,
+                                     uint8_t *out, uint16_t cap)
+{
+    uint16_t cursor = 0;
+    uint16_t writable_count = CountWritableFields(block.Schema);
+    if (writable_count == 0) return 0;
+
+    if (cursor + 2 + 2 > cap) return 0;
+    memcpy(out + cursor, &block_index, 2); cursor += 2;
+    memcpy(out + cursor, &writable_count, 2); cursor += 2;
+
+    for (uint16_t i = 0; i < block.Schema->MapCount; i++)
+    {
+        if (block.Schema->Map[i].FlagsAndType & FieldFlags::ReadOnly)
+            continue;
+        FieldResult field_result = block.Get(i);
+        uint16_t vlen = block.Schema->Map[i].Size;
+        if (cursor + 2 + 2 + vlen > cap) return 0;
+        memcpy(out + cursor, &i, 2); cursor += 2;
+        memcpy(out + cursor, &vlen, 2); cursor += 2;
+        if (vlen && field_result.Data) { memcpy(out + cursor, field_result.Data, vlen); cursor += vlen; }
+    }
+    return cursor;
+}
+
 // Serialises the writable (non-ReadOnly) fields of every static block into `out`.
 // Read-only entries are never saved (Docs/Services/System Memory.md).
 // Returns the byte count (0 on overflow).
 static uint16_t SerializeSystemBlocks(uint8_t *out, uint16_t cap)
 {
     uint16_t cursor = 0;
-    uint16_t writable_blocks = 0;
-    for (uint16_t block_index = 0; block_index < static_block_num; block_index++)
-        if (SystemBlockWritable(static_block_registry[block_index]))
-            writable_blocks++;
     if (cursor + 2 > cap) return 0;
-    memcpy(out + cursor, &writable_blocks, 2); cursor += 2;
+    uint16_t writable_blocks_pos = cursor;
+    cursor += 2; // placeholder for block count
 
+    uint16_t writable_blocks = 0;
     for (uint16_t block_index = 0; block_index < static_block_num; block_index++)
     {
         const StaticBlockDescriptor &block = static_block_registry[block_index];
-        uint16_t writable_count = CountWritableFields(block.Schema);
-        if (writable_count == 0) continue;
-
-        if (cursor + 2 + 2 > cap) return 0;
-        memcpy(out + cursor, &block_index, 2); cursor += 2;
-        memcpy(out + cursor, &writable_count, 2); cursor += 2;
-
-        for (uint16_t i = 0; i < block.Schema->MapCount; i++)
-        {
-            if (block.Schema->Map[i].FlagsAndType & FieldFlags::ReadOnly)
-                continue;
-            FieldResult field_result = block.Get(i);
-            uint16_t vlen = block.Schema->Map[i].Size;
-            if (cursor + 2 + 2 + vlen > cap) return 0;
-            memcpy(out + cursor, &i, 2); cursor += 2;
-            memcpy(out + cursor, &vlen, 2); cursor += 2;
-            if (vlen && field_result.Data)
-            {
-                memcpy(out + cursor, field_result.Data, vlen);
-                cursor += vlen;
-            }
-        }
+        uint16_t blen = SerializeSystemBlock(block, block_index, out + cursor, cap - cursor);
+        if (blen == 0) continue;
+        cursor += blen;
+        writable_blocks++;
     }
+    memcpy(out + writable_blocks_pos, &writable_blocks, 2);
     return cursor;
 }
 
@@ -106,33 +114,6 @@ static bool DeserializeSystemBlocks(const uint8_t *in, uint16_t len, uint16_t ta
         }
     }
     return true;
-}
-
-// Serialises the writable (non-ReadOnly) fields of a single static block into `out`.
-// Returns the byte count (0 on overflow or if the block has no writable fields).
-static uint16_t SerializeSystemBlock(const StaticBlockDescriptor &block, uint16_t block_index,
-                                     uint8_t *out, uint16_t cap)
-{
-    uint16_t cursor = 0;
-    uint16_t writable_count = CountWritableFields(block.Schema);
-    if (writable_count == 0) return 0;
-
-    if (cursor + 2 + 2 > cap) return 0;
-    memcpy(out + cursor, &block_index, 2); cursor += 2;
-    memcpy(out + cursor, &writable_count, 2); cursor += 2;
-
-    for (uint16_t i = 0; i < block.Schema->MapCount; i++)
-    {
-        if (block.Schema->Map[i].FlagsAndType & FieldFlags::ReadOnly)
-            continue;
-        FieldResult field_result = block.Get(i);
-        uint16_t vlen = block.Schema->Map[i].Size;
-        if (cursor + 2 + 2 + vlen > cap) return 0;
-        memcpy(out + cursor, &i, 2); cursor += 2;
-        memcpy(out + cursor, &vlen, 2); cursor += 2;
-        if (vlen && field_result.Data) { memcpy(out + cursor, field_result.Data, vlen); cursor += vlen; }
-    }
-    return cursor;
 }
 
 // Builds the response payload for a System Memory backup-read request by parsing the backup
@@ -286,16 +267,11 @@ void HandleSystemMemory(const PacketFrame &frame)
     if (PayloadBytes(frame) < sizeof(BlockIndex)) { DeviceLog("SYSMEM", "short payload (%u B)", (unsigned)PayloadBytes(frame)); return; }
     const BlockIndex *idx = reinterpret_cast<const BlockIndex *>(frame.payload);
 
-    // Single scratch buffer shared by every reply-building case. Memory replies are small
-    // (BlockIndex + BlockMeta + one field value / block name), so this is a fixed 64 bytes
-    // rather than MAX_PAYLOAD_SIZE - a full-size buffer would stack-overflow the DAS (whose
-    // deepest handler also carries SendResponse's 288-byte reply frame).
-    uint8_t payload[64];
-
     switch (cid)
     {
     case 2: // Read
     {
+        uint8_t payload[64];
         if (idx->Block == INVALID_BLOCK) // summary: count of blocks
         {
             BlockIndex out_index = {INVALID_BLOCK, INVALID_INDEX, INVALID_INDEX};
@@ -352,6 +328,7 @@ void HandleSystemMemory(const PacketFrame &frame)
     }
     case 4: // Read backup (writable fields as stored in the backup file)
     {
+        uint8_t payload[64];
         uint8_t buffer[MEMORY_BACKUP_CAP];
         uint16_t count = ReadBackupFile(SystemBackupName(), buffer, sizeof(buffer));
         if (count == 0) { RespondStatus(frame, false); break; }

@@ -15,9 +15,6 @@ import 'types.dart';
 
 const int coreId = 1;
 
-/// App session start (wall clock): reference for the relative time-offset probe.
-final int _sessionStartMs = DateTime.now().millisecondsSinceEpoch;
-
 /// Everything known about one network device.
 class DeviceEntry {
   final int id;
@@ -168,18 +165,29 @@ class DeviceDatabase extends ChangeNotifier {
       entry.maxLoopTimeMs = numberFromBytes(loopReply, 4);
     }
 
-    // Time offset (Device view): NTP-style estimate from a Time sync probe
-    // (CID 10). The device replies {time sent, t1 (device rx), t2 (device tx)}
-    // in its synced-clock ms; the app stamps t0 (send) and t3 (reply rx) on
-    // its own session clock, then offset = ((t1 - t0) + (t2 - t3)) / 2.
-    final t0 = DateTime.now().millisecondsSinceEpoch - _sessionStartMs;
-    final syncReply = await _request(id, ServiceType.device, 11,
-        payload: uint32ToBytes(t0 & 0xFFFFFFFF));
-    if (syncReply != null && syncReply.length >= 12) {
-      final t1 = uint32FromBytes(syncReply, 4);
-      final t2 = uint32FromBytes(syncReply, 8);
-      final t3 = DateTime.now().millisecondsSinceEpoch - _sessionStartMs;
-      entry.timeOffsetMs = (((t1 - t0) + (t2 - t3)) / 2).round();
+    // Time offset (Device view): NTP-style estimate of the offset between the
+    // device's clock and the core's clock.  The core (ID 1) is the time
+    // reference and always reads 0.  For other devices we probe the core's
+    // uptime (CID 9) before and after the CID 11 round-trip so the NTP
+    // formula uses a common time base.
+    if (id == coreId) {
+      entry.timeOffsetMs = 0;
+    } else {
+      final coreBefore = await _request(coreId, ServiceType.device, 9);
+      if (coreBefore != null && coreBefore.length >= 4) {
+        final t0 = uint32FromBytes(coreBefore);
+        final syncReply = await _request(id, ServiceType.device, 11,
+            payload: uint32ToBytes(t0));
+        if (syncReply != null && syncReply.length >= 12) {
+          final t1 = uint32FromBytes(syncReply, 4);
+          final t2 = uint32FromBytes(syncReply, 8);
+          final coreAfter = await _request(coreId, ServiceType.device, 9);
+          final t3 = (coreAfter != null && coreAfter.length >= 4)
+              ? uint32FromBytes(coreAfter)
+              : t0 + (t2 - t1);
+          entry.timeOffsetMs = (((t1 - t0) + (t2 - t3)) / 2).round();
+        }
+      }
     }
 
     entry.lastSeen = DateTime.now();

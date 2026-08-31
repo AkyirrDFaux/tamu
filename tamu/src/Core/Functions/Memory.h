@@ -36,21 +36,20 @@ struct BlockIndex
 };
 
 // Sends a single response packet back to the requester (only if REQACK was set).
-inline void SendResponse(const PacketFrame &frame, const uint8_t *payload, uint16_t len)
+__attribute__((noinline)) void SendResponse(const PacketFrame &frame, const uint8_t *payload, uint16_t len)
 {
     if (!(frame.flags & FLAG_REQACK))
         return;
-    PacketFrame reply;
-    PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
+    PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.srv_tgt,
                      FLAG_TYPE | FLAG_START | FLAG_STOP, payload, len);
-    DispatchPacket(reply);
+    DispatchPacket(tx_frame);
 }
 
 // Sends a one-byte status response (0 = OK, otherwise a non-zero failure code).
 // Failures are logged on the core (DeviceLog is a no-op on textless nodes): the
 // service tag, CID and the request's block/field/key give a full audit trail for
 // every rejected memory operation without per-call-site logging.
-inline void RespondStatus(const PacketFrame &frame, bool ok)
+__attribute__((noinline)) void RespondStatus(const PacketFrame &frame, bool ok)
 {
     if (!ok)
     {

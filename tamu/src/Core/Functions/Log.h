@@ -21,13 +21,12 @@ inline void ReportLog(const LogMessage &log)
 {
     LogMessage message = log;
     message.timestamp = DeviceStatus.UptimeMs;
-    PacketFrame log_pkt;
-    PacketConstruct(&log_pkt, ADDR_BROADCAST,
+    PacketConstruct(&tx_frame, ADDR_BROADCAST,
                      MakeService(ServiceType::LogHandler, 0),
                      MakeService(ServiceType::LogHandler, 0),
                      FLAG_START | FLAG_STOP,
                      (const uint8_t *)&message, sizeof(LogMessage));
-    DispatchPacket(log_pkt);
+    DispatchPacket(tx_frame);
 }
 
 // Core RAM log database entry (Docs/Services/Log Handler.md):

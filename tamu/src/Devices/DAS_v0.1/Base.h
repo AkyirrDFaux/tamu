@@ -39,7 +39,7 @@ uint32_t TimeFromBoot(void) {
 }
 
 // Returns the current SYNCHRONIZED time in milliseconds (raw timer + time offset pushed
-// by the core via Device service CID 11). TimeOffsetMs is declared in Core/Functions/
+// by the core via Device service CID 12). TimeOffsetMs is declared in Core/Functions/
 // SysFunctions.h, which is always included before this header in the translation unit.
 uint32_t Now(void) {
     return TimeFromBoot() + TimeOffsetMs;

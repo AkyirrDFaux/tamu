@@ -12,7 +12,7 @@ uint32_t TimeFromBoot()
 }
 
 // Returns the current SYNCHRONIZED time in milliseconds (raw timer + time offset pushed
-// by the core via Device service CID 11).
+// by the core via Device service CID 12).
 uint32_t Now()
 {
     return TimeFromBoot() + TimeOffsetMs;
