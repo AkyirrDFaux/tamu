@@ -34,7 +34,7 @@ inline size_t AlignTo4(size_t size)
 // Loop time bookkeeping (defined in Main.cpp)
 extern uint32_t LastTime;
 extern uint32_t DeltaTime;
-// Time offset in ms set by the core via Device service CID 11 (Set time offset)
+// Time offset in ms set by the core via Device service CID 12 (Set time offset)
 extern int32_t TimeOffsetMs;
 
 // Updates uptime/delta time bookkeeping and the loop-time statistics each main-loop tick

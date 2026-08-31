@@ -27,45 +27,43 @@ void HandleStorageService(const PacketFrame &frame)
     if (is_response) return; // Storage service only processes requests
 
     PacketFrame reply;
-    // Single scratch buffer shared by every streaming case (hoisted so the compiler
-    // allocates it once instead of once per case - keeps the DAS's 2 KB stack sane).
-    uint8_t buf[MAX_PAYLOAD_SIZE];
+    // NOTE: no separate scratch buffer - stream fragments are packed straight into
+    // reply.payload (see FinalizeReply) so the DAS's 2 KB stack stays shallow.
 
     switch (cid) {
         case 0: { // Read File Table (FRAG stream of File entries)
             uint8_t active_count = Storage.FileCount();
 
             if (active_count == 0) {
-                PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
-                                 FLAG_TYPE | FLAG_START | FLAG_STOP, nullptr, 0);
+                FinalizeReply(reply, frame, FLAG_TYPE | FLAG_START | FLAG_STOP, 0);
                 DispatchPacket(reply);
                 break;
             }
 
             // Stream every entry as a FRAG stream (Docs/Services/Storage.md:
-            // "Fragmentation, File table entries"). Each fragment carries up to 256
-            // bytes of 16-byte entries; the fragmentation info is the first 4 payload
-            // bytes. `sent` counts what was actually read so the stream always
-            // terminates with STOP even if a late entry read fails.
+            // "Fragmentation, File table entries"). Each fragment carries up to
+            // MAX_PAYLOAD_SIZE - 4 bytes of 16-byte entries; the fragmentation info
+            // is the first 4 payload bytes. `sent` counts what was actually read so
+            // the stream always terminates with STOP even if a late entry read fails.
             uint32_t total = (uint32_t)active_count * sizeof(FileEntry);
-            uint16_t total_frags = (uint16_t)((total + 255) / 256);
+            uint16_t frag_content_cap = (uint16_t)(MAX_PAYLOAD_SIZE - 4);
+            uint16_t total_frags = (uint16_t)((total + frag_content_cap - 1) / frag_content_cap);
             uint8_t sent = 0;
             for (uint16_t f = 0; f < total_frags && sent < active_count; f++) {
                 uint8_t flags = FLAG_TYPE | FLAG_FRAG;
                 if (f == 0) flags |= FLAG_START;
-                WriteFragInfo(buf, f, total_frags);
+                WriteFragInfo(reply.payload, f, total_frags);
                 uint16_t off = 4;
-                while (off - 4 + sizeof(FileEntry) <= 256 && sent < active_count) {
+                while (off + sizeof(FileEntry) <= 4 + frag_content_cap && sent < active_count) {
                     FileEntry entry;
                     if (!Storage.ReadFileEntry(sent, &entry))
                         break; // table unreadable: stop; STOP still set below
-                    memcpy(buf + off, &entry, sizeof(FileEntry));
+                    memcpy(reply.payload + off, &entry, sizeof(FileEntry));
                     off += sizeof(FileEntry);
                     sent++;
                 }
                 if (sent >= active_count || f == total_frags - 1) flags |= FLAG_STOP;
-                PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
-                                 flags, buf, off);
+                FinalizeReply(reply, frame, flags, off);
                 DispatchPacket(reply);
                 if (sent >= active_count) break;
             }
@@ -151,25 +149,29 @@ void HandleStorageService(const PacketFrame &frame)
                 const char *name = reinterpret_cast<const char *>(frame.payload);
                 uint32_t file_offset, file_size;
                 if (Storage.GetFileInfo(name, &file_offset, &file_size)) {
+                    // Chunk size = the payload capacity minus [frag info + name]
+                    // (MAX_PAYLOAD_SIZE; every node builds with the full value).
                     uint32_t total_content = file_size;
-                    uint16_t total_frags = (uint16_t)((total_content + 255) / 256);
+                    uint16_t contentCap = (uint16_t)(MAX_PAYLOAD_SIZE - 4 - 8);
+                    uint16_t total_frags = (uint16_t)((total_content + contentCap - 1) / contentCap);
                     if (total_frags == 0) total_frags = 1; // empty file: single fragment
 
                     for (uint16_t f = 0; f < total_frags; f++) {
                         uint8_t flags = FLAG_TYPE | FLAG_FRAG;
                         if (f == 0) flags |= FLAG_START;
                         if (f == total_frags - 1) flags |= FLAG_STOP;
-                        WriteFragInfo(buf, f, total_frags);
+                        WriteFragInfo(reply.payload, f, total_frags);
                         uint16_t head = (f == 0) ? 8 : 0;
-                        if (head) memcpy(buf + 4, name, 8);
-                        uint32_t content_off = (uint32_t)f * 256;
-                        uint16_t content_len = (total_content - content_off > 256)
-                                                   ? 256
+                        if (head) memcpy(reply.payload + 4, name, 8);
+                        uint32_t content_off = (uint32_t)f * contentCap;
+                        uint16_t content_len = (total_content - content_off > contentCap)
+                                                   ? contentCap
                                                    : (uint16_t)(total_content - content_off);
+                        if (content_len + 4 + head > MAX_PAYLOAD_SIZE)
+                            content_len = (uint16_t)(MAX_PAYLOAD_SIZE - 4 - head);
                         if (content_len)
-                            Storage_FlashRead(file_offset + content_off, buf + 4 + head, content_len);
-                        PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
-                                         flags, buf, 4 + head + content_len);
+                            Storage_FlashRead(file_offset + content_off, reply.payload + 4 + head, content_len);
+                        FinalizeReply(reply, frame, flags, (uint16_t)(4 + head + content_len));
                         DispatchPacket(reply);
                     }
                 } else {

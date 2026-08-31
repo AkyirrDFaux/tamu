@@ -4,6 +4,41 @@ Status of items from the docs-vs-implementation audit and follow-up work.
 
 ## Resolved (code)
 
+### Payload re-sized to the 288-B frame; DAS runs the full payload + RS-485 large-frame loss (2026-08-31)
+
+- **Payload max reduced per the updated Data Formats.md**: Information is now 5 units = 20 B
+  (was 36 B) + 256 B actual payload = **276-B payload (69 units), 288-B frame total** - all
+  devices must handle it in full. `MAX_PAYLOAD_SIZE` is 276 everywhere (Packet.h), the DAS's
+  `-D MAX_PAYLOAD_SIZE=128` build flag was removed (it halved the DAS's payload and broke
+  cross-device fragment consistency - stream senders must use the same fragment sizes), and
+  the app's `maxPayloadSize` is 276. The 320-B DAS echo ring and the core's 320-B TX staging
+  buffer still hold the largest frame (0xAA + 288 = 289 B).
+- **DAS stack overflow on SystemMemory (write/read) with the bigger buffers (fixed)**: the
+  memory handler kept a 276-B `payload[MAX_PAYLOAD_SIZE]` scratch on the stack *plus*
+  SendResponse's 288-B reply frame, overflowing the 2 KB RAM/1024-B stack and wedging the
+  node on any write (watchdog: ping/time-sync died after the first write). Memory replies are
+  small (BlockIndex + BlockMeta + one field), so the scratch is now a fixed 64 B. Storage and
+  Script stream handlers likewise pack straight into `reply.payload` via a shared
+  `FinalizeReply` (Packet.h) instead of a second 276-B `buf`, so the deepest handler fits the
+  stack. Verified: writes/creates/tables/reads all survive, DAS uptime climbs.
+- **RS-485 large frames dropped at the core (root cause found + fixed)**: the DAS's echo
+  verification always succeeded (its own RX saw the clean echo), yet frames >~128 B never
+  reached the core's assembler (it synced mid-frame on a spurious 0xAA in the entry text, or
+  lost the frame entirely) - exactly the ESP32-C3's 128-B UART RX FIFO boundary. The core's
+  WS2812 LED bit-bang ran inside `portENTER_CRITICAL` for ~3 ms per strip (2 strips/loop), so
+  the UART RX ISR was masked ~6 ms/loop: the FIFO filled past 128 and overflowed during any
+  large-frame reception overlapping the LED sends.
+  - **Fixed**: (1) the LED bit-bang now yields every 48 bits for a 15 µs low gap (far under
+    the ~50 µs WS2812 reset threshold) so the UART ISR runs between chunks, and (2) the RS-485
+    UART's RX FIFO-full interrupt threshold is lowered to 4 bytes (`conf1.rxfifo_full_thrhd`)
+    so the ISR drains continuously and the FIFO can never fill. The strip's bit timing is
+    unchanged (the gaps are below the reset threshold). Verified: 192-B and multi-fragment
+    272+96-B table streams now arrive 100% (was ~50%/100% loss); DAS stable under repeated
+    large-frame stress.
+- **Verified**: full `testsuite.py` **98/98**, offline app suite 50 passing (1 pre-existing
+  `ble_switch` failure needing TAMU_HIL), USB HIL 8/8 + script HIL 3/3, DAS survives repeated
+  service traffic (uptime climbs, no watchdog).
+
 ### Memory views flickered on the (new) auto-refresh (2026-08-28)
 
 - After the memory views started auto-refreshing at the documented 0.5 s, the pages rebuilt
@@ -66,9 +101,9 @@ Implemented the redesigned packet format (Docs/Data Formats.md) end-to-end (firm
 app) and reworked the file-transfer services around the new FRAG fragmentation:
 
 - **Header**: byte 2 is now Priority (default 128); Payload Length is in 4-byte units
-  (max 73 units = 292 B, frame max 304 B). Payloads are zero-padded to 4 on the wire;
-  real lengths are derived from format fields (BlockMeta.Size etc.), never
-  `payload_len - fixed`. `PayloadBytes()` converts the stored units to bytes.
+  (max 69 units = 276 B, frame max 288 B per the current Data Formats.md). Payloads are
+  zero-padded to 4 on the wire; real lengths are derived from format fields (BlockMeta.Size
+  etc.), never `payload_len - fixed`. `PayloadBytes()` converts the stored units to bytes.
 - **FRAG** (flag bit 4): the first 4 payload bytes are `u16 current + u16 total
   fragments`; non-last fragments carry a full 256-B actual payload, the last is the
   (padded) remainder. Stream headers (file name / script ID) ride in the Information
@@ -89,11 +124,12 @@ app) and reworked the file-transfer services around the new FRAG fragmentation:
   device - the bootloader is a later session).
 - **Other stream senders moved to FRAG**: SNDB Read All, LogHandler GetLogs, Storage file
   table/read, Script read.
-- **DAS stack fixes**: `PacketFrame` grew to 304 B, overflowing the CH32V003's 256-B
-  stack (service replies crashed the node into a watchdog reset on any SystemMemory read).
-  The DAS now builds with `MAX_PAYLOAD_SIZE=128` (node frame = 140 B), hoisted
-  per-handler response buffers, a 768-B stack and a 320-B RS485 echo ring. Verified:
-  no crashes under repeated service traffic.
+- **DAS stack fixes**: `PacketFrame` grew past the CH32V003's small stack (service replies
+  crashed the node into a watchdog reset on any SystemMemory read). The DAS packs stream
+  replies directly into the response frame (`FinalizeReply` - no second scratch buffer),
+  keeps the SystemMemory reply buffer at 64 B, and uses a 1024-B stack and a 320-B RS485
+  echo ring. The DAS builds with the SAME full `MAX_PAYLOAD_SIZE` as the core (see the
+  payload-size follow-up below).
 - **App**: `protocol.dart` (units, padding, FRAG), `connection.dart` FRAG reassembly
   (strips the 4-B info per fragment; clients trim the last fragment via the known file
   size), memory clients slice values by BlockMeta.Size, `storage_client`/`script_client`

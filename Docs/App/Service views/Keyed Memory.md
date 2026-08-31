@@ -11,6 +11,6 @@ Automatically refreshes the visible view (0.5s)
 	- Sublist contain block's entries
 		- Show type and flags of each entry
 			- Show each key entry's key, type, flags and values
-- Values and blocks can be edited when tapped (current)
-- Values show a Save button (current) /Recall button (backup)
+- Values and blocks can be edited when tapped (current); each key entry has a Delete action
+- Block Save (current) / Recall (backup) via the appbar; the backup view shows a per-entry Recall button
 - Show value entry names and units based on the value and block types, enums, keys and indexes.

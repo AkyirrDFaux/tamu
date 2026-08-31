@@ -601,26 +601,29 @@ uint8_t payload[MAX_PAYLOAD_SIZE];
                 break;
             }
             uint32_t total_content = sz;
-            uint16_t total_frags = (uint16_t)((total_content + 255) / 256);
+            // Chunk size = payload capacity minus [frag info + script id]
+            // (MAX_PAYLOAD_SIZE; every node builds with the full value).
+            uint16_t contentCap = (uint16_t)(MAX_PAYLOAD_SIZE - 4 - 1);
+            uint16_t total_frags = (uint16_t)((total_content + contentCap - 1) / contentCap);
             if (total_frags == 0) total_frags = 1; // empty file: single fragment
 
-            uint8_t buf[MAX_PAYLOAD_SIZE];
             for (uint16_t f = 0; f < total_frags; f++)
             {
                 uint8_t flags = FLAG_TYPE | FLAG_FRAG;
                 if (f == 0) flags |= FLAG_START;
                 if (f == total_frags - 1) flags |= FLAG_STOP;
-                WriteFragInfo(buf, f, total_frags);
+                WriteFragInfo(reply.payload, f, total_frags);
                 uint16_t head = (f == 0) ? 1 : 0;
-                if (head) buf[4] = id;
-                uint32_t content_off = (uint32_t)f * 256;
-                uint16_t content_len = (total_content - content_off > 256)
-                                           ? 256
+                if (head) reply.payload[4] = id;
+                uint32_t content_off = (uint32_t)f * contentCap;
+                uint16_t content_len = (total_content - content_off > contentCap)
+                                           ? contentCap
                                            : (uint16_t)(total_content - content_off);
+                if (content_len + 4 + head > MAX_PAYLOAD_SIZE)
+                    content_len = (uint16_t)(MAX_PAYLOAD_SIZE - 4 - head);
                 if (content_len)
-                    Storage_FlashRead(off + content_off, buf + 4 + head, content_len);
-                PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
-                                 flags, buf, 4 + head + content_len);
+                    Storage_FlashRead(off + content_off, reply.payload + 4 + head, content_len);
+                FinalizeReply(reply, frame, flags, (uint16_t)(4 + head + content_len));
                 DispatchPacket(reply);
             }
             break;

@@ -1,7 +1,15 @@
 # Improvement suggestions
 
-## New 2026-08-28 (packet type + FRAG rework)
+## New 2026-08-28 (bugfix + doc-alignment round)
 
+- **LED display "Keyed Effect" block is documented but not implemented**: Docs/Modules/LED
+  display.md lists index "3 | Keyed Effect" (render order + block map), but the firmware
+  (`Vysi1Display::Render`) only handles Geometry and Texture entries. Either implement the
+  Effect block or remove it from the doc.
+- **Storage upload**: Docs/App/Service views/Storage.md says "Allow uploading and
+  downloading files"; the Storage page only downloads/previews. `StorageClient.writeFile`
+  (CID 7, FRAG stream) exists and works (verified in the HIL round trip) - an upload
+  button with a file picker would complete the feature.
 - **DAS Button module (Docs/Devices.md "Button | PC0") is not implemented**: the doc lists a
   Button module for the DAS but no firmware exists (no button block, no pin handling). The
   button's function is unspecified - decide what it should do (a static Block? a boot

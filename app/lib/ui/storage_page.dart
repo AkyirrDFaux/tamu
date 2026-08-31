@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
+import '../core/backup.dart' show readPlatformFile;
 import '../core/connection.dart';
 import '../core/block_registry.dart' show FieldInfo, blockInfoFor;
 import '../core/storage_client.dart';
@@ -123,6 +125,31 @@ class _StoragePageState extends State<StoragePage>
     await _refresh();
   }
 
+  /// Uploads a host file to the device (CID 7 write stream, Docs/App/Service
+  /// views/Storage.md "Allow uploading ... files from the app host OS").
+  Future<void> _uploadFile() async {
+    final result = await FilePicker.pickFiles(withData: true);
+    final file = result?.files.singleOrNull;
+    if (file == null) return;
+    final bytes = file.bytes ?? readPlatformFile(file.path ?? '');
+    if (bytes.isEmpty) {
+      _snack('Empty file');
+      return;
+    }
+    // Device file names are 8 bytes: base name without extension, trimmed.
+    var name = file.name;
+    final dot = name.lastIndexOf('.');
+    if (dot > 0) name = name.substring(0, dot);
+    if (name.length > StorageClient.nameLength) {
+      name = name.substring(0, StorageClient.nameLength);
+    }
+    if (name.isEmpty) name = 'UPFILE';
+    _snack('Uploading "$name"...');
+    final ok = await _client.writeFile(name, bytes);
+    _snack(ok ? 'Uploaded "$name"' : 'Upload failed');
+    await _refresh();
+  }
+
   Future<void> _deleteFile(FileRecord file) async {
     if (!await _confirm(
         'Delete "${file.name}"?',
@@ -166,6 +193,10 @@ class _StoragePageState extends State<StoragePage>
       appBar: AppBar(
         title: Text('Storage - ${idToString(widget.deviceId)}'),
         actions: [
+          IconButton(
+              onPressed: _uploadFile,
+              tooltip: 'Upload file',
+              icon: const Icon(Icons.upload_outlined)),
           IconButton(
               onPressed: _createFile,
               tooltip: 'Create file',

@@ -4,12 +4,11 @@
 #include <cstddef>
 #include <cstring>
 
-// Max payload = max Information (36) + max Actual payload (256) = 292 bytes,
-// frame total = 12 header + 292 = 304 (Data Formats.md). RAM-starved nodes (the DAS)
-// build with a smaller value via the MAX_PAYLOAD_SIZE build flag so their PacketFrame
-// and response buffers fit the 2 KB stack; the protocol allows any payload <= 292.
+// Max payload = max Information (20) + max Actual payload (256) = 276 bytes,
+// frame total = 12 header + 276 = 288 (Data Formats.md: "all devices have to handle
+// it in full"). Every node builds with this exact value - nodes must not reduce it.
 #ifndef MAX_PAYLOAD_SIZE
-#define MAX_PAYLOAD_SIZE 292
+#define MAX_PAYLOAD_SIZE 276
 #endif
 
 // Flag bitmasks (from Data Formats.md)
@@ -63,7 +62,7 @@ static_assert(offsetof(PacketFrame, payload) % 4 == 0,
               "payload must stay 4-byte aligned for direct word reads");
 
 // Computes the CRC8 checksum over `len` bytes of `data` (polynomial 0x07, init 0x00).
-// The length is 16-bit: frames carry up to 11 + 292 = 303 covered bytes, which a
+// The length is 16-bit: frames carry up to 11 + 276 = 287 covered bytes, which a
 // uint8_t would truncate mod 256.
 inline uint8_t Crc8(const uint8_t *data, uint16_t len)
 {
@@ -113,7 +112,7 @@ inline uint16_t PayloadBytes(const PacketFrame &frame)
 
 // Builds a packet frame with header fields filled and CRC8 computed over the header + payload.
 // The payload is zero-padded to a multiple of 4 and payload_len stores the padded size in
-// 4-byte units (Data Formats.md: Payload Length in multiples of 4, max 73 units).
+// 4-byte units (Data Formats.md: Payload Length in multiples of 4, max 69 units).
 inline void PacketConstruct(PacketFrame *frame,
                             uint16_t dest_addr,
                             uint16_t dest_srv,
@@ -141,6 +140,24 @@ inline void PacketConstruct(PacketFrame *frame,
 
     frame->payload_len = (uint8_t)(padded / 4);
     frame->crc8 = Crc8(&frame->flags, (uint16_t)(11 + padded));
+}
+
+// Finalises a response whose contents were packed directly into `reply.payload`
+// (avoids a second scratch buffer, keeping RAM-starved nodes' stacks shallow):
+// fills the header from the request, pads the payload to 4 and computes the CRC.
+inline void FinalizeReply(PacketFrame &reply, const PacketFrame &req,
+                          uint8_t flags, uint16_t len)
+{
+    reply.flags = flags;
+    reply.priority = DEFAULT_PRIORITY;
+    reply.id_tgt = req.id_src;
+    reply.id_src = DeviceStatus.ShortAddress;
+    reply.srv_tgt = req.srv_src;
+    reply.srv_src = req.srv_tgt;
+    uint16_t padded = (uint16_t)((len + 3u) & ~3u);
+    if (padded > len) memset(reply.payload + len, 0, padded - len);
+    reply.payload_len = (uint8_t)(padded / 4);
+    reply.crc8 = Crc8(&reply.flags, (uint16_t)(11 + padded));
 }
 
 // Writes the 4-byte fragmentation info (u16 current fragment + u16 total fragments)

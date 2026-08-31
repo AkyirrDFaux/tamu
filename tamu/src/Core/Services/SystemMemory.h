@@ -286,9 +286,11 @@ void HandleSystemMemory(const PacketFrame &frame)
     if (PayloadBytes(frame) < sizeof(BlockIndex)) { DeviceLog("SYSMEM", "short payload (%u B)", (unsigned)PayloadBytes(frame)); return; }
     const BlockIndex *idx = reinterpret_cast<const BlockIndex *>(frame.payload);
 
-    // Single scratch buffer shared by every reply-building case (hoisted so the
-    // compiler allocates it once - keeps the DAS's 2 KB stack sane).
-    uint8_t payload[MAX_PAYLOAD_SIZE];
+    // Single scratch buffer shared by every reply-building case. Memory replies are small
+    // (BlockIndex + BlockMeta + one field value / block name), so this is a fixed 64 bytes
+    // rather than MAX_PAYLOAD_SIZE - a full-size buffer would stack-overflow the DAS (whose
+    // deepest handler also carries SendResponse's 288-byte reply frame).
+    uint8_t payload[64];
 
     switch (cid)
     {

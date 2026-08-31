@@ -17,5 +17,9 @@ CRC is over Length + Payload.
 
 | Length of this BLE packet | Payload (Packets, serialized stream) |
 | ------------------------- | ------------------------------------ |
-| uint16                    | (MTU size - 2) bytes max             |
+| uint16                    | (MTU - 2) bytes max                  |
 SRV CID are App defined transaction IDs, the device does not care.
+
+The BLE payload is a length-prefixed chunk of the serialized packet stream: the 3-byte
+ATT header plus the 2-byte length prefix leave MTU - 5 bytes for the stream per
+notification.

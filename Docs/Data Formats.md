@@ -23,16 +23,16 @@
 | Generic | CRC8           | uint8                | covers everything after                                                                                |
 |         | Flags          | 8 bits               |                                                                                                        |
 |         | Priority       | uint8                | 0 = highest, default 128                                                                               |
-|         | Payload Length | uint8                | in multiples of 4 bytes (for 32bit alignment), max 9+64, includes information                          |
+|         | Payload Length | uint8                | in multiples of 4 bytes (for 32bit alignment), max 5+64, includes payload information                  |
 | ID      | TGT            | uint16               |                                                                                                        |
 |         | SRC            | uint16               |                                                                                                        |
 | SRC     | TGT            | uint16               |                                                                                                        |
 |         | SRC            | uint16               |                                                                                                        |
-| Payload | Information    | max 9 * 4 = 36 bytes | Flexible size, can be ommited, service specific. Example: fragmentation, indexing, metadata, filename. |
+| Payload | Information    | max 5 * 4 = 20 bytes | Flexible size, can be ommited, service specific. Example: fragmentation, indexing, metadata, filename. |
 |         | Actual payload | max 256 bytes        | Flexible size, service specific.                                                                       |
 - Flags : REQACK (request response), START (first), STOP (last), TYPE (Request/Response), FRAG (first 4 payload bytes are fragmentation information, uint16 current frag. segment + uint16 total segments)
-- Priorities: Errors (highest) -> Other  -> Streams -> Logs (lowest)
-Maximum length 304 bytes total.
+- Priorities: Errors (highest) -> TimeSync packets -> Other  -> Streams -> Logs (lowest)
+Maximum length 288 bytes total, all devices have to handle it in full.
 ### Common structs
 - BlockMeta (6bit, 10bit , 8bit x2) - Flags, Type, (Padding OR Key), Length of Value
 	Flags:

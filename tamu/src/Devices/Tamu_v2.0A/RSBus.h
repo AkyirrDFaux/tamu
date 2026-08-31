@@ -1,4 +1,5 @@
 #include "driver/uart.h"
+#include "soc/uart_struct.h" // UART1 register struct (rxfifo_full_thrhd)
 #include <string.h>
 #include "Core/Functions/Bus.h"
 
@@ -29,6 +30,12 @@ void SetupRS485()
     {
         ESP_ERROR_CHECK(uart_driver_install(UART_NUM_1, 1024, 0, 0, NULL, 0));
     }
+
+    // The RX ISR only fired as the 128-byte hardware FIFO neared full, so a few ms of the
+    // WS2812 LED bit-bang (interrupts masked, see LED.h) could overflow it and drop large
+    // RS-485 frames. Trigger the ISR at a small FIFO level so it drains continuously and
+    // the FIFO can never fill during an LED chunk.
+    UART1.conf1.rxfifo_full_thrhd = 4;
 
     gpio_reset_pin(RS485_EN_PIN); // Ensure the pin is reset before setting direction
     gpio_set_direction(RS485_EN_PIN, GPIO_MODE_OUTPUT);
@@ -101,8 +108,8 @@ bool SendAndVerifyPacket(const PacketFrame &Data)
     size_t packet_size = 12 + PayloadBytes(tx_frame);
     size_t total_tx_size = 1 + packet_size; // Start byte (0xAA) + packet_size
     // Start byte + header + payload; payload_len is a wire byte in 4-byte units
-    // (max 73 units = 292 bytes), so the largest frame is 305 bytes.
-    static_assert(MAX_PAYLOAD_SIZE <= 292, "RSBus TX buffer assumes a 292-byte payload");
+    // (max 69 units = 276 bytes), so the largest frame is 289 bytes.
+    static_assert(MAX_PAYLOAD_SIZE <= 276, "RSBus TX buffer assumes a 276-byte payload");
     uint8_t tx_buffer[320];
     tx_buffer[0] = 0xAA;
     memcpy(&tx_buffer[1], &tx_frame, packet_size);

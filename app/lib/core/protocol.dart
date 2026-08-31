@@ -1,12 +1,12 @@
 /// Generic packet protocol (Docs/Data Formats.md).
 ///
 /// Wire layout: CRC8 | Flags | Priority | PayloadLen | ID TGT | ID SRC | SRV TGT | SRV SRC | Payload
-/// PayloadLen is in 4-byte units (max 73 = 292 bytes); the payload is padded to 4 on the wire.
+/// PayloadLen is in 4-byte units (max 69 = 276 bytes); the payload is padded to 4 on the wire.
 library;
 
 import 'dart:typed_data';
 
-const int maxPayloadSize = 292;
+const int maxPayloadSize = 276;
 
 // Flag bitmasks.
 const int flagReqAck = 1 << 0;

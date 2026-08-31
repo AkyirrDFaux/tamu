@@ -23,7 +23,7 @@ static inline void SendDeviceReply(const PacketFrame &frame, PacketFrame &reply,
 }
 
 #ifdef TYPE_CORE
-// Dispatches SNDB requests: Read All (12), Read by ID/SN (13) and Write (14).
+// Dispatches SNDB requests: Read All (13), Read by ID/SN (14) and Write (15).
 void HandleSNDB(const PacketFrame &frame)
 {
     uint8_t cid = GetServiceCID(frame.srv_tgt);

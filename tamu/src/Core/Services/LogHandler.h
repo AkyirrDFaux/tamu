@@ -155,21 +155,24 @@ void HandleLogHandler(const PacketFrame &frame)
         // Clear the n entries with the HIGHEST sequence number (the newest). Slot order
         // no longer tracks age once evictions/compaction have scrambled it, so selection
         // goes by LogSeq.
+        // Clear the `n` OLDEST entries (lowest sequence number), per Docs/Services/Log
+        // Handler.md "ClearReadLogs: starting from oldest". Slot order no longer tracks
+        // age once evictions/compaction have scrambled it, so selection goes by LogSeq.
         while (n > 0)
         {
-            int newest = -1;
-            uint32_t newest_seq = 0;
+            int oldest = -1;
+            uint32_t oldest_seq = 0xFFFFFFFF;
             for (uint32_t i = 0; i < LogCount; i++)
             {
-                if (LogUsed[i] && LogSeq[i] > newest_seq)
+                if (LogUsed[i] && LogSeq[i] < oldest_seq)
                 {
-                    newest_seq = LogSeq[i];
-                    newest = (int)i;
+                    oldest_seq = LogSeq[i];
+                    oldest = (int)i;
                 }
             }
-            if (newest < 0)
+            if (oldest < 0)
                 break; // database empty
-            LogUsed[newest] = false;
+            LogUsed[oldest] = false;
             n--;
         }
         if (frame.flags & FLAG_REQACK)

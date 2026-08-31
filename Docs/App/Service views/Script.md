@@ -1,8 +1,6 @@
 Lists all avaliable scripts on that device.
 Each list has the current
-On expanding entry the inputs with specified interaction options show and output values show.
-
-On tapping opens script editor page.
+On tapping the row expands it to show the script's inputs (interaction controls) and outputs; the popup menu / "Open editor" action opens the script editor page.
 
 # Script editor
 Lists instructions in human readable format.

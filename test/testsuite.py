@@ -182,8 +182,9 @@ def test_device_service(cli):
         # DAS is a plain node with no capability bits. The RSBus round trip to
         # node 2 can take several seconds - give it a longer read window.
         r = cli.send(f"dev {dev} cap", timeout=10, idle=idle)
+        # Core = Core|CLI|Dynamic|Keyed|Scripts = 0x3D; DAS is a plain node (0).
         report(f"dev {dev} cap",
-               ("0x0000001D" in r and dev == 1) or ("0x00000000" in r and dev == 2))
+               ("0x0000003D" in r and dev == 1) or ("0x00000000" in r and dev == 2))
 
 
 def test_tamu_system_memory(cli):

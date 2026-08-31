@@ -17,5 +17,5 @@ Per services avaliable, hide unavaliable (based on capabilities device field), l
 - [[App/Service views/Storage|Storage]]
 - SNDB viewer (Core only)
 - Router table viewer (Router only)
-- Log viewer
+- Log viewer (Core only - the log database lives on cores; nodes are outbound-only reporters)
 - [[App/Service views/Script|Script]]

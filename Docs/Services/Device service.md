@@ -31,8 +31,9 @@ Specific packet function is defined as an enum in the service custom identifier 
 Device name is stored in standalone file to allow persistence.
 If possible, the device name is shown in BLE advertising and on USB.
 
-Core implements SN Database
-Has it's own file.
-Stores (permanent) Serial number + ID pairs
+Every core implements SN Database.
+The SNDB has it's own file, which stores (persistent) Serial number + ID pairs
 
-Core also provides time sync, about once per (few) minutes, the time sync is performed at least 3 times with a delay of few seconds to provide an average
+Core also provides time sync reference. After ID assignment, the newly discovered device sends a single initial timesync packet to the core to sync it's time.
+
+The core then randomly syncs other devices if idle.

@@ -6,7 +6,7 @@
 #ifdef TYPE_CORE
 
 #define TIMESYNC_SAMPLES      3
-#define TIMESYNC_GAP_MS       1500
+#define TIMESYNC_GAP_MS       3000
 #define TIMESYNC_INTERVAL_MS  (5 * 60 * 1000)
 #define TIMESYNC_MAX_DEVICES  64
 
@@ -104,8 +104,8 @@ private:
         PacketFrame packet;
         uint32_t sent_time = DeviceStatus.UptimeMs;
         PacketConstruct(&packet, targets[current_target],
-                         MakeService(ServiceType::Device, 12),
-                         MakeService(ServiceType::Device, 12),
+                         MakeService(ServiceType::Device, 11),
+                         MakeService(ServiceType::Device, 11),
                          FLAG_REQACK | FLAG_START | FLAG_STOP,
                          (const uint8_t *)&sent_time, sizeof(uint32_t));
         DispatchPacket(packet);
