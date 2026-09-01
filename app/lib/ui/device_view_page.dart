@@ -116,6 +116,7 @@ class _DeviceViewPageState extends State<DeviceViewPage>
         _uploadStatus = 'Checking bootloader...';
       });
 
+      // Check if the core is in bootloader mode
       final inBootloader = await client.check();
       if (!inBootloader) {
         if (mounted) {
@@ -124,7 +125,7 @@ class _DeviceViewPageState extends State<DeviceViewPage>
             _uploadStatus = '';
           });
           messenger.showSnackBar(const SnackBar(
-              content: Text('Hold boot button and reset device, then try again')));
+              content: Text('Enter bootloader mode from the Bootloader tab first')));
         }
         return;
       }
@@ -134,7 +135,7 @@ class _DeviceViewPageState extends State<DeviceViewPage>
         _uploadProgress = 0;
       });
 
-      final uploaded = await client.writeBinary(binary, onProgress: (current, total) {
+      final uploaded = await client.uploadBinary(binary, onProgress: (current, total) {
         if (mounted) {
           setState(() => _uploadProgress = current / total);
         }
@@ -148,7 +149,7 @@ class _DeviceViewPageState extends State<DeviceViewPage>
         });
         messenger.showSnackBar(SnackBar(
             content: Text(uploaded
-                ? 'Firmware uploaded — reset device to boot'
+                ? 'Firmware uploaded — reset the node to boot'
                 : 'Firmware upload failed')));
       }
     } catch (e) {

@@ -10,28 +10,29 @@ Specific packet function is defined as an enum in the service custom identifier 
 
 ### Service CIDs
 
-| Function               | SRV CID | Content request            | Content response                                               | Note                                                   |
-| ---------------------- | ------- | -------------------------- | -------------------------------------------------------------- | ------------------------------------------------------ |
-| Discover (node - core) | 0       | SN (from node)             | SN (of node) + ID (from core)                                  | Sent from 0.0                                          |
-| Discover (core - core) | 0       | SN                         | SN                                                             | Sent to FFF.1, from NetID.1, request triggers response |
-| Ping                   | 1       | uint32                     | uint32 (same)                                                  | Random transaction ID                                  |
-| Identify               | 2       | Bool                       | -                                                              | True = blink red led fast, false = leave led alone     |
-| Device type            | 3       | -                          | Device type enum                                               |                                                        |
-| Serial number          | 4       | -                          | SN                                                             |                                                        |
-| Software version       | 5       | -                          | Software version (uint8 x4)                                    | YY:MM:DD:II (year-month-day-iteration)                 |
-| Capability             | 6       | -                          | Capability bitfield (32 bit)                                   |                                                        |
-| Read Name              | 7       | -                          | Name                                                           |                                                        |
-| Set Name               | 8       | Name                       | Name                                                           | Respond only if requested                              |
-| Uptime                 | 9       | -                          | Uptime (uint32)                                                | ms                                                     |
-| Loop Time              | 10      | -                          | Average and Maximum loop time (2x Number)                      | ms                                                     |
-| Time sync              | 11      | Time sent                  | Original time sent, Local time recieved, Local time reply sent | ms                                                     |
-| Get time offset        | 12      | -                          | Time offset (int32)                                            | ms                                                     |
-| Set time offset        | 13      | Time offset (int32)        | -                                                              | ms                                                     |
-| Get NetID              | 14      | -                          | NetID                                                          | Core only                                              |
-| Set NetID              | 15      | NetID                      | NetID                                                          | Core only, will take effect after reboot               |
-| SNDB Read All          | 16      | -                          | Fragmentation, SN + ID (stream)                                | Core only                                              |
-| SNDB Read              | 17      | ID or SN (based on length) | SN + ID                                                        | Core only                                              |
-| SNDB Write             | 18      | SN + ID                    | SN + ID                                                        | Core only, setting ID to 0 works as delete             |
+| Function               | SRV CID | Content request                      | Content response                                               | Note                                                                                               |
+| ---------------------- | ------- | ------------------------------------ | -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Discover (node - core) | 0       | SN (from node)                       | SN (of node) + ID (from core)                                  | Sent from 0.0                                                                                      |
+| Discover (core - core) | 0       | SN                                   | SN                                                             | Sent to FFF.1, from NetID.1, request triggers response                                             |
+| Ping                   | 1       | uint32                               | uint32 (same)                                                  | Random transaction ID                                                                              |
+| Identify               | 2       | Bool                                 | -                                                              | True = blink red led fast, false = leave led alone                                                 |
+| Silent mode            | 3       | Bool (true = silent, false = normal) | -                                                              | Will silence the device on the bus until requested otherwise, used for running bootloader in place |
+| Device type            | 4       | -                                    | Device type enum                                               |                                                                                                    |
+| Serial number          | 5       | -                                    | SN                                                             |                                                                                                    |
+| Software version       | 6       | -                                    | Software version (uint8 x4)                                    | YY:MM:DD:II (year-month-day-iteration)                                                             |
+| Capability             | 7       | -                                    | Capability bitfield (32 bit)                                   |                                                                                                    |
+| Read Name              | 8       | -                                    | Name                                                           |                                                                                                    |
+| Set Name               | 9       | Name                                 | Name                                                           | Respond only if requested                                                                          |
+| Uptime                 | 10      | -                                    | Uptime (uint32)                                                | ms                                                                                                 |
+| Loop Time              | 11      | -                                    | Average and Maximum loop time (2x Number)                      | ms                                                                                                 |
+| Time sync              | 12      | Time sent                            | Original time sent, Local time recieved, Local time reply sent | ms                                                                                                 |
+| Get time offset        | 13      | -                                    | Time offset (int32)                                            | ms                                                                                                 |
+| Set time offset        | 14      | Time offset (int32)                  | -                                                              | ms                                                                                                 |
+| Get NetID              | 15      | -                                    | NetID                                                          | Core only                                                                                          |
+| Set NetID              | 16      | NetID                                | NetID                                                          | Core only, will take effect after reboot                                                           |
+| SNDB Read All          | 17      | -                                    | Fragmentation, SN + ID (stream)                                | Core only                                                                                          |
+| SNDB Read              | 18      | ID or SN (based on length)           | SN + ID                                                        | Core only                                                                                          |
+| SNDB Write             | 19      | SN + ID                              | SN + ID                                                        | Core only, setting ID to 0 works as delete                                                         |
 
 Device name is stored in standalone file to allow persistence.
 If possible, the device name is shown in BLE advertising and on USB.

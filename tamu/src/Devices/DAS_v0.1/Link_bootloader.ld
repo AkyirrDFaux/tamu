@@ -1,6 +1,6 @@
 /* DAS v0.1 app linker script with bootloader support.
  *
- * App starts at 0x600 (after 1.5 KB bootloader at 0x0000).
+ * App starts at 0x1000 (after 4 KB bootloader at 0x0000).
  * Storage at 0x3800-0x3FFF (2 KB), pinned via --section-start in platformio.ini.
  */
 
@@ -12,7 +12,7 @@ PROVIDE( _stack_size = __stack_size );
 
 MEMORY
 {
-	FLASH (rx) : ORIGIN = 0x600, LENGTH = 12800
+	FLASH (rx) : ORIGIN = 0x1000, LENGTH = 10240
 	RAM (xrw) : ORIGIN = 0x20000000, LENGTH = 2K
 }
 

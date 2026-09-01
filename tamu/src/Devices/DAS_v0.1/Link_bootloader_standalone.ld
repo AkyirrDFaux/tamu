@@ -1,6 +1,7 @@
 /* DAS v0.1 standalone bootloader linker script.
  *
- * Bootloader at 0x0000-0x05FF (1.5 KB). Minimal — no highcode, no data init.
+ * Bootloader at 0x0000-0x0FFF (4 KB).
+ * Provides all symbols the noneos-sdk startup assembly expects.
  */
 
 ENTRY( _start )
@@ -11,7 +12,7 @@ PROVIDE( _stack_size = __stack_size );
 
 MEMORY
 {
-	FLASH (rx) : ORIGIN = 0x00000000, LENGTH = 1536
+	FLASH (rx) : ORIGIN = 0x00000000, LENGTH = 4096
 	RAM (xrw)  : ORIGIN = 0x20000000, LENGTH = 2K
 }
 
@@ -25,6 +26,14 @@ SECTIONS
 		. = ALIGN(4);
 		_einit = .;
 	} >FLASH AT>FLASH
+
+	/* Highcode: bootloader has no time-critical code, provide empty stubs */
+	PROVIDE(_highcode_lma = 0);
+	PROVIDE(_highcode_vma_start = 0);
+	PROVIDE(_highcode_vma_end = 0);
+	PROVIDE(_highcode_init_lma = 0);
+	PROVIDE(_highcode_init_vma_start = 0);
+	PROVIDE(_highcode_init_vma_end = 0);
 
 	.text :
 	{
@@ -67,6 +76,10 @@ SECTIONS
 		. = ALIGN(4);
 		PROVIDE( _edata = .);
 	} >RAM AT>FLASH
+
+	/* Provide __global_pointer$ for the startup GP init */
+	. = ALIGN(8);
+	PROVIDE( __global_pointer$ = . + 0x800 );
 
 	.bss :
 	{

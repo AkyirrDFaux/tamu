@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Services/Bootloader.md",
+                "file": "Services/Device service.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Bootloader"
+              "title": "Device service"
             }
           }
         ]
@@ -190,13 +190,14 @@
   },
   "active": "7712251b840e352d",
   "lastOpenFiles": [
+    "Services/Dynamic Memory.md",
+    "Services/Bootloader.md",
     "Data Formats.md",
     "General architecture.md",
     "Improve.md",
     "Issues.md",
     "RealHW.md",
     "RSBus.md",
-    "Services/Bootloader.md",
     "Services/Device service.md",
     "Service ID table.md",
     "Devices.md",
@@ -204,7 +205,6 @@
     "Services/System Memory.md",
     "Services/Storage.md",
     "Services/Router.md",
-    "Services/Dynamic Memory.md",
     "Services/CLI.md",
     "App/Devices.md",
     "Modules/LED display.md",

@@ -7,12 +7,17 @@ import 'package:flutter/material.dart';
 
 import '../core/bootloader_client.dart';
 import '../core/connection.dart';
-import '../core/protocol.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
-/// Bootloader page: scans the bus for devices in bootloader mode (broadcast
-/// CID 0 check) and allows uploading firmware to any that respond.
+/// Bootloader page: manages the core's bootloader mode and streams firmware
+/// to a connected node via the RS-Bus bridge.
+///
+/// Flow:
+///   1. User clicks "Enter Bootloader Mode" -> CID 1 switch(true)
+///   2. Core listens for node enumeration (user resets node with button held)
+///   3. User picks firmware file and clicks "Upload"
+///   4. App writes all fragments (CID 4), verifies (CID 3), then optionally leaves
 class BootloaderPage extends StatefulWidget {
   const BootloaderPage({super.key});
 
@@ -22,61 +27,104 @@ class BootloaderPage extends StatefulWidget {
 
 class _BootloaderPageState extends State<BootloaderPage>
     with AutoRefreshMixin<BootloaderPage> {
-  final List<_BootDevice> _devices = [];
-  bool _scanning = false;
+  final BootloaderClient _client = BootloaderClient(deviceId: 1);
+
+  bool _inBootloader = false;
+  Uint8List? _vendorInfo;
+
   bool _uploading = false;
-  double _uploadProgress = 0;
-  String _uploadStatus = '';
-  int? _uploadTarget;
+  bool _verifying = false;
+  double _progress = 0;
+  String _status = '';
+  String? _error;
 
   @override
-  int? get shellTabIndex => 4; // Bootloader tab
+  int? get shellTabIndex => 4;
 
   @override
   void initState() {
     super.initState();
-    _scan();
+    _checkMode();
   }
 
   @override
-  Future<void> onAutoRefresh() => _scan();
+  Future<void> onAutoRefresh() => _checkMode();
 
   @override
-  void onAutoRefreshStarted() {
-    _scan();
+  void onAutoRefreshStarted() {}
+
+  Future<void> _checkMode() async {
+    if (!ConnectionManager.instance.isConnected) return;
+    final inMode = await _client.check();
+    if (!mounted) return;
+    setState(() {
+      _inBootloader = inMode;
+      if (!inMode) _vendorInfo = null;
+    });
+    if (inMode) _fetchDeviceInfo();
   }
 
-  /// Broadcast CID 0 (Bootloader Check) on the bus and collect responses.
-  Future<void> _scan() async {
-    if (_scanning || !ConnectionManager.instance.isConnected) return;
-    setState(() => _scanning = true);
-    try {
-      final mgr = ConnectionManager.instance;
-      // Send a broadcast CID 0 check. The bootloader responds with
-      // payload[0..3] = SN (copied from request, ignored) + payload[4] = bool.
-      final reply = await mgr.request(
-        0xFFFF, // broadcast
-        ServiceType.bootloader,
-        0,
-        payload: Uint8List(4),
-        timeout: const Duration(seconds: 2),
-      );
-      if (reply.length >= 5 && reply[4] != 0) {
-        // A device is in bootloader mode. We can't distinguish multiple
-        // devices from a single broadcast, so show one entry.
-        if (!_devices.any((d) => d.broadcast)) {
-          setState(() => _devices.add(_BootDevice.broadcast()));
-        }
+  Future<void> _fetchDeviceInfo() async {
+    for (var i = 0; i < 10; i++) {
+      final info = await _client.deviceInfo();
+      if (info != null && info.length >= 16) {
+        if (mounted) setState(() => _vendorInfo = info);
+        return;
       }
-    } catch (_) {
-      // No device responded or timeout — that's fine.
-    } finally {
-      if (mounted) setState(() => _scanning = false);
+      await Future.delayed(const Duration(seconds: 1));
     }
   }
 
-  /// Prompt for a firmware file and upload it to the selected device.
-  Future<void> _uploadFirmware(int targetAddr) async {
+  Future<void> _enterBootloader() async {
+    setState(() {
+      _status = 'Entering bootloader mode...';
+      _error = null;
+    });
+    // CID 1 returns immediately — enumeration happens in the main loop.
+    final ok = await _client.switchMode(enter: true);
+    if (!mounted) return;
+    if (!ok) {
+      setState(() {
+        _status = '';
+        _error = 'Failed to enter bootloader mode';
+      });
+      return;
+    }
+    setState(() {
+      _inBootloader = true;
+      _status = 'Waiting for node enumeration...\nHold boot button and reset the node.';
+    });
+    // Poll CID 2 until the node enumerates (up to 30s).
+    for (var i = 0; i < 30; i++) {
+      final info = await _client.deviceInfo();
+      if (info != null && info.length >= 16) {
+        if (mounted) {
+          setState(() {
+            _vendorInfo = info;
+            _status = '';
+          });
+        }
+        return;
+      }
+      await Future.delayed(const Duration(seconds: 1));
+    }
+    if (mounted) {
+      setState(() {
+        _status = 'Node not detected. Hold boot button and reset the node.';
+      });
+    }
+  }
+
+  Future<void> _leaveBootloader() async {
+    await _client.switchMode(enter: false);
+    if (!mounted) return;
+    setState(() {
+      _inBootloader = false;
+      _vendorInfo = null;
+    });
+  }
+
+  Future<void> _uploadFirmware() async {
     final messenger = ScaffoldMessenger.of(context);
     try {
       final result = await FilePicker.pickFiles(
@@ -95,74 +143,70 @@ class _BootloaderPageState extends State<BootloaderPage>
       }
 
       if (binary.isEmpty) {
-        if (mounted) {
-          messenger.showSnackBar(const SnackBar(content: Text('File is empty')));
-        }
+        messenger.showSnackBar(const SnackBar(content: Text('File is empty')));
         return;
       }
-
-      final client = BootloaderClient(deviceId: targetAddr);
 
       setState(() {
         _uploading = true;
-        _uploadTarget = targetAddr;
-        _uploadProgress = 0;
-        _uploadStatus = 'Checking bootloader...';
+        _progress = 0;
+        _status = 'Writing firmware...';
+        _error = null;
       });
 
-      final inBootloader = await client.check();
-      if (!inBootloader) {
+      final writeOk = await _client.uploadBinary(
+        binary,
+        onProgress: (current, total) {
+          if (mounted) setState(() => _progress = current / total);
+        },
+      );
+
+      if (!writeOk) {
         if (mounted) {
           setState(() {
             _uploading = false;
-            _uploadTarget = null;
-            _uploadStatus = '';
+            _status = '';
+            _error = 'Firmware write failed';
           });
-          messenger.showSnackBar(const SnackBar(
-              content: Text('Device not in bootloader mode')));
         }
         return;
       }
 
       setState(() {
-        _uploadStatus = 'Erasing and uploading firmware...';
-        _uploadProgress = 0;
+        _verifying = true;
+        _progress = 0;
+        _status = 'Verifying firmware...';
       });
 
-      final uploaded = await client.writeBinary(
+      final verifyOk = await _client.verifyBinary(
         binary,
         onProgress: (current, total) {
-          if (mounted) {
-            setState(() => _uploadProgress = current / total);
-          }
+          if (mounted) setState(() => _progress = current / total);
         },
       );
 
       if (mounted) {
         setState(() {
           _uploading = false;
-          _uploadTarget = null;
-          _uploadStatus = '';
-          _uploadProgress = uploaded ? 1.0 : 0;
+          _verifying = false;
+          _progress = verifyOk ? 1.0 : 0;
+          _status =
+              verifyOk ? 'Upload complete — reset the node to boot new firmware' : '';
+          _error = verifyOk ? null : 'Verification failed — try uploading again';
         });
-        messenger.showSnackBar(SnackBar(
-            content: Text(uploaded
-                ? 'Firmware uploaded — reset device to boot new firmware'
-                : 'Firmware upload failed')));
       }
     } catch (e) {
       if (mounted) {
         setState(() {
           _uploading = false;
-          _uploadTarget = null;
-          _uploadStatus = '';
+          _verifying = false;
+          _status = '';
+          _error = 'Upload error: $e';
         });
-        messenger.showSnackBar(SnackBar(content: Text('Upload error: $e')));
       }
     }
   }
 
-  /// Intel HEX to raw binary (same as DeviceViewPage).
   Uint8List _parseHex(String content) {
     final lines = content.split('\n');
     final data = <int>[];
@@ -181,13 +225,34 @@ class _BootloaderPageState extends State<BootloaderPage>
     return Uint8List.fromList(data);
   }
 
+  String _formatDeviceType(int type) {
+    switch (type) {
+      case 0x01:
+        return 'Tamu v2.0A';
+      case 0x03:
+        return 'DAS v0.1';
+      default:
+        return 'Unknown (0x${type.toRadixString(16)})';
+    }
+  }
+
+  String _formatSerial(Uint8List info) {
+    // Bytes 2..15 = serial number (14 bytes, raw chip ID)
+    final sb = StringBuffer();
+    for (var i = 2; i < 16; i++) {
+      if (i > 2) sb.write(':');
+      sb.write(info[i].toRadixString(16).padLeft(2, '0'));
+    }
+    return sb.toString();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Bootloader'),
         actions: [
-          if (_uploading)
+          if (_uploading || _verifying)
             const Padding(
               padding: EdgeInsets.all(16),
               child: SizedBox(
@@ -197,107 +262,134 @@ class _BootloaderPageState extends State<BootloaderPage>
             )
           else
             RefreshButton(
-              onRefresh: _scan,
-              autoActive: autoRefreshActive,
-              refreshing: _scanning,
-              error: false,
-              selectedInterval: selectedInterval,
-              onSelectAuto: applyAuto,
+              onRefresh: _checkMode,
+              autoActive: false,
+              refreshing: false,
+              error: _error != null,
+              selectedInterval: null,
+              onSelectAuto: (_) {},
             ),
         ],
       ),
-      body: _devices.isEmpty
-          ? Center(
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Card(
+            color: kSurfaceAlt,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
               child: Column(
-                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.usb_off,
-                      size: 64, color: Colors.white.withValues(alpha: 0.3)),
-                  const SizedBox(height: 16),
-                  Text('No bootloader devices found',
-                      style: Theme.of(context).textTheme.bodyLarge),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Hold the boot button and reset a device,\n'
-                    'then press refresh.',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
+                  Row(children: [
+                    Icon(
+                      _inBootloader
+                          ? Icons.check_circle
+                          : Icons.power_settings_new,
+                      color: _inBootloader ? Colors.green : Colors.grey,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      _inBootloader ? 'Bootloader Mode Active' : 'Normal Mode',
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    const Spacer(),
+                    if (_inBootloader)
+                      OutlinedButton(
+                        onPressed: _leaveBootloader,
+                        child: const Text('Leave'),
+                      )
+                    else
+                      FilledButton(
+                        onPressed: ConnectionManager.instance.isConnected
+                            ? _enterBootloader
+                            : null,
+                        child: const Text('Enter Bootloader'),
+                      ),
+                  ]),
+                  if (_vendorInfo != null) ...[
+                    const Divider(height: 24),
+                    Text(
+                      'Node: ${_formatDeviceType(_vendorInfo![0] | (_vendorInfo![1] << 8))}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    Text(
+                      'Serial: ${_formatSerial(_vendorInfo!)}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
                 ],
               ),
-            )
-          : ListView.builder(
-              padding: const EdgeInsets.all(12),
-              itemCount: _devices.length,
-              itemBuilder: (context, index) =>
-                  _deviceCard(context, _devices[index]),
             ),
-    );
-  }
-
-  Widget _deviceCard(BuildContext context, _BootDevice dev) {
-    final isUploading = _uploading && _uploadTarget == dev.addr;
-    return Card(
-      color: kSurfaceAlt,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(children: [
-              const Icon(Icons.memory, color: kOrange, size: 20),
-              const SizedBox(width: 8),
-              Text('Device @ 0x${dev.addr.toRadixString(16).toUpperCase().padLeft(4, '0')}',
-                  style: const TextStyle(fontWeight: FontWeight.w600)),
-              const Spacer(),
-              if (dev.broadcast)
-                const Chip(
-                  label: Text('Broadcast', style: TextStyle(fontSize: 11)),
-                  visualDensity: VisualDensity.compact,
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          const SizedBox(height: 12),
+          if (_inBootloader) ...[
+            Card(
+              color: kSurfaceAlt,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Firmware Upload',
+                        style: TextStyle(fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 12),
+                    if (_uploading || _verifying) ...[
+                      Text(_status,
+                          style: Theme.of(context).textTheme.bodySmall),
+                      const SizedBox(height: 8),
+                      LinearProgressIndicator(value: _progress),
+                      const SizedBox(height: 4),
+                      Text('${(_progress * 100).toStringAsFixed(0)}%',
+                          style: Theme.of(context).textTheme.bodySmall),
+                    ] else ...[
+                      if (_error != null)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Text(_error!,
+                              style: TextStyle(
+                                  color: Theme.of(context).colorScheme.error,
+                                  fontSize: 13)),
+                        ),
+                      if (_status.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Text(_status,
+                              style: Theme.of(context).textTheme.bodySmall),
+                        ),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: FilledButton.icon(
+                          icon: const Icon(Icons.system_update_alt, size: 18),
+                          label: const Text('Upload Firmware'),
+                          onPressed: _vendorInfo != null ? _uploadFirmware : null,
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
-            ]),
-            const SizedBox(height: 8),
-            if (isUploading) ...[
-              Text(_uploadStatus,
-                  style: Theme.of(context).textTheme.bodySmall),
-              const SizedBox(height: 8),
-              LinearProgressIndicator(value: _uploadProgress),
-              const SizedBox(height: 4),
-              Text('${(_uploadProgress * 100).toStringAsFixed(0)}%',
-                  style: Theme.of(context).textTheme.bodySmall),
-            ] else ...[
-              Text(
-                'Ready to upload firmware. The device will flash\n'
-                'the new binary and reset when done.',
-                style: Theme.of(context).textTheme.bodySmall,
               ),
-              const SizedBox(height: 12),
-              Align(
-                alignment: Alignment.centerRight,
-                child: FilledButton.icon(
-                  icon: const Icon(Icons.system_update_alt, size: 18),
-                  label: const Text('Upload Firmware'),
-                  onPressed: () => _uploadFirmware(dev.addr),
+            ),
+          ] else ...[
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.only(top: 48),
+                child: Column(
+                  children: [
+                    Icon(Icons.power_settings_new,
+                        size: 64,
+                        color: Colors.white.withValues(alpha: 0.3)),
+                    const SizedBox(height: 16),
+                    Text('Enter bootloader mode to upload firmware',
+                        style: Theme.of(context).textTheme.bodyLarge),
+                  ],
                 ),
               ),
-            ],
+            ),
           ],
-        ),
+        ],
       ),
     );
   }
-}
-
-/// Represents a device discovered in bootloader mode.
-class _BootDevice {
-  final int addr;
-  final bool broadcast;
-
-  _BootDevice({required this.addr, required this.broadcast});
-
-  /// Factory for a broadcast-discovered device (address unknown, will use
-  /// broadcast for uploads).
-  factory _BootDevice.broadcast() =>
-      _BootDevice(addr: 0xFFFF, broadcast: true);
 }

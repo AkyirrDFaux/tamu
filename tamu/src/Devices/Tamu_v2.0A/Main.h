@@ -83,6 +83,11 @@ LEDDriver LED2(0);
 #include "CLI/Handler.h"
 #include "RSBus.h"
 
+// Bootloader mode flag (set by Core/Services/Bootloader.h via the Dispatcher).
+// Declared extern here so the main loop can gate ProcessBus() on it.
+extern bool BootloaderMode;
+void BootloaderTick(void);
+
 // Main FreeRTOS task: initialises hardware, broadcasts its serial number to find a short address, then runs the main control loop (bus, buttons, IMU, display).
 void ApplicationTask(void *pvParameters)
 {
@@ -146,7 +151,12 @@ while (1)
         if (ident)
             gpio_set_level(LED_NOTIFICATION_PIN, ((DeviceStatus.UptimeMs / 100) & 1) ? 1 : 0);
 
-        ProcessBus();
+        // In bootloader mode, skip RS-Bus packet processing — the bus is
+        // being used for raw UART bridging by the bootloader service.
+        if (!BootloaderMode)
+            ProcessBus();
+        else
+            BootloaderTick(); // non-blocking enum listen for "E" + "C" confirm
         AppInterfacePump();
         ButtonUpdate();
         ReadIMUData();
