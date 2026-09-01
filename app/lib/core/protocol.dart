@@ -24,18 +24,18 @@ const int appSourceId = 0xFFFE;
 
 /// Service types (Docs/Service ID table.md, matches the firmware enum).
 enum ServiceType {
-  bootloader(0x00),
-  device(0x01),
-  logHandler(0x02),
-  storage(0x04),
-  systemMemory(0x05),
-  dynamicMemory(0x06),
-  keyedMemory(0x07),
+  device(0x00),
+  logHandler(0x01),
+  storage(0x02),
+  systemMemory(0x04),
+  dynamicMemory(0x05),
+  keyedMemory(0x06),
   script(0x08),
   scriptInstructions(0x09),
   router(0x10),
   app(0x11),
-  cli(0x12);
+  cli(0x12),
+  bootloader(0x13);
 
   final int value;
   const ServiceType(this.value);

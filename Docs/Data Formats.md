@@ -2,19 +2,26 @@
 - None (No value there, a placeholder/spacer metadata or a deleted entry)
 - Undefined (Don't know yet, display in hex format if there is anything)
 - Serial Number - 14 byte UUID
-- ID - 16bit (4 bit net + 12 bit device) 
+- ID - 16bit (6 bit net + 10 bit device) 
 	- Net
-		- 0 = Net Broadcast
-		- 15 valid nets
+		- 0 = Net Local
+		- 0x3F = Broadcast into all nets
+		- 62 (64-2) valid nets
 	- Device
 		- 0 = Unassigned
-		- 0xFFFFFF = Broadcast
-		- 4094 (4096 - 2) maximum valid devices
+		- 0x3FF = Broadcast
+		- 0x3FE = Branch Broadcast (Do not route away)
+		- 1021 (1024 - 3) maximum valid devices
 		- 1 is always core
 	- Example:
-		- 0.0 = All unassigned devices
-		- 0.1 = All cores
-		- 0.FFFFFF = All devices
+		- 3F.0 = All unassigned devices
+		- 3F.1 = All cores
+		- 3F.3FF = Everything
+		- 0.0 = Local Unassigned devices
+		- 0.1 = Local Core
+		- 0.8 = Local Device 8
+		- 0.3FF = Local broadcast
+		- 0.3FE = Branch Broadcast
 		- 3.2 = Device 2 in net 3
 - Bool - true/false
 - Index  - 32bit signed integer

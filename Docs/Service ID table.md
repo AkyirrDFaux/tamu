@@ -1,14 +1,13 @@
 
 | Service             | SRV Main ID |
 | ------------------- | ----------- |
-| Bootloader          | 0           |
-| Device              | 1           |
-| Log handler         | 2           |
+| Device              | 0           |
+| Log handler         | 1           |
+| Storage             | 2           |
 |                     |             |
-| Storage             | 4           |
-| System Memory       | 5           |
-| Dynamic Memory      | 6           |
-| Keyed Memory        | 7           |
+| System Memory       | 4           |
+| Dynamic Memory      | 5           |
+| Keyed Memory        | 6           |
 |                     |             |
 | Script manager      | 8           |
 | Script instructions | 9           |
@@ -16,4 +15,4 @@
 | Router              | 16          |
 | App interface       | 17          |
 | CLI                 | 18          |
-|                     |             |
+| Bootloader          | 19          |

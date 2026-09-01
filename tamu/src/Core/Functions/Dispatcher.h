@@ -17,7 +17,6 @@
 #ifdef USE_KEYED_MEMORY
 #include "Core/Services/KeyedMemory.h"
 #endif
-
 #ifdef TYPE_CORE
 // Log records live in RAM on core devices, on the heap (Docs/Services/Log Handler.md).
 // Allocated lazily by EnsureLogStorage() on first use (declared extern in Functions/Log.h).
@@ -134,9 +133,12 @@ void DispatchPacket(const PacketFrame &frame)
 #endif
 
             case ServiceType::Bootloader:
+                // Bootloader is a separate binary — app does not handle these.
+                // Silently drop.
+                break;
             case ServiceType::ScriptInstructions:
             case ServiceType::Router:
-                // Documented but not yet implemented (bootloader later session, router TODO) — silently drop.
+                // Not yet implemented — silently drop.
                 break;
             default:
                 DeviceLog("DISP", "unhandled service %u CID %u", (unsigned)target_srv, (unsigned)cid);

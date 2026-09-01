@@ -326,7 +326,7 @@ void SendMemoryRead(uint16_t target, ServiceType svc, BlockIndex idx)
     DispatchPacket(req);
 }
 
-// Parses a memory-service selector ("s"/"d"/"k" or 0x05/0x06/0x07) into a ServiceType.
+// Parses a memory-service selector ("s"/"d"/"k" or 0x04/0x05/0x06) into a ServiceType.
  // Returns ServiceType::SystemMemory as the default when `str` is null/empty.
  ServiceType ParseService(const char *str)
  {
@@ -339,11 +339,11 @@ void SendMemoryRead(uint16_t target, ServiceType svc, BlockIndex idx)
          case 'd': return ServiceType::DynamicMemory;
          case 'k': return ServiceType::KeyedMemory;
          default:
-             // strtol with base 0 accepts "0x06" (hex) AND "6" (decimal).
+             // strtol with base 0 accepts "0x05" (hex) AND "5" (decimal).
              switch ((int)strtol(str, nullptr, 0))
              {
-                 case 0x06: return ServiceType::DynamicMemory;
-                 case 0x07: return ServiceType::KeyedMemory;
+                 case 0x05: return ServiceType::DynamicMemory;
+                 case 0x06: return ServiceType::KeyedMemory;
                  default:   return ServiceType::SystemMemory;
              }
      }

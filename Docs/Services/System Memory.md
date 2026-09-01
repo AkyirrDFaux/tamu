@@ -25,3 +25,5 @@ Read only entries are never saved, script updated entries only upon manual reque
 | Save        | 5       | BlockIndex                  | Status                      | saves that entry (and everything inside), Invalid Block index saves everything, respond only if requested     |
 | Recall      | 6       | BlockIndex                  | Status                      | recalls that entry (and everything inside), Invalid Block index recalls everything, respond only if requested |
 
+#### Get estimate:
+Split into more CID (add read name, get number of entries, split saving and recall into individual and full)

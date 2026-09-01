@@ -1,7 +1,11 @@
 import 'dart:async';
+import 'dart:io';
+import 'dart:typed_data';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
+import '../core/bootloader_client.dart';
 import '../core/device_db.dart';
 import '../core/types.dart';
 import 'dynmem_page.dart';
@@ -29,6 +33,9 @@ class _DeviceViewPageState extends State<DeviceViewPage>
   final _db = DeviceDatabase.instance;
   bool _renaming = false;
   bool _refreshing = false;
+  bool _uploading = false;
+  double _uploadProgress = 0;
+  String _uploadStatus = '';
 
   @override
   void initState() {
@@ -57,6 +64,103 @@ class _DeviceViewPageState extends State<DeviceViewPage>
 
   String _formatUptime(int? ms) =>
       ms == null ? '-' : formatUptimeMs(ms);
+
+  /// Parses Intel HEX format to raw binary bytes.
+  Uint8List _parseHex(String content) {
+    final lines = content.split('\n');
+    final data = <int>[];
+    for (final line in lines) {
+      final trimmed = line.trim();
+      if (!trimmed.startsWith(':')) continue;
+      if (trimmed.length < 11) continue;
+      final byteCount = int.parse(trimmed.substring(1, 3), radix: 16);
+      // final address = int.parse(trimmed.substring(3, 7), radix: 16);
+      final recordType = int.parse(trimmed.substring(7, 9), radix: 16);
+      if (recordType == 0x01) break; // EOF
+      if (recordType != 0x00) continue; // only data records
+      for (var i = 0; i < byteCount; i++) {
+        data.add(int.parse(trimmed.substring(9 + i * 2, 11 + i * 2), radix: 16));
+      }
+    }
+    return Uint8List.fromList(data);
+  }
+
+  Future<void> _uploadFirmware() async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final result = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['bin', 'hex'],
+      );
+      if (result == null || result.files.isEmpty) return;
+
+      final file = result.files.first;
+      Uint8List binary;
+      if (file.extension == 'hex') {
+        final content = await File(file.path!).readAsString();
+        binary = _parseHex(content);
+      } else {
+        binary = Uint8List.fromList(await File(file.path!).readAsBytes());
+      }
+
+      if (binary.isEmpty) {
+        if (mounted) messenger.showSnackBar(const SnackBar(content: Text('File is empty')));
+        return;
+      }
+
+      final client = BootloaderClient(deviceId: widget.deviceId);
+
+      setState(() {
+        _uploading = true;
+        _uploadProgress = 0;
+        _uploadStatus = 'Checking bootloader...';
+      });
+
+      final inBootloader = await client.check();
+      if (!inBootloader) {
+        if (mounted) {
+          setState(() {
+            _uploading = false;
+            _uploadStatus = '';
+          });
+          messenger.showSnackBar(const SnackBar(
+              content: Text('Hold boot button and reset device, then try again')));
+        }
+        return;
+      }
+
+      setState(() {
+        _uploadStatus = 'Uploading firmware...';
+        _uploadProgress = 0;
+      });
+
+      final uploaded = await client.writeBinary(binary, onProgress: (current, total) {
+        if (mounted) {
+          setState(() => _uploadProgress = current / total);
+        }
+      });
+
+      if (mounted) {
+        setState(() {
+          _uploading = false;
+          _uploadStatus = '';
+          _uploadProgress = uploaded ? 1.0 : 0;
+        });
+        messenger.showSnackBar(SnackBar(
+            content: Text(uploaded
+                ? 'Firmware uploaded — reset device to boot'
+                : 'Firmware upload failed')));
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _uploading = false;
+          _uploadStatus = '';
+        });
+        messenger.showSnackBar(SnackBar(content: Text('Upload error: $e')));
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -169,6 +273,36 @@ class _DeviceViewPageState extends State<DeviceViewPage>
                           () => LogViewerPage(deviceId: widget.deviceId)),
                     ],
                   ]),
+                  if (entry.capabilities & Capability.bootloader != 0) ...[
+                    const Divider(height: 24),
+                    _card(context, 'Firmware', [
+                      if (_uploading)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(_uploadStatus,
+                                  style: Theme.of(context).textTheme.bodySmall),
+                              const SizedBox(height: 8),
+                              LinearProgressIndicator(value: _uploadProgress),
+                              const SizedBox(height: 4),
+                              Text('${(_uploadProgress * 100).toStringAsFixed(0)}%',
+                                  style: Theme.of(context).textTheme.bodySmall),
+                            ],
+                          ),
+                        )
+                      else
+                        ListTile(
+                          dense: true,
+                          leading: const Icon(Icons.system_update_alt),
+                          title: const Text('Upload Firmware'),
+                          subtitle: const Text('Select a .bin or .hex file'),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: _uploadFirmware,
+                        ),
+                    ]),
+                  ],
                 ],
               ),
       ),

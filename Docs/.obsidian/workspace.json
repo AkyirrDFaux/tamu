@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Services/Device service.md",
+                "file": "Services/Bootloader.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Device service"
+              "title": "Bootloader"
             }
           }
         ]
@@ -190,32 +190,32 @@
   },
   "active": "7712251b840e352d",
   "lastOpenFiles": [
-    "RSBus.md",
-    "Services/Dynamic Memory.md",
-    "General architecture.md",
-    "Services/Router.md",
     "Data Formats.md",
+    "General architecture.md",
+    "Improve.md",
     "Issues.md",
     "RealHW.md",
-    "Service ID table.md",
-    "Services/Device service.md",
-    "Services/Keyed Memory.md",
-    "Services/App Interface.md",
-    "Devices.md",
+    "RSBus.md",
     "Services/Bootloader.md",
+    "Services/Device service.md",
+    "Service ID table.md",
+    "Devices.md",
+    "Services/App Interface.md",
+    "Services/System Memory.md",
+    "Services/Storage.md",
+    "Services/Router.md",
+    "Services/Dynamic Memory.md",
     "Services/CLI.md",
+    "App/Devices.md",
+    "Modules/LED display.md",
+    "Modules/Generic system blocks.md",
+    "Services/Keyed Memory.md",
     "Services/Log Handler.md",
     "Services/Script.md",
-    "Services/Storage.md",
-    "Services/System Memory.md",
-    "Improve.md",
-    "App/Devices.md",
     "App/Service views/Script.md",
     "App/Device view.md",
     "App/Connection.md",
     "App/Service views/Dynamic Memory.md",
-    "App/Service views/Keyed Memory.md",
-    "Modules/LED display.md",
     "App/Service views",
     "App"
   ]

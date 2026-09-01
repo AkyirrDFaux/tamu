@@ -33,19 +33,19 @@
 // Service Types (from Docs/Service ID table.md)
 enum class ServiceType : uint8_t
 {
-    Bootloader = 0x00,
-    Device = 0x01,
-    LogHandler = 0x02,
-    Storage = 0x04,
-    SystemMemory = 0x05,
-    DynamicMemory = 0x06,
-    KeyedMemory = 0x07,
+    Device = 0x00,
+    LogHandler = 0x01,
+    Storage = 0x02,
+    SystemMemory = 0x04,
+    DynamicMemory = 0x05,
+    KeyedMemory = 0x06,
     Script = 0x08,
     ScriptInstructions = 0x09,
     Router = 0x10,
     App = 0x11, // App Interface: the app's identity is this service type (SRV SRC high byte),
                 // the CID byte is an app-managed transaction ID. No dedicated network address.
-    CLI = 0x12
+    CLI = 0x12,
+    Bootloader = 0x13
 };
 
 // Packets structure. payload_len holds the WIRE value (in 4-byte units, Data

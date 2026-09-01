@@ -32,9 +32,9 @@ File is given off to have data stored or read by other functions, it has it's ow
 | ----------------- | --- | ------------------------------------------- | -------------------------------------------- | ------------------------- |
 | Read File Table   | 0   | -                                           | Fragmentation, File table entries (stream)   |                           |
 | Format Filesystem | 1   | -                                           | Success (bool)                               | respond only if requested |
-| Create File       | 2   | Name, Size                                  | Success (bool)                               | respond only if requested |
+| Create File       | 2   | Name, Size (>0)                             | Success (bool)                               | respond only if requested |
 | Delete File       | 3   | Name                                        | Success (bool)                               | respond only if requested |
-| Resize File       | 4   | Name, New Size                              | Success (bool)                               | respond only if requested |
+| Resize File       | 4   | Name, New Size (>0)                         | Success (bool)                               | respond only if requested |
 | Rename File       | 5   | Old Name, New Name                          | Success (bool)                               | respond only if requested |
 | Read File         | 6   | Name                                        | Name, Fragmentation, File contents (stream)  |                           |
 | Write File        | 7   | Name, Fragmentation, File contents (stream) | Last sequential fragmentation index written. | respond only if requested |
@@ -71,9 +71,8 @@ File is given off to have data stored or read by other functions, it has it's ow
 	Finds avaliable space using `FindSpace`, erases it, marks it in the file table. Returns true if created.
 - `bool DeleteFile(char[8] Filename)
 	Invalidates the file table entry.
-- `bool ResizeFile(char[8] Filename, uint32 NewLength, bool CopyIfFailed = false)`
+- `bool ResizeFile(char[8] Filename, uint32 NewLength)`
 	Tries to change the file length by just extending/shrinking it, checks the filetable if it can. If possible, only write a new (with increased length) filetable entry and invalidate old one. Shrinking is always possible.
-	Copy the file into a new larger place only if specified, most usecases might want to reduce the filesize first based on the file usage (invalidated entries etc.).
 -  `bool RenameFile(char [8] OldFilename, char [8] NewFilename)`
 	Creates a new record with new name for the same file, deletes the old one.
 - `uint32_t ReadFromFile(char[8] Filename, uint32_t Offset, uint32_t Length, char* Buffer)`

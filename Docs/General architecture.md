@@ -31,7 +31,6 @@ Sets of predefined memory blocks, and functions to provide an unified overall fe
 
 Unknowns:
 	Subscriptions?
-	Core synchronisation?
 
 ### Code rules:
 Use PascalCase where possible

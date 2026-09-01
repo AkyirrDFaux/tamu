@@ -21,7 +21,7 @@ void LoadAllBackups();
 
 // Device identity (mandatory, see Core/Functions/Device.h).
 extern const DeviceType kDeviceType = DeviceType::DualAnalogSensor;
-extern const uint32_t kCapabilities = Capabilities::None; // plain node: no core capability
+extern const uint32_t kCapabilities = Capabilities::None;
 
 // Reads the CH32V003 32-bit unique chip ID as the 14-byte serial number (cached).
 const SerialNumber &GetSerialNumber()

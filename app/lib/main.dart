@@ -4,6 +4,7 @@ import 'core/connection.dart';
 import 'core/notifications.dart';
 import 'core/settings.dart';
 import 'ui/backup_page.dart';
+import 'ui/bootloader_page.dart';
 import 'ui/connection_page.dart';
 import 'ui/devices_page.dart';
 import 'ui/settings_page.dart';
@@ -48,6 +49,7 @@ class _ShellPageState extends State<ShellPage> {
     ConnectionPage(),
     DevicesPage(),
     BackupPage(),
+    BootloaderPage(),
     SettingsPage(),
   ];
 
@@ -88,6 +90,9 @@ class _ShellPageState extends State<ShellPage> {
                   NavigationRailDestination(
                       icon: Icon(Icons.settings_backup_restore),
                       label: Text('Backup')),
+                  NavigationRailDestination(
+                      icon: Icon(Icons.system_update),
+                      label: Text('Bootloader')),
                   NavigationRailDestination(
                       icon: Icon(Icons.settings), label: Text('Settings')),
                 ],
