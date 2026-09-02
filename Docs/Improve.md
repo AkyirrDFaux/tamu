@@ -17,7 +17,6 @@
 ## Docs
 
 - **Data Formats.md**: broadcast written `0xFFFFFFFF` but ID is 16-bit (code uses `0xFFFF`). Payload len byte = max 255 not 256. `RemoteOrigin` flag (bit 15) missing from flag list. "16bit (4 bit net + 12 bit device)" inconsistent with flat 16-bit addresses used everywhere.
-- **Dynamic/Keyed/System Memory docs**: block-name width self-contradicts ("16char/12byte"); backup-record table doesn't match serialized layout (count-prefixed TLV, not `BlockIndex|BlockMeta|Values`); keyed dictionary meta Size stores bytes (doc reads like key count); "separate value and metadata arrays" is actually interleaved `[meta][value]`; block indices renumber when purged on save.
 - **Device service.md**: time-sync direction is core->node (doc says "provides time to core"); sample gap 1.5 s vs "few seconds"; core address hard-coded to 1 (undocumented); SNDB Read not-found = empty (undocumented).
 - **Script.md**: symbol example chains output into another op (line 51 forbids this); "Create script" returns *assigned* Script ID (1 byte, 0 = failure) — doc says "Success"; input meta carries per-input style byte (5 B/input vs legacy 4 B) — doc's table should mention this; "Read script" streams whole file — block-level patch/diff would avoid full rewrite.
 - **Storage.md**: pointer recovery uses LAST valid slot (doc unclear); `Erase` has no default argument.

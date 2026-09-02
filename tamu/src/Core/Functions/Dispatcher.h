@@ -17,9 +17,7 @@
 #ifdef USE_KEYED_MEMORY
 #include "Core/Services/KeyedMemory.h"
 #endif
-#ifdef USE_APP_INTERFACE
-#include "Core/Services/Bootloader.h"
-#endif
+
 #ifdef TYPE_CORE
 // Log records live in RAM on core devices, on the heap (Docs/Services/Log Handler.md).
 // Allocated lazily by EnsureLogStorage() on first use (declared extern in Functions/Log.h).
@@ -135,11 +133,6 @@ void DispatchPacket(const PacketFrame &frame)
                 break;
 #endif
 
-            case ServiceType::Bootloader:
-                #ifdef USE_APP_INTERFACE
-                HandleBootloader(frame);
-                #endif
-                break;
             case ServiceType::ScriptInstructions:
             case ServiceType::Router:
                 // Not yet implemented — silently drop.

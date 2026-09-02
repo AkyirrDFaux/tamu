@@ -15,4 +15,4 @@
 | Router              | 16          |
 | App interface       | 17          |
 | CLI                 | 18          |
-| Bootloader          | 19          |
+

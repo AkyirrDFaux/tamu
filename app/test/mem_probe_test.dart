@@ -1,40 +1,27 @@
 @Tags(['hil'])
 library;
 
-import 'package:flutter/foundation.dart';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tamuapp/core/connection.dart';
 import 'package:tamuapp/core/keyedmem.dart';
 import 'package:tamuapp/core/dynmem.dart';
-import 'package:tamuapp/core/device_db.dart';
 import 'package:tamuapp/core/types.dart';
 import 'package:tamuapp/ui/value_editor.dart' show dataTypeLabel;
 
+import 'hil_helpers.dart';
+
 /// Live probe of the Keyed/Dynamic memory clients against the Tamu.
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
-  debugDefaultTargetPlatformOverride = TargetPlatform.linux;
-
   final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
 
-  test('keyed/dynmem client probe', () async {
-    final mgr = ConnectionManager.instance;
-    await mgr.setAutoRefresh(false);
-    final port = Platform.environment['TAMU_HIL']!;
-    final err = await mgr.connectTo(
-        DiscoveredLink(id: port, type: LinkType.usb, name: 'Tamu'));
-    if (err != null) fail('connect failed: $err');
-    addTearDown(mgr.disconnect);
-    final db = DeviceDatabase.instance;
-    var up = false;
-    for (var i = 0; i < 10 && !up; i++) {
-      await Future<void>.delayed(const Duration(milliseconds: 300));
-      up = await db.pingCore();
-    }
-    expect(up, isTrue, reason: 'no ping after connect');
+  setUpAll(() async {
+    await connectHil();
+  });
 
+  tearDownAll(disconnectHil);
+
+  test('keyed/dynmem client probe', () async {
     // ---- keyed ----
     final keyed = KeyedMemoryClient(deviceId: 1);
     // purge leftovers

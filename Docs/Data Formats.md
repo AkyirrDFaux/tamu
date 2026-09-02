@@ -62,8 +62,8 @@ Maximum length 288 bytes total, all devices have to handle it in full.
 	- Core
 	- Router
 	- CLI
+	- System Memory
 	- Dynamic Memory
 	- Keyed Memory
 	- Scripts
-	- Bootloader
 	- ...

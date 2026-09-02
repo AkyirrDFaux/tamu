@@ -1,5 +1,6 @@
 #!/bin/bash
-# Launches the Tamu Flutter app (debug Linux build).
+# Builds and launches the Tamu Flutter app (debug Linux build).
 set -e
 cd "$(dirname "$0")/app"
+flutter build linux --debug
 exec build/linux/x64/debug/bundle/tamuapp "$@"

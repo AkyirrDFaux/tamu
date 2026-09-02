@@ -1,45 +1,24 @@
-@Tags(['ble'])
+@Tags(['hil'])
 library;
 
-import 'package:flutter/foundation.dart';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tamuapp/core/connection.dart';
 import 'package:tamuapp/core/device_db.dart';
 import 'package:tamuapp/core/diagnostics.dart';
 
-void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
-  debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+import 'hil_helpers.dart';
 
+void main() {
   final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
 
-  test('ble ping x10', () async {
-    final mgr = ConnectionManager.instance;
-    mgr.source = LinkSource.ble;
-    await mgr.setAutoRefresh(false);
-    DiscoveredLink? link;
-    for (var round = 0; round < 3 && link == null; round++) {
-      await mgr.refresh();
-      final deadline = DateTime.now().add(const Duration(seconds: 10));
-      while (link == null && DateTime.now().isBefore(deadline)) {
-        await Future<void>.delayed(const Duration(milliseconds: 400));
-        link = mgr.discoveredLinks
-            .where((l) => l.type == LinkType.ble && l.id == 'E4:B0:63:C8:20:72')
-            .firstOrNull;
-      }
-      await mgr.stopScan();
-    }
-    if (link == null) {
-      // ignore: avoid_print
-      print('[B] device not found');
-      return;
-    }
-    final err = await mgr.connectTo(link);
-    // ignore: avoid_print
-    print('[B] connectTo -> $err');
-    addTearDown(() => mgr.disconnect());
+  setUpAll(() async {
+    await connectHil();
+  });
+
+  tearDownAll(disconnectHil);
+
+  test('ping x10', () async {
     final db = DeviceDatabase.instance;
     for (var i = 0; i < 10; i++) {
       final started = DateTime.now();
@@ -47,11 +26,11 @@ void main() {
         final ok = await db.pingCore()
             .timeout(const Duration(seconds: 5));
         // ignore: avoid_print
-        print('[B] ping $i ok=$ok connected=${mgr.isConnected} '
+        print('[B] ping $i ok=$ok '
             '${DateTime.now().difference(started).inMilliseconds} ms');
       } catch (e) {
         // ignore: avoid_print
-        print('[B] ping $i FAILED: $e connected=${mgr.isConnected} '
+        print('[B] ping $i FAILED: $e '
             '${DateTime.now().difference(started).inMilliseconds} ms');
       }
     }

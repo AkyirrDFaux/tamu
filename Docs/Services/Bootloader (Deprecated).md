@@ -1,3 +1,5 @@
+Not feasible at current stage, remove from code.
+
 Non-USB devices are targets, USB/BLE devices are acting like hardware passthrough for the app.
 
 #### Non-USB (Node/Router)
@@ -10,7 +12,7 @@ Enter:
 Leave:
 - By manual restart (press reset button).
 
-Blink red when writing/reading flash, blink white periodically (50% duty, does not need to be precise) to indicate bootloader mode.
+Blink red when writing/reading flash (default on), blink white when communicating (or trying to).
 #### USB (Core)
 Switch controls if the core device's mode. In bootloader mode, device stops any other service except this one (and obviously app connection/CLI). It gives over it's main (first) RS-Bus to work as half-duplex UART.
 
@@ -26,13 +28,13 @@ Reader requests the specific blocks to be verified, the device reads it from fla
 
 Verification is done app-side (checksum, completeness), and it controls the whole operation.
 
-On half duplex UART using control characters... request and response pair control characters Payload always 4, 14 or 260 bytes.
-- "E" - enumeration
-- "C" - confirm connection
-- "W" - write
-- "D" - done (writing)
-- "V" - verify (read request)
-- "R" - read (from flash)
+On half duplex UART using control characters... request and response pair control indexes. Payload always 4, 14 or 260 bytes.
+- 0 - enumeration
+- 1 - confirm connection
+- 2 - write
+- 3 - done (writing)
+- 4 - verify (read request)
+- 5 - read (from flash)
 #### Flow
 - Device sends enumeration
 - Core confirms

@@ -34,8 +34,7 @@ enum ServiceType {
   scriptInstructions(0x09),
   router(0x10),
   app(0x11),
-  cli(0x12),
-  bootloader(0x13);
+  cli(0x12);
 
   final int value;
   const ServiceType(this.value);

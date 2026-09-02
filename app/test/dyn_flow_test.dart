@@ -1,40 +1,27 @@
 @Tags(['hil'])
 library;
 
-import 'package:flutter/foundation.dart';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tamuapp/core/connection.dart';
 import 'package:tamuapp/core/dynmem.dart';
-import 'package:tamuapp/core/device_db.dart';
 import 'package:tamuapp/core/types.dart';
 import 'package:tamuapp/ui/value_editor.dart' show dataTypeLabel;
+
+import 'hil_helpers.dart';
 
 /// Reproduces the dynamic memory page flow: create block, open, add entries
 /// (append and at an explicit index), edit, delete, refresh.
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
-  debugDefaultTargetPlatformOverride = TargetPlatform.linux;
-
   final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
 
-  test('dynamic page flow', () async {
-    final mgr = ConnectionManager.instance;
-    await mgr.setAutoRefresh(false);
-    final port = Platform.environment['TAMU_HIL']!;
-    final err = await mgr.connectTo(
-        DiscoveredLink(id: port, type: LinkType.usb, name: 'Tamu'));
-    if (err != null) fail('connect failed: $err');
-    addTearDown(mgr.disconnect);
-    final db = DeviceDatabase.instance;
-    var up = false;
-    for (var i = 0; i < 10 && !up; i++) {
-      await Future<void>.delayed(const Duration(milliseconds: 300));
-      up = await db.pingCore();
-    }
-    expect(up, isTrue, reason: 'no ping after connect');
+  setUpAll(() async {
+    await connectHil();
+  });
 
+  tearDownAll(disconnectHil);
+
+  test('dynamic page flow', () async {
     final dyn = DynamicMemoryClient(deviceId: 1);
     for (final b in await dyn.readBlocks() ?? <DynBlock>[]) {
       await dyn.delete(block: b.index);
@@ -45,12 +32,10 @@ void main() {
     // ignore: avoid_print
     print('[F] created block=$idx');
 
-    // fresh block open: fieldCount should be 0
     var b = (await dyn.readBlocks())!.first;
     // ignore: avoid_print
     print('[F] fresh fieldCount=${b.fieldCount}');
 
-    // append entry normally (page Append)
     final e1 = await dyn.appendEntry(
         b, BlockMeta(flagsAndType: DataType.number.value, size: 4), numberToBytes(1.0));
     // ignore: avoid_print
@@ -59,7 +44,6 @@ void main() {
     // ignore: avoid_print
     print('[F] after append fieldCount=${b.fieldCount}');
 
-    // edit the entry (writeField)
     final bOpen = (await dyn.readBlockMeta(b.index))!;
     final f0 = await dyn.readField(bOpen, 0);
     // ignore: avoid_print
@@ -70,7 +54,6 @@ void main() {
     // ignore: avoid_print
     print('[F] edit field0 -> ${edit == null ? "FAIL" : numberFromBytes(edit)}');
 
-    // remove the entry (delete)
     final del = await dyn.delete(block: bOpen.index, field: 0);
     b = (await dyn.readBlocks())!.first;
     // ignore: avoid_print
@@ -80,8 +63,6 @@ void main() {
     print('[F] field0 after delete: '
         '${f0b == null ? "NULL" : dataTypeLabel(f0b.meta.dataType)}');
 
-    // add again: the page fills the first None placeholder (index 0), so the
-    // value lands back AT index 0 - no None rows accumulate.
     final e2 = await dyn.appendEntry(
         b, BlockMeta(flagsAndType: DataType.number.value, size: 4), numberToBytes(3.0),
         index: 0);

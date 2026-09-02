@@ -11,13 +11,14 @@
  - [[Device service]]
  - [[Log Handler]]
  - [[Storage]]
- - [[System Memory]]
 #### Mandatory for core (define TYPE_CORE):
 - SN Database (under [[Device service]])
 - App service (route to USB/BLE, TODO later)
 - [[CLI]] (ESP32 only)
-#### Mandatory for devices without USB:
-- [[Bootloader]]
+#### Mandatory for routers (define TYPE_ROUTER):
+- TODO
+#### Mandatory for nodes (define TYPE_NODE):
+- [[System Memory]]
 ####  Optional:
  - [[Dynamic Memory]]
  - [[Keyed Memory]]

@@ -1,5 +1,5 @@
 Use BOARD_DeviceName for code guarding device specific implementations.
-### Tamu v2.0A (ESP32-C3) - Core
+### Tamu v2.0A (ESP32-C3) - Core & Node
 
 | Feature            | Pins                 | Note                                               |
 | ------------------ | -------------------- | -------------------------------------------------- |
@@ -12,12 +12,15 @@ Use BOARD_DeviceName for code guarding device specific implementations.
 | Unused exposed     | 1, 7, 8              |                                                    |
 Services:
 - Mandatory and Core (including CLI)
-- Dynamic and Keyed memory
+- System memory
+- Dynamic memory
+- Keyed memory
 - Script
 Modules: 
  - LED Display x2
  - Fan Output x2
  - Acc&Gyr
+ - LED-Button
 Page size: 4096 Bytes
 ### DAS v0.1 (CH32V003) - Node
 
@@ -32,6 +35,7 @@ Page size: 4096 Bytes
 | Measuring 2      | PC4 (A2)                 |                             |
 Services:
 - Mandatory services
+- System memory
 Modules:
 - Resistive measurement x2
 - Button

@@ -44,8 +44,7 @@ enum class ServiceType : uint8_t
     Router = 0x10,
     App = 0x11, // App Interface: the app's identity is this service type (SRV SRC high byte),
                 // the CID byte is an app-managed transaction ID. No dedicated network address.
-    CLI = 0x12,
-    Bootloader = 0x13
+    CLI = 0x12
 };
 
 // Packets structure. payload_len holds the WIRE value (in 4-byte units, Data

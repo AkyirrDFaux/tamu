@@ -1,13 +1,3 @@
-/// Hardware-in-the-loop test for the Script service (Docs/Services/Script.md):
-/// create -> write a program via the write stream -> read it back -> run it and
-/// verify states, outputs and the ScriptUpdated flag set by a MEM_WRITE.
-///
-/// Run like the other HIL tests (requires the Tamu core on a USB port):
-/// ```
-/// LIBSERIALPORT_PATH=build/linux/x64/debug/bundle/lib/libserialport.so \
-/// TAMU_HIL=/dev/ttyACM0 flutter test test/hil_script_test.dart
-/// ```
-/// Skipped automatically when TAMU_HIL is not set.
 @Tags(['hil'])
 library;
 
@@ -15,8 +5,6 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tamuapp/core/connection.dart';
-import 'package:tamuapp/core/device_db.dart';
 import 'package:tamuapp/core/dynmem.dart';
 import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/script_asm.dart';
@@ -24,39 +12,21 @@ import 'package:tamuapp/core/script_client.dart';
 import 'package:tamuapp/core/script_file.dart';
 import 'package:tamuapp/core/types.dart';
 
+import 'hil_helpers.dart';
+
 final Timeout hilTimeout = const Timeout(Duration(seconds: 90));
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   debugDefaultTargetPlatformOverride = TargetPlatform.linux;
 
-  final hilTarget = Platform.environment['TAMU_HIL'];
-  final skipReason = hilTarget == null ? 'TAMU_HIL not set' : false;
+  final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
 
-  Future<void> connectApp() async {
-    final mgr = ConnectionManager.instance;
-    final err = await mgr.connectTo(DiscoveredLink(
-        id: hilTarget!, type: LinkType.usb, name: 'Tamu core'));
-    if (err != null) fail('connect failed: $err');
-    for (var i = 0; i < 20; i++) {
-      if (await DeviceDatabase.instance.pingCore()) return;
-      await Future<void>.delayed(const Duration(milliseconds: 250));
-    }
-    fail('core did not answer ping within settle window');
-  }
+  setUpAll(() async {
+    await connectHil();
+  });
 
-  Future<void> disconnectApp() async {
-    await ConnectionManager.instance.disconnect();
-  }
-
-  /// Waits until [predicate] is true (poll every 50 ms, up to ~5 s).
-  Future<void> waitFor(Future<bool> Function() predicate, String what) async {
-    final deadline = DateTime.now().add(const Duration(seconds: 5));
-    while (!await predicate()) {
-      if (DateTime.now().isAfter(deadline)) fail('timeout waiting for $what');
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-    }
-  }
+  tearDownAll(disconnectHil);
 
   List<int> u32(int v) => [
         v & 0xFF,
@@ -70,21 +40,25 @@ void main() {
     return (raw & 0x80000000) != 0 ? (raw - 0x100000000) / 65536.0 : raw / 65536.0;
   }
 
+  /// Waits until [predicate] is true (poll every 50 ms, up to ~5 s).
+  Future<void> waitFor(Future<bool> Function() predicate, String what) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 5));
+    while (!await predicate()) {
+      if (DateTime.now().isAfter(deadline)) fail('timeout waiting for $what');
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+  }
+
   test('HIL: fresh script has no file, then a save creates it', () async {
-    await connectApp();
-    addTearDown(disconnectApp);
     final client = ScriptClient(deviceId: 1);
 
     final id = await client.createScript();
     expect(id, isNotNull);
 
-    // A freshly created script only reserves the ID - no file exists yet, so the
-    // editor's read must come back null (not a corrupt-file error).
     expect(await client.readScriptFile(id!), isNull,
         reason: 'no file before the first save');
     expect(await client.readName(id), isNull);
 
-    // The editor saves a blank script exactly like this (name + END line).
     final file = ScriptFileData(
       name: 'Fresh',
       instructions: [
@@ -102,7 +76,6 @@ void main() {
     expect(parsed!.name, 'Fresh');
     expect(splitLines(parsed.instructions).single.degenerate, isTrue);
 
-    // The blank script runs to Finished immediately (just an END).
     expect(await client.setState(id, ScriptStateCode.running), isTrue);
     await waitFor(() async => (await client.readState(id)) == ScriptStateCode.finished,
         'script finished');
@@ -111,11 +84,8 @@ void main() {
   }, timeout: hilTimeout, skip: skipReason);
 
   test('HIL: script create/write/read/run/states/outputs', () async {
-    await connectApp();
-    addTearDown(disconnectApp);
     final client = ScriptClient(deviceId: 1);
 
-    // Clean any leftover script ids from earlier runs (ids 1..4).
     for (var id = 1; id <= 4; id++) {
       await client.deleteScript(id);
     }
@@ -174,7 +144,6 @@ void main() {
     expect(numberFrom(input0!.value), closeTo(5.0, 0.001),
         reason: 'input default value');
 
-    // Run it: Var0 = 5 + 10 = 15, Out0 = (15 == 15) = true, then Finished.
     expect(await client.setState(id, ScriptStateCode.running), isTrue);
     await waitFor(() async => (await client.readState(id)) == ScriptStateCode.finished,
         'script finished');
@@ -191,24 +160,19 @@ void main() {
     expect(await client.setState(id, ScriptStateCode.stopped), isTrue);
     expect(await client.readState(id), ScriptStateCode.stopped);
 
-    // Clean up.
     expect(await client.deleteScript(id), isTrue);
   }, timeout: hilTimeout, skip: skipReason);
 
   test('HIL: script MEM_WRITE sets the ScriptUpdated flag', () async {
-    await connectApp();
-    addTearDown(disconnectApp);
     final client = ScriptClient(deviceId: 1);
     final dyn = DynamicMemoryClient(deviceId: 1);
 
-    // A dynamic block to be written by the script (field 0 created on demand).
     final dynBlock = await dyn.createBlock(BlockType.undefined, 'SCRMEM');
     expect(dynBlock, isNotNull, reason: 'create dynamic block');
 
     final id = await client.createScript();
     expect(id, isNotNull);
 
-    // Const0 = address [block][field 0][key invalid][DynamicMemory 0x05].
     final address = [
       dynBlock! & 0xFF,
       0,
@@ -235,14 +199,12 @@ void main() {
     await waitFor(() async => (await client.readState(id)) == ScriptStateCode.finished,
         'script finished');
 
-    // The script wrote block 0 field 0 = Number 7.0, flagged ScriptUpdated.
     final field = await dyn.readValue(BlockIndex(block: dynBlock, field: 0));
     expect(field, isNotNull, reason: 'written field readable');
     expect(field!.meta.flags & FieldFlags.scriptUpdated, isNot(0),
         reason: 'script write must set ScriptUpdated');
     expect(numberFrom(field.value), closeTo(7.0, 0.001));
 
-    // Clean up: delete the script and the dynamic block.
     await client.deleteScript(id);
     await dyn.delete(block: dynBlock);
   }, timeout: hilTimeout, skip: skipReason);
