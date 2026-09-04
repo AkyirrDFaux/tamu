@@ -1,4 +1,5 @@
 Use BOARD_DeviceName for code guarding device specific implementations.
+defines TYPE_CORE, TYPE_ROUTER, TYPE_NODE
 ### Tamu v2.0A (ESP32-C3) - Core & Node
 
 | Feature            | Pins                 | Note                                               |
@@ -11,11 +12,11 @@ Use BOARD_DeviceName for code guarding device specific implementations.
 | White LED          | Missing hardware     | Ignore in implemetation                            |
 | Unused exposed     | 1, 7, 8              |                                                    |
 Services:
-- Mandatory and Core (including CLI)
-- System memory
+- Mandatory and Core
+- CLI
 - Dynamic memory
-- Keyed memory
 - Script
+- Subscriptions
 Modules: 
  - LED Display x2
  - Fan Output x2
@@ -35,8 +36,9 @@ Page size: 4096 Bytes
 | Measuring 2      | PC4 (A2)                 |                             |
 Services:
 - Mandatory services
-- System memory
+- Subscriptions
 Modules:
 - Resistive measurement x2
 - Button
+- LED
 Page size: 64 Bytes (Fast mode)

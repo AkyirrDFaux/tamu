@@ -1,7 +1,6 @@
-One large fixed chunks, with vastly different possible size (4kb-2MB).
+One large fixed chunks, with vastly different possible size (4kB-2MB).
 NOR flash (1 erased, 0 filled), can be slow.
 Should be implemented per-device, common interface required.
-
 ### File system
 Aligned with pages (smallest erasable unit).
 
@@ -26,18 +25,17 @@ File table contains file records. It's a file itself managed by this service, fi
 | ---------------- | ------------ | ---------------- | ------------ | ------------ |
 | Filetable itself | First file   | Invalidated file | Second file  | Unwritten    |
 File is given off to have data stored or read by other functions, it has it's own format.
-### Service CIDs
+### Commands (03.0x)
 
 | Function          | CID | Payload In                                  | Payload out                                  | Note                      |
 | ----------------- | --- | ------------------------------------------- | -------------------------------------------- | ------------------------- |
-| Read File Table   | 0   | -                                           | Fragmentation, File table entries (stream)   |                           |
-| Format Filesystem | 1   | -                                           | Success (bool)                               | respond only if requested |
-| Create File       | 2   | Name, Size (>0)                             | Success (bool)                               | respond only if requested |
-| Delete File       | 3   | Name                                        | Success (bool)                               | respond only if requested |
-| Resize File       | 4   | Name, New Size (>0)                         | Success (bool)                               | respond only if requested |
-| Rename File       | 5   | Old Name, New Name                          | Success (bool)                               | respond only if requested |
-| Read File         | 6   | Name                                        | Name, Fragmentation, File contents (stream)  |                           |
-| Write File        | 7   | Name, Fragmentation, File contents (stream) | Last sequential fragmentation index written. | respond only if requested |
+| Format Filesystem | 0   | -                                           | Success                                      |                           |
+| Create File       | 1   | Name, Size (>0)                             | Success (bool)                               | respond only if requested |
+| Delete File       | 2   | Name                                        | Success (bool)                               | respond only if requested |
+| Resize File       | 3   | Name, New Size (>0)                         | Success (bool)                               | respond only if requested |
+| Rename File       | 4   | Old Name, New Name                          | Success (bool)                               | respond only if requested |
+| Read File         | 5   | Name                                        | Name, Fragmentation, File contents (stream)  |                           |
+| Write File        | 6   | Name, Fragmentation, File contents (stream) | Last sequential fragmentation index written. | respond only if requested |
 
 
 ### Functions to implement

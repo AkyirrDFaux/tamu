@@ -1,3 +1,5 @@
+TODO: REDO later
+
 Each script is stored as separate file (max 256 scripts).
 One implementation for all devices, prerequisite for implementation is dynamic and keyed memory.
 Two services - Script manager (Status, Edits, IO, for user), Script instruction (Script interaction with other services, internal).
