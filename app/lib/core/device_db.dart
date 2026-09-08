@@ -103,85 +103,84 @@ class DeviceDatabase extends ChangeNotifier {
     return reply != null;
   }
 
-  /// Refreshes one device's identity fields into the database.
+  /// Helper to read Register block type 0 (System) via Register 01.01
+  Future<List<int>?> _registerRead(int targetId, int field, int key) async {
+    final bi = (0 & 0x3FF) << 22 | (0 << 16) | (field << 8) | key;
+    final payload = [bi & 0xFF, (bi>>8)&0xFF, (bi>>16)&0xFF, (bi>>24)&0xFF];
+    final reply = await _request(targetId, ServiceType.register, 1, payload: payload);
+    if (reply == null || reply.length < 8) return null;
+    // reply is BlockInfo(4)+BlockMeta(4)+value
+    return reply.sublist(8);
+  }
+
+  /// Refreshes one device's identity fields into the database via Register System block.
   Future<DeviceEntry?> refreshDevice(int id) async {
     if (!_link.isConnected) return null;
 
     final entry = _devices.putIfAbsent(id, () => DeviceEntry(id: id));
 
-    final snReply =
-        await _request(id, ServiceType.device, 4, timeout: const Duration(seconds: 2));
-    if (snReply == null) {
+    // Check reachable via Ping 00.01
+    final ping = await _request(id, ServiceType.device, 1, timeout: const Duration(milliseconds: 800));
+    if (ping == null) {
       entry.stale = true;
       notifyListeners();
-      return null; // unreachable
+      return null;
     }
     entry.stale = false;
     entry.lastSeen = DateTime.now();
-    if (snReply.length >= 14) {
+
+    final snReply = await _registerRead(id, 1, 0xFF);
+    if (snReply != null && snReply.length >= 14) {
       entry.serialNumber = serialNumberToHex(snReply.sublist(0, 14));
     }
-
-    final typeReply = await _request(id, ServiceType.device, 3);
+    final typeReply = await _registerRead(id, 0, 0);
     if (typeReply != null && typeReply.length >= 2) {
       entry.type = DeviceType.fromValue(typeReply[0] | (typeReply[1] << 8));
     }
-
-    final versionReply = await _request(id, ServiceType.device, 5);
+    final versionReply = await _registerRead(id, 0, 2);
     if (versionReply != null && versionReply.isNotEmpty) {
-      // The wire payload is padded to 4 bytes; strip trailing NUL padding.
-      entry.softwareVersion =
-          String.fromCharCodes(versionReply).replaceAll('\x00', '').trim();
+      entry.softwareVersion = String.fromCharCodes(versionReply).replaceAll('\x00', '').trim();
     }
-
-    final capReply = await _request(id, ServiceType.device, 6);
+    final capReply = await _registerRead(id, 0, 1);
     if (capReply != null && capReply.length >= 4) {
       entry.capabilities = uint32FromBytes(capReply);
     }
-
-    final nameReply = await _request(id, ServiceType.device, 7);
+    final nameReply = await _registerRead(id, 6, 0xFF);
     if (nameReply != null && nameReply.isNotEmpty) {
-      // The wire payload is padded to 4 bytes; strip trailing NUL padding.
-      entry.name =
-          String.fromCharCodes(nameReply).replaceAll('\x00', '').trim();
+      entry.name = String.fromCharCodes(nameReply).replaceAll('\x00', '').trim();
     }
+    if (entry.name.isEmpty) entry.name = 'Device ${idToString(id)}';
 
     notifyListeners();
     return entry;
   }
 
-  /// Reads live runtime values (uptime + loop times) for the device view.
+  /// Reads live runtime values (uptime + loop times) via Register System block.
   Future<void> refreshRuntime(int id) async {
     final entry = _devices[id];
     if (entry == null) return;
 
-    final uptimeReply = await _request(id, ServiceType.device, 9);
+    final uptimeReply = await _registerRead(id, 3, 0);
     if (uptimeReply != null && uptimeReply.length >= 4) {
       entry.uptimeMs = uint32FromBytes(uptimeReply);
     }
-    final loopReply = await _request(id, ServiceType.device, 10);
-    if (loopReply != null && loopReply.length >= 8) {
-      entry.avgLoopTimeMs = numberFromBytes(loopReply, 0);
-      entry.maxLoopTimeMs = numberFromBytes(loopReply, 4);
-    }
+    final loopAvg = await _registerRead(id, 3, 3);
+    final loopMax = await _registerRead(id, 3, 4);
+    if (loopAvg != null && loopAvg.length >= 4) entry.avgLoopTimeMs = numberFromBytes(loopAvg, 0);
+    if (loopMax != null && loopMax.length >= 4) entry.maxLoopTimeMs = numberFromBytes(loopMax, 0);
 
-    // Time offset (Device view): NTP-style estimate of the offset between the
-    // device's clock and the core's clock.  The core (ID 1) is the time
-    // reference and always reads 0.  For other devices we probe the core's
-    // uptime (CID 9) before and after the CID 11 round-trip so the NTP
-    // formula uses a common time base.
     if (id == coreId) {
       entry.timeOffsetMs = 0;
     } else {
-      final coreBefore = await _request(coreId, ServiceType.device, 9);
+      final coreBefore = await _registerRead(coreId, 3, 0);
       if (coreBefore != null && coreBefore.length >= 4) {
         final t0 = uint32FromBytes(coreBefore);
-        final syncReply = await _request(id, ServiceType.device, 11,
+        final syncReply = await _request(id, ServiceType.device, 3,
             payload: uint32ToBytes(t0));
         if (syncReply != null && syncReply.length >= 12) {
           final t1 = uint32FromBytes(syncReply, 4);
           final t2 = uint32FromBytes(syncReply, 8);
-          final coreAfter = await _request(coreId, ServiceType.device, 9);
+          final coreAfter = await _registerRead(coreId, 3, 0);
           final t3 = (coreAfter != null && coreAfter.length >= 4)
               ? uint32FromBytes(coreAfter)
               : t0 + (t2 - t1);
@@ -194,15 +193,16 @@ class DeviceDatabase extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Renames a device (Device service CID 8) and updates the database.
+  /// Renames a device via Register System Name (Block 0 Field 6)
   Future<bool> setName(int id, String name) async {
-    final bytes = name.codeUnits.take(23).toList();
-    final reply = await _request(id, ServiceType.device, 8, payload: bytes);
+    final bytes = name.codeUnits.take(16).toList();
+    final bi = (0 & 0x3FF) << 22 | (0 << 16) | (6 << 8) | 0xFF;
+    final meta = BlockMeta(flagsAndType: DataType.string.value | FieldFlags.persistent, size: bytes.length);
+    final payload = [...[bi & 0xFF, (bi>>8)&0xFF, (bi>>16)&0xFF, (bi>>24)&0xFF], ...meta.toBytes(), ...bytes];
+    final reply = await _request(id, ServiceType.register, 2, payload: payload);
     if (reply == null) return false;
     final entry = _devices[id];
-    if (entry != null) {
-      entry.name = String.fromCharCodes(reply).replaceAll('\x00', '').trim();
-    }
+    if (entry != null) entry.name = name;
     notifyListeners();
     return true;
   }
@@ -303,28 +303,26 @@ class DeviceDatabase extends ChangeNotifier {
     }
   }
 
-  /// Looks up which serial number belongs to an ID (SNDB Read CID 13).
+  /// SNDB Read per docs 00.11
   Future<String?> serialNumberOf(int id) async {
-    final reply = await _request(coreId, ServiceType.device, 14,
+    final reply = await _request(coreId, ServiceType.device, 11,
         payload: [id & 0xFF, (id >> 8) & 0xFF]);
     if (reply == null || reply.length < 14) return null;
     return serialNumberToHex(reply.sublist(0, 14));
   }
 
-  /// SNDB Write (CID 15): assigns `sn` (14 bytes) the short ID. Returns true
-  /// when the device echoes the entry back.
+  /// SNDB Write per docs 00.12
   Future<bool> sndbWrite(List<int> sn, int id) async {
-    final reply = await _request(coreId, ServiceType.device, 15,
+    final reply = await _request(coreId, ServiceType.device, 12,
         payload: [...sn, id & 0xFF, (id >> 8) & 0xFF],
         timeout: const Duration(seconds: 3));
     return reply != null && reply.length >= 16;
   }
 
-  /// SNDB Delete (Docs/Services/Device service.md): SNDB Write (CID 15) with
-  /// ID 0 tombstones the entry carrying that serial number.
+  /// SNDB Delete per docs 00.12 with ID 0
   Future<bool> sndbDelete(List<int> sn) async {
     if (sn.length < 14) return false;
-    final reply = await _request(coreId, ServiceType.device, 15,
+    final reply = await _request(coreId, ServiceType.device, 12,
         payload: [...sn.take(14), 0, 0],
         timeout: const Duration(seconds: 3));
     return reply != null && reply.length >= 16;

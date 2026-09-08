@@ -4,41 +4,21 @@
     "type": "split",
     "children": [
       {
-        "id": "2938ab9c2a3722cb",
+        "id": "e330e63049290331",
         "type": "tabs",
         "children": [
           {
-            "id": "190bbc79e618fd2a",
+            "id": "3cbc979da9ab1252",
             "type": "leaf",
             "state": {
               "type": "markdown",
               "state": {
-                "file": "RSBus.md",
+                "file": "General architecture.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "RSBus"
-            }
-          }
-        ]
-      },
-      {
-        "id": "1f4871fb5fa1d1b6",
-        "type": "tabs",
-        "children": [
-          {
-            "id": "7a8d22e88d5a17c4",
-            "type": "leaf",
-            "state": {
-              "type": "markdown",
-              "state": {
-                "file": "Data Formats.md",
-                "mode": "source",
-                "source": false
-              },
-              "icon": "lucide-file",
-              "title": "Data Formats"
+              "title": "General architecture"
             }
           }
         ]
@@ -208,28 +188,28 @@
       "bases:Vytvořit novou základnu": false
     }
   },
-  "active": "190bbc79e618fd2a",
+  "active": "3cbc979da9ab1252",
   "lastOpenFiles": [
+    "Services/Dynamic Memory.md",
+    "Services/Register.md",
+    "Services/Log Handler.md",
+    "Services/System Block and Device Commands.md",
+    "Services/Subscriptions.md",
+    "Services/Script.md",
+    "Services/Router.md",
+    "Services/Storage.md",
     "Plan.md",
+    "Services/CLI.md",
+    "Command ID table.md",
+    "Data Formats.md",
+    "Services/App Interface.md",
+    "Devices.md",
+    "General architecture.md",
+    "RSBus.md",
     "Issues.md",
     "Modules and blocks/LED display.md",
     "Modules and blocks/Generic system blocks.md",
-    "Data Formats.md",
-    "Services/System Memory.md",
-    "General architecture.md",
-    "Services/App Interface.md",
-    "Services/Script.md",
-    "Services/Storage.md",
-    "Services/Subscriptions.md",
-    "Devices.md",
-    "Services/CLI.md",
-    "Services/Log Handler.md",
-    "Services/Register.md",
-    "RSBus.md",
-    "Services/Router.md",
-    "Command ID table.md",
     "App/Service views/Dynamic Memory.md",
-    "Services/Dynamic Memory.md",
     "App/Device view.md",
     "Services/Static Memory.md",
     "BlockLog.md",

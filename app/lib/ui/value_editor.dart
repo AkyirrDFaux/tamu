@@ -52,6 +52,14 @@ Future<List<int>?> showValueEditor(
         signed: false,
         hex: true,
       );
+    case DataType.idx:
+      return _editInt(
+        context,
+        title: valueWithUnit(info?.name ?? 'Index', info),
+        initial: current.length >= 4 ? uint32FromBytes(current) : null,
+        signed: false,
+        hex: false,
+      );
     case DataType.integer:
       return _editInt(
         context,
@@ -68,6 +76,10 @@ Future<List<int>?> showValueEditor(
           maxChars: info?.maxChars ?? 23);
     case DataType.sn:
       return _editSerialNumber(context, current);
+    case DataType.id:
+      return _editNetAddr(context, current);
+    case DataType.filename:
+      return _editString(context, info?.name ?? 'Filename', String.fromCharCodes(current), maxChars: 8);
     case DataType.none:
       // Placeholder/deleted slot - nothing to edit.
       return null;
@@ -117,7 +129,9 @@ String dataTypeLabel(DataType type) => switch (type) {
       DataType.none => 'None',
       DataType.undefined => 'Undefined',
       DataType.sn => 'Serial number',
+      DataType.id => 'ID',
       DataType.uint32 => 'Uint32',
+      DataType.idx => 'Index',
       DataType.number => 'Number',
       DataType.devType => 'Device type',
       DataType.netAddr => 'Net address',
@@ -128,6 +142,7 @@ String dataTypeLabel(DataType type) => switch (type) {
       DataType.colour => 'Colour',
       DataType.integer => 'Index',
       DataType.string => 'String',
+      DataType.filename => 'Filename',
       DataType.deleted => 'Deleted',
     };
 
@@ -146,6 +161,9 @@ String formatValue(DataType type, List<int> bytes) {
     case DataType.integer:
       if (bytes.length < 4) return '-';
       return int32FromBytes(bytes).toString();
+    case DataType.idx:
+      if (bytes.length < 4) return '-';
+      return uint32FromBytes(bytes).toString();
     case DataType.string:
       return bytes.isEmpty ? '-' : String.fromCharCodes(bytes);
     case DataType.devType:
@@ -641,7 +659,7 @@ Future<List<int>?> _editNetAddr(BuildContext context, List<int> current) {
                 ? int.tryParse(parts[1], radix: 16)
                 : null;
             if (net == null || dev == null || net < 0 || dev < 0) return;
-            final id = ((net & 0xF) << 12) | (dev & 0xFFF);
+            final id = ((net & 0x3F) << 10) | (dev & 0x3FF);
             Navigator.pop(context, [id & 0xFF, (id >> 8) & 0xFF]);
           },
           child: const Text('OK'),

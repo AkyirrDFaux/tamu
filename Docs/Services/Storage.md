@@ -25,7 +25,7 @@ File table contains file records. It's a file itself managed by this service, fi
 | ---------------- | ------------ | ---------------- | ------------ | ------------ |
 | Filetable itself | First file   | Invalidated file | Second file  | Unwritten    |
 File is given off to have data stored or read by other functions, it has it's own format.
-### Commands (03.0x)
+### Commands (030x)
 
 | Function          | CID | Payload In                                  | Payload out                                  | Note                      |
 | ----------------- | --- | ------------------------------------------- | -------------------------------------------- | ------------------------- |

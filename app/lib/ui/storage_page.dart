@@ -308,12 +308,11 @@ class _StoragePageState extends State<StoragePage>
 // formats the files based on the file name")
 // ---------------------------------------------------------------------------
 
-enum StorageFileType { snreg, layout, text, binary, sysmem, dynmem, keymem }
+enum StorageFileType { snreg, layout, text, binary, dynmem, keymem }
 
 StorageFileType storageFileType(String name) {
   final upper = name.toUpperCase().trim();
   if (upper == 'SNREG') return StorageFileType.snreg;
-  if (upper == 'SYSMEM') return StorageFileType.sysmem;
   if (upper == 'DYNMEM') return StorageFileType.dynmem;
   if (upper == 'KEYMEM') return StorageFileType.keymem;
   if (upper.startsWith('LAY') || upper.endsWith('.LAY')) {
@@ -330,7 +329,6 @@ IconData storageFileIcon(String name) => switch (storageFileType(name)) {
       StorageFileType.layout => Icons.grid_on_outlined,
       StorageFileType.text => Icons.description_outlined,
       StorageFileType.binary => Icons.insert_drive_file_outlined,
-      StorageFileType.sysmem => Icons.memory,
       StorageFileType.dynmem => Icons.storage_outlined,
       StorageFileType.keymem => Icons.key_outlined,
     };
@@ -340,7 +338,6 @@ String fileTypeLabel(String name) => switch (storageFileType(name)) {
       StorageFileType.layout => 'LED layout',
       StorageFileType.text => 'Text',
       StorageFileType.binary => 'Binary',
-      StorageFileType.sysmem => 'System memory backup',
       StorageFileType.dynmem => 'Dynamic memory backup',
       StorageFileType.keymem => 'Keyed memory backup',
     };
@@ -566,7 +563,6 @@ class FileViewPage extends StatelessWidget {
           body = _snregView();
         case StorageFileType.layout:
           body = _layoutView();
-        case StorageFileType.sysmem:
         case StorageFileType.dynmem:
         case StorageFileType.keymem:
           body = MemoryBackupView(fileName: name, data: data!);

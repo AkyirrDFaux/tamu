@@ -38,17 +38,17 @@
 - Effect - Dictionary containing keys describing a graphical effect
 ### Generic packet
 
-| Section | Field          | Size          | Note                                                                                  |
-| ------- | -------------- | ------------- | ------------------------------------------------------------------------------------- |
-| Generic | CRC8           | uint8         | covers everything after                                                               |
-|         | Flags          | 8 bits        |                                                                                       |
-|         | Priority       | uint8         | 0 = highest, default 128                                                              |
-|         | Payload Length | uint8         | in multiples of 4 bytes (for 32bit alignment), max 5+64, includes payload information |
-| ID      | TGT            | uint16        |                                                                                       |
-|         | SRC            | uint16        |                                                                                       |
-| FN      | CMD            | uint16        | Command                                                                               |
-|         | TRID           | uint16        | Transaction ID                                                                        |
-| Payload |                | max 116 bytes | Flexible size, command specific.                                                      |
+| Section | Field          | Size          | Note                                                                        |
+| ------- | -------------- | ------------- | --------------------------------------------------------------------------- |
+| Generic | CRC8           | uint8         | covers everything after                                                     |
+|         | Flags          | 8 bits        |                                                                             |
+|         | Priority       | uint8         | 0 = highest, default 128                                                    |
+|         | Payload Length | uint8         | in multiples of 4 bytes (for 32bit alignment), includes payload information |
+| ID      | TGT            | uint16        |                                                                             |
+|         | SRC            | uint16        |                                                                             |
+| FN      | CMD            | uint16        | Command                                                                     |
+|         | TRID           | uint16        | Transaction ID                                                              |
+| Payload |                | max 116 bytes | Flexible size, command specific.                                            |
 - Flags : REQACK (request response), START (first), STOP (last), TYPE (Request/Response), FRAG (first 4 payload bytes are fragmentation information, uint16 current frag. segment + uint16 total segments)
 - Priorities: Errors (highest) -> TimeSync packets -> Other  -> Streams -> Logs (lowest)
 Maximum length 128 bytes total, all devices have to handle it in full.

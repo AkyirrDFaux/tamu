@@ -40,9 +40,7 @@ Write of a different type and/or length fails.
 A read combines the active and passive flags together.
 
 There are two memory sub-types, differentiated by the "Persistent" flag.
-Separated for easier saving to flash to avoid serialization and deserialization.
-
-They both have a 4-bit active flag field associated with each 32-bit section (retrievable via the offset or directly pre-compiled for internal use).
+Separated for easier saving to flash to avoid long serialization and deserialization.
 
 | Memory sub-type | Usage           |
 | --------------- | --------------- |
@@ -63,13 +61,23 @@ Number of entries and triggers and space requirements for each memory subtype is
 The order of stacking within memory subtypes is sorted by the BlockInfo (i.e. lowest BlockType, BlockInstance, Field and Key first), same as if sorted by the whole uint32.
 
 Since blocks of same types have the same size usage within the memory sub-type, only one (first) offset of each variable has to be stored.
+#### Flag RAM
+Passive flags don't need any, they are fixed.
+
+Active flags have a (single, not split based of memory sub-type) paralel array of 4-bit segments. The blocks instances are stacked upon each other in there (similar to above), each block uses (4 * number of entries) bits. The offset of the first block of it's type within the RAM-array is required to find it's start.
+
+Total offset for each entry:
+O = Block Type's start + Block's instance * Number of entries in this Block Type + Position of entry within Block Type
+
+Precompiled access is possible by knowing the exact offset, since positions don't change.
+Total size of the RAM-array is (4 * number of all individual static entries) bits.
 #### Triggers
 If a block entry has the trigger flag, after the finished write, the trigger table of that block type is searched through linearly for the relevant trigger, which is then run.
 #### Persistence
 The storage is structurally 1:1 mirror of the memory. The user selects what should be updated in the save.
 A new file is created, the old and new data merged into it, and old file is deleted.
 Active flags don't get saved.
-### Basic commands (01.0x)
+### Basic commands (010x)
 
 | Function  | ID  | Content request                     | Content response                           | Note                                                     |
 | --------- | --- | ----------------------------------- | ------------------------------------------ | -------------------------------------------------------- |
@@ -123,7 +131,7 @@ The whole block table is always saved into a separate file (DT_XXX).
 The persistent values are also saved in their file (DV_XXX).
 Changing the persistance flag moves the variable from one memory space to other.
 
-### Dynamic commands (01.1x)
+### Dynamic commands (011x)
 Basic Commands also work on dynamic blocks, these are extra.
 
 | Function         | ID  | Content request     | Content response | Note                      |

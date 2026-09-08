@@ -27,7 +27,7 @@ class FileRecord {
 
 /// Contents chunk size per stream fragment (the max actual payload of a FRAG
 /// packet, Data Formats.md).
-const int fileFragContentSize = 256;
+const int fileFragContentSize = 112;
 
 class StorageClient {
   final int deviceId;
@@ -37,14 +37,15 @@ class StorageClient {
   ConnectionManager get _link => ConnectionManager.instance;
 
   Future<List<int>?> _request(int cid,
-      {List<int> payload = const [], Duration? timeout, bool frag = false}) async {
+      {List<int> payload = const [], Duration? timeout, bool requestFrag = false, bool responseFrag = false}) async {
     try {
       // Mutating ops (create/resize/delete) trigger flash erases on slow nodes
       // and can legitimately exceed the default transaction timeout.
       return await _link.request(deviceId, ServiceType.storage, cid,
           payload: payload,
           timeout: timeout ?? const Duration(seconds: 6),
-          frag: frag);
+          requestFrag: requestFrag,
+          responseFrag: responseFrag);
     } catch (error) {
       AppDiagnostics.log('storage', 'request failed: $error');
       return null;
@@ -68,9 +69,9 @@ class StorageClient {
     return text.replaceAll(' ', '').trim();
   }
 
-  /// Reads the whole file table (CID 0, FRAG-streamed Filerecords of 16 bytes each).
+  /// Reads the whole file table (CID 7 extra, FRAG-streamed Filerecords of 16 bytes each).
   Future<List<FileRecord>?> readFileTable() async {
-    final reply = await _request(0, payload: []);
+    final reply = await _request(7, payload: [], responseFrag: true);
     if (reply == null) return null;
     final records = <FileRecord>[];
     for (var offset = 0; offset + 16 <= reply.length; offset += 16) {
@@ -88,32 +89,27 @@ class StorageClient {
     return records;
   }
 
-  /// Creates a file (CID 2). Returns success flag from the device.
+  /// Creates a file per docs 03.01 CID1
   Future<bool> createFile(String name, int size) async {
     final payload = <int>[...padName(name), ...uint32ToBytes(size)];
-    final reply = await _request(2, payload: payload);
+    final reply = await _request(1, payload: payload);
     return reply != null && reply.isNotEmpty && reply[0] != 0;
   }
 
   Future<bool> deleteFile(String name) async {
-    final reply = await _request(3, payload: padName(name));
-    // The device always sends a status byte: 0x01 success, 0x00 failure
-    // (e.g. table self-entry protection). null means no answer at all.
+    final reply = await _request(2, payload: padName(name));
     return reply != null && reply.isNotEmpty && reply[0] != 0;
   }
 
   Future<bool> renameFile(String oldName, String newName) async {
     final payload = <int>[...padName(oldName), ...padName(newName)];
-    final reply = await _request(5, payload: payload);
+    final reply = await _request(4, payload: payload);
     return reply != null && reply.isNotEmpty && reply[0] != 0;
   }
 
-  /// Reads the whole file (CID 6, FRAG stream). The reply carries the echoed
-  /// name followed by the file contents; the last fragment's 4-byte wire padding
-  /// is trimmed using [size] (the file size, e.g. from the file table). Pass
-  /// [size] to get exact contents.
+  /// Reads the whole file per docs 03.05 CID5
   Future<List<int>?> readFile(String name, {int? size}) async {
-    final reply = await _request(6, payload: padName(name),
+    final reply = await _request(5, payload: padName(name),
         timeout: const Duration(seconds: 10));
     if (reply == null || reply.length < nameLength) return null;
     // The response stream = [name echo (8)][contents...] (the reassembly layer
@@ -125,31 +121,31 @@ class StorageClient {
     return contents;
   }
 
-  /// Writes a whole file (CID 7, FRAG stream). Deletes any existing file, creates it
-  /// with the exact size (the device clamps fragment writes to it), then streams the
-  /// contents in 256-byte fragments, each acknowledged with the last sequential
-  /// fragment index written. Returns true when every fragment was written.
+  /// Writes a whole file per docs 03.06 CID6
   Future<bool> writeFile(String name, List<int> bytes) async {
-    await deleteFile(name); // overwrite semantics
+    await deleteFile(name);
     if (!await createFile(name, bytes.length)) return false;
-    final totalFrags = (bytes.length + fileFragContentSize - 1) ~/ fileFragContentSize;
-    if (totalFrags == 0) return true; // empty file: nothing to stream
+    // First fragment: fragInfo(4) + name(8) + data(max 104) = 116 max
+    // Subsequent fragments: fragInfo(4) + data(max 112) = 116 max
+    const int firstFragDataMax = maxPayloadSize - 4 - nameLength; // 104
+    const int otherFragDataMax = maxPayloadSize - 4; // 112
     var next = 0;
-    while (next < totalFrags) {
-      final start = next * fileFragContentSize;
-      final end = (start + fileFragContentSize > bytes.length)
-          ? bytes.length
-          : start + fileFragContentSize;
+    var offset = 0;
+    while (offset < bytes.length) {
+      final isFirst = next == 0;
+      final dataMax = isFirst ? firstFragDataMax : otherFragDataMax;
+      final end = (offset + dataMax > bytes.length) ? bytes.length : offset + dataMax;
       final payload = <int>[
-        ...writeFragInfo(next, totalFrags),
-        if (next == 0) ...padName(name),
-        ...bytes.sublist(start, end),
+        ...writeFragInfo(next, 0xFFFF), // total fragments unknown, use 0xFFFF
+        if (isFirst) ...padName(name),
+        ...bytes.sublist(offset, end),
       ];
-      final reply = await _request(7, payload: payload, frag: true);
+      final reply = await _request(6, payload: payload, requestFrag: true);
       if (reply == null || reply.length < 2) return false;
       final lastSeq = reply[0] | (reply[1] << 8);
       if (lastSeq == 0xFFFF) return false; // device reported no writable target
       next = lastSeq + 1;
+      offset = end;
     }
     return true;
   }

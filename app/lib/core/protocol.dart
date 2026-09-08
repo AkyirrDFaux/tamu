@@ -1,12 +1,12 @@
 /// Generic packet protocol (Docs/Data Formats.md).
 ///
-/// Wire layout: CRC8 | Flags | Priority | PayloadLen | ID TGT | ID SRC | SRV TGT | SRV SRC | Payload
-/// PayloadLen is in 4-byte units (max 69 = 276 bytes); the payload is padded to 4 on the wire.
+/// Wire layout: CRC8 | Flags | Priority | PayloadLen | ID TGT | ID SRC | CMD | TRID | Payload
+/// PayloadLen is in 4-byte units (max 29 = 116 bytes); the payload is padded to 4 on the wire.
 library;
 
 import 'dart:typed_data';
 
-const int maxPayloadSize = 276;
+const int maxPayloadSize = 116;
 
 // Flag bitmasks.
 const int flagReqAck = 1 << 0;
@@ -25,8 +25,9 @@ const int appSourceId = 0xFFFE;
 /// Service types (Docs/Service ID table.md, matches the firmware enum).
 enum ServiceType {
   device(0x00),
-  logHandler(0x01),
-  storage(0x02),
+  register(0x01),
+  logHandler(0x02),
+  storage(0x03),
   systemMemory(0x04),
   dynamicMemory(0x05),
   keyedMemory(0x06),
@@ -83,6 +84,9 @@ class PacketFrame {
   final int srvTarget;
   final int srvSource;
   final Uint8List payload;
+
+  int get cmd => srvTarget;
+  int get trid => srvSource;
 
   PacketFrame({
     required this.flags,
@@ -150,21 +154,23 @@ class PacketFrame {
 
   /// Builds a single-packet frame (START|STOP set, default priority). Requests carry
   /// REQACK: several services (System/Dynamic/Keyed Memory) respond only when it is set.
-  /// Set [frag] to flag the payload as carrying 4 bytes of fragmentation info first.
+  /// Set [requestFrag] if THIS REQUEST PACKET is a fragment (carries 4-byte frag info).
+  /// Set [responseFrag] if the RESPONSE is expected to be fragmented.
   factory PacketFrame.single({
     required int targetId,
     required int srvTarget,
     required int srvSource,
     required bool response,
     List<int> payload = const [],
-    bool frag = false,
+    bool requestFrag = false,
+    bool responseFrag = false,
   }) {
     return PacketFrame(
       flags: flagStart |
           flagStop |
           flagReqAck |
           (response ? flagType : 0) |
-          (frag ? flagFrag : 0),
+          (requestFrag ? flagFrag : 0),
       priority: defaultPriority,
       idTarget: targetId,
       idSource: appSourceId,

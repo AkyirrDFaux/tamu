@@ -18,7 +18,7 @@ Log Database Entry:
 
 Errors logs are accessible via the service, app should be able to decode into readable text.
 
-### Commands (02.0x)
+### Commands (020x)
 
 | Function       | CID | **Payload In**                                              | **Payload out**                                            | **Note**                         |
 | -------------- | --- | ----------------------------------------------------------- | ---------------------------------------------------------- | -------------------------------- |

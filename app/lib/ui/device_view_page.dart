@@ -7,10 +7,9 @@ import '../core/types.dart';
 import 'dynmem_page.dart';
 import 'keyedmem_page.dart';
 import 'log_page.dart';
-import 'script_page.dart';
+import 'register_page.dart';
 import 'sndb_page.dart';
 import 'storage_page.dart';
-import 'sysmem_page.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
@@ -133,42 +132,36 @@ class _DeviceViewPageState extends State<DeviceViewPage>
                             : Capability.describe(entry.capabilities).join(', ')),
                   ]),
                   const Divider(height: 24),
-                  _card(context, 'Services', [
-                    // Per Docs/App/Device view.md: hide unavailable services
-                    // based on the device's capability field. System Memory,
-                    // Storage and Logs are mandatory; SNDB is core-only.
-                    // Router table and Script editor await their firmware services.
-                    _serviceTile(context, Icons.memory, 'System Memory',
-                        () => SystemMemoryPage(deviceId: widget.deviceId)),
-                    if (entry.capabilities & Capability.dynamicMemory != 0)
-                      _serviceTile(
-                          context,
-                          Icons.dashboard_customize,
-                          'Dynamic Memory',
-                          () => DynamicMemoryPage(deviceId: widget.deviceId)),
-                    if (entry.capabilities & Capability.keyedMemory != 0)
-                      _serviceTile(
-                          context,
-                          Icons.vpn_key_outlined,
-                          'Keyed Memory',
-                          () => KeyedMemoryPage(deviceId: widget.deviceId)),
-                    if (entry.capabilities & Capability.scripts != 0)
-                      _serviceTile(
-                          context,
-                          Icons.menu_book_outlined,
-                          'Scripts',
-                          () => ScriptPage(deviceId: widget.deviceId)),
-                    _serviceTile(context, Icons.save_outlined, 'Storage',
-                        () => StoragePage(deviceId: widget.deviceId)),
-                    if (entry.isCore) ...[
-                      _serviceTile(context, Icons.format_list_numbered,
-                          'SN Database', () => const SndbPage()),
-                      // The log DATABASE lives on cores only (Docs/Services/
-                      // Log Handler.md); non-core views get no logs entry.
-                      _serviceTile(context, Icons.article_outlined, 'Logs',
-                          () => LogViewerPage(deviceId: widget.deviceId)),
-                    ],
-                  ]),
+_card(context, 'Services', [
+                      // Per Docs/App/Device view.md: hide unavailable services
+                      // based on the device's capability field. Register, Storage
+                      // and Logs are mandatory; SNDB is core-only.
+                      // Router table awaits its firmware service.
+                      _serviceTile(context, Icons.table_chart, 'Register',
+                          () => RegisterPage(deviceId: widget.deviceId)),
+                      if (entry.capabilities & Capability.dynamicMemory != 0)
+                        _serviceTile(
+                            context,
+                            Icons.dashboard_customize,
+                            'Dynamic Memory',
+                            () => DynamicMemoryPage(deviceId: widget.deviceId)),
+                      if (entry.capabilities & Capability.keyedMemory != 0)
+                        _serviceTile(
+                            context,
+                            Icons.vpn_key_outlined,
+                            'Keyed Memory',
+                            () => KeyedMemoryPage(deviceId: widget.deviceId)),
+                      _serviceTile(context, Icons.save_outlined, 'Storage',
+                          () => StoragePage(deviceId: widget.deviceId)),
+                      if (entry.isCore) ...[
+                        _serviceTile(context, Icons.format_list_numbered,
+                            'SN Database', () => const SndbPage()),
+                        // The log DATABASE lives on cores only (Docs/Services/
+                        // Log Handler.md); non-core views get no logs entry.
+                        _serviceTile(context, Icons.article_outlined, 'Logs',
+                            () => LogViewerPage(deviceId: widget.deviceId)),
+                      ],
+                    ]),
                 ],
               ),
       ),

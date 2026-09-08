@@ -12,10 +12,10 @@ import 'dart:typed_data';
 String serialNumberToHex(List<int> sn) =>
     sn.map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase()).join();
 
-/// Device ID: 16 bit (4 bit net + 12 bit device).
-int idNet(int id) => (id >> 12) & 0xF;
-int idDevice(int id) => id & 0xFFF;
-String idToString(int id) => '${idNet(id)}:${idDevice(id).toRadixString(16).padLeft(3, '0')}';
+/// Device ID: 16 bit (6 bit net + 10 bit device) per Data Formats.md and Packet.h.
+int idNet(int id) => (id >> 10) & 0x3F;
+int idDevice(int id) => id & 0x3FF;
+String idToString(int id) => '${idNet(id)}.${idDevice(id)}';
 
 /// Sign-extends a 32 bit little-endian value (Dart ints are 64 bit, so the
 /// sign bit must be expanded manually).
@@ -80,23 +80,24 @@ enum DeviceType {
 }
 
 enum DataType {
-  // None (0x00): placeholder/spacer or deleted entry - indexes never move
-  // (Docs/Data Formats.md "Basic types").
   none(0x00),
-  undefined(0x0E), // valid entry whose type is not specified yet
-  sn(0x01),
-  uint32(0x02),
-  number(0x03),
-  devType(0x04),
-  netAddr(0x05),
-  bool_(0x06),
+  undefined(0x01),
+  sn(0x02),
+  id(0x03),
+  bool_(0x04),
+  integer(0x05), // Index 32-bit signed
+  number(0x06),
   vector(0x07),
   matrix(0x08),
-  enum_(0x09),
-  colour(0x0A),
-  integer(0x0B), // Index: 32-bit signed integer ("index" is reserved in Dart enums)
-  string(0x0C),
-  deleted(0x0D);
+  colour(0x09),
+  string(0x0A),
+  filename(0x0B),
+  enum_(0x0C),
+  deleted(0x0D),
+  idx(0x0E), // Index type (firmware DataType::Index)
+  uint32(0x0F), // Unsigned 32-bit
+  devType(0x0C), // alias to enum
+  netAddr(0x03); // alias to id
 
   final int value;
   const DataType(this.value);
@@ -112,6 +113,7 @@ enum DataType {
 enum BlockType {
   none(0x00), // tombstone: no block here; stable until save compacts
   undefined(0x01), // valid block, type not yet specified
+  system(0x02), // System block (type 0, inst 0 in Register service)
   ledButton(0x03),
   pwm(0x04),
   accGyr(0x05),
@@ -133,6 +135,7 @@ enum BlockType {
   String get label => switch (this) {
         BlockType.none => 'None',
         BlockType.undefined => 'Undefined',
+        BlockType.system => 'System',
         BlockType.ledButton => 'LED/Button',
         BlockType.pwm => 'PWM',
         BlockType.accGyr => 'Acc/Gyr',
@@ -143,26 +146,31 @@ enum BlockType {
       };
 }
 
-/// Field/block flag bits (bits 10-15 of BlockMeta.FlagsAndType).
+/// Field/block flag bits (bits 10-15 of BlockMeta.FlagsAndType per Register.md).
 class FieldFlags {
   static const mask = 0xFC00; // flags occupy bits 10-15 of FlagsAndType
-  static const valid = 0x0400; // Flash only: newer version exists when 0
-  static const readOnly = 0x1000;
+  static const readOnly = 0x0400;
+  static const persistent = 0x0800;
+  static const trigger = 0x1000;
   static const notSaved = 0x2000;
   static const scriptUpdated = 0x4000;
-  // Bit 15 (RemoteOrigin) is deprecated in the firmware and unused.
+  static const external = 0x8000;
+  static const valid = 0x0400; // alias to readOnly for INVAL check legacy (flash valid)
 
   static List<String> describe(int flags) {
     final names = <String>[];
     if (flags & readOnly != 0) names.add('RO');
+    if (flags & persistent != 0) names.add('P');
+    if (flags & trigger != 0) names.add('TR');
     if (flags & notSaved != 0) names.add('NS');
     if (flags & scriptUpdated != 0) names.add('SU');
+    if (flags & external != 0) names.add('EXT');
     if (flags & valid == 0) names.add('INVAL');
     return names;
   }
 }
 
-/// Capability bitfield (Docs/Data Formats.md).
+/// Capability bitfield per System Memory.md and Enums.h.
 class Capability {
   static const core = 1 << 0;
   static const router = 1 << 1;
@@ -170,6 +178,9 @@ class Capability {
   static const dynamicMemory = 1 << 3;
   static const keyedMemory = 1 << 4;
   static const scripts = 1 << 5;
+  static const appInterface = 1 << 6;
+  static const subscriptions = 1 << 7;
+  static const node = 1 << 8;
 
   static List<String> describe(int caps) {
     final names = <String>[];
@@ -179,6 +190,9 @@ class Capability {
     if (caps & dynamicMemory != 0) names.add('DynMem');
     if (caps & keyedMemory != 0) names.add('KeyMem');
     if (caps & scripts != 0) names.add('Scripts');
+    if (caps & appInterface != 0) names.add('App');
+    if (caps & subscriptions != 0) names.add('Subs');
+    if (caps & node != 0) names.add('Node');
     return names;
   }
 }

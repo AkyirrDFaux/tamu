@@ -1,32 +1,32 @@
-| Section       | Command          | Enum     |
-| ------------- | ---------------- | -------- |
-| Device        | Discover         |          |
-|               | Ping             | 00.01    |
-|               | Identify         | 00.02    |
-|               | TimeSync         | 00.03    |
-|               | Core discover    | 00.10    |
-|               | SNDB             | 00.11-13 |
-| Registry      | Enumerate        | 01.00    |
-|               | Read             | 01.01    |
-|               | Write            | 01.02    |
-|               | Save             | 01.03    |
-|               | Recall           | 01.04    |
-|               | Create Dynamic   | 01.10    |
-|               | Delete Dynamic   | 01.11    |
-|               | Get Name         | 01.12    |
-|               | Set Name         | 01.13    |
-|               | Get Memory Usage | 01.14    |
-| Log Handler   | Report Error     | 02.00    |
-|               | Read Logs        | 02.01    |
-|               | Clear Logs       | 02.02    |
-| File System   | Format           | 03.00    |
-|               | Create           | 03.01    |
-|               | Delete           | 03.02    |
-|               | Resize           | 03.03    |
-|               | Rename           | 03.04    |
-|               | Read             | 03.05    |
-|               | Write            | 03.06    |
-| Subscriptions |                  |          |
-| Script        | ...              |          |
+| Section       | Command          | Enum (16bit Hex) |
+| ------------- | ---------------- | ---------------- |
+| Device        | Discover         | 0000             |
+|               | Ping             | 0001             |
+|               | Identify         | 0002             |
+|               | TimeSync         | 0003             |
+|               | Core discover    | 0010             |
+|               | SNDB             | 0011-0013        |
+| Registry      | Enumerate        | 0100             |
+|               | Read             | 0101             |
+|               | Write            | 0102             |
+|               | Save             | 0103             |
+|               | Recall           | 0104             |
+|               | Create Dynamic   | 0110             |
+|               | Delete Dynamic   | 0111             |
+|               | Get Name         | 0112             |
+|               | Set Name         | 0113             |
+|               | Get Memory Usage | 0114             |
+| Log Handler   | Report Error     | 0200             |
+|               | Read Logs        | 0201             |
+|               | Clear Logs       | 0202             |
+| Storage       | Format           | 0300             |
+|               | Create           | 0301             |
+|               | Delete           | 0302             |
+|               | Resize           | 0303             |
+|               | Rename           | 0304             |
+|               | Read             | 0305             |
+|               | Write            | 0306             |
+| Subscriptions |                  |                  |
+| Script        | ...              |                  |
 
 

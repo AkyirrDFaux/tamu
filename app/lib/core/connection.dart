@@ -443,7 +443,8 @@ class ConnectionManager extends ChangeNotifier {
     int functionCid, {
     List<int> payload = const [],
     Duration timeout = const Duration(seconds: 2),
-    bool frag = false,
+    bool requestFrag = false,
+    bool responseFrag = false,
   }) async {
     final transport = _transport;
     if (transport == null) throw const TransportException('Not connected');
@@ -458,7 +459,8 @@ class ConnectionManager extends ChangeNotifier {
       srvSource: makeService(ServiceType.app, txId),
       response: false,
       payload: payload,
-      frag: frag,
+      requestFrag: requestFrag,
+      responseFrag: responseFrag,
     );
 
     final completer = Completer<List<int>>();
@@ -469,9 +471,6 @@ class ConnectionManager extends ChangeNotifier {
       return await completer.future.timeout(timeout, onTimeout: () {
         _pending.remove(txId);
         _rxBuffers.remove(txId);
-        AppDiagnostics.log('link',
-            'timeout: ${service.name} CID $functionCid to dev $targetId '
-            '(txId $txId, ${timeout.inMilliseconds} ms)');
         throw TransportException(
             '${service.name} CID $functionCid request timed out');
       });

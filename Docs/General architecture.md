@@ -9,11 +9,11 @@
 ## Services:
 [[Command ID table]]
 #### Mandatory:
- - [[Services/System Memory|System Memory]] (implicitly [[Register]])
+ - [[System Block and Device Commands|System Block and Device Commands]] (implicitly [[Register]])
  - [[Log Handler]]
  - [[Storage]]
 #### Mandatory for core:
-- SN Database (under [[Services/System Memory|System Memory]])
+- SN Database (under [[System Block and Device Commands|System Block and Device Commands]])
 - [[App Interface]]
 - [[CLI]] (ESP32 only)
 #### Mandatory for routers:
@@ -36,7 +36,7 @@ Each service or large feature should be a class.
 Reuse code whereever if possible.
 Use structs for data organization (command payloads, etc.).
 Use malloc/realloc/free instead of new and delete.
-Keep functions moderate in length (20ish lines).
+Keep functions moderate in length (20ish lines), maximum 50 lines (except for switch with only function calls).
 Device specific implementations should have separate folders.
 Do not import new libraries or use float/double type (not even standard ones, except for `<cstdint><cstddef><cstring><cstdlib>` and ones required within ESP32 scope).
 Remember that this is an embedded system with limited resources.
