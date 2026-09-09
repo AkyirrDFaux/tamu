@@ -45,10 +45,10 @@ class KeyedBlock {
   String name;
 
   /// Dictionaries loaded lazily.
-  final Map<int, KeyedDict> dicts = {};
+  final Map<int, KeyedDict> dicts = <int, KeyedDict>{};
 
   /// Keyed entries loaded lazily, per dictionary: key -> entry.
-  final Map<int, Map<int, KeyedEntry>> entries = {};
+  final Map<int, Map<int, KeyedEntry>> entries = <int, Map<int, KeyedEntry>>{};
 
   KeyedBlock({required this.index, required this.meta, required this.name});
 
@@ -141,7 +141,7 @@ class KeyedMemoryClient {
       return existing;
     }
     final result = KeyedEntry(key: key, meta: meta, value: value);
-    block.entries.putIfAbsent(dict, () => {})[key] = result;
+    block.entries.putIfAbsent(dict, () => <int, KeyedEntry>{})[key] = result;
     return result;
   }
 
@@ -284,7 +284,7 @@ class KeyedMemoryClient {
       return existing;
     }
     final result = KeyedEntry(key: key, meta: meta, value: value);
-    block.entries.putIfAbsent(dict, () => {})[key] = result;
+    block.entries.putIfAbsent(dict, () => <int, KeyedEntry>{})[key] = result;
     return result;
   }
 

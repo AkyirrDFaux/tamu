@@ -74,9 +74,14 @@ static void HandleEnumerate(const PacketFrame &frame, uint32_t bi) {
         if (bi_req == 0) { RespondStatus(frame,false); return; }
         uint16_t req_type = BlockInfoType(bi_req);
         if (req_type == 0x3FF) { // Dynamic blocks
+#ifndef DISABLE_DYNAMIC_MEMORY
             uint8_t cnt = dynamic_block_registry.block_count;
             uint8_t rpl[8]; memcpy(rpl, &bi, 4); rpl[4] = cnt;
             SendResponse(frame, rpl, 5);
+#else
+            uint8_t rpl[8]; memcpy(rpl, &bi, 4); rpl[4] = 0;
+            SendResponse(frame, rpl, 5);
+#endif
         } else {
             uint8_t cnt=0; for(size_t i=0;i<static_block_num;i++) if((uint16_t)static_block_registry[i].Schema->Type==req_type) cnt++;
             uint8_t rpl[8]; memcpy(rpl, &bi, 4); rpl[4]=cnt;
@@ -152,6 +157,7 @@ static void HandleMultiEntryRead(const PacketFrame &frame, uint32_t bi, uint16_t
     }
 }
 
+#ifndef DISABLE_DYNAMIC_MEMORY
 static void HandleDynamicBlockRead(const PacketFrame &frame, uint32_t bi, uint8_t inst, uint8_t field) {
     if (inst >= dynamic_block_registry.block_count) { RespondStatus(frame,false); return; }
     DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(inst);
@@ -165,6 +171,7 @@ static void HandleDynamicBlockRead(const PacketFrame &frame, uint32_t bi, uint8_
     if(!fr.Data) { RespondStatus(frame,false); return; }
     SendFieldResponse(frame, bi, fr);
 }
+#endif
 
 static void HandleStaticBlockRead(const PacketFrame &frame, uint32_t bi, uint16_t type, uint8_t inst, uint8_t field) {
     int idx = FindStaticBlock(type, inst);
@@ -193,6 +200,7 @@ static void HandleSystemBlockWrite(const PacketFrame &frame, uint8_t field) {
     }
 }
 
+#ifndef DISABLE_DYNAMIC_MEMORY
 static void HandleDynamicBlockWrite(const PacketFrame &frame, uint8_t inst, uint8_t field, BlockMeta *desc, const uint8_t *val, uint16_t vlen) {
     if (inst >= dynamic_block_registry.block_count) { RespondStatus(frame,false); return; }
     DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(inst);
@@ -228,6 +236,7 @@ static void HandleDynamicBlockWrite(const PacketFrame &frame, uint8_t inst, uint
     }
     SendResponse(frame, frame.payload, PayloadBytes(frame));
 }
+#endif
 
 static void HandleStaticBlockWrite(const PacketFrame &frame, uint16_t type, uint8_t inst, uint8_t field, BlockMeta *desc, const uint8_t *val, uint16_t vlen) {
     int idx=FindStaticBlock(type, inst);
@@ -237,12 +246,14 @@ static void HandleStaticBlockWrite(const PacketFrame &frame, uint16_t type, uint
     SendResponse(frame, frame.payload, PayloadBytes(frame));
 }
 
-// ===== CID 3,4: Save/Recall helpers =====
+// ===== CID 3,4: Save/Recall for Static =====
 
 static void HandleStaticSaveRecall(const PacketFrame &frame, uint8_t cid, uint32_t bi_save, uint8_t field) {
-    int idx = FindStaticBlock(0, 0);
+    uint16_t type = BlockInfoType(bi_save);
+    uint8_t inst = BlockInfoInstance(bi_save);
+    int idx = FindStaticBlock(type, inst);
     if (idx < 0) { RespondStatus(frame,false); return; }
-    const StaticBlockDescriptor &blk = static_block_registry[0];
+    const StaticBlockDescriptor &blk = static_block_registry[idx];
     FieldResult fr = blk.Get(field);
     if (!fr.Data) { RespondStatus(frame,false); return; }
     
@@ -252,14 +263,13 @@ static void HandleStaticSaveRecall(const PacketFrame &frame, uint8_t cid, uint32
     if (cid == 3) { // Save - direct memory mirror
         uint16_t write_pos = 0;
         uint16_t c = 0;
-        bool found = false;
         for (; c + 8 <= cnt; ) {
             uint8_t b = buf[c];
             if (b == 0xFF) break;
             uint8_t sz = buf[c + 5];
             uint16_t el = 8 + ((sz + 3) & ~3);
             if (c + el > cnt) break;
-            if (buf[c] == 0 && buf[c + 1] == field) { found = true; break; }
+            if (buf[c] == 0 && buf[c + 1] == field) { break; }
             c += el;
         }
         write_pos = c;
@@ -280,7 +290,7 @@ static void HandleStaticSaveRecall(const PacketFrame &frame, uint8_t cid, uint32
             if (c + el > cnt) break;
             if (buf[c] == 0 && buf[c + 1] == field) {
                 uint16_t val_c = c + 8;
-                FieldResult fr2 = static_block_registry[0].Get(field);
+                FieldResult fr2 = static_block_registry[idx].Get(field);
                 if (fr2.Data && sz == fr2.Descriptor.Size) { memcpy(fr2.Data, buf + val_c, sz); found = true; }
                 break;
             }
@@ -290,6 +300,7 @@ static void HandleStaticSaveRecall(const PacketFrame &frame, uint8_t cid, uint32
     }
 }
 
+#ifndef DISABLE_DYNAMIC_MEMORY
 static void HandleDynamicSaveRecall(const PacketFrame &frame, uint8_t cid, uint8_t inst_save, uint8_t field) {
     bool save_all = (inst_save == 0x3F);
     DynamicBlockDescriptor *block = nullptr;
@@ -311,8 +322,6 @@ static void HandleDynamicSaveRecall(const PacketFrame &frame, uint8_t cid, uint8
         else { RespondStatus(frame,false); }
     }
 }
-
-// ===== CID 0x10-0x15: Dynamic/Keyed management =====
 
 static void HandleCreateDynamic(const PacketFrame &frame, uint16_t type) {
     if (PayloadBytes(frame) < 8) { RespondStatus(frame,false); return; }
@@ -477,6 +486,7 @@ static void HandleReadBackup(const PacketFrame &frame, uint16_t block_idx) {
     }
     if (!found) RespondStatus(frame, false);
 }
+#endif
 
 // ===== Main dispatcher =====
 
@@ -498,7 +508,11 @@ static void HandleRegister(const PacketFrame &frame) {
     if (cid == 1) {
         if (type==0 && inst==0) { HandleSystemBlockRead(frame, bi, field, key); return; }
         HandleMultiEntryRead(frame, bi, PayloadBytes(frame));
+#ifndef DISABLE_DYNAMIC_MEMORY
         if (type == 0x3FF) { HandleDynamicBlockRead(frame, bi, inst, field); return; }
+#else
+        if (type == 0x3FF) { RespondStatus(frame, false); return; }
+#endif
         HandleStaticBlockRead(frame, bi, type, inst, field);
         return;
     }
@@ -510,7 +524,11 @@ static void HandleRegister(const PacketFrame &frame) {
         BlockMeta *desc = (BlockMeta*)(frame.payload+4);
         const uint8_t *val = frame.payload+8;
         uint16_t vlen = desc->Size;
+#ifndef DISABLE_DYNAMIC_MEMORY
         if (type == 0x3FF) { HandleDynamicBlockWrite(frame, inst, field, desc, val, vlen); return; }
+#else
+        if (type == 0x3FF) { RespondStatus(frame, false); return; }
+#endif
         HandleStaticBlockWrite(frame, type, inst, field, desc, val, vlen);
         return;
     }
@@ -523,12 +541,18 @@ static void HandleRegister(const PacketFrame &frame) {
         uint8_t inst_save = BlockInfoInstance(bi_save);
         
         if (type_save == 0 && inst_save == 0) { HandleStaticSaveRecall(frame, cid, bi_save, field); }
-        else if (type_save == 0x3FF) { HandleDynamicSaveRecall(frame, cid, inst_save, field); }
-        else { RespondStatus(frame,false); }
+        else if (type_save == 0x3FF) {
+#ifndef DISABLE_DYNAMIC_MEMORY
+            HandleDynamicSaveRecall(frame, cid, inst_save, field);
+#else
+            RespondStatus(frame, false);
+#endif
+        } else { RespondStatus(frame,false); }
         return;
     }
 
     // CID 0x10-0x15: Dynamic/Keyed management
+#ifndef DISABLE_DYNAMIC_MEMORY
     if (cid >= 0x10 && cid <= 0x15) {
         if (type != 0x3FF) { RespondStatus(frame,false); return; }
         uint16_t block_idx = BlockInfoInstance(bi);
@@ -542,4 +566,5 @@ static void HandleRegister(const PacketFrame &frame) {
             case 0x15: HandleReadBackup(frame, block_idx); break;
         }
     }
+#endif
 }

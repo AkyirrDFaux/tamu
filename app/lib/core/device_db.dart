@@ -24,7 +24,7 @@ class DeviceEntry {
   /// in the connection list stable even though the reported device name (CID 6)
   /// may differ.
   String? linkName;
-  String get displayName => linkName ?? name;
+  String get displayName => name.isNotEmpty ? name : (linkName ?? 'Device ${idToString(id)}');
   DeviceType type;
   String? serialNumber; // 28-char hex
   String? softwareVersion;

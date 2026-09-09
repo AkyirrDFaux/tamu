@@ -9,6 +9,9 @@
 // Forward declaration for LoadAllBackups function
 void LoadAllBackups();
 
+// DAS has no app interface
+bool AppConnected = false;
+
 #include "Base.h"
 #include "RSBus.h"
 #include "Log.h"

@@ -16,11 +16,12 @@ class FileRecord {
   final int size;
   final String name;
 
-  FileRecord(
-      {required this.index,
-      required this.offset,
-      required this.size,
-      required this.name});
+  FileRecord({
+    required this.index,
+    required this.offset,
+    required this.size,
+    required this.name,
+  });
 
   bool get isFiletable => index == 0;
 }
@@ -36,16 +37,25 @@ class StorageClient {
 
   ConnectionManager get _link => ConnectionManager.instance;
 
-  Future<List<int>?> _request(int cid,
-      {List<int> payload = const [], Duration? timeout, bool requestFrag = false, bool responseFrag = false}) async {
+  Future<List<int>?> _request(
+    int cid, {
+    List<int> payload = const [],
+    Duration? timeout,
+    bool requestFrag = false,
+    bool responseFrag = false,
+  }) async {
     try {
       // Mutating ops (create/resize/delete) trigger flash erases on slow nodes
       // and can legitimately exceed the default transaction timeout.
-      return await _link.request(deviceId, ServiceType.storage, cid,
-          payload: payload,
-          timeout: timeout ?? const Duration(seconds: 6),
-          requestFrag: requestFrag,
-          responseFrag: responseFrag);
+      return await _link.request(
+        deviceId,
+        ServiceType.storage,
+        cid,
+        payload: payload,
+        timeout: timeout ?? const Duration(seconds: 6),
+        requestFrag: requestFrag,
+        responseFrag: responseFrag,
+      );
     } catch (error) {
       AppDiagnostics.log('storage', 'request failed: $error');
       return null;
@@ -80,11 +90,14 @@ class StorageClient {
       // Unwritten entries are all 0xFF; invalidated ones have offset 0.
       if (recOffset == 0xFFFFFFFF && size == 0xFFFFFFFF) break;
       if (recOffset == 0) continue; // invalidated record
-      records.add(FileRecord(
+      records.add(
+        FileRecord(
           index: records.length,
           offset: recOffset,
           size: size,
-          name: unpadName(reply.sublist(offset + 8))));
+          name: unpadName(reply.sublist(offset + 8)),
+        ),
+      );
     }
     return records;
   }
@@ -109,8 +122,11 @@ class StorageClient {
 
   /// Reads the whole file per docs 03.05 CID5
   Future<List<int>?> readFile(String name, {int? size}) async {
-    final reply = await _request(5, payload: padName(name),
-        timeout: const Duration(seconds: 10));
+    final reply = await _request(
+      5,
+      payload: padName(name),
+      timeout: const Duration(seconds: 10),
+    );
     if (reply == null || reply.length < nameLength) return null;
     // The response stream = [name echo (8)][contents...] (the reassembly layer
     // already stripped the fragmentation info from every fragment).
@@ -127,19 +143,17 @@ class StorageClient {
     if (!await createFile(name, bytes.length)) return false;
     // First fragment: fragInfo(4) + name(8) + data(max 104) = 116 max
     // Subsequent fragments: fragInfo(4) + data(max 112) = 116 max
-    const int firstFragDataMax = maxPayloadSize - 4 - nameLength; // 104
-    const int otherFragDataMax = maxPayloadSize - 4; // 112
+    final firstFragDataMax = maxPayloadSize - 4 - nameLength; // 104
+    final otherFragDataMax = maxPayloadSize - 4; // 112
     var next = 0;
     var offset = 0;
     while (offset < bytes.length) {
       final isFirst = next == 0;
       final dataMax = isFirst ? firstFragDataMax : otherFragDataMax;
-      final end = (offset + dataMax > bytes.length) ? bytes.length : offset + dataMax;
-      final payload = <int>[
-        ...writeFragInfo(next, 0xFFFF), // total fragments unknown, use 0xFFFF
-        if (isFirst) ...padName(name),
-        ...bytes.sublist(offset, end),
-      ];
+      final end = (offset + dataMax > bytes.length)
+          ? bytes.length
+          : offset + dataMax;
+final payload = <int>[...writeFragInfo(next, 0xFFFF), if (isFirst) ...padName(name), ...bytes.sublist(offset, end)];
       final reply = await _request(6, payload: payload, requestFrag: true);
       if (reply == null || reply.length < 2) return false;
       final lastSeq = reply[0] | (reply[1] << 8);

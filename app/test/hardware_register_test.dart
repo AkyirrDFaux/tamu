@@ -38,3 +38,40 @@ Future<void> runTests() async {
   expect(reply3, isNotNull);
   expect(reply3!.length, greaterThanOrEqualTo(8 + 14));
 }
+
+void main() async {
+  final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
+
+  setUpAll(() async => await connectHil());
+  tearDownAll(disconnectHil);
+
+  test('HIL: Register Enumerate block types (01.00 Enum 0)', () async {
+    final link = ConnectionManager.instance;
+    final payload = [0]; // Enum 0 for block types
+    final reply = await link.request(1, ServiceType.register, 0, payload: payload);
+    expect(reply, isNotNull, reason: 'Register enumerate should return reply');
+    if (reply != null && reply.length >= 5) {
+      final count = reply[4];
+      final types = reply.sublist(5, 5 + count);
+      expect(types.length, count);
+    }
+  }, timeout: const Timeout(Duration(seconds: 30)), skip: skipReason is String ? skipReason : false);
+
+  test('HIL: Register Read System Block 0 field 0 (DeviceType)', () async {
+    final link = ConnectionManager.instance;
+    final bi = (0 << 22) | (0 << 16) | (0 << 8) | 0; // type0 inst0 field0 key0
+    final payload = [bi & 0xFF, (bi >> 8) & 0xFF, (bi >> 16) & 0xFF, (bi >> 24) & 0xFF];
+    final reply = await link.request(1, ServiceType.register, 1, payload: payload);
+    expect(reply, isNotNull);
+    expect(reply!.length, greaterThanOrEqualTo(8));
+  }, timeout: const Timeout(Duration(seconds: 30)), skip: skipReason is String ? skipReason : false);
+
+  test('HIL: Register Read System SN (field 1, key=0xFF)', () async {
+    final link = ConnectionManager.instance;
+    final bi = (0 << 22) | (0 << 16) | (1 << 8) | 0xFF;
+    final payload = [bi & 0xFF, (bi >> 8) & 0xFF, (bi >> 16) & 0xFF, (bi >> 24) & 0xFF];
+    final reply = await link.request(1, ServiceType.register, 1, payload: payload);
+    expect(reply, isNotNull);
+    expect(reply!.length, greaterThanOrEqualTo(8 + 14));
+  }, timeout: const Timeout(Duration(seconds: 30)), skip: skipReason is String ? skipReason : false);
+}

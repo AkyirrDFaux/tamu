@@ -85,7 +85,7 @@ enum DataType {
   sn(0x02),
   id(0x03),
   bool_(0x04),
-  integer(0x05), // Index 32-bit signed
+  integer(0x05), // Index 32-bit signed (firmware DataType::Index)
   number(0x06),
   vector(0x07),
   matrix(0x08),
@@ -94,9 +94,9 @@ enum DataType {
   filename(0x0B),
   enum_(0x0C),
   deleted(0x0D),
-  idx(0x0E), // Index type (firmware DataType::Index)
-  uint32(0x0F), // Unsigned 32-bit
-  devType(0x0C), // alias to enum
+  idx(0x11), // alias for uint32 (legacy Index type at 0x0E)
+  uint32(0x0E), // Unsigned 32-bit (firmware DataType::Uint32)
+  devType(0x0F), // alias to enum (firmware DataType::DevType)
   netAddr(0x03); // alias to id
 
   final int value;
@@ -113,7 +113,7 @@ enum DataType {
 enum BlockType {
   none(0x00), // tombstone: no block here; stable until save compacts
   undefined(0x01), // valid block, type not yet specified
-  system(0x02), // System block (type 0, inst 0 in Register service)
+  system(0x00), // System block (type 0, inst 0 in Register service)
   ledButton(0x03),
   pwm(0x04),
   accGyr(0x05),

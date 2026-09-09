@@ -37,7 +37,7 @@ class RegisterClient {
   /// Sends a request to the Register service and returns the reply payload.
   Future<List<int>?> request(int cid, {List<int> payload = const [], Duration? timeout}) async {
     try {
-      return await ConnectionManager.instance.request(1, ServiceType.register, cid,
+      return await ConnectionManager.instance.request(deviceId, ServiceType.register, cid,
           payload: payload, timeout: timeout ?? _requestTimeout);
     } catch (error) {
       AppDiagnostics.log('register', 'request failed: $error');

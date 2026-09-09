@@ -517,6 +517,7 @@ struct BlockRegistry
 
 using DynamicRegistry = BlockRegistry<DynamicBlockDescriptor>;
 
+#ifndef DISABLE_DYNAMIC_MEMORY
 // One registry instance per dynamic memory service (defined in their service files).
 extern DynamicRegistry dynamic_block_registry;
 DynamicRegistry dynamic_block_registry;
@@ -540,6 +541,7 @@ static const char *DynamicBackupName()
     static constexpr char name[8] = {'D', 'Y', 'N', 'M', 'E', 'M', ' ', ' '};
     return name;
 }
+#endif
 
 // Common backup file iteration: reads one block's serialized data from backup buffer.
 // Returns true on success and updates cursor.

@@ -43,16 +43,16 @@ enum class DataType : uint16_t {
     Filename       = 0x0B,
     Enum           = 0x0C,
     Deleted        = 0x0D,
-    Unknown        = 0x00,
+    Uint32         = 0x0E,
+    DevType        = 0x0F,
+    NetAddr        = 0x10,
+    Unknown        = 0x00,  // Alias for None
+    // Dynamic/Keyed extensions (not used by DAS)
     UnknownKeyed   = 0x100,
     GenericDict    = 0x100,
     Geometry       = 0x101,
     Texture        = 0x102,
-    Effect         = 0x103,
-    // internal extensions (not in spec) kept distinct to avoid switch duplicate
-    Uint32         = 0x0E,
-    DevType        = 0x0F,
-    NetAddr        = 0x10
+    Effect         = 0x103
 };
 
 #define BLOCK_META_FLAGS_MASK 0xFC00

@@ -308,3 +308,16 @@ String formatProbe(DataType type, List<int> bytes) {
   }
   return 'bytes=$bytes';
 }
+
+void main() async {
+  final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
+  final isDAS = Platform.environment['TAMU_HIL'] == '/dev/ttyACM1';
+  final skipReasonDAS = isDAS ? 'DAS does not have dynamic/keyed memory services' : (skipReason is String ? skipReason : false);
+
+  setUpAll(() async => await connectHil());
+  tearDownAll(disconnectHil);
+
+  test('memory probe - keyed & dynamic', () async {
+    await runTests();
+  }, timeout: const Timeout(Duration(minutes: 5)), skip: skipReasonDAS);
+}

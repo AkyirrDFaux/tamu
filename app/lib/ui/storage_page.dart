@@ -218,19 +218,10 @@ class _StoragePageState extends State<StoragePage>
   Widget _buildBody() {
     final files = _files;
     if (files == null) return Center(child: Text(_error ?? 'Loading...'));
-    // First record is the file table itself; list actual files only.
+    // Always show the file table (first entry), then user files.
     final realFiles = files.toList();
-    if (files.isEmpty || (files.length == 1 && files.first.isFiletable)) {
-      return Center(
-          child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text('No files stored'),
-                const SizedBox(height: 4),
-                if (files.isNotEmpty)
-                  Text('File table: ${_formatSize(files.first.size)}',
-                      style: const TextStyle(color: Colors.white38)),
-              ]));
+    if (files.isEmpty) {
+      return const Center(child: Text('No file table'));
     }
     return ListView.builder(
       itemCount: realFiles.length,

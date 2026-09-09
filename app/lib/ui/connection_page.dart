@@ -182,13 +182,12 @@ class _ConnectionPageState extends State<ConnectionPage> {
               if (_manager.isConnected)
                 ListTile(
                   leading: const Icon(Icons.link, color: kOrange),
-                  // The device's REPORTED name (from the Device service), with
+                  // The device's REPORTED name (from the Register service), with
                   // the link as the subtitle - not two copies of the same text.
-                  title: Text(DeviceDatabase.instance.byId(coreId)?.name.isNotEmpty ==
-                              true
-                          ? DeviceDatabase.instance.byId(coreId)!.name
-                          : _manager.connectedName ??
-                              ''),
+                  title: Text(
+                      DeviceDatabase.instance.byId(coreId)?.displayName ??
+                          _manager.connectedName ??
+                          ''),
                   subtitle: Text(_manager.connectedName ?? 'Connected'),
                   trailing: Row(mainAxisSize: MainAxisSize.min, children: [
                     IconButton(

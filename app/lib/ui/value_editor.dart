@@ -305,10 +305,10 @@ Future<List<int>?> _editBool(
 Future<List<int>?> _editEnum(
     BuildContext context, FieldInfo? info, List<int> current) {
   final options = info?.enumValues;
+  final valueSize = current.length > 0 ? current.length : 4;
   if (options == null || options.isEmpty) {
     // No known labels: enter the numeric value directly.
-    final currentRaw =
-        current.length >= 4 ? uint32FromBytes(current) : null;
+    final currentRaw = _bytesToInt(current);
     final controller =
         TextEditingController(text: currentRaw?.toString() ?? '');
     return showDialog<List<int>>(
@@ -326,7 +326,7 @@ Future<List<int>?> _editEnum(
             onPressed: () {
               final v = int.tryParse(controller.text.trim());
               Navigator.pop(
-                  context, v == null ? null : uint32ToBytes(v));
+                  context, v == null ? null : _intToBytes(v, valueSize));
             },
             child: const Text('OK'),
           ),
@@ -334,8 +334,7 @@ Future<List<int>?> _editEnum(
       ),
     );
   }
-  final currentRaw =
-      current.length >= 4 ? uint32FromBytes(current) : null;
+  final currentRaw = _bytesToInt(current);
   return showDialog<List<int>>(
     context: context,
     builder: (context) => SimpleDialog(
@@ -344,7 +343,7 @@ Future<List<int>?> _editEnum(
         RadioGroup<int>(
           groupValue: currentRaw,
           onChanged: (value) =>
-              Navigator.pop(context, value == null ? null : uint32ToBytes(value)),
+              Navigator.pop(context, value == null ? null : _intToBytes(value, valueSize)),
           child: Column(
             children: [
               for (final entry in options.entries)
@@ -358,6 +357,23 @@ Future<List<int>?> _editEnum(
       ],
     ),
   );
+}
+
+int? _bytesToInt(List<int> bytes) {
+  if (bytes.isEmpty) return null;
+  int value = 0;
+  for (int i = 0; i < bytes.length; i++) {
+    value |= bytes[i] << (8 * i);
+  }
+  return value;
+}
+
+List<int> _intToBytes(int value, int size) {
+  final bytes = <int>[];
+  for (int i = 0; i < size; i++) {
+    bytes.add((value >> (8 * i)) & 0xFF);
+  }
+  return bytes;
 }
 
 Future<List<int>?> _editDevType(
@@ -517,7 +533,7 @@ Future<List<int>?> _editMatrix(
 Future<List<int>?> _editColour(BuildContext context, List<int> current) {
   final controller = TextEditingController(
       text: current.length >= 4
-          ? current.sublist(0, 4).map((b) => b.toRadixString(16).padLeft(2, '0')).join()
+          ? current.sublist(0, 4).map((int b) => b.toRadixString(16).padLeft(2, '0')).join()
           : 'FFFFFF00');
   const presets = {
     'Off': [0, 0, 0, 0],
@@ -574,7 +590,7 @@ Future<List<int>?> _editColour(BuildContext context, List<int> current) {
                   onTap: () {
                     parsed = entry.value;
                     controller.text = entry.value
-                        .map((b) => b.toRadixString(16).padLeft(2, '0'))
+                        .map((int b) => b.toRadixString(16).padLeft(2, '0'))
                         .join();
                     setState(() {});
                   },
@@ -697,7 +713,7 @@ Future<List<int>?> _editString(
 Future<List<int>?> _editHex(
     BuildContext context, String title, List<int> current) {
   final controller = TextEditingController(
-      text: current.map((b) => b.toRadixString(16).padLeft(2, '0')).join());
+      text: current.map((int b) => b.toRadixString(16).padLeft(2, '0')).join());
   return showDialog<List<int>>(
     context: context,
     builder: (context) => AlertDialog(
@@ -727,7 +743,7 @@ Future<List<int>?> _editHex(
 // ---------------------------------------------------------------------------
 
 String _hex(List<int> bytes) =>
-    bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
+    bytes.map((int b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
 
 String _num3(double v) =>
     v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(3);
