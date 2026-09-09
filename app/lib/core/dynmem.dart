@@ -109,7 +109,7 @@ class DynamicMemoryClient {
     final payload = [
       bi & 0xFF, (bi >> 8) & 0xFF, (bi >> 16) & 0xFF, (bi >> 24) & 0xFF
     ];
-    final reply = await _register.request(0x15, payload: [bi & 0xFF, (bi >> 8) & 0xFF, (bi >> 16) & 0xFF, (bi >> 24) & 0xFF]);
+    final reply = await _register.request(0x15, payload: payload);
     if (reply == null || reply.length < 8) return null;
     final meta = BlockMeta.fromBytes(reply, 4);
     return DynField(index: field, meta: meta, value: RegisterClient.valueSlice(reply, meta.size));
@@ -126,7 +126,6 @@ class DynamicMemoryClient {
       key: field.meta.key,
       size: newValue.length,
     );
-    final bi = ((0x3FF & 0x3FF) << 22) | ((block.index & 0x3F) << 16) | ((field.index & 0xFF) << 8);
     final payload = [
       ..._makeBlockInfo(block.index, field.index),
       ...meta.toBytes(),
@@ -193,11 +192,6 @@ class DynamicMemoryClient {
     );
     final fieldIdx = index ?? block.fieldCount;
     final bi = ((0x3FF & 0x3FF) << 22) | ((block.index & 0x3F) << 16) | ((fieldIdx & 0xFF) << 8);
-    final payload = [
-      bi & 0xFF, (bi >> 8) & 0xFF, (bi >> 16) & 0xFF, (bi >> 24) & 0xFF,
-      ...sizedMeta.toBytes(),
-      ...value,
-    ];
     return writeValue(bi, sizedMeta, value, timeout: const Duration(seconds: 4));
   }
 

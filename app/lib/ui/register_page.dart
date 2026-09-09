@@ -12,7 +12,7 @@ import 'value_editor.dart' show dataTypeLabel, formatValue, showValueEditor;
 import 'widgets.dart';
 
 /// Register service view (Docs/App/Service views/Register.md):
-/// System block, static blocks, and dynamic/keyed memory (merged).
+/// System block, static blocks, and dynamic memory.
 class RegisterPage extends StatefulWidget {
   final int deviceId;
 
@@ -28,7 +28,7 @@ class _RegisterPageState extends State<RegisterPage>
 
   /// Stores [type, instance, meta, name] for each block
   List<({int type, int inst, BlockMeta meta, String name})?>? _blockMetas;
-  Map<int, Map<int, ({BlockMeta meta, List<int> value})?>> _fieldCache = {};
+  final Map<int, Map<int, ({BlockMeta meta, List<int> value})?>> _fieldCache = {};
   String? _error;
   final Set<int> _expanded = {};
   bool _refreshing = false;
@@ -215,8 +215,8 @@ class _RegisterPageState extends State<RegisterPage>
           return _blockCard(context, index, blocks[index]);
         } else {
           return _linkTile(
-              context, Icons.dashboard_customize, 'Dynamic / Keyed Memory',
-              'User-created blocks with typed entries and keyed dictionaries',
+              context, Icons.dashboard_customize, 'Dynamic Memory',
+              'User-created blocks with typed entries',
               () => DynamicMemoryPage(deviceId: widget.deviceId));
         }
       },
@@ -252,9 +252,8 @@ class _RegisterPageState extends State<RegisterPage>
     }
 
     final isExpanded = _expanded.contains(blockIndex);
-    final flags = FieldFlags.describe(block.meta.flags);
     final isSystem = block.type == 0 && block.inst == 0;
-    final isDynamicKeyed = block.type == 0x3FF;
+    final isDynamic = block.type == 0x3FF;
 
     return Card(
       color: kSurfaceAlt,
@@ -266,14 +265,14 @@ class _RegisterPageState extends State<RegisterPage>
               color: kOrange),
           title: Row(children: [
             Expanded(
-                child: Text(block.name.isNotEmpty ? block.name : (isSystem ? 'System' : (isDynamicKeyed ? 'Dynamic/Keyed #${block.inst}' : 'Block #${block.inst}')),
+                child: Text(block.name.isNotEmpty ? block.name : (isSystem ? 'System' : (isDynamic ? 'Dynamic #${block.inst}' : 'Block #${block.inst}')),
                     style: const TextStyle(fontWeight: FontWeight.w600))),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
               decoration: BoxDecoration(
                   color: Colors.white.withAlpha(20),
                   borderRadius: BorderRadius.circular(4)),
-              child: Text(isSystem ? 'System' : (isDynamicKeyed ? '#${block.inst}' : '#${block.inst}'),
+              child: Text(isSystem ? 'System' : (isDynamic ? '#${block.inst}' : '#${block.inst}'),
                   style: const TextStyle(fontSize: 10, color: Colors.white54)),
             ),
           ]),
@@ -356,14 +355,10 @@ class _RegisterPageState extends State<RegisterPage>
           systemFieldKeys.add((key: key, field: extraField));
         }
       }
-      if (field != null && !systemFieldKeys.any((e) => e.key == _systemKeysForField(fieldIndex).first)) {
+      if (!systemFieldKeys.any((e) => e.key == _systemKeysForField(fieldIndex).first)) {
         systemFieldKeys.insert(0, (key: _systemKeysForField(fieldIndex).first, field: field));
       }
     }
-
-    final fieldName = isSystemField
-        ? _systemFieldName(fieldIndex)
-        : (blockInfoFor(BlockType.fromValue(block?.meta.typeValue ?? 0))?.field(fieldIndex)?.name ?? 'Field $fieldIndex');
 
     if (isSystemField && systemFieldKeys.length > 1) {
       return ExpansionTile(
@@ -381,9 +376,6 @@ class _RegisterPageState extends State<RegisterPage>
           final key = entry.key;
           final f = entry.field;
           if (f == null) return const SizedBox.shrink();
-          final innerFlags = FieldFlags.describe(f.meta.flags);
-          final valueText = _formatSystemValue(f.meta.dataType, f.value);
-          final memberName = _systemStructMemberName(fieldIndex, key);
           return ListTile(
             dense: true,
             contentPadding: const EdgeInsets.only(left: 56, right: 12),
@@ -417,10 +409,6 @@ class _RegisterPageState extends State<RegisterPage>
         }).toList(),
       );
     }
-
-    final valueText = isSystemField
-        ? _formatSystemValue(field.meta.dataType, field.value)
-        : formatValue(field.meta.dataType, field.value);
 
     final fieldInfo = isSystemField
         ? null
@@ -553,9 +541,8 @@ class _RegisterPageState extends State<RegisterPage>
     if (!mounted) return;
 
     final isSystemField = blockType == 0 && inst == 0;
-    final fieldInfo = isSystemField
-        ? null
-        : blockInfoFor(BlockType.fromValue(block?.meta.typeValue ?? 0))?.field(fieldIndex);
+    final blockInfo = blockInfoFor(BlockType.fromValue(block?.meta.typeValue ?? 0));
+    final fieldInfo = isSystemField ? null : blockInfo?.field(fieldIndex);
 
     final newValue = await showValueEditor(
         context, field.meta.dataType, field.value,
@@ -570,7 +557,7 @@ class _RegisterPageState extends State<RegisterPage>
       final field = await _client.readBlockField(blockType, inst, fieldIndex, key);
       if (field != null) {
         final cache = _fieldCache[cacheKey];
-        cache?[fieldIndex] = field;
+        if (cache != null) cache[fieldIndex] = field;
       }
       if (mounted) setState(() {});
     }

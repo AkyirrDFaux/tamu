@@ -28,7 +28,6 @@ class RegisterClient {
 
   RegisterClient({required this.deviceId});
 
-  ConnectionManager get _link => ConnectionManager.instance;
   ServiceType get service => ServiceType.register;
   String get logTag => 'register';
 
@@ -164,9 +163,9 @@ class RegisterClient {
     return reply.sublist(8);
   }
 
-  /// Reads all blocks (static + dynamic/keyed) by enumerating types and instances.
+  /// Reads all blocks (static + dynamic) by enumerating types and instances.
   /// The System block (type 0, inst 0) is a virtual block not in the static registry.
-  /// Dynamic/Keyed blocks use type 0x3FF and are not returned by enumerateBlockTypes.
+  /// Dynamic blocks use type 0x3FF and are not returned by enumerateBlockTypes.
   Future<List<({int type, int inst, BlockMeta meta, String name})?>?> readBlocks() async {
     final types = await enumerateBlockTypes();
     if (types == null) return null;
@@ -190,7 +189,7 @@ class RegisterClient {
       }
     }
     
-    // Add Dynamic/Keyed blocks (type 0x3FF) - not returned by enumerateBlockTypes
+    // Add Dynamic blocks (type 0x3FF) - not returned by enumerateBlockTypes
     final dynCount = await getInstanceCount(0x3FF);
     if (dynCount != null && dynCount > 0) {
       for (var inst = 0; inst < dynCount; inst++) {

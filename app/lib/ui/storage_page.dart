@@ -299,13 +299,12 @@ class _StoragePageState extends State<StoragePage>
 // formats the files based on the file name")
 // ---------------------------------------------------------------------------
 
-enum StorageFileType { snreg, layout, text, binary, dynmem, keymem }
+enum StorageFileType { snreg, layout, text, binary, dynmem }
 
 StorageFileType storageFileType(String name) {
   final upper = name.toUpperCase().trim();
   if (upper == 'SNREG') return StorageFileType.snreg;
   if (upper == 'DYNMEM') return StorageFileType.dynmem;
-  if (upper == 'KEYMEM') return StorageFileType.keymem;
   if (upper.startsWith('LAY') || upper.endsWith('.LAY')) {
     return StorageFileType.layout;
   }
@@ -321,7 +320,6 @@ IconData storageFileIcon(String name) => switch (storageFileType(name)) {
       StorageFileType.text => Icons.description_outlined,
       StorageFileType.binary => Icons.insert_drive_file_outlined,
       StorageFileType.dynmem => Icons.storage_outlined,
-      StorageFileType.keymem => Icons.key_outlined,
     };
 
 String fileTypeLabel(String name) => switch (storageFileType(name)) {
@@ -330,7 +328,6 @@ String fileTypeLabel(String name) => switch (storageFileType(name)) {
       StorageFileType.text => 'Text',
       StorageFileType.binary => 'Binary',
       StorageFileType.dynmem => 'Dynamic memory backup',
-      StorageFileType.keymem => 'Keyed memory backup',
     };
 
 /// Decoded file-table view: every 16-byte Filerecord as offset/size/name.
@@ -555,7 +552,6 @@ class FileViewPage extends StatelessWidget {
         case StorageFileType.layout:
           body = _layoutView();
         case StorageFileType.dynmem:
-        case StorageFileType.keymem:
           body = MemoryBackupView(fileName: name, data: data!);
         case StorageFileType.text when _looksTextual:
           final text =
@@ -581,10 +577,10 @@ class FileViewPage extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Memory backup file decoders (Docs/Services/System|Dynamic|Keyed Memory.md:
+// Memory backup file decoders (Docs/Services/System|Dynamic Memory.md:
 // "the backup file is the serialised registry").
 //
-// Dynamic/Keyed format (SerializeRegistry):  u16 block_count, then per block
+// Dynamic format (SerializeRegistry):  u16 block_count, then per block
 //   u8 name_len + name, u16 type, u16 map_count, map (BlockMeta x map_count,
 //   4 B each), u16 data_len + data. Field/dict data sits at aligned offsets
 //   (GetOffset sums AlignTo4(Size)).
@@ -672,7 +668,6 @@ class MemoryBackupView extends StatelessWidget {
 
   List<Widget> _parseRegistry() {
     final rows = <Widget>[];
-    final isKeyed = fileName.toUpperCase() == 'KEYMEM';
     final b = data;
     if (b.length < 2) return [const Text('(corrupt backup)')];
     final blockCount = _u16(b, 0);
@@ -703,58 +698,25 @@ class MemoryBackupView extends StatelessWidget {
       final children = <Widget>[];
       final blockType = BlockType.fromValue(typeValue);
       final info = blockInfoFor(blockType);
-      if (isKeyed) {
-        // each dict: its data starts at AlignTo4(sum of previous dict sizes)
-        var off = 0;
-        for (var d = 0; d < mapCount; d++) {
-          final dictMeta = metas[d];
-          final dictSize = dictMeta.size;
-          final entries = <Widget>[];
-          var e = off;
-          while (e + 4 <= off + dictSize) {
-            final em = BlockMeta.fromBytes(blob, e);
-            final esize = em.size;
-            if (e + 4 + esize > off + dictSize || esize > 255) break;
-            final v = blob.sublist(e + 4, e + 4 + esize);
-            entries.add(ListTile(
-              dense: true,
-              contentPadding: const EdgeInsets.only(left: 60, right: 12),
-              title: Row(children: [
-                SizedBox(width: 56,
-                    child: Text('k${em.key.toRadixString(16).padLeft(2, '0').toUpperCase()}',
-                        style: const TextStyle(color: kOrange, fontSize: 11))),
-                Expanded(child: Text(_formatBytes(em, v),
-                    style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
-              ]),
-              subtitle: Text(dataTypeLabel(em.dataType),
-                  style: const TextStyle(fontSize: 10, color: Colors.white38)),
-            ));
-            e += _align4(4 + esize);
-          }
-          children.add(_blockCard('Dictionary $d (${dataTypeLabel(dictMeta.dataType)})',
-              '${entries.length} entries', entries));
-          off += _align4(dictSize);
-        }
-      } else {
-        var off = 0;
-        for (var f = 0; f < mapCount; f++) {
-          final meta = metas[f];
-          final size = meta.size;
-          if (off + size > blob.length) break;
-          final v = blob.sublist(off, off + size);
-          final fname = info?.field(f)?.name ?? 'Entry $f';
-          children.add(ListTile(
-            dense: true,
-            contentPadding: const EdgeInsets.only(left: 60, right: 12),
-            title: Row(children: [
-              Expanded(child: Text('$fname: ${_formatBytes(meta, v)}',
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
-            ]),
-            subtitle: Text(dataTypeLabel(meta.dataType),
-                style: const TextStyle(fontSize: 10, color: Colors.white38)),
-          ));
-          off += _align4(size);
-        }
+      // Dynamic blocks use sequential field layout (AlignTo4 per field)
+      var off = 0;
+      for (var f = 0; f < mapCount; f++) {
+        final meta = metas[f];
+        final size = meta.size;
+        if (off + size > blob.length) break;
+        final v = blob.sublist(off, off + size);
+        final fname = info?.field(f)?.name ?? 'Entry $f';
+        children.add(ListTile(
+          dense: true,
+          contentPadding: const EdgeInsets.only(left: 60, right: 12),
+          title: Row(children: [
+            Expanded(child: Text('$fname: ${_formatBytes(meta, v)}',
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
+          ]),
+          subtitle: Text(dataTypeLabel(meta.dataType),
+              style: const TextStyle(fontSize: 10, color: Colors.white38)),
+        ));
+        off += _align4(size);
       }
       rows.add(_blockCard(name, blockType.label, children));
     }

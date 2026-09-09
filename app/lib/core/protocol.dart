@@ -30,7 +30,6 @@ enum ServiceType {
   storage(0x03),
   systemMemory(0x04),
   dynamicMemory(0x05),
-  keyedMemory(0x06),
   script(0x08),
   scriptInstructions(0x09),
   router(0x10),
@@ -153,7 +152,7 @@ class PacketFrame {
   }
 
   /// Builds a single-packet frame (START|STOP set, default priority). Requests carry
-  /// REQACK: several services (System/Dynamic/Keyed Memory) respond only when it is set.
+  /// REQACK: several services (System/Dynamic Memory) respond only when it is set.
   /// Set [requestFrag] if THIS REQUEST PACKET is a fragment (carries 4-byte frag info).
   /// Set [responseFrag] if the RESPONSE is expected to be fragmented.
   factory PacketFrame.single({

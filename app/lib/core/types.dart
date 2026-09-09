@@ -176,7 +176,6 @@ class Capability {
   static const router = 1 << 1;
   static const cli = 1 << 2;
   static const dynamicMemory = 1 << 3;
-  static const keyedMemory = 1 << 4;
   static const scripts = 1 << 5;
   static const appInterface = 1 << 6;
   static const subscriptions = 1 << 7;
@@ -188,7 +187,6 @@ class Capability {
     if (caps & router != 0) names.add('Router');
     if (caps & cli != 0) names.add('CLI');
     if (caps & dynamicMemory != 0) names.add('DynMem');
-    if (caps & keyedMemory != 0) names.add('KeyMem');
     if (caps & scripts != 0) names.add('Scripts');
     if (caps & appInterface != 0) names.add('App');
     if (caps & subscriptions != 0) names.add('Subs');

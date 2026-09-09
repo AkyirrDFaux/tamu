@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import '../core/device_db.dart';
 import '../core/types.dart';
 import 'dynmem_page.dart';
-import 'keyedmem_page.dart';
 import 'log_page.dart';
 import 'register_page.dart';
 import 'sndb_page.dart';
@@ -145,12 +144,6 @@ _card(context, 'Services', [
                             Icons.dashboard_customize,
                             'Dynamic Memory',
                             () => DynamicMemoryPage(deviceId: widget.deviceId)),
-                      if (entry.capabilities & Capability.keyedMemory != 0)
-                        _serviceTile(
-                            context,
-                            Icons.vpn_key_outlined,
-                            'Keyed Memory',
-                            () => KeyedMemoryPage(deviceId: widget.deviceId)),
                       _serviceTile(context, Icons.save_outlined, 'Storage',
                           () => StoragePage(deviceId: widget.deviceId)),
                       if (entry.isCore) ...[

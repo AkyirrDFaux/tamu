@@ -91,7 +91,7 @@ String formatOffsetMs(int ms) {
       '${msPart.toString().padLeft(3, '0')}';
 }
 
-/// Name + block-type prompt shared by the Dynamic/Keyed memory create and edit
+/// Name + block-type prompt shared by the Dynamic memory create and edit
 /// flows. With `withIndex` the user may pin the new block to an explicit index
 /// (filling a None placeholder); an empty index appends.
 /// Returns (name, type, index) or null when cancelled.

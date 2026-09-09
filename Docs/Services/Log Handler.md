@@ -4,7 +4,7 @@ Log Struct:
 
 | Source (BlockType+Instance) | Log Category | Log Specifics | Timestamp (synced) |
 | --------------------------- | ------------ | ------------- | ------------------ |
-| 16 bit                      | bit          | 8 bit         | 32bit              |
+| 16 bit                      | 8 bit        | 8 bit         | 32bit              |
 The log handler service sends the log imediately with corresponding priority.
 
 ### Log database (Core)

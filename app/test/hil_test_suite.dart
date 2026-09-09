@@ -10,15 +10,12 @@ import 'hardware_register_test.dart' as register_test;
 import 'hardware_storage_test.dart' as storage_test;
 import 'tamu_hardware_verification_test.dart' as verification_test;
 import 'dyn_flow_test.dart' as dyn_flow_test;
-import 'keyed_refresh_test.dart' as keyed_refresh_test;
-import 'keyed_crash_test.dart' as keyed_crash_test;
-import 'mem_probe_test.dart' as mem_probe_test;
 
 void main() {
   final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
-  // DAS doesn't have dynamic/keyed memory services - skip those tests
+  // DAS doesn't have dynamic memory services - skip those tests
   final isDAS = Platform.environment['TAMU_HIL'] == '/dev/ttyACM1';
-  final skipDynamicKeyed = isDAS ? 'DAS does not have dynamic/keyed memory services' : (skipReason is String ? skipReason : false);
+  final skipDynamic = isDAS ? 'DAS does not have dynamic memory services' : (skipReason is String ? skipReason : false);
 
   setUpAll(() async {
     await connectHil();
@@ -40,17 +37,5 @@ void main() {
 
   test('Dynamic Memory Flow Tests', () async {
     await dyn_flow_test.runTests();
-  }, timeout: const Timeout(Duration(minutes: 2)), skip: skipDynamicKeyed);
-
-  test('Keyed Memory Refresh Tests', () async {
-    await keyed_refresh_test.runTests();
-  }, timeout: const Timeout(Duration(minutes: 2)), skip: skipDynamicKeyed);
-
-  test('Keyed Memory Crash Tests', () async {
-    await keyed_crash_test.runTests();
-  }, timeout: const Timeout(Duration(minutes: 5)), skip: skipDynamicKeyed);
-
-  test('Memory Probe Tests', () async {
-    await mem_probe_test.runTests();
-  }, timeout: const Timeout(Duration(minutes: 3)), skip: skipReason);
+  }, timeout: const Timeout(Duration(minutes: 2)), skip: skipDynamic);
 }

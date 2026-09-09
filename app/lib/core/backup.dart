@@ -1,7 +1,7 @@
 /// Whole-network backup and restore (Docs/App/Backup.md).
 ///
 /// Creates a zipfile containing per-device JSON files built from the devices'
-/// Register services (System block + Dynamic/Keyed); restore writes values
+/// Register services (System block + Dynamic); restore writes values
 /// straight back to the services ("optional live restore").
 library;
 
@@ -14,7 +14,6 @@ import 'package:archive/archive_io.dart';
 import 'device_db.dart';
 import 'register_client.dart';
 import 'dynmem.dart';
-import 'keyedmem.dart';
 import 'types.dart';
 
 Future<void> writePlatformFile(String path, List<int> bytes) async {
@@ -135,11 +134,10 @@ Uint8List _makeSystemBi(int field, int key) {
     ..[3] = (bi >> 24) & 0xFF;
 }
 
-/// Collects the current System block + Dynamic/Keyed state of one device.
+/// Collects the current System block + Dynamic state of one device.
 Future<BackupDevice?> captureDevice(int deviceId) async {
   final reg = RegisterClient(deviceId: deviceId);
   final dyn = DynamicMemoryClient(deviceId: deviceId);
-  final keyed = KeyedMemoryClient(deviceId: deviceId);
 
   final entry = DeviceDatabase.instance.byId(deviceId);
   final captured = <BackupBlock>[];
@@ -212,38 +210,6 @@ Future<BackupDevice?> captureDevice(int deviceId) async {
     }
   }
 
-  // --- Keyed blocks ---
-  final keyedBlocks = await keyed.readBlocks();
-  if (keyedBlocks != null) {
-    for (final block in keyedBlocks) {
-      if (block.blockType == BlockType.deleted || block.blockType == BlockType.none) continue;
-      
-      final keyedFields = <BackupField>[];
-      for (var d = 0; d < block.dictCount; d++) {
-        final dict = await keyed.readDict(block, d);
-        if (dict == null) continue;
-        for (final key in dict.keys) {
-          final entry = await keyed.readEntry(block, d, key);
-          if (entry == null) continue;
-          if (entry.readOnly || entry.notSaved) continue;
-          // Store dict index in upper bits of field index for restore
-          keyedFields.add(BackupField(
-              index: (d << 8) | key,
-              flagsAndType: entry.meta.flagsAndType,
-              size: entry.meta.size,
-              valueHex: entry.value.map((b) => b.toRadixString(16).padLeft(2, '0')).join()));
-        }
-      }
-      if (keyedFields.isNotEmpty) {
-        captured.add(BackupBlock(
-            index: block.index,
-            name: block.name,
-            blockTypeValue: block.blockType.value,
-            fields: keyedFields));
-      }
-    }
-  }
-
   if (captured.isEmpty) return null;
 
   return BackupDevice(
@@ -289,7 +255,6 @@ List<BackupDevice> parseBackupZip(List<int> zipBytes) {
 Future<int> restoreDevice(BackupDevice backup) async {
   final reg = RegisterClient(deviceId: backup.id);
   final dyn = DynamicMemoryClient(deviceId: backup.id);
-  final keyed = KeyedMemoryClient(deviceId: backup.id);
   
   var written = 0;
 
@@ -327,40 +292,6 @@ Future<int> restoreDevice(BackupDevice backup) async {
         if (confirmed != null) written++;
       }
       await dyn.save(block: storedBlock.index);
-    } else {
-      // Restore Keyed blocks
-      final liveBlocks = await keyed.readBlocks();
-      if (liveBlocks == null) continue;
-      final live = liveBlocks.where((b) => b.index == storedBlock.index).firstOrNull;
-      if (live == null) continue;
-      
-      for (final field in storedBlock.fields) {
-        final meta = BlockMeta(flagsAndType: field.flagsAndType);
-        if (meta.readOnly) continue;
-        // Extract dict and key from field index
-        final dict = field.index >> 8;
-        final key = field.index & 0xFF;
-        
-        // Ensure dict exists
-        if (!live.dicts.containsKey(dict)) {
-          await keyed.readDict(live, dict);
-        }
-        if (!live.entries.containsKey(dict) || !live.entries[dict]!.containsKey(key)) {
-          // Key may not exist, but writeEntry will create it
-        }
-        final entry = live.entries[dict]?[key];
-        if (entry == null || entry.meta.size != field.size) {
-          // Create new entry if needed
-          final newEntry = KeyedEntry(key: key, meta: meta, value: field.bytes);
-          live.entries.putIfAbsent(dict, () => {})[key] = newEntry;
-          final reply = await keyed.writeKeyValue(live, dict, key, meta, field.bytes);
-          if (reply != null) written++;
-        } else {
-          final reply = await keyed.writeEntry(live, dict, entry, field.bytes);
-          if (reply != null) written++;
-        }
-      }
-      await keyed.save(block: storedBlock.index);
     }
   }
   return written;
