@@ -166,7 +166,7 @@ void HandleStorageService(const PacketFrame &frame)
             break;
         }
 
-        case 7: { // Extra: Read File Table (not in docs, for app)
+        case 7: { // Read File Table (Docs/Services/Storage.md: extra command for app)
             uint8_t active_count = Storage.FileCount();
             if (active_count == 0) {
                 FinalizeReply(tx_frame, frame, FLAG_TYPE | FLAG_START | FLAG_STOP, 0);

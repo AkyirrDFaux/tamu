@@ -128,9 +128,9 @@ class _RegisterPageState extends State<RegisterPage>
         } else {
           cache.remove(f);
         }
-      } else {
-        final key = (blockType == 0x3FF) ? 0 : 0xFF;
-        final field = await _client.readBlockField(blockType, instance, f, key);
+} else {
+          final key = (blockType == BlockType.dynamic.value) ? 0 : 0xFF;
+          final field = await _client.readBlockField(blockType, instance, f, key);
         if (field != null) {
           cache[f] = field;
         } else {
@@ -253,7 +253,7 @@ class _RegisterPageState extends State<RegisterPage>
 
     final isExpanded = _expanded.contains(blockIndex);
     final isSystem = block.type == 0 && block.inst == 0;
-    final isDynamic = block.type == 0x3FF;
+    final isDynamic = block.type == BlockType.dynamic.value;
 
     return Card(
       color: kSurfaceAlt,
@@ -549,7 +549,7 @@ class _RegisterPageState extends State<RegisterPage>
         info: fieldInfo);
     if (newValue == null) return;
 
-    final key = (blockType == 0) ? _systemKeyForField(fieldIndex) : ((blockType == 0x3FF) ? 0 : 0xFF);
+    final key = (blockType == 0) ? _systemKeyForField(fieldIndex) : ((blockType == BlockType.dynamic.value) ? 0 : 0xFF);
     final meta = BlockMeta(flagsAndType: field.meta.flagsAndType, size: newValue.length, key: key);
     final confirmed = await _client.writeBlockField(blockType, inst, fieldIndex, key, meta, newValue);
     _snack(confirmed != null ? 'Value written' : 'Write failed');

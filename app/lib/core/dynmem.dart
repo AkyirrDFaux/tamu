@@ -1,7 +1,7 @@
 /// Dynamic Memory client using Register service (Docs/Services/Register.md).
 ///
 /// Dynamic blocks are accessed via Register service (0x01) with BlockInfo:
-/// Type=0x3FF (Dynamic), Instance=block index, Field=field index, Key=0.
+/// Type=BlockType.dynamic (Dynamic), Instance=block index, Field=field index, Key=0.
 /// CIDs: 0=Enumerate, 1=Read, 2=Write, 3=Save, 4=Recall, 0x10=Create, 0x11=Delete,
 /// 0x12=GetName, 0x13=SetName, 0x14=GetMemoryUsage.
 library;
@@ -47,9 +47,9 @@ class DynamicMemoryClient {
 
   static const int kDynamicBlockType = 0x3FF;
 
-  /// Builds a BlockInfo for dynamic blocks (Type=0x3FF).
+  /// Builds a BlockInfo for dynamic blocks (Type=BlockType.dynamic).
   static Uint8List _makeBlockInfo(int inst, int field, [int key = 0]) {
-    final bi = ((0x3FF & 0x3FF) << 22) | ((inst & 0x3F) << 16) | ((field & 0xFF) << 8) | (key & 0xFF);
+    final bi = ((BlockType.dynamic.value & 0x3FF) << 22) | ((inst & 0x3F) << 16) | ((field & 0xFF) << 8) | (key & 0xFF);
     return Uint8List(4)
       ..[0] = bi & 0xFF
       ..[1] = (bi >> 8) & 0xFF
@@ -59,7 +59,7 @@ class DynamicMemoryClient {
 
   /// Reads the block list (CID 0 Enum 1 for instances).
   Future<List<DynBlock>?> readBlocks() async {
-    final count = await _register.getInstanceCount(0x3FF);
+    final count = await _register.getInstanceCount(BlockType.dynamic.value);
     if (count == null) return null;
     final blocks = <DynBlock>[];
     for (var i = 0; i < count; i++) {
@@ -77,7 +77,7 @@ class DynamicMemoryClient {
 
   /// Reads one block's meta + name (CID 1).
   Future<DynBlock?> readBlockMeta(int block) async {
-    final bi = ((0x3FF & 0x3FF) << 22) | ((block & 0x3F) << 16) | (0xFF << 8) | 0;
+    final bi = ((BlockType.dynamic.value & BlockType.dynamic.value) << 22) | ((block & 0x3F) << 16) | (0xFF << 8) | 0;
     final payload = [
       bi & 0xFF, (bi >> 8) & 0xFF, (bi >> 16) & 0xFF, (bi >> 24) & 0xFF
     ];
@@ -92,7 +92,7 @@ class DynamicMemoryClient {
 
   /// Reads one entry's current value (CID 1).
   Future<DynField?> readField(DynBlock block, int field) async {
-    final bi = ((0x3FF & 0x3FF) << 22) | ((block.index & 0x3F) << 16) | ((field & 0xFF) << 8) | 0;
+    final bi = ((BlockType.dynamic.value & BlockType.dynamic.value) << 22) | ((block.index & 0x3F) << 16) | ((field & 0xFF) << 8) | 0;
     final payload = [
       bi & 0xFF, (bi >> 8) & 0xFF, (bi >> 16) & 0xFF, (bi >> 24) & 0xFF
     ];
@@ -105,7 +105,7 @@ class DynamicMemoryClient {
 
   /// Reads one entry's BACKUP value (CID 0x15).
   Future<DynField?> readBackupField(DynBlock block, int field) async {
-    final bi = ((0x3FF & 0x3FF) << 22) | ((block.index & 0x3F) << 16) | ((field & 0xFF) << 8);
+    final bi = ((BlockType.dynamic.value & BlockType.dynamic.value) << 22) | ((block.index & 0x3F) << 16) | ((field & 0xFF) << 8);
     final payload = [
       bi & 0xFF, (bi >> 8) & 0xFF, (bi >> 16) & 0xFF, (bi >> 24) & 0xFF
     ];
@@ -144,8 +144,8 @@ class DynamicMemoryClient {
     // Firmware requires minimum 8 bytes total (4 BlockInfo + 4 name bytes)
     while (nameBytes.length < 4) nameBytes.add(0x20); // pad with spaces
     final bi = index != null
-        ? ((0x3FF & 0x3FF) << 22) | ((index & 0x3F) << 16) | (0xFF << 8) | 0xFF
-        : ((0x3FF & 0x3FF) << 22) | (0xFF << 8) | 0xFF; // invalid instance for auto-assign
+        ? ((BlockType.dynamic.value & BlockType.dynamic.value) << 22) | ((index & 0x3F) << 16) | (0xFF << 8) | 0xFF
+        : ((BlockType.dynamic.value & BlockType.dynamic.value) << 22) | (0xFF << 8) | 0xFF; // invalid instance for auto-assign
     final payload = [
       bi & 0xFF, (bi >> 8) & 0xFF, (bi >> 16) & 0xFF, (bi >> 24) & 0xFF,
       ...nameBytes,
@@ -165,7 +165,7 @@ class DynamicMemoryClient {
       flagsAndType: (type ?? block.blockType).value,
       size: nameBytes.length,
     );
-    final bi = ((0x3FF & 0x3FF) << 22) | ((block.index & 0x3F) << 16) | (0xFF << 8) | 0;
+    final bi = ((BlockType.dynamic.value & BlockType.dynamic.value) << 22) | ((block.index & 0x3F) << 16) | (0xFF << 8) | 0;
     final payload = [
       bi & 0xFF, (bi >> 8) & 0xFF, (bi >> 16) & 0xFF, (bi >> 24) & 0xFF,
       ...meta.toBytes(),
@@ -191,7 +191,7 @@ class DynamicMemoryClient {
       size: value.length,
     );
     final fieldIdx = index ?? block.fieldCount;
-    final bi = ((0x3FF & 0x3FF) << 22) | ((block.index & 0x3F) << 16) | ((fieldIdx & 0xFF) << 8);
+    final bi = ((BlockType.dynamic.value & BlockType.dynamic.value) << 22) | ((block.index & 0x3F) << 16) | ((fieldIdx & 0xFF) << 8);
     return writeValue(bi, sizedMeta, value, timeout: const Duration(seconds: 4));
   }
 
@@ -210,7 +210,7 @@ class DynamicMemoryClient {
 
   /// Deletes a block / entry (marked Deleted; deallocated on save) - CID 0x11.
   Future<bool> delete({required int block, int? field}) async {
-    final bi = ((0x3FF & 0x3FF) << 22) | ((block & 0x3F) << 16) | ((field ?? 0xFF) << 8);
+    final bi = ((BlockType.dynamic.value & BlockType.dynamic.value) << 22) | ((block & 0x3F) << 16) | ((field ?? 0xFF) << 8);
     final payload = [
       bi & 0xFF, (bi >> 8) & 0xFF, (bi >> 16) & 0xFF, (bi >> 24) & 0xFF,
     ];
@@ -221,8 +221,8 @@ class DynamicMemoryClient {
   /// Save (CID 3): invalid block saves everything.
   Future<bool> save({int? block}) async {
     final bi = block != null
-        ? ((0x3FF & 0x3FF) << 22) | ((block & 0x3F) << 16) | (0xFF << 8)
-        : ((0x3FF & 0x3FF) << 22) | (0xFF << 8) | 0xFF; // invalid block
+        ? ((BlockType.dynamic.value & BlockType.dynamic.value) << 22) | ((block & 0x3F) << 16) | (0xFF << 8)
+        : ((BlockType.dynamic.value & BlockType.dynamic.value) << 22) | (0xFF << 8) | 0xFF; // invalid block
     final payload = [bi & 0xFF, (bi >> 8) & 0xFF, (bi >> 16) & 0xFF, (bi >> 24) & 0xFF];
     final reply = await _register.request(3, payload: payload);
     return reply != null && reply.isNotEmpty && reply[0] == 0;
@@ -231,8 +231,8 @@ class DynamicMemoryClient {
   /// Recall (CID 4): invalid block recalls everything.
   Future<bool> recall({int? block}) async {
     final bi = block != null
-        ? ((0x3FF & 0x3FF) << 22) | ((block & 0x3F) << 16) | (0xFF << 8)
-        : ((0x3FF & 0x3FF) << 22) | (0xFF << 8) | 0xFF; // invalid block
+        ? ((BlockType.dynamic.value & BlockType.dynamic.value) << 22) | ((block & 0x3F) << 16) | (0xFF << 8)
+        : ((BlockType.dynamic.value & BlockType.dynamic.value) << 22) | (0xFF << 8) | 0xFF; // invalid block
     final payload = [bi & 0xFF, (bi >> 8) & 0xFF, (bi >> 16) & 0xFF, (bi >> 24) & 0xFF];
     final reply = await _register.request(4, payload: payload);
     return reply != null && reply.isNotEmpty && reply[0] == 0;
@@ -240,7 +240,7 @@ class DynamicMemoryClient {
 
   /// Get block name (CID 0x12).
   Future<String?> getName(int block) async {
-    final bi = ((0x3FF & 0x3FF) << 22) | ((block & 0x3F) << 16) | (0xFF << 8);
+    final bi = ((BlockType.dynamic.value & BlockType.dynamic.value) << 22) | ((block & 0x3F) << 16) | (0xFF << 8);
     final payload = [bi & 0xFF, (bi >> 8) & 0xFF, (bi >> 16) & 0xFF, (bi >> 24) & 0xFF];
     final reply = await _register.request(0x12, payload: payload);
     if (reply == null || reply.length < 16) return null;
@@ -253,7 +253,7 @@ class DynamicMemoryClient {
     final nameBytes = name.codeUnits.take(12).toList(); // 12 chars max per docs
     while (nameBytes.length < 4) nameBytes.add(0x20); // pad with spaces
     final meta = BlockMeta(flagsAndType: BlockType.undefined.value, size: nameBytes.length);
-    final bi = ((0x3FF & 0x3FF) << 22) | ((block & 0x3F) << 16) | (0xFF << 8);
+    final bi = ((BlockType.dynamic.value & BlockType.dynamic.value) << 22) | ((block & 0x3F) << 16) | (0xFF << 8);
     final payload = [
       bi & 0xFF, (bi >> 8) & 0xFF, (bi >> 16) & 0xFF, (bi >> 24) & 0xFF,
       ...meta.toBytes(),
@@ -265,7 +265,7 @@ class DynamicMemoryClient {
 
   /// Get memory usage (CID 0x14) - returns 6 uint32.
   Future<List<int>?> getMemoryUsage(int block) async {
-    final bi = ((0x3FF & 0x3FF) << 22) | ((block & 0x3F) << 16) | (0xFF << 8);
+    final bi = ((BlockType.dynamic.value & BlockType.dynamic.value) << 22) | ((block & 0x3F) << 16) | (0xFF << 8);
     final payload = [bi & 0xFF, (bi >> 8) & 0xFF, (bi >> 16) & 0xFF, (bi >> 24) & 0xFF];
     final reply = await _register.request(0x14, payload: payload);
     if (reply == null || reply.length < 24) return null;

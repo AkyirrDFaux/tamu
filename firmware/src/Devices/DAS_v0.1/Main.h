@@ -24,7 +24,7 @@ bool AppConnected = false;
 
 // Device identity (mandatory, see Core/Functions/Device.h).
 extern const DeviceType kDeviceType = DeviceType::DualAnalogSensor;
-extern const uint32_t kCapabilities = Capabilities::None;
+extern const uint32_t kCapabilities = Capabilities::Node | Capabilities::Subscriptions;
 
 // Reads the CH32V003 32-bit unique chip ID as the 14-byte serial number (cached).
 const SerialNumber &GetSerialNumber()

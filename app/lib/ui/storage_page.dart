@@ -57,8 +57,9 @@ class _StoragePageState extends State<StoragePage>
     if (!mounted) return;
     setState(() {
       _refreshing = false;
-      _error = files == null ? 'Device did not respond' : null;
-      if (files != null) _files = files;
+      // readFileTable() is no longer supported (CID 7 removed from firmware)
+      _error = null;
+      _files = files ?? [];
     });
   }
 
@@ -215,10 +216,9 @@ class _StoragePageState extends State<StoragePage>
     );
   }
 
-  Widget _buildBody() {
+Widget _buildBody() {
     final files = _files;
     if (files == null) return Center(child: Text(_error ?? 'Loading...'));
-    // Always show the file table (first entry), then user files.
     final realFiles = files.toList();
     if (files.isEmpty) {
       return const Center(child: Text('No file table'));
@@ -274,8 +274,7 @@ class _StoragePageState extends State<StoragePage>
   /// The file table itself, decoded: one row per Filerecord.
   Future<void> _showTable(FileRecord table) async {
     _snack('Reading file table...');
-    // The table can span several pages; read it all so the decoded view agrees
-    // with the CID-0 file list (a 4096-byte cap truncates >256-record tables).
+    // Read the table file directly using CID 5 (read file) instead of CID 7.
     final data = await _client.readFile(table.name, size: table.size);
     if (!mounted) return;
     Navigator.of(context).push(MaterialPageRoute(

@@ -27,7 +27,10 @@ extern const DeviceType kDeviceType = DeviceType::Tamu_v2_0A;
 // Core (ID assignment, SN registry, time sync), CLI console, and both user
 // memory services - matching the USE_* build flags so the app shows their views.
 extern const uint32_t kCapabilities = Capabilities::Core | Capabilities::Cli |
-                                        Capabilities::Scripts;
+                                        Capabilities::DynamicMemory |
+                                        Capabilities::Scripts |
+                                        Capabilities::AppInterface |
+                                        Capabilities::Subscriptions;
 
 // Reads the factory MAC from eFuse as the 14-byte serial number (cached).
 const SerialNumber &GetSerialNumber()

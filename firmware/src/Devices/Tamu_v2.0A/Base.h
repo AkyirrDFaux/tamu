@@ -37,6 +37,13 @@ int32_t GetFreeRAM()
     return (int32_t)heap_caps_get_free_size(MALLOC_CAP_8BIT);
 }
 
+// Returns the total available RAM in bytes.
+uint32_t GetTotalRAM()
+{
+    // ESP32-C3 has 400KB SRAM (320KB SRAM + 80KB IRAM, but IRAM partially used)
+    return 0x64000; // 400KB = 409600 bytes
+}
+
 // Configures `Pin` as a GPIO output.
 void PinModeOutput(gpio_num_t Pin)
 {

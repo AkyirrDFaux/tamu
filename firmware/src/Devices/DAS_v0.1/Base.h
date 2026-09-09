@@ -80,6 +80,13 @@ int32_t GetFreeRAM()
     return (int32_t)(sp - (uint32_t)&_ebss);
 }
 
+// Returns the total available RAM in bytes.
+uint32_t GetTotalRAM()
+{
+    // CH32V003 has 2KB SRAM
+    return 0x800; // 2KB = 2048 bytes
+}
+
 // Configures the given GPIO pin as a push-pull output.
 void PinModeOutput(GPIO_TypeDef* port, uint16_t pin)
 {

@@ -11,6 +11,8 @@ namespace Capabilities {
     constexpr uint32_t Core           = 1u << 0;
     constexpr uint32_t Router         = 1u << 1;
     constexpr uint32_t Cli            = 1u << 2;
+    constexpr uint32_t DynamicMemory  = 1u << 3;
+    constexpr uint32_t KeyedMemory    = 1u << 4;
     constexpr uint32_t Scripts        = 1u << 5;
     constexpr uint32_t AppInterface   = 1u << 6;
     constexpr uint32_t Subscriptions  = 1u << 7;

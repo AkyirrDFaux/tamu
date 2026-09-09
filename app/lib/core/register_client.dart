@@ -165,7 +165,7 @@ class RegisterClient {
 
   /// Reads all blocks (static + dynamic) by enumerating types and instances.
   /// The System block (type 0, inst 0) is a virtual block not in the static registry.
-  /// Dynamic blocks use type 0x3FF and are not returned by enumerateBlockTypes.
+  /// Dynamic blocks use type BlockType.dynamic and are not returned by enumerateBlockTypes.
   Future<List<({int type, int inst, BlockMeta meta, String name})?>?> readBlocks() async {
     final types = await enumerateBlockTypes();
     if (types == null) return null;
@@ -189,13 +189,13 @@ class RegisterClient {
       }
     }
     
-    // Add Dynamic blocks (type 0x3FF) - not returned by enumerateBlockTypes
-    final dynCount = await getInstanceCount(0x3FF);
+    // Add Dynamic blocks (type BlockType.dynamic) - not returned by enumerateBlockTypes
+    final dynCount = await getInstanceCount(BlockType.dynamic.value);
     if (dynCount != null && dynCount > 0) {
       for (var inst = 0; inst < dynCount; inst++) {
-        final block = await readBlockMeta(0x3FF, inst);
+        final block = await readBlockMeta(BlockType.dynamic.value, inst);
         if (block != null) {
-          blocks.add((type: 0x3FF, inst: inst, meta: block.meta, name: block.name));
+          blocks.add((type: BlockType.dynamic.value, inst: inst, meta: block.meta, name: block.name));
         }
       }
     }
