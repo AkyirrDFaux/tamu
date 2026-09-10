@@ -57,7 +57,7 @@ class _StoragePageState extends State<StoragePage>
     if (!mounted) return;
     setState(() {
       _refreshing = false;
-      // readFileTable() is no longer supported (CID 7 removed from firmware)
+      // readFileTable() reads the ".TABLE  " file directly using CID 5
       _error = null;
       _files = files ?? [];
     });

@@ -458,15 +458,15 @@ class _RegisterPageState extends State<RegisterPage>
 
   String _systemFieldName(int field) {
     switch (field) {
-      case 0: return 'DeviceType';
+      case 0: return 'Device Type';
       case 1: return 'Serial Number';
       case 2: return 'Short Address';
       case 3: return 'Time';
       case 4: return 'RAM';
       case 5: return 'Storage';
       case 6: return 'Name';
-      case 7: return 'Reserved';
-      case 8: return 'App Connected';
+      case 7: return 'NetID';
+      case 8: return 'App/CLI Active';
       default: return 'Field $field';
     }
   }
@@ -477,30 +477,30 @@ class _RegisterPageState extends State<RegisterPage>
         switch (key) {
           case 0: return '.deviceType';
           case 1: return '.capabilities';
-          case 2: return '.version';
+          case 2: return '.softwareVersion';
         }
       case 3:
         switch (key) {
-          case 0: return '.timeFromBoot';
-          case 1: return '.now';
+          case 0: return '.uptime';
+          case 1: return '.currentTime';
           case 2: return '.timeOffsetMs';
           case 3: return '.avgLoopTimeMs';
           case 4: return '.maxLoopTimeMs';
         }
       case 4:
         switch (key) {
-          case 0: return '.freeRAM';
-          case 1: return '.totalFlash';
+          case 0: return '.usedRAM';
+          case 1: return '.totalRAM';
         }
       case 5:
         switch (key) {
-          case 0: return '.fileCount';
-          case 1: return '.storageFlashSize';
+          case 0: return '.usedFlash';
+          case 1: return '.totalFlash';
         }
       case 8:
         switch (key) {
-          case 0: return '.appConnected';
-          case 1: return '.reserved';
+          case 0: return '.appActive';
+          case 1: return '.cliActive';
         }
     }
     return 'Key $key';
@@ -509,7 +509,13 @@ class _RegisterPageState extends State<RegisterPage>
   String _formatSystemValue(DataType type, List<int> value) {
     switch (type) {
       case DataType.enum_:
-        return value.isNotEmpty ? '0x${value[0].toRadixString(16).padLeft(2, '0')}' : '-';
+        // Device type is a 32-bit enum
+        if (value.length >= 4) {
+          final val = value[0] | (value[1] << 8) | (value[2] << 16) | (value[3] << 24);
+          return DeviceType.fromValue(val).label;
+        }
+        if (value.isNotEmpty) return '0x${value[0].toRadixString(16).padLeft(2, '0')}';
+        return '-';
       case DataType.sn:
         return serialNumberToHex(value);
       case DataType.id:
@@ -519,6 +525,10 @@ class _RegisterPageState extends State<RegisterPage>
         if (value.length >= 2) return (value[0] | (value[1] << 8)).toString();
         return '-';
       case DataType.string:
+        // Software version is 4 bytes (YY, MM, DD, iteration)
+        if (value.length == 4) {
+          return '${value[0]}.${value[1]}.${value[2]}.${value[3]}';
+        }
         return String.fromCharCodes(value).replaceAll('\x00', '');
       case DataType.bool_:
         return value.isNotEmpty && value[0] != 0 ? 'true' : 'false';
@@ -541,7 +551,7 @@ class _RegisterPageState extends State<RegisterPage>
     if (!mounted) return;
 
     final isSystemField = blockType == 0 && inst == 0;
-    final blockInfo = blockInfoFor(BlockType.fromValue(block?.meta.typeValue ?? 0));
+    final blockInfo = blockInfoFor(BlockType.fromValue(block.meta.typeValue));
     final fieldInfo = isSystemField ? null : blockInfo?.field(fieldIndex);
 
     final newValue = await showValueEditor(

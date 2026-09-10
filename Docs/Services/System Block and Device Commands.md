@@ -32,7 +32,8 @@ Capability (32bit-field):
 	- App Interface
 	- Dynamic Memory
 	- Scripts
-	- Subscriptions
+	- Subscription Request
+	- Subscription Provide
 	- ...
 ### Commands for all devices (000x)
 

@@ -609,6 +609,23 @@ public:
         return count;
     }
 
+    // Returns the total number of bytes used by files in flash (excluding file table itself).
+    uint32_t UsedFlashBytes()
+    {
+        if (file_table_offset == 0) return 0;
+        uint32_t used = 0;
+        uint32_t capacity = TableCapacity();
+        for (uint32_t i = 0; i < capacity; i++) {
+            FileEntry entry;
+            if (!ReadTableEntry(i, &entry)) continue;
+            if (FileSlotIsFree(entry.offset)) continue;
+            uint32_t blocks = BlocksForSize(entry.size);
+            if (blocks == 0) blocks = 1; // zero-size file still occupies one block
+            used += blocks * PAGE_SIZE;
+        }
+        return used;
+    }
+
     // Copies the `idx`-th valid file entry (dense across valid files) into `out`.
     bool ReadFileEntry(uint8_t idx, FileEntry *out)
     {

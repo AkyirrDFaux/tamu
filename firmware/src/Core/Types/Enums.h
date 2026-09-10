@@ -12,7 +12,6 @@ namespace Capabilities {
     constexpr uint32_t Router         = 1u << 1;
     constexpr uint32_t Cli            = 1u << 2;
     constexpr uint32_t DynamicMemory  = 1u << 3;
-    constexpr uint32_t KeyedMemory    = 1u << 4;
     constexpr uint32_t Scripts        = 1u << 5;
     constexpr uint32_t AppInterface   = 1u << 6;
     constexpr uint32_t Subscriptions  = 1u << 7;
@@ -47,7 +46,7 @@ enum class DataType : uint16_t {
     Deleted        = 0x0D,
     Uint32         = 0x0E,
     DevType        = 0x0F,
-    NetAddr        = 0x10,
+    NetAddr        = 0x03,  // alias to Id
     Unknown        = 0x00,  // Alias for None
     // Dynamic/Keyed extensions (not used by DAS)
     UnknownKeyed   = 0x100,
@@ -65,10 +64,9 @@ inline bool IsKeyedType(DataType Type){
 }
 
 enum class BlockType : uint16_t {
-    None           = 0x00,
-    Unknown        = 0x00,
-    Undefined      = 0x01,
-    System         = 0x00,
+    None           = 0x00,  // tombstone: no block here; stable until save compacts
+    Undefined      = 0x01,  // valid block, type not yet specified
+    System         = 0x00,  // System block (type 0, inst 0 in Register service)
     LEDButton      = 0x03,
     PWM            = 0x04,
     AccGyr         = 0x05,

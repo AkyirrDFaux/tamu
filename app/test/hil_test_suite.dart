@@ -13,9 +13,6 @@ import 'dyn_flow_test.dart' as dyn_flow_test;
 
 void main() {
   final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
-  // DAS doesn't have dynamic memory services - skip those tests
-  final isDAS = Platform.environment['TAMU_HIL'] == '/dev/ttyACM1';
-  final skipDynamic = isDAS ? 'DAS does not have dynamic memory services' : (skipReason is String ? skipReason : false);
 
   setUpAll(() async {
     await connectHil();
@@ -37,5 +34,5 @@ void main() {
 
   test('Dynamic Memory Flow Tests', () async {
     await dyn_flow_test.runTests();
-  }, timeout: const Timeout(Duration(minutes: 2)), skip: skipDynamic);
+  }, timeout: const Timeout(Duration(minutes: 2)), skip: skipReason);
 }

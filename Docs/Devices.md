@@ -16,7 +16,7 @@ Services:
 - CLI
 - Dynamic memory
 - Script
-- Subscriptions
+- Subscriptions (Request and Provide)
 Modules: 
  - LED Display x2
  - Fan Output x2
@@ -36,7 +36,7 @@ Page size: 4096 Bytes
 | Measuring 2      | PC4 (A2)                 |                             |
 Services:
 - Mandatory services
-- Subscriptions
+- Subscriptions (Provide only)
 Modules:
 - Resistive measurement x2
 - Button

@@ -387,3 +387,9 @@ void AppUSBTick()
     if (s_usb_mode == USB_MODE_APP && !usb_serial_jtag_is_connected())
         s_usb_revert_req = true;
 }
+
+// Returns true when the CLI is active (USB in CLI mode).
+bool AppCLIConnected()
+{
+    return s_usb_mode == USB_MODE_CLI;
+}

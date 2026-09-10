@@ -5,6 +5,7 @@
 #include "Core/Functions/Device.h"
 #include "Core/Functions/SysFunctions.h"
 #include "Core/Functions/Storage.h"
+#include "Core/Functions/AppInterface.h"
 #include "Core/Services/StaticMemory.h"
 #include "Blocks/DeviceInfo.h"
 
@@ -124,12 +125,12 @@ static void HandleSystemBlockRead(const PacketFrame &frame, uint32_t bi, uint8_t
     else if (field==3 && key==4) { Number v=DeviceStatus.MaxLoopTimeMs; memcpy(vbuf,&v,4); m.FlagsAndType=(uint16_t)DataType::Number|FieldFlags::ReadOnly; m.Size=4; vsz=4; }
     else if (field==4 && key==0) { uint32_t v=GetFreeRAM(); memcpy(vbuf,&v,4); m.FlagsAndType=(uint16_t)DataType::Index|FieldFlags::ReadOnly; m.Size=4; vsz=4; }
     else if (field==4 && key==1) { uint32_t v=GetTotalRAM(); memcpy(vbuf,&v,4); m.FlagsAndType=(uint16_t)DataType::Index|FieldFlags::ReadOnly; m.Size=4; vsz=4; }
-    else if (field==5 && key==0) { uint32_t v=Storage.FileCount(); memcpy(vbuf,&v,4); m.FlagsAndType=(uint16_t)DataType::Index|FieldFlags::ReadOnly; m.Size=4; vsz=4; }
+    else if (field==5 && key==0) { uint32_t v=Storage.UsedFlashBytes(); memcpy(vbuf,&v,4); m.FlagsAndType=(uint16_t)DataType::Index|FieldFlags::ReadOnly; m.Size=4; vsz=4; }
     else if (field==5 && key==1) { uint32_t v=STORAGE_FLASH_SIZE; memcpy(vbuf,&v,4); m.FlagsAndType=(uint16_t)DataType::Index|FieldFlags::ReadOnly; m.Size=4; vsz=4; }
     else if (field==6) { LoadPersistedDeviceName(); m.FlagsAndType=(uint16_t)DataType::String|FieldFlags::Persistent; m.Size=strlen(DeviceName); if(m.Size>16) m.Size=16; vsz=m.Size; memcpy(vbuf, DeviceName, vsz); }
-    else if (field==7) { uint8_t v=0; vbuf[0]=v; m.FlagsAndType=(uint16_t)DataType::Index|FieldFlags::Persistent; m.Size=1; vsz=1; }
+    else if (field==7) { uint16_t v=DeviceStatus.ShortAddress; memcpy(vbuf,&v,2); m.FlagsAndType=(uint16_t)DataType::Id|FieldFlags::Persistent; m.Size=2; vsz=2; }
     else if (field==8 && key==0) { uint8_t v=AppConnected?1:0; vbuf[0]=v; m.FlagsAndType=(uint16_t)DataType::Bool|FieldFlags::ReadOnly; m.Size=1; vsz=1; }
-    else if (field==8 && key==1) { uint8_t v=0; vbuf[0]=v; m.FlagsAndType=(uint16_t)DataType::Bool|FieldFlags::ReadOnly; m.Size=1; vsz=1; }
+    else if (field==8 && key==1) { uint8_t v=AppCLIConnected()?1:0; vbuf[0]=v; m.FlagsAndType=(uint16_t)DataType::Bool|FieldFlags::ReadOnly; m.Size=1; vsz=1; }
     else { RespondStatus(frame,false); return; }
     
     m.Key=key;

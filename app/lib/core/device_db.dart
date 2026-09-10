@@ -138,8 +138,12 @@ class DeviceDatabase extends ChangeNotifier {
       entry.type = DeviceType.fromValue(typeReply[0] | (typeReply[1] << 8));
     }
     final versionReply = await _registerRead(id, 0, 2);
-    if (versionReply != null && versionReply.isNotEmpty) {
-      entry.softwareVersion = String.fromCharCodes(versionReply).replaceAll('\x00', '').trim();
+    if (versionReply != null && versionReply.length >= 4) {
+      final year = versionReply[0];
+      final month = versionReply[1];
+      final day = versionReply[2];
+      final iteration = versionReply[3];
+      entry.softwareVersion = '$year.$month.$day.$iteration';
     }
     final capReply = await _registerRead(id, 0, 1);
     if (capReply != null && capReply.length >= 4) {

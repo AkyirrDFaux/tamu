@@ -79,14 +79,24 @@ class StorageClient {
     return text.replaceAll(' ', '').trim();
   }
 
-  /// Reads the whole file table (CID 7 extra, FRAG-streamed Filerecords of 16 bytes each).
+  /// Reads the file table by reading the ".TABLE  " file directly (CID 5).
+  /// The file table is self-describing: the first entry points to itself with its size.
   Future<List<FileRecord>?> readFileTable() async {
-    final reply = await _request(7, payload: [], responseFrag: true);
-    if (reply == null) return null;
+    // Read the file table file directly using CID 5 (read file)
+    final tableName = '.TABLE  ';
+    final reply = await _request(
+      5,
+      payload: padName(tableName),
+      timeout: const Duration(seconds: 10),
+    );
+    if (reply == null || reply.length < nameLength) return null;
+    // The response stream = [name echo (8)][contents...]
+    var contents = reply.sublist(nameLength);
+    
     final records = <FileRecord>[];
-    for (var offset = 0; offset + 16 <= reply.length; offset += 16) {
-      final recOffset = uint32FromBytes(reply, offset);
-      final size = uint32FromBytes(reply, offset + 4);
+    for (var offset = 0; offset + 16 <= contents.length; offset += 16) {
+      final recOffset = uint32FromBytes(contents, offset);
+      final size = uint32FromBytes(contents, offset + 4);
       // Unwritten entries are all 0xFF; invalidated ones have offset 0.
       if (recOffset == 0xFFFFFFFF && size == 0xFFFFFFFF) break;
       if (recOffset == 0) continue; // invalidated record
@@ -95,7 +105,7 @@ class StorageClient {
           index: records.length,
           offset: recOffset,
           size: size,
-          name: unpadName(reply.sublist(offset + 8)),
+          name: unpadName(contents.sublist(offset + 8)),
         ),
       );
     }

@@ -204,3 +204,11 @@ void AppInterfacePump()
 }
 
 #endif // USE_APP_INTERFACE
+
+#ifdef USE_APP_INTERFACE
+// Returns true when the CLI is active (USB in CLI mode, no app connected).
+bool AppCLIConnected();
+#else
+// DAS and other non-APP devices have no CLI.
+inline bool AppCLIConnected() { return false; }
+#endif

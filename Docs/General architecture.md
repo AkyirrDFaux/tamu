@@ -9,17 +9,15 @@
 ## Services:
 [[Command ID table]]
 #### Mandatory:
- - [[System Block and Device Commands|System Block and Device Commands]] (implicitly [[Register]])
+ - [[System Block and Device Commands|System Block and Device Commands]] (implicitly Static Memory under [[Register]])
  - [[Log Handler]]
- - [[Storage]]
+ - [[Services/Storage]]
 #### Mandatory for core:
 - SN Database (under [[System Block and Device Commands|System Block and Device Commands]])
 - [[App Interface]]
 - [[CLI]] (ESP32 only)
 #### Mandatory for routers:
  - [[Router]]
-#### Mandatory for all nodes:
-- Static Memory (under [[Register]])
 #### Mandatory for sensor nodes:
 - [[Subscriptions]]
 ####  Optional:

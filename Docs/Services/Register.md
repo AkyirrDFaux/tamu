@@ -16,24 +16,24 @@ Block tables contain Field, Key, ValueInfo and Memory offset.
 Communication uses BlockInfo and ValueInfo.
 #### ValueInfo Flags
 
-| Flag            | Type    | Description                                                                                     |
-| --------------- | ------- | ----------------------------------------------------------------------------------------------- |
-| ReadOnly        | Passive | Non-writable from outside                                                                       |
-| Persistent      | Passive | This value is retained after reboot                                                             |
-| Trigger         | Passive | Has a trigger on write                                                                          |
-| -               | -       |                                                                                                 |
-| NotSaved        | Active  | A change was been made compared to the saved state (with persistent only)                       |
-| ScriptUpdated   | Active  | A script changed this variable                                                                  |
-| External origin | Active  | A subscription is updating this variable or a different device updated this via script (paired) |
-| -               | -       | -                                                                                               |
+| Flag            | Type    | Description                                                                                                                |
+| --------------- | ------- | -------------------------------------------------------------------------------------------------------------------------- |
+| ReadOnly        | Passive | Non-writable from outside                                                                                                  |
+| Persistent      | Passive | This value is retained after reboot                                                                                        |
+| Trigger         | Passive | Has a trigger on write, the function is called before the write itself, and applies the write instead of the standard one. |
+| -               | -       |                                                                                                                            |
+| NotSaved        | Active  | A change was been made compared to the saved state (with persistent only)                                                  |
+| ScriptUpdated   | Active  | A script changed this variable                                                                                             |
+| External origin | Active  | A subscription is updating this variable or a different device updated this via script (paired)                            |
 #### Block types
 
-| Block type         | Index |
-| ------------------ | ----- |
-| System             | 0     |
-| Static block types | ...   |
-| Scripts            | 0x2FF |
-| Dynamic            | 0x3FF |
+| Block type             | Index |
+| ---------------------- | ----- |
+| System                 | 0     |
+| Static block types     | ...   |
+| Scripts                | 0x3FD |
+| Subscription requester | 0x3FE |
+| Dynamic                | 0x3FF |
 ### System + Static memory blocks
 Basic flat memory, directly accesible internally by the device.
 Write of a different type and/or length fails.

@@ -166,38 +166,6 @@ void HandleStorageService(const PacketFrame &frame)
             break;
         }
 
-        case 7: { // Read File Table (Docs/Services/Storage.md: extra command for app)
-            uint8_t active_count = Storage.FileCount();
-            if (active_count == 0) {
-                FinalizeReply(tx_frame, frame, FLAG_TYPE | FLAG_START | FLAG_STOP, 0);
-                DispatchPacket(tx_frame);
-                break;
-            }
-            uint32_t total = (uint32_t)active_count * sizeof(FileEntry);
-            uint16_t frag_content_cap = MAX_FRAG_CONTENT_SIZE;
-            uint16_t total_frags = (uint16_t)((total + frag_content_cap - 1) / frag_content_cap);
-            uint8_t sent = 0;
-            for (uint16_t f = 0; f < total_frags && sent < active_count; f++) {
-                uint8_t flags = FLAG_TYPE | FLAG_FRAG;
-                if (f == 0) flags |= FLAG_START;
-                WriteFragInfo(tx_frame.payload, f, total_frags);
-                uint16_t off = 4;
-                while (off + sizeof(FileEntry) <= (uint16_t)(4 + frag_content_cap) && sent < active_count) {
-                    FileEntry entry;
-                    if (!Storage.ReadFileEntry(sent, &entry))
-                        break;
-                    memcpy(tx_frame.payload + off, &entry, sizeof(FileEntry));
-                    off += sizeof(FileEntry);
-                    sent++;
-                }
-                if (sent >= active_count || f == total_frags - 1) flags |= FLAG_STOP;
-                FinalizeReply(tx_frame, frame, flags, off);
-                DispatchPacket(tx_frame);
-                if (sent >= active_count) break;
-            }
-            break;
-        }
-
         default:
             break;
     }

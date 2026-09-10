@@ -169,7 +169,8 @@ class FieldFlags {
     if (flags & notSaved != 0) names.add('NS');
     if (flags & scriptUpdated != 0) names.add('SU');
     if (flags & external != 0) names.add('EXT');
-    if (flags & valid == 0) names.add('INVAL');
+    // Note: 'valid' (FlashValid) shares bit with readOnly (0x0400) in firmware.
+    // We cannot distinguish "flash invalid" from "writable" so we don't display INVAL.
     return names;
   }
 }

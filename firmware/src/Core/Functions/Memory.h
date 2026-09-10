@@ -189,7 +189,7 @@ struct DynamicBlockDescriptor
 {
     void *data_ptr = nullptr;
     BlockMeta *map = nullptr;
-    BlockType type = BlockType::Unknown;
+    BlockType type = BlockType::Undefined;
     uint16_t length = 0;
     uint16_t allocated = 0;
     uint16_t map_count = 0;

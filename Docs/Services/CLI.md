@@ -5,8 +5,6 @@ Allows for interaction with specified user-oriented commands.
 
 Works over the ESP32-C3's USB Serial/JTAG console (App has priority on USB though).
 
-CLI has reserved TRID range 0xE000 - 0xEFFF.
-
 Should implement these commands:
 - Ping
 - Identify

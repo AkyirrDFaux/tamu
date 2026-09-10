@@ -4,7 +4,9 @@ library;
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:tamuapp/core/connection.dart';
 import 'package:tamuapp/core/dynmem.dart';
+import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/types.dart';
 import 'package:tamuapp/ui/value_editor.dart' show dataTypeLabel;
 
@@ -71,13 +73,22 @@ Future<void> runTests() async {
 
 void main() async {
   final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
-  final isDAS = Platform.environment['TAMU_HIL'] == '/dev/ttyACM1';
-  final skipReasonDAS = isDAS ? 'DAS does not have dynamic memory service' : (skipReason is String ? skipReason : false);
 
   setUpAll(() async => await connectHil());
   tearDownAll(disconnectHil);
 
   test('dynamic page flow', () async {
+    final link = ConnectionManager.instance;
+    final payload = [0, 0, 0, 1]; // field 0, key 1 (capabilities)
+    final capReply = await link.request(1, ServiceType.register, 1, payload: payload);
+    if (capReply != null && capReply.length >= 12) {
+      final caps = capReply[8] | (capReply[9] << 8) | (capReply[10] << 16) | (capReply[11] << 24);
+      if ((caps & Capability.dynamicMemory) == 0) {
+        print('Skipping: device does not have dynamic memory capability (caps=0x${caps.toRadixString(16)})');
+        return;
+      }
+    }
+    
     final dyn = DynamicMemoryClient(deviceId: 1);
     for (final b in await dyn.readBlocks() ?? <DynBlock>[]) {
       await dyn.delete(block: b.index);
@@ -132,5 +143,5 @@ void main() async {
     await dyn.save();
     // ignore: avoid_print
     print('[F] done');
-  }, timeout: const Timeout(Duration(minutes: 3)), skip: skipReasonDAS);
+  }, timeout: const Timeout(Duration(minutes: 3)), skip: skipReason);
 }
