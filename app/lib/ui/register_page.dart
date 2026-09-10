@@ -122,7 +122,8 @@ class _RegisterPageState extends State<RegisterPage>
           cache[f] = fieldMap[primaryKey]!;
           for (final entry in fieldMap.entries) {
             if (entry.key != primaryKey) {
-              cache[f * 256 + entry.key] = entry.value;
+              // Use offset 256 to avoid collision with primary field indices (0-255)
+              cache[256 + f * 256 + entry.key] = entry.value;
             }
           }
         } else {
@@ -350,7 +351,8 @@ class _RegisterPageState extends State<RegisterPage>
     if (isSystemField && cache != null) {
       final keys = _systemKeysForField(fieldIndex);
       for (final key in keys) {
-        final extraField = cache[fieldIndex * 256 + key];
+        // Use offset 256 to match _loadBlockFields storage
+        final extraField = cache[256 + fieldIndex * 256 + key];
         if (extraField != null) {
           systemFieldKeys.add((key: key, field: extraField));
         }
