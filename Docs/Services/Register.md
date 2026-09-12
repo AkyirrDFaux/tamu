@@ -16,15 +16,16 @@ Block tables contain Field, Key, ValueInfo and Memory offset.
 Communication uses BlockInfo and ValueInfo.
 #### ValueInfo Flags
 
-| Flag            | Type    | Description                                                                                                                |
-| --------------- | ------- | -------------------------------------------------------------------------------------------------------------------------- |
-| ReadOnly        | Passive | Non-writable from outside                                                                                                  |
-| Persistent      | Passive | This value is retained after reboot                                                                                        |
-| Trigger         | Passive | Has a trigger on write, the function is called before the write itself, and applies the write instead of the standard one. |
-| -               | -       |                                                                                                                            |
-| NotSaved        | Active  | A change was been made compared to the saved state (with persistent only)                                                  |
-| ScriptUpdated   | Active  | A script changed this variable                                                                                             |
-| External origin | Active  | A subscription is updating this variable or a different device updated this via script (paired)                            |
+| Flag                | Type    | Description                                                                                                                |
+| ------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Read Only           | Passive | Non-writable from outside                                                                                                  |
+| Persistent          | Passive | This value is retained after reboot                                                                                        |
+| Trigger             | Passive | Has a trigger on write, the function is called before the write itself, and applies the write instead of the standard one. |
+| -                   | -       |                                                                                                                            |
+| Not Saved           | Active  | A change was been made compared to the saved state (with persistent only)                                                  |
+| Script Updated      | Active  | A script changed this variable                                                                                             |
+| Subscription Source | Active  | A subscription is reading this variable                                                                                    |
+| External origin     | Active  | A subscription is updating this variable or a different device updated this via script (paired)                            |
 #### Block types
 
 | Block type             | Index |
@@ -91,6 +92,7 @@ Active flags don't get saved.
 | Recall    | 4   | BlockInfo (N)                       | Success                                    | Respond only if requested                                |
 
 ### Dynamic blocks
+Use define USE_DYNAMIC_BLOCKS.
 Value count, types and lengths can be changed.
 Strict ascending order of the Field&Keys is maintained, same with the values themselves.
 Any structural change must be done completely, including memory movement and updating the offsets.
@@ -134,10 +136,10 @@ Changing the persistance flag moves the variable from one memory space to other.
 ### Dynamic commands (011x)
 Basic Commands also work on dynamic blocks, these are extra.
 
-| Function         | ID  | Content request     | Content response | Note                      |
-| ---------------- | --- | ------------------- | ---------------- | ------------------------- |
-| Create Dynamic   | 0   | BlockInfo           | Success          |                           |
-| Delete Dynamic   | 1   | BlockInfo           | Success          |                           |
-| Get Name         | 2   | BlockInfo           | 12 chars         |                           |
-| Set Name         | 3   | BlockInfo, 12 chars | Success          | Respond only if requested |
-| Get Memory Usage | 4   | BlockInfo           | uint32x6         | Direct from descriptor    |
+| Function         | ID  | Content request | Content response | Note                      |
+| ---------------- | --- | --------------- | ---------------- | ------------------------- |
+| Create Dynamic   | 0   | Index           | Success          |                           |
+| Delete Dynamic   | 1   | Index           | Success          |                           |
+| Get Name         | 2   | Index           | 12 chars         |                           |
+| Set Name         | 3   | Index, 12 chars | Success          | Respond only if requested |
+| Get Memory Usage | 4   | Index           | uint32x6         | Direct from descriptor    |

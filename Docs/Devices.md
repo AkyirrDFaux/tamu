@@ -23,17 +23,18 @@ Modules:
  - Acc&Gyr
  - LED-Button
 Page size: 4096 Bytes
+Memory...  a lot
 ### DAS v0.1 (CH32V003) - Node
 
-| Feature          | Pins                     | Note                        |
-| ---------------- | ------------------------ | --------------------------- |
-| RSBus 3V3        | TX PD5, RX PD6, TXEN PD4 |                             |
-| LEDs             | Red PA1, White PD0       | Active high                 |
-| Button           | PC0                      | Requires pullup, active low |
-| Range selector 1 | PA2 - PC7 - PD3          | 330Ohm - 10kOhm - 330kOhm   |
-| Range selector 2 | PC1 - PC2 - PC3          | 330Ohm - 10kOhm - 330kOhm   |
-| Measuring 1      | PD2 (A3)                 |                             |
-| Measuring 2      | PC4 (A2)                 |                             |
+| Feature          | Pins                     | Note                                                       |
+| ---------------- | ------------------------ | ---------------------------------------------------------- |
+| RSBus 3V3        | TX PD5, RX PD6, TXEN PD4 |                                                            |
+| LEDs             | Red PA1, White PD0       | Active high                                                |
+| Button           | PC0                      | Requires pullup, active low                                |
+| Range selector 1 | PA2 - PC7 - PD3          | 330Ohm - 10kOhm - 330kOhm, P-Channel switches (high = off) |
+| Range selector 2 | PC1 - PC2 - PC3          | 330Ohm - 10kOhm - 330kOhm, P-Channel switches (high = off) |
+| Measuring 1      | PD2 (A3)                 |                                                            |
+| Measuring 2      | PC4 (A2)                 |                                                            |
 Services:
 - Mandatory services
 - Subscriptions (Provide only)
@@ -41,4 +42,8 @@ Modules:
 - Resistive measurement x2
 - Button
 - LED
+Optimalization cuts:
+- Scalars only (No vector or matrix)
+- Only periodic, delta, bound and crossing type subscriptions
 Page size: 64 Bytes (Fast mode)
+Memory: 1kB

@@ -1,5 +1,6 @@
-/// USB serial transport (Docs/Services/App Interface.md framing over RSBus
-/// 115200 8N1, Docs/RSBus.md).
+/// USB serial transport (Docs/Services/App Interface.md framing). The ESP32-C3 USB
+/// Serial/JTAG is a CDC device, so the configured baud is advisory only; it is set to
+/// match the console speed (the RSBus itself runs at 460.8 kbaud).
 library;
 
 import 'dart:async';

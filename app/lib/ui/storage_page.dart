@@ -704,6 +704,41 @@ class MemoryBackupView extends StatelessWidget {
         final size = meta.size;
         if (off + size > blob.length) break;
         final v = blob.sublist(off, off + size);
+
+        // A keyed dictionary field: its data is a series of BlockMeta+value entries
+        // with a real key (docs: a dictionary when entries have key != 0xFF). Render
+        // such fields as a "Dictionary N" group instead of a single plain entry.
+        if (_looksKeyedField(v)) {
+          children.add(Padding(
+            padding: const EdgeInsets.only(left: 60, top: 4, bottom: 2),
+            child: Text('Dictionary $f',
+                style: const TextStyle(fontSize: 12, color: kOrange)),
+          ));
+          var ko = 0;
+          while (ko + 4 <= v.length) {
+            final km = BlockMeta.fromBytes(v, ko);
+            final ksize = _align4(4 + km.size);
+            if (km.size < 1 || ko + ksize > v.length) break;
+            final kv = v.sublist(ko + 4, ko + 4 + km.size);
+            children.add(ListTile(
+              dense: true,
+              contentPadding: const EdgeInsets.only(left: 80, right: 12),
+              title: Row(children: [
+                Expanded(
+                    child: Text('key ${km.key}: ${formatValue(km.dataType, kv)}',
+                        style: const TextStyle(
+                            fontFamily: 'monospace', fontSize: 12))),
+              ]),
+              subtitle: Text(dataTypeLabel(km.dataType),
+                  style: const TextStyle(
+                      fontSize: 10, color: Colors.white38)),
+            ));
+            ko += ksize;
+          }
+          off += _align4(size);
+          continue;
+        }
+
         final fname = info?.field(f)?.name ?? 'Entry $f';
         children.add(ListTile(
           dense: true,
@@ -720,6 +755,24 @@ class MemoryBackupView extends StatelessWidget {
       rows.add(_blockCard(name, blockType.label, children));
     }
     return rows;
+  }
+
+  /// True when `field` bytes look like a keyed dictionary: they start with a
+/// structurally valid keyed entry (BlockMeta with a real key != 0xFF and a size
+/// that fits), and every entry walks the field cleanly.
+  bool _looksKeyedField(List<int> field) {
+    if (field.length < 8) return false; // one BlockMeta + at least 1 value byte
+    var o = 0;
+    var count = 0;
+    while (o + 4 <= field.length) {
+      final m = BlockMeta.fromBytes(field, o);
+      final es = _align4(4 + m.size);
+      if (m.size < 1 || o + es > field.length) return false;
+      o += es;
+      count++;
+      if (count == 1 && m.key == 0xFF) return false;
+    }
+    return count >= 1 && o == field.length;
   }
 
   Widget _blockCard(String title, String subtitle, List<Widget> children) {

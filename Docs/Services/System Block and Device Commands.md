@@ -1,4 +1,4 @@
-Basic device information and description, shares memory internally with static memory.
+Basic device information and description, shares memory internally with static memory except for precompiled/fixed (fields 0 and 1) information.
 ### Block type 0
 F.K:SP = Field.Key:Struct Position
 
@@ -46,6 +46,7 @@ Capability (32bit-field):
 Devices (with random interval) send the discover packet until their ID is assigned.
 Then they do a TimeSync to the core, repeated at random.
 ### Core functions
+Use define TYPE_CORE
 The net-ID is set by user for each core, 0 is not allowed, it's then randomly re-generated.
 After boot the Core discover command is sent, responses are expected within 500 ms. 
 

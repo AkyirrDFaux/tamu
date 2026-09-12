@@ -305,7 +305,7 @@ Future<List<int>?> _editBool(
 Future<List<int>?> _editEnum(
     BuildContext context, FieldInfo? info, List<int> current) {
   final options = info?.enumValues;
-  final valueSize = current.length > 0 ? current.length : 4;
+  final valueSize = current.isNotEmpty ? current.length : 4;
   if (options == null || options.isEmpty) {
     // No known labels: enter the numeric value directly.
     final currentRaw = _bytesToInt(current);

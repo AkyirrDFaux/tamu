@@ -8,6 +8,13 @@ static const char *StaticLogName()
     return name;
 }
 
+// The System block (type 0, inst 0) has no static-registry index; its persistent
+// fields (Name 6, NetID 7) are stored in the same STATLOG mirror under this reserved
+// block marker (0xFF is the end-of-log sentinel, registry indices are 0..N).
+#define SYSTEM_BLOCK_BACKUP 0xFE
+#define SYSTEM_FIELD_NAME   6
+#define SYSTEM_FIELD_NETID  7
+
 // BlockLog: sequential log file for persistent field-level storage.
 // Caller provides buffer, zero internal allocations.
 // Entry format: BlockIndex[4B] + BlockMeta[4B] + Value[NB, 4B-padded]

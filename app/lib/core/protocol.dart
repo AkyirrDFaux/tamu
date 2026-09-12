@@ -15,23 +15,20 @@ const int flagStop = 1 << 2;
 const int flagType = 1 << 3; // 0 = request, 1 = response
 const int flagFrag = 1 << 4; // first 4 payload bytes = fragmentation info (u16 current + u16 total)
 
-/// Default priority byte (0 = highest, default 128).
-const int defaultPriority = 128;
+/// Default priority byte (docs: Reserved(4) | Priority(4), 0 = highest, default 8).
+const int defaultPriority = 8;
 
 /// Legacy placeholder address. The firmware rewrites id_src on app frames (the core
 /// proxies the app), so this value is inert - kept only as a safe default.
 const int appSourceId = 0xFFFE;
 
-/// Service types (Docs/Service ID table.md, matches the firmware enum).
+/// Service types (matches the firmware enum in Core/Functions/Packet.h).
 enum ServiceType {
   device(0x00),
   register(0x01),
   logHandler(0x02),
   storage(0x03),
-  systemMemory(0x04),
-  dynamicMemory(0x05),
-  script(0x08),
-  scriptInstructions(0x09),
+  subscriptions(0x04),
   router(0x10),
   app(0x11),
   cli(0x12);
@@ -154,7 +151,6 @@ class PacketFrame {
   /// Builds a single-packet frame (START|STOP set, default priority). Requests carry
   /// REQACK: several services (System/Dynamic Memory) respond only when it is set.
   /// Set [requestFrag] if THIS REQUEST PACKET is a fragment (carries 4-byte frag info).
-  /// Set [responseFrag] if the RESPONSE is expected to be fragmented.
   factory PacketFrame.single({
     required int targetId,
     required int srvTarget,
@@ -162,7 +158,6 @@ class PacketFrame {
     required bool response,
     List<int> payload = const [],
     bool requestFrag = false,
-    bool responseFrag = false,
   }) {
     return PacketFrame(
       flags: flagStart |

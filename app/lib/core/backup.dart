@@ -13,7 +13,6 @@ import 'package:archive/archive_io.dart';
 
 import 'device_db.dart';
 import 'register_client.dart';
-import 'dynmem.dart';
 import 'types.dart';
 
 Future<void> writePlatformFile(String path, List<int> bytes) async {
@@ -137,7 +136,7 @@ Uint8List _makeSystemBi(int field, int key) {
 /// Collects the current System block + Dynamic state of one device.
 Future<BackupDevice?> captureDevice(int deviceId) async {
   final reg = RegisterClient(deviceId: deviceId);
-  final dyn = DynamicMemoryClient(deviceId: deviceId);
+  final dyn = RegisterClient(deviceId: deviceId);
 
   final entry = DeviceDatabase.instance.byId(deviceId);
   final captured = <BackupBlock>[];
@@ -183,7 +182,7 @@ Future<BackupDevice?> captureDevice(int deviceId) async {
   }
 
   // --- Dynamic blocks ---
-  final dynBlocks = await dyn.readBlocks();
+  final dynBlocks = await dyn.readDynamicBlocks();
   if (dynBlocks != null) {
     for (final block in dynBlocks) {
       // Only save non-deleted, non-none blocks
@@ -191,7 +190,7 @@ Future<BackupDevice?> captureDevice(int deviceId) async {
       
       final dynFields = <BackupField>[];
       for (var f = 0; f < block.fieldCount; f++) {
-        final field = await dyn.readField(block, f);
+        final field = await dyn.readDynamicField(block, f);
         if (field == null) continue;
         if (field.readOnly || field.notSaved) continue;
         dynFields.add(BackupField(
@@ -254,7 +253,7 @@ List<BackupDevice> parseBackupZip(List<int> zipBytes) {
 /// Returns the number of successfully written fields.
 Future<int> restoreDevice(BackupDevice backup) async {
   final reg = RegisterClient(deviceId: backup.id);
-  final dyn = DynamicMemoryClient(deviceId: backup.id);
+  final dyn = RegisterClient(deviceId: backup.id);
   
   var written = 0;
 
@@ -265,7 +264,7 @@ Future<int> restoreDevice(BackupDevice backup) async {
         final meta = BlockMeta(flagsAndType: field.flagsAndType);
         if (meta.readOnly) continue;
         
-        final bi = _makeSystemBi(field.index, field.flagsAndType == BlockType.system.value ? 0 : 0);
+        final bi = _makeSystemBi(field.index, 0);
         final payload = [...bi, ...meta.toBytes(), ...field.bytes];
         final reply = await reg.request(2, payload: payload);
         if (reply != null && reply.length >= 8) {
@@ -275,7 +274,7 @@ Future<int> restoreDevice(BackupDevice backup) async {
       await reg.request(3, payload: [0xFF, 0xFF, 0xFF, 0xFF]); // Save all
     } else if (storedBlock.blockTypeValue == BlockType.undefined.value) {
       // Restore Dynamic blocks
-      final liveBlocks = await dyn.readBlocks();
+      final liveBlocks = await dyn.readDynamicBlocks();
       if (liveBlocks == null) continue;
       final live = liveBlocks.where((b) => b.index == storedBlock.index).firstOrNull;
       if (live == null) continue;
@@ -284,14 +283,14 @@ Future<int> restoreDevice(BackupDevice backup) async {
         final meta = BlockMeta(flagsAndType: field.flagsAndType);
         if (meta.readOnly) continue;
         if (!live.fields.containsKey(field.index)) {
-          await dyn.readField(live, field.index);
+          await dyn.readDynamicField(live, field.index);
         }
         final liveField = live.fields[field.index];
         if (liveField == null || liveField.meta.size != field.size) continue;
-        final confirmed = await dyn.writeField(live, liveField, field.bytes);
+        final confirmed = await dyn.writeDynamicField(live, liveField, field.bytes);
         if (confirmed != null) written++;
       }
-      await dyn.save(block: storedBlock.index);
+      await dyn.saveDynamic(block: storedBlock.index);
     }
   }
   return written;

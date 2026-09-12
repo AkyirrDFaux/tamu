@@ -12,7 +12,6 @@ namespace Capabilities {
     constexpr uint32_t Router         = 1u << 1;
     constexpr uint32_t Cli            = 1u << 2;
     constexpr uint32_t DynamicMemory  = 1u << 3;
-    constexpr uint32_t Scripts        = 1u << 5;
     constexpr uint32_t AppInterface   = 1u << 6;
     constexpr uint32_t Subscriptions  = 1u << 7;
     constexpr uint32_t Node           = 1u << 8;
@@ -28,6 +27,16 @@ enum FieldFlags : uint16_t {
     External      = 0x8000
 };
 constexpr uint16_t FlashValid = 0x0400;
+
+enum class TriggerType : uint8_t {
+    Periodic           = 0,
+    OnChangePeriodic   = 1,
+    OnChangeConfirm    = 2,
+    EdgeRise           = 3,
+    EdgeFall           = 4,
+    DeltaPeriodic      = 5,
+    DeltaConfirm       = 6
+};
 
 enum class DataType : uint16_t {
     None           = 0x00,
@@ -74,7 +83,6 @@ enum class BlockType : uint16_t {
     Deleted        = 0x07,
     ResistiveMeasure = 0x08,
     Render         = 0x100,
-    Scripts        = 0x2FF,
     Dynamic        = 0x3FF
 };
 

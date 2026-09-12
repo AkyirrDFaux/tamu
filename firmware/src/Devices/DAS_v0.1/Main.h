@@ -24,7 +24,9 @@ bool AppConnected = false;
 
 // Device identity (mandatory, see Core/Functions/Device.h).
 extern const DeviceType kDeviceType = DeviceType::DualAnalogSensor;
-extern const uint32_t kCapabilities = Capabilities::Node | Capabilities::Subscriptions;
+// Subscription service temporarily removed from the DAS (provider logic is compiled out
+// on the DAS until its flash budget is reworked).
+extern const uint32_t kCapabilities = Capabilities::Node;
 
 // Reads the CH32V003 32-bit unique chip ID as the 14-byte serial number (cached).
 const SerialNumber &GetSerialNumber()
@@ -41,8 +43,8 @@ const SerialNumber &GetSerialNumber()
     return sn;
 }
 
-ResistiveMeasStruct Meas1;
-ResistiveMeasStruct Meas2;
+ResistiveMeasStruct Meas1(MeasNTC100K); // channel 1: 100k NTC thermistor
+ResistiveMeasStruct Meas2(MeasLDR10K);  // channel 2: 10k LDR
 
 const StaticBlockDescriptor static_block_registry[] = {
     {&Meas1, &ResistiveMeas_Schema, "Meas1"},

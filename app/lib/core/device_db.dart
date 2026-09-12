@@ -212,7 +212,7 @@ class DeviceDatabase extends ChangeNotifier {
   }
 
   /// Asks a device to identify itself (Device service CID 2): blink its red LED
-  /// fast for a few seconds. Returns true when the device acknowledged.
+  /// fast for ~10 s (docs). Returns true when the device acknowledged.
   Future<bool> identify(int id, {bool on = true}) async {
     final reply =
         await _request(id, ServiceType.device, 2, payload: [on ? 1 : 0]);
@@ -305,14 +305,6 @@ class DeviceDatabase extends ChangeNotifier {
       _refreshing = false;
       notifyListeners();
     }
-  }
-
-  /// SNDB Read per docs 00.11
-  Future<String?> serialNumberOf(int id) async {
-    final reply = await _request(coreId, ServiceType.device, 11,
-        payload: [id & 0xFF, (id >> 8) & 0xFF]);
-    if (reply == null || reply.length < 14) return null;
-    return serialNumberToHex(reply.sublist(0, 14));
   }
 
   /// SNDB Write per docs 00.12

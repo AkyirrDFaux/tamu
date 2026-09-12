@@ -4,21 +4,21 @@
     "type": "split",
     "children": [
       {
-        "id": "e330e63049290331",
+        "id": "f8f6236b79064163",
         "type": "tabs",
         "children": [
           {
-            "id": "3cbc979da9ab1252",
+            "id": "b382b423e960f24e",
             "type": "leaf",
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Plan.md",
+                "file": "Services/Subscriptions.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Plan"
+              "title": "Subscriptions"
             }
           }
         ]
@@ -188,28 +188,28 @@
       "bases:Vytvořit novou základnu": false
     }
   },
-  "active": "3cbc979da9ab1252",
+  "active": "b382b423e960f24e",
   "lastOpenFiles": [
+    "Services/Register.md",
+    "Services/Router.md",
+    "Services/Script.md",
     "Services/Subscriptions.md",
+    "Services/System Block and Device Commands.md",
+    "Plan.md",
+    "RSBus and Packets.md",
+    "Devices.md",
+    "General architecture.md",
+    "Command ID table.md",
+    "Data Formats.md",
+    "Services/Storage.md",
+    "Services/Log Handler.md",
+    "Services/CLI.md",
+    "Services/App Interface.md",
+    "App/General info.md",
     "Modules and blocks/Generic system blocks.md",
     "Modules and blocks/LED display.md",
-    "Services/Script.md",
-    "Services/Storage.md",
-    "Services/System Block and Device Commands.md",
-    "Command ID table.md",
-    "Services/Router.md",
-    "Services/Register.md",
-    "Services/App Interface.md",
-    "Services/CLI.md",
-    "Services/Log Handler.md",
-    "Plan.md",
-    "RSBus.md",
-    "Data Formats.md",
-    "General architecture.md",
-    "Devices.md",
     "App/Devices.md",
     "Issues.md",
-    "App/General info.md",
     "Services/Dynamic Memory.md",
     "App/Service views/Dynamic Memory.md",
     "App/Device view.md",

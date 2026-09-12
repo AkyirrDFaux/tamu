@@ -42,7 +42,6 @@ class StorageClient {
     List<int> payload = const [],
     Duration? timeout,
     bool requestFrag = false,
-    bool responseFrag = false,
   }) async {
     try {
       // Mutating ops (create/resize/delete) trigger flash erases on slow nodes
@@ -54,7 +53,6 @@ class StorageClient {
         payload: payload,
         timeout: timeout ?? const Duration(seconds: 6),
         requestFrag: requestFrag,
-        responseFrag: responseFrag,
       );
     } catch (error) {
       AppDiagnostics.log('storage', 'request failed: $error');
@@ -147,23 +145,21 @@ class StorageClient {
     return contents;
   }
 
-  /// Writes a whole file per docs 03.06 CID6
+  /// Writes a whole file per docs 03.06 CID6. Stream fragments are capped at 64
+  /// content bytes (docs: "maximum 64 byte stream fragment"); every fragment carries
+  /// the 4-byte frag info so the device can detect out-of-order delivery.
   Future<bool> writeFile(String name, List<int> bytes) async {
     await deleteFile(name);
     if (!await createFile(name, bytes.length)) return false;
-    // First fragment: fragInfo(4) + name(8) + data(max 104) = 116 max
-    // Subsequent fragments: fragInfo(4) + data(max 112) = 116 max
-    final firstFragDataMax = maxPayloadSize - 4 - nameLength; // 104
-    final otherFragDataMax = maxPayloadSize - 4; // 112
+    const dataMax = 64;
     var next = 0;
     var offset = 0;
     while (offset < bytes.length) {
       final isFirst = next == 0;
-      final dataMax = isFirst ? firstFragDataMax : otherFragDataMax;
       final end = (offset + dataMax > bytes.length)
           ? bytes.length
           : offset + dataMax;
-final payload = <int>[...writeFragInfo(next, 0xFFFF), if (isFirst) ...padName(name), ...bytes.sublist(offset, end)];
+      final payload = <int>[...writeFragInfo(next, 0xFFFF), if (isFirst) ...padName(name), ...bytes.sublist(offset, end)];
       final reply = await _request(6, payload: payload, requestFrag: true);
       if (reply == null || reply.length < 2) return false;
       final lastSeq = reply[0] | (reply[1] << 8);

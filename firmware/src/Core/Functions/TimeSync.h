@@ -153,12 +153,12 @@ private:
         }
     }
 
-    // Sends the computed time offset (CID 12) to a single node.
+    // Sends the computed time offset (CID 4, docs 00.04) to a single node.
     void SendTimeOffset(uint16_t target, int32_t offset)
     {
         PacketConstruct(&tx_frame, target,
-                         MakeService(ServiceType::Device, 12),
-                         MakeService(ServiceType::Device, 12),
+                         MakeService(ServiceType::Device, 4),
+                         MakeService(ServiceType::Device, 4),
                          FLAG_START | FLAG_STOP,
                          (const uint8_t *)&offset, sizeof(int32_t));
         DispatchPacket(tx_frame);

@@ -4,7 +4,6 @@
 #include "SNDB.h"
 #include "Core/Services/LogHandler.h"
 #include "Core/Functions/Storage.h"
-#include "Core/Functions/Script.h"
 #include "esp_console.h"
 #include <cstring>
 #include <cstdlib>
@@ -149,13 +148,12 @@ static int CmdLog(int argc, char **argv)
 // cli_srv_cid: 0 = response prints block fields, 2 = response prints a status byte.
 // Waits briefly for the asynchronous reply so a dead address or a service that is not
 // compiled into the target produces a timeout error instead of silence.
-// Dynamic/keyed memory uses Register service (0x01) with CIDs 0x10-0x14.
-static int SendMemoryExtra(uint16_t addr, uint8_t block, ServiceType service, uint8_t cid, uint8_t cli_srv_cid)
+// Dynamic/keyed memory uses Register service (0x01) with CIDs 0x10-0x15.
+static int SendMemoryExtra(uint16_t addr, uint8_t block, uint8_t field, ServiceType service, uint8_t cid, uint8_t cli_srv_cid)
 {
     // Map old DynamicMemory/KeyedMemory CIDs to Register service CIDs
     uint8_t reg_cid = cid;
     if (service == ServiceType::Register) {
-        // Map old DynamicMemory/KeyedMemory CIDs to Register CIDs
         switch (cid) {
             case 0: reg_cid = 0x10; break;  // Create Dynamic -> Register 0x10
             case 1: reg_cid = 0x11; break;  // Delete Dynamic -> Register 0x11
@@ -164,20 +162,24 @@ static int SendMemoryExtra(uint16_t addr, uint8_t block, ServiceType service, ui
             case 4: reg_cid = 0x14; break;  // Get Memory Usage -> Register 0x14
             case 5: reg_cid = 3; break;     // Save -> Register 3
             case 6: reg_cid = 4; break;     // Recall -> Register 4
-            case 7: reg_cid = 4; break;     // Read backup -> Register 4
+            case 7: reg_cid = 0x15; break;  // Read backup -> Register 0x15
             default: reg_cid = cid; break;
         }
     } else {
         reg_cid = cid;
     }
 
-    BlockIndex idx = {block, INVALID_INDEX, INVALID_INDEX};
+    // The Register service addresses dynamic blocks via BlockInfo (Type10|Inst6|Field8|Key8),
+    // not BlockIndex. block == INVALID_BLOCK means "everything" -> instance 0x3F.
+    uint32_t block_info = ((0x3FF & 0x3FF) << 22) |
+                          (((block == INVALID_BLOCK) ? 0x3F : block) & 0x3F) << 16 |
+                          ((field & 0xFF) << 8) | 0xFF;
     PacketFrame req;
     PacketConstruct(&req, addr,
                      MakeService(ServiceType::Register, reg_cid),
                      MakeService(ServiceType::CLI, cli_srv_cid),
                      FLAG_REQACK | FLAG_START | FLAG_STOP,
-                     (const uint8_t *)&idx, sizeof(BlockIndex));
+                     (const uint8_t *)&block_info, sizeof(uint32_t));
     g_cli_response_seen = false;
     DispatchPacket(req);
     vTaskDelay(pdMS_TO_TICKS(500));
@@ -194,7 +196,7 @@ static int CmdSave(int argc, char **argv)
     ServiceType svc = (argc > 2) ? ParseService(argv[2]) : ServiceType::Register;
     uint8_t block = (argc > 3 && strcmp(argv[3], "-") != 0) ? (uint8_t)atoi(argv[3]) : INVALID_BLOCK;
     printf("Saving block %d of service %d on device %d...\n", block, (int)svc, addr);
-    return SendMemoryExtra(addr, block, svc, 5, 2);
+    return SendMemoryExtra(addr, block, INVALID_INDEX, svc, 5, 2);
 }
 
 // recall <addr> [svc] [block|-] : Recall a block (or everything) of a service from its backup file
@@ -205,18 +207,19 @@ static int CmdRecall(int argc, char **argv)
     ServiceType svc = (argc > 2) ? ParseService(argv[2]) : ServiceType::Register;
     uint8_t block = (argc > 3 && strcmp(argv[3], "-") != 0) ? (uint8_t)atoi(argv[3]) : INVALID_BLOCK;
     printf("Recalling block %d of service %d on device %d...\n", block, (int)svc, addr);
-    return SendMemoryExtra(addr, block, svc, 6, 2);
+    return SendMemoryExtra(addr, block, INVALID_INDEX, svc, 6, 2);
 }
 
-// rmem <addr> [svc] <block> : Read a block from its service's backup file (prints via tree handler)
+// rmem <addr> [svc] <block> [field] : Read a block (or a single field) from a backup file
 static int CmdReadMemory(int argc, char **argv)
 {
-    if (argc < 3) { printf("Usage: rmem <addr> [svc] <block>\n"); return 1; }
+    if (argc < 3) { printf("Usage: rmem <addr> [svc] <block> [field]\n"); return 1; }
     uint16_t addr = atoi(argv[1]);
     ServiceType svc = (argc > 3) ? ParseService(argv[2]) : ServiceType::Register;
     uint8_t block = (uint8_t)atoi(argv[(argc > 3) ? 3 : 2]);
-    printf("Reading backup of block %d of service %d on device %d...\n", block, (int)svc, addr);
-    return SendMemoryExtra(addr, block, svc, 4, 0);
+    uint8_t field = (argc > 4) ? (uint8_t)atoi(argv[4]) : 0;
+    printf("Reading backup of block %d field %d of service %d on device %d...\n", block, field, (int)svc, addr);
+    return SendMemoryExtra(addr, block, field, svc, 7, 0);
 }
 
 // create <addr> <svc> <type_hex> <name> : Create a new dynamic block via Register service
@@ -266,7 +269,7 @@ static int CmdDelete(int argc, char **argv)
     ServiceType svc = ParseService(argv[2]);
     uint8_t block = (uint8_t)atoi(argv[3]);
     printf("Deleting block %d of service %d on device %d...\n", block, (int)svc, addr);
-    return SendMemoryExtra(addr, block, svc, 1, 2);
+    return SendMemoryExtra(addr, block, INVALID_INDEX, svc, 1, 2);
 }
 
 // Sends a Device service request to `addr` and routes the reply to the CLI (cid 3).
@@ -309,18 +312,20 @@ static int CmdDevice(int argc, char **argv)
         else if (strcmp(cmd, "cap")==0) bi = (0u<<22) | (0u<<16) | (0u<<8) | 1u;
         else if (strcmp(cmd, "name")==0 && argc<=3) bi = (0u<<22) | (0u<<16) | (6u<<8) | 0xFFu;
         else if (strcmp(cmd, "name")==0 && argc>3) {
-            // Set Name via Register Write 01.02
+            // Set Name via Register Write 01.02; reply routed to the Register
+            // response printer (cli cid 0).
             uint32_t wbi = (0u<<22) | (0u<<16) | (6u<<8) | 0xFFu;
             BlockMeta m; m.FlagsAndType = (uint16_t)DataType::String | FieldFlags::Persistent; m.Key=0xFF; m.Size=strlen(argv[3]); if(m.Size>16) m.Size=16;
             uint8_t pl[32]; memcpy(pl,&wbi,4); memcpy(pl+4,&m,4); memcpy(pl+8,argv[3],m.Size);
-            PacketFrame req; PacketConstruct(&req, addr, MakeService(ServiceType::Register, 2), MakeService(ServiceType::CLI, 3), FLAG_REQACK|FLAG_START|FLAG_STOP, pl, 8+m.Size);
+            PacketFrame req; PacketConstruct(&req, addr, MakeService(ServiceType::Register, 2), MakeService(ServiceType::CLI, 0), FLAG_REQACK|FLAG_START|FLAG_STOP, pl, 8+m.Size);
             g_cli_response_seen=false; DispatchPacket(req); vTaskDelay(pdMS_TO_TICKS(500)); if(!g_cli_response_seen) printf("Error: no response from device %d (timeout).\n", addr); return 0;
         }
         else if (strcmp(cmd, "uptime")==0) bi = (0u<<22) | (0u<<16) | (3u<<8) | 0u;
         else if (strcmp(cmd, "loop")==0) bi = (0u<<22) | (0u<<16) | (3u<<8) | 3u; // avg loop, max is key4
         if (strcmp(cmd, "name")==0 && argc>3) { /* handled */ }
         else {
-            PacketFrame req; PacketConstruct(&req, addr, MakeService(ServiceType::Register, 1), MakeService(ServiceType::CLI, 3), FLAG_REQACK|FLAG_START|FLAG_STOP, (uint8_t*)&bi, 4);
+            // Register read (CID 1); reply routed to the Register response printer (cli cid 0).
+            PacketFrame req; PacketConstruct(&req, addr, MakeService(ServiceType::Register, 1), MakeService(ServiceType::CLI, 0), FLAG_REQACK|FLAG_START|FLAG_STOP, (uint8_t*)&bi, 4);
             g_cli_response_seen=false; DispatchPacket(req); vTaskDelay(pdMS_TO_TICKS(500)); if(!g_cli_response_seen) printf("Error: no response from device %d (timeout).\n", addr); return 0;
         }
     }
@@ -353,8 +358,8 @@ static int CmdDevice(int argc, char **argv)
 }
 
 // Sends a Storage service request to `addr` and routes the reply to the CLI (cid 4).
-// Storage service CIDs (Docs/Services/Storage.md): 0 File Table, 1 Format, 2 Create,
-// 3 Delete, 4 Resize, 5 Rename, 6 Read File, 7 Write Stream Open, 8 Write Stream Close.
+// Storage service CIDs (Docs/Services/Storage.md): 0 Format, 1 Create, 2 Delete,
+// 3 Resize, 4 Rename, 5 Read, 6 Write. The file table is a file (".TABLE  ") read via 5.
 static int CmdFile(int argc, char **argv)
 {
     // Usage: file <addr> <table|read|create|delete|resize|rename> [args]
@@ -367,19 +372,17 @@ static int CmdFile(int argc, char **argv)
     uint8_t plen = 0;
     char name8[8] = {0};
 
-    if (strcmp(cmd, "table") == 0) { cid = 7; }
+    if (strcmp(cmd, "table") == 0) { cid = 5; PackName(".TABLE", name8); memcpy(payload, name8, 8); plen = 8; }
     else if (strcmp(cmd, "format") == 0) { cid = 0; }
     else if (strcmp(cmd, "read") == 0)
     {
-        if (argc < 6) { printf("Usage: file <addr> read <name> <offset> <num>\n"); return 1; }
+        // The service streams the whole file (offset/length are not part of the
+        // payload); the offset/length arguments are accepted but ignored.
+        if (argc < 4) { printf("Usage: file <addr> read <name>\n"); return 1; }
         cid = 5; // Read per docs 03.05
         PackName(argv[3], name8);
-        uint32_t off = (uint32_t)strtoul(argv[4], nullptr, 10);
-        uint32_t num = (uint32_t)strtoul(argv[5], nullptr, 10);
         memcpy(payload, name8, 8);
-        memcpy(payload + 8, &off, 4);
-        memcpy(payload + 12, &num, 4);
-        plen = 8 + 8;
+        plen = 8;
     }
     else if (strcmp(cmd, "create") == 0)
     {
@@ -420,10 +423,6 @@ static int CmdFile(int argc, char **argv)
         memcpy(payload + 8, new8, 8);
         plen = 16;
     }
-    else if (strcmp(cmd, "format") == 0)
-    {
-        cid = 0; // Format per docs 03.00
-    }
     else { printf("Unknown file command: %s\n", cmd); return 1; }
 
     printf("Storage service '%s' dispatched to node %d...\n", cmd, addr);
@@ -438,165 +437,88 @@ static int CmdFile(int argc, char **argv)
     return 0;
 }
 
-// Sends a Script service request to the core (the script service is local) and routes the
-// reply to the CLI (cid 7). Script manager CIDs per Docs/Services/Script.md.
-static int SendScriptRequest(uint8_t cid, const uint8_t *payload, uint8_t plen)
+// Sends a Subscriptions service request to `addr` and routes the reply to the CLI (cid 8).
+static int SendSubsRequest(uint16_t addr, uint8_t cid, const uint8_t *payload, uint16_t plen)
 {
     PacketFrame req;
-    PacketConstruct(&req, 1,
-                     MakeService(ServiceType::Script, cid),
-                     MakeService(ServiceType::CLI, 7),
+    PacketConstruct(&req, addr,
+                     MakeService(ServiceType::Subscriptions, cid),
+                     MakeService(ServiceType::CLI, 8),
                      FLAG_REQACK | FLAG_START | FLAG_STOP, payload, plen);
     g_cli_response_seen = false;
     DispatchPacket(req);
     vTaskDelay(pdMS_TO_TICKS(500));
     if (!g_cli_response_seen)
-        printf("Error: no response from the script service (timeout).\n");
+        printf("Error: no response from device %d (timeout).\n", addr);
     return 0;
 }
 
-static const char *ScriptOpName(uint8_t op)
+// subs [listp|add|del] : get/set subscription table entries (docs CLI: "Get and set
+// subscription commands").
+static int CmdSubs(int argc, char **argv)
 {
-    switch (op)
+    // Usage: subs [<addr>] [listp|add <provider> <target> <source> <trigger> <period>|del <index>]
+    uint16_t addr = 1;
+    int arg = 1;
+    if (argc > 2 && argv[1][0] != '\0')
     {
-        case OP_ADD: return "ADD"; case OP_SUB: return "SUB";
-        case OP_MUL: return "MUL"; case OP_DIV: return "DIV";
-        case OP_NEG: return "NEG";
-        case OP_AND: return "AND"; case OP_OR: return "OR"; case OP_NOT: return "NOT";
-        case OP_CMP_EQ: return "EQ"; case OP_CMP_NE: return "NE";
-        case OP_CMP_LT: return "LT"; case OP_CMP_LE: return "LE";
-        case OP_CMP_GT: return "GT"; case OP_CMP_GE: return "GE";
-        case OP_COMPOSE_VEC: return "COMPOSE_VEC"; case OP_COMPOSE_COLOUR: return "COMPOSE_COLOR";
-        case OP_EXTRACT: return "EXTRACT";
-        case OP_MEM_READ: return "MEM_READ"; case OP_MEM_WRITE: return "MEM_WRITE";
-        case OP_IF: return "IF"; case OP_WHILE: return "WHILE";
-        case OP_END_IF: return "END_IF"; case OP_END_WHILE: return "END_WHILE"; case OP_END: return "END";
-        case OP_DELAY: return "DELAY"; case OP_GET_TIME: return "GET_TIME";
-        case OP_PAUSE: return "PAUSE"; case OP_RESUME: return "RESUME";
-        case OP_TERMINATE: return "TERMINATE"; case OP_RESTART: return "RESTART";
-        case OP_INFO_REPORT: return "INFO_REPORT"; case OP_ERROR_HALT: return "ERROR_HALT";
-        case OP_MACRO_CALL: return "MACRO_CALL";
-        default: return "?";
+        // First arg may be an address (all digits) or a subcommand.
+        bool all_digits = true;
+        for (const char *p = argv[1]; *p; p++) if (*p < '0' || *p > '9') { all_digits = false; break; }
+        if (all_digits) { addr = (uint16_t)atoi(argv[1]); arg = 2; }
     }
-}
-
-static void ScriptPrintSymbol(const ScriptSymbol &s)
-{
-    switch (s.type)
+    if (argc <= arg)
     {
-        case SYM_INSTRUCTION:
-            printf(" %s", ScriptOpName(s.subtype));
-            if (s.value) printf("(%u)", s.value);
-            break;
-        case SYM_INPUT: printf(" In%u", s.value); break;
-        case SYM_OUTPUT: printf(" Out%u", s.value); break;
-        case SYM_VARIABLE: printf(" Var%u", s.value); break;
-        case SYM_CONSTANT: printf(" Const%u", s.value); break;
-        case SYM_PREDEFINE: printf(" Pre{%u,%u}", s.subtype, s.value); break;
-        default: break;
-    }
-}
-
-// script <list|read <id>|create <id|auto>|delete <id>|start <id>|stop <id>|state <id>>
-static int CmdScript(int argc, char **argv)
-{
-    if (argc < 2)
-    {
-        printf("Usage: script <list|read <id>|create <id|auto>|delete <id>|start <id>|stop <id>|state <id>>\n");
+        printf("Usage: subs [<addr>] [listp|add <provider> <target> <source> <trigger> <period>|del <index>]\n");
         return 1;
     }
-    const char *cmd = argv[1];
+    const char *cmd = argv[arg];
 
-    if (strcmp(cmd, "list") == 0)
+    if (strcmp(cmd, "listp") == 0)
+        return SendSubsRequest(addr, 2, nullptr, 0); // provider table
+
+    if (strcmp(cmd, "list") == 0 || strcmp(cmd, "listr") == 0)
+        return SendSubsRequest(addr, 3, nullptr, 0); // requester table
+
+    if (strcmp(cmd, "del") == 0)
     {
-        uint8_t n = ScriptFileCount();
-        printf("%u script(s):\n", n);
-        for (uint16_t id = 1; id <= 255; id++)
-        {
-            char fname[8];
-            ScriptFileIdToName(id, fname);
-            if (Storage.FileExists(fname) == 0xFFFFFFFF) continue;
-            uint32_t off, sz;
-            if (!Storage.GetFileInfo(fname, &off, &sz) || sz < ScriptHeaderSize()) continue;
-            char name[17] = {0};
-            Storage_FlashRead(off, name, 16);
-            printf("  Script %u: \"%s\" (%lu B)\n", id, name, (unsigned long)sz);
-        }
-        return 0;
+        if (argc <= arg + 1) { printf("Usage: subs del <index>\n"); return 1; }
+        uint8_t payload[1] = {(uint8_t)atoi(argv[arg + 1])};
+        return SendSubsRequest(addr, 4, payload, 1);
     }
 
-    if (strcmp(cmd, "read") == 0)
+    if (strcmp(cmd, "add") == 0)
     {
-        if (argc < 3) { printf("Usage: script read <id>\n"); return 1; }
-        uint8_t id = (uint8_t)atoi(argv[2]);
-        ScriptProgram p;
-        if (!LoadScriptProgram(id, p))
-        {
-            printf("Script %u: load failed.\n", id);
-            return 1;
-        }
-        if (!ValidateScriptProgram(p))
-        {
-            printf("Script %u: invalid program (unbalanced flow / no End / bad operand).\n", id);
-            p.Release();
-            return 1;
-        }
-        printf("Script %u: name \"%.*s\" in=%u out=%u var=%u const=%u lines=%u\n",
-               id, 16, p.header.name, p.header.input_count, p.header.output_count,
-               p.header.variable_count, p.header.constant_count, p.line_count);
-        uint32_t offset = 0;
-        for (uint32_t line = 0; line < p.line_count; line++)
-        {
-            printf("  %3lu:", (unsigned long)line);
-            for (;;)
-            {
-                ScriptSymbol s;
-                if (!ScriptSymbolRead(p.instructions, p.header.instruction_len, offset, &s)) break;
-                offset += 4;
-                if (s.type == SYM_ENDLINE) break;
-                ScriptPrintSymbol(s);
-            }
-            printf("\n");
-        }
-        p.Release();
-        return 0;
+        // add <provider> <target> <source> <trigger> <period> [min]
+        if (argc < arg + 6) { printf("Usage: subs add <provider> <target> <source> <trigger> <period> [min]\n"); return 1; }
+        uint16_t provider = (uint16_t)strtoul(argv[arg + 1], nullptr, 0);
+        uint32_t target = (uint32_t)strtoul(argv[arg + 2], nullptr, 0);
+        uint32_t source = (uint32_t)strtoul(argv[arg + 3], nullptr, 0);
+        uint8_t trigger = (uint8_t)strtoul(argv[arg + 4], nullptr, 0);
+        uint32_t period = (uint32_t)strtoul(argv[arg + 5], nullptr, 0);
+        uint32_t min = (argc > arg + 6) ? (uint32_t)strtoul(argv[arg + 6], nullptr, 0) : 0;
+
+        uint8_t payload[32];
+        uint16_t off = 0;
+        payload[off++] = 0; // index 0 = first free slot
+        memcpy(payload + off, &target, 4); off += 4;
+        memcpy(payload + off, &source, 4); off += 4;
+        memcpy(payload + off, &provider, 2); off += 2;
+        payload[off++] = trigger;
+        memcpy(payload + off, &period, 4); off += 4;
+        memcpy(payload + off, &min, 4); off += 4;
+        uint32_t counter = 0; memcpy(payload + off, &counter, 4); off += 4;
+        payload[off++] = 0; // tolerance length
+        return SendSubsRequest(addr, 4, payload, off);
     }
 
-    if (argc < 3) { printf("Usage: script <%s> <id>\n", cmd); return 1; }
-
-    if (strcmp(cmd, "create") == 0)
-    {
-        uint8_t payload[1] = {(uint8_t)((strcmp(argv[2], "auto") == 0) ? 0xFF : (uint8_t)atoi(argv[2]))};
-        return SendScriptRequest(13, payload, 1);
-    }
-    if (strcmp(cmd, "delete") == 0)
-    {
-        uint8_t payload[1] = {(uint8_t)atoi(argv[2])};
-        return SendScriptRequest(14, payload, 1);
-    }
-    if (strcmp(cmd, "start") == 0)
-    {
-        uint8_t payload[2] = {(uint8_t)atoi(argv[2]), SCRIPT_RUNNING};
-        return SendScriptRequest(4, payload, 2);
-    }
-    if (strcmp(cmd, "stop") == 0)
-    {
-        uint8_t payload[2] = {(uint8_t)atoi(argv[2]), SCRIPT_STOPPED};
-        return SendScriptRequest(4, payload, 2);
-    }
-    if (strcmp(cmd, "state") == 0)
-    {
-        uint8_t payload[1] = {(uint8_t)atoi(argv[2])};
-        return SendScriptRequest(3, payload, 1);
-    }
-
-    printf("Unknown script command: %s\n", cmd);
+    printf("Unknown subs command: %s\n", cmd);
     return 1;
 }
 
 // Sets up the CLI command registry and starts the USB console/app mode task
 // (see AppUSB.h). Commands: tree, read, write, sndb, logs, logget, logclear, save,
-// recall, rmem, dev, create, delete, log, file.
+// recall, rmem, dev, create, delete, log, file, subs.
 void StartCLI(void)
 {
     // Initialize the console module. The old REPL setup used to do this
@@ -802,16 +724,16 @@ void StartCLI(void)
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&file_cmd));
 
-    const esp_console_cmd_t script_cmd = {
-        .command = "script",
-        .help    = "Script service: list, read, create, delete, start, stop, state",
-        .hint    = "<list|read <id>|create <id|auto>|delete <id>|start <id>|stop <id>|state <id>>",
-        .func    = &CmdScript,
+    const esp_console_cmd_t subs_cmd = {
+        .command = "subs",
+        .help    = "Subscriptions service: list requester/provider subs, add, delete",
+        .hint    = "[<addr>] [list|listp|add|del]",
+        .func    = &CmdSubs,
         .argtable = nullptr,
         .func_w_context = nullptr,
         .context = nullptr,
     };
-    ESP_ERROR_CHECK(esp_console_cmd_register(&script_cmd));
+    ESP_ERROR_CHECK(esp_console_cmd_register(&subs_cmd));
 
     // 5. Bring up the USB port (driver + VFS stdio) and run the console/app mode
     // machine on its own task. Same stack sizing rationale as the old REPL config:

@@ -21,6 +21,8 @@ import 'protocol.dart';
 import 'transport.dart';
 import 'usb_transport.dart';
 
+export 'transport.dart' show TransportException;
+
 enum LinkSource { all, ble, usb }
 
 enum DeviceSort { signal, alphabetical }
@@ -108,6 +110,7 @@ class ConnectionManager extends ChangeNotifier {
 
   String? get connectedName => _transport?.displayName;
   bool get isConnected => _transport != null;
+  Transport? get transport => _transport;
 
   /// True while a connect attempt is in flight (BLE connect + service discovery
   /// + MTU negotiation takes several seconds - the UI must show progress).
@@ -120,6 +123,15 @@ class ConnectionManager extends ChangeNotifier {
   int _nextTxId = 1;
   final Map<int, Completer<List<int>>> _pending = {};
   final Map<int, List<int>> _rxBuffers = {};
+
+  // General listener for subscription value updates (service Subscriptions CID 0).
+  // Only one listener is supported; SubscriptionClient uses it to feed its
+  // valueUpdates stream.
+  Function(List<int>)? _subscriptionListener;
+
+  void setSubscriptionListener(Function(List<int>)? listener) {
+    _subscriptionListener = listener;
+  }
 
   // ===========================================================================
   // Scanning
@@ -400,7 +412,24 @@ class ConnectionManager extends ChangeNotifier {
       return;
     }
     for (final frame in frames) {
+      // Firmware-pushed subscription value updates (service Subscriptions CID 0) are
+      // routed to the registered listener (SubscriptionClient) - they are addressed to
+      // us by subscription TRID, not by an app transaction ID.
+      if (serviceTypeOf(frame.srvTarget) == ServiceType.subscriptions &&
+          serviceCidOf(frame.srvTarget) == 0) {
+        final listener = _subscriptionListener;
+        if (listener != null) {
+          final data = frame.isFrag && frame.payload.length >= 4
+              ? frame.payload.sublist(4)
+              : frame.payload;
+          listener(data);
+          continue;
+        }
+      }
+
       if (!frame.isResponse) continue; // unsolicited requests ignored for now
+      
+      // Handle app transaction IDs
       final txId = frame.srvTarget & 0xFF;
       final completer = _pending.remove(txId);
       if (completer == null || completer.isCompleted) continue;
@@ -435,6 +464,10 @@ class ConnectionManager extends ChangeNotifier {
     throw const TransportException('No free transaction IDs');
   }
 
+  /// Allocates a free transaction ID for manual use (e.g. sharing one TRID across a
+  /// paired pair of requests). The caller owns the slot until it is used by [request].
+  int takeTxId() => _takeTxId();
+
   /// Sends a single-packet request and waits for its response payload (REQACK is
   /// always set). Throws [TransportException] on timeout.
   Future<List<int>> request(
@@ -444,12 +477,18 @@ class ConnectionManager extends ChangeNotifier {
     List<int> payload = const [],
     Duration timeout = const Duration(seconds: 2),
     bool requestFrag = false,
-    bool responseFrag = false,
+    int? transactionId,
   }) async {
     final transport = _transport;
     if (transport == null) throw const TransportException('Not connected');
 
-    final txId = _takeTxId();
+    // A caller-supplied transaction ID lets several requests share one TRID (used by
+    // the Subscriptions client to register both the requester and provider side of a
+    // subscription under the same ID, so value updates route correctly).
+    final txId = transactionId ?? _takeTxId();
+    if (transactionId != null && _pending.containsKey(txId)) {
+      throw TransportException('Transaction ID already in use');
+    }
     final frame = PacketFrame.single(
       targetId: targetId,
       srvTarget: makeService(service, functionCid),
@@ -460,7 +499,6 @@ class ConnectionManager extends ChangeNotifier {
       response: false,
       payload: payload,
       requestFrag: requestFrag,
-      responseFrag: responseFrag,
     );
 
     final completer = Completer<List<int>>();

@@ -39,4 +39,4 @@ Voltage divider based measurement, reference resistor switching supported
 | Sensor Type        | 2      | P      | Enum   |                                               |
 | Measured Value     | 3      | RO     | Number | bit/V/kOhm/Lux/°C                             |
 | Current Range      | 4      | RO     | Number | kOhm                                          |
-Sensor types: Raw Measurement, Raw Voltage, Raw Resistance, LDR 10K, NTC10K
+Sensor types: Raw Measurement, Raw Voltage, Raw Resistance, LDR 10K, NTC10K, NTC100K

@@ -67,8 +67,8 @@ void main() {
       final parser = PacketStreamParser();
       final a = PacketFrame.single(
               targetId: 2,
-              srvTarget: makeService(ServiceType.systemMemory, 2),
-              srvSource: makeService(ServiceType.systemMemory, 7),
+              srvTarget: makeService(ServiceType.register, 2),
+              srvSource: makeService(ServiceType.register, 7),
               response: true,
               payload: [9, 9])
           .toBytes();

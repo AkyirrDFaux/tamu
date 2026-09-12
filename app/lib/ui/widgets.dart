@@ -91,9 +91,10 @@ String formatOffsetMs(int ms) {
       '${msPart.toString().padLeft(3, '0')}';
 }
 
-/// Name + block-type prompt shared by the Dynamic memory create and edit
-/// flows. With `withIndex` the user may pin the new block to an explicit index
-/// (filling a None placeholder); an empty index appends.
+/// Name + optional block-type prompt shared by the memory create and edit flows.
+/// With `withIndex` the user may pin the new block to an explicit index (filling a
+/// None placeholder); an empty index appends. When `fixedType` is given the type
+/// dropdown is hidden and that type is always used (a dynamic block is just dynamic).
 /// Returns (name, type, index) or null when cancelled.
 Future<(String, BlockType, int?)?> promptBlockNameAndType(
   BuildContext context, {
@@ -101,10 +102,11 @@ Future<(String, BlockType, int?)?> promptBlockNameAndType(
   BlockType? initialType,
   required String title,
   bool withIndex = false,
+  BlockType? fixedType,
 }) async {
   final nameController = TextEditingController(text: initialName);
   final indexController = TextEditingController();
-  BlockType selected = initialType ?? BlockType.undefined;
+  BlockType selected = fixedType ?? initialType ?? BlockType.dynamic;
   final result = await showDialog<(String, BlockType, int?)>(
     context: context,
     builder: (context) => StatefulBuilder(
@@ -127,17 +129,19 @@ Future<(String, BlockType, int?)?> promptBlockNameAndType(
                   helperText: 'Fills a deleted (None) slot when given'),
             ),
           ],
-          const SizedBox(height: 8),
-          DropdownButtonFormField<BlockType>(
-            initialValue: selected,
-            decoration: const InputDecoration(labelText: 'Block type'),
-            items: [
-              for (final t in BlockType.values)
-                if (t != BlockType.deleted)
-                  DropdownMenuItem(value: t, child: Text(t.label)),
-            ],
-            onChanged: (t) => setState(() => selected = t ?? BlockType.undefined),
-          ),
+          if (fixedType == null) ...[
+            const SizedBox(height: 8),
+            DropdownButtonFormField<BlockType>(
+              initialValue: selected,
+              decoration: const InputDecoration(labelText: 'Block type'),
+              items: [
+                for (final t in BlockType.values)
+                  if (t != BlockType.deleted)
+                    DropdownMenuItem(value: t, child: Text(t.label)),
+              ],
+              onChanged: (t) => setState(() => selected = t ?? BlockType.dynamic),
+            ),
+          ],
         ]),
         actions: [
           TextButton(

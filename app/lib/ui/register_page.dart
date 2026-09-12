@@ -4,9 +4,9 @@ import 'package:flutter/material.dart';
 
 import '../core/block_registry.dart';
 import '../core/connection.dart';
+import '../core/device_db.dart';
 import '../core/register_client.dart';
 import '../core/types.dart';
-import 'dynmem_page.dart';
 import 'theme.dart';
 import 'value_editor.dart' show dataTypeLabel, formatValue, showValueEditor;
 import 'widgets.dart';
@@ -15,8 +15,9 @@ import 'widgets.dart';
 /// System block, static blocks, and dynamic memory.
 class RegisterPage extends StatefulWidget {
   final int deviceId;
+  final bool hasDynamicMemory;
 
-  const RegisterPage({super.key, required this.deviceId});
+  const RegisterPage({super.key, required this.deviceId, this.hasDynamicMemory = true});
 
   @override
   State<RegisterPage> createState() => _RegisterPageState();
@@ -32,6 +33,18 @@ class _RegisterPageState extends State<RegisterPage>
   String? _error;
   final Set<int> _expanded = {};
   bool _refreshing = false;
+  bool _busy = false;
+
+  /// Runs a long operation (Save/Recall) with the busy spinner shown in the app bar.
+  Future<bool> _withBusy(Future<bool> Function() task) async {
+    if (_busy) return false;
+    setState(() => _busy = true);
+    try {
+      return await task();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
 
   @override
   void initState() {
@@ -81,8 +94,7 @@ class _RegisterPageState extends State<RegisterPage>
       _refreshing = false;
     }
   }
-
-  Future<void> _loadVisibleFields() async {
+Future<void> _loadVisibleFields() async {
     final blocks = _blockMetas;
     if (blocks == null) return;
     for (var i = 0; i < blocks.length; i++) {
@@ -94,6 +106,76 @@ class _RegisterPageState extends State<RegisterPage>
       }
     }
     if (mounted) setState(() {});
+
+  }
+
+  /// Persists every block to its backup (docs Register.md "Save"): the dynamic
+  /// registry, the System block (Name/NetID) and each static block's persistent
+  /// fields. Each target is a separate request so failures are reported accurately.
+  Future<bool> _saveAll() async {
+    final c = _client;
+    // The dynamic registry only exists on devices advertising dynamic memory (the DAS
+    // has none, so the request would report failure and mark the whole save as failed).
+    // Check both the widget flag and the live capability report to stay correct even if
+    // the page was opened before capabilities were loaded.
+    final dev = DeviceDatabase.instance.byId(widget.deviceId);
+    final hasDyn = widget.hasDynamicMemory ||
+        (dev != null && dev.capabilities & Capability.dynamicMemory != 0);
+    bool ok = true;
+    if (hasDyn) {
+      ok &= await _requestStatus(c, 3, const [0xFF, 0xFF, 0xFF, 0xFF]); // dynamic registry
+    }
+    ok &= await _requestStatus(c, 3, makeBlockInfo(0, 0, 0xFF, 0)); // system Name/NetID
+    for (final b in _blockMetas ?? const []) {
+      if (b == null || b.type == 0 || b.type == 0x3FF) continue;
+      ok &= await _requestStatus(c, 3, makeBlockInfo(b.type, b.inst, 0xFF, 0));
+    }
+    return ok;
+  }
+
+  Future<bool> _recallAll() async {
+    final c = _client;
+    bool ok = true;
+    if (widget.hasDynamicMemory) {
+      ok &= await _requestStatus(c, 4, const [0xFF, 0xFF, 0xFF, 0xFF]);
+    }
+    ok &= await _requestStatus(c, 4, makeBlockInfo(0, 0, 0xFF, 0));
+    for (final b in _blockMetas ?? const []) {
+      if (b == null || b.type == 0 || b.type == 0x3FF) continue;
+      ok &= await _requestStatus(c, 4, makeBlockInfo(b.type, b.inst, 0xFF, 0));
+    }
+    return ok;
+  }
+
+  Future<bool> _requestStatus(RegisterClient c, int cid, List<int> payload) async {
+    final reply = await c.request(cid, payload: payload);
+    return reply != null && reply.isNotEmpty && reply[0] == 0;
+  }
+
+  /// Saves one persistent field to its backup (docs System Memory view: "Saveable
+  /// values show a Save button"). System/static fields are addressed by BlockInfo.
+  Future<void> _saveField(int blockType, int inst,
+      ({int type, int inst, BlockMeta meta, String name})? block, int fieldIndex) async {
+    final bi = makeBlockInfo(blockType == 0 ? 0 : blockType, inst, fieldIndex, 0);
+    final ok = await _withBusy(() async {
+      final reply = await _client.request(3, payload: bi);
+      return reply != null && reply.isNotEmpty && reply[0] == 0;
+    });
+    _snack(ok ? 'Saved' : 'Save failed');
+  }
+
+  Future<void> _recallField(int blockType, int inst,
+      ({int type, int inst, BlockMeta meta, String name})? block, int fieldIndex) async {
+    final bi = makeBlockInfo(blockType == 0 ? 0 : blockType, inst, fieldIndex, 0);
+    final ok = await _withBusy(() async {
+      final reply = await _client.request(4, payload: bi);
+      return reply != null && reply.isNotEmpty && reply[0] == 0;
+    });
+    _snack(ok ? 'Recalled' : 'Recall failed');
+    if (ok) {
+      await _loadBlockFields(blockType, inst, block, forceRefresh: true);
+      if (mounted) setState(() {});
+    }
   }
 
   Future<void> _loadBlockFields(int blockType, int instance, ({int type, int inst, BlockMeta meta, String name})? block, {bool forceRefresh = false}) async {
@@ -170,21 +252,34 @@ class _RegisterPageState extends State<RegisterPage>
             tooltip: 'Save all to backup',
             icon: const Icon(Icons.save),
             onPressed: () async {
-              final ok = await _client.request(3, payload: [0xFF, 0xFF, 0xFF, 0xFF]);
-              _snack(ok != null && ok.isNotEmpty && ok[0] == 0
-                  ? 'Saved' : 'Save failed');
+              final ok = await _withBusy(_saveAll);
+              _snack(ok ? 'Saved' : 'Save failed');
             },
           ),
           IconButton(
             tooltip: 'Recall all from backup',
             icon: const Icon(Icons.restore),
             onPressed: () async {
-              final ok = await _client.request(4, payload: [0xFF, 0xFF, 0xFF, 0xFF]);
-              _snack(ok != null && ok.isNotEmpty && ok[0] == 0
-                  ? 'Recalled' : 'Recall failed');
-              if (ok != null && ok.isNotEmpty && ok[0] == 0) await _loadVisibleFields();
+              final ok = await _withBusy(_recallAll);
+              _snack(ok ? 'Recalled' : 'Recall failed');
+              if (ok) await _loadVisibleFields();
             },
           ),
+          if (widget.hasDynamicMemory)
+            IconButton(
+              tooltip: 'Add dynamic block',
+              icon: const Icon(Icons.add_box_outlined),
+              onPressed: _createBlock,
+            ),
+          if (_busy)
+            const Padding(
+              padding: EdgeInsets.only(right: 12),
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
           RefreshButton(
             onRefresh: _refresh,
             autoActive: autoRefreshActive,
@@ -209,34 +304,11 @@ class _RegisterPageState extends State<RegisterPage>
     }
     return ListView.separated(
       padding: const EdgeInsets.fromLTRB(10, 10, 10, 24),
-      itemCount: blocks.length + 1,
+      itemCount: blocks.length,
       separatorBuilder: (_, _) => const SizedBox(height: 6),
       itemBuilder: (context, index) {
-        if (index < blocks.length) {
-          return _blockCard(context, index, blocks[index]);
-        } else {
-          return _linkTile(
-              context, Icons.dashboard_customize, 'Dynamic Memory',
-              'User-created blocks with typed entries',
-              () => DynamicMemoryPage(deviceId: widget.deviceId));
-        }
+        return _blockCard(context, index, blocks[index]);
       },
-    );
-  }
-
-  Widget _linkTile(BuildContext context, IconData icon, String title,
-      String subtitle, Widget Function() page) {
-    return Card(
-      color: kSurfaceAlt,
-      margin: EdgeInsets.zero,
-      child: ListTile(
-        leading: Icon(icon, color: kOrange),
-        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-        subtitle: Text(subtitle, style: const TextStyle(fontSize: 12)),
-        trailing: const Icon(Icons.chevron_right),
-        onTap: () => Navigator.of(context)
-            .push(MaterialPageRoute(builder: (_) => page())),
-      ),
     );
   }
 
@@ -288,13 +360,20 @@ class _RegisterPageState extends State<RegisterPage>
           trailing: PopupMenuButton<String>(
             tooltip: 'Block actions',
             onSelected: (action) {
-              if (action == 'edit' && !isSystem) {
+              if (action == 'edit') {
                 _editBlock(blockIndex, block);
+              } else if (action == 'add') {
+                _addEntry(blockIndex, block);
+              } else if (action == 'delete') {
+                _deleteBlock(blockIndex, block);
               }
             },
             itemBuilder: (_) => [
-              if (!isSystem)
+              if (block.meta.typeValue == BlockType.dynamic.value) ...[
                 const PopupMenuItem(value: 'edit', child: Text('Rename / set type')),
+                const PopupMenuItem(value: 'add', child: Text('Add entry')),
+                const PopupMenuItem(value: 'delete', child: Text('Delete block')),
+              ],
             ],
           ),
           onTap: () async {
@@ -345,6 +424,31 @@ class _RegisterPageState extends State<RegisterPage>
 
     final primaryFlags = FieldFlags.describe(field.meta.flags);
     final isSystemField = isSystem;
+
+    // Custom display for the DAS ResistiveMeasure block: the Sensor Type (field 2)
+    // shows its enum name, and the Measured Value (field 3) shows a unit derived from
+    // the selected sensor, plus a fuzzy lux level for the LDR.
+    String displayValue() {
+      if (blockType != BlockType.resistiveMeasure.value || isSystemField) {
+        return formatValue(field.meta.dataType, field.value);
+      }
+      final sensorRaw = cache?[2];
+      final sensor = (sensorRaw != null && sensorRaw.value.isNotEmpty)
+          ? sensorRaw.value[0]
+          : -1;
+      if (fieldIndex == 2) {
+        return sensor >= 0 ? sensorTypeLabel(sensor) : formatValue(field.meta.dataType, field.value);
+      }
+      if (fieldIndex == 3 && sensor >= 0) {
+        final numVal = numberFromBytes(field.value);
+        final unit = sensorUnits[sensor] ?? '';
+        var text = formatValue(DataType.number, field.value);
+        if (unit.isNotEmpty) text += ' $unit';
+        if (sensor == 3) text += ' · ${luxLevel(numVal)}';
+        return text;
+      }
+      return formatValue(field.meta.dataType, field.value);
+    }
 
     // For system block, collect all keys for this field
     List<({int key, ({BlockMeta meta, List<int> value})? field})> systemFieldKeys = [];
@@ -400,11 +504,19 @@ class _RegisterPageState extends State<RegisterPage>
               onSelected: (action) {
                 if (action == 'edit' && !f.meta.readOnly) {
                   _editValue(blockType, inst, block, fieldIndex);
+                } else if (action == 'save') {
+                  _saveField(blockType, inst, block, fieldIndex);
+                } else if (action == 'recall') {
+                  _recallField(blockType, inst, block, fieldIndex);
                 }
               },
               itemBuilder: (_) => [
                 if (!f.meta.readOnly)
                   const PopupMenuItem(value: 'edit', child: Text('Edit value')),
+                if (!f.meta.readOnly && f.meta.persistent)
+                  const PopupMenuItem(value: 'save', child: Text('Save to backup')),
+                if (!f.meta.readOnly && f.meta.persistent)
+                  const PopupMenuItem(value: 'recall', child: Text('Recall from backup')),
               ],
             ),
           );
@@ -427,7 +539,7 @@ class _RegisterPageState extends State<RegisterPage>
                 style: const TextStyle(fontSize: 12, color: Colors.white54))),
         Expanded(
             child: Text(
-                isSystemField ? _formatSystemValue(field.meta.dataType, field.value) : formatValue(field.meta.dataType, field.value),
+                isSystemField ? _formatSystemValue(field.meta.dataType, field.value) : displayValue(),
                 style: const TextStyle(fontFamily: 'monospace', fontSize: 13))),
         for (final flag in FieldFlags.describe(field.meta.flags))
           Padding(
@@ -447,11 +559,27 @@ class _RegisterPageState extends State<RegisterPage>
         onSelected: (action) {
           if (action == 'edit' && !field.meta.readOnly) {
             _editValue(blockType, inst, block, fieldIndex);
+          } else if (action == 'save') {
+            _saveField(blockType, inst, block, fieldIndex);
+          } else if (action == 'recall') {
+            _recallField(blockType, inst, block, fieldIndex);
+          } else if (action == 'type') {
+            _changeType(blockType, inst, block, fieldIndex);
+          } else if (action == 'delentry') {
+            _deleteEntry(blockType, inst, block, fieldIndex);
           }
         },
         itemBuilder: (_) => [
           if (!field.meta.readOnly)
             const PopupMenuItem(value: 'edit', child: Text('Edit value')),
+          if (!field.meta.readOnly && field.meta.persistent)
+            const PopupMenuItem(value: 'save', child: Text('Save to backup')),
+          if (!field.meta.readOnly && field.meta.persistent)
+            const PopupMenuItem(value: 'recall', child: Text('Recall from backup')),
+          if (blockType == BlockType.dynamic.value && !field.meta.readOnly) ...[
+            const PopupMenuItem(value: 'type', child: Text('Change type')),
+            const PopupMenuItem(value: 'delentry', child: Text('Delete entry')),
+          ],
         ],
       ),
       onTap: (!field.meta.readOnly) ? () => _editValue(blockType, inst, block, fieldIndex) : null,
@@ -523,8 +651,12 @@ class _RegisterPageState extends State<RegisterPage>
       case DataType.id:
         return value.length >= 2 ? idToString(value[0] | (value[1] << 8)) : '-';
       case DataType.integer:
-        if (value.length >= 4) return (value[0] | (value[1] << 8) | (value[2] << 16) | (value[3] << 24)).toString();
-        if (value.length >= 2) return (value[0] | (value[1] << 8)).toString();
+        // System block fields like Time offset are signed 32-bit: sign-extend.
+        if (value.length >= 4) return int32FromBytes(value).toString();
+        if (value.length >= 2) {
+          final v = value[0] | (value[1] << 8);
+          return (v >= 0x8000 ? v - 0x10000 : v).toString();
+        }
         return '-';
       case DataType.string:
         // Software version is 4 bytes (YY, MM, DD, iteration)
@@ -540,8 +672,120 @@ class _RegisterPageState extends State<RegisterPage>
   }
 
   Future<void> _editBlock(int blockIndex, ({int type, int inst, BlockMeta meta, String name})? block) async {
-    if (block == null) return;
-    _snack('Block edit not implemented yet');
+    if (block == null || !mounted) return;
+    if (block.type != BlockType.dynamic.value) {
+      _snack('Only dynamic blocks can be renamed');
+      return;
+    }
+    final result = await promptBlockNameAndType(context,
+        title: 'Edit block',
+        initialName: block.name,
+        fixedType: BlockType.dynamic);
+    if (result == null || !mounted) return;
+    final (name, type, _) = result;
+    
+    final ok = await _client.writeDynamicBlockMeta(
+        DynBlock(index: block.inst, meta: block.meta, name: block.name),
+        name, type);
+    _snack(ok ? 'Block updated' : 'Update failed');
+    await _refresh();
+  }
+
+  Future<void> _createBlock() async {
+    if (!mounted) return;
+    final result = await promptBlockNameAndType(context,
+        title: 'New dynamic block', withIndex: true, fixedType: BlockType.dynamic);
+    if (result == null || !mounted) return;
+    final (name, type, index) = result;
+    
+    final created = await _client.createDynamicBlock(type, name, index: index);
+    _snack(created != null ? 'Block created' : 'Create failed');
+    await _refresh();
+  }
+
+  Future<void> _deleteBlock(int blockIndex, ({int type, int inst, BlockMeta meta, String name})? block) async {
+    if (block == null || !mounted) return;
+    
+    final ok = await _client.deleteDynamic(block: block.inst);
+    _snack(ok ? 'Block deleted (save to free)' : 'Delete failed');
+    await _refresh();
+  }
+
+  Future<void> _addEntry(int blockIndex, ({int type, int inst, BlockMeta meta, String name})? block) async {
+    if (block == null || !mounted) return;
+    final dataType = await _pickDataType();
+    if (dataType == null || !mounted) return;
+    final seed = await showValueEditor(context, dataType, []);
+    if (seed == null || !mounted) return;
+    
+    final live = await _client.readDynamicBlockMeta(block.inst);
+    if (live == null) return;
+    final target = _firstNoneField(live, live.fieldCount);
+    final confirmed = await _client.appendDynamicEntry(
+        live,
+        BlockMeta(flagsAndType: dataType.value, size: seed.length),
+        seed,
+        index: target);
+    _snack(confirmed != null ? 'Entry added' : 'Add failed');
+    await _refresh();
+  }
+
+  Future<void> _changeType(int blockType, int inst,
+      ({int type, int inst, BlockMeta meta, String name})? block, int fieldIndex) async {
+    if (block == null || !mounted) return;
+    final dataType = await _pickDataType();
+    if (dataType == null || !mounted) return;
+    final seed = await showValueEditor(context, dataType, []);
+    if (seed == null || !mounted) return;
+    final cache = _fieldCache[(blockType << 8) | inst];
+    final field = cache?[fieldIndex];
+    if (field == null) return;
+    
+    final dynBlock = DynBlock(index: block.inst, meta: block.meta, name: block.name);
+    final dynField = DynField(index: fieldIndex, meta: field.meta, value: field.value);
+    final confirmed = await _client.writeDynamicField(dynBlock, dynField, seed, newType: dataType);
+    _snack(confirmed != null ? 'Type changed' : 'Change failed');
+    await _refresh();
+  }
+
+  Future<void> _deleteEntry(int blockType, int inst,
+      ({int type, int inst, BlockMeta meta, String name})? block, int fieldIndex) async {
+    if (block == null || !mounted) return;
+    final cache = _fieldCache[(blockType << 8) | inst];
+    final field = cache?[fieldIndex];
+    if (field == null) return;
+    
+    final dynBlock = DynBlock(index: block.inst, meta: block.meta, name: block.name);
+    final dynField = DynField(index: fieldIndex, meta: field.meta, value: field.value);
+    final confirmed = await _client.writeDynamicField(dynBlock, dynField, [], newType: DataType.deleted);
+    _snack(confirmed != null ? 'Entry deleted (save to free)' : 'Delete failed');
+    await _refresh();
+  }
+
+  Future<DataType?> _pickDataType() {
+    return showDialog<DataType>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Entry data type'),
+        children: [
+          for (final t in DataType.values)
+            if (t != DataType.deleted && t != DataType.none && t != DataType.undefined)
+              SimpleDialogOption(
+                onPressed: () => Navigator.pop(context, t),
+                child: Text(dataTypeLabel(t)),
+              ),
+        ],
+      ),
+    );
+  }
+
+  /// The lowest None-marked field index (a deleted slot to fill), or null.
+  int? _firstNoneField(DynBlock block, int count) {
+    for (var f = 0; f < count; f++) {
+      final existing = block.fields[f];
+      if (existing != null && existing.meta.dataType == DataType.none) return f;
+    }
+    return null;
   }
 
   Future<void> _editValue(int blockType, int inst, ({int type, int inst, BlockMeta meta, String name})? block, int fieldIndex) async {
@@ -575,10 +819,6 @@ class _RegisterPageState extends State<RegisterPage>
     }
   }
 
-  @override
-  void dispose() {
-    super.dispose();
-  }
 }
 
 /// Small rounded label chip used across the memory pages.

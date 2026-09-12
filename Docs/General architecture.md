@@ -1,6 +1,6 @@
 ### Needs:
 - High and low capacity [[Devices]] (RAM, Flash, CPU speed)
-- Uses [[RSBus]]
+- Uses [[RSBus and Packets]]
 - Device specific code for optimalization (Architecture, GPIO, Flash, etc...)
 - Common command interface
 - Red error LED and white communication LED
@@ -19,7 +19,7 @@
 #### Mandatory for routers:
  - [[Router]]
 #### Mandatory for sensor nodes:
-- [[Subscriptions]]
+- [[Subscriptions]] (provider)
 ####  Optional:
  - Dynamic memory (under [[Register]])
  - [[Script]]
@@ -36,5 +36,6 @@ Use structs for data organization (command payloads, etc.).
 Use malloc/realloc/free instead of new and delete.
 Keep functions moderate in length (20ish lines), maximum 50 lines (except for switch with only function calls).
 Device specific implementations should have separate folders.
+Avoid using BOARD_X ifdefs in the core, guard based on capabilities only.
 Do not import new libraries or use float/double type (not even standard ones, except for `<cstdint><cstddef><cstring><cstdlib>` and ones required within ESP32 scope).
 Remember that this is an embedded system with limited resources.

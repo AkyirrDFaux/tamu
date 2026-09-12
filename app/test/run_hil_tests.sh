@@ -25,13 +25,14 @@ if [ $# -gt 0 ]; then
   FILES=("$@")
 else
   FILES=(
-    test/hil_live_test.dart
-    test/hil_script_test.dart
+    test/hil_test_suite.dart
+    test/hil_subscriptions_test.dart
+    test/tamu_hardware_verification_test.dart
+    test/hardware_register_test.dart
+    test/hardware_storage_test.dart
     test/dyn_flow_test.dart
-    test/keyed_crash_test.dart
-    test/keyed_refresh_test.dart
-    test/mem_probe_test.dart
-    test/storage_probe_test.dart
+    test/ble_scan_probe_test.dart
+    test/hil_ble_probe_test.dart
     test/ble_ping_test.dart
     test/ble_rtt_probe_test.dart
   )

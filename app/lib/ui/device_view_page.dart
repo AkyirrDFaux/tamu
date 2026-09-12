@@ -1,14 +1,12 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
 import '../core/device_db.dart';
 import '../core/types.dart';
-import 'dynmem_page.dart';
 import 'log_page.dart';
 import 'register_page.dart';
 import 'sndb_page.dart';
 import 'storage_page.dart';
+import 'subscriptions_page.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
@@ -133,19 +131,19 @@ class _DeviceViewPageState extends State<DeviceViewPage>
                   const Divider(height: 24),
 _card(context, 'Services', [
                       // Per Docs/App/Device view.md: hide unavailable services
-                      // based on the device's capability field. Register, Storage
+                      // based on the device's capability field. Register (covers the
+                      // System block, static blocks and dynamic/keyed memory), Storage
                       // and Logs are mandatory; SNDB is core-only.
                       // Router table awaits its firmware service.
                       _serviceTile(context, Icons.table_chart, 'Register',
-                          () => RegisterPage(deviceId: widget.deviceId)),
-                      if (entry.capabilities & Capability.dynamicMemory != 0)
-                        _serviceTile(
-                            context,
-                            Icons.dashboard_customize,
-                            'Dynamic Memory',
-                            () => DynamicMemoryPage(deviceId: widget.deviceId)),
+                          () => RegisterPage(
+                              deviceId: widget.deviceId,
+                              hasDynamicMemory: entry.capabilities & Capability.dynamicMemory != 0)),
                       _serviceTile(context, Icons.save_outlined, 'Storage',
                           () => StoragePage(deviceId: widget.deviceId)),
+                      if (entry.capabilities & Capability.subscriptions != 0)
+                        _serviceTile(context, Icons.sync_alt, 'Subscriptions',
+                          () => SubscriptionsPage(deviceId: widget.deviceId, deviceName: entry.displayName)),
                       if (entry.isCore) ...[
                         _serviceTile(context, Icons.format_list_numbered,
                             'SN Database', () => const SndbPage()),

@@ -53,24 +53,7 @@ public:
         return sqrt(sum); // Assuming Number has a sqrt() method
     }
 
-    // Returns a NEW vector of size N+1 with `val` inserted at position `pos`
-    Vector<N + 1> insert(size_t pos, Number val) const
-    {
-        if (pos > N)
-            pos = N; // clamp: a bad index would be a silent out-of-bounds write
-        Vector<N + 1> next_vec;
-        for (size_t i = 0; i < pos; ++i)
-            next_vec.Data[i] = this->Data[i];
-
-        next_vec.Data[pos] = val;
-
-        for (size_t i = pos; i < N; ++i)
-            next_vec.Data[i + 1] = this->Data[i];
-
-        return next_vec;
-    }
-
-    // Returns a NEW vector of size N-1
+    // Returns a NEW vector of size N-1 with the element at `pos` removed.
     // Note: Requires template specialization or conditional check for N > 0
     Vector<N - 1> remove(size_t pos) const
     {

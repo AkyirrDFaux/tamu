@@ -16,11 +16,8 @@
 
 // Function declarations
 void LoadAllBackups();
-#ifdef USE_SCRIPTS
-// Script scheduler (defined in Core/Services/Script.h via Dispatcher.h, included after
-// this file in Main.cpp - forward-declared here for the loop below).
-void ScriptTick();
-#endif
+void ReRegisterSubscriptions();
+void SubscriptionsTick(uint32_t nowMs);
 
 // Device identity (mandatory, see Core/Functions/Device.h).
 extern const DeviceType kDeviceType = DeviceType::Tamu_v2_0A;
@@ -28,7 +25,6 @@ extern const DeviceType kDeviceType = DeviceType::Tamu_v2_0A;
 // memory services - matching the USE_* build flags so the app shows their views.
 extern const uint32_t kCapabilities = Capabilities::Core | Capabilities::Cli |
                                         Capabilities::DynamicMemory |
-                                        Capabilities::Scripts |
                                         Capabilities::AppInterface |
                                         Capabilities::Subscriptions;
 
@@ -94,8 +90,7 @@ PinModeOutput(LED_NOTIFICATION_PIN);
     DeviceStatus.ShortAddress = 0;
 
 ESP_LOGI("INIT","b1 storage"); Storage.Init();
-ESP_LOGI("INIT","b2 backups"); LoadAllBackups();
-LoadPersistedDeviceName(); // persisted name active before BLE advertising starts
+ESP_LOGI("INIT","b2 backups"); LoadAllBackups(); // restores name + net-id from STATLOG too
 PreloadVysiLayout();       // Vysi v1.0 layout file (layouts/ dir) into storage
 ESP_LOGI("INIT","b3 appif"); AppInterfaceInit();
 
@@ -124,6 +119,40 @@ LED2.Setup();
     // The Tamu is always the core (ID 1): no discovery needed, no button check.
     DeviceStatus.ShortAddress = 1;
 
+    // Re-register the provider side of any restored requester subscriptions now that we
+    // have our bus address (the provider table is non-persistent per the docs).
+    ReRegisterSubscriptions();
+
+    // Core discover (docs, "Core functions"): the persistent net-ID was restored by
+    // LoadAllBackups from STATLOG (0 is not allowed -> randomly re-generated), then
+    // broadcast Core-discover to all cores (3F.1). A response carrying a MATCHING net
+    // within 500 ms means this net is claimed twice on the bus -> normal boot is
+    // aborted (issue logged; the main loop blinks the error LED) while the core stays
+    // reachable via App/CLI to change the net-ID.
+    if (DeviceStatus.NetId == 0 || DeviceStatus.NetId >= 0x3F)
+    {
+        DeviceStatus.NetId = (uint8_t)(1 + (RawRand() % 61));
+    }
+    ESP_LOGI("INIT", "core net ID = %u", (unsigned)DeviceStatus.NetId);
+
+    PacketFrame cd;
+    PacketConstruct(&cd, ADDR_ALL_CORES,
+                    MakeService(ServiceType::Device, 10),
+                    MakeService(ServiceType::Device, 10),
+                    FLAG_REQACK | FLAG_START | FLAG_STOP,
+                    (const uint8_t *)&GetSerialNumber(), sizeof(SerialNumber));
+    SendAndVerifyPacket(cd);
+
+    uint32_t cd_end = TimeFromBoot() + 500; // docs: responses expected within 500 ms
+    while ((int32_t)(TimeFromBoot() - cd_end) < 0)
+    {
+        ProcessBus();
+        Sleep(10);
+    }
+    if (CoreCollisionFlag())
+        ESP_LOGE("CORE", "Net-ID %u collides with another core - normal boot aborted",
+                 (unsigned)DeviceStatus.NetId);
+
     // Register the core's own serial number as ID 1 (once). Otherwise a Discover of its own
     // SN (CLI self-test or a stray broadcast) allocates a fresh ID (2) and leaves a bogus
     // entry; AddDevice also replaces any wrong ID already stored for this SN.
@@ -132,11 +161,21 @@ LED2.Setup();
 
     ReportLog(MakeLog(false, (uint16_t)ServiceType::Device, 0, 0));
 
+    static bool s_identify_prev = false;
 while (1)
     {
+        // Net-ID collision (Core-discover): blink the error LED slowly (~1 Hz) until
+        // the net is changed. Takes priority over identify and the LED-button state.
+        if (CoreCollisionFlag())
+        {
+            PinModeOutput(LED_NOTIFICATION_PIN);
+            gpio_set_level(LED_NOTIFICATION_PIN, ((DeviceStatus.UptimeMs / 500) & 1) ? 1 : 0);
+            s_identify_prev = false; // keep the identify restore logic in sync
+        }
+        else
+        {
         // Identify (Device CID 2): blink the notification LED fast (~5 Hz) while a
         // host asks us to identify ourselves, then re-apply the LED-button state.
-        static bool s_identify_prev = false;
         bool ident = DeviceIdentifyActive(DeviceStatus.UptimeMs);
         if (ident != s_identify_prev)
         {
@@ -148,8 +187,10 @@ while (1)
         }
         if (ident)
             gpio_set_level(LED_NOTIFICATION_PIN, ((DeviceStatus.UptimeMs / 100) & 1) ? 1 : 0);
+        }
 
         ProcessBus();
+        SubscriptionsTick(DeviceStatus.UptimeMs); // periodic provider triggers (docs: checked from the main loop)
         AppInterfacePump();
         ButtonUpdate();
         ReadIMUData();
@@ -162,21 +203,22 @@ while (1)
         Display1.Render();
         LED1.Send(Display1.Buffer, Vysi1Display::LedNum);
         {
-            Number inst = N(1000000.0f) / N((float)(esp_timer_get_time() - rt));
-            Display1.Data.RefreshRate = Display1.Data.RefreshRate * N(0.9f) + inst * N(0.1f);
+            // FPS = 1e6 / elapsed_us, kept in 16.16 fixed point (no float).
+            int64_t elapsed_us = esp_timer_get_time() - rt;
+            if (elapsed_us <= 0) elapsed_us = 1;
+            Number inst = Number::FromRaw((int32_t)((1000000LL << 16) / elapsed_us));
+            Display1.Data.RefreshRate = Display1.Data.RefreshRate * Number::FromRaw(58982) + inst * Number::FromRaw(6553);
         }
 
         rt = esp_timer_get_time();
         Display2.Render();
         LED2.Send(Display2.Buffer, Vysi1Display::LedNum);
         {
-            Number inst = N(1000000.0f) / N((float)(esp_timer_get_time() - rt));
-            Display2.Data.RefreshRate = Display2.Data.RefreshRate * N(0.9f) + inst * N(0.1f);
+            int64_t elapsed_us = esp_timer_get_time() - rt;
+            if (elapsed_us <= 0) elapsed_us = 1;
+            Number inst = Number::FromRaw((int32_t)((1000000LL << 16) / elapsed_us));
+            Display2.Data.RefreshRate = Display2.Data.RefreshRate * Number::FromRaw(58982) + inst * Number::FromRaw(6553);
         }
-
-#ifdef USE_SCRIPTS
-        ScriptTick(); // advance running/waiting scripts (bounded per main-loop tick)
-#endif
 
         Sleep(2); // short heartbeat: BLE request/response latency scales with this loop period
         TimeUpdate();

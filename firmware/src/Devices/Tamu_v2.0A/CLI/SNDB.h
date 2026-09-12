@@ -71,17 +71,17 @@ static int DispatchSNDBCommand(int argc, char **argv)
         payload_len = 0;
     }
     else if (strcmp(cmd_str, "read_one") == 0) {
-        // CID 14: ID (2 bytes) or SN (14 bytes)
+        // CID 11 per docs 00.11: ID (2 bytes) or SN (14 bytes)
         if (argc < 4) { printf("Missing ID\n"); return 1; }
-        cid = 14;
+        cid = 11;
         uint16_t lookup_id = (uint16_t)atoi(argv[3]);
         memcpy(payload, &lookup_id, 2);
         payload_len = 2;
     }
     else if (strcmp(cmd_str, "write") == 0) {
-        // CID 15: SN (14 bytes) + ID (2 bytes)
+        // CID 12 per docs 00.12: SN (14 bytes) + ID (2 bytes)
         if (argc < 5) { printf("Usage: sndb <addr> write <id> <sn_hex>\n"); return 1; }
-        cid = 15;
+        cid = 12;
         uint16_t write_id = (uint16_t)atoi(argv[3]);
         const char *sn_hex = argv[4];
         for (int i = 0; i < 14 && sn_hex[i*2] != '\0'; i++) {

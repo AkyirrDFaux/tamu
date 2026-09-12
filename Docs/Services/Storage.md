@@ -27,15 +27,15 @@ File table contains file records. It's a file itself managed by this service, fi
 File is given off to have data stored or read by other functions, it has it's own format.
 ### Commands (030x)
 
-| Function          | CID | Payload In                                  | Payload out                                  | Note                      |
-| ----------------- | --- | ------------------------------------------- | -------------------------------------------- | ------------------------- |
-| Format Filesystem | 0   | -                                           | Success                                      |                           |
-| Create File       | 1   | Name, Size (>0)                             | Success (bool)                               | respond only if requested |
-| Delete File       | 2   | Name                                        | Success (bool)                               | respond only if requested |
-| Resize File       | 3   | Name, New Size (>0)                         | Success (bool)                               | respond only if requested |
-| Rename File       | 4   | Old Name, New Name                          | Success (bool)                               | respond only if requested |
-| Read File         | 5   | Name                                        | Name, Fragmentation, File contents (stream)  |                           |
-| Write File        | 6   | Name, Fragmentation, File contents (stream) | Last sequential fragmentation index written. | respond only if requested |
+| Function          | CID | Payload In                                  | Payload out                                  | Note                                                       |
+| ----------------- | --- | ------------------------------------------- | -------------------------------------------- | ---------------------------------------------------------- |
+| Format Filesystem | 0   | -                                           | Success                                      |                                                            |
+| Create File       | 1   | Name, Size (>0)                             | Success (bool)                               | respond only if requested                                  |
+| Delete File       | 2   | Name                                        | Success (bool)                               | respond only if requested                                  |
+| Resize File       | 3   | Name, New Size (>0)                         | Success (bool)                               | respond only if requested                                  |
+| Rename File       | 4   | Old Name, New Name                          | Success (bool)                               | respond only if requested                                  |
+| Read File         | 5   | Name                                        | Name, Fragmentation, File contents (stream)  | maximum 64 byte stream fragment                            |
+| Write File        | 6   | Name, Fragmentation, File contents (stream) | Last sequential fragmentation index written. | respond only if requested, maximum 64 byte stream fragment |
 
 
 ### Functions to implement

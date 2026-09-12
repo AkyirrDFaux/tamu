@@ -18,7 +18,10 @@
 #define FLAG_TYPE   (1 << 3)
 #define FLAG_FRAG   (1 << 4)
 
-#define DEFAULT_PRIORITY 128
+// Docs/RSBus and Packets.md: the priority byte is Reserved(4) | Priority(4), 0 = highest,
+// default 8. The CSMA silence formula is 8 + (priority/8) + random bytes, so the 4-bit
+// default of 8 yields a 9-12 byte gap.
+#define DEFAULT_PRIORITY 8
 
 // ID helpers: 6 bit net + 10 bit device
 inline uint16_t MakeId(uint8_t net, uint16_t dev) { return (uint16_t)((net & 0x3F) << 10) | (dev & 0x3FF); }
@@ -29,17 +32,21 @@ inline uint16_t IdDev(uint16_t id) { return id & 0x3FF; }
 #define ADDR_BROADCAST 0xFFFF
 #define ADDR_BRANCH_BROADCAST 0xFFFE
 
+// Data Formats.md: 0x3F = broadcast into all nets.
+// 3F.1  = all cores (Core discover target), 3F.0 = all unassigned devices.
+#define ADDR_ALL_CORES        MakeId(0x3F, 1)
+#define ADDR_ALL_UNASSIGNED   MakeId(0x3F, 0)
+
 enum class ServiceType : uint8_t
 {
     Device = 0x00,
     Register = 0x01,
     LogHandler = 0x02,
     Storage = 0x03,
-    Script = 0x08,
-    ScriptInstructions = 0x09,
+    Subscriptions = 0x04,
+    Router = 0x10,
     App = 0x11,
-    CLI = 0x12,
-    Router = 0x10
+    CLI = 0x12
 };
 
 struct PacketFrame

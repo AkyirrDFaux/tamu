@@ -15,6 +15,9 @@ struct ResistiveMeasStruct
     uint8_t SensorType = 0;
     Number MeasuredValue = N(0);
     Number CurrentRange = N(0);
+    // The physical default sensor for each channel (Meas1 = NTC100K, Meas2 = LDR10K on
+    // the DualAnalogSensor board); the app can still change it via the SensorType field.
+    explicit ResistiveMeasStruct(uint8_t sensorType = 0) { SensorType = sensorType; }
 };
 
 const BlockMeta ResistiveMeas_Map[] = {
@@ -165,6 +168,7 @@ enum MeasSensorType : uint8_t
     MeasRawResistance = 2,
     MeasLDR10K = 3,
     MeasNTC10K = 4,
+    MeasNTC100K = 5, // 100k nominal (R0=100k, B=3950)
 };
 
 // Filter state for each channel (kept outside the block so the block layout stays exactly
@@ -190,24 +194,15 @@ static void Measuring_Update(uint8_t index, ResistiveMeasStruct *m, uint16_t raw
     if (coeff.Value < 0) coeff.Value = 0;
     Number weight_new = N(1) / (N(1) + coeff);
 
-    // Auto-range from the raw sample with HYSTERESIS: each range only leaves via its
-    // own threshold, so a raw sitting near a boundary cannot oscillate between two
-    // references (which would re-seed the EMA filter every loop and flicker
-    // CurrentRange). Range 0 = 330R, 1 = 10k, 2 = 330k reference.
+    // Auto-range from the raw sample. The divider ratio R_sensor/R_ref = raw/(1023-raw)
+    // is independent of the selected reference, so the thresholds are kept in RATIO space
+    // (up when the sensor is >10x the reference, down when <0.1x). This gives a wide,
+    // overlap-free hysteresis band: the previous per-range raw thresholds let a mid-range
+    // sensor (e.g. a 100 kOhm NTC or a dim-light LDR) flip between the 10 k and 330 k
+    // references every loop, re-seeding the EMA filter and flickering CurrentRange.
     uint8_t range = s_meas_range[index];
-    if (range == 0)
-    {
-        if (raw > 400) range = 1; // leave 330R once comfortably above
-    }
-    else if (range == 1)
-    {
-        if (raw > 850) range = 2;      // too hot for 10k -> 330k
-        else if (raw < 150) range = 0; // too cold for 10k -> 330R
-    }
-    else
-    {
-        if (raw < 600) range = 1; // leave 330k once comfortably below
-    }
+    if (raw > 900 && range < 2) range++;        // raw/(1023-raw) > ~9 -> larger reference
+    else if (raw < 93 && range > 0) range--;    // raw/(1023-raw) < 0.1 -> smaller reference
     s_meas_range[index] = range;
     Meas_SelectRange(index, range);
 
@@ -247,11 +242,13 @@ static void Measuring_Update(uint8_t index, ResistiveMeasStruct *m, uint16_t raw
     }
 
     case MeasNTC10K: // degC, Steinhart-Hart simplified for a 10k divider
+    case MeasNTC100K: // degC, Steinhart-Hart for a 100k nominal (R0=100k, B=3950)
     {
         if (in >= ADCRES) in = N(1022);
         if (in < N(1)) in = N(1);
-        // in/(ADCRES - in) = R_sensor/R_ref; normalize to R_sensor/10k.
-        in = N(1) / (N(0.003354) + log((in / (ADCRES - in)) * (Rref_kohm[range] / N(10.0))) / N(3950)) - N(273.15);
+        // in/(ADCRES - in) = R_sensor/R_ref; normalize to R_sensor/nominal.
+        in = N(1) / (N(0.003354) + log((in / (ADCRES - in)) *
+                   (Rref_kohm[range] / (m->SensorType == MeasNTC100K ? N(100.0) : N(10.0)))) / N(3950)) - N(273.15);
         break;
     }
 

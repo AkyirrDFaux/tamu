@@ -19,7 +19,7 @@ void main() {
   tearDownAll(disconnectHil);
 
   // HIL: core ping and Register System block fields
-  test('HIL: core ping and Register System block fields', () async {
+  test('HIL: core ping and Register System block fields', skip: skipReason, () async {
     expect(ConnectionManager.instance.isConnected, isTrue);
     final db = DeviceDatabase.instance;
     expect(await db.pingCore(), isTrue);
@@ -45,7 +45,7 @@ void main() {
   }, timeout: const Timeout(Duration(seconds: 60)));
 
   // HIL: Tamu SystemMemory blocks 6 and flags via Register
-  test('HIL: Tamu SystemMemory blocks 6 and flags via Register', () async {
+  test('HIL: Tamu SystemMemory blocks 6 and flags via Register', skip: skipReason, () async {
     final reg = RegisterClient(deviceId: 1);
     // Enumerate block types (Enum 0)
     final types = await reg.enumerateBlockTypes();
@@ -60,12 +60,12 @@ void main() {
     }
     expect(totalBlocks, 6, reason: 'Tamu v2.0A should have 6 static blocks');
     // Check LEDButton field 0 (LEDState) is writable (TR)
-    final ledState = await reg.readSystemField(0, 0); // LEDState field 0, key 0
+    final ledState = await reg.readField(0, 0); // System field 0, key 0
     expect(ledState, isNotNull);
   }, timeout: const Timeout(Duration(seconds: 60)));
 
   // HIL: storage 112 frag create/read/write/delete
-  test('HIL: storage 112 frag create/read/write/delete', () async {
+  test('HIL: storage 112 frag create/read/write/delete', skip: skipReason, () async {
     final storage = StorageClient(deviceId: 1);
     final table1 = await storage.readFileTable();
     expect(table1, isNotNull);
@@ -82,7 +82,7 @@ void main() {
   }, timeout: const Timeout(Duration(seconds: 60)));
 
   // HIL: Device 00.0x/00.1x SNDB and TimeSync
-  test('HIL: Device 00.0x/00.1x SNDB and TimeSync', () async {
+  test('HIL: Device 00.0x/00.1x SNDB and TimeSync', skip: skipReason, () async {
     final db = DeviceDatabase.instance;
     await db.refreshNetwork();
     final core = db.byId(1);
@@ -96,7 +96,7 @@ void main() {
   }, timeout: const Timeout(Duration(seconds: 60)));
 
   // HIL: Register Enumerate and BlockInfo
-  test('HIL: Register Enumerate and BlockInfo', () async {
+  test('HIL: Register Enumerate and BlockInfo', skip: skipReason, () async {
     final link = ConnectionManager.instance;
     // Enumerate block types via Register 01.00 Enum 0
     final enumPayload = [0]; // Enum 0 for types

@@ -45,6 +45,14 @@ bool PersistDeviceName();
 // Device software version string (provided per device, e.g. Devices/<device>/Main.h)
 extern const char* DeviceVersion;
 
+// Set when Core-discover detects another core with the SAME net-ID on the bus. The core
+// stays reachable via App/CLI (so the net can be changed) but blinks its error LED.
+inline bool &CoreCollisionFlag()
+{
+    static bool collision = false;
+    return collision;
+}
+
 // Identify (Device service CID 2, Docs/Services/Device service.md): "True = blink red
 // led fast, False = leave led alone". The flag is set by the Device service handler and
 // expires after a short window; each device's main loop blinks its red/notification LED
@@ -64,7 +72,7 @@ inline void DeviceIdentifyStart(bool on, uint32_t now_ms)
 {
     DeviceIdentifyRequested() = on;
     if (on)
-        DeviceIdentifyUntil() = now_ms + 3000; // blink for ~3 s
+        DeviceIdentifyUntil() = now_ms + 10000; // blink for ~10 s (docs)
 }
 inline bool DeviceIdentifyActive(uint32_t now_ms)
 {

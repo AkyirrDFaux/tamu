@@ -41,7 +41,8 @@ inline int32_t FixedMul32(int32_t a, int32_t b)
 
 // (a << 16) / b as Q16.16, 32-bit only (bit-by-bit long division over the 48-bit
 // dividend). Returns 0 on divide-by-zero, matching the 64-bit version. Exact when the
-// quotient fits in 32 bits.
+// quotient fits in 32 bits. noinline so the 48-iteration loop is emitted ONCE and
+// shared by every fixed-point division call site (the DAS's flash budget).
 inline int32_t FixedDiv32(int32_t a, int32_t b)
 {
     if (b == 0) return 0;

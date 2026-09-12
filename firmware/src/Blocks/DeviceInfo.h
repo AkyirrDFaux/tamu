@@ -32,4 +32,5 @@ struct DeviceStatusStruct
     Number AvgLoopTimeMs;
     Number MaxLoopTimeMs;
     uint16_t ShortAddress;
+    uint8_t NetId; // Core only: this core's net identifier (docs, System Block field 7)
 };

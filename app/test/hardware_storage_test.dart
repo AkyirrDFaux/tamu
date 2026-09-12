@@ -49,7 +49,7 @@ void main() async {
   setUpAll(() async => await connectHil());
   tearDownAll(disconnectHil);
 
-  test('HIL: storage create/read/write/delete file', () async {
+  test('HIL: storage create/read/write/delete file', skip: skipReason, () async {
     // First, read the file table to see what's there
     final storage = StorageClient(deviceId: 1);
     final table1 = await storage.readFileTable();

@@ -210,13 +210,6 @@ class LogEntry {
   int get sourceId => (srcAndCode >> 1) & 0x7FFF;
   int get code => (srcAndCode >> 16) & 0xFFFF;
 
-  /// Human-readable one-liner, resolved from the firmware's known sources.
-  String describe() {
-    final source = sourceName();
-    final meaning = codeMeaning();
-    return meaning ?? '$source reported code ${codeText()}';
-  }
-
   String detail() =>
       '${isBlock ? 'Block' : 'Service'} $sourceName   '
       '${deviceId == 0xFFFF ? 'broadcast' : idToString(deviceId)}   '
@@ -230,25 +223,85 @@ class LogEntry {
     return service?.name ?? 'Service ${sourceId & 0xFF}';
   }
 
-  /// Decoded code where the firmware defines one, else raw hex.
-  String? codeMeaning() {
+  /// User-readable one-liner (Docs/Services/Log Handler.md: the app "should be
+  /// able to decode into readable text"). The firmware logs are structured
+  /// (source + code), so the code is mapped to a descriptive message.
+  String describe() {
     if (!isBlock) {
-      // Dispatcher reports MakeLog(false, service, cid, 0) when a request
-      // could not be routed/handled; code 0 marks boot reports.
-      if (code == 0) return 'Reported without a code';
-      final service = ServiceType.fromValue(sourceId & 0xFF);
-      return '${service == null ? 'Service' : service.name} CID $code failed';
+      final text = _serviceMeaning();
+      if (text != null) return text;
+      return '${sourceName()} reported code ${codeText()}';
     }
     switch (BlockType.fromValue(sourceId)) {
       case BlockType.accGyr:
         const errors = [
           'No error',
-          'Bus transmit/receive failed',
-          'Sensor not found (ACK/power)',
-          'Init sequence failed',
-          'Transaction timed out',
+          'Gyroscope communication error (I2C bus)',
+          'Gyroscope not found (check wiring/power)',
+          'Gyroscope initialization failed',
+          'Gyroscope timed out',
         ];
-        return 'Acc/Gyr: ${code < errors.length ? errors[code] : codeText()}';
+        return code < errors.length ? errors[code] : 'Acc/Gyr error ${codeText()}';
+      default:
+        return '${sourceName()} reported code ${codeText()}';
+    }
+  }
+
+  /// Maps a service log (source = service type, code = the failing CID or 0 for
+  /// a boot/plain report) to a descriptive sentence.
+  String? _serviceMeaning() {
+    final srv = ServiceType.fromValue(sourceId & 0xFF);
+    if (srv == null) return null;
+    switch (srv) {
+      case ServiceType.device:
+        switch (code) {
+          case 0: return 'Device started';
+          case 1: return 'Device did not respond to ping';
+          case 2: return 'Identify request failed';
+          case 3: return 'Time synchronization failed';
+          case 10: return 'Core discovery failed';
+          case 11: return 'Could not read device database';
+          case 12: return 'Could not write device database';
+          case 13: return 'Could not read device database';
+        }
+        return 'Device service error ${codeText()}';
+      case ServiceType.register:
+        switch (code) {
+          case 1: return 'Could not read register value';
+          case 2: return 'Could not write register value';
+          case 3: return 'Could not save registers to backup';
+          case 4: return 'Could not recall registers from backup';
+          case 0x10: return 'Could not create dynamic block';
+          case 0x11: return 'Could not delete dynamic block';
+          case 0x12: return 'Could not read block name';
+          case 0x13: return 'Could not set block name';
+        }
+        return 'Register error ${codeText()}';
+      case ServiceType.storage:
+        switch (code) {
+          case 0: return 'Filesystem format failed';
+          case 1: return 'Could not create file';
+          case 2: return 'Could not delete file';
+          case 3: return 'Could not resize file';
+          case 4: return 'Could not rename file';
+          case 5: return 'Could not read file';
+          case 6: return 'Could not write file';
+        }
+        return 'Storage error ${codeText()}';
+      case ServiceType.subscriptions:
+        switch (code) {
+          case 1: return 'Could not change subscription';
+          case 2: return 'Could not read provider subscriptions';
+          case 3: return 'Could not read requester subscriptions';
+          case 4: return 'Could not set requester subscription';
+        }
+        return 'Subscription error ${codeText()}';
+      case ServiceType.logHandler:
+        switch (code) {
+          case 1: return 'Could not read logs';
+          case 2: return 'Could not clear logs';
+        }
+        return 'Log handler error ${codeText()}';
       default:
         return null;
     }

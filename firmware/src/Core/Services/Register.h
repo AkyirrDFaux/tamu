@@ -107,36 +107,62 @@ static void HandleEnumerate(const PacketFrame &frame, uint32_t bi) {
 
 // ===== CID 1: Read helpers =====
 
+// Small helpers to write a system-block field value + descriptor in one place. The
+// Subscriptions service resolves system-block sources through the same path.
+static inline void SysFieldValue(BlockMeta &m, uint8_t *vbuf, uint8_t &vsz, const void *v, uint8_t size, uint16_t type) {
+    memcpy(vbuf, v, size);
+    m.FlagsAndType = type; m.Size = size; vsz = size;
+}
+static inline void SysFieldU32(BlockMeta &m, uint8_t *vbuf, uint8_t &vsz, uint32_t v, uint16_t type) {
+    SysFieldValue(m, vbuf, vsz, &v, 4, type);
+}
+
+// Resolves one System-block field (type 0, inst 0) into a descriptor + value. Returns
+// false for an unknown field/key.
+bool RegisterGetSystemField(uint8_t field, uint8_t key, BlockMeta &m, uint8_t *vbuf, uint8_t &vsz) {
+    m = {}; vsz = 0;
+    if (field==0 && key==0) SysFieldU32(m, vbuf, vsz, (uint32_t)kDeviceType, (uint16_t)DataType::Enum|FieldFlags::ReadOnly);
+    else if (field==0 && key==1) SysFieldU32(m, vbuf, vsz, kCapabilities, (uint16_t)DataType::Index|FieldFlags::ReadOnly);
+    else if (field==0 && key==2) { uint8_t ver[4] = { (VERSION_YEAR % 100), VERSION_MONTH, VERSION_DAY, VERSION_ITERATION }; SysFieldValue(m, vbuf, vsz, ver, 4, (uint16_t)DataType::String|FieldFlags::ReadOnly); }
+    else if (field==1) SysFieldValue(m, vbuf, vsz, GetSerialNumber().bytes, 14, (uint16_t)DataType::SN|FieldFlags::ReadOnly);
+    else if (field==2) { uint16_t v=DeviceStatus.ShortAddress; SysFieldValue(m, vbuf, vsz, &v, 2, (uint16_t)DataType::Id|FieldFlags::ReadOnly); }
+    else if (field==3 && key==0) SysFieldU32(m, vbuf, vsz, TimeFromBoot(), (uint16_t)DataType::Index|FieldFlags::ReadOnly);
+    else if (field==3 && key==1) SysFieldU32(m, vbuf, vsz, Now(), (uint16_t)DataType::Index|FieldFlags::ReadOnly);
+    else if (field==3 && key==2) SysFieldU32(m, vbuf, vsz, (uint32_t)TimeOffsetMs, (uint16_t)DataType::Index|FieldFlags::ReadOnly);
+    else if (field==3 && key==3) SysFieldValue(m, vbuf, vsz, &DeviceStatus.AvgLoopTimeMs, 4, (uint16_t)DataType::Number|FieldFlags::ReadOnly);
+    else if (field==3 && key==4) SysFieldValue(m, vbuf, vsz, &DeviceStatus.MaxLoopTimeMs, 4, (uint16_t)DataType::Number|FieldFlags::ReadOnly);
+    else if (field==4 && key==0) SysFieldU32(m, vbuf, vsz, (uint32_t)GetFreeRAM(), (uint16_t)DataType::Index|FieldFlags::ReadOnly);
+    else if (field==4 && key==1) SysFieldU32(m, vbuf, vsz, GetTotalRAM(), (uint16_t)DataType::Index|FieldFlags::ReadOnly);
+    else if (field==5 && key==0) SysFieldU32(m, vbuf, vsz, Storage.UsedFlashBytes(), (uint16_t)DataType::Index|FieldFlags::ReadOnly);
+    else if (field==5 && key==1) SysFieldU32(m, vbuf, vsz, STORAGE_FLASH_SIZE, (uint16_t)DataType::Index|FieldFlags::ReadOnly);
+    else if (field==6) { LoadPersistedDeviceName(); m.FlagsAndType=(uint16_t)DataType::String|FieldFlags::Persistent; m.Size=strlen(DeviceName); if(m.Size>16) m.Size=16; vsz=m.Size; memcpy(vbuf, DeviceName, vsz); }
+    else if (field==7) { uint8_t v=DeviceStatus.NetId; SysFieldValue(m, vbuf, vsz, &v, 1, (uint16_t)DataType::Id|FieldFlags::Persistent); }
+#ifndef BOARD_DAS_v0_1
+    else if (field==8 && key==0) { uint8_t v=AppConnected?1:0; SysFieldValue(m, vbuf, vsz, &v, 1, (uint16_t)DataType::Bool|FieldFlags::ReadOnly); }
+    else if (field==8 && key==1) { uint8_t v=AppCLIConnected()?1:0; SysFieldValue(m, vbuf, vsz, &v, 1, (uint16_t)DataType::Bool|FieldFlags::ReadOnly); }
+#endif
+    else { return false; }
+    m.Key = key;
+    return true;
+}
+
 static void HandleSystemBlockRead(const PacketFrame &frame, uint32_t bi, uint8_t field, uint8_t key) {
     uint8_t rpl[40]; uint16_t pos=0;
     memcpy(rpl+pos, &bi,4); pos+=4;
     BlockMeta m = {}; uint8_t vsz=0; uint8_t vbuf[24]={0};
     
     if (field==0xFF) { m.FlagsAndType = (uint16_t)BlockType::System | FieldFlags::ReadOnly; m.Key=0xFF; m.Size=9; memcpy(rpl+pos,&m,4); pos+=4; rpl[pos++]=9; while(pos%4) rpl[pos++]=0; SendResponse(frame,rpl,pos); return; }
-    if (field==0 && key==0) { uint32_t v=(uint32_t)kDeviceType; memcpy(vbuf,&v,4); m.FlagsAndType=(uint16_t)DataType::Enum|FieldFlags::ReadOnly; m.Size=4; vsz=4; }
-    else if (field==0 && key==1) { uint32_t v=kCapabilities; memcpy(vbuf,&v,4); m.FlagsAndType=(uint16_t)DataType::Index|FieldFlags::ReadOnly; m.Size=4; vsz=4; }
-    else if (field==0 && key==2) { uint8_t ver[4] = { (VERSION_YEAR % 100), VERSION_MONTH, VERSION_DAY, VERSION_ITERATION }; m.FlagsAndType=(uint16_t)DataType::String|FieldFlags::ReadOnly; m.Size=4; vsz=4; memcpy(vbuf, ver, 4); }
-    else if (field==1) { m.FlagsAndType=(uint16_t)DataType::SN|FieldFlags::ReadOnly; m.Size=14; vsz=14; memcpy(vbuf, GetSerialNumber().bytes, 14); }
-    else if (field==2) { uint16_t v=DeviceStatus.ShortAddress; memcpy(vbuf,&v,2); m.FlagsAndType=(uint16_t)DataType::Id|FieldFlags::ReadOnly; m.Size=2; vsz=2; }
-    else if (field==3 && key==0) { uint32_t v=TimeFromBoot(); memcpy(vbuf,&v,4); m.FlagsAndType=(uint16_t)DataType::Index|FieldFlags::ReadOnly; m.Size=4; vsz=4; }
-    else if (field==3 && key==1) { uint32_t v=Now(); memcpy(vbuf,&v,4); m.FlagsAndType=(uint16_t)DataType::Index|FieldFlags::ReadOnly; m.Size=4; vsz=4; }
-    else if (field==3 && key==2) { int32_t v=TimeOffsetMs; memcpy(vbuf,&v,4); m.FlagsAndType=(uint16_t)DataType::Index|FieldFlags::ReadOnly; m.Size=4; vsz=4; }
-    else if (field==3 && key==3) { Number v=DeviceStatus.AvgLoopTimeMs; memcpy(vbuf,&v,4); m.FlagsAndType=(uint16_t)DataType::Number|FieldFlags::ReadOnly; m.Size=4; vsz=4; }
-    else if (field==3 && key==4) { Number v=DeviceStatus.MaxLoopTimeMs; memcpy(vbuf,&v,4); m.FlagsAndType=(uint16_t)DataType::Number|FieldFlags::ReadOnly; m.Size=4; vsz=4; }
-    else if (field==4 && key==0) { uint32_t v=GetFreeRAM(); memcpy(vbuf,&v,4); m.FlagsAndType=(uint16_t)DataType::Index|FieldFlags::ReadOnly; m.Size=4; vsz=4; }
-    else if (field==4 && key==1) { uint32_t v=GetTotalRAM(); memcpy(vbuf,&v,4); m.FlagsAndType=(uint16_t)DataType::Index|FieldFlags::ReadOnly; m.Size=4; vsz=4; }
-    else if (field==5 && key==0) { uint32_t v=Storage.UsedFlashBytes(); memcpy(vbuf,&v,4); m.FlagsAndType=(uint16_t)DataType::Index|FieldFlags::ReadOnly; m.Size=4; vsz=4; }
-    else if (field==5 && key==1) { uint32_t v=STORAGE_FLASH_SIZE; memcpy(vbuf,&v,4); m.FlagsAndType=(uint16_t)DataType::Index|FieldFlags::ReadOnly; m.Size=4; vsz=4; }
-    else if (field==6) { LoadPersistedDeviceName(); m.FlagsAndType=(uint16_t)DataType::String|FieldFlags::Persistent; m.Size=strlen(DeviceName); if(m.Size>16) m.Size=16; vsz=m.Size; memcpy(vbuf, DeviceName, vsz); }
-    else if (field==7) { uint16_t v=DeviceStatus.ShortAddress; memcpy(vbuf,&v,2); m.FlagsAndType=(uint16_t)DataType::Id|FieldFlags::Persistent; m.Size=2; vsz=2; }
-    else if (field==8 && key==0) { uint8_t v=AppConnected?1:0; vbuf[0]=v; m.FlagsAndType=(uint16_t)DataType::Bool|FieldFlags::ReadOnly; m.Size=1; vsz=1; }
-    else if (field==8 && key==1) { uint8_t v=AppCLIConnected()?1:0; vbuf[0]=v; m.FlagsAndType=(uint16_t)DataType::Bool|FieldFlags::ReadOnly; m.Size=1; vsz=1; }
-    else { RespondStatus(frame,false); return; }
+
+    // All system fields resolve through the shared RegisterGetSystemField (single
+    // source of truth - the Subscriptions service uses the same path).
+    if (!RegisterGetSystemField(field, key, m, vbuf, vsz))
+    {
+        RespondStatus(frame,false);
+        return;
+    }
     
-    m.Key=key;
-    memcpy(rpl+pos+4, vbuf, vsz);
-    memcpy(rpl+pos,&m,4);
-    pos+=4+vsz;
+    memcpy(rpl+pos, &m, 4); pos += 4;
+    memcpy(rpl+pos, vbuf, vsz); pos += vsz;
     while(pos%4) rpl[pos++]=0;
     SendResponse(frame,rpl,pos);
 }

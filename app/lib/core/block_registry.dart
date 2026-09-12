@@ -39,7 +39,35 @@ const Map<int, String> _sensorTypes = {
   2: 'Raw Resistance',
   3: 'LDR 10K',
   4: 'NTC10K',
+  5: 'NTC100K',
 };
+
+/// Units reported by each DAS sensor type (Docs/Modules/Generic system blocks.md).
+/// Raw Measurement (0) is a raw ADC bit count and has no unit.
+const Map<int, String> sensorUnits = {
+  0: '',
+  1: 'V',
+  2: 'kΩ',
+  3: 'lux',
+  4: '°C',
+  5: '°C',
+};
+
+/// Human-readable name for a DAS sensor type value (0..5), else the raw number.
+String sensorTypeLabel(int value) => _sensorTypes[value] ?? 'Type $value';
+
+/// Qualitative light level for the LDR (lux) - fuzzy descriptions spanning roughly
+/// 1 lux (deep twilight) up to 10000 lux (full sunlight) and beyond.
+String luxLevel(double lux) {
+  if (lux < 1) return 'Dark';
+  if (lux < 10) return 'Very dim';
+  if (lux < 50) return 'Dim';
+  if (lux < 200) return 'Low light';
+  if (lux < 1000) return 'Moderate';
+  if (lux < 5000) return 'Bright';
+  if (lux < 10000) return 'Very bright';
+  return 'Sunlight';
+}
 
 const _ledButtonFields = [
   FieldInfo('LED State'),

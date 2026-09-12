@@ -2,6 +2,17 @@
 
 #include "Handler.h"
 
+// BlockInfo helpers for the CLI (the Register service addresses blocks via a 32-bit
+// BlockInfo: Type10 | Instance6 | Field8 | Key8, not the old BlockIndex).
+static inline uint32_t CliBlockInfo(uint16_t type, uint8_t inst, uint8_t field, uint8_t key)
+{
+    return ((uint32_t)(type & 0x3FF) << 22) | ((uint32_t)(inst & 0x3F) << 16) | ((uint32_t)field << 8) | key;
+}
+static inline uint16_t CliBlockInfoType(uint32_t bi) { return (bi >> 22) & 0x3FF; }
+static inline uint8_t CliBlockInfoInst(uint32_t bi) { return (bi >> 16) & 0x3F; }
+static inline uint8_t CliBlockInfoField(uint32_t bi) { return (bi >> 8) & 0xFF; }
+static inline uint8_t CliBlockInfoKey(uint32_t bi) { return bi & 0xFF; }
+
 // Converts a float to a fixed-point Number (Q16.16) with rounding. Saturates instead of
 // invoking UB through an out-of-range int32_t cast.
 Number FloatToNumber(float f)
@@ -313,16 +324,15 @@ bool ParseCLIValue(uint16_t type, const char *val_str, void *out_buffer, uint8_t
 #include "esp_console.h"
 #include "esp_log.h"
 
-// Send a memory read request using the new SRV-based routing
-void SendMemoryRead(uint16_t target, ServiceType svc, BlockIndex idx)
+// Send a Register service read request (CID 1) for the given BlockInfo.
+void SendMemoryRead(uint16_t target, ServiceType svc, uint32_t block_info)
 {
     PacketFrame req;
-    // CID 2 (Read) on the selected memory service
     PacketConstruct(&req, target,
-                     MakeService(svc, 2),
+                     MakeService(svc, 1), // Register CID 1 = Read
                      MakeService(ServiceType::CLI, 0),
                      FLAG_REQACK | FLAG_START | FLAG_STOP,
-                     (uint8_t *)&idx, sizeof(BlockIndex));
+                     (uint8_t *)&block_info, sizeof(uint32_t));
     DispatchPacket(req);
 }
 
@@ -354,7 +364,8 @@ static int CmdTree(int argc, char **argv)
     cli_target_addr = (argc > 1) ? atoi(argv[1]) : 1;
     printf("Requesting full topology dump from Device %d...\n", cli_target_addr);
 
-    BlockIndex summary = {.Block = INVALID_BLOCK, .Field = INVALID_INDEX, .Key = INVALID_INDEX};
+    // Start with the System block summary (BlockInfo type 0, inst 0, field 0xFF).
+    uint32_t summary = CliBlockInfo(0, 0, 0xFF, 0xFF);
     // Space the requests out: back-to-back transmissions collide with the responder's
     // replies on the half-duplex bus (the node answers request 1 while we transmit
     // request 2), losing the responses. The 100 ms gap is enough for the core (10 ms
@@ -381,32 +392,23 @@ static int CmdRead(int argc, char **argv)
     ServiceType svc = (argc > 2) ? ParseService(argv[2]) : ServiceType::Register;
     uint8_t block  = (argc > 3) ? (uint8_t)atoi(argv[3]) : INVALID_BLOCK;
     uint8_t field = (argc > 4) ? atoi(argv[4]) : INVALID_INDEX;
-    uint8_t key   = (argc > 5) ? atoi(argv[5]) : INVALID_INDEX;
+    // Key defaults to 0 (the first member of a keyed/system field); only an explicit
+    // key argument requires a concrete field.
+    uint8_t key   = (argc > 5) ? atoi(argv[5]) : 0;
 
-    if (key != INVALID_INDEX && field == INVALID_INDEX)
+    if (argc > 5 && field == INVALID_INDEX)
     {
         printf("Error: Key requires a valid Field index.\n");
         return 1;
     }
 
     printf("Reading Device %d, Svc %d, Block [%d], Field [%d], Key [%s]...\n",
-           addr, (int)svc, block, field, (key == INVALID_INDEX ? "N/A" : argv[5]));
+           addr, (int)svc, block, field, (argc > 5 ? argv[5] : "0"));
 
-    if (svc == ServiceType::Register) {
-        // Register service uses BlockInfo (Type10|Inst6|Field8|Key8), CID 1 for Read
-        uint32_t bi = ((0 & 0x3FF) << 22) | ((0 & 0x3F) << 16) | ((uint32_t)field << 8) | (key & 0xFF);
-        uint8_t payload[4] = {(uint8_t)bi, (uint8_t)(bi >> 8), (uint8_t)(bi >> 16), (uint8_t)(bi >> 24)};
-        PacketFrame req;
-        PacketConstruct(&req, addr,
-                         MakeService(svc, 1),  // CID 1 for Read on Register
-                         MakeService(ServiceType::CLI, 0),
-                         FLAG_REQACK | FLAG_START | FLAG_STOP,
-                         payload, 4);
-        DispatchPacket(req);
-    } else {
-        BlockIndex req = {.Block = block, .Field = field, .Key = key};
-        SendMemoryRead(addr, svc, req);
-    }
+    // Register service uses BlockInfo (Type10|Inst6|Field8|Key8), CID 1 for Read.
+    // `block` is the block TYPE (e.g. 4 = PWM); inst is always 0 for static blocks.
+    uint32_t bi = CliBlockInfo((block == INVALID_BLOCK) ? 0 : block, 0, field, key);
+    SendMemoryRead(addr, svc, bi);
     return 0;
 }
 
@@ -455,33 +457,19 @@ static int CmdWrite(int argc, char **argv)
     uint8_t payload[MAX_PAYLOAD_SIZE];
     uint16_t offset = 0;
 
-    if (svc == ServiceType::Register) {
-        // Register service uses BlockInfo (Type10|Inst6|Field8|Key8)
-        uint32_t bi = ((0 & 0x3FF) << 22) | ((0 & 0x3F) << 16) | ((uint32_t)field << 8) | (key & 0xFF);
-        memcpy(payload + offset, &bi, 4); offset += 4;  // BlockInfo
-        memcpy(payload + offset, &desc, sizeof(BlockMeta)); offset += sizeof(BlockMeta);
-        memcpy(payload + offset, buffer, len); offset += len;
+    // Register service uses BlockInfo (Type10|Inst6|Field8|Key8) and CID 2 for Write.
+    // `block` is the block TYPE (e.g. 4 = PWM); inst is always 0 for static blocks.
+    uint32_t bi = CliBlockInfo((block == INVALID_BLOCK) ? 0 : block, 0, field, key);
+    memcpy(payload + offset, &bi, 4); offset += 4;  // BlockInfo
+    memcpy(payload + offset, &desc, sizeof(BlockMeta)); offset += sizeof(BlockMeta);
+    memcpy(payload + offset, buffer, len); offset += len;
 
-        PacketFrame write_pkt;
-        PacketConstruct(&write_pkt, addr,
-                         MakeService(svc, 3),
-                         MakeService(ServiceType::CLI, 0),
-                         FLAG_REQACK | FLAG_START | FLAG_STOP,
-                         payload, offset);
-        DispatchPacket(write_pkt);
-    } else {
-        BlockIndex idx = { .Block = block, .Field = field, .Key = key };
-        memcpy(payload + offset, &idx, sizeof(BlockIndex));  offset += sizeof(BlockIndex);
-        memcpy(payload + offset, &desc, sizeof(BlockMeta)); offset += sizeof(BlockMeta);
-        memcpy(payload + offset, buffer, len); offset += len;
-
-        PacketFrame write_pkt;
-        PacketConstruct(&write_pkt, addr,
-                         MakeService(svc, 3),
-                         MakeService(ServiceType::CLI, 0),
-                         FLAG_REQACK | FLAG_START | FLAG_STOP,
-                         payload, offset);
-        DispatchPacket(write_pkt);
-    }
+    PacketFrame write_pkt;
+    PacketConstruct(&write_pkt, addr,
+                     MakeService(svc, 2),  // Register CID 2 = Write
+                     MakeService(ServiceType::CLI, 0),
+                     FLAG_REQACK | FLAG_START | FLAG_STOP,
+                     payload, offset);
+    DispatchPacket(write_pkt);
     return 0;
 }
