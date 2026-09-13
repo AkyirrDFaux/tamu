@@ -33,12 +33,13 @@ inline int FindStaticBlock(uint16_t type, uint8_t inst) {
 
 // ===== Helpers for common response patterns =====
 // Buffer size for field responses: 4 (BlockInfo) + 4 (BlockMeta) + max field size + padding.
-// Matrix<3,3> = 40 bytes on full targets; SCALAR_ONLY targets (DAS) carry no Vector/Matrix
-// fields, so the largest field is a 16-byte string.
+// Dynamic (keyed) fields hold concatenated dictionary entries and can reach the u8 size
+// limit of BlockMeta.Size (255 bytes), so the response buffer must cover 4+4+255+pad.
+// SCALAR_ONLY targets (DAS) carry no Vector/Matrix fields; the largest field is a 16-byte string.
 #ifdef SCALAR_ONLY
 #define FIELD_RESPONSE_BUF_SIZE 32
 #else
-#define FIELD_RESPONSE_BUF_SIZE 64
+#define FIELD_RESPONSE_BUF_SIZE 268
 #endif
 
 static inline void SendBlockMetaResponse(const PacketFrame &frame, uint32_t bi, uint16_t flags_and_type, uint8_t map_count, const char *name) {

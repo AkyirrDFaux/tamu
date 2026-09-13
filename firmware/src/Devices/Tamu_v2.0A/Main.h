@@ -71,9 +71,9 @@ const size_t static_block_num = sizeof(static_block_registry) / sizeof(StaticBlo
 #include "Button.h"
 #include "AccGyr.h"
 #include "LED.h"
+#include "LedDisplayTest.h"
 
-LEDDriver LED1(3);
-LEDDriver LED2(0);
+LEDDriver LED(3, 0); // both LED strips: pins 3 (Display1) and 0 (Display2), sent in parallel
 
 #include "AppUSB.h"
 #include "AppBLE.h"
@@ -106,8 +106,8 @@ ESP_LOGI("INIT","b5 cli"); StartCLI();
 ESP_LOGI("INIT","b6 rs485"); SetupRS485();
 ESP_LOGI("INIT","b7 pwm"); SetupFanPWM();
 ESP_LOGI("INIT","b8 imu"); InitLSM6DS3();
-LED1.Setup();
-LED2.Setup();
+LED.Setup();
+InitLedDisplayTest(); // TEMP TEST: repeating square animation on Display2/GPIO0
 
     PinHigh(LED_NOTIFICATION_PIN);
     PinModeInput(LED_NOTIFICATION_PIN);
@@ -196,28 +196,21 @@ while (1)
         ButtonUpdate();
         ReadIMUData();
 
-        // Render the configured render block (Vysi1Display, driven by the LEDDisplay
-        // static block's Brightness/Offset/RenderBlock fields) to both LED strips (pins
-        // 0,3) and track each display's achieved refresh rate (FPS, averaged) in its
-        // Read-Only Refresh Rate field.
+        // Render the configured render blocks (Vysi1Display, driven by the LEDDisplay
+        // static block's Brightness/Offset/RenderBlock fields) and send both LED strips
+        // (pins 0,3) IN PARALLEL, tracking each display's achieved refresh rate (FPS,
+        // averaged) in its Read-Only Refresh Rate field.
         int64_t rt = esp_timer_get_time();
+        TickLedDisplayTest(); // TEMP TEST: drive the square animation
         Display1.Render();
-        LED1.Send(Display1.Buffer, Vysi1Display::LedNum);
+        Display2.Render();
+        LED.SendParallel(Display1.Buffer, Display2.Buffer, Vysi1Display::LedNum);
         {
             // FPS = 1e6 / elapsed_us, kept in 16.16 fixed point (no float).
             int64_t elapsed_us = esp_timer_get_time() - rt;
             if (elapsed_us <= 0) elapsed_us = 1;
             Number inst = Number::FromRaw((int32_t)((1000000LL << 16) / elapsed_us));
             Display1.Data.RefreshRate = Display1.Data.RefreshRate * Number::FromRaw(58982) + inst * Number::FromRaw(6553);
-        }
-
-        rt = esp_timer_get_time();
-        Display2.Render();
-        LED2.Send(Display2.Buffer, Vysi1Display::LedNum);
-        {
-            int64_t elapsed_us = esp_timer_get_time() - rt;
-            if (elapsed_us <= 0) elapsed_us = 1;
-            Number inst = Number::FromRaw((int32_t)((1000000LL << 16) / elapsed_us));
             Display2.Data.RefreshRate = Display2.Data.RefreshRate * Number::FromRaw(58982) + inst * Number::FromRaw(6553);
         }
 

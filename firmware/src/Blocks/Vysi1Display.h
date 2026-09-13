@@ -2,6 +2,8 @@
 
 #include "Blocks/Render.h"
 #include "Core/Functions/Memory.h"
+#include "Core/Types/Matrix.h"
+#include "Core/Types/Vector.h"
 #include "esp_log.h"
 
 const uint8_t GammaTable[256] = {
@@ -83,20 +85,15 @@ const BlockMeta Vysi1_Map[] = {
     {DataType::Number | FieldFlags::ReadOnly, 0x00, sizeof(Number)},  // Refresh Rate
 };
 
-// Layout-file write trigger: stores the new Name and loads the layout file immediately
-// so the stored name always matches the layout in use. `block.Data` is the first member
-// of the owning Vysi1Display instance (Main.h registers &DisplayN.Data), which recovers
-// the per-display runtime layout.
-// The layout-file write trigger (index 3) and the schema are defined after the class:
-// the trigger loads through the owning Vysi1Display instance.
-
+// Renders the configured render block into the LED buffer, applying brightness and gamma correction.
+// Performance-oriented rewrite: geometry contributions are cached per block generation
+// (mask cache), so an unchanged scene costs one buffer clear + a per-LED fill pass per frame.
 class Vysi1Display
 {
 public:
-    // Runtime LED-index table loaded from a layout file (Docs/Modules/LED display.md):
-    // row-first W x H uint16 entries, 0xFFFF = missing LED, indexes are 0-based.
     static const uint32_t MaxLayoutEntries = 256;
     static const uint32_t LedNum = 86;
+    static const uint32_t MaxCachedFields = 8;
 
     Vysi1Struct Data;
     uint16_t Layout[MaxLayoutEntries];
@@ -104,14 +101,57 @@ public:
     uint8_t Lh = 10;
     ColourClass Buffer[LedNum];
 
+    // LED-centric screen coordinates (rebuilt when a layout loads). Screen y = 0 at
+    // the bottom; the layout array is row-first with its first row on top.
+    uint8_t LedX[LedNum];
+    uint8_t LedY[LedNum];
+    bool LedPresent[LedNum];
+    uint32_t LayoutGen = 0;
+
+    // Mask: per-LED alpha (0..255) of the current mask section. Textures consume and
+    // reset it; geometries accumulate into it.
+    uint8_t Mask[LedNum];
+
+    // Cached per-field geometry alpha (0..255), invalidated on block/offset/layout change.
+    uint8_t GeoMask[MaxCachedFields][LedNum];
+    DynamicBlockDescriptor *CacheBlockPtr = nullptr;
+    uint32_t CacheBlockGen = 0xFFFFFFFF;
+    int32_t CacheOffset[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+    uint32_t CacheLayoutGen = 0xFFFFFFFF;
+    bool CacheValid = false;
+
     Vysi1Display() { LoadDefaultLayout(); }
 
     void Render();
-void ResolveGeometryDefinition(DynamicBlockDescriptor *block, uint16_t dict_index, GeometryDefinition &def);
-Number CalculateShapeAlpha(const GeometryDefinition &def, Vector<2> P);
-void RenderGeometry(DynamicBlockDescriptor *block, uint16_t dict_index, const Matrix<3, 3> &BaseTransform, Number *Overlay);
-void ResolveTextureDefinition(DynamicBlockDescriptor *block, uint16_t dict_index, TextureDefinition &def);
-void RenderTexture(DynamicBlockDescriptor *block, uint16_t dict_index, const Matrix<3, 3> &BaseTransform, Number *Overlay);
+    void RenderGeometryField(DynamicBlockDescriptor *block, uint16_t field);
+    void ApplyGeometryField(DynamicBlockDescriptor *block, uint16_t field);
+    void RenderTextureField(DynamicBlockDescriptor *block, uint16_t field);
+    uint8_t ShapeAlpha(Geometries shape, const Vector<2> &P, Number hx, Number hy, Number fade);
+    uint8_t FadeAlpha(Number distance, Number fade);
+    Matrix<3, 3> PromoteAffine(const Matrix<2, 3> &m);
+    Matrix<2, 3> IdentityAffine();
+
+    // Rebuilds the per-LED screen-coordinate table from the current layout and bumps
+    // LayoutGen (invalidates the geometry cache).
+    void RebuildLedTable()
+    {
+        for (uint32_t i = 0; i < LedNum; i++)
+        {
+            LedPresent[i] = false;
+            LedX[i] = 0;
+            LedY[i] = 0;
+        }
+        for (uint32_t r = 0; r < (uint32_t)Lw * Lh && r < MaxLayoutEntries; r++)
+        {
+            uint16_t idx = Layout[r];
+            if (idx == 0xFFFF || idx >= LedNum)
+                continue;
+            LedX[idx] = (uint8_t)(r % Lw);
+            LedY[idx] = (uint8_t)(Lh - 1 - (r / Lw)); // screen y, 0 at bottom
+            LedPresent[idx] = true;
+        }
+        LayoutGen++;
+    }
 
     // Reverts to the compiled-in default layout (11x10, 0=missing converted to FFFF).
     void LoadDefaultLayout()
@@ -122,6 +162,7 @@ void RenderTexture(DynamicBlockDescriptor *block, uint16_t dict_index, const Mat
             Layout[i] = 0xFFFF;
         for (uint32_t i = 0; i < Lw * Lh && i < MaxLayoutEntries; i++)
             Layout[i] = (LayoutVysiv1_0[i] == 0) ? 0xFFFF : (uint16_t)(LayoutVysiv1_0[i] - 1);
+        RebuildLedTable();
     }
 
     // Loads the layout file named by Data.LayoutFile (8-char storage name form).
@@ -159,6 +200,7 @@ void RenderTexture(DynamicBlockDescriptor *block, uint16_t dict_index, const Mat
                 Layout[i] = 0xFFFF; // index beyond this display's chain
         Lw = hdr[0];
         Lh = hdr[1];
+        RebuildLedTable();
         return true;
     }
 };
@@ -211,6 +253,146 @@ const BlockSchema Vysi1_Schema = {
     .MapCount = sizeof(Vysi1_Map) / sizeof(BlockMeta),
 };
 
+// Identity 2x3 affine ([1 0 0; 0 1 0]).
+inline Matrix<2, 3> Vysi1Display::IdentityAffine()
+{
+    Matrix<2, 3> m;
+    m(0, 0) = Number(1);
+    m(0, 1) = Number(0);
+    m(0, 2) = Number(0);
+    m(1, 0) = Number(0);
+    m(1, 1) = Number(1);
+    m(1, 2) = Number(0);
+    return m;
+}
+
+// Promotes a 2x3 affine to a 3x3 homogeneous matrix (docs store "Matrix 2x3",
+// internally we compose 3x3 homogeneous transforms).
+inline Matrix<3, 3> Vysi1Display::PromoteAffine(const Matrix<2, 3> &m)
+{
+    Matrix<3, 3> out = Matrix<3, 3>::Identity();
+    out(0, 0) = m(0, 0);
+    out(0, 1) = m(0, 1);
+    out(0, 2) = m(0, 2);
+    out(1, 0) = m(1, 0);
+    out(1, 1) = m(1, 1);
+    out(1, 2) = m(1, 2);
+    return out;
+}
+
+// Converts a signed edge distance (pixels, positive inside) into a 0..255 alpha with a
+// `fade`-pixel soft edge (alpha 1 at distance >= fade/2, 0 at <= -fade/2). Fade <= 0 = hard edge.
+inline uint8_t Vysi1Display::FadeAlpha(Number distance, Number fade)
+{
+    if (fade.Value <= 0)
+        return (distance.Value >= 0) ? 255 : 0;
+    return (uint8_t)(LimitZeroToOne(distance / fade + N(0.5)) * N(255)).RoundToInt();
+}
+
+// Computes the 0..255 alpha of `shape` at point P (shape-local space) for the shapes
+// implemented so far; unhandled shapes return 0.
+inline uint8_t Vysi1Display::ShapeAlpha(Geometries shape, const Vector<2> &P, Number hx, Number hy, Number fade)
+{
+    switch (shape)
+    {
+    case Geometries::Square:
+    case Geometries::Rectangle:
+        // Distance to the nearest edge (positive inside).
+        return FadeAlpha(min(hx - abs(P[0]), hy - abs(P[1])), fade);
+    default:
+        return 0; // shapes beyond the initial milestone (expand from here)
+    }
+}
+
+// Resolves geometry field `field` and fills GeoMask[field][led] with each LED's alpha.
+// Expensive per-LED shape math; only called when the block/offset/layout changed.
+inline void Vysi1Display::RenderGeometryField(DynamicBlockDescriptor *block, uint16_t field)
+{
+    for (uint16_t i = 0; i < LedNum; i++)
+        GeoMask[field][i] = 0;
+
+    Geometries shape = block->GetKeyValue<Geometries>(field, (uint8_t)GeometryKey::Shape, DataType::Enum, Geometries::None);
+    if (shape == Geometries::None)
+        return;
+
+    // Combined transform: (Position) * (Offset * centering). Offset is the static
+    // block's "default rotation / 0,0 position"; the centering puts the origin at
+    // the layout's centre.
+    Matrix<2, 3> pos = block->GetKeyValue<Matrix<2, 3>>(field, (uint8_t)GeometryKey::Position, DataType::Matrix, IdentityAffine());
+    Matrix<3, 3> local = PromoteAffine(pos);
+    Matrix<3, 3> base = Data.Offset * Matrix<3, 3>::CreateTransform2D(N(0), {-(N(Lw) / N(2) - N(0.5)), -(N(Lh) / N(2) - N(0.5))}, {N(1), N(1)});
+    Matrix<3, 3> combined = local * base;
+
+    // Size: Square takes a Number (side), Rectangle takes a Vector<2> (w, h).
+    Number sx = N(0), sy = N(0);
+    if (shape == Geometries::Square)
+    {
+        sx = sy = block->GetKeyValue<Number>(field, (uint8_t)GeometryKey::Size, DataType::Number, N(1));
+    }
+    else if (shape == Geometries::Rectangle)
+    {
+        Vector<2> size = block->GetKeyValue<Vector<2>>(field, (uint8_t)GeometryKey::Size, DataType::Vector, Vector<2>());
+        sx = size[0];
+        sy = size[1];
+    }
+
+    Number fade = block->GetKeyValue<Number>(field, (uint8_t)GeometryKey::Fade, DataType::Number, N(0));
+    Number alpha = block->GetKeyValue<Number>(field, (uint8_t)GeometryKey::Alpha, DataType::Number, N(1));
+    Number hx = sx / N(2);
+    Number hy = sy / N(2);
+
+    for (uint16_t led = 0; led < LedNum; led++)
+    {
+        if (!LedPresent[led])
+            continue;
+        Vector<3> p = combined * Vector<3>{Number(LedX[led]), Number(LedY[led]), N(1)};
+        Vector<2> p2 = {p[0], p[1]};
+        uint8_t a = ShapeAlpha(shape, p2, hx, hy, fade);
+        if (a == 0)
+            continue;
+        // a is already 0..255; scale by the geometry Alpha (0..1) back to 0..255.
+        GeoMask[field][led] = (uint8_t)((Number(a) * alpha).RoundToInt());
+    }
+}
+
+// Combines GeoMask[field] into the current mask with the field's operation.
+inline void Vysi1Display::ApplyGeometryField(DynamicBlockDescriptor *block, uint16_t field)
+{
+    GeometryOperation op = block->GetKeyValue<GeometryOperation>(field, (uint8_t)GeometryKey::Operation, DataType::Enum, GeometryOperation::Replace);
+    for (uint16_t led = 0; led < LedNum; led++)
+    {
+        uint16_t g = GeoMask[field][led];
+        uint16_t m = Mask[led];
+        switch (op)
+        {
+        case GeometryOperation::Replace: m = g; break;
+        case GeometryOperation::Add: m = m + g; if (m > 255) m = 255; break;
+        case GeometryOperation::Cut: m = (m > g) ? m - g : 0; break;
+        case GeometryOperation::Intersect: m = (m * g) >> 8; break;
+        case GeometryOperation::XOR: m = (m > g) ? m - g : g - m; break;
+        }
+        Mask[led] = (uint8_t)m;
+    }
+}
+
+// Applies texture field `field` onto the buffer over the current mask, then (called by
+// Render) the mask is reset. Initial milestone: Fill (solid colour); the rest are no-ops.
+inline void Vysi1Display::RenderTextureField(DynamicBlockDescriptor *block, uint16_t field)
+{
+    Textures2D type = block->GetKeyValue<Textures2D>(field, (uint8_t)TextureKey::Type, DataType::Enum, Textures2D::None);
+    if (type != Textures2D::Fill)
+        return;
+
+    ColourClass colour = block->GetKeyValue<ColourClass>(field, (uint8_t)TextureKey::Colour1, DataType::Colour, ColourClass(0, 0, 0, 0));
+    for (uint16_t led = 0; led < LedNum; led++)
+    {
+        uint8_t a = Mask[led];
+        if (a == 0)
+            continue;
+        Buffer[led].Layer(colour, ByteToPercent(a));
+    }
+}
+
 // Renders the configured render block into the LED buffer, applying brightness and gamma correction.
 inline void Vysi1Display::Render()
 {
@@ -219,27 +401,45 @@ inline void Vysi1Display::Render()
     // frame or pixels not covered by the current render would keep stale colours.
     memset((void *)Buffer, 0, LedNum * sizeof(ColourClass));
 
-    Number Overlay[LedNum];
-    memset((void *)Overlay, 0, LedNum * sizeof(Number));
-
-    // Example: Center origin, flip Y, and zoom out (scale 0.5)
-    Matrix<3, 3> BaseTransform = Data.Offset * Matrix<3, 3>::CreateTransform2D(N(0), {-(N(Lw) / N(2.0) - N(0.5)), -(N(Lh) / N(2.0) - N(0.5))}, {N(1.0), N(1.0)});
-
-    // Shapes and texturesF
     if (Data.RenderBlock >= dynamic_block_registry.block_count)
         return;
     DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock((uint16_t)Data.RenderBlock);
     if (!block)
         return;
 
-    for (uint16_t i = 0; i < block->map_count; i++)
+    // ---- geometry cache (mask): recompute only when the scene actually changed ----
+    const Matrix<3, 3> &off = Data.Offset;
+    bool offsetChanged = false;
+    for (int i = 0; i < 9; i++)
+        if (off.buffer.data[i].Value != CacheOffset[i]) { offsetChanged = true; break; }
+
+    if (!CacheValid || block != CacheBlockPtr || offsetChanged ||
+        block->generation != CacheBlockGen || LayoutGen != CacheLayoutGen)
     {
-        if (BlockMetaType(block->Get(i).Descriptor.FlagsAndType) == (uint16_t)DataType::Geometry)
-            RenderGeometry(block, i, BaseTransform, Overlay);
-        else if (BlockMetaType(block->Get(i).Descriptor.FlagsAndType) == (uint16_t)DataType::Texture)
+        for (int i = 0; i < 9; i++)
+            CacheOffset[i] = off.buffer.data[i].Value;
+        CacheBlockPtr = block;
+        CacheBlockGen = block->generation;
+        CacheLayoutGen = LayoutGen;
+        CacheValid = true;
+
+        uint16_t n = block->map_count < MaxCachedFields ? block->map_count : MaxCachedFields;
+        for (uint16_t f = 0; f < n; f++)
+            if (BlockMetaType(block->Get(f).Descriptor.FlagsAndType) == (uint16_t)DataType::Geometry)
+                RenderGeometryField(block, f);
+    }
+
+    // ---- per-frame field pass: build mask sections and fill ----
+    memset((void *)Mask, 0, LedNum);
+    for (uint16_t f = 0; f < block->map_count; f++)
+    {
+        uint16_t t = BlockMetaType(block->Get(f).Descriptor.FlagsAndType);
+        if (t == (uint16_t)DataType::Geometry && f < MaxCachedFields)
+            ApplyGeometryField(block, f);
+        else if (t == (uint16_t)DataType::Texture)
         {
-            RenderTexture(block, i, BaseTransform, Overlay);
-            memset((void *)Overlay, 0, LedNum * sizeof(Number));
+            RenderTextureField(block, f);
+            memset((void *)Mask, 0, LedNum);
         }
     }
 
@@ -261,324 +461,5 @@ inline void Vysi1Display::Render()
         Buffer[i].R = GammaTable[r > 255 ? 255 : r];
         Buffer[i].G = GammaTable[g > 255 ? 255 : g];
         Buffer[i].B = GammaTable[b > 255 ? 255 : b];
-    }
-}
-
-// Fills `def` with the geometry parameters (dimensions, radius, edge fade) stored in the given block entry.
-inline void Vysi1Display::ResolveGeometryDefinition(DynamicBlockDescriptor *block, uint16_t dict_index, GeometryDefinition &def)
-{
-    switch (def.Type)
-    {
-    case Geometries::Box:
-    case Geometries::Elipse:
-    case Geometries::Triangle:
-        def.Data.Basic.Width = block->GetKeyValue<Number>(dict_index, (uint8_t)GeometryKey::Width, DataType::Number, N(0.0));
-        def.Data.Basic.Height = block->GetKeyValue<Number>(dict_index, (uint8_t)GeometryKey::Height, DataType::Number, N(0.0));
-        def.Data.Basic.EdgeFade = block->GetKeyValue<Number>(dict_index, (uint8_t)GeometryKey::EdgeFade, DataType::Number, N(0.05));
-        break;
-
-    case Geometries::Polygon:
-    case Geometries::Star:
-        def.Data.Polygon.Radius = block->GetKeyValue<Number>(dict_index, (uint8_t)GeometryKey::Radius, DataType::Number, N(0.0));
-        def.Data.Polygon.PointNumber = block->GetKeyValue<Number>(dict_index, (uint8_t)GeometryKey::PointNumber, DataType::Number, N(3.0));
-        def.Data.Polygon.EdgeFade = block->GetKeyValue<Number>(dict_index, (uint8_t)GeometryKey::EdgeFade, DataType::Number, N(0.05));
-        break;
-
-    case Geometries::HalfFill:
-        def.Data.HalfPlane.EdgeFade = block->GetKeyValue<Number>(dict_index, (uint8_t)GeometryKey::EdgeFade, DataType::Number, N(0.05));
-        break;
-
-    case Geometries::DoubleParabola:
-        def.Data.Basic.Width = block->GetKeyValue<Number>(dict_index, (uint8_t)GeometryKey::Width, DataType::Number, N(0.0));
-        def.Data.Basic.Height = block->GetKeyValue<Number>(dict_index, (uint8_t)GeometryKey::Height, DataType::Number, N(0.0));
-        def.Data.Basic.EdgeFade = block->GetKeyValue<Number>(dict_index, (uint8_t)GeometryKey::EdgeFade, DataType::Number, N(0.05));
-        break;
-
-    default:
-        break;
-    }
-}
-
-// Computes the coverage alpha (0.0-1.0) of the given shape at point `P` in shape-local space.
-Number Vysi1Display::CalculateShapeAlpha(const GeometryDefinition &def, Vector<2> P)
-{
-    Number Distance = 0;
-    Number F = N(0.001); // Default fade
-
-    switch (def.Type)
-    {
-    case Geometries::Box:
-    case Geometries::Triangle:
-        F = def.Data.Basic.EdgeFade;
-        if (def.Type == Geometries::Box)
-        {
-            Distance = min(def.Data.Basic.Width - abs(P[0]), def.Data.Basic.Height - abs(P[1]));
-        }
-        else
-        {
-            // Triangle: 2h|x|/w + y < h
-            Distance = min(def.Data.Basic.Height - P[1] - 2 * def.Data.Basic.Height * abs(P[0]) / def.Data.Basic.Width, P[1]);
-        }
-        break;
-
-    case Geometries::Elipse:
-    {
-        F = def.Data.Basic.EdgeFade;
-        // Bounding box + fade optimization
-        if (abs(P[0]) > def.Data.Basic.Width + F || abs(P[1]) > def.Data.Basic.Height + F)
-            return 0;
-        // Inner full opacity optimization
-        if (abs(P[0]) < def.Data.Basic.Width * N(0.7) - F && abs(P[1]) < def.Data.Basic.Height * N(0.7) - F)
-            return 1;
-
-        // Local copies: the sq() macro would evaluate each subscript twice
-        Number px = P[0], py = P[1];
-        Distance = 1 - sqrt(sq(px) / sq(def.Data.Basic.Width) + sq(py) / sq(def.Data.Basic.Height));
-        break;
-    }
-
-    case Geometries::Star:
-    case Geometries::Polygon:
-    {
-        F = def.Data.Polygon.EdgeFade;
-        // Signed distance to a regular n-gon (Polygon) or n-point star, from the
-        // angular position of P inside its vertex sector: at angle `ang` off the
-        // vertex, the radial extent is v * cos(half) / cos(ang) (v = vertex radius).
-        Number R = def.Data.Polygon.Radius;
-        if (R <= N(0)) { Distance = N(-1); break; } // unconfigured: draw nothing
-        int n = def.Data.Polygon.PointNumber.RoundToInt();
-        if (n < 3) n = 3;
-        if (n > 32) n = 32;
-        const Number n_num = Number(n);
-
-        Number pr = P[0], ppr = P[1];
-        Number r = sqrt(sq(pr) + sq(ppr));
-        if (r <= N(0)) { Distance = R; break; } // centre is always inside
-
-        // Polar angle of P in [0, 2PI) (atan2 returns -PI..PI).
-        Number theta = atan2(ppr, pr);
-        if (theta.Value < 0) theta = theta + 2 * GetPI();
-
-        Number sector, half, v;
-        if (def.Type == Geometries::Polygon)
-        {
-            sector = 2 * GetPI() / n_num;
-            v = R;
-        }
-        else
-        {
-            // Star: 2n vertices alternating outer R / inner R/2.
-            sector = 2 * GetPI() / (n_num * N(2.0));
-            uint16_t vi = (uint16_t)(theta / sector).ToInt();
-            v = (vi & 1) ? R * N(0.5) : R;
-        }
-        half = sector / N(2.0);
-        // Position within the vertex sector, measured from the vertex (cos(ang)
-        // is never 0 here: |ang| <= half <= PI/3).
-        Number ang = (theta - Number((theta / sector).ToInt()) * sector) - half;
-        Distance = (v * cos(half) / cos(ang)) - r;
-        break;
-    }
-
-    case Geometries::DoubleParabola:
-        F = def.Data.Basic.EdgeFade;
-        Distance = -(abs(P[0]) - def.Data.Basic.Width + sq(P[1]) * def.Data.Basic.Width / sq(def.Data.Basic.Height));
-        break;
-
-    case Geometries::HalfFill:
-        F = def.Data.HalfPlane.EdgeFade;
-        return LimitZeroToOne(P[1] / F + N(0.5));
-
-    default:
-        return 0;
-    }
-
-    // Convert Distance to 0.0-1.0 alpha based on EdgeFade
-    return LimitZeroToOne(Distance / F + N(0.5));
-}
-
-// Rasterises the geometry block entry into the LED `Overlay` buffer, combining transforms and applying the operation.
-inline void Vysi1Display::RenderGeometry(DynamicBlockDescriptor *block, uint16_t dict_index, const Matrix<3, 3> &BaseTransform, Number *Overlay)
-{
-    // 1. Resolve Parameters with Defaults
-    GeometryDefinition def;
-    def.Type = block->GetKeyValue<Geometries>(dict_index, (uint8_t)GeometryKey::Shape, DataType::Enum, Geometries::None);
-
-    if (def.Type == Geometries::None)
-        return;
-
-    GeometryOperation Op = block->GetKeyValue<GeometryOperation>(dict_index, (uint8_t)GeometryKey::Operation, DataType::Enum, GeometryOperation::Add);
-
-    // Fast-path for Fill operations
-    if (def.Type == Geometries::Fill)
-    {
-        for (int32_t i = 0; i < LedNum; i++)
-        {
-            switch (Op)
-            {
-            case GeometryOperation::Add:
-                Overlay[i] = N(1);
-                break;
-            case GeometryOperation::Cut:
-                Overlay[i] = N(0);
-                break;
-            case GeometryOperation::Intersect: /* Nothing */
-                break;
-            case GeometryOperation::XOR:
-                Overlay[i] = abs(Overlay[i] - N(1));
-                break;
-            }
-        }
-        return;
-    }
-
-    // Resolve specific shape properties
-    ResolveGeometryDefinition(block, dict_index, def);
-
-    // Fetch Transform: Default to Identity if not explicitly provided
-    Matrix<3, 3> LocalTransform = block->GetKeyValue<Matrix<3, 3>>(
-        dict_index, (uint8_t)GeometryKey::Transformation, DataType::Matrix, Matrix<3, 3>::Identity());
-
-    // 2. Combine Transforms
-    Matrix<3, 3> CombinedTransform = LocalTransform * BaseTransform;
-
-    // 3. Rasterization Loop
-    for (int32_t Y = 0; Y < (int32_t)Lh; Y++)
-    {
-        for (int32_t X = 0; X < (int32_t)Lw; X++)
-        {
-            uint32_t arrayIdx = ((Lh - 1 - Y) * Lw) + X;
-            uint16_t ledIdx = Layout[arrayIdx];
-
-            if (ledIdx == 0xFFFF) // missing LED
-                continue;
-            uint32_t PIdx = ledIdx;
-
-            Vector<3> homo_pt = {Number(X), Number(Y), Number(1)};
-            Vector<3> transformed = CombinedTransform * homo_pt;
-
-            Number LocalAlpha = CalculateShapeAlpha(def, transformed.remove(2));
-            if (LocalAlpha <= 0)
-                continue;
-
-            // 4. Apply Operation
-            switch (Op)
-            {
-            case GeometryOperation::Add:
-                Overlay[PIdx] = LimitZeroToOne(Overlay[PIdx] + LocalAlpha);
-                break;
-            case GeometryOperation::Cut:
-                Overlay[PIdx] = LimitZeroToOne(Overlay[PIdx] - LocalAlpha);
-                break;
-            case GeometryOperation::Intersect:
-                Overlay[PIdx] = LimitZeroToOne(Overlay[PIdx] * LocalAlpha);
-                break;
-            case GeometryOperation::XOR:
-                Overlay[PIdx] = abs(Overlay[PIdx] - LocalAlpha);
-                break;
-            }
-        }
-    }
-}
-
-// Fills `def` with the texture parameters (colours, blend width) stored in the given block entry.
-inline void Vysi1Display::ResolveTextureDefinition(DynamicBlockDescriptor *block, uint16_t dict_index, TextureDefinition &def)
-{
-    // Fetch Type: Default to None if not found
-def.Type = block->GetKeyValue<Textures2D>(dict_index, (uint8_t)TextureKey::Type, DataType::Enum, Textures2D::None);
-
-switch (def.Type)
-    {
-    case Textures2D::Full:
-        def.Data.Fill.Colour = block->GetKeyValue<ColourClass>(
-            dict_index, (uint8_t)TextureKey::Colour1, DataType::Colour, ColourClass(0, 0, 0, 0));
-        break;
-
-    case Textures2D::BlendLinear:
-        def.Data.Blend2.Colour1 = block->GetKeyValue<ColourClass>(
-            dict_index, (uint8_t)TextureKey::Colour1, DataType::Colour, ColourClass(0, 0, 0, 0));
-        def.Data.Blend2.Colour2 = block->GetKeyValue<ColourClass>(
-            dict_index, (uint8_t)TextureKey::Colour2, DataType::Colour, ColourClass(0, 0, 0, 0));
-        def.Data.Blend2.Width = block->GetKeyValue<Number>(
-            dict_index, (uint8_t)TextureKey::Width, DataType::Number, N(1.0));
-        break;
-
-    case Textures2D::BlendCircular:
-        def.Data.Blend2.Colour1 = block->GetKeyValue<ColourClass>(
-            dict_index, (uint8_t)TextureKey::Colour1, DataType::Colour, ColourClass(0, 0, 0, 0));
-        def.Data.Blend2.Colour2 = block->GetKeyValue<ColourClass>(
-            dict_index, (uint8_t)TextureKey::Colour2, DataType::Colour, ColourClass(0, 0, 0, 0));
-        def.Data.Blend2.Width = block->GetKeyValue<Number>(
-            dict_index, (uint8_t)TextureKey::Width, DataType::Number, N(1.0));
-        def.Data.Blend2.Transformation = block->GetKeyValue<Matrix<3, 3>>(
-            dict_index, (uint8_t)TextureKey::Transformation, DataType::Matrix, Matrix<3, 3>::Identity());
-        break;
-
-    default:
-        break;
-    }
-}
-
-// Layers the texture block entry's colours onto the LED buffer using the `Overlay` intensities.
-inline void Vysi1Display::RenderTexture(DynamicBlockDescriptor *block, uint16_t dict_index, const Matrix<3, 3> &BaseTransform, Number *Overlay)
-{
-    TextureDefinition def;
-    ResolveTextureDefinition(block, dict_index, def);
-
-    if (def.Type == Textures2D::None)
-        return;
-
-// Fetch Transform: Default to Identity
-    Matrix<3, 3> LocalTransform = block->GetKeyValue<Matrix<3, 3>>(
-        dict_index, (uint8_t)TextureKey::Transformation, DataType::Matrix, Matrix<3, 3>::Identity());
-
-    // Compose the same way as the geometry pass (Local * Base) so textures and their
-    // covering geometries are evaluated in the same coordinate space.
-    Matrix<3, 3> Combined = LocalTransform * BaseTransform;
-
-    // Handle "Full" texture as a fast path
-    if (def.Type == Textures2D::Full)
-    {
-        for (uint16_t i = 0; i < LedNum; i++)
-        {
-            if (Overlay[i] <= 0)
-                continue;
-            Buffer[i].Layer(def.Data.Fill.Colour, Overlay[i]);
-        }
-        return;
-    }
-
-    // Rasterization Loop for Blends
-    Number invWidth = N(1.0) / (def.Data.Blend2.Width * N(2.0));
-
-    for (int32_t Y = 0; Y < (int32_t)Lh; Y++)
-    {
-        for (int32_t X = 0; X < (int32_t)Lw; X++)
-        {
-            uint32_t arrayIdx = ((Lh - 1 - Y) * Lw) + X;
-            uint16_t ledIdx = Layout[arrayIdx];
-
-            if (ledIdx == 0xFFFF) // missing LED
-                continue;
-            uint32_t PIdx = ledIdx;
-
-            Vector<3> transformed = Combined * Vector<3>{Number(X), Number(Y), N(1)};
-
-            ColourClass blendCol = def.Data.Blend2.Colour2;
-            Number lerpVal;
-
-            if (def.Type == Textures2D::BlendLinear)
-                lerpVal = (transformed[0] * invWidth) + N(0.5);
-            else // BlendCircular
-                lerpVal = (transformed.remove(2).norm2() * invWidth) + N(0.5);
-
-            blendCol.Layer(def.Data.Blend2.Colour1, LimitZeroToOne(lerpVal));
-
-            // Apply to buffer with Overlay intensity (skip zero overlap - Layer would
-            // recompute all four channels for no effect)
-            if (Overlay[PIdx] <= 0)
-                continue;
-            Buffer[PIdx].Layer(blendCol, Overlay[PIdx]);
-        }
     }
 }

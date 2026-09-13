@@ -174,6 +174,10 @@ struct DynamicBlockDescriptor
     uint16_t map_count = 0;
     uint16_t map_allocated = 0;
     char Name[BLOCK_NAME_LEN] = {};
+    // Monotonic counter bumped by every mutation (Set/SetKey/InsertField/Remove/
+    // MarkKey). Renderers (LED display) cache derived state keyed on this so they
+    // only recompute when the block actually changes.
+    uint32_t generation = 0;
 
     // Navigation always jumps by the aligned size, even if the stored size is not.
     size_t GetOffset(uint16_t index) const
@@ -224,6 +228,7 @@ struct DynamicBlockDescriptor
         map[insert_at] = new_field;
         map_count++;
         length += aligned_size;
+        generation++;
         return true;
     }
 
@@ -248,6 +253,7 @@ struct DynamicBlockDescriptor
         map[index].Size = input_len;
         map[index].FlagsAndType = input_type_and_flag;
         memcpy((uint8_t *)data_ptr + offset, input, input_len);
+        generation++;
         return true;
     }
 
@@ -272,6 +278,7 @@ struct DynamicBlockDescriptor
                 allocated = length;
             }
         }
+        generation++;
         return true;
     }
 
@@ -389,6 +396,7 @@ struct DynamicBlockDescriptor
             this->map[field_idx].Size += size_diff;
             this->length += size_diff;
         }
+        generation++;
         return true;
     }
 
@@ -431,6 +439,8 @@ struct DynamicBlockDescriptor
                 }
                 return true; // continue
             }, found);
+        if (found)
+            generation++;
         return found;
     }
 
