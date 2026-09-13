@@ -76,8 +76,16 @@ struct RequesterEntry {
     TriggerType trigger = TriggerType::Periodic;
     uint32_t periodMs = 0;
     uint32_t minTimeMs = 0; // minimum interval / retry interval
+    // Initialization tracking: the entry is "initialized" once a value update arrives.
+    // Until then the requester re-sends the registration (CID 1) to wake the provider.
+    uint32_t registeredAtMs = 0;  // start of the initialization window (set/boot)
+    uint32_t lastRegisteredMs = 0; // last re-registration sent
+    uint32_t lastValueMs = 0;     // uptime of the last received value (0 = never)
     bool active = false;
 };
+
+#define SUB_RETRY_MS          100   // re-registration interval while un-initialized
+#define SUB_INIT_WINDOW_MS    10000 // give up re-registering after this long
 
 static RequesterEntry requesterTable[MAX_REQUESTER_SUBS];
 
@@ -133,6 +141,7 @@ static void ApplyRequesterValue(RequesterEntry *e, const uint8_t *val, uint8_t v
         }
     }
 #endif
+    e->lastValueMs = DeviceStatus.UptimeMs;
     if (!confirm) return;
 
     // Confirmation: the requester sends the hash of the received value (docs CID 0: the
@@ -362,6 +371,9 @@ static void LoadRequesterTable() {
         e->trid = SubscriptionsNextTrid();
         if (e->trid == 0) e->trid = TRID_SUB_BASE;
         e->active = true;
+        e->registeredAtMs = DeviceStatus.UptimeMs;
+        e->lastRegisteredMs = 0;
+        e->lastValueMs = 0;
     }
 }
 
@@ -405,6 +417,22 @@ void ReRegisterSubscriptions() {
     for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
         if (requesterTable[i].active)
             RegisterRequesterProvider(&requesterTable[i]);
+    }
+}
+
+// Verifies each active requester subscription actually receives a value. Until the first
+// value arrives the entry keeps re-registering with the provider (CID 1) on a short retry
+// interval, so a dropped registration or slow provider node eventually gets woken up. The
+// retries stop once a value is received or the initialization window expires.
+static void RequesterInitCheck(uint32_t nowMs) {
+    for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
+        RequesterEntry* e = &requesterTable[i];
+        if (!e->active) continue;
+        if (e->lastValueMs != 0) continue; // a value arrived; the subscription is live
+        if (nowMs - e->registeredAtMs > SUB_INIT_WINDOW_MS) continue; // gave up
+        if (nowMs - e->lastRegisteredMs < SUB_RETRY_MS) continue;
+        e->lastRegisteredMs = nowMs;
+        RegisterRequesterProvider(e);
     }
 }
 #endif // USE_SUB_REQUEST
@@ -547,6 +575,25 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
                 uint8_t index = frame.payload[0];
                 if (index < MAX_REQUESTER_SUBS) {
                     if (frame.payload_len == 1) {
+                        // Cancel the provider side with the shared TRID first (the frame's
+                        // 8-bit TRID over the app link can't match a persisted 0xFAxx TRID).
+                        RequesterEntry* removed = &requesterTable[index];
+                        if (removed->providerAddr != 0) {
+#ifdef USE_SUB_PROVIDE
+                            if (removed->providerAddr == DeviceStatus.ShortAddress) {
+                                ProviderEntry* p = ProviderFindByTrid(removed->trid);
+                                if (p) ProviderClearEntry(p);
+                            } else
+#endif
+                            {
+                                PacketFrame cancel;
+                                PacketConstruct(&cancel, removed->providerAddr,
+                                                MakeService(ServiceType::Subscriptions, 1),
+                                                removed->trid,
+                                                FLAG_START | FLAG_STOP, nullptr, 0);
+                                SendAndVerifyPacket(cancel);
+                            }
+                        }
                         // Delete + compact so the app's ordinal index stays in sync.
                         for (int i = index; i < MAX_REQUESTER_SUBS - 1; i++)
                             requesterTable[i] = requesterTable[i + 1];
@@ -568,6 +615,9 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
                         e->minTimeMs = *(uint32_t *)(frame.payload + offset); offset += 4;
                         e->trid = frame.trid ? frame.trid : SubscriptionsNextTrid();
                         e->active = true;
+                        e->registeredAtMs = DeviceStatus.UptimeMs;
+                        e->lastRegisteredMs = 0;
+                        e->lastValueMs = 0;
                         SaveRequesterTable();
 
                         // Respond first (the app waits on the transaction ID), then register
@@ -612,5 +662,8 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
 void SubscriptionsTick(uint32_t nowMs) {
 #ifdef USE_SUB_PROVIDE
     EvaluateProviderTriggers(nowMs);
+#endif
+#ifdef USE_SUB_REQUEST
+    RequesterInitCheck(nowMs);
 #endif
 }

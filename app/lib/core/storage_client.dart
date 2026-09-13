@@ -5,6 +5,7 @@ library;
 import 'dart:typed_data';
 
 import 'connection.dart';
+import 'device_db.dart';
 import 'diagnostics.dart';
 import 'protocol.dart';
 import 'types.dart';
@@ -32,12 +33,19 @@ const int fileFragContentSize = 112;
 
 class StorageClient {
   final int deviceId;
-  /// True when the device uses the reduced (USE_FIXED_STORAGE) file system - its file
-  /// table is a const array in firmware and the file browser is read-only. Detected when
-  /// readFileTable() finds a fixed record at offset 0 with a non-zero size.
-  bool reduced = false;
+
+  /// True for fixed (USE_FIXED_STORAGE) devices whose file table is a const array served
+  /// at offset 0 (the DAS): there, offset-0 records are the real files. On the full file
+  /// system offset 0 marks a superseded/invalidated record (renames/table moves zero the
+  /// 4-byte offset but leave the size), so such records are skipped there.
+  late final bool fixedStorage = _detectFixedStorage(deviceId);
 
   StorageClient({required this.deviceId});
+
+  static bool _detectFixedStorage(int deviceId) {
+    final dev = DeviceDatabase.instance.byId(deviceId);
+    return dev == null || (dev.capabilities & Capability.storageFiles) == 0;
+  }
 
   ConnectionManager get _link => ConnectionManager.instance;
 
@@ -99,12 +107,11 @@ class StorageClient {
     for (var offset = 0; offset + 16 <= contents.length; offset += 16) {
       final recOffset = uint32FromBytes(contents, offset);
       final size = uint32FromBytes(contents, offset + 4);
-      // Unwritten entries are all 0xFF; invalidated ones have offset 0 AND size 0 (the
-      // device zeroes both). A record at offset 0 with a non-zero size is a valid fixed
-      // (reduced file system) file, so it must be listed.
+      // Unwritten entries are all 0xFF. A record with offset 0 is invalidated on the
+      // full file system (the device zeroes the 4-byte offset on rename/delete/table
+      // moves, leaving the size), but is a real fixed file on the reduced storage.
       if (recOffset == 0xFFFFFFFF && size == 0xFFFFFFFF) break;
-      if (recOffset == 0 && size == 0) continue; // invalidated record
-      if (recOffset == 0) reduced = true; // fixed (reduced) file system record
+      if (!fixedStorage && recOffset == 0) continue; // full FS: offset 0 = invalidated
       records.add(
         FileRecord(
           index: records.length,

@@ -12,6 +12,7 @@ namespace Capabilities {
     constexpr uint32_t Router         = 1u << 1;
     constexpr uint32_t Cli            = 1u << 2;
     constexpr uint32_t DynamicMemory  = 1u << 3;
+    constexpr uint32_t StorageFiles   = 1u << 5; // full file create/delete/rename/resize
     constexpr uint32_t AppInterface   = 1u << 6;
     constexpr uint32_t Subscriptions  = 1u << 7;
     constexpr uint32_t Node           = 1u << 8;

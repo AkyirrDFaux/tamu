@@ -25,6 +25,7 @@ extern const DeviceType kDeviceType = DeviceType::Tamu_v2_0A;
 // memory services - matching the USE_* build flags so the app shows their views.
 extern const uint32_t kCapabilities = Capabilities::Core | Capabilities::Cli |
                                         Capabilities::DynamicMemory |
+                                        Capabilities::StorageFiles |
                                         Capabilities::AppInterface |
                                         Capabilities::Subscriptions;
 

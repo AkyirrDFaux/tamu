@@ -278,7 +278,7 @@ class RegisterClient {
 
   /// Creates a new dynamic block (CID 0x10). Returns the assigned block index.
   Future<int?> createDynamicBlock(BlockType type, String name, {int? index}) async {
-    final nameBytes = name.codeUnits.take(12).toList();
+    final nameBytes = name.codeUnits.take(24).toList();
     while (nameBytes.length < 4) {
       nameBytes.add(0x20); // pad with spaces
     }
@@ -296,7 +296,7 @@ class RegisterClient {
 
   /// Sets a dynamic block's name and/or type (CID 2, field 0xFF = block meta).
   Future<bool> writeDynamicBlockMeta(DynBlock block, String name, BlockType? type) async {
-    final nameBytes = name.codeUnits.take(12).toList();
+    final nameBytes = name.codeUnits.take(24).toList();
     while (nameBytes.length < 4) {
       nameBytes.add(0x20);
     }

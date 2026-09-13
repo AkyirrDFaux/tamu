@@ -45,6 +45,26 @@ void main() async {
   setUpAll(() async {
     await connectHil();
     await discoverDevices();
+    // The requester table + dynamic blocks persist across reboots, and the requester
+    // now re-registers its recovered subscriptions with providers, so clear them to get
+    // a deterministic initial DAS provider table (canceling any active providers).
+    final tamu = findTamu(DeviceDatabase.instance);
+    if (tamu != null) {
+      final client = SubscriptionClient(deviceId: tamu.id);
+      // Delete by the lowest index repeatedly: the firmware compacts the requester
+      // table, so re-read the list after each delete to keep track of the survivors.
+      var subs = await client.getRequesterSubscriptions();
+      while (subs.isNotEmpty) {
+        await client.setRequesterSubscription(subs.first.index);
+        subs = await client.getRequesterSubscriptions();
+      }
+      final reg = RegisterClient(deviceId: tamu.id);
+      for (final b in await reg.readDynamicBlocks() ?? <DynBlock>[]) {
+        await reg.deleteDynamic(block: b.index);
+      }
+      await reg.saveDynamic();
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+    }
   });
   tearDownAll(disconnectHil);
 

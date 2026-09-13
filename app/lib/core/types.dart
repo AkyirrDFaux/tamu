@@ -181,6 +181,7 @@ class Capability {
   static const router = 1 << 1;
   static const cli = 1 << 2;
   static const dynamicMemory = 1 << 3;
+  static const storageFiles = 1 << 5;
   static const appInterface = 1 << 6;
   static const subscriptions = 1 << 7;
   static const node = 1 << 8;
@@ -191,6 +192,7 @@ class Capability {
     if (caps & router != 0) names.add('Router');
     if (caps & cli != 0) names.add('CLI');
     if (caps & dynamicMemory != 0) names.add('DynMem');
+    if (caps & storageFiles != 0) names.add('Files');
     if (caps & appInterface != 0) names.add('App');
     if (caps & subscriptions != 0) names.add('Subs');
     if (caps & node != 0) names.add('Node');
@@ -390,6 +392,18 @@ class RequesterSubscription {
       minTimeMs: minTimeMs,
     );
   }
+
+  /// BlockInfo components of the target (local) register.
+  int get blockType => (targetReg >> 22) & 0x3FF;
+  int get blockInst => (targetReg >> 16) & 0x3F;
+  int get blockField => (targetReg >> 8) & 0xFF;
+  int get blockKey => targetReg & 0xFF;
+
+  /// BlockInfo components of the source (provider) register.
+  int get blockTypeS => (sourceReg >> 22) & 0x3FF;
+  int get blockInstS => (sourceReg >> 16) & 0x3F;
+  int get blockFieldS => (sourceReg >> 8) & 0xFF;
+  int get blockKeyS => sourceReg & 0xFF;
 
   /// Wire layout for the CID 4 set request (providerAddr, trid, targetReg, sourceReg,
   /// trigger+24 pad, period, min). The TRID is also echoed in the packet header.

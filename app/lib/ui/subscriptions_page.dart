@@ -2,7 +2,7 @@
 library;
 
 import 'package:flutter/material.dart';
-import 'package:tamuapp/core/block_registry.dart' show FieldInfo, blockInfoFor;
+import 'package:tamuapp/core/block_registry.dart' show blockInfoFor;
 import 'package:tamuapp/core/device_db.dart';
 import 'package:tamuapp/core/register_client.dart';
 import 'package:tamuapp/core/subscription_client.dart';
@@ -310,25 +310,34 @@ Widget _buildRequesterTab() {
 }
 
 /// Block+Field picker model
-class _BlockFieldOption {
-  final int blockInfo;
-  final String label;
-  final String blockName;
+/// A block (block type + instance) available for a subscription source/target.
+class _BlockSelection {
   final int type;
   final int inst;
-  final int field;
-  final BlockMeta meta;
-  final FieldInfo? fieldInfo;
+  final String name;
+  final String label;
 
-  const _BlockFieldOption({
-    required this.blockInfo,
-    required this.label,
-    required this.blockName,
+  const _BlockSelection({
     required this.type,
     required this.inst,
+    required this.name,
+    required this.label,
+  });
+}
+
+/// A field within a [_BlockSelection]; `keyed` is true when the field's data type is a
+/// keyed type (>= 0x100), so a key picker is offered.
+class _FieldSelection {
+  final int field;
+  final BlockMeta meta;
+  final String name;
+  final bool keyed;
+
+  const _FieldSelection({
     required this.field,
     required this.meta,
-    this.fieldInfo,
+    required this.name,
+    required this.keyed,
   });
 }
 
@@ -355,13 +364,19 @@ class _SubscriptionDialog extends StatefulWidget {
 class _SubscriptionDialogState extends State<_SubscriptionDialog> {
   bool _loadingBlocks = true;
   String? _blockError;
-  List<_BlockFieldOption> _targetOptions = [];
-  List<_BlockFieldOption> _sourceOptions = [];
+  List<_BlockSelection> _targetBlocks = [];
+  List<_BlockSelection> _sourceBlocks = [];
+  List<_FieldSelection> _targetFields = [];
+  List<_FieldSelection> _sourceFields = [];
   List<DeviceEntry> _devices = [];
 
   // Form fields
-  _BlockFieldOption? _selectedTarget;
-  _BlockFieldOption? _selectedSource;
+  _BlockSelection? _selectedTargetBlock;
+  _FieldSelection? _selectedTargetField;
+  int _targetKey = 0;
+  _BlockSelection? _selectedSourceBlock;
+  _FieldSelection? _selectedSourceField;
+  int _sourceKey = 0;
   int? _selectedProviderAddr;
   TriggerType _trigger = TriggerType.periodic;
   int _periodMs = 1000;
@@ -395,33 +410,39 @@ class _SubscriptionDialogState extends State<_SubscriptionDialog> {
       _blockError = null;
     });
     try {
-      // Load available blocks for target (local device) and source (provider device)
-      final targetBlocks = await _fetchAllBlockFields(widget.client.deviceId);
+      // Load the block list for both the target (local device) and the source
+      // (provider device). Fields are fetched lazily once a block is picked.
+      final targetBlocks = await _fetchBlocks(widget.client.deviceId);
       final providerAddr = widget.existing?.providerAddr ?? 1;
-      final sourceBlocks = await _fetchAllBlockFields(providerAddr);
+      final sourceBlocks = await _fetchBlocks(providerAddr);
 
-      // Load available devices for provider selection
       final db = DeviceDatabase.instance;
       await db.refreshNetwork();
       final devices = db.all.where((d) => d.id != widget.client.deviceId).toList();
 
       setState(() {
-        _targetOptions = targetBlocks;
-        _sourceOptions = sourceBlocks;
+        _targetBlocks = targetBlocks;
+        _sourceBlocks = sourceBlocks;
         _devices = devices;
         _loadingBlocks = false;
 
-        // Set default provider
         if (_selectedProviderAddr == null && devices.isNotEmpty) {
           _selectedProviderAddr = devices.first.id;
         }
 
-        // Pre-select the existing subscription's target/source so the pickers show
-        // what is currently configured (pickers need the loaded options).
+        // Pre-select the existing subscription's target/source once the blocks are known.
         final existing = widget.existing;
         if (existing != null) {
-          _selectedTarget = _matchOption(_targetOptions, existing.targetReg);
-          _selectedSource = _matchOption(_sourceOptions, existing.sourceReg);
+          _selectedTargetBlock = _matchBlock(_targetBlocks, existing.blockType, existing.blockInst);
+          if (_selectedTargetBlock != null) {
+            _targetKey = existing.blockKey;
+            _loadFieldsForTarget(_selectedTargetBlock!, existing.blockField, existing.blockKey);
+          }
+          _selectedSourceBlock = _matchBlock(_sourceBlocks, existing.blockTypeS, existing.blockInstS);
+          if (_selectedSourceBlock != null) {
+            _sourceKey = existing.blockKeyS;
+            _loadFieldsForSource(_selectedSourceBlock!, existing.blockFieldS, existing.blockKeyS);
+          }
         }
       });
     } catch (e) {
@@ -432,50 +453,93 @@ class _SubscriptionDialogState extends State<_SubscriptionDialog> {
     }
   }
 
-  static _BlockFieldOption? _matchOption(List<_BlockFieldOption> options, int bi) {
-    for (final o in options) {
-      if (o.blockInfo == bi) return o;
+  static _BlockSelection? _matchBlock(List<_BlockSelection> blocks, int type, int inst) {
+    for (final b in blocks) {
+      if (b.type == type && b.inst == inst) return b;
     }
     return null;
   }
 
-  Future<List<_BlockFieldOption>> _fetchAllBlockFields(int deviceId) async {
+  Future<List<_BlockSelection>> _fetchBlocks(int deviceId) async {
     final regClient = RegisterClient(deviceId: deviceId);
     final blocks = await regClient.readBlocks();
     if (blocks == null) return [];
-
-    final options = <_BlockFieldOption>[];
+    final out = <_BlockSelection>[];
     for (final b in blocks) {
       if (b == null) continue;
-      final fieldCount = await regClient.getFieldCount(b.type, b.inst);
-      if (fieldCount == null) continue;
       final blockType = BlockType.fromValue(b.type);
-      final blockInfo = blockInfoFor(blockType);
-      for (var f = 0; f < fieldCount; f++) {
-        final fieldResult = await regClient.readBlockField(b.type, b.inst, f, 0);
-        if (fieldResult != null) {
-          final bi = ((b.type & 0x3FF) << 22) | ((b.inst & 0x3F) << 16) | ((f & 0xFF) << 8) | 0;
-          final fieldInfo = blockInfo?.field(f);
-          final fieldName = fieldInfo?.name ?? 'Field $f';
-          options.add(_BlockFieldOption(
-            blockInfo: bi,
-            label: '${b.name.isNotEmpty ? b.name : blockType.label}[${b.inst}].$fieldName',
-            blockName: b.name.isNotEmpty ? b.name : blockType.label,
-            type: b.type,
-            inst: b.inst,
-            field: f,
-            meta: fieldResult.meta,
-            fieldInfo: fieldInfo,
-          ));
+      final name = b.name.trim().isNotEmpty ? b.name : blockType.label;
+      out.add(_BlockSelection(
+        type: b.type,
+        inst: b.inst,
+        name: name,
+        label: '$name [${b.inst}]',
+      ));
+    }
+    return out;
+  }
+
+  /// Reads the fields of a block. Fails gracefully (empty list) when the field
+  /// enumeration is unavailable so navigation never blocks.
+  Future<List<_FieldSelection>> _fetchFields(int deviceId, _BlockSelection block) async {
+    final regClient = RegisterClient(deviceId: deviceId);
+    final fieldCount = await regClient.getFieldCount(block.type, block.inst);
+    if (fieldCount == null) return [];
+
+    final out = <_FieldSelection>[];
+    for (var f = 0; f < fieldCount; f++) {
+      final fieldResult = await regClient.readBlockField(block.type, block.inst, f, 0);
+      if (fieldResult == null) continue;
+      // Design-time field names when the block has a schema; "Field N" otherwise.
+      final blockSchema = blockInfoFor(BlockType.fromValue(block.type));
+      final fieldInfo = (blockSchema != null && f < blockSchema.fields.length)
+          ? blockSchema.fields[f].name
+          : null;
+      out.add(_FieldSelection(
+        field: f,
+        meta: fieldResult.meta,
+        name: fieldInfo ?? 'Field $f',
+        keyed: fieldResult.meta.typeValue >= 0x100,
+      ));
+    }
+    return out;
+  }
+
+  Future<void> _loadFieldsForTarget(_BlockSelection block, [int? preField, int? preKey]) async {
+    setState(() { _selectedTargetBlock = block; _selectedTargetField = null; _targetFields = []; _targetKey = 0; });
+    final fields = await _fetchFields(widget.client.deviceId, block);
+    if (!mounted) return;
+    setState(() {
+      _targetFields = fields;
+      if (preField != null) {
+        for (final fl in fields) {
+          if (fl.field == preField) { _selectedTargetField = fl; break; }
         }
       }
-    }
-    return options;
+      if (preKey != null) _targetKey = preKey;
+    });
+  }
+
+  Future<void> _loadFieldsForSource(_BlockSelection block, [int? preField, int? preKey]) async {
+    setState(() { _selectedSourceBlock = block; _selectedSourceField = null; _sourceFields = []; _sourceKey = 0; });
+    final fields = await _fetchFields(_selectedProviderAddr ?? 0, block);
+    if (!mounted) return;
+    setState(() {
+      _sourceFields = fields;
+      if (preField != null) {
+        for (final fl in fields) {
+          if (fl.field == preField) { _selectedSourceField = fl; break; }
+        }
+      }
+      if (preKey != null) _sourceKey = preKey;
+    });
+  }
+
+  static int _makeBlockInfo(int type, int inst, int field, int key) {
+    return ((type & 0x3FF) << 22) | ((inst & 0x3F) << 16) | ((field & 0xFF) << 8) | (key & 0xFF);
   }
 
   void _populateFromExisting(RequesterSubscription sub) {
-    // We can't easily populate pickers without loading blocks first,
-    // so we'll set the raw values and update pickers after loading
     _trigger = sub.trigger;
     _periodMs = sub.periodMs;
     _minTimeMs = sub.minTimeMs;
@@ -502,14 +566,31 @@ class _SubscriptionDialogState extends State<_SubscriptionDialog> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        // Target Block (local)
-                        _BlockFieldPicker(
-                          label: 'Target Block (Local)',
+                        // Target Block -> Field -> Key (local)
+                        _BlockPicker(
+                          label: 'Target Block',
                           hint: 'Where to write received values',
-                          options: _targetOptions,
-                          value: _selectedTarget,
-                          onChanged: (v) => setState(() => _selectedTarget = v),
+                          blocks: _targetBlocks,
+                          value: _selectedTargetBlock,
+                          onChanged: (v) { if (v != null) { _loadFieldsForTarget(v); } },
                         ),
+                        if (_selectedTargetBlock != null) ...[
+                          const SizedBox(height: 12),
+                          _FieldPicker(
+                            label: 'Target Field',
+                            fields: _targetFields,
+                            value: _selectedTargetField,
+                            onChanged: (v) => setState(() => _selectedTargetField = v),
+                          ),
+                          if (_selectedTargetField != null && _selectedTargetField!.keyed) ...[
+                            const SizedBox(height: 12),
+                            _KeyPicker(
+                              label: 'Target Key',
+                              value: _targetKey,
+                              onChanged: (v) => setState(() => _targetKey = v),
+                            ),
+                          ],
+                        ],
                         const SizedBox(height: 12),
 
                         // Provider Device
@@ -521,25 +602,44 @@ class _SubscriptionDialogState extends State<_SubscriptionDialog> {
                           onChanged: (v) async {
                             setState(() {
                               _selectedProviderAddr = v;
-                              _selectedSource = null;
-                              _sourceOptions = [];
+                              _selectedSourceBlock = null;
+                              _selectedSourceField = null;
+                              _sourceFields = [];
                             });
                             if (v != null) {
-                              final blocks = await _fetchAllBlockFields(v);
-                              setState(() => _sourceOptions = blocks);
+                              final blocks = await _fetchBlocks(v);
+                              if (!mounted) return;
+                              setState(() => _sourceBlocks = blocks);
                             }
                           },
                         ),
                         const SizedBox(height: 12),
 
-                        // Source Block (remote)
-                        _BlockFieldPicker(
-                          label: 'Source Block (Remote)',
+                        // Source Block -> Field -> Key (remote)
+                        _BlockPicker(
+                          label: 'Source Block',
                           hint: 'Which value to subscribe to',
-                          options: _sourceOptions,
-                          value: _selectedSource,
-                          onChanged: (v) => setState(() => _selectedSource = v),
+                          blocks: _sourceBlocks,
+                          value: _selectedSourceBlock,
+                          onChanged: (v) { if (v != null) { _loadFieldsForSource(v); } },
                         ),
+                        if (_selectedSourceBlock != null) ...[
+                          const SizedBox(height: 12),
+                          _FieldPicker(
+                            label: 'Source Field',
+                            fields: _sourceFields,
+                            value: _selectedSourceField,
+                            onChanged: (v) => setState(() => _selectedSourceField = v),
+                          ),
+                          if (_selectedSourceField != null && _selectedSourceField!.keyed) ...[
+                            const SizedBox(height: 12),
+                            _KeyPicker(
+                              label: 'Source Key',
+                              value: _sourceKey,
+                              onChanged: (v) => setState(() => _sourceKey = v),
+                            ),
+                          ],
+                        ],
                         const SizedBox(height: 12),
 
                         // Trigger Type
@@ -607,15 +707,21 @@ class _SubscriptionDialogState extends State<_SubscriptionDialog> {
   }
 
   bool _canSave() {
-    if (_selectedTarget == null || _selectedSource == null || _selectedProviderAddr == null) return false;
+    if (_selectedTargetBlock == null || _selectedTargetField == null ||
+        _selectedSourceBlock == null || _selectedSourceField == null ||
+        _selectedProviderAddr == null) {
+      return false;
+    }
     if (_needsPeriod() && _periodMs <= 0) return false;
     if (_minTimeMs < 0) return false;
     return true;
   }
 
   Future<void> _save() async {
-    final targetReg = _selectedTarget!.blockInfo;
-    final sourceReg = _selectedSource!.blockInfo;
+    final targetReg = _makeBlockInfo(_selectedTargetBlock!.type, _selectedTargetBlock!.inst,
+        _selectedTargetField!.field, _targetKey);
+    final sourceReg = _makeBlockInfo(_selectedSourceBlock!.type, _selectedSourceBlock!.inst,
+        _selectedSourceField!.field, _sourceKey);
     final providerAddr = _selectedProviderAddr!;
 
     final index = widget.existing?.index ?? _findFreeIndex();
@@ -665,35 +771,35 @@ class _SubscriptionDialogState extends State<_SubscriptionDialog> {
   }
 }
 
-class _BlockFieldPicker extends StatelessWidget {
+class _BlockPicker extends StatelessWidget {
   final String label;
   final String hint;
-  final List<_BlockFieldOption> options;
-  final _BlockFieldOption? value;
-  final ValueChanged<_BlockFieldOption?> onChanged;
+  final List<_BlockSelection> blocks;
+  final _BlockSelection? value;
+  final ValueChanged<_BlockSelection?> onChanged;
 
-  const _BlockFieldPicker({
+  const _BlockPicker({
     required this.label,
     required this.hint,
-    required this.options,
+    required this.blocks,
     required this.value,
     required this.onChanged,
   });
 
   @override
   Widget build(BuildContext context) {
-    if (options.isEmpty) {
+    if (blocks.isEmpty) {
       return InputDecorator(
         decoration: InputDecoration(
           labelText: label,
-          hintText: 'No blocks available',
+          hintText: hint,
           border: const OutlineInputBorder(),
         ),
         child: const Text('No blocks available'),
       );
     }
 
-    return DropdownButtonFormField<_BlockFieldOption>(
+    return DropdownButtonFormField<_BlockSelection>(
       initialValue: value,
       decoration: InputDecoration(
         labelText: label,
@@ -701,12 +807,83 @@ class _BlockFieldPicker extends StatelessWidget {
         border: const OutlineInputBorder(),
       ),
       isExpanded: true,
-      items: options.map((opt) => DropdownMenuItem(
+      items: blocks.map((opt) => DropdownMenuItem(
         value: opt,
         child: Text(opt.label, overflow: TextOverflow.ellipsis),
       )).toList(),
       onChanged: onChanged,
       menuMaxHeight: 300,
+    );
+  }
+}
+
+class _FieldPicker extends StatelessWidget {
+  final String label;
+  final List<_FieldSelection> fields;
+  final _FieldSelection? value;
+  final ValueChanged<_FieldSelection?> onChanged;
+
+  const _FieldPicker({
+    required this.label,
+    required this.fields,
+    required this.value,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (fields.isEmpty) {
+      return const InputDecorator(
+        decoration: InputDecoration(
+          labelText: 'Field',
+          hintText: 'No fields available',
+          border: OutlineInputBorder(),
+        ),
+        child: Text('No fields available'),
+      );
+    }
+
+    return DropdownButtonFormField<_FieldSelection>(
+      initialValue: value,
+      decoration: InputDecoration(
+        labelText: label,
+        border: const OutlineInputBorder(),
+      ),
+      isExpanded: true,
+      items: fields.map((opt) => DropdownMenuItem(
+        value: opt,
+        child: Text('${opt.name}  (${opt.keyed ? "keyed" : opt.meta.dataType.name})', overflow: TextOverflow.ellipsis),
+      )).toList(),
+      onChanged: onChanged,
+      menuMaxHeight: 300,
+    );
+  }
+}
+
+class _KeyPicker extends StatelessWidget {
+  final String label;
+  final int value;
+  final ValueChanged<int> onChanged;
+
+  static const keys = [0, 1, 2, 3, 4, 5, 6, 7];
+
+  const _KeyPicker({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return DropdownButtonFormField<int>(
+      initialValue: value,
+      decoration: InputDecoration(
+        labelText: label,
+        border: const OutlineInputBorder(),
+      ),
+      isExpanded: true,
+      items: keys.map((k) => DropdownMenuItem(value: k, child: Text('Key $k'))).toList(),
+      onChanged: (v) => onChanged(v!),
     );
   }
 }

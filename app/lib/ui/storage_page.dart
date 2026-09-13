@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../core/backup.dart' show readPlatformFile;
 import '../core/connection.dart';
+import '../core/device_db.dart';
 import '../core/block_registry.dart' show FieldInfo, blockInfoFor;
 import '../core/storage_client.dart';
 import '../core/types.dart';
@@ -32,10 +33,9 @@ class _StoragePageState extends State<StoragePage>
   List<FileRecord>? _files;
   String? _error;
   bool _refreshing = false;
-  // USE_FIXED_STORAGE devices have no browsable file table (the table is a const array in
-  // firmware); readFileTable() fails, so the page shows a fixed-storage notice instead of
-  // the file browser, and create/upload/rename/delete are hidden.
-  bool _reduced = false;
+  // Devices without the StorageFiles capability (e.g. USE_FIXED_STORAGE nodes like the
+  // DAS) have a read-only const file table; create/upload/rename/delete are hidden.
+  late final bool _reduced = !_hasStorageFiles();
 
   @override
   void initState() {
@@ -54,6 +54,11 @@ class _StoragePageState extends State<StoragePage>
         .showSnackBar(SnackBar(content: Text(message)));
   }
 
+  bool _hasStorageFiles() {
+    final dev = DeviceDatabase.instance.byId(widget.deviceId);
+    return dev != null && (dev.capabilities & Capability.storageFiles) != 0;
+  }
+
   Future<void> _refresh() async {
     if (!ConnectionManager.instance.isConnected || _refreshing) return;
     setState(() => _refreshing = true);
@@ -64,7 +69,6 @@ class _StoragePageState extends State<StoragePage>
       // readFileTable() reads the ".TABLE  " file directly using CID 5. A reduced
       // (USE_FIXED_STORAGE) device serves the fixed filetable through the same read.
       _error = null;
-      _reduced = _client.reduced;
       _files = files ?? [];
     });
   }
@@ -289,7 +293,8 @@ Widget _buildBody() {
     if (!mounted) return;
     Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => FileTableViewPage(
-            deviceId: widget.deviceId, size: table.size, data: data)));
+            deviceId: widget.deviceId, size: table.size, data: data,
+            fixed: _reduced)));
   }
 
   Future<void> _showFile(FileRecord file) async {
@@ -344,18 +349,20 @@ class FileTableViewPage extends StatelessWidget {
   final int deviceId;
   final int size;
   final List<int>? data;
+  final bool fixed;
 
   const FileTableViewPage(
       {super.key,
       required this.deviceId,
       required this.size,
-      required this.data});
+      required this.data,
+      this.fixed = false});
 
   @override
   Widget build(BuildContext context) {
     final body = data == null
         ? const Center(child: Text('Read failed'))
-        : _TableBody(data: data!, size: size);
+        : _TableBody(data: data!, size: size, fixed: fixed);
     return Scaffold(
       appBar: AppBar(title: const Text('File table')),
       body: body,
@@ -369,7 +376,13 @@ class FileTableViewPage extends StatelessWidget {
 class _TableBody extends StatefulWidget {
   final List<int> data;
   final int size;
-  const _TableBody({required this.data, required this.size});
+  final bool fixed;
+
+  const _TableBody({
+    required this.data,
+    required this.size,
+    this.fixed = false,
+  });
 
   @override
   State<_TableBody> createState() => _TableBodyState();
@@ -387,9 +400,10 @@ class _TableBodyState extends State<_TableBody> {
       final recOffset = uint32FromBytes(data, off);
       final fileSize = uint32FromBytes(data, off + 4);
       final unwritten = recOffset == 0xFFFFFFFF && fileSize == 0xFFFFFFFF;
-      // Invalidated = offset 0 AND size 0 (the device zeroes both on delete). A record at
-      // offset 0 with a non-zero size is a valid fixed (reduced file system) file.
-      final isInvalidated = !unwritten && recOffset == 0 && fileSize == 0;
+      // Offset 0 marks a superseded/invalidated record on the full file system (the
+      // device zeroes the 4-byte offset, leaving the size); on the fixed (reduced)
+      // storage offset-0 records are the real files.
+      final isInvalidated = !widget.fixed && !unwritten && recOffset == 0;
       String name() => String.fromCharCodes(data.sublist(off + 8, off + 16)).trim();
       final row = ListTile(
         dense: true,

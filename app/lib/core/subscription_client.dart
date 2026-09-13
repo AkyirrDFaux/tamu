@@ -87,26 +87,10 @@ class SubscriptionClient {
   /// the provider's.
   Future<bool> setRequesterSubscription(int index, {RequesterSubscription? entry}) async {
     if (entry == null) {
-      // Delete: clear the requester entry and cancel the provider subscription. Read
-      // the stored entry first to learn the provider address + shared TRID (the
-      // provider entry is found by TRID, and the requester entry is gone after delete).
-      int? providerAddr;
-      int? trid;
-      final before = await getRequesterSubscriptions();
-      for (final s in before) {
-        if (s.index == index) {
-          providerAddr = s.providerAddr;
-          trid = s.trid;
-          break;
-        }
-      }
-      final reply = await _request(4, payload: [index], transactionId: trid == null ? null : trid & 0xFF);
-      if (reply == null) return false;
-      if (providerAddr != null) {
-        await _request(1, payload: [], timeout: const Duration(seconds: 1),
-            toDevice: providerAddr, transactionId: trid == null ? null : trid & 0xFF);
-      }
-      return true;
+      // Delete: the firmware clears the requester entry and cancels the provider side
+      // (CID 1) using the shared TRID, so only the index-based CID 4 is sent here.
+      final reply = await _request(4, payload: [index]);
+      return reply != null;
     } else {
       // Create/update: register BOTH sides under one shared TRID so the provider's value
       // updates (which carry that TRID) are routed to this requester entry.

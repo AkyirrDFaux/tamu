@@ -46,8 +46,10 @@ static inline void SendBlockMetaResponse(const PacketFrame &frame, uint32_t bi, 
     memcpy(rpl+pos, &bi,4); pos+=4;
     BlockMeta m; m.FlagsAndType = flags_and_type; m.Key=0xFF; m.Size=map_count;
     memcpy(rpl+pos, &m,4); pos+=4;
-    uint8_t n = name ? strlen(name) : 0; if (n > 8) n = 8;
-    memcpy(rpl+pos, name, n); pos+=4;
+    uint8_t n = name ? (uint8_t)strlen(name) : 0;
+    if (n > BLOCK_NAME_LEN - 1) n = BLOCK_NAME_LEN - 1;
+    memcpy(rpl+pos, name, n); pos+=n;
+    while (pos % 4) rpl[pos++] = 0; // 4-byte alignment
     SendResponse(frame,rpl,pos);
 }
 
@@ -102,6 +104,13 @@ static void HandleEnumerate(const PacketFrame &frame, uint32_t bi) {
         if (req_type == 0 && req_inst == 0) {
             // System block is not in the static registry; it has 9 fields.
             cnt = 9;
+        } else if (req_type == 0x3FF) {
+#ifndef DISABLE_DYNAMIC_MEMORY
+            if (req_inst >= dynamic_block_registry.block_count) { RespondStatus(frame,false); return; }
+            cnt = dynamic_block_registry.GetBlock(req_inst)->map_count;
+#else
+            cnt = 0;
+#endif
         } else {
             int idx = FindStaticBlock(req_type, req_inst);
             if (idx < 0) { RespondStatus(frame,false); return; }
@@ -485,7 +494,7 @@ static void HandleDynamicSaveRecall(const PacketFrame &frame, uint8_t cid, uint8
 static void HandleCreateDynamic(const PacketFrame &frame, uint16_t type) {
     if (PayloadBytes(frame) < 8) { RespondStatus(frame,false); return; }
     uint16_t name_len = PayloadBytes(frame) - 4;
-    if (name_len > 11) name_len = 11;
+    if (name_len > BLOCK_NAME_LEN - 1) name_len = BLOCK_NAME_LEN - 1;
     DynamicBlockDescriptor *block = CreateDynamicBlock((BlockType)type, frame.payload + 4, name_len);
     if (!block) { RespondStatus(frame,false); return; }
     uint8_t payload[sizeof(BlockIndex) + 1];
@@ -508,9 +517,9 @@ static void HandleGetName(const PacketFrame &frame, uint32_t bi, uint16_t block_
     if (block_idx >= dynamic_block_registry.block_count) { RespondStatus(frame,false); return; }
     DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(block_idx);
     if (!block) { RespondStatus(frame,false); return; }
-    uint8_t payload[sizeof(BlockIndex) + 12];
+    uint8_t payload[sizeof(BlockIndex) + BLOCK_NAME_LEN];
     memcpy(payload, &bi, 4);
-    uint16_t n = strlen(block->Name); if (n > 12) n = 12;
+    uint16_t n = strlen(block->Name); if (n > BLOCK_NAME_LEN - 1) n = BLOCK_NAME_LEN - 1;
     memcpy(payload + 4, block->Name, n);
     SendResponse(frame, payload, 4 + n);
 }
@@ -518,7 +527,7 @@ static void HandleGetName(const PacketFrame &frame, uint32_t bi, uint16_t block_
 static void HandleSetName(const PacketFrame &frame, uint16_t block_idx) {
     if (block_idx >= dynamic_block_registry.block_count) { RespondStatus(frame,false); return; }
     if (PayloadBytes(frame) < 8) { RespondStatus(frame,false); return; }
-    uint16_t n = PayloadBytes(frame) - 4; if (n > 11) n = 11;
+    uint16_t n = PayloadBytes(frame) - 4; if (n > BLOCK_NAME_LEN - 1) n = BLOCK_NAME_LEN - 1;
     DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(block_idx);
     if (!block) { RespondStatus(frame,false); return; }
     memcpy(block->Name, frame.payload + 4, n);
