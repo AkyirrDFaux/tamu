@@ -4,24 +4,24 @@
 #include "Core/Functions/Memory.h"
 #include "Core/Types/Matrix.h"
 #include "Core/Types/Vector.h"
-#include "esp_log.h"
 
 const uint8_t GammaTable[256] = {
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1,
-    1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 4,
-    4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7,
-    8, 8, 8, 9, 9, 9, 10, 10, 10, 11, 11, 11, 12, 12, 12, 13,
-    13, 14, 14, 15, 15, 16, 16, 17, 17, 18, 18, 19, 19, 20, 20, 21,
-    21, 22, 22, 23, 24, 24, 25, 25, 26, 27, 27, 28, 29, 29, 30, 31,
-    31, 32, 33, 33, 34, 35, 36, 36, 37, 38, 39, 39, 40, 41, 42, 43,
-    43, 44, 45, 46, 47, 47, 48, 49, 50, 51, 52, 53, 53, 54, 55, 56,
-    57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72,
-    73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 86, 87, 88, 89,
-    90, 91, 92, 94, 95, 96, 97, 98, 100, 101, 102, 103, 105, 106, 107, 109,
-    110, 111, 113, 114, 115, 117, 118, 119, 121, 122, 123, 125, 126, 128, 129, 131,
-    132, 133, 135, 136, 138, 139, 141, 142, 144, 145, 147, 148, 150, 151, 153, 154,
-    156, 157, 159, 160, 162, 163, 165, 166, 168, 170, 171, 173, 174, 176, 177, 179,
-    181, 182, 184, 185, 187, 188, 190, 192, 193, 195, 196, 198, 199, 200, 200, 200};
+    0, 12, 17, 22, 25, 29, 32, 35, 37, 40, 42, 44, 47, 49, 51, 53,
+    55, 57, 58, 60, 62, 64, 65, 67, 69, 70, 72, 73, 75, 76, 78, 79,
+    80, 82, 83, 85, 86, 87, 89, 90, 91, 92, 94, 95, 96, 97, 98, 100,
+    101, 102, 103, 104, 105, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117,
+    118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133,
+    134, 135, 136, 137, 138, 139, 139, 140, 141, 142, 143, 144, 145, 146, 146, 147,
+    148, 149, 150, 151, 152, 152, 153, 154, 155, 156, 157, 157, 158, 159, 160, 161,
+    161, 162, 163, 164, 165, 165, 166, 167, 168, 169, 169, 170, 171, 172, 172, 173,
+    174, 175, 175, 176, 177, 178, 178, 179, 180, 181, 181, 182, 183, 183, 184, 185,
+    186, 186, 187, 188, 188, 189, 190, 191, 191, 192, 193, 193, 194, 195, 195, 196,
+    197, 198, 198, 199, 200, 200, 201, 202, 202, 203, 204, 204, 205, 206, 206, 207,
+    208, 208, 209, 209, 210, 211, 211, 212, 213, 213, 214, 215, 215, 216, 217, 217,
+    218, 218, 219, 220, 220, 221, 222, 222, 223, 223, 224, 225, 225, 226, 226, 227,
+    228, 228, 229, 230, 230, 231, 231, 232, 233, 233, 234, 234, 235, 236, 236, 237,
+    237, 238, 238, 239, 240, 240, 241, 241, 242, 243, 243, 244, 244, 245, 245, 246,
+    247, 247, 248, 248, 249, 249, 250, 251, 251, 252, 252, 253, 253, 254, 254, 255};
 
 const uint8_t LayoutVysiv1_0[10 * 11]{
     0, 0, 0, 28, 29, 48, 49, 68, 0, 0, 0,
@@ -65,11 +65,24 @@ inline void PreloadVysiLayout()
     Storage.WriteToFile(name, 0, sizeof(buf), (const char *)buf);
 }
 
+// Identity 2x3 affine ([1 0 0; 0 1 0]), the default Offset transform.
+static inline Matrix<2, 3> IdentityAffine23()
+{
+    Matrix<2, 3> m;
+    m(0, 0) = Number(1);
+    m(0, 1) = Number(0);
+    m(0, 2) = Number(0);
+    m(1, 0) = Number(0);
+    m(1, 1) = Number(1);
+    m(1, 2) = Number(0);
+    return m;
+}
+
 struct Vysi1Struct
 {
     Number Brightness = 30; //%
-    Matrix<3, 3> Offset = Matrix<3, 3>::Identity();
-    uint32_t RenderBlock = 0; // Index into dynamic_block_registry (dynamic block with keyed dicts)
+    Matrix<2, 3> Offset = IdentityAffine23(); // 2x3 transformation (0,0 position + rotation)
+    int32_t RenderBlock = -1; // Signed index into dynamic_block_registry; -1 = none (invalid)
     // Layout File Name: plain 8-char storage file name, space padded. Default is blank =
     // built-in default layout. Written via trigger, which loads the layout file
     // immediately (write is rejected if the file cannot be loaded).
@@ -79,8 +92,8 @@ struct Vysi1Struct
 
 const BlockMeta Vysi1_Map[] = {
     {DataType::Number | FieldFlags::None, 0x00, sizeof(Number)},      // Brightness
-    {DataType::Matrix | FieldFlags::Persistent, 0x00, sizeof(Matrix<3, 3>)},// Offset
-    {DataType::Uint32 | FieldFlags::Persistent, 0x00, sizeof(uint32_t)},    // Render DynamicBlock Index
+    {DataType::Matrix | FieldFlags::Persistent, 0x00, sizeof(Matrix<2, 3>)},// Offset (2x3)
+    {DataType::Index | FieldFlags::Persistent, 0x00, sizeof(int32_t)},     // Render Block Index (signed, -1 = none)
     {DataType::String | FieldFlags::Trigger | FieldFlags::Persistent, 0x00, 8}, // Layout File Name
     {DataType::Number | FieldFlags::ReadOnly, 0x00, sizeof(Number)},  // Refresh Rate
 };
@@ -116,7 +129,7 @@ public:
     uint8_t GeoMask[MaxCachedFields][LedNum];
     DynamicBlockDescriptor *CacheBlockPtr = nullptr;
     uint32_t CacheBlockGen = 0xFFFFFFFF;
-    int32_t CacheOffset[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+    int32_t CacheOffset[6] = {0, 0, 0, 0, 0, 0};
     uint32_t CacheLayoutGen = 0xFFFFFFFF;
     bool CacheValid = false;
 
@@ -239,10 +252,10 @@ const FieldTrigger Vysi1_Triggers[] = {
 
 const uint16_t Vysi1_Offsets[] = {
     0,                                    // Brightness (Number, 4B)
-    4,                                    // Offset (Matrix<3,3>, 40B)
-    44,                                   // RenderBlock (uint32, 4B)
-    48,                                   // LayoutFile (String, 8B)
-    56,                                   // RefreshRate (Number, 4B)
+    4,                                    // Offset (Matrix<2,3>, 28B)
+    32,                                   // RenderBlock (int32, 4B)
+    36,                                   // LayoutFile (String, 8B)
+    44,                                   // RefreshRate (Number, 4B)
 };
 
 const BlockSchema Vysi1_Schema = {
@@ -316,11 +329,11 @@ inline void Vysi1Display::RenderGeometryField(DynamicBlockDescriptor *block, uin
         return;
 
     // Combined transform: (Position) * (Offset * centering). Offset is the static
-    // block's "default rotation / 0,0 position"; the centering puts the origin at
-    // the layout's centre.
+    // block's 2x3 "default rotation / 0,0 position", promoted to 3x3 homogeneous; the
+    // centering puts the origin at the layout's centre.
     Matrix<2, 3> pos = block->GetKeyValue<Matrix<2, 3>>(field, (uint8_t)GeometryKey::Position, DataType::Matrix, IdentityAffine());
     Matrix<3, 3> local = PromoteAffine(pos);
-    Matrix<3, 3> base = Data.Offset * Matrix<3, 3>::CreateTransform2D(N(0), {-(N(Lw) / N(2) - N(0.5)), -(N(Lh) / N(2) - N(0.5))}, {N(1), N(1)});
+    Matrix<3, 3> base = PromoteAffine(Data.Offset) * Matrix<3, 3>::CreateTransform2D(N(0), {-(N(Lw) / N(2) - N(0.5)), -(N(Lh) / N(2) - N(0.5))}, {N(1), N(1)});
     Matrix<3, 3> combined = local * base;
 
     // Size: Square takes a Number (side), Rectangle takes a Vector<2> (w, h).
@@ -336,7 +349,7 @@ inline void Vysi1Display::RenderGeometryField(DynamicBlockDescriptor *block, uin
         sy = size[1];
     }
 
-    Number fade = block->GetKeyValue<Number>(field, (uint8_t)GeometryKey::Fade, DataType::Number, N(0));
+    Number fade = block->GetKeyValue<Number>(field, (uint8_t)GeometryKey::Fade, DataType::Number, N(1));
     Number alpha = block->GetKeyValue<Number>(field, (uint8_t)GeometryKey::Alpha, DataType::Number, N(1));
     Number hx = sx / N(2);
     Number hy = sy / N(2);
@@ -401,22 +414,22 @@ inline void Vysi1Display::Render()
     // frame or pixels not covered by the current render would keep stale colours.
     memset((void *)Buffer, 0, LedNum * sizeof(ColourClass));
 
-    if (Data.RenderBlock >= dynamic_block_registry.block_count)
+    if (Data.RenderBlock < 0 || Data.RenderBlock >= dynamic_block_registry.block_count)
         return;
     DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock((uint16_t)Data.RenderBlock);
     if (!block)
         return;
 
     // ---- geometry cache (mask): recompute only when the scene actually changed ----
-    const Matrix<3, 3> &off = Data.Offset;
+    const Matrix<2, 3> &off = Data.Offset;
     bool offsetChanged = false;
-    for (int i = 0; i < 9; i++)
+    for (int i = 0; i < 6; i++)
         if (off.buffer.data[i].Value != CacheOffset[i]) { offsetChanged = true; break; }
 
     if (!CacheValid || block != CacheBlockPtr || offsetChanged ||
         block->generation != CacheBlockGen || LayoutGen != CacheLayoutGen)
     {
-        for (int i = 0; i < 9; i++)
+        for (int i = 0; i < 6; i++)
             CacheOffset[i] = off.buffer.data[i].Value;
         CacheBlockPtr = block;
         CacheBlockGen = block->generation;

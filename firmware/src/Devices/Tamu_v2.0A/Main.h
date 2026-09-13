@@ -163,6 +163,7 @@ LED.Setup();
     static bool s_identify_prev = false;
 while (1)
     {
+        int64_t loopStart = esp_timer_get_time();
         // Net-ID collision (Core-discover): blink the error LED slowly (~1 Hz) until
         // the net is changed. Takes priority over identify and the LED-button state.
         if (CoreCollisionFlag())
@@ -197,18 +198,23 @@ while (1)
         // Render the configured render blocks (Vysi1Display, driven by the LEDDisplay
         // static block's Brightness/Offset/RenderBlock fields) and send both LED strips
         // (pins 0,3) IN PARALLEL, tracking each display's achieved refresh rate (FPS,
-        // averaged) in its Read-Only Refresh Rate field.
-        int64_t rt = esp_timer_get_time();
+        // averaged) in its Read-Only Refresh Rate field. The FPS reflects the FULL frame
+        // period (loop start to loop start), i.e. the display's real update rate.
         Display1.Render();
         Display2.Render();
         LED.SendParallel(Display1.Buffer, Display2.Buffer, Vysi1Display::LedNum);
         {
-            // FPS = 1e6 / elapsed_us, kept in 16.16 fixed point (no float).
-            int64_t elapsed_us = esp_timer_get_time() - rt;
-            if (elapsed_us <= 0) elapsed_us = 1;
-            Number inst = Number::FromRaw((int32_t)((1000000LL << 16) / elapsed_us));
-            Display1.Data.RefreshRate = Display1.Data.RefreshRate * Number::FromRaw(58982) + inst * Number::FromRaw(6553);
-            Display2.Data.RefreshRate = Display2.Data.RefreshRate * Number::FromRaw(58982) + inst * Number::FromRaw(6553);
+            static int64_t lastFrameUs = 0;
+            if (lastFrameUs != 0)
+            {
+                // FPS = 1e6 / period_us, kept in 16.16 fixed point (no float).
+                int64_t period_us = loopStart - lastFrameUs;
+                if (period_us <= 0) period_us = 1;
+                Number inst = Number::FromRaw((int32_t)((1000000LL << 16) / period_us));
+                Display1.Data.RefreshRate = Display1.Data.RefreshRate * Number::FromRaw(58982) + inst * Number::FromRaw(6553);
+                Display2.Data.RefreshRate = Display2.Data.RefreshRate * Number::FromRaw(58982) + inst * Number::FromRaw(6553);
+            }
+            lastFrameUs = loopStart;
         }
 
         Sleep(2); // short heartbeat: BLE request/response latency scales with this loop period

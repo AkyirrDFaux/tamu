@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import '../core/block_registry.dart';
+import '../core/transform_23.dart';
 export '../core/block_registry.dart' show FieldInfo;
 import '../core/types.dart';
 
@@ -173,7 +174,7 @@ String formatValue(DataType type, List<int> bytes) {
       if (bytes.length < 4) return bytesToInt(bytes).toString();
       return uint32FromBytes(bytes).toString();
     case DataType.string:
-      return bytes.isEmpty ? '-' : String.fromCharCodes(bytes);
+      return bytes.isEmpty ? '-' : String.fromCharCodes(bytes).trimRight();
     case DataType.devType:
       if (bytes.length < 2) return '-';
       return DeviceType.fromValue(bytes[0] | (bytes[1] << 8)).label;
@@ -688,92 +689,81 @@ Future<List<int>?> _editColour(BuildContext context, List<int> current) {
 ///   [ cos.sx       cos.sx.tan(skew) - sin.sy    tx ]
 ///   [ sin.sx       sin.sx.tan(skew) + cos.sy    ty ]
 Future<List<int>?> _editTransformMatrix(BuildContext context, List<int> current) {
-  double m(int i) =>
-      current.length >= 4 + (i + 1) * 4 ? numberFromBytes(current, 4 + i * 4) : (i == 0 || i == 4 ? 1 : 0);
+  final t = Transform23()..fromMatrix(current);
 
-  // Source of truth: the six cells (a, b, tx, c, d, ty).
-  final cells = <double>[m(0), m(1), m(2), m(3), m(4), m(5)];
-
-  // Raw cell controllers.
-  final raw = List.generate(6, (i) => TextEditingController(text: _num3(cells[i])));
+  // Raw cell controllers (a, b, tx, c, d, ty).
+  final raw = List.generate(6, (i) => TextEditingController(text: _num3(t.toCells()[i])));
 
   // Transform controllers + mirror flags.
   final tc = <String, TextEditingController>{};
-  var mirrorX = false, mirrorY = false;
+  bool mirrorX = t.mirrorX, mirrorY = t.mirrorY;
 
   void syncTc() {
-    final a = cells[0], b = cells[1], c = cells[3], d = cells[4];
-    final sx = math.sqrt(a * a + c * c);
-    final sy = math.sqrt(b * b + d * d);
-    final deg = math.atan2(c, a) * 180 / math.pi;
-    mirrorX = (a < 0 && c == 0 && b == 0 && d > 0);
-    mirrorY = (d < 0 && b == 0 && c == 0 && a > 0);
-    tc['ox']!.text = _num3(cells[2]);
-    tc['oy']!.text = _num3(cells[5]);
-    tc['rot']!.text = _num3(deg);
-    tc['sx']!.text = _num3(sx);
-    tc['sy']!.text = _num3(sy);
-    tc['skew']!.text = '0';
+    // raw -> transform.
+    final cells = raw.map((c) => double.tryParse(c.text)).toList();
+    if (cells.contains(null)) return;
+    t.fromCells(cells.cast<double>());
+    mirrorX = t.mirrorX;
+    mirrorY = t.mirrorY;
+    tc['ox']!.text = _num3(t.offsetX);
+    tc['oy']!.text = _num3(t.offsetY);
+    tc['rot']!.text = _num3(t.rotation);
+    tc['sx']!.text = _num3(t.scaleX);
+    tc['sy']!.text = _num3(t.scaleY);
+    tc['skew']!.text = _num3(t.skew);
   }
 
-  tc['ox'] = TextEditingController();
-  tc['oy'] = TextEditingController();
-  tc['rot'] = TextEditingController();
-  tc['sx'] = TextEditingController();
-  tc['sy'] = TextEditingController();
-  tc['skew'] = TextEditingController();
-  syncTc();
+  void syncFromRaw() {
+    syncTc();
+  }
 
-  // Transform -> raw (also called on every transform/mirror edit).
   void syncRaw() {
-    final oxx = double.tryParse(tc['ox']!.text) ?? cells[2];
-    final oyy = double.tryParse(tc['oy']!.text) ?? cells[5];
-    final rot = double.tryParse(tc['rot']!.text) ?? 0.0;
-    final sxx = double.tryParse(tc['sx']!.text) ?? 1.0;
-    final syy = double.tryParse(tc['sy']!.text) ?? 1.0;
-    final sk = double.tryParse(tc['skew']!.text) ?? 0.0;
-    final rad = rot * math.pi / 180;
-    final k = math.tan(sk * math.pi / 180);
-    final fsx = sxx * (mirrorX ? -1 : 1);
-    final fsy = syy * (mirrorY ? -1 : 1);
-    cells[0] = fsx * math.cos(rad);
-    cells[1] = fsx * math.cos(rad) * k - fsy * math.sin(rad);
-    cells[2] = oxx;
-    cells[3] = fsx * math.sin(rad);
-    cells[4] = fsx * math.sin(rad) * k + fsy * math.cos(rad);
-    cells[5] = oyy;
+    // transform -> raw (called on every transform/mirror edit).
+    t
+      ..offsetX = double.tryParse(tc['ox']!.text) ?? t.offsetX
+      ..offsetY = double.tryParse(tc['oy']!.text) ?? t.offsetY
+      ..rotation = double.tryParse(tc['rot']!.text) ?? t.rotation
+      ..scaleX = double.tryParse(tc['sx']!.text) ?? t.scaleX
+      ..scaleY = double.tryParse(tc['sy']!.text) ?? t.scaleY
+      ..skew = double.tryParse(tc['skew']!.text) ?? t.skew
+      ..mirrorX = mirrorX
+      ..mirrorY = mirrorY;
+    final cells = t.toCells();
     for (var i = 0; i < 6; i++) {
       raw[i].text = _num3(cells[i]);
     }
-  }
-
-  // Raw -> transform controllers (best-effort; assumes no shear).
-  void syncFromRaw() {
-    for (var i = 0; i < 6; i++) {
-      cells[i] = double.tryParse(raw[i].text) ?? cells[i];
-    }
-    syncTc();
   }
 
   void reset() {
-    cells
-      ..[0] = 1
-      ..[1] = 0
-      ..[2] = 0
-      ..[3] = 0
-      ..[4] = 1
-      ..[5] = 0;
-    syncTc();
+    t
+      ..offsetX = 0
+      ..offsetY = 0
+      ..rotation = 0
+      ..scaleX = 1
+      ..scaleY = 1
+      ..skew = 0
+      ..mirrorX = false
+      ..mirrorY = false;
+    final cells = t.toCells();
     for (var i = 0; i < 6; i++) {
       raw[i].text = _num3(cells[i]);
     }
+    syncTc();
   }
 
+tc['ox'] = TextEditingController(text: _num3(t.offsetX));
+  tc['oy'] = TextEditingController(text: _num3(t.offsetY));
+  tc['rot'] = TextEditingController(text: _num3(t.rotation));
+  tc['sx'] = TextEditingController(text: _num3(t.scaleX));
+  tc['sy'] = TextEditingController(text: _num3(t.scaleY));
+  tc['skew'] = TextEditingController(text: _num3(t.skew));
+
   List<int> build() {
-    for (var i = 0; i < 6; i++) {
-      cells[i] = double.tryParse(raw[i].text) ?? cells[i];
+    final cells = raw.map((c) => double.tryParse(c.text)).toList();
+    if (!cells.contains(null)) {
+      t.fromCells(cells.cast<double>());
     }
-    return [2, 0, 3, 0, for (final v in cells) ...numberToBytes(v)];
+    return t.toMatrix();
   }
 
   Widget row(String label, String key) => Padding(
@@ -948,7 +938,7 @@ Future<List<int>?> _editNetAddr(BuildContext context, List<int> current) {
 Future<List<int>?> _editString(
     BuildContext context, String title, String current,
     {int maxChars = 23}) {
-  final controller = TextEditingController(text: current);
+  final controller = TextEditingController(text: current.trimRight());
   return showDialog<List<int>>(
     context: context,
     builder: (context) => AlertDialog(

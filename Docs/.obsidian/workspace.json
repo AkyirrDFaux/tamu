@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Devices.md",
+                "file": "Modules and blocks/LED display.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Devices"
+              "title": "LED display"
             }
           }
         ]
@@ -190,6 +190,7 @@
   },
   "active": "b382b423e960f24e",
   "lastOpenFiles": [
+    "Devices.md",
     "Modules and blocks/Measurement.md",
     "Modules and blocks/LED display.md",
     "Modules and blocks/Generic system blocks.md",
@@ -200,7 +201,6 @@
     "App/Service views/Script.md",
     "App/Service views/Dynamic Memory.md",
     "Data Formats.md",
-    "Devices.md",
     "RSBus and Packets.md",
     "Command ID table.md",
     "General architecture.md",

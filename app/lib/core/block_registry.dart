@@ -154,7 +154,7 @@ const _accGyrFields = [
 
 const _vysiDisplayFields = [
   FieldInfo('Brightness', unit: '%', min: 0, max: 100, step: 1),
-  FieldInfo('Offset'),
+  FieldInfo('Offset', transform: true), // 2x3 transformation
   FieldInfo('Render Block Index'),
   FieldInfo('Layout File Name', maxChars: 8), // char[8] on the wire
   FieldInfo('Refresh Rate', unit: 'FPS'),

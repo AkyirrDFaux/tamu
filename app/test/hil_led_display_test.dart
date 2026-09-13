@@ -107,16 +107,20 @@ Future<void> runTests() async {
   // block with brightness 20/255; park Display1 (inst 0) so only GPIO0 lights.
   final blockIndex = b.index;
   final setBlock = await reg.writeBlockField(0x06, 1, 2, 0,
-      BlockMeta(flagsAndType: DataType.uint32.value, size: 4), uint32ToBytes(blockIndex));
+      BlockMeta(flagsAndType: DataType.integer.value, size: 4), intToBytes(blockIndex, 4));
   if (setBlock == null) fail('set Display2.RenderBlock failed');
   final park1 = await reg.writeBlockField(0x06, 0, 2, 0,
-      BlockMeta(flagsAndType: DataType.uint32.value, size: 4), uint32ToBytes(0xFFFFFFFF));
+      BlockMeta(flagsAndType: DataType.integer.value, size: 4), intToBytes(-1, 4));
   if (park1 == null) fail('park Display1.RenderBlock failed');
   final setBrightness = await reg.writeBlockField(0x06, 1, 0, 0,
       BlockMeta(flagsAndType: DataType.number.value, size: 4), numberToBytes(20.0));
   if (setBrightness == null) fail('set Display2.Brightness failed');
+  // Apply the preloaded VYSIV1 layout (11x10) so the static block shows it used.
+  final setLayout = await reg.writeBlockField(0x06, 1, 3, 0,
+      BlockMeta(flagsAndType: DataType.string.value, size: 6), 'VYSIV1'.codeUnits);
+  if (setLayout == null) fail('set Display2.LayoutFile failed');
   // ignore: avoid_print
-  print('[D] Display2.RenderBlock=$blockIndex Brightness=20 (Display1 parked)');
+  print('[D] Display2.RenderBlock=$blockIndex Brightness=20 LayoutFile=VYSIV1 (Display1 parked)');
 
   // Let the renderer run a few frames, then read back the achieved FPS.
   final link = ConnectionManager.instance;

@@ -2,13 +2,13 @@ A generic LED display interface, allows rendering shapes with textures and overl
 #### Static Settings Block
 Contains overall settings.
 
-| Name                    | F.K:SP | Flags | Size              | Note                                                                 |
-| ----------------------- | ------ | ----- | ----------------- | -------------------------------------------------------------------- |
-| Brightness              | 0      |       | Number            | %                                                                    |
-| Offset                  | 1      | P     | Matrix 2x3        | Transformation, Defines the 0,0 screen position and default rotation |
-| Render KeyedBlock Index | 2      | P     | uint32            | Index of the block containing shapes textures and effects            |
-| Layout File Name        | 3      | TR,P  | Filename (8 char) | File containing the layout                                           |
-| Refresh Rate            | 4      | RO    | Number            | in FPS (averaged)                                                    |
+| Name                    | F.K:SP | Flags | Size              | Note                                                                     |
+| ----------------------- | ------ | ----- | ----------------- | ------------------------------------------------------------------------ |
+| Brightness              | 0      |       | Number            | %                                                                        |
+| Offset                  | 1      | P     | Matrix 2x3        | Transformation, Defines the 0,0 screen position and default rotation     |
+| Render KeyedBlock Index | 2      | P     | Index (int32)     | Index of the block containing shapes textures and effects, -1 is invalid |
+| Layout File Name        | 3      | TR,P  | Filename (8 char) | File containing the layout                                               |
+| Refresh Rate            | 4      | RO    | Number            | in FPS (averaged)                                                        |
 #### Layout file
 
 | Display width | Display Height | Table of LED indexes |
