@@ -140,59 +140,6 @@ void HandleSNDB(const PacketFrame &frame)
 }
 #endif // TYPE_CORE
 
-// --- Device name persistence ---
-// Docs/Services/Device service.md: "Device name is stored in standalone file to allow
-// persistence." The name lives in a dedicated storage file ("DEVNAME ") updated
-// NOR-safely (stage in a temp file, rename into place) so a power cut never leaves a
-// torn name. Loading is idempotent and safe before storage is ready (FileExists
-// reports not-found while the table is uninitialized).
-#define DEVICE_NAME_FILE      "DEVNAME "
-#define DEVICE_NAME_FILE_SIZE 24 // max name (23) + NUL
-
-static bool s_device_name_loaded = false;
-
-void LoadPersistedDeviceName()
-{
-    if (s_device_name_loaded) return;
-    s_device_name_loaded = true;
-
-    uint32_t sz = Storage.FileExists(DEVICE_NAME_FILE);
-    if (sz == 0xFFFFFFFF || sz == 0) return; // none persisted: keep the built-in default
-    uint8_t buf[DEVICE_NAME_FILE_SIZE];
-    uint32_t n = Storage.ReadFromFile(DEVICE_NAME_FILE, 0, sizeof(buf), (char *)buf);
-    if (n == 0 || buf[0] == '\0') return;
-    uint32_t len = n < sizeof(DeviceNameBuffer) - 1 ? n : sizeof(DeviceNameBuffer) - 1;
-    memcpy(DeviceNameBuffer, buf, len);
-    DeviceNameBuffer[len] = '\0';
-}
-
-bool PersistDeviceName()
-{
-    uint8_t buf[DEVICE_NAME_FILE_SIZE] = {0};
-    uint16_t len = (uint16_t)strlen(DeviceName);
-    if (len >= DEVICE_NAME_FILE_SIZE) len = DEVICE_NAME_FILE_SIZE - 1;
-    memcpy(buf, DeviceName, len);
-
-    char tmp[8];
-    memcpy(tmp, DEVICE_NAME_FILE, 8);
-    tmp[7] = '~'; // staging name ("DEVNAME~")
-    if (Storage.FileExists(tmp) != 0xFFFFFFFF)
-        Storage.DeleteFile(tmp); // clear a stale staging file from an interrupted update
-    if (!Storage.CreateFile(tmp, DEVICE_NAME_FILE_SIZE))
-        return false;
-    if (!Storage.WriteToFile(tmp, 0, DEVICE_NAME_FILE_SIZE, (const char *)buf))
-    {
-        Storage.DeleteFile(tmp);
-        return false;
-    }
-    if (!Storage.RenameFile(tmp, DEVICE_NAME_FILE))
-    {
-        Storage.DeleteFile(tmp);
-        return false;
-    }
-    return true;
-}
-
 // Handles Device service requests (Discover, Ping, Identify, Type, SN, Version, Capability, Name, Uptime, Time sync/offset, SNDB).
 void HandleDeviceService(const PacketFrame &frame)
 {

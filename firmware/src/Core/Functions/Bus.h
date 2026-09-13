@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Core/Functions/Packet.h"
+#include "Core/Types/Number.h" // RawRand() for CSMA backoff
 
 // Shared RS-485 bus receive assembler (Core/Functions/Bus.h).
 //
@@ -9,6 +10,39 @@
 // UART, so the machine lives here and each device supplies a tiny byte-source
 // callback. The assembly state is static per template instantiation, so every
 // device gets its own independent machine.
+
+// CSMA/CD timings at 460800 baud (1 byte = ~21.7us) and the shared retry/silence
+// constants (Docs/RSBus and Packets.md: silence = 8 + priority/8 + random bytes).
+#define RS485_RETRIES 3
+#define RS485_BYTE_TIME_US     22
+#define RS485_SILENCE_BYTES    8
+#define RS485_SILENCE_TIMEOUT_MS 100
+
+// Waits for the line to be silent for 8 bytes + Priority/8 + random 0-3 bytes, bounded by
+// RS485_SILENCE_TIMEOUT_MS so a continuously-busy or shorted bus cannot wedge the caller.
+// Shared by both devices - they only differ in how a byte is drained, how time is read and
+// how the loop yields (DAS busy-waits, Tamu sleeps 1 ms):
+//   drain()  - drains any pending bus bytes; returns true when the bus was active.
+//   now_us() - a microsecond clock (may wrap; only short spans are compared).
+//   yield()  - a short cooperative pause for the tight retry loop.
+template <typename DrainFn, typename NowUs, typename YieldFn>
+static void RS485_WaitForSilence(uint8_t priority, DrainFn drain, NowUs now_us, YieldFn yield_fn)
+{
+    uint32_t silence_us = (RS485_SILENCE_BYTES + (priority / 8) + (RawRand() % 4)) * RS485_BYTE_TIME_US;
+    uint32_t idle_since = now_us();
+    uint32_t wait_start = idle_since;
+
+    for (;;)
+    {
+        if (drain())
+            idle_since = now_us(); // bus activity: restart the silence window
+        if ((now_us() - idle_since) >= silence_us)
+            return;
+        if ((now_us() - wait_start) >= (uint32_t)RS485_SILENCE_TIMEOUT_MS * 1000u)
+            return; // Give up: transmit into the best window we had
+        yield_fn();
+    }
+}
 
 // CRC + length validation for a fully-assembled frame (RX side).
 // CRC covers everything from flags through the end of the payload (the payload_len

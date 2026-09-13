@@ -16,7 +16,4 @@ void DeviceLog(const char *tag, const char *fmt, ...)
 }
 
 // Logs `len` bytes of `data` as a hex dump under the given tag.
-void DeviceLogHex(const char *tag, const uint8_t *data, uint16_t len)
-{
-    ESP_LOG_BUFFER_HEX(tag, data, len);
-}
+

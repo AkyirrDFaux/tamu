@@ -193,7 +193,7 @@ static int CmdSave(int argc, char **argv)
 {
     if (argc < 2) { printf("Usage: save <addr> [svc] [block|-]\n"); return 1; }
     uint16_t addr = atoi(argv[1]);
-    ServiceType svc = (argc > 2) ? ParseService(argv[2]) : ServiceType::Register;
+    ServiceType svc = ServiceType::Register;
     uint8_t block = (argc > 3 && strcmp(argv[3], "-") != 0) ? (uint8_t)atoi(argv[3]) : INVALID_BLOCK;
     printf("Saving block %d of service %d on device %d...\n", block, (int)svc, addr);
     return SendMemoryExtra(addr, block, INVALID_INDEX, svc, 5, 2);
@@ -204,7 +204,7 @@ static int CmdRecall(int argc, char **argv)
 {
     if (argc < 2) { printf("Usage: recall <addr> [svc] [block|-]\n"); return 1; }
     uint16_t addr = atoi(argv[1]);
-    ServiceType svc = (argc > 2) ? ParseService(argv[2]) : ServiceType::Register;
+    ServiceType svc = ServiceType::Register;
     uint8_t block = (argc > 3 && strcmp(argv[3], "-") != 0) ? (uint8_t)atoi(argv[3]) : INVALID_BLOCK;
     printf("Recalling block %d of service %d on device %d...\n", block, (int)svc, addr);
     return SendMemoryExtra(addr, block, INVALID_INDEX, svc, 6, 2);
@@ -215,7 +215,7 @@ static int CmdReadMemory(int argc, char **argv)
 {
     if (argc < 3) { printf("Usage: rmem <addr> [svc] <block> [field]\n"); return 1; }
     uint16_t addr = atoi(argv[1]);
-    ServiceType svc = (argc > 3) ? ParseService(argv[2]) : ServiceType::Register;
+    ServiceType svc = ServiceType::Register;
     uint8_t block = (uint8_t)atoi(argv[(argc > 3) ? 3 : 2]);
     uint8_t field = (argc > 4) ? (uint8_t)atoi(argv[4]) : 0;
     printf("Reading backup of block %d field %d of service %d on device %d...\n", block, field, (int)svc, addr);
@@ -227,7 +227,7 @@ static int CmdCreate(int argc, char **argv)
 {
     if (argc < 5) { printf("Usage: create <addr> <svc> <type_hex> <name>\n"); return 1; }
     uint16_t addr = atoi(argv[1]);
-    ServiceType svc = ParseService(argv[2]);
+    ServiceType svc = ServiceType::Register;
     // Only Register service supported for dynamic block creation (CID 0x10)
     if (svc != ServiceType::Register)
     {
@@ -266,7 +266,7 @@ static int CmdDelete(int argc, char **argv)
 {
     if (argc < 4) { printf("Usage: delete <addr> <svc> <block>\n"); return 1; }
     uint16_t addr = atoi(argv[1]);
-    ServiceType svc = ParseService(argv[2]);
+    ServiceType svc = ServiceType::Register;
     uint8_t block = (uint8_t)atoi(argv[3]);
     printf("Deleting block %d of service %d on device %d...\n", block, (int)svc, addr);
     return SendMemoryExtra(addr, block, INVALID_INDEX, svc, 1, 2);

@@ -32,8 +32,6 @@ typedef struct __attribute__((packed, aligned(4)))
 class SNDB
 {
 public:
-    // Returns the number of registered devices
-    static int32_t ActiveCount();
     // Looks up the short ID for a serial number
     static uint16_t FindShortID(const SerialNumber &serial);
     // Registers a new device and returns its assigned ID
@@ -432,14 +430,6 @@ bool SNDB::GetEntry(uint16_t short_id, RegistryEntry &out_entry)
         }
     }
     return false;
-}
-
-// Returns the number of active (registered) devices.
-int32_t SNDB::ActiveCount()
-{
-    if (!EnsureRecovered())
-        return 0;
-    return active_count;
 }
 
 // Resets the iteration cursor to the first registry entry.

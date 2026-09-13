@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import '../core/connection.dart';
 import '../core/device_db.dart';
 import '../core/types.dart';
-import 'device_icons.dart';
 import 'device_view_page.dart';
 import 'theme.dart';
 import 'widgets.dart';

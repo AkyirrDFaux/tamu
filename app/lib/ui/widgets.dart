@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../core/types.dart';
+import 'theme.dart' show kOrange;
 
 /// Autorefresh plumbing shared by the periodic-refresh pages (Docs/App/
 /// Connection.md + Service views): owns the timer, remembers the selected
@@ -95,6 +96,8 @@ String formatOffsetMs(int ms) {
 /// With `withIndex` the user may pin the new block to an explicit index (filling a
 /// None placeholder); an empty index appends. When `fixedType` is given the type
 /// dropdown is hidden and that type is always used (a dynamic block is just dynamic).
+/// `availableTypes` limits the dropdown to the block types the device actually has
+/// (static + Dynamic); when null every non-deleted type is offered.
 /// Returns (name, type, index) or null when cancelled.
 Future<(String, BlockType, int?)?> promptBlockNameAndType(
   BuildContext context, {
@@ -103,10 +106,15 @@ Future<(String, BlockType, int?)?> promptBlockNameAndType(
   required String title,
   bool withIndex = false,
   BlockType? fixedType,
+  List<BlockType>? availableTypes,
 }) async {
   final nameController = TextEditingController(text: initialName);
   final indexController = TextEditingController();
   BlockType selected = fixedType ?? initialType ?? BlockType.dynamic;
+  final types = availableTypes ??
+      BlockType.values.where((t) => t != BlockType.deleted).toList();
+  // The current selection always has to be offered (a retype keeps the old label).
+  final offered = types.contains(selected) ? types : [selected, ...types];
   final result = await showDialog<(String, BlockType, int?)>(
     context: context,
     builder: (context) => StatefulBuilder(
@@ -135,9 +143,8 @@ Future<(String, BlockType, int?)?> promptBlockNameAndType(
               initialValue: selected,
               decoration: const InputDecoration(labelText: 'Block type'),
               items: [
-                for (final t in BlockType.values)
-                  if (t != BlockType.deleted)
-                    DropdownMenuItem(value: t, child: Text(t.label)),
+                for (final t in offered)
+                  DropdownMenuItem(value: t, child: Text(t.label)),
               ],
               onChanged: (t) => setState(() => selected = t ?? BlockType.dynamic),
             ),
@@ -181,6 +188,64 @@ class ShellTabs extends ChangeNotifier {
     if (_index == i) return;
     _index = i;
     notifyListeners();
+  }
+}
+
+/// Shows a transient status message (shared by the memory/service pages).
+void showSnack(BuildContext context, String message) {
+  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+}
+
+/// Cancel/Confirm alert shared by the destructive actions across pages.
+Future<bool> confirmDialog(BuildContext context,
+    {required String title, required String body, String confirmLabel = 'Confirm'}) async {
+  return await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(title),
+          content: Text(body),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel')),
+            FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: Text(confirmLabel)),
+          ],
+        ),
+      ) ==
+      true;
+}
+
+/// Rough device-type icons (Docs/App/Devices.md: "Use icons for rough device
+/// types").
+IconData deviceTypeIcon(DeviceType type) => switch (type) {
+      DeviceType.tamuV20A => Icons.developer_board,
+      DeviceType.dualAnalogSensor => Icons.sensors,
+      DeviceType.unknown => Icons.devices_other,
+    };
+
+/// Small rounded label chip used across the memory pages.
+class ChipLabel extends StatelessWidget {
+  const ChipLabel(this.text, {super.key, this.subtle = false});
+
+  final String text;
+  final bool subtle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: subtle ? Colors.white.withAlpha(14) : kOrange.withAlpha(46),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(text,
+          style: TextStyle(
+              fontSize: 10,
+              color: subtle ? Colors.white54 : kOrange,
+              fontWeight: subtle ? FontWeight.w400 : FontWeight.w600)),
+    );
   }
 }
 

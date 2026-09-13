@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../core/connection.dart';
+import '../core/device_db.dart';
 import '../core/protocol.dart';
 import '../core/types.dart';
 import 'theme.dart';
@@ -66,21 +67,10 @@ class _LogViewerPageState extends State<LogViewerPage>
   }
 
   Future<void> _clearAll() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Clear log database'),
-        content: const Text('Remove all stored log entries from the core?'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel')),
-          FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Clear')),
-        ],
-      ),
-    );
+    final confirmed = await confirmDialog(context,
+        title: 'Clear log database',
+        body: 'Remove all stored log entries from the core?',
+        confirmLabel: 'Clear');
     if (confirmed != true) return;
     // ClearReadLogs CID 2: count of oldest entries to drop; 0xFFFFFFFF = all.
     try {
@@ -139,11 +129,11 @@ class _LogViewerPageState extends State<LogViewerPage>
           ),
         ],
       ),
-      body: _buildBody(devices),
+      body: _buildBody(),
     );
   }
 
-  Widget _buildBody(List<int>? devices) {
+  Widget _buildBody() {
     if (_loading && _logs == null) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -155,33 +145,75 @@ class _LogViewerPageState extends State<LogViewerPage>
               ? 'No logs recorded'
               : 'No logs match the filter'));
     }
+    // Group the entries by source device so each device reads as one section.
+    final byDevice = <int, List<LogEntry>>{};
+    for (final l in logs) {
+      (byDevice[l.deviceId] ??= []).add(l);
+    }
+    final groupIds = byDevice.keys.toList()..sort();
+
+    final children = <Widget>[];
+    for (final id in groupIds) {
+      final entries = byDevice[id]!;
+      final device = DeviceDatabase.instance.byId(id);
+      children.add(_deviceHeader(id, device?.displayName, entries.length));
+      for (final l in entries) children.add(_logTile(l));
+    }
     return Column(children: [
       Expanded(
-        child: ListView.separated(
-          itemCount: logs.length,
-          separatorBuilder: (_, _) => const Divider(height: 1),
-          itemBuilder: (context, index) {
-            final log = logs[index];
-            return ListTile(
-              dense: true,
-              leading: Icon(
-                  log.isBlock ? Icons.widgets_outlined : Icons.settings_suggest,
-                  size: 20,
-                  color: kOrange),
-              title: Text(log.describe()),
-              subtitle: Text(log.detail()),
-            );
-          },
+        child: ListView(padding: const EdgeInsets.all(12), children: children),
+      ),
+      Padding(
+        padding: const EdgeInsets.all(6),
+        child: Text('${_logs!.length} entr${_logs!.length == 1 ? 'y' : 'ies'}'
+                ' from ${byDevice.length} device${byDevice.length == 1 ? '' : 's'}',
+            style: const TextStyle(fontSize: 11, color: Colors.white38)),
+      ),
+    ]);
+  }
+
+  Widget _deviceHeader(int id, String? name, int count) {
+    final device = DeviceDatabase.instance.byId(id);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 4, 4, 2),
+      child: ListTile(
+        leading: Icon(deviceTypeIcon(device?.type ?? DeviceType.unknown),
+            color: kOrange),
+        title: Text(name ?? idToString(id),
+            style: const TextStyle(fontWeight: FontWeight.w600)),
+        subtitle: Text('$count entr${count == 1 ? 'y' : 'ies'}',
+            style: const TextStyle(fontSize: 10, color: Colors.white38)),
+      ),
+    );
+  }
+
+  Widget _logTile(LogEntry log) {
+    final isError = log.code != 0;
+    final accent = isError ? Colors.redAccent : kOrange;
+    return Card(
+      color: kSurfaceAlt,
+      margin: const EdgeInsets.only(bottom: 2),
+      clipBehavior: Clip.antiAlias,
+      child: ListTile(
+        dense: true,
+        leading: Icon(
+            log.isBlock ? Icons.widgets_outlined : Icons.settings_suggest,
+            size: 20,
+            color: accent),
+        title: Text(log.describe(),
+            style: TextStyle(
+                fontSize: 13, color: isError ? Colors.redAccent : Colors.white)),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Wrap(spacing: 6, runSpacing: 2, children: [
+            ChipLabel(log.isBlock ? 'Block' : 'Service', subtle: true),
+            ChipLabel(log.sourceName(), subtle: true),
+            ChipLabel('x${log.count}', subtle: true),
+            ChipLabel(formatUptimeMs(log.timestampMs), subtle: true),
+          ]),
         ),
       ),
-      if (devices != null)
-        Padding(
-          padding: const EdgeInsets.all(6),
-          child: Text('${_logs!.length} entr${_logs!.length == 1 ? 'y' : 'ies'}'
-                  ' from ${devices.length} device${devices.length == 1 ? '' : 's'}',
-              style: const TextStyle(fontSize: 11, color: Colors.white38)),
-        ),
-    ]);
+    );
   }
 }
 

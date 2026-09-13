@@ -102,8 +102,9 @@ static void HandleEnumerate(const PacketFrame &frame, uint32_t bi) {
         uint8_t req_inst = BlockInfoInstance(bi_req);
         uint16_t cnt;
         if (req_type == 0 && req_inst == 0) {
-            // System block is not in the static registry; it has 9 fields.
-            cnt = 9;
+            // System block is not in the static registry; its field count is board-aware
+            // (nodes like the DAS omit the Core-only NetID and App/CLI fields).
+            cnt = SYSTEM_FIELD_COUNT;
         } else if (req_type == 0x3FF) {
 #ifndef DISABLE_DYNAMIC_MEMORY
             if (req_inst >= dynamic_block_registry.block_count) { RespondStatus(frame,false); return; }
@@ -156,8 +157,10 @@ bool RegisterGetSystemField(uint8_t field, uint8_t key, BlockMeta &m, uint8_t *v
     else if (field==4 && key==1) SysFieldU32(m, vbuf, vsz, GetTotalRAM(), (uint16_t)DataType::Index|FieldFlags::ReadOnly);
     else if (field==5 && key==0) SysFieldU32(m, vbuf, vsz, Storage.UsedFlashBytes(), (uint16_t)DataType::Index|FieldFlags::ReadOnly);
     else if (field==5 && key==1) SysFieldU32(m, vbuf, vsz, STORAGE_FLASH_SIZE, (uint16_t)DataType::Index|FieldFlags::ReadOnly);
-    else if (field==6) { LoadPersistedDeviceName(); m.FlagsAndType=(uint16_t)DataType::String|FieldFlags::Persistent; m.Size=strlen(DeviceName); if(m.Size>16) m.Size=16; vsz=m.Size; memcpy(vbuf, DeviceName, vsz); }
+    else if (field==6) { m.FlagsAndType=(uint16_t)DataType::String|FieldFlags::Persistent; m.Size=strlen(DeviceName); if(m.Size>16) m.Size=16; vsz=m.Size; memcpy(vbuf, DeviceName, vsz); }
+#ifdef TYPE_CORE
     else if (field==7) { uint8_t v=DeviceStatus.NetId; SysFieldValue(m, vbuf, vsz, &v, 1, (uint16_t)DataType::Id|FieldFlags::Persistent); }
+#endif
 #ifndef BOARD_DAS_v0_1
     else if (field==8 && key==0) { uint8_t v=AppConnected?1:0; SysFieldValue(m, vbuf, vsz, &v, 1, (uint16_t)DataType::Bool|FieldFlags::ReadOnly); }
     else if (field==8 && key==1) { uint8_t v=AppCLIConnected()?1:0; SysFieldValue(m, vbuf, vsz, &v, 1, (uint16_t)DataType::Bool|FieldFlags::ReadOnly); }
@@ -172,7 +175,7 @@ static void HandleSystemBlockRead(const PacketFrame &frame, uint32_t bi, uint8_t
     memcpy(rpl+pos, &bi,4); pos+=4;
     BlockMeta m = {}; uint8_t vsz=0; uint8_t vbuf[24]={0};
     
-    if (field==0xFF) { m.FlagsAndType = (uint16_t)BlockType::System | FieldFlags::ReadOnly; m.Key=0xFF; m.Size=9; memcpy(rpl+pos,&m,4); pos+=4; rpl[pos++]=9; while(pos%4) rpl[pos++]=0; SendResponse(frame,rpl,pos); return; }
+    if (field==0xFF) { m.FlagsAndType = (uint16_t)BlockType::System | FieldFlags::ReadOnly; m.Key=0xFF; m.Size=SYSTEM_FIELD_COUNT; memcpy(rpl+pos,&m,4); pos+=4; rpl[pos++]=SYSTEM_FIELD_COUNT; while(pos%4) rpl[pos++]=0; SendResponse(frame,rpl,pos); return; }
 
     // All system fields resolve through the shared RegisterGetSystemField (single
     // source of truth - the Subscriptions service uses the same path).
@@ -242,7 +245,7 @@ static void HandleSystemBlockWrite(const PacketFrame &frame, uint8_t field) {
         if (PayloadBytes(frame) < 8) { RespondStatus(frame,false); return; }
         BlockMeta *desc=(BlockMeta*)(frame.payload+4);
         const uint8_t *val=frame.payload+8;
-        uint16_t len=desc->Size; if(len>24) len=24; memcpy(DeviceNameBuffer,val,len); DeviceNameBuffer[len]='\0'; PersistDeviceName(); SendResponse(frame,frame.payload,PayloadBytes(frame));
+        uint16_t len=desc->Size; if(len>24) len=24; memcpy(DeviceNameBuffer,val,len); DeviceNameBuffer[len]='\0'; SendResponse(frame,frame.payload,PayloadBytes(frame));
     } else {
         RespondStatus(frame,false);
     }

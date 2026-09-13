@@ -6,7 +6,7 @@ import '../core/connection.dart';
 import '../core/device_db.dart';
 import '../core/notifications.dart';
 import '../core/types.dart';
-import 'device_icons.dart';
+import 'widgets.dart';
 
 /// Backup page (Docs/App/Backup.md): unified whole-network backup and restore
 /// as a zipfile of per-device JSON files, with per-device selection.
@@ -22,9 +22,7 @@ class _BackupPageState extends State<BackupPage> {
   final _selected = <int>{};
   bool _busy = false;
 
-  void _snack(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
-  }
+  void _snack(String message) => showSnack(context, message);
 
   Future<void> _createBackup() async {
     if (_selected.isEmpty) return;

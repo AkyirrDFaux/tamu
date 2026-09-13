@@ -7,12 +7,11 @@
 
 // Device-agnostic logging interface (implemented per device, see Devices/<device>/Log.h).
 // Logs a formatted message under the given `tag`
-// TEXTLESS builds (DAS) define DeviceLog/DeviceLogHex as no-op macros before including
+// TEXTLESS builds (DAS) define DeviceLog as a no-op macro before including
 // this header - their formatted call sites only waste flash where no text is transmitted.
 #ifndef DEVICE_LOG_TEXTLESS
 void DeviceLog(const char *tag, const char *fmt, ...);
 // Logs `len` bytes of `data` as a hex dump under the given `tag`
-void DeviceLogHex(const char *tag, const uint8_t *data, uint16_t len);
 #endif
 
 // Sends a log report to the LogHandler service (broadcast, outbound only). The timestamp is

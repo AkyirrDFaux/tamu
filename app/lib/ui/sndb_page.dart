@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import '../core/connection.dart';
 import '../core/device_db.dart';
 import '../core/types.dart';
-import 'device_icons.dart';
 import 'widgets.dart';
 
 /// SNDB viewer page (Docs/App/Device view.md, core only): serial number
@@ -107,22 +106,10 @@ class _SndbPageState extends State<SndbPage>
   }
 
   Future<void> _removeEntry(int id, String snHex) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Remove ${idToString(id)}?'),
-        content:
-            const Text('The registry entry is tombstoned and the ID becomes reusable.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel')),
-          FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Remove')),
-        ],
-      ),
-    );
+    final confirmed = await confirmDialog(context,
+        title: 'Remove ${idToString(id)}?',
+        body: 'The registry entry is tombstoned and the ID becomes reusable.',
+        confirmLabel: 'Remove');
     if (confirmed != true) return;
     final sn = [
       for (var i = 0; i < snHex.length; i += 2)
@@ -135,8 +122,7 @@ class _SndbPageState extends State<SndbPage>
 
   void _snack(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    showSnack(context, message);
   }
 
   @override

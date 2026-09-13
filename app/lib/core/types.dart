@@ -4,8 +4,6 @@ library;
 
 import 'dart:typed_data';
 
-import '../ui/value_editor.dart' show formatValue;
-
 // ---------------------------------------------------------------------------
 // Basic types
 // ---------------------------------------------------------------------------
@@ -53,7 +51,43 @@ Uint8List uint32ToBytes(int value) {
     ..[3] = (v >> 24) & 0xFF;
 }
 
-Uint8List int32ToBytes(int value) => uint32ToBytes(value);
+// ---------------------------------------------------------------------------
+// BlockInfo (mirror of firmware Core/Services/Register.h MakeBlockInfo)
+// ---------------------------------------------------------------------------
+
+/// Packs a BlockInfo into its 32-bit register index: type (10 bit) | instance
+/// (6 bit) | field (8 bit) | key (8 bit).
+int makeBlockInfo(int type, int inst, int field, int key) =>
+    ((type & 0x3FF) << 22) | ((inst & 0x3F) << 16) | ((field & 0xFF) << 8) | (key & 0xFF);
+
+/// The BlockInfo as 4 little-endian bytes (wire payload prefix).
+Uint8List blockInfoBytes(int type, int inst, int field, int key) {
+  final bi = makeBlockInfo(type, inst, field, key);
+  return Uint8List(4)
+    ..[0] = bi & 0xFF
+    ..[1] = (bi >> 8) & 0xFF
+    ..[2] = (bi >> 16) & 0xFF
+    ..[3] = (bi >> 24) & 0xFF;
+}
+
+/// Decodes a little-endian byte string of any length into an int (null when empty).
+int? bytesToInt(List<int> bytes) {
+  if (bytes.isEmpty) return null;
+  int value = 0;
+  for (var i = 0; i < bytes.length; i++) {
+    value |= bytes[i] << (8 * i);
+  }
+  return value;
+}
+
+/// Encodes a value as `size` little-endian bytes.
+List<int> intToBytes(int value, int size) {
+  final bytes = <int>[];
+  for (var i = 0; i < size; i++) {
+    bytes.add((value >> (8 * i)) & 0xFF);
+  }
+  return bytes;
+}
 
 // ---------------------------------------------------------------------------
 // Enums (mirror Core/Types/Enums.h)
@@ -208,44 +242,6 @@ class Capability {
 // Common structs
 // ---------------------------------------------------------------------------
 
-const int invalidBlock = 0xFF;
-const int invalidIndex = 0xFF;
-
-/// BlockIndex (uint8 x4): block, field/dictionary, key, padding.
-class BlockIndex {
-  final int block;
-  final int field;
-  final int key;
-
-  const BlockIndex({
-    this.block = invalidBlock,
-    this.field = invalidIndex,
-    this.key = invalidIndex,
-  });
-
-  Uint8List toBytes() => Uint8List(4)
-    ..[0] = block
-    ..[1] = field
-    ..[2] = key
-    ..[3] = 0;
-
-  static BlockIndex fromBytes(List<int> bytes, [int offset = 0]) => BlockIndex(
-        block: bytes[offset],
-        field: bytes[offset + 1],
-        key: bytes[offset + 2],
-      );
-
-  @override
-  bool operator ==(Object other) =>
-      other is BlockIndex &&
-      other.block == block &&
-      other.field == field &&
-      other.key == key;
-
-  @override
-  int get hashCode => Object.hash(block, field, key);
-}
-
 /// BlockMeta (6bit flags, 10bit type, 8bit key/padding, 8bit value length).
 class BlockMeta {
   final int flagsAndType; // bits 10-15 flags, bits 0-9 type
@@ -261,9 +257,7 @@ class BlockMeta {
 
   bool get readOnly => flags & FieldFlags.readOnly != 0;
   bool get notSaved => flags & FieldFlags.notSaved != 0;
-  bool get scriptUpdated => flags & FieldFlags.scriptUpdated != 0;
   bool get persistent => flags & FieldFlags.persistent != 0;
-  bool get valid => flags & FieldFlags.valid != 0;
 
   Uint8List toBytes() => Uint8List(4)
     ..[0] = flagsAndType & 0xFF
@@ -422,28 +416,5 @@ class RequesterSubscription {
     buf.addAll(uint32ToBytes(periodMs));
     buf.addAll(uint32ToBytes(minTimeMs));
     return buf;
-  }
-}
-
-/// TLFV (Type-Length-Flags-Value) for subscription values
-class Tlvf {
-  final DataType dataType;
-  final int size;
-  final int flags;
-  final List<int> value;
-
-  const Tlvf({required this.dataType, required this.size, required this.flags, required this.value});
-
-  static Tlvf? fromBytes(List<int> bytes) {
-    if (bytes.length < 3) return null;
-    final dt = DataType.fromValue(bytes[0]);
-    final size = bytes[1];
-    final flags = bytes[2];
-    final value = bytes.sublist(3, 3 + size);
-    return Tlvf(dataType: dt, size: size, flags: flags, value: value);
-  }
-
-  String format() {
-    return formatValue(dataType, value);
   }
 }

@@ -24,7 +24,6 @@
 
 // --- Flash access (implemented per device, see Devices/<device>/Storage.h) ---
 bool Storage_FlashInit();                              // find/open the storage partition
-uint32_t Storage_FlashSize();                          // total flash bytes available
 uint32_t Storage_FlashRead(uint32_t offset, void *data, uint32_t size);   // Reads `size` bytes from flash at `offset`; returns bytes actually read (0 on failure)
 bool Storage_FlashWrite(uint32_t offset, const void *data, uint32_t size); // Writes `size` bytes to flash at `offset`
 bool Storage_FlashErase(uint32_t offset, uint32_t size);   // Erases `size` bytes of flash starting at `offset`
@@ -67,13 +66,6 @@ static inline bool FileSlotIsFree(uint32_t offset)
 static inline bool FileEntryIsValid(uint32_t offset)
 {
     return !FileSlotIsFree(offset);
-}
-
-// True when `name` is the reserved table self-entry (entry 0, ".TABLE").
-static inline bool IsTableSelfName(const char name[8])
-{
-    static constexpr char table_name[8] = {'.', 'T', 'A', 'B', 'L', 'E', ' ', ' '};
-    return memcmp(name, table_name, 8) == 0;
 }
 
 // Copies a plain C string into the 8-byte record form, space-padded to the full width so
@@ -242,7 +234,10 @@ public:
         if (!ReadTableEntry(src, &entry)) return false;
 
         FileEntry rec = entry;
-        memcpy(rec.name, new_name, 8);
+        // Space-pad the new name: the caller passes a plain C string and a raw
+        // memcpy would copy its NUL terminator into the record (breaking later
+        // 8-byte memcmp lookups and the app's file-type detection).
+        PackName(new_name, rec.name);
         if (!WriteFilerecord(rec))
             return false;
 
@@ -600,20 +595,6 @@ public:
         DeviceLog("STORAGE", "Formatted, storage ready (%d bytes)", (int)DataEnd());
     }
 
-    // Returns the number of valid files in the file table (including entry 0).
-    uint8_t FileCount()
-    {
-        if (file_table_offset == 0) return 0;
-        uint8_t count = 0;
-        uint32_t capacity = TableCapacity();
-        for (uint32_t i = 0; i < capacity; i++) {
-            FileEntry entry;
-            if (!ReadTableEntry(i, &entry)) continue;
-            if (FileEntryIsValid(entry.offset)) count++;
-        }
-        return count;
-    }
-
     // Returns the total number of bytes used by files in flash (excluding file table itself).
     uint32_t UsedFlashBytes()
     {
@@ -629,26 +610,6 @@ public:
             used += blocks * PAGE_SIZE;
         }
         return used;
-    }
-
-    // Copies the `idx`-th valid file entry (dense across valid files) into `out`.
-    bool ReadFileEntry(uint8_t idx, FileEntry *out)
-    {
-        if (file_table_offset == 0) return false;
-        uint8_t seen = 0;
-        uint32_t capacity = TableCapacity();
-        for (uint32_t i = 0; i < capacity; i++) {
-            FileEntry entry;
-            if (!ReadTableEntry(i, &entry))
-                return false;
-            if (FileSlotIsFree(entry.offset)) continue;
-            if (seen == idx) {
-                *out = entry;
-                return true;
-            }
-            seen++;
-        }
-        return false;
     }
 
     // Looks up a file by its name; returns offset/size via the out params.

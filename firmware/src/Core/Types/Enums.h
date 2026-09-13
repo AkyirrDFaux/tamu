@@ -9,7 +9,6 @@ enum class DeviceType : uint16_t {
 namespace Capabilities {
     constexpr uint32_t None           = 0x00000000;
     constexpr uint32_t Core           = 1u << 0;
-    constexpr uint32_t Router         = 1u << 1;
     constexpr uint32_t Cli            = 1u << 2;
     constexpr uint32_t DynamicMemory  = 1u << 3;
     constexpr uint32_t StorageFiles   = 1u << 5; // full file create/delete/rename/resize
@@ -47,7 +46,6 @@ enum class DataType : uint16_t {
     Matrix         = 0x08,
     Colour         = 0x09,
     String         = 0x0A,
-    Filename       = 0x0B,
     Enum           = 0x0C,
     Deleted        = 0x0D,
     Uint32         = 0x0E,
@@ -56,10 +54,8 @@ enum class DataType : uint16_t {
     Unknown        = 0x00,  // Alias for None
     // Dynamic/Keyed extensions (not used by DAS)
     UnknownKeyed   = 0x100,
-    GenericDict    = 0x100,
     Geometry       = 0x101,
-    Texture        = 0x102,
-    Effect         = 0x103
+    Texture        = 0x102
 };
 
 #define BLOCK_META_FLAGS_MASK 0xFC00
@@ -81,7 +77,6 @@ enum class BlockType : uint16_t {
     ResistiveMeasure = 0x08,
     Button         = 0x09,
     LED            = 0x0A,
-    Render         = 0x100,
     Dynamic        = 0x3FF
 };
 

@@ -124,14 +124,7 @@ class BackupDevice {
 }
 
 /// Builds a BlockInfo for system block (type=0, inst=0).
-Uint8List _makeSystemBi(int field, int key) {
-  final bi = (0 << 22) | (0 << 16) | ((field & 0xFF) << 8) | (key & 0xFF);
-  return Uint8List(4)
-    ..[0] = bi & 0xFF
-    ..[1] = (bi >> 8) & 0xFF
-    ..[2] = (bi >> 16) & 0xFF
-    ..[3] = (bi >> 24) & 0xFF;
-}
+Uint8List _makeSystemBi(int field, int key) => blockInfoBytes(0, 0, field, key);
 
 /// Collects the current System block + Dynamic state of one device.
 Future<BackupDevice?> captureDevice(int deviceId) async {

@@ -25,17 +25,13 @@
 
 // ID helpers: 6 bit net + 10 bit device
 inline uint16_t MakeId(uint8_t net, uint16_t dev) { return (uint16_t)((net & 0x3F) << 10) | (dev & 0x3FF); }
-inline uint8_t IdNet(uint16_t id) { return (uint8_t)((id >> 10) & 0x3F); }
-inline uint16_t IdDev(uint16_t id) { return id & 0x3FF; }
 
 #define ADDR_INVALID   0x0000
 #define ADDR_BROADCAST 0xFFFF
-#define ADDR_BRANCH_BROADCAST 0xFFFE
 
 // Data Formats.md: 0x3F = broadcast into all nets.
 // 3F.1  = all cores (Core discover target), 3F.0 = all unassigned devices.
 #define ADDR_ALL_CORES        MakeId(0x3F, 1)
-#define ADDR_ALL_UNASSIGNED   MakeId(0x3F, 0)
 
 enum class ServiceType : uint8_t
 {
@@ -44,7 +40,6 @@ enum class ServiceType : uint8_t
     LogHandler = 0x02,
     Storage = 0x03,
     Subscriptions = 0x04,
-    Router = 0x10,
     App = 0x11,
     CLI = 0x12
 };

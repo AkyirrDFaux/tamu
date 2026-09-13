@@ -27,8 +27,7 @@ void main() {
     // Register System block type 0 reads via Register 01.01
     final link = ConnectionManager.instance;
     Future<List<int>?> regRead(int field, int key) async {
-      final bi = (0 << 22) | (0 << 16) | (field << 8) | key;
-      final payload = [bi & 0xFF, (bi>>8)&0xFF, (bi>>16)&0xFF, (bi>>24)&0xFF];
+      final payload = blockInfoBytes(0, 0, field, key);
       return await link.request(1, ServiceType.register, 1, payload: payload);
     }
     final type = await regRead(0, 0);

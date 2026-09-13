@@ -14,14 +14,10 @@ import 'package:flutter_libserialport/flutter_libserialport.dart'
     show SerialPort;
 import 'package:universal_ble/universal_ble.dart';
 
-import 'ble_transport.dart';
 import 'diagnostics.dart';
 import 'device_db.dart';
 import 'protocol.dart';
 import 'transport.dart';
-import 'usb_transport.dart';
-
-export 'transport.dart' show TransportException;
 
 enum LinkSource { all, ble, usb }
 

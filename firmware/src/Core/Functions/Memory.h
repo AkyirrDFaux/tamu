@@ -78,27 +78,6 @@ __attribute__((noinline)) void RespondStatus(const PacketFrame &frame, bool ok)
     SendResponse(frame, &status, 1);
 }
 
-// Fills `out` with BlockIndex(block, invalid, invalid) + BlockMeta(flags_and_type,
-// key = invalid, size = map_count) + name - the shared "block meta + name" reply
-// payload of the Dynamic/Keyed/System memory services. Returns the payload length.
-inline uint16_t MakeBlockMetaPayload(uint8_t block, uint16_t flags_and_type, uint16_t map_count,
-                                     const char *name, uint8_t name_len,
-                                     uint8_t *out, uint16_t cap)
-{
-    if ((uint32_t)sizeof(BlockIndex) + sizeof(BlockMeta) + name_len > cap)
-        return 0;
-    uint16_t cursor = 0;
-    BlockIndex out_index = {block, INVALID_INDEX, INVALID_INDEX};
-    memcpy(out + cursor, &out_index, sizeof(BlockIndex)); cursor += sizeof(BlockIndex);
-    BlockMeta meta;
-    meta.FlagsAndType = flags_and_type;
-    meta.Key = INVALID_INDEX;
-    meta.Size = (uint8_t)map_count;
-    memcpy(out + cursor, &meta, sizeof(BlockMeta)); cursor += sizeof(BlockMeta);
-    if (name_len) { memcpy(out + cursor, name, name_len); cursor += name_len; }
-    return cursor;
-}
-
 // Derives the staging-file name for an atomic backup update: the last character of the
 // padded 8-byte name becomes '~' ("SYSMEM " -> "SYSMEM~"). Backup names never end in '~'.
 inline void BackupTempName(const char name[8], char out[8])

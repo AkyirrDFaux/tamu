@@ -28,13 +28,6 @@ else
     test/hil_test_suite.dart
     test/hil_subscriptions_test.dart
     test/tamu_hardware_verification_test.dart
-    test/hardware_register_test.dart
-    test/hardware_storage_test.dart
-    test/dyn_flow_test.dart
-    test/ble_scan_probe_test.dart
-    test/hil_ble_probe_test.dart
-    test/ble_ping_test.dart
-    test/ble_rtt_probe_test.dart
   )
 fi
 

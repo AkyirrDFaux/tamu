@@ -8,10 +8,6 @@ static inline uint32_t CliBlockInfo(uint16_t type, uint8_t inst, uint8_t field, 
 {
     return ((uint32_t)(type & 0x3FF) << 22) | ((uint32_t)(inst & 0x3F) << 16) | ((uint32_t)field << 8) | key;
 }
-static inline uint16_t CliBlockInfoType(uint32_t bi) { return (bi >> 22) & 0x3FF; }
-static inline uint8_t CliBlockInfoInst(uint32_t bi) { return (bi >> 16) & 0x3F; }
-static inline uint8_t CliBlockInfoField(uint32_t bi) { return (bi >> 8) & 0xFF; }
-static inline uint8_t CliBlockInfoKey(uint32_t bi) { return bi & 0xFF; }
 
 // Converts a float to a fixed-point Number (Q16.16) with rounding. Saturates instead of
 // invoking UB through an out-of-range int32_t cast.
@@ -336,26 +332,6 @@ void SendMemoryRead(uint16_t target, ServiceType svc, uint32_t block_info)
     DispatchPacket(req);
 }
 
-// Parses a memory-service selector ("r" or 0x01) into a ServiceType.
-// Static memory is accessed via Register service (0x01).
-  ServiceType ParseService(const char *str)
-  {
-      if (!str || !str[0])
-          return ServiceType::Register; // Default to Register (static memory)
-
-      switch (str[0])
-      {
-          case 'r': return ServiceType::Register;
-          default:
-              // strtol with base 0 accepts "0x05" (hex) AND "5" (decimal).
-              switch ((int)strtol(str, nullptr, 0))
-              {
-                  case 0x01: return ServiceType::Register;
-                  default:   return ServiceType::Register;
-              }
-      }
-  }
-
 static uint16_t cli_target_addr = 1;
 
 // CLI command "tree": requests a full dump of all memory services from a device.
@@ -389,7 +365,7 @@ static int CmdRead(int argc, char **argv)
     }
 
     uint16_t addr  = atoi(argv[1]);
-    ServiceType svc = (argc > 2) ? ParseService(argv[2]) : ServiceType::Register;
+    ServiceType svc = ServiceType::Register;
     uint8_t block  = (argc > 3) ? (uint8_t)atoi(argv[3]) : INVALID_BLOCK;
     uint8_t field = (argc > 4) ? atoi(argv[4]) : INVALID_INDEX;
     // Key defaults to 0 (the first member of a keyed/system field); only an explicit
@@ -422,7 +398,7 @@ static int CmdWrite(int argc, char **argv)
     }
 
     uint16_t addr  = (uint16_t)atoi(argv[1]);
-    ServiceType svc = ParseService(argv[2]);
+    ServiceType svc = ServiceType::Register;
     uint8_t  block = (uint8_t)atoi(argv[3]);
     uint8_t  field = (uint8_t)atoi(argv[4]);
 

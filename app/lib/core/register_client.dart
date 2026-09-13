@@ -10,16 +10,6 @@ import 'diagnostics.dart';
 import 'protocol.dart';
 import 'types.dart';
 
-/// Builds a 32-bit BlockInfo: Type(10)|Instance(6)|Field(8)|Key(8).
-Uint8List makeBlockInfo(int type, int inst, int field, int key) {
-  final bi = ((type & 0x3FF) << 22) | ((inst & 0x3F) << 16) | ((field & 0xFF) << 8) | (key & 0xFF);
-  return Uint8List(4)
-    ..[0] = bi & 0xFF
-    ..[1] = (bi >> 8) & 0xFF
-    ..[2] = (bi >> 16) & 0xFF
-    ..[3] = (bi >> 24) & 0xFF;
-}
-
 /// One entry of a dynamic block (dynamic/keyed memory is part of the Register service).
 class DynField {
   final int index;
@@ -54,9 +44,6 @@ class RegisterClient {
   final int deviceId;
 
   RegisterClient({required this.deviceId});
-
-  ServiceType get service => ServiceType.register;
-  String get logTag => 'register';
 
   Duration get _requestTimeout => const Duration(seconds: 2);
 
@@ -98,11 +85,9 @@ class RegisterClient {
   Future<int?> getInstanceCount(int blockType) async {
     // Enum 1 for instances - firmware expects enum_level + bi_req (5 bytes)
     // bi_req: type=blockType, instance=0x3F (all), field=0xFF (all), key=0
-    // Instance is in bits 16-21 (6 bits), field in bits 8-15.
-    final bi = ((blockType & 0x3FF) << 22) | ((0x3F & 0x3F) << 16) | (0xFF << 8) | 0;
     final payload = [
       1, // enum_level = 1
-      bi & 0xFF, (bi >> 8) & 0xFF, (bi >> 16) & 0xFF, (bi >> 24) & 0xFF
+      ...blockInfoBytes(blockType, 0x3F, 0xFF, 0)
     ];
     final reply = await request(0, payload: payload);
     if (reply == null || reply.length < 5) return null;
@@ -113,10 +98,9 @@ class RegisterClient {
   Future<int?> getFieldCount(int blockType, int instance) async {
     // Enum 2 for fields - firmware expects enum_level + bi_req (5 bytes)
     // Response: BlockInfo echo (4 bytes) + count (2 bytes, little-endian)
-    final bi = ((blockType & 0x3FF) << 22) | ((instance & 0x3F) << 16) | (0xFF << 8);
     final payload = [
       2, // enum_level = 2
-      bi & 0xFF, (bi >> 8) & 0xFF, (bi >> 16) & 0xFF, (bi >> 24) & 0xFF
+      ...blockInfoBytes(blockType, instance, 0xFF, 0)
     ];
     final reply = await request(0, payload: payload);
     if (reply == null || reply.length < 6) return null;
@@ -126,10 +110,7 @@ class RegisterClient {
   /// Read block meta + name (CID 1).
   Future<({BlockMeta meta, String name})?> readBlockMeta(int blockType, int instance) async {
     // For block meta, we need type|inst|field=0xFF|key=0
-    final bi = ((blockType & 0x3FF) << 22) | ((instance & 0x3F) << 16) | (0xFF << 8) | 0;
-    final payload = [
-      bi & 0xFF, (bi >> 8) & 0xFF, (bi >> 16) & 0xFF, (bi >> 24) & 0xFF
-    ];
+    final payload = blockInfoBytes(blockType, instance, 0xFF, 0);
     final reply = await request(1, payload: payload);
     if (reply == null || reply.length < 8) return null;
     final meta = BlockMeta.fromBytes(reply, 4);
@@ -141,8 +122,7 @@ class RegisterClient {
 
   /// Read field value (CID 1) for system block (type=0, inst=0).
   Future<({BlockMeta meta, List<int> value})?> readField(int field, int key) async {
-    final bi = (0 << 22) | (0 << 16) | ((field & 0xFF) << 8) | (key & 0xFF);
-    final payload = [bi & 0xFF, (bi >> 8) & 0xFF, (bi >> 16) & 0xFF, (bi >> 24) & 0xFF];
+    final payload = blockInfoBytes(0, 0, field, key);
     final reply = await request(1, payload: payload);
     if (reply == null || reply.length < 8) return null;
     final meta = BlockMeta.fromBytes(reply, 4);
@@ -151,8 +131,7 @@ class RegisterClient {
 
   /// Read field value (CID 1) for a specific block type and instance.
   Future<({BlockMeta meta, List<int> value})?> readBlockField(int blockType, int instance, int field, int key) async {
-    final bi = ((blockType & 0x3FF) << 22) | ((instance & 0x3F) << 16) | ((field & 0xFF) << 8) | (key & 0xFF);
-    final payload = [bi & 0xFF, (bi >> 8) & 0xFF, (bi >> 16) & 0xFF, (bi >> 24) & 0xFF];
+    final payload = blockInfoBytes(blockType, instance, field, key);
     final reply = await request(1, payload: payload);
     if (reply == null || reply.length < 8) return null;
     final meta = BlockMeta.fromBytes(reply, 4);
@@ -162,8 +141,7 @@ class RegisterClient {
   /// Write field value (CID 2) for a specific block type and instance (static/dynamic blocks).
   /// Payload: BlockInfo (4) + BlockMeta (4) + value
   Future<List<int>?> writeBlockField(int blockType, int instance, int field, int key, BlockMeta meta, List<int> value) async {
-    final bi = ((blockType & 0x3FF) << 22) | ((instance & 0x3F) << 16) | ((field & 0xFF) << 8) | (key & 0xFF);
-    final payload = [bi & 0xFF, (bi >> 8) & 0xFF, (bi >> 16) & 0xFF, (bi >> 24) & 0xFF, ...meta.toBytes(), ...value];
+    final payload = [...blockInfoBytes(blockType, instance, field, key), ...meta.toBytes(), ...value];
     final reply = await request(2, payload: payload);
     if (reply == null || reply.length < 8) return null;
     final echoMeta = BlockMeta.fromBytes(reply, 4);
@@ -179,10 +157,12 @@ class RegisterClient {
     final blocks = <({int type, int inst, BlockMeta meta, String name})?>[];
     
     // Add System block (type 0, inst 0) explicitly - it's a virtual block
-    // not present in the static block registry.
+    // not present in the static block registry. The firmware's whole-system meta
+    // reply carries no name (the byte after the BlockMeta is the field count), so
+    // label it explicitly instead of showing that count byte as the title.
     final sysBlock = await readBlockMeta(0, 0);
     if (sysBlock != null) {
-      blocks.add((type: 0, inst: 0, meta: sysBlock.meta, name: sysBlock.name));
+      blocks.add((type: 0, inst: 0, meta: sysBlock.meta, name: 'System'));
     }
     
     for (final type in types) {
@@ -216,7 +196,7 @@ class RegisterClient {
   // ===========================================================================
 
   static Uint8List _dynBi(int inst, int field, [int key = 0]) =>
-      makeBlockInfo(BlockType.dynamic.value, inst, field, key);
+      blockInfoBytes(BlockType.dynamic.value, inst, field, key);
 
   /// Reads the dynamic block list (CID 0 Enum 1 for instances). None/Deleted
   /// blocks are hidden (their index stays reserved until a save compacts).

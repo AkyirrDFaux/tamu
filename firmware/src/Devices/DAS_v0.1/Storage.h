@@ -65,11 +65,6 @@ bool Storage_FlashInit()
     return true;
 }
 
-uint32_t Storage_FlashSize()
-{
-    return STORAGE_FLASH_SIZE;
-}
-
 // Reads `size` bytes from flash at `offset` into `data` (0x00000000 domain).
 uint32_t Storage_FlashRead(uint32_t offset, void *data, uint32_t size)
 {

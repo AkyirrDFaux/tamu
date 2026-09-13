@@ -7,11 +7,11 @@ import 'package:flutter/material.dart';
 import '../core/backup.dart' show readPlatformFile;
 import '../core/connection.dart';
 import '../core/device_db.dart';
-import '../core/block_registry.dart' show FieldInfo, blockInfoFor;
+import '../core/register_client.dart';
 import '../core/storage_client.dart';
 import '../core/types.dart';
 import 'theme.dart';
-import 'value_editor.dart' show dataTypeLabel, formatValue;
+import 'file_viewers.dart';
 import 'widgets.dart';
 
 /// Storage service view (Docs/App/Service views/Storage.md): file table with
@@ -50,8 +50,7 @@ class _StoragePageState extends State<StoragePage>
 
   void _snack(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    showSnack(context, message);
   }
 
   bool _hasStorageFiles() {
@@ -79,24 +78,8 @@ class _StoragePageState extends State<StoragePage>
     return '${(bytes / (1024 * 1024)).toStringAsFixed(2)} MB';
   }
 
-  Future<bool> _confirm(String title, String body) async {
-    return await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: Text(title),
-            content: Text(body),
-            actions: [
-              TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text('Cancel')),
-              FilledButton(
-                  onPressed: () => Navigator.pop(context, true),
-                  child: const Text('Confirm')),
-            ],
-          ),
-        ) ==
-        true;
-  }
+  Future<bool> _confirm(String title, String body) async =>
+      confirmDialog(context, title: title, body: body);
 
   Future<String?> _promptText(String title, String label, String initial,
       {int maxChars = 8}) async {
@@ -244,15 +227,17 @@ Widget _buildBody() {
           // The file table is read-only but still openable: tapping shows the
           // decoded directory (Docs/Services/Storage.md). Read-only-ness is
           // signalled by the lock icon, not by disabling the row.
-          leading: Icon(isTable
+leading: Icon(isTable
               ? Icons.table_rows_outlined
               : storageFileIcon(file.name)),
-          title: Text(isTable ? '${file.name} (file table)' : file.name,
+          title: Text(isTable
+              ? '${normalizeFileName(file.name)} (file table)'
+              : normalizeFileName(file.name),
               style: isTable ? const TextStyle(color: Colors.white38) : null),
           subtitle:
               Text('${isTable ? "Internal directory" : fileTypeLabel(file.name)}   '
                   '${_formatSize(file.size)}   '
-                  'offset ${_hex32(file.offset)}'),
+                  'offset ${hex32(file.offset)}'),
           trailing: isTable
               ? const Icon(Icons.lock_outline,
                   size: 16, color: Colors.white24)
@@ -301,48 +286,19 @@ Widget _buildBody() {
     _snack('Reading ${file.name}...');
     final data =
         await _client.readFile(file.name, size: file.size);
+    // STATLOG entries are addressed by the static registry index; fetch the
+    // device's blocks so the decoder can name the blocks and fields.
+    List<({int type, int inst, BlockMeta meta, String name})?>? blocks;
+    if (normalizeFileName(file.name).toUpperCase() == 'STATLOG') {
+      final all = await RegisterClient(deviceId: widget.deviceId).readBlocks();
+      blocks = all?.where((b) => b != null && b!.type != 0).toList();
+    }
     if (!mounted) return;
     Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => FileViewPage(deviceId: widget.deviceId,
-            name: file.name, size: file.size, data: data)));
+            name: file.name, size: file.size, data: data, blocks: blocks)));
   }
 }
-
-// ---------------------------------------------------------------------------
-// Known file types (Docs/Services/Storage.md: "the viewer/editor of files
-// formats the files based on the file name")
-// ---------------------------------------------------------------------------
-
-enum StorageFileType { snreg, layout, text, binary, dynmem }
-
-StorageFileType storageFileType(String name) {
-  final upper = name.toUpperCase().trim();
-  if (upper == 'SNREG') return StorageFileType.snreg;
-  if (upper == 'DYNMEM') return StorageFileType.dynmem;
-  if (upper.startsWith('LAY') || upper.endsWith('.LAY')) {
-    return StorageFileType.layout;
-  }
-  if (upper.endsWith('.TXT') || upper.endsWith('.LOG')) {
-    return StorageFileType.text;
-  }
-  return StorageFileType.binary;
-}
-
-IconData storageFileIcon(String name) => switch (storageFileType(name)) {
-      StorageFileType.snreg => Icons.badge_outlined,
-      StorageFileType.layout => Icons.grid_on_outlined,
-      StorageFileType.text => Icons.description_outlined,
-      StorageFileType.binary => Icons.insert_drive_file_outlined,
-      StorageFileType.dynmem => Icons.storage_outlined,
-    };
-
-String fileTypeLabel(String name) => switch (storageFileType(name)) {
-      StorageFileType.snreg => 'Serial registry',
-      StorageFileType.layout => 'LED layout',
-      StorageFileType.text => 'Text',
-      StorageFileType.binary => 'Binary',
-      StorageFileType.dynmem => 'Dynamic memory backup',
-    };
 
 /// Decoded file-table view: every 16-byte Filerecord as offset/size/name.
 class FileTableViewPage extends StatelessWidget {
@@ -423,7 +379,7 @@ class _TableBodyState extends State<_TableBody> {
                 color: isInvalidated ? Colors.white24 : Colors.white70)),
         subtitle: isInvalidated
             ? null
-            : Text('offset ${_hex32(recOffset)}   $fileSize B',
+            : Text('offset ${hex32(recOffset)}   $fileSize B',
                 style: const TextStyle(fontSize: 11)),
       );
       if (isInvalidated) {
@@ -456,384 +412,3 @@ class _TableBodyState extends State<_TableBody> {
     ]);
   }
 }
-
-/// Formatted preview of one file's content. Known types render decoded:
-/// SNREG as a registry table, LAY files as an LED-index grid, textual data as
-/// text; anything else as hex.
-class FileViewPage extends StatelessWidget {
-  final int deviceId;
-  final String name;
-  final int size;
-  final List<int>? data;
-
-  const FileViewPage(
-      {super.key,
-      required this.deviceId,
-      required this.name,
-      required this.size,
-      required this.data});
-
-  bool get _looksTextual {
-    if (data == null || data!.isEmpty) return false;
-    var printable = 0;
-    for (final b in data!) {
-      final isPrintable = (b >= 0x20 && b < 0x7F) ||
-          b == 0x0A || // \n
-          b == 0x0D; // \r
-      if (isPrintable) printable++;
-    }
-    return printable / data!.length > 0.9;
-  }
-
-  Widget _mono(String text) => SingleChildScrollView(
-      padding: const EdgeInsets.all(12),
-      child: SelectableText(text,
-          style: const TextStyle(fontFamily: 'monospace', fontSize: 12)));
-
-  /// SNREG: 32-byte RegistryEntry records (SNDB.h): u16 valid marker, u16 short
-  /// ID, 12 reserved bytes, 14-byte serial number. Markers: 0x55AA valid,
-  /// 0x0000 removed, 0xFFFF unwritten.
-  Widget _snregView() {
-    final rows = <Widget>[];
-    for (var off = 0; off + 32 <= data!.length; off += 32) {
-      final valid = data![off] | (data![off + 1] << 8);
-      if (valid == 0xFFFF) break; // unwritten slot
-      final id = data![off + 2] | (data![off + 3] << 8);
-      final removed = valid == 0x0000;
-      final sn = serialNumberToHex(data!.sublist(off + 16, off + 30));
-      rows.add(Padding(
-        padding: const EdgeInsets.symmetric(vertical: 2),
-        child: Row(children: [
-          SizedBox(
-              width: 88,
-              child: Text(removed ? 'id $id (removed)' : idToString(id),
-                  style: TextStyle(
-                      color: removed ? Colors.white24 : kOrange,
-                      fontSize: 12))),
-          Expanded(
-              child: Text(sn,
-                  style: TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 12,
-                      color: removed ? Colors.white24 : Colors.white70))),
-        ]),
-      ));
-    }
-    return ListView(padding: const EdgeInsets.all(12), children: rows);
-  }
-
-  /// Layout file: row-first W x H uint16 LED indexes, 0xFFFF = missing
-  /// (Docs/Modules/LED display.md). Header: uint16 width, uint16 height.
-  Widget _layoutView() {
-    if (data!.length < 4) return _mono('(empty)');
-    final w = data![0] | (data![1] << 8);
-    final h = data![2] | (data![3] << 8);
-    if (w == 0 || h == 0 || w > 128 || h > 128 || 4 + w * h * 2 > data!.length) {
-      return _mono('Invalid layout header (${w}x$h)');
-    }
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(12),
-      scrollDirection: Axis.horizontal,
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('${w}x$h LEDs',
-            style: const TextStyle(color: Colors.white38, fontSize: 11)),
-        const SizedBox(height: 6),
-        for (var r = 0; r < h; r++)
-          Row(children: [
-            for (var c = 0; c < w; c++)
-              Container(
-                width: 44,
-                height: 22,
-                margin: const EdgeInsets.all(1),
-                color: kSurfaceAlt,
-                alignment: Alignment.center,
-                child: Text(() {
-                  final i = 4 + (r * w + c) * 2;
-                  final v = data![i] | (data![i + 1] << 8);
-                  return v == 0xFFFF ? '-' : '$v';
-                }(),
-                    style: TextStyle(
-                        fontSize: 10,
-                        color:
-                            data![4 + (r * w + c) * 2] == 0xFF &&
-                                    data![4 + (r * w + c) * 2 + 1] == 0xFF
-                                ? Colors.white24
-                                : Colors.white)),
-              ),
-          ]),
-      ]),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    Widget body;
-    if (data == null) {
-      body = const Center(child: Text('Read failed'));
-    } else {
-      switch (storageFileType(name)) {
-        case StorageFileType.snreg:
-          body = _snregView();
-        case StorageFileType.layout:
-          body = _layoutView();
-        case StorageFileType.dynmem:
-          body = MemoryBackupView(fileName: name, data: data!);
-        case StorageFileType.text when _looksTextual:
-          final text =
-              String.fromCharCodes(data!).replaceAll(RegExp(r' +'), ' ');
-          body = _mono(text);
-        case StorageFileType.binary when _looksTextual:
-          final text =
-              String.fromCharCodes(data!).replaceAll(RegExp(r' +'), ' ');
-          body = _mono(text);
-        default:
-          final hex = data!
-              .map((b) => b.toRadixString(16).padLeft(2, '0'))
-              .join(' ');
-          body = _mono(hex);
-      }
-    }
-    return Scaffold(
-      appBar: AppBar(title:
-          Text('$name - ${fileTypeLabel(name)} ($size B)')),
-      body: body,
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Memory backup file decoders (Docs/Services/System|Dynamic Memory.md:
-// "the backup file is the serialised registry").
-//
-// Dynamic format (SerializeRegistry):  u16 block_count, then per block
-//   u8 name_len + name, u16 type, u16 map_count, map (BlockMeta x map_count,
-//   4 B each), u16 data_len + data. Field/dict data sits at aligned offsets
-//   (GetOffset sums AlignTo4(Size)).
-// System format (SerializeSystemBlocks):   u16 writable_blocks, then per block
-//   u16 block_index, u16 field_count, then per field u16 index, u16 vlen, value.
-// ---------------------------------------------------------------------------
-
-class MemoryBackupView extends StatelessWidget {
-  final String fileName;
-  final List<int> data;
-
-  const MemoryBackupView({super.key, required this.fileName, required this.data});
-
-  static int _u16(List<int> b, int o) =>
-      o + 1 < b.length ? (b[o] | (b[o + 1] << 8)) : 0;
-  static int _align4(int v) => (v + 3) & ~3;
-
-  List<Widget> _parseSystem() {
-    final rows = <Widget>[];
-    final b = data;
-    if (b.length < 2) return [const Text('(corrupt backup)')];
-    final blockCount = _u16(b, 0);
-    var c = 2;
-    for (var w = 0; w < blockCount; w++) {
-      if (c + 4 > b.length) break;
-      final blockIndex = _u16(b, c);
-      final fieldCount = _u16(b, c + 2);
-      c += 4;
-      final type = _systemBlockType(blockIndex);
-      final info = type == null ? null : blockInfoFor(type);
-      final fields = <Widget>[];
-      for (var f = 0; f < fieldCount; f++) {
-        if (c + 4 > b.length) break;
-        final fi = _u16(b, c);
-        final vlen = _u16(b, c + 2);
-        c += 4;
-        if (c + vlen > b.length) break;
-        final value = b.sublist(c, c + vlen);
-        c += vlen;
-        final fname = info?.field(fi)?.name ?? 'Field $fi';
-        final meta = BlockMeta(flagsAndType: info?.field(fi) == null ? 0 : _systemFieldType(type!, fi), size: vlen);
-        fields.add(ListTile(
-          dense: true,
-          contentPadding: const EdgeInsets.only(left: 40, right: 12),
-          title: Row(children: [
-            Expanded(child: Text('$fname: ${_formatBytes(meta, value)}',
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
-          ]),
-        ));
-      }
-      rows.add(_blockCard('Block $blockIndex (${type?.label ?? 'unknown'})',
-          info?.typeName ?? '', fields));
-    }
-    return rows;
-  }
-
-  BlockType? _systemBlockType(int index) => switch (index) {
-        0 => BlockType.ledButton,
-        1 => BlockType.pwm,
-        2 => BlockType.pwm,
-        3 => BlockType.accGyr,
-        4 => BlockType.vysiDisplay,
-        5 => BlockType.vysiDisplay,
-        _ => null,
-      };
-
-  int _systemFieldType(BlockType type, int index) {
-    final info = blockInfoFor(type);
-    final f = info?.field(index);
-    if (f == null) return 0;
-    // infer data type from the field name registry (Number for numbers, etc.)
-    return _inferDataType(f).value;
-  }
-
-  DataType _inferDataType(FieldInfo f) {
-    final n = f.name.toLowerCase();
-    if (n.contains('bool') || n == 'led' || n == 'button') return DataType.bool_;
-    if (n.contains('percent') || n.contains('value') || n.contains('range') ||
-        n.contains('voltage') || n.contains('resistance') || n.contains('lux') ||
-        n.contains('temp') || n.contains('brightness') || n.contains('rate')) {
-      return DataType.number;
-    }
-    return DataType.uint32;
-  }
-
-  List<Widget> _parseRegistry() {
-    final rows = <Widget>[];
-    final b = data;
-    if (b.length < 2) return [const Text('(corrupt backup)')];
-    final blockCount = _u16(b, 0);
-    var c = 2;
-    for (var i = 0; i < blockCount; i++) {
-      if (c + 1 > b.length) break;
-      final nameLen = b[c++];
-      if (c + nameLen > b.length) break;
-      final name = String.fromCharCodes(b.sublist(c, c + nameLen));
-      c += nameLen;
-      if (c + 6 > b.length) break;
-      final typeValue = _u16(b, c);
-      final mapCount = _u16(b, c + 2);
-      c += 4;
-      if (c + mapCount * 4 > b.length) break;
-      final metas = <BlockMeta>[];
-      for (var m = 0; m < mapCount; m++) {
-        metas.add(BlockMeta.fromBytes(b, c + m * 4));
-      }
-      c += mapCount * 4;
-      if (c + 2 > b.length) break;
-      final dataLen = _u16(b, c);
-      c += 2;
-      if (c + dataLen > b.length) break;
-      final blob = b.sublist(c, c + dataLen);
-      c += dataLen;
-
-      final children = <Widget>[];
-      final blockType = BlockType.fromValue(typeValue);
-      final info = blockInfoFor(blockType);
-      // Dynamic blocks use sequential field layout (AlignTo4 per field)
-      var off = 0;
-      for (var f = 0; f < mapCount; f++) {
-        final meta = metas[f];
-        final size = meta.size;
-        if (off + size > blob.length) break;
-        final v = blob.sublist(off, off + size);
-
-        // A keyed dictionary field: its data is a series of BlockMeta+value entries
-        // with a real key (docs: a dictionary when entries have key != 0xFF). Render
-        // such fields as a "Dictionary N" group instead of a single plain entry.
-        if (_looksKeyedField(v)) {
-          children.add(Padding(
-            padding: const EdgeInsets.only(left: 60, top: 4, bottom: 2),
-            child: Text('Dictionary $f',
-                style: const TextStyle(fontSize: 12, color: kOrange)),
-          ));
-          var ko = 0;
-          while (ko + 4 <= v.length) {
-            final km = BlockMeta.fromBytes(v, ko);
-            final ksize = _align4(4 + km.size);
-            if (km.size < 1 || ko + ksize > v.length) break;
-            final kv = v.sublist(ko + 4, ko + 4 + km.size);
-            children.add(ListTile(
-              dense: true,
-              contentPadding: const EdgeInsets.only(left: 80, right: 12),
-              title: Row(children: [
-                Expanded(
-                    child: Text('key ${km.key}: ${formatValue(km.dataType, kv)}',
-                        style: const TextStyle(
-                            fontFamily: 'monospace', fontSize: 12))),
-              ]),
-              subtitle: Text(dataTypeLabel(km.dataType),
-                  style: const TextStyle(
-                      fontSize: 10, color: Colors.white38)),
-            ));
-            ko += ksize;
-          }
-          off += _align4(size);
-          continue;
-        }
-
-        final fname = info?.field(f)?.name ?? 'Entry $f';
-        children.add(ListTile(
-          dense: true,
-          contentPadding: const EdgeInsets.only(left: 60, right: 12),
-          title: Row(children: [
-            Expanded(child: Text('$fname: ${_formatBytes(meta, v)}',
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
-          ]),
-          subtitle: Text(dataTypeLabel(meta.dataType),
-              style: const TextStyle(fontSize: 10, color: Colors.white38)),
-        ));
-        off += _align4(size);
-      }
-      rows.add(_blockCard(name, blockType.label, children));
-    }
-    return rows;
-  }
-
-  /// True when `field` bytes look like a keyed dictionary: they start with a
-/// structurally valid keyed entry (BlockMeta with a real key != 0xFF and a size
-/// that fits), and every entry walks the field cleanly.
-  bool _looksKeyedField(List<int> field) {
-    if (field.length < 8) return false; // one BlockMeta + at least 1 value byte
-    var o = 0;
-    var count = 0;
-    while (o + 4 <= field.length) {
-      final m = BlockMeta.fromBytes(field, o);
-      final es = _align4(4 + m.size);
-      if (m.size < 1 || o + es > field.length) return false;
-      o += es;
-      count++;
-      if (count == 1 && m.key == 0xFF) return false;
-    }
-    return count >= 1 && o == field.length;
-  }
-
-  Widget _blockCard(String title, String subtitle, List<Widget> children) {
-    return Card(
-      color: kSurfaceAlt,
-      margin: const EdgeInsets.only(bottom: 6),
-      clipBehavior: Clip.antiAlias,
-      child: Column(children: [
-        ListTile(
-          dense: true,
-          title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-          subtitle: Text(subtitle, style: const TextStyle(fontSize: 10)),
-        ),
-        if (children.isNotEmpty)
-          Material(color: Colors.black26, child: Column(children: children)),
-      ]),
-    );
-  }
-
-  String _formatBytes(BlockMeta meta, List<int> bytes) {
-    if (meta.dataType == DataType.none) return '∅';
-    return formatValue(meta.dataType, bytes);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final isSystem = fileName.toUpperCase() == 'SYSMEM';
-    final rows = isSystem ? _parseSystem() : _parseRegistry();
-    if (rows.isEmpty) return const Center(child: Text('(empty backup)'));
-    return ListView(
-        padding: const EdgeInsets.all(12),
-        children: [for (final r in rows) r]);
-  }
-}
-
-/// 32-bit hex formatting shared by the storage page rows and backup decoder.
-String _hex32(int value) =>
-    '0x${value.toRadixString(16).padLeft(8, '0').toUpperCase()}';

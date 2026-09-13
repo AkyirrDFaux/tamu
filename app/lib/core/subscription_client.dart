@@ -15,7 +15,6 @@ class SubscriptionClient {
   SubscriptionClient({required this.deviceId});
 
   ServiceType get service => ServiceType.subscriptions;
-  String get logTag => 'subscription';
 
   Duration get _requestTimeout => const Duration(seconds: 3);
 

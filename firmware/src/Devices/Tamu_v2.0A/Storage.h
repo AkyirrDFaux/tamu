@@ -27,11 +27,6 @@ bool Storage_FlashInit()
 }
 
 // Returns the size of the storage partition in bytes (0 if not initialised).
-uint32_t Storage_FlashSize()
-{
-    return g_storage_part ? g_storage_part->size : 0;
-}
-
 // Reads `size` bytes from the flash partition at `offset` into `data`.
 uint32_t Storage_FlashRead(uint32_t offset, void *data, uint32_t size)
 {

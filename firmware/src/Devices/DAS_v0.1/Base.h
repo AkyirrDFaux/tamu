@@ -102,15 +102,6 @@ void PinModeOutput(GPIO_TypeDef* port, uint16_t pin)
     GPIO_Init(port, &GPIO_InitStructure);
 }
 
-// Configures the given GPIO pin as an input with internal pull-down.
-void PinModeInputPullDown(GPIO_TypeDef* port, uint16_t pin)
-{
-    GPIO_InitTypeDef GPIO_InitStructure = {0};
-    GPIO_InitStructure.GPIO_Pin = pin;
-    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IPD; // Input Pull-Down
-    GPIO_Init(port, &GPIO_InitStructure);
-}
-
 // Configures the given GPIO pin as an input with internal pull-up (active-low buttons).
 void PinModeInputPullUp(GPIO_TypeDef* port, uint16_t pin)
 {

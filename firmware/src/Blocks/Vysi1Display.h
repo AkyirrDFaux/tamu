@@ -4,9 +4,6 @@
 #include "Core/Functions/Memory.h"
 #include "esp_log.h"
 
-// Converts a fixed-point `Number` to a float.
-float NumberToFloat(Number n);
-
 const uint8_t GammaTable[256] = {
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1,
     1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 4,

@@ -3,7 +3,7 @@
 #include "ch32v00x.h"
 #include "debug.h"
 
-// NOTE: DeviceLog/DeviceLogHex are compiled out via no-op macros in src/Main.cpp
+// NOTE: DeviceLog is compiled out via a no-op macro in src/Main.cpp
 // (DEVICE_LOG_TEXTLESS) - the DAS log format carries no free text, see Log.h.
 
 // Forward declaration for LoadAllBackups function
@@ -61,8 +61,6 @@ const size_t static_block_num = sizeof(static_block_registry) / sizeof(StaticBlo
 #include "Button.h"
 #include "LED.h"
 
-const char* DeviceVersion = "DAS v0.1";
-
 // Converts a configured sampling rate (Hz) into the loop interval in ms (>= 1 ms).
 static inline uint32_t SampleIntervalMs(Number rate)
 {
@@ -102,7 +100,6 @@ int main(void)
     // gets a fresh registration (SNumber/name persistence still works).
     Storage.Init();
     LoadAllBackups();
-    LoadPersistedDeviceName(); // persisted name active from boot
     DeviceStatus.ShortAddress = 0;
 
     // Core distinction loop

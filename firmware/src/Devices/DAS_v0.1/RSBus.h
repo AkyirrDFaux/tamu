@@ -94,12 +94,6 @@ void SetupRS485()
     g_rs485_ready = true;
 }
 
-#define RS485_RETRIES 3
-
-// CSMA/CD timings at 460800 baud (1 byte = ~21.7us)
-#define RS485_BYTE_TIME_US     22
-#define RS485_SILENCE_BYTES    8
-
 // Microsecond timestamp from the SysTick counter (32-bit math, no 64-bit division helper).
 static uint32_t RS485_Micros()
 {
@@ -107,31 +101,19 @@ static uint32_t RS485_Micros()
     return SysTick->CNT / cycles_per_us;
 }
 
-// Wait for the line to be silent for 8 bytes + a random 0-7 byte backoff.
-// Bounded to RS485_SILENCE_TIMEOUT_MS so a continuously-busy or shorted bus
-// cannot wedge the caller forever.
-#define RS485_SILENCE_TIMEOUT_MS 100
-
+// Shared CSMA/CD silence wait (Core/Functions/Bus.h): drain the ring, count silence in
+// SysTick microseconds, busy-wait (the DAS's tight loop keeps bus turnaround latency low).
 static void RS485_WaitForSilence(uint8_t priority)
 {
-    uint32_t silence_us = (RS485_SILENCE_BYTES + (priority/8) + (RawRand() % 4)) * RS485_BYTE_TIME_US;
-    uint32_t idle_since = RS485_Micros();
-    uint32_t wait_start = Now();
-
-    for (;;)
-    {
-        if (UART_Available())
-        {
-            // Bus activity: drain and restart the silence window
+    RS485_WaitForSilence(priority,
+        [](void) -> bool {
+            if (!UART_Available()) return false;
             while (UART_Available())
                 UART_ReadByte();
-            idle_since = RS485_Micros();
-        }
-        if ((RS485_Micros() - idle_since) >= silence_us)
-            return;
-        if ((Now() - wait_start) >= RS485_SILENCE_TIMEOUT_MS)
-            return; // Give up: transmit into the best window we had
-    }
+            return true;
+        },
+        RS485_Micros,
+        [](void) {});
 }
 
 // Transmits a packet with CSMA/CD collision avoidance and verifies the echo; retries up to

@@ -58,16 +58,6 @@ void PinModeInput(gpio_num_t Pin)
     gpio_set_direction(Pin, GPIO_MODE_INPUT);
 }
 
-// Configures `Pin` as a GPIO input with an internal pull-down resistor.
-void PinModeInputPullDown(gpio_num_t Pin)
-{
-    gpio_reset_pin(Pin);
-    gpio_set_direction(Pin, GPIO_MODE_INPUT);
-
-    gpio_pullup_dis(Pin);
-    gpio_pulldown_en(Pin);
-}
-
 // Configures `Pin` as a GPIO input with an internal pull-up resistor.
 void PinModeInputPullUp(gpio_num_t Pin)
 {

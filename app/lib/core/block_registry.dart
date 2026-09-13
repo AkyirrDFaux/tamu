@@ -173,13 +173,6 @@ const Map<BlockType, BlockInfo> _blockRegistry = {
 /// Metadata for a block type, or null for unknown/dynamic types.
 BlockInfo? blockInfoFor(BlockType type) => _blockRegistry[type];
 
-/// Resolves a field's display name: registry entry when the block type is
-/// known, generic label otherwise.
-String fieldNameFor(BlockType blockType, int index) {
-  final info = blockInfoFor(blockType)?.field(index);
-  return info?.name ?? 'Field $index';
-}
-
 /// Formats a value with its unit suffix ("25.0 Hz").
 String valueWithUnit(String formatted, FieldInfo? info) {
   final unit = info?.unit;

@@ -162,22 +162,12 @@ String formatValue(DataType type, List<int> bytes) {
       if (bytes.isEmpty) return '-';
       if (bytes.length < 4) {
         // Short (1-3 byte) integer values, e.g. the uint8 edge counter.
-        var v = 0;
-        for (var i = 0; i < bytes.length; i++) {
-          v |= bytes[i] << (8 * i);
-        }
-        return v.toString();
+        return bytesToInt(bytes).toString();
       }
       return int32FromBytes(bytes).toString();
     case DataType.idx:
       if (bytes.isEmpty) return '-';
-      if (bytes.length < 4) {
-        var v = 0;
-        for (var i = 0; i < bytes.length; i++) {
-          v |= bytes[i] << (8 * i);
-        }
-        return v.toString();
-      }
+      if (bytes.length < 4) return bytesToInt(bytes).toString();
       return uint32FromBytes(bytes).toString();
     case DataType.string:
       return bytes.isEmpty ? '-' : String.fromCharCodes(bytes);
@@ -323,7 +313,7 @@ Future<List<int>?> _editEnum(
   final valueSize = current.isNotEmpty ? current.length : 4;
   if (options == null || options.isEmpty) {
     // No known labels: enter the numeric value directly.
-    final currentRaw = _bytesToInt(current);
+    final currentRaw = bytesToInt(current);
     final controller =
         TextEditingController(text: currentRaw?.toString() ?? '');
     return showDialog<List<int>>(
@@ -341,7 +331,7 @@ Future<List<int>?> _editEnum(
             onPressed: () {
               final v = int.tryParse(controller.text.trim());
               Navigator.pop(
-                  context, v == null ? null : _intToBytes(v, valueSize));
+                  context, v == null ? null : intToBytes(v, valueSize));
             },
             child: const Text('OK'),
           ),
@@ -349,7 +339,7 @@ Future<List<int>?> _editEnum(
       ),
     );
   }
-  final currentRaw = _bytesToInt(current);
+  final currentRaw = bytesToInt(current);
   return showDialog<List<int>>(
     context: context,
     builder: (context) => SimpleDialog(
@@ -358,7 +348,7 @@ Future<List<int>?> _editEnum(
         RadioGroup<int>(
           groupValue: currentRaw,
           onChanged: (value) =>
-              Navigator.pop(context, value == null ? null : _intToBytes(value, valueSize)),
+              Navigator.pop(context, value == null ? null : intToBytes(value, valueSize)),
           child: Column(
             children: [
               for (final entry in options.entries)
@@ -372,23 +362,6 @@ Future<List<int>?> _editEnum(
       ],
     ),
   );
-}
-
-int? _bytesToInt(List<int> bytes) {
-  if (bytes.isEmpty) return null;
-  int value = 0;
-  for (int i = 0; i < bytes.length; i++) {
-    value |= bytes[i] << (8 * i);
-  }
-  return value;
-}
-
-List<int> _intToBytes(int value, int size) {
-  final bytes = <int>[];
-  for (int i = 0; i < size; i++) {
-    bytes.add((value >> (8 * i)) & 0xFF);
-  }
-  return bytes;
 }
 
 Future<List<int>?> _editDevType(

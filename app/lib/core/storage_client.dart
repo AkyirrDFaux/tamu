@@ -10,6 +10,11 @@ import 'diagnostics.dart';
 import 'protocol.dart';
 import 'types.dart';
 
+/// Strips the 8-byte wire padding (spaces or, from older renames, NULs) from a
+/// file name so it matches the plain-name classification and display.
+String normalizeFileName(String name) =>
+    name.replaceAll('\x00', '').trim();
+
 /// One file table entry (Filerecord: Offset u32 | Filesize u32 | Name 8 bytes).
 class FileRecord {
   final int index;

@@ -37,24 +37,6 @@ public:
         }
     }
 
-    // Immediately starts a 3-sample sync round for a single target.
-    // Available for CLI or ad-hoc use; the normal initial sync is now
-    // device-initiated (node sends CID 11 to core after ID assignment).
-    void SyncTarget(uint16_t target)
-    {
-        if (state != Idle)
-            return;
-
-        targets[0] = target;
-        target_count = 1;
-        current_target = 0;
-        sample_count = 0;
-        missed = 0;
-        offset_sum = 0;
-        state = Waiting;
-        SendSample();
-    }
-
     // Accumulates a time-offset sample from a target; moves to the next target once 3 samples are collected.
     void HandleResponse(uint16_t target, int32_t offset)
     {

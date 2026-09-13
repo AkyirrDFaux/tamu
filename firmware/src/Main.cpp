@@ -9,7 +9,6 @@
 #if defined BOARD_DAS_v0_1
 #define DEVICE_LOG_TEXTLESS 1
 #define DeviceLog(...) ((void)0)
-#define DeviceLogHex(...) ((void)0)
 #endif
 
 // 1. Prepare the instances
@@ -30,8 +29,6 @@ const char* DeviceName = DeviceNameBuffer;
 #include "Blocks/DeviceInfo.h"
 
 DeviceStatusStruct DeviceStatus;
-uint32_t DeltaTime = 0;      // defined here (declared in Core/Functions/SysFunctions.h)
-uint32_t LastTime = 0;
 int32_t TimeOffsetMs = 0;
 
 #include "Core/Functions/Packet.h"

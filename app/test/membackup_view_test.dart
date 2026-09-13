@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/types.dart';
-import 'package:tamuapp/ui/storage_page.dart';
+import 'package:tamuapp/ui/file_viewers.dart';
 import 'package:tamuapp/ui/theme.dart';
 
 /// Renders MemoryBackupView against synthetic backup bytes matching the

@@ -9,7 +9,7 @@ import '../core/register_client.dart';
 import '../core/types.dart';
 import 'theme.dart';
 import 'value_editor.dart' show dataTypeLabel, formatValue, showValueEditor;
-import 'widgets.dart';
+import 'system_block_view.dart';import 'widgets.dart';
 
 /// Register service view (Docs/App/Service views/Register.md):
 /// System block, static blocks, and dynamic memory.
@@ -60,8 +60,7 @@ class _RegisterPageState extends State<RegisterPage>
 
   void _snack(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    showSnack(context, message);
   }
 
   Future<void> _refresh() async {
@@ -125,10 +124,10 @@ Future<void> _loadVisibleFields() async {
     if (hasDyn) {
       ok &= await _requestStatus(c, 3, const [0xFF, 0xFF, 0xFF, 0xFF]); // dynamic registry
     }
-    ok &= await _requestStatus(c, 3, makeBlockInfo(0, 0, 0xFF, 0)); // system Name/NetID
+    ok &= await _requestStatus(c, 3, blockInfoBytes(0, 0, 0xFF, 0)); // system Name/NetID
     for (final b in _blockMetas ?? const []) {
       if (b == null || b.type == 0 || b.type == 0x3FF) continue;
-      ok &= await _requestStatus(c, 3, makeBlockInfo(b.type, b.inst, 0xFF, 0));
+      ok &= await _requestStatus(c, 3, blockInfoBytes(b.type, b.inst, 0xFF, 0));
     }
     return ok;
   }
@@ -139,10 +138,10 @@ Future<void> _loadVisibleFields() async {
     if (widget.hasDynamicMemory) {
       ok &= await _requestStatus(c, 4, const [0xFF, 0xFF, 0xFF, 0xFF]);
     }
-    ok &= await _requestStatus(c, 4, makeBlockInfo(0, 0, 0xFF, 0));
+    ok &= await _requestStatus(c, 4, blockInfoBytes(0, 0, 0xFF, 0));
     for (final b in _blockMetas ?? const []) {
       if (b == null || b.type == 0 || b.type == 0x3FF) continue;
-      ok &= await _requestStatus(c, 4, makeBlockInfo(b.type, b.inst, 0xFF, 0));
+      ok &= await _requestStatus(c, 4, blockInfoBytes(b.type, b.inst, 0xFF, 0));
     }
     return ok;
   }
@@ -156,7 +155,7 @@ Future<void> _loadVisibleFields() async {
   /// values show a Save button"). System/static fields are addressed by BlockInfo.
   Future<void> _saveField(int blockType, int inst,
       ({int type, int inst, BlockMeta meta, String name})? block, int fieldIndex) async {
-    final bi = makeBlockInfo(blockType == 0 ? 0 : blockType, inst, fieldIndex, 0);
+    final bi = blockInfoBytes(blockType == 0 ? 0 : blockType, inst, fieldIndex, 0);
     final ok = await _withBusy(() async {
       final reply = await _client.request(3, payload: bi);
       return reply != null && reply.isNotEmpty && reply[0] == 0;
@@ -166,7 +165,7 @@ Future<void> _loadVisibleFields() async {
 
   Future<void> _recallField(int blockType, int inst,
       ({int type, int inst, BlockMeta meta, String name})? block, int fieldIndex) async {
-    final bi = makeBlockInfo(blockType == 0 ? 0 : blockType, inst, fieldIndex, 0);
+    final bi = blockInfoBytes(blockType == 0 ? 0 : blockType, inst, fieldIndex, 0);
     final ok = await _withBusy(() async {
       final reply = await _client.request(4, payload: bi);
       return reply != null && reply.isNotEmpty && reply[0] == 0;
@@ -191,7 +190,7 @@ Future<void> _loadVisibleFields() async {
     for (var f = 0; f < fieldCount; f++) {
       if (!forceRefresh && cache.containsKey(f)) continue;
       if (blockType == 0) {
-        final keys = _systemKeysForField(f);
+        final keys = systemKeysForField(f);
         final fieldMap = <int, ({BlockMeta meta, List<int> value})>{};
         for (final key in keys) {
           final field = await _client.readField(f, key);
@@ -221,25 +220,6 @@ Future<void> _loadVisibleFields() async {
         }
       }
     }
-  }
-
-  List<int> _systemKeysForField(int field) {
-    switch (field) {
-      case 0: return [0, 1, 2];
-      case 1: return [0xFF];
-      case 2: return [0];
-      case 3: return [0, 1, 2, 3, 4];
-      case 4: return [0, 1];
-      case 5: return [0, 1];
-      case 6: return [0xFF];
-      case 7: return [0];
-      case 8: return [0, 1];
-      default: return [0];
-    }
-  }
-
-  int _systemKeyForField(int field) {
-    return _systemKeysForField(field).first;
   }
 
   @override
@@ -345,7 +325,7 @@ Future<void> _loadVisibleFields() async {
               decoration: BoxDecoration(
                   color: Colors.white.withAlpha(20),
                   borderRadius: BorderRadius.circular(4)),
-              child: Text(isSystem ? 'System' : (isDynamic ? '#${block.inst}' : '#${block.inst}'),
+              child: Text(isSystem ? 'System' : '#${block.inst}',
                   style: const TextStyle(fontSize: 10, color: Colors.white54)),
             ),
           ]),
@@ -466,7 +446,7 @@ Future<void> _loadVisibleFields() async {
     // For system block, collect all keys for this field
     List<({int key, ({BlockMeta meta, List<int> value})? field})> systemFieldKeys = [];
     if (isSystemField && cache != null) {
-      final keys = _systemKeysForField(fieldIndex);
+      final keys = systemKeysForField(fieldIndex);
       for (final key in keys) {
         // Use offset 256 to match _loadBlockFields storage
         final extraField = cache[256 + fieldIndex * 256 + key];
@@ -474,8 +454,8 @@ Future<void> _loadVisibleFields() async {
           systemFieldKeys.add((key: key, field: extraField));
         }
       }
-      if (!systemFieldKeys.any((e) => e.key == _systemKeysForField(fieldIndex).first)) {
-        systemFieldKeys.insert(0, (key: _systemKeysForField(fieldIndex).first, field: field));
+      if (!systemFieldKeys.any((e) => e.key == systemKeysForField(fieldIndex).first)) {
+        systemFieldKeys.insert(0, (key: systemKeysForField(fieldIndex).first, field: field));
       }
     }
 
@@ -485,7 +465,7 @@ Future<void> _loadVisibleFields() async {
         title: Row(children: [
           SizedBox(
               width: 120,
-              child: Text(_systemFieldName(fieldIndex),
+              child: Text(systemFieldName(fieldIndex),
                   style: const TextStyle(fontSize: 12, color: Colors.white54))),
           Expanded(
               child: Text('[${systemFieldKeys.length} fields]',
@@ -499,8 +479,8 @@ Future<void> _loadVisibleFields() async {
             dense: true,
             contentPadding: const EdgeInsets.only(left: 56, right: 12),
             title: Row(children: [
-              SizedBox(width: 100, child: Text(_systemStructMemberName(fieldIndex, key), style: const TextStyle(fontSize: 11, color: Colors.white54))),
-              Expanded(child: Text(_formatSystemValue(f.meta.dataType, f.value), style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
+              SizedBox(width: 100, child: Text(systemStructMemberName(fieldIndex, key), style: const TextStyle(fontSize: 11, color: Colors.white54))),
+              Expanded(child: Text(formatSystemValue(f.meta.dataType, f.value, fieldIndex, key), style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
               for (final flag in primaryFlags)
                 Padding(
                   padding: const EdgeInsets.only(left: 4),
@@ -511,7 +491,7 @@ Future<void> _loadVisibleFields() async {
                           color: flag == 'RO' ? kOrange : Colors.white38)),
                 ),
             ]),
-            subtitle: Text('${dataTypeLabel(f.meta.dataType)} [member=${_systemStructMemberName(fieldIndex, key)}]', style: const TextStyle(fontSize: 10)),
+            subtitle: Text('${dataTypeLabel(f.meta.dataType)} [member=${systemStructMemberName(fieldIndex, key)}]', style: const TextStyle(fontSize: 10)),
             trailing: PopupMenuButton<String>(
               icon: const Icon(Icons.more_vert, size: 16),
               onSelected: (action) {
@@ -548,11 +528,11 @@ Future<void> _loadVisibleFields() async {
         SizedBox(
             width: 120,
             child: Text(
-                isSystemField ? _systemFieldName(fieldIndex) : (fieldInfo?.name ?? 'Field $fieldIndex'),
+                isSystemField ? systemFieldName(fieldIndex) : (fieldInfo?.name ?? 'Field $fieldIndex'),
                 style: const TextStyle(fontSize: 12, color: Colors.white54))),
         Expanded(
             child: Text(
-                isSystemField ? _formatSystemValue(field.meta.dataType, field.value) : displayValue(),
+                isSystemField ? formatSystemValue(field.meta.dataType, field.value, fieldIndex, systemKeysForField(fieldIndex).first) : displayValue(),
                 style: const TextStyle(fontFamily: 'monospace', fontSize: 13))),
         for (final flag in FieldFlags.describe(field.meta.flags))
           Padding(
@@ -599,91 +579,6 @@ Future<void> _loadVisibleFields() async {
     );
   }
 
-  String _systemFieldName(int field) {
-    switch (field) {
-      case 0: return 'Device Type';
-      case 1: return 'Serial Number';
-      case 2: return 'Short Address';
-      case 3: return 'Time';
-      case 4: return 'RAM';
-      case 5: return 'Storage';
-      case 6: return 'Name';
-      case 7: return 'NetID';
-      case 8: return 'App/CLI Active';
-      default: return 'Field $field';
-    }
-  }
-
-  String _systemStructMemberName(int field, int key) {
-    switch (field) {
-      case 0:
-        switch (key) {
-          case 0: return '.deviceType';
-          case 1: return '.capabilities';
-          case 2: return '.softwareVersion';
-        }
-      case 3:
-        switch (key) {
-          case 0: return '.uptime';
-          case 1: return '.currentTime';
-          case 2: return '.timeOffsetMs';
-          case 3: return '.avgLoopTimeMs';
-          case 4: return '.maxLoopTimeMs';
-        }
-      case 4:
-        switch (key) {
-          case 0: return '.usedRAM';
-          case 1: return '.totalRAM';
-        }
-      case 5:
-        switch (key) {
-          case 0: return '.usedFlash';
-          case 1: return '.totalFlash';
-        }
-      case 8:
-        switch (key) {
-          case 0: return '.appActive';
-          case 1: return '.cliActive';
-        }
-    }
-    return 'Key $key';
-  }
-
-  String _formatSystemValue(DataType type, List<int> value) {
-    switch (type) {
-      case DataType.enum_:
-        // Device type is a 32-bit enum
-        if (value.length >= 4) {
-          final val = value[0] | (value[1] << 8) | (value[2] << 16) | (value[3] << 24);
-          return DeviceType.fromValue(val).label;
-        }
-        if (value.isNotEmpty) return '0x${value[0].toRadixString(16).padLeft(2, '0')}';
-        return '-';
-      case DataType.sn:
-        return serialNumberToHex(value);
-      case DataType.id:
-        return value.length >= 2 ? idToString(value[0] | (value[1] << 8)) : '-';
-      case DataType.integer:
-        // System block fields like Time offset are signed 32-bit: sign-extend.
-        if (value.length >= 4) return int32FromBytes(value).toString();
-        if (value.length >= 2) {
-          final v = value[0] | (value[1] << 8);
-          return (v >= 0x8000 ? v - 0x10000 : v).toString();
-        }
-        return '-';
-      case DataType.string:
-        // Software version is 4 bytes (YY, MM, DD, iteration)
-        if (value.length == 4) {
-          return '${value[0]}.${value[1]}.${value[2]}.${value[3]}';
-        }
-        return String.fromCharCodes(value).replaceAll('\x00', '');
-      case DataType.bool_:
-        return value.isNotEmpty && value[0] != 0 ? 'true' : 'false';
-      default:
-        return formatValue(type, value);
-    }
-  }
-
   Future<void> _editBlock(int blockIndex, ({int type, int inst, BlockMeta meta, String name})? block) async {
     if (block == null || !mounted) return;
     if (block.type != BlockType.dynamic.value) {
@@ -693,7 +588,8 @@ Future<void> _loadVisibleFields() async {
     final result = await promptBlockNameAndType(context,
         title: 'Edit block',
         initialName: block.name,
-        fixedType: BlockType.dynamic);
+        fixedType: BlockType.dynamic,
+        availableTypes: _availableBlockTypes());
     if (result == null || !mounted) return;
     final (name, type, _) = result;
     
@@ -707,7 +603,7 @@ Future<void> _loadVisibleFields() async {
   Future<void> _createBlock() async {
     if (!mounted) return;
     final result = await promptBlockNameAndType(context,
-        title: 'New dynamic block', withIndex: true, fixedType: BlockType.dynamic);
+        title: 'New dynamic block', withIndex: true, availableTypes: _availableBlockTypes());
     if (result == null || !mounted) return;
     final (name, type, index) = result;
     
@@ -716,9 +612,23 @@ Future<void> _loadVisibleFields() async {
     await _refresh();
   }
 
+  /// The block types this device actually exposes (static blocks + Dynamic),
+/// used to limit the type dropdown when creating a dynamic block.
+  List<BlockType> _availableBlockTypes() {
+    final types = <BlockType>{BlockType.dynamic};
+    final metas = _blockMetas;
+    if (metas != null) {
+      for (final b in metas) {
+        if (b == null || b.type == 0 || b.type == BlockType.dynamic.value) continue;
+        types.add(BlockType.fromValue(b.type));
+      }
+    }
+    return types.where((t) => t != BlockType.none).toList();
+  }
+
   Future<void> _deleteBlock(int blockIndex, ({int type, int inst, BlockMeta meta, String name})? block) async {
     if (block == null || !mounted) return;
-    
+
     final ok = await _client.deleteDynamic(block: block.inst);
     _snack(ok ? 'Block deleted (save to free)' : 'Delete failed');
     await _refresh();
@@ -818,7 +728,7 @@ Future<void> _loadVisibleFields() async {
         info: fieldInfo);
     if (newValue == null) return;
 
-    final key = (blockType == 0) ? _systemKeyForField(fieldIndex) : ((blockType == BlockType.dynamic.value) ? 0 : 0xFF);
+    final key = (blockType == 0) ? systemKeysForField(fieldIndex).first : ((blockType == BlockType.dynamic.value) ? 0 : 0xFF);
     final meta = BlockMeta(flagsAndType: field.meta.flagsAndType, size: newValue.length, key: key);
     final confirmed = await _client.writeBlockField(blockType, inst, fieldIndex, key, meta, newValue);
     _snack(confirmed != null ? 'Value written' : 'Write failed');
@@ -832,28 +742,4 @@ Future<void> _loadVisibleFields() async {
     }
   }
 
-}
-
-/// Small rounded label chip used across the memory pages.
-class ChipLabel extends StatelessWidget {
-  const ChipLabel(this.text, {super.key, this.subtle = false});
-
-  final String text;
-  final bool subtle;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-      decoration: BoxDecoration(
-        color: subtle ? Colors.white.withAlpha(14) : kOrange.withAlpha(46),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(text,
-          style: TextStyle(
-              fontSize: 10,
-              color: subtle ? Colors.white54 : kOrange,
-              fontWeight: subtle ? FontWeight.w400 : FontWeight.w600)),
-    );
-  }
 }

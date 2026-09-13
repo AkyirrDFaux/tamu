@@ -42,32 +42,15 @@ void SetupRS485()
     gpio_set_level(RS485_EN_PIN, 0);
 }
 
-#define RS485_RETRIES 3
-#define RS485_RETRY_DELAY_MS 20
-
-// CSMA/CD timings at 460800 baud (1 byte = ~21.7us)
-#define RS485_BYTE_TIME_US     22
-#define RS485_SILENCE_BYTES    8
-
-// Wait for the line to be silent for 8 bytes + Priority/8 + random 0-3 bytes.
-// Any received byte resets the silence counter (someone else is transmitting).
-// Bounded to RS485_SILENCE_TIMEOUT_MS so a continuously-busy or shorted bus
-// cannot wedge the caller forever.
-#define RS485_SILENCE_TIMEOUT_MS 100
-
+// Shared CSMA/CD silence wait (Core/Functions/Bus.h): drain the UART buffer, count
+// silence in esp_timer microseconds, sleep 1 ms between polls (the Tamu has a scheduler).
 static void RS485_WaitForSilence(uint8_t priority)
 {
-    int64_t idle_since = esp_timer_get_time();
-    uint8_t prio = priority;
-    uint32_t silence_us = (RS485_SILENCE_BYTES + (prio/8) + (RawRand() % 4)) * RS485_BYTE_TIME_US;
-    int64_t wait_start = idle_since;
-
-    for (;;)
-    {
-        size_t len = 0;
-        uart_get_buffered_data_len(UART_NUM_1, &len);
-        if (len > 0)
-        {
+    RS485_WaitForSilence(priority,
+        [](void) -> bool {
+            size_t len = 0;
+            uart_get_buffered_data_len(UART_NUM_1, &len);
+            if (len == 0) return false;
             // Bus activity: drain and restart the silence window
             uint8_t drain[32];
             while (len > 0)
@@ -80,15 +63,10 @@ static void RS485_WaitForSilence(uint8_t priority)
                 if (avail == 0) break;
                 len = avail;
             }
-            idle_since = esp_timer_get_time();
-            continue;
-        }
-        if ((esp_timer_get_time() - idle_since) >= (int64_t)silence_us)
-            return;
-        if ((esp_timer_get_time() - wait_start) >= RS485_SILENCE_TIMEOUT_MS * 1000LL)
-            return; // Give up: transmit into the best window we had
-        vTaskDelay(pdMS_TO_TICKS(1));
-    }
+            return true;
+        },
+        [](void) -> uint32_t { return (uint32_t)esp_timer_get_time(); },
+        [](void) { vTaskDelay(pdMS_TO_TICKS(1)); });
 }
 
 // Sends `Data` over the RS-485 bus with CSMA/CD collision avoidance. Per Docs/RSBus.md the

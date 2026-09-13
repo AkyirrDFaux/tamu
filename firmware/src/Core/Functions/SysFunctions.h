@@ -31,9 +31,6 @@ inline size_t AlignTo4(size_t size)
     return (size + 3) & ~3;
 }
 
-// Loop time bookkeeping (defined in Main.cpp)
-extern uint32_t LastTime;
-extern uint32_t DeltaTime;
 // Time offset in ms set by the core via Device service CID 12 (Set time offset)
 extern int32_t TimeOffsetMs;
 
@@ -43,26 +40,25 @@ extern PacketFrame tx_frame;
 // Updates uptime/delta time bookkeeping and the loop-time statistics each main-loop tick
 inline void TimeUpdate()
 {
-    // Prime on the first call: before any tick, UptimeMs and LastTime are both 0,
-    // so a naive DeltaTime would equal the entire boot time and skew the loop stats.
+    // Loop-time bookkeeping (function-local so no globals leak out of this helper).
     static bool primed = false;
     if (!primed)
     {
+        // Prime on the first call: before any tick, UptimeMs is 0, so a naive delta
+        // would equal the entire boot time and skew the loop stats.
         primed = true;
-        LastTime = Now();
-        DeviceStatus.UptimeMs = LastTime;
-        DeltaTime = 0;
+        DeviceStatus.UptimeMs = Now();
         return;
     }
 
-    LastTime = DeviceStatus.UptimeMs;
+    uint32_t prev = DeviceStatus.UptimeMs;
     DeviceStatus.UptimeMs = Now();
-    DeltaTime = DeviceStatus.UptimeMs - LastTime;
+    uint32_t delta = DeviceStatus.UptimeMs - prev;
 
-    DeviceStatus.AvgLoopTimeMs = (DeviceStatus.AvgLoopTimeMs * N(0.9375)) + (Number(DeltaTime) * N(0.0625));
+    DeviceStatus.AvgLoopTimeMs = (DeviceStatus.AvgLoopTimeMs * N(0.9375)) + (Number(delta) * N(0.0625));
 
-    if (Number(DeltaTime) > DeviceStatus.MaxLoopTimeMs)
-        DeviceStatus.MaxLoopTimeMs = Number(DeltaTime);
+    if (Number(delta) > DeviceStatus.MaxLoopTimeMs)
+        DeviceStatus.MaxLoopTimeMs = Number(delta);
 
     // Long-term windowing: every 20 s the max decays back to the average. A window
     // counter is deterministic (a `UptimeMs % 20000 < 20` test can be missed entirely

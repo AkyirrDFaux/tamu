@@ -96,10 +96,9 @@ void main() async {
     final client = SubscriptionClient(deviceId: tamu.id);
 
     // DAS Meas1 is ResistiveMeasure (type 8) instance 0, field 0
-    // sourceReg = type(10) | inst(6) | field(8) | key(8) = 8<<22 | 0<<16 | 0<<8 | 0
-    final sourceReg = (8 << 22) | (0 << 16) | (0 << 8) | 0;
+    final sourceReg = makeBlockInfo(8, 0, 0, 0);
     // targetReg = System block field 0 (device type) on Tamu
-    final targetReg = (0 << 22) | (0 << 16) | (0 << 8) | 0;
+    final targetReg = makeBlockInfo(0, 0, 0, 0);
 
     print('Creating subscription: targetReg=0x${targetReg.toRadixString(16)}, sourceReg=0x${sourceReg.toRadixString(16)}');
     print('Tamu ID: ${tamu.id}, DAS ID: ${das.id}');
