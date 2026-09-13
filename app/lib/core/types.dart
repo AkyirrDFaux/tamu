@@ -122,6 +122,8 @@ enum BlockType {
   vysiDisplay(0x06),
   deleted(0x07),
   resistiveMeasure(0x08),
+  button(0x09),
+  led(0x0A),
   dynamic(0x3FF), // Dynamic memory block type
   render(0x100);
 
@@ -145,6 +147,8 @@ enum BlockType {
         BlockType.vysiDisplay => 'LED Display',
         BlockType.deleted => 'Deleted',
         BlockType.resistiveMeasure => 'Resistive Measure',
+        BlockType.button => 'Button',
+        BlockType.led => 'LED',
         BlockType.dynamic => 'Dynamic',
         BlockType.render => 'Render',
       };

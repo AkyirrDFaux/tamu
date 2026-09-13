@@ -59,9 +59,16 @@ void main() {
       }
     }
     expect(totalBlocks, 6, reason: 'Tamu v2.0A should have 6 static blocks');
-    // Check LEDButton field 0 (LEDState) is writable (TR)
-    final ledState = await reg.readField(0, 0); // System field 0, key 0
+    // LEDButton (type 3) layout per Docs/Modules and blocks/Buttons & LEDS.md:
+    // field 0 = Button raw state (RO), field 3 = LEDState (TR).
+    final btnState = await reg.readBlockField(BlockType.ledButton.value, 0, 0, 0xFF);
+    expect(btnState, isNotNull);
+    expect(btnState!.meta.readOnly, isTrue,
+        reason: 'LEDButton field 0 (Button raw state) must be read-only');
+    final ledState = await reg.readBlockField(BlockType.ledButton.value, 0, 3, 0xFF);
     expect(ledState, isNotNull);
+    expect(ledState!.meta.flags & FieldFlags.trigger, isNot(0),
+        reason: 'LEDButton field 3 (LEDState) must be a trigger field');
   }, timeout: const Timeout(Duration(seconds: 60)));
 
   // HIL: storage 112 frag create/read/write/delete
@@ -104,5 +111,41 @@ void main() {
     // May be empty if not implemented, but should not timeout with error
     // We check that a reply was received (even if empty types)
     expect(reply != null || true, isTrue);
+  }, timeout: const Timeout(Duration(seconds: 60)));
+
+  // HIL: DAS has its intended blocks (Docs/Devices.md: Resistive measurement x2, Button,
+  // LED), enumerated through the bus via the Tamu core relay.
+  test('HIL: DAS static blocks', skip: skipReason, () async {
+    final db = DeviceDatabase.instance;
+    await db.refreshRuntime(0);
+    await Future.delayed(const Duration(seconds: 2));
+    await db.refreshRuntime(0);
+    DeviceEntry? das;
+    for (final d in db.all) {
+      if (d.type == DeviceType.dualAnalogSensor) {
+        das = d;
+        break;
+      }
+    }
+    if (das == null) {
+      print('DAS not found on the bus - skipping block assertions');
+      return;
+    }
+    final reg = RegisterClient(deviceId: das.id);
+    final types = await reg.enumerateBlockTypes();
+    expect(types, isNotNull);
+    int totalBlocks = 0;
+    final typeSet = <int>{};
+    if (types != null) {
+      for (final t in types) {
+        typeSet.add(t);
+        final count = await reg.getInstanceCount(t);
+        if (count != null) totalBlocks += count;
+      }
+    }
+    expect(totalBlocks, 4, reason: 'DAS should have 4 static blocks (Meas1, Meas2, Button, LED)');
+    expect(typeSet.contains(BlockType.resistiveMeasure.value), isTrue);
+    expect(typeSet.contains(BlockType.button.value), isTrue);
+    expect(typeSet.contains(BlockType.led.value), isTrue);
   }, timeout: const Timeout(Duration(seconds: 60)));
 }

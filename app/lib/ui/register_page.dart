@@ -425,27 +425,40 @@ Future<void> _loadVisibleFields() async {
     final primaryFlags = FieldFlags.describe(field.meta.flags);
     final isSystemField = isSystem;
 
-    // Custom display for the DAS ResistiveMeasure block: the Sensor Type (field 2)
-    // shows its enum name, and the Measured Value (field 3) shows a unit derived from
-    // the selected sensor, plus a fuzzy lux level for the LDR.
+    // Field display: resolves the registry's per-type field metadata for enum labels and
+    // the DAS ResistiveMeasure custom view (Sensor Type at field 1, Measured Value at
+    // field 4 with a sensor-derived unit + fuzzy lux level for the LDR).
     String displayValue() {
-      if (blockType != BlockType.resistiveMeasure.value || isSystemField) {
-        return formatValue(field.meta.dataType, field.value);
+      if (isSystemField) return formatValue(field.meta.dataType, field.value);
+      final blockInfo = blockInfoFor(BlockType.fromValue(blockType));
+      final fieldInfo = blockInfo?.field(fieldIndex);
+
+      if (blockType == BlockType.resistiveMeasure.value) {
+        final sensorRaw = cache?[1];
+        final sensor = (sensorRaw != null && sensorRaw.value.isNotEmpty)
+            ? sensorRaw.value[0]
+            : -1;
+        if (fieldIndex == 1) {
+          return sensor >= 0
+              ? sensorTypeLabel(sensor)
+              : formatValue(field.meta.dataType, field.value);
+        }
+        if (fieldIndex == 4 && sensor >= 0 && field.value.length >= 4) {
+          final numVal = numberFromBytes(field.value);
+          final unit = sensorUnits[sensor] ?? '';
+          var text = formatValue(DataType.number, field.value);
+          if (unit.isNotEmpty) text += ' $unit';
+          if (sensor == 3) text += ' · ${luxLevel(numVal)}';
+          return text;
+        }
       }
-      final sensorRaw = cache?[2];
-      final sensor = (sensorRaw != null && sensorRaw.value.isNotEmpty)
-          ? sensorRaw.value[0]
-          : -1;
-      if (fieldIndex == 2) {
-        return sensor >= 0 ? sensorTypeLabel(sensor) : formatValue(field.meta.dataType, field.value);
-      }
-      if (fieldIndex == 3 && sensor >= 0) {
-        final numVal = numberFromBytes(field.value);
-        final unit = sensorUnits[sensor] ?? '';
-        var text = formatValue(DataType.number, field.value);
-        if (unit.isNotEmpty) text += ' $unit';
-        if (sensor == 3) text += ' · ${luxLevel(numVal)}';
-        return text;
+
+      // Enum fields with known option labels (button edges, Acc&Gyr ODR/ranges, sensor
+      // type): show the label instead of the raw index.
+      final enumLabels = fieldInfo?.enumValues;
+      if (enumLabels != null && field.value.isNotEmpty) {
+        final raw = field.value[0];
+        return enumLabels[raw] ?? 'Enum $raw';
       }
       return formatValue(field.meta.dataType, field.value);
     }

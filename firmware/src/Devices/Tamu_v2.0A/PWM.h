@@ -90,17 +90,16 @@ bool OnPWMFrequencyChange(const StaticBlockDescriptor &block, uint16_t index, co
 // so read-back always matches what was applied.
 bool OnPWMDutyChange(const StaticBlockDescriptor &block, uint16_t index, const void *data, uint16_t data_len)
 {
-    Number new_duty = *static_cast<const Number *>(data);
+    if (data_len != sizeof(uint32_t)) return false;
+    uint32_t new_duty = *static_cast<const uint32_t *>(data);
 
     // Clamp value to 0-100%
-    if (new_duty > N(100))
-        new_duty = N(100);
-    else if (new_duty < N(0))
-        new_duty = N(0);
+    if (new_duty > 100)
+        new_duty = 100;
 
     // Calculate duty cycle: (new_duty / 100) * 1023 computed in one 64-bit step
     // (ESP32-only file), so no precision is lost to early truncation.
-    uint32_t duty = (uint32_t)(((int64_t)new_duty.Value * 1023) / (100 << DECIMAL));
+    uint32_t duty = (uint32_t)(((int64_t)new_duty * 1023) / 100);
 
     // Map data_ptr to channel
     ledc_channel_t channel = (block.Data == &Fan1) ? LEDC_CHANNEL_0 : LEDC_CHANNEL_1;

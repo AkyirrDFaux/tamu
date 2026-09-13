@@ -69,9 +69,60 @@ String luxLevel(double lux) {
   return 'Sunlight';
 }
 
-const _ledButtonFields = [
+/// Edge detection modes (Docs/Modules and blocks/Buttons & LEDS.md).
+const Map<int, String> _buttonEdges = {
+  0: 'None',
+  1: 'Rising',
+  2: 'Falling',
+  3: 'Both',
+};
+
+/// LSM6DS3TR output data rates (Hz), index into the ODR table (Docs/Modules and
+/// blocks/Measurement.md; datasheet Table 52).
+const Map<int, String> _odrOptions = {
+  0: '12.5',
+  1: '26',
+  2: '52',
+  3: '104',
+  4: '208',
+  5: '416',
+  6: '833',
+  7: '1660',
+};
+
+/// Accel full-scale options (datasheet Table 51: FS_XL 00/10/11/01 -> ±2/±4/±8/±16 g).
+const Map<int, String> _accelRanges = {
+  0: '±2 g',
+  1: '±4 g',
+  2: '±8 g',
+  3: '±16 g',
+};
+
+/// Gyro full-scale options (datasheet Table 54: FS_G 00/01/10/11 + FS_125 -> ±250/±500/
+/// ±1000/±2000 dps, ±125 with FS_125 set). No ±4000 on this part.
+const Map<int, String> _gyroRanges = {
+  0: '±125 dps',
+  1: '±250 dps',
+  2: '±500 dps',
+  3: '±1000 dps',
+  4: '±2000 dps',
+};
+
+const _buttonFields = [
+  FieldInfo('Button Raw State'),
+  FieldInfo('Edge Detection', enumValues: _buttonEdges),
+  FieldInfo('Edge Counter'),
+];
+
+const _ledFields = [
   FieldInfo('LED State'),
-  FieldInfo('Button'),
+];
+
+const _ledButtonFields = [
+  FieldInfo('Button Raw State'),
+  FieldInfo('Edge Detection', enumValues: _buttonEdges),
+  FieldInfo('Edge Counter'),
+  FieldInfo('LED State'),
 ];
 
 const _pwmFields = [
@@ -80,11 +131,15 @@ const _pwmFields = [
 ];
 
 const _accGyrFields = [
-  FieldInfo('Sampling Rate', unit: 'Hz', min: 1, max: 6600),
+  FieldInfo('Sampling Rate', unit: 'Hz', enumValues: _odrOptions),
+  FieldInfo('Range Acceleration', enumValues: _accelRanges),
+  FieldInfo('Range Angular', enumValues: _gyroRanges),
+  FieldInfo('Acceleration Filter', min: 0, max: 1, step: 0.05),
+  FieldInfo('Angular Filter', min: 0, max: 1, step: 0.05),
+  FieldInfo('Deadzone Acceleration'),
+  FieldInfo('Deadzone Angular'),
   FieldInfo('Acceleration', unit: 'm/s^2'),
   FieldInfo('Angular Velocity', unit: 'rad/s'),
-  FieldInfo('Acc Filter', unit: 'samples', min: 0, max: 1000, step: 1),
-  FieldInfo('Gyro Filter', unit: 'samples', min: 0, max: 1000, step: 1),
 ];
 
 const _vysiDisplayFields = [
@@ -96,14 +151,17 @@ const _vysiDisplayFields = [
 ];
 
 const _resistiveMeasureFields = [
-  FieldInfo('Sampling Rate', unit: 'Hz', min: 1, max: 10000),
-  FieldInfo('Filter Coefficient', unit: 'samples', min: 0, max: 1000, step: 1),
+  FieldInfo('Sampling Rate', unit: 'Hz', min: 1, max: 1000),
   FieldInfo('Sensor Type', enumValues: _sensorTypes),
+  FieldInfo('Filter Coefficient', min: 0, max: 1, step: 0.05),
+  FieldInfo('Deadzone'),
   FieldInfo('Measured Value'),
   FieldInfo('Current Range', unit: 'kOhm'),
 ];
 
 const Map<BlockType, BlockInfo> _blockRegistry = {
+  BlockType.button: BlockInfo('Button', _buttonFields),
+  BlockType.led: BlockInfo('LED', _ledFields),
   BlockType.ledButton: BlockInfo('LED/Button', _ledButtonFields),
   BlockType.pwm: BlockInfo('PWM output', _pwmFields),
   BlockType.accGyr: BlockInfo('Accelerometer/Gyroscope', _accGyrFields),

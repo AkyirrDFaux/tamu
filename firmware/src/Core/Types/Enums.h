@@ -79,6 +79,8 @@ enum class BlockType : uint16_t {
     Vysi1Display   = 0x06,
     Deleted        = 0x07,
     ResistiveMeasure = 0x08,
+    Button         = 0x09,
+    LED            = 0x0A,
     Render         = 0x100,
     Dynamic        = 0x3FF
 };

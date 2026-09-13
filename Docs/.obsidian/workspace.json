@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Services/System Block and Device Commands.md",
+                "file": "Modules and blocks/Measurement.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "System Block and Device Commands"
+              "title": "Measurement"
             }
           }
         ]
@@ -190,10 +190,11 @@
   },
   "active": "b382b423e960f24e",
   "lastOpenFiles": [
-    "Modules and blocks/Measurement.md",
     "Modules and blocks/LED display.md",
     "Modules and blocks/Generic system blocks.md",
+    "Modules and blocks/Measurement.md",
     "Modules and blocks/Buttons & LEDS.md",
+    "Services/System Block and Device Commands.md",
     "Services/Subscriptions.md",
     "Plan.md",
     "App/Service views/Script.md",
@@ -206,7 +207,6 @@
     "Services/Register.md",
     "Services/Router.md",
     "Services/Storage.md",
-    "Services/System Block and Device Commands.md",
     "Services/Log Handler.md",
     "Services/CLI.md",
     "Services/Script.md",

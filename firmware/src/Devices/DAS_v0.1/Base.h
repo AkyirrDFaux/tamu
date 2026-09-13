@@ -3,6 +3,11 @@
 #define LEDW GPIOD, GPIO_Pin_0
 #define LEDR GPIOA, GPIO_Pin_1
 
+// Latched bus error flag: set on any RS485 transmit failure, cleared on the next
+// successful transmit. The main loop blinks the red LED while it is set (error
+// indication has priority over the LED block value).
+static bool DasErrorFlag = false;
+
 #define VOLTAGE (3.3)
 
 static uint32_t ms_accum = 0;
@@ -103,6 +108,15 @@ void PinModeInputPullDown(GPIO_TypeDef* port, uint16_t pin)
     GPIO_InitTypeDef GPIO_InitStructure = {0};
     GPIO_InitStructure.GPIO_Pin = pin;
     GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IPD; // Input Pull-Down
+    GPIO_Init(port, &GPIO_InitStructure);
+}
+
+// Configures the given GPIO pin as an input with internal pull-up (active-low buttons).
+void PinModeInputPullUp(GPIO_TypeDef* port, uint16_t pin)
+{
+    GPIO_InitTypeDef GPIO_InitStructure = {0};
+    GPIO_InitStructure.GPIO_Pin = pin;
+    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IPU; // Input Pull-Up
     GPIO_Init(port, &GPIO_InitStructure);
 }
 

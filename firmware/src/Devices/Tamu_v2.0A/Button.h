@@ -1,7 +1,10 @@
 #pragma once
 
 // Turns the notification LED on/off and updates the LED/button state in the block.
+// LEDState is field 3 of the LED-Button schema (Docs/Modules and blocks/Buttons &
+// LEDS.md).
 bool OnLEDStateChange(const StaticBlockDescriptor& block, uint16_t index, const void* data, uint16_t data_len) {
+    if (data_len != sizeof(bool)) return false;
     bool new_state = *static_cast<const bool*>(data);
     ESP_LOGI("HW_CONTROL", "Toggling LED to: %s", new_state ? "ON" : "OFF");
 
@@ -32,6 +35,7 @@ bool OnLEDStateChange(const StaticBlockDescriptor& block, uint16_t index, const 
 // LED is on the shared line is driven, so the button cannot be read (ButtonState = false).
 void ButtonUpdate()
 {
+    bool was_pressed = LedButton.ButtonState;
     if (LedButton.LEDState != false)
     {
         LedButton.ButtonState = false; // line is driven by the LED: not readable
@@ -39,4 +43,17 @@ void ButtonUpdate()
     }
 
     LedButton.ButtonState = !PinRead(LED_NOTIFICATION_PIN);
+
+    // Edge detection (Docs/Modules and blocks/Buttons & LEDS.md): None/Rising/Falling/
+    // Both. The counter wraps on uint8 overrun. Skipped while the LED drives the line
+    // (the state is forced false above).
+    if (LedButton.EdgeDetection != EdgeNone)
+    {
+        bool rising = LedButton.ButtonState && !was_pressed;
+        bool falling = !LedButton.ButtonState && was_pressed;
+        bool edge = (LedButton.EdgeDetection == EdgeBoth) ? (rising || falling)
+                  : (LedButton.EdgeDetection == EdgeRising) ? rising : falling;
+        if (edge)
+            LedButton.EdgeCounter++;
+    }
 }

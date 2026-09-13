@@ -5,25 +5,37 @@
 #include "Core/Types/Number.h"
 #include "Core/Types/Enums.h"
 
-// Resistive measurement block (Docs/Modules/Generic system blocks.md):
-//   Sampling Rate (In), Filter Coefficient (In), Sensor Type (In, Enum),
-//   Measured Value (Out), Current Range (Out).
+// Resistive measurement block (Docs/Modules and blocks/Measurement.md):
+//   Sampling Rate (0, P, Number), Sensor Type (1, P, Enum), Filter Coefficient
+//   (2, P, Number, EMA 0-1 on the raw ADC), Deadzone (3, P, Number, after conversion),
+//   Measured Value (4, RO), Current Range (5, RO).
 struct ResistiveMeasStruct
 {
-    Number SamplingRate = N(10);
-    Number FilterCoeff = N(0.5);
-    uint8_t SensorType = 0;
-    Number MeasuredValue = N(0);
-    Number CurrentRange = N(0);
+    Number SamplingRate = N(10);     // offset 0
+    uint8_t SensorType = 0;          // offset 4
+    Number FilterCoeff = N(0.5);     // offset 8, EMA weight 0-1
+    Number Deadzone = N(0);          // offset 12, 0 = off
+    Number MeasuredValue = N(0);     // offset 16
+    Number CurrentRange = N(0);      // offset 20
     // The physical default sensor for each channel (Meas1 = NTC100K, Meas2 = LDR10K on
     // the DualAnalogSensor board); the app can still change it via the SensorType field.
     explicit ResistiveMeasStruct(uint8_t sensorType = 0) { SensorType = sensorType; }
 };
 
+// Lock the layout: the schema offsets must match the natural C struct alignment (Numbers
+// are 4-aligned), so a field-reorder cannot silently desync the wire addressing again.
+static_assert(offsetof(ResistiveMeasStruct, SamplingRate) == 0, "Meas layout");
+static_assert(offsetof(ResistiveMeasStruct, SensorType) == 4, "Meas layout");
+static_assert(offsetof(ResistiveMeasStruct, FilterCoeff) == 8, "Meas layout");
+static_assert(offsetof(ResistiveMeasStruct, Deadzone) == 12, "Meas layout");
+static_assert(offsetof(ResistiveMeasStruct, MeasuredValue) == 16, "Meas layout");
+static_assert(offsetof(ResistiveMeasStruct, CurrentRange) == 20, "Meas layout");
+
 const BlockMeta ResistiveMeas_Map[] = {
     {DataType::Number | FieldFlags::Persistent, 0x00, sizeof(Number)},
-    {DataType::Number | FieldFlags::Persistent, 0x00, sizeof(Number)},
     {DataType::Enum   | FieldFlags::Persistent, 0x00, sizeof(uint8_t)},
+    {DataType::Number | FieldFlags::Persistent, 0x00, sizeof(Number)},
+    {DataType::Number | FieldFlags::Persistent, 0x00, sizeof(Number)},
     {DataType::Number | FieldFlags::ReadOnly, 0x00, sizeof(Number)},
     {DataType::Number | FieldFlags::ReadOnly, 0x00, sizeof(Number)},
 };
@@ -46,10 +58,15 @@ static bool OnMeasFieldWrite(const StaticBlockDescriptor &block, uint16_t index,
         m->SamplingRate = v;
         return true;
 
-    case 1: // Filter Coefficient (EMA weight semantics: 1/(1+f)) - any f >= 0 is
-            // valid, larger values average more samples
-        if (v.Value < 0) v.Value = 0;
+    case 2: // Filter Coefficient: EMA weight 0-1 (0 = no filtering)
+        if (v < N(0)) v = N(0);
+        if (v > N(1)) v = N(1);
         m->FilterCoeff = v;
+        return true;
+
+    case 3: // Deadzone: >= 0 (0 = off)
+        if (v < N(0)) v = N(0);
+        m->Deadzone = v;
         return true;
     }
     return false;
@@ -57,13 +74,14 @@ static bool OnMeasFieldWrite(const StaticBlockDescriptor &block, uint16_t index,
 
 const FieldTrigger ResistiveMeas_Triggers[] = {
     OnMeasFieldWrite,
-    OnMeasFieldWrite,
     nullptr,
+    OnMeasFieldWrite,
+    OnMeasFieldWrite,
     nullptr,
     nullptr,
 };
 
-const uint16_t ResistiveMeas_Offsets[] = {0, 4, 8, 12, 16};
+const uint16_t ResistiveMeas_Offsets[] = {0, 4, 8, 12, 16, 20};
 
 const BlockSchema ResistiveMeas_Schema = {
     .Map = ResistiveMeas_Map,
@@ -188,11 +206,13 @@ static void Measuring_Update(uint8_t index, ResistiveMeasStruct *m, uint16_t raw
 {
     if (index > 1) return;
 
-    // Filter weight per the Sensors.h reference: weightNew = 1/(1 + FilterCoeff).
-    // Clamp FilterCoeff to >= 0 so the weight stays in (0, 1].
+    // Filter weight per the docs (Docs/Modules and blocks/Measurement.md): FilterCoeff is
+    // the EMA coefficient (0-1) applied on the RAW ADC value; 0 = no filtering. The raw
+    // scale depends on the selected reference resistor, so the filter history is re-seeded
+    // whenever the auto-range switches the excitation.
     Number coeff = m->FilterCoeff;
-    if (coeff.Value < 0) coeff.Value = 0;
-    Number weight_new = N(1) / (N(1) + coeff);
+    if (coeff < N(0)) coeff = N(0);
+    if (coeff > N(1)) coeff = N(1);
 
     // Auto-range from the raw sample. The divider ratio R_sensor/R_ref = raw/(1023-raw)
     // is independent of the selected reference, so the thresholds are kept in RATIO space
@@ -209,10 +229,25 @@ static void Measuring_Update(uint8_t index, ResistiveMeasStruct *m, uint16_t raw
     static const Number Rref_kohm[3] = {N(0.33), N(10.0), N(330.0)};
     m->CurrentRange = Rref_kohm[range];
 
-    // Transformations operate on the RAW sample, exactly like the Sensors.h reference
-    // ("SensorClass::Run"); the converted value is then EMA-filtered into MeasuredValue.
+    // EMA over the RAW ADC value.
+    Number filtered_raw;
+    if (range != s_filt_range[index] || !s_conv_seeded[index])
+    {
+        filtered_raw = Number(raw); // re-seed after an excitation switch / first sample
+        s_filt_range[index] = range;
+    }
+    else
+    {
+        filtered_raw = (Number(raw) * coeff) + (s_meas_filtered[index] * (N(1) - coeff));
+    }
+    s_meas_filtered[index] = filtered_raw;
+    s_conv_seeded[index] = true;
+
+    // Transformations operate on the FILTERED raw sample, exactly like the Sensors.h
+    // reference ("SensorClass::Run"); the converted value is then dead-zoned into the
+    // Measured Value output.
     static const Number ADCRES = N(1023);
-    Number in = Number(raw);
+    Number in = filtered_raw;
 
     switch (m->SensorType)
     {
@@ -256,14 +291,10 @@ static void Measuring_Update(uint8_t index, ResistiveMeasStruct *m, uint16_t raw
         break;
     }
 
-    // EMA filter over the CONVERTED value.
-    if (range != s_filt_range[index] || !s_conv_seeded[index])
-        s_meas_filtered[index] = in; // re-seed after an excitation switch / first sample
-    else
-        s_meas_filtered[index] = (in * weight_new) +
-                                 (s_meas_filtered[index] * (N(1) - weight_new));
-    s_filt_range[index] = range;
-    s_conv_seeded[index] = true;
-
-    m->MeasuredValue = s_meas_filtered[index];
+    // Deadzone (docs: "applies after unit conversion"): the current output value is the
+    // center; the new converted value is adopted only when it moves more than `dz` away.
+    // 0 = off.
+    if (m->Deadzone > N(0) && abs(in - m->MeasuredValue) <= m->Deadzone)
+        return; // keep the current output
+    m->MeasuredValue = in;
 }

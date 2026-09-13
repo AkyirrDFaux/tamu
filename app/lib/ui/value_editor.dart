@@ -159,10 +159,25 @@ String formatValue(DataType type, List<int> bytes) {
       if (bytes.length < 4) return '-';
       return uint32FromBytes(bytes).toString();
     case DataType.integer:
-      if (bytes.length < 4) return '-';
+      if (bytes.isEmpty) return '-';
+      if (bytes.length < 4) {
+        // Short (1-3 byte) integer values, e.g. the uint8 edge counter.
+        var v = 0;
+        for (var i = 0; i < bytes.length; i++) {
+          v |= bytes[i] << (8 * i);
+        }
+        return v.toString();
+      }
       return int32FromBytes(bytes).toString();
     case DataType.idx:
-      if (bytes.length < 4) return '-';
+      if (bytes.isEmpty) return '-';
+      if (bytes.length < 4) {
+        var v = 0;
+        for (var i = 0; i < bytes.length; i++) {
+          v |= bytes[i] << (8 * i);
+        }
+        return v.toString();
+      }
       return uint32FromBytes(bytes).toString();
     case DataType.string:
       return bytes.isEmpty ? '-' : String.fromCharCodes(bytes);

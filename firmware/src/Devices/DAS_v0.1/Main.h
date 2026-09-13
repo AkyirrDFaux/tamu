@@ -18,6 +18,8 @@ bool AppConnected = false;
 #include "Log.h"
 #include "Storage.h"
 #include "Measuring.h"
+#include "Blocks/Button.h"
+#include "Blocks/LED.h"
 #include "Core/Functions/Device.h"
 #include "Core/Services/StaticMemory.h"
 
@@ -44,12 +46,20 @@ const SerialNumber &GetSerialNumber()
 
 ResistiveMeasStruct Meas1(MeasNTC100K); // channel 1: 100k NTC thermistor
 ResistiveMeasStruct Meas2(MeasLDR10K);  // channel 2: 10k LDR
+ButtonStruct DasButton;
+LEDStruct DasLed;
 
 const StaticBlockDescriptor static_block_registry[] = {
     {&Meas1, &ResistiveMeas_Schema, "Meas1"},
     {&Meas2, &ResistiveMeas_Schema, "Meas2"},
+    {&DasButton, &Button_Schema, "Button"},
+    {&DasLed, &LED_Schema, "LED"},
 };
 const size_t static_block_num = sizeof(static_block_registry) / sizeof(StaticBlockDescriptor);
+
+// DAS device implementations (drive the actual pins); included after the block instances.
+#include "Button.h"
+#include "LED.h"
 
 const char* DeviceVersion = "DAS v0.1";
 
@@ -85,6 +95,7 @@ int main(void)
 
     SetupRS485();
     Measuring_Init();
+    DasButtonInit();
 
     // Persistent storage: formats the flash directory if needed and restores the saved
     // system state. The short address is cleared afterwards so a changed network always
@@ -125,14 +136,14 @@ int main(void)
 
     uint32_t last_sample_ms = 0;
     uint32_t last_sample2_ms = 0;
-    uint32_t last_blink_ms = 0;
-    bool blink_high = false;
 
     while (1)
     {
         TimeUpdate();
         ProcessBus();
         SubscriptionsTick(DeviceStatus.UptimeMs); // periodic provider triggers (main loop)
+
+        DasButtonUpdate(); // Button block edge detection/counter
 
         // Sample each resistive measurement channel at its own configured rate.
         uint32_t now_ms = Now();
@@ -147,22 +158,16 @@ int main(void)
             Measuring_Update(1, &Meas2, Meas_AdcRead(MEAS2_ADC_CH));
         }
 
-        // Non-blocking LED blink so ProcessBus keeps servicing the bus every loop.
-        // Identify (Device CID 2) blinks the red LED fast (~10 Hz) instead.
-        if (DeviceIdentifyActive(now_ms))
-        {
-            if ((now_ms - last_blink_ms) >= 100)
-            {
-                last_blink_ms = now_ms;
-                blink_high = !blink_high;
-                if (blink_high) PinHigh(LEDR); else PinLow(LEDR);
-            }
-        }
-        else if ((now_ms - last_blink_ms) >= 500)
-        {
-            last_blink_ms = now_ms;
-            blink_high = !blink_high;
-            if (blink_high) PinHigh(LEDR); else PinLow(LEDR);
-        }
+        // Red LED with priority overlays: an active bus error blinks it (~2 Hz), else the
+        // identify blink (~10 Hz), else the LED block's LEDState field. The white LED is
+        // the RS485 TX activity indicator (driven inside RSBus.h).
+        bool red_state;
+        if (DasErrorFlag)
+            red_state = ((now_ms / 500) & 1) == 0;
+        else if (DeviceIdentifyActive(now_ms))
+            red_state = ((now_ms / 100) & 1) == 0;
+        else
+            red_state = DasLed.LEDState;
+        if (red_state) PinHigh(LEDR); else PinLow(LEDR);
     }
 }

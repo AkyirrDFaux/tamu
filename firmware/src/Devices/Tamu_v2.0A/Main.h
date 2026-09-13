@@ -115,7 +115,7 @@ LED2.Setup();
     // The LED state is a writable static-block field persisted in the SYSMEM backup;
     // the boot restore writes the RAM field but does not re-run its write trigger, so
     // re-apply it to drive the pin to match the restored value (LED off by default).
-    OnLEDStateChange(static_block_registry[0], 0, (const void *)&LedButton.LEDState, sizeof(bool));
+    OnLEDStateChange(static_block_registry[0], 3, (const void *)&LedButton.LEDState, sizeof(bool));
 
     // The Tamu is always the core (ID 1): no discovery needed, no button check.
     DeviceStatus.ShortAddress = 1;
@@ -183,7 +183,7 @@ while (1)
             if (ident)
                 PinModeOutput(LED_NOTIFICATION_PIN);
             else
-                OnLEDStateChange(static_block_registry[0], 0, (const void *)&LedButton.LEDState, sizeof(bool));
+                OnLEDStateChange(static_block_registry[0], 3, (const void *)&LedButton.LEDState, sizeof(bool));
             s_identify_prev = ident;
         }
         if (ident)

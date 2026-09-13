@@ -1,0 +1,51 @@
+# Merged project .gitignore (consolidated from app/.gitignore + firmware/.gitignore).
+# Docs/ is version-controlled reference material; datasheet/ is not.
+
+# --- Generic / miscellaneous ---
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# --- IntelliJ ---
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# --- VS Code (firmware) ---
+firmware/.vscode/.browse.c_cpp.db*
+firmware/.vscode/c_cpp_properties.json
+firmware/.vscode/launch.json
+firmware/.vscode/ipch
+
+# --- Flutter/Dart/Pub (app) ---
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+app/build/
+app/coverage/
+app/*.symbols
+app/*.map.json
+app/android/app/debug
+app/android/app/profile
+app/android/app/release
+
+# --- PlatformIO (firmware) ---
+.pio
+firmware/managed_components/
+firmware/src/_old
+
+# --- Reference material (not committed) ---
+/datasheet/

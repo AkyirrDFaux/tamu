@@ -8,7 +8,7 @@ Voltage divider based measurement, reference resistor switching supported
 | Filter Coefficient | 2      | P      | Number | EMA coefficient (0-1), applies on raw ADC value.                                     |
 | Deadzone           | 3      | P      | Number | > 0. The current output value is the center. 0 = off. Applies after unit conversion. |
 | Measured Value     | 4      | RO     | Number | -/V/kOhm/Lux/°C                                                                      |
-| Current Range      | 6      | RO     | Number | kOhm                                                                                 |
+| Current Range      | 5      | RO     | Number | kOhm                                                                                 |
 Sensor types: Raw Measurement, Raw Voltage, Raw Resistance, LDR 10K, NTC10K, NTC100K
 ### Acc&Gyr
 An accelerometer + gyroscope combo.

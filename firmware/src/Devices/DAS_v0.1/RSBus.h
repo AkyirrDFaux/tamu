@@ -179,12 +179,14 @@ bool SendAndVerifyPacket(const PacketFrame &Data) {
         }
 
         if (got == total_tx_size && match) {
+            DasErrorFlag = false; // a successful transmit clears the latched bus error
             return true; // Success!
         }
 
         // Collision or failed echo: random backoff before retry
         Sleep((RawRand() % 16) + 1);
     }
+    DasErrorFlag = true; // the red LED indicates the bus error (priority over the LED block)
     PinLow(LEDW);
     return false;
 }
