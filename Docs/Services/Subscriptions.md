@@ -1,7 +1,7 @@
 A subscription service, initiated by the requester.
 ### Requester
 Use define USE_SUB_REQUEST.
-Subscriptions are stored in a sequential table, sorted by address.
+Subscriptions are stored in a sequential table.
 #### Table entry
 
 | Name                | Size              | Note                                  |

@@ -94,7 +94,7 @@ void DispatchPacket(const PacketFrame &frame)
                     break;
 
                 case ServiceType::Subscriptions:
-#ifndef BOARD_DAS_v0_1
+#if defined(USE_SUB_PROVIDE) || defined(USE_SUB_REQUEST)
                     DeviceLog("DISP", "dispatch Subscriptions cid=%d", cid);
                     HandleSubscriptions(frame);
 #endif
@@ -248,7 +248,7 @@ void LoadAllBackups()
     if (n > 0) DeserializeRegistry(dynamic_block_registry, buf, n);
 #endif
 
-#ifndef BOARD_DAS_v0_1
+#ifdef USE_SUB_REQUEST
     LoadRequesterTable();
 #endif
 }

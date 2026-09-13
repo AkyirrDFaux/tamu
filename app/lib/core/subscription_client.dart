@@ -9,7 +9,8 @@ import 'types.dart';
 
 class SubscriptionClient {
   final int deviceId;
-  final _valueUpdateController = StreamController<Tlvf>.broadcast();
+  // Value updates now carry the RAW value bytes (no TLFV header).
+  final _valueUpdateController = StreamController<List<int>>.broadcast();
 
   SubscriptionClient({required this.deviceId});
 
@@ -18,17 +19,14 @@ class SubscriptionClient {
 
   Duration get _requestTimeout => const Duration(seconds: 3);
 
-  Stream<Tlvf> get valueUpdates => _valueUpdateController.stream;
+  Stream<List<int>> get valueUpdates => _valueUpdateController.stream;
 
   /// Registers the client as the receiver of firmware-pushed subscription value
   /// updates (service Subscriptions CID 0). Must be called while connected; call
   /// [stopListening] when the page closes.
   void startListening() {
     ConnectionManager.instance.setSubscriptionListener((payload) {
-      final tlvf = Tlvf.fromBytes(payload);
-      if (tlvf != null) {
-        _valueUpdateController.add(tlvf);
-      }
+      _valueUpdateController.add(payload);
     });
   }
 
@@ -54,19 +52,10 @@ class SubscriptionClient {
     final count = reply[0];
     final result = <ProviderSubscription>[];
     int offset = 1;
-    for (int i = 0; i < count && offset < reply.length; i++) {
-      if (offset + 4 > reply.length) break;
-      final entryLen = 4 + 2 + 1 + 4 + 4 + 4 + 4 + 1;
-      if (offset + entryLen > reply.length) break;
-      final tolLen = reply[offset + entryLen - 1];
-      if (offset + entryLen + tolLen > reply.length) break;
-      final lastValLen = reply[offset + entryLen + tolLen];
-      if (offset + entryLen + tolLen + 1 + lastValLen > reply.length) break;
-      
-      final totalLen = entryLen + tolLen + 1 + lastValLen;
-      final entryBytes = reply.sublist(offset, offset + totalLen);
+    for (int i = 0; i < count && offset + 28 <= reply.length; i++) {
+      final entryBytes = reply.sublist(offset, offset + 28);
       result.add(ProviderSubscription.fromBytes(i, entryBytes));
-      offset += totalLen;
+      offset += 28;
     }
     return result;
   }
@@ -79,17 +68,10 @@ class SubscriptionClient {
     final count = reply[0];
     final result = <RequesterSubscription>[];
     int offset = 1;
-    for (int i = 0; i < count && offset < reply.length; i++) {
-      if (offset + 4 > reply.length) break;
-      final entryLen = 4 + 4 + 2 + 1 + 4 + 4 + 4 + 1;
-      if (offset + entryLen > reply.length) break;
-      final tolLen = reply[offset + entryLen - 1];
-      if (offset + entryLen + tolLen + 2 > reply.length) break;
-      
-      final totalLen = entryLen + tolLen + 2;
-      final entryBytes = reply.sublist(offset, offset + totalLen);
+    for (int i = 0; i < count && offset + 24 <= reply.length; i++) {
+      final entryBytes = reply.sublist(offset, offset + 24);
       result.add(RequesterSubscription.fromBytes(i, entryBytes));
-      offset += totalLen;
+      offset += 24;
     }
     return result;
   }
@@ -142,17 +124,16 @@ class SubscriptionClient {
 
   /// Builds the provider-side subscription payload (CID 1). The provider's entry stores
   /// the REQUESTER's address so the provider knows where to send value updates.
+  /// Wire: targetReg, sourceReg, requesterAddr, trigger + 24 pad, period, min.
   List<int> _providerPayload(RequesterSubscription entry) {
     final buf = <int>[];
     buf.addAll(uint32ToBytes(entry.targetReg));
     buf.addAll(uint32ToBytes(entry.sourceReg));
     buf.addAll([deviceId & 0xFF, (deviceId >> 8) & 0xFF]); // requester address = us
     buf.add(entry.trigger.value);
+    buf.addAll([0, 0, 0]); // 24-bit padding
     buf.addAll(uint32ToBytes(entry.periodMs));
     buf.addAll(uint32ToBytes(entry.minTimeMs));
-    buf.addAll(uint32ToBytes(entry.counter));
-    buf.add(entry.tolerance.length);
-    buf.addAll(entry.tolerance);
     return buf;
   }
 

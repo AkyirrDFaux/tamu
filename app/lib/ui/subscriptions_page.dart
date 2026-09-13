@@ -6,8 +6,7 @@ import 'package:tamuapp/core/block_registry.dart' show FieldInfo, blockInfoFor;
 import 'package:tamuapp/core/device_db.dart';
 import 'package:tamuapp/core/register_client.dart';
 import 'package:tamuapp/core/subscription_client.dart';
-import 'package:tamuapp/core/types.dart' show BlockType, BlockMeta, Capability, DataType, int32FromBytes, int32ToBytes, ProviderSubscription, RequesterSubscription, TriggerType, Tlvf;
-import 'package:tamuapp/ui/value_editor.dart' show dataTypeLabel;
+import 'package:tamuapp/core/types.dart' show BlockType, BlockMeta, Capability, ProviderSubscription, RequesterSubscription, TriggerType;
 
 class SubscriptionsPage extends StatefulWidget {
   final int deviceId;
@@ -159,16 +158,10 @@ class _SubscriptionsPageState extends State<SubscriptionsPage> with SingleTicker
                 _detailRow('Trigger', sub.trigger.label),
                 _detailRow('Period', '${sub.periodMs} ms'),
                 _detailRow('Min Interval', '${sub.minTimeMs} ms'),
-                _detailRow('Counter', '${sub.counter}'),
                 _detailRow('Last Sent', '${sub.lastSentMs} ms ago'),
                 _detailRow('Requester Addr', '${sub.requesterAddr}'),
-                if (sub.tolerance.isNotEmpty)
-                  _detailRow('Tolerance', _formatTolerance(sub.tolerance)),
-                if (sub.lastValue.isNotEmpty) ...[
-                  const Divider(),
-                  Text('Last Value:', style: TextStyle(color: Colors.orange)),
-                  _detailRow('TLFV', _formatTlvf(sub.lastValue)),
-                ],
+                _detailRow('TRID', '0x${sub.trid.toRadixString(16).padLeft(4, '0')}'),
+                _detailRow('Hash', '0x${sub.hash.toRadixString(16).padLeft(8, '0')}'),
               ],
             ),
           ),
@@ -233,9 +226,6 @@ Widget _buildRequesterTab() {
                 _detailRow('Trigger', sub.trigger.label),
                 _detailRow('Period', '${sub.periodMs} ms'),
                 _detailRow('Min Interval', '${sub.minTimeMs} ms'),
-                _detailRow('Counter', '${sub.counter}'),
-                if (sub.tolerance.isNotEmpty)
-                  _detailRow('Tolerance', _formatTolerance(sub.tolerance)),
                 const SizedBox(height: 8),
                 FilledButton(
                   onPressed: () => _showEditSubscriptionDialog(sub),
@@ -269,21 +259,6 @@ Widget _buildRequesterTab() {
     final key = bi & 0xFF;
     final typeLabel = BlockType.fromValue(type).label;
     return '$typeLabel[$inst].f$field.k$key';
-  }
-
-  String _formatTolerance(List<int> tol) {
-    if (tol.isEmpty) return '-';
-    final dt = DataType.fromValue(tol[0]);
-    if (tol.length >= 5) {
-      final val = int32FromBytes(tol, 1);
-      return '${dataTypeLabel(dt)}: $val';
-    }
-    return tol.map((b) => '0x${b.toRadixString(16).padLeft(2, '0')}').join(' ');
-  }
-
-  String _formatTlvf(List<int> tlvf) {
-    final t = Tlvf.fromBytes(tlvf);
-    return t?.format() ?? tlvf.map((b) => '0x${b.toRadixString(16).padLeft(2, '0')}').join(' ');
   }
 
   void _showAddSubscriptionDialog() {
@@ -391,21 +366,16 @@ class _SubscriptionDialogState extends State<_SubscriptionDialog> {
   TriggerType _trigger = TriggerType.periodic;
   int _periodMs = 1000;
   int _minTimeMs = 100;
-  int _counter = 0;
-  int? _toleranceValue;
 
   // Controllers for text fields
   final _periodController = TextEditingController();
   final _minTimeController = TextEditingController();
-  final _counterController = TextEditingController();
-  final _toleranceController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     _periodController.text = _periodMs.toString();
     _minTimeController.text = _minTimeMs.toString();
-    _counterController.text = _counter.toString();
     _loadData();
     if (widget.existing != null) {
       _populateFromExisting(widget.existing!);
@@ -416,8 +386,6 @@ class _SubscriptionDialogState extends State<_SubscriptionDialog> {
   void dispose() {
     _periodController.dispose();
     _minTimeController.dispose();
-    _counterController.dispose();
-    _toleranceController.dispose();
     super.dispose();
   }
 
@@ -511,17 +479,10 @@ class _SubscriptionDialogState extends State<_SubscriptionDialog> {
     _trigger = sub.trigger;
     _periodMs = sub.periodMs;
     _minTimeMs = sub.minTimeMs;
-    _counter = sub.counter;
     _selectedProviderAddr = sub.providerAddr;
 
     _periodController.text = sub.periodMs.toString();
     _minTimeController.text = sub.minTimeMs.toString();
-    _counterController.text = sub.counter.toString();
-
-    if (sub.tolerance.length >= 5) {
-      _toleranceValue = int32FromBytes(sub.tolerance, 1);
-      _toleranceController.text = _toleranceValue.toString();
-    }
   }
 
   @override
@@ -603,36 +564,13 @@ class _SubscriptionDialogState extends State<_SubscriptionDialog> {
                           ),
                         if (_needsPeriod()) const SizedBox(height: 12),
 
-                        // Min interval (periodic triggers) / retry interval (confirm + edge triggers).
-                        // Docs/Services/Subscriptions.md lists these per trigger type; plain
-                        // Periodic only needs a Period, so the field is hidden there.
+                        // Min interval (periodic) / retry interval (confirm).
+                        // Docs/Services/Subscriptions.md: plain Periodic only needs a Period.
                         if (_needsInterval()) ...[
                           _NumberField(
                             label: _intervalLabel(),
                             controller: _minTimeController,
                             onChanged: (v) => _minTimeMs = v,
-                            min: 0,
-                          ),
-                          const SizedBox(height: 12),
-                        ],
-
-                        // Counter - shown for edge triggers
-                        if (_needsCounter()) ...[
-                          _NumberField(
-                            label: 'Counter (initial)',
-                            controller: _counterController,
-                            onChanged: (v) => _counter = v,
-                            min: 0,
-                          ),
-                          const SizedBox(height: 12),
-                        ],
-
-                        // Tolerance - shown for delta triggers
-                        if (_needsTolerance()) ...[
-                          _NumberField(
-                            label: 'Tolerance (int32)',
-                            controller: _toleranceController,
-                            onChanged: (v) => _toleranceValue = v,
                             min: 0,
                           ),
                           const SizedBox(height: 12),
@@ -653,40 +591,19 @@ class _SubscriptionDialogState extends State<_SubscriptionDialog> {
 
   bool _needsPeriod() {
     return _trigger == TriggerType.periodic ||
-           _trigger == TriggerType.onChangePeriodic ||
-           _trigger == TriggerType.deltaPeriodic;
+           _trigger == TriggerType.onChangePeriodic;
   }
 
-  // Docs: Minimum interval is a Periodic-family setting (OnChange+Period, Delta+Period);
-  // Confirm and edge triggers use a Retry interval instead. Plain Periodic needs neither.
+  // Docs: OnChange+Period uses a Minimum interval; OnChange+Confirm a Retry interval.
   bool _needsInterval() {
     return _trigger == TriggerType.onChangePeriodic ||
-           _trigger == TriggerType.onChangeConfirm ||
-           _trigger == TriggerType.edgeRise ||
-           _trigger == TriggerType.edgeFall ||
-           _trigger == TriggerType.deltaPeriodic ||
-           _trigger == TriggerType.deltaConfirm;
+           _trigger == TriggerType.onChangeConfirm;
   }
 
   String _intervalLabel() {
-    return _needsConfirmOrEdge()
+    return _trigger == TriggerType.onChangeConfirm
         ? 'Retry Interval (ms)'
         : 'Min Interval (ms)';
-  }
-
-  bool _needsConfirmOrEdge() {
-    return _trigger == TriggerType.onChangeConfirm ||
-           _trigger == TriggerType.edgeRise ||
-           _trigger == TriggerType.edgeFall ||
-           _trigger == TriggerType.deltaConfirm;
-  }
-
-  bool _needsCounter() {
-    return _trigger == TriggerType.edgeRise || _trigger == TriggerType.edgeFall;
-  }
-
-  bool _needsTolerance() {
-    return _trigger == TriggerType.deltaPeriodic || _trigger == TriggerType.deltaConfirm;
   }
 
   bool _canSave() {
@@ -700,13 +617,6 @@ class _SubscriptionDialogState extends State<_SubscriptionDialog> {
     final targetReg = _selectedTarget!.blockInfo;
     final sourceReg = _selectedSource!.blockInfo;
     final providerAddr = _selectedProviderAddr!;
-
-    List<int> tolerance = [];
-    if (_needsTolerance() && _toleranceValue != null) {
-      // Tolerance wire format: type byte + int32 value (the firmware's delta check reads
-      // type at [0] and the threshold at [1..4]).
-      tolerance = [DataType.integer.value, ...int32ToBytes(_toleranceValue!)];
-    }
 
     final index = widget.existing?.index ?? _findFreeIndex();
     if (index >= 16) {
@@ -725,8 +635,6 @@ class _SubscriptionDialogState extends State<_SubscriptionDialog> {
       trigger: _trigger,
       periodMs: _periodMs,
       minTimeMs: _minTimeMs,
-      counter: _counter,
-      tolerance: tolerance,
       trid: trid,
     );
 

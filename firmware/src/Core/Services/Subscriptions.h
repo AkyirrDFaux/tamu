@@ -7,20 +7,28 @@
 #include "Core/Services/Storage.h"
 #include "Core/Types/Enums.h"
 
-#ifndef BOARD_DAS_v0_1
-// The Tamu v2.0A (core) keeps the requester + provider support below.
-#define MAX_PROVIDER_SUBS 20
-// Tolerance wire format is a type byte + a fixed-point/int32 value (5 bytes); 8 gives
-// headroom for the widest scalar comparison. Vector tolerances are not supported.
-#define PROVIDER_TOLERANCE_SIZE 8
-#define PROVIDER_LASTVALUE_SIZE 16
+// Reduced subscription service (Docs/Services/Subscriptions.md).
+//   USE_SUB_PROVIDE - provider side: sends source values (raw bytes) with hash-based
+//                     on-change detection, checked from the main loop.
+//   USE_SUB_REQUEST - requester side (Tamu): stores target/source, applies values with the
+//                     foreign-origin flag and confirms with a hash.
+// Value updates carry the RAW value bytes (no TLFV header); the requester's confirmation
+// is the 4-byte FNV-1a hash of the received bytes.
 
 #define TRID_SUB_BASE 0xFA00
 #define TRID_SUB_MAX  0xFBFF
 
+// FNV-1a hash over the value bytes (provider on-change detection + requester confirmation).
+static inline uint32_t Fnv1a(const uint8_t *data, uint8_t len) {
+    uint32_t hash = 0x811C9DC5u;
+    for (uint8_t i = 0; i < len; i++) {
+        hash ^= data[i];
+        hash *= 0x01000193u;
+    }
+    return hash;
+}
+
 // Reads the current value of the register addressed by a 32-bit BlockInfo.
-// The System block (type 0, inst 0) is virtual and resolved via RegisterGetSystemField;
-// other blocks are looked up in the static registry (or dynamic registry for 0x3FF).
 static inline FieldResult SubscriptionsGetField(uint32_t blockInfo) {
     uint16_t type = BlockInfoType(blockInfo);
     uint8_t inst = BlockInfoInstance(blockInfo);
@@ -28,7 +36,6 @@ static inline FieldResult SubscriptionsGetField(uint32_t blockInfo) {
     uint8_t key = BlockInfoKey(blockInfo);
 
     if (type == 0 && inst == 0) {
-#ifndef BOARD_DAS_v0_1
         BlockMeta m;
         uint8_t vbuf[24];
         uint8_t vsz = 0;
@@ -38,7 +45,6 @@ static inline FieldResult SubscriptionsGetField(uint32_t blockInfo) {
             fr.Data = vbuf;
             return fr;
         }
-#endif
         return FieldResult{};
     }
 #ifndef DISABLE_DYNAMIC_MEMORY
@@ -55,342 +61,21 @@ static inline FieldResult SubscriptionsGetField(uint32_t blockInfo) {
     return static_block_registry[idx].Get(field);
 }
 
-// Provider-side subscription entry (Docs/Services/Subscriptions.md: "Trigger settings and
-// states | Flexible | Trigger type dependent"). The trigger-specific fields share one
-// union: only the member matching `trigger` is meaningful.
-//   EdgeRise/EdgeFall          -> counter (incremental, repeats until confirmed)
-//   DeltaPeriodic/DeltaConfirm -> tolerance (type byte + threshold value)
-// Period, minimum interval, last value and retry state are common to every trigger.
-struct ProviderEntry {
-    uint16_t trid = 0;
-    uint32_t sourceReg = 0;
-    uint16_t requesterAddr = 0;
-    TriggerType trigger = TriggerType::Periodic;
-    uint32_t lastSentMs = 0;
-    uint32_t periodMs = 0;   // Periodic / OnChangePeriodic / DeltaPeriodic
-    uint32_t minTimeMs = 0;  // minimum interval between sends (all triggers)
-    union {
-        struct { uint32_t counter; } edge;                          // EdgeRise / EdgeFall
-        struct { uint8_t toleranceLen; uint8_t toleranceData[PROVIDER_TOLERANCE_SIZE]; } delta; // Delta*
-    };
-    uint8_t lastValueLen = 0;
-    uint8_t lastValueData[PROVIDER_LASTVALUE_SIZE];
-    bool awaitingAck = false;
-    uint8_t retryCount = 0;
-};
-
-static ProviderEntry providerTable[MAX_PROVIDER_SUBS];
-
-// Reads the trigger-specific counter (0 unless the entry is an edge trigger). Shared by
-// the provider and requester entries (both use the same union layout).
-template <typename E>
-static inline uint32_t EntryCounter(const E *e) {
-    return (e->trigger == TriggerType::EdgeRise || e->trigger == TriggerType::EdgeFall) ? e->edge.counter : 0;
-}
-// Reads the trigger-specific tolerance length (0 unless the entry is a delta trigger).
-template <typename E>
-static inline uint8_t EntryToleranceLen(const E *e) {
-    return (e->trigger == TriggerType::DeltaPeriodic || e->trigger == TriggerType::DeltaConfirm) ? e->delta.toleranceLen : 0;
-}
-template <typename E>
-static inline const uint8_t *EntryToleranceData(const E *e) {
-    return e->delta.toleranceData;
-}
-
-static uint16_t SubscriptionsNextTrid() {
-    static uint16_t next = TRID_SUB_BASE;
-    for (int tries = 0; tries < (TRID_SUB_MAX - TRID_SUB_BASE + 1); tries++) {
-        uint16_t cand = next++;
-        if (cand > TRID_SUB_MAX) { next = TRID_SUB_BASE; cand = next++; }
-        bool used = false;
-        for (int i = 0; i < MAX_PROVIDER_SUBS; i++) {
-            if (providerTable[i].requesterAddr != 0 && providerTable[i].trid == cand) {
-                used = true; break;
-            }
-        }
-        if (!used) return cand;
-    }
-    return 0;
-}
-
-static ProviderEntry* ProviderFindByTrid(uint16_t trid) {
-    for (int i = 0; i < MAX_PROVIDER_SUBS; i++) {
-        if (providerTable[i].requesterAddr != 0 && providerTable[i].trid == trid)
-            return &providerTable[i];
-    }
-    return nullptr;
-}
-
-static ProviderEntry* ProviderFindBySourceReg(uint32_t srcReg) {
-    for (int i = 0; i < MAX_PROVIDER_SUBS; i++) {
-        if (providerTable[i].requesterAddr != 0 && providerTable[i].sourceReg == srcReg)
-            return &providerTable[i];
-    }
-    return nullptr;
-}
-
-static ProviderEntry* ProviderFindFree() {
-    for (int i = 0; i < MAX_PROVIDER_SUBS; i++) {
-        if (providerTable[i].requesterAddr == 0)
-            return &providerTable[i];
-    }
-    return nullptr;
-}
-
-static void ProviderClearEntry(ProviderEntry* e) {
-    e->trid = 0;
-    e->sourceReg = 0;
-    e->requesterAddr = 0;
-    e->trigger = TriggerType::Periodic;
-    e->periodMs = 0;
-    e->lastSentMs = 0;
-    e->minTimeMs = 0;
-    memset(&e->edge, 0, sizeof(e->edge)); // zeroes the whole union (counter + tolerance)
-    e->lastValueLen = 0;
-    e->awaitingAck = false;
-    e->retryCount = 0;
-}
-
-static bool TlfvEqual(const uint8_t* a, uint8_t alen, const uint8_t* b, uint8_t blen) {
-    if (alen != blen) return false;
-    for (uint8_t i = 0; i < alen; i++) if (a[i] != b[i]) return false;
-    return true;
-}
-
-static void TlfvCopy(uint8_t* dst, uint8_t* dstLen, const uint8_t* src, uint8_t slen) {
-    if (slen > PROVIDER_LASTVALUE_SIZE) slen = PROVIDER_LASTVALUE_SIZE;
-    memcpy(dst, src, slen);
-    *dstLen = slen;
-}
-
-static uint8_t DataTypeSize(DataType dt) {
-    switch (dt) {
-        case DataType::Bool: return 1;
-        case DataType::Uint32: case DataType::Id: return 4;
-        case DataType::Number: case DataType::Index: return 4;
-        case DataType::SN: return 14;
-#ifndef SCALAR_ONLY
-        case DataType::Vector: return 12;
-        case DataType::Matrix: return 0;
-#endif
-        case DataType::String: case DataType::Filename: return 0;
-        default: return 4;
-    }
-}
-
-#ifndef BOARD_DAS_v0_1
-static void HandleRequesterValueUpdate(const PacketFrame &frame);
-#endif
-
-static void SendValueUpdate(ProviderEntry* e, const uint8_t* value, uint8_t vlen, bool isRetry = false) {
-    if (!e || e->requesterAddr == 0) return;
-
-    uint16_t payloadLen = vlen;
-    if (payloadLen > MAX_PAYLOAD_SIZE) payloadLen = MAX_PAYLOAD_SIZE;
-
-#ifndef BOARD_DAS_v0_1
-    // Self-subscription (provider and requester are the same device, e.g. the core
-    // subscribing to its own System Uptime): apply the update locally. A bus round-trip
-    // would never come back, since no other device owns this address.
-    if (e->requesterAddr == DeviceStatus.ShortAddress)
-    {
-        PacketFrame self;
-        memset(&self, 0, sizeof(self));
-        self.id_tgt = DeviceStatus.ShortAddress;
-        self.id_src = DeviceStatus.ShortAddress;
-        self.srv_tgt = MakeService(ServiceType::Subscriptions, 0);
-        self.trid = e->trid;
-        self.flags = FLAG_TYPE | FLAG_START | FLAG_STOP;
-        self.payload_len = (uint8_t)((payloadLen + 3) / 4);
-        memcpy(self.payload, value, payloadLen);
-        HandleRequesterValueUpdate(self);
-    }
-#endif
-
-    // Docs/Services/Subscriptions.md CID 0: the provider's value update is "sent as a
-    // response packet" (FLAG_TYPE); the requester's confirmation is a request (no TYPE).
-    // The shared output buffer keeps a full frame off the DAS's tight stack.
-    PacketConstruct(&tx_frame, e->requesterAddr,
-                    MakeService(ServiceType::Subscriptions, 0),
-                    e->trid,
-                    FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_REQACK,
-                    value, payloadLen);
-
-    if (!isRetry) {
-        e->lastSentMs = DeviceStatus.UptimeMs;
-        e->awaitingAck = (e->trigger == TriggerType::OnChangeConfirm ||
-                          e->trigger == TriggerType::DeltaConfirm ||
-                          e->trigger == TriggerType::EdgeRise ||
-                          e->trigger == TriggerType::EdgeFall);
-        e->retryCount = 0;
-    } else {
-        e->retryCount++;
-    }
-    SendAndVerifyPacket(tx_frame);
-}
-
-static void SendValueUpdateFromRegister(ProviderEntry* e) {
-    FieldResult fr = SubscriptionsGetField(e->sourceReg);
-    if (!fr.Data) return;
-
-    uint8_t tlfv[32];
-    uint8_t tlfvLen = 0;
-    tlfv[tlfvLen++] = (uint8_t)BlockMetaType(fr.Descriptor.FlagsAndType);
-    tlfv[tlfvLen++] = fr.Descriptor.Size;
-    tlfv[tlfvLen++] = (uint8_t)BlockMetaFlags(fr.Descriptor.FlagsAndType);
-    uint8_t vlen = fr.Descriptor.Size;
-    if (vlen > 16) vlen = 16;
-    memcpy(tlfv + tlfvLen, fr.Data, vlen);
-    tlfvLen += vlen;
-
-    TlfvCopy(e->lastValueData, &e->lastValueLen, tlfv, tlfvLen);
-    SendValueUpdate(e, tlfv, tlfvLen);
-}
-
-static bool TriggerShouldFire(ProviderEntry* e, uint32_t nowMs) {
-    if (e->requesterAddr == 0) return false;
-
-    uint32_t elapsed = nowMs - e->lastSentMs;
-    if (elapsed < e->minTimeMs) return false;
-
-    // "with period" triggers fall back to their configured period on the main-loop tick;
-    // confirmation/edge triggers repeat on the minimum interval until acknowledged.
-    switch (e->trigger) {
-        case TriggerType::Periodic:
-        case TriggerType::OnChangePeriodic:
-        case TriggerType::DeltaPeriodic:
-            return (e->periodMs > 0) && (elapsed >= e->periodMs);
-
-        case TriggerType::OnChangeConfirm:
-        case TriggerType::EdgeRise:
-        case TriggerType::EdgeFall:
-        case TriggerType::DeltaConfirm:
-            return true;
-
-        default:
-            return false;
-    }
-}
-
-static void EvaluateProviderTriggers(uint32_t nowMs) {
-    for (int i = 0; i < MAX_PROVIDER_SUBS; i++) {
-        ProviderEntry* e = &providerTable[i];
-        if (e->requesterAddr == 0) continue;
-
-        if (e->awaitingAck) {
-            if (nowMs - e->lastSentMs > 1000 && e->retryCount < 5) {
-                SendValueUpdate(e, e->lastValueData, e->lastValueLen, true);
-            }
-            continue;
-        }
-
-        if (TriggerShouldFire(e, nowMs)) {
-            SendValueUpdateFromRegister(e);
-        }
-    }
-}
-
-// Fires the provider table's on-change/edge/delta triggers after a local register write.
-// Non-static: forward-declared in Register.h (which calls it) to keep the include
-// dependency one-directional. Reaching the provider table is a no-op when the written
-// register is not the source of any active subscription.
-void SubscriptionsOnRegisterWrite(uint32_t srcReg, const uint8_t *newValue, uint8_t vlen) {
-    ProviderEntry* e = ProviderFindBySourceReg(srcReg);
-    if (!e) return;
-
-    FieldResult fr = SubscriptionsGetField(srcReg);
-    if (!fr.Data) return;
-
-    uint8_t tlfv[32];
-    uint8_t tlfvLen = 0;
-    tlfv[tlfvLen++] = (uint8_t)BlockMetaType(fr.Descriptor.FlagsAndType);
-    tlfv[tlfvLen++] = fr.Descriptor.Size;
-    tlfv[tlfvLen++] = (uint8_t)BlockMetaFlags(fr.Descriptor.FlagsAndType);
-    uint8_t copyLen = fr.Descriptor.Size;
-    if (copyLen > 16) copyLen = 16;
-    memcpy(tlfv + tlfvLen, fr.Data, copyLen);
-    tlfvLen += copyLen;
-
-    bool fire = false;
-    switch (e->trigger) {
-        case TriggerType::OnChangePeriodic:
-        case TriggerType::OnChangeConfirm:
-            fire = !TlfvEqual(e->lastValueData, e->lastValueLen, tlfv, tlfvLen);
-            break;
-
-        case TriggerType::EdgeRise: {
-            bool prev = (e->lastValueLen > 0 && e->lastValueData[3] != 0);
-            bool curr = (tlfvLen > 3 && tlfv[3] != 0);
-            fire = (!prev && curr);
-            e->edge.counter++;
-            break;
-        }
-        case TriggerType::EdgeFall: {
-            bool prev = (e->lastValueLen > 0 && e->lastValueData[3] != 0);
-            bool curr = (tlfvLen > 3 && tlfv[3] != 0);
-            fire = (prev && !curr);
-            e->edge.counter++;
-            break;
-        }
-        case TriggerType::DeltaPeriodic:
-        case TriggerType::DeltaConfirm: {
-            if (e->delta.toleranceLen == 0 || BlockMetaType(fr.Descriptor.FlagsAndType) != e->delta.toleranceData[0]) {
-                fire = false;
-            } else {
-                int32_t tolerance = *(int32_t*)(e->delta.toleranceData + 1);
-                int32_t prevVal = *(int32_t*)(e->lastValueData + 3);
-                int32_t currVal = *(int32_t*)(tlfv + 3);
-                int32_t diff = currVal - prevVal;
-                if (diff < 0) diff = -diff;
-                fire = (diff > tolerance);
-            }
-            break;
-        }
-        default:
-            fire = false;
-    }
-
-    if (fire) {
-        TlfvCopy(e->lastValueData, &e->lastValueLen, tlfv, tlfvLen);
-        SendValueUpdate(e, tlfv, tlfvLen);
-    }
-}
-
-// Serializes one provider entry in the CID 2 wire format (Docs/Services/Subscriptions.md):
-// sourceReg, requesterAddr, trigger, periodMs, lastSentMs, minTimeMs, counter, tolerance,
-// lastValue. Returns the advanced buffer offset.
-static uint16_t ProviderEntrySerialize(uint8_t *buf, uint16_t off, const ProviderEntry *e) {
-    *(uint32_t *)(buf + off) = e->sourceReg; off += 4;
-    *(uint16_t *)(buf + off) = e->requesterAddr; off += 2;
-    buf[off++] = (uint8_t)e->trigger;
-    *(uint32_t *)(buf + off) = e->periodMs; off += 4;
-    *(uint32_t *)(buf + off) = e->lastSentMs; off += 4;
-    *(uint32_t *)(buf + off) = e->minTimeMs; off += 4;
-    *(uint32_t *)(buf + off) = EntryCounter(e); off += 4;
-    uint8_t tolLen = EntryToleranceLen(e);
-    buf[off++] = tolLen;
-    if (tolLen > 0) { memcpy(buf + off, EntryToleranceData(e), tolLen); off += tolLen; }
-    buf[off++] = e->lastValueLen;
-    if (e->lastValueLen > 0) { memcpy(buf + off, e->lastValueData, e->lastValueLen); off += e->lastValueLen; }
-    return off;
-}
-
-// ===== Requester Side (Tamu v2.0A only) =====
-#ifndef BOARD_DAS_v0_1
+// ===========================================================================
+// Requester core (USE_SUB_REQUEST) - Tamu. Index-based table; entries persisted to a file
+// (1:1 copy minus the non-persistent TRID, regenerated at boot).
+// ===========================================================================
+#ifdef USE_SUB_REQUEST
 #define MAX_REQUESTER_SUBS 16
 
 struct RequesterEntry {
+    uint16_t providerAddr = 0;
+    uint16_t trid = 0;
     uint32_t targetReg = 0;
     uint32_t sourceReg = 0;
-    uint16_t providerAddr = 0;
     TriggerType trigger = TriggerType::Periodic;
     uint32_t periodMs = 0;
-    uint32_t minTimeMs = 0;
-    union {
-        struct { uint32_t counter; } edge;                          // EdgeRise / EdgeFall
-        struct { uint8_t toleranceLen; uint8_t toleranceData[PROVIDER_TOLERANCE_SIZE]; } delta; // Delta*
-    };
-    uint16_t trid = 0;
+    uint32_t minTimeMs = 0; // minimum interval / retry interval
     bool active = false;
 };
 
@@ -399,14 +84,6 @@ static RequesterEntry requesterTable[MAX_REQUESTER_SUBS];
 static RequesterEntry* RequesterFindByTrid(uint16_t trid) {
     for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
         if (requesterTable[i].active && requesterTable[i].trid == trid)
-            return &requesterTable[i];
-    }
-    return nullptr;
-}
-
-static RequesterEntry* RequesterFindByTargetReg(uint32_t targetReg) {
-    for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
-        if (requesterTable[i].active && requesterTable[i].targetReg == targetReg)
             return &requesterTable[i];
     }
     return nullptr;
@@ -421,191 +98,22 @@ static RequesterEntry* RequesterFindFree() {
 }
 
 static void RequesterClearEntry(RequesterEntry* e) {
-    e->targetReg = 0;
-    e->sourceReg = 0;
-    e->providerAddr = 0;
-    e->trigger = TriggerType::Periodic;
-    e->periodMs = 0;
-    e->minTimeMs = 0;
-    memset(&e->edge, 0, sizeof(e->edge)); // zeroes the whole union (counter + tolerance)
-    e->trid = 0;
-    e->active = false;
+    *e = RequesterEntry{};
 }
 
-static const char* SubscriptionsRequesterFile = "SUBREQ";
-
-static void SaveRequesterTable() {
-    uint8_t buf[256];
-    uint16_t off = 0;
-    uint8_t count = 0;
-    for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
-        if (requesterTable[i].active) count++;
-    }
-    buf[off++] = count;
-    for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
-        RequesterEntry* e = &requesterTable[i];
-        if (!e->active) continue;
-        *(uint32_t*)(buf + off) = e->targetReg; off += 4;
-        *(uint32_t*)(buf + off) = e->sourceReg; off += 4;
-        *(uint16_t*)(buf + off) = e->providerAddr; off += 2;
-        buf[off++] = (uint8_t)e->trigger;
-        *(uint32_t*)(buf + off) = e->periodMs; off += 4;
-        *(uint32_t*)(buf + off) = e->minTimeMs; off += 4;
-        *(uint32_t*)(buf + off) = EntryCounter(e); off += 4;
-        uint8_t tolLen = EntryToleranceLen(e);
-        buf[off++] = tolLen;
-        if (tolLen > 0) { memcpy(buf + off, EntryToleranceData(e), tolLen); off += tolLen; }
-        *(uint16_t*)(buf + off) = e->trid; off += 2;
-    }
-    // Write via a temp file + rename (NOR-safe, like the backup files): an in-place
-    // rewrite of the same flash region can need 0->1 bit transitions (e.g. count going
-    // 0 -> 1), which NOR flash cannot program - the write would silently fail and the
-    // restored table would come back empty. The rename always lands on a freshly
-    // erased region.
-    static const char tmp_name[8] = {'S','U','B','R','E','Q','~',' '};
-    if (Storage.FileExists(tmp_name) != 0xFFFFFFFF)
-        Storage.DeleteFile(tmp_name);
-    if (!Storage.CreateFile(tmp_name, off))
-        return;
-    if (!Storage.WriteToFile(tmp_name, 0, off, (const char*)buf))
-    {
-        Storage.DeleteFile(tmp_name);
-        return;
-    }
-    if (!Storage.RenameFile(tmp_name, SubscriptionsRequesterFile))
-    {
-        Storage.DeleteFile(tmp_name);
-        return;
-    }
-}
-
-// Re-registers the (non-persistent) provider side for a requester subscription so a
-// restored table keeps pushing values after boot (docs: requester "re-activates after
-// boot"). Same-device providers get a direct provider-table entry; remote providers get
-// a CID 1 "Change subscription" packet.
-static void RegisterRequesterProvider(RequesterEntry* e) {
-    if (!e || !e->active) return;
-
-    if (e->providerAddr == DeviceStatus.ShortAddress) {
-        ProviderEntry* p = ProviderFindByTrid(e->trid);
-        if (!p) { p = ProviderFindFree(); if (!p) return; }
-        p->trid = e->trid;
-        p->sourceReg = e->sourceReg;
-        p->requesterAddr = DeviceStatus.ShortAddress;
-        p->trigger = e->trigger;
-        p->periodMs = e->periodMs;
-        p->minTimeMs = e->minTimeMs;
-        // Mirror the trigger-relevant union member from the requester entry.
-        if (e->trigger == TriggerType::EdgeRise || e->trigger == TriggerType::EdgeFall) {
-            p->edge.counter = e->edge.counter;
-        } else if (e->trigger == TriggerType::DeltaPeriodic || e->trigger == TriggerType::DeltaConfirm) {
-            p->delta.toleranceLen = e->delta.toleranceLen;
-            memcpy(p->delta.toleranceData, e->delta.toleranceData, e->delta.toleranceLen);
-        }
-        p->lastSentMs = 0;
-        p->awaitingAck = false;
-        p->retryCount = 0;
-        SendValueUpdateFromRegister(p);
-    } else {
-        uint8_t payload[64]; uint16_t off = 0;
-        *(uint32_t*)(payload + off) = e->targetReg; off += 4;
-        *(uint32_t*)(payload + off) = e->sourceReg; off += 4;
-        *(uint16_t*)(payload + off) = DeviceStatus.ShortAddress; off += 2;
-        payload[off++] = (uint8_t)e->trigger;
-        *(uint32_t*)(payload + off) = e->periodMs; off += 4;
-        *(uint32_t*)(payload + off) = e->minTimeMs; off += 4;
-        *(uint32_t*)(payload + off) = EntryCounter(e); off += 4;
-        uint8_t tolLen = EntryToleranceLen(e);
-        payload[off++] = tolLen;
-        if (tolLen > 0) { memcpy(payload + off, EntryToleranceData(e), tolLen); off += tolLen; }
-        PacketFrame req;
-        PacketConstruct(&req, e->providerAddr,
-                        MakeService(ServiceType::Subscriptions, 1),
-                        e->trid,
-                        FLAG_START | FLAG_STOP,
-                        payload, off);
-        SendAndVerifyPacket(req);
-    }
-}
-
-static void LoadRequesterTable() {
-    uint8_t buf[256];
-    uint16_t len = Storage.ReadFromFile(SubscriptionsRequesterFile, 0, sizeof(buf), (char*)buf);
-    if (len == 0) return;
-
-    uint16_t off = 0;
-    uint8_t count = buf[off++];
-    for (uint8_t i = 0; i < count && off < len; i++) {
-        RequesterEntry* e = RequesterFindFree();
-        if (!e) break;
-        e->targetReg = *(uint32_t*)(buf + off); off += 4;
-        e->sourceReg = *(uint32_t*)(buf + off); off += 4;
-        e->providerAddr = *(uint16_t*)(buf + off); off += 2;
-        e->trigger = (TriggerType)buf[off++];
-        e->periodMs = *(uint32_t*)(buf + off); off += 4;
-        e->minTimeMs = *(uint32_t*)(buf + off); off += 4;
-        uint32_t counter = *(uint32_t*)(buf + off); off += 4;
-        uint8_t toleranceLen = buf[off++];
-        if (toleranceLen > PROVIDER_TOLERANCE_SIZE) toleranceLen = PROVIDER_TOLERANCE_SIZE;
-        if (e->trigger == TriggerType::EdgeRise || e->trigger == TriggerType::EdgeFall) {
-            e->edge.counter = counter;
-        } else if (e->trigger == TriggerType::DeltaPeriodic || e->trigger == TriggerType::DeltaConfirm) {
-            e->delta.toleranceLen = toleranceLen;
-            if (toleranceLen > 0 && off + toleranceLen <= len) {
-                memcpy(e->delta.toleranceData, buf + off, toleranceLen);
-                off += toleranceLen;
-            }
-        } else {
-            off += toleranceLen; // skip the wire tolerance bytes
-        }
-        e->trid = *(uint16_t*)(buf + off); off += 2;
-        if (e->trid == 0) e->trid = SubscriptionsNextTrid();
-        e->active = true;
-    }
-}
-
-// Re-registers the provider side for every active requester subscription. Called after
-// boot once the device has its bus address, since the provider registration needs the
-// requester's own address (Remote) or the local-address check (same-device).
-#ifndef BOARD_DAS_v0_1
-void ReRegisterSubscriptions() {
-    for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
-        if (requesterTable[i].active)
-            RegisterRequesterProvider(&requesterTable[i]);
-    }
-}
-#endif
-
-static void HandleRequesterValueUpdate(const PacketFrame &frame) {
-    if (!(frame.flags & FLAG_TYPE)) return;
-    
-    RequesterEntry* e = RequesterFindByTrid(frame.trid);
-    if (!e) return;
-
+// Applies a received value to the requester's target register (raw bytes), setting the
+// foreign-origin flag, and confirms with the FNV-1a hash of the received bytes.
+static void ApplyRequesterValue(RequesterEntry *e, const uint8_t *val, uint8_t vlen, bool confirm = true) {
     FieldResult fr = SubscriptionsGetField(e->targetReg);
     if (!fr.Data) return;
-
-    const uint8_t* payload = frame.payload;
-    uint8_t payloadBytes = PayloadBytes(frame);
-    if (payloadBytes < 3) return;
-    
-    uint8_t size = payload[1];
-    const uint8_t* val = payload + 3;
-    uint8_t vlen = payloadBytes - 3;
-    if (vlen > size) vlen = size;
     if (vlen > fr.Descriptor.Size) vlen = fr.Descriptor.Size;
 
     uint16_t newFlags = fr.Descriptor.FlagsAndType | FieldFlags::External;
-    
-    uint32_t bi = e->targetReg;
-    uint16_t type = BlockInfoType(bi);
-    uint8_t inst = BlockInfoInstance(bi);
-    uint8_t field = BlockInfoField(bi);
-    
-    if (type == 0 && inst == 0) {
-        return;
-    }
-    
+    uint16_t type = BlockInfoType(e->targetReg);
+    uint8_t inst = BlockInfoInstance(e->targetReg);
+    uint8_t field = BlockInfoField(e->targetReg);
+    if (type == 0 && inst == 0) return;
+
     int idx = FindStaticBlock(type, inst);
     if (idx >= 0) {
         BlockMeta meta = static_block_registry[idx].Schema->Map[field];
@@ -625,24 +133,283 @@ static void HandleRequesterValueUpdate(const PacketFrame &frame) {
         }
     }
 #endif
+    if (!confirm) return;
 
-    // Confirm the update to the provider (docs CID 0: the confirmation is a request,
-    // no FLAG_TYPE, carrying our last value). The provider clears its awaitingAck on
-    // this frame, so confirm-required triggers stop retrying.
+    // Confirmation: the requester sends the hash of the received value (docs CID 0: the
+    // confirmation is a request, no FLAG_TYPE).
+    uint32_t h = Fnv1a(val, vlen);
     PacketFrame reply;
-    PacketConstruct(&reply, e->providerAddr,
-                    MakeService(ServiceType::Subscriptions, 0),
-                    e->trid,
-                    FLAG_START | FLAG_STOP,
-                    frame.payload, PayloadBytes(frame));
+    PacketConstruct(&reply, e->providerAddr, MakeService(ServiceType::Subscriptions, 0),
+                    e->trid, FLAG_START | FLAG_STOP, (const uint8_t *)&h, sizeof(h));
     SendAndVerifyPacket(reply);
 }
 
-#endif // BOARD_DAS_v0_1
+static void HandleRequesterValueUpdate(const PacketFrame &frame) {
+    if (!(frame.flags & FLAG_TYPE)) return;
+    RequesterEntry* e = RequesterFindByTrid(frame.trid);
+    if (!e) return;
+    ApplyRequesterValue(e, frame.payload, PayloadBytes(frame), true);
+}
+
+// Serializes one requester entry (wire order: providerAddr, trid, targetReg, sourceReg,
+// trigger + 3 pad, period, min = 24 B). Returns the advanced offset.
+static uint16_t RequesterEntrySerialize(uint8_t *buf, uint16_t off, const RequesterEntry *e) {
+    *(uint16_t *)(buf + off) = e->providerAddr; off += 2;
+    *(uint16_t *)(buf + off) = e->trid; off += 2;
+    *(uint32_t *)(buf + off) = e->targetReg; off += 4;
+    *(uint32_t *)(buf + off) = e->sourceReg; off += 4;
+    buf[off++] = (uint8_t)e->trigger;
+    buf[off++] = 0; buf[off++] = 0; buf[off++] = 0; // 24-bit padding
+    *(uint32_t *)(buf + off) = e->periodMs; off += 4;
+    *(uint32_t *)(buf + off) = e->minTimeMs; off += 4;
+    return off;
+}
+#endif // USE_SUB_REQUEST
+
+// ===========================================================================
+// Provider (USE_SUB_PROVIDE): active until canceled, not persistent. Updates checked
+// from the main loop (SubscriptionsTick -> EvaluateProviderTriggers).
+// ===========================================================================
+#ifdef USE_SUB_PROVIDE
+#ifdef BOARD_DAS_v0_1
+#define MAX_PROVIDER_SUBS 4 // the DAS's 2 KB RAM: a couple of active providers suffice
+#else
+#define MAX_PROVIDER_SUBS 20
+#endif
+
+// Provider entry (24 B): requesterAddr, trid, sourceReg, trigger(+24 pad), period,
+// min/retry interval, last sent, FNV-1a hash of the last confirmed value.
+struct ProviderEntry {
+    uint16_t requesterAddr = 0;  // 0 = invalid entry
+    uint16_t trid = 0;
+    uint32_t sourceReg = 0;
+    TriggerType trigger = TriggerType::Periodic;
+    uint32_t periodMs = 0;
+    uint32_t minTimeMs = 0;      // minimum interval / retry interval
+    uint32_t lastSentMs = 0;
+    uint32_t hash = 0;
+};
+
+static ProviderEntry providerTable[MAX_PROVIDER_SUBS];
+
+static uint16_t SubscriptionsNextTrid() {
+    static uint16_t next = TRID_SUB_BASE;
+    for (int tries = 0; tries < (TRID_SUB_MAX - TRID_SUB_BASE + 1); tries++) {
+        uint16_t cand = next++;
+        if (cand > TRID_SUB_MAX) { next = TRID_SUB_BASE; cand = next++; }
+        bool used = false;
+#ifdef USE_SUB_REQUEST
+        for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
+            if (requesterTable[i].active && requesterTable[i].trid == cand) { used = true; break; }
+        }
+#endif
+        for (int i = 0; i < MAX_PROVIDER_SUBS; i++) {
+            if (providerTable[i].requesterAddr != 0 && providerTable[i].trid == cand) { used = true; break; }
+        }
+        if (!used) return cand;
+    }
+    return 0;
+}
+
+static ProviderEntry* ProviderFindByTrid(uint16_t trid) {
+    for (int i = 0; i < MAX_PROVIDER_SUBS; i++) {
+        if (providerTable[i].requesterAddr != 0 && providerTable[i].trid == trid)
+            return &providerTable[i];
+    }
+    return nullptr;
+}
+
+static ProviderEntry* ProviderFindFree() {
+    for (int i = 0; i < MAX_PROVIDER_SUBS; i++) {
+        if (providerTable[i].requesterAddr == 0)
+            return &providerTable[i];
+    }
+    return nullptr;
+}
+
+static void ProviderClearEntry(ProviderEntry* e) {
+    *e = ProviderEntry{};
+}
+
+// Serializes one provider entry in the CID 2 wire format (requesterAddr, trid, sourceReg,
+// trigger + 3 pad, period, min, lastSent, hash = 24 B).
+static uint16_t ProviderEntrySerialize(uint8_t *buf, uint16_t off, const ProviderEntry *e) {
+    *(uint16_t *)(buf + off) = e->requesterAddr; off += 2;
+    *(uint16_t *)(buf + off) = e->trid; off += 2;
+    *(uint32_t *)(buf + off) = e->sourceReg; off += 4;
+    buf[off++] = (uint8_t)e->trigger;
+    buf[off++] = 0; buf[off++] = 0; buf[off++] = 0; // 24-bit padding
+    *(uint32_t *)(buf + off) = e->periodMs; off += 4;
+    *(uint32_t *)(buf + off) = e->minTimeMs; off += 4;
+    *(uint32_t *)(buf + off) = e->lastSentMs; off += 4;
+    *(uint32_t *)(buf + off) = e->hash; off += 4;
+    return off;
+}
+
+// The provider side of the requester's confirmation (CID 0 request): the payload is the
+// FNV-1a hash of the value the requester received; confirm-required triggers stop here.
+static void HandleProviderConfirmation(const PacketFrame &frame) {
+    ProviderEntry* e = ProviderFindByTrid(frame.trid);
+    if (!e) return;
+    if (PayloadBytes(frame) >= 4) {
+        uint32_t h;
+        memcpy(&h, frame.payload, 4);
+        e->hash = h;
+    }
+}
+
+static void EvaluateProviderTriggers(uint32_t nowMs) {
+    for (int i = 0; i < MAX_PROVIDER_SUBS; i++) {
+        ProviderEntry* e = &providerTable[i];
+        if (e->requesterAddr == 0) continue;
+        FieldResult fr = SubscriptionsGetField(e->sourceReg);
+        if (!fr.Data) continue;
+        uint8_t vlen = fr.Descriptor.Size;
+        if (vlen > MAX_PAYLOAD_SIZE) vlen = MAX_PAYLOAD_SIZE;
+        uint32_t hash = Fnv1a((const uint8_t *)fr.Data, vlen);
+        uint32_t elapsed = nowMs - e->lastSentMs;
+
+        bool send = false;
+        switch (e->trigger) {
+        case TriggerType::Periodic:
+            send = (e->periodMs > 0) && (elapsed >= e->periodMs);
+            if (send) e->hash = hash;
+            break;
+        case TriggerType::OnChangePeriodic:
+            if (hash != e->hash && elapsed >= e->minTimeMs) { send = true; e->hash = hash; }
+            else if (e->periodMs > 0 && elapsed >= e->periodMs) { send = true; e->hash = hash; }
+            break;
+        case TriggerType::OnChangeConfirm:
+            send = (hash != e->hash) && (elapsed >= e->minTimeMs);
+            break; // hash updates only on confirmation
+        default:
+            break;
+        }
+        if (!send) continue;
+
+        e->lastSentMs = nowMs;
+
+        // Self-loopback (provider and requester on the same device): apply locally; a
+        // confirm-required trigger is confirmed immediately (no bus round-trip).
+        bool applied = false;
+#ifdef USE_SUB_REQUEST
+        if (e->requesterAddr == DeviceStatus.ShortAddress) {
+            RequesterEntry* r = RequesterFindByTrid(e->trid);
+            if (r) { ApplyRequesterValue(r, (const uint8_t *)fr.Data, vlen, false); applied = true; }
+            if (e->trigger == TriggerType::OnChangeConfirm) e->hash = hash;
+        }
+#endif
+        if (!applied) {
+            PacketConstruct(&tx_frame, e->requesterAddr,
+                            MakeService(ServiceType::Subscriptions, 0),
+                            e->trid,
+                            FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_REQACK,
+                            (const uint8_t *)fr.Data, vlen);
+            SendAndVerifyPacket(tx_frame);
+        }
+    }
+}
+#endif // USE_SUB_PROVIDE
+
+// ===========================================================================
+// Requester persistence + provider re-registration (USE_SUB_REQUEST).
+// ===========================================================================
+#ifdef USE_SUB_REQUEST
+static const char* SubscriptionsRequesterFile = "SUBREQ";
+
+static void SaveRequesterTable() {
+    uint8_t buf[1 + MAX_REQUESTER_SUBS * 22]; // entries without the TRID (non-persistent)
+    uint16_t off = 0;
+    uint8_t count = 0;
+    for (int i = 0; i < MAX_REQUESTER_SUBS; i++) if (requesterTable[i].active) count++;
+    buf[off++] = count;
+    for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
+        RequesterEntry* e = &requesterTable[i];
+        if (!e->active) continue;
+        *(uint32_t *)(buf + off) = e->targetReg; off += 4;
+        *(uint32_t *)(buf + off) = e->sourceReg; off += 4;
+        *(uint16_t *)(buf + off) = e->providerAddr; off += 2;
+        buf[off++] = (uint8_t)e->trigger;
+        buf[off++] = 0; buf[off++] = 0; buf[off++] = 0;
+        *(uint32_t *)(buf + off) = e->periodMs; off += 4;
+        *(uint32_t *)(buf + off) = e->minTimeMs; off += 4;
+    }
+    static const char tmp_name[8] = {'S','U','B','R','E','Q','~',' '};
+    if (Storage.FileExists(tmp_name) != 0xFFFFFFFF)
+        Storage.DeleteFile(tmp_name);
+    if (!Storage.CreateFile(tmp_name, off)) return;
+    if (!Storage.WriteToFile(tmp_name, 0, off, (const char*)buf)) { Storage.DeleteFile(tmp_name); return; }
+    if (!Storage.RenameFile(tmp_name, SubscriptionsRequesterFile)) { Storage.DeleteFile(tmp_name); return; }
+}
+
+static void LoadRequesterTable() {
+    uint8_t buf[256];
+    uint16_t len = Storage.ReadFromFile(SubscriptionsRequesterFile, 0, sizeof(buf), (char*)buf);
+    if (len == 0) return;
+
+    uint16_t off = 0;
+    uint8_t count = buf[off++];
+    for (uint8_t i = 0; i < count && off + 22 <= len; i++) {
+        RequesterEntry* e = RequesterFindFree();
+        if (!e) break;
+        e->targetReg = *(uint32_t *)(buf + off); off += 4;
+        e->sourceReg = *(uint32_t *)(buf + off); off += 4;
+        e->providerAddr = *(uint16_t *)(buf + off); off += 2;
+        e->trigger = (TriggerType)buf[off++];
+        off += 3; // padding
+        e->periodMs = *(uint32_t *)(buf + off); off += 4;
+        e->minTimeMs = *(uint32_t *)(buf + off); off += 4;
+        e->trid = SubscriptionsNextTrid();
+        if (e->trid == 0) e->trid = TRID_SUB_BASE;
+        e->active = true;
+    }
+}
+
+// Re-registers the (non-persistent) provider side for a requester subscription so a
+// restored table keeps pushing values after boot. Same-device providers get a direct
+// provider-table entry; remote providers get a CID 1 "Change subscription" packet.
+static void RegisterRequesterProvider(RequesterEntry* e) {
+    if (!e || !e->active) return;
+
+#ifdef USE_SUB_PROVIDE
+    if (e->providerAddr == DeviceStatus.ShortAddress) {
+        ProviderEntry* p = ProviderFindByTrid(e->trid);
+        if (!p) { p = ProviderFindFree(); if (!p) return; }
+        p->requesterAddr = DeviceStatus.ShortAddress;
+        p->trid = e->trid;
+        p->sourceReg = e->sourceReg;
+        p->trigger = e->trigger;
+        p->periodMs = e->periodMs;
+        p->minTimeMs = e->minTimeMs;
+        p->lastSentMs = 0;
+        p->hash = 0;
+        return;
+    }
+#endif
+    // Remote provider: send the subscription info (CID 1, fire and forget).
+    uint8_t payload[24]; uint16_t off = 0;
+    *(uint32_t *)(payload + off) = e->targetReg; off += 4;
+    *(uint32_t *)(payload + off) = e->sourceReg; off += 4;
+    *(uint16_t *)(payload + off) = DeviceStatus.ShortAddress; off += 2;
+    payload[off++] = (uint8_t)e->trigger;
+    payload[off++] = 0; payload[off++] = 0; payload[off++] = 0;
+    *(uint32_t *)(payload + off) = e->periodMs; off += 4;
+    *(uint32_t *)(payload + off) = e->minTimeMs; off += 4;
+    PacketFrame req;
+    PacketConstruct(&req, e->providerAddr, MakeService(ServiceType::Subscriptions, 1),
+                    e->trid, FLAG_START | FLAG_STOP, payload, off);
+    SendAndVerifyPacket(req);
+}
+
+void ReRegisterSubscriptions() {
+    for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
+        if (requesterTable[i].active)
+            RegisterRequesterProvider(&requesterTable[i]);
+    }
+}
+#endif // USE_SUB_REQUEST
 
 // Shared reply for every subscription CID (docs: responses are packets with FLAG_TYPE).
-// Centralizing the PacketConstruct + routing keeps the repeated handlers flash-lean, and
-// the shared output buffer (tx_frame) avoids a full-size frame on the stack.
 static void SubReply(const PacketFrame &frame, const uint8_t *payload, uint16_t len) {
     PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.trid,
                     FLAG_TYPE | FLAG_START | FLAG_STOP, payload, len);
@@ -653,60 +420,46 @@ static void SubReply(const PacketFrame &frame, const uint8_t *payload, uint16_t 
         DispatchPacket(tx_frame);
     }
 #else
-    // Node (no app interface): the reply always goes back to the requester over the bus,
-    // so skip re-entering the router and transmit it directly.
     SendAndVerifyPacket(tx_frame);
 #endif
 }
 
 __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &frame) {
-    DeviceLog("SUB", "HandleSubscriptions cid=%d, flags=0x%02X, trid=0x%04X, payload_len=%d", GetServiceCID(frame.srv_tgt), frame.flags, frame.trid, PayloadBytes(frame));
     uint8_t cid = GetServiceCID(frame.srv_tgt);
 
     switch (cid) {
         case 0: {
-            if (frame.flags & FLAG_TYPE) {
-                // Provider value update (response, docs CID 0): apply it to the
-                // target register and confirm back (requester role).
-                #ifndef BOARD_DAS_v0_1
-                HandleRequesterValueUpdate(frame);
-                #endif
-            } else {
-                // Requester confirmation (request) of our outgoing value update:
-                // clear the outstanding ack so confirm-required triggers stop retrying.
-                ProviderEntry* e = ProviderFindByTrid(frame.trid);
-                if (e && e->awaitingAck) {
-                    e->awaitingAck = false;
-                    e->retryCount = 0;
-                }
-            }
+#ifdef USE_SUB_REQUEST
+            // Provider value update (response): apply + confirm (requester role).
+            HandleRequesterValueUpdate(frame);
+#endif
+#ifdef USE_SUB_PROVIDE
+            // Requester confirmation (request): update the provider's hash.
+            if (!(frame.flags & FLAG_TYPE))
+                HandleProviderConfirmation(frame);
+#endif
             break;
         }
-        case 1: {
+
+        case 1: { // Change subscription (provider side).
+#ifdef USE_SUB_PROVIDE
             if (frame.payload_len == 0) {
                 ProviderEntry* e = ProviderFindByTrid(frame.trid);
                 if (e) ProviderClearEntry(e);
-                // Send response to cancel request
-                uint8_t resp = 1; // success
+                uint8_t resp = 1;
                 SubReply(frame, &resp, 1);
                 break;
             }
-            if (PayloadBytes(frame) < 4 + 4 + 2 + 1 + 4 + 4 + 4 + 1) break;
+            if (PayloadBytes(frame) < 4 + 4 + 2 + 1 + 4 + 4) break;
 
             uint16_t offset = 0;
             offset += 4; // targetReg (not used by provider)
-            uint32_t sourceReg = *(uint32_t*)(frame.payload + offset); offset += 4;
-            uint16_t requesterAddr = *(uint16_t*)(frame.payload + offset); offset += 2;
+            uint32_t sourceReg = *(uint32_t *)(frame.payload + offset); offset += 4;
+            uint16_t requesterAddr = *(uint16_t *)(frame.payload + offset); offset += 2;
             TriggerType trigger = (TriggerType)frame.payload[offset++];
-            uint32_t periodMs = *(uint32_t*)(frame.payload + offset); offset += 4;
-            uint32_t minTimeMs = *(uint32_t*)(frame.payload + offset); offset += 4;
-            uint32_t counter = *(uint32_t*)(frame.payload + offset); offset += 4;
-            uint8_t toleranceLen = frame.payload[offset++];
-            uint8_t toleranceData[PROVIDER_TOLERANCE_SIZE] = {0};
-            if (toleranceLen > PROVIDER_TOLERANCE_SIZE) toleranceLen = PROVIDER_TOLERANCE_SIZE;
-            if (toleranceLen > 0 && offset + toleranceLen <= PayloadBytes(frame)) {
-                memcpy(toleranceData, frame.payload + offset, toleranceLen);
-            }
+            offset += 3; // padding
+            uint32_t periodMs = *(uint32_t *)(frame.payload + offset); offset += 4;
+            uint32_t minTimeMs = *(uint32_t *)(frame.payload + offset); offset += 4;
 
             ProviderEntry* e = ProviderFindByTrid(frame.trid);
             bool isNew = false;
@@ -724,27 +477,20 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
             e->trigger = trigger;
             e->periodMs = periodMs;
             e->minTimeMs = minTimeMs;
-            // Store only the trigger-relevant union member.
-            if (trigger == TriggerType::EdgeRise || trigger == TriggerType::EdgeFall) {
-                e->edge.counter = counter;
-            } else if (trigger == TriggerType::DeltaPeriodic || trigger == TriggerType::DeltaConfirm) {
-                e->delta.toleranceLen = toleranceLen;
-                memcpy(e->delta.toleranceData, toleranceData, toleranceLen);
-            }
             e->lastSentMs = 0;
-            e->awaitingAck = false;
-            e->retryCount = 0;
-
-            // Send response to CID 1 request
-            uint8_t resp = 1; // success
+            e->hash = 0;
+            uint8_t resp = 1;
             SubReply(frame, &resp, 1);
+#endif
             break;
         }
-        case 2: {
+
+        case 2: { // Get subscriptions (provider).
+#ifdef USE_SUB_PROVIDE
             if (frame.payload_len == 0) {
                 uint8_t count = 0;
                 for (int i = 0; i < MAX_PROVIDER_SUBS; i++) if (providerTable[i].requesterAddr != 0) count++;
-                uint8_t buf[1 + MAX_PROVIDER_SUBS * (4 + 2 + 1 + 4 + 4 + 4 + 4 + 1 + PROVIDER_TOLERANCE_SIZE + 1 + PROVIDER_LASTVALUE_SIZE)];
+                uint8_t buf[1 + MAX_PROVIDER_SUBS * 24];
                 uint16_t off = 0;
                 buf[off++] = count;
                 for (int i = 0; i < MAX_PROVIDER_SUBS; i++) {
@@ -755,180 +501,108 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
             } else if (PayloadBytes(frame) >= 1) {
                 uint8_t index = frame.payload[0];
                 if (index < MAX_PROVIDER_SUBS && providerTable[index].requesterAddr != 0) {
-                    uint8_t buf[64];
+                    uint8_t buf[24];
                     uint16_t off = ProviderEntrySerialize(buf, 0, &providerTable[index]);
                     SubReply(frame, buf, off);
                 }
             }
+#else
+            uint8_t resp = 0;
+            SubReply(frame, &resp, 1);
+#endif
             break;
         }
-        case 3: {
-            #ifndef BOARD_DAS_v0_1
+
+        case 3: { // Get subscriptions (requester).
+#ifdef USE_SUB_REQUEST
             if (frame.payload_len == 0) {
                 uint8_t count = 0;
                 for (int i = 0; i < MAX_REQUESTER_SUBS; i++) if (requesterTable[i].active) count++;
-                uint8_t buf[1 + MAX_PROVIDER_SUBS * (4 + 2 + 1 + 4 + 4 + 4 + 4 + 1 + PROVIDER_TOLERANCE_SIZE + 1 + PROVIDER_LASTVALUE_SIZE)];
+                uint8_t buf[1 + MAX_REQUESTER_SUBS * 24];
                 uint16_t off = 0;
                 buf[off++] = count;
                 for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
                     if (!requesterTable[i].active) continue;
-                    RequesterEntry* e = &requesterTable[i];
-                    *(uint32_t*)(buf + off) = e->targetReg; off += 4;
-                    *(uint32_t*)(buf + off) = e->sourceReg; off += 4;
-                    *(uint16_t*)(buf + off) = e->providerAddr; off += 2;
-                    buf[off++] = (uint8_t)e->trigger;
-                    *(uint32_t*)(buf + off) = e->periodMs; off += 4;
-                    *(uint32_t*)(buf + off) = e->minTimeMs; off += 4;
-                    *(uint32_t*)(buf + off) = EntryCounter(e); off += 4;
-                    uint8_t tolLen = EntryToleranceLen(e);
-                    buf[off++] = tolLen;
-                    if (tolLen > 0) { memcpy(buf + off, EntryToleranceData(e), tolLen); off += tolLen; }
-                    *(uint16_t*)(buf + off) = e->trid; off += 2;
+                    off = RequesterEntrySerialize(buf, off, &requesterTable[i]);
                 }
                 SubReply(frame, buf, off);
             } else if (PayloadBytes(frame) >= 1) {
                 uint8_t index = frame.payload[0];
                 if (index < MAX_REQUESTER_SUBS && requesterTable[index].active) {
-                    RequesterEntry* e = &requesterTable[index];
-                    uint8_t buf[64];
-                    uint16_t off = 0;
-                    *(uint32_t*)(buf + off) = e->targetReg; off += 4;
-                    *(uint32_t*)(buf + off) = e->sourceReg; off += 4;
-                    *(uint16_t*)(buf + off) = e->providerAddr; off += 2;
-                    buf[off++] = (uint8_t)e->trigger;
-                    *(uint32_t*)(buf + off) = e->periodMs; off += 4;
-                    *(uint32_t*)(buf + off) = e->minTimeMs; off += 4;
-                    *(uint32_t*)(buf + off) = EntryCounter(e); off += 4;
-                    uint8_t tolLen = EntryToleranceLen(e);
-                    buf[off++] = tolLen;
-                    if (tolLen > 0) { memcpy(buf + off, EntryToleranceData(e), tolLen); off += tolLen; }
-                    *(uint16_t*)(buf + off) = e->trid; off += 2;
-
+                    uint8_t buf[24];
+                    uint16_t off = RequesterEntrySerialize(buf, 0, &requesterTable[index]);
                     SubReply(frame, buf, off);
                 }
             }
-            #else
+#else
             uint8_t resp = 0;
             SubReply(frame, &resp, 1);
-            #endif
+#endif
             break;
         }
-        case 4: {
-            #ifndef BOARD_DAS_v0_1
+
+        case 4: { // Set subscription (requester).
+#ifdef USE_SUB_REQUEST
             if (PayloadBytes(frame) >= 1) {
                 uint8_t index = frame.payload[0];
                 if (index < MAX_REQUESTER_SUBS) {
                     if (frame.payload_len == 1) {
-                        // Delete + compact (docs: the requester table is "sequential, sorted
-                        // by address"). Leaving a hole would make the app's ordinal index
-                        // disagree with the array index, so a later delete/edit hits the
-                        // wrong slot.
+                        // Delete + compact so the app's ordinal index stays in sync.
                         for (int i = index; i < MAX_REQUESTER_SUBS - 1; i++)
                             requesterTable[i] = requesterTable[i + 1];
                         RequesterClearEntry(&requesterTable[MAX_REQUESTER_SUBS - 1]);
                         SaveRequesterTable();
-
-                        // Send response to delete request
-                        uint8_t resp = 1; // success
+                        uint8_t resp = 1;
                         SubReply(frame, &resp, 1);
                     } else {
-                        if (PayloadBytes(frame) < 1 + 4 + 4 + 2 + 1 + 4 + 4 + 4 + 1) {
-                            break;
-                        }
+                        if (PayloadBytes(frame) < 1 + 2 + 2 + 4 + 4 + 1 + 4 + 4) break;
                         uint16_t offset = 1;
                         RequesterEntry* e = &requesterTable[index];
-                        e->targetReg = *(uint32_t*)(frame.payload + offset); offset += 4;
-                        e->sourceReg = *(uint32_t*)(frame.payload + offset); offset += 4;
-                        e->providerAddr = *(uint16_t*)(frame.payload + offset); offset += 2;
+                        e->providerAddr = *(uint16_t *)(frame.payload + offset); offset += 2;
+                        offset += 2; // payload TRID field: the frame TRID is authoritative
+                        e->targetReg = *(uint32_t *)(frame.payload + offset); offset += 4;
+                        e->sourceReg = *(uint32_t *)(frame.payload + offset); offset += 4;
                         e->trigger = (TriggerType)frame.payload[offset++];
-                        e->periodMs = *(uint32_t*)(frame.payload + offset); offset += 4;
-                        e->minTimeMs = *(uint32_t*)(frame.payload + offset); offset += 4;
-                        uint32_t counter = *(uint32_t*)(frame.payload + offset); offset += 4;
-                        uint8_t toleranceLen = frame.payload[offset++];
-                        if (toleranceLen > PROVIDER_TOLERANCE_SIZE) toleranceLen = PROVIDER_TOLERANCE_SIZE;
-                        if (e->trigger == TriggerType::EdgeRise || e->trigger == TriggerType::EdgeFall) {
-                            e->edge.counter = counter;
-                        } else if (e->trigger == TriggerType::DeltaPeriodic || e->trigger == TriggerType::DeltaConfirm) {
-                            e->delta.toleranceLen = toleranceLen;
-                            if (toleranceLen > 0 && offset + toleranceLen <= PayloadBytes(frame)) {
-                                memcpy(e->delta.toleranceData, frame.payload + offset, toleranceLen);
-                                offset += toleranceLen;
-                            }
-                        } else {
-                            offset += toleranceLen; // skip the wire tolerance bytes
-                        }
-                        // Use frame.trid (from packet header) as the TRID for round-trip
-                        // The app sends transaction ID in srvSource = makeService(App, txId)
-                        e->trid = frame.trid;
+                        offset += 3; // padding
+                        e->periodMs = *(uint32_t *)(frame.payload + offset); offset += 4;
+                        e->minTimeMs = *(uint32_t *)(frame.payload + offset); offset += 4;
+                        e->trid = frame.trid ? frame.trid : SubscriptionsNextTrid();
                         e->active = true;
                         SaveRequesterTable();
 
-                        // Send response to CID 4 request FIRST (before contacting provider)
-                        uint8_t resp = 1; // success
+                        // Respond first (the app waits on the transaction ID), then register
+                        // the provider side (same-device or CID 1 to the remote provider).
+                        uint8_t resp = 1;
                         PacketFrame reply;
-                        PacketConstruct(&reply, frame.id_src,
-                                        frame.srv_src,  // Echo app's transaction ID for response matching
-                                        frame.trid,
-                                        FLAG_TYPE | FLAG_START | FLAG_STOP,
-                                        &resp, 1);
-                        #ifdef USE_APP_INTERFACE
-                        if (frame.id_src == 0xFFFE) {
-                            AppInterfaceSend(reply);
-                        } else {
-                            DispatchPacket(reply);
-                        }
-                        #else
+                        PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.trid,
+                                        FLAG_TYPE | FLAG_START | FLAG_STOP, &resp, 1);
+#ifdef USE_APP_INTERFACE
+                        if (frame.id_src == 0xFFFE) AppInterfaceSend(reply); else DispatchPacket(reply);
+#else
                         DispatchPacket(reply);
-                        #endif
-                        DeviceLog("SUB", "CID4 response sent");
-
-                        // Then send CID 1 to provider (fire and forget, no REQACK)
-                        // Provider will send CID 0 (Value Update) with current value later
-                        uint8_t reqBuf[64];
-                        uint16_t reqOff = 0;
-                        *(uint32_t*)(reqBuf + reqOff) = e->targetReg; reqOff += 4;
-                        *(uint32_t*)(reqBuf + reqOff) = e->sourceReg; reqOff += 4;
-                        *(uint16_t*)(reqBuf + reqOff) = DeviceStatus.ShortAddress; reqOff += 2;
-                        reqBuf[reqOff++] = (uint8_t)e->trigger;
-                        *(uint32_t*)(reqBuf + reqOff) = e->periodMs; reqOff += 4;
-                        *(uint32_t*)(reqBuf + reqOff) = e->minTimeMs; reqOff += 4;
-                        *(uint32_t*)(reqBuf + reqOff) = EntryCounter(e); reqOff += 4;
-                        uint8_t tolLen = EntryToleranceLen(e);
-                        reqBuf[reqOff++] = tolLen;
-                        if (tolLen > 0) { memcpy(reqBuf + reqOff, EntryToleranceData(e), tolLen); reqOff += tolLen; }
-
-                        PacketFrame reqFrame;
-                        PacketConstruct(&reqFrame, e->providerAddr,
-                                        MakeService(ServiceType::Subscriptions, 1),
-                                        e->trid,
-                                        FLAG_START | FLAG_STOP,  // No FLAG_REQACK - fire and forget
-                                        reqBuf, reqOff);
-                        SendAndVerifyPacket(reqFrame);
-                        DeviceLog("SUB", "CID1 sent to provider");
-                        }
-                }
-            }
-            #else
-            if (PayloadBytes(frame) >= 1) {
-                uint8_t index = frame.payload[0];
-                if (index < MAX_PROVIDER_SUBS) {
-                    if (frame.payload_len == 1) {
-                        ProviderClearEntry(&providerTable[index]);
-
-                        // Send response to delete request
-                        uint8_t resp = 1; // success
-                        SubReply(frame, &resp, 1);
+#endif
+                        RegisterRequesterProvider(e);
                     }
                 }
             }
-            #endif
+#else
+            if (PayloadBytes(frame) >= 1) {
+                uint8_t index = frame.payload[0];
+                if (index < MAX_PROVIDER_SUBS && frame.payload_len == 1) {
+                    ProviderClearEntry(&providerTable[index]);
+                    uint8_t resp = 1;
+                    SubReply(frame, &resp, 1);
+                }
+            }
+#endif
             break;
         }
-        case 5: { // Save the requester table to its file (persist current entries).
-            #ifndef BOARD_DAS_v0_1
+
+        case 5: { // Save the requester table to its file.
+#ifdef USE_SUB_REQUEST
             SaveRequesterTable();
-            #endif
-            uint8_t resp = 1; // success
+#endif
+            uint8_t resp = 1;
             SubReply(frame, &resp, 1);
             break;
         }
@@ -936,6 +610,7 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
 }
 
 void SubscriptionsTick(uint32_t nowMs) {
+#ifdef USE_SUB_PROVIDE
     EvaluateProviderTriggers(nowMs);
+#endif
 }
-#endif // BOARD_DAS_v0_1

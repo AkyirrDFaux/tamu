@@ -8,6 +8,7 @@
 
 // Forward declaration for LoadAllBackups function
 void LoadAllBackups();
+void SubscriptionsTick(uint32_t nowMs);
 
 // DAS has no app interface
 bool AppConnected = false;
@@ -24,9 +25,7 @@ bool AppConnected = false;
 
 // Device identity (mandatory, see Core/Functions/Device.h).
 extern const DeviceType kDeviceType = DeviceType::DualAnalogSensor;
-// Subscription service temporarily removed from the DAS (provider logic is compiled out
-// on the DAS until its flash budget is reworked).
-extern const uint32_t kCapabilities = Capabilities::Node;
+extern const uint32_t kCapabilities = Capabilities::Node | Capabilities::Subscriptions;
 
 // Reads the CH32V003 32-bit unique chip ID as the 14-byte serial number (cached).
 const SerialNumber &GetSerialNumber()
@@ -133,6 +132,7 @@ int main(void)
     {
         TimeUpdate();
         ProcessBus();
+        SubscriptionsTick(DeviceStatus.UptimeMs); // periodic provider triggers (main loop)
 
         // Sample each resistive measurement channel at its own configured rate.
         uint32_t now_ms = Now();

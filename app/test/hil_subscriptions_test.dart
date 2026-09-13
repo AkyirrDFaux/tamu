@@ -103,8 +103,6 @@ void main() async {
       trigger: TriggerType.periodic,
       periodMs: 1000,
       minTimeMs: 100,
-      counter: 0,
-      tolerance: [],
       trid: 0xFA00 + index,
     );
 

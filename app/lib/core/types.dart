@@ -279,11 +279,7 @@ class BlockMeta {
 enum TriggerType {
   periodic(0),
   onChangePeriodic(1),
-  onChangeConfirm(2),
-  edgeRise(3),
-  edgeFall(4),
-  deltaPeriodic(5),
-  deltaConfirm(6);
+  onChangeConfirm(2);
 
   final int value;
   const TriggerType(this.value);
@@ -299,63 +295,54 @@ enum TriggerType {
     TriggerType.periodic => 'Periodic',
     TriggerType.onChangePeriodic => 'OnChange+Period',
     TriggerType.onChangeConfirm => 'OnChange+Confirm',
-    TriggerType.edgeRise => 'Edge Rise',
-    TriggerType.edgeFall => 'Edge Fall',
-    TriggerType.deltaPeriodic => 'Delta+Period',
-    TriggerType.deltaConfirm => 'Delta+Confirm',
   };
 }
 
 /// Provider-side subscription entry (what the device stores for incoming subscriptions)
 class ProviderSubscription {
   final int index;
-  final int sourceReg; // BlockInfo
   final int requesterAddr;
+  final int trid;
+  final int sourceReg; // BlockInfo
   final TriggerType trigger;
   final int periodMs;
-  final int lastSentMs;
   final int minTimeMs;
-  final int counter;
-  final List<int> tolerance;
-  final List<int> lastValue;
+  final int lastSentMs;
+  final int hash;
 
   const ProviderSubscription({
     required this.index,
-    required this.sourceReg,
     required this.requesterAddr,
+    required this.trid,
+    required this.sourceReg,
     required this.trigger,
     required this.periodMs,
-    required this.lastSentMs,
     required this.minTimeMs,
-    required this.counter,
-    required this.tolerance,
-    required this.lastValue,
+    required this.lastSentMs,
+    required this.hash,
   });
 
   static ProviderSubscription fromBytes(int index, List<int> bytes) {
     int offset = 0;
-    final sourceReg = uint32FromBytes(bytes, offset); offset += 4;
     final requesterAddr = bytes[offset] | (bytes[offset + 1] << 8); offset += 2;
+    final trid = bytes[offset] | (bytes[offset + 1] << 8); offset += 2;
+    final sourceReg = uint32FromBytes(bytes, offset); offset += 4;
     final trigger = TriggerType.fromValue(bytes[offset++]);
+    offset += 3; // 24-bit padding
     final periodMs = uint32FromBytes(bytes, offset); offset += 4;
-    final lastSentMs = uint32FromBytes(bytes, offset); offset += 4;
     final minTimeMs = uint32FromBytes(bytes, offset); offset += 4;
-    final counter = uint32FromBytes(bytes, offset); offset += 4;
-    final toleranceLen = bytes[offset++];
-    final tolerance = bytes.sublist(offset, offset + toleranceLen); offset += toleranceLen;
-    final lastValueLen = bytes[offset++];
-    final lastValue = bytes.sublist(offset, offset + lastValueLen);
+    final lastSentMs = uint32FromBytes(bytes, offset); offset += 4;
+    final hash = uint32FromBytes(bytes, offset);
     return ProviderSubscription(
       index: index,
-      sourceReg: sourceReg,
       requesterAddr: requesterAddr,
+      trid: trid,
+      sourceReg: sourceReg,
       trigger: trigger,
       periodMs: periodMs,
-      lastSentMs: lastSentMs,
       minTimeMs: minTimeMs,
-      counter: counter,
-      tolerance: tolerance,
-      lastValue: lastValue,
+      lastSentMs: lastSentMs,
+      hash: hash,
     );
   }
 }
@@ -363,67 +350,59 @@ class ProviderSubscription {
 /// Requester-side subscription entry (outgoing subscriptions from Tamu)
 class RequesterSubscription {
   final int index;
+  final int providerAddr;
+  final int trid;
   final int targetReg; // BlockInfo
   final int sourceReg; // BlockInfo
-  final int providerAddr;
   final TriggerType trigger;
   final int periodMs;
   final int minTimeMs;
-  final int counter;
-  final List<int> tolerance;
-  final int trid;
 
   const RequesterSubscription({
     required this.index,
+    required this.providerAddr,
+    required this.trid,
     required this.targetReg,
     required this.sourceReg,
-    required this.providerAddr,
     required this.trigger,
     required this.periodMs,
     required this.minTimeMs,
-    required this.counter,
-    required this.tolerance,
-    required this.trid,
   });
 
   static RequesterSubscription fromBytes(int index, List<int> bytes) {
     int offset = 0;
+    final providerAddr = bytes[offset] | (bytes[offset + 1] << 8); offset += 2;
+    final trid = bytes[offset] | (bytes[offset + 1] << 8); offset += 2;
     final targetReg = uint32FromBytes(bytes, offset); offset += 4;
     final sourceReg = uint32FromBytes(bytes, offset); offset += 4;
-    final providerAddr = bytes[offset] | (bytes[offset + 1] << 8); offset += 2;
     final trigger = TriggerType.fromValue(bytes[offset++]);
+    offset += 3; // 24-bit padding
     final periodMs = uint32FromBytes(bytes, offset); offset += 4;
     final minTimeMs = uint32FromBytes(bytes, offset); offset += 4;
-    final counter = uint32FromBytes(bytes, offset); offset += 4;
-    final toleranceLen = bytes[offset++];
-    final tolerance = bytes.sublist(offset, offset + toleranceLen); offset += toleranceLen;
-    final trid = bytes[offset] | (bytes[offset + 1] << 8);
     return RequesterSubscription(
       index: index,
+      providerAddr: providerAddr,
+      trid: trid,
       targetReg: targetReg,
       sourceReg: sourceReg,
-      providerAddr: providerAddr,
       trigger: trigger,
       periodMs: periodMs,
       minTimeMs: minTimeMs,
-      counter: counter,
-      tolerance: tolerance,
-      trid: trid,
     );
   }
 
+  /// Wire layout for the CID 4 set request (providerAddr, trid, targetReg, sourceReg,
+  /// trigger+24 pad, period, min). The TRID is also echoed in the packet header.
   List<int> toCreatePayload() {
     final buf = <int>[];
+    buf.addAll([providerAddr & 0xFF, (providerAddr >> 8) & 0xFF]);
+    buf.addAll([trid & 0xFF, (trid >> 8) & 0xFF]);
     buf.addAll(uint32ToBytes(targetReg));
     buf.addAll(uint32ToBytes(sourceReg));
-    buf.addAll([providerAddr & 0xFF, (providerAddr >> 8) & 0xFF]);
     buf.add(trigger.value);
+    buf.addAll([0, 0, 0]); // 24-bit padding
     buf.addAll(uint32ToBytes(periodMs));
     buf.addAll(uint32ToBytes(minTimeMs));
-    buf.addAll(uint32ToBytes(counter));
-    buf.add(tolerance.length);
-    buf.addAll(tolerance);
-    // TRID is sent in packet header (srvSource), not in payload
     return buf;
   }
 }
