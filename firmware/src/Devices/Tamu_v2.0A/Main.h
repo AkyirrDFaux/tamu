@@ -71,7 +71,6 @@ const size_t static_block_num = sizeof(static_block_registry) / sizeof(StaticBlo
 #include "Button.h"
 #include "AccGyr.h"
 #include "LED.h"
-#include "LedDisplayTest.h"
 
 LEDDriver LED(3, 0); // both LED strips: pins 3 (Display1) and 0 (Display2), sent in parallel
 
@@ -107,7 +106,6 @@ ESP_LOGI("INIT","b6 rs485"); SetupRS485();
 ESP_LOGI("INIT","b7 pwm"); SetupFanPWM();
 ESP_LOGI("INIT","b8 imu"); InitLSM6DS3();
 LED.Setup();
-InitLedDisplayTest(); // TEMP TEST: repeating square animation on Display2/GPIO0
 
     PinHigh(LED_NOTIFICATION_PIN);
     PinModeInput(LED_NOTIFICATION_PIN);
@@ -201,7 +199,6 @@ while (1)
         // (pins 0,3) IN PARALLEL, tracking each display's achieved refresh rate (FPS,
         // averaged) in its Read-Only Refresh Rate field.
         int64_t rt = esp_timer_get_time();
-        TickLedDisplayTest(); // TEMP TEST: drive the square animation
         Display1.Render();
         Display2.Render();
         LED.SendParallel(Display1.Buffer, Display2.Buffer, Vysi1Display::LedNum);

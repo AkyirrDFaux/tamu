@@ -16,11 +16,21 @@ class FieldInfo {
   final double? step;
   final Map<int, String>? enumValues;
 
+  /// Edit a matrix field via the transformation editor (offset/rotation/scale/skew/
+  /// mirror) instead of the raw grid.
+  final bool transform;
+
   /// Max character count for string fields (wire format limit).
   final int maxChars;
 
   const FieldInfo(this.name,
-      {this.unit, this.min, this.max, this.step, this.enumValues, this.maxChars = 23});
+      {this.unit,
+      this.min,
+      this.max,
+      this.step,
+      this.enumValues,
+      this.transform = false,
+      this.maxChars = 23});
 }
 
 class BlockInfo {

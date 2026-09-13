@@ -443,20 +443,18 @@ inline void Vysi1Display::Render()
         }
     }
 
-    // Clamp Brightness into [0, 100]: a negative value would wrap through the
-    // uint32_t scale below and produce garbage colours instead of black.
+    // Apply Brightness only (the mask/texture alpha is already baked into the RGB by
+    // ColourClass::Layer against the cleared buffer; scaling by Buffer.A again would
+    // square the alpha so a 50% mask would render at 25%).
     Number brightness = Data.Brightness;
     if (brightness < N(0)) brightness = N(0);
     uint32_t brightness_scale = (brightness >= 100) ? 255 : ((brightness * 255) / 100).ToInt();
 
     for (uint16_t i = 0; i < LedNum; i++)
     {
-        uint32_t alpha = (uint32_t)Buffer[i].A;
-        uint32_t scalar = (brightness_scale * alpha) >> 8;
-
-        uint32_t r = (Buffer[i].R * scalar) >> 8;
-        uint32_t g = (Buffer[i].G * scalar) >> 8;
-        uint32_t b = (Buffer[i].B * scalar) >> 8;
+        uint32_t r = (Buffer[i].R * brightness_scale) >> 8;
+        uint32_t g = (Buffer[i].G * brightness_scale) >> 8;
+        uint32_t b = (Buffer[i].B * brightness_scale) >> 8;
 
         Buffer[i].R = GammaTable[r > 255 ? 255 : r];
         Buffer[i].G = GammaTable[g > 255 ? 255 : g];

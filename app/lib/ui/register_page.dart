@@ -6,6 +6,7 @@ import '../core/block_registry.dart';
 import '../core/connection.dart';
 import '../core/device_db.dart';
 import '../core/register_client.dart';
+import '../core/render_dict.dart' show KeyedEntry, buildKeyedDict, geometryDictType, isRenderDictType, parseKeyedDict, renderDictKeyName, renderKeyFieldInfo;
 import '../core/types.dart';
 import 'theme.dart';
 import 'value_editor.dart' show dataTypeLabel, formatValue, showValueEditor;
@@ -521,6 +522,72 @@ Future<void> _loadVisibleFields() async {
         ? null
         : blockInfoFor(BlockType.fromValue(block?.meta.typeValue ?? 0))?.field(fieldIndex);
 
+    // Render-block dictionaries (Geometry 0x101 / Texture 0x102): show each keyed
+    // entry as an expandable sub-row so the square/fill can be edited per-key
+    // (Docs/Modules and blocks/LED display.md).
+    if (blockType == BlockType.dynamic.value && isRenderDictType(field.meta.typeValue)) {
+      final dictType = field.meta.typeValue;
+      final entries = parseKeyedDict(field.value) ?? <KeyedEntry>[];
+      return ExpansionTile(
+        dense: true,
+        title: Row(children: [
+          SizedBox(
+              width: 120,
+              child: Text(dictType == geometryDictType ? 'Geometry' : 'Texture',
+                  style: const TextStyle(fontSize: 12, color: Colors.white54))),
+          Expanded(
+              child: Text('[${entries.length} keys]',
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 13))),
+        ]),
+        children: [
+          for (final e in entries)
+            ListTile(
+              dense: true,
+              contentPadding: const EdgeInsets.only(left: 56, right: 12),
+              title: Row(children: [
+                SizedBox(
+                    width: 100,
+                    child: Text(renderDictKeyName(dictType, e.key),
+                        style: const TextStyle(fontSize: 11, color: Colors.white54))),
+                if (e.meta.dataType == DataType.colour && e.value.length >= 4)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: Container(
+                      width: 14,
+                      height: 14,
+                      decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Color.fromARGB(
+                              e.value[3], e.value[0], e.value[1], e.value[2]),
+                          border: Border.all(color: Colors.white38)),
+                    ),
+                  ),
+                Expanded(
+                    child: Text(_formatDictEntry(dictType, e),
+                        style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
+              ]),
+              subtitle: Text(dataTypeLabel(e.meta.dataType),
+                  style: const TextStyle(fontSize: 10)),
+              trailing: PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert, size: 16),
+                onSelected: (action) {
+                  if (action == 'edit' && !e.meta.readOnly) {
+                    _editDictEntry(blockType, inst, block, fieldIndex, e.key);
+                  }
+                },
+                itemBuilder: (_) => [
+                  if (!e.meta.readOnly)
+                    const PopupMenuItem(value: 'edit', child: Text('Edit value')),
+                ],
+              ),
+              onTap: !e.meta.readOnly
+                  ? () => _editDictEntry(blockType, inst, block, fieldIndex, e.key)
+                  : null,
+            ),
+        ],
+      );
+    }
+
     return ListTile(
       dense: true,
       contentPadding: const EdgeInsets.only(left: 40, right: 12),
@@ -740,6 +807,45 @@ Future<void> _loadVisibleFields() async {
       }
       if (mounted) setState(() {});
     }
+  }
+
+  /// Formats one keyed-dict entry by its data type, with enum labels where known.
+  String _formatDictEntry(int dictType, KeyedEntry e) {
+    if (e.meta.dataType == DataType.enum_ && e.value.isNotEmpty) {
+      final enums = renderKeyFieldInfo(dictType, e.key).enumValues;
+      final label = enums?[e.value[0]];
+      if (label != null) return label;
+    }
+    return formatValue(e.meta.dataType, e.value);
+  }
+
+  /// Edits one key of a render-block dictionary field and writes the whole dict back.
+  Future<void> _editDictEntry(int blockType, int inst,
+      ({int type, int inst, BlockMeta meta, String name})? block, int fieldIndex, int key) async {
+    if (block == null || !mounted) return;
+    final cacheKey = (blockType << 8) | inst;
+    final cache = _fieldCache[cacheKey];
+    final field = cache?[fieldIndex];
+    if (field == null || field.meta.readOnly) return;
+    final dictType = field.meta.typeValue;
+    final entries = parseKeyedDict(field.value);
+    if (entries == null) return;
+    final idx = entries.indexWhere((e) => e.key == key);
+    if (idx < 0) return;
+    final entry = entries[idx];
+
+    final newValue = await showValueEditor(
+        context, entry.meta.dataType, entry.value,
+        info: renderKeyFieldInfo(dictType, key));
+    if (newValue == null) return;
+
+    entries[idx] = KeyedEntry(key: key, meta: entry.meta, value: newValue);
+    final newBlob = buildKeyedDict(entries);
+    final dynBlock = DynBlock(index: inst, meta: block.meta, name: block.name);
+    final dynField = DynField(index: fieldIndex, meta: field.meta, value: field.value);
+    final confirmed = await _client.writeDynamicField(dynBlock, dynField, newBlob);
+    _snack(confirmed != null ? 'Value written' : 'Write failed');
+    await _refresh();
   }
 
 }

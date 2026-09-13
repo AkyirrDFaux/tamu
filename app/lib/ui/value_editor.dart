@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -41,7 +42,9 @@ Future<List<int>?> showValueEditor(
     case DataType.vector:
       return _editVector(context, info, current);
     case DataType.matrix:
-      return _editMatrix(context, info, current);
+      return (info?.transform == true)
+          ? _editTransformMatrix(context, current)
+          : _editMatrix(context, info, current);
     case DataType.colour:
       return _editColour(context, current);
     case DataType.uint32:
@@ -517,12 +520,39 @@ Future<List<int>?> _editMatrix(
   );
 }
 
-/// Colour: RGBA byte order on the wire (Data Formats.md); presets + hex entry.
+/// Colour: RGBA byte order on the wire (Data Formats.md). Editor offers an RGBA hex
+/// field, HSVA sliders, a live preview and presets.
 Future<List<int>?> _editColour(BuildContext context, List<int> current) {
+  int r = current.length >= 4 ? current[0] : 255;
+  int g = current.length >= 4 ? current[1] : 255;
+  int b = current.length >= 4 ? current[2] : 255;
+  int a = current.length >= 4 ? current[3] : 255;
   final controller = TextEditingController(
-      text: current.length >= 4
-          ? current.sublist(0, 4).map((int b) => b.toRadixString(16).padLeft(2, '0')).join()
-          : 'FFFFFF00');
+      text: [r, g, b, a].map((v) => v.toRadixString(16).padLeft(2, '0')).join());
+
+  String hex() => [r, g, b, a].map((v) => v.toRadixString(16).padLeft(2, '0')).join();
+  Color preview() => Color.fromARGB((a & 0xFF), r & 0xFF, g & 0xFF, b & 0xFF);
+
+  // HSVA slider state, derived from the current RGBA.
+  var sliderH = 0.0, sliderS = 100.0, sliderV = 100.0;
+  void syncHsv() {
+    final hsv = HSVColor.fromColor(preview());
+    sliderH = hsv.hue;
+    sliderS = hsv.saturation * 100;
+    sliderV = hsv.value * 100;
+  }
+
+  syncHsv();
+
+  void applyHsv() {
+    final hsv = HSVColor.fromAHSV(a / 255, sliderH, sliderS / 100, sliderV / 100);
+    final c = hsv.toColor();
+    r = (c.r * 255).round();
+    g = (c.g * 255).round();
+    b = (c.b * 255).round();
+    controller.text = hex();
+  }
+
   const presets = {
     'Off': [0, 0, 0, 0],
     'White': [255, 255, 255, 255],
@@ -531,76 +561,318 @@ Future<List<int>?> _editColour(BuildContext context, List<int> current) {
     'Blue': [0, 0, 255, 255],
     'Orange': [255, 128, 0, 255],
   };
-  Color preview(List<int>? rgba) => rgba == null || rgba.length < 4
-      ? Colors.transparent
-      : Color.fromARGB(rgba[3], rgba[0], rgba[1], rgba[2]);
-  List<int>? parsed = current.length >= 4 ? current.sublist(0, 4) : null;
+
   return showDialog<List<int>>(
     context: context,
     builder: (context) => StatefulBuilder(
       builder: (context, setState) => AlertDialog(
-        title: const Text('Colour (RGBA hex)'),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          Row(children: [
+        title: const Text('Colour'),
+        content: SizedBox(
+          width: 320,
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            // Live preview.
             Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                    color: preview(parsed),
-                    border: Border.all(color: Colors.white24))),
-            const SizedBox(width: 12),
-            Expanded(
-              child: TextField(
-                controller: controller,
-                autofocus: true,
-                maxLength: 8,
-                decoration: const InputDecoration(hintText: 'RRGGBBAA'),
-                onChanged: (text) {
-                  final clean =
-                      text.replaceAll(RegExp(r'[^0-9a-fA-F]'), '');
-                  parsed = clean.length == 8
-                      ? [
-                          for (var i = 0; i < 8; i += 2)
-                            int.parse(clean.substring(i, i + 2), radix: 16)
-                        ]
-                      : null;
-                  setState(() {});
-                },
+              height: 44,
+              width: double.infinity,
+              decoration: BoxDecoration(
+                  color: preview(),
+                  border: Border.all(color: Colors.white24),
+                  borderRadius: BorderRadius.circular(8)),
+            ),
+            const SizedBox(height: 8),
+            // RGBA hex entry.
+            TextField(
+              controller: controller,
+              maxLength: 8,
+              decoration: const InputDecoration(hintText: 'RRGGBBAA', labelText: 'RGBA hex'),
+              onChanged: (text) {
+                final clean = text.replaceAll(RegExp(r'[^0-9a-fA-F]'), '');
+                if (clean.length == 8) {
+                  r = int.parse(clean.substring(0, 2), radix: 16);
+                  g = int.parse(clean.substring(2, 4), radix: 16);
+                  b = int.parse(clean.substring(4, 6), radix: 16);
+                  a = int.parse(clean.substring(6, 8), radix: 16);
+                  syncHsv();
+                }
+                setState(() {});
+              },
+            ),
+            const SizedBox(height: 4),
+            // HSVA sliders.
+            Row(children: [
+              const SizedBox(width: 34, child: Text('H', style: TextStyle(fontSize: 12))),
+              Expanded(
+                child: Slider(
+                  value: sliderH, min: 0, max: 360, divisions: 360,
+                  label: '${sliderH.round()}°',
+                  onChanged: (v) => setState(() { sliderH = v; applyHsv(); }),
+                ),
               ),
+              SizedBox(width: 34, child: Text('${sliderH.round()}', textAlign: TextAlign.right, style: const TextStyle(fontSize: 11))),
+            ]),
+            Row(children: [
+              const SizedBox(width: 34, child: Text('S', style: TextStyle(fontSize: 12))),
+              Expanded(
+                child: Slider(
+                  value: sliderS, min: 0, max: 100, divisions: 100,
+                  label: '${sliderS.round()}%',
+                  onChanged: (v) => setState(() { sliderS = v; applyHsv(); }),
+                ),
+              ),
+              SizedBox(width: 34, child: Text('${sliderS.round()}', textAlign: TextAlign.right, style: const TextStyle(fontSize: 11))),
+            ]),
+            Row(children: [
+              const SizedBox(width: 34, child: Text('V', style: TextStyle(fontSize: 12))),
+              Expanded(
+                child: Slider(
+                  value: sliderV, min: 0, max: 100, divisions: 100,
+                  label: '${sliderV.round()}%',
+                  onChanged: (v) => setState(() { sliderV = v; applyHsv(); }),
+                ),
+              ),
+              SizedBox(width: 34, child: Text('${sliderV.round()}', textAlign: TextAlign.right, style: const TextStyle(fontSize: 11))),
+            ]),
+            Row(children: [
+              const SizedBox(width: 34, child: Text('A', style: TextStyle(fontSize: 12))),
+              Expanded(
+                child: Slider(
+                  value: a.toDouble(), min: 0, max: 255, divisions: 255,
+                  label: '${a}',
+                  onChanged: (v) => setState(() { a = v.round(); syncHsv(); }),
+                ),
+              ),
+              SizedBox(width: 34, child: Text('$a', textAlign: TextAlign.right, style: const TextStyle(fontSize: 11))),
+            ]),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 8,
+              children: [
+                for (final entry in presets.entries)
+                  InkWell(
+                    onTap: () {
+                      final v = entry.value;
+                      r = v[0]; g = v[1]; b = v[2]; a = v[3];
+                      controller.text = hex();
+                      syncHsv();
+                      setState(() {});
+                    },
+                    child: Container(
+                        width: 28,
+                        height: 28,
+                        decoration: BoxDecoration(
+                            color: Color.fromARGB(
+                                entry.value[3], entry.value[0], entry.value[1], entry.value[2]),
+                            border: Border.all(color: Colors.white24),
+                            borderRadius: BorderRadius.circular(6))),
+                  ),
+              ],
             ),
           ]),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            children: [
-              for (final entry in presets.entries)
-                InkWell(
-                  onTap: () {
-                    parsed = entry.value;
-                    controller.text = entry.value
-                        .map((int b) => b.toRadixString(16).padLeft(2, '0'))
-                        .join();
-                    setState(() {});
-                  },
-                  child: Container(
-                      width: 28,
-                      height: 28,
-                      color: preview(entry.value)),
-                ),
-            ],
-          ),
-        ]),
+        ),
         actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
           FilledButton(
-              onPressed: () => Navigator.pop(context, parsed),
+              onPressed: () => Navigator.pop(context, [r, g, b, a]),
               child: const Text('OK')),
         ],
       ),
     ),
   );
 }
+
+/// Matrix editor with two switchable modes for a 2x3 affine matrix [a b tx; c d ty]
+/// (the render-block Position key):
+///  - Transformation: Offset X/Y, Rotation, Scale X/Y, Skew, Mirror;
+///  - Raw: the six matrix cells.
+/// The transform mode reconstructs the matrix as:
+///   [ cos.sx       cos.sx.tan(skew) - sin.sy    tx ]
+///   [ sin.sx       sin.sx.tan(skew) + cos.sy    ty ]
+Future<List<int>?> _editTransformMatrix(BuildContext context, List<int> current) {
+  double m(int i) =>
+      current.length >= 4 + (i + 1) * 4 ? numberFromBytes(current, 4 + i * 4) : (i == 0 || i == 4 ? 1 : 0);
+
+  // Source of truth: the six cells (a, b, tx, c, d, ty).
+  final cells = <double>[m(0), m(1), m(2), m(3), m(4), m(5)];
+
+  // Raw cell controllers.
+  final raw = List.generate(6, (i) => TextEditingController(text: _num3(cells[i])));
+
+  // Transform controllers + mirror flags.
+  final tc = <String, TextEditingController>{};
+  var mirrorX = false, mirrorY = false;
+
+  void syncTc() {
+    final a = cells[0], b = cells[1], c = cells[3], d = cells[4];
+    final sx = math.sqrt(a * a + c * c);
+    final sy = math.sqrt(b * b + d * d);
+    final deg = math.atan2(c, a) * 180 / math.pi;
+    mirrorX = (a < 0 && c == 0 && b == 0 && d > 0);
+    mirrorY = (d < 0 && b == 0 && c == 0 && a > 0);
+    tc['ox']!.text = _num3(cells[2]);
+    tc['oy']!.text = _num3(cells[5]);
+    tc['rot']!.text = _num3(deg);
+    tc['sx']!.text = _num3(sx);
+    tc['sy']!.text = _num3(sy);
+    tc['skew']!.text = '0';
+  }
+
+  tc['ox'] = TextEditingController();
+  tc['oy'] = TextEditingController();
+  tc['rot'] = TextEditingController();
+  tc['sx'] = TextEditingController();
+  tc['sy'] = TextEditingController();
+  tc['skew'] = TextEditingController();
+  syncTc();
+
+  // Transform -> raw (also called on every transform/mirror edit).
+  void syncRaw() {
+    final oxx = double.tryParse(tc['ox']!.text) ?? cells[2];
+    final oyy = double.tryParse(tc['oy']!.text) ?? cells[5];
+    final rot = double.tryParse(tc['rot']!.text) ?? 0.0;
+    final sxx = double.tryParse(tc['sx']!.text) ?? 1.0;
+    final syy = double.tryParse(tc['sy']!.text) ?? 1.0;
+    final sk = double.tryParse(tc['skew']!.text) ?? 0.0;
+    final rad = rot * math.pi / 180;
+    final k = math.tan(sk * math.pi / 180);
+    final fsx = sxx * (mirrorX ? -1 : 1);
+    final fsy = syy * (mirrorY ? -1 : 1);
+    cells[0] = fsx * math.cos(rad);
+    cells[1] = fsx * math.cos(rad) * k - fsy * math.sin(rad);
+    cells[2] = oxx;
+    cells[3] = fsx * math.sin(rad);
+    cells[4] = fsx * math.sin(rad) * k + fsy * math.cos(rad);
+    cells[5] = oyy;
+    for (var i = 0; i < 6; i++) {
+      raw[i].text = _num3(cells[i]);
+    }
+  }
+
+  // Raw -> transform controllers (best-effort; assumes no shear).
+  void syncFromRaw() {
+    for (var i = 0; i < 6; i++) {
+      cells[i] = double.tryParse(raw[i].text) ?? cells[i];
+    }
+    syncTc();
+  }
+
+  void reset() {
+    cells
+      ..[0] = 1
+      ..[1] = 0
+      ..[2] = 0
+      ..[3] = 0
+      ..[4] = 1
+      ..[5] = 0;
+    syncTc();
+    for (var i = 0; i < 6; i++) {
+      raw[i].text = _num3(cells[i]);
+    }
+  }
+
+  List<int> build() {
+    for (var i = 0; i < 6; i++) {
+      cells[i] = double.tryParse(raw[i].text) ?? cells[i];
+    }
+    return [2, 0, 3, 0, for (final v in cells) ...numberToBytes(v)];
+  }
+
+  Widget row(String label, String key) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Row(children: [
+          SizedBox(width: 100, child: Text(label, style: const TextStyle(fontSize: 12))),
+          Expanded(
+            child: TextField(
+              controller: tc[key]!,
+              keyboardType: const TextInputType.numberWithOptions(signed: true, decimal: true),
+              onChanged: (_) => syncRaw(),
+            ),
+          ),
+        ]),
+      );
+
+  const cellNames = ['a', 'b', 'tx', 'c', 'd', 'ty'];
+
+  var rawMode = false;
+
+  return showDialog<List<int>>(
+    context: context,
+    builder: (context) => StatefulBuilder(
+      builder: (context, setState) => AlertDialog(
+          title: const Text('Matrix (2x3)'),
+          content: SizedBox(
+            width: 320,
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              SegmentedButton<bool>(
+                segments: const [
+                  ButtonSegment(value: false, label: Text('Transform')),
+                  ButtonSegment(value: true, label: Text('Raw')),
+                ],
+                selected: {rawMode},
+                onSelectionChanged: (sel) {
+                  final toRaw = sel.first;
+                  if (toRaw) {
+                    syncTc();
+                  } else {
+                    syncFromRaw();
+                  }
+                  setState(() => rawMode = toRaw);
+                },
+              ),
+              const SizedBox(height: 10),
+              if (!rawMode) ...[
+                row('Offset X', 'ox'),
+                row('Offset Y', 'oy'),
+                row('Rotation °', 'rot'),
+                row('Scale X', 'sx'),
+                row('Scale Y', 'sy'),
+                row('Skew °', 'skew'),
+                Row(children: [
+                  Checkbox(
+                      value: mirrorX,
+                      onChanged: (v) => setState(() {
+                        mirrorX = v ?? false;
+                        syncRaw();
+                      })),
+                  const Text('Mirror X', style: TextStyle(fontSize: 12)),
+                  const SizedBox(width: 24),
+                  Checkbox(
+                      value: mirrorY,
+                      onChanged: (v) => setState(() {
+                        mirrorY = v ?? false;
+                        syncRaw();
+                      })),
+                  const Text('Mirror Y', style: TextStyle(fontSize: 12)),
+                ]),
+              ] else ...[
+                for (var r = 0; r < 2; r++)
+                  Row(children: [
+                    for (var c = 0; c < 3; c++)
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.all(3),
+                          child: TextField(
+                            controller: raw[r * 3 + c],
+                            keyboardType: const TextInputType.numberWithOptions(signed: true, decimal: true),
+                            textAlign: TextAlign.center,
+                            decoration: InputDecoration(labelText: cellNames[r * 3 + c]),
+                            onChanged: (_) => syncFromRaw(),
+                          ),
+                        ),
+                      ),
+                  ]),
+              ],
+            ]),
+          ),
+          actions: [
+            TextButton(onPressed: () => setState(reset), child: const Text('Reset')),
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(context, build()), child: const Text('OK')),
+          ],
+        ),
+      ),
+  );
+}
+
 
 Future<List<int>?> _editInt(
   BuildContext context, {
