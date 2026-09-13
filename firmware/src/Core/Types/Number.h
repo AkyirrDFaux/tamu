@@ -196,6 +196,8 @@ inline Number abs(Number A)
 }
 
 // Fixed-point square root via binary digit-by-digit extraction (returns 0 for non-positive input).
+// Used by the Vector/Matrix support only; compiled out on SCALAR_ONLY targets.
+#ifndef SCALAR_ONLY
 #ifdef NUMBER_ONLY_32BIT
 // 32-bit-only variant: decompose into integer sqrt then shift.
 // For 16.16 fixed point: sqrt(x_16.16) = isqrt32(x) << 8.
@@ -250,6 +252,7 @@ inline Number sqrt(Number A)
     return Number::FromRaw((int32_t)res);
 }
 #endif
+#endif // SCALAR_ONLY
 
 #define RAW_PI 205887
 // Single shared PI instance: a plain namespace-scope `static const Number` would be

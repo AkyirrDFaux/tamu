@@ -32,6 +32,10 @@ const int fileFragContentSize = 112;
 
 class StorageClient {
   final int deviceId;
+  /// True when the device uses the reduced (USE_FIXED_STORAGE) file system - its file
+  /// table is a const array in firmware and the file browser is read-only. Detected when
+  /// readFileTable() finds a fixed record at offset 0 with a non-zero size.
+  bool reduced = false;
 
   StorageClient({required this.deviceId});
 
@@ -95,9 +99,12 @@ class StorageClient {
     for (var offset = 0; offset + 16 <= contents.length; offset += 16) {
       final recOffset = uint32FromBytes(contents, offset);
       final size = uint32FromBytes(contents, offset + 4);
-      // Unwritten entries are all 0xFF; invalidated ones have offset 0.
+      // Unwritten entries are all 0xFF; invalidated ones have offset 0 AND size 0 (the
+      // device zeroes both). A record at offset 0 with a non-zero size is a valid fixed
+      // (reduced file system) file, so it must be listed.
       if (recOffset == 0xFFFFFFFF && size == 0xFFFFFFFF) break;
-      if (recOffset == 0) continue; // invalidated record
+      if (recOffset == 0 && size == 0) continue; // invalidated record
+      if (recOffset == 0) reduced = true; // fixed (reduced) file system record
       records.add(
         FileRecord(
           index: records.length,

@@ -3,9 +3,12 @@
 #include "Core/Functions/Packet.h"
 #include "Core/Functions/Storage.h"
 
+// Replies to a storage request. Docs: responses are sent only if requested (REQACK set).
 static void StorageReply(PacketFrame &reply, const PacketFrame &req,
                            const uint8_t *payload, uint16_t len)
 {
+    if (!(req.flags & FLAG_REQACK))
+        return;
     PacketConstruct(&reply, req.id_src, req.srv_src, req.srv_tgt,
                      FLAG_TYPE | FLAG_START | FLAG_STOP, payload, len);
     DispatchPacket(reply);
@@ -30,6 +33,9 @@ void HandleStorageService(const PacketFrame &frame)
             break;
         }
 
+        // Create/Delete/Resize/Rename are NOT part of the reduced file system
+        // (docs: "not in reduced file system").
+#ifndef USE_FIXED_STORAGE
         case 1: { // Create per docs 03.01
             if (PayloadBytes(frame) >= 12) {
                 const char *name = reinterpret_cast<const char *>(frame.payload);
@@ -81,6 +87,7 @@ void HandleStorageService(const PacketFrame &frame)
             }
             break;
         }
+#endif // !USE_FIXED_STORAGE
 
         case 5: { // Read per docs 03.05
             if (PayloadBytes(frame) >= 8) {
@@ -88,9 +95,9 @@ void HandleStorageService(const PacketFrame &frame)
                 uint32_t file_offset, file_size;
                 if (Storage.GetFileInfo(name, &file_offset, &file_size)) {
                     uint32_t total_content = file_size;
-                    // Fragment 0 has 4 frag_info + 8 name = 12 overhead, leaving 104 for content.
-                    // Other fragments have 4 overhead, leaving 112. Use 104 for all to simplify.
-                    uint16_t contentCap = MAX_FRAG_CONTENT_SIZE - 8;
+                    // Docs: "maximum 64 byte stream fragment". Every fragment carries the
+                    // 4-byte frag info (fragment 0 additionally the 8-byte name echo).
+                    uint16_t contentCap = 64;
                     uint16_t total_frags = (uint16_t)((total_content + contentCap - 1) / contentCap);
                     if (total_frags == 0) total_frags = 1;
                     for (uint16_t f = 0; f < total_frags; f++) {
@@ -105,6 +112,13 @@ void HandleStorageService(const PacketFrame &frame)
                                                    ? contentCap
                                                    : (uint16_t)(total_content - content_off);
                         if (content_len)
+#ifdef USE_FIXED_STORAGE
+                            // The fixed filetable is a const array in code, not a flash
+                            // file: serialize it on the fly for the app's file browser.
+                            if (Storage.IsFixedTableName(name))
+                                Storage.CopyFixedTable(tx_frame.payload + 4 + head, content_off, content_len);
+                            else
+#endif
                             Storage_FlashRead(file_offset + content_off, tx_frame.payload + 4 + head, content_len);
                         FinalizeReply(tx_frame, frame, flags, (uint16_t)(4 + head + content_len));
                         DispatchPacket(tx_frame);
@@ -140,6 +154,7 @@ void HandleStorageService(const PacketFrame &frame)
                 content_len = plen - 4;
             }
             uint32_t file_offset, file_size;
+            if (content_len > 64) content_len = 64; // docs: "maximum 64 byte stream fragment"
             if (Storage.GetFileInfo((const char *)name, &file_offset, &file_size)) {
                 if (frag.current == (uint16_t)(s_write_seq + 1)) {
                     uint32_t room = (s_write_off < file_size) ? (file_size - s_write_off) : 0;

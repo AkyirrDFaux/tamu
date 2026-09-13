@@ -8,11 +8,11 @@
 #include "Core/Types/Enums.h"
 
 #ifndef BOARD_DAS_v0_1
-// The DAS is a pure sensor node; its subscription service (provider table, ticks and
-// service handler) is temporarily removed while its flash budget is being reworked.
 // The Tamu v2.0A (core) keeps the requester + provider support below.
 #define MAX_PROVIDER_SUBS 20
-#define PROVIDER_TOLERANCE_SIZE 16
+// Tolerance wire format is a type byte + a fixed-point/int32 value (5 bytes); 8 gives
+// headroom for the widest scalar comparison. Vector tolerances are not supported.
+#define PROVIDER_TOLERANCE_SIZE 8
 #define PROVIDER_LASTVALUE_SIZE 16
 
 #define TRID_SUB_BASE 0xFA00
@@ -55,17 +55,24 @@ static inline FieldResult SubscriptionsGetField(uint32_t blockInfo) {
     return static_block_registry[idx].Get(field);
 }
 
+// Provider-side subscription entry (Docs/Services/Subscriptions.md: "Trigger settings and
+// states | Flexible | Trigger type dependent"). The trigger-specific fields share one
+// union: only the member matching `trigger` is meaningful.
+//   EdgeRise/EdgeFall          -> counter (incremental, repeats until confirmed)
+//   DeltaPeriodic/DeltaConfirm -> tolerance (type byte + threshold value)
+// Period, minimum interval, last value and retry state are common to every trigger.
 struct ProviderEntry {
     uint16_t trid = 0;
     uint32_t sourceReg = 0;
     uint16_t requesterAddr = 0;
     TriggerType trigger = TriggerType::Periodic;
-    uint32_t periodMs = 0;
     uint32_t lastSentMs = 0;
-    uint32_t minTimeMs = 0;
-    uint32_t counter = 0;
-    uint8_t toleranceLen = 0;
-    uint8_t toleranceData[PROVIDER_TOLERANCE_SIZE];
+    uint32_t periodMs = 0;   // Periodic / OnChangePeriodic / DeltaPeriodic
+    uint32_t minTimeMs = 0;  // minimum interval between sends (all triggers)
+    union {
+        struct { uint32_t counter; } edge;                          // EdgeRise / EdgeFall
+        struct { uint8_t toleranceLen; uint8_t toleranceData[PROVIDER_TOLERANCE_SIZE]; } delta; // Delta*
+    };
     uint8_t lastValueLen = 0;
     uint8_t lastValueData[PROVIDER_LASTVALUE_SIZE];
     bool awaitingAck = false;
@@ -73,6 +80,22 @@ struct ProviderEntry {
 };
 
 static ProviderEntry providerTable[MAX_PROVIDER_SUBS];
+
+// Reads the trigger-specific counter (0 unless the entry is an edge trigger). Shared by
+// the provider and requester entries (both use the same union layout).
+template <typename E>
+static inline uint32_t EntryCounter(const E *e) {
+    return (e->trigger == TriggerType::EdgeRise || e->trigger == TriggerType::EdgeFall) ? e->edge.counter : 0;
+}
+// Reads the trigger-specific tolerance length (0 unless the entry is a delta trigger).
+template <typename E>
+static inline uint8_t EntryToleranceLen(const E *e) {
+    return (e->trigger == TriggerType::DeltaPeriodic || e->trigger == TriggerType::DeltaConfirm) ? e->delta.toleranceLen : 0;
+}
+template <typename E>
+static inline const uint8_t *EntryToleranceData(const E *e) {
+    return e->delta.toleranceData;
+}
 
 static uint16_t SubscriptionsNextTrid() {
     static uint16_t next = TRID_SUB_BASE;
@@ -122,8 +145,7 @@ static void ProviderClearEntry(ProviderEntry* e) {
     e->periodMs = 0;
     e->lastSentMs = 0;
     e->minTimeMs = 0;
-    e->counter = 0;
-    e->toleranceLen = 0;
+    memset(&e->edge, 0, sizeof(e->edge)); // zeroes the whole union (counter + tolerance)
     e->lastValueLen = 0;
     e->awaitingAck = false;
     e->retryCount = 0;
@@ -147,8 +169,10 @@ static uint8_t DataTypeSize(DataType dt) {
         case DataType::Uint32: case DataType::Id: return 4;
         case DataType::Number: case DataType::Index: return 4;
         case DataType::SN: return 14;
+#ifndef SCALAR_ONLY
         case DataType::Vector: return 12;
         case DataType::Matrix: return 0;
+#endif
         case DataType::String: case DataType::Filename: return 0;
         default: return 4;
     }
@@ -229,19 +253,17 @@ static bool TriggerShouldFire(ProviderEntry* e, uint32_t nowMs) {
     uint32_t elapsed = nowMs - e->lastSentMs;
     if (elapsed < e->minTimeMs) return false;
 
+    // "with period" triggers fall back to their configured period on the main-loop tick;
+    // confirmation/edge triggers repeat on the minimum interval until acknowledged.
     switch (e->trigger) {
         case TriggerType::Periodic:
+        case TriggerType::OnChangePeriodic:
+        case TriggerType::DeltaPeriodic:
             return (e->periodMs > 0) && (elapsed >= e->periodMs);
 
-        case TriggerType::OnChangePeriodic:
         case TriggerType::OnChangeConfirm:
-            return true;
-
         case TriggerType::EdgeRise:
         case TriggerType::EdgeFall:
-            return true;
-
-        case TriggerType::DeltaPeriodic:
         case TriggerType::DeltaConfirm:
             return true;
 
@@ -300,22 +322,22 @@ void SubscriptionsOnRegisterWrite(uint32_t srcReg, const uint8_t *newValue, uint
             bool prev = (e->lastValueLen > 0 && e->lastValueData[3] != 0);
             bool curr = (tlfvLen > 3 && tlfv[3] != 0);
             fire = (!prev && curr);
-            e->counter++;
+            e->edge.counter++;
             break;
         }
         case TriggerType::EdgeFall: {
             bool prev = (e->lastValueLen > 0 && e->lastValueData[3] != 0);
             bool curr = (tlfvLen > 3 && tlfv[3] != 0);
             fire = (prev && !curr);
-            e->counter++;
+            e->edge.counter++;
             break;
         }
         case TriggerType::DeltaPeriodic:
         case TriggerType::DeltaConfirm: {
-            if (e->toleranceLen == 0 || BlockMetaType(fr.Descriptor.FlagsAndType) != e->toleranceData[0]) {
+            if (e->delta.toleranceLen == 0 || BlockMetaType(fr.Descriptor.FlagsAndType) != e->delta.toleranceData[0]) {
                 fire = false;
             } else {
-                int32_t tolerance = *(int32_t*)(e->toleranceData + 1);
+                int32_t tolerance = *(int32_t*)(e->delta.toleranceData + 1);
                 int32_t prevVal = *(int32_t*)(e->lastValueData + 3);
                 int32_t currVal = *(int32_t*)(tlfv + 3);
                 int32_t diff = currVal - prevVal;
@@ -344,9 +366,10 @@ static uint16_t ProviderEntrySerialize(uint8_t *buf, uint16_t off, const Provide
     *(uint32_t *)(buf + off) = e->periodMs; off += 4;
     *(uint32_t *)(buf + off) = e->lastSentMs; off += 4;
     *(uint32_t *)(buf + off) = e->minTimeMs; off += 4;
-    *(uint32_t *)(buf + off) = e->counter; off += 4;
-    buf[off++] = e->toleranceLen;
-    if (e->toleranceLen > 0) { memcpy(buf + off, e->toleranceData, e->toleranceLen); off += e->toleranceLen; }
+    *(uint32_t *)(buf + off) = EntryCounter(e); off += 4;
+    uint8_t tolLen = EntryToleranceLen(e);
+    buf[off++] = tolLen;
+    if (tolLen > 0) { memcpy(buf + off, EntryToleranceData(e), tolLen); off += tolLen; }
     buf[off++] = e->lastValueLen;
     if (e->lastValueLen > 0) { memcpy(buf + off, e->lastValueData, e->lastValueLen); off += e->lastValueLen; }
     return off;
@@ -363,9 +386,10 @@ struct RequesterEntry {
     TriggerType trigger = TriggerType::Periodic;
     uint32_t periodMs = 0;
     uint32_t minTimeMs = 0;
-    uint32_t counter = 0;
-    uint8_t toleranceLen = 0;
-    uint8_t toleranceData[16];
+    union {
+        struct { uint32_t counter; } edge;                          // EdgeRise / EdgeFall
+        struct { uint8_t toleranceLen; uint8_t toleranceData[PROVIDER_TOLERANCE_SIZE]; } delta; // Delta*
+    };
     uint16_t trid = 0;
     bool active = false;
 };
@@ -403,8 +427,7 @@ static void RequesterClearEntry(RequesterEntry* e) {
     e->trigger = TriggerType::Periodic;
     e->periodMs = 0;
     e->minTimeMs = 0;
-    e->counter = 0;
-    e->toleranceLen = 0;
+    memset(&e->edge, 0, sizeof(e->edge)); // zeroes the whole union (counter + tolerance)
     e->trid = 0;
     e->active = false;
 }
@@ -428,10 +451,10 @@ static void SaveRequesterTable() {
         buf[off++] = (uint8_t)e->trigger;
         *(uint32_t*)(buf + off) = e->periodMs; off += 4;
         *(uint32_t*)(buf + off) = e->minTimeMs; off += 4;
-        *(uint32_t*)(buf + off) = e->counter; off += 4;
-        buf[off++] = e->toleranceLen;
-        if (e->toleranceLen > PROVIDER_TOLERANCE_SIZE) e->toleranceLen = PROVIDER_TOLERANCE_SIZE;
-        if (e->toleranceLen > 0) { memcpy(buf + off, e->toleranceData, e->toleranceLen); off += e->toleranceLen; }
+        *(uint32_t*)(buf + off) = EntryCounter(e); off += 4;
+        uint8_t tolLen = EntryToleranceLen(e);
+        buf[off++] = tolLen;
+        if (tolLen > 0) { memcpy(buf + off, EntryToleranceData(e), tolLen); off += tolLen; }
         *(uint16_t*)(buf + off) = e->trid; off += 2;
     }
     // Write via a temp file + rename (NOR-safe, like the backup files): an in-place
@@ -472,9 +495,13 @@ static void RegisterRequesterProvider(RequesterEntry* e) {
         p->trigger = e->trigger;
         p->periodMs = e->periodMs;
         p->minTimeMs = e->minTimeMs;
-        p->counter = e->counter;
-        p->toleranceLen = e->toleranceLen;
-        memcpy(p->toleranceData, e->toleranceData, e->toleranceLen);
+        // Mirror the trigger-relevant union member from the requester entry.
+        if (e->trigger == TriggerType::EdgeRise || e->trigger == TriggerType::EdgeFall) {
+            p->edge.counter = e->edge.counter;
+        } else if (e->trigger == TriggerType::DeltaPeriodic || e->trigger == TriggerType::DeltaConfirm) {
+            p->delta.toleranceLen = e->delta.toleranceLen;
+            memcpy(p->delta.toleranceData, e->delta.toleranceData, e->delta.toleranceLen);
+        }
         p->lastSentMs = 0;
         p->awaitingAck = false;
         p->retryCount = 0;
@@ -487,9 +514,10 @@ static void RegisterRequesterProvider(RequesterEntry* e) {
         payload[off++] = (uint8_t)e->trigger;
         *(uint32_t*)(payload + off) = e->periodMs; off += 4;
         *(uint32_t*)(payload + off) = e->minTimeMs; off += 4;
-        *(uint32_t*)(payload + off) = e->counter; off += 4;
-        payload[off++] = e->toleranceLen;
-        if (e->toleranceLen > 0) { memcpy(payload + off, e->toleranceData, e->toleranceLen); off += e->toleranceLen; }
+        *(uint32_t*)(payload + off) = EntryCounter(e); off += 4;
+        uint8_t tolLen = EntryToleranceLen(e);
+        payload[off++] = tolLen;
+        if (tolLen > 0) { memcpy(payload + off, EntryToleranceData(e), tolLen); off += tolLen; }
         PacketFrame req;
         PacketConstruct(&req, e->providerAddr,
                         MakeService(ServiceType::Subscriptions, 1),
@@ -516,12 +544,19 @@ static void LoadRequesterTable() {
         e->trigger = (TriggerType)buf[off++];
         e->periodMs = *(uint32_t*)(buf + off); off += 4;
         e->minTimeMs = *(uint32_t*)(buf + off); off += 4;
-        e->counter = *(uint32_t*)(buf + off); off += 4;
-        e->toleranceLen = buf[off++];
-        if (e->toleranceLen > PROVIDER_TOLERANCE_SIZE) e->toleranceLen = PROVIDER_TOLERANCE_SIZE;
-        if (e->toleranceLen > 0 && off + e->toleranceLen <= len) {
-            memcpy(e->toleranceData, buf + off, e->toleranceLen);
-            off += e->toleranceLen;
+        uint32_t counter = *(uint32_t*)(buf + off); off += 4;
+        uint8_t toleranceLen = buf[off++];
+        if (toleranceLen > PROVIDER_TOLERANCE_SIZE) toleranceLen = PROVIDER_TOLERANCE_SIZE;
+        if (e->trigger == TriggerType::EdgeRise || e->trigger == TriggerType::EdgeFall) {
+            e->edge.counter = counter;
+        } else if (e->trigger == TriggerType::DeltaPeriodic || e->trigger == TriggerType::DeltaConfirm) {
+            e->delta.toleranceLen = toleranceLen;
+            if (toleranceLen > 0 && off + toleranceLen <= len) {
+                memcpy(e->delta.toleranceData, buf + off, toleranceLen);
+                off += toleranceLen;
+            }
+        } else {
+            off += toleranceLen; // skip the wire tolerance bytes
         }
         e->trid = *(uint16_t*)(buf + off); off += 2;
         if (e->trid == 0) e->trid = SubscriptionsNextTrid();
@@ -689,9 +724,13 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
             e->trigger = trigger;
             e->periodMs = periodMs;
             e->minTimeMs = minTimeMs;
-            e->counter = counter;
-            e->toleranceLen = toleranceLen;
-            memcpy(e->toleranceData, toleranceData, toleranceLen);
+            // Store only the trigger-relevant union member.
+            if (trigger == TriggerType::EdgeRise || trigger == TriggerType::EdgeFall) {
+                e->edge.counter = counter;
+            } else if (trigger == TriggerType::DeltaPeriodic || trigger == TriggerType::DeltaConfirm) {
+                e->delta.toleranceLen = toleranceLen;
+                memcpy(e->delta.toleranceData, toleranceData, toleranceLen);
+            }
             e->lastSentMs = 0;
             e->awaitingAck = false;
             e->retryCount = 0;
@@ -740,9 +779,10 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
                     buf[off++] = (uint8_t)e->trigger;
                     *(uint32_t*)(buf + off) = e->periodMs; off += 4;
                     *(uint32_t*)(buf + off) = e->minTimeMs; off += 4;
-                    *(uint32_t*)(buf + off) = e->counter; off += 4;
-                    buf[off++] = e->toleranceLen;
-                    if (e->toleranceLen > 0) { memcpy(buf + off, e->toleranceData, e->toleranceLen); off += e->toleranceLen; }
+                    *(uint32_t*)(buf + off) = EntryCounter(e); off += 4;
+                    uint8_t tolLen = EntryToleranceLen(e);
+                    buf[off++] = tolLen;
+                    if (tolLen > 0) { memcpy(buf + off, EntryToleranceData(e), tolLen); off += tolLen; }
                     *(uint16_t*)(buf + off) = e->trid; off += 2;
                 }
                 SubReply(frame, buf, off);
@@ -758,9 +798,10 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
                     buf[off++] = (uint8_t)e->trigger;
                     *(uint32_t*)(buf + off) = e->periodMs; off += 4;
                     *(uint32_t*)(buf + off) = e->minTimeMs; off += 4;
-                    *(uint32_t*)(buf + off) = e->counter; off += 4;
-                    buf[off++] = e->toleranceLen;
-                    if (e->toleranceLen > 0) { memcpy(buf + off, e->toleranceData, e->toleranceLen); off += e->toleranceLen; }
+                    *(uint32_t*)(buf + off) = EntryCounter(e); off += 4;
+                    uint8_t tolLen = EntryToleranceLen(e);
+                    buf[off++] = tolLen;
+                    if (tolLen > 0) { memcpy(buf + off, EntryToleranceData(e), tolLen); off += tolLen; }
                     *(uint16_t*)(buf + off) = e->trid; off += 2;
 
                     SubReply(frame, buf, off);
@@ -802,12 +843,19 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
                         e->trigger = (TriggerType)frame.payload[offset++];
                         e->periodMs = *(uint32_t*)(frame.payload + offset); offset += 4;
                         e->minTimeMs = *(uint32_t*)(frame.payload + offset); offset += 4;
-                        e->counter = *(uint32_t*)(frame.payload + offset); offset += 4;
-                        e->toleranceLen = frame.payload[offset++];
-                        if (e->toleranceLen > PROVIDER_TOLERANCE_SIZE) e->toleranceLen = PROVIDER_TOLERANCE_SIZE;
-                        if (e->toleranceLen > 0 && offset + e->toleranceLen <= PayloadBytes(frame)) {
-                            memcpy(e->toleranceData, frame.payload + offset, e->toleranceLen);
-                            offset += e->toleranceLen;
+                        uint32_t counter = *(uint32_t*)(frame.payload + offset); offset += 4;
+                        uint8_t toleranceLen = frame.payload[offset++];
+                        if (toleranceLen > PROVIDER_TOLERANCE_SIZE) toleranceLen = PROVIDER_TOLERANCE_SIZE;
+                        if (e->trigger == TriggerType::EdgeRise || e->trigger == TriggerType::EdgeFall) {
+                            e->edge.counter = counter;
+                        } else if (e->trigger == TriggerType::DeltaPeriodic || e->trigger == TriggerType::DeltaConfirm) {
+                            e->delta.toleranceLen = toleranceLen;
+                            if (toleranceLen > 0 && offset + toleranceLen <= PayloadBytes(frame)) {
+                                memcpy(e->delta.toleranceData, frame.payload + offset, toleranceLen);
+                                offset += toleranceLen;
+                            }
+                        } else {
+                            offset += toleranceLen; // skip the wire tolerance bytes
                         }
                         // Use frame.trid (from packet header) as the TRID for round-trip
                         // The app sends transaction ID in srvSource = makeService(App, txId)
@@ -844,9 +892,10 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
                         reqBuf[reqOff++] = (uint8_t)e->trigger;
                         *(uint32_t*)(reqBuf + reqOff) = e->periodMs; reqOff += 4;
                         *(uint32_t*)(reqBuf + reqOff) = e->minTimeMs; reqOff += 4;
-                        *(uint32_t*)(reqBuf + reqOff) = e->counter; reqOff += 4;
-                        reqBuf[reqOff++] = e->toleranceLen;
-                        if (e->toleranceLen > 0) { memcpy(reqBuf + reqOff, e->toleranceData, e->toleranceLen); reqOff += e->toleranceLen; }
+                        *(uint32_t*)(reqBuf + reqOff) = EntryCounter(e); reqOff += 4;
+                        uint8_t tolLen = EntryToleranceLen(e);
+                        reqBuf[reqOff++] = tolLen;
+                        if (tolLen > 0) { memcpy(reqBuf + reqOff, EntryToleranceData(e), tolLen); reqOff += tolLen; }
 
                         PacketFrame reqFrame;
                         PacketConstruct(&reqFrame, e->providerAddr,

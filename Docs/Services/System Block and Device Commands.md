@@ -34,6 +34,7 @@ Capability (32bit-field):
 	- Scripts
 	- Subscription Request
 	- Subscription Provide
+	- Reduced filesystem
 	- ...
 ### Commands for all devices (000x)
 

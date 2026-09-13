@@ -32,8 +32,7 @@ Communication uses BlockInfo and ValueInfo.
 | ---------------------- | ----- |
 | System                 | 0     |
 | Static block types     | ...   |
-| Scripts                | 0x3FD |
-| Subscription requester | 0x3FE |
+| Scripts                | 0x3FE |
 | Dynamic                | 0x3FF |
 ### System + Static memory blocks
 Basic flat memory, directly accesible internally by the device.

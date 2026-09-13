@@ -23,6 +23,7 @@ Modules:
  - Acc&Gyr
  - LED-Button
 Page size: 4096 Bytes
+Table size: 4 Pages 
 Memory...  a lot
 ### DAS v0.1 (CH32V003) - Node
 
@@ -38,12 +39,16 @@ Memory...  a lot
 Services:
 - Mandatory services
 - Subscriptions (Provide only)
+- Uses reduced filesystem
 Modules:
 - Resistive measurement x2
 - Button
 - LED
-Optimalization cuts:
-- Scalars only (No vector or matrix)
-- Only periodic, delta, bound and crossing type subscriptions
+Optimization cuts:
+- Do not use TRID manager
+	- TRID 0 is discovery
+	- TRID 1 is timesync
+	- TRID 2 is log/error
+	- Packet handlers are fixed to the TRID
 Page size: 64 Bytes (Fast mode)
-Memory: 1kB
+Memory: 128B (single file from offset 0)

@@ -1,5 +1,7 @@
 #pragma once
 
+// Vector/Matrix support is compiled out on SCALAR_ONLY targets (DAS).
+#ifndef SCALAR_ONLY
 template <size_t Rows, size_t Cols>
 class Matrix
 {
@@ -131,3 +133,5 @@ Matrix<R1, C2> operator*(const Matrix<R1, C1> &lhs, const Matrix<C1, C2> &rhs)
 {
     return lhs.multiply(rhs);
 }
+
+#endif // SCALAR_ONLY

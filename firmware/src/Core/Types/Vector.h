@@ -1,5 +1,7 @@
 #pragma once
 
+// Vector/Matrix support is compiled out on SCALAR_ONLY targets (DAS).
+#ifndef SCALAR_ONLY
 template <size_t N>
 class Vector
 {
@@ -71,3 +73,5 @@ public:
 };
 
 
+
+#endif // SCALAR_ONLY

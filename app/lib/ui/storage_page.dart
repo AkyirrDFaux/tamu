@@ -32,6 +32,10 @@ class _StoragePageState extends State<StoragePage>
   List<FileRecord>? _files;
   String? _error;
   bool _refreshing = false;
+  // USE_FIXED_STORAGE devices have no browsable file table (the table is a const array in
+  // firmware); readFileTable() fails, so the page shows a fixed-storage notice instead of
+  // the file browser, and create/upload/rename/delete are hidden.
+  bool _reduced = false;
 
   @override
   void initState() {
@@ -57,8 +61,10 @@ class _StoragePageState extends State<StoragePage>
     if (!mounted) return;
     setState(() {
       _refreshing = false;
-      // readFileTable() reads the ".TABLE  " file directly using CID 5
+      // readFileTable() reads the ".TABLE  " file directly using CID 5. A reduced
+      // (USE_FIXED_STORAGE) device serves the fixed filetable through the same read.
       _error = null;
+      _reduced = _client.reduced;
       _files = files ?? [];
     });
   }
@@ -194,14 +200,16 @@ class _StoragePageState extends State<StoragePage>
       appBar: AppBar(
         title: Text('Storage - ${idToString(widget.deviceId)}'),
         actions: [
-          IconButton(
-              onPressed: _uploadFile,
-              tooltip: 'Upload file',
-              icon: const Icon(Icons.upload_outlined)),
-          IconButton(
-              onPressed: _createFile,
-              tooltip: 'Create file',
-              icon: const Icon(Icons.create_new_folder_outlined)),
+          if (!_reduced) ...[
+            IconButton(
+                onPressed: _uploadFile,
+                tooltip: 'Upload file',
+                icon: const Icon(Icons.upload_outlined)),
+            IconButton(
+                onPressed: _createFile,
+                tooltip: 'Create file',
+                icon: const Icon(Icons.create_new_folder_outlined)),
+          ],
           RefreshButton(
             onRefresh: _refresh,
             autoActive: autoRefreshActive,
@@ -253,16 +261,18 @@ Widget _buildBody() {
                 case 'download':
                   _downloadFile(file);
                 case 'rename':
-                  _renameFile(file);
+                  if (!_reduced) _renameFile(file);
                 case 'delete':
-                  _deleteFile(file);
+                  if (!_reduced) _deleteFile(file);
               }
             },
-            itemBuilder: (_) => const [
+            itemBuilder: (_) => [
               PopupMenuItem(value: 'view', child: Text('View')),
               PopupMenuItem(value: 'download', child: Text('Download')),
-              PopupMenuItem(value: 'rename', child: Text('Rename')),
-              PopupMenuItem(value: 'delete', child: Text('Delete')),
+              if (!_reduced) ...[
+                PopupMenuItem(value: 'rename', child: Text('Rename')),
+                PopupMenuItem(value: 'delete', child: Text('Delete')),
+              ],
             ],
           ),
           onTap: () => isTable ? _showTable(file) : _showFile(file),
@@ -377,7 +387,9 @@ class _TableBodyState extends State<_TableBody> {
       final recOffset = uint32FromBytes(data, off);
       final fileSize = uint32FromBytes(data, off + 4);
       final unwritten = recOffset == 0xFFFFFFFF && fileSize == 0xFFFFFFFF;
-      final isInvalidated = !unwritten && recOffset == 0;
+      // Invalidated = offset 0 AND size 0 (the device zeroes both on delete). A record at
+      // offset 0 with a non-zero size is a valid fixed (reduced file system) file.
+      final isInvalidated = !unwritten && recOffset == 0 && fileSize == 0;
       String name() => String.fromCharCodes(data.sublist(off + 8, off + 16)).trim();
       final row = ListTile(
         dense: true,

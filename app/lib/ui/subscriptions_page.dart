@@ -447,6 +447,14 @@ class _SubscriptionDialogState extends State<_SubscriptionDialog> {
         if (_selectedProviderAddr == null && devices.isNotEmpty) {
           _selectedProviderAddr = devices.first.id;
         }
+
+        // Pre-select the existing subscription's target/source so the pickers show
+        // what is currently configured (pickers need the loaded options).
+        final existing = widget.existing;
+        if (existing != null) {
+          _selectedTarget = _matchOption(_targetOptions, existing.targetReg);
+          _selectedSource = _matchOption(_sourceOptions, existing.sourceReg);
+        }
       });
     } catch (e) {
       setState(() {
@@ -454,6 +462,13 @@ class _SubscriptionDialogState extends State<_SubscriptionDialog> {
         _loadingBlocks = false;
       });
     }
+  }
+
+  static _BlockFieldOption? _matchOption(List<_BlockFieldOption> options, int bi) {
+    for (final o in options) {
+      if (o.blockInfo == bi) return o;
+    }
+    return null;
   }
 
   Future<List<_BlockFieldOption>> _fetchAllBlockFields(int deviceId) async {
@@ -688,7 +703,9 @@ class _SubscriptionDialogState extends State<_SubscriptionDialog> {
 
     List<int> tolerance = [];
     if (_needsTolerance() && _toleranceValue != null) {
-      tolerance = int32ToBytes(_toleranceValue!);
+      // Tolerance wire format: type byte + int32 value (the firmware's delta check reads
+      // type at [0] and the threshold at [1..4]).
+      tolerance = [DataType.integer.value, ...int32ToBytes(_toleranceValue!)];
     }
 
     final index = widget.existing?.index ?? _findFreeIndex();

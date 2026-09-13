@@ -144,19 +144,10 @@ bool Storage_FlashErase(uint32_t offset, uint32_t size)
     return true;
 }
 
-// Wipes the entire storage region. Format is the one place where the coarse 1 KB CR_PER
-// sector erase (FLASH_ErasePage) is appropriate: the whole region goes anyway, and two
-// sector erases beat thirty-two page erases. The region base (0x3800) is 1 KB-aligned.
+// Wipes the entire storage region. The region is small (256 B with USE_FIXED_STORAGE, 1 KB
+// otherwise), so it is erased with the 64-byte CR_PAGE_ER pages (like every other storage
+// op) - a coarse 1 KB CR_PER sector erase would spill past the region on the 256 B layout.
 bool Storage_FlashFormat()
 {
-    static_assert(STORAGE_FLASH_SIZE % 1024 == 0, "Region must be sector-aligned");
-    FLASH_Unlock();
-    for (uint32_t o = 0; o < STORAGE_FLASH_SIZE; o += 1024u) {
-        if (FLASH_ErasePage(STORAGE_FLASH_BASE + o) != FLASH_COMPLETE) {
-            FLASH_Lock();
-            return false;
-        }
-    }
-    FLASH_Lock();
-    return true;
+    return Storage_FlashErase(0, STORAGE_FLASH_SIZE);
 }

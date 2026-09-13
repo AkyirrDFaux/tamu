@@ -87,6 +87,8 @@ static inline void PackName(const char *plain, char out[8])
         out[i] = ' ';
 }
 
+// Full multi-file file system (Tamu + any target without USE_FIXED_STORAGE).
+#ifndef USE_FIXED_STORAGE
 class StorageSystem
 {
 public:
@@ -211,13 +213,16 @@ public:
     }
 
     // Invalidates the file record matching `name` in place; true if it existed.
+    // Both the offset AND size are zeroed so a deleted record is unambiguous: the app's
+    // file browser skips (offset 0, size 0) records but lists (offset 0, size > 0) ones
+    // (a valid fixed-file in the reduced file system).
     bool DeleteFilerecord(const char name[8])
     {
         uint32_t idx = FindInFiletable(name);
         if (idx == 0xFFFFFFFF) return true; // Already gone
         if (idx == 0) return false;         // Entry 0 (the table itself) cannot be deleted
 
-        uint32_t zero = 0x00000000;
+        uint32_t zero[2] = {0, 0};
         return Storage_FlashWrite(file_table_offset + idx * TABLE_ENTRY_SIZE, &zero, sizeof(zero));
     }
 
@@ -750,3 +755,140 @@ private:
 
     uint32_t wear_cursor;  // Rotating allocation cursor for even wear (in data pages)
 } Storage;
+#else
+// ===========================================================================
+// USE_FIXED_STORAGE (DAS): reduced variant (Devices.md "Reduced variant"). Files have a
+// FIXED size and FIXED positions; the filetable is NOT a real file but a const array within
+// code. Read on the file; write on the file only, always erasing pre-write. No allocation,
+// no rename/move, no multi-file support. Standalone on purpose - not aligned with the core.
+// ===========================================================================
+class StorageSystem {
+public:
+    uint32_t file_table_offset = 0;  // interface parity only (no flash table)
+    uint32_t file_table_size   = 0;
+
+    // Fixed filetable: a const array in code (not a file). Each entry gives a file's fixed
+    // name, offset and size. The first record is the filetable itself (".TABLE"), the
+    // second is the single settings file occupying the whole region from offset 0
+    // ("Memory: 256B, single file from offset 0").
+    struct FixedFile {
+        const char name[8];
+        const uint32_t offset;
+        const uint32_t size;
+    };
+    static constexpr FixedFile FixedFiletable[2] = {
+        // Self-describing first record: the fixed filetable itself (2 records x 16 B).
+        {{'.','T','A','B','L','E',' ',' '}, 0, (uint32_t)(2 * TABLE_ENTRY_SIZE)},
+        // The single settings file, from the storage base.
+        {{'S','T','A','T','L','O','G',' '}, 0, STORAGE_FLASH_SIZE},
+    };
+
+    // Only the STATLOG-family names address the settings file (the legacy DEVNAME/NETID
+    // cleanup in LoadAllBackups must never resolve to it). The WriteBackupFile's temp
+    // name ("STATLOG~") belongs to the same family, so the single fixed file is shared.
+    static bool IsSettingsName(const char name[8]) {
+        return name[0]=='S'&&name[1]=='T'&&name[2]=='A'&&name[3]=='T'&&name[4]=='L'&&name[5]=='O'&&name[6]=='G';
+    }
+    // The fixed filetable is browsable through the virtual ".TABLE  " file: the read path
+    // serializes the const array into standard FileEntry records for the app.
+    static bool IsFixedTableName(const char name[8]) {
+        return memcmp(name, ".TABLE  ", 8) == 0;
+    }
+    static const FixedFile *SettingsFile(const char name[8]) {
+        if (!IsSettingsName(name)) return nullptr;
+        // Find the settings entry (the first record is the .TABLE itself).
+        for (uint32_t i = 0; i < (sizeof(FixedFiletable) / sizeof(FixedFile)); i++) {
+            if (IsSettingsName(FixedFiletable[i].name))
+                return &FixedFiletable[i];
+        }
+        return nullptr;
+    }
+
+    void Init() {
+        // No table to validate - the layout is fixed in code. A fresh/erased region is all
+        // 0xFF, which the STATLOG reader treats as an empty file (the first 0xFF terminator).
+    }
+
+    void Format() {
+        Storage_FlashFormat();
+    }
+
+    uint32_t FileExists(const char name[8]) {
+        const FixedFile *f = SettingsFile(name);
+        return f ? f->size : 0xFFFFFFFF;
+    }
+
+    bool GetFileInfo(const char name[8], uint32_t *offset, uint32_t *size) {
+        if (IsFixedTableName(name)) {
+            if (offset) *offset = 0;
+            if (size)    *size    = (uint32_t)sizeof(FixedFiletable); // serialized table bytes
+            return true;
+        }
+        const FixedFile *f = SettingsFile(name);
+        if (!f) return false;
+        if (offset) *offset = f->offset;
+        if (size)    *size    = f->size;
+        return true;
+    }
+
+    // Serializes the fixed filetable into the standard FileEntry wire layout (offset,
+    // size, name) starting at `content_off`, up to `len` bytes. The table is tiny, so the
+    // normal read path always asks for a single fragment starting at offset 0.
+    uint16_t CopyFixedTable(uint8_t *out, uint32_t content_off, uint16_t len) {
+        const uint32_t table_size = (uint32_t)sizeof(FixedFiletable);
+        uint16_t written = 0;
+        if (content_off >= table_size) return 0;
+        for (uint32_t i = 0; i < (sizeof(FixedFiletable) / sizeof(FixedFile)); i++) {
+            if (written >= len) break;
+            FileEntry e;
+            e.offset = FixedFiletable[i].offset;
+            e.size = FixedFiletable[i].size;
+            memcpy(e.name, FixedFiletable[i].name, 8);
+            uint32_t rec_start = i * TABLE_ENTRY_SIZE;
+            if (rec_start + TABLE_ENTRY_SIZE <= content_off) continue;
+            uint32_t src = (content_off > rec_start) ? (content_off - rec_start) : 0;
+            uint32_t n = TABLE_ENTRY_SIZE - src;
+            if (n > len - written) n = len - written;
+            memcpy(out + written, ((uint8_t *)&e) + src, n);
+            written += (uint16_t)n;
+        }
+        return written;
+    }
+
+    bool CreateFile(const char name[8], uint32_t size) {
+        if (!SettingsFile(name)) return false;
+        // Always erases pre-write: wipe the whole region so the fixed file starts clean.
+        return Storage_FlashErase(0, STORAGE_FLASH_SIZE);
+    }
+
+    bool WriteToFile(const char name[8], uint32_t offset, uint32_t length, const char *buffer) {
+        uint32_t off, sz;
+        if (!GetFileInfo(name, &off, &sz)) return false;
+        if (offset >= sz) return false;
+        if (offset + length > sz) length = sz - offset;
+        return Storage_FlashWrite(off + offset, buffer, length);
+    }
+
+    uint32_t ReadFromFile(const char name[8], uint32_t offset, uint32_t length, char *buffer) {
+        uint32_t off, sz;
+        if (!GetFileInfo(name, &off, &sz)) return 0;
+        if (offset >= sz) return 0;
+        if (offset + length > sz) length = sz - offset;
+        return Storage_FlashRead(off + offset, buffer, length);
+    }
+
+    // Fixed single file: rename/delete/resize are no-ops (the file always exists).
+    bool RenameFile(const char old_name[8], const char new_name[8]) { return true; }
+    bool DeleteFile(const char name[8]) { return SettingsFile(name) != nullptr; }
+    bool ResizeFile(const char name[8], uint32_t new_size, bool copy_if_failed = false) {
+        return SettingsFile(name) != nullptr && new_size <= STORAGE_FLASH_SIZE;
+    }
+
+    uint32_t UsedFlashBytes() {
+        // The settings file (index 1) occupies the storage; the .TABLE is only a code
+        // array with no flash footprint.
+        const FixedFile *f = SettingsFile(FixedFiletable[1].name);
+        return f ? f->size : 0;
+    }
+} Storage;
+#endif // USE_FIXED_STORAGE
