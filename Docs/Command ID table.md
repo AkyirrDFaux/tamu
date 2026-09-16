@@ -27,6 +27,6 @@
 |               | Read             | 0x0305           |
 |               | Write            | 0x0306           |
 | Subscriptions | ...              | 0x0400-0x0404    |
-| Script        | ...              |                  |
+| Script        | ...              | 0x0500-0x0507    |
 
 
