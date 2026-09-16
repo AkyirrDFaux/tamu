@@ -61,27 +61,29 @@ List<int> buildKeyedDict(List<KeyedEntry> entries) {
 }
 
 const List<String> _geometryKeys = [
-  'Operation', // 0
+  'Dictionary', // 0 (reserved marker)
   'Shape', // 1
-  'Position', // 2 (Matrix 2x3)
-  'Size', // 3 (Vector2 / Number)
-  'Fade', // 4 (Number, px)
-  'Alpha', // 5 (Number, 0..1)
-  'Rounding', // 6 (Number, px)
-  'Angles', // 7
-  'Point Number', // 8
-  'Point Coordinates', // 9
-  'Noise Seed', // 10
+  'Operation', // 2
+  'Position', // 3 (Matrix 2x3)
+  'Size', // 4 (Vector2 / Number)
+  'Fade', // 5 (Number, px)
+  'Alpha', // 6 (Number, 0..1)
+  'Rounding', // 7 (Number, px)
+  'Angles', // 8
+  'Point Number', // 9
+  'Point Coordinates', // 10
+  'Noise Seed', // 11
 ];
 
 const List<String> _textureKeys = [
-  'Type', // 0
-  'Position', // 1 (Matrix 2x3)
-  'Size', // 2
-  'Colour 1', // 3 (RGBA)
-  'Colour 2', // 4 (RGBA)
-  'Colour 3', // 5 (RGBA)
-  'Amount', // 6 (Number)
+  'Dictionary', // 0 (reserved marker)
+  'Type', // 1
+  'Position', // 2 (Matrix 2x3)
+  'Size', // 3
+  'Colour 1', // 4 (RGBA)
+  'Colour 2', // 5 (RGBA)
+  'Colour 3', // 6 (RGBA)
+  'Amount', // 7 (Number)
 ];
 
 String renderDictKeyName(int typeValue, int key) {
@@ -125,18 +127,67 @@ const Map<int, String> renderTextures = {
   7: 'Brightness',
 };
 
+/// Geometry dict keys that are meaningful for a given shape value (the Shape enum
+/// at key 1). Irrelevant keys are ignored by the renderer; the editor hides them.
+Set<int> geometryKeysForShape(int shape) {
+  final base = <int>{1, 2, 3, 6}; // Shape, Operation, Position, Alpha
+  switch (shape) {
+    case 1: // Fill
+      return base;
+    case 2: // HalfFill
+      return {...base, 5}; // Fade
+    case 3: // Square
+    case 4: // Rectangle
+      return {...base, 4, 5, 7}; // Size, Fade, Rounding
+    case 5: // Trapezoid
+      return {...base, 4, 5, 7, 8}; // Size, Fade, Rounding, Angles
+    case 6: // Circle
+    case 7: // Ellipse
+    case 8: // DoubleParabola
+      return {...base, 4, 5}; // Size, Fade
+    case 9: // Triangle (equilateral / isosceles)
+      return {...base, 4, 5, 8}; // Size, Fade, Angles
+    case 10: // Polygon
+      return {...base, 4, 5, 9}; // Size, Fade, PointNumber
+    case 11: // Star
+      return {...base, 4, 5, 8, 9}; // Size, Fade, Angles, PointNumber
+    case 13: // Noise
+      return {...base, 4, 11}; // Size (scale), NoiseSeed
+    default:
+      return base;
+  }
+}
+
+/// Texture dict keys that are meaningful for a given texture/effect type (key 1).
+Set<int> textureKeysForType(int type) {
+  final base = <int>{1}; // Type
+  switch (type) {
+    case 1: // Fill
+      return {...base, 4}; // Colour1
+    case 2: // GradientLinear
+    case 3: // GradientCircular
+      return {...base, 2, 3, 4, 5}; // Position, Size, Colour1, Colour2
+    case 5: // HueShift
+    case 6: // Contrast
+    case 7: // Brightness
+      return {...base, 7}; // Amount
+    default:
+      return base; // InvertColour (4) has no extra keys
+  }
+}
+
 /// Field metadata for a dict key, so the value editor shows labels/ranges. The
 /// Position keys (2x3 affine) open the transformation editor.
 FieldInfo renderKeyFieldInfo(int typeValue, int key) {
   final name = renderDictKeyName(typeValue, key);
-  final isPosition = (typeValue == geometryDictType && key == 2) ||
-      (typeValue == textureDictType && key == 1);
+  final isPosition = (typeValue == geometryDictType && key == 3) ||
+      (typeValue == textureDictType && key == 2);
   Map<int, String>? enums;
   if (typeValue == geometryDictType) {
-    if (key == 0) enums = renderOperations;
+    if (key == 2) enums = renderOperations;
     if (key == 1) enums = renderShapes;
   } else {
-    if (key == 0) enums = renderTextures;
+    if (key == 1) enums = renderTextures;
   }
   return FieldInfo(name, enumValues: enums, transform: isPosition);
 }

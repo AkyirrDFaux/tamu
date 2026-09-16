@@ -6,20 +6,22 @@
 // build the alpha mask, Texture fields (DataType::Texture) fill it. Fields are
 // processed consecutively in the block's index order.
 
-// Keys of a Geometry dictionary (mask).
+// Keys of a Geometry dictionary (mask). Key 0 is reserved for the dictionary marker
+// itself (an entry with DataType::Geometry and no value); the value keys start at 1.
 enum class GeometryKey : uint8_t
 {
-    Operation = 0,    // GeometryOperation
+    Dictionary = 0,   // reserved: the Geometry dictionary marker
     Shape = 1,        // Geometries
-    Position = 2,     // Matrix 2x3 (2D transformation)
-    Size = 3,         // Vector<2> / Number
-    Fade = 4,         // Number, pixels
-    Alpha = 5,        // Number, 0..1 (default 1)
-    Rounding = 6,     // Number, pixels
-    Angles = 7,       // Number / Vector
-    PointNumber = 8,  // Integer
-    PointCoordinates = 9, // Matrix 2xN
-    NoiseSeed = 10,   // Integer
+    Operation = 2,    // GeometryOperation
+    Position = 3,     // Matrix 2x3 (2D transformation)
+    Size = 4,         // Vector<2> / Number
+    Fade = 5,         // Number, pixels
+    Alpha = 6,        // Number, 0..1 (default 1)
+    Rounding = 7,     // Number, pixels
+    Angles = 8,       // Number / Vector
+    PointNumber = 9,  // Integer
+    PointCoordinates = 10, // Matrix 2xN
+    NoiseSeed = 11,   // Integer
 };
 
 // Geometry shapes (docs order). Only a subset is rendered initially; the rest
@@ -52,16 +54,18 @@ enum class GeometryOperation : uint8_t
     XOR = 4,
 };
 
-// Keys of a Texture dictionary (fill).
+// Keys of a Texture dictionary (fill). Key 0 is reserved for the dictionary marker
+// itself (an entry with DataType::Texture and no value); the value keys start at 1.
 enum class TextureKey : uint8_t
 {
-    Type = 0,       // Textures2D
-    Position = 1,   // Matrix 2x3 (defines centre)
-    Size = 2,       // Vector<2> / Number
-    Colour1 = 3,    // Colour (RGBA)
-    Colour2 = 4,    // Colour (RGBA)
-    Colour3 = 5,    // Colour (RGBA)
-    Amount = 6,     // Number
+    Dictionary = 0, // reserved: the Texture dictionary marker
+    Type = 1,       // Textures2D
+    Position = 2,   // Matrix 2x3 (defines centre)
+    Size = 3,       // Vector<2> / Number
+    Colour1 = 4,    // Colour (RGBA)
+    Colour2 = 5,    // Colour (RGBA)
+    Colour3 = 6,    // Colour (RGBA)
+    Amount = 7,     // Number
 };
 
 // Texture/effect types; effects continue the same enum

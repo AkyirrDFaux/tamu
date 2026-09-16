@@ -63,6 +63,17 @@ static inline void SendFieldResponse(const PacketFrame &frame, uint32_t bi, cons
     SendResponse(frame,rpl,pos);
 }
 
+// Sends one dynamic entry (BlockInfo echo + BlockMeta + value, 4-aligned).
+static inline void SendKeyResponse(const PacketFrame &frame, uint32_t bi, const KeyResult &kr) {
+    uint8_t rpl[FIELD_RESPONSE_BUF_SIZE]; uint16_t pos = 0;
+    memcpy(rpl + pos, &bi, 4); pos += 4;
+    memcpy(rpl + pos, &kr.meta, 4); pos += 4;
+    if (kr.data_ptr && kr.data_len) memcpy(rpl + pos, kr.data_ptr, kr.data_len);
+    pos += kr.data_len;
+    while (pos % 4) rpl[pos++] = 0;
+    SendResponse(frame, rpl, pos);
+}
+
 // ===== CID 0: Enumerate =====
 
 static void HandleEnumerate(const PacketFrame &frame, uint32_t bi) {
@@ -109,7 +120,15 @@ static void HandleEnumerate(const PacketFrame &frame, uint32_t bi) {
         } else if (req_type == 0x3FF) {
 #ifndef DISABLE_DYNAMIC_MEMORY
             if (req_inst >= dynamic_block_registry.block_count) { RespondStatus(frame,false); return; }
-            cnt = dynamic_block_registry.GetBlock(req_inst)->map_count;
+            DynamicBlockDescriptor *dyn = dynamic_block_registry.GetBlock(req_inst);
+            // Return the distinct field indexes after the count (dynamic blocks).
+            uint8_t fields[256];
+            cnt = dyn->ListFields(fields, 256);
+            uint8_t rpl[8 + 256]; memcpy(rpl, &bi_req, 4); rpl[4]=(uint8_t)cnt; rpl[5]=(uint8_t)(cnt>>8);
+            uint16_t p = 6;
+            for (uint16_t i = 0; i < cnt; i++) rpl[p++] = fields[i];
+            SendResponse(frame, rpl, p);
+            return;
 #else
             cnt = 0;
 #endif
@@ -120,9 +139,32 @@ static void HandleEnumerate(const PacketFrame &frame, uint32_t bi) {
         }
         uint8_t rpl[8]; memcpy(rpl, &bi_req, 4); rpl[4]=(uint8_t)cnt; rpl[5]=(uint8_t)(cnt>>8);
         SendResponse(frame, rpl, 6);
-    } else if (enum_level == 3) { // Enumerate keys (static blocks not keyed)
-        uint8_t rpl[8]; memcpy(rpl, &bi, 4); rpl[4]=0;
-        SendResponse(frame, rpl, 5);
+    } else if (enum_level == 3) { // Enumerate keys in a field (dynamic blocks)
+        uint8_t rpl[8 + 256];
+        memcpy(rpl, &bi_req, 4);
+        uint16_t p = 4;
+        uint16_t key_count = 0;
+        uint16_t req_type = BlockInfoType(bi_req);
+        uint8_t req_inst = BlockInfoInstance(bi_req);
+        uint8_t req_field = BlockInfoField(bi_req);
+        if (req_type == 0x3FF) {
+#ifndef DISABLE_DYNAMIC_MEMORY
+            if (req_inst < dynamic_block_registry.block_count) {
+                DynamicBlockDescriptor *dyn = dynamic_block_registry.GetBlock(req_inst);
+                uint8_t keys[256];
+                key_count = dyn->ListKeys(req_field, keys, 256);
+                rpl[p++] = (uint8_t)key_count;
+                for (uint16_t i = 0; i < key_count; i++) rpl[p++] = keys[i];
+            } else {
+                rpl[p++] = 0;
+            }
+#else
+            rpl[p++] = 0;
+#endif
+        } else {
+            rpl[p++] = 0;
+        }
+        SendResponse(frame, rpl, p);
     } else {
         RespondStatus(frame,false);
     }
@@ -210,18 +252,17 @@ static void HandleMultiEntryRead(const PacketFrame &frame, uint32_t bi, uint16_t
 }
 
 #ifndef DISABLE_DYNAMIC_MEMORY
-static void HandleDynamicBlockRead(const PacketFrame &frame, uint32_t bi, uint8_t inst, uint8_t field) {
+static void HandleDynamicBlockRead(const PacketFrame &frame, uint32_t bi, uint8_t inst, uint8_t field, uint8_t key) {
     if (inst >= dynamic_block_registry.block_count) { RespondStatus(frame,false); return; }
     DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(inst);
     if (!block) { RespondStatus(frame,false); return; }
     if (field == 0xFF) { // block meta
-        SendBlockMetaResponse(frame, bi, (uint16_t)block->type, block->map_count, block->Name);
+        SendBlockMetaResponse(frame, bi, (uint16_t)block->type, (uint8_t)block->FieldCount(), block->Name);
         return;
     }
-    if (field >= block->map_count) { RespondStatus(frame,false); return; }
-    FieldResult fr = block->Get(field);
-    if(!fr.Data) { RespondStatus(frame,false); return; }
-    SendFieldResponse(frame, bi, fr);
+    KeyResult kr = block->GetKey(field, key);
+    if (!kr.exists) { RespondStatus(frame,false); return; }
+    SendKeyResponse(frame, bi, kr);
 }
 #endif
 
@@ -253,11 +294,11 @@ static void HandleSystemBlockWrite(const PacketFrame &frame, uint8_t field) {
 }
 
 #ifndef DISABLE_DYNAMIC_MEMORY
-static void HandleDynamicBlockWrite(const PacketFrame &frame, uint8_t inst, uint8_t field, BlockMeta *desc, const uint8_t *val, uint16_t vlen) {
+static void HandleDynamicBlockWrite(const PacketFrame &frame, uint8_t inst, uint8_t field, uint8_t key, BlockMeta *desc, const uint8_t *val, uint16_t vlen) {
     if (inst >= dynamic_block_registry.block_count) { RespondStatus(frame,false); return; }
     DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(inst);
     if (!block || block->type == BlockType::Deleted) { RespondStatus(frame,false); return; }
-    
+
     if (field == INVALID_INDEX) { // set block name and/or type
         block->type = (BlockType)BlockMetaType(desc->FlagsAndType);
         uint16_t name_len = vlen;
@@ -265,27 +306,15 @@ static void HandleDynamicBlockWrite(const PacketFrame &frame, uint8_t inst, uint
         memcpy(block->Name, val, name_len);
         block->Name[name_len] = '\0';
         uint8_t payload[sizeof(BlockIndex) + 1];
-        BlockIndex out_index = {(uint8_t)(dynamic_block_registry.block_count - 1), 0xFF, 0xFF};
+        BlockIndex out_index = {(uint8_t)inst, 0xFF, 0xFF};
         memcpy(payload, &out_index, sizeof(BlockIndex));
         payload[sizeof(BlockIndex)] = 1;
         SendResponse(frame, payload, sizeof(payload));
         return;
     }
-    
-    if (field < block->map_count) {
-        if (!block->Set(field, val, vlen, desc->FlagsAndType)) { RespondStatus(frame,false); return; }
-    } else if (field == block->map_count) {
-        BlockMeta meta = *desc; meta.Size = (uint8_t)vlen;
-        if (!block->InsertField(field, meta) || !block->Set(field, val, vlen, desc->FlagsAndType)) { RespondStatus(frame,false); return; }
-    } else {
-        while (block->map_count < field) {
-            BlockMeta pad = {}; pad.FlagsAndType = (uint16_t)DataType::None;
-            if (!block->InsertField(block->map_count, pad)) { RespondStatus(frame,false); return; }
-        }
-        if (block->map_count != field) { RespondStatus(frame,false); return; }
-        BlockMeta meta = *desc; meta.Size = (uint8_t)vlen;
-        if (!block->InsertField(field, meta) || !block->Set(field, val, vlen, desc->FlagsAndType)) { RespondStatus(frame,false); return; }
-    }
+
+    // Position-specified entry write; writing type None deletes the entry.
+    if (!block->SetEntry(field, key, val, vlen, desc->FlagsAndType)) { RespondStatus(frame,false); return; }
     SendResponse(frame, frame.payload, PayloadBytes(frame));
 }
 #endif
@@ -495,26 +524,36 @@ static void HandleDynamicSaveRecall(const PacketFrame &frame, uint8_t cid, uint8
     }
 }
 
-static void HandleCreateDynamic(const PacketFrame &frame, uint16_t type) {
+static void HandleCreateDynamic(const PacketFrame &frame, uint8_t index, uint16_t type) {
     if (PayloadBytes(frame) < 8) { RespondStatus(frame,false); return; }
     uint16_t name_len = PayloadBytes(frame) - 4;
     if (name_len > BLOCK_NAME_LEN - 1) name_len = BLOCK_NAME_LEN - 1;
-    DynamicBlockDescriptor *block = CreateDynamicBlock((BlockType)type, frame.payload + 4, name_len);
+    DynamicBlockDescriptor *block = CreateDynamicBlock((BlockType)type, frame.payload + 4, name_len, index);
     if (!block) { RespondStatus(frame,false); return; }
     uint8_t payload[sizeof(BlockIndex) + 1];
-    BlockIndex out_index = {(uint8_t)(dynamic_block_registry.block_count - 1), 0xFF, 0xFF};
+    BlockIndex out_index = {index, 0xFF, 0xFF};
     memcpy(payload, &out_index, sizeof(BlockIndex));
     payload[sizeof(BlockIndex)] = 1;
     SendResponse(frame, payload, sizeof(payload));
 }
 
-static void HandleDeleteDynamic(const PacketFrame &frame, uint16_t block_idx, uint8_t field_idx) {
+static void HandleDeleteDynamic(const PacketFrame &frame, uint16_t block_idx, uint8_t field_idx, uint8_t key) {
     if (block_idx >= dynamic_block_registry.block_count) { RespondStatus(frame,false); return; }
+    if (field_idx == INVALID_INDEX) { // delete the whole block -> tombstone (slot kept)
+        dynamic_block_registry.TombstoneBlock(block_idx);
+        RespondStatus(frame, true);
+        return;
+    }
     DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(block_idx);
     if (!block) { RespondStatus(frame,false); return; }
-    if (field_idx == INVALID_INDEX) { dynamic_block_registry.RemoveBlock(block_idx); RespondStatus(frame, true); }
-    else if (field_idx < block->map_count) { RespondStatus(frame, block->Remove(field_idx)); }
-    else { RespondStatus(frame, false); }
+    if (key != INVALID_INDEX) { RespondStatus(frame, block->DeleteEntry(field_idx, key)); return; }
+    // Delete every entry at `field` (the record compacts per removal).
+    uint8_t keys[256];
+    uint16_t n = block->ListKeys(field_idx, keys, 256);
+    bool ok = true;
+    for (uint16_t i = 0; i < n; i++)
+        ok &= block->DeleteEntry(field_idx, keys[i]);
+    RespondStatus(frame, ok);
 }
 
 static void HandleGetName(const PacketFrame &frame, uint32_t bi, uint16_t block_idx) {
@@ -546,118 +585,48 @@ static void HandleGetMemUsage(const PacketFrame &frame, uint32_t bi, uint16_t bl
     uint8_t payload[sizeof(BlockIndex) + 24];
     memcpy(payload, &bi, 4);
     uint32_t *u32 = reinterpret_cast<uint32_t *>(payload + 4);
-    u32[0] = block->map_count * sizeof(BlockMeta);
-    u32[1] = block->map_allocated * sizeof(BlockMeta);
-    u32[2] = block->length;
-    u32[3] = block->allocated;
-    u32[4] = block->length;
-    u32[5] = block->allocated;
+    u32[0] = block->entry_count * sizeof(DynamicEntry);
+    u32[1] = block->entry_allocated * sizeof(DynamicEntry);
+    u32[2] = block->volatile_len;
+    u32[3] = block->volatile_allocated;
+    u32[4] = block->persistent_len;
+    u32[5] = block->persistent_allocated;
     SendResponse(frame, payload, sizeof(payload));
 }
 
-static void HandleReadBackup(const PacketFrame &frame, uint16_t block_idx) {
+static void HandleReadBackup(const PacketFrame &frame, uint32_t bi, uint16_t block_idx) {
     if (block_idx >= dynamic_block_registry.block_count) { RespondStatus(frame,false); return; }
-    
-    // Parse BlockInfo from payload
-    uint32_t bi = 0; memcpy(&bi, frame.payload, 4);
-    uint8_t req_inst = BlockInfoInstance(bi);
     uint8_t req_field = BlockInfoField(bi);
     uint8_t req_key = BlockInfoKey(bi);
-    
+
     uint8_t buf[MEMORY_BACKUP_CAP];
     uint16_t cnt = ReadBackupFile(DynamicBackupName(), buf, sizeof(buf));
     if (cnt == 0) { RespondStatus(frame,false); return; }
-    
-    uint8_t payload[MAX_PAYLOAD_SIZE];
-    bool found = false;
-    if (cnt >= 2) {
-        uint16_t cursor = 2;
-        uint16_t block_index = 0;
-        while (cursor < cnt) {
-            if (cursor + 1 > cnt) break;
-            uint8_t name_length = buf[cursor++];
-            if (cursor + name_length > cnt) break;
-            cursor += name_length;
-            if (cursor + 2 > cnt) break;
-            uint16_t type; memcpy(&type, buf + cursor, 2); cursor += 2;
-            if (cursor + 2 > cnt) break;
-            uint16_t map_count; memcpy(&map_count, buf + cursor, 2); cursor += 2;
-            uint16_t map_bytes = map_count * sizeof(BlockMeta);
-            if (cursor + map_bytes > cnt) break;
-            const BlockMeta *map = (const BlockMeta *)(buf + cursor); cursor += map_bytes;
-            if (cursor + 2 > cnt) break;
-            uint16_t data_length; memcpy(&data_length, buf + cursor, 2); cursor += 2;
-            if (cursor + data_length > cnt) break;
-            const uint8_t *data = buf + cursor; cursor += data_length;
 
-            if (block_index == req_inst) {
-                const BlockMeta &fd = map[req_field];
-                if (req_key == INVALID_INDEX) { // Dictionary read
-                    if (fd.Size > 0) {
-                        uint16_t base = 0;
-                        for (uint16_t i = 0; i < req_field; i++) base += AlignTo4(map[i].Size);
-                        if (base + fd.Size <= data_length) {
-                            const uint8_t *dict_data = data + base;
-                            uint16_t key_count = 0, key_offset = 0;
-                            while (key_offset + sizeof(BlockMeta) <= fd.Size) {
-                                const BlockMeta *m = (const BlockMeta *)(dict_data + key_offset);
-                                if (!KeyedEntryFits(m->Size, key_offset, fd.Size)) break;
-                                if (((uint16_t)m->FlagsAndType & 0x03FF) != (uint16_t)DataType::None) key_count++;
-                                key_offset += AlignTo4(sizeof(BlockMeta) + m->Size);
-                            }
-                            if (sizeof(BlockIndex) + sizeof(BlockMeta) + key_count <= MAX_PAYLOAD_SIZE) {
-                                BlockIndex out_idx = {req_inst, req_field, INVALID_INDEX};
-                                memcpy(payload, &out_idx, sizeof(BlockIndex));
-                                BlockMeta dm = fd; dm.Size = (uint8_t)key_count;
-                                memcpy(payload + sizeof(BlockIndex), &dm, sizeof(BlockMeta));
-                                key_offset = 0;
-                                uint16_t p = sizeof(BlockIndex) + sizeof(BlockMeta);
-                                while (key_offset + sizeof(BlockMeta) <= fd.Size) {
-                                    const BlockMeta *m = (const BlockMeta *)(dict_data + key_offset);
-                                    if (!KeyedEntryFits(m->Size, key_offset, fd.Size)) break;
-                                    if (((uint16_t)m->FlagsAndType & 0x03FF) != (uint16_t)DataType::None) {
-                                        if (p + 1 <= MAX_PAYLOAD_SIZE) payload[p++] = m->Key;
-                                    }
-                                    key_offset += AlignTo4(sizeof(BlockMeta) + m->Size);
-                                }
-                                SendResponse(frame, payload, p);
-                                found = true;
-                            }
-                        }
-                } else { // Keyed entry read
-                    if (fd.Size > 0) {
-                        uint16_t base = 0;
-                        for (uint16_t i = 0; i < req_field; i++) base += AlignTo4(map[i].Size);
-                        if (base + fd.Size <= data_length) {
-                            const uint8_t *dict_data = data + base;
-                            uint16_t key_offset = 0;
-                            while (key_offset + sizeof(BlockMeta) <= fd.Size) {
-                                const BlockMeta *m = (const BlockMeta *)(dict_data + key_offset);
-                                if (!KeyedEntryFits(m->Size, key_offset, fd.Size)) break;
-                                if (m->Key == req_key) {
-                                    if (sizeof(BlockIndex) + sizeof(BlockMeta) + m->Size <= MAX_PAYLOAD_SIZE) {
-                                        BlockIndex out_idx = {req_inst, req_field, req_key};
-                                        memcpy(payload, &out_idx, sizeof(BlockIndex));
-                                        memcpy(payload + sizeof(BlockIndex), m, sizeof(BlockMeta));
-                                        memcpy(payload + sizeof(BlockIndex) + sizeof(BlockMeta), data + base + key_offset + sizeof(BlockMeta), m->Size);
-                                        SendResponse(frame, payload, sizeof(BlockIndex) + sizeof(BlockMeta) + m->Size);
-                                        found = true;
-                                    }
-                                    break;
-                                }
-                                key_offset += AlignTo4(sizeof(BlockMeta) + m->Size);
-                            }
-                        }
-                    }
-                }
-                break;
-                }
-                block_index++;
-            }
-        }
+    uint16_t cursor = 0;
+    if (cnt < 2) { RespondStatus(frame,false); return; }
+    uint16_t block_count; memcpy(&block_count, buf + cursor, 2); cursor += 2;
+    if (block_idx >= block_count) { RespondStatus(frame,false); return; }
+
+    DynamicBlockDescriptor scratch;
+    for (uint16_t index = 0; index < block_idx; index++)
+    {
+        DynamicBlockDescriptor tmp;
+        if (!DeserializeDynamicBlock(tmp, buf, cnt, cursor)) { RespondStatus(frame,false); return; }
+        tmp.Release();
     }
-    if (!found) RespondStatus(frame, false);
+    if (!DeserializeDynamicBlock(scratch, buf, cnt, cursor)) { RespondStatus(frame,false); return; }
+
+    if (req_field == 0xFF) {
+        SendBlockMetaResponse(frame, bi, (uint16_t)scratch.type, (uint8_t)scratch.FieldCount(), scratch.Name);
+    } else {
+        KeyResult kr = scratch.GetKey(req_field, req_key);
+        if (!kr.exists) RespondStatus(frame, false);
+        else SendKeyResponse(frame, bi, kr);
+    }
+    scratch.Release();
 }
+
 #endif
 
 // ===== Main dispatcher =====
@@ -681,7 +650,7 @@ static void HandleRegister(const PacketFrame &frame) {
         if (type==0 && inst==0) { HandleSystemBlockRead(frame, bi, field, key); return; }
         HandleMultiEntryRead(frame, bi, PayloadBytes(frame));
 #ifndef DISABLE_DYNAMIC_MEMORY
-        if (type == 0x3FF) { HandleDynamicBlockRead(frame, bi, inst, field); return; }
+        if (type == 0x3FF) { HandleDynamicBlockRead(frame, bi, inst, field, key); return; }
 #else
         if (type == 0x3FF) { RespondStatus(frame, false); return; }
 #endif
@@ -697,7 +666,7 @@ static void HandleRegister(const PacketFrame &frame) {
         const uint8_t *val = frame.payload+8;
         uint16_t vlen = desc->Size;
 #ifndef DISABLE_DYNAMIC_MEMORY
-        if (type == 0x3FF) { HandleDynamicBlockWrite(frame, inst, field, desc, val, vlen); return; }
+        if (type == 0x3FF) { HandleDynamicBlockWrite(frame, inst, field, key, desc, val, vlen); return; }
 #else
         if (type == 0x3FF) { RespondStatus(frame, false); return; }
 #endif
@@ -734,12 +703,12 @@ static void HandleRegister(const PacketFrame &frame) {
         uint16_t block_idx = BlockInfoInstance(bi);
         
         switch (cid) {
-            case 0x10: HandleCreateDynamic(frame, type); break;
-            case 0x11: HandleDeleteDynamic(frame, block_idx, BlockInfoField(bi)); break;
+            case 0x10: HandleCreateDynamic(frame, (uint8_t)block_idx, type); break;
+            case 0x11: HandleDeleteDynamic(frame, block_idx, BlockInfoField(bi), BlockInfoKey(bi)); break;
             case 0x12: HandleGetName(frame, bi, block_idx); break;
             case 0x13: HandleSetName(frame, block_idx); break;
             case 0x14: HandleGetMemUsage(frame, bi, block_idx); break;
-            case 0x15: HandleReadBackup(frame, block_idx); break;
+            case 0x15: HandleReadBackup(frame, bi, block_idx); break;
         }
     }
 #endif

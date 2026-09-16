@@ -134,6 +134,8 @@ Changing the persistance flag moves the variable from one memory space to other.
 
 ### Dynamic commands (011x)
 Basic Commands also work on dynamic blocks, these are extra.
+Write (basic command) with type none works as delete here.
+Create/write is in specified place, not an append neccesarily.
 
 | Function         | ID  | Content request | Content response | Note                      |
 | ---------------- | --- | --------------- | ---------------- | ------------------------- |

@@ -26,17 +26,17 @@ Geometry is defined using a dictionary.
 
 | Key name          | Key | Usual type       | Note                              |
 | ----------------- | --- | ---------------- | --------------------------------- |
-| Operation type    | 0   | Enum             | Replace, Add, Cut, Intersect, XOR |
 | Geometry shape    | 1   | Enum             |                                   |
-| Position          | 2   | Matrix 2x3       | 2D transformation                 |
-| Size              | 3   | Vector<2>/Number |                                   |
-| Fade              | 4   | Number           | in pixels                         |
-| Alpha             | 5   | Number           | default 1, 0 to 1 range           |
-| Rounding          | 6   | Number           | in pixels                         |
-| Angles            | 7   | Number/Vector    |                                   |
-| Point number      | 8   | Integer          |                                   |
-| Point coordinates | 9   | Matrix 2xN       |                                   |
-| Noise seed        | 10  | Integer          |                                   |
+| Operation type    | 2   | Enum             | Replace, Add, Cut, Intersect, XOR |
+| Position          | 3   | Matrix 2x3       | 2D transformation                 |
+| Size              | 4   | Vector<2>/Number |                                   |
+| Fade              | 5   | Number           | in pixels                         |
+| Alpha             | 6   | Number           | default 1, 0 to 1 range           |
+| Rounding          | 7   | Number           | in pixels                         |
+| Angles            | 8   | Number/Vector    |                                   |
+| Point number      | 9   | Integer          |                                   |
+| Point coordinates | 10  | Matrix 2xN       |                                   |
+| Noise seed        | 11  | Integer          |                                   |
 Not all shapes have to interact with every parameter.
 
 Shape list:
@@ -60,13 +60,13 @@ Textures and effects are described using a dictionary.
 
 | Key name            | Key | Usual type       | Note                              |
 | ------------------- | --- | ---------------- | --------------------------------- |
-| Texture/Effect type | 0   | Enum             |                                   |
-| Position            | 1   | Matrix 2x3       | 2D transformation, defines center |
-| Size                | 2   | Vector<2>/Number |                                   |
-| Colour 1            | 3   | Colour (RGBA)    |                                   |
-| Colour 2            | 4   | Colour (RGBA)    |                                   |
-| Colour 3            | 5   | Colour (RGBA)    |                                   |
-| Amount              | 6   | Number           |                                   |
+| Texture/Effect type | 1   | Enum             |                                   |
+| Position            | 2   | Matrix 2x3       | 2D transformation, defines center |
+| Size                | 3   | Vector<2>/Number |                                   |
+| Colour 1            | 4   | Colour (RGBA)    |                                   |
+| Colour 2            | 5   | Colour (RGBA)    |                                   |
+| Colour 3            | 6   | Colour (RGBA)    |                                   |
+| Amount              | 7   | Number           |                                   |
 Not all shapes have to interact with every parameter.
 Texture list:
 - Fill

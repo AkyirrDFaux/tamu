@@ -226,9 +226,27 @@ class RegisterClient {
     return DynBlock(index: block, meta: meta, name: name);
   }
 
-  /// Reads one dynamic entry's current value (CID 1).
-  Future<DynField?> readDynamicField(DynBlock block, int field) async {
-    final reply = await request(1, payload: _dynBi(block.index, field));
+  /// Enumerates a dynamic block's distinct field indexes (CID 0, Enum 2).
+  Future<List<int>?> getDynamicFields(int inst) async {
+    final reply = await request(0,
+        payload: [2, ...blockInfoBytes(BlockType.dynamic.value, inst, 0xFF, 0)]);
+    if (reply == null || reply.length < 6) return null;
+    final count = reply[4] | (reply[5] << 8);
+    return [for (var i = 0; i < count && 6 + i < reply.length; i++) reply[6 + i]];
+  }
+
+  /// Enumerates the keys present at (inst, field) (CID 0, Enum 3).
+  Future<List<int>?> getDynamicKeys(int inst, int field) async {
+    final reply = await request(0,
+        payload: [3, ...blockInfoBytes(BlockType.dynamic.value, inst, field, 0)]);
+    if (reply == null || reply.length < 5) return null;
+    final count = reply[4];
+    return [for (var i = 0; i < count && 5 + i < reply.length; i++) reply[5 + i]];
+  }
+
+  /// Reads one dynamic entry's current value (CID 1) at (field, key).
+  Future<DynField?> readDynamicField(DynBlock block, int field, [int key = 0]) async {
+    final reply = await request(1, payload: _dynBi(block.index, field, key));
     if (reply == null || reply.length < 8) return null;
     final meta = BlockMeta.fromBytes(reply, 4);
     return DynField(index: field, meta: meta, value: valueSlice(reply, meta.size));
@@ -245,15 +263,23 @@ class RegisterClient {
   /// Writes a dynamic entry (CID 2). Writing type Deleted marks it for deletion.
   Future<List<int>?> writeDynamicField(
       DynBlock block, DynField field, List<int> newValue,
-      {DataType? newType}) async {
+      {DataType? newType, int? key}) async {
     final meta = BlockMeta(
       flagsAndType: newType != null
           ? (field.meta.flags & FieldFlags.mask) | newType.value
           : field.meta.flagsAndType,
-      key: field.meta.key,
+      key: key ?? field.meta.key,
       size: newValue.length,
     );
-    return _writeDynamicValue(_dynBi(block.index, field.index), meta, newValue);
+    return _writeDynamicValue(_dynBi(block.index, field.index, key ?? field.meta.key), meta, newValue);
+  }
+
+  /// Writes one (field, key) entry (CID 2), creating/updating it in the sorted table.
+  /// Writing DataType.none deletes the entry (docs: "Setting the type to None deletes").
+  Future<List<int>?> writeDynamicEntry(
+      DynBlock block, int field, int key, BlockMeta meta, List<int> value) async {
+    final sized = BlockMeta(flagsAndType: meta.flagsAndType, key: key, size: value.length);
+    return _writeDynamicValue(_dynBi(block.index, field, key), sized, value);
   }
 
   /// Creates a new dynamic block (CID 0x10). Returns the assigned block index.
@@ -319,10 +345,81 @@ class RegisterClient {
     return valueSlice(reply, echoMeta.size);
   }
 
-  /// Deletes a dynamic block / entry (marked Deleted; deallocated on save) - CID 0x11.
-  Future<bool> deleteDynamic({required int block, int? field}) async {
-    final reply = await request(0x11, payload: _dynBi(block, field ?? 0xFF));
+  /// Deletes a dynamic block (tombstone), a field, or a (field, key) entry - CID 0x11.
+  /// Field 0xFF = whole block; key 0xFF = the whole field; otherwise the entry.
+  Future<bool> deleteDynamic({required int block, int? field, int? key}) async {
+    final reply = await request(0x11, payload: _dynBi(block, field ?? 0xFF, key ?? 0xFF));
     return reply != null;
+  }
+
+  /// Reorders the live dynamic blocks to [newOrder] (the desired order of the live
+  /// block indexes) using position ops: reads every block's content, tombstones all
+  /// dynamic positions, then recreates them at positions 0..L-1 in the new order
+  /// (tombstone slots are filled; leftover tombstones stay at the end).
+  Future<bool> reorderDynamicBlocks(List<int> newOrder) async {
+    final live = <
+        ({
+          String name,
+          BlockType type,
+          List<({int field, int key, BlockMeta meta, List<int> value})> entries,
+        })>[];
+    for (final i in newOrder) {
+      final meta = await readDynamicBlockMeta(i);
+      if (meta == null || meta.meta.typeValue == BlockType.none.value) continue;
+      final entries = <({int field, int key, BlockMeta meta, List<int> value})>[];
+      final block = DynBlock(index: i, meta: meta.meta, name: meta.name);
+      for (final f in await getDynamicFields(i) ?? <int>[]) {
+        for (final k in await getDynamicKeys(i, f) ?? <int>[0]) {
+          final e = await readDynamicField(block, f, k);
+          if (e != null) entries.add((field: f, key: k, meta: e.meta, value: e.value));
+        }
+      }
+      live.add((name: meta.name, type: meta.meta.blockType, entries: entries));
+    }
+    final count = await getInstanceCount(BlockType.dynamic.value) ?? 0;
+    for (var i = 0; i < count; i++) {
+      await deleteDynamic(block: i);
+    }
+    for (var pos = 0; pos < live.length; pos++) {
+      final entry = live[pos];
+      final idx = await createDynamicBlock(entry.type, entry.name, index: pos);
+      if (idx == null) return false;
+      final b = DynBlock(
+          index: pos,
+          meta: BlockMeta(
+              flagsAndType: entry.type.value, size: entry.entries.length),
+          name: entry.name);
+      for (final e in entry.entries) {
+        final ok = await writeDynamicEntry(
+            b, e.field, e.key, e.meta, e.value);
+        if (ok == null) return false;
+      }
+    }
+    return true;
+  }
+
+  /// Reorders a block's FIELDS: [newOrder] is the desired field order (old field
+  /// indexes). Reads every entry, deletes all fields, then rewrites each entry under
+  /// the remapped field index (position in newOrder).
+  Future<bool> reorderDynamicFields(DynBlock block, List<int> newOrder) async {
+    final all = <({int field, int key, BlockMeta meta, List<int> value})>[];
+    for (final f in await getDynamicFields(block.index) ?? <int>[]) {
+      for (final k in await getDynamicKeys(block.index, f) ?? <int>[0]) {
+        final e = await readDynamicField(block, f, k);
+        if (e != null) all.add((field: f, key: k, meta: e.meta, value: e.value));
+      }
+    }
+    for (final f in await getDynamicFields(block.index) ?? <int>[]) {
+      await deleteDynamic(block: block.index, field: f);
+    }
+    for (var pos = 0; pos < newOrder.length; pos++) {
+      final oldField = newOrder[pos];
+      for (final e in all.where((e) => e.field == oldField)) {
+        final ok = await writeDynamicEntry(block, pos, e.key, e.meta, e.value);
+        if (ok == null) return false;
+      }
+    }
+    return true;
   }
 
   /// Saves the dynamic registry (CID 3; instance 0x3F = everything).

@@ -12,64 +12,18 @@ import 'package:tamuapp/core/types.dart';
 
 import 'hil_helpers.dart';
 
-/// LED display rewrite probe (Tamu): creates a dynamic render block whose field 0 is a
-/// Geometry dictionary (Replace/Square) and field 1 a Texture dictionary (Fill colour),
-/// points Display2 (static block type 6, inst 1 - the strip on GPIO0) at it, checks the
-/// achieved Refresh Rate, then cycles the square's colour red -> green -> blue -> black.
-/// The render block + Display2 config are left in place so the square (red) stays visible
-/// on GPIO0 after the test.
+/// LED display probe (Tamu) on the FLAT dynamic model (Docs/Services/Register.md):
+/// a block is a sorted table of (field, key) entries; a Geometry/Texture dictionary is
+/// a field whose (field, 0) entry is a type marker (no value) followed by value keys.
 ///
-/// Docs/Modules and blocks/LED display.md dict keys:
-///   Geometry: Operation=0, Shape=1, Position=2 (Matrix 2x3), Size=3, Fade=4, Alpha=5
-///   Texture:  Type=0, Colour1=3
+/// Geometry keys: Shape=1, Operation=2, Position=3 (Matrix 2x3), Size=4, Fade=5,
+/// Alpha=6, Rounding=7, Angles=8, PointNumber=9, PointCoordinates=10, NoiseSeed=11.
+/// Texture keys: Type=1, Position=2, Size=3, Colour1=4, Colour2=5, Colour3=6, Amount=7.
 Future<void> runTests() async {
   final reg = RegisterClient(deviceId: 1);
 
-  // Geometry dict entry (field value = concatenated keyed entries). Each entry must be
-  // padded to a multiple of 4 bytes: the firmware's keyed-entry walker aligns entries
-  // (AlignTo4(BlockMeta + value)) and would misread unaligned entries.
-  List<int> entry(int flagsAndType, int key, List<int> value) {
-    final pad = (4 - ((4 + value.length) % 4)) % 4;
-    return [
-          ...BlockMeta(flagsAndType: flagsAndType, key: key, size: value.length)
-              .toBytes(),
-          ...value,
-          ...List<int>.filled(pad, 0),
-        ];
-  }
-
-  // Matrix 2x3 wire: u16 height, u16 width, then h*w Numbers (Q16.16).
-  List<int> affine23(List<double> a, List<double> b) => [
-        2, 0, 3, 0,
-        ...a.expand((v) => numberToBytes(v)),
-        ...b.expand((v) => numberToBytes(v)),
-      ];
-
-  final identity = affine23([1, 0, 0], [0, 1, 0]);
-
-  final geometry = [
-    ...entry(DataType.enum_.value, 0, [0]), // Operation: Replace
-    ...entry(DataType.enum_.value, 1, [3]), // Shape: Square
-    ...entry(DataType.matrix.value, 2, identity), // Position: identity 2x3 affine
-    ...entry(DataType.number.value, 3, numberToBytes(4.0)), // Size: side (px)
-    ...entry(DataType.number.value, 4, numberToBytes(0.0)), // Fade (px)
-    ...entry(DataType.number.value, 5, numberToBytes(1.0)), // Alpha
-  ];
-
-  final texture = [
-    ...entry(DataType.enum_.value, 0, [1]), // Type: Fill
-    ...entry(DataType.colour.value, 3, [255, 0, 0, 255]), // Colour1: red RGBA
-  ];
-
-  // Texture dict with a different Colour1 (RGBA).
-  List<int> textureWith(List<int> colour) => [
-        ...entry(DataType.enum_.value, 0, [1]), // Type: Fill
-        ...entry(DataType.colour.value, 3, colour),
-      ];
-
-  // Clean slate: clear any persisted requester subscriptions (their provider side
-  // re-registers at boot and can write into dynamic block 0 field 0, clobbering the
-  // render dict), then drop every dynamic block.
+  // Clean slate: clear any persisted requester subscriptions, then drop every dynamic
+  // block (tombstones keep their slots, so re-create the render block at index 0).
   final subClient = SubscriptionClient(deviceId: 1);
   var subs = await subClient.getRequesterSubscriptions();
   while (subs.isNotEmpty) {
@@ -83,47 +37,52 @@ Future<void> runTests() async {
   }
   await reg.saveDynamic();
 
-  final created = await reg.createDynamicBlock(BlockType.dynamic, 'RENDER');
+  final created = await reg.createDynamicBlock(BlockType.dynamic, 'RENDER', index: 0);
   if (created == null) fail('createDynamicBlock failed');
-  var b = (await reg.readDynamicBlocks())!.first;
-  // ignore: avoid_print
-  print('[D] created block index=${b.index} fieldCount=${b.fieldCount}');
+  final b = (await reg.readDynamicBlockMeta(0))!;
 
-  final geoField = await reg.appendDynamicEntry(
-      b, BlockMeta(flagsAndType: 0x101 /* Geometry */, size: geometry.length), geometry);
-  if (geoField == null) fail('append geometry dict failed');
-  b = (await reg.readDynamicBlocks())!.first;
-  // ignore: avoid_print
-  print('[D] geometry field -> ok fieldCount=${b.fieldCount}');
+  // Entry write helpers.
+  Future<bool> setEntry(int field, int key, int type, List<int> value) async =>
+      await reg.writeDynamicEntry(
+              b, field, key, BlockMeta(flagsAndType: type, key: key), value) !=
+          null;
 
-  final texField = await reg.appendDynamicEntry(
-      b, BlockMeta(flagsAndType: 0x102 /* Texture */, size: texture.length), texture);
-  if (texField == null) fail('append texture dict failed');
-  b = (await reg.readDynamicBlocks())!.first;
-  // ignore: avoid_print
-  print('[D] texture field -> ok fieldCount=${b.fieldCount}');
+  // Geometry dictionary at field 0: marker + values.
+  if (!await setEntry(0, 0, 0x101, [])) fail('geometry marker failed'); // Geometry
+  if (!await setEntry(0, 1, DataType.enum_.value, [3])) fail('Shape failed'); // Square
+  if (!await setEntry(0, 2, DataType.enum_.value, [0])) fail('Operation failed'); // Replace
+  final identity = [
+    2, 0, 3, 0,
+    ...numberToBytes(1.0), ...numberToBytes(0.0), ...numberToBytes(0.0),
+    ...numberToBytes(0.0), ...numberToBytes(1.0), ...numberToBytes(0.0),
+  ]; // identity 2x3
+  if (!await setEntry(0, 3, DataType.matrix.value, identity)) fail('Position failed');
+  if (!await setEntry(0, 4, DataType.number.value, numberToBytes(4.0))) fail('Size failed');
+  if (!await setEntry(0, 5, DataType.number.value, numberToBytes(1.0))) fail('Fade failed');
+  if (!await setEntry(0, 6, DataType.number.value, numberToBytes(1.0))) fail('Alpha failed');
 
-  // Point Display2 (Vysi1, type 0x06, inst 1 - the strip wired on GPIO0) at the render
-  // block with brightness 20/255; park Display1 (inst 0) so only GPIO0 lights.
-  final blockIndex = b.index;
-  final setBlock = await reg.writeBlockField(0x06, 1, 2, 0,
-      BlockMeta(flagsAndType: DataType.integer.value, size: 4), intToBytes(blockIndex, 4));
-  if (setBlock == null) fail('set Display2.RenderBlock failed');
+  // Texture dictionary at field 1: marker + Fill red.
+  if (!await setEntry(1, 0, 0x102, [])) fail('texture marker failed'); // Texture
+  if (!await setEntry(1, 1, DataType.enum_.value, [1])) fail('Type failed'); // Fill
+  if (!await setEntry(1, 4, DataType.colour.value, [255, 0, 0, 255])) fail('Colour1 failed');
+
+  // Configure Display2 (GPIO0): render block 0, brightness 20, VYSIV1 layout.
+  final writeBlock = await reg.writeBlockField(0x06, 1, 2, 0,
+      BlockMeta(flagsAndType: DataType.integer.value, size: 4), intToBytes(0, 4));
+  if (writeBlock == null) fail('set Display2.RenderBlock failed');
   final park1 = await reg.writeBlockField(0x06, 0, 2, 0,
       BlockMeta(flagsAndType: DataType.integer.value, size: 4), intToBytes(-1, 4));
-  if (park1 == null) fail('park Display1.RenderBlock failed');
-  final setBrightness = await reg.writeBlockField(0x06, 1, 0, 0,
+  if (park1 == null) fail('park Display1 failed');
+  final brightness = await reg.writeBlockField(0x06, 1, 0, 0,
       BlockMeta(flagsAndType: DataType.number.value, size: 4), numberToBytes(20.0));
-  if (setBrightness == null) fail('set Display2.Brightness failed');
-  // Apply the preloaded VYSIV1 layout (11x10) so the static block shows it used.
-  final setLayout = await reg.writeBlockField(0x06, 1, 3, 0,
+  if (brightness == null) fail('set Display2.Brightness failed');
+  final layout = await reg.writeBlockField(0x06, 1, 3, 0,
       BlockMeta(flagsAndType: DataType.string.value, size: 6), 'VYSIV1'.codeUnits);
-  if (setLayout == null) fail('set Display2.LayoutFile failed');
+  if (layout == null) fail('set Display2.LayoutFile failed');
   // ignore: avoid_print
-  print('[D] Display2.RenderBlock=$blockIndex Brightness=20 LayoutFile=VYSIV1 (Display1 parked)');
+  print('[D] Display2.RenderBlock=0 Brightness=20 LayoutFile=VYSIV1');
 
   // Let the renderer run a few frames, then read back the achieved FPS.
-  final link = ConnectionManager.instance;
   double fps = 0;
   for (var attempt = 0; attempt < 8; attempt++) {
     await Future<void>.delayed(const Duration(milliseconds: 400));
@@ -135,50 +94,112 @@ Future<void> runTests() async {
       if (fps > 200) break;
     }
   }
-  if (fps < 200) fail('RefreshRate $fps < 200 FPS (parallel bit-bang expected ~300)');
+  if (fps < 200) fail('RefreshRate $fps < 200 FPS');
 
-  // Sanity: read the render block back (whole dict blobs). Retries guard against a
-  // requester subscription firing mid-run and clobbering the geometry field (the probe
-  // clears requester subs first, but a provider could still push between cleanup and here).
-  DynField? checkGeo;
-  DynField? checkTex;
-  for (var attempt = 0; attempt < 4; attempt++) {
-    checkGeo = await reg.readDynamicField(b, 0);
-    checkTex = await reg.readDynamicField(b, 1);
-    if (checkGeo != null && checkGeo.value.length == geometry.length) break;
-    await Future<void>.delayed(const Duration(milliseconds: 150));
-  }
+  // Readback of a few entries.
+  final shape = await reg.readDynamicField(b, 0, 1);
+  final texType = await reg.readDynamicField(b, 1, 1);
+  final colour = await reg.readDynamicField(b, 1, 4);
   // ignore: avoid_print
-  print('[D] readback geometry=${checkGeo?.value.length ?? -1}B (expected ${geometry.length}B) '
-      'texture=${checkTex?.value.length ?? -1}B (expected ${texture.length}B)');
-  if (checkGeo == null || checkGeo.value.length != geometry.length) fail('geometry readback mismatch');
-  if (checkTex == null || checkTex.value.length != texture.length) fail('texture readback mismatch');
+  print('[D] readback Shape=${shape?.value ?? []} Type=${texType?.value ?? []} Colour=${colour?.value ?? []}');
+  if (shape == null || shape.value.first != 3) fail('Shape readback mismatch');
+  if (texType == null || texType.value.first != 1) fail('Type readback mismatch');
+  if (colour == null || colour.value.length != 4) fail('Colour readback mismatch');
 
-  // RGB-black colour cycle on the square: rewrite the texture dict's Colour1 every 1.5s.
-  const colours = [
-    'red',
-    'green',
-    'blue',
-    'black',
+  // Shape cycle: rewrite the geometry value keys every 1.6s.
+  Future<void> geometry({
+    required int shape,
+    List<double>? sizeVec,
+    double? sizeNum,
+    double? angles,
+    int? points,
+    int? seed,
+  }) async {
+    if (!await setEntry(0, 1, DataType.enum_.value, [shape])) fail('shape write failed');
+    if (sizeVec != null) {
+      final v = <int>[];
+      for (final x in sizeVec) v.addAll(numberToBytes(x));
+      if (!await setEntry(0, 4, DataType.vector.value, v)) fail('size vec write failed');
+    } else if (sizeNum != null) {
+      if (!await setEntry(0, 4, DataType.number.value, numberToBytes(sizeNum))) fail('size write failed');
+    }
+    if (angles != null) {
+      if (!await setEntry(0, 8, DataType.number.value, numberToBytes(angles))) fail('angles write failed');
+    }
+    if (points != null) {
+      if (!await setEntry(0, 9, DataType.integer.value, intToBytes(points, 4))) fail('points write failed');
+    }
+    if (seed != null) {
+      if (!await setEntry(0, 11, DataType.integer.value, intToBytes(seed, 4))) fail('seed write failed');
+    }
+  }
+
+  final shapes = <(String, Future<void> Function())>[
+    ('Square', () => geometry(shape: 3, sizeNum: 4.0)),
+    ('Rectangle', () => geometry(shape: 4, sizeVec: [6.0, 3.0])),
+    ('Circle', () => geometry(shape: 6, sizeNum: 4.0)),
+    ('Ellipse', () => geometry(shape: 7, sizeVec: [6.0, 4.0])),
+    ('Trapezoid', () => geometry(shape: 5, sizeVec: [6.0, 4.0], angles: 20.0)),
+    ('Triangle', () => geometry(shape: 9, sizeNum: 4.0)),
+    ('Triangle iso', () => geometry(shape: 9, sizeNum: 4.0, angles: 40.0)),
+    ('Polygon', () => geometry(shape: 10, sizeNum: 3.0, points: 6)),
+    ('Star', () => geometry(shape: 11, sizeNum: 3.0, points: 5)),
+    ('HalfFill', () => geometry(shape: 2)),
+    ('Fill', () => geometry(shape: 1)),
+    ('Noise', () => geometry(shape: 13, sizeNum: 1.0, seed: 123)),
+    ('DoubleParabola', () => geometry(shape: 8, sizeVec: [5.0, 4.0])),
   ];
-  final rgbas = <List<int>>[
-    [255, 0, 0, 255],
-    [0, 255, 0, 255],
-    [0, 0, 255, 255],
-    [0, 0, 0, 255],
-  ];
-  final dynField1 = (await reg.readDynamicField(b, 1))!;
-  for (var c = 0; c < colours.length; c++) {
-    final set = await reg.writeDynamicField(b, dynField1, textureWith(rgbas[c]));
-    if (set == null) fail('cycle colour ${colours[c]} failed');
+  for (final s in shapes) {
+    final (name, apply) = s;
+    await apply();
     // ignore: avoid_print
-    print('[D] cycle -> ${colours[c]}');
-    await Future<void>.delayed(const Duration(milliseconds: 1500));
+    print('[D] shape -> $name');
+    await Future<void>.delayed(const Duration(milliseconds: 1600));
   }
-  // Leave the square red.
-  await reg.writeDynamicField(b, dynField1, textureWith([255, 0, 0, 255]));
+  await geometry(shape: 3, sizeNum: 4.0);
   // ignore: avoid_print
-  print('[D] done - square cycled RGB-black, left red on Display2/GPIO0');
+  print('[D] shapes done - restored Square');
+
+  // Gradient textures (rewrite field 1 value keys).
+  for (final g in <(String, int, int, int)>[
+    ('Gradient linear', 2, 4, 5),
+    ('Gradient circular', 3, 4, 5),
+  ]) {
+    final (name, type, c1k, c2k) = g;
+    if (!await setEntry(1, 1, DataType.enum_.value, [type])) fail('gradient type failed');
+    if (!await setEntry(1, c1k, DataType.colour.value, [255, 0, 0, 255])) fail('gradient c1 failed');
+    if (!await setEntry(1, c2k, DataType.colour.value, [0, 0, 255, 255])) fail('gradient c2 failed');
+    if (!await setEntry(1, 3, DataType.number.value, numberToBytes(6.0))) fail('gradient extent failed');
+    // ignore: avoid_print
+    print('[D] texture -> $name');
+    await Future<void>.delayed(const Duration(milliseconds: 2000));
+  }
+
+  // Effects: green Fill (field 1) then an effect dictionary (field 2) after it.
+  await setEntry(1, 4, DataType.colour.value, [0, 255, 0, 255]);
+  await setEntry(1, 1, DataType.enum_.value, [1]);
+  if (!await setEntry(2, 0, 0x102, [])) fail('effect marker failed'); // Texture
+  for (final e in <(String, int, double?)>[
+    ('Invert', 4, null),
+    ('HueShift 120deg', 5, 120.0),
+    ('Contrast 1.5', 6, 1.5),
+    ('Brightness 1.5', 7, 1.5),
+  ]) {
+    final (name, type, amount) = e;
+    if (!await setEntry(2, 1, DataType.enum_.value, [type])) fail('effect type failed');
+    if (amount != null) {
+      if (!await setEntry(2, 7, DataType.number.value, numberToBytes(amount))) fail('effect amount failed');
+    }
+    // ignore: avoid_print
+    print('[D] effect -> $name');
+    await Future<void>.delayed(const Duration(milliseconds: 1800));
+  }
+
+  // Restore: red Fill, remove the effect field.
+  await setEntry(1, 4, DataType.colour.value, [255, 0, 0, 255]);
+  await reg.deleteDynamic(block: b.index, field: 2);
+  // ignore: avoid_print
+  print('[D] textures done - restored red Square');
 }
 
 void main() async {
@@ -187,7 +208,7 @@ void main() async {
   setUpAll(() async => await connectHil());
   tearDownAll(disconnectHil);
 
-  test('LED display: square + RefreshRate', () async {
+  test('LED display: flat dynamic model', () async {
     final link = ConnectionManager.instance;
     final payload = [0, 0, 0, 1]; // field 0, key 1 (capabilities)
     final capReply = await link.request(1, ServiceType.register, 1, payload: payload);

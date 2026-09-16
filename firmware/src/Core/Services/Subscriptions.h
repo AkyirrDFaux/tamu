@@ -51,7 +51,13 @@ static inline FieldResult SubscriptionsGetField(uint32_t blockInfo) {
     if (type == 0x3FF) {
         if (inst < dynamic_block_registry.block_count) {
             DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(inst);
-            if (block) return block->Get(field);
+            if (block) {
+                KeyResult kr = block->GetKey(field, key);
+                FieldResult fr;
+                fr.Descriptor = kr.meta;
+                fr.Data = kr.data_ptr;
+                return fr;
+            }
         }
         return FieldResult{};
     }
@@ -120,6 +126,7 @@ static void ApplyRequesterValue(RequesterEntry *e, const uint8_t *val, uint8_t v
     uint16_t type = BlockInfoType(e->targetReg);
     uint8_t inst = BlockInfoInstance(e->targetReg);
     uint8_t field = BlockInfoField(e->targetReg);
+    uint8_t key = BlockInfoKey(e->targetReg);
     if (type == 0 && inst == 0) return;
 
     int idx = FindStaticBlock(type, inst);
@@ -136,7 +143,7 @@ static void ApplyRequesterValue(RequesterEntry *e, const uint8_t *val, uint8_t v
                 BlockMeta meta;
                 meta.FlagsAndType = newFlags;
                 meta.Size = vlen;
-                block->Set(field, val, vlen, meta.FlagsAndType);
+                block->SetEntry(field, key, val, vlen, meta.FlagsAndType);
             }
         }
     }

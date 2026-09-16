@@ -60,11 +60,11 @@ void main() {
     expect(isRenderDictType(0x101), isTrue);
     expect(isRenderDictType(0x102), isTrue);
     expect(isRenderDictType(0x06), isFalse);
-    expect(renderDictKeyName(0x101, 0), 'Operation');
-    expect(renderDictKeyName(0x101, 2), 'Position');
-    expect(renderDictKeyName(0x102, 3), 'Colour 1');
+    expect(renderDictKeyName(0x101, 0), 'Dictionary');
+    expect(renderDictKeyName(0x101, 3), 'Position');
+    expect(renderDictKeyName(0x102, 4), 'Colour 1');
     expect(renderKeyFieldInfo(0x101, 1).enumValues?[3], 'Square');
-    expect(renderKeyFieldInfo(0x102, 0).enumValues?[1], 'Fill');
-    expect(renderKeyFieldInfo(0x101, 0).enumValues?[0], 'Replace');
+    expect(renderKeyFieldInfo(0x102, 1).enumValues?[1], 'Fill');
+    expect(renderKeyFieldInfo(0x101, 2).enumValues?[0], 'Replace');
   });
 }
