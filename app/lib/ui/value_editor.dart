@@ -147,6 +147,8 @@ String dataTypeLabel(DataType type) => switch (type) {
       DataType.string => 'String',
       DataType.filename => 'Filename',
       DataType.deleted => 'Deleted',
+      DataType.geometry => 'Geometry dict',
+      DataType.texture => 'Texture dict',
     };
 
 String formatValue(DataType type, List<int> bytes) {

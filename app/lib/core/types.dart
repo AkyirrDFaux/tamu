@@ -133,7 +133,9 @@ enum DataType {
   idx(0x11), // alias for uint32 (legacy Index type at 0x0E)
   uint32(0x0E), // Unsigned 32-bit (firmware DataType::Uint32)
   devType(0x0F), // alias to enum (firmware DataType::DevType)
-  netAddr(0x03); // alias to id
+  netAddr(0x03), // alias to id
+  geometry(0x101), // dictionary marker (firmware DataType::Geometry = 0x101)
+  texture(0x102); // dictionary marker (firmware DataType::Texture = 0x102)
 
   final int value;
   const DataType(this.value);

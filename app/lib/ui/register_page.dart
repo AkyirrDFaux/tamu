@@ -633,7 +633,7 @@ Future<void> _loadVisibleFields() async {
                 child: Text(_formatDynamicValue(head, false, 0, 0),
                     style: const TextStyle(fontFamily: 'monospace', fontSize: 13))),
           ]),
-          subtitle: Text(dataTypeLabel(head.meta.dataType),
+          subtitle: Text(dataTypeLabel(head.meta.dataType) + _flagsSuffix(head.meta),
               style: const TextStyle(fontSize: 10)),
           trailing: _editMode
               ? PopupMenuButton<String>(
@@ -645,6 +645,8 @@ Future<void> _loadVisibleFields() async {
                       _changeDynamicType(blockType, inst, block, fieldIndex, 0);
                     } else if (action == 'fidx' && !head.meta.readOnly) {
                       _changeFieldIndex(blockType, inst, block, fieldIndex);
+                    } else if (action == 'flags') {
+                      _editEntryFlags(blockType, inst, block, fieldIndex, 0);
                     } else if (action == 'delete') {
                       _deleteField(blockType, inst, block, fieldIndex);
                     } else if (action == 'addkey' && !head.meta.readOnly) {
@@ -658,6 +660,7 @@ Future<void> _loadVisibleFields() async {
                       const PopupMenuItem(value: 'fidx', child: Text('Change field index')),
                       const PopupMenuItem(value: 'addkey', child: Text('Add key')),
                     ],
+                    const PopupMenuItem(value: 'flags', child: Text('Edit flags')),
                     const PopupMenuItem(value: 'delete', child: Text('Delete field')),
                   ],
                 )
@@ -743,7 +746,7 @@ Future<void> _loadVisibleFields() async {
                     child: Text(_formatDynamicValue(ek.e, isDict, dictType, ek.key),
                         style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
               ]),
-              subtitle: Text(dataTypeLabel(ek.e.meta.dataType),
+              subtitle: Text(dataTypeLabel(ek.e.meta.dataType) + _flagsSuffix(ek.e.meta),
                   style: const TextStyle(fontSize: 10)),
               trailing: PopupMenuButton<String>(
                 icon: const Icon(Icons.more_vert, size: 16),
@@ -752,8 +755,10 @@ Future<void> _loadVisibleFields() async {
                     _editDynamicEntry(blockType, inst, block, fieldIndex, ek.key);
                   } else if (action == 'type' && !ek.e.meta.readOnly) {
                     _changeDynamicType(blockType, inst, block, fieldIndex, ek.key);
-                  } else if (action == 'key' && !ek.e.meta.readOnly && ek.key != 0) {
+                  } else if (action == 'key' && !ek.e.meta.readOnly) {
                     _changeDynamicKey(blockType, inst, block, fieldIndex, ek.key);
+                  } else if (action == 'flags') {
+                    _editEntryFlags(blockType, inst, block, fieldIndex, ek.key);
                   } else if (action == 'delete' && !ek.e.meta.readOnly) {
                     _deleteDynamicEntry(blockType, inst, block, fieldIndex, ek.key);
                   }
@@ -766,6 +771,8 @@ Future<void> _loadVisibleFields() async {
                       const PopupMenuItem(value: 'key', child: Text('Change key')),
                     ],
                   ],
+                  if (_editMode)
+                    const PopupMenuItem(value: 'flags', child: Text('Edit flags')),
                   if (!ek.e.meta.readOnly)
                     const PopupMenuItem(value: 'delete', child: Text('Delete entry')),
                 ],
@@ -1075,6 +1082,17 @@ Future<void> _loadVisibleFields() async {
       _snack('Field $field already exists');
       return;
     }
+    // A dictionary field is created as an empty key-0 marker (no value).
+    if (dataType == DataType.geometry || dataType == DataType.texture) {
+      final seed = <int>[];
+      final dynBlock = DynBlock(index: block.inst, meta: block.meta, name: block.name);
+      final meta = BlockMeta(flagsAndType: dataType.value, key: 0, size: 0);
+      final confirmed =
+          await _client.writeDynamicEntry(dynBlock, field, 0, meta, seed);
+      _snack(confirmed != null ? 'Field added' : 'Add failed');
+      await _refresh();
+      return;
+    }
     final seed = await showValueEditor(context, dataType, []);
     if (seed == null || !mounted) return;
     final dynBlock = DynBlock(index: block.inst, meta: block.meta, name: block.name);
@@ -1241,6 +1259,60 @@ Future<void> _loadVisibleFields() async {
     final ok = await _client.setDynamicFieldIndex(dynBlock, fieldIndex, newField);
     _snack(ok ? 'Field moved' : 'Move failed (index already used?)');
     await _refresh();
+  }
+
+  /// Edits the Read-only / Persistent flags of one (field, key) entry.
+  Future<void> _editEntryFlags(int blockType, int inst,
+      ({int type, int inst, BlockMeta meta, String name})? block, int fieldIndex, int key) async {
+    if (block == null || !mounted) return;
+    final cache = _fieldCache[(blockType << 8) | inst];
+    final entry = cache?[fieldIndex * 256 + key];
+    if (entry == null) return;
+    var ro = entry.meta.readOnly;
+    var per = entry.meta.persistent;
+    final result = await showDialog<List<bool>>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: Text('Entry flags (field $fieldIndex)'),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            SwitchListTile(
+              title: const Text('Read-only'),
+              subtitle: const Text('Blocks value edits from the app'),
+              value: ro,
+              onChanged: (v) => setState(() => ro = v),
+            ),
+            SwitchListTile(
+              title: const Text('Persistent'),
+              subtitle: const Text('Saved to the block DV file on Save; survives reboot'),
+              value: per,
+              onChanged: (v) => setState(() => per = v),
+            ),
+          ]),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            FilledButton(
+                onPressed: () => Navigator.pop(context, [ro, per]),
+                child: const Text('OK')),
+          ],
+        ),
+      ),
+    );
+    if (result == null || !mounted) return;
+    final dynBlock = DynBlock(index: inst, meta: block.meta, name: block.name);
+    final ok = await _client.setDynamicEntryFlags(
+        dynBlock, fieldIndex, key, readOnly: result[0], persistent: result[1]);
+    _snack(ok != null ? 'Flags updated' : 'Update failed');
+    await _refresh();
+  }
+
+  /// RO/P flag suffix for a dynamic entry's subtitle.
+  String _flagsSuffix(BlockMeta meta) {
+    final f = <String>[];
+    if (meta.readOnly) f.add('RO');
+    if (meta.persistent) f.add('P');
+    return f.isEmpty ? '' : ' · ${f.join(' · ')}';
   }
 
   /// Adds an entry to a dynamic block's (field, key) record at the first free key.

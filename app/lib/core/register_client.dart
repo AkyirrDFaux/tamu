@@ -356,6 +356,23 @@ class RegisterClient {
     return valueSlice(reply, echoMeta.size);
   }
 
+  /// Sets the Read-only / Persistent flags of one (field, key) entry in place,
+  /// preserving its type and value.
+  Future<List<int>?> setDynamicEntryFlags(DynBlock block, int field, int key,
+      {bool? readOnly, bool? persistent}) async {
+    final e = await readDynamicField(block, field, key);
+    if (e == null) return null;
+    final curRO = (e.meta.flags & FieldFlags.readOnly) != 0;
+    final curPer = (e.meta.flags & FieldFlags.persistent) != 0;
+    final newRO = readOnly ?? curRO;
+    final newPer = persistent ?? curPer;
+    if (newRO == curRO && newPer == curPer) return e.value;
+    final nf = (e.meta.flagsAndType & ~FieldFlags.mask) |
+        (newRO ? FieldFlags.readOnly : 0) | (newPer ? FieldFlags.persistent : 0);
+    return writeDynamicEntry(block, field, key,
+        BlockMeta(flagsAndType: nf, key: key, size: e.value.length), e.value);
+  }
+
   /// Deletes a dynamic block (tombstone), a field, or a (field, key) entry - CID 0x11.
   /// Field 0xFF = whole block; key 0xFF = the whole field; otherwise the entry.
   Future<bool> deleteDynamic({required int block, int? field, int? key}) async {

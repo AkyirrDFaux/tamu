@@ -57,8 +57,12 @@ void main() {
   });
 
   test('render dict key names and enum labels', () {
-    expect(isRenderDictType(0x101), isTrue);
-    expect(isRenderDictType(0x102), isTrue);
+    // DataType must cover the dictionary marker types (0x101/0x102) so the app can
+    // create a dictionary field and render_dict constants stay in sync.
+    expect(DataType.geometry.value, geometryDictType);
+    expect(DataType.texture.value, textureDictType);
+    expect(isRenderDictType(DataType.geometry.value), isTrue);
+    expect(isRenderDictType(DataType.texture.value), isTrue);
     expect(isRenderDictType(0x06), isFalse);
     expect(renderDictKeyName(0x101, 0), 'Dictionary');
     expect(renderDictKeyName(0x101, 3), 'Position');
