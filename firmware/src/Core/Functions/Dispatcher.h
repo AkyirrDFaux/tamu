@@ -244,8 +244,21 @@ void LoadAllBackups()
     }
 
 #ifndef DISABLE_DYNAMIC_MEMORY
-    n = ReadBackupFile(DynamicBackupName(), buf, sizeof(buf));
-    if (n > 0) DeserializeRegistry(dynamic_block_registry, buf, n);
+    // Per-block DT/DV files: load every live slot (absent file = tombstone/empty).
+    for (uint16_t i = 0; i < MAX_DYNAMIC_BLOCKS; i++) {
+        DynamicBlockDescriptor scratch;
+        if (!LoadDynamicBlockFiles(scratch, i))
+            continue;
+        while (dynamic_block_registry.block_count <= i)
+            if (!dynamic_block_registry.AddBlock(BlockType::Undefined))
+                break;
+        if (dynamic_block_registry.block_count > i) {
+            dynamic_block_registry.TombstoneBlock(i);
+            *dynamic_block_registry.GetBlock(i) = scratch;
+        } else {
+            scratch.Release();
+        }
+    }
 #endif
 
 #ifdef USE_SUB_REQUEST

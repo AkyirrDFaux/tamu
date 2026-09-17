@@ -151,7 +151,10 @@ Future<void> _loadVisibleFields() async {
   }
 
   Future<bool> _requestStatus(RegisterClient c, int cid, List<int> payload) async {
-    final reply = await c.request(cid, payload: payload);
+    // The dynamic registry save/recall (CID 3/4, inst 0x3F) writes per-block files and
+    // runs the 64-slot cleanup - allow it more than the default request timeout.
+    final reply = await c.request(cid, payload: payload,
+        timeout: const Duration(seconds: 25));
     return reply != null && reply.isNotEmpty && reply[0] == 0;
   }
 

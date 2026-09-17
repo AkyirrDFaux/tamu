@@ -503,25 +503,50 @@ static void HandleStaticSaveRecall(const PacketFrame &frame, uint8_t cid, uint32
 
 #ifndef DISABLE_DYNAMIC_MEMORY
 static void HandleDynamicSaveRecall(const PacketFrame &frame, uint8_t cid, uint8_t inst_save, uint8_t field) {
-    bool save_all = (inst_save == 0x3F);
-    DynamicBlockDescriptor *block = nullptr;
-    if (!save_all) {
-        if (inst_save >= dynamic_block_registry.block_count) { RespondStatus(frame,false); return; }
-        block = dynamic_block_registry.GetBlock(inst_save);
-        if (!block) { RespondStatus(frame,false); return; }
-    }
-    
-    if (cid == 3) { // Save
-        uint8_t backup_buf[MEMORY_BACKUP_CAP];
-        uint16_t serialized_len = SerializeRegistry(dynamic_block_registry, backup_buf, sizeof(backup_buf));
-        if (serialized_len == 0) { RespondStatus(frame,false); return; }
-        if (!WriteBackupFile(DynamicBackupName(), backup_buf, serialized_len)) { RespondStatus(frame,false); return; }
+    if (cid == 3) { // Save (DT/DV per-block files)
+        // Clean tombstoned/orphan files BEFORE writing, so deleted blocks release
+        // their storage; positions in the registry are never touched.
+        CleanupDynamicFiles();
+        if (inst_save == 0x3F) {
+            for (uint16_t i = 0; i < dynamic_block_registry.block_count && i < MAX_DYNAMIC_BLOCKS; i++) {
+                if (dynamic_block_registry.blocks[i].type == BlockType::None) continue;
+                if (!SaveDynamicBlockFiles(dynamic_block_registry.blocks[i], i)) { RespondStatus(frame,false); return; }
+            }
+        } else {
+            if (inst_save >= dynamic_block_registry.block_count) { RespondStatus(frame,false); return; }
+            DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(inst_save);
+            if (!block || block->type == BlockType::None) { RespondStatus(frame,false); return; }
+            if (!SaveDynamicBlockFiles(*block, inst_save)) { RespondStatus(frame,false); return; }
+        }
         RespondStatus(frame,true);
-    } else { // Recall
-        if (save_all) { RespondStatus(frame,false); }
-        else if (RecallRegistryBlock(dynamic_block_registry, inst_save, DynamicBackupName())) { RespondStatus(frame,true); }
-        else { RespondStatus(frame,false); }
+        return;
     }
+
+    // Recall (CID 4): rebuild the slot(s) from their DT/DV files. Per the docs each
+    // block keeps its own files, so a slot with no DT file stays a tombstone.
+    if (inst_save == 0x3F) {
+        bool ok = true;
+        for (uint16_t i = 0; i < MAX_DYNAMIC_BLOCKS; i++) {
+            DynamicBlockDescriptor scratch;
+            if (!LoadDynamicBlockFiles(scratch, i))
+                continue;
+            while (dynamic_block_registry.block_count <= i)
+                if (!dynamic_block_registry.AddBlock(BlockType::Undefined)) { ok = false; break; }
+            if (!ok) break;
+            dynamic_block_registry.TombstoneBlock(i);
+            *dynamic_block_registry.GetBlock(i) = scratch;
+        }
+        RespondStatus(frame, ok);
+        return;
+    }
+
+    DynamicBlockDescriptor scratch;
+    if (!LoadDynamicBlockFiles(scratch, inst_save)) { RespondStatus(frame,false); return; }
+    while (dynamic_block_registry.block_count <= inst_save)
+        if (!dynamic_block_registry.AddBlock(BlockType::Undefined)) { RespondStatus(frame,false); return; }
+    dynamic_block_registry.TombstoneBlock(inst_save);
+    *dynamic_block_registry.GetBlock(inst_save) = scratch;
+    RespondStatus(frame,true);
 }
 
 static void HandleCreateDynamic(const PacketFrame &frame, uint8_t index, uint16_t type) {
@@ -595,27 +620,12 @@ static void HandleGetMemUsage(const PacketFrame &frame, uint32_t bi, uint16_t bl
 }
 
 static void HandleReadBackup(const PacketFrame &frame, uint32_t bi, uint16_t block_idx) {
-    if (block_idx >= dynamic_block_registry.block_count) { RespondStatus(frame,false); return; }
+    if (block_idx >= MAX_DYNAMIC_BLOCKS) { RespondStatus(frame,false); return; }
     uint8_t req_field = BlockInfoField(bi);
     uint8_t req_key = BlockInfoKey(bi);
 
-    uint8_t buf[MEMORY_BACKUP_CAP];
-    uint16_t cnt = ReadBackupFile(DynamicBackupName(), buf, sizeof(buf));
-    if (cnt == 0) { RespondStatus(frame,false); return; }
-
-    uint16_t cursor = 0;
-    if (cnt < 2) { RespondStatus(frame,false); return; }
-    uint16_t block_count; memcpy(&block_count, buf + cursor, 2); cursor += 2;
-    if (block_idx >= block_count) { RespondStatus(frame,false); return; }
-
     DynamicBlockDescriptor scratch;
-    for (uint16_t index = 0; index < block_idx; index++)
-    {
-        DynamicBlockDescriptor tmp;
-        if (!DeserializeDynamicBlock(tmp, buf, cnt, cursor)) { RespondStatus(frame,false); return; }
-        tmp.Release();
-    }
-    if (!DeserializeDynamicBlock(scratch, buf, cnt, cursor)) { RespondStatus(frame,false); return; }
+    if (!LoadDynamicBlockFiles(scratch, block_idx)) { RespondStatus(frame,false); return; }
 
     if (req_field == 0xFF) {
         SendBlockMetaResponse(frame, bi, (uint16_t)scratch.type, (uint8_t)scratch.FieldCount(), scratch.Name);

@@ -474,14 +474,18 @@ class RegisterClient {
   /// Saves the dynamic registry (CID 3; instance 0x3F = everything).
   Future<bool> saveDynamic({int? block}) async {
     final inst = block ?? 0x3F;
-    final reply = await request(3, payload: _dynBi(inst, 0xFF));
+    // Saving writes per-block DT/DV files and runs the 64-slot orphan cleanup (flash
+    // page erases), which can exceed the default 2s request timeout.
+    final reply = await request(3, payload: _dynBi(inst, 0xFF),
+        timeout: const Duration(seconds: 25));
     return reply != null && reply.isNotEmpty && reply[0] == 0;
   }
 
   /// Recalls the dynamic registry (CID 4; instance 0x3F = everything).
   Future<bool> recallDynamic({int? block}) async {
     final inst = block ?? 0x3F;
-    final reply = await request(4, payload: _dynBi(inst, 0xFF));
+    final reply = await request(4, payload: _dynBi(inst, 0xFF),
+        timeout: const Duration(seconds: 25));
     return reply != null && reply.isNotEmpty && reply[0] == 0;
   }
 }

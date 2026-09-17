@@ -498,195 +498,171 @@ static DynamicBlockDescriptor *CreateDynamicBlock(BlockType type, const uint8_t 
     return &block;
 }
 
-// Encoded Storage file name holding the dynamic memory backup registry.
-static const char *DynamicBackupName()
+// Per-block dynamic persistence (Docs/Services/Register.md: DT_XXX / DV_XXX files).
+// A block's table lives in "DT_<hex2>", its persistent value space in "DV_<hex2>".
+#define MAX_DYNAMIC_BLOCKS 64 // 6-bit BlockInfo instance range (0..63)
+
+// "D<kind>_<hex2>" space padded to 8 chars (kind = T or V).
+static void HexIndexName(char kind, uint16_t idx, char out[8])
 {
-    static constexpr char name[8] = {'D', 'Y', 'N', 'M', 'E', 'M', ' ', ' '};
-    return name;
+    const char *hex = "0123456789ABCDEF";
+    out[0] = 'D';
+    out[1] = kind;
+    out[2] = '_';
+    out[3] = hex[(idx >> 4) & 0xF];
+    out[4] = hex[idx & 0xF];
+    out[5] = out[6] = out[7] = ' ';
 }
-#endif
+static void DynamicTableName(uint16_t idx, char out[8]) { HexIndexName('T', idx, out); }
+static void DynamicValuesName(uint16_t idx, char out[8]) { HexIndexName('V', idx, out); }
 
-// ---------------------------------------------------------------------------
-// Serialisation (single-file registry for now; per-block DT/DV files follow).
-// Per block: u8 name_len, name, u16 type, u16 entry_count, u16 persistent_len,
-// then entries (u16 fieldKey, u16 flagsAndType, u8 size, u8 pad) x entry_count,
-// then the compacted persistent value space (persistent entries in table order).
-// Tombstone blocks (type None) serialise as an empty block.
-// ---------------------------------------------------------------------------
-
-// Serialises one dynamic block's table + persistent values into `out` (max `cap`).
-static uint16_t SerializeDynamicBlock(const DynamicBlockDescriptor &b, uint8_t *out, uint16_t cap)
+// Removes a block's DT/DV files (tombstoned slots must not leave files behind).
+static void DeleteDynamicBlockFiles(uint16_t idx)
 {
+    char tn[8], vn[8];
+    DynamicTableName(idx, tn);
+    DynamicValuesName(idx, vn);
+    if (Storage.FileExists(tn) != 0xFFFFFFFF) Storage.DeleteFile(tn);
+    if (Storage.FileExists(vn) != 0xFFFFFFFF) Storage.DeleteFile(vn);
+}
+
+// Cleans orphaned DT/DV files for tombstoned or beyond-registry slots. Called before
+// every save. File cleanup never changes registry positions.
+static void CleanupDynamicFiles()
+{
+    for (uint16_t i = 0; i < MAX_DYNAMIC_BLOCKS; i++)
+    {
+        bool live = (i < dynamic_block_registry.block_count &&
+                     dynamic_block_registry.blocks[i].type != BlockType::None);
+        if (!live)
+            DeleteDynamicBlockFiles(i);
+    }
+}
+
+// Writes the block's DT (table) + DV (persistent value space) files atomically via the
+// staging/rename helper. Volatile values are NOT persisted (docs: only the Persistent
+// space is saved; the table keeps all entries).
+static bool SaveDynamicBlockFiles(const DynamicBlockDescriptor &b, uint16_t idx)
+{
+    uint8_t buf[MEMORY_BACKUP_CAP];
     uint16_t cursor = 0;
     uint8_t name_len = (uint8_t)strlen(b.Name);
-    uint16_t p_len = b.persistent_len;
+    uint16_t need = (uint16_t)(1 + name_len + 2 + 2 + (uint16_t)b.entry_count * 6);
+    if (need > sizeof(buf))
+        return false;
 
-    uint16_t needed = (uint16_t)(1 + name_len + 2 + 2 + 2 + b.entry_count * 6 + p_len);
-    if (needed > cap) return 0;
-
-    out[cursor++] = name_len;
-    if (name_len) { memcpy(out + cursor, b.Name, name_len); cursor += name_len; }
-    memcpy(out + cursor, &b.type, 2); cursor += 2;
-    memcpy(out + cursor, &b.entry_count, 2); cursor += 2;
-    memcpy(out + cursor, &p_len, 2); cursor += 2;
+    buf[cursor++] = name_len;
+    if (name_len) { memcpy(buf + cursor, b.Name, name_len); cursor += name_len; }
+    memcpy(buf + cursor, &b.type, 2); cursor += 2;
+    memcpy(buf + cursor, &b.entry_count, 2); cursor += 2;
     for (uint16_t i = 0; i < b.entry_count; i++)
     {
         const DynamicEntry &e = b.table[i];
-        memcpy(out + cursor, &e.fieldKey, 2); cursor += 2;
-        memcpy(out + cursor, &e.flagsAndType, 2); cursor += 2;
-        out[cursor++] = e.size;
-        out[cursor++] = 0;
+        memcpy(buf + cursor, &e.fieldKey, 2); cursor += 2;
+        memcpy(buf + cursor, &e.flagsAndType, 2); cursor += 2;
+        buf[cursor++] = e.size;
+        buf[cursor++] = 0;
     }
-    if (p_len) memcpy(out + cursor, b.persistent_data, p_len);
-    cursor += p_len;
-    return cursor;
+
+    char tn[8], vn[8];
+    DynamicTableName(idx, tn);
+    DynamicValuesName(idx, vn);
+    if (!WriteBackupFile(tn, buf, cursor))
+        return false;
+
+    if (b.persistent_len)
+    {
+        if (b.persistent_len > sizeof(buf))
+        {
+            DeleteDynamicBlockFiles(idx);
+            return false;
+        }
+        memcpy(buf, b.persistent_data, b.persistent_len);
+        if (!WriteBackupFile(vn, buf, b.persistent_len))
+        {
+            DeleteDynamicBlockFiles(idx);
+            return false;
+        }
+    }
+    else if (Storage.FileExists(vn) != 0xFFFFFFFF)
+    {
+        Storage.DeleteFile(vn); // block has no persistent values; drop a stale DV
+    }
+    return true;
 }
 
-// Deserialises one block from `in` (len bytes) at `cursor` into `b` (fresh descriptor).
-// Returns true on success and advances cursor.
-static bool DeserializeDynamicBlock(DynamicBlockDescriptor &b, const uint8_t *in, uint16_t len, uint16_t &cursor)
+// Loads one block from its DT+DV files into `b` (fresh). Returns false when no DT file
+// exists (an empty/tombstone slot). The persistent space is restored; the volatile
+// space is zero-filled (its values are not persisted).
+static bool LoadDynamicBlockFiles(DynamicBlockDescriptor &b, uint16_t idx)
 {
-    if (cursor + 1 > len) return false;
-    uint8_t name_len = in[cursor++];
-    if (cursor + name_len > len) return false;
-    if (name_len) memcpy(b.Name, in + cursor, name_len);
+    char tn[8], vn[8];
+    DynamicTableName(idx, tn);
+    DynamicValuesName(idx, vn);
+    uint8_t tbuf[MEMORY_BACKUP_CAP], vbuf[MEMORY_BACKUP_CAP];
+    uint16_t tlen = ReadBackupFile(tn, tbuf, sizeof(tbuf));
+    if (tlen == 0)
+        return false;
+    uint16_t vlen = ReadBackupFile(vn, vbuf, sizeof(vbuf));
+
+    uint16_t cursor = 0;
+    if (cursor + 1 > tlen) return false;
+    uint8_t name_len = tbuf[cursor++];
+    if (cursor + name_len > tlen) return false;
+    if (name_len) memcpy(b.Name, tbuf + cursor, name_len);
     b.Name[name_len] = '\0';
     cursor += name_len;
-    if (cursor + 2 > len) return false;
-    memcpy(&b.type, in + cursor, 2); cursor += 2;
-    if (cursor + 2 > len) return false;
-    uint16_t entry_count; memcpy(&entry_count, in + cursor, 2); cursor += 2;
-    if (cursor + 2 > len) return false;
-    uint16_t p_len; memcpy(&p_len, in + cursor, 2); cursor += 2;
-
-    uint16_t entries_bytes = (uint16_t)entry_count * 6;
-    if (cursor + entries_bytes > len) return false;
+    if (cursor + 2 > tlen) return false;
+    memcpy(&b.type, tbuf + cursor, 2); cursor += 2;
+    if (cursor + 2 > tlen) return false;
+    uint16_t entry_count; memcpy(&entry_count, tbuf + cursor, 2); cursor += 2;
+    if (cursor + (uint16_t)entry_count * 6 > tlen) return false;
     if (entry_count && !b.EnsureTable(entry_count)) return false;
+
+    uint16_t p_needed = 0, v_needed = 0;
     for (uint16_t i = 0; i < entry_count; i++)
     {
-        uint16_t fk, fat;
-        memcpy(&fk, in + cursor, 2);
-        memcpy(&fat, in + cursor + 2, 2);
-        b.table[i].fieldKey = fk;
-        b.table[i].flagsAndType = fat;
-        b.table[i].size = in[cursor + 4];
-        b.table[i].pad = in[cursor + 5];
+        DynamicEntry &e = b.table[i];
+        memcpy(&e.fieldKey, tbuf + cursor, 2);
+        memcpy(&e.flagsAndType, tbuf + cursor + 2, 2);
+        e.size = tbuf[cursor + 4];
+        e.pad = tbuf[cursor + 5];
+        (e.flagsAndType & FieldFlags::Persistent ? p_needed : v_needed) += e.size;
         cursor += 6;
     }
     b.entry_count = entry_count;
-    if (cursor + p_len > len) return false;
+    if (p_needed != vlen)
+        return false; // DV length must equal the table's persistent size
 
-    if (p_len)
+    if (v_needed)
     {
-        b.persistent_data = (uint8_t *)malloc(p_len);
-        if (!b.persistent_data) return false;
-        b.persistent_allocated = b.persistent_len = p_len;
+        b.volatile_data = (uint8_t *)malloc(v_needed);
+        if (!b.volatile_data) return false;
+        b.volatile_allocated = b.volatile_len = v_needed;
+        memset(b.volatile_data, 0, v_needed);
     }
-    uint16_t po = 0, pcursor = cursor;
+    if (p_needed)
+    {
+        b.persistent_data = (uint8_t *)malloc(p_needed);
+        if (!b.persistent_data) return false;
+        b.persistent_allocated = b.persistent_len = p_needed;
+    }
+    uint16_t po = 0, vo = 0;
     for (uint16_t i = 0; i < entry_count; i++)
     {
         DynamicEntry &e = b.table[i];
         if (e.flagsAndType & FieldFlags::Persistent)
         {
-            if (e.size) memcpy(b.persistent_data + po, in + pcursor, e.size);
-            pcursor += e.size;
+            if (e.size) memcpy(b.persistent_data + po, vbuf + po, e.size);
             e.memoryOffset = po;
             po += e.size;
         }
         else
         {
-            e.memoryOffset = 0; // volatile: no saved value
-            e.size = 0;
-        }
-    }
-    cursor = pcursor;
-    return true;
-}
-
-// Rebuilds the registry from a serialised buffer, replacing any existing blocks.
-template <typename T>
-static bool DeserializeRegistry(BlockRegistry<T> &registry, const uint8_t *in, uint16_t len)
-{
-    uint16_t cursor = 0;
-    if (len < 2) return false;
-    uint16_t block_count;
-    memcpy(&block_count, in + cursor, 2); cursor += 2;
-
-    // Free any existing blocks first.
-    while (registry.block_count > 0)
-        registry.RemoveBlock(registry.block_count - 1);
-
-    for (uint16_t index = 0; index < block_count; index++)
-    {
-        if (!registry.AddBlock(BlockType::Undefined))
-            return false;
-        T &block = *registry.GetBlock(registry.block_count - 1);
-        if (!DeserializeDynamicBlock(block, in, len, cursor))
-        {
-            registry.RemoveBlock(registry.block_count - 1);
-            return false;
+            e.memoryOffset = vo;
+            vo += e.size;
         }
     }
     return true;
 }
-
-// Serialises `registry` into `out` (max `cap` bytes). Returns the serialised length (0 on error).
-template <typename T>
-static uint16_t SerializeRegistry(const BlockRegistry<T> &registry, uint8_t *out, uint16_t cap)
-{
-    uint16_t cursor = 0;
-    if (cap < 2)
-        return 0;
-    memcpy(out + cursor, &registry.block_count, 2); cursor += 2;
-    for (uint16_t index = 0; index < registry.block_count; index++)
-    {
-        uint16_t n = SerializeDynamicBlock(registry.blocks[index], out + cursor, cap - cursor);
-        if (n == 0)
-            return 0;
-        cursor += n;
-    }
-    return cursor;
-}
-
-// Restores a single block `block_idx` from the backup file `backup_name` into `registry`.
-// Returns true on success.
-template <typename T>
-static bool RecallRegistryBlock(BlockRegistry<T> &registry, uint16_t block_idx, const char backup_name[8])
-{
-    uint8_t buf[MEMORY_BACKUP_CAP];
-    uint16_t cnt = ReadBackupFile(backup_name, buf, sizeof(buf));
-    if (cnt == 0)
-        return false;
-
-    uint16_t cursor = 0;
-    if (cnt < 2)
-        return false;
-    uint16_t block_count;
-    memcpy(&block_count, buf + cursor, 2); cursor += 2;
-
-    if (block_idx >= block_count)
-        return false;
-
-    // Skip blocks before block_idx.
-    for (uint16_t index = 0; index < block_idx; index++)
-    {
-        T scratch;
-        if (!DeserializeDynamicBlock(scratch, buf, cnt, cursor))
-            return false;
-        scratch.Release();
-    }
-
-    // Replace the block at block_idx (tombstone it first if present).
-    if (block_idx < registry.block_count)
-        registry.TombstoneBlock(block_idx);
-    while (registry.block_count <= block_idx)
-        if (!registry.AddBlock(BlockType::Undefined))
-            return false;
-    T &block = *registry.GetBlock(block_idx);
-    if (!DeserializeDynamicBlock(block, buf, cnt, cursor))
-    {
-        registry.TombstoneBlock(block_idx);
-        return false;
-    }
-    return true;
-}
+#endif
