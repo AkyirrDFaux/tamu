@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Modules and blocks/LED display.md",
+                "file": "Plan.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "LED display"
+              "title": "Plan"
             }
           },
           {
@@ -204,6 +204,7 @@
   },
   "active": "b382b423e960f24e",
   "lastOpenFiles": [
+    "Modules and blocks/LED display.md",
     "Modules and blocks/Generic system blocks.md",
     "Modules and blocks/Buttons & LEDS.md",
     "Services/Register.md",
@@ -213,7 +214,6 @@
     "Services/Storage.md",
     "Services/Subscriptions.md",
     "Services/System Block and Device Commands.md",
-    "Modules and blocks/LED display.md",
     "Plan.md",
     "Services/Script.md",
     "Data Formats.md",

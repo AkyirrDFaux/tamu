@@ -1,4 +1,3 @@
-import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -397,64 +396,102 @@ Future<List<int>?> _editDevType(
   );
 }
 
-/// Vector (N Numbers): one numeric field per component. Vectors are
-  /// size-flexible per Docs/Data Formats.md, so the component count follows the
-  /// current value length (falling back to 3 for a brand-new entry).
+/// Vector (N Numbers): one numeric field per component, with a size picker so the
+/// length can be chosen/edited (Docs/Data Formats.md: size-flexible).
 Future<List<int>?> _editVector(
     BuildContext context, FieldInfo? info, List<int> current) {
-  final n = current.length >= 4 ? (current.length ~/ 4) : 3;
-  // A brand-new entry carries no value yet: start from zeros instead of
-  // falling back to the raw-hex editor.
-  final hasValue = current.length >= n * 4;
+  var n = current.length >= 4 ? (current.length ~/ 4) : 3;
+  if (n < 1) n = 1;
+  var hasValue = current.length >= n * 4;
   final controllers = List.generate(
       n,
       (i) => TextEditingController(
           text: hasValue
               ? numberFromBytes(current, i * 4).toString()
               : '0.0'));
+  final _sizeCtrl = TextEditingController(text: '$n');
   final unit = info?.unit;
+
+  void resize(int newN) {
+    if (newN < 1) newN = 1;
+    if (newN > 32) newN = 32;
+    n = newN;
+    while (controllers.length < n) {
+      controllers.add(TextEditingController(text: '0.0'));
+    }
+    while (controllers.length > n) {
+      controllers.removeLast();
+    }
+    _sizeCtrl.text = '$n';
+    hasValue = false;
+  }
+
   return showDialog<List<int>>(
     context: context,
-    builder: (context) => AlertDialog(
-      title: Text(unit == null
-          ? (info?.name ?? 'Vector')
-          : '${info!.name} [$unit]'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          for (var i = 0; i < n; i++)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: TextField(
-                controller: controllers[i],
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(labelText: i < 3 ? 'XYZ'[i] : '$i'),
+    builder: (context) => StatefulBuilder(
+      builder: (context, setState) => AlertDialog(
+        title: Text(unit == null
+            ? (info?.name ?? 'Vector')
+            : '${info!.name} [$unit]'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(children: [
+              const Text('Size: ', style: TextStyle(fontSize: 12)),
+              IconButton(
+                icon: const Icon(Icons.remove_circle_outline, size: 20),
+                onPressed: () => setState(() => resize(n - 1)),
               ),
-            ),
+              SizedBox(
+                width: 44,
+                child: TextField(
+                  controller: _sizeCtrl,
+                  keyboardType: TextInputType.number,
+                  textAlign: TextAlign.center,
+                  decoration: const InputDecoration(isDense: true),
+                  onChanged: (_) =>
+                      setState(() => resize(int.tryParse(_sizeCtrl.text) ?? n)),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.add_circle_outline, size: 20),
+                onPressed: () => setState(() => resize(n + 1)),
+              ),
+            ]),
+            for (var i = 0; i < n; i++)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: TextField(
+                  controller: controllers[i],
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(labelText: i < 3 ? 'XYZ'[i] : '$i'),
+                ),
+              ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () {
+              final values =
+                  controllers.map((c) => double.tryParse(c.text)).toList();
+              if (values.any((v) => v == null)) return;
+              final out = BytesBuilder();
+              for (final v in values) {
+                out.add(numberToBytes(v!));
+              }
+              Navigator.pop(context, out.toBytes());
+            },
+            child: const Text('OK'),
+          ),
         ],
       ),
-      actions: [
-        TextButton(
-            onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-        FilledButton(
-          onPressed: () {
-            final values =
-                controllers.map((c) => double.tryParse(c.text)).toList();
-            if (values.any((v) => v == null)) return;
-            final out = BytesBuilder();
-            for (final v in values) {
-              out.add(numberToBytes(v!));
-            }
-            Navigator.pop(context, out.toBytes());
-          },
-          child: const Text('OK'),
-        ),
-      ],
     ),
   );
 }
 
-/// Matrix (Rows x Cols of Number): grid editor with the header (h, w) preserved.
+/// Matrix (Rows x Cols of Number): grid editor with the header (h, w) preserved, and
+/// rows/cols size pickers.
 Future<List<int>?> _editMatrix(
     BuildContext context, FieldInfo? info, List<int> current) {
   var h = current.length >= 2 ? current[0] | (current[1] << 8) : 0;
@@ -469,54 +506,111 @@ Future<List<int>?> _editMatrix(
       return _editHex(context, 'Matrix ${h}x$w', current);
     }
   }
+  if (h < 1) h = 1;
+  if (w < 1) w = 1;
+  final _rowsCtrl = TextEditingController(text: '$h');
+  final _colsCtrl = TextEditingController(text: '$w');
   final controllers = List.generate(
       h * w,
       (i) => TextEditingController(
           text: numberFromBytes(current, 4 + i * 4).toString()));
+
+  void resize(int newH, int newW) {
+    if (newH < 1) newH = 1;
+    if (newW < 1) newW = 1;
+    if (newH > 6) newH = 6;
+    if (newW > 6) newW = 6;
+    h = newH;
+    w = newW;
+    while (controllers.length < h * w) {
+      controllers.add(TextEditingController(text: '0.0'));
+    }
+    while (controllers.length > h * w) {
+      controllers.removeLast();
+    }
+    _rowsCtrl.text = '$h';
+    _colsCtrl.text = '$w';
+  }
+
   return showDialog<List<int>>(
     context: context,
-    builder: (context) => AlertDialog(
-      title: Text(info?.name ?? 'Matrix ${h}x$w'),
-      content: SizedBox(
-        width: 280,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (var r = 0; r < h; r++)
-              Row(children: [
-                for (var c = 0; c < w; c++)
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.all(3),
-                      child: TextField(
-                        controller: controllers[r * w + c],
-                        keyboardType: TextInputType.number,
-                        textAlign: TextAlign.center,
+    builder: (context) => StatefulBuilder(
+      builder: (context, setState) {
+        Widget sizeRow(String label, TextEditingController ctrl,
+            void Function(int delta) bump) {
+          return Row(children: [
+            Text('$label: ', style: const TextStyle(fontSize: 12)),
+            IconButton(
+              icon: const Icon(Icons.remove_circle_outline, size: 20),
+              onPressed: () => setState(() => bump(-1)),
+            ),
+            SizedBox(
+              width: 40,
+              child: TextField(
+                controller: ctrl,
+                keyboardType: TextInputType.number,
+                textAlign: TextAlign.center,
+                decoration: const InputDecoration(isDense: true),
+                onChanged: (_) => setState(() {
+                  final v = int.tryParse(ctrl.text) ?? 0;
+                  if (label == 'Rows') resize(v, w); else resize(h, v);
+                }),
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.add_circle_outline, size: 20),
+              onPressed: () => setState(() => bump(1)),
+            ),
+          ]);
+        }
+
+        return AlertDialog(
+          title: Text(info?.name ?? 'Matrix ${h}x$w'),
+          content: SizedBox(
+            width: 300,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                sizeRow('Rows', _rowsCtrl, (d) => resize(h + d, w)),
+                sizeRow('Cols', _colsCtrl, (d) => resize(h, w + d)),
+                const SizedBox(height: 6),
+                for (var r = 0; r < h; r++)
+                  Row(children: [
+                    for (var c = 0; c < w; c++)
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.all(3),
+                          child: TextField(
+                            controller: controllers[r * w + c],
+                            keyboardType: TextInputType.number,
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-              ]),
+                  ]),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            FilledButton(
+              onPressed: () {
+                final values =
+                    controllers.map((c) => double.tryParse(c.text)).toList();
+                if (values.any((v) => v == null)) return;
+                final out = BytesBuilder()
+                  ..add([h & 0xFF, h >> 8, w & 0xFF, w >> 8]);
+                for (final v in values) {
+                  out.add(numberToBytes(v!));
+                }
+                Navigator.pop(context, out.toBytes());
+              },
+              child: const Text('OK'),
+            ),
           ],
-        ),
-      ),
-      actions: [
-        TextButton(
-            onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-        FilledButton(
-          onPressed: () {
-            final values =
-                controllers.map((c) => double.tryParse(c.text)).toList();
-            if (values.any((v) => v == null)) return;
-            final out = BytesBuilder()
-              ..add([h & 0xFF, h >> 8, w & 0xFF, w >> 8]);
-            for (final v in values) {
-              out.add(numberToBytes(v!));
-            }
-            Navigator.pop(context, out.toBytes());
-          },
-          child: const Text('OK'),
-        ),
-      ],
+        );
+      },
     ),
   );
 }

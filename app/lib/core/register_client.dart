@@ -283,15 +283,26 @@ class RegisterClient {
   }
 
   /// Creates a new dynamic block (CID 0x10). Returns the assigned block index.
+  /// When [index] is null the block is APPENDED right after the last live block (never
+  /// at position 0, and ignoring trailing tombstones).
   Future<int?> createDynamicBlock(BlockType type, String name, {int? index}) async {
     final nameBytes = name.codeUnits.take(24).toList();
     while (nameBytes.length < 4) {
       nameBytes.add(0x20); // pad with spaces
     }
     final typeBits = type.value & 0x3FF;
-    final bi = index != null
-        ? (typeBits << 22) | ((index & 0x3F) << 16) | (0xFF << 8) | 0xFF
-        : (typeBits << 22) | (0xFF << 8) | 0xFF;
+    var target = index;
+    if (target == null) {
+      // Append = one past the highest LIVE block (tombstones are skipped).
+      final count = await getInstanceCount(BlockType.dynamic.value) ?? 0;
+      var maxLive = -1;
+      for (var i = 0; i < count; i++) {
+        final m = await readDynamicBlockMeta(i);
+        if (m != null && m.meta.typeValue != BlockType.none.value) maxLive = i;
+      }
+      target = maxLive + 1;
+    }
+    final bi = (typeBits << 22) | ((target & 0x3F) << 16) | (0xFF << 8) | 0xFF;
     final reply = await request(0x10, timeout: const Duration(seconds: 5), payload: [
       bi & 0xFF, (bi >> 8) & 0xFF, (bi >> 16) & 0xFF, (bi >> 24) & 0xFF,
       ...nameBytes,
@@ -418,6 +429,44 @@ class RegisterClient {
         final ok = await writeDynamicEntry(block, pos, e.key, e.meta, e.value);
         if (ok == null) return false;
       }
+    }
+    return true;
+  }
+
+  /// Moves the live block at [fromIndex] to [toIndex] (registry positions), shifting
+  /// the others. Returns false when either position is invalid.
+  Future<bool> moveDynamicBlockTo(int fromIndex, int toIndex) async {
+    if (fromIndex == toIndex) return true;
+    final count = await getInstanceCount(BlockType.dynamic.value) ?? 0;
+    final live = <int>[];
+    for (var i = 0; i < count; i++) {
+      final m = await readDynamicBlockMeta(i);
+      if (m != null && m.meta.typeValue != BlockType.none.value) live.add(i);
+    }
+    if (!live.contains(fromIndex) || toIndex < 0 || toIndex > live.length) return false;
+    live.remove(fromIndex);
+    live.insert(toIndex, fromIndex);
+    return reorderDynamicBlocks(live);
+  }
+
+  /// Re-numbers a field from [oldField] to [newField] (rewrites every entry at the new
+  /// index and removes the old). Returns false when newField collides.
+  Future<bool> setDynamicFieldIndex(DynBlock block, int oldField, int newField) async {
+    if (oldField == newField) return true;
+    final existing = await getDynamicFields(block.index) ?? <int>[];
+    if (existing.contains(newField)) return false;
+    final all = <({int key, BlockMeta meta, List<int> value})>[];
+    for (final k in await getDynamicKeys(block.index, oldField) ?? <int>[]) {
+      final e = await readDynamicField(block, oldField, k);
+      if (e != null) all.add((key: k, meta: e.meta, value: e.value));
+    }
+    for (final e in all) {
+      if (await writeDynamicEntry(block, newField, e.key, e.meta, e.value) == null) {
+        return false;
+      }
+    }
+    for (final k in await getDynamicKeys(block.index, oldField) ?? <int>[]) {
+      await deleteDynamic(block: block.index, field: oldField, key: k);
     }
     return true;
   }

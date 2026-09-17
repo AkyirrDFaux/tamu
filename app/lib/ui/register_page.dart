@@ -6,7 +6,7 @@ import '../core/block_registry.dart';
 import '../core/connection.dart';
 import '../core/device_db.dart';
 import '../core/register_client.dart';
-import '../core/render_dict.dart' show KeyedEntry, buildKeyedDict, geometryDictType, geometryKeysForShape, isRenderDictType, parseKeyedDict, renderDictKeyName, renderKeyFieldInfo, textureKeysForType;
+import '../core/render_dict.dart' show geometryDictType, geometryKeysForShape, isRenderDictType, renderDictKeyName, renderKeyFieldInfo, textureKeysForType;
 import '../core/types.dart';
 import 'theme.dart';
 import 'value_editor.dart' show dataTypeLabel, formatValue, showValueEditor;
@@ -408,6 +408,37 @@ Future<void> _loadVisibleFields() async {
     await _refresh();
   }
 
+  /// Moves a dynamic block to a chosen registry index (dialogue).
+  Future<void> _moveBlock(({int type, int inst, BlockMeta meta, String name})? block) async {
+    if (block == null || !mounted) return;
+    final controller = TextEditingController(text: '${block.inst}');
+    final target = await showDialog<int>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Move block to index'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () {
+              final v = int.tryParse(controller.text.trim());
+              Navigator.pop(context, v == null ? null : v);
+            },
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+    if (target == null || target < 0 || target == block.inst) return;
+    final ok = await _client.moveDynamicBlockTo(block.inst, target);
+    _snack(ok ? 'Block moved' : 'Move failed');
+    await _refresh();
+  }
+
   Widget _blockCard(BuildContext context, int blockIndex, ({int type, int inst, BlockMeta meta, String name})? block, {Key? cardKey, int? dragIndex}) {
     if (block == null) {
       return Card(
@@ -473,14 +504,19 @@ Future<void> _loadVisibleFields() async {
                 _editBlock(blockIndex, block);
               } else if (action == 'add') {
                 _addEntry(blockIndex, block);
+              } else if (action == 'move') {
+                _moveBlock(block);
               } else if (action == 'delete') {
                 _deleteBlock(blockIndex, block);
               }
             },
             itemBuilder: (_) => [
               if (block.meta.typeValue == BlockType.dynamic.value) ...[
-                const PopupMenuItem(value: 'edit', child: Text('Rename / set type')),
-                const PopupMenuItem(value: 'add', child: Text('Add entry')),
+                const PopupMenuItem(value: 'edit', child: Text('Rename')),
+                const PopupMenuItem(value: 'add', child: Text('Add field')),
+                if (_editMode) ...[
+                  const PopupMenuItem(value: 'move', child: Text('Move to index...')),
+                ],
                 const PopupMenuItem(value: 'delete', child: Text('Delete block')),
               ],
             ],
@@ -538,108 +574,203 @@ Future<void> _loadVisibleFields() async {
     final field = cache?[fieldIndex];
     final isSystem = blockType == 0 && inst == 0;
 
-    // Dynamic blocks: flat (field, key) entries. Show every entry of this field.
+    // Dynamic blocks: flat (field, key) entries. A field is a DICTIONARY when its
+    // key-0 entry is a Geometry/Texture marker; otherwise key 0 is the field's plain
+    // value. Key 0 is never shown as a row - it's the value/marker itself.
     if (blockType == BlockType.dynamic.value) {
       final keys = _dynamicKeys[inst]?[fieldIndex] ?? <int>[0];
       final entries = <(int, ({BlockMeta meta, List<int> value})?)>[
         for (final k in keys) (k, cache?[fieldIndex * 256 + k]),
       ];
+      if (entries.every((e) => e.$2 == null)) {
+        return ListTile(
+            key: cardKey,
+            dense: true,
+            leading: const SizedBox(
+                width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+            title: const Text('...',
+                style: TextStyle(fontSize: 13, color: Colors.white38)));
+      }
       final head = entries.firstOrNull?.$2;
       final isDict = head != null && isRenderDictType(head.meta.typeValue);
       final dictType = head?.meta.typeValue ?? 0;
-      final shown = entries;
-      if (entries.every((e) => e.$2 == null)) {
-        return const ListTile(
-            dense: true,
-            leading: SizedBox(
-                width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
-            title: Text('...', style: TextStyle(fontSize: 13, color: Colors.white38)));
+      final extraKeys = <({int key, ({BlockMeta meta, List<int> value}) e})>[];
+      for (final (k, e) in entries) {
+        if (k > 0 && e != null) extraKeys.add((key: k, e: e));
       }
-      return ExpansionTile(
-        key: cardKey,
-        dense: true,
-        title: Row(children: [
-          if (dragIndex != null) ...[
-            ReorderableDragStartListener(
-              index: dragIndex,
-              child: const Icon(Icons.drag_handle, color: Colors.white38),
-            ),
-            const SizedBox(width: 6),
-          ],
-          SizedBox(
-              width: 120,
-              child: Text('Field $fieldIndex',
-                  style: const TextStyle(fontSize: 12, color: Colors.white54))),
-          Expanded(
-              child: Text('[${shown.length} entries]',
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 13))),
-          if (_editMode)
-            IconButton(
-              tooltip: 'Add entry to field $fieldIndex',
-              icon: const Icon(Icons.add, size: 18),
-              onPressed: () => _addDynamicEntry(blockType, inst, block, fieldIndex),
-            ),
-        ]),
-        children: [
-          for (final (k, e) in shown)
-            if (e != null)
-              ListTile(
-                dense: true,
-                contentPadding: const EdgeInsets.only(left: 56, right: 12),
-                title: Row(children: [
-                  SizedBox(
-                      width: 90,
-                      child: Text(isDict
-                          ? renderDictKeyName(dictType, k)
-                          : (k == 0 ? 'value' : 'key $k'),
-                          style: const TextStyle(fontSize: 11, color: Colors.white54))),
-                  if (e.meta.dataType == DataType.colour && e.value.length >= 4)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: Container(
-                        width: 14,
-                        height: 14,
-                        decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: Color.fromARGB(
-                                e.value[3], e.value[0], e.value[1], e.value[2]),
-                            border: Border.all(color: Colors.white38)),
-                      ),
-                    ),
-                  Expanded(
-                      child: Text(_formatDynamicValue(e, isDict, dictType, k),
-                          style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
-                ]),
-                subtitle: Text(dataTypeLabel(e.meta.dataType),
-                    style: const TextStyle(fontSize: 10)),
-                trailing: PopupMenuButton<String>(
+
+      // Plain field (key 0 only, not a dictionary): a single editable value tile.
+      if (!isDict && extraKeys.isEmpty && head != null) {
+        return ListTile(
+          key: cardKey,
+          dense: true,
+          leading: dragIndex != null
+              ? ReorderableDragStartListener(
+                  index: dragIndex, child: const Icon(Icons.drag_handle, color: Colors.white38))
+              : null,
+          title: Row(children: [
+            SizedBox(
+                width: 120,
+                child: Text('Field $fieldIndex',
+                    style: const TextStyle(fontSize: 12, color: Colors.white54))),
+            if (head.meta.dataType == DataType.colour && head.value.length >= 4)
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: Container(
+                  width: 14,
+                  height: 14,
+                  decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Color.fromARGB(
+                          head.value[3], head.value[0], head.value[1], head.value[2]),
+                      border: Border.all(color: Colors.white38)),
+                ),
+              ),
+            Expanded(
+                child: Text(_formatDynamicValue(head, false, 0, 0),
+                    style: const TextStyle(fontFamily: 'monospace', fontSize: 13))),
+          ]),
+          subtitle: Text(dataTypeLabel(head.meta.dataType),
+              style: const TextStyle(fontSize: 10)),
+          trailing: _editMode
+              ? PopupMenuButton<String>(
                   icon: const Icon(Icons.more_vert, size: 16),
                   onSelected: (action) {
-                    if (action == 'edit' && !e.meta.readOnly) {
-                      _editDynamicEntry(blockType, inst, block, fieldIndex, k);
-                    } else if (action == 'delete' && !e.meta.readOnly && k != 0) {
-                      _deleteDynamicEntry(blockType, inst, block, fieldIndex, k);
-                    } else if (action == 'type' && !e.meta.readOnly) {
-                      _changeDynamicType(blockType, inst, block, fieldIndex, k);
-                    } else if (action == 'key' && !e.meta.readOnly && k != 0) {
-                      _changeDynamicKey(blockType, inst, block, fieldIndex, k);
+                    if (action == 'edit' && !head.meta.readOnly) {
+                      _editDynamicEntry(blockType, inst, block, fieldIndex, 0);
+                    } else if (action == 'type' && !head.meta.readOnly) {
+                      _changeDynamicType(blockType, inst, block, fieldIndex, 0);
+                    } else if (action == 'fidx' && !head.meta.readOnly) {
+                      _changeFieldIndex(blockType, inst, block, fieldIndex);
+                    } else if (action == 'delete') {
+                      _deleteField(blockType, inst, block, fieldIndex);
+                    } else if (action == 'addkey' && !head.meta.readOnly) {
+                      _addDynamicEntry(blockType, inst, block, fieldIndex);
                     }
                   },
                   itemBuilder: (_) => [
-                    if (!e.meta.readOnly)
+                    if (!head.meta.readOnly) ...[
                       const PopupMenuItem(value: 'edit', child: Text('Edit value')),
-                    if (!e.meta.readOnly && _editMode && k != 0) ...[
+                      const PopupMenuItem(value: 'type', child: Text('Change type')),
+                      const PopupMenuItem(value: 'fidx', child: Text('Change field index')),
+                      const PopupMenuItem(value: 'addkey', child: Text('Add key')),
+                    ],
+                    const PopupMenuItem(value: 'delete', child: Text('Delete field')),
+                  ],
+                )
+              : null,
+          onTap: !head.meta.readOnly
+              ? () => _editDynamicEntry(blockType, inst, block, fieldIndex, 0)
+              : null,
+        );
+      }
+
+      // Dictionary (or a field with extra keys): expand the key>0 rows; key 0 (the
+      // marker/value) is shown compactly in the header but never as a row.
+      return ExpansionTile(
+        key: cardKey,
+        dense: true,
+        leading: dragIndex != null
+            ? ReorderableDragStartListener(
+                index: dragIndex, child: const Icon(Icons.drag_handle, color: Colors.white38))
+            : null,
+        title: Row(children: [
+          SizedBox(
+              width: 120,
+              child: Text(isDict
+                  ? (dictType == geometryDictType ? 'Geometry' : 'Texture')
+                  : 'Field $fieldIndex',
+                  style: const TextStyle(fontSize: 12, color: Colors.white54))),
+          Expanded(
+              child: Text('[${extraKeys.length} keys]',
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 13))),
+          if (_editMode) ...[
+            IconButton(
+              tooltip: 'Add key to field $fieldIndex',
+              icon: const Icon(Icons.add, size: 18),
+              onPressed: () => _addDynamicEntry(blockType, inst, block, fieldIndex),
+            ),
+            PopupMenuButton<String>(
+              tooltip: 'Field actions',
+              icon: const Icon(Icons.more_vert, size: 16),
+              onSelected: (action) {
+                if (action == 'type' && head != null && !head.meta.readOnly) {
+                  _changeDynamicType(blockType, inst, block, fieldIndex, 0);
+                } else if (action == 'fidx') {
+                  _changeFieldIndex(blockType, inst, block, fieldIndex);
+                } else if (action == 'delete') {
+                  _deleteField(blockType, inst, block, fieldIndex);
+                }
+              },
+              itemBuilder: (_) => [
+                if (head != null && !head.meta.readOnly)
+                  const PopupMenuItem(value: 'type', child: Text('Change type')),
+                const PopupMenuItem(value: 'fidx', child: Text('Change field index')),
+                const PopupMenuItem(value: 'delete', child: Text('Delete field')),
+              ],
+            ),
+          ],
+        ]),
+        children: <Widget>[
+          for (final ek in extraKeys)
+            ListTile(
+              dense: true,
+              contentPadding: const EdgeInsets.only(left: 56, right: 12),
+              title: Row(children: [
+                SizedBox(
+                    width: 90,
+                    child: Text(isDict
+                        ? '${ek.key} · ${renderDictKeyName(dictType, ek.key)}'
+                        : 'key ${ek.key}',
+                        style: const TextStyle(fontSize: 11, color: Colors.white54))),
+                if (ek.e.meta.dataType == DataType.colour && ek.e.value.length >= 4)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: Container(
+                      width: 14,
+                      height: 14,
+                      decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Color.fromARGB(
+                              ek.e.value[3], ek.e.value[0], ek.e.value[1], ek.e.value[2]),
+                          border: Border.all(color: Colors.white38)),
+                    ),
+                  ),
+                Expanded(
+                    child: Text(_formatDynamicValue(ek.e, isDict, dictType, ek.key),
+                        style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
+              ]),
+              subtitle: Text(dataTypeLabel(ek.e.meta.dataType),
+                  style: const TextStyle(fontSize: 10)),
+              trailing: PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert, size: 16),
+                onSelected: (action) {
+                  if (action == 'edit' && !ek.e.meta.readOnly) {
+                    _editDynamicEntry(blockType, inst, block, fieldIndex, ek.key);
+                  } else if (action == 'type' && !ek.e.meta.readOnly) {
+                    _changeDynamicType(blockType, inst, block, fieldIndex, ek.key);
+                  } else if (action == 'key' && !ek.e.meta.readOnly && ek.key != 0) {
+                    _changeDynamicKey(blockType, inst, block, fieldIndex, ek.key);
+                  } else if (action == 'delete' && !ek.e.meta.readOnly) {
+                    _deleteDynamicEntry(blockType, inst, block, fieldIndex, ek.key);
+                  }
+                },
+                itemBuilder: (_) => [
+                  if (!ek.e.meta.readOnly) ...[
+                    const PopupMenuItem(value: 'edit', child: Text('Edit value')),
+                    if (_editMode) ...[
                       const PopupMenuItem(value: 'type', child: Text('Change type')),
                       const PopupMenuItem(value: 'key', child: Text('Change key')),
                     ],
-                    if (!e.meta.readOnly && k != 0)
-                      const PopupMenuItem(value: 'delete', child: Text('Delete entry')),
                   ],
-                ),
-                onTap: !e.meta.readOnly
-                    ? () => _editDynamicEntry(blockType, inst, block, fieldIndex, k)
-                    : null,
+                  if (!ek.e.meta.readOnly)
+                    const PopupMenuItem(value: 'delete', child: Text('Delete entry')),
+                ],
               ),
+              onTap: !ek.e.meta.readOnly
+                  ? () => _editDynamicEntry(blockType, inst, block, fieldIndex, ek.key)
+                  : null,
+            ),
         ],
       );
     }
@@ -774,72 +905,6 @@ Future<void> _loadVisibleFields() async {
         ? null
         : blockInfoFor(BlockType.fromValue(block?.meta.typeValue ?? 0))?.field(fieldIndex);
 
-    // Render-block dictionaries (Geometry 0x101 / Texture 0x102): show each keyed
-    // entry as an expandable sub-row so the square/fill can be edited per-key
-    // (Docs/Modules and blocks/LED display.md).
-    if (blockType == BlockType.dynamic.value && isRenderDictType(field.meta.typeValue)) {
-      final dictType = field.meta.typeValue;
-      final entries = parseKeyedDict(field.value) ?? <KeyedEntry>[];
-      return ExpansionTile(
-        dense: true,
-        title: Row(children: [
-          SizedBox(
-              width: 120,
-              child: Text(dictType == geometryDictType ? 'Geometry' : 'Texture',
-                  style: const TextStyle(fontSize: 12, color: Colors.white54))),
-          Expanded(
-              child: Text('[${entries.length} keys]',
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 13))),
-        ]),
-        children: [
-          for (final e in entries)
-            ListTile(
-              dense: true,
-              contentPadding: const EdgeInsets.only(left: 56, right: 12),
-              title: Row(children: [
-                SizedBox(
-                    width: 100,
-                    child: Text(renderDictKeyName(dictType, e.key),
-                        style: const TextStyle(fontSize: 11, color: Colors.white54))),
-                if (e.meta.dataType == DataType.colour && e.value.length >= 4)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: Container(
-                      width: 14,
-                      height: 14,
-                      decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Color.fromARGB(
-                              e.value[3], e.value[0], e.value[1], e.value[2]),
-                          border: Border.all(color: Colors.white38)),
-                    ),
-                  ),
-                Expanded(
-                    child: Text(_formatDictEntry(dictType, e),
-                        style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
-              ]),
-              subtitle: Text(dataTypeLabel(e.meta.dataType),
-                  style: const TextStyle(fontSize: 10)),
-              trailing: PopupMenuButton<String>(
-                icon: const Icon(Icons.more_vert, size: 16),
-                onSelected: (action) {
-                  if (action == 'edit' && !e.meta.readOnly) {
-                    _editDictEntry(blockType, inst, block, fieldIndex, e.key);
-                  }
-                },
-                itemBuilder: (_) => [
-                  if (!e.meta.readOnly)
-                    const PopupMenuItem(value: 'edit', child: Text('Edit value')),
-                ],
-              ),
-              onTap: !e.meta.readOnly
-                  ? () => _editDictEntry(blockType, inst, block, fieldIndex, e.key)
-                  : null,
-            ),
-        ],
-      );
-    }
-
     return ListTile(
       dense: true,
       contentPadding: const EdgeInsets.only(left: 40, right: 12),
@@ -932,21 +997,6 @@ Future<void> _loadVisibleFields() async {
     await _refresh();
   }
 
-  /// Creates a dynamic block at a specific (tombstone) position.
-  Future<void> _createBlockAt(int index) async {
-    if (!mounted) return;
-    final result = await promptBlockNameAndType(context,
-        title: 'Create block at slot #$index',
-        initialName: 'Dynamic $index',
-        fixedType: BlockType.dynamic,
-        availableTypes: _availableBlockTypes());
-    if (result == null || !mounted) return;
-    final (name, type, _) = result;
-    final created = await _client.createDynamicBlock(type, name, index: index);
-    _snack(created != null ? 'Block created' : 'Create failed');
-    await _refresh();
-  }
-
   /// The block types this device actually exposes (static blocks + Dynamic),
 /// used to limit the type dropdown when creating a dynamic block.
   List<BlockType> _availableBlockTypes() {
@@ -971,18 +1021,62 @@ Future<void> _loadVisibleFields() async {
 
   Future<void> _addEntry(int blockIndex, ({int type, int inst, BlockMeta meta, String name})? block) async {
     if (block == null || !mounted) return;
-    final dataType = await _pickDataType(selected: DataType.number);
-    if (dataType == null || !mounted) return;
+    final fields = _dynamicFields[block.inst] ?? <int>[];
+    var firstFree = 0;
+    while (fields.contains(firstFree)) firstFree++;
+    final indexController = TextEditingController(text: '$firstFree');
+    var selectedType = DataType.number;
+    final result = await showDialog<(int, DataType)>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('Add field'),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(
+              controller: indexController,
+              autofocus: true,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                  labelText: 'Field index', helperText: '0..255, must be unused'),
+            ),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<DataType>(
+              initialValue: selectedType,
+              decoration: const InputDecoration(labelText: 'Type'),
+              items: [
+                for (final t in DataType.values)
+                  if (t != DataType.deleted && t != DataType.none && t != DataType.undefined)
+                    DropdownMenuItem(value: t, child: Text(dataTypeLabel(t))),
+              ],
+              onChanged: (t) => setState(() => selectedType = t ?? DataType.number),
+            ),
+          ]),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            FilledButton(
+              onPressed: () {
+                final idx = int.tryParse(indexController.text.trim());
+                if (idx == null) return;
+                Navigator.pop(context, (idx, selectedType));
+              },
+              child: const Text('Next'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result == null || !mounted) return;
+    final (field, dataType) = result;
+    if (field < 0 || field > 255) return;
+    if (fields.contains(field)) {
+      _snack('Field $field already exists');
+      return;
+    }
     final seed = await showValueEditor(context, dataType, []);
     if (seed == null || !mounted) return;
-    // Flat model: add a new FIELD at the first free field index, key 0 (head).
-    final fields = _dynamicFields[block.inst] ?? <int>[];
-    var newField = 0;
-    while (fields.contains(newField)) newField++;
     final dynBlock = DynBlock(index: block.inst, meta: block.meta, name: block.name);
     final meta = BlockMeta(flagsAndType: dataType.value, key: 0, size: seed.length);
-    final confirmed =
-        await _client.writeDynamicEntry(dynBlock, newField, 0, meta, seed);
+    final confirmed = await _client.writeDynamicEntry(dynBlock, field, 0, meta, seed);
     _snack(confirmed != null ? 'Field added' : 'Add failed');
     await _refresh();
   }
@@ -1039,15 +1133,6 @@ Future<void> _loadVisibleFields() async {
         ],
       ),
     );
-  }
-
-  /// The lowest None-marked field index (a deleted slot to fill), or null.
-  int? _firstNoneField(DynBlock block, int count) {
-    for (var f = 0; f < count; f++) {
-      final existing = block.fields[f];
-      if (existing != null && existing.meta.dataType == DataType.none) return f;
-    }
-    return null;
   }
 
   Future<void> _editValue(int blockType, int inst, ({int type, int inst, BlockMeta meta, String name})? block, int fieldIndex) async {
@@ -1112,40 +1197,165 @@ Future<void> _loadVisibleFields() async {
     await _refresh();
   }
 
+  /// Deletes an entire field (every (field, key) entry).
+  Future<void> _deleteField(int blockType, int inst,
+      ({int type, int inst, BlockMeta meta, String name})? block, int fieldIndex) async {
+    if (block == null || !mounted) return;
+    final ok = await _client.deleteDynamic(block: inst, field: fieldIndex);
+    _snack(ok ? 'Field deleted' : 'Delete failed');
+    await _refresh();
+  }
+
+  /// Re-numbers a field to a chosen index (dialogue; pre-filled with the current).
+  Future<void> _changeFieldIndex(int blockType, int inst,
+      ({int type, int inst, BlockMeta meta, String name})? block, int fieldIndex) async {
+    if (block == null || !mounted) return;
+    final controller = TextEditingController(text: '$fieldIndex');
+    final newField = await showDialog<int>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Change field index'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(helperText: '0..255, must be unused'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () {
+              final v = int.tryParse(controller.text.trim());
+              Navigator.pop(context, v == null ? null : v);
+            },
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+    if (newField == null || newField < 0 || newField > 255 || newField == fieldIndex) return;
+    final dynBlock = DynBlock(index: inst, meta: block.meta, name: block.name);
+    final ok = await _client.setDynamicFieldIndex(dynBlock, fieldIndex, newField);
+    _snack(ok ? 'Field moved' : 'Move failed (index already used?)');
+    await _refresh();
+  }
+
   /// Adds an entry to a dynamic block's (field, key) record at the first free key.
+  /// Prompts for a key number to add/change in a field. For dictionaries the meaningful
+/// keys of the current shape/effect are offered as a selector, but manual numeric input
+/// (0..255) is always allowed - including keys beyond the dictionary specification.
+  Future<int?> _promptKey({
+    required String title,
+    required int startKey,
+    required bool isDict,
+    required int dictType,
+    required int selector,
+    required List<int> usedKeys,
+  }) async {
+    final controller = TextEditingController(text: '$startKey');
+    List<int> meaningful;
+    if (isDict) {
+      final ks = dictType == geometryDictType
+          ? geometryKeysForShape(selector)
+          : textureKeysForType(selector);
+      meaningful = ks.toList()..sort();
+    } else {
+      meaningful = <int>[];
+    }
+    int? chosenDropdown;
+    return showDialog<int>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: Text(title),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            if (meaningful.isNotEmpty) ...[
+              DropdownButtonFormField<int?>(
+                initialValue: chosenDropdown,
+                decoration: const InputDecoration(labelText: 'Dictionary keys'),
+                hint: Text(controller.text == '$startKey'
+                    ? 'Pick (or type below)'
+                    : 'Type below'),
+                items: [
+                  for (final k in meaningful)
+                    DropdownMenuItem(
+                      value: k,
+                      child: Text('$k · ${renderDictKeyName(dictType, k)}'),
+                    ),
+                ],
+                onChanged: (v) => setState(() {
+                  if (v != null) {
+                    chosenDropdown = v;
+                    controller.text = '$v';
+                  }
+                }),
+              ),
+              const SizedBox(height: 8),
+            ],
+            TextField(
+              controller: controller,
+              autofocus: true,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                  labelText: 'Key number',
+                  helperText: '0..255 - any value allowed'),
+            ),
+          ]),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            FilledButton(
+              onPressed: () {
+                final v = int.tryParse(controller.text.trim());
+                if (v == null || v < 0 || v > 255) return;
+                Navigator.pop(context, v);
+              },
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Adds a key to a dynamic block's field: asks which key (dict selector + manual
+  /// numeric, always), then the type and a value.
   Future<void> _addDynamicEntry(int blockType, int inst,
       ({int type, int inst, BlockMeta meta, String name})? block, int fieldIndex) async {
     if (block == null || !mounted) return;
-    final dataType = await _pickDataType(selected: DataType.number);
-    if (dataType == null || !mounted) return;
-    final seed = await showValueEditor(context, dataType, []);
-    if (seed == null || !mounted) return;
     final keys = _dynamicKeys[inst]?[fieldIndex] ?? <int>[];
     final cache = _fieldCache[(blockType << 8) | inst];
     final head = cache?[fieldIndex * 256 + 0];
     final dictType =
         (head != null && isRenderDictType(head.meta.typeValue)) ? head.meta.typeValue : 0;
-    int freeKey;
-    if (isRenderDictType(dictType)) {
-      // Offer only keys meaningful for the current shape/effect.
-      final selector = cache?[fieldIndex * 256 + 1]?.value.first ?? 0;
-      final relevant = dictType == geometryDictType
-          ? geometryKeysForShape(selector)
-          : textureKeysForType(selector);
-      final missing = relevant.where((k) => !keys.contains(k)).toList();
-      if (missing.isEmpty) {
-        _snack('All keys for this shape are already present');
-        return;
-      }
-      freeKey = missing.first;
-    } else {
-      freeKey = 0;
-      while (keys.contains(freeKey)) freeKey++;
+    final isDict = isRenderDictType(dictType);
+    final selector = cache?[fieldIndex * 256 + 1]?.value.first ?? 0;
+
+    var startKey = 0;
+    while (keys.contains(startKey)) startKey++;
+
+    final newKey = await _promptKey(
+      title: 'Add key to field $fieldIndex',
+      startKey: startKey,
+      isDict: isDict,
+      dictType: dictType,
+      selector: selector,
+      usedKeys: keys,
+    );
+    if (newKey == null || !mounted) return;
+    if (keys.contains(newKey)) {
+      _snack('Key $newKey already exists in this field');
+      return;
     }
+
+    final dataType = await _pickDataType(selected: DataType.number);
+    if (dataType == null || !mounted) return;
+    final seed = await showValueEditor(context, dataType, []);
+    if (seed == null || !mounted) return;
     final dynBlock = DynBlock(index: inst, meta: block.meta, name: block.name);
-    final meta = BlockMeta(flagsAndType: dataType.value, key: freeKey, size: seed.length);
+    final meta = BlockMeta(flagsAndType: dataType.value, key: newKey, size: seed.length);
     final confirmed =
-        await _client.writeDynamicEntry(dynBlock, fieldIndex, freeKey, meta, seed);
+        await _client.writeDynamicEntry(dynBlock, fieldIndex, newKey, meta, seed);
     _snack(confirmed != null ? 'Entry added' : 'Add failed');
     await _refresh();
   }
@@ -1169,38 +1379,32 @@ Future<void> _loadVisibleFields() async {
     await _refresh();
   }
 
-  /// Re-keys one entry (moves it to a different key byte within the field).
+  /// Re-keys one entry (moves it to a different key byte within the field). Uses the
+  /// dict-aware key selector + always allows manual numeric input.
   Future<void> _changeDynamicKey(int blockType, int inst,
       ({int type, int inst, BlockMeta meta, String name})? block, int fieldIndex, int key) async {
     if (block == null || !mounted) return;
     final cache = _fieldCache[(blockType << 8) | inst];
     final entry = cache?[fieldIndex * 256 + key];
     if (entry == null) return;
-    final controller = TextEditingController(text: '$key');
-    final newKey = await showDialog<int>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Change key'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          keyboardType: TextInputType.number,
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          FilledButton(
-            onPressed: () {
-              final v = int.tryParse(controller.text.trim());
-              Navigator.pop(context, v == null ? null : v);
-            },
-            child: const Text('OK'),
-          ),
-        ],
-      ),
+    final keys = _dynamicKeys[inst]?[fieldIndex] ?? <int>[];
+    final head = cache?[fieldIndex * 256 + 0];
+    final dictType =
+        (head != null && isRenderDictType(head.meta.typeValue)) ? head.meta.typeValue : 0;
+    final isDict = isRenderDictType(dictType);
+    final selector = cache?[fieldIndex * 256 + 1]?.value.first ?? 0;
+
+    final newKey = await _promptKey(
+      title: 'Change key (was $key)',
+      startKey: key,
+      isDict: isDict,
+      dictType: dictType,
+      selector: selector,
+      usedKeys: keys,
     );
-    if (newKey == null || newKey < 0 || newKey > 255 || newKey == key) return;
-    if ((_dynamicKeys[inst]?[fieldIndex] ?? <int>[]).contains(newKey)) {
+    if (newKey == null || newKey == key) return;
+    if (newKey < 0 || newKey > 255) return;
+    if (keys.contains(newKey)) {
       _snack('Key $newKey already exists in this field');
       return;
     }
@@ -1223,45 +1427,6 @@ Future<void> _loadVisibleFields() async {
       if (label != null) return label;
     }
     return formatValue(e.meta.dataType, e.value);
-  }
-
-  /// Formats one keyed-dict entry by its data type, with enum labels where known.
-  String _formatDictEntry(int dictType, KeyedEntry e) {
-    if (e.meta.dataType == DataType.enum_ && e.value.isNotEmpty) {
-      final enums = renderKeyFieldInfo(dictType, e.key).enumValues;
-      final label = enums?[e.value[0]];
-      if (label != null) return label;
-    }
-    return formatValue(e.meta.dataType, e.value);
-  }
-
-  /// Edits one key of a render-block dictionary field and writes the whole dict back.
-  Future<void> _editDictEntry(int blockType, int inst,
-      ({int type, int inst, BlockMeta meta, String name})? block, int fieldIndex, int key) async {
-    if (block == null || !mounted) return;
-    final cacheKey = (blockType << 8) | inst;
-    final cache = _fieldCache[cacheKey];
-    final field = cache?[fieldIndex];
-    if (field == null || field.meta.readOnly) return;
-    final dictType = field.meta.typeValue;
-    final entries = parseKeyedDict(field.value);
-    if (entries == null) return;
-    final idx = entries.indexWhere((e) => e.key == key);
-    if (idx < 0) return;
-    final entry = entries[idx];
-
-    final newValue = await showValueEditor(
-        context, entry.meta.dataType, entry.value,
-        info: renderKeyFieldInfo(dictType, key));
-    if (newValue == null) return;
-
-    entries[idx] = KeyedEntry(key: key, meta: entry.meta, value: newValue);
-    final newBlob = buildKeyedDict(entries);
-    final dynBlock = DynBlock(index: inst, meta: block.meta, name: block.name);
-    final dynField = DynField(index: fieldIndex, meta: field.meta, value: field.value);
-    final confirmed = await _client.writeDynamicField(dynBlock, dynField, newBlob);
-    _snack(confirmed != null ? 'Value written' : 'Write failed');
-    await _refresh();
   }
 
 }
