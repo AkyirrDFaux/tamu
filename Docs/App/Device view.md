@@ -11,9 +11,7 @@ Interacts with the device service only
 - Uptime, looptimes, time offset
 ### Second section - Services
 Per services avaliable, hide unavaliable (based on capabilities device field), list of links to specialized viewer
-- [[App/Service views/System Memory|System Memory]]
-- [[App/Service views/Dynamic Memory|Dynamic Memory]]
-- [[App/Service views/Keyed Memory|Keyed Memory]]
+- [[App/Service views/Register|Register]]
 - [[App/Service views/Storage|Storage]]
 - SNDB viewer (Core only)
 - Router table viewer (Router only)

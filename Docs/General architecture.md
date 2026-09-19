@@ -9,7 +9,7 @@
 ## Services:
 [[Command ID table]]
 #### Mandatory:
- - [[System Block and Device Commands|System Block and Device Commands]] (implicitly Static Memory under [[Register]])
+ - [[System Block and Device Commands|System Block and Device Commands]] (implicitly Static Memory under [[Services/Register]])
  - [[Log Handler]]
  - [[Services/Storage]]
 #### Mandatory for core:
@@ -21,7 +21,7 @@
 #### Mandatory for sensor nodes:
 - [[Subscriptions]] (provider)
 ####  Optional:
- - Dynamic memory (under [[Register]])
+ - Dynamic memory (under [[Services/Register]])
  - [[Script]]
  
 ## [[Data Formats]]

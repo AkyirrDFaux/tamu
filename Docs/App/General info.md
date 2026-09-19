@@ -3,7 +3,7 @@ Written in flutter.
 
 | OS      | Connection types | Status               |
 | ------- | ---------------- | -------------------- |
-| Android | BLE              | Do not implement yet |
+| Android | BLE              | In development       |
 | Linux   | BLE, USB         | In development       |
 | Windows | BLE, USB         | Do not implement yet |
 ### Overall app layout:
@@ -12,9 +12,10 @@ Written in flutter.
 - [[Backup]]
 - [[Settings]]
 ### Overall function
-Interface the services in the different device's firmware via packets, provide a user friendly way to display information and control the devices.
-Can do multiple things at once due to having a full CID range avaliable used as transaction ID.
-Always can access the device it's connected to directly via ID 1 (Net 0), where it can obtain information about the rest of the system.
+Interface the different device's firmware via commands, provide a user friendly way to display information and control the devices.
+A large focus on human-readable interpretation, targeted at technically non-proficient users, while subtly displaying extra information for more advanced users.
+Can do multiple things at once due to having a reserved TRID range.
+Always can access the core device it's connected to via ID 0.1, where it can obtain information about the rest of the system.
 App keeps local database in RAM, updates upon arrival of new data.
 
 ### Rules

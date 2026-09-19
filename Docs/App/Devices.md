@@ -18,7 +18,7 @@ Main interaction layer.
 	- A smaller subtext displays the ID and Device type in text
 	- Tap on entry opens [[Device view]]
 ### Main view (graph variant)
- - A graph view with the connection structure visible
+ - A graph view with the net structure visible
 	- Topmost cores (contents are given by SNDB)
 	- Routers below (tree based on router tables)
 	- Nodes (stacked vertically)
