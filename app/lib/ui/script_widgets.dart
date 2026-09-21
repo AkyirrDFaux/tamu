@@ -1,11 +1,13 @@
-/// Shared script UI pieces (Docs/App/Service views/Script.md): state chips and the
-/// input/output/variable/constant tables of a loaded script.
+/// Shared script UI pieces (Docs/App/Service views/Script.md): state chips and the I/O
+/// tables of a loaded script. Inputs are rendered using their UI specification (sliders,
+/// toggles, buttons - docs: "formatted with the UI specifications").
 library;
 
 import 'package:flutter/material.dart';
 
 import '../core/script_client.dart';
 import '../core/script_file.dart';
+import '../core/types.dart';
 import 'theme.dart';
 import 'value_editor.dart';
 import 'widgets.dart';
@@ -19,8 +21,8 @@ Color scriptStateColor(int state) => switch (state) {
       _ => Colors.white38,
     };
 
-/// One category (inputs / outputs / variables / constants) of a loaded script's Register
-/// entries. Inputs and variables are editable; outputs and constants are read-only.
+/// One category (inputs or outputs) of a loaded script's Register entries. Inputs are
+/// editable, outputs are read-only.
 class ScriptIoSection extends StatefulWidget {
   final ScriptClient client;
   final int slot;
@@ -28,6 +30,9 @@ class ScriptIoSection extends StatefulWidget {
   final String title;
   final IconData icon;
   final bool editable;
+
+  /// Per-input UI specifications (inputs only), read from the script file.
+  final List<ScriptInputSpec>? specs;
 
   /// Bump to force a re-read (the parent's refresh tick).
   final int revision;
@@ -42,6 +47,7 @@ class ScriptIoSection extends StatefulWidget {
     required this.icon,
     required this.editable,
     required this.revision,
+    this.specs,
     this.onChanged,
   });
 
@@ -113,7 +119,34 @@ class _ScriptIoSectionState extends State<ScriptIoSection> {
     );
   }
 
+  ScriptInputSpec? _specFor(int index) {
+    final specs = widget.specs;
+    if (widget.field != ScriptField.input || specs == null || index >= specs.length) return null;
+    return specs[index];
+  }
+
   Widget _row(int index, ScriptEntry entry) {
+    final spec = _specFor(index);
+    if (widget.editable && spec != null) {
+      final isSlider = spec.uiType == ScriptUiType.slider &&
+          spec.max > spec.min &&
+          entry.meta.dataType == DataType.number;
+      final isToggle =
+          spec.uiType == ScriptUiType.toggle && entry.meta.dataType == DataType.bool_;
+      final isButton =
+          spec.uiType == ScriptUiType.button && entry.meta.dataType == DataType.bool_;
+      if (isSlider || isToggle || isButton) {
+        return ScriptInputControl(
+          client: widget.client,
+          slot: widget.slot,
+          inputIndex: index,
+          entry: entry,
+          spec: spec,
+          title: '${widget.title} $index',
+          onChanged: widget.onChanged,
+        );
+      }
+    }
     final label = formatValue(entry.meta.dataType, entry.value);
     return ListTile(
       dense: true,
@@ -125,5 +158,114 @@ class _ScriptIoSectionState extends State<ScriptIoSection> {
           style: const TextStyle(fontFamily: 'monospace', color: Colors.white70)),
       onTap: widget.editable ? () => _edit(index, entry) : null,
     );
+  }
+}
+
+/// An input rendered per its UI specification: a slider, a toggle or a momentary button.
+class ScriptInputControl extends StatefulWidget {
+  final ScriptClient client;
+  final int slot;
+  final int inputIndex;
+  final ScriptEntry entry;
+  final ScriptInputSpec spec;
+  final String title;
+  final VoidCallback? onChanged;
+
+  const ScriptInputControl({
+    super.key,
+    required this.client,
+    required this.slot,
+    required this.inputIndex,
+    required this.entry,
+    required this.spec,
+    required this.title,
+    this.onChanged,
+  });
+
+  @override
+  State<ScriptInputControl> createState() => _ScriptInputControlState();
+}
+
+class _ScriptInputControlState extends State<ScriptInputControl> {
+  double _value = 0;
+  bool _dragging = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _syncFromEntry();
+  }
+
+  @override
+  void didUpdateWidget(covariant ScriptInputControl oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Re-sync with the device value on refresh, but not while the user is dragging.
+    if (!_dragging) _syncFromEntry();
+  }
+
+  void _syncFromEntry() {
+    final v = widget.entry.value;
+    _value = v.length >= 4 ? numberFromBytes(v) : (v.isNotEmpty ? v.first.toDouble() : 0);
+  }
+
+  bool get _bool => widget.entry.value.isNotEmpty && widget.entry.value.first != 0;
+
+  Future<void> _write(List<int> bytes) async {
+    final ok = await widget.client
+        .writeEntry(widget.slot, ScriptField.input, widget.inputIndex, widget.entry.meta, bytes);
+    if (!mounted) return;
+    if (!ok) showSnack(context, 'Write failed');
+    widget.onChanged?.call();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    switch (widget.spec.uiType) {
+      case ScriptUiType.slider:
+        final min = widget.spec.min;
+        final max = widget.spec.max;
+        final step = widget.spec.step > 0 ? widget.spec.step : (max - min) / 100;
+        final divisions = ((max - min) / step).round().clamp(1, 1000);
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Expanded(
+                  child: Text(widget.title, style: const TextStyle(fontSize: 13))),
+              Text(_value.toStringAsFixed(2),
+                  style: const TextStyle(fontFamily: 'monospace', color: Colors.white70)),
+            ]),
+            Slider(
+              value: _value.clamp(min, max),
+              min: min,
+              max: max,
+              divisions: divisions,
+              onChangeStart: (_) => _dragging = true,
+              onChanged: (v) => setState(() => _value = v),
+              onChangeEnd: (v) {
+                _dragging = false;
+                _write(numberToBytes(v));
+              },
+            ),
+          ]),
+        );
+      case ScriptUiType.toggle:
+        return SwitchListTile(
+          dense: true,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+          title: Text(widget.title, style: const TextStyle(fontSize: 13)),
+          value: _bool,
+          onChanged: (v) => _write([v ? 1 : 0]),
+        );
+      case ScriptUiType.button:
+        return ListTile(
+          dense: true,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+          title: Text(widget.title, style: const TextStyle(fontSize: 13)),
+          trailing: FilledButton(onPressed: () => _write([1]), child: const Text('Press')),
+        );
+      default:
+        return const SizedBox.shrink();
+    }
   }
 }

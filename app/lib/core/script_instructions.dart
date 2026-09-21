@@ -64,17 +64,6 @@ class ScriptSymbol {
   static ScriptSymbol fromBytes(List<int> bytes, [int offset = 0]) => ScriptSymbol(
         bytes[offset], bytes[offset + 1], bytes[offset + 2] | (bytes[offset + 3] << 8));
 
-  static String typeName(int type) => switch (type) {
-        symInstruction => 'Instruction',
-        symInput => 'Input',
-        symOutput => 'Output',
-        symVariable => 'Variable',
-        symConstant => 'Constant',
-        symEndline => 'Endline',
-        symPredefine => 'Predefine',
-        _ => '?',
-      };
-
   static String predefineName(int subtype) => switch (subtype) {
         preState => 'State',
         preType => 'Type',
@@ -358,6 +347,15 @@ List<String> validateScriptLines(List<ScriptLine> lines, ScriptValidationContext
             line.operands[def.constantIndex].type != symConstant)) {
       errors.add('$where (${def.label}): operand ${def.constantIndex + 1} must be a constant '
           '(4-byte register address)');
+    }
+    if (def.addressIndex >= 0 && line.operands.length > def.addressIndex) {
+      final a = line.operands[def.addressIndex];
+      final t = context.typeOf(a);
+      const addrTypes = {0x03 /*Id*/, 0x05 /*Index*/, 0x06 /*Number*/, 0x0E /*Uint32*/};
+      if (a.type != symConstant && t != null && !addrTypes.contains(t)) {
+        errors.add('$where (${def.label}): operand ${def.addressIndex + 1} must be a device '
+            'address (Id)');
+      }
     }
     if (def.numeric) {
       for (final o in line.operands) {

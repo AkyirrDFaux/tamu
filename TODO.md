@@ -17,10 +17,9 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
 - [ ] **Script (un)loading from within a script** (a script starting/stopping another) and
       macro-style cross-script calls — not yet implemented.
 - [x] **Milestone C — app list page**: `ScriptsPage` with a Loaded/Available switch,
-      state chip + Start/Pause/Continue/Stop/Restart, expandable inputs/outputs/variables/
-      constants (inputs & variables editable), a Device view "Scripts" tile (guarded by the
-      Scripts capability), and `ScriptEditorPage` (controls, header, IO/variable/constant
-      tables, instruction-file info).
+      state chip + Start/Pause/Continue/Stop/Restart, expandable inputs (rendered per UI
+      spec) and outputs, a Device view "Scripts" tile (guarded by the Scripts capability),
+      and `ScriptEditorPage`.
 - [x] **Milestone C — app editor**: opens stored *and* loaded scripts; edits function name +
       properties, inputs (type/style/limits/default), outputs, variables (add/remove/type),
       constants (value/name), and instructions (per-line/per-symbol editing with
@@ -30,11 +29,29 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
       conditional min/max, readable reorderable instruction lines (Destination-Instruction-
       Operands), recommendation-first grouped pickers (tap a group / back), instruction-aware
       destination/operand limits and filtering, full predefine set, and Unload actions.
-- [ ] **Editor refinements**: inline operand hints and richer per-position recommendations.
+- [x] **Bugfix / docs-alignment round**:
+      - Editor active-line highlight fixed (IC is a line index, not a symbol offset).
+      - Inputs rendered from their UI specification (Slider/Toggle/Button) in the script
+        list expansion (docs: "formatted with the UI specifications").
+      - `Log` opcode implemented (custom logs); `Script state` opcode now uses the same
+        transition rules as CID 4.
+      - Waiting-state fixes: a manual state change cancels an outstanding foreign
+        confirmation; a late reply only resumes a script that is still Waiting.
+      - Compose rejects a non-writable container.
+      - Removed dead code (header register keys, unused app helpers).
+- [x] **Recommendations**: instruction-aware instruction-picker ordering (value-producing
+      vs control ops), position/type-aware symbol recommendations (register address, device
+      address, line target, boolean condition, numeric) and an "expects ..." hint line.
+- [x] **Second bugfix / streamline round**: boot only loads `Load-on-boot` scripts (was
+      loading every stored script); register read/write buffers sized to the u8 value limit
+      (was a 64-byte overflow risk); compose operand scratch aliasing fixed; Number size
+      guard; foreign device-address validation; input control re-sync on refresh without
+      fighting a drag; single-pass UI-info parse (was five re-walks).
 ### Notes
 - Script entities use the ValueInfo packing of `Core/Services/Script.h` /
   `app/lib/core/script_file.dart` (internal convention; the docs leave it open).
-- Outputs and constants are exposed read-only; inputs and variables are writable.
+- Outputs are read-only and inputs writable in the Register; Variables are script RAM
+  (management CID 5/7) and Constants are file data - neither is register content.
 - IO lives in the volatile memory space ("dynamic memory without persistence" per docs).
 - Loaded scripts are exposed through the Register service as block type `0x3FE`, **I/O only**
   (Inputs and Outputs; inputs writable). Variables live in the script RAM (Script CID 5/7),

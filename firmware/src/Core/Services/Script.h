@@ -150,18 +150,6 @@ enum class ScriptState : uint8_t {
 #define SCRIPT_FIELD_CONSTANT 4 // internal only, not in the Register
 #define SCRIPT_FIELD_COUNT    3 // register categories: Header (reserved) + Input + Output
 
-// Header keys (field 0).
-#define SCRIPT_KEY_STATE       0
-#define SCRIPT_KEY_IC          1
-#define SCRIPT_KEY_PROPERTIES  2
-#define SCRIPT_KEY_IN_COUNT    3
-#define SCRIPT_KEY_OUT_COUNT   4
-#define SCRIPT_KEY_VAR_COUNT   5
-#define SCRIPT_KEY_CONST_COUNT 6
-#define SCRIPT_KEY_FILE_ID     7
-#define SCRIPT_KEY_ERROR       8
-#define SCRIPT_HEADER_KEYS     9
-
 static inline uint16_t ScriptAlign4(uint16_t size) { return (uint16_t)((size + 3u) & ~3u); }
 
 // SCR_XX (8-char space-padded name, the slot index in hex).
@@ -573,6 +561,10 @@ struct ScriptScalar {
     int32_t i;
 };
 
+// Defined after the tick; used by the Script-state opcode so self state changes follow the
+// same transition rules (IC reset, pending-confirmation clearing) as CID 4.
+static void ScriptSetState(LoadedScript *s, uint8_t newState);
+
 static inline uint16_t ScriptSymVal(const uint8_t *sym) { return (uint16_t)(sym[2] | (sym[3] << 8)); }
 
 static inline bool ScriptIsNumericDtype(uint16_t dtype) {
@@ -654,6 +646,7 @@ static bool ScriptToScalar(const uint8_t *data, uint8_t size, uint16_t dtype, bo
     if (num) {
         switch (dtype) {
             case (uint16_t)DataType::Number: {
+                if (size < 4) return false;
                 int32_t raw = 0; memcpy(&raw, data, 4); out.n = Number::FromRaw(raw); return true;
             }
             case (uint16_t)DataType::Index: out.n = Number(ScriptLoadInt(data, size, true)); return true;
@@ -667,6 +660,7 @@ static bool ScriptToScalar(const uint8_t *data, uint8_t size, uint16_t dtype, bo
     }
     switch (dtype) {
         case (uint16_t)DataType::Number: {
+            if (size < 4) return false;
             int32_t raw = 0; memcpy(&raw, data, 4); out.i = Number::FromRaw(raw).ToInt(); return true;
         }
         case (uint16_t)DataType::Index: out.i = ScriptLoadInt(data, size, true); return true;
@@ -994,15 +988,27 @@ static uint8_t ScriptExecService(LoadedScript *s, const ScriptLineInfo &ln, cons
         case SCRIPT_OP_SERVICE_NOP:
             s->ic++;
             return SCRIPT_ERR_NONE;
-        case SCRIPT_OP_SERVICE_LOG:
+        case SCRIPT_OP_SERVICE_LOG: {
+            // Custom log (docs "Custom logs"): the first operand's value becomes the
+            // log code; the source is the Script service tagged with the instance.
+            uint16_t code = (uint16_t)(s->slot & 0xFF);
+            if (ln.opCount >= 1) {
+                int32_t v = 0;
+                if (ScriptResolveOperandInt(s, opbase, v)) code = (uint16_t)(v & 0xFFFF);
+            }
+            ReportLog(MakeLog(false, (uint16_t)ServiceType::Script, code, 0));
             s->ic++;
             return SCRIPT_ERR_NONE;
+        }
         case SCRIPT_OP_SERVICE_STATE: {
             if (ln.opCount < 1) return SCRIPT_ERR_OPERAND;
             if (opbase[0] == SCRIPT_SYM_PREDEFINE && opbase[1] == SCRIPT_PRE_STATE) {
                 uint8_t st = (uint8_t)(ScriptSymVal(opbase) & 0xFF);
                 if (st > (uint8_t)ScriptState::Error) return SCRIPT_ERR_OPERAND;
-                s->state = st;
+                ScriptSetState(s, st);
+                if (st == (uint8_t)ScriptState::Stopped || st == (uint8_t)ScriptState::Finished ||
+                    st == (uint8_t)ScriptState::Error)
+                    return SCRIPT_ERR_NONE; // terminal: the run loop stops here
                 s->ic++;
                 return SCRIPT_ERR_NONE;
             }
@@ -1014,7 +1020,7 @@ static uint8_t ScriptExecService(LoadedScript *s, const ScriptLineInfo &ln, cons
             uint32_t bi = 0;
             if (!ScriptOperandBlockInfo(s, opbase, bi)) return SCRIPT_ERR_OPERAND;
             BlockMeta rm;
-            uint8_t rbuf[64];
+            uint8_t rbuf[256]; // a register value can be up to the u8 size limit
             uint8_t rsz = 0;
             if (!RegisterGetByBlockInfo(bi, rm, rbuf, rsz)) return SCRIPT_ERR_REGISTER;
             uint8_t err = ScriptAssign(s, s->instr + (size_t)ln.start * 4, rbuf, rsz,
@@ -1028,7 +1034,7 @@ static uint8_t ScriptExecService(LoadedScript *s, const ScriptLineInfo &ln, cons
             uint32_t bi = 0;
             if (!ScriptOperandBlockInfo(s, opbase, bi)) return SCRIPT_ERR_OPERAND;
             BlockMeta rm;
-            uint8_t rbuf[64];
+            uint8_t rbuf[256];
             uint8_t rsz = 0;
             if (!RegisterGetByBlockInfo(bi, rm, rbuf, rsz)) return SCRIPT_ERR_REGISTER;
             uint8_t scratch[4];
@@ -1037,7 +1043,7 @@ static uint8_t ScriptExecService(LoadedScript *s, const ScriptLineInfo &ln, cons
             uint16_t vtype = 0;
             if (!ScriptResolve(s, opbase[4], opbase[5], ScriptSymVal(opbase + 4), scratch, &val, &vsize, &vtype))
                 return SCRIPT_ERR_OPERAND;
-            uint8_t wbuf[64];
+            uint8_t wbuf[256];
             memset(wbuf, 0, sizeof(wbuf));
             uint8_t err = ScriptAssignResolved(BlockMetaType(rm.FlagsAndType), wbuf, rm.Size, val, vsize, vtype);
             if (err) return err;
@@ -1157,20 +1163,25 @@ static uint8_t ScriptExecCompose(LoadedScript *s, const ScriptLineInfo &ln, cons
     if (op == SCRIPT_OP_COMPOSE) {
         if (ln.destCount < 1 || ln.opCount < 2) return SCRIPT_ERR_OPERAND;
         const uint8_t *destSym = s->instr + (size_t)ln.start * 4;
+        // The container must be writable (a variable or an output).
+        if (destSym[0] != SCRIPT_SYM_VARIABLE && destSym[0] != SCRIPT_SYM_OUTPUT)
+            return SCRIPT_ERR_OPERAND;
         int32_t index = 0;
         if (!ScriptResolveOperandInt(s, opbase, index)) return SCRIPT_ERR_OPERAND;
         for (uint8_t k = 1; k < ln.opCount; k++) {
-            uint8_t scratch[4];
+            uint8_t vscratch[4];
             const uint8_t *val = nullptr;
             uint8_t vsize = 0;
             uint16_t vtype = 0;
             if (!ScriptResolve(s, opbase[k * 4], opbase[k * 4 + 1], ScriptSymVal(opbase + (size_t)k * 4),
-                               scratch, &val, &vsize, &vtype))
+                               vscratch, &val, &vsize, &vtype))
                 return SCRIPT_ERR_OPERAND;
             const uint8_t *elem = nullptr;
             uint8_t esize = 0;
             uint16_t etype = 0;
-            if (!ScriptContainerElement(s, destSym, index + (k - 1), scratch, &elem, &esize, &etype))
+            // Separate scratch: `val` may point into `vscratch`.
+            uint8_t escratch[4];
+            if (!ScriptContainerElement(s, destSym, index + (k - 1), escratch, &elem, &esize, &etype))
                 return SCRIPT_ERR_BOUNDS;
             uint8_t err = ScriptAssignResolved(etype, const_cast<uint8_t *>(elem), esize, val, vsize, vtype);
             if (err) return err;
@@ -1287,7 +1298,9 @@ static void HandleScriptResponse(const PacketFrame &frame) {
             if (ScriptResolveDest(s, s->pendingDest, dtype, dest, dsize))
                 ScriptAssignResolved(dtype, dest, dsize, val, (uint8_t)vsz, BlockMetaType(rm.FlagsAndType));
         }
-        s->state = (uint8_t)ScriptState::Running;
+        // Only a script still waiting on this confirmation resumes.
+        if (s->state == (uint8_t)ScriptState::Waiting)
+            s->state = (uint8_t)ScriptState::Running;
         return;
     }
 }
@@ -1307,6 +1320,8 @@ static void ScriptSetState(LoadedScript *s, uint8_t newState) {
         s->waitingOnTime = false;
         s->errorCode = SCRIPT_ERR_NONE;
     }
+    // A manual state change abandons any outstanding foreign confirmation.
+    if (newState != (uint8_t)ScriptState::Waiting) s->pendingForeign = false;
     s->state = newState;
 }
 
@@ -1316,9 +1331,13 @@ void ScriptsBootLoad() {
         char name[8];
         ScriptFileName(i, name);
         if (Storage.FileExists(name) == 0xFFFFFFFF) continue;
-        if (ScriptLoad(i) && (scriptRegistry[i].properties & SCRIPT_PROP_RUN_ON_LOAD)) {
-            scriptRegistry[i].state = (uint8_t)ScriptState::Running;
+        if (!ScriptLoad(i)) continue;
+        if (!(scriptRegistry[i].properties & SCRIPT_PROP_LOAD_ON_BOOT)) {
+            scriptRegistry[i].Release(); // stored, but not pre-loaded
+            continue;
         }
+        if (scriptRegistry[i].properties & SCRIPT_PROP_RUN_ON_LOAD)
+            scriptRegistry[i].state = (uint8_t)ScriptState::Running;
     }
 }
 

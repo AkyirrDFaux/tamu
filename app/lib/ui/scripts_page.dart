@@ -18,12 +18,14 @@ class _LoadedScript {
   final String name;
   final int state;
   final int instructionCounter;
+  final List<ScriptInputSpec> inputSpecs;
 
   const _LoadedScript({
     required this.slot,
     required this.name,
     required this.state,
     required this.instructionCounter,
+    this.inputSpecs = const [],
   });
 
   String get fileName =>
@@ -83,11 +85,23 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
       final meta = await _client.readBlockMeta(slot);
       final state = await _client.readState(slot) ?? ScriptState.stopped;
       final internal = await _client.readInternalState(slot);
+      // The input UI specifications live in the script file.
+      var specs = const <ScriptInputSpec>[];
+      final fileName = 'SCR_${slot.toRadixString(16).toUpperCase().padLeft(2, '0')}';
+      final bytes = await _storage.readFile(fileName);
+      if (bytes != null) {
+        try {
+          specs = ScriptFileData.parse(bytes).inputSpecs;
+        } on FormatException {
+          specs = const [];
+        }
+      }
       list.add(_LoadedScript(
         slot: slot,
         name: (meta?.name.isNotEmpty ?? false) ? meta!.name : 'Script $slot',
         state: state,
         instructionCounter: internal?.instructionCounter ?? 0,
+        inputSpecs: specs,
       ));
     }
     if (!mounted) return;
@@ -303,6 +317,7 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
             icon: Icons.login,
             editable: true,
             revision: _revision,
+            specs: s.inputSpecs,
             onChanged: _loadLoaded,
           ),
           ScriptIoSection(

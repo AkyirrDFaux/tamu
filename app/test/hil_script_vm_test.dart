@@ -237,4 +237,47 @@ void main() async {
 
     await cleanup(c, st, slot);
   }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('log + nop execute without error', skip: skipReason, () async {
+    final draft = ScriptDraft(functionName: 'Log')
+      ..constants.add(ScriptDraftValue(name: 'Code', type: DataType.number, size: 4, value: numberToBytes(7)))
+      ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catService, 0), operands: [ScriptSymbol.constant(0)])) // Log
+      ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catService, 4))) // Nop
+      ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6))); // Halt
+
+    final (c, st, slot) = await loadScript(7, draft);
+    await c.setState(slot, ScriptState.running);
+    final state = await waitState(c, slot, ScriptState.finished);
+    print('[VM] log state=$state err=${await c.readError(slot)}');
+    expect(state, ScriptState.finished);
+    expect(await c.readError(slot), 0);
+    await cleanup(c, st, slot);
+  }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('stored script without load-on-boot stays unloaded after a reset', skip: skipReason, () async {
+    final port = Platform.environment['TAMU_HIL']!;
+    final c = ScriptClient(deviceId: 1);
+    final st = StorageClient(deviceId: 1);
+    if (await c.readState(8) != null) await c.unload(8);
+    await st.deleteFile('SCR_08');
+
+    final draft = ScriptDraft(functionName: 'Stored') // properties 0 (no load-on-boot)
+      ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catService, 4)))
+      ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)));
+    if (!await st.writeFile('SCR_08', draft.toImage())) fail('write failed');
+    if ((await c.loadedScripts()).contains(8)) fail('should not be loaded before reset');
+
+    await ConnectionManager.instance.disconnect();
+    await Process.run(
+        '/home/akyirr/.platformio/penv/bin/python',
+        ['/home/akyirr/.platformio/packages/tool-esptoolpy/esptool.py', '--port', port, 'run']);
+    await Future<void>.delayed(const Duration(seconds: 5));
+    final err = await connectHil();
+    if (err != null) fail('reconnect failed: $err');
+
+    final loaded = await c.loadedScripts();
+    print('[VM] stored-only boot loaded=$loaded');
+    expect(loaded.contains(8), isFalse, reason: 'stored script must not load on boot');
+    await st.deleteFile('SCR_08');
+  }, timeout: const Timeout(Duration(minutes: 2)));
 }

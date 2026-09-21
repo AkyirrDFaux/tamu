@@ -129,20 +129,6 @@ class ScriptField {
   static const count = 3;
 }
 
-/// Header keys (field 0).
-class ScriptHeaderKey {
-  static const state = 0;
-  static const instructionCounter = 1;
-  static const properties = 2;
-  static const inputCount = 3;
-  static const outputCount = 4;
-  static const variableCount = 5;
-  static const constantCount = 6;
-  static const fileId = 7;
-  static const error = 8;
-  static const count = 9;
-}
-
 /// Script states (Docs/Services/Script.md "State").
 class ScriptState {
   static const stopped = 0;
@@ -440,6 +426,7 @@ class ScriptFileData {
     final instructions = Uint8List.fromList(bytes.sublist(offset, offset + instrLen));
     offset += instrLen;
     final ui = bytes.sublist(offset, offset + uiLen);
+    final info = _parseUiInfo(ui, inCount);
 
     return ScriptFileData(
       properties: properties,
@@ -450,18 +437,17 @@ class ScriptFileData {
       constantValues: constantValues,
       inputDefaults: inputDefaults,
       instructions: instructions,
-      functionName: _parseFunctionName(ui),
-      inputNames: _parseNames(ui, 0, inCount),
-      outputNames: _parseNames(ui, 1, outCount),
-      variableNames: _parseNames(ui, 2, varCount),
-      constantNames: _parseNames(ui, 3, constCount),
-      inputSpecs: _parseInputSpecs(ui, inCount),
+      functionName: info.functionName,
+      inputNames: info.inputNames,
+      outputNames: info.outputNames,
+      variableNames: info.variableNames,
+      constantNames: info.constantNames,
+      inputSpecs: info.inputSpecs,
     );
   }
 }
 
-/// Cursor over the UI-info name sections. `_parseNames`/`_parseInputSpecs` re-walk the
-/// blob from the start so they stay independent of call order.
+/// Cursor over the UI-info blob (length-prefixed strings / bytes).
 class _UiCursor {
   final List<int> ui;
   int pos = 0;
@@ -482,46 +468,52 @@ class _UiCursor {
   }
 }
 
-/// Walks past the function name and the first `section` name lists, returning the
-/// `index`-th name of the requested section (0=inputs, 1=outputs, 2=variables, 3=constants).
-List<String> _parseNames(List<int> ui, int section, int count) {
-  if (ui.isEmpty || ui[0] != scriptUiInfoVersion) return const [];
-  final c = _UiCursor(ui)..pos = 1;
-  c.string(); // function name
-  for (var s = 0; s < 4; s++) {
-    final n = c.u8();
-    final names = <String>[];
-    for (var i = 0; i < n; i++) {
-      names.add(c.string());
-    }
-    if (s == section) return names;
-    // Skip remaining sections for the requested one.
+/// Parses the whole UI-info blob in a single walk: function name, the four name lists and
+/// the per-input specifications.
+({
+  String functionName,
+  List<String> inputNames,
+  List<String> outputNames,
+  List<String> variableNames,
+  List<String> constantNames,
+  List<ScriptInputSpec> inputSpecs,
+}) _parseUiInfo(List<int> ui, int inputCount) {
+  if (ui.isEmpty) {
+    return (
+      functionName: '',
+      inputNames: const <String>[],
+      outputNames: const <String>[],
+      variableNames: const <String>[],
+      constantNames: const <String>[],
+      inputSpecs: const <ScriptInputSpec>[],
+    );
   }
-  return const [];
-}
-
-String _parseFunctionName(List<int> ui) {
-  if (ui.isEmpty || ui[0] != scriptUiInfoVersion) {
-    // Legacy/unknown blob: first byte was the name length.
-    if (ui.isEmpty) return '';
+  if (ui[0] != scriptUiInfoVersion) {
+    // Legacy/unknown blob: the first byte was the function-name length.
     final n = ui[0];
-    if (1 + n <= ui.length) return String.fromCharCodes(ui.sublist(1, 1 + n));
-    return '';
+    final name = (1 + n <= ui.length) ? String.fromCharCodes(ui.sublist(1, 1 + n)) : '';
+    return (
+      functionName: name,
+      inputNames: const <String>[],
+      outputNames: const <String>[],
+      variableNames: const <String>[],
+      constantNames: const <String>[],
+      inputSpecs: const <ScriptInputSpec>[],
+    );
   }
-  final c = _UiCursor(ui)..pos = 1;
-  return c.string();
-}
 
-List<ScriptInputSpec> _parseInputSpecs(List<int> ui, int inputCount) {
-  if (ui.isEmpty || ui[0] != scriptUiInfoVersion) return const [];
   final c = _UiCursor(ui)..pos = 1;
-  c.string(); // function name
-  for (var s = 0; s < 4; s++) {
+  final functionName = c.string();
+  List<String> names() {
     final n = c.u8();
-    for (var i = 0; i < n; i++) {
-      c.string();
-    }
+    return [for (var i = 0; i < n; i++) c.string()];
   }
+
+  final inputNames = names();
+  final outputNames = names();
+  final variableNames = names();
+  final constantNames = names();
+
   final specs = <ScriptInputSpec>[];
   for (var i = 0; i < inputCount; i++) {
     final uiType = c.u8();
@@ -535,5 +527,12 @@ List<ScriptInputSpec> _parseInputSpecs(List<int> ui, int inputCount) {
     final step = _rawToNumber(_getU32(ui, c.pos)); c.pos += 4;
     specs.add(ScriptInputSpec(uiType: uiType, min: min, max: max, step: step));
   }
-  return specs;
+  return (
+    functionName: functionName,
+    inputNames: inputNames,
+    outputNames: outputNames,
+    variableNames: variableNames,
+    constantNames: constantNames,
+    inputSpecs: specs,
+  );
 }

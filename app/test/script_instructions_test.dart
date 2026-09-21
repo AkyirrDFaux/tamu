@@ -140,4 +140,30 @@ void main() {
         {preState, preType, preIndex, preChar, preMathOp, preBool});
     expect(scriptPredefineMathOps.length, 18);
   });
+
+  test('foreign register ops validate the address operand', () {
+    // Register read (foreign): operand 0 = address, operand 1 = BlockInfo constant.
+    final bad = [
+      ScriptLine(
+        destinations: [ScriptSymbol.variable(0)],
+        instruction: ScriptSymbol.instruction(catService, 5),
+        operands: [ScriptSymbol.variable(1), ScriptSymbol.constant(0)],
+      ),
+    ];
+    final ctx = ScriptValidationContext(
+        variableTypes: [DataType.number.value, DataType.colour.value]);
+    final errors = validateScriptLines(bad, ctx);
+    expect(errors.any((e) => e.contains('device address')), isTrue);
+
+    final good = [
+      ScriptLine(
+        destinations: [ScriptSymbol.variable(0)],
+        instruction: ScriptSymbol.instruction(catService, 5),
+        operands: [ScriptSymbol.input(0), ScriptSymbol.constant(0)],
+      ),
+    ];
+    final ctxGood = ScriptValidationContext(
+        inputTypes: [DataType.id.value], variableTypes: [DataType.number.value]);
+    expect(validateScriptLines(good, ctxGood), isEmpty);
+  });
 }

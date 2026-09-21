@@ -471,8 +471,6 @@ Future<void> _loadVisibleFields() async {
         ScriptField.header => 'Header',
         ScriptField.input => 'Input',
         ScriptField.output => 'Output',
-        ScriptField.variable => 'Variable',
-        ScriptField.constant => 'Constant',
         _ => 'Field $field',
       };
 
@@ -508,8 +506,7 @@ Future<void> _loadVisibleFields() async {
         subtitle: const Text('None', style: TextStyle(fontSize: 10, color: Colors.white38)),
       );
     }
-    final editableField =
-        fieldIndex == ScriptField.input || fieldIndex == ScriptField.variable;
+    final editableField = fieldIndex == ScriptField.input;
     return Column(
       children: [
         for (final key in keys)

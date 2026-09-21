@@ -554,19 +554,7 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
   // Instructions
   // ---------------------------------------------------------------------------
 
-  /// Symbol index at which each line starts (used for the active-line highlight).
-  List<int> _lineStarts(ScriptDraft draft) {
-    final starts = <int>[];
-    var at = 0;
-    for (final line in draft.lines) {
-      starts.add(at);
-      at += line.destinations.length + 1 + line.operands.length + 1;
-    }
-    return starts;
-  }
-
   Widget _instructionsCard(ScriptDraft draft) {
-    final starts = _lineStarts(draft);
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: Padding(
@@ -606,7 +594,7 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
                 draft.lines.insert(newIndex, line);
                 _dirty = true;
               }),
-              itemBuilder: (context, i) => _lineEditor(draft, i, starts[i]),
+              itemBuilder: (context, i) => _lineEditor(draft, i),
             ),
         ]),
       ),
@@ -616,13 +604,11 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
   /// One line rendered as a readable Destination-Instruction-Operand row. Tapping a symbol
   /// changes it, tapping the instruction re-picks it, and the drag handle reorders lines.
   /// Adding destinations/operands is limited by the selected instruction.
-  Widget _lineEditor(ScriptDraft draft, int index, int startSymbol) {
+  Widget _lineEditor(ScriptDraft draft, int index) {
     final line = draft.lines[index];
     final def = line.def;
-    final count = line.destinations.length + 1 + line.operands.length + 1;
-    final active = widget.loaded &&
-        _instructionCounter >= startSymbol &&
-        _instructionCounter < startSymbol + count;
+    // The instruction counter is a line index, so the active line is a direct match.
+    final active = widget.loaded && _instructionCounter == index;
     final canAddDestination =
         def != null && line.destinations.length < def.maxDestinations;
     final canAddOperand = def != null && line.operands.length < def.maxOperands;
@@ -751,7 +737,10 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
   Future<void> _changeInstruction(ScriptLine line) async {
     final def = await showDialog<ScriptInstructionDef>(
       context: context,
-      builder: (_) => _InstructionPicker(current: line.def),
+      builder: (_) => _InstructionPicker(
+        current: line.def,
+        hasDestination: line.destinations.isNotEmpty,
+      ),
     );
     if (def == null || !mounted) return;
     setState(() {
@@ -1073,27 +1062,104 @@ class _SymbolPickerState extends State<_SymbolPicker> {
     return scriptTypeIsNumeric(t.value);
   }
 
-  /// Context recommendations shown before the category groups.
+  /// True when this operand is expected to be a numeric value.
+  bool get _numericOperand =>
+      widget.def?.numeric == true && !_constantOnly && !_addressOperand;
+
+  /// True when the instruction expects a boolean condition at this position.
+  bool get _conditionOperand {
+    final def = widget.def;
+    if (def == null || widget.destination) return false;
+    if (def.category == catFlow && (def.op == 0 || def.op == 1)) return true; // If/While
+    if (def.category == catTime && def.op == 1) return true; // Wait until
+    if (def.category == catLogic && def.op == 12 && widget.operandIndex == 0) return true; // Select
+    return false;
+  }
+
+  /// True when the instruction expects a line target (Jump/Call).
+  bool get _targetOperand {
+    final def = widget.def;
+    return def != null && !widget.destination && def.category == catFlow && (def.op == 3 || def.op == 4);
+  }
+
+  /// Instruction/position-aware recommendations shown before the category groups.
   List<ScriptSymbol> _recommendations(ScriptDraft draft) {
     final candidates = <ScriptSymbol>[];
-    if (widget.destination) {
-      for (var i = 0; i < draft.variables.length; i++) {
-        candidates.add(ScriptSymbol.variable(i));
+    void addInputsWhere(bool Function(DataType) test) {
+      for (var i = 0; i < draft.inputs.length; i++) {
+        if (test(draft.inputs[i].type)) candidates.add(ScriptSymbol.input(i));
       }
+    }
+
+    void addVarsWhere(bool Function(DataType) test) {
+      for (var i = 0; i < draft.variables.length; i++) {
+        if (test(draft.variables[i].type)) candidates.add(ScriptSymbol.variable(i));
+      }
+    }
+
+    void addConstsWhere(bool Function(DataType) test) {
+      for (var i = 0; i < draft.constants.length; i++) {
+        if (test(draft.constants[i].type)) candidates.add(ScriptSymbol.constant(i));
+      }
+    }
+
+    bool any(DataType _) => true;
+    bool isId(DataType t) => t == DataType.id;
+    bool isBool(DataType t) => t == DataType.bool_;
+    bool numeric(DataType t) => scriptTypeIsNumeric(t.value);
+
+    if (widget.destination) {
+      addVarsWhere(any); // writable first
       for (var i = 0; i < draft.outputs.length; i++) {
         candidates.add(ScriptSymbol.output(i));
       }
-    } else {
-      for (var i = 0; i < draft.constants.length; i++) {
-        candidates.add(ScriptSymbol.constant(i));
-      }
-      for (var i = 0; i < draft.inputs.length; i++) {
-        candidates.add(ScriptSymbol.input(i));
-      }
+    } else if (_constantOnly) {
+      addConstsWhere(any);
+    } else if (_addressOperand) {
+      addInputsWhere(isId);
+      addVarsWhere(isId);
+      addConstsWhere(isId);
+      addInputsWhere(numeric);
+      addConstsWhere(numeric);
+    } else if (_targetOperand) {
+      candidates.add(ScriptSymbol.predefine(preIndex, 0));
+      candidates.add(ScriptSymbol.predefine(preIndex, 1));
+      addVarsWhere(numeric);
+      addConstsWhere(numeric);
+    } else if (_conditionOperand) {
+      addVarsWhere(isBool);
+      addInputsWhere(isBool);
       candidates.add(ScriptSymbol.predefine(preBool, 1));
+      candidates.add(ScriptSymbol.predefine(preBool, 0));
+    } else if (_numericOperand) {
+      addConstsWhere(numeric);
+      addVarsWhere(numeric);
+      addInputsWhere(numeric);
+      candidates.add(ScriptSymbol.predefine(preIndex, 0));
+      candidates.add(ScriptSymbol.predefine(preBool, 1));
+    } else {
+      addConstsWhere(any);
+      addVarsWhere(any);
+      addInputsWhere(any);
       candidates.add(ScriptSymbol.predefine(preIndex, 0));
     }
     return candidates.where((s) => _allowed(draft, s)).take(6).toList();
+  }
+
+  /// A short description of what this position expects.
+  String? get _hint {
+    if (widget.destination) {
+      if (widget.def != null && widget.def!.maxDestinations == 0) {
+        return 'This instruction takes no destination';
+      }
+      return 'Destination: a variable or output';
+    }
+    if (_constantOnly) return 'Register address (a 4-byte BlockInfo constant)';
+    if (_addressOperand) return 'Device address (Id)';
+    if (_targetOperand) return 'Target line index';
+    if (_conditionOperand) return 'Boolean condition';
+    if (_numericOperand) return 'Numeric value';
+    return null;
   }
 
   List<(String, List<ScriptSymbol>)> _groups(ScriptDraft draft) {
@@ -1152,11 +1218,20 @@ class _SymbolPickerState extends State<_SymbolPicker> {
       content: SizedBox(
         width: 360,
         height: 380,
-        child: group == null
-            ? _menu(draft, groups)
-            : groups[group].$1 == 'Predefines'
-                ? _predefineList()
-                : _groupList(draft, groups[group].$2),
+        child: Column(children: [
+          if (_hint != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Text(_hint!, style: const TextStyle(color: kOrange, fontSize: 12)),
+            ),
+          Expanded(
+            child: group == null
+                ? _menu(draft, groups)
+                : groups[group].$1 == 'Predefines'
+                    ? _predefineList()
+                    : _groupList(draft, groups[group].$2),
+          ),
+        ]),
       ),
       actions: [
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
@@ -1257,8 +1332,9 @@ class _SymbolPickerState extends State<_SymbolPicker> {
 /// Instruction picker with the same recommendation-first, grouped layout.
 class _InstructionPicker extends StatefulWidget {
   final ScriptInstructionDef? current;
+  final bool hasDestination;
 
-  const _InstructionPicker({this.current});
+  const _InstructionPicker({this.current, this.hasDestination = false});
 
   @override
   State<_InstructionPicker> createState() => _InstructionPickerState();
@@ -1287,11 +1363,23 @@ class _InstructionPickerState extends State<_InstructionPicker> {
       }
     }
 
-    add(catMath, 0); // Set
-    add(catMath, 1); // Add
-    add(catFlow, 0); // If
-    add(catTime, 0); // Delay
-    add(catService, 4); // Nop
+    // Context: with a destination the line produces a value; without one it is control
+    // flow / timing / a service action.
+    if (widget.hasDestination) {
+      add(catMath, 0); // Set
+      add(catMath, 1); // Add
+      add(catLogic, 6); // Compare =
+      add(catTime, 2); // Get time
+      add(catService, 1); // Register read
+      add(catCompose, 1); // Extract
+    } else {
+      add(catFlow, 0); // If
+      add(catFlow, 1); // While
+      add(catTime, 1); // Wait until
+      add(catService, 2); // Register write
+      add(catService, 4); // Nop
+      add(catFlow, 6); // Halt
+    }
     final current = widget.current;
     if (current != null && !recs.contains(current)) recs.insert(0, current);
     return recs;
