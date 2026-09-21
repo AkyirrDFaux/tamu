@@ -83,16 +83,19 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
   TriggerType _trigger = TriggerType.periodic;
   int _periodMs = 1000;
   int _minTimeMs = 100;
+  double _deadzone = 0;
 
   // Controllers for text fields
   final _periodController = TextEditingController();
   final _minTimeController = TextEditingController();
+  final _deadzoneController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     _periodController.text = _periodMs.toString();
     _minTimeController.text = _minTimeMs.toString();
+    _deadzoneController.text = '0';
     _loadData();
     if (widget.existing != null) {
       _populateFromExisting(widget.existing!);
@@ -103,6 +106,7 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
   void dispose() {
     _periodController.dispose();
     _minTimeController.dispose();
+    _deadzoneController.dispose();
     super.dispose();
   }
 
@@ -240,10 +244,12 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
     _trigger = sub.trigger;
     _periodMs = sub.periodMs;
     _minTimeMs = sub.minTimeMs;
+    _deadzone = sub.deadzone;
     _selectedProviderAddr = sub.providerAddr;
 
     _periodController.text = sub.periodMs.toString();
     _minTimeController.text = sub.minTimeMs.toString();
+    _deadzoneController.text = sub.deadzone.toString();
   }
 
   @override
@@ -372,6 +378,18 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
                           ),
                           const SizedBox(height: 12),
                         ],
+
+                        // Deadzone (docs: "for number/vector") - Delta triggers.
+                        if (_needsDeadzone()) ...[
+                          TextFormField(
+                            controller: _deadzoneController,
+                            decoration: const InputDecoration(
+                                labelText: 'Deadzone', border: OutlineInputBorder()),
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            onChanged: (v) => _deadzone = double.tryParse(v) ?? 0,
+                          ),
+                          const SizedBox(height: 12),
+                        ],
                       ],
                     ),
                   ),
@@ -388,20 +406,23 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
 
   bool _needsPeriod() {
     return _trigger == TriggerType.periodic ||
-           _trigger == TriggerType.onChangePeriodic;
+           _trigger == TriggerType.onChangePeriodic ||
+           _trigger == TriggerType.deltaPeriodic;
   }
 
-  // Docs: OnChange+Period uses a Minimum interval; OnChange+Confirm a Retry interval.
+  // Docs: OnChange+Period uses a Minimum interval; OnChange+Confirm/Edge a Retry interval.
   bool _needsInterval() {
-    return _trigger == TriggerType.onChangePeriodic ||
-           _trigger == TriggerType.onChangeConfirm;
+    return _trigger != TriggerType.periodic;
   }
 
   String _intervalLabel() {
-    return _trigger == TriggerType.onChangeConfirm
+    return (_trigger == TriggerType.onChangeConfirm || _trigger.isEdge)
         ? 'Retry Interval (ms)'
         : 'Min Interval (ms)';
   }
+
+  /// The deadzone applies to the scalar/vector Delta trigger.
+  bool _needsDeadzone() => _trigger == TriggerType.deltaPeriodic;
 
   bool _canSave() {
     if (_selectedTargetBlock == null || _selectedTargetField == null ||
@@ -438,6 +459,7 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
       trigger: _trigger,
       periodMs: _periodMs,
       minTimeMs: _minTimeMs,
+      deadzone: _deadzone,
       trid: trid,
     );
 

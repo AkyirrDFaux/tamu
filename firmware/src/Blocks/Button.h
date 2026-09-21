@@ -1,36 +1,21 @@
 #pragma once
 
-// Edge detection modes for button blocks (Docs/Modules and blocks/Buttons & LEDS.md):
-// the edge counter increments once per detected transition and wraps on uint8 overrun.
-enum ButtonEdgeMode : uint8_t {
-    EdgeNone   = 0,
-    EdgeRising = 1,  // free -> pressed
-    EdgeFalling = 2, // pressed -> free
-    EdgeBoth   = 3,  // any transition
-};
-
 // ===== Button =====
 // Docs/Modules and blocks/Buttons & LEDS.md:
-//   Button raw state (0, RO, bool), Edge detection (1, P, enum), Edge counter (2, RO, uint8).
+//   Button raw state (0, RO, bool) - true = pressed, false = free.
 struct ButtonStruct {
     bool ButtonState = false;
-    uint8_t EdgeDetection = EdgeNone;
-    uint8_t EdgeCounter = 0;
 };
 
 const BlockMeta Button_Map[] = {
     {DataType::Bool | FieldFlags::ReadOnly, 0x00, sizeof(bool)},
-    {DataType::Enum | FieldFlags::Persistent, 0x00, sizeof(uint8_t)},
-    {DataType::Index | FieldFlags::ReadOnly, 0x00, sizeof(uint8_t)},
 };
 
 const FieldTrigger Button_Triggers[] = {
     nullptr,
-    nullptr,
-    nullptr,
 };
 
-const uint16_t Button_Offsets[] = {0, 1, 2};
+const uint16_t Button_Offsets[] = {0};
 
 const BlockSchema Button_Schema = {
     .Map = Button_Map,
@@ -44,20 +29,18 @@ const BlockSchema Button_Schema = {
 // Docs/Modules and blocks/Buttons & LEDS.md: button + LED on one pin. The LED is
 // controlled by the LEDState field; the button is reported through the Button field
 // (if the LED is on, button reading is disabled).
-//   Button raw state (0, RO, bool), Edge detection (1, P, enum), Edge counter
-//   (2, RO, uint8), LEDState (3, TR, bool).
+//   Button raw state (0, RO, bool), LEDState (3, TR, bool).
+// Fields 1-2 are reserved (None) so LEDState keeps its documented field index 3.
 struct LEDButtonStruct {
-    bool ButtonState = false; // offset 0
-    uint8_t EdgeDetection = EdgeNone; // offset 1
-    uint8_t EdgeCounter = 0;  // offset 2
-    bool LEDState = false;    // offset 3
+    bool ButtonState = false; // field 0
+    bool LEDState = false;    // field 3
 };
 
 const BlockMeta LEDButton_Map[] = {
-    {DataType::Bool | FieldFlags::ReadOnly, 0x00, sizeof(bool)},
-    {DataType::Enum | FieldFlags::Persistent, 0x00, sizeof(uint8_t)},
-    {DataType::Index | FieldFlags::ReadOnly, 0x00, sizeof(uint8_t)},
-    {DataType::Bool | FieldFlags::Trigger, 0x00, sizeof(bool)},
+    {DataType::Bool | FieldFlags::ReadOnly, 0x00, sizeof(bool)}, // 0 Button raw state
+    {(uint16_t)DataType::None, 0x00, 0},                          // 1 reserved
+    {(uint16_t)DataType::None, 0x00, 0},                          // 2 reserved
+    {DataType::Bool | FieldFlags::Trigger, 0x00, sizeof(bool)},  // 3 LEDState
 };
 
 bool OnLEDStateChange(const StaticBlockDescriptor &block, uint16_t index, const void *data, uint16_t data_len);
@@ -69,7 +52,8 @@ const FieldTrigger LEDButton_Triggers[] = {
     OnLEDStateChange,
 };
 
-const uint16_t LEDButton_Offsets[] = {0, 1, 2, 3};
+// Reserved fields point at the struct start; their Size is 0 so nothing is read/written.
+const uint16_t LEDButton_Offsets[] = {0, 0, 0, 1};
 
 const BlockSchema LEDButton_Schema = {
     .Map = LEDButton_Map,

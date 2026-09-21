@@ -545,6 +545,26 @@ static bool ScriptSetEntry(uint8_t slot, uint8_t field, uint8_t key, const Block
     return true;
 }
 
+// Non-copying I/O lookup for subscription sources and cross-service register access:
+// returns a pointer straight into the I/O space (inputs then outputs).
+static bool ScriptGetIoPointer(uint8_t slot, uint8_t field, uint8_t key, BlockMeta &m, void *&data) {
+    LoadedScript *s = ScriptActive(slot);
+    if (!s) return false;
+    if (field == SCRIPT_FIELD_INPUT && key < s->inCount) {
+        m = s->inMeta[key];
+        m.Key = key;
+        data = s->ioSpace + s->InputOffset(key);
+        return true;
+    }
+    if (field == SCRIPT_FIELD_OUTPUT && key < s->outCount) {
+        m = s->outMeta[key];
+        m.Key = key;
+        data = s->ioSpace + s->OutputOffset(key);
+        return true;
+    }
+    return false;
+}
+
 // Writes a variable's RAM (Script management CID 7 "Write Variable" - editor debug).
 static bool ScriptSetVariable(uint8_t slot, uint8_t varId, const uint8_t *val, uint16_t vlen) {
     LoadedScript *s = ScriptActive(slot);

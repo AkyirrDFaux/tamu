@@ -716,6 +716,18 @@ bool RegisterGetByBlockInfo(uint32_t bi, BlockMeta &m, uint8_t *vbuf, uint8_t &v
     vsz = 0;
     if (type == 0 && inst == 0)
         return RegisterGetSystemField(field, key, m, vbuf, vsz);
+#ifdef USE_SCRIPTS
+    if (type == 0x3FE) { // Script I/O (inputs/outputs)
+        BlockMeta sm;
+        void *p = nullptr;
+        if (!ScriptGetIoPointer(inst, field, key, sm, p)) return false;
+        m = sm;
+        uint8_t n = sm.Size;
+        if (n) memcpy(vbuf, p, n);
+        vsz = n;
+        return true;
+    }
+#endif
 #ifndef DISABLE_DYNAMIC_MEMORY
     if (type == 0x3FF) {
         if (inst >= dynamic_block_registry.block_count) return false;
@@ -748,6 +760,11 @@ bool RegisterSetByBlockInfo(uint32_t bi, const BlockMeta &m, const uint8_t *val,
     uint8_t field = BlockInfoField(bi);
     uint8_t key = BlockInfoKey(bi);
     (void)key; // only the dynamic (keyed) path uses it
+#ifdef USE_SCRIPTS
+    if (type == 0x3FE) { // Script I/O: only inputs are writable
+        return ScriptSetEntry(inst, field, key, m, val, vlen);
+    }
+#endif
     if (type == 0x3FF) {
 #ifndef DISABLE_DYNAMIC_MEMORY
         if (inst >= dynamic_block_registry.block_count) return false;

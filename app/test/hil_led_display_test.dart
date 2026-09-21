@@ -77,7 +77,7 @@ Future<void> runTests() async {
       BlockMeta(flagsAndType: DataType.number.value, size: 4), numberToBytes(20.0));
   if (brightness == null) fail('set Display2.Brightness failed');
   final layout = await reg.writeBlockField(0x06, 1, 3, 0,
-      BlockMeta(flagsAndType: DataType.string.value, size: 6), 'VYSIV1'.codeUnits);
+      BlockMeta(flagsAndType: DataType.filename.value, size: 6), 'VYSIV1'.codeUnits);
   if (layout == null) fail('set Display2.LayoutFile failed');
   // ignore: avoid_print
   print('[D] Display2.RenderBlock=0 Brightness=20 LayoutFile=VYSIV1');

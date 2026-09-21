@@ -32,7 +32,11 @@ constexpr uint16_t FlashValid = 0x0400;
 enum class TriggerType : uint8_t {
     Periodic           = 0,
     OnChangePeriodic   = 1,
-    OnChangeConfirm    = 2
+    OnChangeConfirm    = 2,
+    EdgeRising         = 3,
+    EdgeFalling        = 4,
+    EdgeAny            = 5,
+    DeltaPeriodic      = 6
 };
 
 enum class DataType : uint16_t {
@@ -47,6 +51,7 @@ enum class DataType : uint16_t {
     Matrix         = 0x08,
     Colour         = 0x09,
     String         = 0x0A,
+    Filename       = 0x0B,
     Enum           = 0x0C,
     Deleted        = 0x0D,
     Uint32         = 0x0E,

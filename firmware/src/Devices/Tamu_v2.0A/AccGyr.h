@@ -196,18 +196,8 @@ void InitLSM6DS3() {
     }
 }
 
-// Applies the 2-norm deadzone (Docs/Modules and blocks/Measurement.md): the current output
-// is the center; the new (filtered) value is adopted only when it moves more than `dz`
-// away in Euclidean distance. 0 = off.
-static Vector<3> AccGyrApplyDeadzone(const Vector<3> &next, const Vector<3> &prev, Number dz)
-{
-    if (dz <= N(0)) return next;
-    if ((next - prev).norm2() <= dz) return prev;
-    return next;
-}
-
-// Reads raw gyro/accel registers and updates the block outputs: per-range scaling, EMA
-// (0-1 coefficient) on the raw values, then a 2-norm deadzone on the results.
+// Reads raw gyro/accel registers and updates the block outputs: per-range scaling and
+// EMA (0-1 coefficient) on the raw values.
 bool ReadIMUData() {
     uint16_t Raw[6];
 
@@ -244,8 +234,8 @@ bool ReadIMUData() {
                            (AccGyr.Acceleration.Data[i] * (N(1) - acc_w));
     }
 
-    AccGyr.AngularVelocity = AccGyrApplyDeadzone(next_gyro, AccGyr.AngularVelocity, AccGyr.AngDeadzone);
-    AccGyr.Acceleration = AccGyrApplyDeadzone(next_acc, AccGyr.Acceleration, AccGyr.AccDeadzone);
+    AccGyr.AngularVelocity = next_gyro;
+    AccGyr.Acceleration = next_acc;
 
     return true;
 }

@@ -3,20 +3,21 @@ library;
 
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tamuapp/core/connection.dart';
-import 'package:tamuapp/core/protocol.dart';
+import 'package:tamuapp/core/device_db.dart';
 import 'package:tamuapp/core/register_client.dart';
+import 'package:tamuapp/core/script_client.dart';
+import 'package:tamuapp/core/script_draft.dart';
+import 'package:tamuapp/core/script_file.dart';
+import 'package:tamuapp/core/script_instructions.dart';
+import 'package:tamuapp/core/storage_client.dart';
 import 'package:tamuapp/core/subscription_client.dart';
 import 'package:tamuapp/core/types.dart';
-import 'package:tamuapp/core/device_db.dart';
 import 'hil_helpers.dart';
 
 DeviceEntry? findDas(DeviceDatabase db) {
-  // First try by type
   for (final d in db.all) {
     if (d.type == DeviceType.dualAnalogSensor) return d;
   }
-  // Fallback: DAS is typically at ID 2
   for (final d in db.all) {
     if (d.id == 2) return d;
   }
@@ -32,8 +33,7 @@ DeviceEntry? findTamu(DeviceDatabase db) {
 
 Future<void> discoverDevices() async {
   final db = DeviceDatabase.instance;
-  // Trigger device discovery by pinging broadcast
-  await db.refreshRuntime(0); // 0 = broadcast
+  await db.refreshRuntime(0);
   await Future<void>.delayed(const Duration(seconds: 2));
   await db.refreshRuntime(0);
   await Future<void>.delayed(const Duration(seconds: 1));
@@ -42,162 +42,190 @@ Future<void> discoverDevices() async {
 void main() async {
   final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
 
+  late DeviceEntry tamu;
+  late DeviceEntry? das;
+
   setUpAll(() async {
+    if (skipReason is String) return; // HIL not requested: leave the tests skipped
     await connectHil();
     await discoverDevices();
-    // The requester table + dynamic blocks persist across reboots, and the requester
-    // now re-registers its recovered subscriptions with providers, so clear them to get
-    // a deterministic initial DAS provider table (canceling any active providers).
-    final tamu = findTamu(DeviceDatabase.instance);
-    if (tamu != null) {
-      final client = SubscriptionClient(deviceId: tamu.id);
-      // Delete by the lowest index repeatedly: the firmware compacts the requester
-      // table, so re-read the list after each delete to keep track of the survivors.
-      var subs = await client.getRequesterSubscriptions();
-      while (subs.isNotEmpty) {
-        await client.setRequesterSubscription(subs.first.index);
-        subs = await client.getRequesterSubscriptions();
-      }
-      final reg = RegisterClient(deviceId: tamu.id);
-      for (final b in await reg.readDynamicBlocks() ?? <DynBlock>[]) {
-        await reg.deleteDynamic(block: b.index);
-      }
-      await reg.saveDynamic();
-      await Future<void>.delayed(const Duration(milliseconds: 300));
+    tamu = findTamu(DeviceDatabase.instance) ??
+        (throw StateError('Tamu not found'));
+    das = findDas(DeviceDatabase.instance);
+    // Deterministic start: clear the Tamu requester table (which cancels the DAS
+    // providers) and any dynamic blocks used as subscription targets.
+    final client = SubscriptionClient(deviceId: tamu.id);
+    var subs = await client.getRequesterSubscriptions();
+    while (subs.isNotEmpty) {
+      await client.setRequesterSubscription(subs.first.index);
+      subs = await client.getRequesterSubscriptions();
     }
+    final reg = RegisterClient(deviceId: tamu.id);
+    for (final b in await reg.readDynamicBlocks() ?? <DynBlock>[]) {
+      await reg.deleteDynamic(block: b.index);
+    }
+    await reg.saveDynamic();
+    await Future<void>.delayed(const Duration(milliseconds: 300));
   });
   tearDownAll(disconnectHil);
 
-  test('Subscriptions: DAS provider table empty initially', () async {
-    final db = DeviceDatabase.instance;
-    final das = findDas(db);
-    if (das == null) {
-      print('DAS not found - available devices: ${db.all.map((d) => '${d.id}:${d.type.label}').join(', ')}');
-      return;
-    }
-    final client = SubscriptionClient(deviceId: das.id);
-    final subs = await client.getProviderSubscriptions();
-    expect(subs, isEmpty);
-  }, timeout: const Timeout(Duration(seconds: 10)), skip: skipReason is String ? skipReason : false);
+  /// Creates a dynamic block at [index] with a single entry (field 0, key 0) and returns
+  /// it, so the subscription target is a writable register.
+  Future<DynBlock> makeTarget(RegisterClient reg, int index, DataType type, int size, {List<int>? value}) async {
+    await reg.deleteDynamic(block: index);
+    await reg.createDynamicBlock(BlockType.dynamic, 'SUBTGT', index: index);
+    final b = DynBlock(index: index, meta: BlockMeta(flagsAndType: BlockType.dynamic.value, size: 1), name: 'SUBTGT');
+    await reg.writeDynamicEntry(b, 0, 0, BlockMeta(flagsAndType: type.value, key: 0),
+        value ?? List<int>.filled(size, 0));
+    return b;
+  }
 
-  test('Subscriptions: Create periodic subscription to DAS Meas1', () async {
-    final db = DeviceDatabase.instance;
-    final das = findDas(db);
+  test('subscriptions: new entry formats persist (28/32 B)', skip: skipReason, () async {
+    final client = SubscriptionClient(deviceId: tamu.id);
+    final entry = RequesterSubscription(
+      index: 0,
+      providerAddr: 1,
+      trid: 0xFA00,
+      targetReg: makeBlockInfo(0, 0, 3, 0),
+      sourceReg: makeBlockInfo(0, 0, 3, 0),
+      trigger: TriggerType.deltaPeriodic,
+      periodMs: 250,
+      minTimeMs: 50,
+      deadzone: 0.5,
+    );
+    expect(await client.setRequesterSubscription(0, entry: entry), isTrue);
+    final subs = await client.getRequesterSubscriptions();
+    expect(subs, isNotEmpty);
+    final got = subs.firstWhere((s) => s.index == 0);
+    expect(got.trigger, TriggerType.deltaPeriodic);
+    expect(got.deadzone, closeTo(0.5, 1e-3));
+    await client.setRequesterSubscription(0);
+  }, timeout: const Timeout(Duration(seconds: 20)));
+
+  test('subscriptions: DAS Measured Value flows to a Tamu target', skip: skipReason, () async {
     if (das == null) {
-      print('DAS not found - available devices: ${db.all.map((d) => '${d.id}:${d.type.label}').join(', ')}');
+      print('DAS not found; skipping');
       return;
     }
-    final tamu = findTamu(db);
-    if (tamu == null) {
-      print('Tamu not found - available devices: ${db.all.map((d) => '${d.id}:${d.type.label}').join(', ')}');
-      return;
-    }
+    final reg = RegisterClient(deviceId: tamu.id);
+    final target = await makeTarget(reg, 0, DataType.number, 4);
+
+    // DAS Meas1 (ResistiveMeasure inst 0) Measured Value = field 3.
+    final sourceReg = makeBlockInfo(BlockType.resistiveMeasure.value, 0, 3, 0);
+    final targetReg = makeBlockInfo(BlockType.dynamic.value, 0, 0, 0);
+
+    // Read the provider value directly so we can compare after the subscription.
+    final dasReg = RegisterClient(deviceId: das!.id);
+    final direct = await dasReg.readBlockField(BlockType.resistiveMeasure.value, 0, 3, 0);
+    final expected = direct == null ? 0.0 : numberFromBytes(direct.value);
+    print('[SUB] DAS Measured Value = $expected');
 
     final client = SubscriptionClient(deviceId: tamu.id);
-
-    // DAS Meas1 is ResistiveMeasure (type 8) instance 0, field 0
-    final sourceReg = makeBlockInfo(8, 0, 0, 0);
-    // targetReg = System block field 0 (device type) on Tamu
-    final targetReg = makeBlockInfo(0, 0, 0, 0);
-
-    print('Creating subscription: targetReg=0x${targetReg.toRadixString(16)}, sourceReg=0x${sourceReg.toRadixString(16)}');
-    print('Tamu ID: ${tamu.id}, DAS ID: ${das.id}');
-
-    // Find free index
-    int index = 0;
-    final existing = await client.getRequesterSubscriptions();
-    while (index < 16 && existing.any((s) => s.index == index)) index++;
-    if (index >= 16) {
-      print('Max subscriptions reached');
-      return;
-    }
-
-    // Create subscription with periodic trigger using CID 4 (setRequesterSubscription)
-    // This will create local requester entry and send CID 1 to provider
     final entry = RequesterSubscription(
-      index: index,
+      index: 0,
+      providerAddr: das!.id,
+      trid: 0xFA00,
       targetReg: targetReg,
       sourceReg: sourceReg,
-      providerAddr: das.id,
       trigger: TriggerType.periodic,
-      periodMs: 1000,
-      minTimeMs: 100,
-      trid: 0xFA00 + index,
+      periodMs: 200,
+      minTimeMs: 50,
     );
+    expect(await client.setRequesterSubscription(0, entry: entry), isTrue);
 
-    print('Sending setRequesterSubscription...');
-    try {
-      final ok = await client.setRequesterSubscription(index, entry: entry);
-      print('Subscription create result: $ok');
-      
-      if (!ok) {
-        print('Request returned false (null reply or exception caught)');
-        // Try to debug - check if we can reach the device
-        final regClient = RegisterClient(deviceId: tamu.id);
-        final sysBlocks = await regClient.readBlockMeta(0, 0);
-        print('Tamu system block meta: $sysBlocks');
-        
-        // Try getRequesterSubscriptions to see if anything was created
-        final subs = await client.getRequesterSubscriptions();
-        print('Requester subs after failed create: ${subs.length}');
-        
-        // Try getProviderSubscriptions on DAS
-        final providerClient = SubscriptionClient(deviceId: das.id);
-        final providerSubs = await providerClient.getProviderSubscriptions();
-        print('Provider subs on DAS: ${providerSubs.length}');
-      }
-      
-      expect(ok, isTrue);
-    } catch (e, stack) {
-      print('Exception during setRequesterSubscription: $e');
-      print('Stack: $stack');
-      rethrow;
-    }
+    // The provider table on the DAS should now hold an entry with our deadzone field.
+    final provClient = SubscriptionClient(deviceId: das!.id);
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    final provs = await provClient.getProviderSubscriptions();
+    print('[SUB] DAS provider entries: ${provs.length}');
+    expect(provs, isNotEmpty);
 
-    // Wait a bit for the subscription to be processed
-    await Future.delayed(const Duration(milliseconds: 500));
+    await Future<void>.delayed(const Duration(milliseconds: 800));
+    final applied = await reg.readDynamicField(target, 0, 0);
+    final value = applied == null ? 0.0 : numberFromBytes(applied.value);
+    print('[SUB] Tamu target value = $value');
+    // The applied value should track the provider (non-zero for a connected sensor).
+    expect(value, isNot(0.0));
 
-    // Check provider subscriptions on DAS
-    final providerClient = SubscriptionClient(deviceId: das.id);
-    final providerSubs = await providerClient.getProviderSubscriptions();
-    print('Provider subscriptions on DAS: ${providerSubs.length}');
-    for (final s in providerSubs) {
-      print('  Sub #${s.index}: trigger=${s.trigger.label}, period=${s.periodMs}ms, sourceReg=0x${s.sourceReg.toRadixString(16)}, requesterAddr=${s.requesterAddr}');
-    }
+    await client.setRequesterSubscription(0);
+  }, timeout: const Timeout(Duration(seconds: 30)));
 
-    // Check requester subscriptions on Tamu
-    final requesterSubs = await client.getRequesterSubscriptions();
-    print('Requester subscriptions on Tamu: ${requesterSubs.length}');
-    for (final s in requesterSubs) {
-      print('  Sub #${s.index}: trigger=${s.trigger.label}, targetReg=0x${s.targetReg.toRadixString(16)}, trid=0x${s.trid.toRadixString(16)}');
-    }
+  test('subscriptions: delta self-loopback on Tamu AccGyr vector', skip: skipReason, () async {
+    final reg = RegisterClient(deviceId: tamu.id);
+    final target = await makeTarget(reg, 1, DataType.vector, 12);
 
-    // Clean up - delete the subscription this test created (not the first entry,
-    // which may be a pre-saved example subscription).
-    await client.setRequesterSubscription(index, entry: null);
-  }, timeout: const Timeout(Duration(seconds: 30)), skip: skipReason is String ? skipReason : false);
+    final sourceReg = makeBlockInfo(BlockType.accGyr.value, 0, 5, 0); // Acceleration (Vector3)
+    final targetReg = makeBlockInfo(BlockType.dynamic.value, 1, 0, 0);
 
-  test('Subscriptions: Get provider subscriptions (empty)', () async {
-    final db = DeviceDatabase.instance;
-    final das = findDas(db);
-    if (das == null) {
-      print('DAS not found - available devices: ${db.all.map((d) => '${d.id}:${d.type.label}').join(', ')}');
-      return;
-    }
-    final client = SubscriptionClient(deviceId: das.id);
-    final subs = await client.getProviderSubscriptions();
-    print('Provider subs: ${subs.length}');
-  }, timeout: const Timeout(Duration(seconds: 10)), skip: skipReason is String ? skipReason : false);
-
-  test('Subscriptions: Get requester subscriptions (empty)', () async {
-    final db = DeviceDatabase.instance;
-    final tamu = findTamu(db);
-    if (tamu == null) {
-      print('Tamu not found - available devices: ${db.all.map((d) => '${d.id}:${d.type.label}').join(', ')}');
-      return;
-    }
     final client = SubscriptionClient(deviceId: tamu.id);
-    final subs = await client.getRequesterSubscriptions();
-    print('Requester subs: ${subs.length}');
-  }, timeout: const Timeout(Duration(seconds: 10)), skip: skipReason is String ? skipReason : false);
+    final entry = RequesterSubscription(
+      index: 0,
+      providerAddr: tamu.id, // self-loopback
+      trid: 0xFA00,
+      targetReg: targetReg,
+      sourceReg: sourceReg,
+      trigger: TriggerType.deltaPeriodic,
+      periodMs: 500,
+      minTimeMs: 50,
+      deadzone: 0.01,
+    );
+    expect(await client.setRequesterSubscription(0, entry: entry), isTrue);
+    await Future<void>.delayed(const Duration(milliseconds: 800));
+
+    final applied = await reg.readDynamicField(target, 0, 0);
+    final nonZero = applied != null && applied.value.any((b) => b != 0);
+    print('[SUB] delta target bytes = ${applied?.value}');
+    expect(nonZero, isTrue, reason: 'acceleration vector should have flowed to the target');
+    await client.setRequesterSubscription(0);
+  }, timeout: const Timeout(Duration(seconds: 20)));
+
+  test('subscriptions: script I/O as a source', skip: skipReason, () async {
+    final reg = RegisterClient(deviceId: tamu.id);
+    final scriptClient = ScriptClient(deviceId: tamu.id);
+    final storage = StorageClient(deviceId: tamu.id);
+
+    // SCR_09: Out0 = 42; halt.
+    if (await scriptClient.readState(9) != null) await scriptClient.unload(9);
+    await storage.deleteFile('SCR_09');
+    final draft = ScriptDraft(functionName: 'SubSrc')
+      ..outputs.add(ScriptDraftValue(name: 'Out', type: DataType.number, size: 4))
+      ..constants.add(ScriptDraftValue(name: 'K', type: DataType.number, size: 4, value: numberToBytes(42)))
+      ..lines.add(ScriptLine(
+          destinations: [ScriptSymbol.output(0)],
+          instruction: ScriptSymbol.instruction(catMath, 0),
+          operands: [ScriptSymbol.constant(0)]))
+      ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)));
+    expect(await storage.writeFile('SCR_09', draft.toImage()), isTrue);
+    expect(await scriptClient.load(9), 9);
+    // Run once so the output holds 42.
+    await scriptClient.setState(9, ScriptState.running);
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+
+    final target = await makeTarget(reg, 2, DataType.number, 4);
+    final sourceReg = makeBlockInfo(0x3FE, 9, 2, 0); // script output 0
+    final targetReg = makeBlockInfo(BlockType.dynamic.value, 2, 0, 0);
+
+    final client = SubscriptionClient(deviceId: tamu.id);
+    final entry = RequesterSubscription(
+      index: 0,
+      providerAddr: tamu.id,
+      trid: 0xFA00,
+      targetReg: targetReg,
+      sourceReg: sourceReg,
+      trigger: TriggerType.periodic,
+      periodMs: 200,
+      minTimeMs: 50,
+    );
+    expect(await client.setRequesterSubscription(0, entry: entry), isTrue);
+    await Future<void>.delayed(const Duration(milliseconds: 700));
+
+    final applied = await reg.readDynamicField(target, 0, 0);
+    print('[SUB] script-sourced target = ${applied == null ? null : numberFromBytes(applied.value)}');
+    expect(applied, isNotNull);
+    expect(numberFromBytes(applied!.value), closeTo(42.0, 0.01));
+
+    await client.setRequesterSubscription(0);
+    await scriptClient.unload(9);
+    await storage.deleteFile('SCR_09');
+  }, timeout: const Timeout(Duration(seconds: 30)));
 }

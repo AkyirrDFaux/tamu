@@ -285,7 +285,11 @@ class BlockMeta {
 enum TriggerType {
   periodic(0),
   onChangePeriodic(1),
-  onChangeConfirm(2);
+  onChangeConfirm(2),
+  edgeRising(3),
+  edgeFalling(4),
+  edgeAny(5),
+  deltaPeriodic(6);
 
   final int value;
   const TriggerType(this.value);
@@ -299,9 +303,19 @@ enum TriggerType {
 
   String get label => switch (this) {
     TriggerType.periodic => 'Periodic',
-    TriggerType.onChangePeriodic => 'OnChange+Period',
-    TriggerType.onChangeConfirm => 'OnChange+Confirm',
+    TriggerType.onChangePeriodic => 'On change + period',
+    TriggerType.onChangeConfirm => 'On change + confirm',
+    TriggerType.edgeRising => 'Edge rising',
+    TriggerType.edgeFalling => 'Edge falling',
+    TriggerType.edgeAny => 'Edge (any)',
+    TriggerType.deltaPeriodic => 'Delta + period',
   };
+
+  /// Edge triggers compare boolean values; the others compare hashes/values.
+  bool get isEdge =>
+      this == TriggerType.edgeRising ||
+      this == TriggerType.edgeFalling ||
+      this == TriggerType.edgeAny;
 }
 
 /// Provider-side subscription entry (what the device stores for incoming subscriptions)
@@ -315,6 +329,7 @@ class ProviderSubscription {
   final int minTimeMs;
   final int lastSentMs;
   final int hash;
+  final double deadzone;
 
   const ProviderSubscription({
     required this.index,
@@ -326,6 +341,7 @@ class ProviderSubscription {
     required this.minTimeMs,
     required this.lastSentMs,
     required this.hash,
+    required this.deadzone,
   });
 
   static ProviderSubscription fromBytes(int index, List<int> bytes) {
@@ -338,7 +354,8 @@ class ProviderSubscription {
     final periodMs = uint32FromBytes(bytes, offset); offset += 4;
     final minTimeMs = uint32FromBytes(bytes, offset); offset += 4;
     final lastSentMs = uint32FromBytes(bytes, offset); offset += 4;
-    final hash = uint32FromBytes(bytes, offset);
+    final hash = uint32FromBytes(bytes, offset); offset += 4;
+    final deadzone = numberFromBytes(bytes, offset);
     return ProviderSubscription(
       index: index,
       requesterAddr: requesterAddr,
@@ -349,6 +366,7 @@ class ProviderSubscription {
       minTimeMs: minTimeMs,
       lastSentMs: lastSentMs,
       hash: hash,
+      deadzone: deadzone,
     );
   }
 }
@@ -363,6 +381,7 @@ class RequesterSubscription {
   final TriggerType trigger;
   final int periodMs;
   final int minTimeMs;
+  final double deadzone;
 
   const RequesterSubscription({
     required this.index,
@@ -373,6 +392,7 @@ class RequesterSubscription {
     required this.trigger,
     required this.periodMs,
     required this.minTimeMs,
+    this.deadzone = 0,
   });
 
   static RequesterSubscription fromBytes(int index, List<int> bytes) {
@@ -385,6 +405,7 @@ class RequesterSubscription {
     offset += 3; // 24-bit padding
     final periodMs = uint32FromBytes(bytes, offset); offset += 4;
     final minTimeMs = uint32FromBytes(bytes, offset); offset += 4;
+    final deadzone = numberFromBytes(bytes, offset);
     return RequesterSubscription(
       index: index,
       providerAddr: providerAddr,
@@ -394,6 +415,7 @@ class RequesterSubscription {
       trigger: trigger,
       periodMs: periodMs,
       minTimeMs: minTimeMs,
+      deadzone: deadzone,
     );
   }
 
@@ -421,6 +443,7 @@ class RequesterSubscription {
     buf.addAll([0, 0, 0]); // 24-bit padding
     buf.addAll(uint32ToBytes(periodMs));
     buf.addAll(uint32ToBytes(minTimeMs));
+    buf.addAll(numberToBytes(deadzone));
     return buf;
   }
 }

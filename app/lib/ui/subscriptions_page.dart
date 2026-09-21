@@ -90,11 +90,6 @@ class _SubscriptionsPageState extends State<SubscriptionsPage> with SingleTicker
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.save),
-            tooltip: 'Save requester subscriptions',
-            onPressed: _saveAllSubscriptions,
-          ),
-          IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _loadSubscriptions,
             tooltip: 'Refresh',
@@ -285,14 +280,6 @@ Widget _buildRequesterTab() {
         onSaved: _loadSubscriptions,
       ),
     );
-  }
-
-  Future<void> _saveAllSubscriptions() async {
-    final ok = await _client.saveRequesterSubscriptions();
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(ok ? 'Requester subscriptions saved' : 'Failed to save subscriptions')));
-    }
   }
 
   Future<void> _deleteRequesterSubscription(int index) async {

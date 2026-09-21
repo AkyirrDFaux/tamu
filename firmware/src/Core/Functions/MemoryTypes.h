@@ -78,7 +78,10 @@ struct StaticBlockDescriptor
         uint8_t pad_buf[32];
         const void *data = Input;
         uint16_t data_len = Length;
-        if (BlockMetaType(Field.Descriptor.FlagsAndType) == (uint16_t)DataType::String &&
+        uint16_t field_type = BlockMetaType(Field.Descriptor.FlagsAndType);
+        // String/Filename fields are space-padded up to their declared size when a shorter
+        // value is written (filenames are fixed 8-char records).
+        if ((field_type == (uint16_t)DataType::String || field_type == (uint16_t)DataType::Filename) &&
             Length < Field.Descriptor.Size && Field.Descriptor.Size <= sizeof(pad_buf))
         {
             memset(pad_buf, ' ', sizeof(pad_buf));

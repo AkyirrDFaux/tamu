@@ -13,17 +13,15 @@ enum AccGyrError : uint16_t {
 // option tables (below); the write triggers reconfigure the sensor and snap the stored
 // value to the index actually applied.
 //
-// | Field | Flags | Size | Note
-// |-------|-------|------|-----
-// | Sampling Rate         | 0 | TR,P | Enum | Hz (index into AccGyrOdr)
-// | Range Acceleration    | 1 | TR,P | Enum | m/s^2 (index into AccGyrRangeAcc)
-// | Range Angular         | 2 | TR,P | Enum | rad/s (index into AccGyrRangeAng)
-// | Acceleration Filter   | 3 | P    | Number | EMA (0-1)
-// | Angular Filter        | 4 | P    | Number | EMA (0-1)
-// | Deadzone acceleration | 5 | P    | Number | > 0, 2-norm, current output center, 0 = off
-// | Deadzone angular      | 6 | P    | Number | > 0, 2-norm, current output center, 0 = off
-// | Acceleration          | 7 | RO   | Vector3 | m/s^2
-// | Angular Velocity      | 8 | RO   | Vector3 | rad/s
+// | Name                | F.K:SP | Flags | Size    | Note      |
+// |---------------------|--------|-------|---------|-----------|
+// | Sampling Rate       | 0      | TR,P  | Enum    | Hz        |
+// | Range Acceleration  | 1      | TR,P  | Enum    | m/s^2     |
+// | Range Angular       | 2      | TR,P  | Enum    | rad/s     |
+// | Acceleration Filter | 3      | P     | Number  | EMA (0-1) |
+// | Angular Filter      | 4      | P     | Number  | EMA (0-1) |
+// | Acceleration        | 5      | RO    | Vector3 | m/s^2     |
+// | Angular Velocity    | 6      | RO    | Vector3 | rad/s     |
 
 // Supported output data rates (Hz) - LSM6DS3 CTRL1_XL/CTRL2_G ODR codes 0b0001..0b1000.
 enum AccGyrOdr : uint8_t {
@@ -49,24 +47,20 @@ struct AccGyrStruct {
     uint8_t RangeAng = Ang2000;    // offset 2
     Number AccFilter = N(1);       // offset 4, EMA coefficient 0-1 (1 = no filtering)
     Number AngFilter = N(1);       // offset 8
-    Number AccDeadzone = N(0);     // offset 12, 0 = off
-    Number AngDeadzone = N(0);     // offset 16
-    Vector<3> Acceleration;        // offset 20
-    Vector<3> AngularVelocity;     // offset 32
+    Vector<3> Acceleration;        // offset 12
+    Vector<3> AngularVelocity;     // offset 24
 };
 
 // Lock the layout: the schema offsets must match the natural C struct alignment.
 static_assert(offsetof(AccGyrStruct, SamplingRate) == 0, "AccGyr layout");
 static_assert(offsetof(AccGyrStruct, AccFilter) == 4, "AccGyr layout");
-static_assert(offsetof(AccGyrStruct, Acceleration) == 20, "AccGyr layout");
-static_assert(offsetof(AccGyrStruct, AngularVelocity) == 32, "AccGyr layout");
+static_assert(offsetof(AccGyrStruct, Acceleration) == 12, "AccGyr layout");
+static_assert(offsetof(AccGyrStruct, AngularVelocity) == 24, "AccGyr layout");
 
 const BlockMeta AccGyr_Map[] = {
     {DataType::Enum | FieldFlags::Trigger | FieldFlags::Persistent, 0x00, sizeof(uint8_t)},
     {DataType::Enum | FieldFlags::Trigger | FieldFlags::Persistent, 0x00, sizeof(uint8_t)},
     {DataType::Enum | FieldFlags::Trigger | FieldFlags::Persistent, 0x00, sizeof(uint8_t)},
-    {DataType::Number | FieldFlags::Persistent, 0x00, sizeof(Number)},
-    {DataType::Number | FieldFlags::Persistent, 0x00, sizeof(Number)},
     {DataType::Number | FieldFlags::Persistent, 0x00, sizeof(Number)},
     {DataType::Number | FieldFlags::Persistent, 0x00, sizeof(Number)},
     {DataType::Vector | FieldFlags::ReadOnly, 0x00, sizeof(Vector<3>)},
@@ -85,11 +79,9 @@ const FieldTrigger AccGyr_Triggers[] = {
     nullptr,
     nullptr,
     nullptr,
-    nullptr,
-    nullptr,
 };
 
-const uint16_t AccGyr_Offsets[] = {0, 1, 2, 4, 8, 12, 16, 20, 32};
+const uint16_t AccGyr_Offsets[] = {0, 1, 2, 4, 8, 12, 24};
 
 const BlockSchema AccGyr_Schema = {
     .Map = AccGyr_Map,

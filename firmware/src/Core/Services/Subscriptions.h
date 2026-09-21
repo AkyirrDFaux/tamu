@@ -18,6 +18,17 @@
 #define TRID_SUB_BASE 0xFA00
 #define TRID_SUB_MAX  0xFBFF
 
+// Packet priorities (Docs/RSBus and Packets.md: high-priority subscriptions sit above
+// "Other" (default 8), low-priority ones below it).
+#define SUB_PRIORITY_HIGH 4
+#define SUB_PRIORITY_LOW  12
+
+// True for the high-priority triggers (confirmation and edge detection).
+static inline bool SubscriptionsHighPriority(TriggerType t) {
+    return t == TriggerType::OnChangeConfirm || t == TriggerType::EdgeRising ||
+           t == TriggerType::EdgeFalling || t == TriggerType::EdgeAny;
+}
+
 // FNV-1a hash over the value bytes (provider on-change detection + requester confirmation).
 static inline uint32_t Fnv1a(const uint8_t *data, uint8_t len) {
     uint32_t hash = 0x811C9DC5u;
@@ -36,17 +47,32 @@ static inline FieldResult SubscriptionsGetField(uint32_t blockInfo) {
     uint8_t key = BlockInfoKey(blockInfo);
 
     if (type == 0 && inst == 0) {
+        // System fields are synthesised on the fly; keep the value in a shared buffer
+        // (single-threaded main loop, and the caller consumes it before any nested call).
+        static uint8_t s_sysFieldBuf[24];
         BlockMeta m;
-        uint8_t vbuf[24];
         uint8_t vsz = 0;
-        if (RegisterGetSystemField(field, key, m, vbuf, vsz)) {
+        if (RegisterGetSystemField(field, key, m, s_sysFieldBuf, vsz)) {
             FieldResult fr;
             fr.Descriptor = m;
-            fr.Data = vbuf;
+            fr.Data = s_sysFieldBuf;
             return fr;
         }
         return FieldResult{};
     }
+#ifdef USE_SCRIPTS
+    if (type == 0x3FE) { // Script I/O (inputs/outputs)
+        BlockMeta m;
+        void *p = nullptr;
+        if (ScriptGetIoPointer(inst, field, key, m, p)) {
+            FieldResult fr;
+            fr.Descriptor = m;
+            fr.Data = p;
+            return fr;
+        }
+        return FieldResult{};
+    }
+#endif
 #ifndef DISABLE_DYNAMIC_MEMORY
     if (type == 0x3FF) {
         if (inst < dynamic_block_registry.block_count) {
@@ -82,6 +108,7 @@ struct RequesterEntry {
     TriggerType trigger = TriggerType::Periodic;
     uint32_t periodMs = 0;
     uint32_t minTimeMs = 0; // minimum interval / retry interval
+    Number deadzone = N(0); // for number/vector triggers (forwarded to the provider)
     // Initialization tracking: the entry is "initialized" once a value update arrives.
     // Until then the requester re-sends the registration (CID 1) to wake the provider.
     uint32_t registeredAtMs = 0;  // start of the initialization window (set/boot)
@@ -129,25 +156,37 @@ static void ApplyRequesterValue(RequesterEntry *e, const uint8_t *val, uint8_t v
     uint8_t key = BlockInfoKey(e->targetReg);
     if (type == 0 && inst == 0) return;
 
-    int idx = FindStaticBlock(type, inst);
-    if (idx >= 0) {
-        BlockMeta meta = static_block_registry[idx].Schema->Map[field];
+#ifdef USE_SCRIPTS
+    if (type == 0x3FE) {
+        // Script I/O target: only inputs are writable (outputs are read-only).
+        BlockMeta meta;
         meta.FlagsAndType = newFlags;
-        static_block_registry[idx].Set(field, val, vlen, meta.FlagsAndType);
-    }
+        meta.Key = key;
+        meta.Size = vlen;
+        ScriptSetEntry(inst, field, key, meta, val, vlen);
+    } else
+#endif
+    {
+        int idx = FindStaticBlock(type, inst);
+        if (idx >= 0) {
+            BlockMeta meta = static_block_registry[idx].Schema->Map[field];
+            meta.FlagsAndType = newFlags;
+            static_block_registry[idx].Set(field, val, vlen, meta.FlagsAndType);
+        }
 #ifndef DISABLE_DYNAMIC_MEMORY
-    else if (type == 0x3FF) {
-        if (inst < dynamic_block_registry.block_count) {
-            DynamicBlockDescriptor* block = dynamic_block_registry.GetBlock(inst);
-            if (block) {
-                BlockMeta meta;
-                meta.FlagsAndType = newFlags;
-                meta.Size = vlen;
-                block->SetEntry(field, key, val, vlen, meta.FlagsAndType);
+        else if (type == 0x3FF) {
+            if (inst < dynamic_block_registry.block_count) {
+                DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(inst);
+                if (block) {
+                    BlockMeta meta;
+                    meta.FlagsAndType = newFlags;
+                    meta.Size = vlen;
+                    block->SetEntry(field, key, val, vlen, meta.FlagsAndType);
+                }
             }
         }
-    }
 #endif
+    }
     e->lastValueMs = DeviceStatus.UptimeMs;
     if (!confirm) return;
 
@@ -168,7 +207,7 @@ static void HandleRequesterValueUpdate(const PacketFrame &frame) {
 }
 
 // Serializes one requester entry (wire order: providerAddr, trid, targetReg, sourceReg,
-// trigger + 3 pad, period, min = 24 B). Returns the advanced offset.
+// trigger + 3 pad, period, min, deadzone = 28 B). Returns the advanced offset.
 static uint16_t RequesterEntrySerialize(uint8_t *buf, uint16_t off, const RequesterEntry *e) {
     *(uint16_t *)(buf + off) = e->providerAddr; off += 2;
     *(uint16_t *)(buf + off) = e->trid; off += 2;
@@ -178,6 +217,7 @@ static uint16_t RequesterEntrySerialize(uint8_t *buf, uint16_t off, const Reques
     buf[off++] = 0; buf[off++] = 0; buf[off++] = 0; // 24-bit padding
     *(uint32_t *)(buf + off) = e->periodMs; off += 4;
     *(uint32_t *)(buf + off) = e->minTimeMs; off += 4;
+    *(uint32_t *)(buf + off) = (uint32_t)e->deadzone.Value; off += 4;
     return off;
 }
 #endif // USE_SUB_REQUEST
@@ -193,8 +233,8 @@ static uint16_t RequesterEntrySerialize(uint8_t *buf, uint16_t off, const Reques
 #define MAX_PROVIDER_SUBS 20
 #endif
 
-// Provider entry (24 B): requesterAddr, trid, sourceReg, trigger(+24 pad), period,
-// min/retry interval, last sent, FNV-1a hash of the last confirmed value.
+// Provider entry (32 B wire): requesterAddr, trid, sourceReg, trigger(+24 pad), period,
+// min/retry interval, last sent, hash/hashlike, deadzone.
 struct ProviderEntry {
     uint16_t requesterAddr = 0;  // 0 = invalid entry
     uint16_t trid = 0;
@@ -203,7 +243,12 @@ struct ProviderEntry {
     uint32_t periodMs = 0;
     uint32_t minTimeMs = 0;      // minimum interval / retry interval
     uint32_t lastSentMs = 0;
-    uint32_t hash = 0;
+    uint32_t hash = 0;           // FNV-1a hash / edge counter / last value / subresolution
+    Number deadzone = N(0);      // for delta/edge triggers
+    // Transient (not serialized): last boolean sample for edge detection and the last
+    // counter value that was transmitted.
+    bool lastBool = false;
+    uint32_t sentCounter = 0;
 };
 
 static ProviderEntry providerTable[MAX_PROVIDER_SUBS];
@@ -248,7 +293,7 @@ static void ProviderClearEntry(ProviderEntry* e) {
 }
 
 // Serializes one provider entry in the CID 2 wire format (requesterAddr, trid, sourceReg,
-// trigger + 3 pad, period, min, lastSent, hash = 24 B).
+// trigger + 3 pad, period, min, lastSent, hash, deadzone = 32 B).
 static uint16_t ProviderEntrySerialize(uint8_t *buf, uint16_t off, const ProviderEntry *e) {
     *(uint16_t *)(buf + off) = e->requesterAddr; off += 2;
     *(uint16_t *)(buf + off) = e->trid; off += 2;
@@ -259,6 +304,7 @@ static uint16_t ProviderEntrySerialize(uint8_t *buf, uint16_t off, const Provide
     *(uint32_t *)(buf + off) = e->minTimeMs; off += 4;
     *(uint32_t *)(buf + off) = e->lastSentMs; off += 4;
     *(uint32_t *)(buf + off) = e->hash; off += 4;
+    *(uint32_t *)(buf + off) = (uint32_t)e->deadzone.Value; off += 4;
     return off;
 }
 
@@ -274,6 +320,44 @@ static void HandleProviderConfirmation(const PacketFrame &frame) {
     }
 }
 
+// Per-value hashlike for the delta trigger: scalar -> the raw Number bits; vector ->
+// the subresolution pack (Docs/Services/Subscriptions.md "Subresolution Vector"): 10 bits
+// per axis (first 3 axes), each [5-bit above deadzone | 5-bit below], where "above" is a
+// sign bit plus a 4-bit hash of the magnitude and "below" is the distance bucket 0..31.
+static uint32_t SubscriptionsDeltaHash(const FieldResult &fr, Number deadzone) {
+    uint16_t dtype = BlockMetaType(fr.Descriptor.FlagsAndType);
+    uint8_t size = fr.Descriptor.Size;
+    const uint8_t *data = (const uint8_t *)fr.Data;
+#ifndef SCALAR_ONLY
+    if (dtype == (uint16_t)DataType::Vector && size >= 4 && (size % 4) == 0) {
+        uint8_t axes = (uint8_t)(size / 4);
+        if (axes > 3) axes = 3;
+        int32_t dz = deadzone.Value;
+        uint32_t packed = 0;
+        for (uint8_t a = 0; a < axes; a++) {
+            int32_t raw = 0;
+            memcpy(&raw, data + (size_t)a * 4, 4);
+            int32_t av = raw < 0 ? -raw : raw;
+            uint32_t above5 = ((raw < 0 ? 1u : 0u) << 4) | ((((uint32_t)av * 2654435761u) >> 28) & 0xF);
+            uint32_t below5 = 0;
+            if (dz > 0) {
+                // av < dz here, so av*31 cannot overflow when dz is a 16.16 value.
+                below5 = ((uint32_t)av * 31u) / (uint32_t)dz;
+                if (below5 > 31) below5 = 31;
+            }
+            packed |= ((above5 << 5) | below5) << (10 * a);
+        }
+        return packed;
+    }
+#endif
+    if (dtype == (uint16_t)DataType::Number && size >= 4) {
+        int32_t raw = 0;
+        memcpy(&raw, data, 4);
+        return (uint32_t)raw;
+    }
+    return Fnv1a(data, size);
+}
+
 static void EvaluateProviderTriggers(uint32_t nowMs) {
     for (int i = 0; i < MAX_PROVIDER_SUBS; i++) {
         ProviderEntry* e = &providerTable[i];
@@ -282,22 +366,51 @@ static void EvaluateProviderTriggers(uint32_t nowMs) {
         if (!fr.Data) continue;
         uint8_t vlen = fr.Descriptor.Size;
         if (vlen > MAX_PAYLOAD_SIZE) vlen = MAX_PAYLOAD_SIZE;
-        uint32_t hash = Fnv1a((const uint8_t *)fr.Data, vlen);
         uint32_t elapsed = nowMs - e->lastSentMs;
 
         bool send = false;
         switch (e->trigger) {
         case TriggerType::Periodic:
             send = (e->periodMs > 0) && (elapsed >= e->periodMs);
-            if (send) e->hash = hash;
+            if (send) e->hash = Fnv1a((const uint8_t *)fr.Data, vlen);
             break;
-        case TriggerType::OnChangePeriodic:
-            if (hash != e->hash && elapsed >= e->minTimeMs) { send = true; e->hash = hash; }
-            else if (e->periodMs > 0 && elapsed >= e->periodMs) { send = true; e->hash = hash; }
+
+        case TriggerType::OnChangePeriodic: {
+            uint32_t h = Fnv1a((const uint8_t *)fr.Data, vlen);
+            if (h != e->hash && elapsed >= e->minTimeMs) { send = true; e->hash = h; }
+            else if (e->periodMs > 0 && elapsed >= e->periodMs) { send = true; e->hash = h; }
             break;
-        case TriggerType::OnChangeConfirm:
-            send = (hash != e->hash) && (elapsed >= e->minTimeMs);
-            break; // hash updates only on confirmation
+        }
+
+        case TriggerType::OnChangeConfirm: {
+            // Pure bit comparison; repeats until confirmed (hash updates on confirmation).
+            uint32_t h = Fnv1a((const uint8_t *)fr.Data, vlen);
+            send = (h != e->hash) && (elapsed >= e->minTimeMs);
+            break;
+        }
+
+        case TriggerType::EdgeRising:
+        case TriggerType::EdgeFalling:
+        case TriggerType::EdgeAny: {
+            bool cur = BlockMetaType(fr.Descriptor.FlagsAndType) == (uint16_t)DataType::Bool &&
+                       ((const uint8_t *)fr.Data)[0] != 0;
+            bool edge = (e->trigger == TriggerType::EdgeRising)  ? (cur && !e->lastBool)
+                      : (e->trigger == TriggerType::EdgeFalling) ? (!cur && e->lastBool)
+                                                                 : (cur != e->lastBool);
+            e->lastBool = cur;
+            if (edge) e->hash++; // counter; send on increase (not sooner than the retry interval)
+            send = (e->hash != e->sentCounter) && (elapsed >= e->minTimeMs);
+            if (send) e->sentCounter = e->hash;
+            break;
+        }
+
+        case TriggerType::DeltaPeriodic: {
+            uint32_t h = SubscriptionsDeltaHash(fr, e->deadzone);
+            if (h != e->hash && elapsed >= e->minTimeMs) { send = true; e->hash = h; }
+            else if (e->periodMs > 0 && elapsed >= e->periodMs) { send = true; e->hash = h; }
+            break;
+        }
+
         default:
             break;
         }
@@ -312,15 +425,17 @@ static void EvaluateProviderTriggers(uint32_t nowMs) {
         if (e->requesterAddr == DeviceStatus.ShortAddress) {
             RequesterEntry* r = RequesterFindByTrid(e->trid);
             if (r) { ApplyRequesterValue(r, (const uint8_t *)fr.Data, vlen, false); applied = true; }
-            if (e->trigger == TriggerType::OnChangeConfirm) e->hash = hash;
+            if (e->trigger == TriggerType::OnChangeConfirm)
+                e->hash = Fnv1a((const uint8_t *)fr.Data, vlen);
         }
 #endif
         if (!applied) {
+            uint8_t prio = SubscriptionsHighPriority(e->trigger) ? SUB_PRIORITY_HIGH : SUB_PRIORITY_LOW;
             PacketConstruct(&tx_frame, e->requesterAddr,
                             MakeService(ServiceType::Subscriptions, 0),
                             e->trid,
                             FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_REQACK,
-                            (const uint8_t *)fr.Data, vlen);
+                            (const uint8_t *)fr.Data, vlen, prio);
             SendAndVerifyPacket(tx_frame);
         }
     }
@@ -334,7 +449,7 @@ static void EvaluateProviderTriggers(uint32_t nowMs) {
 static const char* SubscriptionsRequesterFile = "SUBREQ";
 
 static void SaveRequesterTable() {
-    uint8_t buf[1 + MAX_REQUESTER_SUBS * 22]; // entries without the TRID (non-persistent)
+    uint8_t buf[1 + MAX_REQUESTER_SUBS * 26]; // entries without the TRID (non-persistent)
     uint16_t off = 0;
     uint8_t count = 0;
     for (int i = 0; i < MAX_REQUESTER_SUBS; i++) if (requesterTable[i].active) count++;
@@ -349,6 +464,7 @@ static void SaveRequesterTable() {
         buf[off++] = 0; buf[off++] = 0; buf[off++] = 0;
         *(uint32_t *)(buf + off) = e->periodMs; off += 4;
         *(uint32_t *)(buf + off) = e->minTimeMs; off += 4;
+        *(uint32_t *)(buf + off) = (uint32_t)e->deadzone.Value; off += 4;
     }
     static const char tmp_name[8] = {'S','U','B','R','E','Q','~',' '};
     if (Storage.FileExists(tmp_name) != 0xFFFFFFFF)
@@ -365,7 +481,7 @@ static void LoadRequesterTable() {
 
     uint16_t off = 0;
     uint8_t count = buf[off++];
-    for (uint8_t i = 0; i < count && off + 22 <= len; i++) {
+    for (uint8_t i = 0; i < count && off + 26 <= len; i++) {
         RequesterEntry* e = RequesterFindFree();
         if (!e) break;
         e->targetReg = *(uint32_t *)(buf + off); off += 4;
@@ -375,6 +491,7 @@ static void LoadRequesterTable() {
         off += 3; // padding
         e->periodMs = *(uint32_t *)(buf + off); off += 4;
         e->minTimeMs = *(uint32_t *)(buf + off); off += 4;
+        e->deadzone = Number::FromRaw(*(int32_t *)(buf + off)); off += 4;
         e->trid = SubscriptionsNextTrid();
         if (e->trid == 0) e->trid = TRID_SUB_BASE;
         e->active = true;
@@ -402,11 +519,14 @@ static void RegisterRequesterProvider(RequesterEntry* e) {
         p->minTimeMs = e->minTimeMs;
         p->lastSentMs = 0;
         p->hash = 0;
+        p->deadzone = e->deadzone;
+        p->lastBool = false;
+        p->sentCounter = 0;
         return;
     }
 #endif
     // Remote provider: send the subscription info (CID 1, fire and forget).
-    uint8_t payload[24]; uint16_t off = 0;
+    uint8_t payload[26]; uint16_t off = 0;
     *(uint32_t *)(payload + off) = e->targetReg; off += 4;
     *(uint32_t *)(payload + off) = e->sourceReg; off += 4;
     *(uint16_t *)(payload + off) = DeviceStatus.ShortAddress; off += 2;
@@ -414,6 +534,7 @@ static void RegisterRequesterProvider(RequesterEntry* e) {
     payload[off++] = 0; payload[off++] = 0; payload[off++] = 0;
     *(uint32_t *)(payload + off) = e->periodMs; off += 4;
     *(uint32_t *)(payload + off) = e->minTimeMs; off += 4;
+    *(uint32_t *)(payload + off) = (uint32_t)e->deadzone.Value; off += 4;
     PacketFrame req;
     PacketConstruct(&req, e->providerAddr, MakeService(ServiceType::Subscriptions, 1),
                     e->trid, FLAG_START | FLAG_STOP, payload, off);
@@ -485,7 +606,7 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
                 SubReply(frame, &resp, 1);
                 break;
             }
-            if (PayloadBytes(frame) < 4 + 4 + 2 + 1 + 4 + 4) break;
+            if (PayloadBytes(frame) < 4 + 4 + 2 + 1 + 4 + 4 + 4) break;
 
             uint16_t offset = 0;
             offset += 4; // targetReg (not used by provider)
@@ -495,6 +616,7 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
             offset += 3; // padding
             uint32_t periodMs = *(uint32_t *)(frame.payload + offset); offset += 4;
             uint32_t minTimeMs = *(uint32_t *)(frame.payload + offset); offset += 4;
+            Number deadzone = Number::FromRaw(*(int32_t *)(frame.payload + offset)); offset += 4;
 
             ProviderEntry* e = ProviderFindByTrid(frame.trid);
             bool isNew = false;
@@ -512,8 +634,11 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
             e->trigger = trigger;
             e->periodMs = periodMs;
             e->minTimeMs = minTimeMs;
+            e->deadzone = deadzone;
             e->lastSentMs = 0;
             e->hash = 0;
+            e->lastBool = false;
+            e->sentCounter = 0;
             uint8_t resp = 1;
             SubReply(frame, &resp, 1);
 #endif
@@ -525,7 +650,7 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
             if (frame.payload_len == 0) {
                 uint8_t count = 0;
                 for (int i = 0; i < MAX_PROVIDER_SUBS; i++) if (providerTable[i].requesterAddr != 0) count++;
-                uint8_t buf[1 + MAX_PROVIDER_SUBS * 24];
+                uint8_t buf[1 + MAX_PROVIDER_SUBS * 32];
                 uint16_t off = 0;
                 buf[off++] = count;
                 for (int i = 0; i < MAX_PROVIDER_SUBS; i++) {
@@ -536,7 +661,7 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
             } else if (PayloadBytes(frame) >= 1) {
                 uint8_t index = frame.payload[0];
                 if (index < MAX_PROVIDER_SUBS && providerTable[index].requesterAddr != 0) {
-                    uint8_t buf[24];
+                    uint8_t buf[32];
                     uint16_t off = ProviderEntrySerialize(buf, 0, &providerTable[index]);
                     SubReply(frame, buf, off);
                 }
@@ -553,7 +678,7 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
             if (frame.payload_len == 0) {
                 uint8_t count = 0;
                 for (int i = 0; i < MAX_REQUESTER_SUBS; i++) if (requesterTable[i].active) count++;
-                uint8_t buf[1 + MAX_REQUESTER_SUBS * 24];
+                uint8_t buf[1 + MAX_REQUESTER_SUBS * 28];
                 uint16_t off = 0;
                 buf[off++] = count;
                 for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
@@ -564,7 +689,7 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
             } else if (PayloadBytes(frame) >= 1) {
                 uint8_t index = frame.payload[0];
                 if (index < MAX_REQUESTER_SUBS && requesterTable[index].active) {
-                    uint8_t buf[24];
+                    uint8_t buf[28];
                     uint16_t off = RequesterEntrySerialize(buf, 0, &requesterTable[index]);
                     SubReply(frame, buf, off);
                 }
@@ -609,7 +734,7 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
                         uint8_t resp = 1;
                         SubReply(frame, &resp, 1);
                     } else {
-                        if (PayloadBytes(frame) < 1 + 2 + 2 + 4 + 4 + 1 + 4 + 4) break;
+                        if (PayloadBytes(frame) < 1 + 2 + 2 + 4 + 4 + 1 + 4 + 4 + 4) break;
                         uint16_t offset = 1;
                         RequesterEntry* e = &requesterTable[index];
                         e->providerAddr = *(uint16_t *)(frame.payload + offset); offset += 2;
@@ -620,6 +745,7 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
                         offset += 3; // padding
                         e->periodMs = *(uint32_t *)(frame.payload + offset); offset += 4;
                         e->minTimeMs = *(uint32_t *)(frame.payload + offset); offset += 4;
+                        e->deadzone = Number::FromRaw(*(int32_t *)(frame.payload + offset)); offset += 4;
                         e->trid = frame.trid ? frame.trid : SubscriptionsNextTrid();
                         e->active = true;
                         e->registeredAtMs = DeviceStatus.UptimeMs;
@@ -652,15 +778,6 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
                 }
             }
 #endif
-            break;
-        }
-
-        case 5: { // Save the requester table to its file.
-#ifdef USE_SUB_REQUEST
-            SaveRequesterTable();
-#endif
-            uint8_t resp = 1;
-            SubReply(frame, &resp, 1);
             break;
         }
     }

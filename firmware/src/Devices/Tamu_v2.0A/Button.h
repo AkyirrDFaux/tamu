@@ -31,11 +31,10 @@ bool OnLEDStateChange(const StaticBlockDescriptor& block, uint16_t index, const 
 // Samples the notification pin and reports the button state while the LED is off.
 // Polarity per the hardware: pulling the pin LOW lights the LED and reads as the
 // button pressed (the line idles HIGH via the pull-up, so ButtonState = false at rest).
-// The button only reports its state (Out field) - it does not drive the LED. While the
+// The button only reports its state (field 0) - it does not drive the LED. While the
 // LED is on the shared line is driven, so the button cannot be read (ButtonState = false).
 void ButtonUpdate()
 {
-    bool was_pressed = LedButton.ButtonState;
     if (LedButton.LEDState != false)
     {
         LedButton.ButtonState = false; // line is driven by the LED: not readable
@@ -43,17 +42,4 @@ void ButtonUpdate()
     }
 
     LedButton.ButtonState = !PinRead(LED_NOTIFICATION_PIN);
-
-    // Edge detection (Docs/Modules and blocks/Buttons & LEDS.md): None/Rising/Falling/
-    // Both. The counter wraps on uint8 overrun. Skipped while the LED drives the line
-    // (the state is forced false above).
-    if (LedButton.EdgeDetection != EdgeNone)
-    {
-        bool rising = LedButton.ButtonState && !was_pressed;
-        bool falling = !LedButton.ButtonState && was_pressed;
-        bool edge = (LedButton.EdgeDetection == EdgeBoth) ? (rising || falling)
-                  : (LedButton.EdgeDetection == EdgeRising) ? rising : falling;
-        if (edge)
-            LedButton.EdgeCounter++;
-    }
 }

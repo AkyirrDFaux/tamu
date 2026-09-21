@@ -7,16 +7,14 @@
 
 // Resistive measurement block (Docs/Modules and blocks/Measurement.md):
 //   Sampling Rate (0, P, Number), Sensor Type (1, P, Enum), Filter Coefficient
-//   (2, P, Number, EMA 0-1 on the raw ADC), Deadzone (3, P, Number, after conversion),
-//   Measured Value (4, RO), Current Range (5, RO).
+//   (2, P, Number, EMA 0-1 on the raw ADC), Measured Value (3, RO), Current Range (4, RO).
 struct ResistiveMeasStruct
 {
     Number SamplingRate = N(10);     // offset 0
     uint8_t SensorType = 0;          // offset 4
     Number FilterCoeff = N(0.5);     // offset 8, EMA weight 0-1
-    Number Deadzone = N(0);          // offset 12, 0 = off
-    Number MeasuredValue = N(0);     // offset 16
-    Number CurrentRange = N(0);      // offset 20
+    Number MeasuredValue = N(0);     // offset 12
+    Number CurrentRange = N(0);      // offset 16
     // The physical default sensor for each channel (Meas1 = NTC100K, Meas2 = LDR10K on
     // the DualAnalogSensor board); the app can still change it via the SensorType field.
     explicit ResistiveMeasStruct(uint8_t sensorType = 0) { SensorType = sensorType; }
@@ -27,14 +25,12 @@ struct ResistiveMeasStruct
 static_assert(offsetof(ResistiveMeasStruct, SamplingRate) == 0, "Meas layout");
 static_assert(offsetof(ResistiveMeasStruct, SensorType) == 4, "Meas layout");
 static_assert(offsetof(ResistiveMeasStruct, FilterCoeff) == 8, "Meas layout");
-static_assert(offsetof(ResistiveMeasStruct, Deadzone) == 12, "Meas layout");
-static_assert(offsetof(ResistiveMeasStruct, MeasuredValue) == 16, "Meas layout");
-static_assert(offsetof(ResistiveMeasStruct, CurrentRange) == 20, "Meas layout");
+static_assert(offsetof(ResistiveMeasStruct, MeasuredValue) == 12, "Meas layout");
+static_assert(offsetof(ResistiveMeasStruct, CurrentRange) == 16, "Meas layout");
 
 const BlockMeta ResistiveMeas_Map[] = {
     {DataType::Number | FieldFlags::Persistent, 0x00, sizeof(Number)},
     {DataType::Enum   | FieldFlags::Persistent, 0x00, sizeof(uint8_t)},
-    {DataType::Number | FieldFlags::Persistent, 0x00, sizeof(Number)},
     {DataType::Number | FieldFlags::Persistent, 0x00, sizeof(Number)},
     {DataType::Number | FieldFlags::ReadOnly, 0x00, sizeof(Number)},
     {DataType::Number | FieldFlags::ReadOnly, 0x00, sizeof(Number)},
@@ -63,11 +59,6 @@ static bool OnMeasFieldWrite(const StaticBlockDescriptor &block, uint16_t index,
         if (v > N(1)) v = N(1);
         m->FilterCoeff = v;
         return true;
-
-    case 3: // Deadzone: >= 0 (0 = off)
-        if (v < N(0)) v = N(0);
-        m->Deadzone = v;
-        return true;
     }
     return false;
 }
@@ -76,12 +67,11 @@ const FieldTrigger ResistiveMeas_Triggers[] = {
     OnMeasFieldWrite,
     nullptr,
     OnMeasFieldWrite,
-    OnMeasFieldWrite,
     nullptr,
     nullptr,
 };
 
-const uint16_t ResistiveMeas_Offsets[] = {0, 4, 8, 12, 16, 20};
+const uint16_t ResistiveMeas_Offsets[] = {0, 4, 8, 12, 16};
 
 const BlockSchema ResistiveMeas_Schema = {
     .Map = ResistiveMeas_Map,
@@ -244,8 +234,7 @@ static void Measuring_Update(uint8_t index, ResistiveMeasStruct *m, uint16_t raw
     s_conv_seeded[index] = true;
 
     // Transformations operate on the FILTERED raw sample, exactly like the Sensors.h
-    // reference ("SensorClass::Run"); the converted value is then dead-zoned into the
-    // Measured Value output.
+    // reference ("SensorClass::Run").
     static const Number ADCRES = N(1023);
     Number in = filtered_raw;
 
@@ -291,10 +280,5 @@ static void Measuring_Update(uint8_t index, ResistiveMeasStruct *m, uint16_t raw
         break;
     }
 
-    // Deadzone (docs: "applies after unit conversion"): the current output value is the
-    // center; the new converted value is adopted only when it moves more than `dz` away.
-    // 0 = off.
-    if (m->Deadzone > N(0) && abs(in - m->MeasuredValue) <= m->Deadzone)
-        return; // keep the current output
     m->MeasuredValue = in;
 }

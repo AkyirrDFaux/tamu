@@ -51,10 +51,10 @@ class SubscriptionClient {
     final count = reply[0];
     final result = <ProviderSubscription>[];
     int offset = 1;
-    for (int i = 0; i < count && offset + 28 <= reply.length; i++) {
-      final entryBytes = reply.sublist(offset, offset + 28);
+    for (int i = 0; i < count && offset + 32 <= reply.length; i++) {
+      final entryBytes = reply.sublist(offset, offset + 32);
       result.add(ProviderSubscription.fromBytes(i, entryBytes));
-      offset += 28;
+      offset += 32;
     }
     return result;
   }
@@ -67,10 +67,10 @@ class SubscriptionClient {
     final count = reply[0];
     final result = <RequesterSubscription>[];
     int offset = 1;
-    for (int i = 0; i < count && offset + 24 <= reply.length; i++) {
-      final entryBytes = reply.sublist(offset, offset + 24);
+    for (int i = 0; i < count && offset + 28 <= reply.length; i++) {
+      final entryBytes = reply.sublist(offset, offset + 28);
       result.add(RequesterSubscription.fromBytes(i, entryBytes));
-      offset += 24;
+      offset += 28;
     }
     return result;
   }
@@ -107,7 +107,7 @@ class SubscriptionClient {
 
   /// Builds the provider-side subscription payload (CID 1). The provider's entry stores
   /// the REQUESTER's address so the provider knows where to send value updates.
-  /// Wire: targetReg, sourceReg, requesterAddr, trigger + 24 pad, period, min.
+  /// Wire: targetReg, sourceReg, requesterAddr, trigger + 24 pad, period, min, deadzone.
   List<int> _providerPayload(RequesterSubscription entry) {
     final buf = <int>[];
     buf.addAll(uint32ToBytes(entry.targetReg));
@@ -117,14 +117,8 @@ class SubscriptionClient {
     buf.addAll([0, 0, 0]); // 24-bit padding
     buf.addAll(uint32ToBytes(entry.periodMs));
     buf.addAll(uint32ToBytes(entry.minTimeMs));
+    buf.addAll(numberToBytes(entry.deadzone));
     return buf;
-  }
-
-  /// CID 5: Persist the requester table to its file. The firmware already saves on every
-  /// set/delete; this forces a save so the current state survives the next reboot.
-  Future<bool> saveRequesterSubscriptions() async {
-    final reply = await _request(5, payload: []);
-    return reply != null && reply.isNotEmpty && reply[0] != 0xFF;
   }
 
   void dispose() {

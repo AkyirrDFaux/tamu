@@ -94,7 +94,7 @@ const BlockMeta Vysi1_Map[] = {
     {DataType::Number | FieldFlags::None, 0x00, sizeof(Number)},      // Brightness
     {DataType::Matrix | FieldFlags::Persistent, 0x00, sizeof(Matrix<2, 3>)},// Offset (2x3)
     {DataType::Index | FieldFlags::Persistent, 0x00, sizeof(int32_t)},     // Render Block Index (signed, -1 = none)
-    {DataType::String | FieldFlags::Trigger | FieldFlags::Persistent, 0x00, 8}, // Layout File Name
+    {DataType::Filename | FieldFlags::Trigger | FieldFlags::Persistent, 0x00, 8}, // Layout File Name
     {DataType::Number | FieldFlags::ReadOnly, 0x00, sizeof(Number)},  // Refresh Rate
 };
 

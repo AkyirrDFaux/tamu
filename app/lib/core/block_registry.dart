@@ -79,14 +79,6 @@ String luxLevel(double lux) {
   return 'Sunlight';
 }
 
-/// Edge detection modes (Docs/Modules and blocks/Buttons & LEDS.md).
-const Map<int, String> _buttonEdges = {
-  0: 'None',
-  1: 'Rising',
-  2: 'Falling',
-  3: 'Both',
-};
-
 /// LSM6DS3TR output data rates (Hz), index into the ODR table (Docs/Modules and
 /// blocks/Measurement.md; datasheet Table 52).
 const Map<int, String> _odrOptions = {
@@ -120,18 +112,18 @@ const Map<int, String> _gyroRanges = {
 
 const _buttonFields = [
   FieldInfo('Button Raw State'),
-  FieldInfo('Edge Detection', enumValues: _buttonEdges),
-  FieldInfo('Edge Counter'),
 ];
 
 const _ledFields = [
   FieldInfo('LED State'),
 ];
 
+// LED-Button (Docs/Modules and blocks/Buttons & LEDS.md): Button raw state (0) and
+// LEDState (3); fields 1-2 are reserved so LEDState keeps its documented index.
 const _ledButtonFields = [
   FieldInfo('Button Raw State'),
-  FieldInfo('Edge Detection', enumValues: _buttonEdges),
-  FieldInfo('Edge Counter'),
+  FieldInfo('Reserved'),
+  FieldInfo('Reserved'),
   FieldInfo('LED State'),
 ];
 
@@ -146,8 +138,6 @@ const _accGyrFields = [
   FieldInfo('Range Angular', enumValues: _gyroRanges),
   FieldInfo('Acceleration Filter', min: 0, max: 1, step: 0.05),
   FieldInfo('Angular Filter', min: 0, max: 1, step: 0.05),
-  FieldInfo('Deadzone Acceleration'),
-  FieldInfo('Deadzone Angular'),
   FieldInfo('Acceleration', unit: 'm/s^2'),
   FieldInfo('Angular Velocity', unit: 'rad/s'),
 ];
@@ -164,7 +154,6 @@ const _resistiveMeasureFields = [
   FieldInfo('Sampling Rate', unit: 'Hz', min: 1, max: 1000),
   FieldInfo('Sensor Type', enumValues: _sensorTypes),
   FieldInfo('Filter Coefficient', min: 0, max: 1, step: 0.05),
-  FieldInfo('Deadzone'),
   FieldInfo('Measured Value'),
   FieldInfo('Current Range', unit: 'kOhm'),
 ];

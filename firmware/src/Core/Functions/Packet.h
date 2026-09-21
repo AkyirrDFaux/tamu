@@ -110,11 +110,12 @@ inline void PacketConstruct(PacketFrame *frame,
                             uint16_t trid,
                             uint8_t flags,
                             const uint8_t *payload,
-                            uint16_t len)
+                            uint16_t len,
+                            uint8_t priority = DEFAULT_PRIORITY)
 {
     if (len > MAX_PAYLOAD_SIZE) len = MAX_PAYLOAD_SIZE;
     frame->flags = flags;
-    frame->priority = DEFAULT_PRIORITY;
+    frame->priority = priority;
     frame->id_tgt = dest_addr;
     frame->id_src = DeviceStatus.ShortAddress;
     frame->cmd = dest_cmd;

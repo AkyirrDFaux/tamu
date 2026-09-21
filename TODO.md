@@ -47,7 +47,26 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
       (was a 64-byte overflow risk); compose operand scratch aliasing fixed; Number size
       guard; foreign device-address validation; input control re-sync on refresh without
       fighting a drag; single-pass UI-info parse (was five re-walks).
+## 2. Blocks/modules + subscriptions
+- [x] **Block/module schema alignment** (docs-driven): Button reduced to field 0; LED-Button
+      = Button (0) + LEDState (3) with reserved 1-2; Acc&Gyr deadzones removed (Acceleration
+      = 5, Angular Velocity = 6); Resistive measurement deadzone removed (Measured Value = 3,
+      Current Range = 4); `DataType::Filename` added and used for the LED-Display Layout File
+      Name. App `block_registry` mirrored + a drift-guard unit test.
+- [x] **Subscription alignment**: `Deadzone` added to both entries (requester 28 B, provider
+      32 B, CID 1 payload); trigger types `EdgeRising/Falling/Any` and `DeltaPeriodic`;
+      per-trigger hashlike (FNV-1a / raw compare / edge counter / last value / subresolution
+      vector); high/low packet priorities; script I/O (`0x3FE`) as source/target; non-doc
+      CID 5 manual save removed (auto-save on set/delete). App types/dialog/client updated.
+- [x] **Two-device HIL** (Tamu + DAS): DAS Measured Value → Tamu target; Acc&Gyr vector delta
+      self-loopback; script-output source; new 28/32 B entry round-trip.
+      Verified on hardware (`app/test/hil_subscriptions_test.dart`).
+
+## 3. App backup
+- [ ] Not started (`Docs/App/Backup.md`).
+
 ### Notes
+- A write of `Filename`/`String` shorter than the field is space-padded to its declared size.
 - Script entities use the ValueInfo packing of `Core/Services/Script.h` /
   `app/lib/core/script_file.dart` (internal convention; the docs leave it open).
 - Outputs are read-only and inputs writable in the Register; Variables are script RAM
