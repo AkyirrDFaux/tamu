@@ -160,6 +160,7 @@ enum BlockType {
   resistiveMeasure(0x08),
   button(0x09),
   led(0x0A),
+  script(0x3FE), // loaded-script blocks (Script service, exposed via the Register)
   dynamic(0x3FF), // Dynamic memory block type
   render(0x100);
 
@@ -185,6 +186,7 @@ enum BlockType {
         BlockType.resistiveMeasure => 'Resistive Measure',
         BlockType.button => 'Button',
         BlockType.led => 'LED',
+        BlockType.script => 'Script',
         BlockType.dynamic => 'Dynamic',
         BlockType.render => 'Render',
       };
@@ -221,6 +223,7 @@ class Capability {
   static const router = 1 << 1;
   static const cli = 1 << 2;
   static const dynamicMemory = 1 << 3;
+  static const scripts = 1 << 4;
   static const storageFiles = 1 << 5;
   static const appInterface = 1 << 6;
   static const subscriptions = 1 << 7;
@@ -232,6 +235,7 @@ class Capability {
     if (caps & router != 0) names.add('Router');
     if (caps & cli != 0) names.add('CLI');
     if (caps & dynamicMemory != 0) names.add('DynMem');
+    if (caps & scripts != 0) names.add('Scripts');
     if (caps & storageFiles != 0) names.add('Files');
     if (caps & appInterface != 0) names.add('App');
     if (caps & subscriptions != 0) names.add('Subs');

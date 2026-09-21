@@ -40,6 +40,7 @@ enum class ServiceType : uint8_t
     LogHandler = 0x02,
     Storage = 0x03,
     Subscriptions = 0x04,
+    Script = 0x05,
     App = 0x11,
     CLI = 0x12
 };

@@ -82,16 +82,36 @@ class RegisterClient {
   }
 
 /// Enumerate instances of a block type (CID 0, field=0xFF).
+  /// Enumerate instances of a block type (CID 0, field=0xFF). Static and dynamic blocks
+  /// return just the count; scripts return their loaded-slot list too.
   Future<int?> getInstanceCount(int blockType) async {
-    // Enum 1 for instances - firmware expects enum_level + bi_req (5 bytes)
-    // bi_req: type=blockType, instance=0x3F (all), field=0xFF (all), key=0
-    final payload = [
-      1, // enum_level = 1
-      ...blockInfoBytes(blockType, 0x3F, 0xFF, 0)
-    ];
-    final reply = await request(0, payload: payload);
+    final reply = await request(0,
+        payload: [1, ...blockInfoBytes(blockType, 0x3F, 0xFF, 0)]);
     if (reply == null || reply.length < 5) return null;
     return reply[4];
+  }
+
+  /// Enumerate the instance indexes of a block type. Static and dynamic blocks reply
+  /// with a count only (instances are 0..count-1); scripts reply with the explicit
+  /// loaded-slot list (which may be sparse).
+  Future<List<int>?> enumerateInstanceIds(int blockType) async {
+    final reply = await request(0,
+        payload: [1, ...blockInfoBytes(blockType, 0x3F, 0xFF, 0)]);
+    if (reply == null || reply.length < 5) return null;
+    final count = reply[4];
+    if (blockType == BlockType.script.value && reply.length >= 5 + count) {
+      return [for (var i = 0; i < count; i++) reply[5 + i]];
+    }
+    return [for (var i = 0; i < count; i++) i];
+  }
+
+  /// Enumerate the keys present at (instance, field) for a keyed block (CID 0, Enum 3).
+  Future<List<int>?> getBlockKeys(int blockType, int instance, int field) async {
+    final reply = await request(0,
+        payload: [3, ...blockInfoBytes(blockType, instance, field, 0)]);
+    if (reply == null || reply.length < 5) return null;
+    final count = reply[4];
+    return [for (var i = 0; i < count && 5 + i < reply.length; i++) reply[5 + i]];
   }
 
   /// Enumerate fields in a block (CID 0, key=0xFF).
@@ -148,45 +168,37 @@ class RegisterClient {
     return valueSlice(reply, echoMeta.size);
   }
 
-  /// Reads all blocks (static + dynamic) by enumerating types and instances.
+  /// Reads all blocks (static + dynamic + loaded scripts) by enumerating types/instances.
   /// The System block (type 0, inst 0) is a virtual block not in the static registry.
-  /// Dynamic blocks use type BlockType.dynamic and are not returned by enumerateBlockTypes.
+  /// Dynamic blocks (0x3FF) and script blocks (0x3FE) are not returned by enumerateBlockTypes.
   Future<List<({int type, int inst, BlockMeta meta, String name})?>?> readBlocks() async {
     final types = await enumerateBlockTypes();
     if (types == null) return null;
     final blocks = <({int type, int inst, BlockMeta meta, String name})?>[];
-    
-    // Add System block (type 0, inst 0) explicitly - it's a virtual block
-    // not present in the static block registry. The firmware's whole-system meta
-    // reply carries no name (the byte after the BlockMeta is the field count), so
-    // label it explicitly instead of showing that count byte as the title.
+
+    // System block (type 0, inst 0): a virtual block not present in the static registry.
     final sysBlock = await readBlockMeta(0, 0);
     if (sysBlock != null) {
       blocks.add((type: 0, inst: 0, meta: sysBlock.meta, name: 'System'));
     }
-    
-    for (final type in types) {
-      final count = await getInstanceCount(type);
-      if (count == null) continue;
-      for (var inst = 0; inst < count; inst++) {
+
+    Future<void> addAll(int type) async {
+      final ids = await enumerateInstanceIds(type);
+      if (ids == null) return;
+      for (final inst in ids) {
         final block = await readBlockMeta(type, inst);
         if (block != null) {
           blocks.add((type: type, inst: inst, meta: block.meta, name: block.name));
         }
       }
     }
-    
-    // Add Dynamic blocks (type BlockType.dynamic) - not returned by enumerateBlockTypes
-    final dynCount = await getInstanceCount(BlockType.dynamic.value);
-    if (dynCount != null && dynCount > 0) {
-      for (var inst = 0; inst < dynCount; inst++) {
-        final block = await readBlockMeta(BlockType.dynamic.value, inst);
-        if (block != null) {
-          blocks.add((type: BlockType.dynamic.value, inst: inst, meta: block.meta, name: block.name));
-        }
-      }
+
+    for (final type in types) {
+      await addAll(type);
     }
-    
+    await addAll(BlockType.dynamic.value);
+    await addAll(BlockType.script.value); // loaded-script blocks
+
     return blocks;
   }
 

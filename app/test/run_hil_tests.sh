@@ -27,6 +27,8 @@ else
   FILES=(
     test/hil_test_suite.dart
     test/hil_subscriptions_test.dart
+    test/hil_script_test.dart
+    test/hil_script_vm_test.dart
     test/tamu_hardware_verification_test.dart
   )
 fi

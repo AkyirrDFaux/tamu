@@ -18,6 +18,8 @@
 void LoadAllBackups();
 void ReRegisterSubscriptions();
 void SubscriptionsTick(uint32_t nowMs);
+void ScriptsTick(uint32_t nowMs);
+void ScriptsBootLoad();
 
 // Device identity (mandatory, see Core/Functions/Device.h).
 extern const DeviceType kDeviceType = DeviceType::Tamu_v2_0A;
@@ -25,6 +27,7 @@ extern const DeviceType kDeviceType = DeviceType::Tamu_v2_0A;
 // memory services - matching the USE_* build flags so the app shows their views.
 extern const uint32_t kCapabilities = Capabilities::Core | Capabilities::Cli |
                                         Capabilities::DynamicMemory |
+                                        Capabilities::Scripts |
                                         Capabilities::StorageFiles |
                                         Capabilities::AppInterface |
                                         Capabilities::Subscriptions;
@@ -91,6 +94,7 @@ PinModeOutput(LED_NOTIFICATION_PIN);
 
 ESP_LOGI("INIT","b1 storage"); Storage.Init();
 ESP_LOGI("INIT","b2 backups"); LoadAllBackups(); // restores name + net-id from STATLOG too
+ScriptsBootLoad();         // loads SCR_XX scripts flagged load-on-boot (Docs/Services/Script.md)
 PreloadVysiLayout();       // Vysi v1.0 layout file (layouts/ dir) into storage
 ESP_LOGI("INIT","b3 appif"); AppInterfaceInit();
 
@@ -191,6 +195,7 @@ while (1)
 
         ProcessBus();
         SubscriptionsTick(DeviceStatus.UptimeMs); // periodic provider triggers (docs: checked from the main loop)
+        ScriptsTick(DeviceStatus.UptimeMs);       // run loaded script programs (Docs/Services/Script.md)
         AppInterfacePump();
         ButtonUpdate();
         ReadIMUData();

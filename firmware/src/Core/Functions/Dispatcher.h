@@ -75,6 +75,13 @@ void DispatchPacket(const PacketFrame &frame)
                 uint8_t cid = GetServiceCID(frame.srv_tgt);
                 DeviceLog("DISP", "dispatching to service=%d cid=%d", target_srv, cid);
 
+#ifdef USE_SCRIPTS
+                // Script-instance replies (foreign register access): the reply's CMD is the
+                // script's TRID, so it never matches a ServiceType and is routed by range.
+                if (frame.srv_tgt >= SCRIPT_TRID_BASE && frame.srv_tgt <= SCRIPT_TRID_MAX) {
+                    HandleScriptResponse(frame);
+                } else
+#endif
                 switch (target_srv)
                 {
                 case ServiceType::Device:
@@ -97,6 +104,13 @@ void DispatchPacket(const PacketFrame &frame)
 #if defined(USE_SUB_PROVIDE) || defined(USE_SUB_REQUEST)
                     DeviceLog("DISP", "dispatch Subscriptions cid=%d", cid);
                     HandleSubscriptions(frame);
+#endif
+                    break;
+
+                case ServiceType::Script:
+#ifdef USE_SCRIPTS
+                    DeviceLog("DISP", "dispatch Script cid=%d", cid);
+                    HandleScript(frame);
 #endif
                     break;
 

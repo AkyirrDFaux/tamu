@@ -7,6 +7,7 @@ import '../core/connection.dart';
 import '../core/device_db.dart';
 import '../core/register_client.dart';
 import '../core/render_dict.dart' show geometryDictType, geometryKeysForShape, isRenderDictType, renderDictKeyName, renderKeyFieldInfo, textureKeysForType;
+import '../core/script_file.dart' show ScriptField;
 import '../core/types.dart';
 import 'theme.dart';
 import 'value_editor.dart' show dataTypeLabel, formatValue, showValueEditor;
@@ -33,6 +34,9 @@ class _RegisterPageState extends State<RegisterPage>
   final Map<int, Map<int, ({BlockMeta meta, List<int> value})?>> _fieldCache = {};
   final Map<int, List<int>> _dynamicFields = {};
   final Map<int, Map<int, List<int>>> _dynamicKeys = {};
+
+  /// Script blocks (0x3FE): cacheKey -> field -> keys/entity indexes.
+  final Map<int, Map<int, List<int>>> _scriptKeys = {};
   String? _error;
   final Set<int> _expanded = {};
   bool _refreshing = false;
@@ -209,6 +213,27 @@ Future<void> _loadVisibleFields() async {
         for (final key in keys) {
           if (!forceRefresh && cache.containsKey(f * 256 + key)) continue;
           final entry = await _client.readBlockField(BlockType.dynamic.value, instance, f, key);
+          if (entry != null) {
+            cache[f * 256 + key] = entry;
+          } else {
+            cache.remove(f * 256 + key);
+          }
+        }
+      }
+      return;
+    }
+
+    // Script blocks (0x3FE): keyed entries per category field. The Header (field 0) is
+    // script metadata, not register content, so only the Input/Output/Variable/Constant
+    // categories are exposed here.
+    if (blockType == BlockType.script.value) {
+      final keyMap = _scriptKeys.putIfAbsent(cacheKey, () => {});
+      for (var f = ScriptField.input; f < block.meta.size; f++) {
+        final keys = await _client.getBlockKeys(blockType, instance, f) ?? <int>[];
+        keyMap[f] = keys;
+        for (final key in keys) {
+          if (!forceRefresh && cache.containsKey(f * 256 + key)) continue;
+          final entry = await _client.readBlockField(blockType, instance, f, key);
           if (entry != null) {
             cache[f * 256 + key] = entry;
           } else {
@@ -442,6 +467,90 @@ Future<void> _loadVisibleFields() async {
     await _refresh();
   }
 
+  String _scriptFieldName(int field) => switch (field) {
+        ScriptField.header => 'Header',
+        ScriptField.input => 'Input',
+        ScriptField.output => 'Output',
+        ScriptField.variable => 'Variable',
+        ScriptField.constant => 'Constant',
+        _ => 'Field $field',
+      };
+
+  Future<void> _editScriptEntry(int blockType, int inst, int field, int key,
+      ({BlockMeta meta, List<int> value}) entry,
+      ({int type, int inst, BlockMeta meta, String name})? block) async {
+    final next = await showValueEditor(context, entry.meta.dataType, entry.value);
+    if (next == null || !mounted) return;
+    final ok = await _client.writeBlockField(blockType, inst, field, key, entry.meta, next);
+    _snack(ok != null ? 'Written' : 'Write failed');
+    if (block != null) {
+      await _loadBlockFields(blockType, inst, block, forceRefresh: true);
+      if (mounted) setState(() {});
+    }
+  }
+
+  /// Renders one category field of a loaded script (Header/Input/Output/Variable/
+  /// Constant) as a keyed list. Inputs and variables are editable; the header, outputs
+  /// and constants are read-only.
+  Widget _scriptFieldTile(int blockType, int inst, int cacheKey, int fieldIndex,
+      ({int type, int inst, BlockMeta meta, String name})? block, Key? cardKey) {
+    // The Header category is script metadata and is intentionally not part of the
+    // Register view.
+    if (fieldIndex == ScriptField.header) return const SizedBox.shrink();
+    final cache = _fieldCache[cacheKey];
+    final keys = _scriptKeys[cacheKey]?[fieldIndex] ?? <int>[];
+    final name = _scriptFieldName(fieldIndex);
+    if (keys.isEmpty) {
+      return ListTile(
+        key: cardKey,
+        dense: true,
+        title: Text(name, style: const TextStyle(fontSize: 13, color: Colors.white54)),
+        subtitle: const Text('None', style: TextStyle(fontSize: 10, color: Colors.white38)),
+      );
+    }
+    final editableField =
+        fieldIndex == ScriptField.input || fieldIndex == ScriptField.variable;
+    return Column(
+      children: [
+        for (final key in keys)
+          Builder(builder: (context) {
+            final e = cache?[fieldIndex * 256 + key];
+            if (e == null) {
+              return ListTile(
+                key: key == keys.first ? cardKey : null,
+                dense: true,
+                leading: const SizedBox(
+                    width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+                title: Text('$name $key',
+                    style: const TextStyle(fontSize: 13, color: Colors.white38)),
+              );
+            }
+            final editable = editableField && !e.meta.readOnly;
+            return ListTile(
+              key: key == keys.first ? cardKey : null,
+              dense: true,
+              title: Row(children: [
+                SizedBox(
+                    width: 120,
+                    child: Text('$name $key',
+                        style: const TextStyle(fontSize: 12, color: Colors.white54))),
+                Expanded(
+                    child: Text(formatValue(e.meta.dataType, e.value),
+                        style: const TextStyle(fontFamily: 'monospace', fontSize: 13))),
+              ]),
+              subtitle: Text(
+                  dataTypeLabel(e.meta.dataType) + (e.meta.readOnly ? ' · RO' : ''),
+                  style: const TextStyle(fontSize: 10)),
+              trailing: editable ? const Icon(Icons.edit, size: 16, color: Colors.white38) : null,
+              onTap: editable
+                  ? () => _editScriptEntry(blockType, inst, fieldIndex, key, e, block)
+                  : null,
+            );
+          }),
+      ],
+    );
+  }
+
   Widget _blockCard(BuildContext context, int blockIndex, ({int type, int inst, BlockMeta meta, String name})? block, {Key? cardKey, int? dragIndex}) {
     if (block == null) {
       return Card(
@@ -497,7 +606,8 @@ Future<void> _loadVisibleFields() async {
             child: Wrap(spacing: 6, runSpacing: 2, children: [
               ChipLabel(isSystem ? 'System' : BlockType.fromValue(block.meta.typeValue).label),
               for (final flag in FieldFlags.describe(block.meta.flags)) ChipLabel(flag, subtle: flag != 'RO'),
-              ChipLabel('${block.meta.size} fields', subtle: true),
+              if (block.meta.typeValue != BlockType.script.value)
+                ChipLabel('${block.meta.size} fields', subtle: true),
             ]),
           ),
           trailing: PopupMenuButton<String>(
@@ -576,6 +686,11 @@ Future<void> _loadVisibleFields() async {
     final cache = _fieldCache[cacheKey];
     final field = cache?[fieldIndex];
     final isSystem = blockType == 0 && inst == 0;
+
+    // Loaded scripts (0x3FE): keyed entries per category field.
+    if (blockType == BlockType.script.value) {
+      return _scriptFieldTile(blockType, inst, cacheKey, fieldIndex, block, cardKey);
+    }
 
     // Dynamic blocks: flat (field, key) entries. A field is a DICTIONARY when its
     // key-0 entry is a Geometry/Texture marker; otherwise key 0 is the field's plain

@@ -4,6 +4,7 @@ import '../core/device_db.dart';
 import '../core/types.dart';
 import 'log_page.dart';
 import 'register_page.dart';
+import 'scripts_page.dart';
 import 'sndb_page.dart';
 import 'storage_page.dart';
 import 'subscriptions_page.dart';
@@ -144,6 +145,9 @@ _card(context, 'Services', [
                       if (entry.capabilities & Capability.subscriptions != 0)
                         _serviceTile(context, Icons.sync_alt, 'Subscriptions',
                           () => SubscriptionsPage(deviceId: widget.deviceId, deviceName: entry.displayName)),
+                      if (entry.capabilities & Capability.scripts != 0)
+                        _serviceTile(context, Icons.code, 'Scripts',
+                          () => ScriptsPage(deviceId: widget.deviceId, deviceName: entry.displayName)),
                       if (entry.isCore) ...[
                         _serviceTile(context, Icons.format_list_numbered,
                             'SN Database', () => const SndbPage()),

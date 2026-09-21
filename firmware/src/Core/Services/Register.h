@@ -8,6 +8,9 @@
 #include "Core/Functions/AppInterface.h"
 #include "Core/Services/StaticMemory.h"
 #include "Blocks/DeviceInfo.h"
+#ifdef USE_SCRIPTS
+#include "Core/Services/Script.h"
+#endif
 
 // Register service per Docs/Services/Register.md
 // BlockInfo 32b: Type10 | Instance6 | Field8 | Key8
@@ -94,7 +97,22 @@ static void HandleEnumerate(const PacketFrame &frame, uint32_t bi) {
     } else if (enum_level == 1) { // Enumerate instances of type
         if (bi_req == 0) { RespondStatus(frame,false); return; }
         uint16_t req_type = BlockInfoType(bi_req);
-        if (req_type == 0x3FF) { // Dynamic blocks
+        if (req_type == 0x3FE) {
+#ifdef USE_SCRIPTS
+            // Scripts: list the loaded slots (stable instance = script slot). The reply is
+            // a count (u8) followed by the slot ids so sparse loads stay addressable.
+            uint8_t ids[MAX_SCRIPTS];
+            uint8_t n = ScriptListInstances(ids, MAX_SCRIPTS);
+            uint8_t rpl[8 + MAX_SCRIPTS];
+            memcpy(rpl, &bi, 4);
+            rpl[4] = n;
+            memcpy(rpl + 5, ids, n);
+            SendResponse(frame, rpl, 5 + n);
+#else
+            uint8_t rpl[8]; memcpy(rpl, &bi, 4); rpl[4] = 0;
+            SendResponse(frame, rpl, 5);
+#endif
+        } else if (req_type == 0x3FF) { // Dynamic blocks
 #ifndef DISABLE_DYNAMIC_MEMORY
             uint8_t cnt = dynamic_block_registry.block_count;
             uint8_t rpl[8]; memcpy(rpl, &bi, 4); rpl[4] = cnt;
@@ -117,6 +135,12 @@ static void HandleEnumerate(const PacketFrame &frame, uint32_t bi) {
             // System block is not in the static registry; its field count is board-aware
             // (nodes like the DAS omit the Core-only NetID and App/CLI fields).
             cnt = SYSTEM_FIELD_COUNT;
+        } else if (req_type == 0x3FE) {
+#ifdef USE_SCRIPTS
+            cnt = ScriptActive(req_inst) ? SCRIPT_FIELD_COUNT : 0;
+#else
+            cnt = 0;
+#endif
         } else if (req_type == 0x3FF) {
 #ifndef DISABLE_DYNAMIC_MEMORY
             if (req_inst >= dynamic_block_registry.block_count) { RespondStatus(frame,false); return; }
@@ -158,6 +182,14 @@ static void HandleEnumerate(const PacketFrame &frame, uint32_t bi) {
             } else {
                 rpl[p++] = 0;
             }
+#else
+            rpl[p++] = 0;
+#endif
+        } else if (req_type == 0x3FE) {
+#ifdef USE_SCRIPTS
+            uint8_t n = ScriptKeyCount(req_inst, req_field);
+            rpl[p++] = n;
+            for (uint8_t i = 0; i < n; i++) rpl[p++] = i;
 #else
             rpl[p++] = 0;
 #endif
@@ -266,6 +298,31 @@ static void HandleDynamicBlockRead(const PacketFrame &frame, uint32_t bi, uint8_
 }
 #endif
 
+#ifdef USE_SCRIPTS
+// Reads one entry of a loaded script (block type 0x3FE) or its block meta. The script's
+// input/output/variable/constant tables are addressed as fields 1-4 with key = index.
+static void HandleScriptBlockRead(const PacketFrame &frame, uint32_t bi, uint8_t inst, uint8_t field, uint8_t key) {
+    LoadedScript *s = ScriptActive(inst);
+    if (!s) { RespondStatus(frame,false); return; }
+    if (field == 0xFF) {
+        SendBlockMetaResponse(frame, bi, 0x3FE, SCRIPT_FIELD_COUNT, s->name);
+        return;
+    }
+    uint8_t rpl[FIELD_RESPONSE_BUF_SIZE];
+    uint16_t pos = 0;
+    BlockMeta m = {};
+    uint8_t vbuf[FIELD_RESPONSE_BUF_SIZE];
+    uint8_t vsz = 0;
+    if (!ScriptGetEntry(inst, field, key, m, vbuf, vsz)) { RespondStatus(frame,false); return; }
+    memcpy(rpl + pos, &bi, 4); pos += 4;
+    memcpy(rpl + pos, &m, 4); pos += 4;
+    if (vsz) memcpy(rpl + pos, vbuf, vsz);
+    pos += vsz;
+    while (pos % 4) rpl[pos++] = 0;
+    SendResponse(frame, rpl, pos);
+}
+#endif
+
 static void HandleStaticBlockRead(const PacketFrame &frame, uint32_t bi, uint16_t type, uint8_t inst, uint8_t field) {
     int idx = FindStaticBlock(type, inst);
     if (idx < 0) { RespondStatus(frame,false); return; }
@@ -315,6 +372,15 @@ static void HandleDynamicBlockWrite(const PacketFrame &frame, uint8_t inst, uint
 
     // Position-specified entry write; writing type None deletes the entry.
     if (!block->SetEntry(field, key, val, vlen, desc->FlagsAndType)) { RespondStatus(frame,false); return; }
+    SendResponse(frame, frame.payload, PayloadBytes(frame));
+}
+#endif
+
+#ifdef USE_SCRIPTS
+// Writes a script input (field 1) or variable (field 3) entry.
+static void HandleScriptBlockWrite(const PacketFrame &frame, uint8_t inst, uint8_t field, uint8_t key, BlockMeta *desc, const uint8_t *val, uint16_t vlen) {
+    if (!ScriptActive(inst)) { RespondStatus(frame,false); return; }
+    if (!ScriptSetEntry(inst, field, key, *desc, val, vlen)) { RespondStatus(frame,false); return; }
     SendResponse(frame, frame.payload, PayloadBytes(frame));
 }
 #endif
@@ -641,6 +707,62 @@ static void HandleReadBackup(const PacketFrame &frame, uint32_t bi, uint16_t blo
 
 // ===== Main dispatcher =====
 
+// Generic register access by BlockInfo (shared by the Subscriptions and Script services).
+bool RegisterGetByBlockInfo(uint32_t bi, BlockMeta &m, uint8_t *vbuf, uint8_t &vsz) {
+    uint16_t type = BlockInfoType(bi);
+    uint8_t inst = BlockInfoInstance(bi);
+    uint8_t field = BlockInfoField(bi);
+    uint8_t key = BlockInfoKey(bi);
+    vsz = 0;
+    if (type == 0 && inst == 0)
+        return RegisterGetSystemField(field, key, m, vbuf, vsz);
+#ifndef DISABLE_DYNAMIC_MEMORY
+    if (type == 0x3FF) {
+        if (inst >= dynamic_block_registry.block_count) return false;
+        DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(inst);
+        if (!block) return false;
+        KeyResult kr = block->GetKey(field, key);
+        if (!kr.exists) return false;
+        m = kr.meta;
+        uint8_t n = kr.meta.Size;
+        if (n) memcpy(vbuf, kr.data_ptr, n);
+        vsz = n;
+        return true;
+    }
+#endif
+    int idx = FindStaticBlock(type, inst);
+    if (idx < 0) return false;
+    FieldResult fr = static_block_registry[idx].Get(field);
+    if (!fr.Data) return false;
+    m = fr.Descriptor;
+    uint8_t n = fr.Descriptor.Size;
+    if (n) memcpy(vbuf, fr.Data, n);
+    vsz = n;
+    return true;
+}
+
+// Writes a register value by BlockInfo. `m` carries the value type (and any active flags).
+bool RegisterSetByBlockInfo(uint32_t bi, const BlockMeta &m, const uint8_t *val, uint16_t vlen) {
+    uint16_t type = BlockInfoType(bi);
+    uint8_t inst = BlockInfoInstance(bi);
+    uint8_t field = BlockInfoField(bi);
+    uint8_t key = BlockInfoKey(bi);
+    (void)key; // only the dynamic (keyed) path uses it
+    if (type == 0x3FF) {
+#ifndef DISABLE_DYNAMIC_MEMORY
+        if (inst >= dynamic_block_registry.block_count) return false;
+        DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(inst);
+        if (!block) return false;
+        return block->SetEntry(field, key, val, vlen, m.FlagsAndType);
+#else
+        return false;
+#endif
+    }
+    int idx = FindStaticBlock(type, inst);
+    if (idx < 0) return false;
+    return static_block_registry[idx].Set(field, val, vlen, m.FlagsAndType);
+}
+
 static void HandleRegister(const PacketFrame &frame) {
     uint8_t cid = GetServiceCID(frame.cmd);
     if (frame.flags & FLAG_TYPE) return;
@@ -659,6 +781,9 @@ static void HandleRegister(const PacketFrame &frame) {
     if (cid == 1) {
         if (type==0 && inst==0) { HandleSystemBlockRead(frame, bi, field, key); return; }
         HandleMultiEntryRead(frame, bi, PayloadBytes(frame));
+#ifdef USE_SCRIPTS
+        if (type == 0x3FE) { HandleScriptBlockRead(frame, bi, inst, field, key); return; }
+#endif
 #ifndef DISABLE_DYNAMIC_MEMORY
         if (type == 0x3FF) { HandleDynamicBlockRead(frame, bi, inst, field, key); return; }
 #else
@@ -675,6 +800,9 @@ static void HandleRegister(const PacketFrame &frame) {
         BlockMeta *desc = (BlockMeta*)(frame.payload+4);
         const uint8_t *val = frame.payload+8;
         uint16_t vlen = desc->Size;
+#ifdef USE_SCRIPTS
+        if (type == 0x3FE) { HandleScriptBlockWrite(frame, inst, field, key, desc, val, vlen); return; }
+#endif
 #ifndef DISABLE_DYNAMIC_MEMORY
         if (type == 0x3FF) { HandleDynamicBlockWrite(frame, inst, field, key, desc, val, vlen); return; }
 #else
