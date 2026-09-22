@@ -66,7 +66,7 @@ Future<void> runTests() async {
   if (!await setEntry(1, 1, DataType.enum_.value, [1])) fail('Type failed'); // Fill
   if (!await setEntry(1, 4, DataType.colour.value, [255, 0, 0, 255])) fail('Colour1 failed');
 
-  // Configure Display2 (GPIO0): render block 0, brightness 20, VYSIV1 layout.
+  // Configure Display2 (GPIO0): render block 0, brightness 20, LAY_1 layout.
   final writeBlock = await reg.writeBlockField(0x06, 1, 2, 0,
       BlockMeta(flagsAndType: DataType.integer.value, size: 4), intToBytes(0, 4));
   if (writeBlock == null) fail('set Display2.RenderBlock failed');
@@ -77,10 +77,10 @@ Future<void> runTests() async {
       BlockMeta(flagsAndType: DataType.number.value, size: 4), numberToBytes(20.0));
   if (brightness == null) fail('set Display2.Brightness failed');
   final layout = await reg.writeBlockField(0x06, 1, 3, 0,
-      BlockMeta(flagsAndType: DataType.filename.value, size: 6), 'VYSIV1'.codeUnits);
+      BlockMeta(flagsAndType: DataType.filename.value, size: 5), 'LAY_1'.codeUnits);
   if (layout == null) fail('set Display2.LayoutFile failed');
   // ignore: avoid_print
-  print('[D] Display2.RenderBlock=0 Brightness=20 LayoutFile=VYSIV1');
+  print('[D] Display2.RenderBlock=0 Brightness=20 LayoutFile=LAY_1');
 
   // Let the renderer run a few frames, then read back the achieved FPS.
   double fps = 0;

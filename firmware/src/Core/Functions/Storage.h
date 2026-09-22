@@ -79,6 +79,18 @@ static inline void PackName(const char *plain, char out[8])
         out[i] = ' ';
 }
 
+// Compares an on-flash (space-padded) record name against a plain C string. A raw
+// `memcmp(record, "SUBREQ", 8)` compares the record's padding spaces against the C
+// string's NUL terminator and always differs for names shorter than 8 chars - which
+// silently broke FindInFiletable/DeleteFile and left a new SUBREQ/DT_/DV_ record behind
+// on every save. Pack the plain name first so both sides use the same 8-byte form.
+static inline bool NameMatch(const char record[8], const char *plain)
+{
+    char packed[8];
+    PackName(plain, packed);
+    return memcmp(record, packed, 8) == 0;
+}
+
 // Full multi-file file system (Tamu + any target without USE_FIXED_STORAGE).
 #ifndef USE_FIXED_STORAGE
 class StorageSystem
@@ -98,8 +110,55 @@ public:
         }
 
         file_table_offset = FindFiletable();
-        if (file_table_offset == 0 || !ValidateTable())
+        if (file_table_offset == 0 || !ValidateTable()) {
             Format();
+        } else {
+            DeduplicateFiletable();
+            RemoveObsoleteFiles();
+        }
+    }
+
+    // Deletes files written by pre-release firmware that are no longer part of the spec.
+    // Dynamic memory moved from a single DYNMEM blob to the per-block DT_/DV_ files
+    // (Docs/Services/Register.md), so a leftover DYNMEM is dead weight.
+    void RemoveObsoleteFiles()
+    {
+        static const char *obsolete[] = {"DYNMEM"};
+        for (const char *name : obsolete) {
+            if (FileExists(name) != 0xFFFFFFFF) {
+                DeleteFile(name);
+                DeviceLog("STORAGE", "removed obsolete '%s'", name);
+            }
+        }
+    }
+
+    // Heals duplicate file names. An older RenameFile compared NUL-terminated C strings
+    // against space-padded records, so the superseded record was never invalidated and one
+    // new record was appended per save (many stale SUBREQ/DT_/DV_ entries). Keep the newest
+    // valid record for each name and invalidate the rest. Bounded by the written slot count,
+    // so it is O(entries^2) over a handful of records.
+    void DeduplicateFiletable()
+    {
+        uint32_t end = GetEndOfFiletable();
+        for (uint32_t i = 1; i < end; i++) {
+            FileEntry entry;
+            if (!ReadTableEntry(i, &entry)) return;
+            if (!FileEntryIsValid(entry.offset)) continue;
+            bool newer = false;
+            for (uint32_t j = i + 1; j < end; j++) {
+                FileEntry other;
+                if (!ReadTableEntry(j, &other)) break;
+                if (FileEntryIsValid(other.offset) && memcmp(other.name, entry.name, 8) == 0) {
+                    newer = true;
+                    break;
+                }
+            }
+            if (!newer) continue;
+            uint32_t zero[2] = {0, 0};
+            if (!Storage_FlashWrite(file_table_offset + i * TABLE_ENTRY_SIZE, &zero, sizeof(zero)))
+                return;
+            DeviceLog("STORAGE", "invalidated duplicate '%.8s'", entry.name);
+        }
     }
 
     // Returns the current file table pointer from the first page. Slots are scanned one at a
@@ -157,19 +216,22 @@ public:
         return true;
     }
 
-    // Returns the index of the file record matching `name`, or 0xFFFFFFFF if none.
+    // Returns the index of the NEWEST file record matching `name`, or 0xFFFFFFFF if none.
+    // The newest (highest slot) wins so a duplicate left by an older build cannot shadow
+    // the current file (RenameFile appends the replacement).
     uint32_t FindInFiletable(const char name[8])
     {
         if (file_table_offset == 0) return 0xFFFFFFFF;
         uint32_t capacity = TableCapacity();
+        uint32_t found = 0xFFFFFFFF;
         for (uint32_t i = 0; i < capacity; i++) {
             FileEntry entry;
             if (!ReadTableEntry(i, &entry))
-                return 0xFFFFFFFF;
-            if (FileEntryIsValid(entry.offset) && memcmp(entry.name, name, 8) == 0)
-                return i;
+                return found;
+            if (FileEntryIsValid(entry.offset) && NameMatch(entry.name, name))
+                found = i;
         }
-        return 0xFFFFFFFF;
+        return found;
     }
 
     // Returns the first non-written file record index (first slot with offset 0xFFFFFFFF).
@@ -204,18 +266,46 @@ public:
                                   &new_record, TABLE_ENTRY_SIZE);
     }
 
-    // Invalidates the file record matching `name` in place; true if it existed.
-    // Both the offset AND size are zeroed so a deleted record is unambiguous: the app's
-    // file browser skips (offset 0, size 0) records but lists (offset 0, size > 0) ones
-    // (a valid fixed-file in the reduced file system).
+    // Invalidates EVERY file record matching `name` in place. Both the offset AND size
+    // are zeroed so a deleted record is unambiguous: the app's file browser skips
+    // (offset 0, size 0) records but lists (offset 0, size > 0) ones (a valid fixed-file
+    // in the reduced file system). All matches are removed so pre-existing duplicates are
+    // fully deleted, not just the newest one.
     bool DeleteFilerecord(const char name[8])
     {
-        uint32_t idx = FindInFiletable(name);
-        if (idx == 0xFFFFFFFF) return true; // Already gone
-        if (idx == 0) return false;         // Entry 0 (the table itself) cannot be deleted
+        if (file_table_offset == 0) return true;
+        uint32_t capacity = TableCapacity();
+        for (uint32_t i = 1; i < capacity; i++) { // entry 0 (the table) is never deleted
+            FileEntry entry;
+            if (!ReadTableEntry(i, &entry))
+                return false;
+            if (FileSlotIsFree(entry.offset)) continue;
+            if (!NameMatch(entry.name, name)) continue;
+            uint32_t zero[2] = {0, 0};
+            if (!Storage_FlashWrite(file_table_offset + i * TABLE_ENTRY_SIZE, &zero, sizeof(zero)))
+                return false;
+        }
+        return true; // already gone is fine
+    }
 
-        uint32_t zero[2] = {0, 0};
-        return Storage_FlashWrite(file_table_offset + idx * TABLE_ENTRY_SIZE, &zero, sizeof(zero));
+    // Deletes every record whose 8 raw name bytes equal `name8` exactly. Used to heal
+    // records written by the old unpacked-name bug (a NUL inside the record name), which
+    // the space-padded lookups above cannot address.
+    bool DeleteFileExact(const char name8[8])
+    {
+        if (file_table_offset == 0) return true;
+        uint32_t capacity = TableCapacity();
+        for (uint32_t i = 1; i < capacity; i++) {
+            FileEntry entry;
+            if (!ReadTableEntry(i, &entry))
+                return false;
+            if (FileSlotIsFree(entry.offset)) continue;
+            if (memcmp(entry.name, name8, 8) != 0) continue;
+            uint32_t zero[2] = {0, 0};
+            if (!Storage_FlashWrite(file_table_offset + i * TABLE_ENTRY_SIZE, &zero, sizeof(zero)))
+                return false;
+        }
+        return true;
     }
 
     // Renames `old_name` to `new_name`: appends a record with the new name for the same
@@ -252,7 +342,7 @@ public:
             if (!ReadTableEntry(i, &e))
                 break;
             if (FileSlotIsFree(e.offset)) continue;
-            if (memcmp(e.name, old_name, 8) == 0 || memcmp(e.name, new_name, 8) == 0) {
+            if (NameMatch(e.name, old_name) || NameMatch(e.name, new_name)) {
                 if (!Storage_FlashWrite(file_table_offset + i * TABLE_ENTRY_SIZE,
                                         &zero, sizeof(zero)))
                     return false;
@@ -411,7 +501,7 @@ public:
         FileEntry new_record;
         new_record.offset = data_offset;
         new_record.size = size;
-        memcpy(new_record.name, name, 8);
+        PackName(name, new_record.name);
 
         // The committing record is not in the table yet. Reserve the area so a table
         // move triggered by WriteFilerecord can never relocate the file table onto

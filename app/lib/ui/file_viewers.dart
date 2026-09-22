@@ -183,13 +183,14 @@ class _FileViewPageState extends State<FileViewPage> {
   }
 
   /// Layout file: row-first W x H uint16 LED indexes, 0xFFFF = missing
-  /// (Docs/Modules/LED display.md). Header: uint16 width, uint16 height.
+  /// (Docs/Modules/LED display.md). Header is u8 width + u8 height (2 bytes), then
+  /// W*H little-endian uint16 indexes.
   Widget _layoutView() {
     final data = widget.data!;
-    if (data.length < 4) return _mono('(empty)');
-    final w = data[0] | (data[1] << 8);
-    final h = data[2] | (data[3] << 8);
-    if (w == 0 || h == 0 || w > 128 || h > 128 || 4 + w * h * 2 > data.length) {
+    if (data.length < 2) return _mono('(empty)');
+    final w = data[0];
+    final h = data[1];
+    if (w == 0 || h == 0 || w > 128 || h > 128 || 2 + w * h * 2 > data.length) {
       return _mono('Invalid layout header (${w}x$h)');
     }
     return SingleChildScrollView(
@@ -209,15 +210,15 @@ class _FileViewPageState extends State<FileViewPage> {
                 color: kSurfaceAlt,
                 alignment: Alignment.center,
                 child: Text(() {
-                  final i = 4 + (r * w + c) * 2;
+                  final i = 2 + (r * w + c) * 2;
                   final v = data[i] | (data[i + 1] << 8);
                   return v == 0xFFFF ? '-' : '$v';
                 }(),
                     style: TextStyle(
                         fontSize: 10,
                         color:
-                            data[4 + (r * w + c) * 2] == 0xFF &&
-                                    data[4 + (r * w + c) * 2 + 1] == 0xFF
+                            data[2 + (r * w + c) * 2] == 0xFF &&
+                                    data[2 + (r * w + c) * 2 + 1] == 0xFF
                                 ? Colors.white24
                                 : Colors.white)),
               ),

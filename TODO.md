@@ -80,6 +80,19 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
       restore on Tamu (`app/test/hil_backup_test.dart`).
 
 ### Notes
+- LED display layout file renamed to `LAY_1` (firmware `Blocks/Vysi1Display.h`): the
+  preload migrates a `VYSIV1` file (keeping any customization) or creates it from the
+  compiled-in 11x10 grid, and removes the obsolete `LAY5X5`/zero-padded `VYSIV1` records
+  (`DeleteFileExact`); `LayoutFile` now defaults to `LAY_1` and `Vysi1BootLayout` re-applies
+  the file after the boot recall. App layout viewer fixed: the header is u8 width + u8
+  height (2 bytes), not uint16 x2 - the old parser rejected the real file.
+- Storage name handling fixed (firmware `Core/Functions/Storage.h`): records are space-padded
+  but lookups/deletes/rename-invalidation compared them against NUL-terminated C strings, so
+  short names ("SUBREQ", "DT_000") never matched - every save appended another record and the
+  oldest was read. Now `NameMatch` packs the plain name first, `CreateFile` refuses an
+  existing name, `DeleteFilerecord` clears all matches, `FindInFiletable` prefers the newest,
+  and `Init` runs `DeduplicateFiletable` + `RemoveObsoleteFiles` (deletes the pre-release
+  `DYNMEM`) to heal existing devices.
 - Backup zip entries must be built from UTF-8 bytes, not `ArchiveFile.string` (archive
   3.6.1 sizes by UTF-16 code units but stores UTF-8, so any non-ASCII character such as the
   "±" in the accelerometer range labels wrote a wrong uncompressed size and strict unzippers

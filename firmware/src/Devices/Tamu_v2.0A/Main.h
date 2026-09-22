@@ -95,7 +95,9 @@ PinModeOutput(LED_NOTIFICATION_PIN);
 ESP_LOGI("INIT","b1 storage"); Storage.Init();
 ESP_LOGI("INIT","b2 backups"); LoadAllBackups(); // restores name + net-id from STATLOG too
 ScriptsBootLoad();         // loads SCR_XX scripts flagged load-on-boot (Docs/Services/Script.md)
-PreloadVysiLayout();       // Vysi v1.0 layout file (layouts/ dir) into storage
+PreloadVysiLayout();       // Vysi v1.0 layout file -> storage as "LAY_1"
+Vysi1BootLayout(Display1); // apply the (restored) layout file to each display
+Vysi1BootLayout(Display2);
 ESP_LOGI("INIT","b3 appif"); AppInterfaceInit();
 
     // BLE app link (Nordic UART service); advertised under the device version string.

@@ -83,6 +83,27 @@ void main() {
     expect(storageFileType('STATLOG '), StorageFileType.backup);
     expect(storageFileType('DYNMEM  '), StorageFileType.dynmem);
     expect(storageFileType('SNREG   '), StorageFileType.snreg);
+    expect(storageFileType('LAY_1   '), StorageFileType.layout);
+  });
+
+  testWidgets('layout file uses the u8 width/height header', (tester) async {
+    // Docs/Modules/LED display.md: u8 width, u8 height, then W*H u16 LE indexes.
+    // An 11x10 grid = 2 + 110*2 = 222 bytes (the preloaded LAY_1 size).
+    final data = <int>[
+      11, 10,
+      for (var i = 0; i < 110; i++) ...u16(i == 0 ? 0 : 0xFFFF),
+    ];
+    expect(data.length, 222);
+    await tester.pumpWidget(MaterialApp(
+      theme: buildTheme(),
+      home: Scaffold(
+          body: FileViewPage(deviceId: 1, name: 'LAY_1', size: data.length, data: data)),
+    ));
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    // Parsed as u8 x2 -> 11x10; the old uint16 header would have reported invalid.
+    expect(find.text('11x10 LEDs'), findsOneWidget);
+    expect(find.text('-'), findsWidgets); // 0xFFFF = missing cells
   });
 
   test('capabilities format human-readable', () {

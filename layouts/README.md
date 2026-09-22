@@ -20,4 +20,5 @@ W x H logical grid to physical LED strip positions.
   contents match the firmware's compiled-in default (`LayoutVysiv1_0` in
   `tamu/src/Blocks/Vysi1Display.h`), so the display renders identically whether the
   `LayoutFile` field is blank (built-in default) or set to this file. The file is
-  preloaded to the Tamu's storage at boot (name `VYSIV1 `, 222 bytes) when it is missing.
+  preloaded to the Tamu's storage at boot (name `LAY_1`, 222 bytes) when it is missing;
+  older `VYSIV1`/`LAY5X5` preloads are migrated/removed.

@@ -35,23 +35,33 @@ const uint8_t LayoutVysiv1_0[10 * 11]{
     0, 0, 18, 20, 37, 40, 57, 60, 76, 0, 0,
     0, 0, 0, 19, 38, 39, 58, 59, 0, 0, 0};
 
-// Preloads the Vysi v1.0 layout file into storage on first boot (the project's
-// layouts/ directory holds the same bytes). Only created when absent, so a user's
-// customized layout is never overwritten. File format per Docs/Modules/LED display.md:
-// u8 width, u8 height, then w*h u16 LE 0-based LED indices (0xFFFF = unused).
+// Preloads the Vysi v1.0 LED layout into storage as "LAY_1" on first boot (the
+// project's layouts/ directory holds the same bytes). Only created when absent, so a
+// user's customized layout is never overwritten. File format per Docs/Modules/LED
+// display.md: u8 width, u8 height, then w*h u16 LE 0-based LED indices (0xFFFF = unused).
 inline void PreloadVysiLayout()
 {
-    // Heal devices flashed with the first (buggy) preload: it wrote the name as
-    // "VYSIV1 \0" (NUL in byte 7) instead of the space-padded form, leaving an
-    // orphan entry that the app cannot delete (its delete pads with spaces).
-    const char legacy[8] = "VYSIV1 ";
-    if (Storage.FileExists(legacy) != 0xFFFFFFFF)
-        Storage.DeleteFile(legacy);
+    // Heal older preloads: an earlier 5x5 grid ("LAY5X5") and the first build's
+    // "VYSIV1 \0" name (a NUL inside the 8-byte record, unreachable through the
+    // space-padded lookups).
+    char name5[8];
+    PackName("LAY5X5", name5);
+    Storage.DeleteFile(name5);
+    const char legacyNul[8] = {'V', 'Y', 'S', 'I', 'V', '1', ' ', '\0'};
+    Storage.DeleteFileExact(legacyNul);
 
-    char name[8];
-    PackName("VYSIV1", name); // space-padded 8-byte storage name ("VYSIV1  ")
-    if (Storage.FileExists(name) != 0xFFFFFFFF)
-        return; // already present
+    // Adopt the previous Vysi layout file as LAY_1 (keeps a user's customization).
+    char lay1[8];
+    PackName("LAY_1", lay1);
+    if (Storage.FileExists(lay1) == 0xFFFFFFFF)
+    {
+        char legacy[8];
+        PackName("VYSIV1", legacy);
+        if (Storage.FileExists(legacy) != 0xFFFFFFFF)
+            Storage.RenameFile(legacy, lay1);
+    }
+    if (Storage.FileExists(lay1) != 0xFFFFFFFF)
+        return; // already present (renamed or preloaded earlier)
 
     uint8_t buf[2 + 11 * 10 * 2];
     buf[0] = 11; // width
@@ -60,9 +70,9 @@ inline void PreloadVysiLayout()
     for (uint32_t i = 0; i < 11 * 10; i++)
         idx[i] = (LayoutVysiv1_0[i] == 0) ? 0xFFFF : (uint16_t)(LayoutVysiv1_0[i] - 1);
 
-    if (!Storage.CreateFile(name, sizeof(buf)))
+    if (!Storage.CreateFile(lay1, sizeof(buf)))
         return;
-    Storage.WriteToFile(name, 0, sizeof(buf), (const char *)buf);
+    Storage.WriteToFile(lay1, 0, sizeof(buf), (const char *)buf);
 }
 
 // Identity 2x3 affine ([1 0 0; 0 1 0]), the default Offset transform.
@@ -83,10 +93,11 @@ struct Vysi1Struct
     Number Brightness = 30; //%
     Matrix<2, 3> Offset = IdentityAffine23(); // 2x3 transformation (0,0 position + rotation)
     int32_t RenderBlock = -1; // Signed index into dynamic_block_registry; -1 = none (invalid)
-    // Layout File Name: plain 8-char storage file name, space padded. Default is blank =
-    // built-in default layout. Written via trigger, which loads the layout file
+    // Layout File Name: plain 8-char storage file name, space padded. Defaults to the
+    // preloaded "LAY_1" file (identical to the compiled-in layout); a blank name means
+    // the built-in default layout. Written via trigger, which loads the layout file
     // immediately (write is rejected if the file cannot be loaded).
-    char LayoutFile[8] = {' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '};
+    char LayoutFile[8] = {'L', 'A', 'Y', '_', '1', ' ', ' ', ' '};
     Number RefreshRate;     // Out: achieved render rate in FPS (averaged)
 };
 
@@ -235,6 +246,19 @@ public:
         return true;
     }
 };
+
+// Boot helper: migrates a persisted old-format "VYSIV1" reference to the renamed
+// "LAY_1", then loads the named layout file (blank name = compiled-in default). The
+// boot recall restores the LayoutFile RAM field but does not re-run its write trigger,
+// so the layout must be re-applied explicitly.
+inline void Vysi1BootLayout(Vysi1Display &disp)
+{
+    char legacy[8];
+    PackName("VYSIV1", legacy);
+    if (memcmp(disp.Data.LayoutFile, legacy, 8) == 0)
+        PackName("LAY_1", disp.Data.LayoutFile);
+    disp.LoadLayoutFromStorage();
+}
 
 // Layout-file write trigger: stores the new Name and loads the layout file immediately
 // so the stored name always matches the layout in use. `block.Data` is the first member
