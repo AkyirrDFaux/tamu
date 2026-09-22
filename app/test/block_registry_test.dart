@@ -3,7 +3,7 @@ import 'package:tamuapp/core/block_registry.dart';
 import 'package:tamuapp/core/types.dart';
 
 /// Guards the app's block/field metadata against the documented schemas
-/// (Docs/Modules and blocks/*.md and Docs/Modules/Generic system blocks.md). The firmware
+/// (Docs/Modules and blocks/*.md and Docs/Modules and blocks/Generic system blocks.md). The firmware
 /// schemas must match these field counts/order.
 void main() {
   test('block registry matches the documented schemas', () {

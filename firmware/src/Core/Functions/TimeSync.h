@@ -1,153 +1,100 @@
 #pragma once
 
 #include "Core/Functions/Packet.h"
-#include "Core/Functions/SNDB.h"
+#include "Core/Functions/Device.h"
+#include "Core/Functions/SysFunctions.h"
 
 #ifdef TYPE_CORE
 
-#define TIMESYNC_SAMPLES      3
-#define TIMESYNC_GAP_MS       3000
-#define TIMESYNC_INTERVAL_MS  (5 * 60 * 1000)
-#define TIMESYNC_MAX_DEVICES  64
-
-// Core provides periodic time sync (Docs/Services/Device service.md):
-// about once per few minutes, at least 3 samples with a short delay are
-// taken and averaged before the offset is pushed to the node (CID 12).
-class TimeSyncService
+// Core time synchronization (Docs/Services/System Block and Device Commands.md).
+//
+// TimeSync is SYNCHRONIZED-DEVICE INITIATED: a device that wants to be synced sends
+// Device service CID 3 (its local time); the peer answers with (echo, receive time, send
+// time); the INITIATOR computes the offset locally and applies it to its own clock. The
+// core never pushes offsets to other devices - it only RESPONDS to a node's TimeSync, and
+// syncs ITSELF to the longest-running core on the bus.
+//
+// The core finds that reference core with Core discover (CID 10, broadcast to 3F.1),
+// remembers the responder with the highest uptime, then TimeSyncs to it. The CID 3
+// response path (Core/Services/Device.h) applies the resulting offset to this core.
+class CoreTimeSyncService
 {
 public:
-    enum State { Idle, Waiting };
+    static const uint32_t DISCOVER_INTERVAL_MS = 150000; // ~2.5 min (docs "2-3 minutes")
+    static const uint32_t DISCOVER_WINDOW_MS   = 500;    // docs: responses within 500 ms
 
-    // Called on the main loop; starts a sync round when due and sends/retries samples while waiting.
-    // Scheduling uses signed differences of the uint32 millisecond counters so the
-    // comparisons stay correct across UptimeMs wraparound.
+    // Main-loop tick: starts a discovery round when due and closes it after the window.
     void Tick(uint32_t now_ms)
     {
-        if (state == Idle)
+        if (phase == Idle)
         {
-            if ((int32_t)(now_ms - round_due_ms) >= 0)
-                BeginRound();
+            if ((int32_t)(now_ms - due_ms) >= 0)
+                StartDiscover(now_ms);
         }
-        else if ((int32_t)(now_ms - next_send_ms) >= 0)
+        else if ((int32_t)(now_ms - deadline_ms) >= 0)
         {
-            if (missed >= TIMESYNC_SAMPLES)
-                NextTarget();
-            else
-                SendSample();
+            FinishDiscover();
         }
     }
 
-    // Accumulates a time-offset sample from a target; moves to the next target once 3 samples are collected.
-    void HandleResponse(uint16_t target, int32_t offset)
+    // Called for every Core-discover RESPONSE (Device service CID 10).
+    void HandleDiscoverResponse(const PacketFrame &frame)
     {
-        if (state != Waiting || current_target >= target_count)
+        if (phase != Discovering)
             return;
-        if (target != targets[current_target])
+        if (PayloadBytes(frame) < 14 + 4)
             return;
-
-        offset_sum += offset;
-        sample_count++;
-        missed = 0;
-
-        if (sample_count >= TIMESYNC_SAMPLES)
-            NextTarget();
-        else
-            next_send_ms = DeviceStatus.UptimeMs + TIMESYNC_GAP_MS;
+        const SerialNumber *sn = reinterpret_cast<const SerialNumber *>(frame.payload);
+        if (*sn == GetSerialNumber())
+            return; // our own broadcast echoed back by the local dispatch
+        uint32_t uptime = 0;
+        memcpy(&uptime, frame.payload + 14, sizeof(uptime));
+        if (uptime > best_uptime)
+        {
+            best_uptime = uptime;
+            best_addr = frame.id_src;
+        }
     }
 
 private:
-    State state = Idle;
-    uint16_t targets[TIMESYNC_MAX_DEVICES];
-    uint16_t target_count = 0;
-    uint16_t current_target = 0;
-    uint8_t sample_count = 0;
-    uint8_t missed = 0;
-    int64_t offset_sum = 0;
-    uint32_t round_due_ms = 0;
-    uint32_t next_send_ms = 0;
+    enum Phase : uint8_t { Idle, Discovering };
 
-    // Builds the target list from the SN registry and starts the first sample round.
-    void BeginRound()
+    Phase phase = Idle;
+    uint32_t due_ms = 0;
+    uint32_t deadline_ms = 0;
+    uint16_t best_addr = 0;
+    uint32_t best_uptime = 0;
+
+    void StartDiscover(uint32_t now_ms)
     {
-        target_count = 0;
-        SNDB::IterReset();
-        RegistryEntry entry;
-        while (SNDB::IterNext(entry))
-        {
-            if (entry.shortID == DeviceStatus.ShortAddress)
-                continue;
-            if (target_count < TIMESYNC_MAX_DEVICES)
-                targets[target_count++] = entry.shortID;
-        }
-
-        if (target_count == 0)
-        {
-            state = Idle;
-            round_due_ms = DeviceStatus.UptimeMs + TIMESYNC_INTERVAL_MS;
-            return;
-        }
-
-        current_target = 0;
-        sample_count = 0;
-        missed = 0;
-        offset_sum = 0;
-        state = Waiting;
-        SendSample();
+        best_addr = 0;
+        best_uptime = 0;
+        PacketConstruct(&tx_frame, ADDR_ALL_CORES,
+                        MakeService(ServiceType::Device, 10),
+                        MakeService(ServiceType::Device, 10),
+                        FLAG_REQACK | FLAG_START | FLAG_STOP, nullptr, 0);
+        DispatchPacket(tx_frame);
+        deadline_ms = now_ms + DISCOVER_WINDOW_MS;
+        phase = Discovering;
     }
 
-    // Sends one time-sample request (CID 3 per docs 00.03) to the current target and schedules the retry.
-    void SendSample()
+    void FinishDiscover()
     {
-        if (current_target >= target_count)
-            return;
+        phase = Idle;
+        due_ms = DeviceStatus.UptimeMs + DISCOVER_INTERVAL_MS;
+        if (best_addr == 0 || best_addr == DeviceStatus.ShortAddress)
+            return; // no other core on the bus: this core is the reference
 
         uint32_t sent_time = TimeFromBoot();
-        PacketConstruct(&tx_frame, targets[current_target],
-                         MakeService(ServiceType::Device, 3),
-                         MakeService(ServiceType::Device, 3),
-                         FLAG_REQACK | FLAG_START | FLAG_STOP,
-                         (const uint8_t *)&sent_time, sizeof(uint32_t));
-        DispatchPacket(tx_frame);
-
-        missed++;
-        next_send_ms = DeviceStatus.UptimeMs + TIMESYNC_GAP_MS;
-    }
-
-    // Pushes the averaged offset to the current target, then advances to the next one or ends the round.
-    void NextTarget()
-    {
-        if (sample_count >= TIMESYNC_SAMPLES)
-            SendTimeOffset(targets[current_target], (int32_t)(offset_sum / TIMESYNC_SAMPLES));
-
-        current_target++;
-        sample_count = 0;
-        missed = 0;
-        offset_sum = 0;
-
-        if (current_target >= target_count)
-        {
-            state = Idle;
-            round_due_ms = DeviceStatus.UptimeMs + TIMESYNC_INTERVAL_MS;
-        }
-        else
-        {
-            SendSample();
-        }
-    }
-
-    // Sends the computed time offset (CID 4, docs 00.04) to a single node.
-    void SendTimeOffset(uint16_t target, int32_t offset)
-    {
-        PacketConstruct(&tx_frame, target,
-                         MakeService(ServiceType::Device, 4),
-                         MakeService(ServiceType::Device, 4),
-                         FLAG_START | FLAG_STOP,
-                         (const uint8_t *)&offset, sizeof(int32_t));
+        PacketConstruct(&tx_frame, best_addr,
+                        MakeService(ServiceType::Device, 3),
+                        MakeService(ServiceType::Device, 3),
+                        FLAG_REQACK | FLAG_START | FLAG_STOP,
+                        (const uint8_t *)&sent_time, sizeof(sent_time));
         DispatchPacket(tx_frame);
     }
 };
 
-TimeSyncService TimeSync;
+CoreTimeSyncService CoreTimeSync;
 
 #endif // TYPE_CORE
-

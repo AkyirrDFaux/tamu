@@ -118,9 +118,8 @@ void DispatchPacket(const PacketFrame &frame)
                 case ServiceType::App:
                     // Responses to app transactions (SRV TGT type == App, CID = the app's
                     // transaction ID). Forward to the attached app's TX stream; silently
-                    // count strays when no link is active.
-                    if (!AppInterfaceSend(frame))
-                        AppStrayFrames++;
+                    // drop strays when no link is active.
+                    (void)AppInterfaceSend(frame);
                     break;
                 #endif
 

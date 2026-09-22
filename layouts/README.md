@@ -1,6 +1,6 @@
 # Display layout files
 
-Layout files for the LED display blocks (Docs/Modules/LED display.md). Each file maps a
+Layout files for the LED display blocks (Docs/Modules and blocks/LED display.md). Each file maps a
 W x H logical grid to physical LED strip positions.
 
 ## Format
@@ -18,7 +18,7 @@ W x H logical grid to physical LED strip positions.
 
 - `Vysi v1.0.lay` — the 11x10 layout of the Tamu v2.0A's Vysi v1.0 LED display. Its
   contents match the firmware's compiled-in default (`LayoutVysiv1_0` in
-  `tamu/src/Blocks/Vysi1Display.h`), so the display renders identically whether the
+  `firmware/src/Blocks/Vysi1Display.h`), so the display renders identically whether the
   `LayoutFile` field is blank (built-in default) or set to this file. The file is
   preloaded to the Tamu's storage at boot (name `LAY_1`, 222 bytes) when it is missing;
   older `VYSIV1`/`LAY5X5` preloads are migrated/removed.

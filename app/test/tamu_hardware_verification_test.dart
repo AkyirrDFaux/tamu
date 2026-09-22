@@ -174,4 +174,73 @@ void main() {
     expect(typeSet.contains(BlockType.button.value), isTrue);
     expect(typeSet.contains(BlockType.led.value), isTrue);
   }, timeout: const Timeout(Duration(seconds: 60)));
+
+  // HIL: System Name write clamps to the documented 16 bytes (and can never write the
+  // terminating NUL past the firmware's 24-byte DeviceNameBuffer).
+  test('HIL: System Name write clamps to 16 bytes', skip: skipReason, () async {
+    final reg = RegisterClient(deviceId: 1);
+    final before = await reg.readField(6, 0);
+    expect(before, isNotNull);
+    final original = String.fromCharCodes(before!.value).replaceAll('\x00', '');
+    expect(original, isNotEmpty);
+
+    const long = 'ABCDEFGHIJKLMNOPQRSTUV'; // 22 chars
+    final wrote = await reg.writeBlockField(
+        0,
+        0,
+        6,
+        0,
+        BlockMeta(
+            flagsAndType: DataType.string.value | FieldFlags.persistent,
+            size: long.length),
+        long.codeUnits);
+    expect(wrote, isNotNull);
+    final after = await reg.readField(6, 0);
+    expect(after!.value.length, lessThanOrEqualTo(16));
+    expect(String.fromCharCodes(after.value).replaceAll('\x00', ''),
+        'ABCDEFGHIJKLMNOP');
+
+    // Restore the original (unpersisted) name.
+    await reg.writeBlockField(
+        0,
+        0,
+        6,
+        0,
+        BlockMeta(
+            flagsAndType: DataType.string.value | FieldFlags.persistent,
+            size: original.length),
+        original.codeUnits);
+    expect((await reg.readField(6, 0))!.value, isNotEmpty);
+  }, timeout: const Timeout(Duration(seconds: 60)));
+
+  // HIL: TimeSync is synchronized-device initiated - the DAS syncs ITSELF to the core, so
+  // their "Now" clocks agree. The core only answers; it never pushes an offset.
+  test('HIL: DAS clock is synced to the core', skip: skipReason, () async {
+    final db = DeviceDatabase.instance;
+    await db.refreshRuntime(0);
+    await Future.delayed(const Duration(seconds: 2));
+    await db.refreshRuntime(0);
+    DeviceEntry? das;
+    for (final d in db.all) {
+      if (d.type == DeviceType.dualAnalogSensor) {
+        das = d;
+        break;
+      }
+    }
+    if (das == null) {
+      // ignore: avoid_print
+      print('DAS not found - skipping');
+      return;
+    }
+    final coreNow = await RegisterClient(deviceId: 1).readField(3, 1); // System field 3.1
+    final dasNow = await RegisterClient(deviceId: das.id).readField(3, 1);
+    expect(coreNow, isNotNull);
+    expect(dasNow, isNotNull);
+    final c = uint32FromBytes(coreNow!.value);
+    final d = uint32FromBytes(dasNow!.value);
+    // ignore: avoid_print
+    print('[TIMESYNC] coreNow=$c dasNow=$d delta=${(c - d).abs()}');
+    expect((c - d).abs(), lessThan(5000),
+        reason: 'the DAS should have synced its clock to the core');
+  }, timeout: const Timeout(Duration(seconds: 60)));
 }

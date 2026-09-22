@@ -68,7 +68,8 @@ bool Storage_FlashInit()
 // Reads `size` bytes from flash at `offset` into `data` (0x00000000 domain).
 uint32_t Storage_FlashRead(uint32_t offset, void *data, uint32_t size)
 {
-    if (offset + size > STORAGE_FLASH_SIZE)
+    // Overflow-safe bound: `offset + size` could wrap for a huge size.
+    if (offset > STORAGE_FLASH_SIZE || size > STORAGE_FLASH_SIZE - offset)
         return 0;
     memcpy(data, (const void *)(STORAGE_CHIP_BASE + offset), size);
     return size;
@@ -81,7 +82,12 @@ bool Storage_FlashWrite(uint32_t offset, const void *data, uint32_t size)
 {
     if (size == 0)
         return true;
-    if (offset + size > STORAGE_FLASH_SIZE)
+    if (offset > STORAGE_FLASH_SIZE || size > STORAGE_FLASH_SIZE - offset)
+        return false;
+    // The read-modify-write below indexes `maddr[byte_addr - faddr]`; for the leading
+    // partial word `byte_addr < faddr`, so require a word-aligned target to keep that
+    // index non-negative (all storage structures are 4-byte aligned).
+    if (offset & 3u)
         return false;
 
     FLASH_Unlock();

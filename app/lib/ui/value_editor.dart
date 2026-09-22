@@ -120,27 +120,9 @@ Future<List<int>?> _editSerialNumber(
   );
 }
 
-String dataTypeLabel(DataType type) => switch (type) {
-      DataType.none => 'None',
-      DataType.undefined => 'Undefined',
-      DataType.sn => 'Serial number',
-      DataType.id => 'ID',
-      DataType.uint32 => 'Uint32',
-      DataType.number => 'Number',
-      DataType.devType => 'Device type',
-      DataType.netAddr => 'Net address',
-      DataType.bool_ => 'Bool',
-      DataType.vector => 'Vector',
-      DataType.matrix => 'Matrix',
-      DataType.enum_ => 'Enum',
-      DataType.colour => 'Colour',
-      DataType.integer => 'Index',
-      DataType.string => 'String',
-      DataType.filename => 'Filename',
-      DataType.deleted => 'Deleted',
-      DataType.geometry => 'Geometry dict',
-      DataType.texture => 'Texture dict',
-    };
+/// Human-readable data-type name (shared with the semantic backup format, so a label
+/// and a stored type word never drift apart).
+String dataTypeLabel(DataType type) => dataTypeWord(type);
 
 String formatValue(DataType type, List<int> bytes) {
   switch (type) {
@@ -177,8 +159,10 @@ String formatValue(DataType type, List<int> bytes) {
       if (bytes.length < 14) return '-';
       return serialNumberToHex(bytes.sublist(0, 14));
     case DataType.vector:
-      if (bytes.length < 12) return '-';
-      return '[${List.generate(3, (i) => _num3(numberFromBytes(bytes, i * 4))).join(', ')}]';
+      // Size-flexible: format however many 4-byte Numbers are present (Vector2/3/N).
+      if (bytes.length < 4) return '-';
+      final n = bytes.length ~/ 4;
+      return '[${List.generate(n, (i) => _num3(numberFromBytes(bytes, i * 4))).join(', ')}]';
     case DataType.matrix:
       // Matrix buffer: uint16 height, uint16 width, then height*width Numbers.
       if (bytes.length < 8) return '-';

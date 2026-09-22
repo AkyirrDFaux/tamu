@@ -25,6 +25,9 @@ bool AppConnected = false;
 
 #define CHIP_ID_ADDR  0x1FFFF7E8 // Fixed memory-mapped location of the chip's unique ID
 
+// Node time-sync interval (docs: "repeated at random within the next 2-3 minutes").
+#define NODE_TIME_SYNC_INTERVAL_MS 150000u
+
 // Device identity (mandatory, see Core/Functions/Device.h).
 extern const DeviceType kDeviceType = DeviceType::DualAnalogSensor;
 extern const uint32_t kCapabilities = Capabilities::Node | Capabilities::Subscriptions;
@@ -116,11 +119,11 @@ int main(void)
     }
     PinLow(LEDR);
 
-    // Initial time sync: send CID 11 to the core so it replies with its own
-    // timestamps and we can compute the offset locally (Docs/Services/Device
-    // service.md: "the newly discovered device sends a single initial timesync
-    // packet to the core to sync it's own time").
-    {
+    // TimeSync is synchronized-device initiated: this node syncs ITSELF to the core by
+    // sending Device service CID 3 and computing the offset locally from the reply. Repeat
+    // every 2-3 minutes, jittered so devices do not all burst at once
+    // (Docs/Services/System Block and Device Commands.md).
+    auto sendTimeSync = []() {
         uint32_t time_sent = TimeFromBoot();
         PacketConstruct(&tx_frame, 1,
                          MakeService(ServiceType::Device, 3),
@@ -128,8 +131,11 @@ int main(void)
                          FLAG_REQACK | FLAG_START | FLAG_STOP,
                          (const uint8_t *)&time_sent, sizeof(uint32_t));
         DispatchPacket(tx_frame);
-        // ProcessBus() in the main loop will handle the reply.
-    }
+        // ProcessBus() in the main loop handles the reply (applies the offset).
+    };
+    sendTimeSync(); // initial sync right after discovery
+    uint32_t last_sync_ms = DeviceStatus.UptimeMs;
+    uint32_t next_sync_ms = NODE_TIME_SYNC_INTERVAL_MS + (RawRand() % 60000);
 
     uint32_t last_sample_ms = 0;
     uint32_t last_sample2_ms = 0;
@@ -139,6 +145,13 @@ int main(void)
         TimeUpdate();
         ProcessBus();
         SubscriptionsTick(DeviceStatus.UptimeMs); // periodic provider triggers (main loop)
+
+        // Re-sync to the core every ~2-3 min (synchronized-device initiated).
+        if ((DeviceStatus.UptimeMs - last_sync_ms) >= next_sync_ms) {
+            last_sync_ms = DeviceStatus.UptimeMs;
+            next_sync_ms = NODE_TIME_SYNC_INTERVAL_MS + (RawRand() % 60000);
+            sendTimeSync();
+        }
 
         DasButtonUpdate(); // Button block edge detection/counter
 

@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'connection.dart';
 import 'diagnostics.dart';
 import 'protocol.dart';
+import 'register_client.dart';
 import 'types.dart';
 
 /// Block type of a loaded script (Docs/Services/Register.md: "Scripts 0x3FE").
@@ -142,15 +143,16 @@ class ScriptClient {
   }
 
   /// Reads one Register entry (CID 1). Returns null when the entry does not exist.
-  Future<ScriptEntry?> readEntry(int inst, int field, int key) async {    final reply = await _request(
+  Future<ScriptEntry?> readEntry(int inst, int field, int key) async {
+    final reply = await _request(
       ServiceType.register,
       1,
       payload: _bi(inst, field, key),
     );
     if (reply == null || reply.length < 8) return null;
     final meta = BlockMeta.fromBytes(reply, 4);
-    final value = RegisterValueSlice.slice(reply, meta.size);
-    return ScriptEntry(meta: meta, value: value);
+    return ScriptEntry(
+        meta: meta, value: RegisterClient.valueSlice(reply, meta.size));
   }
 
   /// Reads the block meta of a loaded script (field 0xFF): snapshot name + field count.
@@ -179,16 +181,5 @@ class ScriptClient {
     final reply = await _request(ServiceType.script, 8, payload: [loadedId & 0xFF]);
     if (reply == null || reply.isEmpty) return null;
     return reply[0];
-  }
-}
-
-/// Slices a Register reply value (4-byte BlockInfo echo + 4-byte BlockMeta + value).
-class RegisterValueSlice {
-  static List<int> slice(List<int> reply, int size) {
-    if (size <= 0) return <int>[];
-    const valueOffset = 8;
-    final available = reply.length - valueOffset;
-    final n = size > available ? available : size;
-    return reply.sublist(valueOffset, valueOffset + n);
   }
 }

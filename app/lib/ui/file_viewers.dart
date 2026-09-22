@@ -3,8 +3,8 @@
 //
 // - FileViewPage: previews one file's content (SNREG registry, LAY LED-index
 //   grid, text, hex).
-// - MemoryBackupView: decodes the SYSMEM / DYNMEM backup files (the serialised
-//   system-block / dynamic registry).
+// - MemoryBackupView: decodes the STATLOG / SUBREQ registry backups and the
+//   DT_ dynamic block table.
 library;
 
 import 'package:flutter/material.dart';
@@ -195,7 +195,7 @@ class _FileViewPageState extends State<FileViewPage> {
   }
 
   /// Layout file: row-first W x H uint16 LED indexes, 0xFFFF = missing
-  /// (Docs/Modules/LED display.md). Header is u8 width + u8 height (2 bytes), then
+  /// (Docs/Modules and blocks/LED display.md). Header is u8 width + u8 height (2 bytes), then
   /// W*H little-endian uint16 indexes.
   Widget _layoutView() {
     final data = widget.data!;
@@ -300,15 +300,13 @@ class _FileViewPageState extends State<FileViewPage> {
 }
 
 // ---------------------------------------------------------------------------
-// Memory backup file decoders (Docs/Services/System|Dynamic Memory.md:
-// "the backup file is the serialised registry").
-//
-// Dynamic format (SerializeRegistry):  u16 block_count, then per block
-//   u8 name_len + name, u16 type, u16 map_count, map (BlockMeta x map_count,
-//   4 B each), u16 data_len + data. Field/dict data sits at aligned offsets
-//   (GetOffset sums AlignTo4(Size)).
-// System format (SerializeSystemBlocks):   u16 writable_blocks, then per block
-//   u16 block_index, u16 field_count, then per field u16 index, u16 vlen, value.
+// Registry backup decoders (firmware layouts, Docs/Services/Register.md):
+//   STATLOG (StaticMemory.h): u8 block_idx, u8 field, u16 pad, BlockMeta[4],
+//     value[4-aligned]; block_idx 0xFF ends the log, 0xFE marks a System field.
+//   SUBREQ (Subscriptions.h SaveRequesterTable): u8 count, then 26 B per entry
+//     (target, source, provider, trigger + pad, period, min, deadzone).
+//   DT_<hex2> (Memory.h SaveDynamicBlockFiles): u8 name_len, name, u16 type,
+//     u16 entry_count, then fieldKey/flagsAndType/size/pad per entry.
 // ---------------------------------------------------------------------------
 
 class MemoryBackupView extends StatelessWidget {
@@ -357,7 +355,7 @@ class MemoryBackupView extends StatelessWidget {
         contentPadding: const EdgeInsets.only(left: 40, right: 12),
         title: Text(
             'f${fieldKey >> 8}.k${fieldKey & 0xFF}: ${dataTypeLabel(meta.dataType)}'
-            '  ${size} B',
+            '  $size B',
             style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
         subtitle: Text(flags.isEmpty ? '(no flags)' : flags.join(' · '),
             style: const TextStyle(fontSize: 10, color: Colors.white38)),

@@ -6,7 +6,7 @@
 #include "Core/Types/Number.h"
 
 // Device identity and status. These are owned by the Device service (see
-// Docs/Services/Device service.md) and are no longer System Memory blocks; they are reported
+// Docs/Services/System Block and Device Commands.md) and are no longer System Memory blocks; they are reported
 // through the service functions (Device type, Serial number, Capability, Uptime, Loop Time).
 
 struct SerialNumber{
@@ -24,7 +24,7 @@ struct SerialNumber{
 
 // Device identity is mandatory per build: the device-type/capability constants and the
 // GetSerialNumber() getter are declared in Core/Functions/Device.h and defined per device
-// (see Docs/Services/Device service.md).
+// (see Docs/Services/System Block and Device Commands.md).
 
 struct DeviceStatusStruct
 {

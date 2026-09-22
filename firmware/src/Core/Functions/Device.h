@@ -36,7 +36,7 @@ const SerialNumber &GetSerialNumber();
 // Global device name string (set per device, e.g. Main.cpp)
 extern const char* DeviceName;
 extern char DeviceNameBuffer[24];
-// Device name persistence (Docs/Services/Device service.md: "Device name is stored in
+// Device name persistence (Docs/Services/System Block and Device Commands.md: "Device name is stored in
 // standalone file to allow persistence"). Implemented in Core/Services/Device.h.
 // Device software version string (provided per device, e.g. Devices/<device>/Main.h)
 extern const char* DeviceVersion;
@@ -49,7 +49,7 @@ inline bool &CoreCollisionFlag()
     return collision;
 }
 
-// Identify (Device service CID 2, Docs/Services/Device service.md): "True = blink red
+// Identify (Device service CID 2, Docs/Services/System Block and Device Commands.md): "True = blink red
 // led fast, False = leave led alone". The flag is set by the Device service handler and
 // expires after a short window; each device's main loop blinks its red/notification LED
 // while DeviceIdentifyActive() is true. Function-local statics in inline functions are

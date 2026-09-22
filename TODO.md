@@ -80,6 +80,23 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
       restore on Tamu (`app/test/hil_backup_test.dart`).
 
 ### Notes
+- TimeSync reworked to the documented model: **synchronized-device initiated**. Nodes (and
+  a core syncing to the longest-running core) send Device CID 3 and apply the offset to
+  their own clock; the core only answers and never pushes offsets. Removed the old
+  `TimeSyncService` push + undocumented CID 4; added `CoreTimeSyncService` (core
+  self-sync via Core-discover) and DAS periodic re-sync (2-3 min, jittered).
+- Third cleanup round: fixed the SNDB serial validation (`int.tryParse` overflowed 64-bit),
+  capped the device-name editor at 16 bytes, made `formatValue` size-flexible for vectors,
+  gated the System version decoder, fixed the DAS `Storage_FlashWrite/Read` bounds, the
+  `RebuildSpaces` OOM guard, unused-variable/dangling-else/sign-compare/deprecated warnings,
+  and a batch of dead code (`LogEntry.detail`, `RegisterValueSlice`, `AppStrayFrames`).
+- Second cleanup round: clamped the System Name write to the documented 16 bytes (the
+  old clamp of 24 could write the terminating NUL one byte past `DeviceNameBuffer[24]`),
+  routed the TimeSync response through `PacketFinalize` instead of a hand-rolled CRC,
+  removed dead code (`AlignTo4`, `MakeBlockInfo`, `Pulse` TEMP-DEBUG, `RemoveBlock`,
+  the unused dynamic-block type picker), reused `RegisterClient` in `DeviceDatabase`,
+  made `dataTypeLabel` delegate to `dataTypeWord`, and fixed every stale doc-path/format
+  comment (SYSMEM/DYNMEM references, wrong `Docs/...` locations).
 - Packet wire order now matches `Docs/RSBus and Packets.md` (CRC8 | Flags | Priority |
   Length | SRC | CMD | TGT | TRID | Payload); static_asserts pin the offsets and the app
   mirrors it. **Wire-breaking: Tamu + DAS + app must be flashed together.**

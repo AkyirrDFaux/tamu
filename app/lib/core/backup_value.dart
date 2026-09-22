@@ -49,7 +49,6 @@ String backupFileKind(String name) {
   final upper = name.replaceAll('\x00', '').trim().toUpperCase();
   if (upper.startsWith('SCR_')) return 'Script';
   if (upper == 'SNREG') return 'Serial registry';
-  if (upper == 'DYNMEM') return 'Dynamic memory backup';
   if (upper == 'STATLOG' || upper == 'SUBREQ') return 'Registry backup';
   if (upper.startsWith('DV_') || upper.startsWith('DT_')) return 'Registry backup';
   if (upper.startsWith('LAY') || upper.endsWith('.LAY')) return 'LED layout';

@@ -914,7 +914,7 @@ Future<void> _loadVisibleFields() async {
 
     // Field display: resolves the registry's per-type field metadata for enum labels and
     // the DAS ResistiveMeasure custom view (Sensor Type at field 1, Measured Value at
-    // field 4 with a sensor-derived unit + fuzzy lux level for the LDR).
+    // field 3 with a sensor-derived unit + fuzzy lux level for the LDR).
     String displayValue() {
       if (isSystemField) return formatValue(field.meta.dataType, field.value);
       final blockInfo = blockInfoFor(BlockType.fromValue(blockType));
@@ -930,7 +930,9 @@ Future<void> _loadVisibleFields() async {
               ? sensorTypeLabel(sensor)
               : formatValue(field.meta.dataType, field.value);
         }
-        if (fieldIndex == 4 && sensor >= 0 && field.value.length >= 4) {
+        // Measured Value is field 3 (0 Sampling Rate, 1 Sensor Type, 2 Filter
+        // Coefficient, 3 Measured Value, 4 Current Range).
+        if (fieldIndex == 3 && sensor >= 0 && field.value.length >= 4) {
           final numVal = numberFromBytes(field.value);
           final unit = sensorUnits[sensor] ?? '';
           var text = formatValue(DataType.number, field.value);
@@ -1092,46 +1094,29 @@ Future<void> _loadVisibleFields() async {
       _snack('Only dynamic blocks can be renamed');
       return;
     }
-    final result = await promptBlockNameAndType(context,
-        title: 'Edit block',
-        initialName: block.name,
-        fixedType: BlockType.dynamic,
-        availableTypes: _availableBlockTypes());
+    final result = await promptBlockName(context,
+        title: 'Edit block', initialName: block.name);
     if (result == null || !mounted) return;
-    final (name, type, _) = result;
-    
+    final (name, _) = result;
+
     final ok = await _client.writeDynamicBlockMeta(
         DynBlock(index: block.inst, meta: block.meta, name: block.name),
-        name, type);
+        name, BlockType.dynamic);
     _snack(ok ? 'Block updated' : 'Update failed');
     await _refresh();
   }
 
   Future<void> _createBlock() async {
     if (!mounted) return;
-    // Dynamic blocks are always the Dynamic type; no type selection needed.
-    final result = await promptBlockNameAndType(context,
-        title: 'New dynamic block', withIndex: true, fixedType: BlockType.dynamic);
+    final result = await promptBlockName(context,
+        title: 'New dynamic block', withIndex: true);
     if (result == null || !mounted) return;
-    final (name, type, index) = result;
+    final (name, index) = result;
 
-    final created = await _client.createDynamicBlock(type, name, index: index);
+    final created =
+        await _client.createDynamicBlock(BlockType.dynamic, name, index: index);
     _snack(created != null ? 'Block created' : 'Create failed');
     await _refresh();
-  }
-
-  /// The block types this device actually exposes (static blocks + Dynamic),
-/// used to limit the type dropdown when creating a dynamic block.
-  List<BlockType> _availableBlockTypes() {
-    final types = <BlockType>{BlockType.dynamic};
-    final metas = _blockMetas;
-    if (metas != null) {
-      for (final b in metas) {
-        if (b == null || b.type == 0 || b.type == BlockType.dynamic.value) continue;
-        types.add(BlockType.fromValue(b.type));
-      }
-    }
-    return types.where((t) => t != BlockType.none).toList();
   }
 
   Future<void> _deleteBlock(int blockIndex, ({int type, int inst, BlockMeta meta, String name})? block) async {
@@ -1281,7 +1266,10 @@ Future<void> _loadVisibleFields() async {
 
     final isSystemField = blockType == 0 && inst == 0;
     final blockInfo = blockInfoFor(BlockType.fromValue(block.meta.typeValue));
-    final fieldInfo = isSystemField ? null : blockInfo?.field(fieldIndex);
+    // The System Name field is 16 bytes; cap the editor accordingly.
+    final fieldInfo = isSystemField
+        ? (fieldIndex == 6 ? const FieldInfo('Name', maxChars: 16) : null)
+        : blockInfo?.field(fieldIndex);
 
     final newValue = await showValueEditor(
         context, field.meta.dataType, field.value,

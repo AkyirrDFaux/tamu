@@ -4,6 +4,7 @@ import 'package:tamuapp/core/types.dart';
 import 'package:tamuapp/ui/file_viewers.dart';
 import 'package:tamuapp/ui/system_block_view.dart';
 import 'package:tamuapp/ui/theme.dart';
+import 'package:tamuapp/ui/value_editor.dart' show formatValue;
 
 /// Renders the STATLOG / SUBREQ decoders against synthetic bytes matching the
 /// firmware formats (StaticMemory.h / Subscriptions.h), and checks the
@@ -93,7 +94,7 @@ void main() {
   });
 
   testWidgets('layout file uses the u8 width/height header', (tester) async {
-    // Docs/Modules/LED display.md: u8 width, u8 height, then W*H u16 LE indexes.
+    // Docs/Modules and blocks/LED display.md: u8 width, u8 height, then W*H u16 LE indexes.
     // An 11x10 grid = 2 + 110*2 = 222 bytes (the preloaded LAY_1 size).
     final data = <int>[
       11, 10,
@@ -110,6 +111,22 @@ void main() {
     // Parsed as u8 x2 -> 11x10; the old uint16 header would have reported invalid.
     expect(find.text('11x10 LEDs'), findsOneWidget);
     expect(find.text('-'), findsWidgets); // 0xFFFF = missing cells
+  });
+
+  test('formatValue renders size-flexible vectors and IDs', () {
+    // A Vector2 (8 bytes) must not be rejected as "too short".
+    expect(
+        formatValue(DataType.vector,
+            [...numberToBytes(1.5), ...numberToBytes(-2.0)]),
+        '[1.500, -2]');
+    final id = ((3 & 0x3F) << 10) | 7;
+    expect(formatValue(DataType.id, [id & 0xFF, (id >> 8) & 0xFF]), '3.7');
+  });
+
+  test('formatSystemValue only decodes the version member as a version', () {
+    // A 4-character Name must render as text, not as YY.MM.DD.II.
+    expect(formatSystemValue(DataType.string, 'DAS1'.codeUnits, 6, 0xFF), 'DAS1');
+    expect(formatSystemValue(DataType.string, [25, 9, 21, 1], 0, 2), '25.9.21.1');
   });
 
   test('capabilities format human-readable', () {

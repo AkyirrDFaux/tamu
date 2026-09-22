@@ -39,8 +39,8 @@ String formatSystemValue(DataType type, List<int> value, [int field = -1, int ke
       }
       return '-';
     case DataType.string:
-      // Software version is 4 bytes (YY, MM, DD, iteration)
-      if (value.length == 4) {
+      // Software version (Device Type / key 2) is 4 bytes: YY.MM.DD.Iteration.
+      if (field == 0 && key == 2 && value.length == 4) {
         return '${value[0]}.${value[1]}.${value[2]}.${value[3]}';
       }
       return String.fromCharCodes(value).replaceAll('\x00', '');

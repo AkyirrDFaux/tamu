@@ -14,9 +14,6 @@
 
 // Register service per Docs/Services/Register.md
 // BlockInfo 32b: Type10 | Instance6 | Field8 | Key8
-inline uint32_t MakeBlockInfo(uint16_t type, uint8_t inst, uint8_t field, uint8_t key) {
-    return ((uint32_t)(type & 0x3FF) << 22) | ((uint32_t)(inst & 0x3F) << 16) | ((uint32_t)field << 8) | key;
-}
 inline uint16_t BlockInfoType(uint32_t bi) { return (bi >> 22) & 0x3FF; }
 inline uint8_t BlockInfoInstance(uint32_t bi) { return (bi >> 16) & 0x3F; }
 inline uint8_t BlockInfoField(uint32_t bi) { return (bi >> 8) & 0xFF; }
@@ -167,16 +164,15 @@ static void HandleEnumerate(const PacketFrame &frame, uint32_t bi) {
         uint8_t rpl[8 + 256];
         memcpy(rpl, &bi_req, 4);
         uint16_t p = 4;
-        uint16_t key_count = 0;
         uint16_t req_type = BlockInfoType(bi_req);
-        uint8_t req_inst = BlockInfoInstance(bi_req);
-        uint8_t req_field = BlockInfoField(bi_req);
         if (req_type == 0x3FF) {
 #ifndef DISABLE_DYNAMIC_MEMORY
+            uint8_t req_inst = BlockInfoInstance(bi_req);
+            uint8_t req_field = BlockInfoField(bi_req);
             if (req_inst < dynamic_block_registry.block_count) {
                 DynamicBlockDescriptor *dyn = dynamic_block_registry.GetBlock(req_inst);
                 uint8_t keys[256];
-                key_count = dyn->ListKeys(req_field, keys, 256);
+                uint16_t key_count = dyn->ListKeys(req_field, keys, 256);
                 rpl[p++] = (uint8_t)key_count;
                 for (uint16_t i = 0; i < key_count; i++) rpl[p++] = keys[i];
             } else {
@@ -187,7 +183,7 @@ static void HandleEnumerate(const PacketFrame &frame, uint32_t bi) {
 #endif
         } else if (req_type == 0x3FE) {
 #ifdef USE_SCRIPTS
-            uint8_t n = ScriptKeyCount(req_inst, req_field);
+            uint8_t n = ScriptKeyCount(BlockInfoInstance(bi_req), BlockInfoField(bi_req));
             rpl[p++] = n;
             for (uint8_t i = 0; i < n; i++) rpl[p++] = i;
 #else
@@ -361,7 +357,14 @@ static void HandleSystemBlockWrite(const PacketFrame &frame, uint8_t field) {
         if (PayloadBytes(frame) < 8) { RespondStatus(frame,false); return; }
         BlockMeta *desc=(BlockMeta*)(frame.payload+4);
         const uint8_t *val=frame.payload+8;
-        uint16_t len=desc->Size; if(len>24) len=24; memcpy(DeviceNameBuffer,val,len); DeviceNameBuffer[len]='\0'; SendResponse(frame,frame.payload,PayloadBytes(frame));
+        // Docs: Name is a 16-byte field. Clamp to it (and to the received payload) so the
+        // terminating NUL can never write past DeviceNameBuffer[24].
+        uint16_t len = desc->Size;
+        if (len > 16) len = 16;
+        if (len > (uint16_t)(PayloadBytes(frame) - 8)) len = (uint16_t)(PayloadBytes(frame) - 8);
+        memcpy(DeviceNameBuffer, val, len);
+        DeviceNameBuffer[len] = '\0';
+        SendResponse(frame,frame.payload,PayloadBytes(frame));
 #ifdef TYPE_CORE
     } else if (field==7) { // NetID (core only): stored now, applied on the next boot
         if (PayloadBytes(frame) < 8) { RespondStatus(frame,false); return; }

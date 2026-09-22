@@ -92,81 +92,56 @@ String formatOffsetMs(int ms) {
       '${msPart.toString().padLeft(3, '0')}';
 }
 
-/// Name + optional block-type prompt shared by the memory create and edit flows.
+/// Name (+ optional index) prompt for the dynamic-block create/edit flows. Dynamic
+/// blocks are always the Dynamic type, so no type picker is needed.
 /// With `withIndex` the user may pin the new block to an explicit index (filling a
-/// None placeholder); an empty index appends. When `fixedType` is given the type
-/// dropdown is hidden and that type is always used (a dynamic block is just dynamic).
-/// `availableTypes` limits the dropdown to the block types the device actually has
-/// (static + Dynamic); when null every non-deleted type is offered.
-/// Returns (name, type, index) or null when cancelled.
-Future<(String, BlockType, int?)?> promptBlockNameAndType(
+/// None placeholder); an empty index appends. Returns (name, index) or null.
+Future<(String, int?)?> promptBlockName(
   BuildContext context, {
   String initialName = '',
-  BlockType? initialType,
   required String title,
   bool withIndex = false,
-  BlockType? fixedType,
-  List<BlockType>? availableTypes,
 }) async {
   final nameController = TextEditingController(text: initialName);
   final indexController = TextEditingController();
-  BlockType selected = fixedType ?? initialType ?? BlockType.dynamic;
-  final types = availableTypes ??
-      BlockType.values.where((t) => t != BlockType.deleted).toList();
-  // The current selection always has to be offered (a retype keeps the old label).
-  final offered = types.contains(selected) ? types : [selected, ...types];
-  final result = await showDialog<(String, BlockType, int?)>(
+  final result = await showDialog<(String, int?)>(
     context: context,
-    builder: (context) => StatefulBuilder(
-      builder: (context, setState) => AlertDialog(
-        title: Text(title),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
+    builder: (context) => AlertDialog(
+      title: Text(title),
+      content: Column(mainAxisSize: MainAxisSize.min, children: [
+        TextField(
+          controller: nameController,
+          autofocus: true,
+          maxLength: 16,
+          decoration: const InputDecoration(labelText: 'Block name'),
+        ),
+        if (withIndex) ...[
+          const SizedBox(height: 8),
           TextField(
-            controller: nameController,
-            autofocus: true,
-            maxLength: 16,
-            decoration: const InputDecoration(labelText: 'Block name'),
-          ),
-          if (withIndex) ...[
-            const SizedBox(height: 8),
-            TextField(
-              controller: indexController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                  labelText: 'Index (empty = append)',
-                  helperText: 'Fills a deleted (None) slot when given'),
-            ),
-          ],
-          if (fixedType == null) ...[
-            const SizedBox(height: 8),
-            DropdownButtonFormField<BlockType>(
-              initialValue: selected,
-              decoration: const InputDecoration(labelText: 'Block type'),
-              items: [
-                for (final t in offered)
-                  DropdownMenuItem(value: t, child: Text(t.label)),
-              ],
-              onChanged: (t) => setState(() => selected = t ?? BlockType.dynamic),
-            ),
-          ],
-        ]),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel')),
-          FilledButton(
-            onPressed: () {
-              final name = nameController.text.trim();
-              if (name.isEmpty) return;
-              final idxText = indexController.text.trim();
-              final idx = idxText.isEmpty ? null : int.tryParse(idxText);
-              if (idxText.isNotEmpty && idx == null) return;
-              Navigator.pop(context, (name, selected, idx));
-            },
-            child: const Text('OK'),
+            controller: indexController,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+                labelText: 'Index (empty = append)',
+                helperText: 'Fills a deleted (None) slot when given'),
           ),
         ],
-      ),
+      ]),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel')),
+        FilledButton(
+          onPressed: () {
+            final name = nameController.text.trim();
+            if (name.isEmpty) return;
+            final idxText = indexController.text.trim();
+            final idx = idxText.isEmpty ? null : int.tryParse(idxText);
+            if (idxText.isNotEmpty && idx == null) return;
+            Navigator.pop(context, (name, idx));
+          },
+          child: const Text('OK'),
+        ),
+      ],
     ),
   );
   nameController.dispose();

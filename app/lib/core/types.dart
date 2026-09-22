@@ -1,5 +1,5 @@
 /// Shared data types (Docs/Data Formats.md) and the common block model used by
-/// the memory services (Docs/Services/System Memory.md).
+/// the memory services (Docs/Services/Register.md).
 library;
 
 import 'dart:typed_data';

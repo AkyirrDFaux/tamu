@@ -116,7 +116,7 @@ LED.Setup();
     PinHigh(LED_NOTIFICATION_PIN);
     PinModeInput(LED_NOTIFICATION_PIN);
 
-    // The LED state is a writable static-block field persisted in the SYSMEM backup;
+    // The LED state is a writable static-block field persisted in the STATLOG backup;
     // the boot restore writes the RAM field but does not re-run its write trigger, so
     // re-apply it to drive the pin to match the restored value (LED off by default).
     OnLEDStateChange(static_block_registry[0], 3, (const void *)&LedButton.LEDState, sizeof(bool));
@@ -241,7 +241,7 @@ LED.Setup();
 
         Sleep(2); // short heartbeat: BLE request/response latency scales with this loop period
         TimeUpdate();
-        TimeSync.Tick(DeviceStatus.UptimeMs);
+        CoreTimeSync.Tick(DeviceStatus.UptimeMs); // core syncs ITSELF to the reference core
     }
 }
 

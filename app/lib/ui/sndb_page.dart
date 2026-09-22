@@ -88,7 +88,9 @@ class _SndbPageState extends State<SndbPage>
     snController.dispose();
     idController.dispose();
     if (ok != true) return;
-    if (hex.length != 28 || int.tryParse(hex, radix: 16) == null) {
+    // A 14-byte serial is 28 hex chars (112 bits); int.tryParse would overflow int64, so
+    // validate the whole string with a regex (like the value editor does).
+    if (!RegExp(r'^[0-9A-F]{28}$').hasMatch(hex)) {
       _snack('Invalid serial number');
       return;
     }

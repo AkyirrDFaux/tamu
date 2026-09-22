@@ -196,7 +196,7 @@ void AppBLEInit(const char *DeviceName)
 
     BleTx = svc->createCharacteristic(BLE_TX_CHAR_UUID, NIMBLE_PROPERTY::NOTIFY);
 
-    svc->start();
+    // (NimBLEService::start() is a no-op / deprecated: services start with the server.)
 
     // Do NOT start advertising here: the controller may not have synced with
     // the radio yet, and start() then succeeds while nothing reaches the air.

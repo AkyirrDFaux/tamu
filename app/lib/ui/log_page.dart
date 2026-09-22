@@ -286,14 +286,9 @@ class LogEntry {
   int get sourceId => (srcAndCode >> 1) & 0x7FFF;
   int get code => (srcAndCode >> 16) & 0xFFFF;
 
-  String detail() =>
-      '${isBlock ? 'Block' : 'Service'} $sourceName   '
-      '${deviceId == 0xFFFF ? 'broadcast' : idToString(deviceId)}   '
-      'x$count   ${formatUptime(timestampMs)}';
-
   String sourceName() {
     if (isBlock) {
-      return BlockType.fromValue(sourceId).label;
+      return blockTypeLabel(sourceId);
     }
     final service = ServiceType.fromValue(sourceId & 0xFF);
     return service?.name ?? 'Service ${sourceId & 0xFF}';
@@ -338,7 +333,7 @@ class LogEntry {
           case 10: return 'Core discovery failed';
           case 11: return 'Could not read device database';
           case 12: return 'Could not write device database';
-          case 13: return 'Could not read device database';
+          case 13: return 'Could not read the device database (all)';
         }
         return 'Device service error ${codeText()}';
       case ServiceType.register:
@@ -384,6 +379,4 @@ class LogEntry {
   }
 
   String codeText() => '0x${code.toRadixString(16).padLeft(4, '0').toUpperCase()}';
-
-  static String formatUptime(int ms) => formatUptimeMs(ms);
 }

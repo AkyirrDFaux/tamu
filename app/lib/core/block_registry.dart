@@ -1,5 +1,5 @@
 /// Block and field display metadata, mirroring the firmware block schemas
-/// (tamu/src/Blocks/*.h) and Docs/Modules/Generic system blocks.md.
+/// (firmware/src/Blocks/*.h) and Docs/Modules and blocks/Generic system blocks.md.
 ///
 /// The wire protocol only carries numeric indexes; these tables resolve them
 /// into human-readable field names, units, ranges and enum options - exactly
@@ -52,7 +52,7 @@ const Map<int, String> _sensorTypes = {
   5: 'NTC100K',
 };
 
-/// Units reported by each DAS sensor type (Docs/Modules/Generic system blocks.md).
+/// Units reported by each DAS sensor type (Docs/Modules and blocks/Generic system blocks.md).
 /// Raw Measurement (0) is a raw ADC bit count and has no unit.
 const Map<int, String> sensorUnits = {
   0: '',

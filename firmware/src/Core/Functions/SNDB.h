@@ -23,7 +23,7 @@ typedef struct __attribute__((packed, aligned(4)))
 #define SNDB_MAX_ENTRIES 128
 #endif
 
-// Serial-number database (mandatory for core, see Docs/Services/Device service.md).
+// Serial-number database (mandatory for core, see Docs/Services/System Block and Device Commands.md).
 // Single shared implementation: the registry is a log-structured FILE in the storage
 // filesystem (a file named "SNREG"), so no device-specific code and no reserved flash
 // region is required. New entries are appended to the file, removed entries are

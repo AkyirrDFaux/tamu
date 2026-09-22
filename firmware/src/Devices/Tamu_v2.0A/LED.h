@@ -64,53 +64,6 @@ public:
         gpio_config(&io_conf);
     }
 
-    // TEMP DEBUG: raw GRB byte-stream bit-bang - a verbatim port of the reference
-    // working driver (datasheet/LED.h Show()), bypassing the renderer. Used to verify
-    // the WS2812 data line + timing on the hardware.
-    void IRAM_ATTR Pulse(uint8_t *grb, uint16_t length, int pin)
-    {
-        uint32_t mask = 1ULL << pin;
-        static portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
-
-        portENTER_CRITICAL(&mux);
-
-        uint32_t byteLength = (uint32_t)length * 3;
-        uint32_t i = 0;
-        while (byteLength--)
-        {
-            uint8_t channel = grb[i++];
-
-            for (int8_t b = 7; b >= 0; b--)
-            {
-                if (channel & (1 << b))
-                {
-                    // T1H
-                    GPIO.out_w1ts.val = mask; // High
-                    NOP64();
-                    NOP64();
-                    NOP16();
-                    GPIO.out_w1tc.val = mask; // Low
-                    NOP64();
-                }
-                else
-                {
-                    // T0H
-                    GPIO.out_w1ts.val = mask; // High
-                    NOP16();
-                    NOP16();
-                    NOP4();
-                    GPIO.out_w1tc.val = mask; // Low
-                    NOP64();
-                    NOP64();
-                    NOP16();
-                }
-            }
-        }
-
-        portEXIT_CRITICAL(&mux);
-        esp_rom_delay_us(80); // Reset Latch
-    }
-
     // Sends `length` pixels to a single WS2812 strip (primary pin) with bit-banged
     // timing (the reference working driver's timing); reorders channels to GRB and
     // finishes with a reset latch.

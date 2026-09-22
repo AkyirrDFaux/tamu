@@ -69,7 +69,7 @@ static void RS485_WaitForSilence(uint8_t priority)
         [](void) { vTaskDelay(pdMS_TO_TICKS(1)); });
 }
 
-// Sends `Data` over the RS-485 bus with CSMA/CD collision avoidance. Per Docs/RSBus.md the
+// Sends `Data` over the RS-485 bus with CSMA/CD collision avoidance. Per Docs/RSBus and Packets.md the
 // sent data is verified WHILE sending: frames go out in small chunks and each chunk's echo
 // is compared as it returns, so a collision aborts mid-frame (only the queued remainder,
 // <= one chunk, still leaves the wire) instead of after the whole frame. Unbounded retry

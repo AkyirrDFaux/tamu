@@ -142,7 +142,8 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
     await _loadLoaded();
   }
 
-  Future<void> _loadFile(FileRecord file) async {    final name = normalizeFileName(file.name);
+  Future<void> _loadFile(FileRecord file) async {
+    final name = normalizeFileName(file.name);
     final id = int.tryParse(name.substring(4), radix: 16);
     if (id == null) {
       showSnack(context, 'Bad script file name');

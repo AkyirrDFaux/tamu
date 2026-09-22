@@ -23,7 +23,8 @@ static inline void SendDeviceReply(const PacketFrame &frame, PacketFrame &reply,
 }
 
 #ifdef TYPE_CORE
-// Dispatches SNDB requests: Read All (13), Read by ID/SN (14) and Write (15).
+// Dispatches SNDB requests: Read by ID/SN (11), Write (12) and Read All (13)
+// (Docs/Command ID table.md 0x0011-0x0013).
 void HandleSNDB(const PacketFrame &frame)
 {
     uint8_t cid = GetServiceCID(frame.srv_tgt);
@@ -48,7 +49,7 @@ void HandleSNDB(const PacketFrame &frame)
                 break;
             }
 
-            // Stream every entry as a FRAG stream (Docs/Services/Device service.md:
+            // Stream every entry as a FRAG stream (Docs/Services/System Block and Device Commands.md:
             // "Fragmentation, SN + ID stream"). Each fragment carries up to 112 bytes
             // of 16-byte (SN + ID) entries; the fragmentation info is the first 4
             // payload bytes (u16 current + u16 total fragments).
@@ -116,7 +117,7 @@ void HandleSNDB(const PacketFrame &frame)
                 const SerialNumber *write_sn = reinterpret_cast<const SerialNumber *>(frame.payload);
                 uint16_t write_id = *reinterpret_cast<const uint16_t *>(frame.payload + 14);
 
-                // Per Docs/Services/Device service.md: ID 0 = delete the
+                // Per Docs/Services/System Block and Device Commands.md: ID 0 = delete the
                 // entry carrying this serial number.
                 bool success = (write_id != 0)
                                    ? SNDB::AddDevice(*write_sn, write_id)
@@ -164,36 +165,29 @@ void HandleDeviceService(const PacketFrame &frame)
                 }
             }
         }
-        else if (cid == 3) // Time sync response per docs 00.03
+        else if (cid == 3 && PayloadBytes(frame) >= 12) // Time sync response per docs 00.03
         {
+            // TimeSync is synchronized-device initiated: the INITIATOR (a node syncing to
+            // a core, or a core syncing to the longest-running core) applies the offset to
+            // its OWN clock. The core never pushes offsets to other devices.
+            uint32_t t0, t1, t2;
+            memcpy(&t0, frame.payload, 4);
+            memcpy(&t1, frame.payload + 4, 4);
+            memcpy(&t2, frame.payload + 8, 4);
+            uint32_t t3 = TimeFromBoot();
 #ifdef TYPE_CORE
-            if (PayloadBytes(frame) >= 12)
-            {
-                uint32_t t0, t1, t2;
-                memcpy(&t0, frame.payload, 4);
-                memcpy(&t1, frame.payload + 4, 4);
-                memcpy(&t2, frame.payload + 8, 4);
-                uint32_t t3 = TimeFromBoot();
-
-                int32_t offset = (int32_t)(((int64_t)(int32_t)(t1 - t0) + (int64_t)(int32_t)(t2 - t3)) / 2);
-
-                TimeSync.HandleResponse(frame.id_src, offset);
-            }
+            int32_t offset = (int32_t)(((int64_t)(int32_t)(t1 - t0) + (int64_t)(int32_t)(t2 - t3)) / 2);
 #else
-            if (PayloadBytes(frame) >= 12)
-            {
-                uint32_t t0, t1, t2;
-                memcpy(&t0, frame.payload, 4);
-                memcpy(&t1, frame.payload + 4, 4);
-                memcpy(&t2, frame.payload + 8, 4);
-                uint32_t t3 = TimeFromBoot();
-                int32_t d1 = (int32_t)(t1 - t0);
-                int32_t d2 = (int32_t)(t2 - t3);
-                int32_t offset = (d1 + d2) / 2;
-                TimeOffsetMs += offset;
-            }
+            int32_t offset = ((int32_t)(t1 - t0) + (int32_t)(t2 - t3)) / 2;
 #endif
+            TimeOffsetMs += offset;
         }
+#ifdef TYPE_CORE
+        else if (cid == 10) // Core discover response: remember the reference core
+        {
+            CoreTimeSync.HandleDiscoverResponse(frame);
+        }
+#endif
         return;
     }
 
@@ -283,20 +277,16 @@ void HandleDeviceService(const PacketFrame &frame)
             {
                 uint32_t time_sent = *reinterpret_cast<const uint32_t *>(frame.payload);
                 uint32_t t1 = TimeFromBoot();
-
-                PacketConstruct(&tx_frame, frame.id_src,
-                                 frame.srv_src,
-                                 frame.srv_tgt,
-                                 FLAG_TYPE | FLAG_START | FLAG_STOP,
-                                 nullptr, 0);
-
-                memcpy(tx_frame.payload + 0, &time_sent, 4);
-                memcpy(tx_frame.payload + 4, &t1, 4);
                 uint32_t t2 = TimeFromBoot();
-                memcpy(tx_frame.payload + 8, &t2, 4);
-                tx_frame.payload_len = (uint8_t)(12 / 4);
-                tx_frame.crc8 = Crc8(&tx_frame.flags, (uint16_t)(11 + PayloadBytes(tx_frame)));
 
+                // Response: echoed requester time, responder receive time, responder send
+                // time (NTP-like; see the offset math in the response handler above).
+                uint8_t rpl[12];
+                memcpy(rpl + 0, &time_sent, 4);
+                memcpy(rpl + 4, &t1, 4);
+                memcpy(rpl + 8, &t2, 4);
+                PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.srv_tgt,
+                                 FLAG_TYPE | FLAG_START | FLAG_STOP, rpl, 12);
                 DispatchPacket(tx_frame);
             }
             break;

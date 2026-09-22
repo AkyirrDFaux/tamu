@@ -899,7 +899,8 @@ public:
             if (rec_start + TABLE_ENTRY_SIZE <= content_off) continue;
             uint32_t src = (content_off > rec_start) ? (content_off - rec_start) : 0;
             uint32_t n = TABLE_ENTRY_SIZE - src;
-            if (n > len - written) n = len - written;
+            const uint32_t remaining = (uint32_t)len - written;
+            if (n > remaining) n = remaining;
             memcpy(out + written, ((uint8_t *)&e) + src, n);
             written += (uint16_t)n;
         }

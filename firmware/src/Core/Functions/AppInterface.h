@@ -50,8 +50,6 @@ PacketFrame AppRxQueue[APP_RX_QUEUE_DEPTH];
 volatile uint8_t AppRxCount = 0;
 portMUX_TYPE AppRxMux = portMUX_INITIALIZER_UNLOCKED;
 
-uint32_t AppStrayFrames = 0; // App-targeted frames received while no app is connected
-
 // Link hooks (implemented per device: Devices/Tamu_v2.0A/AppUSB.h + AppBLE.h).
 bool AppUSBActive();
 bool AppBLEActive();

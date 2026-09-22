@@ -227,7 +227,7 @@ class _RenameFieldState extends State<RenameField> {
         child: TextField(
           controller: _controller,
           autofocus: true,
-          maxLength: 23,
+          maxLength: 16, // docs: the System Name field is 16 bytes
           decoration: const InputDecoration(hintText: 'Device name'),
           onSubmitted: widget.onDone,
         ),

@@ -79,7 +79,7 @@ __attribute__((noinline)) void RespondStatus(const PacketFrame &frame, bool ok)
 }
 
 // Derives the staging-file name for an atomic backup update: the last character of the
-// padded 8-byte name becomes '~' ("SYSMEM " -> "SYSMEM~"). Backup names never end in '~'.
+// padded 8-byte name becomes '~' ("STATLOG " -> "STATLOG~"). Backup names never end in '~'.
 inline void BackupTempName(const char name[8], char out[8])
 {
     memcpy(out, name, 8);
@@ -233,6 +233,15 @@ struct DynamicBlockDescriptor
 
         uint8_t *nv = v_needed ? (uint8_t *)malloc(v_needed) : nullptr;
         uint8_t *np = p_needed ? (uint8_t *)malloc(p_needed) : nullptr;
+        if ((v_needed && !nv) || (p_needed && !np)) {
+            // Out of memory: skip compaction. The value just written already sits at its
+            // entry's memoryOffset in the right space and the other entries are untouched,
+            // so the block stays consistent (just less compact) instead of dereferencing
+            // a null buffer.
+            if (nv) free(nv);
+            if (np) free(np);
+            return true;
+        }
         uint16_t vo = 0, po = 0;
         for (uint16_t i = 0; i < entry_count; i++)
         {
@@ -465,17 +474,6 @@ struct BlockRegistry
         return &blocks[index];
     }
 
-    // Fully deallocates a block and shifts the remaining ones down. Used internally
-    // when clearing the registry, never for user deletes.
-    void RemoveBlock(uint16_t index)
-    {
-        if (index >= block_count)
-            return;
-        blocks[index].Release();
-        for (uint16_t i = index; i < block_count - 1; i++)
-            blocks[i] = blocks[i + 1];
-        block_count--;
-    }
 };
 
 using DynamicRegistry = BlockRegistry<DynamicBlockDescriptor>;

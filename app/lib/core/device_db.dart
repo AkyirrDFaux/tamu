@@ -11,6 +11,7 @@ import 'connection.dart';
 import 'diagnostics.dart';
 import 'notifications.dart';
 import 'protocol.dart';
+import 'register_client.dart';
 import 'types.dart';
 
 const int coreId = 1;
@@ -65,7 +66,7 @@ class DeviceDatabase extends ChangeNotifier {
   DeviceEntry? byId(int id) => _devices[id];
 
   // ===========================================================================
-  // Queries (Docs/Services/Device service.md)
+  // Queries (Docs/Services/System Block and Device Commands.md)
   // ===========================================================================
 
   ConnectionManager get _link => ConnectionManager.instance;
@@ -103,14 +104,10 @@ class DeviceDatabase extends ChangeNotifier {
     return reply != null;
   }
 
-  /// Helper to read Register block type 0 (System) via Register 01.01
+  /// Reads one System-block field through the shared Register client.
   Future<List<int>?> _registerRead(int targetId, int field, int key) async {
-    final bi = (0 & 0x3FF) << 22 | (0 << 16) | (field << 8) | key;
-    final payload = [bi & 0xFF, (bi>>8)&0xFF, (bi>>16)&0xFF, (bi>>24)&0xFF];
-    final reply = await _request(targetId, ServiceType.register, 1, payload: payload);
-    if (reply == null || reply.length < 8) return null;
-    // reply is BlockInfo(4)+BlockMeta(4)+value
-    return reply.sublist(8);
+    final read = await RegisterClient(deviceId: targetId).readField(field, key);
+    return read?.value;
   }
 
   /// Refreshes one device's identity fields into the database via Register System block.

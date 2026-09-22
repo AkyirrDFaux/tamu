@@ -273,7 +273,7 @@ static int CmdDelete(int argc, char **argv)
 }
 
 // Sends a Device service request to `addr` and routes the reply to the CLI (cid 3).
-// Device service CIDs (Docs/Services/Device service.md): 0 Discover, 1 Ping, 2 Identify,
+// Device service CIDs (Docs/Services/System Block and Device Commands.md): 0 Discover, 1 Ping, 2 Identify,
 // 3 Type, 4 SN, 5 Version, 6 Capability, 7 Read Name, 8 Set Name, 9 Uptime, 10 Loop, 11 Time sync.
 static int CmdDevice(int argc, char **argv)
 {

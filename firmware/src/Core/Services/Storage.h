@@ -111,15 +111,19 @@ void HandleStorageService(const PacketFrame &frame)
                         uint16_t content_len = (total_content - content_off > contentCap)
                                                    ? contentCap
                                                    : (uint16_t)(total_content - content_off);
-                        if (content_len)
+                        if (content_len) {
 #ifdef USE_FIXED_STORAGE
                             // The fixed filetable is a const array in code, not a flash
                             // file: serialize it on the fly for the app's file browser.
-                            if (Storage.IsFixedTableName(name))
+                            if (Storage.IsFixedTableName(name)) {
                                 Storage.CopyFixedTable(tx_frame.payload + 4 + head, content_off, content_len);
-                            else
-#endif
+                            } else {
+                                Storage_FlashRead(file_offset + content_off, tx_frame.payload + 4 + head, content_len);
+                            }
+#else
                             Storage_FlashRead(file_offset + content_off, tx_frame.payload + 4 + head, content_len);
+#endif
+                        }
                         FinalizeReply(tx_frame, frame, flags, (uint16_t)(4 + head + content_len));
                         DispatchPacket(tx_frame);
                     }

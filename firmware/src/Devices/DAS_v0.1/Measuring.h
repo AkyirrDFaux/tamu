@@ -168,7 +168,7 @@ void Measuring_Init()
     Meas_SelectRange(1, 1);
 }
 
-// Sensor types (Docs/Modules/Generic system blocks.md).
+// Sensor types (Docs/Modules and blocks/Generic system blocks.md).
 enum MeasSensorType : uint8_t
 {
     MeasRawMeasurement = 0,

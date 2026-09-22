@@ -25,13 +25,7 @@ void DispatchPacket(const PacketFrame &frame);
 // Defined in Core/Functions/Dispatcher.h; processes the bus queue, dispatching pending received packets
 void ProcessBus();
 
-// Rounds `size` up to the nearest multiple of 4 (alignment padding)
-inline size_t AlignTo4(size_t size)
-{
-    return (size + 3) & ~3;
-}
-
-// Time offset in ms set by the core via Device service CID 12 (Set time offset)
+// Time offset in ms applied by a node after a Device service CID 3 (TimeSync) exchange.
 extern int32_t TimeOffsetMs;
 
 // Single shared output buffer — all handlers build replies here instead of stack-allocating.
