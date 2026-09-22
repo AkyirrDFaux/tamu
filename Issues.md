@@ -1,8 +1,11 @@
 # Issues
 
-## DAS provider table has stale persisted entries (HIL test state)
-- `hil_subscriptions_test.dart` "DAS provider table empty initially" fails when the DAS
-  restores provider subscriptions persisted in its flash from an earlier session whose
-  requester (Tamu) is gone.
-- Unrelated to the LED display rewrite. Fix/cleanup: reflash the DAS (erases flash) or
-  cancel the stale providers via a matching requester entry before running the suite.
+## System block Net ID (field 7) cannot be written via Register
+- `RegisterGetSystemField` exposes field 7 (Net ID) as `Id | Persistent` (writable in
+  principle), but `HandleSystemBlockWrite` only accepts field 6 (Name); a write to field 7
+  returns failure.
+- Impact: the backup captures the Net ID (complete register snapshot) but the restore plan
+  marks it unavailable ("Identity field") because the write would fail; see `RestorePlan`
+  in `app/lib/core/backup.dart`.
+- Fix: extend `HandleSystemBlockWrite` to apply a Net ID write (and re-register on the bus)
+  if restoring identity is desired.

@@ -62,10 +62,37 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
       self-loopback; script-output source; new 28/32 B entry round-trip.
       Verified on hardware (`app/test/hil_subscriptions_test.dart`).
 
-## 3. App backup
-- [ ] Not started (`Docs/App/Backup.md`).
+## 3. App backup (`Docs/App/Backup.md`)
+- [x] **3A Semantic format**: `backup_value.dart` (type/enum/flag/colour/matrix/dictionary
+      words), `backup_format.dart` (per-device archive: register, subscriptions, SNDB,
+      files) and `backup_script.dart` (scripts as function/IO/variables/constants/lines
+      with type words and semantic values). Numbers only as literal values/indexes. Unit
+      tests (`backup_value_test.dart`, `backup_script_test.dart`, `backup_restore_test.dart`).
+- [x] **3B Capture/restore**: the ENTIRE register (System + static + dynamic, read-only and
+      volatile entries included), the Subscriptions tables, Scripts, SNDB (cores) and every
+      device file, all semantic. Restore matches by name then index with a type check
+      (string/filename interchangeable, enum names resolved on the target). The zip now
+      holds **one JSON per device - no aggregate manifest**.
+- [x] **3C Per-part sync UI**: `RestorePlanPage` groups Registry / Scripts / Subscriptions /
+      SNDB / Files with per-item selection and target device/block remap; unavailable items
+      are flagged and disabled.
+- [x] **3D HIL**: whole-registry capture/mutate/restore, semantic script round-trip and file
+      restore on Tamu (`app/test/hil_backup_test.dart`).
 
 ### Notes
+- Backup zip entries must be built from UTF-8 bytes, not `ArchiveFile.string` (archive
+  3.6.1 sizes by UTF-16 code units but stores UTF-8, so any non-ASCII character such as the
+  "±" in the accelerometer range labels wrote a wrong uncompressed size and strict unzippers
+  failed with a CRC error). Guarded by the "zip declares correct sizes for non-ASCII content"
+  test.
+- Backup format 2 is semantic and per-device (`backup_format.dart`); the zip contains only
+  `<id>_<name>.json` files (no aggregate manifest). Archives with a numeric (pre-semantic)
+  format are rejected with a migration message.
+- Scripts are captured both semantically (`backup_script.dart`) and as their raw `SCR_XX`
+  file (storage section); restoring the semantic script re-serialises it via `ScriptDraft`.
+- Backup capture skips device files larger than 128 kB by default (the Storage stream
+  fragments are small, so large reads are slow); `captureDevice(maxFileBytes:)` raises it.
+  System block Net ID (field 7) is not captured (firmware write limitation, see `Issues.md`).
 - A write of `Filename`/`String` shorter than the field is space-padded to its declared size.
 - Script entities use the ValueInfo packing of `Core/Services/Script.h` /
   `app/lib/core/script_file.dart` (internal convention; the docs leave it open).

@@ -148,6 +148,54 @@ enum DataType {
   }
 }
 
+/// Canonical, human-readable name of a data type (Docs/App/Backup.md: the storage
+/// format describes types "in words"). Used by the semantic backup format.
+String dataTypeWord(DataType type) => switch (type) {
+      DataType.none => 'None',
+      DataType.undefined => 'Undefined',
+      DataType.sn => 'Serial number',
+      DataType.id || DataType.netAddr => 'ID',
+      DataType.bool_ => 'Bool',
+      DataType.integer => 'Index',
+      DataType.number => 'Number',
+      DataType.vector => 'Vector',
+      DataType.matrix => 'Matrix',
+      DataType.colour => 'Colour',
+      DataType.string => 'String',
+      DataType.filename => 'Filename',
+      DataType.enum_ => 'Enum',
+      DataType.deleted => 'Deleted',
+      DataType.idx || DataType.uint32 => 'Uint32',
+      DataType.devType => 'Device type',
+      DataType.geometry => 'Geometry dict',
+      DataType.texture => 'Texture dict',
+    };
+
+/// Parses a [dataTypeWord] back to its data type (null when unknown).
+DataType? dataTypeFromWord(String word) {
+  const words = <String, DataType>{
+    'None': DataType.none,
+    'Undefined': DataType.undefined,
+    'Serial number': DataType.sn,
+    'ID': DataType.id,
+    'Bool': DataType.bool_,
+    'Index': DataType.integer,
+    'Number': DataType.number,
+    'Vector': DataType.vector,
+    'Matrix': DataType.matrix,
+    'Colour': DataType.colour,
+    'String': DataType.string,
+    'Filename': DataType.filename,
+    'Enum': DataType.enum_,
+    'Deleted': DataType.deleted,
+    'Uint32': DataType.uint32,
+    'Device type': DataType.devType,
+    'Geometry dict': DataType.geometry,
+    'Texture dict': DataType.texture,
+  };
+  return words[word];
+}
+
 enum BlockType {
   none(0x00), // tombstone: no block here; stable until save compacts
   undefined(0x01), // valid block, type not yet specified
@@ -316,6 +364,13 @@ enum TriggerType {
       this == TriggerType.edgeRising ||
       this == TriggerType.edgeFalling ||
       this == TriggerType.edgeAny;
+
+  static TriggerType? fromWord(String word) {
+    for (final t in TriggerType.values) {
+      if (t.label == word || t.name == word) return t;
+    }
+    return null;
+  }
 }
 
 /// Provider-side subscription entry (what the device stores for incoming subscriptions)

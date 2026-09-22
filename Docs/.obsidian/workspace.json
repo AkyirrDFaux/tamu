@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "App/Service views/Script.md",
+                "file": "App/Backup.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Script"
+              "title": "Backup"
             }
           },
           {
@@ -204,8 +204,8 @@
   },
   "active": "b382b423e960f24e",
   "lastOpenFiles": [
-    "App/Service views/Storage.md",
     "App/Service views/Script.md",
+    "App/Service views/Storage.md",
     "App/Service views/Register.md",
     "App/Backup.md",
     "App/Connection.md",
