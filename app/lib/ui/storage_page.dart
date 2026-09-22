@@ -291,7 +291,7 @@ leading: Icon(isTable
     List<({int type, int inst, BlockMeta meta, String name})?>? blocks;
     if (normalizeFileName(file.name).toUpperCase() == 'STATLOG') {
       final all = await RegisterClient(deviceId: widget.deviceId).readBlocks();
-      blocks = all?.where((b) => b != null && b!.type != 0).toList();
+      blocks = all?.where((b) => b != null && b.type != 0).toList();
     }
     if (!mounted) return;
     Navigator.of(context).push(MaterialPageRoute(

@@ -1,9 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../core/connection.dart';
 import '../core/device_db.dart';
+import '../core/diagnostics.dart';
 import '../core/protocol.dart';
 import '../core/types.dart';
 import 'theme.dart';
@@ -82,6 +84,42 @@ class _LogViewerPageState extends State<LogViewerPage>
     await _fetch();
   }
 
+  /// Surfaces the app-side diagnostic ring (timeouts, parse errors, link changes)
+  /// that the transports/services log during a session - handy for bug reports.
+  Future<void> _showDiagnostics() async {
+    final events = AppDiagnostics.events;
+    final text = events.isEmpty ? 'No app diagnostics recorded' : AppDiagnostics.dump();
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('App diagnostics'),
+        content: SizedBox(
+          width: 520,
+          height: 360,
+          child: SingleChildScrollView(
+            child: SelectableText(text,
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: events.isEmpty
+                ? null
+                : () {
+                    Clipboard.setData(ClipboardData(text: text));
+                    showSnack(context, 'Diagnostics copied');
+                  },
+            child: const Text('Copy'),
+          ),
+          FilledButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Close')),
+        ],
+      ),
+    );
+  }
+
   List<LogEntry> get _filtered {
     final logs = _logs;
     if (logs == null) return const [];
@@ -115,6 +153,10 @@ class _LogViewerPageState extends State<LogViewerPage>
                       value: id, child: Text('Device ${idToString(id)}')),
               ],
             ),
+          IconButton(
+              onPressed: _showDiagnostics,
+              tooltip: 'App diagnostics',
+              icon: const Icon(Icons.bug_report_outlined)),
           IconButton(
               onPressed: _clearAll,
               tooltip: 'Clear database',
@@ -157,7 +199,9 @@ class _LogViewerPageState extends State<LogViewerPage>
       final entries = byDevice[id]!;
       final device = DeviceDatabase.instance.byId(id);
       children.add(_deviceHeader(id, device?.displayName, entries.length));
-      for (final l in entries) children.add(_logTile(l));
+      for (final l in entries) {
+        children.add(_logTile(l));
+      }
     }
     return Column(children: [
       Expanded(

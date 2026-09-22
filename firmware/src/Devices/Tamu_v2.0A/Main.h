@@ -167,7 +167,7 @@ LED.Setup();
     ReportLog(MakeLog(false, (uint16_t)ServiceType::Device, 0, 0));
 
     static bool s_identify_prev = false;
-while (1)
+    while (1)
     {
         int64_t loopStart = esp_timer_get_time();
         // Net-ID collision (Core-discover): blink the error LED slowly (~1 Hz) until
@@ -200,7 +200,18 @@ while (1)
         ScriptsTick(DeviceStatus.UptimeMs);       // run loaded script programs (Docs/Services/Script.md)
         AppInterfacePump();
         ButtonUpdate();
-        ReadIMUData();
+
+        // Sample the IMU at its configured output data rate instead of every loop
+        // (the sensor registers only change at ODR, so faster reads are wasted bus time).
+        {
+            static const uint16_t OdrPeriodMs[8] = {80, 38, 19, 10, 5, 2, 1, 1};
+            static uint32_t lastImuMs = 0;
+            uint8_t odr = AccGyr.SamplingRate < 8 ? AccGyr.SamplingRate : 3;
+            if (DeviceStatus.UptimeMs - lastImuMs >= OdrPeriodMs[odr]) {
+                lastImuMs = DeviceStatus.UptimeMs;
+                ReadIMUData();
+            }
+        }
 
         // Render the configured render blocks (Vysi1Display, driven by the LEDDisplay
         // static block's Brightness/Offset/RenderBlock fields) and send both LED strips
@@ -211,6 +222,10 @@ while (1)
         Display2.Render();
         LED.SendParallel(Display1.Buffer, Display2.Buffer, Vysi1Display::LedNum);
         {
+            // FPS EMA weights (alpha = 0.1) in 16.16 fixed point; the pair sums to exactly
+            // 1.0 so the average does not drift.
+            static const Number FpsEmaNew = Number::FromRaw(6554);          // 0.1
+            static const Number FpsEmaKeep = Number::FromRaw(65536 - 6554); // 0.9
             static int64_t lastFrameUs = 0;
             if (lastFrameUs != 0)
             {
@@ -218,8 +233,8 @@ while (1)
                 int64_t period_us = loopStart - lastFrameUs;
                 if (period_us <= 0) period_us = 1;
                 Number inst = Number::FromRaw((int32_t)((1000000LL << 16) / period_us));
-                Display1.Data.RefreshRate = Display1.Data.RefreshRate * Number::FromRaw(58982) + inst * Number::FromRaw(6553);
-                Display2.Data.RefreshRate = Display2.Data.RefreshRate * Number::FromRaw(58982) + inst * Number::FromRaw(6553);
+                Display1.Data.RefreshRate = Display1.Data.RefreshRate * FpsEmaKeep + inst * FpsEmaNew;
+                Display2.Data.RefreshRate = Display2.Data.RefreshRate * FpsEmaKeep + inst * FpsEmaNew;
             }
             lastFrameUs = loopStart;
         }

@@ -14,6 +14,7 @@ void main() {
   final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
 
   setUpAll(() async {
+    if (skipReason is String) return;
     await connectHil();
   });
 

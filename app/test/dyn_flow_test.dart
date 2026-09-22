@@ -85,7 +85,7 @@ void main() async {
     final link = ConnectionManager.instance;
     final payload = [0, 0, 0, 1]; // field 0, key 1 (capabilities)
     final capReply = await link.request(1, ServiceType.register, 1, payload: payload);
-    if (capReply != null && capReply.length >= 12) {
+    if (capReply.length >= 12) {
       final caps = capReply[8] | (capReply[9] << 8) | (capReply[10] << 16) | (capReply[11] << 24);
       if ((caps & Capability.dynamicMemory) == 0) {
         print('Skipping: device does not have dynamic memory capability (caps=0x${caps.toRadixString(16)})');

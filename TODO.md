@@ -80,6 +80,20 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
       restore on Tamu (`app/test/hil_backup_test.dart`).
 
 ### Notes
+- Packet wire order now matches `Docs/RSBus and Packets.md` (CRC8 | Flags | Priority |
+  Length | SRC | CMD | TGT | TRID | Payload); static_asserts pin the offsets and the app
+  mirrors it. **Wire-breaking: Tamu + DAS + app must be flashed together.**
+- Dynamic memory files: the app now recognises `DT_<hex2>` (table) / `DV_<hex2>` (values)
+  and decodes the DT table; the legacy `SYSMEM`/`DYNMEM`/`KEYMEM` viewers were removed.
+- System NetID (field 7) write is accepted: the value is stored to STATLOG for the next boot
+  without changing the live NetID (docs: applies only after reboot), so the backup can
+  restore it and the app link is not broken. 0/0x3F are rejected.
+- Review/cleanup round: fixed the SUBREQ viewer entry size (26 B) and the u8 layout header,
+  removed the `BlockType` `none`/`system` value collision and the dead `DataType.idx` /
+  `FieldFlags.valid`, consolidated the System-block schema (`core/system_schema.dart`) and
+  address/hex/BlockInfo helpers, guarded every HIL `setUpAll`, wired `AppDiagnostics` into
+  the Log page, documented the remaining doc-vs-code gaps in `Issues.md`, and made the
+  Subscriptions CID 1 response return the current value per docs.
 - LED display layout file renamed to `LAY_1` (firmware `Blocks/Vysi1Display.h`): the
   preload migrates a `VYSIV1` file (keeping any customization) or creates it from the
   compiled-in 11x10 grid, and removes the obsolete `LAY5X5`/zero-padded `VYSIV1` records

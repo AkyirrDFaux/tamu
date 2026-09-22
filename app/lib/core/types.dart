@@ -17,6 +17,16 @@ int idNet(int id) => (id >> 10) & 0x3F;
 int idDevice(int id) => id & 0x3FF;
 String idToString(int id) => '${idNet(id)}.${idDevice(id)}';
 
+/// Parses a "net.device" address (both fields hex) into a 16-bit ID, or null.
+int? idFromString(String text) {
+  final parts = text.split('.');
+  if (parts.length != 2) return null;
+  final net = int.tryParse(parts[0], radix: 16);
+  final dev = int.tryParse(parts[1], radix: 16);
+  if (net == null || dev == null) return null;
+  return ((net & 0x3F) << 10) | (dev & 0x3FF);
+}
+
 /// Sign-extends a 32 bit little-endian value (Dart ints are 64 bit, so the
 /// sign bit must be expanded manually).
 int _signExtend32(int raw) => (raw & 0x80000000) != 0 ? raw - 0x100000000 : raw;
@@ -59,6 +69,11 @@ Uint8List uint32ToBytes(int value) {
 /// (6 bit) | field (8 bit) | key (8 bit).
 int makeBlockInfo(int type, int inst, int field, int key) =>
     ((type & 0x3FF) << 22) | ((inst & 0x3F) << 16) | ((field & 0xFF) << 8) | (key & 0xFF);
+
+int blockInfoType(int blockInfo) => (blockInfo >> 22) & 0x3FF;
+int blockInfoInstance(int blockInfo) => (blockInfo >> 16) & 0x3F;
+int blockInfoField(int blockInfo) => (blockInfo >> 8) & 0xFF;
+int blockInfoKey(int blockInfo) => blockInfo & 0xFF;
 
 /// The BlockInfo as 4 little-endian bytes (wire payload prefix).
 Uint8List blockInfoBytes(int type, int inst, int field, int key) {
@@ -130,7 +145,6 @@ enum DataType {
   filename(0x0B),
   enum_(0x0C),
   deleted(0x0D),
-  idx(0x11), // alias for uint32 (legacy Index type at 0x0E)
   uint32(0x0E), // Unsigned 32-bit (firmware DataType::Uint32)
   devType(0x0F), // alias to enum (firmware DataType::DevType)
   netAddr(0x03), // alias to id
@@ -165,7 +179,7 @@ String dataTypeWord(DataType type) => switch (type) {
       DataType.filename => 'Filename',
       DataType.enum_ => 'Enum',
       DataType.deleted => 'Deleted',
-      DataType.idx || DataType.uint32 => 'Uint32',
+      DataType.uint32 => 'Uint32',
       DataType.devType => 'Device type',
       DataType.geometry => 'Geometry dict',
       DataType.texture => 'Texture dict',
@@ -196,10 +210,19 @@ DataType? dataTypeFromWord(String word) {
   return words[word];
 }
 
+/// The System block is type 0 instance 0 in the Register service; it shares the numeric
+/// value with the dynamic "None" tombstone, so it is not a [BlockType] member (that would
+/// duplicate the enum value). Use this constant for system-block comparisons.
+const int systemBlockTypeValue = 0x00;
+
+/// Block type label for a raw type value, with the System block resolved explicitly
+/// ([BlockType.fromValue] maps 0 to the "None" tombstone).
+String blockTypeLabel(int typeValue) =>
+    typeValue == systemBlockTypeValue ? 'System' : BlockType.fromValue(typeValue).label;
+
 enum BlockType {
   none(0x00), // tombstone: no block here; stable until save compacts
   undefined(0x01), // valid block, type not yet specified
-  system(0x00), // System block (type 0, inst 0 in Register service)
   ledButton(0x03),
   pwm(0x04),
   accGyr(0x05),
@@ -225,7 +248,6 @@ enum BlockType {
   String get label => switch (this) {
         BlockType.none => 'None',
         BlockType.undefined => 'Undefined',
-        BlockType.system => 'System',
         BlockType.ledButton => 'LED/Button',
         BlockType.pwm => 'PWM',
         BlockType.accGyr => 'Acc/Gyr',
@@ -249,7 +271,6 @@ class FieldFlags {
   static const notSaved = 0x2000;
   static const scriptUpdated = 0x4000;
   static const external = 0x8000;
-  static const valid = 0x0400; // alias to readOnly for INVAL check legacy (flash valid)
 
   static List<String> describe(int flags) {
     final names = <String>[];

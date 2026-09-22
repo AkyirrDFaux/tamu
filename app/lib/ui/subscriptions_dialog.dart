@@ -8,7 +8,7 @@ import '../core/block_registry.dart' show blockInfoFor;
 import '../core/device_db.dart';
 import '../core/register_client.dart';
 import '../core/subscription_client.dart';
-import '../core/types.dart' show BlockType, BlockMeta, ProviderSubscription, RequesterSubscription, TriggerType, makeBlockInfo;
+import '../core/types.dart' show BlockType, BlockMeta, RequesterSubscription, TriggerType, makeBlockInfo;
 import 'widgets.dart' show showSnack;
 
 /// Block+Field picker model
@@ -52,6 +52,7 @@ class SubscriptionDialog extends StatefulWidget {
   final Future<void> Function() onSaved;
 
   const SubscriptionDialog({
+    super.key,
     required this.client,
     required this.regClient,
     required this.currentSubs,
@@ -445,7 +446,7 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
     final index = widget.existing?.index ?? _findFreeIndex();
     if (index >= 16) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Max subscriptions reached')));
+      showSnack(context, 'Max subscriptions reached');
       return;
     }
 
@@ -467,15 +468,11 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
     if (ok) {
       await widget.onSaved();
       if (mounted) {
+        showSnack(context, isEdit ? 'Subscription updated' : 'Subscription added');
         Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(isEdit ? 'Subscription updated' : 'Subscription added')),
-        );
       }
     } else {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to save subscription')));
-      }
+      if (mounted) showSnack(context, 'Failed to save subscription');
     }
   }
 
@@ -498,6 +495,7 @@ class BlockPicker extends StatelessWidget {
   final ValueChanged<BlockSelection?> onChanged;
 
   const BlockPicker({
+    super.key,
     required this.label,
     required this.hint,
     required this.blocks,
@@ -543,6 +541,7 @@ class FieldPicker extends StatelessWidget {
   final ValueChanged<FieldSelection?> onChanged;
 
   const FieldPicker({
+    super.key,
     required this.label,
     required this.fields,
     required this.value,
@@ -587,6 +586,7 @@ class KeyPicker extends StatelessWidget {
   static const keys = [0, 1, 2, 3, 4, 5, 6, 7];
 
   const KeyPicker({
+    super.key,
     required this.label,
     required this.value,
     required this.onChanged,
@@ -615,6 +615,7 @@ class ProviderPicker extends StatelessWidget {
   final ValueChanged<int?> onChanged;
 
   const ProviderPicker({
+    super.key,
     required this.label,
     required this.hint,
     required this.devices,
@@ -659,6 +660,7 @@ class NumberField extends StatelessWidget {
   final int min;
 
   const NumberField({
+    super.key,
     required this.label,
     required this.controller,
     required this.onChanged,

@@ -4,8 +4,8 @@ import 'package:tamuapp/core/types.dart';
 import 'package:tamuapp/ui/file_viewers.dart';
 import 'package:tamuapp/ui/theme.dart';
 
-/// Renders MemoryBackupView against synthetic backup bytes matching the
-/// firmware's SerializeRegistry / SerializeSystemBlocks layouts.
+/// Renders MemoryBackupView (the STATLOG / SUBREQ / DT_ decoders) against synthetic
+/// bytes matching the firmware layouts (StaticMemory.h, Subscriptions.h, Memory.h).
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -20,59 +20,29 @@ void main() {
     expect(tester.takeException(), isNull, reason: '$name threw while rendering');
   }
 
-  testWidgets('DYNMEM backup renders', (tester) async {
+  testWidgets('DT_ dynamic block table decodes entries', (tester) async {
+    // u8 name_len, name, u16 type, u16 entry_count, then per entry
+    // u16 fieldKey, u16 flagsAndType, u8 size, u8 pad.
     final data = <int>[
-      ...u16(1), // one block
       3, 68, 89, 78, // name "DYN"
-      ...u16(BlockType.undefined.value), // block type
-      ...u16(2), // two entries
-      ...BlockMeta(flagsAndType: DataType.number.value, size: 4).toBytes(),
-      ...BlockMeta(flagsAndType: DataType.bool_.value, size: 1).toBytes(),
-      ...u16(8), // data length
-      ...numberToBytes(2.5),
-      1, 0, 0, 0, // bool value + pad
+      ...u16(BlockType.dynamic.value),
+      ...u16(2),
+      ...u16((0 << 8) | 0),
+      ...u16(DataType.number.value | FieldFlags.persistent),
+      4, 0,
+      ...u16((1 << 8) | 5),
+      ...u16(DataType.bool_.value),
+      1, 0,
     ];
-    await pump(tester, 'DYNMEM', data);
+    await pump(tester, 'DT_00  ', data);
     expect(find.textContaining('DYN'), findsWidgets);
-    expect(find.textContaining('2.50'), findsWidgets);
+    expect(find.textContaining('Number'), findsWidgets);
   });
 
-  testWidgets('KEYMEM backup renders', (tester) async {
-    final data = <int>[
-      ...u16(1), // one block
-      3, 75, 69, 89,
-      ...u16(BlockType.undefined.value),
-      ...u16(1), // one dictionary
-      ...BlockMeta(flagsAndType: DataType.undefined.value, size: 8).toBytes(),
-      ...u16(8), // dict data length
-      // entry: key 5, number, 4 bytes
-      ...BlockMeta(flagsAndType: DataType.number.value, key: 5, size: 4).toBytes(),
-      ...numberToBytes(3.75),
-    ];
-    await pump(tester, 'KEYMEM', data);
-    expect(find.textContaining('Dictionary 0'), findsWidgets);
-    expect(find.textContaining('3.75'), findsWidgets);
-  });
-
-  testWidgets('SYSMEM backup renders', (tester) async {
-    final data = <int>[
-      ...u16(1), // one writable block
-      ...u16(0), // block index 0 (LEDButton)
-      ...u16(1), // one field
-      ...u16(0), // field index 0 (LEDState)
-      ...u16(1), // vlen 1
-      1, // value true
-    ];
-    await pump(tester, 'SYSMEM', data);
-    expect(find.textContaining('Block 0'), findsWidgets);
-  });
-
-  testWidgets('empty backup renders', (tester) async {
-    await pump(tester, 'DYNMEM', [0, 0]);
-    expect(find.textContaining('empty backup'), findsOneWidget);
-  });
-
-  testWidgets('corrupt backup does not crash', (tester) async {
-    await pump(tester, 'DYNMEM', [5, 0, 0xFF, 0xFF, 1, 2, 3]);
+  testWidgets('empty and corrupt registry files do not crash', (tester) async {
+    await pump(tester, 'DT_00', []);
+    await pump(tester, 'DT_00', [5, 0, 0xFF, 0xFF, 1, 2, 3]);
+    await pump(tester, 'STATLOG', [0xFF]);
+    await pump(tester, 'BOGUS', [1, 2, 3]);
   });
 }

@@ -368,14 +368,8 @@ class BackupDevice {
     );
   }
 
-  static int _parseAddress(String? address) {
-    if (address == null) return 0;
-    final parts = address.split('.');
-    if (parts.length != 2) return 0;
-    final net = int.tryParse(parts[0], radix: 16) ?? 0;
-    final dev = int.tryParse(parts[1], radix: 16) ?? 0;
-    return ((net & 0x3F) << 10) | (dev & 0x3FF);
-  }
+  static int _parseAddress(String? address) =>
+      address == null ? 0 : (idFromString(address) ?? 0);
 
   String get fileName =>
       '${id}_${name.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_')}.json';

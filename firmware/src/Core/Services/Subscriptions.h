@@ -639,8 +639,20 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
             e->hash = 0;
             e->lastBool = false;
             e->sentCounter = 0;
-            uint8_t resp = 1;
-            SubReply(frame, &resp, 1);
+            // Docs CID 1: the response to a change subscription is the CURRENT VALUE
+            // (so the requester starts from a known state). Fall back to a 1-byte ack
+            // when the source register does not resolve (yet).
+            {
+                FieldResult cur = SubscriptionsGetField(sourceReg);
+                if (cur.Data) {
+                    uint8_t vlen = cur.Descriptor.Size;
+                    if (vlen > MAX_PAYLOAD_SIZE) vlen = MAX_PAYLOAD_SIZE;
+                    SubReply(frame, (const uint8_t *)cur.Data, vlen);
+                } else {
+                    uint8_t resp = 1;
+                    SubReply(frame, &resp, 1);
+                }
+            }
 #endif
             break;
         }

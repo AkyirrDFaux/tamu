@@ -5,7 +5,6 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/backup.dart';
-import 'package:tamuapp/core/backup_format.dart';
 import 'package:tamuapp/core/backup_script.dart';
 import 'package:tamuapp/core/device_db.dart';
 import 'package:tamuapp/core/register_client.dart';

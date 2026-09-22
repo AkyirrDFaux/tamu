@@ -5,69 +5,9 @@ library;
 import '../core/types.dart';
 import 'value_editor.dart' show formatValue;
 
-/// Field display names for the system block (Register service fields 0-8).
-String systemFieldName(int field) => switch (field) {
-      0 => 'Device Type',
-      1 => 'Serial Number',
-      2 => 'Short Address',
-      3 => 'Time',
-      4 => 'RAM',
-      5 => 'Storage',
-      6 => 'Name',
-      7 => 'NetID',
-      8 => 'App/CLI Active',
-      _ => 'Field $field',
-    };
-
-/// Sub-structure member names for a keyed system field (e.g. field 3 -> Time).
-String systemStructMemberName(int field, int key) {
-  switch (field) {
-    case 0:
-      switch (key) {
-        case 0: return '.deviceType';
-        case 1: return '.capabilities';
-        case 2: return '.softwareVersion';
-      }
-    case 3:
-      switch (key) {
-        case 0: return '.uptime';
-        case 1: return '.currentTime';
-        case 2: return '.timeOffsetMs';
-        case 3: return '.avgLoopTimeMs';
-        case 4: return '.maxLoopTimeMs';
-      }
-    case 4:
-      switch (key) {
-        case 0: return '.usedRAM';
-        case 1: return '.totalRAM';
-      }
-    case 5:
-      switch (key) {
-        case 0: return '.usedFlash';
-        case 1: return '.totalFlash';
-      }
-    case 8:
-      switch (key) {
-        case 0: return '.appActive';
-        case 1: return '.cliActive';
-      }
-  }
-  return 'Key $key';
-}
-
-/// The key set of one system-block field (0xFF = scalar field, no keys).
-List<int> systemKeysForField(int field) => switch (field) {
-      0 => [0, 1, 2],
-      1 => [0xFF],
-      2 => [0],
-      3 => [0, 1, 2, 3, 4],
-      4 => [0, 1],
-      5 => [0, 1],
-      6 => [0xFF],
-      7 => [0],
-      8 => [0, 1],
-      _ => [0],
-    };
+// The field/key names live in core/system_schema.dart; re-export so existing
+// `system_block_view.dart` importers keep working.
+export '../core/system_schema.dart';
 
 /// Formats one system-block value (special-cases the device type enum, serial
 /// number, addresses, timestamps and the 4-byte software version). `field`/`key`

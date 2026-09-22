@@ -87,7 +87,6 @@ Object? encodeSemantic(DataType type, List<int> bytes, {FieldInfo? info}) {
       if (bytes.isEmpty) return null;
       return bytes.length < 4 ? bytesToInt(bytes) : int32FromBytes(bytes);
     case DataType.uint32:
-    case DataType.idx:
       if (bytes.isEmpty) return null;
       return bytes.length < 4 ? bytesToInt(bytes) : uint32FromBytes(bytes);
     case DataType.enum_:
@@ -151,7 +150,6 @@ List<int>? decodeSemantic(DataType type, Object? value,
     case DataType.integer:
       return value is num ? intToBytes(value.toInt(), size ?? 4) : null;
     case DataType.uint32:
-    case DataType.idx:
       return value is num ? uint32ToBytes(value.toInt()) : null;
     case DataType.enum_:
       final raw = _enumRaw(value, info);

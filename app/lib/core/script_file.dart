@@ -52,7 +52,6 @@ List<int> uiStylesForType(DataType type) => switch (type) {
       DataType.bool_ => const [ScriptUiType.auto, ScriptUiType.toggle, ScriptUiType.button],
       DataType.number ||
       DataType.integer ||
-      DataType.idx ||
       DataType.uint32 =>
         const [ScriptUiType.auto, ScriptUiType.number, ScriptUiType.slider],
       DataType.enum_ || DataType.devType =>
@@ -178,7 +177,7 @@ int defaultSizeForType(DataType type) => switch (type) {
       DataType.bool_ => 1,
       DataType.enum_ => 1,
       DataType.id || DataType.devType => 2,
-      DataType.number || DataType.integer || DataType.idx || DataType.uint32 => 4,
+      DataType.number || DataType.integer || DataType.uint32 => 4,
       DataType.colour => 4,
       DataType.vector => 8,
       DataType.matrix => 24,

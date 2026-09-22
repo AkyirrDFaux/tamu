@@ -59,7 +59,8 @@ class _RegisterPageState extends State<RegisterPage>
     super.initState();
     _refresh();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) applyAuto(const Duration(milliseconds: 2000));
+      // Docs/App/Service views/Register.md: the memory view auto-refreshes at 0.5 s.
+      if (mounted) applyAuto(const Duration(milliseconds: 500));
     });
   }
 
@@ -454,7 +455,7 @@ Future<void> _loadVisibleFields() async {
           FilledButton(
             onPressed: () {
               final v = int.tryParse(controller.text.trim());
-              Navigator.pop(context, v == null ? null : v);
+              Navigator.pop(context, v);
             },
             child: const Text('OK'),
           ),
@@ -950,22 +951,22 @@ Future<void> _loadVisibleFields() async {
     }
 
     // For system block, collect all keys for this field
-    List<({int key, ({BlockMeta meta, List<int> value})? field})> systemFieldKeys = [];
+    List<({int key, ({BlockMeta meta, List<int> value})? field})> keyedEntries = [];
     if (isSystemField && cache != null) {
       final keys = systemKeysForField(fieldIndex);
       for (final key in keys) {
         // Use offset 256 to match _loadBlockFields storage
         final extraField = cache[256 + fieldIndex * 256 + key];
         if (extraField != null) {
-          systemFieldKeys.add((key: key, field: extraField));
+          keyedEntries.add((key: key, field: extraField));
         }
       }
-      if (!systemFieldKeys.any((e) => e.key == systemKeysForField(fieldIndex).first)) {
-        systemFieldKeys.insert(0, (key: systemKeysForField(fieldIndex).first, field: field));
+      if (!keyedEntries.any((e) => e.key == systemKeysForField(fieldIndex).first)) {
+        keyedEntries.insert(0, (key: systemKeysForField(fieldIndex).first, field: field));
       }
     }
 
-    if (isSystemField && systemFieldKeys.length > 1) {
+    if (isSystemField && keyedEntries.length > 1) {
       return ExpansionTile(
         dense: true,
         title: Row(children: [
@@ -974,10 +975,10 @@ Future<void> _loadVisibleFields() async {
               child: Text(systemFieldName(fieldIndex),
                   style: const TextStyle(fontSize: 12, color: Colors.white54))),
           Expanded(
-              child: Text('[${systemFieldKeys.length} fields]',
+              child: Text('[${keyedEntries.length} fields]',
                   style: const TextStyle(fontFamily: 'monospace', fontSize: 13))),
         ]),
-        children: systemFieldKeys.map((entry) {
+        children: keyedEntries.map((entry) {
           final key = entry.key;
           final f = entry.field;
           if (f == null) return const SizedBox.shrink();
@@ -1145,7 +1146,9 @@ Future<void> _loadVisibleFields() async {
     if (block == null || !mounted) return;
     final fields = _dynamicFields[block.inst] ?? <int>[];
     var firstFree = 0;
-    while (fields.contains(firstFree)) firstFree++;
+    while (fields.contains(firstFree)) {
+      firstFree++;
+    }
     final indexController = TextEditingController(text: '$firstFree');
     var selectedType = DataType.number;
     final result = await showDialog<(int, DataType)>(
@@ -1359,7 +1362,7 @@ Future<void> _loadVisibleFields() async {
           FilledButton(
             onPressed: () {
               final v = int.tryParse(controller.text.trim());
-              Navigator.pop(context, v == null ? null : v);
+              Navigator.pop(context, v);
             },
             child: const Text('OK'),
           ),
@@ -1427,17 +1430,15 @@ Future<void> _loadVisibleFields() async {
     return f.isEmpty ? '' : ' · ${f.join(' · ')}';
   }
 
-  /// Adds an entry to a dynamic block's (field, key) record at the first free key.
   /// Prompts for a key number to add/change in a field. For dictionaries the meaningful
-/// keys of the current shape/effect are offered as a selector, but manual numeric input
-/// (0..255) is always allowed - including keys beyond the dictionary specification.
+  /// keys of the current shape/effect are offered as a selector, but manual numeric input
+  /// (0..255) is always allowed - including keys beyond the dictionary specification.
   Future<int?> _promptKey({
     required String title,
     required int startKey,
     required bool isDict,
     required int dictType,
     required int selector,
-    required List<int> usedKeys,
   }) async {
     final controller = TextEditingController(text: '$startKey');
     List<int> meaningful;
@@ -1519,7 +1520,9 @@ Future<void> _loadVisibleFields() async {
     final selector = cache?[fieldIndex * 256 + 1]?.value.first ?? 0;
 
     var startKey = 0;
-    while (keys.contains(startKey)) startKey++;
+    while (keys.contains(startKey)) {
+      startKey++;
+    }
 
     final newKey = await _promptKey(
       title: 'Add key to field $fieldIndex',
@@ -1527,7 +1530,6 @@ Future<void> _loadVisibleFields() async {
       isDict: isDict,
       dictType: dictType,
       selector: selector,
-      usedKeys: keys,
     );
     if (newKey == null || !mounted) return;
     if (keys.contains(newKey)) {
@@ -1587,7 +1589,6 @@ Future<void> _loadVisibleFields() async {
       isDict: isDict,
       dictType: dictType,
       selector: selector,
-      usedKeys: keys,
     );
     if (newKey == null || newKey == key) return;
     if (newKey < 0 || newKey > 255) return;

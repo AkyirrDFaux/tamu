@@ -14,7 +14,10 @@ import 'hil_helpers.dart';
 /// flash (volatile entries come back zeroed).
 void main() async {
   final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
-  setUpAll(() async => await connectHil());
+  setUpAll(() async {
+    if (skipReason is String) return;
+    await connectHil();
+  });
   tearDownAll(disconnectHil);
 
   test('per-block DT/DV save + cleanup', skip: skipReason, () async {
@@ -28,7 +31,9 @@ void main() async {
 
     // Clean slate.
     final count = await c.getInstanceCount(BlockType.dynamic.value) ?? 0;
-    for (var i = 0; i < count; i++) await c.deleteDynamic(block: i);
+    for (var i = 0; i < count; i++) {
+      await c.deleteDynamic(block: i);
+    }
     await c.saveDynamic();
 
     // RENDER at 0: persistent (0,0)=42, volatile (0,1)=7.
@@ -68,7 +73,9 @@ void main() async {
     final port = Platform.environment['TAMU_HIL']!;
     final c = RegisterClient(deviceId: 1);
     final count = await c.getInstanceCount(BlockType.dynamic.value) ?? 0;
-    for (var i = 0; i < count; i++) await c.deleteDynamic(block: i);
+    for (var i = 0; i < count; i++) {
+      await c.deleteDynamic(block: i);
+    }
     await c.saveDynamic();
 
     await c.createDynamicBlock(BlockType.dynamic, 'RENDER', index: 0);

@@ -2,72 +2,49 @@
 library;
 
 import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter/foundation.dart';
 import 'package:tamuapp/core/connection.dart';
-import 'package:tamuapp/core/register_client.dart';
 import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/types.dart';
+
 import 'hil_helpers.dart';
 
+/// Register service smoke checks, shared by `hil_test_suite.dart` and runnable
+/// standalone via `main` (Tamu only).
 Future<void> runTests() async {
-  const t = Timeout(Duration(seconds: 30));
-
-  // HIL: Register Enumerate block types (01.00 Enum 0)
   final link = ConnectionManager.instance;
-  final payload = [0]; // Enum 0 for block types
-  final reply = await link.request(1, ServiceType.register, 0, payload: payload);
-  expect(reply, isNotNull, reason: 'Register enumerate should return reply');
-  if (reply != null && reply.length >= 5) {
-    final count = reply[4];
-    final types = reply.sublist(5, 5 + count);
-    expect(types.length, count);
-  }
 
-  // HIL: Register Read System Block 0 field 0 (DeviceType)
-  final payload2 = blockInfoBytes(0, 0, 0, 0); // type0 inst0 field0 key0
-  final reply2 = await link.request(1, ServiceType.register, 1, payload: payload2);
-  expect(reply2, isNotNull);
-  expect(reply2!.length, greaterThanOrEqualTo(8));
+  // Enumerate block types (01.00 Enum 0: enum_level byte + BlockInfo, min 5 bytes).
+  final reply = await link.request(1, ServiceType.register, 0,
+      payload: [0, 0, 0, 0, 0]);
+  expect(reply.length, greaterThanOrEqualTo(5),
+      reason: 'enumerate should echo BlockInfo + block types');
+  final count = reply[4];
+  expect(count, greaterThan(0), reason: 'Tamu has static blocks');
+  expect(reply.length, greaterThanOrEqualTo(4 + count));
 
-  // HIL: Register Read System SN (field 1, key=0xFF)
-  final payload3 = blockInfoBytes(0, 0, 1, 0xFF);
-  final reply3 = await link.request(1, ServiceType.register, 1, payload: payload3);
-  expect(reply3, isNotNull);
-  expect(reply3!.length, greaterThanOrEqualTo(8 + 14));
+  // Read System block DeviceType (type 0, inst 0, field 0).
+  final reply2 = await link.request(1, ServiceType.register, 1,
+      payload: blockInfoBytes(0, 0, 0, 0));
+  expect(reply2.length, greaterThanOrEqualTo(8));
+
+  // Read System SN (field 1, key 0xFF).
+  final reply3 = await link.request(1, ServiceType.register, 1,
+      payload: blockInfoBytes(0, 0, 1, 0xFF));
+  expect(reply3.length, greaterThanOrEqualTo(8 + 14));
 }
 
-void main() async {
-  final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
+void main() {
+  final skipReason =
+      Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
 
-  setUpAll(() async => await connectHil());
+  setUpAll(() async {
+    if (skipReason is String) return;
+    await connectHil();
+  });
   tearDownAll(disconnectHil);
 
-  test('HIL: Register Enumerate block types (01.00 Enum 0)', () async {
-    final link = ConnectionManager.instance;
-    final payload = [0]; // Enum 0 for block types
-    final reply = await link.request(1, ServiceType.register, 0, payload: payload);
-    expect(reply, isNotNull, reason: 'Register enumerate should return reply');
-    if (reply != null && reply.length >= 5) {
-      final count = reply[4];
-      final types = reply.sublist(5, 5 + count);
-      expect(types.length, count);
-    }
-  }, timeout: const Timeout(Duration(seconds: 30)), skip: skipReason is String ? skipReason : false);
-
-  test('HIL: Register Read System Block 0 field 0 (DeviceType)', () async {
-    final link = ConnectionManager.instance;
-    final payload = blockInfoBytes(0, 0, 0, 0); // type0 inst0 field0 key0
-    final reply = await link.request(1, ServiceType.register, 1, payload: payload);
-    expect(reply, isNotNull);
-    expect(reply!.length, greaterThanOrEqualTo(8));
-  }, timeout: const Timeout(Duration(seconds: 30)), skip: skipReason is String ? skipReason : false);
-
-  test('HIL: Register Read System SN (field 1, key=0xFF)', () async {
-    final link = ConnectionManager.instance;
-    final payload = blockInfoBytes(0, 0, 1, 0xFF);
-    final reply = await link.request(1, ServiceType.register, 1, payload: payload);
-    expect(reply, isNotNull);
-    expect(reply!.length, greaterThanOrEqualTo(8 + 14));
-  }, timeout: const Timeout(Duration(seconds: 30)), skip: skipReason is String ? skipReason : false);
+  test('HIL: Register service', skip: skipReason, () => runTests(),
+      timeout: const Timeout(Duration(seconds: 30)));
 }

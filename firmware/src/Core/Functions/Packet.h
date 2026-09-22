@@ -45,20 +45,26 @@ enum class ServiceType : uint8_t
     CLI = 0x12
 };
 
+// Wire order per Docs/RSBus and Packets.md (top-to-bottom): CRC8 | Flags | Reserved(4) |
+// Priority(4) | Payload Length | SRC ID | CMD | TGT ID | TRID | Payload.
 struct PacketFrame
 {
     uint8_t crc8;
     uint8_t flags;
     uint8_t priority;
     uint8_t payload_len;
-    uint16_t id_tgt;
-    uint16_t id_src;
-    union { uint16_t cmd; uint16_t srv_tgt; };
-    union { uint16_t trid; uint16_t srv_src; };
+    uint16_t id_src;                                 // Source device's address
+    union { uint16_t cmd; uint16_t srv_tgt; };       // Command (destination service)
+    uint16_t id_tgt;                                 // Target device's address
+    union { uint16_t trid; uint16_t srv_src; };      // Transaction ID
     uint8_t payload[MAX_PAYLOAD_SIZE];
 } __attribute__((packed));
 
 static_assert(offsetof(PacketFrame, payload) % 4 == 0, "payload must stay 4-byte aligned");
+static_assert(offsetof(PacketFrame, id_src) == 4, "wire order: SRC ID after the length");
+static_assert(offsetof(PacketFrame, cmd) == 6, "wire order: CMD after SRC ID");
+static_assert(offsetof(PacketFrame, id_tgt) == 8, "wire order: TGT ID after CMD");
+static_assert(offsetof(PacketFrame, trid) == 10, "wire order: TRID after TGT ID");
 
 inline uint8_t Crc8(const uint8_t *data, uint16_t len)
 {

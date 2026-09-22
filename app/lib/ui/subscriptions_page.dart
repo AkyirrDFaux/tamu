@@ -2,11 +2,10 @@
 library;
 
 import 'package:flutter/material.dart';
-import 'package:tamuapp/core/block_registry.dart' show blockInfoFor;
 import 'package:tamuapp/core/device_db.dart';
 import 'package:tamuapp/core/register_client.dart';
 import 'package:tamuapp/core/subscription_client.dart';
-import 'package:tamuapp/core/types.dart' show BlockType, Capability, ProviderSubscription, RequesterSubscription, TriggerType;
+import 'package:tamuapp/core/types.dart' show BlockType, Capability, ProviderSubscription, RequesterSubscription;
 import 'subscriptions_dialog.dart' show SubscriptionDialog;
 
 class SubscriptionsPage extends StatefulWidget {

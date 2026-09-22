@@ -16,7 +16,10 @@ import 'hil_helpers.dart';
 /// written through the Register service (block type 0x3FE).
 void main() async {
   final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
-  setUpAll(() async => await connectHil());
+  setUpAll(() async {
+    if (skipReason is String) return;
+    await connectHil();
+  });
   tearDownAll(disconnectHil);
 
   test('script load / register exposure / unload', skip: skipReason, () async {

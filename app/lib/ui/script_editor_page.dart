@@ -345,7 +345,8 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
         _ => 'Error $code',
       };
 
-  Future<void> _moveToLine() async {    final controller = TextEditingController(text: '$_instructionCounter');
+  Future<void> _moveToLine() async {
+    final controller = TextEditingController(text: '$_instructionCounter');
     final line = await showDialog<int>(
       context: context,
       builder: (context) => AlertDialog(

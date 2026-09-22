@@ -339,12 +339,42 @@ static void HandleStaticBlockRead(const PacketFrame &frame, uint32_t bi, uint16_
 
 // ===== CID 2: Write helpers =====
 
+// Defined with the Save/Recall helpers below (forward declaration for the write path).
+static uint16_t LogEntryWrite(uint8_t block_idx, uint8_t field, uint8_t *buf, uint16_t cnt,
+                              const BlockMeta &m, const uint8_t *val, uint8_t vsz);
+
+// Persists one System-block field with an EXPLICIT value (does not read the live value).
+// Used by the NetID write: the docs say the NetID applies only after reboot, so the write
+// must store it WITHOUT changing the live DeviceStatus.NetId - re-addressing the core at
+// runtime would break the bus/app link to it.
+static bool SystemFieldPersistExplicit(uint8_t field, const uint8_t *val, uint8_t vsz, uint16_t type) {
+    uint8_t buf[MEMORY_BACKUP_CAP];
+    uint16_t cnt = ReadBackupFile(StaticLogName(), buf, sizeof(buf));
+    BlockMeta m; m.FlagsAndType = type; m.Key = 0xFF; m.Size = vsz;
+    uint16_t len = LogEntryWrite(SYSTEM_BLOCK_BACKUP, field, buf, cnt, m, val, vsz);
+    if (len == 0) return false;
+    return WriteBackupFile(StaticLogName(), buf, len);
+}
+
 static void HandleSystemBlockWrite(const PacketFrame &frame, uint8_t field) {
     if (field==6) { // Name
         if (PayloadBytes(frame) < 8) { RespondStatus(frame,false); return; }
         BlockMeta *desc=(BlockMeta*)(frame.payload+4);
         const uint8_t *val=frame.payload+8;
         uint16_t len=desc->Size; if(len>24) len=24; memcpy(DeviceNameBuffer,val,len); DeviceNameBuffer[len]='\0'; SendResponse(frame,frame.payload,PayloadBytes(frame));
+#ifdef TYPE_CORE
+    } else if (field==7) { // NetID (core only): stored now, applied on the next boot
+        if (PayloadBytes(frame) < 8) { RespondStatus(frame,false); return; }
+        BlockMeta *desc=(BlockMeta*)(frame.payload+4);
+        const uint8_t *val=frame.payload+8;
+        // Docs: 0 is not allowed (it is re-randomised at boot); 0x3F is "all nets".
+        if (desc->Size < 1 || val[0] == 0 || val[0] >= 0x3F) { RespondStatus(frame,false); return; }
+        uint16_t type = (uint16_t)DataType::Id | FieldFlags::Persistent;
+        if (SystemFieldPersistExplicit(SYSTEM_FIELD_NETID, val, 1, type))
+            SendResponse(frame,frame.payload,PayloadBytes(frame));
+        else
+            RespondStatus(frame,false);
+#endif
     } else {
         RespondStatus(frame,false);
     }

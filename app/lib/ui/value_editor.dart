@@ -55,14 +55,6 @@ Future<List<int>?> showValueEditor(
         signed: false,
         hex: true,
       );
-    case DataType.idx:
-      return _editInt(
-        context,
-        title: valueWithUnit(info?.name ?? 'Index', info),
-        initial: current.length >= 4 ? uint32FromBytes(current) : null,
-        signed: false,
-        hex: false,
-      );
     case DataType.integer:
       return _editInt(
         context,
@@ -134,7 +126,6 @@ String dataTypeLabel(DataType type) => switch (type) {
       DataType.sn => 'Serial number',
       DataType.id => 'ID',
       DataType.uint32 => 'Uint32',
-      DataType.idx => 'Index',
       DataType.number => 'Number',
       DataType.devType => 'Device type',
       DataType.netAddr => 'Net address',
@@ -170,15 +161,12 @@ String formatValue(DataType type, List<int> bytes) {
         return bytesToInt(bytes).toString();
       }
       return int32FromBytes(bytes).toString();
-    case DataType.idx:
-      if (bytes.isEmpty) return '-';
-      if (bytes.length < 4) return bytesToInt(bytes).toString();
-      return uint32FromBytes(bytes).toString();
     case DataType.string:
       return bytes.isEmpty ? '-' : String.fromCharCodes(bytes).trimRight();
     case DataType.devType:
       if (bytes.length < 2) return '-';
       return DeviceType.fromValue(bytes[0] | (bytes[1] << 8)).label;
+    case DataType.id:
     case DataType.netAddr:
       if (bytes.length < 2) return '-';
       return idToString(bytes[0] | (bytes[1] << 8));
@@ -411,7 +399,7 @@ Future<List<int>?> _editVector(
           text: hasValue
               ? numberFromBytes(current, i * 4).toString()
               : '0.0'));
-  final _sizeCtrl = TextEditingController(text: '$n');
+  final sizeCtrl = TextEditingController(text: '$n');
   final unit = info?.unit;
 
   void resize(int newN) {
@@ -424,7 +412,7 @@ Future<List<int>?> _editVector(
     while (controllers.length > n) {
       controllers.removeLast();
     }
-    _sizeCtrl.text = '$n';
+    sizeCtrl.text = '$n';
     hasValue = false;
   }
 
@@ -447,12 +435,12 @@ Future<List<int>?> _editVector(
               SizedBox(
                 width: 44,
                 child: TextField(
-                  controller: _sizeCtrl,
+                  controller: sizeCtrl,
                   keyboardType: TextInputType.number,
                   textAlign: TextAlign.center,
                   decoration: const InputDecoration(isDense: true),
                   onChanged: (_) =>
-                      setState(() => resize(int.tryParse(_sizeCtrl.text) ?? n)),
+                      setState(() => resize(int.tryParse(sizeCtrl.text) ?? n)),
                 ),
               ),
               IconButton(
@@ -510,8 +498,8 @@ Future<List<int>?> _editMatrix(
   }
   if (h < 1) h = 1;
   if (w < 1) w = 1;
-  final _rowsCtrl = TextEditingController(text: '$h');
-  final _colsCtrl = TextEditingController(text: '$w');
+  final rowsCtrl = TextEditingController(text: '$h');
+  final colsCtrl = TextEditingController(text: '$w');
   final controllers = List.generate(
       h * w,
       (i) => TextEditingController(
@@ -530,8 +518,8 @@ Future<List<int>?> _editMatrix(
     while (controllers.length > h * w) {
       controllers.removeLast();
     }
-    _rowsCtrl.text = '$h';
-    _colsCtrl.text = '$w';
+    rowsCtrl.text = '$h';
+    colsCtrl.text = '$w';
   }
 
   return showDialog<List<int>>(
@@ -555,7 +543,11 @@ Future<List<int>?> _editMatrix(
                 decoration: const InputDecoration(isDense: true),
                 onChanged: (_) => setState(() {
                   final v = int.tryParse(ctrl.text) ?? 0;
-                  if (label == 'Rows') resize(v, w); else resize(h, v);
+                  if (label == 'Rows') {
+                    resize(v, w);
+                  } else {
+                    resize(h, v);
+                  }
                 }),
               ),
             ),
@@ -573,8 +565,8 @@ Future<List<int>?> _editMatrix(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                sizeRow('Rows', _rowsCtrl, (d) => resize(h + d, w)),
-                sizeRow('Cols', _colsCtrl, (d) => resize(h, w + d)),
+                sizeRow('Rows', rowsCtrl, (d) => resize(h + d, w)),
+                sizeRow('Cols', colsCtrl, (d) => resize(h, w + d)),
                 const SizedBox(height: 6),
                 for (var r = 0; r < h; r++)
                   Row(children: [
@@ -734,7 +726,7 @@ Future<List<int>?> _editColour(BuildContext context, List<int> current) {
               Expanded(
                 child: Slider(
                   value: a.toDouble(), min: 0, max: 255, divisions: 255,
-                  label: '${a}',
+                  label: '$a',
                   onChanged: (v) => setState(() { a = v.round(); syncHsv(); }),
                 ),
               ),

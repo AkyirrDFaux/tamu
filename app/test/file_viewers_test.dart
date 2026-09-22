@@ -38,7 +38,9 @@ void main() {
       DataType.string.value & 0xFF, (DataType.string.value >> 8) & 0xFF, 0xFF, name.length,
       ...name,
     ];
-    while (entry1.length % 4 != 0) entry1.add(0);
+    while (entry1.length % 4 != 0) {
+      entry1.add(0);
+    }
     // 2. Static block 0, field 0: Number 10.0
     final entry2 = <int>[
       0, 0, 0xFF, 0, // BlockIndex
@@ -59,20 +61,22 @@ void main() {
     expect(tester.takeException(), isNull, reason: 'STATLOG threw');
   });
 
-  testWidgets('SUBREQ decodes requester entries', (tester) async {
-    // u8 count + 22 B per entry: targetReg, sourceReg, providerAddr u16,
-    // trigger u8 + 3 pad, periodMs u32, minTimeMs u32.
+  testWidgets('SUBREQ decodes requester entries (26 B incl. deadzone)', (tester) async {
+    // u8 count + 26 B per entry: targetReg, sourceReg, providerAddr u16,
+    // trigger u8 + 3 pad, periodMs u32, minTimeMs u32, deadzone Number (16.16).
     final targetReg = makeBlockInfo(0, 0, 0, 0);
     final sourceReg = makeBlockInfo(8, 0, 4, 0);
-    final data = <int>[
-      1,
-      ...u32(targetReg),
-      ...u32(sourceReg),
-      2 & 0xFF, (2 >> 8) & 0xFF,
-      1, 0, 0, 0, // trigger + pad
-      ...u32(1000),
-      ...u32(100),
-    ];
+    List<int> entry(int provider, double deadzone) => <int>[
+          ...u32(targetReg),
+          ...u32(sourceReg),
+          provider & 0xFF, (provider >> 8) & 0xFF,
+          1, 0, 0, 0, // trigger + pad
+          ...u32(1000),
+          ...u32(100),
+          ...numberToBytes(deadzone),
+        ];
+    // Two entries: a misaligned (22 B) parser would read garbage from entry 2.
+    final data = <int>[2, ...entry(2, 0), ...entry(3, 1.5)];
     await pump(tester, 'SUBREQ', data);
   });
 
@@ -81,9 +85,11 @@ void main() {
     // must normalize both space and NUL padding.
     expect(storageFileType('SUBREQ\u0000\u0000'), StorageFileType.backup);
     expect(storageFileType('STATLOG '), StorageFileType.backup);
-    expect(storageFileType('DYNMEM  '), StorageFileType.dynmem);
     expect(storageFileType('SNREG   '), StorageFileType.snreg);
     expect(storageFileType('LAY_1   '), StorageFileType.layout);
+    // Per-block dynamic persistence (Docs/Services/Register.md).
+    expect(storageFileType('DT_0A   '), StorageFileType.dynamicTable);
+    expect(storageFileType('DV_0A   '), StorageFileType.dynamicValues);
   });
 
   testWidgets('layout file uses the u8 width/height header', (tester) async {
@@ -116,9 +122,26 @@ void main() {
         contains('Subs'));
   });
 
-  testWidgets('SYSMEM + DYNMEM still render', (tester) async {
-    await pump(tester, 'SYSMEM', [...u16(0)]);
-    await pump(tester, 'DYNMEM', [...u16(0)]);
+  testWidgets('DT_ dynamic block table renders', (tester) async {
+    // u8 name_len, name, u16 type, u16 entry_count, then (fieldKey, flagsAndType,
+    // size, pad) per entry.
+    final data = <int>[
+      3, 66, 111, 120, // "Box"
+      ...u16(BlockType.dynamic.value),
+      ...u16(2),
+      ...u16((0 << 8) | 0),
+      ...u16(DataType.number.value | FieldFlags.persistent),
+      4, 0,
+      ...u16((1 << 8) | 0),
+      ...u16(DataType.string.value),
+      5, 0,
+    ];
+    await pump(tester, 'DT_00  ', data);
+    expect(find.textContaining('Box'), findsWidgets);
+    expect(find.textContaining('Number'), findsWidgets);
+    // Empty + corrupt tables must not throw.
+    await pump(tester, 'DT_01  ', []);
+    await pump(tester, 'DT_02  ', [9, 1, 2]);
   });
 
   testWidgets('FileViewPage renders formatted and raw hex', (tester) async {

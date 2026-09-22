@@ -1,6 +1,7 @@
 /// Generic packet protocol (Docs/Data Formats.md).
 ///
-/// Wire layout: CRC8 | Flags | Priority | PayloadLen | ID TGT | ID SRC | CMD | TRID | Payload
+/// Wire layout (Docs/RSBus and Packets.md): CRC8 | Flags | Priority | PayloadLen |
+/// SRC ID | CMD | TGT ID | TRID | Payload.
 /// PayloadLen is in 4-byte units (max 29 = 116 bytes); the payload is padded to 4 on the wire.
 library;
 
@@ -112,10 +113,10 @@ class PacketFrame {
     bytes.setUint8(1, flags);
     bytes.setUint8(2, priority);
     bytes.setUint8(3, padded ~/ 4);
-    bytes.setUint16(4, idTarget, Endian.little);
-    bytes.setUint16(6, idSource, Endian.little);
-    bytes.setUint16(8, srvTarget, Endian.little);
-    bytes.setUint16(10, srvSource, Endian.little);
+    bytes.setUint16(4, idSource, Endian.little); // SRC ID
+    bytes.setUint16(6, srvTarget, Endian.little); // CMD
+    bytes.setUint16(8, idTarget, Endian.little); // TGT ID
+    bytes.setUint16(10, srvSource, Endian.little); // TRID
     final out = bytes.buffer.asUint8List();
     out.setAll(12, payload);
     for (var i = payload.length; i < padded; i++) {
@@ -141,9 +142,9 @@ class PacketFrame {
     return PacketFrame(
       flags: data[offset + 1],
       priority: data[offset + 2],
-      idTarget: data[offset + 4] | (data[offset + 5] << 8),
-      idSource: data[offset + 6] | (data[offset + 7] << 8),
-      srvTarget: data[offset + 8] | (data[offset + 9] << 8),
+      idSource: data[offset + 4] | (data[offset + 5] << 8),
+      srvTarget: data[offset + 6] | (data[offset + 7] << 8),
+      idTarget: data[offset + 8] | (data[offset + 9] << 8),
       srvSource: data[offset + 10] | (data[offset + 11] << 8),
       payload: payload,
     );

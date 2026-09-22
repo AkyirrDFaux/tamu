@@ -3,7 +3,6 @@ library;
 
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter/foundation.dart';
 import 'package:tamuapp/core/connection.dart';
 import 'package:tamuapp/core/device_db.dart';
 import 'package:tamuapp/core/protocol.dart';
@@ -15,7 +14,10 @@ import 'hil_helpers.dart';
 void main() {
   final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
 
-  setUpAll(() async => await connectHil());
+  setUpAll(() async {
+    if (skipReason is String) return;
+    await connectHil();
+  });
   tearDownAll(disconnectHil);
 
   // HIL: core ping and Register System block fields
@@ -104,12 +106,37 @@ void main() {
   // HIL: Register Enumerate and BlockInfo
   test('HIL: Register Enumerate and BlockInfo', skip: skipReason, () async {
     final link = ConnectionManager.instance;
-    // Enumerate block types via Register 01.00 Enum 0
-    final enumPayload = [0]; // Enum 0 for types
-    final reply = await link.request(1, ServiceType.register, 0, payload: enumPayload);
-    // May be empty if not implemented, but should not timeout with error
-    // We check that a reply was received (even if empty types)
-    expect(reply != null || true, isTrue);
+    // Enumerate block types via Register 01.00 Enum 0 (enum_level + BlockInfo).
+    final reply = await link.request(1, ServiceType.register, 0,
+        payload: [0, 0, 0, 0, 0]);
+    expect(reply.length, greaterThanOrEqualTo(5), reason: 'BlockInfo echo + types');
+    expect(reply[4], greaterThan(0), reason: 'Tamu has static blocks');
+  }, timeout: const Timeout(Duration(seconds: 60)));
+
+  // HIL: System block NetID (field 7) write. Docs: "applies only after reboot", so the
+  // write must be accepted and stored without changing the live NetID (re-addressing the
+  // core mid-session would break the app/bus link to it).
+  test('HIL: System NetID write is accepted and not applied live', skip: skipReason,
+      () async {
+    final reg = RegisterClient(deviceId: 1);
+    final before = await reg.readField(7, 0);
+    expect(before, isNotNull);
+    final current = before!.value.first;
+    final next = current == 0x30 ? 0x31 : 0x30;
+    Future<List<int>?> write(int v) => reg.writeBlockField(0, 0, 7, 0,
+        BlockMeta(
+            flagsAndType: DataType.id.value | FieldFlags.persistent, size: 1),
+        [v]);
+
+    // Out-of-range values are rejected (0 = unassigned, 0x3F = all nets).
+    expect(await write(0), isNull);
+    expect(await write(0x3F), isNull);
+    // A valid value is accepted...
+    expect(await write(next), isNotNull);
+    // ...but the live NetID is unchanged until the next boot.
+    expect((await reg.readField(7, 0))!.value.first, current);
+    // Restore the original stored value.
+    expect(await write(current), isNotNull);
   }, timeout: const Timeout(Duration(seconds: 60)));
 
   // HIL: DAS has its intended blocks (Docs/Devices.md: Resistive measurement x2, Button,

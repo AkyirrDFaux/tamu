@@ -16,7 +16,10 @@ import 'hil_helpers.dart';
 /// flow (While/EndBlock), time (Delay -> Waiting), and the state machine.
 void main() async {
   final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
-  setUpAll(() async => await connectHil());
+  setUpAll(() async {
+    if (skipReason is String) return;
+    await connectHil();
+  });
   tearDownAll(disconnectHil);
 
   /// Builds a draft and uploads + loads it into [slot]; returns the loaded id.

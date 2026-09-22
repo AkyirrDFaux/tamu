@@ -5,6 +5,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/device_db.dart';
+import 'package:tamuapp/core/register_client.dart';
 import 'package:tamuapp/core/storage_client.dart';
 import 'package:tamuapp/core/subscription_client.dart';
 import 'package:tamuapp/core/types.dart';
@@ -62,8 +63,8 @@ void main() {
         index: 0,
         providerAddr: tamu.id, // self, so the provider CID 1 completes quickly
         trid: 0,
-        targetReg: makeBlockInfo(BlockType.system.value, 0, 6, 0),
-        sourceReg: makeBlockInfo(BlockType.system.value, 0, 6, 0),
+        targetReg: makeBlockInfo(systemBlockTypeValue, 0, 6, 0),
+        sourceReg: makeBlockInfo(systemBlockTypeValue, 0, 6, 0),
         trigger: TriggerType.periodic,
         periodMs: 500,
         minTimeMs: 100,
@@ -90,6 +91,56 @@ void main() {
     expect(counts.containsKey('DYNMEM'), isFalse,
         reason: 'the obsolete DYNMEM file must be gone');
   }, timeout: const Timeout(Duration(seconds: 90)));
+
+  test('dynamic persistence uses the DT_/DV_ files in the documented format',
+      skip: skipReason, () async {
+    final reg = RegisterClient(deviceId: tamu.id);
+    final storage = StorageClient(deviceId: tamu.id);
+    await reg.deleteDynamic(block: 0);
+    await reg.createDynamicBlock(BlockType.dynamic, 'DYNCHK', index: 0);
+    final blk = DynBlock(
+        index: 0,
+        meta: BlockMeta(flagsAndType: BlockType.dynamic.value, size: 1),
+        name: 'DYNCHK');
+    await reg.writeDynamicEntry(
+        blk,
+        0,
+        0,
+        BlockMeta(flagsAndType: DataType.number.value | FieldFlags.persistent, size: 4),
+        numberToBytes(1.0));
+    expect(await reg.saveDynamic(), isTrue);
+
+    final names = (await storage.readFileTable() ?? [])
+        .map((r) => normalizeFileName(r.name))
+        .toSet();
+    // ignore: avoid_print
+    print('[STORAGE] after dynamic save: $names');
+    expect(names.any((n) => n.startsWith('DT_')), isTrue);
+    expect(names.any((n) => n.startsWith('DV_')), isTrue);
+
+    // The DT_ table format matches the app decoder:
+    // u8 name_len, name, u16 type, u16 entry_count, then 6 B per entry.
+    final dtName = names.firstWhere((n) => n.startsWith('DT_'));
+    final bytes = await storage.readFile(dtName, size: 64);
+    expect(bytes, isNotNull);
+    final nameLen = bytes![0];
+    expect(String.fromCharCodes(bytes.sublist(1, 1 + nameLen)), 'DYNCHK');
+    final type = bytes[1 + nameLen] | (bytes[1 + nameLen + 1] << 8);
+    expect(type, BlockType.dynamic.value);
+    final entryCount = bytes[1 + nameLen + 2] | (bytes[1 + nameLen + 3] << 8);
+    expect(entryCount, 1);
+    final entryFieldKey = bytes[1 + nameLen + 4] | (bytes[1 + nameLen + 5] << 8);
+    final entryFlagsAndType =
+        bytes[1 + nameLen + 6] | (bytes[1 + nameLen + 7] << 8);
+    final entrySize = bytes[1 + nameLen + 8];
+    expect(entryFieldKey, 0); // field 0 / key 0
+    expect(entryFlagsAndType & 0x3FF, DataType.number.value);
+    expect(entryFlagsAndType & FieldFlags.persistent, isNot(0));
+    expect(entrySize, 4);
+
+    await reg.deleteDynamic(block: 0);
+    await reg.saveDynamic();
+  }, timeout: const Timeout(Duration(seconds: 60)));
 
   test('the Vysi layout is preloaded as LAY_1; old names are gone', skip: skipReason,
       () async {

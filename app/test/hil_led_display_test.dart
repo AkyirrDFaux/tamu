@@ -118,7 +118,9 @@ Future<void> runTests() async {
     if (!await setEntry(0, 1, DataType.enum_.value, [shape])) fail('shape write failed');
     if (sizeVec != null) {
       final v = <int>[];
-      for (final x in sizeVec) v.addAll(numberToBytes(x));
+      for (final x in sizeVec) {
+        v.addAll(numberToBytes(x));
+      }
       if (!await setEntry(0, 4, DataType.vector.value, v)) fail('size vec write failed');
     } else if (sizeNum != null) {
       if (!await setEntry(0, 4, DataType.number.value, numberToBytes(sizeNum))) fail('size write failed');
@@ -205,14 +207,17 @@ Future<void> runTests() async {
 void main() async {
   final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
 
-  setUpAll(() async => await connectHil());
+  setUpAll(() async {
+    if (skipReason is String) return;
+    await connectHil();
+  });
   tearDownAll(disconnectHil);
 
   test('LED display: flat dynamic model', () async {
     final link = ConnectionManager.instance;
     final payload = [0, 0, 0, 1]; // field 0, key 1 (capabilities)
     final capReply = await link.request(1, ServiceType.register, 1, payload: payload);
-    if (capReply != null && capReply.length >= 12) {
+    if (capReply.length >= 12) {
       final caps = capReply[8] | (capReply[9] << 8) | (capReply[10] << 16) | (capReply[11] << 24);
       if ((caps & Capability.dynamicMemory) == 0) {
         print('Skipping: device does not have dynamic memory capability (caps=0x${caps.toRadixString(16)})');

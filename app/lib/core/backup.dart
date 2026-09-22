@@ -24,9 +24,9 @@ import 'block_registry.dart';
 import 'device_db.dart';
 import 'diagnostics.dart';
 import 'register_client.dart';
-import 'script_draft.dart';
 import 'storage_client.dart';
 import 'subscription_client.dart';
+import 'system_schema.dart';
 import 'types.dart';
 
 Future<void> writePlatformFile(String path, List<int> bytes) async {
@@ -39,46 +39,15 @@ List<int> readPlatformFile(String path) => File(path).readAsBytesSync();
 /// large reads prohibitively slow); the value can be raised by the caller.
 const int defaultMaxFileBytes = 128 * 1024;
 
-// ---------------------------------------------------------------------------
-// System block schema (mirror firmware Register.h RegisterGetSystemField)
-// ---------------------------------------------------------------------------
-
-const int systemFieldCount = 9;
-
-const Map<int, String> systemFieldNames = {
-  0: 'Device',
-  1: 'Serial Number',
-  2: 'Net Address',
-  3: 'Time',
-  4: 'Memory',
-  5: 'Storage',
-  6: 'Name',
-  7: 'Net ID',
-  8: 'App Connection',
-};
-
-const Map<int, Map<int, String>> systemFieldKeys = {
-  0: {0: 'Device Type', 1: 'Capabilities', 2: 'Version'},
-  3: {
-    0: 'Time From Boot',
-    1: 'Now',
-    2: 'Time Offset',
-    3: 'Average Loop',
-    4: 'Maximum Loop',
-  },
-  8: {0: 'App Connected', 1: 'CLI Connected'},
-};
-
-String _systemFieldName(int field) => systemFieldNames[field] ?? 'Field $field';
-String _systemKeyName(int field, int key) =>
-    systemFieldKeys[field]?[key] ?? 'Key $key';
+// The System block schema (names/keys) is shared with the UI in core/system_schema.dart.
 
 // ---------------------------------------------------------------------------
 // Semantic naming helpers
 // ---------------------------------------------------------------------------
 
-/// Block type name in words (registry name when known).
+/// Block type name in words (registry name when known, System block resolved explicitly).
 String blockTypeWord(int typeValue) {
+  if (typeValue == systemBlockTypeValue) return 'System';
   final type = BlockType.fromValue(typeValue);
   return blockInfoFor(type)?.typeName ?? type.label;
 }
@@ -89,24 +58,21 @@ FieldInfo? _staticFieldInfo(int typeValue, int field) =>
 
 /// Field name in words for a Register address (system/static names, else "Field N").
 String registerFieldName(int typeIndex, int field) {
-  if (typeIndex == BlockType.system.value) return _systemFieldName(field);
+  if (typeIndex == systemBlockTypeValue) return systemFieldName(field);
   return _staticFieldInfo(typeIndex, field)?.name ?? 'Field $field';
 }
 
 String registerKeyName(int typeIndex, int field, int key) {
-  if (typeIndex == BlockType.system.value) return _systemKeyName(field, key);
+  if (typeIndex == systemBlockTypeValue) return systemKeyName(field, key);
   return 'Key $key';
 }
 
-String? registerUnit(int typeIndex, int field) =>
-    _staticFieldInfo(typeIndex, field)?.unit;
-
 /// A semantic address for a 32-bit BlockInfo.
 BackupBlockRef _blockRef(int blockInfo) {
-  final type = (blockInfo >> 22) & 0x3FF;
-  final inst = (blockInfo >> 16) & 0x3F;
-  final field = (blockInfo >> 8) & 0xFF;
-  final key = blockInfo & 0xFF;
+  final type = blockInfoType(blockInfo);
+  final inst = blockInfoInstance(blockInfo);
+  final field = blockInfoField(blockInfo);
+  final key = blockInfoKey(blockInfo);
   return BackupBlockRef(
     block: blockTypeWord(type),
     typeIndex: type,
@@ -144,10 +110,16 @@ Future<BackupDevice?> captureDevice(
       if (b == null) continue;
       final type = b.type;
       if (type == BlockType.script.value) continue; // scripts captured semantically
+      // Dynamic tombstones (None/Deleted) carry no data; skip them like readDynamicBlocks.
+      if (type == BlockType.dynamic.value &&
+          (b.meta.typeValue == BlockType.none.value ||
+              b.meta.typeValue == BlockType.deleted.value)) {
+        continue;
+      }
       BackupBlock? block;
       if (type == BlockType.dynamic.value) {
         block = await _captureDynamic(reg, b.inst, b.name, b.meta);
-      } else if (type == BlockType.system.value) {
+      } else if (type == systemBlockTypeValue) {
         block = await _captureSystem(reg);
       } else {
         block = await _captureStatic(reg, type, b.inst, b.name, b.meta);
@@ -272,9 +244,9 @@ Future<BackupBlock?> _captureSystem(RegisterClient reg) async {
       final read = await reg.readField(field, key);
       if (read == null) continue;
       entries.add(BackupEntry(
-        field: _systemFieldName(field),
+        field: systemFieldName(field),
         fieldIndex: field,
-        key: _systemKeyName(field, key),
+        key: systemKeyName(field, key),
         keyIndex: key,
         type: dataTypeWord(read.meta.dataType),
         flags: flagWords(read.meta.flagsAndType),
@@ -285,7 +257,7 @@ Future<BackupBlock?> _captureSystem(RegisterClient reg) async {
   }
   return BackupBlock(
     type: 'System',
-    typeIndex: BlockType.system.value,
+    typeIndex: systemBlockTypeValue,
     instance: 0,
     name: 'System',
     isDynamic: false,
@@ -469,8 +441,8 @@ class LiveDevice {
   });
 
   LiveBlock? findBlock(BackupBlock source) {
-    if (source.typeIndex == BlockType.system.value) {
-      return blocks.where((b) => b.typeValue == BlockType.system.value).firstOrNull;
+    if (source.typeIndex == systemBlockTypeValue) {
+      return blocks.where((b) => b.typeValue == systemBlockTypeValue).firstOrNull;
     }
     final sameType = blocks.where((b) => b.typeValue == source.typeIndex).toList();
     if (sameType.isEmpty) return null;
@@ -512,6 +484,11 @@ Future<LiveDevice?> readLiveDevice(int deviceId) async {
     if (b == null) continue;
     final type = b.type;
     if (type == BlockType.script.value) continue;
+    if (type == BlockType.dynamic.value &&
+        (b.meta.typeValue == BlockType.none.value ||
+            b.meta.typeValue == BlockType.deleted.value)) {
+      continue;
+    }
     if (type == BlockType.dynamic.value) {
       final dyn = DynBlock(index: b.inst, meta: b.meta, name: b.name);
       var fields = await reg.getDynamicFields(b.inst) ?? const <int>[];
@@ -540,7 +517,7 @@ Future<LiveDevice?> readLiveDevice(int deviceId) async {
         isDynamic: true,
         entries: entries,
       ));
-    } else if (type == BlockType.system.value) {
+    } else if (type == systemBlockTypeValue) {
       final entries = <LiveEntry>[];
       for (var field = 0; field < systemFieldCount; field++) {
         final keys = systemFieldKeys[field] ?? const {0: 'Key 0'};
@@ -550,14 +527,14 @@ Future<LiveDevice?> readLiveDevice(int deviceId) async {
           entries.add(LiveEntry(
             field: field,
             key: key,
-            fieldName: _systemFieldName(field),
-            keyName: _systemKeyName(field, key),
+            fieldName: systemFieldName(field),
+            keyName: systemKeyName(field, key),
             meta: read.meta,
           ));
         }
       }
       live.add(LiveBlock(
-        typeValue: BlockType.system.value,
+        typeValue: systemBlockTypeValue,
         instance: 0,
         name: 'System',
         isDynamic: false,
@@ -693,10 +670,6 @@ class RestorePlan {
           final entry = item.entry!;
           if (entry.readOnly) {
             item.issue = 'Read Only';
-            break;
-          }
-          if (item.block!.typeIndex == BlockType.system.value && entry.fieldIndex == 7) {
-            item.issue = 'Identity field'; // Net ID: not writable via Register
             break;
           }
           final override = blockTargets[blockKey(item.device.id, item.block!)];
@@ -878,7 +851,7 @@ Future<({int written, int failed})> applyRestorePlan(RestorePlan plan) async {
         final s = item.subscription!;
         final source = target.resolveRef(s.source);
         final targetReg = target.resolveRef(s.target);
-        final provider = _parseAddress(s.provider);
+        final provider = idFromString(s.provider);
         if (source == null || targetReg == null || provider == null) {
           failed++;
           break;
@@ -904,9 +877,9 @@ Future<({int written, int failed})> applyRestorePlan(RestorePlan plan) async {
         if (!sndbWritten.add(key)) {
           break; // the SNDB is global; write each entry once
         }
-        final id = _parseAddress(e.address);
+        final id = idFromString(e.address);
         done(id != null &&
-            await DeviceDatabase.instance.sndbWrite(_unhex(e.serial), id));
+            await DeviceDatabase.instance.sndbWrite(unhexBytes(e.serial), id));
       case RestoreKind.file:
         final store = storage
             .putIfAbsent(target.id, () => StorageClient(deviceId: target.id));
@@ -920,21 +893,4 @@ Future<({int written, int failed})> applyRestorePlan(RestorePlan plan) async {
     }
   }
   return (written: written, failed: failed);
-}
-
-int? _parseAddress(String address) {
-  final parts = address.split('.');
-  if (parts.length != 2) return null;
-  final net = int.tryParse(parts[0], radix: 16);
-  final dev = int.tryParse(parts[1], radix: 16);
-  if (net == null || dev == null) return null;
-  return ((net & 0x3F) << 10) | (dev & 0x3FF);
-}
-
-List<int> _unhex(String hex) {
-  final clean = hex.replaceAll(RegExp(r'[^0-9a-fA-F]'), '');
-  return [
-    for (var i = 0; i + 1 < clean.length; i += 2)
-      int.parse(clean.substring(i, i + 2), radix: 16)
-  ];
 }
