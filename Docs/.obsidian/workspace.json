@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "App/Backup.md",
+                "file": "Current setup.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Backup"
+              "title": "Current setup"
             }
           },
           {
@@ -27,12 +27,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Command ID table.md",
+                "file": "Modules and blocks/LED display.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Command ID table"
+              "title": "LED display"
             }
           }
         ]
@@ -204,32 +204,32 @@
   },
   "active": "b382b423e960f24e",
   "lastOpenFiles": [
+    "Command ID table.md",
+    "Plan.md",
+    "RSBus and Packets.md",
+    "Services/System Block and Device Commands.md",
+    "Modules and blocks/LED display.md",
+    "Current setup.md",
+    "Services/Subscriptions.md",
+    "Services/Script.md",
+    "Services/CLI.md",
+    "Services/Register.md",
+    "App/Backup.md",
     "App/Service views/Script.md",
     "App/Service views/Storage.md",
     "App/Service views/Register.md",
-    "App/Backup.md",
     "App/Connection.md",
     "App/Device view.md",
     "App/Devices.md",
     "App/General info.md",
     "App/Settings.md",
     "App/Service views/Dynamic Memory.md",
-    "Plan.md",
-    "Services/Script.md",
-    "Services/Subscriptions.md",
     "Modules and blocks/Measurement.md",
-    "Modules and blocks/LED display.md",
     "Modules and blocks/Generic system blocks.md",
     "Modules and blocks/Buttons & LEDS.md",
-    "Services/Register.md",
     "Services/Router.md",
     "General architecture.md",
-    "Command ID table.md",
     "Services/Storage.md",
-    "Services/System Block and Device Commands.md",
-    "Data Formats.md",
-    "Devices.md",
-    "RSBus and Packets.md",
     "App/Service views",
     "App"
   ]

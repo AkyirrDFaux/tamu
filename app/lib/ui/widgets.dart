@@ -166,6 +166,57 @@ class ShellTabs extends ChangeNotifier {
   }
 }
 
+/// Compact vs expanded shell layout. Phones (narrow) use a navigation Drawer;
+/// wider screens keep the always-visible NavigationRail.
+class ShellLayout {
+  static const double breakpoint = 600;
+
+  static bool isCompact(BuildContext context) =>
+      MediaQuery.sizeOf(context).width < breakpoint;
+}
+
+/// Key of the shell Scaffold, so the compact-layout app-bar button can open the
+/// navigation drawer from any shell tab page.
+final GlobalKey<ScaffoldState> shellScaffoldKey = GlobalKey<ScaffoldState>();
+
+/// App-bar leading button shown on the four shell tabs. Renders nothing on wide
+/// layouts, where the NavigationRail is always visible.
+class ShellDrawerButton extends StatelessWidget {
+  const ShellDrawerButton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    if (!ShellLayout.isCompact(context)) return const SizedBox.shrink();
+    return IconButton(
+      icon: const Icon(Icons.menu),
+      tooltip: 'Menu',
+      onPressed: () => shellScaffoldKey.currentState?.openDrawer(),
+    );
+  }
+}
+
+/// A dialog/panel body with a desktop-friendly [maxWidth] that still shrinks to
+/// fit a phone screen. The surrounding dialog bounds the actual width, so
+/// `double.infinity` resolves to the available space and [maxWidth] caps it.
+class DialogBody extends StatelessWidget {
+  const DialogBody({
+    super.key,
+    required this.maxWidth,
+    this.height,
+    required this.child,
+  });
+
+  final double maxWidth;
+  final double? height;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: maxWidth),
+        child: SizedBox(width: double.infinity, height: height, child: child),
+      );
+}
+
 /// Shows a transient status message (shared by the memory/service pages).
 void showSnack(BuildContext context, String message) {
   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));

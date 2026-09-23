@@ -1,12 +1,12 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
-import '../core/backup.dart' show readPlatformFile;
 import '../core/connection.dart';
 import '../core/device_db.dart';
+import '../core/host_files.dart';
+import '../core/platform_caps.dart';
 import '../core/register_client.dart';
 import '../core/storage_client.dart';
 import '../core/types.dart';
@@ -166,7 +166,7 @@ class _StoragePageState extends State<StoragePage>
     await _refresh();
   }
 
-  /// Downloads the whole file to the host (~/Downloads by default).
+  /// Downloads the whole file to a user-chosen location.
   Future<void> _downloadFile(FileRecord file) async {
     _snack('Downloading ${file.name}...');
     final data = await _client.readFile(file.name, size: file.size);
@@ -174,11 +174,14 @@ class _StoragePageState extends State<StoragePage>
       _snack('Download failed');
       return;
     }
-    final dir = Directory('${Platform.environment['HOME']}/Downloads');
-    if (!await dir.exists()) await dir.create(recursive: true);
-    final target = '${dir.path}/${file.name}_download.bin';
-    await File(target).writeAsBytes(data, flush: true);
-    _snack('Saved to $target');
+    final target = await saveBytesWithPicker(
+        fileName: '${file.name}_download.bin', bytes: data);
+    if (target == null) {
+      _snack('Download cancelled');
+      return;
+    }
+    // Mobile pickers return a content URI, not a filesystem path.
+    _snack(isMobile ? 'Saved' : 'Saved to $target');
   }
 
   @override

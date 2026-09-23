@@ -929,8 +929,8 @@ class _ValueDialogState extends State<_ValueDialog> {
     return AlertDialog(
       scrollable: true,
       title: Text('${_categoryTitle(widget.category)} ${widget.index}'),
-      content: SizedBox(
-        width: 380,
+      content: DialogBody(
+        maxWidth: 380,
         child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
           TextField(
             controller: _name,
@@ -1216,8 +1216,8 @@ class _SymbolPickerState extends State<_SymbolPicker> {
               : groups[group].$1),
         ),
       ]),
-      content: SizedBox(
-        width: 360,
+      content: DialogBody(
+        maxWidth: 360,
         height: 380,
         child: Column(children: [
           if (_hint != null)
@@ -1401,8 +1401,8 @@ class _InstructionPickerState extends State<_InstructionPicker> {
           ),
         Expanded(child: Text(category == null ? 'Pick instruction' : ScriptInstructionDef.categoryName(category))),
       ]),
-      content: SizedBox(
-        width: 380,
+      content: DialogBody(
+        maxWidth: 380,
         height: 400,
         child: category == null
             ? ListView(children: [
@@ -1486,7 +1486,7 @@ class _PredefineValueDialogState extends State<_PredefineValueDialog> {
     };
     return AlertDialog(
       title: Text('Predefine: ${ScriptSymbol.predefineName(subtype)}'),
-      content: SizedBox(width: 320, height: 360, child: body),
+      content: DialogBody(maxWidth: 320, height: 360, child: body),
       actions: [
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
       ],

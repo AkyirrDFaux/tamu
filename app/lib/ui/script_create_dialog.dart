@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import '../core/script_file.dart';
 import '../core/types.dart';
 import 'theme.dart';
+import 'widgets.dart';
 
 /// The result of the create-script dialog.
 class NewScriptResult {
@@ -113,8 +114,8 @@ class _NewScriptDialogState extends State<_NewScriptDialog> {
     return AlertDialog(
       scrollable: true,
       title: const Text('New script'),
-      content: SizedBox(
-        width: 420,
+      content: DialogBody(
+        maxWidth: 420,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

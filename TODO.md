@@ -147,3 +147,38 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
   (Inputs and Outputs; inputs writable). Variables live in the script RAM (Script CID 5/7),
   constants are file data and the Header is script metadata (Script CID 3/5/8) - none of
   them are register content.
+
+## 4. Android app (`Docs/App/General info.md`: Android = BLE)
+- [x] **Platform gating**: `core/platform_caps.dart` (`isAndroid`/`isMobile`/`supportsUsb`
+  from `defaultTargetPlatform`, test-overridable). The manager defaults to the BLE source on
+  Android, skips USB enumeration, and refuses USB links off desktop; the Connection source
+  menu only offers BLE there.
+- [x] **Storage / file IO**: Android settings persist via `path_provider`
+  (`getApplicationSupportDirectory`); `main()` awaits the async settings load. Backup save
+  and Storage download use `file_picker` with `bytes:` so the SAF writes them on mobile
+  (the old `$HOME/Downloads` / path-write path was broken on Android). New
+  `core/host_files.dart` holds the pick/save helpers.
+- [x] **BLE permissions**: `permission_handler` requests `BLUETOOTH_SCAN`/`CONNECT` on the
+  first scan (maps to the legacy location permission on Android 11 and below); a denied
+  request stops scanning, and the Connection page shows a banner with a settings shortcut
+  and an Android Bluetooth-off/unsupported warning. Manifest cleaned (dropped
+  `MANAGE_EXTERNAL_STORAGE` + legacy storage permissions; added the BLE feature + versioned
+  location permissions).
+- [x] **Adaptive phone shell**: below 600 dp the shell uses a navigation Drawer (hamburger on
+  the four tab pages); wider screens keep the NavigationRail. Desktop-sized dialogs/panels
+  (`DialogBody`) now shrink to the phone width.
+- [x] **Host tests**: `test/android_platform_test.dart` (capability gating, BLE-only source,
+  USB refusal, file IO round-trip, `DialogBody` shrink, compact-shell decision). Full suite
+  73 pass; `flutter build linux --debug` still builds.
+- [x] **Android build verified** with JDK 21 (`flutter config --jdk-dir=/usr/lib/jvm/java-21-openjdk`):
+  `flutter build apk --debug` and `--release` both succeed. `aapt2 dump badging` confirms
+  minSdk 24 / targetSdk 36, the BLE feature, the BLE runtime permissions and no storage
+  permissions. `permission_handler` is pinned to `^11.3.1` (its Android impl 12.1.0 uses
+  compileSdk 34); 13.x pulls `permission_handler_android` 14.1.0, which needs `compileSdk 37`
+  and the SDK ships that platform as `android-37.0`, which AGP 8.11 cannot resolve.
+- [x] **Beta identity**: both Android builds are labelled **Tamu App (beta)** and use the
+  application id `tamu.app.beta` (`applicationIdSuffix = ".beta"`), so the beta installs
+  alongside the previous `tamu.app` release instead of updating it. Remove the suffix to
+  promote it.
+- [ ] **On-device verification** (pending a phone): runtime permission prompt, BLE
+  scan/connect/MTU, SAF backup save + restore, download, and the drawer on a real phone.

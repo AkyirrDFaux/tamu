@@ -5,6 +5,7 @@ import '../core/backup.dart';
 import '../core/backup_format.dart';
 import '../core/connection.dart';
 import '../core/device_db.dart';
+import '../core/host_files.dart';
 import '../core/notifications.dart';
 import '../core/types.dart';
 import 'widgets.dart';
@@ -41,14 +42,13 @@ class _BackupPageState extends State<BackupPage> {
         return;
       }
       final zip = buildBackupZip(devices);
-      final target = await FilePicker.saveFile(
+      final target = await saveBytesWithPicker(
         fileName:
             'tamu_backup_${DateTime.now().toIso8601String().substring(0, 10)}.zip',
-        type: FileType.custom,
+        bytes: zip,
         allowedExtensions: ['zip'],
       );
-      if (target == null) return;
-      await writePlatformFile(target, zip);
+      if (target == null) return; // cancelled
       final items = devices.fold<int>(
           0, (sum, d) => sum + d.blocks.fold<int>(0, (s, b) => s + b.entries.length));
       _snack('Backup saved (${devices.length} device(s), $items register entries)');
@@ -107,7 +107,10 @@ class _BackupPageState extends State<BackupPage> {
         final connected = ConnectionManager.instance.isConnected;
         final devices = _db.all;
         return Scaffold(
-          appBar: AppBar(title: const Text('Backup')),
+          appBar: AppBar(
+            title: const Text('Backup'),
+            leading: const ShellDrawerButton(),
+          ),
           body: !connected
               ? const Center(child: Text('Not connected'))
               : Column(children: [

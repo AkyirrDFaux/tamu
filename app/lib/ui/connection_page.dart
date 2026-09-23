@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../core/connection.dart';
 import '../core/device_db.dart';
+import '../core/platform_caps.dart';
 import '../core/settings.dart';
 import 'theme.dart';
 import 'widgets.dart';
@@ -16,7 +17,8 @@ class ConnectionPage extends StatefulWidget {
   State<ConnectionPage> createState() => _ConnectionPageState();
 }
 
-class _ConnectionPageState extends State<ConnectionPage> {
+class _ConnectionPageState extends State<ConnectionPage>
+    with WidgetsBindingObserver {
   final _manager = ConnectionManager.instance;
   bool _refreshing = false;
   Duration? _autoInterval = const Duration(seconds: 1); // docs default: on
@@ -24,6 +26,7 @@ class _ConnectionPageState extends State<ConnectionPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     ShellTabs.instance.addListener(_onTabChanged);
     _refreshOnce();
     // Autorefresh is "automatically on" (docs, 1 s period): start the periodic
@@ -33,10 +36,19 @@ class _ConnectionPageState extends State<ConnectionPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     ShellTabs.instance.removeListener(_onTabChanged);
     // Leaving the page (app exit) always stops autorefresh.
     if (ShellTabs.instance.index == 0) _manager.setAutoRefresh(false);
     super.dispose();
+  }
+
+  /// Coming back from the system settings page (permission fix-up) re-checks.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _manager.blePermissionBlocked) {
+      _manager.retryBlePermissions();
+    }
   }
 
   /// Autorefresh only runs while the Connection tab is visible.
@@ -117,8 +129,49 @@ class _ConnectionPageState extends State<ConnectionPage> {
     return Colors.redAccent;
   }
 
+  /// Source selector. USB is a desktop-only link (Docs/App/General info.md), so
+  /// Android only offers BLE.
+  Widget _sourceMenu() {
+    return PopupMenuButton<LinkSource>(
+      icon: const Icon(Icons.source),
+      tooltip: 'Source',
+      initialValue: _manager.source,
+      onSelected: (source) => _manager.setSource(source),
+      itemBuilder: (_) => [
+        const PopupMenuItem(value: LinkSource.ble, child: Text('BLE devices')),
+        if (supportsUsb)
+          const PopupMenuItem(
+              value: LinkSource.usb, child: Text('USB devices')),
+        if (supportsUsb)
+          const PopupMenuItem(
+              value: LinkSource.all, child: Text('All devices')),
+      ],
+    );
+  }
+
+  /// A Bluetooth availability / permission banner, or nothing when usable.
+  Widget _statusBanner() {
+    if (_manager.blePermissionBlocked) {
+      return _Banner(
+        icon: Icons.bluetooth_disabled,
+        text: 'Bluetooth permission denied',
+        actionLabel: 'Open settings',
+        onAction: () => _manager.openPermissionSettings(),
+      );
+    }
+    return StreamBuilder<String?>(
+      stream: _manager.bluetoothWarning,
+      builder: (context, snapshot) {
+        final warning = snapshot.data;
+        if (warning == null) return const SizedBox.shrink();
+        return _Banner(icon: Icons.bluetooth_disabled, text: warning);
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final compact = ShellLayout.isCompact(context);
     return ListenableBuilder(
       listenable: _manager,
       builder: (context, _) {
@@ -126,18 +179,9 @@ class _ConnectionPageState extends State<ConnectionPage> {
         return Scaffold(
           appBar: AppBar(
             title: const Text('Connection'),
-            leading: PopupMenuButton<LinkSource>(
-              icon: const Icon(Icons.source),
-              tooltip: 'Source',
-              initialValue: _manager.source,
-              onSelected: (source) => _manager.setSource(source),
-              itemBuilder: (_) => const [
-                PopupMenuItem(value: LinkSource.ble, child: Text('BLE devices')),
-                PopupMenuItem(value: LinkSource.usb, child: Text('USB devices')),
-                PopupMenuItem(value: LinkSource.all, child: Text('All devices')),
-              ],
-            ),
+            leading: compact ? const ShellDrawerButton() : _sourceMenu(),
             actions: [
+              if (compact && supportsUsb) _sourceMenu(),
               RefreshButton(
                 onRefresh: _refreshOnce,
                 autoActive: _manager.autoRefresh,
@@ -164,6 +208,7 @@ class _ConnectionPageState extends State<ConnectionPage> {
           ),
           body: Column(
             children: [
+              _statusBanner(),
               if (_manager.isConnecting)
                 ListTile(
                   leading: const SizedBox(
@@ -262,6 +307,39 @@ class _ConnectionPageState extends State<ConnectionPage> {
       // Long-press picks this device as the autoconnect target (Settings page
       // documents "Long-press a device on the Connection page to set it").
       onLongPress: () => _setAutoConnectFor(link),
+    );
+  }
+}
+
+/// A compact full-width warning strip used for Bluetooth/permission problems.
+class _Banner extends StatelessWidget {
+  const _Banner({
+    required this.icon,
+    required this.text,
+    this.actionLabel,
+    this.onAction,
+  });
+
+  final IconData icon;
+  final String text;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      color: kOrange.withAlpha(38),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: kOrange),
+          const SizedBox(width: 8),
+          Expanded(child: Text(text)),
+          if (actionLabel != null && onAction != null)
+            TextButton(onPressed: onAction, child: Text(actionLabel!)),
+        ],
+      ),
     );
   }
 }

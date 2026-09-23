@@ -94,8 +94,8 @@ class _LogViewerPageState extends State<LogViewerPage>
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('App diagnostics'),
-        content: SizedBox(
-          width: 520,
+        content: DialogBody(
+          maxWidth: 520,
           height: 360,
           child: SingleChildScrollView(
             child: SelectableText(text,

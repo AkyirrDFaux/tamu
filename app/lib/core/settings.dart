@@ -9,6 +9,9 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
+
+import 'platform_caps.dart';
 
 const String appVersion = '1.0.0';
 const String appBuildDate =
@@ -41,7 +44,7 @@ class AppSettings extends ChangeNotifier {
   final Set<String> osEvents = {...notificationEvents};
 
   Future<void> load() async {
-    final file = _settingsFile();
+    final file = await _settingsFile();
     if (file == null || !file.existsSync()) return;
     try {
       final data = jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
@@ -65,7 +68,7 @@ class AppSettings extends ChangeNotifier {
   }
 
   Future<void> save() async {
-    final file = _settingsFile();
+    final file = await _settingsFile();
     if (file == null) return;
     try {
       file.createSync(recursive: true);
@@ -87,8 +90,15 @@ class AppSettings extends ChangeNotifier {
     save();
   }
 
-  static File? _settingsFile() {
+  /// The persisted settings location. Android has no HOME: use the app's
+  /// private support directory (path_provider). Desktops keep the existing
+  /// `~/.config/tamuapp` path so already-saved settings are not orphaned.
+  static Future<File?> _settingsFile() async {
     try {
+      if (isMobile) {
+        final dir = await getApplicationSupportDirectory();
+        return File('${dir.path}/settings.json');
+      }
       final home = Platform.environment['HOME'] ??
           Platform.environment['USERPROFILE'];
       if (home == null || home.isEmpty) return null;

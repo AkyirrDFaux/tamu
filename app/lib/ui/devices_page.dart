@@ -75,24 +75,30 @@ class _DevicesPageState extends State<DevicesPage>
     }
   }
 
+  Widget _viewMenu() {
+    return PopupMenuButton<_ViewMode>(
+      icon: Icon(_mode == _ViewMode.list ? Icons.view_list : Icons.account_tree),
+      tooltip: 'View',
+      initialValue: _mode,
+      onSelected: (mode) => setState(() => _mode = mode),
+      itemBuilder: (_) => const [
+        PopupMenuItem(value: _ViewMode.list, child: Text('List view')),
+        PopupMenuItem(value: _ViewMode.graph, child: Text('Graph view')),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final compact = ShellLayout.isCompact(context);
     return ListenableBuilder(
       listenable: _db,
       builder: (context, _) => Scaffold(
         appBar: AppBar(
           title: const Text('Devices'),
-          leading: PopupMenuButton<_ViewMode>(
-            icon: Icon(_mode == _ViewMode.list ? Icons.view_list : Icons.account_tree),
-            tooltip: 'View',
-            initialValue: _mode,
-            onSelected: (mode) => setState(() => _mode = mode),
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: _ViewMode.list, child: Text('List view')),
-              PopupMenuItem(value: _ViewMode.graph, child: Text('Graph view')),
-            ],
-          ),
+          leading: compact ? const ShellDrawerButton() : _viewMenu(),
           actions: [
+            if (compact) _viewMenu(),
             RefreshButton(
               onRefresh: _refresh,
               autoActive: autoRefreshActive,

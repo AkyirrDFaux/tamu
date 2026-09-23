@@ -9,7 +9,7 @@ import '../core/device_db.dart';
 import '../core/register_client.dart';
 import '../core/subscription_client.dart';
 import '../core/types.dart' show BlockType, BlockMeta, RequesterSubscription, TriggerType, makeBlockInfo;
-import 'widgets.dart' show showSnack;
+import 'widgets.dart' show showSnack, DialogBody;
 
 /// Block+Field picker model
 /// A block (block type + instance) available for a subscription source/target.
@@ -260,8 +260,8 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
 
     return AlertDialog(
       title: Text(isEdit ? 'Edit Subscription' : 'Add Subscription'),
-      content: SizedBox(
-        width: 500,
+      content: DialogBody(
+        maxWidth: 500,
         child: _loadingBlocks
             ? const Center(child: CircularProgressIndicator())
             : _blockError != null

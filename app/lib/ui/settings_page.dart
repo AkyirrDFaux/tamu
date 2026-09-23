@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/settings.dart';
 import 'theme.dart';
+import 'widgets.dart';
 
 /// Settings screen (Docs/App/Settings.md).
 class SettingsPage extends StatefulWidget {
@@ -25,7 +26,10 @@ class _SettingsPageState extends State<SettingsPage> {
     return ListenableBuilder(
       listenable: _settings,
       builder: (context, _) => Scaffold(
-        appBar: AppBar(title: const Text('Settings')),
+        appBar: AppBar(
+          title: const Text('Settings'),
+          leading: const ShellDrawerButton(),
+        ),
         body: ListView(
           children: [
             const SectionHeader('Connection'),

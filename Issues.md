@@ -13,3 +13,18 @@
 - **Register backup view.** `Docs/App/Service views/Register.md` describes a Current/Backup
   view toggle with Save/Recall; the app exposes per-field "Save/Recall to backup" menus and
   a global Save/Recall all instead of a view toggle.
+
+## Android (build verified; on-device verification pending)
+- **`permission_handler` pinned to 11.x.** The 13.x Android implementation
+  (`permission_handler_android` 14.1.0) declares `compileSdk 37` (Android 17 preview); the SDK
+  installs that platform as `android-37.0`, which AGP 8.11 cannot resolve
+  (`Failed to find target with hash string 'android-37'`). The 11.x line
+  (`permission_handler_android` 12.1.0, compileSdk 34) builds cleanly and exposes the same
+  Bluetooth permission API. Revisit when AGP/Flutter understand minor-versioned platforms.
+- **Flutter "Built-in Kotlin" migration.** The build warns that some plugins still apply the
+  Kotlin Gradle Plugin; Flutter will require the built-in Kotlin path in future versions.
+  Upgrade the affected plugins when they support it.
+- **On-device behavior not yet verified** (no Android device/emulator configured): the BLE
+  runtime permission prompt and its denied/permanently-denied paths, BLE scan/connect/MTU,
+  the Storage Access Framework backup save + restore and file download, and the compact
+  drawer shell on a phone form factor.

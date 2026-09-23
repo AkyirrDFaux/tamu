@@ -6,6 +6,7 @@ import '../core/block_registry.dart';
 import '../core/transform_23.dart';
 export '../core/block_registry.dart' show FieldInfo;
 import '../core/types.dart';
+import 'widgets.dart';
 
 /// Per-data-type editing popups (Docs/App/Service views/*: "values can be
 /// edited when tapped"). Each type gets widgets suited to it - switches for
@@ -544,8 +545,8 @@ Future<List<int>?> _editMatrix(
 
         return AlertDialog(
           title: Text(info?.name ?? 'Matrix ${h}x$w'),
-          content: SizedBox(
-            width: 300,
+          content: DialogBody(
+            maxWidth: 300,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -640,8 +641,8 @@ Future<List<int>?> _editColour(BuildContext context, List<int> current) {
     builder: (context) => StatefulBuilder(
       builder: (context, setState) => AlertDialog(
         title: const Text('Colour'),
-        content: SizedBox(
-          width: 320,
+        content: DialogBody(
+          maxWidth: 320,
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             // Live preview.
             Container(
@@ -861,8 +862,8 @@ tc['ox'] = TextEditingController(text: _num3(t.offsetX));
     builder: (context) => StatefulBuilder(
       builder: (context, setState) => AlertDialog(
           title: const Text('Matrix (2x3)'),
-          content: SizedBox(
-            width: 320,
+          content: DialogBody(
+            maxWidth: 320,
             child: Column(mainAxisSize: MainAxisSize.min, children: [
               SegmentedButton<bool>(
                 segments: const [

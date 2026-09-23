@@ -14,8 +14,10 @@ import 'package:flutter_libserialport/flutter_libserialport.dart'
     show SerialPort;
 import 'package:universal_ble/universal_ble.dart';
 
+import 'ble_permissions.dart';
 import 'diagnostics.dart';
 import 'device_db.dart';
+import 'platform_caps.dart';
 import 'protocol.dart';
 import 'transport.dart';
 
@@ -46,7 +48,8 @@ class ConnectionManager extends ChangeNotifier {
   static final ConnectionManager instance = ConnectionManager._();
 
   // --- Scan state -----------------------------------------------------------
-  LinkSource source = LinkSource.all;
+  // Android is BLE-only, so the source menu must not offer USB there.
+  LinkSource source = supportsUsb ? LinkSource.all : LinkSource.ble;
   DeviceSort sort = DeviceSort.alphabetical;
   bool autoRefresh = true; // automatically on per the docs
 
@@ -63,6 +66,16 @@ class ConnectionManager extends ChangeNotifier {
   Timer? _autoConnectRetry;
   DateTime? _autoConnectSuppressedUntil;
   bool _bleScanActive = false;
+
+  // Android runtime BLE permission state (see _refreshBle). The request is made
+  // once; afterwards the user must fix it from the system settings page.
+  bool _blePermissionRequested = false;
+  bool _blePermissionGranted = false;
+  bool _blePermissionBlocked = false;
+
+  /// True when scanning is blocked because the BLE runtime permission was
+  /// permanently denied (only the system settings page can re-enable it).
+  bool get blePermissionBlocked => _blePermissionBlocked;
 
   /// The visible list: remaining devices, sorted as selected.
   List<DiscoveredLink> get discoveredLinks {
@@ -145,7 +158,7 @@ class ConnectionManager extends ChangeNotifier {
     // stationary close-range device stays silent in later scans and clearing
     // here would make previously-found devices vanish from the list.
     if (source != LinkSource.usb) await _refreshBle();
-    if (source != LinkSource.ble) await _refreshUsb();
+    if (source != LinkSource.ble && supportsUsb) await _refreshUsb();
     notifyListeners();
     unawaited(_maybeAutoConnect());
   }
@@ -229,6 +242,24 @@ class ConnectionManager extends ChangeNotifier {
   }
 
   Future<void> _refreshBle() async {
+    // Android needs runtime BLE permissions before the first scan. Request them
+    // once; if denied, stop scanning until the user grants them (the Connection
+    // page offers a shortcut to the system settings page).
+    if (isAndroid && !_blePermissionGranted) {
+      if (_blePermissionRequested) {
+        refreshError = true;
+        return;
+      }
+      _blePermissionRequested = true;
+      final result = await ensureBlePermissions();
+      _blePermissionGranted = result == BlePermissionResult.granted;
+      _blePermissionBlocked = result == BlePermissionResult.permanentlyDenied;
+      if (!_blePermissionGranted) {
+        refreshError = true;
+        notifyListeners();
+        return;
+      }
+    }
     try {
       if (!_bleScanActive) {
         await _scanSub?.cancel();
@@ -273,6 +304,10 @@ class ConnectionManager extends ChangeNotifier {
   }
 
   Future<void> _refreshUsb() async {
+    if (!supportsUsb) {
+      _usbEntries = [];
+      return;
+    }
     try {
       _usbEntries = SerialPort.availablePorts.map((n) {
         String? description;
@@ -299,6 +334,28 @@ class ConnectionManager extends ChangeNotifier {
     _bleScanActive = false;
   }
 
+  /// A human-readable Bluetooth warning, or null while Bluetooth is usable
+  /// (Android surfaces "Bluetooth is off" and permission problems).
+  Stream<String?> get bluetoothWarning =>
+      UniversalBle.availabilityStream.map((state) => switch (state) {
+            AvailabilityState.poweredOff => 'Bluetooth is off',
+            AvailabilityState.unauthorized => 'Bluetooth permission denied',
+            AvailabilityState.unsupported => 'Bluetooth is not supported',
+            _ => null,
+          });
+
+  /// Re-requests the BLE runtime permissions, e.g. after the user returned from
+  /// the system settings page.
+  Future<void> retryBlePermissions() async {
+    _blePermissionRequested = false;
+    _blePermissionGranted = false;
+    _blePermissionBlocked = false;
+    await refresh();
+  }
+
+  /// Opens this app's OS settings page (used to fix a denied permission).
+  Future<void> openPermissionSettings() => openBlePermissionSettings();
+
   // ===========================================================================
   // Connecting / disconnecting
   // ===========================================================================
@@ -319,6 +376,8 @@ class ConnectionManager extends ChangeNotifier {
           await ble.connect();
           transport = ble;
         case LinkType.usb:
+          // Android is BLE-only (Docs/App/General info.md).
+          if (!supportsUsb) return 'USB is not supported on this platform';
           final usb = UsbTransport(link.id);
           await usb.connect();
           transport = usb;

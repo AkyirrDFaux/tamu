@@ -12,7 +12,6 @@
 library;
 
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:archive/archive_io.dart';
@@ -28,12 +27,6 @@ import 'storage_client.dart';
 import 'subscription_client.dart';
 import 'system_schema.dart';
 import 'types.dart';
-
-Future<void> writePlatformFile(String path, List<int> bytes) async {
-  await File(path).writeAsBytes(bytes);
-}
-
-List<int> readPlatformFile(String path) => File(path).readAsBytesSync();
 
 /// Files larger than this are not captured (the 64-byte Storage fragments make
 /// large reads prohibitively slow); the value can be raised by the caller.
