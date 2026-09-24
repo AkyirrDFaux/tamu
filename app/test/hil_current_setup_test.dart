@@ -134,13 +134,25 @@ void main() {
   }, timeout: const Timeout(Duration(seconds: 30)));
 
   test('setup: capture the semantic backup zip to the project root', skip: skipReason, () async {
+    // A busy device can drop the block enumeration; retry until each device reports blocks.
+    Future<BackupDevice> captureWithRetry(DeviceEntry d) async {
+      BackupDevice? cap;
+      for (var i = 0; i < 4; i++) {
+        cap = await captureDevice(d.id, includeFiles: true, maxFileBytes: 65536);
+        if (cap != null && cap.blocks.isNotEmpty) break;
+        await Future<void>.delayed(const Duration(milliseconds: 600));
+      }
+      expect(cap, isNotNull, reason: 'capture device ${d.id}');
+      // ignore: avoid_print
+      print('[SETUP] captured device ${d.id} (${d.displayName}) -> '
+          '${cap!.blocks.length} blocks, ${cap.files.length} files, ${cap.scripts.length} scripts');
+      expect(cap.blocks, isNotEmpty, reason: 'device ${d.id} blocks captured');
+      return cap;
+    }
+
     final devices = <BackupDevice>[];
     for (final d in [found.core, ...found.das]) {
-      final cap = await captureDevice(d.id, includeFiles: true, maxFileBytes: 65536);
-      // ignore: avoid_print
-      print('[SETUP] captured device ${d.id} (${d.displayName}) -> ${cap == null ? "null" : "${cap.blocks.length} blocks, ${cap.files.length} files, ${cap.scripts.length} scripts"}');
-      expect(cap, isNotNull, reason: 'capture device ${d.id}');
-      devices.add(cap!);
+      devices.add(await captureWithRetry(d));
     }
     final zip = buildBackupZip(devices);
     final out = File('${Directory.current.parent.path}/Tamu_current_setup.zip');
