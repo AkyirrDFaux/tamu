@@ -220,6 +220,13 @@ const int systemBlockTypeValue = 0x00;
 String blockTypeLabel(int typeValue) =>
     typeValue == systemBlockTypeValue ? 'System' : BlockType.fromValue(typeValue).label;
 
+/// Whether a Register block slot should be hidden as a dynamic tombstone. Dynamic tombstone
+/// slots carry no block (their meta type is the "None" tombstone value), but the System block
+/// reports meta type 0x00 too - the same numeric value - so the slot type must be checked as
+/// well. `type` is the slot's block type (System = 0x00, dynamic = 0x3FF).
+bool isHiddenRegisterSlot(int type, BlockMeta meta) =>
+    type != systemBlockTypeValue && meta.typeValue == BlockType.none.value;
+
 enum BlockType {
   none(0x00), // tombstone: no block here; stable until save compacts
   undefined(0x01), // valid block, type not yet specified

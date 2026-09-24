@@ -186,7 +186,7 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
   (`DialogBody`) now shrink to the phone width.
 - [x] **Host tests**: `test/android_platform_test.dart` (capability gating, BLE-only source,
   USB refusal, file IO round-trip, `DialogBody` shrink, compact-shell decision). Full suite
-  73 pass; `flutter build linux --debug` still builds.
+  76 pass; `flutter build linux --debug` still builds.
 - [x] **Android build verified** with JDK 21 (`flutter config --jdk-dir=/usr/lib/jvm/java-21-openjdk`):
   `flutter build apk --debug` and `--release` both succeed. `aapt2 dump badging` confirms
   minSdk 24 / targetSdk 36, the BLE feature, the BLE runtime permissions and no storage
@@ -197,5 +197,10 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
   application id `tamu.app.beta` (`applicationIdSuffix = ".beta"`), so the beta installs
   alongside the previous `tamu.app` release instead of updating it. Remove the suffix to
   promote it.
+- [x] **Register System block display fix**: the Register page hid every block whose meta type
+  equalled the dynamic "None" tombstone (`0x00`) - which also hid the System block, whose
+  meta type is `0x00` (`BlockType::System`). The filter (`isHiddenRegisterSlot` in
+  `core/types.dart`) now checks the slot type, so the System block shows again while empty
+  dynamic slots stay hidden. Regression test `test/register_slots_test.dart`.
 - [ ] **On-device verification** (pending a phone): runtime permission prompt, BLE
   scan/connect/MTU, SAF backup save + restore, download, and the drawer on a real phone.

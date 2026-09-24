@@ -564,8 +564,9 @@ Future<void> _loadVisibleFields() async {
     final isExpanded = _expanded.contains(blockIndex);
     final isSystem = block.type == 0 && block.inst == 0;
     final isDynamic = block.type == BlockType.dynamic.value;
-    if (block.meta.typeValue == BlockType.none.value) {
-      // Tombstone slots are hidden (they carry no block).
+    if (isHiddenRegisterSlot(block.type, block.meta)) {
+      // Dynamic tombstone slots are hidden (they carry no block). The System block reports
+      // meta type 0x00 too, so it is excluded by the slot type (see isHiddenRegisterSlot).
       return const SizedBox.shrink();
     }
 
