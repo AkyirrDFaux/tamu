@@ -13,6 +13,12 @@
 - **Register backup view.** `Docs/App/Service views/Register.md` describes a Current/Backup
   view toggle with Save/Recall; the app exposes per-field "Save/Recall to backup" menus and
   a global Save/Recall all instead of a view toggle.
+- **The "Not Saved" active flag is never set.** `Docs/Services/Register.md` defines an active
+  "Not Saved" flag ("a change has been made compared to the saved state") and the CLI prints
+  `[NS]`, but nothing sets it. A static Write only reaches RAM until an explicit Save (CID 3),
+  so a value can look applied and still vanish on reboot with nothing signalling it - which is
+  exactly how the display render-block was lost unnoticed. Set/clear the flag on write/save (or
+  document that callers must track it themselves).
 
 ## Android (build verified; on-device verification pending)
 - **`permission_handler` pinned to 11.x.** The 13.x Android implementation
@@ -87,6 +93,10 @@
   1 kHz should be achievable).
 - **PWM Duty is a `uint32` (%), not a Number.** The Register view/tests must decode it as an
   unsigned int; reading it as 16.16 gives ~0.0005 for a real 30 %.
+- **DAS static persistence is saved but not reboot-verified.** The builder now issues a Save
+  for each DAS's resistive-measure block (the same STATLOG path the core uses, including the
+  truncation fix), but a DAS power-cycle/refresh is needed to confirm the CH32 restores it;
+  the HIL reset only reboots the core.
 - **DAS provider subscriptions accumulate stale entries.** The DAS provider table holds 4, and
   a requester cancel does not always reach the DAS (busy bus / dropped packet), so stale
   providers linger and can block a new subscription (`ProviderFindFree` returns none). The

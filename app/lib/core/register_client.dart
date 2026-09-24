@@ -500,6 +500,16 @@ class RegisterClient {
     return true;
   }
 
+  /// Saves one static (or System) block's persistent fields to the STATLOG mirror
+  /// (CID 3; field 0xFF = every writable persistent field). A static write only lands in
+  /// RAM, so without a Save the block reverts to its defaults on the next reboot.
+  Future<bool> saveStatic(int blockType, int instance) async {
+    final reply = await request(3,
+        payload: blockInfoBytes(blockType, instance, 0xFF, 0),
+        timeout: const Duration(seconds: 10));
+    return reply != null && reply.isNotEmpty && reply[0] == 0;
+  }
+
   /// Saves the dynamic registry (CID 3; instance 0x3F = everything).
   Future<bool> saveDynamic({int? block}) async {
     final inst = block ?? 0x3F;

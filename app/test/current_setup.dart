@@ -36,12 +36,13 @@ const int scrEyeMovement = 1;
 const int scrLidTimer = 2;
 const int scrBrightness = 3;
 
-/// Display indices on the core.
-const int dispLeft = 0;
-const int dispRight = 1;
+/// Display indices on the core. The two LED outputs are swapped on the rig: the physical
+/// left display answers on instance 1 and the right one on instance 0.
+const int dispLeft = 1;
+const int dispRight = 0;
 
-/// Fan PWM instance.
-const int fanInst = 0;
+/// Fan PWM instance. The fan is wired to the second output (Fan2).
+const int fanInst = 1;
 
 /// Subscription block field indexes.
 const int fTempA = 0;
@@ -109,13 +110,15 @@ const double eyeOffsetX = 1.0; // px toward the face centre (Input 0.x; flipped 
 const double eyeOffsetY = -0.5; // px up (+y in the render space points down on the mounted displays)
 const double eyeLimit = 3.0; // px clamp (safety, internal)
 
-/// Display Offset matrices (2x3 affine, raw wire bytes) - the mounting rotations fixed
-/// on the device. Left is mounted ~180 deg, right ~5 deg.
-const List<int> dispLeftOffset = [
-  2, 0, 3, 0, 6, 1, 255, 255, 70, 22, 0, 0, 0, 0, 0, 0, 186, 233, 255, 255, 6, 1, 255, 255, 0, 0, 0, 0,
-];
-const List<int> dispRightOffset = [
+/// Display Offset matrices (2x3 affine, raw wire bytes) - the mounting rotations fixed on
+/// the device. A rotation is a property of the panel and its mount, so it is keyed by CORE
+/// INSTANCE and stays with the output even though the two outputs are swapped.
+/// Instance 0 is mounted ~5 deg, instance 1 ~175 deg.
+const List<int> dispOffsetInst0 = [
   2, 0, 3, 0, 250, 254, 0, 0, 70, 22, 0, 0, 0, 0, 0, 0, 186, 233, 255, 255, 250, 254, 0, 0, 0, 0, 0, 0,
+];
+const List<int> dispOffsetInst1 = [
+  2, 0, 3, 0, 6, 1, 255, 255, 70, 22, 0, 0, 0, 0, 0, 0, 186, 233, 255, 255, 6, 1, 255, 255, 0, 0, 0, 0,
 ];
 
 /// Script tunables / input defaults (Docs/Current setup v2.md).
@@ -167,9 +170,14 @@ DynBlock _dyn(int index, [String name = '']) =>
 
 /// Writes one (field, key) entry into a dynamic block, creating the field if needed.
 /// Retries a few times: a busy device (rendering, subscriptions) can drop a reply.
-Future<void> setDynEntry(
-    RegisterClient reg, int block, int field, int key, DataType type, List<int> value) async {
-  final meta = BlockMeta(flagsAndType: type.value, key: key, size: value.length);
+///
+/// [persistent] defaults to true: a render dictionary is configuration, and a dynamic entry
+/// without the Persistent flag is zeroed when the block is reloaded from its DT/DV files at
+/// boot - so the whole scene (shapes, texture types, sizes, fades) would be lost on a reboot.
+Future<void> setDynEntry(RegisterClient reg, int block, int field, int key, DataType type,
+    List<int> value, {bool persistent = true}) async {
+  final flags = type.value | (persistent ? FieldFlags.persistent : 0);
+  final meta = BlockMeta(flagsAndType: flags, key: key, size: value.length);
   for (var attempt = 0; attempt < 4; attempt++) {
     final ok = await reg.writeDynamicEntry(_dyn(block), field, key, meta, value);
     if (ok != null) return;
@@ -205,6 +213,16 @@ Future<void> setStatic(
     await Future<void>.delayed(const Duration(milliseconds: 200));
   }
   throw StateError('static write failed: type $type inst $inst field $field');
+}
+
+/// Persists a static block's persistent fields to flash (Register CID 3, field 0xFF).
+/// Retries a busy device; throws so a setup that would not survive a reboot fails loudly.
+Future<void> saveStaticBlock(RegisterClient reg, int type, int inst) async {
+  for (var attempt = 0; attempt < 4; attempt++) {
+    if (await reg.saveStatic(type, inst)) return;
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+  }
+  throw StateError('static save failed: type $type inst $inst');
 }
 
 bool _bytesEqual(List<int> a, List<int> b) {
@@ -251,7 +269,9 @@ Future<void> buildSubscriptionBlock(RegisterClient reg) async {
   await reg.deleteDynamic(block: dynSubscriptions);
   await reg.createDynamicBlock(BlockType.dynamic, 'Subscriptions', index: dynSubscriptions);
   for (final f in [fTempA, fLuxA, fTempB, fLuxB]) {
-    await setDynEntry(reg, dynSubscriptions, f, 0, DataType.number, num(0));
+    // These hold live values pushed by the DAS, so they are volatile (a stale reading is
+    // useless after a reboot; the subscriptions refill them immediately).
+    await setDynEntry(reg, dynSubscriptions, f, 0, DataType.number, num(0), persistent: false);
   }
 }
 
@@ -313,9 +333,9 @@ Future<void> buildEyeBlock(RegisterClient reg, int block, String name) async {
 Future<void> configureDisplays(RegisterClient reg) async {
   await setStatic(reg, BlockType.vysiDisplay.value, dispLeft, 2, u32(dynLeftEye));
   await setStatic(reg, BlockType.vysiDisplay.value, dispRight, 2, u32(dynRightEye));
-  // Preserve the mounting rotations fixed on the device.
-  await setStatic(reg, BlockType.vysiDisplay.value, dispLeft, 1, dispLeftOffset);
-  await setStatic(reg, BlockType.vysiDisplay.value, dispRight, 1, dispRightOffset);
+  // Preserve the mounting rotations fixed on the device, by instance (not by side).
+  await setStatic(reg, BlockType.vysiDisplay.value, 0, 1, dispOffsetInst0);
+  await setStatic(reg, BlockType.vysiDisplay.value, 1, 1, dispOffsetInst1);
   final layout = 'LAY_1'.padRight(8).codeUnits; // 8-char space-padded storage name
   await setStatic(reg, BlockType.vysiDisplay.value, dispLeft, 3, layout);
   await setStatic(reg, BlockType.vysiDisplay.value, dispRight, 3, layout);
@@ -846,5 +866,20 @@ Future<({DeviceEntry core, List<DeviceEntry> das})> applyCurrentSetup(
   }
 
   await reg.saveDynamic();
+
+  // Flush the static settings to the STATLOG mirror. A static write only lands in RAM
+  // until a Save (Register.md "the user selects what should be updated in the save"), so
+  // without this the display render-block/layout, the fan, the gyro and the DAS
+  // measurement settings all revert to their defaults on the next reboot.
+  await saveStaticBlock(reg, BlockType.vysiDisplay.value, dispLeft);
+  await saveStaticBlock(reg, BlockType.vysiDisplay.value, dispRight);
+  await saveStaticBlock(reg, BlockType.pwm.value, fanInst);
+  await saveStaticBlock(reg, BlockType.accGyr.value, 0);
+  for (final das in found.das) {
+    final dasReg = RegisterClient(deviceId: das.id);
+    await saveStaticBlock(dasReg, BlockType.resistiveMeasure.value, 0);
+    await saveStaticBlock(dasReg, BlockType.resistiveMeasure.value, 1);
+  }
+
   return found;
 }

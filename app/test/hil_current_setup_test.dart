@@ -6,6 +6,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/backup.dart';
 import 'package:tamuapp/core/backup_format.dart';
+import 'package:tamuapp/core/connection.dart';
 import 'package:tamuapp/core/device_db.dart';
 import 'package:tamuapp/core/register_client.dart';
 import 'package:tamuapp/core/script_client.dart';
@@ -27,7 +28,7 @@ void main() {
     await connectHil();
     final db = DeviceDatabase.instance;
     // Bounded discovery: the DAS re-register on their own schedule after a reset.
-    for (var i = 0; i < 10; i++) {
+    for (var i = 0; i < 20; i++) {
       await db.refreshRuntime(0);
       await Future<void>.delayed(const Duration(seconds: 2));
       if (db.all.where((d) => d.type == DeviceType.dualAnalogSensor).length >= 2) break;
@@ -84,6 +85,16 @@ void main() {
           reason: 'eye $eye iris gradient 2');
     }
   }, timeout: const Timeout(Duration(seconds: 60)));
+
+  test('setup: each display keeps its own mount rotation', skip: skipReason, () async {
+    // The two panels are mounted differently (~5 deg and ~175 deg) and the rotations are keyed
+    // by core instance. Getting these swapped makes one eye render upside down.
+    final reg = RegisterClient(deviceId: found.core.id);
+    for (final (inst, expected) in [(0, dispOffsetInst0), (1, dispOffsetInst1)]) {
+      final off = await reg.readBlockField(BlockType.vysiDisplay.value, inst, 1, 0);
+      expect(off?.value, expected, reason: 'display $inst mount rotation');
+    }
+  }, timeout: const Timeout(Duration(seconds: 30)));
 
   test('setup: scripts expose their documented inputs', skip: skipReason, () async {
     final storage = StorageClient(deviceId: found.core.id);
@@ -394,4 +405,60 @@ void main() {
     final names = [for (final b in core.blocks) b.name];
     expect(names, containsAll(['Subscriptions', 'Left Eye', 'Right Eye']));
   }, timeout: const Timeout(Duration(seconds: 60)));
+
+  test('setup: static settings survive a reboot', skip: skipReason, () async {
+    // The displays' Render Block is a *static* persistent field: it only reaches flash when
+    // applyCurrentSetup issues a Save (Register.md). Without one, a reboot reverts it to
+    // -1 and the eyes stop rendering the setup entirely - this was the reported "config did
+    // not persist". Reboot and check the whole configuration comes back on its own.
+    final db = DeviceDatabase.instance;
+    final reg = RegisterClient(deviceId: found.core.id);
+    final port = Platform.environment['TAMU_HIL']!;
+
+    await ConnectionManager.instance.disconnect();
+    await Process.run('/home/akyirr/.platformio/penv/bin/python', [
+      '/home/akyirr/.platformio/packages/tool-esptoolpy/esptool.py',
+      '--port', port, 'run'
+    ]);
+    await Future<void>.delayed(const Duration(seconds: 6));
+    final err = await connectHil();
+    expect(err, isNull, reason: 'reconnect after reboot');
+    for (var i = 0; i < 20; i++) {
+      await db.refreshRuntime(0);
+      await Future<void>.delayed(const Duration(seconds: 2));
+      if (db.all.where((d) => d.type == DeviceType.dualAnalogSensor).length >= 2) break;
+    }
+
+    final left = await reg.readBlockField(BlockType.vysiDisplay.value, dispLeft, 2, 0);
+    final right = await reg.readBlockField(BlockType.vysiDisplay.value, dispRight, 2, 0);
+    // ignore: avoid_print
+    print('[SETUP] after reboot: left renders ${left?.value} right renders ${right?.value}');
+    expect(uint32FromBytes(left!.value), dynLeftEye, reason: 'left display render block restored');
+    expect(uint32FromBytes(right!.value), dynRightEye, reason: 'right display render block restored');
+
+    // The rest of the configuration restores through its own paths (DT/DV, script files,
+    // the requester table).
+    final layout = await reg.readBlockField(BlockType.vysiDisplay.value, dispLeft, 3, 0);
+    expect(layout?.value, 'LAY_1'.padRight(8).codeUnits, reason: 'layout restored');
+    final names = {for (final b in await reg.readDynamicBlocks() ?? <DynBlock>[]) b.index: b.name};
+    expect(names[dynLeftEye], 'Left Eye');
+    expect(names[dynRightEye], 'Right Eye');
+
+    // The render dictionary itself must survive too: its entries carry the Persistent flag,
+    // so the shapes/texture types/sizes/fades come back instead of being zeroed (the scripts
+    // only rewrite the positions and the mode colours, so a zeroed dictionary renders wrong).
+    final leftBlock = DynBlock(
+        index: dynLeftEye, meta: BlockMeta(flagsAndType: BlockType.dynamic.value), name: '');
+    Future<List<int>?> val(int field, int key) async =>
+        (await reg.readDynamicField(leftBlock, field, key))?.value;
+    expect(await val(eyeBgGeo, gkShape), enumByte(shapeFill), reason: 'bg shape restored');
+    expect(await val(eyeIrisTex, tkType), enumByte(texGradientLinear), reason: 'iris texture restored');
+    expect(await val(eyePupilGeo, gkSize), [...num(pupilHalfW), ...num(pupilHalfH)],
+        reason: 'pupil size restored');
+    expect(await val(eyeLidGeo, gkFade), num(lidFade), reason: 'lid fade restored');
+    expect(await val(eyeLidTex, tkType), enumByte(texFill), reason: 'lid texture restored');
+
+    expect(await ScriptClient(deviceId: found.core.id).loadedScripts(), [0, 1, 2, 3]);
+    expect(await SubscriptionClient(deviceId: found.core.id).getRequesterSubscriptions(), hasLength(4));
+  }, timeout: const Timeout(Duration(minutes: 3)));
 }

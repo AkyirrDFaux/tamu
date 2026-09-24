@@ -428,28 +428,36 @@ static void HandleStaticBlockWrite(const PacketFrame &frame, uint16_t type, uint
 
 // ===== CID 3,4: Save/Recall for Static =====
 
-// Writes (or updates in place) one field entry in the STATLOG mirror buffer. Entry format:
+// Writes (or updates) one field entry in the STATLOG mirror buffer. Entry format:
 // BlockIndex[4] + BlockMeta[4] + value[4-aligned]. Returns the new buffer length (0 = no
-// room / invalid). Reusing the exact same entry for a repeated save keeps the log bounded.
+// room). An existing entry for the same (block, field) is REMOVED first (the tail is shifted
+// down) and the new entry appended, so updating an entry in the middle keeps every entry
+// that follows it. (Replacing in place returned a length ending at the updated entry, and the
+// caller writes back exactly that many bytes - which silently truncated the rest of the log
+// and dropped the saved settings of later blocks/instances.)
 static uint16_t LogEntryWrite(uint8_t block_idx, uint8_t field, uint8_t *buf, uint16_t cnt,
                               const BlockMeta &m, const uint8_t *val, uint8_t vsz) {
-    uint16_t c = 0;
-    for (; c + kLogEntryHeaderSize <= cnt; ) {
+    for (uint16_t c = 0; c + kLogEntryHeaderSize <= cnt; ) {
         uint8_t b = buf[c]; if (b == 0xFF) break;
         uint8_t sz = buf[c + kLogEntryHeaderSize - 1];
         uint16_t el = LogEntrySize(sz);
         if (c + el > cnt) break;
-        if (buf[c] == block_idx && buf[c + 1] == field) break; // replace the existing entry
+        if (buf[c] == block_idx && buf[c + 1] == field) {
+            memmove(buf + c, buf + c + el, cnt - (c + el)); // drop it, close the gap
+            cnt -= el;
+            break;
+        }
         c += el;
     }
+
     uint16_t need = kLogEntryHeaderSize + ((vsz + 3) & ~3);
-    if (c + need > MEMORY_BACKUP_CAP) return 0;
+    if (cnt + need > MEMORY_BACKUP_CAP) return 0;
     BlockIndex ei = {block_idx, field, 0xFF, 0};
-    memcpy(buf + c, &ei, sizeof(BlockIndex)); c += sizeof(BlockIndex);
-    memcpy(buf + c, &m, sizeof(BlockMeta));  c += sizeof(BlockMeta);
-    memcpy(buf + c, val, vsz);               c += vsz;
-    while (c % 4) buf[c++] = 0;
-    return c;
+    memcpy(buf + cnt, &ei, sizeof(BlockIndex)); cnt += sizeof(BlockIndex);
+    memcpy(buf + cnt, &m, sizeof(BlockMeta));   cnt += sizeof(BlockMeta);
+    memcpy(buf + cnt, val, vsz);                cnt += vsz;
+    while (cnt % 4) buf[cnt++] = 0;
+    return cnt;
 }
 
 // Persists one static-block field into the STATLOG buffer.

@@ -413,6 +413,40 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
   from the pupil matrix); the lux subscriptions were sped back up (period 500 ms, deadzone
   2 lux, min 200 ms) and the brightness script delay cut to 100 ms, so the brightness reacts
   in ~0.6 s without streaming.
+- [x] **Static settings now persist across a reboot**: `applyCurrentSetup` wrote the display
+  render-block/layout, fan, gyro and DAS measurement settings but never issued a Register
+  **Save** (CID 3), so they only lived in RAM - a reboot reverted the displays to render
+  block -1 and the eyes stopped rendering (the "config did not persist" report). Added
+  `RegisterClient.saveStatic` (CID 3, field 0xFF) and `saveStaticBlock` in the builder, which
+  saves each configured static block and throws if the save fails. Verified by a new
+  reboot-persistence test in `hil_current_setup_test` (the core is hard-reset, then the
+  display render blocks, layout, render-dictionary values, dynamic blocks, scripts and
+  subscriptions are all checked).
+- [x] **STATLOG save truncated the log after every update (firmware bug).** `LogEntryWrite`
+  "replaced" an existing (block, field) entry *in place* and returned a length ending at that
+  entry; `HandleStaticSaveRecall` then wrote back exactly that many bytes, silently dropping
+  every entry that followed. So saving a block whose entry sat in the middle of the log wiped
+  the saved settings of the blocks after it - the saves still reported success. This is what
+  swapped the displays and moved the fan: the saved instance-1 render block was truncated away
+  by a later save of instance 0. Fixed in `Register.h`: remove the old entry (shift the tail
+  down) and append the new one, so all other entries survive. Verified by the reboot test:
+  both display instances now restore (`display 0 -> Right Eye`, `display 1 -> Left Eye`) and
+  the STATLOG holds entries for both instances.
+- [x] **Render-dictionary entries are now Persistent.** The eye blocks were built with flag 0,
+  so `saveDynamic` stored the entry *structure* but the values were zeroed on reload (only the
+  scripts' positions/colours came back, not the shapes, texture types, sizes or fades - the
+  scene rendered wrong after a reboot). `setDynEntry` now sets `FieldFlags.persistent` by
+  default; the live-value "Subscriptions" block opts out. The reboot test asserts the restored
+  shapes/texture types/pupil size/lid fade.
+- [x] **Rig mapping: displays swapped L<->R and the fan moved to the second output.** The
+  physical left display answers on core instance 1 and the fan on PWM instance 1:
+  `dispLeft = 1`, `dispRight = 0`, `fanInst = 1`. The mount rotations are keyed by CORE
+  INSTANCE now (`dispOffsetInst0`/`dispOffsetInst1`) - a rotation is a property of the panel and
+  its mount, so it stays with the output instead of following the side. The two constants were
+  also swapped to match the device's current values: the panels are mounted differently
+  (instance 0 ~5 deg, instance 1 ~175 deg), so a single rotation for both is wrong. The LDR
+  crossing (left eye <- right DAS LDR) was left as-is; if the panels physically moved, that
+  pairing should flip too.
 - [ ] **Tuning** (later): temperature->duty curve, gyro->pixel scale, and the brightness
   range (kept low to avoid a brown-out), plus a physical check of the eyes/lid.
 
