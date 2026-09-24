@@ -11,13 +11,6 @@ import 'package:tamuapp/core/subscription_client.dart';
 import 'package:tamuapp/core/types.dart';
 import 'hil_helpers.dart';
 
-DeviceEntry? findTamu(DeviceDatabase db) {
-  for (final d in db.all) {
-    if (d.type == DeviceType.tamuV20A) return d;
-  }
-  return db.byId(1);
-}
-
 void main() {
   final skipReason =
       Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;

@@ -15,13 +15,6 @@ import 'package:tamuapp/core/storage_client.dart';
 import 'package:tamuapp/core/types.dart';
 import 'hil_helpers.dart';
 
-DeviceEntry? findTamu(DeviceDatabase db) {
-  for (final d in db.all) {
-    if (d.type == DeviceType.tamuV20A) return d;
-  }
-  return db.byId(1);
-}
-
 Future<void> discoverDevices() async {
   final db = DeviceDatabase.instance;
   await db.refreshRuntime(0);

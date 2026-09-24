@@ -158,4 +158,50 @@ class ScriptDraft {
         symConstant => s.value < constants.length ? constants[s.value].type : null,
         _ => null,
       };
+
+  /// The list backing [category].
+  List<ScriptDraftValue> listOf(ScriptValueCategory category) => switch (category) {
+        ScriptValueCategory.input => inputs,
+        ScriptValueCategory.output => outputs,
+        ScriptValueCategory.variable => variables,
+        ScriptValueCategory.constant => constants,
+      };
+}
+
+/// The four value lists of a script draft, shared by the editor UI.
+enum ScriptValueCategory {
+  input,
+  output,
+  variable,
+  constant;
+
+  /// The Register field the category is exposed through (variables/constants are internal).
+  int get field => switch (this) {
+        input => ScriptField.input,
+        output => ScriptField.output,
+        variable => ScriptField.variable,
+        constant => ScriptField.constant,
+      };
+
+  /// The symbol type that references an entry of this category.
+  int get symbolType => switch (this) {
+        input => symInput,
+        output => symOutput,
+        variable => symVariable,
+        constant => symConstant,
+      };
+
+  String get label => switch (this) {
+        input => 'Input',
+        output => 'Output',
+        variable => 'Variable',
+        constant => 'Constant',
+      };
+
+  String get pluralLabel => switch (this) {
+        input => 'Inputs',
+        output => 'Outputs',
+        variable => 'Variables',
+        constant => 'Constants',
+      };
 }

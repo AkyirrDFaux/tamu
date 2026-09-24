@@ -64,28 +64,10 @@ void HandleLogHandler(const PacketFrame &frame)
         {
             // Database full: try to GROW it on the heap first; only when the heap cannot
             // provide more room, drop the OLDEST record to make space for this one.
-            if (LogCapacity < LOG_MAX_CAPACITY)
-            {
-                LogRecord *nb = (LogRecord *)realloc(LogBuffer, (LogCapacity + LOG_GROW_STEP) * sizeof(LogRecord));
-                bool *nu = (bool *)realloc(LogUsed, (LogCapacity + LOG_GROW_STEP) * sizeof(bool));
-                uint32_t *ns = (uint32_t *)realloc(LogSeq, (LogCapacity + LOG_GROW_STEP) * sizeof(uint32_t));
-                if (nb && nu && ns)
-                {
-                    memset(nu + LogCapacity, 0, LOG_GROW_STEP * sizeof(bool));
-                    LogBuffer = nb; LogUsed = nu; LogSeq = ns;
-                    LogCapacity += LOG_GROW_STEP;
-                    slot = LogCount++;
-                }
-                else
-                {
-                    free(nb); free(nu); free(ns); // partial failure: keep the old buffers
-                    slot = (uint32_t)oldest_slot; // drop the oldest record
-                }
-            }
+            if (LogCapacity < LOG_MAX_CAPACITY && GrowLogStorage(LogCapacity + LOG_GROW_STEP))
+                slot = LogCount++;
             else
-            {
-                slot = (uint32_t)oldest_slot; // hard cap reached: drop the oldest record
-            }
+                slot = (uint32_t)oldest_slot; // growth failed / hard cap: drop the oldest record
         }
 
         LogBuffer[slot].device_id = frame.id_src;

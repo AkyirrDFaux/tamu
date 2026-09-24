@@ -13,6 +13,27 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/connection.dart';
 import 'package:tamuapp/core/device_db.dart';
+import 'package:tamuapp/core/types.dart';
+
+/// Finds the Tamu core in the device database (falling back to instance 1 while discovery
+/// has not classified the device yet).
+DeviceEntry? findTamu(DeviceDatabase db) {
+  for (final d in db.all) {
+    if (d.type == DeviceType.tamuV20A) return d;
+  }
+  return db.byId(1);
+}
+
+/// Finds the DAS node in the device database (falling back to instance 2).
+DeviceEntry? findDas(DeviceDatabase db) {
+  for (final d in db.all) {
+    if (d.type == DeviceType.dualAnalogSensor) return d;
+  }
+  for (final d in db.all) {
+    if (d.id == 2) return d;
+  }
+  return null;
+}
 
 /// Automatically detects the correct serial port for the Tamu device.
 /// Tries each available serial port, sends a ping, and returns the first one

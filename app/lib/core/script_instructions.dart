@@ -106,6 +106,10 @@ class ScriptInstructionDef {
   /// Short role of the destination (a hint on the line).
   final String? destinationRole;
 
+  /// True when the destination must be an integer-typed value (e.g. `Get time`, whose
+  /// millisecond count overflows a Q16.16 Number).
+  final bool integerDestination;
+
   const ScriptInstructionDef({
     required this.op,
     required this.category,
@@ -119,6 +123,7 @@ class ScriptInstructionDef {
     this.expression = false,
     this.operandRoles = const [],
     this.destinationRole,
+    this.integerDestination = false,
   });
 
   ScriptSymbol symbol() => ScriptSymbol.instruction(category, op);
@@ -186,6 +191,11 @@ const Set<int> expressionOps = {
 /// Prefix function operator values and their arity.
 const Map<int, int> expressionFunctions = {20: 2, 21: 2, 22: 1, 23: 1};
 
+/// Destination data types that hold a whole integer (Index/Uint32). Used by instructions
+/// whose result cannot be represented in a Q16.16 Number (see [ScriptInstructionDef
+/// .integerDestination], e.g. `Get time`).
+const Set<int> integerDestinationTypes = {0x05 /*Index*/, 0x0E /*Uint32*/};
+
 /// `Transform` instruction op (a 2x3 matrix from rot, ox, oy, sx, sy[, skew]).
 const int mathTransformOp = 11;
 
@@ -223,7 +233,7 @@ const List<ScriptInstructionDef> scriptInstructions = [
   // Time
   ScriptInstructionDef(op: 0, category: catTime, label: 'Delay', minOperands: 1, maxOperands: 1, operandRoles: ['ms']),
   ScriptInstructionDef(op: 1, category: catTime, label: 'Wait until', minOperands: 1, maxOperands: 32, numeric: true, expression: true, operandRoles: ['condition']),
-  ScriptInstructionDef(op: 2, category: catTime, label: 'Get time', destination: true, minOperands: 0, maxOperands: 0, destinationRole: 'time'),
+  ScriptInstructionDef(op: 2, category: catTime, label: 'Get time', destination: true, minOperands: 0, maxOperands: 0, integerDestination: true, destinationRole: 'time'),
   // Service
   ScriptInstructionDef(op: 0, category: catService, label: 'Log', minOperands: 1, maxOperands: 4, operandRoles: ['code']),
   ScriptInstructionDef(op: 1, category: catService, label: 'Register read', destination: true, minOperands: 1, maxOperands: 1, constantIndex: 0, operandRoles: ['register'], destinationRole: 'value'),
@@ -370,6 +380,11 @@ List<String> validateScriptLines(List<ScriptLine> lines, ScriptValidationContext
     for (final d in line.destinations) {
       if (d.type != symVariable && d.type != symOutput) {
         errors.add('$where: destination must be a variable or output');
+      } else if (def.integerDestination) {
+        final t = context.typeOf(d);
+        if (t != null && !integerDestinationTypes.contains(t)) {
+          errors.add('$where (${def.label}): destination must be an integer (Index/Uint32)');
+        }
       }
     }
     if (line.operands.length < def.minOperands || line.operands.length > def.maxOperands) {

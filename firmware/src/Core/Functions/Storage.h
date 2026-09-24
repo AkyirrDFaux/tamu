@@ -627,7 +627,8 @@ public:
             return 0;
         if (offset >= file_size)
             return 0;
-        if (offset + length > file_size)
+        // Overflow-safe clamp: `offset + length` could wrap for a huge length.
+        if (length > file_size - offset)
             length = file_size - offset;
         return Storage_FlashRead(file_offset + offset, buffer, length);
     }
@@ -641,7 +642,8 @@ public:
             return false;
         if (offset >= file_size)
             return false;
-        if (offset + length > file_size)
+        // Overflow-safe clamp: `offset + length` could wrap for a huge length.
+        if (length > file_size - offset)
             length = file_size - offset;
         return Storage_FlashWrite(file_offset + offset, buffer, length);
     }

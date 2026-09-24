@@ -849,7 +849,11 @@ static void HandleRegister(const PacketFrame &frame) {
         if (PayloadBytes(frame) < 8) { RespondStatus(frame,false); return; }
         BlockMeta *desc = (BlockMeta*)(frame.payload+4);
         const uint8_t *val = frame.payload+8;
+        // The BlockMeta.Size must match the value bytes actually present: a larger Size
+        // would make the write path copy past the frame (the System Name path clamps too).
         uint16_t vlen = desc->Size;
+        uint16_t avail = (uint16_t)(PayloadBytes(frame) - 8);
+        if (vlen > avail) vlen = avail;
 #ifdef USE_SCRIPTS
         if (type == 0x3FE) { HandleScriptBlockWrite(frame, inst, field, key, desc, val, vlen); return; }
 #endif

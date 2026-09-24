@@ -480,7 +480,12 @@ Future<void> _loadVisibleFields() async {
       ({int type, int inst, BlockMeta meta, String name})? block) async {
     final next = await showValueEditor(context, entry.meta.dataType, entry.value);
     if (next == null || !mounted) return;
-    final ok = await _client.writeBlockField(blockType, inst, field, key, entry.meta, next);
+    // Declare the actual value length: sending the field's declared Size with a shorter
+    // value (a trimmed String) makes the device copy stale payload bytes. A shorter String
+    // is space-padded by the firmware.
+    final meta = BlockMeta(
+        flagsAndType: entry.meta.flagsAndType, size: next.length, key: entry.meta.key);
+    final ok = await _client.writeBlockField(blockType, inst, field, key, meta, next);
     _snack(ok != null ? 'Written' : 'Write failed');
     if (block != null) {
       await _loadBlockFields(blockType, inst, block, forceRefresh: true);

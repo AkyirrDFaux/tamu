@@ -27,7 +27,6 @@ bool RegisterSetByBlockInfo(uint32_t bi, const BlockMeta &m, const uint8_t *val,
 // ID and as the Register instance number of block type 0x3FE.
 #define MAX_SCRIPTS 64
 #define SCRIPT_HEADER_SIZE 24
-#define SCRIPT_SYMBOL_SIZE 4
 #define SCRIPT_MAX_LINES 1024
 #define SCRIPT_INSTR_BUDGET 512
 #define SCRIPT_MAX_CALL_DEPTH 8
@@ -58,16 +57,13 @@ bool RegisterSetByBlockInfo(uint32_t bi, const BlockMeta &m, const uint8_t *val,
 #define SCRIPT_PRE_BOOL 5
 #define SCRIPT_PRE_NUMBER 6 // 16-bit Q8.8 fixed-point literal
 
-// Math ops.
+// Math ops. Add/Sub/Mul/Div/Neg (1..4, 8) are retired as instructions: arithmetic is
+// handled by the Set expression (`SCRIPT_MATHOP_*`); the values are left reserved so the
+// wire numbering stays stable.
 #define SCRIPT_OP_MATH_SET 0
-#define SCRIPT_OP_MATH_ADD 1
-#define SCRIPT_OP_MATH_SUB 2
-#define SCRIPT_OP_MATH_MUL 3
-#define SCRIPT_OP_MATH_DIV 4
 #define SCRIPT_OP_MATH_MOD 5
 #define SCRIPT_OP_MATH_MIN 6
 #define SCRIPT_OP_MATH_MAX 7
-#define SCRIPT_OP_MATH_NEG 8
 #define SCRIPT_OP_MATH_ABS 9
 #define SCRIPT_OP_MATH_LIMIT 10 // clamp(value, min, max)
 #define SCRIPT_OP_MATH_TRANSFORM 11 // 2x3 matrix from (rot, ox, oy, sx, sy[, skew])
@@ -99,19 +95,8 @@ bool RegisterSetByBlockInfo(uint32_t bi, const BlockMeta &m, const uint8_t *val,
 #define SCRIPT_MATHOP_FN_SIZE 22
 #define SCRIPT_MATHOP_FN_TRANSPOSE 23
 
-// Logic ops.
-#define SCRIPT_OP_LOGIC_AND 0
-#define SCRIPT_OP_LOGIC_OR 1
-#define SCRIPT_OP_LOGIC_XOR 2
-#define SCRIPT_OP_LOGIC_NOT 3
-#define SCRIPT_OP_LOGIC_SHL 4
-#define SCRIPT_OP_LOGIC_SHR 5
-#define SCRIPT_OP_LOGIC_CMP_EQ 6
-#define SCRIPT_OP_LOGIC_CMP_NE 7
-#define SCRIPT_OP_LOGIC_CMP_LT 8
-#define SCRIPT_OP_LOGIC_CMP_LE 9
-#define SCRIPT_OP_LOGIC_CMP_GT 10
-#define SCRIPT_OP_LOGIC_CMP_GE 11
+// Logic op (comparisons/logic moved into the Set expression; only Select remains as an
+// instruction).
 #define SCRIPT_OP_LOGIC_SELECT 12
 
 // Flow ops.
@@ -171,13 +156,10 @@ enum class ScriptState : uint8_t {
 #define SCRIPT_PROP_RUN_ON_LOAD  (1u << 1)
 
 // Register field categories for block type 0x3FE (Scripts). Only the I/O categories are
-// exposed through the Register (docs: "IO is in register"); the Header, Variables and
-// Constants are script metadata reached through the Script management commands.
-#define SCRIPT_FIELD_HEADER   0
+// exposed through the Register (docs: "IO is in register"); Variables/Constants are
+// internal (Script management) and Header is metadata.
 #define SCRIPT_FIELD_INPUT    1
 #define SCRIPT_FIELD_OUTPUT   2
-#define SCRIPT_FIELD_VARIABLE 3 // internal only (CID 5/7), not in the Register
-#define SCRIPT_FIELD_CONSTANT 4 // internal only, not in the Register
 #define SCRIPT_FIELD_COUNT    3 // register categories: Header (reserved) + Input + Output
 
 static inline uint16_t ScriptAlign4(uint16_t size) { return (uint16_t)((size + 3u) & ~3u); }
@@ -293,6 +275,14 @@ struct LoadedScript {
 };
 
 static LoadedScript scriptRegistry[MAX_SCRIPTS];
+// Bit `i` is set for every slot that may hold a loaded script (a superset of the active
+// slots, so hot loops can skip the empty registry entries).
+static uint64_t scriptActiveMask = 0;
+
+static inline void ScriptMaskSet(uint8_t slot, bool on) {
+    if (on) scriptActiveMask |= (uint64_t)1 << slot;
+    else    scriptActiveMask &= ~((uint64_t)1 << slot);
+}
 
 static LoadedScript *ScriptActive(uint8_t slot) {
     if (slot >= MAX_SCRIPTS) return nullptr;
@@ -414,6 +404,7 @@ static bool ScriptLoad(uint8_t fileId) {
 
     LoadedScript *s = &scriptRegistry[fileId];
     s->Release();
+    ScriptMaskSet(fileId, false);
     s->slot = fileId;
     s->trid = (uint16_t)(SCRIPT_TRID_BASE + fileId);
 
@@ -507,6 +498,7 @@ static bool ScriptLoad(uint8_t fileId) {
     for (uint8_t i = 0; i < s->constCount; i++) { s->constMeta[i].Key = 0; s->constMeta[i].FlagsAndType |= FieldFlags::ReadOnly; }
 
     s->active = true;
+    ScriptMaskSet(fileId, true);
     s->state = (uint8_t)ScriptState::Stopped;
     s->ic = 0;
     free(buf);
@@ -515,7 +507,9 @@ static bool ScriptLoad(uint8_t fileId) {
 
 static void ScriptUnload(uint8_t slot) {
     LoadedScript *s = ScriptActive(slot);
-    if (s) s->Release();
+    if (!s) return;
+    s->Release();
+    ScriptMaskSet(slot, false);
 }
 
 // Number of loaded scripts + their slots (dense list, stable instance = slot).
@@ -572,6 +566,12 @@ static bool ScriptSetEntry(uint8_t slot, uint8_t field, uint8_t key, const Block
     if (BlockMetaType(meta->FlagsAndType) != BlockMetaType(m.FlagsAndType)) return false;
     if (vlen > meta->Size) return false;
     if (vlen) memcpy(data, val, vlen);
+    // A short write defines the rest of the fixed-size input too: spaces for a string
+    // (matching the static-block behaviour), zero otherwise, so no stale bytes survive.
+    uint16_t type = BlockMetaType(meta->FlagsAndType);
+    uint8_t fill = (type == (uint16_t)DataType::String || type == (uint16_t)DataType::Filename)
+                       ? (uint8_t)' ' : 0;
+    for (uint16_t i = vlen; i < meta->Size; i++) data[i] = fill;
     return true;
 }
 
@@ -812,7 +812,6 @@ static uint8_t ScriptAssign(LoadedScript *s, const uint8_t *destSym, const uint8
     return ScriptAssignResolved(dtype, dest, dsize, src, ssize, stype);
 }
 
-// Executes a single math/logic line. Returns an error code (0 = ok).
 // Number of elements in a Vector/Matrix value (0 for scalars / malformed containers).
 static uint16_t ScriptContainerCount(uint16_t dtype, uint8_t size, const uint8_t *data) {
     if (dtype == (uint16_t)DataType::Vector) return size / 4;
@@ -850,15 +849,15 @@ static bool ScriptVectorElement(const uint8_t *data, uint8_t size, uint16_t dtyp
     }
 }
 
-// Element-wise math on a Vector/Matrix destination (Add/Sub/Mul/Div/Mod/Min/Max/Neg/Abs).
-// Scalar operands broadcast, same-size containers apply element-wise.
+// Element-wise math on a Vector/Matrix destination (Mod/Min/Max/Abs/Limit). Scalar
+// operands broadcast, same-size containers apply element-wise.
 static uint8_t ScriptExecVectorMath(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase,
                                     uint8_t cat, uint8_t op, uint16_t dtype, uint8_t *dest, uint8_t dsize) {
+    // Only the element-wise instructions that remain (Modulo/Minimum/Maximum/Absolute/Limit);
+    // arithmetic on a container goes through the Set expression.
     if (cat != SCRIPT_CAT_MATH) return SCRIPT_ERR_TYPE;
-    if (op != SCRIPT_OP_MATH_ADD && op != SCRIPT_OP_MATH_SUB && op != SCRIPT_OP_MATH_MUL &&
-        op != SCRIPT_OP_MATH_DIV && op != SCRIPT_OP_MATH_MOD && op != SCRIPT_OP_MATH_MIN &&
-        op != SCRIPT_OP_MATH_MAX && op != SCRIPT_OP_MATH_NEG && op != SCRIPT_OP_MATH_ABS &&
-        op != SCRIPT_OP_MATH_LIMIT)
+    if (op != SCRIPT_OP_MATH_MOD && op != SCRIPT_OP_MATH_MIN && op != SCRIPT_OP_MATH_MAX &&
+        op != SCRIPT_OP_MATH_ABS && op != SCRIPT_OP_MATH_LIMIT)
         return SCRIPT_ERR_TYPE;
 
     uint16_t count = ScriptContainerCount(dtype, dsize, dest);
@@ -889,15 +888,14 @@ static uint8_t ScriptExecVectorMath(LoadedScript *s, const ScriptLineInfo &ln, c
             if (!ScriptVectorElement(odata[2], osize[2], otype[2], e, hi)) return SCRIPT_ERR_TYPE;
             if (acc < lo) acc = lo;
             if (acc > hi) acc = hi;
+        } else if (op == SCRIPT_OP_MATH_ABS) {
+            if (n != 1) return SCRIPT_ERR_TYPE; // Absolute is unary
+            acc = abs(acc);
         } else {
             for (uint8_t k = 1; k < n; k++) {
                 Number v;
                 if (!ScriptVectorElement(odata[k], osize[k], otype[k], e, v)) return SCRIPT_ERR_TYPE;
                 switch (op) {
-                    case SCRIPT_OP_MATH_ADD: acc = acc + v; break;
-                    case SCRIPT_OP_MATH_SUB: acc = acc - v; break;
-                    case SCRIPT_OP_MATH_MUL: acc = acc * v; break;
-                    case SCRIPT_OP_MATH_DIV: if (v.Value == 0) return SCRIPT_ERR_TYPE; acc = acc / v; break;
                     case SCRIPT_OP_MATH_MOD: {
                         int32_t b = v.RoundToInt();
                         if (b == 0) return SCRIPT_ERR_TYPE;
@@ -909,8 +907,6 @@ static uint8_t ScriptExecVectorMath(LoadedScript *s, const ScriptLineInfo &ln, c
                     default: return SCRIPT_ERR_TYPE;
                 }
             }
-            if (op == SCRIPT_OP_MATH_NEG) acc = -acc;
-            else if (op == SCRIPT_OP_MATH_ABS) acc = abs(acc);
         }
         int32_t raw = acc.Value;
         memcpy(dest + off + e * 4, &raw, 4);
@@ -957,37 +953,21 @@ static bool ScriptExprResolve(ExprParser *p, const uint8_t *sym, ExprValue &out)
     out.dtype = dtype;
     out.mh = 0;
     out.mw = 0;
-    out.count = 0;
-    if (dtype == (uint16_t)DataType::Vector)
+
+    uint16_t cnt = 1;
+    if (dtype == (uint16_t)DataType::Vector || dtype == (uint16_t)DataType::Matrix)
     {
-        uint16_t n = size / 4;
-        if (n == 0 || n > SCRIPT_EXPR_MAX_ELEMS) return false;
-        for (uint16_t i = 0; i < n; i++)
-        {
-            int32_t raw; memcpy(&raw, data + i * 4, 4);
-            out.e[i] = Number::FromRaw(raw);
-        }
-        out.count = (uint8_t)n;
-        return true;
-    }
-    if (dtype == (uint16_t)DataType::Matrix)
-    {
-        uint16_t cnt = ScriptContainerCount(dtype, size, data);
+        cnt = ScriptContainerCount(dtype, size, data);
         if (cnt == 0 || cnt > SCRIPT_EXPR_MAX_ELEMS) return false;
-        out.mh = (uint16_t)(data[0] | (data[1] << 8));
-        out.mw = (uint16_t)(data[2] | (data[3] << 8));
-        for (uint16_t i = 0; i < cnt; i++)
+        if (dtype == (uint16_t)DataType::Matrix)
         {
-            int32_t raw; memcpy(&raw, data + 4 + i * 4, 4);
-            out.e[i] = Number::FromRaw(raw);
+            out.mh = (uint16_t)(data[0] | (data[1] << 8));
+            out.mw = (uint16_t)(data[2] | (data[3] << 8));
         }
-        out.count = (uint8_t)cnt;
-        return true;
     }
-    Number v;
-    if (!ScriptVectorElement(data, size, dtype, 0, v)) return false;
-    out.e[0] = v;
-    out.count = 1;
+    for (uint16_t i = 0; i < cnt; i++)
+        if (!ScriptVectorElement(data, size, dtype, i, out.e[i])) return false;
+    out.count = (uint8_t)cnt;
     return true;
 }
 
@@ -1060,12 +1040,13 @@ static bool ScriptExprApply(ExprValue &a, const ExprValue &b, uint8_t op)
     else if (a.count == 1) count = b.count;
     else if (b.count == 1) count = a.count;
     else return false;
-    ExprValue out = a;
-    if (a.count == 1 && b.count > 1) { out.dtype = b.dtype; out.mh = b.mh; out.mw = b.mw; }
-    out.count = count;
+    const bool abcast = (a.count == 1);
+    const Number asrc = abcast ? a.e[0] : Number(); // cached before the in-place writes
+    if (abcast && b.count > 1) { a.dtype = b.dtype; a.mh = b.mh; a.mw = b.mw; }
+    a.count = count;
     for (uint8_t k = 0; k < count; k++)
     {
-        Number va = (a.count == 1) ? a.e[0] : a.e[k];
+        Number va = abcast ? asrc : a.e[k];
         Number vb = (b.count == 1) ? b.e[0] : b.e[k];
         switch (op)
         {
@@ -1082,9 +1063,8 @@ static bool ScriptExprApply(ExprValue &a, const ExprValue &b, uint8_t op)
         case SCRIPT_MATHOP_POW: if (!ScriptExprPow(va, vb, va)) return false; break;
         default: return false;
         }
-        out.e[k] = va;
+        a.e[k] = va;
     }
-    a = out;
     return true;
 }
 
@@ -1534,12 +1514,17 @@ static uint8_t ScriptExecTime(LoadedScript *s, const ScriptLineInfo &ln, const u
         }
         case SCRIPT_OP_TIME_GET: {
             if (ln.destCount < 1) return SCRIPT_ERR_OPERAND;
-            ScriptScalar v;
-            v.i = (int32_t)nowMs;
-            v.n = Number((int32_t)nowMs);
             uint16_t dtype = 0; uint8_t *dest = nullptr; uint8_t dsize = 0;
             if (!ScriptResolveDest(s, s->instr + (size_t)ln.start * 4, dtype, dest, dsize)) return SCRIPT_ERR_OPERAND;
-            ScriptStoreScalar(dtype, dest, dsize, dtype == (uint16_t)DataType::Number, v);
+            // Time is a whole millisecond count. A Q16.16 Number destination only has a
+            // 15-bit integer part (it overflows past ~32767 ms), so restrict Get time to
+            // the integer types.
+            if (dtype != (uint16_t)DataType::Index && dtype != (uint16_t)DataType::Uint32)
+                return SCRIPT_ERR_TYPE;
+            ScriptScalar v;
+            v.i = (int32_t)nowMs;
+            v.n = Number::FromRaw(0); // unused: integer destination
+            ScriptStoreScalar(dtype, dest, dsize, false, v);
             s->ic++;
             return SCRIPT_ERR_NONE;
         }
@@ -1833,7 +1818,10 @@ static void ScriptRun(LoadedScript *s, uint32_t nowMs) {
 
 void ScriptsTick(uint32_t nowMs) {
     scriptTick++;
-    for (uint8_t i = 0; i < MAX_SCRIPTS; i++) {
+    uint64_t mask = scriptActiveMask;
+    while (mask) {
+        uint8_t i = (uint8_t)__builtin_ctzll(mask);
+        mask &= mask - 1;
         LoadedScript *s = &scriptRegistry[i];
         if (!s->active) continue;
         if (s->state == (uint8_t)ScriptState::Running) {
@@ -1861,7 +1849,10 @@ void ScriptsTick(uint32_t nowMs) {
 // TRID, so the Dispatcher routes it here by range instead of by ServiceType.
 static void HandleScriptResponse(const PacketFrame &frame) {
     uint16_t trid = frame.srv_tgt;
-    for (uint8_t i = 0; i < MAX_SCRIPTS; i++) {
+    uint64_t mask = scriptActiveMask;
+    while (mask) {
+        uint8_t i = (uint8_t)__builtin_ctzll(mask);
+        mask &= mask - 1;
         LoadedScript *s = &scriptRegistry[i];
         if (!s->active || !s->pendingForeign || s->pendingTrid != trid) continue;
         s->pendingForeign = false;

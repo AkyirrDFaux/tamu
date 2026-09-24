@@ -14,23 +14,6 @@ import 'package:tamuapp/core/subscription_client.dart';
 import 'package:tamuapp/core/types.dart';
 import 'hil_helpers.dart';
 
-DeviceEntry? findDas(DeviceDatabase db) {
-  for (final d in db.all) {
-    if (d.type == DeviceType.dualAnalogSensor) return d;
-  }
-  for (final d in db.all) {
-    if (d.id == 2) return d;
-  }
-  return null;
-}
-
-DeviceEntry? findTamu(DeviceDatabase db) {
-  for (final d in db.all) {
-    if (d.type == DeviceType.tamuV20A) return d;
-  }
-  return null;
-}
-
 Future<void> discoverDevices() async {
   final db = DeviceDatabase.instance;
   await db.refreshRuntime(0);

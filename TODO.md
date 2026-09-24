@@ -90,6 +90,40 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
   (`Transform m = rot, ox, oy, sx, sy[, skew]`) producing a 2×3 matrix in the render's
   Position format (rotation in radians). The eye/lid scripts now build their Position with
   `Transform` instead of `IDENT` + Compose.
+- [x] **Cleanup / streamlining round**: removed the retired instruction defines
+  (`Add/Sub/Mul/Div/Neg` math ops, the standalone logic ops except `Select`, unused
+  `SCRIPT_FIELD_*`/`SCRIPT_SYMBOL_SIZE`) and the now-unreachable vector-math branches (only
+  `Modulo/Minimum/Maximum/Absolute/Limit` reach a container destination; arithmetic goes
+  through the `Set` expression). `ScriptsTick`/`HandleScriptResponse` walk only the loaded
+  slots (64-bit active mask); the expression evaluator resolves elements through
+  `ScriptVectorElement` and folds in place (no `ExprValue` copy); the app's full/compact label
+  helpers were unified, `Select`'s condition no longer carries dead If/While/Wait branches,
+  and the instruction picker no longer recommends the removed ops. The 1,892-line editor was
+  split into `script_editor_page` + `script_symbol_picker` + `script_instruction_picker` +
+  `script_value_dialog`, with the shared `ScriptValueCategory` moved to `script_draft.dart`.
+  Behaviour unchanged; re-verified on hardware (`hil_script_vm_test`, the four setup scripts).
+- [x] **Dynamic-memory hot path**: `DynamicBlockDescriptor::SetEntry` overwrites an existing
+  entry **in place** when its size and persistence are unchanged, skipping the tail append +
+  full-space compaction (two `malloc`/`free` pairs per write). The scripts rewrite the same
+  render matrices every tick, so this is the core loop's hottest write. Size/persistence
+  changes still take the append + `RebuildSpaces` path. Verified on hardware
+  (`hil_dynamic_persistence_test`, `hil_led_display_test`, `hil_subscriptions_test`,
+  `hil_backup_test`).
+- [x] **Bug-hunt fixes**: `Number::RoundToInt` rounded **every negative value down by one**
+  (`-1.0 -> -2`, `-0.4 -> -1`); it now adds half and floors for both signs (guarded 32-bit, so
+  the DAS pulls in no 64-bit helper). `Get time` is now **limited to integer destinations**
+  (Index/Uint32) in the VM, the editor's picker + validator and the lid setup script (a Q16.16
+  Number overflows the absolute ms count past ~32767 ms). The Log database growth commits each
+  `realloc` as it succeeds (a partial failure used to leave `LogBuffer`/`LogUsed`/`LogSeq`
+  dangling and then double-free). A malformed `DT_XX` name length is **rejected** instead of
+  overflowing `DynamicBlockDescriptor::Name`. The Register write path **clamps
+  `BlockMeta.Size`** to the value bytes actually present (the System-Name path already did) and
+  the app declares the real value length for script entries; a short write now fills the rest
+  of a fixed-size input (spaces for strings, zero otherwise). `Storage_FlashErase` and the
+  file read/write clamps use overflow-safe bounds. New regressions: HIL negative rounding +
+  `Get time` type, malformed-DT and oversized-write (both verified to fail before the fix),
+  short-string padding; app unit test for the `Get time` destination. All 10 HIL suites +
+  the four setup scripts re-verified on hardware.
 ## 2. Blocks/modules + subscriptions
 - [x] **Block/module schema alignment** (docs-driven): Button reduced to field 0; LED-Button
       = Button (0) + LEDState (3) with reserved 1-2; Acc&Gyr deadzones removed (Acceleration

@@ -232,4 +232,34 @@ void main() async {
     if (!await c.unload(2)) fail('unload failed');
     await st.deleteFile('SCR_02');
   }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('a short write fills the rest of a script input', skip: skipReason, () async {
+    final c = ScriptClient(deviceId: 1);
+    final st = StorageClient(deviceId: 1);
+    if (await c.readState(1) != null) await c.unload(1);
+    await st.deleteFile('SCR_01');
+
+    // One 16-byte String input.
+    final draft = ScriptDraft(functionName: 'Pad')
+      ..inputs.add(ScriptDraftValue(name: 'Name', type: DataType.string, size: 16));
+    if (!await st.writeFile('SCR_01', draft.toImage())) fail('upload SCR_01 failed');
+    if (await c.load(1) != 1) fail('load SCR_01 failed');
+
+    final entry = await c.readEntry(1, ScriptField.input, 0);
+    if (entry == null || entry.meta.size != 16) fail('string input missing/size wrong');
+
+    // A shorter String write declares its real length; the device must fill the rest of the
+    // fixed-size input with spaces rather than leaving stale bytes.
+    final meta = BlockMeta(flagsAndType: entry.meta.flagsAndType, key: 0, size: 3);
+    if (!await c.writeEntry(1, ScriptField.input, 0, meta, 'abc'.codeUnits)) {
+      fail('short string write failed');
+    }
+    final back = await c.readEntry(1, ScriptField.input, 0);
+    if (back == null || back.value.length != 16) fail('string input size wrong: ${back?.value.length}');
+    final text = String.fromCharCodes(back.value);
+    if (text != 'abc${' ' * 13}') fail('short string not space-padded: "$text"');
+
+    if (!await c.unload(1)) fail('unload failed');
+    await st.deleteFile('SCR_01');
+  }, timeout: const Timeout(Duration(minutes: 2)));
 }

@@ -93,6 +93,66 @@ void main() async {
     await cleanup(c, st, slot);
   }, timeout: const Timeout(Duration(minutes: 2)));
 
+  test('integer destinations round negatives to nearest (not down)', skip: skipReason, () async {
+    // A = 0 - 5; B = 2 - 4; C = -3. Stored into Index (integer) variables, so the
+    // expression result is rounded to an integer: the nearest value, not floored.
+    final draft = ScriptDraft(functionName: 'RoundNeg')
+      ..variables.add(ScriptDraftValue(name: 'A', type: DataType.integer, size: 4))
+      ..variables.add(ScriptDraftValue(name: 'B', type: DataType.integer, size: 4))
+      ..variables.add(ScriptDraftValue(name: 'C', type: DataType.integer, size: 4))
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(0)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [
+        ScriptSymbol.predefine(preIndex, 0), ScriptSymbol.predefine(preMathOp, 1), ScriptSymbol.predefine(preIndex, 5),
+      ]))
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(1)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [
+        ScriptSymbol.predefine(preIndex, 2), ScriptSymbol.predefine(preMathOp, 1), ScriptSymbol.predefine(preIndex, 4),
+      ]))
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(2)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [
+        ScriptSymbol.predefine(preMathOp, 1), ScriptSymbol.predefine(preIndex, 3), // unary minus
+      ]))
+      ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)));
+
+    final (c, st, slot) = await loadScript(8, draft);
+    await c.setState(slot, ScriptState.running);
+    expect(await waitState(c, slot, ScriptState.finished), ScriptState.finished);
+
+    final ram = (await c.readInternalState(slot))!.variables;
+    final a = int32FromBytes(ram, 0), b = int32FromBytes(ram, 4), cc = int32FromBytes(ram, 8);
+    print('[VM] roundneg A=$a B=$b C=$cc');
+    expect(a, -5);
+    expect(b, -2);
+    expect(cc, -3);
+    await cleanup(c, st, slot);
+  }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('Get time fills an integer destination and rejects a Number one', skip: skipReason, () async {
+    // Index destination: accepted, a positive millisecond count.
+    final ok = ScriptDraft(functionName: 'GetTime')
+      ..variables.add(ScriptDraftValue(name: 'I0', type: DataType.integer, size: 4))
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(0)], instruction: ScriptSymbol.instruction(catTime, 2)))
+      ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)));
+    final (c1, st1, slot1) = await loadScript(8, ok);
+    await c1.setState(slot1, ScriptState.running);
+    expect(await waitState(c1, slot1, ScriptState.finished), ScriptState.finished);
+    final ms = int32FromBytes((await c1.readInternalState(slot1))!.variables, 0);
+    print('[VM] gettime ms=$ms');
+    expect(ms, greaterThan(0));
+    await cleanup(c1, st1, slot1);
+
+    // Number destination: rejected (its Q16.16 integer part overflows past ~32767 ms).
+    final bad = ScriptDraft(functionName: 'GetTimeNum')
+      ..variables.add(ScriptDraftValue(name: 'N0', type: DataType.number, size: 4))
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(0)], instruction: ScriptSymbol.instruction(catTime, 2)))
+      ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)));
+    final (c2, st2, slot2) = await loadScript(8, bad);
+    await c2.setState(slot2, ScriptState.running);
+    final state = await waitState(c2, slot2, ScriptState.error);
+    final err = await c2.readError(slot2);
+    print('[VM] gettime-number state=$state err=$err');
+    expect(state, ScriptState.error);
+    expect(err, 2); // SCRIPT_ERR_TYPE
+    await cleanup(c2, st2, slot2);
+  }, timeout: const Timeout(Duration(minutes: 2)));
+
   test('while loop + end block', skip: skipReason, () async {
     // A=0; While A < 3 { A = A + 1 } halt  -> A == 3 (While takes the comparison expression)
     final draft = ScriptDraft(functionName: 'Loop')

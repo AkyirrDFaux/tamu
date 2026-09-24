@@ -562,8 +562,10 @@ ScriptDraft scriptLidTimer() {
     _cIx('WAIT_MS', lidWaitMs),
   ]);
   d.variables.addAll([
-    _var('t0', DataType.number, 4),
-    _var('now', DataType.number, 4),
+    // Get time yields a whole millisecond count, so its destinations are integers (Index):
+    // a Q16.16 Number would overflow the absolute count past ~32767 ms.
+    _var('t0', DataType.integer, 4),
+    _var('now', DataType.integer, 4),
     _var('elapsed', DataType.number, 4),
     _var('closeP', DataType.number, 4),
     _var('openP', DataType.number, 4),

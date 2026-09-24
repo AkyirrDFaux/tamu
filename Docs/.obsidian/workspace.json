@@ -13,30 +13,15 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Data Formats.md",
+                "file": "Current setup v2.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Data Formats"
-            }
-          },
-          {
-            "id": "2a4ba6322c2443a2",
-            "type": "leaf",
-            "state": {
-              "type": "markdown",
-              "state": {
-                "file": "Current setup.md",
-                "mode": "source",
-                "source": false
-              },
-              "icon": "lucide-file",
-              "title": "Current setup"
+              "title": "Current setup v2"
             }
           }
-        ],
-        "currentTab": 1
+        ]
       }
     ],
     "direction": "vertical"
@@ -203,20 +188,24 @@
       "bases:Vytvořit novou základnu": false
     }
   },
-  "active": "2a4ba6322c2443a2",
+  "active": "b382b423e960f24e",
   "lastOpenFiles": [
-    "Data Formats.md",
+    "Services/Script.md",
     "Modules and blocks/LED display.md",
+    "Modules and blocks/Measurement.md",
+    "Modules and blocks/Generic system blocks.md",
+    "Modules and blocks/Buttons & LEDS.md",
+    "Current setup v2.md",
+    "Current setup.md",
+    "Data Formats.md",
     "Services/Register.md",
     "Devices.md",
     "General architecture.md",
     "Plan.md",
     "RSBus and Packets.md",
-    "Current setup.md",
     "Command ID table.md",
     "Services/System Block and Device Commands.md",
     "Services/Subscriptions.md",
-    "Services/Script.md",
     "Services/CLI.md",
     "App/Backup.md",
     "App/Service views/Script.md",
@@ -227,10 +216,6 @@
     "App/Devices.md",
     "App/General info.md",
     "App/Settings.md",
-    "App/Service views/Dynamic Memory.md",
-    "Modules and blocks/Measurement.md",
-    "Modules and blocks/Generic system blocks.md",
-    "Modules and blocks/Buttons & LEDS.md",
     "App/Service views",
     "App"
   ]

@@ -244,9 +244,17 @@ void main() {
     bool converged = false;
     final deadline = DateTime.now().add(const Duration(seconds: 180));
     while (DateTime.now().isBefore(deadline)) {
-      final coreRaw = uint32FromBytes((await coreReg.readField(3, 0))!.value);
-      final dasRaw = uint32FromBytes((await dasReg.readField(3, 0))!.value);
-      final offset = int32FromBytes((await dasReg.readField(3, 2))!.value);
+      final coreRead = await coreReg.readField(3, 0);
+      final dasRead = await dasReg.readField(3, 0);
+      final offsetRead = await dasReg.readField(3, 2);
+      // A busy bus can drop a read; retry instead of aborting the (bounded) wait.
+      if (coreRead == null || dasRead == null || offsetRead == null) {
+        await Future.delayed(const Duration(seconds: 5));
+        continue;
+      }
+      final coreRaw = uint32FromBytes(coreRead.value);
+      final dasRaw = uint32FromBytes(dasRead.value);
+      final offset = int32FromBytes(offsetRead.value);
       if ((offset - (coreRaw - dasRaw)).abs() < 15) {
         // ignore: avoid_print
         print('[TIMESYNC] converged offset=$offset rawDiff=${coreRaw - dasRaw}');
@@ -259,9 +267,15 @@ void main() {
 
     // Compare the clocks, interpolating the core's "Now" around the node's read so the
     // round-trip read skew cancels.
-    final c0 = uint32FromBytes((await coreReg.readField(3, 1))!.value);
-    final d = uint32FromBytes((await dasReg.readField(3, 1))!.value);
-    final c1 = uint32FromBytes((await coreReg.readField(3, 1))!.value);
+    final c0Read = await coreReg.readField(3, 1);
+    final dRead = await dasReg.readField(3, 1);
+    final c1Read = await coreReg.readField(3, 1);
+    if (c0Read == null || dRead == null || c1Read == null) {
+      fail('clock compare reads failed (busy bus?)');
+    }
+    final c0 = uint32FromBytes(c0Read.value);
+    final d = uint32FromBytes(dRead.value);
+    final c1 = uint32FromBytes(c1Read.value);
     final coreMid = (c0 + c1) ~/ 2;
     final diff = d - coreMid;
     // ignore: avoid_print

@@ -89,8 +89,11 @@ class _ScriptIoSectionState extends State<ScriptIoSection> {
   Future<void> _edit(int key, ScriptEntry entry) async {
     final next = await showValueEditor(context, entry.meta.dataType, entry.value);
     if (next == null || !mounted) return;
-    final ok = await widget.client
-        .writeEntry(widget.slot, widget.field, key, entry.meta, next);
+    // Declare the actual value length (a shorter String is space-padded by the firmware);
+    // the field's declared Size would make the device copy stale payload bytes.
+    final meta = BlockMeta(
+        flagsAndType: entry.meta.flagsAndType, size: next.length, key: entry.meta.key);
+    final ok = await widget.client.writeEntry(widget.slot, widget.field, key, meta, next);
     if (!mounted) return;
     showSnack(context, ok ? '${widget.title} $key updated' : 'Write failed');
     widget.onChanged?.call();

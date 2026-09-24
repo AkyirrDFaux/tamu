@@ -96,13 +96,17 @@ public:
     }
 
     // Round to Nearest (Most Accurate)
-    // Example: 1.5 becomes 2, 1.4 becomes 1
+    // Example: 1.5 becomes 2, 1.4 becomes 1, -1.4 becomes -1
     inline int32_t RoundToInt() const
     {
-        if (Value >= 0)
-            return (Value + (1 << (DECIMAL - 1))) >> DECIMAL;
-        else
-            return (Value - (1 << (DECIMAL - 1))) >> DECIMAL;
+        // Adding half and flooring is correct for both signs (a plain `Value >> 16` would
+        // floor, and subtracting half for negatives rounded every negative down by one).
+        // The add is guarded so a Value within half of the Q16.16 limit cannot overflow the
+        // 32-bit intermediate (there is no representable fraction left to round there).
+        constexpr int32_t half = 1 << (DECIMAL - 1);
+        if (Value > INT32_MAX - half || Value < INT32_MIN + half)
+            return Value >> DECIMAL;
+        return (Value + half) >> DECIMAL;
     }
 
     // Compound add: adds `Other` in fixed-point

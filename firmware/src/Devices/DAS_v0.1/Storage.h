@@ -125,7 +125,8 @@ bool Storage_FlashErase(uint32_t offset, uint32_t size)
 {
     if ((offset & (FLASH_ERASE_PAGE_SIZE - 1)) || (size & (FLASH_ERASE_PAGE_SIZE - 1)))
         return false;
-    if (offset + size > STORAGE_FLASH_SIZE)
+    // Overflow-safe bound: `offset + size` could wrap for a huge size.
+    if (offset > STORAGE_FLASH_SIZE || size > STORAGE_FLASH_SIZE - offset)
         return false;
 
     FLASH_Unlock();

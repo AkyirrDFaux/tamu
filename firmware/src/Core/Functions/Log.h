@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include "Core/Types/Log.h"
 #include "Core/Functions/Packet.h"
 
@@ -78,6 +79,30 @@ inline void EnsureLogStorage()
             LogCapacity = LOG_INITIAL_CAPACITY;
         }
     }
+}
+
+// Grows the database to `new_capacity` slots. Each buffer is committed as soon as its own
+// realloc succeeds: realloc frees the old block on success, so growing them all and only
+// assigning at the end would leave dangling pointers if a later realloc failed (and freeing
+// the grown buffers would free the live data too). On failure every pointer stays valid and
+// the database simply remains at its previous capacity.
+inline bool GrowLogStorage(uint32_t new_capacity)
+{
+    LogRecord *nb = (LogRecord *)realloc(LogBuffer, new_capacity * sizeof(LogRecord));
+    if (!nb) return false;
+    LogBuffer = nb;
+
+    bool *nu = (bool *)realloc(LogUsed, new_capacity * sizeof(bool));
+    if (!nu) return false;
+    LogUsed = nu;
+
+    uint32_t *ns = (uint32_t *)realloc(LogSeq, new_capacity * sizeof(uint32_t));
+    if (!ns) return false;
+    LogSeq = ns;
+
+    memset(LogUsed + LogCapacity, 0, (new_capacity - LogCapacity) * sizeof(bool));
+    LogCapacity = new_capacity;
+    return true;
 }
 #endif
 

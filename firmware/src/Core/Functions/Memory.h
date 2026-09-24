@@ -279,7 +279,18 @@ struct DynamicBlockDescriptor
 
         if (i < entry_count && table[i].fieldKey == fk)
         {
-            // Update in place: stash the new value at the end of its space first,
+            // Fast path: same size and persistence - overwrite the value in place. This is
+            // the hot path (e.g. a script rewriting the same render matrix every tick) and
+            // avoids the append + full-space compaction.
+            if (table[i].size == len && IsPersistent(table[i]) == pers)
+            {
+                uint8_t *sp = pers ? persistent_data : volatile_data;
+                if (len && sp) memcpy(sp + table[i].memoryOffset, value, len);
+                table[i].flagsAndType = type_and_flag;
+                generation++;
+                return true;
+            }
+            // Size/persistence changed: stash the new value at the end of its space first,
             // then RebuildSpaces compacts (reads the new value from the tail).
             uint16_t off = AppendValue(pers, value, len);
             if (off == 0xFFFF) return false;
@@ -607,6 +618,7 @@ static bool LoadDynamicBlockFiles(DynamicBlockDescriptor &b, uint16_t idx)
     if (cursor + 1 > tlen) return false;
     uint8_t name_len = tbuf[cursor++];
     if (cursor + name_len > tlen) return false;
+    if (name_len > BLOCK_NAME_LEN - 1) return false; // malformed table: name would overflow
     if (name_len) memcpy(b.Name, tbuf + cursor, name_len);
     b.Name[name_len] = '\0';
     cursor += name_len;

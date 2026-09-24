@@ -298,6 +298,31 @@ void main() {
     }
   });
 
+  test('Get time only accepts integer destinations', () {
+    final def = scriptInstructions.firstWhere((d) => d.category == catTime && d.op == 2);
+    expect(def.integerDestination, isTrue);
+    ScriptLine getTime(ScriptSymbol dest) =>
+        ScriptLine(destinations: [dest], instruction: ScriptSymbol.instruction(catTime, 2));
+
+    // Index / Uint32 destinations are accepted.
+    for (final t in [DataType.integer, DataType.uint32]) {
+      final ctx = ScriptValidationContext(variableTypes: [t.value]);
+      expect(validateScriptLines([getTime(ScriptSymbol.variable(0))], ctx), isEmpty,
+          reason: '${t.name} should be a valid Get time destination');
+    }
+    // A Number (its Q16.16 integer part overflows past ~32767 ms) and a Vector are rejected.
+    for (final t in [DataType.number, DataType.vector]) {
+      final ctx = ScriptValidationContext(variableTypes: [t.value]);
+      expect(validateScriptLines([getTime(ScriptSymbol.variable(0))], ctx), isNotEmpty,
+          reason: '${t.name} should be rejected as a Get time destination');
+    }
+    // Every other destination-capable instruction keeps the permissive default.
+    for (final d in scriptInstructions.where((d) => d.destination)) {
+      if (d.category == catTime && d.op == 2) continue;
+      expect(d.integerDestination, isFalse, reason: d.label);
+    }
+  });
+
   test('BlockInfo and Number-literal symbols round-trip through the backup', () {
     final draft = ScriptDraft(functionName: 'Reg')
       ..constants.add(ScriptDraftValue(
