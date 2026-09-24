@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'core/connection.dart';
+import 'core/diagnostics.dart';
 import 'core/notifications.dart';
 import 'core/settings.dart';
 import 'ui/backup_page.dart';
@@ -13,6 +14,13 @@ import 'ui/widgets.dart';
 void main() async {
   // path_provider (Android settings) and the plugin channels need the binding.
   WidgetsFlutterBinding.ensureInitialized();
+  // Surface widget/build errors in the app's Log page (helps diagnose a dialog that throws,
+  // which otherwise shows as a frozen dimmed screen).
+  final previousOnError = FlutterError.onError;
+  FlutterError.onError = (details) {
+    AppDiagnostics.log('app', 'Flutter error: ${details.exceptionAsString()}');
+    previousOnError?.call(details);
+  };
   // Load persisted settings (autoconnect target etc.) before the UI starts.
   await AppSettings.instance.load();
   runApp(const TamuApp());

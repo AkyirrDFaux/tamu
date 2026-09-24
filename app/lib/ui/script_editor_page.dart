@@ -983,6 +983,10 @@ class _ValueDialogState extends State<_ValueDialog> {
             decoration: InputDecoration(
                 labelText: 'Type', helperText: 'Size: ${defaultSizeForType(_type)} bytes'),
             items: [
+              // Guard against a value type the picker no longer offers (a handler reading an
+              // unknown type would otherwise assert inside DropdownButtonFormField).
+              if (!scriptValueTypes.contains(_type))
+                DropdownMenuItem(value: _type, child: Text(dataTypeLabel(_type))),
               for (final t in scriptValueTypes)
                 DropdownMenuItem(value: t, child: Text(dataTypeLabel(t))),
             ],
@@ -994,6 +998,8 @@ class _ValueDialogState extends State<_ValueDialog> {
               initialValue: _uiType,
               decoration: const InputDecoration(labelText: 'UI style'),
               items: [
+                if (!styles.contains(_uiType))
+                  DropdownMenuItem(value: _uiType, child: Text(ScriptUiType.label(_uiType))),
                 for (final t in styles)
                   DropdownMenuItem(value: t, child: Text(ScriptUiType.label(t))),
               ],

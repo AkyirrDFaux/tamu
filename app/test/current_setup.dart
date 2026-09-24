@@ -550,57 +550,68 @@ ScriptDraft scriptEyeMovement() {
   return d;
 }
 
-/// Script 3: blink. The lid position is a piecewise-linear function of the time within the
-/// blink period (open, then a 100 ms close and a 100 ms open): one big loop, no nesting.
+/// Script 3: blink. While blinking the lid is updated every loop tick (no artificial delay);
+/// once the movement finishes (close + open over [lidMoveMs] each) the script waits exactly
+/// [lidWaitMs] for the next blink.
 ScriptDraft scriptLidTimer() {
   final d = ScriptDraft(functionName: 'Lid timer', properties: _props());
-  final periodMs = lidWaitMs + 2 * lidMoveMs; // open wait + close + open
+  final blinkMs = 2 * lidMoveMs; // close + open
   d.constants.addAll([
     _cBlockInfo('LID_L', bi(BlockType.dynamic.value, dynLeftEye, eyeLidGeo, gkPosition)),
     _cBlockInfo('LID_R', bi(BlockType.dynamic.value, dynRightEye, eyeLidGeo, gkPosition)),
     _cMatrix('IDENT', identity23()),
     _cNum('OPEN_TY', lidOpenTy),
     _cNum('DELTA', lidClosedTy - lidOpenTy),
-    _cIx('PERIOD', periodMs),
-    _cIx('BLINK_AT', lidWaitMs),
     _cIx('MOVE_MS', lidMoveMs),
-    _cIx('TICK', 10),
+    _cIx('BLINK_MS', blinkMs),
+    _cIx('WAIT_MS', lidWaitMs),
   ]);
   d.variables.addAll([
-    _var('t', DataType.number, 4), // phase (ms within the period)
-    _var('closeP', DataType.number, 4), // 0..1 close progress
-    _var('openP', DataType.number, 4), // 0..1 open progress
+    _var('t0', DataType.number, 4),
+    _var('now', DataType.number, 4),
+    _var('elapsed', DataType.number, 4),
+    _var('closeP', DataType.number, 4),
+    _var('openP', DataType.number, 4),
     _var('ty', DataType.number, 4),
     _var('mat', DataType.matrix, 28),
+    _var('cond', DataType.bool_, 1),
   ]);
 
   /// mat = IDENT with translation ty, written to the lid geometry field.
   List<ScriptLine> applyLid(int regConst) => [
-        _line([_v(4)], _ins(catMath, 0), [_c(2)]), // mat = IDENT
-        _line([_v(4)], _ins(catCompose, 0), [_idx(5), _v(3)]), // mat[1,2] = ty
-        _line([], _ins(catService, 2), [_c(regConst), _v(4)]), // write[reg] = mat
+        _line([_v(6)], _ins(catMath, 0), [_c(2)]), // mat = IDENT
+        _line([_v(6)], _ins(catCompose, 0), [_idx(5), _v(5)]), // mat[1,2] = ty
+        _line([], _ins(catService, 2), [_c(regConst), _v(6)]), // write[reg] = mat
       ];
 
   d.lines.addAll([
     _line([], _ins(catFlow, 1), [_true()]), // While true
-    _line([_v(0)], _ins(catTime, 2)), // t = Get time
-    _line([_v(0)], _ins(catMath, 5), [_v(0), _c(5)]), // t %= PERIOD
-    // closeP = Limit((t - BLINK_AT) / MOVE_MS, 0, 1)
-    _line([_v(1)], _ins(catMath, 2), [_v(0), _c(6)]), // closeP = t - BLINK_AT
-    _line([_v(1)], _ins(catMath, 4), [_v(1), _c(7)]), // closeP /= MOVE_MS
-    _line([_v(1)], _ins(catMath, 10), [_v(1), _idx(0), _idx(1)]), // closeP = Limit(closeP,0,1)
-    // openP = Limit((t - BLINK_AT - MOVE_MS) / MOVE_MS, 0, 1)
-    _line([_v(2)], _ins(catMath, 2), [_v(0), _c(6)]), // openP = t - BLINK_AT
-    _line([_v(2)], _ins(catMath, 2), [_v(2), _c(7)]), // openP -= MOVE_MS
-    _line([_v(2)], _ins(catMath, 4), [_v(2), _c(7)]), // openP /= MOVE_MS
-    _line([_v(2)], _ins(catMath, 10), [_v(2), _idx(0), _idx(1)]), // openP = Limit(openP,0,1)
+    _line([_v(0)], _ins(catTime, 2)), // t0 = Get time
+    _line([_v(7)], _ins(catMath, 0), [_true()]), // cond = true
+    _line([], _ins(catFlow, 1), [_v(7)]), // While cond  (blink: no delay -> fastest update)
+    _line([_v(1)], _ins(catTime, 2)), // now = Get time
+    _line([_v(2)], _ins(catMath, 2), [_v(1), _v(0)]), // elapsed = now - t0
+    // closeP = Limit(elapsed / MOVE_MS, 0, 1)
+    _line([_v(3)], _ins(catMath, 4), [_v(2), _c(5)]), // closeP = elapsed / MOVE_MS
+    _line([_v(3)], _ins(catMath, 10), [_v(3), _idx(0), _idx(1)]), // closeP = Limit(closeP,0,1)
+    // openP = Limit((elapsed - MOVE_MS) / MOVE_MS, 0, 1)
+    _line([_v(4)], _ins(catMath, 2), [_v(2), _c(5)]), // openP = elapsed - MOVE_MS
+    _line([_v(4)], _ins(catMath, 4), [_v(4), _c(5)]), // openP /= MOVE_MS
+    _line([_v(4)], _ins(catMath, 10), [_v(4), _idx(0), _idx(1)]), // openP = Limit(openP,0,1)
     // ty = OPEN_TY + DELTA * (closeP - openP)
-    _line([_v(3)], _ins(catMath, 2), [_v(1), _v(2)]), // ty = closeP - openP
-    _line([_v(3)], _ins(catMath, 3), [_v(3), _c(4)]), // ty *= DELTA
-    _line([_v(3)], _ins(catMath, 1), [_v(3), _c(3)]), // ty += OPEN_TY
+    _line([_v(5)], _ins(catMath, 2), [_v(3), _v(4)]), // ty = closeP - openP
+    _line([_v(5)], _ins(catMath, 3), [_v(5), _c(4)]), // ty *= DELTA
+    _line([_v(5)], _ins(catMath, 1), [_v(5), _c(3)]), // ty += OPEN_TY
     ...applyLid(0),
     ...applyLid(1),
-    _line([], _ins(catTime, 0), [_c(8)]), // Delay TICK
+    // Recompute `cond` INSIDE the loop (the While re-reads its operand).
+    _line([_v(7)], _ins(catLogic, 8), [_v(2), _c(6)]), // cond = elapsed < BLINK_MS
+    _line([], _ins(catFlow, 2)), // EndBlock
+    // Movement finished: park the lid open and wait exactly WAIT_MS for the next blink.
+    _line([_v(5)], _ins(catMath, 0), [_c(3)]), // ty = OPEN_TY
+    ...applyLid(0),
+    ...applyLid(1),
+    _line([], _ins(catTime, 0), [_c(7)]), // Delay WAIT_MS
     _line([], _ins(catFlow, 2)), // EndBlock
   ]);
   return d;

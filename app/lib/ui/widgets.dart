@@ -211,10 +211,17 @@ class DialogBody extends StatelessWidget {
   final Widget child;
 
   @override
-  Widget build(BuildContext context) => ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: maxWidth),
-        child: SizedBox(width: double.infinity, height: height, child: child),
-      );
+  Widget build(BuildContext context) {
+    // A fixed body height can exceed a small window and push the dialog's buttons off-screen
+    // (the dialog then looks frozen); clamp it to the available height.
+    var available = MediaQuery.sizeOf(context).height - 180;
+    if (available < 120) available = 120;
+    final h = height == null || height! < available ? height : available;
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: maxWidth),
+      child: SizedBox(width: double.infinity, height: h, child: child),
+    );
+  }
 }
 
 /// Shows a transient status message (shared by the memory/service pages).
