@@ -96,6 +96,10 @@ class ScriptInstructionDef {
   /// Operand index that is a device address (Id), or -1.
   final int addressIndex;
 
+  /// True when the operands form an infix expression (`Set`): values interleaved with
+  /// `Math op` predefines and parentheses.
+  final bool expression;
+
   const ScriptInstructionDef({
     required this.op,
     required this.category,
@@ -106,6 +110,7 @@ class ScriptInstructionDef {
     this.numeric = false,
     this.constantIndex = -1,
     this.addressIndex = -1,
+    this.expression = false,
   });
 
   ScriptSymbol symbol() => ScriptSymbol.instruction(category, op);
@@ -124,7 +129,8 @@ class ScriptInstructionDef {
       };
 }
 
-/// Predefine "Math op." values (Docs/Services/Script.md predefine subtypes).
+/// Predefine "Math op." values (Docs/Services/Script.md predefine subtypes). Values 0..17
+/// are the operator enum; 18/19 are the expression parentheses (inline in a `Set` line).
 const List<(int, String)> scriptPredefineMathOps = [
   (0, 'Add'),
   (1, 'Subtract'),
@@ -144,7 +150,16 @@ const List<(int, String)> scriptPredefineMathOps = [
   (15, 'Compare <='),
   (16, 'Compare >'),
   (17, 'Compare >='),
+  (18, 'Open parenthesis'),
+  (19, 'Close parenthesis'),
 ];
+
+/// Expression parenthesis operator values (inline in a `Set` operand stream).
+const int mathOpOpenParen = 18;
+const int mathOpCloseParen = 19;
+
+/// Inline operators the editor offers for a `Set` expression (`+ - * / ^` + parens).
+const Set<int> expressionOps = {0, 1, 2, 3, 5, mathOpOpenParen, mathOpCloseParen};
 
 /// Predefine subtypes offered in the picker (name + subtype value).
 const List<(int, String)> scriptPredefineSubtypes = [
@@ -158,16 +173,12 @@ const List<(int, String)> scriptPredefineSubtypes = [
 ];
 
 const List<ScriptInstructionDef> scriptInstructions = [
-  // Math (Add..Maximum fold N operands left-to-right; Set/Negate/Absolute take one)
-  ScriptInstructionDef(op: 0, category: catMath, label: 'Set', destination: true, minOperands: 1, maxOperands: 1, numeric: true),
-  ScriptInstructionDef(op: 1, category: catMath, label: 'Add', destination: true, minOperands: 2, maxOperands: 8, numeric: true),
-  ScriptInstructionDef(op: 2, category: catMath, label: 'Subtract', destination: true, minOperands: 2, maxOperands: 8, numeric: true),
-  ScriptInstructionDef(op: 3, category: catMath, label: 'Multiply', destination: true, minOperands: 2, maxOperands: 8, numeric: true),
-  ScriptInstructionDef(op: 4, category: catMath, label: 'Divide', destination: true, minOperands: 2, maxOperands: 8, numeric: true),
+  // Math: Set evaluates an infix expression (scalar/vector/matrix, element-wise with
+  // scalar broadcast). Modulo/Minimum/Maximum/Absolute/Limit remain separate instructions.
+  ScriptInstructionDef(op: 0, category: catMath, label: 'Set', destination: true, minOperands: 1, maxOperands: 32, numeric: true, expression: true),
   ScriptInstructionDef(op: 5, category: catMath, label: 'Modulo', destination: true, minOperands: 2, maxOperands: 8, numeric: true),
   ScriptInstructionDef(op: 6, category: catMath, label: 'Minimum', destination: true, minOperands: 2, maxOperands: 8, numeric: true),
   ScriptInstructionDef(op: 7, category: catMath, label: 'Maximum', destination: true, minOperands: 2, maxOperands: 8, numeric: true),
-  ScriptInstructionDef(op: 8, category: catMath, label: 'Negate', destination: true, minOperands: 1, maxOperands: 1, numeric: true),
   ScriptInstructionDef(op: 9, category: catMath, label: 'Absolute', destination: true, minOperands: 1, maxOperands: 1, numeric: true),
   ScriptInstructionDef(op: 10, category: catMath, label: 'Limit', destination: true, minOperands: 3, maxOperands: 3, numeric: true),
   // Logic (And/Or/Xor fold N; Not/Shift/Compare/Select fixed)
@@ -376,6 +387,64 @@ List<String> validateScriptLines(List<ScriptLine> lines, ScriptValidationContext
         }
       }
     }
+    if (def.expression) errors.addAll(_validateExpression(line, i));
+  }
+  return errors;
+}
+
+/// Structural check for an infix expression (`Set`): balanced parentheses and a
+/// value/operator alternation (a leading or after-operator `-` is unary).
+List<String> _validateExpression(ScriptLine line, int lineIndex) {
+  final errors = <String>[];
+  final where = 'Line ${lineIndex + 1}';
+  const binaryOps = {0, 2, 3, 5}; // Add, Multiply, Divide, Power
+  var depth = 0;
+  var expectValue = true;
+  for (final o in line.operands) {
+    final isOp = o.type == symPredefine && o.subtype == preMathOp;
+    if (isOp && (o.value == mathOpOpenParen || o.value == mathOpCloseParen)) {
+      if (o.value == mathOpOpenParen) {
+        if (!expectValue) {
+          errors.add('$where: unexpected "("');
+          return errors;
+        }
+        depth++;
+      } else {
+        if (expectValue) {
+          errors.add('$where: unexpected ")"');
+          return errors;
+        }
+        if (depth == 0) {
+          errors.add('$where: unbalanced ")"');
+          return errors;
+        }
+        depth--;
+        expectValue = false;
+      }
+      continue;
+    }
+    if (isOp) {
+      if (o.value == 1) {
+        // Subtract: binary when a value was just read, unary otherwise.
+        if (!expectValue) expectValue = true;
+        continue;
+      }
+      if (expectValue || !binaryOps.contains(o.value)) {
+        errors.add('$where: unexpected operator');
+        return errors;
+      }
+      expectValue = true;
+      continue;
+    }
+    if (!expectValue) {
+      errors.add('$where: two values in a row');
+      return errors;
+    }
+    expectValue = false;
+  }
+  if (depth != 0) errors.add('$where: unbalanced "("');
+  if (expectValue && line.operands.isNotEmpty) {
+    errors.add('$where: expression ends with an operator');
   }
   return errors;
 }

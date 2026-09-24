@@ -28,27 +28,68 @@ void main() {
 
   test('validity check reports missing destination and arity', () {
     final lines = [
-      ScriptLine(instruction: ScriptSymbol.instruction(catMath, 1)), // Add needs dest + 2 ops
+      ScriptLine(instruction: ScriptSymbol.instruction(catMath, 5)), // Modulo needs dest + 2 ops
     ];
     final errors = validateScriptLines(lines, const ScriptValidationContext());
     expect(errors.any((e) => e.contains('needs a destination')), isTrue);
     expect(errors.any((e) => e.contains('operands')), isTrue);
   });
 
-  test('validity check accepts a well-formed line', () {
+  test('validity check accepts a well-formed expression line', () {
     final lines = [
       ScriptLine(
         destinations: [ScriptSymbol.output(0)],
-        instruction: ScriptSymbol.instruction(catMath, 1),
-        operands: [ScriptSymbol.variable(0), ScriptSymbol.input(0)],
+        instruction: ScriptSymbol.instruction(catMath, 0), // Set
+        operands: [
+          ScriptSymbol.predefine(preMathOp, mathOpOpenParen),
+          ScriptSymbol.variable(0),
+          ScriptSymbol.predefine(preMathOp, 0), // +
+          ScriptSymbol.input(0),
+          ScriptSymbol.predefine(preMathOp, mathOpCloseParen),
+          ScriptSymbol.predefine(preMathOp, 2), // *
+          ScriptSymbol.constant(0),
+        ],
       ),
     ];
     final ctx = ScriptValidationContext(
       inputTypes: [DataType.number.value],
       outputTypes: [DataType.number.value],
       variableTypes: [DataType.number.value],
+      constantTypes: [DataType.number.value],
     );
     expect(validateScriptLines(lines, ctx), isEmpty);
+  });
+
+  test('validity check rejects malformed expressions', () {
+    ScriptLine set(List<ScriptSymbol> ops) => ScriptLine(
+          destinations: [ScriptSymbol.output(0)],
+          instruction: ScriptSymbol.instruction(catMath, 0),
+          operands: ops,
+        );
+    const ctx = ScriptValidationContext();
+    // Unbalanced "(".
+    expect(
+        validateScriptLines([
+          set([
+            ScriptSymbol.predefine(preMathOp, mathOpOpenParen),
+            ScriptSymbol.variable(0),
+            ScriptSymbol.predefine(preMathOp, 0),
+            ScriptSymbol.variable(0),
+          ])
+        ], ctx),
+        isNotEmpty);
+    // Two values in a row.
+    expect(
+        validateScriptLines([
+          set([ScriptSymbol.variable(0), ScriptSymbol.variable(0)])
+        ], ctx),
+        isNotEmpty);
+    // Ends with an operator.
+    expect(
+        validateScriptLines([
+          set([ScriptSymbol.variable(0), ScriptSymbol.predefine(preMathOp, 0)])
+        ], ctx),
+        isNotEmpty);
   });
 
   test('draft round-trips names, input specs and instructions', () {
@@ -118,8 +159,9 @@ void main() {
     final set = defFor(catMath, 0);
     expect(set.maxDestinations, 1);
     expect(set.minOperands, 1);
-    expect(set.maxOperands, 1);
+    expect(set.maxOperands, 32);
     expect(set.numeric, isTrue);
+    expect(set.expression, isTrue);
 
     final regRead = defFor(catService, 1);
     expect(regRead.constantIndex, 0);
@@ -139,31 +181,39 @@ void main() {
   test('all predefine subtypes and math ops are available', () {
     expect(scriptPredefineSubtypes.map((e) => e.$1).toSet(),
         {preState, preType, preIndex, preChar, preMathOp, preBool, preNumber});
-    expect(scriptPredefineMathOps.length, 18);
+    expect(scriptPredefineMathOps.length, 20); // 18 operators + the two parentheses
+    expect(scriptPredefineMathOps.map((e) => e.$1), containsAll(expressionOps));
   });
 
-  test('n-ary math ops accept up to 8 operands', () {
-    ScriptInstructionDef defFor(int cat, int op) =>
-        scriptInstructions.firstWhere((d) => d.category == cat && d.op == op);
-    for (final (cat, op) in [(catMath, 1), (catMath, 3), (catMath, 6), (catLogic, 0)]) {
-      expect(defFor(cat, op).maxOperands, 8);
+  test('Add/Subtract/Multiply/Divide/Negate are no longer instructions', () {
+    for (final op in [1, 2, 3, 4, 8]) {
+      expect(scriptInstructions.any((d) => d.category == catMath && d.op == op), isFalse);
     }
-    // A 4-operand Add validates and round-trips.
+    // The ops that remain: Set(0), Modulo(5), Minimum(6), Maximum(7), Absolute(9), Limit(10).
+    for (final op in [0, 5, 6, 7, 9, 10]) {
+      expect(scriptInstructions.any((d) => d.category == catMath && d.op == op), isTrue);
+    }
+  });
+
+  test('a long expression validates and round-trips', () {
+    // Set v0 = v1 + v2 + v3 + v1
     final line = ScriptLine(
       destinations: [ScriptSymbol.variable(0)],
-      instruction: ScriptSymbol.instruction(catMath, 1),
+      instruction: ScriptSymbol.instruction(catMath, 0),
       operands: [
         ScriptSymbol.variable(1),
+        ScriptSymbol.predefine(preMathOp, 0), // +
         ScriptSymbol.variable(2),
-        ScriptSymbol.constant(0),
-        ScriptSymbol.predefine(preIndex, 3),
+        ScriptSymbol.predefine(preMathOp, 0),
+        ScriptSymbol.variable(3),
+        ScriptSymbol.predefine(preMathOp, 0),
+        ScriptSymbol.variable(1),
       ],
     );
     final ctx = ScriptValidationContext(
-        variableTypes: [DataType.number.value, DataType.number.value, DataType.number.value],
-        constantTypes: [DataType.number.value]);
+        variableTypes: [for (var i = 0; i < 4; i++) DataType.number.value]);
     expect(validateScriptLines([line], ctx), isEmpty);
-    expect(decodeScriptLines(encodeScriptLines([line])).single.operands.length, 4);
+    expect(decodeScriptLines(encodeScriptLines([line])).single.operands.length, 7);
   });
 
   test('BlockInfo and Number-literal symbols round-trip through the backup', () {

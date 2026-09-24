@@ -58,7 +58,7 @@ void main() async {
       ..constants.add(ScriptDraftValue(name: 'Two', type: DataType.number, size: 4, value: numberToBytes(2.0)))
       // A = 2; B = A + A; Out = B; halt
       ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(0)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [ScriptSymbol.constant(0)]))
-      ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(1)], instruction: ScriptSymbol.instruction(catMath, 1), operands: [ScriptSymbol.variable(0), ScriptSymbol.variable(0)]))
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(1)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [ScriptSymbol.variable(0), ScriptSymbol.predefine(preMathOp, 0), ScriptSymbol.variable(0)]))
       ..lines.add(ScriptLine(destinations: [ScriptSymbol.output(0)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [ScriptSymbol.variable(1)]))
       ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)));
 
@@ -90,7 +90,7 @@ void main() async {
       ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(0)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [ScriptSymbol.constant(0)]))
       ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(1)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [ScriptSymbol.predefine(preBool, 1)]))
       ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 1), operands: [ScriptSymbol.variable(1)]))
-      ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(0)], instruction: ScriptSymbol.instruction(catMath, 1), operands: [ScriptSymbol.variable(0), ScriptSymbol.constant(1)]))
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(0)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [ScriptSymbol.variable(0), ScriptSymbol.predefine(preMathOp, 0), ScriptSymbol.constant(1)]))
       ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(1)], instruction: ScriptSymbol.instruction(catLogic, 8), operands: [ScriptSymbol.variable(0), ScriptSymbol.constant(2)]))
       ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 2)))
       ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)));
@@ -285,26 +285,38 @@ void main() async {
     await st.deleteFile('SCR_08');
   }, timeout: const Timeout(Duration(minutes: 2)));
 
-  test('n-ary math with inline literals', skip: skipReason, () async {
-    // Out = 5 + 2 + 3 in ONE Add line (Index literals instead of named constants).
-    final draft = ScriptDraft(functionName: 'Nary')
-      ..outputs.add(ScriptDraftValue(name: 'Out', type: DataType.number, size: 4))
-      ..lines.add(ScriptLine(
-          destinations: [ScriptSymbol.output(0)],
-          instruction: ScriptSymbol.instruction(catMath, 1), // Add
-          operands: [
-            ScriptSymbol.predefine(preIndex, 5),
-            ScriptSymbol.predefine(preIndex, 2),
-            ScriptSymbol.predefine(preIndex, 3),
-          ]))
+  test('expression: precedence, parens, power and sqrt', skip: skipReason, () async {
+    ScriptSymbol lit(int n) => ScriptSymbol.predefine(preIndex, n);
+    ScriptSymbol op(int o) => ScriptSymbol.predefine(preMathOp, o);
+    final draft = ScriptDraft(functionName: 'Expr')
+      ..outputs.add(ScriptDraftValue(name: 'O0', type: DataType.number, size: 4))
+      ..outputs.add(ScriptDraftValue(name: 'O1', type: DataType.number, size: 4))
+      ..outputs.add(ScriptDraftValue(name: 'O2', type: DataType.number, size: 4))
+      ..outputs.add(ScriptDraftValue(name: 'O3', type: DataType.number, size: 4))
+      ..outputs.add(ScriptDraftValue(name: 'O4', type: DataType.number, size: 4))
+      // O0 = 2 + 3 * 4 = 14
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.output(0)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [lit(2), op(0), lit(3), op(2), lit(4)]))
+      // O1 = (2 + 3) * 4 = 20
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.output(1)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [op(mathOpOpenParen), lit(2), op(0), lit(3), op(mathOpCloseParen), op(2), lit(4)]))
+      // O2 = 3 ^ 2 = 9
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.output(2)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [lit(3), op(5), lit(2)]))
+      // O3 = 9 ^ 0.5 = 3
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.output(3)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [lit(9), op(5), ScriptSymbol.predefine(preNumber, 128)]))
+      // O4 = -5 + 2 = -3
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.output(4)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [op(1), lit(5), op(0), lit(2)]))
       ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)));
     final (c, st, slot) = await loadScript(9, draft);
     await c.setState(slot, ScriptState.running);
     final state = await waitState(c, slot, ScriptState.finished);
-    print('[VM] nary state=$state err=${await c.readError(slot)}');
+    print('[VM] expr state=$state err=${await c.readError(slot)}');
     expect(state, ScriptState.finished);
-    final out = await c.readEntry(slot, ScriptField.output, 0);
-    expect(numberFromBytes(out!.value), closeTo(10.0, 0.001));
+    Future<double> val(int i) async =>
+        numberFromBytes((await c.readEntry(slot, ScriptField.output, i))!.value);
+    expect(await val(0), closeTo(14.0, 0.01));
+    expect(await val(1), closeTo(20.0, 0.01));
+    expect(await val(2), closeTo(9.0, 0.01));
+    expect(await val(3), closeTo(3.0, 0.01));
+    expect(await val(4), closeTo(-3.0, 0.01));
     await cleanup(c, st, slot);
   }, timeout: const Timeout(Duration(minutes: 2)));
 
@@ -321,9 +333,9 @@ void main() async {
             ...numberToBytes(2),
             ...numberToBytes(3),
           ])))
-      // V = V0; V *= 2; Mid = V[1]; halt  -> V = [2,4,6], Mid = 4
+      // V = V0; V = V * 2; Mid = V[1]; halt  -> V = [2,4,6], Mid = 4
       ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(0)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [ScriptSymbol.constant(0)]))
-      ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(0)], instruction: ScriptSymbol.instruction(catMath, 3), operands: [ScriptSymbol.variable(0), ScriptSymbol.predefine(preIndex, 2)]))
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(0)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [ScriptSymbol.variable(0), ScriptSymbol.predefine(preMathOp, 2), ScriptSymbol.predefine(preIndex, 2)]))
       ..lines.add(ScriptLine(destinations: [ScriptSymbol.output(0)], instruction: ScriptSymbol.instruction(catCompose, 1), operands: [ScriptSymbol.variable(0), ScriptSymbol.predefine(preIndex, 1)]))
       ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)));
     final (c, st, slot) = await loadScript(10, draft);
@@ -337,6 +349,37 @@ void main() async {
     expect(numberFromBytes(ram, 0), closeTo(2.0, 0.001));
     expect(numberFromBytes(ram, 4), closeTo(4.0, 0.001));
     expect(numberFromBytes(ram, 8), closeTo(6.0, 0.001));
+    await cleanup(c, st, slot);
+  }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('expression: Matrix copy preserves the header', skip: skipReason, () async {
+    // M = IDENT (2x3); M[0,2] = 5; Out = M[0,2]
+    final draft = ScriptDraft(functionName: 'MatExpr')
+      ..outputs.add(ScriptDraftValue(name: 'Out', type: DataType.number, size: 4))
+      ..variables.add(ScriptDraftValue(name: 'M', type: DataType.matrix, size: 28))
+      ..constants.add(ScriptDraftValue(
+          name: 'IDENT',
+          type: DataType.matrix,
+          size: 28,
+          value: Uint8List.fromList([
+            2, 0, 3, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0,
+          ])))
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(0)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [ScriptSymbol.constant(0)]))
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(0)], instruction: ScriptSymbol.instruction(catCompose, 0), operands: [ScriptSymbol.predefine(preIndex, 2), ScriptSymbol.predefine(preIndex, 5)]))
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.output(0)], instruction: ScriptSymbol.instruction(catCompose, 1), operands: [ScriptSymbol.variable(0), ScriptSymbol.predefine(preIndex, 2)]))
+      ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)));
+    final (c, st, slot) = await loadScript(13, draft);
+    await c.setState(slot, ScriptState.running);
+    final state = await waitState(c, slot, ScriptState.finished);
+    print('[VM] matexpr state=$state err=${await c.readError(slot)}');
+    expect(state, ScriptState.finished);
+    expect(numberFromBytes((await c.readEntry(slot, ScriptField.output, 0))!.value),
+        closeTo(5.0, 0.01));
+    // The matrix header survived the copy.
+    final ram = (await c.readInternalState(slot))!.variables;
+    expect(ram[0], 2);
+    expect(ram[1], 0);
+    expect(ram[2], 3);
     await cleanup(c, st, slot);
   }, timeout: const Timeout(Duration(minutes: 2)));
 

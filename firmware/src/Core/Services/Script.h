@@ -71,6 +71,17 @@ bool RegisterSetByBlockInfo(uint32_t bi, const BlockMeta &m, const uint8_t *val,
 #define SCRIPT_OP_MATH_ABS 9
 #define SCRIPT_OP_MATH_LIMIT 10 // clamp(value, min, max)
 
+// Inline expression operator values (the `Math op` predefine): the operands of a Set
+// line may be interleaved with these to form an infix expression (Docs/Services/Script.md:
+// "generic math and logic processor").
+#define SCRIPT_MATHOP_ADD 0
+#define SCRIPT_MATHOP_SUB 1
+#define SCRIPT_MATHOP_MUL 2
+#define SCRIPT_MATHOP_DIV 3
+#define SCRIPT_MATHOP_POW 5
+#define SCRIPT_MATHOP_OPEN 18
+#define SCRIPT_MATHOP_CLOSE 19
+
 // Logic ops.
 #define SCRIPT_OP_LOGIC_AND 0
 #define SCRIPT_OP_LOGIC_OR 1
@@ -891,6 +902,252 @@ static uint8_t ScriptExecVectorMath(LoadedScript *s, const ScriptLineInfo &ln, c
     return SCRIPT_ERR_NONE;
 }
 
+// ---------------------------------------------------------------------------
+// Infix expression evaluation (the Set instruction): scalar, vector and matrix
+// values, element-wise with scalar broadcast (Docs/Services/Script.md: "generic math
+// and logic processor"). Limit/Min/Max stay separate instructions.
+// ---------------------------------------------------------------------------
+
+#define SCRIPT_EXPR_MAX_ELEMS 9 // covers Number, Vector2/3, Matrix2x3, Colour
+#define SCRIPT_EXPR_MAX_DEPTH 8 // paren/`^` nesting cap (keeps the VM stack bounded)
+
+struct ExprValue
+{
+    uint16_t dtype = (uint16_t)DataType::None;
+    uint16_t mh = 0, mw = 0; // Matrix header (0 otherwise)
+    uint8_t count = 0;       // elements (1 = scalar)
+    Number e[SCRIPT_EXPR_MAX_ELEMS];
+};
+
+struct ExprParser
+{
+    LoadedScript *s;
+    const uint8_t *tok;
+    uint8_t n;
+    uint8_t i;
+    uint8_t depth;
+    uint8_t scratch[4];
+};
+
+// Resolves a value token into an ExprValue (scalar / Vector / Matrix).
+static bool ScriptExprResolve(ExprParser *p, const uint8_t *sym, ExprValue &out)
+{
+    const uint8_t *data = nullptr;
+    uint8_t size = 0;
+    uint16_t dtype = 0;
+    if (!ScriptResolve(p->s, sym[0], sym[1], ScriptSymVal(sym), p->scratch, &data, &size, &dtype))
+        return false;
+    out.dtype = dtype;
+    out.mh = 0;
+    out.mw = 0;
+    out.count = 0;
+    if (dtype == (uint16_t)DataType::Vector)
+    {
+        uint16_t n = size / 4;
+        if (n == 0 || n > SCRIPT_EXPR_MAX_ELEMS) return false;
+        for (uint16_t i = 0; i < n; i++)
+        {
+            int32_t raw; memcpy(&raw, data + i * 4, 4);
+            out.e[i] = Number::FromRaw(raw);
+        }
+        out.count = (uint8_t)n;
+        return true;
+    }
+    if (dtype == (uint16_t)DataType::Matrix)
+    {
+        uint16_t cnt = ScriptContainerCount(dtype, size, data);
+        if (cnt == 0 || cnt > SCRIPT_EXPR_MAX_ELEMS) return false;
+        out.mh = (uint16_t)(data[0] | (data[1] << 8));
+        out.mw = (uint16_t)(data[2] | (data[3] << 8));
+        for (uint16_t i = 0; i < cnt; i++)
+        {
+            int32_t raw; memcpy(&raw, data + 4 + i * 4, 4);
+            out.e[i] = Number::FromRaw(raw);
+        }
+        out.count = (uint8_t)cnt;
+        return true;
+    }
+    Number v;
+    if (!ScriptVectorElement(data, size, dtype, 0, v)) return false;
+    out.e[0] = v;
+    out.count = 1;
+    return true;
+}
+
+// `Math op` value at the cursor, or 0xFF when the next token is a value / end.
+static uint8_t ScriptExprPeekOp(ExprParser *p)
+{
+    if (p->i >= p->n) return 0xFF;
+    const uint8_t *sym = p->tok + (size_t)p->i * 4;
+    if (sym[0] == SCRIPT_SYM_PREDEFINE && sym[1] == SCRIPT_PRE_MATHOP)
+        return (uint8_t)(ScriptSymVal(sym) & 0xFF);
+    return 0xFF;
+}
+
+// base ^ exp: exp == 0.5 -> sqrt, integer exp -> repeated multiply (negative -> reciprocal).
+static bool ScriptExprPow(Number base, Number exp, Number &out)
+{
+    if (exp.Value == (int32_t)(1 << 15)) { out = sqrt(base); return true; } // 0.5
+    int32_t e = exp.RoundToInt();
+    if (exp.Value != (e << 16)) return false; // only integer exponents (and 0.5)
+    bool neg = e < 0;
+    if (neg) e = -e;
+    if (e > 64) return false;
+    Number r = Number(1);
+    for (int32_t i = 0; i < e; i++) r = r * base;
+    if (neg) { if (r.Value == 0) return false; r = Number(1) / r; }
+    out = r;
+    return true;
+}
+
+// a = a <op> b, element-wise (a scalar broadcasts to a container's shape).
+static bool ScriptExprApply(ExprValue &a, const ExprValue &b, uint8_t op)
+{
+    uint8_t count;
+    if (a.count == b.count) count = a.count;
+    else if (a.count == 1) count = b.count;
+    else if (b.count == 1) count = a.count;
+    else return false;
+    ExprValue out = a;
+    if (a.count == 1 && b.count > 1) { out.dtype = b.dtype; out.mh = b.mh; out.mw = b.mw; }
+    out.count = count;
+    for (uint8_t k = 0; k < count; k++)
+    {
+        Number va = (a.count == 1) ? a.e[0] : a.e[k];
+        Number vb = (b.count == 1) ? b.e[0] : b.e[k];
+        switch (op)
+        {
+        case SCRIPT_MATHOP_ADD: va = va + vb; break;
+        case SCRIPT_MATHOP_SUB: va = va - vb; break;
+        case SCRIPT_MATHOP_MUL: va = va * vb; break;
+        case SCRIPT_MATHOP_DIV: if (vb.Value == 0) return false; va = va / vb; break;
+        case SCRIPT_MATHOP_POW: if (!ScriptExprPow(va, vb, va)) return false; break;
+        default: return false;
+        }
+        out.e[k] = va;
+    }
+    a = out;
+    return true;
+}
+
+static bool ScriptExprBin(ExprParser *p, ExprValue &out, uint8_t minPrec);
+
+static bool ScriptExprPrimary(ExprParser *p, ExprValue &out)
+{
+    if (p->depth >= SCRIPT_EXPR_MAX_DEPTH) return false;
+    p->depth++;
+    bool ok;
+    if (ScriptExprPeekOp(p) == SCRIPT_MATHOP_OPEN)
+    {
+        p->i++;
+        ok = ScriptExprBin(p, out, 1);
+        if (ok)
+        {
+            if (ScriptExprPeekOp(p) != SCRIPT_MATHOP_CLOSE) ok = false;
+            else p->i++;
+        }
+    }
+    else if (p->i < p->n)
+    {
+        const uint8_t *sym = p->tok + (size_t)p->i * 4;
+        ok = ScriptExprResolve(p, sym, out);
+        if (ok) p->i++;
+    }
+    else
+    {
+        ok = false;
+    }
+    p->depth--;
+    return ok;
+}
+
+static bool ScriptExprUnary(ExprParser *p, ExprValue &out)
+{
+    if (ScriptExprPeekOp(p) == SCRIPT_MATHOP_SUB)
+    {
+        p->i++;
+        ExprValue a;
+        if (!ScriptExprUnary(p, a)) return false;
+        for (uint8_t k = 0; k < a.count; k++) a.e[k] = -a.e[k];
+        out = a;
+        return true;
+    }
+    return ScriptExprPrimary(p, out);
+}
+
+// Precedence climbing: MUL/DIV bind tighter than ADD/SUB; POW is right-associative.
+static bool ScriptExprBin(ExprParser *p, ExprValue &out, uint8_t minPrec)
+{
+    if (!ScriptExprUnary(p, out)) return false;
+    for (;;)
+    {
+        uint8_t op = ScriptExprPeekOp(p);
+        uint8_t prec = (op == SCRIPT_MATHOP_MUL || op == SCRIPT_MATHOP_DIV) ? 2
+                       : (op == SCRIPT_MATHOP_POW) ? 3
+                       : (op == SCRIPT_MATHOP_ADD || op == SCRIPT_MATHOP_SUB) ? 1 : 0;
+        if (prec == 0 || prec < minPrec) break;
+        p->i++;
+        ExprValue b;
+        uint8_t next = (op == SCRIPT_MATHOP_POW) ? prec : (uint8_t)(prec + 1);
+        if (!ScriptExprBin(p, b, next)) return false;
+        if (!ScriptExprApply(out, b, op)) return false;
+    }
+    return true;
+}
+
+// Evaluates the Set line's token stream and stores it into the destination.
+static uint8_t ScriptExecSet(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase,
+                             uint16_t dtype, uint8_t *dest, uint8_t dsize)
+{
+    if (ln.opCount < 1) return SCRIPT_ERR_OPERAND;
+    ExprParser p;
+    p.s = s;
+    p.tok = opbase;
+    p.n = ln.opCount;
+    p.i = 0;
+    p.depth = 0;
+    ExprValue v;
+    if (!ScriptExprBin(&p, v, 1)) return SCRIPT_ERR_OPERAND;
+    if (p.i != p.n) return SCRIPT_ERR_OPERAND; // trailing tokens
+
+    if (dtype == (uint16_t)DataType::Vector)
+    {
+        uint8_t dcount = dsize / 4;
+        if (dcount == 0 || v.count != dcount) return SCRIPT_ERR_TYPE;
+        for (uint8_t k = 0; k < dcount; k++)
+        {
+            int32_t raw = v.e[k].Value;
+            memcpy(dest + (size_t)k * 4, &raw, 4);
+        }
+    }
+    else if (dtype == (uint16_t)DataType::Matrix)
+    {
+        // A Matrix destination takes its dimensions from the value's header (the dest slot
+        // may be uninitialised). The value must be a Matrix (or a Matrix expression result).
+        if (v.dtype != (uint16_t)DataType::Matrix || v.count == 0) return SCRIPT_ERR_TYPE;
+        if ((uint32_t)dsize < 4u + (uint32_t)v.count * 4u) return SCRIPT_ERR_TYPE;
+        dest[0] = (uint8_t)(v.mh & 0xFF);
+        dest[1] = (uint8_t)(v.mh >> 8);
+        dest[2] = (uint8_t)(v.mw & 0xFF);
+        dest[3] = (uint8_t)(v.mw >> 8);
+        for (uint8_t k = 0; k < v.count; k++)
+        {
+            int32_t raw = v.e[k].Value;
+            memcpy(dest + 4 + (size_t)k * 4, &raw, 4);
+        }
+    }
+    else
+    {
+        if (v.count != 1) return SCRIPT_ERR_TYPE;
+        ScriptScalar sc;
+        sc.n = v.e[0];
+        sc.i = v.e[0].RoundToInt();
+        ScriptStoreScalar(dtype, dest, dsize, dtype == (uint16_t)DataType::Number, sc);
+    }
+    s->ic++;
+    return SCRIPT_ERR_NONE;
+}
+
 static uint8_t ScriptExecMath(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase, uint8_t cat, uint8_t op) {
     if (ln.destCount < 1) return SCRIPT_ERR_OPERAND;
     uint16_t dtype = 0;
@@ -899,18 +1156,9 @@ static uint8_t ScriptExecMath(LoadedScript *s, const ScriptLineInfo &ln, const u
     if (!ScriptResolveDest(s, s->instr + (size_t)ln.start * 4, dtype, dest, dsize)) return SCRIPT_ERR_OPERAND;
     bool num = (dtype == (uint16_t)DataType::Number);
 
-    // SET copies/assigns a single operand.
+    // SET evaluates an infix expression (scalar / vector / matrix).
     if (cat == SCRIPT_CAT_MATH && op == SCRIPT_OP_MATH_SET) {
-        if (ln.opCount < 1) return SCRIPT_ERR_OPERAND;
-        uint8_t scratch[8];
-        const uint8_t *src = nullptr;
-        uint8_t ssize = 0;
-        uint16_t stype = 0;
-        if (!ScriptResolve(s, opbase[0], opbase[1], ScriptSymVal(opbase), scratch, &src, &ssize, &stype)) return SCRIPT_ERR_OPERAND;
-        uint8_t err = ScriptAssignResolved(dtype, dest, dsize, src, ssize, stype);
-        if (err) return err;
-        s->ic++;
-        return SCRIPT_ERR_NONE;
+        return ScriptExecSet(s, ln, opbase, dtype, dest, dsize);
     }
 
     // Vector/Matrix destination: element-wise math (operands resolved raw).
@@ -934,21 +1182,6 @@ static uint8_t ScriptExecMath(LoadedScript *s, const ScriptLineInfo &ln, const u
             // Fold every operand left-to-right (n-ary: dest = a op b op c ...).
             out = in[0];
             switch (op) {
-                case SCRIPT_OP_MATH_ADD:
-                    for (uint8_t k = 1; k < n; k++) { if (num) out.n = out.n + in[k].n; else out.i += in[k].i; }
-                    break;
-                case SCRIPT_OP_MATH_SUB:
-                    for (uint8_t k = 1; k < n; k++) { if (num) out.n = out.n - in[k].n; else out.i -= in[k].i; }
-                    break;
-                case SCRIPT_OP_MATH_MUL:
-                    for (uint8_t k = 1; k < n; k++) { if (num) out.n = out.n * in[k].n; else out.i *= in[k].i; }
-                    break;
-                case SCRIPT_OP_MATH_DIV:
-                    for (uint8_t k = 1; k < n; k++) {
-                        if (num) { if (in[k].n.Value == 0) return SCRIPT_ERR_TYPE; out.n = out.n / in[k].n; }
-                        else { if (in[k].i == 0) return SCRIPT_ERR_TYPE; out.i /= in[k].i; }
-                    }
-                    break;
                 case SCRIPT_OP_MATH_MOD:
                     for (uint8_t k = 1; k < n; k++) {
                         if (num) { int32_t b = in[k].n.RoundToInt(); if (b == 0) return SCRIPT_ERR_TYPE; out.n = Number(out.n.RoundToInt() % b); }
@@ -961,7 +1194,6 @@ static uint8_t ScriptExecMath(LoadedScript *s, const ScriptLineInfo &ln, const u
                 case SCRIPT_OP_MATH_MAX:
                     for (uint8_t k = 1; k < n; k++) { if (num) out.n = max(out.n, in[k].n); else out.i = out.i > in[k].i ? out.i : in[k].i; }
                     break;
-                case SCRIPT_OP_MATH_NEG: if (num) out.n = -out.n; else out.i = -out.i; break;
                 case SCRIPT_OP_MATH_ABS: if (num) out.n = abs(out.n); else out.i = out.i < 0 ? -out.i : out.i; break;
                 case SCRIPT_OP_MATH_LIMIT: {
                     if (n < 3) return SCRIPT_ERR_OPERAND;

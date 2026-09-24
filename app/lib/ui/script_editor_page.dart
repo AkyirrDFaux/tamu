@@ -818,9 +818,21 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
     }
   }
 
+  /// Short symbol for a `Math op` predefine (used in expression labels).
+  static String _mathOpSymbol(int op) => switch (op) {
+        0 => '+',
+        1 => '−',
+        2 => '×',
+        3 => '÷',
+        4 => 'mod',
+        5 => '^',
+        18 => '(',
+        19 => ')',
+        _ => '?'
+      };
+
   String _predefineLabel(int subtype, int value) {
-    switch (subtype) {
-      case preState:
+    switch (subtype) {      case preState:
         return 'State: ${ScriptState.label(value)}';
       case preType:
         return 'Type: ${dataTypeLabel(DataType.fromValue(value))}';
@@ -831,7 +843,7 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
       case preMathOp:
         final op = scriptPredefineMathOps.firstWhere((e) => e.$1 == value,
             orElse: () => (value, '?'));
-        return 'Op: ${op.$2}';
+        return '${_mathOpSymbol(value)} ${op.$2}';
       case preNumber: {
         final q = value >= 32768 ? value - 65536 : value;
         return 'Number: ${(q / 256).toStringAsFixed(3)}';
@@ -1213,6 +1225,9 @@ class _SymbolPickerState extends State<_SymbolPicker> {
     if (_addressOperand) return 'Device address (Id)';
     if (_targetOperand) return 'Target line index';
     if (_conditionOperand) return 'Boolean condition';
+    if (widget.def?.expression == true) {
+      return 'Expression: values and operators (+, −, ×, ÷, ^, parentheses)';
+    }
     if (_numericOperand) return 'Numeric value';
     return null;
   }
@@ -1229,6 +1244,20 @@ class _SymbolPickerState extends State<_SymbolPicker> {
     if (_constantOnly) {
       return [
         ('Constants', filter([for (var i = 0; i < draft.constants.length; i++) ScriptSymbol.constant(i)])),
+      ];
+    }
+    if (widget.def?.expression == true) {
+      // Infix expression: values plus inline operators / parentheses.
+      return [
+        ('Values', filter([
+          for (var i = 0; i < draft.inputs.length; i++) ScriptSymbol.input(i),
+          for (var i = 0; i < draft.variables.length; i++) ScriptSymbol.variable(i),
+          for (var i = 0; i < draft.constants.length; i++) ScriptSymbol.constant(i),
+        ])),
+        ('Operators', [
+          for (final (op, _) in scriptPredefineMathOps)
+            if (expressionOps.contains(op)) ScriptSymbol.predefine(preMathOp, op),
+        ]),
       ];
     }
     return [

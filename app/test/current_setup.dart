@@ -377,6 +377,7 @@ Future<void> buildSubscriptions(
 ScriptSymbol _c(int i) => ScriptSymbol.constant(i);
 ScriptSymbol _v(int i) => ScriptSymbol.variable(i);
 ScriptSymbol _idx(int n) => ScriptSymbol.predefine(preIndex, n); // index / integer literal
+ScriptSymbol _op(int op) => ScriptSymbol.predefine(preMathOp, op); // inline expression operator
 ScriptSymbol _true() => ScriptSymbol.predefine(preBool, 1);
 ScriptSymbol _ins(int cat, int op) => ScriptSymbol.instruction(cat, op);
 
@@ -418,13 +419,15 @@ ScriptDraft scriptTemperature() {
     _line([], _ins(catFlow, 1), [_true()]), // While true
     _line([_v(0)], _ins(catService, 1), [_c(0)]), // tempA = read[TEMP_A]
     _line([_v(1)], _ins(catService, 1), [_c(1)]), // tempB = read[TEMP_B]
-    _line([_v(2)], _ins(catMath, 1), [_v(0), _v(1)]), // avg = tempA + tempB
-    _line([_v(2)], _ins(catMath, 4), [_v(2), _idx(2)]), // avg /= 2
-    _line([_v(3)], _ins(catMath, 2), [_v(2), _c(3)]), // duty = avg - T_MIN
-    _line([_v(3)], _ins(catMath, 3), [_v(3), _c(4)]), // duty *= DUTY_MAX
-    _line([_v(3)], _ins(catMath, 4), [_v(3), _c(5)]), // duty /= T_SPAN
-    _line([_v(3)], _ins(catMath, 7), [_v(3), _idx(0)]), // duty = Max(duty, 0)
-    _line([_v(3)], _ins(catMath, 6), [_v(3), _c(4)]), // duty = Min(duty, DUTY_MAX)
+    // avg = (tempA + tempB) / 2
+    _line([_v(2)], _ins(catMath, 0), [
+      _op(mathOpOpenParen), _v(0), _op(0), _v(1), _op(mathOpCloseParen), _op(3), _idx(2),
+    ]),
+    // duty = (avg - T_MIN) * DUTY_MAX / T_SPAN
+    _line([_v(3)], _ins(catMath, 0), [
+      _op(mathOpOpenParen), _v(2), _op(1), _c(3), _op(mathOpCloseParen), _op(2), _c(4), _op(3), _c(5),
+    ]),
+    _line([_v(3)], _ins(catMath, 10), [_v(3), _idx(0), _c(4)]), // duty = Limit(duty, 0, DUTY_MAX)
     _line([], _ins(catService, 2), [_c(2), _v(3)]), // write[FAN_DUTY] = duty
     _line([], _ins(catTime, 0), [_c(6)]), // Delay PERIOD
     _line([], _ins(catFlow, 2)), // EndBlock
@@ -452,15 +455,14 @@ ScriptDraft scriptBrightness() {
     _var('bL', DataType.number, 4),
     _var('bR', DataType.number, 4),
   ]);
-  // brightness = clamp(BRIGHT_MIN + lux * RANGE / LUX_SPAN, MIN, MAX): a brighter ambient
+  // brightness = clamp(lux * RANGE / LUX_SPAN + BRIGHT_MIN, MIN, MAX): a brighter ambient
   // makes the display brighter.
   List<ScriptLine> calc(int luxVar, int outVar, int regConst) => [
-        _line([_v(outVar)], _ins(catMath, 0), [_v(luxVar)]), // out = lux
-        _line([_v(outVar)], _ins(catMath, 3), [_v(outVar), _c(7)]), // out *= RANGE
-        _line([_v(outVar)], _ins(catMath, 4), [_v(outVar), _c(6)]), // out /= LUX_SPAN
-        _line([_v(outVar)], _ins(catMath, 1), [_v(outVar), _c(5)]), // out += BRIGHT_MIN
-        _line([_v(outVar)], _ins(catMath, 7), [_v(outVar), _c(5)]), // out = Max(out, MIN)
-        _line([_v(outVar)], _ins(catMath, 6), [_v(outVar), _c(4)]), // out = Min(out, MAX)
+        // Set out = lux * RANGE / LUX_SPAN + BRIGHT_MIN
+        _line([_v(outVar)], _ins(catMath, 0), [
+          _v(luxVar), _op(2), _c(7), _op(3), _c(6), _op(0), _c(5),
+        ]),
+        _line([_v(outVar)], _ins(catMath, 10), [_v(outVar), _c(5), _c(4)]), // out = Limit(out, MIN, MAX)
         _line([], _ins(catService, 2), [_c(regConst), _v(outVar)]), // reg[bright] = out
       ];
   d.lines.addAll([
@@ -522,24 +524,19 @@ ScriptDraft scriptEyeMovement() {
 
   /// posX/posY = source (srcX, srcY) + the base offset constants.
   List<ScriptLine> at(int srcX, int srcY, int baseXConst, int baseYConst) => [
-        _line([_v(6)], _ins(catMath, 0), [_v(srcX)]), // posX = srcX
-        _line([_v(6)], _ins(catMath, 1), [_v(6), _c(baseXConst)]), // posX += baseX
-        _line([_v(7)], _ins(catMath, 0), [_v(srcY)]), // posY = srcY
-        _line([_v(7)], _ins(catMath, 1), [_v(7), _c(baseYConst)]), // posY += baseY
+        _line([_v(6)], _ins(catMath, 0), [_v(srcX), _op(0), _c(baseXConst)]), // Set posX = srcX + baseX
+        _line([_v(7)], _ins(catMath, 0), [_v(srcY), _op(0), _c(baseYConst)]), // Set posY = srcY + baseY
       ];
 
   d.lines.addAll([
     _line([], _ins(catFlow, 1), [_true()]), // While true
     _line([_v(0)], _ins(catService, 1), [_c(0)]), // offset = read[GYRO] (vector)
-    _line([_v(0)], _ins(catMath, 3), [_v(0), _c(6)]), // offset *= SCALE   (element-wise)
-    _line([_v(0)], _ins(catMath, 7), [_v(0), _c(8)]), // offset = Max(offset, -LIMIT)
-    _line([_v(0)], _ins(catMath, 6), [_v(0), _c(7)]), // offset = Min(offset, LIMIT)
+    _line([_v(0)], _ins(catMath, 0), [_v(0), _op(2), _c(6)]), // Set offset = offset * SCALE (vector)
+    _line([_v(0)], _ins(catMath, 10), [_v(0), _c(8), _c(7)]), // offset = Limit(offset, -LIMIT, LIMIT)
     _line([_v(1)], _ins(catCompose, 1), [_v(0), _idx(0)]), // gx = offset[0]
     _line([_v(2)], _ins(catCompose, 1), [_v(0), _idx(1)]), // gy = offset[1]
-    _line([_v(3)], _ins(catMath, 0), [_v(1)]), // halfX = gx
-    _line([_v(3)], _ins(catMath, 4), [_v(3), _idx(2)]), // halfX /= 2
-    _line([_v(4)], _ins(catMath, 0), [_v(2)]), // halfY = gy
-    _line([_v(4)], _ins(catMath, 4), [_v(4), _idx(2)]), // halfY /= 2
+    _line([_v(3)], _ins(catMath, 0), [_v(1), _op(3), _idx(2)]), // Set halfX = gx / 2
+    _line([_v(4)], _ins(catMath, 0), [_v(2), _op(3), _idx(2)]), // Set halfY = gy / 2
     ...at(3, 4, 10, 11), ...place(6, 7, 1), // left iris (half offset)
     ...at(1, 2, 10, 11), ...place(6, 7, 2, texConst: 14), // left pupil + iris fade
     ...at(3, 4, 12, 13), ...place(6, 7, 3), // right iris
@@ -590,25 +587,23 @@ ScriptDraft scriptLidTimer() {
     _line([_v(7)], _ins(catMath, 0), [_true()]), // cond = true
     _line([], _ins(catFlow, 1), [_v(7)]), // While cond  (blink: no delay -> fastest update)
     _line([_v(1)], _ins(catTime, 2)), // now = Get time
-    _line([_v(2)], _ins(catMath, 2), [_v(1), _v(0)]), // elapsed = now - t0
-    // closeP = Limit(elapsed / MOVE_MS, 0, 1)
-    _line([_v(3)], _ins(catMath, 4), [_v(2), _c(5)]), // closeP = elapsed / MOVE_MS
-    _line([_v(3)], _ins(catMath, 10), [_v(3), _idx(0), _idx(1)]), // closeP = Limit(closeP,0,1)
-    // openP = Limit((elapsed - MOVE_MS) / MOVE_MS, 0, 1)
-    _line([_v(4)], _ins(catMath, 2), [_v(2), _c(5)]), // openP = elapsed - MOVE_MS
-    _line([_v(4)], _ins(catMath, 4), [_v(4), _c(5)]), // openP /= MOVE_MS
-    _line([_v(4)], _ins(catMath, 10), [_v(4), _idx(0), _idx(1)]), // openP = Limit(openP,0,1)
-    // ty = OPEN_TY + DELTA * (closeP - openP)
-    _line([_v(5)], _ins(catMath, 2), [_v(3), _v(4)]), // ty = closeP - openP
-    _line([_v(5)], _ins(catMath, 3), [_v(5), _c(4)]), // ty *= DELTA
-    _line([_v(5)], _ins(catMath, 1), [_v(5), _c(3)]), // ty += OPEN_TY
+    _line([_v(2)], _ins(catMath, 0), [_v(1), _op(1), _v(0)]), // Set elapsed = now - t0
+    _line([_v(3)], _ins(catMath, 0), [_v(2), _op(3), _c(5)]), // Set closeP = elapsed / MOVE_MS
+    _line([_v(3)], _ins(catMath, 10), [_v(3), _idx(0), _idx(1)]), // Set closeP = Limit(closeP, 0, 1)
+    _line([_v(4)], _ins(catMath, 0), [
+      _op(mathOpOpenParen), _v(2), _op(1), _c(5), _op(mathOpCloseParen), _op(3), _c(5),
+    ]), // Set openP = (elapsed - MOVE_MS) / MOVE_MS
+    _line([_v(4)], _ins(catMath, 10), [_v(4), _idx(0), _idx(1)]), // Set openP = Limit(openP, 0, 1)
+    _line([_v(5)], _ins(catMath, 0), [
+      _op(mathOpOpenParen), _v(3), _op(1), _v(4), _op(mathOpCloseParen), _op(2), _c(4), _op(0), _c(3),
+    ]), // Set ty = (closeP - openP) * DELTA + OPEN_TY
     ...applyLid(0),
     ...applyLid(1),
     // Recompute `cond` INSIDE the loop (the While re-reads its operand).
     _line([_v(7)], _ins(catLogic, 8), [_v(2), _c(6)]), // cond = elapsed < BLINK_MS
     _line([], _ins(catFlow, 2)), // EndBlock
     // Movement finished: park the lid open and wait exactly WAIT_MS for the next blink.
-    _line([_v(5)], _ins(catMath, 0), [_c(3)]), // ty = OPEN_TY
+    _line([_v(5)], _ins(catMath, 0), [_c(3)]), // Set ty = OPEN_TY
     ...applyLid(0),
     ...applyLid(1),
     _line([], _ins(catTime, 0), [_c(7)]), // Delay WAIT_MS

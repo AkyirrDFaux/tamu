@@ -62,6 +62,14 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
       constants; the lid script is a single **time-interpolated loop** (open, then a 100 ms
       close/open every period) using `Limit`; the editor shows a retry instead of an endless
       spinner when a script file cannot be loaded.
+- [x] **Single-line math expressions**: `Set` now evaluates an **infix expression** with
+      precedence (`^` > unary `-` > `* /` > `+ -`) and parentheses, in one line
+      (`Set y = (A + B) * C - D / 2`). Full scalar/**vector**/**matrix** support
+      (element-wise, scalar broadcast). Operators are inline `Math op` predefines
+      (`+ − * / ^`, parens 18/19); `^` takes an integer exponent or `0.5` (sqrt).
+      `Add/Subtract/Multiply/Divide/Negate` were removed (incorporate into the expression);
+      `Modulo/Minimum/Maximum/Absolute/Limit` stay instructions. The editor offers an
+      Operators group for a `Set` operand and validates balanced parens + alternation.
 ## 2. Blocks/modules + subscriptions
 - [x] **Block/module schema alignment** (docs-driven): Button reduced to field 0; LED-Button
       = Button (0) + LEDState (3) with reserved 1-2; Acc&Gyr deadzones removed (Acceleration
