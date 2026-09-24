@@ -589,6 +589,7 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
   // ---------------------------------------------------------------------------
 
   Widget _instructionsCard(ScriptDraft draft) {
+    final depths = _blockDepths(draft.lines);
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: Padding(
@@ -630,17 +631,33 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
                 draft.lines.insert(newIndex, line);
                 _dirty = true;
               }),
-              itemBuilder: (context, i) => _lineEditor(draft, i),
+              itemBuilder: (context, i) => _lineEditor(draft, i, depths[i]),
             ),
         ]),
       ),
     );
   }
 
+  /// Nesting depth of each instruction line (inside If/While blocks) for indentation.
+  static List<int> _blockDepths(List<ScriptLine> lines) {
+    final depths = <int>[];
+    var depth = 0;
+    for (final line in lines) {
+      final d = line.def;
+      final isEnd = d != null && d.category == catFlow && d.op == 2;
+      if (isEnd && depth > 0) depth--;
+      depths.add(depth);
+      final isOpen = d != null && d.category == catFlow && (d.op == 0 || d.op == 1);
+      if (isOpen) depth++;
+    }
+    return depths;
+  }
+
   /// One line rendered as a readable Destination-Instruction-Operand row. Tapping a symbol
   /// changes it, tapping the instruction re-picks it, and the drag handle reorders lines.
-  /// Adding destinations/operands is limited by the selected instruction.
-  Widget _lineEditor(ScriptDraft draft, int index) {
+  /// Adding destinations/operands is limited by the selected instruction. [depth] is the
+  /// block nesting depth (the line is indented like formatted code).
+  Widget _lineEditor(ScriptDraft draft, int index, int depth) {
     final line = draft.lines[index];
     final def = line.def;
     // The instruction counter is a line index, so the active line is a direct match.
@@ -693,6 +710,15 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
             child: Icon(Icons.drag_indicator, size: 18, color: Colors.white38),
           ),
         ),
+        // Indent block contents (like formatted code).
+        if (depth > 0) ...[
+          Container(
+              width: 2,
+              height: 22,
+              margin: const EdgeInsets.only(right: 6),
+              color: Colors.white24),
+          SizedBox(width: depth * 12.0),
+        ],
         Expanded(
           // Wrap: a long line folds onto the next row instead of scrolling off-screen.
           child: Wrap(
@@ -742,8 +768,8 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
 
   /// Category colour for a script symbol: I/O, variable, constant or predefine.
   Color _symbolColor(ScriptSymbol s) => switch (s.type) {
-        symInput => const Color(0xFF26C6DA), // cyan - inputs
-        symOutput => const Color(0xFF4DD0E1), // lighter cyan - outputs
+        symInput => const Color(0xFFFFD54F), // amber - inputs
+        symOutput => const Color(0xFFF06292), // pink - outputs
         symVariable => const Color(0xFF64B5F6), // blue - variables
         symConstant => const Color(0xFFBA68C8), // purple - constants
         symPredefine => const Color(0xFF81C784), // green - predefines
@@ -758,7 +784,7 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
     final color = _symbolColor(s);
 
     Widget chip({bool dragging = false}) => InputChip(
-          label: Text(_symbolLabel(draft, s),
+          label: Text(_lineLabel(draft, s),
               style: TextStyle(fontSize: 12, color: color)),
           backgroundColor: color.withAlpha(dragging ? 70 : 28),
           side: BorderSide(color: color.withAlpha(dragging ? 255 : 110)),
@@ -794,8 +820,8 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
 
   /// Colour legend for the instruction card.
   Widget _legend() => Wrap(spacing: 10, runSpacing: 4, children: [
-        _legendDot('Input', const Color(0xFF26C6DA)),
-        _legendDot('Output', const Color(0xFF4DD0E1)),
+        _legendDot('Input', const Color(0xFFFFD54F)),
+        _legendDot('Output', const Color(0xFFF06292)),
         _legendDot('Variable', const Color(0xFF64B5F6)),
         _legendDot('Constant', const Color(0xFFBA68C8)),
         _legendDot('Predefine', const Color(0xFF81C784)),
@@ -868,6 +894,55 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
     }
   }
 
+  /// Compact label for a symbol on the line: just the name / literal / operator symbol.
+  /// The picker keeps the full description via [_symbolLabel].
+  String _lineLabel(ScriptDraft draft, ScriptSymbol s) {
+    switch (s.type) {
+      case symInput:
+        return _named(draft.inputs, s.value);
+      case symOutput:
+        return _named(draft.outputs, s.value);
+      case symVariable:
+        return _named(draft.variables, s.value);
+      case symConstant:
+        return _named(draft.constants, s.value);
+      case symPredefine:
+        return _linePredefineLabel(s.subtype, s.value);
+      default:
+        return '?';
+    }
+  }
+
+  /// Compact predefine label (see [_predefineLabel] for the full editor wording).
+  String _linePredefineLabel(int subtype, int value) {
+    switch (subtype) {
+      case preState:
+        return ScriptState.label(value);
+      case preType:
+        return dataTypeLabel(DataType.fromValue(value));
+      case preBool:
+        return value != 0 ? 'true' : 'false';
+      case preChar:
+        return value >= 32 && value < 127
+            ? String.fromCharCode(value)
+            : '\\x${value.toRadixString(16)}';
+      case preMathOp:
+        return _mathOpSymbol(value);
+      case preNumber:
+        return _numberLiteral(value);
+      case preIndex:
+      default:
+        return '$value';
+    }
+  }
+
+  /// Decimal rendering of a Q8.8 number literal.
+  static String _numberLiteral(int value) {
+    final q = value >= 32768 ? value - 65536 : value;
+    final d = q / 256.0;
+    return d == d.roundToDouble() ? '${d.toInt()}' : '$d';
+  }
+
   /// Short symbol for a `Math op` predefine (used in expression labels).
   static String _mathOpSymbol(int op) => switch (op) {
         0 => '+',
@@ -882,7 +957,8 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
       };
 
   String _predefineLabel(int subtype, int value) {
-    switch (subtype) {      case preState:
+    switch (subtype) {
+      case preState:
         return 'State: ${ScriptState.label(value)}';
       case preType:
         return 'Type: ${dataTypeLabel(DataType.fromValue(value))}';
