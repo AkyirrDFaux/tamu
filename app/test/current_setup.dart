@@ -84,17 +84,40 @@ const int texGradientLinear = 2;
 const int sensorNtc100k = 5; // the DAS ch1 NTC is a 100 kohm part (firmware default)
 const int sensorLdr10k = 3;
 
+/// Eye look (values tuned on the device; applied to both eyes).
+const double irisDiameter = 9; // px
+const double irisFade = 0.6;
+const int irisR = 0, irisG = 97, irisB = 0; // dark green
+const double pupilHalfW = 2.4; // DoubleParabola half-width
+const double pupilHalfH = 5.0; // DoubleParabola half-height
+const double pupilFade = 0.6;
+const double lidFade = 4.0;
+
+/// Base eye position offset (iris+pupil) in display space: move the eye inward and
+/// slightly up. The right eye mirrors the horizontal component.
+const double eyeBaseIn = 1.0; // px toward the face centre
+const double eyeBaseUp = 0.5; // px up
+
+/// Display Offset matrices (2x3 affine, raw wire bytes) - the mounting rotations fixed
+/// on the device. Left is mounted ~180 deg, right ~5 deg.
+const List<int> dispLeftOffset = [
+  2, 0, 3, 0, 6, 1, 255, 255, 70, 22, 0, 0, 0, 0, 0, 0, 186, 233, 255, 255, 6, 1, 255, 255, 0, 0, 0, 0,
+];
+const List<int> dispRightOffset = [
+  2, 0, 3, 0, 250, 254, 0, 0, 70, 22, 0, 0, 0, 0, 0, 0, 186, 233, 255, 255, 250, 254, 0, 0, 0, 0, 0, 0,
+];
+
 /// Script constants (tunable).
 const double tempMin = 20; // degC -> 0%
 const double tempMax = 40; // degC -> 100%
-const double luxBrightMax = 15; // % at full dark (kept low: high LED current browns out the board)
-const double luxBrightMin = 5; // % at bright ambient
-const double luxSpan = 1000; // lux for the full brightness swing
+const double luxBrightMin = 5; // % in the dark
+const double luxBrightMax = 20; // % in bright ambient (kept low: high LED current browns out the board)
+const double luxSpan = 500; // lux for the full brightness swing
 const double eyeScale = 1.0; // px per rad/s
 const double eyeLimit = 3.0; // px clamp
 const double lidOpenTy = -5.5; // half-fill line below the screen (open)
 const double lidClosedTy = 5.5; // half-fill line above the screen (closed)
-const int lidSteps = 10; // 200 ms / 20 ms
+const int lidSteps = 10; // 100 ms movement / 10 ms tick
 
 // ---------------------------------------------------------------------------
 // Small wire helpers
@@ -226,11 +249,11 @@ Future<void> buildEyeBlock(RegisterClient reg, int block, String name) async {
   await setDynEntry(reg, block, eyeIrisGeo, gkShape, DataType.enum_, enumByte(shapeCircle));
   await setDynEntry(reg, block, eyeIrisGeo, gkOperation, DataType.enum_, enumByte(opReplace));
   await setDynEntry(reg, block, eyeIrisGeo, gkPosition, DataType.matrix, identity23());
-  await setDynEntry(reg, block, eyeIrisGeo, gkSize, DataType.number, num(9)); // diameter
-  await setDynEntry(reg, block, eyeIrisGeo, gkFade, DataType.number, num(1));
+  await setDynEntry(reg, block, eyeIrisGeo, gkSize, DataType.number, num(irisDiameter));
+  await setDynEntry(reg, block, eyeIrisGeo, gkFade, DataType.number, num(irisFade));
   await setDynEntry(reg, block, eyeIrisTex, 0, DataType.texture, const []);
   await setDynEntry(reg, block, eyeIrisTex, tkType, DataType.enum_, enumByte(texFill));
-  await setDynEntry(reg, block, eyeIrisTex, tkColour1, DataType.colour, colour(60, 200, 70));
+  await setDynEntry(reg, block, eyeIrisTex, tkColour1, DataType.colour, colour(irisR, irisG, irisB));
 
   // 4: DoubleParabola pupil + 5: black fill.
   await setDynEntry(reg, block, eyePupilGeo, 0, DataType.geometry, const []);
@@ -238,8 +261,9 @@ Future<void> buildEyeBlock(RegisterClient reg, int block, String name) async {
   await setDynEntry(reg, block, eyePupilGeo, gkOperation, DataType.enum_, enumByte(opReplace));
   await setDynEntry(reg, block, eyePupilGeo, gkPosition, DataType.matrix, identity23());
   // Size = [half-width, half-height]: a tall, clearly visible vertical pupil.
-  await setDynEntry(reg, block, eyePupilGeo, gkSize, DataType.vector, [...num(1.4), ...num(3.6)]);
-  await setDynEntry(reg, block, eyePupilGeo, gkFade, DataType.number, num(0.6));
+  await setDynEntry(reg, block, eyePupilGeo, gkSize, DataType.vector,
+      [...num(pupilHalfW), ...num(pupilHalfH)]);
+  await setDynEntry(reg, block, eyePupilGeo, gkFade, DataType.number, num(pupilFade));
   await setDynEntry(reg, block, eyePupilTex, 0, DataType.texture, const []);
   await setDynEntry(reg, block, eyePupilTex, tkType, DataType.enum_, enumByte(texFill));
   await setDynEntry(reg, block, eyePupilTex, tkColour1, DataType.colour, colour(0, 0, 0));
@@ -249,16 +273,19 @@ Future<void> buildEyeBlock(RegisterClient reg, int block, String name) async {
   await setDynEntry(reg, block, eyeLidGeo, gkShape, DataType.enum_, enumByte(shapeHalfFill));
   await setDynEntry(reg, block, eyeLidGeo, gkOperation, DataType.enum_, enumByte(opReplace));
   await setDynEntry(reg, block, eyeLidGeo, gkPosition, DataType.matrix, affine(ty: lidOpenTy));
-  await setDynEntry(reg, block, eyeLidGeo, gkFade, DataType.number, num(0.5));
+  await setDynEntry(reg, block, eyeLidGeo, gkFade, DataType.number, num(lidFade));
   await setDynEntry(reg, block, eyeLidTex, 0, DataType.texture, const []);
   await setDynEntry(reg, block, eyeLidTex, tkType, DataType.enum_, enumByte(texFill));
   await setDynEntry(reg, block, eyeLidTex, tkColour1, DataType.colour, colour(0, 0, 0));
 }
 
-/// Points a display at its eye render block and applies the layout.
+/// Points a display at its eye render block, applies the layout and the mounting rotation.
 Future<void> configureDisplays(RegisterClient reg) async {
   await setStatic(reg, BlockType.vysiDisplay.value, dispLeft, 2, u32(dynLeftEye));
   await setStatic(reg, BlockType.vysiDisplay.value, dispRight, 2, u32(dynRightEye));
+  // Preserve the mounting rotations fixed on the device.
+  await setStatic(reg, BlockType.vysiDisplay.value, dispLeft, 1, dispLeftOffset);
+  await setStatic(reg, BlockType.vysiDisplay.value, dispRight, 1, dispRightOffset);
   final layout = 'LAY_1'.padRight(8).codeUnits; // 8-char space-padded storage name
   await setStatic(reg, BlockType.vysiDisplay.value, dispLeft, 3, layout);
   await setStatic(reg, BlockType.vysiDisplay.value, dispRight, 3, layout);
@@ -295,14 +322,17 @@ Future<void> configureDas(RegisterClient reg) async {
 /// Four subscriptions: DAS A ch1/ch2 -> f0/f1, DAS B ch1/ch2 -> f2/f3.
 Future<void> buildSubscriptions(
     SubscriptionClient subs, DeviceEntry core, List<DeviceEntry> das) async {
+  // (provider, measurement instance, target field, deadzone, period ms, min ms)
+  // The lux reading is noisy, so it needs a much larger deadzone and a longer period than
+  // the temperature or it streams continuously.
   final sources = [
-    (das[0].id, 0, fTempA),
-    (das[0].id, 1, fLuxA),
-    (das[1].id, 0, fTempB),
-    (das[1].id, 1, fLuxB),
+    (das[0].id, 0, fTempA, 0.2, 1000, 500),
+    (das[0].id, 1, fLuxA, 10.0, 2000, 1000),
+    (das[1].id, 0, fTempB, 0.2, 1000, 500),
+    (das[1].id, 1, fLuxB, 10.0, 2000, 1000),
   ];
   for (var i = 0; i < sources.length; i++) {
-    final (addr, measInst, field) = sources[i];
+    final (addr, measInst, field, deadzone, period, minTime) = sources[i];
     final entry = RequesterSubscription(
       index: i,
       providerAddr: addr,
@@ -310,9 +340,9 @@ Future<void> buildSubscriptions(
       targetReg: bi(BlockType.dynamic.value, dynSubscriptions, field, 0),
       sourceReg: bi(BlockType.resistiveMeasure.value, measInst, 3, 0), // Measured Value
       trigger: TriggerType.deltaPeriodic,
-      periodMs: 250,
-      minTimeMs: 50,
-      deadzone: 0.1,
+      periodMs: period,
+      minTimeMs: minTime,
+      deadzone: deadzone,
     );
     if (!await subs.setRequesterSubscription(i, entry: entry)) {
       throw StateError('subscription $i failed');
@@ -402,13 +432,13 @@ ScriptDraft scriptBrightness() {
     _var('bL', DataType.number, 4),
     _var('bR', DataType.number, 4),
   ]);
-  // b = BRIGHT_MAX - clamp(lux,0,LUX_SPAN)*RANGE/LUX_SPAN, clamped to [MIN,MAX]
+  // brightness = clamp(BRIGHT_MIN + lux * RANGE / LUX_SPAN, MIN, MAX): a brighter ambient
+  // makes the display brighter.
   List<ScriptLine> calc(int luxVar, int outVar, int regConst) => [
         _line([_v(outVar)], _ins(catMath, 0), [_v(luxVar)]), // out = lux
         _line([_v(outVar)], _ins(catMath, 3), [_v(outVar), _c(7)]), // out *= RANGE
         _line([_v(outVar)], _ins(catMath, 4), [_v(outVar), _c(6)]), // out /= LUX_SPAN
-        _line([_v(outVar)], _ins(catMath, 8), [_v(outVar)]), // out = -out
-        _line([_v(outVar)], _ins(catMath, 1), [_v(outVar), _c(4)]), // out += BRIGHT_MAX
+        _line([_v(outVar)], _ins(catMath, 1), [_v(outVar), _c(5)]), // out += BRIGHT_MIN
         _line([_v(outVar)], _ins(catMath, 7), [_v(outVar), _c(5)]), // out = Max(out, MIN)
         _line([_v(outVar)], _ins(catMath, 6), [_v(outVar), _c(4)]), // out = Min(out, MAX)
         _line([], _ins(catService, 2), [_c(regConst), _v(outVar)]), // reg[bright] = out
@@ -417,8 +447,8 @@ ScriptDraft scriptBrightness() {
     _line([], _ins(catFlow, 1), [_true()]), // While true
     _line([_v(0)], _ins(catService, 1), [_c(0)]), // luxA = reg[SUB_LUX_A]
     _line([_v(1)], _ins(catService, 1), [_c(1)]), // luxB = reg[SUB_LUX_B]
-    ...calc(0, 2, 2), // left
-    ...calc(1, 3, 3), // right
+    ...calc(1, 2, 2), // left display uses the RIGHT DAS LDR (LuxB)
+    ...calc(0, 3, 3), // right display uses the LEFT DAS LDR (LuxA)
     _line([], _ins(catTime, 0), [_c(8)]), // Delay 300
     _line([], _ins(catFlow, 2)), // EndBlock
   ]);
@@ -440,6 +470,11 @@ ScriptDraft scriptEyeMovement() {
     _cNum('NEG_LIMIT', -eyeLimit),
     _cNum('TWO', 2),
     _cIx('PERIOD', 30),
+    // Base eye position: inward (+x on the left eye, -x on the right) and slightly up.
+    _cNum('BASE_L_X', eyeBaseIn),
+    _cNum('BASE_L_Y', eyeBaseUp),
+    _cNum('BASE_R_X', -eyeBaseIn),
+    _cNum('BASE_R_Y', eyeBaseUp),
   ]);
   d.variables.addAll([
     _var('gyro', DataType.vector, 12),
@@ -453,6 +488,8 @@ ScriptDraft scriptEyeMovement() {
     _var('pupilL', DataType.matrix, 28),
     _var('irisR', DataType.matrix, 28),
     _var('pupilR', DataType.matrix, 28),
+    _var('posX', DataType.number, 4), // 11: eye position x (source + base)
+    _var('posY', DataType.number, 4), // 12: eye position y
   ]);
 
   /// tx = clamp(gx * SCALE, NEG_LIMIT, LIMIT) from gyro element [elem].
@@ -471,6 +508,14 @@ ScriptDraft scriptEyeMovement() {
         _line([], _ins(catService, 2), [_c(regConst), _v(matVar)]), // reg[...] = mat
       ];
 
+  /// posX/posY (vars 11/12) = source (srcX, srcY) + the base offset constants.
+  List<ScriptLine> withBase(int srcX, int srcY, int baseXConst, int baseYConst) => [
+        _line([_v(11)], _ins(catMath, 0), [_v(srcX)]), // posX = srcX
+        _line([_v(11)], _ins(catMath, 1), [_v(11), _c(baseXConst)]), // posX += baseX
+        _line([_v(12)], _ins(catMath, 0), [_v(srcY)]), // posY = srcY
+        _line([_v(12)], _ins(catMath, 1), [_v(12), _c(baseYConst)]), // posY += baseY
+      ];
+
   d.lines.addAll([
     _line([], _ins(catFlow, 1), [_true()]), // While true
     _line([_v(0)], _ins(catService, 1), [_c(0)]), // gyro = reg[GYRO]
@@ -480,10 +525,10 @@ ScriptDraft scriptEyeMovement() {
     _line([_v(5)], _ins(catMath, 4), [_v(5), _c(9)]), // halfX /= 2
     _line([_v(6)], _ins(catMath, 0), [_v(4)]), // halfY = ty
     _line([_v(6)], _ins(catMath, 4), [_v(6), _c(9)]), // halfY /= 2
-    ...move(7, 5, 6, 1), // left iris (half offset)
-    ...move(8, 3, 4, 2), // left pupil (full offset)
-    ...move(9, 5, 6, 3), // right iris
-    ...move(10, 3, 4, 4), // right pupil
+    ...withBase(5, 6, 11, 12), ...move(7, 11, 12, 1), // left iris (half offset)
+    ...withBase(3, 4, 11, 12), ...move(8, 11, 12, 2), // left pupil (full offset)
+    ...withBase(5, 6, 13, 14), ...move(9, 11, 12, 3), // right iris
+    ...withBase(3, 4, 13, 14), ...move(10, 11, 12, 4), // right pupil
     _line([], _ins(catTime, 0), [_c(10)]), // Delay 30
     _line([], _ins(catFlow, 2)), // EndBlock
   ]);
@@ -501,7 +546,7 @@ ScriptDraft scriptLidTimer() {
     _cNum('CLOSED_TY', lidClosedTy),
     _cNum('STEP', (lidClosedTy - lidOpenTy) / lidSteps),
     _cIx('STEPS', lidSteps),
-    _cIx('TICK', 20),
+    _cIx('TICK', 10), // 10 ticks * 10 ms = 100 ms per movement
     _cIx('WAIT', 10000),
     _cNum('ZERO', 0),
     _cNum('ONE', 1),

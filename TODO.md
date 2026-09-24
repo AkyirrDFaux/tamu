@@ -222,8 +222,14 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
   valid animated 2x3 render matrices, and the semantic backup round-trip.
 - [x] **Artifact**: `Tamu_current_setup.zip` in the project root - the app's semantic backup
   (one JSON per device: core + 2 DAS), restorable through the app's Backup tool.
-- [ ] **Tuning** (later): temperature->duty curve, gyro->pixel scale, blink timing, and the
-  brightness range (kept low to avoid a brown-out), plus a physical check of the eyes/lid.
+- [x] **Device tuning round 1** (applied to the builder): display mounting rotations preserved
+  (left ~180 deg, right ~5 deg); left-eye look copied to both eyes (dark-green solid iris,
+  iris fade 0.6, pupil half-size 2.4x5.0, lid fade 4.0); iris+pupil base offset inward+up;
+  brightness now **increases** with ambient light and the displays use the **crossed** LDRs
+  (left display <- right DAS LDR); blink movement shortened to 100 ms; the lux subscriptions
+  got a larger deadzone (10 lux) and a longer period (2 s) so the noisy LDR stops streaming.
+- [ ] **Tuning** (later): temperature->duty curve, gyro->pixel scale, and the brightness
+  range (kept low to avoid a brown-out), plus a physical check of the eyes/lid.
 
 ### Notes
 - The DAS ch1 NTC is a **100 kohm** part (`MeasNTC100K`); writing `NTC10K` misreads it (the
