@@ -228,6 +228,12 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
   brightness now **increases** with ambient light and the displays use the **crossed** LDRs
   (left display <- right DAS LDR); blink movement shortened to 100 ms; the lux subscriptions
   got a larger deadzone (10 lux) and a longer period (2 s) so the noisy LDR stops streaming.
+- [x] **Device tuning round 2**: the vertical eye offset is flipped ("up" is negative y in the
+  render space of the mounted displays); the iris is now a `GradientLinear` (left brighter ->
+  right darker) whose `Position` follows the pupil (the eye script writes the texture Position
+  from the pupil matrix); the lux subscriptions were sped back up (period 500 ms, deadzone
+  2 lux, min 200 ms) and the brightness script delay cut to 100 ms, so the brightness reacts
+  in ~0.6 s without streaming.
 - [ ] **Tuning** (later): temperature->duty curve, gyro->pixel scale, and the brightness
   range (kept low to avoid a brown-out), plus a physical check of the eyes/lid.
 

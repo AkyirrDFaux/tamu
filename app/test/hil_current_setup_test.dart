@@ -133,6 +133,12 @@ void main() {
       // ignore: avoid_print
       print('[SETUP] $name position = ${pos.value}');
     }
+    // The iris texture Position tracks the pupil, so the fade stays centred on it.
+    final tex = await reg.readDynamicField(block, eyeIrisTex, tkPosition);
+    final pupil = await reg.readDynamicField(block, eyePupilGeo, gkPosition);
+    expect(tex, isNotNull, reason: 'iris texture position present');
+    expect(tex!.meta.dataType, DataType.matrix);
+    expect(tex.value, pupil!.value, reason: 'iris fade centred on the pupil');
   }, timeout: const Timeout(Duration(seconds: 30)));
 
   test('setup: the lid script stays bounded and reaches the open position', skip: skipReason, () async {

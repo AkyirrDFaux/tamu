@@ -87,16 +87,20 @@ const int sensorLdr10k = 3;
 /// Eye look (values tuned on the device; applied to both eyes).
 const double irisDiameter = 9; // px
 const double irisFade = 0.6;
-const int irisR = 0, irisG = 97, irisB = 0; // dark green
+// Iris texture: a light horizontal fade, left brighter -> right darker, centred on the
+// pupil (the eye script writes the texture Position to the pupil position).
+const int irisR1 = 0, irisG1 = 150, irisB1 = 0; // brighter (left)
+const int irisR2 = 0, irisG2 = 45, irisB2 = 0; // darker (right)
 const double pupilHalfW = 2.4; // DoubleParabola half-width
 const double pupilHalfH = 5.0; // DoubleParabola half-height
 const double pupilFade = 0.6;
 const double lidFade = 4.0;
 
 /// Base eye position offset (iris+pupil) in display space: move the eye inward and
-/// slightly up. The right eye mirrors the horizontal component.
+/// slightly up. The right eye mirrors the horizontal component. The vertical sign is
+/// negative because +y in the render space points down on these mounted displays.
 const double eyeBaseIn = 1.0; // px toward the face centre
-const double eyeBaseUp = 0.5; // px up
+const double eyeBaseUp = -0.5; // px up (negative y)
 
 /// Display Offset matrices (2x3 affine, raw wire bytes) - the mounting rotations fixed
 /// on the device. Left is mounted ~180 deg, right ~5 deg.
@@ -252,8 +256,11 @@ Future<void> buildEyeBlock(RegisterClient reg, int block, String name) async {
   await setDynEntry(reg, block, eyeIrisGeo, gkSize, DataType.number, num(irisDiameter));
   await setDynEntry(reg, block, eyeIrisGeo, gkFade, DataType.number, num(irisFade));
   await setDynEntry(reg, block, eyeIrisTex, 0, DataType.texture, const []);
-  await setDynEntry(reg, block, eyeIrisTex, tkType, DataType.enum_, enumByte(texFill));
-  await setDynEntry(reg, block, eyeIrisTex, tkColour1, DataType.colour, colour(irisR, irisG, irisB));
+  await setDynEntry(reg, block, eyeIrisTex, tkType, DataType.enum_, enumByte(texGradientLinear));
+  await setDynEntry(reg, block, eyeIrisTex, tkPosition, DataType.matrix, identity23());
+  await setDynEntry(reg, block, eyeIrisTex, tkSize, DataType.number, num(irisDiameter));
+  await setDynEntry(reg, block, eyeIrisTex, tkColour1, DataType.colour, colour(irisR1, irisG1, irisB1));
+  await setDynEntry(reg, block, eyeIrisTex, tkColour2, DataType.colour, colour(irisR2, irisG2, irisB2));
 
   // 4: DoubleParabola pupil + 5: black fill.
   await setDynEntry(reg, block, eyePupilGeo, 0, DataType.geometry, const []);
@@ -323,13 +330,13 @@ Future<void> configureDas(RegisterClient reg) async {
 Future<void> buildSubscriptions(
     SubscriptionClient subs, DeviceEntry core, List<DeviceEntry> das) async {
   // (provider, measurement instance, target field, deadzone, period ms, min ms)
-  // The lux reading is noisy, so it needs a much larger deadzone and a longer period than
-  // the temperature or it streams continuously.
+  // The lux reading is noisy, so it needs a larger deadzone than the temperature, but the
+  // period is short so the brightness reacts quickly to a real light change.
   final sources = [
-    (das[0].id, 0, fTempA, 0.2, 1000, 500),
-    (das[0].id, 1, fLuxA, 10.0, 2000, 1000),
-    (das[1].id, 0, fTempB, 0.2, 1000, 500),
-    (das[1].id, 1, fLuxB, 10.0, 2000, 1000),
+    (das[0].id, 0, fTempA, 0.2, 500, 200),
+    (das[0].id, 1, fLuxA, 2.0, 500, 200),
+    (das[1].id, 0, fTempB, 0.2, 500, 200),
+    (das[1].id, 1, fLuxB, 2.0, 500, 200),
   ];
   for (var i = 0; i < sources.length; i++) {
     final (addr, measInst, field, deadzone, period, minTime) = sources[i];
@@ -424,7 +431,7 @@ ScriptDraft scriptBrightness() {
     _cNum('BRIGHT_MIN', luxBrightMin),
     _cNum('LUX_SPAN', luxSpan),
     _cNum('RANGE', luxBrightMax - luxBrightMin),
-    _cIx('PERIOD', 300),
+    _cIx('PERIOD', 100),
   ]);
   d.variables.addAll([
     _var('luxA', DataType.number, 4),
@@ -475,6 +482,9 @@ ScriptDraft scriptEyeMovement() {
     _cNum('BASE_L_Y', eyeBaseUp),
     _cNum('BASE_R_X', -eyeBaseIn),
     _cNum('BASE_R_Y', eyeBaseUp),
+    // Iris texture Position: keeps the fade centred on the pupil.
+    _cU32('LEFT_IRIS_TEX', bi(BlockType.dynamic.value, dynLeftEye, eyeIrisTex, tkPosition)),
+    _cU32('RIGHT_IRIS_TEX', bi(BlockType.dynamic.value, dynRightEye, eyeIrisTex, tkPosition)),
   ]);
   d.variables.addAll([
     _var('gyro', DataType.vector, 12),
@@ -527,8 +537,10 @@ ScriptDraft scriptEyeMovement() {
     _line([_v(6)], _ins(catMath, 4), [_v(6), _c(9)]), // halfY /= 2
     ...withBase(5, 6, 11, 12), ...move(7, 11, 12, 1), // left iris (half offset)
     ...withBase(3, 4, 11, 12), ...move(8, 11, 12, 2), // left pupil (full offset)
+    _line([], _ins(catService, 2), [_c(15), _v(8)]), // left iris texture centred on pupil
     ...withBase(5, 6, 13, 14), ...move(9, 11, 12, 3), // right iris
     ...withBase(3, 4, 13, 14), ...move(10, 11, 12, 4), // right pupil
+    _line([], _ins(catService, 2), [_c(16), _v(10)]), // right iris texture centred on pupil
     _line([], _ins(catTime, 0), [_c(10)]), // Delay 30
     _line([], _ins(catFlow, 2)), // EndBlock
   ]);
