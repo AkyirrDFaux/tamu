@@ -70,6 +70,10 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
       `Add/Subtract/Multiply/Divide/Negate` were removed (incorporate into the expression);
       `Modulo/Minimum/Maximum/Absolute/Limit` stay instructions. The editor offers an
       Operators group for a `Set` operand and validates balanced parens + alternation.
+- [x] **Editor UX**: instruction lines **wrap** instead of scrolling horizontally; symbol chips
+      are **colour-coded by category** (input/output/variable/constant/predefine/instruction)
+      with a legend; symbols can be **reordered within a line** by long-press + drag onto
+      another symbol.
 ## 2. Blocks/modules + subscriptions
 - [x] **Block/module schema alignment** (docs-driven): Button reduced to field 0; LED-Button
       = Button (0) + LEDState (3) with reserved 1-2; Acc&Gyr deadzones removed (Acceleration

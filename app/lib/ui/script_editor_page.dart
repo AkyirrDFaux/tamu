@@ -611,6 +611,8 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
               }),
             ),
           ]),
+          const SizedBox(height: 4),
+          _legend(),
           if (draft.lines.isEmpty)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 8),
@@ -647,16 +649,6 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
         def != null && line.destinations.length < def.maxDestinations;
     final canAddOperand = def != null && line.operands.length < def.maxOperands;
 
-    Widget symbolChip(ScriptSymbol s, VoidCallback onTap, VoidCallback onDelete) => Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 2),
-          child: InputChip(
-            label: Text(_symbolLabel(draft, s), style: const TextStyle(fontSize: 12)),
-            visualDensity: VisualDensity.compact,
-            onPressed: onTap,
-            onDeleted: onDelete,
-          ),
-        );
-
     Future<void> addDestination() async {
       final s = await _pickSymbol(draft, destination: true, def: def, operandIndex: 0);
       if (s == null || !mounted) return;
@@ -677,16 +669,23 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
       });
     }
 
+    Widget addButton(String tooltip, VoidCallback onPressed) => IconButton(
+          visualDensity: VisualDensity.compact,
+          tooltip: tooltip,
+          icon: const Icon(Icons.add_circle_outline, size: 18),
+          onPressed: onPressed,
+        );
+
     return Container(
       key: ObjectKey(line),
       margin: const EdgeInsets.symmetric(vertical: 4),
-      padding: const EdgeInsets.symmetric(vertical: 2),
+      padding: const EdgeInsets.symmetric(vertical: 4),
       decoration: BoxDecoration(
         color: active ? kOrange.withAlpha(28) : Colors.white.withAlpha(8),
         borderRadius: BorderRadius.circular(6),
         border: Border.all(color: active ? kOrange : Colors.white24),
       ),
-      child: Row(children: [
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         ReorderableDragStartListener(
           index: index,
           child: const Padding(
@@ -695,61 +694,40 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
           ),
         ),
         Expanded(
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(children: [
-              const SizedBox(width: 4),
-              Text('${index + 1}', style: const TextStyle(color: Colors.white38, fontSize: 11)),
-              const SizedBox(width: 6),
-              // Destinations... then the add-destination affordance, before the instruction.
+          // Wrap: a long line folds onto the next row instead of scrolling off-screen.
+          child: Wrap(
+            spacing: 4,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text('${index + 1}',
+                  style: const TextStyle(color: Colors.white38, fontSize: 11)),
+              const SizedBox(width: 2),
+              // Destinations, then the instruction, then the operands.
               for (var i = 0; i < line.destinations.length; i++)
-                symbolChip(
-                  line.destinations[i],
-                  () => _changeSymbol(draft, line.destinations, i,
-                      destination: true, def: def),
-                  () => setState(() {
-                    line.destinations.removeAt(i);
-                    _dirty = true;
-                  }),
-                ),
-              if (canAddDestination)
-                IconButton(
-                  visualDensity: VisualDensity.compact,
-                  tooltip: 'Add destination',
-                  icon: const Icon(Icons.add_circle_outline, size: 18),
-                  onPressed: addDestination,
-                ),
+                _symbolChip(draft, line.destinations, i, destination: true, def: def),
+              if (canAddDestination) addButton('Add destination', addDestination),
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 2),
                 child: ActionChip(
-                  avatar: const Icon(Icons.tune, size: 16),
+                  avatar: const Icon(Icons.tune, size: 16, color: kOrange),
                   label: Text(_instructionLabel(line.instruction),
-                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                      style: const TextStyle(
+                          fontSize: 12, fontWeight: FontWeight.w600, color: kOrange)),
+                  backgroundColor: kOrange.withAlpha(30),
+                  side: BorderSide(color: kOrange.withAlpha(120)),
+                  visualDensity: VisualDensity.compact,
                   onPressed: () => _changeInstruction(line),
                 ),
               ),
               for (var i = 0; i < line.operands.length; i++)
-                symbolChip(
-                  line.operands[i],
-                  () => _changeSymbol(draft, line.operands, i,
-                      destination: false, def: def, operandIndex: i),
-                  () => setState(() {
-                    line.operands.removeAt(i);
-                    _dirty = true;
-                  }),
-                ),
-              if (canAddOperand)
-                IconButton(
-                  visualDensity: VisualDensity.compact,
-                  tooltip: 'Add operand',
-                  icon: const Icon(Icons.add_circle_outline, size: 18),
-                  onPressed: addOperand,
-                ),
-              const SizedBox(width: 4),
-            ]),
+                _symbolChip(draft, line.operands, i, destination: false, def: def),
+              if (canAddOperand) addButton('Add operand', addOperand),
+            ],
           ),
         ),
-        if (active) const Padding(padding: EdgeInsets.only(right: 4), child: ChipLabel('ACTIVE')),
+        if (active)
+          const Padding(padding: EdgeInsets.only(right: 4), child: ChipLabel('ACTIVE')),
         IconButton(
           visualDensity: VisualDensity.compact,
           icon: const Icon(Icons.delete_outline, size: 18, color: Colors.redAccent),
@@ -761,6 +739,78 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
       ]),
     );
   }
+
+  /// Category colour for a script symbol: I/O, variable, constant or predefine.
+  Color _symbolColor(ScriptSymbol s) => switch (s.type) {
+        symInput => const Color(0xFF26C6DA), // cyan - inputs
+        symOutput => const Color(0xFF4DD0E1), // lighter cyan - outputs
+        symVariable => const Color(0xFF64B5F6), // blue - variables
+        symConstant => const Color(0xFFBA68C8), // purple - constants
+        symPredefine => const Color(0xFF81C784), // green - predefines
+        _ => Colors.white70,
+      };
+
+  /// A colour-coded symbol chip. Long-press + drag it onto another chip to reorder the
+  /// symbol within its list (destination or operand); tap to change, X to delete.
+  Widget _symbolChip(ScriptDraft draft, List<ScriptSymbol> list, int i,
+      {required bool destination, ScriptInstructionDef? def}) {
+    final s = list[i];
+    final color = _symbolColor(s);
+
+    Widget chip({bool dragging = false}) => InputChip(
+          label: Text(_symbolLabel(draft, s),
+              style: TextStyle(fontSize: 12, color: color)),
+          backgroundColor: color.withAlpha(dragging ? 70 : 28),
+          side: BorderSide(color: color.withAlpha(dragging ? 255 : 110)),
+          visualDensity: VisualDensity.compact,
+          onPressed: () => _changeSymbol(draft, list, i,
+              destination: destination, def: def, operandIndex: destination ? null : i),
+          onDeleted: () => setState(() {
+            list.removeAt(i);
+            _dirty = true;
+          }),
+        );
+
+    return DragTarget<int>(
+      onWillAcceptWithDetails: (d) => d.data != i,
+      onAcceptWithDetails: (d) => setState(() {
+        final sym = list.removeAt(d.data);
+        list.insert(i, sym);
+        _dirty = true;
+      }),
+      builder: (context, candidate, rejected) => LongPressDraggable<int>(
+        data: i,
+        feedback: Material(
+          color: Colors.transparent,
+          child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 260),
+              child: chip(dragging: true)),
+        ),
+        childWhenDragging: Opacity(opacity: 0.3, child: chip()),
+        child: chip(),
+      ),
+    );
+  }
+
+  /// Colour legend for the instruction card.
+  Widget _legend() => Wrap(spacing: 10, runSpacing: 4, children: [
+        _legendDot('Input', const Color(0xFF26C6DA)),
+        _legendDot('Output', const Color(0xFF4DD0E1)),
+        _legendDot('Variable', const Color(0xFF64B5F6)),
+        _legendDot('Constant', const Color(0xFFBA68C8)),
+        _legendDot('Predefine', const Color(0xFF81C784)),
+        _legendDot('Instruction', kOrange),
+      ]);
+
+  Widget _legendDot(String label, Color color) =>
+      Row(mainAxisSize: MainAxisSize.min, children: [
+        Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+        const SizedBox(width: 4),
+        Text(label, style: const TextStyle(fontSize: 10, color: Colors.white54)),
+      ]);
 
   String _instructionLabel(ScriptSymbol s) {
     final def = scriptInstructionFor(s);
