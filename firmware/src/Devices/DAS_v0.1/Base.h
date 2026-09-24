@@ -44,11 +44,11 @@ uint32_t TimeFromBoot(void) {
 }
 
 // Returns the current SYNCHRONIZED time in milliseconds (raw timer + the offset this node
-// computed from its own Device service CID 3 (TimeSync) exchange with the core).
-// TimeOffsetMs is declared in Core/Functions/SysFunctions.h, which is always included
-// before this header in the translation unit.
+// computed from its own Device service CID 3 (TimeSync) exchange with the core, including
+// the drift extrapolation between syncs). ApplyTimeOffset is in Core/Functions/
+// SysFunctions.h, which is always included before this header in the translation unit.
 uint32_t Now(void) {
-    return TimeFromBoot() + TimeOffsetMs;
+    return ApplyTimeOffset(TimeFromBoot());
 }
 
 // Non-blocking busy-wait delay for `ms` milliseconds based on the SysTick counter.

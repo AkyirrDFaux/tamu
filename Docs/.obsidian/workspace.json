@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Current setup.md",
+                "file": "Services/System Block and Device Commands.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Current setup"
+              "title": "System Block and Device Commands"
             }
           },
           {
@@ -204,12 +204,12 @@
   },
   "active": "b382b423e960f24e",
   "lastOpenFiles": [
+    "Current setup.md",
     "Command ID table.md",
     "Plan.md",
     "RSBus and Packets.md",
     "Services/System Block and Device Commands.md",
     "Modules and blocks/LED display.md",
-    "Current setup.md",
     "Services/Subscriptions.md",
     "Services/Script.md",
     "Services/CLI.md",

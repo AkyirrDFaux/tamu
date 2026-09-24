@@ -30,6 +30,8 @@ const char* DeviceName = DeviceNameBuffer;
 
 DeviceStatusStruct DeviceStatus;
 int32_t TimeOffsetMs = 0;
+uint32_t TimeOffsetRefRaw = 0;
+int32_t TimeDrift = 0;
 
 #include "Core/Functions/Packet.h"
 

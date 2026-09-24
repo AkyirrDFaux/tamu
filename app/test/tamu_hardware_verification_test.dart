@@ -213,9 +213,13 @@ void main() {
     expect((await reg.readField(6, 0))!.value, isNotEmpty);
   }, timeout: const Timeout(Duration(seconds: 60)));
 
-  // HIL: TimeSync is synchronized-device initiated - the DAS syncs ITSELF to the core, so
-  // their "Now" clocks agree. The core only answers; it never pushes an offset.
-  test('HIL: DAS clock is synced to the core', skip: skipReason, () async {
+  // HIL: TimeSync is synchronized-device initiated - the node syncs ITSELF to the core
+  // (NTP-like) and tracks the core's RATE between syncs (the DAS's internal RC drifts ~1%),
+  // so its clock must stay within 10 ms of the core's.
+  //
+  // The HIL connection can reset the core's clock; the node re-syncs within its interval, so
+  // wait (bounded) for it to converge before asserting.
+  test('HIL: DAS clock is within 10 ms of the core', skip: skipReason, () async {
     final db = DeviceDatabase.instance;
     await db.refreshRuntime(0);
     await Future.delayed(const Duration(seconds: 2));
@@ -232,15 +236,37 @@ void main() {
       print('DAS not found - skipping');
       return;
     }
-    final coreNow = await RegisterClient(deviceId: 1).readField(3, 1); // System field 3.1
-    final dasNow = await RegisterClient(deviceId: das.id).readField(3, 1);
-    expect(coreNow, isNotNull);
-    expect(dasNow, isNotNull);
-    final c = uint32FromBytes(coreNow!.value);
-    final d = uint32FromBytes(dasNow!.value);
+    final coreReg = RegisterClient(deviceId: 1);
+    final dasReg = RegisterClient(deviceId: das.id);
+
+    // Wait until the node's applied offset matches the raw core-node difference (i.e. it has
+    // re-synced after the core's clock restarted). The reads add a few ms of skew, hence 15.
+    bool converged = false;
+    final deadline = DateTime.now().add(const Duration(seconds: 180));
+    while (DateTime.now().isBefore(deadline)) {
+      final coreRaw = uint32FromBytes((await coreReg.readField(3, 0))!.value);
+      final dasRaw = uint32FromBytes((await dasReg.readField(3, 0))!.value);
+      final offset = int32FromBytes((await dasReg.readField(3, 2))!.value);
+      if ((offset - (coreRaw - dasRaw)).abs() < 15) {
+        // ignore: avoid_print
+        print('[TIMESYNC] converged offset=$offset rawDiff=${coreRaw - dasRaw}');
+        converged = true;
+        break;
+      }
+      await Future.delayed(const Duration(seconds: 5));
+    }
+    expect(converged, isTrue, reason: 'the node never re-synced to the core');
+
+    // Compare the clocks, interpolating the core's "Now" around the node's read so the
+    // round-trip read skew cancels.
+    final c0 = uint32FromBytes((await coreReg.readField(3, 1))!.value);
+    final d = uint32FromBytes((await dasReg.readField(3, 1))!.value);
+    final c1 = uint32FromBytes((await coreReg.readField(3, 1))!.value);
+    final coreMid = (c0 + c1) ~/ 2;
+    final diff = d - coreMid;
     // ignore: avoid_print
-    print('[TIMESYNC] coreNow=$c dasNow=$d delta=${(c - d).abs()}');
-    expect((c - d).abs(), lessThan(5000),
-        reason: 'the DAS should have synced its clock to the core');
-  }, timeout: const Timeout(Duration(seconds: 60)));
+    print('[TIMESYNC] coreMid=$coreMid das=$d diff=${diff}ms');
+    expect(diff.abs(), lessThan(10),
+        reason: 'the DAS clock must be within 10 ms of the core');
+  }, timeout: const Timeout(Duration(seconds: 240)));
 }

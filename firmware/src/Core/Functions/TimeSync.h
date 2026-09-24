@@ -24,6 +24,9 @@ public:
     static const uint32_t DISCOVER_WINDOW_MS   = 500;    // docs: responses within 500 ms
 
     // Main-loop tick: starts a discovery round when due and closes it after the window.
+    // `now_ms` must be RAW time (TimeFromBoot): a clock correction changes
+    // DeviceStatus.UptimeMs, and scheduling against it would let the correction itself
+    // trigger the next round.
     void Tick(uint32_t now_ms)
     {
         if (phase == Idle)
@@ -33,7 +36,7 @@ public:
         }
         else if ((int32_t)(now_ms - deadline_ms) >= 0)
         {
-            FinishDiscover();
+            FinishDiscover(now_ms);
         }
     }
 
@@ -78,14 +81,16 @@ private:
         phase = Discovering;
     }
 
-    void FinishDiscover()
+    void FinishDiscover(uint32_t now_ms)
     {
         phase = Idle;
-        due_ms = DeviceStatus.UptimeMs + DISCOVER_INTERVAL_MS;
+        due_ms = now_ms + DISCOVER_INTERVAL_MS;
         if (best_addr == 0 || best_addr == DeviceStatus.ShortAddress)
             return; // no other core on the bus: this core is the reference
 
-        uint32_t sent_time = TimeFromBoot();
+        // NTP-like: send the SYNCHRONIZED local time so the reply's offset is a
+        // correction (delta) to add, not an absolute value to overwrite.
+        uint32_t sent_time = Now();
         PacketConstruct(&tx_frame, best_addr,
                         MakeService(ServiceType::Device, 3),
                         MakeService(ServiceType::Device, 3),

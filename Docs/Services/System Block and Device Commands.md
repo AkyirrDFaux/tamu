@@ -45,7 +45,7 @@ Capability (32bit-field):
 | Identify | 2   | -               | -                                                    | Blink red LED fast for 10s. |
 | TimeSync | 3   | Local time      | Local time, foreign time recieved, foreign time sent | NTP-like                    |
 Devices (with random interval) send the discover packet until their ID is assigned.
-Then they do a TimeSync to the core. TimeSync is repeated at random within the next 2-3 minutes.
+Then they do a TimeSync to the core. TimeSync is repeated at random within a time interval that is necessary to maintain <10ms accuracy (larger difference is ocasionally acceptable). Two point approximation is used for drift a and offset.
 ### Core functions
 Use define TYPE_CORE
 The net-ID is set by user for each core, 0 is not allowed, it's then randomly re-generated.

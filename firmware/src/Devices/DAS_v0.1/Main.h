@@ -25,8 +25,12 @@ bool AppConnected = false;
 
 #define CHIP_ID_ADDR  0x1FFFF7E8 // Fixed memory-mapped location of the chip's unique ID
 
-// Node time-sync interval (docs: "repeated at random within the next 2-3 minutes").
-#define NODE_TIME_SYNC_INTERVAL_MS 150000u
+// Node time-sync interval. The docs say "repeated at random within the next 2-3 minutes";
+// 60 s keeps the DAS's internal-RC holdover within the required <10 ms (its drift changes
+// by ~0.02% between syncs, i.e. ~10 ms per 60 s).
+#define NODE_TIME_SYNC_INTERVAL_MS 60000u
+// First re-sync delay: a short warm-up so the drift estimate is seeded early.
+#define NODE_TIME_SYNC_WARMUP_MS 30000u
 
 // Device identity (mandatory, see Core/Functions/Device.h).
 extern const DeviceType kDeviceType = DeviceType::DualAnalogSensor;
@@ -124,7 +128,9 @@ int main(void)
     // every 2-3 minutes, jittered so devices do not all burst at once
     // (Docs/Services/System Block and Device Commands.md).
     auto sendTimeSync = []() {
-        uint32_t time_sent = TimeFromBoot();
+        // NTP-like: send the SYNCHRONIZED local time (Now()), so the reply's offset is a
+        // correction (delta) to add to TimeOffsetMs, not an absolute value to overwrite.
+        uint32_t time_sent = Now();
         PacketConstruct(&tx_frame, 1,
                          MakeService(ServiceType::Device, 3),
                          MakeService(ServiceType::Device, 3),
@@ -134,8 +140,12 @@ int main(void)
         // ProcessBus() in the main loop handles the reply (applies the offset).
     };
     sendTimeSync(); // initial sync right after discovery
-    uint32_t last_sync_ms = DeviceStatus.UptimeMs;
-    uint32_t next_sync_ms = NODE_TIME_SYNC_INTERVAL_MS + (RawRand() % 60000);
+    // The re-sync interval is measured in RAW time (TimeFromBoot): a clock correction
+    // changes DeviceStatus.UptimeMs, and measuring against it would let the correction
+    // itself satisfy the interval (a TimeSync storm).
+    uint32_t last_sync_ms = TimeFromBoot();
+    // Warm-up first (seed the drift estimate), then the documented 2-3 minute cadence.
+    uint32_t next_sync_ms = NODE_TIME_SYNC_WARMUP_MS;
 
     uint32_t last_sample_ms = 0;
     uint32_t last_sample2_ms = 0;
@@ -146,10 +156,12 @@ int main(void)
         ProcessBus();
         SubscriptionsTick(DeviceStatus.UptimeMs); // periodic provider triggers (main loop)
 
-        // Re-sync to the core every ~2-3 min (synchronized-device initiated).
-        if ((DeviceStatus.UptimeMs - last_sync_ms) >= next_sync_ms) {
-            last_sync_ms = DeviceStatus.UptimeMs;
-            next_sync_ms = NODE_TIME_SYNC_INTERVAL_MS + (RawRand() % 60000);
+        // Re-sync to the core every ~60-75 s (synchronized-device initiated, jittered so
+        // nodes do not burst together). Measured in raw time so a clock correction cannot
+        // trigger the next sync.
+        if ((TimeFromBoot() - last_sync_ms) >= next_sync_ms) {
+            last_sync_ms = TimeFromBoot();
+            next_sync_ms = NODE_TIME_SYNC_INTERVAL_MS + (RawRand() % 15000);
             sendTimeSync();
         }
 

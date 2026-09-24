@@ -11,11 +11,11 @@ uint32_t TimeFromBoot()
     return (uint32_t)(esp_timer_get_time() / 1000);
 }
 
-// Returns the current SYNCHRONIZED time in milliseconds (raw timer + time offset pushed
-// by the core via Device service CID 12).
+// Returns the current SYNCHRONIZED time in milliseconds (raw timer + the TimeSync offset
+// with drift extrapolation between syncs).
 uint32_t Now()
 {
-    return TimeFromBoot() + TimeOffsetMs;
+    return ApplyTimeOffset(TimeFromBoot());
 }
 
 // Blocks the task for `ms` milliseconds.

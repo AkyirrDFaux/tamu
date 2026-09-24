@@ -239,9 +239,15 @@ LED.Setup();
             lastFrameUs = loopStart;
         }
 
+        // Poll the bus again after the LED bit-bang (which masks interrupts for ~6 ms):
+        // it halves the worst-case request->handler latency, which is the dominant term in
+        // the TimeSync round-trip asymmetry (the node's clock accuracy).
+        ProcessBus();
+
         Sleep(2); // short heartbeat: BLE request/response latency scales with this loop period
         TimeUpdate();
-        CoreTimeSync.Tick(DeviceStatus.UptimeMs); // core syncs ITSELF to the reference core
+        // RAW time: the schedule must not be affected by a clock correction (see Tick).
+        CoreTimeSync.Tick(TimeFromBoot()); // core syncs ITSELF to the reference core
     }
 }
 

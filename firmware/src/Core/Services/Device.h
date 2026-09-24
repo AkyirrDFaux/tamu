@@ -170,17 +170,24 @@ void HandleDeviceService(const PacketFrame &frame)
             // TimeSync is synchronized-device initiated: the INITIATOR (a node syncing to
             // a core, or a core syncing to the longest-running core) applies the offset to
             // its OWN clock. The core never pushes offsets to other devices.
+            //
+            // NTP-like with SYNCHRONIZED timestamps (Now()): t0/t3 are the initiator's
+            // clock including its current offset, so the computed offset is a DELTA to
+            // add. Using raw TimeFromBoot() here would make it an absolute value and
+            // `+=` would accumulate it on every sync.
             uint32_t t0, t1, t2;
             memcpy(&t0, frame.payload, 4);
             memcpy(&t1, frame.payload + 4, 4);
             memcpy(&t2, frame.payload + 8, 4);
-            uint32_t t3 = TimeFromBoot();
+            uint32_t t3 = Now();
 #ifdef TYPE_CORE
             int32_t offset = (int32_t)(((int64_t)(int32_t)(t1 - t0) + (int64_t)(int32_t)(t2 - t3)) / 2);
 #else
             int32_t offset = ((int32_t)(t1 - t0) + (int32_t)(t2 - t3)) / 2;
 #endif
-            TimeOffsetMs += offset;
+            // Step the offset AND update the drift estimate (ApplyTimeSync) so the clock
+            // tracks the peer's rate between syncs, not just its value at this instant.
+            ApplyTimeSync(offset);
         }
 #ifdef TYPE_CORE
         else if (cid == 10) // Core discover response: remember the reference core
@@ -276,8 +283,10 @@ void HandleDeviceService(const PacketFrame &frame)
             if (PayloadBytes(frame) >= 4)
             {
                 uint32_t time_sent = *reinterpret_cast<const uint32_t *>(frame.payload);
-                uint32_t t1 = TimeFromBoot();
-                uint32_t t2 = TimeFromBoot();
+                // The responder reports its SYNCHRONIZED time (Now()), matching the
+                // initiator's t0/t3 (see the response handler above).
+                uint32_t t1 = Now();
+                uint32_t t2 = Now();
 
                 // Response: echoed requester time, responder receive time, responder send
                 // time (NTP-like; see the offset math in the response handler above).

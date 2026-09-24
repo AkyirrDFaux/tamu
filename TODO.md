@@ -80,6 +80,23 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
       restore on Tamu (`app/test/hil_backup_test.dart`).
 
 ### Notes
+- TimeSync accuracy (target: within 10 ms of the core):
+  1. The node applied the reply's offset with `TimeOffsetMs += offset` while sending/reading
+     RAW `TimeFromBoot()` timestamps, so `offset` was the ABSOLUTE core-node difference and
+     accumulated on every sync - the node's clock drifted and, once the accumulated offset
+     exceeded the sync interval, the correction itself satisfied the re-sync gate and caused
+     a TimeSync storm. All four timestamps now use the SYNCHRONIZED `Now()` (NTP-correct with
+     `+=`), and the re-sync interval is measured in raw time so a correction cannot trigger
+     the next sync.
+  2. Rate discipline (`Core/Functions/SysFunctions.h`): a step-only offset is seconds off
+     again within one interval (the DAS's internal RC drifts ~1%), so the node also estimates
+     its clock drift (Q16.16, from the offset change since the previous sync) and extrapolates
+     the offset between syncs; `Now()` applies it. A large step (core restart) is treated as a
+     discontinuity: the offset is stepped but the drift (a property of this oscillator) kept.
+  3. The re-sync interval is **60-75 s** (30 s warm-up first) rather than the docs' 2-3 min:
+     the DAS's HSI drift changes by ~0.02% between syncs (~10 ms per 60 s), so 60 s is needed
+     to hold the target. `tamu_hardware_verification_test` waits for convergence and asserts
+     the node clock is within 10 ms of the core (measured ~3 ms).
 - TimeSync reworked to the documented model: **synchronized-device initiated**. Nodes (and
   a core syncing to the longest-running core) send Device CID 3 and apply the offset to
   their own clock; the core only answers and never pushes offsets. Removed the old

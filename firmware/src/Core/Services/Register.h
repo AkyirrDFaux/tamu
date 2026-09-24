@@ -221,7 +221,7 @@ bool RegisterGetSystemField(uint8_t field, uint8_t key, BlockMeta &m, uint8_t *v
     else if (field==2) { uint16_t v=DeviceStatus.ShortAddress; SysFieldValue(m, vbuf, vsz, &v, 2, (uint16_t)DataType::Id|FieldFlags::ReadOnly); }
     else if (field==3 && key==0) SysFieldU32(m, vbuf, vsz, TimeFromBoot(), (uint16_t)DataType::Index|FieldFlags::ReadOnly);
     else if (field==3 && key==1) SysFieldU32(m, vbuf, vsz, Now(), (uint16_t)DataType::Index|FieldFlags::ReadOnly);
-    else if (field==3 && key==2) SysFieldU32(m, vbuf, vsz, (uint32_t)TimeOffsetMs, (uint16_t)DataType::Index|FieldFlags::ReadOnly);
+    else if (field==3 && key==2) SysFieldU32(m, vbuf, vsz, (uint32_t)CurrentTimeOffsetMs(), (uint16_t)DataType::Index|FieldFlags::ReadOnly);
     else if (field==3 && key==3) SysFieldValue(m, vbuf, vsz, &DeviceStatus.AvgLoopTimeMs, 4, (uint16_t)DataType::Number|FieldFlags::ReadOnly);
     else if (field==3 && key==4) SysFieldValue(m, vbuf, vsz, &DeviceStatus.MaxLoopTimeMs, 4, (uint16_t)DataType::Number|FieldFlags::ReadOnly);
     else if (field==4 && key==0) SysFieldU32(m, vbuf, vsz, (uint32_t)GetFreeRAM(), (uint16_t)DataType::Index|FieldFlags::ReadOnly);

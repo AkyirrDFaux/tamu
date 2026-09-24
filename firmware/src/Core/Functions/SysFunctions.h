@@ -25,8 +25,66 @@ void DispatchPacket(const PacketFrame &frame);
 // Defined in Core/Functions/Dispatcher.h; processes the bus queue, dispatching pending received packets
 void ProcessBus();
 
-// Time offset in ms applied by a node after a Device service CID 3 (TimeSync) exchange.
+// Time offset in ms applied by a node after a Device service CID 3 (TimeSync) exchange,
+// plus the raw time it was measured at and the offset drift (Q16.16 ms of offset per raw
+// ms). Between syncs the offset is extrapolated with the drift so the clock tracks the
+// peer's RATE: a node's own oscillator drifts ~1%, so a step-only correction would be
+// seconds off again before the next 2-3 minute sync.
 extern int32_t TimeOffsetMs;
+extern uint32_t TimeOffsetRefRaw;
+extern int32_t TimeDrift;
+
+// The drift part of the offset at `raw` (Q16.16 multiply, clamped so it cannot overflow).
+inline int32_t TimeOffsetExtrapolation(uint32_t raw)
+{
+    int32_t dt = (int32_t)(raw - TimeOffsetRefRaw);
+    if (dt > 1000000) dt = 1000000; // clamp: bounds the Q16.16 multiply
+    else if (dt < -1000000) dt = -1000000;
+    return (int32_t)(((int32_t)TimeDrift * dt) >> 16);
+}
+
+// The offset currently applied (for reporting; System field 3.2).
+inline int32_t CurrentTimeOffsetMs()
+{
+    return TimeOffsetMs + TimeOffsetExtrapolation(TimeFromBoot());
+}
+
+// Applies the current offset to a raw timestamp.
+inline uint32_t ApplyTimeOffset(uint32_t raw)
+{
+    return raw + (uint32_t)(TimeOffsetMs + TimeOffsetExtrapolation(raw));
+}
+
+// Applies a TimeSync offset measured at the current raw time and updates the drift
+// estimate. A large step is treated as a discontinuity (e.g. the peer restarted): the
+// offset is stepped but the drift (a property of this device's oscillator) is kept.
+inline void ApplyTimeSync(int32_t offset)
+{
+    uint32_t r = TimeFromBoot();
+    int32_t dt = (int32_t)(r - TimeOffsetRefRaw);
+    if (dt > 1000000) dt = 1000000;
+    else if (dt < -1000000) dt = -1000000;
+
+    int32_t applied = TimeOffsetMs + (int32_t)(((int32_t)TimeDrift * dt) >> 16);
+    int32_t target = applied + offset;
+
+    const bool haveRef = (TimeOffsetRefRaw != 0);
+    if (haveRef && dt >= 1000 && offset <= 5000 && offset >= -5000)
+    {
+        int32_t delta = target - TimeOffsetMs;
+        if (delta > 30000) delta = 30000;
+        else if (delta < -30000) delta = -30000;
+        int32_t slope = (int32_t)(((int32_t)delta << 16) / dt); // Q16.16 dO/dR
+        if (slope > 3277) slope = 3277;        // clamp to +/-5%
+        else if (slope < -3277) slope = -3277;
+        // The estimate is unbiased (it is the true drift plus measurement noise), so use it
+        // directly: the next sync corrects any noise.
+        TimeDrift = slope;
+    }
+
+    TimeOffsetMs = target;
+    TimeOffsetRefRaw = r;
+}
 
 // Single shared output buffer — all handlers build replies here instead of stack-allocating.
 extern PacketFrame tx_frame;

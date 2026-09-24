@@ -28,3 +28,23 @@
   runtime permission prompt and its denied/permanently-denied paths, BLE scan/connect/MTU,
   the Storage Access Framework backup save + restore and file download, and the compact
   drawer shell on a phone form factor.
+
+## Subscriptions / time sync (noted gaps, not currently triggered)
+- **The app never confirms `OnChangeConfirm` subscriptions.** A high-priority change
+  subscription repeats "until confirmed" (docs; `HandleProviderConfirmation` updates the
+  provider hash from the requester's Subscriptions CID 0). The app has no FNV-1a and never
+  sends that confirmation (`app/lib/core/subscription_client.dart` only listens), so an
+  app-created `OnChangeConfirm` subscription would repeat at its retry interval (default
+  100 ms) indefinitely. Implement the confirmation (or hide the trigger) before using it.
+- **Node time-sync interval is 60-75 s, not the docs' 2-3 min.** The DAS's internal RC
+  oscillator drifts ~1% and its drift changes by ~0.02% between syncs (~10 ms per 60 s), so
+  the <10 ms accuracy target needs a shorter interval than the docs specify. An external
+  crystal (HSE) on the DAS would allow the documented 2-3 min cadence to meet the target.
+- **A node stays out of sync for up to one sync interval after a core restart.** The node
+  applies its offset only at its own TimeSync, so a core reboot leaves the node's clock stale
+  until the next sync (now <=~75 s). By design; a core "time changed" broadcast would let
+  nodes re-sync immediately.
+- **The app's default subscription trigger is `Periodic` (1000 ms)**
+  (`ui/subscriptions_dialog.dart`), which sends regardless of change - so a subscription
+  generates a steady 1/s of bus traffic while it exists. Consider defaulting to a change-based
+  trigger (`OnChangePeriodic`/`DeltaPeriodic`).
