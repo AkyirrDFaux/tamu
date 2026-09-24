@@ -69,6 +69,7 @@ bool RegisterSetByBlockInfo(uint32_t bi, const BlockMeta &m, const uint8_t *val,
 #define SCRIPT_OP_MATH_MAX 7
 #define SCRIPT_OP_MATH_NEG 8
 #define SCRIPT_OP_MATH_ABS 9
+#define SCRIPT_OP_MATH_LIMIT 10 // clamp(value, min, max)
 
 // Logic ops.
 #define SCRIPT_OP_LOGIC_AND 0
@@ -828,7 +829,8 @@ static uint8_t ScriptExecVectorMath(LoadedScript *s, const ScriptLineInfo &ln, c
     if (cat != SCRIPT_CAT_MATH) return SCRIPT_ERR_TYPE;
     if (op != SCRIPT_OP_MATH_ADD && op != SCRIPT_OP_MATH_SUB && op != SCRIPT_OP_MATH_MUL &&
         op != SCRIPT_OP_MATH_DIV && op != SCRIPT_OP_MATH_MOD && op != SCRIPT_OP_MATH_MIN &&
-        op != SCRIPT_OP_MATH_MAX && op != SCRIPT_OP_MATH_NEG && op != SCRIPT_OP_MATH_ABS)
+        op != SCRIPT_OP_MATH_MAX && op != SCRIPT_OP_MATH_NEG && op != SCRIPT_OP_MATH_ABS &&
+        op != SCRIPT_OP_MATH_LIMIT)
         return SCRIPT_ERR_TYPE;
 
     uint16_t count = ScriptContainerCount(dtype, dsize, dest);
@@ -852,27 +854,36 @@ static uint8_t ScriptExecVectorMath(LoadedScript *s, const ScriptLineInfo &ln, c
     for (uint32_t e = 0; e < count; e++) {
         Number acc;
         if (!ScriptVectorElement(odata[0], osize[0], otype[0], e, acc)) return SCRIPT_ERR_TYPE;
-        for (uint8_t k = 1; k < n; k++) {
-            Number v;
-            if (!ScriptVectorElement(odata[k], osize[k], otype[k], e, v)) return SCRIPT_ERR_TYPE;
-            switch (op) {
-                case SCRIPT_OP_MATH_ADD: acc = acc + v; break;
-                case SCRIPT_OP_MATH_SUB: acc = acc - v; break;
-                case SCRIPT_OP_MATH_MUL: acc = acc * v; break;
-                case SCRIPT_OP_MATH_DIV: if (v.Value == 0) return SCRIPT_ERR_TYPE; acc = acc / v; break;
-                case SCRIPT_OP_MATH_MOD: {
-                    int32_t b = v.RoundToInt();
-                    if (b == 0) return SCRIPT_ERR_TYPE;
-                    acc = Number(acc.RoundToInt() % b);
-                    break;
+        if (op == SCRIPT_OP_MATH_LIMIT) {
+            Number lo, hi;
+            if (n < 3) return SCRIPT_ERR_OPERAND;
+            if (!ScriptVectorElement(odata[1], osize[1], otype[1], e, lo)) return SCRIPT_ERR_TYPE;
+            if (!ScriptVectorElement(odata[2], osize[2], otype[2], e, hi)) return SCRIPT_ERR_TYPE;
+            if (acc < lo) acc = lo;
+            if (acc > hi) acc = hi;
+        } else {
+            for (uint8_t k = 1; k < n; k++) {
+                Number v;
+                if (!ScriptVectorElement(odata[k], osize[k], otype[k], e, v)) return SCRIPT_ERR_TYPE;
+                switch (op) {
+                    case SCRIPT_OP_MATH_ADD: acc = acc + v; break;
+                    case SCRIPT_OP_MATH_SUB: acc = acc - v; break;
+                    case SCRIPT_OP_MATH_MUL: acc = acc * v; break;
+                    case SCRIPT_OP_MATH_DIV: if (v.Value == 0) return SCRIPT_ERR_TYPE; acc = acc / v; break;
+                    case SCRIPT_OP_MATH_MOD: {
+                        int32_t b = v.RoundToInt();
+                        if (b == 0) return SCRIPT_ERR_TYPE;
+                        acc = Number(acc.RoundToInt() % b);
+                        break;
+                    }
+                    case SCRIPT_OP_MATH_MIN: acc = min(acc, v); break;
+                    case SCRIPT_OP_MATH_MAX: acc = max(acc, v); break;
+                    default: return SCRIPT_ERR_TYPE;
                 }
-                case SCRIPT_OP_MATH_MIN: acc = min(acc, v); break;
-                case SCRIPT_OP_MATH_MAX: acc = max(acc, v); break;
-                default: return SCRIPT_ERR_TYPE;
             }
+            if (op == SCRIPT_OP_MATH_NEG) acc = -acc;
+            else if (op == SCRIPT_OP_MATH_ABS) acc = abs(acc);
         }
-        if (op == SCRIPT_OP_MATH_NEG) acc = -acc;
-        else if (op == SCRIPT_OP_MATH_ABS) acc = abs(acc);
         int32_t raw = acc.Value;
         memcpy(dest + off + e * 4, &raw, 4);
     }
@@ -952,6 +963,19 @@ static uint8_t ScriptExecMath(LoadedScript *s, const ScriptLineInfo &ln, const u
                     break;
                 case SCRIPT_OP_MATH_NEG: if (num) out.n = -out.n; else out.i = -out.i; break;
                 case SCRIPT_OP_MATH_ABS: if (num) out.n = abs(out.n); else out.i = out.i < 0 ? -out.i : out.i; break;
+                case SCRIPT_OP_MATH_LIMIT: {
+                    if (n < 3) return SCRIPT_ERR_OPERAND;
+                    if (num) {
+                        Number lo = in[1].n, hi = in[2].n;
+                        if (out.n.Value < lo.Value) out.n = lo;
+                        if (out.n.Value > hi.Value) out.n = hi;
+                    } else {
+                        int32_t lo = in[1].i, hi = in[2].i;
+                        if (out.i < lo) out.i = lo;
+                        if (out.i > hi) out.i = hi;
+                    }
+                    break;
+                }
                 default: return SCRIPT_ERR_UNKNOWN_OP;
             }
             break;

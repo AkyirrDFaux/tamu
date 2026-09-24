@@ -56,6 +56,12 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
       were rewritten with these (behaviour unchanged) and the builder now validates each
       script before upload. Wire-compatible except the BlockInfo type tag and the Number
       predefine (firmware + app ship together).
+- [x] **Script follow-up**: a **`Limit`** (clamp) math op (`Limit x = v, min, max`, scalar and
+      element-wise); the BlockInfo editor is a **tiered block -> field -> key dialogue**
+      (reusing the Subscriptions pickers) and the register operand picker creates BlockInfo
+      constants; the lid script is a single **time-interpolated loop** (open, then a 100 ms
+      close/open every period) using `Limit`; the editor shows a retry instead of an endless
+      spinner when a script file cannot be loaded.
 ## 2. Blocks/modules + subscriptions
 - [x] **Block/module schema alignment** (docs-driven): Button reduced to field 0; LED-Button
       = Button (0) + LEDState (3) with reserved 1-2; Acc&Gyr deadzones removed (Acceleration

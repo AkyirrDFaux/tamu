@@ -18,6 +18,7 @@ import '../core/script_file.dart';
 import '../core/script_instructions.dart';
 import '../core/storage_client.dart';
 import '../core/types.dart';
+import 'block_info_picker.dart';
 import 'script_widgets.dart';
 import 'theme.dart';
 import 'value_editor.dart';
@@ -50,6 +51,7 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
 
   ScriptDraft? _draft;
   bool _loading = true;
+  String? _loadError;
   bool _busy = false;
   bool _dirty = false;
   List<String>? _errors;
@@ -75,7 +77,10 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
   void onAutoRefreshStarted() => _refresh();
 
   Future<void> _load() async {
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _loadError = null;
+    });
     try {
       final bytes = await _storage.readFile(_fileName);
       final draft = bytes == null
@@ -87,12 +92,35 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
         _loading = false;
       });
       await _refresh();
-    } on FormatException catch (e) {
+    } catch (e) {
+      // A device read can fail/time out (busy bus) or the file can be malformed: show a
+      // retry instead of an endless spinner.
       if (!mounted) return;
-      setState(() => _loading = false);
-      showSnack(context, 'Script file parse error: ${e.message}');
+      setState(() {
+        _loading = false;
+        _loadError = '$e';
+      });
     }
   }
+
+  Widget _loadErrorBody() => Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Icon(Icons.error_outline, color: Colors.redAccent, size: 36),
+            const SizedBox(height: 8),
+            Text('Could not load $_fileName',
+                style: const TextStyle(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            Text(_loadError ?? '',
+                style: const TextStyle(color: Colors.white54, fontSize: 12),
+                textAlign: TextAlign.center),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+                onPressed: _load, icon: const Icon(Icons.refresh), label: const Text('Retry')),
+          ]),
+        ),
+      );
 
   Future<void> _refresh() async {
     final draft = _draft;
@@ -258,9 +286,13 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
           ),
         ],
       ),
-      body: _loading || draft == null
+      body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : ListView(
+          : _loadError != null
+              ? _loadErrorBody()
+              : draft == null
+                  ? const Center(child: CircularProgressIndicator())
+                  : ListView(
               padding: const EdgeInsets.only(bottom: 24),
               children: [
                 if (widget.loaded) _controlsCard(),
@@ -542,6 +574,7 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
         category: category,
         initial: list[index],
         index: index,
+        deviceId: widget.deviceId,
       ),
     );
     if (updated == null || !mounted) return;
@@ -799,6 +832,10 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
         final op = scriptPredefineMathOps.firstWhere((e) => e.$1 == value,
             orElse: () => (value, '?'));
         return 'Op: ${op.$2}';
+      case preNumber: {
+        final q = value >= 32768 ? value - 65536 : value;
+        return 'Number: ${(q / 256).toStringAsFixed(3)}';
+      }
       case preIndex:
       default:
         return 'Index: $value';
@@ -817,6 +854,7 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
         destination: destination,
         def: def,
         operandIndex: operandIndex,
+        deviceId: widget.deviceId,
         nameOf: _symbolLabel,
       ),
     );
@@ -855,8 +893,10 @@ class _ValueDialog extends StatefulWidget {
   final _Category category;
   final ScriptDraftValue initial;
   final int index;
+  final int deviceId;
 
-  const _ValueDialog({required this.category, required this.initial, required this.index});
+  const _ValueDialog(
+      {required this.category, required this.initial, required this.index, required this.deviceId});
 
   @override
   State<_ValueDialog> createState() => _ValueDialogState();
@@ -978,7 +1018,10 @@ class _ValueDialogState extends State<_ValueDialog> {
               const Spacer(),
               TextButton(
                 onPressed: () async {
-                  final next = await showValueEditor(context, _type, _value);
+                  // BlockInfo uses the tiered block/field/key picker (device-aware).
+                  final next = _type == DataType.blockInfo
+                      ? await pickBlockInfo(context, widget.deviceId, current: _value)
+                      : await showValueEditor(context, _type, _value);
                   if (next == null || !mounted) return;
                   setState(() => _value = next);
                 },
@@ -1012,6 +1055,7 @@ class _SymbolPicker extends StatefulWidget {
   /// The instruction the symbol is being added to (drives the allowed kinds/counts).
   final ScriptInstructionDef? def;
   final int? operandIndex;
+  final int deviceId;
   final String Function(ScriptDraft, ScriptSymbol) nameOf;
 
   const _SymbolPicker({
@@ -1019,6 +1063,7 @@ class _SymbolPicker extends StatefulWidget {
     required this.destination,
     this.def,
     this.operandIndex,
+    required this.deviceId,
     required this.nameOf,
   });
 
@@ -1317,7 +1362,7 @@ class _SymbolPickerState extends State<_SymbolPicker> {
             subtitle: const Text('Register target (block/field/key)',
                 style: TextStyle(fontSize: 11, color: Colors.white54)),
             onTap: () async {
-              final bytes = await showValueEditor(context, DataType.blockInfo, const []);
+              final bytes = await pickBlockInfo(context, widget.deviceId);
               if (bytes == null || !mounted) return;
               draft.constants.add(ScriptDraftValue(
                   name: 'Target',

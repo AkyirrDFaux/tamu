@@ -169,6 +169,7 @@ const List<ScriptInstructionDef> scriptInstructions = [
   ScriptInstructionDef(op: 7, category: catMath, label: 'Maximum', destination: true, minOperands: 2, maxOperands: 8, numeric: true),
   ScriptInstructionDef(op: 8, category: catMath, label: 'Negate', destination: true, minOperands: 1, maxOperands: 1, numeric: true),
   ScriptInstructionDef(op: 9, category: catMath, label: 'Absolute', destination: true, minOperands: 1, maxOperands: 1, numeric: true),
+  ScriptInstructionDef(op: 10, category: catMath, label: 'Limit', destination: true, minOperands: 3, maxOperands: 3, numeric: true),
   // Logic (And/Or/Xor fold N; Not/Shift/Compare/Select fixed)
   ScriptInstructionDef(op: 0, category: catLogic, label: 'And', destination: true, minOperands: 2, maxOperands: 8, numeric: true),
   ScriptInstructionDef(op: 1, category: catLogic, label: 'Or', destination: true, minOperands: 2, maxOperands: 8, numeric: true),

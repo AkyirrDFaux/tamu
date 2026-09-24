@@ -121,7 +121,8 @@ const double eyeScale = 1.0; // px per rad/s
 const double eyeLimit = 3.0; // px clamp
 const double lidOpenTy = -5.5; // half-fill line below the screen (open)
 const double lidClosedTy = 5.5; // half-fill line above the screen (closed)
-const int lidSteps = 10; // 100 ms movement / 10 ms tick
+const int lidWaitMs = 10000; // open time between blinks
+const int lidMoveMs = 100; // close/open movement time
 
 // ---------------------------------------------------------------------------
 // Small wire helpers
@@ -549,64 +550,57 @@ ScriptDraft scriptEyeMovement() {
   return d;
 }
 
-/// Script 3: blink - 10 s open, then 200 ms close and 200 ms open.
+/// Script 3: blink. The lid position is a piecewise-linear function of the time within the
+/// blink period (open, then a 100 ms close and a 100 ms open): one big loop, no nesting.
 ScriptDraft scriptLidTimer() {
   final d = ScriptDraft(functionName: 'Lid timer', properties: _props());
+  final periodMs = lidWaitMs + 2 * lidMoveMs; // open wait + close + open
   d.constants.addAll([
     _cBlockInfo('LID_L', bi(BlockType.dynamic.value, dynLeftEye, eyeLidGeo, gkPosition)),
     _cBlockInfo('LID_R', bi(BlockType.dynamic.value, dynRightEye, eyeLidGeo, gkPosition)),
     _cMatrix('IDENT', identity23()),
     _cNum('OPEN_TY', lidOpenTy),
-    _cNum('CLOSED_TY', lidClosedTy),
-    _cNum('STEP', (lidClosedTy - lidOpenTy) / lidSteps),
-    _cIx('STEPS', lidSteps),
-    _cIx('TICK', 10), // 10 ticks * 10 ms = 100 ms per movement
-    _cIx('WAIT', 10000),
+    _cNum('DELTA', lidClosedTy - lidOpenTy),
+    _cIx('PERIOD', periodMs),
+    _cIx('BLINK_AT', lidWaitMs),
+    _cIx('MOVE_MS', lidMoveMs),
+    _cIx('TICK', 10),
   ]);
   d.variables.addAll([
-    _var('step', DataType.number, 4),
+    _var('t', DataType.number, 4), // phase (ms within the period)
+    _var('closeP', DataType.number, 4), // 0..1 close progress
+    _var('openP', DataType.number, 4), // 0..1 open progress
     _var('ty', DataType.number, 4),
-    _var('lidL', DataType.matrix, 28),
-    _var('lidR', DataType.matrix, 28),
-    _var('cond', DataType.bool_, 1),
+    _var('mat', DataType.matrix, 28),
   ]);
 
-  /// Writes both lids at translation [yVar] (or a constant symbol) to the given reg.
-  List<ScriptLine> applyLid(int matVar, int regConst, ScriptSymbol y) => [
-        _line([_v(matVar)], _ins(catMath, 0), [_c(2)]), // mat = IDENT
-        _line([_v(matVar)], _ins(catCompose, 0), [_idx(5), y]), // mat[1,2] = y
-        _line([], _ins(catService, 2), [_c(regConst), _v(matVar)]),
-      ];
-
-  /// One 100 ms sweep: ty = from + step*STEP, applying both lids each tick.
-  List<ScriptLine> sweep(int fromConst, int sign) => [
-        _line([_v(0)], _ins(catMath, 0), [_idx(0)]), // step = 0
-        _line([_v(4)], _ins(catMath, 0), [_true()]), // cond = true (enter the loop)
-        _line([], _ins(catFlow, 1), [_v(4)]), // While cond
-        _line([_v(1)], _ins(catMath, 0), [_v(0)]), // ty = step
-        _line([_v(1)], _ins(catMath, 3), [_v(1), _c(5)]), // ty *= STEP
-        if (sign > 0)
-          _line([_v(1)], _ins(catMath, 1), [_v(1), _c(fromConst)]) // ty += OPEN_TY
-        else
-          _line([_v(1)], _ins(catMath, 2), [_c(fromConst), _v(1)]), // ty = CLOSED_TY - ty
-        ...applyLid(2, 0, _v(1)),
-        ...applyLid(3, 1, _v(1)),
-        _line([_v(0)], _ins(catMath, 1), [_v(0), _idx(1)]), // step += 1
-        // The While re-reads `cond` at the top, so the comparison must be recomputed
-        // INSIDE the loop (a condition computed once before the loop never changes and
-        // the loop would run forever).
-        _line([_v(4)], _ins(catLogic, 8), [_v(0), _c(6)]), // cond = step < STEPS
-        _line([], _ins(catTime, 0), [_c(7)]), // Delay TICK
-        _line([], _ins(catFlow, 2)), // EndBlock
+  /// mat = IDENT with translation ty, written to the lid geometry field.
+  List<ScriptLine> applyLid(int regConst) => [
+        _line([_v(4)], _ins(catMath, 0), [_c(2)]), // mat = IDENT
+        _line([_v(4)], _ins(catCompose, 0), [_idx(5), _v(3)]), // mat[1,2] = ty
+        _line([], _ins(catService, 2), [_c(regConst), _v(4)]), // write[reg] = mat
       ];
 
   d.lines.addAll([
     _line([], _ins(catFlow, 1), [_true()]), // While true
-    ...applyLid(2, 0, _c(3)), // open left
-    ...applyLid(3, 1, _c(3)), // open right
-    _line([], _ins(catTime, 0), [_c(8)]), // Delay 10000
-    ...sweep(3, 1), // close (OPEN_TY + step*STEP)
-    ...sweep(4, -1), // open (CLOSED_TY - step*STEP)
+    _line([_v(0)], _ins(catTime, 2)), // t = Get time
+    _line([_v(0)], _ins(catMath, 5), [_v(0), _c(5)]), // t %= PERIOD
+    // closeP = Limit((t - BLINK_AT) / MOVE_MS, 0, 1)
+    _line([_v(1)], _ins(catMath, 2), [_v(0), _c(6)]), // closeP = t - BLINK_AT
+    _line([_v(1)], _ins(catMath, 4), [_v(1), _c(7)]), // closeP /= MOVE_MS
+    _line([_v(1)], _ins(catMath, 10), [_v(1), _idx(0), _idx(1)]), // closeP = Limit(closeP,0,1)
+    // openP = Limit((t - BLINK_AT - MOVE_MS) / MOVE_MS, 0, 1)
+    _line([_v(2)], _ins(catMath, 2), [_v(0), _c(6)]), // openP = t - BLINK_AT
+    _line([_v(2)], _ins(catMath, 2), [_v(2), _c(7)]), // openP -= MOVE_MS
+    _line([_v(2)], _ins(catMath, 4), [_v(2), _c(7)]), // openP /= MOVE_MS
+    _line([_v(2)], _ins(catMath, 10), [_v(2), _idx(0), _idx(1)]), // openP = Limit(openP,0,1)
+    // ty = OPEN_TY + DELTA * (closeP - openP)
+    _line([_v(3)], _ins(catMath, 2), [_v(1), _v(2)]), // ty = closeP - openP
+    _line([_v(3)], _ins(catMath, 3), [_v(3), _c(4)]), // ty *= DELTA
+    _line([_v(3)], _ins(catMath, 1), [_v(3), _c(3)]), // ty += OPEN_TY
+    ...applyLid(0),
+    ...applyLid(1),
+    _line([], _ins(catTime, 0), [_c(8)]), // Delay TICK
     _line([], _ins(catFlow, 2)), // EndBlock
   ]);
   return d;

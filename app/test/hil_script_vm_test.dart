@@ -373,4 +373,40 @@ void main() async {
     await cleanup(c, st, slot);
     await reg.deleteDynamic(block: block);
   }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('Limit clamps a value to [min, max]', skip: skipReason, () async {
+    // Out = Limit(50, 0, 10) = 10; and Low = Limit(-5, 0, 10) = 0
+    final draft = ScriptDraft(functionName: 'Limit')
+      ..outputs.add(ScriptDraftValue(name: 'Out', type: DataType.number, size: 4))
+      ..outputs.add(ScriptDraftValue(name: 'Low', type: DataType.number, size: 4))
+      ..lines.add(ScriptLine(
+          destinations: [ScriptSymbol.output(0)],
+          instruction: ScriptSymbol.instruction(catMath, 10), // Limit
+          operands: [
+            ScriptSymbol.predefine(preIndex, 50),
+            ScriptSymbol.predefine(preIndex, 0),
+            ScriptSymbol.predefine(preIndex, 10),
+          ]))
+      ..constants.add(ScriptDraftValue(
+          name: 'Neg', type: DataType.number, size: 4, value: numberToBytes(-5)))
+      ..lines.add(ScriptLine(
+          destinations: [ScriptSymbol.output(1)],
+          instruction: ScriptSymbol.instruction(catMath, 10),
+          operands: [
+            ScriptSymbol.constant(0), // -5
+            ScriptSymbol.predefine(preIndex, 0),
+            ScriptSymbol.predefine(preIndex, 10),
+          ]))
+      ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)));
+    final (c, st, slot) = await loadScript(12, draft);
+    await c.setState(slot, ScriptState.running);
+    final state = await waitState(c, slot, ScriptState.finished);
+    print('[VM] limit state=$state err=${await c.readError(slot)}');
+    expect(state, ScriptState.finished);
+    expect(numberFromBytes((await c.readEntry(slot, ScriptField.output, 0))!.value),
+        closeTo(10.0, 0.001));
+    expect(numberFromBytes((await c.readEntry(slot, ScriptField.output, 1))!.value),
+        closeTo(0.0, 0.001));
+    await cleanup(c, st, slot);
+  }, timeout: const Timeout(Duration(minutes: 2)));
 }
