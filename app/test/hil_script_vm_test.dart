@@ -80,25 +80,23 @@ void main() async {
   }, timeout: const Timeout(Duration(minutes: 2)));
 
   test('while loop + end block', skip: skipReason, () async {
-    // A=0; Cond=true; While Cond { Cond = A < 3; A = A + 1 } halt  -> A == 3
+    // A=0; While A < 3 { A = A + 1 } halt  -> A == 3 (While takes the comparison expression)
     final draft = ScriptDraft(functionName: 'Loop')
       ..variables.add(ScriptDraftValue(name: 'A', type: DataType.number, size: 4))
-      ..variables.add(ScriptDraftValue(name: 'Cond', type: DataType.bool_, size: 1))
-      ..constants.add(ScriptDraftValue(name: 'Zero', type: DataType.number, size: 4, value: numberToBytes(0)))
-      ..constants.add(ScriptDraftValue(name: 'One', type: DataType.number, size: 4, value: numberToBytes(1)))
-      ..constants.add(ScriptDraftValue(name: 'Three', type: DataType.number, size: 4, value: numberToBytes(3)))
-      ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(0)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [ScriptSymbol.constant(0)]))
-      ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(1)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [ScriptSymbol.predefine(preBool, 1)]))
-      ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 1), operands: [ScriptSymbol.variable(1)]))
-      ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(0)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [ScriptSymbol.variable(0), ScriptSymbol.predefine(preMathOp, 0), ScriptSymbol.constant(1)]))
-      ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(1)], instruction: ScriptSymbol.instruction(catLogic, 8), operands: [ScriptSymbol.variable(0), ScriptSymbol.constant(2)]))
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(0)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [ScriptSymbol.predefine(preIndex, 0)]))
+      ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 1), operands: [
+        ScriptSymbol.variable(0), ScriptSymbol.predefine(preMathOp, 14), ScriptSymbol.predefine(preIndex, 3),
+      ]))
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(0)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [
+        ScriptSymbol.variable(0), ScriptSymbol.predefine(preMathOp, 0), ScriptSymbol.predefine(preIndex, 1),
+      ]))
       ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 2)))
       ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)));
 
     final (c, st, slot) = await loadScript(1, draft);
     await c.setState(slot, ScriptState.running);
     final state = await waitState(c, slot, ScriptState.finished);
-    print('[VM] loop state=$state');
+    print('[VM] loop state=$state err=${await c.readError(slot)}');
     expect(state, ScriptState.finished);
     final ram = (await c.readInternalState(slot))!.variables;
     expect(numberFromBytes(ram, 0), closeTo(3.0, 0.001));
@@ -380,6 +378,72 @@ void main() async {
     expect(ram[0], 2);
     expect(ram[1], 0);
     expect(ram[2], 3);
+    await cleanup(c, st, slot);
+  }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('expression: logic, comparisons and modulo', skip: skipReason, () async {
+    ScriptSymbol lit(int n) => ScriptSymbol.predefine(preIndex, n);
+    ScriptSymbol op(int o) => ScriptSymbol.predefine(preMathOp, o);
+    ScriptLine setOut(int i, List<ScriptSymbol> expr) => ScriptLine(
+        destinations: [ScriptSymbol.output(i)],
+        instruction: ScriptSymbol.instruction(catMath, 0),
+        operands: expr);
+    final draft = ScriptDraft(functionName: 'Logic')
+      ..outputs.add(ScriptDraftValue(name: 'O0', type: DataType.number, size: 4))
+      ..outputs.add(ScriptDraftValue(name: 'O1', type: DataType.number, size: 4))
+      ..outputs.add(ScriptDraftValue(name: 'O2', type: DataType.number, size: 4))
+      ..outputs.add(ScriptDraftValue(name: 'O3', type: DataType.number, size: 4))
+      // O0 = (3 > 2) AND (1 < 2) = 1
+      ..lines.add(setOut(0, [
+        op(mathOpOpenParen), lit(3), op(16), lit(2), op(mathOpCloseParen),
+        op(6),
+        op(mathOpOpenParen), lit(1), op(14), lit(2), op(mathOpCloseParen),
+      ]))
+      // O1 = 5 % 3 = 2
+      ..lines.add(setOut(1, [lit(5), op(4), lit(3)]))
+      // O2 = NOT (2 == 3) = 1
+      ..lines.add(setOut(2, [
+        op(9), op(mathOpOpenParen), lit(2), op(12), lit(3), op(mathOpCloseParen),
+      ]))
+      // O3 = 3 XOR 1 = 0 (both truthy)
+      ..lines.add(setOut(3, [lit(3), op(8), lit(1)]))
+      ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)));
+    final (c, st, slot) = await loadScript(14, draft);
+    await c.setState(slot, ScriptState.running);
+    final state = await waitState(c, slot, ScriptState.finished);
+    print('[VM] logic state=$state err=${await c.readError(slot)}');
+    expect(state, ScriptState.finished);
+    Future<double> val(int i) async =>
+        numberFromBytes((await c.readEntry(slot, ScriptField.output, i))!.value);
+    expect(await val(0), closeTo(1.0, 0.01));
+    expect(await val(1), closeTo(2.0, 0.01));
+    expect(await val(2), closeTo(1.0, 0.01));
+    expect(await val(3), closeTo(0.0, 0.01));
+    await cleanup(c, st, slot);
+  }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('flow: While takes a boolean expression', skip: skipReason, () async {
+    // i = 0; While i < 5 { i = i + 1 }; Out = i; halt  -> i == 5
+    final draft = ScriptDraft(functionName: 'FlowExpr')
+      ..outputs.add(ScriptDraftValue(name: 'Out', type: DataType.number, size: 4))
+      ..variables.add(ScriptDraftValue(name: 'i', type: DataType.number, size: 4))
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(0)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [ScriptSymbol.predefine(preIndex, 0)]))
+      ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 1), operands: [
+        ScriptSymbol.variable(0), ScriptSymbol.predefine(preMathOp, 14), ScriptSymbol.predefine(preIndex, 5),
+      ]))
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(0)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [
+        ScriptSymbol.variable(0), ScriptSymbol.predefine(preMathOp, 0), ScriptSymbol.predefine(preIndex, 1),
+      ]))
+      ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 2)))
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.output(0)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [ScriptSymbol.variable(0)]))
+      ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)));
+    final (c, st, slot) = await loadScript(15, draft);
+    await c.setState(slot, ScriptState.running);
+    final state = await waitState(c, slot, ScriptState.finished);
+    print('[VM] flowexpr state=$state err=${await c.readError(slot)}');
+    expect(state, ScriptState.finished);
+    expect(numberFromBytes((await c.readEntry(slot, ScriptField.output, 0))!.value),
+        closeTo(5.0, 0.01));
     await cleanup(c, st, slot);
   }, timeout: const Timeout(Duration(minutes: 2)));
 

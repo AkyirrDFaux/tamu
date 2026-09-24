@@ -131,6 +131,7 @@ class ScriptInstructionDef {
 
 /// Predefine "Math op." values (Docs/Services/Script.md predefine subtypes). Values 0..17
 /// are the operator enum; 18/19 are the expression parentheses (inline in a `Set` line).
+/// Shifts (10/11) and Modulo (4) are not offered (no shift support; Modulo is an instruction).
 const List<(int, String)> scriptPredefineMathOps = [
   (0, 'Add'),
   (1, 'Subtract'),
@@ -138,12 +139,10 @@ const List<(int, String)> scriptPredefineMathOps = [
   (3, 'Divide'),
   (4, 'Modulo'),
   (5, 'Power'),
-  (6, 'And'),
-  (7, 'Or'),
-  (8, 'Xor'),
-  (9, 'Not'),
-  (10, 'Shift left'),
-  (11, 'Shift right'),
+  (6, 'AND'),
+  (7, 'OR'),
+  (8, 'XOR'),
+  (9, 'NOT'),
   (12, 'Compare ='),
   (13, 'Compare !='),
   (14, 'Compare <'),
@@ -158,8 +157,13 @@ const List<(int, String)> scriptPredefineMathOps = [
 const int mathOpOpenParen = 18;
 const int mathOpCloseParen = 19;
 
-/// Inline operators the editor offers for a `Set` expression (`+ - * / ^` + parens).
-const Set<int> expressionOps = {0, 1, 2, 3, 5, mathOpOpenParen, mathOpCloseParen};
+/// Inline operators the editor offers for an expression (`Set` / `If` / `While` / `Wait until`).
+const Set<int> expressionOps = {
+  0, 1, 2, 3, 4, 5, // + - * / % ^
+  6, 7, 8, 9, // AND OR XOR NOT
+  12, 13, 14, 15, 16, 17, // == != < <= > >=
+  mathOpOpenParen, mathOpCloseParen,
+};
 
 /// Predefine subtypes offered in the picker (name + subtype value).
 const List<(int, String)> scriptPredefineSubtypes = [
@@ -181,23 +185,11 @@ const List<ScriptInstructionDef> scriptInstructions = [
   ScriptInstructionDef(op: 7, category: catMath, label: 'Maximum', destination: true, minOperands: 2, maxOperands: 8, numeric: true),
   ScriptInstructionDef(op: 9, category: catMath, label: 'Absolute', destination: true, minOperands: 1, maxOperands: 1, numeric: true),
   ScriptInstructionDef(op: 10, category: catMath, label: 'Limit', destination: true, minOperands: 3, maxOperands: 3, numeric: true),
-  // Logic (And/Or/Xor fold N; Not/Shift/Compare/Select fixed)
-  ScriptInstructionDef(op: 0, category: catLogic, label: 'And', destination: true, minOperands: 2, maxOperands: 8, numeric: true),
-  ScriptInstructionDef(op: 1, category: catLogic, label: 'Or', destination: true, minOperands: 2, maxOperands: 8, numeric: true),
-  ScriptInstructionDef(op: 2, category: catLogic, label: 'Xor', destination: true, minOperands: 2, maxOperands: 8, numeric: true),
-  ScriptInstructionDef(op: 3, category: catLogic, label: 'Not', destination: true, minOperands: 1, maxOperands: 1, numeric: true),
-  ScriptInstructionDef(op: 4, category: catLogic, label: 'Shift left', destination: true, minOperands: 2, maxOperands: 2, numeric: true),
-  ScriptInstructionDef(op: 5, category: catLogic, label: 'Shift right', destination: true, minOperands: 2, maxOperands: 2, numeric: true),
-  ScriptInstructionDef(op: 6, category: catLogic, label: 'Compare =', destination: true, minOperands: 2, maxOperands: 2, numeric: true),
-  ScriptInstructionDef(op: 7, category: catLogic, label: 'Compare !=', destination: true, minOperands: 2, maxOperands: 2, numeric: true),
-  ScriptInstructionDef(op: 8, category: catLogic, label: 'Compare <', destination: true, minOperands: 2, maxOperands: 2, numeric: true),
-  ScriptInstructionDef(op: 9, category: catLogic, label: 'Compare <=', destination: true, minOperands: 2, maxOperands: 2, numeric: true),
-  ScriptInstructionDef(op: 10, category: catLogic, label: 'Compare >', destination: true, minOperands: 2, maxOperands: 2, numeric: true),
-  ScriptInstructionDef(op: 11, category: catLogic, label: 'Compare >=', destination: true, minOperands: 2, maxOperands: 2, numeric: true),
+  // Logic: only Select remains (comparisons/logic moved into the expression).
   ScriptInstructionDef(op: 12, category: catLogic, label: 'Select', destination: true, minOperands: 3, maxOperands: 3),
-  // Flow
-  ScriptInstructionDef(op: 0, category: catFlow, label: 'If', minOperands: 1, maxOperands: 1),
-  ScriptInstructionDef(op: 1, category: catFlow, label: 'While', minOperands: 1, maxOperands: 1),
+  // Flow (If/While take a boolean expression)
+  ScriptInstructionDef(op: 0, category: catFlow, label: 'If', minOperands: 1, maxOperands: 32, numeric: true, expression: true),
+  ScriptInstructionDef(op: 1, category: catFlow, label: 'While', minOperands: 1, maxOperands: 32, numeric: true, expression: true),
   ScriptInstructionDef(op: 2, category: catFlow, label: 'End block', minOperands: 0, maxOperands: 0),
   ScriptInstructionDef(op: 3, category: catFlow, label: 'Jump', minOperands: 1, maxOperands: 1),
   ScriptInstructionDef(op: 4, category: catFlow, label: 'Call', minOperands: 1, maxOperands: 1),
@@ -205,7 +197,7 @@ const List<ScriptInstructionDef> scriptInstructions = [
   ScriptInstructionDef(op: 6, category: catFlow, label: 'Halt', minOperands: 0, maxOperands: 0),
   // Time
   ScriptInstructionDef(op: 0, category: catTime, label: 'Delay', minOperands: 1, maxOperands: 1),
-  ScriptInstructionDef(op: 1, category: catTime, label: 'Wait until', minOperands: 1, maxOperands: 1),
+  ScriptInstructionDef(op: 1, category: catTime, label: 'Wait until', minOperands: 1, maxOperands: 32, numeric: true, expression: true),
   ScriptInstructionDef(op: 2, category: catTime, label: 'Get time', destination: true, minOperands: 0, maxOperands: 0),
   // Service
   ScriptInstructionDef(op: 0, category: catService, label: 'Log', minOperands: 1, maxOperands: 4),
@@ -397,7 +389,9 @@ List<String> validateScriptLines(List<ScriptLine> lines, ScriptValidationContext
 List<String> _validateExpression(ScriptLine line, int lineIndex) {
   final errors = <String>[];
   final where = 'Line ${lineIndex + 1}';
-  const binaryOps = {0, 2, 3, 5}; // Add, Multiply, Divide, Power
+  // Binary operators: Add, Subtract, Multiply, Divide, Modulo, Power, AND, OR, XOR and
+  // the comparisons. Subtract (1) and NOT (9) may also be unary (where a value is expected).
+  const binaryOps = {0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 13, 14, 15, 16, 17};
   var depth = 0;
   var expectValue = true;
   for (final o in line.operands) {
@@ -424,11 +418,8 @@ List<String> _validateExpression(ScriptLine line, int lineIndex) {
       continue;
     }
     if (isOp) {
-      if (o.value == 1) {
-        // Subtract: binary when a value was just read, unary otherwise.
-        if (!expectValue) expectValue = true;
-        continue;
-      }
+      // Unary minus / NOT where a value is expected: still expect a value afterwards.
+      if (expectValue && (o.value == 1 || o.value == 9)) continue;
       if (expectValue || !binaryOps.contains(o.value)) {
         errors.add('$where: unexpected operator');
         return errors;

@@ -27,12 +27,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Data Formats.md",
+                "file": "Current setup.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Data Formats"
+              "title": "Current setup"
             }
           }
         ],
@@ -205,9 +205,9 @@
   },
   "active": "2a4ba6322c2443a2",
   "lastOpenFiles": [
+    "Data Formats.md",
     "Modules and blocks/LED display.md",
     "Services/Register.md",
-    "Data Formats.md",
     "Devices.md",
     "General architecture.md",
     "Plan.md",

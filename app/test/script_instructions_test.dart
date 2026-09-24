@@ -181,8 +181,42 @@ void main() {
   test('all predefine subtypes and math ops are available', () {
     expect(scriptPredefineSubtypes.map((e) => e.$1).toSet(),
         {preState, preType, preIndex, preChar, preMathOp, preBool, preNumber});
-    expect(scriptPredefineMathOps.length, 20); // 18 operators + the two parentheses
+    expect(scriptPredefineMathOps.length, 18); // 16 operators + the two parentheses
     expect(scriptPredefineMathOps.map((e) => e.$1), containsAll(expressionOps));
+    // Logic + comparison operators are present.
+    for (final op in [6, 7, 8, 9, 12, 13, 14, 15, 16, 17, 4]) {
+      expect(scriptPredefineMathOps.any((e) => e.$1 == op), isTrue, reason: 'op $op');
+    }
+  });
+
+  test('the standalone logic instructions are gone (expression instead)', () {
+    for (final op in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]) {
+      expect(scriptInstructions.any((d) => d.category == catLogic && d.op == op), isFalse,
+          reason: 'catLogic $op');
+    }
+    // Only Select remains in catLogic.
+    expect(scriptInstructions.where((d) => d.category == catLogic).single.op, 12);
+  });
+
+  test('If / While / Wait until take a boolean expression', () {
+    ScriptInstructionDef defFor(int cat, int op) =>
+        scriptInstructions.firstWhere((d) => d.category == cat && d.op == op);
+    for (final (cat, op) in [(catFlow, 0), (catFlow, 1), (catTime, 1)]) {
+      final d = defFor(cat, op);
+      expect(d.expression, isTrue);
+      expect(d.maxOperands, 32);
+    }
+    // If a > 5 validates and round-trips.
+    final line = ScriptLine(
+      instruction: ScriptSymbol.instruction(catFlow, 0),
+      operands: [
+        ScriptSymbol.variable(0),
+        ScriptSymbol.predefine(preMathOp, 16), // >
+        ScriptSymbol.predefine(preIndex, 5),
+      ],
+    );
+    final ctx = ScriptValidationContext(variableTypes: [DataType.number.value]);
+    expect(validateScriptLines([line], ctx), isEmpty);
   });
 
   test('Add/Subtract/Multiply/Divide/Negate are no longer instructions', () {

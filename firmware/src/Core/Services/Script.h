@@ -78,7 +78,18 @@ bool RegisterSetByBlockInfo(uint32_t bi, const BlockMeta &m, const uint8_t *val,
 #define SCRIPT_MATHOP_SUB 1
 #define SCRIPT_MATHOP_MUL 2
 #define SCRIPT_MATHOP_DIV 3
+#define SCRIPT_MATHOP_MOD 4
 #define SCRIPT_MATHOP_POW 5
+#define SCRIPT_MATHOP_AND 6
+#define SCRIPT_MATHOP_OR 7
+#define SCRIPT_MATHOP_XOR 8
+#define SCRIPT_MATHOP_NOT 9
+#define SCRIPT_MATHOP_EQ 12
+#define SCRIPT_MATHOP_NE 13
+#define SCRIPT_MATHOP_LT 14
+#define SCRIPT_MATHOP_LE 15
+#define SCRIPT_MATHOP_GT 16
+#define SCRIPT_MATHOP_GE 17
 #define SCRIPT_MATHOP_OPEN 18
 #define SCRIPT_MATHOP_CLOSE 19
 
@@ -1000,9 +1011,44 @@ static bool ScriptExprPow(Number base, Number exp, Number &out)
     return true;
 }
 
-// a = a <op> b, element-wise (a scalar broadcasts to a container's shape).
+// Comparisons and logic ops (scalar operands -> Bool).
+static bool ScriptExprIsBoolOp(uint8_t op)
+{
+    return op == SCRIPT_MATHOP_EQ || op == SCRIPT_MATHOP_NE || op == SCRIPT_MATHOP_LT ||
+           op == SCRIPT_MATHOP_LE || op == SCRIPT_MATHOP_GT || op == SCRIPT_MATHOP_GE ||
+           op == SCRIPT_MATHOP_AND || op == SCRIPT_MATHOP_OR || op == SCRIPT_MATHOP_XOR;
+}
+
+// a = a <op> b, element-wise (a scalar broadcasts to a container's shape). Comparisons and
+// logic produce a scalar Bool and require scalar operands.
 static bool ScriptExprApply(ExprValue &a, const ExprValue &b, uint8_t op)
 {
+    if (ScriptExprIsBoolOp(op))
+    {
+        if (a.count != 1 || b.count != 1) return false;
+        int32_t x = a.e[0].Value, y = b.e[0].Value;
+        bool r;
+        switch (op)
+        {
+        case SCRIPT_MATHOP_EQ: r = (x == y); break;
+        case SCRIPT_MATHOP_NE: r = (x != y); break;
+        case SCRIPT_MATHOP_LT: r = (x < y); break;
+        case SCRIPT_MATHOP_LE: r = (x <= y); break;
+        case SCRIPT_MATHOP_GT: r = (x > y); break;
+        case SCRIPT_MATHOP_GE: r = (x >= y); break;
+        case SCRIPT_MATHOP_AND: r = (x != 0) && (y != 0); break;
+        case SCRIPT_MATHOP_OR: r = (x != 0) || (y != 0); break;
+        case SCRIPT_MATHOP_XOR: r = (x != 0) != (y != 0); break;
+        default: return false;
+        }
+        a.dtype = (uint16_t)DataType::Bool;
+        a.mh = 0;
+        a.mw = 0;
+        a.count = 1;
+        a.e[0] = Number(r ? 1 : 0);
+        return true;
+    }
+
     uint8_t count;
     if (a.count == b.count) count = a.count;
     else if (a.count == 1) count = b.count;
@@ -1021,6 +1067,12 @@ static bool ScriptExprApply(ExprValue &a, const ExprValue &b, uint8_t op)
         case SCRIPT_MATHOP_SUB: va = va - vb; break;
         case SCRIPT_MATHOP_MUL: va = va * vb; break;
         case SCRIPT_MATHOP_DIV: if (vb.Value == 0) return false; va = va / vb; break;
+        case SCRIPT_MATHOP_MOD: {
+            int32_t b = vb.RoundToInt();
+            if (b == 0) return false;
+            va = Number(va.RoundToInt() % b);
+            break;
+        }
         case SCRIPT_MATHOP_POW: if (!ScriptExprPow(va, vb, va)) return false; break;
         default: return false;
         }
@@ -1063,13 +1115,27 @@ static bool ScriptExprPrimary(ExprParser *p, ExprValue &out)
 
 static bool ScriptExprUnary(ExprParser *p, ExprValue &out)
 {
-    if (ScriptExprPeekOp(p) == SCRIPT_MATHOP_SUB)
+    uint8_t op = ScriptExprPeekOp(p);
+    if (op == SCRIPT_MATHOP_SUB)
     {
         p->i++;
         ExprValue a;
         if (!ScriptExprUnary(p, a)) return false;
         for (uint8_t k = 0; k < a.count; k++) a.e[k] = -a.e[k];
         out = a;
+        return true;
+    }
+    if (op == SCRIPT_MATHOP_NOT)
+    {
+        p->i++;
+        ExprValue a;
+        if (!ScriptExprUnary(p, a)) return false;
+        if (a.count != 1) return false;
+        out.dtype = (uint16_t)DataType::Bool;
+        out.mh = 0;
+        out.mw = 0;
+        out.count = 1;
+        out.e[0] = Number(a.e[0].Value == 0 ? 1 : 0);
         return true;
     }
     return ScriptExprPrimary(p, out);
@@ -1082,9 +1148,16 @@ static bool ScriptExprBin(ExprParser *p, ExprValue &out, uint8_t minPrec)
     for (;;)
     {
         uint8_t op = ScriptExprPeekOp(p);
-        uint8_t prec = (op == SCRIPT_MATHOP_MUL || op == SCRIPT_MATHOP_DIV) ? 2
-                       : (op == SCRIPT_MATHOP_POW) ? 3
-                       : (op == SCRIPT_MATHOP_ADD || op == SCRIPT_MATHOP_SUB) ? 1 : 0;
+        uint8_t prec = (op == SCRIPT_MATHOP_POW) ? 9
+                       : (op == SCRIPT_MATHOP_MUL || op == SCRIPT_MATHOP_DIV ||
+                          op == SCRIPT_MATHOP_MOD) ? 8
+                       : (op == SCRIPT_MATHOP_ADD || op == SCRIPT_MATHOP_SUB) ? 7
+                       : (op == SCRIPT_MATHOP_LT || op == SCRIPT_MATHOP_LE ||
+                          op == SCRIPT_MATHOP_GT || op == SCRIPT_MATHOP_GE) ? 5
+                       : (op == SCRIPT_MATHOP_EQ || op == SCRIPT_MATHOP_NE) ? 4
+                       : (op == SCRIPT_MATHOP_AND) ? 3
+                       : (op == SCRIPT_MATHOP_XOR) ? 2
+                       : (op == SCRIPT_MATHOP_OR) ? 1 : 0;
         if (prec == 0 || prec < minPrec) break;
         p->i++;
         ExprValue b;
@@ -1146,6 +1219,24 @@ static uint8_t ScriptExecSet(LoadedScript *s, const ScriptLineInfo &ln, const ui
     }
     s->ic++;
     return SCRIPT_ERR_NONE;
+}
+
+// Evaluates a token stream as an expression and returns its truth value (used by the flow
+// instructions and Wait until).
+static bool ScriptExprTruthy(LoadedScript *s, const uint8_t *tok, uint8_t n, bool &ok)
+{
+    if (n < 1) return false;
+    ExprParser p;
+    p.s = s;
+    p.tok = tok;
+    p.n = n;
+    p.i = 0;
+    p.depth = 0;
+    ExprValue v;
+    if (!ScriptExprBin(&p, v, 1)) return false;
+    if (p.i != p.n) return false;
+    ok = (v.count > 0) && (v.e[0].Value != 0);
+    return true;
 }
 
 static uint8_t ScriptExecMath(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase, uint8_t cat, uint8_t op) {
@@ -1212,46 +1303,8 @@ static uint8_t ScriptExecMath(LoadedScript *s, const ScriptLineInfo &ln, const u
             }
             break;
         case SCRIPT_CAT_LOGIC:
-            out = in[0];
+            // Comparisons/logic moved into the expression (Set/If/While); only Select remains.
             switch (op) {
-                case SCRIPT_OP_LOGIC_AND:
-                    for (uint8_t k = 1; k < n; k++) { if (num) out.n = Number((out.n.Value != 0) && (in[k].n.Value != 0)); else out.i &= in[k].i; }
-                    break;
-                case SCRIPT_OP_LOGIC_OR:
-                    for (uint8_t k = 1; k < n; k++) { if (num) out.n = Number((out.n.Value != 0) || (in[k].n.Value != 0)); else out.i |= in[k].i; }
-                    break;
-                case SCRIPT_OP_LOGIC_XOR:
-                    for (uint8_t k = 1; k < n; k++) { if (num) out.n = Number((out.n.Value != 0) != (in[k].n.Value != 0)); else out.i ^= in[k].i; }
-                    break;
-                case SCRIPT_OP_LOGIC_NOT: if (num) out.n = Number(out.n.Value == 0); else out.i = ~out.i; break;
-                case SCRIPT_OP_LOGIC_SHL: {
-                    int32_t a = num ? out.n.RoundToInt() : out.i;
-                    int32_t b = num ? in[1].n.RoundToInt() : in[1].i;
-                    int32_t r = (uint32_t)a << (b & 31);
-                    if (num) out.n = Number(r); else out.i = r; break;
-                }
-                case SCRIPT_OP_LOGIC_SHR: {
-                    int32_t a = num ? out.n.RoundToInt() : out.i;
-                    int32_t b = num ? in[1].n.RoundToInt() : in[1].i;
-                    int32_t r = a >> (b & 31);
-                    if (num) out.n = Number(r); else out.i = r; break;
-                }
-                case SCRIPT_OP_LOGIC_CMP_EQ: case SCRIPT_OP_LOGIC_CMP_NE:
-                case SCRIPT_OP_LOGIC_CMP_LT: case SCRIPT_OP_LOGIC_CMP_LE:
-                case SCRIPT_OP_LOGIC_CMP_GT: case SCRIPT_OP_LOGIC_CMP_GE: {
-                    bool r;
-                    if (num) { Number a = in[0].n, b = in[1].n;
-                        r = (op == SCRIPT_OP_LOGIC_CMP_EQ) ? (a.Value == b.Value) : (op == SCRIPT_OP_LOGIC_CMP_NE) ? (a.Value != b.Value) :
-                            (op == SCRIPT_OP_LOGIC_CMP_LT) ? (a.Value < b.Value) : (op == SCRIPT_OP_LOGIC_CMP_LE) ? (a.Value <= b.Value) :
-                            (op == SCRIPT_OP_LOGIC_CMP_GT) ? (a.Value > b.Value) : (a.Value >= b.Value);
-                    } else { int32_t a = in[0].i, b = in[1].i;
-                        r = (op == SCRIPT_OP_LOGIC_CMP_EQ) ? (a == b) : (op == SCRIPT_OP_LOGIC_CMP_NE) ? (a != b) :
-                            (op == SCRIPT_OP_LOGIC_CMP_LT) ? (a < b) : (op == SCRIPT_OP_LOGIC_CMP_LE) ? (a <= b) :
-                            (op == SCRIPT_OP_LOGIC_CMP_GT) ? (a > b) : (a >= b);
-                    }
-                    if (num) out.n = Number(r ? 1 : 0); else out.i = r ? 1 : 0;
-                    break;
-                }
                 case SCRIPT_OP_LOGIC_SELECT: {
                     if (n < 3) return SCRIPT_ERR_OPERAND;
                     bool cond = num ? (in[0].n.Value != 0) : (in[0].i != 0);
@@ -1270,24 +1323,12 @@ static uint8_t ScriptExecMath(LoadedScript *s, const ScriptLineInfo &ln, const u
     return SCRIPT_ERR_NONE;
 }
 
-// Evaluates an operand as a truth value.
-static bool ScriptOperandTruthy(LoadedScript *s, const uint8_t *sym, bool &ok) {
-    uint8_t scratch[4];
-    const uint8_t *data = nullptr;
-    uint8_t size = 0;
-    uint16_t dtype = 0;
-    ok = false;
-    if (!ScriptResolve(s, sym[0], sym[1], ScriptSymVal(sym), scratch, &data, &size, &dtype)) return false;
-    ok = ScriptIsNumericDtype(dtype) && ScriptLoadInt(data, size, dtype == (uint16_t)DataType::Index) != 0;
-    return true;
-}
-
 static uint8_t ScriptExecFlow(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase, uint8_t op) {
     switch (op) {
         case SCRIPT_OP_FLOW_IF: {
             if (ln.opCount < 1) return SCRIPT_ERR_OPERAND;
             bool ok = false;
-            if (!ScriptOperandTruthy(s, opbase, ok)) return SCRIPT_ERR_OPERAND;
+            if (!ScriptExprTruthy(s, opbase, ln.opCount, ok)) return SCRIPT_ERR_OPERAND;
             uint16_t match = s->blockMatch[s->ic];
             s->ic = ok ? s->ic + 1 : (match == 0xFFFF ? s->ic + 1 : match + 1);
             return SCRIPT_ERR_NONE;
@@ -1295,7 +1336,7 @@ static uint8_t ScriptExecFlow(LoadedScript *s, const ScriptLineInfo &ln, const u
         case SCRIPT_OP_FLOW_WHILE: {
             if (ln.opCount < 1) return SCRIPT_ERR_OPERAND;
             bool ok = false;
-            if (!ScriptOperandTruthy(s, opbase, ok)) return SCRIPT_ERR_OPERAND;
+            if (!ScriptExprTruthy(s, opbase, ln.opCount, ok)) return SCRIPT_ERR_OPERAND;
             uint16_t match = s->blockMatch[s->ic];
             s->ic = ok ? s->ic + 1 : (match == 0xFFFF ? s->ic + 1 : match + 1);
             return SCRIPT_ERR_NONE;
@@ -1354,7 +1395,7 @@ static uint8_t ScriptExecTime(LoadedScript *s, const ScriptLineInfo &ln, const u
         case SCRIPT_OP_TIME_WAIT: {
             if (ln.opCount < 1) return SCRIPT_ERR_OPERAND;
             bool ok = false;
-            if (!ScriptOperandTruthy(s, opbase, ok)) return SCRIPT_ERR_OPERAND;
+            if (!ScriptExprTruthy(s, opbase, ln.opCount, ok)) return SCRIPT_ERR_OPERAND;
             if (!ok) {
                 s->waitingOnTime = false;
                 s->state = (uint8_t)ScriptState::Waiting;

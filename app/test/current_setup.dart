@@ -571,12 +571,11 @@ ScriptDraft scriptLidTimer() {
     _var('openP', DataType.number, 4),
     _var('ty', DataType.number, 4),
     _var('mat', DataType.matrix, 28),
-    _var('cond', DataType.bool_, 1),
   ]);
 
   /// mat = IDENT with translation ty, written to the lid geometry field.
   List<ScriptLine> applyLid(int regConst) => [
-        _line([_v(6)], _ins(catMath, 0), [_c(2)]), // mat = IDENT
+        _line([_v(6)], _ins(catMath, 0), [_c(2)]), // Set mat = IDENT
         _line([_v(6)], _ins(catCompose, 0), [_idx(5), _v(5)]), // mat[1,2] = ty
         _line([], _ins(catService, 2), [_c(regConst), _v(6)]), // write[reg] = mat
       ];
@@ -584,23 +583,24 @@ ScriptDraft scriptLidTimer() {
   d.lines.addAll([
     _line([], _ins(catFlow, 1), [_true()]), // While true
     _line([_v(0)], _ins(catTime, 2)), // t0 = Get time
-    _line([_v(7)], _ins(catMath, 0), [_true()]), // cond = true
-    _line([], _ins(catFlow, 1), [_v(7)]), // While cond  (blink: no delay -> fastest update)
     _line([_v(1)], _ins(catTime, 2)), // now = Get time
+    // While (now - t0) < BLINK_MS  (the blink: no delay -> fastest update)
+    _line([], _ins(catFlow, 1), [
+      _op(mathOpOpenParen), _v(1), _op(1), _v(0), _op(mathOpCloseParen), _op(14), _c(6),
+    ]),
     _line([_v(2)], _ins(catMath, 0), [_v(1), _op(1), _v(0)]), // Set elapsed = now - t0
     _line([_v(3)], _ins(catMath, 0), [_v(2), _op(3), _c(5)]), // Set closeP = elapsed / MOVE_MS
-    _line([_v(3)], _ins(catMath, 10), [_v(3), _idx(0), _idx(1)]), // Set closeP = Limit(closeP, 0, 1)
+    _line([_v(3)], _ins(catMath, 10), [_v(3), _idx(0), _idx(1)]), // closeP = Limit(closeP, 0, 1)
     _line([_v(4)], _ins(catMath, 0), [
       _op(mathOpOpenParen), _v(2), _op(1), _c(5), _op(mathOpCloseParen), _op(3), _c(5),
     ]), // Set openP = (elapsed - MOVE_MS) / MOVE_MS
-    _line([_v(4)], _ins(catMath, 10), [_v(4), _idx(0), _idx(1)]), // Set openP = Limit(openP, 0, 1)
+    _line([_v(4)], _ins(catMath, 10), [_v(4), _idx(0), _idx(1)]), // openP = Limit(openP, 0, 1)
     _line([_v(5)], _ins(catMath, 0), [
       _op(mathOpOpenParen), _v(3), _op(1), _v(4), _op(mathOpCloseParen), _op(2), _c(4), _op(0), _c(3),
     ]), // Set ty = (closeP - openP) * DELTA + OPEN_TY
     ...applyLid(0),
     ...applyLid(1),
-    // Recompute `cond` INSIDE the loop (the While re-reads its operand).
-    _line([_v(7)], _ins(catLogic, 8), [_v(2), _c(6)]), // cond = elapsed < BLINK_MS
+    _line([_v(1)], _ins(catTime, 2)), // now = Get time  (the While re-reads the condition)
     _line([], _ins(catFlow, 2)), // EndBlock
     // Movement finished: park the lid open and wait exactly WAIT_MS for the next blink.
     _line([_v(5)], _ins(catMath, 0), [_c(3)]), // Set ty = OPEN_TY

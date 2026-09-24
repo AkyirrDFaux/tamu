@@ -949,8 +949,18 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
         1 => '−',
         2 => '×',
         3 => '÷',
-        4 => 'mod',
+        4 => '%',
         5 => '^',
+        6 => 'AND',
+        7 => 'OR',
+        8 => 'XOR',
+        9 => 'NOT',
+        12 => '==',
+        13 => '!=',
+        14 => '<',
+        15 => '<=',
+        16 => '>',
+        17 => '>=',
         18 => '(',
         19 => ')',
         _ => '?'
@@ -1298,7 +1308,15 @@ class _SymbolPickerState extends State<_SymbolPicker> {
     bool isBool(DataType t) => t == DataType.bool_;
     bool numeric(DataType t) => scriptTypeIsNumeric(t.value);
 
-    if (widget.destination) {
+    if (widget.def?.expression == true) {
+      // An expression: values plus a few common operators.
+      addVarsWhere(any);
+      addConstsWhere(any);
+      candidates.add(ScriptSymbol.predefine(preMathOp, 0)); // +
+      candidates.add(ScriptSymbol.predefine(preMathOp, 6)); // AND
+      candidates.add(ScriptSymbol.predefine(preMathOp, 16)); // >
+      candidates.add(ScriptSymbol.predefine(preBool, 1));
+    } else if (widget.destination) {
       addVarsWhere(any); // writable first
       for (var i = 0; i < draft.outputs.length; i++) {
         candidates.add(ScriptSymbol.output(i));
@@ -1350,10 +1368,10 @@ class _SymbolPickerState extends State<_SymbolPicker> {
     if (_constantOnly) return 'Register address (a 4-byte BlockInfo constant)';
     if (_addressOperand) return 'Device address (Id)';
     if (_targetOperand) return 'Target line index';
-    if (_conditionOperand) return 'Boolean condition';
     if (widget.def?.expression == true) {
-      return 'Expression: values and operators (+, −, ×, ÷, ^, parentheses)';
+      return 'Expression: values and operators (+ − × ÷ % ^, AND OR XOR NOT, comparisons, parentheses)';
     }
+    if (_conditionOperand) return 'Boolean condition';
     if (_numericOperand) return 'Numeric value';
     return null;
   }
