@@ -217,10 +217,10 @@ class DialogBody extends StatelessWidget {
     var available = MediaQuery.sizeOf(context).height - 180;
     if (available < 120) available = 120;
     final h = height == null || height! < available ? height : available;
-    return ConstrainedBox(
-      constraints: BoxConstraints(maxWidth: maxWidth),
-      child: SizedBox(width: double.infinity, height: h, child: child),
-    );
+    // Use a FINITE width. `width: double.infinity` has an infinite intrinsic width, which
+    // makes AlertDialog's IntrinsicWidth recurse without bound (the dialog freezes on open).
+    // A finite SizedBox still shrinks to a narrower parent / dialog.
+    return SizedBox(width: maxWidth, height: h, child: child);
   }
 }
 
