@@ -124,6 +124,108 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
   `Get time` type, malformed-DT and oversized-write (both verified to fail before the fix),
   short-string padding; app unit test for the `Get time` destination. All 10 HIL suites +
   the four setup scripts re-verified on hardware.
+- [x] **Current setup v2** (`Docs/Current setup v2.md`, supersedes v1): the eye render blocks
+  gained a 9th part - a **Circle Cut** that carves the iris into the dark-mode "edge only"
+  ring (`Vysi1Display::MaxCachedFields` 8 -> 12). The blocks are built in **light** mode and
+  script 4 switches each eye to dark on its own (black background, ring enabled, light-green
+  wider pupil). The four scripts now take their tunables as **inputs** (Register/UI-drivable,
+  with slider/toggle specs): temperature target + P constant (`duty = clamp(P*(temp-target),
+  0, 100)`, both-NTC average), eye offset (Vector2, x mirrored for the right eye) + sensitivity
+  (Matrix 2x3, a plain XYZ->XY matrix multiply via `Extract`), blink delay (10 s) + movement
+  time (200 ms), and manual/auto light-dark + per-eye manual selection. New HIL coverage: a
+  `Cut` ring and a 9-part scene in `hil_led_display_test`, and the setup test drives the mode
+  (dark -> light) and the P controller through the inputs. Fixed `ScriptClient.writeEntry`,
+  which reported a failed key-0 write as success and a successful key != 0 write as failure
+  (the CID 2 reply is a payload echo, not a status byte).
+- [x] **LED transfer curve + ring look**: `Vysi1Display`'s `GammaTable` applied `in^(1/1.8)` -
+  the *brightening* direction - so dark colours were badly lifted (32 -> 80). It now applies
+  the stated gamma in the correct direction (`255*(in/255)^1.8`, 32 -> 6). The per-frame
+  Brightness is applied **after** the curve (it used to scale first, so "5%" landed at ~19%
+  duty); the same brightness value is now the true LED duty, so the setup's 5-20% range reads
+  ~2x dimmer than before. The dark-mode ring cut was widened (6.4 -> 7.2 px inner diameter) for
+  a thinner "edge only" band.
+- [x] **v2 look capture**: the eye values hand-tuned on the device (left eye) were folded into
+  the builder and applied to both eyes - the iris gradient brightened to (0,242,0)/(0,153,0)
+  and the ring's inner (Cut) edge given `Fade = 0.6` (it had been left at the default, so the
+  ring's inside was hard). The pupil now keeps **one** size (the original 2.4 x 5.0) in both
+  modes, and the dark-mode pupil is a **desaturated dark green** (120,150,120) rather than a
+  wider light green - both matching the updated `Docs/Current setup v2.md`. The captured
+  values are pinned by setup-test assertions so they cannot drift.
+- [x] **LDR calibration (v2)**: the lux subscription deadzone tightened to **0.1 lux**
+  (`luxDeadzone`), the dark/light line to **~1 lux** (`darkLux`), and the brightness map to
+  **5..70 %** over **0..50 000 lux** (`luxBrightMin`/`luxBrightMax`/`luxSpan`). The display's
+  initial value is now the floor (brightness == LED duty after the transfer-curve fix), and the
+  setup test bounds the driven brightness to the band.
+- [x] **Delta-subscription scalar deadzone**: the trigger never applied the deadzone to scalar
+  Numbers - `SubscriptionsDeltaHash` returned the raw 16.16 bits, so a noisy scalar (the LDR
+  lux) sent on every bit of jitter (up to the minimum interval) while a stable one (the NTC)
+  stayed quiet, and the deadzone value had no effect on scalars at all. Scalars
+  (Number/Index/Uint32) now compare the change magnitude against the deadzone (Docs: "Checks
+  distance ... Last scalar value"), with the last sent value kept in Hash/Hashlike. New HIL
+  test drives a script input as the source: +1 with deadzone 5 is not sent, +10 is (verified
+  to fail before the fix). The root cause was compounded by the requester confirming **every**
+  value update: the confirmation carries an FNV hash and `HandleProviderConfirmation` writes it
+  straight into the provider's Hash/Hashlike, clobbering the delta trigger's last-scalar state
+  on any **remote** provider (a self-loopback never confirms, so a core-local test passed while
+  the DAS kept streaming). The requester now confirms only for `OnChangeConfirm`, per the docs
+  ("request is confirmation if needed") - which also removes a redundant packet per update for
+  every other trigger (edge counters were being clobbered the same way). A second HIL test
+  checks that the DAS provider's Hash equals the last sent scalar (verified to fail before).
+- [x] **Delta-subscription vector deadzone**: the vector path sent on any change of its
+  subresolution hashlike. Per the docs ("Checks distance (euclidian for vectors)" ... "sends
+  sooner if the threshold is reached") it now gates on the euclidean distance: the provider
+  keeps the last sent vector (3 int32 axes; +48 B on the DAS's 4-entry table) and sends when
+  the squared distance reaches the squared deadzone (saturating 32-bit maths, no libgcc on the
+  DAS). The subresolution pack stays the reported hashlike. New HIL test (AccGyr source, long
+  period): a huge deadzone sends only the first value, a tiny one keeps updating (verified to
+  fail before).
+- [x] **LDR lux recalibration** (`datasheet/dsh.520-084.1.pdf`): the board's part is the GL55
+  **5-10 kOhm** variant (R at 10 lux), and `MeasLDR10K` no longer uses the old `180/R`
+  approximation (which assumed R10 = 18 kOhm, gamma = 1). It now implements the datasheet
+  relation `R(E) = R10*(E/10)^-gamma` => `E = 10^(1 + (log10(R10) - log10(R_ref) -
+  log10(ratio))/gamma)`, with `LDR_R10_KOHM` / `LDR_GAMMA` as the calibration knobs
+  (defaults 7.5 and 0.6, the latter read off Fig. 2). Everything stays in the log domain so no
+  intermediate overflows Q16.16, and `Number.h` gained `log10`/`pow10` (the antilog is a binary
+  expansion of precomputed `10^(2^-i)` constants, multiplies only - the DAS pulls in no
+  libgcc). Verified with a host build of `Number.h` against the closed form (agrees within the
+  existing `log` approximation's ~10%). The DAS reports lux as a Q16.16 Number so it saturates
+  at ~31623; the setup's `luxSpan` is 30000 so the 70% cap is reachable. Flashed to the DAS
+  and verified on hardware (the same ADC sample: firmware 3.65 lux, closed form 3.98, old
+  formula 13.8). Still wants a lux-meter calibration of R10 (the part is only specified as
+  5-10 kOhm).
+- [x] **Brightness curve**: the lux -> brightness map was linear, so a phone flashlight
+  (~10k lux) only reached ~27%. It is now `MIN + (MAX-MIN)*(lux/luxSpan)^0.25` - a compressive
+  curve (with `^0.25` spelled as two `^0.5`s, since the expression only has `^0.5` and integer
+  powers). Measured on hardware by driving the lux inputs directly: 1 lux -> 9.8%, 100 -> 20.6%,
+  1000 -> 32.8%, **10000 -> 54.4%**, 30000 -> 70% (the cap).
+- [x] **Dark-mode look revision**: dark mode now uses a regular **filled** iris - the Circle
+  Cut ring is gone, so the eye block is 8 parts again (the eye script no longer writes a ring
+  position) - with a really dark green gradient (0,90,0)/(0,45,0) and a slightly lighter
+  desaturated dark-green pupil (140,170,140). The pupil size stays 2.4x5.0 in both modes. A
+  mode change now rewrites the iris gradient, the background and the pupil colour. Added
+  `app/test/current_setup_test.dart` (host-only) so the setup builder's script structure and
+  constant wiring are validated without hardware; verified the switch on the device (dark: bg
+  black, iris (0,90,0), pupil (140,170,140); light: bg white, iris (0,242,0)) and that the two
+  eyes switch independently.
+- [x] **Dark-mode iris/pupil tuning + pupil-edge fix**: captured the tuned dark colours (iris
+  `0x008C00`/`0x006600`, pupil `0xB3AD74`) and fixed the "edges go to a completely different
+  tone" artefact. It was **not** the gamma table (that is per-channel identical, so it cannot
+  shift a hue): the pupil's half-height was **5.0** against the iris radius **4.5**, and the
+  eye script wrote the pupil at **twice** the iris's travel (half-offset parallax), so the
+  pupil's tone slid outside the iris circle - most visible once the pupil became a light khaki
+  on black, and only when the eye looked sideways ("sometimes"). The iris, pupil and iris fade
+  now share **one** position and the pupil's half-height is **4.0**, so it stays inside. Both
+  are asserted in the setup test (shared position + `halfH < iris radius`).
+- [x] **Correct compositing order (low-brightness colour quality)**: the renderer filled and
+  alpha-blended the authored (sRGB-ish) colours and applied the transfer curve only at the very
+  end, so blends and gradients mixed *encoded* values and low-brightness partial-alpha edges
+  quantised to the wrong tones - which is what the "edge goes to a different tone" report was
+  really about. Colours are now linearised **once**, as they enter the render buffer
+  (`Vysi1Display::Linearise`), so all alpha compositing happens in linear light and the frame
+  ends with just the Brightness scale. Flat (alpha-1) fills are numerically identical to
+  before, so the tuned colours are unchanged; only blended/anti-aliased pixels improve. (The
+  Contrast/Brightness *effects* now act on linear values too, which is physically right but
+  visually stronger.) The pupil size was restored to 2.4x5.0 as requested.
 ## 2. Blocks/modules + subscriptions
 - [x] **Block/module schema alignment** (docs-driven): Button reduced to field 0; LED-Button
       = Button (0) + LEDState (3) with reserved 1-2; Acc&Gyr deadzones removed (Acceleration

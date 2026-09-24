@@ -1,4 +1,11 @@
-// Gamma = 1.8
+// Output transfer curve: linear = 255 * (sRGB/255)^1.8 (GammaTable).
+//
+// A WS2812-style LED is LINEAR in PWM duty, while the render dictionary's colours are
+// authored perceptually (sRGB-like). The curve therefore DARKENS the low end (exponent > 1);
+// it used to apply 1/1.8, which lifted dark colours instead. Colours are now linearised ONCE,
+// as they enter the render buffer (see Linearise) - so alpha compositing happens in linear
+// light and the frame ends with just the Brightness scale. Blending encoded values and
+// applying the curve afterwards quantised partial-alpha edges wrongly at low brightness.
 
 #include "Blocks/Render.h"
 #include "Core/Functions/Memory.h"
@@ -6,22 +13,31 @@
 #include "Core/Types/Vector.h"
 
 const uint8_t GammaTable[256] = {
-    0, 12, 17, 22, 25, 29, 32, 35, 37, 40, 42, 44, 47, 49, 51, 53,
-    55, 57, 58, 60, 62, 64, 65, 67, 69, 70, 72, 73, 75, 76, 78, 79,
-    80, 82, 83, 85, 86, 87, 89, 90, 91, 92, 94, 95, 96, 97, 98, 100,
-    101, 102, 103, 104, 105, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117,
-    118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133,
-    134, 135, 136, 137, 138, 139, 139, 140, 141, 142, 143, 144, 145, 146, 146, 147,
-    148, 149, 150, 151, 152, 152, 153, 154, 155, 156, 157, 157, 158, 159, 160, 161,
-    161, 162, 163, 164, 165, 165, 166, 167, 168, 169, 169, 170, 171, 172, 172, 173,
-    174, 175, 175, 176, 177, 178, 178, 179, 180, 181, 181, 182, 183, 183, 184, 185,
-    186, 186, 187, 188, 188, 189, 190, 191, 191, 192, 193, 193, 194, 195, 195, 196,
-    197, 198, 198, 199, 200, 200, 201, 202, 202, 203, 204, 204, 205, 206, 206, 207,
-    208, 208, 209, 209, 210, 211, 211, 212, 213, 213, 214, 215, 215, 216, 217, 217,
-    218, 218, 219, 220, 220, 221, 222, 222, 223, 223, 224, 225, 225, 226, 226, 227,
-    228, 228, 229, 230, 230, 231, 231, 232, 233, 233, 234, 234, 235, 236, 236, 237,
-    237, 238, 238, 239, 240, 240, 241, 241, 242, 243, 243, 244, 244, 245, 245, 246,
-    247, 247, 248, 248, 249, 249, 250, 251, 251, 252, 252, 253, 253, 254, 254, 255};
+      0,   0,   0,   0,   0,   0,   0,   0,   1,   1,   1,   1,   1,   1,   1,   2,
+      2,   2,   2,   2,   3,   3,   3,   3,   4,   4,   4,   4,   5,   5,   5,   6,
+      6,   6,   7,   7,   8,   8,   8,   9,   9,  10,  10,  10,  11,  11,  12,  12,
+     13,  13,  14,  14,  15,  15,  16,  16,  17,  17,  18,  18,  19,  19,  20,  21,
+     21,  22,  22,  23,  24,  24,  25,  26,  26,  27,  28,  28,  29,  30,  30,  31,
+     32,  32,  33,  34,  35,  35,  36,  37,  38,  38,  39,  40,  41,  41,  42,  43,
+     44,  45,  46,  46,  47,  48,  49,  50,  51,  52,  53,  53,  54,  55,  56,  57,
+     58,  59,  60,  61,  62,  63,  64,  65,  66,  67,  68,  69,  70,  71,  72,  73,
+     74,  75,  76,  77,  78,  79,  80,  81,  82,  83,  84,  86,  87,  88,  89,  90,
+     91,  92,  93,  95,  96,  97,  98,  99, 100, 102, 103, 104, 105, 107, 108, 109,
+    110, 111, 113, 114, 115, 116, 118, 119, 120, 122, 123, 124, 126, 127, 128, 129,
+    131, 132, 134, 135, 136, 138, 139, 140, 142, 143, 145, 146, 147, 149, 150, 152,
+    153, 154, 156, 157, 159, 160, 162, 163, 165, 166, 168, 169, 171, 172, 174, 175,
+    177, 178, 180, 181, 183, 184, 186, 188, 189, 191, 192, 194, 195, 197, 199, 200,
+    202, 204, 205, 207, 208, 210, 212, 213, 215, 217, 218, 220, 222, 224, 225, 227,
+    229, 230, 232, 234, 236, 237, 239, 241, 243, 244, 246, 248, 250, 251, 253, 255};
+
+// Convert an authored (sRGB-ish) colour to the linear LED-duty domain. Colours are linearised
+// as they enter the render buffer, so every alpha blend / composite below happens in linear
+// light (blending encoded values and applying the curve afterwards quantises partial-alpha
+// edges wrongly, especially at low brightness).
+inline ColourClass Linearise(ColourClass c)
+{
+    return ColourClass(GammaTable[c.R], GammaTable[c.G], GammaTable[c.B], c.A);
+}
 
 const uint8_t LayoutVysiv1_0[10 * 11]{
     0, 0, 0, 28, 29, 48, 49, 68, 0, 0, 0,
@@ -131,7 +147,9 @@ class Vysi1Display
 public:
     static const uint32_t MaxLayoutEntries = 256;
     static const uint32_t LedNum = 86;
-    static const uint32_t MaxCachedFields = 8;
+    // Maximum render "parts" (geometry/texture fields) cached per block; 12 leaves headroom
+    // for richer scenes.
+    static const uint32_t MaxCachedFields = 12;
 
     Vysi1Struct Data;
     uint16_t Layout[MaxLayoutEntries];
@@ -583,7 +601,7 @@ inline void Vysi1Display::RenderTextureField(DynamicBlockDescriptor *block, uint
             uint8_t a = Mask[led];
             if (a == 0)
                 continue;
-            Buffer[led].Layer(colour, ByteToPercent(a));
+            Buffer[led].Layer(Linearise(colour), ByteToPercent(a));
         }
         break;
     }
@@ -606,7 +624,7 @@ inline void Vysi1Display::RenderTextureField(DynamicBlockDescriptor *block, uint
             Number t = (type == Textures2D::GradientLinear)
                 ? LimitZeroToOne(p2[0] / extent + N(0.5))
                 : LimitZeroToOne(p2.norm2() / extent);
-            Buffer[led].Layer(LerpColour(c1, c2, t), ByteToPercent(a));
+            Buffer[led].Layer(Linearise(LerpColour(c1, c2, t)), ByteToPercent(a));
         }
         break;
     }
@@ -817,12 +835,12 @@ inline void Vysi1Display::Render()
         }
     }
 
-    // Apply Brightness only (the mask/texture alpha is already baked into the RGB by
-    // ColourClass::Layer against the cleared buffer; scaling by Buffer.A again would
-    // square the alpha so a 50% mask would render at 25%).
+    // The render buffer already holds linear LED duty (colours are linearised as they are
+    // filled, see Linearise), so only scale by Brightness here.
     Number brightness = Data.Brightness;
     if (brightness < N(0)) brightness = N(0);
-    uint32_t brightness_scale = (brightness >= 100) ? 255 : ((brightness * 255) / 100).ToInt();
+    // 256-scale so full brightness maps to exactly 255 after the >>8.
+    uint32_t brightness_scale = (brightness >= 100) ? 256 : ((brightness * 256) / 100).ToInt();
 
     for (uint16_t i = 0; i < LedNum; i++)
     {
@@ -830,8 +848,8 @@ inline void Vysi1Display::Render()
         uint32_t g = (Buffer[i].G * brightness_scale) >> 8;
         uint32_t b = (Buffer[i].B * brightness_scale) >> 8;
 
-        Buffer[i].R = GammaTable[r > 255 ? 255 : r];
-        Buffer[i].G = GammaTable[g > 255 ? 255 : g];
-        Buffer[i].B = GammaTable[b > 255 ? 255 : b];
+        Buffer[i].R = r > 255 ? 255 : r;
+        Buffer[i].G = g > 255 ? 255 : g;
+        Buffer[i].B = b > 255 ? 255 : b;
     }
 }

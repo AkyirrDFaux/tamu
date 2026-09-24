@@ -368,6 +368,33 @@ inline Number log(Number x)
     return Number::FromRaw((log2_count * LN2) + ln_m);
 }
 
+// Base-10 logarithm (natural log scaled by 1/ln 10).
+inline Number log10(Number x) { return log(x) / Number::FromRaw(150902); } // 1/ln10 in 16.16
+
+// 10^y for any finite y (multiplies only, so 32-bit targets pull in no libgcc helper).
+// 10^frac is built from the binary expansion of the fraction: for every set bit i of the
+// Q16.16 fraction, multiply by 10^(2^-i) (the table below), which is exact to the table's
+// 16-bit resolution. Saturates at the Q16.16 ceiling (~32767) and returns ~0 for very
+// negative y.
+inline Number pow10(Number y)
+{
+    if (y.Value < 0) return Number(1) / pow10(-y);
+    // 10^4.5 = 31623, safely inside the Q16.16 range; saturate beyond it.
+    if (y.Value >= 294912) return Number::FromRaw(31623 << DECIMAL);
+
+    int32_t n = y.Value >> DECIMAL;                 // 0..4
+    int32_t frac = y.Value & 0xFFFF;                // Q16.16 fraction
+    // 10^(2^-i) for i = 1..16.
+    static const int32_t bits[16] = {
+        207243, 116541,  87394,  75680,  70425,  67937,  66726,  66128,
+         65831,  65684,  65610,  65573,  65554,  65545,  65541,  65538};
+    Number result(1);
+    for (uint8_t i = 0; i < 16; i++)
+        if (frac & (int32_t)(0x8000u >> i)) result = result * Number::FromRaw(bits[i]);
+    while (n-- > 0) result = result * Number(10);
+    return result;
+}
+
 // Returns the smaller of `A` and `B` (fixed-point)
 inline Number min(Number A, Number B) { return (A.Value < B.Value) ? A : B; }
 // Returns the larger of `A` and `B` (fixed-point)

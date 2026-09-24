@@ -179,6 +179,13 @@ enum MeasSensorType : uint8_t
     MeasNTC100K = 5, // 100k nominal (R0=100k, B=3950)
 };
 
+// LDR calibration (datasheet/dsh.520-084.1.pdf): the board's part is the GL55 5-10 kOhm
+// variant - light resistance at 10 lux is 5..10 kOhm, and the illuminance-resistance slope
+// gamma = lg(R10/R100) is ~0.6 (Fig. 2). Calibrate both against a lux meter for the actual
+// part: R10 sets the level, gamma sets the slope across the decades.
+#define LDR_R10_KOHM 7.5
+#define LDR_GAMMA    0.6
+
 // Filter state for each channel (kept outside the block so the block layout stays exactly
 // the five documented fields). The CONVERTED measurement is EMA-filtered; the history is
 // re-seeded whenever the auto-range switches the excitation scale.
@@ -255,13 +262,18 @@ static void Measuring_Update(uint8_t index, ResistiveMeasStruct *m, uint16_t raw
         break;
     }
 
-    case MeasLDR10K: // lux, inverse-relation approximation for a 10k divider (Sensors.h)
+    case MeasLDR10K: // lux from the GL55 CdS photoresistor (datasheet/dsh.520-084.1.pdf)
     {
+        // ratio = in/(ADCRES-in) = R_sensor/R_ref, and the datasheet relation
+        //   R(E) = R10 * (E/10)^-gamma  =>  E = 10 * (R10/(R_ref*ratio))^(1/gamma)
+        //        = 10^(1 + (log10(R10) - log10(R_ref) - log10(ratio))/gamma).
+        // Working in the log domain keeps every intermediate well inside Q16.16 (the
+        // resistance itself would overflow for the 330k reference and underflow for 330R).
         if (in < N(1)) in = N(1);
-        // (ADCRES - in)/in = R_ref/R_sensor. Auto-range can select the 330R or
-        // 330k reference, so normalize the ratio back to the 10k reference the
-        // formula assumes: * (10k / Rref_actual).
-        in = N(18.0) * ((ADCRES - in) / in) * (N(10.0) / Rref_kohm[range]);
+        if (in > N(1022)) in = N(1022);
+        Number ratio = in / (ADCRES - in);
+        Number decades = (log10(N(LDR_R10_KOHM)) - log10(Rref_kohm[range]) - log10(ratio)) / N(LDR_GAMMA);
+        in = pow10(N(1) + decades);
         break;
     }
 

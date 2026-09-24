@@ -1,6 +1,6 @@
-/// Builds the evaluation scenario described in `Docs/Current setup.md`:
-/// 2x DAS (NTC on ch1, LDR on ch2), 2x LED display eyes, 1x fan, the
-/// "Subscriptions" scratch block, and the four scripts.
+/// Builds the evaluation scenario described in `Docs/Current setup v2.md`:
+/// 2x DAS (NTC on ch1, LDR on ch2), 2x LED display eyes (light/dark mode), 1x fan, the
+/// "Subscriptions" scratch block, and the four scripts with their documented inputs.
 ///
 /// This is a test-side tool (not production UI): it drives the existing
 /// [RegisterClient]/[SubscriptionClient]/[ScriptClient]/[StorageClient] to
@@ -49,15 +49,17 @@ const int fLuxA = 1;
 const int fTempB = 2;
 const int fLuxB = 3;
 
-/// Eye render-block field indexes (interleaved geometry/texture parts).
-const int eyeBgGeo = 0; // Fill (white background)
-const int eyeBgTex = 1; // Texture Fill white
-const int eyeIrisGeo = 2; // Circle
+/// Eye render-block field indexes (interleaved geometry/texture parts). Part order is
+/// significant: a geometry sets the mask, the textures after it fill it.
+const int eyeBgGeo = 0; // Fill (background)
+const int eyeBgTex = 1; // Texture Fill (light: white, dark: black)
+const int eyeIrisGeo = 2; // Circle (iris)
 const int eyeIrisTex = 3; // Texture GradientLinear (green, horizontal fade)
 const int eyePupilGeo = 4; // DoubleParabola
-const int eyePupilTex = 5; // Texture Fill black
+const int eyePupilTex = 5; // Texture Fill (light: black, dark: dark green)
 const int eyeLidGeo = 6; // HalfFill (closes from the top)
 const int eyeLidTex = 7; // Texture Fill black
+const int eyePartCount = 8;
 
 /// Eye render keys.
 const int gkShape = 1;
@@ -73,9 +75,9 @@ const int tkColour2 = 5;
 
 /// Geometry / texture enum values (Blocks/Render.h).
 const int shapeFill = 1;
+const int shapeHalfFill = 2;
 const int shapeCircle = 6;
 const int shapeDoubleParabola = 8;
-const int shapeHalfFill = 2;
 const int opReplace = 0;
 const int texFill = 1;
 const int texGradientLinear = 2;
@@ -84,23 +86,28 @@ const int texGradientLinear = 2;
 const int sensorNtc100k = 5; // the DAS ch1 NTC is a 100 kohm part (firmware default)
 const int sensorLdr10k = 3;
 
-/// Eye look (values tuned on the device; applied to both eyes).
-const double irisDiameter = 9; // px
+/// Eye look. The blocks are built in light mode; the brightness script writes the dark-mode
+/// values in on a mode change. Both modes use a filled iris (no ring).
+const double irisDiameter = 9; // px (outer)
 const double irisFade = 0.6;
 // Iris texture: a light horizontal fade, left brighter -> right darker, centred on the
 // pupil (the eye script writes the texture Position to the pupil position).
-const int irisR1 = 0, irisG1 = 150, irisB1 = 0; // brighter (left)
-const int irisR2 = 0, irisG2 = 45, irisB2 = 0; // darker (right)
-const double pupilHalfW = 2.4; // DoubleParabola half-width
+const int irisR1 = 0, irisG1 = 242, irisB1 = 0; // light mode: brighter (left)
+const int irisR2 = 0, irisG2 = 153, irisB2 = 0; // light mode: darker (right)
+const double pupilHalfW = 2.4; // DoubleParabola half-width (same in both modes)
 const double pupilHalfH = 5.0; // DoubleParabola half-height
 const double pupilFade = 0.6;
 const double lidFade = 4.0;
 
-/// Base eye position offset (iris+pupil) in display space: move the eye inward and
-/// slightly up. The right eye mirrors the horizontal component. The vertical sign is
-/// negative because +y in the render space points down on these mounted displays.
-const double eyeBaseIn = 1.0; // px toward the face centre
-const double eyeBaseUp = -0.5; // px up (negative y)
+/// Dark-mode look (written by script 4 on a mode change), as tuned on the device.
+const int darkIrisR1 = 0, darkIrisG1 = 140, darkIrisB1 = 0; // 0x008C00, brighter (left)
+const int darkIrisR2 = 0, darkIrisG2 = 102, darkIrisB2 = 0; // 0x006600, darker (right)
+const int darkPupilR = 179, darkPupilG = 173, darkPupilB = 116; // 0xB3AD74
+
+/// Eye movement defaults (script 2 inputs).
+const double eyeOffsetX = 1.0; // px toward the face centre (Input 0.x; flipped for the right eye)
+const double eyeOffsetY = -0.5; // px up (+y in the render space points down on the mounted displays)
+const double eyeLimit = 3.0; // px clamp (safety, internal)
 
 /// Display Offset matrices (2x3 affine, raw wire bytes) - the mounting rotations fixed
 /// on the device. Left is mounted ~180 deg, right ~5 deg.
@@ -111,18 +118,21 @@ const List<int> dispRightOffset = [
   2, 0, 3, 0, 250, 254, 0, 0, 70, 22, 0, 0, 0, 0, 0, 0, 186, 233, 255, 255, 250, 254, 0, 0, 0, 0, 0, 0,
 ];
 
-/// Script constants (tunable).
-const double tempMin = 20; // degC -> 0%
-const double tempMax = 40; // degC -> 100%
-const double luxBrightMin = 5; // % in the dark
-const double luxBrightMax = 20; // % in bright ambient (kept low: high LED current browns out the board)
-const double luxSpan = 500; // lux for the full brightness swing
-const double eyeScale = 1.0; // px per rad/s
-const double eyeLimit = 3.0; // px clamp
+/// Script tunables / input defaults (Docs/Current setup v2.md).
+const double targetTemp = 30; // degC (script 1 Input 0)
+const double pGain = 4; // %/degC (script 1 Input 1)
+const double luxBrightMin = 5; // % at 0 lux
+const double luxBrightMax = 70; // % cap
+// Brightness = MIN + (MAX-MIN) * (lux/luxSpan)^0.25, clamped: a compressive curve, so a phone
+// flashlight (~10k lux) is already past half (54%) while a dim room stays low. luxSpan is the
+// lux at which the cap is reached (the DAS saturates at ~31623 as a Q16.16 Number).
+const double luxSpan = 30000; // lux at which the brightness cap is reached
+const double darkLux = 1; // below this lux the eye switches to dark mode in auto
+const double luxDeadzone = 0.1; // lux: LDR subscription change deadzone
 const double lidOpenTy = -5.5; // half-fill line below the screen (open)
 const double lidClosedTy = 5.5; // half-fill line above the screen (closed)
-const int lidWaitMs = 10000; // open time between blinks
-const int lidMoveMs = 100; // close/open movement time
+const int lidWaitMs = 10000; // default blink interval between blinks (script 3 Input 0, ms)
+const int lidMoveMs = 200; // default movement time each way (script 3 Input 1, ms)
 
 // ---------------------------------------------------------------------------
 // Small wire helpers
@@ -261,7 +271,7 @@ Future<void> buildEyeBlock(RegisterClient reg, int block, String name) async {
   await setDynEntry(reg, block, eyeBgTex, tkType, DataType.enum_, enumByte(texFill));
   await setDynEntry(reg, block, eyeBgTex, tkColour1, DataType.colour, colour(255, 255, 255));
 
-  // 2: Circle (iris) + 3: solid green fill.
+  // 2: Circle (iris) + 3: green horizontal fade.
   await setDynEntry(reg, block, eyeIrisGeo, 0, DataType.geometry, const []);
   await setDynEntry(reg, block, eyeIrisGeo, gkShape, DataType.enum_, enumByte(shapeCircle));
   await setDynEntry(reg, block, eyeIrisGeo, gkOperation, DataType.enum_, enumByte(opReplace));
@@ -275,7 +285,7 @@ Future<void> buildEyeBlock(RegisterClient reg, int block, String name) async {
   await setDynEntry(reg, block, eyeIrisTex, tkColour1, DataType.colour, colour(irisR1, irisG1, irisB1));
   await setDynEntry(reg, block, eyeIrisTex, tkColour2, DataType.colour, colour(irisR2, irisG2, irisB2));
 
-  // 4: DoubleParabola pupil + 5: black fill.
+  // 5: DoubleParabola pupil + 6: black fill.
   await setDynEntry(reg, block, eyePupilGeo, 0, DataType.geometry, const []);
   await setDynEntry(reg, block, eyePupilGeo, gkShape, DataType.enum_, enumByte(shapeDoubleParabola));
   await setDynEntry(reg, block, eyePupilGeo, gkOperation, DataType.enum_, enumByte(opReplace));
@@ -288,7 +298,7 @@ Future<void> buildEyeBlock(RegisterClient reg, int block, String name) async {
   await setDynEntry(reg, block, eyePupilTex, tkType, DataType.enum_, enumByte(texFill));
   await setDynEntry(reg, block, eyePupilTex, tkColour1, DataType.colour, colour(0, 0, 0));
 
-  // 6: HalfFill lid (closes from the top) + 7: black fill.
+  // 7: HalfFill lid (closes from the top) + 8: black fill.
   await setDynEntry(reg, block, eyeLidGeo, 0, DataType.geometry, const []);
   await setDynEntry(reg, block, eyeLidGeo, gkShape, DataType.enum_, enumByte(shapeHalfFill));
   await setDynEntry(reg, block, eyeLidGeo, gkOperation, DataType.enum_, enumByte(opReplace));
@@ -309,10 +319,11 @@ Future<void> configureDisplays(RegisterClient reg) async {
   final layout = 'LAY_1'.padRight(8).codeUnits; // 8-char space-padded storage name
   await setStatic(reg, BlockType.vysiDisplay.value, dispLeft, 3, layout);
   await setStatic(reg, BlockType.vysiDisplay.value, dispRight, 3, layout);
-  // Keep the brightness low: the LED strips draw enough current at high brightness to
-  // brown out the board (the default 30% is already near the limit on USB power).
-  await setStatic(reg, BlockType.vysiDisplay.value, dispLeft, 0, num(5));
-  await setStatic(reg, BlockType.vysiDisplay.value, dispRight, 0, num(5));
+  // Start at the low end of the range; script 4 then drives it from the LDR. After the
+  // transfer-curve fix the brightness value IS the LED duty (current ∝ duty), so the floor
+  // is the safe starting point.
+  await setStatic(reg, BlockType.vysiDisplay.value, dispLeft, 0, num(luxBrightMin));
+  await setStatic(reg, BlockType.vysiDisplay.value, dispRight, 0, num(luxBrightMin));
 }
 
 /// Fan PWM: the fan is not connected in this setup. Keep the default 25 kHz timer
@@ -343,13 +354,13 @@ Future<void> configureDas(RegisterClient reg) async {
 Future<void> buildSubscriptions(
     SubscriptionClient subs, DeviceEntry core, List<DeviceEntry> das) async {
   // (provider, measurement instance, target field, deadzone, period ms, min ms)
-  // The lux reading is noisy, so it needs a larger deadzone than the temperature, but the
-  // period is short so the brightness reacts quickly to a real light change.
+  // The lux reading is noisy but its subscription needs to track it closely (0.1 lux), and
+  // the period is short so the brightness reacts quickly to a real light change.
   final sources = [
     (das[0].id, 0, fTempA, 0.2, 500, 200),
-    (das[0].id, 1, fLuxA, 2.0, 500, 200),
+    (das[0].id, 1, fLuxA, luxDeadzone, 500, 200),
     (das[1].id, 0, fTempB, 0.2, 500, 200),
-    (das[1].id, 1, fLuxB, 2.0, 500, 200),
+    (das[1].id, 1, fLuxB, luxDeadzone, 500, 200),
   ];
   for (var i = 0; i < sources.length; i++) {
     final (addr, measInst, field, deadzone, period, minTime) = sources[i];
@@ -376,10 +387,12 @@ Future<void> buildSubscriptions(
 
 ScriptSymbol _c(int i) => ScriptSymbol.constant(i);
 ScriptSymbol _v(int i) => ScriptSymbol.variable(i);
+ScriptSymbol _in(int i) => ScriptSymbol.input(i); // a script input read as an operand
 ScriptSymbol _idx(int n) => ScriptSymbol.predefine(preIndex, n); // index / integer literal
 ScriptSymbol _op(int op) => ScriptSymbol.predefine(preMathOp, op); // inline expression operator
 ScriptSymbol _true() => ScriptSymbol.predefine(preBool, 1);
 ScriptSymbol _ins(int cat, int op) => ScriptSymbol.instruction(cat, op);
+ScriptSymbol _preNum(double v) => ScriptSymbol.predefine(preNumber, (v * 256).round() & 0xFFFF); // Q8.8 literal
 
 ScriptLine _line(List<ScriptSymbol> dest, ScriptSymbol instr, [List<ScriptSymbol> ops = const []]) =>
     ScriptLine(destinations: dest, instruction: instr, operands: ops);
@@ -390,23 +403,56 @@ ScriptDraftValue _cBlockInfo(String name, int v) =>
     ScriptDraftValue(name: name, type: DataType.blockInfo, value: u32(v));
 ScriptDraftValue _cIx(String name, int v) =>
     ScriptDraftValue(name: name, type: DataType.integer, size: 4, value: u32(v));
-ScriptDraftValue _cMatrix(String name, List<int> bytes) =>
-    ScriptDraftValue(name: name, type: DataType.matrix, value: Uint8List.fromList(bytes));
 ScriptDraftValue _var(String name, DataType type, int size) =>
     ScriptDraftValue(name: name, type: type, size: size);
 
+// Script inputs (Docs/Current setup v2.md): live values the Register/editor can drive.
+ScriptDraftValue _inNum(String name, double v,
+        {double? min, double? max, double step = 0, int ui = ScriptUiType.auto}) =>
+    ScriptDraftValue(
+        name: name,
+        type: DataType.number,
+        value: num(v),
+        spec: ScriptInputSpec(uiType: ui, min: min ?? 0, max: max ?? 0, step: step));
+
+ScriptDraftValue _inIx(String name, int v,
+        {double? min, double? max, double step = 0, int ui = ScriptUiType.auto}) =>
+    ScriptDraftValue(
+        name: name,
+        type: DataType.integer,
+        size: 4,
+        value: u32(v),
+        spec: ScriptInputSpec(uiType: ui, min: min ?? 0, max: max ?? 0, step: step));
+
+ScriptDraftValue _inBool(String name, bool v) => ScriptDraftValue(
+    name: name,
+    type: DataType.bool_,
+    size: 1,
+    value: Uint8List.fromList([v ? 1 : 0]),
+    spec: const ScriptInputSpec(uiType: ScriptUiType.toggle));
+
+ScriptDraftValue _inVector2(String name, double x, double y) => ScriptDraftValue(
+    name: name, type: DataType.vector, value: Uint8List.fromList([...num(x), ...num(y)]));
+
+ScriptDraftValue _inMatrix23(String name, List<int> bytes) => ScriptDraftValue(
+    name: name, type: DataType.matrix, value: Uint8List.fromList(bytes));
+
 int _props() => ScriptProperties.loadOnBoot | ScriptProperties.runOnLoad;
 
-/// Script 1: temperature -> fan duty (average of both DAS NTCs).
+/// Script 1: temperature -> fan duty (average of both DAS NTCs) with a proportional
+/// controller: duty = clamp(P * (avg - target), 0, 100).
+/// Input 0 = target temperature (degC), Input 1 = P constant (%/degC).
 ScriptDraft scriptTemperature() {
   final d = ScriptDraft(functionName: 'Temperature regulation', properties: _props());
+  d.inputs.addAll([
+    _inNum('Target temperature', targetTemp, min: 0, max: 60, step: 1, ui: ScriptUiType.slider),
+    _inNum('P constant', pGain, min: 0, max: 20, step: 0.5, ui: ScriptUiType.slider),
+  ]);
   d.constants.addAll([
     _cBlockInfo('TEMP_A', bi(BlockType.dynamic.value, dynSubscriptions, fTempA, 0)),
     _cBlockInfo('TEMP_B', bi(BlockType.dynamic.value, dynSubscriptions, fTempB, 0)),
     _cBlockInfo('FAN_DUTY', bi(BlockType.pwm.value, fanInst, 1, 0)),
-    _cNum('T_MIN', tempMin),
     _cNum('DUTY_MAX', 100),
-    _cNum('T_SPAN', tempMax - tempMin),
     _cIx('PERIOD', 200),
   ]);
   d.variables.addAll([
@@ -423,122 +469,215 @@ ScriptDraft scriptTemperature() {
     _line([_v(2)], _ins(catMath, 0), [
       _op(mathOpOpenParen), _v(0), _op(0), _v(1), _op(mathOpCloseParen), _op(3), _idx(2),
     ]),
-    // duty = (avg - T_MIN) * DUTY_MAX / T_SPAN
+    // duty = P * (avg - target)
     _line([_v(3)], _ins(catMath, 0), [
-      _op(mathOpOpenParen), _v(2), _op(1), _c(3), _op(mathOpCloseParen), _op(2), _c(4), _op(3), _c(5),
+      _in(1), _op(2), _op(mathOpOpenParen), _v(2), _op(1), _in(0), _op(mathOpCloseParen),
     ]),
-    _line([_v(3)], _ins(catMath, 10), [_v(3), _idx(0), _c(4)]), // duty = Limit(duty, 0, DUTY_MAX)
+    _line([_v(3)], _ins(catMath, 10), [_v(3), _idx(0), _c(3)]), // duty = Limit(duty, 0, DUTY_MAX)
     _line([], _ins(catService, 2), [_c(2), _v(3)]), // write[FAN_DUTY] = duty
-    _line([], _ins(catTime, 0), [_c(6)]), // Delay PERIOD
+    _line([], _ins(catTime, 0), [_c(4)]), // Delay PERIOD
     _line([], _ins(catFlow, 2)), // EndBlock
   ]);
   return d;
 }
 
-/// Script 4: LDR -> display brightness (each display uses its own DAS LDR).
+/// Script 4: LDR -> display brightness (each display uses its own DAS LDR) plus per-display
+/// light/dark mode selection.
+///
+/// Auto mode derives the mode from the display's lux (below [darkLux] it goes dark); manual
+/// mode takes Input 1 (left) / Input 2 (right). On a mode change the eye block's background
+/// colour, ring shape, pupil colour and pupil size are rewritten - the eye render blocks are
+/// built in light mode, so a fresh scene and a fresh script agree at boot.
+///
+/// Input 0 = manual mode (false = auto), Input 1 = manual left (dark), Input 2 = manual right.
 ScriptDraft scriptBrightness() {
   final d = ScriptDraft(functionName: 'Brightness regulation', properties: _props());
+  d.inputs.addAll([
+    _inBool('Manual mode', false),
+    _inBool('Manual left dark', false),
+    _inBool('Manual right dark', false),
+  ]);
   d.constants.addAll([
-    _cBlockInfo('SUB_LUX_A', bi(BlockType.dynamic.value, dynSubscriptions, fLuxA, 0)),
-    _cBlockInfo('SUB_LUX_B', bi(BlockType.dynamic.value, dynSubscriptions, fLuxB, 0)),
-    _cBlockInfo('DISP_L_BRIGHT', bi(BlockType.vysiDisplay.value, dispLeft, 0, 0)),
-    _cBlockInfo('DISP_R_BRIGHT', bi(BlockType.vysiDisplay.value, dispRight, 0, 0)),
-    _cNum('BRIGHT_MAX', luxBrightMax),
-    _cNum('BRIGHT_MIN', luxBrightMin),
-    _cNum('LUX_SPAN', luxSpan),
-    _cNum('RANGE', luxBrightMax - luxBrightMin),
-    _cIx('PERIOD', 100),
+    _cBlockInfo('SUB_LUX_A', bi(BlockType.dynamic.value, dynSubscriptions, fLuxA, 0)), // 0
+    _cBlockInfo('SUB_LUX_B', bi(BlockType.dynamic.value, dynSubscriptions, fLuxB, 0)), // 1
+    _cBlockInfo('DISP_L_BRIGHT', bi(BlockType.vysiDisplay.value, dispLeft, 0, 0)), // 2
+    _cBlockInfo('DISP_R_BRIGHT', bi(BlockType.vysiDisplay.value, dispRight, 0, 0)), // 3
+    _cNum('BRIGHT_MAX', luxBrightMax), // 4
+    _cNum('BRIGHT_MIN', luxBrightMin), // 5
+    _cNum('LUX_SPAN', luxSpan), // 6
+    _cNum('RANGE', luxBrightMax - luxBrightMin), // 7
+    _cIx('PERIOD', 100), // 8
+    _cNum('DARK_LUX', darkLux), // 9
+    // Left eye mode keys.
+    _cBlockInfo('L_IRIS_C1', bi(BlockType.dynamic.value, dynLeftEye, eyeIrisTex, tkColour1)), // 10
+    _cBlockInfo('L_IRIS_C2', bi(BlockType.dynamic.value, dynLeftEye, eyeIrisTex, tkColour2)), // 11
+    _cBlockInfo('L_BG_COL', bi(BlockType.dynamic.value, dynLeftEye, eyeBgTex, tkColour1)), // 12
+    _cBlockInfo('L_PUPIL_COL', bi(BlockType.dynamic.value, dynLeftEye, eyePupilTex, tkColour1)), // 13
+    // Right eye mode keys.
+    _cBlockInfo('R_IRIS_C1', bi(BlockType.dynamic.value, dynRightEye, eyeIrisTex, tkColour1)), // 14
+    _cBlockInfo('R_IRIS_C2', bi(BlockType.dynamic.value, dynRightEye, eyeIrisTex, tkColour2)), // 15
+    _cBlockInfo('R_BG_COL', bi(BlockType.dynamic.value, dynRightEye, eyeBgTex, tkColour1)), // 16
+    _cBlockInfo('R_PUPIL_COL', bi(BlockType.dynamic.value, dynRightEye, eyePupilTex, tkColour1)), // 17
+    // Light-mode values (18..21).
+    ScriptDraftValue(name: 'IRIS_C1_LIGHT', type: DataType.colour, size: 4, value: Uint8List.fromList(colour(irisR1, irisG1, irisB1))), // 18
+    ScriptDraftValue(name: 'IRIS_C2_LIGHT', type: DataType.colour, size: 4, value: Uint8List.fromList(colour(irisR2, irisG2, irisB2))), // 19
+    ScriptDraftValue(name: 'BG_LIGHT', type: DataType.colour, size: 4, value: Uint8List.fromList(colour(255, 255, 255))), // 20
+    ScriptDraftValue(name: 'PUPIL_LIGHT', type: DataType.colour, size: 4, value: Uint8List.fromList(colour(0, 0, 0))), // 21
+    // Dark-mode values (22..25): a really dark green iris and a slightly lighter pupil.
+    ScriptDraftValue(name: 'IRIS_C1_DARK', type: DataType.colour, size: 4, value: Uint8List.fromList(colour(darkIrisR1, darkIrisG1, darkIrisB1))), // 22
+    ScriptDraftValue(name: 'IRIS_C2_DARK', type: DataType.colour, size: 4, value: Uint8List.fromList(colour(darkIrisR2, darkIrisG2, darkIrisB2))), // 23
+    ScriptDraftValue(name: 'BG_DARK', type: DataType.colour, size: 4, value: Uint8List.fromList(colour(0, 0, 0))), // 24
+    ScriptDraftValue(name: 'PUPIL_DARK', type: DataType.colour, size: 4, value: Uint8List.fromList(colour(darkPupilR, darkPupilG, darkPupilB))), // 25
   ]);
   d.variables.addAll([
-    _var('luxA', DataType.number, 4),
-    _var('luxB', DataType.number, 4),
-    _var('bL', DataType.number, 4),
-    _var('bR', DataType.number, 4),
+    _var('luxL', DataType.number, 4), // 0
+    _var('luxR', DataType.number, 4), // 1
+    _var('bL', DataType.number, 4), // 2
+    _var('bR', DataType.number, 4), // 3
+    _var('wantL', DataType.number, 4), // 4
+    _var('modeL', DataType.number, 4), // 5
+    _var('wantR', DataType.number, 4), // 6
+    _var('modeR', DataType.number, 4), // 7
   ]);
-  // brightness = clamp(lux * RANGE / LUX_SPAN + BRIGHT_MIN, MIN, MAX): a brighter ambient
-  // makes the display brighter.
-  List<ScriptLine> calc(int luxVar, int outVar, int regConst) => [
-        // Set out = lux * RANGE / LUX_SPAN + BRIGHT_MIN
+
+  // brightness = MIN + RANGE * (lux/LUX_SPAN)^0.25, clamped to [MIN, MAX]: a compressive
+  // curve so a phone flashlight (~10k lux) is already past half while a dim room stays low.
+  // ^0.25 is two square roots - the expression only has ^0.5 and integer powers.
+  List<ScriptLine> brightness(int luxVar, int outVar, int regConst) => [
         _line([_v(outVar)], _ins(catMath, 0), [
-          _v(luxVar), _op(2), _c(7), _op(3), _c(6), _op(0), _c(5),
+          _c(5), _op(0), _c(7), _op(2), // MIN + RANGE *
+          _op(mathOpOpenParen),
+          _op(mathOpOpenParen),
+          _op(mathOpOpenParen), _v(luxVar), _op(3), _c(6), _op(mathOpCloseParen), // (lux / SPAN)
+          _op(5), _preNum(0.5), _op(mathOpCloseParen), // ^ 0.5
+          _op(5), _preNum(0.5), _op(mathOpCloseParen), // ^ 0.5
         ]),
-        _line([_v(outVar)], _ins(catMath, 10), [_v(outVar), _c(5), _c(4)]), // out = Limit(out, MIN, MAX)
+        _line([_v(outVar)], _ins(catMath, 10), [_v(outVar), _c(5), _c(4)]), // Limit(out, MIN, MAX)
         _line([], _ins(catService, 2), [_c(regConst), _v(outVar)]), // reg[bright] = out
       ];
+
+  ScriptLine set(int regConst, int valConst) =>
+      _line([], _ins(catService, 2), [_c(regConst), _c(valConst)]);
+
+  // If want != mode { <write that mode>; mode = want }. A mode change rewrites the iris
+  // gradient, the background and the pupil colour for that eye.
+  List<ScriptLine> modeCheck(int wantVar, int modeVar, int irisC1, int irisC2, int bgC, int pupilC) => [
+        _line([], _ins(catFlow, 0), [_v(wantVar), _op(13), _v(modeVar)]), // If want != mode
+        // Dark (want == 1)
+        _line([], _ins(catFlow, 0), [_v(wantVar)]), // If want
+        set(irisC1, 22), set(irisC2, 23), set(bgC, 24), set(pupilC, 25),
+        _line([], _ins(catFlow, 2)), // EndBlock
+        // Light (want == 0)
+        _line([], _ins(catFlow, 0), [_v(wantVar), _op(12), _idx(0)]), // If want == 0
+        set(irisC1, 18), set(irisC2, 19), set(bgC, 20), set(pupilC, 21),
+        _line([], _ins(catFlow, 2)), // EndBlock
+        _line([_v(modeVar)], _ins(catMath, 0), [_v(wantVar)]), // mode = want
+        _line([], _ins(catFlow, 2)), // EndBlock
+      ];
+
   d.lines.addAll([
     _line([], _ins(catFlow, 1), [_true()]), // While true
-    _line([_v(0)], _ins(catService, 1), [_c(0)]), // luxA = reg[SUB_LUX_A]
-    _line([_v(1)], _ins(catService, 1), [_c(1)]), // luxB = reg[SUB_LUX_B]
-    ...calc(1, 2, 2), // left display uses the RIGHT DAS LDR (LuxB)
-    ...calc(0, 3, 3), // right display uses the LEFT DAS LDR (LuxA)
+    _line([_v(0)], _ins(catService, 1), [_c(1)]), // luxL = reg[SUB_LUX_B]
+    _line([_v(1)], _ins(catService, 1), [_c(0)]), // luxR = reg[SUB_LUX_A]
+    ...brightness(0, 2, 2), // left display uses the RIGHT DAS LDR (LuxB)
+    ...brightness(1, 3, 3), // right display uses the LEFT DAS LDR (LuxA)
+    // Left mode: auto from the lux, or the manual input.
+    _line([_v(4)], _ins(catMath, 0), [_v(0), _op(14), _c(9)]), // wantL = luxL < DARK_LUX
+    _line([], _ins(catFlow, 0), [_in(0)]), // If manual
+    _line([_v(4)], _ins(catMath, 0), [_in(1)]), // wantL = manual left
+    _line([], _ins(catFlow, 2)), // EndBlock
+    ...modeCheck(4, 5, 10, 11, 12, 13),
+    // Right mode.
+    _line([_v(6)], _ins(catMath, 0), [_v(1), _op(14), _c(9)]), // wantR = luxR < DARK_LUX
+    _line([], _ins(catFlow, 0), [_in(0)]), // If manual
+    _line([_v(6)], _ins(catMath, 0), [_in(2)]), // wantR = manual right
+    _line([], _ins(catFlow, 2)), // EndBlock
+    ...modeCheck(6, 7, 14, 15, 16, 17),
     _line([], _ins(catTime, 0), [_c(8)]), // Delay PERIOD
     _line([], _ins(catFlow, 2)), // EndBlock
   ]);
   return d;
 }
 
-/// Script 2: gyro XY -> eye iris + pupil position (both displays).
+/// Script 2: gyro angular velocity -> eye iris/pupil position (both displays).
+///
+/// Input 0 = base offset (Vector2; x is flipped for the right eye),
+/// Input 1 = sensitivity (Matrix 2x3, a plain XYZ -> XY linear map: the movement is
+/// (m0,m1,m2)·gyro and (m3,m4,m5)·gyro, "not a transformation").
 ScriptDraft scriptEyeMovement() {
   final d = ScriptDraft(functionName: 'Eye movement', properties: _props());
+  d.inputs.addAll([
+    _inVector2('Offset', eyeOffsetX, eyeOffsetY),
+    _inMatrix23('Sensitivity', identity23()), // default [1 0 0; 0 1 0]: 1 px per rad/s
+  ]);
   d.constants.addAll([
     _cBlockInfo('GYRO', bi(BlockType.accGyr.value, 0, 6, 0)), // Angular Velocity (Vector3)
-    _cBlockInfo('LEFT_IRIS', bi(BlockType.dynamic.value, dynLeftEye, eyeIrisGeo, gkPosition)),
-    _cBlockInfo('LEFT_PUPIL', bi(BlockType.dynamic.value, dynLeftEye, eyePupilGeo, gkPosition)),
-    _cBlockInfo('RIGHT_IRIS', bi(BlockType.dynamic.value, dynRightEye, eyeIrisGeo, gkPosition)),
-    _cBlockInfo('RIGHT_PUPIL', bi(BlockType.dynamic.value, dynRightEye, eyePupilGeo, gkPosition)),
-    _cMatrix('IDENT', identity23()),
-    _cNum('SCALE', eyeScale),
-    _cNum('LIMIT', eyeLimit),
-    _cNum('NEG_LIMIT', -eyeLimit),
-    _cIx('PERIOD', 30),
-    // Base eye position: inward (+x on the left eye, -x on the right) and slightly up.
-    _cNum('BASE_L_X', eyeBaseIn),
-    _cNum('BASE_L_Y', eyeBaseUp),
-    _cNum('BASE_R_X', -eyeBaseIn),
-    _cNum('BASE_R_Y', eyeBaseUp),
-    // Iris texture Position: keeps the fade centred on the pupil.
-    _cBlockInfo('LEFT_IRIS_TEX', bi(BlockType.dynamic.value, dynLeftEye, eyeIrisTex, tkPosition)),
-    _cBlockInfo('RIGHT_IRIS_TEX', bi(BlockType.dynamic.value, dynRightEye, eyeIrisTex, tkPosition)),
+    _cBlockInfo('L_IRIS', bi(BlockType.dynamic.value, dynLeftEye, eyeIrisGeo, gkPosition)), // 1
+    _cBlockInfo('L_PUPIL', bi(BlockType.dynamic.value, dynLeftEye, eyePupilGeo, gkPosition)), // 2
+    _cBlockInfo('L_IRIS_TEX', bi(BlockType.dynamic.value, dynLeftEye, eyeIrisTex, tkPosition)), // 3
+    _cBlockInfo('R_IRIS', bi(BlockType.dynamic.value, dynRightEye, eyeIrisGeo, gkPosition)), // 4
+    _cBlockInfo('R_PUPIL', bi(BlockType.dynamic.value, dynRightEye, eyePupilGeo, gkPosition)), // 5
+    _cBlockInfo('R_IRIS_TEX', bi(BlockType.dynamic.value, dynRightEye, eyeIrisTex, tkPosition)), // 6
+    _cNum('LIMIT', eyeLimit), // 7
+    _cNum('NEG_LIMIT', -eyeLimit), // 8
+    _cIx('PERIOD', 30), // 9
   ]);
   d.variables.addAll([
-    _var('offset', DataType.vector, 12), // gyro scaled + clamped as one vector op
-    _var('gx', DataType.number, 4),
-    _var('gy', DataType.number, 4),
-    _var('halfX', DataType.number, 4),
-    _var('halfY', DataType.number, 4),
-    _var('mat', DataType.matrix, 28), // reused 2x3 position matrix
-    _var('posX', DataType.number, 4),
-    _var('posY', DataType.number, 4),
+    _var('g', DataType.vector, 12), // 0
+    _var('gx', DataType.number, 4), // 1
+    _var('gy', DataType.number, 4), // 2
+    _var('gz', DataType.number, 4), // 3
+    _var('s0', DataType.number, 4), // 4
+    _var('s1', DataType.number, 4), // 5
+    _var('s2', DataType.number, 4), // 6
+    _var('s3', DataType.number, 4), // 7
+    _var('s4', DataType.number, 4), // 8
+    _var('s5', DataType.number, 4), // 9
+    _var('mx', DataType.number, 4), // 10
+    _var('my', DataType.number, 4), // 11
+    _var('offX', DataType.number, 4), // 12
+    _var('offY', DataType.number, 4), // 13
+    _var('px', DataType.number, 4), // 14
+    _var('py', DataType.number, 4), // 15
+    _var('mat', DataType.matrix, 28), // 16
   ]);
 
-  /// mat = Transform(0, x, y, 1, 1) (a 2x3 with the translation); written to the geometry
-  /// Position and, for the iris, also to the texture Position (fade centred on the pupil).
-  List<ScriptLine> place(int xVar, int yVar, int regConst, {int? texConst}) => [
-        _line([_v(5)], _ins(catMath, 11), [_idx(0), _v(xVar), _v(yVar), _idx(1), _idx(1)]), // Transform mat = 0, x, y, 1, 1
-        _line([], _ins(catService, 2), [_c(regConst), _v(5)]), // write[reg] = mat
-        if (texConst != null)
-          _line([], _ins(catService, 2), [_c(texConst), _v(5)]),
+  /// mat = Transform(0, px, py, 1, 1); written to the given field.
+  List<ScriptLine> place(int regConst) => [
+        _line([_v(16)], _ins(catMath, 11), [_idx(0), _v(14), _v(15), _idx(1), _idx(1)]),
+        _line([], _ins(catService, 2), [_c(regConst), _v(16)]),
       ];
 
-  /// posX/posY = source (srcX, srcY) + the base offset constants.
-  List<ScriptLine> at(int srcX, int srcY, int baseXConst, int baseYConst) => [
-        _line([_v(6)], _ins(catMath, 0), [_v(srcX), _op(0), _c(baseXConst)]), // Set posX = srcX + baseX
-        _line([_v(7)], _ins(catMath, 0), [_v(srcY), _op(0), _c(baseYConst)]), // Set posY = srcY + baseY
+  /// px/py = movement (srcX/srcY) plus the base offset (mirrored when [flipX]).
+  List<ScriptLine> at(int srcX, int srcY, {bool flipX = false}) => [
+        _line([_v(14)], _ins(catMath, 0), [_v(srcX), _op(flipX ? 1 : 0), _v(12)]),
+        _line([_v(15)], _ins(catMath, 0), [_v(srcY), _op(0), _v(13)]),
       ];
 
   d.lines.addAll([
     _line([], _ins(catFlow, 1), [_true()]), // While true
-    _line([_v(0)], _ins(catService, 1), [_c(0)]), // offset = read[GYRO] (vector)
-    _line([_v(0)], _ins(catMath, 0), [_v(0), _op(2), _c(6)]), // Set offset = offset * SCALE (vector)
-    _line([_v(0)], _ins(catMath, 10), [_v(0), _c(8), _c(7)]), // offset = Limit(offset, -LIMIT, LIMIT)
-    _line([_v(1)], _ins(catCompose, 1), [_v(0), _idx(0)]), // gx = offset[0]
-    _line([_v(2)], _ins(catCompose, 1), [_v(0), _idx(1)]), // gy = offset[1]
-    _line([_v(3)], _ins(catMath, 0), [_v(1), _op(3), _idx(2)]), // Set halfX = gx / 2
-    _line([_v(4)], _ins(catMath, 0), [_v(2), _op(3), _idx(2)]), // Set halfY = gy / 2
-    ...at(3, 4, 10, 11), ...place(6, 7, 1), // left iris (half offset)
-    ...at(1, 2, 10, 11), ...place(6, 7, 2, texConst: 14), // left pupil + iris fade
-    ...at(3, 4, 12, 13), ...place(6, 7, 3), // right iris
-    ...at(1, 2, 12, 13), ...place(6, 7, 4, texConst: 15), // right pupil + iris fade
+    _line([_v(0)], _ins(catService, 1), [_c(0)]), // g = read[GYRO]
+    _line([_v(1)], _ins(catCompose, 1), [_v(0), _idx(0)]), // gx = g[0]
+    _line([_v(2)], _ins(catCompose, 1), [_v(0), _idx(1)]), // gy = g[1]
+    _line([_v(3)], _ins(catCompose, 1), [_v(0), _idx(2)]), // gz = g[2]
+    for (var i = 0; i < 6; i++)
+      _line([_v(4 + i)], _ins(catCompose, 1), [_in(1), _idx(i)]), // s0..s5 = sensitivity[i]
+    // movement = sensitivity * gyro (a plain 2x3 linear map, XYZ -> XY)
+    _line([_v(10)], _ins(catMath, 0), [
+      _v(4), _op(2), _v(1), _op(0), _v(5), _op(2), _v(2), _op(0), _v(6), _op(2), _v(3),
+    ]),
+    _line([_v(11)], _ins(catMath, 0), [
+      _v(7), _op(2), _v(1), _op(0), _v(8), _op(2), _v(2), _op(0), _v(9), _op(2), _v(3),
+    ]),
+    _line([_v(10)], _ins(catMath, 10), [_v(10), _c(8), _c(7)]), // mx = Limit(mx, -LIMIT, LIMIT)
+    _line([_v(11)], _ins(catMath, 10), [_v(11), _c(8), _c(7)]), // my = Limit(my, -LIMIT, LIMIT)
+    _line([_v(12)], _ins(catCompose, 1), [_in(0), _idx(0)]), // offX = offset[0]
+    _line([_v(13)], _ins(catCompose, 1), [_in(0), _idx(1)]), // offY = offset[1]
+    // Iris, pupil and the iris fade all share one position: the pupil is smaller than the
+    // iris and must stay inside it (moving them by different fractions let the pupil's tone
+    // slide out past the iris edge).
+    ...at(10, 11), ...place(1), ...place(2), ...place(3), // left iris + pupil + fade
+    ...at(10, 11, flipX: true), ...place(4), ...place(5), ...place(6), // right (x mirrored)
     _line([], _ins(catTime, 0), [_c(9)]), // Delay PERIOD
     _line([], _ins(catFlow, 2)), // EndBlock
   ]);
@@ -546,31 +685,32 @@ ScriptDraft scriptEyeMovement() {
 }
 
 /// Script 3: blink. While blinking the lid is updated every loop tick (no artificial delay);
-/// once the movement finishes (close + open over [lidMoveMs] each) the script waits exactly
-/// [lidWaitMs] for the next blink.
+/// once the movement finishes (close + open over Input 1 each) the script waits Input 0 for
+/// the next blink.
+///
+/// Input 0 = delay between blinks (ms, default 10 s), Input 1 = movement time each way (ms).
 ScriptDraft scriptLidTimer() {
   final d = ScriptDraft(functionName: 'Lid timer', properties: _props());
-  final blinkMs = 2 * lidMoveMs; // close + open
+  d.inputs.addAll([
+    _inIx('Blink delay', lidWaitMs, min: 1000, max: 60000, step: 1000, ui: ScriptUiType.slider),
+    _inIx('Movement time', lidMoveMs, min: 50, max: 1000, step: 50, ui: ScriptUiType.slider),
+  ]);
   d.constants.addAll([
     _cBlockInfo('LID_L', bi(BlockType.dynamic.value, dynLeftEye, eyeLidGeo, gkPosition)),
     _cBlockInfo('LID_R', bi(BlockType.dynamic.value, dynRightEye, eyeLidGeo, gkPosition)),
-    _cMatrix('IDENT', identity23()),
     _cNum('OPEN_TY', lidOpenTy),
     _cNum('DELTA', lidClosedTy - lidOpenTy),
-    _cIx('MOVE_MS', lidMoveMs),
-    _cIx('BLINK_MS', blinkMs),
-    _cIx('WAIT_MS', lidWaitMs),
   ]);
   d.variables.addAll([
     // Get time yields a whole millisecond count, so its destinations are integers (Index):
     // a Q16.16 Number would overflow the absolute count past ~32767 ms.
-    _var('t0', DataType.integer, 4),
-    _var('now', DataType.integer, 4),
-    _var('elapsed', DataType.number, 4),
-    _var('closeP', DataType.number, 4),
-    _var('openP', DataType.number, 4),
-    _var('ty', DataType.number, 4),
-    _var('mat', DataType.matrix, 28),
+    _var('t0', DataType.integer, 4), // 0
+    _var('now', DataType.integer, 4), // 1
+    _var('elapsed', DataType.number, 4), // 2
+    _var('closeP', DataType.number, 4), // 3
+    _var('openP', DataType.number, 4), // 4
+    _var('ty', DataType.number, 4), // 5
+    _var('mat', DataType.matrix, 28), // 6
   ]);
 
   /// mat = Transform(0, 0, ty, 1, 1) written to the lid geometry field.
@@ -583,29 +723,30 @@ ScriptDraft scriptLidTimer() {
     _line([], _ins(catFlow, 1), [_true()]), // While true
     _line([_v(0)], _ins(catTime, 2)), // t0 = Get time
     _line([_v(1)], _ins(catTime, 2)), // now = Get time
-    // While (now - t0) < BLINK_MS  (the blink: no delay -> fastest update)
+    // While (now - t0) < MOVE_MS * 2  (the blink: no delay -> fastest update)
     _line([], _ins(catFlow, 1), [
-      _op(mathOpOpenParen), _v(1), _op(1), _v(0), _op(mathOpCloseParen), _op(14), _c(6),
+      _op(mathOpOpenParen), _v(1), _op(1), _v(0), _op(mathOpCloseParen), _op(14),
+      _in(1), _op(2), _idx(2),
     ]),
     _line([_v(2)], _ins(catMath, 0), [_v(1), _op(1), _v(0)]), // Set elapsed = now - t0
-    _line([_v(3)], _ins(catMath, 0), [_v(2), _op(3), _c(5)]), // Set closeP = elapsed / MOVE_MS
+    _line([_v(3)], _ins(catMath, 0), [_v(2), _op(3), _in(1)]), // Set closeP = elapsed / MOVE_MS
     _line([_v(3)], _ins(catMath, 10), [_v(3), _idx(0), _idx(1)]), // closeP = Limit(closeP, 0, 1)
     _line([_v(4)], _ins(catMath, 0), [
-      _op(mathOpOpenParen), _v(2), _op(1), _c(5), _op(mathOpCloseParen), _op(3), _c(5),
+      _op(mathOpOpenParen), _v(2), _op(1), _in(1), _op(mathOpCloseParen), _op(3), _in(1),
     ]), // Set openP = (elapsed - MOVE_MS) / MOVE_MS
     _line([_v(4)], _ins(catMath, 10), [_v(4), _idx(0), _idx(1)]), // openP = Limit(openP, 0, 1)
     _line([_v(5)], _ins(catMath, 0), [
-      _op(mathOpOpenParen), _v(3), _op(1), _v(4), _op(mathOpCloseParen), _op(2), _c(4), _op(0), _c(3),
+      _op(mathOpOpenParen), _v(3), _op(1), _v(4), _op(mathOpCloseParen), _op(2), _c(3), _op(0), _c(2),
     ]), // Set ty = (closeP - openP) * DELTA + OPEN_TY
     ...applyLid(0),
     ...applyLid(1),
     _line([_v(1)], _ins(catTime, 2)), // now = Get time  (the While re-reads the condition)
     _line([], _ins(catFlow, 2)), // EndBlock
-    // Movement finished: park the lid open and wait exactly WAIT_MS for the next blink.
-    _line([_v(5)], _ins(catMath, 0), [_c(3)]), // Set ty = OPEN_TY
+    // Movement finished: park the lid open and wait the blink delay for the next blink.
+    _line([_v(5)], _ins(catMath, 0), [_c(2)]), // Set ty = OPEN_TY
     ...applyLid(0),
     ...applyLid(1),
-    _line([], _ins(catTime, 0), [_c(7)]), // Delay WAIT_MS
+    _line([], _ins(catTime, 0), [_in(0)]), // Delay blink delay
     _line([], _ins(catFlow, 2)), // EndBlock
   ]);
   return d;
@@ -674,7 +815,7 @@ Future<({DeviceEntry core, List<DeviceEntry> das})> applyCurrentSetup(
   // Stop the scripts first: a running script keeps writing into the dynamic blocks
   // (eye/lid positions), which would race the rebuild below.
   await stopScripts(scriptClient);
-  await clampBrightness(reg, 5);
+  await clampBrightness(reg, luxBrightMin);
 
   // Clear stale provider entries on the DAS nodes. Their provider table is small (4) and
   // an earlier requester cancel does not always reach them, so a stale entry can block a

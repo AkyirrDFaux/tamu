@@ -203,7 +203,12 @@ static void HandleRequesterValueUpdate(const PacketFrame &frame) {
     if (!(frame.flags & FLAG_TYPE)) return;
     RequesterEntry* e = RequesterFindByTrid(frame.trid);
     if (!e) return;
-    ApplyRequesterValue(e, frame.payload, PayloadBytes(frame), true);
+    // Docs: the value update is "sent as response packet, request is confirmation IF NEEDED" -
+    // only OnChangeConfirm repeats until confirmed. Confirming every trigger would also
+    // overwrite the provider's Hash/Hashlike state, which the delta trigger uses as its last
+    // sent scalar value.
+    const bool confirm = e->trigger == TriggerType::OnChangeConfirm;
+    ApplyRequesterValue(e, frame.payload, PayloadBytes(frame), confirm);
 }
 
 // Serializes one requester entry (wire order: providerAddr, trid, targetReg, sourceReg,
@@ -249,6 +254,9 @@ struct ProviderEntry {
     // counter value that was transmitted.
     bool lastBool = false;
     uint32_t sentCounter = 0;
+    // Last SENT vector for a delta subscription on a Vector source (up to 3 axes); the
+    // scalar delta reuses `hash` for the same purpose.
+    int32_t lastVec[3] = {0, 0, 0};
 };
 
 static ProviderEntry providerTable[MAX_PROVIDER_SUBS];
@@ -358,6 +366,39 @@ static uint32_t SubscriptionsDeltaHash(const FieldResult &fr, Number deadzone) {
     return Fnv1a(data, size);
 }
 
+// True for a 4-byte scalar numeric value. Delta subscriptions gate these on the change
+// magnitude against the deadzone (Docs "Checks distance ... Last scalar value"); the
+// vector path uses [SubscriptionsDeltaHash]'s subresolution pack instead.
+static bool SubscriptionsIsScalar(const FieldResult &fr) {
+    if (fr.Descriptor.Size < 4) return false;
+    uint16_t t = BlockMetaType(fr.Descriptor.FlagsAndType);
+    return t == (uint16_t)DataType::Number || t == (uint16_t)DataType::Index ||
+           t == (uint16_t)DataType::Uint32;
+}
+
+#ifndef SCALAR_ONLY
+// Squared euclidean distance between a Vector value (up to 3 axes) and `last`, saturated so
+// the comparison against the squared deadzone can never overflow (Docs: the delta trigger
+// "Checks distance (euclidian for vectors)").
+static uint32_t SubscriptionsVectorDist2(const FieldResult &fr, const int32_t *last) {
+    uint8_t axes = (uint8_t)(fr.Descriptor.Size / 4);
+    if (axes > 3) axes = 3;
+    const uint8_t *data = (const uint8_t *)fr.Data;
+    uint32_t sum = 0;
+    for (uint8_t a = 0; a < axes; a++) {
+        int32_t raw = 0;
+        memcpy(&raw, data + (size_t)a * 4, 4);
+        uint32_t x = (uint32_t)raw, y = (uint32_t)last[a];
+        uint32_t d = x >= y ? x - y : y - x;
+        if (d > 0xFFFFu) return 0xFFFFFFFFu; // >= 1.0 in 16.16: above any practical deadzone
+        uint32_t t = d * d;
+        if (sum > 0xFFFFFFFFu - t) return 0xFFFFFFFFu; // saturate, never wrap
+        sum += t;
+    }
+    return sum;
+}
+#endif
+
 static void EvaluateProviderTriggers(uint32_t nowMs) {
     for (int i = 0; i < MAX_PROVIDER_SUBS; i++) {
         ProviderEntry* e = &providerTable[i];
@@ -405,6 +446,43 @@ static void EvaluateProviderTriggers(uint32_t nowMs) {
         }
 
         case TriggerType::DeltaPeriodic: {
+            if (SubscriptionsIsScalar(fr)) {
+                // Scalar: Hash/Hashlike is the last SENT value; send once the change
+                // magnitude reaches the deadzone (0 = any change).
+                int32_t raw = 0;
+                memcpy(&raw, fr.Data, 4);
+                uint32_t a = (uint32_t)raw;
+                uint32_t b = e->hash;
+                uint32_t delta = a >= b ? a - b : b - a; // exact; unsigned wraps safely
+                uint32_t dz = e->deadzone.Value > 0 ? (uint32_t)e->deadzone.Value : 0;
+                if (delta >= dz && elapsed >= e->minTimeMs) {
+                    send = true;
+                    e->hash = a;
+                } else if (e->periodMs > 0 && elapsed >= e->periodMs) {
+                    send = true;
+                    e->hash = a;
+                }
+                break;
+            }
+#ifndef SCALAR_ONLY
+            if (BlockMetaType(fr.Descriptor.FlagsAndType) == (uint16_t)DataType::Vector &&
+                fr.Descriptor.Size >= 4 && (fr.Descriptor.Size % 4) == 0) {
+                // Vector: lastVec holds the last SENT vector; gate on the euclidean distance
+                // (squared, to stay 32-bit and overflow-free).
+                uint32_t dz = e->deadzone.Value > 0 ? (uint32_t)e->deadzone.Value : 0;
+                uint32_t dz2 = dz > 0xFFFFu ? 0xFFFFFFFFu : dz * dz;
+                if (SubscriptionsVectorDist2(fr, e->lastVec) >= dz2 && elapsed >= e->minTimeMs)
+                    send = true;
+                else if (e->periodMs > 0 && elapsed >= e->periodMs)
+                    send = true;
+                if (send) {
+                    uint8_t n = fr.Descriptor.Size > 12 ? 12 : fr.Descriptor.Size;
+                    memcpy(e->lastVec, fr.Data, n);
+                    e->hash = SubscriptionsDeltaHash(fr, e->deadzone); // reported hashlike
+                }
+                break;
+            }
+#endif
             uint32_t h = SubscriptionsDeltaHash(fr, e->deadzone);
             if (h != e->hash && elapsed >= e->minTimeMs) { send = true; e->hash = h; }
             else if (e->periodMs > 0 && elapsed >= e->periodMs) { send = true; e->hash = h; }
@@ -639,6 +717,7 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
             e->hash = 0;
             e->lastBool = false;
             e->sentCounter = 0;
+            e->lastVec[0] = e->lastVec[1] = e->lastVec[2] = 0;
             // Docs CID 1: the response to a change subscription is the CURRENT VALUE
             // (so the requester starts from a known state). Fall back to a 1-byte ack
             // when the source register does not resolve (yet).

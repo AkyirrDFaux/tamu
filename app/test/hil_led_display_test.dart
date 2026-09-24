@@ -197,9 +197,54 @@ Future<void> runTests() async {
     await Future<void>.delayed(const Duration(milliseconds: 1800));
   }
 
-  // Restore: red Fill, remove the effect field.
+  // Ring: an independent Circle (Replace) + a smaller Circle (Cut) + a Fill texture. This is
+  // the "edge only" iris of the evaluation scene, and the only coverage of the mask
+  // operations (everything above uses Replace).
+  await reg.deleteDynamic(block: b.index, field: 2); // release the effect dictionary
+  if (!await setEntry(2, 0, 0x101, [])) fail('ring outer marker failed'); // Geometry
+  if (!await setEntry(2, 1, DataType.enum_.value, [6])) fail('ring outer shape failed'); // Circle
+  if (!await setEntry(2, 2, DataType.enum_.value, [0])) fail('ring outer op failed'); // Replace
+  if (!await setEntry(2, 4, DataType.number.value, numberToBytes(6.0))) fail('ring outer size failed');
+  if (!await setEntry(3, 0, 0x101, [])) fail('ring cut marker failed');
+  if (!await setEntry(3, 1, DataType.enum_.value, [6])) fail('ring cut shape failed'); // Circle
+  if (!await setEntry(3, 2, DataType.enum_.value, [2])) fail('ring cut op failed'); // Cut
+  if (!await setEntry(3, 4, DataType.number.value, numberToBytes(4.0))) fail('ring cut size failed');
+  if (!await setEntry(4, 0, 0x102, [])) fail('ring texture marker failed'); // Texture
+  if (!await setEntry(4, 1, DataType.enum_.value, [1])) fail('ring fill type failed'); // Fill
+  if (!await setEntry(4, 4, DataType.colour.value, [0, 255, 0, 255])) fail('ring colour failed');
+  // ignore: avoid_print
+  print('[D] ring -> Circle 6 (Replace) - Circle 4 (Cut) + green Fill');
+
+  // Nine parts (the v2 eye scene size): four more textures after the ring. Proves the
+  // renderer handles more than the old 8-part cap without overrunning its caches.
+  for (var f = 5; f <= 8; f++) {
+    if (!await setEntry(f, 0, 0x102, [])) fail('part $f marker failed');
+    if (!await setEntry(f, 1, DataType.enum_.value, [1])) fail('part $f type failed');
+    if (!await setEntry(f, 4, DataType.colour.value, [30 + f * 10, 0, 0, 40])) fail('part $f colour failed');
+  }
+  final parts = await reg.getDynamicFields(b.index) ?? <int>[];
+  // ignore: avoid_print
+  print('[D] parts=${parts.length} $parts');
+  if (parts.length < 9) fail('expected >= 9 render parts, got ${parts.length}');
+
+  double fps9 = 0;
+  for (var attempt = 0; attempt < 8; attempt++) {
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    final rate = await reg.readBlockField(0x06, 1, 4, 0);
+    if (rate != null && rate.value.length >= 4) {
+      fps9 = numberFromBytes(rate.value);
+      if (fps9 > 200) break;
+    }
+  }
+  // ignore: avoid_print
+  print('[D] 9 parts RefreshRate=${fps9.toStringAsFixed(1)} FPS');
+  if (fps9 < 200) fail('RefreshRate $fps9 < 200 FPS with 9 parts');
+
+  // Restore: red Fill, drop the ring/extra parts and the effect field.
   await setEntry(1, 4, DataType.colour.value, [255, 0, 0, 255]);
-  await reg.deleteDynamic(block: b.index, field: 2);
+  for (final f in [2, 3, 4, 5, 6, 7, 8]) {
+    await reg.deleteDynamic(block: b.index, field: f);
+  }
   // ignore: avoid_print
   print('[D] textures done - restored red Square');
 }

@@ -9,8 +9,8 @@
 	- Black lid (closes from top)
 - Dark mode:
 	- Black background
-	- A green circular iris, edge only, slight horizontal fade
-	- Light green vertical pupil, wider (double parabola)
+	- A dark green circular iris, slight horizontal fade
+	- Desaturated green vertical pupil (double parabola)
 	- Black lid (closes from top)
 1x Fan
 

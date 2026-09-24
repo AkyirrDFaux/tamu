@@ -55,6 +55,27 @@
   brightness script at a high ceiling put it in a boot/brown-out loop). The builder now
   clamps the displays to 5 % before anything else and caps the brightness script at 15 %.
   A firmware-side current cap (or a ramp) would be safer than relying on the app.
+- **The LED display has no framebuffer readback.** `Docs/Modules and blocks/LED display.md`
+  exposes no way to read the rendered pixels, so a HIL test can only assert the render
+  dictionary contents + the refresh rate. The `Cut` mask operation is exercised by the LED
+  probe (`hil_led_display_test`); the evaluation scene uses only `Replace` now that dark mode
+  is a filled iris, and the *look* is verified by eye only. A render snapshot command would
+  make the visuals testable.
+- **`Docs/Current setup v2.md` still describes dark mode as an "edge only" iris.** The scene
+  now uses a filled, really dark green iris (and a slightly lighter pupil), per the request;
+  the doc line needs the same update.
+- **The LDR lux needs a one-time calibration against a lux meter.** `MeasLDR10K` now follows
+  the datasheet (GL55 5-10 kOhm part, gamma ~0.6 from Fig. 2) and is live on the DAS
+  (verified: the room reads 4.5 lux where the old formula said ~18). The part is only specified
+  as 5-10 kOhm at 10 lux and the firmware's `log` carries a ~10% bias, so read a reference lux
+  next to the sensor and adjust `LDR_R10_KOHM` (level) / `LDR_GAMMA` (slope) in
+  `Devices/DAS_v0.1/Measuring.h`.
+- **A node reboot silently kills its subscriptions.** The provider table lives in the node's
+  RAM ("active until canceled, not persistent"), and the core only pushes it when the requester
+  is created (`ReRegisterSubscriptions` runs at the *core's* boot). Re-flashing/rebooting the
+  DAS left the core's requester entries alive but the node's providers gone, so no values
+  flowed until the setup was re-applied. Re-push a requester's provider config when its
+  provider device (re-)registers.
 - **A core that loses its SNDB orphans already-registered nodes.** The DAS run their
   discovery loop only once at boot (`while (ShortAddress == 0)`), and the core does not
   re-register an unknown sender, so after the core's SNDB was wiped (flash erase) the two

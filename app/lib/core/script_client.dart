@@ -173,7 +173,10 @@ class ScriptClient {
   Future<bool> writeEntry(int inst, int field, int key, BlockMeta meta, List<int> value) async {
     final payload = <int>[..._bi(inst, field, key), ...meta.toBytes(), ...value];
     final reply = await _request(ServiceType.register, 2, payload: payload);
-    return reply != null && reply.isNotEmpty && reply[0] == 0;
+    // A failure replies with a single 0xFF status; a success echoes the request payload
+    // (BlockInfo + BlockMeta + value). The echoed BlockInfo starts with the key byte, so it
+    // is not a reliable success flag (a successful key-0 write echoes 0x00 too).
+    return reply != null && reply.length >= 8;
   }
 
   /// CID 8: reads a loaded script's error code (0 = none).
