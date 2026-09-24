@@ -221,7 +221,7 @@ Future<void> buildEyeBlock(RegisterClient reg, int block, String name) async {
   await setDynEntry(reg, block, eyeBgTex, tkType, DataType.enum_, enumByte(texFill));
   await setDynEntry(reg, block, eyeBgTex, tkColour1, DataType.colour, colour(255, 255, 255));
 
-  // 2: Circle (iris) + 3: green horizontal gradient.
+  // 2: Circle (iris) + 3: solid green fill.
   await setDynEntry(reg, block, eyeIrisGeo, 0, DataType.geometry, const []);
   await setDynEntry(reg, block, eyeIrisGeo, gkShape, DataType.enum_, enumByte(shapeCircle));
   await setDynEntry(reg, block, eyeIrisGeo, gkOperation, DataType.enum_, enumByte(opReplace));
@@ -229,19 +229,17 @@ Future<void> buildEyeBlock(RegisterClient reg, int block, String name) async {
   await setDynEntry(reg, block, eyeIrisGeo, gkSize, DataType.number, num(9)); // diameter
   await setDynEntry(reg, block, eyeIrisGeo, gkFade, DataType.number, num(1));
   await setDynEntry(reg, block, eyeIrisTex, 0, DataType.texture, const []);
-  await setDynEntry(reg, block, eyeIrisTex, tkType, DataType.enum_, enumByte(texGradientLinear));
-  await setDynEntry(reg, block, eyeIrisTex, tkPosition, DataType.matrix, identity23());
-  await setDynEntry(reg, block, eyeIrisTex, tkSize, DataType.number, num(9));
-  await setDynEntry(reg, block, eyeIrisTex, tkColour1, DataType.colour, colour(80, 220, 90));
-  await setDynEntry(reg, block, eyeIrisTex, tkColour2, DataType.colour, colour(20, 120, 40));
+  await setDynEntry(reg, block, eyeIrisTex, tkType, DataType.enum_, enumByte(texFill));
+  await setDynEntry(reg, block, eyeIrisTex, tkColour1, DataType.colour, colour(60, 200, 70));
 
   // 4: DoubleParabola pupil + 5: black fill.
   await setDynEntry(reg, block, eyePupilGeo, 0, DataType.geometry, const []);
   await setDynEntry(reg, block, eyePupilGeo, gkShape, DataType.enum_, enumByte(shapeDoubleParabola));
   await setDynEntry(reg, block, eyePupilGeo, gkOperation, DataType.enum_, enumByte(opReplace));
   await setDynEntry(reg, block, eyePupilGeo, gkPosition, DataType.matrix, identity23());
-  await setDynEntry(reg, block, eyePupilGeo, gkSize, DataType.vector, [...num(0.9), ...num(2.5)]);
-  await setDynEntry(reg, block, eyePupilGeo, gkFade, DataType.number, num(0.5));
+  // Size = [half-width, half-height]: a tall, clearly visible vertical pupil.
+  await setDynEntry(reg, block, eyePupilGeo, gkSize, DataType.vector, [...num(1.4), ...num(3.6)]);
+  await setDynEntry(reg, block, eyePupilGeo, gkFade, DataType.number, num(0.6));
   await setDynEntry(reg, block, eyePupilTex, 0, DataType.texture, const []);
   await setDynEntry(reg, block, eyePupilTex, tkType, DataType.enum_, enumByte(texFill));
   await setDynEntry(reg, block, eyePupilTex, tkColour1, DataType.colour, colour(0, 0, 0));
@@ -526,7 +524,7 @@ ScriptDraft scriptLidTimer() {
   /// One 200 ms sweep: ty = from + step*STEP, applying both lids each tick.
   List<ScriptLine> sweep(int fromConst, int sign) => [
         _line([_v(0)], _ins(catMath, 0), [_c(9)]), // step = 0
-        _line([_v(4)], _ins(catLogic, 8), [_v(0), _c(6)]), // cond = step < STEPS
+        _line([_v(4)], _ins(catMath, 0), [_true()]), // cond = true (enter the loop)
         _line([], _ins(catFlow, 1), [_v(4)]), // While cond
         _line([_v(1)], _ins(catMath, 0), [_v(0)]), // ty = step
         _line([_v(1)], _ins(catMath, 3), [_v(1), _c(5)]), // ty *= STEP
@@ -537,6 +535,10 @@ ScriptDraft scriptLidTimer() {
         ...applyLid(2, 0, _v(1)),
         ...applyLid(3, 1, _v(1)),
         _line([_v(0)], _ins(catMath, 1), [_v(0), _c(10)]), // step += 1
+        // The While re-reads `cond` at the top, so the comparison must be recomputed
+        // INSIDE the loop (a condition computed once before the loop never changes and
+        // the loop would run forever).
+        _line([_v(4)], _ins(catLogic, 8), [_v(0), _c(6)]), // cond = step < STEPS
         _line([], _ins(catTime, 0), [_c(7)]), // Delay 20
         _line([], _ins(catFlow, 2)), // EndBlock
       ];

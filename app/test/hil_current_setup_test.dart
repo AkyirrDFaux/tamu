@@ -25,10 +25,12 @@ void main() {
     if (skipReason is String) return;
     await connectHil();
     final db = DeviceDatabase.instance;
-    await db.refreshRuntime(0);
-    await Future<void>.delayed(const Duration(seconds: 2));
-    await db.refreshRuntime(0);
-    await Future<void>.delayed(const Duration(seconds: 1));
+    // Bounded discovery: the DAS re-register on their own schedule after a reset.
+    for (var i = 0; i < 10; i++) {
+      await db.refreshRuntime(0);
+      await Future<void>.delayed(const Duration(seconds: 2));
+      if (db.all.where((d) => d.type == DeviceType.dualAnalogSensor).length >= 2) break;
+    }
     found = findDevices(db);
     await applyCurrentSetup(db);
   });
@@ -132,6 +134,26 @@ void main() {
       print('[SETUP] $name position = ${pos.value}');
     }
   }, timeout: const Timeout(Duration(seconds: 30)));
+
+  test('setup: the lid script stays bounded and reaches the open position', skip: skipReason, () async {
+    final reg = RegisterClient(deviceId: found.core.id);
+    final block = DynBlock(index: dynLeftEye, meta: BlockMeta(flagsAndType: BlockType.dynamic.value), name: '');
+    // Sample across a blink cycle: the lid must stay within the screen range (a runaway
+    // loop condition used to drive `ty` to thousands, jamming the lid shut).
+    var maxAbs = 0.0;
+    var sawOpen = false;
+    for (var i = 0; i < 16; i++) {
+      final pos = await reg.readDynamicField(block, eyeLidGeo, gkPosition);
+      final ty = numberFromBytes(pos!.value, 24);
+      if (ty.abs() > maxAbs) maxAbs = ty.abs();
+      if (ty < -4) sawOpen = true; // open position (~-5.5)
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
+    // ignore: avoid_print
+    print('[SETUP] lid ty max|.|=$maxAbs sawOpen=$sawOpen');
+    expect(maxAbs, lessThan(8), reason: 'lid position must stay within the screen range');
+    expect(sawOpen, isTrue, reason: 'the lid must reach its open position');
+  }, timeout: const Timeout(Duration(seconds: 60)));
 
   test('setup: capture the semantic backup zip to the project root', skip: skipReason, () async {
     // A busy device can drop the block enumeration; retry until each device reports blocks.

@@ -208,7 +208,7 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
 ## 5. Evaluation setup (`Docs/Current setup.md`)
 - [x] **Setup builder** (`app/test/current_setup.dart`): builds the whole scenario through the
   existing clients - dynamic block 0 "Subscriptions" (four DAS value targets), dynamic blocks
-  1/2 "Left Eye"/"Right Eye" (8-part render dictionaries: white fill, green gradient iris,
+  1/2 "Left Eye"/"Right Eye" (8-part render dictionaries: white fill, solid green iris,
   double-parabola pupil, half-fill lid), the display render-block/layout wiring, the fan duty,
   the Acc&Gyr sampling/filters, the DAS sensor types, four `DeltaPeriodic` subscriptions
   (each DAS ch1 NTC -> temp field, ch2 LDR -> lux field), and the four scripts.
@@ -231,3 +231,7 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
   firmware default.
 - The LED strips can brown out the board at high brightness; the builder clamps the displays
   to 5 % first and caps the brightness script at 15 %.
+- **A `While` re-reads its operand each iteration, so a condition computed once before the
+  loop never updates.** The lid script originally did `cond = step < STEPS` before the While
+  and then looped forever (the lid jammed shut, `step` ran to thousands). The comparison is
+  now recomputed inside the loop. Worth surfacing in the editor/VM docs.
