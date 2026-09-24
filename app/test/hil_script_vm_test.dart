@@ -1,6 +1,7 @@
 @Tags(['hil'])
 library;
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/connection.dart';
 import 'package:tamuapp/core/script_client.dart';
@@ -282,5 +283,94 @@ void main() async {
     print('[VM] stored-only boot loaded=$loaded');
     expect(loaded.contains(8), isFalse, reason: 'stored script must not load on boot');
     await st.deleteFile('SCR_08');
+  }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('n-ary math with inline literals', skip: skipReason, () async {
+    // Out = 5 + 2 + 3 in ONE Add line (Index literals instead of named constants).
+    final draft = ScriptDraft(functionName: 'Nary')
+      ..outputs.add(ScriptDraftValue(name: 'Out', type: DataType.number, size: 4))
+      ..lines.add(ScriptLine(
+          destinations: [ScriptSymbol.output(0)],
+          instruction: ScriptSymbol.instruction(catMath, 1), // Add
+          operands: [
+            ScriptSymbol.predefine(preIndex, 5),
+            ScriptSymbol.predefine(preIndex, 2),
+            ScriptSymbol.predefine(preIndex, 3),
+          ]))
+      ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)));
+    final (c, st, slot) = await loadScript(9, draft);
+    await c.setState(slot, ScriptState.running);
+    final state = await waitState(c, slot, ScriptState.finished);
+    print('[VM] nary state=$state err=${await c.readError(slot)}');
+    expect(state, ScriptState.finished);
+    final out = await c.readEntry(slot, ScriptField.output, 0);
+    expect(numberFromBytes(out!.value), closeTo(10.0, 0.001));
+    await cleanup(c, st, slot);
+  }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('vector math: scale a Vector with one op', skip: skipReason, () async {
+    final draft = ScriptDraft(functionName: 'VecMath')
+      ..outputs.add(ScriptDraftValue(name: 'Mid', type: DataType.number, size: 4))
+      ..variables.add(ScriptDraftValue(name: 'V', type: DataType.vector, size: 12))
+      ..constants.add(ScriptDraftValue(
+          name: 'V0',
+          type: DataType.vector,
+          size: 12,
+          value: Uint8List.fromList([
+            ...numberToBytes(1),
+            ...numberToBytes(2),
+            ...numberToBytes(3),
+          ])))
+      // V = V0; V *= 2; Mid = V[1]; halt  -> V = [2,4,6], Mid = 4
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(0)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [ScriptSymbol.constant(0)]))
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(0)], instruction: ScriptSymbol.instruction(catMath, 3), operands: [ScriptSymbol.variable(0), ScriptSymbol.predefine(preIndex, 2)]))
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.output(0)], instruction: ScriptSymbol.instruction(catCompose, 1), operands: [ScriptSymbol.variable(0), ScriptSymbol.predefine(preIndex, 1)]))
+      ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)));
+    final (c, st, slot) = await loadScript(10, draft);
+    await c.setState(slot, ScriptState.running);
+    final state = await waitState(c, slot, ScriptState.finished);
+    print('[VM] vec state=$state err=${await c.readError(slot)}');
+    expect(state, ScriptState.finished);
+    final out = await c.readEntry(slot, ScriptField.output, 0);
+    expect(numberFromBytes(out!.value), closeTo(4.0, 0.001));
+    final ram = (await c.readInternalState(slot))!.variables;
+    expect(numberFromBytes(ram, 0), closeTo(2.0, 0.001));
+    expect(numberFromBytes(ram, 4), closeTo(4.0, 0.001));
+    expect(numberFromBytes(ram, 8), closeTo(6.0, 0.001));
+    await cleanup(c, st, slot);
+  }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('BlockInfo operand: write a register target', skip: skipReason, () async {
+    final reg = RegisterClient(deviceId: 1);
+    const block = 5;
+    await reg.deleteDynamic(block: block);
+    await reg.createDynamicBlock(BlockType.dynamic, 'VMTGT', index: block);
+    final b = DynBlock(
+        index: block,
+        meta: BlockMeta(flagsAndType: BlockType.dynamic.value, size: 1),
+        name: 'VMTGT');
+    await reg.writeDynamicEntry(
+        b, 0, 0, BlockMeta(flagsAndType: DataType.number.value, key: 0), List<int>.filled(4, 0));
+
+    final draft = ScriptDraft(functionName: 'RegWrite')
+      ..constants.add(ScriptDraftValue(
+          name: 'TARGET',
+          type: DataType.blockInfo,
+          value: Uint8List.fromList(
+              uint32ToBytes(makeBlockInfo(BlockType.dynamic.value, block, 0, 0)))))
+      // write[TARGET] = 7; halt
+      ..lines.add(ScriptLine(
+          instruction: ScriptSymbol.instruction(catService, 2),
+          operands: [ScriptSymbol.constant(0), ScriptSymbol.predefine(preIndex, 7)]))
+      ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)));
+    final (c, st, slot) = await loadScript(11, draft);
+    await c.setState(slot, ScriptState.running);
+    final state = await waitState(c, slot, ScriptState.finished);
+    print('[VM] blockinfo state=$state err=${await c.readError(slot)}');
+    expect(state, ScriptState.finished);
+    final applied = await reg.readDynamicField(b, 0, 0);
+    expect(numberFromBytes(applied!.value), closeTo(7.0, 0.001));
+    await cleanup(c, st, slot);
+    await reg.deleteDynamic(block: block);
   }, timeout: const Timeout(Duration(minutes: 2)));
 }

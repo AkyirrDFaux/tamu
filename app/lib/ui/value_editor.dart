@@ -48,6 +48,8 @@ Future<List<int>?> showValueEditor(
           : _editMatrix(context, info, current);
     case DataType.colour:
       return _editColour(context, current);
+    case DataType.blockInfo:
+      return _editBlockInfo(context, current);
     case DataType.uint32:
       return _editInt(
         context,
@@ -594,10 +596,103 @@ Future<List<int>?> _editMatrix(
   );
 }
 
+/// BlockInfo: a 32-bit register pointer (type 10 | instance 6 | field 8 | key 8) - the
+/// same layout the Register service uses (Docs/Data Formats.md). The editor picks the
+/// block type and the instance/field/key, showing the registry field name where known.
+Future<List<int>?> _editBlockInfo(BuildContext context, List<int> current) {
+  var bi = current.length >= 4 ? uint32FromBytes(current) : 0;
+  var type = (bi >> 22) & 0x3FF;
+  var inst = (bi >> 16) & 0x3F;
+  var field = (bi >> 8) & 0xFF;
+  var key = bi & 0xFF;
+  final instC = TextEditingController(text: '$inst');
+  final fieldC = TextEditingController(text: '$field');
+  final keyC = TextEditingController(text: '$key');
+
+  final types = <(int, String)>[
+    (systemBlockTypeValue, 'System'),
+    for (final t in BlockType.values)
+      if (t != BlockType.none &&
+          t != BlockType.undefined &&
+          t != BlockType.deleted &&
+          t != BlockType.render)
+        (t.value, t.label),
+  ];
+  if (!types.any((e) => e.$1 == type)) types.add((type, blockTypeLabel(type)));
+
+  return showDialog<List<int>>(
+    context: context,
+    builder: (context) => StatefulBuilder(
+      builder: (context, setState) {
+        final name = blockInfoFor(BlockType.fromValue(type))?.field(field)?.name;
+        return AlertDialog(
+          title: const Text('BlockInfo'),
+          content: DialogBody(
+            maxWidth: 360,
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              DropdownButtonFormField<int>(
+                initialValue: type,
+                decoration: const InputDecoration(labelText: 'Block'),
+                items: [
+                  for (final (v, l) in types)
+                    DropdownMenuItem(value: v, child: Text(l)),
+                ],
+                onChanged: (v) => setState(() {
+                  if (v != null) type = v;
+                }),
+              ),
+              const SizedBox(height: 8),
+              Row(children: [
+                Expanded(
+                    child: TextField(
+                        controller: instC,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(labelText: 'Instance'))),
+                const SizedBox(width: 8),
+                Expanded(
+                    child: TextField(
+                        controller: fieldC,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(labelText: 'Field'))),
+                const SizedBox(width: 8),
+                Expanded(
+                    child: TextField(
+                        controller: keyC,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(labelText: 'Key'))),
+              ]),
+              if (name != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 10),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('Field: $name',
+                        style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                  ),
+                ),
+            ]),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            FilledButton(
+              onPressed: () {
+                final i = int.tryParse(instC.text) ?? 0;
+                final f = int.tryParse(fieldC.text) ?? 0;
+                final k = int.tryParse(keyC.text) ?? 0;
+                Navigator.pop(context, uint32ToBytes(makeBlockInfo(type, i, f, k)));
+              },
+              child: const Text('OK'),
+            ),
+          ],
+        );
+      },
+    ),
+  );
+}
+
 /// Colour: RGBA byte order on the wire (Data Formats.md). Editor offers an RGBA hex
 /// field, HSVA sliders, a live preview and presets.
-Future<List<int>?> _editColour(BuildContext context, List<int> current) {
-  int r = current.length >= 4 ? current[0] : 255;
+Future<List<int>?> _editColour(BuildContext context, List<int> current) {  int r = current.length >= 4 ? current[0] : 255;
   int g = current.length >= 4 ? current[1] : 255;
   int b = current.length >= 4 ? current[2] : 255;
   int a = current.length >= 4 ? current[3] : 255;

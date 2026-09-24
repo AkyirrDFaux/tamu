@@ -129,6 +129,15 @@ Object? encodeSemantic(DataType type, List<int> bytes, {FieldInfo? info}) {
     case DataType.geometry:
     case DataType.texture:
       return encodeDictionary(type.value, bytes);
+    case DataType.blockInfo:
+      if (bytes.length < 4) return hexBytes(bytes);
+      final bi = uint32FromBytes(bytes);
+      return {
+        'block': blockTypeLabel((bi >> 22) & 0x3FF),
+        'instance': (bi >> 16) & 0x3F,
+        'field': (bi >> 8) & 0xFF,
+        'key': bi & 0xFF,
+      };
     case DataType.undefined:
     case DataType.deleted:
       return {'hex': hexBytes(bytes)};
@@ -192,6 +201,12 @@ List<int>? decodeSemantic(DataType type, Object? value,
     case DataType.geometry:
     case DataType.texture:
       return decodeDictionary(type.value, value);
+    case DataType.blockInfo:
+      if (value is! Map) return null;
+      final type = _blockTypeRaw(value['block']);
+      final inst = value['instance'], field = value['field'], key = value['key'];
+      if (type == null || inst is! num || field is! num || key is! num) return null;
+      return uint32ToBytes(makeBlockInfo(type, inst.toInt(), field.toInt(), key.toInt()));
     case DataType.undefined:
     case DataType.deleted:
       if (value is Map && value['hex'] is String) return unhexBytes(value['hex'] as String);
@@ -217,6 +232,20 @@ int? _deviceTypeRaw(Object? value) {
   if (value is num) return value.toInt();
   if (value is String) {
     for (final type in DeviceType.values) {
+      if (type.label == value) return type.value;
+    }
+    return int.tryParse(value);
+  }
+  return null;
+}
+
+/// Resolves a block-type word (or number) back to its raw value, with the System block
+/// (0x00) resolved explicitly (its word is "System", not the "None" tombstone).
+int? _blockTypeRaw(Object? value) {
+  if (value is num) return value.toInt();
+  if (value is String) {
+    if (value == 'System') return systemBlockTypeValue;
+    for (final type in BlockType.values) {
       if (type.label == value) return type.value;
     }
     return int.tryParse(value);

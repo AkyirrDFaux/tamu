@@ -66,3 +66,8 @@
   1 kHz should be achievable).
 - **PWM Duty is a `uint32` (%), not a Number.** The Register view/tests must decode it as an
   unsigned int; reading it as 16.16 gives ~0.0005 for a real 30 %.
+- **DAS provider subscriptions accumulate stale entries.** The DAS provider table holds 4, and
+  a requester cancel does not always reach the DAS (busy bus / dropped packet), so stale
+  providers linger and can block a new subscription (`ProviderFindFree` returns none). The
+  setup builder clears both DAS provider tables first as a workaround; the cancel should
+  retry/verify instead.

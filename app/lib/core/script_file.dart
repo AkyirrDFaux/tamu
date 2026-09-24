@@ -169,6 +169,7 @@ const List<DataType> scriptValueTypes = [
   DataType.string,
   DataType.filename,
   DataType.uint32,
+  DataType.blockInfo,
 ];
 
 /// A sensible byte size for a newly declared value of [type] (used as the default in the
@@ -180,10 +181,11 @@ int defaultSizeForType(DataType type) => switch (type) {
       DataType.number || DataType.integer || DataType.uint32 => 4,
       DataType.colour => 4,
       DataType.vector => 8,
-      DataType.matrix => 24,
+      DataType.matrix => 28, // 2x3 wire value: u16 h, u16 w + 6 Numbers
       DataType.string => 16,
       DataType.filename => 8,
       DataType.sn => 14,
+      DataType.blockInfo => 4,
       _ => 4,
     };
 

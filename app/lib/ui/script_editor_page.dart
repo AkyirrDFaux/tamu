@@ -1058,7 +1058,7 @@ class _SymbolPickerState extends State<_SymbolPicker> {
     final t = draft.valueTypeOf(s);
     if (t == null) {
       return s.type == symPredefine &&
-          const {preIndex, preChar, preBool, preMathOp}.contains(s.subtype);
+          const {preIndex, preChar, preBool, preMathOp, preNumber}.contains(s.subtype);
     }
     return scriptTypeIsNumeric(t.value);
   }
@@ -1136,8 +1136,11 @@ class _SymbolPickerState extends State<_SymbolPicker> {
       addConstsWhere(numeric);
       addVarsWhere(numeric);
       addInputsWhere(numeric);
+      // Common inline literals (no named constant needed).
       candidates.add(ScriptSymbol.predefine(preIndex, 0));
-      candidates.add(ScriptSymbol.predefine(preBool, 1));
+      candidates.add(ScriptSymbol.predefine(preIndex, 1));
+      candidates.add(ScriptSymbol.predefine(preIndex, 2));
+      candidates.add(ScriptSymbol.predefine(preNumber, 128)); // 0.5
     } else {
       addConstsWhere(any);
       addVarsWhere(any);
@@ -1190,7 +1193,7 @@ class _SymbolPickerState extends State<_SymbolPicker> {
     final def = widget.def;
     if (def != null && def.numeric) {
       return scriptPredefineSubtypes
-          .where((e) => const {preIndex, preChar, preBool, preMathOp}.contains(e.$1))
+          .where((e) => const {preIndex, preChar, preBool, preMathOp, preNumber}.contains(e.$1))
           .toList();
     }
     return scriptPredefineSubtypes;
@@ -1306,7 +1309,24 @@ class _SymbolPickerState extends State<_SymbolPicker> {
               Navigator.pop(context, ScriptSymbol.variable(draft.variables.length - 1));
             },
           ),
-        if (!widget.destination)
+        if (_constantOnly)
+          ListTile(
+            dense: true,
+            leading: const Icon(Icons.add, size: 18),
+            title: const Text('New BlockInfo'),
+            subtitle: const Text('Register target (block/field/key)',
+                style: TextStyle(fontSize: 11, color: Colors.white54)),
+            onTap: () async {
+              final bytes = await showValueEditor(context, DataType.blockInfo, const []);
+              if (bytes == null || !mounted) return;
+              draft.constants.add(ScriptDraftValue(
+                  name: 'Target',
+                  type: DataType.blockInfo,
+                  value: Uint8List.fromList(bytes)));
+              Navigator.pop(context, ScriptSymbol.constant(draft.constants.length - 1));
+            },
+          )
+        else if (!widget.destination)
           ListTile(
             dense: true,
             leading: const Icon(Icons.add, size: 18),
@@ -1314,6 +1334,20 @@ class _SymbolPickerState extends State<_SymbolPicker> {
             onTap: () {
               draft.constants.add(ScriptDraftValue(type: DataType.number));
               Navigator.pop(context, ScriptSymbol.constant(draft.constants.length - 1));
+            },
+          ),
+        if (_numericOperand)
+          ListTile(
+            dense: true,
+            leading: const Icon(Icons.numbers, size: 18),
+            title: const Text('Literal…'),
+            subtitle: const Text('Inline number (no constant needed)',
+                style: TextStyle(fontSize: 11, color: Colors.white54)),
+            onTap: () async {
+              final s = await showDialog<ScriptSymbol>(
+                  context: context, builder: (_) => const _LiteralDialog());
+              if (s == null || !mounted) return;
+              Navigator.pop(context, s);
             },
           ),
       ];
@@ -1482,6 +1516,7 @@ class _PredefineValueDialogState extends State<_PredefineValueDialog> {
       preMathOp => _list(scriptPredefineMathOps),
       preIndex => _numberEntry(max: 0xFFFF, hint: '0..65535'),
       preChar => _charEntry(),
+      preNumber => _numberLiteralEntry(),
       _ => const SizedBox.shrink(),
     };
     return AlertDialog(
@@ -1537,5 +1572,84 @@ class _PredefineValueDialogState extends State<_PredefineValueDialog> {
         child: const Text('OK'),
       ),
     ]);
+  }
+
+  /// Number literal: a decimal value encoded as a 16-bit Q8.8 (step 1/256, range ±128).
+  Widget _numberLiteralEntry() {
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      TextField(
+        controller: _text,
+        autofocus: true,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
+        decoration: const InputDecoration(
+            labelText: 'Value', helperText: '-128..127.99 (e.g. 0.5, 2.25)'),
+      ),
+      const SizedBox(height: 12),
+      FilledButton(
+        onPressed: () {
+          final v = double.tryParse(_text.text.trim().replaceAll(',', '.'));
+          if (v == null) return;
+          final q = (v * 256).round();
+          if (q < -32768 || q > 32767) return;
+          _pickValue(q & 0xFFFF);
+        },
+        child: const Text('OK'),
+      ),
+    ]);
+  }
+}
+
+/// Inline numeric literal picker: an integer in 0..65535 becomes an `Index` predefine,
+/// anything else a Q8.8 `Number` predefine.
+class _LiteralDialog extends StatefulWidget {
+  const _LiteralDialog();
+
+  @override
+  State<_LiteralDialog> createState() => _LiteralDialogState();
+}
+
+class _LiteralDialogState extends State<_LiteralDialog> {
+  final _text = TextEditingController();
+
+  @override
+  void dispose() {
+    _text.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final v = double.tryParse(_text.text.trim().replaceAll(',', '.'));
+    if (v == null) return;
+    if (v == v.roundToDouble() && v >= 0 && v <= 65535) {
+      Navigator.pop(context, ScriptSymbol.predefine(preIndex, v.toInt()));
+      return;
+    }
+    final q = (v * 256).round();
+    if (q < -32768 || q > 32767) return;
+    Navigator.pop(context, ScriptSymbol.predefine(preNumber, q & 0xFFFF));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Literal'),
+      content: DialogBody(
+        maxWidth: 320,
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          TextField(
+            controller: _text,
+            autofocus: true,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
+            decoration: const InputDecoration(
+                labelText: 'Value', helperText: 'Integer 0..65535, or a fraction like 0.5'),
+            onSubmitted: (_) => _submit(),
+          ),
+        ]),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        FilledButton(onPressed: _submit, child: const Text('OK')),
+      ],
+    );
   }
 }

@@ -147,6 +147,7 @@ enum DataType {
   deleted(0x0D),
   uint32(0x0E), // Unsigned 32-bit (firmware DataType::Uint32)
   devType(0x0F), // alias to enum (firmware DataType::DevType)
+  blockInfo(0x10), // register pointer type|inst|field|key (firmware DataType::BlockInfo)
   netAddr(0x03), // alias to id
   geometry(0x101), // dictionary marker (firmware DataType::Geometry = 0x101)
   texture(0x102); // dictionary marker (firmware DataType::Texture = 0x102)
@@ -181,6 +182,7 @@ String dataTypeWord(DataType type) => switch (type) {
       DataType.deleted => 'Deleted',
       DataType.uint32 => 'Uint32',
       DataType.devType => 'Device type',
+      DataType.blockInfo => 'BlockInfo',
       DataType.geometry => 'Geometry dict',
       DataType.texture => 'Texture dict',
     };
@@ -204,6 +206,7 @@ DataType? dataTypeFromWord(String word) {
     'Deleted': DataType.deleted,
     'Uint32': DataType.uint32,
     'Device type': DataType.devType,
+    'BlockInfo': DataType.blockInfo,
     'Geometry dict': DataType.geometry,
     'Texture dict': DataType.texture,
   };

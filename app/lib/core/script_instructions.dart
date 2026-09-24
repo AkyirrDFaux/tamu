@@ -9,6 +9,8 @@ library;
 
 import 'dart:typed_data';
 
+import 'types.dart';
+
 // Symbol types.
 const int symInstruction = 0;
 const int symInput = 1;
@@ -25,6 +27,7 @@ const int preIndex = 2;
 const int preChar = 3;
 const int preMathOp = 4;
 const int preBool = 5;
+const int preNumber = 6; // 16-bit Q8.8 fixed-point literal
 
 /// Instruction categories (the symbol Subtype for instruction symbols).
 const int catMath = 0;
@@ -71,6 +74,7 @@ class ScriptSymbol {
         preChar => 'Char',
         preMathOp => 'Math op',
         preBool => 'Bool',
+        preNumber => 'Number',
         _ => 'Predefine',
       };
 }
@@ -150,24 +154,25 @@ const List<(int, String)> scriptPredefineSubtypes = [
   (preChar, 'Char'),
   (preMathOp, 'Math op'),
   (preBool, 'Bool'),
+  (preNumber, 'Number'),
 ];
 
 const List<ScriptInstructionDef> scriptInstructions = [
-  // Math
+  // Math (Add..Maximum fold N operands left-to-right; Set/Negate/Absolute take one)
   ScriptInstructionDef(op: 0, category: catMath, label: 'Set', destination: true, minOperands: 1, maxOperands: 1, numeric: true),
-  ScriptInstructionDef(op: 1, category: catMath, label: 'Add', destination: true, minOperands: 2, maxOperands: 2, numeric: true),
-  ScriptInstructionDef(op: 2, category: catMath, label: 'Subtract', destination: true, minOperands: 2, maxOperands: 2, numeric: true),
-  ScriptInstructionDef(op: 3, category: catMath, label: 'Multiply', destination: true, minOperands: 2, maxOperands: 2, numeric: true),
-  ScriptInstructionDef(op: 4, category: catMath, label: 'Divide', destination: true, minOperands: 2, maxOperands: 2, numeric: true),
-  ScriptInstructionDef(op: 5, category: catMath, label: 'Modulo', destination: true, minOperands: 2, maxOperands: 2, numeric: true),
-  ScriptInstructionDef(op: 6, category: catMath, label: 'Minimum', destination: true, minOperands: 2, maxOperands: 2, numeric: true),
-  ScriptInstructionDef(op: 7, category: catMath, label: 'Maximum', destination: true, minOperands: 2, maxOperands: 2, numeric: true),
+  ScriptInstructionDef(op: 1, category: catMath, label: 'Add', destination: true, minOperands: 2, maxOperands: 8, numeric: true),
+  ScriptInstructionDef(op: 2, category: catMath, label: 'Subtract', destination: true, minOperands: 2, maxOperands: 8, numeric: true),
+  ScriptInstructionDef(op: 3, category: catMath, label: 'Multiply', destination: true, minOperands: 2, maxOperands: 8, numeric: true),
+  ScriptInstructionDef(op: 4, category: catMath, label: 'Divide', destination: true, minOperands: 2, maxOperands: 8, numeric: true),
+  ScriptInstructionDef(op: 5, category: catMath, label: 'Modulo', destination: true, minOperands: 2, maxOperands: 8, numeric: true),
+  ScriptInstructionDef(op: 6, category: catMath, label: 'Minimum', destination: true, minOperands: 2, maxOperands: 8, numeric: true),
+  ScriptInstructionDef(op: 7, category: catMath, label: 'Maximum', destination: true, minOperands: 2, maxOperands: 8, numeric: true),
   ScriptInstructionDef(op: 8, category: catMath, label: 'Negate', destination: true, minOperands: 1, maxOperands: 1, numeric: true),
   ScriptInstructionDef(op: 9, category: catMath, label: 'Absolute', destination: true, minOperands: 1, maxOperands: 1, numeric: true),
-  // Logic
-  ScriptInstructionDef(op: 0, category: catLogic, label: 'And', destination: true, minOperands: 2, maxOperands: 2, numeric: true),
-  ScriptInstructionDef(op: 1, category: catLogic, label: 'Or', destination: true, minOperands: 2, maxOperands: 2, numeric: true),
-  ScriptInstructionDef(op: 2, category: catLogic, label: 'Xor', destination: true, minOperands: 2, maxOperands: 2, numeric: true),
+  // Logic (And/Or/Xor fold N; Not/Shift/Compare/Select fixed)
+  ScriptInstructionDef(op: 0, category: catLogic, label: 'And', destination: true, minOperands: 2, maxOperands: 8, numeric: true),
+  ScriptInstructionDef(op: 1, category: catLogic, label: 'Or', destination: true, minOperands: 2, maxOperands: 8, numeric: true),
+  ScriptInstructionDef(op: 2, category: catLogic, label: 'Xor', destination: true, minOperands: 2, maxOperands: 8, numeric: true),
   ScriptInstructionDef(op: 3, category: catLogic, label: 'Not', destination: true, minOperands: 1, maxOperands: 1, numeric: true),
   ScriptInstructionDef(op: 4, category: catLogic, label: 'Shift left', destination: true, minOperands: 2, maxOperands: 2, numeric: true),
   ScriptInstructionDef(op: 5, category: catLogic, label: 'Shift right', destination: true, minOperands: 2, maxOperands: 2, numeric: true),
@@ -342,11 +347,15 @@ List<String> validateScriptLines(List<ScriptLine> lines, ScriptValidationContext
       errors.add('$where (${def.label}): expects ${def.minOperands}..${def.maxOperands} operands '
           '(${line.operands.length} given)');
     }
-    if (def.constantIndex >= 0 &&
-        (line.operands.length <= def.constantIndex ||
-            line.operands[def.constantIndex].type != symConstant)) {
-      errors.add('$where (${def.label}): operand ${def.constantIndex + 1} must be a constant '
-          '(4-byte register address)');
+    if (def.constantIndex >= 0 && line.operands.length > def.constantIndex) {
+      final o = line.operands[def.constantIndex];
+      final t = context.typeOf(o);
+      if (o.type != symConstant) {
+        errors.add('$where (${def.label}): operand ${def.constantIndex + 1} must be a constant '
+            '(BlockInfo)');
+      } else if (t != null && t != DataType.blockInfo.value) {
+        errors.add('$where (${def.label}): operand ${def.constantIndex + 1} must be a BlockInfo');
+      }
     }
     if (def.addressIndex >= 0 && line.operands.length > def.addressIndex) {
       final a = line.operands[def.addressIndex];

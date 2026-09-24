@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:tamuapp/core/backup_script.dart';
 import 'package:tamuapp/core/script_draft.dart';
 import 'package:tamuapp/core/script_file.dart';
 import 'package:tamuapp/core/script_instructions.dart';
@@ -137,8 +138,64 @@ void main() {
 
   test('all predefine subtypes and math ops are available', () {
     expect(scriptPredefineSubtypes.map((e) => e.$1).toSet(),
-        {preState, preType, preIndex, preChar, preMathOp, preBool});
+        {preState, preType, preIndex, preChar, preMathOp, preBool, preNumber});
     expect(scriptPredefineMathOps.length, 18);
+  });
+
+  test('n-ary math ops accept up to 8 operands', () {
+    ScriptInstructionDef defFor(int cat, int op) =>
+        scriptInstructions.firstWhere((d) => d.category == cat && d.op == op);
+    for (final (cat, op) in [(catMath, 1), (catMath, 3), (catMath, 6), (catLogic, 0)]) {
+      expect(defFor(cat, op).maxOperands, 8);
+    }
+    // A 4-operand Add validates and round-trips.
+    final line = ScriptLine(
+      destinations: [ScriptSymbol.variable(0)],
+      instruction: ScriptSymbol.instruction(catMath, 1),
+      operands: [
+        ScriptSymbol.variable(1),
+        ScriptSymbol.variable(2),
+        ScriptSymbol.constant(0),
+        ScriptSymbol.predefine(preIndex, 3),
+      ],
+    );
+    final ctx = ScriptValidationContext(
+        variableTypes: [DataType.number.value, DataType.number.value, DataType.number.value],
+        constantTypes: [DataType.number.value]);
+    expect(validateScriptLines([line], ctx), isEmpty);
+    expect(decodeScriptLines(encodeScriptLines([line])).single.operands.length, 4);
+  });
+
+  test('BlockInfo and Number-literal symbols round-trip through the backup', () {
+    final draft = ScriptDraft(functionName: 'Reg')
+      ..constants.add(ScriptDraftValue(
+          name: 'Target',
+          type: DataType.blockInfo,
+          value: Uint8List.fromList(uint32ToBytes(makeBlockInfo(BlockType.pwm.value, 0, 1, 0)))))
+      ..lines.add(ScriptLine(
+        instruction: ScriptSymbol.instruction(catService, 2),
+        operands: [
+          ScriptSymbol.constant(0),
+          ScriptSymbol.predefine(preNumber, 128), // 0.5
+        ],
+      ));
+    final parsed = ScriptFileData.parse(draft.toImage());
+    expect(parsed.constants.single.type, DataType.blockInfo);
+    final restored = ScriptDraft.fromFile(parsed);
+    expect(restored.constants.single.type, DataType.blockInfo);
+    expect(uint32FromBytes(restored.constants.single.value),
+        makeBlockInfo(BlockType.pwm.value, 0, 1, 0));
+    expect(restored.lines.single.operands.last.subtype, preNumber);
+    expect(restored.lines.single.operands.last.value, 128);
+
+    // And through the semantic backup codec (block word + instance/field/key).
+    final backup = BackupScript.fromDraft(0, draft);
+    final json = backup.toJson();
+    expect(json['constants'][0]['type'], 'BlockInfo');
+    final back = BackupScript.fromJson(json).toDraft();
+    expect(back.constants.single.type, DataType.blockInfo);
+    expect(uint32FromBytes(back.constants.single.value),
+        makeBlockInfo(BlockType.pwm.value, 0, 1, 0));
   });
 
   test('foreign register ops validate the address operand', () {

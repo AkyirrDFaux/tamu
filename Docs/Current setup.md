@@ -18,6 +18,6 @@ Script 2 : Eye movement
 - Rotational axis of gyroscope (XY) calculates circle and pupil position
 Script 3 : Lid timer
 -  10s delay between blinks
--  200ms movement (each way)
+-  100ms movement (each way)
 Script 4 : Brightness regulation
 - Uses one LDR to set brightness on each display

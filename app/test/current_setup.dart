@@ -169,15 +169,27 @@ Future<void> setDynEntry(
 
 /// Writes a static block field, reusing the field's current type from the device.
 /// Skips the write when the value is already equal (avoids re-running write triggers,
-/// e.g. the LED-display layout reload).
+/// e.g. the LED-display layout reload). Retries a busy device.
 Future<void> setStatic(
     RegisterClient reg, int type, int inst, int field, List<int> value) async {
-  final cur = await reg.readBlockField(type, inst, field, 0);
-  if (cur == null) throw StateError('static read failed: type $type inst $inst field $field');
-  if (_bytesEqual(cur.value, value)) return;
-  final meta = BlockMeta(flagsAndType: cur.meta.flagsAndType, key: 0, size: value.length);
+  BlockMeta? meta;
+  List<int>? cur;
+  for (var attempt = 0; attempt < 5; attempt++) {
+    final r = await reg.readBlockField(type, inst, field, 0);
+    if (r != null) {
+      meta = r.meta;
+      cur = r.value;
+      break;
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+  }
+  if (meta == null || cur == null) {
+    throw StateError('static read failed: type $type inst $inst field $field');
+  }
+  if (_bytesEqual(cur, value)) return;
+  final wm = BlockMeta(flagsAndType: meta.flagsAndType, key: 0, size: value.length);
   for (var attempt = 0; attempt < 4; attempt++) {
-    final ok = await reg.writeBlockField(type, inst, field, 0, meta, value);
+    final ok = await reg.writeBlockField(type, inst, field, 0, wm, value);
     if (ok != null) return;
     await Future<void>.delayed(const Duration(milliseconds: 200));
   }
@@ -363,7 +375,7 @@ Future<void> buildSubscriptions(
 
 ScriptSymbol _c(int i) => ScriptSymbol.constant(i);
 ScriptSymbol _v(int i) => ScriptSymbol.variable(i);
-ScriptSymbol _idx(int n) => ScriptSymbol.predefine(preIndex, n);
+ScriptSymbol _idx(int n) => ScriptSymbol.predefine(preIndex, n); // index / integer literal
 ScriptSymbol _true() => ScriptSymbol.predefine(preBool, 1);
 ScriptSymbol _ins(int cat, int op) => ScriptSymbol.instruction(cat, op);
 
@@ -372,8 +384,8 @@ ScriptLine _line(List<ScriptSymbol> dest, ScriptSymbol instr, [List<ScriptSymbol
 
 ScriptDraftValue _cNum(String name, double v) =>
     ScriptDraftValue(name: name, type: DataType.number, value: num(v));
-ScriptDraftValue _cU32(String name, int v) =>
-    ScriptDraftValue(name: name, type: DataType.uint32, value: u32(v));
+ScriptDraftValue _cBlockInfo(String name, int v) =>
+    ScriptDraftValue(name: name, type: DataType.blockInfo, value: u32(v));
 ScriptDraftValue _cIx(String name, int v) =>
     ScriptDraftValue(name: name, type: DataType.integer, size: 4, value: u32(v));
 ScriptDraftValue _cMatrix(String name, List<int> bytes) =>
@@ -387,33 +399,33 @@ int _props() => ScriptProperties.loadOnBoot | ScriptProperties.runOnLoad;
 ScriptDraft scriptTemperature() {
   final d = ScriptDraft(functionName: 'Temperature regulation', properties: _props());
   d.constants.addAll([
-    _cU32('SUB_TEMP_A', bi(BlockType.dynamic.value, dynSubscriptions, fTempA, 0)),
-    _cU32('SUB_TEMP_B', bi(BlockType.dynamic.value, dynSubscriptions, fTempB, 0)),
-    _cU32('FAN_DUTY', bi(BlockType.pwm.value, fanInst, 1, 0)),
+    _cBlockInfo('TEMP_A', bi(BlockType.dynamic.value, dynSubscriptions, fTempA, 0)),
+    _cBlockInfo('TEMP_B', bi(BlockType.dynamic.value, dynSubscriptions, fTempB, 0)),
+    _cBlockInfo('FAN_DUTY', bi(BlockType.pwm.value, fanInst, 1, 0)),
     _cNum('T_MIN', tempMin),
-    _cNum('T_MAX', tempMax),
     _cNum('DUTY_MAX', 100),
-    _cNum('ZERO', 0),
-    _cNum('TWO', 2),
-    _cIx('PERIOD', 200),
     _cNum('T_SPAN', tempMax - tempMin),
+    _cIx('PERIOD', 200),
   ]);
-  d.variables.addAll([_var('tempA', DataType.number, 4), _var('tempB', DataType.number, 4), _var('avg', DataType.number, 4), _var('duty', DataType.number, 4)]);
+  d.variables.addAll([
+    _var('tempA', DataType.number, 4),
+    _var('tempB', DataType.number, 4),
+    _var('avg', DataType.number, 4),
+    _var('duty', DataType.number, 4),
+  ]);
   d.lines.addAll([
     _line([], _ins(catFlow, 1), [_true()]), // While true
-    _line([_v(0)], _ins(catService, 1), [_c(0)]), // tempA = reg[SUB_TEMP_A]
-    _line([_v(1)], _ins(catService, 1), [_c(1)]), // tempB = reg[SUB_TEMP_B]
-    _line([_v(2)], _ins(catMath, 0), [_v(0)]), // avg = tempA
-    _line([_v(2)], _ins(catMath, 1), [_v(2), _v(1)]), // avg += tempB
-    _line([_v(2)], _ins(catMath, 4), [_v(2), _c(7)]), // avg /= 2
-    _line([_v(3)], _ins(catMath, 0), [_v(2)]), // duty = avg
-    _line([_v(3)], _ins(catMath, 2), [_v(3), _c(3)]), // duty -= T_MIN
-    _line([_v(3)], _ins(catMath, 3), [_v(3), _c(5)]), // duty *= DUTY_MAX
-    _line([_v(3)], _ins(catMath, 4), [_v(3), _c(9)]), // duty /= T_SPAN
-    _line([_v(3)], _ins(catMath, 7), [_v(3), _c(6)]), // duty = Max(duty, 0)
-    _line([_v(3)], _ins(catMath, 6), [_v(3), _c(5)]), // duty = Min(duty, 100)
-    _line([], _ins(catService, 2), [_c(2), _v(3)]), // reg[FAN_DUTY] = duty
-    _line([], _ins(catTime, 0), [_c(8)]), // Delay 200
+    _line([_v(0)], _ins(catService, 1), [_c(0)]), // tempA = read[TEMP_A]
+    _line([_v(1)], _ins(catService, 1), [_c(1)]), // tempB = read[TEMP_B]
+    _line([_v(2)], _ins(catMath, 1), [_v(0), _v(1)]), // avg = tempA + tempB
+    _line([_v(2)], _ins(catMath, 4), [_v(2), _idx(2)]), // avg /= 2
+    _line([_v(3)], _ins(catMath, 2), [_v(2), _c(3)]), // duty = avg - T_MIN
+    _line([_v(3)], _ins(catMath, 3), [_v(3), _c(4)]), // duty *= DUTY_MAX
+    _line([_v(3)], _ins(catMath, 4), [_v(3), _c(5)]), // duty /= T_SPAN
+    _line([_v(3)], _ins(catMath, 7), [_v(3), _idx(0)]), // duty = Max(duty, 0)
+    _line([_v(3)], _ins(catMath, 6), [_v(3), _c(4)]), // duty = Min(duty, DUTY_MAX)
+    _line([], _ins(catService, 2), [_c(2), _v(3)]), // write[FAN_DUTY] = duty
+    _line([], _ins(catTime, 0), [_c(6)]), // Delay PERIOD
     _line([], _ins(catFlow, 2)), // EndBlock
   ]);
   return d;
@@ -423,10 +435,10 @@ ScriptDraft scriptTemperature() {
 ScriptDraft scriptBrightness() {
   final d = ScriptDraft(functionName: 'Brightness regulation', properties: _props());
   d.constants.addAll([
-    _cU32('SUB_LUX_A', bi(BlockType.dynamic.value, dynSubscriptions, fLuxA, 0)),
-    _cU32('SUB_LUX_B', bi(BlockType.dynamic.value, dynSubscriptions, fLuxB, 0)),
-    _cU32('DISP_L_BRIGHT', bi(BlockType.vysiDisplay.value, dispLeft, 0, 0)),
-    _cU32('DISP_R_BRIGHT', bi(BlockType.vysiDisplay.value, dispRight, 0, 0)),
+    _cBlockInfo('SUB_LUX_A', bi(BlockType.dynamic.value, dynSubscriptions, fLuxA, 0)),
+    _cBlockInfo('SUB_LUX_B', bi(BlockType.dynamic.value, dynSubscriptions, fLuxB, 0)),
+    _cBlockInfo('DISP_L_BRIGHT', bi(BlockType.vysiDisplay.value, dispLeft, 0, 0)),
+    _cBlockInfo('DISP_R_BRIGHT', bi(BlockType.vysiDisplay.value, dispRight, 0, 0)),
     _cNum('BRIGHT_MAX', luxBrightMax),
     _cNum('BRIGHT_MIN', luxBrightMin),
     _cNum('LUX_SPAN', luxSpan),
@@ -456,7 +468,7 @@ ScriptDraft scriptBrightness() {
     _line([_v(1)], _ins(catService, 1), [_c(1)]), // luxB = reg[SUB_LUX_B]
     ...calc(1, 2, 2), // left display uses the RIGHT DAS LDR (LuxB)
     ...calc(0, 3, 3), // right display uses the LEFT DAS LDR (LuxA)
-    _line([], _ins(catTime, 0), [_c(8)]), // Delay 300
+    _line([], _ins(catTime, 0), [_c(8)]), // Delay PERIOD
     _line([], _ins(catFlow, 2)), // EndBlock
   ]);
   return d;
@@ -466,16 +478,15 @@ ScriptDraft scriptBrightness() {
 ScriptDraft scriptEyeMovement() {
   final d = ScriptDraft(functionName: 'Eye movement', properties: _props());
   d.constants.addAll([
-    _cU32('GYRO', bi(BlockType.accGyr.value, 0, 6, 0)), // Angular Velocity (Vector3)
-    _cU32('LEFT_IRIS', bi(BlockType.dynamic.value, dynLeftEye, eyeIrisGeo, gkPosition)),
-    _cU32('LEFT_PUPIL', bi(BlockType.dynamic.value, dynLeftEye, eyePupilGeo, gkPosition)),
-    _cU32('RIGHT_IRIS', bi(BlockType.dynamic.value, dynRightEye, eyeIrisGeo, gkPosition)),
-    _cU32('RIGHT_PUPIL', bi(BlockType.dynamic.value, dynRightEye, eyePupilGeo, gkPosition)),
+    _cBlockInfo('GYRO', bi(BlockType.accGyr.value, 0, 6, 0)), // Angular Velocity (Vector3)
+    _cBlockInfo('LEFT_IRIS', bi(BlockType.dynamic.value, dynLeftEye, eyeIrisGeo, gkPosition)),
+    _cBlockInfo('LEFT_PUPIL', bi(BlockType.dynamic.value, dynLeftEye, eyePupilGeo, gkPosition)),
+    _cBlockInfo('RIGHT_IRIS', bi(BlockType.dynamic.value, dynRightEye, eyeIrisGeo, gkPosition)),
+    _cBlockInfo('RIGHT_PUPIL', bi(BlockType.dynamic.value, dynRightEye, eyePupilGeo, gkPosition)),
     _cMatrix('IDENT', identity23()),
     _cNum('SCALE', eyeScale),
     _cNum('LIMIT', eyeLimit),
     _cNum('NEG_LIMIT', -eyeLimit),
-    _cNum('TWO', 2),
     _cIx('PERIOD', 30),
     // Base eye position: inward (+x on the left eye, -x on the right) and slightly up.
     _cNum('BASE_L_X', eyeBaseIn),
@@ -483,65 +494,56 @@ ScriptDraft scriptEyeMovement() {
     _cNum('BASE_R_X', -eyeBaseIn),
     _cNum('BASE_R_Y', eyeBaseUp),
     // Iris texture Position: keeps the fade centred on the pupil.
-    _cU32('LEFT_IRIS_TEX', bi(BlockType.dynamic.value, dynLeftEye, eyeIrisTex, tkPosition)),
-    _cU32('RIGHT_IRIS_TEX', bi(BlockType.dynamic.value, dynRightEye, eyeIrisTex, tkPosition)),
+    _cBlockInfo('LEFT_IRIS_TEX', bi(BlockType.dynamic.value, dynLeftEye, eyeIrisTex, tkPosition)),
+    _cBlockInfo('RIGHT_IRIS_TEX', bi(BlockType.dynamic.value, dynRightEye, eyeIrisTex, tkPosition)),
   ]);
   d.variables.addAll([
-    _var('gyro', DataType.vector, 12),
+    _var('offset', DataType.vector, 12), // gyro scaled + clamped as one vector op
     _var('gx', DataType.number, 4),
     _var('gy', DataType.number, 4),
-    _var('tx', DataType.number, 4),
-    _var('ty', DataType.number, 4),
     _var('halfX', DataType.number, 4),
     _var('halfY', DataType.number, 4),
-    _var('irisL', DataType.matrix, 28),
-    _var('pupilL', DataType.matrix, 28),
-    _var('irisR', DataType.matrix, 28),
-    _var('pupilR', DataType.matrix, 28),
-    _var('posX', DataType.number, 4), // 11: eye position x (source + base)
-    _var('posY', DataType.number, 4), // 12: eye position y
+    _var('mat', DataType.matrix, 28), // reused 2x3 position matrix
+    _var('posX', DataType.number, 4),
+    _var('posY', DataType.number, 4),
   ]);
 
-  /// tx = clamp(gx * SCALE, NEG_LIMIT, LIMIT) from gyro element [elem].
-  List<ScriptLine> axis(int elem, int outVar) => [
-        _line([_v(outVar)], _ins(catCompose, 1), [_v(0), _idx(elem)]), // out = gyro[elem]
-        _line([_v(outVar)], _ins(catMath, 3), [_v(outVar), _c(6)]), // out *= SCALE
-        _line([_v(outVar)], _ins(catMath, 7), [_v(outVar), _c(8)]), // out = Max(out, -LIMIT)
-        _line([_v(outVar)], _ins(catMath, 6), [_v(outVar), _c(7)]), // out = Min(out, LIMIT)
+  /// mat = IDENT with translation (xVar, yVar); written to the geometry Position and, for
+  /// the iris, also to the texture Position (so the fade stays centred on the pupil).
+  List<ScriptLine> place(int xVar, int yVar, int regConst, {int? texConst}) => [
+        _line([_v(5)], _ins(catMath, 0), [_c(5)]), // mat = IDENT
+        _line([_v(5)], _ins(catCompose, 0), [_idx(2), _v(xVar)]), // mat[0,2] = x
+        _line([_v(5)], _ins(catCompose, 0), [_idx(5), _v(yVar)]), // mat[1,2] = y
+        _line([], _ins(catService, 2), [_c(regConst), _v(5)]), // write[reg] = mat
+        if (texConst != null)
+          _line([], _ins(catService, 2), [_c(texConst), _v(5)]),
       ];
 
-  /// Writes matrix var = IDENT with translation (xVar, yVar) to regConst.
-  List<ScriptLine> move(int matVar, int xVar, int yVar, int regConst) => [
-        _line([_v(matVar)], _ins(catMath, 0), [_c(5)]), // mat = IDENT
-        _line([_v(matVar)], _ins(catCompose, 0), [_idx(2), _v(xVar)]), // mat[0,2] = x
-        _line([_v(matVar)], _ins(catCompose, 0), [_idx(5), _v(yVar)]), // mat[1,2] = y
-        _line([], _ins(catService, 2), [_c(regConst), _v(matVar)]), // reg[...] = mat
-      ];
-
-  /// posX/posY (vars 11/12) = source (srcX, srcY) + the base offset constants.
-  List<ScriptLine> withBase(int srcX, int srcY, int baseXConst, int baseYConst) => [
-        _line([_v(11)], _ins(catMath, 0), [_v(srcX)]), // posX = srcX
-        _line([_v(11)], _ins(catMath, 1), [_v(11), _c(baseXConst)]), // posX += baseX
-        _line([_v(12)], _ins(catMath, 0), [_v(srcY)]), // posY = srcY
-        _line([_v(12)], _ins(catMath, 1), [_v(12), _c(baseYConst)]), // posY += baseY
+  /// posX/posY = source (srcX, srcY) + the base offset constants.
+  List<ScriptLine> at(int srcX, int srcY, int baseXConst, int baseYConst) => [
+        _line([_v(6)], _ins(catMath, 0), [_v(srcX)]), // posX = srcX
+        _line([_v(6)], _ins(catMath, 1), [_v(6), _c(baseXConst)]), // posX += baseX
+        _line([_v(7)], _ins(catMath, 0), [_v(srcY)]), // posY = srcY
+        _line([_v(7)], _ins(catMath, 1), [_v(7), _c(baseYConst)]), // posY += baseY
       ];
 
   d.lines.addAll([
     _line([], _ins(catFlow, 1), [_true()]), // While true
-    _line([_v(0)], _ins(catService, 1), [_c(0)]), // gyro = reg[GYRO]
-    ...axis(0, 3), // tx
-    ...axis(1, 4), // ty
-    _line([_v(5)], _ins(catMath, 0), [_v(3)]), // halfX = tx
-    _line([_v(5)], _ins(catMath, 4), [_v(5), _c(9)]), // halfX /= 2
-    _line([_v(6)], _ins(catMath, 0), [_v(4)]), // halfY = ty
-    _line([_v(6)], _ins(catMath, 4), [_v(6), _c(9)]), // halfY /= 2
-    ...withBase(5, 6, 11, 12), ...move(7, 11, 12, 1), // left iris (half offset)
-    ...withBase(3, 4, 11, 12), ...move(8, 11, 12, 2), // left pupil (full offset)
-    _line([], _ins(catService, 2), [_c(15), _v(8)]), // left iris texture centred on pupil
-    ...withBase(5, 6, 13, 14), ...move(9, 11, 12, 3), // right iris
-    ...withBase(3, 4, 13, 14), ...move(10, 11, 12, 4), // right pupil
-    _line([], _ins(catService, 2), [_c(16), _v(10)]), // right iris texture centred on pupil
-    _line([], _ins(catTime, 0), [_c(10)]), // Delay 30
+    _line([_v(0)], _ins(catService, 1), [_c(0)]), // offset = read[GYRO] (vector)
+    _line([_v(0)], _ins(catMath, 3), [_v(0), _c(6)]), // offset *= SCALE   (element-wise)
+    _line([_v(0)], _ins(catMath, 7), [_v(0), _c(8)]), // offset = Max(offset, -LIMIT)
+    _line([_v(0)], _ins(catMath, 6), [_v(0), _c(7)]), // offset = Min(offset, LIMIT)
+    _line([_v(1)], _ins(catCompose, 1), [_v(0), _idx(0)]), // gx = offset[0]
+    _line([_v(2)], _ins(catCompose, 1), [_v(0), _idx(1)]), // gy = offset[1]
+    _line([_v(3)], _ins(catMath, 0), [_v(1)]), // halfX = gx
+    _line([_v(3)], _ins(catMath, 4), [_v(3), _idx(2)]), // halfX /= 2
+    _line([_v(4)], _ins(catMath, 0), [_v(2)]), // halfY = gy
+    _line([_v(4)], _ins(catMath, 4), [_v(4), _idx(2)]), // halfY /= 2
+    ...at(3, 4, 10, 11), ...place(6, 7, 1), // left iris (half offset)
+    ...at(1, 2, 10, 11), ...place(6, 7, 2, texConst: 14), // left pupil + iris fade
+    ...at(3, 4, 12, 13), ...place(6, 7, 3), // right iris
+    ...at(1, 2, 12, 13), ...place(6, 7, 4, texConst: 15), // right pupil + iris fade
+    _line([], _ins(catTime, 0), [_c(9)]), // Delay PERIOD
     _line([], _ins(catFlow, 2)), // EndBlock
   ]);
   return d;
@@ -551,8 +553,8 @@ ScriptDraft scriptEyeMovement() {
 ScriptDraft scriptLidTimer() {
   final d = ScriptDraft(functionName: 'Lid timer', properties: _props());
   d.constants.addAll([
-    _cU32('LID_L', bi(BlockType.dynamic.value, dynLeftEye, eyeLidGeo, gkPosition)),
-    _cU32('LID_R', bi(BlockType.dynamic.value, dynRightEye, eyeLidGeo, gkPosition)),
+    _cBlockInfo('LID_L', bi(BlockType.dynamic.value, dynLeftEye, eyeLidGeo, gkPosition)),
+    _cBlockInfo('LID_R', bi(BlockType.dynamic.value, dynRightEye, eyeLidGeo, gkPosition)),
     _cMatrix('IDENT', identity23()),
     _cNum('OPEN_TY', lidOpenTy),
     _cNum('CLOSED_TY', lidClosedTy),
@@ -560,8 +562,6 @@ ScriptDraft scriptLidTimer() {
     _cIx('STEPS', lidSteps),
     _cIx('TICK', 10), // 10 ticks * 10 ms = 100 ms per movement
     _cIx('WAIT', 10000),
-    _cNum('ZERO', 0),
-    _cNum('ONE', 1),
   ]);
   d.variables.addAll([
     _var('step', DataType.number, 4),
@@ -578,9 +578,9 @@ ScriptDraft scriptLidTimer() {
         _line([], _ins(catService, 2), [_c(regConst), _v(matVar)]),
       ];
 
-  /// One 200 ms sweep: ty = from + step*STEP, applying both lids each tick.
+  /// One 100 ms sweep: ty = from + step*STEP, applying both lids each tick.
   List<ScriptLine> sweep(int fromConst, int sign) => [
-        _line([_v(0)], _ins(catMath, 0), [_c(9)]), // step = 0
+        _line([_v(0)], _ins(catMath, 0), [_idx(0)]), // step = 0
         _line([_v(4)], _ins(catMath, 0), [_true()]), // cond = true (enter the loop)
         _line([], _ins(catFlow, 1), [_v(4)]), // While cond
         _line([_v(1)], _ins(catMath, 0), [_v(0)]), // ty = step
@@ -591,12 +591,12 @@ ScriptDraft scriptLidTimer() {
           _line([_v(1)], _ins(catMath, 2), [_c(fromConst), _v(1)]), // ty = CLOSED_TY - ty
         ...applyLid(2, 0, _v(1)),
         ...applyLid(3, 1, _v(1)),
-        _line([_v(0)], _ins(catMath, 1), [_v(0), _c(10)]), // step += 1
+        _line([_v(0)], _ins(catMath, 1), [_v(0), _idx(1)]), // step += 1
         // The While re-reads `cond` at the top, so the comparison must be recomputed
         // INSIDE the loop (a condition computed once before the loop never changes and
         // the loop would run forever).
         _line([_v(4)], _ins(catLogic, 8), [_v(0), _c(6)]), // cond = step < STEPS
-        _line([], _ins(catTime, 0), [_c(7)]), // Delay 20
+        _line([], _ins(catTime, 0), [_c(7)]), // Delay TICK
         _line([], _ins(catFlow, 2)), // EndBlock
       ];
 
@@ -623,6 +623,11 @@ Future<void> buildScripts(StorageClient storage, ScriptClient scripts) async {
   for (final entry in drafts.entries) {
     final id = entry.key;
     final name = 'SCR_${id.toString().padLeft(2, '0')}';
+    // Catch wrong constant indices / operand types before uploading.
+    final errors = validateScriptLines(entry.value.lines, entry.value.validationContext);
+    if (errors.isNotEmpty) {
+      throw StateError('script $name invalid: ${errors.first}');
+    }
     if (await scripts.readState(id) != null) await scripts.unload(id);
     await storage.deleteFile(name);
     if (!await storage.writeFile(name, entry.value.toImage())) {
@@ -671,6 +676,16 @@ Future<({DeviceEntry core, List<DeviceEntry> das})> applyCurrentSetup(
   // (eye/lid positions), which would race the rebuild below.
   await stopScripts(scriptClient);
   await clampBrightness(reg, 5);
+
+  // Clear stale provider entries on the DAS nodes. Their provider table is small (4) and
+  // an earlier requester cancel does not always reach them, so a stale entry can block a
+  // new subscription (see Issues.md).
+  for (final das in found.das) {
+    final c = SubscriptionClient(deviceId: das.id);
+    for (var i = 0; i < 4; i++) {
+      await c.setRequesterSubscription(i);
+    }
+  }
 
   if (clear) await clearSetup(reg, subs);
   await buildSubscriptionBlock(reg);

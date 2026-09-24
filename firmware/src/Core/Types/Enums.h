@@ -56,6 +56,7 @@ enum class DataType : uint16_t {
     Deleted        = 0x0D,
     Uint32         = 0x0E,
     DevType        = 0x0F,
+    BlockInfo      = 0x10,  // 32-bit register pointer (type|inst|field|key)
     NetAddr        = 0x03,  // alias to Id
     Unknown        = 0x00,  // Alias for None
     // Dynamic/Keyed extensions (not used by DAS)

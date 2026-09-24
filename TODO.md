@@ -47,6 +47,15 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
       (was a 64-byte overflow risk); compose operand scratch aliasing fixed; Number size
       guard; foreign device-address validation; input control re-sync on refresh without
       fighting a drag; single-pass UI-info parse (was five re-walks).
+- [x] **Readability / docs-alignment round**: math ops now fold **N operands**
+      (`Add x = a + b + c`); a Vector/Matrix destination gets **element-wise math** (scale +
+      clamp a gyro vector in one op); register targets use a dedicated **`BlockInfo`** type
+      (0x10 - the Register's type|inst|field|key) with a block/field/key editor instead of a
+      raw uint32; trivial constants are **inline predefines** (integers via the existing
+      `Index` predefine, fractions via a new `Number` predefine, Q8.8). The four setup scripts
+      were rewritten with these (behaviour unchanged) and the builder now validates each
+      script before upload. Wire-compatible except the BlockInfo type tag and the Number
+      predefine (firmware + app ship together).
 ## 2. Blocks/modules + subscriptions
 - [x] **Block/module schema alignment** (docs-driven): Button reduced to field 0; LED-Button
       = Button (0) + LEDState (3) with reserved 1-2; Acc&Gyr deadzones removed (Acceleration
