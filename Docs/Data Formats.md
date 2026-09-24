@@ -31,6 +31,7 @@
 - String - Text (8bit per character, standard)
 - Filename - 8 chars
 - Enum - Generic enum, used in dictionaries
+- BlockInfo - Struct for pointing scripts
 - Generic dictionary (0x0100) - Always Key 0, no value (length 0, offset invalid), works as a marker
 - Geometry - Dictionary containing keys describing a geometric shape
 - Texture - Dictionary containing keys describing a texture
