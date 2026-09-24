@@ -80,6 +80,12 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
   the standalone `And/Or/Xor/Not/Compare*` (`Shift*`) instructions were removed - only `Select`
   remains in Logic. Shifts are not supported. The lid script dropped its `cond` variable
   (now `While (now - t0) < BLINK_MS`).
+- [x] **Vector/matrix functions + transform helper**: prefix functions in the expression -
+  `size v` (Euclidean norm), `transpose m` (matrix R×C -> C×R), `dot a b`, `cross a b`
+  (Vector3 -> Vector3) - plus a standalone **`Transform`** instruction
+  (`Transform m = rot, ox, oy, sx, sy[, skew]`) producing a 2×3 matrix in the render's
+  Position format (rotation in radians). The eye/lid scripts now build their Position with
+  `Transform` instead of `IDENT` + Compose.
 ## 2. Blocks/modules + subscriptions
 - [x] **Block/module schema alignment** (docs-driven): Button reduced to field 0; LED-Button
       = Button (0) + LEDState (3) with reserved 1-2; Acc&Gyr deadzones removed (Acceleration

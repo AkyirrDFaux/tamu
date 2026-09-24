@@ -181,12 +181,37 @@ void main() {
   test('all predefine subtypes and math ops are available', () {
     expect(scriptPredefineSubtypes.map((e) => e.$1).toSet(),
         {preState, preType, preIndex, preChar, preMathOp, preBool, preNumber});
-    expect(scriptPredefineMathOps.length, 18); // 16 operators + the two parentheses
+    expect(scriptPredefineMathOps.length, 22); // 18 operators + 2 parens + 4 functions
     expect(scriptPredefineMathOps.map((e) => e.$1), containsAll(expressionOps));
     // Logic + comparison operators are present.
     for (final op in [6, 7, 8, 9, 12, 13, 14, 15, 16, 17, 4]) {
       expect(scriptPredefineMathOps.any((e) => e.$1 == op), isTrue, reason: 'op $op');
     }
+    // Functions + the Transform instruction.
+    for (final op in [20, 21, 22, 23]) {
+      expect(expressionFunctions.containsKey(op), isTrue);
+    }
+    expect(scriptInstructions.any((d) => d.category == catMath && d.op == mathTransformOp), isTrue);
+  });
+
+  test('prefix functions validate (unary and binary)', () {
+    ScriptSymbol fn(int o) => ScriptSymbol.predefine(preMathOp, o);
+    ScriptLine set(List<ScriptSymbol> ops) => ScriptLine(
+        destinations: [ScriptSymbol.output(0)],
+        instruction: ScriptSymbol.instruction(catMath, 0),
+        operands: ops);
+    final ctx = ScriptValidationContext(outputTypes: [DataType.number.value]);
+    // Set out = size v
+    expect(validateScriptLines([set([fn(22), ScriptSymbol.variable(0)])], ctx), isEmpty);
+    // Set out = dot a b
+    expect(
+        validateScriptLines(
+            [set([fn(20), ScriptSymbol.variable(0), ScriptSymbol.variable(1)])], ctx),
+        isEmpty);
+    // Set out = size (missing operand) -> invalid
+    expect(validateScriptLines([set([fn(22)])], ctx), isNotEmpty);
+    // Set out = dot a (missing 2nd operand) -> invalid
+    expect(validateScriptLines([set([fn(20), ScriptSymbol.variable(0)])], ctx), isNotEmpty);
   });
 
   test('the standalone logic instructions are gone (expression instead)', () {

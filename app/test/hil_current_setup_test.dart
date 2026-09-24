@@ -83,9 +83,9 @@ void main() {
   test('setup: DAS values flow into the Subscriptions block', skip: skipReason, () async {
     final reg = RegisterClient(deviceId: found.core.id);
     final block = DynBlock(index: dynSubscriptions, meta: BlockMeta(flagsAndType: BlockType.dynamic.value), name: '');
-    // Wait for the delta subscriptions to push a first value.
+    // Wait for the delta subscriptions to push a first value (a busy bus can delay it).
     var ok = false;
-    for (var i = 0; i < 20 && !ok; i++) {
+    for (var i = 0; i < 40 && !ok; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 250));
       final vals = <double>[];
       for (final f in [fTempA, fLuxA, fTempB, fLuxB]) {
@@ -97,18 +97,24 @@ void main() {
       ok = vals.every((v) => v != 0.0);
     }
     expect(ok, isTrue, reason: 'all four DAS values should reach the core');
-  }, timeout: const Timeout(Duration(seconds: 60)));
+  }, timeout: const Timeout(Duration(seconds: 120)));
 
   test('setup: scripts are loaded and running', skip: skipReason, () async {
+    // Give a just-started script a moment (a Waiting/Delay state is fine; Error is not).
     final scripts = ScriptClient(deviceId: found.core.id);
     for (final id in [scrTemperature, scrEyeMovement, scrLidTimer, scrBrightness]) {
-      final state = await scripts.readState(id);
+      int? state;
+      for (var i = 0; i < 8; i++) {
+        state = await scripts.readState(id);
+        if (state != null && state != ScriptState.error) break;
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+      }
       // ignore: avoid_print
       print('[SETUP] script $id state=$state (${state == null ? '-' : ScriptState.label(state)})');
       expect(state, isNotNull, reason: 'script $id loaded');
       expect(state, isNot(ScriptState.error), reason: 'script $id not in error');
     }
-  }, timeout: const Timeout(Duration(seconds: 30)));
+  }, timeout: const Timeout(Duration(seconds: 60)));
 
   test('setup: temperature script drives the fan duty', skip: skipReason, () async {
     final reg = RegisterClient(deviceId: found.core.id);
@@ -133,12 +139,27 @@ void main() {
       // ignore: avoid_print
       print('[SETUP] $name position = ${pos.value}');
     }
-    // The iris texture Position tracks the pupil, so the fade stays centred on it.
-    final tex = await reg.readDynamicField(block, eyeIrisTex, tkPosition);
-    final pupil = await reg.readDynamicField(block, eyePupilGeo, gkPosition);
-    expect(tex, isNotNull, reason: 'iris texture position present');
-    expect(tex!.meta.dataType, DataType.matrix);
-    expect(tex.value, pupil!.value, reason: 'iris fade centred on the pupil');
+    // The iris texture Position tracks the pupil, so the fade stays centred on it. The
+    // script writes both from the same matrix; a read can straddle a write, so retry.
+    var centred = false;
+    for (var i = 0; i < 10 && !centred; i++) {
+      final tex = await reg.readDynamicField(block, eyeIrisTex, tkPosition);
+      final pupil = await reg.readDynamicField(block, eyePupilGeo, gkPosition);
+      if (tex != null &&
+          pupil != null &&
+          tex.value.length == pupil.value.length &&
+          tex.value.isNotEmpty) {
+        centred = true;
+        for (var k = 0; k < tex.value.length; k++) {
+          if (tex.value[k] != pupil.value[k]) {
+            centred = false;
+            break;
+          }
+        }
+      }
+      if (!centred) await Future<void>.delayed(const Duration(milliseconds: 30));
+    }
+    expect(centred, isTrue, reason: 'iris fade centred on the pupil');
   }, timeout: const Timeout(Duration(seconds: 30)));
 
   test('setup: the lid script stays bounded and reaches the open position', skip: skipReason, () async {

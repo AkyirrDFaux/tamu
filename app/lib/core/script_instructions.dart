@@ -151,6 +151,11 @@ const List<(int, String)> scriptPredefineMathOps = [
   (17, 'Compare >='),
   (18, 'Open parenthesis'),
   (19, 'Close parenthesis'),
+  // Prefix functions: unary (size v, transpose m) and binary (dot a b, cross a b).
+  (20, 'dot'),
+  (21, 'cross'),
+  (22, 'size'),
+  (23, 'transpose'),
 ];
 
 /// Expression parenthesis operator values (inline in a `Set` operand stream).
@@ -163,7 +168,14 @@ const Set<int> expressionOps = {
   6, 7, 8, 9, // AND OR XOR NOT
   12, 13, 14, 15, 16, 17, // == != < <= > >=
   mathOpOpenParen, mathOpCloseParen,
+  20, 21, 22, 23, // dot cross size transpose (prefix functions)
 };
+
+/// Prefix function operator values and their arity.
+const Map<int, int> expressionFunctions = {20: 2, 21: 2, 22: 1, 23: 1};
+
+/// `Transform` instruction op (a 2x3 matrix from rot, ox, oy, sx, sy[, skew]).
+const int mathTransformOp = 11;
 
 /// Predefine subtypes offered in the picker (name + subtype value).
 const List<(int, String)> scriptPredefineSubtypes = [
@@ -185,6 +197,7 @@ const List<ScriptInstructionDef> scriptInstructions = [
   ScriptInstructionDef(op: 7, category: catMath, label: 'Maximum', destination: true, minOperands: 2, maxOperands: 8, numeric: true),
   ScriptInstructionDef(op: 9, category: catMath, label: 'Absolute', destination: true, minOperands: 1, maxOperands: 1, numeric: true),
   ScriptInstructionDef(op: 10, category: catMath, label: 'Limit', destination: true, minOperands: 3, maxOperands: 3, numeric: true),
+  ScriptInstructionDef(op: 11, category: catMath, label: 'Transform', destination: true, minOperands: 5, maxOperands: 6, numeric: true),
   // Logic: only Select remains (comparisons/logic moved into the expression).
   ScriptInstructionDef(op: 12, category: catLogic, label: 'Select', destination: true, minOperands: 3, maxOperands: 3),
   // Flow (If/While take a boolean expression)
@@ -384,58 +397,62 @@ List<String> validateScriptLines(List<ScriptLine> lines, ScriptValidationContext
   return errors;
 }
 
-/// Structural check for an infix expression (`Set`): balanced parentheses and a
-/// value/operator alternation (a leading or after-operator `-` is unary).
+/// Structural check for an infix expression (`Set` / `If` / `While` / `Wait until`): mirrors
+/// the parser - values, parentheses, unary `-`/`NOT`, binary operators and the prefix
+/// functions (`size`/`transpose` unary, `dot`/`cross` binary).
 List<String> _validateExpression(ScriptLine line, int lineIndex) {
-  final errors = <String>[];
+  final toks = line.operands;
+  final n = toks.length;
   final where = 'Line ${lineIndex + 1}';
-  // Binary operators: Add, Subtract, Multiply, Divide, Modulo, Power, AND, OR, XOR and
-  // the comparisons. Subtract (1) and NOT (9) may also be unary (where a value is expected).
-  const binaryOps = {0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 13, 14, 15, 16, 17};
-  var depth = 0;
-  var expectValue = true;
-  for (final o in line.operands) {
-    final isOp = o.type == symPredefine && o.subtype == preMathOp;
-    if (isOp && (o.value == mathOpOpenParen || o.value == mathOpCloseParen)) {
-      if (o.value == mathOpOpenParen) {
-        if (!expectValue) {
-          errors.add('$where: unexpected "("');
-          return errors;
-        }
-        depth++;
-      } else {
-        if (expectValue) {
-          errors.add('$where: unexpected ")"');
-          return errors;
-        }
-        if (depth == 0) {
-          errors.add('$where: unbalanced ")"');
-          return errors;
-        }
-        depth--;
-        expectValue = false;
+  var i = 0;
+
+  bool isMathOpAt(int idx) =>
+      idx < n && toks[idx].type == symPredefine && toks[idx].subtype == preMathOp;
+  bool isOpAt(int idx, int value) => isMathOpAt(idx) && toks[idx].value == value;
+  bool isBinary(int op) =>
+      op == 0 || op == 1 || (op >= 2 && op <= 8) || (op >= 12 && op <= 17);
+
+  late bool Function() parseExpr;
+
+  bool parseUnary() {
+    if (i >= n) return false;
+    if (isMathOpAt(i)) {
+      final op = toks[i].value;
+      if (op == 1 || op == 9) {
+        i++;
+        return parseUnary(); // unary minus / NOT
       }
-      continue;
-    }
-    if (isOp) {
-      // Unary minus / NOT where a value is expected: still expect a value afterwards.
-      if (expectValue && (o.value == 1 || o.value == 9)) continue;
-      if (expectValue || !binaryOps.contains(o.value)) {
-        errors.add('$where: unexpected operator');
-        return errors;
+      final arity = expressionFunctions[op];
+      if (arity != null) {
+        i++;
+        for (var k = 0; k < arity; k++) {
+          if (!parseUnary()) return false;
+        }
+        return true;
       }
-      expectValue = true;
-      continue;
+      if (op == mathOpOpenParen) {
+        i++;
+        if (!parseExpr()) return false;
+        if (!isOpAt(i, mathOpCloseParen)) return false;
+        i++;
+        return true;
+      }
+      return false; // an operator where a value is expected
     }
-    if (!expectValue) {
-      errors.add('$where: two values in a row');
-      return errors;
+    i++; // a value symbol
+    return true;
+  }
+
+  parseExpr = () {
+    if (!parseUnary()) return false;
+    for (;;) {
+      if (!isMathOpAt(i) || !isBinary(toks[i].value)) break;
+      i++;
+      if (!parseUnary()) return false;
     }
-    expectValue = false;
-  }
-  if (depth != 0) errors.add('$where: unbalanced "("');
-  if (expectValue && line.operands.isNotEmpty) {
-    errors.add('$where: expression ends with an operator');
-  }
-  return errors;
+    return true;
+  };
+
+  if (!parseExpr() || i != n) return ['$where: malformed expression'];
+  return const <String>[];
 }

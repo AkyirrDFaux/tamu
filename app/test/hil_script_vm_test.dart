@@ -10,6 +10,7 @@ import 'package:tamuapp/core/script_draft.dart';
 import 'package:tamuapp/core/script_file.dart';
 import 'package:tamuapp/core/script_instructions.dart';
 import 'package:tamuapp/core/storage_client.dart';
+import 'package:tamuapp/core/subscription_client.dart';
 import 'package:tamuapp/core/types.dart';
 import 'hil_helpers.dart';
 
@@ -20,6 +21,19 @@ void main() async {
   setUpAll(() async {
     if (skipReason is String) return;
     await connectHil();
+    // The evaluation setup's subscriptions + dynamic blocks would overwrite the VM tests'
+    // own dynamic memory (they share block indexes); clear them first.
+    final subs = SubscriptionClient(deviceId: 1);
+    var list = await subs.getRequesterSubscriptions();
+    while (list.isNotEmpty) {
+      await subs.setRequesterSubscription(list.first.index);
+      list = await subs.getRequesterSubscriptions();
+    }
+    final reg = RegisterClient(deviceId: 1);
+    for (final b in await reg.readDynamicBlocks() ?? <DynBlock>[]) {
+      await reg.deleteDynamic(block: b.index);
+    }
+    await reg.saveDynamic();
   });
   tearDownAll(disconnectHil);
 
@@ -444,6 +458,83 @@ void main() async {
     expect(state, ScriptState.finished);
     expect(numberFromBytes((await c.readEntry(slot, ScriptField.output, 0))!.value),
         closeTo(5.0, 0.01));
+    await cleanup(c, st, slot);
+  }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('expression: dot, cross, size', skip: skipReason, () async {
+    ScriptSymbol fn(int o) => ScriptSymbol.predefine(preMathOp, o);
+    Uint8List vec(List<double> v) =>
+        Uint8List.fromList([for (final x in v) ...numberToBytes(x)]);
+    final draft = ScriptDraft(functionName: 'VecFn')
+      ..outputs.add(ScriptDraftValue(name: 'Dot', type: DataType.number, size: 4))
+      ..outputs.add(ScriptDraftValue(name: 'Size', type: DataType.number, size: 4))
+      ..outputs.add(ScriptDraftValue(name: 'CrossZ', type: DataType.number, size: 4))
+      ..variables.add(ScriptDraftValue(name: 'V', type: DataType.vector, size: 12))
+      ..variables.add(ScriptDraftValue(name: 'W', type: DataType.vector, size: 12))
+      ..variables.add(ScriptDraftValue(name: 'C', type: DataType.vector, size: 12))
+      ..constants.add(ScriptDraftValue(name: 'V0', type: DataType.vector, size: 12, value: vec([3, 4, 0])))
+      ..constants.add(ScriptDraftValue(name: 'W0', type: DataType.vector, size: 12, value: vec([1, 0, 0])))
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(0)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [ScriptSymbol.constant(0)]))
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(1)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [ScriptSymbol.constant(1)]))
+      // Dot = dot V V = 25
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.output(0)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [fn(20), ScriptSymbol.variable(0), ScriptSymbol.variable(0)]))
+      // Size = size V = 5
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.output(1)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [fn(22), ScriptSymbol.variable(0)]))
+      // C = cross V W = (0, 0, -4)
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(2)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [fn(21), ScriptSymbol.variable(0), ScriptSymbol.variable(1)]))
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.output(2)], instruction: ScriptSymbol.instruction(catCompose, 1), operands: [ScriptSymbol.variable(2), ScriptSymbol.predefine(preIndex, 2)]))
+      ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)));
+    final (c, st, slot) = await loadScript(16, draft);
+    await c.setState(slot, ScriptState.running);
+    final state = await waitState(c, slot, ScriptState.finished);
+    print('[VM] vecfn state=$state err=${await c.readError(slot)}');
+    expect(state, ScriptState.finished);
+    Future<double> val(int i) async =>
+        numberFromBytes((await c.readEntry(slot, ScriptField.output, i))!.value);
+    expect(await val(0), closeTo(25.0, 0.01));
+    expect(await val(1), closeTo(5.0, 0.01));
+    expect(await val(2), closeTo(-4.0, 0.01));
+    await cleanup(c, st, slot);
+  }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('expression: transpose + Transform', skip: skipReason, () async {
+    ScriptSymbol fn(int o) => ScriptSymbol.predefine(preMathOp, o);
+    ScriptSymbol lit(int n) => ScriptSymbol.predefine(preIndex, n);
+    final draft = ScriptDraft(functionName: 'Xform')
+      ..outputs.add(ScriptDraftValue(name: 'T01', type: DataType.number, size: 4))
+      ..outputs.add(ScriptDraftValue(name: 'TX', type: DataType.number, size: 4))
+      ..outputs.add(ScriptDraftValue(name: 'TY', type: DataType.number, size: 4))
+      ..variables.add(ScriptDraftValue(name: 'M', type: DataType.matrix, size: 28))
+      ..variables.add(ScriptDraftValue(name: 'T', type: DataType.matrix, size: 28))
+      ..variables.add(ScriptDraftValue(name: 'X', type: DataType.matrix, size: 28))
+      ..constants.add(ScriptDraftValue(name: 'M0', type: DataType.matrix, size: 28, value: Uint8List.fromList([
+        2, 0, 3, 0,
+        ...numberToBytes(1), ...numberToBytes(2), ...numberToBytes(3),
+        ...numberToBytes(4), ...numberToBytes(5), ...numberToBytes(6),
+      ])))
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(0)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [ScriptSymbol.constant(0)])) // M = M0
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(1)], instruction: ScriptSymbol.instruction(catMath, 0), operands: [fn(23), ScriptSymbol.variable(0)])) // T = transpose M (3x2)
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.output(0)], instruction: ScriptSymbol.instruction(catCompose, 1), operands: [ScriptSymbol.variable(1), lit(1)])) // T[0,1] = M[1,0] = 4
+      // X = Transform(rot=0, ox=3, oy=4, sx=1, sy=1)
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.variable(2)], instruction: ScriptSymbol.instruction(catMath, 11), operands: [lit(0), lit(3), lit(4), lit(1), lit(1)]))
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.output(1)], instruction: ScriptSymbol.instruction(catCompose, 1), operands: [ScriptSymbol.variable(2), lit(2)])) // X[0,2] = ox
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.output(2)], instruction: ScriptSymbol.instruction(catCompose, 1), operands: [ScriptSymbol.variable(2), lit(5)])) // X[1,2] = oy
+      ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)));
+    final (c, st, slot) = await loadScript(17, draft);
+    await c.setState(slot, ScriptState.running);
+    final state = await waitState(c, slot, ScriptState.finished);
+    print('[VM] xform state=$state err=${await c.readError(slot)}');
+    expect(state, ScriptState.finished);
+    Future<double> val(int i) async =>
+        numberFromBytes((await c.readEntry(slot, ScriptField.output, i))!.value);
+    expect(await val(0), closeTo(4.0, 0.01)); // transposed element
+    expect(await val(1), closeTo(3.0, 0.01)); // ox
+    expect(await val(2), closeTo(4.0, 0.01)); // oy
+    // The transposed matrix header is 3x2.
+    final ram = (await c.readInternalState(slot))!.variables;
+    // M (28) then T (28): T starts at offset 28.
+    expect(ram[28], 3);
+    expect(ram[30], 2);
     await cleanup(c, st, slot);
   }, timeout: const Timeout(Duration(minutes: 2)));
 

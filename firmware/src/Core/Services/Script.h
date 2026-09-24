@@ -70,6 +70,7 @@ bool RegisterSetByBlockInfo(uint32_t bi, const BlockMeta &m, const uint8_t *val,
 #define SCRIPT_OP_MATH_NEG 8
 #define SCRIPT_OP_MATH_ABS 9
 #define SCRIPT_OP_MATH_LIMIT 10 // clamp(value, min, max)
+#define SCRIPT_OP_MATH_TRANSFORM 11 // 2x3 matrix from (rot, ox, oy, sx, sy[, skew])
 
 // Inline expression operator values (the `Math op` predefine): the operands of a Set
 // line may be interleaved with these to form an infix expression (Docs/Services/Script.md:
@@ -92,6 +93,11 @@ bool RegisterSetByBlockInfo(uint32_t bi, const BlockMeta &m, const uint8_t *val,
 #define SCRIPT_MATHOP_GE 17
 #define SCRIPT_MATHOP_OPEN 18
 #define SCRIPT_MATHOP_CLOSE 19
+// Prefix functions (arithmetic / vector / matrix): size v, transpose m, dot a b, cross a b.
+#define SCRIPT_MATHOP_FN_DOT 20
+#define SCRIPT_MATHOP_FN_CROSS 21
+#define SCRIPT_MATHOP_FN_SIZE 22
+#define SCRIPT_MATHOP_FN_TRANSPOSE 23
 
 // Logic ops.
 #define SCRIPT_OP_LOGIC_AND 0
@@ -1113,9 +1119,83 @@ static bool ScriptExprPrimary(ExprParser *p, ExprValue &out)
     return ok;
 }
 
+// size v: Euclidean norm -> Number.
+static bool ScriptExprFnSize(const ExprValue &a, ExprValue &out)
+{
+    Number s = Number(0);
+    for (uint8_t k = 0; k < a.count; k++) s = s + a.e[k] * a.e[k];
+    out.dtype = (uint16_t)DataType::Number;
+    out.mh = 0;
+    out.mw = 0;
+    out.count = 1;
+    out.e[0] = sqrt(s);
+    return true;
+}
+
+// transpose m: Matrix R x C -> C x R.
+static bool ScriptExprFnTranspose(const ExprValue &a, ExprValue &out)
+{
+    if (a.dtype != (uint16_t)DataType::Matrix || a.mh == 0 || a.mw == 0) return false;
+    uint16_t R = a.mh, C = a.mw;
+    if ((uint32_t)R * C > SCRIPT_EXPR_MAX_ELEMS) return false;
+    out.dtype = (uint16_t)DataType::Matrix;
+    out.mh = C;
+    out.mw = R;
+    out.count = a.count;
+    for (uint16_t r = 0; r < R; r++)
+        for (uint16_t c = 0; c < C; c++)
+            out.e[c * R + r] = a.e[r * C + c];
+    return true;
+}
+
+// dot a b: sum(a_i * b_i) -> Number.
+static bool ScriptExprFnDot(const ExprValue &a, const ExprValue &b, ExprValue &out)
+{
+    if (a.count == 0 || a.count != b.count) return false;
+    Number s = Number(0);
+    for (uint8_t k = 0; k < a.count; k++) s = s + a.e[k] * b.e[k];
+    out.dtype = (uint16_t)DataType::Number;
+    out.mh = 0;
+    out.mw = 0;
+    out.count = 1;
+    out.e[0] = s;
+    return true;
+}
+
+// cross a b: Vector3 x Vector3 -> Vector3.
+static bool ScriptExprFnCross(const ExprValue &a, const ExprValue &b, ExprValue &out)
+{
+    if (a.count != 3 || b.count != 3) return false;
+    out.dtype = (uint16_t)DataType::Vector;
+    out.mh = 0;
+    out.mw = 0;
+    out.count = 3;
+    out.e[0] = a.e[1] * b.e[2] - a.e[2] * b.e[1];
+    out.e[1] = a.e[2] * b.e[0] - a.e[0] * b.e[2];
+    out.e[2] = a.e[0] * b.e[1] - a.e[1] * b.e[0];
+    return true;
+}
+
 static bool ScriptExprUnary(ExprParser *p, ExprValue &out)
 {
     uint8_t op = ScriptExprPeekOp(p);
+    if (op == SCRIPT_MATHOP_FN_SIZE || op == SCRIPT_MATHOP_FN_TRANSPOSE)
+    {
+        p->i++;
+        ExprValue a;
+        if (!ScriptExprUnary(p, a)) return false;
+        return (op == SCRIPT_MATHOP_FN_SIZE) ? ScriptExprFnSize(a, out)
+                                             : ScriptExprFnTranspose(a, out);
+    }
+    if (op == SCRIPT_MATHOP_FN_DOT || op == SCRIPT_MATHOP_FN_CROSS)
+    {
+        p->i++;
+        ExprValue a, b;
+        if (!ScriptExprUnary(p, a)) return false;
+        if (!ScriptExprUnary(p, b)) return false;
+        return (op == SCRIPT_MATHOP_FN_DOT) ? ScriptExprFnDot(a, b, out)
+                                            : ScriptExprFnCross(a, b, out);
+    }
     if (op == SCRIPT_MATHOP_SUB)
     {
         p->i++;
@@ -1239,6 +1319,48 @@ static bool ScriptExprTruthy(LoadedScript *s, const uint8_t *tok, uint8_t n, boo
     return true;
 }
 
+// Transform dest = rot, ox, oy, sx, sy [, skew] -> a 2x3 affine matrix (rotation in
+// radians), matching the render Position/Offset format.
+static uint8_t ScriptExecTransform(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase,
+                                   uint16_t dtype, uint8_t *dest, uint8_t dsize)
+{
+    if (dtype != (uint16_t)DataType::Matrix || dsize < 4 + 6 * 4) return SCRIPT_ERR_TYPE;
+    if (ln.opCount < 5) return SCRIPT_ERR_OPERAND;
+    Number v[6] = {Number(0), Number(0), Number(0), Number(0), Number(0), Number(0)};
+    uint8_t n = ln.opCount;
+    if (n > 6) n = 6;
+    for (uint8_t i = 0; i < n; i++)
+    {
+        ScriptScalar sc;
+        if (!ScriptResolveOperandScalar(s, opbase + (size_t)i * 4, true, sc)) return SCRIPT_ERR_OPERAND;
+        v[i] = sc.n;
+    }
+    Number rot = v[0], tx = v[1], ty = v[2], sx = v[3], sy = v[4], skew = v[5];
+    Number c = cos(rot), s2 = sin(rot);
+    Number k = Number(0);
+    if (skew.Value != 0)
+    {
+        Number cd = cos(skew);
+        if (cd.Value != 0) k = sin(skew) / cd;
+    }
+    // Cells [a b tx; c d ty] (matches the app's Transform23).
+    Number cells[6];
+    cells[0] = sx * c;
+    cells[1] = sx * c * k + sy * s2;
+    cells[2] = tx;
+    cells[3] = -sx * s2;
+    cells[4] = -sx * s2 * k + sy * c;
+    cells[5] = ty;
+    dest[0] = 2; dest[1] = 0; dest[2] = 3; dest[3] = 0;
+    for (uint8_t i = 0; i < 6; i++)
+    {
+        int32_t raw = cells[i].Value;
+        memcpy(dest + 4 + (size_t)i * 4, &raw, 4);
+    }
+    s->ic++;
+    return SCRIPT_ERR_NONE;
+}
+
 static uint8_t ScriptExecMath(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase, uint8_t cat, uint8_t op) {
     if (ln.destCount < 1) return SCRIPT_ERR_OPERAND;
     uint16_t dtype = 0;
@@ -1250,6 +1372,11 @@ static uint8_t ScriptExecMath(LoadedScript *s, const ScriptLineInfo &ln, const u
     // SET evaluates an infix expression (scalar / vector / matrix).
     if (cat == SCRIPT_CAT_MATH && op == SCRIPT_OP_MATH_SET) {
         return ScriptExecSet(s, ln, opbase, dtype, dest, dsize);
+    }
+
+    // Transform: a 2x3 affine matrix from (rot, ox, oy, sx, sy[, skew]).
+    if (cat == SCRIPT_CAT_MATH && op == SCRIPT_OP_MATH_TRANSFORM) {
+        return ScriptExecTransform(s, ln, opbase, dtype, dest, dsize);
     }
 
     // Vector/Matrix destination: element-wise math (operands resolved raw).

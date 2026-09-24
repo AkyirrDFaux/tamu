@@ -511,12 +511,10 @@ ScriptDraft scriptEyeMovement() {
     _var('posY', DataType.number, 4),
   ]);
 
-  /// mat = IDENT with translation (xVar, yVar); written to the geometry Position and, for
-  /// the iris, also to the texture Position (so the fade stays centred on the pupil).
+  /// mat = Transform(0, x, y, 1, 1) (a 2x3 with the translation); written to the geometry
+  /// Position and, for the iris, also to the texture Position (fade centred on the pupil).
   List<ScriptLine> place(int xVar, int yVar, int regConst, {int? texConst}) => [
-        _line([_v(5)], _ins(catMath, 0), [_c(5)]), // mat = IDENT
-        _line([_v(5)], _ins(catCompose, 0), [_idx(2), _v(xVar)]), // mat[0,2] = x
-        _line([_v(5)], _ins(catCompose, 0), [_idx(5), _v(yVar)]), // mat[1,2] = y
+        _line([_v(5)], _ins(catMath, 11), [_idx(0), _v(xVar), _v(yVar), _idx(1), _idx(1)]), // Transform mat = 0, x, y, 1, 1
         _line([], _ins(catService, 2), [_c(regConst), _v(5)]), // write[reg] = mat
         if (texConst != null)
           _line([], _ins(catService, 2), [_c(texConst), _v(5)]),
@@ -573,10 +571,9 @@ ScriptDraft scriptLidTimer() {
     _var('mat', DataType.matrix, 28),
   ]);
 
-  /// mat = IDENT with translation ty, written to the lid geometry field.
+  /// mat = Transform(0, 0, ty, 1, 1) written to the lid geometry field.
   List<ScriptLine> applyLid(int regConst) => [
-        _line([_v(6)], _ins(catMath, 0), [_c(2)]), // Set mat = IDENT
-        _line([_v(6)], _ins(catCompose, 0), [_idx(5), _v(5)]), // mat[1,2] = ty
+        _line([_v(6)], _ins(catMath, 11), [_idx(0), _idx(0), _v(5), _idx(1), _idx(1)]), // Transform mat = 0, 0, ty, 1, 1
         _line([], _ins(catService, 2), [_c(regConst), _v(6)]), // write[reg] = mat
       ];
 

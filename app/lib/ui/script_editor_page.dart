@@ -963,6 +963,10 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
         17 => '>=',
         18 => '(',
         19 => ')',
+        20 => 'dot',
+        21 => 'cross',
+        22 => 'size',
+        23 => 'transpose',
         _ => '?'
       };
 
