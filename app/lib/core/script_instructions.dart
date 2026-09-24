@@ -100,6 +100,12 @@ class ScriptInstructionDef {
   /// `Math op` predefines and parentheses.
   final bool expression;
 
+  /// Short role of each operand position (a hint on the line), e.g. ['value','min','max'].
+  final List<String> operandRoles;
+
+  /// Short role of the destination (a hint on the line).
+  final String? destinationRole;
+
   const ScriptInstructionDef({
     required this.op,
     required this.category,
@@ -111,9 +117,15 @@ class ScriptInstructionDef {
     this.constantIndex = -1,
     this.addressIndex = -1,
     this.expression = false,
+    this.operandRoles = const [],
+    this.destinationRole,
   });
 
   ScriptSymbol symbol() => ScriptSymbol.instruction(category, op);
+
+  /// Role of operand [index], or null when it has no hint.
+  String? operandRole(int index) =>
+      index < operandRoles.length ? operandRoles[index] : null;
 
   /// Maximum number of destination symbols for this instruction (single-destination set).
   int get maxDestinations => destination ? 1 : 0;
@@ -191,38 +203,38 @@ const List<(int, String)> scriptPredefineSubtypes = [
 const List<ScriptInstructionDef> scriptInstructions = [
   // Math: Set evaluates an infix expression (scalar/vector/matrix, element-wise with
   // scalar broadcast). Modulo/Minimum/Maximum/Absolute/Limit remain separate instructions.
-  ScriptInstructionDef(op: 0, category: catMath, label: 'Set', destination: true, minOperands: 1, maxOperands: 32, numeric: true, expression: true),
-  ScriptInstructionDef(op: 5, category: catMath, label: 'Modulo', destination: true, minOperands: 2, maxOperands: 8, numeric: true),
-  ScriptInstructionDef(op: 6, category: catMath, label: 'Minimum', destination: true, minOperands: 2, maxOperands: 8, numeric: true),
-  ScriptInstructionDef(op: 7, category: catMath, label: 'Maximum', destination: true, minOperands: 2, maxOperands: 8, numeric: true),
-  ScriptInstructionDef(op: 9, category: catMath, label: 'Absolute', destination: true, minOperands: 1, maxOperands: 1, numeric: true),
-  ScriptInstructionDef(op: 10, category: catMath, label: 'Limit', destination: true, minOperands: 3, maxOperands: 3, numeric: true),
-  ScriptInstructionDef(op: 11, category: catMath, label: 'Transform', destination: true, minOperands: 5, maxOperands: 6, numeric: true),
+  ScriptInstructionDef(op: 0, category: catMath, label: 'Set', destination: true, minOperands: 1, maxOperands: 32, numeric: true, expression: true, destinationRole: 'result'),
+  ScriptInstructionDef(op: 5, category: catMath, label: 'Modulo', destination: true, minOperands: 2, maxOperands: 8, numeric: true, operandRoles: ['value', 'modulus'], destinationRole: 'result'),
+  ScriptInstructionDef(op: 6, category: catMath, label: 'Minimum', destination: true, minOperands: 2, maxOperands: 8, numeric: true, operandRoles: ['value', '+'], destinationRole: 'result'),
+  ScriptInstructionDef(op: 7, category: catMath, label: 'Maximum', destination: true, minOperands: 2, maxOperands: 8, numeric: true, operandRoles: ['value', '+'], destinationRole: 'result'),
+  ScriptInstructionDef(op: 9, category: catMath, label: 'Absolute', destination: true, minOperands: 1, maxOperands: 1, numeric: true, operandRoles: ['value'], destinationRole: 'result'),
+  ScriptInstructionDef(op: 10, category: catMath, label: 'Limit', destination: true, minOperands: 3, maxOperands: 3, numeric: true, operandRoles: ['value', 'min', 'max'], destinationRole: 'result'),
+  ScriptInstructionDef(op: 11, category: catMath, label: 'Transform', destination: true, minOperands: 5, maxOperands: 6, numeric: true, operandRoles: ['rot', 'offset X', 'offset Y', 'scale X', 'scale Y', 'skew'], destinationRole: 'matrix'),
   // Logic: only Select remains (comparisons/logic moved into the expression).
-  ScriptInstructionDef(op: 12, category: catLogic, label: 'Select', destination: true, minOperands: 3, maxOperands: 3),
+  ScriptInstructionDef(op: 12, category: catLogic, label: 'Select', destination: true, minOperands: 3, maxOperands: 3, operandRoles: ['condition', 'if true', 'if false'], destinationRole: 'result'),
   // Flow (If/While take a boolean expression)
-  ScriptInstructionDef(op: 0, category: catFlow, label: 'If', minOperands: 1, maxOperands: 32, numeric: true, expression: true),
-  ScriptInstructionDef(op: 1, category: catFlow, label: 'While', minOperands: 1, maxOperands: 32, numeric: true, expression: true),
+  ScriptInstructionDef(op: 0, category: catFlow, label: 'If', minOperands: 1, maxOperands: 32, numeric: true, expression: true, operandRoles: ['condition']),
+  ScriptInstructionDef(op: 1, category: catFlow, label: 'While', minOperands: 1, maxOperands: 32, numeric: true, expression: true, operandRoles: ['condition']),
   ScriptInstructionDef(op: 2, category: catFlow, label: 'End block', minOperands: 0, maxOperands: 0),
-  ScriptInstructionDef(op: 3, category: catFlow, label: 'Jump', minOperands: 1, maxOperands: 1),
-  ScriptInstructionDef(op: 4, category: catFlow, label: 'Call', minOperands: 1, maxOperands: 1),
+  ScriptInstructionDef(op: 3, category: catFlow, label: 'Jump', minOperands: 1, maxOperands: 1, operandRoles: ['line']),
+  ScriptInstructionDef(op: 4, category: catFlow, label: 'Call', minOperands: 1, maxOperands: 1, operandRoles: ['line']),
   ScriptInstructionDef(op: 5, category: catFlow, label: 'Return', minOperands: 0, maxOperands: 0),
   ScriptInstructionDef(op: 6, category: catFlow, label: 'Halt', minOperands: 0, maxOperands: 0),
   // Time
-  ScriptInstructionDef(op: 0, category: catTime, label: 'Delay', minOperands: 1, maxOperands: 1),
-  ScriptInstructionDef(op: 1, category: catTime, label: 'Wait until', minOperands: 1, maxOperands: 32, numeric: true, expression: true),
-  ScriptInstructionDef(op: 2, category: catTime, label: 'Get time', destination: true, minOperands: 0, maxOperands: 0),
+  ScriptInstructionDef(op: 0, category: catTime, label: 'Delay', minOperands: 1, maxOperands: 1, operandRoles: ['ms']),
+  ScriptInstructionDef(op: 1, category: catTime, label: 'Wait until', minOperands: 1, maxOperands: 32, numeric: true, expression: true, operandRoles: ['condition']),
+  ScriptInstructionDef(op: 2, category: catTime, label: 'Get time', destination: true, minOperands: 0, maxOperands: 0, destinationRole: 'time'),
   // Service
-  ScriptInstructionDef(op: 0, category: catService, label: 'Log', minOperands: 1, maxOperands: 4),
-  ScriptInstructionDef(op: 1, category: catService, label: 'Register read', destination: true, minOperands: 1, maxOperands: 1, constantIndex: 0),
-  ScriptInstructionDef(op: 2, category: catService, label: 'Register write', minOperands: 2, maxOperands: 2, constantIndex: 0),
-  ScriptInstructionDef(op: 3, category: catService, label: 'Script state', minOperands: 1, maxOperands: 1),
+  ScriptInstructionDef(op: 0, category: catService, label: 'Log', minOperands: 1, maxOperands: 4, operandRoles: ['code']),
+  ScriptInstructionDef(op: 1, category: catService, label: 'Register read', destination: true, minOperands: 1, maxOperands: 1, constantIndex: 0, operandRoles: ['register'], destinationRole: 'value'),
+  ScriptInstructionDef(op: 2, category: catService, label: 'Register write', minOperands: 2, maxOperands: 2, constantIndex: 0, operandRoles: ['register', 'value']),
+  ScriptInstructionDef(op: 3, category: catService, label: 'Script state', minOperands: 1, maxOperands: 1, operandRoles: ['state']),
   ScriptInstructionDef(op: 4, category: catService, label: 'Nop', minOperands: 0, maxOperands: 0),
-  ScriptInstructionDef(op: 5, category: catService, label: 'Register read (foreign)', destination: true, minOperands: 2, maxOperands: 2, constantIndex: 1, addressIndex: 0),
-  ScriptInstructionDef(op: 6, category: catService, label: 'Register write (foreign)', minOperands: 3, maxOperands: 3, constantIndex: 1, addressIndex: 0),
+  ScriptInstructionDef(op: 5, category: catService, label: 'Register read (foreign)', destination: true, minOperands: 2, maxOperands: 2, constantIndex: 1, addressIndex: 0, operandRoles: ['device', 'register'], destinationRole: 'value'),
+  ScriptInstructionDef(op: 6, category: catService, label: 'Register write (foreign)', minOperands: 3, maxOperands: 3, constantIndex: 1, addressIndex: 0, operandRoles: ['device', 'register', 'value']),
   // Compose
-  ScriptInstructionDef(op: 0, category: catCompose, label: 'Compose', destination: true, minOperands: 2, maxOperands: 4),
-  ScriptInstructionDef(op: 1, category: catCompose, label: 'Extract', destination: true, minOperands: 2, maxOperands: 2),
+  ScriptInstructionDef(op: 0, category: catCompose, label: 'Compose', destination: true, minOperands: 2, maxOperands: 4, operandRoles: ['index', 'value'], destinationRole: 'container'),
+  ScriptInstructionDef(op: 1, category: catCompose, label: 'Extract', destination: true, minOperands: 2, maxOperands: 2, operandRoles: ['container', 'index'], destinationRole: 'element'),
 ];
 
 ScriptInstructionDef? scriptInstructionFor(ScriptSymbol symbol) {

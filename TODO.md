@@ -74,6 +74,10 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
       are **colour-coded by category** (input/output/variable/constant/predefine/instruction)
       with a legend; symbols can be **reordered within a line** by long-press + drag onto
       another symbol.
+- [x] **Editor UX follow-up**: symbols are reordered by a normal **drag** (was long-press);
+  each operand/destination shows a **role hint** under it (e.g. Limit: value/min/max,
+  Transform: rot/offset X/offset Y/scale X/scale Y/skew, Select: condition/if true/if false)
+  plus a hover tooltip with the full symbol.
 - [x] **Logic/comparisons in the processor + boolean flow**: the expression gained `AND OR XOR
   NOT`, `== != < <= > >=` and `%` (Modulo); comparisons/logic are scalar and yield a Bool.
   `If` / `While` / `Wait until` now take an expression that yields a Bool (`While i < 10`), so

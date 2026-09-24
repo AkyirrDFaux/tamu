@@ -724,14 +724,15 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
           child: Wrap(
             spacing: 4,
             runSpacing: 4,
-            crossAxisAlignment: WrapCrossAlignment.center,
+            crossAxisAlignment: WrapCrossAlignment.end,
             children: [
               Text('${index + 1}',
                   style: const TextStyle(color: Colors.white38, fontSize: 11)),
               const SizedBox(width: 2),
-              // Destinations, then the instruction, then the operands.
+              // Destinations, then the instruction, then the operands (with role hints).
               for (var i = 0; i < line.destinations.length; i++)
-                _symbolChip(draft, line.destinations, i, destination: true, def: def),
+                _symbolChip(draft, line.destinations, i,
+                    destination: true, def: def, role: def?.destinationRole),
               if (canAddDestination) addButton('Add destination', addDestination),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 2),
@@ -747,7 +748,8 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
                 ),
               ),
               for (var i = 0; i < line.operands.length; i++)
-                _symbolChip(draft, line.operands, i, destination: false, def: def),
+                _symbolChip(draft, line.operands, i,
+                    destination: false, def: def, role: def?.operandRole(i)),
               if (canAddOperand) addButton('Add operand', addOperand),
             ],
           ),
@@ -776,10 +778,10 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
         _ => Colors.white70,
       };
 
-  /// A colour-coded symbol chip. Long-press + drag it onto another chip to reorder the
-  /// symbol within its list (destination or operand); tap to change, X to delete.
+  /// A colour-coded symbol chip. Drag it onto another chip to reorder it within its list;
+  /// tap to change, X to delete. [role] is a short hint (e.g. "min", "condition").
   Widget _symbolChip(ScriptDraft draft, List<ScriptSymbol> list, int i,
-      {required bool destination, ScriptInstructionDef? def}) {
+      {required bool destination, ScriptInstructionDef? def, String? role}) {
     final s = list[i];
     final color = _symbolColor(s);
 
@@ -789,6 +791,7 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
           backgroundColor: color.withAlpha(dragging ? 70 : 28),
           side: BorderSide(color: color.withAlpha(dragging ? 255 : 110)),
           visualDensity: VisualDensity.compact,
+          tooltip: role == null ? null : '$role: ${_symbolLabel(draft, s)}',
           onPressed: () => _changeSymbol(draft, list, i,
               destination: destination, def: def, operandIndex: destination ? null : i),
           onDeleted: () => setState(() {
@@ -797,14 +800,14 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
           }),
         );
 
-    return DragTarget<int>(
+    final body = DragTarget<int>(
       onWillAcceptWithDetails: (d) => d.data != i,
       onAcceptWithDetails: (d) => setState(() {
         final sym = list.removeAt(d.data);
         list.insert(i, sym);
         _dirty = true;
       }),
-      builder: (context, candidate, rejected) => LongPressDraggable<int>(
+      builder: (context, candidate, rejected) => Draggable<int>(
         data: i,
         feedback: Material(
           color: Colors.transparent,
@@ -816,6 +819,12 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
         child: chip(),
       ),
     );
+
+    if (role == null) return body;
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      Text(role, style: const TextStyle(fontSize: 8, color: Colors.white38)),
+      body,
+    ]);
   }
 
   /// Colour legend for the instruction card.

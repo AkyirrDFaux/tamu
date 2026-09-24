@@ -275,6 +275,29 @@ void main() {
     expect(decodeScriptLines(encodeScriptLines([line])).single.operands.length, 7);
   });
 
+  test('instructions expose operand/destination role hints', () {
+    ScriptInstructionDef defFor(int cat, int op) =>
+        scriptInstructions.firstWhere((d) => d.category == cat && d.op == op);
+    // Limit: value, min, max
+    expect(defFor(catMath, 10).operandRoles, ['value', 'min', 'max']);
+    expect(defFor(catMath, 10).operandRole(2), 'max');
+    expect(defFor(catMath, 10).operandRole(9), isNull); // no hint beyond the list
+    // Transform: rot, offset X/Y, scale X/Y, skew
+    expect(defFor(catMath, 11).operandRoles.first, 'rot');
+    expect(defFor(catMath, 11).operandRoles.length, 6);
+    // Set destination + register operand + Select roles.
+    expect(defFor(catMath, 0).destinationRole, 'result');
+    expect(defFor(catService, 1).operandRole(0), 'register');
+    expect(defFor(catService, 1).destinationRole, 'value');
+    expect(defFor(catLogic, 12).operandRoles, ['condition', 'if true', 'if false']);
+    // Every role list is short (fits under the chip).
+    for (final d in scriptInstructions) {
+      for (final r in d.operandRoles) {
+        expect(r.length, lessThanOrEqualTo(10), reason: '${d.label} role "$r"');
+      }
+    }
+  });
+
   test('BlockInfo and Number-literal symbols round-trip through the backup', () {
     final draft = ScriptDraft(functionName: 'Reg')
       ..constants.add(ScriptDraftValue(
