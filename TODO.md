@@ -204,3 +204,30 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
   dynamic slots stay hidden. Regression test `test/register_slots_test.dart`.
 - [ ] **On-device verification** (pending a phone): runtime permission prompt, BLE
   scan/connect/MTU, SAF backup save + restore, download, and the drawer on a real phone.
+
+## 5. Evaluation setup (`Docs/Current setup.md`)
+- [x] **Setup builder** (`app/test/current_setup.dart`): builds the whole scenario through the
+  existing clients - dynamic block 0 "Subscriptions" (four DAS value targets), dynamic blocks
+  1/2 "Left Eye"/"Right Eye" (8-part render dictionaries: white fill, green gradient iris,
+  double-parabola pupil, half-fill lid), the display render-block/layout wiring, the fan duty,
+  the Acc&Gyr sampling/filters, the DAS sensor types, four `DeltaPeriodic` subscriptions
+  (each DAS ch1 NTC -> temp field, ch2 LDR -> lux field), and the four scripts.
+- [x] **Scripts** (built as `ScriptDraft`s, uploaded to `SCR_00..SCR_03`, load-on-boot +
+  run-on-load): 1 temperature -> fan duty (average of both NTCs), 2 gyro XY -> iris/pupil
+  `Position` matrices (pupil moves 2x the iris), 3 lid blink (10 s open, 200 ms close/open
+  sweep), 4 LDR -> display brightness (each display uses its own DAS LDR).
+- [x] **Verification** (`app/test/hil_current_setup_test.dart`, 9 tests): block/field
+  structure, display wiring, four subscriptions, DAS values reaching the block (measured
+  26.1 degC / ~49-76 lux), all four scripts Running/Waiting (not Error), fan duty 30 %,
+  valid animated 2x3 render matrices, and the semantic backup round-trip.
+- [x] **Artifact**: `Tamu_current_setup.zip` in the project root - the app's semantic backup
+  (one JSON per device: core + 2 DAS), restorable through the app's Backup tool.
+- [ ] **Tuning** (later): temperature->duty curve, gyro->pixel scale, blink timing, and the
+  brightness range (kept low to avoid a brown-out), plus a physical check of the eyes/lid.
+
+### Notes
+- The DAS ch1 NTC is a **100 kohm** part (`MeasNTC100K`); writing `NTC10K` misreads it (the
+  auto-range jumps to 330 kohm and the temperature reads ~-18 degC). The builder uses the
+  firmware default.
+- The LED strips can brown out the board at high brightness; the builder clamps the displays
+  to 5 % first and caps the brightness script at 15 %.

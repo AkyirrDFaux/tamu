@@ -48,3 +48,21 @@
   (`ui/subscriptions_dialog.dart`), which sends regardless of change - so a subscription
   generates a steady 1/s of bus traffic while it exists. Consider defaulting to a change-based
   trigger (`OnChangePeriodic`/`DeltaPeriodic`).
+
+## Evaluation setup (`Docs/Current setup.md`)
+- **LED brightness can brown out the board.** The LED-display driver accepts brightness
+  values whose current draw resets the MCU (the board dropped off USB at 60 %; a stored
+  brightness script at a high ceiling put it in a boot/brown-out loop). The builder now
+  clamps the displays to 5 % before anything else and caps the brightness script at 15 %.
+  A firmware-side current cap (or a ramp) would be safer than relying on the app.
+- **A core that loses its SNDB orphans already-registered nodes.** The DAS run their
+  discovery loop only once at boot (`while (ShortAddress == 0)`), and the core does not
+  re-register an unknown sender, so after the core's SNDB was wiped (flash erase) the two
+  nodes never came back until they were power-cycled. Consider periodic re-discovery or
+  re-registering on an unknown source.
+- **Reconfiguring the fan PWM frequency fails.** Writing PWM Frequency (1000 Hz) is rejected:
+  `OnPWMFrequencyChange` calls `ledc_timer_config` and returns false, so the field write is
+  refused. The setup leaves the default 25 kHz. Worth investigating (10-bit resolution at
+  1 kHz should be achievable).
+- **PWM Duty is a `uint32` (%), not a Number.** The Register view/tests must decode it as an
+  unsigned int; reading it as 16.16 gives ~0.0005 for a real 30 %.
