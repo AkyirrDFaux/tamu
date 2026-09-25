@@ -55,21 +55,18 @@
   generates a steady 1/s of bus traffic while it exists. Consider defaulting to a change-based
   trigger (`OnChangePeriodic`/`DeltaPeriodic`).
 
-## Evaluation setup (`Docs/Current setup.md`)
+## Evaluation setup (`Docs/Current setup v3.md`)
 - **LED brightness can brown out the board.** The LED-display driver accepts brightness
   values whose current draw resets the MCU (the board dropped off USB at 60 %; a stored
-  brightness script at a high ceiling put it in a boot/brown-out loop). The builder now
-  clamps the displays to 5 % before anything else and caps the brightness script at 15 %.
-  A firmware-side current cap (or a ramp) would be safer than relying on the app.
+  brightness script at a high ceiling put it in a boot/brown-out loop). The builder clamps the
+  displays to 5 % before anything else, and the brightness script's ceiling is 70 % (reached
+  around 10k lux). A firmware-side current cap (or a ramp) would be safer than relying on the app.
 - **The LED display has no framebuffer readback.** `Docs/Modules and blocks/LED display.md`
   exposes no way to read the rendered pixels, so a HIL test can only assert the render
   dictionary contents + the refresh rate. The `Cut` mask operation is exercised by the LED
   probe (`hil_led_display_test`); the evaluation scene uses only `Replace` now that dark mode
   is a filled iris, and the *look* is verified by eye only. A render snapshot command would
   make the visuals testable.
-- **`Docs/Current setup v2.md` still describes dark mode as an "edge only" iris.** The scene
-  now uses a filled, really dark green iris (and a slightly lighter pupil), per the request;
-  the doc line needs the same update.
 - **The LDR lux needs a one-time calibration against a lux meter.** `MeasLDR10K` now follows
   the datasheet (GL55 5-10 kOhm part, gamma ~0.6 from Fig. 2) and is live on the DAS
   (verified: the room reads 4.5 lux where the old formula said ~18). The part is only specified

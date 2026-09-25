@@ -1,4 +1,4 @@
-/// Builds the evaluation scenario described in `Docs/Current setup v2.md`:
+/// Builds the evaluation scenario described in `Docs/Current setup v3.md`:
 /// 2x DAS (NTC on ch1, LDR on ch2), 2x LED display eyes (light/dark mode), 1x fan, the
 /// "Subscriptions" scratch block, and the four scripts with their documented inputs.
 ///
@@ -22,7 +22,7 @@ import 'package:tamuapp/core/transform_23.dart';
 import 'package:tamuapp/core/types.dart';
 
 // ---------------------------------------------------------------------------
-// Scenario constants (Docs/Current setup.md)
+// Scenario constants (Docs/Current setup v3.md)
 // ---------------------------------------------------------------------------
 
 /// Core dynamic blocks.
@@ -121,15 +121,20 @@ const List<int> dispOffsetInst1 = [
   2, 0, 3, 0, 6, 1, 255, 255, 70, 22, 0, 0, 0, 0, 0, 0, 186, 233, 255, 255, 6, 1, 255, 255, 0, 0, 0, 0,
 ];
 
-/// Script tunables / input defaults (Docs/Current setup v2.md).
+/// Script tunables / input defaults (Docs/Current setup v3.md).
 const double targetTemp = 30; // degC (script 1 Input 0)
 const double pGain = 4; // %/degC (script 1 Input 1)
 const double luxBrightMin = 5; // % at 0 lux
 const double luxBrightMax = 70; // % cap
-// Brightness = MIN + (MAX-MIN) * (lux/luxSpan)^0.25, clamped: a compressive curve, so a phone
-// flashlight (~10k lux) is already past half (54%) while a dim room stays low. luxSpan is the
-// lux at which the cap is reached (the DAS saturates at ~31623 as a Q16.16 Number).
-const double luxSpan = 30000; // lux at which the brightness cap is reached
+// Brightness = MIN + RANGE * ( (1-w)*t + w*t^4 ), t = (lux/luxSpan)^brightExpA, clamped. The
+// two terms are x^0.2 and x^0.8 of the same x: the slow term keeps a dim room dim, the fast
+// one steepens the top, and the cap is reached at luxSpan. Tuned on the device: ~200 lux ->
+// ~20 %, 3000 lux -> ~42 %, 10k lux -> 70 %.
+const double luxSpan = 10000; // lux at which the brightness cap is reached
+const double brightWeightA = 0.45; // weight of the slow term (matches on 1-w = 0.55)
+const double brightExpA = 0.2; // slow-term exponent (the fast term is 4x this)
+/// Brightness script variable holding the slow curve term (index into `ScriptDraft.variables`).
+const int brightCurveT = 8;
 const double darkLux = 1; // below this lux the eye switches to dark mode in auto
 const double luxDeadzone = 0.1; // lux: LDR subscription change deadzone
 const double lidOpenTy = -5.5; // half-fill line below the screen (open)
@@ -426,7 +431,7 @@ ScriptDraftValue _cIx(String name, int v) =>
 ScriptDraftValue _var(String name, DataType type, int size) =>
     ScriptDraftValue(name: name, type: type, size: size);
 
-// Script inputs (Docs/Current setup v2.md): live values the Register/editor can drive.
+// Script inputs (Docs/Current setup v3.md): live values the Register/editor can drive.
 ScriptDraftValue _inNum(String name, double v,
         {double? min, double? max, double step = 0, int ui = ScriptUiType.auto}) =>
     ScriptDraftValue(
@@ -558,19 +563,26 @@ ScriptDraft scriptBrightness() {
     _var('modeL', DataType.number, 4), // 5
     _var('wantR', DataType.number, 4), // 6
     _var('modeR', DataType.number, 4), // 7
+    _var('curveT', DataType.number, 4), // 8: slow curve term, reused by both eyes
   ]);
 
-  // brightness = MIN + RANGE * (lux/LUX_SPAN)^0.25, clamped to [MIN, MAX]: a compressive
-  // curve so a phone flashlight (~10k lux) is already past half while a dim room stays low.
-  // ^0.25 is two square roots - the expression only has ^0.5 and integer powers.
+  // Brightness = MIN + RANGE * ( (1-w)*t + w*t^4 ), t = (lux/LUX_SPAN)^0.2, clamped to
+  // [MIN, MAX]. The two terms are x^0.2 and x^0.8 of the same x = lux/LUX_SPAN: the slow term
+  // keeps a dim room dim, the fast one steepens the top, and the cap lands at LUX_SPAN.
   List<ScriptLine> brightness(int luxVar, int outVar, int regConst) => [
+        // t = (lux / LUX_SPAN) ^ 0.2
+        _line([_v(brightCurveT)], _ins(catMath, 0), [
+          _op(mathOpOpenParen),
+          _op(mathOpOpenParen), _v(luxVar), _op(3), _c(6), _op(mathOpCloseParen), // (lux / SPAN)
+          _op(5), _preNum(brightExpA), _op(mathOpCloseParen), // ^ 0.2
+        ]),
+        // out = MIN + RANGE * ( (1-w)*t + w*t*t*t*t )
         _line([_v(outVar)], _ins(catMath, 0), [
           _c(5), _op(0), _c(7), _op(2), // MIN + RANGE *
           _op(mathOpOpenParen),
-          _op(mathOpOpenParen),
-          _op(mathOpOpenParen), _v(luxVar), _op(3), _c(6), _op(mathOpCloseParen), // (lux / SPAN)
-          _op(5), _preNum(0.5), _op(mathOpCloseParen), // ^ 0.5
-          _op(5), _preNum(0.5), _op(mathOpCloseParen), // ^ 0.5
+          _preNum(brightWeightA), _op(2), _v(brightCurveT), _op(0), // w*t +
+          _preNum(1 - brightWeightA), _op(2), _v(brightCurveT), _op(2), _v(brightCurveT), _op(2), _v(brightCurveT), _op(2), _v(brightCurveT), // (1-w)*t^4
+          _op(mathOpCloseParen),
         ]),
         _line([_v(outVar)], _ins(catMath, 10), [_v(outVar), _c(5), _c(4)]), // Limit(out, MIN, MAX)
         _line([], _ins(catService, 2), [_c(regConst), _v(outVar)]), // reg[bright] = out
@@ -680,6 +692,11 @@ ScriptDraft scriptEyeMovement() {
     _line([_v(1)], _ins(catCompose, 1), [_v(0), _idx(0)]), // gx = g[0]
     _line([_v(2)], _ins(catCompose, 1), [_v(0), _idx(1)]), // gy = g[1]
     _line([_v(3)], _ins(catCompose, 1), [_v(0), _idx(2)]), // gz = g[2]
+    // The gyro's in-plane sense is inverted relative to the render space (the panel is mounted
+    // the other way round), so negate the two in-plane components: a tilt must move the pupils
+    // the same way the rig leans. The axis mapping itself is correct.
+    _line([_v(1)], _ins(catMath, 0), [_preNum(0), _op(1), _v(1)]), // gx = 0 - gx
+    _line([_v(2)], _ins(catMath, 0), [_preNum(0), _op(1), _v(2)]), // gy = 0 - gy
     for (var i = 0; i < 6; i++)
       _line([_v(4 + i)], _ins(catCompose, 1), [_in(1), _idx(i)]), // s0..s5 = sensitivity[i]
     // movement = sensitivity * gyro (a plain 2x3 linear map, XYZ -> XY)

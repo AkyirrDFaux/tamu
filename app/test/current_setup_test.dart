@@ -26,6 +26,25 @@ void main() {
     }
   });
 
+  test('the eye script inverts the gyro sense on both in-plane axes', () {
+    final d = scriptEyeMovement();
+    // The script carries two "gN = 0 - gN" lines: the mount's gyro sense is inverted relative
+    // to the render space, so the in-plane components are negated before they are mapped.
+    final negated = <int>{};
+    for (final line in d.lines) {
+      if (line.instruction.type != symInstruction || line.instruction.subtype != catMath) continue;
+      if (line.instruction.value != 0 || line.operands.length != 3) continue;
+      final ops = line.operands;
+      final zero = ops[0].type == symPredefine && ops[0].subtype == preNumber && ops[0].value == 0;
+      final sub = ops[1].type == symPredefine && ops[1].subtype == preMathOp && ops[1].value == 1;
+      if (!zero || !sub || ops[2].type != symVariable) continue;
+      for (final dest in line.destinations) {
+        if (dest.type == symVariable && dest.value == ops[2].value) negated.add(dest.value);
+      }
+    }
+    expect(negated, containsAll(<int>[1, 2]), reason: 'gx and gy are negated');
+  });
+
   test('the brightness script wires the right constants per mode', () {
     final d = scriptBrightness();
     String name(int i) => i < d.constants.length ? d.constants[i].name : '?$i';

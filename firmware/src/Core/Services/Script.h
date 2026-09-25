@@ -981,17 +981,37 @@ static uint8_t ScriptExprPeekOp(ExprParser *p)
     return 0xFF;
 }
 
-// base ^ exp: exp == 0.5 -> sqrt, integer exp -> repeated multiply (negative -> reciprocal).
+// base ^ exp. Fast paths: exp == 0.5 -> sqrt, integer exp -> repeated multiply (negative ->
+// reciprocal). Any other exponent uses its binary expansion: with exp = int + sum(2^-k) over
+// the set fraction bits, x^exp = x^int * prod(x^(2^-k)), and x^(2^-k) is k nested square
+// roots. Fixed point end to end (no log/exp tables); the chain is only deepened while a lower
+// fraction bit still needs it.
 static bool ScriptExprPow(Number base, Number exp, Number &out)
 {
     if (exp.Value == (int32_t)(1 << 15)) { out = sqrt(base); return true; } // 0.5
-    int32_t e = exp.RoundToInt();
-    if (exp.Value != (e << 16)) return false; // only integer exponents (and 0.5)
-    bool neg = e < 0;
-    if (neg) e = -e;
-    if (e > 64) return false;
+
+    bool neg = exp.Value < 0;
+    if (neg) exp = -exp;
+    int32_t ip = exp.Value >> 16;      // integer part
+    int32_t frac = exp.Value & 0xFFFF; // Q16.16 fraction
+    if (ip > 64) return false;
+    if (frac && base.Value < 0) return false; // no real fractional power of a negative base
+
     Number r = Number(1);
-    for (int32_t i = 0; i < e; i++) r = r * base;
+    for (int32_t i = 0; i < ip; i++) r = r * base;
+    if (frac)
+    {
+        Number chain = sqrt(base); // base^(2^-1)
+        int32_t bit = 0x8000;
+        while (bit)
+        {
+            if (frac & bit) r = r * chain;
+            bit >>= 1;
+            // The chain must track the next bit's exponent; only skip a sqrt when no bit at
+            // or below the new one is set (otherwise it would be one level too shallow).
+            if (bit && (frac & ((bit << 1) - 1))) chain = sqrt(chain);
+        }
+    }
     if (neg) { if (r.Value == 0) return false; r = Number(1) / r; }
     out = r;
     return true;

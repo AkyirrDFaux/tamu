@@ -124,7 +124,7 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
   `Get time` type, malformed-DT and oversized-write (both verified to fail before the fix),
   short-string padding; app unit test for the `Get time` destination. All 10 HIL suites +
   the four setup scripts re-verified on hardware.
-- [x] **Current setup v2** (`Docs/Current setup v2.md`, supersedes v1): the eye render blocks
+- [x] **Current setup v3** (`Docs/Current setup v3.md`, supersedes v1): the eye render blocks
   gained a 9th part - a **Circle Cut** that carves the iris into the dark-mode "edge only"
   ring (`Vysi1Display::MaxCachedFields` 8 -> 12). The blocks are built in **light** mode and
   script 4 switches each eye to dark on its own (black background, ring enabled, light-green
@@ -149,7 +149,7 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
   and the ring's inner (Cut) edge given `Fade = 0.6` (it had been left at the default, so the
   ring's inside was hard). The pupil now keeps **one** size (the original 2.4 x 5.0) in both
   modes, and the dark-mode pupil is a **desaturated dark green** (120,150,120) rather than a
-  wider light green - both matching the updated `Docs/Current setup v2.md`. The captured
+  wider light green - both matching the updated `Docs/Current setup v3.md`. The captured
   values are pinned by setup-test assertions so they cannot drift.
 - [x] **LDR calibration (v2)**: the lux subscription deadzone tightened to **0.1 lux**
   (`luxDeadzone`), the dark/light line to **~1 lux** (`darkLux`), and the brightness map to
@@ -384,7 +384,7 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
 - [ ] **On-device verification** (pending a phone): runtime permission prompt, BLE
   scan/connect/MTU, SAF backup save + restore, download, and the drawer on a real phone.
 
-## 5. Evaluation setup (`Docs/Current setup.md`)
+## 5. Evaluation setup (`Docs/Current setup v3.md`)
 - [x] **Setup builder** (`app/test/current_setup.dart`): builds the whole scenario through the
   existing clients - dynamic block 0 "Subscriptions" (four DAS value targets), dynamic blocks
   1/2 "Left Eye"/"Right Eye" (8-part render dictionaries: white fill, solid green iris,
@@ -447,10 +447,33 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
   (instance 0 ~5 deg, instance 1 ~175 deg), so a single rotation for both is wrong. The LDR
   crossing (left eye <- right DAS LDR) was left as-is; if the panels physically moved, that
   pairing should flip too.
+- [x] **Gyro reaction sense inverted (rig fact).** The mount's gyro axes read opposite to the
+  render space, so the eye script negates the two in-plane components (`gx`/`gy` = 0 - g) right
+  after reading them; a tilt now moves the pupils the way the rig leans. The axis mapping
+  (gx->x, gy->y) and the right-eye x mirror are unchanged. Guarded by a host test that finds
+  both negations in the emitted script.
+- [x] **New brightness curve.** `lux -> %` is now `MIN + RANGE*((1-w)*t + w*t^4)` with
+  `t = (lux/10000)^0.2` (a mix of x^0.2 and x^0.8, w = 0.45), clamped to [5, 70]. Measured on
+  the device by silencing the feeds and driving the lux inputs: 0 -> 5.0 %, 200 -> 20.0 %,
+  1000 -> 29.2 %, 3000 -> 41.7 %, 5000 -> 51.0 %, 10000 -> 70.0 % (cap). Replaces the old
+  `^0.25` / span-30k curve whose cap was only reached at 30k. Covered by a HIL test that drives
+  200 and 10000 lux and asserts ~20 % / 70 %.
+- [x] **Script VM: general fractional powers.** `^` used to accept only 0.5 and integer
+  exponents (which is why the old curve spelled `^0.25` as two square roots). `ScriptExprPow`
+  now expands any exponent into its binary fraction and multiplies nested square roots
+  (`x^(sum 2^-k) = prod x^(2^-k)`), so `x^0.2` works. First attempt advanced the root chain
+  only when a strictly-lower bit was set, leaving it one sqrt too shallow - fixed by testing
+  every bit at or below the next one. Exponent literals are Q8.8 (1/256 resolution: 0.2 ->
+  0.19922, negligible here).
 - [ ] **Tuning** (later): temperature->duty curve, gyro->pixel scale, and the brightness
   range (kept low to avoid a brown-out), plus a physical check of the eyes/lid.
 
 ### Notes
+- **Fixed-point `^` accuracy.** A non-integer exponent is evaluated as a product of nested
+  square roots (see the entry above). Each `sqrt` truncates, so a long chain can drift by a
+  fraction of a percent - measured under 0.1 % for the brightness curve's `x^0.2`/`x^0.8`.
+  Fine for a brightness curve; keep chains short where precision matters. Exponent and weight
+  literals are Q8.8, so they are quantised to 1/256.
 - The DAS ch1 NTC is a **100 kohm** part (`MeasNTC100K`); writing `NTC10K` misreads it (the
   auto-range jumps to 330 kohm and the temperature reads ~-18 degC). The builder uses the
   firmware default.

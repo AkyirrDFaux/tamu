@@ -365,6 +365,51 @@ void main() {
     await writeInput(0, [0]);
   }, timeout: const Timeout(Duration(minutes: 3)));
 
+  test('setup: the lux -> brightness curve hits its anchors', skip: skipReason, () async {
+    // Silence every feed so driven lux values stick (the DAS would otherwise overwrite them).
+    final reg = RegisterClient(deviceId: found.core.id);
+    final subs = SubscriptionClient(deviceId: found.core.id);
+    for (final r in await subs.getRequesterSubscriptions()) {
+      await subs.setRequesterSubscription(r.index);
+    }
+    for (final das in found.das) {
+      final c = SubscriptionClient(deviceId: das.id);
+      for (var i = 0; i < 4; i++) {
+        await c.setRequesterSubscription(i);
+      }
+    }
+
+    final block = DynBlock(
+        index: dynSubscriptions,
+        meta: BlockMeta(flagsAndType: BlockType.dynamic.value),
+        name: 'Subscriptions');
+    Future<void> drive(double lux) async {
+      for (var i = 0; i < 5; i++) {
+        await reg.writeDynamicEntry(block, fLuxA, 0,
+            BlockMeta(flagsAndType: DataType.number.value), numberToBytes(lux));
+        await reg.writeDynamicEntry(block, fLuxB, 0,
+            BlockMeta(flagsAndType: DataType.number.value), numberToBytes(lux));
+        await Future<void>.delayed(const Duration(milliseconds: 60));
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
+
+    Future<double> brightness(int inst) async =>
+        numberFromBytes((await reg.readBlockField(BlockType.vysiDisplay.value, inst, 0, 0))!.value);
+
+    await drive(200);
+    final at200 = await brightness(dispLeft);
+    await drive(10000);
+    final at10k = await brightness(dispRight);
+    // ignore: avoid_print
+    print('[SETUP] curve: 200 lux -> $at200 %, 10000 lux -> $at10k %');
+    expect(at200, closeTo(20, 2), reason: '~200 lux should give ~20 %');
+    expect(at10k, closeTo(luxBrightMax, 1), reason: 'full brightness is reached around 10k lux');
+
+    // Put the real feeds back (the later tests and the capture expect four subscriptions).
+    await buildSubscriptions(subs, found.core, found.das);
+  }, timeout: const Timeout(Duration(minutes: 3)));
+
   test('setup: capture the semantic backup zip to the project root', skip: skipReason, () async {
     // A busy device can drop the block enumeration; retry until each device reports blocks.
     Future<BackupDevice> captureWithRetry(DeviceEntry d) async {
