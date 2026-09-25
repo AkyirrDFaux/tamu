@@ -479,7 +479,9 @@ static bool ScriptLoad(uint8_t fileId) {
     // file name. The remaining names/specs are app-side editor metadata.
     s->uiLen = (uint16_t)uiLen;
     s->name[0] = '\0';
-    if (uiLen >= 2 && uiBlob[0] == 1) {
+    // UI info v2 starts with the version byte then the function name; the later sections
+    // (enum option labels) are app-side only and ignored here. v1 is no longer supported.
+    if (uiLen >= 2 && uiBlob[0] == 2) {
         uint8_t nlen = uiBlob[1];
         if (2u + nlen <= uiLen && nlen < BLOCK_NAME_LEN) {
             memcpy(s->name, uiBlob + 2, nlen);
@@ -1351,6 +1353,14 @@ static uint8_t ScriptExecTransform(LoadedScript *s, const ScriptLineInfo &ln, co
     cells[3] = -sx * s2;
     cells[4] = -sx * s2 * k + sy * c;
     cells[5] = ty;
+    // The renderer samples the geometry mask forward (pp = Position * coord), so the shape's
+    // centre lands where the sampled point is zero: Position^-1(0) = -L^-1 * t. To keep the
+    // centre where the caller asked for it (-t, the same as an unrotated translation) the
+    // stored translation is pre-rotated by the linear part: t' = L * t.
+    Number txr = cells[0] * tx + cells[1] * ty;
+    Number tyr = cells[3] * tx + cells[4] * ty;
+    cells[2] = txr;
+    cells[5] = tyr;
     dest[0] = 2; dest[1] = 0; dest[2] = 3; dest[3] = 0;
     for (uint8_t i = 0; i < 6; i++)
     {

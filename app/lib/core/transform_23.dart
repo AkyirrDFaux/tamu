@@ -30,6 +30,10 @@ class Transform23 {
   bool mirrorY = false;
 
   /// The six matrix cells (a, b, tx, c, d, ty).
+  ///
+  /// The renderer samples the geometry/texture mask forward, so a shape's centre lands at
+  /// `-L^-1 * t` unless the stored translation is pre-rotated by the linear part `L`. Doing
+  /// that keeps the centre at `-t` for any rotation (an unrotated transform is unchanged).
   List<double> toCells() {
     final rad = rotation * math.pi / 180;
     final k = math.tan(skew * math.pi / 180);
@@ -37,13 +41,17 @@ class Transform23 {
     final sy = scaleY * (mirrorY ? -1 : 1);
     final c = math.cos(rad);
     final s = math.sin(rad);
+    final a = sx * c;
+    final b = sx * c * k + sy * s;
+    final cc = -sx * s;
+    final d = -sx * s * k + sy * c;
     return [
-      sx * c,
-      sx * c * k + sy * s,
-      offsetX,
-      -sx * s,
-      -sx * s * k + sy * c,
-      offsetY,
+      a,
+      b,
+      a * offsetX + b * offsetY,
+      cc,
+      d,
+      cc * offsetX + d * offsetY,
     ];
   }
 
@@ -63,15 +71,21 @@ class Transform23 {
 
   void fromCells(List<double> cells) {
     final a = cells[0], b = cells[1], c = cells[3], d = cells[4];
-    offsetX = cells[2];
-    offsetY = cells[5];
+    final det = a * d - b * c;
+    // Undo the writer's linear pre-rotation of the translation (see toCells).
+    if (det.abs() < 1e-9) {
+      offsetX = cells[2];
+      offsetY = cells[5];
+    } else {
+      offsetX = (d * cells[2] - b * cells[5]) / det;
+      offsetY = (a * cells[5] - c * cells[2]) / det;
+    }
     scaleX = math.sqrt(a * a + c * c);
     scaleY = math.sqrt(b * b + d * d);
     skew = 0;
     mirrorX = false;
     mirrorY = false;
 
-    final det = a * d - b * c;
     if (b == 0 && c == 0) {
       // Axis-aligned: a negative component is a mirror, both negative is 180deg.
       if (a < 0 && d > 0) {

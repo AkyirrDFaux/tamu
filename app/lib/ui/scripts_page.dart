@@ -19,6 +19,7 @@ class _LoadedScript {
   final int state;
   final int instructionCounter;
   final List<ScriptInputSpec> inputSpecs;
+  final List<String> inputNames;
 
   const _LoadedScript({
     required this.slot,
@@ -26,6 +27,7 @@ class _LoadedScript {
     required this.state,
     required this.instructionCounter,
     this.inputSpecs = const [],
+    this.inputNames = const [],
   });
 
   String get fileName =>
@@ -85,15 +87,19 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
       final meta = await _client.readBlockMeta(slot);
       final state = await _client.readState(slot) ?? ScriptState.stopped;
       final internal = await _client.readInternalState(slot);
-      // The input UI specifications live in the script file.
+      // The input UI specifications and names live in the script file.
       var specs = const <ScriptInputSpec>[];
+      var names = const <String>[];
       final fileName = 'SCR_${slot.toRadixString(16).toUpperCase().padLeft(2, '0')}';
       final bytes = await _storage.readFile(fileName);
       if (bytes != null) {
         try {
-          specs = ScriptFileData.parse(bytes).inputSpecs;
+          final parsed = ScriptFileData.parse(bytes);
+          specs = parsed.inputSpecs;
+          names = parsed.inputNames;
         } on FormatException {
           specs = const [];
+          names = const [];
         }
       }
       list.add(_LoadedScript(
@@ -102,6 +108,7 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
         state: state,
         instructionCounter: internal?.instructionCounter ?? 0,
         inputSpecs: specs,
+        inputNames: names,
       ));
     }
     if (!mounted) return;
@@ -319,6 +326,7 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
             editable: true,
             revision: _revision,
             specs: s.inputSpecs,
+            names: s.inputNames,
             onChanged: _loadLoaded,
           ),
           ScriptIoSection(

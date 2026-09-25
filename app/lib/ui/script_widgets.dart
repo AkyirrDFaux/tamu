@@ -34,6 +34,9 @@ class ScriptIoSection extends StatefulWidget {
   /// Per-input UI specifications (inputs only), read from the script file.
   final List<ScriptInputSpec>? specs;
 
+  /// Per-input display names (inputs only), from the script file's UI info.
+  final List<String> names;
+
   /// Bump to force a re-read (the parent's refresh tick).
   final int revision;
   final VoidCallback? onChanged;
@@ -48,6 +51,7 @@ class ScriptIoSection extends StatefulWidget {
     required this.editable,
     required this.revision,
     this.specs,
+    this.names = const [],
     this.onChanged,
   });
 
@@ -128,6 +132,12 @@ class _ScriptIoSectionState extends State<ScriptIoSection> {
     return specs[index];
   }
 
+  /// The input's display name (falls back to the generic "Input N").
+  String _nameFor(int index) =>
+      index < widget.names.length && widget.names[index].isNotEmpty
+          ? widget.names[index]
+          : '${widget.title} $index';
+
   Widget _row(int index, ScriptEntry entry) {
     final spec = _specFor(index);
     if (widget.editable && spec != null) {
@@ -138,14 +148,18 @@ class _ScriptIoSectionState extends State<ScriptIoSection> {
           spec.uiType == ScriptUiType.toggle && entry.meta.dataType == DataType.bool_;
       final isButton =
           spec.uiType == ScriptUiType.button && entry.meta.dataType == DataType.bool_;
-      if (isSlider || isToggle || isButton) {
+      // A custom enum (dropdown, or auto with labels) is rendered by the control too.
+      final isEnum = entry.meta.dataType == DataType.enum_ &&
+          (spec.uiType == ScriptUiType.dropdown ||
+              (spec.uiType == ScriptUiType.auto && spec.options.isNotEmpty));
+      if (isSlider || isToggle || isButton || isEnum) {
         return ScriptInputControl(
           client: widget.client,
           slot: widget.slot,
           inputIndex: index,
           entry: entry,
           spec: spec,
-          title: '${widget.title} $index',
+          title: _nameFor(index),
           onChanged: widget.onChanged,
         );
       }
@@ -154,7 +168,7 @@ class _ScriptIoSectionState extends State<ScriptIoSection> {
     return ListTile(
       dense: true,
       contentPadding: const EdgeInsets.symmetric(horizontal: 24),
-      title: Text('${widget.title} $index'),
+      title: Text(_nameFor(index)),
       subtitle: Text(dataTypeLabel(entry.meta.dataType),
           style: const TextStyle(fontSize: 10, color: Colors.white54)),
       trailing: Text(label,
@@ -267,8 +281,49 @@ class _ScriptInputControlState extends State<ScriptInputControl> {
           title: Text(widget.title, style: const TextStyle(fontSize: 13)),
           trailing: FilledButton(onPressed: () => _write([1]), child: const Text('Press')),
         );
+      case ScriptUiType.dropdown:
+      case ScriptUiType.auto:
+        // "Custom enum": named choices over an integer value (the stored value stays the
+        // plain index - the labels live in the script's UI info). `auto` with labels is
+        // treated as a dropdown so a re-saved script keeps working.
+        final options = widget.spec.options;
+        if (options.isEmpty) {
+          if (widget.spec.uiType == ScriptUiType.auto) {
+            return ListTile(
+              dense: true,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+              title: Text(widget.title, style: const TextStyle(fontSize: 13)),
+              trailing: Text(_value.toStringAsFixed(0),
+                  style: const TextStyle(color: Colors.white70)),
+            );
+          }
+          return const SizedBox.shrink();
+        }
+        final index = _value.round().clamp(0, options.length - 1);
+        return ListTile(
+          dense: true,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+          title: Text(widget.title, style: const TextStyle(fontSize: 13)),
+          trailing: DropdownButton<int>(
+            value: index,
+            items: [
+              for (var i = 0; i < options.length; i++)
+                DropdownMenuItem<int>(value: i, child: Text(options[i])),
+            ],
+            onChanged: (v) {
+              if (v != null) _write(_enumBytes(v));
+            },
+          ),
+        );
       default:
         return const SizedBox.shrink();
     }
+  }
+
+  /// Encodes an enum choice with the input's declared type (1 byte enum/bool, else 4).
+  List<int> _enumBytes(int index) {
+    final t = widget.entry.meta.dataType;
+    if (t == DataType.enum_ || t == DataType.bool_) return [index & 0xFF];
+    return numberToBytes(index.toDouble());
   }
 }

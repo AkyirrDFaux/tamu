@@ -13,6 +13,27 @@
 - **Register backup view.** `Docs/App/Service views/Register.md` describes a Current/Backup
   view toggle with Save/Recall; the app exposes per-field "Save/Recall to backup" menus and
   a global Save/Recall all instead of a view toggle.
+- **Script UI info carries no enum labels in the docs.** `Docs/Services/Script.md` describes the
+  UI info as names plus per-input limits/UI type; the app now writes **version 2** with a label
+  list per input (the custom-enum / dropdown case). **v1 is no longer supported** (the app's
+  parser and the firmware's function-name read accept version 2 only), so an old backup's script
+  names fall back to the file name until re-saved - the format should be documented.
+- **`Docs/Current setup v3.md` predates the emote interface.** The implementation adds script 2
+  outputs (pupil offset L/R), script 3 inputs 2/3 (Force close / Max opening) and script 5
+  (Emote selector) with a custom-enum emote input; the spec still lists only script 2's two
+  inputs and no script 5 interface.
+- **Position matrices carry a pre-rotated translation.** The renderer samples the geometry and
+  texture masks *forward*, so a shape's centre lands at `-L^-1 * t`; with a rotation baked into
+  the Position the shape would drift. Both writers (`ScriptExecTransform` and the app's
+  `Transform23`) therefore store `t' = L * t`, which keeps the centre at `-t` for any rotation
+  (an unrotated transform is unchanged). `Docs/Modules and blocks/LED display.md` describes
+  Position as a plain 2x3 matrix, so a hand-written rotated matrix would need to know this.
+- **The script Transform and the app's Transform23 rotate in opposite senses.** The app's
+  `Transform23.toMatrix` builds `[[cos,-sin],[sin,cos]]` (a standard CCW rotation) while the
+  firmware's `ScriptExecTransform` builds `[[cos,sin],[-sin,cos]]` (CW). Transforms written by
+  the scripts and by the app therefore mirror each other's rotation (harmless for the symmetric
+  +/-45 deg bars, and for the display offsets the matrices are hand-written with zero
+  translation, but a rotated shape authored in the app vs a script would disagree).
 - **The "Not Saved" active flag is never set.** `Docs/Services/Register.md` defines an active
   "Not Saved" flag ("a change has been made compared to the saved state") and the CLI prints
   `[NS]`, but nothing sets it. A static Write only reaches RAM until an explicit Save (CID 3),

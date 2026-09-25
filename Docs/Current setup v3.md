@@ -26,6 +26,8 @@ Script 2 : Eye movement
 - Rotational axis of gyroscope (XY) moves circle and pupil position
 - Input 0: Offset (Vector2), X is flipped for one of the eyes.
 - Input 1: Sensitivity (Matrix 2x3), multiplier for movement (not a transformation), XYZ (gyro) ->XY (display).
+- Output 0: Position L
+- Output 1: Position R
 Script 3 : Lid timer
 -  Input 0 : Delay between blinks, default 10s
 -  Input 1 : Movement time (each way), default 200ms 
@@ -33,6 +35,11 @@ Script 3 : Lid timer
 -  Input 3: Max opening
 Script 4 : Brightness regulation
 - Uses one LDR to set brightness on each display, switches between dark mode and light mode independently.
+
+| <10 Lux | 100 Lux | 3000Lux | >10k Lux |
+| ------- | ------- | ------- | -------- |
+| 5%      | 10%     | 40%     | 70%      |
+
 - Input 0 : Switch between auto and manual, default auto
 - Input 1 : Manual mode Left eye switch selection (light/dark)
 - Input 2 : Manual mode Right eye switch selection (light/dark)

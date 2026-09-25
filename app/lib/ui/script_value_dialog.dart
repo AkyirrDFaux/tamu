@@ -37,6 +37,9 @@ class _ScriptValueDialogState extends State<ScriptValueDialog> {
   late final TextEditingController _step = TextEditingController(text: _trim(widget.initial.spec.step));
   late DataType _type = widget.initial.type;
   late int _uiType = widget.initial.spec.uiType;
+  /// Custom enum option labels (the values stay the plain 0..N-1 indexes).
+  late final List<TextEditingController> _options =
+      [for (final o in widget.initial.spec.options) TextEditingController(text: o)];
   late List<int> _value = widget.initial.value.isNotEmpty
       ? List<int>.from(widget.initial.value)
       : (_editableValue ? List<int>.filled(defaultSizeForType(widget.initial.type), 0) : <int>[]);
@@ -52,6 +55,9 @@ class _ScriptValueDialogState extends State<ScriptValueDialog> {
   @override
   void dispose() {
     _name.dispose();
+    for (final c in _options) {
+      c.dispose();
+    }
     _min.dispose();
     _max.dispose();
     _step.dispose();
@@ -75,6 +81,10 @@ class _ScriptValueDialogState extends State<ScriptValueDialog> {
             min: double.tryParse(_min.text.trim()) ?? 0,
             max: double.tryParse(_max.text.trim()) ?? 0,
             step: double.tryParse(_step.text.trim()) ?? 0,
+            options: [
+              for (final c in _options)
+                if (c.text.trim().isNotEmpty) c.text.trim(),
+            ],
           )
         : const ScriptInputSpec();
     Navigator.pop(
@@ -133,6 +143,41 @@ class _ScriptValueDialogState extends State<ScriptValueDialog> {
               ],
               onChanged: (t) => setState(() => _uiType = t ?? ScriptUiType.auto),
             ),
+            // Custom enum: name the values (the stored value stays the 0..N-1 index).
+            if (_type == DataType.enum_) ...[
+              const SizedBox(height: 10),
+              Row(children: [
+                const Text('Enum values',
+                    style: TextStyle(fontSize: 12, color: Colors.white70)),
+                const Spacer(),
+                TextButton(
+                  onPressed: () => setState(() => _options.add(TextEditingController())),
+                  child: const Text('Add value'),
+                ),
+              ]),
+              for (var i = 0; i < _options.length; i++)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(children: [
+                    SizedBox(
+                        width: 26,
+                        child: Text('$i',
+                            style: const TextStyle(color: Colors.white54, fontSize: 12))),
+                    Expanded(
+                      child: TextField(
+                        controller: _options[i],
+                        decoration: InputDecoration(
+                            labelText: 'Value $i name', isDense: true),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 18),
+                      tooltip: 'Remove',
+                      onPressed: () => setState(() => _options.removeAt(i).dispose()),
+                    ),
+                  ]),
+                ),
+            ],
           ],
           if (showLimits) ...[
             const SizedBox(height: 8),

@@ -22,7 +22,7 @@ const int scriptHeaderSize = 24;
 const int scriptSymbolSize = 4;
 
 /// Version byte of the UI-info blob (bumped when the layout changes).
-const int scriptUiInfoVersion = 1;
+const int scriptUiInfoVersion = 2;
 
 /// UI widget kinds an input can be rendered as (Docs/App/Service views/Script.md:
 /// "UI preview ... sliders, buttons, toggles").
@@ -98,19 +98,26 @@ class ScriptInputSpec {
   final double max;
   final double step;
 
+  /// Named choices for an integer/enum input shown as a dropdown ("custom enum"). Empty for
+  /// every other UI style; the stored value stays the plain integer index.
+  final List<String> options;
+
   const ScriptInputSpec({
     this.uiType = ScriptUiType.auto,
     this.min = 0,
     this.max = 0,
     this.step = 0,
+    this.options = const <String>[],
   });
 
-  ScriptInputSpec copyWith({int? uiType, double? min, double? max, double? step}) =>
+  ScriptInputSpec copyWith(
+          {int? uiType, double? min, double? max, double? step, List<String>? options}) =>
       ScriptInputSpec(
         uiType: uiType ?? this.uiType,
         min: min ?? this.min,
         max: max ?? this.max,
         step: step ?? this.step,
+        options: options ?? this.options,
       );
 }
 
@@ -299,6 +306,11 @@ class ScriptFileBuilder {
       final minB = Uint8List(4); _putU32(minB, 0, _numberToRaw(spec.min)); out.addAll(minB);
       final maxB = Uint8List(4); _putU32(maxB, 0, _numberToRaw(spec.max)); out.addAll(maxB);
       final stepB = Uint8List(4); _putU32(stepB, 0, _numberToRaw(spec.step)); out.addAll(stepB);
+    }
+    // v2: named enum choices, one label list per input (count 0 when unused).
+    for (var i = 0; i < inputs.length; i++) {
+      final spec = i < inputSpecs.length ? inputSpecs[i] : const ScriptInputSpec();
+      putNames(spec.options, spec.options.length);
     }
     return Uint8List.fromList(out);
   }
@@ -490,7 +502,8 @@ class _UiCursor {
     );
   }
   if (ui[0] != scriptUiInfoVersion) {
-    // Legacy/unknown blob: the first byte was the function-name length.
+    // Unknown/older blob (UI info v1 is no longer supported): the first byte was the
+    // function-name length in the pre-versioned layout, so recover the name if we can.
     final n = ui[0];
     final name = (1 + n <= ui.length) ? String.fromCharCodes(ui.sublist(1, 1 + n)) : '';
     return (
@@ -527,6 +540,18 @@ class _UiCursor {
     final max = _rawToNumber(_getU32(ui, c.pos)); c.pos += 4;
     final step = _rawToNumber(_getU32(ui, c.pos)); c.pos += 4;
     specs.add(ScriptInputSpec(uiType: uiType, min: min, max: max, step: step));
+  }
+
+  // enum option labels (UI info v2).
+  if (ui[0] == scriptUiInfoVersion) {
+    for (var i = 0; i < specs.length && c.pos < ui.length; i++) {
+      final n = c.u8();
+      final options = <String>[];
+      for (var k = 0; k < n && c.pos < ui.length; k++) {
+        options.add(c.string());
+      }
+      if (options.isNotEmpty) specs[i] = specs[i].copyWith(options: options);
+    }
   }
   return (
     functionName: functionName,

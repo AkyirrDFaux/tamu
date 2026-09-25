@@ -465,10 +465,86 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
   only when a strictly-lower bit was set, leaving it one sqrt too shallow - fixed by testing
   every bit at or below the next one. Exponent literals are Q8.8 (1/256 resolution: 0.2 ->
   0.19922, negligible here).
+- [x] **v3 emote system** (Docs/Current setup v3.md). The eye render block grew to **9 parts**:
+  pupil base (A) + pupil modifier (B) + the pupil fill, so an emote can build a shape from two
+  geometries (B is a no-op - Shape None + Add - for the emotes that need one).
+  - **Script 2 "Eye movement"** is now a pure calculator: it publishes the per-eye pupil
+    transform as **Output 0/1 (Matrix 2x3)** and writes no render fields.
+  - **Script 5 "Emote selector"** (new) owns the eye geometry: it reads those outputs and
+    writes the iris, iris fade and both pupil positions (pupil A +tilt, B -tilt) plus the
+    per-emote shapes. It is loaded into a **higher slot** than script 2, so it consumes the
+    same pass's fresh offset and the displays render in that pass - no cross-script loop delay.
+    Writes happen on change with a 0.05 px deadzone (the gyro jitter is below it, so at rest
+    nothing is written and the mask cache stays valid).
+  - Emotes (custom enum input): Normal = the tuned DoubleParabola; Happy = a triangle with a
+    smaller cut triangle (hollow caret); Dead = two rectangles added at +/-45 deg (the tilt
+    rides in the Position, radians); Annoyed = DoubleParabola + the lid held 25 % closed.
+    Pupil colours stay with script 4 (mode colours).
+  - An emote change is applied **behind a forced blink**: the emote script sets script 3's
+    `Force close`, waits for the lid to reach its closed position (or a 2 s timeout), swaps the
+    pupil/tilt/Max opening, then releases. All non-blocking (a state machine, not a wait loop).
+  - **Script 3 "Lid timer"**: + Input 2 `Force close`, + Input 3 `Max opening`; the blink is now
+    close -> hold while forced -> open to the max-opening rest -> interruptible delay, and it
+    parks at the rest position each cycle.
+  - **Custom enum inputs (app)**: `ScriptInputSpec.options`, UI-info **version 2** (labels per
+    input; v1 blobs still parse), a real dropdown in the input panel, and `_inEnum` in the
+    builder. The firmware reads the function name from v1 *or* v2 and ignores the rest.
+  - Tests: host (5 scripts validate, enum labels, script 2's outputs/lack of writes, a
+    file round-trip of the names/labels) + HIL (every emote's shapes in both eyes, the
+    +/-45 deg tilt, the forced blink, the annoyed lid rest, colours untouched, 5 scripts in
+    the archive). The setup suite dropped the fan/P-control and the lux->brightness anchor
+    tests (the fan is not connected and the curve is verified by driving lux) and the emote
+    waits were shortened; a bare `run_hil_tests.sh` now runs just the setup suite (the
+    feature suites are listed in the script for when a change touches them).
+- [x] **Emote tuning round 1** (from the first look): Happy's triangle band is thicker
+  (outer 6.6 / cut 3.4 instead of 5.6 / 4.0); Dead's bars are thicker and shorter
+  (`deadBarWidth` 2.4, `deadBarLength` 7.0); the annoyed lid rests ~2 px lower
+  (`lidAnnoyedOpen` 0.58); the fully-closed lid line moved past the bottom edge
+  (`lidClosedTy` 6.5) so it covers the last LED row. **UI info v1 support was dropped**
+  (app parser and the firmware's name read now accept version 2 only).
+- [x] **Emote tuning round 2** (second look) + the scripts page/editor fixes:
+  - **Happy** is now a true caret: apex 55 deg (pointier), outer 7.0 / cut 3.0 (thicker band),
+    and the cut triangle is **shifted 1.9 px down** (a per-emote `CUT_OFFSET_HAPPY`, applied to
+    the pupil B translation) so it removes the base and leaves the two upper edges instead of a
+    triangle ring.
+  - **Dead** bars rebalanced to 1.9 x 9.0 px (2.4 x 7.0 made the arms merge into a blob; the
+    matrices were already correct - both bars share the centre at +/-45 deg).
+  - **Scripts page**: `ScriptIoSection._row` only routed slider/toggle/button to the
+    spec-driven control, so every other input fell through to a generic "Input N" tile that
+    opened the numeric value editor. Dropdown (and `auto` with labels) now render the labelled
+    dropdown, and titles come from the file's input names (`ScriptIoSection.names`, wired from
+    `scripts_page`).
+  - **Editor**: the value dialog gained an "Enum values" section (add/remove/name) so a custom
+    enum can be defined; the labels are stored in the UI info and the value stays the index.
+  - Rebuilt the Linux app (`build/linux/x64/debug/bundle/tamuapp`) - the earlier symptoms were
+    the stale binary, which only understood UI-info v1.
+- [x] **Emote tuning round 3** + the transform fix (from the second look):
+  - **The real cause of the cross drift**: the renderer samples the geometry mask *forward*
+    (`pp = Position * coord`), so a rotated Position also rotates its translation and the
+    shape's centre lands at `-L^-1 * t` instead of `-t`. For a pure translation that is
+    invisible (everything tuned so far), but with a rotation the two bars drifted apart. Fixed
+    in the Transform (firmware `ScriptExecTransform` and the app's `Transform23.toCells/
+    fromCells`): the stored translation is pre-rotated by the linear part, so the centre stays
+    put for any rotation. Verified on the device: the Happy and Dead pupils' centres now equal
+    the iris's to <0.01 px (was ~1 px with the rotation).
+  - **Happy**: the whole pupil is lifted 1.5 px (`happyOffsetY`, applied to both pupil parts),
+    on top of the cut triangle being pushed down 1.9 px (the caret). Asserted in the HIL test.
+  - **Dead**: bars 1.9 x 9.0 (2.4 x 7.0 read as a blob).
+  - **Normal <-> Annoyed no longer blinks**: only a change that alters the pupil *shape*
+    (Normal/Annoyed vs Happy/Dead) forces the blink; a lid-only change is applied at once
+    (a shape class compared against the applied emote's).
+  - The emote script was one `EndBlock` short after the rewrite (the run ran off the end and
+    the script sat in Finished, so no emote ever applied) - caught by extending the script-state
+    test to slot 4, then by counting the flow blocks.
 - [ ] **Tuning** (later): temperature->duty curve, gyro->pixel scale, and the brightness
   range (kept low to avoid a brown-out), plus a physical check of the eyes/lid.
 
 ### Notes
+- **A script loop advances at most once per main-loop tick.** `ScriptRun` stamps every line it
+  executes and yields when a line is revisited within the same tick, so a `While` body that
+  contains no `Delay` runs one iteration per tick. The lid's 200 ms movement therefore takes
+  200 ticks (~0.2-1 s) and the *nominal* `Movement time` is a lower bound, not a real duration.
+  Fine here, but worth knowing before tightening any blink timing.
 - **Fixed-point `^` accuracy.** A non-integer exponent is evaluated as a product of nested
   square roots (see the entry above). Each `sqrt` truncates, so a long chain can drift by a
   fraction of a percent - measured under 0.1 % for the brightness curve's `x^0.2`/`x^0.8`.

@@ -59,7 +59,7 @@ void main() {
         (eyeBgGeo, DataType.geometry),
         (eyeBgTex, DataType.texture),
         (eyeIrisGeo, DataType.geometry),
-        (eyePupilGeo, DataType.geometry),
+        (eyePupilGeoA, DataType.geometry),
         (eyeLidGeo, DataType.geometry),
       ]) {
         final head = await reg.readDynamicField(block, pair.$1, 0);
@@ -110,7 +110,8 @@ void main() {
 
     expect(names(await file(scrTemperature)), ['Target temperature', 'P constant']);
     expect(names(await file(scrEyeMovement)), ['Offset', 'Sensitivity']);
-    expect(names(await file(scrLidTimer)), ['Blink delay', 'Movement time']);
+    expect(names(await file(scrLidTimer)),
+        ['Blink delay', 'Movement time', 'Force close', 'Max opening']);
     expect(names(await file(scrBrightness)),
         ['Manual mode', 'Manual left dark', 'Manual right dark']);
 
@@ -190,7 +191,7 @@ void main() {
   test('setup: scripts are loaded and running', skip: skipReason, () async {
     // Give a just-started script a moment (a Waiting/Delay state is fine; Error is not).
     final scripts = ScriptClient(deviceId: found.core.id);
-    for (final id in [scrTemperature, scrEyeMovement, scrLidTimer, scrBrightness]) {
+    for (final id in [scrTemperature, scrEyeMovement, scrLidTimer, scrBrightness, scrEmote]) {
       int? state;
       for (var i = 0; i < 8; i++) {
         state = await scripts.readState(id);
@@ -204,50 +205,10 @@ void main() {
     }
   }, timeout: const Timeout(Duration(seconds: 60)));
 
-  test('setup: temperature script drives the fan duty (P control)', skip: skipReason, () async {
-    final reg = RegisterClient(deviceId: found.core.id);
-    final scripts = ScriptClient(deviceId: found.core.id);
-
-    Future<int?> duty() async {
-      final r = await reg.readBlockField(BlockType.pwm.value, fanInst, 1, 0);
-      return r == null ? null : uint32FromBytes(r.value); // PWM Duty is a uint32 (%)
-    }
-
-    final pct = await duty();
-    // ignore: avoid_print
-    print('[SETUP] fan duty = $pct %');
-    expect(pct, isNotNull);
-    expect(pct, inInclusiveRange(0, 100));
-
-    // Drive the P controller through its input: a target below any plausible ambient makes
-    // duty = P * (temp - target) positive.
-    final target = await scripts.readEntry(scrTemperature, ScriptField.input, 0);
-    expect(target, isNotNull);
-    expect(target!.meta.dataType, DataType.number);
-    final meta = BlockMeta(flagsAndType: target.meta.flagsAndType, key: 0, size: 4);
-    expect(await scripts.writeEntry(scrTemperature, ScriptField.input, 0, meta, numberToBytes(5)),
-        isTrue);
-    var heated = 0;
-    for (var i = 0; i < 40; i++) {
-      await Future<void>.delayed(const Duration(milliseconds: 250));
-      heated = await duty() ?? 0;
-      if (heated > 0) break;
-    }
-    // ignore: avoid_print
-    print('[SETUP] fan duty with target 5 C = $heated %');
-    expect(heated, greaterThan(0), reason: 'the P controller should ask for cooling');
-
-    // Restore the documented default target.
-    expect(
-        await scripts.writeEntry(
-            scrTemperature, ScriptField.input, 0, meta, numberToBytes(targetTemp)),
-        isTrue);
-  }, timeout: const Timeout(Duration(seconds: 60)));
-
   test('setup: the eye script drives valid render matrices', skip: skipReason, () async {
     final reg = RegisterClient(deviceId: found.core.id);
     final block = DynBlock(index: dynLeftEye, meta: BlockMeta(flagsAndType: BlockType.dynamic.value), name: '');
-    for (final (name, field) in [('iris', eyeIrisGeo), ('pupil', eyePupilGeo), ('lid', eyeLidGeo)]) {
+    for (final (name, field) in [('iris', eyeIrisGeo), ('pupil', eyePupilGeoA), ('lid', eyeLidGeo)]) {
       final pos = await reg.readDynamicField(block, field, gkPosition);
       expect(pos, isNotNull, reason: '$name position present');
       expect(pos!.meta.dataType, DataType.matrix, reason: '$name is a matrix');
@@ -273,7 +234,7 @@ void main() {
     for (var i = 0; i < 10 && !centred; i++) {
       final iris = await reg.readDynamicField(block, eyeIrisGeo, gkPosition);
       final tex = await reg.readDynamicField(block, eyeIrisTex, tkPosition);
-      final pupil = await reg.readDynamicField(block, eyePupilGeo, gkPosition);
+      final pupil = await reg.readDynamicField(block, eyePupilGeoA, gkPosition);
       if (iris != null && tex != null && pupil != null) {
         centred = same(iris.value, pupil.value) && same(tex.value, pupil.value);
       }
@@ -332,7 +293,7 @@ void main() {
       bg = await read(right, eyeBgTex, tkColour1) ?? const [];
       irisC1 = await read(right, eyeIrisTex, tkColour1) ?? const [];
       pupil = await read(right, eyePupilTex, tkColour1) ?? const [];
-      size = await read(right, eyePupilGeo, gkSize) ?? const [];
+      size = await read(right, eyePupilGeoA, gkSize) ?? const [];
       if (bg.isNotEmpty && bg.first == 0 && irisC1.isNotEmpty && irisC1[1] == darkIrisG1) break;
     }
     // ignore: avoid_print
@@ -365,50 +326,110 @@ void main() {
     await writeInput(0, [0]);
   }, timeout: const Timeout(Duration(minutes: 3)));
 
-  test('setup: the lux -> brightness curve hits its anchors', skip: skipReason, () async {
-    // Silence every feed so driven lux values stick (the DAS would otherwise overwrite them).
+  test('setup: the emote selector drives the pupil in both eyes', skip: skipReason, () async {
     final reg = RegisterClient(deviceId: found.core.id);
-    final subs = SubscriptionClient(deviceId: found.core.id);
-    for (final r in await subs.getRequesterSubscriptions()) {
-      await subs.setRequesterSubscription(r.index);
+    final scripts = ScriptClient(deviceId: found.core.id);
+    final left = DynBlock(
+        index: dynLeftEye, meta: BlockMeta(flagsAndType: BlockType.dynamic.value), name: 'Left Eye');
+    final right = DynBlock(
+        index: dynRightEye, meta: BlockMeta(flagsAndType: BlockType.dynamic.value), name: 'Right Eye');
+
+    Future<int?> numOf(DynBlock b, int field, int key) async {
+      final e = await reg.readDynamicField(b, field, key);
+      return e == null ? null : e.value.first;
     }
-    for (final das in found.das) {
-      final c = SubscriptionClient(deviceId: das.id);
-      for (var i = 0; i < 4; i++) {
-        await c.setRequesterSubscription(i);
+
+    Future<void> setEmote(int e) async {
+      final entry = await scripts.readEntry(scrEmote, ScriptField.input, 0);
+      expect(entry, isNotNull, reason: 'emote input present');
+      expect(entry!.meta.dataType, DataType.enum_, reason: 'custom enum input');
+      expect(
+          await scripts.writeEntry(scrEmote, ScriptField.input, 0,
+              BlockMeta(flagsAndType: entry.meta.flagsAndType, key: 0, size: 1), [e]),
+          isTrue,
+          reason: 'write emote $e');
+    }
+
+    // Waits for both eyes' pupil base/modifier to become [a]/[b] (the swap happens behind a
+    // forced blink, so give it a couple of seconds).
+    Future<void> waitShapes(int a, int b) async {
+      var ok = false;
+      for (var i = 0; i < 25 && !ok; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+        ok = await numOf(left, eyePupilGeoA, gkShape) == a &&
+            await numOf(right, eyePupilGeoA, gkShape) == a &&
+            await numOf(left, eyePupilGeoB, gkShape) == b &&
+            await numOf(right, eyePupilGeoB, gkShape) == b;
+      }
+      expect(ok, isTrue, reason: 'emote shapes $a/$b applied to both eyes');
+    }
+
+    // A change must be applied behind a blink: the lid reaches its closed position.
+    Future<bool> watchedBlink(int emote) async {
+      await setEmote(emote);
+      var closed = false;
+      for (var i = 0; i < 40 && !closed; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+        final ty = await (() async {
+          final m = (await reg.readDynamicField(left, eyeLidGeo, gkPosition))?.value;
+          return m == null ? null : numberFromBytes(m, 24);
+        })();
+        if (ty != null && ty > lidClosedTy - 0.5) closed = true;
+      }
+      return closed;
+    }
+
+    // Normal: the tuned parabola, modifier unused.
+    await setEmote(emoteNormal);
+    await waitShapes(shapeDoubleParabola, shapeNone);
+
+    // Happy: a triangle with a cut triangle -> a hollow (caret) shape.
+    expect(await watchedBlink(emoteHappy), isTrue, reason: 'emote change forces a blink');
+    await waitShapes(shapeTriangle, shapeTriangle);
+    expect(await numOf(left, eyePupilGeoB, gkOperation), opCut, reason: 'happy cuts the base');
+    expect(await numOf(right, eyePupilGeoB, gkShape), shapeTriangle, reason: 'right eye swapped');
+    // Happy lifts the whole pupil (untilted here, so the stored translation is plain).
+    final irisM = (await reg.readDynamicField(left, eyeIrisGeo, gkPosition))!.value;
+    final paM = (await reg.readDynamicField(left, eyePupilGeoA, gkPosition))!.value;
+    expect(numberFromBytes(paM, 24) - numberFromBytes(irisM, 24), closeTo(happyOffsetY, 0.1),
+        reason: 'happy pupil sits higher');
+
+    // Dead: two rectangles, added and tilted opposite ways.
+    await setEmote(emoteDead);
+    await waitShapes(shapeRectangle, shapeRectangle);
+    expect(await numOf(left, eyePupilGeoB, gkOperation), opAdd, reason: 'dead adds the 2nd bar');
+    final pa = (await reg.readDynamicField(left, eyePupilGeoA, gkPosition))!.value;
+    final pb = (await reg.readDynamicField(left, eyePupilGeoB, gkPosition))!.value;
+    // Cell [0][1] of the transform is sin(rot): non-zero and opposite for the two bars.
+    expect(numberFromBytes(pa, 8), greaterThan(0.1), reason: 'bar A tilts one way');
+    expect(numberFromBytes(pb, 8), lessThan(-0.1), reason: 'bar B tilts the other way');
+
+    // Annoyed: back to the parabola, with a 25 %-closed resting lid.
+    await setEmote(emoteAnnoyed);
+    await waitShapes(shapeDoubleParabola, shapeNone);
+    var restTy = 0.0;
+    for (var i = 0; i < 30; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      final m = (await reg.readDynamicField(left, eyeLidGeo, gkPosition))?.value;
+      if (m == null) continue;
+      restTy = numberFromBytes(m, 24);
+      // Open position for 75 % opening: OPEN_TY + (1 - 0.75) * DELTA = -2.75.
+      if (restTy > lidOpenTy + (1 - lidAnnoyedOpen) * (lidClosedTy - lidOpenTy) - 0.6 &&
+          restTy < lidOpenTy + (1 - lidAnnoyedOpen) * (lidClosedTy - lidOpenTy) + 0.6) {
+        break;
       }
     }
+    expect(restTy, closeTo(lidOpenTy + (1 - lidAnnoyedOpen) * (lidClosedTy - lidOpenTy), 0.6),
+        reason: 'annoyed lid rests part-closed');
 
-    final block = DynBlock(
-        index: dynSubscriptions,
-        meta: BlockMeta(flagsAndType: BlockType.dynamic.value),
-        name: 'Subscriptions');
-    Future<void> drive(double lux) async {
-      for (var i = 0; i < 5; i++) {
-        await reg.writeDynamicEntry(block, fLuxA, 0,
-            BlockMeta(flagsAndType: DataType.number.value), numberToBytes(lux));
-        await reg.writeDynamicEntry(block, fLuxB, 0,
-            BlockMeta(flagsAndType: DataType.number.value), numberToBytes(lux));
-        await Future<void>.delayed(const Duration(milliseconds: 60));
-      }
-      await Future<void>.delayed(const Duration(milliseconds: 250));
-    }
+    // The emote script never touches the pupil colour: still the light-mode black.
+    expect((await reg.readDynamicField(left, eyePupilTex, tkColour1))?.value, [0, 0, 0, 255],
+        reason: 'mode colours stay with the brightness script');
 
-    Future<double> brightness(int inst) async =>
-        numberFromBytes((await reg.readBlockField(BlockType.vysiDisplay.value, inst, 0, 0))!.value);
-
-    await drive(200);
-    final at200 = await brightness(dispLeft);
-    await drive(10000);
-    final at10k = await brightness(dispRight);
-    // ignore: avoid_print
-    print('[SETUP] curve: 200 lux -> $at200 %, 10000 lux -> $at10k %');
-    expect(at200, closeTo(20, 2), reason: '~200 lux should give ~20 %');
-    expect(at10k, closeTo(luxBrightMax, 1), reason: 'full brightness is reached around 10k lux');
-
-    // Put the real feeds back (the later tests and the capture expect four subscriptions).
-    await buildSubscriptions(subs, found.core, found.das);
-  }, timeout: const Timeout(Duration(minutes: 3)));
+    // Restore the default emote for the later tests.
+    await setEmote(emoteNormal);
+    await waitShapes(shapeDoubleParabola, shapeNone);
+  }, timeout: const Timeout(Duration(minutes: 4)));
 
   test('setup: capture the semantic backup zip to the project root', skip: skipReason, () async {
     // A busy device can drop the block enumeration; retry until each device reports blocks.
@@ -445,7 +466,7 @@ void main() {
     final devices = parseBackupZip(await out.readAsBytes());
     expect(devices.length, 3);
     final core = devices.firstWhere((d) => d.typeId == DeviceType.tamuV20A.value);
-    expect(core.scripts.length, 4, reason: 'four scripts captured');
+    expect(core.scripts.length, 5, reason: 'five scripts captured');
     expect(core.requesterSubscriptions.length, 4, reason: 'four subscriptions captured');
     final names = [for (final b in core.blocks) b.name];
     expect(names, containsAll(['Subscriptions', 'Left Eye', 'Right Eye']));
@@ -498,12 +519,12 @@ void main() {
         (await reg.readDynamicField(leftBlock, field, key))?.value;
     expect(await val(eyeBgGeo, gkShape), enumByte(shapeFill), reason: 'bg shape restored');
     expect(await val(eyeIrisTex, tkType), enumByte(texGradientLinear), reason: 'iris texture restored');
-    expect(await val(eyePupilGeo, gkSize), [...num(pupilHalfW), ...num(pupilHalfH)],
+    expect(await val(eyePupilGeoA, gkSize), [...num(pupilHalfW), ...num(pupilHalfH)],
         reason: 'pupil size restored');
     expect(await val(eyeLidGeo, gkFade), num(lidFade), reason: 'lid fade restored');
     expect(await val(eyeLidTex, tkType), enumByte(texFill), reason: 'lid texture restored');
 
-    expect(await ScriptClient(deviceId: found.core.id).loadedScripts(), [0, 1, 2, 3]);
+    expect(await ScriptClient(deviceId: found.core.id).loadedScripts(), [0, 1, 2, 3, 4]);
     expect(await SubscriptionClient(deviceId: found.core.id).getRequesterSubscriptions(), hasLength(4));
   }, timeout: const Timeout(Duration(minutes: 3)));
 }

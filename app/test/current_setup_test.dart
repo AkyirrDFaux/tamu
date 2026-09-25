@@ -5,17 +5,20 @@ library;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/script_draft.dart';
+import 'package:tamuapp/core/script_file.dart';
 import 'package:tamuapp/core/script_instructions.dart';
+import 'package:tamuapp/core/types.dart';
 
 import 'current_setup.dart';
 
 void main() {
-  test('the four setup scripts build and validate', () {
+  test('the five setup scripts build and validate', () {
     final drafts = <String, ScriptDraft>{
       'SCR_00': scriptTemperature(),
       'SCR_01': scriptEyeMovement(),
       'SCR_02': scriptLidTimer(),
       'SCR_03': scriptBrightness(),
+      'SCR_04': scriptEmoteSelector(),
     };
     for (final entry in drafts.entries) {
       final d = entry.value;
@@ -43,6 +46,38 @@ void main() {
       }
     }
     expect(negated, containsAll(<int>[1, 2]), reason: 'gx and gy are negated');
+  });
+
+  test('script 2 publishes the pupil offsets and the emote script consumes them', () {
+    final eye = scriptEyeMovement();
+    // Two matrix outputs (offset L/R) and no render-block writes.
+    expect(eye.outputs.length, 2, reason: 'offset L/R outputs');
+    expect(eye.outputs.every((o) => o.type == DataType.matrix), isTrue);
+    final writes = eye.lines.where(
+        (l) => l.instruction.subtype == catService && l.instruction.value == 2); // Service write
+    expect(writes, isEmpty, reason: 'the eye script writes no register fields');
+
+    final emote = scriptEmoteSelector();
+    // The emote input is a custom enum with the documented labels.
+    expect(emote.inputs.length, 1);
+    expect(emote.inputs.first.type, DataType.enum_);
+    expect(emote.inputs.first.spec.uiType, ScriptUiType.dropdown);
+    expect(emote.inputs.first.spec.options, emoteNames);
+    // It drives the lid and reads script 2's outputs.
+    final names = [for (final c in emote.constants) c.name];
+    expect(names, containsAll(<String>['OFF_L', 'OFF_R', 'LID_FORCE', 'LID_MAXOPEN']));
+  });
+
+  test('script input names and enum labels survive a file round-trip', () {
+    final image = scriptEmoteSelector().toImage();
+    final parsed = ScriptFileData.parse(image);
+    expect(parsed.inputNames, ['Emote'], reason: 'input named from the UI info');
+    expect(parsed.inputSpecs.first.uiType, ScriptUiType.dropdown);
+    expect(parsed.inputSpecs.first.options, emoteNames);
+
+    // Every setup script must carry its input names (the UI shows these, not "Input N").
+    final lid = ScriptFileData.parse(scriptLidTimer().toImage());
+    expect(lid.inputNames, ['Blink delay', 'Movement time', 'Force close', 'Max opening']);
   });
 
   test('the brightness script wires the right constants per mode', () {

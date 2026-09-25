@@ -20,16 +20,18 @@ fi
 # libserialport native lib
 export LD_LIBRARY_PATH="${APP_DIR}/build/linux/x64/debug/bundle/lib:${LD_LIBRARY_PATH:-}"
 
-# Which files to run
+# Which files to run. The default is the fast set for day-to-day work (the evaluation setup
+# covers the blocks, scripts, subscriptions, eye render and persistence). Run the feature
+# suites explicitly when a change touches them, e.g.
+#   TAMU_HIL=/dev/ttyACM0 bash test/run_hil_tests.sh test/hil_script_test.dart \
+#       test/hil_script_vm_test.dart test/hil_dynamic_persistence_test.dart \
+#       test/hil_backup_test.dart test/hil_storage_files_test.dart \
+#       test/hil_led_display_test.dart test/tamu_hardware_verification_test.dart
 if [ $# -gt 0 ]; then
   FILES=("$@")
 else
   FILES=(
-    test/hil_test_suite.dart
-    test/hil_subscriptions_test.dart
-    test/hil_script_test.dart
-    test/hil_script_vm_test.dart
-    test/tamu_hardware_verification_test.dart
+    test/hil_current_setup_test.dart
   )
 fi
 
