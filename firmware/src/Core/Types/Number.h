@@ -270,6 +270,7 @@ inline const Number &GetPI()
 #define RAW_HALF_PI 102943 // PI / 2 in 16.16
 #define RAW_SIN_B 83443    // Fixed-point 16.16 for 4/pi
 #define RAW_SIN_C 26561    // Fixed-point 16.16 for 4/pi^2
+#define RAW_SIN_P 14746    // Fixed-point 16.16 for 0.225 (improved-parabola correction)
 
 // Fixed-point sine approximation using a parabola, after reducing the angle into [-PI, PI]
 inline Number sin(Number X)
@@ -297,7 +298,14 @@ inline Number sin(Number X)
 
     int32_t P2 = FixedMul32(RAW_SIN_C, xSquared);
 
-    return Number::FromRaw(P1 - P2);
+    // Improved parabola: the plain Bx + Cx|x| has a ~5.6% amplitude error (visible as an
+    // oversized shape from a rotated transform), corrected to ~0.1% by
+    // y' = P*(y*|y| - y) + y.
+    int32_t y = P1 - P2;
+    int32_t yAbs = (y < 0) ? -y : y;
+    int32_t corr = FixedMul32(RAW_SIN_P, FixedMul32(y, yAbs) - y);
+
+    return Number::FromRaw(y + corr);
 }
 
 // Fixed-point cosine computed as sine of (angle + PI/2)

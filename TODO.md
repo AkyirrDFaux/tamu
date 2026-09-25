@@ -559,3 +559,52 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
   loop never updates.** The lid script originally did `cond = step < STEPS` before the While
   and then looped forever (the lid jammed shut, `step` ran to thousands). The comparison is
   now recomputed inside the loop. Worth surfacing in the editor/VM docs.
+
+## 6. Cleanup / optimization / bugfix pass
+
+- [x] **Trig accuracy (core)**: the fixed-point `sin`/`cos` used the plain parabola
+  (`Bx + Cx|x|`, ~5.6% amplitude error - visible as an oversized shape when a transform is
+  rotated). Added the standard improved-parabola correction
+  (`y' = 0.225*(y*|y| - y) + y`, ~0.1% error). The HIL emote test now pins the 45 deg cells to
+  0.7071 +/- 0.02 (was 0.75).
+- [x] **"Not Saved" active flag (core)**: a written persistent field now reports the active
+  `Not Saved` flag until it is saved (Docs/Services/Register.md). Small bitset next to the
+  STATLOG helpers (48 B; the DAS's RAM went 79.3% -> 81.6%), set on a static write, cleared by
+  Save, folded into the read meta on both static read paths. The app already renders the `NS`
+  chip; HIL regression added.
+- [x] **App is only a subscription manager** (verified): `SubscriptionClient` writes the
+  *devices'* requester tables; the app never registers itself as requester/provider. A guard
+  test asserts `appSourceId` is never used as a subscription address.
+- [x] **PWM Frequency**: verified working (1 kHz and 25 kHz accepted with the channel live and
+  idle) - the old "always refused" note was stale. HIL regression added; the issue was dropped.
+- [x] **Issues.md cleaned**: dropped/rewrote the stale entries (PWM, the "opposite rotation
+  senses" misreading, the LDR calibration per the user, the subscription-trigger default, the
+  SNDB re-register design note) and stated the app's manager-only role.
+- [x] **Splits done** (mechanical, `part`-based, zero privacy/behaviour change):
+  `ui/value_editor.dart` 1167 -> +scalars/containers/visual; `core/backup.dart` 889 ->
+  +capture/restore; `test/current_setup.dart` 1296 -> +scripts/apply. Analyzer clean; 92 app
+  tests + 16 setup + 5 feature suites green.
+- [ ] **Splits remaining** (need real work, not slicing):
+  - `firmware/Core/Services/Script.h` (2060): the whole file sits inside `#ifdef` regions that
+    span any linear boundary, so each part must be re-wrapped in its own guards first.
+  - `firmware/Core/Services/Register.h` (914), `Storage.h` (947), `Subscriptions.h` (883),
+    `Vysi1Display.h` (854), `Memory.h` (678): split at top-level boundaries and keep each
+    part's `#include`s explicit (a first attempt reverted cleanly).
+  - `ui/register_page.dart` (1614) is one giant `State` class: needs *widget extraction*
+    (pull the panels/dialogs into widgets), not a slice.
+  - `ui/script_editor_page.dart` (991), `ui/subscriptions_dialog.dart` (689).
+- [ ] **Optimization - per-field geometry-mask versioning**: any write to an eye block bumps the
+  block generation and the renderer recomputes all 9 masks; the emote script writes on gyro
+  motion. Measured headroom says it is not urgent (the display readback sits at the panel cap,
+  ~127-132 FPS), so it stays planned rather than done.
+- Deferred by request: SNDB re-registration, the LED brightness cap, the subscription trigger
+  default, the LDR calibration (considered done).
+- [x] **Brightness curve re-fitted to the updated v3 table** (`<10 lux -> 5 %`, `100 -> 10 %`,
+  `3000 -> 40 %`, `>10k -> 70 %`): the low end is now much dimmer than the old 200-lux anchor,
+  so the curve became a *shifted* power law with a dead zone below 10 lux -
+  `MIN + RANGE * ((Max(lux, 10) - 10) / 8840)^0.5721`, clamped. Measured on the device by
+  driving the lux inputs: 0/5/10 -> 5.00 %, 100 -> 9.75 %, 1000 -> 23.7 %, 3000 -> 40.0 %,
+  10k -> 70.0 %. Complexity dropped too: one term instead of the old 0.2/0.8 mix.
+  **Bug caught on the way**: the `^` bound to the *divisor* instead of the quotient (the
+  expression's precedence), which turned the curve into a linear ramp - fixed with an explicit
+  group around the division. Worth remembering when writing expressions.

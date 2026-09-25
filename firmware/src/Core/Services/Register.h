@@ -54,10 +54,14 @@ static inline void SendBlockMetaResponse(const PacketFrame &frame, uint32_t bi, 
     SendResponse(frame,rpl,pos);
 }
 
-static inline void SendFieldResponse(const PacketFrame &frame, uint32_t bi, const FieldResult &fr) {
+static inline void SendFieldResponse(const PacketFrame &frame, uint32_t bi, const FieldResult &fr,
+                                     bool notSaved = false) {
     uint8_t rpl[FIELD_RESPONSE_BUF_SIZE]; uint16_t pos=0;
     memcpy(rpl+pos, &bi,4); pos+=4;
-    memcpy(rpl+pos, &fr.Descriptor,4); pos+=4;
+    // The active Not Saved flag is not part of the schema: fold it into the reported meta.
+    BlockMeta m = fr.Descriptor;
+    if (notSaved) m.FlagsAndType |= (uint16_t)FieldFlags::NotSaved;
+    memcpy(rpl+pos, &m,4); pos+=4;
     memcpy(rpl+pos, fr.Data, fr.Descriptor.Size); pos+=fr.Descriptor.Size;
     while(pos%4) rpl[pos++]=0;
     SendResponse(frame,rpl,pos);
@@ -275,7 +279,7 @@ static void HandleMultiEntryRead(const PacketFrame &frame, uint32_t bi, uint16_t
         if (BlockInfoField(bi_entry) >= blk.Schema->MapCount) { RespondStatus(frame,false); return; }
         FieldResult fr = blk.Get(BlockInfoField(bi_entry));
         if (!fr.Data) { RespondStatus(frame,false); return; }
-        SendFieldResponse(frame, bi, fr);
+        SendFieldResponse(frame, bi, fr, StaticDirtyGet((uint8_t)idx, BlockInfoField(bi_entry)));
     }
 }
 
@@ -330,7 +334,7 @@ static void HandleStaticBlockRead(const PacketFrame &frame, uint32_t bi, uint16_
     if (field >= blk.Schema->MapCount) { RespondStatus(frame,false); return; }
     FieldResult fr = blk.Get(field);
     if(!fr.Data) { RespondStatus(frame,false); return; }
-    SendFieldResponse(frame, bi, fr);
+    SendFieldResponse(frame, bi, fr, StaticDirtyGet((uint8_t)idx, field));
 }
 
 // ===== CID 2: Write helpers =====
@@ -423,6 +427,13 @@ static void HandleStaticBlockWrite(const PacketFrame &frame, uint16_t type, uint
     if(idx<0) { RespondStatus(frame,false); return; }
     const StaticBlockDescriptor &blk = static_block_registry[idx];
     if(!blk.Set(field, val, vlen, desc->FlagsAndType)) { RespondStatus(frame,false); return; }
+    // A written persistent field is not in flash until an explicit Save: mark it (docs
+    // "Not Saved"). This is the signal that would have caught the render-block loss.
+    if (field < blk.Schema->MapCount) {
+        const uint16_t f = blk.Schema->Map[field].FlagsAndType;
+        if ((f & FieldFlags::Persistent) && !(f & FieldFlags::ReadOnly))
+            StaticDirtySet((uint8_t)idx, field, true);
+    }
     SendResponse(frame, frame.payload, PayloadBytes(frame));
 }
 
@@ -583,12 +594,14 @@ static void HandleStaticSaveRecall(const PacketFrame &frame, uint8_t cid, uint32
                 uint16_t l = StaticFieldSave((uint8_t)idx, (uint8_t)fi, buf, len ? len : cnt);
                 if (l == 0) { RespondStatus(frame,false); return; }
                 len = l;
+                StaticDirtySet((uint8_t)idx, (uint8_t)fi, false); // now in flash
             }
             if (len == 0) { RespondStatus(frame,true); return; } // nothing writable/persistent
             RespondStatus(frame, WriteBackupFile(StaticLogName(), buf, len));
         } else {
             uint16_t len = StaticFieldSave((uint8_t)idx, field, buf, cnt);
             if (len == 0) { RespondStatus(frame,false); return; }
+            StaticDirtySet((uint8_t)idx, field, false); // now in flash
             RespondStatus(frame, WriteBackupFile(StaticLogName(), buf, len));
         }
     } else { // Recall

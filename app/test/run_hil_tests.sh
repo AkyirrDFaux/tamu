@@ -27,6 +27,10 @@ export LD_LIBRARY_PATH="${APP_DIR}/build/linux/x64/debug/bundle/lib:${LD_LIBRARY
 #       test/hil_script_vm_test.dart test/hil_dynamic_persistence_test.dart \
 #       test/hil_backup_test.dart test/hil_storage_files_test.dart \
 #       test/hil_led_display_test.dart test/tamu_hardware_verification_test.dart
+# NOTE: those suites are destructive - they upload/unload their own scripts and reconfigure
+# blocks, leaving the device off the evaluation setup. Run the setup suite afterwards (or
+# last) to restore it:
+#   TAMU_HIL=/dev/ttyACM0 bash test/run_hil_tests.sh test/hil_current_setup_test.dart
 if [ $# -gt 0 ]; then
   FILES=("$@")
 else

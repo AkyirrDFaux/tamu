@@ -336,7 +336,7 @@ void main() {
 
     Future<int?> numOf(DynBlock b, int field, int key) async {
       final e = await reg.readDynamicField(b, field, key);
-      return e == null ? null : e.value.first;
+      return e?.value.first;
     }
 
     Future<void> setEmote(int e) async {
@@ -400,9 +400,10 @@ void main() {
     expect(await numOf(left, eyePupilGeoB, gkOperation), opAdd, reason: 'dead adds the 2nd bar');
     final pa = (await reg.readDynamicField(left, eyePupilGeoA, gkPosition))!.value;
     final pb = (await reg.readDynamicField(left, eyePupilGeoB, gkPosition))!.value;
-    // Cell [0][1] of the transform is sin(rot): non-zero and opposite for the two bars.
-    expect(numberFromBytes(pa, 8), greaterThan(0.1), reason: 'bar A tilts one way');
-    expect(numberFromBytes(pb, 8), lessThan(-0.1), reason: 'bar B tilts the other way');
+    // Cell [0][1] of the transform is sin(rot): +0.707 for the 45 deg bar, -0.707 for the
+    // other. This also pins the trig accuracy (the plain parabola gave 0.75, ~6% off).
+    expect(numberFromBytes(pa, 8), closeTo(0.7071, 0.02), reason: 'bar A tilted 45 deg');
+    expect(numberFromBytes(pb, 8), closeTo(-0.7071, 0.02), reason: 'bar B tilted -45 deg');
 
     // Annoyed: back to the parabola, with a 25 %-closed resting lid.
     await setEmote(emoteAnnoyed);
@@ -430,6 +431,46 @@ void main() {
     await setEmote(emoteNormal);
     await waitShapes(shapeDoubleParabola, shapeNone);
   }, timeout: const Timeout(Duration(minutes: 4)));
+
+  test('setup: the fan PWM frequency accepts a change', skip: skipReason, () async {
+    // Verified working (the old note claimed the write was always refused): 1 kHz and 25 kHz
+    // are accepted with the channel live and idle.
+    final reg = RegisterClient(deviceId: found.core.id);
+    final before = await reg.readBlockField(BlockType.pwm.value, fanInst, 0, 0);
+    expect(before, isNotNull, reason: 'fan frequency present');
+    final meta = BlockMeta(flagsAndType: before!.meta.flagsAndType, key: 0, size: 4);
+    expect(
+        await reg.writeBlockField(BlockType.pwm.value, fanInst, 0, 0, meta, uint32ToBytes(1000)),
+        isNotNull,
+        reason: '1 kHz accepted');
+    final read = await reg.readBlockField(BlockType.pwm.value, fanInst, 0, 0);
+    expect(uint32FromBytes(read!.value), 1000, reason: 'frequency stored');
+    // Restore the default and save it.
+    expect(
+        await reg.writeBlockField(
+            BlockType.pwm.value, fanInst, 0, 0, meta, uint32ToBytes(25000)),
+        isNotNull);
+    expect(await reg.saveStatic(BlockType.pwm.value, fanInst), isTrue);
+  }, timeout: const Timeout(Duration(seconds: 30)));
+
+  test('setup: a written persistent field reports Not Saved until saved', skip: skipReason, () async {
+    final reg = RegisterClient(deviceId: found.core.id);
+    // The display Offset is persistent + writable (saving it is what the setup already does).
+    final before = await reg.readBlockField(BlockType.vysiDisplay.value, dispLeft, 1, 0);
+    expect(before, isNotNull, reason: 'display offset present');
+    final meta = BlockMeta(
+        flagsAndType: before!.meta.flagsAndType, key: 0, size: before.value.length);
+    expect(
+        await reg.writeBlockField(
+            BlockType.vysiDisplay.value, dispLeft, 1, 0, meta, before.value),
+        isNotNull,
+        reason: 'offset write accepted');
+    var after = await reg.readBlockField(BlockType.vysiDisplay.value, dispLeft, 1, 0);
+    expect(after?.meta.notSaved, isTrue, reason: 'a written persistent field is flagged');
+    expect(await reg.saveStatic(BlockType.vysiDisplay.value, dispLeft), isTrue);
+    after = await reg.readBlockField(BlockType.vysiDisplay.value, dispLeft, 1, 0);
+    expect(after?.meta.notSaved, isFalse, reason: 'saving clears the flag');
+  }, timeout: const Timeout(Duration(seconds: 30)));
 
   test('setup: capture the semantic backup zip to the project root', skip: skipReason, () async {
     // A busy device can drop the block enumeration; retry until each device reports blocks.

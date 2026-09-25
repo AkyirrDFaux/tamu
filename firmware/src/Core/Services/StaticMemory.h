@@ -36,3 +36,30 @@ static inline uint16_t LogEntrySize(uint8_t value_size)
 {
     return kLogEntryHeaderSize + ((value_size + 3) & ~3);
 }
+
+// ---- Active "Not Saved" flags (Docs/Services/Register.md) -------------------------------
+// A persistent field that has been written but not saved carries the active Not Saved flag.
+// The passive flags live in the schema, so the active ones need their own (tiny) store: one
+// bit per (static-registry entry, field). Capped rather than sized from static_block_num
+// (which is an extern const, not a constant expression here); the arrays are trimmed to the
+// board's block count at runtime.
+#define STATIC_DIRTY_BLOCKS 32
+#define STATIC_DIRTY_FIELDS 12
+#define STATIC_DIRTY_BYTES ((STATIC_DIRTY_BLOCKS * STATIC_DIRTY_FIELDS + 7) / 8)
+
+static uint8_t StaticDirtyBits[STATIC_DIRTY_BYTES];
+
+static inline void StaticDirtySet(uint8_t block_idx, uint8_t field, bool dirty)
+{
+    uint16_t bit = (uint16_t)block_idx * STATIC_DIRTY_FIELDS + field;
+    if (block_idx >= STATIC_DIRTY_BLOCKS || field >= STATIC_DIRTY_FIELDS) return;
+    if (dirty) StaticDirtyBits[bit >> 3] |= (uint8_t)(1u << (bit & 7));
+    else StaticDirtyBits[bit >> 3] &= (uint8_t)~(1u << (bit & 7));
+}
+
+static inline bool StaticDirtyGet(uint8_t block_idx, uint8_t field)
+{
+    if (block_idx >= STATIC_DIRTY_BLOCKS || field >= STATIC_DIRTY_FIELDS) return false;
+    uint16_t bit = (uint16_t)block_idx * STATIC_DIRTY_FIELDS + field;
+    return (StaticDirtyBits[bit >> 3] & (uint8_t)(1u << (bit & 7))) != 0;
+}
