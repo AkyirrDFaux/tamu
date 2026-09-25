@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Current setup v3.md",
+                "file": "Plan.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Current setup v3"
+              "title": "Plan"
             }
           }
         ]
@@ -190,9 +190,9 @@
   },
   "active": "b382b423e960f24e",
   "lastOpenFiles": [
+    "Current setup v3.md",
     "Current setup v2.md",
     "Data Formats.md",
-    "Current setup v3.md",
     "Services/Script.md",
     "Modules and blocks/LED display.md",
     "Modules and blocks/Measurement.md",
