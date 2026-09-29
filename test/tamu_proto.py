@@ -24,9 +24,13 @@ Usage:
         print(t.read_field(1, 0xFF, 0, 0, 6))   # System Name
 """
 
+import asyncio
+import collections
 import os
 import select
 import struct
+import sys
+import threading
 import time
 
 import serial
@@ -194,16 +198,13 @@ def parse_packet(buf):
     return p, size
 
 
-class Tamu:
-    """One link to a node (the core is the one on USB; other nodes are reached through it)."""
+class UsbLink:
+    """The USB Serial/JTAG link: `0xFA | crc8 | len | packet stream | 0xBF` frames."""
 
-    def __init__(self, port=None, timeout=2.0):
+    def __init__(self, port=None):
         self.port = port or self.find_port()
         self.ser = serial.Serial(self.port, 115200, timeout=0.05)
-        self.timeout = timeout
-        self.buf = bytearray()
-        self.link = LinkParser()
-        self.txid = 0
+        self.parser = LinkParser()
         time.sleep(0.2)
         self.ser.reset_input_buffer()
 
@@ -221,11 +222,157 @@ class Tamu:
                 pass
         raise RuntimeError("no Tamu (Espressif USB) console found")
 
+    def write_stream(self, stream):
+        for off in range(0, len(stream), FRAME_MAX):
+            chunk = stream[off:off + FRAME_MAX]
+            body = bytes([len(chunk)]) + chunk
+            self.ser.write(bytes([FRAME_START, crc8(body)]) + body + bytes([FRAME_STOP]))
+
+    def read(self, timeout=0.05):
+        r, _, _ = select.select([self.ser], [], [], timeout)
+        if not r:
+            return b""
+        return self.parser.feed(self.ser.read(self.ser.in_waiting or 1))
+
     def close(self):
         try:
             self.ser.close()
         except Exception:
             pass
+
+
+class BleLink:
+    """The BLE (Nordic UART) link: each transfer is a uint16 LE length prefix followed by that
+    many packet-stream bytes - a different framing from USB, which is the whole reason the
+    harness has transports.
+
+    bleak is asyncio-based, so a dedicated thread owns the event loop and this class marshals
+    writes and received transfers across it.
+    """
+
+    NUS_SERVICE = "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
+    NUS_RX = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"  # host writes here
+    NUS_TX = "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"  # device notifies here
+    BLE_CHUNK = 480  # the device's per-transfer stream buffer (AppBLE.h BLE_CHUNK)
+
+    def __init__(self, address=None, scan_timeout=15.0):
+        self.address = address
+        self.rx = bytearray()        # unwrapped packet-stream bytes
+        self._buf = bytearray()      # partial length-prefixed transfer
+        self._error = None
+        self._ready = threading.Event()
+        self._loop = asyncio.new_event_loop()
+        self._client = None
+        self._write_size = 20
+        threading.Thread(target=self._main, args=(scan_timeout,), daemon=True).start()
+        if not self._ready.wait(scan_timeout + 10):
+            raise TimeoutError("BLE link did not come up")
+        if self._error:
+            raise self._error
+
+    # --- the asyncio side (one thread) ---
+    def _main(self, scan_timeout):
+        asyncio.set_event_loop(self._loop)
+        try:
+            self._loop.run_until_complete(self._connect(scan_timeout))
+        except Exception as exc:  # surfaced to the caller
+            self._error = exc
+            self._ready.set()
+            return
+        self._ready.set()
+        self._loop.run_forever()
+
+    async def _connect(self, scan_timeout):
+        from bleak import BleakClient, BleakScanner
+
+        target = self.address
+        if not target:
+            # The scanner object rather than `discover()`: on this BlueZ the one-shot helper
+            # can raise "No discovery started" while tearing the scan down, which loses the
+            # results. Stopping explicitly (and ignoring that teardown error) keeps them.
+            scanner = BleakScanner(service_uuids=[self.NUS_SERVICE])
+            await scanner.start()
+            deadline = time.time() + scan_timeout
+            while time.time() < deadline and not scanner.discovered_devices:
+                await asyncio.sleep(0.25)
+            found = list(scanner.discovered_devices)
+            try:
+                await scanner.stop()
+            except Exception:
+                pass  # BlueZ complains if the discovery already ended on its own
+            print(f"  BLE scan: {[(d.address, d.name) for d in found]}", flush=True)
+            if not found:
+                raise RuntimeError("no device advertising the Nordic UART service")
+            target = found[0].address
+        self._client = BleakClient(target)
+        await self._client.connect()
+        print(f"  BLE connected to {target}", flush=True)
+        # A big MTU (the device chunks up to 480 stream bytes per notification); writes are
+        # split to what this link accepts, and the device accumulates the prefix stream itself.
+        mtu = getattr(self._client, "mtu_size", 23) or 23
+        self._write_size = max(20, mtu - 3)
+        await self._client.start_notify(self.NUS_TX, self._on_notify)
+
+    def _on_notify(self, _char, data: bytearray):
+        self._buf += data
+        while len(self._buf) >= 2:
+            n = self._buf[0] | (self._buf[1] << 8)
+            if len(self._buf) < 2 + n:
+                break
+            self.rx += bytes(self._buf[2:2 + n])
+            del self._buf[:2 + n]
+
+    # --- the synchronous side ---
+    def write_stream(self, stream):
+        # Every transfer carries a uint16 LE length prefix followed by its packet-stream bytes
+        # (the device reassembles them - BlueZ may split a write). Long streams become several
+        # chunks; `_write` then splits those to whatever this link accepts.
+        framed = bytearray()
+        for off in range(0, len(stream), self.BLE_CHUNK):
+            chunk = stream[off:off + self.BLE_CHUNK]
+            framed += struct.pack("<H", len(chunk)) + chunk
+        asyncio.run_coroutine_threadsafe(self._write(bytes(framed)), self._loop).result(5)
+
+    def write_raw(self, data):
+        """Writes bytes with no framing added - used to leave the device mid-chunk on purpose."""
+        asyncio.run_coroutine_threadsafe(self._write(bytes(data)), self._loop).result(5)
+
+    async def _write(self, data):
+        for off in range(0, len(data), self._write_size):
+            await self._client.write_gatt_char(
+                self.NUS_RX, data[off:off + self._write_size], response=True)
+
+    def read(self, timeout=0.05):
+        deadline = time.time() + timeout
+        while time.time() < deadline and not self.rx:
+            time.sleep(0.002)
+        out = bytes(self.rx)
+        self.rx.clear()
+        return out
+
+    def close(self):
+        try:
+            if self._client:
+                asyncio.run_coroutine_threadsafe(self._client.disconnect(),
+                                                 self._loop).result(5)
+        except Exception:
+            pass
+        self._loop.call_soon_threadsafe(self._loop.stop)
+
+
+class Tamu:
+    """One link to a node (the core is the one on USB or BLE; other nodes are reached through
+    it). The protocol helpers below are transport-agnostic - only the link framing differs."""
+
+    def __init__(self, port=None, timeout=2.0, link=None):
+        self.link = link or UsbLink(port)
+        self.port = getattr(self.link, "port", None) or getattr(self.link, "address", "ble")
+        self.timeout = timeout
+        self.buf = bytearray()
+        self.txid = 0
+
+    def close(self):
+        self.link.close()
 
     def __enter__(self):
         return self
@@ -233,23 +380,17 @@ class Tamu:
     def __exit__(self, *_):
         self.close()
 
-    def _write_frame(self, stream):
-        for off in range(0, len(stream), FRAME_MAX):
-            chunk = stream[off:off + FRAME_MAX]
-            body = bytes([len(chunk)]) + chunk
-            self.ser.write(bytes([FRAME_START, crc8(body)]) + body + bytes([FRAME_STOP]))
-
     def send(self, packet, addr=1):
         """Sends a request to `addr` and returns the first response addressed back to us."""
         self.txid = (self.txid + 1) & 0xFF
         packet.trid = (Srv.App << 8) | self.txid   # srv_src: the app's service + transaction
         tag = packet.trid
-        self._write_frame(packet.wire(addr))
+        self.link.write_stream(packet.wire(addr))
         deadline = time.time() + self.timeout
         while time.time() < deadline:
-            r, _, _ = select.select([self.ser], [], [], 0.05)
-            if r:
-                self.buf += self.link.feed(self.ser.read(self.ser.in_waiting or 1))
+            data = self.link.read(0.05)
+            if data:
+                self.buf += data
             while True:
                 pkt, used = parse_packet(self.buf)
                 if used:
@@ -326,11 +467,49 @@ class Tamu:
         return struct.unpack("<i", raw[:4])[0] / 65536.0
 
 
+def ble_aborted_session_regression(address=None):
+    """Regression for the fixed BLE receive bug: a session that ends mid-chunk must not poison
+    the next one.
+
+    The device accumulates each length-prefixed chunk across transfers. A session that died
+    partway through one used to leave `haveLen`/`got` set, so the *next* session read its length
+    prefix as payload - every frame was shifted, `PacketWireSize` saw garbage, nothing dispatched
+    and nothing was CRC-rejected. Here we deliberately leave it mid-chunk (a prefix claiming 12
+    stream bytes with only 5 delivered), drop the link, reconnect and ping.
+    """
+    aborted = BleLink(address=address)
+    try:
+        aborted.write_raw(struct.pack("<H", 12) + b"\x01\x02\x03\x04\x05")
+        time.sleep(0.2)
+    finally:
+        aborted.close()
+    time.sleep(1.0)  # let the device notice the loss and re-advertise
+
+    link = BleLink(address=address)
+    with Tamu(link=link) as t:
+        ok = t.ping(1)
+    print("aborted-session recovery ping:", ok)
+    if not ok:
+        raise SystemExit("FAIL: a session aborted mid-chunk poisoned the next one")
+    print("PASS: the receive path recovered after a mid-chunk disconnect")
+
+
 if __name__ == "__main__":
-    import sys
-    addr = int(sys.argv[1]) if len(sys.argv) > 1 else 1
-    with Tamu() as t:
-        print(f"port {t.port}")
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    use_ble = "--ble" in sys.argv
+    node = int(args[0]) if args and args[0].isdigit() else 1
+    # `--ble` scans for the Nordic UART service; `--ble <mac>` connects straight to a known
+    # address, which sidesteps BlueZ's discovery races (and is faster on a known rig).
+    # Look for the MAC anywhere (not just after a node number), so `--ble <mac>` and
+    # `--ble <node> <mac>` both connect by address instead of scanning.
+    ble_addr = next((a for a in args if ":" in a), None)
+    addr = node
+    if "--ble-abort-check" in sys.argv:
+        ble_aborted_session_regression(ble_addr)
+        raise SystemExit(0)
+    link = BleLink(address=ble_addr) if use_ble else None
+    with Tamu(link=link) as t:
+        print(f"{'BLE' if use_ble else 'USB'} link: {t.port}")
         print("ping:", t.ping(addr))
         types = t.enumerate_types(addr)
         print("types:", [hex(x) for x in types])

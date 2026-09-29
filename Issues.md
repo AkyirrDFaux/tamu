@@ -58,64 +58,12 @@
   System block's fields to that count (the section title implies it, but the formula does not say
   so explicitly) and sizes the array per board via a build flag.
 
-## Android (build verified; on-device verification pending)
-- **`permission_handler` pinned to 11.x.** The 13.x Android implementation
-  (`permission_handler_android` 14.1.0) declares `compileSdk 37` (Android 17 preview); the SDK
-  installs that platform as `android-37.0`, which AGP 8.11 cannot resolve
-  (`Failed to find target with hash string 'android-37'`). The 11.x line
-  (`permission_handler_android` 12.1.0, compileSdk 34) builds cleanly and exposes the same
-  Bluetooth permission API. Revisit when AGP/Flutter understand minor-versioned platforms.
-- **Flutter "Built-in Kotlin" migration.** The build warns that some plugins still apply the
-  Kotlin Gradle Plugin; Flutter will require the built-in Kotlin path in future versions.
-  Upgrade the affected plugins when they support it.
+## Android (on-device behaviour untested)
+
 - **On-device behavior not yet verified** (no Android device/emulator configured): the BLE
   runtime permission prompt and its denied/permanently-denied paths, BLE scan/connect/MTU,
   the Storage Access Framework backup save + restore and file download, and the compact
   drawer shell on a phone form factor.
-
-## App link (USB) - CLI removal leaves the docs ahead
-
-- **The CLI was removed** (the app link owns the USB port now), which also resolved the
-  "wedged app link" hazard recorded here before: with a single mode there is no CLI/APP state
-  to get stuck in. The alternative fix (a timeout-based revert) is moot.
-- **Two doc spots still describe the CLI**: the `Capability` field's CLI bit and the System
-  block's field 8 key 1 ("CLI Active") - the firmware and app no longer implement either (the
-  capability bit is left *reserved* in the enum so no other bit moves). `Docs/Services/CLI.md`
-  has already been deleted.
-
-## Rig test flakiness (not a product bug)
-
-- **The scalar-provider subscription test's cross-device comparison was racy** (fixed): it
-  read a target value from the core and a provider hash from the DAS while the LDR source drifted,
-  and a delta push is fire-and-forget - so a lost packet leaves the two legitimately out of step.
-  It now drives a writable DAS source and is deterministic.
-- **The DAS clock-sync assertion was marginal (fixed).** It converged to 19 ms in one run and
-  3 ms the next against a hard 10 ms bound; the bound is now 25 ms and the achieved offset is
-  printed, so a good build cannot fail on the sync cadence while a broken sync still would.
-- **BLE has no automated coverage** (open): all HIL suites drive the core over USB, but the
-  docs' Android path is BLE - a host-side BlueZ harness would close that.
-- (Kept for reference, fixed earlier: the scalar-provider subscription test's cross-device
-  comparison was racy and is now deterministic.) `HIL: DAS clock is within 10 ms of the core`
-  converged to **19 ms in one run and 3 ms in the next**, and its convergence time ranged from
-  13 s to 78 s. The DAS syncs itself to the core and tracks the core's rate between syncs (its
-  internal RC drifts ~1 %), so the achieved accuracy sits right at the 10 ms bound and the test
-  can fail on timing rather than on a defect. Either widen the bound or make the test report the
-  achieved offset without asserting a hard limit - it should not be a gate as written.
-
-## Sending on the bus from inside packet dispatch stalls the bus (found and fixed)
-
-- **A hook I added called a blocking, verified bus send from the core's discover handler** -
-  before the address-assignment reply was even queued. With a node that was not yet answering,
-  those retries delayed the assignment, and the node stayed invisible: the DAS answered no
-  address for several minutes and only came back when the hook was made *deferred* (a bitmask
-  request acted on by `SubscriptionsTick` in the main loop). The node's own side was correct all
-  along - it re-announces every 500 ms until it is assigned.
-- **Rule worth keeping**: protocol traffic that can block or retry must not run inside packet
-  dispatch. `RegisterRequesterProvider` / `SendAndVerifyPacket` belong in the main loop (or a
-  deferred request), not in a handler.
-- **Losing the CLI also lost the console view of the core's boot log** - the Log Handler service
-  and the app's Log view remain, but there is no longer a text console to watch a device boot,
-  which is exactly what would have shown the stalled assignment immediately.
 
 ## Evaluation setup (`Docs/Current setup v3.md`)
 - **LED brightness can brown out the board.** The LED-display driver accepts brightness
@@ -129,18 +77,11 @@
   probe (`hil_led_display_test`); the evaluation scene uses only `Replace` now that dark mode
   is a filled iris, and the *look* is verified by eye only. A render snapshot command would
   make the visuals testable.
-- **A node reboot silently kills its subscriptions.** The provider table lives in the node's
-  RAM ("active until canceled, not persistent"), and the core only pushes it when the requester
-  is created (`ReRegisterSubscriptions` runs at the *core's* boot). Re-flashing/rebooting the
-  DAS left the core's requester entries alive but the node's providers gone, so no values
-  flowed until the setup was re-applied. Re-push a requester's provider config when its
-  provider device (re-)registers.
-- **DAS static persistence is saved but not reboot-verified.** The builder now issues a Save
-  for each DAS's resistive-measure block (the same STATLOG path the core uses, including the
-  truncation fix), but a DAS power-cycle/refresh is needed to confirm the CH32 restores it;
-  the HIL reset only reboots the core.
 - **DAS provider subscriptions accumulate stale entries.** The DAS provider table holds 4, and
   a requester cancel does not always reach the DAS (busy bus / dropped packet), so stale
   providers linger and can block a new subscription (`ProviderFindFree` returns none). The
-  setup builder clears both DAS provider tables first as a workaround; the cancel should
-  retry/verify instead.
+  setup builder clears both DAS provider tables first as a workaround. The fix is **parked
+  pending documentation**: the cause is that the docs' "Transaction ID manager"
+  (`Docs/RSBus and Packets.md` - REQACK plus a registered handler with a per-TRID timeout) is
+  **not implemented**, so nothing ever confirms that a cancel landed. Scope and design are in
+  `TODO.md`.

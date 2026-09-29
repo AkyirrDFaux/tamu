@@ -236,7 +236,7 @@ Future<void> _loadVisibleFields() async {
       // the same ordered list the decoder expects: every non-System block, in page order.
       final registry = <({int type, int inst})>[
         for (final b in _blockMetas ?? const [])
-          if (b != null && b.type != 0) (type: b.type, inst: b.inst),
+          if (b != null && isStaticRegistryType(b.type)) (type: b.type, inst: b.inst),
       ];
       final dynamic = <int, ({List<int> table, List<int> values})>{
         for (final slot in tables.keys)

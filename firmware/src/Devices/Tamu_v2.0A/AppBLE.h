@@ -48,6 +48,18 @@ struct BleRxAssembler
     uint8_t  lenBuf[2] = {0, 0};
     uint32_t malformed = 0;   // diagnostics: chunks dropped for zero length
 
+    // Clears the in-flight chunk state (the `malformed` counter is diagnostics and kept).
+    // Called on connect/disconnect: a session that ends mid-chunk would otherwise leave
+    // haveLen/got set, and the next session's first bytes would be read as payload instead of
+    // a length prefix - the frame then never completes and nothing is ever dispatched, with no
+    // CRC rejection to show for it either.
+    inline void reset()
+    {
+        need    = 0;
+        got     = 0;
+        haveLen = false;
+    }
+
     // Feeds one raw byte; returns true when a stream byte should go into the RX ring.
     inline bool feed(uint8_t b, uint8_t *out)
     {
@@ -80,6 +92,8 @@ class BleServerCallbacks : public NimBLEServerCallbacks
     {
         BleMtu = connInfo.getMTU();
         BleConnected = true;
+        staticBleRxAssembler.reset();
+        s_ble_parser.Reset();
         // Prefer 2M PHY when the central supports it: halves air time per packet
         // (helps multi-notification transfers); stays at 1M otherwise.
         pServer->updatePhy(connInfo.getConnHandle(),
@@ -93,6 +107,9 @@ class BleServerCallbacks : public NimBLEServerCallbacks
     void onDisconnect(NimBLEServer *pServer, NimBLEConnInfo &connInfo, int reason) override
     {
         BleConnected = false;
+        // Drop any half-received chunk with the session (see BleRxAssembler::reset).
+        staticBleRxAssembler.reset();
+        s_ble_parser.Reset();
         BleMtu = 23;
         AppTxFlushAll(); // pending responses belong to the dead session
         extern void appbleResetSessionBreadcrumbs();

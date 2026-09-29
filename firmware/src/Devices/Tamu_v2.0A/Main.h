@@ -62,6 +62,9 @@ Vysi1Display Display2;
 
 const char* DeviceVersion = "Tamu v2.0A";
 
+// Registry order is load-bearing: a STATLOG entry stores the index into this array, and the app
+// reconstructs it from type + per-type instance order. Keep the entries grouped by type (see
+// FindStaticBlock in Core/Services/RegisterDefs.h).
 const StaticBlockDescriptor static_block_registry[] = {
     {&LedButton, &LEDButton_Schema, "LEDButton"},
     {&Fan1, &PWM_Schema, "Fan1"},

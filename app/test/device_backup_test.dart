@@ -193,6 +193,45 @@ void main() {
       expect(backup.hasAny, isFalse);
     });
 
+    test('only static blocks may occupy a STATLOG registry index', () {
+      // `readBlocks()` appends the Script (0x3FE) and Dynamic (0x3FF) memories after the
+      // statics, so an unfiltered list *happens* to index STATLOG correctly. This shows why
+      // the filter is required rather than incidental: list the memories first and the same
+      // STATLOG bytes name a different block entirely.
+      final withMemoriesFirst = <({int type, int inst})>[
+        (type: BlockType.dynamic.value, inst: 0),
+        (type: BlockType.script.value, inst: 0),
+        (type: BlockType.ledButton.value, inst: 0),
+        (type: BlockType.pwm.value, inst: 0),
+      ];
+      final registry =
+          withMemoriesFirst.where((b) => isStaticRegistryType(b.type)).toList();
+      expect(registry, hasLength(2));
+
+      // Registry index 0 means the first *static* entry (LEDButton) to the firmware.
+      final data = <int>[
+        ...statlogEntry(0, 0, DataType.number, 0, numberToBytes(5)),
+        0xFF,
+      ];
+      final right = DeviceBackup.decode(statlog: data, staticRegistry: registry);
+      expect(right.staticField(BlockType.ledButton.value, 0, 0)?.value,
+          numberToBytes(5));
+
+      // Unfiltered, the same index lands on the dynamic memory instead.
+      final wrong =
+          DeviceBackup.decode(statlog: data, staticRegistry: withMemoriesFirst);
+      expect(wrong.staticField(BlockType.ledButton.value, 0, 0), isNull);
+      expect(wrong.staticField(BlockType.dynamic.value, 0, 0)?.value,
+          numberToBytes(5));
+
+      // The classifier: System, Script and Dynamic are excluded; static types are not.
+      expect(isStaticRegistryType(systemBlockTypeValue), isFalse);
+      expect(isStaticRegistryType(BlockType.script.value), isFalse);
+      expect(isStaticRegistryType(BlockType.dynamic.value), isFalse);
+      expect(isStaticRegistryType(BlockType.pwm.value), isTrue);
+      expect(isStaticRegistryType(BlockType.resistiveMeasure.value), isTrue);
+    });
+
     test('dynamic entries are looked up by field and key', () {
       final backup = DeviceBackup.decode(dynamic: {
         3: (

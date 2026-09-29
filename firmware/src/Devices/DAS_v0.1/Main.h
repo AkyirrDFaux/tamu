@@ -56,6 +56,8 @@ ResistiveMeasStruct Meas2(MeasLDR10K);  // channel 2: 10k LDR
 ButtonStruct DasButton;
 LEDStruct DasLed;
 
+// Registry order is load-bearing (STATLOG stores the index into this array; the app derives it
+// from type + per-type instance order) - keep the entries grouped by type.
 const StaticBlockDescriptor static_block_registry[] = {
     {&Meas1, &ResistiveMeas_Schema, "Meas1"},
     {&Meas2, &ResistiveMeas_Schema, "Meas2"},

@@ -134,7 +134,10 @@ Future<String?> connectHil() async {
         link = mgr.discoveredLinks
             .where((l) =>
                 l.type == LinkType.ble &&
-                l.id.toUpperCase() == 'E4:B0:63:C8:20:72')
+                // Match by the advertised name rather than a hard-coded BLE address: the
+                // ESP32's address differs per board (and per configuration), so pinning one
+                // meant this test could only ever run against the unit it was written on.
+                l.name.toLowerCase().contains('tamu'))
             .firstOrNull;
       }
       await mgr.stopScan();

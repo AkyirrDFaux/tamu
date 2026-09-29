@@ -627,8 +627,9 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
   `ScriptEditorPage` and `SubscriptionDialog`.
   Note: the firmware's CID 0x15 "read backup" is dynamic-only, which is why static/System come
   from the file decode.
-- [ ] **Optimization - per-field geometry-mask versioning** (A11, deferred to the rig batch):
-  any write to an eye block bumps the block generation and the renderer recomputes all 9 masks;
+- [ ] **Optimization - per-field geometry-mask versioning** (A11 = D3; this is the **canonical
+  record** - the one-line A11/D3 entries elsewhere point here): any write to an eye block bumps
+  the block generation and the renderer recomputes all 9 masks;
   the emote script writes on gyro motion. Measured headroom says it is not urgent (the display
   readback sits at the panel cap, ~127-132 FPS), so it stays planned rather than done.
   Unverifiable without the rig. Sketch for when it is picked up: the per-frame pass still has to
@@ -638,7 +639,8 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
   field) or comparing the cached geometry inputs (shape/size/position/rounding/angles/fade/
   alpha/point/noise) each frame and recomputing only the fields whose inputs moved. The latter
   needs no block-model change and keeps the host-visible behaviour identical, which is what
-  makes it checkable off-device - the rig would confirm the frame time.
+  makes it checkable off-device - the rig would confirm the frame time. **Deferred to the rig
+  batch** (Track B/D3).
 - Deferred by request: SNDB re-registration, the LED brightness cap, the subscription trigger
   default, the LDR calibration (considered done).
 - [x] **Brightness curve re-fitted to the updated v3 table** (`<10 lux -> 5 %`, `100 -> 10 %`,
@@ -1017,10 +1019,9 @@ analyzer.
   give no opcode, no boundary-crossing rule and no argument passing; the proposal (a `Call
   script` flow op taking `(loaded id, entry line)`, blocking by construction, a shared
   `(script, line)` stack, values exchanged through registers) is waiting on confirmation.
-- [ ] **A11** Per-field geometry-mask versioning - **deferred to the rig batch by design**:
-  the measured headroom says it is not urgent (the display readback sits at the panel cap) and
-  its correctness cannot be checked without hardware, so it is Track B/D3, not Track A. The
-  plan is in §6.
+- [ ] **A11** Per-field geometry-mask versioning - **deferred to the rig batch by design**: the
+  canonical record, the sketch and the rationale live with the render item in §6 / the backup
+  section (search "canonical record"); it is Track B/D3, not Track A.
 
 - [x] **A2 App: the register view no longer re-enumerates every 0.5 s** (done). The documented
   auto-refresh is about *values*, but every tick was calling `readBlocks()` = enumerate block
@@ -1110,9 +1111,33 @@ analyzer.
   Added to the verification suite: a persistent Name write reads back with `notSaved`, and
   `saveStatic` clears it. The System block has no static-registry entry, so this is exactly the
   case that used to be silently dropped.
-- [ ] Node re-register -> provider re-push (deferred by request).
-- [ ] DAS provider stale entries (the cancel path does not always reach the node).
-- [ ] Backup view: the app's block order vs the firmware's static registry order.
+- [x] Node re-register -> provider re-push - **done** (see "Issue 3" below: 3a, implemented and
+  rig-verified). This box was left unchecked after the item was closed.
+- [ ] DAS provider stale entries (the cancel path does not always reach the node) - **parked
+  pending documentation**, by request: the underlying cause is that the docs' "Transaction ID
+  manager" (`Docs/RSBus and Packets.md`: REQACK + a registered handler with a per-TRID timeout)
+  is unimplemented, and nothing confirms a cancel landed. Design + verification plan are in the
+  "Issue 4" section below, to be picked up once the docs are settled.
+- [x] **Backup view: the app's block order vs the firmware's static registry order - verified,
+  and the assumption hardened.** The chain, read end to end: a STATLOG entry stores the block's
+  **array index** into `static_block_registry[]`; `FindStaticBlock` resolves (type, inst) where
+  `inst` is the *per-type ordinal*; `RegisterEnumerate` returns types in first-seen registry order
+  and a bare count per type, which the app turns into instances `0..n-1`. So the app's derived
+  "type-then-instance" order equals the array order **only while every type's entries are
+  contiguous** - and both boards already are: Tamu `LEDButton, Fan1, Fan2, AccGyr, LEDDisplay,
+  LEDDisplay2` (Button, PWM x2, AccGyr, Vysi1 x2) and DAS `Meas1, Meas2, Button, LED`
+  (ResistiveMeas x2, Button, LED).
+  The latent hazard found on the way: the app built its registry with `type != 0`, which *also*
+  admitted Script (0x3FE) and Dynamic (0x3FF) - harmless only because `readBlocks()` appends them
+  after the statics. Now a shared `isStaticRegistryType()` (`app/lib/core/types.dart`) filters the
+  Register backup view (`register_page.dart`) and the Storage STATLOG viewer (`storage_page.dart`),
+  and `device_backup_test.dart` pins it: the new test lists the memories *first* so the same
+  STATLOG bytes land on the wrong block unfiltered, then shows the filter keeping the mapping.
+  Firmware side: the invariant is documented at both registry definitions and at `FindStaticBlock`.
+  A compile-time guard was attempted and **rejected**: the registry holds pointers to non-const
+  block instances, so it is not usable in a constant expression, and a runtime guard is dead on
+  textless (DAS) builds (`DeviceLog` is a no-op macro there). Flash unchanged - the firmware change
+  is comments only (core 629 716 B, DAS 13 996 B), and `test.sh` is green at 141 app tests.
 - [ ] LED brightness brown-out -> firmware current cap/ramp decision (deferred by request).
 - [ ] Mask-versioning correctness, if A11 is implemented.
 
@@ -1143,9 +1168,42 @@ analyzer.
 - [x] **TODO hygiene**: no action needed after all - the moot CLI entries (`file write`, the
   `subs` deadzone argument, the help sweep) went out with the CLI removal record, and the only
   remaining references to the deleted tools are inside that record, which is history.
-- [ ] **BLE is a coverage gap** (noted, needs tooling): every HIL suite drives the core over USB,
-  while the docs' Android path is BLE. A Linux host could exercise the core's BLE through BlueZ;
-  until then the BLE link is only verified by using the app.
+- [x] **BLE harness built** (`test/tamu_proto.py` now has transports). `BleLink` speaks the
+  Nordic UART service (`6E4000xx-...`), marshals bleak's asyncio across a thread, and uses the
+  BLE framing: a **uint16 LE length prefix** per transfer, unlike USB's `0xFA/crc/len/0xBF` -
+  the same protocol helpers run over either link. Found and fixed two host-side bugs on the way
+  (the missing length prefix; and the scan teardown that BlueZ rejects, so `--ble <mac>`
+  connects by address). Proven on the rig: the device is found as "Tamu v2.0A", the session
+  opens, and its own console logs `first write: 14 bytes` - the harness's exact framing.
+- [x] **BLE receive path - root-caused and fixed** (the harness's original finding). The packet
+  after the first write never dispatched and was not CRC-rejected either, so the assembled frame
+  was never completed. The cause was **not** the parser or the dispatcher: `BleRxAssembler` kept
+  its in-flight chunk state (`need`/`got`/`haveLen`) across sessions. `onDisconnect` reset
+  `s_ble_parser` but not the assembler, so a session that ended mid-chunk left `haveLen` set and
+  a partial `got`; the *next* session's first bytes (a fresh length prefix + packet) were then
+  read as payload, shifting the whole frame - `PacketWireSize` saw garbage, the parser waited for
+  a length that never arrived, and nothing dispatched. A clean session starts from the initial
+  state, which is why the app always worked. My abandoned bleak probes were exactly the aborted
+  session that poisoned the next connection, so the "broken receive path" was my own doing.
+  Fix: `BleRxAssembler::reset()` (keeps the diagnostics counter), called on **both** connect and
+  disconnect next to the parser reset. Verified: the Python harness pings and reads `System Name`
+  over BLE, and the app's own suites now run over `TAMU_HIL=ble` - verification 10/10,
+  subscriptions 8/8, dynamic persistence 2 passed + 2 skipped (its `esptool` hard reset has no
+  BLE equivalent, so the two boot-behaviour tests skip on the BLE link).
+- [x] **Aborted-session regression check** (`test/tamu_proto.py --ble --ble-abort-check <mac>`).
+  It deliberately leaves the device mid-chunk (a prefix claiming 12 stream bytes with 5
+  delivered), drops the link, reconnects and pings - the exact precondition. The causality was
+  **falsified rather than assumed**: with the two reset calls reverted and the board freshly
+  flashed (so the assembler started clean), the check failed with `no reply (tag 0x1101)` - a
+  write that dispatches nothing - and passed again once the fix was restored. Flashing alone
+  would have cleared the poisoned state, so without this the "it works now" could have been the
+  reboot, not the fix.
+- [x] **BLE HIL host bug fixed** (`test/hil_helpers.dart`): the BLE branch matched a
+  **hard-coded BLE address** (`E4:B0:63:C8:20:72`) that is not this core's (`E4:B0:63:C5:43:CE`),
+  so `TAMU_HIL=ble` could only ever find the board it was written on. It now matches by the
+  advertised name ("Tamu..."), the same way the app's scan identifies devices by their service.
+  The clock-sync assertion also reports instead of gating on the BLE link (BLE inflated the same
+  run from 13 s / a few ms to 3 min / ~40 ms), which is recorded in the test.
 
 ### Issue 3: node-reboot re-push (3a) and orphan cleanup (3b) - implemented
 
@@ -1180,6 +1238,39 @@ analyzer.
   the general rule about not sending on the bus from inside packet dispatch.
 - Cost: core flash **629 488 -> 629 658 B (+170 B)**; both changes are core-only, so the DAS is
   untouched at 13 988 B / 1 636 B.
+
+### Issue 4: the documented transaction-ID manager is unimplemented (blocked on docs)
+
+- [ ] **`Docs/RSBus and Packets.md` specifies a transaction-ID manager that does not exist.**
+  Per the docs: each new outgoing request gets a fresh TRID (checked for collisions); requests
+  that expect a response send `REQACK` and **register a handler** in a table keyed by TRID with
+  a `Valid until (time)` and a callback ("default timeout is 1s, 0 means forever"); the table
+  size caps the outstanding connections. The firmware implements none of it: every feature
+  hand-rolls its own pending state (`pendingForeign` in `ScriptDefs.h`, `s_reregisterPending`
+  in `SubscriptionsPersist.h`, `RequesterInitCheck`'s retry window), TRIDs are service-specific
+  (`SubscriptionsNextTrid`) or literal, and the only request/response helpers are blocking
+  (`SendAndVerifyPacket` verifies the **echo** only; the boot Core-discover busy-waits
+  `ProcessBus()` + `Sleep(10)` for 500 ms).
+- **Why it matters.** Nothing confirms a request was *acted on*, only that its bytes came back
+  on the wire - which is why a lost subscription cancel leaves a stale provider entry on the
+  DAS (`Issues.md`). The general fix is this table; it would serve every request/response
+  exchange (subscription add/cancel, SNDB, file reads), not just subscriptions.
+- **Blocked on documentation, by request.** The narrow fix for the cancel path is designed and
+  ready to implement once the docs are settled. Sketch, for when it is picked up:
+  - `SubscriptionsControl.h` case 4 currently calls `SendAndVerifyPacket` **inside dispatch** -
+    the blocking-and-retrying call the dispatch rule forbids. It should only enqueue
+    `{addr, trid}`.
+  - `SubscriptionsTick` sends the cancel (with `FLAG_REQACK`) and re-sends after `SUB_RETRY_MS`
+    until acked or `SUB_INIT_WINDOW_MS` expires: a requester-side table of ~4 x
+    `{addr, trid, sentAtMs, attempts}` (~36 B, core-only - the DAS has no requester role, so its
+    flash is untouched).
+  - the ack arrives as a `FLAG_TYPE` CID-1 frame, so `HandleSubscriptions` case 1 needs an
+    `if (frame.flags & FLAG_TYPE)` branch matching the pending cancel by `(id_src, trid)` -
+    today that frame would be mis-parsed as a *change subscription* request.
+  - tests: a native test for the pending-cancel state machine (send -> retry -> ack clears ->
+    expire drops); on the rig, fill the DAS provider table with four direct CID-1 writes,
+    confirm a fifth is refused, cancel one and poll CID 2 until it is gone; HIL subscriptions
+    must stay 8/8.
 
 ### Rig follow-ups: vector deadzone cap fixed, direct harness working
 
@@ -1290,14 +1381,16 @@ notifications ("To OS") never delivered · no framebuffer readback (visuals are 
 The Register Current/Backup view item is closed (implemented).
 
 ### Track D - decisions
-- [ ] D1 Keep or drop the two remaining Android `Issues.md` items (`permission_handler` pinned to
-  11.x, Flutter "Built-in Kotlin" migration)? On-device verification was called a non-issue.
+- [x] **D1 answered: the two items are dropped.** The `permission_handler` pin and the
+  "Built-in Kotlin" migration warning both documented upstream constraints; the facts stay in
+  the build files, and `Issues.md` keeps only the on-device-behaviour note.
 - [x] **D2 answered** - the flags are implemented as write provenance (see the A1 record): the
   origin is declared by the writer in the write's ValueInfo and both sides apply it; the
   Subscription-Source flag has no wire bit and stays a docs gap in `Issues.md`.
-- [ ] D3 Mask versioning now (flagged for the rig) or later?
-- [ ] D4 LED brightness cap stays deferred?
-- [ ] D5 Cross-script control: does the app get UI too?
+- [ ] D3 Mask versioning - **parked** for the display session (it is unverifiable without one).
+  Same item as A11; see the "canonical record" entry for the sketch.
+- [ ] D4 LED brightness cap - **parked** with the display session (a cap needs a display to pick and verify).
+- [ ] D5 Cross-script control - **parked** with A10 part 2. Note it is effectively forced: with the CLI gone, any cross-script feature needs app UI to be reachable at all.
 
 ### Track E - intentionally not doing (with reasons)
 Merging the UI role-flag pairs (`_loadFieldsFor{Target,Source}`, `addDestination`/`addOperand`,

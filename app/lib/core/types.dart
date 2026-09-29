@@ -266,6 +266,19 @@ enum BlockType {
       };
 }
 
+/// True for the block types that live in the firmware's `static_block_registry[]`, and so
+/// occupy a **STATLOG index**: `FindStaticBlock` maps type + a per-type instance onto the array
+/// position, and that position is what a persisted STATLOG entry stores.
+///
+/// The virtual System block (type 0) and the Script (0x3FE) / Dynamic (0x3FF) memories are not
+/// static blocks. `RegisterClient.readBlocks()` appends those two *after* the statics, so an
+/// unfiltered list happens to index STATLOG correctly - but only by that ordering. Filter with
+/// this helper wherever a STATLOG registry is built so the mapping cannot silently drift.
+bool isStaticRegistryType(int type) =>
+    type != systemBlockTypeValue &&
+    type != BlockType.script.value &&
+    type != BlockType.dynamic.value;
+
 /// Field/block flag bits (bits 10-15 of BlockMeta.FlagsAndType per Register.md).
 class FieldFlags {
   static const mask = 0xFC00; // flags occupy bits 10-15 of FlagsAndType

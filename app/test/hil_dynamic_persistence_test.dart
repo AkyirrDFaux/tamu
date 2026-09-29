@@ -14,6 +14,13 @@ import 'hil_helpers.dart';
 /// flash (volatile entries come back zeroed).
 void main() async {
   final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
+  // Two tests below hard-reset the core with esptool over the USB serial port (TAMU_HIL). Over BLE
+  // there is no such handle and the protocol has no reboot op, so the device would never reload
+  // flash and the assertions (volatile zeroed, corrupt table rejected at boot) would test nothing.
+  // Boot behaviour is transport independent, so skipping on the BLE link loses no coverage.
+  final resetReason = Platform.environment['TAMU_HIL'] == 'ble'
+      ? 'needs an esptool hard reset over USB; the BLE link cannot reboot the core'
+      : false;
   setUpAll(() async {
     if (skipReason is String) return;
     await connectHil();
@@ -101,7 +108,8 @@ void main() async {
     await c.saveDynamic();
   }, timeout: const Timeout(Duration(minutes: 2)));
 
-  test('boot persistence restores persistent entries', skip: skipReason, () async {
+  test('boot persistence restores persistent entries',
+      skip: skipReason is String ? skipReason : resetReason, () async {
     final port = Platform.environment['TAMU_HIL']!;
     final c = RegisterClient(deviceId: 1);
     final count = await c.getInstanceCount(BlockType.dynamic.value) ?? 0;
@@ -148,7 +156,8 @@ void main() async {
     await c.saveDynamic();
   }, timeout: const Timeout(Duration(minutes: 2)));
 
-  test('a malformed DT table is rejected without overflowing', skip: skipReason, () async {
+  test('a malformed DT table is rejected without overflowing',
+      skip: skipReason is String ? skipReason : resetReason, () async {
     final port = Platform.environment['TAMU_HIL']!;
     final c = RegisterClient(deviceId: 1);
     final st = StorageClient(deviceId: 1);

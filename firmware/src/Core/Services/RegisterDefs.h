@@ -26,7 +26,16 @@ inline uint8_t BlockInfoInstance(uint32_t bi) { return (bi >> 16) & 0x3F; }
 inline uint8_t BlockInfoField(uint32_t bi) { return (bi >> 8) & 0xFF; }
 inline uint8_t BlockInfoKey(uint32_t bi) { return bi & 0xFF; }
 
-// Find static block index from Type+Instance
+// Find static block index from Type+Instance.
+//
+// `inst` is the *per-type ordinal* (the Nth registry entry of this type) and the returned index
+// is the array position - which is exactly what a STATLOG entry stores, and what the app has to
+// reconstruct from enumeration alone. The app derives the order by enumerating block types
+// (first-seen array order) and then instances, so the two agree only while the registry stays
+// **grouped by type**. Interleaving types (e.g. Fan1, AccGyr, Fan2) would make the app's
+// type-then-instance order differ from the array order and silently mis-name STATLOG entries;
+// the app correspondingly filters Script/Dynamic out of its registry (they are appended after
+// the statics, so their presence only *happens* to be harmless).
 inline int FindStaticBlock(uint16_t type, uint8_t inst) {
     int count=0;
     for (size_t i=0;i<static_block_num;i++) {
