@@ -1,10 +1,13 @@
 #pragma once
 
-// USB link for the App Interface (Docs/Services/App Interface.md) + CLI console,
-// sharing the single USB Serial/JTAG peripheral EXCLUSIVELY: the app always has
-// priority. The port runs a two-mode state machine:
+// USB link for the App Interface (Docs/Services/App Interface.md).
 //
-//   USB_MODE_CLI --(valid app frame received)--> USB_MODE_APP --(host unplugged)--> USB_MODE_CLI
+// The App Interface owns the USB Serial/JTAG port: the host (the app, or a test harness such
+// as test/tamu_proto.py) writes link frames and the device answers over the same port.
+//
+// There is no console/REPL: the CLI was removed, and with it the two-mode state machine it
+// shared the port with - which also removed the hazard where a half-fed link left the port
+// unreachable until a replug.
 //
 // Link framing (both directions):
 //   0xFA | CRC8 | Length | Payload (max 60 bytes of packet stream) | 0xBF
@@ -18,43 +21,40 @@
 #include "freertos/task.h"
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
-#include "esp_console.h"
 #include "Core/Functions/AppInterface.h"
 
 #define USB_FRAME_START 0xFA
 #define USB_FRAME_STOP 0xBF
 #define USB_FRAME_MAX_PAYLOAD 60
 
-enum UsbMode : uint8_t { USB_MODE_CLI = 0, USB_MODE_APP = 1 };
-
-static uint8_t s_usb_mode = USB_MODE_CLI;
-static volatile bool s_usb_revert_req = false; // set by AppUSBTick when the host disappears
-// TimeFromBoot() of the last validated app frame received over USB. Used to
-// detect an app that CLOSED its USB port but left the cable plugged in: the
-// SOF-based usb_serial_jtag_is_connected() stays true, so without this the
-// TX pump would keep draining responses into the dead port after a USB->BLE
-// link switch.
+// TimeFromBoot() of the last validated app frame received over USB. Used to detect an app that
+// CLOSED its USB port but left the cable plugged in: the SOF-based
+// usb_serial_jtag_is_connected() stays true, so without this the TX pump would keep draining
+// responses into the dead port.
 static uint32_t s_usb_last_rx = 0;
 #define USB_TX_SILENCE_MS 500
 
-// True when no app frame has arrived over USB for a while. Only meaningful as a
-// "the app moved to BLE" signal when a BLE session is also up.
+// True when no app frame has arrived over USB for a while (the port is open but the app is
+// gone). Only meaningful as a TX guard.
 bool AppUsbSilent()
 {
     return (uint32_t)(TimeFromBoot() - s_usb_last_rx) > USB_TX_SILENCE_MS;
 }
 
 // ---------------------------------------------------------------------------
-// Link frame parser (shared by both modes)
+// Link framing
 // ---------------------------------------------------------------------------
 
 struct UsbFramer
 {
-    uint8_t buf[2 + USB_FRAME_MAX_PAYLOAD + 1]; // crc + len + payload + stop
-    uint8_t len = 0;
     bool in_frame = false;
+    uint16_t len = 0;
+    uint8_t buf[2 + USB_FRAME_MAX_PAYLOAD + 1]; // crc + len + payload + stop
 
-    bool InFrame() const { return in_frame; }
+    bool InFrame() const
+    {
+        return in_frame;
+    }
 
     void Reset()
     {
@@ -104,7 +104,20 @@ struct UsbFramer
     }
 };
 
-static UsbFramer s_app_framer; // APP mode RX
+static UsbFramer s_app_framer;
+
+// Installs the USJ driver and routes the VFS stdio to it so Crc8/log output has a home.
+void AppUSBInit()
+{
+    if (!usb_serial_jtag_is_driver_installed())
+    {
+        usb_serial_jtag_driver_config_t cfg = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
+        cfg.tx_buffer_size = 2048;
+        cfg.rx_buffer_size = 1024;
+        usb_serial_jtag_driver_install(&cfg);
+    }
+    usb_serial_jtag_vfs_use_driver();
+}
 
 // ---------------------------------------------------------------------------
 // Packet stream parser: turns the continuous crc8-first packet stream into frames
@@ -151,57 +164,9 @@ struct WireStreamParser
 
 static WireStreamParser s_wire_parser;
 
-// Installs the USJ driver (the CLI no longer uses the stock REPL) and routes the
-// VFS stdio to it so printf output reaches the USB host.
-void AppUSBInit()
-{
-    if (!usb_serial_jtag_is_driver_installed())
-    {
-        usb_serial_jtag_driver_config_t cfg = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
-        cfg.tx_buffer_size = 2048;
-        cfg.rx_buffer_size = 1024;
-        usb_serial_jtag_driver_install(&cfg);
-    }
-    usb_serial_jtag_vfs_use_driver();
-}
-
 // ---------------------------------------------------------------------------
-// Console task (CLI mode line editor + APP mode forwarding)
+// RX: link frames -> queued packets
 // ---------------------------------------------------------------------------
-
-#define CONSOLE_LINE_MAX 256
-
-static char s_line[CONSOLE_LINE_MAX];
-static uint16_t s_line_len = 0;
-
-static UsbFramer s_cli_framer;      // shadow sniffer while in CLI mode
-static bool s_cli_candidate = false; // bytes of a possible frame are being captured
-static uint16_t s_cli_frame_at = 0;  // line-buffer position where the candidate started
-
-static void PrintPrompt()
-{
-    printf("tamu> ");
-}
-
-// Enters APP mode silently (any output would corrupt the app's byte stream).
-static void EnterAppMode()
-{
-    s_usb_mode = USB_MODE_APP;
-    s_line_len = 0;
-    s_app_framer.Reset();
-    s_wire_parser.Reset();
-    AppTxFlushAll(); // pending responses belong to previous sessions
-}
-
-static void EnterCliMode()
-{
-    s_usb_mode = USB_MODE_CLI;
-    s_cli_framer.Reset();
-    s_cli_candidate = false;
-    s_line_len = 0;
-    AppTxFlushAll();
-    PrintPrompt();
-}
 
 // Handles one validated app link-frame payload: parses the contained packet-stream
 // bytes and queues complete packets for dispatch.
@@ -222,127 +187,34 @@ static void AppRxStream(const uint8_t *data, uint16_t len)
     }
 }
 
-// CLI-mode line editor: append/echo/backspace/run. Returns when the byte is consumed.
-static void CliLineByte(uint8_t b)
-{
-    if (b == '\r' || b == '\n')
-    {
-        if (s_line_len > 0)
-        {
-            s_line[s_line_len] = '\0';
-            printf("\n");
-            int ret;
-            esp_console_run(s_line, &ret);
-            if (ret != 0)
-                printf("Command returned %d\n", ret);
-            s_line_len = 0;
-        }
-        PrintPrompt();
-        return;
-    }
-
-    if (b == '\b' || b == 0x7F)
-    {
-        if (s_line_len > 0)
-        {
-            s_line_len--;
-            printf("\b \b");
-        }
-        return;
-    }
-
-    if (b >= 32 && b < 127 && s_line_len < CONSOLE_LINE_MAX - 1)
-    {
-        s_line[s_line_len++] = (char)b;
-        putchar(b);
-    }
-}
-
-// Console task body: reads the USJ port and routes bytes according to the mode.
-void ConsoleTask(void *)
+// Link task: reads the USJ port and feeds the app framer. Nothing else owns the port, so a
+// stray byte outside a frame is simply ignored by the framer.
+static void AppLinkTask(void *)
 {
     uint8_t buf[128];
 
-    PrintPrompt();
-
     for (;;)
     {
-        // Deferred mode revert (requested by AppUSBTick after physical unplug).
-        if (s_usb_mode == USB_MODE_APP && s_usb_revert_req)
-        {
-            s_usb_revert_req = false;
-            printf("\n[App detached]\n");
-            EnterCliMode();
-        }
-
         int n = usb_serial_jtag_read_bytes(buf, sizeof(buf), pdMS_TO_TICKS(20));
         if (n <= 0)
             continue;
 
-
-        // Per-byte mode dispatch: a mode switch (CLI -> APP) can happen mid-batch,
-        // and the remaining bytes of the batch already belong to the app stream.
         for (int i = 0; i < n; i++)
         {
-            uint8_t b = buf[i];
-
-            if (s_usb_mode == USB_MODE_APP)
-            {
-                // A CR/LF OUTSIDE any app frame cannot be app traffic (packet
-                // payloads only exist inside FA..BF frames) - it is a human
-                // typing at a terminal. A software-only host close does not
-                // drop the USJ connection state, so without this the console
-                // would stay unreachable until the cable is replugged.
-                if ((b == '\r' || b == '\n') && !s_app_framer.InFrame())
-                {
-                    EnterCliMode();
-                    continue; // the triggering byte starts a fresh line
-                }
-
-                uint8_t payload[USB_FRAME_MAX_PAYLOAD];
-                int r = s_app_framer.Feed(b, payload);
-                if (r > 0)
-                    AppRxStream(payload, (uint16_t)r);
-                else if (r < 0)
-                    s_wire_parser.Reset(); // broken link frame: resync the stream too
-                continue;
-            }
-
-            // CLI mode: line editor + shadow sniffer for incoming app frames.
-            // A typed 0xFA never happens, but an attaching app can start mid-line.
-            // While a candidate frame is being captured its bytes are withheld from
-            // the line editor (a candidate could contain \n or \r, which would
-            // execute a garbage command).
-            if (!s_cli_candidate && b == USB_FRAME_START)
-            {
-                s_cli_candidate = true;
-                s_cli_frame_at = s_line_len;
-            }
-
-            if (s_cli_candidate)
-            {
-                uint8_t payload[USB_FRAME_MAX_PAYLOAD];
-                int r = s_cli_framer.Feed(b, payload);
-
-                if (r > 0)
-                {
-                    // Valid app frame: drop the captured bytes from the line and
-                    // hand the port to the app (app priority). The loop continues
-                    // in APP mode with any remaining bytes of this batch.
-                    s_line_len = s_cli_frame_at;
-                    EnterAppMode();
-                    AppRxStream(payload, (uint16_t)r);
-                    continue;
-                }
-                if (r < 0)
-                    s_cli_candidate = false; // not a frame; byte is consumed
-                continue;
-            }
-
-            CliLineByte(b);
+            uint8_t payload[USB_FRAME_MAX_PAYLOAD];
+            int r = s_app_framer.Feed(buf[i], payload);
+            if (r > 0)
+                AppRxStream(payload, (uint16_t)r);
+            else if (r < 0)
+                s_wire_parser.Reset(); // broken link frame: resync the stream too
         }
-
     }
+}
+
+// Creates the link task (called from boot, after AppUSBInit).
+void AppUSBStartTask()
+{
+    xTaskCreate(AppLinkTask, "usblink", 4096, NULL, 5, NULL);
 }
 
 // ---------------------------------------------------------------------------
@@ -351,9 +223,9 @@ void ConsoleTask(void *)
 
 bool AppUSBActive()
 {
-    // APP mode only counts while the USB host is actually present; writing into an
-    // unplugged port would silently buffer (and stall the pump) otherwise.
-    return s_usb_mode == USB_MODE_APP && usb_serial_jtag_is_connected();
+    // Only counts while the USB host is actually present; writing into an unplugged port
+    // would silently buffer (and stall the pump) otherwise.
+    return usb_serial_jtag_is_connected();
 }
 
 // Sends up to `len` stream bytes as one or more link frames. Blocks briefly until the
@@ -380,16 +252,17 @@ void AppUSBSend(const uint8_t *data, uint16_t len)
 }
 
 // Called from the pump (ApplicationTask). Watches the physical USB link: when the host
-// disconnects during an app session, request reverting to CLI mode (the console task
-// prints the banner once the port is back in CLI hands).
+// disconnects, flush anything pending and reset the framing state so a re-attaching host
+// starts from a clean stream.
 void AppUSBTick()
 {
-    if (s_usb_mode == USB_MODE_APP && !usb_serial_jtag_is_connected())
-        s_usb_revert_req = true;
-}
-
-// Returns true when the CLI is active (USB in CLI mode).
-bool AppCLIConnected()
-{
-    return s_usb_mode == USB_MODE_CLI;
+    static bool was_connected = false;
+    bool connected = usb_serial_jtag_is_connected();
+    if (was_connected && !connected)
+    {
+        AppTxFlushAll();
+        s_app_framer.Reset();
+        s_wire_parser.Reset();
+    }
+    was_connected = connected;
 }

@@ -17,7 +17,7 @@ const Map<int, String> systemFieldNames = {
   5: 'Storage',
   6: 'Name',
   7: 'NetID',
-  8: 'App/CLI Active',
+  8: 'App Active',
 };
 
 /// Field -> (key -> display name). Fields 1 (SN) and 6 (Name) are addressed at key
@@ -37,7 +37,7 @@ const Map<int, Map<int, String>> systemFieldKeys = {
   5: {0: 'Used FLASH', 1: 'Total FLASH'},
   6: {0xFF: 'Name'},
   7: {0: 'NetID'},
-  8: {0: 'App Active', 1: 'CLI Active'},
+  8: {0: 'App Active'},
 };
 
 /// Field -> (key -> dotted struct member name) for the keyed fields (UI sub-labels).
@@ -52,7 +52,7 @@ const Map<int, Map<int, String>> systemStructMembers = {
   },
   4: {0: '.usedRAM', 1: '.totalRAM'},
   5: {0: '.usedFlash', 1: '.totalFlash'},
-  8: {0: '.appActive', 1: '.cliActive'},
+  8: {0: '.appActive'},
 };
 
 String systemFieldName(int field) => systemFieldNames[field] ?? 'Field $field';

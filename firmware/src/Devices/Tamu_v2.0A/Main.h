@@ -24,9 +24,9 @@ void ScriptsBootLoad();
 
 // Device identity (mandatory, see Core/Functions/Device.h).
 extern const DeviceType kDeviceType = DeviceType::Tamu_v2_0A;
-// Core (ID assignment, SN registry, time sync), CLI console, and both user
+// Core (ID assignment, SN registry, time sync), the app link, and both user
 // memory services - matching the USE_* build flags so the app shows their views.
-extern const uint32_t kCapabilities = Capabilities::Core | Capabilities::Cli |
+extern const uint32_t kCapabilities = Capabilities::Core |
                                         Capabilities::DynamicMemory |
                                         Capabilities::Scripts |
                                         Capabilities::StorageFiles |
@@ -80,8 +80,6 @@ LEDDriver LED(3, 0); // both LED strips: pins 3 (Display1) and 0 (Display2), sen
 
 #include "AppUSB.h"
 #include "AppBLE.h"
-#include "CLI/Entry.h"
-#include "CLI/Handler.h"
 #include "RSBus.h"
 
 
@@ -104,7 +102,7 @@ ESP_LOGI("INIT","b3 appif"); AppInterfaceInit();
     // BLE app link (Nordic UART service); advertised under the device version string.
 ESP_LOGI("INIT","b4 ble"); AppBLEInit(DeviceVersion);
 
-ESP_LOGI("INIT","b5 cli"); StartCLI();
+ESP_LOGI("INIT","b5 usb"); AppUSBInit(); AppUSBStartTask();
 
     // Seed PRNG with hardware RNG for CSMA backoff randomisation.
     SeedRand(esp_random());
@@ -134,7 +132,7 @@ LED.Setup();
     // broadcast Core-discover to all cores (3F.1). A response carrying a MATCHING net
     // within 500 ms means this net is claimed twice on the bus -> normal boot is
     // aborted (issue logged; the main loop blinks the error LED) while the core stays
-    // reachable via App/CLI to change the net-ID.
+    // reachable via the app link to change the net-ID.
     if (DeviceStatus.NetId == 0 || DeviceStatus.NetId >= 0x3F)
     {
         DeviceStatus.NetId = (uint8_t)(1 + (RawRand() % 61));
@@ -160,7 +158,7 @@ LED.Setup();
                  (unsigned)DeviceStatus.NetId);
 
     // Register the core's own serial number as ID 1 (once). Otherwise a Discover of its own
-    // SN (CLI self-test or a stray broadcast) allocates a fresh ID (2) and leaves a bogus
+    // SN (a stray broadcast) allocates a fresh ID (2) and leaves a bogus
     // entry; AddDevice also replaces any wrong ID already stored for this SN.
     if (SNDB::FindShortID(GetSerialNumber()) != 1)
         SNDB::AddDevice(GetSerialNumber(), 1);

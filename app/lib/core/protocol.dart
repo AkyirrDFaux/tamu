@@ -32,8 +32,7 @@ enum ServiceType {
   subscriptions(0x04),
   script(0x05),
   router(0x10),
-  app(0x11),
-  cli(0x12);
+  app(0x11);
 
   final int value;
   const ServiceType(this.value);

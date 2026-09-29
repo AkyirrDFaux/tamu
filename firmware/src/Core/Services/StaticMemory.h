@@ -16,7 +16,7 @@ static const char *StaticLogName()
 #define SYSTEM_FIELD_NETID  7
 
 // Number of system-block fields. NetID (7) is Core-only (Docs: "applies only after
-// reboot") and App/CLI Active (8) only exists on boards with an app interface, so a
+// reboot") and App Active (8) only exists on boards with an app interface, so a
 // plain node like the DAS exposes fields 0-6.
 #ifdef TYPE_CORE
 #define SYSTEM_FIELD_COUNT 9
@@ -148,7 +148,7 @@ static inline bool StaticDirtyGet(uint8_t idx, uint8_t field)
 // local/foreign script").
 enum WriteOrigin : uint8_t
 {
-    OriginManual = 0,      // the app, the CLI, or any plain host write
+    OriginManual = 0,      // the app, or any plain host write
     OriginLocalScript = 1, // one of this device's own scripts
     OriginForeign = 2,     // a subscription update, or another device's script
 };

@@ -248,20 +248,6 @@ void HandleDeviceService(const PacketFrame &frame)
 
             DispatchPacket(tx_frame);
 
-            // The CLI's `dev 1 discover` asks the CORE to register this SN and show
-            // the assigned ID. The broadcast above is consumed by the target node,
-            // and the core's own response handler drops it, so answer the CLI
-            // directly (srv_tgt = CLI CID 3 -> HandleCLI_DeviceResponse).
-            if (GetServiceType(frame.srv_src) == ServiceType::CLI)
-            {
-                PacketConstruct(&tx_frame, DeviceStatus.ShortAddress,
-                                 MakeService(ServiceType::CLI, GetServiceCID(frame.srv_src)),
-                                 MakeService(ServiceType::Device, 0),
-                                 FLAG_TYPE | FLAG_START | FLAG_STOP,
-                                 (uint8_t *)&response_data, sizeof(AssignPayload));
-                tx_frame.id_src = NewAddr; // the CLI prints id_src as the device
-                DispatchPacket(tx_frame);
-            }
 #endif
             break;
         }

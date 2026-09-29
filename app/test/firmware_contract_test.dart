@@ -325,7 +325,6 @@ void main() {
       _expectEnumMatches(const {
         'core': Capability.core,
         'router': Capability.router,
-        'cli': Capability.cli,
         'dynamicMemory': Capability.dynamicMemory,
         'scripts': Capability.scripts,
         'storageFiles': Capability.storageFiles,

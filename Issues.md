@@ -73,6 +73,25 @@
   the Storage Access Framework backup save + restore and file download, and the compact
   drawer shell on a phone form factor.
 
+## App link (USB) - CLI removal leaves the docs ahead
+
+- **The CLI was removed** (the app link owns the USB port now), which also resolved the
+  "wedged app link" hazard recorded here before: with a single mode there is no CLI/APP state
+  to get stuck in. The alternative fix (a timeout-based revert) is moot.
+- **Two doc spots still describe the CLI**: the `Capability` field's CLI bit and the System
+  block's field 8 key 1 ("CLI Active") - the firmware and app no longer implement either (the
+  capability bit is left *reserved* in the enum so no other bit moves). `Docs/Services/CLI.md`
+  has already been deleted.
+
+## Rig test flakiness (not a product bug)
+
+- **The DAS clock-sync assertion is marginal.** `HIL: DAS clock is within 10 ms of the core`
+  converged to **19 ms in one run and 3 ms in the next**, and its convergence time ranged from
+  13 s to 78 s. The DAS syncs itself to the core and tracks the core's rate between syncs (its
+  internal RC drifts ~1 %), so the achieved accuracy sits right at the 10 ms bound and the test
+  can fail on timing rather than on a defect. Either widen the bound or make the test report the
+  achieved offset without asserting a hard limit - it should not be a gate as written.
+
 ## Evaluation setup (`Docs/Current setup v3.md`)
 - **LED brightness can brown out the board.** The LED-display driver accepts brightness
   values whose current draw resets the MCU (the board dropped off USB at 60 %; a stored

@@ -42,7 +42,7 @@ extern char DeviceNameBuffer[24];
 extern const char* DeviceVersion;
 
 // Set when Core-discover detects another core with the SAME net-ID on the bus. The core
-// stays reachable via App/CLI (so the net can be changed) but blinks its error LED.
+// stays reachable via the app link (so the net can be changed) but blinks its error LED.
 inline bool &CoreCollisionFlag()
 {
     static bool collision = false;

@@ -20,15 +20,14 @@ F.K:SP = Field.Key:Struct Position
 | Total FLASH      | 5.0:1  | RO    | uint32          | Avaliable to filesystem                   |
 | Name             | 6      | P     | 16 bytes        | Applies fully after reboot                |
 | NetID            | 7      | P     | uint8           | Core only, applies only after reboot      |
-| App Active       | 8.0:0  | RO    | 1bit            | Core only                                 |
-| CLI Active       | 8.0:1  | RO    | 1bit            | Core with CLI only                        |
+| App Active       | 8      | RO    | enum            | Core only (No/USB/BLE)                    |
+
 If possible, the device name is shown in BLE advertising and on USB.
 
 Capability (32bit-field):
 	- Core
 	- Router
 	- Node
-	- CLI
 	- App Interface
 	- Dynamic Memory
 	- Scripts

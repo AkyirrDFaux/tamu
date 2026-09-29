@@ -42,7 +42,6 @@ bool RegisterGetSystemField(uint8_t field, uint8_t key, BlockMeta &m, uint8_t *v
 #endif
 #ifndef BOARD_DAS_v0_1
     else if (field==8 && key==0) { uint8_t v=AppConnected?1:0; SysFieldValue(m, vbuf, vsz, &v, 1, (uint16_t)DataType::Bool|FieldFlags::ReadOnly); }
-    else if (field==8 && key==1) { uint8_t v=AppCLIConnected()?1:0; SysFieldValue(m, vbuf, vsz, &v, 1, (uint16_t)DataType::Bool|FieldFlags::ReadOnly); }
 #endif
     else { return false; }
     m.Key = key;

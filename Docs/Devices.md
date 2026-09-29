@@ -13,7 +13,6 @@ defines TYPE_CORE, TYPE_ROUTER, TYPE_NODE
 | Unused exposed     | 1, 7, 8              |                                                    |
 Services:
 - Mandatory and Core
-- CLI
 - Dynamic memory
 - Script
 - Subscriptions (Request and Provide)

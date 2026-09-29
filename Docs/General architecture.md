@@ -15,7 +15,6 @@
 #### Mandatory for core:
 - SN Database (under [[System Block and Device Commands|System Block and Device Commands]])
 - [[App Interface]]
-- [[CLI]] (ESP32 only)
 #### Mandatory for routers:
  - [[Router]]
 #### Mandatory for sensor nodes:

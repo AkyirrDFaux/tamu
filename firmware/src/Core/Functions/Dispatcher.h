@@ -24,18 +24,6 @@ uint32_t LogCapacity = 0;
 uint32_t LogCount = 0;
 #endif
 
-// CLI response handlers are device-specific (implemented per device, e.g. Devices/Tamu_v2.0A/CLI/Handler.h).
-// The CLI service is only available on ESP32 devices
-#ifdef TYPE_CORE
-void HandleCLI_RegisterResponse(const PacketFrame &frame);
-void HandleCLI_SNDBResponse(const PacketFrame &frame);
-void HandleCLI_StatusResponse(const PacketFrame &frame);
-void HandleCLI_DeviceResponse(const PacketFrame &frame);
-void HandleCLI_StorageResponse(const PacketFrame &frame);
-void HandleCLI_CreateResponse(const PacketFrame &frame);
-void HandleCLI_LogResponse(const PacketFrame &frame);
-void HandleCLI_SubsResponse(const PacketFrame &frame);
-#endif
 
 // The Main Packet Dispatcher: routes an incoming frame to the local service
 // handler (or forwards it to the bus when it targets another device).
@@ -123,26 +111,6 @@ void DispatchPacket(const PacketFrame &frame)
                     break;
                 #endif
 
-                #ifdef TYPE_CORE
-                case ServiceType::CLI:
-                    if (cid == 0)
-                        HandleCLI_RegisterResponse(frame);   // Memory read responses
-                    else if (cid == 1)
-                        HandleCLI_SNDBResponse(frame); // SNDB responses
-                    else if (cid == 2)
-                        HandleCLI_StatusResponse(frame); // Save/Recall/Delete status responses
-                    else if (cid == 3)
-                        HandleCLI_DeviceResponse(frame); // Device service responses
-                    else if (cid == 4)
-                        HandleCLI_StorageResponse(frame); // Storage service responses
-                    else if (cid == 5)
-                        HandleCLI_CreateResponse(frame); // Dynamic/Keyed create responses
-                    else if (cid == 6)
-                        HandleCLI_LogResponse(frame); // LogHandler GetLogs/ClearReadLogs responses
-                    else if (cid == 8)
-                        HandleCLI_SubsResponse(frame); // Subscriptions service responses
-                    break;
-                #endif
 
                 default:
                     DeviceLog("DISP", "unhandled service %u CID %u", (unsigned)target_srv, (unsigned)cid);

@@ -42,8 +42,7 @@ enum class ServiceType : uint8_t
     Storage = 0x03,
     Subscriptions = 0x04,
     Script = 0x05,
-    App = 0x11,
-    CLI = 0x12
+    App = 0x11
 };
 
 // Wire order per Docs/RSBus and Packets.md (top-to-bottom): CRC8 | Flags | Reserved(4) |

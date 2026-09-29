@@ -300,7 +300,6 @@ class FieldFlags {
 class Capability {
   static const core = 1 << 0;
   static const router = 1 << 1;
-  static const cli = 1 << 2;
   static const dynamicMemory = 1 << 3;
   static const scripts = 1 << 4;
   static const storageFiles = 1 << 5;
@@ -312,7 +311,6 @@ class Capability {
     final names = <String>[];
     if (caps & core != 0) names.add('Core');
     if (caps & router != 0) names.add('Router');
-    if (caps & cli != 0) names.add('CLI');
     if (caps & dynamicMemory != 0) names.add('DynMem');
     if (caps & scripts != 0) names.add('Scripts');
     if (caps & storageFiles != 0) names.add('Files');

@@ -62,7 +62,7 @@ static void HandleEnumerate(const PacketFrame &frame, uint32_t bi) {
         uint16_t cnt;
         if (req_type == 0 && req_inst == 0) {
             // System block is not in the static registry; its field count is board-aware
-            // (nodes like the DAS omit the Core-only NetID and App/CLI fields).
+            // (nodes like the DAS omit the Core-only NetID and App fields).
             cnt = SYSTEM_FIELD_COUNT;
         } else if (req_type == 0x3FE) {
 #ifdef USE_SCRIPTS

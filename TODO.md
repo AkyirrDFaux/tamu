@@ -1095,9 +1095,10 @@ analyzer.
   `__*di3`/`__muldi3`/`__clzsi2`/`__clz_tab`** in the image). Sensor sanity on hardware: the
   NTC reads **27.5 / 26.1 °C** (plausible room temperature, and it tracks the room), the
   auto-range picks the **330 kΩ** reference for the ~100 kΩ NTC and the reported value stays
-  compensated, and `FilterCoeff` round-trips. The **lux (measuring instance 1) was not read** -
-  the CLI can only address static instance 0, so the LDR needs the app or a small addition;
-  the `log`-fix lux recalibration therefore stays open.
+  compensated, and `FilterCoeff` round-trips. The **LDR lux (measuring instance 1) now reads
+  too** - it needed the CLI's instance addressing (see the CLI update below) - and reports
+  **6.76 lux** for the room, i.e. the `log`-fix lux chain is verified end to end. A lux-meter
+  cross-check is still the only way to confirm the calibration constants themselves.
 - [x] DAS `LoadAllBackups` restore across a reboot - **verified** (see the persistence item
   below, same mechanism: the node restores its saved static values at boot).
 - [x] **DAS static persistence - verified, after fixing two bugs that made it impossible.**
@@ -1114,6 +1115,35 @@ analyzer.
 - [ ] Backup view: the app's block order vs the firmware's static registry order.
 - [ ] LED brightness brown-out -> firmware current cap/ramp decision (deferred by request).
 - [ ] Mask-versioning correctness, if A11 is implemented.
+
+### The CLI was removed (it outlived its purpose)
+
+The console/REPL and everything that existed to serve it are gone; the App Interface now owns
+the USB port outright. Kept: the protocol harness (`test/tamu_proto.py`, now the rig entry
+point - see `test/README.md`) and the Flutter HIL suites, which both speak the wire protocol.
+
+- **Deleted**: `firmware/src/Devices/Tamu_v2.0A/CLI/` (4 files, ~96 KB: `Entry.h` with `StartCLI`
+  and its 16 KB console task, `Handler.h`, `Block.h`, `SNDB.h`); the console-driven
+  `test/testsuite.py` + `test/hwtest.py` (+ `__pycache__`); the CLI reply-tag dispatch and the
+  eight `HandleCLI_*` declarations in `Dispatcher.h`; `ServiceType::CLI`;
+  `Capabilities::Cli` (bit 2 stays reserved so no other bit moves); the CLI-only Discover reply
+  branch in `Core/Services/Device.h`; `AppCLIConnected()` and the System field 8 key 1
+  ("CLI Active"); the app's `Capability.cli` + its contract-test entry and the
+  `system_schema` CLI labels.
+- **Refactored**: `AppUSB.h` lost the two-mode state machine (`USB_MODE_*`, `EnterCliMode`,
+  the line editor, the prompt, the CR/LF revert, the CLI shadow framer) and keeps the link
+  task, framer, wire parser, RX queue and TX pump - `ConsoleTask` became `AppLinkTask` with a
+  4 KB stack (from 16 KB). `Main.h` now calls `AppUSBInit()` + `AppUSBStartTask()` (it was
+  `StartCLI` that initialised the port).
+- **Effect**: **the wedge hazard I reported earlier is gone** - with a single mode there is no
+  state to get stuck in. Docs (`Docs/Services/CLI.md`, the Capability bit, System field 8 key 1)
+  are now ahead of the implementation; noted in `Issues.md`.
+- **Measured**: core flash **679 390 -> 629 490 B (-49.9 KB, 21.6 % -> 20.0 %)**; the DAS is
+  unchanged (it never had a CLI: 13 988 B / 85.4 %). RAM improves too - the console task's
+  16 KB stack and the CLI's static buffers are gone.
+- **Verified on the rig**: the HIL suites still pass on the rebuilt firmware
+  (verification 10/10, subscriptions 7/7, dynamic persistence 4/4), and the host suite is green
+  (11 native groups, 139 app tests, analyzer).
 
 ### Rig session results (Tamu + 1 DAS, default sensors, no display/fans)
 
