@@ -76,14 +76,8 @@ int blockInfoField(int blockInfo) => (blockInfo >> 8) & 0xFF;
 int blockInfoKey(int blockInfo) => blockInfo & 0xFF;
 
 /// The BlockInfo as 4 little-endian bytes (wire payload prefix).
-Uint8List blockInfoBytes(int type, int inst, int field, int key) {
-  final bi = makeBlockInfo(type, inst, field, key);
-  return Uint8List(4)
-    ..[0] = bi & 0xFF
-    ..[1] = (bi >> 8) & 0xFF
-    ..[2] = (bi >> 16) & 0xFF
-    ..[3] = (bi >> 24) & 0xFF;
-}
+Uint8List blockInfoBytes(int type, int inst, int field, int key) =>
+    uint32ToBytes(makeBlockInfo(type, inst, field, key));
 
 /// Decodes a little-endian byte string of any length into an int (null when empty).
 int? bytesToInt(List<int> bytes) {
@@ -281,6 +275,12 @@ class FieldFlags {
   static const notSaved = 0x2000;
   static const scriptUpdated = 0x4000;
   static const external = 0x8000;
+
+  /// The three *active* flags (Not Saved, Script Updated, External origin). They describe the
+  /// state of a value as a *read* reports it - a write declares only its own specification, so
+  /// the active bits a writer does not mean must not be echoed back (see
+  /// `RegisterClient.writeBlockField`).
+  static const activeMask = notSaved | scriptUpdated | external;
 
   static List<String> describe(int flags) {
     final names = <String>[];

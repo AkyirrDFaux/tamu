@@ -193,3 +193,8 @@ int main(void)
         if (red_state) PinHigh(LEDR); else PinLow(LEDR);
     }
 }
+
+// The active-flag array is sized by STATIC_ACTIVE_ENTRIES (platformio.ini). It must cover
+// every entry here plus the System block's SYSTEM_FIELD_COUNT fields:
+//   Meas1/Meas2(ResistiveMeas 5 each) + Button(1) + LED(1) + System(7) = 19 entries
+//   -> 24 slots (12 B).

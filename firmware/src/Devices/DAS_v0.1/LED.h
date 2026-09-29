@@ -4,8 +4,6 @@
 // indicator (see RSBus.h) and is not part of this block. Red has priority overlays
 // resolved in the main loop: an active error blinks it, then identify, then the block
 // value (Docs/Devices.md, user requirement: "used to indicate errors - that has priority").
-#define DAS_LED_PORT GPIOA
-#define DAS_LED_PIN  GPIO_Pin_1
 
 // Stores the written LEDState. The pin itself is driven by the main loop, which resolves
 // the priority overlays (error > identify > block) so a write can never fight a blink.

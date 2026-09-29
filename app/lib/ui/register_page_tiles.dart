@@ -1,0 +1,610 @@
+// Field/block tiles for the Register page.
+//
+// Part of register_page.dart: an extension on its State so the tiles keep private
+// access to the page's caches while staying out of the main file.
+
+part of 'register_page.dart';
+
+extension on _RegisterPageState {
+  /// Renders one category field of a loaded script (Header/Input/Output/Variable/
+  /// Constant) as a keyed list. Inputs and variables are editable; the header, outputs
+  /// and constants are read-only.
+  Widget _scriptFieldTile(int blockType, int inst, int cacheKey, int fieldIndex,
+      ({int type, int inst, BlockMeta meta, String name})? block, Key? cardKey) {
+    // The Header category is script metadata and is intentionally not part of the
+    // Register view.
+    if (fieldIndex == ScriptField.header) return const SizedBox.shrink();
+    final cache = _fieldCache[cacheKey];
+    final keys = _scriptKeys[cacheKey]?[fieldIndex] ?? <int>[];
+    final name = _scriptFieldName(fieldIndex);
+    if (keys.isEmpty) {
+      return ListTile(
+        key: cardKey,
+        dense: true,
+        title: Text(name, style: const TextStyle(fontSize: 13, color: Colors.white54)),
+        subtitle: const Text('None', style: TextStyle(fontSize: 10, color: Colors.white38)),
+      );
+    }
+    final editableField = fieldIndex == ScriptField.input;
+    return Column(
+      children: [
+        for (final key in keys)
+          Builder(builder: (context) {
+            final e = cache?[fieldIndex * 256 + key];
+            if (e == null) {
+              return ListTile(
+                key: key == keys.first ? cardKey : null,
+                dense: true,
+                leading: const SizedBox(
+                    width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+                title: Text('$name $key',
+                    style: const TextStyle(fontSize: 13, color: Colors.white38)),
+              );
+            }
+            final editable = editableField && !e.meta.readOnly;
+            return ListTile(
+              key: key == keys.first ? cardKey : null,
+              dense: true,
+              title: Row(children: [
+                SizedBox(
+                    width: 120,
+                    child: Text('$name $key',
+                        style: const TextStyle(fontSize: 12, color: Colors.white54))),
+                Expanded(
+                    child: Text(formatValue(e.meta.dataType, e.value),
+                        style: const TextStyle(fontFamily: 'monospace', fontSize: 13))),
+              ]),
+              subtitle: Text(
+                  dataTypeLabel(e.meta.dataType) + (e.meta.readOnly ? ' · RO' : ''),
+                  style: const TextStyle(fontSize: 10)),
+              trailing: editable ? const Icon(Icons.edit, size: 16, color: Colors.white38) : null,
+              onTap: editable
+                  ? () => _editScriptEntry(blockType, inst, fieldIndex, key, e, block)
+                  : null,
+            );
+          }),
+      ],
+    );
+  }
+
+  Widget _blockCard(BuildContext context, int blockIndex, ({int type, int inst, BlockMeta meta, String name})? block, {Key? cardKey, int? dragIndex}) {
+    if (block == null) {
+      return Card(
+        color: kSurfaceAlt,
+        child: ListTile(
+          leading: const Icon(Icons.memory, color: kOrange),
+          title: const Text('System Block', style: TextStyle(fontWeight: FontWeight.w600)),
+          subtitle: const Text('Loading...'),
+        ),
+      );
+    }
+
+    final isExpanded = _expanded.contains(blockIndex);
+    final isSystem = block.type == 0 && block.inst == 0;
+    final isDynamic = block.type == BlockType.dynamic.value;
+    if (isHiddenRegisterSlot(block.type, block.meta)) {
+      // Dynamic tombstone slots are hidden (they carry no block). The System block reports
+      // meta type 0x00 too, so it is excluded by the slot type (see isHiddenRegisterSlot).
+      return const SizedBox.shrink();
+    }
+
+    return Card(
+      key: cardKey,
+      color: kSurfaceAlt,
+      margin: EdgeInsets.zero,
+      clipBehavior: Clip.antiAlias,
+      child: Column(children: [
+        ListTile(
+          leading: _editMode && isDynamic && dragIndex != null
+              ? Row(mainAxisSize: MainAxisSize.min, children: [
+                  ReorderableDragStartListener(
+                    index: dragIndex,
+                    child: const Icon(Icons.drag_handle, color: Colors.white38),
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(isExpanded ? Icons.folder_open : Icons.folder, color: kOrange),
+                ])
+              : Icon(isExpanded ? Icons.folder_open : Icons.folder, color: kOrange),
+          title: Row(children: [
+            Expanded(
+                child: Text(block.name.isNotEmpty ? block.name : (isSystem ? 'System' : (isDynamic ? 'Dynamic #${block.inst}' : 'Block #${block.inst}')),
+                    style: const TextStyle(fontWeight: FontWeight.w600))),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+              decoration: BoxDecoration(
+                  color: Colors.white.withAlpha(20),
+                  borderRadius: BorderRadius.circular(4)),
+              child: Text(isSystem ? 'System' : '#${block.inst}',
+                  style: const TextStyle(fontSize: 10, color: Colors.white54)),
+            ),
+          ]),
+          subtitle: Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Wrap(spacing: 6, runSpacing: 2, children: [
+              ChipLabel(isSystem ? 'System' : BlockType.fromValue(block.meta.typeValue).label),
+              for (final flag in FieldFlags.describe(block.meta.flags)) ChipLabel(flag, subtle: flag != 'RO'),
+              if (block.meta.typeValue != BlockType.script.value)
+                ChipLabel('${block.meta.size} fields', subtle: true),
+            ]),
+          ),
+          trailing: PopupMenuButton<String>(
+            tooltip: 'Block actions',
+            onSelected: (action) {
+              if (action == 'edit') {
+                _editBlock(blockIndex, block);
+              } else if (action == 'add') {
+                _addEntry(blockIndex, block);
+              } else if (action == 'move') {
+                _moveBlock(block);
+              } else if (action == 'delete') {
+                _deleteBlock(blockIndex, block);
+              }
+            },
+            itemBuilder: (_) => [
+              if (block.meta.typeValue == BlockType.dynamic.value) ...[
+                const PopupMenuItem(value: 'edit', child: Text('Rename')),
+                const PopupMenuItem(value: 'add', child: Text('Add field')),
+                if (_editMode) ...[
+                  const PopupMenuItem(value: 'move', child: Text('Move to index...')),
+                ],
+                const PopupMenuItem(value: 'delete', child: Text('Delete block')),
+              ],
+            ],
+          ),
+          onTap: () async {
+            _rebuild(() {
+              isExpanded
+                  ? _expanded.remove(blockIndex)
+                  : _expanded.add(blockIndex);
+            });
+            if (_expanded.contains(blockIndex)) {
+              final block = _blockMetas?[blockIndex];
+              if (block != null) {
+                await _loadBlockFields(block.type, block.inst, block, forceRefresh: true);
+              }
+              if (mounted) _rebuild(() {});
+            }
+          },
+        ),
+        if (isExpanded)
+          Material(
+            color: Colors.black26,
+            child: Column(children: [
+              const Divider(height: 1),
+              if (block.meta.size > 0) ...[
+                if (_editMode && isDynamic)
+                  ReorderableListView(
+                    shrinkWrap: true,
+                    buildDefaultDragHandles: false,
+                    children: [
+                      for (final (si, f)
+                          in (_dynamicFields[block.inst] ?? <int>[]).indexed)
+                        _fieldTile(block.type, block.inst, block, f,
+                            cardKey: ValueKey('fld-$f'), dragIndex: si),
+                    ],
+                    onReorderItem: (oldIndex, newIndex) =>
+                        _reorderFields(block, _dynamicFields[block.inst] ?? <int>[], oldIndex, newIndex),
+                  )
+                else if (isDynamic)
+                  for (final f in (_dynamicFields[block.inst] ?? <int>[]))
+                    _fieldTile(block.type, block.inst, block, f)
+                else
+                  for (var f = 0; f < block.meta.size; f++)
+                    _fieldTile(block.type, block.inst, block, f),
+              ],
+            ]),
+          ),
+      ]),
+    );
+  }
+
+  Widget _fieldTile(int blockType, int inst, ({int type, int inst, BlockMeta meta, String name})? block, int fieldIndex, {Key? cardKey, int? dragIndex}) {
+    final cacheKey = (blockType << 8) | inst;
+    final cache = _fieldCache[cacheKey];
+    final field = cache?[fieldIndex];
+    final isSystem = blockType == 0 && inst == 0;
+
+    // Loaded scripts (0x3FE): keyed entries per category field.
+    if (blockType == BlockType.script.value) {
+      return _scriptFieldTile(blockType, inst, cacheKey, fieldIndex, block, cardKey);
+    }
+
+    // Dynamic blocks: flat (field, key) entries. A field is a DICTIONARY when its
+    // key-0 entry is a Geometry/Texture marker; otherwise key 0 is the field's plain
+    // value. Key 0 is never shown as a row - it's the value/marker itself.
+    if (blockType == BlockType.dynamic.value) {
+      final keys = _dynamicKeys[inst]?[fieldIndex] ?? <int>[0];
+      final entries = <(int, ({BlockMeta meta, List<int> value})?)>[
+        for (final k in keys) (k, cache?[fieldIndex * 256 + k]),
+      ];
+      if (entries.every((e) => e.$2 == null)) {
+        return ListTile(
+            key: cardKey,
+            dense: true,
+            leading: const SizedBox(
+                width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+            title: const Text('...',
+                style: TextStyle(fontSize: 13, color: Colors.white38)));
+      }
+      final head = entries.firstOrNull?.$2;
+      final isDict = head != null && isRenderDictType(head.meta.typeValue);
+      final dictType = head?.meta.typeValue ?? 0;
+      final extraKeys = <({int key, ({BlockMeta meta, List<int> value}) e})>[];
+      for (final (k, e) in entries) {
+        if (k > 0 && e != null) extraKeys.add((key: k, e: e));
+      }
+
+      // Plain field (key 0 only, not a dictionary): a single editable value tile.
+      if (!isDict && extraKeys.isEmpty && head != null) {
+        return ListTile(
+          key: cardKey,
+          dense: true,
+          leading: dragIndex != null
+              ? ReorderableDragStartListener(
+                  index: dragIndex, child: const Icon(Icons.drag_handle, color: Colors.white38))
+              : null,
+          title: Row(children: [
+            SizedBox(
+                width: 120,
+                child: Text('Field $fieldIndex',
+                    style: const TextStyle(fontSize: 12, color: Colors.white54))),
+            if (head.meta.dataType == DataType.colour && head.value.length >= 4)
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: Container(
+                  width: 14,
+                  height: 14,
+                  decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Color.fromARGB(
+                          head.value[3], head.value[0], head.value[1], head.value[2]),
+                      border: Border.all(color: Colors.white38)),
+                ),
+              ),
+            Expanded(
+                child: Text(_formatDynamicValue(head, false, 0, 0),
+                    style: const TextStyle(fontFamily: 'monospace', fontSize: 13))),
+          ]),
+          subtitle: Text(dataTypeLabel(head.meta.dataType) + _flagsSuffix(head.meta),
+              style: const TextStyle(fontSize: 10)),
+          trailing: _editMode
+              ? PopupMenuButton<String>(
+                  icon: const Icon(Icons.more_vert, size: 16),
+                  onSelected: (action) {
+                    if (action == 'edit' && !head.meta.readOnly) {
+                      _editDynamicEntry(blockType, inst, block, fieldIndex, 0);
+                    } else if (action == 'type' && !head.meta.readOnly) {
+                      _changeDynamicType(blockType, inst, block, fieldIndex, 0);
+                    } else if (action == 'fidx' && !head.meta.readOnly) {
+                      _changeFieldIndex(blockType, inst, block, fieldIndex);
+                    } else if (action == 'flags') {
+                      _editEntryFlags(blockType, inst, block, fieldIndex, 0);
+                    } else if (action == 'delete') {
+                      _deleteField(blockType, inst, block, fieldIndex);
+                    } else if (action == 'addkey' && !head.meta.readOnly) {
+                      _addDynamicEntry(blockType, inst, block, fieldIndex);
+                    }
+                  },
+                  itemBuilder: (_) => [
+                    if (!head.meta.readOnly) ...[
+                      const PopupMenuItem(value: 'edit', child: Text('Edit value')),
+                      const PopupMenuItem(value: 'type', child: Text('Change type')),
+                      const PopupMenuItem(value: 'fidx', child: Text('Change field index')),
+                      const PopupMenuItem(value: 'addkey', child: Text('Add key')),
+                    ],
+                    const PopupMenuItem(value: 'flags', child: Text('Edit flags')),
+                    const PopupMenuItem(value: 'delete', child: Text('Delete field')),
+                  ],
+                )
+              : null,
+          onTap: !head.meta.readOnly
+              ? () => _editDynamicEntry(blockType, inst, block, fieldIndex, 0)
+              : null,
+        );
+      }
+
+      // Dictionary (or a field with extra keys): expand the key>0 rows; key 0 (the
+      // marker/value) is shown compactly in the header but never as a row.
+      return ExpansionTile(
+        key: cardKey,
+        dense: true,
+        leading: dragIndex != null
+            ? ReorderableDragStartListener(
+                index: dragIndex, child: const Icon(Icons.drag_handle, color: Colors.white38))
+            : null,
+        title: Row(children: [
+          SizedBox(
+              width: 120,
+              child: Text(isDict
+                  ? (dictType == geometryDictType ? 'Geometry' : 'Texture')
+                  : 'Field $fieldIndex',
+                  style: const TextStyle(fontSize: 12, color: Colors.white54))),
+          Expanded(
+              child: Text('[${extraKeys.length} keys]',
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 13))),
+          if (_editMode) ...[
+            IconButton(
+              tooltip: 'Add key to field $fieldIndex',
+              icon: const Icon(Icons.add, size: 18),
+              onPressed: () => _addDynamicEntry(blockType, inst, block, fieldIndex),
+            ),
+            PopupMenuButton<String>(
+              tooltip: 'Field actions',
+              icon: const Icon(Icons.more_vert, size: 16),
+              onSelected: (action) {
+                if (action == 'type' && head != null && !head.meta.readOnly) {
+                  _changeDynamicType(blockType, inst, block, fieldIndex, 0);
+                } else if (action == 'fidx') {
+                  _changeFieldIndex(blockType, inst, block, fieldIndex);
+                } else if (action == 'delete') {
+                  _deleteField(blockType, inst, block, fieldIndex);
+                }
+              },
+              itemBuilder: (_) => [
+                if (head != null && !head.meta.readOnly)
+                  const PopupMenuItem(value: 'type', child: Text('Change type')),
+                const PopupMenuItem(value: 'fidx', child: Text('Change field index')),
+                const PopupMenuItem(value: 'delete', child: Text('Delete field')),
+              ],
+            ),
+          ],
+        ]),
+        children: <Widget>[
+          for (final ek in extraKeys)
+            ListTile(
+              dense: true,
+              contentPadding: const EdgeInsets.only(left: 56, right: 12),
+              title: Row(children: [
+                SizedBox(
+                    width: 90,
+                    child: Text(isDict
+                        ? '${ek.key} · ${renderDictKeyName(dictType, ek.key)}'
+                        : 'key ${ek.key}',
+                        style: const TextStyle(fontSize: 11, color: Colors.white54))),
+                if (ek.e.meta.dataType == DataType.colour && ek.e.value.length >= 4)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: Container(
+                      width: 14,
+                      height: 14,
+                      decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Color.fromARGB(
+                              ek.e.value[3], ek.e.value[0], ek.e.value[1], ek.e.value[2]),
+                          border: Border.all(color: Colors.white38)),
+                    ),
+                  ),
+                Expanded(
+                    child: Text(_formatDynamicValue(ek.e, isDict, dictType, ek.key),
+                        style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
+              ]),
+              subtitle: Text(dataTypeLabel(ek.e.meta.dataType) + _flagsSuffix(ek.e.meta),
+                  style: const TextStyle(fontSize: 10)),
+              trailing: PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert, size: 16),
+                onSelected: (action) {
+                  if (action == 'edit' && !ek.e.meta.readOnly) {
+                    _editDynamicEntry(blockType, inst, block, fieldIndex, ek.key);
+                  } else if (action == 'type' && !ek.e.meta.readOnly) {
+                    _changeDynamicType(blockType, inst, block, fieldIndex, ek.key);
+                  } else if (action == 'key' && !ek.e.meta.readOnly) {
+                    _changeDynamicKey(blockType, inst, block, fieldIndex, ek.key);
+                  } else if (action == 'flags') {
+                    _editEntryFlags(blockType, inst, block, fieldIndex, ek.key);
+                  } else if (action == 'delete' && !ek.e.meta.readOnly) {
+                    _deleteDynamicEntry(blockType, inst, block, fieldIndex, ek.key);
+                  }
+                },
+                itemBuilder: (_) => [
+                  if (!ek.e.meta.readOnly) ...[
+                    const PopupMenuItem(value: 'edit', child: Text('Edit value')),
+                    if (_editMode) ...[
+                      const PopupMenuItem(value: 'type', child: Text('Change type')),
+                      const PopupMenuItem(value: 'key', child: Text('Change key')),
+                    ],
+                  ],
+                  if (_editMode)
+                    const PopupMenuItem(value: 'flags', child: Text('Edit flags')),
+                  if (!ek.e.meta.readOnly)
+                    const PopupMenuItem(value: 'delete', child: Text('Delete entry')),
+                ],
+              ),
+              onTap: !ek.e.meta.readOnly
+                  ? () => _editDynamicEntry(blockType, inst, block, fieldIndex, ek.key)
+                  : null,
+            ),
+        ],
+      );
+    }
+
+    if (field == null) {
+      return const ListTile(
+          dense: true,
+          leading: SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2)),
+          title: Text('...',
+              style: TextStyle(fontSize: 13, color: Colors.white38)));
+    }
+
+    final primaryFlags = FieldFlags.describe(field.meta.flags);
+    final isSystemField = isSystem;
+
+    // Field display: resolves the registry's per-type field metadata for enum labels and
+    // the DAS ResistiveMeasure custom view (Sensor Type at field 1, Measured Value at
+    // field 3 with a sensor-derived unit + fuzzy lux level for the LDR).
+    String displayValue() {
+      if (isSystemField) return formatValue(field.meta.dataType, field.value);
+      final blockInfo = blockInfoFor(BlockType.fromValue(blockType));
+      final fieldInfo = blockInfo?.field(fieldIndex);
+
+      if (blockType == BlockType.resistiveMeasure.value) {
+        final sensorRaw = cache?[1];
+        final sensor = (sensorRaw != null && sensorRaw.value.isNotEmpty)
+            ? sensorRaw.value[0]
+            : -1;
+        if (fieldIndex == 1) {
+          return sensor >= 0
+              ? sensorTypeLabel(sensor)
+              : formatValue(field.meta.dataType, field.value);
+        }
+        // Measured Value is field 3 (0 Sampling Rate, 1 Sensor Type, 2 Filter
+        // Coefficient, 3 Measured Value, 4 Current Range).
+        if (fieldIndex == 3 && sensor >= 0 && field.value.length >= 4) {
+          final numVal = numberFromBytes(field.value);
+          final unit = sensorUnits[sensor] ?? '';
+          var text = formatValue(DataType.number, field.value);
+          if (unit.isNotEmpty) text += ' $unit';
+          if (sensor == 3) text += ' · ${luxLevel(numVal)}';
+          return text;
+        }
+      }
+
+      // Enum fields with known option labels (button edges, Acc&Gyr ODR/ranges, sensor
+      // type): show the label instead of the raw index.
+      final enumLabels = fieldInfo?.enumValues;
+      if (enumLabels != null && field.value.isNotEmpty) {
+        final raw = field.value[0];
+        return enumLabels[raw] ?? 'Enum $raw';
+      }
+      return formatValue(field.meta.dataType, field.value);
+    }
+
+    // For system block, collect all keys for this field
+    List<({int key, ({BlockMeta meta, List<int> value})? field})> keyedEntries = [];
+    if (isSystemField && cache != null) {
+      final keys = systemKeysForField(fieldIndex);
+      for (final key in keys) {
+        // Use offset 256 to match _loadBlockFields storage
+        final extraField = cache[256 + fieldIndex * 256 + key];
+        if (extraField != null) {
+          keyedEntries.add((key: key, field: extraField));
+        }
+      }
+      if (!keyedEntries.any((e) => e.key == systemKeysForField(fieldIndex).first)) {
+        keyedEntries.insert(0, (key: systemKeysForField(fieldIndex).first, field: field));
+      }
+    }
+
+    if (isSystemField && keyedEntries.length > 1) {
+      return ExpansionTile(
+        dense: true,
+        title: Row(children: [
+          SizedBox(
+              width: 120,
+              child: Text(systemFieldName(fieldIndex),
+                  style: const TextStyle(fontSize: 12, color: Colors.white54))),
+          Expanded(
+              child: Text('[${keyedEntries.length} fields]',
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 13))),
+        ]),
+        children: keyedEntries.map((entry) {
+          final key = entry.key;
+          final f = entry.field;
+          if (f == null) return const SizedBox.shrink();
+          return ListTile(
+            dense: true,
+            contentPadding: const EdgeInsets.only(left: 56, right: 12),
+            title: Row(children: [
+              SizedBox(width: 100, child: Text(systemStructMemberName(fieldIndex, key), style: const TextStyle(fontSize: 11, color: Colors.white54))),
+              Expanded(child: Text(formatSystemValue(f.meta.dataType, f.value, fieldIndex, key), style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
+              for (final flag in primaryFlags)
+                Padding(
+                  padding: const EdgeInsets.only(left: 4),
+                  child: Text(flag,
+                      style: TextStyle(
+                          fontSize: 8,
+                          fontWeight: FontWeight.w700,
+                          color: flag == 'RO' ? kOrange : Colors.white38)),
+                ),
+            ]),
+            subtitle: Text('${dataTypeLabel(f.meta.dataType)} [member=${systemStructMemberName(fieldIndex, key)}]', style: const TextStyle(fontSize: 10)),
+            trailing: PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert, size: 16),
+              onSelected: (action) {
+                if (action == 'edit' && !f.meta.readOnly) {
+                  _editValue(blockType, inst, block, fieldIndex);
+                } else if (action == 'save') {
+                  _saveField(blockType, inst, block, fieldIndex);
+                } else if (action == 'recall') {
+                  _recallField(blockType, inst, block, fieldIndex);
+                }
+              },
+              itemBuilder: (_) => [
+                if (!f.meta.readOnly)
+                  const PopupMenuItem(value: 'edit', child: Text('Edit value')),
+                if (!f.meta.readOnly && f.meta.persistent)
+                  const PopupMenuItem(value: 'save', child: Text('Save to backup')),
+                if (!f.meta.readOnly && f.meta.persistent)
+                  const PopupMenuItem(value: 'recall', child: Text('Recall from backup')),
+              ],
+            ),
+          );
+        }).toList(),
+      );
+    }
+
+    final fieldInfo = isSystemField
+        ? null
+        : blockInfoFor(BlockType.fromValue(block?.meta.typeValue ?? 0))?.field(fieldIndex);
+
+    return ListTile(
+      dense: true,
+      contentPadding: const EdgeInsets.only(left: 40, right: 12),
+      title: Row(children: [
+        SizedBox(
+            width: 120,
+            child: Text(
+                isSystemField ? systemFieldName(fieldIndex) : (fieldInfo?.name ?? 'Field $fieldIndex'),
+                style: const TextStyle(fontSize: 12, color: Colors.white54))),
+        Expanded(
+            child: Text(
+                isSystemField ? formatSystemValue(field.meta.dataType, field.value, fieldIndex, systemKeysForField(fieldIndex).first) : displayValue(),
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 13))),
+        for (final flag in FieldFlags.describe(field.meta.flags))
+          Padding(
+            padding: const EdgeInsets.only(left: 4),
+            child: Text(flag,
+                style: TextStyle(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w700,
+                    color: flag == 'RO' ? kOrange : Colors.white38)),
+          ),
+      ]),
+      subtitle: Text('${dataTypeLabel(field.meta.dataType)}${!isSystemField && fieldInfo?.unit != null ? ' [${fieldInfo!.unit}]' : ''}',
+          style: const TextStyle(fontSize: 11)),
+      trailing: PopupMenuButton<String>(
+        icon: const Icon(Icons.more_vert, size: 18),
+        tooltip: 'Field actions',
+        onSelected: (action) {
+          if (action == 'edit' && !field.meta.readOnly) {
+            _editValue(blockType, inst, block, fieldIndex);
+          } else if (action == 'save') {
+            _saveField(blockType, inst, block, fieldIndex);
+          } else if (action == 'recall') {
+            _recallField(blockType, inst, block, fieldIndex);
+          } else if (action == 'type') {
+            _changeType(blockType, inst, block, fieldIndex);
+          } else if (action == 'delentry') {
+            _deleteEntry(blockType, inst, block, fieldIndex);
+          }
+        },
+        itemBuilder: (_) => [
+          if (!field.meta.readOnly)
+            const PopupMenuItem(value: 'edit', child: Text('Edit value')),
+          if (!field.meta.readOnly && field.meta.persistent)
+            const PopupMenuItem(value: 'save', child: Text('Save to backup')),
+          if (!field.meta.readOnly && field.meta.persistent)
+            const PopupMenuItem(value: 'recall', child: Text('Recall from backup')),
+          if (blockType == BlockType.dynamic.value && !field.meta.readOnly) ...[
+            const PopupMenuItem(value: 'type', child: Text('Change type')),
+            const PopupMenuItem(value: 'delentry', child: Text('Delete entry')),
+          ],
+        ],
+      ),
+      onTap: (!field.meta.readOnly) ? () => _editValue(blockType, inst, block, fieldIndex) : null,
+    );
+  }
+
+}

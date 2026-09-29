@@ -56,6 +56,19 @@ private:
     // Ensures state was recovered from the file (shared prologue of every public method).
     static bool EnsureRecovered();
 
+    // One registry entry read/written by index. The offset arithmetic lives here so it cannot
+    // drift between the scan loops; the caller still decides what a failed read means (stop
+    // the scan or skip the entry).
+    static bool ReadEntry(const char *file, uint32_t index, RegistryEntry &out)
+    {
+        return Storage.ReadFromFile(file, index * sizeof(RegistryEntry),
+                                    sizeof(RegistryEntry), (char *)&out) == sizeof(RegistryEntry);
+    }
+    static bool WriteEntry(const char *file, uint32_t index, const void *data, uint16_t count)
+    {
+        return Storage.WriteToFile(file, index * sizeof(RegistryEntry), count, (const char *)data);
+    }
+
     static uint32_t registry_size;   // Actual registry file size in bytes
     static uint32_t write_head;      // Next append offset (file-relative)
     static int32_t active_count;     // Number of valid entries
@@ -112,14 +125,11 @@ bool SNDB::Available()
             for (uint32_t i = 0; i < num_entries && restored < SNDB_MAX_ENTRIES; i++)
             {
                 RegistryEntry entry;
-                if (Storage.ReadFromFile(SNDBTempName(), i * sizeof(RegistryEntry),
-                                         sizeof(entry), (char *)&entry) != sizeof(entry))
+                if (!ReadEntry(SNDBTempName(), i, entry))
                     break;
                 if (entry.valid != STATE_VALID)
                     continue;
-                Storage.WriteToFile(SNDBFileName(),
-                                    (uint32_t)restored * sizeof(RegistryEntry),
-                                    sizeof(RegistryEntry), (const char *)&entry);
+                WriteEntry(SNDBFileName(), (uint32_t)restored, &entry, sizeof(RegistryEntry));
                 restored++;
             }
         }
@@ -166,8 +176,7 @@ void SNDB::RecoverState()
     for (uint32_t i = 0; i < num_entries; i++)
     {
         RegistryEntry entry;
-        if (Storage.ReadFromFile(SNDBFileName(), i * sizeof(RegistryEntry),
-                                 sizeof(entry), (char *)&entry) != sizeof(entry))
+        if (!ReadEntry(SNDBFileName(), i, entry))
             break;
         if (memcmp(&entry, ff, sizeof(entry)) == 0)
         {
@@ -208,8 +217,7 @@ uint16_t SNDB::FindShortID(const SerialNumber &serial)
     for (uint32_t i = 0; i < num_entries; i++)
     {
         RegistryEntry entry;
-        if (Storage.ReadFromFile(SNDBFileName(), i * sizeof(RegistryEntry),
-                                 sizeof(entry), (char *)&entry) != sizeof(entry))
+        if (!ReadEntry(SNDBFileName(), i, entry))
             break;
         if (entry.valid == STATE_VALID &&
             memcmp(entry.uid.bytes, serial.bytes, sizeof(serial.bytes)) == 0)
@@ -278,14 +286,12 @@ bool SNDB::RemoveDevice(uint16_t short_id)
     for (uint32_t i = 0; i < num_entries; i++)
     {
         RegistryEntry entry;
-        if (Storage.ReadFromFile(SNDBFileName(), i * sizeof(RegistryEntry),
-                                 sizeof(entry), (char *)&entry) != sizeof(entry))
+        if (!ReadEntry(SNDBFileName(), i, entry))
             break;
         if (entry.valid == STATE_VALID && entry.shortID == short_id)
         {
             uint16_t tombstone = STATE_REMOVED;
-            if (Storage.WriteToFile(SNDBFileName(), i * sizeof(RegistryEntry),
-                                    sizeof(uint16_t), (const char *)&tombstone))
+            if (WriteEntry(SNDBFileName(), i, &tombstone, sizeof(uint16_t)))
             {
                 active_count--;
                 found = true;
@@ -309,8 +315,7 @@ bool SNDB::Compact()
     for (uint32_t i = 0; i < num_entries; i++)
     {
         RegistryEntry entry;
-        if (Storage.ReadFromFile(SNDBFileName(), i * sizeof(RegistryEntry),
-                                 sizeof(entry), (char *)&entry) != sizeof(entry))
+        if (!ReadEntry(SNDBFileName(), i, entry))
             break;
         if (entry.valid == STATE_VALID && count < SNDB_MAX_ENTRIES)
             compact_buf[count++] = entry;
@@ -339,8 +344,7 @@ bool SNDB::Compact()
     bool ok = true;
     for (uint32_t i = 0; i < count && ok; i++)
     {
-        ok = Storage.WriteToFile(SNDBFileName(), i * sizeof(RegistryEntry),
-                                 sizeof(RegistryEntry), (const char *)&compact_buf[i]);
+        ok = WriteEntry(SNDBFileName(), i, &compact_buf[i], sizeof(RegistryEntry));
     }
 
     // 3. Compaction complete on this boot: drop the staging file only AFTER every
@@ -373,8 +377,7 @@ uint16_t SNDB::FindLowestAvailableID()
     for (uint32_t i = 0; i < num_entries; i++)
     {
         RegistryEntry entry;
-        if (Storage.ReadFromFile(SNDBFileName(), i * sizeof(RegistryEntry),
-                                 sizeof(entry), (char *)&entry) != sizeof(entry))
+        if (!ReadEntry(SNDBFileName(), i, entry))
             break;
         if (entry.valid == STATE_VALID && entry.shortID < ID_SCAN_LIMIT)
         {
@@ -420,8 +423,7 @@ bool SNDB::GetEntry(uint16_t short_id, RegistryEntry &out_entry)
     for (uint32_t i = 0; i < num_entries; i++)
     {
         RegistryEntry entry;
-        if (Storage.ReadFromFile(SNDBFileName(), i * sizeof(RegistryEntry),
-                                 sizeof(entry), (char *)&entry) != sizeof(entry))
+        if (!ReadEntry(SNDBFileName(), i, entry))
             break;
         if (entry.valid == STATE_VALID && entry.shortID == short_id)
         {
@@ -450,8 +452,7 @@ bool SNDB::IterNext(RegistryEntry &out_entry)
     while (iter_pos < num_entries)
     {
         RegistryEntry entry;
-        if (Storage.ReadFromFile(SNDBFileName(), iter_pos * sizeof(RegistryEntry),
-                                 sizeof(entry), (char *)&entry) != sizeof(entry))
+        if (!ReadEntry(SNDBFileName(), iter_pos, entry))
         {
             iter_pos = num_entries;
             return false;

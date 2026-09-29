@@ -242,6 +242,11 @@ const List<ScriptInstructionDef> scriptInstructions = [
   ScriptInstructionDef(op: 4, category: catService, label: 'Nop', minOperands: 0, maxOperands: 0),
   ScriptInstructionDef(op: 5, category: catService, label: 'Register read (foreign)', destination: true, minOperands: 2, maxOperands: 2, constantIndex: 1, addressIndex: 0, operandRoles: ['device', 'register'], destinationRole: 'value'),
   ScriptInstructionDef(op: 6, category: catService, label: 'Register write (foreign)', minOperands: 3, maxOperands: 3, constantIndex: 1, addressIndex: 0, operandRoles: ['device', 'register', 'value']),
+  // Script (un)loading from within a script (Docs/Services/Script.md functions list). Same
+  // operations as management CIDs 1/2: load answers the loaded id (0xFF on failure) and
+  // unloading a script that is not loaded does nothing. A script cannot (un)load itself.
+  ScriptInstructionDef(op: 7, category: catService, label: 'Load script', destination: true, minOperands: 1, maxOperands: 1, operandRoles: ['file'], destinationRole: 'id'),
+  ScriptInstructionDef(op: 8, category: catService, label: 'Unload script', minOperands: 1, maxOperands: 1, operandRoles: ['script']),
   // Compose
   ScriptInstructionDef(op: 0, category: catCompose, label: 'Compose', destination: true, minOperands: 2, maxOperands: 4, operandRoles: ['index', 'value'], destinationRole: 'container'),
   ScriptInstructionDef(op: 1, category: catCompose, label: 'Extract', destination: true, minOperands: 2, maxOperands: 2, operandRoles: ['container', 'index'], destinationRole: 'element'),

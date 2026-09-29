@@ -1,0 +1,9 @@
+# Test-only analyzer overrides.
+#
+# Tests deliberately print (test names, measured values, the HIL probe output) so `avoid_print`
+# is disabled here while staying on for `lib/`. This file inherits the package rules first.
+include: ../analysis_options.yaml
+
+linter:
+  rules:
+    avoid_print: false

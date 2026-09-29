@@ -244,8 +244,56 @@ void main() {
     expect(validateScriptLines([line], ctx), isEmpty);
   });
 
-  test('Add/Subtract/Multiply/Divide/Negate are no longer instructions', () {
-    for (final op in [1, 2, 3, 4, 8]) {
+  test('Load script / Unload script validate like the management commands', () {
+    ScriptInstructionDef defFor(int op) =>
+        scriptInstructions.firstWhere((d) => d.category == catService && d.op == op);
+
+    // Both are service instructions with exactly one operand.
+    for (final op in [7, 8]) {
+      expect(defFor(op).minOperands, 1);
+      expect(defFor(op).maxOperands, 1);
+    }
+    // Loading answers the loaded id, so it needs a destination; unloading does not.
+    expect(defFor(7).destination, isTrue);
+    expect(defFor(8).destination, isFalse);
+
+    final ctx = ScriptValidationContext(variableTypes: [DataType.integer.value]);
+    // dest = Load(5)
+    expect(
+        validateScriptLines([
+          ScriptLine(
+            destinations: [ScriptSymbol.variable(0)],
+            instruction: ScriptSymbol.instruction(catService, 7),
+            operands: [ScriptSymbol.predefine(preIndex, 5)],
+          )
+        ], ctx),
+        isEmpty);
+    // Load without a destination -> invalid (the loaded id has to go somewhere).
+    expect(
+        validateScriptLines([
+          ScriptLine(
+            instruction: ScriptSymbol.instruction(catService, 7),
+            operands: [ScriptSymbol.predefine(preIndex, 5)],
+          )
+        ], ctx),
+        isNotEmpty);
+    // Unload(3)
+    expect(
+        validateScriptLines([
+          ScriptLine(
+            instruction: ScriptSymbol.instruction(catService, 8),
+            operands: [ScriptSymbol.predefine(preIndex, 3)],
+          )
+        ], ctx),
+        isEmpty);
+    // Unload with no operand -> invalid.
+    expect(
+        validateScriptLines(
+            [ScriptLine(instruction: ScriptSymbol.instruction(catService, 8))], ctx),
+        isNotEmpty);
+  });
+
+  test('Add/Subtract/Multiply/Divide/Negate are no longer instructions', () {    for (final op in [1, 2, 3, 4, 8]) {
       expect(scriptInstructions.any((d) => d.category == catMath && d.op == op), isFalse);
     }
     // The ops that remain: Set(0), Modulo(5), Minimum(6), Maximum(7), Absolute(9), Limit(10).

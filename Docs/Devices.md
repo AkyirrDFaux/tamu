@@ -24,7 +24,7 @@ Modules:
  - LED-Button
 Page size: 4096 Bytes
 Table size: 4 Pages 
-Memory...  a lot
+Memory: ...a lot (MBs)
 ### DAS v0.1 (CH32V003) - Node
 
 | Feature          | Pins                     | Note                                                       |
@@ -52,3 +52,31 @@ Optimization cuts:
 	- Packet handlers are fixed to the TRID
 Page size: 64 Bytes (Fast mode)
 Memory: 128B (single file from offset 0)
+
+### Valu v2.0 (CH32V203G8R6) - Legacy standalone node with USB
+
+| Feature           | Pins                                         | Note                             |
+| ----------------- | -------------------------------------------- | -------------------------------- |
+| LED-Button        | PA2                                          | Red, Active high                 |
+| Buttons           | PB15, PB14, PB13                             | Requires pulldown, active high   |
+| Fan PWM output    | PA8                                          |                                  |
+| Measuring         | PA6 (ADC6), PA1 (ADC1), PA0 (ADC0)           | Reference resistor 10KOhm fixed. |
+| LED strip outputs | PA14, PB8                                    |                                  |
+| OLED Display      | MOSI PA7, CLK PA5, CS PA4, DRST PA3, DDC PB0 |                                  |
+| I2C bus           | SCL PB6, SDA PB7                             |                                  |
+| UART              | RX PA10, TX PA9                              |                                  |
+Services:
+- Mandatory
+- App interface (USB)
+- Dynamic memory
+- Script
+Modules: 
+ - LED Display x2
+ - Fan Output x1
+ - LED-Button
+ - Button x3
+ - OLED Display (TODO)
+ - Resistive measurement x3
+Page size: 256 Bytes (Fast mode)
+Table size: 2 Pages 
+Memory: 8kB

@@ -158,10 +158,23 @@ class RegisterClient {
     return (meta: meta, value: valueSlice(reply, meta.size));
   }
 
+  /// The ValueInfo a *write* carries: passive flags only. The active flags (Not Saved, Script
+  /// Updated, External origin) describe the state a *read* reports - a register sets Not Saved
+  /// itself and scripts/subscriptions declare their own origin, so echoing a previously read
+  /// meta back would mis-declare the write's specification.
+  static BlockMeta _valueInfoForWrite(BlockMeta meta) => BlockMeta(
+      flagsAndType: meta.flagsAndType & ~FieldFlags.activeMask,
+      key: meta.key,
+      size: meta.size);
+
   /// Write field value (CID 2) for a specific block type and instance (static/dynamic blocks).
   /// Payload: BlockInfo (4) + BlockMeta (4) + value
   Future<List<int>?> writeBlockField(int blockType, int instance, int field, int key, BlockMeta meta, List<int> value) async {
-    final payload = [...blockInfoBytes(blockType, instance, field, key), ...meta.toBytes(), ...value];
+    final payload = [
+      ...blockInfoBytes(blockType, instance, field, key),
+      ..._valueInfoForWrite(meta).toBytes(),
+      ...value,
+    ];
     final reply = await request(2, payload: payload);
     if (reply == null || reply.length < 8) return null;
     final echoMeta = BlockMeta.fromBytes(reply, 4);
@@ -361,7 +374,7 @@ class RegisterClient {
 
   Future<List<int>?> _writeDynamicValue(Uint8List bi, BlockMeta meta, List<int> value,
       {Duration? timeout}) async {
-    final reply = await request(2, payload: [...bi, ...meta.toBytes(), ...value],
+    final reply = await request(2, payload: [...bi, ..._valueInfoForWrite(meta).toBytes(), ...value],
         timeout: timeout ?? const Duration(seconds: 4));
     if (reply == null || reply.length < 8) return null;
     final echoMeta = BlockMeta.fromBytes(reply, 4);

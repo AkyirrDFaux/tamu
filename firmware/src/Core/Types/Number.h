@@ -13,22 +13,26 @@
 // Both are exact for results that fit in 32 bits.
 // ---------------------------------------------------------------------------
 
-// High 32 bits of the signed 64-bit product a*b (Hacker's Delight "mulhs"), computed
-// with 16-bit splitting and well-defined unsigned wraparound.
+// High 32 bits of the signed 64-bit product a*b (Hacker's Delight "mulhs").
+// The high halves are split off *signed* deliberately: an all-unsigned decomposition needs
+// 33 bits for the cross terms aH*bL + aL*bH and silently drops the carry out of that sum.
+// (That is exactly what an earlier version did, returning a value 2^16 too low whenever both
+// operands were negative. FixedMul32 only reads the low 16 bits of the result, so it was
+// unaffected - but anyone else calling this would have been off by 65536.)
 inline int32_t MulHigh32(int32_t a, int32_t b)
 {
-    uint32_t ua = (uint32_t)a, ub = (uint32_t)b;
-    uint32_t aH = ua >> 16, aL = ua & 0xFFFF;
-    uint32_t bH = ub >> 16, bL = ub & 0xFFFF;
+    const uint32_t aL = (uint32_t)a & 0xFFFFu;
+    const uint32_t bL = (uint32_t)b & 0xFFFFu;
+    const int32_t aH = a >> 16;
+    const int32_t bH = b >> 16;
 
-    uint32_t t = aL * bL;                                  // low product
-    uint32_t m = aL * bH + aH * bL;                        // cross terms (wraps mod 2^32)
-    uint32_t hi = aH * bH + (m >> 16) + (((m & 0xFFFF) + (t >> 16)) >> 16);
+    const uint32_t lowProduct = aL * bL;
+    // Both intermediates fit in 32 bits: |aH*bL| <= 2147450880 and |aL*bH| <= 2147385345, so
+    // adding the (< 2^16) carry can never reach past INT32_MIN/MAX.
+    const int32_t t = aH * (int32_t)bL + (int32_t)(lowProduct >> 16);
+    const int32_t w1 = (t & 0xFFFF) + aL * bH;
 
-    uint32_t r = hi;
-    if (a < 0) r -= ub;                                    // sign correction
-    if (b < 0) r -= ua;
-    return (int32_t)r;
+    return aH * bH + (t >> 16) + (w1 >> 16);
 }
 
 // (a * b) >> 16 as Q16.16: bits [16..47] of the signed 64-bit product, 32-bit only.
@@ -78,8 +82,14 @@ public:
     constexpr Number(int32_t NewValue) : Value(NewValue << DECIMAL) {}
     // Constructs a Number from an unsigned integer value
     constexpr Number(uint32_t NewValue) : Value(int32_t(NewValue << DECIMAL)) {}
-    // Constructs a Number from a plain int value
+    // Constructs a Number from a plain int value. Needed because int32_t is `long` on the
+    // embedded toolchains, so without it an `int` argument (or anything that promotes to one,
+    // like uint16_t) is ambiguous between the long and unsigned long overloads.
+    // On a 32-bit host int32_t already IS int, where this would be a redefinition of the
+    // first constructor - the native numeric tests define TAMU_INT32_IS_INT to skip it.
+#ifndef TAMU_INT32_IS_INT
     constexpr Number(int NewValue) : Value(NewValue << DECIMAL) {}
+#endif
 
     // Wraps an already-scaled raw 16.16 value without re-scaling
     static constexpr Number FromRaw(int32_t raw)
@@ -229,7 +239,12 @@ inline uint32_t isqrt32(uint32_t x)
 inline Number sqrt(Number A)
 {
     if (A.Value <= 0) return Number(0);
-    return Number::FromRaw((int32_t)(isqrt32((uint32_t)A.Value) << 8));
+    // isqrt32 of the raw value shifted up carries only 8 fractional bits, so the result can
+    // be off by ~2.3 % (the integer sqrt drops a whole unit, worth 256 raw units). One Newton
+    // step in fixed point, r = (r + A/r) / 2, brings that to the Q16.16 quantisation limit.
+    int32_t r = (int32_t)(isqrt32((uint32_t)A.Value) << 8);
+    if (r == 0) return Number(0);
+    return Number::FromRaw((r + FixedDiv32(A.Value, r)) >> 1);
 }
 #else
 // 64-bit variant: full precision, used by ESP32 core.
@@ -259,6 +274,8 @@ inline Number sqrt(Number A)
 #endif // SCALAR_ONLY
 
 #define RAW_PI 205887
+// sqrt(2) in 16.16 - the log range-reduction split point (see log()).
+#define RAW_SQRT2 92682
 // Single shared PI instance: a plain namespace-scope `static const Number` would be
 // duplicated (with internal linkage) in every translation unit including this header.
 inline const Number &GetPI()
@@ -315,16 +332,40 @@ inline Number cos(Number X)
     return sin(Number::FromRaw(X.Value + RAW_HALF_PI));
 }
 
-// Fixed-point atan2(Y, X) returning the angle in radians (approximate)
+#define RAW_ATAN_C0 (-3047)  // Q16.16 of -0.0464964749
+#define RAW_ATAN_C1 10441    // Q16.16 of  0.15931422
+#define RAW_ATAN_C2 (-21471) // Q16.16 of -0.327622764
+
+// Fixed-point atan2(Y, X) returning the angle in radians, in [-PI, PI].
+// Uses the standard rational reduction a = min(|X|,|Y|) / max(|X|,|Y|) with a cubic in a^2,
+// which holds the worst-case error to ~3e-4 rad. (The previous form was off by up to
+// 0.071 rad - 4 degrees - around +-163 deg, which skewed the Polygon/Star sector lookup in
+// the LED renderer.)
 inline Number atan2(Number Y, Number X)
 {
-    // This is not very accurate
-    int32_t Sign = Y > 0 ? 1 : -1;
-    if (X < 0)
-        return Sign * (3 * GetPI() / 4 - GetPI() / 4 * ((X + abs(Y)) / (abs(Y) - X)));
-    else
-        return Sign * (GetPI() / 4 - GetPI() / 4 * ((X - abs(Y)) / (X + abs(Y))));
-};
+    const int32_t ax = abs(X).Value;
+    const int32_t ay = abs(Y).Value;
+    if (ax == 0 && ay == 0)
+        return Number(0);
+
+    const bool yLarger = ay > ax;
+    const int32_t hi = yLarger ? ay : ax;
+    const int32_t lo = yLarger ? ax : ay;
+    const Number a = Number::FromRaw(lo) / Number::FromRaw(hi); // in [0, 1]
+
+    const Number s = a * a;
+    Number t = Number::FromRaw(RAW_ATAN_C0) * s + Number::FromRaw(RAW_ATAN_C1);
+    t = t * s + Number::FromRaw(RAW_ATAN_C2);
+    Number r = (t * s) * a + a;
+
+    if (yLarger)
+        r = Number::FromRaw(RAW_HALF_PI) - r;
+    if (X.Value < 0)
+        r = GetPI() - r;
+    if (Y.Value < 0)
+        r = -r;
+    return r;
+}
 
 // Fixed-point natural logarithm via range reduction plus a Horner polynomial (returns 0 for non-positive input)
 inline Number log(Number x)
@@ -335,7 +376,7 @@ inline Number log(Number x)
     int32_t val = x.Value;
     int32_t log2_count = 0;
 
-    // 1. Range Reduction
+    // 1. Range Reduction: bring the mantissa into [1, 2)...
     if (val >= 0x10000)
     {
         while (val >= 0x20000)
@@ -351,6 +392,17 @@ inline Number log(Number x)
             val <<= 1;
             log2_count--;
         }
+    }
+
+    // ...then centre it on 1 by folding the upper half back down, giving [sqrt(1/2),
+    // sqrt(2)) and |y| <= 0.415 instead of 1. The Horner series below is a 4-term truncation,
+    // so its error grows quickly with |y|: without this the worst case (just below a power of
+    // two) was 0.109 absolute, ~16 % relative at ln 2. Centring cuts it to ~0.002, and the
+    // powers of two stay exact because either way the mantissa lands on y = 0.
+    if (val >= RAW_SQRT2)
+    {
+        val >>= 1;
+        log2_count++;
     }
 
     // 2. Polynomial Approximation using Horner's Method
@@ -380,26 +432,36 @@ inline Number log(Number x)
 inline Number log10(Number x) { return log(x) / Number::FromRaw(150902); } // 1/ln10 in 16.16
 
 // 10^y for any finite y (multiplies only, so 32-bit targets pull in no libgcc helper).
-// 10^frac is built from the binary expansion of the fraction: for every set bit i of the
-// Q16.16 fraction, multiply by 10^(2^-i) (the table below), which is exact to the table's
-// 16-bit resolution. Saturates at the Q16.16 ceiling (~32767) and returns ~0 for very
-// negative y.
+// Saturates at the Q16.16 ceiling (~32767) and returns ~0 for very negative y.
+//
+// Range reduction: y = n + f with n = floor(y) in 0..4 and f in [0,1). Then
+// 10^f = 2^u with u = f*log2(10) = i + v (i in 0..3, v in [0,1)), and 2^v is a quintic.
+// This replaces the 16-entry 10^(2^-i) table with five multiplies: no 64-byte table, fewer
+// iterations (5 vs 16) and a worst-case error of ~0.013 % over the whole range (the table
+// gave 16-bit resolution near the low bits).
+#define RAW_LOG2_10 217706 // Q16.16 of log2(10) = 3.321928
 inline Number pow10(Number y)
 {
     if (y.Value < 0) return Number(1) / pow10(-y);
     // 10^4.5 = 31623, safely inside the Q16.16 range; saturate beyond it.
     if (y.Value >= 294912) return Number::FromRaw(31623 << DECIMAL);
 
-    int32_t n = y.Value >> DECIMAL;                 // 0..4
-    int32_t frac = y.Value & 0xFFFF;                // Q16.16 fraction
-    // 10^(2^-i) for i = 1..16.
-    static const int32_t bits[16] = {
-        207243, 116541,  87394,  75680,  70425,  67937,  66726,  66128,
-         65831,  65684,  65610,  65573,  65554,  65545,  65541,  65538};
-    Number result(1);
-    for (uint8_t i = 0; i < 16; i++)
-        if (frac & (int32_t)(0x8000u >> i)) result = result * Number::FromRaw(bits[i]);
-    while (n-- > 0) result = result * Number(10);
+    const int32_t n = y.Value >> DECIMAL;               // 0..4
+    const int32_t frac = y.Value & 0xFFFF;              // Q16.16 fraction, [0,1)
+    const int32_t u = FixedMul32(frac, RAW_LOG2_10);    // f * log2(10)
+    const int32_t v = u & 0xFFFF;                       // fraction of u
+
+    // 2^v for v in [0,1): Horner with the coefficients (ln 2)^k / k!.
+    int32_t r = FixedMul32(87, v) + 630;
+    r = FixedMul32(r, v) + 3638;
+    r = FixedMul32(r, v) + 15743;
+    r = FixedMul32(r, v) + 45426;
+    r = FixedMul32(r, v) + 65536;
+    r <<= (u >> DECIMAL);                               // * 2^(integer part of u)
+
+    Number result = Number::FromRaw(r);
+    int32_t k = n;
+    while (k-- > 0) result = result * Number(10);
     return result;
 }
 

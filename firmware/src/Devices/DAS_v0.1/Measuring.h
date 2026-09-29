@@ -186,6 +186,13 @@ enum MeasSensorType : uint8_t
 #define LDR_R10_KOHM 7.5
 #define LDR_GAMMA    0.6
 
+// log10(R10/R_ref) in Q16.16 for the {0.33, 10, 330} kOhm references of Rref_kohm, derived
+// from LDR_R10_KOHM - regenerate it if that calibration changes. Folding these two constant
+// logarithms out of the lux path is exactly equivalent (the same numbers to within one Q16.16
+// step, a 0.006 % lux difference) and removes two log() calls and two fixed-point divisions
+// from every sample.
+static const int32_t kLdrLog10R10OverRref[3] = {88903, -8188, -107705};
+
 // Filter state for each channel (kept outside the block so the block layout stays exactly
 // the five documented fields). The CONVERTED measurement is EMA-filtered; the history is
 // re-seeded whenever the auto-range switches the excitation scale.
@@ -264,15 +271,15 @@ static void Measuring_Update(uint8_t index, ResistiveMeasStruct *m, uint16_t raw
 
     case MeasLDR10K: // lux from the GL55 CdS photoresistor (datasheet/dsh.520-084.1.pdf)
     {
-        // ratio = in/(ADCRES-in) = R_sensor/R_ref, and the datasheet relation
-        //   R(E) = R10 * (E/10)^-gamma  =>  E = 10 * (R10/(R_ref*ratio))^(1/gamma)
-        //        = 10^(1 + (log10(R10) - log10(R_ref) - log10(ratio))/gamma).
-        // Working in the log domain keeps every intermediate well inside Q16.16 (the
-        // resistance itself would overflow for the 330k reference and underflow for 330R).
+        // Both R terms are constants, so log10(R10) - log10(R_ref) folds into the per-range
+        // table below (the old form recomputed those two log10 calls - two log() calls and two
+        // fixed-point divisions - on every sample). What remains is one log() call plus a
+        // constant division, then the shared pow10.
         if (in < N(1)) in = N(1);
         if (in > N(1022)) in = N(1022);
-        Number ratio = in / (ADCRES - in);
-        Number decades = (log10(N(LDR_R10_KOHM)) - log10(Rref_kohm[range]) - log10(ratio)) / N(LDR_GAMMA);
+        const Number ratio = in / (ADCRES - in);
+        const Number log10Ratio = log(ratio) / Number::FromRaw(150902); // 1/ln 10, as log10() does
+        const Number decades = (Number::FromRaw(kLdrLog10R10OverRref[range]) - log10Ratio) / N(LDR_GAMMA);
         in = pow10(N(1) + decades);
         break;
     }
@@ -282,7 +289,6 @@ static void Measuring_Update(uint8_t index, ResistiveMeasStruct *m, uint16_t raw
     {
         if (in >= ADCRES) in = N(1022);
         if (in < N(1)) in = N(1);
-        // in/(ADCRES - in) = R_sensor/R_ref; normalize to R_sensor/nominal.
         in = N(1) / (N(0.003354) + log((in / (ADCRES - in)) *
                    (Rref_kohm[range] / (m->SensorType == MeasNTC100K ? N(100.0) : N(10.0)))) / N(3950)) - N(273.15);
         break;

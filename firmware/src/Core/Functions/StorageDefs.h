@@ -1,0 +1,98 @@
+#pragma once
+
+// Storage geometry, the flash backend hooks and the FileEntry helpers.
+//
+// Part of Core/Functions/Storage.h (included from there).
+
+#include <cstring>
+#include <cstdint>
+#include "Core/Functions/Log.h"
+
+
+// Total storage flash available to the file layer. Constant at compile time: the device
+// build flags define it (see platformio.ini), so the directory/data layout never depends on
+// runtime values and no RAM is spent caching flash geometry.
+#ifndef STORAGE_FLASH_SIZE
+#define STORAGE_FLASH_SIZE 0x10000
+#endif
+// Filesystem block/page size: allocation granularity and erase unit. Defined per device
+// (4096 on ESP32-based devices; 64 on the CH32V003 DAS node, matching its hardware erase
+// page).
+#ifndef STORAGE_BLOCK_SIZE
+#define STORAGE_BLOCK_SIZE 4096
+#endif
+#define PAGE_SIZE STORAGE_BLOCK_SIZE
+
+// Upper bound on allocatable data pages (worst-case flash geometry); sizes the per-call
+// usage bitmap in FindSpace (STORAGE_FLASH_SIZE / PAGE_SIZE bits).
+#define STORAGE_MAX_BLOCKS ((STORAGE_FLASH_SIZE / PAGE_SIZE) + 1)
+
+// --- Flash access (implemented per device, see Devices/<device>/Storage.h) ---
+bool Storage_FlashInit();                              // find/open the storage partition
+uint32_t Storage_FlashRead(uint32_t offset, void *data, uint32_t size);   // Reads `size` bytes from flash at `offset`; returns bytes actually read (0 on failure)
+bool Storage_FlashWrite(uint32_t offset, const void *data, uint32_t size); // Writes `size` bytes to flash at `offset`
+bool Storage_FlashErase(uint32_t offset, uint32_t size);   // Erases `size` bytes of flash starting at `offset`
+bool Storage_FlashFormat();                            // Wipes the entire storage region (per-device)
+
+// File record format (16 bytes, naturally 4-aligned, Docs/Services/Storage.md):
+// Offset is from flash start, Filesize in bytes, Name is 8 plain-text characters.
+struct FileEntry
+{
+    uint32_t offset;    // 0x00 = invalidated entry, 0xFFFFFFFF = unwritten slot
+    uint32_t size;
+    char name[8];
+};
+
+#define TABLE_ENTRY_SIZE sizeof(FileEntry)
+
+// Number of whole pages a byte size occupies, clamped to [1, MAX_DATA_BLOCKS].
+// Plain `(size + PAGE_SIZE - 1) / PAGE_SIZE` overflows uint32 for sizes near
+// 0xFFFFFFFF (the Storage service passes untrusted sizes straight in), silently
+// yielding a tiny block count for a huge file.
+static inline uint32_t BlocksForSize(uint32_t size)
+{
+    if (size > (0xFFFFFFFFu - PAGE_SIZE + 1))
+        return (0xFFFFFFFFu / PAGE_SIZE) + 1; // saturate: no overflow
+    uint32_t blocks = (size + PAGE_SIZE - 1) / PAGE_SIZE;
+    if (blocks == 0) blocks = 1;
+    if (blocks > STORAGE_MAX_BLOCKS) blocks = STORAGE_MAX_BLOCKS;
+    return blocks;
+}
+
+// Number of 32-bit pointer slots in the first (pointer) page
+#define PTR_SLOTS (PAGE_SIZE / 4)
+
+// File-table slot state (Docs/Services/Storage.md): offset 0x00 = invalidated entry,
+// 0xFFFFFFFF = unused slot, anything else = a real (page-aligned) flash offset.
+static inline bool FileSlotIsFree(uint32_t offset)
+{
+    return offset == 0x00 || offset == 0xFFFFFFFF;
+}
+static inline bool FileEntryIsValid(uint32_t offset)
+{
+    return !FileSlotIsFree(offset);
+}
+
+// Copies a plain C string into the 8-byte record form, space-padded to the full width so
+// names compare equal with an exact 8-byte memcmp regardless of how they were supplied.
+static inline void PackName(const char *plain, char out[8])
+{
+    uint8_t i = 0;
+    for (; i < 8 && plain && plain[i]; i++)
+        out[i] = plain[i];
+    for (; i < 8; i++)
+        out[i] = ' ';
+}
+
+// Compares an on-flash (space-padded) record name against a plain C string. A raw
+// `memcmp(record, "SUBREQ", 8)` compares the record's padding spaces against the C
+// string's NUL terminator and always differs for names shorter than 8 chars - which
+// silently broke FindInFiletable/DeleteFile and left a new SUBREQ/DT_/DV_ record behind
+// on every save. Pack the plain name first so both sides use the same 8-byte form.
+static inline bool NameMatch(const char record[8], const char *plain)
+{
+    char packed[8];
+    PackName(plain, packed);
+    return memcmp(record, packed, 8) == 0;
+}
+

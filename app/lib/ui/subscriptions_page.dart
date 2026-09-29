@@ -181,7 +181,7 @@ Widget _buildRequesterTab() {
         child: SizedBox(
           width: double.infinity,
           child: FilledButton(
-            onPressed: _showAddSubscriptionDialog,
+            onPressed: () => _showSubscriptionDialog(),
             style: FilledButton.styleFrom(
               padding: const EdgeInsets.symmetric(vertical: 14),
             ),
@@ -223,7 +223,7 @@ Widget _buildRequesterTab() {
                 _detailRow('Min Interval', '${sub.minTimeMs} ms'),
                 const SizedBox(height: 8),
                 FilledButton(
-                  onPressed: () => _showEditSubscriptionDialog(sub),
+                  onPressed: () => _showSubscriptionDialog(sub),
                   child: const Text('Edit'),
                 ),
               ],
@@ -256,26 +256,15 @@ Widget _buildRequesterTab() {
     return '$typeLabel[$inst].f$field.k$key';
   }
 
-  void _showAddSubscriptionDialog() {
+  /// Opens the create/edit dialog: `existing` selects edit mode, null creates.
+  void _showSubscriptionDialog([RequesterSubscription? existing]) {
     showDialog(
       context: context,
       builder: (context) => SubscriptionDialog(
         client: _client,
         regClient: _regClient,
         currentSubs: _requesterSubs,
-        onSaved: _loadSubscriptions,
-      ),
-    );
-  }
-
-  void _showEditSubscriptionDialog(RequesterSubscription sub) {
-    showDialog(
-      context: context,
-      builder: (context) => SubscriptionDialog(
-        client: _client,
-        regClient: _regClient,
-        currentSubs: _requesterSubs,
-        existing: sub,
+        existing: existing,
         onSaved: _loadSubscriptions,
       ),
     );

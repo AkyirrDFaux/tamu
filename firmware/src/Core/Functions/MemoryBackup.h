@@ -1,0 +1,153 @@
+#pragma once
+
+// Backup-file helpers (the backup-name/read/write trio)
+//
+// Part of Memory.h, split for readability; included from there.
+
+#include <cstdint>
+#include <cstddef>
+#include <cstring>
+#include "Core/Functions/MemoryTypes.h"
+#include "Core/Functions/Packet.h"
+#include "Core/Functions/Storage.h"
+
+void DispatchPacket(const PacketFrame &frame);
+
+#define INVALID_BLOCK 0xFF
+#define INVALID_INDEX 0xFF
+
+// Capacity of a serialised service backup buffer (Dynamic/Keyed/System backup files).
+// RAM-starved devices (DAS) build with a smaller value via the MEMORY_BACKUP_CAP build flag.
+#ifndef MEMORY_BACKUP_CAP
+#define MEMORY_BACKUP_CAP 2048
+#endif
+
+// Block numbers are local to each memory service: Dynamic and Keyed Memory each
+// number their blocks independently from 0. The service a request targets is carried by the
+// packet's SRV TGT (ServiceType), never by the block number itself.
+struct BlockIndex
+{
+    uint8_t Block = INVALID_BLOCK;
+    uint8_t Field = INVALID_INDEX;
+    uint8_t Key = INVALID_INDEX;
+    uint8_t Padding = 0;
+};
+
+// Sends a single response packet back to the requester (only if REQACK was set).
+__attribute__((noinline)) void SendResponse(const PacketFrame &frame, const uint8_t *payload, uint16_t len)
+{
+    if (!(frame.flags & FLAG_REQACK))
+        return;
+    PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.srv_tgt,
+                     FLAG_TYPE | FLAG_START | FLAG_STOP, payload, len);
+    DispatchPacket(tx_frame);
+}
+
+// Sends a one-byte status response (0 = OK, otherwise a non-zero failure code).
+// Failures are logged on the core (DeviceLog is a no-op on textless nodes): the
+// service tag, CID and the request's block/field/key give a full audit trail for
+// every rejected memory operation without per-call-site logging.
+__attribute__((noinline)) void RespondStatus(const PacketFrame &frame, bool ok)
+{
+    if (!ok)
+    {
+#ifndef DEVICE_LOG_TEXTLESS
+        const char *tag = "MEM";
+        switch (GetServiceType(frame.srv_tgt))
+        {
+            case ServiceType::Storage:        tag = "STORAGE"; break;
+            default: break;
+        }
+        uint16_t block = INVALID_INDEX, field = INVALID_INDEX, key = INVALID_INDEX;
+        if (PayloadBytes(frame) >= sizeof(BlockIndex))
+        {
+            const BlockIndex *idx = reinterpret_cast<const BlockIndex *>(frame.payload);
+            block = idx->Block; field = idx->Field; key = idx->Key;
+        }
+        DeviceLog(tag, "CID %u failed block=%u field=%u key=%u",
+                  (unsigned)GetServiceCID(frame.srv_tgt),
+                  (unsigned)block, (unsigned)field, (unsigned)key);
+#endif
+        // Structured report (LogHandler CID 0): reaches the core's log DB even
+        // from textless nodes; code = CID so failures dedup per service+op.
+        ReportLog(MakeLog(false, (uint8_t)GetServiceType(frame.srv_tgt), GetServiceCID(frame.srv_tgt), 0));
+    }
+    uint8_t status = ok ? 0 : 0xFF;
+    SendResponse(frame, &status, 1);
+}
+
+// Derives the staging-file name for an atomic backup update: the last character of the
+// padded 8-byte name becomes '~' ("STATLOG " -> "STATLOG~"). Backup names never end in '~'.
+inline void BackupTempName(const char name[8], char out[8])
+{
+    memcpy(out, name, 8);
+    out[7] = '~';
+}
+
+// Writes `data` to the backup file `name` atomically (NOR-safe copy-and-rename):
+inline bool WriteBackupFile(const char name[8], const uint8_t *data, uint16_t len)
+{
+#ifdef USE_FIXED_STORAGE
+    // The reduced file system (the DAS) has exactly one pre-allocated file per settings name
+    // and its RenameFile is a no-op, so the staging dance below cannot work there: CreateFile
+    // of the temporary name fails outright, which made *every* static save on the DAS fail
+    // (status 255, STATLOG left untouched - found on the rig; the block's Not-Saved flag could
+    // never clear). Its CreateFile erases the region and hands back the file ready for the
+    // whole content, so the write goes straight to the live name. No staging means no atomic
+    // swap - acceptable for the deliberately reduced file system, and still better than a save
+    // that cannot complete at all.
+    if (!Storage.CreateFile(name, len))
+        return false;
+    return Storage.WriteToFile(name, 0, len, (const char *)data);
+#else
+    char tmp[8];
+    BackupTempName(name, tmp);
+    if (memcmp(name, tmp, 8) == 0)
+        return false; // naming convention violation guard
+
+    // Remove a staging file left over from an interrupted update.
+    if (Storage.FileExists(tmp) != 0xFFFFFFFF)
+        Storage.DeleteFile(tmp);
+
+    // Stage the new generation in its own file (CreateFile provides freshly erased blocks).
+    if (!Storage.CreateFile(tmp, len))
+        return false;
+    if (!Storage.WriteToFile(tmp, 0, len, (const char *)data))
+        return false;
+
+    // Commit atomically: the staging file becomes the live backup under its final name.
+    if (!Storage.RenameFile(tmp, name))
+    {
+        Storage.DeleteFile(tmp);
+        return false;
+    }
+    return true;
+#endif
+}
+
+// Reads a backup file into `out`; returns the byte count (0 if absent or too large).
+inline uint16_t ReadBackupFile(const char name[8], uint8_t *out, uint16_t cap)
+{
+    uint32_t off, sz;
+    if (!Storage.GetFileInfo(name, &off, &sz)) return 0;
+    if (sz > cap) sz = cap;
+    if (Storage_FlashRead(off, out, sz) != sz) return 0;
+    return (uint16_t)sz;
+}
+
+//**********************************************************************
+//**********************************************************************
+// Dynamic memory block (Docs/Services/Register.md "Dynamic blocks").
+//
+// A block's contents are a FLAT table of entries, strictly ascending by Field&Key
+// (u16 = (field<<8)|key); fields and keys are equal entry types. Each entry carries a
+// ValueInfo (FlagsAndType u16 + Size u8) and a MemoryOffset into one of the block's two
+// value spaces (volatile / persistent, chosen by the entry's Persistent flag).
+// Deleting an entry removes it from the table (the sequential record compacts);
+// a deleted/skipped BLOCK keeps a tombstone slot in the registry.
+
+// Combines a field index and a key into the 16-bit Field&Key sort key.
+inline uint16_t MakeFieldKey(uint8_t field, uint8_t key) { return (uint16_t)(((uint16_t)field << 8) | key); }
+inline uint8_t FieldOf(uint16_t fieldKey) { return (uint8_t)(fieldKey >> 8); }
+inline uint8_t KeyOf(uint16_t fieldKey) { return (uint8_t)fieldKey; }
+

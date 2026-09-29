@@ -43,37 +43,30 @@ class SubscriptionClient {
     }
   }
 
-  /// CID 2: Get provider subscriptions (device as provider)
-  Future<List<ProviderSubscription>> getProviderSubscriptions() async {
-    final reply = await _request(2, payload: []);
+  /// Decodes a "count + fixed-size entries" reply: the provider table is 32-byte entries and
+  /// the requester table 28-byte ones (CID 2 and 3 respectively).
+  Future<List<T>> _getSubscriptionList<T>(
+      int cid, int entrySize, T Function(int index, List<int> bytes) decode) async {
+    final reply = await _request(cid, payload: []);
     if (reply == null || reply.isEmpty) return [];
 
     final count = reply[0];
-    final result = <ProviderSubscription>[];
+    final result = <T>[];
     int offset = 1;
-    for (int i = 0; i < count && offset + 32 <= reply.length; i++) {
-      final entryBytes = reply.sublist(offset, offset + 32);
-      result.add(ProviderSubscription.fromBytes(i, entryBytes));
-      offset += 32;
+    for (int i = 0; i < count && offset + entrySize <= reply.length; i++) {
+      result.add(decode(i, reply.sublist(offset, offset + entrySize)));
+      offset += entrySize;
     }
     return result;
   }
+
+  /// CID 2: Get provider subscriptions (device as provider)
+  Future<List<ProviderSubscription>> getProviderSubscriptions() =>
+      _getSubscriptionList(2, 32, ProviderSubscription.fromBytes);
 
   /// CID 3: Get requester subscriptions (device as requester - Tamu only)
-  Future<List<RequesterSubscription>> getRequesterSubscriptions() async {
-    final reply = await _request(3, payload: []);
-    if (reply == null || reply.isEmpty) return [];
-
-    final count = reply[0];
-    final result = <RequesterSubscription>[];
-    int offset = 1;
-    for (int i = 0; i < count && offset + 28 <= reply.length; i++) {
-      final entryBytes = reply.sublist(offset, offset + 28);
-      result.add(RequesterSubscription.fromBytes(i, entryBytes));
-      offset += 28;
-    }
-    return result;
-  }
+  Future<List<RequesterSubscription>> getRequesterSubscriptions() =>
+      _getSubscriptionList(3, 28, RequesterSubscription.fromBytes);
 
   /// CID 4: Set requester subscription (create/update/delete)
   /// Index only = delete

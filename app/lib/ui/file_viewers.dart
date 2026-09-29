@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 
 import '../core/block_registry.dart' show blockInfoFor;
 import '../core/storage_client.dart' show normalizeFileName;
+import '../core/device_backup.dart';
 import '../core/types.dart';
 import 'theme.dart' show kOrange, kSurfaceAlt;
 import 'value_editor.dart' show dataTypeLabel, formatValue;
@@ -318,56 +319,6 @@ class MemoryBackupView extends StatelessWidget {
 
   const MemoryBackupView({super.key, required this.fileName, required this.data, this.blocks});
 
-  static int _u16(List<int> b, int o) =>
-      o + 1 < b.length ? (b[o] | (b[o + 1] << 8)) : 0;
-  static int _align4(int v) => (v + 3) & ~3;
-
-  // -------------------------------------------------------------------------
-  // Dynamic block table (firmware Memory.h SaveDynamicBlockFiles): DT_<hex2>
-  //   u8 name_len, name[], u16 type, u16 entry_count, then per entry
-  //   u16 fieldKey (field<<8|key), u16 flagsAndType, u8 size, u8 pad.
-  // The block's persistent value space lives in the sibling DV_<hex2> file.
-  // -------------------------------------------------------------------------
-  List<Widget> _parseDynamicTable() {
-    final b = data;
-    if (b.isEmpty) return [const Text('(corrupt table)')];
-    var c = 0;
-    final nameLen = b[c++];
-    if (c + nameLen + 4 > b.length) return [const Text('(corrupt table)')];
-    final name = String.fromCharCodes(b.sublist(c, c + nameLen));
-    c += nameLen;
-    final typeValue = _u16(b, c);
-    final entryCount = _u16(b, c + 2);
-    c += 4;
-
-    final children = <Widget>[];
-    for (var i = 0; i < entryCount; i++) {
-      if (c + 6 > b.length) break;
-      final fieldKey = _u16(b, c);
-      final flagsAndType = _u16(b, c + 2);
-      final size = b[c + 4];
-      c += 6;
-      final meta = BlockMeta(
-          flagsAndType: flagsAndType, key: fieldKey & 0xFF, size: size);
-      final flags = FieldFlags.describe(flagsAndType);
-      children.add(ListTile(
-        dense: true,
-        contentPadding: const EdgeInsets.only(left: 40, right: 12),
-        title: Text(
-            'f${fieldKey >> 8}.k${fieldKey & 0xFF}: ${dataTypeLabel(meta.dataType)}'
-            '  $size B',
-            style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
-        subtitle: Text(flags.isEmpty ? '(no flags)' : flags.join(' · '),
-            style: const TextStyle(fontSize: 10, color: Colors.white38)),
-      ));
-    }
-    return [
-      _blockCard('${name.isEmpty ? 'Block' : name} (${blockTypeLabel(typeValue)})',
-          '$entryCount entries', children)
-    ];
-  }
-
-
   Widget _blockCard(String title, String subtitle, List<Widget> children) {
     return Card(
       color: kSurfaceAlt,
@@ -390,57 +341,64 @@ class MemoryBackupView extends StatelessWidget {
     return formatValue(meta.dataType, bytes);
   }
 
-  // ---------------------------------------------------------------------------
-  // STATLOG decoder - the static-block backup (firmware StaticMemory.h): a
-  // sequential log of BlockIndex[4] + BlockMeta[4] + value[4-aligned] entries.
-  // BlockIndex.block == 0xFF ends the log, 0xFE marks a System-block entry
-  // (field 6 = Name, 7 = NetID); other indexes address the static registry.
-  // ---------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Dynamic block table (DT_<hex2>, decoded by device_backup.dart): the block's
+  // persistent value space lives in the sibling DV_<hex2> file.
+  // -------------------------------------------------------------------------
+  List<Widget> _parseDynamicTable() {
+    final table = decodeDynamicTable(data);
+    if (table == null) return [const Text('(corrupt table)')];
 
-  static const int _systemBackup = 0xFE;
-  static const int _systemNameField = 6;
-  static const int _systemNetIdField = 7;
+    final children = <Widget>[];
+    for (final e in table.entries) {
+      final flags = FieldFlags.describe(e.flagsAndType);
+      children.add(ListTile(
+        dense: true,
+        contentPadding: const EdgeInsets.only(left: 40, right: 12),
+        title: Text(
+            'f${e.field}.k${e.key}: ${dataTypeLabel(e.meta.dataType)}  ${e.size} B',
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+        subtitle: Text(flags.isEmpty ? '(no flags)' : flags.join(' · '),
+            style: const TextStyle(fontSize: 10, color: Colors.white38)),
+      ));
+    }
+    return [
+      _blockCard(
+          '${table.name.isEmpty ? 'Block' : table.name} (${blockTypeLabel(table.typeValue)})',
+          '${table.entries.length} entries',
+          children)
+    ];
+  }
 
+  // -------------------------------------------------------------------------
+  // STATLOG - the static-block + System backup, decoded by device_backup.dart.
+  // -------------------------------------------------------------------------
   List<Widget> _parseStatlog() {
     final rows = <Widget>[];
-    final b = data;
-    if (b.length < 8) return [const Text('(corrupt backup)')];
-    var c = 0;
-    while (c + 8 <= b.length) {
-      final blockIdx = b[c];
-      if (blockIdx == 0xFF) break; // end of log
-      final field = b[c + 1];
-      final meta = BlockMeta.fromBytes(b, c + 4);
-      final el = 8 + _align4(meta.size);
-      if (c + el > b.length) break;
-      final value = b.sublist(c + 8, c + 8 + meta.size);
-      c += el;
-
+    for (final r in decodeStatlog(data)) {
       String title;
       String subtitle;
-      if (blockIdx == _systemBackup) {
-        title = field == _systemNameField
+      if (r.isSystem) {
+        title = r.field == systemNameField
             ? 'System Name'
-            : (field == _systemNetIdField ? 'NetID' : 'System field $field');
+            : (r.field == systemNetIdField ? 'NetID' : 'System field ${r.field}');
         subtitle = 'System block';
       } else {
-        final blk = (blocks != null && blockIdx < blocks!.length)
-            ? blocks![blockIdx]
+        final blk = (blocks != null && r.blockIdx < blocks!.length)
+            ? blocks![r.blockIdx]
             : null;
-        final info = blk == null
-            ? null
-            : blockInfoFor(BlockType.fromValue(blk.type));
-        title = '${(blk?.name ?? 'Block $blockIdx').trim()}'
-            '${info?.field(field) == null ? '' : ' · ${info!.field(field)!.name}'}';
+        final info = blk == null ? null : blockInfoFor(BlockType.fromValue(blk.type));
+        title = '${(blk?.name ?? 'Block ${r.blockIdx}').trim()}'
+            '${info?.field(r.field) == null ? '' : ' · ${info!.field(r.field)!.name}'}';
         subtitle = blk == null
-            ? 'static block $blockIdx'
+            ? 'static block ${r.blockIdx}'
             : BlockType.fromValue(blk.type).label;
       }
       rows.add(ListTile(
         dense: true,
         contentPadding: const EdgeInsets.only(left: 16, right: 12),
         title: Row(children: [
-          Expanded(child: Text('$title: ${_formatBytes(meta, value)}',
+          Expanded(child: Text('$title: ${_formatBytes(r.meta, r.value)}',
               style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
         ]),
         subtitle: Text(subtitle, style: const TextStyle(fontSize: 10, color: Colors.white38)),
@@ -450,43 +408,34 @@ class MemoryBackupView extends StatelessWidget {
     return rows;
   }
 
-  // ---------------------------------------------------------------------------
-  // SUBREQ decoder - the requester-subscription backup (firmware
-  // Subscriptions.h SaveRequesterTable): u8 count, then per entry (26 B)
-  // targetReg u32, sourceReg u32, providerAddr u16, trigger u8 + 3 pad,
-  // periodMs u32, minTimeMs u32, deadzone Number (16.16).
-  // ---------------------------------------------------------------------------
-
+  // -------------------------------------------------------------------------
+  // SUBREQ - the requester-subscription backup, decoded by device_backup.dart.
+  // -------------------------------------------------------------------------
   static String _regLabel(int reg) =>
       '${blockTypeLabel(blockInfoType(reg))}[${blockInfoInstance(reg)}]'
       '.f${blockInfoField(reg)}.k${blockInfoKey(reg)}';
 
   List<Widget> _parseSubreq() {
-    final b = data;
-    if (b.isEmpty) return [const Text('(corrupt backup)')];
-    final count = b[0];
-    if (count > 16) return [Text('(corrupt: $count entries claimed)')];
-    if (count == 0) return [const Text('(no subscriptions)')];
-    final rows = <Widget>[];
-    var c = 1;
-    for (var i = 0; i < count && c + 26 <= b.length; i++) {
-      final targetReg = uint32FromBytes(b, c); c += 4;
-      final sourceReg = uint32FromBytes(b, c); c += 4;
-      final providerAddr = b[c] | (b[c + 1] << 8); c += 2;
-      final trigger = b[c]; c += 4; // trigger + 3 pad bytes
-      final periodMs = uint32FromBytes(b, c); c += 4;
-      final minTimeMs = uint32FromBytes(b, c); c += 4;
-      final deadzone = numberFromBytes(b, c); c += 4;
+    if (data.isEmpty) return [const Text('(corrupt backup)')];
+    final claimed = data[0];
+    if (claimed > maxSubreqEntries) {
+      return [Text('(corrupt: $claimed entries claimed)')];
+    }
+    if (claimed == 0) return [const Text('(no subscriptions)')];
 
-      final triggerLabel = TriggerType.fromValue(trigger).label;
-      final dz = deadzone == 0 ? '' : '  ·  deadzone $deadzone';
+    final rows = <Widget>[];
+    final entries = decodeSubreq(data);
+    for (var i = 0; i < entries.length; i++) {
+      final e = entries[i];
+      final triggerLabel = TriggerType.fromValue(e.trigger).label;
+      final dz = e.deadzone == 0 ? '' : '  ·  deadzone ${e.deadzone}';
       rows.add(ListTile(
         dense: true,
         leading: const Icon(Icons.sync_alt, size: 20, color: kOrange),
-        title: Text('#${i + 1}  ${_regLabel(targetReg)}  <-  ${_regLabel(sourceReg)}',
+        title: Text('#${i + 1}  ${_regLabel(e.targetReg)}  <-  ${_regLabel(e.sourceReg)}',
             style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
-        subtitle: Text('$triggerLabel  ·  every $periodMs ms  ·  '
-            'min $minTimeMs ms$dz  ·  provider ${idToString(providerAddr)}',
+        subtitle: Text('$triggerLabel  ·  every ${e.periodMs} ms  ·  '
+            'min ${e.minTimeMs} ms$dz  ·  provider ${idToString(e.providerAddr)}',
             style: const TextStyle(fontSize: 11)),
       ));
     }

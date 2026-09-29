@@ -110,37 +110,29 @@ class ScriptClient {
 
   static Uint8List _bi(int inst, int field, int key) => blockInfoBytes(scriptBlockType, inst, field, key);
 
-  /// Registers enum level 1: the loaded slots (same list as [loadedScripts]).
-  Future<List<int>> enumerateInstances() async {
+  /// Registers "enumerate" reply: one level byte + BlockInfo in, then a count at offset 4 and
+  /// that many bytes. Level 1 = the loaded slots, level 3 = the keys (entity indexes) of a
+  /// script field.
+  Future<List<int>> _enumerate(int level, int inst, int field) async {
     final reply = await _request(
       ServiceType.register,
       0,
-      payload: [1, ..._bi(0, 0, 0)],
+      payload: [level, ..._bi(inst, field, 0)],
     );
     if (reply == null || reply.length < 5) return const [];
     final count = reply[4];
-    final slots = <int>[];
+    final out = <int>[];
     for (var i = 0; i < count && 5 + i < reply.length; i++) {
-      slots.add(reply[5 + i]);
+      out.add(reply[5 + i]);
     }
-    return slots;
+    return out;
   }
 
+  /// Registers enum level 1: the loaded slots (same list as [loadedScripts]).
+  Future<List<int>> enumerateInstances() => _enumerate(1, 0, 0);
+
   /// Registers enum level 3: the keys (entity indexes) of a script field.
-  Future<List<int>> enumerateKeys(int inst, int field) async {
-    final reply = await _request(
-      ServiceType.register,
-      0,
-      payload: [3, ..._bi(inst, field, 0)],
-    );
-    if (reply == null || reply.length < 5) return const [];
-    final count = reply[4];
-    final keys = <int>[];
-    for (var i = 0; i < count && 5 + i < reply.length; i++) {
-      keys.add(reply[5 + i]);
-    }
-    return keys;
-  }
+  Future<List<int>> enumerateKeys(int inst, int field) => _enumerate(3, inst, field);
 
   /// Reads one Register entry (CID 1). Returns null when the entry does not exist.
   Future<ScriptEntry?> readEntry(int inst, int field, int key) async {

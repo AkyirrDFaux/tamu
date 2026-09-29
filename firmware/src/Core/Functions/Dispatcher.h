@@ -191,65 +191,51 @@ void LoadAllBackups()
     uint16_t n = ReadBackupFile(StaticLogName(), buf, sizeof(buf));
     if (n > 0)
     {
-        for (uint16_t bi = 0; bi < static_block_num; bi++)
-        {
-            const StaticBlockDescriptor &block = static_block_registry[bi];
-            for (uint16_t fi = 0; fi < block.Schema->MapCount; fi++)
-            {
-                // Only writable Persistent fields are retained after reboot (Register.md);
-                // volatile and read-only fields are never restored from the backup.
-                if (!(block.Schema->Map[fi].FlagsAndType & FieldFlags::Persistent) ||
-                    (block.Schema->Map[fi].FlagsAndType & FieldFlags::ReadOnly))
-                    continue;
-                const uint8_t *val = nullptr;
-                uint8_t vl = 0;
-                uint16_t c = 0;
-                while (c + kLogEntryHeaderSize <= n)
-                {
-                    uint8_t b = buf[c];
-                    if (b == 0xFF) break;
-                    // Entry layout: BlockIndex[4] + BlockMeta[4] + Value. The value
-                    // size lives in the BlockMeta.Size byte, the LAST byte of the
-                    // 8-byte header (c + kLogEntryHeaderSize - 1).
-                    uint8_t sz = buf[c + kLogEntryHeaderSize - 1];
-                    uint16_t el = LogEntrySize(sz);
-                    if (el > n - c) break;
-                    if (b == bi && buf[c + 1] == fi)
-                    {
-                        val = buf + c + kLogEntryHeaderSize;
-                        vl = sz;
-                    }
-                    c += el;
-                }
-                if (!val || vl != block.Schema->Map[fi].Size) continue;
-                FieldResult fr = block.Get(fi);
-                if (fr.Data)
-                    memcpy(fr.Data, val, vl);
-            }
-        }
-
-        // System block persistent fields (Name 6, NetID 7) live in the same STATLOG
-        // mirror under the SYSTEM_BLOCK_BACKUP marker (no separate DEVNAME/NETID files).
-        for (uint16_t c = 0; c + kLogEntryHeaderSize <= n; )
+        // One pass over the log. Each entry carries its block index and field, so there is
+        // no need to scan the log once per block/field (the previous nested walk was O(blocks
+        // x fields x entries)); the last entry for a field still wins, as before.
+        for (uint16_t c = 0; c + kLogEntryHeaderSize <= n;)
         {
             uint8_t b = buf[c];
             if (b == 0xFF) break;
+            // Entry layout: BlockIndex[4] + BlockMeta[4] + Value. The value size lives in
+            // the BlockMeta.Size byte, the LAST byte of the 8-byte header.
             uint8_t sz = buf[c + kLogEntryHeaderSize - 1];
             uint16_t el = LogEntrySize(sz);
-            if (c + el > n) break;
+            if (el > n - c) break;
+            const uint8_t field = buf[c + 1];
+            const uint8_t *val = buf + c + kLogEntryHeaderSize;
+
             if (b == SYSTEM_BLOCK_BACKUP)
             {
-                uint8_t field = buf[c + 1];
-                uint16_t val_c = c + kLogEntryHeaderSize;
+                // System block persistent fields (Name 6, NetID 7) live in the same STATLOG
+                // mirror under the SYSTEM_BLOCK_BACKUP marker (no separate DEVNAME/NETID files).
                 if (field == SYSTEM_FIELD_NAME)
                 {
                     uint16_t nl = sz; if (nl > 16) nl = 16;
-                    memcpy(DeviceNameBuffer, buf + val_c, nl);
+                    memcpy(DeviceNameBuffer, val, nl);
                     DeviceNameBuffer[nl] = '\0';
                 }
                 else if (field == SYSTEM_FIELD_NETID)
                 {
-                    DeviceStatus.NetId = buf[val_c];
+                    DeviceStatus.NetId = val[0];
+                }
+            }
+            else if (b < static_block_num)
+            {
+                const StaticBlockDescriptor &block = static_block_registry[b];
+                if (field < block.Schema->MapCount)
+                {
+                    // Only writable Persistent fields are retained after reboot
+                    // (Register.md); volatile and read-only fields are never restored.
+                    const uint16_t fl = block.Schema->Map[field].FlagsAndType;
+                    if ((fl & FieldFlags::Persistent) && !(fl & FieldFlags::ReadOnly) &&
+                        sz == block.Schema->Map[field].Size)
+                    {
+                        FieldResult fr = block.Get(field);
+                        if (fr.Data)
+                            memcpy(fr.Data, val, sz);
+                    }
                 }
             }
             c += el;

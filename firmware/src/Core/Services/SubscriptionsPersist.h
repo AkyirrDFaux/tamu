@@ -1,0 +1,131 @@
+#pragma once
+
+// Requester persistence and provider re-registration.
+//
+// Part of Core/Services/Subscriptions.h (included from there).
+
+#include "Core/Services/SubscriptionsDefs.h"
+
+
+// ===========================================================================
+// Requester persistence + provider re-registration (USE_SUB_REQUEST).
+// ===========================================================================
+#ifdef USE_SUB_REQUEST
+static const char* SubscriptionsRequesterFile = "SUBREQ";
+
+static void SaveRequesterTable() {
+    uint8_t buf[1 + MAX_REQUESTER_SUBS * 26]; // entries without the TRID (non-persistent)
+    uint16_t off = 0;
+    uint8_t count = 0;
+    for (int i = 0; i < MAX_REQUESTER_SUBS; i++) if (requesterTable[i].active) count++;
+    buf[off++] = count;
+    for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
+        RequesterEntry* e = &requesterTable[i];
+        if (!e->active) continue;
+        *(uint32_t *)(buf + off) = e->targetReg; off += 4;
+        *(uint32_t *)(buf + off) = e->sourceReg; off += 4;
+        *(uint16_t *)(buf + off) = e->providerAddr; off += 2;
+        buf[off++] = (uint8_t)e->trigger;
+        buf[off++] = 0; buf[off++] = 0; buf[off++] = 0;
+        *(uint32_t *)(buf + off) = e->periodMs; off += 4;
+        *(uint32_t *)(buf + off) = e->minTimeMs; off += 4;
+        *(uint32_t *)(buf + off) = (uint32_t)e->deadzone.Value; off += 4;
+    }
+    static const char tmp_name[8] = {'S','U','B','R','E','Q','~',' '};
+    if (Storage.FileExists(tmp_name) != 0xFFFFFFFF)
+        Storage.DeleteFile(tmp_name);
+    if (!Storage.CreateFile(tmp_name, off)) return;
+    if (!Storage.WriteToFile(tmp_name, 0, off, (const char*)buf)) { Storage.DeleteFile(tmp_name); return; }
+    if (!Storage.RenameFile(tmp_name, SubscriptionsRequesterFile)) { Storage.DeleteFile(tmp_name); return; }
+}
+
+static void LoadRequesterTable() {
+    uint8_t buf[256];
+    uint16_t len = Storage.ReadFromFile(SubscriptionsRequesterFile, 0, sizeof(buf), (char*)buf);
+    if (len == 0) return;
+
+    uint16_t off = 0;
+    uint8_t count = buf[off++];
+    for (uint8_t i = 0; i < count && off + 26 <= len; i++) {
+        RequesterEntry* e = RequesterFindFree();
+        if (!e) break;
+        e->targetReg = *(uint32_t *)(buf + off); off += 4;
+        e->sourceReg = *(uint32_t *)(buf + off); off += 4;
+        e->providerAddr = *(uint16_t *)(buf + off); off += 2;
+        e->trigger = (TriggerType)buf[off++];
+        off += 3; // padding
+        e->periodMs = *(uint32_t *)(buf + off); off += 4;
+        e->minTimeMs = *(uint32_t *)(buf + off); off += 4;
+        e->deadzone = Number::FromRaw(*(int32_t *)(buf + off)); off += 4;
+        e->trid = SubscriptionsNextTrid();
+        if (e->trid == 0) e->trid = TRID_SUB_BASE;
+        e->active = true;
+        e->registeredAtMs = DeviceStatus.UptimeMs;
+        e->lastRegisteredMs = 0;
+        e->lastValueMs = 0;
+    }
+}
+
+// Re-registers the (non-persistent) provider side for a requester subscription so a
+// restored table keeps pushing values after boot. Same-device providers get a direct
+// provider-table entry; remote providers get a CID 1 "Change subscription" packet.
+static void RegisterRequesterProvider(RequesterEntry* e) {
+    if (!e || !e->active) return;
+
+#ifdef USE_SUB_PROVIDE
+    if (e->providerAddr == DeviceStatus.ShortAddress) {
+        ProviderEntry* p = ProviderFindByTrid(e->trid);
+        if (!p) { p = ProviderFindFree(); if (!p) return; }
+        p->requesterAddr = DeviceStatus.ShortAddress;
+        p->trid = e->trid;
+        p->sourceReg = e->sourceReg;
+        p->trigger = e->trigger;
+        p->periodMs = e->periodMs;
+        p->minTimeMs = e->minTimeMs;
+        p->lastSentMs = 0;
+        p->hash = 0;
+        p->deadzone = e->deadzone;
+        p->lastBool = false;
+        p->sentCounter = 0;
+        return;
+    }
+#endif
+    // Remote provider: send the subscription info (CID 1, fire and forget).
+    uint8_t payload[26]; uint16_t off = 0;
+    *(uint32_t *)(payload + off) = e->targetReg; off += 4;
+    *(uint32_t *)(payload + off) = e->sourceReg; off += 4;
+    *(uint16_t *)(payload + off) = DeviceStatus.ShortAddress; off += 2;
+    payload[off++] = (uint8_t)e->trigger;
+    payload[off++] = 0; payload[off++] = 0; payload[off++] = 0;
+    *(uint32_t *)(payload + off) = e->periodMs; off += 4;
+    *(uint32_t *)(payload + off) = e->minTimeMs; off += 4;
+    *(uint32_t *)(payload + off) = (uint32_t)e->deadzone.Value; off += 4;
+    PacketFrame req;
+    PacketConstruct(&req, e->providerAddr, MakeService(ServiceType::Subscriptions, 1),
+                    e->trid, FLAG_START | FLAG_STOP, payload, off);
+    SendAndVerifyPacket(req);
+}
+
+void ReRegisterSubscriptions() {
+    for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
+        if (requesterTable[i].active)
+            RegisterRequesterProvider(&requesterTable[i]);
+    }
+}
+
+// Verifies each active requester subscription actually receives a value. Until the first
+// value arrives the entry keeps re-registering with the provider (CID 1) on a short retry
+// interval, so a dropped registration or slow provider node eventually gets woken up. The
+// retries stop once a value is received or the initialization window expires.
+static void RequesterInitCheck(uint32_t nowMs) {
+    for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
+        RequesterEntry* e = &requesterTable[i];
+        if (!e->active) continue;
+        if (e->lastValueMs != 0) continue; // a value arrived; the subscription is live
+        if (nowMs - e->registeredAtMs > SUB_INIT_WINDOW_MS) continue; // gave up
+        if (nowMs - e->lastRegisteredMs < SUB_RETRY_MS) continue;
+        e->lastRegisteredMs = nowMs;
+        RegisterRequesterProvider(e);
+    }
+}
+#endif // USE_SUB_REQUEST

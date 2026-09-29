@@ -14,8 +14,10 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
       Verified on Tamu v2.0A (`app/test/hil_script_vm_test.dart`).
 - [x] **Milestone B — boot/load**: `Load-on-boot` loads every stored script so flagged;
       `Run-on-load` starts it. Verified across a hard reset.
-- [ ] **Script (un)loading from within a script** (a script starting/stopping another) and
-      macro-style cross-script calls — not yet implemented.
+- [x] **Script (un)loading from within a script** (A10 part 1, done): service ops 7/8 mirror
+      management CIDs 1/2, with a self-(un)load guard. **Macro-style cross-script calls** are
+      still not implemented - the encoding and the waiting semantics are unspecified, see the
+      proposal in `Issues.md` and TODO A10 part 2.
 - [x] **Milestone C — app list page**: `ScriptsPage` with a Loaded/Available switch,
       state chip + Start/Pause/Continue/Stop/Restart, expandable inputs (rendered per UI
       spec) and outputs, a Device view "Scripts" tile (guarded by the Scripts capability),
@@ -381,8 +383,7 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
   meta type is `0x00` (`BlockType::System`). The filter (`isHiddenRegisterSlot` in
   `core/types.dart`) now checks the slot type, so the System block shows again while empty
   dynamic slots stay hidden. Regression test `test/register_slots_test.dart`.
-- [ ] **On-device verification** (pending a phone): runtime permission prompt, BLE
-  scan/connect/MTU, SAF backup save + restore, download, and the drawer on a real phone.
+  (The Android on-device verification item that sat here was dropped as a non-issue by the user.)
 
 ## 5. Evaluation setup (`Docs/Current setup v3.md`)
 - [x] **Setup builder** (`app/test/current_setup.dart`): builds the whole scenario through the
@@ -536,8 +537,8 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
   - The emote script was one `EndBlock` short after the rewrite (the run ran off the end and
     the script sat in Finished, so no emote ever applied) - caught by extending the script-state
     test to slot 4, then by counting the flow blocks.
-- [ ] **Tuning** (later): temperature->duty curve, gyro->pixel scale, and the brightness
-  range (kept low to avoid a brown-out), plus a physical check of the eyes/lid.
+  (The "Tuning" item that sat here - temperature->duty curve, gyro->pixel scale, brightness
+  range, physical eye/lid check - was dropped as a non-issue by the user.)
 
 ### Notes
 - **A script loop advances at most once per main-loop tick.** `ScriptRun` stamps every line it
@@ -584,19 +585,60 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
   `ui/value_editor.dart` 1167 -> +scalars/containers/visual; `core/backup.dart` 889 ->
   +capture/restore; `test/current_setup.dart` 1296 -> +scripts/apply. Analyzer clean; 92 app
   tests + 16 setup + 5 feature suites green.
-- [ ] **Splits remaining** (need real work, not slicing):
-  - `firmware/Core/Services/Script.h` (2060): the whole file sits inside `#ifdef` regions that
-    span any linear boundary, so each part must be re-wrapped in its own guards first.
-  - `firmware/Core/Services/Register.h` (914), `Storage.h` (947), `Subscriptions.h` (883),
-    `Vysi1Display.h` (854), `Memory.h` (678): split at top-level boundaries and keep each
-    part's `#include`s explicit (a first attempt reverted cleanly).
-  - `ui/register_page.dart` (1614) is one giant `State` class: needs *widget extraction*
-    (pull the panels/dialogs into widgets), not a slice.
-  - `ui/script_editor_page.dart` (991), `ui/subscriptions_dialog.dart` (689).
-- [ ] **Optimization - per-field geometry-mask versioning**: any write to an eye block bumps the
-  block generation and the renderer recomputes all 9 masks; the emote script writes on gyro
-  motion. Measured headroom says it is not urgent (the display readback sits at the panel cap,
-  ~127-132 FPS), so it stays planned rather than done.
+- [x] **`Script.h` split done** (2060 -> 30 + 6 guarded parts): `ScriptDefs.h`, `ScriptProgram.h`,
+  `ScriptVm.h`, `ScriptExpr.h`, `ScriptExec.h`, `ScriptRuntime.h`, each re-wrapped in its own
+  `#ifdef USE_SCRIPTS` with explicit includes. The split was verified *lossless* (the parts'
+  bodies concatenate byte-for-byte to the original lines) and the core binary is byte-size
+  identical (652384), so it is codegen-neutral. Both targets build.
+- [x] **Splits done — all of them** (mechanical; every file verified lossless + codegen-neutral).
+  Recipe: slice at top-level boundaries (checking the preprocessor nesting depth is 0 so each
+  part is guard-balanced), reassemble and assert the parts equal the whole original *and* that
+  braces/#if are balanced per part, then confirm both targets build with the **same binary size**
+  (core 652384 B, DAS 13932 B) and the same DAS RAM/flash.
+  - firmware: `Vysi1Display.h` (855) -> Vysi1Gamma/Layout/Render (this one was also missing its
+    `#pragma once`); `Memory.h` (678) -> MemoryBackup/Blocks/Dynamic; `Storage.h` (948) ->
+    StorageDefs/BlockFS/FixedFS (the `#ifndef USE_FIXED_STORAGE` branch is regenerated in the
+    parent); `Register.h` (928) -> Defs/Enumerate/Read/Write/Persist/Dispatch;
+    `Subscriptions.h` (884) -> Defs/Requester/Provider/Persist/Control.
+  - app: `register_page.dart` (1748) -> register_page (633) + register_page_tiles (601) +
+    register_page_edit (517); `script_editor_page.dart` (991) -> 436 + script_editor_view (312) +
+    script_editor_line (249); `subscriptions_dialog.dart` (690) -> 491 + subscriptions_pickers
+    (208).
+  - **Technique note for the page files**: a Dart `part` cannot split a *class body*, so the
+    State's methods moved into `extension on _XState { ... }` blocks in part files. Dart resolves
+    an unqualified call inside the class to a same-library extension, and the extension keeps
+    private access - so this is a pure move. Two gotchas found and handled: `setState` is
+    `@protected` (not callable from an extension -> routed through a `_rebuild` helper on the
+    State), and extension bodies cannot declare `static` members or reference the type's statics
+    unqualified (the statics stayed in the class and the parts' calls are qualified).
+  - A first attempt at `Vysi1Display.h` dropped its final `}`: `wc -l` counts newlines, and the
+    file's last line had none. The verification now compares against the whole file, not a
+    `wc`-derived prefix. Worth remembering.
+- [x] **Register Current/Backup view** (docs gap, implemented): the appbar now has the documented
+  Current/Backup toggle; Current shows the live RAM values with the Save actions, Backup shows
+  what a Save persisted with the Recall action (per-field recall included). The stored values are
+  decoded from the device's own backup files by a new pure module
+  (`app/lib/core/device_backup.dart`): `STATLOG` for static/System fields and `DT_`/`DV_` per
+  dynamic slot - including a `DV_` decoder the app previously lacked (it rendered `DV_` as raw
+  hex). `ui/file_viewers.dart` now renders through that same module, so the two paths cannot
+  drift. Fields with no stored entry are shown as "not backed up" and volatile dynamic entries as
+  "not persisted", so a missing save is visible. 17 decoder tests + 7 Backup-view widget tests +
+  a page toggle test; `app/test/ui_smoke_test.dart` adds the first runtime coverage for
+  `ScriptEditorPage` and `SubscriptionDialog`.
+  Note: the firmware's CID 0x15 "read backup" is dynamic-only, which is why static/System come
+  from the file decode.
+- [ ] **Optimization - per-field geometry-mask versioning** (A11, deferred to the rig batch):
+  any write to an eye block bumps the block generation and the renderer recomputes all 9 masks;
+  the emote script writes on gyro motion. Measured headroom says it is not urgent (the display
+  readback sits at the panel cap, ~127-132 FPS), so it stays planned rather than done.
+  Unverifiable without the rig. Sketch for when it is picked up: the per-frame pass still has to
+  run (`ApplyGeometryField` combines the cached mask), so the win is only in skipping the
+  per-LED `RenderGeometryField`; that needs a *per-field* invalidation token rather than the
+  block-wide `generation` - either a per-field version array in the block descriptor (RAM per
+  field) or comparing the cached geometry inputs (shape/size/position/rounding/angles/fade/
+  alpha/point/noise) each frame and recomputing only the fields whose inputs moved. The latter
+  needs no block-model change and keeps the host-visible behaviour identical, which is what
+  makes it checkable off-device - the rig would confirm the frame time.
 - Deferred by request: SNDB re-registration, the LED brightness cap, the subscription trigger
   default, the LDR calibration (considered done).
 - [x] **Brightness curve re-fitted to the updated v3 table** (`<10 lux -> 5 %`, `100 -> 10 %`,
@@ -608,3 +650,532 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
   **Bug caught on the way**: the `^` bound to the *divisor* instead of the quotient (the
   expression's precedence), which turned the curve into a linear ramp - fixed with an explicit
   group around the division. Worth remembering when writing expressions.
+
+### Native numeric-core tests (host-only, no hardware needed)
+- [x] **Host test harness for the firmware numeric core**: `firmware/test/native/numeric_test.cpp`
+  + `run.sh`, compiled and run in **three** shapes - the core build (64-bit), the DAS build
+  (`NUMBER_ONLY_32BIT` + `SCALAR_ONLY`) and 32-bit with Vector/Matrix (`NUMBER_ONLY_32BIT`
+  alone, a combination neither target selects but which is otherwise never compiled).
+  Zero dependencies (plain g++, no Unity, no network).
+  Covers construction/rounding/divide-by-zero, `FixedMul32`/`MulHigh32`/`FixedDiv32` against an
+  exact int64 reference (hand-picked edges + a 200k randomised sweep), `sqrt`, `sin`/`cos`
+  (including the 45-degree regression and the old 5.6 % amplitude error), `atan2`, `log`/`log10`/
+  `pow10`, the `Vector`/`Matrix` transforms (pre-rotated translation convention) and `Colour`
+  blending. ~3600 checks per build. Run it with `firmware/test/native/run.sh`.
+  This is the net whose absence let the trig regression ship in a beta.
+- [x] **`MulHigh32` was wrong for two negative operands** (off by exactly 2^16): the unsigned
+  decomposition needs 33 bits for `aH*bL + aL*bH` and silently dropped the carry. `FixedMul32`
+  was unaffected (it only reads the low 16 bits of the high word), so it never showed on the
+  device - but the function's documented contract was broken for any other caller. Rewritten
+  with signed high halves (Hacker's Delight `mulhs`); `FixedMul32` output is unchanged
+  (the randomised sweep proves it). DAS flash 13912 -> 13916 B.
+- [x] **`Vector::operator*` double-scaled its scalar** (`Data[i] * scalar.Value` fed a raw
+  Q16.16 value into `Number`'s int constructor, which shifts it again - any scalar above ~32767
+  overflowed to 0). Unused in the firmware today, but public API with a comment that said the
+  opposite of what the code did. Fixed to `Data[i] * scalar`.
+- [x] **`atan2` accuracy fixed**: replaced the crude rational form (worst case 0.071 rad = 4 deg
+  at ~163 deg) with the standard `min/max` reduction plus a cubic in `a^2`. Measured worst case
+  is now **0.0002 rad** (363x better); the quadrant boundaries and `atan2(0,0) = 0` are exact.
+  Affects the `Polygon`/`Star` sector lookup - the rendered look wants an eyeball with the rig.
+- [x] **`log`/`log10` accuracy fixed**: centring the range reduction on 1 (target
+  [sqrt(1/2), sqrt(2))) instead of [1, 2) cuts the 4-term series' worst-case error from
+  **0.109 to 0.002** (59x); `pow10(log10(x))` round-trip **10.4 % -> 0.17 %**. Powers of two
+  stay exact. **The DAS LDR lux output changes** (more accurate), so the LDR calibration needs
+  re-checking against a reference and the DAS needs a re-flash - recorded in `Issues.md`.
+- [x] **32-bit `sqrt` (`isqrt32`) fixed and now actually compiled**: it is only selected by
+  `NUMBER_ONLY_32BIT` without `SCALAR_ONLY`, which no target uses, so it was dead *and* off by
+  up to 2.3 %. One Newton step brings it to 0.04 %; a third native test configuration
+  (32-bit with Vector/Matrix) now compiles and runs it so it cannot rot again.
+
+### Cross-implementation contracts and host coverage (host-only)
+- [x] **App<->firmware contract tests** (`app/test/firmware_contract_test.dart`, 13 tests): the
+  script encoding (symbol/predefine/category enums, every inline math op, every instruction
+  opcode per category, header size and slot count), the core enums (`DeviceType`, `DataType`,
+  `BlockType`, `TriggerType`, `FieldFlags`, `Capability` bits) and the render dictionary
+  (`Geometries`, `GeometryOperation`, `Textures2D`) are compared directly against the firmware
+  headers. Extra/renumbered members on *either* side fail, so a new firmware enum member cannot
+  be silently unknown to the app. Verified against a deliberate mutation (changing `BlockType.led`
+  fails the test). Skips cleanly when the firmware tree is not next to the app.
+- [x] **Analyzer to zero**: a nested `app/test/analysis_options.yaml` disables `avoid_print` for
+  tests only (test output is deliberate), so `flutter analyze` reports **no issues** instead of
+  41 infos while `lib/` keeps the lint.
+- [x] **`diagnostics_schema_test.dart`**: pins the diagnostics ring (cap, oldest-first order,
+  formatting, dump) and the System schema (every field/key named, unknown values fall back
+  rather than throwing).
+- [x] **`./test.sh`**: one entry point for everything that does not need hardware - the native
+  numeric tests, the app host suite (HIL excluded) and the analyzer.
+- Note: the dead-code sweeps found nothing. The firmware has no unused static functions (only
+  `app_main`, the framework entry point) and the app has no unreferenced public declaration, so
+  there was nothing to remove.
+
+### DAS flash reduction + Tamu speed build (measured, step by step)
+Target: the DAS has 13 928/16 384 B (85.0 %) and 1 672/2 048 B RAM; Tamu has a 3 MB app
+partition with 652 KB used, so flash is free there and only speed matters.
+
+**DAS (each step measured; baseline 13 928 B):**
+- [x] **`pow10` -> range-reduced polynomial** (no table): `10^f = 2^(f*log2 10)` with a quintic
+  in the fraction. Removes the 64-byte `10^(2^-i)` table and 16 conditional multiplies; 5
+  multiplies instead, faster on both targets, worst-case error 0.013 %.
+  **Measured: -24 B** (the function grew 40 B, the table saved 64 B). Kept for the speed.
+- [x] **`LoadAllBackups` one pass instead of nested O(blocks x fields x entries) + a second
+  System pass**. Same restore semantics (last entry wins, same persistent/read-only/size
+  filter). **Measured: -136 B** (410 -> 272 B). This is the one genuine algorithmic win.
+- [x] **`pow10`'s 2 runtime `log10` constants** noted for later; the lux path is the biggest
+  remaining DAS item (measured ceiling: removing `log`+`pow10` entirely = **-504 B**, but the
+  NTC genuinely needs a log, so only part is capturable).
+- **Rejected after measuring** (kept out):
+  - `noinline` on the dispatcher's handlers (`HandleRegister`/`Storage`/`Device`/`LogHandler`):
+    **+92 B** - inlining was already the size-optimal choice, and `DispatchPacket`'s 2446 B is
+    their combined bodies, not a comparison chain.
+  - Unifying the 4+ copies of the STATLOG walk behind one finder: **+4/-4 B (i.e. nothing)** -
+    GCC's identical-code-folding already merges identical loops. Reverted to keep the
+    save/recall path untouched.
+  - `HandleLogHandler` on nodes is already compiled to nothing (`#ifndef TYPE_CORE`), and
+    `DeviceLog` is already a no-op on TEXTLESS builds - no hidden wins there.
+- Net so far: **13 928 -> 13 768 B (-160 B, 85.0 % -> 84.0 %)**, RAM unchanged, DAS ELF still
+  has **no `*di3` symbols** (NUMBER_ONLY_32BIT doing its job).
+
+**Tamu (speed):**
+- [x] **Release-speed build profile**: the env was compiling with `-Og` plus the platform's
+  debug-friendly `-fno-shrink-wrap -fno-jump-tables -fno-tree-switch-conversion` (PlatformIO
+  appends its flags *after* `build_flags`, so a later `-Og` won). Fixed with **`build_unflags`**
+  + `-O2 -fwrapv`. `-fwrapv` keeps the fixed-point arithmetic's two's-complement wraparound
+  defined (-O2 would otherwise exploit the signed-overflow UB).
+  `firmware.bin` 652 384 -> **666 944 B** (+14.5 KB, still ~21 % of the 3 MB partition).
+- [x] `-O2` surfaced a **false-positive** `-Warray-bounds`/`-Wstringop-overflow` in
+  `CreateDynamicBlock` (GCC cannot follow the realloc'd registry; sizes are clamped and the
+  source is payload-bounded). Suppressed narrowly at that site so the warning stays live
+  everywhere else.
+- Host benchmark of the same integer math (x86-64 proxy, 300 k iters): the per-LED
+  transform+norm2 is 2.5x faster at -O2 and 3.3x at -O3 vs -Og; sqrt 2.7x; sin+cos 1.4-2x.
+- [x] Remaining Tamu candidates - all now covered: render invariant hoisting (A8 parts 1+2,
+  done), shape specialisation (A8 part 3, still rig-gated), `Crc8` table via `OPTIMIZE_SPEED`
+  (A9, done), `-O3` vs `-O2` (A4, measured; `-O2` kept).
+
+### Near-identical functions merged (code cleanliness)
+Found with a body-similarity scan (comments stripped, identifiers/strings normalised), merged
+where the result is clearer, verified by both firmware builds + the full host suite.
+
+**Firmware:**
+- [x] `Vysi1Display::IdentityAffine` was a byte-identical copy of the free `IdentityAffine23()`
+  (the scan scored it 1.00) - the member now returns it.
+- [x] `ScriptExprFnSize` is `sqrt(dot(v, v))` - now calls `ScriptExprFnDot` (the two shared the
+  same accumulation + result shape). Reordered so Dot precedes Size.
+- [x] The four subscription finders (`RequesterFindByTrid/Free`, `ProviderFindByTrid/Free`) were
+  0.91-0.97 identical over two different tables - now two shared templates in
+  `SubscriptionsDefs.h` plus a per-role `Occupied` predicate. **This also shrank the DAS by
+  another 28 B** (13 768 -> 13 740 B), the only size win in this batch.
+- [x] The two dynamic-block read handlers (`HandleDynamicBlockRead`, `HandleReadBackup`) shared
+  their reply tail (field 0xFF = block meta, else one keyed entry) - now
+  `ReplyDynamicBlockOrField` in `RegisterDefs.h`.
+- [x] CLI `CmdPing`/`CmdIdentify` (0.99) and `CmdSave`/`CmdRecall` (0.99) - merged into
+  `CmdDeviceRequest` and `CmdSaveRecall`; the printed text and command ids are unchanged.
+- [x] SNDB registry access: the "read entry `i`" expression was repeated at 8 sites and the
+  index-based write at 3 - now `SNDB::ReadEntry`/`WriteEntry`. The four scan functions stay
+  separate (they differ in what a failed read means, and `IterNext` uses a persistent cursor).
+
+**App:**
+- [x] `subscription_client.getProviderSubscriptions`/`getRequesterSubscriptions` (0.98) - one
+  `_getSubscriptionList` decoder parameterised by CID/entry size.
+- [x] `script_client.enumerateInstances`/`enumerateKeys` (0.98) - one `_enumerate(level, ...)`.
+- [x] `backup_value._enumRaw`/`_deviceTypeRaw`/`_blockTypeRaw` (0.87-0.91) - one `_rawFromWord`
+  with a label table. **First bump: lower the similarity threshold to 0.80**; the field's
+  `blockInfoBytes` (the same 4-byte packing as `uint32ToBytes`) and
+  `subscriptions_page._show{Add,Edit}SubscriptionDialog` also merged.
+
+**Deliberately left (merge would need a role flag/bool and reads worse, not better):**
+`subscriptions_dialog._loadFieldsFor{Target,Source}`, `script_editor_line.addDestination/
+addOperand`, `devices_page._cycle{Net,Type}`, `RequesterEntrySerialize`/`ProviderEntrySerialize`
+(different wire layouts), `ScriptResolveOperandScalar`/`ScriptOperandBlockInfo` (the `scratch`
+buffer's lifetime is load-bearing - returning `data` from a helper would dangle),
+`PinModeOutput`/`PinModeInputPullUp` (different register writes).
+Note: the 1.00-scoring int->string `switch` tables (`predefineName`, `categoryName`, etc.) are a
+scan artefact - normalising string literals made distinct tables look identical; they are not
+duplicates.
+
+## 7. Size / speed / cleanup pass - consolidated plan
+
+Baseline now: **DAS** 13 740 / 16 384 B flash (83.9 %), 1 672 / 2 048 B RAM (81.6 %), stack 576 B,
+no `__*di3` helpers; **core** 666 368 B of a 3 MB partition (~21 %), built `-O2 -fwrapv`.
+Host suite (no rig needed): `./test.sh` = native numeric core in 3 configs + 137 app tests +
+analyzer.
+
+### Track A - host-verifiable
+
+- [x] **A1 Active-flag array aligned to the documentation** (done). `Docs/Services/Register.md`
+  "Flag RAM" specifies **one 4-bit segment per static entry**, blocks stacked by instance, and
+  the section covers **"System + Static"**. The array now follows that: 4 bits per entry, the
+  entry offset is `sum of the preceding registry entries + field`, the System block has its own
+  trailing segment, and the size is per board (`-D STATIC_ACTIVE_ENTRIES`: DAS 24 slots = 12 B,
+  core 48 = 24 B; the arithmetic is documented next to each board's registry) with a runtime
+  bounds check so a board that outgrows the cap cannot corrupt memory. The array is `inline`
+  (a `static` array in a header would give every TU its own copy - it only works today because
+  both targets are single-TU).
+  **Two real bugs fixed on the way:**
+  1. The **System block was excluded entirely** (the array was addressed by static-registry
+     index, and System has none), and `HandleSystemBlockRead` built its reply by hand without
+     folding in the flag - so editing the device **Name** (persistent, waits for an explicit
+     Save) never reported *Not Saved*. Now set on the Name write, cleared by Save, and folded
+     into the reported meta. (NetID was only ever safe because its write path auto-saves.)
+  2. **Recall did not clear *Not Saved*** for static blocks either - a recalled value matches
+     its backup, so the flag must clear. Now done inside `StaticFieldRecall`/`SystemFieldRecall`
+     (one site each, not per call site).
+  **Measured trade (DAS, re-measured after the flag-scoping fix below)**: RAM
+  **1 672 -> 1 636 B (81.6 -> 79.9 %, -36 B)**; flash **13 740 -> 13 992 B (84.6 -> 85.4 %,
+  +252 B)** for A1 + D2 + A3 together (the offset walk is genuine new code; `-flto` already
+  merged the duplicated inlined copies, so `noinline` changed nothing). Both still have headroom
+  (412 B RAM / 2.4 KB flash free). If the flash is wanted back, a boot-built prefix-sum table
+  would trade ~10 B RAM for ~50 B flash - not done, since it needs a boot init hook.
+  **Corrected claim**: the promised "host test for the index formula" is not feasible - the
+  formula reads `static_block_registry`/its schemas, and neither is constexpr-usable (GCC rejects
+  their addresses in a constant expression: `void* const` pointers to mutable blocks), so a
+  `static_assert` is out too. Verification is the two builds + the runtime bound check.
+  **D2 done - the remaining active flags are implemented as write provenance.** Per your rule
+  ("they clear when writing a new value of different specification - manual user's input vs
+  local/foreign script"): a `WriteOrigin` (Manual / LocalScript / Foreign) is derived from the
+  writer - the app (0xFFFE) and the local CLI are Manual, a frame from a peer on the bus is
+  Foreign - or from the flags the writer already passes (a local script sends `ScriptUpdated`,
+  a subscription update sends `External`). Every write clears the provenance it does not match
+  and sets its own, and reads fold the whole active set in
+  (`StaticActiveReported` covers Not Saved + Script Updated + External).
+  Two details worth knowing:
+  - Static block schemas are `const`, so their active flags can only live in the array - which
+    is exactly why the doc has one. The old `ScriptUpdated`/`External` bits folded into a
+    static meta were silently **discarded** by `StaticBlockDescriptor::Set` (it only validates
+    the type), so the array is what makes them observable at all.
+  - **Subscription Source cannot be reported**: the flags field is 6 bits (bits 10-15) and
+    already holds ReadOnly/Persistent/Trigger + Not Saved/Script Updated/External, so the
+    documented 4th active flag has no wire bit. Stored-but-unreportable would be dead weight,
+    so it is left unimplemented and recorded in `Issues.md`.
+  **Cost**: DAS flash +104 B; an attempt to fold both flags into one offset lookup was *larger*
+  (+36 B), and a `#ifdef USE_SCRIPTS` narrowing (the DAS has no scripts, so the Script-Updated
+  bit can never be set there) clawed 48 B back.
+
+- [x] **A2** done - see the record below (the register view no longer re-enumerates each tick).
+
+- [x] **A3** done - see the record below (`MEMORY_BACKUP_CAP` 256 -> 128 on the DAS).
+
+- [x] **A4** done - see the record below (`-O3` measured, `-O2` kept).
+
+- [x] **A5** done - see the record below (dead `DAS_LED_*` defines removed).
+
+- [x] **A6 Script VM symbol resolution made O(1)** (done). The hot cost was not the resolution
+  *logic* but the offset it needs: `InputOffset`/`OutputOffset`/`VarOffset`/`ConstOffset` walked
+  the preceding meta entries (`for k < i: off += align4(size)`), i.e. **O(index)** - and the VM
+  resolves operands **per line per tick** at ~200 Hz, so a variable late in a script cost a full
+  walk on every use. They are now **prefix sums** built once at load
+  (`LoadedScript::BuildOffsets` → `Core/Functions/StrideOffsets.h`), so a symbol resolves to a
+  table index. The layout cannot change while a script is loaded (only values change, never the
+  strides), so nothing needs invalidating - which is also why the pointer cache the plan
+  floated is **not** needed: with O(1) resolution there is nothing left to cache, and register
+  targets keep resolving per execution as they must (a dynamic block's pointers move).
+  Three things fell out of the same change:
+  - the load path's two input/constant default copies also walked the strides (O(n²) parsing) -
+    they now reuse the same offsets, and the file's packing *is* the space's packing;
+  - `ScriptSumStrides` went away (the builder produces the totals as the last entry of each
+    segment, so there is one place that computes them);
+  - `ScriptAlign4` moved into the shared header as `StrideAlign4`.
+  **Measured: core 667 840 → 667 552 B (-288 B)**, DAS untouched (no scripts there), and the
+  per-tick work drops from a walk to a load.
+  **Constant folding was considered and is not worth doing**: the scripts' expressions are
+  symbol-driven (a "constant" operand is a read from `constSpace`, e.g. `luxT - LUX_MIN` in the
+  brightness script), so there are no literal-only subexpressions in the token stream - folding
+  would need a load-time constant-propagation pass to buy one subtraction per tick.
+  **New host test**: `test/native/stride_test.cpp` (wired into `test/native/run.sh`) checks the
+  table against the naive walk the code replaced, the saturating out-of-range read, the totals
+  and the four segment bases - using the same inline base helpers as the getters, so a mistake
+  in the layout arithmetic fails there. 45 checks.
+
+- [x] **A7 DAS measuring math - dedicated (distilled) rewrite tried, does not pay; a real
+  win found in the same place instead.** Measured ceiling for deleting `log` + `pow10`
+  entirely is **504 B**, but neither can go: the **NTC needs a logarithm** and the **LDR's lux
+  needs an exponential**.
+  **Attempt 1 (base-2 generic pair).** Fold the datasheet constants so the lux is
+  `2^(A(range) - log2(ratio)/gamma)`, `A = log2(10) + (log2(R10) - log2(Rref))/gamma`. The
+  folding is *correct* - a host test matched it against the old log10/pow10 path to
+  **0.04-0.11 %** across the band the brightness curve uses - but it is **+24 B**: the natural
+  `log` must stay for the NTC, so the lux *adds* a second logarithm while `pow10` is merely
+  swapped for a similar `exp2`.
+  **Attempt 2 (dedicated, "ignores Number").** A distilled integer-domain pair
+  (`Core/Types/SensorMath.h`): `SensorLog2` for the integer ADC counts (four conditional
+  shifts to find the MSB - `__builtin_clz` was tried first and is a trap on this core, pulling
+  in `__clzsi2` plus a **256-byte `__clz_tab`**) and `SensorExp2` (the same quintic `pow10`
+  uses), both serving the LDR *and* the NTC so the trio could drop out entirely. With the
+  interpolation the tables can be 33 bytes each; without it the lux error is ~5 % and the exp
+  ~2 %, i.e. too coarse. Measured, best variant (quintic exp2, no exp table): **+8 B**, with
+  the transform code at **863 B against the baseline's 840 B**. The trio is simply compact:
+  `log` **114 B**, `log10` **22 B** (a wrapper), `pow10` **164 B**, and `log` is already shared
+  by both sensors. Reverted, header deleted.
+  **What does pay (`A7` fix, applied).** The LDR recomputed `log10(R10)` and `log10(R_ref)`
+  *every sample* - two `log()` calls and two fixed-point divisions. They are constants, so
+  `log10(R10) - log10(R_ref) = log10(R10/R_ref)` folds into a per-range table
+  (`kLdrLog10R10OverRref`), leaving one `log()` call plus a constant division and the shared
+  `pow10`. **DAS 13 972 -> 13 960 B, and `log10` drops out of the image** - equivalent maths
+  (the same numbers to within one Q16.16 step, 0.006 % in lux), fewer per-sample calls, and the
+  NTC path is left bit-identical.
+  **Found on the way (worth knowing):** the Steinhart-Hart sum `A + ln(R/R0)/B ~ 0.0034` is
+  only ~**222 Q16.16 steps**, so `T = 1/sum` turns *one* step into ~**1.3 K**. The temperature
+  reading is resolution-limited by the form itself, which is why it must be re-calibrated
+  after any change to that path - so it was left alone.
+  Conclusion: do not rewrite the trio; fold the constants that the compiler cannot.
+
+- [x] **A8 (part 1+2) Core render hot loop: per-LED divisions and shape invariants hoisted.**
+  Every per-LED division and trig call in `ShapeAlpha` is now a per-*geometry* invariant
+  (`PrepareGeometry`, called once per geometry field): `HalfX/HalfY`, `InvHalfX/InvHalfY`,
+  `InvFade`, `InvSizeX/InvSizeY`, the rounded-rect inner extents, `min(HalfX,HalfY)`,
+  `ParabolaK`, the trapezoid's `tan(slant)`/top/slope, the triangle's `h/2` and `2h/w`, the
+  polygon/star sector + `cos(half)` + inner radius, and the Noise cell divisors. `FadeAlpha` now
+  takes the params and multiplies by `InvFade`; the gradient's per-LED `/extent` is a hoisted
+  reciprocal too. **Measured: the only per-LED division left is the polygon/star `cos(ang)`**
+  (the divisor genuinely depends on the pixel), down from ~6-8; core `.text` **-432 B**
+  (668 272 -> 667 840) because the divide code disappeared.
+  Accuracy: the reciprocals differ by at most 1 LSB from the divide (accepted: functional
+  equivalence), everything else is bit-identical (the same value computed once).
+  Note the host micro-benchmark (divide vs reciprocal-multiply) shows only ~20 % because x86 has
+  a hardware divide and hides its latency; on the C3 a `Number` divide is a 64-bit ROM software
+  routine (`__divdi3`), so the saving in cycles is far larger - the structural change (divide
+  count) is the meaningful one there.
+- [x] **A8 (part 3) loop specialisation - measured, not worth doing (closed).** The geometry
+  shape math now lives in its own pure header (`Blocks/GeometryMath.h`), so it can be measured
+  and tested on the host instead of being eye-verified only; the move is behaviour-neutral (the
+  image size is unchanged). A host benchmark of today's form (the shape switch inside the
+  per-LED loop, through `ShapeAlpha`) against a hand-specialised loop with the switch hoisted
+  gives **-8.8 % per 86-LED field pass** (`-O2` and `-O1` alike, byte-identical output) - so GCC
+  does *not* unswitch it - but that pass is a small slice of a frame that already runs at the
+  panel cap (~127-132 FPS, measured earlier): the absolute saving is a fraction of a percent of
+  the frame, for twelve duplicated loop bodies. Not worth the churn; the readable dispatcher
+  stays. Revisit only if an on-device profile says otherwise.
+  **The extraction paid for itself immediately** - it caught a real bug in the rounded-rectangle
+  signed distance. The standard form is `d = r - length(max(q,0)) - min(max(q.x,q.y), 0)` with
+  `q = |P| - (Half - r)`: the `min(max(...))` term corrects the *interior* and must not be
+  subtracted out in the side band. The code tested `m > 0` instead of `m < 0`, so a
+  `Square`/`Rectangle` with `Rounding > 0` lost ~Rounding px from **all four straight sides**
+  instead of only rounding the corners. Fixed (one comparison). The evaluation scene sets only
+  Shape/Operation/Position/Size/Fade/Angles on its geometries, so no shipped look changes; the
+  rig look-check is noted in Track B for anyone who does use Rounding.
+  **New host test** `test/native/geometry_test.cpp` (**122 733 checks**, wired into `run.sh` in
+  both `OPTIMIZE_SPEED` states): per-shape extent/inside/outside, the mirror and rotation axes
+  each shape actually has (a polygon's every sector boundary *and* bisector; a star's bisectors
+  only, since its outer points sit half a sector off the axes), fade monotonicity, noise
+  determinism, a range sweep over size/fade/point-count/angle, and the rounded-rect sides the
+  bug broke. Samples in the fade band or on a sector step are skipped - the alpha is genuinely
+  discontinuous there - with a floor on how many points were compared, so a check cannot pass by
+  skipping everything.
+
+- [x] **A9 `OPTIMIZE_SPEED` duals - the flag, the sites, and the harness** (done).
+  `OPTIMIZE_SPEED` is now a real build-level choice: **the size variant is the default** and
+  `Tamu_v2_0A` defines it in `platformio.ini` (next to `USE_SCRIPTS`, with the rationale in a
+  comment). `NUMBER_ONLY_32BIT` stays what it is - a **hardware** capability flag (the CH32V003
+  has neither a multiplier nor a divider), never an optimisation switch.
+  **Sites, and why only one:**
+  - **`Crc8` - implemented** (the genuine divergence). Moved out of `Packet.h` into
+    `Core/Functions/Crc8.h` so it is host-testable (`Packet.h` pulls in `DeviceStatus`, which a
+    host test cannot provide). The speed shape is a **256-byte lookup table generated by
+    `constexpr` from the very step function the loop uses**, so the two shapes cannot disagree;
+    it lands in flash-mapped rodata (DROM), not RAM. The CRC covers every packet and every USB
+    chunk, so the core pays 256 B of flash for it: **core 667 552 → 667 840 B (+288 B, flash
+    free)**, DAS unchanged at 13 960 B and no table in its image.
+  - **`Fnv1a`** - no useful second shape. The hash is inherently sequential (each byte's
+    multiply depends on the previous), so a table or an unroll buys nothing meaningful.
+  - **The `Number` division fast path** - not an `OPTIMIZE_SPEED` site at all: the compact
+    48-iteration `FixedDiv32` versus the 64-bit divide the core's hardware compiles to is
+    already selected by `NUMBER_ONLY_32BIT`, which is exactly the hardware flag this item says
+    to keep separate.
+  - **`log`/`pow10` tables** - their only caller is the DAS's measuring block, and the DAS is
+    the *size* target, so a table shape would never be selected. (A7 also showed the polynomial
+    form is already both the smaller and the faster choice there.)
+  **Harness**: `test/native/run.sh` now builds **every** config in both `OPTIMIZE_SPEED` states
+  and runs the same assertions, so a future dual cannot silently change a result:
+  numeric core/32-bit/DAS (3665/3665/3405 checks) plus the new `crc_test.cpp`
+  (**486 checks** each way) and the stride-offset test (45). The CRC test's reference is
+  independent of the firmware (its own shift-register implementation) and pins the standard
+  check value `"123456789" → 0xF4`, i.e. the *parameters* are tested, not just the equivalence
+  of the two shapes - as are single-bit error detection over a 12-byte frame.
+
+- [x] **A10 (part 1) Script (un)loading from within a script** (done). `Docs/Services/Script.md`
+  lists "Script (un)loading" among the VM's functions, so the VM now has service ops **7
+  (`Load script`)** and **8 (`Unload script`)** that perform exactly management **CID 1/CID 2**:
+  load answers the loaded id (the file id, as the CID replies; `0xFF` on failure) and unload
+  takes a loaded id and treats "not loaded" as a no-op. Two guards, both deliberate:
+  - **a script cannot (un)load itself** - `ScriptLoad`/`ScriptUnload` release the program and
+    spaces that would be executing, so this returns a script error instead of corrupting memory
+    (self-restart is what the `Script state` op is for);
+  - loading replaces the target slot (the same idempotent reload the app's "apply live" uses),
+    and a script loaded this way starts **Stopped** - loading is not running.
+  App side: both instructions are in `script_instructions.dart` with role hints, and the
+  app↔firmware contract test now maps ops 7/8 to the new firmware defines, so the encoding
+  cannot drift. New app test covers the arity/destination rules (Load needs a destination to
+  report the id, Unload does not). **Core +688 B** (two cases plus their inlined resolution in
+  the VM), DAS unaffected (no scripts). For reference, PlatformIO's partition report on the core
+  now reads **667 842 B / 21.2 %** of the 3 MB app partition (the `firmware.bin` deltas quoted
+  across A6/A9/A10 are measured on the same artifact, so they are comparable to each other).
+- [ ] **A10 (part 2) Cross-script macro calls - blocked on a docs decision**, recorded in
+  `Issues.md` with the proposal. The VM runs **one script per tick** and every wait state
+  (`waitUntil`, `pendingForeign`, the foreign deadline) lives on the callee, so "macro call"
+  cannot be built as a local `Call` variant: the call stack has to carry a script slot, and the
+  tick loop has to resume whichever script is actually waiting. The docs name "Macro call" but
+  give no opcode, no boundary-crossing rule and no argument passing; the proposal (a `Call
+  script` flow op taking `(loaded id, entry line)`, blocking by construction, a shared
+  `(script, line)` stack, values exchanged through registers) is waiting on confirmation.
+- [ ] **A11** Per-field geometry-mask versioning - **deferred to the rig batch by design**:
+  the measured headroom says it is not urgent (the display readback sits at the panel cap) and
+  its correctness cannot be checked without hardware, so it is Track B/D3, not Track A. The
+  plan is in §6.
+
+- [x] **A2 App: the register view no longer re-enumerates every 0.5 s** (done). The documented
+  auto-refresh is about *values*, but every tick was calling `readBlocks()` = enumerate block
+  types + per-type instances + a meta read per block (~8-12 bus round-trips on a bus the DAS
+  shares) for topology that only changes on create/delete/reorder/re-type - and each of those
+  paths refreshes explicitly anyway. Now: the tick re-reads only the *values* of the expanded
+  blocks, and the topology every 10th tick (a counter, not the wall clock, so it is deterministic
+  and testable). A view with nothing expanded costs **no traffic at all**. Explicit refresh (the
+  Refresh button, edit actions) still does a full read.
+  Verified by a new behavioural test: `readBlocks` is called once on load, **not** during ticks
+  inside the interval, and again after the 10th tick. That needed two small test seams on
+  `RegisterPage` (`isConnected`, `clientFactory`) because the refresh paths require a live link,
+  which a widget test cannot fake (`ConnectionManager.isConnected` is `_transport != null`).
+- [x] **A2b (noted) - checked and closed: the eager tile building is not the cost it looked
+  like.** The page does build a card per block eagerly (`SingleChildScrollView` + `Column`), but
+  a card is only cheap *until* it is expanded, and the expansion is already lazy: `_blockCard`
+  returns just a `Card`/`ListTile` plus a few `ChipLabel`s when collapsed, and the field list
+  (with its grid, keys and edit affordances) is built only for blocks in `_expanded`, whose
+  fields are fetched on demand (`_loadBlockFields`). So the 0.5 s value refresh rebuilds ~N
+  collapsed tiles - tens of widgets each - every half second, which is far below anything a
+  phone notices. Slivers would only pay off if a registry grew to hundreds of *expanded* blocks,
+  and they would mean restructuring the page (including the reorderable dynamic section, which
+  needs `shrinkWrap` inside the current scroll view) for that hypothetical. Left as is.
+- [x] **A3 DAS stack cap**: `MEMORY_BACKUP_CAP` 256 -> **128** for the DAS. The STATLOG for its
+  two resistive-measure blocks needs ~72 B, so 128 keeps ~2x headroom; the cap sizes the
+  `buf[MEMORY_BACKUP_CAP]` locals in `LoadAllBackups` / `HandleStaticSaveRecall` /
+  `HandleSystemBlockWrite` / `SystemFieldPersistExplicit`, so it cuts the *peak stack* by 128 B
+  against a 576 B reservation. DAS flash -32 B as a side effect (smaller buffers). Still to do
+  if wanted: measure the real peak with `-fstack-usage` and then shrink the peservation.
+- [x] **A4 core `-O3` measured, not enabled**: `-O3` on the project's own sources works but grows
+  the image **667 952 -> 1 029 280 B (+54 %)**. Flash is free (1.9 MB spare), but the win is
+  host-measured only and the C3's icache could make it a *regression*, so the committed setting
+  stays **-O2** and the flip is one line (`-O3` in the Tamu env's build_flags). Note: a *global*
+  `-O3` fails the build - it makes GCC's `-Wmaybe-uninitialized` fire in IDF's
+  `tinycrypt/ecc.c`, which IDF compiles with `-Werror`.
+- [x] **A5 dead defines**: `DAS_LED_PORT` / `DAS_LED_PIN` removed (superseded by `LEDR`/`LEDW`).
+- [x] **Flag-scoping bug (found while doing A4)**: an earlier edit of mine inserted `-O2 -fwrapv`
+  into the **DAS** env instead of the core env - both envs contain `VERSION_YEAR`, and the text
+  replacement hit the first match. The DAS then built at `-O2` (not `-Os`) and the core fell back
+  to the compiler default (~1 MB image, i.e. *slower* than the original `-Og`). Fixed and both
+  re-measured; the numbers above are post-fix. Worth remembering when editing `platformio.ini`
+  with a text replace.
+
+- [x] **Active flags are source-side (user correction)**: the specification of a write is
+  **declared by the writer** in the write's ValueInfo flags and the receiver just applies it -
+  it never guesses from the sender's address. Replaced the `frame.id_src` heuristic with
+  `OriginFromDeclaredFlags` (`ScriptUpdated` -> local script, `External` -> subscription or a
+  foreign script, neither -> plain manual write, which clears both) and made
+  `SCRIPT_OP_SERVICE_REG_WRITE_FOREIGN` **declare `External`** in the packet it sends, so the
+  receiving device marks "a different device updated this via script" as the docs describe.
+  The receiver is now purely "apply the write + manage Not Saved": Not Saved stays
+  destination-side (only the register knows its backup), and the origin flags are stored exactly
+  as declared. In-process writers (a local script, a subscription update) already declared their
+  origin the same way.
+  **App side**: the app *echoes* the meta it read on a write, and reads now carry the active
+  bits, so it would have mis-declared every edit. `RegisterClient` now masks them at its two
+  write choke points (`FieldFlags.activeMask`), leaving the passive flags for the firmware's
+  type/size validation. DAS flash -20 B (13 992 -> 13 972, 85.3 %).
+
+### Track B - needs the rig (batch into one session)
+- [x] `-O2 -fwrapv` sanity: **boot + scripts verified** on the rig (boot log, enumerate, SNDB
+  recovery), and the script VM's full HIL suite (`hil_script_test` + `hil_script_vm_test`,
+  20 VM cases: arithmetic, rounding, Get time, While/EndBlock, Delay/Wait, local + foreign
+  register write with the **ScriptUpdated flag set** (`dyn flags=0x4000`), compose/extract,
+  error states, load-on-boot across a reset, expressions, vectors/matrices, BlockInfo targets,
+  Limit). **render unverified - this rig has no display** (the render block exists but there is
+  nothing to drive), so that half stays open for a display-equipped session.
+- [ ] `Polygon`/`Star` look after the `atan2` fix.
+- [ ] Rounded `Square`/`Rectangle` look, if a scene uses `Rounding` (the evaluation scene does
+  not): the A8 part-3 fix stops the four straight sides being pulled in by the corner radius.
+- [x] **DAS reflashed** (minichlink, current build 13 988 B / 85.4 %, RAM 1 636 B, and **no
+  `__*di3`/`__muldi3`/`__clzsi2`/`__clz_tab`** in the image). Sensor sanity on hardware: the
+  NTC reads **27.5 / 26.1 °C** (plausible room temperature, and it tracks the room), the
+  auto-range picks the **330 kΩ** reference for the ~100 kΩ NTC and the reported value stays
+  compensated, and `FilterCoeff` round-trips. The **lux (measuring instance 1) was not read** -
+  the CLI can only address static instance 0, so the LDR needs the app or a small addition;
+  the `log`-fix lux recalibration therefore stays open.
+- [x] DAS `LoadAllBackups` restore across a reboot - **verified** (see the persistence item
+  below, same mechanism: the node restores its saved static values at boot).
+- [x] **DAS static persistence - verified, after fixing two bugs that made it impossible.**
+  Rebooted the node and read back: `FilterCoeff` **0.25** (the written value, not the 0.5
+  default), `SamplingRate` 10.0, `SensorType` 5. A real power-cycle is still the strongest
+  form; a reflash resets the CH32 and (checked) **preserves the 256 B storage region**, so it
+  exercises the same restore path.
+- [x] **Device Name shows Not Saved and clears on Save - verified on hardware** (A1's fix).
+  Added to the verification suite: a persistent Name write reads back with `notSaved`, and
+  `saveStatic` clears it. The System block has no static-registry entry, so this is exactly the
+  case that used to be silently dropped.
+- [ ] Node re-register -> provider re-push (deferred by request).
+- [ ] DAS provider stale entries (the cancel path does not always reach the node).
+- [ ] Backup view: the app's block order vs the firmware's static registry order.
+- [ ] LED brightness brown-out -> firmware current cap/ramp decision (deferred by request).
+- [ ] Mask-versioning correctness, if A11 is implemented.
+
+### Rig session results (Tamu + 1 DAS, default sensors, no display/fans)
+
+Suites run and passing on hardware: `tamu_hardware_verification_test` (**10/10**),
+`hil_script_test` + `hil_script_vm_test` (2/2), `hil_subscriptions_test` (**7/7**),
+`hil_dynamic_persistence_test` (4/4), `hil_backup_test` (3/3), `hil_storage_files_test` (3/3).
+Both targets were reflashed from the current tree first - the devices had **very old firmware**
+(the CLI prompt had changed and the app could not connect at all).
+
+- [x] **Fixed: delta-subscription change magnitude was computed from raw bit patterns.** Both
+  delta paths (scalar and vector) took `a >= b ? a - b : b - a` on the *unsigned* raw values,
+  which only matches the value ordering while both sit on the same side of zero. A source that
+  **crosses zero** - the accelerometer's X axis idles at −0.38 with Y at 0.07 - then looked
+  like a change of ~2^32, so it exceeded every deadzone and sent every minimum interval.
+  Found by `hil_subscriptions_test`'s "delta vector honours the deadzone" (a *huge* deadzone
+  must only send the first value). One shared `SubscriptionsAbsDelta` (a signed difference,
+  negated through unsigned so `INT32_MIN` is safe) now serves both paths. The suite passes
+  7/7 after the fix; the same bug would have spammed a temperature subscription crossing 0 °C.
+- [x] **Fixed: the CLI's save/recall/read-backup hard-coded the Dynamic block type.** The
+  BlockInfo it built was always `Type=0x3FF`, so a *static* block could not be saved from the
+  CLI at all - the core logged `MEM: CID 3 failed block=255 field=255 key=197`. Static blocks
+  are now addressed by their TYPE with instance 0 (what the app does); the "no block given"
+  form keeps the Dynamic all-instances encoding.
+- [x] **Fixed: no static save on the DAS could ever succeed** (two independent causes):
+  1. `WriteBackupFile`'s atomic staging writes a temporary name and renames - but the reduced
+     file system has one pre-allocated file per settings name and its `RenameFile` is a no-op,
+     so `CreateFile("STATLO~")` failed outright. It now writes the live name in place (no
+     atomic swap, acceptable for the deliberately reduced FS).
+  2. Worse, `ReadBackupFile` returns the **file length**, and the DAS's fixed storage
+     pre-allocates STATLOG at 256 bytes of erased 0xFF - so the append position looked like a
+     full buffer and `LogEntryWrite` refused. `BackupLogUsed` now gives the save paths the
+     log's *logical* end (up to the format's 0xFF terminator), which the recall paths already
+     honoured. Symptom before the fix: every DAS save returned status 255 and STATLOG stayed
+     untouched, so the node had nothing to restore after a reboot.
+  **New regression check** in the verification suite ("DAS static save writes the backup log"):
+  write a persistent field back unchanged, `saveStatic`, then read the node's STATLOG and
+  require a non-erased entry - the save path's *result*, not just its status reply, which is
+  what the suite was missing. Flash cost of both DAS fixes: 13 960 -> 13 988 B (+28 B).
+
+### Track C - docs gaps to keep in `Issues.md`
+Active-flag model (partly resolved by A1; the other three flags are unimplemented *and*
+under-specified) · `Current setup v3` predates the emote interface · UI-info v2 format ·
+`SCR_XX` vs `SCR_XXX` · script management CID 8 · pre-rotated translation convention · OS
+notifications ("To OS") never delivered · no framebuffer readback (visuals are eye-only).
+The Register Current/Backup view item is closed (implemented).
+
+### Track D - decisions
+- [ ] D1 Keep or drop the two remaining Android `Issues.md` items (`permission_handler` pinned to
+  11.x, Flutter "Built-in Kotlin" migration)? On-device verification was called a non-issue.
+- [x] **D2 answered** - the flags are implemented as write provenance (see the A1 record): the
+  origin is declared by the writer in the write's ValueInfo and both sides apply it; the
+  Subscription-Source flag has no wire bit and stays a docs gap in `Issues.md`.
+- [ ] D3 Mask versioning now (flagged for the rig) or later?
+- [ ] D4 LED brightness cap stays deferred?
+- [ ] D5 Cross-script control: does the app get UI too?
+
+### Track E - intentionally not doing (with reasons)
+Merging the UI role-flag pairs (`_loadFieldsFor{Target,Source}`, `addDestination`/`addOperand`,
+`_cycle{Net,Type}`) and the two `*EntrySerialize`s - the merge needs a role bool and reads worse.
+Hoisting the `ScriptResolveOperandScalar`/`ScriptOperandBlockInfo` preamble - their `scratch`
+buffer's lifetime is load-bearing, so it would return a dangling pointer. App APK size
+(`--split-per-abi`) - out of scope by request. Extra `-Warray-bounds`/`-Wstringop-overflow`
+suppressions beyond the one documented false positive.
+
+Order: **A1 -> A2 -> A3 -> A4 -> A5 -> A6 -> A7 -> A8 -> A9 -> A10 -> A11**, then one rig session.

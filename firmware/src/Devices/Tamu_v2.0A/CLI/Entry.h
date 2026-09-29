@@ -8,15 +8,16 @@
 #include <cstring>
 #include <cstdlib>
 
-// Sends a Device service ping (00.01) to `addr`.
-static int CmdPing(int argc, char **argv)
+// Shared body of the Device-service request commands (ping = CID 1, identify = CID 2):
+// both send a no-payload request to a device and wait briefly for the CLI reply.
+static int CmdDeviceRequest(const char *usage, uint8_t cid, int argc, char **argv)
 {
-    if (argc < 2) { printf("Usage: ping <addr>\n"); return 1; }
+    if (argc < 2) { printf("Usage: %s\n", usage); return 1; }
     uint16_t addr = (uint16_t)atoi(argv[1]);
 
     PacketFrame req;
     PacketConstruct(&req, addr,
-                     MakeService(ServiceType::Device, 1), // Ping per docs 00.01
+                     MakeService(ServiceType::Device, cid),
                      MakeService(ServiceType::CLI, 3),
                      FLAG_REQACK | FLAG_START | FLAG_STOP,
                      nullptr, 0);
@@ -28,24 +29,16 @@ static int CmdPing(int argc, char **argv)
     return 0;
 }
 
+// Sends a Device service ping (00.01) to `addr`.
+static int CmdPing(int argc, char **argv)
+{
+    return CmdDeviceRequest("ping <addr>", 1 /* Ping per docs 00.01 */, argc, argv);
+}
+
 // Sends a Device service identify (00.02) to `addr` - makes the device blink/identify itself.
 static int CmdIdentify(int argc, char **argv)
 {
-    if (argc < 2) { printf("Usage: identify <addr>\n"); return 1; }
-    uint16_t addr = (uint16_t)atoi(argv[1]);
-
-    PacketFrame req;
-    PacketConstruct(&req, addr,
-                     MakeService(ServiceType::Device, 2), // Identify per docs 00.02
-                     MakeService(ServiceType::CLI, 3),
-                     FLAG_REQACK | FLAG_START | FLAG_STOP,
-                     nullptr, 0);
-    g_cli_response_seen = false;
-    DispatchPacket(req);
-    vTaskDelay(pdMS_TO_TICKS(500));
-    if (!g_cli_response_seen)
-        printf("Error: no response from device %d (timeout).\n", addr);
-    return 0;
+    return CmdDeviceRequest("identify <addr>", 2 /* Identify per docs 00.02 */, argc, argv);
 }
 
 // Prints the log records kept in RAM on the core device, oldest first (by sequence).
@@ -169,11 +162,18 @@ static int SendMemoryExtra(uint16_t addr, uint8_t block, uint8_t field, ServiceT
         reg_cid = cid;
     }
 
-    // The Register service addresses dynamic blocks via BlockInfo (Type10|Inst6|Field8|Key8),
-    // not BlockIndex. block == INVALID_BLOCK means "everything" -> instance 0x3F.
-    uint32_t block_info = ((0x3FF & 0x3FF) << 22) |
-                          (((block == INVALID_BLOCK) ? 0x3F : block) & 0x3F) << 16 |
-                          ((field & 0xFF) << 8) | 0xFF;
+    // The Register service addresses blocks via BlockInfo (Type10|Inst6|Field8|Key8), not
+    // BlockIndex. A static block is addressed by its TYPE with instance 0 (the app does the
+    // same); only the "no block given" form means everything, which uses the Dynamic type with
+    // instance 0x3F. Hard-coding 0x3FF here made save/recall/read-backup of a *static* block
+    // unreachable from the CLI - the core logged `MEM: CID 3 failed block=255 field=255` and
+    // reported a failure the CLI then showed as a timeout (found on the rig while saving a DAS
+    // block).
+    uint32_t block_info;
+    if (block == INVALID_BLOCK)
+        block_info = CliBlockInfo(0x3FF, 0x3F, field, 0xFF);
+    else
+        block_info = CliBlockInfo(block, 0, field, 0xFF);
     PacketFrame req;
     PacketConstruct(&req, addr,
                      MakeService(ServiceType::Register, reg_cid),
@@ -189,25 +189,28 @@ static int SendMemoryExtra(uint16_t addr, uint8_t block, uint8_t field, ServiceT
 }
 
 // save <addr> [svc] [block|-] : Save a block (or everything) of a service to its backup file
-static int CmdSave(int argc, char **argv)
+// Shared body of save/recall: same argument parsing, differing only in the verb printed and
+// the command id (5 = save, 6 = recall).
+static int CmdSaveRecall(const char *usage, const char *verb, uint8_t cid, int argc, char **argv)
 {
-    if (argc < 2) { printf("Usage: save <addr> [svc] [block|-]\n"); return 1; }
+    if (argc < 2) { printf("Usage: %s\n", usage); return 1; }
     uint16_t addr = atoi(argv[1]);
     ServiceType svc = ServiceType::Register;
     uint8_t block = (argc > 3 && strcmp(argv[3], "-") != 0) ? (uint8_t)atoi(argv[3]) : INVALID_BLOCK;
-    printf("Saving block %d of service %d on device %d...\n", block, (int)svc, addr);
-    return SendMemoryExtra(addr, block, INVALID_INDEX, svc, 5, 2);
+    printf("%s block %d of service %d on device %d...\n", verb, block, (int)svc, addr);
+    return SendMemoryExtra(addr, block, INVALID_INDEX, svc, cid, 2);
+}
+
+// save <addr> [svc] [block|-] : Save a block (or everything) of a service to its backup file
+static int CmdSave(int argc, char **argv)
+{
+    return CmdSaveRecall("save <addr> [svc] [block|-]", "Saving", 5, argc, argv);
 }
 
 // recall <addr> [svc] [block|-] : Recall a block (or everything) of a service from its backup file
 static int CmdRecall(int argc, char **argv)
 {
-    if (argc < 2) { printf("Usage: recall <addr> [svc] [block|-]\n"); return 1; }
-    uint16_t addr = atoi(argv[1]);
-    ServiceType svc = ServiceType::Register;
-    uint8_t block = (argc > 3 && strcmp(argv[3], "-") != 0) ? (uint8_t)atoi(argv[3]) : INVALID_BLOCK;
-    printf("Recalling block %d of service %d on device %d...\n", block, (int)svc, addr);
-    return SendMemoryExtra(addr, block, INVALID_INDEX, svc, 6, 2);
+    return CmdSaveRecall("recall <addr> [svc] [block|-]", "Recalling", 6, argc, argv);
 }
 
 // rmem <addr> [svc] <block> [field] : Read a block (or a single field) from a backup file

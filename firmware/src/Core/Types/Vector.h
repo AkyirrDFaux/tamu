@@ -35,12 +35,14 @@ public:
     }
 
     // Scalar Multiplication: V = V1 * scalar
-    // Note: Scalar is converted to Number (16.16) for fixed-point consistency
+    // Scalar is a Number (16.16) and is multiplied as one. Passing `scalar.Value` here would
+    // hand the raw fixed-point value to Number's int constructor, which scales it a second
+    // time (and overflows for any scalar above ~32767).
     Vector operator*(const Number &scalar) const
     {
         Vector result;
         for (size_t i = 0; i < N; ++i)
-            result.Data[i] = Data[i] * scalar.Value;
+            result.Data[i] = Data[i] * scalar;
         return result;
     }
 

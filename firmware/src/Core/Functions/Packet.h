@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include "Core/Functions/Crc8.h"
 
 // Spec Data Formats.md: Generic packet max 128 total, payload max 116
 // Header 12 bytes: CRC8 | Flags | Priority | PayloadLen | TGT | SRC | CMD | TRID
@@ -65,21 +66,6 @@ static_assert(offsetof(PacketFrame, id_src) == 4, "wire order: SRC ID after the 
 static_assert(offsetof(PacketFrame, cmd) == 6, "wire order: CMD after SRC ID");
 static_assert(offsetof(PacketFrame, id_tgt) == 8, "wire order: TGT ID after CMD");
 static_assert(offsetof(PacketFrame, trid) == 10, "wire order: TRID after TGT ID");
-
-inline uint8_t Crc8(const uint8_t *data, uint16_t len)
-{
-    uint8_t crc = 0x00;
-    for (uint16_t i = 0; i < len; i++)
-    {
-        crc ^= data[i];
-        for (uint8_t j = 0; j < 8; j++)
-        {
-            if (crc & 0x80) crc = (crc << 1) ^ 0x07;
-            else crc <<= 1;
-        }
-    }
-    return crc;
-}
 
 inline uint16_t MakeService(ServiceType type, uint8_t cid)
 {

@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Plan.md",
+                "file": "Services/Register.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Plan"
+              "title": "Register"
             }
           }
         ]
@@ -190,32 +190,32 @@
   },
   "active": "b382b423e960f24e",
   "lastOpenFiles": [
-    "Current setup v3.md",
-    "Current setup v2.md",
-    "Data Formats.md",
-    "Services/Script.md",
+    "Devices.md",
+    "Services/System Block and Device Commands.md",
     "Modules and blocks/LED display.md",
     "Modules and blocks/Measurement.md",
+    "General architecture.md",
+    "Data Formats.md",
+    "Services/Script.md",
+    "Services/Storage.md",
+    "Services/Subscriptions.md",
     "Modules and blocks/Generic system blocks.md",
     "Modules and blocks/Buttons & LEDS.md",
+    "Services/Router.md",
     "Services/Register.md",
-    "Devices.md",
-    "General architecture.md",
+    "Services/Log Handler.md",
+    "Services/CLI.md",
+    "Services/App Interface.md",
     "Plan.md",
+    "Current setup v3.md",
+    "Current setup v2.md",
     "RSBus and Packets.md",
     "Command ID table.md",
-    "Services/System Block and Device Commands.md",
-    "Services/Subscriptions.md",
-    "Services/CLI.md",
     "App/Backup.md",
     "App/Service views/Script.md",
     "App/Service views/Storage.md",
     "App/Service views/Register.md",
     "App/Connection.md",
-    "App/Device view.md",
-    "App/Devices.md",
-    "App/General info.md",
-    "App/Settings.md",
     "App/Service views",
     "App"
   ]

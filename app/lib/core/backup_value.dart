@@ -214,39 +214,28 @@ List<int>? decodeSemantic(DataType type, Object? value,
   }
 }
 
-int? _enumRaw(Object? value, FieldInfo? info) {
-  if (value is num) return value.toInt();
-  if (value is String) {
-    final options = info?.enumValues;
-    if (options != null) {
-      for (final entry in options.entries) {
-        if (entry.value == value) return entry.key;
-      }
-    }
-    return int.tryParse(value);
-  }
-  return null;
-}
+int? _enumRaw(Object? value, FieldInfo? info) => _rawFromWord(value, info?.enumValues);
 
-int? _deviceTypeRaw(Object? value) {
-  if (value is num) return value.toInt();
-  if (value is String) {
-    for (final type in DeviceType.values) {
-      if (type.label == value) return type.value;
-    }
-    return int.tryParse(value);
-  }
-  return null;
-}
+int? _deviceTypeRaw(Object? value) =>
+    _rawFromWord(value, {for (final t in DeviceType.values) t.value: t.label});
 
 /// Resolves a block-type word (or number) back to its raw value, with the System block
 /// (0x00) resolved explicitly (its word is "System", not the "None" tombstone).
 int? _blockTypeRaw(Object? value) {
+  if (value is String && value == 'System') return systemBlockTypeValue;
+  return _rawFromWord(value, {for (final t in BlockType.values) t.value: t.label});
+}
+
+/// Shared prologue of the word -> raw-value lookups used when applying a semantic backup:
+/// a number passes through, a string is matched against the [options] label->value table and
+/// otherwise parsed as a number.
+int? _rawFromWord(Object? value, Map<int, String>? options) {
   if (value is num) return value.toInt();
   if (value is String) {
-    if (value == 'System') return systemBlockTypeValue;
-    for (final type in BlockType.values) {
-      if (type.label == value) return type.value;
+    if (options != null) {
+      for (final entry in options.entries) {
+        if (entry.value == value) return entry.key;
+      }
     }
     return int.tryParse(value);
   }

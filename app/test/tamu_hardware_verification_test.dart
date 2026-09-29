@@ -175,6 +175,47 @@ void main() {
     expect(typeSet.contains(BlockType.led.value), isTrue);
   }, timeout: const Timeout(Duration(seconds: 60)));
 
+  // HIL: the DAS can save a static block. The reduced file system pre-allocates its settings
+  // file, which used to make the save appends see a "full" log and refuse, so *every* static
+  // save on the DAS failed (status 255) and nothing was ever restored after a reboot. This
+  // checks the save reports success and the log actually holds entries, which is what the
+  // persistence depends on; the restore itself needs a power-cycle and is done by hand.
+  test('HIL: DAS static save writes the backup log', skip: skipReason, () async {
+    final db = DeviceDatabase.instance;
+    await db.refreshRuntime(0);
+    DeviceEntry? das;
+    for (final d in db.all) {
+      if (d.type == DeviceType.dualAnalogSensor) {
+        das = d;
+        break;
+      }
+    }
+    if (das == null) {
+      print('DAS not found - skipping static save check');
+      return;
+    }
+    final reg = RegisterClient(deviceId: das.id);
+    // A persistent, writable field of Meas1 (Filter Coefficient, field 2): write it back
+    // unchanged so the check does not disturb the device's configuration.
+    final before = await reg.readBlockField(BlockType.resistiveMeasure.value, 0, 2, 0);
+    expect(before, isNotNull, reason: 'Meas1 Filter Coefficient readable');
+    final meta = BlockMeta(
+        flagsAndType: before!.meta.flagsAndType, key: 0, size: before.value.length);
+    expect(
+        await reg.writeBlockField(
+            BlockType.resistiveMeasure.value, 0, 2, 0, meta, before.value),
+        isNotNull,
+        reason: 'write accepted');
+    expect(await reg.saveStatic(BlockType.resistiveMeasure.value, 0), isTrue,
+        reason: 'the DAS must be able to save a static block');
+    // The STATLOG entry list must no longer be an erased (all-0xFF) region.
+    final storage = StorageClient(deviceId: das.id);
+    final data = await storage.readFile('STATLOG', size: 128);
+    expect(data, isNotNull, reason: 'STATLOG readable');
+    final used = data!.takeWhile((b) => b != 0xFF).length;
+    expect(used, greaterThan(0), reason: 'a saved entry is present in STATLOG');
+  }, timeout: const Timeout(Duration(seconds: 60)));
+
   // HIL: System Name write clamps to the documented 16 bytes (and can never write the
   // terminating NUL past the firmware's 24-byte DeviceNameBuffer).
   test('HIL: System Name write clamps to 16 bytes', skip: skipReason, () async {
@@ -195,12 +236,22 @@ void main() {
             size: long.length),
         long.codeUnits);
     expect(wrote, isNotNull);
+    // A persistent write must report Not Saved until it is saved (the System block has no
+    // static-registry entry, so its flags live in the active-flag array - this is the case
+    // that used to be silently dropped).
     final after = await reg.readField(6, 0);
-    expect(after!.value.length, lessThanOrEqualTo(16));
+    expect(after!.meta.notSaved, isTrue, reason: 'the read agrees with the write');
+    expect(after.value.length, lessThanOrEqualTo(16));
     expect(String.fromCharCodes(after.value).replaceAll('\x00', ''),
         'ABCDEFGHIJKLMNOP');
 
-    // Restore the original (unpersisted) name.
+    // Saving clears it again.
+    expect(await reg.saveStatic(0, 0), isTrue);
+    final saved = await reg.readField(6, 0);
+    expect(saved!.meta.notSaved, isFalse, reason: 'saving clears the flag');
+
+    // Restore the original name and persist it, so the device is left as it was found (the
+    // temporary name above reached flash when the save was exercised).
     await reg.writeBlockField(
         0,
         0,
@@ -211,6 +262,8 @@ void main() {
             size: original.length),
         original.codeUnits);
     expect((await reg.readField(6, 0))!.value, isNotEmpty);
+    expect(await reg.saveStatic(0, 0), isTrue);
+    expect((await reg.readField(6, 0))!.meta.notSaved, isFalse);
   }, timeout: const Timeout(Duration(seconds: 60)));
 
   // HIL: TimeSync is synchronized-device initiated - the node syncs ITSELF to the core

@@ -10,9 +10,6 @@
   per-event selection; the app persists `notifyOs`/`osEvents`/`suppressOsWhenOpen` but only
   delivers in-app notifications (`app/lib/core/notifications.dart`). Implement OS delivery
   or mark the settings as pending.
-- **Register backup view.** `Docs/App/Service views/Register.md` describes a Current/Backup
-  view toggle with Save/Recall; the app exposes per-field "Save/Recall to backup" menus and
-  a global Save/Recall all instead of a view toggle.
 - **Script UI info carries no enum labels in the docs.** `Docs/Services/Script.md` describes the
   UI info as names plus per-input limits/UI type; the app now writes **version 2** with a label
   list per input (the custom-enum / dropdown case). **v1 is no longer supported** (the app's
@@ -28,12 +25,38 @@
   `Transform23`) therefore store `t' = L * t`, which keeps the centre at `-t` for any rotation
   (an unrotated transform is unchanged). `Docs/Modules and blocks/LED display.md` describes
   Position as a plain 2x3 matrix, so a hand-written rotated matrix would need to know this.
-- **The "Not Saved" active flag is never set.** `Docs/Services/Register.md` defines an active
-  "Not Saved" flag ("a change has been made compared to the saved state") and the CLI prints
-  `[NS]`, but nothing sets it. A static Write only reaches RAM until an explicit Save (CID 3),
-  so a value can look applied and still vanish on reboot with nothing signalling it - which is
-  exactly how the display render-block was lost unnoticed. Set/clear the flag on write/save (or
-  document that callers must track it themselves).
+- **Cross-script macro calls: the encoding and the waiting semantics are unspecified.**
+  `Docs/Services/Script.md` lists "Macro call" and "Script (un)loading" in the functions table
+  and nothing else - no opcode, no symbol encoding, no statement about what happens when the
+  *callee* blocks. The (un)loading half is implemented (service ops 7/8, mirroring management
+  CIDs 1/2, with a self-(un)load guard). The macro-call half needs a decision before it can be
+  built, because the VM runs **one script per tick** and every wait state (`waitUntil`,
+  `pendingForeign`, the 500 ms foreign deadline) lives on the callee:
+  - if a callee waits on a foreign register reply, the tick loop must resume the *callee*, not
+    the caller - so one script's state can no longer describe the run;
+  - `Return` must know which script and line to come back to, i.e. the call stack has to carry
+    a script slot as well as an instruction index;
+  - it is not stated whether a macro call is blocking (caller waits for the callee to finish) or
+    immediate, nor whether arguments/results cross the boundary, nor how recursion depth is
+    counted (`SCRIPT_MAX_CALL_DEPTH` is per script today).
+  Proposal to confirm: a `Call script` flow op with operands `(loaded script id, entry line)`,
+  blocking by construction (the caller's instruction pointer stays on the call line and it
+  resumes only on the callee's `Return`/`Halt`), a shared call stack of `(script, line)` pairs,
+  and no argument passing (scripts exchange values through registers, as they already do).
+
+## Register active flags (docs gap)
+- **"Subscription Source" has no wire bit.** `Docs/Services/Register.md` lists four active flags
+  as a 4-bit segment per static entry (Not Saved, Script Updated, Subscription Source, External
+  origin), and says a read "combines the active and passive flags together". But the flags field
+  is only 6 bits (bits 10-15, `BLOCK_META_FLAGS_MASK`): ReadOnly/Persistent/Trigger plus Not
+  Saved/Script Updated/External origin already fill it, so the fourth active flag cannot be
+  reported. Not Saved, Script Updated and External origin are implemented (set/cleared as write
+  provenance - see `TODO.md` A1/D2); Subscription Source is left unimplemented rather than stored
+  unreportably. Either the docs drop it or the flags field needs another bit.
+- **`Docs/Services/Register.md` should state the array's size rule the implementation uses.**
+  The doc gives `4 bits * number of all individual static entries`; the implementation adds the
+  System block's fields to that count (the section title implies it, but the formula does not say
+  so explicitly) and sizes the array per board via a build flag.
 
 ## Android (build verified; on-device verification pending)
 - **`permission_handler` pinned to 11.x.** The 13.x Android implementation
@@ -49,20 +72,6 @@
   runtime permission prompt and its denied/permanently-denied paths, BLE scan/connect/MTU,
   the Storage Access Framework backup save + restore and file download, and the compact
   drawer shell on a phone form factor.
-
-## Subscriptions / time sync (noted gaps, not currently triggered)
-- **The app is a manager, never a requester/provider.** `SubscriptionClient` only writes the
-  *devices'* requester tables; the app never registers a subscription with itself as requester
-  or provider (so the `OnChangeConfirm` confirmation path does not apply to it). A test guards
-  this.
-- **Node time-sync interval is 60-75 s, not the docs' 2-3 min.** The DAS's internal RC
-  oscillator drifts ~1% and its drift changes by ~0.02% between syncs (~10 ms per 60 s), so
-  the <10 ms accuracy target needs a shorter interval than the docs specify. An external
-  crystal (HSE) on the DAS would allow the documented 2-3 min cadence to meet the target.
-- **A node stays out of sync for up to one sync interval after a core restart.** The node
-  applies its offset only at its own TimeSync, so a core reboot leaves the node's clock stale
-  until the next sync (now <=~75 s). By design; a core "time changed" broadcast would let
-  nodes re-sync immediately.
 
 ## Evaluation setup (`Docs/Current setup v3.md`)
 - **LED brightness can brown out the board.** The LED-display driver accepts brightness
