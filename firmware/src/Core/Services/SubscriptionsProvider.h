@@ -176,8 +176,10 @@ static uint32_t SubscriptionsVectorDist2(const FieldResult &fr, const int32_t *l
     for (uint8_t a = 0; a < axes; a++) {
         int32_t raw = 0;
         memcpy(&raw, data + (size_t)a * 4, 4);
-        uint32_t d = SubscriptionsAbsDelta(raw, last[a]);
-        if (d > 0xFFFFu) return 0xFFFFFFFFu; // >= 1.0 in 16.16: above any practical deadzone
+        // Compared in Q8.8 (see the call site): +-256 value units at 1/256 resolution, which is
+        // far beyond any real sensor and keeps the squares inside 32 bits.
+        uint32_t d = SubscriptionsAbsDelta(raw, last[a]) >> 8;
+        if (d > 0xFFFFu) return 0xFFFFFFFFu; // >= 256 units: above any meaningful deadzone
         uint32_t t = d * d;
         if (sum > 0xFFFFFFFFu - t) return 0xFFFFFFFFu; // saturate, never wrap
         sum += t;
@@ -252,9 +254,14 @@ static void EvaluateProviderTriggers(uint32_t nowMs) {
 #ifndef SCALAR_ONLY
             if (BlockMetaType(fr.Descriptor.FlagsAndType) == (uint16_t)DataType::Vector &&
                 fr.Descriptor.Size >= 4 && (fr.Descriptor.Size % 4) == 0) {
-                // Vector: lastVec holds the last SENT vector; gate on the euclidean distance
-                // (squared, to stay 32-bit and overflow-free).
-                uint32_t dz = e->deadzone.Value > 0 ? (uint32_t)e->deadzone.Value : 0;
+                // Vector: lastVec holds the last SENT vector; gate on the euclidean distance.
+                //
+                // Both sides live in Q8.8 (shifted right by 8): squaring a practical change or
+                // deadzone in full Q16.16 overflows 32 bits, and saturating both sides at the
+                // same ceiling silently capped every deadzone at 1.0 - a "huge" deadzone then
+                // behaved like a tiny one, sending on any change over 1.0. Q8.8 covers +-256
+                // units at 1/256 resolution; a deadzone below 1/256 still means "any change".
+                uint32_t dz = e->deadzone.Value > 0 ? ((uint32_t)e->deadzone.Value >> 8) : 0;
                 uint32_t dz2 = dz > 0xFFFFu ? 0xFFFFFFFFu : dz * dz;
                 if (SubscriptionsVectorDist2(fr, e->lastVec) >= dz2 && elapsed >= e->minTimeMs)
                     send = true;

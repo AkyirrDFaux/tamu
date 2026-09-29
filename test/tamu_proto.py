@@ -112,6 +112,45 @@ def block_info(block_type, inst, field, key):
     return ((block_type & 0x3FF) << 22) | ((inst & 0x3F) << 16) | ((field & 0xFF) << 8) | (key & 0xFF)
 
 
+class LinkParser:
+    """Recovers the packet stream from USB link frames: 0xFA | crc8 | len | payload | 0xBF.
+
+    The device frames the packet stream on the way out, so the raw bytes cannot be fed to the
+    packet parser directly - that was the first version's mistake. `crc8` here covers length +
+    payload, matching the firmware's UsbFramer.
+    """
+
+    def __init__(self):
+        self.buf = bytearray()
+        self.stream = bytearray()
+
+    def feed(self, chunk):
+        self.buf += chunk
+        i = 0
+        while i < len(self.buf):
+            if self.buf[i] != FRAME_START:
+                i += 1
+                continue
+            if len(self.buf) - i < 3:
+                break
+            n = self.buf[i + 2]
+            if n > FRAME_MAX:
+                i += 1
+                continue
+            if len(self.buf) - i < 3 + n + 1:
+                break
+            body = bytes(self.buf[i + 2:i + 3 + n])          # length byte + payload
+            if crc8(body) == self.buf[i + 1] and self.buf[i + 3 + n] == FRAME_STOP:
+                self.stream += body[1:]
+                i += 3 + n + 1
+            else:
+                i += 1
+        self.buf = self.buf[i:]
+        out = bytes(self.stream)
+        self.stream.clear()
+        return out
+
+
 class Packet:
     def __init__(self, flags, src, tgt_srv, cid, trid, payload=b""):
         self.flags = flags
@@ -148,8 +187,10 @@ def parse_packet(buf):
         return None, 1  # resync: drop a byte
     if len(buf) < size:
         return None, 0
-    src, cmd, tgt = struct.unpack("<HHH", bytes(buf[4:10]))
-    p = Packet(buf[1], src, cmd >> 8, cmd & 0xFF, tgt, bytes(buf[12:size]))
+    src, cmd, tgt, srv_src = struct.unpack("<HHHH", bytes(buf[4:12]))
+    p = Packet(buf[1], src, cmd >> 8, cmd & 0xFF, srv_src, bytes(buf[12:size]))
+    p.tgt = tgt
+    p.srv_tgt = cmd          # the service/CID this packet addresses (a reply echoes our tag)
     return p, size
 
 
@@ -161,7 +202,8 @@ class Tamu:
         self.ser = serial.Serial(self.port, 115200, timeout=0.05)
         self.timeout = timeout
         self.buf = bytearray()
-        self.trid = 0x1000
+        self.link = LinkParser()
+        self.txid = 0
         time.sleep(0.2)
         self.ser.reset_input_buffer()
 
@@ -199,13 +241,15 @@ class Tamu:
 
     def send(self, packet, addr=1):
         """Sends a request to `addr` and returns the first response addressed back to us."""
-        packet.trid = self.trid = (self.trid + 1) & 0xFFFF
+        self.txid = (self.txid + 1) & 0xFF
+        packet.trid = (Srv.App << 8) | self.txid   # srv_src: the app's service + transaction
+        tag = packet.trid
         self._write_frame(packet.wire(addr))
         deadline = time.time() + self.timeout
         while time.time() < deadline:
             r, _, _ = select.select([self.ser], [], [], 0.05)
             if r:
-                self.buf += self.ser.read(self.ser.in_waiting or 1)
+                self.buf += self.link.feed(self.ser.read(self.ser.in_waiting or 1))
             while True:
                 pkt, used = parse_packet(self.buf)
                 if used:
@@ -214,9 +258,12 @@ class Tamu:
                     if not used:
                         break
                     continue
-                if pkt.flags & FLAG_TYPE and pkt.trid == self.trid:
+                # A reply addresses the requester's tag: the device answers with
+                # srv_tgt = the request's srv_src, so match on that (not on the target
+                # address, which for us is always the app placeholder).
+                if (pkt.flags & FLAG_TYPE) and pkt.srv_tgt == tag:
                     return pkt
-        raise TimeoutError(f"no reply (trid 0x{self.trid:04X})")
+        raise TimeoutError(f"no reply (tag 0x{tag:04X})")
 
     # ---- convenience helpers -------------------------------------------------
     def ping(self, addr=1):

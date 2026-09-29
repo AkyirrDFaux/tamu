@@ -7,6 +7,13 @@
 
 #ifdef TYPE_CORE
 #include "Core/Functions/SNDB.h"
+
+#ifdef USE_SUB_REQUEST
+// Defined in Core/Services/SubscriptionsPersist.h (included later in the same translation
+// unit): ask for this device's requester entries for `addr` to be re-pushed. Deferred on
+// purpose - see SubscriptionsRequestReRegister.
+void SubscriptionsRequestReRegister(uint16_t addr);
+#endif
 #include "Core/Functions/TimeSync.h"
 #endif
 
@@ -239,6 +246,14 @@ void HandleDeviceService(const PacketFrame &frame)
             AssignPayload response_data;
             response_data.sn = *incoming_sn;
             response_data.new_addr = NewAddr;
+
+#ifdef USE_SUB_REQUEST
+            // The node just (re-)appeared with an empty provider table, so ask for this
+            // device's subscriptions that point at it to be re-pushed - otherwise a node reboot
+            // silently ends them. Only *requested* here: this runs inside packet dispatch and
+            // must not delay the assignment reply below.
+            SubscriptionsRequestReRegister(NewAddr);
+#endif
 
             PacketConstruct(&tx_frame, ADDR_BROADCAST,
                              MakeService(ServiceType::Device, 0),

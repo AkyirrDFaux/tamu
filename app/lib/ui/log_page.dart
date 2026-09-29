@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -17,7 +18,12 @@ import 'widgets.dart';
 class LogViewerPage extends StatefulWidget {
   final int deviceId;
 
-  const LogViewerPage({super.key, required this.deviceId});
+  /// Test seam: the log fetch itself (`LogHandler CID 1`). Defaults to the live connection,
+  /// which a widget test cannot fake. A page built with a fetcher also skips the connection
+  /// check, since there is no transport in a widget test.
+  final Future<List<int>?> Function(int deviceId)? logFetcher;
+
+  const LogViewerPage({super.key, required this.deviceId, this.logFetcher});
 
   @override
   State<LogViewerPage> createState() => _LogViewerPageState();
@@ -32,6 +38,16 @@ class _LogViewerPageState extends State<LogViewerPage>
   /// null = show every device's entries.
   int? _deviceFilter;
 
+  // The device streams its *entire* log store for every read, so a quiet view would pull the
+  // whole buffer - several packets over the RS-Bus once the store is full - on every 0.5 s
+  // tick. An identical reply therefore backs the poll off (linearly, up to [_maxSkip] ticks),
+  // while any change - or a manual refresh - puts it straight back to every tick, so a device
+  // that is actually logging stays live.
+  static const int _maxSkip = 10;
+  int _skip = 1;
+  int _tick = 0;
+  List<int>? _lastReply;
+
   @override
   void initState() {
     super.initState();
@@ -39,20 +55,41 @@ class _LogViewerPageState extends State<LogViewerPage>
   }
 
   @override
-  Future<void> onAutoRefresh() => _fetch();
+  Future<void> onAutoRefresh() async {
+    if (++_tick < _skip) return;
+    _tick = 0;
+    await _fetch();
+  }
+
+  /// Manual refresh (the button and pull-to-refresh): always fetches and restarts the fast
+  /// cadence.
+  Future<void> _refreshNow() async {
+    _skip = 1;
+    _tick = 0;
+    await _fetch();
+  }
+
+  Future<List<int>?> _request() {
+    final seamed = widget.logFetcher;
+    if (seamed != null) return seamed(widget.deviceId);
+    return ConnectionManager.instance.request(widget.deviceId, ServiceType.logHandler, 1,
+        timeout: const Duration(seconds: 5));
+  }
 
 
 
   Future<void> _fetch() async {
-    if (!ConnectionManager.instance.isConnected || _loading) return;
+    if (_loading) return;
+    if (widget.logFetcher == null && !ConnectionManager.instance.isConnected) return;
     setState(() => _loading = true);
     List<int>? reply;
     try {
-      reply = await ConnectionManager.instance
-          .request(widget.deviceId, ServiceType.logHandler, 1,
-              timeout: const Duration(seconds: 5));
+      reply = await _request();
     } catch (_) {}
     if (!mounted) return;
+    final changed = _lastReply == null || !listEquals(reply, _lastReply);
+    _lastReply = reply;
+    _skip = changed ? 1 : (_skip < _maxSkip ? _skip + 1 : _maxSkip);
     setState(() {
       _loading = false;
       if (reply == null) {
@@ -162,7 +199,7 @@ class _LogViewerPageState extends State<LogViewerPage>
               tooltip: 'Clear database',
               icon: const Icon(Icons.delete_sweep_outlined)),
           RefreshButton(
-            onRefresh: _fetch,
+            onRefresh: _refreshNow,
             autoActive: autoRefreshActive,
             refreshing: _loading,
             error: _error != null,

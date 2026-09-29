@@ -248,8 +248,18 @@ void main() async {
     final dasAddr = das!.id;
     final reg = RegisterClient(deviceId: tamu.id);
     final target = await makeTarget(reg, 4, DataType.number, 4, value: numberToBytes(-1));
-    final sourceReg = makeBlockInfo(BlockType.resistiveMeasure.value, 1, 3, 0); // DAS ch2 LDR
+    // A *writable* source on the DAS: its ResistiveMeasure Filter Coefficient. The LDR
+    // (instance 1 Measured Value) was used before, but it drifts with the room light - and
+    // because a delta push is fire-and-forget, one lost packet leaves the provider's
+    // last-sent hash ahead of the value that reached the target. Driving the source makes the
+    // check deterministic while still exercising the DAS's provider table.
+    final sourceReg = makeBlockInfo(BlockType.resistiveMeasure.value, 0, 2, 0); // FilterCoeff
     final targetReg = makeBlockInfo(BlockType.dynamic.value, 4, 0, 0);
+    final dasReg = RegisterClient(deviceId: dasAddr);
+    final before = await dasReg.readBlockField(BlockType.resistiveMeasure.value, 0, 2, 0);
+    expect(before, isNotNull, reason: 'DAS FilterCoeff readable');
+    final srcMeta =
+        BlockMeta(flagsAndType: before!.meta.flagsAndType, key: 0, size: before.value.length);
 
     final client = SubscriptionClient(deviceId: tamu.id);
     final entry = RequesterSubscription(
@@ -261,7 +271,7 @@ void main() async {
       trigger: TriggerType.deltaPeriodic,
       periodMs: 60000, // long: only the change branch fires
       minTimeMs: 200,
-      deadzone: 3.0,
+      deadzone: 0.05,
     );
     expect(await client.setRequesterSubscription(0, entry: entry), isTrue);
 
@@ -277,27 +287,37 @@ void main() async {
     }
     expect(ready, isTrue, reason: 'the DAS never received the provider entry');
 
-    // The provider's Hash/Hashlike is the last SENT scalar, so it must equal the raw value
-    // that reached the target - not an FNV hash written by a stray confirmation (which used
-    // to overwrite it after every update, breaking the scalar deadzone).
-    var ok = false;
-    var last = '';
-    for (var i = 0; i < 12 && !ok; i++) {
-      final t = await reg.readDynamicField(target, 0, 0);
-      final v = t == null ? double.nan : numberFromBytes(t.value);
-      final mine = (await provClient.getProviderSubscriptions())
-          .where((p) => p.periodMs == 60000 && p.sourceReg == sourceReg)
-          .toList();
-      final raw = (v * 65536).round() & 0xFFFFFFFF;
-      final hash = mine.isEmpty ? 0 : mine.first.hash;
-      last = 'target=$v hash=0x${hash.toRadixString(16)} expected=0x${raw.toRadixString(16)}';
-      ok = v.isFinite && hash == raw;
-      if (!ok) await Future<void>.delayed(const Duration(milliseconds: 250));
+    // Drive the source to a known value, retrying the nudge if a push went missing.
+    var landed = false;
+    var sent = 0.0;
+    for (var attempt = 0; attempt < 6 && !landed; attempt++) {
+      sent = 0.2 + 0.1 * attempt;
+      await dasReg.writeBlockField(
+          BlockType.resistiveMeasure.value, 0, 2, 0, srcMeta, numberToBytes(sent));
+      for (var i = 0; i < 8 && !landed; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        final t = await reg.readDynamicField(target, 0, 0);
+        landed = t != null && (numberFromBytes(t.value) - sent).abs() < 0.005;
+      }
     }
-    // ignore: avoid_print
-    print('[SUB] scalar provider state: $last');
-    expect(ok, isTrue, reason: 'provider Hash must hold the last sent scalar, not a hash');
+    expect(landed, isTrue, reason: 'the pushed value never reached the target');
 
+    // The provider's Hash/Hashlike is the last SENT scalar, so it must equal the raw value that
+    // reached the target - not an FNV hash written by a stray confirmation (which used to
+    // overwrite it after every update, breaking the scalar deadzone).
+    final mine = (await provClient.getProviderSubscriptions())
+        .where((p) => p.periodMs == 60000 && p.sourceReg == sourceReg)
+        .toList();
+    final raw = (sent * 65536).round() & 0xFFFFFFFF;
+    final hash = mine.isEmpty ? 0 : mine.first.hash;
+    // ignore: avoid_print
+    print('[SUB] scalar provider state: sent=$sent hash=0x${hash.toRadixString(16)} '
+        'expected=0x${raw.toRadixString(16)}');
+    expect(hash, raw, reason: 'provider Hash must hold the last sent scalar, not a hash');
+
+    // Restore the DAS coefficient, then clean up.
+    await dasReg.writeBlockField(
+        BlockType.resistiveMeasure.value, 0, 2, 0, srcMeta, before.value);
     await client.setRequesterSubscription(0);
     await reg.deleteDynamic(block: 4);
   }, timeout: const Timeout(Duration(seconds: 30)));
@@ -329,8 +349,11 @@ void main() async {
     bool same(List<int> a, List<int> b) =>
         a.length == b.length && List.generate(a.length, (i) => a[i] == b[i]).every((x) => x);
 
-    // Huge deadzone: only the very first evaluation sends.
-    await subscribe(100.0);
+    // A deadzone comfortably above the source's noise but below its ~10-unit initial state
+    // (the reference starts at zero), so exactly one value arrives and then it stays quiet.
+    // It is also > 1.0, which is what the old saturated Q16.16 comparison could not express:
+    // back then any change over 1.0 was sent regardless of this number.
+    await subscribe(5.0);
     var first = <int>[];
     for (var i = 0; i < 12 && !first.any((b) => b != 0); i++) {
       await Future<void>.delayed(const Duration(milliseconds: 250));
@@ -413,4 +436,84 @@ void main() async {
     await scriptClient.unload(9);
     await storage.deleteFile('SCR_09');
   }, timeout: const Timeout(Duration(seconds: 30)));
+
+  test('subscriptions: a vector deadzone above 1.0 holds (Q16.16 cap fix)',
+      skip: skipReason, () async {
+    // The vector delta path used to square the change and the deadzone in full Q16.16, where
+    // both overflow 32 bits - so both sides saturated at the same ceiling and every deadzone
+    // behaved like 1.0: a change of 3 units was sent even with a deadzone of 100. The source
+    // here is a *writable* dynamic vector, so the test is deterministic (the accelerometer
+    // version depends on not touching the board).
+    final reg = RegisterClient(deviceId: tamu.id);
+    final source = await makeTarget(reg, 6, DataType.vector, 12);
+    final target = await makeTarget(reg, 7, DataType.vector, 12);
+    final client = SubscriptionClient(deviceId: tamu.id);
+
+    Future<void> put(List<double> v) async {
+      final bytes = <int>[];
+      for (final x in v) {
+        bytes.addAll(numberToBytes(x));
+      }
+      final f = await reg.readDynamicField(source, 0);
+      expect(f, isNotNull);
+      await reg.writeDynamicField(source, f!, bytes);
+    }
+
+    bool same(List<int> a, List<int> b) =>
+        a.length == b.length && List.generate(a.length, (i) => a[i] == b[i]).every((x) => x);
+
+    expect(
+        await client.setRequesterSubscription(
+            0,
+            entry: RequesterSubscription(
+              index: 0,
+              providerAddr: tamu.id, // self-loopback: the core is the provider
+              trid: 0xFB01,
+              targetReg: makeBlockInfo(BlockType.dynamic.value, 7, 0, 0),
+              sourceReg: makeBlockInfo(BlockType.dynamic.value, 6, 0, 0),
+              trigger: TriggerType.deltaPeriodic,
+              periodMs: 60000, // long: only the change branch can fire
+              minTimeMs: 200,
+              deadzone: 100.0,
+            )),
+        isTrue);
+
+    Future<List<int>> tval() async =>
+        (await reg.readDynamicField(target, 0, 0))?.value ?? const [];
+
+    // A change well past the deadzone sends (the reference starts at zero).
+    await put([200.0, 200.0, 200.0]);
+    var first = <int>[];
+    for (var i = 0; i < 12 && !first.any((b) => b != 0); i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      first = await tval();
+    }
+    expect(first.any((b) => b != 0), isTrue, reason: 'a change past the deadzone must arrive');
+
+    // ~3 units per axis: far under the 100 deadzone, but over 1.0 - the old saturated
+    // comparison sent this, which is the bug.
+    await put([203.0, 203.0, 203.0]);
+    var stable = true;
+    for (var i = 0; i < 8; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      if (!same(await tval(), first)) {
+        stable = false;
+        break;
+      }
+    }
+    expect(stable, isTrue, reason: 'a change under the 100 deadzone must not be sent');
+
+    // And past it again still sends, so the gate is not simply stuck shut.
+    await put([500.0, 500.0, 500.0]);
+    var moved = false;
+    for (var i = 0; i < 12 && !moved; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      moved = !same(await tval(), first);
+    }
+    expect(moved, isTrue, reason: 'a change past the deadzone must be sent');
+
+    await client.setRequesterSubscription(0);
+    await reg.deleteDynamic(block: 6);
+    await reg.deleteDynamic(block: 7);
+  }, timeout: const Timeout(Duration(seconds: 60)));
 }

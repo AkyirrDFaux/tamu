@@ -1116,6 +1116,105 @@ analyzer.
 - [ ] LED brightness brown-out -> firmware current cap/ramp decision (deferred by request).
 - [ ] Mask-versioning correctness, if A11 is implemented.
 
+### Cleanup pass: app per-tick work, wire bounds, flaky assertion, TODO hygiene
+
+- [x] **Log page: adaptive poll cadence.** The device streams its *entire* log store for every
+  read (`LogHandler CID 1`), so a quiet view pulled the whole buffer - several packets over the
+  RS-Bus once the store is full - on every 0.5 s tick. An identical reply now backs the poll off
+  (linearly, up to 10 ticks); any change, or a manual refresh, resets it to every tick, so a
+  device that is actually logging stays live while a quiet one costs ~10x less. New widget test
+  (`log_refresh_test.dart`) drives the hook directly and asserts all three properties: fetch on
+  open, a handful of fetches over 21 quiet ticks instead of 21, and a change picked up within
+  one skip period.
+  The **devices page** was measured rather than changed: its tick marks every known device stale
+  and probes each, which is two requests here and scales with the node count. Left as is - the
+  A2 values/topology split is the pattern if the setup grows.
+- [x] **Wire-bounds audit: clean.** Every `frame.payload[...]` site was checked for a payload
+  length guard: the Script service's share one `PayloadBytes(frame)` local per case, the
+  Register/Storage/Log/Subscriptions handlers all bound-check before reading, and the rest stay
+  inside the struct regardless. One hardening applied: `PacketGetFrag` now returns an empty
+  range for a frame that sets `FLAG_FRAG` with no payload, instead of reading whatever the
+  struct's payload area holds (in-bounds but meaningless). +8 B on the DAS.
+- [x] **The DAS clock-sync HIL assertion no longer fails good builds.** It converged to 19 ms in
+  one run and 3 ms the next against a hard 10 ms bound - the residual is a function of the sync
+  cadence (the DAS tracks the core's rate between syncs, RC drift ~1 %). The bound is now 25 ms
+  (still catching a broken sync, which is orders of magnitude out) and the achieved offset is
+  printed either way. Verified: the suite passes and reports the offset (-1 ms this run).
+- [x] **TODO hygiene**: no action needed after all - the moot CLI entries (`file write`, the
+  `subs` deadzone argument, the help sweep) went out with the CLI removal record, and the only
+  remaining references to the deleted tools are inside that record, which is history.
+- [ ] **BLE is a coverage gap** (noted, needs tooling): every HIL suite drives the core over USB,
+  while the docs' Android path is BLE. A Linux host could exercise the core's BLE through BlueZ;
+  until then the BLE link is only verified by using the app.
+
+### Issue 3: node-reboot re-push (3a) and orphan cleanup (3b) - implemented
+
+- [x] **3a - re-push on node registration.** `ReRegisterSubscriptionsForNode(addr)` re-pushes this
+  device's requester entries that belong to `addr`, called from the core's discovery/assign path
+  (`Core/Services/Device.h`, next to the "Registered new device" log). A node's provider table is
+  RAM-only, and the existing retries stop once the first value has arrived - which is exactly the
+  state a running subscription is in - so a node reboot used to end its subscriptions silently.
+  The node's add is TRID-keyed, so a re-push replaces rather than duplicates.
+- [x] **3b - the requester cancels orphans it is told about** (user's design, and it costs no
+  traffic in the normal case). In `HandleRequesterValueUpdate`, an incoming value update whose
+  TRID matches no active requester entry is by definition an orphan provider entry - the only
+  notice we ever get, since the node's table is its own. It is cancelled immediately, for its
+  TRID, back to the sender. A lost cancel simply means the orphan announces itself again on its
+  next period, so the node's table converges without polling.
+- [x] **3b verified on the rig, with a three-way control** (via `test/tamu_proto.py`):
+  1. a **real** subscription (trid 4356) persists across every read - it is never cancelled;
+  2. a **core-addressed orphan** is never observable: its first value update arrives at once and
+     the core cancels it within the same read window;
+  3. an orphan addressed **elsewhere** (requester 99) **persists** - no update reaches the core -
+     which isolates the trigger as the update itself rather than a timer or a table scan;
+  4. a stale entry left by earlier sessions (trid 4420) disappeared once it next reported.
+- [x] **3a verified on the rig.** The first version called the re-push **inline** in the core's
+  discover handler - a blocking verified send, issued before the assignment reply - and with a
+  node that was not yet answering it stalled the assignment: the DAS went silent for minutes.
+  **That was my regression**, and it is now deferred: the handler only sets a bitmask
+  (`SubscriptionsRequestReRegister`), and `SubscriptionsTick` does the sending from the main
+  loop. After the fix the DAS registered normally, and a freshly rebooted node (empty provider
+  table) came back holding **exactly** the subscription the core wanted (requester 1, trid
+  0xFA00) with no app involvement - and the orphan I had left behind was correctly *not*
+  re-pushed. HIL suites all pass with the DAS present (10/10, 8/8, 4/4); see `Issues.md` for
+  the general rule about not sending on the bus from inside packet dispatch.
+- Cost: core flash **629 488 -> 629 658 B (+170 B)**; both changes are core-only, so the DAS is
+  untouched at 13 988 B / 1 636 B.
+
+### Rig follow-ups: vector deadzone cap fixed, direct harness working
+
+- [x] **Vector delta deadzone cap fixed** (`SubscriptionsProvider.h`). Both sides of the
+  comparison used to be squared in full Q16.16, where a practical change *or* deadzone
+  overflows 32 bits - so both saturated at the same ceiling and every deadzone behaved like
+  1.0: a 3-unit change was sent with a 100 deadzone. The comparison now runs in Q8.8 (±256
+  units at 1/256 resolution; a deadzone below 1/256 still means "any change"). The scalar path
+  was already exact. Cost: core flash -2 B plus the dead function below.
+- [x] **New deterministic test** for exactly that bug: a *writable* dynamic vector source, so
+  the check needs no physical motion (the accelerometer version depends on not touching the
+  board). It asserts a change past the deadzone arrives, a ~3-unit change under a 100 deadzone
+  does not, and a change past it still gets through.
+- [x] **The "delta vector honours the deadzone" test's deadzone corrected** (100 -> 5). With the
+  cap fixed, a deadzone above the source's whole initial state means nothing is sent - which is
+  correct behaviour, but the test's "the first value should have arrived" assumed the old
+  saturation made it slip through.
+- [x] **The "scalar provider keeps its last value" test made deterministic.** It subscribed to
+  the DAS's LDR, whose value drifts with the room light, and compared a value read from the
+  core with a hash read from the DAS: a delta push is fire-and-forget, so one lost packet
+  leaves the provider's last-sent hash legitimately ahead of what reached the target. It now
+  drives a *writable* DAS source (the ResistiveMeasure Filter Coefficient), retries the nudge
+  if a push goes missing, and asserts the mechanism it was written for - the provider's hash
+  equals the raw value that arrived.
+- [x] **Dead code**: `StaticDirtyGet()` removed (defined, never called; invisible on the DAS
+  because that build passes `-Wno-unused-function`).
+- [x] **`test/tamu_proto.py` now works end to end**: ping, block-type enumeration and a System
+  read over the protocol. Three fixes were needed, all in the client: the packet CRC covers
+  offsets 1..11 (flags..trid) plus the payload; the request's **source service must be a real
+  tag** (`ServiceType::App << 8 | txid`) because the device addresses its reply to it and drops
+  replies to an unknown service; and the **link frames must be unwrapped** before the packet
+  parser sees the stream.
+- [x] **Artifacts**: `tamu_backup_2026-09-22.zip` and `test_connect.dart` removed;
+  `Tamu_current_setup.zip` kept as requested.
+
 ### The CLI was removed (it outlived its purpose)
 
 The console/REPL and everything that existed to serve it are gone; the App Interface now owns

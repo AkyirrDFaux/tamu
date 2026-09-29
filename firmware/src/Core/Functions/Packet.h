@@ -142,7 +142,17 @@ struct PacketFragInfo
 
 inline PacketFragInfo PacketGetFrag(const PacketFrame &frame)
 {
+    // A fragment must carry at least its 4-byte frag info (payload lengths are in 4-byte
+    // words, so a flagged frame normally has one). A malformed frame that sets FLAG_FRAG with
+    // no payload would otherwise read whatever the struct's payload area holds; return an empty
+    // range instead. Handlers still bound-check before using the values.
     PacketFragInfo fi;
+    if (PayloadBytes(frame) < 4)
+    {
+        fi.current = 0xFFFF;
+        fi.total = 0xFFFF;
+        return fi;
+    }
     fi.current = (uint16_t)(frame.payload[0] | (frame.payload[1] << 8));
     fi.total = (uint16_t)(frame.payload[2] | (frame.payload[3] << 8));
     return fi;

@@ -112,7 +112,19 @@ static void ApplyRequesterValue(RequesterEntry *e, const uint8_t *val, uint8_t v
 static void HandleRequesterValueUpdate(const PacketFrame &frame) {
     if (!(frame.flags & FLAG_TYPE)) return;
     RequesterEntry* e = RequesterFindByTrid(frame.trid);
-    if (!e) return;
+    if (!e) {
+        // The sender holds a subscription this device does not have: an orphan provider entry.
+        // That happens when a cancel could not land (the node was offline, or the verified
+        // retries ran out) and is the *only* notification we get - the node's table is its own.
+        // Cancel it here, for its TRID, back to the sender. Nothing happens in the normal case,
+        // and if this cancel is lost too the orphan simply announces itself again on its next
+        // period, so the table converges on its own.
+        PacketFrame cancel;
+        PacketConstruct(&cancel, frame.id_src, MakeService(ServiceType::Subscriptions, 1),
+                        frame.trid, FLAG_START | FLAG_STOP, nullptr, 0);
+        SendAndVerifyPacket(cancel);
+        return;
+    }
     // Docs: the value update is "sent as response packet, request is confirmation IF NEEDED" -
     // only OnChangeConfirm repeats until confirmed. Confirming every trigger would also
     // overwrite the provider's Hash/Hashlike state, which the delta trigger uses as its last

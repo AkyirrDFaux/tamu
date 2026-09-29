@@ -137,10 +137,6 @@ static inline void StaticDirtySet(uint8_t idx, uint8_t field, bool dirty)
     StaticActiveSet(idx, field, ActiveNotSaved, dirty);
 }
 
-static inline bool StaticDirtyGet(uint8_t idx, uint8_t field)
-{
-    return StaticActiveGet(idx, field, ActiveNotSaved);
-}
 
 // Specification of the last write. The active flags record *what* last touched a value, so a
 // write of a different specification clears the flags it does not match (user decision:

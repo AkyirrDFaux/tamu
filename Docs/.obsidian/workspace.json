@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Services/System Block and Device Commands.md",
+                "file": "Plan.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "System Block and Device Commands"
+              "title": "Plan"
             }
           }
         ]
@@ -190,11 +190,11 @@
   },
   "active": "b382b423e960f24e",
   "lastOpenFiles": [
+    "Services/System Block and Device Commands.md",
     "Devices.md",
     "Data Formats.md",
     "General architecture.md",
     "Services/Register.md",
-    "Services/System Block and Device Commands.md",
     "Modules and blocks/LED display.md",
     "Modules and blocks/Measurement.md",
     "Services/Script.md",

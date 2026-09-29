@@ -244,5 +244,6 @@ void SubscriptionsTick(uint32_t nowMs) {
 #endif
 #ifdef USE_SUB_REQUEST
     RequesterInitCheck(nowMs);
+    SubscriptionsReRegisterPending();
 #endif
 }

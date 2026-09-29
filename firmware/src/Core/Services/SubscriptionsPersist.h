@@ -113,6 +113,43 @@ void ReRegisterSubscriptions() {
     }
 }
 
+// Re-pushes the requester entries whose provider is `addr`.
+//
+// A node's provider table is RAM-only ("active until cancelled"), so a node reboot wipes it
+// while the core's requester entries still look active and healthy - the subscription then
+// dies silently until the setup is re-applied. Retries exist, but they stop once the first
+// value has arrived, which is exactly the state a running subscription is in. The node's add
+// is TRID-keyed, so this replaces its entry rather than duplicating it.
+void ReRegisterSubscriptionsForNode(uint16_t addr) {
+    for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
+        RequesterEntry &e = requesterTable[i];
+        if (e.active && e.providerAddr == addr)
+            RegisterRequesterProvider(&e);
+    }
+}
+
+// Nodes that registered since the last tick, as a bitmask of addresses. The discover handler
+// only *requests* the re-push: it runs inside packet dispatch and must not be delayed by
+// protocol traffic to a node that may not even be answering yet (a verified send blocks and
+// retries). SubscriptionsTick does the sending from the main loop.
+static uint16_t s_reregisterPending = 0;
+
+void SubscriptionsRequestReRegister(uint16_t addr) {
+    if (addr > 0 && addr < 16)
+        s_reregisterPending |= (uint16_t)(1u << addr);
+}
+
+// Called from SubscriptionsTick: performs the deferred re-pushes.
+static void SubscriptionsReRegisterPending() {
+    uint16_t pending = s_reregisterPending;
+    s_reregisterPending = 0;
+    while (pending) {
+        uint16_t addr = (uint16_t)(pending & (~pending + 1)); // lowest set bit
+        pending &= (uint16_t)(pending - 1);
+        ReRegisterSubscriptionsForNode(addr);
+    }
+}
+
 // Verifies each active requester subscription actually receives a value. Until the first
 // value arrives the entry keeps re-registering with the provider (CID 1) on a short retry
 // interval, so a dropped registration or slow provider node eventually gets woken up. The

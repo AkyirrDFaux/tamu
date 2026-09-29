@@ -85,12 +85,37 @@
 
 ## Rig test flakiness (not a product bug)
 
-- **The DAS clock-sync assertion is marginal.** `HIL: DAS clock is within 10 ms of the core`
+- **The scalar-provider subscription test's cross-device comparison was racy** (fixed): it
+  read a target value from the core and a provider hash from the DAS while the LDR source drifted,
+  and a delta push is fire-and-forget - so a lost packet leaves the two legitimately out of step.
+  It now drives a writable DAS source and is deterministic.
+- **The DAS clock-sync assertion was marginal (fixed).** It converged to 19 ms in one run and
+  3 ms the next against a hard 10 ms bound; the bound is now 25 ms and the achieved offset is
+  printed, so a good build cannot fail on the sync cadence while a broken sync still would.
+- **BLE has no automated coverage** (open): all HIL suites drive the core over USB, but the
+  docs' Android path is BLE - a host-side BlueZ harness would close that.
+- (Kept for reference, fixed earlier: the scalar-provider subscription test's cross-device
+  comparison was racy and is now deterministic.) `HIL: DAS clock is within 10 ms of the core`
   converged to **19 ms in one run and 3 ms in the next**, and its convergence time ranged from
   13 s to 78 s. The DAS syncs itself to the core and tracks the core's rate between syncs (its
   internal RC drifts ~1 %), so the achieved accuracy sits right at the 10 ms bound and the test
   can fail on timing rather than on a defect. Either widen the bound or make the test report the
   achieved offset without asserting a hard limit - it should not be a gate as written.
+
+## Sending on the bus from inside packet dispatch stalls the bus (found and fixed)
+
+- **A hook I added called a blocking, verified bus send from the core's discover handler** -
+  before the address-assignment reply was even queued. With a node that was not yet answering,
+  those retries delayed the assignment, and the node stayed invisible: the DAS answered no
+  address for several minutes and only came back when the hook was made *deferred* (a bitmask
+  request acted on by `SubscriptionsTick` in the main loop). The node's own side was correct all
+  along - it re-announces every 500 ms until it is assigned.
+- **Rule worth keeping**: protocol traffic that can block or retry must not run inside packet
+  dispatch. `RegisterRequesterProvider` / `SendAndVerifyPacket` belong in the main loop (or a
+  deferred request), not in a handler.
+- **Losing the CLI also lost the console view of the core's boot log** - the Log Handler service
+  and the app's Log view remain, but there is no longer a text console to watch a device boot,
+  which is exactly what would have shown the stalled assignment immediately.
 
 ## Evaluation setup (`Docs/Current setup v3.md`)
 - **LED brightness can brown out the board.** The LED-display driver accepts brightness
