@@ -263,14 +263,15 @@ Future<void> setStatic(
   throw StateError('static write failed: type $type inst $inst field $field');
 }
 
-/// Persists a static block's persistent fields to flash (Register CID 3, field 0xFF).
-/// Retries a busy device; throws so a setup that would not survive a reboot fails loudly.
-Future<void> saveStaticBlock(RegisterClient reg, int type, int inst) async {
+/// Persists a device's whole backup (Register CID 4, "Save All": the System block, every
+/// static block and every dynamic block's files). Retries a busy device; throws so a setup
+/// that would not survive a reboot fails loudly.
+Future<void> saveAllBlocks(RegisterClient reg) async {
   for (var attempt = 0; attempt < 4; attempt++) {
-    if (await reg.saveStatic(type, inst)) return;
+    if (await reg.saveAll()) return;
     await Future<void>.delayed(const Duration(milliseconds: 250));
   }
-  throw StateError('static save failed: type $type inst $inst');
+  throw StateError('save failed');
 }
 
 bool _bytesEqual(List<int> a, List<int> b) {
@@ -309,7 +310,7 @@ Future<void> clearSetup(RegisterClient reg, SubscriptionClient subs) async {
   for (final b in await reg.readDynamicBlocks() ?? <DynBlock>[]) {
     await reg.deleteDynamic(block: b.index);
   }
-  await reg.saveDynamic();
+  await reg.saveAll();
 }
 
 /// Dynamic block 0 "Subscriptions": the four DAS value targets.

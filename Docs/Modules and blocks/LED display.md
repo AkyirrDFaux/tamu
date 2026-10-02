@@ -11,9 +11,9 @@ Contains overall settings.
 | Refresh Rate            | 4      | RO    | Number            | in FPS (averaged)                                                        |
 #### Layout file
 
-| Display width | Display Height | Table of LED indexes |
-| ------------- | -------------- | -------------------- |
-| uint8         | uint8          | W x H x uint16       |
+| Brightness limit | Display width | Display Height | Table of LED indexes |
+| ---------------- | ------------- | -------------- | -------------------- |
+| uint8 (0-255)    | uint8         | uint8          | W x H x uint16       |
 Index 0xFFFF means missing LED, 0 is first led in chain, 1 is second and so on.
 Table is row first.
 

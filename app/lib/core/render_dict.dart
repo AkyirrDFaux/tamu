@@ -32,7 +32,7 @@ List<KeyedEntry>? parseKeyedDict(List<int> fieldValue) {
   final entries = <KeyedEntry>[];
   var offset = 0;
   while (offset + 4 <= fieldValue.length) {
-    final meta = BlockMeta.fromBytes(fieldValue, offset);
+    final meta = BlockMeta.fromPacked(fieldValue, offset);
     if (offset + 4 + meta.size > fieldValue.length) return null; // truncated
     entries.add(KeyedEntry(
       key: meta.key,
@@ -51,7 +51,7 @@ List<KeyedEntry>? parseKeyedDict(List<int> fieldValue) {
 List<int> buildKeyedDict(List<KeyedEntry> entries) {
   final out = BytesBuilder();
   for (final e in entries) {
-    out.add(BlockMeta(flagsAndType: e.meta.flagsAndType, key: e.key, size: e.value.length).toBytes());
+    out.add(BlockMeta(flagsAndType: e.meta.flagsAndType, key: e.key, size: e.value.length).toPacked());
     out.add(e.value);
     final aligned = (4 + e.value.length + 3) & ~3;
     final pad = aligned - 4 - e.value.length;

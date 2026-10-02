@@ -19,7 +19,6 @@ class DynField {
   DynField({required this.index, required this.meta, required this.value});
 
   bool get readOnly => meta.readOnly;
-  bool get notSaved => meta.notSaved;
 }
 
 /// A user-created dynamic memory block.
@@ -66,66 +65,112 @@ class RegisterClient {
     return reply.sublist(8, 8 + ((size > avail) ? avail : size));
   }
 
-  /// Enumerate block types (CID 0, Enum 0).
-  Future<List<int>?> enumerateBlockTypes() async {
-    // Enum 0 for block types - firmware expects enum_level + bi_req (5 bytes)
-    // Response: BlockInfo echo (4 bytes) + types array, padded to a 4-byte multiple.
-    final reply = await request(0, payload: [0, 0, 0, 0, 0]);
-    if (reply == null || reply.length < 5) return null;
-    // The type list is the reply after the 4-byte BlockInfo echo; trailing padding
-    // bytes (0) must not be counted as block types.
-    var count = reply.length - 4;
-    while (count > 0 && reply[3 + count] == 0) {
-      count--;
-    }
-    return reply.sublist(4, 4 + count);
-  }
-
-/// Enumerate instances of a block type (CID 0, field=0xFF).
-  /// Enumerate instances of a block type (CID 0, field=0xFF). Static and dynamic blocks
-  /// return just the count; scripts return their loaded-slot list too.
-  Future<int?> getInstanceCount(int blockType) async {
-    final reply = await request(0,
-        payload: [1, ...blockInfoBytes(blockType, 0x3F, 0xFF, 0)]);
-    if (reply == null || reply.length < 5) return null;
-    return reply[4];
-  }
-
-  /// Enumerate the instance indexes of a block type. Static and dynamic blocks reply
-  /// with a count only (instances are 0..count-1); scripts reply with the explicit
-  /// loaded-slot list (which may be sparse).
-  Future<List<int>?> enumerateInstanceIds(int blockType) async {
-    final reply = await request(0,
-        payload: [1, ...blockInfoBytes(blockType, 0x3F, 0xFF, 0)]);
-    if (reply == null || reply.length < 5) return null;
-    final count = reply[4];
-    if (blockType == BlockType.script.value && reply.length >= 5 + count) {
-      return [for (var i = 0; i < count; i++) reply[5 + i]];
-    }
-    return [for (var i = 0; i < count; i++) i];
-  }
-
-  /// Enumerate the keys present at (instance, field) for a keyed block (CID 0, Enum 3).
-  Future<List<int>?> getBlockKeys(int blockType, int instance, int field) async {
-    final reply = await request(0,
-        payload: [3, ...blockInfoBytes(blockType, instance, field, 0)]);
-    if (reply == null || reply.length < 5) return null;
-    final count = reply[4];
-    return [for (var i = 0; i < count && 5 + i < reply.length; i++) reply[5 + i]];
-  }
-
-  /// Enumerate fields in a block (CID 0, key=0xFF).
-  Future<int?> getFieldCount(int blockType, int instance) async {
-    // Enum 2 for fields - firmware expects enum_level + bi_req (5 bytes)
-    // Response: BlockInfo echo (4 bytes) + count (2 bytes, little-endian)
-    final payload = [
-      2, // enum_level = 2
-      ...blockInfoBytes(blockType, instance, 0xFF, 0)
+  /// The u16 words of a CID 0 stream. The wire pads the payload to a 4-byte multiple, which is
+  /// at most one extra word, and the entries are ordered - so a legitimate zero can only be the
+  /// *first* one (the System block, or field 0 key 0). A trailing zero is padding.
+  static List<int> _streamWords(List<int> reply) {
+    final words = <int>[
+      for (var i = 0; i + 1 < reply.length; i += 2) reply[i] | (reply[i + 1] << 8),
     ];
-    final reply = await request(0, payload: payload);
-    if (reply == null || reply.length < 6) return null;
-    return (reply[4] | (reply[5] << 8));
+    if (words.length > 1 && words.last == 0) words.removeLast();
+    return words;
   }
+
+  /// Enumerate the present block types with their highest instance index (CID 0, empty
+  /// request, Docs/Services/Register.md). The reply is a stream of packed
+  /// `(type << 6) | maxInstance` words; a type with no instances is absent, and the
+  /// trailing wire padding shows up as a zero word (a real type is never 0).
+  Future<List<({int type, int maxInstance})>?> enumerateBlockTypes() async {
+    final reply = await request(0, payload: const []);
+    if (reply == null) return null;
+    return [
+      for (final w in _streamWords(reply))
+        (type: (w >> 6) & 0x3FF, maxInstance: w & 0x3F),
+    ];
+  }
+
+  /// The instance indexes of a block type. Static and dynamic blocks are dense
+  /// (`0..maxInstance`); scripts are sparse, so their slots come from the Script service
+  /// (CID 0 lists the loaded file ids, which equal the loaded slots).
+  Future<List<int>?> enumerateInstanceIds(int blockType,
+      {List<int>? scriptSlots}) async {
+    if (blockType == BlockType.script.value) return scriptSlots ?? const [];
+    final types = await enumerateBlockTypes();
+    if (types == null) return null;
+    for (final t in types) {
+      if (t.type == blockType) {
+        return [for (var i = 0; i <= t.maxInstance; i++) i];
+      }
+    }
+    return const [];
+  }
+
+  /// How many instances a block type has (0 when the type has none).
+  Future<int?> getInstanceCount(int blockType, {List<int>? scriptSlots}) async {
+    final ids = await enumerateInstanceIds(blockType, scriptSlots: scriptSlots);
+    return ids?.length;
+  }
+
+  /// The block instance's fields and keys (CID 0, packed `(type << 6) | instance`), as a
+  /// stream of `Field&Key` words (field in the high byte, key in the low), ascending.
+  ///
+  /// The reply depends only on the type for static and System blocks (they share a schema),
+  /// so those are cached; dynamic blocks and loaded scripts are per instance.
+  final Map<int, List<int>> _fieldKeysCache = {};
+
+  Future<List<int>?> enumerateFieldKeys(int blockType, int instance) async {
+    final typeInvariant = blockType != BlockType.dynamic.value &&
+        blockType != BlockType.script.value &&
+        blockType != 0; // the System block's list is fixed too, but it is one instance
+    if (typeInvariant && _fieldKeysCache.containsKey(blockType)) {
+      return _fieldKeysCache[blockType];
+    }
+    final packed = ((blockType & 0x3FF) << 6) | (instance & 0x3F);
+    final reply = await request(0,
+        payload: [packed & 0xFF, (packed >> 8) & 0xFF, 0, 0]);
+    if (reply == null) return null;
+    final words = _streamWords(reply);
+    if (typeInvariant) _fieldKeysCache[blockType] = words;
+    return words;
+  }
+
+  /// The distinct field indexes of an instance, in ascending order.
+  Future<List<int>?> enumerateFieldIndexes(int blockType, int instance) async {
+    final keys = await enumerateFieldKeys(blockType, instance);
+    if (keys == null) return null;
+    final fields = <int>[];
+    for (final fk in keys) {
+      final f = fk >> 8;
+      if (fields.isEmpty || fields.last != f) fields.add(f);
+    }
+    return fields;
+  }
+
+  /// The keys present at `field` of an instance (key 0 when that field is not keyed).
+  Future<List<int>?> enumerateKeys(int blockType, int instance, int field) async {
+    final keys = await enumerateFieldKeys(blockType, instance);
+    if (keys == null) return null;
+    return [for (final fk in keys) if ((fk >> 8) == field) fk & 0xFF];
+  }
+
+  // ===== thin wrappers the call sites still use (the enumeration is two requests now) =====
+
+  /// The number of distinct fields in a block instance.
+  Future<int?> getFieldCount(int blockType, int instance) async =>
+      (await enumerateFieldIndexes(blockType, instance))?.length;
+
+  /// The keys present at (instance, field). An unkeyed field reports `[0]`, which is what the
+  /// call sites defaulted to for the old "no keys" reply.
+  Future<List<int>?> getBlockKeys(int blockType, int instance, int field) async =>
+      enumerateKeys(blockType, instance, field);
+
+  /// The distinct field indexes of a dynamic block instance.
+  Future<List<int>?> getDynamicFields(int inst) async =>
+      enumerateFieldIndexes(BlockType.dynamic.value, inst);
+
+  /// The keys present at (inst, field) of a dynamic block instance.
+  Future<List<int>?> getDynamicKeys(int inst, int field) async =>
+      enumerateKeys(BlockType.dynamic.value, inst, field);
 
   /// Read block meta + name (CID 1).
   Future<({BlockMeta meta, String name})?> readBlockMeta(int blockType, int instance) async {
@@ -154,25 +199,17 @@ class RegisterClient {
     final payload = blockInfoBytes(blockType, instance, field, key);
     final reply = await request(1, payload: payload);
     if (reply == null || reply.length < 8) return null;
-    final meta = BlockMeta.fromBytes(reply, 4);
+    // The wire ValueInfo has no key, so the one we asked with goes back into the meta.
+    final meta = BlockMeta.fromBytes(reply, 4, key);
     return (meta: meta, value: valueSlice(reply, meta.size));
   }
-
-  /// The ValueInfo a *write* carries: passive flags only. The active flags (Not Saved, Script
-  /// Updated, External origin) describe the state a *read* reports - a register sets Not Saved
-  /// itself and scripts/subscriptions declare their own origin, so echoing a previously read
-  /// meta back would mis-declare the write's specification.
-  static BlockMeta _valueInfoForWrite(BlockMeta meta) => BlockMeta(
-      flagsAndType: meta.flagsAndType & ~FieldFlags.activeMask,
-      key: meta.key,
-      size: meta.size);
 
   /// Write field value (CID 2) for a specific block type and instance (static/dynamic blocks).
   /// Payload: BlockInfo (4) + BlockMeta (4) + value
   Future<List<int>?> writeBlockField(int blockType, int instance, int field, int key, BlockMeta meta, List<int> value) async {
     final payload = [
       ...blockInfoBytes(blockType, instance, field, key),
-      ..._valueInfoForWrite(meta).toBytes(),
+      ...meta.toBytes(),
       ...value,
     ];
     final reply = await request(2, payload: payload);
@@ -184,7 +221,8 @@ class RegisterClient {
   /// Reads all blocks (static + dynamic + loaded scripts) by enumerating types/instances.
   /// The System block (type 0, inst 0) is a virtual block not in the static registry.
   /// Dynamic blocks (0x3FF) and script blocks (0x3FE) are not returned by enumerateBlockTypes.
-  Future<List<({int type, int inst, BlockMeta meta, String name})?>?> readBlocks() async {
+  Future<List<({int type, int inst, BlockMeta meta, String name})?>?> readBlocks(
+      {List<int>? scriptSlots}) async {
     final types = await enumerateBlockTypes();
     if (types == null) return null;
     final blocks = <({int type, int inst, BlockMeta meta, String name})?>[];
@@ -195,10 +233,10 @@ class RegisterClient {
       blocks.add((type: 0, inst: 0, meta: sysBlock.meta, name: 'System'));
     }
 
-    Future<void> addAll(int type) async {
-      final ids = await enumerateInstanceIds(type);
-      if (ids == null) return;
-      for (final inst in ids) {
+    Future<void> addType(int type, {List<int>? ids}) async {
+      final list = ids ?? await enumerateInstanceIds(type);
+      if (list == null) return;
+      for (final inst in list) {
         final block = await readBlockMeta(type, inst);
         if (block != null) {
           blocks.add((type: type, inst: inst, meta: block.meta, name: block.name));
@@ -206,11 +244,15 @@ class RegisterClient {
       }
     }
 
-    for (final type in types) {
-      await addAll(type);
+    // The type list is the registry's first-seen order, which STATLOG indexes depend on -
+    // keep it, then append the dynamic and script memories the firmware omits.
+    // The type list carries every static type *and* the dynamic memory when it has instances;
+    // only the script blocks are missing (the Script service owns their sparse slots).
+    for (final t in types) {
+      if (t.type == 0) continue; // the System block is added above
+      await addType(t.type);
     }
-    await addAll(BlockType.dynamic.value);
-    await addAll(BlockType.script.value); // loaded-script blocks
+    await addType(BlockType.script.value, ids: scriptSlots ?? const []);
 
     return blocks;
   }
@@ -252,28 +294,11 @@ class RegisterClient {
   }
 
   /// Enumerates a dynamic block's distinct field indexes (CID 0, Enum 2).
-  Future<List<int>?> getDynamicFields(int inst) async {
-    final reply = await request(0,
-        payload: [2, ...blockInfoBytes(BlockType.dynamic.value, inst, 0xFF, 0)]);
-    if (reply == null || reply.length < 6) return null;
-    final count = reply[4] | (reply[5] << 8);
-    return [for (var i = 0; i < count && 6 + i < reply.length; i++) reply[6 + i]];
-  }
-
-  /// Enumerates the keys present at (inst, field) (CID 0, Enum 3).
-  Future<List<int>?> getDynamicKeys(int inst, int field) async {
-    final reply = await request(0,
-        payload: [3, ...blockInfoBytes(BlockType.dynamic.value, inst, field, 0)]);
-    if (reply == null || reply.length < 5) return null;
-    final count = reply[4];
-    return [for (var i = 0; i < count && 5 + i < reply.length; i++) reply[5 + i]];
-  }
-
   /// Reads one dynamic entry's current value (CID 1) at (field, key).
   Future<DynField?> readDynamicField(DynBlock block, int field, [int key = 0]) async {
     final reply = await request(1, payload: _dynBi(block.index, field, key));
     if (reply == null || reply.length < 8) return null;
-    final meta = BlockMeta.fromBytes(reply, 4);
+    final meta = BlockMeta.fromBytes(reply, 4, key);
     return DynField(index: field, meta: meta, value: valueSlice(reply, meta.size));
   }
 
@@ -374,7 +399,7 @@ class RegisterClient {
 
   Future<List<int>?> _writeDynamicValue(Uint8List bi, BlockMeta meta, List<int> value,
       {Duration? timeout}) async {
-    final reply = await request(2, payload: [...bi, ..._valueInfoForWrite(meta).toBytes(), ...value],
+    final reply = await request(2, payload: [...bi, ...meta.toBytes(), ...value],
         timeout: timeout ?? const Duration(seconds: 4));
     if (reply == null || reply.length < 8) return null;
     final echoMeta = BlockMeta.fromBytes(reply, 4);
@@ -513,31 +538,21 @@ class RegisterClient {
     return true;
   }
 
-  /// Saves one static (or System) block's persistent fields to the STATLOG mirror
-  /// (CID 3; field 0xFF = every writable persistent field). A static write only lands in
-  /// RAM, so without a Save the block reverts to its defaults on the next reboot.
-  Future<bool> saveStatic(int blockType, int instance) async {
-    final reply = await request(3,
-        payload: blockInfoBytes(blockType, instance, 0xFF, 0),
-        timeout: const Duration(seconds: 10));
+  /// Saves the whole device to its backup (CID 4 "Save All"): the System block's persistent
+  /// fields, every static block, and every dynamic block's DT_/DV_ files. Per
+  /// Docs/Services/Register.md the command carries no BlockInfo; partial saving is the app's
+  /// job (direct file writes - see `saveFieldToBackup`).
+  Future<bool> saveAll() async {
+    // Writing every dynamic block runs the 64-slot orphan cleanup (flash page erases), which
+    // can exceed the default request timeout.
+    final reply = await request(4, payload: const [], timeout: const Duration(seconds: 25));
     return reply != null && reply.isNotEmpty && reply[0] == 0;
   }
 
-  /// Saves the dynamic registry (CID 3; instance 0x3F = everything).
-  Future<bool> saveDynamic({int? block}) async {
-    final inst = block ?? 0x3F;
-    // Saving writes per-block DT/DV files and runs the 64-slot orphan cleanup (flash
-    // page erases), which can exceed the default 2s request timeout.
-    final reply = await request(3, payload: _dynBi(inst, 0xFF),
-        timeout: const Duration(seconds: 25));
-    return reply != null && reply.isNotEmpty && reply[0] == 0;
-  }
-
-  /// Recalls the dynamic registry (CID 4; instance 0x3F = everything).
-  Future<bool> recallDynamic({int? block}) async {
-    final inst = block ?? 0x3F;
-    final reply = await request(4, payload: _dynBi(inst, 0xFF),
-        timeout: const Duration(seconds: 25));
+  /// Recalls the whole device from its backup (CID 3 "Recall All"), the counterpart of
+  /// [saveAll]. Partial recall is the app's job (register writes of the stored values).
+  Future<bool> recallAll() async {
+    final reply = await request(3, payload: const [], timeout: const Duration(seconds: 25));
     return reply != null && reply.isNotEmpty && reply[0] == 0;
   }
 }

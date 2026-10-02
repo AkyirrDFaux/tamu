@@ -10,7 +10,7 @@ import 'package:tamuapp/core/types.dart';
 List<int> entry(int type, int key, List<int> value) {
   final pad = (4 - ((4 + value.length) % 4)) % 4;
   return [
-    ...BlockMeta(flagsAndType: type, key: key, size: value.length).toBytes(),
+    ...BlockMeta(flagsAndType: type, key: key, size: value.length).toPacked(),
     ...value,
     ...List<int>.filled(pad, 0),
   ];

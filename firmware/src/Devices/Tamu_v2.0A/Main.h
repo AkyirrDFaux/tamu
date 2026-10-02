@@ -263,10 +263,3 @@ extern "C"
         xTaskCreate(ApplicationTask, "app_task", 16384, NULL, 5, NULL);
     };
 }
-// The active-flag array is sized by STATIC_ACTIVE_ENTRIES (platformio.ini). It must cover
-// every entry here plus the System block's SYSTEM_FIELD_COUNT fields:
-//   LEDButton(4) + Fan1/Fan2(PWM 2 each) + AccGyr(7) + Display1/2(Vysi1 5 each) + System(9)
-//   = 34 entries -> 48 slots (24 B).
-// (The registry and schemas are not usable in a constant expression - they hold `void* const`
-// pointers to mutable blocks and their addresses are not constant expressions - so this is a
-// documented setting, and StaticActiveSet/Get bounds-check at runtime.)

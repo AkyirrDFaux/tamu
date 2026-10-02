@@ -93,14 +93,16 @@ void main() {
     expect(storageFileType('DV_0A   '), StorageFileType.dynamicValues);
   });
 
-  testWidgets('layout file uses the u8 width/height header', (tester) async {
-    // Docs/Modules and blocks/LED display.md: u8 width, u8 height, then W*H u16 LE indexes.
-    // An 11x10 grid = 2 + 110*2 = 222 bytes (the preloaded LAY_1 size).
+  testWidgets('layout file uses the brightness limit + u8 width/height header',
+      (tester) async {
+    // Docs/Modules and blocks/LED display.md: u8 brightness limit (0-255 as a percentage),
+    // u8 width, u8 height, then W*H u16 LE indexes.
+    // An 11x10 grid = 3 + 110*2 = 223 bytes (the preloaded LAY_1 size).
     final data = <int>[
-      11, 10,
+      178, 11, 10,
       for (var i = 0; i < 110; i++) ...u16(i == 0 ? 0 : 0xFFFF),
     ];
-    expect(data.length, 222);
+    expect(data.length, 223);
     await tester.pumpWidget(MaterialApp(
       theme: buildTheme(),
       home: Scaffold(
@@ -108,9 +110,22 @@ void main() {
     ));
     await tester.pump();
     expect(tester.takeException(), isNull);
-    // Parsed as u8 x2 -> 11x10; the old uint16 header would have reported invalid.
-    expect(find.text('11x10 LEDs'), findsOneWidget);
+    // Parsed as u8 x3 -> 11x10 with the 70% cap; the old 2-byte header would be invalid.
+    expect(find.text('11x10 LEDs · limit 178 (70%)'), findsOneWidget);
     expect(find.text('-'), findsWidgets); // 0xFFFF = missing cells
+  });
+
+  testWidgets('a layout header that overruns the file is rejected', (tester) async {
+    // 11x10 announced, but only two index entries supplied.
+    final data = <int>[178, 11, 10, 0, 0, 0, 0];
+    await tester.pumpWidget(MaterialApp(
+      theme: buildTheme(),
+      home: Scaffold(
+          body: FileViewPage(deviceId: 1, name: 'LAY_1', size: data.length, data: data)),
+    ));
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    expect(find.text('Invalid layout header (11x10)'), findsOneWidget);
   });
 
   test('formatValue renders size-flexible vectors and IDs', () {

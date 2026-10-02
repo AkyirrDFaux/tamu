@@ -248,27 +248,29 @@ void main() {
     ScriptInstructionDef defFor(int op) =>
         scriptInstructions.firstWhere((d) => d.category == catService && d.op == op);
 
-    // Both are service instructions with exactly one operand.
-    for (final op in [7, 8]) {
-      expect(defFor(op).minOperands, 1);
-      expect(defFor(op).maxOperands, 1);
-    }
-    // Loading answers the loaded id, so it needs a destination; unloading does not.
-    expect(defFor(7).destination, isTrue);
+    // Load takes (file id, loaded id) and answers nothing, like CID 1; Unload takes the loaded
+    // id, like CID 2. Neither has a destination.
+    expect(defFor(7).minOperands, 2);
+    expect(defFor(7).maxOperands, 2);
+    expect(defFor(7).destination, isFalse);
+    expect(defFor(8).minOperands, 1);
+    expect(defFor(8).maxOperands, 1);
     expect(defFor(8).destination, isFalse);
 
     final ctx = ScriptValidationContext(variableTypes: [DataType.integer.value]);
-    // dest = Load(5)
+    // Load(5, 5) - file 5 into slot 5.
     expect(
         validateScriptLines([
           ScriptLine(
-            destinations: [ScriptSymbol.variable(0)],
             instruction: ScriptSymbol.instruction(catService, 7),
-            operands: [ScriptSymbol.predefine(preIndex, 5)],
+            operands: [
+              ScriptSymbol.predefine(preIndex, 5),
+              ScriptSymbol.predefine(preIndex, 5),
+            ],
           )
         ], ctx),
         isEmpty);
-    // Load without a destination -> invalid (the loaded id has to go somewhere).
+    // Load with only the file id -> invalid (the caller must pick the slot).
     expect(
         validateScriptLines([
           ScriptLine(

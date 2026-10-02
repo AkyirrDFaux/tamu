@@ -196,21 +196,23 @@ class _FileViewPageState extends State<FileViewPage> {
   }
 
   /// Layout file: row-first W x H uint16 LED indexes, 0xFFFF = missing
-  /// (Docs/Modules and blocks/LED display.md). Header is u8 width + u8 height (2 bytes), then
-  /// W*H little-endian uint16 indexes.
+  /// (Docs/Modules and blocks/LED display.md). Header is u8 brightness limit (0-255 as a
+  /// percentage) + u8 width + u8 height (3 bytes), then W*H little-endian uint16 indexes.
   Widget _layoutView() {
     final data = widget.data!;
-    if (data.length < 2) return _mono('(empty)');
-    final w = data[0];
-    final h = data[1];
-    if (w == 0 || h == 0 || w > 128 || h > 128 || 2 + w * h * 2 > data.length) {
+    if (data.length < 3) return _mono('(empty)');
+    final limit = data[0];
+    final w = data[1];
+    final h = data[2];
+    if (w == 0 || h == 0 || w > 128 || h > 128 || 3 + w * h * 2 > data.length) {
       return _mono('Invalid layout header (${w}x$h)');
     }
+    final limitPct = (limit * 100 + 127) ~/ 255;
     return SingleChildScrollView(
       padding: const EdgeInsets.all(12),
       scrollDirection: Axis.horizontal,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('${w}x$h LEDs',
+        Text('${w}x$h LEDs · limit $limit ($limitPct%)',
             style: const TextStyle(color: Colors.white38, fontSize: 11)),
         const SizedBox(height: 6),
         for (var r = 0; r < h; r++)
@@ -223,15 +225,15 @@ class _FileViewPageState extends State<FileViewPage> {
                 color: kSurfaceAlt,
                 alignment: Alignment.center,
                 child: Text(() {
-                  final i = 2 + (r * w + c) * 2;
+                  final i = 3 + (r * w + c) * 2;
                   final v = data[i] | (data[i + 1] << 8);
                   return v == 0xFFFF ? '-' : '$v';
                 }(),
                     style: TextStyle(
                         fontSize: 10,
                         color:
-                            data[2 + (r * w + c) * 2] == 0xFF &&
-                                    data[2 + (r * w + c) * 2 + 1] == 0xFF
+                            data[3 + (r * w + c) * 2] == 0xFF &&
+                                    data[3 + (r * w + c) * 2 + 1] == 0xFF
                                 ? Colors.white24
                                 : Colors.white)),
               ),

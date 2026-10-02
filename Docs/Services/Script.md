@@ -94,13 +94,13 @@ Execution done in main loop. Run all instructions until the same instruction is 
 
 ### Management commands (0x050X)
 
-| Function                     | CID | Payload In                    | Payload out                                       | Note                             |
-| ---------------------------- | --- | ----------------------------- | ------------------------------------------------- | -------------------------------- |
-| Get currently loaded scripts | 0   | -                             | Number of loaded scripts, Script File IDs (uint8) | Get actively loaded scripts      |
-| Load Script                  | 1   | Script File ID                | Script (loaded) ID                                | Load into active memory          |
-| Unload script                | 2   | Script (loaded) ID            |                                                   | Unload script from active memory |
-| Read state                   | 3   | Script ID                     | State                                             |                                  |
-| Set state                    | 4   | Script ID, new state          |                                                   |                                  |
-| Read internal state          | 5   | Script ID                     | Instruction counter, Variable RAM                 | (editor debug)                   |
-| Move to instruction          | 6   | Script ID, Instruction number |                                                   | (editor debug)                   |
-| Write Variable               | 7   | Script ID, Variable ID, Value |                                                   | (editor debug)                   |
+| Function                     | CID | Payload In                         | Payload out                                       | Note                             |
+| ---------------------------- | --- | ---------------------------------- | ------------------------------------------------- | -------------------------------- |
+| Get currently loaded scripts | 0   | -                                  | Number of loaded scripts, Script File IDs (uint8) | Get actively loaded scripts      |
+| Load Script                  | 1   | Script File ID, Script (loaded) ID | Success                                           | Load into active memory          |
+| Unload script                | 2   | Script (loaded) ID                 |                                                   | Unload script from active memory |
+| Read state                   | 3   | Script ID                          | State, Last error code                            | 0 = OK                           |
+| Set state                    | 4   | Script ID, new state               |                                                   | Clears error                     |
+| Read internal state          | 5   | Script ID                          | Instruction counter, Variable RAM                 | (editor debug)                   |
+| Move to instruction          | 6   | Script ID, Instruction number      |                                                   | (editor debug)                   |
+| Write Variable               | 7   | Script ID, Variable ID, Value      |                                                   | (editor debug)                   |

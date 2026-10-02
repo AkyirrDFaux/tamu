@@ -58,11 +58,12 @@ inline int FindStaticBlock(uint16_t type, uint8_t inst) {
 #define FIELD_RESPONSE_BUF_SIZE 268
 #endif
 
-static inline void SendBlockMetaResponse(const PacketFrame &frame, uint32_t bi, uint16_t flags_and_type, uint8_t map_count, const char *name) {
+static inline void SendBlockMetaResponse(const PacketFrame &frame, uint32_t bi, uint16_t type, uint8_t map_count, const char *name) {
     uint8_t rpl[32]; uint16_t pos=0;
     memcpy(rpl+pos, &bi,4); pos+=4;
-    BlockMeta m; m.FlagsAndType = flags_and_type; m.Key=0xFF; m.Size=map_count;
-    memcpy(rpl+pos, &m,4); pos+=4;
+    // A block meta reports its field count in ValueInfo.Size and carries no flags.
+    ValueInfo v = { (uint16_t)(type & BLOCK_META_TYPE_MASK), map_count, 0 };
+    memcpy(rpl+pos, &v,4); pos+=4;
     uint8_t n = name ? (uint8_t)strlen(name) : 0;
     if (n > BLOCK_NAME_LEN - 1) n = BLOCK_NAME_LEN - 1;
     memcpy(rpl+pos, name, n); pos+=n;
@@ -70,49 +71,30 @@ static inline void SendBlockMetaResponse(const PacketFrame &frame, uint32_t bi, 
     SendResponse(frame,rpl,pos);
 }
 
-static inline void SendFieldResponse(const PacketFrame &frame, uint32_t bi, const FieldResult &fr,
-                                     uint16_t activeFlags = 0) {
+static inline void SendFieldResponse(const PacketFrame &frame, uint32_t bi, const FieldResult &fr) {
     uint8_t rpl[FIELD_RESPONSE_BUF_SIZE]; uint16_t pos=0;
     memcpy(rpl+pos, &bi,4); pos+=4;
-    // Active flags are not part of the (const) schema: fold them into the reported meta.
-    BlockMeta m = fr.Descriptor;
-    m.FlagsAndType |= activeFlags;
-    memcpy(rpl+pos, &m,4); pos+=4;
+    // Docs/Services/Register.md: the wire ValueInfo is Type | Size | Flags, all passive - the
+    // descriptor's packed form converts at this boundary.
+    ValueInfo v = ToWireInfo(fr.Descriptor);
+    memcpy(rpl+pos, &v,4); pos+=4;
     memcpy(rpl+pos, fr.Data, fr.Descriptor.Size); pos+=fr.Descriptor.Size;
     while(pos%4) rpl[pos++]=0;
     SendResponse(frame,rpl,pos);
 }
 
-// Sends one dynamic entry (BlockInfo echo + BlockMeta + value, 4-aligned).
+// Sends one dynamic entry (BlockInfo echo + ValueInfo + value, 4-aligned).
 static inline void SendKeyResponse(const PacketFrame &frame, uint32_t bi, const KeyResult &kr) {
     uint8_t rpl[FIELD_RESPONSE_BUF_SIZE]; uint16_t pos = 0;
     memcpy(rpl + pos, &bi, 4); pos += 4;
-    memcpy(rpl + pos, &kr.meta, 4); pos += 4;
+    ValueInfo v = ToWireInfo(kr.meta);
+    memcpy(rpl + pos, &v, 4); pos += 4;
     if (kr.data_ptr && kr.data_len) memcpy(rpl + pos, kr.data_ptr, kr.data_len);
     pos += kr.data_len;
     while (pos % 4) rpl[pos++] = 0;
     SendResponse(frame, rpl, pos);
 }
 
-
-// The specification of a write is *declared by the writer* in the write's ValueInfo flags
-// (Docs/Services/Register.md: "Script Updated = a script changed this variable", "External
-// origin = a subscription is updating this variable or a different device updated this via
-// script"). A write that declares neither is a plain manual write, so a write of a different
-// specification clears the origin flags it does not carry (user decision). The receiving side
-// never guesses from the sender's address.
-static inline WriteOrigin OriginFromDeclaredFlags(uint16_t flagsAndType)
-{
-    if (flagsAndType & (uint16_t)FieldFlags::ScriptUpdated) return OriginLocalScript;
-    if (flagsAndType & (uint16_t)FieldFlags::External) return OriginForeign;
-    return OriginManual;
-}
-
-// Stores a static block's write-origin flags from the specification the writer declared.
-static inline void StaticMarkWriteFromFlags(uint8_t idx, uint8_t field, uint16_t flagsAndType)
-{
-    StaticActiveMarkWrite(idx, field, OriginFromDeclaredFlags(flagsAndType));
-}
 
 #ifndef DISABLE_DYNAMIC_MEMORY
 // Shared tail of "read a dynamic block": field 0xFF asks for the block meta, any other field

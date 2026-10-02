@@ -35,7 +35,7 @@ Future<void> runTests() async {
     if (current.isEmpty) break;
     await reg.deleteDynamic(block: current.first.index);
   }
-  await reg.saveDynamic();
+  await reg.saveAll();
 
   final created = await reg.createDynamicBlock(BlockType.dynamic, 'RENDER', index: 0);
   if (created == null) fail('createDynamicBlock failed');

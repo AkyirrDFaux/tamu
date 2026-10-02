@@ -78,16 +78,18 @@ static void ProviderClearEntry(ProviderEntry* e) {
 // Serializes one provider entry in the CID 2 wire format (requesterAddr, trid, sourceReg,
 // trigger + 3 pad, period, min, lastSent, hash, deadzone = 32 B).
 static uint16_t ProviderEntrySerialize(uint8_t *buf, uint16_t off, const ProviderEntry *e) {
-    *(uint16_t *)(buf + off) = e->requesterAddr; off += 2;
-    *(uint16_t *)(buf + off) = e->trid; off += 2;
-    *(uint32_t *)(buf + off) = e->sourceReg; off += 4;
+    // memcpy, not casts: the caller starts at off = 1 (the count byte), so every field here is
+    // misaligned and an `lw`/`sw` on the RV32EC CH32 node would fault (see SubscriptionsControl).
+    memcpy(buf + off, &e->requesterAddr, 2); off += 2;
+    memcpy(buf + off, &e->trid, 2); off += 2;
+    memcpy(buf + off, &e->sourceReg, 4); off += 4;
     buf[off++] = (uint8_t)e->trigger;
     buf[off++] = 0; buf[off++] = 0; buf[off++] = 0; // 24-bit padding
-    *(uint32_t *)(buf + off) = e->periodMs; off += 4;
-    *(uint32_t *)(buf + off) = e->minTimeMs; off += 4;
-    *(uint32_t *)(buf + off) = e->lastSentMs; off += 4;
-    *(uint32_t *)(buf + off) = e->hash; off += 4;
-    *(uint32_t *)(buf + off) = (uint32_t)e->deadzone.Value; off += 4;
+    memcpy(buf + off, &e->periodMs, 4); off += 4;
+    memcpy(buf + off, &e->minTimeMs, 4); off += 4;
+    memcpy(buf + off, &e->lastSentMs, 4); off += 4;
+    memcpy(buf + off, &e->hash, 4); off += 4;
+    memcpy(buf + off, &e->deadzone.Value, 4); off += 4;
     return off;
 }
 

@@ -25,6 +25,52 @@ inline uint16_t BlockMetaType(uint16_t v)
     return v & BLOCK_META_TYPE_MASK;
 }
 
+// Wire ValueInfo (Docs/Services/Register.md "Map entry"): Type(16) | Size(8) | Flags(8). The
+// key is not part of it - the request's and reply's BlockInfo carry that. The internal BlockMeta
+// keeps its packed form (flags above the 10 type bits) because the block schemas spell
+// `DataType::X | FieldFlags::Y`, so the two convert at the wire boundary and nothing else changes.
+struct ValueInfo
+{
+    uint16_t Type;
+    uint8_t Size;
+    uint8_t Flags;
+};
+
+// The passive flags, in the doc's table order. These are separate bits from FieldFlags: the
+// internal packing keeps the flags above the 10 type bits, while the wire byte holds only them.
+enum ValueFlags : uint8_t
+{
+    ValueReadOnly   = 0x01,
+    ValuePersistent = 0x02,
+    ValueTrigger    = 0x04,
+};
+
+inline ValueInfo ToWireInfo(const BlockMeta &m)
+{
+    ValueInfo v;
+    v.Type = BlockMetaType(m.FlagsAndType);
+    v.Size = m.Size;
+    v.Flags = 0;
+    if (m.FlagsAndType & (uint16_t)FieldFlags::ReadOnly)   v.Flags |= ValueReadOnly;
+    if (m.FlagsAndType & (uint16_t)FieldFlags::Persistent) v.Flags |= ValuePersistent;
+    if (m.FlagsAndType & (uint16_t)FieldFlags::Trigger)    v.Flags |= ValueTrigger;
+    return v;
+}
+
+// Inverse of ToWireInfo, for the write path. The key is left at 0: it arrives in the request's
+// BlockInfo and the write handlers take it from there.
+inline BlockMeta FromWireInfo(const ValueInfo &v)
+{
+    BlockMeta m;
+    m.FlagsAndType = (uint16_t)(v.Type & BLOCK_META_TYPE_MASK);
+    if (v.Flags & ValueReadOnly)   m.FlagsAndType |= (uint16_t)FieldFlags::ReadOnly;
+    if (v.Flags & ValuePersistent) m.FlagsAndType |= (uint16_t)FieldFlags::Persistent;
+    if (v.Flags & ValueTrigger)    m.FlagsAndType |= (uint16_t)FieldFlags::Trigger;
+    m.Key = 0x00;
+    m.Size = v.Size;
+    return m;
+}
+
 struct FieldResult
 {
     BlockMeta Descriptor = {DataType::Unknown | FieldFlags::None, 0x00, 0};

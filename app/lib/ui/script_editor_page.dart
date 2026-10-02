@@ -129,9 +129,8 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
   Future<void> _refresh() async {
     final draft = _draft;
     if (widget.loaded) {
-      final state = await _client.readState(widget.fileId);
+      final st = await _client.readState(widget.fileId);
       final internal = await _client.readInternalState(widget.fileId);
-      final error = await _client.readError(widget.fileId);
       final values = <ScriptValueCategory, List<String>>{};
 
       // I/O live values come from the Register (the only script content it exposes).
@@ -163,9 +162,9 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
 
       if (!mounted) return;
       setState(() {
-        _state = state ?? ScriptState.stopped;
+        _state = st?.state ?? ScriptState.stopped;
         _instructionCounter = internal?.instructionCounter ?? 0;
-        _errorCode = error ?? 0;
+        _errorCode = st?.error ?? 0;
         _statusText..clear()..addAll(values);
       });
     } else {
@@ -204,9 +203,9 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
 
   Future<void> _reloadLive() async {
     await _client.unload(widget.fileId);
-    final id = await _client.load(widget.fileId);
+    final ok = await _client.load(widget.fileId, widget.fileId);
     if (!mounted) return;
-    showSnack(context, id == null ? 'Reload failed' : 'Reloaded');
+    showSnack(context, ok ? 'Reloaded' : 'Reload failed');
     await _refresh();
   }
 

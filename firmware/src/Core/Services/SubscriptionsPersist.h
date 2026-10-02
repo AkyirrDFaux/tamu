@@ -22,14 +22,15 @@ static void SaveRequesterTable() {
     for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
         RequesterEntry* e = &requesterTable[i];
         if (!e->active) continue;
-        *(uint32_t *)(buf + off) = e->targetReg; off += 4;
-        *(uint32_t *)(buf + off) = e->sourceReg; off += 4;
-        *(uint16_t *)(buf + off) = e->providerAddr; off += 2;
+        // Off starts at 1 (the count byte): every field here is misaligned.
+        StoreUnaligned(buf + off, e->targetReg); off += 4;
+        StoreUnaligned(buf + off, e->sourceReg); off += 4;
+        StoreUnaligned(buf + off, e->providerAddr); off += 2;
         buf[off++] = (uint8_t)e->trigger;
         buf[off++] = 0; buf[off++] = 0; buf[off++] = 0;
-        *(uint32_t *)(buf + off) = e->periodMs; off += 4;
-        *(uint32_t *)(buf + off) = e->minTimeMs; off += 4;
-        *(uint32_t *)(buf + off) = (uint32_t)e->deadzone.Value; off += 4;
+        StoreUnaligned(buf + off, e->periodMs); off += 4;
+        StoreUnaligned(buf + off, e->minTimeMs); off += 4;
+        StoreUnaligned(buf + off, (uint32_t)e->deadzone.Value); off += 4;
     }
     static const char tmp_name[8] = {'S','U','B','R','E','Q','~',' '};
     if (Storage.FileExists(tmp_name) != 0xFFFFFFFF)
@@ -49,14 +50,14 @@ static void LoadRequesterTable() {
     for (uint8_t i = 0; i < count && off + 26 <= len; i++) {
         RequesterEntry* e = RequesterFindFree();
         if (!e) break;
-        e->targetReg = *(uint32_t *)(buf + off); off += 4;
-        e->sourceReg = *(uint32_t *)(buf + off); off += 4;
-        e->providerAddr = *(uint16_t *)(buf + off); off += 2;
+        e->targetReg = LoadUnaligned<uint32_t>(buf + off); off += 4;
+        e->sourceReg = LoadUnaligned<uint32_t>(buf + off); off += 4;
+        e->providerAddr = LoadUnaligned<uint16_t>(buf + off); off += 2;
         e->trigger = (TriggerType)buf[off++];
         off += 3; // padding
-        e->periodMs = *(uint32_t *)(buf + off); off += 4;
-        e->minTimeMs = *(uint32_t *)(buf + off); off += 4;
-        e->deadzone = Number::FromRaw(*(int32_t *)(buf + off)); off += 4;
+        e->periodMs = LoadUnaligned<uint32_t>(buf + off); off += 4;
+        e->minTimeMs = LoadUnaligned<uint32_t>(buf + off); off += 4;
+        e->deadzone = Number::FromRaw(LoadUnaligned<int32_t>(buf + off)); off += 4;
         e->trid = SubscriptionsNextTrid();
         if (e->trid == 0) e->trid = TRID_SUB_BASE;
         e->active = true;
@@ -92,14 +93,14 @@ static void RegisterRequesterProvider(RequesterEntry* e) {
 #endif
     // Remote provider: send the subscription info (CID 1, fire and forget).
     uint8_t payload[26]; uint16_t off = 0;
-    *(uint32_t *)(payload + off) = e->targetReg; off += 4;
-    *(uint32_t *)(payload + off) = e->sourceReg; off += 4;
-    *(uint16_t *)(payload + off) = DeviceStatus.ShortAddress; off += 2;
+    memcpy(payload + off, &e->targetReg, 4); off += 4;
+    memcpy(payload + off, &e->sourceReg, 4); off += 4;
+    StoreUnaligned(payload + off, DeviceStatus.ShortAddress); off += 2;
     payload[off++] = (uint8_t)e->trigger;
     payload[off++] = 0; payload[off++] = 0; payload[off++] = 0;
-    *(uint32_t *)(payload + off) = e->periodMs; off += 4;
-    *(uint32_t *)(payload + off) = e->minTimeMs; off += 4;
-    *(uint32_t *)(payload + off) = (uint32_t)e->deadzone.Value; off += 4;
+    memcpy(payload + off, &e->periodMs, 4); off += 4;
+    memcpy(payload + off, &e->minTimeMs, 4); off += 4;
+    memcpy(payload + off, &e->deadzone.Value, 4); off += 4;
     PacketFrame req;
     PacketConstruct(&req, e->providerAddr, MakeService(ServiceType::Subscriptions, 1),
                     e->trid, FLAG_START | FLAG_STOP, payload, off);

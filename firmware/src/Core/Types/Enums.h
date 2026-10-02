@@ -22,12 +22,8 @@ enum FieldFlags : uint16_t {
     None          = 0x0000,
     ReadOnly      = 0x0400,
     Persistent    = 0x0800,
-    Trigger       = 0x1000,
-    NotSaved      = 0x2000,
-    ScriptUpdated = 0x4000,
-    External      = 0x8000
+    Trigger       = 0x1000
 };
-constexpr uint16_t FlashValid = 0x0400;
 
 enum class TriggerType : uint8_t {
     Periodic           = 0,

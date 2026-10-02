@@ -64,6 +64,10 @@ for SPEED in "-DOPTIMIZE_SPEED" ""; do
     echo
 done
 
+echo "### native alignment tests (PacketFrame alignment + unaligned buffer access)"
+build_run "align" "align_test.cpp"
+echo
+
 echo "### native stride-offset tests (script VM symbol resolution)"
 build_run "stride" "stride_test.cpp"
 

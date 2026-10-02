@@ -106,10 +106,13 @@ static bool ScriptBuildProgram(LoadedScript *s, const uint8_t *instr, uint32_t i
     return true;
 }
 
-// Parses SCR_<fileId> into the registry slot with the same index. Returns false (and leaves
-// the slot inactive) when the file is missing or malformed.
-static bool ScriptLoad(uint8_t fileId) {
-    if (fileId >= MAX_SCRIPTS) return false;
+// Parses SCR_<fileId> into registry `slot`. Docs/Services/Script.md: the loaded-script table
+// maps a loaded id (the slot) to a file id, and the caller picks the slot - so the two need not
+// be equal. The app keeps them equal (it loads file N into slot N), which is what makes CID 0's
+// "currently loaded scripts" list addressable. Returns false (and leaves the slot inactive) when
+// the file is missing, malformed, or the slot/file id is out of range.
+static bool ScriptLoad(uint8_t fileId, uint8_t slot) {
+    if (fileId >= MAX_SCRIPTS || slot >= MAX_SCRIPTS) return false;
 
     char name[8];
     ScriptFileName(fileId, name);
@@ -121,11 +124,11 @@ static bool ScriptLoad(uint8_t fileId) {
     uint32_t got = Storage.ReadFromFile(name, 0, size, (char *)buf);
     if (got < SCRIPT_HEADER_SIZE) { free(buf); return false; }
 
-    LoadedScript *s = &scriptRegistry[fileId];
+    LoadedScript *s = &scriptRegistry[slot];
     s->Release();
-    ScriptMaskSet(fileId, false);
-    s->slot = fileId;
-    s->trid = (uint16_t)(SCRIPT_TRID_BASE + fileId);
+    ScriptMaskSet(slot, false);
+    s->slot = slot;
+    s->trid = (uint16_t)(SCRIPT_TRID_BASE + slot);
 
     s->properties = ScriptRdU32(buf + 0);
     s->inCount    = buf[4];

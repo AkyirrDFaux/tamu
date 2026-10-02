@@ -123,7 +123,7 @@ void ScriptsBootLoad() {
         char name[8];
         ScriptFileName(i, name);
         if (Storage.FileExists(name) == 0xFFFFFFFF) continue;
-        if (!ScriptLoad(i)) continue;
+        if (!ScriptLoad(i, i)) continue; // boot loads file i into slot i
         if (!(scriptRegistry[i].properties & SCRIPT_PROP_LOAD_ON_BOOT)) {
             scriptRegistry[i].Release(); // stored, but not pre-loaded
             continue;
@@ -154,12 +154,12 @@ __attribute__((noinline)) static void HandleScript(const PacketFrame &frame) {
             break;
         }
 
-        case 1: { // Load Script (File ID -> loaded ID)
-            if (bytes < 1) { RespondStatus(frame, false); return; }
-            uint8_t fileId = frame.payload[0];
-            bool ok = ScriptLoad(fileId);
-            uint8_t reply = ok ? fileId : 0xFF;
-            ScriptReply(frame, &reply, 1);
+        case 1: { // Load Script (file id, loaded id) -> Success
+            // Docs/Services/Script.md: the caller picks the loaded id (the slot); the reply is
+            // just Success, so it must have chosen it.
+            if (bytes < 2) { RespondStatus(frame, false); return; }
+            bool ok = ScriptLoad(frame.payload[0], frame.payload[1]);
+            RespondStatus(frame, ok);
             break;
         }
 
@@ -172,19 +172,21 @@ __attribute__((noinline)) static void HandleScript(const PacketFrame &frame) {
             break;
         }
 
-        case 3: { // Read state (loaded ID -> state)
+        case 3: { // Read state (loaded ID -> state, last error code)
             if (bytes < 1) { RespondStatus(frame, false); return; }
             LoadedScript *s = ScriptActive(frame.payload[0]);
             if (!s) { RespondStatus(frame, false); return; }
-            ScriptReply(frame, &s->state, 1);
+            uint8_t reply[2] = { s->state, s->errorCode };
+            ScriptReply(frame, reply, 2);
             break;
         }
 
-        case 4: { // Set state (loaded ID, new state)
+        case 4: { // Set state (loaded ID, new state; clears the error)
             if (bytes < 2) { RespondStatus(frame, false); return; }
             LoadedScript *s = ScriptActive(frame.payload[0]);
             if (!s || frame.payload[1] > (uint8_t)ScriptState::Error) { RespondStatus(frame, false); return; }
             ScriptSetState(s, frame.payload[1]);
+            s->errorCode = SCRIPT_ERR_NONE; // docs: setting the state clears the error
             RespondStatus(frame, true);
             break;
         }
@@ -225,14 +227,6 @@ __attribute__((noinline)) static void HandleScript(const PacketFrame &frame) {
             uint16_t vlen = s->varMeta[varId].Size;
             if ((uint16_t)(2 + vlen) > bytes) { RespondStatus(frame, false); return; }
             RespondStatus(frame, ScriptSetVariable(frame.payload[0], varId, frame.payload + 2, vlen));
-            break;
-        }
-
-        case 8: { // Read error (loaded ID -> error code)
-            if (bytes < 1) { RespondStatus(frame, false); return; }
-            LoadedScript *s = ScriptActive(frame.payload[0]);
-            if (!s) { RespondStatus(frame, false); return; }
-            ScriptReply(frame, &s->errorCode, 1);
             break;
         }
 

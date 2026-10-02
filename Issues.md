@@ -4,8 +4,6 @@
 - **Script file names.** `Docs/Services/Script.md` says `SCR_XXX`; the implementation uses
   `SCR_XX` (`SCR_00..SCR_3F`, 64 slots) in both firmware (`Core/Services/Script.h`) and app
   (`app/lib/core/script_file.dart`). Rename if >64 scripts are wanted.
-- **Script management CID 8.** The firmware adds CID 8 "Read error" (`Script.h`); the docs
-  table stops at CID 7. Document the extension or fold the error code into CID 5.
 - **OS notifications.** `Docs/App/Settings.md` lists "Allow notifications (To OS)" with
   per-event selection; the app persists `notifyOs`/`osEvents`/`suppressOsWhenOpen` but only
   delivers in-app notifications (`app/lib/core/notifications.dart`). Implement OS delivery
@@ -44,20 +42,39 @@
   resumes only on the callee's `Return`/`Halt`), a shared call stack of `(script, line)` pairs,
   and no argument passing (scripts exchange values through registers, as they already do).
 
-## Register active flags (docs gap)
-- **"Subscription Source" has no wire bit.** `Docs/Services/Register.md` lists four active flags
-  as a 4-bit segment per static entry (Not Saved, Script Updated, Subscription Source, External
-  origin), and says a read "combines the active and passive flags together". But the flags field
-  is only 6 bits (bits 10-15, `BLOCK_META_FLAGS_MASK`): ReadOnly/Persistent/Trigger plus Not
-  Saved/Script Updated/External origin already fill it, so the fourth active flag cannot be
-  reported. Not Saved, Script Updated and External origin are implemented (set/cleared as write
-  provenance - see `TODO.md` A1/D2); Subscription Source is left unimplemented rather than stored
-  unreportably. Either the docs drop it or the flags field needs another bit.
-- **`Docs/Services/Register.md` should state the array's size rule the implementation uses.**
-  The doc gives `4 bits * number of all individual static entries`; the implementation adds the
-  System block's fields to that count (the section title implies it, but the formula does not say
-  so explicitly) and sizes the array per board via a build flag.
+## Docs revision: points still to pin
+The revision closed two gaps: the **active-flag model is gone** (there is no 4-bit active segment
+and no "Subscription Source" bit, and the read no longer combines flags), and the **script CID 8
+extension is folded into CID 3** ("Read state" now returns `State, Last error code`). What the new
+text still disagrees about, and needs a ruling before the matching code lands:
 
+- **`Register.md` "Write ... Respond always"** contradicts the agreed behaviour: **write responses
+  are request-gated** (reply only when the request set REQACK), which is what `Set Name`'s
+  "Respond only if requested" already says. **Confirmed**: the firmware gates every response on
+  `FLAG_REQACK` (`SendResponse` returns early otherwise), so only the doc line needs to go back.
+- **The trigger table's "Function pointer (Static)"** cannot be sent. Proposal: `Field&Key` plus a
+  reserved 32-bit word (0 for static, the Script ID for dynamic).
+- **`ValueInfo` layout.** The Map entry gives `Type(16) + Size(8) + Flags(8)`, while the wire
+  format packs `FlagsAndType(16) + Key(8) + Size(8)` (`BLOCK_META_FLAGS_MASK` occupies bits 10-15).
+  The block table now puts ValueInfo on the wire, so this needs pinning; with only the three
+  passive flags left, the doc's layout is cleaner and would retire the mask hack.
+- **`Script.md:82`** still says "Writer sets the script updated flag", but that flag no longer
+  exists.
+- **`App/Device view.md:8`** still lists **CLI** in the capability bitfield, though the CLI is gone
+  and `Docs/Services/CLI.md` was deleted.
+- **Script CID 0 lists "Script File IDs", not slots.** CID 1 now takes a separate loaded id, so
+  the two may differ - but then CID 0's list is not addressable: the caller cannot recover which
+  slot holds which file. The implementation loads a slot explicitly and the app keeps file id ==
+  slot, so CID 0 stays meaningful; either CID 0 should report the loaded **slots**, or the docs
+  should say the loaded id equals the file id.
+- **`Docs/Services/Register.md`'s dynamic trigger table has no backing data.** The row says a
+  dynamic trigger's target is a **Script ID**, but nothing stores one: `DynamicEntry` has no
+  script id and the descriptor has no trigger array - the `Trigger` flag is only a marker. A
+  dynamic block therefore reports **zero** triggers, and that column is unimplemented.
+- **The dynamic descriptor's `Name` is 24 characters, not 12.** `BLOCK_NAME_LEN` is 24 and
+  `HandleCreateDynamic` accepts 23; the doc's descriptor (and the old Dynamic Block Table) say 12.
+  The evaluation setup's own block is named `'Subscriptions'` (13), so clamping to 12 would break
+  it - the doc should say 24.
 ## Android (on-device behaviour untested)
 
 - **On-device behavior not yet verified** (no Android device/emulator configured): the BLE

@@ -59,13 +59,13 @@ inline void Vysi1Display::RenderGeometryField(DynamicBlockDescriptor *block, uin
         KeyResult kr = block->GetKey(field, (uint8_t)GeometryKey::Size);
         if (BlockMetaType(kr.meta.FlagsAndType) == (uint16_t)DataType::Vector && kr.data_ptr)
         {
-            Vector<2> size = *(Vector<2> *)kr.data_ptr;
+            Vector<2> size = LoadUnaligned<Vector<2>>(kr.data_ptr);
             p.SizeX = size[0];
             p.SizeY = size[1];
         }
         else if (BlockMetaType(kr.meta.FlagsAndType) == (uint16_t)DataType::Number && kr.data_ptr)
         {
-            Number s = *(Number *)kr.data_ptr;
+            Number s = LoadUnaligned<Number>(kr.data_ptr);
             p.SizeX = s;
             p.SizeY = s;
         }
@@ -373,6 +373,11 @@ inline void Vysi1Display::Render()
     // filled, see Linearise), so only scale by Brightness here.
     Number brightness = Data.Brightness;
     if (brightness < N(0)) brightness = N(0);
+    // The layout file's brightness limit (Docs/Modules and blocks/LED display.md) is a 0-255
+    // byte read as a percentage: it caps the configured brightness, which is the board's
+    // current ceiling. 178 -> 70%, the same ceiling the brightness script uses.
+    const Number limit((int32_t)(((uint32_t)BrightnessLimit * 100u + 127u) / 255u));
+    if (brightness > limit) brightness = limit;
     // 256-scale so full brightness maps to exactly 255 after the >>8.
     uint32_t brightness_scale = (brightness >= 100) ? 256 : ((brightness * 256) / 100).ToInt();
 

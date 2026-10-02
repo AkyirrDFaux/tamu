@@ -194,7 +194,7 @@ void main() {
     for (final id in [scrTemperature, scrEyeMovement, scrLidTimer, scrBrightness, scrEmote]) {
       int? state;
       for (var i = 0; i < 8; i++) {
-        state = await scripts.readState(id);
+        state = (await scripts.readState(id))?.state;
         if (state != null && state != ScriptState.error) break;
         await Future<void>.delayed(const Duration(milliseconds: 250));
       }
@@ -450,10 +450,10 @@ void main() {
         await reg.writeBlockField(
             BlockType.pwm.value, fanInst, 0, 0, meta, uint32ToBytes(25000)),
         isNotNull);
-    expect(await reg.saveStatic(BlockType.pwm.value, fanInst), isTrue);
+    expect(await reg.saveAll(), isTrue);
   }, timeout: const Timeout(Duration(seconds: 30)));
 
-  test('setup: a written persistent field reports Not Saved until saved', skip: skipReason, () async {
+  test('setup: a written persistent field survives an explicit save', skip: skipReason, () async {
     final reg = RegisterClient(deviceId: found.core.id);
     // The display Offset is persistent + writable (saving it is what the setup already does).
     final before = await reg.readBlockField(BlockType.vysiDisplay.value, dispLeft, 1, 0);
@@ -465,11 +465,11 @@ void main() {
             BlockType.vysiDisplay.value, dispLeft, 1, 0, meta, before.value),
         isNotNull,
         reason: 'offset write accepted');
-    var after = await reg.readBlockField(BlockType.vysiDisplay.value, dispLeft, 1, 0);
-    expect(after?.meta.notSaved, isTrue, reason: 'a written persistent field is flagged');
-    expect(await reg.saveStatic(BlockType.vysiDisplay.value, dispLeft), isTrue);
-    after = await reg.readBlockField(BlockType.vysiDisplay.value, dispLeft, 1, 0);
-    expect(after?.meta.notSaved, isFalse, reason: 'saving clears the flag');
+    // The write is only in RAM until saved. The save must succeed and the value must read back
+    // unchanged - the "Not Saved" flag that used to report this is gone (TODO.md §8 P1).
+    expect(await reg.saveAll(), isTrue);
+    final after = await reg.readBlockField(BlockType.vysiDisplay.value, dispLeft, 1, 0);
+    expect(after?.value, before.value);
   }, timeout: const Timeout(Duration(seconds: 30)));
 
   test('setup: capture the semantic backup zip to the project root', skip: skipReason, () async {

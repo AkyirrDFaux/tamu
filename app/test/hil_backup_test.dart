@@ -6,6 +6,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/backup.dart';
 import 'package:tamuapp/core/backup_script.dart';
+import 'package:tamuapp/core/device_backup.dart';
 import 'package:tamuapp/core/device_db.dart';
 import 'package:tamuapp/core/register_client.dart';
 import 'package:tamuapp/core/script_draft.dart';
@@ -38,7 +39,7 @@ void main() {
         (throw StateError('Tamu not found'));
     final reg = RegisterClient(deviceId: tamu.id);
     await reg.deleteDynamic(block: 0);
-    await reg.saveDynamic();
+    await reg.saveAll();
     final storage = StorageClient(deviceId: tamu.id);
     await storage.deleteFile('BKTEST');
     await Future<void>.delayed(const Duration(milliseconds: 300));
@@ -101,7 +102,7 @@ void main() {
     expect(String.fromCharCodes(textBack!.value).trimRight(), 'hello');
 
     await reg.deleteDynamic(block: 0);
-    await reg.saveDynamic();
+    await reg.saveAll();
   }, timeout: const Timeout(Duration(seconds: 90)));
 
   test('backup captures scripts semantically and restores them', skip: skipReason,
@@ -171,4 +172,57 @@ void main() {
     expect(back, [1, 2, 3, 4, 5]);
     await storage.deleteFile('BKTEST');
   }, timeout: const Timeout(Duration(seconds: 90)));
+
+  test('a per-field Save writes STATLOG and the device recalls it', skip: skipReason, () async {
+    // The wire only carries Save All (CID 4) / Recall All (CID 3); a single field's Save is
+    // the app writing the file itself (Docs/Services/Register.md: "partial saving ... app with
+    // direct file writes"). This drives that path end to end: the app builds the STATLOG entry,
+    // writes it, and the *device* then restores it with Recall All.
+    final reg = RegisterClient(deviceId: tamu.id);
+    final storage = StorageClient(deviceId: tamu.id);
+
+    final before = await reg.readField(6, 0);
+    expect(before, isNotNull, reason: 'the System Name is readable');
+    final original = String.fromCharCodes(before!.value).replaceAll('\x00', '').trim();
+    expect(original, isNotEmpty);
+
+    // Point the device at a distinctive name in RAM, then persist it app-side.
+    const next = 'PerField';
+    final meta = BlockMeta(
+        flagsAndType: DataType.string.value | FieldFlags.persistent, size: next.length);
+    expect(await reg.writeBlockField(0, 0, 6, 0, meta, next.codeUnits), isNotNull);
+
+    final table = await storage.readFileTable() ?? const <FileRecord>[];
+    final rec = table.firstWhere((f) => normalizeFileName(f.name) == 'STATLOG');
+    final statlog = await storage.readFile(rec.name, size: rec.size);
+    expect(statlog, isNotNull, reason: 'STATLOG is readable');
+    final updated = statlogSaveField(
+        statlog!, statlogSystemBlock, 6, meta, next.codeUnits);
+    expect(await storage.writeFile('STATLOG', updated), isTrue,
+        reason: 'the app-side file write is accepted');
+
+    // Change RAM again WITHOUT saving, so a device-side recall has something to undo.
+    expect(
+        await reg.writeBlockField(0, 0, 6, 0,
+            BlockMeta(flagsAndType: DataType.string.value | FieldFlags.persistent, size: 3),
+            'tmp'.codeUnits),
+        isNotNull);
+    expect(await reg.recallAll(), isTrue, reason: 'the device recalls the app-written log');
+
+    final recalled = await reg.readField(6, 0);
+    expect(String.fromCharCodes(recalled!.value).replaceAll('\x00', '').trim(), next,
+        reason: 'the app-written entry is what came back');
+
+    // Leave the device with its original name (write it and save it app-side, as the page does).
+    final restoreMeta = BlockMeta(
+        flagsAndType: DataType.string.value | FieldFlags.persistent, size: original.length);
+    expect(await reg.writeBlockField(0, 0, 6, 0, restoreMeta, original.codeUnits), isNotNull);
+    final fresh = table.isEmpty ? null : await storage.readFile(rec.name, size: rec.size);
+    final back = statlogSaveField(
+        fresh ?? const <int>[], statlogSystemBlock, 6, restoreMeta, original.codeUnits);
+    expect(await storage.writeFile('STATLOG', back), isTrue);
+    expect(await reg.recallAll(), isTrue);
+    final finalName = await reg.readField(6, 0);
+    expect(String.fromCharCodes(finalName!.value).replaceAll('\x00', '').trim(), original);
+  }, timeout: const Timeout(Duration(seconds: 120)));
 }

@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstring>
 #include "Core/Functions/Crc8.h"
+#include "Core/Functions/Align.h" // LoadUnaligned/StoreUnaligned for payload access
 
 // Spec Data Formats.md: Generic packet max 128 total, payload max 116
 // Header 12 bytes: CRC8 | Flags | Priority | PayloadLen | TGT | SRC | CMD | TRID
@@ -58,8 +59,13 @@ struct PacketFrame
     uint16_t id_tgt;                                 // Target device's address
     union { uint16_t trid; uint16_t srv_src; };      // Transaction ID
     uint8_t payload[MAX_PAYLOAD_SIZE];
-} __attribute__((packed));
+} __attribute__((packed, aligned(4)));
 
+// `packed` fixes the wire layout but on its own drops the type's alignment to 1, which would
+// let a `PacketFrame` local sit anywhere and make every typed payload access misaligned. The
+// explicit 4-byte alignment keeps the layout/size identical and makes `payload + 4k` genuinely
+// 4-aligned (a u16 at an even offset is fine too).
+static_assert(alignof(PacketFrame) == 4, "the payload must be 4-byte aligned for typed access");
 static_assert(offsetof(PacketFrame, payload) % 4 == 0, "payload must stay 4-byte aligned");
 static_assert(offsetof(PacketFrame, id_src) == 4, "wire order: SRC ID after the length");
 static_assert(offsetof(PacketFrame, cmd) == 6, "wire order: CMD after SRC ID");

@@ -1,6 +1,5 @@
 Per device specific, USB, BLE or both.
 Use define USE_APP_INTERFACE.
-Must not interfere with CLI!
 
 Provides forwarding of packets to the app via the avaliable interface.
 Maximize throughput (split into fragments, fully fill payload), since line is bi-directional peer to peer.

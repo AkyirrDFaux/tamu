@@ -8,7 +8,7 @@ import 'package:tamuapp/core/storage_client.dart';
 import 'package:tamuapp/core/types.dart';
 import 'hil_helpers.dart';
 
-/// Verifies per-block dynamic persistence (Docs/Services/Register.md: DT_XXX / DV_XXX
+/// Verifies dynamic persistence through the device's per-block files (Register.md: DT_XXX / DV_XXX
 /// files): save writes a block's table + persistent space, delete+save cleans the files
 /// without shifting positions, and a device reset restores persistent entries from
 /// flash (volatile entries come back zeroed).
@@ -27,7 +27,7 @@ void main() async {
   });
   tearDownAll(disconnectHil);
 
-  test('per-block DT/DV save + cleanup', skip: skipReason, () async {
+  test('Save All writes the per-block DT/DV files and cleanup', skip: skipReason, () async {
     final c = RegisterClient(deviceId: 1);
     final st = StorageClient(deviceId: 1);
     Future<Set<String>> names() async {
@@ -41,7 +41,7 @@ void main() async {
     for (var i = 0; i < count; i++) {
       await c.deleteDynamic(block: i);
     }
-    await c.saveDynamic();
+    await c.saveAll();
 
     // RENDER at 0: persistent (0,0)=42, volatile (0,1)=7.
     await c.createDynamicBlock(BlockType.dynamic, 'RENDER', index: 0);
@@ -50,7 +50,7 @@ void main() async {
         BlockMeta(flagsAndType: FieldFlags.persistent | DataType.number.value, key: 0), numberToBytes(42.0));
     await c.writeDynamicEntry(b, 0, 1,
         BlockMeta(flagsAndType: DataType.number.value, key: 1), numberToBytes(7.0));
-    await c.saveDynamic();
+    await c.saveAll();
 
     var files = await names();
     if (!files.contains('DT_00') || !files.contains('DV_00')) {
@@ -65,15 +65,16 @@ void main() async {
 
     // Delete + save removes the files; recreate at the same index works.
     await c.deleteDynamic(block: 0);
-    await c.saveDynamic();
+    await c.saveAll();
     files = await names();
     if (files.contains('DT_00') || files.contains('DV_00')) {
-      fail('tombstoned files not cleaned on save');
+      fail('tombstoned files not cleaned on save: '
+          '${files.where((f) => f.startsWith('DT_') || f.startsWith('DV_')).toList()}');
     }
     final idx = await c.createDynamicBlock(BlockType.dynamic, 'RENDER', index: 0);
     if (idx != 0) fail('recreate not at index 0');
     await c.deleteDynamic(block: 0);
-    await c.saveDynamic();
+    await c.saveAll();
   });
 
   test('a write whose BlockMeta.Size exceeds the payload is clamped', skip: skipReason, () async {
@@ -84,7 +85,7 @@ void main() async {
     for (var i = 0; i < count; i++) {
       await c.deleteDynamic(block: i);
     }
-    await c.saveDynamic();
+    await c.saveAll();
     await c.createDynamicBlock(BlockType.dynamic, 'CLAMP', index: 0);
     final b = DynBlock(index: 0, meta: BlockMeta(flagsAndType: BlockType.dynamic.value, size: 1), name: 'CLAMP');
 
@@ -105,7 +106,7 @@ void main() async {
     }
 
     await c.deleteDynamic(block: 0);
-    await c.saveDynamic();
+    await c.saveAll();
   }, timeout: const Timeout(Duration(minutes: 2)));
 
   test('boot persistence restores persistent entries',
@@ -116,7 +117,7 @@ void main() async {
     for (var i = 0; i < count; i++) {
       await c.deleteDynamic(block: i);
     }
-    await c.saveDynamic();
+    await c.saveAll();
 
     await c.createDynamicBlock(BlockType.dynamic, 'RENDER', index: 0);
     final b = DynBlock(index: 0, meta: BlockMeta(flagsAndType: BlockType.dynamic.value, size: 1), name: 'RENDER');
@@ -124,7 +125,7 @@ void main() async {
         BlockMeta(flagsAndType: FieldFlags.persistent | DataType.number.value, key: 0), numberToBytes(42.0));
     await c.writeDynamicEntry(b, 0, 1,
         BlockMeta(flagsAndType: DataType.number.value, key: 1), numberToBytes(7.0));
-    final saved = await c.saveDynamic();
+    final saved = await c.saveAll();
     await Future<void>.delayed(const Duration(milliseconds: 500));
     final st = StorageClient(deviceId: 1);
     final files = await st.readFileTable();
@@ -153,7 +154,7 @@ void main() async {
     }
 
     await c.deleteDynamic(block: 0);
-    await c.saveDynamic();
+    await c.saveAll();
   }, timeout: const Timeout(Duration(minutes: 2)));
 
   test('a malformed DT table is rejected without overflowing',
@@ -167,12 +168,12 @@ void main() async {
     for (var i = 0; i < count; i++) {
       await c.deleteDynamic(block: i);
     }
-    await c.saveDynamic();
+    await c.saveAll();
     await c.createDynamicBlock(BlockType.dynamic, 'RENDER', index: 0);
     final b = DynBlock(index: 0, meta: BlockMeta(flagsAndType: BlockType.dynamic.value, size: 1), name: 'RENDER');
     await c.writeDynamicEntry(b, 0, 0,
         BlockMeta(flagsAndType: FieldFlags.persistent | DataType.number.value, key: 0), numberToBytes(42.0));
-    await c.saveDynamic();
+    await c.saveAll();
     await Future<void>.delayed(const Duration(milliseconds: 500));
 
     // Corrupt the table with a name length far beyond the block's 24-byte name buffer while

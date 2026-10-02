@@ -59,8 +59,6 @@ static bool StaticFieldRecall(uint8_t idx, uint8_t field, const uint8_t *buf, ui
             FieldResult fr = static_block_registry[idx].Get(field);
             if (fr.Data && sz == fr.Descriptor.Size) {
                 memcpy(fr.Data, buf + c + kLogEntryHeaderSize, sz);
-                // The RAM value matches the backup again, so it is no longer "not saved".
-                StaticDirtySet(idx, field, false);
                 return true;
             }
             return false;
@@ -115,137 +113,83 @@ static bool SystemFieldRecall(uint8_t field, const uint8_t *buf, uint16_t cnt) {
     return false;
 }
 
-static void HandleStaticSaveRecall(const PacketFrame &frame, uint8_t cid, uint32_t bi_save, uint8_t field) {
-    uint16_t type = BlockInfoType(bi_save);
-    uint8_t inst = BlockInfoInstance(bi_save);
-
+// Saves the whole STATLOG mirror in one pass: the System block's persistent fields, then
+// every registry block's writable persistent fields, written with a single WriteBackupFile.
+//
+// One pass, not one write per block: WriteBackupFile replaces the file with exactly the bytes
+// it is given, and the read buffer is MEMORY_BACKUP_CAP, so a per-block walk that reads a
+// truncated file and writes it back would silently drop the entries past the cap. Building the
+// whole log in one buffer also makes "does it fit" an explicit failure instead.
+static bool StaticSaveAll() {
     uint8_t buf[MEMORY_BACKUP_CAP];
-    // The append position is the log's *logical* end, not the file length: the reduced file
-    // system pre-allocates the settings file, so a fresh DAS reads back a whole erased region
-    // (256 bytes of 0xFF) and every save would otherwise be refused as "buffer full".
-    uint16_t cnt = BackupLogUsed(buf, ReadBackupFile(StaticLogName(), buf, sizeof(buf)));
-
-    // System block (type 0, inst 0): its persistent fields (Name 6, NetID 7) live in the
-    // SAME static backup file (STATLOG) as the static blocks.
-    if (type == 0 && inst == 0) {
-        if (cid == 3) { // Save
-            uint16_t len = 0;
-            bool any = false;
-            if (field == SYSTEM_FIELD_NAME || field == 0xFF) {
-                uint16_t l = SystemFieldSave(SYSTEM_FIELD_NAME, buf, len ? len : cnt);
-                if (l == 0) { RespondStatus(frame,false); return; }
-                len = l; any = true;
-                StaticDirtySet(SYSTEM_BLOCK_BACKUP, SYSTEM_FIELD_NAME, false); // now in flash
-            }
+    uint16_t len = SystemFieldSave(SYSTEM_FIELD_NAME, buf, 0);
+    if (len == 0) return false;
+    uint16_t l = 0;
 #ifdef TYPE_CORE
-            if (field == SYSTEM_FIELD_NETID || field == 0xFF) {
-                uint16_t l = SystemFieldSave(SYSTEM_FIELD_NETID, buf, len ? len : cnt);
-                if (l == 0) { RespondStatus(frame,false); return; }
-                len = l; any = true;
-                StaticDirtySet(SYSTEM_BLOCK_BACKUP, SYSTEM_FIELD_NETID, false);
-            }
+    l = SystemFieldSave(SYSTEM_FIELD_NETID, buf, len);
+    if (l == 0) return false;
+    len = l;
 #endif
-            if (!any) { RespondStatus(frame,false); return; }
-            RespondStatus(frame, WriteBackupFile(StaticLogName(), buf, len));
-        } else { // Recall
-            bool any = false;
-            if (field == SYSTEM_FIELD_NAME || field == 0xFF)
-                any |= SystemFieldRecall(SYSTEM_FIELD_NAME, buf, cnt);
-#ifdef TYPE_CORE
-            if (field == SYSTEM_FIELD_NETID || field == 0xFF)
-                any |= SystemFieldRecall(SYSTEM_FIELD_NETID, buf, cnt);
-#endif
-            RespondStatus(frame, any);
+    for (size_t i = 0; i < static_block_num; i++) {
+        const StaticBlockDescriptor &blk = static_block_registry[i];
+        for (uint16_t fi = 0; fi < blk.Schema->MapCount; fi++) {
+            if (!(blk.Schema->Map[fi].FlagsAndType & FieldFlags::Persistent) ||
+                (blk.Schema->Map[fi].FlagsAndType & FieldFlags::ReadOnly)) continue;
+            l = StaticFieldSave((uint8_t)i, (uint8_t)fi, buf, len);
+            if (l == 0) return false; // buffer full: the set does not fit MEMORY_BACKUP_CAP
+            len = l;
         }
-        return;
     }
+    return WriteBackupFile(StaticLogName(), buf, len);
+}
 
-    int idx = FindStaticBlock(type, inst);
-    if (idx < 0) { RespondStatus(frame,false); return; }
-    const StaticBlockDescriptor &blk = static_block_registry[idx];
-
-    if (cid == 3) { // Save
-        if (field == 0xFF) { // whole block: persist every writable persistent field
-            uint16_t len = 0;
-            for (uint16_t fi = 0; fi < blk.Schema->MapCount; fi++) {
-                if (!(blk.Schema->Map[fi].FlagsAndType & FieldFlags::Persistent) ||
-                    (blk.Schema->Map[fi].FlagsAndType & FieldFlags::ReadOnly)) continue;
-                uint16_t l = StaticFieldSave((uint8_t)idx, (uint8_t)fi, buf, len ? len : cnt);
-                if (l == 0) { RespondStatus(frame,false); return; }
-                len = l;
-                StaticDirtySet((uint8_t)idx, (uint8_t)fi, false); // now in flash
-            }
-            if (len == 0) { RespondStatus(frame,true); return; } // nothing writable/persistent
-            RespondStatus(frame, WriteBackupFile(StaticLogName(), buf, len));
-        } else {
-            uint16_t len = StaticFieldSave((uint8_t)idx, field, buf, cnt);
-            if (len == 0) { RespondStatus(frame,false); return; }
-            StaticDirtySet((uint8_t)idx, field, false); // now in flash
-            RespondStatus(frame, WriteBackupFile(StaticLogName(), buf, len));
+// Recalls the whole STATLOG mirror: one read, then every System and registry persistent field.
+// A field with no stored entry (or one whose stored size no longer matches) is left alone -
+// that is not a recall failure.
+static void StaticRecallAll() {
+    uint8_t buf[MEMORY_BACKUP_CAP];
+    uint16_t cnt = BackupLogUsed(buf, ReadBackupFile(StaticLogName(), buf, sizeof(buf)));
+    SystemFieldRecall(SYSTEM_FIELD_NAME, buf, cnt);
+#ifdef TYPE_CORE
+    SystemFieldRecall(SYSTEM_FIELD_NETID, buf, cnt);
+#endif
+    for (size_t i = 0; i < static_block_num; i++) {
+        const StaticBlockDescriptor &blk = static_block_registry[i];
+        for (uint16_t fi = 0; fi < blk.Schema->MapCount; fi++) {
+            if (!(blk.Schema->Map[fi].FlagsAndType & FieldFlags::Persistent) ||
+                (blk.Schema->Map[fi].FlagsAndType & FieldFlags::ReadOnly)) continue;
+            StaticFieldRecall((uint8_t)i, (uint8_t)fi, buf, cnt);
         }
-    } else { // Recall
-        bool ok;
-        if (field == 0xFF) {
-            ok = true;
-            for (uint16_t fi = 0; fi < blk.Schema->MapCount; fi++) {
-                if (!(blk.Schema->Map[fi].FlagsAndType & FieldFlags::Persistent) ||
-                    (blk.Schema->Map[fi].FlagsAndType & FieldFlags::ReadOnly)) continue;
-                if (StaticFieldRecall((uint8_t)idx, (uint8_t)fi, buf, cnt)) ok = true;
-                else ok = false;
-            }
-        } else {
-            ok = StaticFieldRecall((uint8_t)idx, field, buf, cnt);
-        }
-        RespondStatus(frame, ok);
     }
 }
 
 #ifndef DISABLE_DYNAMIC_MEMORY
-static void HandleDynamicSaveRecall(const PacketFrame &frame, uint8_t cid, uint8_t inst_save, uint8_t field) {
-    if (cid == 3) { // Save (DT/DV per-block files)
-        // Clean tombstoned/orphan files BEFORE writing, so deleted blocks release
-        // their storage; positions in the registry are never touched.
-        CleanupDynamicFiles();
-        if (inst_save == 0x3F) {
-            for (uint16_t i = 0; i < dynamic_block_registry.block_count && i < MAX_DYNAMIC_BLOCKS; i++) {
-                if (dynamic_block_registry.blocks[i].type == BlockType::None) continue;
-                if (!SaveDynamicBlockFiles(dynamic_block_registry.blocks[i], i)) { RespondStatus(frame,false); return; }
-            }
-        } else {
-            if (inst_save >= dynamic_block_registry.block_count) { RespondStatus(frame,false); return; }
-            DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(inst_save);
-            if (!block || block->type == BlockType::None) { RespondStatus(frame,false); return; }
-            if (!SaveDynamicBlockFiles(*block, inst_save)) { RespondStatus(frame,false); return; }
-        }
-        RespondStatus(frame,true);
-        return;
+// Saves every dynamic block to its DT_/DV_ files (the dynamic half of "Save All").
+static bool DynamicSaveAll() {
+    // Clean tombstoned/orphan files BEFORE writing, so deleted blocks release their storage;
+    // positions in the registry are never touched.
+    CleanupDynamicFiles();
+    for (uint16_t i = 0; i < dynamic_block_registry.block_count && i < MAX_DYNAMIC_BLOCKS; i++) {
+        if (dynamic_block_registry.blocks[i].type == BlockType::None) continue;
+        if (!SaveDynamicBlockFiles(dynamic_block_registry.blocks[i], i)) return false;
     }
+    return true;
+}
 
-    // Recall (CID 4): rebuild the slot(s) from their DT/DV files. Per the docs each
-    // block keeps its own files, so a slot with no DT file stays a tombstone.
-    if (inst_save == 0x3F) {
-        bool ok = true;
-        for (uint16_t i = 0; i < MAX_DYNAMIC_BLOCKS; i++) {
-            DynamicBlockDescriptor scratch;
-            if (!LoadDynamicBlockFiles(scratch, i))
-                continue;
-            while (dynamic_block_registry.block_count <= i)
-                if (!dynamic_block_registry.AddBlock(BlockType::Undefined)) { ok = false; break; }
-            if (!ok) break;
-            dynamic_block_registry.TombstoneBlock(i);
-            *dynamic_block_registry.GetBlock(i) = scratch;
-        }
-        RespondStatus(frame, ok);
-        return;
+// Rebuilds every slot from its DT/DV files. Per the docs each block keeps its own files, so
+// a slot with no DT file stays a tombstone.
+static bool DynamicRecallAll() {
+    bool ok = true;
+    for (uint16_t i = 0; i < MAX_DYNAMIC_BLOCKS; i++) {
+        DynamicBlockDescriptor scratch;
+        if (!LoadDynamicBlockFiles(scratch, i)) continue;
+        while (dynamic_block_registry.block_count <= i)
+            if (!dynamic_block_registry.AddBlock(BlockType::Undefined)) { ok = false; break; }
+        if (!ok) break;
+        dynamic_block_registry.TombstoneBlock(i);
+        *dynamic_block_registry.GetBlock(i) = scratch;
     }
-
-    DynamicBlockDescriptor scratch;
-    if (!LoadDynamicBlockFiles(scratch, inst_save)) { RespondStatus(frame,false); return; }
-    while (dynamic_block_registry.block_count <= inst_save)
-        if (!dynamic_block_registry.AddBlock(BlockType::Undefined)) { RespondStatus(frame,false); return; }
-    dynamic_block_registry.TombstoneBlock(inst_save);
-    *dynamic_block_registry.GetBlock(inst_save) = scratch;
-    RespondStatus(frame,true);
+    return ok;
 }
 
 static void HandleCreateDynamic(const PacketFrame &frame, uint8_t index, uint16_t type) {
@@ -308,13 +252,13 @@ static void HandleGetMemUsage(const PacketFrame &frame, uint32_t bi, uint16_t bl
     if (!block) { RespondStatus(frame,false); return; }
     uint8_t payload[sizeof(BlockIndex) + 24];
     memcpy(payload, &bi, 4);
-    uint32_t *u32 = reinterpret_cast<uint32_t *>(payload + 4);
-    u32[0] = block->entry_count * sizeof(DynamicEntry);
-    u32[1] = block->entry_allocated * sizeof(DynamicEntry);
-    u32[2] = block->volatile_len;
-    u32[3] = block->volatile_allocated;
-    u32[4] = block->persistent_len;
-    u32[5] = block->persistent_allocated;
+    // Six little-endian u32s at payload + 4, 8, ... (a byte array is only 1-aligned).
+    StoreUnaligned(payload + 4, (uint32_t)(block->entry_count * sizeof(DynamicEntry)));
+    StoreUnaligned(payload + 8, (uint32_t)(block->entry_allocated * sizeof(DynamicEntry)));
+    StoreUnaligned(payload + 12, (uint32_t)block->volatile_len);
+    StoreUnaligned(payload + 16, (uint32_t)block->volatile_allocated);
+    StoreUnaligned(payload + 20, (uint32_t)block->persistent_len);
+    StoreUnaligned(payload + 24, (uint32_t)block->persistent_allocated);
     SendResponse(frame, payload, sizeof(payload));
 }
 
@@ -332,3 +276,25 @@ static void HandleReadBackup(const PacketFrame &frame, uint32_t bi, uint16_t blo
 
 #endif
 
+// CID 3 (Recall All) / CID 4 (Save All): the whole device in one command
+// (Docs/Services/Register.md - no BlockInfo). Partial saving/recall is the app's job (direct
+// file writes / direct register writes), so nothing is addressed here. Each target keeps its
+// own bounded read-modify-write - a DAS's whole persistent set does not fit one
+// MEMORY_BACKUP_CAP buffer - and the results are aggregated into a single reply.
+static void HandleSaveRecallAll(const PacketFrame &frame, bool save) {
+    bool ok = true;
+    if (save) {
+        ok &= StaticSaveAll();
+#ifndef DISABLE_DYNAMIC_MEMORY
+        ok &= DynamicSaveAll();
+#endif
+    } else {
+        // A recall has no failure mode of its own: a field with no stored entry is simply left
+        // as it is (the doc's reply is Success). Only rebuilding a dynamic slot can fail.
+        StaticRecallAll();
+#ifndef DISABLE_DYNAMIC_MEMORY
+        ok = DynamicRecallAll();
+#endif
+    }
+    RespondStatus(frame, ok);
+}

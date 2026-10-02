@@ -996,8 +996,9 @@ analyzer.
 
 - [x] **A10 (part 1) Script (un)loading from within a script** (done). `Docs/Services/Script.md`
   lists "Script (un)loading" among the VM's functions, so the VM now has service ops **7
-  (`Load script`)** and **8 (`Unload script`)** that perform exactly management **CID 1/CID 2**:
-  load answers the loaded id (the file id, as the CID replies; `0xFF` on failure) and unload
+  (`Load script`)** and **8 (`Unload script`)** that perform exactly management **CID 1/CID 2**.
+  (Op 7's encoding was changed again by §8 P2 to `(file id, loaded id)` with no destination, to
+  match the revised CID 1 - it originally answered the loaded id.) Unload
   takes a loaded id and treats "not loaded" as a no-op. Two guards, both deliberate:
   - **a script cannot (un)load itself** - `ScriptLoad`/`ScriptUnload` release the program and
     spaces that would be executing, so this returns a script error instead of corrupting memory
@@ -1006,8 +1007,9 @@ analyzer.
     and a script loaded this way starts **Stopped** - loading is not running.
   App side: both instructions are in `script_instructions.dart` with role hints, and the
   app↔firmware contract test now maps ops 7/8 to the new firmware defines, so the encoding
-  cannot drift. New app test covers the arity/destination rules (Load needs a destination to
-  report the id, Unload does not). **Core +688 B** (two cases plus their inlined resolution in
+  cannot drift. New app test covers the arity rules (updated again in §8 P2: Load now takes
+  `(file id, loaded id)` and no destination). **Core +688 B** (two cases plus their inlined
+  resolution in
   the VM), DAS unaffected (no scripts). For reference, PlatformIO's partition report on the core
   now reads **667 842 B / 21.2 %** of the 3 MB app partition (the `firmware.bin` deltas quoted
   across A6/A9/A10 are measured on the same artifact, so they are comparable to each other).
@@ -1138,7 +1140,9 @@ analyzer.
   block instances, so it is not usable in a constant expression, and a runtime guard is dead on
   textless (DAS) builds (`DeviceLog` is a no-op macro there). Flash unchanged - the firmware change
   is comments only (core 629 716 B, DAS 13 996 B), and `test.sh` is green at 141 app tests.
-- [ ] LED brightness brown-out -> firmware current cap/ramp decision (deferred by request).
+- [x] LED brightness brown-out -> **the firmware current cap landed** (§8 P3: the layout file's
+  brightness limit, 178 = 70%, enforced in the render). A ramp was not needed; the value itself
+  is confirmed by eye on a display-equipped rig.
 - [ ] Mask-versioning correctness, if A11 is implemented.
 
 ### Cleanup pass: app per-tick work, wire bounds, flaky assertion, TODO hygiene
@@ -1374,22 +1378,27 @@ Both targets were reflashed from the current tree first - the devices had **very
   what the suite was missing. Flash cost of both DAS fixes: 13 960 -> 13 988 B (+28 B).
 
 ### Track C - docs gaps to keep in `Issues.md`
-Active-flag model (partly resolved by A1; the other three flags are unimplemented *and*
-under-specified) · `Current setup v3` predates the emote interface · UI-info v2 format ·
-`SCR_XX` vs `SCR_XXX` · script management CID 8 · pre-rotated translation convention · OS
-notifications ("To OS") never delivered · no framebuffer readback (visuals are eye-only).
-The Register Current/Backup view item is closed (implemented).
+`Current setup v3` predates the emote interface · UI-info v2 format · `SCR_XX` vs `SCR_XXX` ·
+pre-rotated translation convention · OS notifications ("To OS") never delivered · no framebuffer
+readback (visuals are eye-only) · the docs-revision points still to pin (§8 "Docs revision").
+The Register Current/Backup view item is closed (implemented); the **active-flag model** and the
+**script CID 8** gap are closed by the docs revision - the flags are gone (implementation removal
+is §8 P1) and the error code is folded into CID 3 (implementation change is §8 P2).
 
 ### Track D - decisions
 - [x] **D1 answered: the two items are dropped.** The `permission_handler` pin and the
   "Built-in Kotlin" migration warning both documented upstream constraints; the facts stay in
   the build files, and `Issues.md` keeps only the on-device-behaviour note.
-- [x] **D2 answered** - the flags are implemented as write provenance (see the A1 record): the
+- [x] **D2 answered** - the flags were implemented as write provenance (see the A1 record): the
   origin is declared by the writer in the write's ValueInfo and both sides apply it; the
   Subscription-Source flag has no wire bit and stays a docs gap in `Issues.md`.
+  **Superseded by §8 P1**: the revised `Register.md` removed all four active flags, so the
+  provenance model and the flag array are being deleted, not extended.
 - [ ] D3 Mask versioning - **parked** for the display session (it is unverifiable without one).
   Same item as A11; see the "canonical record" entry for the sketch.
-- [ ] D4 LED brightness cap - **parked** with the display session (a cap needs a display to pick and verify).
+- [ ] D4 LED brightness cap - **the mechanism landed in §8 P3** (the layout file's brightness
+  limit, 178 = 70% by default, capped in the render). What remains is picking/confirming the
+  value on a display, so it stays parked for the display session.
 - [ ] D5 Cross-script control - **parked** with A10 part 2. Note it is effectively forced: with the CLI gone, any cross-script feature needs app UI to be reachable at all.
 
 ### Track E - intentionally not doing (with reasons)
@@ -1401,3 +1410,231 @@ buffer's lifetime is load-bearing, so it would return a dangling pointer. App AP
 suppressions beyond the one documented false positive.
 
 Order: **A1 -> A2 -> A3 -> A4 -> A5 -> A6 -> A7 -> A8 -> A9 -> A10 -> A11**, then one rig session.
+
+## 8. Documentation revision - Register / Script / LED display (docs-driven protocol change)
+
+The docs were revised (`Services/Register.md`, `Services/Script.md`, `Modules and blocks/LED
+display.md`): the four active flags are gone, the block table becomes reportable, and enumerate /
+read / save / recall, the Script management CIDs and the layout-file header change. This section is
+the implementation plan, in landing order. **P4-P6 are protocol-breaking** - firmware and app land
+together and the rig always runs a matched pair (no half-migrated build flashed).
+
+**Decisions (confirmed)**
+- **Recall All = 3, Save All = 4.** `Register.md` wins over `Command ID table.md` (the user updates
+  that file) - the IDs are **swapped** relative to the current implementation.
+- **The active flags are removed everywhere**: the firmware's per-board flag array and its
+  write-provenance setters, and the app's Not Saved / Script Updated / External indicators. The
+  A1/D2 records above are superseded by P1 and are rewritten there as removals.
+- **Write responses stay request-gated.** `Register.md`'s "Respond always" is overridden by
+  request: a write replies only when the request asked for one, so `Write` and `Set Name` ("Respond
+  only if requested") agree. P4 therefore leaves the write path alone.
+- **`Docs/Plan.md` is the user's notes, not scope** - the subscription orphan-handling / cancel
+  work stays parked (see "Issue 4").
+
+**Rulings (settled)**
+- `Get Memory Usage` keeps its **six** values (table used/allocated, volatile used/allocated,
+  persistent used/allocated) - what the command is for - and now reports them in **32-bit
+  multiples**.
+- **ValueInfo** adopts the doc's `Type(16) + Size(8) + Flags(8)` with `Field&Key` carrying the
+  key (done as P8). The flag bits follow the doc's table order: `0x01` Read Only, `0x02`
+  Persistent, `0x04` Trigger.
+- **Trigger table**: `Field&Key` plus a reserved 32-bit word - 0 for a static trigger (a function
+  pointer cannot be sent) and the Script ID for a dynamic one.
+
+**Docs follow-ups for the user** (listed in `Issues.md` "Docs revision: points still to pin"): the
+`Write ... Respond always` line (the agreed behaviour - **writes respond only when the request set
+REQACK** - is implemented; only the doc line is left), `Script.md:82`'s script-updated-flag
+mention, and `App/Device view.md`'s CLI capability. The `Get Memory Usage` `uint32x6` wording is
+settled (six u32s are emitted).
+
+- [x] **P1 Active flags removed - done.** The revised `Register.md` makes every ValueInfo flag
+  passive, so the array, its write provenance and the three bits are gone.
+  **Firmware**: `FieldFlags` is back to `None/ReadOnly/Persistent/Trigger` (the dead `FlashValid`,
+  which aliased ReadOnly's bit, went with it); `StaticMemory.h` lost the whole active-flag block
+  (`ActiveFlag`, `STATIC_ACTIVE_ENTRIES`/`_BYTES`, the inline bit array, `StaticEntryOffset`,
+  `StaticActiveSet/Get`, `StaticDirtySet`, `WriteOrigin`, `StaticActiveMarkWrite`,
+  `StaticActiveReported`); `SendFieldResponse` no longer takes or folds `activeFlags`;
+  `OriginFromDeclaredFlags`/`StaticMarkWriteFromFlags` are deleted, and their call sites went from
+  `RegisterRead`/`RegisterWrite` (Name, NetID, static write) and the five dirty-clears in
+  `RegisterPersist`; `ScriptExec` and `SubscriptionsRequester` stopped declaring
+  ScriptUpdated/External; both `Main.h` sizing notes and both `STATIC_ACTIVE_ENTRIES` defines in
+  `platformio.ini` are gone.
+  **App**: `FieldFlags` lost `notSaved`/`scriptUpdated`/`external`/`activeMask` and `describe()`
+  no longer emits NS/SU/EXT - so the register tiles, file viewers and backup capture needed **no
+  change** (they render or parse whatever is returned); `BlockMeta.notSaved` and `DynField.notSaved`
+  are gone, and `_valueInfoForWrite`'s masking went away (a write carries its meta verbatim).
+  **Tests** rewritten: the contract test's `FieldFlags` map, the verification suite's Name test
+  (a value + save round-trip now), the script-VM dynamic-write assertion (the value, not the flag),
+  the current-setup persistent-write test.
+  **Sizes: core 629 716 -> 627 092 B (-2 624); DAS flash 13 996 -> 13 268 B (-728); DAS RAM
+  1 636 -> 1 624 B (-12, the flag array).**
+  **Read is single-entry too**: `HandleMultiEntryRead` is deleted and CID 1 rejects a request that
+  is not exactly one BlockInfo. That is P4's read change, taken here because the active-flag fold
+  was the only thing the multi-entry path still needed.
+  **Verified**: `test.sh` green (141 app tests, analyzer clean); on the rig over USB - verification
+  **10/10**, script VM **20/20**, subscriptions **8/8**, dynamic persistence **4/4**; plus a harness
+  check reading core and DAS static fields showed **passive flags only** (`0x1800` P|TR,
+  `0x0800` P), a write introducing no active bits, and a two-BlockInfo read rejected.
+  Unlike P4-P6 this is **bit-tolerant in both directions** (the bits simply stop being set), so it
+  needed no matched firmware/app pair on the rig.
+- [x] **P2 Script management CIDs - done.** **Load (CID 1)** now takes `(Script File ID,
+  Script (loaded) ID)` and answers **Success** - the caller picks the slot, so it no longer
+  learns it from the reply. `ScriptLoad(fileId, slot)` indexes the registry by **slot** and loads
+  `SCR_<fileId>`, so the two may differ on the wire; **the app keeps them equal** (file N into
+  slot N), the agreed "identity in practice" reading, which is what makes CID 0's loaded list
+  addressable. **Read state (CID 3)** returns `State, Last error code` (0 = OK), **Set state
+  (CID 4)** clears the error (before, only Running did), and the implementation-only **CID 8 is
+  retired** (an unknown CID is rejected). **In-script op 7** (`Load script`) mirrors CID 1: two
+  operands `(file id, loaded id)` and no destination id; op 8 is unchanged.
+  App: `script_client.load(fileId, loadedId) -> bool`, `readState -> (state, error)`,
+  `readError` deleted; the editor takes state and error from the one call; `scripts_page._loadFile`
+  passes the slot; `script_instructions` op 7 is two-operand and destination-free.
+  Tests: the script suite, the subscriptions script loads, the instruction arity test and the VM's
+  error assertions (now via CID 3) were updated; **new rig test** "a script can (un)load another
+  script" executes the changed ops 7/8 for real - that path had no execution coverage before.
+  **Core flash 627 092 -> 627 004 B (-88); the DAS is byte-identical** (scripts are core-only).
+  **Verified**: `test.sh` green (141 app tests, analyzer clean); on the rig - script **4/4**,
+  script VM **21/21**, subscriptions **8/8**, verification regression **10/10**; plus a harness
+  check that CID 8 is rejected and CID 3 is the state+error reply.
+- [x] **P3 LED layout brightness limit - done.** The layout file gained a leading byte
+  (`u8 brightness limit | u8 width | u8 height | W*H u16 LE`), so the 11x10 preload goes
+  222 -> **223 bytes**. Per the ruling the byte is a **percentage in 0-255 units** capping the
+  configured brightness: in `Vysi1Display::Render` the limit becomes
+  `limitPct = (limit*100+127)/255` and `brightness = min(Data.Brightness, limitPct)` before the
+  0-256 duty scale. The shipped and compiled-in default is **178 -> 70%**, the ceiling the
+  brightness script already uses - this is the firmware-side current cap `Issues.md` asked for.
+  **Firmware**: `uint8_t BrightnessLimit = 178` on the display; `PreloadVysiLayout` writes it at
+  byte 0; `LoadLayoutFromStorage` reads a 3-byte header and **accepts only the new format**;
+  `LoadDefaultLayout` sets 178.
+  **Because the loader is new-format-only**, `Vysi1BootLayout` now falls back to
+  `LoadDefaultLayout()` when the file cannot load - without it a stale 2-byte-header file (my rig
+  had one) would leave the display on its zero-initialised `Layout[]`, i.e. every cell on LED 0.
+  The built-in default has the same LED mapping as the `.lay` file, so the picture is unchanged;
+  only a *customised* old-format layout is dropped in favour of the default.
+  **App**: the layout viewer reads the 3-byte header, shows `11x10 LEDs · limit 178 (70%)`, and
+  rejects a header that overruns the file. Project files: `layouts/Vysi v1.0.lay` gained the byte
+  and `layouts/README.md` documents the format.
+  **Verified**: `test.sh` green (142 app tests, analyzer clean - the widget fixture moved to the
+  3-byte header plus a new overrun-rejection case); on the rig - deleted the old-format `LAY_1`,
+  reset the core, and the preloader recreated it at **223 bytes** with the storage suite reading
+  limit 178 / width 11 / height 10; the LED-display suite's `LayoutFile = LAY_1` write (whose
+  trigger rejects a file that cannot load) was accepted; verification 10/10.
+  **Not verified - the render effect**: there is no framebuffer readback and this rig has no
+  display, so the duty actually being capped is eye-only, like D4/A11.
+  Core flash 627 004 -> **627 280 B (+276)**; the DAS is untouched.
+- [x] **P4 + P7 Register persistence - done** (wire and app-side partial landed together, because
+  the wire change removes the partial commands the UI used). Per the revised `Register.md` the
+  basic commands are **Save All (CID 4)** and **Recall All (CID 3)** - the IDs are **swapped** and
+  carry **no BlockInfo** - and "partial saving/recall is handled by app with direct file writes /
+  direct register writes".
+  **Firmware**: `HandleRegister` handles CID 3/4 *before* the BlockInfo guard (their request is
+  empty), and `HandleSaveRecallAll(frame, save)` runs `StaticSaveAll` - one pass over the System
+  fields and every registry block's writable persistent fields, written with a single
+  `WriteBackupFile` - plus `DynamicSaveAll`/`DynamicRecallAll`. The old per-field
+  `HandleStaticSaveRecall`/`HandleDynamicSaveRecall` are gone.
+  **One pass, not one write per block** - a real hazard found on the rig: `WriteBackupFile`
+  replaces the file with exactly the bytes it is given while the read buffer is
+  `MEMORY_BACKUP_CAP`, so a per-block walk that read a truncated file and wrote it back would
+  silently drop every entry past the cap. One pass also turns "does it fit" into an explicit
+  failure, and it cut the core's Save All from **7.8 s to 1.6 s** (one staging cycle instead of
+  ~10) - the repeated staging was also what left stale `.TABLE` records for `STATLOG~`/`DT_00~`,
+  which the one-pass form stopped producing.
+  **App**: `saveAll()`/`recallAll()` replace `saveStatic`/`saveDynamic`/`recallDynamic`; the
+  appbar Save/Recall is one command each instead of a per-block loop. The per-field Save/Recall
+  buttons (and the backup view's per-entry Recall) stay and are now app-side: **Save** splices
+  `STATLOG` (`statlogSaveField`, byte-preserving so entries this app does not understand survive)
+  or patches `DV_<xx>` (`dvSaveField`); **Recall** is a register write of the stored value. Both
+  are only offered for writable+persistent fields, so no persistence-flag movement is involved.
+  **Tests**: 40 call sites over 11 files moved to `saveAll`; the dynamic suite's per-block premise
+  became Save All (its failure message now names the offending files); new host tests for the two
+  encoders (append/replace/terminator, offset patch, refusals); and a **new rig test** drives the
+  app-side path end to end - it builds the STATLOG entry, writes the file, and the *device*
+  restores it with Recall All.
+  **Sizes: core 627 280 -> 626 332 B (-948); DAS flash 13 268 -> 13 016 B (-252); DAS RAM 1 624 B.**
+  **Verified**: `test.sh` green (145 app tests, analyzer clean); on the rig - verification 10/10,
+  dynamic persistence 4/4, subscriptions 8/8, LED display 1/1, storage files 3/3, backup 4/4
+  (including the new per-field test), script VM 21/21; plus a harness check that CID 4 and CID 3
+  answer Success on both the core and the DAS.
+  Not run: `hil_current_setup_test` requires **two** DAS nodes ("expected 2 DAS nodes, found 1") -
+  a rig limitation, unrelated to this change. The DAS's reduced filesystem erases its whole
+  settings region per `CreateFile` and holds a single settings file (STATLOG), so an app-side save
+  there is equivalent to the device's own.
+- [x] **P5 + P6 Enumerate rewritten to the doc's two levels - done** (firmware + app, legacy
+  removed). CID 0 serves exactly the doc's two requests, both as 64-byte FRAG streams of u16
+  words: an **empty** request returns the present block types, one packed
+  `(type << 6) | maxInstance` word each (a type with no instances is omitted - a dynamic type
+  appears only once a block exists), and a **packed `(type << 6) | instance`** request returns
+  that block's `Field&Key` words (type-invariant for static/System, per instance for dynamic and
+  loaded scripts). No ValueInfo, offsets, size sums or trigger scans go on the wire, and nothing
+  is buffered: the words are generated straight into the frame payload the send path already has.
+  `RegisterTable.h` (the block table) is deleted. The list always leads with the **System block**
+  (its packed word is the only zero and it is first) and an absent/tombstoned block reports an
+  *empty* reply, never a failure - that is what lets the app tell a real zero from the wire's
+  trailing padding (it drops exactly one trailing zero word, and only when the list has more than
+  one).
+  **App ported**: `enumerateBlockTypes` returns `(type, maxInstance)` records;
+  `enumerateFieldKeys`/`enumerateFieldIndexes`/`enumerateKeys` read a block's `Field&Key` stream
+  (static/System lists cached per type); the old `getFieldCount`/`getBlockKeys`/`getDynamicFields`/
+  `getDynamicKeys` are thin wrappers so the call sites stayed put; a block's script slots come from
+  the Script service's CID 0 (`readBlocks(scriptSlots:)`). `HandleLegacyEnumerate` and the
+  dispatcher's `>= 8` branch are gone - CID 0 is an empty request or a 4-byte packed one, else
+  failure. `readBlocks` no longer appends the dynamic instances twice (the type list now carries
+  the dynamic type).
+  **Verified on both boards** (harness): core level 0 = System 0, Button 0, PWM 1, AccGyr 0,
+  Vysi1 1; DAS level 0 = System 0, ResistiveMeas 1, Button 0, LED 0; core AccGyr 7 fields; core
+  System 17; a tombstone or missing type answers **zero words**.
+  **DAS provider-push hang fixed**: the node died on the *first* provider add because the parse
+  read `*(uint32_t *)(payload + 14)` - a **misaligned** 32-bit load, which the RV32EC CH32V003
+  traps on (Xtensa tolerates it), so the node faulted and stopped answering; a core reset could
+  not revive it, a reflash could. The parse, the requester builder and the provider-get serializer
+  (`ProviderEntrySerialize`, called at `off = 1`) now use `memcpy`.
+  **Enumeration size pass**: the rework measured **~830 B** on the DAS (the per-kind template
+  inlined the whole FRAG loop and a word generator once per call site). It is now one tagged
+  `EnumSrc` source through a single streaming loop, the System field list is a flat 34-byte table,
+  and the type walk relies on the registry's documented per-type grouping; `EnumWord` stays out of
+  line.
+  **Alignment-safety sweep** (the whole firmware, not just the DAS): `PacketFrame` is `packed`,
+  which on its own drops the type to 1-byte alignment, so every `payload + 4k` typed access was
+  only accidentally aligned - the type is now `packed, aligned(4)` (layout and size unchanged,
+  `static_assert` added). All byte-buffer serialization, the dynamic `data_ptr` value loads
+  (`GetKeyValue<T>`, Vysi1 geometry) and the odd-offset Vysi1 layout table go through
+  `LoadUnaligned`/`StoreUnaligned` (`Core/Functions/Align.h`). The remaining casts are provably
+  aligned (`SerialNumber`/`AssignPayload`/`LogMessage` are `packed`; `BlockIndex` is byte-only;
+  payload offsets are even/4k). `firmware/test/native/align_test.cpp` locks the helpers and the
+  frame alignment in.
+  **DAS heap reclaimed**: the node links no allocator or stdio, so the linker's implicit heap
+  (`_end` 0x20000418 -> `_heap_end` 0x200005C0, 424 B) was dead RAM. `board_build.stack_size` is
+  now **1000** (= 2 KB RAM - 1048 B statics), so `_heap_end == _end` and the whole gap is stack;
+  the linker errors if statics ever grow into it.
+  **Sizes**: core 630 950 -> **626 616 B**; DAS 14 836 -> **13 160 B (80.3 %)**, RAM 2048 B
+  (statics 1048 + stack 1000, no heap). (The storage wire service, ~980 B, is *not* removable -
+  the app's reduced-file client reads node files for backup/STATLOG.)
+  **P6 `Get Memory Usage`**: the six values (table used/allocated, volatile used/allocated,
+  persistent used/allocated) are emitted as six u32s - the ruling is implemented.
+  **Verified**: `test.sh` green (145 app tests + the native alignment test, analyzer clean); HIL
+  verification 10/10, dynamic 4/4, backup 4/4, subscriptions 8/8, LED 1/1, script VM 21/21,
+  storage 3/3.
+- [x] **P7 App-side partial persistence - done**, landed with P4 (see its record): the per-field
+  Save writes `STATLOG` (splice) or `DV_<xx>` (patch), and the per-field Recall is a register
+  write of the stored value.
+- [x] **P8 ValueInfo reconciliation - done.** The wire `ValueInfo` is now the doc's
+  `Type(16) | Size(8) | Flags(8)`, with the key carried by the request's/reply's `BlockInfo`
+  (which already had a Key byte). The device keeps its internal `BlockMeta` packing - the block
+  schemas spell `DataType::X | FieldFlags::Y` - so the two convert **at the wire boundary only**:
+  `ToWireInfo`/`FromWireInfo` on the firmware, `BlockMeta.toBytes`/`fromBytes` in the app, with
+  the wire flag bits `0x01` Read Only / `0x02` Persistent / `0x04` Trigger in the doc's table
+  order. `SendBlockMetaResponse` reports its field count in `Size` and no key.
+  Firmware sites: the two wire builders and the System/Script read metas in `RegisterDefs.h`/
+  `RegisterRead.h`, and the incoming-ValueInfo parse in `RegisterDispatch.h`/`RegisterWrite.h`
+  (which keeps the downstream `BlockMeta*` signatures). The app needed only the boundary:
+  `toBytes`/`fromBytes` converted, plus `toPacked`/`fromPacked` for the formats the device
+  *embeds* rather than sends - STATLOG and DT_ entries and a render dictionary's entries, whose
+  `FlagsAndType(16) | Key(8) | Size(8)` layout is untouched. Keyed reads pass the key back
+  (`readBlockField`, `readDynamicField`, script `readEntry`), since the wire no longer carries it.
+  **Sizes: core 626 332 -> 626 570 B (+238); DAS 13 016 -> 13 168 B (+152).**
+  **Verified**: `test.sh` green (145 tests, analyzer clean - the render-dict fixture moved to
+  `toPacked`); on the rig a harness dump of each block kind shows the new layout
+  (`System Name: type 0x000A, size 10, flags 0x02`; `AccGyr 0/0: type 0x000C, flags 0x06`;
+  `DAS Meas1/0/0: type 0x0006, flags 0x02`; a block meta `type 0x0008, size 5, flags 0`), and the
+  suites all pass: verification 10/10, dynamic persistence 4/4, subscriptions 8/8, LED display
+  1/1, backup 4/4, script VM 21/21, storage files 3/3.

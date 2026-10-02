@@ -57,11 +57,13 @@ class ScriptClient {
     return slots;
   }
 
-  /// CID 1: loads `SCR_<fileId>` and returns its loaded ID (slot), or null on failure.
-  Future<int?> load(int fileId) async {
-    final reply = await _request(ServiceType.script, 1, payload: [fileId & 0xFF]);
-    if (reply == null || reply.isEmpty || reply[0] == 0xFF) return null;
-    return reply[0];
+  /// CID 1: loads `SCR_<fileId>` into slot `loadedId`. The device answers Success - the caller
+  /// picked the slot, so it already knows it. The app keeps the two equal (file N into slot N),
+  /// which is what makes CID 0's loaded list addressable.
+  Future<bool> load(int fileId, int loadedId) async {
+    final reply = await _request(ServiceType.script, 1,
+        payload: [fileId & 0xFF, loadedId & 0xFF]);
+    return reply != null && reply.isNotEmpty && reply[0] == 0;
   }
 
   /// CID 2: unloads a loaded script.
@@ -70,11 +72,11 @@ class ScriptClient {
     return reply != null && reply.isNotEmpty && reply[0] == 0;
   }
 
-  /// CID 3: reads a loaded script's state.
-  Future<int?> readState(int loadedId) async {
+  /// CID 3: a loaded script's state and its last error code (0 = OK).
+  Future<({int state, int error})?> readState(int loadedId) async {
     final reply = await _request(ServiceType.script, 3, payload: [loadedId & 0xFF]);
     if (reply == null || reply.isEmpty) return null;
-    return reply[0];
+    return (state: reply[0], error: reply.length > 1 ? reply[1] : 0);
   }
 
   /// CID 4: sets a loaded script's state.
@@ -142,7 +144,7 @@ class ScriptClient {
       payload: _bi(inst, field, key),
     );
     if (reply == null || reply.length < 8) return null;
-    final meta = BlockMeta.fromBytes(reply, 4);
+    final meta = BlockMeta.fromBytes(reply, 4, key);
     return ScriptEntry(
         meta: meta, value: RegisterClient.valueSlice(reply, meta.size));
   }
@@ -169,12 +171,5 @@ class ScriptClient {
     // (BlockInfo + BlockMeta + value). The echoed BlockInfo starts with the key byte, so it
     // is not a reliable success flag (a successful key-0 write echoes 0x00 too).
     return reply != null && reply.length >= 8;
-  }
-
-  /// CID 8: reads a loaded script's error code (0 = none).
-  Future<int?> readError(int loadedId) async {
-    final reply = await _request(ServiceType.script, 8, payload: [loadedId & 0xFF]);
-    if (reply == null || reply.isEmpty) return null;
-    return reply[0];
   }
 }

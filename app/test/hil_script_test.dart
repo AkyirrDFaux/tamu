@@ -56,10 +56,8 @@ void main() async {
 
     if (!await st.writeFile('SCR_00', image)) fail('upload SCR_00 failed');
 
-    // Load (CID 1).
-    final loadedId = await c.load(0);
-    print('[S] loadedId=$loadedId');
-    if (loadedId != 0) fail('load returned $loadedId');
+    // Load (CID 1): the caller picks the slot; the app keeps file N in slot N.
+    if (!await c.load(0, 0)) fail('load SCR_00 failed');
 
     // Listed by both the management command and Register enumerate.
     if (!(await c.loadedScripts()).contains(0)) fail('CID 0 list missing script 0');
@@ -91,9 +89,11 @@ void main() async {
     if (outEntry == null || !outEntry.meta.readOnly) fail('script output should be RO');
 
     // State: fresh load is Stopped; set/read round-trips.
-    if (await c.readState(0) != ScriptState.stopped) fail('initial state not Stopped');
+    if ((await c.readState(0))?.state != ScriptState.stopped) fail('initial state not Stopped');
     if (!await c.setState(0, ScriptState.running)) fail('setState failed');
-    if (await c.readState(0) != ScriptState.running) fail('state not Running');
+    if ((await c.readState(0))?.state != ScriptState.running) fail('state not Running');
+    // Docs: setting the state clears the error code.
+    if ((await c.readState(0))?.error != 0) fail('setState did not clear the error');
 
     // File metadata (properties/counts/constants) lives in the SCR_XX file; the Register
     // only exposes the script's I/O.
@@ -178,8 +178,7 @@ void main() async {
       fail('new script was loaded automatically');
     }
 
-    final id = await c.load(0x3F);
-    if (id != 0x3F) fail('load SCR_3F failed: $id');
+    if (!await c.load(0x3F, 0x3F)) fail('load SCR_3F failed');
     final meta = await c.readBlockMeta(0x3F);
     if (meta == null || meta.name != 'Empty') fail('name wrong: ${meta?.name}');
     if (meta.meta.size != ScriptField.count) fail('field count wrong');
@@ -214,8 +213,7 @@ void main() async {
     if (!await st.writeFile('SCR_02', draft.toImage())) fail('edit upload failed');
     if ((await c.loadedScripts()).contains(2)) fail('edited stored script was auto-loaded');
 
-    final id = await c.load(2);
-    if (id != 2) fail('load edited script failed');
+    if (!await c.load(2, 2)) fail('load edited script failed');
     final meta = await c.readBlockMeta(2);
     if (meta == null || meta.name != 'Edited') fail('edited name not restored: ${meta?.name}');
     final parsed2 = ScriptFileData.parse((await st.readFile('SCR_02'))!);
@@ -243,7 +241,7 @@ void main() async {
     final draft = ScriptDraft(functionName: 'Pad')
       ..inputs.add(ScriptDraftValue(name: 'Name', type: DataType.string, size: 16));
     if (!await st.writeFile('SCR_01', draft.toImage())) fail('upload SCR_01 failed');
-    if (await c.load(1) != 1) fail('load SCR_01 failed');
+    if (!await c.load(1, 1)) fail('load SCR_01 failed');
 
     final entry = await c.readEntry(1, ScriptField.input, 0);
     if (entry == null || entry.meta.size != 16) fail('string input missing/size wrong');

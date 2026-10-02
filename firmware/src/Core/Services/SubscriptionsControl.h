@@ -52,13 +52,19 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
 
             uint16_t offset = 0;
             offset += 4; // targetReg (not used by provider)
-            uint32_t sourceReg = *(uint32_t *)(frame.payload + offset); offset += 4;
-            uint16_t requesterAddr = *(uint16_t *)(frame.payload + offset); offset += 2;
+            uint32_t sourceReg = 0;
+            memcpy(&sourceReg, frame.payload + offset, 4); offset += 4;
+            uint16_t requesterAddr = 0;
+            memcpy(&requesterAddr, frame.payload + offset, 2); offset += 2;
             TriggerType trigger = (TriggerType)frame.payload[offset++];
             offset += 3; // padding
-            uint32_t periodMs = *(uint32_t *)(frame.payload + offset); offset += 4;
-            uint32_t minTimeMs = *(uint32_t *)(frame.payload + offset); offset += 4;
-            Number deadzone = Number::FromRaw(*(int32_t *)(frame.payload + offset)); offset += 4;
+            uint32_t periodMs = 0;
+            memcpy(&periodMs, frame.payload + offset, 4); offset += 4;
+            uint32_t minTimeMs = 0;
+            memcpy(&minTimeMs, frame.payload + offset, 4); offset += 4;
+            int32_t deadzoneRaw = 0;
+            memcpy(&deadzoneRaw, frame.payload + offset, 4); offset += 4;
+            Number deadzone = Number::FromRaw(deadzoneRaw);
 
             ProviderEntry* e = ProviderFindByTrid(frame.trid);
             bool isNew = false;
@@ -192,15 +198,15 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
                         if (PayloadBytes(frame) < 1 + 2 + 2 + 4 + 4 + 1 + 4 + 4 + 4) break;
                         uint16_t offset = 1;
                         RequesterEntry* e = &requesterTable[index];
-                        e->providerAddr = *(uint16_t *)(frame.payload + offset); offset += 2;
+                        memcpy(&e->providerAddr, frame.payload + offset, 2); offset += 2;
                         offset += 2; // payload TRID field: the frame TRID is authoritative
-                        e->targetReg = *(uint32_t *)(frame.payload + offset); offset += 4;
-                        e->sourceReg = *(uint32_t *)(frame.payload + offset); offset += 4;
+                        memcpy(&e->targetReg, frame.payload + offset, 4); offset += 4;
+                        memcpy(&e->sourceReg, frame.payload + offset, 4); offset += 4;
                         e->trigger = (TriggerType)frame.payload[offset++];
                         offset += 3; // padding
-                        e->periodMs = *(uint32_t *)(frame.payload + offset); offset += 4;
-                        e->minTimeMs = *(uint32_t *)(frame.payload + offset); offset += 4;
-                        e->deadzone = Number::FromRaw(*(int32_t *)(frame.payload + offset)); offset += 4;
+                        memcpy(&e->periodMs, frame.payload + offset, 4); offset += 4;
+                        memcpy(&e->minTimeMs, frame.payload + offset, 4); offset += 4;
+                        e->deadzone = Number::FromRaw(LoadUnaligned<int32_t>(frame.payload + offset)); offset += 4;
                         e->trid = frame.trid ? frame.trid : SubscriptionsNextTrid();
                         e->active = true;
                         e->registeredAtMs = DeviceStatus.UptimeMs;

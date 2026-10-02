@@ -226,8 +226,10 @@ struct DynamicBlockDescriptor
     T GetKeyValue(uint16_t field, uint8_t key, DataType expectedType, T defaultValue = 0)
     {
         KeyResult res = GetKey((uint8_t)field, key);
+        // data_ptr points into the value area at a running byte offset, so it is not
+        // guaranteed to be aligned for T - load it through memcpy.
         if (res.data_ptr && (BlockMetaType(res.meta.FlagsAndType) == (uint16_t)expectedType))
-            return *(T *)res.data_ptr;
+            return LoadUnaligned<T>(res.data_ptr);
         return defaultValue;
     }
 

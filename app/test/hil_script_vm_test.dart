@@ -33,11 +33,11 @@ void main() async {
     for (final b in await reg.readDynamicBlocks() ?? <DynBlock>[]) {
       await reg.deleteDynamic(block: b.index);
     }
-    await reg.saveDynamic();
+    await reg.saveAll();
   });
   tearDownAll(disconnectHil);
 
-  /// Builds a draft and uploads + loads it into [slot]; returns the loaded id.
+  /// Builds a draft and uploads + loads it into [slot]; returns the loaded slot.
   Future<(ScriptClient, StorageClient, int)> loadScript(int slot, ScriptDraft draft) async {
     final c = ScriptClient(deviceId: 1);
     final st = StorageClient(deviceId: 1);
@@ -45,18 +45,20 @@ void main() async {
     await st.deleteFile('SCR_${slot.toRadixString(16).toUpperCase().padLeft(2, '0')}');
     final name = 'SCR_${slot.toRadixString(16).toUpperCase().padLeft(2, '0')}';
     if (!await st.writeFile(name, draft.toImage())) fail('upload $name failed');
-    final id = await c.load(slot);
-    if (id != slot) fail('load $name failed: $id');
+    if (!await c.load(slot, slot)) fail('load $name failed');
     return (c, st, slot);
   }
 
+  /// The script's last error code (0 = OK); docs folded the old CID 8 into the state reply.
+  Future<int?> readError(ScriptClient c, int slot) async => (await c.readState(slot))?.error;
+
   Future<int> waitState(ScriptClient c, int slot, int want, {int tries = 40}) async {
     for (var i = 0; i < tries; i++) {
-      final s = await c.readState(slot);
+      final s = (await c.readState(slot))?.state;
       if (s == want) return s!;
       await Future<void>.delayed(const Duration(milliseconds: 50));
     }
-    return await c.readState(slot) ?? -1;
+    return (await c.readState(slot))?.state ?? -1;
   }
 
   Future<void> cleanup(ScriptClient c, StorageClient st, int slot) async {
@@ -146,7 +148,7 @@ void main() async {
     final (c2, st2, slot2) = await loadScript(8, bad);
     await c2.setState(slot2, ScriptState.running);
     final state = await waitState(c2, slot2, ScriptState.error);
-    final err = await c2.readError(slot2);
+    final err = await readError(c2, slot2);
     print('[VM] gettime-number state=$state err=$err');
     expect(state, ScriptState.error);
     expect(err, 2); // SCRIPT_ERR_TYPE
@@ -170,7 +172,7 @@ void main() async {
     final (c, st, slot) = await loadScript(1, draft);
     await c.setState(slot, ScriptState.running);
     final state = await waitState(c, slot, ScriptState.finished);
-    print('[VM] loop state=$state err=${await c.readError(slot)}');
+    print('[VM] loop state=$state err=${await readError(c, slot)}');
     expect(state, ScriptState.finished);
     final ram = (await c.readInternalState(slot))!.variables;
     expect(numberFromBytes(ram, 0), closeTo(3.0, 0.001));
@@ -199,7 +201,7 @@ void main() async {
     await cleanup(c, st, slot);
   }, timeout: const Timeout(Duration(minutes: 2)));
 
-  test('local register read + write with ScriptUpdated', skip: skipReason, () async {
+  test('local register read + write', skip: skipReason, () async {
     // Prepare a dynamic block 0 with an entry (0,0) for the script to write into.
     final rc = RegisterClient(deviceId: 1);
     await rc.deleteDynamic(block: 0);
@@ -232,12 +234,60 @@ void main() async {
     expect(numberFromBytes(out!.value), closeTo(1.0, 0.001)); // Tamu device type
 
     final written = await rc.readDynamicField(dyn, 0, 0);
-    print('[VM] dyn flags=0x${written!.meta.flags.toRadixString(16)} v=${numberFromBytes(written.value)}');
+    print('[VM] dyn v=${numberFromBytes(written!.value)}');
     expect(numberFromBytes(written.value), closeTo(7.5, 0.001));
-    expect(written.meta.flags & FieldFlags.scriptUpdated, FieldFlags.scriptUpdated);
 
     await cleanup(c, st, slot);
     await rc.deleteDynamic(block: 0);
+  }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('a script can (un)load another script', skip: skipReason, () async {
+    // Docs/Services/Script.md lists "Script (un)loading" among the VM's functions; the ops
+    // mirror management CIDs 1/2, so this pins the new (file id, loaded id) encoding by
+    // actually running it (the arity test is host-only).
+    final c = ScriptClient(deviceId: 1);
+    final st = StorageClient(deviceId: 1);
+
+    // A file that exists but is not loaded: SCR_06.
+    if (await c.readState(6) != null) await c.unload(6);
+    await st.deleteFile('SCR_06');
+    if (!await st.writeFile('SCR_06', ScriptDraft(functionName: 'Target').toImage())) {
+      fail('upload SCR_06 failed');
+    }
+    if ((await c.loadedScripts()).contains(6)) fail('SCR_06 was loaded before the test');
+
+    // Host script 1: Load(6, 6) then halt.
+    final loadDraft = ScriptDraft(functionName: 'Loader')
+      ..lines.add(ScriptLine(
+          instruction: ScriptSymbol.instruction(catService, 7),
+          operands: [
+            ScriptSymbol.predefine(preIndex, 6),
+            ScriptSymbol.predefine(preIndex, 6),
+          ]))
+      ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)));
+    final (cl, stl, slotL) = await loadScript(7, loadDraft);
+    await cl.setState(slotL, ScriptState.running);
+    expect(await waitState(cl, slotL, ScriptState.finished), ScriptState.finished);
+    expect(await readError(cl, slotL), 0, reason: 'the in-script load must not fault');
+    expect((await cl.loadedScripts()).contains(6), isTrue,
+        reason: 'the script loaded SCR_06 into slot 6');
+    await cleanup(cl, stl, slotL);
+
+    // Host script 2: Unload(6) then halt.
+    final unloadDraft = ScriptDraft(functionName: 'Unloader')
+      ..lines.add(ScriptLine(
+          instruction: ScriptSymbol.instruction(catService, 8),
+          operands: [ScriptSymbol.predefine(preIndex, 6)]))
+      ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)));
+    final (cu, stu, slotU) = await loadScript(7, unloadDraft);
+    await cu.setState(slotU, ScriptState.running);
+    expect(await waitState(cu, slotU, ScriptState.finished), ScriptState.finished);
+    expect(await readError(cu, slotU), 0, reason: 'the in-script unload must not fault');
+    expect((await cu.loadedScripts()).contains(6), isFalse,
+        reason: 'the script unloaded slot 6');
+    await cleanup(cu, stu, slotU);
+
+    await st.deleteFile('SCR_06');
   }, timeout: const Timeout(Duration(minutes: 2)));
 
   test('compose + extract vector', skip: skipReason, () async {
@@ -280,7 +330,7 @@ void main() async {
     final state = await waitState(c, slot, ScriptState.error);
     print('[VM] error state=$state');
     expect(state, ScriptState.error);
-    final err = await c.readError(slot);
+    final err = await readError(c, slot);
     print('[VM] error code=$err');
     expect(err, 3); // SCRIPT_ERR_OPERAND
     await cleanup(c, st, slot);
@@ -324,9 +374,9 @@ void main() async {
     final (c, st, slot) = await loadScript(7, draft);
     await c.setState(slot, ScriptState.running);
     final state = await waitState(c, slot, ScriptState.finished);
-    print('[VM] log state=$state err=${await c.readError(slot)}');
+    print('[VM] log state=$state err=${await readError(c, slot)}');
     expect(state, ScriptState.finished);
-    expect(await c.readError(slot), 0);
+    expect(await readError(c, slot), 0);
     await cleanup(c, st, slot);
   }, timeout: const Timeout(Duration(minutes: 2)));
 
@@ -380,7 +430,7 @@ void main() async {
     final (c, st, slot) = await loadScript(9, draft);
     await c.setState(slot, ScriptState.running);
     final state = await waitState(c, slot, ScriptState.finished);
-    print('[VM] expr state=$state err=${await c.readError(slot)}');
+    print('[VM] expr state=$state err=${await readError(c, slot)}');
     expect(state, ScriptState.finished);
     Future<double> val(int i) async =>
         numberFromBytes((await c.readEntry(slot, ScriptField.output, i))!.value);
@@ -413,7 +463,7 @@ void main() async {
     final (c, st, slot) = await loadScript(10, draft);
     await c.setState(slot, ScriptState.running);
     final state = await waitState(c, slot, ScriptState.finished);
-    print('[VM] vec state=$state err=${await c.readError(slot)}');
+    print('[VM] vec state=$state err=${await readError(c, slot)}');
     expect(state, ScriptState.finished);
     final out = await c.readEntry(slot, ScriptField.output, 0);
     expect(numberFromBytes(out!.value), closeTo(4.0, 0.001));
@@ -443,7 +493,7 @@ void main() async {
     final (c, st, slot) = await loadScript(13, draft);
     await c.setState(slot, ScriptState.running);
     final state = await waitState(c, slot, ScriptState.finished);
-    print('[VM] matexpr state=$state err=${await c.readError(slot)}');
+    print('[VM] matexpr state=$state err=${await readError(c, slot)}');
     expect(state, ScriptState.finished);
     expect(numberFromBytes((await c.readEntry(slot, ScriptField.output, 0))!.value),
         closeTo(5.0, 0.01));
@@ -485,7 +535,7 @@ void main() async {
     final (c, st, slot) = await loadScript(14, draft);
     await c.setState(slot, ScriptState.running);
     final state = await waitState(c, slot, ScriptState.finished);
-    print('[VM] logic state=$state err=${await c.readError(slot)}');
+    print('[VM] logic state=$state err=${await readError(c, slot)}');
     expect(state, ScriptState.finished);
     Future<double> val(int i) async =>
         numberFromBytes((await c.readEntry(slot, ScriptField.output, i))!.value);
@@ -514,7 +564,7 @@ void main() async {
     final (c, st, slot) = await loadScript(15, draft);
     await c.setState(slot, ScriptState.running);
     final state = await waitState(c, slot, ScriptState.finished);
-    print('[VM] flowexpr state=$state err=${await c.readError(slot)}');
+    print('[VM] flowexpr state=$state err=${await readError(c, slot)}');
     expect(state, ScriptState.finished);
     expect(numberFromBytes((await c.readEntry(slot, ScriptField.output, 0))!.value),
         closeTo(5.0, 0.01));
@@ -547,7 +597,7 @@ void main() async {
     final (c, st, slot) = await loadScript(16, draft);
     await c.setState(slot, ScriptState.running);
     final state = await waitState(c, slot, ScriptState.finished);
-    print('[VM] vecfn state=$state err=${await c.readError(slot)}');
+    print('[VM] vecfn state=$state err=${await readError(c, slot)}');
     expect(state, ScriptState.finished);
     Future<double> val(int i) async =>
         numberFromBytes((await c.readEntry(slot, ScriptField.output, i))!.value);
@@ -583,7 +633,7 @@ void main() async {
     final (c, st, slot) = await loadScript(17, draft);
     await c.setState(slot, ScriptState.running);
     final state = await waitState(c, slot, ScriptState.finished);
-    print('[VM] xform state=$state err=${await c.readError(slot)}');
+    print('[VM] xform state=$state err=${await readError(c, slot)}');
     expect(state, ScriptState.finished);
     Future<double> val(int i) async =>
         numberFromBytes((await c.readEntry(slot, ScriptField.output, i))!.value);
@@ -624,7 +674,7 @@ void main() async {
     final (c, st, slot) = await loadScript(11, draft);
     await c.setState(slot, ScriptState.running);
     final state = await waitState(c, slot, ScriptState.finished);
-    print('[VM] blockinfo state=$state err=${await c.readError(slot)}');
+    print('[VM] blockinfo state=$state err=${await readError(c, slot)}');
     expect(state, ScriptState.finished);
     final applied = await reg.readDynamicField(b, 0, 0);
     expect(numberFromBytes(applied!.value), closeTo(7.0, 0.001));
@@ -659,7 +709,7 @@ void main() async {
     final (c, st, slot) = await loadScript(12, draft);
     await c.setState(slot, ScriptState.running);
     final state = await waitState(c, slot, ScriptState.finished);
-    print('[VM] limit state=$state err=${await c.readError(slot)}');
+    print('[VM] limit state=$state err=${await readError(c, slot)}');
     expect(state, ScriptState.finished);
     expect(numberFromBytes((await c.readEntry(slot, ScriptField.output, 0))!.value),
         closeTo(10.0, 0.001));

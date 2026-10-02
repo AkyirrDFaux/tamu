@@ -5,12 +5,12 @@ import 'package:flutter/material.dart';
 import '../core/block_registry.dart';
 import '../core/connection.dart';
 import '../core/device_backup.dart';
-import '../core/device_db.dart';
 import '../core/register_client.dart';
 import '../core/render_dict.dart' show geometryDictType, geometryKeysForShape, isRenderDictType, renderDictKeyName, renderKeyFieldInfo, textureKeysForType;
 import '../core/script_file.dart' show ScriptField;
 import '../core/storage_client.dart' show FileRecord, StorageClient, normalizeFileName;
 import '../core/types.dart';
+import '../core/script_client.dart';
 import 'register_backup_view.dart';
 import 'theme.dart';
 import 'value_editor.dart' show dataTypeLabel, formatValue, showValueEditor;
@@ -149,7 +149,11 @@ class _RegisterPageState extends State<RegisterPage>
         await _loadBackup();
         return;
       }
-      final blocks = await _client.readBlocks();
+      // Script blocks are not in the type list (the Script service owns their slots), so
+      // pass its loaded list to keep them in the view.
+      final blocks = await _client.readBlocks(
+          scriptSlots: await ScriptClient(deviceId: widget.deviceId).loadedScripts());
+      if (!mounted) return;
       if (!mounted) return;
       if (blocks == null) {
         setState(() => _error = 'Device did not respond');
@@ -254,13 +258,10 @@ Future<void> _loadVisibleFields() async {
     }
   }
 
-  /// Recalls one stored field into RAM (CID 4 at the field's BlockInfo).
+  /// Recalls one stored field into RAM (the Backup view's per-entry button). The wire only
+  /// carries `Recall All`, so a single recall is a register write of the stored value.
   Future<void> _recallBackupField(int blockType, int inst, int field, int key) async {
-    final ok = await _withBusy(() async {
-      final reply =
-          await _client.request(4, payload: blockInfoBytes(blockType, inst, field, key));
-      return reply != null && reply.isNotEmpty && reply[0] == 0;
-    });
+    final ok = await _withBusy(() => _writeStoredFieldToRam(blockType, inst, field, key));
     _snack(ok ? 'Recalled' : 'Recall failed');
     if (ok && mounted) {
       // The live cache no longer matches RAM; drop the recalled entry.
@@ -268,71 +269,106 @@ Future<void> _loadVisibleFields() async {
     }
   }
 
-  /// Persists every block to its backup (docs Register.md "Save"): the dynamic
-  /// registry, the System block (Name/NetID) and each static block's persistent
-  /// fields. Each target is a separate request so failures are reported accurately.
-  Future<bool> _saveAll() async {
-    final c = _client;
-    // The dynamic registry only exists on devices advertising dynamic memory (the DAS
-    // has none, so the request would report failure and mark the whole save as failed).
-    // Check both the widget flag and the live capability report to stay correct even if
-    // the page was opened before capabilities were loaded.
-    final dev = DeviceDatabase.instance.byId(widget.deviceId);
-    final hasDyn = widget.hasDynamicMemory ||
-        (dev != null && dev.capabilities & Capability.dynamicMemory != 0);
-    bool ok = true;
-    if (hasDyn) {
-      ok &= await _requestStatus(c, 3, const [0xFF, 0xFF, 0xFF, 0xFF]); // dynamic registry
+  /// The static registry the STATLOG indexes are relative to: every non-System block, in
+  /// enumeration order (the same list the backup decoder is given).
+  List<({int type, int inst})> get _staticRegistry => [
+        for (final b in _blockMetas ?? const [])
+          if (b != null && isStaticRegistryType(b.type)) (type: b.type, inst: b.inst),
+      ];
+
+  /// Reads one storage file's bytes, or null when it is missing.
+  Future<List<int>?> _readFile(String name) async {
+    final store = StorageClient(deviceId: widget.deviceId);
+    final table = await store.readFileTable();
+    for (final f in table ?? const <FileRecord>[]) {
+      if (normalizeFileName(f.name).toUpperCase() == name) {
+        return store.readFile(f.name, size: f.size);
+      }
     }
-    ok &= await _requestStatus(c, 3, blockInfoBytes(0, 0, 0xFF, 0)); // system Name/NetID
-    for (final b in _blockMetas ?? const []) {
-      if (b == null || b.type == 0 || b.type == 0x3FF) continue;
-      ok &= await _requestStatus(c, 3, blockInfoBytes(b.type, b.inst, 0xFF, 0));
-    }
-    return ok;
+    return null;
   }
 
-  Future<bool> _recallAll() async {
-    final c = _client;
-    bool ok = true;
-    if (widget.hasDynamicMemory) {
-      ok &= await _requestStatus(c, 4, const [0xFF, 0xFF, 0xFF, 0xFF]);
+  /// Writes one field's live value into its backup file - the app-side half of a partial save
+  /// (docs Register.md: "partial saving ... app with direct file writes"). `STATLOG` for the
+  /// System/static fields, addressed by registry index; `DV_<xx>` for a dynamic entry.
+  Future<bool> _writeFieldToBackup(int blockType, int inst, int field, int key) async {
+    final cacheKey = (blockType << 8) | inst;
+    final isDynamic = blockType == BlockType.dynamic.value;
+    final live = _fieldCache[cacheKey]?[isDynamic ? field * 256 + key : field];
+    if (live == null) return false; // the live value has to be known to save it
+    final store = StorageClient(deviceId: widget.deviceId);
+
+    if (isDynamic) {
+      final suffix = inst.toRadixString(16).toUpperCase().padLeft(2, '0');
+      final tableBytes = await _readFile('DT_$suffix');
+      final values = await _readFile('DV_$suffix');
+      if (tableBytes == null) return false;
+      final table = decodeDynamicTable(tableBytes);
+      if (table == null) return false;
+      final next = dvSaveField(table, values ?? const [], field, key, live.value);
+      if (next == null) return false;
+      return store.writeFile('DV_$suffix', next);
     }
-    ok &= await _requestStatus(c, 4, blockInfoBytes(0, 0, 0xFF, 0));
-    for (final b in _blockMetas ?? const []) {
-      if (b == null || b.type == 0 || b.type == 0x3FF) continue;
-      ok &= await _requestStatus(c, 4, blockInfoBytes(b.type, b.inst, 0xFF, 0));
+
+    // The System block has no registry entry: STATLOG reserves index 0xFE for it.
+    int? idx;
+    if (blockType == systemBlockTypeValue && inst == 0) {
+      idx = statlogSystemBlock;
+    } else {
+      final reg = _staticRegistry;
+      for (var i = 0; i < reg.length; i++) {
+        if (reg[i].type == blockType && reg[i].inst == inst) {
+          idx = i;
+          break;
+        }
+      }
     }
-    return ok;
+    if (idx == null) return false;
+    final statlog = await _readFile('STATLOG') ?? const <int>[];
+    return store.writeFile(
+        'STATLOG', statlogSaveField(statlog, idx, field, live.meta, live.value));
   }
 
-  Future<bool> _requestStatus(RegisterClient c, int cid, List<int> payload) async {
-    // The dynamic registry save/recall (CID 3/4, inst 0x3F) writes per-block files and
-    // runs the 64-slot cleanup - allow it more than the default request timeout.
-    final reply = await c.request(cid, payload: payload,
-        timeout: const Duration(seconds: 25));
-    return reply != null && reply.isNotEmpty && reply[0] == 0;
+  /// Writes one stored value back into RAM with a register write - the app-side half of a
+  /// partial recall.
+  Future<bool> _writeStoredFieldToRam(int blockType, int inst, int field, int key) async {
+    final backup = _backup;
+    if (backup == null) return false;
+    final isDynamic = blockType == BlockType.dynamic.value;
+    final stored = isDynamic
+        ? backup.dynamicField(inst, field, key)
+        : backup.staticField(blockType == systemBlockTypeValue ? 0 : blockType, inst, field);
+    if (stored == null || stored.value.isEmpty) return false;
+    final meta = BlockMeta(
+        flagsAndType: stored.meta.flagsAndType, key: key, size: stored.value.length);
+    if (isDynamic) {
+      final block = await _client.readDynamicBlockMeta(inst);
+      if (block == null) return false;
+      return await _client.writeDynamicEntry(block, field, key, meta, stored.value) != null;
+    }
+    return await _client.writeBlockField(blockType, inst, field, key, meta, stored.value) != null;
   }
 
-  /// Saves one persistent field to its backup (docs System Memory view: "Saveable
-  /// values show a Save button"). System/static fields are addressed by BlockInfo.
+  /// Persists the whole device to its backup (CID 4 "Save All", docs Register.md): the System
+  /// block's persistent fields, every static block, and every dynamic block's DT_/DV_ files.
+  /// This is one command now - the per-block loop that used to live here was emulating it.
+  Future<bool> _saveAll() => _client.saveAll();
+
+  /// Recalls the whole device from its backup (CID 3 "Recall All").
+  Future<bool> _recallAll() => _client.recallAll();
+
+  /// Saves one persistent field to its backup (the docs' per-value Save). The wire only
+  /// carries `Save All`, so this is the app-side half: see [_writeFieldToBackup].
   Future<void> _saveField(int blockType, int inst,
       ({int type, int inst, BlockMeta meta, String name})? block, int fieldIndex) async {
-    final bi = blockInfoBytes(blockType == 0 ? 0 : blockType, inst, fieldIndex, 0);
-    final ok = await _withBusy(() async {
-      final reply = await _client.request(3, payload: bi);
-      return reply != null && reply.isNotEmpty && reply[0] == 0;
-    });
+    final ok = await _withBusy(() => _writeFieldToBackup(blockType, inst, fieldIndex, 0));
     _snack(ok ? 'Saved' : 'Save failed');
   }
 
+  /// Recalls one stored field into RAM (the docs' per-value Recall).
   Future<void> _recallField(int blockType, int inst,
       ({int type, int inst, BlockMeta meta, String name})? block, int fieldIndex) async {
-    final bi = blockInfoBytes(blockType == 0 ? 0 : blockType, inst, fieldIndex, 0);
-    final ok = await _withBusy(() async {
-      final reply = await _client.request(4, payload: bi);
-      return reply != null && reply.isNotEmpty && reply[0] == 0;
-    });
+    final ok = await _withBusy(() => _writeStoredFieldToRam(blockType, inst, fieldIndex, 0));
     _snack(ok ? 'Recalled' : 'Recall failed');
     if (ok) {
       await _loadBlockFields(blockType, inst, block, forceRefresh: true);

@@ -51,14 +51,14 @@ static void RequesterClearEntry(RequesterEntry* e) {
     *e = RequesterEntry{};
 }
 
-// Applies a received value to the requester's target register (raw bytes), setting the
-// foreign-origin flag, and confirms with the FNV-1a hash of the received bytes.
+// Applies a received value to the requester's target register (raw bytes) and confirms with
+// the FNV-1a hash of the received bytes.
 static void ApplyRequesterValue(RequesterEntry *e, const uint8_t *val, uint8_t vlen, bool confirm = true) {
     FieldResult fr = SubscriptionsGetField(e->targetReg);
     if (!fr.Data) return;
     if (vlen > fr.Descriptor.Size) vlen = fr.Descriptor.Size;
 
-    uint16_t newFlags = fr.Descriptor.FlagsAndType | FieldFlags::External;
+    uint16_t newFlags = fr.Descriptor.FlagsAndType;
     uint16_t type = BlockInfoType(e->targetReg);
     uint8_t inst = BlockInfoInstance(e->targetReg);
     uint8_t field = BlockInfoField(e->targetReg);
@@ -80,8 +80,7 @@ static void ApplyRequesterValue(RequesterEntry *e, const uint8_t *val, uint8_t v
         if (idx >= 0) {
             BlockMeta meta = static_block_registry[idx].Schema->Map[field];
             meta.FlagsAndType = newFlags;
-            if (static_block_registry[idx].Set(field, val, vlen, meta.FlagsAndType))
-                StaticMarkWriteFromFlags((uint8_t)idx, field, newFlags); // External origin
+            static_block_registry[idx].Set(field, val, vlen, meta.FlagsAndType);
         }
 #ifndef DISABLE_DYNAMIC_MEMORY
         else if (type == 0x3FF) {
@@ -136,15 +135,16 @@ static void HandleRequesterValueUpdate(const PacketFrame &frame) {
 // Serializes one requester entry (wire order: providerAddr, trid, targetReg, sourceReg,
 // trigger + 3 pad, period, min, deadzone = 28 B). Returns the advanced offset.
 static uint16_t RequesterEntrySerialize(uint8_t *buf, uint16_t off, const RequesterEntry *e) {
-    *(uint16_t *)(buf + off) = e->providerAddr; off += 2;
-    *(uint16_t *)(buf + off) = e->trid; off += 2;
-    *(uint32_t *)(buf + off) = e->targetReg; off += 4;
-    *(uint32_t *)(buf + off) = e->sourceReg; off += 4;
+    // The caller starts at off = 1 (the count byte), so every field below is misaligned.
+    StoreUnaligned(buf + off, e->providerAddr); off += 2;
+    StoreUnaligned(buf + off, e->trid); off += 2;
+    StoreUnaligned(buf + off, e->targetReg); off += 4;
+    StoreUnaligned(buf + off, e->sourceReg); off += 4;
     buf[off++] = (uint8_t)e->trigger;
     buf[off++] = 0; buf[off++] = 0; buf[off++] = 0; // 24-bit padding
-    *(uint32_t *)(buf + off) = e->periodMs; off += 4;
-    *(uint32_t *)(buf + off) = e->minTimeMs; off += 4;
-    *(uint32_t *)(buf + off) = (uint32_t)e->deadzone.Value; off += 4;
+    StoreUnaligned(buf + off, e->periodMs); off += 4;
+    StoreUnaligned(buf + off, e->minTimeMs); off += 4;
+    StoreUnaligned(buf + off, (uint32_t)e->deadzone.Value); off += 4;
     return off;
 }
 #endif // USE_SUB_REQUEST

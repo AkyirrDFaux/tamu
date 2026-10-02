@@ -55,10 +55,17 @@ void main() {
     int totalBlocks = 0;
     if (types != null) {
       for (final t in types) {
-        final count = await reg.getInstanceCount(t);
+        // The list also carries the System block and the dynamic memory; count only the
+        // static registry types.
+        if (!isStaticRegistryType(t.type)) continue;
+        final count = await reg.getInstanceCount(t.type);
         if (count != null) totalBlocks += count;
       }
     }
+    // ignore: avoid_print
+    print('[ENUM] types=${{types!.map((t) => "0x${{t.type.toRadixString(16)}}:${{t.maxInstance}}").join(",")}}'
+        ' counts=${{[for (final t in types) if (t.type != 0) await reg.getInstanceCount(t.type)]}}'
+        ' total=$totalBlocks');
     expect(totalBlocks, 6, reason: 'Tamu v2.0A should have 6 static blocks');
     // LEDButton (type 3) layout per Docs/Modules and blocks/Buttons & LEDS.md:
     // field 0 = Button raw state (RO), field 3 = LEDState (TR).
@@ -105,12 +112,33 @@ void main() {
 
   // HIL: Register Enumerate and BlockInfo
   test('HIL: Register Enumerate and BlockInfo', skip: skipReason, () async {
-    final link = ConnectionManager.instance;
-    // Enumerate block types via Register 01.00 Enum 0 (enum_level + BlockInfo).
-    final reply = await link.request(1, ServiceType.register, 0,
-        payload: [0, 0, 0, 0, 0]);
-    expect(reply.length, greaterThanOrEqualTo(5), reason: 'BlockInfo echo + types');
-    expect(reply[4], greaterThan(0), reason: 'Tamu has static blocks');
+    final reg = RegisterClient(deviceId: 1);
+    // The type list (CID 0, empty request): packed `(type << 6) | maxInstance` words, in the
+    // registry's first-seen order. Type 0 is the virtual System block and is never listed.
+    final types = await reg.enumerateBlockTypes();
+    expect(types, isNotNull);
+    expect(types!, isNotEmpty, reason: 'a device always has at least the System block');
+    expect(types.first.type, 0, reason: 'the System block leads the list');
+    expect(types.first.maxInstance, 0, reason: 'its only instance is 0');
+    for (final t in types) {
+      expect(t.maxInstance, lessThan(64), reason: 'an instance fits the packed word');
+    }
+    // The second request (packed type + instance) answers the Field&Key list, fields ascending.
+    // Skip the System block: its fields carry sub-keys, so it is not a plain schema table.
+    final first = types.firstWhere((t) => t.type != 0);
+    final keys = await reg.enumerateFieldKeys(first.type, 0);
+    expect(keys, isNotNull);
+    expect(keys!, isNotEmpty, reason: 'a block type has fields');
+    final fields = (await reg.enumerateFieldIndexes(first.type, 0))!;
+    expect(fields, isNotEmpty);
+    expect(fields.first, 0, reason: 'fields start at 0 and ascend');
+    for (var i = 1; i < fields.length; i++) {
+      expect(fields[i], greaterThan(fields[i - 1]));
+    }
+    // And the block meta is still addressable (CID 1, field 0xFF).
+    final meta = await reg.readBlockMeta(first.type, 0);
+    expect(meta, isNotNull);
+    expect(meta!.meta.size, fields.length, reason: 'the block table count matches');
   }, timeout: const Timeout(Duration(seconds: 60)));
 
   // HIL: System block NetID (field 7) write. Docs: "applies only after reboot", so the
@@ -164,8 +192,9 @@ void main() {
     final typeSet = <int>{};
     if (types != null) {
       for (final t in types) {
-        typeSet.add(t);
-        final count = await reg.getInstanceCount(t);
+        if (!isStaticRegistryType(t.type)) continue;
+        typeSet.add(t.type);
+        final count = await reg.getInstanceCount(t.type);
         if (count != null) totalBlocks += count;
       }
     }
@@ -206,7 +235,7 @@ void main() {
             BlockType.resistiveMeasure.value, 0, 2, 0, meta, before.value),
         isNotNull,
         reason: 'write accepted');
-    expect(await reg.saveStatic(BlockType.resistiveMeasure.value, 0), isTrue,
+    expect(await reg.saveAll(), isTrue,
         reason: 'the DAS must be able to save a static block');
     // The STATLOG entry list must no longer be an erased (all-0xFF) region.
     final storage = StorageClient(deviceId: das.id);
@@ -236,22 +265,17 @@ void main() {
             size: long.length),
         long.codeUnits);
     expect(wrote, isNotNull);
-    // A persistent write must report Not Saved until it is saved (the System block has no
-    // static-registry entry, so its flags live in the active-flag array - this is the case
-    // that used to be silently dropped).
+    // The write is clamped to the documented 16 bytes on the way back.
     final after = await reg.readField(6, 0);
-    expect(after!.meta.notSaved, isTrue, reason: 'the read agrees with the write');
-    expect(after.value.length, lessThanOrEqualTo(16));
+    expect(after, isNotNull);
+    expect(after!.value.length, lessThanOrEqualTo(16));
     expect(String.fromCharCodes(after.value).replaceAll('\x00', ''),
         'ABCDEFGHIJKLMNOP');
 
-    // Saving clears it again.
-    expect(await reg.saveStatic(0, 0), isTrue);
-    final saved = await reg.readField(6, 0);
-    expect(saved!.meta.notSaved, isFalse, reason: 'saving clears the flag');
-
-    // Restore the original name and persist it, so the device is left as it was found (the
-    // temporary name above reached flash when the save was exercised).
+    // A Name write is only in RAM until an explicit Save - exercise the save path, then put
+    // the original back and persist that, so the device is left as it was found (the temporary
+    // name above reached flash when the save was exercised).
+    expect(await reg.saveAll(), isTrue);
     await reg.writeBlockField(
         0,
         0,
@@ -262,8 +286,10 @@ void main() {
             size: original.length),
         original.codeUnits);
     expect((await reg.readField(6, 0))!.value, isNotEmpty);
-    expect(await reg.saveStatic(0, 0), isTrue);
-    expect((await reg.readField(6, 0))!.meta.notSaved, isFalse);
+    expect(await reg.saveAll(), isTrue);
+    expect(String.fromCharCodes((await reg.readField(6, 0))!.value)
+            .replaceAll('\x00', ''),
+        original);
   }, timeout: const Timeout(Duration(seconds: 60)));
 
   // HIL: TimeSync is synchronized-device initiated - the node syncs ITSELF to the core

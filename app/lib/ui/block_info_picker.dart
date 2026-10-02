@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import '../core/block_registry.dart' show blockInfoFor;
 import '../core/register_client.dart';
 import '../core/types.dart';
+import '../core/script_client.dart';
 import 'subscriptions_dialog.dart'
     show BlockPicker, BlockSelection, FieldPicker, FieldSelection, KeyPicker;
 import 'widgets.dart' show DialogBody;
@@ -51,7 +52,8 @@ class _BlockInfoDialogState extends State<_BlockInfoDialog> {
   Future<void> _load() async {
     try {
       final reg = RegisterClient(deviceId: widget.deviceId);
-      final blocks = await reg.readBlocks();
+      final blocks = await reg.readBlocks(
+          scriptSlots: await ScriptClient(deviceId: widget.deviceId).loadedScripts());
       final list = <BlockSelection>[];
       for (final b in blocks ?? <({int type, int inst, BlockMeta meta, String name})>[]) {
         if (b == null) continue;

@@ -53,7 +53,7 @@ static void HandleSystemBlockRead(const PacketFrame &frame, uint32_t bi, uint8_t
     memcpy(rpl+pos, &bi,4); pos+=4;
     BlockMeta m = {}; uint8_t vsz=0; uint8_t vbuf[24]={0};
     
-    if (field==0xFF) { m.FlagsAndType = (uint16_t)BlockType::System | FieldFlags::ReadOnly; m.Key=0xFF; m.Size=SYSTEM_FIELD_COUNT; memcpy(rpl+pos,&m,4); pos+=4; rpl[pos++]=SYSTEM_FIELD_COUNT; while(pos%4) rpl[pos++]=0; SendResponse(frame,rpl,pos); return; }
+    if (field==0xFF) { BlockMeta hm; hm.FlagsAndType = (uint16_t)BlockType::System | FieldFlags::ReadOnly; hm.Key=0xFF; hm.Size=SYSTEM_FIELD_COUNT; ValueInfo hv = ToWireInfo(hm); memcpy(rpl+pos,&hv,4); pos+=4; rpl[pos++]=SYSTEM_FIELD_COUNT; while(pos%4) rpl[pos++]=0; SendResponse(frame,rpl,pos); return; }
 
     // All system fields resolve through the shared RegisterGetSystemField (single
     // source of truth - the Subscriptions service uses the same path).
@@ -62,31 +62,13 @@ static void HandleSystemBlockRead(const PacketFrame &frame, uint32_t bi, uint8_t
         RespondStatus(frame,false);
         return;
     }
-    // A read combines the active and passive flags (Docs/Services/Register.md): fold the
-    // System block's active flags into the reported meta, like the static path does.
-    m.FlagsAndType |= StaticActiveReported(SYSTEM_BLOCK_BACKUP, field);
-    
-    memcpy(rpl+pos, &m, 4); pos += 4;
+    // Docs/Services/Register.md "Map entry": the wire ValueInfo is Type | Size | Flags, so the
+    // packed descriptor converts at this boundary.
+    ValueInfo v = ToWireInfo(m);
+    memcpy(rpl+pos, &v, 4); pos += 4;
     memcpy(rpl+pos, vbuf, vsz); pos += vsz;
     while(pos%4) rpl[pos++]=0;
     SendResponse(frame,rpl,pos);
-}
-
-static void HandleMultiEntryRead(const PacketFrame &frame, uint32_t bi, uint16_t payload_bytes) {
-    uint16_t num_entries = payload_bytes / 4;
-    if (num_entries <= 1) return;
-    
-    for (uint16_t i = 0; i < num_entries; i++) {
-        uint32_t bi_entry = 0;
-        memcpy(&bi_entry, frame.payload + i * 4, 4);
-        int idx = FindStaticBlock(BlockInfoType(bi_entry), BlockInfoInstance(bi_entry));
-        if (idx < 0) { RespondStatus(frame,false); return; }
-        const StaticBlockDescriptor &blk = static_block_registry[idx];
-        if (BlockInfoField(bi_entry) >= blk.Schema->MapCount) { RespondStatus(frame,false); return; }
-        FieldResult fr = blk.Get(BlockInfoField(bi_entry));
-        if (!fr.Data) { RespondStatus(frame,false); return; }
-        SendFieldResponse(frame, bi, fr, StaticActiveReported((uint8_t)idx, BlockInfoField(bi_entry)));
-    }
 }
 
 #ifndef DISABLE_DYNAMIC_MEMORY
@@ -115,7 +97,8 @@ static void HandleScriptBlockRead(const PacketFrame &frame, uint32_t bi, uint8_t
     uint8_t vsz = 0;
     if (!ScriptGetEntry(inst, field, key, m, vbuf, vsz)) { RespondStatus(frame,false); return; }
     memcpy(rpl + pos, &bi, 4); pos += 4;
-    memcpy(rpl + pos, &m, 4); pos += 4;
+    ValueInfo v = ToWireInfo(m);
+    memcpy(rpl + pos, &v, 4); pos += 4;
     if (vsz) memcpy(rpl + pos, vbuf, vsz);
     pos += vsz;
     while (pos % 4) rpl[pos++] = 0;
@@ -134,6 +117,6 @@ static void HandleStaticBlockRead(const PacketFrame &frame, uint32_t bi, uint16_
     if (field >= blk.Schema->MapCount) { RespondStatus(frame,false); return; }
     FieldResult fr = blk.Get(field);
     if(!fr.Data) { RespondStatus(frame,false); return; }
-    SendFieldResponse(frame, bi, fr, StaticActiveReported((uint8_t)idx, field));
+    SendFieldResponse(frame, bi, fr);
 }
 

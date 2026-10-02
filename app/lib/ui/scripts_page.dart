@@ -85,7 +85,7 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
     final list = <_LoadedScript>[];
     for (final slot in slots) {
       final meta = await _client.readBlockMeta(slot);
-      final state = await _client.readState(slot) ?? ScriptState.stopped;
+      final state = (await _client.readState(slot))?.state ?? ScriptState.stopped;
       final internal = await _client.readInternalState(slot);
       // The input UI specifications and names live in the script file.
       var specs = const <ScriptInputSpec>[];
@@ -156,9 +156,10 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
       showSnack(context, 'Bad script file name');
       return;
     }
-    final loaded = await _client.load(id);
+    // File N loads into slot N (the app keeps the two equal - the wire allows them to differ).
+    final loaded = await _client.load(id, id);
     if (!mounted) return;
-    showSnack(context, loaded == null ? 'Load failed' : 'Loaded $name');
+    showSnack(context, loaded ? 'Loaded $name' : 'Load failed');
     await _loadLoaded();
   }
 

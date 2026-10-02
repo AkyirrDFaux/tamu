@@ -279,32 +279,19 @@ bool isStaticRegistryType(int type) =>
     type != BlockType.script.value &&
     type != BlockType.dynamic.value;
 
-/// Field/block flag bits (bits 10-15 of BlockMeta.FlagsAndType per Register.md).
+/// Field/block flag bits (bits 10-15 of BlockMeta.FlagsAndType per Register.md). Every flag is
+/// **passive**: a read reports them verbatim and a write carries the same specification back.
 class FieldFlags {
   static const mask = 0xFC00; // flags occupy bits 10-15 of FlagsAndType
   static const readOnly = 0x0400;
   static const persistent = 0x0800;
   static const trigger = 0x1000;
-  static const notSaved = 0x2000;
-  static const scriptUpdated = 0x4000;
-  static const external = 0x8000;
-
-  /// The three *active* flags (Not Saved, Script Updated, External origin). They describe the
-  /// state of a value as a *read* reports it - a write declares only its own specification, so
-  /// the active bits a writer does not mean must not be echoed back (see
-  /// `RegisterClient.writeBlockField`).
-  static const activeMask = notSaved | scriptUpdated | external;
 
   static List<String> describe(int flags) {
     final names = <String>[];
     if (flags & readOnly != 0) names.add('RO');
     if (flags & persistent != 0) names.add('P');
     if (flags & trigger != 0) names.add('TR');
-    if (flags & notSaved != 0) names.add('NS');
-    if (flags & scriptUpdated != 0) names.add('SU');
-    if (flags & external != 0) names.add('EXT');
-    // Note: 'valid' (FlashValid) shares bit with readOnly (0x0400) in firmware.
-    // We cannot distinguish "flash invalid" from "writable" so we don't display INVAL.
     return names;
   }
 }
@@ -352,20 +339,68 @@ class BlockMeta {
   BlockType get blockType => BlockType.fromValue(typeValue);
 
   bool get readOnly => flags & FieldFlags.readOnly != 0;
-  bool get notSaved => flags & FieldFlags.notSaved != 0;
   bool get persistent => flags & FieldFlags.persistent != 0;
 
+  /// The wire ValueInfo (Docs/Services/Register.md "Map entry"): `Type(16) | Size(8) | Flags(8)`.
+  /// The app keeps the flags packed above the type - the form the device's *files* and embedded
+  /// values use - so only the flags convert here. The key is not in the wire ValueInfo: it
+  /// travels in the request's/reply's BlockInfo, so [toBytes] drops it and [fromBytes] takes it
+  /// from the caller (which always knows it - it asked with it).
   Uint8List toBytes() => Uint8List(4)
+    ..[0] = typeValue & 0xFF
+    ..[1] = (typeValue >> 8) & 0xFF
+    ..[2] = size
+    ..[3] = fieldFlagsToWire(flags);
+
+  static BlockMeta fromBytes(List<int> bytes, [int offset = 0, int key = 0]) => BlockMeta(
+        flagsAndType: (bytes[offset] | (bytes[offset + 1] << 8)) |
+            fieldFlagsFromWire(bytes[offset + 3]),
+        key: key,
+        size: bytes[offset + 2],
+      );
+
+  /// The packed descriptor the device embeds in file and value formats (STATLOG and DT_
+  /// entries, a render dictionary's entries) - the inverse of [fromPacked]. The wire layout is
+  /// [toBytes].
+  Uint8List toPacked() => Uint8List(4)
     ..[0] = flagsAndType & 0xFF
     ..[1] = (flagsAndType >> 8) & 0xFF
     ..[2] = key
     ..[3] = size;
 
-  static BlockMeta fromBytes(List<int> bytes, [int offset = 0]) => BlockMeta(
+  /// Parses the *packed* descriptor the device embeds in file and value formats (STATLOG and
+  /// DT_ entries, a render dictionary's entries): `FlagsAndType(16) | Key(8) | Size(8)`. That
+  /// layout is unchanged by the wire revision, so it needs its own parser.
+  static BlockMeta fromPacked(List<int> bytes, [int offset = 0]) => BlockMeta(
         flagsAndType: bytes[offset] | (bytes[offset + 1] << 8),
         key: bytes[offset + 2],
         size: bytes[offset + 3],
       );
+}
+
+/// The ValueInfo flag bits on the wire (Docs/Services/Register.md, in that table's order).
+class ValueFlags {
+  static const readOnly = 0x01;
+  static const persistent = 0x02;
+  static const trigger = 0x04;
+}
+
+/// Maps the app's packed flag bits onto the wire ValueInfo flag byte.
+int fieldFlagsToWire(int flags) {
+  var wire = 0;
+  if (flags & FieldFlags.readOnly != 0) wire |= ValueFlags.readOnly;
+  if (flags & FieldFlags.persistent != 0) wire |= ValueFlags.persistent;
+  if (flags & FieldFlags.trigger != 0) wire |= ValueFlags.trigger;
+  return wire;
+}
+
+/// Maps the wire ValueInfo flag byte back onto the app's packed flag bits.
+int fieldFlagsFromWire(int wire) {
+  var flags = 0;
+  if (wire & ValueFlags.readOnly != 0) flags |= FieldFlags.readOnly;
+  if (wire & ValueFlags.persistent != 0) flags |= FieldFlags.persistent;
+  if (wire & ValueFlags.trigger != 0) flags |= FieldFlags.trigger;
+  return flags;
 }
 
 // ---------------------------------------------------------------------------

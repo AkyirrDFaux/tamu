@@ -101,13 +101,13 @@ void main() {
         0,
         BlockMeta(flagsAndType: DataType.number.value | FieldFlags.persistent, size: 4),
         numberToBytes(1.0));
-    expect(await reg.saveDynamic(), isTrue);
+    expect(await reg.saveAll(), isTrue);
 
     final names = (await storage.readFileTable() ?? [])
         .map((r) => normalizeFileName(r.name))
         .toSet();
     // ignore: avoid_print
-    print('[STORAGE] after dynamic save: $names');
+    print('[STORAGE] after Save All: $names');
     expect(names.any((n) => n.startsWith('DT_')), isTrue);
     expect(names.any((n) => n.startsWith('DV_')), isTrue);
 
@@ -132,7 +132,7 @@ void main() {
     expect(entrySize, 4);
 
     await reg.deleteDynamic(block: 0);
-    await reg.saveDynamic();
+    await reg.saveAll();
   }, timeout: const Timeout(Duration(seconds: 60)));
 
   test('the Vysi layout is preloaded as LAY_1; old names are gone', skip: skipReason,
@@ -147,14 +147,15 @@ void main() {
     expect(names, isNot(contains('LAY5X5')));
 
     final record = table.firstWhere((r) => normalizeFileName(r.name) == 'LAY_1');
-    expect(record.size, 222, reason: '2-byte header + 11*10 u16 indexes');
-    final bytes = await storage.readFile('LAY_1', size: 222);
+    expect(record.size, 223, reason: '3-byte header (limit, w, h) + 11*10 u16 indexes');
+    final bytes = await storage.readFile('LAY_1', size: 223);
     expect(bytes, isNotNull);
-    expect(bytes!.length, 222);
-    expect(bytes[0], 11, reason: 'u8 width');
-    expect(bytes[1], 10, reason: 'u8 height');
+    expect(bytes!.length, 223);
+    expect(bytes[0], 178, reason: 'u8 brightness limit (0-255 as a percentage: 70%)');
+    expect(bytes[1], 11, reason: 'u8 width');
+    expect(bytes[2], 10, reason: 'u8 height');
     for (var i = 0; i < 110; i++) {
-      final v = bytes[2 + i * 2] | (bytes[2 + i * 2 + 1] << 8);
+      final v = bytes[3 + i * 2] | (bytes[3 + i * 2 + 1] << 8);
       expect(v == 0xFFFF || v < 86, isTrue, reason: 'bad LED index at $i: $v');
     }
   }, timeout: const Timeout(Duration(seconds: 60)));

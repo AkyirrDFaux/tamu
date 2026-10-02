@@ -54,7 +54,7 @@ bool RegisterGetByBlockInfo(uint32_t bi, BlockMeta &m, uint8_t *vbuf, uint8_t &v
     return true;
 }
 
-// Writes a register value by BlockInfo. `m` carries the value type (and any active flags).
+// Writes a register value by BlockInfo. `m` carries the value type and the passive flags.
 bool RegisterSetByBlockInfo(uint32_t bi, const BlockMeta &m, const uint8_t *val, uint16_t vlen) {
     uint16_t type = BlockInfoType(bi);
     uint8_t inst = BlockInfoInstance(bi);
@@ -79,14 +79,24 @@ bool RegisterSetByBlockInfo(uint32_t bi, const BlockMeta &m, const uint8_t *val,
     int idx = FindStaticBlock(type, inst);
     if (idx < 0) return false;
     if (!static_block_registry[idx].Set(field, val, vlen, m.FlagsAndType)) return false;
-    // Static block metas are const, so their active flags live in the parallel array.
-    StaticMarkWriteFromFlags((uint8_t)idx, field, m.FlagsAndType);
     return true;
 }
 
 static void HandleRegister(const PacketFrame &frame) {
     uint8_t cid = GetServiceCID(frame.cmd);
     if (frame.flags & FLAG_TYPE) return;
+
+    // CID 3,4: Recall All / Save All - the whole device, no BlockInfo, so an empty request
+    // (Docs/Services/Register.md). Handled before the BlockInfo guard below, which every other
+    // command needs. Partial saving/recall is the app's job (direct file writes / direct
+    // register writes), so nothing is addressed here.
+    if (cid == 3 || cid == 4) { HandleSaveRecallAll(frame, cid == 4); return; }
+
+    // CID 0: Enumerate. Its requests are shaped by the command itself - empty for the type list,
+    // a packed (type<<6|instance) word for a block's fields+keys - so it is handled before the
+    // BlockInfo guard below (which every other command needs).
+    if (cid == 0) { HandleEnumerate(frame); return; }
+
     if (PayloadBytes(frame) < 4) return;
     
     uint32_t bi = 0; memcpy(&bi, frame.payload, 4);
@@ -95,13 +105,10 @@ static void HandleRegister(const PacketFrame &frame) {
     uint8_t field = BlockInfoField(bi);
     uint8_t key = BlockInfoKey(bi);
 
-    // CID 0: Enumerate
-    if (cid == 0) { HandleEnumerate(frame, bi); return; }
-
-    // CID 1: Read
+    // CID 1: Read (single entry: the request carries one BlockInfo, per Docs/Services/Register.md)
     if (cid == 1) {
+        if (PayloadBytes(frame) != 4) { RespondStatus(frame,false); return; }
         if (type==0 && inst==0) { HandleSystemBlockRead(frame, bi, field, key); return; }
-        HandleMultiEntryRead(frame, bi, PayloadBytes(frame));
 #ifdef USE_SCRIPTS
         if (type == 0x3FE) { HandleScriptBlockRead(frame, bi, inst, field, key); return; }
 #endif
@@ -118,7 +125,9 @@ static void HandleRegister(const PacketFrame &frame) {
     if (cid == 2) {
         if (type==0 && inst==0) { HandleSystemBlockWrite(frame, field); return; }
         if (PayloadBytes(frame) < 8) { RespondStatus(frame,false); return; }
-        BlockMeta *desc = (BlockMeta*)(frame.payload+4);
+        const ValueInfo *vin = (const ValueInfo *)(frame.payload + 4);
+        BlockMeta descMeta = FromWireInfo(*vin);
+        BlockMeta *desc = &descMeta;
         const uint8_t *val = frame.payload+8;
         // The BlockMeta.Size must match the value bytes actually present: a larger Size
         // would make the write path copy past the frame (the System Name path clamps too).
@@ -134,28 +143,6 @@ static void HandleRegister(const PacketFrame &frame) {
         if (type == 0x3FF) { RespondStatus(frame, false); return; }
 #endif
         HandleStaticBlockWrite(frame, type, inst, field, desc, val, vlen);
-        return;
-    }
-
-    // CID 3,4: Save/Recall
-    if (cid == 3 || cid == 4) {
-        if (PayloadBytes(frame) < 4) { RespondStatus(frame,false); return; }
-        uint32_t bi_save = 0; memcpy(&bi_save, frame.payload, 4);
-        uint16_t type_save = BlockInfoType(bi_save);
-        uint8_t inst_save = BlockInfoInstance(bi_save);
-
-        if (type_save == 0x3FF) {
-#ifndef DISABLE_DYNAMIC_MEMORY
-            HandleDynamicSaveRecall(frame, cid, inst_save, field);
-#else
-            RespondStatus(frame, false);
-#endif
-        } else if (type_save == 0 || FindStaticBlock(type_save, inst_save) >= 0) {
-            // System block (type 0) + static blocks persist through the STATLOG mirror.
-            HandleStaticSaveRecall(frame, cid, bi_save, field);
-        } else {
-            RespondStatus(frame,false);
-        }
         return;
     }
 

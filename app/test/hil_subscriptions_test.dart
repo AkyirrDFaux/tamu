@@ -47,7 +47,7 @@ void main() async {
     for (final b in await reg.readDynamicBlocks() ?? <DynBlock>[]) {
       await reg.deleteDynamic(block: b.index);
     }
-    await reg.saveDynamic();
+    await reg.saveAll();
     await Future<void>.delayed(const Duration(milliseconds: 300));
   });
   tearDownAll(disconnectHil);
@@ -174,7 +174,7 @@ void main() async {
       ..inputs.add(ScriptDraftValue(name: 'Level', type: DataType.number, value: numberToBytes(100)))
       ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6))); // Halt
     expect(await storage.writeFile('SCR_08', draft.toImage()), isTrue);
-    expect(await scripts.load(8), 8);
+    expect(await scripts.load(8, 8), isTrue);
 
     // Sentinel -1 in the target so "arrived" is distinguishable from "unchanged".
     final target = await makeTarget(reg, 3, DataType.number, 4, value: numberToBytes(-1));
@@ -404,7 +404,7 @@ void main() async {
           operands: [ScriptSymbol.constant(0)]))
       ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)));
     expect(await storage.writeFile('SCR_09', draft.toImage()), isTrue);
-    expect(await scriptClient.load(9), 9);
+    expect(await scriptClient.load(9, 9), isTrue);
     // Run once so the output holds 42.
     await scriptClient.setState(9, ScriptState.running);
     await Future<void>.delayed(const Duration(milliseconds: 300));

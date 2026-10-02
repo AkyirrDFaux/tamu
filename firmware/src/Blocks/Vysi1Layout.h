@@ -27,7 +27,8 @@ const uint8_t LayoutVysiv1_0[10 * 11]{
 // Preloads the Vysi v1.0 LED layout into storage as "LAY_1" on first boot (the
 // project's layouts/ directory holds the same bytes). Only created when absent, so a
 // user's customized layout is never overwritten. File format per Docs/Modules/LED
-// display.md: u8 width, u8 height, then w*h u16 LE 0-based LED indices (0xFFFF = unused).
+// display.md: u8 brightness limit (0-255 as a percentage), u8 width, u8 height, then
+// w*h u16 LE 0-based LED indices (0xFFFF = unused).
 inline void PreloadVysiLayout()
 {
     // Heal older preloads: an earlier 5x5 grid ("LAY5X5") and the first build's
@@ -52,12 +53,14 @@ inline void PreloadVysiLayout()
     if (Storage.FileExists(lay1) != 0xFFFFFFFF)
         return; // already present (renamed or preloaded earlier)
 
-    uint8_t buf[2 + 11 * 10 * 2];
-    buf[0] = 11; // width
-    buf[1] = 10; // height
-    uint16_t *idx = reinterpret_cast<uint16_t *>(buf + 2);
+    uint8_t buf[3 + 11 * 10 * 2];
+    buf[0] = 178; // brightness limit: 0-255 as a percentage -> 70%
+    buf[1] = 11;  // width
+    buf[2] = 10;  // height
+    // The 3-byte header puts every u16 at an odd offset, so write them through memcpy.
     for (uint32_t i = 0; i < 11 * 10; i++)
-        idx[i] = (LayoutVysiv1_0[i] == 0) ? 0xFFFF : (uint16_t)(LayoutVysiv1_0[i] - 1);
+        StoreUnaligned(buf + 3 + i * 2,
+                       (uint16_t)((LayoutVysiv1_0[i] == 0) ? 0xFFFF : (LayoutVysiv1_0[i] - 1)));
 
     if (!Storage.CreateFile(lay1, sizeof(buf)))
         return;
@@ -114,6 +117,10 @@ public:
     uint16_t Layout[MaxLayoutEntries];
     uint8_t Lw = 11;
     uint8_t Lh = 10;
+    // Docs/Modules and blocks/LED display.md: the layout file's leading byte, a 0-255
+    // percentage cap on Data.Brightness (178 = 70%). Replaced whenever a layout file loads;
+    // the built-in default carries the same value as the preloaded LAY_1.
+    uint8_t BrightnessLimit = 178;
     ColourClass Buffer[LedNum];
 
     // LED-centric screen coordinates (rebuilt when a layout loads). Screen y = 0 at
@@ -175,6 +182,7 @@ public:
     {
         Lw = 11;
         Lh = 10;
+        BrightnessLimit = 178; // keep the built-in default's cap (70%)
         for (uint32_t i = 0; i < MaxLayoutEntries; i++)
             Layout[i] = 0xFFFF;
         for (uint32_t i = 0; i < Lw * Lh && i < MaxLayoutEntries; i++)
@@ -201,22 +209,26 @@ public:
         uint32_t off, size;
         if (!Storage.GetFileInfo(n8, &off, &size))
             return false;
-        if (size < 2)
+        if (size < 3)
             return false;
 
-        uint8_t hdr[2]; // width, height
-        Storage_FlashRead(off, hdr, 2);
-        uint32_t entries = (uint32_t)hdr[0] * hdr[1];
-        if (hdr[0] == 0 || hdr[1] == 0 || entries > MaxLayoutEntries ||
-            size < 2 + entries * 2)
+        // Docs/Modules and blocks/LED display.md: u8 brightness limit, u8 width, u8 height,
+        // then the index table. Only this format is accepted - a file written to the older
+        // 2-byte header fails here and the caller falls back to the built-in default.
+        uint8_t hdr[3];
+        Storage_FlashRead(off, hdr, 3);
+        uint32_t entries = (uint32_t)hdr[1] * hdr[2];
+        if (hdr[1] == 0 || hdr[2] == 0 || entries > MaxLayoutEntries ||
+            size < 3 + entries * 2)
             return false;
 
-        Storage_FlashRead(off + 2, (void *)Layout, entries * 2);
+        Storage_FlashRead(off + 3, (void *)Layout, entries * 2);
         for (uint32_t i = 0; i < entries; i++)
             if (Layout[i] != 0xFFFF && Layout[i] >= LedNum)
                 Layout[i] = 0xFFFF; // index beyond this display's chain
-        Lw = hdr[0];
-        Lh = hdr[1];
+        BrightnessLimit = hdr[0];
+        Lw = hdr[1];
+        Lh = hdr[2];
         RebuildLedTable();
         return true;
     }
@@ -232,7 +244,11 @@ inline void Vysi1BootLayout(Vysi1Display &disp)
     PackName("VYSIV1", legacy);
     if (memcmp(disp.Data.LayoutFile, legacy, 8) == 0)
         PackName("LAY_1", disp.Data.LayoutFile);
-    disp.LoadLayoutFromStorage();
+    // A file that cannot be loaded (missing, truncated, or an older 2-byte-header format)
+    // must not leave the display on its zero-initialised Layout[] - every cell there maps to
+    // LED 0 - so fall back to the built-in default, whose LED mapping matches the .lay file.
+    if (!disp.LoadLayoutFromStorage())
+        disp.LoadDefaultLayout();
 }
 
 // Layout-file write trigger: stores the new Name and loads the layout file immediately

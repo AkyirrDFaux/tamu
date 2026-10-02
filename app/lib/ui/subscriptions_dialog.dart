@@ -8,6 +8,7 @@ import '../core/block_registry.dart' show blockInfoFor;
 import '../core/device_db.dart';
 import '../core/register_client.dart';
 import '../core/subscription_client.dart';
+import '../core/script_client.dart';
 import '../core/types.dart' show BlockType, BlockMeta, RequesterSubscription, TriggerType, makeBlockInfo;
 import 'widgets.dart' show showSnack, DialogBody;
 
@@ -170,7 +171,8 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
 
   Future<List<BlockSelection>> _fetchBlocks(int deviceId) async {
     final regClient = RegisterClient(deviceId: deviceId);
-    final blocks = await regClient.readBlocks();
+    final blocks = await regClient.readBlocks(
+        scriptSlots: await ScriptClient(deviceId: deviceId).loadedScripts());
     if (blocks == null) return [];
     final out = <BlockSelection>[];
     for (final b in blocks) {

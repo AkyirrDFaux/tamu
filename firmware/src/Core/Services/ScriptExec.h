@@ -414,7 +414,6 @@ static uint8_t ScriptExecService(LoadedScript *s, const ScriptLineInfo &ln, cons
             uint8_t err = ScriptAssignResolved(BlockMetaType(rm.FlagsAndType), wbuf, rm.Size, val, vsize, vtype);
             if (err) return err;
             BlockMeta wm = rm;
-            wm.FlagsAndType = (uint16_t)(rm.FlagsAndType | FieldFlags::ScriptUpdated);
             wm.Size = rm.Size;
             if (!RegisterSetByBlockInfo(bi, wm, wbuf, rm.Size)) return SCRIPT_ERR_REGISTER;
             s->ic++;
@@ -456,10 +455,7 @@ static uint8_t ScriptExecService(LoadedScript *s, const ScriptLineInfo &ln, cons
             uint8_t payload[8 + 64];
             memcpy(payload, &bi, 4);
             BlockMeta wm;
-            // Declare the write's specification (Docs/Services/Register.md active flags): the
-            // receiving device marks "External origin" (a different device updated this via
-            // script) from this ValueInfo bit.
-            wm.FlagsAndType = (uint16_t)(vtype | FieldFlags::External);
+            wm.FlagsAndType = (uint16_t)vtype;
             wm.Key = 0;
             wm.Size = vsize;
             memcpy(payload + 4, &wm, 4);
@@ -475,23 +471,16 @@ static uint8_t ScriptExecService(LoadedScript *s, const ScriptLineInfo &ln, cons
             ScriptSendRegisterRequest(s, (uint16_t)addr, 2, payload, (uint16_t)(8 + vsize));
             return SCRIPT_ERR_NONE;
         }
-        case SCRIPT_OP_SERVICE_SCRIPT_LOAD: { // dest = load(script file id)
-            // Same operation as management CID 1 (load into active memory): the loaded ID is
-            // the file ID and 0xFF means the load failed, exactly as that CID replies.
-            if (ln.destCount < 1 || ln.opCount < 1) return SCRIPT_ERR_OPERAND;
-            int32_t fileId = 0;
+        case SCRIPT_OP_SERVICE_SCRIPT_LOAD: { // load(script file id, loaded script id)
+            // Mirrors management CID 1: the script picks the slot and the pair may differ.
+            if (ln.opCount < 2) return SCRIPT_ERR_OPERAND;
+            int32_t fileId = 0, slot = 0;
             if (!ScriptResolveOperandInt(s, opbase, fileId)) return SCRIPT_ERR_OPERAND;
-            // Loading the running script would free the program currently being executed.
-            if (fileId == (int32_t)s->slot) return SCRIPT_ERR_OPERAND;
-            int32_t loaded = 0xFF;
-            if (fileId >= 0 && fileId < MAX_SCRIPTS && ScriptLoad((uint8_t)fileId)) loaded = fileId;
-            uint16_t dtype = 0; uint8_t *dest = nullptr; uint8_t dsize = 0;
-            if (!ScriptResolveDest(s, s->instr + (size_t)ln.start * 4, dtype, dest, dsize))
-                return SCRIPT_ERR_OPERAND;
-            ScriptScalar v;
-            v.n = Number(loaded);
-            v.i = loaded;
-            ScriptStoreScalar(dtype, dest, dsize, dtype == (uint16_t)DataType::Number, v);
+            if (!ScriptResolveOperandInt(s, opbase + 4, slot)) return SCRIPT_ERR_OPERAND;
+            // Loading over the running script would free the program currently being executed.
+            if (slot == (int32_t)s->slot) return SCRIPT_ERR_OPERAND;
+            if (fileId >= 0 && fileId < MAX_SCRIPTS && slot >= 0 && slot < MAX_SCRIPTS)
+                ScriptLoad((uint8_t)fileId, (uint8_t)slot);
             s->ic++;
             return SCRIPT_ERR_NONE;
         }

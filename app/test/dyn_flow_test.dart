@@ -23,7 +23,7 @@ Future<void> runTests() async {
     if (current.isEmpty) break;
     await dyn.deleteDynamic(block: current.first.index);
   }
-  await dyn.saveDynamic();
+  await dyn.saveAll();
 
   final _ = await dyn.createDynamicBlock(BlockType.dynamic, 'DPROBE');
   var b = (await dyn.readDynamicBlocks())!.first;
@@ -70,7 +70,7 @@ Future<void> runTests() async {
       '${f0c == null ? "?" : numberFromBytes(f0c.value)}');
 
   await dyn.deleteDynamic(block: b.index);
-  await dyn.saveDynamic();
+  await dyn.saveAll();
   // ignore: avoid_print
   print('[F] done');
 }
@@ -100,7 +100,7 @@ void main() async {
       if (current.isEmpty) break;
       await dyn.deleteDynamic(block: current.first.index);
     }
-    await dyn.saveDynamic();
+    await dyn.saveAll();
 
 final _ = await dyn.createDynamicBlock(BlockType.dynamic, 'DPROBE');
     var b = (await dyn.readDynamicBlocks())!.first;
@@ -147,7 +147,7 @@ final _ = await dyn.createDynamicBlock(BlockType.dynamic, 'DPROBE');
         '${f0c == null ? "?" : numberFromBytes(f0c.value)}');
 
     await dyn.deleteDynamic(block: b.index);
-    await dyn.saveDynamic();
+    await dyn.saveAll();
     // ignore: avoid_print
     print('[F] done');
   }, timeout: const Timeout(Duration(minutes: 3)), skip: skipReason);

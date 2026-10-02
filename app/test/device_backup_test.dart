@@ -314,4 +314,70 @@ void main() {
     expect(align4(4), 4);
     expect(align4(5), 8);
   });
+
+  // The per-field Save writes the file itself (the wire only carries Save All), so these two
+  // writers must round-trip through the decoders above.
+  group('field writers', () {
+    test('statlogSaveField appends a new entry and keeps the others', () {
+      final data = <int>[
+        ...statlogEntry(0, 0, DataType.number, 0, numberToBytes(10)),
+        ...statlogEntry(1, 2, DataType.number, 0, numberToBytes(20)),
+        0xFF,
+      ];
+      final out = statlogSaveField(
+          data,
+          1,
+          3,
+          BlockMeta(flagsAndType: DataType.number.value, size: 4),
+          numberToBytes(30));
+      expect(out.last, statlogEnd, reason: 'the log needs its terminator');
+      final records = decodeStatlog(out);
+      expect(records, hasLength(3));
+      expect(records[0].blockIdx, 0);
+      expect(numberFromBytes(records[0].value), 10);
+      expect(records[1].field, 2);
+      expect(numberFromBytes(records[1].value), 20);
+      expect(records[2].blockIdx, 1);
+      expect(records[2].field, 3);
+      expect(numberFromBytes(records[2].value), 30);
+    });
+
+    test('statlogSaveField replaces an entry instead of duplicating it', () {
+      final data = <int>[
+        ...statlogEntry(0, 0, DataType.number, 0, numberToBytes(10)),
+        ...statlogEntry(1, 2, DataType.number, 0, numberToBytes(20)),
+        0xFF,
+      ];
+      final out = statlogSaveField(
+          data,
+          0,
+          0,
+          BlockMeta(flagsAndType: DataType.number.value, size: 4),
+          numberToBytes(99));
+      final records = decodeStatlog(out);
+      expect(records, hasLength(2));
+      // The updated entry moved to the end; the untouched one survives byte-for-byte.
+      expect(numberFromBytes(records[0].value), 20);
+      expect(records[1].blockIdx, 0);
+      expect(numberFromBytes(records[1].value), 99);
+    });
+
+    test('dvSaveField patches one persistent entry at its table offset', () {
+      final table = decodeDynamicTable(dynamicTable('Box', BlockType.dynamic.value, [
+        ((0 << 8) | 0, DataType.number.value | FieldFlags.persistent, 4, 0),
+        ((1 << 8) | 0, DataType.number.value | FieldFlags.persistent, 2, 0),
+      ]))!;
+      final values = <int>[...numberToBytes(1.0), 5, 6];
+      final patched = dvSaveField(table, values, 1, 0, [7, 8])!;
+      expect(patched.length, values.length, reason: 'DV_ keeps its exact length');
+      expect(patched.sublist(0, 4), numberToBytes(1.0)); // the first entry is untouched
+      expect(patched.sublist(4), [7, 8]);
+      // The patched file still pairs with its table.
+      expect(decodeDynamicValues(0, table, patched).first.value, numberToBytes(1.0));
+
+      // A wrong size and a non-persistent entry are refused rather than written.
+      expect(dvSaveField(table, values, 1, 0, [1]), isNull);
+      expect(dvSaveField(table, values, 9, 0, [1, 2]), isNull);
+    });
+  });
 }

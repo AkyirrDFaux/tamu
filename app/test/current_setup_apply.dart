@@ -23,7 +23,7 @@ Future<void> buildScripts(StorageClient storage, ScriptClient scripts) async {
     if (!await storage.writeFile(name, entry.value.toImage())) {
       throw StateError('script upload failed: $name');
     }
-    if (await scripts.load(id) != id) throw StateError('script load failed: $name');
+    if (!await scripts.load(id, id)) throw StateError('script load failed: $name');
     await scripts.setState(id, ScriptState.running);
   }
 }
@@ -95,20 +95,12 @@ Future<({DeviceEntry core, List<DeviceEntry> das})> applyCurrentSetup(
     await buildScripts(StorageClient(deviceId: found.core.id), scriptClient);
   }
 
-  await reg.saveDynamic();
-
-  // Flush the static settings to the STATLOG mirror. A static write only lands in RAM
-  // until a Save (Register.md "the user selects what should be updated in the save"), so
-  // without this the display render-block/layout, the fan, the gyro and the DAS
-  // measurement settings all revert to their defaults on the next reboot.
-  await saveStaticBlock(reg, BlockType.vysiDisplay.value, dispLeft);
-  await saveStaticBlock(reg, BlockType.vysiDisplay.value, dispRight);
-  await saveStaticBlock(reg, BlockType.pwm.value, fanInst);
-  await saveStaticBlock(reg, BlockType.accGyr.value, 0);
+  // Persist the whole device (Register.md "Save All", CID 4). A static write only lands in
+  // RAM until a Save, so without this the display render-block/layout, the fan, the gyro and
+  // the DAS measurement settings all revert to their defaults on the next reboot.
+  await saveAllBlocks(reg);
   for (final das in found.das) {
-    final dasReg = RegisterClient(deviceId: das.id);
-    await saveStaticBlock(dasReg, BlockType.resistiveMeasure.value, 0);
-    await saveStaticBlock(dasReg, BlockType.resistiveMeasure.value, 1);
+    await saveAllBlocks(RegisterClient(deviceId: das.id));
   }
 
   return found;
