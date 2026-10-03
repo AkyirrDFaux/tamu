@@ -34,31 +34,6 @@ static void SubSendFragment(const PacketFrame &frame, uint16_t f, uint16_t frags
     DispatchPacket(tx_frame);
 }
 
-// Streams a table (u8 count, then fixed-size entries) as FRAG fragments, copying each entry
-// straight into the fragment payload - no full-table buffer on the stack.
-static void SubStreamTable(const PacketFrame &frame, uint8_t count, uint16_t entrySize,
-                           uint16_t maxEntries, bool (*occupied)(int),
-                           void (*copy)(uint8_t *, int)) {
-    uint16_t total = (uint16_t)(1 + (uint16_t)count * entrySize);
-    uint16_t frags = (uint16_t)((total + MAX_FRAG_CONTENT_SIZE - 1) / MAX_FRAG_CONTENT_SIZE);
-    if (frags == 0) frags = 1;
-
-    bool countSent = false;
-    uint16_t idx = 0;
-    for (uint16_t f = 0; f < frags; f++) {
-        uint8_t *dst = tx_frame.payload + 4;
-        uint16_t n = 0;
-        if (!countSent) { dst[n++] = count; countSent = true; }
-        while (idx < maxEntries && n + entrySize <= MAX_FRAG_CONTENT_SIZE) {
-            if (!occupied(idx)) { idx++; continue; }
-            copy(dst + n, idx);
-            n += entrySize;
-            idx++;
-        }
-        SubSendFragment(frame, f, frags, n);
-    }
-}
-
 // Cancels the provider side of a requester subscription (same-device: drop the local provider
 // entry; remote: send 0401 with an empty payload = None/cancel).
 static void SubscriptionsCancelProvider(uint16_t providerAddr, uint16_t trid) {
@@ -76,15 +51,77 @@ static void SubscriptionsCancelProvider(uint16_t providerAddr, uint16_t trid) {
 }
 
 #ifdef USE_SUB_PROVIDE
-static bool ProviderRowOccupied(int i) { return providerTable[i].requesterAddr != 0; }
-static void ProviderRowCopy(uint8_t *dst, int i) {
-    memcpy(dst, &providerTable[i], PROVIDER_ENTRY_WIRE_SIZE);
+// Installs (or updates) a provider entry from a subscription table. Returns the entry, or
+// nullptr when the table is full. Shared by 0401 and 0421.
+static ProviderEntry* ProviderInstall(uint16_t trid, uint16_t requesterAddr,
+                                      const SubscriptionTable &t) {
+    ProviderEntry* e = ProviderFindByTrid(trid);
+    bool isNew = (e == nullptr);
+    if (!e) e = ProviderFindFree();
+    if (!e) return nullptr;
+    e->requesterAddr = requesterAddr;
+    e->trid = trid;
+    e->sub = t;
+    e->timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
+    if (isNew) {
+        e->lastSentMs = 0;
+        e->hash = 0;
+        e->lastBool = false;
+        e->sentCounter = 0;
+        e->lastVec[0] = e->lastVec[1] = e->lastVec[2] = 0;
+    }
+    return e;
+}
+
+// Streams the provider table (u8 count, then 32 B entries) as FRAG fragments, copying each
+// entry straight into the fragment payload - no full-table buffer.
+static void ProviderStreamTable(const PacketFrame &frame) {
+    uint8_t count = 0;
+    for (int i = 0; i < MAX_PROVIDER_SUBS; i++) if (providerTable[i].requesterAddr != 0) count++;
+    uint16_t total = (uint16_t)(1 + (uint16_t)count * PROVIDER_ENTRY_WIRE_SIZE);
+    uint16_t frags = (uint16_t)((total + MAX_FRAG_CONTENT_SIZE - 1) / MAX_FRAG_CONTENT_SIZE);
+    if (frags == 0) frags = 1;
+
+    bool countSent = false;
+    int idx = 0;
+    for (uint16_t f = 0; f < frags; f++) {
+        uint8_t *dst = tx_frame.payload + 4;
+        uint16_t n = 0;
+        if (!countSent) { dst[n++] = count; countSent = true; }
+        while (idx < MAX_PROVIDER_SUBS && n + PROVIDER_ENTRY_WIRE_SIZE <= MAX_FRAG_CONTENT_SIZE) {
+            if (providerTable[idx].requesterAddr == 0) { idx++; continue; }
+            memcpy(dst + n, &providerTable[idx], PROVIDER_ENTRY_WIRE_SIZE);
+            n += PROVIDER_ENTRY_WIRE_SIZE;
+            idx++;
+        }
+        SubSendFragment(frame, f, frags, n);
+    }
 }
 #endif
+
 #ifdef USE_SUB_REQUEST
-static bool RequesterRowOccupied(int i) { return requesterTable[i].active; }
-static void RequesterRowCopy(uint8_t *dst, int i) {
-    memcpy(dst, &requesterTable[i], REQUESTER_ENTRY_WIRE_SIZE);
+// Streams the requester table (u8 count, then 28 B entries) as FRAG fragments.
+static void RequesterStreamTable(const PacketFrame &frame) {
+    uint8_t count = 0;
+    for (int i = 0; i < MAX_REQUESTER_SUBS; i++) if (requesterTable[i].active) count++;
+    uint16_t total = (uint16_t)(1 + (uint16_t)count * REQUESTER_ENTRY_WIRE_SIZE);
+    uint16_t frags = (uint16_t)((total + MAX_FRAG_CONTENT_SIZE - 1) / MAX_FRAG_CONTENT_SIZE);
+    if (frags == 0) frags = 1;
+
+    bool countSent = false;
+    int idx = 0;
+    for (uint16_t f = 0; f < frags; f++) {
+        uint8_t *dst = tx_frame.payload + 4;
+        uint16_t n = 0;
+        if (!countSent) { dst[n++] = count; countSent = true; }
+        while (idx < MAX_REQUESTER_SUBS && n + REQUESTER_ENTRY_WIRE_SIZE <= MAX_FRAG_CONTENT_SIZE) {
+            if (!requesterTable[idx].active) { idx++; continue; }
+            memcpy(dst + n, &requesterTable[idx], REQUESTER_ENTRY_WIRE_SIZE);
+            n += REQUESTER_ENTRY_WIRE_SIZE;
+            idx++;
+        }
+        SubSendFragment(frame, f, frags, n);
+    }
 }
 #endif
 
@@ -116,25 +153,15 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
                 break;
             }
 
-            bool isNew = (e == nullptr);
-            if (!e) e = ProviderFindFree();
+            SubscriptionTable t;
+            memcpy((void *)&t, frame.payload, SUB_TABLE_WIRE_SIZE);
+            e = ProviderInstall(frame.trid, frame.id_src, t);
             if (!e) break;
-            e->requesterAddr = frame.id_src;
-            e->trid = frame.trid;
-            memcpy((void *)&e->sub, frame.payload, SUB_TABLE_WIRE_SIZE);
-            e->timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
-            if (isNew) {
-                e->lastSentMs = 0;
-                e->hash = 0;
-                e->lastBool = false;
-                e->sentCounter = 0;
-                e->lastVec[0] = e->lastVec[1] = e->lastVec[2] = 0;
-            }
             // Docs CID 1: the response to a change subscription is the CURRENT VALUE (so the
             // requester starts from a known state). Fall back to a 1-byte ack when the source
             // register does not resolve (yet).
             {
-                FieldResult cur = SubscriptionsGetField(e->sub.sourceReg);
+                FieldResult cur = SubscriptionsGetField(t.sourceReg);
                 if (cur.Data) {
                     uint8_t vlen = cur.Descriptor.Size;
                     if (vlen > MAX_PAYLOAD_SIZE) vlen = MAX_PAYLOAD_SIZE;
@@ -150,20 +177,19 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
             break;
         }
 
-        case 0x10: { // Get subscriptions (requester).
-#ifdef USE_SUB_REQUEST
-            uint8_t count = 0;
-            for (int i = 0; i < MAX_REQUESTER_SUBS; i++) if (requesterTable[i].active) count++;
-            SubStreamTable(frame, count, REQUESTER_ENTRY_WIRE_SIZE, MAX_REQUESTER_SUBS,
-                           RequesterRowOccupied, RequesterRowCopy);
-#else
+        // Requester management commands (041x). A build without the requester role answers
+        // them all with FAIL through one shared stub.
+#if !defined(USE_SUB_REQUEST)
+        case 0x10: case 0x11: case 0x12: case 0x13:
             SubReply(frame, nullptr, 0, FLAG_FAIL);
-#endif
+            break;
+#else
+        case 0x10: { // Get subscriptions (requester).
+            RequesterStreamTable(frame);
             break;
         }
 
         case 0x11: { // Set subscription (requester). Trigger None = cancel.
-#ifdef USE_SUB_REQUEST
             if (PayloadBytes(frame) < 2 + 2 + SUB_TABLE_WIRE_SIZE + 4 + 4) break;
             uint16_t providerAddr = LoadUnaligned<uint16_t>(frame.payload);
             SubscriptionTable t;
@@ -197,38 +223,25 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
             // side (same-device or 0401 to the remote provider).
             SubReply(frame, nullptr, 0, FLAG_SUCCESS);
             RegisterRequesterProvider(e);
-#else
-            SubReply(frame, nullptr, 0, FLAG_FAIL);
-#endif
             break;
         }
 
         case 0x12: { // Recall all subscriptions (requester).
-#ifdef USE_SUB_REQUEST
             LoadRequesterTable();
             SubReply(frame, nullptr, 0, FLAG_SUCCESS);
-#else
-            SubReply(frame, nullptr, 0, FLAG_FAIL);
-#endif
             break;
         }
 
         case 0x13: { // Save all subscriptions (requester).
-#ifdef USE_SUB_REQUEST
             SaveRequesterTable();
             SubReply(frame, nullptr, 0, FLAG_SUCCESS);
-#else
-            SubReply(frame, nullptr, 0, FLAG_FAIL);
-#endif
             break;
         }
+#endif // USE_SUB_REQUEST
 
         case 0x20: { // Get subscriptions (provider).
 #ifdef USE_SUB_PROVIDE
-            uint8_t count = 0;
-            for (int i = 0; i < MAX_PROVIDER_SUBS; i++) if (providerTable[i].requesterAddr != 0) count++;
-            SubStreamTable(frame, count, PROVIDER_ENTRY_WIRE_SIZE, MAX_PROVIDER_SUBS,
-                           ProviderRowOccupied, ProviderRowCopy);
+            ProviderStreamTable(frame);
 #else
             SubReply(frame, nullptr, 0, FLAG_FAIL);
 #endif
@@ -242,26 +255,13 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
             SubscriptionTable t;
             memcpy((void *)&t, frame.payload + 4, SUB_TABLE_WIRE_SIZE);
 
-            ProviderEntry* e = ProviderFindByTrid(frame.trid);
             if (t.trigger == TriggerType::None) {
+                ProviderEntry* e = ProviderFindByTrid(frame.trid);
                 if (e) ProviderClearEntry(e);
                 SubReply(frame, nullptr, 0, FLAG_SUCCESS);
                 break;
             }
-            bool isNew = (e == nullptr);
-            if (!e) e = ProviderFindFree();
-            if (!e) break;
-            e->requesterAddr = requesterAddr;
-            e->trid = frame.trid;
-            e->sub = t;
-            e->timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
-            if (isNew) {
-                e->lastSentMs = 0;
-                e->hash = 0;
-                e->lastBool = false;
-                e->sentCounter = 0;
-                e->lastVec[0] = e->lastVec[1] = e->lastVec[2] = 0;
-            }
+            if (!ProviderInstall(frame.trid, requesterAddr, t)) break;
             SubReply(frame, nullptr, 0, FLAG_SUCCESS);
 #else
             SubReply(frame, nullptr, 0, FLAG_FAIL);
