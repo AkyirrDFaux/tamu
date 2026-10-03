@@ -24,17 +24,15 @@ static bool SystemFieldPersistExplicit(uint8_t field, const uint8_t *val, uint8_
 }
 
 static void HandleSystemBlockWrite(const PacketFrame &frame, uint8_t field) {
-    if (field==6) { // Name
+    if (field==6) { // Name: fixed 16-char field, space-padded (not a C string)
         if (PayloadBytes(frame) < 8) { RespondStatus(frame,false); return; }
         const ValueInfo *desc=(const ValueInfo*)(frame.payload+4);
         const uint8_t *val=frame.payload+8;
-        // Docs: Name is a 16-byte field. Clamp to it (and to the received payload) so the
-        // terminating NUL always fits the SystemPersistent::Name storage.
         uint16_t len = desc->Size;
         if (len > SYSTEM_NAME_LEN) len = SYSTEM_NAME_LEN;
         if (len > (uint16_t)(PayloadBytes(frame) - 8)) len = (uint16_t)(PayloadBytes(frame) - 8);
+        memset(staticPer.system.Name, ' ', SYSTEM_NAME_LEN);
         memcpy(staticPer.system.Name, val, len);
-        staticPer.system.Name[len] = '\0';
         SendResponse(frame,frame.payload,PayloadBytes(frame));
 #ifdef TYPE_CORE
     } else if (field==7) { // NetID (core only): stored now, applied on the next boot

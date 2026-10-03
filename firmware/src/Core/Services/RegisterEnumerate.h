@@ -24,18 +24,23 @@
 
 #include "Core/Services/RegisterDefs.h"
 
-// The System block's field/key list, flattened as (field << 8 | key) and matching
-// RegisterGetSystemField's cases. A flat table beats re-deriving it from per-field key counts:
-// the unrolled double loop cost more flash than these 34 bytes.
-static const uint16_t kSystemFields[] = {
-    0x0000, 0x0001, 0x0002,                 // field 0: three keys
-    0x0100, 0x0200,                         // fields 1, 2: one key each
-    0x0300, 0x0301, 0x0302, 0x0303, 0x0304, // field 3: five keys
-    0x0400, 0x0401,                         // field 4: two keys
-    0x0500, 0x0501,                         // field 5: two keys
-    0x0600, 0x0700, 0x0800,                 // fields 6, 7, 8: one key each
+// The System block's schema (Docs/Services/System Block and Device Commands.md). One entry per
+// field, key 0: the struct fields (0, 3, 4, 5) are Undefined raw bytes whose Size is the sum of
+// their members. The struct position is never addressed on the wire - the whole struct is sent.
+static const BlockEntry System_Entries[] = {
+    { MakeFieldKey(0, 0), 0,  { (uint16_t)DataType::Undefined, 12, ValueReadOnly } }, // DeviceType + Capability + Version
+    { MakeFieldKey(1, 0), 0,  { (uint16_t)DataType::SN,        14, ValueReadOnly } },
+    { MakeFieldKey(2, 0), 0,  { (uint16_t)DataType::Id,         2, ValueReadOnly } },
+    { MakeFieldKey(3, 0), 0,  { (uint16_t)DataType::Undefined, 20, ValueReadOnly } }, // Uptime + Now + Offset + AvgLoop + MaxLoop
+    { MakeFieldKey(4, 0), 0,  { (uint16_t)DataType::Undefined,  8, ValueReadOnly } }, // UsedRAM + TotalRAM
+    { MakeFieldKey(5, 0), 0,  { (uint16_t)DataType::Undefined,  8, ValueReadOnly } }, // UsedFlash + TotalFlash
+    { MakeFieldKey(6, 0), 0,  { (uint16_t)DataType::String,    16, ValuePersistent } }, // Name
+#ifdef TYPE_CORE
+    { MakeFieldKey(7, 0), 16, { (uint16_t)DataType::Id,         1, ValuePersistent } }, // NetID
+    { MakeFieldKey(8, 0), 0,  { (uint16_t)DataType::Enum,       1, ValueReadOnly } },   // App Active
+#endif
 };
-static const uint16_t kSystemFieldCount = sizeof(kSystemFields) / sizeof(kSystemFields[0]);
+static const uint16_t System_EntryCount = sizeof(System_Entries) / sizeof(System_Entries[0]);
 
 // Which list is being streamed.
 enum class EnumSrc : uint8_t { Types, System, Static, Dynamic, Script };
@@ -99,7 +104,7 @@ __attribute__((noinline)) static uint16_t EnumWord(EnumSrc src, const void *ctx,
     case EnumSrc::Types:
         return EnumTypeWord(i);
     case EnumSrc::System:
-        return kSystemFields[i];
+        return System_Entries[i].FieldKey;
     case EnumSrc::Static: {
         const BlockSchema *s = (const BlockSchema *)ctx;
         return s->Entries[i].FieldKey; // the literal table carries the Field&Key
@@ -165,9 +170,9 @@ static void HandleEnumerateFields(const PacketFrame &frame) {
     const void *ctx = nullptr;
     uint16_t count = 0;
 
-    if (type == 0) { // the System block: virtual, its field/key list is fixed
+    if (type == 0) { // the System block: virtual, its schema is the fixed System_Entries
         src = EnumSrc::System;
-        count = kSystemFieldCount;
+        count = System_EntryCount;
 #ifdef USE_SCRIPTS
     } else if (BlockTypeRange::IsScript(type)) { // a loaded script: its inputs and outputs, per instance
         gi = BlockTypeRange::ScriptGlobal(type, inst);

@@ -13,12 +13,12 @@ static const char *StaticValuesName()
 
 // The System block (BlockType 0) is a special static block every device has. Its persistent
 // fields are the first segment of the static persistent space (Docs/Services/Register.md):
-// Name (16 bytes) and, on a core, NetID (1 byte). The space is mirrored 1:1 to .SV. Name keeps
-// a trailing NUL so DeviceName stays a valid C string while the exposed field stays 16 bytes.
+// Name (16 bytes) and, on a core, NetID (1 byte). The space is mirrored 1:1 to .SV. Name is a
+// fixed 16-char field, space-padded, with no terminator.
 #define SYSTEM_NAME_LEN 16
 struct SystemPersistent
 {
-    char Name[SYSTEM_NAME_LEN + 1];
+    char Name[SYSTEM_NAME_LEN];
 #ifdef TYPE_CORE
     uint8_t NetId;
 #endif

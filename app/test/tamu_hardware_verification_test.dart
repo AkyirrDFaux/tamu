@@ -245,13 +245,13 @@ void main() {
     expect(data.length, greaterThanOrEqualTo(20), reason: 'at least the System segment');
   }, timeout: const Timeout(Duration(seconds: 60)));
 
-  // HIL: System Name write clamps to the documented 16 bytes (and can never write the
-  // terminating NUL past the firmware's 24-byte DeviceNameBuffer).
+  // HIL: System Name is the documented fixed 16-byte field, space-padded (no terminator).
   test('HIL: System Name write clamps to 16 bytes', skip: skipReason, () async {
     final reg = RegisterClient(deviceId: 1);
     final before = await reg.readField(6, 0);
     expect(before, isNotNull);
-    final original = String.fromCharCodes(before!.value).replaceAll('\x00', '');
+    final original =
+        String.fromCharCodes(before!.value).replaceAll('\x00', '').trimRight();
     expect(original, isNotEmpty);
 
     const long = 'ABCDEFGHIJKLMNOPQRSTUV'; // 22 chars
@@ -269,7 +269,8 @@ void main() {
     final after = await reg.readField(6, 0);
     expect(after, isNotNull);
     expect(after!.value.length, lessThanOrEqualTo(16));
-    expect(String.fromCharCodes(after.value).replaceAll('\x00', ''),
+    expect(
+        String.fromCharCodes(after.value).replaceAll('\x00', '').trimRight(),
         'ABCDEFGHIJKLMNOP');
 
     // A Name write is only in RAM until an explicit Save - exercise the save path, then put
@@ -287,8 +288,10 @@ void main() {
         original.codeUnits);
     expect((await reg.readField(6, 0))!.value, isNotEmpty);
     expect(await reg.saveAll(), isTrue);
-    expect(String.fromCharCodes((await reg.readField(6, 0))!.value)
-            .replaceAll('\x00', ''),
+    expect(
+        String.fromCharCodes((await reg.readField(6, 0))!.value)
+            .replaceAll('\x00', '')
+            .trimRight(),
         original);
   }, timeout: const Timeout(Duration(seconds: 60)));
 

@@ -8,6 +8,7 @@ import 'dart:typed_data';
 import 'connection.dart';
 import 'diagnostics.dart';
 import 'protocol.dart';
+import 'system_schema.dart';
 import 'types.dart';
 
 /// One entry of a dynamic block (dynamic/keyed memory is part of the Register service).
@@ -214,13 +215,28 @@ class RegisterClient {
     return (meta: meta, name: name);
   }
 
-  /// Read field value (CID 1) for system block (type=0, inst=0).
+  /// Read field value (CID 1) for system block (type=0, inst=0). The struct fields (0, 3, 4, 5)
+  /// are read whole and the member the key selects is sliced out; the scalar fields (1, 2, 6, 7)
+  /// return as-is (the firmware ignores the key).
   Future<({ValueInfo meta, List<int> value})?> readField(int field, int key) async {
     final payload = blockInfoBytes(0, 0, field, key);
     final reply = await request(RegisterCid.read, payload: payload);
     if (reply == null || reply.length < 8) return null;
     final meta = ValueInfo.fromBytes(reply, 4);
-    return (meta: meta, value: valueSlice(reply, meta.size));
+    var value = valueSlice(reply, meta.size);
+    final member = systemStructFields[field]?[key];
+    if (member != null) {
+      final off = systemStructOffset(field, key) ?? 0;
+      if (off + member.size <= value.length) {
+        value = value.sublist(off, off + member.size);
+      }
+      return (
+        meta: ValueInfo(
+            type: member.type.value, size: member.size, flags: meta.flags, key: key),
+        value: value,
+      );
+    }
+    return (meta: meta, value: value);
   }
 
   /// Read field value (CID 1) for a specific block type and instance.

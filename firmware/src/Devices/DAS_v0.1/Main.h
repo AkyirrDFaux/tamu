@@ -64,12 +64,11 @@ struct StaticVolatile {
     LEDVolatile led;                  // BlockType 0x0A
 };
 StaticPersistent staticPer = {
-    .system = {.Name = "DAS v0.1"},
+    // Name is a fixed 16-char space-padded field (no terminator).
+    .system = {.Name = {'D','A','S',' ','v','0','.','1',' ',' ',' ',' ',' ',' ',' ',' '}},
     .meas = {{.SensorType = MeasNTC100K}, {.SensorType = MeasLDR10K}},
 };
 StaticVolatile staticVol;
-
-const char *DeviceName = staticPer.system.Name;
 
 // Registry order is load-bearing: the app derives the registry index from type + per-type
 // instance order - keep the entries grouped by type.

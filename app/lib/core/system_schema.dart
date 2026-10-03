@@ -5,6 +5,8 @@
 /// between the UI and the semantic backup format.
 library;
 
+import 'types.dart';
+
 /// Number of System block fields (firmware SYSTEM_FIELD_COUNT).
 const int systemFieldCount = 9;
 
@@ -65,3 +67,46 @@ String systemStructMemberName(int field, int key) =>
 /// The keys present in one system field (a scalar field reports its single key).
 List<int> systemKeysForField(int field) =>
     systemFieldKeys[field]?.keys.toList() ?? const [0];
+
+/// The System struct fields (0, 3, 4, 5) are read whole (one entry per field, key 0); the app
+/// slices the member the key selects. (field, key) -> the member's type and byte size, in
+/// struct order (Docs/Services/System Block and Device Commands.md).
+const Map<int, Map<int, ({DataType type, int size})>> systemStructFields = {
+  0: {
+    0: (type: DataType.enum_, size: 4), // Device Type
+    1: (type: DataType.integer, size: 4), // Capability
+    2: (type: DataType.string, size: 4), // Software version
+  },
+  3: {
+    0: (type: DataType.integer, size: 4), // Uptime
+    1: (type: DataType.integer, size: 4), // Current time
+    2: (type: DataType.integer, size: 4), // Time offset
+    3: (type: DataType.number, size: 4), // Loop time
+    4: (type: DataType.number, size: 4), // Max Loop time
+  },
+  4: {
+    0: (type: DataType.integer, size: 4), // Used RAM
+    1: (type: DataType.integer, size: 4), // Total RAM
+  },
+  5: {
+    0: (type: DataType.integer, size: 4), // Used FLASH
+    1: (type: DataType.integer, size: 4), // Total FLASH
+  },
+  8: {
+    0: (type: DataType.enum_, size: 1), // App Active
+  },
+};
+
+/// Byte offset of member `key` inside its struct field, or null when `field` is not a struct
+/// or `key` is not one of its members.
+int? systemStructOffset(int field, int key) {
+  final members = systemStructFields[field];
+  if (members == null || !members.containsKey(key)) return null;
+  var off = 0;
+  for (var k = 0; k < key; k++) {
+    final m = members[k];
+    if (m == null) return null;
+    off += m.size;
+  }
+  return off;
+}

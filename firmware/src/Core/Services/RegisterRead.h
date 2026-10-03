@@ -8,50 +8,77 @@
 
 // ===== CID 1: Read helpers =====
 
-// Small helpers to write a system-block field value + descriptor in one place. The
-// Subscriptions service resolves system-block sources through the same path.
-static inline void SysFieldValue(ValueInfo &m, uint8_t *vbuf, uint8_t &vsz, const void *v, uint8_t size,
-                                 uint16_t type, uint8_t flags = 0) {
-    memcpy(vbuf, v, size);
-    m.Type = type; m.Size = size; m.Flags = flags; vsz = size;
-}
-static inline void SysFieldU32(ValueInfo &m, uint8_t *vbuf, uint8_t &vsz, uint32_t v, uint16_t type,
-                               uint8_t flags = 0) {
-    SysFieldValue(m, vbuf, vsz, &v, 4, type, flags);
-}
-
-// Resolves one System-block field (type 0, inst 0) into a descriptor + value. Returns
-// false for an unknown field/key.
+// Resolves one System-block field (type 0, inst 0) into a descriptor + value. The descriptor
+// comes from System_Entries (the metadata is unified); this only fills the value bytes. The
+// struct fields (0, 3, 4, 5) return the whole struct; the struct position is not on the wire.
 bool RegisterGetSystemField(uint8_t field, uint8_t key, ValueInfo &m, uint8_t *vbuf, uint8_t &vsz) {
-    m = {}; vsz = 0;
-    if (field==0 && key==0) SysFieldU32(m, vbuf, vsz, (uint32_t)kDeviceType, (uint16_t)DataType::Enum, ValueReadOnly);
-    else if (field==0 && key==1) SysFieldU32(m, vbuf, vsz, kCapabilities, (uint16_t)DataType::Index, ValueReadOnly);
-    else if (field==0 && key==2) { uint8_t ver[4] = { (VERSION_YEAR % 100), VERSION_MONTH, VERSION_DAY, VERSION_ITERATION }; SysFieldValue(m, vbuf, vsz, ver, 4, (uint16_t)DataType::String, ValueReadOnly); }
-    else if (field==1) SysFieldValue(m, vbuf, vsz, GetSerialNumber().bytes, 14, (uint16_t)DataType::SN, ValueReadOnly);
-    else if (field==2) { uint16_t v=DeviceStatus.ShortAddress; SysFieldValue(m, vbuf, vsz, &v, 2, (uint16_t)DataType::Id, ValueReadOnly); }
-    else if (field==3 && key==0) SysFieldU32(m, vbuf, vsz, TimeFromBoot(), (uint16_t)DataType::Index, ValueReadOnly);
-    else if (field==3 && key==1) SysFieldU32(m, vbuf, vsz, Now(), (uint16_t)DataType::Index, ValueReadOnly);
-    else if (field==3 && key==2) SysFieldU32(m, vbuf, vsz, (uint32_t)CurrentTimeOffsetMs(), (uint16_t)DataType::Index, ValueReadOnly);
-    else if (field==3 && key==3) SysFieldValue(m, vbuf, vsz, &DeviceStatus.AvgLoopTimeMs, 4, (uint16_t)DataType::Number, ValueReadOnly);
-    else if (field==3 && key==4) SysFieldValue(m, vbuf, vsz, &DeviceStatus.MaxLoopTimeMs, 4, (uint16_t)DataType::Number, ValueReadOnly);
-    else if (field==4 && key==0) SysFieldU32(m, vbuf, vsz, (uint32_t)GetFreeRAM(), (uint16_t)DataType::Index, ValueReadOnly);
-    else if (field==4 && key==1) SysFieldU32(m, vbuf, vsz, GetTotalRAM(), (uint16_t)DataType::Index, ValueReadOnly);
-    else if (field==5 && key==0) SysFieldU32(m, vbuf, vsz, Storage.UsedFlashBytes(), (uint16_t)DataType::Index, ValueReadOnly);
-    else if (field==5 && key==1) SysFieldU32(m, vbuf, vsz, STORAGE_FLASH_SIZE, (uint16_t)DataType::Index, ValueReadOnly);
-    else if (field==6) { m.Type=(uint16_t)DataType::String; m.Flags=ValuePersistent; m.Size=strlen(DeviceName); if(m.Size>16) m.Size=16; vsz=m.Size; memcpy(vbuf, DeviceName, vsz); }
-#ifdef TYPE_CORE
-    else if (field==7) { uint8_t v=DeviceStatus.NetId; SysFieldValue(m, vbuf, vsz, &v, 1, (uint16_t)DataType::Id, ValuePersistent); }
-#endif
-#ifdef TYPE_CORE
-    else if (field==8 && key==0) {
-        // Docs/Services/System Block and Device Commands.md: App Active (No/USB/BLE), RO.
-        uint8_t v = AppBLEActive() ? (uint8_t)AppActive::BLE
-                  : (AppUSBActive() ? (uint8_t)AppActive::USB
-                                    : (uint8_t)AppActive::None);
-        SysFieldValue(m, vbuf, vsz, &v, 1, (uint16_t)DataType::Enum, ValueReadOnly);
+    (void)key; // the struct position is not addressed on the wire
+    const BlockEntry *e = nullptr;
+    for (uint16_t i = 0; i < System_EntryCount; i++)
+        if (FieldOf(System_Entries[i].FieldKey) == field) { e = &System_Entries[i]; break; }
+    if (!e) return false;
+    m = e->Info;
+
+    switch (field) {
+    case 0: { // Device Type struct: DeviceType | Capability | Software version
+        uint32_t dt = (uint32_t)kDeviceType;
+        uint32_t cap = kCapabilities;
+        uint8_t ver[4] = { (uint8_t)(VERSION_YEAR % 100), VERSION_MONTH, VERSION_DAY, VERSION_ITERATION };
+        memcpy(vbuf, &dt, 4);
+        memcpy(vbuf + 4, &cap, 4);
+        memcpy(vbuf + 8, ver, 4);
+        break;
     }
+    case 1:
+        memcpy(vbuf, GetSerialNumber().bytes, 14);
+        break;
+    case 2: {
+        uint16_t v = DeviceStatus.ShortAddress;
+        memcpy(vbuf, &v, 2);
+        break;
+    }
+    case 3: { // Time struct: Uptime | Current time | Time offset | Loop time | Max Loop time
+        uint32_t up = TimeFromBoot();
+        uint32_t now = Now();
+        int32_t off = CurrentTimeOffsetMs();
+        memcpy(vbuf, &up, 4);
+        memcpy(vbuf + 4, &now, 4);
+        memcpy(vbuf + 8, &off, 4);
+        memcpy(vbuf + 12, &DeviceStatus.AvgLoopTimeMs, 4);
+        memcpy(vbuf + 16, &DeviceStatus.MaxLoopTimeMs, 4);
+        break;
+    }
+    case 4: { // RAM struct: Used | Total
+        int32_t used = GetFreeRAM();
+        uint32_t total = GetTotalRAM();
+        memcpy(vbuf, &used, 4);
+        memcpy(vbuf + 4, &total, 4);
+        break;
+    }
+    case 5: { // FLASH struct: Used | Total
+        uint32_t used = Storage.UsedFlashBytes();
+        uint32_t total = STORAGE_FLASH_SIZE;
+        memcpy(vbuf, &used, 4);
+        memcpy(vbuf + 4, &total, 4);
+        break;
+    }
+    case 6: // Name (fixed 16-char field, space-padded)
+        memcpy(vbuf, staticPer.system.Name, SYSTEM_NAME_LEN);
+        break;
+#ifdef TYPE_CORE
+    case 7:
+        vbuf[0] = DeviceStatus.NetId;
+        break;
+    case 8:
+        // Docs/Services/System Block and Device Commands.md: App Active (No/USB/BLE), RO.
+        vbuf[0] = AppBLEActive() ? (uint8_t)AppActive::BLE
+                : (AppUSBActive() ? (uint8_t)AppActive::USB : (uint8_t)AppActive::None);
+        break;
 #endif
-    else { return false; }
+    default:
+        return false;
+    }
+    vsz = m.Size;
     return true;
 }
 

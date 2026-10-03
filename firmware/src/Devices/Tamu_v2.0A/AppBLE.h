@@ -190,7 +190,14 @@ static void StartAppAdvertising()
     adv->removeServices();
     bool uuidOk = adv->addServiceUUID(BLE_SERVICE_UUID);
     adv->enableScanResponse(true); // must precede setName (see ordering note)
-    bool nameOk = adv->setName(DeviceName);
+    // The System Name is a fixed 16-char field (space-padded, no terminator); BLE wants a
+    // NUL-terminated C string, so copy it trimmed.
+    char advName[SYSTEM_NAME_LEN + 1];
+    uint8_t n = SYSTEM_NAME_LEN;
+    while (n > 0 && staticPer.system.Name[n - 1] == ' ') n--;
+    memcpy(advName, staticPer.system.Name, n);
+    advName[n] = '\0';
+    bool nameOk = adv->setName(advName);
     bool started = adv->start();
     DeviceLog("APPBLE", "adv restart: uuid=%d name=%d started=%d",
               uuidOk, nameOk, started);

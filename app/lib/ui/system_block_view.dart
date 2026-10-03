@@ -47,7 +47,8 @@ String formatSystemValue(DataType type, List<int> value, [int field = -1, int ke
       if (field == 0 && key == 2 && value.length == 4) {
         return '${value[0]}.${value[1]}.${value[2]}.${value[3]}';
       }
-      return String.fromCharCodes(value).replaceAll('\x00', '');
+      // The System Name is a fixed 16-char space-padded field.
+      return String.fromCharCodes(value).replaceAll('\x00', '').trimRight();
     case DataType.bool_:
       return value.isNotEmpty && value[0] != 0 ? 'true' : 'false';
     default:

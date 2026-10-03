@@ -33,8 +33,6 @@ extern const DeviceType kDeviceType;
 extern const uint32_t kCapabilities;
 const SerialNumber &GetSerialNumber();
 
-// Global device name string (points into the board's System persistent space).
-extern const char* DeviceName;
 // Device name persistence (Docs/Services/System Block and Device Commands.md: "Device name is stored in
 // standalone file to allow persistence"). Implemented in Core/Services/Device.h.
 // Device software version string (provided per device, e.g. Devices/<device>/Main.h)

@@ -70,14 +70,13 @@ struct StaticVolatile {
     Vysi1Volatile display[2];     // BlockType 6
 };
 StaticPersistent staticPer = {
-    .system = {.Name = "Tamu v2.0A", .NetId = 0},
+    // Name is a fixed 16-char space-padded field (no terminator).
+    .system = {.Name = {'T','a','m','u',' ','v','2','.','0','A',' ',' ',' ',' ',' ',' '}, .NetId = 0},
     .fan = {},
     .accgyr = {},
     .display = {},
 };
 StaticVolatile staticVol;
-
-const char *DeviceName = staticPer.system.Name;
 
 Vysi1Display Display1(staticVol.display[0], staticPer.display[0]);
 Vysi1Display Display2(staticVol.display[1], staticPer.display[1]);
