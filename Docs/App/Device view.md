@@ -5,7 +5,7 @@ A standalone page displaying known things about the device.
 
 ### First section - Device info
 Interacts with the device service only
-- Device type, capabilities (bitfield - Core, Router, CLI, Dynamic/Keyed Memory, Scripts, Bootloader)
+- Device type, capabilities (bitfield - Core, Router, Dynamic/Keyed Memory, Scripts, Bootloader)
 - Serial number
 - Software version
 - Uptime, looptimes, time offset

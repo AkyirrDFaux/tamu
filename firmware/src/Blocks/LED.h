@@ -3,12 +3,12 @@
 // ===== LED =====
 // Docs/Modules and blocks/Buttons & LEDS.md:
 //   LEDState (0, TR, bool) - true = on, false = off.
-struct LEDStruct {
+struct LEDVolatile {
     bool LEDState = false;
 };
 
-const BlockMeta LED_Map[] = {
-    {DataType::Bool | FieldFlags::Trigger, 0x00, sizeof(bool)},
+const ValueInfo LED_Map[] = {
+    {(uint16_t)DataType::Bool, sizeof(bool), ValueTrigger},
 };
 
 bool OnLEDStateChange(const StaticBlockDescriptor &block, uint16_t index, const void *data, uint16_t data_len);
@@ -24,5 +24,7 @@ const BlockSchema LED_Schema = {
     .Triggers = LED_Triggers,
     .Offsets = LED_Offsets,
     .Type = BlockType::LED,
-    .MapCount = sizeof(LED_Map) / sizeof(BlockMeta),
+    .MapCount = sizeof(LED_Map) / sizeof(ValueInfo),
+    .VolatileSize = 1,
+    .PersistentSize = 0,
 };

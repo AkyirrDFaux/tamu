@@ -33,28 +33,30 @@ static void ScriptRun(LoadedScript *s, uint32_t nowMs) {
 
 void ScriptsTick(uint32_t nowMs) {
     scriptTick++;
-    uint64_t mask = scriptActiveMask;
-    while (mask) {
-        uint8_t i = (uint8_t)__builtin_ctzll(mask);
-        mask &= mask - 1;
-        LoadedScript *s = &scriptRegistry[i];
-        if (!s->active) continue;
-        if (s->state == (uint8_t)ScriptState::Running) {
-            ScriptRun(s, nowMs);
-        } else if (s->state == (uint8_t)ScriptState::Waiting) {
-            if (s->pendingForeign) {
-                if ((int32_t)(nowMs - s->pendingDeadline) >= 0) {
-                    s->pendingForeign = false;
-                    s->errorCode = SCRIPT_ERR_TIMEOUT;
-                    s->state = (uint8_t)ScriptState::Error;
+    for (uint16_t w = 0; w < kScriptMaskWords; w++) {
+        uint64_t mask = scriptActiveMask[w];
+        while (mask) {
+            uint16_t i = (uint16_t)(w * 64 + __builtin_ctzll(mask));
+            mask &= mask - 1;
+            LoadedScript *s = &scriptRegistry[i];
+            if (!s->active) continue;
+            if (s->state == (uint8_t)ScriptState::Running) {
+                ScriptRun(s, nowMs);
+            } else if (s->state == (uint8_t)ScriptState::Waiting) {
+                if (s->pendingForeign) {
+                    if ((int32_t)(nowMs - s->pendingDeadline) >= 0) {
+                        s->pendingForeign = false;
+                        s->errorCode = SCRIPT_ERR_TIMEOUT;
+                        s->state = (uint8_t)ScriptState::Error;
+                    }
+                    continue;
                 }
-                continue;
-            }
-            if (s->waitingOnTime && (int32_t)(nowMs - s->waitUntil) >= 0) {
-                s->waitingOnTime = false;
-                s->state = (uint8_t)ScriptState::Running;
-            } else if (!s->waitingOnTime) {
-                s->state = (uint8_t)ScriptState::Running; // WaitUntil: re-evaluate
+                if (s->waitingOnTime && (int32_t)(nowMs - s->waitUntil) >= 0) {
+                    s->waitingOnTime = false;
+                    s->state = (uint8_t)ScriptState::Running;
+                } else if (!s->waitingOnTime) {
+                    s->state = (uint8_t)ScriptState::Running; // WaitUntil: re-evaluate
+                }
             }
         }
     }
@@ -64,9 +66,10 @@ void ScriptsTick(uint32_t nowMs) {
 // TRID, so the Dispatcher routes it here by range instead of by ServiceType.
 static void HandleScriptResponse(const PacketFrame &frame) {
     uint16_t trid = frame.srv_tgt;
-    uint64_t mask = scriptActiveMask;
+    for (uint16_t w = 0; w < kScriptMaskWords; w++) {
+    uint64_t mask = scriptActiveMask[w];
     while (mask) {
-        uint8_t i = (uint8_t)__builtin_ctzll(mask);
+        uint16_t i = (uint16_t)(w * 64 + __builtin_ctzll(mask));
         mask &= mask - 1;
         LoadedScript *s = &scriptRegistry[i];
         if (!s->active || !s->pendingForeign || s->pendingTrid != trid) continue;
@@ -78,8 +81,7 @@ static void HandleScriptResponse(const PacketFrame &frame) {
                 s->state = (uint8_t)ScriptState::Error;
                 return;
             }
-            BlockMeta rm;
-            memcpy(&rm, frame.payload + 4, 4);
+            ValueInfo rm = *reinterpret_cast<const ValueInfo *>(frame.payload + 4);
             const uint8_t *val = frame.payload + 8;
             uint8_t avail = (uint8_t)(pb - 8);
             uint16_t vsz = rm.Size;
@@ -88,12 +90,13 @@ static void HandleScriptResponse(const PacketFrame &frame) {
             uint8_t *dest = nullptr;
             uint8_t dsize = 0;
             if (ScriptResolveDest(s, s->pendingDest, dtype, dest, dsize))
-                ScriptAssignResolved(dtype, dest, dsize, val, (uint8_t)vsz, BlockMetaType(rm.FlagsAndType));
+                ScriptAssignResolved(dtype, dest, dsize, val, (uint8_t)vsz, ValueInfoType(rm.Type));
         }
         // Only a script still waiting on this confirmation resumes.
         if (s->state == (uint8_t)ScriptState::Waiting)
             s->state = (uint8_t)ScriptState::Running;
         return;
+    }
     }
 }
 
@@ -119,7 +122,7 @@ static void ScriptSetState(LoadedScript *s, uint8_t newState) {
 
 // Boot: load every stored script flagged Load-on-boot; run those flagged Run-on-load.
 void ScriptsBootLoad() {
-    for (uint8_t i = 0; i < MAX_SCRIPTS; i++) {
+    for (uint16_t i = 0; i < MAX_SCRIPTS; i++) {
         char name[8];
         ScriptFileName(i, name);
         if (Storage.FileExists(name) == 0xFFFFFFFF) continue;
@@ -146,26 +149,43 @@ __attribute__((noinline)) static void HandleScript(const PacketFrame &frame) {
     uint16_t bytes = PayloadBytes(frame);
 
     switch (cid) {
-        case 0: { // Get currently loaded scripts
-            uint8_t buf[1 + MAX_SCRIPTS];
-            uint8_t n = ScriptListInstances(buf + 1, MAX_SCRIPTS);
-            buf[0] = n;
-            ScriptReply(frame, buf, 1 + n);
+        case 0: { // Get currently loaded scripts (their file ids, uint16 each)
+            // 64 ids = 129 B > MAX_PAYLOAD_SIZE (116), so stream it as FRAG fragments exactly
+            // like the Register enumerate; the app already reassembles those.
+            uint8_t content[1 + MAX_SCRIPTS * 2];
+            uint16_t n = ScriptListFiles(content + 1, MAX_SCRIPTS);
+            content[0] = n;
+            uint16_t total = (uint16_t)(1 + 2 * n);
+            const uint16_t kFrag = 64;
+            uint16_t frags = (uint16_t)((total + kFrag - 1) / kFrag);
+            if (frags == 0) frags = 1;
+            for (uint16_t f = 0; f < frags; f++) {
+                uint16_t off = (uint16_t)(f * kFrag);
+                uint16_t len = (uint16_t)((total - off > kFrag) ? kFrag : total - off);
+                memcpy(tx_frame.payload + 4, content + off, len);
+                uint8_t flags = FLAG_TYPE | FLAG_FRAG;
+                if (f == 0) flags |= FLAG_START;
+                if (f == frags - 1) flags |= FLAG_STOP;
+                WriteFragInfo(tx_frame.payload, f, frags);
+                FinalizeReply(tx_frame, frame, flags, (uint16_t)(4 + len));
+                DispatchPacket(tx_frame);
+            }
             break;
         }
 
-        case 1: { // Load Script (file id, loaded id) -> Success
+        case 1: { // Load Script (file id uint16, loaded id uint8) -> Success
             // Docs/Services/Script.md: the caller picks the loaded id (the slot); the reply is
             // just Success, so it must have chosen it.
-            if (bytes < 2) { RespondStatus(frame, false); return; }
-            bool ok = ScriptLoad(frame.payload[0], frame.payload[1]);
+            if (bytes < 3) { RespondStatus(frame, false); return; }
+            uint16_t fileId = (uint16_t)(frame.payload[0] | (frame.payload[1] << 8));
+            bool ok = ScriptLoad(fileId, frame.payload[2]);
             RespondStatus(frame, ok);
             break;
         }
 
         case 2: { // Unload script (loaded ID)
             if (bytes < 1) { RespondStatus(frame, false); return; }
-            uint8_t slot = frame.payload[0];
+            uint16_t slot = frame.payload[0];
             bool ok = ScriptActive(slot) != nullptr;
             if (ok) ScriptUnload(slot);
             RespondStatus(frame, ok);

@@ -3,12 +3,12 @@
 // ===== Button =====
 // Docs/Modules and blocks/Buttons & LEDS.md:
 //   Button raw state (0, RO, bool) - true = pressed, false = free.
-struct ButtonStruct {
+struct ButtonVolatile {
     bool ButtonState = false;
 };
 
-const BlockMeta Button_Map[] = {
-    {DataType::Bool | FieldFlags::ReadOnly, 0x00, sizeof(bool)},
+const ValueInfo Button_Map[] = {
+    {(uint16_t)DataType::Bool, sizeof(bool), ValueReadOnly},
 };
 
 const FieldTrigger Button_Triggers[] = {
@@ -22,7 +22,9 @@ const BlockSchema Button_Schema = {
     .Triggers = Button_Triggers,
     .Offsets = Button_Offsets,
     .Type = BlockType::Button,
-    .MapCount = sizeof(Button_Map) / sizeof(BlockMeta),
+    .MapCount = sizeof(Button_Map) / sizeof(ValueInfo),
+    .VolatileSize = 1,
+    .PersistentSize = 0,
 };
 
 // ===== LED-Button =====
@@ -31,16 +33,16 @@ const BlockSchema Button_Schema = {
 // (if the LED is on, button reading is disabled).
 //   Button raw state (0, RO, bool), LEDState (3, TR, bool).
 // Fields 1-2 are reserved (None) so LEDState keeps its documented field index 3.
-struct LEDButtonStruct {
+struct LEDButtonVolatile {
     bool ButtonState = false; // field 0
     bool LEDState = false;    // field 3
 };
 
-const BlockMeta LEDButton_Map[] = {
-    {DataType::Bool | FieldFlags::ReadOnly, 0x00, sizeof(bool)}, // 0 Button raw state
-    {(uint16_t)DataType::None, 0x00, 0},                          // 1 reserved
-    {(uint16_t)DataType::None, 0x00, 0},                          // 2 reserved
-    {DataType::Bool | FieldFlags::Trigger, 0x00, sizeof(bool)},  // 3 LEDState
+const ValueInfo LEDButton_Map[] = {
+    {(uint16_t)DataType::Bool, sizeof(bool), ValueReadOnly}, // 0 Button raw state
+    {(uint16_t)DataType::None, 0, 0},                         // 1 reserved
+    {(uint16_t)DataType::None, 0, 0},                         // 2 reserved
+    {(uint16_t)DataType::Bool, sizeof(bool), ValueTrigger},   // 3 LEDState
 };
 
 bool OnLEDStateChange(const StaticBlockDescriptor &block, uint16_t index, const void *data, uint16_t data_len);
@@ -60,5 +62,7 @@ const BlockSchema LEDButton_Schema = {
     .Triggers = LEDButton_Triggers,
     .Offsets = LEDButton_Offsets,
     .Type = BlockType::LEDButton,
-    .MapCount = sizeof(LEDButton_Map) / sizeof(BlockMeta),
+    .MapCount = sizeof(LEDButton_Map) / sizeof(ValueInfo),
+    .VolatileSize = 2,
+    .PersistentSize = 0,
 };

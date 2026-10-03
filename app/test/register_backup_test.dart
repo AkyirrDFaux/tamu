@@ -17,11 +17,11 @@ class _CountingRegisterClient extends RegisterClient {
   int readBlocksCalls = 0;
 
   @override
-  Future<List<({int type, int inst, BlockMeta meta, String name})?>?> readBlocks(
+  Future<List<({int type, int inst, ValueInfo meta, String name})?>?> readBlocks(
       {List<int>? scriptSlots}) async {
     readBlocksCalls++;
     return [
-      (type: 0, inst: 0, meta: const BlockMeta(flagsAndType: 0, size: 9), name: 'System'),
+      (type: 0, inst: 0, meta: const ValueInfo(type: 0, size: 9), name: 'System'),
     ];
   }
 }
@@ -31,63 +31,52 @@ void main() {
 
   List<int> u16(int v) => [v & 0xFF, (v >> 8) & 0xFF];
 
-  List<int> statlogEntry(int blockIdx, int field, DataType type, List<int> value) {
-    final out = <int>[
-      blockIdx, field, 0xFF, 0,
-      type.value & 0xFF, (type.value >> 8) & 0xFF, 0xFF, value.length,
-      ...value,
-    ];
-    while (out.length % 4 != 0) {
-      out.add(0);
-    }
-    return out;
-  }
-
   /// One static block (resistive measure, 2 fields), one dynamic slot and a script block.
-  final blocks = <({int type, int inst, BlockMeta meta, String name})?>[
-    (type: 0, inst: 0, meta: const BlockMeta(flagsAndType: 0, size: 9), name: 'System'),
+  final blocks = <({int type, int inst, ValueInfo meta, String name})?>[
+    (type: 0, inst: 0, meta: const ValueInfo(type: 0, size: 9), name: 'System'),
     (
       type: BlockType.resistiveMeasure.value,
       inst: 0,
-      meta: BlockMeta(flagsAndType: DataType.number.value, size: 2),
+      meta: ValueInfo(type: DataType.number.value, size: 2),
       name: 'Meas'
     ),
     (
-      type: BlockType.dynamic.value,
+      type: dynamicTypeBase, // a banked dynamic block
       inst: 3,
-      meta: BlockMeta(flagsAndType: DataType.number.value, size: 4),
+      meta: ValueInfo(type: DataType.number.value, size: 4),
       name: 'Box'
     ),
     (
-      type: BlockType.script.value,
+      type: scriptTypeBase, // a banked loaded script
       inst: 0,
-      meta: BlockMeta(flagsAndType: DataType.number.value, size: 1),
+      meta: ValueInfo(type: DataType.number.value, size: 1),
       name: 'Eye'
     ),
   ];
 
   /// A backup with: a stored System Name, one stored static field (1 of 2), and a dynamic
   /// slot whose table has one persistent entry (stored) and one volatile entry.
-  DeviceBackup backup() => DeviceBackup.decode(
-        statlog: <int>[
-          ...statlogEntry(statlogSystemBlock, systemNameField, DataType.string, 'Eye'.codeUnits),
-          ...statlogEntry(0, 0, DataType.number, numberToBytes(5)),
-          0xFF,
-        ],
+  DeviceBackup backup() {
+    // System segment (20 B) + one ResistiveMeasure (0x08, 12 B: SamplingRate@20).
+    final sv = List<int>.filled(32, 0);
+    sv.setRange(0, 3, 'Eye'.codeUnits);
+    sv.setRange(20, 24, numberToBytes(5));
+    return DeviceBackup.decode(
+        sv: sv,
         staticRegistry: const [(type: 0x08, inst: 0)],
         dynamic: {
           3: (
             table: <int>[
-              3, ...'Box'.codeUnits,
-              ...u16(BlockType.dynamic.value),
-              ...u16(2),
-              ...u16(0), ...u16(DataType.number.value | FieldFlags.persistent), 4, 0,
+              ...'Box'.codeUnits, ...List.filled(13, 0), // 16-byte name
+              ...u16(2), 0, 0, // entry_count + reserved padding
+              ...u16(0), ...u16(DataType.number.value), 4, ValueFlags.persistent,
               ...u16(0x0100), ...u16(DataType.number.value), 4, 0,
             ],
             values: numberToBytes(42),
           ),
         },
       );
+  }
 
   Future<void> pump(WidgetTester tester, {DeviceBackup? b,
       Future<void> Function(int, int, int, int)? onRecall}) async {
@@ -137,11 +126,12 @@ void main() {
       recalled.add((bt, inst, field, key));
     });
     final buttons = find.widgetWithIcon(IconButton, Icons.restore);
-    // System Name + static field 0 + dynamic (0, 0) = 3 stored rows.
-    expect(buttons, findsNWidgets(3));
+    // `.SV` is the whole static space, so every persistent field is present: System Name +
+    // the 3 ResistiveMeasure fields + dynamic (0, 0) = 5 stored rows.
+    expect(buttons, findsNWidgets(5));
     await tester.tap(buttons.last);
     await tester.pump();
-    expect(recalled, [(BlockType.dynamic.value, 3, 0, 0)]);
+    expect(recalled, [(dynamicTypeBase, 3, 0, 0)]);
   });
 
   testWidgets('without a recall callback the rows are read-only', (tester) async {

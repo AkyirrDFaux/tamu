@@ -56,12 +56,21 @@ void main() async {
   /// it, so the subscription target is a writable register.
   Future<DynBlock> makeTarget(RegisterClient reg, int index, DataType type, int size, {List<int>? value}) async {
     await reg.deleteDynamic(block: index);
-    await reg.createDynamicBlock(BlockType.dynamic, 'SUBTGT', index: index);
-    final b = DynBlock(index: index, meta: BlockMeta(flagsAndType: BlockType.dynamic.value, size: 1), name: 'SUBTGT');
-    await reg.writeDynamicEntry(b, 0, 0, BlockMeta(flagsAndType: type.value, key: 0),
+    await reg.createDynamicBlock('SUBTGT', index: index);
+    final b = DynBlock(index: index, meta: ValueInfo(type: dynamicTypeForIndex(index), size: 1), name: 'SUBTGT');
+    await reg.writeDynamicEntry(b, 0, 0, ValueInfo(type: type.value, key: 0),
         value ?? List<int>.filled(size, 0));
     return b;
   }
+
+  /// The BlockInfo of a dynamic block addressed by its global index (the bank type is
+  /// derived from the index, not the old single `BlockType.dynamic` marker).
+  int dynReg(int global, int field, [int key = 0]) =>
+      makeBlockInfo(dynamicTypeForIndex(global), dynamicInstanceForIndex(global), field, key);
+
+  /// The BlockInfo of a loaded script addressed by its global slot.
+  int scriptReg(int global, int field, [int key = 0]) =>
+      makeBlockInfo(scriptTypeForIndex(global), scriptInstanceForIndex(global), field, key);
 
   test('subscriptions: new entry formats persist (28/32 B)', skip: skipReason, () async {
     final client = SubscriptionClient(deviceId: tamu.id);
@@ -95,7 +104,7 @@ void main() async {
 
     // DAS Meas1 (ResistiveMeasure inst 0) Measured Value = field 3.
     final sourceReg = makeBlockInfo(BlockType.resistiveMeasure.value, 0, 3, 0);
-    final targetReg = makeBlockInfo(BlockType.dynamic.value, 0, 0, 0);
+    final targetReg = dynReg(0, 0, 0);
 
     // Read the provider value directly so we can compare after the subscription.
     final dasReg = RegisterClient(deviceId: das!.id);
@@ -138,7 +147,7 @@ void main() async {
     final target = await makeTarget(reg, 1, DataType.vector, 12);
 
     final sourceReg = makeBlockInfo(BlockType.accGyr.value, 0, 5, 0); // Acceleration (Vector3)
-    final targetReg = makeBlockInfo(BlockType.dynamic.value, 1, 0, 0);
+    final targetReg = dynReg(1, 0, 0);
 
     final client = SubscriptionClient(deviceId: tamu.id);
     final entry = RequesterSubscription(
@@ -167,19 +176,19 @@ void main() async {
     final scripts = ScriptClient(deviceId: tamu.id);
     final storage = StorageClient(deviceId: tamu.id);
 
-    // SCR_08: one Number input (a scalar we can drive) defaulting to 100.
+    // SCR_008: one Number input (a scalar we can drive) defaulting to 100.
     if (await scripts.readState(8) != null) await scripts.unload(8);
-    await storage.deleteFile('SCR_08');
+    await storage.deleteFile('SCR_008');
     final draft = ScriptDraft(functionName: 'SubScalar')
       ..inputs.add(ScriptDraftValue(name: 'Level', type: DataType.number, value: numberToBytes(100)))
       ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6))); // Halt
-    expect(await storage.writeFile('SCR_08', draft.toImage()), isTrue);
+    expect(await storage.writeFile('SCR_008', draft.toImage()), isTrue);
     expect(await scripts.load(8, 8), isTrue);
 
     // Sentinel -1 in the target so "arrived" is distinguishable from "unchanged".
     final target = await makeTarget(reg, 3, DataType.number, 4, value: numberToBytes(-1));
-    final sourceReg = makeBlockInfo(0x3FE, 8, 1, 0); // script input 0
-    final targetReg = makeBlockInfo(BlockType.dynamic.value, 3, 0, 0);
+    final targetReg = dynReg(3, 0, 0);
+    final sourceReg = scriptReg(8, 1, 0); // script input 0
 
     final client = SubscriptionClient(deviceId: tamu.id);
     // A long period so only the change branch can send during the test.
@@ -216,7 +225,7 @@ void main() async {
     Future<void> setLevel(double v) async {
       expect(
           await scripts.writeEntry(8, ScriptField.input, 0,
-              BlockMeta(flagsAndType: input!.meta.flagsAndType, key: 0, size: 4), numberToBytes(v)),
+              ValueInfo(type: input!.meta.type, flags: input.meta.flags, key: 0, size: 4), numberToBytes(v)),
           isTrue);
     }
 
@@ -241,7 +250,7 @@ void main() async {
 
     await client.setRequesterSubscription(0);
     await scripts.unload(8);
-    await storage.deleteFile('SCR_08');
+    await storage.deleteFile('SCR_008');
   }, timeout: const Timeout(Duration(seconds: 30)));
 
   test('subscriptions: scalar delta provider keeps its last value', skip: skipReason, () async {
@@ -254,12 +263,12 @@ void main() async {
     // last-sent hash ahead of the value that reached the target. Driving the source makes the
     // check deterministic while still exercising the DAS's provider table.
     final sourceReg = makeBlockInfo(BlockType.resistiveMeasure.value, 0, 2, 0); // FilterCoeff
-    final targetReg = makeBlockInfo(BlockType.dynamic.value, 4, 0, 0);
+    final targetReg = dynReg(4, 0, 0);
     final dasReg = RegisterClient(deviceId: dasAddr);
     final before = await dasReg.readBlockField(BlockType.resistiveMeasure.value, 0, 2, 0);
     expect(before, isNotNull, reason: 'DAS FilterCoeff readable');
     final srcMeta =
-        BlockMeta(flagsAndType: before!.meta.flagsAndType, key: 0, size: before.value.length);
+        ValueInfo(type: before!.meta.type, flags: before.meta.flags, key: 0, size: before.value.length);
 
     final client = SubscriptionClient(deviceId: tamu.id);
     final entry = RequesterSubscription(
@@ -326,7 +335,7 @@ void main() async {
     final reg = RegisterClient(deviceId: tamu.id);
     final target = await makeTarget(reg, 5, DataType.vector, 12);
     final sourceReg = makeBlockInfo(BlockType.accGyr.value, 0, 5, 0); // Acceleration (Vector3)
-    final targetReg = makeBlockInfo(BlockType.dynamic.value, 5, 0, 0);
+    final targetReg = dynReg(5, 0, 0);
     final client = SubscriptionClient(deviceId: tamu.id);
 
     Future<void> subscribe(double deadzone) async {
@@ -392,9 +401,9 @@ void main() async {
     final scriptClient = ScriptClient(deviceId: tamu.id);
     final storage = StorageClient(deviceId: tamu.id);
 
-    // SCR_09: Out0 = 42; halt.
+    // SCR_009: Out0 = 42; halt.
     if (await scriptClient.readState(9) != null) await scriptClient.unload(9);
-    await storage.deleteFile('SCR_09');
+    await storage.deleteFile('SCR_009');
     final draft = ScriptDraft(functionName: 'SubSrc')
       ..outputs.add(ScriptDraftValue(name: 'Out', type: DataType.number, size: 4))
       ..constants.add(ScriptDraftValue(name: 'K', type: DataType.number, size: 4, value: numberToBytes(42)))
@@ -403,15 +412,15 @@ void main() async {
           instruction: ScriptSymbol.instruction(catMath, 0),
           operands: [ScriptSymbol.constant(0)]))
       ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)));
-    expect(await storage.writeFile('SCR_09', draft.toImage()), isTrue);
+    expect(await storage.writeFile('SCR_009', draft.toImage()), isTrue);
     expect(await scriptClient.load(9, 9), isTrue);
     // Run once so the output holds 42.
     await scriptClient.setState(9, ScriptState.running);
     await Future<void>.delayed(const Duration(milliseconds: 300));
 
     final target = await makeTarget(reg, 2, DataType.number, 4);
-    final sourceReg = makeBlockInfo(0x3FE, 9, 2, 0); // script output 0
-    final targetReg = makeBlockInfo(BlockType.dynamic.value, 2, 0, 0);
+    final targetReg = dynReg(2, 0, 0);
+    final sourceReg = scriptReg(9, 2, 0); // script output 0
 
     final client = SubscriptionClient(deviceId: tamu.id);
     final entry = RequesterSubscription(
@@ -434,7 +443,7 @@ void main() async {
 
     await client.setRequesterSubscription(0);
     await scriptClient.unload(9);
-    await storage.deleteFile('SCR_09');
+    await storage.deleteFile('SCR_009');
   }, timeout: const Timeout(Duration(seconds: 30)));
 
   test('subscriptions: a vector deadzone above 1.0 holds (Q16.16 cap fix)',
@@ -469,8 +478,8 @@ void main() async {
               index: 0,
               providerAddr: tamu.id, // self-loopback: the core is the provider
               trid: 0xFB01,
-              targetReg: makeBlockInfo(BlockType.dynamic.value, 7, 0, 0),
-              sourceReg: makeBlockInfo(BlockType.dynamic.value, 6, 0, 0),
+              targetReg: dynReg(7, 0, 0),
+              sourceReg: dynReg(6, 0, 0),
               trigger: TriggerType.deltaPeriodic,
               periodMs: 60000, // long: only the change branch can fire
               minTimeMs: 200,

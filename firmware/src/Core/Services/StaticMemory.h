@@ -2,57 +2,36 @@
 
 #include "Core/Functions/Memory.h"
 
-static const char *StaticLogName()
+// The static memory's persistent half is mirrored 1:1 to a single file, `.SV`
+// (Docs/Services/Register.md "Persistence"). The device only ever overwrites/loads the whole
+// file; targeted saves/recalls are the app's job (direct file writes at a field's offset).
+static const char *StaticValuesName()
 {
-    static constexpr char name[8] = {'S', 'T', 'A', 'T', 'L', 'O', 'G', ' '};
+    static constexpr char name[8] = {'.', 'S', 'V', ' ', ' ', ' ', ' ', ' '};
     return name;
 }
 
-// The System block (type 0, inst 0) has no static-registry index; its persistent
-// fields (Name 6, NetID 7) are stored in the same STATLOG mirror under this reserved
-// block marker (0xFF is the end-of-log sentinel, registry indices are 0..N).
-#define SYSTEM_BLOCK_BACKUP 0xFE
+// The System block (BlockType 0) is a special static block every device has. Its persistent
+// fields are the first segment of the static persistent space (Docs/Services/Register.md):
+// Name (16 bytes) and, on a core, NetID (1 byte). The space is mirrored 1:1 to .SV. Name keeps
+// a trailing NUL so DeviceName stays a valid C string while the exposed field stays 16 bytes.
+#define SYSTEM_NAME_LEN 16
+struct SystemPersistent
+{
+    char Name[SYSTEM_NAME_LEN + 1];
+#ifdef TYPE_CORE
+    uint8_t NetId;
+#endif
+};
+
 #define SYSTEM_FIELD_NAME   6
 #define SYSTEM_FIELD_NETID  7
 
-// Number of system-block fields. NetID (7) is Core-only (Docs: "applies only after
-// reboot") and App Active (8) only exists on boards with an app interface, so a
-// plain node like the DAS exposes fields 0-6.
+// Number of system-block fields. NetID (7) is Core-only (Docs: "applies only after reboot")
+// and App Active (8) only exists on boards with an app interface, so a plain node like the DAS
+// exposes fields 0-6.
 #ifdef TYPE_CORE
 #define SYSTEM_FIELD_COUNT 9
 #else
 #define SYSTEM_FIELD_COUNT 7
 #endif
-
-// BlockLog: sequential log file for persistent field-level storage.
-// Caller provides buffer, zero internal allocations.
-// Entry format: BlockIndex[4B] + BlockMeta[4B] + Value[NB, 4B-padded]
-// BlockIndex.block == 0xFF  => unwritten (end of log)
-// BlockIndex.block == 0x00  => invalidated entry
-
-static constexpr uint16_t kLogEntryHeaderSize = sizeof(BlockMeta) + sizeof(BlockIndex);
-
-static inline uint16_t LogEntrySize(uint8_t value_size)
-{
-    return kLogEntryHeaderSize + ((value_size + 3) & ~3);
-}
-
-// Logical length of a STATLOG-style log: the entries up to the first 0xFF terminator (the
-// format's end marker - an erased region is all 0xFF and means "empty").
-//
-// The raw file length is NOT that length. The reduced file system pre-allocates the settings
-// file, so reading it returns the whole erased region (the DAS's STATLOG is 256 bytes of 0xFF);
-// treating that as "used" made the append refuse with a full buffer, so *every* static save on
-// the DAS failed (status 255, STATLOG untouched - found on the rig). The recall paths already
-// stop at the terminator; this gives the save paths the same view.
-static inline uint16_t BackupLogUsed(const uint8_t *buf, uint16_t len)
-{
-    uint16_t c = 0;
-    while (c + kLogEntryHeaderSize <= len)
-    {
-        if (buf[c] == 0xFF) break; // terminator: the log ends here
-        const uint8_t sz = buf[c + kLogEntryHeaderSize - 1];
-        c = (uint16_t)(c + LogEntrySize(sz));
-    }
-    return c;
-}

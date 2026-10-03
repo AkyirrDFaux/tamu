@@ -207,14 +207,21 @@ List<int> affine({double tx = 0, double ty = 0, double sx = 1, double sy = 1, do
 
 List<int> identity23() => affine();
 
-int bi(int type, int inst, int field, int key) => makeBlockInfo(type, inst, field, key);
+// The fixture uses the Dynamic/Script service markers; map them to the banked wire type so the
+// emitted BlockInfo operands match the firmware's 0x3F0-0x3F7 ranges.
+int bi(int type, int inst, int field, int key) {
+  final t = type == BlockType.dynamic.value
+      ? dynamicTypeForIndex(inst)
+      : (type == BlockType.script.value ? scriptTypeForIndex(inst) : type);
+  return makeBlockInfo(t, inst, field, key);
+}
 
 // ---------------------------------------------------------------------------
 // Register writes
 // ---------------------------------------------------------------------------
 
 DynBlock _dyn(int index, [String name = '']) =>
-    DynBlock(index: index, meta: BlockMeta(flagsAndType: BlockType.dynamic.value, size: 0), name: name);
+    DynBlock(index: index, meta: ValueInfo(type: BlockType.dynamic.value, size: 0), name: name);
 
 /// Writes one (field, key) entry into a dynamic block, creating the field if needed.
 /// Retries a few times: a busy device (rendering, subscriptions) can drop a reply.
@@ -224,8 +231,11 @@ DynBlock _dyn(int index, [String name = '']) =>
 /// boot - so the whole scene (shapes, texture types, sizes, fades) would be lost on a reboot.
 Future<void> setDynEntry(RegisterClient reg, int block, int field, int key, DataType type,
     List<int> value, {bool persistent = true}) async {
-  final flags = type.value | (persistent ? FieldFlags.persistent : 0);
-  final meta = BlockMeta(flagsAndType: flags, key: key, size: value.length);
+  final meta = ValueInfo(
+      type: type.value,
+      flags: persistent ? ValueFlags.persistent : 0,
+      key: key,
+      size: value.length);
   for (var attempt = 0; attempt < 4; attempt++) {
     final ok = await reg.writeDynamicEntry(_dyn(block), field, key, meta, value);
     if (ok != null) return;
@@ -239,7 +249,7 @@ Future<void> setDynEntry(RegisterClient reg, int block, int field, int key, Data
 /// e.g. the LED-display layout reload). Retries a busy device.
 Future<void> setStatic(
     RegisterClient reg, int type, int inst, int field, List<int> value) async {
-  BlockMeta? meta;
+  ValueInfo? meta;
   List<int>? cur;
   for (var attempt = 0; attempt < 5; attempt++) {
     final r = await reg.readBlockField(type, inst, field, 0);
@@ -254,7 +264,7 @@ Future<void> setStatic(
     throw StateError('static read failed: type $type inst $inst field $field');
   }
   if (_bytesEqual(cur, value)) return;
-  final wm = BlockMeta(flagsAndType: meta.flagsAndType, key: 0, size: value.length);
+  final wm = ValueInfo(type: meta.type, flags: meta.flags, key: 0, size: value.length);
   for (var attempt = 0; attempt < 4; attempt++) {
     final ok = await reg.writeBlockField(type, inst, field, 0, wm, value);
     if (ok != null) return;
@@ -316,7 +326,7 @@ Future<void> clearSetup(RegisterClient reg, SubscriptionClient subs) async {
 /// Dynamic block 0 "Subscriptions": the four DAS value targets.
 Future<void> buildSubscriptionBlock(RegisterClient reg) async {
   await reg.deleteDynamic(block: dynSubscriptions);
-  await reg.createDynamicBlock(BlockType.dynamic, 'Subscriptions', index: dynSubscriptions);
+  await reg.createDynamicBlock('Subscriptions', index: dynSubscriptions);
   for (final f in [fTempA, fLuxA, fTempB, fLuxB]) {
     // These hold live values pushed by the DAS, so they are volatile (a stale reading is
     // useless after a reboot; the subscriptions refill them immediately).
@@ -330,7 +340,7 @@ Future<void> buildSubscriptionBlock(RegisterClient reg) async {
 /// after it fills that mask (`Vysi1Display::Render`).
 Future<void> buildEyeBlock(RegisterClient reg, int block, String name) async {
   await reg.deleteDynamic(block: block);
-  await reg.createDynamicBlock(BlockType.dynamic, name, index: block);
+  await reg.createDynamicBlock(name, index: block);
 
   // 0: Fill geometry (whole screen) + 1: white fill.
   await setDynEntry(reg, block, eyeBgGeo, 0, DataType.geometry, const []);

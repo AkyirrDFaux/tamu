@@ -1,6 +1,6 @@
 #pragma once
 
-// Shared memory subsystem. Holds the common block model (BlockIndex, BlockMeta), the
+// Shared memory subsystem. Holds the common block model (BlockIndex, ValueInfo), the
 // runtime block descriptors/registries used by the Dynamic and Keyed Memory services, and
 // the response helpers shared by every memory service. The per-service request handling
 // lives in Core/Services/<Service>.h (one file per service).

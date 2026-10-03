@@ -5,39 +5,19 @@
 #include <cstddef>
 #include "Core/Types/Enums.h"
 
-#define BLOCK_NAME_LEN 24
+#define BLOCK_NAME_LEN 16
 
-// BlockMeta (Data Formats.md): Flags 6bit | Type 10bit | (Padding OR Key) | Length of Value
-struct BlockMeta
-{
-    uint16_t FlagsAndType; // 6bit flags | 10bit type
-    uint8_t Key;           // Padding (or key for keyed entries)
-    uint8_t Size;          // Length of value in bytes
-};
-
-inline uint16_t BlockMetaFlags(uint16_t v)
-{
-    return v & BLOCK_META_FLAGS_MASK;
-}
-
-inline uint16_t BlockMetaType(uint16_t v)
-{
-    return v & BLOCK_META_TYPE_MASK;
-}
-
-// Wire ValueInfo (Docs/Services/Register.md "Map entry"): Type(16) | Size(8) | Flags(8). The
-// key is not part of it - the request's and reply's BlockInfo carry that. The internal BlockMeta
-// keeps its packed form (flags above the 10 type bits) because the block schemas spell
-// `DataType::X | FieldFlags::Y`, so the two convert at the wire boundary and nothing else changes.
+// The descriptor (Docs/Services/Register.md "Map entry"): Type(16) | Size(8) | Flags(8).
+// One type, internal and on the wire. The key is not part of it - it travels in the request's /
+// reply's BlockInfo, or in a table entry's Field&Key.
 struct ValueInfo
 {
     uint16_t Type;
-    uint8_t Size;
+    uint8_t Size;  // value length in bytes
     uint8_t Flags;
 };
 
-// The passive flags, in the doc's table order. These are separate bits from FieldFlags: the
-// internal packing keeps the flags above the 10 type bits, while the wire byte holds only them.
+// The passive flags, in the doc's table order.
 enum ValueFlags : uint8_t
 {
     ValueReadOnly   = 0x01,
@@ -45,35 +25,15 @@ enum ValueFlags : uint8_t
     ValueTrigger    = 0x04,
 };
 
-inline ValueInfo ToWireInfo(const BlockMeta &m)
-{
-    ValueInfo v;
-    v.Type = BlockMetaType(m.FlagsAndType);
-    v.Size = m.Size;
-    v.Flags = 0;
-    if (m.FlagsAndType & (uint16_t)FieldFlags::ReadOnly)   v.Flags |= ValueReadOnly;
-    if (m.FlagsAndType & (uint16_t)FieldFlags::Persistent) v.Flags |= ValuePersistent;
-    if (m.FlagsAndType & (uint16_t)FieldFlags::Trigger)    v.Flags |= ValueTrigger;
-    return v;
-}
-
-// Inverse of ToWireInfo, for the write path. The key is left at 0: it arrives in the request's
-// BlockInfo and the write handlers take it from there.
-inline BlockMeta FromWireInfo(const ValueInfo &v)
-{
-    BlockMeta m;
-    m.FlagsAndType = (uint16_t)(v.Type & BLOCK_META_TYPE_MASK);
-    if (v.Flags & ValueReadOnly)   m.FlagsAndType |= (uint16_t)FieldFlags::ReadOnly;
-    if (v.Flags & ValuePersistent) m.FlagsAndType |= (uint16_t)FieldFlags::Persistent;
-    if (v.Flags & ValueTrigger)    m.FlagsAndType |= (uint16_t)FieldFlags::Trigger;
-    m.Key = 0x00;
-    m.Size = v.Size;
-    return m;
-}
+inline uint16_t ValueInfoType(const ValueInfo &v) { return (uint16_t)(v.Type & 0x3FF); }
+inline uint16_t ValueInfoType(uint16_t type) { return (uint16_t)(type & 0x3FF); }
+inline bool ValueIsReadOnly(const ValueInfo &v)   { return (v.Flags & ValueReadOnly) != 0; }
+inline bool ValueIsPersistent(const ValueInfo &v) { return (v.Flags & ValuePersistent) != 0; }
+inline bool ValueIsTrigger(const ValueInfo &v)    { return (v.Flags & ValueTrigger) != 0; }
 
 struct FieldResult
 {
-    BlockMeta Descriptor = {DataType::Unknown | FieldFlags::None, 0x00, 0};
+    ValueInfo Descriptor = { (uint16_t)DataType::Unknown, 0, 0 };
     void *Data = nullptr;
 };
 
@@ -84,47 +44,58 @@ typedef bool (*FieldTrigger)(const StaticBlockDescriptor &Block, uint16_t Index,
 // 1. The Schema (All members are const)
 struct BlockSchema
 {
-    const BlockMeta *const Map;
+    const ValueInfo *const Map;
     const FieldTrigger *const Triggers; // Indexed by field number, nullptr = no trigger
     const uint16_t *const Offsets;      // Precomputed byte offsets within the block's RAM struct
     const BlockType Type;
     const uint16_t MapCount;
+    const uint16_t VolatileSize;   // bytes this block's volatile half occupies
+    const uint16_t PersistentSize; // bytes this block's persistent half occupies
 };
 
 struct StaticBlockDescriptor
 {
-    void* const Data;
+    // Pointers into the board's two flat spaces (Docs/Services/Register.md "System + Static
+    // memory blocks"): the persistent space (settings, mirrored 1:1 to .SV) and the volatile
+    // space. The schema's offsets are byte offsets from whichever pointer the field's
+    // Persistent flag selects.
+    void* const VolatileData;
+    void* const PersistentData;
     const BlockSchema* const Schema;
     const char *const Name;
+
+    const void* Base(const ValueInfo &info) const {
+        return ValueIsPersistent(info) ? PersistentData : VolatileData;
+    }
 
     // Unified entry retrieval — O(1) via precomputed offset
     FieldResult Get(uint16_t Index) const {
         FieldResult Output;
         if (Index >= Schema->MapCount) return Output;
 
-        uint8_t* current_ptr = static_cast<uint8_t*>(Data) + Schema->Offsets[Index];
-        Output.Descriptor = Schema->Map[Index];
-        Output.Data = static_cast<void*>(current_ptr);
+        const ValueInfo &info = Schema->Map[Index];
+        Output.Descriptor = info;
+        Output.Data = const_cast<uint8_t*>(static_cast<const uint8_t*>(Base(info))) + Schema->Offsets[Index];
         return Output;
     }
 
-    // Unified setter interface
-    bool Set(uint16_t Index, const void* Input, uint16_t Length, uint16_t InputTypeAndFlag) const {
+    // Unified setter interface. `desc` is the request's ValueInfo (type + flags).
+    bool Set(uint16_t Index, const void* Input, uint16_t Length, const ValueInfo &desc) const {
         FieldResult Field = Get(Index);
 
         if (!Field.Data)
             return false;
 
-        if (Field.Descriptor.FlagsAndType & FieldFlags::ReadOnly)
+        if (ValueIsReadOnly(Field.Descriptor))
             return false;
 
-        if (BlockMetaType(Field.Descriptor.FlagsAndType) != BlockMetaType(InputTypeAndFlag))
+        if (ValueInfoType(Field.Descriptor) != ValueInfoType(desc))
             return false;
 
         uint8_t pad_buf[32];
         const void *data = Input;
         uint16_t data_len = Length;
-        uint16_t field_type = BlockMetaType(Field.Descriptor.FlagsAndType);
+        uint16_t field_type = ValueInfoType(Field.Descriptor);
         // String/Filename fields are space-padded up to their declared size when a shorter
         // value is written (filenames are fixed 8-char records).
         if ((field_type == (uint16_t)DataType::String || field_type == (uint16_t)DataType::Filename) &&

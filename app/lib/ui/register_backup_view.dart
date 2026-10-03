@@ -3,7 +3,7 @@
 /// (current) / Recall button (backup)").
 ///
 /// Current view shows what is live in RAM; this shows what a Save actually persisted:
-/// static/System fields from `STATLOG` and dynamic entries from `DT_`/`DV_`. Fields with no
+/// static/System fields from `.SV` and dynamic entries from `DT_`/`DV_`. Fields with no
 /// stored entry are shown explicitly as "not backed up" rather than hidden, so a missing
 /// save is visible instead of looking like a normal empty field.
 library;
@@ -42,7 +42,7 @@ class RegisterBackupView extends StatelessWidget {
   final DeviceBackup backup;
 
   /// The device's blocks in the page's order (System included, dynamic tombstones too).
-  final List<({int type, int inst, BlockMeta meta, String name})?> blocks;
+  final List<({int type, int inst, ValueInfo meta, String name})?> blocks;
 
   /// Recalls one stored field into RAM. Null disables the per-field recall buttons.
   final Future<void> Function(int blockType, int inst, int field, int key)? onRecall;
@@ -64,9 +64,9 @@ class RegisterBackupView extends StatelessWidget {
       if (b == null) continue;
       if (b.type == 0) {
         children.add(_card(b, _systemRows()));
-      } else if (b.type == BlockType.script.value) {
+      } else if (isScriptType(b.type)) {
         children.add(_card(b, const []));
-      } else if (b.type == BlockType.dynamic.value) {
+      } else if (isDynamicType(b.type)) {
         children.add(_card(b, _dynamicRows(b.inst)));
       } else {
         children.add(_card(b, _staticRows(b)));
@@ -83,9 +83,9 @@ class RegisterBackupView extends StatelessWidget {
     );
   }
 
-  /// Static blocks persist their Persistent fields through STATLOG; the log addresses them
-  /// by registry index, which the decoder already resolved against this same block list.
-  List<_BackupRow> _staticRows(({int type, int inst, BlockMeta meta, String name}) b) {
+  /// Static blocks persist their Persistent fields in the `.SV` space; the decoder already
+  /// resolved each field's offset against this same block list.
+  List<_BackupRow> _staticRows(({int type, int inst, ValueInfo meta, String name}) b) {
     final info = blockInfoFor(BlockType.fromValue(b.type));
     final rows = <_BackupRow>[];
     for (var f = 0; f < b.meta.size; f++) {
@@ -189,7 +189,7 @@ class RegisterBackupView extends StatelessWidget {
     );
   }
 
-  Widget _card(({int type, int inst, BlockMeta meta, String name}) b, List<_BackupRow> rows) {
+  Widget _card(({int type, int inst, ValueInfo meta, String name}) b, List<_BackupRow> rows) {
     final typeLabel = b.type == 0 ? 'System' : BlockType.fromValue(b.type).label;
     return Card(
       color: kSurfaceAlt,
@@ -204,7 +204,7 @@ class RegisterBackupView extends StatelessWidget {
             style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
           ),
           subtitle: Text(
-              b.type == BlockType.script.value
+              isScriptType(b.type)
                   ? 'scripts are not backed up'
                   : (rows.isEmpty ? 'not backed up' : '${rows.where((r) => r.stored).length}'
                       ' of ${rows.length} stored'),

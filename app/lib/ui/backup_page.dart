@@ -7,6 +7,7 @@ import '../core/connection.dart';
 import '../core/device_db.dart';
 import '../core/host_files.dart';
 import '../core/notifications.dart';
+import '../core/script_file.dart';
 import '../core/types.dart';
 import 'widgets.dart';
 
@@ -409,7 +410,7 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
         return '${item.entry!.field} / ${item.entry!.key}';
       case RestoreKind.script:
         return '${item.script!.functionName.isEmpty ? 'Script' : item.script!.functionName} '
-            '(SCR_${item.script!.slot.toRadixString(16).padLeft(2, '0').toUpperCase()})';
+            '(${scriptFileName(item.script!.slot)})';
       case RestoreKind.subscription:
         return '${item.subscription!.trigger} from ${item.subscription!.provider}';
       case RestoreKind.sndb:

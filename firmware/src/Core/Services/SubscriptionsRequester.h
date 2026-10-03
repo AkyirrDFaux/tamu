@@ -58,7 +58,6 @@ static void ApplyRequesterValue(RequesterEntry *e, const uint8_t *val, uint8_t v
     if (!fr.Data) return;
     if (vlen > fr.Descriptor.Size) vlen = fr.Descriptor.Size;
 
-    uint16_t newFlags = fr.Descriptor.FlagsAndType;
     uint16_t type = BlockInfoType(e->targetReg);
     uint8_t inst = BlockInfoInstance(e->targetReg);
     uint8_t field = BlockInfoField(e->targetReg);
@@ -66,31 +65,26 @@ static void ApplyRequesterValue(RequesterEntry *e, const uint8_t *val, uint8_t v
     if (type == 0 && inst == 0) return;
 
 #ifdef USE_SCRIPTS
-    if (type == 0x3FE) {
+    if (BlockTypeRange::IsScript(type)) {
         // Script I/O target: only inputs are writable (outputs are read-only).
-        BlockMeta meta;
-        meta.FlagsAndType = newFlags;
-        meta.Key = key;
-        meta.Size = vlen;
-        ScriptSetEntry(inst, field, key, meta, val, vlen);
+        ValueInfo meta = fr.Descriptor; meta.Size = vlen;
+        ScriptSetEntry(BlockTypeRange::ScriptGlobal(type, inst), field, key, meta, val, vlen);
     } else
 #endif
     {
         int idx = FindStaticBlock(type, inst);
         if (idx >= 0) {
-            BlockMeta meta = static_block_registry[idx].Schema->Map[field];
-            meta.FlagsAndType = newFlags;
-            static_block_registry[idx].Set(field, val, vlen, meta.FlagsAndType);
+            ValueInfo meta = fr.Descriptor; meta.Size = vlen;
+            static_block_registry[idx].Set(field, val, vlen, meta);
         }
-#ifndef DISABLE_DYNAMIC_MEMORY
-        else if (type == 0x3FF) {
-            if (inst < dynamic_block_registry.block_count) {
-                DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(inst);
+#ifdef USE_DYNAMIC_BLOCKS
+        else if (BlockTypeRange::IsDynamic(type)) {
+            uint16_t gi = BlockTypeRange::DynamicGlobal(type, inst);
+            if (gi < dynamic_block_registry.block_count) {
+                DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(gi);
                 if (block) {
-                    BlockMeta meta;
-                    meta.FlagsAndType = newFlags;
-                    meta.Size = vlen;
-                    block->SetEntry(field, key, val, vlen, meta.FlagsAndType);
+                    ValueInfo meta = fr.Descriptor; meta.Size = vlen;
+                    block->SetEntry(field, key, val, vlen, meta);
                 }
             }
         }

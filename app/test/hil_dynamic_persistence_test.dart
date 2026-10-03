@@ -3,10 +3,12 @@ library;
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/connection.dart';
+import 'package:tamuapp/core/device_backup.dart';
 import 'package:tamuapp/core/register_client.dart';
 import 'package:tamuapp/core/storage_client.dart';
 import 'package:tamuapp/core/types.dart';
 import 'hil_helpers.dart';
+import 'package:tamuapp/core/protocol.dart';
 
 /// Verifies dynamic persistence through the device's per-block files (Register.md: DT_XXX / DV_XXX
 /// files): save writes a block's table + persistent space, delete+save cleans the files
@@ -37,19 +39,19 @@ void main() async {
     }
 
     // Clean slate.
-    final count = await c.getInstanceCount(BlockType.dynamic.value) ?? 0;
+    final count = (await c.enumerateDynamicIndices())?.length ?? 0;
     for (var i = 0; i < count; i++) {
       await c.deleteDynamic(block: i);
     }
     await c.saveAll();
 
     // RENDER at 0: persistent (0,0)=42, volatile (0,1)=7.
-    await c.createDynamicBlock(BlockType.dynamic, 'RENDER', index: 0);
-    final b = DynBlock(index: 0, meta: BlockMeta(flagsAndType: BlockType.dynamic.value, size: 1), name: 'RENDER');
+    await c.createDynamicBlock('RENDER', index: 0);
+    final b = DynBlock(index: 0, meta: ValueInfo(type: dynamicTypeForIndex(0), size: 1), name: 'RENDER');
     await c.writeDynamicEntry(b, 0, 0,
-        BlockMeta(flagsAndType: FieldFlags.persistent | DataType.number.value, key: 0), numberToBytes(42.0));
+        ValueInfo(type: DataType.number.value, flags: ValueFlags.persistent, key: 0), numberToBytes(42.0));
     await c.writeDynamicEntry(b, 0, 1,
-        BlockMeta(flagsAndType: DataType.number.value, key: 1), numberToBytes(7.0));
+        ValueInfo(type: DataType.number.value, key: 1), numberToBytes(7.0));
     await c.saveAll();
 
     var files = await names();
@@ -57,8 +59,14 @@ void main() async {
       fail('DT_00/DV_00 missing after save: ${files.where((f) => f.startsWith('DT_') || f.startsWith('DV_')).join(',')}');
     }
 
-    // Backup readback (CID 0x15) sees the persistent value.
-    final backup = await c.readDynamicBackupField(b, 0);
+    // The persistent value is in DV_00 (the app reads the DT_/DV_ files directly, not a CID).
+    final dt = await st.readFile('DT_00');
+    final dv = await st.readFile('DV_00');
+    final table = dt == null ? null : decodeDynamicTable(dt);
+    if (table == null || dv == null) fail('DT_00/DV_00 unreadable');
+    final backup = decodeDynamicValues(0, table, dv)
+        .where((e) => e.field == 0 && e.key == 0)
+        .firstOrNull;
     if (backup == null || (numberFromBytes(backup.value) - 42.0).abs() > 0.01) {
       fail('persistent backup readback wrong: ${backup?.value ?? []}');
     }
@@ -71,31 +79,31 @@ void main() async {
       fail('tombstoned files not cleaned on save: '
           '${files.where((f) => f.startsWith('DT_') || f.startsWith('DV_')).toList()}');
     }
-    final idx = await c.createDynamicBlock(BlockType.dynamic, 'RENDER', index: 0);
+    final idx = await c.createDynamicBlock('RENDER', index: 0);
     if (idx != 0) fail('recreate not at index 0');
     await c.deleteDynamic(block: 0);
     await c.saveAll();
   });
 
-  test('a write whose BlockMeta.Size exceeds the payload is clamped', skip: skipReason, () async {
+  test('a write whose ValueInfo.Size exceeds the payload is clamped', skip: skipReason, () async {
     final c = RegisterClient(deviceId: 1);
 
     // Clean slate.
-    final count = await c.getInstanceCount(BlockType.dynamic.value) ?? 0;
+    final count = (await c.enumerateDynamicIndices())?.length ?? 0;
     for (var i = 0; i < count; i++) {
       await c.deleteDynamic(block: i);
     }
     await c.saveAll();
-    await c.createDynamicBlock(BlockType.dynamic, 'CLAMP', index: 0);
-    final b = DynBlock(index: 0, meta: BlockMeta(flagsAndType: BlockType.dynamic.value, size: 1), name: 'CLAMP');
+    await c.createDynamicBlock('CLAMP', index: 0);
+    final b = DynBlock(index: 0, meta: ValueInfo(type: dynamicTypeForIndex(0), size: 1), name: 'CLAMP');
 
     // Declare size 16 but send only 4 value bytes: the device must not read past the frame.
     final payload = <int>[
-      ...blockInfoBytes(BlockType.dynamic.value, 0, 0, 0),
-      ...BlockMeta(flagsAndType: DataType.number.value, key: 0, size: 16).toBytes(),
+      ...blockInfoBytes(dynamicTypeForIndex(0), dynamicInstanceForIndex(0), 0, 0),
+      ...ValueInfo(type: DataType.number.value, key: 0, size: 16).toBytes(),
       ...numberToBytes(1.5),
     ];
-    final reply = await c.request(2, payload: payload);
+    final reply = await c.request(RegisterCid.write, payload: payload);
     print('[P] clamp write reply=${reply?.length}');
     if (reply == null) fail('oversized write got no reply');
 
@@ -113,18 +121,18 @@ void main() async {
       skip: skipReason is String ? skipReason : resetReason, () async {
     final port = Platform.environment['TAMU_HIL']!;
     final c = RegisterClient(deviceId: 1);
-    final count = await c.getInstanceCount(BlockType.dynamic.value) ?? 0;
+    final count = (await c.enumerateDynamicIndices())?.length ?? 0;
     for (var i = 0; i < count; i++) {
       await c.deleteDynamic(block: i);
     }
     await c.saveAll();
 
-    await c.createDynamicBlock(BlockType.dynamic, 'RENDER', index: 0);
-    final b = DynBlock(index: 0, meta: BlockMeta(flagsAndType: BlockType.dynamic.value, size: 1), name: 'RENDER');
+    await c.createDynamicBlock('RENDER', index: 0);
+    final b = DynBlock(index: 0, meta: ValueInfo(type: dynamicTypeForIndex(0), size: 1), name: 'RENDER');
     await c.writeDynamicEntry(b, 0, 0,
-        BlockMeta(flagsAndType: FieldFlags.persistent | DataType.number.value, key: 0), numberToBytes(42.0));
+        ValueInfo(type: DataType.number.value, flags: ValueFlags.persistent, key: 0), numberToBytes(42.0));
     await c.writeDynamicEntry(b, 0, 1,
-        BlockMeta(flagsAndType: DataType.number.value, key: 1), numberToBytes(7.0));
+        ValueInfo(type: DataType.number.value, key: 1), numberToBytes(7.0));
     final saved = await c.saveAll();
     await Future<void>.delayed(const Duration(milliseconds: 500));
     final st = StorageClient(deviceId: 1);
@@ -164,30 +172,25 @@ void main() async {
     final st = StorageClient(deviceId: 1);
 
     // Clean slate, then persist one block so DT_00 / DV_00 exist.
-    final count = await c.getInstanceCount(BlockType.dynamic.value) ?? 0;
+    final count = (await c.enumerateDynamicIndices())?.length ?? 0;
     for (var i = 0; i < count; i++) {
       await c.deleteDynamic(block: i);
     }
     await c.saveAll();
-    await c.createDynamicBlock(BlockType.dynamic, 'RENDER', index: 0);
-    final b = DynBlock(index: 0, meta: BlockMeta(flagsAndType: BlockType.dynamic.value, size: 1), name: 'RENDER');
+    await c.createDynamicBlock('RENDER', index: 0);
+    final b = DynBlock(index: 0, meta: ValueInfo(type: dynamicTypeForIndex(0), size: 1), name: 'RENDER');
     await c.writeDynamicEntry(b, 0, 0,
-        BlockMeta(flagsAndType: FieldFlags.persistent | DataType.number.value, key: 0), numberToBytes(42.0));
+        ValueInfo(type: DataType.number.value, flags: ValueFlags.persistent, key: 0), numberToBytes(42.0));
     await c.saveAll();
     await Future<void>.delayed(const Duration(milliseconds: 500));
 
-    // Corrupt the table with a name length far beyond the block's 24-byte name buffer while
-    // keeping the rest valid (one persistent entry of 4 bytes matches DV_00), so the only
-    // thing that can reject it is the name-length bound. Before the fix this memcpy'd past
-    // the loader's stack descriptor (and its NUL terminator) at boot.
-    const fat = 0x0800 | 0x06; // Persistent | Number
+    // Corrupt the table by declaring an entry count far past the file, so the loader's
+    // entry-count bound must reject it rather than read past its buffer at boot. The DT
+    // layout is Name (16), entry count (u16), reserved padding (u16), then the entries.
     final corrupt = <int>[
-      200, ...List<int>.filled(200, 0x41), // name length + name
-      BlockType.dynamic.value & 0xFF, (BlockType.dynamic.value >> 8) & 0xFF, // type
-      1, 0, // entry_count
-      0, 0, // fieldKey (field 0, key 0)
-      fat & 0xFF, (fat >> 8) & 0xFF, // flagsAndType
-      4, 0, // size, pad
+      ...'RENDER'.codeUnits, ...List.filled(10, 0), // 16-byte name
+      200, 0, // entry_count far past the file
+      0, 0, // reserved padding
     ];
     if (!await st.writeFile('DT_00', corrupt)) fail('could not write the corrupt DT_00');
 

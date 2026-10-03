@@ -183,9 +183,10 @@ void HandleDeviceService(const PacketFrame &frame)
             // add. Using raw TimeFromBoot() here would make it an absolute value and
             // `+=` would accumulate it on every sync.
             uint32_t t0, t1, t2;
-            memcpy(&t0, frame.payload, 4);
-            memcpy(&t1, frame.payload + 4, 4);
-            memcpy(&t2, frame.payload + 8, 4);
+            // 4-byte aligned offsets in a packed+aligned(4) frame: word loads.
+            t0 = *reinterpret_cast<const uint32_t *>(frame.payload);
+            t1 = *reinterpret_cast<const uint32_t *>(frame.payload + 4);
+            t2 = *reinterpret_cast<const uint32_t *>(frame.payload + 8);
             uint32_t t3 = Now();
 #ifdef TYPE_CORE
             int32_t offset = (int32_t)(((int64_t)(int32_t)(t1 - t0) + (int64_t)(int32_t)(t2 - t3)) / 2);

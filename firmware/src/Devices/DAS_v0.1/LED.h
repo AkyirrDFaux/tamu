@@ -10,7 +10,7 @@
 bool OnLEDStateChange(const StaticBlockDescriptor& block, uint16_t index, const void* data, uint16_t data_len)
 {
     if (data_len != sizeof(bool)) return false;
-    auto *led = static_cast<LEDStruct *>(block.Data);
+    auto *led = static_cast<LEDVolatile *>(block.VolatileData);
     led->LEDState = *static_cast<const bool *>(data);
     return true;
 }

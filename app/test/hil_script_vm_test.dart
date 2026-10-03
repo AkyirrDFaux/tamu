@@ -42,8 +42,8 @@ void main() async {
     final c = ScriptClient(deviceId: 1);
     final st = StorageClient(deviceId: 1);
     if (await c.readState(slot) != null) await c.unload(slot);
-    await st.deleteFile('SCR_${slot.toRadixString(16).toUpperCase().padLeft(2, '0')}');
-    final name = 'SCR_${slot.toRadixString(16).toUpperCase().padLeft(2, '0')}';
+    await st.deleteFile(scriptFileName(slot));
+    final name = scriptFileName(slot);
     if (!await st.writeFile(name, draft.toImage())) fail('upload $name failed');
     if (!await c.load(slot, slot)) fail('load $name failed');
     return (c, st, slot);
@@ -63,7 +63,7 @@ void main() async {
 
   Future<void> cleanup(ScriptClient c, StorageClient st, int slot) async {
     await c.unload(slot);
-    await st.deleteFile('SCR_${slot.toRadixString(16).toUpperCase().padLeft(2, '0')}');
+    await st.deleteFile(scriptFileName(slot));
   }
 
   test('arithmetic + halt', skip: skipReason, () async {
@@ -205,12 +205,13 @@ void main() async {
     // Prepare a dynamic block 0 with an entry (0,0) for the script to write into.
     final rc = RegisterClient(deviceId: 1);
     await rc.deleteDynamic(block: 0);
-    await rc.createDynamicBlock(BlockType.dynamic, 'VM', index: 0);
-    final dyn = DynBlock(index: 0, meta: BlockMeta(flagsAndType: BlockType.dynamic.value, size: 1), name: 'VM');
-    await rc.writeDynamicEntry(dyn, 0, 0, BlockMeta(flagsAndType: DataType.number.value, key: 0), numberToBytes(1.0));
+    await rc.createDynamicBlock('VM', index: 0);
+    final dyn = DynBlock(index: 0, meta: ValueInfo(type: dynamicTypeForIndex(0), size: 1), name: 'VM');
+    await rc.writeDynamicEntry(dyn, 0, 0, ValueInfo(type: DataType.number.value, key: 0), numberToBytes(1.0));
 
     final bi = uint32ToBytes(makeBlockInfo(0, 0, 0, 0)); // System Device Type
-    final biDyn = uint32ToBytes(makeBlockInfo(0x3FF, 0, 0, 0)); // Dynamic block 0, field 0, key 0
+    final biDyn = uint32ToBytes(
+        makeBlockInfo(dynamicTypeForIndex(0), dynamicInstanceForIndex(0), 0, 0)); // Dynamic block 0, field 0, key 0
 
     final draft = ScriptDraft(functionName: 'Regs')
       ..outputs.add(ScriptDraftValue(name: 'Out', type: DataType.number, size: 4))
@@ -248,13 +249,13 @@ void main() async {
     final c = ScriptClient(deviceId: 1);
     final st = StorageClient(deviceId: 1);
 
-    // A file that exists but is not loaded: SCR_06.
+    // A file that exists but is not loaded: SCR_006.
     if (await c.readState(6) != null) await c.unload(6);
-    await st.deleteFile('SCR_06');
-    if (!await st.writeFile('SCR_06', ScriptDraft(functionName: 'Target').toImage())) {
-      fail('upload SCR_06 failed');
+    await st.deleteFile('SCR_006');
+    if (!await st.writeFile('SCR_006', ScriptDraft(functionName: 'Target').toImage())) {
+      fail('upload SCR_006 failed');
     }
-    if ((await c.loadedScripts()).contains(6)) fail('SCR_06 was loaded before the test');
+    if ((await c.loadedScripts()).contains(6)) fail('SCR_006 was loaded before the test');
 
     // Host script 1: Load(6, 6) then halt.
     final loadDraft = ScriptDraft(functionName: 'Loader')
@@ -270,7 +271,7 @@ void main() async {
     expect(await waitState(cl, slotL, ScriptState.finished), ScriptState.finished);
     expect(await readError(cl, slotL), 0, reason: 'the in-script load must not fault');
     expect((await cl.loadedScripts()).contains(6), isTrue,
-        reason: 'the script loaded SCR_06 into slot 6');
+        reason: 'the script loaded SCR_006 into slot 6');
     await cleanup(cl, stl, slotL);
 
     // Host script 2: Unload(6) then halt.
@@ -287,7 +288,7 @@ void main() async {
         reason: 'the script unloaded slot 6');
     await cleanup(cu, stu, slotU);
 
-    await st.deleteFile('SCR_06');
+    await st.deleteFile('SCR_006');
   }, timeout: const Timeout(Duration(minutes: 2)));
 
   test('compose + extract vector', skip: skipReason, () async {
@@ -385,12 +386,12 @@ void main() async {
     final c = ScriptClient(deviceId: 1);
     final st = StorageClient(deviceId: 1);
     if (await c.readState(8) != null) await c.unload(8);
-    await st.deleteFile('SCR_08');
+    await st.deleteFile('SCR_008');
 
     final draft = ScriptDraft(functionName: 'Stored') // properties 0 (no load-on-boot)
       ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catService, 4)))
       ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)));
-    if (!await st.writeFile('SCR_08', draft.toImage())) fail('write failed');
+    if (!await st.writeFile('SCR_008', draft.toImage())) fail('write failed');
     if ((await c.loadedScripts()).contains(8)) fail('should not be loaded before reset');
 
     await ConnectionManager.instance.disconnect();
@@ -404,7 +405,7 @@ void main() async {
     final loaded = await c.loadedScripts();
     print('[VM] stored-only boot loaded=$loaded');
     expect(loaded.contains(8), isFalse, reason: 'stored script must not load on boot');
-    await st.deleteFile('SCR_08');
+    await st.deleteFile('SCR_008');
   }, timeout: const Timeout(Duration(minutes: 2)));
 
   test('expression: precedence, parens, power and sqrt', skip: skipReason, () async {
@@ -652,20 +653,20 @@ void main() async {
     final reg = RegisterClient(deviceId: 1);
     const block = 5;
     await reg.deleteDynamic(block: block);
-    await reg.createDynamicBlock(BlockType.dynamic, 'VMTGT', index: block);
+    await reg.createDynamicBlock('VMTGT', index: block);
     final b = DynBlock(
         index: block,
-        meta: BlockMeta(flagsAndType: BlockType.dynamic.value, size: 1),
+        meta: ValueInfo(type: dynamicTypeForIndex(block), size: 1),
         name: 'VMTGT');
     await reg.writeDynamicEntry(
-        b, 0, 0, BlockMeta(flagsAndType: DataType.number.value, key: 0), List<int>.filled(4, 0));
+        b, 0, 0, ValueInfo(type: DataType.number.value, key: 0), List<int>.filled(4, 0));
 
     final draft = ScriptDraft(functionName: 'RegWrite')
       ..constants.add(ScriptDraftValue(
           name: 'TARGET',
           type: DataType.blockInfo,
-          value: Uint8List.fromList(
-              uint32ToBytes(makeBlockInfo(BlockType.dynamic.value, block, 0, 0)))))
+          value: Uint8List.fromList(uint32ToBytes(makeBlockInfo(
+              dynamicTypeForIndex(block), dynamicInstanceForIndex(block), 0, 0)))))
       // write[TARGET] = 7; halt
       ..lines.add(ScriptLine(
           instruction: ScriptSymbol.instruction(catService, 2),

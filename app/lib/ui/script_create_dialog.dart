@@ -1,4 +1,4 @@
-/// "New script" dialog (Docs/App/Service views/Script.md): defines a fresh `SCR_XX` file's
+/// "New script" dialog (Docs/App/Service views/Script.md): defines a fresh `SCR_XXX` file's
 /// function name, properties, and its input/output/variable/constant skeleton. The file is
 /// only written to storage - it is never loaded automatically.
 library;
@@ -13,7 +13,7 @@ import 'widgets.dart';
 /// The result of the create-script dialog.
 class NewScriptResult {
   final String name;
-  final int slot;
+  final int fileId;
   final int properties;
   final List<ScriptValueInfo> inputs;
   final List<ScriptValueInfo> outputs;
@@ -22,7 +22,7 @@ class NewScriptResult {
 
   const NewScriptResult({
     required this.name,
-    required this.slot,
+    required this.fileId,
     required this.properties,
     required this.inputs,
     required this.outputs,
@@ -57,7 +57,7 @@ class _NewScriptDialog extends StatefulWidget {
 
 class _NewScriptDialogState extends State<_NewScriptDialog> {
   final _nameController = TextEditingController();
-  late int _slot = widget.freeSlots.first;
+  final _idController = TextEditingController();
   bool _loadOnBoot = false;
   bool _runOnLoad = false;
 
@@ -67,13 +67,27 @@ class _NewScriptDialogState extends State<_NewScriptDialog> {
   final _constants = <_EntryDraft>[];
 
   @override
+  void initState() {
+    super.initState();
+    // Default to the lowest free file id; the id space is SCR_XXX (4096), so a text field
+    // beats a dropdown.
+    _idController.text =
+        widget.freeSlots.first.toRadixString(16).toUpperCase().padLeft(3, '0');
+  }
+
+  @override
   void dispose() {
     _nameController.dispose();
+    _idController.dispose();
     super.dispose();
   }
 
-  String _slotName(int id) =>
-      'SCR_${id.toRadixString(16).toUpperCase().padLeft(2, '0')}';
+  /// The file id currently typed, or null if it is not a free, valid id.
+  int? get _fileId {
+    final v = int.tryParse(_idController.text.trim(), radix: 16);
+    if (v == null || v < 0 || v >= maxScriptFiles) return null;
+    return widget.freeSlots.contains(v) ? v : null;
+  }
 
   void _addEntry(List<_EntryDraft> list, int index) {
     setState(() => list.insert(index, _EntryDraft(DataType.number)));
@@ -92,6 +106,8 @@ class _NewScriptDialogState extends State<_NewScriptDialog> {
       [for (final e in drafts) ScriptValueInfo(type: e.type, size: defaultSizeForType(e.type))];
 
   void _submit() {
+    final id = _fileId;
+    if (id == null) return;
     var properties = 0;
     if (_loadOnBoot) properties |= ScriptProperties.loadOnBoot;
     if (_runOnLoad) properties |= ScriptProperties.runOnLoad;
@@ -99,7 +115,7 @@ class _NewScriptDialogState extends State<_NewScriptDialog> {
       context,
       NewScriptResult(
         name: _nameController.text.trim(),
-        slot: _slot,
+        fileId: id,
         properties: properties,
         inputs: _collect(_inputs),
         outputs: _collect(_outputs),
@@ -128,14 +144,15 @@ class _NewScriptDialogState extends State<_NewScriptDialog> {
                   helperText: 'Shown in the app and on the script block'),
             ),
             const SizedBox(height: 8),
-            DropdownButtonFormField<int>(
-              initialValue: _slot,
-              decoration: const InputDecoration(labelText: 'File slot'),
-              items: [
-                for (final id in widget.freeSlots)
-                  DropdownMenuItem(value: id, child: Text(_slotName(id))),
-              ],
-              onChanged: (v) => setState(() => _slot = v ?? _slot),
+            TextField(
+              controller: _idController,
+              decoration: InputDecoration(
+                labelText: 'File id (hex)',
+                errorText: _fileId == null
+                    ? 'Not a free id'
+                    : 'File ${scriptFileName(_fileId!)}',
+              ),
+              onChanged: (_) => setState(() {}),
             ),
             const SizedBox(height: 4),
             SwitchListTile(
@@ -167,7 +184,8 @@ class _NewScriptDialogState extends State<_NewScriptDialog> {
       ),
       actions: [
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-        FilledButton(onPressed: _submit, child: const Text('Create')),
+        FilledButton(
+            onPressed: _fileId == null ? null : _submit, child: const Text('Create')),
       ],
     );
   }

@@ -1,6 +1,6 @@
 #pragma once
 
-// SCR_XX file parsing and program compilation (ScriptProgram.h) - part of the script service.
+// SCR_XXX file parsing and program compilation (ScriptProgram.h) - part of the script service.
 //
 // Turns a script file into instruction/line tables and owns load/unload and
 // the Register-facing entry accessors.
@@ -14,9 +14,9 @@
 #include <cstdlib>
 #include <cstring>
 
-static BlockMeta *ScriptAllocMetas(uint8_t count) {
+static ValueInfo *ScriptAllocMetas(uint8_t count) {
     if (count == 0) return nullptr;
-    return (BlockMeta *)calloc(count, sizeof(BlockMeta));
+    return (ValueInfo *)calloc(count, sizeof(ValueInfo));
 }
 
 // ===== Program compilation (instructions -> lines + If/While block table) =====
@@ -108,11 +108,11 @@ static bool ScriptBuildProgram(LoadedScript *s, const uint8_t *instr, uint32_t i
 
 // Parses SCR_<fileId> into registry `slot`. Docs/Services/Script.md: the loaded-script table
 // maps a loaded id (the slot) to a file id, and the caller picks the slot - so the two need not
-// be equal. The app keeps them equal (it loads file N into slot N), which is what makes CID 0's
-// "currently loaded scripts" list addressable. Returns false (and leaves the slot inactive) when
-// the file is missing, malformed, or the slot/file id is out of range.
-static bool ScriptLoad(uint8_t fileId, uint8_t slot) {
-    if (fileId >= MAX_SCRIPTS || slot >= MAX_SCRIPTS) return false;
+// be equal. The file id space is wider than the slot space (SCR_XXX vs the 6-bit instance), so
+// the app stores many files and loads them into free slots. Returns false (and leaves the slot
+// inactive) when the file is missing, malformed, or the slot/file id is out of range.
+static bool ScriptLoad(uint16_t fileId, uint16_t slot) {
+    if (fileId >= MAX_SCRIPT_FILES || slot >= MAX_SCRIPTS) return false;
 
     char name[8];
     ScriptFileName(fileId, name);
@@ -128,6 +128,7 @@ static bool ScriptLoad(uint8_t fileId, uint8_t slot) {
     s->Release();
     ScriptMaskSet(slot, false);
     s->slot = slot;
+    s->fileId = fileId;
     s->trid = (uint16_t)(SCRIPT_TRID_BASE + slot);
 
     s->properties = ScriptRdU32(buf + 0);
@@ -214,35 +215,37 @@ static bool ScriptLoad(uint8_t fileId, uint8_t slot) {
     }
 
     // Force the key byte to 0 and enforce read-only on outputs/constants.
-    for (uint8_t i = 0; i < s->inCount; i++)    s->inMeta[i].Key = 0;
-    for (uint8_t i = 0; i < s->outCount; i++)   { s->outMeta[i].Key = 0; s->outMeta[i].FlagsAndType |= FieldFlags::ReadOnly; }
-    for (uint8_t i = 0; i < s->varCount; i++)   s->varMeta[i].Key = 0;
-    for (uint8_t i = 0; i < s->constCount; i++) { s->constMeta[i].Key = 0; s->constMeta[i].FlagsAndType |= FieldFlags::ReadOnly; }
+    for (uint8_t i = 0; i < s->outCount; i++)   s->outMeta[i].Flags |= ValueReadOnly;
+    for (uint8_t i = 0; i < s->constCount; i++) s->constMeta[i].Flags |= ValueReadOnly;
 
     s->active = true;
-    ScriptMaskSet(fileId, true);
+    ScriptMaskSet(slot, true);
     s->state = (uint8_t)ScriptState::Stopped;
     s->ic = 0;
     free(buf);
     return true;
 }
 
-static void ScriptUnload(uint8_t slot) {
+static void ScriptUnload(uint16_t slot) {
     LoadedScript *s = ScriptActive(slot);
     if (!s) return;
     s->Release();
     ScriptMaskSet(slot, false);
 }
 
-// Number of loaded scripts + their slots (dense list, stable instance = slot).
-static uint8_t ScriptListInstances(uint8_t *out, uint8_t max) {
+// The loaded scripts' file ids (dense list, in slot order), each as two little-endian bytes.
+static uint16_t ScriptListFiles(uint8_t *out, uint16_t max) {
     uint8_t n = 0;
-    for (uint8_t i = 0; i < MAX_SCRIPTS && n < max; i++)
-        if (scriptRegistry[i].active) out[n++] = i;
+    for (uint16_t i = 0; i < MAX_SCRIPTS && n < max; i++)
+        if (scriptRegistry[i].active) {
+            out[2 * n] = (uint8_t)(scriptRegistry[i].fileId & 0xFF);
+            out[2 * n + 1] = (uint8_t)(scriptRegistry[i].fileId >> 8);
+            n++;
+        }
     return n;
 }
 
-static uint8_t ScriptKeyCount(uint8_t slot, uint8_t field) {
+static uint8_t ScriptKeyCount(uint16_t slot, uint8_t field) {
     LoadedScript *s = ScriptActive(slot);
     if (!s) return 0;
     switch (field) {
@@ -254,13 +257,13 @@ static uint8_t ScriptKeyCount(uint8_t slot, uint8_t field) {
 
 // Resolves one I/O entry into a descriptor + value copy. Only inputs (field 1) and
 // outputs (field 2) are exposed through the Register.
-static bool ScriptGetEntry(uint8_t slot, uint8_t field, uint8_t key, BlockMeta &m, uint8_t *vbuf, uint8_t &vsz) {
+static bool ScriptGetEntry(uint16_t slot, uint8_t field, uint8_t key, ValueInfo &m, uint8_t *vbuf, uint8_t &vsz) {
     LoadedScript *s = ScriptActive(slot);
     if (!s) return false;
     m = {};
     vsz = 0;
 
-    const BlockMeta *meta = nullptr;
+    const ValueInfo *meta = nullptr;
     const uint8_t *data = nullptr;
     if (field == SCRIPT_FIELD_INPUT && key < s->inCount) {
         meta = &s->inMeta[key]; data = s->ioSpace + s->InputOffset(key);
@@ -278,19 +281,19 @@ static bool ScriptGetEntry(uint8_t slot, uint8_t field, uint8_t key, BlockMeta &
 }
 
 // Writes an input (field 1) entry - the only writable Register entry of a script.
-static bool ScriptSetEntry(uint8_t slot, uint8_t field, uint8_t key, const BlockMeta &m,
+static bool ScriptSetEntry(uint16_t slot, uint8_t field, uint8_t key, const ValueInfo &m,
                            const uint8_t *val, uint16_t vlen) {
     LoadedScript *s = ScriptActive(slot);
     if (!s || field != SCRIPT_FIELD_INPUT || key >= s->inCount) return false;
-    const BlockMeta *meta = &s->inMeta[key];
+    const ValueInfo *meta = &s->inMeta[key];
     uint8_t *data = s->ioSpace + s->InputOffset(key);
-    if (meta->FlagsAndType & FieldFlags::ReadOnly) return false;
-    if (BlockMetaType(meta->FlagsAndType) != BlockMetaType(m.FlagsAndType)) return false;
+    if (ValueIsReadOnly(*meta)) return false;
+    if (ValueInfoType(*meta) != ValueInfoType(m)) return false;
     if (vlen > meta->Size) return false;
     if (vlen) memcpy(data, val, vlen);
     // A short write defines the rest of the fixed-size input too: spaces for a string
     // (matching the static-block behaviour), zero otherwise, so no stale bytes survive.
-    uint16_t type = BlockMetaType(meta->FlagsAndType);
+    uint16_t type = ValueInfoType(*meta);
     uint8_t fill = (type == (uint16_t)DataType::String || type == (uint16_t)DataType::Filename)
                        ? (uint8_t)' ' : 0;
     for (uint16_t i = vlen; i < meta->Size; i++) data[i] = fill;
@@ -299,18 +302,16 @@ static bool ScriptSetEntry(uint8_t slot, uint8_t field, uint8_t key, const Block
 
 // Non-copying I/O lookup for subscription sources and cross-service register access:
 // returns a pointer straight into the I/O space (inputs then outputs).
-static bool ScriptGetIoPointer(uint8_t slot, uint8_t field, uint8_t key, BlockMeta &m, void *&data) {
+static bool ScriptGetIoPointer(uint16_t slot, uint8_t field, uint8_t key, ValueInfo &m, void *&data) {
     LoadedScript *s = ScriptActive(slot);
     if (!s) return false;
     if (field == SCRIPT_FIELD_INPUT && key < s->inCount) {
         m = s->inMeta[key];
-        m.Key = key;
         data = s->ioSpace + s->InputOffset(key);
         return true;
     }
     if (field == SCRIPT_FIELD_OUTPUT && key < s->outCount) {
         m = s->outMeta[key];
-        m.Key = key;
         data = s->ioSpace + s->OutputOffset(key);
         return true;
     }
@@ -318,7 +319,7 @@ static bool ScriptGetIoPointer(uint8_t slot, uint8_t field, uint8_t key, BlockMe
 }
 
 // Writes a variable's RAM (Script management CID 7 "Write Variable" - editor debug).
-static bool ScriptSetVariable(uint8_t slot, uint8_t varId, const uint8_t *val, uint16_t vlen) {
+static bool ScriptSetVariable(uint16_t slot, uint8_t varId, const uint8_t *val, uint16_t vlen) {
     LoadedScript *s = ScriptActive(slot);
     if (!s || varId >= s->varCount) return false;
     if (vlen > s->varMeta[varId].Size) return false;

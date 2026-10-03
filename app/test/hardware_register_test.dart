@@ -9,28 +9,26 @@ import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/types.dart';
 
 import 'hil_helpers.dart';
+import 'package:tamuapp/core/register_client.dart';
 
 /// Register service smoke checks, shared by `hil_test_suite.dart` and runnable
 /// standalone via `main` (Tamu only).
 Future<void> runTests() async {
   final link = ConnectionManager.instance;
 
-  // Enumerate block types (01.00 Enum 0: enum_level byte + BlockInfo, min 5 bytes).
-  final reply = await link.request(1, ServiceType.register, 0,
-      payload: [0, 0, 0, 0, 0]);
-  expect(reply.length, greaterThanOrEqualTo(5),
-      reason: 'enumerate should echo BlockInfo + block types');
-  final count = reply[4];
-  expect(count, greaterThan(0), reason: 'Tamu has static blocks');
-  expect(reply.length, greaterThanOrEqualTo(4 + count));
+  // Enumerate block types (CID 0, no payload): a FRAG stream of `(type << 6) | maxInstance`.
+  final reg = RegisterClient(deviceId: 1);
+  final types = await reg.enumerateBlockTypes();
+  expect(types, isNotNull, reason: 'enumerate returned no list');
+  expect(types!, isNotEmpty, reason: 'Tamu has static blocks');
 
   // Read System block DeviceType (type 0, inst 0, field 0).
-  final reply2 = await link.request(1, ServiceType.register, 1,
+  final reply2 = await link.request(1, ServiceType.register, RegisterCid.read,
       payload: blockInfoBytes(0, 0, 0, 0));
   expect(reply2.length, greaterThanOrEqualTo(8));
 
   // Read System SN (field 1, key 0xFF).
-  final reply3 = await link.request(1, ServiceType.register, 1,
+  final reply3 = await link.request(1, ServiceType.register, RegisterCid.read,
       payload: blockInfoBytes(0, 0, 1, 0xFF));
   expect(reply3.length, greaterThanOrEqualTo(8 + 14));
 }

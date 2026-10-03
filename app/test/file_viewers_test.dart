@@ -6,7 +6,7 @@ import 'package:tamuapp/ui/system_block_view.dart';
 import 'package:tamuapp/ui/theme.dart';
 import 'package:tamuapp/ui/value_editor.dart' show formatValue;
 
-/// Renders the STATLOG / SUBREQ decoders against synthetic bytes matching the
+/// Renders the `.SV` / SUBREQ decoders against synthetic bytes matching the
 /// firmware formats (StaticMemory.h / Subscriptions.h), and checks the
 /// system-block capability decoding.
 void main() {
@@ -30,36 +30,21 @@ void main() {
     expect(tester.takeException(), isNull, reason: '$name threw while rendering');
   }
 
-  testWidgets('STATLOG decodes system + static entries', (tester) async {
-    // Entry: BlockIndex[4] + BlockMeta[4] + value[4-aligned].
-    // 1. System Name (block 0xFE, field 6): "DAS v0.1"
-    final name = 'DAS v0.1'.codeUnits.toList();
-    final entry1 = <int>[
-      0xFE, 6, 0xFF, 0, // BlockIndex
-      DataType.string.value & 0xFF, (DataType.string.value >> 8) & 0xFF, 0xFF, name.length,
-      ...name,
-    ];
-    while (entry1.length % 4 != 0) {
-      entry1.add(0);
-    }
-    // 2. Static block 0, field 0: Number 10.0
-    final entry2 = <int>[
-      0, 0, 0xFF, 0, // BlockIndex
-      DataType.number.value & 0xFF, (DataType.number.value >> 8) & 0xFF, 0xFF, 4,
-      ...numberToBytes(10),
-    ];
-    // 3. End marker
-    final data = [...entry1, ...entry2, 0xFF];
-    final blocks = <({int type, int inst, BlockMeta meta, String name})?>[
+  testWidgets('.SV decodes the System segment + static fields', (tester) async {
+    // System segment (20 B) + one ResistiveMeasure (0x08, 12 B: SamplingRate@20).
+    final data = List<int>.filled(20 + 12, 0);
+    data.setRange(0, 8, 'DAS v0.1'.codeUnits); // System Name @ 0
+    data.setRange(20, 24, numberToBytes(10)); // 0x08 SamplingRate @ 20
+    final blocks = <({int type, int inst, ValueInfo meta, String name})?>[
       (type: BlockType.resistiveMeasure.value, inst: 0,
-          meta: BlockMeta(flagsAndType: DataType.number.value, size: 4), name: 'Meas1'),
+          meta: ValueInfo(type: DataType.number.value, size: 4), name: 'Meas1'),
     ];
     await tester.pumpWidget(MaterialApp(
       theme: buildTheme(),
-      home: Scaffold(body: MemoryBackupView(fileName: 'STATLOG', data: data, blocks: blocks)),
+      home: Scaffold(body: MemoryBackupView(fileName: '.SV', data: data, blocks: blocks)),
     ));
     await tester.pump();
-    expect(tester.takeException(), isNull, reason: 'STATLOG threw');
+    expect(tester.takeException(), isNull, reason: '.SV threw');
   });
 
   testWidgets('SUBREQ decodes requester entries (26 B incl. deadzone)', (tester) async {
@@ -85,7 +70,7 @@ void main() {
     // Older renames stored NUL-padded names (SUBREQ\0\0); the classification
     // must normalize both space and NUL padding.
     expect(storageFileType('SUBREQ\u0000\u0000'), StorageFileType.backup);
-    expect(storageFileType('STATLOG '), StorageFileType.backup);
+    expect(storageFileType('.SV     '), StorageFileType.backup);
     expect(storageFileType('SNREG   '), StorageFileType.snreg);
     expect(storageFileType('LAY_1   '), StorageFileType.layout);
     // Per-block dynamic persistence (Docs/Services/Register.md).
@@ -155,14 +140,14 @@ void main() {
   });
 
   testWidgets('DT_ dynamic block table renders', (tester) async {
-    // u8 name_len, name, u16 type, u16 entry_count, then (fieldKey, flagsAndType,
-    // size, pad) per entry.
+    // Name (16 chars, NUL-padded), u16 entry_count, u16 reserved, then
+    // (fieldKey, flagsAndType, size, pad) per entry.
     final data = <int>[
-      3, 66, 111, 120, // "Box"
-      ...u16(BlockType.dynamic.value),
+      ...'Box'.codeUnits, ...List.filled(13, 0), // 16-byte name
       ...u16(2),
+      0, 0, // reserved padding
       ...u16((0 << 8) | 0),
-      ...u16(DataType.number.value | FieldFlags.persistent),
+      ...u16(DataType.number.value | ValueFlags.persistent),
       4, 0,
       ...u16((1 << 8) | 0),
       ...u16(DataType.string.value),
@@ -177,11 +162,11 @@ void main() {
   });
 
   testWidgets('FileViewPage renders formatted and raw hex', (tester) async {
-    // STATLOG via the full page (formatted view).
+    // `.SV` via the full page (formatted view).
     await tester.pumpWidget(MaterialApp(
       theme: buildTheme(),
       home: Scaffold(body: FileViewPage(
-          deviceId: 1, name: 'STATLOG', size: 16, data: [0xFF, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])),
+          deviceId: 1, name: '.SV', size: 16, data: [0xFF, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])),
     ));
     await tester.pump();
     expect(tester.takeException(), isNull, reason: 'FileViewPage formatted threw');

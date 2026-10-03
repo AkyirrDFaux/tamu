@@ -14,11 +14,11 @@ import 'current_setup.dart';
 void main() {
   test('the five setup scripts build and validate', () {
     final drafts = <String, ScriptDraft>{
-      'SCR_00': scriptTemperature(),
-      'SCR_01': scriptEyeMovement(),
-      'SCR_02': scriptLidTimer(),
-      'SCR_03': scriptBrightness(),
-      'SCR_04': scriptEmoteSelector(),
+      'SCR_000': scriptTemperature(),
+      'SCR_001': scriptEyeMovement(),
+      'SCR_002': scriptLidTimer(),
+      'SCR_003': scriptBrightness(),
+      'SCR_004': scriptEmoteSelector(),
     };
     for (final entry in drafts.entries) {
       final d = entry.value;

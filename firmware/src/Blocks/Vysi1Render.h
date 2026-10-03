@@ -57,15 +57,15 @@ inline void Vysi1Display::RenderGeometryField(DynamicBlockDescriptor *block, uin
     // entry never silently leaves an invisible shape.
     {
         KeyResult kr = block->GetKey(field, (uint8_t)GeometryKey::Size);
-        if (BlockMetaType(kr.meta.FlagsAndType) == (uint16_t)DataType::Vector && kr.data_ptr)
+        if (ValueInfoType(kr.meta.Type) == (uint16_t)DataType::Vector && kr.data_ptr)
         {
-            Vector<2> size = LoadUnaligned<Vector<2>>(kr.data_ptr);
+            Vector<2> size = *reinterpret_cast<const Vector<2> *>(kr.data_ptr);
             p.SizeX = size[0];
             p.SizeY = size[1];
         }
-        else if (BlockMetaType(kr.meta.FlagsAndType) == (uint16_t)DataType::Number && kr.data_ptr)
+        else if (ValueInfoType(kr.meta.Type) == (uint16_t)DataType::Number && kr.data_ptr)
         {
-            Number s = LoadUnaligned<Number>(kr.data_ptr);
+            Number s = *reinterpret_cast<const Number *>(kr.data_ptr);
             p.SizeX = s;
             p.SizeY = s;
         }
@@ -226,7 +226,7 @@ inline void Vysi1Display::RenderTextureField(DynamicBlockDescriptor *block, uint
 // followed by centering the origin at the layout's centre.
 inline Matrix<3, 3> Vysi1Display::BaseTransform()
 {
-    return PromoteAffine(Data.Offset) * Matrix<3, 3>::CreateTransform2D(N(0), {-(N(Lw) / N(2) - N(0.5)), -(N(Lh) / N(2) - N(0.5))}, {N(1), N(1)});
+    return PromoteAffine(Per.Offset) * Matrix<3, 3>::CreateTransform2D(N(0), {-(N(Lw) / N(2) - N(0.5)), -(N(Lh) / N(2) - N(0.5))}, {N(1), N(1)});
 }
 
 // Reads an integer (Index/Uint32) dictionary entry, else `def`.
@@ -235,7 +235,7 @@ inline int32_t Vysi1Display::ReadKeyInt(DynamicBlockDescriptor *block, uint16_t 
     KeyResult res = block->GetKey(field, key);
     if (res.data_ptr && res.data_len >= 4)
     {
-        uint16_t t = BlockMetaType(res.meta.FlagsAndType);
+        uint16_t t = ValueInfoType(res.meta.Type);
         if (t == (uint16_t)DataType::Index || t == (uint16_t)DataType::Uint32)
         {
             int32_t v;
@@ -315,14 +315,14 @@ inline void Vysi1Display::Render()
     // frame or pixels not covered by the current render would keep stale colours.
     memset((void *)Buffer, 0, LedNum * sizeof(ColourClass));
 
-    if (Data.RenderBlock < 0 || Data.RenderBlock >= dynamic_block_registry.block_count)
+    if (Per.RenderBlock < 0 || Per.RenderBlock >= dynamic_block_registry.block_count)
         return;
-    DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock((uint16_t)Data.RenderBlock);
+    DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock((uint16_t)Per.RenderBlock);
     if (!block)
         return;
 
     // ---- geometry cache (mask): recompute only when the scene actually changed ----
-    const Matrix<2, 3> &off = Data.Offset;
+    const Matrix<2, 3> &off = Per.Offset;
     bool offsetChanged = false;
     for (int i = 0; i < 6; i++)
         if (off.buffer.data[i].Value != CacheOffset[i]) { offsetChanged = true; break; }
@@ -345,7 +345,7 @@ inline void Vysi1Display::Render()
         for (uint16_t fi = 0; fi < nFields; fi++)
         {
             uint8_t f = Fields[fi];
-            if (BlockMetaType(block->GetKey(f, 0).meta.FlagsAndType) == (uint16_t)DataType::Geometry)
+            if (ValueInfoType(block->GetKey(f, 0).meta.Type) == (uint16_t)DataType::Geometry)
                 RenderGeometryField(block, f, fi);
         }
     }
@@ -358,7 +358,7 @@ inline void Vysi1Display::Render()
     for (uint16_t fi = 0; fi < nFields2; fi++)
     {
         uint8_t f = Fields2[fi];
-        uint16_t t = BlockMetaType(block->GetKey(f, 0).meta.FlagsAndType);
+        uint16_t t = ValueInfoType(block->GetKey(f, 0).meta.Type);
         if (t == (uint16_t)DataType::Geometry)
             ApplyGeometryField(block, f, fi);
         else if (t == (uint16_t)DataType::Texture)
@@ -371,7 +371,7 @@ inline void Vysi1Display::Render()
 
     // The render buffer already holds linear LED duty (colours are linearised as they are
     // filled, see Linearise), so only scale by Brightness here.
-    Number brightness = Data.Brightness;
+    Number brightness = Vol.Brightness;
     if (brightness < N(0)) brightness = N(0);
     // The layout file's brightness limit (Docs/Modules and blocks/LED display.md) is a 0-255
     // byte read as a percentage: it caps the configured brightness, which is the board's

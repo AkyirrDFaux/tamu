@@ -9,7 +9,7 @@
 //   RegisterEnumerate.h CID 0
 //   RegisterRead.h      CID 1
 //   RegisterWrite.h     CID 2
-//   RegisterPersist.h   CID 3/4 and 0x10-0x15
+//   RegisterPersist.h   CID 3/4 and 0x10-0x13
 //   RegisterDispatch.h  the shared accessors and the dispatcher
 
 #include "Core/Services/RegisterDefs.h"

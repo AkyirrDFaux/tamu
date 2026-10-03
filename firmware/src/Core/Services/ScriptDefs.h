@@ -19,12 +19,16 @@
 
 // Defined in Core/Services/Register.h (shared with the Subscriptions service); declared
 // here so the VM resolves registers through the exact same access path.
-bool RegisterGetByBlockInfo(uint32_t bi, BlockMeta &m, uint8_t *vbuf, uint8_t &vsz);
-bool RegisterSetByBlockInfo(uint32_t bi, const BlockMeta &m, const uint8_t *val, uint16_t vlen);
+bool RegisterGetByBlockInfo(uint32_t bi, ValueInfo &m, uint8_t *vbuf, uint8_t &vsz);
+bool RegisterSetByBlockInfo(uint32_t bi, const ValueInfo &m, const uint8_t *val, uint16_t vlen);
 
-// Number of script file slots (SCR_00..SCR_3F); the slot index doubles as the Script File
-// ID and as the Register instance number of block type 0x3FE.
-#define MAX_SCRIPTS 64
+// Number of loaded script slots. The Scripts range is four banked block types (0x3F4-0x3F7) of
+// 64 instances each, addressed by one global index 0..255 (Docs/Services/Register.md "Block
+// types"). The slot index doubles as that global Register index. The *stored file* space is
+// wider - see MAX_SCRIPT_FILES.
+#define MAX_SCRIPTS 256
+// Stored script files are named SCR_XXX (three hex digits), so a file id is 0..0xFFF.
+#define MAX_SCRIPT_FILES 4096
 #define SCRIPT_HEADER_SIZE 24
 #define SCRIPT_MAX_LINES 1024
 #define SCRIPT_INSTR_BUDGET 512
@@ -158,7 +162,7 @@ enum class ScriptState : uint8_t {
 #define SCRIPT_PROP_LOAD_ON_BOOT (1u << 0)
 #define SCRIPT_PROP_RUN_ON_LOAD  (1u << 1)
 
-// Register field categories for block type 0x3FE (Scripts). Only the I/O categories are
+// Register field categories for the Scripts range (0x3F4-0x3F7). Only the I/O categories are
 // exposed through the Register (docs: "IO is in register"); Variables/Constants are
 // internal (Script management) and Header is metadata.
 #define SCRIPT_FIELD_INPUT    1
@@ -168,13 +172,14 @@ enum class ScriptState : uint8_t {
 // 4-byte stride alignment lives in Core/Functions/StrideOffsets.h (shared with the offset
 // tables below).
 
-// SCR_XX (8-char space-padded name, the slot index in hex).
-static inline void ScriptFileName(uint8_t id, char out[8]) {
+// SCR_XXX (8-char space-padded name, the file id in three hex digits).
+static inline void ScriptFileName(uint16_t id, char out[8]) {
     static const char hex[] = "0123456789ABCDEF";
     out[0] = 'S'; out[1] = 'C'; out[2] = 'R'; out[3] = '_';
-    out[4] = hex[(id >> 4) & 0x0F];
-    out[5] = hex[id & 0x0F];
-    out[6] = ' '; out[7] = ' ';
+    out[4] = hex[(id >> 8) & 0x0F];
+    out[5] = hex[(id >> 4) & 0x0F];
+    out[6] = hex[id & 0x0F];
+    out[7] = ' ';
 }
 
 static inline uint32_t ScriptRdU32(const uint8_t *p) {
@@ -195,12 +200,13 @@ struct ScriptLineInfo {
 //   constSpace : constants (read-only)
 struct LoadedScript {
     bool active = false;
-    uint8_t slot = 0;
+    uint16_t slot = 0;
+    uint16_t fileId = 0; // the stored SCR_XXX file this slot was loaded from
     uint8_t state = (uint8_t)ScriptState::Stopped;
     uint32_t properties = 0;
 
     uint8_t inCount = 0, outCount = 0, varCount = 0, constCount = 0;
-    BlockMeta *inMeta = nullptr, *outMeta = nullptr, *varMeta = nullptr, *constMeta = nullptr;
+    ValueInfo *inMeta = nullptr, *outMeta = nullptr, *varMeta = nullptr, *constMeta = nullptr;
 
     uint8_t *ioSpace = nullptr;
     uint8_t *varSpace = nullptr;
@@ -296,16 +302,18 @@ struct LoadedScript {
 };
 
 static LoadedScript scriptRegistry[MAX_SCRIPTS];
-// Bit `i` is set for every slot that may hold a loaded script (a superset of the active
-// slots, so hot loops can skip the empty registry entries).
-static uint64_t scriptActiveMask = 0;
+// One bit per slot, set for every slot that may hold a loaded script (a superset of the active
+// slots, so hot loops can skip the empty registry entries). MAX_SCRIPTS is a multiple of 64.
+static constexpr uint16_t kScriptMaskWords = MAX_SCRIPTS / 64;
+static uint64_t scriptActiveMask[kScriptMaskWords];
 
-static inline void ScriptMaskSet(uint8_t slot, bool on) {
-    if (on) scriptActiveMask |= (uint64_t)1 << slot;
-    else    scriptActiveMask &= ~((uint64_t)1 << slot);
+static inline void ScriptMaskSet(uint16_t slot, bool on) {
+    uint16_t w = (uint16_t)(slot >> 6), b = (uint16_t)(slot & 63);
+    if (on) scriptActiveMask[w] |= (uint64_t)1 << b;
+    else    scriptActiveMask[w] &= ~((uint64_t)1 << b);
 }
 
-static LoadedScript *ScriptActive(uint8_t slot) {
+static LoadedScript *ScriptActive(uint16_t slot) {
     if (slot >= MAX_SCRIPTS) return nullptr;
     return scriptRegistry[slot].active ? &scriptRegistry[slot] : nullptr;
 }

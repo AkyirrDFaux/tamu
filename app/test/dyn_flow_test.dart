@@ -25,13 +25,13 @@ Future<void> runTests() async {
   }
   await dyn.saveAll();
 
-  final _ = await dyn.createDynamicBlock(BlockType.dynamic, 'DPROBE');
+  final _ = await dyn.createDynamicBlock('DPROBE');
   var b = (await dyn.readDynamicBlocks())!.first;
   // ignore: avoid_print
   print('[F] fresh fieldCount=${b.fieldCount}');
 
   final e1 = await dyn.appendDynamicEntry(
-      b, BlockMeta(flagsAndType: DataType.number.value, size: 4), numberToBytes(1.0));
+      b, ValueInfo(type: DataType.number.value, size: 4), numberToBytes(1.0));
   // ignore: avoid_print
   print('[F] append entry -> ${e1 == null ? "FAIL" : "ok"}');
   b = (await dyn.readDynamicBlocks())!.first;
@@ -58,7 +58,7 @@ Future<void> runTests() async {
       '${f0b == null ? "NULL" : dataTypeLabel(f0b.meta.dataType)}');
 
   final e2 = await dyn.appendDynamicEntry(
-      b, BlockMeta(flagsAndType: DataType.number.value, size: 4), numberToBytes(3.0),
+      b, ValueInfo(type: DataType.number.value, size: 4), numberToBytes(3.0),
       index: 0);
   // ignore: avoid_print
   print('[F] fill None slot 0 -> ${e2 == null ? "FAIL" : "ok"}');
@@ -84,7 +84,7 @@ void main() async {
   test('dynamic page flow', () async {
     final link = ConnectionManager.instance;
     final payload = [0, 0, 0, 1]; // field 0, key 1 (capabilities)
-    final capReply = await link.request(1, ServiceType.register, 1, payload: payload);
+    final capReply = await link.request(1, ServiceType.register, RegisterCid.read, payload: payload);
     if (capReply.length >= 12) {
       final caps = capReply[8] | (capReply[9] << 8) | (capReply[10] << 16) | (capReply[11] << 24);
       if ((caps & Capability.dynamicMemory) == 0) {
@@ -102,13 +102,13 @@ void main() async {
     }
     await dyn.saveAll();
 
-final _ = await dyn.createDynamicBlock(BlockType.dynamic, 'DPROBE');
+final _ = await dyn.createDynamicBlock('DPROBE');
     var b = (await dyn.readDynamicBlocks())!.first;
     // ignore: avoid_print
     print('[F] fresh fieldCount=${b.fieldCount}');
 
     final e1 = await dyn.appendDynamicEntry(
-        b, BlockMeta(flagsAndType: DataType.number.value, size: 4), numberToBytes(1.0));
+        b, ValueInfo(type: DataType.number.value, size: 4), numberToBytes(1.0));
     // ignore: avoid_print
     print('[F] append entry -> ${e1 == null ? "FAIL" : "ok"}');
     b = (await dyn.readDynamicBlocks())!.first;
@@ -135,7 +135,7 @@ final _ = await dyn.createDynamicBlock(BlockType.dynamic, 'DPROBE');
         '${f0b == null ? "NULL" : dataTypeLabel(f0b.meta.dataType)}');
 
     final e2 = await dyn.appendDynamicEntry(
-        b, BlockMeta(flagsAndType: DataType.number.value, size: 4), numberToBytes(3.0),
+        b, ValueInfo(type: DataType.number.value, size: 4), numberToBytes(3.0),
         index: 0);
     // ignore: avoid_print
     print('[F] fill None slot 0 -> ${e2 == null ? "FAIL" : "ok"}');

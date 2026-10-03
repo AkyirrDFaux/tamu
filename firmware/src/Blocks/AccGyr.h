@@ -41,30 +41,33 @@ enum AccGyrRangeAng : uint8_t {
     Ang125 = 0, Ang250, Ang500, Ang1000, Ang2000,
 };
 
-struct AccGyrStruct {
+// The block's two halves (Docs/Services/Register.md): persistent settings + volatile values.
+struct AccGyrPersistent {
     uint8_t SamplingRate = Odr104; // offset 0
     uint8_t RangeAcc = Acc16g;     // offset 1 (boot default matches the factory config)
     uint8_t RangeAng = Ang2000;    // offset 2
     Number AccFilter = N(1);       // offset 4, EMA coefficient 0-1 (1 = no filtering)
     Number AngFilter = N(1);       // offset 8
-    Vector<3> Acceleration;        // offset 12
-    Vector<3> AngularVelocity;     // offset 24
+};
+struct AccGyrVolatile {
+    Vector<3> Acceleration;        // offset 0
+    Vector<3> AngularVelocity;     // offset 12
 };
 
 // Lock the layout: the schema offsets must match the natural C struct alignment.
-static_assert(offsetof(AccGyrStruct, SamplingRate) == 0, "AccGyr layout");
-static_assert(offsetof(AccGyrStruct, AccFilter) == 4, "AccGyr layout");
-static_assert(offsetof(AccGyrStruct, Acceleration) == 12, "AccGyr layout");
-static_assert(offsetof(AccGyrStruct, AngularVelocity) == 24, "AccGyr layout");
+static_assert(offsetof(AccGyrPersistent, SamplingRate) == 0, "AccGyr layout");
+static_assert(offsetof(AccGyrPersistent, AccFilter) == 4, "AccGyr layout");
+static_assert(offsetof(AccGyrVolatile, Acceleration) == 0, "AccGyr layout");
+static_assert(offsetof(AccGyrVolatile, AngularVelocity) == 12, "AccGyr layout");
 
-const BlockMeta AccGyr_Map[] = {
-    {DataType::Enum | FieldFlags::Trigger | FieldFlags::Persistent, 0x00, sizeof(uint8_t)},
-    {DataType::Enum | FieldFlags::Trigger | FieldFlags::Persistent, 0x00, sizeof(uint8_t)},
-    {DataType::Enum | FieldFlags::Trigger | FieldFlags::Persistent, 0x00, sizeof(uint8_t)},
-    {DataType::Number | FieldFlags::Persistent, 0x00, sizeof(Number)},
-    {DataType::Number | FieldFlags::Persistent, 0x00, sizeof(Number)},
-    {DataType::Vector | FieldFlags::ReadOnly, 0x00, sizeof(Vector<3>)},
-    {DataType::Vector | FieldFlags::ReadOnly, 0x00, sizeof(Vector<3>)},
+const ValueInfo AccGyr_Map[] = {
+    {(uint16_t)DataType::Enum, sizeof(uint8_t), ValueTrigger | ValuePersistent},
+    {(uint16_t)DataType::Enum, sizeof(uint8_t), ValueTrigger | ValuePersistent},
+    {(uint16_t)DataType::Enum, sizeof(uint8_t), ValueTrigger | ValuePersistent},
+    {(uint16_t)DataType::Number, sizeof(Number), ValuePersistent},
+    {(uint16_t)DataType::Number, sizeof(Number), ValuePersistent},
+    {(uint16_t)DataType::Vector, sizeof(Vector<3>), ValueReadOnly},
+    {(uint16_t)DataType::Vector, sizeof(Vector<3>), ValueReadOnly},
 };
 
 bool OnAccGyrFrequencyChange(const StaticBlockDescriptor& block, uint16_t index, const void* data, uint16_t data_len);
@@ -81,12 +84,14 @@ const FieldTrigger AccGyr_Triggers[] = {
     nullptr,
 };
 
-const uint16_t AccGyr_Offsets[] = {0, 1, 2, 4, 8, 12, 24};
+const uint16_t AccGyr_Offsets[] = {0, 1, 2, 4, 8, 0, 12};
 
 const BlockSchema AccGyr_Schema = {
     .Map = AccGyr_Map,
     .Triggers = AccGyr_Triggers,
     .Offsets = AccGyr_Offsets,
     .Type = BlockType::AccGyr,
-    .MapCount = sizeof(AccGyr_Map) / sizeof(BlockMeta),
+    .MapCount = sizeof(AccGyr_Map) / sizeof(ValueInfo),
+    .VolatileSize = 24,
+    .PersistentSize = 12,
 };

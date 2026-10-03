@@ -1,7 +1,7 @@
 /// Semantic script representation for backups (Docs/App/Backup.md: the storage
 /// format describes "all the functionalities", including Scripts, in words).
 ///
-/// A `SCR_XX` file is decoded into a [BackupScript] (function name, properties,
+/// A `SCR_XXX` file is decoded into a [BackupScript] (function name, properties,
 /// inputs/outputs/variables/constants with type words and semantic values, and the
 /// instruction lines) so a firmware change to the binary packing does not invalidate
 /// a backup. It re-serialises through the normal [ScriptDraft] codec.
@@ -190,7 +190,7 @@ int _category(String? name) {
 const List<String> _propertyWords = ['Load on boot', 'Run on load'];
 
 class BackupScript {
-  final int slot; // SCR slot (0..63), or -1 when unknown
+  final int slot; // SCR file id (0..4095), or -1 when unknown
   final String functionName;
   final List<String> properties;
   final List<BackupScriptValue> inputs;
@@ -238,7 +238,7 @@ class BackupScript {
       .map((e) => BackupScriptValue.fromJson(e as Map<String, dynamic>))
       .toList();
 
-  /// Decodes a raw `SCR_XX` image into the semantic form.
+  /// Decodes a raw `SCR_XXX` image into the semantic form.
   static BackupScript fromImage(int slot, List<int> image) {
     final file = ScriptFileData.parse(image);
     final draft = ScriptDraft.fromFile(file);
@@ -282,7 +282,7 @@ class BackupScript {
     );
   }
 
-  /// Rebuilds the editable draft (and thus the `SCR_XX` image via `toImage`).
+  /// Rebuilds the editable draft (and thus the `SCR_XXX` image via `toImage`).
   ScriptDraft toDraft() {
     ScriptDraftValue value(BackupScriptValue v) {
       final type = dataTypeFromWord(v.type) ?? DataType.number;

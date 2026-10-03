@@ -37,14 +37,14 @@ Future<void> runTests() async {
   }
   await reg.saveAll();
 
-  final created = await reg.createDynamicBlock(BlockType.dynamic, 'RENDER', index: 0);
+  final created = await reg.createDynamicBlock('RENDER', index: 0);
   if (created == null) fail('createDynamicBlock failed');
   final b = (await reg.readDynamicBlockMeta(0))!;
 
   // Entry write helpers.
   Future<bool> setEntry(int field, int key, int type, List<int> value) async =>
       await reg.writeDynamicEntry(
-              b, field, key, BlockMeta(flagsAndType: type, key: key), value) !=
+              b, field, key, ValueInfo(type: type, key: key), value) !=
           null;
 
   // Geometry dictionary at field 0: marker + values.
@@ -68,16 +68,16 @@ Future<void> runTests() async {
 
   // Configure Display2 (GPIO0): render block 0, brightness 20, LAY_1 layout.
   final writeBlock = await reg.writeBlockField(0x06, 1, 2, 0,
-      BlockMeta(flagsAndType: DataType.integer.value, size: 4), intToBytes(0, 4));
+      ValueInfo(type: DataType.integer.value, size: 4), intToBytes(0, 4));
   if (writeBlock == null) fail('set Display2.RenderBlock failed');
   final park1 = await reg.writeBlockField(0x06, 0, 2, 0,
-      BlockMeta(flagsAndType: DataType.integer.value, size: 4), intToBytes(-1, 4));
+      ValueInfo(type: DataType.integer.value, size: 4), intToBytes(-1, 4));
   if (park1 == null) fail('park Display1 failed');
   final brightness = await reg.writeBlockField(0x06, 1, 0, 0,
-      BlockMeta(flagsAndType: DataType.number.value, size: 4), numberToBytes(20.0));
+      ValueInfo(type: DataType.number.value, size: 4), numberToBytes(20.0));
   if (brightness == null) fail('set Display2.Brightness failed');
   final layout = await reg.writeBlockField(0x06, 1, 3, 0,
-      BlockMeta(flagsAndType: DataType.filename.value, size: 5), 'LAY_1'.codeUnits);
+      ValueInfo(type: DataType.filename.value, size: 5), 'LAY_1'.codeUnits);
   if (layout == null) fail('set Display2.LayoutFile failed');
   // ignore: avoid_print
   print('[D] Display2.RenderBlock=0 Brightness=20 LayoutFile=LAY_1');
@@ -261,7 +261,7 @@ void main() async {
   test('LED display: flat dynamic model', () async {
     final link = ConnectionManager.instance;
     final payload = [0, 0, 0, 1]; // field 0, key 1 (capabilities)
-    final capReply = await link.request(1, ServiceType.register, 1, payload: payload);
+    final capReply = await link.request(1, ServiceType.register, RegisterCid.read, payload: payload);
     if (capReply.length >= 12) {
       final caps = capReply[8] | (capReply[9] << 8) | (capReply[10] << 16) | (capReply[11] << 24);
       if ((caps & Capability.dynamicMemory) == 0) {

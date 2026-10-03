@@ -30,7 +30,7 @@ void main() {
     final link = ConnectionManager.instance;
     Future<List<int>?> regRead(int field, int key) async {
       final payload = blockInfoBytes(0, 0, field, key);
-      return await link.request(1, ServiceType.register, 1, payload: payload);
+      return await link.request(1, ServiceType.register, RegisterCid.read, payload: payload);
     }
     final type = await regRead(0, 0);
     expect(type, isNotNull, reason: 'Register System DeviceType');
@@ -75,7 +75,7 @@ void main() {
         reason: 'LEDButton field 0 (Button raw state) must be read-only');
     final ledState = await reg.readBlockField(BlockType.ledButton.value, 0, 3, 0xFF);
     expect(ledState, isNotNull);
-    expect(ledState!.meta.flags & FieldFlags.trigger, isNot(0),
+    expect(ledState!.meta.flags & ValueFlags.trigger, isNot(0),
         reason: 'LEDButton field 3 (LEDState) must be a trigger field');
   }, timeout: const Timeout(Duration(seconds: 60)));
 
@@ -152,8 +152,8 @@ void main() {
     final current = before!.value.first;
     final next = current == 0x30 ? 0x31 : 0x30;
     Future<List<int>?> write(int v) => reg.writeBlockField(0, 0, 7, 0,
-        BlockMeta(
-            flagsAndType: DataType.id.value | FieldFlags.persistent, size: 1),
+        ValueInfo(
+            type: DataType.id.value, flags: ValueFlags.persistent, size: 1),
         [v]);
 
     // Out-of-range values are rejected (0 = unassigned, 0x3F = all nets).
@@ -228,8 +228,8 @@ void main() {
     // unchanged so the check does not disturb the device's configuration.
     final before = await reg.readBlockField(BlockType.resistiveMeasure.value, 0, 2, 0);
     expect(before, isNotNull, reason: 'Meas1 Filter Coefficient readable');
-    final meta = BlockMeta(
-        flagsAndType: before!.meta.flagsAndType, key: 0, size: before.value.length);
+    final meta = ValueInfo(
+        type: before!.meta.type, flags: before.meta.flags, key: 0, size: before.value.length);
     expect(
         await reg.writeBlockField(
             BlockType.resistiveMeasure.value, 0, 2, 0, meta, before.value),
@@ -237,12 +237,12 @@ void main() {
         reason: 'write accepted');
     expect(await reg.saveAll(), isTrue,
         reason: 'the DAS must be able to save a static block');
-    // The STATLOG entry list must no longer be an erased (all-0xFF) region.
+    // `.SV` is the raw static persistent space (not an erased 0xFF region).
     final storage = StorageClient(deviceId: das.id);
-    final data = await storage.readFile('STATLOG', size: 128);
-    expect(data, isNotNull, reason: 'STATLOG readable');
-    final used = data!.takeWhile((b) => b != 0xFF).length;
-    expect(used, greaterThan(0), reason: 'a saved entry is present in STATLOG');
+    final data = await storage.readFile('.SV', size: 128);
+    expect(data, isNotNull, reason: '.SV readable');
+    expect(data!.any((b) => b != 0xFF), isTrue, reason: '.SV holds the saved space');
+    expect(data.length, greaterThanOrEqualTo(20), reason: 'at least the System segment');
   }, timeout: const Timeout(Duration(seconds: 60)));
 
   // HIL: System Name write clamps to the documented 16 bytes (and can never write the
@@ -260,8 +260,8 @@ void main() {
         0,
         6,
         0,
-        BlockMeta(
-            flagsAndType: DataType.string.value | FieldFlags.persistent,
+        ValueInfo(
+            type: DataType.string.value, flags: ValueFlags.persistent,
             size: long.length),
         long.codeUnits);
     expect(wrote, isNotNull);
@@ -281,8 +281,8 @@ void main() {
         0,
         6,
         0,
-        BlockMeta(
-            flagsAndType: DataType.string.value | FieldFlags.persistent,
+        ValueInfo(
+            type: DataType.string.value, flags: ValueFlags.persistent,
             size: original.length),
         original.codeUnits);
     expect((await reg.readField(6, 0))!.value, isNotEmpty);

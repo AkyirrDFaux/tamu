@@ -51,24 +51,40 @@ const SerialNumber &GetSerialNumber()
     return sn;
 }
 
-ResistiveMeasStruct Meas1(MeasNTC100K); // channel 1: 100k NTC thermistor
-ResistiveMeasStruct Meas2(MeasLDR10K);  // channel 2: 10k LDR
-ButtonStruct DasButton;
-LEDStruct DasLed;
+// The static memory: two flat spaces (Docs/Services/Register.md "System + Static memory
+// blocks"). Persistent settings (mirrored 1:1 to .SV) and volatile values, stacked in
+// BlockInfo order (lowest BlockType first, instances contiguous per type).
+struct StaticPersistent {
+    SystemPersistent system;          // BlockType 0 (special)
+    ResistiveMeasPersistent meas[2];  // BlockType 8
+};
+struct StaticVolatile {
+    ResistiveMeasVolatile meas[2];    // BlockType 8
+    ButtonVolatile button;            // BlockType 9
+    LEDVolatile led;                  // BlockType 0x0A
+};
+StaticPersistent staticPer = {
+    .system = {.Name = "DAS v0.1"},
+    .meas = {{.SensorType = MeasNTC100K}, {.SensorType = MeasLDR10K}},
+};
+StaticVolatile staticVol;
 
-// Registry order is load-bearing (STATLOG stores the index into this array; the app derives it
-// from type + per-type instance order) - keep the entries grouped by type.
+const char *DeviceName = staticPer.system.Name;
+
+// Registry order is load-bearing: the app derives the registry index from type + per-type
+// instance order - keep the entries grouped by type.
 const StaticBlockDescriptor static_block_registry[] = {
-    {&Meas1, &ResistiveMeas_Schema, "Meas1"},
-    {&Meas2, &ResistiveMeas_Schema, "Meas2"},
-    {&DasButton, &Button_Schema, "Button"},
-    {&DasLed, &LED_Schema, "LED"},
+    {&staticVol.meas[0], &staticPer.meas[0], &ResistiveMeas_Schema, "Meas1"},
+    {&staticVol.meas[1], &staticPer.meas[1], &ResistiveMeas_Schema, "Meas2"},
+    {&staticVol.button, nullptr, &Button_Schema, "Button"},
+    {&staticVol.led, nullptr, &LED_Schema, "LED"},
 };
 const size_t static_block_num = sizeof(static_block_registry) / sizeof(StaticBlockDescriptor);
 
 // DAS device implementations (drive the actual pins); included after the block instances.
 #include "Button.h"
 #include "LED.h"
+#include "MeasuringRun.h"
 
 // Converts a configured sampling rate (Hz) into the loop interval in ms (>= 1 ms).
 static inline uint32_t SampleIntervalMs(Number rate)
@@ -171,15 +187,15 @@ int main(void)
 
         // Sample each resistive measurement channel at its own configured rate.
         uint32_t now_ms = Now();
-        if ((now_ms - last_sample_ms) >= SampleIntervalMs(Meas1.SamplingRate))
+        if ((now_ms - last_sample_ms) >= SampleIntervalMs(staticPer.meas[0].SamplingRate))
         {
             last_sample_ms = now_ms;
-            Measuring_Update(0, &Meas1, Meas_AdcRead(MEAS1_ADC_CH));
+            Measuring_Update(0, Meas_AdcRead(MEAS1_ADC_CH));
         }
-        if ((now_ms - last_sample2_ms) >= SampleIntervalMs(Meas2.SamplingRate))
+        if ((now_ms - last_sample2_ms) >= SampleIntervalMs(staticPer.meas[1].SamplingRate))
         {
             last_sample2_ms = now_ms;
-            Measuring_Update(1, &Meas2, Meas_AdcRead(MEAS2_ADC_CH));
+            Measuring_Update(1, Meas_AdcRead(MEAS2_ADC_CH));
         }
 
         // Red LED with priority overlays: an active bus error blinks it (~2 Hz), else the
@@ -191,7 +207,7 @@ int main(void)
         else if (DeviceIdentifyActive(now_ms))
             red_state = ((now_ms / 100) & 1) == 0;
         else
-            red_state = DasLed.LEDState;
+            red_state = staticVol.led.LEDState;
         if (red_state) PinHigh(LEDR); else PinLow(LEDR);
     }
 }

@@ -22,9 +22,8 @@ void DispatchPacket(const PacketFrame &frame);
 #define MEMORY_BACKUP_CAP 2048
 #endif
 
-// Block numbers are local to each memory service: Dynamic and Keyed Memory each
-// number their blocks independently from 0. The service a request targets is carried by the
-// packet's SRV TGT (ServiceType), never by the block number itself.
+// A block number is the dynamic memory's single global index (0..255). The service a request
+// targets is carried by the packet's SRV TGT (ServiceType), never by the block number itself.
 struct BlockIndex
 {
     uint8_t Block = INVALID_BLOCK;
@@ -77,7 +76,7 @@ __attribute__((noinline)) void RespondStatus(const PacketFrame &frame, bool ok)
 }
 
 // Derives the staging-file name for an atomic backup update: the last character of the
-// padded 8-byte name becomes '~' ("STATLOG " -> "STATLOG~"). Backup names never end in '~'.
+// padded 8-byte name becomes '~' (e.g. ".SV     " -> ".SV    ~"). Backup names never end in '~'.
 inline void BackupTempName(const char name[8], char out[8])
 {
     memcpy(out, name, 8);
@@ -91,7 +90,7 @@ inline bool WriteBackupFile(const char name[8], const uint8_t *data, uint16_t le
     // The reduced file system (the DAS) has exactly one pre-allocated file per settings name
     // and its RenameFile is a no-op, so the staging dance below cannot work there: CreateFile
     // of the temporary name fails outright, which made *every* static save on the DAS fail
-    // (status 255, STATLOG left untouched - found on the rig; the block's Not-Saved flag could
+    // (status 255, the static backup left untouched - found on the rig; the block's Not-Saved flag could
     // never clear). Its CreateFile erases the region and hands back the file ready for the
     // whole content, so the write goes straight to the live name. No staging means no atomic
     // swap - acceptable for the deliberately reduced file system, and still better than a save

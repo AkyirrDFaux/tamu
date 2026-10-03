@@ -18,13 +18,6 @@ namespace Capabilities {
     constexpr uint32_t Node           = 1u << 8;
 }
 
-enum FieldFlags : uint16_t {
-    None          = 0x0000,
-    ReadOnly      = 0x0400,
-    Persistent    = 0x0800,
-    Trigger       = 0x1000
-};
-
 enum class TriggerType : uint8_t {
     Periodic           = 0,
     OnChangePeriodic   = 1,
@@ -61,11 +54,8 @@ enum class DataType : uint16_t {
     Texture        = 0x102
 };
 
-#define BLOCK_META_FLAGS_MASK 0xFC00
-#define BLOCK_META_TYPE_MASK  0x03FF
-
 inline bool IsKeyedType(DataType Type){
-    return ((uint16_t)Type & BLOCK_META_TYPE_MASK) >= (uint16_t)DataType::UnknownKeyed;
+    return ((uint16_t)Type & 0x3FF) >= (uint16_t)DataType::UnknownKeyed;
 }
 
 enum class BlockType : uint16_t {
@@ -79,10 +69,8 @@ enum class BlockType : uint16_t {
     Deleted        = 0x07,
     ResistiveMeasure = 0x08,
     Button         = 0x09,
-    LED            = 0x0A,
-    Dynamic        = 0x3FF
+    LED            = 0x0A
+    // The banked Dynamic (0x3F0-0x3F3) and Scripts (0x3F4-0x3F7) ranges are not enum members:
+    // they are addressed by BlockTypeRange (Core/Services/RegisterDefs.h).
 };
 
-constexpr uint16_t operator|(DataType type, FieldFlags flag) {
-    return static_cast<uint16_t>(type) | static_cast<uint16_t>(flag);
-}

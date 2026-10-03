@@ -11,13 +11,7 @@
 #define DeviceLog(...) ((void)0)
 #endif
 
-// 1. Prepare the instances
-#ifdef BOARD_DAS_v0_1
-char DeviceNameBuffer[24] = "DAS v0.1";
-#else
-char DeviceNameBuffer[24] = "Tamu v2.0A";
-#endif
-const char* DeviceName = DeviceNameBuffer;
+// 1. Prepare the instances (the device name lives in the board's persistent space)
 
 #include "Core/Types/Number.h"
 #include "Core/Types/Colour.h"

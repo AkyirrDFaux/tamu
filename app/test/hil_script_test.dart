@@ -30,7 +30,7 @@ void main() async {
     for (final slot in await c.loadedScripts()) {
       await c.unload(slot);
     }
-    await st.deleteFile('SCR_00');
+    await st.deleteFile('SCR_000');
 
     final image = ScriptFileBuilder(
       properties: ScriptProperties.loadOnBoot,
@@ -54,10 +54,10 @@ void main() async {
       functionName: 'Blink',
     ).build();
 
-    if (!await st.writeFile('SCR_00', image)) fail('upload SCR_00 failed');
+    if (!await st.writeFile('SCR_000', image)) fail('upload SCR_000 failed');
 
     // Load (CID 1): the caller picks the slot; the app keeps file N in slot N.
-    if (!await c.load(0, 0)) fail('load SCR_00 failed');
+    if (!await c.load(0, 0)) fail('load SCR_000 failed');
 
     // Listed by both the management command and Register enumerate.
     if (!(await c.loadedScripts()).contains(0)) fail('CID 0 list missing script 0');
@@ -74,18 +74,18 @@ void main() async {
     // Script block must be visible through the Register service (client path the
     // Register page uses): readBlocks() lists it, and its category fields/keys read.
     final rc = RegisterClient(deviceId: 1);
-    final blocks = await rc.readBlocks();
+    final blocks = await rc.readBlocks(scriptSlots: const [0]);
     if (blocks == null ||
-        !blocks.any((b) => b?.type == BlockType.script.value && b?.inst == 0)) {
+        !blocks.any((b) => b != null && isScriptType(b.type) && b.inst == 0)) {
       fail('script block not listed by readBlocks()');
     }
-    final inKeys = await rc.getBlockKeys(BlockType.script.value, 0, ScriptField.input);
+    final inKeys = await rc.getBlockKeys(scriptTypeBase, 0, ScriptField.input);
     if (inKeys == null || inKeys.length != 1) fail('script input keys wrong: $inKeys');
-    final inEntry = await rc.readBlockField(BlockType.script.value, 0, ScriptField.input, 0);
+    final inEntry = await rc.readBlockField(scriptTypeBase, 0, ScriptField.input, 0);
     if (inEntry == null || inEntry.meta.dataType != DataType.number) {
       fail('script input read via register failed');
     }
-    final outEntry = await rc.readBlockField(BlockType.script.value, 0, ScriptField.output, 0);
+    final outEntry = await rc.readBlockField(scriptTypeBase, 0, ScriptField.output, 0);
     if (outEntry == null || !outEntry.meta.readOnly) fail('script output should be RO');
 
     // State: fresh load is Stopped; set/read round-trips.
@@ -97,7 +97,7 @@ void main() async {
 
     // File metadata (properties/counts/constants) lives in the SCR_XX file; the Register
     // only exposes the script's I/O.
-    final parsed = ScriptFileData.parse((await st.readFile('SCR_00'))!);
+    final parsed = ScriptFileData.parse((await st.readFile('SCR_000'))!);
     if (parsed.properties != ScriptProperties.loadOnBoot) fail('properties wrong');
     if (parsed.inputs.length != 1) fail('input count wrong');
     if (parsed.variables.length != 2) fail('variable count wrong');
@@ -159,7 +159,7 @@ void main() async {
     if ((await c.loadedScripts()).isNotEmpty) fail('script still loaded after unload');
     if ((await c.enumerateInstances()).isNotEmpty) fail('Register enumerate not empty after unload');
 
-    await st.deleteFile('SCR_00');
+    await st.deleteFile('SCR_000');
   }, timeout: const Timeout(Duration(minutes: 2)));
 
   test('created script is stored but not loaded', skip: skipReason, () async {
@@ -168,30 +168,30 @@ void main() async {
 
     // Make sure slot 0x3F is clear, then write a brand-new minimal script.
     if (await c.readState(0x3F) != null) await c.unload(0x3F);
-    await st.deleteFile('SCR_3F');
+    await st.deleteFile('SCR_03F');
 
     final image = ScriptFileBuilder(functionName: 'Empty').build();
-    if (!await st.writeFile('SCR_3F', image)) fail('create SCR_3F failed');
+    if (!await st.writeFile('SCR_03F', image)) fail('create SCR_03F failed');
 
     // Writing the file must NOT load it.
     if ((await c.loadedScripts()).contains(0x3F)) {
       fail('new script was loaded automatically');
     }
 
-    if (!await c.load(0x3F, 0x3F)) fail('load SCR_3F failed');
+    if (!await c.load(0x3F, 0x3F)) fail('load SCR_03F failed');
     final meta = await c.readBlockMeta(0x3F);
     if (meta == null || meta.name != 'Empty') fail('name wrong: ${meta?.name}');
     if (meta.meta.size != ScriptField.count) fail('field count wrong');
 
     if (!await c.unload(0x3F)) fail('unload failed');
-    await st.deleteFile('SCR_3F');
+    await st.deleteFile('SCR_03F');
   }, timeout: const Timeout(Duration(minutes: 2)));
 
   test('edit a stored (not loaded) script', skip: skipReason, () async {
     final c = ScriptClient(deviceId: 1);
     final st = StorageClient(deviceId: 1);
     if (await c.readState(2) != null) await c.unload(2);
-    await st.deleteFile('SCR_02');
+    await st.deleteFile('SCR_002');
 
     // Build an edited draft through the same model the editor uses.
     final draft = ScriptDraft(functionName: 'Edited', properties: ScriptProperties.loadOnBoot)
@@ -210,13 +210,13 @@ void main() async {
           instruction: ScriptSymbol.instruction(catMath, 0),
           operands: [ScriptSymbol.input(0)]));
 
-    if (!await st.writeFile('SCR_02', draft.toImage())) fail('edit upload failed');
+    if (!await st.writeFile('SCR_002', draft.toImage())) fail('edit upload failed');
     if ((await c.loadedScripts()).contains(2)) fail('edited stored script was auto-loaded');
 
     if (!await c.load(2, 2)) fail('load edited script failed');
     final meta = await c.readBlockMeta(2);
     if (meta == null || meta.name != 'Edited') fail('edited name not restored: ${meta?.name}');
-    final parsed2 = ScriptFileData.parse((await st.readFile('SCR_02'))!);
+    final parsed2 = ScriptFileData.parse((await st.readFile('SCR_002'))!);
     if (parsed2.variables.length != 1) fail('variable count wrong');
     final internal = await c.readInternalState(2);
     if (internal == null || internal.variables.length != 4) {
@@ -228,27 +228,27 @@ void main() async {
     }
 
     if (!await c.unload(2)) fail('unload failed');
-    await st.deleteFile('SCR_02');
+    await st.deleteFile('SCR_002');
   }, timeout: const Timeout(Duration(minutes: 2)));
 
   test('a short write fills the rest of a script input', skip: skipReason, () async {
     final c = ScriptClient(deviceId: 1);
     final st = StorageClient(deviceId: 1);
     if (await c.readState(1) != null) await c.unload(1);
-    await st.deleteFile('SCR_01');
+    await st.deleteFile('SCR_001');
 
     // One 16-byte String input.
     final draft = ScriptDraft(functionName: 'Pad')
       ..inputs.add(ScriptDraftValue(name: 'Name', type: DataType.string, size: 16));
-    if (!await st.writeFile('SCR_01', draft.toImage())) fail('upload SCR_01 failed');
-    if (!await c.load(1, 1)) fail('load SCR_01 failed');
+    if (!await st.writeFile('SCR_001', draft.toImage())) fail('upload SCR_001 failed');
+    if (!await c.load(1, 1)) fail('load SCR_001 failed');
 
     final entry = await c.readEntry(1, ScriptField.input, 0);
     if (entry == null || entry.meta.size != 16) fail('string input missing/size wrong');
 
     // A shorter String write declares its real length; the device must fill the rest of the
     // fixed-size input with spaces rather than leaving stale bytes.
-    final meta = BlockMeta(flagsAndType: entry.meta.flagsAndType, key: 0, size: 3);
+    final meta = ValueInfo(type: entry.meta.type, flags: entry.meta.flags, key: 0, size: 3);
     if (!await c.writeEntry(1, ScriptField.input, 0, meta, 'abc'.codeUnits)) {
       fail('short string write failed');
     }
@@ -258,6 +258,6 @@ void main() async {
     if (text != 'abc${' ' * 13}') fail('short string not space-padded: "$text"');
 
     if (!await c.unload(1)) fail('unload failed');
-    await st.deleteFile('SCR_01');
+    await st.deleteFile('SCR_001');
   }, timeout: const Timeout(Duration(minutes: 2)));
 }

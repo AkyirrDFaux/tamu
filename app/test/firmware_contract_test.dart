@@ -277,10 +277,10 @@ void main() {
         fw,
         alias: const {'vysiDisplay': 'Vysi1Display'},
         firmwareOnly: const {'system'},
-        // Script blocks are exposed through the Register (0x3FE) and "render" is the app's
-        // pseudo grouping for the 0x101/0x102 dictionary types - neither is a BlockType in
-        // the firmware's own enum.
-        appOnly: const {'script', 'render'},
+        // The banked Script (0x3F4-0x3F7) and Dynamic (0x3F0-0x3F3) ranges are not members of
+        // the firmware's BlockType enum (BlockTypeRange owns them), and "render" is the app's
+        // pseudo grouping for the 0x101/0x102 dictionary types.
+        appOnly: const {'script', 'dynamic', 'render'},
       );
     });
 
@@ -293,21 +293,20 @@ void main() {
       );
     });
 
-    test('FieldFlags matches', () {
-      final fw = _firmwareEnum('src/Core/Types/Enums.h', 'FieldFlags');
+    test('ValueFlags matches', () {
+      final fw = _firmwareEnum('src/Core/Types/Enums.h', 'ValueFlags');
       if (fw.isEmpty) return;
       _expectEnumMatches(
         const {
-          'readOnly': FieldFlags.readOnly,
-          'persistent': FieldFlags.persistent,
-          'trigger': FieldFlags.trigger,
+          'readOnly': ValueFlags.readOnly,
+          'persistent': ValueFlags.persistent,
+          'trigger': ValueFlags.trigger,
         },
         fw,
         firmwareOnly: const {'none'},
       );
-      // The flag mask the app applies to FlagsAndType.
-      expect(fw['ReadOnly'], FieldFlags.readOnly);
-      expect(FieldFlags.mask, 0xFC00);
+      // The ValueInfo flag bits.
+      expect(fw['ReadOnly'], ValueFlags.readOnly);
     });
 
     test('Capability bits match', () {

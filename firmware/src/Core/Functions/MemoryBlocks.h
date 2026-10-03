@@ -7,21 +7,27 @@
 #include "Core/Functions/MemoryBackup.h"
 #include <cstdlib>
 
-// One entry in a dynamic block's table.
+// Value alignment (Docs/Services/Register.md "Memory with 32-bit alignment"): a value is
+// aligned to its own size, capped at 4 - 1 -> 1, 2 -> 2, >= 3 -> 4. Offsets stay byte offsets.
+static inline uint16_t AlignValue(uint16_t off, uint8_t size) {
+    uint16_t a = (size >= 3) ? 4 : (size == 2 ? 2 : 1);
+    return (uint16_t)((off + a - 1) & ~(uint16_t)(a - 1));
+}
+
+// One entry in a dynamic block's table (Docs/Services/Register.md "Dynamic Block Table"):
+// Field&Key(16) + MemoryOffset(16) + ValueInfo(32).
 struct DynamicEntry
 {
     uint16_t fieldKey;     // (field << 8) | key
-    uint16_t flagsAndType; // ValueInfo: type (10b) + flags (6b)
-    uint8_t size;          // value size in bytes
-    uint8_t pad = 0;
     uint16_t memoryOffset; // offset into the entry's volatile/persistent value space
+    ValueInfo info;        // type + size + flags
 };
 
 // Lookup result compatible with the older FieldResult/KeyResult consumers: the meta
-// (BlockMeta) + a pointer to the value bytes.
+// (ValueInfo) + a pointer to the value bytes.
 struct KeyResult
 {
-    BlockMeta meta = {DataType::Unknown | FieldFlags::None, 0x00, 0};
+    ValueInfo meta = { (uint16_t)DataType::Unknown, 0, 0 };
     void *data_ptr = nullptr;
     uint16_t data_len = 0;
     bool exists = false; // entry present (a size-0 entry exists with no value)
@@ -36,11 +42,14 @@ struct DynamicBlockDescriptor
     uint16_t volatile_len = 0, volatile_allocated = 0;
     uint8_t *persistent_data = nullptr;
     uint16_t persistent_len = 0, persistent_allocated = 0;
-    BlockType type = BlockType::Undefined;
     char Name[BLOCK_NAME_LEN] = {};
     uint32_t generation = 0;
+    // A live block occupies its slot; a tombstone is an empty slot that keeps the position
+    // stable (Docs/Services/Register.md: "Create/write is in specified place"). The block's
+    // bank type is derived from its global index (BlockTypeRange::DynamicType), not stored.
+    bool present = false;
 
-    bool IsPersistent(const DynamicEntry &e) const { return (e.flagsAndType & FieldFlags::Persistent) != 0; }
+    bool IsPersistent(const DynamicEntry &e) const { return ValueIsPersistent(e.info); }
     uint8_t *Space(bool persistent) const { return persistent ? persistent_data : volatile_data; }
     uint16_t &SpaceLen(bool persistent) { return persistent ? persistent_len : volatile_len; }
     uint16_t &SpaceAlloc(bool persistent) { return persistent ? persistent_allocated : volatile_allocated; }
@@ -76,17 +85,17 @@ struct DynamicBlockDescriptor
         uint16_t &used = SpaceLen(persistent);
         uint16_t &alloc = SpaceAlloc(persistent);
         uint8_t *&sp = SpaceData(persistent);
-        if (used + len > alloc)
+        uint16_t offset = AlignValue(used, len);
+        if (offset + len > alloc)
         {
-            uint16_t new_cap = used + len + 16;
+            uint16_t new_cap = offset + len + 16;
             uint8_t *nb = (uint8_t *)realloc(sp, new_cap);
             if (!nb) return 0xFFFF;
             sp = nb;
             alloc = new_cap;
         }
-        uint16_t offset = used;
         if (len) memcpy(sp + offset, value, len);
-        used += len;
+        used = offset + len;
         return offset;
     }
 
@@ -97,7 +106,11 @@ struct DynamicBlockDescriptor
     {
         uint16_t v_needed = 0, p_needed = 0;
         for (uint16_t i = 0; i < entry_count; i++)
-            (IsPersistent(table[i]) ? p_needed : v_needed) += table[i].size;
+        {
+            uint16_t &n = IsPersistent(table[i]) ? p_needed : v_needed;
+            n = AlignValue(n, table[i].info.Size);
+            n += table[i].info.Size;
+        }
 
         uint8_t *nv = v_needed ? (uint8_t *)malloc(v_needed) : nullptr;
         uint8_t *np = p_needed ? (uint8_t *)malloc(p_needed) : nullptr;
@@ -118,10 +131,11 @@ struct DynamicBlockDescriptor
             uint8_t *src = pers ? persistent_data : volatile_data;
             uint8_t *dst = pers ? np : nv;
             uint16_t &off = pers ? po : vo;
-            if (e.size && src)
-                memcpy(dst + off, src + e.memoryOffset, e.size);
+            off = AlignValue(off, e.info.Size);
+            if (e.info.Size && src)
+                memcpy(dst + off, src + e.memoryOffset, e.info.Size);
             e.memoryOffset = off;
-            off += e.size;
+            off += e.info.Size;
         }
         if (volatile_data) free(volatile_data);
         if (persistent_data) free(persistent_data);
@@ -136,25 +150,28 @@ struct DynamicBlockDescriptor
 
     // Writes the value at (field, key), creating/updating the sorted entry.
     // Writing type None deletes the entry (docs "Setting the type to None deletes").
-    bool SetEntry(uint8_t field, uint8_t key, const void *value, uint8_t len, uint16_t type_and_flag)
+    bool SetEntry(uint8_t field, uint8_t key, const void *value, uint8_t len, const ValueInfo &desc)
     {
-        if (BlockMetaType(type_and_flag) == (uint16_t)DataType::None)
+        if (ValueInfoType(desc) == (uint16_t)DataType::None)
             return DeleteEntry(field, key);
 
+        ValueInfo info = desc;
+        info.Size = len;              // the stored length is the bytes actually present
+        info.Flags &= ~ValueTrigger;  // the Trigger flag is static-only (Docs: dynamic triggers are gone)
         uint16_t fk = MakeFieldKey(field, key);
         uint16_t i = FindEntry(fk);
-        bool pers = (type_and_flag & FieldFlags::Persistent) != 0;
+        bool pers = ValueIsPersistent(info);
 
         if (i < entry_count && table[i].fieldKey == fk)
         {
             // Fast path: same size and persistence - overwrite the value in place. This is
             // the hot path (e.g. a script rewriting the same render matrix every tick) and
             // avoids the append + full-space compaction.
-            if (table[i].size == len && IsPersistent(table[i]) == pers)
+            if (table[i].info.Size == len && IsPersistent(table[i]) == pers)
             {
                 uint8_t *sp = pers ? persistent_data : volatile_data;
                 if (len && sp) memcpy(sp + table[i].memoryOffset, value, len);
-                table[i].flagsAndType = type_and_flag;
+                table[i].info = info;
                 generation++;
                 return true;
             }
@@ -162,8 +179,7 @@ struct DynamicBlockDescriptor
             // then RebuildSpaces compacts (reads the new value from the tail).
             uint16_t off = AppendValue(pers, value, len);
             if (off == 0xFFFF) return false;
-            table[i].flagsAndType = type_and_flag;
-            table[i].size = len;
+            table[i].info = info;
             table[i].memoryOffset = off;
         }
         else
@@ -175,9 +191,7 @@ struct DynamicBlockDescriptor
                 table[j] = table[j - 1];
             DynamicEntry &e = table[i];
             e.fieldKey = fk;
-            e.flagsAndType = type_and_flag;
-            e.size = len;
-            e.pad = 0;
+            e.info = info;
             e.memoryOffset = off;
             entry_count++;
         }
@@ -206,10 +220,10 @@ struct DynamicBlockDescriptor
         if (i >= entry_count || table[i].fieldKey != MakeFieldKey(field, key))
             return res;
         const DynamicEntry &e = table[i];
-        res.meta = {(uint16_t)e.flagsAndType, key, e.size};
-        res.data_len = e.size;
+        res.meta = e.info;
+        res.data_len = e.info.Size;
         res.exists = true;
-        res.data_ptr = e.size ? (Space(IsPersistent(e)) + e.memoryOffset) : nullptr;
+        res.data_ptr = e.info.Size ? (Space(IsPersistent(e)) + e.memoryOffset) : nullptr;
         return res;
     }
 
@@ -226,10 +240,10 @@ struct DynamicBlockDescriptor
     T GetKeyValue(uint16_t field, uint8_t key, DataType expectedType, T defaultValue = 0)
     {
         KeyResult res = GetKey((uint8_t)field, key);
-        // data_ptr points into the value area at a running byte offset, so it is not
-        // guaranteed to be aligned for T - load it through memcpy.
-        if (res.data_ptr && (BlockMetaType(res.meta.FlagsAndType) == (uint16_t)expectedType))
-            return LoadUnaligned<T>(res.data_ptr);
+        // The allocator aligns each value to its size (capped at 4), so a value of type T is
+        // aligned for T - a direct load.
+        if (res.data_ptr && (ValueInfoType(res.meta) == (uint16_t)expectedType))
+            return *reinterpret_cast<const T *>(res.data_ptr);
         return defaultValue;
     }
 
@@ -283,6 +297,7 @@ struct DynamicBlockDescriptor
         volatile_len = volatile_allocated = 0;
         persistent_len = persistent_allocated = 0;
         Name[0] = '\0';
+        present = false;
     }
 };
 
@@ -294,47 +309,48 @@ struct BlockRegistry
     uint16_t block_count = 0;
     uint16_t block_allocated = 0;
 
-    // Appends a new empty block of `type`, growing the descriptor array as needed.
-    bool AddBlock(BlockType type)
+    // Appends a new live empty block, growing the descriptor array as needed.
+    bool AddBlock()
     {
-        if (block_count + 1 > block_allocated)
-        {
-            uint16_t new_cap = block_allocated + 4;
-            T *new_blocks = (T *)realloc(blocks, new_cap * sizeof(T));
-            if (!new_blocks)
-                return false;
-            memset((void *)(new_blocks + block_allocated), 0, (new_cap - block_allocated) * sizeof(T));
-            blocks = new_blocks;
-            block_allocated = new_cap;
-        }
-        blocks[block_count].type = type;
+        if (!Grow()) return false;
+        blocks[block_count] = T();
+        blocks[block_count].present = true;
         block_count++;
         return true;
     }
 
-    // Creates a block at a specified position (docs "create/write is in specified
+    // Appends a tombstone (an empty slot that reserves a position).
+    bool AddTombstone()
+    {
+        if (!Grow()) return false;
+        blocks[block_count] = T();
+        block_count++;
+        return true;
+    }
+
+    // Creates a live block at a specified position (docs "create/write is in specified
     // place, not an append necessarily"): fills a tombstone slot, pads with tombstones
     // beyond, or inserts (shifting later blocks) when the slot is occupied.
-    bool AddBlockAt(uint16_t index, BlockType type)
+    bool AddBlockAt(uint16_t index)
     {
         if (index >= block_count)
         {
             while (block_count < index)
-                if (!AddBlock(BlockType::None)) return false;
-            return AddBlock(type);
+                if (!AddTombstone()) return false;
+            return AddBlock();
         }
-        if (blocks[index].type == BlockType::None)
+        if (!blocks[index].present)
         {
             blocks[index] = T();
-            blocks[index].type = type;
+            blocks[index].present = true;
             return true;
         }
         // Insert: shift the occupied slot and everything after it right by one.
-        if (!AddBlock(BlockType::None)) return false;
+        if (!AddTombstone()) return false;
         for (uint16_t i = block_count - 1; i > index; i--)
             blocks[i] = blocks[i - 1];
         blocks[index] = T();
-        blocks[index].type = type;
+        blocks[index].present = true;
         return true;
     }
 
@@ -344,7 +360,7 @@ struct BlockRegistry
         if (index >= block_count) return;
         blocks[index].Release();
         blocks[index] = T();
-        blocks[index].type = BlockType::None;
+        blocks[index].present = false;
     }
 
     // Returns the block descriptor at `index`, or nullptr if out of range.
@@ -355,6 +371,19 @@ struct BlockRegistry
         return &blocks[index];
     }
 
+private:
+    bool Grow()
+    {
+        if (block_count + 1 <= block_allocated) return true;
+        uint16_t new_cap = block_allocated + 4;
+        T *new_blocks = (T *)realloc(blocks, new_cap * sizeof(T));
+        if (!new_blocks)
+            return false;
+        memset((void *)(new_blocks + block_allocated), 0, (new_cap - block_allocated) * sizeof(T));
+        blocks = new_blocks;
+        block_allocated = new_cap;
+        return true;
+    }
 };
 
 using DynamicRegistry = BlockRegistry<DynamicBlockDescriptor>;

@@ -5,35 +5,48 @@
 #include "Core/Types/Number.h"
 #include "Core/Types/Enums.h"
 
+// Sensor types (Docs/Modules and blocks/Generic system blocks.md).
+enum MeasSensorType : uint8_t
+{
+    MeasRawMeasurement = 0,
+    MeasRawVoltage = 1,
+    MeasRawResistance = 2,
+    MeasLDR10K = 3,
+    MeasNTC10K = 4,
+    MeasNTC100K = 5, // 100k nominal (R0=100k, B=3950)
+};
+
 // Resistive measurement block (Docs/Modules and blocks/Measurement.md):
 //   Sampling Rate (0, P, Number), Sensor Type (1, P, Enum), Filter Coefficient
 //   (2, P, Number, EMA 0-1 on the raw ADC), Measured Value (3, RO), Current Range (4, RO).
-struct ResistiveMeasStruct
+struct ResistiveMeasPersistent
 {
     Number SamplingRate = N(10);     // offset 0
-    uint8_t SensorType = 0;          // offset 4
+    uint8_t SensorType = MeasRawMeasurement; // offset 4
     Number FilterCoeff = N(0.5);     // offset 8, EMA weight 0-1
-    Number MeasuredValue = N(0);     // offset 12
-    Number CurrentRange = N(0);      // offset 16
-    // The physical default sensor for each channel (Meas1 = NTC100K, Meas2 = LDR10K on
-    // the DualAnalogSensor board); the app can still change it via the SensorType field.
-    explicit ResistiveMeasStruct(uint8_t sensorType = 0) { SensorType = sensorType; }
+};
+struct ResistiveMeasVolatile
+{
+    Number MeasuredValue = N(0);     // offset 0
+    Number CurrentRange = N(0);      // offset 4
 };
 
 // Lock the layout: the schema offsets must match the natural C struct alignment (Numbers
 // are 4-aligned), so a field-reorder cannot silently desync the wire addressing again.
-static_assert(offsetof(ResistiveMeasStruct, SamplingRate) == 0, "Meas layout");
-static_assert(offsetof(ResistiveMeasStruct, SensorType) == 4, "Meas layout");
-static_assert(offsetof(ResistiveMeasStruct, FilterCoeff) == 8, "Meas layout");
-static_assert(offsetof(ResistiveMeasStruct, MeasuredValue) == 12, "Meas layout");
-static_assert(offsetof(ResistiveMeasStruct, CurrentRange) == 16, "Meas layout");
+static_assert(offsetof(ResistiveMeasPersistent, SamplingRate) == 0, "Meas layout");
+static_assert(offsetof(ResistiveMeasPersistent, SensorType) == 4, "Meas layout");
+static_assert(offsetof(ResistiveMeasPersistent, FilterCoeff) == 8, "Meas layout");
+static_assert(offsetof(ResistiveMeasVolatile, MeasuredValue) == 0, "Meas layout");
+static_assert(offsetof(ResistiveMeasVolatile, CurrentRange) == 4, "Meas layout");
 
-const BlockMeta ResistiveMeas_Map[] = {
-    {DataType::Number | FieldFlags::Persistent, 0x00, sizeof(Number)},
-    {DataType::Enum   | FieldFlags::Persistent, 0x00, sizeof(uint8_t)},
-    {DataType::Number | FieldFlags::Persistent, 0x00, sizeof(Number)},
-    {DataType::Number | FieldFlags::ReadOnly, 0x00, sizeof(Number)},
-    {DataType::Number | FieldFlags::ReadOnly, 0x00, sizeof(Number)},
+
+
+const ValueInfo ResistiveMeas_Map[] = {
+    {(uint16_t)DataType::Number, sizeof(Number), ValuePersistent},
+    {(uint16_t)DataType::Enum, sizeof(uint8_t), ValuePersistent},
+    {(uint16_t)DataType::Number, sizeof(Number), ValuePersistent},
+    {(uint16_t)DataType::Number, sizeof(Number), ValueReadOnly},
+    {(uint16_t)DataType::Number, sizeof(Number), ValueReadOnly},
 };
 
 // Write-time clamping for the writable Meas fields, so the STORED value always equals the
@@ -42,7 +55,7 @@ const BlockMeta ResistiveMeas_Map[] = {
 // would mislead.
 static bool OnMeasFieldWrite(const StaticBlockDescriptor &block, uint16_t index, const void *data, uint16_t len)
 {
-    auto *m = static_cast<ResistiveMeasStruct *>(block.Data);
+    auto *m = static_cast<ResistiveMeasPersistent *>(block.PersistentData);
     if (len != sizeof(Number)) return false;
     Number v = *static_cast<const Number *>(data);
 
@@ -71,14 +84,16 @@ const FieldTrigger ResistiveMeas_Triggers[] = {
     nullptr,
 };
 
-const uint16_t ResistiveMeas_Offsets[] = {0, 4, 8, 12, 16};
+const uint16_t ResistiveMeas_Offsets[] = {0, 4, 8, 0, 4};
 
 const BlockSchema ResistiveMeas_Schema = {
     .Map = ResistiveMeas_Map,
     .Triggers = ResistiveMeas_Triggers,
     .Offsets = ResistiveMeas_Offsets,
     .Type = BlockType::ResistiveMeasure,
-    .MapCount = sizeof(ResistiveMeas_Map) / sizeof(BlockMeta),
+    .MapCount = sizeof(ResistiveMeas_Map) / sizeof(ValueInfo),
+    .VolatileSize = 8,
+    .PersistentSize = 12,
 };
 
 // Range selector pins (Docs/Devices.md): each channel picks a reference resistor
@@ -168,17 +183,6 @@ void Measuring_Init()
     Meas_SelectRange(1, 1);
 }
 
-// Sensor types (Docs/Modules and blocks/Generic system blocks.md).
-enum MeasSensorType : uint8_t
-{
-    MeasRawMeasurement = 0,
-    MeasRawVoltage = 1,
-    MeasRawResistance = 2,
-    MeasLDR10K = 3,
-    MeasNTC10K = 4,
-    MeasNTC100K = 5, // 100k nominal (R0=100k, B=3950)
-};
-
 // LDR calibration (datasheet/dsh.520-084.1.pdf): the board's part is the GL55 5-10 kOhm
 // variant - light resistance at 10 lux is 5..10 kOhm, and the illuminance-resistance slope
 // gamma = lg(R10/R100) is ~0.6 (Fig. 2). Calibrate both against a lux meter for the actual
@@ -192,111 +196,3 @@ enum MeasSensorType : uint8_t
 // step, a 0.006 % lux difference) and removes two log() calls and two fixed-point divisions
 // from every sample.
 static const int32_t kLdrLog10R10OverRref[3] = {88903, -8188, -107705};
-
-// Filter state for each channel (kept outside the block so the block layout stays exactly
-// the five documented fields). The CONVERTED measurement is EMA-filtered; the history is
-// re-seeded whenever the auto-range switches the excitation scale.
-static Number s_meas_filtered[2];
-static uint8_t s_meas_range[2] = {1, 1}; // currently selected range (matches Measuring_Init)
-static uint8_t s_filt_range[2] = {1, 1}; // range the filter history belongs to
-static bool s_conv_seeded[2] = {false, false};
-
-// Samples one measurement channel and updates the block outputs. `index` selects the
-// channel (0/1). Measured Value and Current Range are reported in kOhm so that the
-// 330 kOhm range still fits within the Q16.16 Number range. All arithmetic uses 32-bit
-// math only (FixedMul32 / 32-bit division), so neither 64-bit multiply (__muldi3) nor
-// division (__divdi3) helpers are pulled in on the flash-constrained DAS.
-static void Measuring_Update(uint8_t index, ResistiveMeasStruct *m, uint16_t raw)
-{
-    if (index > 1) return;
-
-    // Filter weight per the docs (Docs/Modules and blocks/Measurement.md): FilterCoeff is
-    // the EMA coefficient (0-1) applied on the RAW ADC value; 0 = no filtering. The raw
-    // scale depends on the selected reference resistor, so the filter history is re-seeded
-    // whenever the auto-range switches the excitation.
-    Number coeff = m->FilterCoeff;
-    if (coeff < N(0)) coeff = N(0);
-    if (coeff > N(1)) coeff = N(1);
-
-    // Auto-range from the raw sample. The divider ratio R_sensor/R_ref = raw/(1023-raw)
-    // is independent of the selected reference, so the thresholds are kept in RATIO space
-    // (up when the sensor is >10x the reference, down when <0.1x). This gives a wide,
-    // overlap-free hysteresis band: the previous per-range raw thresholds let a mid-range
-    // sensor (e.g. a 100 kOhm NTC or a dim-light LDR) flip between the 10 k and 330 k
-    // references every loop, re-seeding the EMA filter and flickering CurrentRange.
-    uint8_t range = s_meas_range[index];
-    if (raw > 900 && range < 2) range++;        // raw/(1023-raw) > ~9 -> larger reference
-    else if (raw < 93 && range > 0) range--;    // raw/(1023-raw) < 0.1 -> smaller reference
-    s_meas_range[index] = range;
-    Meas_SelectRange(index, range);
-
-    static const Number Rref_kohm[3] = {N(0.33), N(10.0), N(330.0)};
-    m->CurrentRange = Rref_kohm[range];
-
-    // EMA over the RAW ADC value.
-    Number filtered_raw;
-    if (range != s_filt_range[index] || !s_conv_seeded[index])
-    {
-        filtered_raw = Number(raw); // re-seed after an excitation switch / first sample
-        s_filt_range[index] = range;
-    }
-    else
-    {
-        filtered_raw = (Number(raw) * coeff) + (s_meas_filtered[index] * (N(1) - coeff));
-    }
-    s_meas_filtered[index] = filtered_raw;
-    s_conv_seeded[index] = true;
-
-    // Transformations operate on the FILTERED raw sample, exactly like the Sensors.h
-    // reference ("SensorClass::Run").
-    static const Number ADCRES = N(1023);
-    Number in = filtered_raw;
-
-    switch (m->SensorType)
-    {
-    case MeasRawMeasurement: // raw counts
-        break;
-
-    case MeasRawVoltage: // volts
-        in = in * N(VOLTAGE) / ADCRES;
-        break;
-
-    case MeasRawResistance: // kOhm: R = Rref * V / (1 - V)
-    {
-        if (in >= ADCRES) in = N(1022);
-        if (in < N(1)) in = N(1);
-        in = Rref_kohm[range] * in / (ADCRES - in);
-        break;
-    }
-
-    case MeasLDR10K: // lux from the GL55 CdS photoresistor (datasheet/dsh.520-084.1.pdf)
-    {
-        // Both R terms are constants, so log10(R10) - log10(R_ref) folds into the per-range
-        // table below (the old form recomputed those two log10 calls - two log() calls and two
-        // fixed-point divisions - on every sample). What remains is one log() call plus a
-        // constant division, then the shared pow10.
-        if (in < N(1)) in = N(1);
-        if (in > N(1022)) in = N(1022);
-        const Number ratio = in / (ADCRES - in);
-        const Number log10Ratio = log(ratio) / Number::FromRaw(150902); // 1/ln 10, as log10() does
-        const Number decades = (Number::FromRaw(kLdrLog10R10OverRref[range]) - log10Ratio) / N(LDR_GAMMA);
-        in = pow10(N(1) + decades);
-        break;
-    }
-
-    case MeasNTC10K: // degC, Steinhart-Hart simplified for a 10k divider
-    case MeasNTC100K: // degC, Steinhart-Hart for a 100k nominal (R0=100k, B=3950)
-    {
-        if (in >= ADCRES) in = N(1022);
-        if (in < N(1)) in = N(1);
-        in = N(1) / (N(0.003354) + log((in / (ADCRES - in)) *
-                   (Rref_kohm[range] / (m->SensorType == MeasNTC100K ? N(100.0) : N(10.0)))) / N(3950)) - N(273.15);
-        break;
-    }
-
-    default:
-        break;
-    }
-
-    m->MeasuredValue = in;
-}

@@ -100,7 +100,7 @@ static void HandleProviderConfirmation(const PacketFrame &frame) {
     if (!e) return;
     if (PayloadBytes(frame) >= 4) {
         uint32_t h;
-        memcpy(&h, frame.payload, 4);
+        h = *reinterpret_cast<const uint32_t *>(frame.payload); // 4-byte aligned
         e->hash = h;
     }
 }
@@ -110,7 +110,7 @@ static void HandleProviderConfirmation(const PacketFrame &frame) {
 // per axis (first 3 axes), each [5-bit above deadzone | 5-bit below], where "above" is a
 // sign bit plus a 4-bit hash of the magnitude and "below" is the distance bucket 0..31.
 static uint32_t SubscriptionsDeltaHash(const FieldResult &fr, Number deadzone) {
-    uint16_t dtype = BlockMetaType(fr.Descriptor.FlagsAndType);
+    uint16_t dtype = ValueInfoType(fr.Descriptor.Type);
     uint8_t size = fr.Descriptor.Size;
     const uint8_t *data = (const uint8_t *)fr.Data;
 #ifndef SCALAR_ONLY
@@ -161,7 +161,7 @@ static inline uint32_t SubscriptionsAbsDelta(int32_t now, int32_t last) {
 // vector path uses [SubscriptionsDeltaHash]'s subresolution pack instead.
 static bool SubscriptionsIsScalar(const FieldResult &fr) {
     if (fr.Descriptor.Size < 4) return false;
-    uint16_t t = BlockMetaType(fr.Descriptor.FlagsAndType);
+    uint16_t t = ValueInfoType(fr.Descriptor.Type);
     return t == (uint16_t)DataType::Number || t == (uint16_t)DataType::Index ||
            t == (uint16_t)DataType::Uint32;
 }
@@ -224,7 +224,7 @@ static void EvaluateProviderTriggers(uint32_t nowMs) {
         case TriggerType::EdgeRising:
         case TriggerType::EdgeFalling:
         case TriggerType::EdgeAny: {
-            bool cur = BlockMetaType(fr.Descriptor.FlagsAndType) == (uint16_t)DataType::Bool &&
+            bool cur = ValueInfoType(fr.Descriptor.Type) == (uint16_t)DataType::Bool &&
                        ((const uint8_t *)fr.Data)[0] != 0;
             bool edge = (e->trigger == TriggerType::EdgeRising)  ? (cur && !e->lastBool)
                       : (e->trigger == TriggerType::EdgeFalling) ? (!cur && e->lastBool)
@@ -254,7 +254,7 @@ static void EvaluateProviderTriggers(uint32_t nowMs) {
                 break;
             }
 #ifndef SCALAR_ONLY
-            if (BlockMetaType(fr.Descriptor.FlagsAndType) == (uint16_t)DataType::Vector &&
+            if (ValueInfoType(fr.Descriptor.Type) == (uint16_t)DataType::Vector &&
                 fr.Descriptor.Size >= 4 && (fr.Descriptor.Size % 4) == 0) {
                 // Vector: lastVec holds the last SENT vector; gate on the euclidean distance.
                 //

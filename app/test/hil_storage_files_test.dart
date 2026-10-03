@@ -90,16 +90,16 @@ void main() {
     final reg = RegisterClient(deviceId: tamu.id);
     final storage = StorageClient(deviceId: tamu.id);
     await reg.deleteDynamic(block: 0);
-    await reg.createDynamicBlock(BlockType.dynamic, 'DYNCHK', index: 0);
+    await reg.createDynamicBlock('DYNCHK', index: 0);
     final blk = DynBlock(
         index: 0,
-        meta: BlockMeta(flagsAndType: BlockType.dynamic.value, size: 1),
+        meta: ValueInfo(type: BlockType.dynamic.value, size: 1),
         name: 'DYNCHK');
     await reg.writeDynamicEntry(
         blk,
         0,
         0,
-        BlockMeta(flagsAndType: DataType.number.value | FieldFlags.persistent, size: 4),
+        ValueInfo(type: DataType.number.value, flags: ValueFlags.persistent, size: 4),
         numberToBytes(1.0));
     expect(await reg.saveAll(), isTrue);
 
@@ -111,24 +111,21 @@ void main() {
     expect(names.any((n) => n.startsWith('DT_')), isTrue);
     expect(names.any((n) => n.startsWith('DV_')), isTrue);
 
-    // The DT_ table format matches the app decoder:
-    // u8 name_len, name, u16 type, u16 entry_count, then 6 B per entry.
+    // The DT_ table format matches the app decoder: Name (16 chars, NUL-padded),
+    // u16 entry_count, u16 reserved, then 6 B per entry. The block's bank type is
+    // derived from the file's global index, not stored.
     final dtName = names.firstWhere((n) => n.startsWith('DT_'));
     final bytes = await storage.readFile(dtName, size: 64);
     expect(bytes, isNotNull);
-    final nameLen = bytes![0];
-    expect(String.fromCharCodes(bytes.sublist(1, 1 + nameLen)), 'DYNCHK');
-    final type = bytes[1 + nameLen] | (bytes[1 + nameLen + 1] << 8);
-    expect(type, BlockType.dynamic.value);
-    final entryCount = bytes[1 + nameLen + 2] | (bytes[1 + nameLen + 3] << 8);
+    expect(String.fromCharCodes(bytes!.sublist(0, 6)), 'DYNCHK');
+    final entryCount = bytes[16] | (bytes[17] << 8);
     expect(entryCount, 1);
-    final entryFieldKey = bytes[1 + nameLen + 4] | (bytes[1 + nameLen + 5] << 8);
-    final entryFlagsAndType =
-        bytes[1 + nameLen + 6] | (bytes[1 + nameLen + 7] << 8);
-    final entrySize = bytes[1 + nameLen + 8];
+    final entryFieldKey = bytes[20] | (bytes[21] << 8);
+    final entryFlagsAndType = bytes[22] | (bytes[23] << 8);
+    final entrySize = bytes[24];
     expect(entryFieldKey, 0); // field 0 / key 0
     expect(entryFlagsAndType & 0x3FF, DataType.number.value);
-    expect(entryFlagsAndType & FieldFlags.persistent, isNot(0));
+    expect(entryFlagsAndType & ValueFlags.persistent, isNot(0));
     expect(entrySize, 4);
 
     await reg.deleteDynamic(block: 0);

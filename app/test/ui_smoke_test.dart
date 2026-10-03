@@ -16,7 +16,7 @@ void main() {
       (tester) async {
     await tester.pumpWidget(MaterialApp(
       theme: buildTheme(),
-      home: const ScriptEditorPage(deviceId: 1, fileId: 0, name: 'SCR_00', loaded: false),
+      home: const ScriptEditorPage(deviceId: 1, fileId: 0, name: 'SCR_000', loaded: false),
     ));
     await tester.pump();
     expect(tester.takeException(), isNull, reason: 'ScriptEditorPage threw while building');

@@ -18,12 +18,11 @@ import 'types.dart';
 // ---------------------------------------------------------------------------
 
 /// Passive value flags described in words (Docs/Services/Register.md).
-List<String> flagWords(int flagsAndType) {
-  final flags = flagsAndType & FieldFlags.mask;
+List<String> flagWords(int flags) {
   return [
-    if (flags & FieldFlags.readOnly != 0) 'Read Only',
-    if (flags & FieldFlags.persistent != 0) 'Persistent',
-    if (flags & FieldFlags.trigger != 0) 'Trigger',
+    if (flags & ValueFlags.readOnly != 0) 'Read Only',
+    if (flags & ValueFlags.persistent != 0) 'Persistent',
+    if (flags & ValueFlags.trigger != 0) 'Trigger',
   ];
 }
 
@@ -33,11 +32,11 @@ int flagsFromWords(List<String> words) {
   for (final w in words) {
     switch (w) {
       case 'Read Only':
-        flags |= FieldFlags.readOnly;
+        flags |= ValueFlags.readOnly;
       case 'Persistent':
-        flags |= FieldFlags.persistent;
+        flags |= ValueFlags.persistent;
       case 'Trigger':
-        flags |= FieldFlags.trigger;
+        flags |= ValueFlags.trigger;
     }
   }
   return flags;
@@ -49,7 +48,7 @@ String backupFileKind(String name) {
   final upper = name.replaceAll('\x00', '').trim().toUpperCase();
   if (upper.startsWith('SCR_')) return 'Script';
   if (upper == 'SNREG') return 'Serial registry';
-  if (upper == 'STATLOG' || upper == 'SUBREQ') return 'Registry backup';
+  if (upper == '.SV' || upper == 'SUBREQ') return 'Registry backup';
   if (upper.startsWith('DV_') || upper.startsWith('DT_')) return 'Registry backup';
   if (upper.startsWith('LAY') || upper.endsWith('.LAY')) return 'LED layout';
   if (upper.endsWith('.TXT') || upper.endsWith('.LOG')) return 'Text';
@@ -287,7 +286,7 @@ List<Map<String, dynamic>> encodeDictionary(int dictType, List<int> bytes) {
         'key': renderDictKeyName(dictType, e.key),
         'keyIndex': e.key,
         'type': dataTypeWord(e.meta.dataType),
-        'flags': flagWords(e.meta.flagsAndType),
+        'flags': flagWords(e.meta.flags),
         'value': encodeSemantic(e.meta.dataType, e.value,
             info: renderKeyFieldInfo(dictType, e.key)),
       }
@@ -308,9 +307,9 @@ List<int>? decodeDictionary(int dictType, Object? value) {
     if (bytes == null) return null;
     entries.add(KeyedEntry(
         key: key,
-        meta: BlockMeta(
-            flagsAndType:
-                flagsFromWords((raw['flags'] as List?)?.cast<String>() ?? []) | type.value,
+        meta: ValueInfo(
+            type: type.value,
+            flags: flagsFromWords((raw['flags'] as List?)?.cast<String>() ?? []),
             key: key,
             size: bytes.length),
         value: bytes));

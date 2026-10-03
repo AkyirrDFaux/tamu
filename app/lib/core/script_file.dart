@@ -1,6 +1,6 @@
 /// Script file codec (Docs/Services/Script.md).
 ///
-/// One `SCR_XX` file holds a script's properties, its input/output/variable/constant
+/// One `SCR_XXX` file holds a script's properties, its input/output/variable/constant
 /// ValueInfo tables, constant values, input defaults, instruction symbols and UI info
 /// (function/IO/variable/constant names + per-input UI specification).
 ///
@@ -12,8 +12,23 @@ import 'dart:typed_data';
 
 import 'types.dart';
 
-/// Number of script slots (SCR_00..SCR_3F).
-const int maxScripts = 64;
+/// Number of loaded script slots. The Scripts range is four banked block types (0x3F4-0x3F7)
+/// of 64 instances each, so at most 256 scripts load at once (one global 0..255 index).
+const int maxScripts = 256;
+
+/// Stored script files are named `SCR_XXX` (three hex digits), so a file id is 0..0xFFF.
+const int maxScriptFiles = 4096;
+
+/// The stored file name for a script file id (`SCR_XXX`, three hex digits).
+String scriptFileName(int fileId) =>
+    'SCR_${fileId.toRadixString(16).toUpperCase().padLeft(3, '0')}';
+
+/// Parses a `SCR_XXX` name back to its file id, or null if it is not a script file.
+int? scriptFileId(String name) {
+  final n = name.replaceAll('\x00', '').trim();
+  if (!n.startsWith('SCR_')) return null;
+  return int.tryParse(n.substring(4), radix: 16);
+}
 
 /// File header size: Properties + counts + the four lengths.
 const int scriptHeaderSize = 24;
@@ -73,22 +88,17 @@ class ScriptValueInfo {
 
   const ScriptValueInfo({required this.type, required this.size, this.flags = 0});
 
-  int get flagsAndType => (flags & FieldFlags.mask) | (type.value & 0x03FF);
-
   Uint8List toBytes() => Uint8List(4)
-    ..[0] = flagsAndType & 0xFF
-    ..[1] = (flagsAndType >> 8) & 0xFF
-    ..[2] = 0
-    ..[3] = size & 0xFF;
+    ..[0] = type.value & 0xFF
+    ..[1] = (type.value >> 8) & 0xFF
+    ..[2] = size & 0xFF
+    ..[3] = flags;
 
-  static ScriptValueInfo fromBytes(List<int> bytes, [int offset = 0]) {
-    final fat = bytes[offset] | (bytes[offset + 1] << 8);
-    return ScriptValueInfo(
-      type: DataType.fromValue(fat & 0x03FF),
-      size: bytes[offset + 3],
-      flags: fat & FieldFlags.mask,
-    );
-  }
+  static ScriptValueInfo fromBytes(List<int> bytes, [int offset = 0]) => ScriptValueInfo(
+        type: DataType.fromValue(bytes[offset] | (bytes[offset + 1] << 8)),
+        size: bytes[offset + 2],
+        flags: bytes[offset + 3],
+      );
 }
 
 /// Per-input UI specification (limits are kept as 16.16 fixed point like Number).
@@ -121,7 +131,7 @@ class ScriptInputSpec {
       );
 }
 
-/// Register field categories of a loaded script (block type 0x3FE). Only Input and Output
+/// Register field categories of a loaded script (the Scripts range 0x3F4-0x3F7). Only Input and Output
 /// are exposed through the Register; Variables/Constants are internal (Script CID 5/7) and
 /// Header is script metadata.
 class ScriptField {
@@ -244,7 +254,7 @@ Uint8List unpackScriptValue(List<ScriptValueInfo> infos, List<int> blob, int ind
   return Uint8List(0);
 }
 
-/// Builds a `SCR_XX` file image.
+/// Builds a `SCR_XXX` file image.
 class ScriptFileBuilder {
   final int properties;
   final List<ScriptValueInfo> inputs;
@@ -351,7 +361,7 @@ class ScriptFileBuilder {
   }
 }
 
-/// A parsed `SCR_XX` image.
+/// A parsed `SCR_XXX` image.
 class ScriptFileData {
   final int properties;
   final List<ScriptValueInfo> inputs;

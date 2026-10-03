@@ -1,5 +1,5 @@
 /// Script service client (Docs/Services/Script.md, management commands 0x050X) plus the
-/// Register access to a loaded script's block (type 0x3FE).
+/// Register access to a loaded script's block (the Scripts range 0x3F4-0x3F7).
 library;
 
 import 'dart:typed_data';
@@ -10,12 +10,9 @@ import 'protocol.dart';
 import 'register_client.dart';
 import 'types.dart';
 
-/// Block type of a loaded script (Docs/Services/Register.md: "Scripts 0x3FE").
-const int scriptBlockType = 0x3FE;
-
 /// A loaded-script register entry (ValueInfo + value).
 class ScriptEntry {
-  final BlockMeta meta;
+  final ValueInfo meta;
   final List<int> value;
 
   const ScriptEntry({required this.meta, required this.value});
@@ -45,24 +42,24 @@ class ScriptClient {
 
   // ---- Management commands (0x0500-0x0507) ----
 
-  /// CID 0: the slots of the currently loaded scripts.
+  /// CID 0: the file ids of the currently loaded scripts (uint16 each).
   Future<List<int>> loadedScripts() async {
     final reply = await _request(ServiceType.script, 0);
     if (reply == null || reply.isEmpty) return const [];
     final count = reply[0];
-    final slots = <int>[];
-    for (var i = 0; i < count && 1 + i < reply.length; i++) {
-      slots.add(reply[1 + i]);
+    final fileIds = <int>[];
+    for (var i = 0; i < count && 2 + 2 * i < reply.length; i++) {
+      fileIds.add(reply[1 + 2 * i] | (reply[2 + 2 * i] << 8));
     }
-    return slots;
+    return fileIds;
   }
 
-  /// CID 1: loads `SCR_<fileId>` into slot `loadedId`. The device answers Success - the caller
-  /// picked the slot, so it already knows it. The app keeps the two equal (file N into slot N),
-  /// which is what makes CID 0's loaded list addressable.
+  /// CID 1: loads `SCR_<fileId>` (uint16) into slot `loadedId` (uint8). The device answers
+  /// Success - the caller picked the slot, so it already knows it. The file id and the slot are
+  /// independent: many files (SCR_XXX) exist, at most [maxScripts] load at once.
   Future<bool> load(int fileId, int loadedId) async {
     final reply = await _request(ServiceType.script, 1,
-        payload: [fileId & 0xFF, loadedId & 0xFF]);
+        payload: [fileId & 0xFF, (fileId >> 8) & 0xFF, loadedId & 0xFF]);
     return reply != null && reply.isNotEmpty && reply[0] == 0;
   }
 
@@ -108,67 +105,58 @@ class ScriptClient {
     return reply != null && reply.isNotEmpty && reply[0] == 0;
   }
 
-  // ---- Register access (block type 0x3FE) ----
+  // ---- Register access (the Scripts range 0x3F4-0x3F7, addressed by the global slot) ----
 
-  static Uint8List _bi(int inst, int field, int key) => blockInfoBytes(scriptBlockType, inst, field, key);
+  static Uint8List _bi(int inst, int field, int key) => blockInfoBytes(
+      scriptTypeForIndex(inst), scriptInstanceForIndex(inst), field, key);
 
-  /// Registers "enumerate" reply: one level byte + BlockInfo in, then a count at offset 4 and
-  /// that many bytes. Level 1 = the loaded slots, level 3 = the keys (entity indexes) of a
-  /// script field.
-  Future<List<int>> _enumerate(int level, int inst, int field) async {
-    final reply = await _request(
-      ServiceType.register,
-      0,
-      payload: [level, ..._bi(inst, field, 0)],
-    );
-    if (reply == null || reply.length < 5) return const [];
-    final count = reply[4];
-    final out = <int>[];
-    for (var i = 0; i < count && 5 + i < reply.length; i++) {
-      out.add(reply[5 + i]);
-    }
-    return out;
+  /// The loaded scripts' file ids - the Register enumerate no longer carries a separate script
+  /// level, so this is the Script service's CID 0 (the same list).
+  Future<List<int>> enumerateInstances() => loadedScripts();
+
+  /// The keys (entity indexes) of a script field: the block's Field&Key list (Register CID 0),
+  /// filtered to that field.
+  late final RegisterClient _reg = RegisterClient(deviceId: deviceId);
+
+  Future<List<int>> enumerateKeys(int inst, int field) async {
+    return (await _reg.enumerateKeys(
+            scriptTypeForIndex(inst), scriptInstanceForIndex(inst), field)) ??
+        const [];
   }
-
-  /// Registers enum level 1: the loaded slots (same list as [loadedScripts]).
-  Future<List<int>> enumerateInstances() => _enumerate(1, 0, 0);
-
-  /// Registers enum level 3: the keys (entity indexes) of a script field.
-  Future<List<int>> enumerateKeys(int inst, int field) => _enumerate(3, inst, field);
 
   /// Reads one Register entry (CID 1). Returns null when the entry does not exist.
   Future<ScriptEntry?> readEntry(int inst, int field, int key) async {
     final reply = await _request(
       ServiceType.register,
-      1,
+      RegisterCid.read,
       payload: _bi(inst, field, key),
     );
     if (reply == null || reply.length < 8) return null;
-    final meta = BlockMeta.fromBytes(reply, 4, key);
+    final meta = ValueInfo.fromBytes(reply, 4, key);
     return ScriptEntry(
         meta: meta, value: RegisterClient.valueSlice(reply, meta.size));
   }
 
   /// Reads the block meta of a loaded script (field 0xFF): snapshot name + field count.
-  Future<({BlockMeta meta, String name})?> readBlockMeta(int inst) async {
+  Future<({ValueInfo meta, String name})?> readBlockMeta(int inst) async {
     final reply = await _request(
       ServiceType.register,
-      1,
+      RegisterCid.read,
       payload: _bi(inst, 0xFF, 0),
     );
     if (reply == null || reply.length < 8) return null;
-    final meta = BlockMeta.fromBytes(reply, 4);
+    final meta = ValueInfo.fromBytes(reply, 4);
     final raw = reply.sublist(8).takeWhile((b) => b != 0).toList();
     final name = String.fromCharCodes(raw).trimRight();
     return (meta: meta, name: name);
   }
 
   /// Writes one Register entry (CID 2), e.g. a script input (field 1) or variable (3).
-  Future<bool> writeEntry(int inst, int field, int key, BlockMeta meta, List<int> value) async {
+  Future<bool> writeEntry(int inst, int field, int key, ValueInfo meta, List<int> value) async {
     final payload = <int>[..._bi(inst, field, key), ...meta.toBytes(), ...value];
-    final reply = await _request(ServiceType.register, 2, payload: payload);
+    final reply = await _request(ServiceType.register, RegisterCid.write, payload: payload);
     // A failure replies with a single 0xFF status; a success echoes the request payload
-    // (BlockInfo + BlockMeta + value). The echoed BlockInfo starts with the key byte, so it
+    // (BlockInfo + ValueInfo + value). The echoed BlockInfo starts with the key byte, so it
     // is not a reliable success flag (a successful key-0 write echoes 0x00 too).
     return reply != null && reply.length >= 8;
   }

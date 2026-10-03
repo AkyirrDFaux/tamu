@@ -3,7 +3,7 @@
 #include <cstdint>
 #include "Core/Functions/MemoryTypes.h"
 
-// Running 4-byte-aligned offsets of a BlockMeta array (the wire layout of
+// Running 4-byte-aligned offsets of a ValueInfo array (the wire layout of
 // Docs/Data Formats.md: each entry occupies its size rounded up to 4).
 //
 // Finding entry `i`'s byte offset by walking the preceding entries is O(index), and the
@@ -35,7 +35,7 @@ inline uint16_t StrideTableSize(uint8_t inCount, uint8_t outCount, uint8_t varCo
 // table[base + i] (relative to `start`), the space total at table[base + count] - so an index
 // equal to the count is still addressable and no bounds check is needed to read the total.
 // Returns the first free index after the segment.
-inline uint16_t StrideOffsetsBuild(uint16_t *table, uint16_t base, const BlockMeta *meta,
+inline uint16_t StrideOffsetsBuild(uint16_t *table, uint16_t base, const ValueInfo *meta,
                                    uint8_t count, uint16_t start)
 {
     uint16_t off = start;

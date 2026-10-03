@@ -212,17 +212,21 @@ DataType? dataTypeFromWord(String word) {
 /// duplicate the enum value). Use this constant for system-block comparisons.
 const int systemBlockTypeValue = 0x00;
 
-/// Block type label for a raw type value, with the System block resolved explicitly
-/// ([BlockType.fromValue] maps 0 to the "None" tombstone).
-String blockTypeLabel(int typeValue) =>
-    typeValue == systemBlockTypeValue ? 'System' : BlockType.fromValue(typeValue).label;
+/// Block type label for a raw type value, with the System block and the banked dynamic types
+/// resolved explicitly ([BlockType.fromValue] maps 0 to the "None" tombstone and does not know
+/// the 0x3F0-0x3F3 banks).
+String blockTypeLabel(int type) {
+  if (type == systemBlockTypeValue) return 'System';
+  if (isDynamicType(type)) return 'Dynamic';
+  return BlockType.fromValue(type).label;
+}
 
 /// Whether a Register block slot should be hidden as a dynamic tombstone. Dynamic tombstone
 /// slots carry no block (their meta type is the "None" tombstone value), but the System block
 /// reports meta type 0x00 too - the same numeric value - so the slot type must be checked as
 /// well. `type` is the slot's block type (System = 0x00, dynamic = 0x3FF).
-bool isHiddenRegisterSlot(int type, BlockMeta meta) =>
-    type != systemBlockTypeValue && meta.typeValue == BlockType.none.value;
+bool isHiddenRegisterSlot(int type, ValueInfo meta) =>
+    type != systemBlockTypeValue && meta.type == BlockType.none.value;
 
 enum BlockType {
   none(0x00), // tombstone: no block here; stable until save compacts
@@ -235,8 +239,8 @@ enum BlockType {
   resistiveMeasure(0x08),
   button(0x09),
   led(0x0A),
-  script(0x3FE), // loaded-script blocks (Script service, exposed via the Register)
-  dynamic(0x3FF), // Dynamic memory block type
+  script(0x3FE), // app marker for the Scripts service (wire range 0x3F4-0x3F7)
+  dynamic(0x3FF), // app marker for the Dynamic service (wire range 0x3F0-0x3F3)
   render(0x100);
 
   final int value;
@@ -266,26 +270,64 @@ enum BlockType {
       };
 }
 
-/// True for the block types that live in the firmware's `static_block_registry[]`, and so
-/// occupy a **STATLOG index**: `FindStaticBlock` maps type + a per-type instance onto the array
-/// position, and that position is what a persisted STATLOG entry stores.
-///
-/// The virtual System block (type 0) and the Script (0x3FE) / Dynamic (0x3FF) memories are not
-/// static blocks. `RegisterClient.readBlocks()` appends those two *after* the statics, so an
-/// unfiltered list happens to index STATLOG correctly - but only by that ordering. Filter with
-/// this helper wherever a STATLOG registry is built so the mapping cannot silently drift.
-bool isStaticRegistryType(int type) =>
-    type != systemBlockTypeValue &&
-    type != BlockType.script.value &&
-    type != BlockType.dynamic.value;
+// ---------------------------------------------------------------------------
+// Banked dynamic memory (Docs/Services/Register.md "Block types")
+// ---------------------------------------------------------------------------
 
-/// Field/block flag bits (bits 10-15 of BlockMeta.FlagsAndType per Register.md). Every flag is
-/// **passive**: a read reports them verbatim and a write carries the same specification back.
-class FieldFlags {
-  static const mask = 0xFC00; // flags occupy bits 10-15 of FlagsAndType
-  static const readOnly = 0x0400;
-  static const persistent = 0x0800;
-  static const trigger = 0x1000;
+/// The dynamic memory is four banked block types (0x3F0-0x3F3) of 64 instances each, addressed
+/// by one **global** index `0..255`: `bank = index >> 6`, `instance = index & 63`. The storage
+/// files carry that global index in hex (`.DT_XX` / `.DV_XX`).
+const int dynamicTypeBase = 0x3F0;
+const int dynamicTypeCount = 4;
+const int dynamicInstancesPerType = 64;
+
+bool isDynamicType(int type) =>
+    type >= dynamicTypeBase && type < dynamicTypeBase + dynamicTypeCount;
+
+/// The banked block type that owns global index `global`.
+int dynamicTypeForIndex(int global) => dynamicTypeBase + (global >> 6);
+
+/// The BlockInstance (0..63) of global index `global`.
+int dynamicInstanceForIndex(int global) => global & 0x3F;
+
+// ---------------------------------------------------------------------------
+// Banked script memory (Docs/Services/Register.md "Block types")
+// ---------------------------------------------------------------------------
+
+/// Loaded scripts are four banked block types (0x3F4-0x3F7) of 64 instances each, addressed by
+/// one **global** index `0..255` (the Script service owns the file↔slot mapping).
+const int scriptTypeBase = 0x3F4;
+const int scriptTypeCount = 4;
+
+bool isScriptType(int type) =>
+    type >= scriptTypeBase && type < scriptTypeBase + scriptTypeCount;
+
+/// The banked block type that owns global script index `global`.
+int scriptTypeForIndex(int global) => scriptTypeBase + (global >> 6);
+
+/// The BlockInstance (0..63) of global script index `global`.
+int scriptInstanceForIndex(int global) => global & 0x3F;
+
+/// True for the block types that live in the firmware's `static_block_registry[]` - the device's
+/// static memory, persisted 1:1 in `.SV` (Docs/Services/Register.md "System + Static memory
+/// blocks"). The types are stacked in ascending block-type order with their instances contiguous,
+/// which is the order this registry must keep.
+///
+/// The virtual System block (type 0) and the Script (0x3F4-0x3F7) / Dynamic (0x3F0-0x3F3)
+/// memories are not static blocks. `RegisterClient.readBlocks()` appends those two *after* the
+/// statics, so an unfiltered list happens to match the static layout order - but only by that
+/// ordering. Filter with this helper wherever the static registry is built so the mapping cannot
+/// silently drift.
+bool isStaticRegistryType(int type) =>
+    type != systemBlockTypeValue && !isScriptType(type) && !isDynamicType(type);
+
+/// The ValueInfo flag bits (Docs/Services/Register.md "ValueInfo Flags", in that table's order).
+/// Every flag is **passive**: a read reports them verbatim and a write carries the same
+/// specification back.
+class ValueFlags {
+  static const readOnly = 0x01;
+  static const persistent = 0x02;
+  static const trigger = 0x04;
 
   static List<String> describe(int flags) {
     final names = <String>[];
@@ -325,82 +367,35 @@ class Capability {
 // Common structs
 // ---------------------------------------------------------------------------
 
-/// BlockMeta (6bit flags, 10bit type, 8bit key/padding, 8bit value length).
-class BlockMeta {
-  final int flagsAndType; // bits 10-15 flags, bits 0-9 type
-  final int key;
-  final int size;
+/// The descriptor (Docs/Services/Register.md "Map entry"): `Type(16) | Size(8) | Flags(8)`.
+/// One type, on the wire and internally. The key is not part of it - it travels in the
+/// request's/reply's BlockInfo, or in a table entry's Field&Key.
+class ValueInfo {
+  final int type;   // DataType (10 bits)
+  final int size;   // value length in bytes
+  final int flags;  // ValueFlags bits
+  final int key;    // carried separately, not on the wire
 
-  const BlockMeta({required this.flagsAndType, this.key = 0, this.size = 0});
+  const ValueInfo({required this.type, this.size = 0, this.flags = 0, this.key = 0});
 
-  int get flags => flagsAndType & 0xFC00;
-  int get typeValue => flagsAndType & 0x03FF;
-  DataType get dataType => DataType.fromValue(typeValue);
-  BlockType get blockType => BlockType.fromValue(typeValue);
+  DataType get dataType => DataType.fromValue(type);
+  BlockType get blockType => BlockType.fromValue(type);
 
-  bool get readOnly => flags & FieldFlags.readOnly != 0;
-  bool get persistent => flags & FieldFlags.persistent != 0;
+  bool get readOnly => flags & ValueFlags.readOnly != 0;
+  bool get persistent => flags & ValueFlags.persistent != 0;
 
-  /// The wire ValueInfo (Docs/Services/Register.md "Map entry"): `Type(16) | Size(8) | Flags(8)`.
-  /// The app keeps the flags packed above the type - the form the device's *files* and embedded
-  /// values use - so only the flags convert here. The key is not in the wire ValueInfo: it
-  /// travels in the request's/reply's BlockInfo, so [toBytes] drops it and [fromBytes] takes it
-  /// from the caller (which always knows it - it asked with it).
   Uint8List toBytes() => Uint8List(4)
-    ..[0] = typeValue & 0xFF
-    ..[1] = (typeValue >> 8) & 0xFF
+    ..[0] = type & 0xFF
+    ..[1] = (type >> 8) & 0xFF
     ..[2] = size
-    ..[3] = fieldFlagsToWire(flags);
+    ..[3] = flags;
 
-  static BlockMeta fromBytes(List<int> bytes, [int offset = 0, int key = 0]) => BlockMeta(
-        flagsAndType: (bytes[offset] | (bytes[offset + 1] << 8)) |
-            fieldFlagsFromWire(bytes[offset + 3]),
-        key: key,
+  static ValueInfo fromBytes(List<int> bytes, [int offset = 0, int key = 0]) => ValueInfo(
+        type: bytes[offset] | (bytes[offset + 1] << 8),
         size: bytes[offset + 2],
+        flags: bytes[offset + 3],
+        key: key,
       );
-
-  /// The packed descriptor the device embeds in file and value formats (STATLOG and DT_
-  /// entries, a render dictionary's entries) - the inverse of [fromPacked]. The wire layout is
-  /// [toBytes].
-  Uint8List toPacked() => Uint8List(4)
-    ..[0] = flagsAndType & 0xFF
-    ..[1] = (flagsAndType >> 8) & 0xFF
-    ..[2] = key
-    ..[3] = size;
-
-  /// Parses the *packed* descriptor the device embeds in file and value formats (STATLOG and
-  /// DT_ entries, a render dictionary's entries): `FlagsAndType(16) | Key(8) | Size(8)`. That
-  /// layout is unchanged by the wire revision, so it needs its own parser.
-  static BlockMeta fromPacked(List<int> bytes, [int offset = 0]) => BlockMeta(
-        flagsAndType: bytes[offset] | (bytes[offset + 1] << 8),
-        key: bytes[offset + 2],
-        size: bytes[offset + 3],
-      );
-}
-
-/// The ValueInfo flag bits on the wire (Docs/Services/Register.md, in that table's order).
-class ValueFlags {
-  static const readOnly = 0x01;
-  static const persistent = 0x02;
-  static const trigger = 0x04;
-}
-
-/// Maps the app's packed flag bits onto the wire ValueInfo flag byte.
-int fieldFlagsToWire(int flags) {
-  var wire = 0;
-  if (flags & FieldFlags.readOnly != 0) wire |= ValueFlags.readOnly;
-  if (flags & FieldFlags.persistent != 0) wire |= ValueFlags.persistent;
-  if (flags & FieldFlags.trigger != 0) wire |= ValueFlags.trigger;
-  return wire;
-}
-
-/// Maps the wire ValueInfo flag byte back onto the app's packed flag bits.
-int fieldFlagsFromWire(int wire) {
-  var flags = 0;
-  if (wire & ValueFlags.readOnly != 0) flags |= FieldFlags.readOnly;
-  if (wire & ValueFlags.persistent != 0) flags |= FieldFlags.persistent;
-  if (wire & ValueFlags.trigger != 0) flags |= FieldFlags.trigger;
-  return flags;
 }
 
 // ---------------------------------------------------------------------------

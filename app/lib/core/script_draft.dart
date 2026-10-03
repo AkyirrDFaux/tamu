@@ -1,5 +1,5 @@
 /// Editable in-memory model of a script (Docs/App/Service views/Script.md). The editor
-/// loads a `SCR_XX` file into a [ScriptDraft], edits it, and serialises it back with
+/// loads a `SCR_XXX` file into a [ScriptDraft], edits it, and serialises it back with
 /// [ScriptDraft.toImage] - working for stored scripts as well as loaded ones.
 library;
 

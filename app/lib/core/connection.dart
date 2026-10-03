@@ -492,7 +492,7 @@ class ConnectionManager extends ChangeNotifier {
       // carry 4 bytes of fragmentation info (u16 current + u16 total) at the start of the
       // payload; it is stripped here so streams reassemble into the raw service data.
       // Non-FRAG single packets are padded to 4 bytes on the wire - clients slice the
-      // real lengths via the format fields (BlockMeta.Size etc.).
+      // real lengths via the format fields (ValueInfo.Size etc.).
       final buffer = _rxBuffers.putIfAbsent(txId, () => <int>[]);
       final data = frame.isFrag && frame.payload.length >= 4
           ? frame.payload.sublist(4)

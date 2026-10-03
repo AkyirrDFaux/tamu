@@ -42,8 +42,12 @@ enum class EnumSrc : uint8_t { Types, System, Static, Dynamic, Script };
 
 // The block-type list word at index `i`. The System block is always first: its word is the only
 // zero and it is first, which is what lets the app tell a real zero from the wire's trailing
-// padding. The static registry is grouped by type (see the board Main.h - STATLOG's index depends
+// padding. The static registry is grouped by type (see the board Main.h - the app's index depends
 // on it), so a run of equal types is one list entry with `run - 1` as its highest instance.
+//
+// The banked dynamic range is reported as a single entry in an **8.8** split (Docs/Services/
+// Register.md "Block types"): the high byte is the owning bank type's low byte (0xF0-0xF3) and
+// the low byte the highest occupied global index (0..255), instead of the normal 10.6.
 static uint16_t EnumTypeWord(uint16_t i) {
     if (i == 0) return 0; // the System block: type 0, instance 0
     uint16_t seen = 1;
@@ -55,10 +59,12 @@ static uint16_t EnumTypeWord(uint16_t i) {
         if (seen++ == i) return (uint16_t)((t << 6) | ((end - start - 1) & 0x3F));
         start = end;
     }
-#ifndef DISABLE_DYNAMIC_MEMORY
-    if (seen == i && dynamic_block_registry.block_count > 0)
-        return (uint16_t)(((uint16_t)BlockType::Dynamic << 6) |
-                          ((dynamic_block_registry.block_count - 1) & 0x3F));
+#ifdef USE_DYNAMIC_BLOCKS
+    if (seen == i && dynamic_block_registry.block_count > 0) {
+        uint16_t highest = (uint16_t)(dynamic_block_registry.block_count - 1);
+        uint16_t bankType = BlockTypeRange::DynamicType((uint16_t)(highest >> BlockTypeRange::BankShift));
+        return (uint16_t)((bankType << 8) | (highest & 0xFF));
+    }
 #endif
     return 0;
 }
@@ -68,14 +74,14 @@ static uint16_t EnumTypeCount() {
     for (size_t i = 0; i < static_block_num; i++)
         if (i == 0 || static_block_registry[i].Schema->Type != static_block_registry[i - 1].Schema->Type)
             count++;
-#ifndef DISABLE_DYNAMIC_MEMORY
+#ifdef USE_DYNAMIC_BLOCKS
     if (dynamic_block_registry.block_count > 0) count++;
 #endif
     return count;
 }
 
 #ifdef USE_SCRIPTS
-static uint16_t EnumScriptWord(uint8_t inst, uint16_t i) {
+static uint16_t EnumScriptWord(uint16_t inst, uint16_t i) {
     uint16_t seen = 0;
     for (uint16_t f = 0; f <= SCRIPT_FIELD_OUTPUT; f++) {
         uint8_t keys = ScriptKeyCount(inst, (uint8_t)f);
@@ -94,11 +100,9 @@ __attribute__((noinline)) static uint16_t EnumWord(EnumSrc src, const void *ctx,
         return EnumTypeWord(i);
     case EnumSrc::System:
         return kSystemFields[i];
-    case EnumSrc::Static: {
-        const BlockSchema *sc = (const BlockSchema *)ctx;
-        return (uint16_t)((i << 8) | sc->Map[i].Key);
-    }
-#ifndef DISABLE_DYNAMIC_MEMORY
+    case EnumSrc::Static:
+        return (uint16_t)(i << 8); // static fields are unkeyed
+#ifdef USE_DYNAMIC_BLOCKS
     case EnumSrc::Dynamic: {
         const DynamicBlockDescriptor *b = (const DynamicBlockDescriptor *)ctx;
         return b->table[i].fieldKey;
@@ -106,8 +110,10 @@ __attribute__((noinline)) static uint16_t EnumWord(EnumSrc src, const void *ctx,
 #endif
 #ifdef USE_SCRIPTS
     case EnumSrc::Script:
-        return EnumScriptWord(*(const uint8_t *)ctx, i);
+        return EnumScriptWord(*(const uint16_t *)ctx, i);
 #endif
+    default:
+        break;
     }
     return 0;
 }
@@ -138,56 +144,57 @@ static void SendU16Stream(const PacketFrame &frame, uint16_t count, EnumSrc src,
     }
 }
 
-// CID 0's dispatcher: the request's own shape says which enumeration is wanted. The wire pads
-// every payload to 4 bytes, so an empty request is the type list and a 4-byte one is the packed
-// `(type << 6) | instance` block request (a uint16 on the wire). An absent or tombstoned block
-// reports an empty list rather than a failure.
-static void HandleEnumerate(const PacketFrame &frame) {
-    uint16_t bytes = PayloadBytes(frame);
+// CID 0: the present block types, one packed `(type << 6) | maxInstance` word each.
+static void HandleEnumerateBlocks(const PacketFrame &frame) {
+    SendU16Stream(frame, EnumTypeCount(), EnumSrc::Types, nullptr);
+}
+
+// CID 1: a block's Field&Key words. The request carries the packed `(type << 6) | instance`
+// word (a uint16 on the wire). An absent or tombstoned block reports an empty list rather than a
+// failure.
+static void HandleEnumerateFields(const PacketFrame &frame) {
+    if (PayloadBytes(frame) != 4) { RespondStatus(frame, false); return; }
+    uint16_t packed = (uint16_t)(frame.payload[0] | (frame.payload[1] << 8));
+    uint16_t type = (packed >> 6) & 0x3FF;
+    uint8_t inst = (uint8_t)(packed & 0x3F);
+    uint16_t gi = 0; // the global index of a banked (script/dynamic) block; ctx points at it
+    (void)inst; (void)gi; // unused when neither USE_SCRIPTS nor USE_DYNAMIC_BLOCKS is set
     EnumSrc src = EnumSrc::Types;
     const void *ctx = nullptr;
     uint16_t count = 0;
 
-    if (bytes == 0) {
-        count = EnumTypeCount();
-    } else if (bytes == 4) {
-        uint16_t packed = (uint16_t)(frame.payload[0] | (frame.payload[1] << 8));
-        uint16_t type = (packed >> 6) & 0x3FF;
-        uint8_t inst = (uint8_t)(packed & 0x3F);
-        if (type == 0) { // the System block: virtual, its field/key list is fixed
-            src = EnumSrc::System;
-            count = kSystemFieldCount;
+    if (type == 0) { // the System block: virtual, its field/key list is fixed
+        src = EnumSrc::System;
+        count = kSystemFieldCount;
 #ifdef USE_SCRIPTS
-        } else if (type == 0x3FE) { // a loaded script: its inputs and outputs, per instance
-            LoadedScript *s = ScriptActive(inst);
-            if (s) {
-                src = EnumSrc::Script;
-                ctx = &inst;
-                count = (uint16_t)(s->inCount + s->outCount);
-            }
-#endif
-#ifndef DISABLE_DYNAMIC_MEMORY
-        } else if (type == 0x3FF) { // a dynamic block: its live entries, per instance
-            DynamicBlockDescriptor *b = inst < dynamic_block_registry.block_count
-                                            ? dynamic_block_registry.GetBlock(inst)
-                                            : nullptr;
-            if (b && b->type != BlockType::None) {
-                src = EnumSrc::Dynamic;
-                ctx = b;
-                count = b->entry_count;
-            }
-#endif
-        } else { // a static registry entry: the schema is the type's, every instance answers alike
-            int idx = FindStaticBlock(type, 0);
-            if (idx >= 0) {
-                src = EnumSrc::Static;
-                ctx = static_block_registry[idx].Schema;
-                count = static_block_registry[idx].Schema->MapCount;
-            }
+    } else if (BlockTypeRange::IsScript(type)) { // a loaded script: its inputs and outputs, per instance
+        gi = BlockTypeRange::ScriptGlobal(type, inst);
+        LoadedScript *s = ScriptActive(gi);
+        if (s) {
+            src = EnumSrc::Script;
+            ctx = &gi;
+            count = (uint16_t)(s->inCount + s->outCount);
         }
-    } else {
-        RespondStatus(frame, false);
-        return;
+#endif
+#ifdef USE_DYNAMIC_BLOCKS
+    } else if (BlockTypeRange::IsDynamic(type)) { // a dynamic block: its live entries, per instance
+        gi = BlockTypeRange::DynamicGlobal(type, inst);
+        DynamicBlockDescriptor *b = gi < dynamic_block_registry.block_count
+                                        ? dynamic_block_registry.GetBlock(gi)
+                                        : nullptr;
+        if (b && b->present) {
+            src = EnumSrc::Dynamic;
+            ctx = b;
+            count = b->entry_count;
+        }
+#endif
+    } else { // a static registry entry: the schema is the type's, every instance answers alike
+        int idx = FindStaticBlock(type, 0);
+        if (idx >= 0) {
+            src = EnumSrc::Static;
+            ctx = static_block_registry[idx].Schema;
+            count = static_block_registry[idx].Schema->MapCount;
+        }
     }
     SendU16Stream(frame, count, src, ctx);
 }

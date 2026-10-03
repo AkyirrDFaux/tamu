@@ -80,25 +80,28 @@ static inline Matrix<2, 3> IdentityAffine23()
     return m;
 }
 
-struct Vysi1Struct
+struct Vysi1Volatile
 {
-    Number Brightness = 30; //%
-    Matrix<2, 3> Offset = IdentityAffine23(); // 2x3 transformation (0,0 position + rotation)
-    int32_t RenderBlock = -1; // Signed index into dynamic_block_registry; -1 = none (invalid)
+    Number Brightness = 30; //% (offset 0)
+    Number RefreshRate;     // Out: achieved render rate in FPS (averaged), offset 4
+};
+struct Vysi1Persistent
+{
+    Matrix<2, 3> Offset = IdentityAffine23(); // 2x3 transformation, offset 0
+    int32_t RenderBlock = -1; // Signed index into dynamic_block_registry; -1 = none, offset 24
     // Layout File Name: plain 8-char storage file name, space padded. Defaults to the
     // preloaded "LAY_1" file (identical to the compiled-in layout); a blank name means
     // the built-in default layout. Written via trigger, which loads the layout file
     // immediately (write is rejected if the file cannot be loaded).
-    char LayoutFile[8] = {'L', 'A', 'Y', '_', '1', ' ', ' ', ' '};
-    Number RefreshRate;     // Out: achieved render rate in FPS (averaged)
+    char LayoutFile[8] = {'L', 'A', 'Y', '_', '1', ' ', ' ', ' '}; // offset 28
 };
 
-const BlockMeta Vysi1_Map[] = {
-    {DataType::Number | FieldFlags::None, 0x00, sizeof(Number)},      // Brightness
-    {DataType::Matrix | FieldFlags::Persistent, 0x00, sizeof(Matrix<2, 3>)},// Offset (2x3)
-    {DataType::Index | FieldFlags::Persistent, 0x00, sizeof(int32_t)},     // Render Block Index (signed, -1 = none)
-    {DataType::Filename | FieldFlags::Trigger | FieldFlags::Persistent, 0x00, 8}, // Layout File Name
-    {DataType::Number | FieldFlags::ReadOnly, 0x00, sizeof(Number)},  // Refresh Rate
+const ValueInfo Vysi1_Map[] = {
+    {(uint16_t)DataType::Number, sizeof(Number), 0},                    // Brightness
+    {(uint16_t)DataType::Matrix, sizeof(Matrix<2, 3>), ValuePersistent},// Offset (2x3)
+    {(uint16_t)DataType::Index, sizeof(int32_t), ValuePersistent},      // Render Block Index (signed, -1 = none)
+    {(uint16_t)DataType::Filename, 8, ValueTrigger | ValuePersistent},  // Layout File Name
+    {(uint16_t)DataType::Number, sizeof(Number), ValueReadOnly},        // Refresh Rate
 };
 
 // Renders the configured render block into the LED buffer, applying brightness and gamma correction.
@@ -113,12 +116,21 @@ public:
     // for richer scenes.
     static const uint32_t MaxCachedFields = 12;
 
-    Vysi1Struct Data;
+    // The block's two halves live in the board's static spaces; the display holds references.
+    Vysi1Volatile &Vol;
+    Vysi1Persistent &Per;
+
+    // The field-write trigger is handed only the block, so the displays self-register to let it
+    // recover the owning instance from a block's persistent half.
+    static const uint32_t MaxInstances = 4;
+    static Vysi1Display *s_instances[MaxInstances];
+    static uint32_t s_instanceCount;
+
     uint16_t Layout[MaxLayoutEntries];
     uint8_t Lw = 11;
     uint8_t Lh = 10;
     // Docs/Modules and blocks/LED display.md: the layout file's leading byte, a 0-255
-    // percentage cap on Data.Brightness (178 = 70%). Replaced whenever a layout file loads;
+    // percentage cap on Vol.Brightness (178 = 70%). Replaced whenever a layout file loads;
     // the built-in default carries the same value as the preloaded LAY_1.
     uint8_t BrightnessLimit = 178;
     ColourClass Buffer[LedNum];
@@ -142,7 +154,18 @@ public:
     uint32_t CacheLayoutGen = 0xFFFFFFFF;
     bool CacheValid = false;
 
-    Vysi1Display() { LoadDefaultLayout(); }
+    Vysi1Display(Vysi1Volatile &vol, Vysi1Persistent &per) : Vol(vol), Per(per) {
+        if (s_instanceCount < MaxInstances) s_instances[s_instanceCount++] = this;
+        LoadDefaultLayout();
+    }
+
+    // Resolves the owning display from a block's persistent half (the field-write trigger only
+    // receives the block, not the instance).
+    static Vysi1Display *FromPersistent(const void *per) {
+        for (uint32_t i = 0; i < s_instanceCount; i++)
+            if ((const void *)&s_instances[i]->Per == per) return s_instances[i];
+        return nullptr;
+    }
 
     void Render();
     void RenderGeometryField(DynamicBlockDescriptor *block, uint16_t field, uint16_t slot);
@@ -190,14 +213,14 @@ public:
         RebuildLedTable();
     }
 
-    // Loads the layout file named by Data.LayoutFile (8-char storage name form).
+    // Loads the layout file named by Per.LayoutFile (8-char storage name form).
     // Rejects files that are malformed or whose LED indexes exceed this display.
     bool LoadLayoutFromStorage()
     {
         // Blank name (all spaces) -> built-in default layout.
         bool empty = true;
         for (int i = 0; i < 8; i++)
-            if (Data.LayoutFile[i] != ' ' && Data.LayoutFile[i] != '\0') empty = false;
+            if (Per.LayoutFile[i] != ' ' && Per.LayoutFile[i] != '\0') empty = false;
         if (empty)
         {
             LoadDefaultLayout();
@@ -205,7 +228,7 @@ public:
         }
 
         char n8[8];
-        PackName(Data.LayoutFile, n8); // normalize to space-padded form
+        PackName(Per.LayoutFile, n8); // normalize to space-padded form
         uint32_t off, size;
         if (!Storage.GetFileInfo(n8, &off, &size))
             return false;
@@ -234,6 +257,9 @@ public:
     }
 };
 
+inline Vysi1Display *Vysi1Display::s_instances[Vysi1Display::MaxInstances] = {};
+inline uint32_t Vysi1Display::s_instanceCount = 0;
+
 // Boot helper: migrates a persisted old-format "VYSIV1" reference to the renamed
 // "LAY_1", then loads the named layout file (blank name = compiled-in default). The
 // boot recall restores the LayoutFile RAM field but does not re-run its write trigger,
@@ -242,8 +268,8 @@ inline void Vysi1BootLayout(Vysi1Display &disp)
 {
     char legacy[8];
     PackName("VYSIV1", legacy);
-    if (memcmp(disp.Data.LayoutFile, legacy, 8) == 0)
-        PackName("LAY_1", disp.Data.LayoutFile);
+    if (memcmp(disp.Per.LayoutFile, legacy, 8) == 0)
+        PackName("LAY_1", disp.Per.LayoutFile);
     // A file that cannot be loaded (missing, truncated, or an older 2-byte-header format)
     // must not leave the display on its zero-initialised Layout[] - every cell there maps to
     // LED 0 - so fall back to the built-in default, whose LED mapping matches the .lay file.
@@ -252,26 +278,27 @@ inline void Vysi1BootLayout(Vysi1Display &disp)
 }
 
 // Layout-file write trigger: stores the new Name and loads the layout file immediately
-// so the stored name always matches the layout in use. `block.Data` is the first member
-// of the owning Vysi1Display instance (Main.h registers &DisplayN.Data), which recovers
-// the per-display runtime layout.
+// so the stored name always matches the layout in use. The owning Vysi1Display is recovered
+// from the block's persistent half, which recovers the per-display runtime layout.
 inline bool OnVysi1FieldWrite(const StaticBlockDescriptor& block, uint16_t index, const void* data, uint16_t len)
 {
     if (index != 3 || len != 8)
         return false;
-    auto* disp = reinterpret_cast<Vysi1Display*>(block.Data); // Data is the first member
+    Vysi1Display* disp = Vysi1Display::FromPersistent(block.PersistentData);
+    if (!disp)
+        return false;
     // Validate against the NEW name before committing it, so a failed layout
     // load leaves the stored name matching the layout actually in use
     // ("stored value equals applied value"). LoadLayoutFromStorage reads
-    // Data.LayoutFile, so load through a temporary and only copy on success.
+    // Per.LayoutFile, so load through a temporary and only copy on success.
     char pending[8];
     memcpy(pending, data, 8);
     char saved[8];
-    memcpy(saved, disp->Data.LayoutFile, 8);
-    memcpy(disp->Data.LayoutFile, pending, 8);
+    memcpy(saved, disp->Per.LayoutFile, 8);
+    memcpy(disp->Per.LayoutFile, pending, 8);
     bool ok = disp->LoadLayoutFromStorage();
     if (!ok)
-        memcpy(disp->Data.LayoutFile, saved, 8); // revert the RAM field
+        memcpy(disp->Per.LayoutFile, saved, 8); // revert the RAM field
     return ok;
 }
 
@@ -284,11 +311,11 @@ const FieldTrigger Vysi1_Triggers[] = {
 };
 
 const uint16_t Vysi1_Offsets[] = {
-    0,                                    // Brightness (Number, 4B)
-    4,                                    // Offset (Matrix<2,3>, 28B)
-    32,                                   // RenderBlock (int32, 4B)
-    36,                                   // LayoutFile (String, 8B)
-    44,                                   // RefreshRate (Number, 4B)
+    0,   // Brightness (volatile, Number, 4B)
+    0,   // Offset (persistent, Matrix<2,3>, 24B)
+    24,  // RenderBlock (persistent, int32, 4B)
+    28,  // LayoutFile (persistent, String, 8B)
+    4,   // RefreshRate (volatile, Number, 4B)
 };
 
 const BlockSchema Vysi1_Schema = {
@@ -296,6 +323,8 @@ const BlockSchema Vysi1_Schema = {
     .Triggers = Vysi1_Triggers,
     .Offsets = Vysi1_Offsets,
     .Type = BlockType::Vysi1Display,
-    .MapCount = sizeof(Vysi1_Map) / sizeof(BlockMeta),
+    .MapCount = sizeof(Vysi1_Map) / sizeof(ValueInfo),
+    .VolatileSize = 8,
+    .PersistentSize = 36,
 };
 

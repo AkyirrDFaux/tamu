@@ -1,20 +1,27 @@
 A subscription service, initiated by the requester.
+
+#### Subscription table
+A minimum describing record
+
+| Name                | Size              | Note                   |
+| ------------------- | ----------------- | ---------------------- |
+| Address of provider | uint16            | Provider               |
+| TRID                | uint16            |                        |
+| Source register     | 32bit (BlockInfo) | At provider's register |
+| Trigger type        | enum (8bit)       |                        |
+| Minimum/Retry time  | uint8             | in 10*ms               |
+| Period              | uint16            | in 10*ms               |
+| Deadzone            | Number (32bit)    | For number/vector      |
 ### Requester
 Use define USE_SUB_REQUEST.
 Subscriptions are stored in a sequential table.
-#### Table entry
+#### Requester table entry
 
-| Name                | Size              | Note                                  |
-| ------------------- | ----------------- | ------------------------------------- |
-| Address of provider | uint16            | Provider                              |
-| TRID                | uint16            | Non-persistent                        |
-| Target register     | 32bit (BlockInfo) | Local write, sets foreign origin flag |
-| Source register     | 32bit (BlockInfo) | At provider's register                |
-| Trigger type        | enum (8bit)       |                                       |
-|                     | 24bit padding     |                                       |
-| Period              | uint32            |                                       |
-| Minimum/Retry time  | uint32            |                                       |
-| Deadzone            | Number (32bit)    | For number/vector                     |
+| Name               | Size              | Note                                  |
+| ------------------ | ----------------- | ------------------------------------- |
+| Target register    | 32bit (BlockInfo) | Local write, sets foreign origin flag |
+| Subscription table | ...               |                                       |
+
 Callback finds the target register based on the address and TRID, and writes it there if possible, adding the foreign origin flag.
 
 Re-activates after boot, recalls values from a file, which is a 1:1 copy of the table.
@@ -23,7 +30,7 @@ Use define USE_SUB_PROVIDE.
 Active until canceled, information is not persistent on this side.
 Sending device keeps a table of active subscriptions, maximum number is limited by device's RAM.
 Updates are checked by a function from the main loop.
-#### Table entry
+#### Provider table entry
 
 | Name                   | Size              | Note               |
 | ---------------------- | ----------------- | ------------------ |
@@ -34,9 +41,9 @@ Updates are checked by a function from the main loop.
 |                        | 24bit padding     |                    |
 | Period                 | uint32            | ms                 |
 | Minimum/Retry interval | uint32            | In local uptime    |
+| Deadzone               | Number (32bit)    | For number/vector  |
 | Last time sent         | uint32            | In local uptime    |
 | Hash/Hashlike          | uint32            |                    |
-| Deadzone               | Number (32bit)    | For number/vector  |
 Hash/Hashlike:
 - Hash - FNV-1a
 - Counter - for Bool edges only

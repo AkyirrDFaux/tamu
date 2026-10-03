@@ -1,6 +1,6 @@
 /// Script editor (Docs/App/Service views/Script.md).
 ///
-/// Works on the stored `SCR_XX` file, so both loaded and available scripts can be edited.
+/// Works on the stored `SCR_XXX` file, so both loaded and available scripts can be edited.
 /// Covers: controls/state (live), inputs (type/style/limits/default), outputs
 /// (type/name + live values), variables (add/remove, type, live values), constants
 /// (value + name), and instructions (per-line/per-symbol editing with context
@@ -33,12 +33,17 @@ class ScriptEditorPage extends StatefulWidget {
   final String name;
   final bool loaded;
 
+  /// The register slot this script is loaded into (only when [loaded]); the file id and the
+  /// slot are independent.
+  final int? slot;
+
   const ScriptEditorPage({
     super.key,
     required this.deviceId,
     required this.fileId,
     required this.name,
     required this.loaded,
+    this.slot,
   });
 
   @override
@@ -62,8 +67,11 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
 
   final _statusText = <ScriptValueCategory, List<String>>{};
 
-  String get _fileName =>
-      'SCR_${widget.fileId.toRadixString(16).toUpperCase().padLeft(2, '0')}';
+  String get _fileName => scriptFileName(widget.fileId);
+
+  /// The register slot the script is loaded into. The file id and the slot are independent;
+  /// the caller passes the slot for a loaded script, and it falls back to the file id.
+  int get _slot => widget.slot ?? widget.fileId;
 
   /// State update used by the part-file extensions (setState is @protected).
   void _rebuild(VoidCallback fn) => setState(fn);
@@ -129,16 +137,16 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
   Future<void> _refresh() async {
     final draft = _draft;
     if (widget.loaded) {
-      final st = await _client.readState(widget.fileId);
-      final internal = await _client.readInternalState(widget.fileId);
+      final st = await _client.readState(_slot);
+      final internal = await _client.readInternalState(_slot);
       final values = <ScriptValueCategory, List<String>>{};
 
       // I/O live values come from the Register (the only script content it exposes).
       for (final cat in const [ScriptValueCategory.input, ScriptValueCategory.output]) {
-        final keys = await _client.enumerateKeys(widget.fileId, cat.field);
+        final keys = await _client.enumerateKeys(_slot, cat.field);
         final list = <String>[];
         for (final key in keys) {
-          final e = await _client.readEntry(widget.fileId, cat.field, key);
+          final e = await _client.readEntry(_slot, cat.field, key);
           list.add(e == null ? '-' : formatValue(e.meta.dataType, e.value));
         }
         values[cat] = list;
@@ -202,15 +210,16 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
   }
 
   Future<void> _reloadLive() async {
-    await _client.unload(widget.fileId);
-    final ok = await _client.load(widget.fileId, widget.fileId);
+    final slot = widget.slot ?? widget.fileId;
+    await _client.unload(slot);
+    final ok = await _client.load(widget.fileId, slot);
     if (!mounted) return;
     showSnack(context, ok ? 'Reloaded' : 'Reload failed');
     await _refresh();
   }
 
   Future<void> _unloadScript() async {
-    final ok = await _client.unload(widget.fileId);
+    final ok = await _client.unload(widget.slot ?? widget.fileId);
     if (!mounted) return;
     showSnack(context, ok ? 'Unloaded' : 'Unload failed');
     if (ok) Navigator.of(context).pop();
@@ -225,8 +234,8 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
   }
 
   Future<void> _control(int state, {bool reset = false}) async {
-    if (reset) await _client.moveToInstruction(widget.fileId, 0);
-    final ok = await _client.setState(widget.fileId, state);
+    if (reset) await _client.moveToInstruction(_slot, 0);
+    final ok = await _client.setState(_slot, state);
     if (!mounted) return;
     showSnack(context, ok ? ScriptState.label(state) : 'Command failed');
     await _refresh();

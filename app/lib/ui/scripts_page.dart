@@ -15,6 +15,7 @@ import 'widgets.dart';
 
 class _LoadedScript {
   final int slot;
+  final int fileId;
   final String name;
   final int state;
   final int instructionCounter;
@@ -23,6 +24,7 @@ class _LoadedScript {
 
   const _LoadedScript({
     required this.slot,
+    required this.fileId,
     required this.name,
     required this.state,
     required this.instructionCounter,
@@ -30,8 +32,7 @@ class _LoadedScript {
     this.inputNames = const [],
   });
 
-  String get fileName =>
-      'SCR_${slot.toRadixString(16).toUpperCase().padLeft(2, '0')}';
+  String get fileName => scriptFileName(fileId);
 }
 
 class ScriptsPage extends StatefulWidget {
@@ -53,6 +54,9 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
   List<_LoadedScript> _loaded = [];
   List<FileRecord> _available = [];
   int _revision = 0;
+
+  /// The file->slot mapping for the loads this page started (the device cannot report it).
+  final Map<int, int> _slotByFile = {};
 
   @override
   void initState() {
@@ -80,31 +84,58 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
     }
   }
 
-  Future<void> _loadLoaded() async {
-    final slots = await _client.loadedScripts();
-    final list = <_LoadedScript>[];
-    for (final slot in slots) {
+  /// Resolves the loaded scripts. CID 0 lists the loaded *file ids*; the slot is the
+  /// addressable register instance. The app tracks the file->slot mapping for the loads it
+  /// starts (the block meta carries the function name, not the file id, so it cannot be
+  /// recovered from the device); an untracked slot falls back to the file==slot convention.
+  Future<List<({int slot, int fileId, String metaName})>> _probeLoaded() async {
+    final fileIds = await _client.loadedScripts();
+    final out = <({int slot, int fileId, String metaName})>[];
+    final used = <int>{};
+    for (final fileId in fileIds) {
+      final slot = _slotByFile[fileId];
+      if (slot == null || used.contains(slot)) continue;
       final meta = await _client.readBlockMeta(slot);
-      final state = (await _client.readState(slot))?.state ?? ScriptState.stopped;
-      final internal = await _client.readInternalState(slot);
-      // The input UI specifications and names live in the script file.
+      if (meta == null) continue; // stale mapping
+      out.add((slot: slot, fileId: fileId, metaName: meta.name));
+      used.add(slot);
+    }
+    for (var slot = 0; slot < maxScripts && out.length < fileIds.length; slot++) {
+      if (used.contains(slot)) continue;
+      final meta = await _client.readBlockMeta(slot);
+      if (meta == null) continue;
+      out.add((slot: slot, fileId: slot, metaName: meta.name));
+      used.add(slot);
+    }
+    return out;
+  }
+
+  Future<void> _loadLoaded() async {
+    final probed = await _probeLoaded();
+    final list = <_LoadedScript>[];
+    for (final p in probed) {
+      final state = (await _client.readState(p.slot))?.state ?? ScriptState.stopped;
+      final internal = await _client.readInternalState(p.slot);
+      // The input UI specifications and function name live in the script file.
       var specs = const <ScriptInputSpec>[];
       var names = const <String>[];
-      final fileName = 'SCR_${slot.toRadixString(16).toUpperCase().padLeft(2, '0')}';
-      final bytes = await _storage.readFile(fileName);
+      var display = p.metaName;
+      final bytes = await _storage.readFile(scriptFileName(p.fileId));
       if (bytes != null) {
         try {
           final parsed = ScriptFileData.parse(bytes);
           specs = parsed.inputSpecs;
           names = parsed.inputNames;
+          if (parsed.functionName.isNotEmpty) display = parsed.functionName;
         } on FormatException {
           specs = const [];
           names = const [];
         }
       }
       list.add(_LoadedScript(
-        slot: slot,
-        name: (meta?.name.isNotEmpty ?? false) ? meta!.name : 'Script $slot',
+        slot: p.slot,
+        fileId: p.fileId,
+        name: display.isNotEmpty ? display : 'Script ${p.slot}',
         state: state,
         instructionCounter: internal?.instructionCounter ?? 0,
         inputSpecs: specs,
@@ -144,6 +175,7 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
 
   Future<void> _unload(_LoadedScript s) async {
     final ok = await _client.unload(s.slot);
+    if (ok) _slotByFile.remove(s.fileId);
     if (!mounted) return;
     showSnack(context, ok ? 'Unloaded ${s.name}' : 'Unload failed');
     await _loadLoaded();
@@ -151,15 +183,24 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
 
   Future<void> _loadFile(FileRecord file) async {
     final name = normalizeFileName(file.name);
-    final id = int.tryParse(name.substring(4), radix: 16);
+    final id = scriptFileId(name);
     if (id == null) {
       showSnack(context, 'Bad script file name');
       return;
     }
-    // File N loads into slot N (the app keeps the two equal - the wire allows them to differ).
-    final loaded = await _client.load(id, id);
+    // The file id and the loaded slot are independent: pick the lowest free slot.
+    final probed = await _probeLoaded();
+    final used = {for (final p in probed) p.slot};
+    final free = [for (var i = 0; i < maxScripts; i++) if (!used.contains(i)) i];
     if (!mounted) return;
-    showSnack(context, loaded ? 'Loaded $name' : 'Load failed');
+    if (free.isEmpty) {
+      showSnack(context, 'No free script slot');
+      return;
+    }
+    final loaded = await _client.load(id, free.first);
+    if (loaded) _slotByFile[id] = free.first;
+    if (!mounted) return;
+    showSnack(context, loaded ? 'Loaded $name into slot ${free.first}' : 'Load failed');
     await _loadLoaded();
   }
 
@@ -167,15 +208,13 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
     final table = await _storage.readFileTable() ?? const <FileRecord>[];
     final used = <int>{};
     for (final f in table) {
-      final n = normalizeFileName(f.name);
-      if (!n.startsWith('SCR_')) continue;
-      final id = int.tryParse(n.substring(4), radix: 16);
+      final id = scriptFileId(f.name);
       if (id != null) used.add(id);
     }
-    final free = [for (var i = 0; i < maxScripts; i++) if (!used.contains(i)) i];
+    final free = [for (var i = 0; i < maxScriptFiles; i++) if (!used.contains(i)) i];
     if (!mounted) return;
     if (free.isEmpty) {
-      showSnack(context, 'No free script slot');
+      showSnack(context, 'No free script id');
       return;
     }
     final result = await showNewScriptDialog(context, freeSlots: free);
@@ -190,8 +229,7 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
       constants: result.constants,
       functionName: result.name,
     ).build();
-    final fileName =
-        'SCR_${result.slot.toRadixString(16).toUpperCase().padLeft(2, '0')}';
+    final fileName = scriptFileName(result.fileId);
     final ok = await _storage.writeFile(fileName, image);
     if (!mounted) return;
     showSnack(context, ok ? 'Created $fileName (not loaded)' : 'Create failed');
@@ -258,7 +296,7 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
         child: Padding(
           padding: EdgeInsets.all(24),
           child: Text(
-            'No scripts loaded.\nSwitch to "Available" and load a stored SCR_XX file.',
+            'No scripts loaded.\nSwitch to "Available" and load a stored SCR_XXX file.',
             style: TextStyle(color: Colors.white54),
             textAlign: TextAlign.center,
           ),
@@ -312,7 +350,7 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
                 label: const Text('Unload'),
               ),
               TextButton.icon(
-                onPressed: () => _openEditor(s.slot, s.name, true),
+                onPressed: () => _openEditor(s.fileId, s.name, true, slot: s.slot),
                 icon: const Icon(Icons.edit_note, size: 18),
                 label: const Text('Open editor'),
               ),
@@ -350,7 +388,7 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
         child: Padding(
           padding: EdgeInsets.all(24),
           child: Text(
-            'No stored scripts.\nUse "New script" to create one, or upload a SCR_XX file.',
+            'No stored scripts.\nUse "New script" to create one, or upload a SCR_XXX file.',
             style: TextStyle(color: Colors.white54),
             textAlign: TextAlign.center,
           ),
@@ -374,7 +412,7 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
                 tooltip: 'Open editor',
                 icon: const Icon(Icons.edit_note),
                 onPressed: () {
-                  final id = int.tryParse(name.substring(4), radix: 16);
+                  final id = scriptFileId(name);
                   if (id != null) _openEditor(id, name, false);
                 },
               ),
@@ -394,13 +432,14 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
     );
   }
 
-  void _openEditor(int fileId, String name, bool loaded) {
+  void _openEditor(int fileId, String name, bool loaded, {int? slot}) {
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => ScriptEditorPage(
         deviceId: widget.deviceId,
         fileId: fileId,
         name: name,
         loaded: loaded,
+        slot: slot,
       ),
     ));
   }

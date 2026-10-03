@@ -625,8 +625,8 @@ Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 
   "not persisted", so a missing save is visible. 17 decoder tests + 7 Backup-view widget tests +
   a page toggle test; `app/test/ui_smoke_test.dart` adds the first runtime coverage for
   `ScriptEditorPage` and `SubscriptionDialog`.
-  Note: the firmware's CID 0x15 "read backup" is dynamic-only, which is why static/System come
-  from the file decode.
+  Note: static/System come from the file decode. The old dynamic-only CID 0x15 "read backup" is
+  now dropped (L3); the app reads the `DT_`/`DV_` files directly.
 - [ ] **Optimization - per-field geometry-mask versioning** (A11 = D3; this is the **canonical
   record** - the one-line A11/D3 entries elsewhere point here): any write to an eye block bumps
   the block generation and the renderer recomputes all 9 masks;
@@ -1614,6 +1614,53 @@ settled (six u32s are emitted).
   **Verified**: `test.sh` green (145 app tests + the native alignment test, analyzer clean); HIL
   verification 10/10, dynamic 4/4, backup 4/4, subscriptions 8/8, LED 1/1, script VM 21/21,
   storage 3/3.
+- [x] **Docs fixes A1-A3 + B1 - done.** `Register.md`'s Save/Recall All now say "Respond only if
+  requested" (the firmware gates **every** response on REQACK - `SendResponse` returns early
+  otherwise, and the app sends REQACK and waits); `Script.md:82` dropped the removed "script
+  updated flag"; `App/Device view.md` dropped the gone **CLI** capability. B1 (`ValueInfo` wire
+  layout) was already the doc's `Type(16)|Size(8)|Flags(8)` since P8 - the `FlagsAndType|Key|Size`
+  packing is the *embedded file* format (STATLOG/DT_/render dict), not the wire - so the stale
+  `Issues.md` entry was deleted.
+- [x] **B5 Script file space widened to `SCR_XXX` (uint16 file ids, 64 loaded) - done.** The doc's
+  `SCR_XXX` and "there could be more than 64 scripts" could not be met by the old 2-hex/64-slot
+  scheme. File ids are now **uint16** (0..4095) while the *loaded slot* stays 6-bit (64 at once -
+  the `BlockInstance` limit): `MAX_SCRIPT_FILES`/`maxScriptFiles` = 4096, `ScriptFileName`/
+  `scriptFileName` emit three hex digits, and `ScriptLoad`/`load` take a `(fileId, slot)` pair.
+  CID 1 is `fileId(uint16) + slot(uint8)`; CID 0 reports the loaded **file ids as uint16**
+  (`ScriptListFiles`); `LoadedScript` carries its `fileId`; and `ScriptMaskSet` had been called
+  with the file id instead of the slot (fixed). The doc's Script CID table now states the uint16
+  file id. The app picks a free slot per load and tracks file->slot (the block meta reports the
+  function name, not the file id - see `Issues.md`).
+  Also fixed while here: `script_client._enumerate` still used the **legacy** level-based CID 0
+  removed in P5, so `enumerateInstances`/`enumerateKeys` (the script page's I/O) were broken - they
+  now read the two-request form (`loadedScripts()` and `RegisterClient.enumerateKeys`). And a real
+  firmware bug: `HandleEnumerate`'s `ctx = &inst` pointed at a block-scoped local, so the Script
+  word generator read a dangling stack slot (intermittently `[0,0]`); `inst` is now function-scoped.
+  **Verified**: `test.sh` green (145 + native alignment, analyzer clean); HIL script 4/4, script VM
+  21/21, subscriptions 8/8, verification 10/10, backup 4/4, dynamic 4/4, storage 3/3, LED 1/1.
+  Sizes: core 626 620 B; DAS 13 160 B (80.3 %).
+- [x] **Bugfix + alignment-optimization pass - done.**
+  - **CID 0 script reply truncation**: with uint16 file ids, 64 loaded scripts = 129 B >
+    `MAX_PAYLOAD_SIZE` (116), so `PacketConstruct` silently clamped and the tail ids were lost.
+    CID 0 now streams the list as FRAG fragments (the app already reassembles them).
+  - **Script foreign-register ValueInfo**: two P8 conversions were missed. The foreign-read reply
+    parse read the wire `ValueInfo` straight into the internal `BlockMeta` (so `Size` was actually
+    the flags byte), and the foreign-write request put a raw `BlockMeta` where the wire expects a
+    `ValueInfo`. Both now use `FromWireInfo`/`ToWireInfo`.
+  - **Alignment optimization**: now that `PacketFrame` is `packed, aligned(4)`, the 4-aligned
+    payload reads that were memcpy'd (the per-register-op BlockInfo, the TimeSync triple, the
+    provider confirmation hash, the script move-to-instruction) are single word loads.
+  - **Cleanup**: stale `SCR_XX` comments across firmware/app, and the dead level-based enumerate
+    comment in `script_client.dart`.
+  **Verified**: `test.sh` green (145 + native alignment, analyzer clean); all 8 HIL suites pass
+  (script 4/4, script VM 21/21, subscriptions 8/8, verification 10/10, backup 4/4, dynamic 4/4,
+  storage 3/3, LED 1/1). Sizes: core 627 004 B; DAS 13 164 B (80.3 %).
+- [ ] **`ScriptsBootLoad` only scans script file ids 0..63.** With the file space widened to
+  `SCR_XXX` (4096), a load-on-boot script with a higher id is never pre-loaded (the boot loop
+  builds `SCR_00..SCR_3F` names). The fix is to scan the storage file table instead of a fixed
+  64-name range and load each flagged `SCR_XXX` into a free slot - needs a small `Storage`
+  file-listing API. Low priority: the app assigns the lowest free id, so it only bites past 64
+  files.
 - [x] **P7 App-side partial persistence - done**, landed with P4 (see its record): the per-field
   Save writes `STATLOG` (splice) or `DV_<xx>` (patch), and the per-field Recall is a register
   write of the stored value.
@@ -1638,3 +1685,112 @@ settled (six u32s are emitted).
   `DAS Meas1/0/0: type 0x0006, flags 0x02`; a block meta `type 0x0008, size 5, flags 0`), and the
   suites all pass: verification 10/10, dynamic persistence 4/4, subscriptions 8/8, LED display
   1/1, backup 4/4, script VM 21/21, storage files 3/3.
+
+## §9 Register service reimplementation (code -> revised docs)
+
+Goal: make firmware + app match the reorganized `Docs/Services/Register.md` (and `Script.md`)
+cleanly, with no legacy leftovers. Full plan: `/home/akyirr/.opencode/plan/register-service-plan.md`.
+Every layer lands firmware + app + docs + tests together and is gated on `test.sh` + the 8 HIL suites.
+
+**Target model (locked)**: `ValueInfo = Type(16)+Size(8)+Flags(8)` as the only descriptor (internal
+and wire); static memory = two flat compile-time spaces (volatile + persistent), offsets in bytes,
+values aligned `1/2/>=3 -> 4`; block types Dynamic `0x3F0-0x3F3`, Scripts `0x3F4-0x3F7`, Reserved
+`0x3F8-0x3FF`; basic CIDs `0-5`, dynamic `0x10-0x13`; global `0..255` dynamic/script indices;
+`Name` 16; static-only triggers; `.SV` + `.DT_XX`/`.DV_XX` persistence; `USE_DYNAMIC_BLOCKS`.
+
+- [x] **L0 Identifiers** - done. Firmware: `RegisterCid`/`DynamicCid` enums + a `BlockType` range
+  namespace in `RegisterDefs.h`; the dispatcher switches on them; enumerate split into
+  `HandleEnumerateBlocks` (CID 0) / `HandleEnumerateFields` (CID 1); Read/Write/Recall/Save moved
+  to 2/3/4/5. App: the same constants in `protocol.dart` + the numeric CIDs replaced; HIL tests
+  updated. `DISABLE_DYNAMIC_MEMORY` -> `USE_DYNAMIC_BLOCKS` (and the unused `USE_DYNAMIC_MEMORY`/
+  `USE_KEYED_MEMORY`/`DISABLE_KEYED_MEMORY` defines removed). No behaviour change on the wire
+  beyond the CID numbers.
+- [x] **L1 Descriptor unification** - done (firmware + app). `BlockMeta`, `FieldFlags`,
+  `BLOCK_META_*_MASK`, `ToWireInfo`/`FromWireInfo` and the packing are gone; `ValueInfo =
+  Type(16)+Size(8)+Flags(8)` is the single descriptor, internal and on the wire. Firmware:
+  schemas, `DynamicEntry` (`Field&Key + MemoryOffset + ValueInfo`), `KeyResult`, script metas,
+  read/write/persist paths. App: `types.dart` `ValueInfo` + `ValueFlags`, the render-dict and
+  backup codecs, the STATLOG/DT_ decoders and every call site. `test.sh` green (145 + native +
+  analyzer).
+- [x] **L2 32-bit memory model** - done. The dynamic allocator (`AppendValue`/`RebuildSpaces`) and
+  the `DT_` load align each value to its own size (`1 -> 1`, `2 -> 2`, `>= 3 -> 4`) via
+  `AlignValue`, so offsets stay byte offsets but every value is aligned for its type;
+  `GetKeyValue<T>` and the render reads are now direct loads (no memcpy). `test.sh` green.
+- [x] **L3 Protocol** - done. The enumerate split (0 blocks / 1 fields) and the Read/Write/
+  Recall/Save = 2/3/4/5 renumber landed with L0. The old dynamic `Get Memory Usage` (0x14) and
+  `Read Backup` (0x15) are now dropped from both sides: the firmware handlers
+  (`HandleGetMemUsage`/`HandleReadBackup`) and the dispatcher cases are gone, the app's
+  `DynamicCid.getMemUsage`/`readBackup` + `readDynamicBackupField` are gone, and the HIL dynamic
+  test reads the `DV_` file directly. `test/tamu_proto.py`'s stale `RegCid` was corrected.
+  **Flash: core 625 086 -> 624 788 B (-298).** Note: `Docs/Command ID table.md` still lists
+  `Save All 0x0104 / Recall All 0x0105`, which is **swapped** vs `Register.md` (Recall 4, Save 5)
+  and the code - reported in `Issues.md`.
+- [x] **L4 Banks** - done (firmware + app). The dynamic memory is four banked block types
+  (0x3F0-0x3F3) and the scripts four (0x3F4-0x3F7), each 64 instances, addressed by one **global**
+  index `0..255` (`bank = index >> 6`, `instance = index & 63`). Firmware: `BlockTypeRange` owns
+  the ranges; the dispatcher/read/write/persist/enumerate/subscriptions map a banked `(type,
+  instance)` to the global index (`DynamicGlobal`/`ScriptGlobal`); `MAX_DYNAMIC_BLOCKS` 64 -> 256
+  and `MAX_SCRIPTS` 64 -> 256 (the script active mask became a `MAX_SCRIPTS/64`-word array); the
+  enumerate reports the dynamic range as one **8.8** word (bank type low byte + highest global
+  index). App: the same helpers in `types.dart`; `_dynBi`/`createDynamicBlock`/`readBlocks`/the
+  script client derive the bank type, and every `== BlockType.dynamic/script.value` check became
+  `isDynamicType`/`isScriptType`. `.DT_XX`/`.DV_XX` already carry the global index in hex.
+  **Flash: core 624 788 -> 625 234 B; DAS 11 804 -> 11 816 B; core RAM 39 076 -> 67 516 B (the
+  256-slot script registry).**
+  Note: the banked **8.8** enumerate encoding is a plan decision (the doc only says "Block types +
+  maximum instance") - reported in `Issues.md`.
+- [x] **L2 static split -> true flat spaces - done.** The static blocks are split into
+  `<Name>Persistent` + `<Name>Volatile` halves. Each board now declares **two flat compile-time
+  spaces** (`StaticPersistent`/`StaticVolatile` in its `Main.h`) holding every block instance in
+  BlockInfo order (a type's fields contiguous per instance, instances contiguous per type, e.g.
+  `PWMPersistent fan[2]`); the registry points into them and the block code addresses the fields
+  through the space. The System block is folded in as the first persistent segment
+  (`SystemPersistent`: Name(16)+NUL, NetID on a core), so `DeviceName` points into the space and
+  `DeviceNameBuffer` is gone. `StaticBlockDescriptor` holds `VolatileData` + `PersistentData`;
+  `Get`/`Set` pick the base by the field's Persistent flag (the schema `Offsets` stay byte offsets
+  from that base). `BlockSchema` keeps `VolatileSize`/`PersistentSize` (doc metadata).
+  `Vysi1Display` holds references to its space slots and self-registers so the layout-file trigger
+  can recover the owning instance. **Flash: core 625 554 -> 625 086 B (-468); DAS 11 964 ->
+  11 804 B (-160); DAS RAM unchanged (2 040 B, 99.6%).**
+- [x] **L5 static persistence - done (firmware + app).** `STATLOG` is gone; `StaticSaveAll`/
+  `StaticRecallAll` are a single `memcpy` of the persistent space (`sizeof(staticPer)`) to/from
+  `.SV` - a true 1:1 mirror that includes the System segment. The storage's fixed filetable
+  classifies `.SV` (and its `.SV    ~` temp) as the settings file. `LoadAllBackups` does one
+  `StaticRecallAll` read. **Flash (STATLOG removal): core 626 614 -> 625 554 B (-1 060); DAS
+  12 980 -> 11 964 B (-1 016).**
+  **App**: `device_backup.dart`'s STATLOG codec is replaced by a `.SV` codec -
+  `StaticSpaceLayout` recomputes each field's offset from a per-type persistent-field table +
+  the 32-bit alignment rule (`decodeSv`/`svSaveField`); the register page reads/patches `.SV`
+  (System fields included), the storage viewer decodes it, and every test was ported. `test.sh`
+  green.
+- [x] **L6 Cleanup - done.** The dynamic `Trigger` flag is masked off in `SetEntry` (static schemas
+  only), `BLOCK_NAME_LEN` is **16**, and the dead code from L0-L5 is gone: `BlockType::Dynamic`,
+  `BlockTypeRange::DynamicTypeOf`, the `0x3FE`/`0x3FF` literals in the services, the `BlockSchema`
+  missing initializers, the app's unused `dynamicGlobalIndex`, and the unused enumerate locals.
+  Both boards build with **no warnings**; `test.sh` green. **Sizes: core 625 238 B / DAS 11 816 B;
+  core RAM 67 516 B / DAS 2 040 B.**
+
+**L0-L6 complete.** Firmware + app now match the revised `Register.md`/`Script.md`. Both boards
+build with no warnings and `test.sh` is green.
+
+- [x] **Doc-gap alignment - done.** Per the 2026-10-03 review, the `.DT_XX` table no longer stores a
+  name length or the block type - it is now `Name(16) + count(16) + reserved(16) + entries`
+  (matching the doc's Dynamic Block Table), and `DynamicBlockDescriptor` drops `type` (derived from
+  the global index) for a `present` flag; a block-meta write with type None tombstones the block.
+  The app's `DynamicTable` decoder + storage viewer derive the type from the file index. The other
+  doc gaps were resolved in the doc or deferred (`Issues.md`). **Sizes: core 625 212 B / DAS
+  11 816 B; core RAM 67 516 B / DAS 2 040 B.** `test.sh` green.
+
+**HIL (rig: core on `/dev/ttyACM1`, reduced 1-DAS setup).** All feature suites pass:
+`tamu_hardware_verification_test` (10), `hil_dynamic_persistence_test` (4),
+`hil_storage_files_test` (2), `hil_script_test` (4), `hil_script_vm_test` (21),
+`hil_subscriptions_test` (8), `hil_backup_test` (4), `hil_led_display_test` (1), plus
+`hardware_register_test`, `hardware_storage_test` and `hil_test_suite`. `hil_current_setup_test`
+expects the full 2-DAS evaluation rig, so it is not applicable here. The stale
+`BlockType.dynamic/script.value` wire addresses (now the app markers `0x3FF`/`0x3FE`) were corrected
+to the bank types, and a test helper put the Persistent flag in the ValueInfo *type* instead of
+*flags* - both fixed.
+
+Legacy to delete (covered by the layers): `BlockMeta` packing + conversions; dynamic Trigger path;
+`0x3FE`/`0x3FF` literals; `STATLOG`; the define rename; `HandleGetMemUsage`/`HandleReadBackup`;
+`scriptActiveMask`.

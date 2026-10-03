@@ -63,7 +63,7 @@ bool OnPWMFrequencyChange(const StaticBlockDescriptor &block, uint16_t index, co
     uint32_t new_freq = *static_cast<const uint32_t *>(data);
 
     // Determine which timer to update based on the pointer
-    ledc_timer_t timer = (block.Data == &Fan1) ? LEDC_TIMER_0 : LEDC_TIMER_1;
+    ledc_timer_t timer = (block.PersistentData == &staticPer.fan[0]) ? LEDC_TIMER_0 : LEDC_TIMER_1;
 
     ledc_timer_config_t ledc_timer = {
         .speed_mode = LEDC_LOW_SPEED_MODE,
@@ -79,7 +79,7 @@ bool OnPWMFrequencyChange(const StaticBlockDescriptor &block, uint16_t index, co
     }
 
     // Update RAM state
-    auto *fan = static_cast<PWMStruct *>(block.Data);
+    auto *fan = static_cast<PWMPersistent *>(block.PersistentData);
     fan->PWMFreq = new_freq;
 
     return true;
@@ -102,7 +102,7 @@ bool OnPWMDutyChange(const StaticBlockDescriptor &block, uint16_t index, const v
     uint32_t duty = (uint32_t)(((int64_t)new_duty * 1023) / 100);
 
     // Map data_ptr to channel
-    ledc_channel_t channel = (block.Data == &Fan1) ? LEDC_CHANNEL_0 : LEDC_CHANNEL_1;
+    ledc_channel_t channel = (block.PersistentData == &staticPer.fan[0]) ? LEDC_CHANNEL_0 : LEDC_CHANNEL_1;
 
     ledc_set_duty(LEDC_LOW_SPEED_MODE, channel, duty);
     bool applied = (ledc_update_duty(LEDC_LOW_SPEED_MODE, channel) == ESP_OK);
@@ -111,7 +111,7 @@ bool OnPWMDutyChange(const StaticBlockDescriptor &block, uint16_t index, const v
     // the field would claim a duty the fan is not running.
     if (applied)
     {
-        auto *fan = static_cast<PWMStruct *>(block.Data);
+        auto *fan = static_cast<PWMVolatile *>(block.VolatileData);
         fan->Duty = new_duty;
     }
     return applied;

@@ -79,11 +79,11 @@ void main() {
     final dict = buildKeyedDict([
       KeyedEntry(
           key: 1,
-          meta: BlockMeta(flagsAndType: DataType.enum_.value, key: 1, size: 4),
+          meta: ValueInfo(type: DataType.enum_.value, key: 1, size: 4),
           value: intToBytes(1, 4)),
       KeyedEntry(
           key: 4,
-          meta: BlockMeta(flagsAndType: DataType.colour.value, key: 4, size: 4),
+          meta: ValueInfo(type: DataType.colour.value, key: 4, size: 4),
           value: [255, 0, 0, 255]),
     ]);
     final semantic = encodeSemantic(DataType.texture, dict) as List;
@@ -94,7 +94,7 @@ void main() {
   });
 
   test('flag words round-trip', () {
-    final flags = FieldFlags.readOnly | FieldFlags.persistent | FieldFlags.trigger;
+    final flags = ValueFlags.readOnly | ValueFlags.persistent | ValueFlags.trigger;
     final words = flagWords(flags);
     expect(words, ['Read Only', 'Persistent', 'Trigger']);
     expect(flagsFromWords(words), flags);
@@ -102,7 +102,7 @@ void main() {
   });
 
   test('backup file kinds are semantic', () {
-    expect(backupFileKind('SCR_00'), 'Script');
+    expect(backupFileKind('SCR_000'), 'Script');
     expect(backupFileKind('LAY1    '), 'LED layout');
     expect(backupFileKind('SUBREQ'), 'Registry backup');
     expect(backupFileKind('whatever'), 'Binary');

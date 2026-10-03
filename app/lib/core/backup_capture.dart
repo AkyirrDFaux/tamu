@@ -14,15 +14,15 @@ Future<BackupDevice?> captureDevice(
     for (final b in live) {
       if (b == null) continue;
       final type = b.type;
-      if (type == BlockType.script.value) continue; // scripts captured semantically
+      if (isScriptType(type)) continue; // scripts captured semantically
       // Dynamic tombstones (None/Deleted) carry no data; skip them like readDynamicBlocks.
-      if (type == BlockType.dynamic.value &&
-          (b.meta.typeValue == BlockType.none.value ||
-              b.meta.typeValue == BlockType.deleted.value)) {
+      if (isDynamicType(type) &&
+          (b.meta.type == BlockType.none.value ||
+              b.meta.type == BlockType.deleted.value)) {
         continue;
       }
       BackupBlock? block;
-      if (type == BlockType.dynamic.value) {
+      if (isDynamicType(type)) {
         block = await _captureDynamic(reg, b.inst, b.name, b.meta);
       } else if (type == systemBlockTypeValue) {
         block = await _captureSystem(reg);
@@ -37,7 +37,7 @@ Future<BackupDevice?> captureDevice(
       ? await _captureFiles(deviceId, maxFileBytes)
       : <BackupFile>[];
 
-  // Scripts: decode every SCR_XX file into the semantic form (the file is kept too).
+  // Scripts: decode every SCR_XXX file into the semantic form (the file is kept too).
   final scripts = <BackupScript>[];
   for (final file in files) {
     if (file.kind != 'Script') continue;
@@ -113,7 +113,7 @@ Future<BackupDevice?> captureDevice(
 }
 
 Future<BackupBlock?> _captureStatic(RegisterClient reg, int type, int instance,
-    String name, BlockMeta meta) async {
+    String name, ValueInfo meta) async {
   final entries = <BackupEntry>[];
   for (var field = 0; field < meta.size; field++) {
     final read = await reg.readBlockField(type, instance, field, 0);
@@ -125,7 +125,7 @@ Future<BackupBlock?> _captureStatic(RegisterClient reg, int type, int instance,
       key: 'Key 0',
       keyIndex: 0,
       type: dataTypeWord(read.meta.dataType),
-      flags: flagWords(read.meta.flagsAndType),
+      flags: flagWords(read.meta.flags),
       unit: info?.unit,
       value: encodeSemantic(read.meta.dataType, read.value, info: info),
       size: read.value.length,
@@ -154,7 +154,7 @@ Future<BackupBlock?> _captureSystem(RegisterClient reg) async {
         key: systemKeyName(field, key),
         keyIndex: key,
         type: dataTypeWord(read.meta.dataType),
-        flags: flagWords(read.meta.flagsAndType),
+        flags: flagWords(read.meta.flags),
         value: encodeSemantic(read.meta.dataType, read.value),
         size: read.value.length,
       ));
@@ -171,7 +171,7 @@ Future<BackupBlock?> _captureSystem(RegisterClient reg) async {
 }
 
 Future<BackupBlock?> _captureDynamic(
-    RegisterClient reg, int instance, String name, BlockMeta meta) async {
+    RegisterClient reg, int instance, String name, ValueInfo meta) async {
   final block = DynBlock(index: instance, meta: meta, name: name);
   var fields = await reg.getDynamicFields(instance) ?? const <int>[];
   if (fields.isEmpty && meta.size > 0) {
@@ -189,15 +189,15 @@ Future<BackupBlock?> _captureDynamic(
         key: 'Key $key',
         keyIndex: key,
         type: dataTypeWord(read.meta.dataType),
-        flags: flagWords(read.meta.flagsAndType),
+        flags: flagWords(read.meta.flags),
         value: encodeSemantic(read.meta.dataType, read.value),
         size: read.value.length,
       ));
     }
   }
   return BackupBlock(
-    type: blockTypeWord(meta.typeValue),
-    typeIndex: meta.typeValue,
+    type: blockTypeWord(meta.type),
+    typeIndex: meta.type,
     instance: instance,
     name: name,
     isDynamic: true,

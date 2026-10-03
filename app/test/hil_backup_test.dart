@@ -50,15 +50,15 @@ void main() {
       skip: skipReason, () async {
     final reg = RegisterClient(deviceId: tamu.id);
     await reg.deleteDynamic(block: 0);
-    await reg.createDynamicBlock(BlockType.dynamic, 'BKTEST', index: 0);
+    await reg.createDynamicBlock('BKTEST', index: 0);
     final block = DynBlock(
         index: 0,
-        meta: BlockMeta(flagsAndType: BlockType.dynamic.value, size: 2),
+        meta: ValueInfo(type: BlockType.dynamic.value, size: 2),
         name: 'BKTEST');
     await reg.writeDynamicEntry(block, 0, 0,
-        BlockMeta(flagsAndType: DataType.number.value, size: 4), numberToBytes(42.0));
+        ValueInfo(type: DataType.number.value, size: 4), numberToBytes(42.0));
     await reg.writeDynamicEntry(block, 1, 0,
-        BlockMeta(flagsAndType: DataType.string.value, size: 5), 'hello'.codeUnits);
+        ValueInfo(type: DataType.string.value, size: 5), 'hello'.codeUnits);
     await Future<void>.delayed(const Duration(milliseconds: 200));
 
     final device = await captureDevice(tamu.id, includeFiles: false);
@@ -80,9 +80,9 @@ void main() {
 
     // Mutate, then restore from the semantic archive.
     await reg.writeDynamicEntry(block, 0, 0,
-        BlockMeta(flagsAndType: DataType.number.value, size: 4), numberToBytes(99.0));
+        ValueInfo(type: DataType.number.value, size: 4), numberToBytes(99.0));
     await reg.writeDynamicEntry(block, 1, 0,
-        BlockMeta(flagsAndType: DataType.string.value, size: 5), 'bye!!'.codeUnits);
+        ValueInfo(type: DataType.string.value, size: 5), 'bye!!'.codeUnits);
     await Future<void>.delayed(const Duration(milliseconds: 200));
 
     final plan = await buildRestorePlan([device]);
@@ -108,7 +108,7 @@ void main() {
   test('backup captures scripts semantically and restores them', skip: skipReason,
       () async {
     final storage = StorageClient(deviceId: tamu.id);
-    await storage.deleteFile('SCR_09');
+    await storage.deleteFile('SCR_009');
     final draft = ScriptDraft(
         functionName: 'BackupFn', properties: ScriptProperties.loadOnBoot);
     draft.inputs.add(ScriptDraftValue(
@@ -119,7 +119,7 @@ void main() {
         instruction: ScriptSymbol.instruction(catMath, 0), // Set
         operands: [ScriptSymbol.input(0)]));
     draft.lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)));
-    expect(await storage.writeFile('SCR_09', draft.toImage()), isTrue);
+    expect(await storage.writeFile('SCR_009', draft.toImage()), isTrue);
 
     final device = await captureDevice(tamu.id, includeFiles: true, maxFileBytes: 8192);
     expect(device, isNotNull);
@@ -128,9 +128,9 @@ void main() {
     expect(script.inputs.length, 1);
     expect(script.lines.length, 2);
     // The raw file is still present in the storage section.
-    expect(device.files.any((f) => f.name == 'SCR_09'), isTrue);
+    expect(device.files.any((f) => f.name == 'SCR_009'), isTrue);
 
-    await storage.deleteFile('SCR_09');
+    await storage.deleteFile('SCR_009');
     final plan = await buildRestorePlan([device]);
     for (final item in plan.items) {
       item.selected = item.kind == RestoreKind.script && item.script!.slot == 9;
@@ -139,10 +139,10 @@ void main() {
     print('[BACKUP] restored ${result.written} script(s), ${result.failed} failed');
     expect(result.written, 1);
 
-    final back = await storage.readFile('SCR_09');
+    final back = await storage.readFile('SCR_009');
     expect(back, isNotNull);
     expect(BackupScript.fromImage(9, back!).functionName, 'BackupFn');
-    await storage.deleteFile('SCR_09');
+    await storage.deleteFile('SCR_009');
   }, timeout: const Timeout(Duration(seconds: 90)));
 
   test('backup captures and restores a device file', skip: skipReason, () async {
@@ -173,10 +173,10 @@ void main() {
     await storage.deleteFile('BKTEST');
   }, timeout: const Timeout(Duration(seconds: 90)));
 
-  test('a per-field Save writes STATLOG and the device recalls it', skip: skipReason, () async {
+  test('a per-field Save writes .SV and the device recalls it', skip: skipReason, () async {
     // The wire only carries Save All (CID 4) / Recall All (CID 3); a single field's Save is
     // the app writing the file itself (Docs/Services/Register.md: "partial saving ... app with
-    // direct file writes"). This drives that path end to end: the app builds the STATLOG entry,
+    // direct file writes"). This drives that path end to end: the app patches the `.SV` space,
     // writes it, and the *device* then restores it with Recall All.
     final reg = RegisterClient(deviceId: tamu.id);
     final storage = StorageClient(deviceId: tamu.id);
@@ -188,23 +188,27 @@ void main() {
 
     // Point the device at a distinctive name in RAM, then persist it app-side.
     const next = 'PerField';
-    final meta = BlockMeta(
-        flagsAndType: DataType.string.value | FieldFlags.persistent, size: next.length);
+    final meta = ValueInfo(
+        type: DataType.string.value, flags: ValueFlags.persistent, size: next.length);
     expect(await reg.writeBlockField(0, 0, 6, 0, meta, next.codeUnits), isNotNull);
 
     final table = await storage.readFileTable() ?? const <FileRecord>[];
-    final rec = table.firstWhere((f) => normalizeFileName(f.name) == 'STATLOG');
-    final statlog = await storage.readFile(rec.name, size: rec.size);
-    expect(statlog, isNotNull, reason: 'STATLOG is readable');
-    final updated = statlogSaveField(
-        statlog!, statlogSystemBlock, 6, meta, next.codeUnits);
-    expect(await storage.writeFile('STATLOG', updated), isTrue,
+    final rec = table.firstWhere((f) => normalizeFileName(f.name) == '.SV');
+    final sv = await storage.readFile(rec.name, size: rec.size);
+    expect(sv, isNotNull, reason: '.SV is readable');
+    final layout = StaticSpaceLayout.fromRegistry(const []);
+    List<int> padToName(String s) {
+      final t = s.length > systemNameSize ? s.substring(0, systemNameSize) : s;
+      return [...t.codeUnits, ...List<int>.filled(systemNameSize - t.length, 0)];
+    }
+    final updated = svSaveField(sv!, layout, 0, 0, systemNameField, padToName(next))!;
+    expect(await storage.writeFile('.SV', updated), isTrue,
         reason: 'the app-side file write is accepted');
 
     // Change RAM again WITHOUT saving, so a device-side recall has something to undo.
     expect(
         await reg.writeBlockField(0, 0, 6, 0,
-            BlockMeta(flagsAndType: DataType.string.value | FieldFlags.persistent, size: 3),
+            ValueInfo(type: DataType.string.value, flags: ValueFlags.persistent, size: 3),
             'tmp'.codeUnits),
         isNotNull);
     expect(await reg.recallAll(), isTrue, reason: 'the device recalls the app-written log');
@@ -214,13 +218,13 @@ void main() {
         reason: 'the app-written entry is what came back');
 
     // Leave the device with its original name (write it and save it app-side, as the page does).
-    final restoreMeta = BlockMeta(
-        flagsAndType: DataType.string.value | FieldFlags.persistent, size: original.length);
+    final restoreMeta = ValueInfo(
+        type: DataType.string.value, flags: ValueFlags.persistent, size: original.length);
     expect(await reg.writeBlockField(0, 0, 6, 0, restoreMeta, original.codeUnits), isNotNull);
     final fresh = table.isEmpty ? null : await storage.readFile(rec.name, size: rec.size);
-    final back = statlogSaveField(
-        fresh ?? const <int>[], statlogSystemBlock, 6, restoreMeta, original.codeUnits);
-    expect(await storage.writeFile('STATLOG', back), isTrue);
+    final back =
+        svSaveField(fresh ?? const <int>[], layout, 0, 0, systemNameField, padToName(original))!;
+    expect(await storage.writeFile('.SV', back), isTrue);
     expect(await reg.recallAll(), isTrue);
     final finalName = await reg.readField(6, 0);
     expect(String.fromCharCodes(finalName!.value).replaceAll('\x00', '').trim(), original);

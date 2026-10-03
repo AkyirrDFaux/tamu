@@ -53,25 +53,47 @@ const SerialNumber &GetSerialNumber()
 #include "Blocks/AccGyr.h"
 #include "Blocks/Vysi1Display.h"
 
-LEDButtonStruct LedButton;
-PWMStruct Fan1;
-PWMStruct Fan2;
-AccGyrStruct AccGyr;
-Vysi1Display Display1;
-Vysi1Display Display2;
+// The static memory: two flat spaces (Docs/Services/Register.md "System + Static memory
+// blocks"). Persistent settings (mirrored 1:1 to .SV) and volatile values, stacked in
+// BlockInfo order (lowest BlockType first, instances contiguous per type). The block code
+// addresses the fields through these, so the whole space is one compile-time layout.
+struct StaticPersistent {
+    SystemPersistent system;      // BlockType 0 (special)
+    PWMPersistent fan[2];         // BlockType 4
+    AccGyrPersistent accgyr;      // BlockType 5
+    Vysi1Persistent display[2];   // BlockType 6
+};
+struct StaticVolatile {
+    LEDButtonVolatile ledButton;  // BlockType 3
+    PWMVolatile fan[2];           // BlockType 4
+    AccGyrVolatile accgyr;        // BlockType 5
+    Vysi1Volatile display[2];     // BlockType 6
+};
+StaticPersistent staticPer = {
+    .system = {.Name = "Tamu v2.0A", .NetId = 0},
+    .fan = {},
+    .accgyr = {},
+    .display = {},
+};
+StaticVolatile staticVol;
+
+const char *DeviceName = staticPer.system.Name;
+
+Vysi1Display Display1(staticVol.display[0], staticPer.display[0]);
+Vysi1Display Display2(staticVol.display[1], staticPer.display[1]);
 
 const char* DeviceVersion = "Tamu v2.0A";
 
-// Registry order is load-bearing: a STATLOG entry stores the index into this array, and the app
+// Registry order is load-bearing: the app reconstructs the registry index from the array,
 // reconstructs it from type + per-type instance order. Keep the entries grouped by type (see
 // FindStaticBlock in Core/Services/RegisterDefs.h).
 const StaticBlockDescriptor static_block_registry[] = {
-    {&LedButton, &LEDButton_Schema, "LEDButton"},
-    {&Fan1, &PWM_Schema, "Fan1"},
-    {&Fan2, &PWM_Schema, "Fan2"},
-    {&AccGyr, &AccGyr_Schema, "AccGyr"},
-    {&Display1.Data, &Vysi1_Schema, "LEDDisplay"},
-    {&Display2.Data, &Vysi1_Schema, "LEDDisplay2"}};
+    {&staticVol.ledButton, nullptr, &LEDButton_Schema, "LEDButton"},
+    {&staticVol.fan[0], &staticPer.fan[0], &PWM_Schema, "Fan1"},
+    {&staticVol.fan[1], &staticPer.fan[1], &PWM_Schema, "Fan2"},
+    {&staticVol.accgyr, &staticPer.accgyr, &AccGyr_Schema, "AccGyr"},
+    {&staticVol.display[0], &staticPer.display[0], &Vysi1_Schema, "LEDDisplay"},
+    {&staticVol.display[1], &staticPer.display[1], &Vysi1_Schema, "LEDDisplay2"}};
 const size_t static_block_num = sizeof(static_block_registry) / sizeof(StaticBlockDescriptor);
 
 #include "PWM.h"
@@ -95,8 +117,8 @@ PinModeOutput(LED_NOTIFICATION_PIN);
     DeviceStatus.ShortAddress = 0;
 
 ESP_LOGI("INIT","b1 storage"); Storage.Init();
-ESP_LOGI("INIT","b2 backups"); LoadAllBackups(); // restores name + net-id from STATLOG too
-ScriptsBootLoad();         // loads SCR_XX scripts flagged load-on-boot (Docs/Services/Script.md)
+ESP_LOGI("INIT","b2 backups"); LoadAllBackups(); // restores name + net-id from .SV too
+ScriptsBootLoad();         // loads SCR_XXX scripts flagged load-on-boot (Docs/Services/Script.md)
 PreloadVysiLayout();       // Vysi v1.0 layout file -> storage as "LAY_1"
 Vysi1BootLayout(Display1); // apply the (restored) layout file to each display
 Vysi1BootLayout(Display2);
@@ -118,10 +140,10 @@ LED.Setup();
     PinHigh(LED_NOTIFICATION_PIN);
     PinModeInput(LED_NOTIFICATION_PIN);
 
-    // The LED state is a writable static-block field persisted in the STATLOG backup;
+    // The LED state is a writable static-block field persisted in the .SV backup;
     // the boot restore writes the RAM field but does not re-run its write trigger, so
     // re-apply it to drive the pin to match the restored value (LED off by default).
-    OnLEDStateChange(static_block_registry[0], 3, (const void *)&LedButton.LEDState, sizeof(bool));
+    OnLEDStateChange(static_block_registry[0], 3, (const void *)&staticVol.ledButton.LEDState, sizeof(bool));
 
     // The Tamu is always the core (ID 1): no discovery needed, no button check.
     DeviceStatus.ShortAddress = 1;
@@ -131,7 +153,7 @@ LED.Setup();
     ReRegisterSubscriptions();
 
     // Core discover (docs, "Core functions"): the persistent net-ID was restored by
-    // LoadAllBackups from STATLOG (0 is not allowed -> randomly re-generated), then
+    // LoadAllBackups from .SV (0 is not allowed -> randomly re-generated), then
     // broadcast Core-discover to all cores (3F.1). A response carrying a MATCHING net
     // within 500 ms means this net is claimed twice on the bus -> normal boot is
     // aborted (issue logged; the main loop blinks the error LED) while the core stays
@@ -190,7 +212,7 @@ LED.Setup();
             if (ident)
                 PinModeOutput(LED_NOTIFICATION_PIN);
             else
-                OnLEDStateChange(static_block_registry[0], 3, (const void *)&LedButton.LEDState, sizeof(bool));
+                OnLEDStateChange(static_block_registry[0], 3, (const void *)&staticVol.ledButton.LEDState, sizeof(bool));
             s_identify_prev = ident;
         }
         if (ident)
@@ -208,7 +230,7 @@ LED.Setup();
         {
             static const uint16_t OdrPeriodMs[8] = {80, 38, 19, 10, 5, 2, 1, 1};
             static uint32_t lastImuMs = 0;
-            uint8_t odr = AccGyr.SamplingRate < 8 ? AccGyr.SamplingRate : 3;
+            uint8_t odr = staticPer.accgyr.SamplingRate < 8 ? staticPer.accgyr.SamplingRate : 3;
             if (DeviceStatus.UptimeMs - lastImuMs >= OdrPeriodMs[odr]) {
                 lastImuMs = DeviceStatus.UptimeMs;
                 ReadIMUData();
@@ -235,8 +257,8 @@ LED.Setup();
                 int64_t period_us = loopStart - lastFrameUs;
                 if (period_us <= 0) period_us = 1;
                 Number inst = Number::FromRaw((int32_t)((1000000LL << 16) / period_us));
-                Display1.Data.RefreshRate = Display1.Data.RefreshRate * FpsEmaKeep + inst * FpsEmaNew;
-                Display2.Data.RefreshRate = Display2.Data.RefreshRate * FpsEmaKeep + inst * FpsEmaNew;
+                Display1.Vol.RefreshRate = Display1.Vol.RefreshRate * FpsEmaKeep + inst * FpsEmaNew;
+                Display2.Vol.RefreshRate = Display2.Vol.RefreshRate * FpsEmaKeep + inst * FpsEmaNew;
             }
             lastFrameUs = loopStart;
         }

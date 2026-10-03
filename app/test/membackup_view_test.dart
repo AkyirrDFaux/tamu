@@ -4,7 +4,7 @@ import 'package:tamuapp/core/types.dart';
 import 'package:tamuapp/ui/file_viewers.dart';
 import 'package:tamuapp/ui/theme.dart';
 
-/// Renders MemoryBackupView (the STATLOG / SUBREQ / DT_ decoders) against synthetic
+/// Renders MemoryBackupView (the `.SV` / SUBREQ / DT_ decoders) against synthetic
 /// bytes matching the firmware layouts (StaticMemory.h, Subscriptions.h, Memory.h).
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -21,14 +21,14 @@ void main() {
   }
 
   testWidgets('DT_ dynamic block table decodes entries', (tester) async {
-    // u8 name_len, name, u16 type, u16 entry_count, then per entry
+    // Name (16 chars, NUL-padded), u16 entry_count, u16 reserved, then per entry
     // u16 fieldKey, u16 flagsAndType, u8 size, u8 pad.
     final data = <int>[
-      3, 68, 89, 78, // name "DYN"
-      ...u16(BlockType.dynamic.value),
+      ...'DYN'.codeUnits, ...List.filled(13, 0), // 16-byte name
       ...u16(2),
+      0, 0, // reserved padding
       ...u16((0 << 8) | 0),
-      ...u16(DataType.number.value | FieldFlags.persistent),
+      ...u16(DataType.number.value | ValueFlags.persistent),
       4, 0,
       ...u16((1 << 8) | 5),
       ...u16(DataType.bool_.value),
@@ -42,7 +42,7 @@ void main() {
   testWidgets('empty and corrupt registry files do not crash', (tester) async {
     await pump(tester, 'DT_00', []);
     await pump(tester, 'DT_00', [5, 0, 0xFF, 0xFF, 1, 2, 3]);
-    await pump(tester, 'STATLOG', [0xFF]);
+    await pump(tester, '.SV', [0xFF]);
     await pump(tester, 'BOGUS', [1, 2, 3]);
   });
 }

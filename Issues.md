@@ -1,9 +1,6 @@
 # Issues
 
 ## Naming/coverage gaps vs the docs (decision needed)
-- **Script file names.** `Docs/Services/Script.md` says `SCR_XXX`; the implementation uses
-  `SCR_XX` (`SCR_00..SCR_3F`, 64 slots) in both firmware (`Core/Services/Script.h`) and app
-  (`app/lib/core/script_file.dart`). Rename if >64 scripts are wanted.
 - **OS notifications.** `Docs/App/Settings.md` lists "Allow notifications (To OS)" with
   per-event selection; the app persists `notifyOs`/`osEvents`/`suppressOsWhenOpen` but only
   delivers in-app notifications (`app/lib/core/notifications.dart`). Implement OS delivery
@@ -48,33 +45,36 @@ and no "Subscription Source" bit, and the read no longer combines flags), and th
 extension is folded into CID 3** ("Read state" now returns `State, Last error code`). What the new
 text still disagrees about, and needs a ruling before the matching code lands:
 
-- **`Register.md` "Write ... Respond always"** contradicts the agreed behaviour: **write responses
-  are request-gated** (reply only when the request set REQACK), which is what `Set Name`'s
-  "Respond only if requested" already says. **Confirmed**: the firmware gates every response on
-  `FLAG_REQACK` (`SendResponse` returns early otherwise), so only the doc line needs to go back.
 - **The trigger table's "Function pointer (Static)"** cannot be sent. Proposal: `Field&Key` plus a
   reserved 32-bit word (0 for static, the Script ID for dynamic).
-- **`ValueInfo` layout.** The Map entry gives `Type(16) + Size(8) + Flags(8)`, while the wire
-  format packs `FlagsAndType(16) + Key(8) + Size(8)` (`BLOCK_META_FLAGS_MASK` occupies bits 10-15).
-  The block table now puts ValueInfo on the wire, so this needs pinning; with only the three
-  passive flags left, the doc's layout is cleaner and would retire the mask hack.
-- **`Script.md:82`** still says "Writer sets the script updated flag", but that flag no longer
-  exists.
-- **`App/Device view.md:8`** still lists **CLI** in the capability bitfield, though the CLI is gone
-  and `Docs/Services/CLI.md` was deleted.
-- **Script CID 0 lists "Script File IDs", not slots.** CID 1 now takes a separate loaded id, so
-  the two may differ - but then CID 0's list is not addressable: the caller cannot recover which
-  slot holds which file. The implementation loads a slot explicitly and the app keeps file id ==
-  slot, so CID 0 stays meaningful; either CID 0 should report the loaded **slots**, or the docs
-  should say the loaded id equals the file id.
-- **`Docs/Services/Register.md`'s dynamic trigger table has no backing data.** The row says a
-  dynamic trigger's target is a **Script ID**, but nothing stores one: `DynamicEntry` has no
-  script id and the descriptor has no trigger array - the `Trigger` flag is only a marker. A
-  dynamic block therefore reports **zero** triggers, and that column is unimplemented.
-- **The dynamic descriptor's `Name` is 24 characters, not 12.** `BLOCK_NAME_LEN` is 24 and
-  `HandleCreateDynamic` accepts 23; the doc's descriptor (and the old Dynamic Block Table) say 12.
-  The evaluation setup's own block is named `'Subscriptions'` (13), so clamping to 12 would break
-  it - the doc should say 24.
+- **Script CID 0 lists "Script File IDs", not slots.** CID 1 takes a separate loaded id, so the
+  two may differ - and CID 0's list is then not addressable: the caller cannot recover which slot
+  holds which file. The docs were updated to **uint16 file ids** (SCR_XXX, 4096 files) with the
+  slot still 6-bit (64 loaded); the app picks a free slot and tracks file->slot itself, and a
+  script's block meta carries its function name (not its file id), so an untracked slot can only
+  fall back to the file==slot convention. Reporting the loaded **slots** in CID 0 (or a slot in
+  each list entry) would remove the guesswork - a docs decision.
+- **The app mirrors the firmware's static persistent layout.** `.SV` is a raw space with no
+  offsets, so the app recomputes each field's offset from a per-type persistent-field table
+  (`device_backup.dart`'s `staticPersistentFields`) + the 32-bit alignment rule. The firmware is
+  the source of truth, so a firmware layout change must be mirrored there; a device-side
+  "field offsets" read (not in the doc's wire format) would remove the duplication.
+
+Verified against the code (2026-10-03), still to pin:
+- **The Static Block Type Table is descriptive, not literal.** The doc lists an explicit
+  `Field&Key` per entry and per trigger plus a `Count: Triggers`; the firmware stores positional
+  parallel arrays (`Map[]`/`Offsets[]`/`Triggers[]`) indexed by field (field/key implicit, no
+  separate trigger count). Equivalent, but the doc should say the entries are positional.
+- **The dynamic commands' request shape (deferred).** The doc says `Index (uint16)`; the firmware
+  + app send a full 32-bit **BlockInfo** (the index in the upper half). The doc should say
+  `BlockInfo`.
+
+Resolved in the 2026-10-03 revision (code now matches): the trigger timing wording, the
+`VolatileSize`/`PersistentSize` units, the Dynamic Block Table header (the `.DT_XX` file is now
+`Name(16) + count(16) + reserved(16) + entries`, no length prefix and no stored type), the dynamic
+Trigger flag, the banked enumerate 8.8 split, and `Command ID table.md`'s Save/Recall swap. The
+dynamic descriptor no longer stores a type (it is derived from the global index); a live block is
+marked by a `present` flag instead.
 ## Android (on-device behaviour untested)
 
 - **On-device behavior not yet verified** (no Android device/emulator configured): the BLE

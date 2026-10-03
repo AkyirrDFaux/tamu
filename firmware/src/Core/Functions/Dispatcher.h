@@ -148,76 +148,17 @@ void ProcessBus()
 // Meas1/Meas2) reuse the same path instead of duplicating it per device.
 void LoadAllBackups()
 {
-    // Remove the obsolete standalone name/net-id files - the System block's Name and
-    // NetID now persist through the STATLOG mirror (like every other persistent field).
-    static const char devname_file[8] = {'D','E','V','N','A','M','E',' '};
-    static const char netid_file[8]  = {'N','E','T','I','D',' ',' ',' '};
-    if (Storage.FileExists(devname_file) != 0xFFFFFFFF) Storage.DeleteFile(devname_file);
-    if (Storage.FileExists(netid_file) != 0xFFFFFFFF) Storage.DeleteFile(netid_file);
+    // Static memory: one 1:1 mirror read of `.SV` (the whole persistent space).
+    StaticRecallAll();
 
-    uint8_t buf[MEMORY_BACKUP_CAP];
-    uint16_t n = ReadBackupFile(StaticLogName(), buf, sizeof(buf));
-    if (n > 0)
-    {
-        // One pass over the log. Each entry carries its block index and field, so there is
-        // no need to scan the log once per block/field (the previous nested walk was O(blocks
-        // x fields x entries)); the last entry for a field still wins, as before.
-        for (uint16_t c = 0; c + kLogEntryHeaderSize <= n;)
-        {
-            uint8_t b = buf[c];
-            if (b == 0xFF) break;
-            // Entry layout: BlockIndex[4] + BlockMeta[4] + Value. The value size lives in
-            // the BlockMeta.Size byte, the LAST byte of the 8-byte header.
-            uint8_t sz = buf[c + kLogEntryHeaderSize - 1];
-            uint16_t el = LogEntrySize(sz);
-            if (el > n - c) break;
-            const uint8_t field = buf[c + 1];
-            const uint8_t *val = buf + c + kLogEntryHeaderSize;
-
-            if (b == SYSTEM_BLOCK_BACKUP)
-            {
-                // System block persistent fields (Name 6, NetID 7) live in the same STATLOG
-                // mirror under the SYSTEM_BLOCK_BACKUP marker (no separate DEVNAME/NETID files).
-                if (field == SYSTEM_FIELD_NAME)
-                {
-                    uint16_t nl = sz; if (nl > 16) nl = 16;
-                    memcpy(DeviceNameBuffer, val, nl);
-                    DeviceNameBuffer[nl] = '\0';
-                }
-                else if (field == SYSTEM_FIELD_NETID)
-                {
-                    DeviceStatus.NetId = val[0];
-                }
-            }
-            else if (b < static_block_num)
-            {
-                const StaticBlockDescriptor &block = static_block_registry[b];
-                if (field < block.Schema->MapCount)
-                {
-                    // Only writable Persistent fields are retained after reboot
-                    // (Register.md); volatile and read-only fields are never restored.
-                    const uint16_t fl = block.Schema->Map[field].FlagsAndType;
-                    if ((fl & FieldFlags::Persistent) && !(fl & FieldFlags::ReadOnly) &&
-                        sz == block.Schema->Map[field].Size)
-                    {
-                        FieldResult fr = block.Get(field);
-                        if (fr.Data)
-                            memcpy(fr.Data, val, sz);
-                    }
-                }
-            }
-            c += el;
-        }
-    }
-
-#ifndef DISABLE_DYNAMIC_MEMORY
+#ifdef USE_DYNAMIC_BLOCKS
     // Per-block DT/DV files: load every live slot (absent file = tombstone/empty).
     for (uint16_t i = 0; i < MAX_DYNAMIC_BLOCKS; i++) {
         DynamicBlockDescriptor scratch;
         if (!LoadDynamicBlockFiles(scratch, i))
             continue;
         while (dynamic_block_registry.block_count <= i)
-            if (!dynamic_block_registry.AddBlock(BlockType::Undefined))
+            if (!dynamic_block_registry.AddTombstone())
                 break;
         if (dynamic_block_registry.block_count > i) {
             dynamic_block_registry.TombstoneBlock(i);

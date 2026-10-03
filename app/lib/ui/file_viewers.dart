@@ -3,7 +3,7 @@
 //
 // - FileViewPage: previews one file's content (SNREG registry, LAY LED-index
 //   grid, text, hex).
-// - MemoryBackupView: decodes the STATLOG / SUBREQ registry backups and the
+// - MemoryBackupView: decodes the `.SV` / SUBREQ registry backups and the
 //   DT_ dynamic block table.
 library;
 
@@ -34,7 +34,7 @@ enum StorageFileType {
 StorageFileType storageFileType(String name) {
   final upper = normalizeFileName(name).toUpperCase();
   if (upper == 'SNREG') return StorageFileType.snreg;
-  if (upper == 'STATLOG' || upper == 'SUBREQ') return StorageFileType.backup;
+  if (upper == '.SV' || upper == 'SUBREQ') return StorageFileType.backup;
   // Per-block dynamic persistence (Docs/Services/Register.md: DT_XXX table / DV_XXX values).
   if (upper.startsWith('DT_')) return StorageFileType.dynamicTable;
   if (upper.startsWith('DV_')) return StorageFileType.dynamicValues;
@@ -80,9 +80,9 @@ class FileViewPage extends StatefulWidget {
   final int size;
   final List<int>? data;
 
-  /// The device's static blocks in registry order (STATLOG decoder maps its
-  /// block indexes onto these). null when unknown.
-  final List<({int type, int inst, BlockMeta meta, String name})?>? blocks;
+  /// The device's static blocks in registry order (the `.SV` decoder computes its
+  /// field layout from these). null when unknown.
+  final List<({int type, int inst, ValueInfo meta, String name})?>? blocks;
 
   const FileViewPage(
       {super.key,
@@ -304,20 +304,20 @@ class _FileViewPageState extends State<FileViewPage> {
 
 // ---------------------------------------------------------------------------
 // Registry backup decoders (firmware layouts, Docs/Services/Register.md):
-//   STATLOG (StaticMemory.h): u8 block_idx, u8 field, u16 pad, BlockMeta[4],
-//     value[4-aligned]; block_idx 0xFF ends the log, 0xFE marks a System field.
+//   `.SV` (StaticMemory.h + the board's StaticPersistent): a raw 1:1 mirror of the static
+//     persistent space, decoded by device_backup.dart from the computed field layout.
 //   SUBREQ (Subscriptions.h SaveRequesterTable): u8 count, then 26 B per entry
 //     (target, source, provider, trigger + pad, period, min, deadzone).
-//   DT_<hex2> (Memory.h SaveDynamicBlockFiles): u8 name_len, name, u16 type,
-//     u16 entry_count, then fieldKey/flagsAndType/size/pad per entry.
+//   DT_<hex2> (MemoryDynamic.h SaveDynamicBlockFiles): Name (16 chars, NUL-padded),
+//     u16 entry_count, u16 reserved, then fieldKey/flagsAndType/size/pad per entry.
 // ---------------------------------------------------------------------------
 
 class MemoryBackupView extends StatelessWidget {
   final String fileName;
   final List<int> data;
 
-  /// The device's static blocks in registry order (used by the STATLOG decoder).
-  final List<({int type, int inst, BlockMeta meta, String name})?>? blocks;
+  /// The device's static blocks in registry order (used by the `.SV` decoder).
+  final List<({int type, int inst, ValueInfo meta, String name})?>? blocks;
 
   const MemoryBackupView({super.key, required this.fileName, required this.data, this.blocks});
 
@@ -338,22 +338,29 @@ class MemoryBackupView extends StatelessWidget {
     );
   }
 
-  String _formatBytes(BlockMeta meta, List<int> bytes) {
+  String _formatBytes(ValueInfo meta, List<int> bytes) {
     if (meta.dataType == DataType.none) return '∅';
     return formatValue(meta.dataType, bytes);
   }
 
   // -------------------------------------------------------------------------
   // Dynamic block table (DT_<hex2>, decoded by device_backup.dart): the block's
-  // persistent value space lives in the sibling DV_<hex2> file.
+  // persistent value space lives in the sibling DV_<hex2> file. The table no
+  // longer stores the block's type; it is derived from the file's global index.
   // -------------------------------------------------------------------------
+  int? _dynamicIndex() {
+    final n = normalizeFileName(fileName).toUpperCase();
+    if (!n.startsWith('DT_')) return null;
+    return int.tryParse(n.substring(3), radix: 16);
+  }
+
   List<Widget> _parseDynamicTable() {
     final table = decodeDynamicTable(data);
     if (table == null) return [const Text('(corrupt table)')];
 
     final children = <Widget>[];
     for (final e in table.entries) {
-      final flags = FieldFlags.describe(e.flagsAndType);
+      final flags = ValueFlags.describe(e.flags);
       children.add(ListTile(
         dense: true,
         contentPadding: const EdgeInsets.only(left: 40, right: 12),
@@ -364,43 +371,52 @@ class MemoryBackupView extends StatelessWidget {
             style: const TextStyle(fontSize: 10, color: Colors.white38)),
       ));
     }
+    final idx = _dynamicIndex();
+    final typeLabel = idx == null ? '' : ' (${blockTypeLabel(dynamicTypeForIndex(idx))})';
     return [
       _blockCard(
-          '${table.name.isEmpty ? 'Block' : table.name} (${blockTypeLabel(table.typeValue)})',
+          '${table.name.isEmpty ? 'Block' : table.name}$typeLabel',
           '${table.entries.length} entries',
           children)
     ];
   }
 
   // -------------------------------------------------------------------------
-  // STATLOG - the static-block + System backup, decoded by device_backup.dart.
+  // `.SV` - the static-block + System backup, decoded by device_backup.dart.
   // -------------------------------------------------------------------------
-  List<Widget> _parseStatlog() {
+  List<Widget> _parseSv() {
+    final registry = <({int type, int inst})>[
+      for (final b in blocks ?? const [])
+        if (b != null && isStaticRegistryType(b.type)) (type: b.type, inst: b.inst),
+    ];
+    final layout = StaticSpaceLayout.fromRegistry(registry);
     final rows = <Widget>[];
-    for (final r in decodeStatlog(data)) {
+    for (final e in decodeSv(data, layout, registry)) {
       String title;
       String subtitle;
-      if (r.isSystem) {
-        title = r.field == systemNameField
+      if (e.blockType == systemBlockTypeValue) {
+        title = e.field == systemNameField
             ? 'System Name'
-            : (r.field == systemNetIdField ? 'NetID' : 'System field ${r.field}');
+            : (e.field == systemNetIdField ? 'NetID' : 'System field ${e.field}');
         subtitle = 'System block';
       } else {
-        final blk = (blocks != null && r.blockIdx < blocks!.length)
-            ? blocks![r.blockIdx]
-            : null;
-        final info = blk == null ? null : blockInfoFor(BlockType.fromValue(blk.type));
-        title = '${(blk?.name ?? 'Block ${r.blockIdx}').trim()}'
-            '${info?.field(r.field) == null ? '' : ' · ${info!.field(r.field)!.name}'}';
-        subtitle = blk == null
-            ? 'static block ${r.blockIdx}'
-            : BlockType.fromValue(blk.type).label;
+        ({int type, int inst, ValueInfo meta, String name})? blk;
+        for (final b in blocks ?? const []) {
+          if (b != null && b.type == e.blockType && b.inst == e.inst) {
+            blk = b;
+            break;
+          }
+        }
+        final info = blockInfoFor(BlockType.fromValue(e.blockType));
+        title = '${(blk?.name ?? 'Block ${e.blockType}').trim()}'
+            '${info?.field(e.field) == null ? '' : ' · ${info!.field(e.field)!.name}'}';
+        subtitle = BlockType.fromValue(e.blockType).label;
       }
       rows.add(ListTile(
         dense: true,
         contentPadding: const EdgeInsets.only(left: 16, right: 12),
         title: Row(children: [
-          Expanded(child: Text('$title: ${_formatBytes(r.meta, r.value)}',
+          Expanded(child: Text('$title: ${_formatBytes(e.meta, e.value)}',
               style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
         ]),
         subtitle: Text(subtitle, style: const TextStyle(fontSize: 10, color: Colors.white38)),
@@ -448,7 +464,7 @@ class MemoryBackupView extends StatelessWidget {
   Widget build(BuildContext context) {
     final upper = normalizeFileName(fileName).toUpperCase();
     final List<Widget> rows = switch (upper) {
-          'STATLOG' => _parseStatlog(),
+          '.SV' => _parseSv(),
           'SUBREQ' => _parseSubreq(),
           _ when upper.startsWith('DT_') => _parseDynamicTable(),
           _ => [const Text('(unknown registry file)')],

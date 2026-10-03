@@ -79,7 +79,7 @@ Execution done in main loop. Run all instructions until the same instruction is 
 - Register reader and writer
 	Var, success = read (blockinfo) / readforeign(Address, blockinfo).
 	Success = write(Val, blockinfo) / writeforeign(Val, Address, blockinfo).
-	Writer sets the script updated flag, uses different TRID for each instance.
+	Writer uses a different TRID for each instance.
 	Waits for confirmation.
 - If/While blocks
 	M&L processor embedded in input, expected result bool.
@@ -96,8 +96,8 @@ Execution done in main loop. Run all instructions until the same instruction is 
 
 | Function                     | CID | Payload In                         | Payload out                                       | Note                             |
 | ---------------------------- | --- | ---------------------------------- | ------------------------------------------------- | -------------------------------- |
-| Get currently loaded scripts | 0   | -                                  | Number of loaded scripts, Script File IDs (uint8) | Get actively loaded scripts      |
-| Load Script                  | 1   | Script File ID, Script (loaded) ID | Success                                           | Load into active memory          |
+| Get currently loaded scripts | 0   | -                                  | Number of loaded scripts (uint8), Script File IDs (uint16) | Get actively loaded scripts      |
+| Load Script                  | 1   | Script File ID (uint16), Script (loaded) ID (uint8) | Success                                           | Load into active memory          |
 | Unload script                | 2   | Script (loaded) ID                 |                                                   | Unload script from active memory |
 | Read state                   | 3   | Script ID                          | State, Last error code                            | 0 = OK                           |
 | Set state                    | 4   | Script ID, new state               |                                                   | Clears error                     |

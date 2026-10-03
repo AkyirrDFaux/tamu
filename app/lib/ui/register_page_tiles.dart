@@ -10,7 +10,7 @@ extension on _RegisterPageState {
   /// Constant) as a keyed list. Inputs and variables are editable; the header, outputs
   /// and constants are read-only.
   Widget _scriptFieldTile(int blockType, int inst, int cacheKey, int fieldIndex,
-      ({int type, int inst, BlockMeta meta, String name})? block, Key? cardKey) {
+      ({int type, int inst, ValueInfo meta, String name})? block, Key? cardKey) {
     // The Header category is script metadata and is intentionally not part of the
     // Register view.
     if (fieldIndex == ScriptField.header) return const SizedBox.shrink();
@@ -67,7 +67,7 @@ extension on _RegisterPageState {
     );
   }
 
-  Widget _blockCard(BuildContext context, int blockIndex, ({int type, int inst, BlockMeta meta, String name})? block, {Key? cardKey, int? dragIndex}) {
+  Widget _blockCard(BuildContext context, int blockIndex, ({int type, int inst, ValueInfo meta, String name})? block, {Key? cardKey, int? dragIndex}) {
     if (block == null) {
       return Card(
         color: kSurfaceAlt,
@@ -81,7 +81,7 @@ extension on _RegisterPageState {
 
     final isExpanded = _expanded.contains(blockIndex);
     final isSystem = block.type == 0 && block.inst == 0;
-    final isDynamic = block.type == BlockType.dynamic.value;
+    final isDynamic = isDynamicType(block.type);
     if (isHiddenRegisterSlot(block.type, block.meta)) {
       // Dynamic tombstone slots are hidden (they carry no block). The System block reports
       // meta type 0x00 too, so it is excluded by the slot type (see isHiddenRegisterSlot).
@@ -121,9 +121,9 @@ extension on _RegisterPageState {
           subtitle: Padding(
             padding: const EdgeInsets.only(top: 2),
             child: Wrap(spacing: 6, runSpacing: 2, children: [
-              ChipLabel(isSystem ? 'System' : BlockType.fromValue(block.meta.typeValue).label),
-              for (final flag in FieldFlags.describe(block.meta.flags)) ChipLabel(flag, subtle: flag != 'RO'),
-              if (block.meta.typeValue != BlockType.script.value)
+              ChipLabel(isSystem ? 'System' : blockTypeLabel(block.meta.type)),
+              for (final flag in ValueFlags.describe(block.meta.flags)) ChipLabel(flag, subtle: flag != 'RO'),
+              if (!isScriptType(block.meta.type))
                 ChipLabel('${block.meta.size} fields', subtle: true),
             ]),
           ),
@@ -141,7 +141,7 @@ extension on _RegisterPageState {
               }
             },
             itemBuilder: (_) => [
-              if (block.meta.typeValue == BlockType.dynamic.value) ...[
+              if (isDynamicType(block.meta.type)) ...[
                 const PopupMenuItem(value: 'edit', child: Text('Rename')),
                 const PopupMenuItem(value: 'add', child: Text('Add field')),
                 if (_editMode) ...[
@@ -198,23 +198,23 @@ extension on _RegisterPageState {
     );
   }
 
-  Widget _fieldTile(int blockType, int inst, ({int type, int inst, BlockMeta meta, String name})? block, int fieldIndex, {Key? cardKey, int? dragIndex}) {
+  Widget _fieldTile(int blockType, int inst, ({int type, int inst, ValueInfo meta, String name})? block, int fieldIndex, {Key? cardKey, int? dragIndex}) {
     final cacheKey = (blockType << 8) | inst;
     final cache = _fieldCache[cacheKey];
     final field = cache?[fieldIndex];
     final isSystem = blockType == 0 && inst == 0;
 
-    // Loaded scripts (0x3FE): keyed entries per category field.
-    if (blockType == BlockType.script.value) {
+    // Loaded scripts (0x3F4-0x3F7): keyed entries per category field.
+    if (isScriptType(blockType)) {
       return _scriptFieldTile(blockType, inst, cacheKey, fieldIndex, block, cardKey);
     }
 
     // Dynamic blocks: flat (field, key) entries. A field is a DICTIONARY when its
     // key-0 entry is a Geometry/Texture marker; otherwise key 0 is the field's plain
     // value. Key 0 is never shown as a row - it's the value/marker itself.
-    if (blockType == BlockType.dynamic.value) {
+    if (isDynamicType(blockType)) {
       final keys = _dynamicKeys[inst]?[fieldIndex] ?? <int>[0];
-      final entries = <(int, ({BlockMeta meta, List<int> value})?)>[
+      final entries = <(int, ({ValueInfo meta, List<int> value})?)>[
         for (final k in keys) (k, cache?[fieldIndex * 256 + k]),
       ];
       if (entries.every((e) => e.$2 == null)) {
@@ -227,9 +227,9 @@ extension on _RegisterPageState {
                 style: TextStyle(fontSize: 13, color: Colors.white38)));
       }
       final head = entries.firstOrNull?.$2;
-      final isDict = head != null && isRenderDictType(head.meta.typeValue);
-      final dictType = head?.meta.typeValue ?? 0;
-      final extraKeys = <({int key, ({BlockMeta meta, List<int> value}) e})>[];
+      final isDict = head != null && isRenderDictType(head.meta.type);
+      final dictType = head?.meta.type ?? 0;
+      final extraKeys = <({int key, ({ValueInfo meta, List<int> value}) e})>[];
       for (final (k, e) in entries) {
         if (k > 0 && e != null) extraKeys.add((key: k, e: e));
       }
@@ -428,7 +428,7 @@ extension on _RegisterPageState {
               style: TextStyle(fontSize: 13, color: Colors.white38)));
     }
 
-    final primaryFlags = FieldFlags.describe(field.meta.flags);
+    final primaryFlags = ValueFlags.describe(field.meta.flags);
     final isSystemField = isSystem;
 
     // Field display: resolves the registry's per-type field metadata for enum labels and
@@ -472,7 +472,7 @@ extension on _RegisterPageState {
     }
 
     // For system block, collect all keys for this field
-    List<({int key, ({BlockMeta meta, List<int> value})? field})> keyedEntries = [];
+    List<({int key, ({ValueInfo meta, List<int> value})? field})> keyedEntries = [];
     if (isSystemField && cache != null) {
       final keys = systemKeysForField(fieldIndex);
       for (final key in keys) {
@@ -547,7 +547,7 @@ extension on _RegisterPageState {
 
     final fieldInfo = isSystemField
         ? null
-        : blockInfoFor(BlockType.fromValue(block?.meta.typeValue ?? 0))?.field(fieldIndex);
+        : blockInfoFor(BlockType.fromValue(block?.meta.type ?? 0))?.field(fieldIndex);
 
     return ListTile(
       dense: true,
@@ -562,7 +562,7 @@ extension on _RegisterPageState {
             child: Text(
                 isSystemField ? formatSystemValue(field.meta.dataType, field.value, fieldIndex, systemKeysForField(fieldIndex).first) : displayValue(),
                 style: const TextStyle(fontFamily: 'monospace', fontSize: 13))),
-        for (final flag in FieldFlags.describe(field.meta.flags))
+        for (final flag in ValueFlags.describe(field.meta.flags))
           Padding(
             padding: const EdgeInsets.only(left: 4),
             child: Text(flag,
@@ -597,7 +597,7 @@ extension on _RegisterPageState {
             const PopupMenuItem(value: 'save', child: Text('Save to backup')),
           if (!field.meta.readOnly && field.meta.persistent)
             const PopupMenuItem(value: 'recall', child: Text('Recall from backup')),
-          if (blockType == BlockType.dynamic.value && !field.meta.readOnly) ...[
+          if (isDynamicType(blockType) && !field.meta.readOnly) ...[
             const PopupMenuItem(value: 'type', child: Text('Change type')),
             const PopupMenuItem(value: 'delentry', child: Text('Delete entry')),
           ],

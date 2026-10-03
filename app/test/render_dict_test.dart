@@ -8,9 +8,10 @@ import 'package:tamuapp/core/types.dart';
 /// Keyed-dictionary helpers for the LED display render block: parsing a field value
 /// into entries and re-serializing (4-byte entry alignment) round-trips exactly.
 List<int> entry(int type, int key, List<int> value) {
-  final pad = (4 - ((4 + value.length) % 4)) % 4;
+  final pad = (4 - ((6 + value.length) % 4)) % 4;
   return [
-    ...BlockMeta(flagsAndType: type, key: key, size: value.length).toPacked(),
+    0, key, // Field&Key (the dict field is implicit here)
+    ...ValueInfo(type: type, key: key, size: value.length).toBytes(),
     ...value,
     ...List<int>.filled(pad, 0),
   ];

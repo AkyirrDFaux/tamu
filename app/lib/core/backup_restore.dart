@@ -5,7 +5,7 @@ class LiveEntry {
   final int key;
   final String fieldName;
   final String keyName;
-  final BlockMeta meta;
+  final ValueInfo meta;
   final FieldInfo? info;
 
   LiveEntry({
@@ -21,21 +21,21 @@ class LiveEntry {
 }
 
 class LiveBlock {
-  final int typeValue;
+  final int type;
   final int instance;
   final String name;
   final bool isDynamic;
   final List<LiveEntry> entries;
 
   LiveBlock({
-    required this.typeValue,
+    required this.type,
     required this.instance,
     required this.name,
     required this.isDynamic,
     required this.entries,
   });
 
-  String get typeWord => blockTypeWord(typeValue);
+  String get typeWord => blockTypeWord(type);
 }
 
 /// A live device snapshot for restore matching.
@@ -56,9 +56,9 @@ class LiveDevice {
 
   LiveBlock? findBlock(BackupBlock source) {
     if (source.typeIndex == systemBlockTypeValue) {
-      return blocks.where((b) => b.typeValue == systemBlockTypeValue).firstOrNull;
+      return blocks.where((b) => b.type == systemBlockTypeValue).firstOrNull;
     }
-    final sameType = blocks.where((b) => b.typeValue == source.typeIndex).toList();
+    final sameType = blocks.where((b) => b.type == source.typeIndex).toList();
     if (sameType.isEmpty) return null;
     return sameType.where((b) => b.instance == source.instance).firstOrNull ??
         sameType
@@ -69,7 +69,7 @@ class LiveDevice {
 
   /// Resolves a semantic subscription address to a live BlockInfo, or null.
   int? resolveRef(BackupBlockRef ref) {
-    final block = blocks.where((b) => b.typeValue == ref.typeIndex).firstOrNull ??
+    final block = blocks.where((b) => b.type == ref.typeIndex).firstOrNull ??
         blocks.where((b) => b.typeWord == ref.block).firstOrNull;
     if (block == null) return null;
     LiveEntry? entry;
@@ -83,7 +83,7 @@ class LiveDevice {
         .where((e) => e.field == ref.fieldIndex && e.key == ref.keyIndex)
         .firstOrNull;
     if (entry == null) return null;
-    return makeBlockInfo(block.typeValue, block.instance, entry.field, entry.key);
+    return makeBlockInfo(block.type, block.instance, entry.field, entry.key);
   }
 }
 
@@ -97,13 +97,13 @@ Future<LiveDevice?> readLiveDevice(int deviceId) async {
   for (final b in blocks) {
     if (b == null) continue;
     final type = b.type;
-    if (type == BlockType.script.value) continue;
-    if (type == BlockType.dynamic.value &&
-        (b.meta.typeValue == BlockType.none.value ||
-            b.meta.typeValue == BlockType.deleted.value)) {
+    if (isScriptType(type)) continue;
+    if (isDynamicType(type) &&
+        (b.meta.type == BlockType.none.value ||
+            b.meta.type == BlockType.deleted.value)) {
       continue;
     }
-    if (type == BlockType.dynamic.value) {
+    if (isDynamicType(type)) {
       final dyn = DynBlock(index: b.inst, meta: b.meta, name: b.name);
       var fields = await reg.getDynamicFields(b.inst) ?? const <int>[];
       if (fields.isEmpty && b.meta.size > 0) {
@@ -125,7 +125,7 @@ Future<LiveDevice?> readLiveDevice(int deviceId) async {
         }
       }
       live.add(LiveBlock(
-        typeValue: b.meta.typeValue,
+        type: b.meta.type,
         instance: b.inst,
         name: b.name,
         isDynamic: true,
@@ -148,7 +148,7 @@ Future<LiveDevice?> readLiveDevice(int deviceId) async {
         }
       }
       live.add(LiveBlock(
-        typeValue: systemBlockTypeValue,
+        type: systemBlockTypeValue,
         instance: 0,
         name: 'System',
         isDynamic: false,
@@ -170,7 +170,7 @@ Future<LiveDevice?> readLiveDevice(int deviceId) async {
         ));
       }
       live.add(LiveBlock(
-        typeValue: type,
+        type: type,
         instance: b.inst,
         name: b.name,
         isDynamic: false,
@@ -261,7 +261,7 @@ class RestorePlan {
       '$deviceId:${block.typeIndex}:${block.instance}';
 
   List<LiveBlock> compatibleBlocks(LiveDevice device, BackupBlock source) =>
-      device.blocks.where((b) => b.typeValue == source.typeIndex).toList();
+      device.blocks.where((b) => b.type == source.typeIndex).toList();
 
   int get selectedCount => items.where((i) => i.selected && i.ready).length;
   int get issueCount => items.where((i) => i.issue != null).length;
@@ -355,7 +355,7 @@ Future<RestorePlan> buildRestorePlan(List<BackupDevice> devices) async {
         .where((d) => d.name.toLowerCase() == source.name.toLowerCase())
         .firstOrNull;
     match ??= live.where((d) => d.blocks.any((b) =>
-        b.typeValue == source.blocks.firstOrNull?.typeIndex)).firstOrNull;
+        b.type == source.blocks.firstOrNull?.typeIndex)).firstOrNull;
     match ??= live.firstOrNull;
     if (match != null) targets[source.id] = match;
   }
@@ -429,8 +429,9 @@ Future<({int written, int failed})> applyRestorePlan(RestorePlan plan) async {
           failed++;
           break;
         }
-        final meta = BlockMeta(
-          flagsAndType: item.targetEntry!.meta.flagsAndType,
+        final meta = ValueInfo(
+          type: item.targetEntry!.meta.type,
+          flags: item.targetEntry!.meta.flags,
           key: item.targetEntry!.key,
           size: bytes.length,
         );
@@ -438,13 +439,13 @@ Future<({int written, int failed})> applyRestorePlan(RestorePlan plan) async {
         if (block.isDynamic) {
           final dyn = DynBlock(
               index: block.instance,
-              meta: BlockMeta(flagsAndType: block.typeValue),
+              meta: ValueInfo(type: block.type),
               name: block.name);
           done(await reg.writeDynamicEntry(
                   dyn, item.targetEntry!.field, item.targetEntry!.key, meta, bytes) !=
               null);
         } else {
-          done(await reg.writeBlockField(block.typeValue, block.instance,
+          done(await reg.writeBlockField(block.type, block.instance,
                   item.targetEntry!.field, item.targetEntry!.key, meta, bytes) !=
               null);
         }
@@ -452,7 +453,7 @@ Future<({int written, int failed})> applyRestorePlan(RestorePlan plan) async {
         final store = storage
             .putIfAbsent(target.id, () => StorageClient(deviceId: target.id));
         final slot = item.script!.slot;
-        final name = 'SCR_${slot.toRadixString(16).padLeft(2, '0').toUpperCase()}';
+        final name = scriptFileName(slot);
         try {
           done(await store.writeFile(name, item.script!.toDraft().toImage()));
         } catch (error) {

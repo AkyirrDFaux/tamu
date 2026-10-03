@@ -4,7 +4,7 @@
 /// A render block is a dynamic block whose fields are keyed dictionaries:
 /// Geometry fields (type 0x101) build the alpha mask, Texture fields (0x102) fill it.
 /// Each field's value is a sequence of keyed entries:
-///   BlockMeta (flagsAndType, key, size) + value (padded to a multiple of 4).
+///   Field&Key(16) + ValueInfo (type, size, flags) + value (padded to a multiple of 4).
 library;
 
 import 'dart:typed_data';
@@ -15,31 +15,34 @@ import 'types.dart';
 const int geometryDictType = 0x101;
 const int textureDictType = 0x102;
 
-bool isRenderDictType(int typeValue) =>
-    typeValue == geometryDictType || typeValue == textureDictType;
+bool isRenderDictType(int type) =>
+    type == geometryDictType || type == textureDictType;
 
 class KeyedEntry {
   final int key;
-  final BlockMeta meta;
+  final ValueInfo meta;
   final List<int> value;
 
   KeyedEntry({required this.key, required this.meta, required this.value});
 }
 
 /// Parses a keyed-dictionary field value into its entries; null when malformed.
+/// Entry: `Field&Key(16) + ValueInfo(32) + value` (4-byte aligned) - the doc's table entry
+/// shape (the MemoryOffset is implicit here).
 List<KeyedEntry>? parseKeyedDict(List<int> fieldValue) {
   if (fieldValue.isEmpty) return <KeyedEntry>[];
   final entries = <KeyedEntry>[];
   var offset = 0;
-  while (offset + 4 <= fieldValue.length) {
-    final meta = BlockMeta.fromPacked(fieldValue, offset);
-    if (offset + 4 + meta.size > fieldValue.length) return null; // truncated
+  while (offset + 6 <= fieldValue.length) {
+    final key = fieldValue[offset + 1]; // Field&Key = (field << 8) | key
+    final meta = ValueInfo.fromBytes(fieldValue, offset + 2, key);
+    if (offset + 6 + meta.size > fieldValue.length) return null; // truncated
     entries.add(KeyedEntry(
-      key: meta.key,
+      key: key,
       meta: meta,
-      value: fieldValue.sublist(offset + 4, offset + 4 + meta.size),
+      value: fieldValue.sublist(offset + 6, offset + 6 + meta.size),
     ));
-    final aligned = (4 + meta.size + 3) & ~3;
+    final aligned = (6 + meta.size + 3) & ~3;
     if (aligned == 0) break;
     offset += aligned;
   }
@@ -51,10 +54,11 @@ List<KeyedEntry>? parseKeyedDict(List<int> fieldValue) {
 List<int> buildKeyedDict(List<KeyedEntry> entries) {
   final out = BytesBuilder();
   for (final e in entries) {
-    out.add(BlockMeta(flagsAndType: e.meta.flagsAndType, key: e.key, size: e.value.length).toPacked());
+    out.add([0, e.key & 0xFF]); // Field&Key (the field is the dict field, implicit here)
+    out.add(e.meta.toBytes());
     out.add(e.value);
-    final aligned = (4 + e.value.length + 3) & ~3;
-    final pad = aligned - 4 - e.value.length;
+    final aligned = (6 + e.value.length + 3) & ~3;
+    final pad = aligned - 6 - e.value.length;
     if (pad > 0) out.add(List<int>.filled(pad, 0));
   }
   return out.toBytes();
@@ -86,8 +90,8 @@ const List<String> _textureKeys = [
   'Amount', // 7 (Number)
 ];
 
-String renderDictKeyName(int typeValue, int key) {
-  final names = typeValue == geometryDictType ? _geometryKeys : _textureKeys;
+String renderDictKeyName(int type, int key) {
+  final names = type == geometryDictType ? _geometryKeys : _textureKeys;
   return key >= 0 && key < names.length ? names[key] : 'Key $key';
 }
 
@@ -178,12 +182,12 @@ Set<int> textureKeysForType(int type) {
 
 /// Field metadata for a dict key, so the value editor shows labels/ranges. The
 /// Position keys (2x3 affine) open the transformation editor.
-FieldInfo renderKeyFieldInfo(int typeValue, int key) {
-  final name = renderDictKeyName(typeValue, key);
-  final isPosition = (typeValue == geometryDictType && key == 3) ||
-      (typeValue == textureDictType && key == 2);
+FieldInfo renderKeyFieldInfo(int type, int key) {
+  final name = renderDictKeyName(type, key);
+  final isPosition = (type == geometryDictType && key == 3) ||
+      (type == textureDictType && key == 2);
   Map<int, String>? enums;
-  if (typeValue == geometryDictType) {
+  if (type == geometryDictType) {
     if (key == 2) enums = renderOperations;
     if (key == 1) enums = renderShapes;
   } else {

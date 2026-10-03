@@ -385,12 +385,12 @@ static uint8_t ScriptExecService(LoadedScript *s, const ScriptLineInfo &ln, cons
             if (ln.destCount < 1 || ln.opCount < 1) return SCRIPT_ERR_OPERAND;
             uint32_t bi = 0;
             if (!ScriptOperandBlockInfo(s, opbase, bi)) return SCRIPT_ERR_OPERAND;
-            BlockMeta rm;
+            ValueInfo rm;
             uint8_t rbuf[256]; // a register value can be up to the u8 size limit
             uint8_t rsz = 0;
             if (!RegisterGetByBlockInfo(bi, rm, rbuf, rsz)) return SCRIPT_ERR_REGISTER;
             uint8_t err = ScriptAssign(s, s->instr + (size_t)ln.start * 4, rbuf, rsz,
-                                       BlockMetaType(rm.FlagsAndType));
+                                       ValueInfoType(rm.Type));
             if (err) return err;
             s->ic++;
             return SCRIPT_ERR_NONE;
@@ -399,7 +399,7 @@ static uint8_t ScriptExecService(LoadedScript *s, const ScriptLineInfo &ln, cons
             if (ln.opCount < 2) return SCRIPT_ERR_OPERAND;
             uint32_t bi = 0;
             if (!ScriptOperandBlockInfo(s, opbase, bi)) return SCRIPT_ERR_OPERAND;
-            BlockMeta rm;
+            ValueInfo rm;
             uint8_t rbuf[256];
             uint8_t rsz = 0;
             if (!RegisterGetByBlockInfo(bi, rm, rbuf, rsz)) return SCRIPT_ERR_REGISTER;
@@ -411,9 +411,9 @@ static uint8_t ScriptExecService(LoadedScript *s, const ScriptLineInfo &ln, cons
                 return SCRIPT_ERR_OPERAND;
             uint8_t wbuf[256];
             memset(wbuf, 0, sizeof(wbuf));
-            uint8_t err = ScriptAssignResolved(BlockMetaType(rm.FlagsAndType), wbuf, rm.Size, val, vsize, vtype);
+            uint8_t err = ScriptAssignResolved(ValueInfoType(rm.Type), wbuf, rm.Size, val, vsize, vtype);
             if (err) return err;
-            BlockMeta wm = rm;
+            ValueInfo wm = rm;
             wm.Size = rm.Size;
             if (!RegisterSetByBlockInfo(bi, wm, wbuf, rm.Size)) return SCRIPT_ERR_REGISTER;
             s->ic++;
@@ -454,10 +454,7 @@ static uint8_t ScriptExecService(LoadedScript *s, const ScriptLineInfo &ln, cons
             if (vsize > 64) vsize = 64;
             uint8_t payload[8 + 64];
             memcpy(payload, &bi, 4);
-            BlockMeta wm;
-            wm.FlagsAndType = (uint16_t)vtype;
-            wm.Key = 0;
-            wm.Size = vsize;
+            ValueInfo wm = { (uint16_t)vtype, vsize, 0 };
             memcpy(payload + 4, &wm, 4);
             if (vsize) memcpy(payload + 8, val, vsize);
             s->pendingRead = false;
@@ -479,8 +476,8 @@ static uint8_t ScriptExecService(LoadedScript *s, const ScriptLineInfo &ln, cons
             if (!ScriptResolveOperandInt(s, opbase + 4, slot)) return SCRIPT_ERR_OPERAND;
             // Loading over the running script would free the program currently being executed.
             if (slot == (int32_t)s->slot) return SCRIPT_ERR_OPERAND;
-            if (fileId >= 0 && fileId < MAX_SCRIPTS && slot >= 0 && slot < MAX_SCRIPTS)
-                ScriptLoad((uint8_t)fileId, (uint8_t)slot);
+            if (fileId >= 0 && fileId < MAX_SCRIPT_FILES && slot >= 0 && slot < MAX_SCRIPTS)
+                ScriptLoad((uint16_t)fileId, (uint8_t)slot);
             s->ic++;
             return SCRIPT_ERR_NONE;
         }

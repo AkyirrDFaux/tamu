@@ -92,15 +92,15 @@ static const uint8_t AccGyrAngFsNib[5] = {0b0010, 0b0000, 0b0100, 0b1000, 0b1100
 // (LPF1_BW_SEL / BW0_XL / bit 0 are left cleared).
 static uint8_t AccGyrCtrl1Byte()
 {
-    uint8_t odr = AccGyr.SamplingRate < 8 ? AccGyrOdrCode[AccGyr.SamplingRate] : 0;
-    uint8_t fs = AccGyr.RangeAcc < 4 ? AccGyrAccFsCode[AccGyr.RangeAcc] : 0;
+    uint8_t odr = staticPer.accgyr.SamplingRate < 8 ? AccGyrOdrCode[staticPer.accgyr.SamplingRate] : 0;
+    uint8_t fs = staticPer.accgyr.RangeAcc < 4 ? AccGyrAccFsCode[staticPer.accgyr.RangeAcc] : 0;
     return (uint8_t)((odr << 4) | (fs << 2));
 }
 
 static uint8_t AccGyrCtrl2Byte()
 {
-    uint8_t odr = AccGyr.SamplingRate < 8 ? AccGyrOdrCode[AccGyr.SamplingRate] : 0;
-    uint8_t fs = AccGyr.RangeAng < 5 ? AccGyrAngFsNib[AccGyr.RangeAng] : 0;
+    uint8_t odr = staticPer.accgyr.SamplingRate < 8 ? AccGyrOdrCode[staticPer.accgyr.SamplingRate] : 0;
+    uint8_t fs = staticPer.accgyr.RangeAng < 5 ? AccGyrAngFsNib[staticPer.accgyr.RangeAng] : 0;
     return (uint8_t)((odr << 4) | fs);
 }
 
@@ -211,17 +211,17 @@ bool ReadIMUData() {
     // (Table 51: 0.061/0.122/0.244/0.488 mg/LSb; Table 54: 4.375/8.75/17.5/35/70 mdps/LSb)
     // and anchored to the previously-calibrated defaults: accel 209 @ +-16 g, gyro 939 @
     // +-2000 dps, so the default ranges keep today's readings.
-    uint8_t ri = AccGyr.RangeAcc > 3 ? 3 : AccGyr.RangeAcc;
-    uint8_t gi = AccGyr.RangeAng > 4 ? 4 : AccGyr.RangeAng;
+    uint8_t ri = staticPer.accgyr.RangeAcc > 3 ? 3 : staticPer.accgyr.RangeAcc;
+    uint8_t gi = staticPer.accgyr.RangeAng > 4 ? 4 : staticPer.accgyr.RangeAng;
     static const Number accel_div[4] = {N(1672), N(836), N(418), N(209)};
     static const Number gyro_div[5] = {N(15024), N(7512), N(3756), N(1878), N(939)};
 
     // EMA coefficients (0-1); clamp so a remotely-written out-of-range value cannot make
     // the low-pass diverge. 1 = no filtering (output tracks the raw value).
-    Number acc_w = AccGyr.AccFilter;
+    Number acc_w = staticPer.accgyr.AccFilter;
     if (acc_w < N(0)) acc_w = N(0);
     if (acc_w > N(1)) acc_w = N(1);
-    Number ang_w = AccGyr.AngFilter;
+    Number ang_w = staticPer.accgyr.AngFilter;
     if (ang_w < N(0)) ang_w = N(0);
     if (ang_w > N(1)) ang_w = N(1);
 
@@ -229,13 +229,13 @@ bool ReadIMUData() {
     for (int i = 0; i < 3; i++)
     {
         next_gyro.Data[i] = (Number(Raw[i]) / gyro_div[gi]) * ang_w +
-                            (AccGyr.AngularVelocity.Data[i] * (N(1) - ang_w));
+                            (staticVol.accgyr.AngularVelocity.Data[i] * (N(1) - ang_w));
         next_acc.Data[i] = (Number(Raw[3 + i]) / accel_div[ri]) * acc_w +
-                           (AccGyr.Acceleration.Data[i] * (N(1) - acc_w));
+                           (staticVol.accgyr.Acceleration.Data[i] * (N(1) - acc_w));
     }
 
-    AccGyr.AngularVelocity = next_gyro;
-    AccGyr.Acceleration = next_acc;
+    staticVol.accgyr.AngularVelocity = next_gyro;
+    staticVol.accgyr.Acceleration = next_acc;
 
     return true;
 }
@@ -267,9 +267,9 @@ static bool AccGyrWriteEnum(const StaticBlockDescriptor &block, uint16_t field, 
 
     switch (field)
     {
-    case 0: AccGyr.SamplingRate = index; break;
-    case 1: AccGyr.RangeAcc = index; break;
-    case 2: AccGyr.RangeAng = index; break;
+    case 0: staticPer.accgyr.SamplingRate = index; break;
+    case 1: staticPer.accgyr.RangeAcc = index; break;
+    case 2: staticPer.accgyr.RangeAng = index; break;
     }
     return true;
 }

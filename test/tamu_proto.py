@@ -65,17 +65,16 @@ class DevCid:
 
 
 class RegCid:
-    Enumerate = 0x00
-    Read = 0x01
-    Write = 0x02
-    Save = 0x03
+    EnumerateBlocks = 0x00
+    EnumerateFields = 0x01
+    Read = 0x02
+    Write = 0x03
     Recall = 0x04
+    Save = 0x05
     CreateDynamic = 0x10
     DeleteDynamic = 0x11
     GetName = 0x12
     SetName = 0x13
-    GetMemUsage = 0x14
-    ReadBackup = 0x15
 
 
 class StoreCid:

@@ -29,15 +29,14 @@ public:
     static constexpr FixedFile FixedFiletable[2] = {
         // Self-describing first record: the fixed filetable itself (2 records x 16 B).
         {{'.','T','A','B','L','E',' ',' '}, 0, (uint32_t)(2 * TABLE_ENTRY_SIZE)},
-        // The single settings file, from the storage base.
-        {{'S','T','A','T','L','O','G',' '}, 0, STORAGE_FLASH_SIZE},
+        // The single settings file (the .SV persistent-space mirror), from the storage base.
+        {{'.','S','V',' ',' ',' ',' ',' '}, 0, STORAGE_FLASH_SIZE},
     };
 
-    // Only the STATLOG-family names address the settings file (the legacy DEVNAME/NETID
-    // cleanup in LoadAllBackups must never resolve to it). The WriteBackupFile's temp
-    // name ("STATLOG~") belongs to the same family, so the single fixed file is shared.
+    // Only the .SV-family names address the settings file. The WriteBackupFile's temp name
+    // (".SV    ~") belongs to the same family, so the single fixed file is shared.
     static bool IsSettingsName(const char name[8]) {
-        return name[0]=='S'&&name[1]=='T'&&name[2]=='A'&&name[3]=='T'&&name[4]=='L'&&name[5]=='O'&&name[6]=='G';
+        return name[0]=='.'&&name[1]=='S'&&name[2]=='V';
     }
     // The fixed filetable is browsable through the virtual ".TABLE  " file: the read path
     // serializes the const array into standard FileEntry records for the app.
@@ -56,7 +55,7 @@ public:
 
     void Init() {
         // No table to validate - the layout is fixed in code. A fresh/erased region is all
-        // 0xFF, which the STATLOG reader treats as an empty file (the first 0xFF terminator).
+        // 0xFF, which the .SV reader treats as an empty file (a zero-length / missing file).
     }
 
     void Format() {

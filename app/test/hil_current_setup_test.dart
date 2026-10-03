@@ -54,7 +54,7 @@ void main() {
     for (final eye in [dynLeftEye, dynRightEye]) {
       final fields = await reg.getDynamicFields(eye) ?? <int>[];
       expect(fields.length, eyePartCount, reason: 'eye block $eye parts');
-      final block = DynBlock(index: eye, meta: BlockMeta(flagsAndType: BlockType.dynamic.value), name: '');
+      final block = DynBlock(index: eye, meta: ValueInfo(type: BlockType.dynamic.value), name: '');
       for (final pair in [
         (eyeBgGeo, DataType.geometry),
         (eyeBgTex, DataType.texture),
@@ -99,7 +99,7 @@ void main() {
   test('setup: scripts expose their documented inputs', skip: skipReason, () async {
     final storage = StorageClient(deviceId: found.core.id);
     Future<ScriptFileData> file(int slot) async {
-      final name = 'SCR_${slot.toString().padLeft(2, '0')}';
+      final name = scriptFileName(slot);
       final bytes = await storage.readFile(name);
       expect(bytes, isNotNull, reason: '$name present on the device');
       return ScriptFileData.parse(bytes!);
@@ -169,7 +169,7 @@ void main() {
 
   test('setup: DAS values flow into the Subscriptions block', skip: skipReason, () async {
     final reg = RegisterClient(deviceId: found.core.id);
-    final block = DynBlock(index: dynSubscriptions, meta: BlockMeta(flagsAndType: BlockType.dynamic.value), name: '');
+    final block = DynBlock(index: dynSubscriptions, meta: ValueInfo(type: BlockType.dynamic.value), name: '');
     // Wait for the delta subscriptions to push a first value (a busy bus can delay it).
     var ok = false;
     for (var i = 0; i < 40 && !ok; i++) {
@@ -207,7 +207,7 @@ void main() {
 
   test('setup: the eye script drives valid render matrices', skip: skipReason, () async {
     final reg = RegisterClient(deviceId: found.core.id);
-    final block = DynBlock(index: dynLeftEye, meta: BlockMeta(flagsAndType: BlockType.dynamic.value), name: '');
+    final block = DynBlock(index: dynLeftEye, meta: ValueInfo(type: BlockType.dynamic.value), name: '');
     for (final (name, field) in [('iris', eyeIrisGeo), ('pupil', eyePupilGeoA), ('lid', eyeLidGeo)]) {
       final pos = await reg.readDynamicField(block, field, gkPosition);
       expect(pos, isNotNull, reason: '$name position present');
@@ -245,7 +245,7 @@ void main() {
 
   test('setup: the lid script stays bounded and reaches the open position', skip: skipReason, () async {
     final reg = RegisterClient(deviceId: found.core.id);
-    final block = DynBlock(index: dynLeftEye, meta: BlockMeta(flagsAndType: BlockType.dynamic.value), name: '');
+    final block = DynBlock(index: dynLeftEye, meta: ValueInfo(type: BlockType.dynamic.value), name: '');
     // Sample across a blink cycle: the lid must stay within the screen range (a runaway
     // loop condition used to drive `ty` to thousands, jamming the lid shut).
     var maxAbs = 0.0;
@@ -267,9 +267,9 @@ void main() {
     final reg = RegisterClient(deviceId: found.core.id);
     final scripts = ScriptClient(deviceId: found.core.id);
     final right = DynBlock(
-        index: dynRightEye, meta: BlockMeta(flagsAndType: BlockType.dynamic.value), name: 'Right Eye');
+        index: dynRightEye, meta: ValueInfo(type: BlockType.dynamic.value), name: 'Right Eye');
     final left = DynBlock(
-        index: dynLeftEye, meta: BlockMeta(flagsAndType: BlockType.dynamic.value), name: 'Left Eye');
+        index: dynLeftEye, meta: ValueInfo(type: BlockType.dynamic.value), name: 'Left Eye');
 
     Future<List<int>?> read(DynBlock b, int field, int key) async =>
         (await reg.readDynamicField(b, field, key))?.value;
@@ -278,7 +278,7 @@ void main() {
       final e = await scripts.readEntry(scrBrightness, ScriptField.input, index);
       expect(e, isNotNull, reason: 'brightness input $index');
       final ok = await scripts.writeEntry(scrBrightness, ScriptField.input, index,
-          BlockMeta(flagsAndType: e!.meta.flagsAndType, key: 0, size: value.length), value);
+          ValueInfo(type: e!.meta.type, flags: e.meta.flags, key: 0, size: value.length), value);
       expect(ok, isTrue, reason: 'write brightness input $index');
     }
 
@@ -330,9 +330,9 @@ void main() {
     final reg = RegisterClient(deviceId: found.core.id);
     final scripts = ScriptClient(deviceId: found.core.id);
     final left = DynBlock(
-        index: dynLeftEye, meta: BlockMeta(flagsAndType: BlockType.dynamic.value), name: 'Left Eye');
+        index: dynLeftEye, meta: ValueInfo(type: BlockType.dynamic.value), name: 'Left Eye');
     final right = DynBlock(
-        index: dynRightEye, meta: BlockMeta(flagsAndType: BlockType.dynamic.value), name: 'Right Eye');
+        index: dynRightEye, meta: ValueInfo(type: BlockType.dynamic.value), name: 'Right Eye');
 
     Future<int?> numOf(DynBlock b, int field, int key) async {
       final e = await reg.readDynamicField(b, field, key);
@@ -345,7 +345,7 @@ void main() {
       expect(entry!.meta.dataType, DataType.enum_, reason: 'custom enum input');
       expect(
           await scripts.writeEntry(scrEmote, ScriptField.input, 0,
-              BlockMeta(flagsAndType: entry.meta.flagsAndType, key: 0, size: 1), [e]),
+              ValueInfo(type: entry.meta.type, flags: entry.meta.flags, key: 0, size: 1), [e]),
           isTrue,
           reason: 'write emote $e');
     }
@@ -438,7 +438,7 @@ void main() {
     final reg = RegisterClient(deviceId: found.core.id);
     final before = await reg.readBlockField(BlockType.pwm.value, fanInst, 0, 0);
     expect(before, isNotNull, reason: 'fan frequency present');
-    final meta = BlockMeta(flagsAndType: before!.meta.flagsAndType, key: 0, size: 4);
+    final meta = ValueInfo(type: before!.meta.type, flags: before.meta.flags, key: 0, size: 4);
     expect(
         await reg.writeBlockField(BlockType.pwm.value, fanInst, 0, 0, meta, uint32ToBytes(1000)),
         isNotNull,
@@ -458,8 +458,8 @@ void main() {
     // The display Offset is persistent + writable (saving it is what the setup already does).
     final before = await reg.readBlockField(BlockType.vysiDisplay.value, dispLeft, 1, 0);
     expect(before, isNotNull, reason: 'display offset present');
-    final meta = BlockMeta(
-        flagsAndType: before!.meta.flagsAndType, key: 0, size: before.value.length);
+    final meta = ValueInfo(
+        type: before!.meta.type, flags: before.meta.flags, key: 0, size: before.value.length);
     expect(
         await reg.writeBlockField(
             BlockType.vysiDisplay.value, dispLeft, 1, 0, meta, before.value),
@@ -555,7 +555,7 @@ void main() {
     // so the shapes/texture types/sizes/fades come back instead of being zeroed (the scripts
     // only rewrite the positions and the mode colours, so a zeroed dictionary renders wrong).
     final leftBlock = DynBlock(
-        index: dynLeftEye, meta: BlockMeta(flagsAndType: BlockType.dynamic.value), name: '');
+        index: dynLeftEye, meta: ValueInfo(type: BlockType.dynamic.value), name: '');
     Future<List<int>?> val(int field, int key) async =>
         (await reg.readDynamicField(leftBlock, field, key))?.value;
     expect(await val(eyeBgGeo, gkShape), enumByte(shapeFill), reason: 'bg shape restored');

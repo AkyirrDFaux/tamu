@@ -1,3 +1,6 @@
+Update packet size (bytes)
+TRID manager per-service (script and app only)
+
 Subscription orphan handling (timeouts, cancelation)
 Script reusable functions
 

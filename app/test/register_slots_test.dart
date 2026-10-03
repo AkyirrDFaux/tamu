@@ -5,10 +5,10 @@ import 'package:tamuapp/core/types.dart';
 /// the dynamic "None" tombstone. The Register view must not hide the System block when it
 /// filters out empty dynamic slots (the slot type distinguishes them).
 void main() {
-  BlockMeta meta(int flagsAndType) => BlockMeta(flagsAndType: flagsAndType);
+  ValueInfo meta(int flagsAndType) => ValueInfo(type: flagsAndType);
 
   test('System block slot is never hidden as a tombstone', () {
-    // Firmware sends BlockType::System (0x00) | FieldFlags::ReadOnly (0x0400).
+    // Firmware sends BlockType::System (0x00) | ValueFlags::ReadOnly (0x0400).
     expect(isHiddenRegisterSlot(systemBlockTypeValue, meta(0x0400)), isFalse);
   });
 

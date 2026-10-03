@@ -57,7 +57,7 @@ static inline FieldResult SubscriptionsGetField(uint32_t blockInfo) {
         // System fields are synthesised on the fly; keep the value in a shared buffer
         // (single-threaded main loop, and the caller consumes it before any nested call).
         static uint8_t s_sysFieldBuf[24];
-        BlockMeta m;
+        ValueInfo m;
         uint8_t vsz = 0;
         if (RegisterGetSystemField(field, key, m, s_sysFieldBuf, vsz)) {
             FieldResult fr;
@@ -68,10 +68,10 @@ static inline FieldResult SubscriptionsGetField(uint32_t blockInfo) {
         return FieldResult{};
     }
 #ifdef USE_SCRIPTS
-    if (type == 0x3FE) { // Script I/O (inputs/outputs)
-        BlockMeta m;
+    if (BlockTypeRange::IsScript(type)) { // Script I/O (inputs/outputs)
+        ValueInfo m;
         void *p = nullptr;
-        if (ScriptGetIoPointer(inst, field, key, m, p)) {
+        if (ScriptGetIoPointer(BlockTypeRange::ScriptGlobal(type, inst), field, key, m, p)) {
             FieldResult fr;
             fr.Descriptor = m;
             fr.Data = p;
@@ -80,10 +80,11 @@ static inline FieldResult SubscriptionsGetField(uint32_t blockInfo) {
         return FieldResult{};
     }
 #endif
-#ifndef DISABLE_DYNAMIC_MEMORY
-    if (type == 0x3FF) {
-        if (inst < dynamic_block_registry.block_count) {
-            DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(inst);
+#ifdef USE_DYNAMIC_BLOCKS
+    if (BlockTypeRange::IsDynamic(type)) {
+        uint16_t gi = BlockTypeRange::DynamicGlobal(type, inst);
+        if (gi < dynamic_block_registry.block_count) {
+            DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(gi);
             if (block) {
                 KeyResult kr = block->GetKey(field, key);
                 FieldResult fr;

@@ -36,12 +36,12 @@ void main() {
 
   test('script value info flags/type packing', () {
     const info = ScriptValueInfo(
-        type: DataType.number, size: 4, flags: FieldFlags.readOnly);
+        type: DataType.number, size: 4, flags: ValueFlags.readOnly);
     final bytes = info.toBytes();
     final back = ScriptValueInfo.fromBytes(bytes);
     expect(back.type, DataType.number);
     expect(back.size, 4);
-    expect(back.flags & FieldFlags.readOnly, FieldFlags.readOnly);
+    expect(back.flags & ValueFlags.readOnly, ValueFlags.readOnly);
   });
 
   test('truncated script file is rejected', () {

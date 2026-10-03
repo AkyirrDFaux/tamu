@@ -55,7 +55,7 @@ class _BlockInfoDialogState extends State<_BlockInfoDialog> {
       final blocks = await reg.readBlocks(
           scriptSlots: await ScriptClient(deviceId: widget.deviceId).loadedScripts());
       final list = <BlockSelection>[];
-      for (final b in blocks ?? <({int type, int inst, BlockMeta meta, String name})>[]) {
+      for (final b in blocks ?? <({int type, int inst, ValueInfo meta, String name})>[]) {
         if (b == null) continue;
         final label = b.name.trim().isNotEmpty ? b.name : BlockType.fromValue(b.type).label;
         list.add(BlockSelection(

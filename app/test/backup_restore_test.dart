@@ -28,7 +28,7 @@ LiveEntry _live(String field, int fieldIndex, DataType type,
       key: keyIndex,
       fieldName: field,
       keyName: key,
-      meta: BlockMeta(flagsAndType: type.value, size: size),
+      meta: ValueInfo(type: type.value, size: size),
       info: info,
     );
 
@@ -80,7 +80,7 @@ void main() {
     final device = _device();
     final live = LiveDevice(id: 1, name: 'Tamu', capabilities: Capability.scripts, blocks: [
       LiveBlock(
-          typeValue: BlockType.pwm.value,
+          type: BlockType.pwm.value,
           instance: 0,
           name: 'Fan',
           isDynamic: false,
@@ -127,13 +127,13 @@ void main() {
       ],
     );
     final live = LiveDevice(id: 1, name: 'Tamu', blocks: [
-      LiveBlock(typeValue: BlockType.button.value, instance: 0, name: 'Button', isDynamic: false, entries: [
+      LiveBlock(type: BlockType.button.value, instance: 0, name: 'Button', isDynamic: false, entries: [
         LiveEntry(
             field: 0,
             key: 0,
             fieldName: 'Button Raw State',
             keyName: 'Key 0',
-            meta: BlockMeta(flagsAndType: DataType.bool_.value | FieldFlags.readOnly, size: 1)),
+            meta: ValueInfo(type: DataType.bool_.value, flags: ValueFlags.readOnly, size: 1)),
       ]),
     ]);
     final item = RestoreItem(

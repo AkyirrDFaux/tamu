@@ -46,12 +46,12 @@ class _RegisterPageState extends State<RegisterPage>
       (int id) => RegisterClient(deviceId: id))(widget.deviceId);
 
   /// Stores [type, instance, meta, name] for each block
-  List<({int type, int inst, BlockMeta meta, String name})?>? _blockMetas;
-  final Map<int, Map<int, ({BlockMeta meta, List<int> value})?>> _fieldCache = {};
+  List<({int type, int inst, ValueInfo meta, String name})?>? _blockMetas;
+  final Map<int, Map<int, ({ValueInfo meta, List<int> value})?>> _fieldCache = {};
   final Map<int, List<int>> _dynamicFields = {};
   final Map<int, Map<int, List<int>>> _dynamicKeys = {};
 
-  /// Script blocks (0x3FE): cacheKey -> field -> keys/entity indexes.
+  /// Script blocks (the Scripts range 0x3F4-0x3F7): cacheKey -> field -> keys/entity indexes.
   final Map<int, Map<int, List<int>>> _scriptKeys = {};
   String? _error;
   final Set<int> _expanded = {};
@@ -64,7 +64,7 @@ class _RegisterPageState extends State<RegisterPage>
 
   /// Docs/App/Service views/Register.md: a Current/Backup view toggle in the appbar.
   /// Current shows the live RAM values; Backup shows what a Save persisted (decoded from
-  /// the device's STATLOG / DT_ / DV_ files).
+  /// the device's `.SV` / DT_ / DV_ files).
   RegisterViewMode _viewMode = RegisterViewMode.current;
   DeviceBackup? _backup;
   bool _backupBusy = false;
@@ -162,8 +162,8 @@ class _RegisterPageState extends State<RegisterPage>
       _error = null;
       _ticksSinceTopology = 0;
       // Preserve cache for blocks that still exist
-      final newMetas = <({int type, int inst, BlockMeta meta, String name})?>[];
-      final oldCache = Map<int, Map<int, ({BlockMeta meta, List<int> value})?>>.from(_fieldCache);
+      final newMetas = <({int type, int inst, ValueInfo meta, String name})?>[];
+      final oldCache = Map<int, Map<int, ({ValueInfo meta, List<int> value})?>>.from(_fieldCache);
       _fieldCache.clear();
       for (final b in blocks) {
         if (b == null) { newMetas.add(null); continue; }
@@ -210,7 +210,7 @@ Future<void> _loadVisibleFields() async {
     }
   }
 
-  /// Reads and decodes the device's backup files: `STATLOG` for the static/System fields
+  /// Reads and decodes the device's backup files: `.SV` for the static/System fields
   /// and `DT_`/`DV_` for each dynamic slot (docs Register.md "Save").
   Future<void> _loadBackup() async {
     if (_backupBusy) return;
@@ -221,13 +221,13 @@ Future<void> _loadVisibleFields() async {
     try {
       final store = StorageClient(deviceId: widget.deviceId);
       final table = await store.readFileTable();
-      List<int>? statlog;
+      List<int>? sv;
       final tables = <int, List<int>>{};
       final values = <int, List<int>>{};
       for (final f in table ?? const <FileRecord>[]) {
         final name = normalizeFileName(f.name).toUpperCase();
-        if (name == 'STATLOG') {
-          statlog = await store.readFile(f.name, size: f.size);
+        if (name == '.SV') {
+          sv = await store.readFile(f.name, size: f.size);
         } else if (name.startsWith('DT_') || name.startsWith('DV_')) {
           final slot = int.tryParse(name.substring(3).trim(), radix: 16);
           if (slot == null) continue;
@@ -236,8 +236,8 @@ Future<void> _loadVisibleFields() async {
           (name.startsWith('DT_') ? tables : values)[slot] = bytes;
         }
       }
-      // STATLOG addresses blocks by their static-registry index, so the registry must be
-      // the same ordered list the decoder expects: every non-System block, in page order.
+      // `.SV` is a raw mirror of the static persistent space, so the registry must be the same
+      // ordered list the layout is computed from: every non-System block, in page order.
       final registry = <({int type, int inst})>[
         for (final b in _blockMetas ?? const [])
           if (b != null && isStaticRegistryType(b.type)) (type: b.type, inst: b.inst),
@@ -247,7 +247,7 @@ Future<void> _loadVisibleFields() async {
           slot: (table: tables[slot]!, values: values[slot] ?? const []),
       };
       final decoded = DeviceBackup.decode(
-          statlog: statlog, staticRegistry: registry, dynamic: dynamic);
+          sv: sv, staticRegistry: registry, dynamic: dynamic);
       if (!mounted) return;
       setState(() => _backup = decoded);
     } catch (e) {
@@ -269,7 +269,7 @@ Future<void> _loadVisibleFields() async {
     }
   }
 
-  /// The static registry the STATLOG indexes are relative to: every non-System block, in
+  /// The static registry the `.SV` layout is computed from: every non-System block, in
   /// enumeration order (the same list the backup decoder is given).
   List<({int type, int inst})> get _staticRegistry => [
         for (final b in _blockMetas ?? const [])
@@ -289,11 +289,11 @@ Future<void> _loadVisibleFields() async {
   }
 
   /// Writes one field's live value into its backup file - the app-side half of a partial save
-  /// (docs Register.md: "partial saving ... app with direct file writes"). `STATLOG` for the
-  /// System/static fields, addressed by registry index; `DV_<xx>` for a dynamic entry.
+  /// (docs Register.md: "partial saving ... app with direct file writes"). `.SV` for the
+  /// System/static fields, at the field's computed offset; `DV_<xx>` for a dynamic entry.
   Future<bool> _writeFieldToBackup(int blockType, int inst, int field, int key) async {
     final cacheKey = (blockType << 8) | inst;
-    final isDynamic = blockType == BlockType.dynamic.value;
+    final isDynamic = isDynamicType(blockType);
     final live = _fieldCache[cacheKey]?[isDynamic ? field * 256 + key : field];
     if (live == null) return false; // the live value has to be known to save it
     final store = StorageClient(deviceId: widget.deviceId);
@@ -310,23 +310,18 @@ Future<void> _loadVisibleFields() async {
       return store.writeFile('DV_$suffix', next);
     }
 
-    // The System block has no registry entry: STATLOG reserves index 0xFE for it.
-    int? idx;
-    if (blockType == systemBlockTypeValue && inst == 0) {
-      idx = statlogSystemBlock;
-    } else {
-      final reg = _staticRegistry;
-      for (var i = 0; i < reg.length; i++) {
-        if (reg[i].type == blockType && reg[i].inst == inst) {
-          idx = i;
-          break;
-        }
-      }
+    // `.SV` is the raw static persistent space: write the field at its computed offset.
+    final layout = StaticSpaceLayout.fromRegistry(_staticRegistry);
+    final size = layout.sizeOf(blockType, field);
+    if (size == null) return false;
+    var value = live.value;
+    if (value.length < size) {
+      value = [...value, ...List<int>.filled(size - value.length, 0)];
     }
-    if (idx == null) return false;
-    final statlog = await _readFile('STATLOG') ?? const <int>[];
-    return store.writeFile(
-        'STATLOG', statlogSaveField(statlog, idx, field, live.meta, live.value));
+    final sv = await _readFile('.SV') ?? const <int>[];
+    final next = svSaveField(sv, layout, blockType, inst, field, value);
+    if (next == null) return false;
+    return store.writeFile('.SV', next);
   }
 
   /// Writes one stored value back into RAM with a register write - the app-side half of a
@@ -334,13 +329,13 @@ Future<void> _loadVisibleFields() async {
   Future<bool> _writeStoredFieldToRam(int blockType, int inst, int field, int key) async {
     final backup = _backup;
     if (backup == null) return false;
-    final isDynamic = blockType == BlockType.dynamic.value;
+    final isDynamic = isDynamicType(blockType);
     final stored = isDynamic
         ? backup.dynamicField(inst, field, key)
         : backup.staticField(blockType == systemBlockTypeValue ? 0 : blockType, inst, field);
     if (stored == null || stored.value.isEmpty) return false;
-    final meta = BlockMeta(
-        flagsAndType: stored.meta.flagsAndType, key: key, size: stored.value.length);
+    final meta = ValueInfo(
+        type: stored.meta.type, flags: stored.meta.flags, key: key, size: stored.value.length);
     if (isDynamic) {
       final block = await _client.readDynamicBlockMeta(inst);
       if (block == null) return false;
@@ -360,14 +355,14 @@ Future<void> _loadVisibleFields() async {
   /// Saves one persistent field to its backup (the docs' per-value Save). The wire only
   /// carries `Save All`, so this is the app-side half: see [_writeFieldToBackup].
   Future<void> _saveField(int blockType, int inst,
-      ({int type, int inst, BlockMeta meta, String name})? block, int fieldIndex) async {
+      ({int type, int inst, ValueInfo meta, String name})? block, int fieldIndex) async {
     final ok = await _withBusy(() => _writeFieldToBackup(blockType, inst, fieldIndex, 0));
     _snack(ok ? 'Saved' : 'Save failed');
   }
 
   /// Recalls one stored field into RAM (the docs' per-value Recall).
   Future<void> _recallField(int blockType, int inst,
-      ({int type, int inst, BlockMeta meta, String name})? block, int fieldIndex) async {
+      ({int type, int inst, ValueInfo meta, String name})? block, int fieldIndex) async {
     final ok = await _withBusy(() => _writeStoredFieldToRam(blockType, inst, fieldIndex, 0));
     _snack(ok ? 'Recalled' : 'Recall failed');
     if (ok) {
@@ -376,7 +371,7 @@ Future<void> _loadVisibleFields() async {
     }
   }
 
-  Future<void> _loadBlockFields(int blockType, int instance, ({int type, int inst, BlockMeta meta, String name})? block, {bool forceRefresh = false}) async {
+  Future<void> _loadBlockFields(int blockType, int instance, ({int type, int inst, ValueInfo meta, String name})? block, {bool forceRefresh = false}) async {
     if (block == null) return;
     final cacheKey = (blockType << 8) | instance;
     final cache = _fieldCache.putIfAbsent(cacheKey, () => {});
@@ -389,7 +384,7 @@ Future<void> _loadVisibleFields() async {
 
     // Dynamic blocks use the flat Field&Key model: enumerate the distinct fields and
     // read every (field, key) entry (cached as cache[field*256 + key]).
-    if (blockType == BlockType.dynamic.value) {
+    if (isDynamicType(blockType)) {
       final fieldList = await _client.getDynamicFields(instance) ?? <int>[];
       fields
         ..clear()
@@ -400,7 +395,7 @@ Future<void> _loadVisibleFields() async {
         keyMap[f] = keys;
         for (final key in keys) {
           if (!forceRefresh && cache.containsKey(f * 256 + key)) continue;
-          final entry = await _client.readBlockField(BlockType.dynamic.value, instance, f, key);
+          final entry = await _client.readBlockField(blockType, instance, f, key);
           if (entry != null) {
             cache[f * 256 + key] = entry;
           } else {
@@ -411,10 +406,10 @@ Future<void> _loadVisibleFields() async {
       return;
     }
 
-    // Script blocks (0x3FE): keyed entries per category field. The Header (field 0) is
+    // Script blocks (the Scripts range 0x3F4-0x3F7): keyed entries per category field. The Header (field 0) is
     // script metadata, not register content, so only the Input/Output/Variable/Constant
     // categories are exposed here.
-    if (blockType == BlockType.script.value) {
+    if (isScriptType(blockType)) {
       final keyMap = _scriptKeys.putIfAbsent(cacheKey, () => {});
       for (var f = ScriptField.input; f < block.meta.size; f++) {
         final keys = await _client.getBlockKeys(blockType, instance, f) ?? <int>[];
@@ -437,7 +432,7 @@ Future<void> _loadVisibleFields() async {
       if (!forceRefresh && cache.containsKey(f)) continue;
       if (blockType == 0) {
         final keys = systemKeysForField(f);
-        final fieldMap = <int, ({BlockMeta meta, List<int> value})>{};
+        final fieldMap = <int, ({ValueInfo meta, List<int> value})>{};
         for (final key in keys) {
           final field = await _client.readField(f, key);
           if (field != null) {
@@ -551,7 +546,7 @@ Future<void> _loadVisibleFields() async {
   }
 
   /// The Backup view: the stored values, read-only, with a per-field recall.
-  Widget _backupBody(List<({int type, int inst, BlockMeta meta, String name})?> blocks) {
+  Widget _backupBody(List<({int type, int inst, ValueInfo meta, String name})?> blocks) {
     if (_backup == null && _backupBusy) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -566,7 +561,7 @@ Future<void> _loadVisibleFields() async {
     );
   }
 
-  Widget _liveBody(List<({int type, int inst, BlockMeta meta, String name})?> blocks) {
+  Widget _liveBody(List<({int type, int inst, ValueInfo meta, String name})?> blocks) {
     // Partition: static/system blocks keep their fixed order; dynamic blocks are a
     // separate section (reorderable in edit mode).
     final fixed = <int>[];
@@ -574,7 +569,7 @@ Future<void> _loadVisibleFields() async {
     for (var i = 0; i < blocks.length; i++) {
       final b = blocks[i];
       // A None-typed block is a dynamic tombstone slot (static blocks are never None).
-      if (b != null && b.meta.typeValue == BlockType.dynamic.value) {
+      if (b != null && isDynamicType(b.meta.type)) {
         dynamic.add(i);
       } else {
         fixed.add(i);
@@ -615,8 +610,9 @@ Future<void> _loadVisibleFields() async {
         ));
       } else {
         for (final i in dynamic) {
-          if (blocks[i]?.meta.typeValue == BlockType.dynamic.value) {
-            children.add(_blockCard(context, i, blocks[i]));
+          final b = blocks[i];
+          if (b != null && isDynamicType(b.meta.type)) {
+            children.add(_blockCard(context, i, b));
           }
         }
       }
@@ -632,7 +628,7 @@ Future<void> _loadVisibleFields() async {
   }
 
   /// Applies a drag-reorder of a block's fields.
-  Future<void> _reorderFields(({int type, int inst, BlockMeta meta, String name})? block,
+  Future<void> _reorderFields(({int type, int inst, ValueInfo meta, String name})? block,
       List<int> fields, int oldIndex, int newIndex) async {
     if (block == null || oldIndex == newIndex) return;
     final order = fields.toList();
@@ -654,7 +650,7 @@ Future<void> _loadVisibleFields() async {
     order.insert(newIndex, moved);
     // Recreate only the LIVE blocks in the dragged order (tombstones compact to the end).
     final liveOrder = order
-        .where((i) => _blockMetas?[i]?.meta.typeValue == BlockType.dynamic.value)
+        .where((i) => isDynamicType(_blockMetas?[i]?.meta.type ?? -1))
         .map((i) => _blockMetas![i]!.inst)
         .toList();
     final ok = await _client.reorderDynamicBlocks(liveOrder);
@@ -663,7 +659,7 @@ Future<void> _loadVisibleFields() async {
   }
 
   /// Moves a dynamic block to a chosen registry index (dialogue).
-  Future<void> _moveBlock(({int type, int inst, BlockMeta meta, String name})? block) async {
+  Future<void> _moveBlock(({int type, int inst, ValueInfo meta, String name})? block) async {
     if (block == null || !mounted) return;
     final controller = TextEditingController(text: '${block.inst}');
     final target = await showDialog<int>(
@@ -701,15 +697,15 @@ Future<void> _loadVisibleFields() async {
       };
 
   Future<void> _editScriptEntry(int blockType, int inst, int field, int key,
-      ({BlockMeta meta, List<int> value}) entry,
-      ({int type, int inst, BlockMeta meta, String name})? block) async {
+      ({ValueInfo meta, List<int> value}) entry,
+      ({int type, int inst, ValueInfo meta, String name})? block) async {
     final next = await showValueEditor(context, entry.meta.dataType, entry.value);
     if (next == null || !mounted) return;
     // Declare the actual value length: sending the field's declared Size with a shorter
     // value (a trimmed String) makes the device copy stale payload bytes. A shorter String
     // is space-padded by the firmware.
-    final meta = BlockMeta(
-        flagsAndType: entry.meta.flagsAndType, size: next.length, key: entry.meta.key);
+    final meta = ValueInfo(
+        type: entry.meta.type, flags: entry.meta.flags, size: next.length, key: entry.meta.key);
     final ok = await _client.writeBlockField(blockType, inst, field, key, meta, next);
     _snack(ok != null ? 'Written' : 'Write failed');
     if (block != null) {

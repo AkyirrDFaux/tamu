@@ -36,25 +36,25 @@ static int checks = 0, failures = 0;
     } while (0)
 
 // The reference the tables replaced: walk everything before `i`.
-static uint16_t NaiveOffset(const BlockMeta *meta, uint8_t count, uint8_t i)
+static uint16_t NaiveOffset(const ValueInfo *meta, uint8_t count, uint8_t i)
 {
     uint16_t off = 0;
     for (uint8_t k = 0; k < i && k < count; k++) off += StrideAlign4(meta[k].Size);
     return off;
 }
 
-static void Fill(BlockMeta *meta, const uint8_t *sizes, uint8_t count)
+static void Fill(ValueInfo *meta, const uint8_t *sizes, uint8_t count)
 {
     for (uint8_t i = 0; i < count; i++)
     {
-        meta[i].FlagsAndType = 0;
-        meta[i].Key = 0;
+        meta[i].Type = 0;
+        meta[i].Flags = 0;
         meta[i].Size = sizes[i];
     }
 }
 
 // Every entry of one space, plus the total, plus one index past the end (which must saturate).
-static void CheckSpace(const uint16_t *table, uint16_t base, const BlockMeta *meta,
+static void CheckSpace(const uint16_t *table, uint16_t base, const ValueInfo *meta,
                        uint8_t count, uint16_t start, const char *label)
 {
     char msg[64];
@@ -82,7 +82,7 @@ int main()
     const uint8_t inCount = sizeof(inSizes), outCount = sizeof(outSizes);
     const uint8_t varCount = sizeof(varSizes), constCount = sizeof(cstSizes);
 
-    BlockMeta in[16], out[16], var[16], cst[16];
+    ValueInfo in[16], out[16], var[16], cst[16];
     Fill(in, inSizes, inCount);
     Fill(out, outSizes, outCount);
     Fill(var, varSizes, varCount);

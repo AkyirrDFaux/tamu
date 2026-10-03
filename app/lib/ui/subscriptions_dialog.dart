@@ -9,7 +9,7 @@ import '../core/device_db.dart';
 import '../core/register_client.dart';
 import '../core/subscription_client.dart';
 import '../core/script_client.dart';
-import '../core/types.dart' show BlockType, BlockMeta, RequesterSubscription, TriggerType, makeBlockInfo;
+import '../core/types.dart' show BlockType, ValueInfo, RequesterSubscription, TriggerType, makeBlockInfo;
 import 'widgets.dart' show showSnack, DialogBody;
 
 part 'subscriptions_pickers.dart';
@@ -34,7 +34,7 @@ class BlockSelection {
 /// keyed type (>= 0x100), so a key picker is offered.
 class FieldSelection {
   final int field;
-  final BlockMeta meta;
+  final ValueInfo meta;
   final String name;
   final bool keyed;
 
@@ -209,7 +209,7 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
         field: f,
         meta: fieldResult.meta,
         name: fieldInfo ?? 'Field $f',
-        keyed: fieldResult.meta.typeValue >= 0x100,
+        keyed: fieldResult.meta.type >= 0x100,
       ));
     }
     return out;

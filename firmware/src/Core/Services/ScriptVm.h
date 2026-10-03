@@ -62,25 +62,25 @@ static bool ScriptResolve(LoadedScript *s, uint8_t stype, uint8_t ssub, uint16_t
             if (sval >= s->inCount || !s->ioSpace) return false;
             *data = s->ioSpace + s->InputOffset((uint8_t)sval);
             *size = s->inMeta[sval].Size;
-            *dtype = BlockMetaType(s->inMeta[sval].FlagsAndType);
+            *dtype = ValueInfoType(s->inMeta[sval].Type);
             return true;
         case SCRIPT_SYM_OUTPUT:
             if (sval >= s->outCount || !s->ioSpace) return false;
             *data = s->ioSpace + s->OutputOffset((uint8_t)sval);
             *size = s->outMeta[sval].Size;
-            *dtype = BlockMetaType(s->outMeta[sval].FlagsAndType);
+            *dtype = ValueInfoType(s->outMeta[sval].Type);
             return true;
         case SCRIPT_SYM_VARIABLE:
             if (sval >= s->varCount) return false;
             *data = s->varSpace + s->VarOffset((uint8_t)sval);
             *size = s->varMeta[sval].Size;
-            *dtype = BlockMetaType(s->varMeta[sval].FlagsAndType);
+            *dtype = ValueInfoType(s->varMeta[sval].Type);
             return true;
         case SCRIPT_SYM_CONSTANT:
             if (sval >= s->constCount) return false;
             *data = s->constSpace + s->ConstOffset((uint8_t)sval);
             *size = s->constMeta[sval].Size;
-            *dtype = BlockMetaType(s->constMeta[sval].FlagsAndType);
+            *dtype = ValueInfoType(s->constMeta[sval].Type);
             return true;
         case SCRIPT_SYM_PREDEFINE:
             memset(scratch, 0, 4);
@@ -162,7 +162,7 @@ static bool ScriptResolveDest(LoadedScript *s, const uint8_t *sym, uint16_t &dty
         if (idx >= s->varCount) return false;
         data = s->varSpace + s->VarOffset((uint8_t)idx);
         size = s->varMeta[idx].Size;
-        dtype = BlockMetaType(s->varMeta[idx].FlagsAndType);
+        dtype = ValueInfoType(s->varMeta[idx].Type);
         return true;
     }
     if (sym[0] == SCRIPT_SYM_OUTPUT) {
@@ -170,7 +170,7 @@ static bool ScriptResolveDest(LoadedScript *s, const uint8_t *sym, uint16_t &dty
         if (idx >= s->outCount || !s->ioSpace) return false;
         data = s->ioSpace + s->OutputOffset((uint8_t)idx);
         size = s->outMeta[idx].Size;
-        dtype = BlockMetaType(s->outMeta[idx].FlagsAndType);
+        dtype = ValueInfoType(s->outMeta[idx].Type);
         return true;
     }
     return false;

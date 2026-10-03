@@ -12,7 +12,7 @@ Future<void> buildScripts(StorageClient storage, ScriptClient scripts) async {
   };
   for (final entry in drafts.entries) {
     final id = entry.key;
-    final name = 'SCR_${id.toString().padLeft(2, '0')}';
+    final name = scriptFileName(id);
     // Catch wrong constant indices / operand types before uploading.
     final errors = validateScriptLines(entry.value.lines, entry.value.validationContext);
     if (errors.isNotEmpty) {

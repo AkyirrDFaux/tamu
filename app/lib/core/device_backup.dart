@@ -2,30 +2,36 @@
 /// (Docs/Services/Register.md "Save").
 ///
 /// The device persists its Save targets as storage files:
-///   `STATLOG`   static-block + System persistent fields (firmware `StaticMemory.h`)
+///   `.SV`       the static memory's persistent space (firmware `StaticMemory.h` + the board's
+///               `StaticPersistent`): a raw 1:1 mirror with no per-record headers
 ///   `SUBREQ`    the requester-subscription table (firmware `Subscriptions.h`)
 ///   `DT_<xx>`   a dynamic block's entry table (firmware `Memory.h`)
 ///   `DV_<xx>`   that block's packed persistent values (firmware `Memory.h`)
 ///
-/// The decoders serve the storage file viewer and the Register view's Current/Backup
-/// toggle from one parse. The writers exist because the wire only carries `Save All` /
-/// `Recall All`: "partial saving/recall is handled by app with direct file writes / direct
-/// register writes" (Docs/Services/Register.md), so saving one field writes the file here
-/// and recalling one is a register write.
+/// `.SV` carries no offsets, so the app recomputes the static persistent layout from the
+/// per-type field sizes + the 32-bit alignment rule (see [StaticSpaceLayout]). The decoders
+/// serve the storage file viewer and the Register view's Current/Backup toggle from one parse.
+/// The writers exist because the wire only carries `Save All` / `Recall All`: "partial
+/// saving/recall is handled by app with direct file writes / direct register writes"
+/// (Docs/Services/Register.md), so saving one field writes the file here and recalling one is a
+/// register write.
 library;
 
 import 'dart:typed_data';
 
 import 'types.dart';
 
-/// STATLOG `BlockIndex.block`: 0xFF ends the log.
-const int statlogEnd = 0xFF;
-/// STATLOG `BlockIndex.block`: 0xFE marks a System-block entry.
-const int statlogSystemBlock = 0xFE;
-
 /// System-block persistent field indexes (Register.md): 6 = Name, 7 = NetID.
 const int systemNameField = 6;
 const int systemNetIdField = 7;
+
+/// The System block's persistent segment: Name (16 bytes) then NetID (1 byte, core only). The
+/// firmware keeps a NUL after Name and pads the segment to 32-bit alignment, so the first static
+/// block starts at offset 20.
+const int systemNameOffset = 0;
+const int systemNameSize = 16;
+const int systemNetIdOffset = 17;
+const int staticSpaceSystemSize = 20;
 
 /// The firmware's SUBREQ entry cap (Subscriptions.h).
 const int maxSubreqEntries = 16;
@@ -35,6 +41,123 @@ int align4(int v) => (v + 3) & ~3;
 
 int _u16(List<int> b, int o) => o + 1 < b.length ? (b[o] | (b[o + 1] << 8)) : 0;
 
+/// Aligns a static-space offset to a value of `size` bytes (Docs/Services/Register.md "Memory
+/// with 32-bit alignment"): `1 -> 1`, `2 -> 2`, `>= 3 -> 4`.
+int _alignValue(int offset, int size) {
+  final a = size >= 3 ? 4 : (size == 2 ? 2 : 1);
+  return (offset + a - 1) & ~(a - 1);
+}
+
+/// The persistent fields of each static block type, in field order, as `(field, size, dataType)`.
+/// Mirrors the firmware's compile-time layout (firmware/src/Blocks/*.h); a type absent here has
+/// no persistent fields. Kept in one place so the offset computation cannot drift.
+const Map<int, List<({int field, int size, DataType dataType})>> staticPersistentFields = {
+  0x04: [(field: 0, size: 4, dataType: DataType.uint32)], // PWM: PWMFreq
+  0x05: [
+    // AccGyr: SamplingRate, RangeAcc, RangeAng, AccFilter, AngFilter
+    (field: 0, size: 1, dataType: DataType.enum_),
+    (field: 1, size: 1, dataType: DataType.enum_),
+    (field: 2, size: 1, dataType: DataType.enum_),
+    (field: 3, size: 4, dataType: DataType.number),
+    (field: 4, size: 4, dataType: DataType.number),
+  ],
+  0x06: [
+    // Vysi1: Offset (2x3 matrix), RenderBlock (signed index), LayoutFile (8-char name)
+    (field: 1, size: 24, dataType: DataType.matrix),
+    (field: 2, size: 4, dataType: DataType.integer),
+    (field: 3, size: 8, dataType: DataType.filename),
+  ],
+  0x08: [
+    // ResistiveMeasure: SamplingRate, SensorType, FilterCoeff
+    (field: 0, size: 4, dataType: DataType.number),
+    (field: 1, size: 1, dataType: DataType.enum_),
+    (field: 2, size: 4, dataType: DataType.number),
+  ],
+};
+
+/// One static block type's resolved persistent segment: the base offset of its first instance,
+/// the per-instance stride, and each persistent field's offset/size within the instance.
+class StaticTypeLayout {
+  final int base;
+  final int stride;
+  final Map<int, int> fieldOffset;
+  final Map<int, int> fieldSize;
+  final Map<int, DataType> fieldType;
+
+  const StaticTypeLayout({
+    required this.base,
+    required this.stride,
+    required this.fieldOffset,
+    required this.fieldSize,
+    required this.fieldType,
+  });
+}
+
+/// The static persistent space's resolved layout, computed from the device's static registry
+/// (the block types + their instances, in enumeration order).
+class StaticSpaceLayout {
+  final Map<int, StaticTypeLayout> types;
+
+  const StaticSpaceLayout(this.types);
+
+  StaticTypeLayout? type(int blockType) => types[blockType];
+
+  /// The byte offset of `(blockType, inst, field)` in `.SV`, or null when the field is not a
+  /// persistent static field.
+  int? offsetOf(int blockType, int inst, int field) {
+    final t = types[blockType];
+    final off = t?.fieldOffset[field];
+    return (t == null || off == null) ? null : t.base + inst * t.stride + off;
+  }
+
+  /// The stored size of a persistent static field, or null when it is not one.
+  int? sizeOf(int blockType, int field) => types[blockType]?.fieldSize[field];
+
+  /// Builds the layout from the device's static registry (`(type, inst)` pairs). Types are laid
+  /// out in ascending block-type order with their instances contiguous (Docs/Services/Register.md
+  /// "System + Static memory blocks"); the System block (type 0) is the first segment.
+  factory StaticSpaceLayout.fromRegistry(List<({int type, int inst})> registry) {
+    final counts = <int, int>{};
+    for (final r in registry) {
+      counts[r.type] = (counts[r.type] ?? 0) + 1;
+    }
+    final ordered = counts.keys.toList()..sort();
+    final types = <int, StaticTypeLayout>{
+      0: const StaticTypeLayout(
+        base: 0,
+        stride: staticSpaceSystemSize,
+        fieldOffset: {systemNameField: systemNameOffset, systemNetIdField: systemNetIdOffset},
+        fieldSize: {systemNameField: systemNameSize, systemNetIdField: 1},
+        fieldType: {systemNameField: DataType.string, systemNetIdField: DataType.id},
+      ),
+    };
+    var cursor = staticSpaceSystemSize;
+    for (final t in ordered) {
+      final fields = staticPersistentFields[t] ?? const [];
+      final fieldOffset = <int, int>{};
+      final fieldSize = <int, int>{};
+      final fieldType = <int, DataType>{};
+      var inner = 0;
+      for (final f in fields) {
+        inner = _alignValue(inner, f.size);
+        fieldOffset[f.field] = inner;
+        fieldSize[f.field] = f.size;
+        fieldType[f.field] = f.dataType;
+        inner += f.size;
+      }
+      types[t] = StaticTypeLayout(
+        base: cursor,
+        stride: inner,
+        fieldOffset: fieldOffset,
+        fieldSize: fieldSize,
+        fieldType: fieldType,
+      );
+      cursor += inner * counts[t]!;
+    }
+    return StaticSpaceLayout(types);
+  }
+}
+
 /// One stored value, addressed the way the Register addresses fields.
 class BackupEntry {
   /// Register block type (0 = the System block).
@@ -42,9 +165,9 @@ class BackupEntry {
   final int inst;
   final int field;
   final int key;
-  final BlockMeta meta;
+  final ValueInfo meta;
 
-  /// The stored value, exactly [BlockMeta.size] bytes long.
+  /// The stored value, exactly [ValueInfo.size] bytes long.
   final Uint8List value;
 
   const BackupEntry({
@@ -57,86 +180,51 @@ class BackupEntry {
   });
 }
 
-/// One raw STATLOG record. Blocks are addressed by *registry index*, which only the
-/// caller can resolve (see [DeviceBackup.decode]'s `staticRegistry`).
-class StatlogRecord {
-  final int blockIdx;
-  final int field;
-  final BlockMeta meta;
-  final Uint8List value;
-
-  const StatlogRecord({
-    required this.blockIdx,
-    required this.field,
-    required this.meta,
-    required this.value,
-  });
-
-  bool get isSystem => blockIdx == statlogSystemBlock;
-}
-
-/// Decodes the STATLOG registry backup. Stops at the 0xFF terminator or the end, and
-/// stops early rather than reading past a truncated trailing record.
-List<StatlogRecord> decodeStatlog(List<int> bytes) {
-  final out = <StatlogRecord>[];
-  var c = 0;
-  while (c + 8 <= bytes.length) {
-    final blockIdx = bytes[c];
-    if (blockIdx == statlogEnd) break;
-    final field = bytes[c + 1];
-    final meta = BlockMeta.fromPacked(bytes, c + 4);
-    final size = meta.size;
-    if (c + 8 + size > bytes.length) break;
-    out.add(StatlogRecord(
-      blockIdx: blockIdx,
-      field: field,
-      meta: meta,
-      value: Uint8List.fromList(bytes.sublist(c + 8, c + 8 + size)),
-    ));
-    c += 8 + align4(size);
-  }
-  return out;
-}
-
-/// Returns [statlog] with the entry for (`blockIdx`, `field`) replaced by [value], or with a
-/// fresh entry appended when there was none, followed by a 0xFF terminator.
-///
-/// The other entries are copied byte-for-byte rather than re-encoded, so an entry this app
-/// does not understand survives a partial save. [value] must be the field's full stored size
-/// (its descriptor's `size`), which is what a live register read returns.
-///
-/// This is the "direct file write" half of the per-field Save: the device only offers
-/// Save All / Recall All, so a single field's save is built here and written with
-/// `StorageClient.writeFile`.
-List<int> statlogSaveField(
-    List<int> statlog, int blockIdx, int field, BlockMeta meta, List<int> value) {
-  final out = <int>[];
-  var c = 0;
-  while (c + 8 <= statlog.length) {
-    if (statlog[c] == statlogEnd) break;
-    final len = 8 + align4(statlog[c + 7]); // BlockMeta.Size is the header's last byte
-    if (c + len > statlog.length) break; // truncated tail: dropped, like the decoder
-    if (!(statlog[c] == blockIdx && statlog[c + 1] == field)) {
-      out.addAll(statlog.sublist(c, c + len));
+/// Decodes the static persistent space (`.SV`): the System block's fields, then every static
+/// block's persistent fields. [registry] is the device's static blocks in enumeration order.
+List<BackupEntry> decodeSv(
+    List<int> bytes, StaticSpaceLayout layout, List<({int type, int inst})> registry) {
+  final out = <BackupEntry>[];
+  // The System block is virtual (type 0, inst 0) and has no registry entry.
+  final instances = <({int type, int inst})>[(type: 0, inst: 0), ...registry];
+  for (final r in instances) {
+    final t = layout.type(r.type);
+    if (t == null) continue;
+    for (final f in t.fieldOffset.entries) {
+      final size = t.fieldSize[f.key]!;
+      final offset = t.base + r.inst * t.stride + f.value;
+      if (offset + size > bytes.length) continue; // truncated space
+      final key = (r.type == 0 && f.key == systemNetIdField) ? 0 : 0xFF;
+      out.add(BackupEntry(
+        blockType: r.type,
+        inst: r.inst,
+        field: f.key,
+        key: key,
+        meta: ValueInfo(
+            type: t.fieldType[f.key]!.value,
+            flags: ValueFlags.persistent,
+            key: key,
+            size: size),
+        value: Uint8List.fromList(bytes.sublist(offset, offset + size)),
+      ));
     }
-    c += len;
   }
-  out.addAll(_statlogEntry(blockIdx, field, meta, value));
-  out.add(statlogEnd); // everything after the terminator is ignored on read
   return out;
 }
 
-/// One STATLOG entry: `BlockIndex[4] + BlockMeta[4] + value`, padded to 4 bytes.
-List<int> _statlogEntry(int blockIdx, int field, BlockMeta meta, List<int> value) {
-  final out = <int>[
-    blockIdx & 0xFF, field & 0xFF, 0xFF, 0,
-    meta.flagsAndType & 0xFF, (meta.flagsAndType >> 8) & 0xFF, meta.key & 0xFF,
-    value.length & 0xFF,
-    ...value,
-  ];
-  while (out.length % 4 != 0) {
+/// Returns [sv] with the persistent static field's bytes replaced by [value] (the field's stored
+/// size). This is the "direct file write" half of a per-field Save; null when the field is not a
+/// persistent static field or [value] is the wrong size.
+List<int>? svSaveField(
+    List<int> sv, StaticSpaceLayout layout, int blockType, int inst, int field, List<int> value) {
+  final offset = layout.offsetOf(blockType, inst, field);
+  final size = layout.sizeOf(blockType, field);
+  if (offset == null || size == null || value.length != size) return null;
+  final out = List<int>.from(sv);
+  while (out.length < offset + size) {
     out.add(0);
   }
+  out.setRange(offset, offset + size, value);
   return out;
 }
 
@@ -224,27 +312,28 @@ List<SubreqEntry> decodeSubreq(List<int> bytes) {
 class DynamicTableEntry {
   final int field;
   final int key;
-  final int flagsAndType;
+  final int type;
+  final int flags;
   final int size;
 
   const DynamicTableEntry({
     required this.field,
     required this.key,
-    required this.flagsAndType,
+    required this.type,
+    required this.flags,
     required this.size,
   });
 
-  BlockMeta get meta => BlockMeta(flagsAndType: flagsAndType, key: key, size: size);
-  bool get persistent => flagsAndType & FieldFlags.persistent != 0;
+  ValueInfo get meta => ValueInfo(type: type, flags: flags, key: key, size: size);
+  bool get persistent => flags & ValueFlags.persistent != 0;
 }
 
 /// A dynamic block's saved table (`DT_<xx>`).
 class DynamicTable {
   final String name;
-  final int typeValue;
   final List<DynamicTableEntry> entries;
 
-  const DynamicTable({required this.name, required this.typeValue, required this.entries});
+  const DynamicTable({required this.name, required this.entries});
 
   /// Total bytes the persistent entries occupy in the sibling `DV_` file.
   int get persistentSize {
@@ -256,32 +345,35 @@ class DynamicTable {
   }
 }
 
-/// Decodes a dynamic block's table. Returns null when the bytes are too short to hold
-/// the header or the declared entries (a truncated or corrupt table).
+/// Decodes a dynamic block's table. Layout (Docs/Services/Register.md "Dynamic Block
+/// Table"): Name (16 chars), entry count (uint16), 16-bit reserved padding, then the
+/// entries. Returns null when the bytes are too short to hold the header or the declared
+/// entries (a truncated or corrupt table). The block's bank type is not stored: it is
+/// derived from the file's global index.
 DynamicTable? decodeDynamicTable(List<int> bytes) {
-  if (bytes.isEmpty) return null;
-  var c = 0;
-  final nameLen = bytes[c++];
-  if (c + nameLen + 4 > bytes.length) return null;
-  final name = String.fromCharCodes(bytes.sublist(c, c + nameLen));
-  c += nameLen;
-  final typeValue = _u16(bytes, c);
-  final entryCount = _u16(bytes, c + 2);
-  c += 4;
+  const nameLen = 16;
+  if (bytes.length < nameLen + 4) return null;
+  final nameBytes = bytes.sublist(0, nameLen);
+  final nul = nameBytes.indexOf(0);
+  final name = String.fromCharCodes(nul >= 0 ? nameBytes.sublist(0, nul) : nameBytes);
+  final entryCount = _u16(bytes, nameLen);
+  var c = nameLen + 4; // entry count (2) + reserved padding (2)
   if (c + entryCount * 6 > bytes.length) return null;
 
   final entries = <DynamicTableEntry>[];
   for (var i = 0; i < entryCount; i++) {
     final fieldKey = _u16(bytes, c);
+    final info = ValueInfo.fromBytes(bytes, c + 2);
     entries.add(DynamicTableEntry(
       field: fieldKey >> 8,
       key: fieldKey & 0xFF,
-      flagsAndType: _u16(bytes, c + 2),
-      size: bytes[c + 4],
+      type: info.type,
+      flags: info.flags,
+      size: info.size,
     ));
     c += 6;
   }
-  return DynamicTable(name: name, typeValue: typeValue, entries: entries);
+  return DynamicTable(name: name, entries: entries);
 }
 
 /// Pairs a decoded table with its `DV_` bytes.
@@ -368,38 +460,19 @@ class DeviceBackup {
 
   /// Decodes every available part.
   ///
-  /// [staticRegistry] must be the device's static blocks in **registry order** with the
-  /// System block excluded (the storage page builds it exactly that way) - STATLOG
-  /// addresses blocks by that index. [dynamic] maps a dynamic slot index to its
-  /// (`DT_`, `DV_`) file bytes.
+  /// [staticRegistry] is the device's static blocks (type + per-type instance) in enumeration
+  /// order; the `.SV` decoder recomputes each field's offset from it. [dynamic] maps a dynamic
+  /// slot index to its (`DT_`, `DV_`) file bytes.
   factory DeviceBackup.decode({
-    List<int>? statlog,
+    List<int>? sv,
     List<({int type, int inst})> staticRegistry = const [],
     Map<int, ({List<int> table, List<int> values})> dynamic = const {},
   }) {
     final statics = <_StaticKey, BackupEntry>{};
-    if (statlog != null) {
-      for (final r in decodeStatlog(statlog)) {
-        if (r.isSystem) {
-          // The System block is virtual: type 0, inst 0.
-          statics[(blockType: 0, inst: 0, field: r.field)] = BackupEntry(
-              blockType: 0,
-              inst: 0,
-              field: r.field,
-              key: r.meta.key,
-              meta: r.meta,
-              value: r.value);
-          continue;
-        }
-        if (r.blockIdx >= staticRegistry.length) continue; // unmapped index
-        final b = staticRegistry[r.blockIdx];
-        statics[(blockType: b.type, inst: b.inst, field: r.field)] = BackupEntry(
-            blockType: b.type,
-            inst: b.inst,
-            field: r.field,
-            key: r.meta.key,
-            meta: r.meta,
-            value: r.value);
+    if (sv != null) {
+      final layout = StaticSpaceLayout.fromRegistry(staticRegistry);
+      for (final e in decodeSv(sv, layout, staticRegistry)) {
+        statics[(blockType: e.blockType, inst: e.inst, field: e.field)] = e;
       }
     }
 

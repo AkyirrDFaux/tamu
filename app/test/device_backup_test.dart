@@ -3,34 +3,22 @@ import 'package:tamuapp/core/device_backup.dart';
 import 'package:tamuapp/core/types.dart';
 
 /// The device backup decoders, against synthetic bytes matching the firmware layouts
-/// (`StaticMemory.h` STATLOG, `Subscriptions.h` SUBREQ, `Memory.h` DT_/DV_).
+/// (the static `.SV` space, `Subscriptions.h` SUBREQ, `Memory.h` DT_/DV_).
 void main() {
   List<int> u16(int v) => [v & 0xFF, (v >> 8) & 0xFF];
   List<int> u32(int v) => [v & 0xFF, (v >> 8) & 0xFF, (v >> 16) & 0xFF, (v >> 24) & 0xFF];
 
-  /// BlockIndex[4] + BlockMeta[4] + value[4-aligned].
-  /// BlockMeta is u16 FlagsAndType, u8 Key, u8 Size.
-  List<int> statlogEntry(int blockIdx, int field, DataType type, int flags, List<int> value) {
-    final flagsAndType = type.value | flags;
-    final out = <int>[
-      blockIdx, field, 0xFF, 0, // BlockIndex
-      flagsAndType & 0xFF, (flagsAndType >> 8) & 0xFF, // FlagsAndType
-      0xFF, // key
-      value.length, // size
-      ...value,
-    ];
-    while (out.length % 4 != 0) {
-      out.add(0);
+  /// DT_ table: Name (16 chars, NUL-padded), u16 entry_count, u16 reserved, then
+  /// 6 B per entry.
+  List<int> dynamicTable(String name, List<(int, int, int, int)> entries) {
+    final nameBytes = name.codeUnits.take(16).toList();
+    while (nameBytes.length < 16) {
+      nameBytes.add(0);
     }
-    return out;
-  }
-
-  /// DT_ table: u8 name_len, name, u16 type, u16 entry_count, then 6 B per entry.
-  List<int> dynamicTable(String name, int typeValue, List<(int, int, int, int)> entries) {
     final out = <int>[
-      name.length, ...name.codeUnits,
-      ...u16(typeValue),
+      ...nameBytes,
       ...u16(entries.length),
+      0, 0, // reserved padding
     ];
     for (final e in entries) {
       out.addAll([...u16(e.$1), ...u16(e.$2), e.$3, e.$4]);
@@ -38,39 +26,55 @@ void main() {
     return out;
   }
 
-  group('STATLOG', () {
-    test('decodes a System entry and a static entry, stopping at the terminator', () {
-      final name = 'DAS v0.1'.codeUnits;
-      final data = <int>[
-        ...statlogEntry(statlogSystemBlock, systemNameField, DataType.string,
-            FieldFlags.persistent, name),
-        ...statlogEntry(0, 0, DataType.number, FieldFlags.persistent, numberToBytes(10)),
-        0xFF,
-      ];
-      final records = decodeStatlog(data);
-      expect(records, hasLength(2));
-      expect(records[0].isSystem, isTrue);
-      expect(records[0].field, 6);
-      expect(String.fromCharCodes(records[0].value), 'DAS v0.1');
-      expect(records[1].blockIdx, 0);
-      expect(records[1].value, numberToBytes(10));
+  group('.SV', () {
+    // One Vysi1 display (0x06) and one ResistiveMeasure (0x08), ascending - the space is stacked
+    // in block-type order. System (20 B) + 0x06 (36 B: Offset@0, RenderBlock@24, LayoutFile@28)
+    // + 0x08 (12 B: SamplingRate@0, SensorType@4, FilterCoeff@8).
+    const registry = [(type: 0x06, inst: 0), (type: 0x08, inst: 0)];
+
+    List<int> svBytes() {
+      final b = List<int>.filled(20 + 36 + 12, 0);
+      b.setRange(0, 3, 'Eye'.codeUnits); // System Name @ 0
+      b[17] = 3; // System NetID @ 17
+      b[44] = 5; // 0x06 RenderBlock @ 20 + 24 = 44
+      b.setRange(56, 60, numberToBytes(10)); // 0x08 SamplingRate @ 20 + 36 = 56
+      b[60] = 2; // 0x08 SensorType @ 60
+      return b;
+    }
+
+    test('computes each field offset from the field sizes + alignment', () {
+      final layout = StaticSpaceLayout.fromRegistry(registry);
+      expect(layout.offsetOf(0x06, 0, 1), 20);
+      expect(layout.offsetOf(0x06, 0, 2), 44);
+      expect(layout.offsetOf(0x06, 0, 3), 48);
+      expect(layout.offsetOf(0x08, 0, 0), 56);
+      expect(layout.offsetOf(0x08, 0, 1), 60); // SensorType (1 B) follows the 4 B Number
+      expect(layout.offsetOf(0x08, 0, 2), 64); // FilterCoeff re-aligns to 4
+      // A volatile field and an absent type have no offset.
+      expect(layout.offsetOf(0x08, 0, 3), isNull);
+      expect(layout.offsetOf(0x05, 0, 0), isNull);
     });
 
-    test('a truncated trailing record is dropped, not read past the end', () {
-      final data = <int>[
-        ...statlogEntry(0, 0, DataType.number, 0, numberToBytes(1)),
-        // A record header claiming a 16-byte value but supplying only 2.
-        0, 1, 0, 0, // BlockIndex
-        0x06, 0x00, 0xFF, 16, // FlagsAndType = number, key 0xFF, size 16
-        1, 2,
-      ];
-      final records = decodeStatlog(data);
-      expect(records, hasLength(1));
+    test('decodes the System segment and every static persistent field', () {
+      final layout = StaticSpaceLayout.fromRegistry(registry);
+      final entries = decodeSv(svBytes(), layout, registry);
+      // System Name + NetID + 0x06 x3 + 0x08 x3.
+      expect(entries, hasLength(8));
+      final byKey = {
+        for (final e in entries) '${e.blockType}.${e.inst}.${e.field}': e,
+      };
+      expect(byKey['0.0.6']!.value.sublist(0, 3), 'Eye'.codeUnits);
+      expect(byKey['0.0.7']!.value, [3]);
+      expect(byKey['6.0.2']!.value, [5, 0, 0, 0]);
+      expect(byKey['8.0.0']!.value, numberToBytes(10));
+      expect(byKey['8.0.1']!.value, [2]);
     });
 
-    test('a clear STATLOG decodes to nothing', () {
-      expect(decodeStatlog([0xFF]), isEmpty);
-      expect(decodeStatlog(const []), isEmpty);
+    test('a truncated space drops the fields past its end', () {
+      final layout = StaticSpaceLayout.fromRegistry(registry);
+      // Only the System segment is present.
+      expect(decodeSv(List.filled(20, 0), layout, registry), hasLength(2));
+      expect(decodeSv(const [], layout, registry), isEmpty);
     });
   });
 
@@ -105,19 +109,17 @@ void main() {
   group('DT_ / DV_', () {
     DynamicTable table() => decodeDynamicTable(dynamicTable(
           'Box',
-          BlockType.dynamic.value,
           [
-            // fieldKey, flagsAndType, size, pad
-            ((0 << 8) | 0, DataType.number.value | FieldFlags.persistent, 4, 0),
+            // fieldKey, type, size, flags
+            ((0 << 8) | 0, DataType.number.value, 4, ValueFlags.persistent),
             ((1 << 8) | 0, DataType.number.value, 4, 0), // volatile
-            ((2 << 8) | 3, DataType.number.value | FieldFlags.persistent, 2, 0),
+            ((2 << 8) | 3, DataType.number.value, 2, ValueFlags.persistent),
           ],
         ))!;
 
-    test('the table decodes name, type and entries', () {
+    test('the table decodes name and entries', () {
       final t = table();
       expect(t.name, 'Box');
-      expect(t.typeValue, BlockType.dynamic.value);
       expect(t.entries, hasLength(3));
       expect(t.entries[0].field, 0);
       expect(t.entries[2].field, 2);
@@ -151,83 +153,45 @@ void main() {
 
     test('a corrupt or empty table decodes to null', () {
       expect(decodeDynamicTable(const []), isNull);
-      expect(decodeDynamicTable([9, 1, 2]), isNull); // name length past the end
+      expect(decodeDynamicTable([9, 1, 2]), isNull); // shorter than the header
       // Entry count past the supplied bytes.
-      expect(decodeDynamicTable([0, 0, 0, 5, 0, 0, 0, 0]), isNull);
+      expect(decodeDynamicTable([...List.filled(16, 0), 5, 0, 0, 0]), isNull);
     });
   });
 
   group('DeviceBackup', () {
-    test('maps STATLOG registry indexes onto the static block list', () {
-      final data = <int>[
-        ...statlogEntry(0, 0, DataType.number, 0, numberToBytes(10)),
-        ...statlogEntry(1, 2, DataType.number, 0, numberToBytes(20)),
-        ...statlogEntry(statlogSystemBlock, systemNameField, DataType.string, 0,
-            'Eye'.codeUnits),
-        0xFF,
-      ];
-      final backup = DeviceBackup.decode(
-        statlog: data,
-        staticRegistry: const [
-          (type: 0x08, inst: 0), // resistive measure
-          (type: 0x06, inst: 1), // display
-        ],
-      );
+    test('decodes the System segment and the static blocks from .SV', () {
+      const registry = [(type: 0x08, inst: 0)];
+      final sv = List<int>.filled(20 + 12, 0);
+      sv.setRange(0, 3, 'Eye'.codeUnits);
+      sv.setRange(20, 24, numberToBytes(10));
+      final backup = DeviceBackup.decode(sv: sv, staticRegistry: registry);
       expect(backup.hasAny, isTrue);
       expect(backup.staticField(0x08, 0, 0)?.value, numberToBytes(10));
-      expect(backup.staticField(0x06, 1, 2)?.value, numberToBytes(20));
       // The System block is virtual (type 0, inst 0) and carries Name/NetID.
-      expect(String.fromCharCodes(backup.staticField(0, 0, systemNameField)!.value), 'Eye');
-      // A field that was never saved has no entry.
-      expect(backup.staticField(0x08, 0, 1), isNull);
+      final name = backup.staticField(0, 0, systemNameField)!.value;
+      expect(name.sublist(0, 3), 'Eye'.codeUnits);
+      // A persistent field the space carries is decoded...
+      expect(backup.staticField(0x08, 0, 1)?.value, [0]);
+      // ...but a volatile field has no stored entry.
+      expect(backup.staticField(0x08, 0, 3), isNull);
     });
 
-    test('an out-of-range registry index is skipped, not misattributed', () {
-      final data = <int>[
-        ...statlogEntry(7, 0, DataType.number, 0, numberToBytes(1)),
-        0xFF,
-      ];
+    test('a registry type with no persistent fields contributes nothing', () {
       final backup = DeviceBackup.decode(
-          statlog: data, staticRegistry: const [(type: 0x08, inst: 0)]);
-      expect(backup.staticField(0x08, 0, 0), isNull);
-      expect(backup.hasAny, isFalse);
+          sv: List.filled(20, 0), staticRegistry: const [(type: 0x03, inst: 0)]);
+      // LEDButton (0x03) has no persistent fields, so only the System fields are present.
+      expect(backup.staticField(0x03, 0, 0), isNull);
+      expect(backup.staticField(0, 0, systemNameField), isNotNull);
     });
 
-    test('only static blocks may occupy a STATLOG registry index', () {
-      // `readBlocks()` appends the Script (0x3FE) and Dynamic (0x3FF) memories after the
-      // statics, so an unfiltered list *happens* to index STATLOG correctly. This shows why
-      // the filter is required rather than incidental: list the memories first and the same
-      // STATLOG bytes name a different block entirely.
-      final withMemoriesFirst = <({int type, int inst})>[
-        (type: BlockType.dynamic.value, inst: 0),
-        (type: BlockType.script.value, inst: 0),
-        (type: BlockType.ledButton.value, inst: 0),
-        (type: BlockType.pwm.value, inst: 0),
-      ];
-      final registry =
-          withMemoriesFirst.where((b) => isStaticRegistryType(b.type)).toList();
-      expect(registry, hasLength(2));
-
-      // Registry index 0 means the first *static* entry (LEDButton) to the firmware.
-      final data = <int>[
-        ...statlogEntry(0, 0, DataType.number, 0, numberToBytes(5)),
-        0xFF,
-      ];
-      final right = DeviceBackup.decode(statlog: data, staticRegistry: registry);
-      expect(right.staticField(BlockType.ledButton.value, 0, 0)?.value,
-          numberToBytes(5));
-
-      // Unfiltered, the same index lands on the dynamic memory instead.
-      final wrong =
-          DeviceBackup.decode(statlog: data, staticRegistry: withMemoriesFirst);
-      expect(wrong.staticField(BlockType.ledButton.value, 0, 0), isNull);
-      expect(wrong.staticField(BlockType.dynamic.value, 0, 0)?.value,
-          numberToBytes(5));
-
-      // The classifier: System, Script and Dynamic are excluded; static types are not.
+    test('the static classifier excludes the System, Script and Dynamic memories', () {
       expect(isStaticRegistryType(systemBlockTypeValue), isFalse);
-      expect(isStaticRegistryType(BlockType.script.value), isFalse);
-      expect(isStaticRegistryType(BlockType.dynamic.value), isFalse);
+      // The banked script range (0x3F4-0x3F7) and dynamic range (0x3F0-0x3F3).
+      expect(isStaticRegistryType(scriptTypeBase), isFalse);
+      expect(isStaticRegistryType(scriptTypeBase + 3), isFalse);
+      expect(isStaticRegistryType(dynamicTypeBase), isFalse);
+      expect(isStaticRegistryType(dynamicTypeBase + 3), isFalse);
       expect(isStaticRegistryType(BlockType.pwm.value), isTrue);
       expect(isStaticRegistryType(BlockType.resistiveMeasure.value), isTrue);
     });
@@ -235,8 +199,8 @@ void main() {
     test('dynamic entries are looked up by field and key', () {
       final backup = DeviceBackup.decode(dynamic: {
         3: (
-          table: dynamicTable('Box', BlockType.dynamic.value, [
-            ((0 << 8) | 1, DataType.number.value | FieldFlags.persistent, 4, 0),
+          table: dynamicTable('Box', [
+            ((0 << 8) | 1, DataType.number.value, 4, ValueFlags.persistent),
           ]),
           values: numberToBytes(42),
         ),
@@ -254,14 +218,14 @@ void main() {
       expect(DeviceBackup.empty.staticField(0, 0, 0), isNull);
       expect(DeviceBackup.empty.dynamicField(0, 0, 0), isNull);
       expect(DeviceBackup.decode().hasAny, isFalse);
-      expect(DeviceBackup.decode(statlog: const [], dynamic: const {}).hasAny, isFalse);
+      expect(DeviceBackup.decode(sv: const [], dynamic: const {}).hasAny, isFalse);
     });
 
     test('a DV file that does not match its DT table contributes no values', () {
       final backup = DeviceBackup.decode(dynamic: {
         1: (
-          table: dynamicTable('Box', BlockType.dynamic.value, [
-            ((0 << 8) | 0, DataType.number.value | FieldFlags.persistent, 4, 0),
+          table: dynamicTable('Box', [
+            ((0 << 8) | 0, DataType.number.value, 4, ValueFlags.persistent),
           ]),
           values: const [1, 2], // wrong length
         ),
@@ -277,10 +241,10 @@ void main() {
   group('DeviceBackup table structure (for the Backup view)', () {
     DeviceBackup build() => DeviceBackup.decode(dynamic: {
           2: (
-            table: dynamicTable('Panel', BlockType.dynamic.value, [
-              ((3 << 8) | 1, DataType.number.value | FieldFlags.persistent, 4, 0),
+            table: dynamicTable('Panel', [
+              ((3 << 8) | 1, DataType.number.value, 4, ValueFlags.persistent),
               ((3 << 8) | 2, DataType.number.value, 4, 0), // volatile
-              ((1 << 8) | 0, DataType.colour.value | FieldFlags.persistent, 4, 0),
+              ((1 << 8) | 0, DataType.colour.value, 4, ValueFlags.persistent),
             ]),
             values: numberToBytes(5) + [1, 2, 3, 4],
           ),
@@ -318,54 +282,37 @@ void main() {
   // The per-field Save writes the file itself (the wire only carries Save All), so these two
   // writers must round-trip through the decoders above.
   group('field writers', () {
-    test('statlogSaveField appends a new entry and keeps the others', () {
-      final data = <int>[
-        ...statlogEntry(0, 0, DataType.number, 0, numberToBytes(10)),
-        ...statlogEntry(1, 2, DataType.number, 0, numberToBytes(20)),
-        0xFF,
-      ];
-      final out = statlogSaveField(
-          data,
-          1,
-          3,
-          BlockMeta(flagsAndType: DataType.number.value, size: 4),
-          numberToBytes(30));
-      expect(out.last, statlogEnd, reason: 'the log needs its terminator');
-      final records = decodeStatlog(out);
-      expect(records, hasLength(3));
-      expect(records[0].blockIdx, 0);
-      expect(numberFromBytes(records[0].value), 10);
-      expect(records[1].field, 2);
-      expect(numberFromBytes(records[1].value), 20);
-      expect(records[2].blockIdx, 1);
-      expect(records[2].field, 3);
-      expect(numberFromBytes(records[2].value), 30);
+    test('svSaveField writes a persistent field at its computed offset', () {
+      const registry = [(type: 0x08, inst: 0)];
+      final layout = StaticSpaceLayout.fromRegistry(registry);
+      final sv = List<int>.filled(20 + 12, 0);
+      sv.setRange(0, 3, 'Eye'.codeUnits);
+      final out = svSaveField(sv, layout, 0x08, 0, 0, numberToBytes(30))!;
+      expect(out.length, sv.length, reason: '.SV keeps its exact length');
+      expect(out.sublist(20, 24), numberToBytes(30)); // SamplingRate @ 20
+      expect(out.sublist(0, 3), 'Eye'.codeUnits); // nothing else moved
+      // The patched space still decodes.
+      final decoded = decodeSv(out, layout, registry)
+          .firstWhere((e) => e.blockType == 0x08 && e.field == 0);
+      expect(decoded.value, numberToBytes(30));
+
+      // A wrong size and a volatile/absent field are refused rather than written.
+      expect(svSaveField(sv, layout, 0x08, 0, 0, [1]), isNull);
+      expect(svSaveField(sv, layout, 0x08, 0, 3, [1, 2, 3, 4]), isNull);
     });
 
-    test('statlogSaveField replaces an entry instead of duplicating it', () {
-      final data = <int>[
-        ...statlogEntry(0, 0, DataType.number, 0, numberToBytes(10)),
-        ...statlogEntry(1, 2, DataType.number, 0, numberToBytes(20)),
-        0xFF,
-      ];
-      final out = statlogSaveField(
-          data,
-          0,
-          0,
-          BlockMeta(flagsAndType: DataType.number.value, size: 4),
-          numberToBytes(99));
-      final records = decodeStatlog(out);
-      expect(records, hasLength(2));
-      // The updated entry moved to the end; the untouched one survives byte-for-byte.
-      expect(numberFromBytes(records[0].value), 20);
-      expect(records[1].blockIdx, 0);
-      expect(numberFromBytes(records[1].value), 99);
+    test('svSaveField grows a short space to reach the field', () {
+      const registry = [(type: 0x08, inst: 0)];
+      final layout = StaticSpaceLayout.fromRegistry(registry);
+      final out = svSaveField(const <int>[], layout, 0x08, 0, 0, numberToBytes(7))!;
+      expect(out.length, 20 + 4);
+      expect(out.sublist(20, 24), numberToBytes(7));
     });
 
     test('dvSaveField patches one persistent entry at its table offset', () {
-      final table = decodeDynamicTable(dynamicTable('Box', BlockType.dynamic.value, [
-        ((0 << 8) | 0, DataType.number.value | FieldFlags.persistent, 4, 0),
-        ((1 << 8) | 0, DataType.number.value | FieldFlags.persistent, 2, 0),
+      final table = decodeDynamicTable(dynamicTable('Box', [
+        ((0 << 8) | 0, DataType.number.value, 4, ValueFlags.persistent),
+        ((1 << 8) | 0, DataType.number.value, 2, ValueFlags.persistent),
       ]))!;
       final values = <int>[...numberToBytes(1.0), 5, 6];
       final patched = dvSaveField(table, values, 1, 0, [7, 8])!;

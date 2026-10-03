@@ -289,10 +289,10 @@ leading: Icon(isTable
     _snack('Reading ${file.name}...');
     final data =
         await _client.readFile(file.name, size: file.size);
-    // STATLOG entries are addressed by the static registry index; fetch the
-    // device's blocks so the decoder can name the blocks and fields.
-    List<({int type, int inst, BlockMeta meta, String name})?>? blocks;
-    if (normalizeFileName(file.name).toUpperCase() == 'STATLOG') {
+    // `.SV` is a raw static persistent-space mirror; fetch the device's blocks so
+    // the decoder can compute the field layout and name the blocks and fields.
+    List<({int type, int inst, ValueInfo meta, String name})?>? blocks;
+    if (normalizeFileName(file.name).toUpperCase() == '.SV') {
       final all = await RegisterClient(deviceId: widget.deviceId).readBlocks();
       blocks = all?.where((b) => b != null && isStaticRegistryType(b.type)).toList();
     }

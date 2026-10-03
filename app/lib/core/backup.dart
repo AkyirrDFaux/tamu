@@ -24,6 +24,7 @@ import 'block_registry.dart';
 import 'device_db.dart';
 import 'diagnostics.dart';
 import 'register_client.dart';
+import 'script_file.dart';
 import 'storage_client.dart';
 import 'subscription_client.dart';
 import 'system_schema.dart';
