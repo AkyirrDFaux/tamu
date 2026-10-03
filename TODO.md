@@ -1791,6 +1791,15 @@ expects the full 2-DAS evaluation rig, so it is not applicable here. The stale
 to the bank types, and a test helper put the Persistent flag in the ValueInfo *type* instead of
 *flags* - both fixed.
 
+- [x] **Test cleanup pass - done.** The stale fixtures were corrected: `0x3FF`/`0x3FE` markers used
+  as wire types (`subscription_types_test`, `backup_value_test`), the DT entry's flags read from the
+  type word instead of the flags byte (`hil_storage_files_test`, `membackup_view_test`,
+  `file_viewers_test`), `decodeDynamicValues` now stamps the derived bank type, and stale comments
+  were updated. `dyn_flow_test.dart` lost its duplicated no-assert body and now asserts the flow
+  (shared by `hil_test_suite`). `blockTypeWord`/`blockTypeLabel` resolve the banked types, and
+  `test/tamu_proto.py` was repaired (`RegCid.Enumerate` -> `EnumerateBlocks`/`EnumerateFields`, the
+  ValueInfo write layout, and the banked-type helpers). `test.sh` green; all 12 HIL suites pass.
+
 Legacy to delete (covered by the layers): `BlockMeta` packing + conversions; dynamic Trigger path;
 `0x3FE`/`0x3FF` literals; `STATLOG`; the define rename; `HandleGetMemUsage`/`HandleReadBackup`;
 `scriptActiveMask`.

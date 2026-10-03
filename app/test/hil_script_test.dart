@@ -13,7 +13,8 @@ import 'hil_helpers.dart';
 
 /// Verifies the script walking skeleton (Docs/Services/Script.md): a SCR_XX file can be
 /// uploaded, loaded, listed, state-controlled, and its IO/variables/constants read and
-/// written through the Register service (block type 0x3FE).
+/// written through the Register service (banked script types 0x3F4-0x3F7, addressed by the
+/// global slot).
 void main() async {
   final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
   setUpAll(() async {

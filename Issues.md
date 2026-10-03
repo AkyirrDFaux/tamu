@@ -75,6 +75,14 @@ Resolved in the 2026-10-03 revision (code now matches): the trigger timing wordi
 Trigger flag, the banked enumerate 8.8 split, and `Command ID table.md`'s Save/Recall swap. The
 dynamic descriptor no longer stores a type (it is derived from the global index); a live block is
 marked by a `present` flag instead.
+
+Still open after the 2026-10-03 cleanup:
+- **The `.DT_XX` entry omits the doc's `MemoryOffset`.** The doc's Dynamic Block Table lists
+  `Field&Key(16) + MemoryOffset(16) + ValueInfo(32)` per entry, but the firmware writes only
+  `Field&Key(16) + ValueInfo(32)` and recomputes the offset (value sizes + 32-bit alignment) on
+  load, so the file is a compacted mirror rather than a literal one. Storing the offset would
+  match the table 1:1; dropping it is redundant-but-smaller and is what the app decoder assumes.
+  The doc should pin which form the `.DT_XX` file uses.
 ## Android (on-device behaviour untested)
 
 - **On-device behavior not yet verified** (no Android device/emulator configured): the BLE

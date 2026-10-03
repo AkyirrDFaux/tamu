@@ -121,11 +121,12 @@ void main() {
     final entryCount = bytes[16] | (bytes[17] << 8);
     expect(entryCount, 1);
     final entryFieldKey = bytes[20] | (bytes[21] << 8);
-    final entryFlagsAndType = bytes[22] | (bytes[23] << 8);
+    final entryType = bytes[22] | (bytes[23] << 8);
     final entrySize = bytes[24];
+    final entryFlags = bytes[25];
     expect(entryFieldKey, 0); // field 0 / key 0
-    expect(entryFlagsAndType & 0x3FF, DataType.number.value);
-    expect(entryFlagsAndType & ValueFlags.persistent, isNot(0));
+    expect(entryType & 0x3FF, DataType.number.value);
+    expect(entryFlags & ValueFlags.persistent, isNot(0));
     expect(entrySize, 4);
 
     await reg.deleteDynamic(block: 0);

@@ -218,13 +218,14 @@ const int systemBlockTypeValue = 0x00;
 String blockTypeLabel(int type) {
   if (type == systemBlockTypeValue) return 'System';
   if (isDynamicType(type)) return 'Dynamic';
+  if (isScriptType(type)) return 'Script';
   return BlockType.fromValue(type).label;
 }
 
 /// Whether a Register block slot should be hidden as a dynamic tombstone. Dynamic tombstone
 /// slots carry no block (their meta type is the "None" tombstone value), but the System block
 /// reports meta type 0x00 too - the same numeric value - so the slot type must be checked as
-/// well. `type` is the slot's block type (System = 0x00, dynamic = 0x3FF).
+/// well. `type` is the slot's block type (System = 0x00, dynamic = the 0x3F0-0x3F3 banks).
 bool isHiddenRegisterSlot(int type, ValueInfo meta) =>
     type != systemBlockTypeValue && meta.type == BlockType.none.value;
 

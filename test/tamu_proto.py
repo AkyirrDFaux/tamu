@@ -21,7 +21,7 @@ Usage:
     from tamu_proto import Tamu
     with Tamu() as t:
         print(t.ping(1))
-        print(t.read_field(1, 0xFF, 0, 0, 6))   # System Name
+        print(t.read_field(1, 0, 0, 6))   # System Name (block 0, field 6)
 """
 
 import asyncio
@@ -96,8 +96,17 @@ class BlockType:
     ResistiveMeasure = 0x08
     Button = 0x09
     LED = 0x0A
-    Script = 0x3FE
-    Dynamic = 0x3FF
+
+
+# The dynamic memory is four banked types (0x3F0-0x3F3) and scripts four (0x3F4-0x3F7),
+# each 64 instances, addressed by one global 0..255 index. The wire type is the bank type,
+# derived from the index - there is no single "dynamic"/"script" wire type.
+def dynamic_type(global_index):
+    return 0x3F0 + (global_index >> 6)
+
+
+def script_type(global_index):
+    return 0x3F4 + (global_index >> 6)
 
 
 def crc8(data):
@@ -420,23 +429,31 @@ class Tamu:
             return None, p.payload
         return p.payload[4:8], p.payload[8:]
 
-    def write_field(self, addr, block_type, inst, field, key, type_tag, value):
+    def write_field(self, addr, block_type, inst, field, key, type_tag, value, flags=0):
         bi = block_info(block_type, inst, field, key)
-        meta = bytes([type_tag & 0xFF, (type_tag >> 8) & 0xFF, key & 0xFF, len(value)])
+        # ValueInfo: Type(16) | Size(8) | Flags(8). The key is not on the wire (it is in the
+        # BlockInfo), so the 3rd byte is the value length and the 4th the passive flags.
+        meta = bytes([type_tag & 0xFF, (type_tag >> 8) & 0xFF,
+                      len(value) & 0xFF, flags & 0xFF])
         payload = struct.pack("<I", bi) + meta + value
         return self.send(Packet(FLAG_REQACK | FLAG_START | FLAG_STOP, 1, Srv.Register,
                                 RegCid.Write, 0, payload), addr)
 
     def enumerate_types(self, addr=1):
         p = self.send(Packet(FLAG_REQACK | FLAG_START | FLAG_STOP, 1, Srv.Register,
-                             RegCid.Enumerate, 0, bytes([0, 0, 0, 0, 0])), addr)
+                             RegCid.EnumerateBlocks, 0, b""), addr)
         return list(p.payload[4:]) if len(p.payload) > 4 else []
 
     def instance_count(self, block_type, addr=1):
-        bi = block_info(block_type, 0x3F, 0xFF, 0)
-        p = self.send(Packet(FLAG_REQACK | FLAG_START | FLAG_STOP, 1, Srv.Register,
-                             RegCid.Enumerate, 0, bytes([1]) + struct.pack("<I", bi)), addr)
-        return p.payload[4] if len(p.payload) >= 5 else None
+        """The number of instances of a static type (from the CID 0 block-type list)."""
+        raw = self.enumerate_types(addr)
+        for i in range(0, len(raw) - 1, 2):
+            w = raw[i] | (raw[i + 1] << 8)
+            t, max_i = (0x300 | (w >> 8), w & 0xFF) if (w >> 8) >= 0xF0 \
+                else ((w >> 6) & 0x3FF, w & 0x3F)
+            if t == block_type:
+                return max_i + 1
+        return 0
 
     def save(self, addr, block_type, inst=0):
         bi = block_info(block_type, inst, 0xFF, 0xFF)

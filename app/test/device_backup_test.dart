@@ -135,7 +135,7 @@ void main() {
         0x34, 0x12, // 2-byte field 2/key 3
       ]);
       expect(entries, hasLength(2));
-      expect(entries[0].blockType, BlockType.dynamic.value);
+      expect(entries[0].blockType, dynamicTypeForIndex(0x0A));
       expect(entries[0].inst, 0x0A);
       expect(entries[0].field, 0);
       expect(entries[0].key, 0);
@@ -210,7 +210,7 @@ void main() {
       expect(backup.dynamicField(3, 0, 0), isNull);
       expect(backup.dynamicField(4, 0, 1), isNull);
       // A dynamic entry is not reachable through the static lookup.
-      expect(backup.staticField(BlockType.dynamic.value, 3, 0), isNull);
+      expect(backup.staticField(dynamicTypeForIndex(3), 3, 0), isNull);
     });
 
     test('an empty or missing backup is empty, not an error', () {

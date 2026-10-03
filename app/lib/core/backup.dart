@@ -46,6 +46,8 @@ const int defaultMaxFileBytes = 128 * 1024;
 /// Block type name in words (registry name when known, System block resolved explicitly).
 String blockTypeWord(int typeValue) {
   if (typeValue == systemBlockTypeValue) return 'System';
+  if (isDynamicType(typeValue)) return 'Dynamic';
+  if (isScriptType(typeValue)) return 'Script';
   final type = BlockType.fromValue(typeValue);
   return blockInfoFor(type)?.typeName ?? type.label;
 }

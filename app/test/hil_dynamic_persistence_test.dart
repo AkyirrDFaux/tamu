@@ -10,7 +10,7 @@ import 'package:tamuapp/core/types.dart';
 import 'hil_helpers.dart';
 import 'package:tamuapp/core/protocol.dart';
 
-/// Verifies dynamic persistence through the device's per-block files (Register.md: DT_XXX / DV_XXX
+/// Verifies dynamic persistence through the device's per-block files (Register.md: DT_XX / DV_XX
 /// files): save writes a block's table + persistent space, delete+save cleans the files
 /// without shifting positions, and a device reset restores persistent entries from
 /// flash (volatile entries come back zeroed).

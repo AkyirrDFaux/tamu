@@ -141,14 +141,14 @@ void main() {
 
   testWidgets('DT_ dynamic block table renders', (tester) async {
     // Name (16 chars, NUL-padded), u16 entry_count, u16 reserved, then
-    // (fieldKey, flagsAndType, size, pad) per entry.
+    // (fieldKey, type, size, flags) per entry.
     final data = <int>[
       ...'Box'.codeUnits, ...List.filled(13, 0), // 16-byte name
       ...u16(2),
       0, 0, // reserved padding
       ...u16((0 << 8) | 0),
-      ...u16(DataType.number.value | ValueFlags.persistent),
-      4, 0,
+      ...u16(DataType.number.value),
+      4, ValueFlags.persistent,
       ...u16((1 << 8) | 0),
       ...u16(DataType.string.value),
       5, 0,

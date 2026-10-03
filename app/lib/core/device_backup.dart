@@ -388,7 +388,7 @@ List<BackupEntry> decodeDynamicValues(int inst, DynamicTable table, List<int> va
   for (final e in table.entries) {
     if (!e.persistent) continue;
     out.add(BackupEntry(
-      blockType: BlockType.dynamic.value,
+      blockType: dynamicTypeForIndex(inst),
       inst: inst,
       field: e.field,
       key: e.key,

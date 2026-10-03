@@ -5,20 +5,24 @@ import 'package:tamuapp/core/types.dart';
 /// the dynamic "None" tombstone. The Register view must not hide the System block when it
 /// filters out empty dynamic slots (the slot type distinguishes them).
 void main() {
-  ValueInfo meta(int flagsAndType) => ValueInfo(type: flagsAndType);
+  ValueInfo meta(int type, {int flags = 0}) => ValueInfo(type: type, flags: flags);
 
   test('System block slot is never hidden as a tombstone', () {
-    // Firmware sends BlockType::System (0x00) | ValueFlags::ReadOnly (0x0400).
-    expect(isHiddenRegisterSlot(systemBlockTypeValue, meta(0x0400)), isFalse);
+    // The System block reports meta type 0x00 - the same value as the tombstone - with the
+    // ReadOnly flag in the separate flags byte; the slot type keeps it visible.
+    expect(
+        isHiddenRegisterSlot(systemBlockTypeValue,
+            meta(systemBlockTypeValue, flags: ValueFlags.readOnly)),
+        isFalse);
   });
 
   test('dynamic tombstone slots are hidden', () {
-    expect(isHiddenRegisterSlot(BlockType.dynamic.value, meta(0x0000)), isTrue);
+    expect(isHiddenRegisterSlot(dynamicTypeBase, meta(0x0000)), isTrue);
   });
 
   test('live dynamic and static blocks are shown', () {
-    // Live dynamic block: meta type PWM (0x04).
-    expect(isHiddenRegisterSlot(BlockType.dynamic.value, meta(0x0004)), isFalse);
+    // Live dynamic block: its meta type is the owning bank type (0x3F0-0x3F3).
+    expect(isHiddenRegisterSlot(dynamicTypeBase, meta(dynamicTypeBase)), isFalse);
     // Static block: meta type LEDButton (0x03).
     expect(isHiddenRegisterSlot(BlockType.ledButton.value, meta(0x0003)), isFalse);
   });

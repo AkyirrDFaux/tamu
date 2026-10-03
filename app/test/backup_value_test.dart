@@ -155,7 +155,7 @@ void main() {
               keyIndex: 0),
           target: const BackupBlockRef(
               block: 'Dynamic',
-              typeIndex: 0x3FF,
+              typeIndex: dynamicTypeBase,
               instance: 0,
               field: 'Field 0',
               fieldIndex: 0,
