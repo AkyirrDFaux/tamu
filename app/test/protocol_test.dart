@@ -6,7 +6,7 @@ import 'package:tamuapp/core/transport.dart';
 
 void main() {
   group('PacketFrame', () {
-    test('round-trips a frame (payload padded to 4)', () {
+    test('round-trips a frame (payload length in bytes)', () {
       final frame = PacketFrame.single(
         targetId: 0x0002,
         srvTarget: makeService(ServiceType.device, 3),
@@ -16,9 +16,9 @@ void main() {
       );
       final bytes = frame.toBytes();
       expect(bytes[0], crc8(bytes.sublist(1)));
-      // Header: crc8 | flags | priority | payload_len(units) | ids/srvs.
+      // Header: crc8 | flags | priority | payload_len(bytes) | ids/srvs.
       expect(bytes[2], defaultPriority);
-      expect(bytes[3], 1, reason: '3-byte payload padded to 4 -> 1 unit');
+      expect(bytes[3], 3, reason: 'Payload Length is the exact byte count');
 
       final parsed = PacketFrame.tryParse(bytes, 0)!;
       expect(parsed.flags, frame.flags);
@@ -26,7 +26,7 @@ void main() {
       expect(parsed.idTarget, 0x0002);
       expect(parsed.srvTarget, frame.srvTarget);
       expect(parsed.srvSource, frame.srvSource);
-      expect(parsed.payload, [1, 2, 3, 0], reason: 'wire payload is padded to 4');
+      expect(parsed.payload, [1, 2, 3], reason: 'the wire payload is not padded');
     });
 
     test('a 116-byte payload fits (max payload size)', () {
@@ -39,7 +39,7 @@ void main() {
         payload: payload,
       );
       final bytes = frame.toBytes();
-      expect(bytes[3], 29, reason: '116 bytes / 4 = 29 units');
+      expect(bytes[3], 116, reason: 'Payload Length in bytes');
       final parsed = PacketFrame.tryParse(bytes, 0)!;
       expect(parsed.payload, payload);
     });
@@ -85,7 +85,7 @@ void main() {
       expect(frames, isEmpty);
       frames = parser.feed(all.sublist(10));
       expect(frames.length, 2);
-      expect(frames[0].payload, [9, 9, 0, 0], reason: 'wire payload is padded to 4');
+      expect(frames[0].payload, [9, 9], reason: 'the wire payload is not padded');
       expect(frames[1].payload, isEmpty);
     });
   });

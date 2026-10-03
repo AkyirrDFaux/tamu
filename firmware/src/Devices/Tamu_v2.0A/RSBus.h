@@ -83,15 +83,12 @@ bool SendAndVerifyPacket(const PacketFrame &Data)
     uint16_t crc_len = 11 + PayloadBytes(tx_frame);
     tx_frame.crc8 = Crc8(&tx_frame.flags, crc_len);
 
-    // 3. Prepare for transmission (12 bytes header + payload bytes)
+    // 3. Prepare for transmission: the frame is header + payload bytes, max 128 total.
+    // The 0xAA sync byte is sent separately (not part of the frame).
     size_t packet_size = 12 + PayloadBytes(tx_frame);
-    size_t total_tx_size = 1 + packet_size; // Start byte (0xAA) + packet_size
-    // Start byte + header + payload; payload_len is a wire byte in 4-byte units
-    // (max 29 units = 116 bytes), so the largest frame is 129 bytes.
-    static_assert(MAX_PAYLOAD_SIZE <= 116, "RSBus TX buffer assumes 116-byte payload");
-    uint8_t tx_buffer[140];
-    tx_buffer[0] = 0xAA;
-    memcpy(&tx_buffer[1], &tx_frame, packet_size);
+    static_assert(MAX_PAYLOAD_SIZE <= 116, "RSBus TX buffer assumes a 116-byte payload");
+    uint8_t tx_buffer[128];
+    memcpy(tx_buffer, &tx_frame, packet_size);
 
     const size_t CHUNK = 16;               // ~1.4 ms of line time per chunk
     uint8_t rx_chunk[CHUNK];
@@ -107,9 +104,17 @@ bool SendAndVerifyPacket(const PacketFrame &Data)
         bool collided = false;
         size_t verified = 0;
 
-        for (size_t off = 0; off < total_tx_size; off += CHUNK)
+        // Sync byte first; its echo is verified too.
+        uart_write_bytes(UART_NUM_1, "\xAA", 1);
         {
-            size_t n = (total_tx_size - off < CHUNK) ? total_tx_size - off : CHUNK;
+            int got = uart_read_bytes(UART_NUM_1, rx_chunk, 1, pdMS_TO_TICKS(20));
+            if (got != 1 || rx_chunk[0] != 0xAA)
+                collided = true;
+        }
+
+        for (size_t off = 0; !collided && off < packet_size; off += CHUNK)
+        {
+            size_t n = (packet_size - off < CHUNK) ? packet_size - off : CHUNK;
             uart_write_bytes(UART_NUM_1, (const char *)(tx_buffer + off), n);
 
             // The echo of this chunk must come back intact while we keep sending.
@@ -127,7 +132,7 @@ bool SendAndVerifyPacket(const PacketFrame &Data)
         // Switch back to RX mode
         gpio_set_level(RS485_EN_PIN, 0);
 
-        if (!collided && verified == total_tx_size)
+        if (!collided && verified == packet_size)
         {
             // NOTE: no ESP_LOG here - the log goes to the USB console, and in USB APP
             // mode that byte stream belongs to the attached app (text would corrupt it).

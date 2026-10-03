@@ -1819,6 +1819,24 @@ to the bank types, and a test helper put the Persistent flag in the ValueInfo *t
   field list + CID 2 ValueInfo) instead of the hardcoded `staticPersistentFields` mirror.
   `test.sh` green; all 12 HIL suites pass. **Sizes: core 625 602 B / DAS 11 840 B.**
 
+- [ ] **RSBus packet + TRID + subscriptions rework (docs 2026-10-03).** Per the updated
+  `RSBus and Packets.md` / `Services/Subscriptions.md`:
+  - [x] **P1 Packet format.** Header order `SRC, TGT, CMD, TRID`; Payload Length in **bytes** (no
+    4-byte padding; wire size = `12 + len`); add `SUCCESS`/`FAIL` flag bits (defined now, used
+    later). Updated `Packet.h` / `Bus.h` / both `RSBus.h` / `AppUSB.h`, `protocol.dart`,
+    `test/tamu_proto.py`; typed payload reads audited (payload stays 4-aligned, all casts are at
+    aligned offsets). `test.sh` green; 8 HIL suites pass on the 1-core/1-DAS rig (both boards
+    reflashed). **Sizes: core 624 678 B / DAS 11 792 B.**
+  - [ ] **P2 TRID.** Subscription range `0x1000-0x1FFF`; App widened to `0xF000-0xFFFF` (16-bit,
+    carried in the TRID field; `FinalizeReply` echoes `req.trid`; the app routes on the full
+    16-bit TRID); System/Logs `0x0000-0x0FFF` incrementing.
+  - [ ] **P3 Subscriptions.** `TriggerType` gets `None = 0` (others shift); shared 16-byte
+    subscription table (`sourceReg`, `trigger`, `minTime` uint24, `period`, `deadzone`);
+    requester 28 B / provider 32 B entries with a `Timeout`; 120 s renewal; persist the TRID;
+    CID scheme `0x041x`/`0x042x` + recall/save all; cancel via `trigger None`; app
+    client/types/UI/backup + tests.
+  - [ ] **`.SUBREQ`** file gets a leading dot (name `.SUBREQ`).
+
 Legacy to delete (covered by the layers): `BlockMeta` packing + conversions; dynamic Trigger path;
 `0x3FE`/`0x3FF` literals; `STATLOG`; the define rename; `HandleGetMemUsage`/`HandleReadBackup`;
 `scriptActiveMask`.

@@ -1,5 +1,5 @@
-// Sized to hold at least two full frames: max frame = 0xAA + 12 header + 116 payload = 129
-// bytes; two frames = 258 bytes, rounded up to 300.
+// Sized to hold at least two full transmissions: a frame is 12 header + 116 payload = 128
+// bytes, plus the 0xAA sync byte = 129 transmitted bytes; two = 258, rounded up to 300.
 #define BUFFER_SIZE 300
 #define RS485_EN_PORT GPIOD
 #define RS485_EN_PIN GPIO_Pin_4
@@ -121,8 +121,8 @@ static void RS485_WaitForSilence(uint8_t priority)
 // DAS's small stack is not exhausted even when called from a service handler that already
 // holds its own frame (the frame's CRC is set by PacketConstruct/Append before we get here).
 bool SendAndVerifyPacket(const PacketFrame &Data) {
-    size_t packet_size = 12 + PayloadBytes(Data);       // Header + payload (packed struct)
-    size_t total_tx_size = 1 + packet_size;           // Start byte (0xAA) + packet
+    size_t packet_size = 12 + PayloadBytes(Data);    // frame: header + payload, max 128
+    size_t total_tx_size = 1 + packet_size;          // sync byte + frame (echo count)
     const uint8_t *bytes = (const uint8_t *)&Data;
 
     for (int attempt = 0; attempt < RS485_RETRIES; attempt++) {

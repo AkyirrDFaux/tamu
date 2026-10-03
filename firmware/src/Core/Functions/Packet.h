@@ -7,7 +7,7 @@
 #include "Core/Functions/Align.h" // LoadUnaligned/StoreUnaligned for payload access
 
 // Spec Data Formats.md: Generic packet max 128 total, payload max 116
-// Header 12 bytes: CRC8 | Flags | Priority | PayloadLen | TGT | SRC | CMD | TRID
+// Header 12 bytes: CRC8 | Flags | Reserved(4)+Priority(4) | PayloadLen(bytes) | SRC | TGT | CMD | TRID
 #ifndef MAX_PAYLOAD_SIZE
 #define MAX_PAYLOAD_SIZE 116
 #endif
@@ -19,6 +19,8 @@
 #define FLAG_STOP   (1 << 2)
 #define FLAG_TYPE   (1 << 3)
 #define FLAG_FRAG   (1 << 4)
+#define FLAG_SUCCESS (1 << 5) // response: success, no extra information
+#define FLAG_FAIL    (1 << 6) // response: error, no extra information
 
 // Docs/RSBus and Packets.md: the priority byte is Reserved(4) | Priority(4), 0 = highest,
 // default 8. The CSMA silence formula is 8 + (priority/8) + random bytes, so the 4-bit
@@ -47,16 +49,16 @@ enum class ServiceType : uint8_t
 };
 
 // Wire order per Docs/RSBus and Packets.md (top-to-bottom): CRC8 | Flags | Reserved(4) |
-// Priority(4) | Payload Length | SRC ID | CMD | TGT ID | TRID | Payload.
+// Priority(4) | Payload Length (bytes) | SRC ID | TGT ID | CMD | TRID | Payload.
 struct PacketFrame
 {
     uint8_t crc8;
     uint8_t flags;
-    uint8_t priority;
-    uint8_t payload_len;
+    uint8_t priority;    // Reserved(4) | Priority(4), 0 = highest
+    uint8_t payload_len; // payload length in bytes
     uint16_t id_src;                                 // Source device's address
-    union { uint16_t cmd; uint16_t srv_tgt; };       // Command (destination service)
     uint16_t id_tgt;                                 // Target device's address
+    union { uint16_t cmd; uint16_t srv_tgt; };       // Command (destination service)
     union { uint16_t trid; uint16_t srv_src; };      // Transaction ID
     uint8_t payload[MAX_PAYLOAD_SIZE];
 } __attribute__((packed, aligned(4)));
@@ -68,9 +70,9 @@ struct PacketFrame
 static_assert(alignof(PacketFrame) == 4, "the payload must be 4-byte aligned for typed access");
 static_assert(offsetof(PacketFrame, payload) % 4 == 0, "payload must stay 4-byte aligned");
 static_assert(offsetof(PacketFrame, id_src) == 4, "wire order: SRC ID after the length");
-static_assert(offsetof(PacketFrame, cmd) == 6, "wire order: CMD after SRC ID");
-static_assert(offsetof(PacketFrame, id_tgt) == 8, "wire order: TGT ID after CMD");
-static_assert(offsetof(PacketFrame, trid) == 10, "wire order: TRID after TGT ID");
+static_assert(offsetof(PacketFrame, id_tgt) == 6, "wire order: TGT ID after SRC ID");
+static_assert(offsetof(PacketFrame, cmd) == 8, "wire order: CMD after TGT ID");
+static_assert(offsetof(PacketFrame, trid) == 10, "wire order: TRID after CMD");
 
 inline uint16_t MakeService(ServiceType type, uint8_t cid)
 {
@@ -89,16 +91,14 @@ extern DeviceStatusStruct DeviceStatus;
 
 inline uint16_t PayloadBytes(const PacketFrame &frame)
 {
-    return (uint16_t)frame.payload_len * 4;
+    return (uint16_t)frame.payload_len; // bytes (Docs: "Payload Length, in bytes")
 }
 
 inline void PacketFinalize(PacketFrame *frame, uint16_t len)
 {
-    uint16_t padded = (uint16_t)((len + 3u) & ~3u);
-    if (padded > MAX_PAYLOAD_SIZE) padded = MAX_PAYLOAD_SIZE;
-    if (padded > len) memset(frame->payload + len, 0, padded - len);
-    frame->payload_len = (uint8_t)(padded / 4);
-    frame->crc8 = Crc8(&frame->flags, (uint16_t)(11 + padded));
+    if (len > MAX_PAYLOAD_SIZE) len = MAX_PAYLOAD_SIZE;
+    frame->payload_len = (uint8_t)len;
+    frame->crc8 = Crc8(&frame->flags, (uint16_t)(11 + len));
 }
 
 inline void PacketConstruct(PacketFrame *frame,
@@ -148,10 +148,10 @@ struct PacketFragInfo
 
 inline PacketFragInfo PacketGetFrag(const PacketFrame &frame)
 {
-    // A fragment must carry at least its 4-byte frag info (payload lengths are in 4-byte
-    // words, so a flagged frame normally has one). A malformed frame that sets FLAG_FRAG with
-    // no payload would otherwise read whatever the struct's payload area holds; return an empty
-    // range instead. Handlers still bound-check before using the values.
+    // A fragment must carry at least its 4-byte frag info (u16 current + u16 total). A
+    // malformed frame that sets FLAG_FRAG with no payload would otherwise read whatever the
+    // struct's payload area holds; return an empty range instead. Handlers still bound-check
+    // before using the values.
     PacketFragInfo fi;
     if (PayloadBytes(frame) < 4)
     {

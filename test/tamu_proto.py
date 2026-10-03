@@ -2,8 +2,8 @@
 """Direct protocol client for a Tamu node over USB Serial/JTAG (the App Interface).
 
 The firmware's contract is the *wire protocol*, not the debug console: a packet is a 12-byte
-PacketFrame header (crc8, flags, priority, payload-length-in-words, src, cmd, tgt, trid) plus a
-payload padded to 4 bytes, sent crc8-first. Host and device wrap a stream of packets in
+PacketFrame header (crc8, flags, priority, payload-length-in-bytes, src, tgt, cmd, trid) plus a
+payload of exactly that many bytes, sent crc8-first. Host and device wrap a stream of packets in
 `0xFA | crc8 | length | payload | 0xBF` frames with the payload chunked to 60 bytes.
 
 This is the project's test entry point for the rig: the protocol is the contract the app and
@@ -45,6 +45,8 @@ FLAG_START = 1 << 1
 FLAG_STOP = 1 << 2
 FLAG_TYPE = 1 << 3
 FLAG_FRAG = 1 << 4
+FLAG_SUCCESS = 1 << 5
+FLAG_FAIL = 1 << 6
 
 
 class Srv:
@@ -177,14 +179,12 @@ class Packet:
         return (self.tgt_srv << 8) | self.cid
 
     def wire(self, addr):
-        """12-byte header (crc8, flags, priority, len-words, src, cmd, tgt, trid) + padded payload."""
-        pad = (-len(self.payload)) % 4
-        body = self.payload + b"\x00" * pad
-        words = len(body) // 4
+        """12-byte header (crc8, flags, priority, len-bytes, src, tgt, cmd, trid) + payload."""
+        body = self.payload
         # SRC = the app placeholder (0xFFFE): replies addressed to it are routed straight back
         # over USB (the dispatcher forwards frames targeting 0xFFFE to the App interface).
-        pkt = bytearray(bytes([0, self.flags, 0, words]) +
-                        struct.pack("<HHHH", APP_ADDR, self.cmd, addr, self.trid) + body)
+        pkt = bytearray(bytes([0, self.flags, 0, len(body)]) +
+                        struct.pack("<HHHH", APP_ADDR, addr, self.cmd, self.trid) + body)
         pkt[0] = crc8(bytes(pkt[1:12 + len(body)]))  # flags..trid (+payload), as the firmware does
         return bytes(pkt)
 
@@ -193,13 +193,12 @@ def parse_packet(buf):
     """Returns (Packet, consumed) or (None, 0) when the buffer does not hold a full packet."""
     if len(buf) < 12:
         return None, 0
-    words = buf[3]
-    size = 12 + words * 4
-    if buf[0] != crc8(bytes(buf[1:12 + words * 4])):
+    size = 12 + buf[3]  # Payload Length is in bytes
+    if buf[0] != crc8(bytes(buf[1:size])):
         return None, 1  # resync: drop a byte
     if len(buf) < size:
         return None, 0
-    src, cmd, tgt, srv_src = struct.unpack("<HHHH", bytes(buf[4:12]))
+    src, tgt, cmd, srv_src = struct.unpack("<HHHH", bytes(buf[4:12]))
     p = Packet(buf[1], src, cmd >> 8, cmd & 0xFF, srv_src, bytes(buf[12:size]))
     p.tgt = tgt
     p.srv_tgt = cmd          # the service/CID this packet addresses (a reply echoes our tag)

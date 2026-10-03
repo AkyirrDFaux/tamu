@@ -45,8 +45,8 @@ static void RS485_WaitForSilence(uint8_t priority, DrainFn drain, NowUs now_us, 
 }
 
 // CRC + length validation for a fully-assembled frame (RX side).
-// CRC covers everything from flags through the end of the payload (the payload_len
-// field is the wire value in 4-byte units, so the byte count is PayloadBytes()).
+// CRC covers everything from flags through the end of the payload (the payload_len field is
+// the byte count, so the covered length is 11 + PayloadBytes()).
 inline int RxValidateFrame(PacketFrame *Data)
 {
     if (Crc8(&Data->flags, (uint16_t)(11 + PayloadBytes(*Data))) != Data->crc8)
@@ -97,9 +97,9 @@ int ReceivePacketFrame(PacketFrame *Data, ReadByte read_byte)
             if (got < 12)
                 break;
 
-            // Header complete: payload_len holds the wire value in 4-byte units.
-            // A corrupt length could claim up to 255 units (= 1020 bytes), far beyond
-            // the payload buffer, so reject such frames instead of overflowing.
+            // Header complete: payload_len is the payload byte count.
+            // A corrupt length could claim up to 255 bytes, beyond the payload buffer,
+            // so reject such frames instead of overflowing.
             if (PayloadBytes(*Data) > MAX_PAYLOAD_SIZE)
             {
                 stage = RX_SYNC;

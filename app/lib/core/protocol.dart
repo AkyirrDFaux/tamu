@@ -1,8 +1,8 @@
 /// Generic packet protocol (Docs/Data Formats.md).
 ///
-/// Wire layout (Docs/RSBus and Packets.md): CRC8 | Flags | Priority | PayloadLen |
-/// SRC ID | CMD | TGT ID | TRID | Payload.
-/// PayloadLen is in 4-byte units (max 29 = 116 bytes); the payload is padded to 4 on the wire.
+/// Wire layout (Docs/RSBus and Packets.md): CRC8 | Flags | Reserved(4)+Priority(4) |
+/// PayloadLen (bytes) | SRC ID | TGT ID | CMD | TRID | Payload. The payload is exactly
+/// PayloadLen bytes (max 116); the total is at most 128.
 library;
 
 import 'dart:typed_data';
@@ -15,6 +15,8 @@ const int flagStart = 1 << 1;
 const int flagStop = 1 << 2;
 const int flagType = 1 << 3; // 0 = request, 1 = response
 const int flagFrag = 1 << 4; // first 4 payload bytes = fragmentation info (u16 current + u16 total)
+const int flagSuccess = 1 << 5; // response: success, no extra information
+const int flagFail = 1 << 6; // response: error, no extra information
 
 /// Default priority byte (docs: Reserved(4) | Priority(4), 0 = highest, default 8).
 const int defaultPriority = 8;
@@ -100,27 +102,25 @@ class PacketFrame {
   bool get isStop => (flags & flagStop) != 0;
   bool get isFrag => (flags & flagFrag) != 0;
   bool get isSingle => isStart && isStop;
+  bool get isSuccess => (flags & flagSuccess) != 0;
+  bool get isFail => (flags & flagFail) != 0;
 
-  /// Serialises the frame including the CRC8 header byte. The payload is padded to a
-  /// multiple of 4 and PayloadLen carries the padded size in 4-byte units.
+  /// Serialises the frame including the CRC8 header byte. PayloadLen is the exact payload
+  /// byte count (no padding).
   Uint8List toBytes() {
     assert(payload.length <= maxPayloadSize,
         'payload ${payload.length} exceeds max $maxPayloadSize');
-    final padded = (payload.length + 3) & ~3;
-    final bytes = ByteData(12 + padded);
+    final bytes = ByteData(12 + payload.length);
     bytes.setUint8(0, 0); // CRC placeholder, patched below
     bytes.setUint8(1, flags);
     bytes.setUint8(2, priority);
-    bytes.setUint8(3, padded ~/ 4);
+    bytes.setUint8(3, payload.length); // Payload Length in bytes
     bytes.setUint16(4, idSource, Endian.little); // SRC ID
-    bytes.setUint16(6, srvTarget, Endian.little); // CMD
-    bytes.setUint16(8, idTarget, Endian.little); // TGT ID
+    bytes.setUint16(6, idTarget, Endian.little); // TGT ID
+    bytes.setUint16(8, srvTarget, Endian.little); // CMD
     bytes.setUint16(10, srvSource, Endian.little); // TRID
     final out = bytes.buffer.asUint8List();
     out.setAll(12, payload);
-    for (var i = payload.length; i < padded; i++) {
-      out[12 + i] = 0;
-    }
     bytes.setUint8(0, crc8(out.sublist(1)));
     return out;
   }
@@ -129,8 +129,7 @@ class PacketFrame {
   /// not enough data yet. Throws FormatException on a CRC mismatch.
   static PacketFrame? tryParse(List<int> data, int offset) {
     if (data.length - offset < 12) return null;
-    final units = data[offset + 3];
-    final len = units * 4;
+    final len = data[offset + 3]; // Payload Length in bytes
     if (data.length - offset < 12 + len) return null;
     final body = data.sublist(offset + 1, offset + 12 + len);
     if (crc8(body) != data[offset]) {
@@ -142,8 +141,8 @@ class PacketFrame {
       flags: data[offset + 1],
       priority: data[offset + 2],
       idSource: data[offset + 4] | (data[offset + 5] << 8),
-      srvTarget: data[offset + 6] | (data[offset + 7] << 8),
-      idTarget: data[offset + 8] | (data[offset + 9] << 8),
+      idTarget: data[offset + 6] | (data[offset + 7] << 8),
+      srvTarget: data[offset + 8] | (data[offset + 9] << 8),
       srvSource: data[offset + 10] | (data[offset + 11] << 8),
       payload: payload,
     );
@@ -189,10 +188,9 @@ class PacketStreamParser {
     while (true) {
       final remaining = _buffer.length - offset;
       if (remaining < 12) break;
-      final units = _buffer[offset + 3];
-      final len = units * 4;
+      final len = _buffer[offset + 3]; // Payload Length in bytes
       if (len > maxPayloadSize) {
-        // Corrupt length (would stall waiting for ~1kB that will never arrive) — resync.
+        // Corrupt length (would stall waiting for bytes that will never arrive) — resync.
         offset++;
         continue;
       }

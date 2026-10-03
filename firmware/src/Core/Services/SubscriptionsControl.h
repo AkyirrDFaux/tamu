@@ -41,7 +41,7 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
 
         case 1: { // Change subscription (provider side).
 #ifdef USE_SUB_PROVIDE
-            if (frame.payload_len == 0) {
+            if (PayloadBytes(frame) == 0) {
                 ProviderEntry* e = ProviderFindByTrid(frame.trid);
                 if (e) ProviderClearEntry(e);
                 uint8_t resp = 1;
@@ -108,7 +108,7 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
 
         case 2: { // Get subscriptions (provider).
 #ifdef USE_SUB_PROVIDE
-            if (frame.payload_len == 0) {
+            if (PayloadBytes(frame) == 0) {
                 uint8_t count = 0;
                 for (int i = 0; i < MAX_PROVIDER_SUBS; i++) if (providerTable[i].requesterAddr != 0) count++;
                 uint8_t buf[1 + MAX_PROVIDER_SUBS * 32];
@@ -136,7 +136,7 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
 
         case 3: { // Get subscriptions (requester).
 #ifdef USE_SUB_REQUEST
-            if (frame.payload_len == 0) {
+            if (PayloadBytes(frame) == 0) {
                 uint8_t count = 0;
                 for (int i = 0; i < MAX_REQUESTER_SUBS; i++) if (requesterTable[i].active) count++;
                 uint8_t buf[1 + MAX_REQUESTER_SUBS * 28];
@@ -167,7 +167,7 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
             if (PayloadBytes(frame) >= 1) {
                 uint8_t index = frame.payload[0];
                 if (index < MAX_REQUESTER_SUBS) {
-                    if (frame.payload_len == 1) {
+                    if (PayloadBytes(frame) == 1) {
                         // Cancel the provider side with the shared TRID first (the frame's
                         // 8-bit TRID over the app link can't match a persisted 0xFAxx TRID).
                         RequesterEntry* removed = &requesterTable[index];
@@ -232,7 +232,7 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
 #else
             if (PayloadBytes(frame) >= 1) {
                 uint8_t index = frame.payload[0];
-                if (index < MAX_PROVIDER_SUBS && frame.payload_len == 1) {
+                if (index < MAX_PROVIDER_SUBS && PayloadBytes(frame) == 1) {
                     ProviderClearEntry(&providerTable[index]);
                     uint8_t resp = 1;
                     SubReply(frame, &resp, 1);

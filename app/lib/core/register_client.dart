@@ -58,7 +58,7 @@ class RegisterClient {
   }
 
   /// Slices the value bytes after a ValueInfo header, clamped to the declared size
-  /// (the wire payload is padded to 4 bytes).
+  /// (the reply may carry service-level padding past the value).
   static List<int> valueSlice(List<int> reply, int size) {
     if (size <= 0) return <int>[];
     final avail = reply.length - 8;
@@ -78,9 +78,9 @@ class RegisterClient {
     return out;
   }
 
-  /// The u16 words of a CID 0 stream. The wire pads the payload to a 4-byte multiple, which is
-  /// at most one extra word, and the entries are ordered - so a legitimate zero can only be the
-  /// *first* one (the System block, or field 0 key 0). A trailing zero is padding.
+  /// The u16 words of a CID 0 stream. The register service emits whole words; a trailing zero
+  /// can only ever be padding, because the entries are ordered and a legitimate zero (the System
+  /// block, or field 0 key 0) is always *first*.
   static List<int> _streamWords(List<int> reply) {
     final words = <int>[
       for (var i = 0; i + 1 < reply.length; i += 2) reply[i] | (reply[i + 1] << 8),
@@ -91,8 +91,7 @@ class RegisterClient {
 
   /// Enumerate the present block types with their highest instance index (CID 0, empty
   /// request, Docs/Services/Register.md). The reply is a stream of packed words; a type with no
-  /// instances is absent, and the trailing wire padding shows up as a zero word (a real type is
-  /// never 0).
+  /// instances is absent (a real type is never 0).
   ///
   /// Static/System types use the normal **10.6** split `(type << 6) | maxInstance`. The banked
   /// dynamic range is a single entry in an **8.8** split: the high byte is the owning bank type's
