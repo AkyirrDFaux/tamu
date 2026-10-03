@@ -43,12 +43,6 @@ Modules:
 - Resistive measurement x2
 - Button
 - LED
-Optimization cuts:
-- Do not use TRID manager
-	- TRID 0 is discovery
-	- TRID 1 is timesync
-	- TRID 2 is log/error
-	- Packet handlers are fixed to the TRID
 Page size: 64 Bytes (Fast mode)
 Memory: 128B (single file from offset 0)
 

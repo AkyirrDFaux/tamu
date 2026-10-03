@@ -25,24 +25,26 @@ Checking of the packet validity is done separately from the main loop via `Proce
 
 # Packets
 
-| Section    | Field          | Size          | Note                                                                                         |
-| ---------- | -------------- | ------------- | -------------------------------------------------------------------------------------------- |
-| Generic    | CRC8           | uint8         | covers everything after, calculated only when leaves device, checked on entering device only |
-|            | Flags          | 8 bits        |                                                                                              |
-|            | Reserved       | 4 bits        |                                                                                              |
-|            | Priority       | 4 bits        | 0 = highest, default 8                                                                       |
-|            | Payload Length | uint8         | in multiples of 4 bytes (for 32bit alignment), includes payload information                  |
-| Source     | SRC ID         | uint16        | Source device's address                                                                      |
-|            | CMD            | uint16        | Command                                                                                      |
-| Target (N) | TGT ID         | uint16        | Target device's address                                                                      |
-|            | TRID           | uint16        | Transaction ID                                                                               |
-| Payload    |                | max 116 bytes | Flexible size, command specific.                                                             |
+| Section | Field          | Size          | Note                                                                                         |
+| ------- | -------------- | ------------- | -------------------------------------------------------------------------------------------- |
+| Generic | CRC8           | uint8         | covers everything after, calculated only when leaves device, checked on entering device only |
+|         | Flags          | 8 bits        |                                                                                              |
+|         | Reserved       | 4 bits        |                                                                                              |
+|         | Priority       | 4 bits        | 0 = highest, default 8                                                                       |
+|         | Payload Length | uint8         | in bytes                                                                                     |
+| Routing | SRC ID         | uint16        | Source device's address                                                                      |
+|         | TGT ID         | uint16        | Target device's address                                                                      |
+|         | CMD            | uint16        | Command                                                                                      |
+|         | TRID           | uint16        | Transaction ID                                                                               |
+| Payload |                | max 116 bytes | Flexible size, command specific.                                                             |
 - Flags:
 	- REQACK (request response)
 	- START (first)
 	- STOP (last)
 	- TYPE (Request/Response)
 	- FRAG (first 4 payload bytes are fragmentation information, uint16 current frag. segment + uint16 total segments)
+	- SUCCESS (response indicates success with no extra information)
+	- FAIL (response indicates an error with no extra information)
 - Priorities:
 	- Errors (highest)
 	- TimeSync packets
@@ -52,23 +54,19 @@ Checking of the packet validity is done separately from the main loop via `Proce
 	- Streams
 	- Logs (lowest)
 Maximum length 128 bytes total, all devices have to handle it in full.
-### Transaction ID manager
-Each new outgoing request packet must have a new transaction ID (repeats reuse it).
-They are created by an incrementing counter, the upper ceiling may be reserved, upon reaching it is reset to 0. The table is checked for collisions upon generating a new TRID.
+### Transaction IDs
+Reserved ranges:
 
-If a request is expecting a response, a handler must be registered, which takes the incoming packet back and processes it.
-Handlers are stored in a table together with a timeout value and the TRID.
-
-| TRID   | Flags | Valid until (time) | Callback function |
-| ------ | ----- | ------------------ | ----------------- |
-| uint16 | 16bit | uint32 (uptime)    | 32bit pointer     |
-Default timeout is 1s, 0 means forever.
-The table size determines maximum number of outgoing connections.
-Technically only two handlers are mandatory (Discover, TimeSync), one handled concurrently.
-
-Flags:
-- Oneshot - Automatically delete the table entry upon recieving end flag in packet (breaks fragmented packets with messed up order)
-
+| Service       | Range           | Type                                 |
+| ------------- | --------------- | ------------------------------------ |
+| System, Logs  | 0x0000 - 0x0FFF | Incrementing, resets on overflow     |
+| Subscriptions | 0x1000 - 0x1FFF | Table                                |
+| Scripts       | ...             | Slot based (asynchronous operations) |
+| App           | 0xF000 - 0xFFFF | Slot based (asynchronous operations) |
+Each new outgoing request packet must have a transaction ID (repeats reuse it).
+Responses arrive on the same TRID as the request.
+The individual ranges are managed by the respective service, typically an incrementing counter or a slot/reserved table.
+Allows for connecting asynchronous requests back to the correct function.
 ### Dispatcher
 The packets are routed through the dispatcher between services and outside.
 Internal packet:

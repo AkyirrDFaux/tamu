@@ -4,7 +4,7 @@ Use define USE_APP_INTERFACE.
 Provides forwarding of packets to the app via the avaliable interface.
 Maximize throughput (split into fragments, fully fill payload), since line is bi-directional peer to peer.
 
-App has reserved TRID range 0xFC00 - 0xFFFF.
+App has reserved TRID range.
 #### USB Packet (64 bytes):
 
 | Start trigger | CRC8 | Length | Payload (Packets, serialized stream) | Stop |

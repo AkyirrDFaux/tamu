@@ -19,7 +19,7 @@ Memory offsets are relative, in bytes, uint16 type.
 | Trigger    | Has a trigger on write, the function is called before the write itself, and applies the write instead of the standard one. |
 #### Block types
 
-| Block type         | Index       |                 |
+| Block type         | Index       | Note            |
 | ------------------ | ----------- | --------------- |
 | System             | 0           |                 |
 | Static block types | ...         |                 |
@@ -61,14 +61,14 @@ If a write is happening on a field/key with the trigger flag, the trigger table 
 The storage is structurally 1:1 mirror of the persistent memory in a file (.SV). The device can only overwrite/load the entire file. For targeted saves/recalls the app is needed.
 ### Basic commands (010x)
 
-| Function         | ID  | Content request               | Content response                                                       | Note                                |
-| ---------------- | --- | ----------------------------- | ---------------------------------------------------------------------- | ----------------------------------- |
-| Enumerate blocks | 0   |                               | Fragmentation, Block types + maximum instance for each (uint16) stream |                                     |
-| Enumerate fields | 1   | (BlockType << 6) + instance (uint16, 4-byte padded) | Fragmentation, Field&Key (uint16) stream |                                |
-| Read             | 2   | BlockInfo                     | BlockInfo, ValueInfo, Value                                            | Single entry                        |
-| Write            | 3   | BlockInfo, ValueInfo, Value   | Success (echoes the request)                                           | Respond when required, Single entry |
-| Recall All       | 4   |                               | Success                                                                | Respond only if requested           |
-| Save All         | 5   |                               | Success                                                                | Respond only if requested           |
+| Function         | ID  | Content request                                     | Content response                                                       | Note                                |
+| ---------------- | --- | --------------------------------------------------- | ---------------------------------------------------------------------- | ----------------------------------- |
+| Enumerate blocks | 0   |                                                     | Fragmentation, Block types + maximum instance for each (uint16) stream |                                     |
+| Enumerate fields | 1   | (BlockType << 6) + instance (uint16, 4-byte padded) | Fragmentation, Field&Key (uint16) stream                               | Return empty if nonexistent.        |
+| Read             | 2   | BlockInfo                                           | BlockInfo, ValueInfo, Value                                            | Single entry                        |
+| Write            | 3   | BlockInfo, ValueInfo, Value                         | Success (echoes the request)                                           | Respond when required, Single entry |
+| Recall All       | 4   |                                                     | Success                                                                | Respond only if requested           |
+| Save All         | 5   |                                                     | Success                                                                | Respond only if requested           |
 Read with field 0xFF (any key) returns a block's meta: `BlockInfo, ValueInfo` (the field count
 in Size), then the 16-char name.
 Partial saving/recall is handled by app with direct file writes/direct register writes.

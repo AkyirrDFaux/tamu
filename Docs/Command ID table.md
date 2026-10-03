@@ -28,5 +28,6 @@
 |               | Write           | 0x0306           |
 | Subscriptions | ...             | 0x0400-0x0404    |
 | Script        | ...             | 0x0500-0x0507    |
+| Bootloader    | ...             | 0xFF..           |
 
 
