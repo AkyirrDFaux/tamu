@@ -42,6 +42,11 @@ endif()
 function(APPLY_STANDARD_SETTINGS TARGET)
   target_compile_features(${TARGET} PUBLIC cxx_std_14)
   target_compile_options(${TARGET} PRIVATE -Wall -Werror)
+  # clang's -Wunused-but-set-global fires on glib's G_DEFINE_TYPE in third-party plugins
+  # (flutter_libserialport) whose class_init is empty; keep -Werror for everything else.
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    target_compile_options(${TARGET} PRIVATE -Wno-error=unused-but-set-global)
+  endif()
   target_compile_options(${TARGET} PRIVATE "$<$<NOT:$<CONFIG:Debug>>:-O3>")
   target_compile_definitions(${TARGET} PRIVATE "$<$<NOT:$<CONFIG:Debug>>:NDEBUG>")
 endfunction()
