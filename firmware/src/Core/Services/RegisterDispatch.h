@@ -46,7 +46,7 @@ bool RegisterGetByBlockInfo(uint32_t bi, ValueInfo &m, uint8_t *vbuf, uint8_t &v
 #endif
     int idx = FindStaticBlock(type, inst);
     if (idx < 0) return false;
-    FieldResult fr = static_block_registry[idx].Get(field);
+    FieldResult fr = static_block_registry[idx].Get(field, key);
     if (!fr.Data) return false;
     m = fr.Descriptor;
     uint8_t n = fr.Descriptor.Size;
@@ -61,7 +61,6 @@ bool RegisterSetByBlockInfo(uint32_t bi, const ValueInfo &m, const uint8_t *val,
     uint8_t inst = BlockInfoInstance(bi);
     uint8_t field = BlockInfoField(bi);
     uint8_t key = BlockInfoKey(bi);
-    (void)key; // only the dynamic (keyed) path uses it
 #ifdef USE_SCRIPTS
     if (BlockTypeRange::IsScript(type)) { // Script I/O: only inputs are writable
         return ScriptSetEntry(BlockTypeRange::ScriptGlobal(type, inst), field, key, m, val, vlen);
@@ -80,7 +79,7 @@ bool RegisterSetByBlockInfo(uint32_t bi, const ValueInfo &m, const uint8_t *val,
     }
     int idx = FindStaticBlock(type, inst);
     if (idx < 0) return false;
-    if (!static_block_registry[idx].Set(field, val, vlen, m)) return false;
+    if (!static_block_registry[idx].Set(field, key, val, vlen, m)) return false;
     return true;
 }
 
@@ -126,7 +125,7 @@ static void HandleRegister(const PacketFrame &frame) {
 #else
         if (BlockTypeRange::IsDynamic(type)) { RespondStatus(frame, false); return; }
 #endif
-        HandleStaticBlockRead(frame, bi, type, inst, field);
+        HandleStaticBlockRead(frame, bi, type, inst, field, key);
         return;
     }
 
@@ -155,7 +154,7 @@ static void HandleRegister(const PacketFrame &frame) {
 #else
         if (BlockTypeRange::IsDynamic(type)) { RespondStatus(frame, false); return; }
 #endif
-        HandleStaticBlockWrite(frame, type, inst, field, desc, val, vlen);
+        HandleStaticBlockWrite(frame, type, inst, field, key, desc, val, vlen);
         return;
     }
 

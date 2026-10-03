@@ -107,7 +107,7 @@ static void ApplyRequesterValue(RequesterEntry *e, const uint8_t *val, uint8_t v
         int idx = FindStaticBlock(type, inst);
         if (idx >= 0) {
             ValueInfo meta = fr.Descriptor; meta.Size = vlen;
-            static_block_registry[idx].Set(field, val, vlen, meta);
+            static_block_registry[idx].Set(field, key, val, vlen, meta);
         }
 #ifdef USE_DYNAMIC_BLOCKS
         else if (BlockTypeRange::IsDynamic(type)) {

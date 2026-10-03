@@ -96,22 +96,24 @@ struct StaticBlockDescriptor
         return ValueIsPersistent(info) ? PersistentData : VolatileData;
     }
 
-    const BlockEntry* FindEntry(uint16_t field) const {
+    const BlockEntry* FindEntry(uint16_t field, uint8_t key) const {
+        (void)key; // storage-backed static entries are single-key; the System block uses a getter
         for (uint16_t i = 0; i < Schema->EntryCount; i++)
             if (FieldOf(Schema->Entries[i].FieldKey) == field) return &Schema->Entries[i];
         return nullptr;
     }
 
-    FieldTrigger FindTrigger(uint16_t field) const {
+    FieldTrigger FindTrigger(uint16_t field, uint8_t key) const {
+        (void)key;
         for (uint16_t i = 0; i < Schema->TriggerCount; i++)
             if (FieldOf(Schema->Triggers[i].FieldKey) == field) return Schema->Triggers[i].Fn;
         return nullptr;
     }
 
-    // Unified entry retrieval by field index (linear over the literal table).
-    FieldResult Get(uint16_t field) const {
+    // Unified entry retrieval by (field, key) (linear over the literal table).
+    FieldResult Get(uint16_t field, uint8_t key) const {
         FieldResult Output;
-        const BlockEntry *e = FindEntry(field);
+        const BlockEntry *e = FindEntry(field, key);
         if (!e) return Output;
         Output.Descriptor = e->Info;
         Output.Data = const_cast<uint8_t*>(static_cast<const uint8_t*>(Base(e->Info))) + e->Offset;
@@ -119,8 +121,8 @@ struct StaticBlockDescriptor
     }
 
     // Unified setter interface. `desc` is the request's ValueInfo (type + flags).
-    bool Set(uint16_t field, const void* Input, uint16_t Length, const ValueInfo &desc) const {
-        FieldResult Field = Get(field);
+    bool Set(uint16_t field, uint8_t key, const void* Input, uint16_t Length, const ValueInfo &desc) const {
+        FieldResult Field = Get(field, key);
 
         if (!Field.Data)
             return false;
@@ -150,7 +152,7 @@ struct StaticBlockDescriptor
             return false;
         }
 
-        const FieldTrigger fn = FindTrigger(field);
+        const FieldTrigger fn = FindTrigger(field, key);
         if (fn != nullptr)
             return fn(*this, field, data, data_len);
 

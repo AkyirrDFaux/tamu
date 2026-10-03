@@ -56,10 +56,6 @@ bool RegisterGetSystemField(uint8_t field, uint8_t key, ValueInfo &m, uint8_t *v
 }
 
 static void HandleSystemBlockRead(const PacketFrame &frame, uint32_t bi, uint8_t field, uint8_t key) {
-    uint8_t rpl[40]; uint16_t pos=0;
-    memcpy(rpl+pos, &bi,4); pos+=4;
-    ValueInfo m = {}; uint8_t vsz=0; uint8_t vbuf[24]={0};
-
     if (field==0xFF) {
         // The same shape as every other block meta (Bi, ValueInfo, 16-char name); the System
         // block has no name of its own.
@@ -67,17 +63,19 @@ static void HandleSystemBlockRead(const PacketFrame &frame, uint32_t bi, uint8_t
         return;
     }
 
-    // All system fields resolve through the shared RegisterGetSystemField (single
-    // source of truth - the Subscriptions service uses the same path).
+    // All system fields resolve through the shared RegisterGetSystemField (single source of
+    // truth - the Subscriptions service uses the same path), then reply through the same helper
+    // the static blocks use.
+    ValueInfo m = {}; uint8_t vsz=0; uint8_t vbuf[24]={0};
     if (!RegisterGetSystemField(field, key, m, vbuf, vsz))
     {
         RespondStatus(frame,false);
         return;
     }
-    memcpy(rpl+pos, &m, 4); pos += 4;
-    memcpy(rpl+pos, vbuf, vsz); pos += vsz;
-    while(pos%4) rpl[pos++]=0;
-    SendResponse(frame,rpl,pos);
+    FieldResult fr;
+    fr.Descriptor = m;
+    fr.Data = vbuf;
+    SendFieldResponse(frame, bi, fr);
 }
 
 #ifdef USE_DYNAMIC_BLOCKS
@@ -115,7 +113,7 @@ static void HandleScriptBlockRead(const PacketFrame &frame, uint32_t bi, uint16_
 }
 #endif
 
-static void HandleStaticBlockRead(const PacketFrame &frame, uint32_t bi, uint16_t type, uint8_t inst, uint8_t field) {
+static void HandleStaticBlockRead(const PacketFrame &frame, uint32_t bi, uint16_t type, uint8_t inst, uint8_t field, uint8_t key) {
     int idx = FindStaticBlock(type, inst);
     if (idx < 0) { RespondStatus(frame,false); return; }
     const StaticBlockDescriptor &blk = static_block_registry[idx];
@@ -124,7 +122,7 @@ static void HandleStaticBlockRead(const PacketFrame &frame, uint32_t bi, uint16_
                               blk.Name, (uint16_t)strlen(blk.Name));
         return;
     }
-    FieldResult fr = blk.Get(field);
+    FieldResult fr = blk.Get(field, key);
     if(!fr.Data) { RespondStatus(frame,false); return; }
     SendFieldResponse(frame, bi, fr);
 }

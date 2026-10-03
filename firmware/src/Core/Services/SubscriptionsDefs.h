@@ -125,7 +125,7 @@ static inline FieldResult SubscriptionsGetField(uint32_t blockInfo) {
 #endif
     int idx = FindStaticBlock(type, inst);
     if (idx < 0) return FieldResult{};
-    return static_block_registry[idx].Get(field);
+    return static_block_registry[idx].Get(field, key);
 }
 
 // ---------------------------------------------------------------------------

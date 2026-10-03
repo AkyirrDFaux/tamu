@@ -91,10 +91,10 @@ static void HandleScriptBlockWrite(const PacketFrame &frame, uint16_t inst, uint
 }
 #endif
 
-static void HandleStaticBlockWrite(const PacketFrame &frame, uint16_t type, uint8_t inst, uint8_t field, const ValueInfo *desc, const uint8_t *val, uint16_t vlen) {
+static void HandleStaticBlockWrite(const PacketFrame &frame, uint16_t type, uint8_t inst, uint8_t field, uint8_t key, const ValueInfo *desc, const uint8_t *val, uint16_t vlen) {
     int idx=FindStaticBlock(type, inst);
     if(idx<0) { RespondStatus(frame,false); return; }
     const StaticBlockDescriptor &blk = static_block_registry[idx];
-    if(!blk.Set(field, val, vlen, *desc)) { RespondStatus(frame,false); return; }
+    if(!blk.Set(field, key, val, vlen, *desc)) { RespondStatus(frame,false); return; }
     SendResponse(frame, frame.payload, PayloadBytes(frame));
 }
