@@ -125,11 +125,10 @@ Resolved in the TRID-range pass (2026-10-03, later):
   probe (`hil_led_display_test`); the evaluation scene uses only `Replace` now that dark mode
   is a filled iris, and the *look* is verified by eye only. A render snapshot command would
   make the visuals testable.
-- **DAS provider subscriptions accumulate stale entries.** The DAS provider table holds 4, and
-  a requester cancel does not always reach the DAS (busy bus / dropped packet), so stale
-  providers linger and can block a new subscription (`ProviderFindFree` returns none). The
-  setup builder clears both DAS provider tables first as a workaround. The fix is **parked
-  pending documentation**: the cause is that the docs' "Transaction ID manager"
-  (`Docs/RSBus and Packets.md` - REQACK plus a registered handler with a per-TRID timeout) is
-  **not implemented**, so nothing ever confirms that a cancel landed. Scope and design are in
-  `TODO.md`.
+- **DAS provider subscriptions could accumulate stale entries.** The DAS provider table holds 4,
+  and a requester cancel did not always reach the DAS (busy bus / dropped packet), so stale
+  providers lingered and could block a new subscription. The 2026-10-03 subscription rework adds
+  a **120 s provider lease** renewed by the requester's change-subscription keepalive, so an
+  unrenewed provider now expires on its own. A missed cancel can still hold a slot for up to
+  120 s; the full fix (a confirmed cancel via the docs' "Transaction ID manager") is still parked
+  (`TODO.md`).

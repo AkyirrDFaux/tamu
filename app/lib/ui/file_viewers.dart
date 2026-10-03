@@ -328,8 +328,9 @@ class _FileViewPageState extends State<FileViewPage> {
 // Registry backup decoders (firmware layouts, Docs/Services/Register.md):
 //   `.SV` (StaticMemory.h + the board's StaticPersistent): a raw 1:1 mirror of the static
 //     persistent space, decoded by device_backup.dart from the computed field layout.
-//   SUBREQ (Subscriptions.h SaveRequesterTable): u8 count, then 26 B per entry
-//     (target, source, provider, trigger + pad, period, min, deadzone).
+//   .SUBREQ (SubscriptionsPersist.h SaveRequesterTable): u8 count, then 24 B per entry
+//     (provider, trid, subscription table [source, trigger, min u24, period, deadzone],
+//     target). The timeout is not persisted.
 //   DT_<hex2> (MemoryDynamic.h SaveDynamicBlockFiles): Name (16 chars, NUL-padded),
 //     u16 entry_count, u16 reserved, then fieldKey/flagsAndType/size/pad per entry.
 // ---------------------------------------------------------------------------
