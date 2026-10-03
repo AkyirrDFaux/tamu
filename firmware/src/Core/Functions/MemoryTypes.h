@@ -97,16 +97,18 @@ struct StaticBlockDescriptor
     }
 
     const BlockEntry* FindEntry(uint16_t field, uint8_t key) const {
-        (void)key; // storage-backed static entries are single-key; the System block uses a getter
+        // Static single-key fields are addressed with key 0xFF by the app; normalise it to the
+        // entries' key 0. Multi-key blocks (e.g. the System block) match their exact key.
+        const uint16_t fk = MakeFieldKey(field, key == 0xFF ? 0 : key);
         for (uint16_t i = 0; i < Schema->EntryCount; i++)
-            if (FieldOf(Schema->Entries[i].FieldKey) == field) return &Schema->Entries[i];
+            if (Schema->Entries[i].FieldKey == fk) return &Schema->Entries[i];
         return nullptr;
     }
 
     FieldTrigger FindTrigger(uint16_t field, uint8_t key) const {
-        (void)key;
+        const uint16_t fk = MakeFieldKey(field, key == 0xFF ? 0 : key);
         for (uint16_t i = 0; i < Schema->TriggerCount; i++)
-            if (FieldOf(Schema->Triggers[i].FieldKey) == field) return Schema->Triggers[i].Fn;
+            if (Schema->Triggers[i].FieldKey == fk) return Schema->Triggers[i].Fn;
         return nullptr;
     }
 
