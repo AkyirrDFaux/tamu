@@ -68,7 +68,6 @@ static bool DynamicRecallAll() {
 static void HandleCreateDynamic(const PacketFrame &frame, uint16_t index) {
     if (PayloadBytes(frame) < 8) { RespondStatus(frame,false); return; }
     uint16_t name_len = PayloadBytes(frame) - 4;
-    if (name_len > BLOCK_NAME_LEN - 1) name_len = BLOCK_NAME_LEN - 1;
     DynamicBlockDescriptor *block = CreateDynamicBlock(frame.payload + 4, name_len, index);
     if (!block) { RespondStatus(frame,false); return; }
     uint8_t payload[sizeof(BlockIndex) + 1];
@@ -103,19 +102,16 @@ static void HandleGetName(const PacketFrame &frame, uint32_t bi, uint16_t block_
     if (!block) { RespondStatus(frame,false); return; }
     uint8_t payload[sizeof(BlockIndex) + BLOCK_NAME_LEN];
     memcpy(payload, &bi, 4);
-    uint16_t n = strlen(block->Name); if (n > BLOCK_NAME_LEN - 1) n = BLOCK_NAME_LEN - 1;
-    memcpy(payload + 4, block->Name, n);
-    SendResponse(frame, payload, 4 + n);
+    memcpy(payload + 4, block->Name, BLOCK_NAME_LEN);
+    SendResponse(frame, payload, 4 + BLOCK_NAME_LEN);
 }
 
 static void HandleSetName(const PacketFrame &frame, uint16_t block_idx) {
     if (block_idx >= dynamic_block_registry.block_count) { RespondStatus(frame,false); return; }
-    if (PayloadBytes(frame) < 8) { RespondStatus(frame,false); return; }
-    uint16_t n = PayloadBytes(frame) - 4; if (n > BLOCK_NAME_LEN - 1) n = BLOCK_NAME_LEN - 1;
+    if (PayloadBytes(frame) < 4) { RespondStatus(frame,false); return; }
     DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(block_idx);
     if (!block) { RespondStatus(frame,false); return; }
-    memcpy(block->Name, frame.payload + 4, n);
-    block->Name[n] = '\0';
+    SetBlockName(block->Name, (const char *)(frame.payload + 4), (uint16_t)(PayloadBytes(frame) - 4));
     RespondStatus(frame, true);
 }
 

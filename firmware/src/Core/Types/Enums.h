@@ -28,6 +28,13 @@ enum class TriggerType : uint8_t {
     DeltaPeriodic      = 6
 };
 
+// System block field 8 "App Active" (Docs/Services/System Block and Device Commands.md).
+enum class AppActive : uint8_t {
+    None = 0, // no app attached
+    USB  = 1,
+    BLE  = 2,
+};
+
 enum class DataType : uint16_t {
     None           = 0x00,
     Undefined      = 0x01,

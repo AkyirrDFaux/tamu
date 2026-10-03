@@ -16,8 +16,8 @@ DynamicRegistry dynamic_block_registry;
 // Creates a dynamic block at position `index` (see AddBlockAt). Returns the block or nullptr.
 //
 // GCC's -Warray-bounds (only enabled at -O2+) cannot follow the realloc'd registry storage and
-// reports the memcpy destination as a zero-length object. It is a false positive: the
-// descriptor's Name is BLOCK_NAME_LEN bytes, `len` is clamped to BLOCK_NAME_LEN-1 here, and the
+// reports the name copy's destination as a zero-length object. It is a false positive: the
+// descriptor's Name is BLOCK_NAME_LEN bytes, `SetBlockName` clamps `name_len` to it, and the
 // caller's source is bounded by the payload length. Suppress it at this site rather than
 // disarming the warning project-wide.
 #pragma GCC diagnostic push
@@ -28,10 +28,7 @@ static DynamicBlockDescriptor *CreateDynamicBlock(const uint8_t *name, uint16_t 
     if (!dynamic_block_registry.AddBlockAt(index))
         return nullptr;
     DynamicBlockDescriptor &block = *dynamic_block_registry.GetBlock(index);
-    uint16_t len = name_len;
-    if (len > BLOCK_NAME_LEN - 1) len = BLOCK_NAME_LEN - 1;
-    if (len && name) memcpy(block.Name, name, len);
-    block.Name[len] = '\0';
+    SetBlockName(block.Name, (const char *)name, name_len);
     return &block;
 }
 #pragma GCC diagnostic pop
@@ -149,7 +146,6 @@ static bool LoadDynamicBlockFiles(DynamicBlockDescriptor &b, uint16_t idx)
     uint16_t cursor = 0;
     if (cursor + BLOCK_NAME_LEN + 4 > tlen) return false;
     memcpy(b.Name, tbuf + cursor, BLOCK_NAME_LEN);
-    b.Name[BLOCK_NAME_LEN - 1] = '\0';
     cursor += BLOCK_NAME_LEN;
     uint16_t entry_count; memcpy(&entry_count, tbuf + cursor, 2); cursor += 2;
     cursor += 2; // 16-bit reserved padding (Docs "Dynamic Block Table")

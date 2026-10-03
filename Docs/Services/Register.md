@@ -4,8 +4,8 @@ Memory offsets are relative, in bytes, uint16 type.
 
 | Struct    | Section       | Size       | Note           |
 | --------- | ------------- | ---------- | -------------- |
-| BlockInfo | BlockType     | 10bit/8bit | Static/Dynamic |
-|           | BlockInstance | 6bit/8bit  | Static/Dynamic |
+| BlockInfo | BlockType     | 10bit      |                |
+|           | BlockInstance | 6bit       |                |
 |           | Field         | uint8      |                |
 |           | Key           | uint8      |                |
 | ValueInfo | Type          | uint16     |                |
@@ -19,17 +19,18 @@ Memory offsets are relative, in bytes, uint16 type.
 | Trigger    | Has a trigger on write, the function is called before the write itself, and applies the write instead of the standard one. |
 #### Block types
 
-| Block type         | Index       |
-| ------------------ | ----------- |
-| System             | 0           |
-| Static block types | ...         |
-| Dynamic            | 0x3F0-0x3F3 |
-| Scripts            | 0x3F4-0x3F7 |
-| Reserved           | 0x3F8-0x3FF |
+| Block type         | Index       |                 |
+| ------------------ | ----------- | --------------- |
+| System             | 0           |                 |
+| Static block types | ...         |                 |
+| Dynamic            | 0x3F0-0x3F3 | Instances 0-255 |
+| Scripts            | 0x3F4-0x3F7 | Instances 0-255 |
+| Reserved           | 0x3F8-0x3FF |                 |
 ### System + Static memory blocks
 Basic flat memory, directly accesible internally by the device.
 Compile time layout.
-Write of a different type and/or length fails.
+Write of a different type and/or length fails (String/Filename writes may be shorter and are
+space-padded to the field size).
 
 There are two memory sub-types, differentiated by the "Persistent" flag.
 Separated for easier saving to flash to avoid long serialization and deserialization.
@@ -57,17 +58,19 @@ Since blocks of same types have the same size usage within the memory sub-type, 
 #### Triggers
 If a write is happening on a field/key with the trigger flag, the trigger table is looked through for the right function. It is called before the write itself, and applies the write instead of the standard one.
 #### Persistence
-The storage is structurally 1:1 mirror of the memory in a file (.SV). The device can only overwrite/load the entire file. For targeted saves/recalls the app is needed.
+The storage is structurally 1:1 mirror of the persistent memory in a file (.SV). The device can only overwrite/load the entire file. For targeted saves/recalls the app is needed.
 ### Basic commands (010x)
 
 | Function         | ID  | Content request               | Content response                                                       | Note                                |
 | ---------------- | --- | ----------------------------- | ---------------------------------------------------------------------- | ----------------------------------- |
 | Enumerate blocks | 0   |                               | Fragmentation, Block types + maximum instance for each (uint16) stream |                                     |
-| Enumerate fields | 1   | BlockType + instance (uint16) | Fragmentation, Field&Key (uint16) stream                               |                                     |
+| Enumerate fields | 1   | (BlockType << 6) + instance (uint16, 4-byte padded) | Fragmentation, Field&Key (uint16) stream |                                |
 | Read             | 2   | BlockInfo                     | BlockInfo, ValueInfo, Value                                            | Single entry                        |
-| Write            | 3   | BlockInfo, ValueInfo, Value   | Success                                                                | Respond when required, Single entry |
+| Write            | 3   | BlockInfo, ValueInfo, Value   | Success (echoes the request)                                           | Respond when required, Single entry |
 | Recall All       | 4   |                               | Success                                                                | Respond only if requested           |
 | Save All         | 5   |                               | Success                                                                | Respond only if requested           |
+Read with field 0xFF (any key) returns a block's meta: `BlockInfo, ValueInfo` (the field count
+in Size), then the 16-char name.
 Partial saving/recall is handled by app with direct file writes/direct register writes.
 ### Dynamic blocks
 Use define USE_DYNAMIC_BLOCKS.
@@ -104,7 +107,7 @@ Runtime only, each block maintains three separate memory spaces, one for table, 
 | Persistent Size     | Used      | uint16        |      |
 |                     | Allocated | uint16        |      |
 #### Persistence
-The storage is structurally 1:1 mirror of the memory.
+The storage is structurally 1:1 mirror of the persistent memory.
 The whole block table is always saved into a separate file (.DT_XX).
 The persistent values are also saved in their file (.DV_XX).
 Changing the persistance flag moves the variable from one memory space to other.

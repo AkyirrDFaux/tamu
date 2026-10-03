@@ -27,6 +27,4 @@ const BlockSchema PWM_Schema = {
     .Offsets = PWM_Offsets,
     .Type = BlockType::PWM,
     .MapCount = sizeof(PWM_Map) / sizeof(ValueInfo),
-    .VolatileSize = 4,
-    .PersistentSize = 4,
 };

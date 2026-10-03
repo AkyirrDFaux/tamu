@@ -92,8 +92,6 @@ const BlockSchema ResistiveMeas_Schema = {
     .Offsets = ResistiveMeas_Offsets,
     .Type = BlockType::ResistiveMeasure,
     .MapCount = sizeof(ResistiveMeas_Map) / sizeof(ValueInfo),
-    .VolatileSize = 8,
-    .PersistentSize = 12,
 };
 
 // Range selector pins (Docs/Devices.md): each channel picks a reference resistor

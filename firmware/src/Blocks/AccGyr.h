@@ -92,6 +92,4 @@ const BlockSchema AccGyr_Schema = {
     .Offsets = AccGyr_Offsets,
     .Type = BlockType::AccGyr,
     .MapCount = sizeof(AccGyr_Map) / sizeof(ValueInfo),
-    .VolatileSize = 24,
-    .PersistentSize = 12,
 };

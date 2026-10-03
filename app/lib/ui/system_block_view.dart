@@ -15,6 +15,10 @@ export '../core/system_schema.dart';
 String formatSystemValue(DataType type, List<int> value, [int field = -1, int key = -1]) {
   switch (type) {
     case DataType.enum_:
+      // App Active (field 8) is a 1-byte enum: No / USB / BLE.
+      if (field == 8 && value.isNotEmpty) {
+        return const {0: 'No', 1: 'USB', 2: 'BLE'}[value[0]] ?? '?';
+      }
       // Device type is a 32-bit enum
       if (value.length >= 4) {
         final val = value[0] | (value[1] << 8) | (value[2] << 16) | (value[3] << 24);

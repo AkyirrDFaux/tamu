@@ -25,6 +25,4 @@ const BlockSchema LED_Schema = {
     .Offsets = LED_Offsets,
     .Type = BlockType::LED,
     .MapCount = sizeof(LED_Map) / sizeof(ValueInfo),
-    .VolatileSize = 1,
-    .PersistentSize = 0,
 };

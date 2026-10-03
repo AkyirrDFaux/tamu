@@ -324,7 +324,5 @@ const BlockSchema Vysi1_Schema = {
     .Offsets = Vysi1_Offsets,
     .Type = BlockType::Vysi1Display,
     .MapCount = sizeof(Vysi1_Map) / sizeof(ValueInfo),
-    .VolatileSize = 8,
-    .PersistentSize = 36,
 };
 

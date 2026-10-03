@@ -23,8 +23,6 @@ const BlockSchema Button_Schema = {
     .Offsets = Button_Offsets,
     .Type = BlockType::Button,
     .MapCount = sizeof(Button_Map) / sizeof(ValueInfo),
-    .VolatileSize = 1,
-    .PersistentSize = 0,
 };
 
 // ===== LED-Button =====
@@ -63,6 +61,4 @@ const BlockSchema LEDButton_Schema = {
     .Offsets = LEDButton_Offsets,
     .Type = BlockType::LEDButton,
     .MapCount = sizeof(LEDButton_Map) / sizeof(ValueInfo),
-    .VolatileSize = 2,
-    .PersistentSize = 0,
 };

@@ -67,10 +67,7 @@ static void HandleDynamicBlockWrite(const PacketFrame &frame, uint16_t inst, uin
             RespondStatus(frame, true);
             return;
         }
-        uint16_t name_len = vlen;
-        if (name_len > BLOCK_NAME_LEN - 1) name_len = BLOCK_NAME_LEN - 1;
-        memcpy(block->Name, val, name_len);
-        block->Name[name_len] = '\0';
+        SetBlockName(block->Name, (const char *)val, vlen);
         uint8_t payload[sizeof(BlockIndex) + 1];
         BlockIndex out_index = {(uint8_t)inst, 0xFF, 0xFF};
         memcpy(payload, &out_index, sizeof(BlockIndex));

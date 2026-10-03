@@ -42,8 +42,14 @@ bool RegisterGetSystemField(uint8_t field, uint8_t key, ValueInfo &m, uint8_t *v
 #ifdef TYPE_CORE
     else if (field==7) { uint8_t v=DeviceStatus.NetId; SysFieldValue(m, vbuf, vsz, &v, 1, (uint16_t)DataType::Id, ValuePersistent); }
 #endif
-#ifndef BOARD_DAS_v0_1
-    else if (field==8 && key==0) { uint8_t v=AppConnected?1:0; SysFieldValue(m, vbuf, vsz, &v, 1, (uint16_t)DataType::Bool, ValueReadOnly); }
+#ifdef TYPE_CORE
+    else if (field==8 && key==0) {
+        // Docs/Services/System Block and Device Commands.md: App Active (No/USB/BLE), RO.
+        uint8_t v = AppBLEActive() ? (uint8_t)AppActive::BLE
+                  : (AppUSBActive() ? (uint8_t)AppActive::USB
+                                    : (uint8_t)AppActive::None);
+        SysFieldValue(m, vbuf, vsz, &v, 1, (uint16_t)DataType::Enum, ValueReadOnly);
+    }
 #endif
     else { return false; }
     return true;
@@ -55,9 +61,10 @@ static void HandleSystemBlockRead(const PacketFrame &frame, uint32_t bi, uint8_t
     ValueInfo m = {}; uint8_t vsz=0; uint8_t vbuf[24]={0};
 
     if (field==0xFF) {
-        ValueInfo hv = { (uint16_t)BlockType::System, SYSTEM_FIELD_COUNT, ValueReadOnly };
-        memcpy(rpl+pos,&hv,4); pos+=4; rpl[pos++]=SYSTEM_FIELD_COUNT; while(pos%4) rpl[pos++]=0;
-        SendResponse(frame,rpl,pos); return;
+        // The same shape as every other block meta (Bi, ValueInfo, 16-char name); the System
+        // block has no name of its own.
+        SendBlockMetaResponse(frame, bi, (uint16_t)BlockType::System, SYSTEM_FIELD_COUNT, "", 0);
+        return;
     }
 
     // All system fields resolve through the shared RegisterGetSystemField (single
@@ -89,7 +96,8 @@ static void HandleScriptBlockRead(const PacketFrame &frame, uint32_t bi, uint16_
     LoadedScript *s = ScriptActive(inst);
     if (!s) { RespondStatus(frame,false); return; }
     if (field == 0xFF) {
-        SendBlockMetaResponse(frame, bi, BlockTypeRange::ScriptTypeOf(inst), SCRIPT_FIELD_COUNT, s->name);
+        SendBlockMetaResponse(frame, bi, BlockTypeRange::ScriptTypeOf(inst), SCRIPT_FIELD_COUNT,
+                              s->name, (uint16_t)strlen(s->name));
         return;
     }
     uint8_t rpl[FIELD_RESPONSE_BUF_SIZE];
@@ -112,7 +120,8 @@ static void HandleStaticBlockRead(const PacketFrame &frame, uint32_t bi, uint16_
     if (idx < 0) { RespondStatus(frame,false); return; }
     const StaticBlockDescriptor &blk = static_block_registry[idx];
     if (field==0xFF) { // block meta
-        SendBlockMetaResponse(frame, bi, (uint16_t)blk.Schema->Type, blk.Schema->MapCount, blk.Name);
+        SendBlockMetaResponse(frame, bi, (uint16_t)blk.Schema->Type, blk.Schema->MapCount,
+                              blk.Name, (uint16_t)strlen(blk.Name));
         return;
     }
     if (field >= blk.Schema->MapCount) { RespondStatus(frame,false); return; }

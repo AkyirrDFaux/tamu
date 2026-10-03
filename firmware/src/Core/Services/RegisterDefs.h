@@ -102,15 +102,15 @@ inline int FindStaticBlock(uint16_t type, uint8_t inst) {
 #define FIELD_RESPONSE_BUF_SIZE 268
 #endif
 
-static inline void SendBlockMetaResponse(const PacketFrame &frame, uint32_t bi, uint16_t type, uint8_t map_count, const char *name) {
-    uint8_t rpl[32]; uint16_t pos=0;
+static inline void SendBlockMetaResponse(const PacketFrame &frame, uint32_t bi, uint16_t type,
+                                         uint8_t map_count, const char *name, uint16_t name_len) {
+    uint8_t rpl[4 + 4 + BLOCK_NAME_LEN]; uint16_t pos=0;
     memcpy(rpl+pos, &bi,4); pos+=4;
     // A block meta reports its field count in ValueInfo.Size and carries no flags.
     ValueInfo v = { (uint16_t)(type & 0x3FF), map_count, 0 };
     memcpy(rpl+pos, &v,4); pos+=4;
-    uint8_t n = name ? (uint8_t)strlen(name) : 0;
-    if (n > BLOCK_NAME_LEN - 1) n = BLOCK_NAME_LEN - 1;
-    memcpy(rpl+pos, name, n); pos+=n;
+    // The name is a fixed BLOCK_NAME_LEN-char field (space-padded), not a C string.
+    SetBlockName((char *)(rpl + pos), name, name_len); pos += BLOCK_NAME_LEN;
     while (pos % 4) rpl[pos++] = 0; // 4-byte alignment
     SendResponse(frame,rpl,pos);
 }
@@ -149,7 +149,7 @@ static void ReplyDynamicBlockOrField(const PacketFrame &frame, uint32_t bi,
         // The block's bank type is derived from its global index, which the request's
         // BlockInfo carries; a tombstone reports None (Docs "Dynamic Block Descriptor").
         uint16_t type = block.present ? BlockInfoType(bi) : (uint16_t)BlockType::None;
-        SendBlockMetaResponse(frame, bi, type, (uint8_t)block.FieldCount(), block.Name);
+        SendBlockMetaResponse(frame, bi, type, (uint8_t)block.FieldCount(), block.Name, BLOCK_NAME_LEN);
         return;
     }
     KeyResult kr = block.GetKey(field, key);

@@ -7,6 +7,14 @@
 
 #define BLOCK_NAME_LEN 16
 
+// Copies a block name into a fixed BLOCK_NAME_LEN field (Docs/Services/Register.md "Dynamic
+// Block Table": Name is 16 chars with no terminator). A shorter name is space-padded.
+static inline void SetBlockName(char *dst, const char *src, uint16_t len) {
+    if (len > BLOCK_NAME_LEN) len = BLOCK_NAME_LEN;
+    if (len && src) memcpy(dst, src, len);
+    if (len < BLOCK_NAME_LEN) memset(dst + len, ' ', (size_t)(BLOCK_NAME_LEN - len));
+}
+
 // The descriptor (Docs/Services/Register.md "Map entry"): Type(16) | Size(8) | Flags(8).
 // One type, internal and on the wire. The key is not part of it - it travels in the request's /
 // reply's BlockInfo, or in a table entry's Field&Key.
@@ -49,8 +57,6 @@ struct BlockSchema
     const uint16_t *const Offsets;      // Precomputed byte offsets within the block's RAM struct
     const BlockType Type;
     const uint16_t MapCount;
-    const uint16_t VolatileSize;   // bytes this block's volatile half occupies
-    const uint16_t PersistentSize; // bytes this block's persistent half occupies
 };
 
 struct StaticBlockDescriptor

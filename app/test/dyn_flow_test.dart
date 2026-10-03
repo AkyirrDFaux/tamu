@@ -58,6 +58,20 @@ Future<void> runTests() async {
   expect(f0c, isNotNull);
   expect(numberFromBytes(f0c!.value), closeTo(3.0, 0.001));
 
+  // A Read Only entry is non-writable from outside: both a value write and a delete fail.
+  final e3 = await dyn.appendDynamicEntry(
+      b, ValueInfo(type: DataType.number.value, flags: ValueFlags.readOnly, size: 4),
+      numberToBytes(9.0), index: 1);
+  expect(e3, isNotNull, reason: 'append a read-only entry');
+  b = (await dyn.readDynamicBlocks())!.first;
+  final ro = await dyn.readDynamicField(b, 1);
+  expect(ro, isNotNull);
+  expect(ro!.meta.readOnly, isTrue);
+  expect(await dyn.writeDynamicField(b, ro, numberToBytes(10.0)), isNull,
+      reason: 'a read-only entry rejects writes');
+  expect(await dyn.deleteDynamic(block: b.index, field: 1), isFalse,
+      reason: 'a read-only entry rejects deletes');
+
   await dyn.deleteDynamic(block: b.index);
   await dyn.saveAll();
 }

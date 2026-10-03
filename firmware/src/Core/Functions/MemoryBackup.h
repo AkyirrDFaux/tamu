@@ -140,7 +140,7 @@ inline uint16_t ReadBackupFile(const char name[8], uint8_t *out, uint16_t cap)
 //
 // A block's contents are a FLAT table of entries, strictly ascending by Field&Key
 // (u16 = (field<<8)|key); fields and keys are equal entry types. Each entry carries a
-// ValueInfo (FlagsAndType u16 + Size u8) and a MemoryOffset into one of the block's two
+// ValueInfo (Type u16 + Size u8 + Flags u8) and a MemoryOffset into one of the block's two
 // value spaces (volatile / persistent, chosen by the entry's Persistent flag).
 // Deleting an entry removes it from the table (the sequential record compacts);
 // a deleted/skipped BLOCK keeps a tombstone slot in the registry.

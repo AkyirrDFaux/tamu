@@ -76,6 +76,19 @@ Trigger flag, the banked enumerate 8.8 split, and `Command ID table.md`'s Save/R
 dynamic descriptor no longer stores a type (it is derived from the global index); a live block is
 marked by a `present` flag instead.
 
+Resolved in the register doc-vs-implementation pass (2026-10-03, later):
+- **Dynamic `Read Only` is enforced.** `DynamicBlockDescriptor::SetEntry` and `DeleteEntry` reject a
+  write/delete of a stored read-only entry (the static and script paths already did).
+- **Block names are the documented fixed 16 chars**, space-padded, with no NUL and no truncation
+  (`SetBlockName`; create/set/get/meta/persist all use it).
+- **System field 8 "App Active" is an enum** (`AppActive`: No/USB/BLE), not a bool.
+- **`Register.md` updated**: the BlockInfo split (10/6, dynamic banked), the enumerate-fields
+  request (packed 10.6, 4-byte padded), the block-meta read (field 0xFF), the write response
+  (echoes the request), and the String/Filename space-padding exception.
+- **The System block meta uses the same shape as every other block** (Bi + ValueInfo + 16-char name).
+- **`BlockSchema.VolatileSize`/`PersistentSize` dropped** (unused; the flat space structs are the
+  layout source of truth).
+
 Still open after the 2026-10-03 cleanup:
 - **The `.DT_XX` entry omits the doc's `MemoryOffset`.** The doc's Dynamic Block Table lists
   `Field&Key(16) + MemoryOffset(16) + ValueInfo(32)` per entry, but the firmware writes only
@@ -83,6 +96,10 @@ Still open after the 2026-10-03 cleanup:
   load, so the file is a compacted mirror rather than a literal one. Storing the offset would
   match the table 1:1; dropping it is redundant-but-smaller and is what the app decoder assumes.
   The doc should pin which form the `.DT_XX` file uses.
+- **The dynamic descriptor doc omits `Name`/`generation`/`present`** (deferred).
+- **ResistiveMeasure trigger flags are device-specific.** The doc marks Sampling Rate "(TR)"; the
+  firmware gives it (and Filter Coefficient) a trigger function but no `ValueTrigger` flag, so the
+  wire flags don't advertise the trigger. Different devices may or may not need one.
 ## Android (on-device behaviour untested)
 
 - **On-device behavior not yet verified** (no Android device/emulator configured): the BLE

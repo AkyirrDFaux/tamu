@@ -1800,6 +1800,16 @@ to the bank types, and a test helper put the Persistent flag in the ValueInfo *t
   `test/tamu_proto.py` was repaired (`RegCid.Enumerate` -> `EnumerateBlocks`/`EnumerateFields`, the
   ValueInfo write layout, and the banked-type helpers). `test.sh` green; all 12 HIL suites pass.
 
+- [x] **Register doc-vs-implementation pass - done.** Fixed the code where it disagreed with the
+  doc and the doc where it was imprecise: dynamic `Read Only` is now enforced on write and delete;
+  block names are the documented fixed 16 chars, space-padded (no NUL, no truncation);
+  System field 8 "App Active" is an enum (No/USB/BLE); the System block meta uses the common
+  shape; `BlockSchema.VolatileSize`/`PersistentSize` were dropped. `Register.md` now pins the
+  BlockInfo split (10/6, banked dynamic), the enumerate-fields request, the block-meta read
+  (field 0xFF), the write echo, and the String/Filename padding exception. `dyn_flow_test` gained
+  a Read Only assertion; `deleteDynamic` now checks the status byte. `test.sh` green; all 12 HIL
+  suites pass. **Sizes: core 625 688 B / DAS 11 832 B.**
+
 Legacy to delete (covered by the layers): `BlockMeta` packing + conversions; dynamic Trigger path;
 `0x3FE`/`0x3FF` literals; `STATLOG`; the define rename; `HandleGetMemUsage`/`HandleReadBackup`;
 `scriptActiveMask`.

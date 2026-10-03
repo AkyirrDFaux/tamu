@@ -65,6 +65,19 @@ class RegisterClient {
     return reply.sublist(8, 8 + ((size > avail) ? avail : size));
   }
 
+  /// Decodes a block name: a fixed 16-char field, space-padded (Docs "Dynamic Block Table").
+  static String _blockName(List<int> bytes) =>
+      String.fromCharCodes(bytes).replaceAll('\x00', '').trimRight();
+
+  /// Encodes a block name into the fixed 16-char field (space-padded).
+  static List<int> _padBlockName(String name) {
+    final out = name.codeUnits.take(16).toList();
+    while (out.length < 16) {
+      out.add(0x20);
+    }
+    return out;
+  }
+
   /// The u16 words of a CID 0 stream. The wire pads the payload to a 4-byte multiple, which is
   /// at most one extra word, and the entries are ordered - so a legitimate zero can only be the
   /// *first* one (the System block, or field 0 key 0). A trailing zero is padding.
@@ -198,9 +211,7 @@ class RegisterClient {
     final reply = await request(RegisterCid.read, payload: payload);
     if (reply == null || reply.length < 8) return null;
     final meta = ValueInfo.fromBytes(reply, 4);
-    final name = reply.length > 8
-        ? String.fromCharCodes(reply.sublist(8)).replaceAll('\x00', '')
-        : '';
+    final name = reply.length > 8 ? _blockName(reply.sublist(8)) : '';
     return (meta: meta, name: name);
   }
 
@@ -327,9 +338,8 @@ class RegisterClient {
     final reply = await request(RegisterCid.read, payload: _dynBi(block, 0xFF));
     if (reply == null || reply.length < 8) return null;
     final meta = ValueInfo.fromBytes(reply, 4);
-    final name = reply.length > 8
-        ? String.fromCharCodes(reply.sublist(8)).replaceAll('\x00', '')
-        : '';
+    // The name is a fixed 16-char field, space-padded (Docs "Dynamic Block Table").
+    final name = reply.length > 8 ? _blockName(reply.sublist(8)) : '';
     return DynBlock(index: block, meta: meta, name: name);
   }
 
@@ -367,10 +377,7 @@ class RegisterClient {
   /// When [index] is null the block is APPENDED right after the last live block (never
   /// at position 0, and ignoring trailing tombstones).
   Future<int?> createDynamicBlock(String name, {int? index}) async {
-    final nameBytes = name.codeUnits.take(16).toList();
-    while (nameBytes.length < 4) {
-      nameBytes.add(0x20); // pad with spaces
-    }
+    final nameBytes = _padBlockName(name);
     var target = index;
     if (target == null) {
       // Append = one past the highest LIVE block (tombstones are skipped).
@@ -394,10 +401,7 @@ class RegisterClient {
 
   /// Sets a dynamic block's name and/or type (CID 2, field 0xFF = block meta).
   Future<bool> writeDynamicBlockMeta(DynBlock block, String name, BlockType? type) async {
-    final nameBytes = name.codeUnits.take(16).toList();
-    while (nameBytes.length < 4) {
-      nameBytes.add(0x20);
-    }
+    final nameBytes = _padBlockName(name);
     final meta = ValueInfo(
       type: type?.value ?? dynamicTypeForIndex(block.index),
       size: nameBytes.length,
@@ -459,7 +463,8 @@ class RegisterClient {
   /// Field 0xFF = whole block; key 0xFF = the whole field; otherwise the entry.
   Future<bool> deleteDynamic({required int block, int? field, int? key}) async {
     final reply = await request(DynamicCid.delete, payload: _dynBi(block, field ?? 0xFF, key ?? 0xFF));
-    return reply != null;
+    // The delete replies with a one-byte status (0 = success, 0xFF = refused).
+    return reply != null && reply.isNotEmpty && reply[0] == 0;
   }
 
   /// Reorders the live dynamic blocks to [newOrder] (the desired order of the live

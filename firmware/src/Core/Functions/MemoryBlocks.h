@@ -152,17 +152,24 @@ struct DynamicBlockDescriptor
     // Writing type None deletes the entry (docs "Setting the type to None deletes").
     bool SetEntry(uint8_t field, uint8_t key, const void *value, uint8_t len, const ValueInfo &desc)
     {
+        uint16_t fk = MakeFieldKey(field, key);
+        uint16_t i = FindEntry(fk);
+        bool exists = (i < entry_count && table[i].fieldKey == fk);
+
+        // Read Only (Docs "ValueInfo Flags"): a stored read-only entry is non-writable from
+        // outside, so neither its value nor its flags can change (the delete included).
+        if (exists && ValueIsReadOnly(table[i].info))
+            return false;
+
         if (ValueInfoType(desc) == (uint16_t)DataType::None)
             return DeleteEntry(field, key);
 
         ValueInfo info = desc;
         info.Size = len;              // the stored length is the bytes actually present
         info.Flags &= ~ValueTrigger;  // the Trigger flag is static-only (Docs: dynamic triggers are gone)
-        uint16_t fk = MakeFieldKey(field, key);
-        uint16_t i = FindEntry(fk);
         bool pers = ValueIsPersistent(info);
 
-        if (i < entry_count && table[i].fieldKey == fk)
+        if (exists)
         {
             // Fast path: same size and persistence - overwrite the value in place. This is
             // the hot path (e.g. a script rewriting the same render matrix every tick) and
@@ -205,6 +212,9 @@ struct DynamicBlockDescriptor
         uint16_t fk = MakeFieldKey(field, key);
         uint16_t i = FindEntry(fk);
         if (i >= entry_count || table[i].fieldKey != fk) return false;
+        // Read Only (Docs "ValueInfo Flags"): a stored read-only entry is non-writable from
+        // outside, the delete included.
+        if (ValueIsReadOnly(table[i].info)) return false;
         for (uint16_t j = i; j + 1 < entry_count; j++)
             table[j] = table[j + 1];
         entry_count--;
@@ -296,7 +306,7 @@ struct DynamicBlockDescriptor
         entry_count = entry_allocated = 0;
         volatile_len = volatile_allocated = 0;
         persistent_len = persistent_allocated = 0;
-        Name[0] = '\0';
+        memset(Name, 0, sizeof(Name));
         present = false;
     }
 };
