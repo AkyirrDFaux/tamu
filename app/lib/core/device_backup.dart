@@ -25,13 +25,16 @@ import 'types.dart';
 const int systemNameField = 6;
 const int systemNetIdField = 7;
 
-/// The System block's persistent segment: Name (16 bytes) then NetID (1 byte, core only). The
-/// firmware keeps a NUL after Name and pads the segment to 32-bit alignment, so the first static
-/// block starts at offset 20.
+/// The System block's persistent segment: Name (16 bytes, fixed and space-padded, no NUL) then
+/// NetID (1 byte, core only). The firmware pads the segment up to the 4-byte alignment of the
+/// first static block, so it is 16 B on a node and 20 B on a core.
 const int systemNameOffset = 0;
 const int systemNameSize = 16;
-const int systemNetIdOffset = 17;
-const int staticSpaceSystemSize = 20;
+const int systemNetIdOffset = 16;
+const int systemNetIdSize = 1;
+
+/// The System segment size in the `.SV` space for a device with/without a NetID field.
+int systemSegmentSize(bool hasNetId) => align4(systemNameSize + (hasNetId ? systemNetIdSize : 0));
 
 /// The firmware's SUBREQ entry cap (Subscriptions.h).
 const int maxSubreqEntries = 16;
@@ -96,22 +99,33 @@ class StaticSpaceLayout {
   /// out in ascending block-type order with their instances contiguous (Docs/Services/Register.md
   /// "System + Static memory blocks"); the System block (type 0) is the first segment.
   factory StaticSpaceLayout.fromRegistry(
-      List<({int type, int inst})> registry, StaticFieldLayout fields) {
+      List<({int type, int inst})> registry, StaticFieldLayout fields,
+      {bool hasNetId = true}) {
     final counts = <int, int>{};
     for (final r in registry) {
       counts[r.type] = (counts[r.type] ?? 0) + 1;
     }
     final ordered = counts.keys.toList()..sort();
+    final sysSize = systemSegmentSize(hasNetId);
     final types = <int, StaticTypeLayout>{
-      0: const StaticTypeLayout(
+      0: StaticTypeLayout(
         base: 0,
-        stride: staticSpaceSystemSize,
-        fieldOffset: {systemNameField: systemNameOffset, systemNetIdField: systemNetIdOffset},
-        fieldSize: {systemNameField: systemNameSize, systemNetIdField: 1},
-        fieldType: {systemNameField: DataType.string, systemNetIdField: DataType.id},
+        stride: sysSize,
+        fieldOffset: {
+          systemNameField: systemNameOffset,
+          if (hasNetId) systemNetIdField: systemNetIdOffset,
+        },
+        fieldSize: {
+          systemNameField: systemNameSize,
+          if (hasNetId) systemNetIdField: systemNetIdSize,
+        },
+        fieldType: {
+          systemNameField: DataType.string,
+          if (hasNetId) systemNetIdField: DataType.id,
+        },
       ),
     };
-    var cursor = staticSpaceSystemSize;
+    var cursor = sysSize;
     for (final t in ordered) {
       final flds = fields[t] ?? const [];
       final fieldOffset = <int, int>{};
@@ -340,7 +354,10 @@ DynamicTable? decodeDynamicTable(List<int> bytes) {
   if (bytes.length < nameLen + 4) return null;
   final nameBytes = bytes.sublist(0, nameLen);
   final nul = nameBytes.indexOf(0);
-  final name = String.fromCharCodes(nul >= 0 ? nameBytes.sublist(0, nul) : nameBytes);
+  // The firmware space-pads the name (no NUL), so trim trailing spaces; a NUL, if present,
+  // still ends it.
+  final raw = nul >= 0 ? nameBytes.sublist(0, nul) : nameBytes;
+  final name = String.fromCharCodes(raw).trimRight();
   final entryCount = _u16(bytes, nameLen);
   var c = nameLen + 4; // entry count (2) + reserved padding (2)
   if (c + entryCount * 8 > bytes.length) return null;
@@ -386,9 +403,9 @@ List<BackupEntry> decodeDynamicValues(int inst, DynamicTable table, List<int> va
   return out;
 }
 
-/// Key for the static/System map. These fields are addressed by *field* only: the app
-/// always reads a static field at key 0xFF, and the stored descriptor's key is not
-/// meaningful per field.
+/// Key for the static/System map. These fields are addressed by *field* only: the wire key is
+/// 0 for the System schema and 0xFF for a single-key static field (the firmware normalises
+/// 0xFF to 0), so the map key ignores it.
 typedef _StaticKey = ({int blockType, int inst, int field});
 
 /// Key for the dynamic map (real field/key pairs).
@@ -454,10 +471,12 @@ class DeviceBackup {
     List<({int type, int inst})> staticRegistry = const [],
     StaticFieldLayout staticFields = const {},
     Map<int, ({List<int> table, List<int> values})> dynamic = const {},
+    bool hasNetId = true,
   }) {
     final statics = <_StaticKey, BackupEntry>{};
     if (sv != null) {
-      final layout = StaticSpaceLayout.fromRegistry(staticRegistry, staticFields);
+      final layout =
+          StaticSpaceLayout.fromRegistry(staticRegistry, staticFields, hasNetId: hasNetId);
       for (final e in decodeSv(sv, layout, staticRegistry)) {
         statics[(blockType: e.blockType, inst: e.inst, field: e.field)] = e;
       }

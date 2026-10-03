@@ -30,13 +30,13 @@ void main() {
     ],
   };
 
-  /// DT_ table: Name (16 chars, NUL-padded), u16 entry_count, u16 reserved, then
+  /// DT_ table: Name (16 chars, space-padded), u16 entry_count, u16 reserved, then
   /// 8 B per entry (Field&Key, MemoryOffset, ValueInfo). The offset is the entry's position
   /// in its (compacted) value space.
   List<int> dynamicTable(String name, List<(int, int, int, int)> entries) {
     final nameBytes = name.codeUnits.take(16).toList();
     while (nameBytes.length < 16) {
-      nameBytes.add(0);
+      nameBytes.add(0x20);
     }
     final out = <int>[
       ...nameBytes,
@@ -67,7 +67,7 @@ void main() {
     List<int> svBytes() {
       final b = List<int>.filled(20 + 36 + 12, 0);
       b.setRange(0, 3, 'Eye'.codeUnits); // System Name @ 0
-      b[17] = 3; // System NetID @ 17
+      b[16] = 3; // System NetID @ 16
       b[44] = 5; // 0x06 RenderBlock @ 20 + 24 = 44
       b.setRange(56, 60, numberToBytes(10)); // 0x08 SamplingRate @ 20 + 36 = 56
       b[60] = 2; // 0x08 SensorType @ 60
@@ -85,6 +85,14 @@ void main() {
       // A volatile field and an absent type have no offset.
       expect(layout.offsetOf(0x08, 0, 3), isNull);
       expect(layout.offsetOf(0x05, 0, 0), isNull);
+    });
+
+    test('a node (no NetID) has a 16 B System segment and no NetID field', () {
+      final layout = StaticSpaceLayout.fromRegistry(registry, staticFields, hasNetId: false);
+      expect(layout.offsetOf(0, 0, systemNameField), 0);
+      expect(layout.offsetOf(0, 0, systemNetIdField), isNull);
+      expect(layout.offsetOf(0x06, 0, 1), 16); // the first static block starts at 16, not 20
+      expect(layout.offsetOf(0x08, 0, 0), 52);
     });
 
     test('decodes the System segment and every static persistent field', () {

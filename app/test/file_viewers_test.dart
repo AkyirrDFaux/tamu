@@ -30,11 +30,12 @@ void main() {
     expect(tester.takeException(), isNull, reason: '$name threw while rendering');
   }
 
-  testWidgets('.SV decodes the System segment + static fields', (tester) async {
-    // System segment (20 B) + one ResistiveMeasure (0x08, 12 B: SamplingRate@20).
-    final data = List<int>.filled(20 + 12, 0);
+  testWidgets('.SV decodes a node System segment + static fields', (tester) async {
+    // A node (no NetID): System segment 16 B + one ResistiveMeasure (0x08, 12 B:
+    // SamplingRate@16).
+    final data = List<int>.filled(16 + 12, 0);
     data.setRange(0, 8, 'DAS v0.1'.codeUnits); // System Name @ 0
-    data.setRange(20, 24, numberToBytes(10)); // 0x08 SamplingRate @ 20
+    data.setRange(16, 20, numberToBytes(10)); // 0x08 SamplingRate @ 16
     final blocks = <({int type, int inst, ValueInfo meta, String name})?>[
       (type: BlockType.resistiveMeasure.value, inst: 0,
           meta: ValueInfo(type: DataType.number.value, size: 4), name: 'Meas1'),
@@ -50,28 +51,35 @@ void main() {
       theme: buildTheme(),
       home: Scaffold(
           body: MemoryBackupView(
-              fileName: '.SV', data: data, blocks: blocks, staticFields: staticFields)),
+              fileName: '.SV',
+              data: data,
+              blocks: blocks,
+              staticFields: staticFields,
+              hasNetId: false)),
     ));
     await tester.pump();
     expect(tester.takeException(), isNull, reason: '.SV threw');
   });
 
-  testWidgets('SUBREQ decodes requester entries (26 B incl. deadzone)', (tester) async {
-    // u8 count + 26 B per entry: targetReg, sourceReg, providerAddr u16,
-    // trigger u8 + 3 pad, periodMs u32, minTimeMs u32, deadzone Number (16.16).
+  testWidgets('SUBREQ decodes requester entries (24 B: provider+trid+table+target)',
+      (tester) async {
+    // u8 count + 24 B per entry (the requester wire prefix minus the timeout):
+    // providerAddr u16, trid u16, subscription table (sourceReg u32, trigger u8,
+    // minTime u24, period u32, deadzone Number 16.16), targetReg u32.
     final targetReg = makeBlockInfo(0, 0, 0, 0);
     final sourceReg = makeBlockInfo(8, 0, 4, 0);
-    List<int> entry(int provider, double deadzone) => <int>[
-          ...u32(targetReg),
-          ...u32(sourceReg),
+    List<int> entry(int provider, int trid, double deadzone) => <int>[
           provider & 0xFF, (provider >> 8) & 0xFF,
-          1, 0, 0, 0, // trigger + pad
+          trid & 0xFF, (trid >> 8) & 0xFF,
+          ...u32(sourceReg),
+          TriggerType.deltaPeriodic.value,
+          100 & 0xFF, (100 >> 8) & 0xFF, (100 >> 16) & 0xFF, // minTime 100
           ...u32(1000),
-          ...u32(100),
           ...numberToBytes(deadzone),
+          ...u32(targetReg),
         ];
-    // Two entries: a misaligned (22 B) parser would read garbage from entry 2.
-    final data = <int>[2, ...entry(2, 0), ...entry(3, 1.5)];
+    // Two entries: a misaligned parser would read garbage from entry 2.
+    final data = <int>[2, ...entry(2, 0x1000, 0), ...entry(3, 0x1001, 1.5)];
     await pump(tester, 'SUBREQ', data);
   });
 

@@ -4,8 +4,8 @@
 #include "Blocks/DeviceInfo.h"
 #include "Core/Functions/Packet.h"
 
-// Returns the current SYNCHRONIZED time in milliseconds (raw timer + time offset pushed
-// by the core). All scheduling and timestamps use this.
+// Returns the current SYNCHRONIZED time in milliseconds (raw timer + this device's time
+// offset, learned from the TimeSync reply). All scheduling and timestamps use this.
 uint32_t Now();
 // Returns the RAW time since boot in milliseconds, unaffected by any time offset
 // (reported by the Device service Uptime function).

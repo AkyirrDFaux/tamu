@@ -8,17 +8,11 @@
 
 // ===== CID 1: Read helpers =====
 
-// Resolves one System-block field (type 0, inst 0) into a descriptor + value. The descriptor
-// comes from System_Entries (the metadata is unified); this only fills the value bytes. The
-// struct fields (0, 3, 4, 5) return the whole struct; the struct position is not on the wire.
-bool RegisterGetSystemField(uint8_t field, uint8_t key, ValueInfo &m, uint8_t *vbuf, uint8_t &vsz) {
-    (void)key; // the struct position is not addressed on the wire
-    const BlockEntry *e = nullptr;
-    for (uint16_t i = 0; i < System_EntryCount; i++)
-        if (FieldOf(System_Entries[i].FieldKey) == field) { e = &System_Entries[i]; break; }
-    if (!e) return false;
-    m = e->Info;
-
+// Fills the value bytes for one System-block field (type 0, inst 0). The descriptor comes from
+// System_Entries (the metadata is unified) and the caller has already resolved the entry, so this
+// only synthesises the value. The struct fields (0, 3, 4, 5) fill the whole struct; the struct
+// position is not on the wire.
+static bool SystemFillValue(uint8_t field, uint8_t *vbuf) {
     switch (field) {
     case 0: { // Device Type struct: DeviceType | Capability | Software version
         uint32_t dt = (uint32_t)kDeviceType;
@@ -62,13 +56,7 @@ bool RegisterGetSystemField(uint8_t field, uint8_t key, ValueInfo &m, uint8_t *v
         memcpy(vbuf + 4, &total, 4);
         break;
     }
-    case 6: // Name (fixed 16-char field, space-padded)
-        memcpy(vbuf, staticPer.system.Name, SYSTEM_NAME_LEN);
-        break;
 #ifdef TYPE_CORE
-    case 7:
-        vbuf[0] = DeviceStatus.NetId;
-        break;
     case 8:
         // Docs/Services/System Block and Device Commands.md: App Active (No/USB/BLE), RO.
         vbuf[0] = AppBLEActive() ? (uint8_t)AppActive::BLE
@@ -78,13 +66,13 @@ bool RegisterGetSystemField(uint8_t field, uint8_t key, ValueInfo &m, uint8_t *v
     default:
         return false;
     }
-    vsz = m.Size;
     return true;
 }
 
 // The System block as a static descriptor: System_Entries is the schema, Name/NetID are the
 // storage-backed persistent fields, and the computed fields come from SystemGet.
 static void* SystemGet(uint16_t field, uint8_t key) {
+    (void)key; // the struct position is not addressed on the wire
     if (field == SYSTEM_FIELD_NAME) return nullptr; // storage-backed (fixed 16-char field)
 #ifdef TYPE_CORE
     if (field == SYSTEM_FIELD_NETID) {
@@ -95,8 +83,7 @@ static void* SystemGet(uint16_t field, uint8_t key) {
     }
 #endif
     static uint8_t s_sysValueBuf[24];
-    ValueInfo m; uint8_t vsz = 0;
-    if (!RegisterGetSystemField((uint8_t)field, (uint8_t)key, m, s_sysValueBuf, vsz)) return nullptr;
+    if (!SystemFillValue((uint8_t)field, s_sysValueBuf)) return nullptr;
     return s_sysValueBuf;
 }
 

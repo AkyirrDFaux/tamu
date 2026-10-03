@@ -29,7 +29,9 @@ String formatSystemValue(DataType type, List<int> value, [int field = -1, int ke
     case DataType.sn:
       return serialNumberToHex(value);
     case DataType.id:
-      return value.length >= 2 ? idToString(value[0] | (value[1] << 8)) : '-';
+      if (value.length >= 2) return idToString(value[0] | (value[1] << 8));
+      if (value.length == 1) return value[0].toString(); // 1-byte Id (System NetID)
+      return '-';
     case DataType.integer:
       // Device Type -> capabilities (field 0, key 1) is a bitmask of enabled services.
       if (field == 0 && key == 1 && value.length >= 4) {

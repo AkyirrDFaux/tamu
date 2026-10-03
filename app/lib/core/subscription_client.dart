@@ -101,9 +101,9 @@ class SubscriptionClient {
     return reply != null;
   }
 
-  /// Index-based facade over the TRID protocol (the UI addresses rows by position).
-  /// `entry == null` cancels the row at [index]; otherwise it creates/updates, allocating a
-  /// fresh TRID when the entry does not carry one.
+  /// UI-position facade over the TRID-keyed protocol: [index] is the row's position in the
+  /// current list. `entry == null` cancels the row; otherwise it creates/updates it,
+  /// allocating a fresh TRID when the entry does not carry one.
   Future<bool> setRequesterSubscription(int index, {RequesterSubscription? entry}) async {
     if (entry == null) {
       final subs = await getRequesterSubscriptions();

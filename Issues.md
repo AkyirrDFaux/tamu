@@ -92,6 +92,11 @@ Resolved in the register doc-vs-implementation pass 2 (2026-10-03, later):
 
 Still open after the 2026-10-03 cleanup:
 - **The dynamic descriptor doc omits `Name`/`generation`/`present`** (deferred).
+- **The static write's over-long String/Filename behaviour is unspecified.** `Register.md` says
+  "Write of a different type and/or length fails (String/Filename writes may be shorter and are
+  space-padded to the field size)". The code *also* clamps a longer String/Filename write to the
+  field size (a 22-char System Name write is clamped to the documented 16, pinned by the
+  verification HIL test), which the parenthetical does not state.
 - **ResistiveMeasure trigger flags are device-specific.** The doc marks Sampling Rate "(TR)"; the
   firmware gives it (and Filter Coefficient) a trigger function but no `ValueTrigger` flag, so the
   wire flags don't advertise the trigger. Different devices may or may not need one.

@@ -464,15 +464,15 @@ class Tamu:
                 return max_i + 1
         return 0
 
-    def save(self, addr, block_type, inst=0):
-        bi = block_info(block_type, inst, 0xFF, 0xFF)
+    def save(self, addr=1):
+        # Save All (CID 5): the request carries no BlockInfo (partial saves are app-side).
         return self.send(Packet(FLAG_REQACK | FLAG_START | FLAG_STOP, 1, Srv.Register,
-                                RegCid.Save, 0, struct.pack("<I", bi)), addr)
+                                RegCid.Save, 0, b""), addr)
 
-    def recall(self, addr, block_type, inst=0):
-        bi = block_info(block_type, inst, 0xFF, 0xFF)
+    def recall(self, addr=1):
+        # Recall All (CID 4): the request carries no BlockInfo.
         return self.send(Packet(FLAG_REQACK | FLAG_START | FLAG_STOP, 1, Srv.Register,
-                                RegCid.Recall, 0, struct.pack("<I", bi)), addr)
+                                RegCid.Recall, 0, b""), addr)
 
     def file_table(self, addr, timeout=4.0):
         """Storage read of '.TABLE' -> the raw FileEntry records (offset u32, size u32, name[8])."""

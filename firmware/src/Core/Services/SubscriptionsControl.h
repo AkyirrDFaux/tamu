@@ -34,8 +34,10 @@ static void SubSendFragment(const PacketFrame &frame, uint16_t f, uint16_t frags
     DispatchPacket(tx_frame);
 }
 
+#ifdef USE_SUB_REQUEST
 // Cancels the provider side of a requester subscription (same-device: drop the local provider
-// entry; remote: send 0401 with an empty payload = None/cancel).
+// entry; remote: send 0401 with an empty payload = None/cancel). Requester-only: the provider
+// side never cancels anything, so the DAS does not compile it.
 static void SubscriptionsCancelProvider(uint16_t providerAddr, uint16_t trid) {
 #ifdef USE_SUB_PROVIDE
     if (providerAddr == DeviceStatus.ShortAddress) {
@@ -49,6 +51,7 @@ static void SubscriptionsCancelProvider(uint16_t providerAddr, uint16_t trid) {
                     FLAG_START | FLAG_STOP, nullptr, 0);
     SendAndVerifyPacket(cancel);
 }
+#endif
 
 #ifdef USE_SUB_PROVIDE
 // Installs (or updates) a provider entry from a subscription table. Returns the entry, or

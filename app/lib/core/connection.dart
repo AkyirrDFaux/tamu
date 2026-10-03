@@ -1,9 +1,9 @@
 /// Connection management: scanning, link establishment and the packet
 /// transaction layer (Docs/App/Connection.md, Docs/Services/App Interface.md).
 ///
-/// The app uses the full SRV CID range of its own source service as transaction
-/// IDs; responses are matched by the CID echoed back in SRV TGT
-/// ("SRV CID are App defined transaction IDs, the device does not care").
+/// The app allocates a 16-bit transaction ID from its own App range
+/// (0xF000-0xFFFF, Docs/RSBus and Packets.md "Transaction IDs"); the device echoes it, so
+/// responses are matched on the full TRID.
 library;
 
 import 'dart:async';

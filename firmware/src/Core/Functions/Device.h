@@ -33,9 +33,8 @@ extern const DeviceType kDeviceType;
 extern const uint32_t kCapabilities;
 const SerialNumber &GetSerialNumber();
 
-// Device name persistence (Docs/Services/System Block and Device Commands.md: "Device name is stored in
-// standalone file to allow persistence"). Implemented in Core/Services/Device.h.
-// Device software version string (provided per device, e.g. Devices/<device>/Main.h)
+// Device software version string (provided per device, e.g. Devices/<device>/Main.h). The
+// device Name is a System-block persistent field (SystemPersistent, mirrored to .SV).
 extern const char* DeviceVersion;
 
 // Set when Core-discover detects another core with the SAME net-ID on the bus. The core

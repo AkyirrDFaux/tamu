@@ -100,8 +100,10 @@ static uint32_t SubscriptionsDeltaHash(const FieldResult &fr, Number deadzone) {
             uint32_t above5 = ((raw < 0 ? 1u : 0u) << 4) | ((((uint32_t)av * 2654435761u) >> 28) & 0xF);
             uint32_t below5 = 0;
             if (dz > 0) {
-                // av < dz here, so av*31 cannot overflow when dz is a 16.16 value.
-                below5 = ((uint32_t)av * 31u) / (uint32_t)dz;
+                // av can exceed dz (the OnChange hash path calls this for any change; the
+                // vector delta path calls it after the distance gate), so scale in 64 bits and
+                // saturate at the top bucket.
+                below5 = (uint32_t)(((uint64_t)(uint32_t)av * 31u) / (uint32_t)dz);
                 if (below5 > 31) below5 = 31;
             }
             packed |= ((above5 << 5) | below5) << (10 * a);

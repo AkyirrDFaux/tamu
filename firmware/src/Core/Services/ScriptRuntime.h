@@ -242,8 +242,8 @@ __attribute__((noinline)) static void HandleScript(const PacketFrame &frame) {
             LoadedScript *s = ScriptActive(frame.payload[0]);
             uint8_t varId = frame.payload[1];
             if (!s || varId >= s->varCount) { RespondStatus(frame, false); return; }
-            // The wire payload is 4-byte padded, so the value length comes from the
-            // variable's declared size, not from the remaining payload bytes.
+            // The value length comes from the variable's declared size (the request carries
+            // exactly that many value bytes).
             uint16_t vlen = s->varMeta[varId].Size;
             if ((uint16_t)(2 + vlen) > bytes) { RespondStatus(frame, false); return; }
             RespondStatus(frame, ScriptSetVariable(frame.payload[0], varId, frame.payload + 2, vlen));

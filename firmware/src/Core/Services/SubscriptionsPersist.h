@@ -38,7 +38,8 @@ static void SaveRequesterTable() {
 }
 
 static void LoadRequesterTable() {
-    uint8_t buf[256];
+    // The whole file: a count byte plus every entry (1 + 16*24 = 385 B).
+    uint8_t buf[1 + MAX_REQUESTER_SUBS * REQUESTER_FILE_ENTRY_SIZE];
     uint16_t len = Storage.ReadFromFile(SubscriptionsRequesterFile, 0, sizeof(buf), (char*)buf);
     for (int i = 0; i < MAX_REQUESTER_SUBS; i++) RequesterClearEntry(&requesterTable[i]);
     if (len == 0) return;
@@ -117,26 +118,29 @@ void ReRegisterSubscriptionsForNode(uint16_t addr) {
     }
 }
 
-// Nodes that registered since the last tick, as a bitmask of addresses. The discover handler
-// only *requests* the re-push: it runs inside packet dispatch and must not be delayed by
-// protocol traffic to a node that may not even be answering yet (a verified send blocks and
-// retries). SubscriptionsTick does the sending from the main loop.
-static uint16_t s_reregisterPending = 0;
+// Nodes that registered since the last tick. The discover handler only *requests* the re-push:
+// it runs inside packet dispatch and must not be delayed by protocol traffic to a node that may
+// not even be answering yet (a verified send blocks and retries). SubscriptionsTick does the
+// sending from the main loop. A short address list (not a bitmask) keeps any 10-bit node id
+// addressable; a duplicate request is dropped.
+static const uint8_t kReRegisterMax = 4;
+static uint16_t s_reregisterPending[kReRegisterMax];
+static uint8_t s_reregisterCount = 0;
 
 void SubscriptionsRequestReRegister(uint16_t addr) {
-    if (addr > 0 && addr < 16)
-        s_reregisterPending |= (uint16_t)(1u << addr);
+    if (addr == ADDR_INVALID) return;
+    for (uint8_t i = 0; i < s_reregisterCount; i++)
+        if (s_reregisterPending[i] == addr) return; // already queued
+    if (s_reregisterCount < kReRegisterMax)
+        s_reregisterPending[s_reregisterCount++] = addr;
 }
 
 // Called from SubscriptionsTick: performs the deferred re-pushes.
 static void SubscriptionsReRegisterPending() {
-    uint16_t pending = s_reregisterPending;
-    s_reregisterPending = 0;
-    while (pending) {
-        uint16_t addr = (uint16_t)(pending & (~pending + 1)); // lowest set bit
-        pending &= (uint16_t)(pending - 1);
-        ReRegisterSubscriptionsForNode(addr);
-    }
+    uint8_t count = s_reregisterCount;
+    s_reregisterCount = 0;
+    for (uint8_t i = 0; i < count; i++)
+        ReRegisterSubscriptionsForNode(s_reregisterPending[i]);
 }
 
 // Keeps the provider side alive: until the first value arrives the entry re-registers on a

@@ -269,12 +269,19 @@ class _FileViewPageState extends State<FileViewPage> {
       case StorageFileType.layout:
         return _layoutView();
       case StorageFileType.dynamicTable:
-      case StorageFileType.backup:
+      case StorageFileType.backup: {
+        // The System segment is 20 B on a core (Name + NetID, padded) and 16 B on a node; the
+        // System block's field count (>= 8 includes NetID) tells them apart.
+        final hasNetId = widget.blocks?.any((b) =>
+                b != null && b.type == systemBlockTypeValue && b.meta.size >= 8) ??
+            true;
         return MemoryBackupView(
             fileName: widget.name,
             data: data,
             blocks: widget.blocks,
-            staticFields: _staticFields);
+            staticFields: _staticFields,
+            hasNetId: hasNetId);
+      }
       case StorageFileType.dynamicValues:
         // The persistent value space, addressable only together with its DT table.
         return _hexView();
@@ -345,12 +352,17 @@ class MemoryBackupView extends StatelessWidget {
   /// The static blocks' persistent fields, read from the device (the `.SV` layout source).
   final StaticFieldLayout staticFields;
 
+  /// Whether the device has the System NetID field (a core): it changes the System segment
+  /// size in the `.SV` space.
+  final bool hasNetId;
+
   const MemoryBackupView(
       {super.key,
       required this.fileName,
       required this.data,
       this.blocks,
-      this.staticFields = const {}});
+      this.staticFields = const {},
+      this.hasNetId = true});
 
   Widget _blockCard(String title, String subtitle, List<Widget> children) {
     return Card(
@@ -420,7 +432,8 @@ class MemoryBackupView extends StatelessWidget {
       for (final b in blocks ?? const [])
         if (b != null && isStaticRegistryType(b.type)) (type: b.type, inst: b.inst),
     ];
-    final layout = StaticSpaceLayout.fromRegistry(registry, staticFields);
+    final layout =
+        StaticSpaceLayout.fromRegistry(registry, staticFields, hasNetId: hasNetId);
     final rows = <Widget>[];
     for (final e in decodeSv(data, layout, registry)) {
       String title;

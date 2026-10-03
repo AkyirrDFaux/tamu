@@ -264,7 +264,8 @@ Future<void> _loadVisibleFields() async {
           sv: sv,
           staticRegistry: registry,
           staticFields: await _ensureStaticFields(),
-          dynamic: dynamic);
+          dynamic: dynamic,
+          hasNetId: _hasNetId);
       if (!mounted) return;
       setState(() => _backup = decoded);
     } catch (e) {
@@ -292,6 +293,13 @@ Future<void> _loadVisibleFields() async {
         for (final b in _blockMetas ?? const [])
           if (b != null && isStaticRegistryType(b.type)) (type: b.type, inst: b.inst),
       ];
+
+  /// The device has the System NetID field (a core) when its System block reports >= 8 fields;
+  /// it changes the System segment size in the `.SV` space.
+  bool get _hasNetId =>
+      _blockMetas?.any((b) =>
+          b != null && b.type == systemBlockTypeValue && b.meta.size >= 8) ??
+      true;
 
   /// Reads one storage file's bytes, or null when it is missing.
   Future<List<int>?> _readFile(String name) async {
@@ -329,7 +337,8 @@ Future<void> _loadVisibleFields() async {
 
     // `.SV` is the raw static persistent space: write the field at its computed offset.
     final layout =
-        StaticSpaceLayout.fromRegistry(_staticRegistry, await _ensureStaticFields());
+        StaticSpaceLayout.fromRegistry(_staticRegistry, await _ensureStaticFields(),
+            hasNetId: _hasNetId);
     final size = layout.sizeOf(blockType, field);
     if (size == null) return false;
     var value = live.value;

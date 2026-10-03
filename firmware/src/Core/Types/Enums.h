@@ -62,10 +62,6 @@ enum class DataType : uint16_t {
     Texture        = 0x102
 };
 
-inline bool IsKeyedType(DataType Type){
-    return ((uint16_t)Type & 0x3FF) >= (uint16_t)DataType::UnknownKeyed;
-}
-
 enum class BlockType : uint16_t {
     None           = 0x00,  // tombstone: no block here; stable until save compacts
     Undefined      = 0x01,  // valid block, type not yet specified

@@ -18,7 +18,8 @@ void main() {
     );
     final payload = sub.toCreatePayload();
     expect(payload.length, 28);
-    // requesterAddr(2) trid(2) targetReg(4) sourceReg(4) trigger(1)+pad(3) period(4) min(4) dz(4)
+    // providerAddr(2) trid(2) table(16: sourceReg+trigger+minTime+period+deadzone)
+    // targetReg(4) timeout(4)
     final decoded = RequesterSubscription.fromBytes(0, payload);
     expect(decoded.providerAddr, 2);
     expect(decoded.trigger, TriggerType.deltaPeriodic);

@@ -7,7 +7,7 @@ library;
 
 import 'types.dart';
 
-/// Number of System block fields (firmware SYSTEM_FIELD_COUNT).
+/// Number of System block fields on a core (the DAS exposes fields 0-6, no NetID/App Active).
 const int systemFieldCount = 9;
 
 const Map<int, String> systemFieldNames = {
@@ -22,11 +22,12 @@ const Map<int, String> systemFieldNames = {
   8: 'App Active',
 };
 
-/// Field -> (key -> display name). Fields 1 (SN) and 6 (Name) are addressed at key
-/// 0xFF by the UI; the firmware resolves them regardless of key.
+/// Field -> (key -> display name). Every System entry is addressed at key 0 (the firmware
+/// schema is one BlockEntry per field; a struct's position is not on the wire - the app reads
+/// the whole struct and slices the member locally).
 const Map<int, Map<int, String>> systemFieldKeys = {
   0: {0: 'Device Type', 1: 'Capability', 2: 'Software version'},
-  1: {0xFF: 'Serial Number'},
+  1: {0: 'Serial Number'},
   2: {0: 'Short Address'},
   3: {
     0: 'Uptime',
@@ -37,7 +38,7 @@ const Map<int, Map<int, String>> systemFieldKeys = {
   },
   4: {0: 'Used RAM', 1: 'Total RAM'},
   5: {0: 'Used FLASH', 1: 'Total FLASH'},
-  6: {0xFF: 'Name'},
+  6: {0: 'Name'},
   7: {0: 'NetID'},
   8: {0: 'App Active'},
 };

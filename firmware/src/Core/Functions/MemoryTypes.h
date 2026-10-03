@@ -42,7 +42,6 @@ inline uint16_t ValueInfoType(const ValueInfo &v) { return (uint16_t)(v.Type & 0
 inline uint16_t ValueInfoType(uint16_t type) { return (uint16_t)(type & 0x3FF); }
 inline bool ValueIsReadOnly(const ValueInfo &v)   { return (v.Flags & ValueReadOnly) != 0; }
 inline bool ValueIsPersistent(const ValueInfo &v) { return (v.Flags & ValuePersistent) != 0; }
-inline bool ValueIsTrigger(const ValueInfo &v)    { return (v.Flags & ValueTrigger) != 0; }
 
 struct FieldResult
 {

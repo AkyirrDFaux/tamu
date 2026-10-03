@@ -89,12 +89,12 @@ void HandleSNDB(const PacketFrame &frame)
             RegistryEntry entry;
             bool found = false;
 
-            // The wire pads payloads to 4 bytes: an ID request (2 B) arrives as 4,
-            // an SN request (14 B) as 16. Disambiguate by the padded byte count.
-            if (PayloadBytes(frame) == 4) {
+            // Disambiguate by length (Docs: "ID or SN (based on length)"): an ID request is a
+            // 2-byte uint16, an SN request the 14-byte serial. Payloads are not padded.
+            if (PayloadBytes(frame) == 2) {
                 uint16_t lookup_id = *reinterpret_cast<const uint16_t *>(frame.payload);
                 found = SNDB::GetEntry(lookup_id, entry);
-            } else if (PayloadBytes(frame) == 16) {
+            } else if (PayloadBytes(frame) >= 14) {
                 const SerialNumber *lookup_sn = reinterpret_cast<const SerialNumber *>(frame.payload);
                 uint16_t lookup_id = SNDB::FindShortID(*lookup_sn);
                 if (lookup_id != ADDR_INVALID) {

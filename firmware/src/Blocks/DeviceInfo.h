@@ -6,8 +6,8 @@
 #include "Core/Types/Number.h"
 
 // Device identity and status. These are owned by the Device service (see
-// Docs/Services/System Block and Device Commands.md) and are no longer System Memory blocks; they are reported
-// through the service functions (Device type, Serial number, Capability, Uptime, Loop Time).
+// Docs/Services/System Block and Device Commands.md) and reported through the service functions
+// (Device type, Serial number, Capability, Uptime, Loop Time) and the System block.
 
 struct SerialNumber{
     uint8_t bytes[14];

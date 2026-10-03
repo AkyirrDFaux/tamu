@@ -1841,6 +1841,25 @@ to the bank types, and a test helper put the Persistent flag in the ValueInfo *t
     `trigger None`; app client/types/UI/backup + tests. `test.sh` green; 8 HIL suites pass
     (core + DAS reflashed). **Sizes: core 626 132 B / DAS 12 288 B** (DAS stack 984).
   - [x] **`.SUBREQ`** file gets a leading dot (name `.SUBREQ`).
+  - [x] **System block rework + full codebase audit (2026-10-03).** The System block became a
+    `StaticBlockDescriptor` (`System_Block` + `System_Entries`, one entry per field at key 0;
+    struct fields 0/3/4/5 `Undefined` with Size = the member sum; Name a fixed space-padded
+    `char[16]`), and read/write/enumerate/meta now share the static-block machinery
+    (`VirtualGet` hook, `FindBlock`, a core-only NetID write trigger) instead of the
+    `HandleSystemBlockRead`/`Write` special cases. A full audit then (strict
+    `-Wunused-function`/`-Wshadow` builds + two review agents) fixed real bugs:
+    - the provider re-register bitmask passed the bit *value* as the address (so it never
+      matched) and dropped node ids >= 16 - now a short pending list;
+    - `LoadRequesterTable`'s 256 B buffer truncated a full 385 B `.SUBREQ`;
+    - SNDB Read (CID 11) still disambiguated by the removed 4-byte padding (now 2 B id / 14 B SN);
+    - the vector delta hash's `av*31` could overflow (now 64-bit);
+    - the app's `.SV` layout put NetID at offset 17 (16) and used a 20 B System segment on a
+      node (16) - now `hasNetId`-aware.
+    Also removed dead code (`SubSetMinTime`, `ValueIsTrigger`, `IsKeyedType`,
+    `RegisterGetSystemField`, `SubscriptionsCancelProvider` on the DAS) and fixed stale
+    comments (`4-byte padded`, `DeviceName`, `SYSTEM_FIELD_COUNT`, index-based subscriptions).
+    **DAS 11 776 -> 11 332 B; core 625 692 -> 625 480 B.** `test.sh` green (146 app tests,
+    analyzer clean); all 8 HIL suites pass.
 
 Legacy to delete (covered by the layers): `BlockMeta` packing + conversions; dynamic Trigger path;
 `0x3FE`/`0x3FF` literals; `STATLOG`; the define rename; `HandleGetMemUsage`/`HandleReadBackup`;

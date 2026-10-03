@@ -67,8 +67,9 @@ String formatValue(DataType type, List<int> bytes) {
       return DeviceType.fromValue(bytes[0] | (bytes[1] << 8)).label;
     case DataType.id:
     case DataType.netAddr:
-      if (bytes.length < 2) return '-';
-      return idToString(bytes[0] | (bytes[1] << 8));
+      if (bytes.length >= 2) return idToString(bytes[0] | (bytes[1] << 8));
+      if (bytes.length == 1) return bytes[0].toString(); // 1-byte Id (System NetID)
+      return '-';
     case DataType.colour:
       if (bytes.length < 4) return '-';
       return '#${bytes.sublist(0, 4).map((b) => b.toRadixString(16).padLeft(2, '0')).join()}';

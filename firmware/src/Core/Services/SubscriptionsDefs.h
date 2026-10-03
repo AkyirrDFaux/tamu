@@ -4,12 +4,8 @@
 //
 // Part of Core/Services/Subscriptions.h (included from there).
 
-
-#pragma once
 #include "Core/Functions/Packet.h"
-#include "Core/Functions/TimeSync.h"
 #include "Core/Functions/MemoryTypes.h"
-#include "Core/Functions/Dispatcher.h"
 #include "Core/Services/Register.h"
 #include "Core/Services/Storage.h"
 #include "Core/Types/Enums.h"
@@ -60,11 +56,6 @@ static_assert(sizeof(SubscriptionTable) == 16, "the subscription table is 16 byt
 
 static inline uint32_t SubMinTime(const SubscriptionTable &t) {
     return (uint32_t)t.minTime[0] | ((uint32_t)t.minTime[1] << 8) | ((uint32_t)t.minTime[2] << 16);
-}
-static inline void SubSetMinTime(SubscriptionTable &t, uint32_t ms) {
-    t.minTime[0] = (uint8_t)ms;
-    t.minTime[1] = (uint8_t)(ms >> 8);
-    t.minTime[2] = (uint8_t)(ms >> 16);
 }
 
 // Docs: "Timeout 120s, renewed with new request." Both sides expire entries that stop being
