@@ -91,6 +91,9 @@ struct StaticBlockDescriptor
     void* const PersistentData;
     const BlockSchema* const Schema;
     const char *const Name;
+    // Computed-field getter (the System block): returns the field's value pointer, or nullptr
+    // to fall back to the storage path (so the persistent Name/NetID keep their real storage).
+    void* (*const VirtualGet)(uint16_t field, uint8_t key) = nullptr;
 
     const void* Base(const ValueInfo &info) const {
         return ValueIsPersistent(info) ? PersistentData : VolatileData;
@@ -114,10 +117,14 @@ struct StaticBlockDescriptor
 
     // Unified entry retrieval by (field, key) (linear over the literal table).
     FieldResult Get(uint16_t field, uint8_t key) const {
-        FieldResult Output;
         const BlockEntry *e = FindEntry(field, key);
-        if (!e) return Output;
+        if (!e) return FieldResult{};
+        FieldResult Output;
         Output.Descriptor = e->Info;
+        if (VirtualGet) {
+            void *p = VirtualGet(field, key);
+            if (p) { Output.Data = p; return Output; }
+        }
         Output.Data = const_cast<uint8_t*>(static_cast<const uint8_t*>(Base(e->Info))) + e->Offset;
         return Output;
     }
@@ -140,14 +147,21 @@ struct StaticBlockDescriptor
         uint16_t data_len = Length;
         uint16_t field_type = ValueInfoType(Field.Descriptor);
         // String/Filename fields are space-padded up to their declared size when a shorter
-        // value is written (filenames are fixed 8-char records).
-        if ((field_type == (uint16_t)DataType::String || field_type == (uint16_t)DataType::Filename) &&
-            Length < Field.Descriptor.Size && Field.Descriptor.Size <= sizeof(pad_buf))
+        // value is written, and clamped to it when a longer one is (filenames are fixed
+        // 8-char records; the System Name is a fixed 16).
+        if (field_type == (uint16_t)DataType::String || field_type == (uint16_t)DataType::Filename)
         {
-            memset(pad_buf, ' ', sizeof(pad_buf));
-            memcpy(pad_buf, Input, Length);
-            data = pad_buf;
-            data_len = Field.Descriptor.Size;
+            if (Length < Field.Descriptor.Size && Field.Descriptor.Size <= sizeof(pad_buf))
+            {
+                memset(pad_buf, ' ', sizeof(pad_buf));
+                memcpy(pad_buf, Input, Length);
+                data = pad_buf;
+                data_len = Field.Descriptor.Size;
+            }
+            else if (Length > Field.Descriptor.Size)
+            {
+                data_len = Field.Descriptor.Size; // clamp; memcpy copies Size bytes anyway
+            }
         }
         else if (Length != Field.Descriptor.Size)
         {

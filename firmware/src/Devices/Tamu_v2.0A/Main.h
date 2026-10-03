@@ -13,7 +13,7 @@
 #include "Core/Functions/SNDB.h"
 #include "Core/Functions/TimeSync.h"
 #include "Core/Functions/Memory.h"
-#include "Core/Services/StaticMemory.h" // SYSTEM_FIELD_COUNT + the active-flag array sizing
+#include "Core/Services/StaticMemory.h" // SystemPersistent + the active-flag array sizing
 
 // Function declarations
 void LoadAllBackups();

@@ -15,8 +15,6 @@ bool RegisterGetByBlockInfo(uint32_t bi, ValueInfo &m, uint8_t *vbuf, uint8_t &v
     uint8_t field = BlockInfoField(bi);
     uint8_t key = BlockInfoKey(bi);
     vsz = 0;
-    if (type == 0 && inst == 0)
-        return RegisterGetSystemField(field, key, m, vbuf, vsz);
 #ifdef USE_SCRIPTS
     if (BlockTypeRange::IsScript(type)) { // Script I/O (inputs/outputs)
         ValueInfo sm;
@@ -44,9 +42,9 @@ bool RegisterGetByBlockInfo(uint32_t bi, ValueInfo &m, uint8_t *vbuf, uint8_t &v
         return true;
     }
 #endif
-    int idx = FindStaticBlock(type, inst);
-    if (idx < 0) return false;
-    FieldResult fr = static_block_registry[idx].Get(field, key);
+    const StaticBlockDescriptor *blk = FindBlock(type, inst);
+    if (!blk) return false;
+    FieldResult fr = blk->Get(field, key);
     if (!fr.Data) return false;
     m = fr.Descriptor;
     uint8_t n = fr.Descriptor.Size;
@@ -77,10 +75,9 @@ bool RegisterSetByBlockInfo(uint32_t bi, const ValueInfo &m, const uint8_t *val,
         return false;
 #endif
     }
-    int idx = FindStaticBlock(type, inst);
-    if (idx < 0) return false;
-    if (!static_block_registry[idx].Set(field, key, val, vlen, m)) return false;
-    return true;
+    const StaticBlockDescriptor *blk = FindBlock(type, inst);
+    if (!blk) return false;
+    return blk->Set(field, key, val, vlen, m);
 }
 
 static void HandleRegister(const PacketFrame &frame) {
@@ -110,7 +107,6 @@ static void HandleRegister(const PacketFrame &frame) {
     // Read (single entry: the request carries one BlockInfo).
     if (cid == (uint8_t)RegisterCid::Read) {
         if (PayloadBytes(frame) != 4) { RespondStatus(frame,false); return; }
-        if (type==0 && inst==0) { HandleSystemBlockRead(frame, bi, field, key); return; }
 #ifdef USE_SCRIPTS
         if (BlockTypeRange::IsScript(type)) {
             HandleScriptBlockRead(frame, bi, BlockTypeRange::ScriptGlobal(type, inst), field, key);
@@ -131,12 +127,11 @@ static void HandleRegister(const PacketFrame &frame) {
 
     // Write.
     if (cid == (uint8_t)RegisterCid::Write) {
-        if (type==0 && inst==0) { HandleSystemBlockWrite(frame, field); return; }
         if (PayloadBytes(frame) < 8) { RespondStatus(frame,false); return; }
         const ValueInfo *desc = (const ValueInfo *)(frame.payload + 4);
         const uint8_t *val = frame.payload+8;
         // The ValueInfo.Size must match the value bytes actually present: a larger Size
-        // would make the write path copy past the frame (the System Name path clamps too).
+        // would make the write path copy past the frame.
         uint16_t vlen = desc->Size;
         uint16_t avail = (uint16_t)(PayloadBytes(frame) - 8);
         if (vlen > avail) vlen = avail;

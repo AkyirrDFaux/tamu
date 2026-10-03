@@ -80,20 +80,6 @@ static inline FieldResult SubscriptionsGetField(uint32_t blockInfo) {
     uint8_t field = BlockInfoField(blockInfo);
     uint8_t key = BlockInfoKey(blockInfo);
 
-    if (type == 0 && inst == 0) {
-        // System fields are synthesised on the fly; keep the value in a shared buffer
-        // (single-threaded main loop, and the caller consumes it before any nested call).
-        static uint8_t s_sysFieldBuf[24];
-        ValueInfo m;
-        uint8_t vsz = 0;
-        if (RegisterGetSystemField(field, key, m, s_sysFieldBuf, vsz)) {
-            FieldResult fr;
-            fr.Descriptor = m;
-            fr.Data = s_sysFieldBuf;
-            return fr;
-        }
-        return FieldResult{};
-    }
 #ifdef USE_SCRIPTS
     if (BlockTypeRange::IsScript(type)) { // Script I/O (inputs/outputs)
         ValueInfo m;
@@ -123,9 +109,11 @@ static inline FieldResult SubscriptionsGetField(uint32_t blockInfo) {
         return FieldResult{};
     }
 #endif
-    int idx = FindStaticBlock(type, inst);
-    if (idx < 0) return FieldResult{};
-    return static_block_registry[idx].Get(field, key);
+    // The System block (type 0) and every static block share the descriptor lookup; the System
+    // fields are synthesised by its VirtualGet into a shared buffer.
+    const StaticBlockDescriptor *blk = FindBlock(type, inst);
+    if (!blk) return FieldResult{};
+    return blk->Get(field, key);
 }
 
 // ---------------------------------------------------------------------------

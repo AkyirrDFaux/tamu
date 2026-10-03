@@ -82,27 +82,57 @@ bool RegisterGetSystemField(uint8_t field, uint8_t key, ValueInfo &m, uint8_t *v
     return true;
 }
 
-static void HandleSystemBlockRead(const PacketFrame &frame, uint32_t bi, uint8_t field, uint8_t key) {
-    if (field==0xFF) {
-        // The same shape as every other block meta (Bi, ValueInfo, 16-char name); the System
-        // block has no name of its own.
-        SendBlockMetaResponse(frame, bi, (uint16_t)BlockType::System, SYSTEM_FIELD_COUNT, "", 0);
-        return;
+// The System block as a static descriptor: System_Entries is the schema, Name/NetID are the
+// storage-backed persistent fields, and the computed fields come from SystemGet.
+static void* SystemGet(uint16_t field, uint8_t key) {
+    if (field == SYSTEM_FIELD_NAME) return nullptr; // storage-backed (fixed 16-char field)
+#ifdef TYPE_CORE
+    if (field == SYSTEM_FIELD_NETID) {
+        // The live net (the stored value applies on reboot); the write stores it via a trigger.
+        static uint8_t s_netId;
+        s_netId = DeviceStatus.NetId;
+        return &s_netId;
     }
+#endif
+    static uint8_t s_sysValueBuf[24];
+    ValueInfo m; uint8_t vsz = 0;
+    if (!RegisterGetSystemField((uint8_t)field, (uint8_t)key, m, s_sysValueBuf, vsz)) return nullptr;
+    return s_sysValueBuf;
+}
 
-    // All system fields resolve through the shared RegisterGetSystemField (single source of
-    // truth - the Subscriptions service uses the same path), then reply through the same helper
-    // the static blocks use.
-    ValueInfo m = {}; uint8_t vsz=0; uint8_t vbuf[24]={0};
-    if (!RegisterGetSystemField(field, key, m, vbuf, vsz))
-    {
-        RespondStatus(frame,false);
-        return;
-    }
-    FieldResult fr;
-    fr.Descriptor = m;
-    fr.Data = vbuf;
-    SendFieldResponse(frame, bi, fr);
+#ifdef TYPE_CORE
+// Docs: NetID 0 is unassigned and 0x3F is all-nets, so neither is a valid stored value. The
+// write stores it (applied on reboot) without touching the live DeviceStatus.NetId.
+static bool OnSystemNetIdWrite(const StaticBlockDescriptor &block, uint16_t field, const void *data, uint16_t len) {
+    (void)block; (void)field;
+    if (len < 1) return false;
+    const uint8_t v = *static_cast<const uint8_t *>(data);
+    if (v == 0 || v >= 0x3F) return false;
+    memcpy(&staticPer.system.NetId, data, 1);
+    return true;
+}
+static const BlockTrigger System_Triggers[] = { { MakeFieldKey(SYSTEM_FIELD_NETID, 0), OnSystemNetIdWrite } };
+#endif
+
+static const BlockSchema System_Schema = {
+    System_Entries, System_EntryCount,
+#ifdef TYPE_CORE
+    System_Triggers, (uint16_t)(sizeof(System_Triggers) / sizeof(System_Triggers[0])),
+#else
+    nullptr, 0,
+#endif
+    BlockType::System
+};
+static const StaticBlockDescriptor System_Block = {
+    nullptr, &staticPer, &System_Schema, "", SystemGet
+};
+
+// The descriptor for a (type, instance): the System block (type 0, inst 0) or a static registry
+// entry; nullptr when neither exists.
+static const StaticBlockDescriptor* FindBlock(uint16_t type, uint8_t inst) {
+    if (type == 0 && inst == 0) return &System_Block;
+    int idx = FindStaticBlock(type, inst);
+    return idx >= 0 ? &static_block_registry[idx] : nullptr;
 }
 
 #ifdef USE_DYNAMIC_BLOCKS
@@ -141,15 +171,14 @@ static void HandleScriptBlockRead(const PacketFrame &frame, uint32_t bi, uint16_
 #endif
 
 static void HandleStaticBlockRead(const PacketFrame &frame, uint32_t bi, uint16_t type, uint8_t inst, uint8_t field, uint8_t key) {
-    int idx = FindStaticBlock(type, inst);
-    if (idx < 0) { RespondStatus(frame,false); return; }
-    const StaticBlockDescriptor &blk = static_block_registry[idx];
+    const StaticBlockDescriptor *blk = FindBlock(type, inst);
+    if (!blk) { RespondStatus(frame,false); return; }
     if (field==0xFF) { // block meta
-        SendBlockMetaResponse(frame, bi, (uint16_t)blk.Schema->Type, (uint8_t)blk.Schema->EntryCount,
-                              blk.Name, (uint16_t)strlen(blk.Name));
+        SendBlockMetaResponse(frame, bi, (uint16_t)blk->Schema->Type, (uint8_t)blk->Schema->EntryCount,
+                              blk->Name, (uint16_t)strlen(blk->Name));
         return;
     }
-    FieldResult fr = blk.Get(field, key);
+    FieldResult fr = blk->Get(field, key);
     if(!fr.Data) { RespondStatus(frame,false); return; }
     SendFieldResponse(frame, bi, fr);
 }

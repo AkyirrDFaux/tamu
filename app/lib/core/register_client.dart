@@ -216,15 +216,15 @@ class RegisterClient {
   }
 
   /// Read field value (CID 1) for system block (type=0, inst=0). The struct fields (0, 3, 4, 5)
-  /// are read whole and the member the key selects is sliced out; the scalar fields (1, 2, 6, 7)
-  /// return as-is (the firmware ignores the key).
+  /// are read whole at key 0 (the struct position never goes on the wire) and the member the
+  /// key selects is sliced out; the scalar fields (1, 2, 6, 7) return as-is.
   Future<({ValueInfo meta, List<int> value})?> readField(int field, int key) async {
-    final payload = blockInfoBytes(0, 0, field, key);
+    final member = systemStructFields[field]?[key];
+    final payload = blockInfoBytes(0, 0, field, member != null ? 0 : key);
     final reply = await request(RegisterCid.read, payload: payload);
     if (reply == null || reply.length < 8) return null;
     final meta = ValueInfo.fromBytes(reply, 4);
     var value = valueSlice(reply, meta.size);
-    final member = systemStructFields[field]?[key];
     if (member != null) {
       final off = systemStructOffset(field, key) ?? 0;
       if (off + member.size <= value.length) {

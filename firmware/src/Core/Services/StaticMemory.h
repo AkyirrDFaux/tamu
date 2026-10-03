@@ -26,12 +26,3 @@ struct SystemPersistent
 
 #define SYSTEM_FIELD_NAME   6
 #define SYSTEM_FIELD_NETID  7
-
-// Number of system-block fields. NetID (7) is Core-only (Docs: "applies only after reboot")
-// and App Active (8) only exists on boards with an app interface, so a plain node like the DAS
-// exposes fields 0-6.
-#ifdef TYPE_CORE
-#define SYSTEM_FIELD_COUNT 9
-#else
-#define SYSTEM_FIELD_COUNT 7
-#endif
