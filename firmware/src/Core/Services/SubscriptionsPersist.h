@@ -14,11 +14,11 @@
 static const char* SubscriptionsRequesterFile = ".SUBREQ";
 
 // Docs: "recalls values from a file, which is a 1:1 copy of the table except timeout value."
-// Entry: providerAddr(2) + trid(2) + subscription table(16) + targetReg(4) = 24 B.
-#define SUB_FILE_ENTRY_SIZE 24
+// Entry: the requester wire prefix minus the timeout = providerAddr(2) + trid(2) + table(16)
+// + targetReg(4) = 24 B, so it is copied whole.
 
 static void SaveRequesterTable() {
-    uint8_t buf[1 + MAX_REQUESTER_SUBS * SUB_FILE_ENTRY_SIZE];
+    uint8_t buf[1 + MAX_REQUESTER_SUBS * REQUESTER_FILE_ENTRY_SIZE];
     uint16_t off = 0;
     uint8_t count = 0;
     for (int i = 0; i < MAX_REQUESTER_SUBS; i++) if (requesterTable[i].active) count++;
@@ -26,11 +26,8 @@ static void SaveRequesterTable() {
     for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
         RequesterEntry* e = &requesterTable[i];
         if (!e->active) continue;
-        // Off starts at 1 (the count byte): every field here is misaligned.
-        StoreUnaligned(buf + off, e->providerAddr); off += 2;
-        StoreUnaligned(buf + off, e->trid); off += 2;
-        off = SubTableSerialize(buf, off, e->sub);
-        StoreUnaligned(buf + off, e->targetReg); off += 4;
+        memcpy(buf + off, e, REQUESTER_FILE_ENTRY_SIZE);
+        off += REQUESTER_FILE_ENTRY_SIZE;
     }
     static const char tmp_name[8] = {'.','S','U','B','R','E','Q','~'};
     if (Storage.FileExists(tmp_name) != 0xFFFFFFFF)
@@ -48,14 +45,12 @@ static void LoadRequesterTable() {
 
     uint16_t off = 0;
     uint8_t count = buf[off++];
-    for (uint8_t i = 0; i < count && off + SUB_FILE_ENTRY_SIZE <= len; i++) {
-        uint16_t providerAddr = LoadUnaligned<uint16_t>(buf + off); off += 2;
-        uint16_t trid = LoadUnaligned<uint16_t>(buf + off); off += 2;
+    for (uint8_t i = 0; i < count && off + REQUESTER_FILE_ENTRY_SIZE <= len; i++) {
+        uint16_t trid = LoadUnaligned<uint16_t>(buf + off + 2);
         RequesterEntry* e = RequesterUpsert(trid);
         if (!e) break;
-        e->providerAddr = providerAddr;
-        off = SubTableDeserialize(buf, off, e->sub);
-        e->targetReg = LoadUnaligned<uint32_t>(buf + off); off += 4;
+        memcpy((void *)e, buf + off, REQUESTER_FILE_ENTRY_SIZE);
+        off += REQUESTER_FILE_ENTRY_SIZE;
         e->timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
         e->registeredAtMs = DeviceStatus.UptimeMs;
         e->lastRegisteredMs = 0;
@@ -74,10 +69,12 @@ static void RegisterRequesterProvider(RequesterEntry* e) {
 
 #ifdef USE_SUB_PROVIDE
     if (e->providerAddr == DeviceStatus.ShortAddress) {
-        bool isNew = (ProviderFindByTrid(e->trid) == nullptr);
-        ProviderEntry* p = ProviderUpsert(e->trid, DeviceStatus.ShortAddress);
+        ProviderEntry* p = ProviderFindByTrid(e->trid);
+        bool isNew = (p == nullptr);
+        if (!p) p = ProviderFindFree();
         if (!p) return;
         p->requesterAddr = DeviceStatus.ShortAddress;
+        p->trid = e->trid;
         p->sub = e->sub;
         p->timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
         if (isNew) {
@@ -92,7 +89,7 @@ static void RegisterRequesterProvider(RequesterEntry* e) {
 #endif
     // Remote provider: send the subscription table (0401, fire and forget).
     uint8_t payload[SUB_TABLE_WIRE_SIZE];
-    SubTableSerialize(payload, 0, e->sub);
+    memcpy(payload, &e->sub, SUB_TABLE_WIRE_SIZE);
     PacketFrame req;
     PacketConstruct(&req, e->providerAddr, MakeService(ServiceType::Subscriptions, 1),
                     e->trid, FLAG_START | FLAG_STOP, payload, SUB_TABLE_WIRE_SIZE);

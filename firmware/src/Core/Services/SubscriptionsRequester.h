@@ -36,6 +36,16 @@ struct RequesterEntry {
 
 static RequesterEntry requesterTable[MAX_REQUESTER_SUBS];
 
+// The wire prefix of the entry IS the struct prefix, so serialization is a plain copy of the
+// first 28 bytes (Docs "Requester table entry"): providerAddr, trid, table, targetReg, timeout.
+static_assert(offsetof(RequesterEntry, providerAddr) == 0, "wire order: providerAddr first");
+static_assert(offsetof(RequesterEntry, trid) == 2, "wire order: trid after providerAddr");
+static_assert(offsetof(RequesterEntry, sub) == 4, "wire order: subscription table after trid");
+static_assert(offsetof(RequesterEntry, targetReg) == 20, "wire order: targetReg after the table");
+static_assert(offsetof(RequesterEntry, timeout) == 24, "wire order: timeout after targetReg");
+#define REQUESTER_ENTRY_WIRE_SIZE 28
+#define REQUESTER_FILE_ENTRY_SIZE 24 // the wire entry minus the timeout (not persisted)
+
 // What makes a requester entry occupied (used by the shared table search).
 static bool RequesterOccupied(const RequesterEntry &e) { return e.active; }
 
@@ -147,17 +157,5 @@ static void HandleRequesterValueUpdate(const PacketFrame &frame) {
     // sent scalar value.
     const bool confirm = e->sub.trigger == TriggerType::OnChangeConfirm;
     ApplyRequesterValue(e, frame.payload, PayloadBytes(frame), confirm);
-}
-
-// Serializes one requester entry (Docs "Requester table entry", 28 B): providerAddr, trid,
-// the shared 16-byte subscription table, targetReg, timeout. Returns the advanced offset.
-static uint16_t RequesterEntrySerialize(uint8_t *buf, uint16_t off, const RequesterEntry *e) {
-    // The caller starts at off = 1 (the count byte), so every field below is misaligned.
-    StoreUnaligned(buf + off, e->providerAddr); off += 2;
-    StoreUnaligned(buf + off, e->trid); off += 2;
-    off = SubTableSerialize(buf, off, e->sub);
-    StoreUnaligned(buf + off, e->targetReg); off += 4;
-    StoreUnaligned(buf + off, e->timeout); off += 4;
-    return off;
 }
 #endif // USE_SUB_REQUEST

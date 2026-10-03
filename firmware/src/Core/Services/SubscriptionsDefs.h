@@ -44,39 +44,27 @@ static inline uint32_t Fnv1a(const uint8_t *data, uint8_t len) {
     return hash;
 }
 
-// Docs/Services/Subscriptions.md "Subscription table": the shared 16-byte describing record
-// embedded by both the requester and provider entries. On the wire it is
-// sourceReg(u32) | trigger(u8) | minTime(u24) | period(u32) | deadzone(i32) = 16 bytes.
+// Docs/Services/Subscriptions.md "Subscription table": the shared 16-byte describing record.
+// The struct IS the wire layout (sourceReg u32, trigger u8, minTime u24, period u32, deadzone
+// i32) with every u32 on a 4-byte offset, so it is copied whole - no field-by-field codec.
 struct SubscriptionTable {
     uint32_t sourceReg = 0;              // BlockInfo at the provider's register
     TriggerType trigger = TriggerType::None;
-    uint32_t minTimeMs = 0;              // minimum/retry interval, uint24 on the wire
+    uint8_t minTime[3] = {0, 0, 0};      // minimum/retry interval, uint24 little-endian
     uint32_t periodMs = 0;
     Number deadzone = N(0);              // for number/vector triggers
 };
+static_assert(sizeof(SubscriptionTable) == 16, "the subscription table is 16 bytes on the wire");
 
 #define SUB_TABLE_WIRE_SIZE 16
 
-static inline uint16_t SubTableSerialize(uint8_t *buf, uint16_t off, const SubscriptionTable &t) {
-    StoreUnaligned(buf + off, t.sourceReg); off += 4;
-    buf[off++] = (uint8_t)t.trigger;
-    uint32_t mt = t.minTimeMs & 0xFFFFFFu; // uint24, little-endian
-    buf[off++] = (uint8_t)mt;
-    buf[off++] = (uint8_t)(mt >> 8);
-    buf[off++] = (uint8_t)(mt >> 16);
-    StoreUnaligned(buf + off, t.periodMs); off += 4;
-    StoreUnaligned(buf + off, (uint32_t)t.deadzone.Value); off += 4;
-    return off;
+static inline uint32_t SubMinTime(const SubscriptionTable &t) {
+    return (uint32_t)t.minTime[0] | ((uint32_t)t.minTime[1] << 8) | ((uint32_t)t.minTime[2] << 16);
 }
-
-static inline uint16_t SubTableDeserialize(const uint8_t *buf, uint16_t off, SubscriptionTable &t) {
-    t.sourceReg = LoadUnaligned<uint32_t>(buf + off); off += 4;
-    t.trigger = (TriggerType)buf[off++];
-    t.minTimeMs = (uint32_t)buf[off] | ((uint32_t)buf[off + 1] << 8) | ((uint32_t)buf[off + 2] << 16);
-    off += 3;
-    t.periodMs = LoadUnaligned<uint32_t>(buf + off); off += 4;
-    t.deadzone = Number::FromRaw(LoadUnaligned<int32_t>(buf + off)); off += 4;
-    return off;
+static inline void SubSetMinTime(SubscriptionTable &t, uint32_t ms) {
+    t.minTime[0] = (uint8_t)ms;
+    t.minTime[1] = (uint8_t)(ms >> 8);
+    t.minTime[2] = (uint8_t)(ms >> 16);
 }
 
 // Docs: "Timeout 120s, renewed with new request." Both sides expire entries that stop being

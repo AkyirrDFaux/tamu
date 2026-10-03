@@ -38,6 +38,17 @@ struct ProviderEntry {
 
 static ProviderEntry providerTable[MAX_PROVIDER_SUBS];
 
+// The wire prefix of the entry IS the struct prefix, so serialization is a plain copy of the
+// first 32 bytes (Docs "Provider table entry"): requesterAddr, trid, table, lastSent, hash,
+// timeout. The provider table is not ordered (only the requester table is TRID-sorted).
+static_assert(offsetof(ProviderEntry, requesterAddr) == 0, "wire order: requesterAddr first");
+static_assert(offsetof(ProviderEntry, trid) == 2, "wire order: trid after requesterAddr");
+static_assert(offsetof(ProviderEntry, sub) == 4, "wire order: subscription table after trid");
+static_assert(offsetof(ProviderEntry, lastSentMs) == 20, "wire order: lastSent after the table");
+static_assert(offsetof(ProviderEntry, hash) == 24, "wire order: hash after lastSent");
+static_assert(offsetof(ProviderEntry, timeout) == 28, "wire order: timeout after hash");
+#define PROVIDER_ENTRY_WIRE_SIZE 32
+
 // What makes a provider entry occupied (used by the shared table search).
 static bool ProviderOccupied(const ProviderEntry &e) { return e.requesterAddr != 0; }
 
@@ -45,47 +56,14 @@ static ProviderEntry* ProviderFindByTrid(uint16_t trid) {
     return SubTableFindByTrid(providerTable, trid, ProviderOccupied);
 }
 
+static ProviderEntry* ProviderFindFree() {
+    for (int i = 0; i < MAX_PROVIDER_SUBS; i++)
+        if (providerTable[i].requesterAddr == 0) return &providerTable[i];
+    return nullptr;
+}
+
 static void ProviderClearEntry(ProviderEntry* e) {
     *e = ProviderEntry{};
-}
-
-// Deletes `e` and compacts the table, so the active entries stay a TRID-sorted prefix.
-static void ProviderRemove(ProviderEntry* e) {
-    int idx = (int)(e - providerTable);
-    for (int i = idx; i < MAX_PROVIDER_SUBS - 1; i++) providerTable[i] = providerTable[i + 1];
-    ProviderClearEntry(&providerTable[MAX_PROVIDER_SUBS - 1]);
-}
-
-// Finds the entry for `trid`, or allocates it at its sorted position. Returns nullptr when the
-// table is full. The new entry is marked occupied with the requester address.
-static ProviderEntry* ProviderUpsert(uint16_t trid, uint16_t requesterAddr) {
-    int count = 0;
-    while (count < MAX_PROVIDER_SUBS && providerTable[count].requesterAddr != 0) {
-        if (providerTable[count].trid == trid) return &providerTable[count];
-        count++;
-    }
-    if (count >= MAX_PROVIDER_SUBS) return nullptr;
-    int pos = 0;
-    while (pos < count && providerTable[pos].trid < trid) pos++;
-    for (int i = count; i > pos; i--) providerTable[i] = providerTable[i - 1];
-    ProviderClearEntry(&providerTable[pos]);
-    providerTable[pos].trid = trid;
-    providerTable[pos].requesterAddr = requesterAddr;
-    return &providerTable[pos];
-}
-
-// Serializes one provider entry (Docs "Provider table entry", 32 B): requesterAddr, trid,
-// the shared 16-byte subscription table, lastSent, hash, timeout.
-static uint16_t ProviderEntrySerialize(uint8_t *buf, uint16_t off, const ProviderEntry *e) {
-    // memcpy, not casts: the caller starts at off = 1 (the count byte), so every field here is
-    // misaligned and an `lw`/`sw` on the RV32EC CH32 node would fault (see SubscriptionsControl).
-    StoreUnaligned(buf + off, e->requesterAddr); off += 2;
-    StoreUnaligned(buf + off, e->trid); off += 2;
-    off = SubTableSerialize(buf, off, e->sub);
-    StoreUnaligned(buf + off, e->lastSentMs); off += 4;
-    StoreUnaligned(buf + off, e->hash); off += 4;
-    StoreUnaligned(buf + off, e->timeout); off += 4;
-    return off;
 }
 
 // The provider side of the requester's confirmation (CID 0 request): the payload is the
@@ -205,7 +183,7 @@ static void EvaluateProviderTriggers(uint32_t nowMs) {
 
         case TriggerType::OnChangePeriodic: {
             uint32_t h = Fnv1a((const uint8_t *)fr.Data, vlen);
-            if (h != e->hash && elapsed >= e->sub.minTimeMs) { send = true; e->hash = h; }
+            if (h != e->hash && elapsed >= SubMinTime(e->sub)) { send = true; e->hash = h; }
             else if (e->sub.periodMs > 0 && elapsed >= e->sub.periodMs) { send = true; e->hash = h; }
             break;
         }
@@ -213,7 +191,7 @@ static void EvaluateProviderTriggers(uint32_t nowMs) {
         case TriggerType::OnChangeConfirm: {
             // Pure bit comparison; repeats until confirmed (hash updates on confirmation).
             uint32_t h = Fnv1a((const uint8_t *)fr.Data, vlen);
-            send = (h != e->hash) && (elapsed >= e->sub.minTimeMs);
+            send = (h != e->hash) && (elapsed >= SubMinTime(e->sub));
             break;
         }
 
@@ -227,7 +205,7 @@ static void EvaluateProviderTriggers(uint32_t nowMs) {
                                                                      : (cur != e->lastBool);
             e->lastBool = cur;
             if (edge) e->hash++; // counter; send on increase (not sooner than the retry interval)
-            send = (e->hash != e->sentCounter) && (elapsed >= e->sub.minTimeMs);
+            send = (e->hash != e->sentCounter) && (elapsed >= SubMinTime(e->sub));
             if (send) e->sentCounter = e->hash;
             break;
         }
@@ -240,7 +218,7 @@ static void EvaluateProviderTriggers(uint32_t nowMs) {
                 memcpy(&raw, fr.Data, 4);
                 uint32_t delta = SubscriptionsAbsDelta(raw, (int32_t)e->hash);
                 uint32_t dz = e->sub.deadzone.Value > 0 ? (uint32_t)e->sub.deadzone.Value : 0;
-                if (delta >= dz && elapsed >= e->sub.minTimeMs) {
+                if (delta >= dz && elapsed >= SubMinTime(e->sub)) {
                     send = true;
                     e->hash = (uint32_t)raw;
                 } else if (e->sub.periodMs > 0 && elapsed >= e->sub.periodMs) {
@@ -261,7 +239,7 @@ static void EvaluateProviderTriggers(uint32_t nowMs) {
                 // units at 1/256 resolution; a deadzone below 1/256 still means "any change".
                 uint32_t dz = e->sub.deadzone.Value > 0 ? ((uint32_t)e->sub.deadzone.Value >> 8) : 0;
                 uint32_t dz2 = dz > 0xFFFFu ? 0xFFFFFFFFu : dz * dz;
-                if (SubscriptionsVectorDist2(fr, e->lastVec) >= dz2 && elapsed >= e->sub.minTimeMs)
+                if (SubscriptionsVectorDist2(fr, e->lastVec) >= dz2 && elapsed >= SubMinTime(e->sub))
                     send = true;
                 else if (e->sub.periodMs > 0 && elapsed >= e->sub.periodMs)
                     send = true;
@@ -274,7 +252,7 @@ static void EvaluateProviderTriggers(uint32_t nowMs) {
             }
 #endif
             uint32_t h = SubscriptionsDeltaHash(fr, e->sub.deadzone);
-            if (h != e->hash && elapsed >= e->sub.minTimeMs) { send = true; e->hash = h; }
+            if (h != e->hash && elapsed >= SubMinTime(e->sub)) { send = true; e->hash = h; }
             else if (e->sub.periodMs > 0 && elapsed >= e->sub.periodMs) { send = true; e->hash = h; }
             break;
         }
