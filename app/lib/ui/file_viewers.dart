@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import '../core/block_registry.dart' show blockInfoFor;
 import '../core/storage_client.dart' show normalizeFileName;
 import '../core/device_backup.dart';
+import '../core/register_client.dart';
 import '../core/types.dart';
 import 'theme.dart' show kOrange, kSurfaceAlt;
 import 'value_editor.dart' show dataTypeLabel, formatValue;
@@ -84,13 +85,18 @@ class FileViewPage extends StatefulWidget {
   /// field layout from these). null when unknown.
   final List<({int type, int inst, ValueInfo meta, String name})?>? blocks;
 
+  /// The static blocks' persistent fields (the `.SV` layout source). Read from the device
+  /// when not supplied.
+  final StaticFieldLayout staticFields;
+
   const FileViewPage(
       {super.key,
       required this.deviceId,
       required this.name,
       required this.size,
       required this.data,
-      this.blocks});
+      this.blocks,
+      this.staticFields = const {}});
 
   @override
   State<FileViewPage> createState() => _FileViewPageState();
@@ -99,6 +105,19 @@ class FileViewPage extends StatefulWidget {
 class _FileViewPageState extends State<FileViewPage> {
   bool _showRaw = false;
   int _bytesPerLine = 16;
+  StaticFieldLayout _staticFields = const {};
+
+  @override
+  void initState() {
+    super.initState();
+    _staticFields = widget.staticFields;
+    if (_staticFields.isEmpty) _loadStaticFields();
+  }
+
+  Future<void> _loadStaticFields() async {
+    final fields = await RegisterClient(deviceId: widget.deviceId).readStaticFieldLayout();
+    if (mounted) setState(() => _staticFields = fields);
+  }
 
   static final List<int> bytesPerLineOptions = [8, 16, 32, 64];
 
@@ -252,7 +271,10 @@ class _FileViewPageState extends State<FileViewPage> {
       case StorageFileType.dynamicTable:
       case StorageFileType.backup:
         return MemoryBackupView(
-            fileName: widget.name, data: data, blocks: widget.blocks);
+            fileName: widget.name,
+            data: data,
+            blocks: widget.blocks,
+            staticFields: _staticFields);
       case StorageFileType.dynamicValues:
         // The persistent value space, addressable only together with its DT table.
         return _hexView();
@@ -319,7 +341,15 @@ class MemoryBackupView extends StatelessWidget {
   /// The device's static blocks in registry order (used by the `.SV` decoder).
   final List<({int type, int inst, ValueInfo meta, String name})?>? blocks;
 
-  const MemoryBackupView({super.key, required this.fileName, required this.data, this.blocks});
+  /// The static blocks' persistent fields, read from the device (the `.SV` layout source).
+  final StaticFieldLayout staticFields;
+
+  const MemoryBackupView(
+      {super.key,
+      required this.fileName,
+      required this.data,
+      this.blocks,
+      this.staticFields = const {}});
 
   Widget _blockCard(String title, String subtitle, List<Widget> children) {
     return Card(
@@ -389,7 +419,7 @@ class MemoryBackupView extends StatelessWidget {
       for (final b in blocks ?? const [])
         if (b != null && isStaticRegistryType(b.type)) (type: b.type, inst: b.inst),
     ];
-    final layout = StaticSpaceLayout.fromRegistry(registry);
+    final layout = StaticSpaceLayout.fromRegistry(registry, staticFields);
     final rows = <Widget>[];
     for (final e in decodeSv(data, layout, registry)) {
       String title;

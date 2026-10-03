@@ -48,32 +48,11 @@ int _alignValue(int offset, int size) {
   return (offset + a - 1) & ~(a - 1);
 }
 
-/// The persistent fields of each static block type, in field order, as `(field, size, dataType)`.
-/// Mirrors the firmware's compile-time layout (firmware/src/Blocks/*.h); a type absent here has
-/// no persistent fields. Kept in one place so the offset computation cannot drift.
-const Map<int, List<({int field, int size, DataType dataType})>> staticPersistentFields = {
-  0x04: [(field: 0, size: 4, dataType: DataType.uint32)], // PWM: PWMFreq
-  0x05: [
-    // AccGyr: SamplingRate, RangeAcc, RangeAng, AccFilter, AngFilter
-    (field: 0, size: 1, dataType: DataType.enum_),
-    (field: 1, size: 1, dataType: DataType.enum_),
-    (field: 2, size: 1, dataType: DataType.enum_),
-    (field: 3, size: 4, dataType: DataType.number),
-    (field: 4, size: 4, dataType: DataType.number),
-  ],
-  0x06: [
-    // Vysi1: Offset (2x3 matrix), RenderBlock (signed index), LayoutFile (8-char name)
-    (field: 1, size: 24, dataType: DataType.matrix),
-    (field: 2, size: 4, dataType: DataType.integer),
-    (field: 3, size: 8, dataType: DataType.filename),
-  ],
-  0x08: [
-    // ResistiveMeasure: SamplingRate, SensorType, FilterCoeff
-    (field: 0, size: 4, dataType: DataType.number),
-    (field: 1, size: 1, dataType: DataType.enum_),
-    (field: 2, size: 4, dataType: DataType.number),
-  ],
-};
+/// A static block type's persistent fields, in field order, as read from the device
+/// (Register CID 1 field list + CID 2 per-field ValueInfo). `type` is the wire DataType
+/// value. The `.SV` decoder recomputes each field's offset from these sizes + the 32-bit
+/// alignment rule, so the app no longer mirrors the firmware's compile-time layout.
+/// (See `types.dart`.)
 
 /// One static block type's resolved persistent segment: the base offset of its first instance,
 /// the per-instance stride, and each persistent field's offset/size within the instance.
@@ -116,7 +95,8 @@ class StaticSpaceLayout {
   /// Builds the layout from the device's static registry (`(type, inst)` pairs). Types are laid
   /// out in ascending block-type order with their instances contiguous (Docs/Services/Register.md
   /// "System + Static memory blocks"); the System block (type 0) is the first segment.
-  factory StaticSpaceLayout.fromRegistry(List<({int type, int inst})> registry) {
+  factory StaticSpaceLayout.fromRegistry(
+      List<({int type, int inst})> registry, StaticFieldLayout fields) {
     final counts = <int, int>{};
     for (final r in registry) {
       counts[r.type] = (counts[r.type] ?? 0) + 1;
@@ -133,16 +113,16 @@ class StaticSpaceLayout {
     };
     var cursor = staticSpaceSystemSize;
     for (final t in ordered) {
-      final fields = staticPersistentFields[t] ?? const [];
+      final flds = fields[t] ?? const [];
       final fieldOffset = <int, int>{};
       final fieldSize = <int, int>{};
       final fieldType = <int, DataType>{};
       var inner = 0;
-      for (final f in fields) {
+      for (final f in flds) {
         inner = _alignValue(inner, f.size);
         fieldOffset[f.field] = inner;
         fieldSize[f.field] = f.size;
-        fieldType[f.field] = f.dataType;
+        fieldType[f.field] = DataType.fromValue(f.type);
         inner += f.size;
       }
       types[t] = StaticTypeLayout(
@@ -232,20 +212,17 @@ List<int>? svSaveField(
 /// replaced by [value], or null when that entry is not persistent or [value] is not the size
 /// the table declares.
 ///
-/// The persistent entries are concatenated in table order, so an entry's offset is the sum of
-/// the preceding persistent entries' sizes - the same rule `decodeDynamicValues` uses.
+/// Each persistent entry's bytes sit at its stored MemoryOffset in the DV space.
 List<int>? dvSaveField(
     DynamicTable table, List<int> values, int field, int key, List<int> value) {
-  var offset = 0;
   for (final e in table.entries) {
     if (!e.persistent) continue;
     if (e.field == field && e.key == key) {
-      if (value.length != e.size || offset + e.size > values.length) return null;
+      if (value.length != e.size || e.offset + e.size > values.length) return null;
       final out = List<int>.from(values);
-      out.setRange(offset, offset + e.size, value);
+      out.setRange(e.offset, e.offset + e.size, value);
       return out;
     }
-    offset += e.size;
   }
   return null; // not a persistent entry (Save is only offered for persistent fields)
 }
@@ -312,6 +289,7 @@ List<SubreqEntry> decodeSubreq(List<int> bytes) {
 class DynamicTableEntry {
   final int field;
   final int key;
+  final int offset; // MemoryOffset into the entry's value space
   final int type;
   final int flags;
   final int size;
@@ -319,6 +297,7 @@ class DynamicTableEntry {
   const DynamicTableEntry({
     required this.field,
     required this.key,
+    required this.offset,
     required this.type,
     required this.flags,
     required this.size,
@@ -335,11 +314,12 @@ class DynamicTable {
 
   const DynamicTable({required this.name, required this.entries});
 
-  /// Total bytes the persistent entries occupy in the sibling `DV_` file.
+  /// Total bytes the persistent entries occupy in the sibling `DV_` file (the space is
+  /// compacted, so the highest persistent MemoryOffset + size is its length).
   int get persistentSize {
     var total = 0;
     for (final e in entries) {
-      if (e.persistent) total += e.size;
+      if (e.persistent && e.offset + e.size > total) total = e.offset + e.size;
     }
     return total;
   }
@@ -347,9 +327,9 @@ class DynamicTable {
 
 /// Decodes a dynamic block's table. Layout (Docs/Services/Register.md "Dynamic Block
 /// Table"): Name (16 chars), entry count (uint16), 16-bit reserved padding, then the
-/// entries. Returns null when the bytes are too short to hold the header or the declared
-/// entries (a truncated or corrupt table). The block's bank type is not stored: it is
-/// derived from the file's global index.
+/// entries (Field&Key uint16, MemoryOffset uint16, ValueInfo). Returns null when the bytes
+/// are too short to hold the header or the declared entries (a truncated or corrupt table).
+/// The block's bank type is not stored: it is derived from the file's global index.
 DynamicTable? decodeDynamicTable(List<int> bytes) {
   const nameLen = 16;
   if (bytes.length < nameLen + 4) return null;
@@ -358,44 +338,45 @@ DynamicTable? decodeDynamicTable(List<int> bytes) {
   final name = String.fromCharCodes(nul >= 0 ? nameBytes.sublist(0, nul) : nameBytes);
   final entryCount = _u16(bytes, nameLen);
   var c = nameLen + 4; // entry count (2) + reserved padding (2)
-  if (c + entryCount * 6 > bytes.length) return null;
+  if (c + entryCount * 8 > bytes.length) return null;
 
   final entries = <DynamicTableEntry>[];
   for (var i = 0; i < entryCount; i++) {
     final fieldKey = _u16(bytes, c);
-    final info = ValueInfo.fromBytes(bytes, c + 2);
+    final offset = _u16(bytes, c + 2);
+    final info = ValueInfo.fromBytes(bytes, c + 4);
     entries.add(DynamicTableEntry(
       field: fieldKey >> 8,
       key: fieldKey & 0xFF,
+      offset: offset,
       type: info.type,
       flags: info.flags,
       size: info.size,
     ));
-    c += 6;
+    c += 8;
   }
   return DynamicTable(name: name, entries: entries);
 }
 
 /// Pairs a decoded table with its `DV_` bytes.
 ///
-/// The values are the persistent entries' bytes concatenated in *table order* (the
-/// firmware requires the DV length to be exactly [DynamicTable.persistentSize]); a
-/// mismatch means the two files do not belong together, so nothing is returned.
+/// Each persistent entry's bytes sit at its stored MemoryOffset in the DV space (the
+/// firmware requires the DV length to be exactly [DynamicTable.persistentSize]); a mismatch
+/// means the two files do not belong together, so nothing is returned.
 List<BackupEntry> decodeDynamicValues(int inst, DynamicTable table, List<int> values) {
   if (values.length != table.persistentSize) return const [];
   final out = <BackupEntry>[];
-  var offset = 0;
   for (final e in table.entries) {
     if (!e.persistent) continue;
+    if (e.offset + e.size > values.length) continue;
     out.add(BackupEntry(
       blockType: dynamicTypeForIndex(inst),
       inst: inst,
       field: e.field,
       key: e.key,
       meta: e.meta,
-      value: Uint8List.fromList(values.sublist(offset, offset + e.size)),
+      value: Uint8List.fromList(values.sublist(e.offset, e.offset + e.size)),
     ));
-    offset += e.size;
   }
   return out;
 }
@@ -466,11 +447,12 @@ class DeviceBackup {
   factory DeviceBackup.decode({
     List<int>? sv,
     List<({int type, int inst})> staticRegistry = const [],
+    StaticFieldLayout staticFields = const {},
     Map<int, ({List<int> table, List<int> values})> dynamic = const {},
   }) {
     final statics = <_StaticKey, BackupEntry>{};
     if (sv != null) {
-      final layout = StaticSpaceLayout.fromRegistry(staticRegistry);
+      final layout = StaticSpaceLayout.fromRegistry(staticRegistry, staticFields);
       for (final e in decodeSv(sv, layout, staticRegistry)) {
         statics[(blockType: e.blockType, inst: e.inst, field: e.field)] = e;
       }

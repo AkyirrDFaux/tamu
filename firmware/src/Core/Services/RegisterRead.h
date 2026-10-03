@@ -120,11 +120,10 @@ static void HandleStaticBlockRead(const PacketFrame &frame, uint32_t bi, uint16_
     if (idx < 0) { RespondStatus(frame,false); return; }
     const StaticBlockDescriptor &blk = static_block_registry[idx];
     if (field==0xFF) { // block meta
-        SendBlockMetaResponse(frame, bi, (uint16_t)blk.Schema->Type, blk.Schema->MapCount,
+        SendBlockMetaResponse(frame, bi, (uint16_t)blk.Schema->Type, (uint8_t)blk.Schema->EntryCount,
                               blk.Name, (uint16_t)strlen(blk.Name));
         return;
     }
-    if (field >= blk.Schema->MapCount) { RespondStatus(frame,false); return; }
     FieldResult fr = blk.Get(field);
     if(!fr.Data) { RespondStatus(frame,false); return; }
     SendFieldResponse(frame, bi, fr);

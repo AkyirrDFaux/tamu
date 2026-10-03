@@ -1810,6 +1810,15 @@ to the bank types, and a test helper put the Persistent flag in the ValueInfo *t
   a Read Only assertion; `deleteDynamic` now checks the status byte. `test.sh` green; all 12 HIL
   suites pass. **Sizes: core 625 688 B / DAS 11 832 B.**
 
+- [x] **Register doc-vs-implementation pass 2 - done.** Per the decisions: the `.DT_XX` table now
+  stores each entry's `MemoryOffset` (Field&Key + MemoryOffset + ValueInfo) and the load uses it;
+  the static block table is literal (`BlockEntry`) with a literal trigger table (`BlockTrigger`)
+  holding only the fields that actually have a trigger, so the per-field `nullptr` padding is gone
+  (`BlockSchema` no longer carries `Map`/`Offsets`/`MapCount`); and the app derives the static
+  `.SV` layout from the device's read commands (`RegisterClient.readStaticFieldLayout` - CID 1
+  field list + CID 2 ValueInfo) instead of the hardcoded `staticPersistentFields` mirror.
+  `test.sh` green; all 12 HIL suites pass. **Sizes: core 625 602 B / DAS 11 840 B.**
+
 Legacy to delete (covered by the layers): `BlockMeta` packing + conversions; dynamic Trigger path;
 `0x3FE`/`0x3FF` literals; `STATLOG`; the define rename; `HandleGetMemUsage`/`HandleReadBackup`;
 `scriptActiveMask`.

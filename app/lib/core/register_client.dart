@@ -307,6 +307,27 @@ class RegisterClient {
     return blocks;
   }
 
+  /// The persistent fields of each static block type, read from the device (CID 1 field list
+  /// + CID 2 per-field ValueInfo). The `.SV` layout is recomputed from these sizes + the
+  /// 32-bit alignment rule, so the app does not mirror the firmware's compile-time table.
+  Future<StaticFieldLayout> readStaticFieldLayout() async {
+    final out = <int, List<({int field, int size, int type})>>{};
+    final types = await enumerateBlockTypes();
+    if (types == null) return out;
+    for (final t in types) {
+      if (t.type == 0 || isDynamicType(t.type) || isScriptType(t.type)) continue;
+      final fields = await enumerateFieldIndexes(t.type, 0) ?? const <int>[];
+      final list = <({int field, int size, int type})>[];
+      for (final f in fields) {
+        final r = await readBlockField(t.type, 0, f, 0);
+        if (r == null || !r.meta.persistent) continue;
+        list.add((field: f, size: r.meta.size, type: r.meta.type));
+      }
+      if (list.isNotEmpty) out[t.type] = list;
+    }
+    return out;
+  }
+
   // ===========================================================================
   // Dynamic (and keyed) memory - fully part of the Register service
   // (Docs/Services/Register.md "Dynamic blocks", CIDs 0x10-0x13).

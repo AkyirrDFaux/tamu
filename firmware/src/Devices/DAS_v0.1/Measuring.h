@@ -41,12 +41,12 @@ static_assert(offsetof(ResistiveMeasVolatile, CurrentRange) == 4, "Meas layout")
 
 
 
-const ValueInfo ResistiveMeas_Map[] = {
-    {(uint16_t)DataType::Number, sizeof(Number), ValuePersistent},
-    {(uint16_t)DataType::Enum, sizeof(uint8_t), ValuePersistent},
-    {(uint16_t)DataType::Number, sizeof(Number), ValuePersistent},
-    {(uint16_t)DataType::Number, sizeof(Number), ValueReadOnly},
-    {(uint16_t)DataType::Number, sizeof(Number), ValueReadOnly},
+const BlockEntry ResistiveMeas_Entries[] = {
+    { MakeFieldKey(0, 0), 0, {(uint16_t)DataType::Number, sizeof(Number), ValuePersistent} },
+    { MakeFieldKey(1, 0), 4, {(uint16_t)DataType::Enum, sizeof(uint8_t), ValuePersistent} },
+    { MakeFieldKey(2, 0), 8, {(uint16_t)DataType::Number, sizeof(Number), ValuePersistent} },
+    { MakeFieldKey(3, 0), 0, {(uint16_t)DataType::Number, sizeof(Number), ValueReadOnly} },
+    { MakeFieldKey(4, 0), 4, {(uint16_t)DataType::Number, sizeof(Number), ValueReadOnly} },
 };
 
 // Write-time clamping for the writable Meas fields, so the STORED value always equals the
@@ -76,22 +76,17 @@ static bool OnMeasFieldWrite(const StaticBlockDescriptor &block, uint16_t index,
     return false;
 }
 
-const FieldTrigger ResistiveMeas_Triggers[] = {
-    OnMeasFieldWrite,
-    nullptr,
-    OnMeasFieldWrite,
-    nullptr,
-    nullptr,
+const BlockTrigger ResistiveMeas_Triggers[] = {
+    { MakeFieldKey(0, 0), OnMeasFieldWrite },
+    { MakeFieldKey(2, 0), OnMeasFieldWrite },
 };
 
-const uint16_t ResistiveMeas_Offsets[] = {0, 4, 8, 0, 4};
-
 const BlockSchema ResistiveMeas_Schema = {
-    .Map = ResistiveMeas_Map,
+    .Entries = ResistiveMeas_Entries,
+    .EntryCount = sizeof(ResistiveMeas_Entries) / sizeof(BlockEntry),
     .Triggers = ResistiveMeas_Triggers,
-    .Offsets = ResistiveMeas_Offsets,
+    .TriggerCount = sizeof(ResistiveMeas_Triggers) / sizeof(BlockTrigger),
     .Type = BlockType::ResistiveMeasure,
-    .MapCount = sizeof(ResistiveMeas_Map) / sizeof(ValueInfo),
 };
 
 // Range selector pins (Docs/Devices.md): each channel picks a reference resistor

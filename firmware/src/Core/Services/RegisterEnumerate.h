@@ -100,8 +100,10 @@ __attribute__((noinline)) static uint16_t EnumWord(EnumSrc src, const void *ctx,
         return EnumTypeWord(i);
     case EnumSrc::System:
         return kSystemFields[i];
-    case EnumSrc::Static:
-        return (uint16_t)(i << 8); // static fields are unkeyed
+    case EnumSrc::Static: {
+        const BlockSchema *s = (const BlockSchema *)ctx;
+        return s->Entries[i].FieldKey; // the literal table carries the Field&Key
+    }
 #ifdef USE_DYNAMIC_BLOCKS
     case EnumSrc::Dynamic: {
         const DynamicBlockDescriptor *b = (const DynamicBlockDescriptor *)ctx;
@@ -193,7 +195,7 @@ static void HandleEnumerateFields(const PacketFrame &frame) {
         if (idx >= 0) {
             src = EnumSrc::Static;
             ctx = static_block_registry[idx].Schema;
-            count = static_block_registry[idx].Schema->MapCount;
+            count = static_block_registry[idx].Schema->EntryCount;
         }
     }
     SendU16Stream(frame, count, src, ctx);

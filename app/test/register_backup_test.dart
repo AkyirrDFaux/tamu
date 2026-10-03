@@ -64,13 +64,20 @@ void main() {
     return DeviceBackup.decode(
         sv: sv,
         staticRegistry: const [(type: 0x08, inst: 0)],
+        staticFields: const {
+          0x08: [
+            (field: 0, size: 4, type: 0x06),
+            (field: 1, size: 1, type: 0x0C),
+            (field: 2, size: 4, type: 0x06),
+          ],
+        },
         dynamic: {
           3: (
             table: <int>[
               ...'Box'.codeUnits, ...List.filled(13, 0), // 16-byte name
               ...u16(2), 0, 0, // entry_count + reserved padding
-              ...u16(0), ...u16(DataType.number.value), 4, ValueFlags.persistent,
-              ...u16(0x0100), ...u16(DataType.number.value), 4, 0,
+              ...u16(0), ...u16(0), ...u16(DataType.number.value), 4, ValueFlags.persistent,
+              ...u16(0x0100), ...u16(0), ...u16(DataType.number.value), 4, 0,
             ],
             values: numberToBytes(42),
           ),

@@ -96,12 +96,12 @@ struct Vysi1Persistent
     char LayoutFile[8] = {'L', 'A', 'Y', '_', '1', ' ', ' ', ' '}; // offset 28
 };
 
-const ValueInfo Vysi1_Map[] = {
-    {(uint16_t)DataType::Number, sizeof(Number), 0},                    // Brightness
-    {(uint16_t)DataType::Matrix, sizeof(Matrix<2, 3>), ValuePersistent},// Offset (2x3)
-    {(uint16_t)DataType::Index, sizeof(int32_t), ValuePersistent},      // Render Block Index (signed, -1 = none)
-    {(uint16_t)DataType::Filename, 8, ValueTrigger | ValuePersistent},  // Layout File Name
-    {(uint16_t)DataType::Number, sizeof(Number), ValueReadOnly},        // Refresh Rate
+const BlockEntry Vysi1_Entries[] = {
+    { MakeFieldKey(0, 0), 0,  {(uint16_t)DataType::Number, sizeof(Number), 0} },                     // Brightness
+    { MakeFieldKey(1, 0), 0,  {(uint16_t)DataType::Matrix, sizeof(Matrix<2, 3>), ValuePersistent} }, // Offset (2x3)
+    { MakeFieldKey(2, 0), 24, {(uint16_t)DataType::Index, sizeof(int32_t), ValuePersistent} },       // Render Block Index (signed, -1 = none)
+    { MakeFieldKey(3, 0), 28, {(uint16_t)DataType::Filename, 8, ValueTrigger | ValuePersistent} },   // Layout File Name
+    { MakeFieldKey(4, 0), 4,  {(uint16_t)DataType::Number, sizeof(Number), ValueReadOnly} },         // Refresh Rate
 };
 
 // Renders the configured render block into the LED buffer, applying brightness and gamma correction.
@@ -302,27 +302,15 @@ inline bool OnVysi1FieldWrite(const StaticBlockDescriptor& block, uint16_t index
     return ok;
 }
 
-const FieldTrigger Vysi1_Triggers[] = {
-    nullptr,
-    nullptr,
-    nullptr,
-    OnVysi1FieldWrite,
-    nullptr,
-};
-
-const uint16_t Vysi1_Offsets[] = {
-    0,   // Brightness (volatile, Number, 4B)
-    0,   // Offset (persistent, Matrix<2,3>, 24B)
-    24,  // RenderBlock (persistent, int32, 4B)
-    28,  // LayoutFile (persistent, String, 8B)
-    4,   // RefreshRate (volatile, Number, 4B)
+const BlockTrigger Vysi1_Triggers[] = {
+    { MakeFieldKey(3, 0), OnVysi1FieldWrite },
 };
 
 const BlockSchema Vysi1_Schema = {
-    .Map = Vysi1_Map,
+    .Entries = Vysi1_Entries,
+    .EntryCount = sizeof(Vysi1_Entries) / sizeof(BlockEntry),
     .Triggers = Vysi1_Triggers,
-    .Offsets = Vysi1_Offsets,
+    .TriggerCount = sizeof(Vysi1_Triggers) / sizeof(BlockTrigger),
     .Type = BlockType::Vysi1Display,
-    .MapCount = sizeof(Vysi1_Map) / sizeof(ValueInfo),
 };
 

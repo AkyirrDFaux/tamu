@@ -15,6 +15,11 @@ static inline void SetBlockName(char *dst, const char *src, uint16_t len) {
     if (len < BLOCK_NAME_LEN) memset(dst + len, ' ', (size_t)(BLOCK_NAME_LEN - len));
 }
 
+// Combines a field index and a key into the 16-bit Field&Key sort key.
+constexpr uint16_t MakeFieldKey(uint8_t field, uint8_t key) { return (uint16_t)(((uint16_t)field << 8) | key); }
+constexpr uint8_t FieldOf(uint16_t fieldKey) { return (uint8_t)(fieldKey >> 8); }
+constexpr uint8_t KeyOf(uint16_t fieldKey) { return (uint8_t)fieldKey; }
+
 // The descriptor (Docs/Services/Register.md "Map entry"): Type(16) | Size(8) | Flags(8).
 // One type, internal and on the wire. The key is not part of it - it travels in the request's /
 // reply's BlockInfo, or in a table entry's Field&Key.
@@ -50,20 +55,37 @@ struct StaticBlockDescriptor;
 typedef bool (*FieldTrigger)(const StaticBlockDescriptor &Block, uint16_t Index, const void *Data, uint16_t Length);
 
 // 1. The Schema (All members are const)
+//
+// Docs/Services/Register.md "Static Block Type Table": a literal table of entries
+// (Field&Key + MemoryOffset + ValueInfo) plus a literal trigger table (Field&Key + function
+// pointer) that holds only the fields that actually have a trigger.
+struct BlockEntry
+{
+    uint16_t FieldKey; // (field << 8) | key
+    uint16_t Offset;   // byte offset within the value space the field's Persistent flag selects
+    ValueInfo Info;
+};
+
+struct BlockTrigger
+{
+    uint16_t FieldKey;
+    FieldTrigger Fn;
+};
+
 struct BlockSchema
 {
-    const ValueInfo *const Map;
-    const FieldTrigger *const Triggers; // Indexed by field number, nullptr = no trigger
-    const uint16_t *const Offsets;      // Precomputed byte offsets within the block's RAM struct
+    const BlockEntry *const Entries;
+    const uint16_t EntryCount;
+    const BlockTrigger *const Triggers; // nullptr when the block has no triggers
+    const uint16_t TriggerCount;
     const BlockType Type;
-    const uint16_t MapCount;
 };
 
 struct StaticBlockDescriptor
 {
     // Pointers into the board's two flat spaces (Docs/Services/Register.md "System + Static
     // memory blocks"): the persistent space (settings, mirrored 1:1 to .SV) and the volatile
-    // space. The schema's offsets are byte offsets from whichever pointer the field's
+    // space. An entry's offset is a byte offset from whichever pointer the field's
     // Persistent flag selects.
     void* const VolatileData;
     void* const PersistentData;
@@ -74,20 +96,31 @@ struct StaticBlockDescriptor
         return ValueIsPersistent(info) ? PersistentData : VolatileData;
     }
 
-    // Unified entry retrieval — O(1) via precomputed offset
-    FieldResult Get(uint16_t Index) const {
-        FieldResult Output;
-        if (Index >= Schema->MapCount) return Output;
+    const BlockEntry* FindEntry(uint16_t field) const {
+        for (uint16_t i = 0; i < Schema->EntryCount; i++)
+            if (FieldOf(Schema->Entries[i].FieldKey) == field) return &Schema->Entries[i];
+        return nullptr;
+    }
 
-        const ValueInfo &info = Schema->Map[Index];
-        Output.Descriptor = info;
-        Output.Data = const_cast<uint8_t*>(static_cast<const uint8_t*>(Base(info))) + Schema->Offsets[Index];
+    FieldTrigger FindTrigger(uint16_t field) const {
+        for (uint16_t i = 0; i < Schema->TriggerCount; i++)
+            if (FieldOf(Schema->Triggers[i].FieldKey) == field) return Schema->Triggers[i].Fn;
+        return nullptr;
+    }
+
+    // Unified entry retrieval by field index (linear over the literal table).
+    FieldResult Get(uint16_t field) const {
+        FieldResult Output;
+        const BlockEntry *e = FindEntry(field);
+        if (!e) return Output;
+        Output.Descriptor = e->Info;
+        Output.Data = const_cast<uint8_t*>(static_cast<const uint8_t*>(Base(e->Info))) + e->Offset;
         return Output;
     }
 
     // Unified setter interface. `desc` is the request's ValueInfo (type + flags).
-    bool Set(uint16_t Index, const void* Input, uint16_t Length, const ValueInfo &desc) const {
-        FieldResult Field = Get(Index);
+    bool Set(uint16_t field, const void* Input, uint16_t Length, const ValueInfo &desc) const {
+        FieldResult Field = Get(field);
 
         if (!Field.Data)
             return false;
@@ -117,10 +150,9 @@ struct StaticBlockDescriptor
             return false;
         }
 
-        // Indexed trigger lookup — O(1), nullptr = no trigger
-        if (Schema->Triggers != nullptr && Schema->Triggers[Index] != nullptr) {
-            return Schema->Triggers[Index](*this, Index, data, data_len);
-        }
+        const FieldTrigger fn = FindTrigger(field);
+        if (fn != nullptr)
+            return fn(*this, field, data, data_len);
 
         memcpy(Field.Data, data, Field.Descriptor.Size);
         return true;

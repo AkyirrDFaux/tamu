@@ -7,22 +7,20 @@ struct LEDVolatile {
     bool LEDState = false;
 };
 
-const ValueInfo LED_Map[] = {
-    {(uint16_t)DataType::Bool, sizeof(bool), ValueTrigger},
-};
-
 bool OnLEDStateChange(const StaticBlockDescriptor &block, uint16_t index, const void *data, uint16_t data_len);
 
-const FieldTrigger LED_Triggers[] = {
-    OnLEDStateChange,
+const BlockEntry LED_Entries[] = {
+    { MakeFieldKey(0, 0), 0, {(uint16_t)DataType::Bool, sizeof(bool), ValueTrigger} },
 };
 
-const uint16_t LED_Offsets[] = {0};
+const BlockTrigger LED_Triggers[] = {
+    { MakeFieldKey(0, 0), OnLEDStateChange },
+};
 
 const BlockSchema LED_Schema = {
-    .Map = LED_Map,
+    .Entries = LED_Entries,
+    .EntryCount = sizeof(LED_Entries) / sizeof(BlockEntry),
     .Triggers = LED_Triggers,
-    .Offsets = LED_Offsets,
+    .TriggerCount = sizeof(LED_Triggers) / sizeof(BlockTrigger),
     .Type = BlockType::LED,
-    .MapCount = sizeof(LED_Map) / sizeof(ValueInfo),
 };

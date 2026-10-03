@@ -145,8 +145,3 @@ inline uint16_t ReadBackupFile(const char name[8], uint8_t *out, uint16_t cap)
 // Deleting an entry removes it from the table (the sequential record compacts);
 // a deleted/skipped BLOCK keeps a tombstone slot in the registry.
 
-// Combines a field index and a key into the 16-bit Field&Key sort key.
-inline uint16_t MakeFieldKey(uint8_t field, uint8_t key) { return (uint16_t)(((uint16_t)field << 8) | key); }
-inline uint8_t FieldOf(uint16_t fieldKey) { return (uint8_t)(fieldKey >> 8); }
-inline uint8_t KeyOf(uint16_t fieldKey) { return (uint8_t)fieldKey; }
-

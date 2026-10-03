@@ -7,22 +7,16 @@ struct ButtonVolatile {
     bool ButtonState = false;
 };
 
-const ValueInfo Button_Map[] = {
-    {(uint16_t)DataType::Bool, sizeof(bool), ValueReadOnly},
+const BlockEntry Button_Entries[] = {
+    { MakeFieldKey(0, 0), 0, {(uint16_t)DataType::Bool, sizeof(bool), ValueReadOnly} },
 };
-
-const FieldTrigger Button_Triggers[] = {
-    nullptr,
-};
-
-const uint16_t Button_Offsets[] = {0};
 
 const BlockSchema Button_Schema = {
-    .Map = Button_Map,
-    .Triggers = Button_Triggers,
-    .Offsets = Button_Offsets,
+    .Entries = Button_Entries,
+    .EntryCount = sizeof(Button_Entries) / sizeof(BlockEntry),
+    .Triggers = nullptr,
+    .TriggerCount = 0,
     .Type = BlockType::Button,
-    .MapCount = sizeof(Button_Map) / sizeof(ValueInfo),
 };
 
 // ===== LED-Button =====
@@ -30,35 +24,28 @@ const BlockSchema Button_Schema = {
 // controlled by the LEDState field; the button is reported through the Button field
 // (if the LED is on, button reading is disabled).
 //   Button raw state (0, RO, bool), LEDState (3, TR, bool).
-// Fields 1-2 are reserved (None) so LEDState keeps its documented field index 3.
+// Fields 1-2 are reserved and omitted from the literal table, so LEDState keeps its
+// documented field index 3.
 struct LEDButtonVolatile {
     bool ButtonState = false; // field 0
     bool LEDState = false;    // field 3
 };
 
-const ValueInfo LEDButton_Map[] = {
-    {(uint16_t)DataType::Bool, sizeof(bool), ValueReadOnly}, // 0 Button raw state
-    {(uint16_t)DataType::None, 0, 0},                         // 1 reserved
-    {(uint16_t)DataType::None, 0, 0},                         // 2 reserved
-    {(uint16_t)DataType::Bool, sizeof(bool), ValueTrigger},   // 3 LEDState
-};
-
 bool OnLEDStateChange(const StaticBlockDescriptor &block, uint16_t index, const void *data, uint16_t data_len);
 
-const FieldTrigger LEDButton_Triggers[] = {
-    nullptr,
-    nullptr,
-    nullptr,
-    OnLEDStateChange,
+const BlockEntry LEDButton_Entries[] = {
+    { MakeFieldKey(0, 0), 0, {(uint16_t)DataType::Bool, sizeof(bool), ValueReadOnly} }, // Button raw state
+    { MakeFieldKey(3, 0), 1, {(uint16_t)DataType::Bool, sizeof(bool), ValueTrigger} },   // LEDState
 };
 
-// Reserved fields point at the struct start; their Size is 0 so nothing is read/written.
-const uint16_t LEDButton_Offsets[] = {0, 0, 0, 1};
+const BlockTrigger LEDButton_Triggers[] = {
+    { MakeFieldKey(3, 0), OnLEDStateChange },
+};
 
 const BlockSchema LEDButton_Schema = {
-    .Map = LEDButton_Map,
+    .Entries = LEDButton_Entries,
+    .EntryCount = sizeof(LEDButton_Entries) / sizeof(BlockEntry),
     .Triggers = LEDButton_Triggers,
-    .Offsets = LEDButton_Offsets,
+    .TriggerCount = sizeof(LEDButton_Triggers) / sizeof(BlockTrigger),
     .Type = BlockType::LEDButton,
-    .MapCount = sizeof(LEDButton_Map) / sizeof(ValueInfo),
 };

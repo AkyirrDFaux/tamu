@@ -82,13 +82,14 @@ static void CleanupDynamicFiles()
 // space is saved; the table keeps all entries).
 //
 // DT layout (Docs/Services/Register.md "Dynamic Block Table"): Name (16 chars, NUL-padded),
-// entry count (uint16), 16-bit reserved padding, then the entries. The block's bank type is
-// not stored: it is derived from the file's global index.
+// entry count (uint16), 16-bit reserved padding, then the entries, each
+// Field&Key (uint16) + MemoryOffset (uint16) + ValueInfo. The block's bank type is not
+// stored: it is derived from the file's global index.
 static bool SaveDynamicBlockFiles(const DynamicBlockDescriptor &b, uint16_t idx)
 {
     uint8_t buf[MEMORY_BACKUP_CAP];
     uint16_t cursor = 0;
-    uint16_t need = (uint16_t)(BLOCK_NAME_LEN + 2 + 2 + (uint16_t)b.entry_count * (2 + (int)sizeof(ValueInfo)));
+    uint16_t need = (uint16_t)(BLOCK_NAME_LEN + 2 + 2 + (uint16_t)b.entry_count * (2 + 2 + (int)sizeof(ValueInfo)));
     if (need > sizeof(buf))
         return false;
 
@@ -99,6 +100,7 @@ static bool SaveDynamicBlockFiles(const DynamicBlockDescriptor &b, uint16_t idx)
     {
         const DynamicEntry &e = b.table[i];
         memcpy(buf + cursor, &e.fieldKey, 2); cursor += 2;
+        memcpy(buf + cursor, &e.memoryOffset, 2); cursor += 2;
         memcpy(buf + cursor, &e.info, sizeof(ValueInfo)); cursor += sizeof(ValueInfo);
     }
 
@@ -149,21 +151,22 @@ static bool LoadDynamicBlockFiles(DynamicBlockDescriptor &b, uint16_t idx)
     cursor += BLOCK_NAME_LEN;
     uint16_t entry_count; memcpy(&entry_count, tbuf + cursor, 2); cursor += 2;
     cursor += 2; // 16-bit reserved padding (Docs "Dynamic Block Table")
-    if (cursor + (uint16_t)entry_count * (2 + (int)sizeof(ValueInfo)) > tlen) return false;
+    if (cursor + (uint16_t)entry_count * (2 + 2 + (int)sizeof(ValueInfo)) > tlen) return false;
     if (entry_count && !b.EnsureTable(entry_count)) return false;
 
+    // The stored MemoryOffset is the file's source of truth (Docs "Dynamic Block Table");
+    // each space's size follows from it.
     uint16_t p_needed = 0, v_needed = 0;
     for (uint16_t i = 0; i < entry_count; i++)
     {
         DynamicEntry &e = b.table[i];
         memcpy(&e.fieldKey, tbuf + cursor, 2);
-        memcpy(&e.info, tbuf + cursor + 2, sizeof(ValueInfo));
-        {
-            uint16_t &n = ValueIsPersistent(e.info) ? p_needed : v_needed;
-            n = AlignValue(n, e.info.Size);
-            n += e.info.Size;
-        }
-        cursor += 2 + sizeof(ValueInfo);
+        memcpy(&e.memoryOffset, tbuf + cursor + 2, 2);
+        memcpy(&e.info, tbuf + cursor + 4, sizeof(ValueInfo));
+        uint16_t &n = ValueIsPersistent(e.info) ? p_needed : v_needed;
+        uint16_t end = (uint16_t)(e.memoryOffset + e.info.Size);
+        if (end > n) n = end;
+        cursor += 2 + 2 + sizeof(ValueInfo);
     }
     b.entry_count = entry_count;
     if (p_needed != vlen)
@@ -181,24 +184,7 @@ static bool LoadDynamicBlockFiles(DynamicBlockDescriptor &b, uint16_t idx)
         b.persistent_data = (uint8_t *)malloc(p_needed);
         if (!b.persistent_data) return false;
         b.persistent_allocated = b.persistent_len = p_needed;
-    }
-    uint16_t po = 0, vo = 0;
-    for (uint16_t i = 0; i < entry_count; i++)
-    {
-        DynamicEntry &e = b.table[i];
-        if (ValueIsPersistent(e.info))
-        {
-            po = AlignValue(po, e.info.Size);
-            if (e.info.Size) memcpy(b.persistent_data + po, vbuf + po, e.info.Size);
-            e.memoryOffset = po;
-            po += e.info.Size;
-        }
-        else
-        {
-            vo = AlignValue(vo, e.info.Size);
-            e.memoryOffset = vo;
-            vo += e.info.Size;
-        }
+        memcpy(b.persistent_data, vbuf, p_needed); // the DV is the compacted persistent space
     }
     b.present = true;
     return true;

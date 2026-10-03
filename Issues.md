@@ -54,17 +54,8 @@ text still disagrees about, and needs a ruling before the matching code lands:
   script's block meta carries its function name (not its file id), so an untracked slot can only
   fall back to the file==slot convention. Reporting the loaded **slots** in CID 0 (or a slot in
   each list entry) would remove the guesswork - a docs decision.
-- **The app mirrors the firmware's static persistent layout.** `.SV` is a raw space with no
-  offsets, so the app recomputes each field's offset from a per-type persistent-field table
-  (`device_backup.dart`'s `staticPersistentFields`) + the 32-bit alignment rule. The firmware is
-  the source of truth, so a firmware layout change must be mirrored there; a device-side
-  "field offsets" read (not in the doc's wire format) would remove the duplication.
 
 Verified against the code (2026-10-03), still to pin:
-- **The Static Block Type Table is descriptive, not literal.** The doc lists an explicit
-  `Field&Key` per entry and per trigger plus a `Count: Triggers`; the firmware stores positional
-  parallel arrays (`Map[]`/`Offsets[]`/`Triggers[]`) indexed by field (field/key implicit, no
-  separate trigger count). Equivalent, but the doc should say the entries are positional.
 - **The dynamic commands' request shape (deferred).** The doc says `Index (uint16)`; the firmware
   + app send a full 32-bit **BlockInfo** (the index in the upper half). The doc should say
   `BlockInfo`.
@@ -89,13 +80,17 @@ Resolved in the register doc-vs-implementation pass (2026-10-03, later):
 - **`BlockSchema.VolatileSize`/`PersistentSize` dropped** (unused; the flat space structs are the
   layout source of truth).
 
+Resolved in the register doc-vs-implementation pass 2 (2026-10-03, later):
+- **The `.DT_XX` table now stores the `MemoryOffset`** per entry (Field&Key + MemoryOffset +
+  ValueInfo); the load uses the stored offset directly (the DV is the compacted persistent space).
+- **The static block table is literal** (`BlockEntry`: Field&Key + MemoryOffset + ValueInfo) with
+  a literal trigger table (`BlockTrigger`: Field&Key + function pointer) that holds only the fields
+  that actually have a trigger - no per-field nullptr padding (the core dropped ~86 B).
+- **The app derives the static layout from the read commands**
+  (`RegisterClient.readStaticFieldLayout` reads the CID 1 field list + CID 2 per-field ValueInfo);
+  the hardcoded `staticPersistentFields` mirror is gone.
+
 Still open after the 2026-10-03 cleanup:
-- **The `.DT_XX` entry omits the doc's `MemoryOffset`.** The doc's Dynamic Block Table lists
-  `Field&Key(16) + MemoryOffset(16) + ValueInfo(32)` per entry, but the firmware writes only
-  `Field&Key(16) + ValueInfo(32)` and recomputes the offset (value sizes + 32-bit alignment) on
-  load, so the file is a compacted mirror rather than a literal one. Storing the offset would
-  match the table 1:1; dropping it is redundant-but-smaller and is what the app decoder assumes.
-  The doc should pin which form the `.DT_XX` file uses.
 - **The dynamic descriptor doc omits `Name`/`generation`/`present`** (deferred).
 - **ResistiveMeasure trigger flags are device-specific.** The doc marks Sampling Rate "(TR)"; the
   firmware gives it (and Filter Coefficient) a trigger function but no `ValueTrigger` flag, so the

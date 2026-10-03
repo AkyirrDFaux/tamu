@@ -39,9 +39,18 @@ void main() {
       (type: BlockType.resistiveMeasure.value, inst: 0,
           meta: ValueInfo(type: DataType.number.value, size: 4), name: 'Meas1'),
     ];
+    final staticFields = <int, List<({int field, int size, int type})>>{
+      0x08: [
+        (field: 0, size: 4, type: DataType.number.value),
+        (field: 1, size: 1, type: DataType.enum_.value),
+        (field: 2, size: 4, type: DataType.number.value),
+      ],
+    };
     await tester.pumpWidget(MaterialApp(
       theme: buildTheme(),
-      home: Scaffold(body: MemoryBackupView(fileName: '.SV', data: data, blocks: blocks)),
+      home: Scaffold(
+          body: MemoryBackupView(
+              fileName: '.SV', data: data, blocks: blocks, staticFields: staticFields)),
     ));
     await tester.pump();
     expect(tester.takeException(), isNull, reason: '.SV threw');
@@ -146,10 +155,10 @@ void main() {
       ...'Box'.codeUnits, ...List.filled(13, 0), // 16-byte name
       ...u16(2),
       0, 0, // reserved padding
-      ...u16((0 << 8) | 0),
+      ...u16((0 << 8) | 0), ...u16(0),
       ...u16(DataType.number.value),
       4, ValueFlags.persistent,
-      ...u16((1 << 8) | 0),
+      ...u16((1 << 8) | 0), ...u16(0),
       ...u16(DataType.string.value),
       5, 0,
     ];

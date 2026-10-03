@@ -112,8 +112,8 @@ void main() {
     expect(names.any((n) => n.startsWith('DV_')), isTrue);
 
     // The DT_ table format matches the app decoder: Name (16 chars, NUL-padded),
-    // u16 entry_count, u16 reserved, then 6 B per entry. The block's bank type is
-    // derived from the file's global index, not stored.
+    // u16 entry_count, u16 reserved, then 8 B per entry (Field&Key, MemoryOffset,
+    // ValueInfo). The block's bank type is derived from the file's global index, not stored.
     final dtName = names.firstWhere((n) => n.startsWith('DT_'));
     final bytes = await storage.readFile(dtName, size: 64);
     expect(bytes, isNotNull);
@@ -121,10 +121,12 @@ void main() {
     final entryCount = bytes[16] | (bytes[17] << 8);
     expect(entryCount, 1);
     final entryFieldKey = bytes[20] | (bytes[21] << 8);
-    final entryType = bytes[22] | (bytes[23] << 8);
-    final entrySize = bytes[24];
-    final entryFlags = bytes[25];
+    final entryOffset = bytes[22] | (bytes[23] << 8);
+    final entryType = bytes[24] | (bytes[25] << 8);
+    final entrySize = bytes[26];
+    final entryFlags = bytes[27];
     expect(entryFieldKey, 0); // field 0 / key 0
+    expect(entryOffset, 0);
     expect(entryType & 0x3FF, DataType.number.value);
     expect(entryFlags & ValueFlags.persistent, isNot(0));
     expect(entrySize, 4);

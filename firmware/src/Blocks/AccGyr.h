@@ -60,36 +60,30 @@ static_assert(offsetof(AccGyrPersistent, AccFilter) == 4, "AccGyr layout");
 static_assert(offsetof(AccGyrVolatile, Acceleration) == 0, "AccGyr layout");
 static_assert(offsetof(AccGyrVolatile, AngularVelocity) == 12, "AccGyr layout");
 
-const ValueInfo AccGyr_Map[] = {
-    {(uint16_t)DataType::Enum, sizeof(uint8_t), ValueTrigger | ValuePersistent},
-    {(uint16_t)DataType::Enum, sizeof(uint8_t), ValueTrigger | ValuePersistent},
-    {(uint16_t)DataType::Enum, sizeof(uint8_t), ValueTrigger | ValuePersistent},
-    {(uint16_t)DataType::Number, sizeof(Number), ValuePersistent},
-    {(uint16_t)DataType::Number, sizeof(Number), ValuePersistent},
-    {(uint16_t)DataType::Vector, sizeof(Vector<3>), ValueReadOnly},
-    {(uint16_t)DataType::Vector, sizeof(Vector<3>), ValueReadOnly},
-};
-
 bool OnAccGyrFrequencyChange(const StaticBlockDescriptor& block, uint16_t index, const void* data, uint16_t data_len);
 bool OnAccGyrAccRangeChange(const StaticBlockDescriptor& block, uint16_t index, const void* data, uint16_t data_len);
 bool OnAccGyrAngRangeChange(const StaticBlockDescriptor& block, uint16_t index, const void* data, uint16_t data_len);
 
-const FieldTrigger AccGyr_Triggers[] = {
-    OnAccGyrFrequencyChange,
-    OnAccGyrAccRangeChange,
-    OnAccGyrAngRangeChange,
-    nullptr,
-    nullptr,
-    nullptr,
-    nullptr,
+const BlockEntry AccGyr_Entries[] = {
+    { MakeFieldKey(0, 0), 0, {(uint16_t)DataType::Enum, sizeof(uint8_t), ValueTrigger | ValuePersistent} },
+    { MakeFieldKey(1, 0), 1, {(uint16_t)DataType::Enum, sizeof(uint8_t), ValueTrigger | ValuePersistent} },
+    { MakeFieldKey(2, 0), 2, {(uint16_t)DataType::Enum, sizeof(uint8_t), ValueTrigger | ValuePersistent} },
+    { MakeFieldKey(3, 0), 4, {(uint16_t)DataType::Number, sizeof(Number), ValuePersistent} },
+    { MakeFieldKey(4, 0), 8, {(uint16_t)DataType::Number, sizeof(Number), ValuePersistent} },
+    { MakeFieldKey(5, 0), 0, {(uint16_t)DataType::Vector, sizeof(Vector<3>), ValueReadOnly} },
+    { MakeFieldKey(6, 0), 12, {(uint16_t)DataType::Vector, sizeof(Vector<3>), ValueReadOnly} },
 };
 
-const uint16_t AccGyr_Offsets[] = {0, 1, 2, 4, 8, 0, 12};
+const BlockTrigger AccGyr_Triggers[] = {
+    { MakeFieldKey(0, 0), OnAccGyrFrequencyChange },
+    { MakeFieldKey(1, 0), OnAccGyrAccRangeChange },
+    { MakeFieldKey(2, 0), OnAccGyrAngRangeChange },
+};
 
 const BlockSchema AccGyr_Schema = {
-    .Map = AccGyr_Map,
+    .Entries = AccGyr_Entries,
+    .EntryCount = sizeof(AccGyr_Entries) / sizeof(BlockEntry),
     .Triggers = AccGyr_Triggers,
-    .Offsets = AccGyr_Offsets,
+    .TriggerCount = sizeof(AccGyr_Triggers) / sizeof(BlockTrigger),
     .Type = BlockType::AccGyr,
-    .MapCount = sizeof(AccGyr_Map) / sizeof(ValueInfo),
 };

@@ -196,7 +196,7 @@ void main() {
     final rec = table.firstWhere((f) => normalizeFileName(f.name) == '.SV');
     final sv = await storage.readFile(rec.name, size: rec.size);
     expect(sv, isNotNull, reason: '.SV is readable');
-    final layout = StaticSpaceLayout.fromRegistry(const []);
+    final layout = StaticSpaceLayout.fromRegistry(const [], const {});
     List<int> padToName(String s) {
       final t = s.length > systemNameSize ? s.substring(0, systemNameSize) : s;
       return [...t.codeUnits, ...List<int>.filled(systemNameSize - t.length, 0)];

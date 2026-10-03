@@ -8,8 +8,31 @@ void main() {
   List<int> u16(int v) => [v & 0xFF, (v >> 8) & 0xFF];
   List<int> u32(int v) => [v & 0xFF, (v >> 8) & 0xFF, (v >> 16) & 0xFF, (v >> 24) & 0xFF];
 
+  /// The static blocks' persistent fields (the values the device reports via CID 1/2).
+  final staticFields = <int, List<({int field, int size, int type})>>{
+    0x04: [(field: 0, size: 4, type: DataType.uint32.value)],
+    0x05: [
+      (field: 0, size: 1, type: DataType.enum_.value),
+      (field: 1, size: 1, type: DataType.enum_.value),
+      (field: 2, size: 1, type: DataType.enum_.value),
+      (field: 3, size: 4, type: DataType.number.value),
+      (field: 4, size: 4, type: DataType.number.value),
+    ],
+    0x06: [
+      (field: 1, size: 24, type: DataType.matrix.value),
+      (field: 2, size: 4, type: DataType.integer.value),
+      (field: 3, size: 8, type: DataType.filename.value),
+    ],
+    0x08: [
+      (field: 0, size: 4, type: DataType.number.value),
+      (field: 1, size: 1, type: DataType.enum_.value),
+      (field: 2, size: 4, type: DataType.number.value),
+    ],
+  };
+
   /// DT_ table: Name (16 chars, NUL-padded), u16 entry_count, u16 reserved, then
-  /// 6 B per entry.
+  /// 8 B per entry (Field&Key, MemoryOffset, ValueInfo). The offset is the entry's position
+  /// in its (compacted) value space.
   List<int> dynamicTable(String name, List<(int, int, int, int)> entries) {
     final nameBytes = name.codeUnits.take(16).toList();
     while (nameBytes.length < 16) {
@@ -20,8 +43,17 @@ void main() {
       ...u16(entries.length),
       0, 0, // reserved padding
     ];
+    var po = 0, vo = 0;
     for (final e in entries) {
-      out.addAll([...u16(e.$1), ...u16(e.$2), e.$3, e.$4]);
+      final type = e.$2, size = e.$3, flags = e.$4;
+      final persistent = flags & ValueFlags.persistent != 0;
+      final offset = persistent ? po : vo;
+      if (persistent) {
+        po += size;
+      } else {
+        vo += size;
+      }
+      out.addAll([...u16(e.$1), ...u16(offset), ...u16(type), size, flags]);
     }
     return out;
   }
@@ -43,7 +75,7 @@ void main() {
     }
 
     test('computes each field offset from the field sizes + alignment', () {
-      final layout = StaticSpaceLayout.fromRegistry(registry);
+      final layout = StaticSpaceLayout.fromRegistry(registry, staticFields);
       expect(layout.offsetOf(0x06, 0, 1), 20);
       expect(layout.offsetOf(0x06, 0, 2), 44);
       expect(layout.offsetOf(0x06, 0, 3), 48);
@@ -56,7 +88,7 @@ void main() {
     });
 
     test('decodes the System segment and every static persistent field', () {
-      final layout = StaticSpaceLayout.fromRegistry(registry);
+      final layout = StaticSpaceLayout.fromRegistry(registry, staticFields);
       final entries = decodeSv(svBytes(), layout, registry);
       // System Name + NetID + 0x06 x3 + 0x08 x3.
       expect(entries, hasLength(8));
@@ -71,7 +103,7 @@ void main() {
     });
 
     test('a truncated space drops the fields past its end', () {
-      final layout = StaticSpaceLayout.fromRegistry(registry);
+      final layout = StaticSpaceLayout.fromRegistry(registry, staticFields);
       // Only the System segment is present.
       expect(decodeSv(List.filled(20, 0), layout, registry), hasLength(2));
       expect(decodeSv(const [], layout, registry), isEmpty);
@@ -165,7 +197,8 @@ void main() {
       final sv = List<int>.filled(20 + 12, 0);
       sv.setRange(0, 3, 'Eye'.codeUnits);
       sv.setRange(20, 24, numberToBytes(10));
-      final backup = DeviceBackup.decode(sv: sv, staticRegistry: registry);
+      final backup = DeviceBackup.decode(
+          sv: sv, staticRegistry: registry, staticFields: staticFields);
       expect(backup.hasAny, isTrue);
       expect(backup.staticField(0x08, 0, 0)?.value, numberToBytes(10));
       // The System block is virtual (type 0, inst 0) and carries Name/NetID.
@@ -284,7 +317,7 @@ void main() {
   group('field writers', () {
     test('svSaveField writes a persistent field at its computed offset', () {
       const registry = [(type: 0x08, inst: 0)];
-      final layout = StaticSpaceLayout.fromRegistry(registry);
+      final layout = StaticSpaceLayout.fromRegistry(registry, staticFields);
       final sv = List<int>.filled(20 + 12, 0);
       sv.setRange(0, 3, 'Eye'.codeUnits);
       final out = svSaveField(sv, layout, 0x08, 0, 0, numberToBytes(30))!;
@@ -303,7 +336,7 @@ void main() {
 
     test('svSaveField grows a short space to reach the field', () {
       const registry = [(type: 0x08, inst: 0)];
-      final layout = StaticSpaceLayout.fromRegistry(registry);
+      final layout = StaticSpaceLayout.fromRegistry(registry, staticFields);
       final out = svSaveField(const <int>[], layout, 0x08, 0, 0, numberToBytes(7))!;
       expect(out.length, 20 + 4);
       expect(out.sublist(20, 24), numberToBytes(7));

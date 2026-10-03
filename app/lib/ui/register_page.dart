@@ -70,6 +70,18 @@ class _RegisterPageState extends State<RegisterPage>
   bool _backupBusy = false;
   String? _backupError;
 
+  /// The static blocks' persistent fields, read from the device (the `.SV` layout source).
+  /// Re-read with the topology so the app never mirrors the firmware's compile-time table.
+  StaticFieldLayout _staticFields = const {};
+
+  /// Reads the static field layout once per topology generation.
+  Future<StaticFieldLayout> _ensureStaticFields() async {
+    if (_staticFields.isEmpty) {
+      _staticFields = await _client.readStaticFieldLayout();
+    }
+    return _staticFields;
+  }
+
   bool get _backupMode => _viewMode == RegisterViewMode.backup;
 
   /// Runs a long operation (Save/Recall) with the busy spinner shown in the app bar.
@@ -174,6 +186,8 @@ class _RegisterPageState extends State<RegisterPage>
         newMetas.add(b);
       }
       _blockMetas = newMetas;
+      _staticFields = const {}; // re-read the layout with the new topology
+      await _ensureStaticFields();
       await _loadVisibleFields();
     } finally {
       _refreshing = false;
@@ -247,7 +261,10 @@ Future<void> _loadVisibleFields() async {
           slot: (table: tables[slot]!, values: values[slot] ?? const []),
       };
       final decoded = DeviceBackup.decode(
-          sv: sv, staticRegistry: registry, dynamic: dynamic);
+          sv: sv,
+          staticRegistry: registry,
+          staticFields: await _ensureStaticFields(),
+          dynamic: dynamic);
       if (!mounted) return;
       setState(() => _backup = decoded);
     } catch (e) {
@@ -311,7 +328,8 @@ Future<void> _loadVisibleFields() async {
     }
 
     // `.SV` is the raw static persistent space: write the field at its computed offset.
-    final layout = StaticSpaceLayout.fromRegistry(_staticRegistry);
+    final layout =
+        StaticSpaceLayout.fromRegistry(_staticRegistry, await _ensureStaticFields());
     final size = layout.sizeOf(blockType, field);
     if (size == null) return false;
     var value = live.value;

@@ -27,10 +27,10 @@ void main() {
       ...'DYN'.codeUnits, ...List.filled(13, 0), // 16-byte name
       ...u16(2),
       0, 0, // reserved padding
-      ...u16((0 << 8) | 0),
+      ...u16((0 << 8) | 0), ...u16(0),
       ...u16(DataType.number.value),
       4, ValueFlags.persistent,
-      ...u16((1 << 8) | 5),
+      ...u16((1 << 8) | 5), ...u16(0),
       ...u16(DataType.bool_.value),
       1, 0,
     ];

@@ -322,6 +322,12 @@ int scriptInstanceForIndex(int global) => global & 0x3F;
 bool isStaticRegistryType(int type) =>
     type != systemBlockTypeValue && !isScriptType(type) && !isDynamicType(type);
 
+/// A static block type's persistent fields, in field order, as read from the device
+/// (Register CID 1 field list + CID 2 per-field ValueInfo). `type` is the wire DataType
+/// value. The `.SV` decoder recomputes each field's offset from these sizes + the 32-bit
+/// alignment rule, so the app no longer mirrors the firmware's compile-time layout.
+typedef StaticFieldLayout = Map<int, List<({int field, int size, int type})>>;
+
 /// The ValueInfo flag bits (Docs/Services/Register.md "ValueInfo Flags", in that table's order).
 /// Every flag is **passive**: a read reports them verbatim and a write carries the same
 /// specification back.
