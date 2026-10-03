@@ -32,6 +32,7 @@ Use define USE_SUB_PROVIDE.
 Active until canceled, information is not persistent on this side.
 Sending device keeps a table of active subscriptions, maximum number is limited by device's RAM.
 Updates are checked by a function from the main loop.
+Ordering not specified.
 #### Provider table entry
 
 | Name                 | Size         | Note                                       |
