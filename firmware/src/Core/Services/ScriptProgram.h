@@ -129,7 +129,7 @@ static bool ScriptLoad(uint16_t fileId, uint16_t slot) {
     ScriptMaskSet(slot, false);
     s->slot = slot;
     s->fileId = fileId;
-    s->trid = (uint16_t)(SCRIPT_TRID_BASE + slot);
+    s->trid = (uint16_t)(TRID_SCRIPT_BASE + slot);
 
     s->properties = ScriptRdU32(buf + 0);
     s->inCount    = buf[4];

@@ -1827,9 +1827,12 @@ to the bank types, and a test helper put the Persistent flag in the ValueInfo *t
     `test/tamu_proto.py`; typed payload reads audited (payload stays 4-aligned, all casts are at
     aligned offsets). `test.sh` green; 8 HIL suites pass on the 1-core/1-DAS rig (both boards
     reflashed). **Sizes: core 624 678 B / DAS 11 792 B.**
-  - [ ] **P2 TRID.** Subscription range `0x1000-0x1FFF`; App widened to `0xF000-0xFFFF` (16-bit,
-    carried in the TRID field; `FinalizeReply` echoes `req.trid`; the app routes on the full
-    16-bit TRID); System/Logs `0x0000-0x0FFF` incrementing.
+  - [x] **P2 TRID.** Ranges defined centrally in `Packet.h`: System/Logs `0x0000-0x0FFF`,
+    Subscriptions `0x1000-0x1FFF`, Scripts `0x2000-0x2FFF`, App `0xF000-0xFFFF`.
+    `FinalizeReply` and every direct reply construction echo `req.trid`; the dispatcher routes
+    app replies by the App range; the app allocates `0xF000-0xFFFF` and matches on the full
+    16-bit TRID. The System/Logs *incrementing* allocator is deferred to the TRID manager
+    (see `Issues.md`). `test.sh` green; 8 HIL suites pass (both boards reflashed).
   - [ ] **P3 Subscriptions.** `TriggerType` gets `None = 0` (others shift); shared 16-byte
     subscription table (`sourceReg`, `trigger`, `minTime` uint24, `period`, `deadzone`);
     requester 28 B / provider 32 B entries with a `Timeout`; 120 s renewal; persist the TRID;

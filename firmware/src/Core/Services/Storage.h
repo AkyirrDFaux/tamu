@@ -9,7 +9,7 @@ static void StorageReply(PacketFrame &reply, const PacketFrame &req,
 {
     if (!(req.flags & FLAG_REQACK))
         return;
-    PacketConstruct(&reply, req.id_src, req.srv_src, req.srv_tgt,
+    PacketConstruct(&reply, req.id_src, req.srv_src, req.trid,
                      FLAG_TYPE | FLAG_START | FLAG_STOP, payload, len);
     DispatchPacket(reply);
 }

@@ -144,9 +144,8 @@ bool RegisterSetByBlockInfo(uint32_t bi, const ValueInfo &m, const uint8_t *val,
 #define SCRIPT_ERR_TIMEOUT 7
 #define SCRIPT_ERR_NOT_IMPL 8
 
-// Per-instance script transaction IDs for foreign register access.
-#define SCRIPT_TRID_BASE 0xF000
-#define SCRIPT_TRID_MAX  0xF9FF
+// Per-instance script transaction IDs for foreign register access (TRID_SCRIPT_BASE..MAX,
+// defined in Functions/Packet.h).
 
 // States (Docs/Services/Script.md "State").
 enum class ScriptState : uint8_t {

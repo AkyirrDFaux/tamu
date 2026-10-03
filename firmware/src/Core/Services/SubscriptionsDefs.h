@@ -21,9 +21,7 @@
 //                     foreign-origin flag and confirms with a hash.
 // Value updates carry the RAW value bytes (no TLFV header); the requester's confirmation
 // is the 4-byte FNV-1a hash of the received bytes.
-
-#define TRID_SUB_BASE 0xFA00
-#define TRID_SUB_MAX  0xFBFF
+// The subscription TRID range (TRID_SUB_BASE..TRID_SUB_MAX) is defined in Functions/Packet.h.
 
 // Packet priorities (Docs/RSBus and Packets.md: high-priority subscriptions sit above
 // "Other" (default 8), low-priority ones below it).

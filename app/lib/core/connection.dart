@@ -129,7 +129,7 @@ class ConnectionManager extends ChangeNotifier {
 
   final PacketStreamParser _parser = PacketStreamParser();
   StreamSubscription<Uint8List>? _streamSub;
-  int _nextTxId = 1;
+  int _nextTxId = tridAppBase;
   final Map<int, Completer<List<int>>> _pending = {};
   final Map<int, List<int>> _rxBuffers = {};
 
@@ -484,8 +484,9 @@ class ConnectionManager extends ChangeNotifier {
 
       if (!frame.isResponse) continue; // unsolicited requests ignored for now
       
-      // Handle app transaction IDs
-      final txId = frame.srvTarget & 0xFF;
+      // Responses echo the request's TRID (Docs "Transaction IDs"), so match on the full
+      // 16-bit TRID field.
+      final txId = frame.srvSource;
       final completer = _pending.remove(txId);
       if (completer == null || completer.isCompleted) continue;
       // Multi-packet streams accumulate until the fragment with STOP set. FRAG packets
@@ -509,12 +510,11 @@ class ConnectionManager extends ChangeNotifier {
   }
 
   int _takeTxId() {
-    // The CID byte wraps at 256; skip any id still pending so a slow request
-    // can never have its slot silently re-used by a later one.
-    for (var guard = 0; guard < 255; guard++) {
+    // The app owns the 0xF000-0xFFFF TRID range (Docs "Transaction IDs"). Skip any id still
+    // pending so a slow request can never have its slot silently re-used by a later one.
+    for (var guard = 0; guard <= tridAppMax - tridAppBase; guard++) {
       final txId = _nextTxId;
-      _nextTxId = (_nextTxId + 1) & 0xFF; // full CID range as transaction IDs
-      if (_nextTxId == 0) _nextTxId = 1;
+      _nextTxId = _nextTxId >= tridAppMax ? tridAppBase : _nextTxId + 1;
       if (!_pending.containsKey(txId)) return txId;
     }
     throw const TransportException('No free transaction IDs');
@@ -548,10 +548,10 @@ class ConnectionManager extends ChangeNotifier {
     final frame = PacketFrame.single(
       targetId: targetId,
       srvTarget: makeService(service, functionCid),
-      // The app's identity is the App Interface service type (0x11); the CID byte
-      // carries our transaction ID. The device routes replies back purely by this
-      // service type (it rewrites id_src as a proxy, so no app address is needed).
-      srvSource: makeService(ServiceType.app, txId),
+      // The app's identity is the App Interface service type (0x11); the TRID field carries
+      // our transaction ID from the reserved App range (0xF000-0xFFFF). The device echoes it,
+      // so replies route back by TRID and are matched on the full 16-bit value.
+      srvSource: txId,
       response: false,
       payload: payload,
       requestFrag: requestFrag,

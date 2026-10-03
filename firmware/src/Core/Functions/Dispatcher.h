@@ -63,10 +63,18 @@ void DispatchPacket(const PacketFrame &frame)
                 uint8_t cid = GetServiceCID(frame.srv_tgt);
                 DeviceLog("DISP", "dispatching to service=%d cid=%d", target_srv, cid);
 
+#ifdef USE_APP_INTERFACE
+                // A reply's CMD carries the originator's service tag (the echoed TRID). The
+                // App owns 0xF000-0xFFFF, so a CMD in that range is an app reply: hand it
+                // back over the app link (the app matches on the full 16-bit TRID).
+                if (frame.srv_tgt >= TRID_APP_BASE) {
+                    (void)AppInterfaceSend(frame);
+                } else
+#endif
 #ifdef USE_SCRIPTS
                 // Script-instance replies (foreign register access): the reply's CMD is the
-                // script's TRID, so it never matches a ServiceType and is routed by range.
-                if (frame.srv_tgt >= SCRIPT_TRID_BASE && frame.srv_tgt <= SCRIPT_TRID_MAX) {
+                // script's slot tag, so it never matches a ServiceType and is routed by range.
+                if (frame.srv_tgt >= TRID_SCRIPT_BASE && frame.srv_tgt <= TRID_SCRIPT_MAX) {
                     HandleScriptResponse(frame);
                 } else
 #endif
@@ -103,10 +111,9 @@ void DispatchPacket(const PacketFrame &frame)
                     break;
 
                 #ifdef USE_APP_INTERFACE
+                // Kept as a fallback for legacy 0x11xx app tags; the 0xF000+ range above is
+                // the documented App TRID range.
                 case ServiceType::App:
-                    // Responses to app transactions (SRV TGT type == App, CID = the app's
-                    // transaction ID). Forward to the attached app's TX stream; silently
-                    // drop strays when no link is active.
                     (void)AppInterfaceSend(frame);
                     break;
                 #endif

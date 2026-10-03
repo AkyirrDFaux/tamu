@@ -23,7 +23,7 @@ void SubscriptionsRequestReRegister(uint16_t addr);
 static inline void SendDeviceReply(const PacketFrame &frame, PacketFrame &reply,
                                    const void *payload, uint8_t len)
 {
-    PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.srv_tgt,
+    PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.trid,
                      FLAG_TYPE | FLAG_START | FLAG_STOP,
                      (const uint8_t *)payload, len);
     DispatchPacket(reply);
@@ -50,7 +50,7 @@ void HandleSNDB(const PacketFrame &frame)
 
             if (count == 0) {
                 // Send an empty stop packet
-                PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.srv_tgt,
+                PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.trid,
                                  FLAG_TYPE | FLAG_START | FLAG_STOP, nullptr, 0);
                 DispatchPacket(tx_frame);
                 break;
@@ -77,7 +77,7 @@ void HandleSNDB(const PacketFrame &frame)
                     sent++;
                 }
                 if (sent >= count || f == total_frags - 1) flags |= FLAG_STOP;
-                PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.srv_tgt,
+                PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.trid,
                                  flags, buf, off);
                 DispatchPacket(tx_frame);
                 if (sent >= count) break;
@@ -106,13 +106,13 @@ void HandleSNDB(const PacketFrame &frame)
                 uint8_t payload[16];
                 memcpy(payload, entry.uid.bytes, 14);
                 memcpy(payload + 14, &entry.shortID, 2);
-                PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.srv_tgt,
+                PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.trid,
                                  FLAG_TYPE | FLAG_START | FLAG_STOP, payload, 16);
                 DispatchPacket(tx_frame);
             } else {
                 // Send an empty response to indicate not found
                 DeviceLog("DEVICE", "SNDB lookup miss (id or sn)");
-                PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.srv_tgt,
+                PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.trid,
                                  FLAG_TYPE | FLAG_START | FLAG_STOP, nullptr, 0);
                 DispatchPacket(tx_frame);
             }
@@ -134,7 +134,7 @@ void HandleSNDB(const PacketFrame &frame)
                     DeviceLog("DEVICE", "SNDB write id %u failed", (unsigned)write_id);
                 }
                 // Always acknowledge (empty frame = failure, like the CID 13 not-found case).
-                PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.srv_tgt,
+                PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.trid,
                                  FLAG_TYPE | FLAG_START | FLAG_STOP,
                                  success ? frame.payload : nullptr, success ? 16 : 0);
                 DispatchPacket(tx_frame);
@@ -296,7 +296,7 @@ void HandleDeviceService(const PacketFrame &frame)
                 memcpy(rpl + 0, &time_sent, 4);
                 memcpy(rpl + 4, &t1, 4);
                 memcpy(rpl + 8, &t2, 4);
-                PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.srv_tgt,
+                PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.trid,
                                  FLAG_TYPE | FLAG_START | FLAG_STOP, rpl, 12);
                 DispatchPacket(tx_frame);
             }
@@ -311,7 +311,7 @@ void HandleDeviceService(const PacketFrame &frame)
             uint8_t rpl[14+4];
             memcpy(rpl, &GetSerialNumber(), 14);
             memcpy(rpl+14, &uptime, 4);
-            PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.srv_tgt,
+            PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.trid,
                              FLAG_TYPE | FLAG_START | FLAG_STOP, rpl, 18);
             DispatchPacket(tx_frame);
 #endif

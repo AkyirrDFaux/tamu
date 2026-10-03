@@ -48,6 +48,16 @@ FLAG_FRAG = 1 << 4
 FLAG_SUCCESS = 1 << 5
 FLAG_FAIL = 1 << 6
 
+# Reserved TRID ranges (Docs/RSBus and Packets.md "Transaction IDs").
+TRID_SYS_BASE = 0x0000
+TRID_SYS_MAX = 0x0FFF
+TRID_SUB_BASE = 0x1000
+TRID_SUB_MAX = 0x1FFF
+TRID_SCRIPT_BASE = 0x2000
+TRID_SCRIPT_MAX = 0x2FFF
+TRID_APP_BASE = 0xF000
+TRID_APP_MAX = 0xFFFF
+
 
 class Srv:
     Device = 0x00
@@ -389,8 +399,9 @@ class Tamu:
 
     def send(self, packet, addr=1):
         """Sends a request to `addr` and returns the first response addressed back to us."""
-        self.txid = (self.txid + 1) & 0xFF
-        packet.trid = (Srv.App << 8) | self.txid   # srv_src: the app's service + transaction
+        # The App owns the 0xF000-0xFFFF TRID range (Docs "Transaction IDs").
+        self.txid = TRID_APP_BASE + ((self.txid + 1) & 0x0FFF)
+        packet.trid = self.txid
         tag = packet.trid
         self.link.write_stream(packet.wire(addr))
         deadline = time.time() + self.timeout
@@ -406,10 +417,9 @@ class Tamu:
                     if not used:
                         break
                     continue
-                # A reply addresses the requester's tag: the device answers with
-                # srv_tgt = the request's srv_src, so match on that (not on the target
+                # Responses echo the request's TRID, so match on that (not on the target
                 # address, which for us is always the app placeholder).
-                if (pkt.flags & FLAG_TYPE) and pkt.srv_tgt == tag:
+                if (pkt.flags & FLAG_TYPE) and pkt.trid == tag:
                     return pkt
         raise TimeoutError(f"no reply (tag 0x{tag:04X})")
 

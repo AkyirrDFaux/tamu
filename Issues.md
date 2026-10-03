@@ -95,6 +95,17 @@ Still open after the 2026-10-03 cleanup:
 - **ResistiveMeasure trigger flags are device-specific.** The doc marks Sampling Rate "(TR)"; the
   firmware gives it (and Filter Coefficient) a trigger function but no `ValueTrigger` flag, so the
   wire flags don't advertise the trigger. Different devices may or may not need one.
+
+Resolved in the TRID-range pass (2026-10-03, later):
+- The reserved ranges are defined centrally (`TRID_*` in `Core/Functions/Packet.h`): System/Logs
+  `0x0000-0x0FFF`, Subscriptions `0x1000-0x1FFF`, Scripts `0x2000-0x2FFF` (the docs leave the
+  script range as "..."), App `0xF000-0xFFFF`. Replies echo the request's TRID
+  (`FinalizeReply`), and the app allocates/matches on the full 16-bit App TRID.
+- **System/Logs is not yet a blind incrementing counter.** The Device service still discriminates
+  its responses by the tag's CID (`MakeService(Device, cid)`), so a plain counter would break
+  discover/timesync matching; converting it needs the documented TRID manager (the same gap as
+  the DAS provider-cancel entry below). The current Device/Log tags already sit inside
+  `0x0000-0x0FFF`.
 ## Android (on-device behaviour untested)
 
 - **On-device behavior not yet verified** (no Android device/emulator configured): the BLE

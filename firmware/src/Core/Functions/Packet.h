@@ -27,6 +27,18 @@
 // default of 8 yields a 9-12 byte gap.
 #define DEFAULT_PRIORITY 8
 
+// Docs/RSBus and Packets.md "Transaction IDs": every originating service owns a reserved TRID
+// range, and a reply echoes the request's TRID - so the range tells the dispatcher where to route
+// the response, and each service manages its own allocation (counter or slot table).
+#define TRID_SYS_BASE    0x0000
+#define TRID_SYS_MAX     0x0FFF // System (Device) + Logs, incrementing
+#define TRID_SUB_BASE    0x1000
+#define TRID_SUB_MAX     0x1FFF // Subscriptions, table-managed
+#define TRID_SCRIPT_BASE 0x2000
+#define TRID_SCRIPT_MAX  0x2FFF // Scripts, slot-based
+#define TRID_APP_BASE    0xF000
+#define TRID_APP_MAX     0xFFFF // App, slot-based
+
 // ID helpers: 6 bit net + 10 bit device
 inline uint16_t MakeId(uint8_t net, uint16_t dev) { return (uint16_t)((net & 0x3F) << 10) | (dev & 0x3FF); }
 
@@ -127,8 +139,8 @@ inline void FinalizeReply(PacketFrame &reply, const PacketFrame &req, uint8_t fl
     reply.priority = DEFAULT_PRIORITY;
     reply.id_tgt = req.id_src;
     reply.id_src = DeviceStatus.ShortAddress;
-    reply.cmd = req.srv_src;   // Destination service (was request's source)
-    reply.trid = req.srv_tgt;  // Source service (was request's target)
+    reply.cmd = req.srv_src;   // Destination service (the originator's service tag)
+    reply.trid = req.trid;     // Responses echo the request's TRID (Docs "Transaction IDs")
     PacketFinalize(&reply, len);
 }
 

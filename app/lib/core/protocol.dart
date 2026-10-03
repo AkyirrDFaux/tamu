@@ -21,6 +21,18 @@ const int flagFail = 1 << 6; // response: error, no extra information
 /// Default priority byte (docs: Reserved(4) | Priority(4), 0 = highest, default 8).
 const int defaultPriority = 8;
 
+/// Reserved TRID ranges (Docs/RSBus and Packets.md "Transaction IDs"). The App owns
+/// 0xF000-0xFFFF: every app request draws its transaction ID from that range and a reply
+/// echoes the same TRID, so the app routes on the full 16-bit value.
+const int tridSysBase = 0x0000;
+const int tridSysMax = 0x0FFF;
+const int tridSubBase = 0x1000;
+const int tridSubMax = 0x1FFF;
+const int tridScriptBase = 0x2000;
+const int tridScriptMax = 0x2FFF;
+const int tridAppBase = 0xF000;
+const int tridAppMax = 0xFFFF;
+
 /// Legacy placeholder address. The firmware rewrites id_src on app frames (the core
 /// proxies the app), so this value is inert - kept only as a safe default.
 const int appSourceId = 0xFFFE;
