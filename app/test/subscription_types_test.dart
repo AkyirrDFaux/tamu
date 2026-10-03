@@ -30,19 +30,22 @@ void main() {
   test('provider entry decodes 32 bytes with deadzone', () {
     final bytes = <int>[
       2, 0, // requesterAddr
-      0x00, 0xFA, // trid
+      0x34, 0x12, // trid 0x1234
+      // subscription table: sourceReg(4) trigger(1) minTime(3) period(4) deadzone(4)
       0x55, 0x55, 0x55, 0x55, // sourceReg
-      TriggerType.edgeRising.value, 0, 0, 0,
+      TriggerType.edgeRising.value,
+      0x64, 0, 0, // minTime 100
       0xE8, 0x03, 0, 0, // period 1000
-      0x64, 0, 0, 0, // min 100
+      ...[0x00, 0xC0, 0x00, 0x00], // deadzone 0.75 (16.16 = 0xC000)
       0, 0, 0, 0, // lastSent
       0x2A, 0, 0, 0, // hash/counter
-      ...[0x00, 0xC0, 0x00, 0x00], // deadzone 0.75 (16.16 = 0xC000)
+      0, 0, 0, 0, // timeout
     ];
     expect(bytes.length, 32);
     final p = ProviderSubscription.fromBytes(3, bytes);
     expect(p.index, 3);
     expect(p.requesterAddr, 2);
+    expect(p.trid, 0x1234);
     expect(p.trigger, TriggerType.edgeRising);
     expect(p.periodMs, 1000);
     expect(p.minTimeMs, 100);

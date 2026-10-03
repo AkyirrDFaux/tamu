@@ -20,6 +20,14 @@ class SubscriptionClient {
 
   Stream<List<int>> get valueUpdates => _valueUpdateController.stream;
 
+  // --- CIDs (Docs "Requester commands (041x)" / "Provider commands (042x)") ---
+  static const int _cidGetRequester = 0x10;
+  static const int _cidSetRequester = 0x11;
+  static const int _cidRecallAll = 0x12;
+  static const int _cidSaveAll = 0x13;
+  static const int _cidGetProvider = 0x20;
+  static const int _cidSetProvider = 0x21;
+
   /// Registers the client as the receiver of firmware-pushed subscription value
   /// updates (service Subscriptions CID 0). Must be called while connected; call
   /// [stopListening] when the page closes.
@@ -34,7 +42,8 @@ class SubscriptionClient {
   }
 
   // Use normal request with ConnectionManager's transaction ID
-  Future<List<int>?> _request(int cid, {List<int> payload = const [], Duration? timeout, int? toDevice, int? transactionId}) async {
+  Future<List<int>?> _request(int cid,
+      {List<int> payload = const [], Duration? timeout, int? toDevice, int? transactionId}) async {
     try {
       return await ConnectionManager.instance.request(toDevice ?? deviceId, service, cid,
           payload: payload, timeout: timeout ?? _requestTimeout, transactionId: transactionId);
@@ -44,7 +53,7 @@ class SubscriptionClient {
   }
 
   /// Decodes a "count + fixed-size entries" reply: the provider table is 32-byte entries and
-  /// the requester table 28-byte ones (CID 2 and 3 respectively).
+  /// the requester table 28-byte ones (CIDs 0x20 and 0x10 respectively).
   Future<List<T>> _getSubscriptionList<T>(
       int cid, int entrySize, T Function(int index, List<int> bytes) decode) async {
     final reply = await _request(cid, payload: []);
@@ -60,57 +69,89 @@ class SubscriptionClient {
     return result;
   }
 
-  /// CID 2: Get provider subscriptions (device as provider)
+  /// CID 0x20: Get provider subscriptions (device as provider)
   Future<List<ProviderSubscription>> getProviderSubscriptions() =>
-      _getSubscriptionList(2, 32, ProviderSubscription.fromBytes);
+      _getSubscriptionList(_cidGetProvider, 32, ProviderSubscription.fromBytes);
 
-  /// CID 3: Get requester subscriptions (device as requester - Tamu only)
+  /// CID 0x10: Get requester subscriptions (device as requester - Tamu only)
   Future<List<RequesterSubscription>> getRequesterSubscriptions() =>
-      _getSubscriptionList(3, 28, RequesterSubscription.fromBytes);
+      _getSubscriptionList(_cidGetRequester, 28, RequesterSubscription.fromBytes);
 
-  /// CID 4: Set requester subscription (create/update/delete)
-  /// Index only = delete
-  /// Index + entry = create/update
-  ///
-  /// Per Docs/Services/Subscriptions.md ("A subscription service, initiated by the
-  /// requester"), setting a requester subscription ALSO registers the provider side
-  /// (CID 1 "Change subscription") so the provider knows to push value updates to this
-  /// requester. The provider entry carries the REQUESTER's address (our device), not
-  /// the provider's.
-  Future<bool> setRequesterSubscription(int index, {RequesterSubscription? entry}) async {
-    if (entry == null) {
-      // Delete: the firmware clears the requester entry and cancels the provider side
-      // (CID 1) using the shared TRID, so only the index-based CID 4 is sent here.
-      final reply = await _request(4, payload: [index]);
-      return reply != null;
-    } else {
-      // Create/update: register BOTH sides under one shared TRID so the provider's value
-      // updates (which carry that TRID) are routed to this requester entry.
-      final txId = ConnectionManager.instance.takeTxId();
-      final buf = <int>[index];
-      buf.addAll(entry.toCreatePayload());
-      final reply = await _request(4, payload: buf, transactionId: txId);
-      if (reply == null) return false;
-      final prov = _providerPayload(entry);
-      await _request(1, payload: prov, timeout: const Duration(seconds: 1),
-          toDevice: entry.providerAddr, transactionId: txId);
-      return true;
+  /// Finds the lowest free subscription TRID in the reserved 0x1000-0x1FFF range.
+  Future<int?> _allocateTrid() async {
+    final used = (await getRequesterSubscriptions()).map((s) => s.trid).toSet();
+    for (var t = tridSubBase; t <= tridSubMax; t++) {
+      if (!used.contains(t)) return t;
     }
+    return null;
   }
 
-  /// Builds the provider-side subscription payload (CID 1). The provider's entry stores
-  /// the REQUESTER's address so the provider knows where to send value updates.
-  /// Wire: targetReg, sourceReg, requesterAddr, trigger + 24 pad, period, min, deadzone.
-  List<int> _providerPayload(RequesterSubscription entry) {
+  /// CID 0x11: Set (create/update) a requester subscription. The entry's TRID is the
+  /// subscription identity; allocate one from 0x1000-0x1FFF for a new entry.
+  Future<bool> setRequesterSubscriptionEntry(RequesterSubscription entry) async {
+    final reply =
+        await _request(_cidSetRequester, payload: entry.toCreatePayload(), transactionId: entry.trid);
+    return reply != null;
+  }
+
+  /// CID 0x11: Cancel the requester subscription with `trid` (trigger None = delete).
+  Future<bool> cancelRequesterSubscription(int trid) async {
+    final reply = await _request(_cidSetRequester,
+        payload: RequesterSubscription.cancel(trid).toCreatePayload(), transactionId: trid);
+    return reply != null;
+  }
+
+  /// Index-based facade over the TRID protocol (the UI addresses rows by position).
+  /// `entry == null` cancels the row at [index]; otherwise it creates/updates, allocating a
+  /// fresh TRID when the entry does not carry one.
+  Future<bool> setRequesterSubscription(int index, {RequesterSubscription? entry}) async {
+    if (entry == null) {
+      final subs = await getRequesterSubscriptions();
+      if (index < 0 || index >= subs.length) return false;
+      return cancelRequesterSubscription(subs[index].trid);
+    }
+    var e = entry;
+    if (e.trid < tridSubBase || e.trid > tridSubMax) {
+      final trid = await _allocateTrid();
+      if (trid == null) return false;
+      e = RequesterSubscription(
+        index: index,
+        providerAddr: e.providerAddr,
+        trid: trid,
+        sourceReg: e.sourceReg,
+        targetReg: e.targetReg,
+        trigger: e.trigger,
+        periodMs: e.periodMs,
+        minTimeMs: e.minTimeMs,
+        deadzone: e.deadzone,
+      );
+    }
+    return setRequesterSubscriptionEntry(e);
+  }
+
+  /// CID 0x12: Recall all requester subscriptions from the persisted file.
+  Future<bool> recallAll() async => (await _request(_cidRecallAll, payload: [])) != null;
+
+  /// CID 0x13: Save all requester subscriptions to the persisted file.
+  Future<bool> saveAll() async => (await _request(_cidSaveAll, payload: [])) != null;
+
+  /// CID 0x21: Set a provider subscription directly (management; trigger None cancels).
+  Future<bool> setProviderSubscription(ProviderSubscription entry) async {
+    final reply = await _request(_cidSetProvider,
+        payload: _providerPayload(entry), transactionId: entry.trid, toDevice: deviceId);
+    return reply != null;
+  }
+
+  /// Provider entry wire (Docs "Provider table entry", 32 B): requesterAddr, trid, the shared
+  /// subscription table, lastSent, hash, timeout (ignored by Set).
+  List<int> _providerPayload(ProviderSubscription entry) {
     final buf = <int>[];
-    buf.addAll(uint32ToBytes(entry.targetReg));
-    buf.addAll(uint32ToBytes(entry.sourceReg));
-    buf.addAll([deviceId & 0xFF, (deviceId >> 8) & 0xFF]); // requester address = us
-    buf.add(entry.trigger.value);
-    buf.addAll([0, 0, 0]); // 24-bit padding
-    buf.addAll(uint32ToBytes(entry.periodMs));
-    buf.addAll(uint32ToBytes(entry.minTimeMs));
-    buf.addAll(numberToBytes(entry.deadzone));
+    buf.addAll([entry.requesterAddr & 0xFF, (entry.requesterAddr >> 8) & 0xFF]);
+    buf.addAll([entry.trid & 0xFF, (entry.trid >> 8) & 0xFF]);
+    buf.addAll(entry.table.toBytes());
+    buf.addAll(uint32ToBytes(entry.lastSentMs));
+    buf.addAll(uint32ToBytes(entry.hash));
+    buf.addAll(uint32ToBytes(entry.timeout));
     return buf;
   }
 

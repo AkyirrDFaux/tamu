@@ -1833,12 +1833,14 @@ to the bank types, and a test helper put the Persistent flag in the ValueInfo *t
     app replies by the App range; the app allocates `0xF000-0xFFFF` and matches on the full
     16-bit TRID. The System/Logs *incrementing* allocator is deferred to the TRID manager
     (see `Issues.md`). `test.sh` green; 8 HIL suites pass (both boards reflashed).
-  - [ ] **P3 Subscriptions.** `TriggerType` gets `None = 0` (others shift); shared 16-byte
+  - [x] **P3 Subscriptions.** `TriggerType` gets `None = 0` (others shift); shared 16-byte
     subscription table (`sourceReg`, `trigger`, `minTime` uint24, `period`, `deadzone`);
-    requester 28 B / provider 32 B entries with a `Timeout`; 120 s renewal; persist the TRID;
-    CID scheme `0x041x`/`0x042x` + recall/save all; cancel via `trigger None`; app
-    client/types/UI/backup + tests.
-  - [ ] **`.SUBREQ`** file gets a leading dot (name `.SUBREQ`).
+    requester 28 B / provider 32 B entries with a `Timeout`; 120 s lease renewed by value
+    updates / keepalive / confirmation; TRID persisted (`.SUBREQ` is a 1:1 copy minus timeout,
+    TRID-sorted); CID scheme `0x040x`/`0x041x`/`0x042x` + recall/save all; cancel via
+    `trigger None`; app client/types/UI/backup + tests. `test.sh` green; 8 HIL suites pass
+    (core + DAS reflashed). **Sizes: core 626 132 B / DAS 12 288 B** (DAS stack 984).
+  - [x] **`.SUBREQ`** file gets a leading dot (name `.SUBREQ`).
 
 Legacy to delete (covered by the layers): `BlockMeta` packing + conversions; dynamic Trigger path;
 `0x3FE`/`0x3FF` literals; `STATLOG`; the define rename; `HandleGetMemUsage`/`HandleReadBackup`;

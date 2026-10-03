@@ -44,6 +44,47 @@ static inline uint32_t Fnv1a(const uint8_t *data, uint8_t len) {
     return hash;
 }
 
+// Docs/Services/Subscriptions.md "Subscription table": the shared 16-byte describing record
+// embedded by both the requester and provider entries. On the wire it is
+// sourceReg(u32) | trigger(u8) | minTime(u24) | period(u32) | deadzone(i32) = 16 bytes.
+struct SubscriptionTable {
+    uint32_t sourceReg = 0;              // BlockInfo at the provider's register
+    TriggerType trigger = TriggerType::None;
+    uint32_t minTimeMs = 0;              // minimum/retry interval, uint24 on the wire
+    uint32_t periodMs = 0;
+    Number deadzone = N(0);              // for number/vector triggers
+};
+
+#define SUB_TABLE_WIRE_SIZE 16
+
+static inline uint16_t SubTableSerialize(uint8_t *buf, uint16_t off, const SubscriptionTable &t) {
+    StoreUnaligned(buf + off, t.sourceReg); off += 4;
+    buf[off++] = (uint8_t)t.trigger;
+    uint32_t mt = t.minTimeMs & 0xFFFFFFu; // uint24, little-endian
+    buf[off++] = (uint8_t)mt;
+    buf[off++] = (uint8_t)(mt >> 8);
+    buf[off++] = (uint8_t)(mt >> 16);
+    StoreUnaligned(buf + off, t.periodMs); off += 4;
+    StoreUnaligned(buf + off, (uint32_t)t.deadzone.Value); off += 4;
+    return off;
+}
+
+static inline uint16_t SubTableDeserialize(const uint8_t *buf, uint16_t off, SubscriptionTable &t) {
+    t.sourceReg = LoadUnaligned<uint32_t>(buf + off); off += 4;
+    t.trigger = (TriggerType)buf[off++];
+    t.minTimeMs = (uint32_t)buf[off] | ((uint32_t)buf[off + 1] << 8) | ((uint32_t)buf[off + 2] << 16);
+    off += 3;
+    t.periodMs = LoadUnaligned<uint32_t>(buf + off); off += 4;
+    t.deadzone = Number::FromRaw(LoadUnaligned<int32_t>(buf + off)); off += 4;
+    return off;
+}
+
+// Docs: "Timeout 120s, renewed with new request." Both sides expire entries that stop being
+// renewed (a value update / re-registration refreshes the deadline).
+#define SUB_TIMEOUT_MS 120000u
+
+static inline uint32_t SubTimeoutFrom(uint32_t nowMs) { return nowMs + SUB_TIMEOUT_MS; }
+
 // Reads the current value of the register addressed by a 32-bit BlockInfo.
 static inline FieldResult SubscriptionsGetField(uint32_t blockInfo) {
     uint16_t type = BlockInfoType(blockInfo);
@@ -110,15 +151,6 @@ template <typename T, size_t N, typename Occupied>
 static T *SubTableFindByTrid(T (&table)[N], uint16_t trid, Occupied occupied) {
     for (size_t i = 0; i < N; i++) {
         if (occupied(table[i]) && table[i].trid == trid) return &table[i];
-    }
-    return nullptr;
-}
-
-// First free entry, or nullptr.
-template <typename T, size_t N, typename Occupied>
-static T *SubTableFindFree(T (&table)[N], Occupied occupied) {
-    for (size_t i = 0; i < N; i++) {
-        if (!occupied(table[i])) return &table[i];
     }
     return nullptr;
 }

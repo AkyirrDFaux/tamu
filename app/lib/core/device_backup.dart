@@ -227,59 +227,64 @@ List<int>? dvSaveField(
   return null; // not a persistent entry (Save is only offered for persistent fields)
 }
 
-/// One stored requester subscription (SUBREQ layout, Subscriptions.h).
+/// One stored requester subscription (`.SUBREQ` layout, Subscriptions.h).
 class SubreqEntry {
-  final int targetReg;
-  final int sourceReg;
   final int providerAddr;
+  final int trid;
+  final int sourceReg;
   final int trigger;
-  final int periodMs;
   final int minTimeMs;
+  final int periodMs;
   final double deadzone;
+  final int targetReg;
 
   const SubreqEntry({
-    required this.targetReg,
-    required this.sourceReg,
     required this.providerAddr,
+    required this.trid,
+    required this.sourceReg,
     required this.trigger,
-    required this.periodMs,
     required this.minTimeMs,
+    required this.periodMs,
     required this.deadzone,
+    required this.targetReg,
   });
 }
 
-/// Decodes the SUBREQ requester table: u8 count, then 26 bytes per entry
-/// (target u32, source u32, provider u16, trigger u8 + 3 pad, period u32, min u32,
-/// deadzone Number 16.16).
+/// Decodes the `.SUBREQ` requester table: u8 count, then 24 bytes per entry
+/// (provider u16, trid u16, subscription table [source u32, trigger u8, min u24, period u32,
+/// deadzone Number 16.16], target u32). The timeout is not persisted.
 List<SubreqEntry> decodeSubreq(List<int> bytes) {
   if (bytes.isEmpty) return const [];
   final count = bytes[0];
   if (count > maxSubreqEntries) return const [];
   final out = <SubreqEntry>[];
   var c = 1;
-  for (var i = 0; i < count && c + 26 <= bytes.length; i++) {
-    final targetReg = uint32FromBytes(bytes, c);
-    c += 4;
-    final sourceReg = uint32FromBytes(bytes, c);
-    c += 4;
+  for (var i = 0; i < count && c + 24 <= bytes.length; i++) {
     final providerAddr = _u16(bytes, c);
     c += 2;
-    final trigger = bytes[c];
-    c += 4; // trigger + 3 pad
-    final periodMs = uint32FromBytes(bytes, c);
+    final trid = _u16(bytes, c);
+    c += 2;
+    final sourceReg = uint32FromBytes(bytes, c);
     c += 4;
-    final minTimeMs = uint32FromBytes(bytes, c);
+    final trigger = bytes[c];
+    c += 1;
+    final minTimeMs = bytes[c] | (bytes[c + 1] << 8) | (bytes[c + 2] << 16);
+    c += 3;
+    final periodMs = uint32FromBytes(bytes, c);
     c += 4;
     final deadzone = numberFromBytes(bytes, c);
     c += 4;
+    final targetReg = uint32FromBytes(bytes, c);
+    c += 4;
     out.add(SubreqEntry(
-      targetReg: targetReg,
-      sourceReg: sourceReg,
       providerAddr: providerAddr,
+      trid: trid,
+      sourceReg: sourceReg,
       trigger: trigger,
-      periodMs: periodMs,
       minTimeMs: minTimeMs,
+      periodMs: periodMs,
       deadzone: deadzone,
+      targetReg: targetReg,
     ));
   }
   return out;

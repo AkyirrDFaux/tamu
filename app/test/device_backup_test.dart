@@ -114,16 +114,19 @@ void main() {
     test('decodes every entry including the 16.16 deadzone', () {
       final target = makeBlockInfo(0, 0, 0, 0);
       final source = makeBlockInfo(8, 0, 4, 0);
-      List<int> entry(int provider, double deadzone) => [
-            ...u32(target), ...u32(source),
-            ...u16(provider),
-            1, 0, 0, 0, // trigger + pad
-            ...u32(1000), ...u32(100),
+      // provider(2) trid(2) source(4) trigger(1) min(3) period(4) deadzone(4) target(4)
+      List<int> entry(int provider, int trid, double deadzone) => [
+            ...u16(provider), ...u16(trid),
+            ...u32(source),
+            1, 100, 0, 0, // trigger + uint24 minTime = 100
+            ...u32(1000),
             ...numberToBytes(deadzone),
+            ...u32(target),
           ];
-      final entries = decodeSubreq([2, ...entry(2, 0), ...entry(3, 1.5)]);
+      final entries = decodeSubreq([2, ...entry(2, 0x1000, 0), ...entry(3, 0x1001, 1.5)]);
       expect(entries, hasLength(2));
       expect(entries[0].providerAddr, 2);
+      expect(entries[0].trid, 0x1000);
       expect(entries[0].periodMs, 1000);
       expect(entries[0].minTimeMs, 100);
       expect(entries[0].trigger, 1);

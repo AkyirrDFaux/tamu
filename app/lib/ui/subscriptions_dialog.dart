@@ -354,10 +354,13 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
                         DropdownButtonFormField<TriggerType>(
                           initialValue: _trigger,
                           decoration: const InputDecoration(labelText: 'Trigger Type'),
-                          items: TriggerType.values.map((t) => DropdownMenuItem(
-                            value: t,
-                            child: Text(t.label),
-                          )).toList(),
+                          items: TriggerType.values
+                              .where((t) => t != TriggerType.none)
+                              .map((t) => DropdownMenuItem(
+                                    value: t,
+                                    child: Text(t.label),
+                                  ))
+                              .toList(),
                           onChanged: (v) => setState(() => _trigger = v!),
                         ),
                         const SizedBox(height: 12),
@@ -454,7 +457,8 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
       return;
     }
 
-    final trid = widget.existing?.trid ?? (0xFA00 + index);
+    // A new entry gets its TRID allocated by the client from the reserved 0x1000-0x1FFF range.
+    final trid = widget.existing?.trid ?? 0;
 
     final entry = RequesterSubscription(
       index: index,

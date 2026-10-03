@@ -35,7 +35,7 @@ enum StorageFileType {
 StorageFileType storageFileType(String name) {
   final upper = normalizeFileName(name).toUpperCase();
   if (upper == 'SNREG') return StorageFileType.snreg;
-  if (upper == '.SV' || upper == 'SUBREQ') return StorageFileType.backup;
+  if (upper == '.SV' || upper == '.SUBREQ' || upper == 'SUBREQ') return StorageFileType.backup;
   // Per-block dynamic persistence (Docs/Services/Register.md: DT_XXX table / DV_XXX values).
   if (upper.startsWith('DT_')) return StorageFileType.dynamicTable;
   if (upper.startsWith('DV_')) return StorageFileType.dynamicValues;
@@ -495,6 +495,7 @@ class MemoryBackupView extends StatelessWidget {
     final upper = normalizeFileName(fileName).toUpperCase();
     final List<Widget> rows = switch (upper) {
           '.SV' => _parseSv(),
+          '.SUBREQ' => _parseSubreq(),
           'SUBREQ' => _parseSubreq(),
           _ when upper.startsWith('DT_') => _parseDynamicTable(),
           _ => [const Text('(unknown registry file)')],

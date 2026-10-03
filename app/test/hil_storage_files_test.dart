@@ -79,7 +79,7 @@ void main() {
     for (final entry in counts.entries) {
       expect(entry.value, 1, reason: 'duplicate file "${entry.key}"');
     }
-    expect(counts.containsKey('SUBREQ'), isTrue,
+    expect(counts.containsKey('.SUBREQ'), isTrue,
         reason: 'the requester table file must exist');
     expect(counts.containsKey('DYNMEM'), isFalse,
         reason: 'the obsolete DYNMEM file must be gone');

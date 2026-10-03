@@ -410,13 +410,14 @@ class ValueInfo {
 // ---------------------------------------------------------------------------
 
 enum TriggerType {
-  periodic(0),
-  onChangePeriodic(1),
-  onChangeConfirm(2),
-  edgeRising(3),
-  edgeFalling(4),
-  edgeAny(5),
-  deltaPeriodic(6);
+  none(0),
+  periodic(1),
+  onChangePeriodic(2),
+  onChangeConfirm(3),
+  edgeRising(4),
+  edgeFalling(5),
+  edgeAny(6),
+  deltaPeriodic(7);
 
   final int value;
   const TriggerType(this.value);
@@ -425,10 +426,11 @@ enum TriggerType {
     for (final t in TriggerType.values) {
       if (t.value == value) return t;
     }
-    return TriggerType.periodic;
+    return TriggerType.none;
   }
 
   String get label => switch (this) {
+    TriggerType.none => 'None',
     TriggerType.periodic => 'Periodic',
     TriggerType.onChangePeriodic => 'On change + period',
     TriggerType.onChangeConfirm => 'On change + confirm',
@@ -452,104 +454,177 @@ enum TriggerType {
   }
 }
 
-/// Provider-side subscription entry (what the device stores for incoming subscriptions)
+/// Docs/Services/Subscriptions.md "Subscription table": the shared 16-byte describing record
+/// (sourceReg u32, trigger u8, minTime u24, period u32, deadzone i32).
+class SubscriptionTable {
+  final int sourceReg; // BlockInfo at the provider's register
+  final TriggerType trigger;
+  final int minTimeMs; // uint24 on the wire
+  final int periodMs;
+  final double deadzone;
+
+  const SubscriptionTable({
+    required this.sourceReg,
+    required this.trigger,
+    required this.minTimeMs,
+    required this.periodMs,
+    required this.deadzone,
+  });
+
+  static SubscriptionTable fromBytes(List<int> bytes, int offset) {
+    final sourceReg = uint32FromBytes(bytes, offset);
+    offset += 4;
+    final trigger = TriggerType.fromValue(bytes[offset++]);
+    final minTimeMs =
+        bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16);
+    offset += 3;
+    final periodMs = uint32FromBytes(bytes, offset);
+    offset += 4;
+    final deadzone = numberFromBytes(bytes, offset);
+    return SubscriptionTable(
+      sourceReg: sourceReg,
+      trigger: trigger,
+      minTimeMs: minTimeMs,
+      periodMs: periodMs,
+      deadzone: deadzone,
+    );
+  }
+
+  List<int> toBytes() {
+    final buf = <int>[];
+    buf.addAll(uint32ToBytes(sourceReg));
+    buf.add(trigger.value);
+    buf.addAll([minTimeMs & 0xFF, (minTimeMs >> 8) & 0xFF, (minTimeMs >> 16) & 0xFF]);
+    buf.addAll(uint32ToBytes(periodMs));
+    buf.addAll(numberToBytes(deadzone));
+    return buf;
+  }
+}
+
+/// Provider-side subscription entry (Docs "Provider table entry", 32 B wire).
 class ProviderSubscription {
   final int index;
   final int requesterAddr;
   final int trid;
-  final int sourceReg; // BlockInfo
-  final TriggerType trigger;
-  final int periodMs;
-  final int minTimeMs;
+  final SubscriptionTable table;
   final int lastSentMs;
   final int hash;
-  final double deadzone;
+  final int timeout;
 
   const ProviderSubscription({
     required this.index,
     required this.requesterAddr,
     required this.trid,
-    required this.sourceReg,
-    required this.trigger,
-    required this.periodMs,
-    required this.minTimeMs,
+    required this.table,
     required this.lastSentMs,
     required this.hash,
-    required this.deadzone,
+    required this.timeout,
   });
+
+  int get sourceReg => table.sourceReg;
+  TriggerType get trigger => table.trigger;
+  int get periodMs => table.periodMs;
+  int get minTimeMs => table.minTimeMs;
+  double get deadzone => table.deadzone;
 
   static ProviderSubscription fromBytes(int index, List<int> bytes) {
     int offset = 0;
-    final requesterAddr = bytes[offset] | (bytes[offset + 1] << 8); offset += 2;
-    final trid = bytes[offset] | (bytes[offset + 1] << 8); offset += 2;
-    final sourceReg = uint32FromBytes(bytes, offset); offset += 4;
-    final trigger = TriggerType.fromValue(bytes[offset++]);
-    offset += 3; // 24-bit padding
-    final periodMs = uint32FromBytes(bytes, offset); offset += 4;
-    final minTimeMs = uint32FromBytes(bytes, offset); offset += 4;
-    final lastSentMs = uint32FromBytes(bytes, offset); offset += 4;
-    final hash = uint32FromBytes(bytes, offset); offset += 4;
-    final deadzone = numberFromBytes(bytes, offset);
+    final requesterAddr = bytes[offset] | (bytes[offset + 1] << 8);
+    offset += 2;
+    final trid = bytes[offset] | (bytes[offset + 1] << 8);
+    offset += 2;
+    final table = SubscriptionTable.fromBytes(bytes, offset);
+    offset += 16;
+    final lastSentMs = uint32FromBytes(bytes, offset);
+    offset += 4;
+    final hash = uint32FromBytes(bytes, offset);
+    offset += 4;
+    final timeout = uint32FromBytes(bytes, offset);
     return ProviderSubscription(
       index: index,
       requesterAddr: requesterAddr,
       trid: trid,
-      sourceReg: sourceReg,
-      trigger: trigger,
-      periodMs: periodMs,
-      minTimeMs: minTimeMs,
+      table: table,
       lastSentMs: lastSentMs,
       hash: hash,
-      deadzone: deadzone,
+      timeout: timeout,
     );
   }
 }
 
-/// Requester-side subscription entry (outgoing subscriptions from Tamu)
+/// Requester-side subscription entry (Docs "Requester table entry", 28 B wire).
 class RequesterSubscription {
   final int index;
   final int providerAddr;
   final int trid;
-  final int targetReg; // BlockInfo
-  final int sourceReg; // BlockInfo
-  final TriggerType trigger;
-  final int periodMs;
-  final int minTimeMs;
-  final double deadzone;
+  final SubscriptionTable table;
+  final int targetReg; // BlockInfo (local write)
+  final int timeout;
 
-  const RequesterSubscription({
+  const RequesterSubscription._({
     required this.index,
     required this.providerAddr,
     required this.trid,
+    required this.table,
     required this.targetReg,
-    required this.sourceReg,
-    required this.trigger,
-    required this.periodMs,
-    required this.minTimeMs,
-    this.deadzone = 0,
+    required this.timeout,
   });
+
+  /// Convenience constructor from the flat fields (the UI/tests build entries this way).
+  RequesterSubscription({
+    required this.index,
+    required this.providerAddr,
+    required this.trid,
+    required int sourceReg,
+    required this.targetReg,
+    required TriggerType trigger,
+    required int periodMs,
+    required int minTimeMs,
+    double deadzone = 0,
+    this.timeout = 0,
+  }) : table = SubscriptionTable(
+          sourceReg: sourceReg,
+          trigger: trigger,
+          minTimeMs: minTimeMs,
+          periodMs: periodMs,
+          deadzone: deadzone,
+        );
+
+  /// A cancel marker: trigger None tells the device to delete the entry with `trid`.
+  factory RequesterSubscription.cancel(int trid) => RequesterSubscription._(
+        index: 0,
+        providerAddr: 0,
+        trid: trid,
+        table: const SubscriptionTable(
+            sourceReg: 0, trigger: TriggerType.none, minTimeMs: 0, periodMs: 0, deadzone: 0),
+        targetReg: 0,
+        timeout: 0,
+      );
+
+  int get sourceReg => table.sourceReg;
+  TriggerType get trigger => table.trigger;
+  int get periodMs => table.periodMs;
+  int get minTimeMs => table.minTimeMs;
+  double get deadzone => table.deadzone;
 
   static RequesterSubscription fromBytes(int index, List<int> bytes) {
     int offset = 0;
-    final providerAddr = bytes[offset] | (bytes[offset + 1] << 8); offset += 2;
-    final trid = bytes[offset] | (bytes[offset + 1] << 8); offset += 2;
-    final targetReg = uint32FromBytes(bytes, offset); offset += 4;
-    final sourceReg = uint32FromBytes(bytes, offset); offset += 4;
-    final trigger = TriggerType.fromValue(bytes[offset++]);
-    offset += 3; // 24-bit padding
-    final periodMs = uint32FromBytes(bytes, offset); offset += 4;
-    final minTimeMs = uint32FromBytes(bytes, offset); offset += 4;
-    final deadzone = numberFromBytes(bytes, offset);
-    return RequesterSubscription(
+    final providerAddr = bytes[offset] | (bytes[offset + 1] << 8);
+    offset += 2;
+    final trid = bytes[offset] | (bytes[offset + 1] << 8);
+    offset += 2;
+    final table = SubscriptionTable.fromBytes(bytes, offset);
+    offset += 16;
+    final targetReg = uint32FromBytes(bytes, offset);
+    offset += 4;
+    final timeout = uint32FromBytes(bytes, offset);
+    return RequesterSubscription._(
       index: index,
       providerAddr: providerAddr,
       trid: trid,
+      table: table,
       targetReg: targetReg,
-      sourceReg: sourceReg,
-      trigger: trigger,
-      periodMs: periodMs,
-      minTimeMs: minTimeMs,
-      deadzone: deadzone,
+      timeout: timeout,
     );
   }
 
@@ -565,19 +640,15 @@ class RequesterSubscription {
   int get blockFieldS => (sourceReg >> 8) & 0xFF;
   int get blockKeyS => sourceReg & 0xFF;
 
-  /// Wire layout for the CID 4 set request (providerAddr, trid, targetReg, sourceReg,
-  /// trigger+24 pad, period, min). The TRID is also echoed in the packet header.
+  /// Wire layout for the 0x11 set request (providerAddr, trid, subscription table, targetReg,
+  /// timeout). The TRID is also echoed in the packet header.
   List<int> toCreatePayload() {
     final buf = <int>[];
     buf.addAll([providerAddr & 0xFF, (providerAddr >> 8) & 0xFF]);
     buf.addAll([trid & 0xFF, (trid >> 8) & 0xFF]);
+    buf.addAll(table.toBytes());
     buf.addAll(uint32ToBytes(targetReg));
-    buf.addAll(uint32ToBytes(sourceReg));
-    buf.add(trigger.value);
-    buf.addAll([0, 0, 0]); // 24-bit padding
-    buf.addAll(uint32ToBytes(periodMs));
-    buf.addAll(uint32ToBytes(minTimeMs));
-    buf.addAll(numberToBytes(deadzone));
+    buf.addAll(uint32ToBytes(timeout));
     return buf;
   }
 }

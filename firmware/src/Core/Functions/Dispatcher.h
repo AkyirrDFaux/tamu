@@ -65,9 +65,11 @@ void DispatchPacket(const PacketFrame &frame)
 
 #ifdef USE_APP_INTERFACE
                 // A reply's CMD carries the originator's service tag (the echoed TRID). The
-                // App owns 0xF000-0xFFFF, so a CMD in that range is an app reply: hand it
-                // back over the app link (the app matches on the full 16-bit TRID).
-                if (frame.srv_tgt >= TRID_APP_BASE) {
+                // App owns 0xF000-0xFFFF, and a subscription-management request (set/get/etc.)
+                // carries a TRID from the Subscriptions 0x1000-0x1FFF range - both are replies
+                // to the app, so hand them back over the app link (the app matches on TRID).
+                if (frame.srv_tgt >= TRID_APP_BASE ||
+                    (frame.srv_tgt >= TRID_SUB_BASE && frame.srv_tgt <= TRID_SUB_MAX)) {
                     (void)AppInterfaceSend(frame);
                 } else
 #endif

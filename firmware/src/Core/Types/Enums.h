@@ -19,13 +19,14 @@ namespace Capabilities {
 }
 
 enum class TriggerType : uint8_t {
-    Periodic           = 0,
-    OnChangePeriodic   = 1,
-    OnChangeConfirm    = 2,
-    EdgeRising         = 3,
-    EdgeFalling        = 4,
-    EdgeAny            = 5,
-    DeltaPeriodic      = 6
+    None               = 0, // canceled/to be deleted
+    Periodic           = 1,
+    OnChangePeriodic   = 2,
+    OnChangeConfirm    = 3,
+    EdgeRising         = 4,
+    EdgeFalling        = 5,
+    EdgeAny            = 6,
+    DeltaPeriodic      = 7
 };
 
 // System block field 8 "App Active" (Docs/Services/System Block and Device Commands.md).

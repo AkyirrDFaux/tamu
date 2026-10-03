@@ -22,7 +22,7 @@ void main() {
     }
     // The requester address written on the device's behalf is the device's own id.
     final client = File('lib/core/subscription_client.dart').readAsStringSync();
-    expect(client.contains('requester address = us'), isTrue,
-        reason: 'requester entries carry the device address, not the app\'s');
+    expect(client.contains('entry.requesterAddr'), isTrue,
+        reason: 'provider entries carry the device address, not the app\'s');
   });
 }

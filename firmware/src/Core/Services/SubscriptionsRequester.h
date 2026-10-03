@@ -8,31 +8,31 @@
 
 
 // ===========================================================================
-// Requester core (USE_SUB_REQUEST) - Tamu. Index-based table; entries persisted to a file
-// (1:1 copy minus the non-persistent TRID, regenerated at boot).
+// Requester core (USE_SUB_REQUEST) - Tamu. TRID-sorted table; entries persisted to a file
+// (1:1 copy minus the non-persistent timeout, regenerated at boot).
 // ===========================================================================
 #ifdef USE_SUB_REQUEST
 #define MAX_REQUESTER_SUBS 16
 
+// Docs "Requester table entry" (28 B wire): providerAddr, TRID, the shared subscription
+// table, target register, timeout. The timeout is local uptime and is not persistent.
 struct RequesterEntry {
     uint16_t providerAddr = 0;
     uint16_t trid = 0;
-    uint32_t targetReg = 0;
-    uint32_t sourceReg = 0;
-    TriggerType trigger = TriggerType::Periodic;
-    uint32_t periodMs = 0;
-    uint32_t minTimeMs = 0; // minimum interval / retry interval
-    Number deadzone = N(0); // for number/vector triggers (forwarded to the provider)
-    // Initialization tracking: the entry is "initialized" once a value update arrives.
-    // Until then the requester re-sends the registration (CID 1) to wake the provider.
-    uint32_t registeredAtMs = 0;  // start of the initialization window (set/boot)
-    uint32_t lastRegisteredMs = 0; // last re-registration sent
-    uint32_t lastValueMs = 0;     // uptime of the last received value (0 = never)
+    SubscriptionTable sub;
+    uint32_t targetReg = 0;      // local write target
+    uint32_t timeout = 0;        // local uptime deadline (not persisted)
     bool active = false;
+    // Initialization tracking (transient): the entry is "initialized" once a value update
+    // arrives; until then the requester re-sends the registration (CID 1) to wake the provider.
+    uint32_t registeredAtMs = 0;   // start of the initialization window (set/boot)
+    uint32_t lastRegisteredMs = 0; // last re-registration sent
+    uint32_t lastValueMs = 0;      // uptime of the last received value (0 = never)
 };
 
 #define SUB_RETRY_MS          100   // re-registration interval while un-initialized
 #define SUB_INIT_WINDOW_MS    10000 // give up re-registering after this long
+#define SUB_KEEPALIVE_MS      60000 // renew the provider's 120 s lease once values flow
 
 static RequesterEntry requesterTable[MAX_REQUESTER_SUBS];
 
@@ -43,12 +43,34 @@ static RequesterEntry* RequesterFindByTrid(uint16_t trid) {
     return SubTableFindByTrid(requesterTable, trid, RequesterOccupied);
 }
 
-static RequesterEntry* RequesterFindFree() {
-    return SubTableFindFree(requesterTable, RequesterOccupied);
-}
-
 static void RequesterClearEntry(RequesterEntry* e) {
     *e = RequesterEntry{};
+}
+
+// Deletes `e` and compacts the table, so the active entries stay a TRID-sorted prefix
+// (Docs: "stored in a sequential table, sorted by TRID").
+static void RequesterRemove(RequesterEntry* e) {
+    int idx = (int)(e - requesterTable);
+    for (int i = idx; i < MAX_REQUESTER_SUBS - 1; i++) requesterTable[i] = requesterTable[i + 1];
+    RequesterClearEntry(&requesterTable[MAX_REQUESTER_SUBS - 1]);
+}
+
+// Finds the entry for `trid`, or allocates it at its sorted position. Returns nullptr when the
+// table is full. The new entry is marked active with only its TRID set.
+static RequesterEntry* RequesterUpsert(uint16_t trid) {
+    int count = 0;
+    while (count < MAX_REQUESTER_SUBS && requesterTable[count].active) {
+        if (requesterTable[count].trid == trid) return &requesterTable[count];
+        count++;
+    }
+    if (count >= MAX_REQUESTER_SUBS) return nullptr;
+    int pos = 0;
+    while (pos < count && requesterTable[pos].trid < trid) pos++;
+    for (int i = count; i > pos; i--) requesterTable[i] = requesterTable[i - 1];
+    RequesterClearEntry(&requesterTable[pos]);
+    requesterTable[pos].trid = trid;
+    requesterTable[pos].active = true;
+    return &requesterTable[pos];
 }
 
 // Applies a received value to the requester's target register (raw bytes) and confirms with
@@ -91,6 +113,7 @@ static void ApplyRequesterValue(RequesterEntry *e, const uint8_t *val, uint8_t v
 #endif
     }
     e->lastValueMs = DeviceStatus.UptimeMs;
+    e->timeout = SubTimeoutFrom(DeviceStatus.UptimeMs); // a value renews the 120 s lease
     if (!confirm) return;
 
     // Confirmation: the requester sends the hash of the received value (docs CID 0: the
@@ -122,23 +145,19 @@ static void HandleRequesterValueUpdate(const PacketFrame &frame) {
     // only OnChangeConfirm repeats until confirmed. Confirming every trigger would also
     // overwrite the provider's Hash/Hashlike state, which the delta trigger uses as its last
     // sent scalar value.
-    const bool confirm = e->trigger == TriggerType::OnChangeConfirm;
+    const bool confirm = e->sub.trigger == TriggerType::OnChangeConfirm;
     ApplyRequesterValue(e, frame.payload, PayloadBytes(frame), confirm);
 }
 
-// Serializes one requester entry (wire order: providerAddr, trid, targetReg, sourceReg,
-// trigger + 3 pad, period, min, deadzone = 28 B). Returns the advanced offset.
+// Serializes one requester entry (Docs "Requester table entry", 28 B): providerAddr, trid,
+// the shared 16-byte subscription table, targetReg, timeout. Returns the advanced offset.
 static uint16_t RequesterEntrySerialize(uint8_t *buf, uint16_t off, const RequesterEntry *e) {
     // The caller starts at off = 1 (the count byte), so every field below is misaligned.
     StoreUnaligned(buf + off, e->providerAddr); off += 2;
     StoreUnaligned(buf + off, e->trid); off += 2;
+    off = SubTableSerialize(buf, off, e->sub);
     StoreUnaligned(buf + off, e->targetReg); off += 4;
-    StoreUnaligned(buf + off, e->sourceReg); off += 4;
-    buf[off++] = (uint8_t)e->trigger;
-    buf[off++] = 0; buf[off++] = 0; buf[off++] = 0; // 24-bit padding
-    StoreUnaligned(buf + off, e->periodMs); off += 4;
-    StoreUnaligned(buf + off, e->minTimeMs); off += 4;
-    StoreUnaligned(buf + off, (uint32_t)e->deadzone.Value); off += 4;
+    StoreUnaligned(buf + off, e->timeout); off += 4;
     return off;
 }
 #endif // USE_SUB_REQUEST
