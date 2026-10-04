@@ -300,6 +300,20 @@ Tests:
   `core_bootloader_flash.py:103,107,108`); destructive-suite ordering not enforced by
   `run_hil_tests.sh:23-40`.
 
+Tooling:
+- Cleanup: redundant `firmware/.gitignore` (root copy exists); stale `platformio.ini:102-105`
+  upload-offset comment (the override is `core_app_offset.py`); `run_hil_tests.sh:23-40` comment
+  vs actual default; `.gitignore` gaps (`__pycache__/`, `sdkconfig.*`); `platformio.ini:121`
+  whitespace.
+- Dedup: hardcoded DAS app base `0x800` in three places (`platformio.ini:30`,
+  `das_app_upload.py:7`, `DAS_v0.1/Bootloader.cpp:31`); hardcoded core `0x70000`
+  (`core_app_offset.py:10` duplicates `partitions.csv`); version pack/shape logic in four places
+  (`version.py:79-92`, `gen_app_version.py:19-23`, `auto_version.py:20-23`, `RegisterRead.h:22-25`);
+  the `.lay` asset duplicates `LayoutVysiv1_0` with no equality test.
+- Optimization/DX: `run_hil_tests.sh:48-63` runs one Flutter process per file (batch into one);
+  `platformio.ini` env duplication (`build_type` x5, DAS/Tamu flag copies); hardcoded Linux x64
+  debug bundle path (`run_hil_tests.sh:21`).
+
 **Deliberately left** (a merge would read worse): the three flag-name decoders (`flagWords` =
 full words for the backup format, `ValueFlags.describe` = RO/P/TR, `_flagsSuffix` = RO/P) and
 the two flag renderings in `register_page_tiles` (chips vs small text) are different
