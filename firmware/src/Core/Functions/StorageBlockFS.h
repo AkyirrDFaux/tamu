@@ -259,6 +259,12 @@ public:
         uint32_t capacity = TableCapacity();
         if (capacity == 0) return false;
 
+        // OPTIMIZE_SPEED builds keep the table between 25% and 75% full by growing or
+        // shrinking it one page per move; size builds keep the current page count (the extra
+        // entries are not needed on a space-constrained target and the arithmetic costs
+        // flash). Both compact the live entries into the (same-size) new table.
+        uint32_t new_size = file_table_size;
+#ifdef OPTIMIZE_SPEED
         uint32_t valid_count = 0;
         for (uint32_t i = 0; i < capacity; i++) {
             FileEntry entry;
@@ -267,12 +273,11 @@ public:
             if (FileEntryIsValid(entry.offset))
                 valid_count++;
         }
-
-        uint32_t new_size = file_table_size;
         if (valid_count * 4 > capacity * 3) // > 75% full: grow by one page
             new_size += PAGE_SIZE;
         else if (valid_count * 4 < capacity && new_size > PAGE_SIZE) // < 25% full: shrink
             new_size -= PAGE_SIZE;
+#endif
 
         uint32_t new_offset = FindSpace(new_size);
         if (new_offset == 0) return false; // Out of space
@@ -310,13 +315,19 @@ public:
 
         file_table_offset = new_offset;
         file_table_size = new_size;
-        DeviceLog("STORAGE", "Table moved to 0x%x (%d B, %d valid)", (unsigned)new_offset,
-                  (int)new_size, (int)valid_count);
+        DeviceLog("STORAGE", "Table moved to 0x%x (%d B)", (unsigned)new_offset,
+                  (int)new_size);
         return true;
     }
 
-    // Finds contiguous free space of `size` bytes starting at the best-fitting page, excluding
-    // existing files and the pointer page. A rotating cursor spreads wear across the storage.
+    // Finds contiguous free space of `size` bytes, excluding existing files and the pointer
+    // page. Both shapes start at the rotating wear cursor so allocation spreads wear.
+    //
+    // OPTIMIZE_SPEED builds (the core) build a usage bitmap and pick the best-fitting run:
+    // fewest table re-reads and less fragmentation, which is worth the flash where there is
+    // room. Size builds (the DAS and any space-constrained target) do a linear first-fit,
+    // re-reading the table once per candidate page through BlockUsed; the extra flash reads
+    // are negligible on a small device and the code is a fraction of the bitmap shape.
     uint32_t FindSpace(uint32_t size_bytes)
     {
         uint32_t blocks = BlocksForSize(size_bytes);
@@ -329,6 +340,7 @@ public:
         if (blocks > num_blocks)
             return 0;
 
+#ifdef OPTIMIZE_SPEED
         // Build the usage bitmap directly from the file table (~entries, not
         // num_blocks x entries): per-candidate BlockUsed() rescans the whole table each time.
         uint8_t used_bitmap[(STORAGE_MAX_BLOCKS + 7) / 8] = {0};
@@ -395,6 +407,25 @@ public:
         uint32_t idx = (best_offset - data_start) / PAGE_SIZE;
         wear_cursor = (idx + blocks) % num_blocks;
         return best_offset;
+#else
+        // Size variant: first-fit linear scan from the wear cursor. A run must not wrap past
+        // the data end (files are a linear [offset, offset+blocks*PAGE) range).
+        for (uint32_t scanned = 0; scanned < num_blocks; scanned++)
+        {
+            uint32_t idx = (wear_cursor + scanned) % num_blocks;
+            if (idx + blocks > num_blocks)
+                continue; // would wrap the linear data area
+            uint32_t run = 0;
+            while (run < blocks && !BlockUsed(data_start + (idx + run) * PAGE_SIZE))
+                run++;
+            if (run == blocks)
+            {
+                wear_cursor = (idx + blocks) % num_blocks;
+                return data_start + idx * PAGE_SIZE;
+            }
+        }
+        return 0;
+#endif
     }
 
     // Creates a file of `size` bytes; returns true on success.

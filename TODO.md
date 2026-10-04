@@ -146,7 +146,11 @@ flag renderings in `register_page_tiles` (chips vs small text).
   cross-ref/`static_assert`s; app `ScriptDraftValue.setType` and `ValueInfo` unification; added
   storage-client/dynamic-trace/TRID tests.
 - **DAS full filesystem** (2026-10-04): the DAS drops the reduced `StorageFixedFS` and runs the
-  shared `StorageBlockFS` in a 384 B region at `0x3E80` (pointer page + table + 256 B data,
-  `_etext` +176 B); `USE_FIXED_STORAGE` and the fixed branches are removed. `StaticRecallAll`
-  re-persists the defaults when `.SV` is absent/short so the full FS's real file presence keeps the
-  mirror valid. All four envs build; host gate + 6 HIL suites green.
+  shared `StorageBlockFS` in a 384 B region at `0x3E80` (pointer page + table + 256 B data);
+  `USE_FIXED_STORAGE` and the fixed branches are removed. `StaticRecallAll` re-persists the
+  defaults when `.SV` is absent/short so the full FS's real file presence keeps the mirror valid.
+- **Storage size variants** (2026-10-04): following the `Crc8` `OPTIMIZE_SPEED` pattern, `FindSpace`
+  picks the bitmap best-fit (speed) or a linear first-fit (size), and `MoveFiletable` grows/shrinks
+  the table (speed) or keeps the page count (size). The DAS takes the size shapes: **−328 B**
+  (flash 13 772 → 13 444, app gap 176 → **504 B**), while the core's speed shapes are unchanged.
+  All four envs build; host gate + 6 HIL suites green.
