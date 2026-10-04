@@ -4,6 +4,7 @@
 #
 #   ./upload.sh app [tamu|das]         build + upload the application(s)   (default: both)
 #   ./upload.sh boot [tamu|das] [-y]   build + upload the bootloader(s)    (default: both)
+#   ./upload.sh all [tamu|das] [-y]    build + upload bootloader(s) then application(s)
 #   ./upload.sh build [tamu|das]       build only, no upload               (default: both)
 #   ./upload.sh bin tamu [file] [off]  flash a raw .bin via esptool   (default: app @ 0x70000)
 #   ./upload.sh bin das  [file] [off]  flash a raw .bin via minichlink (default: app @ 0x800)
@@ -11,7 +12,7 @@
 #   ./upload.sh help                   this text
 #
 # `app`/`bin` write only the application slot, so the bootloader is preserved; only `boot`
-# overwrites a bootloader. Run `./upload.sh help` for the full list and port overrides.
+# and `all` overwrite a bootloader. Run `./upload.sh help` for the full list and overrides.
 #
 set -euo pipefail
 
@@ -50,6 +51,7 @@ Usage: ./upload.sh <command> [device] [args]
 Commands:
   app   [tamu|das]            Build and upload the application(s).        (default: both)
   boot  [tamu|das] [-y]       Build and upload the bootloader(s).         (default: both)
+  all   [tamu|das] [-y]       Build and upload the bootloader(s) then the application(s).
   build [tamu|das]            Build only, no upload.                      (default: both)
   bin   <tamu|das> [file] [offset]
                               Flash a raw .bin. `file` defaults to the built app image,
@@ -62,11 +64,13 @@ Devices:
   das    ->  DAS_v0_1 app            / DAS_bootloader
 
 The app commands write only the application slot (tamu ota_0, DAS 0x800), so the
-bootloader is preserved; only `boot` overwrites a bootloader.
+bootloader is preserved; only `boot` and `all` overwrite a bootloader.
 
 Examples:
   ./upload.sh app                 # reflash both applications
   ./upload.sh boot                # reflash both bootloaders (prompts; -y to skip)
+  ./upload.sh all                 # reflash both bootloaders + both applications
+  ./upload.sh all tamu            # Tamu bootloader + Tamu application
   ./upload.sh app das             # reflash just the DAS application
   ./upload.sh build tamu          # compile Tamu app + bootloader, no upload
   ./upload.sh bin das             # flash the built DAS app image
@@ -99,6 +103,12 @@ boot_env_for() { case "$1" in tamu) echo "$TAMU_BOOT_ENV" ;; das) echo "$DAS_BOO
 
 devices() { # <tamu|das|all> -> space-separated list
     if [ "$1" = all ]; then echo "tamu das"; else echo "$1"; fi
+}
+
+confirm_flash() { # <assume-y> <dev> <what>
+    [ "$1" = 1 ] && return 0
+    read -r -p "Reflash $3 for '$2'? This overwrites the bootloader. [y/N] " ans
+    [[ "$ans" =~ ^[Yy] ]]
 }
 
 do_upload() { # <app|boot> <tamu|das|all>
@@ -174,11 +184,22 @@ case "$cmd" in
                 *) die "unknown boot option '$a' (use tamu|das|all|-y)" ;;
             esac
         done
-        if [ "$assume" != 1 ]; then
-            read -r -p "Reflash bootloader(s) for '$dev'? This overwrites the bootloader. [y/N] " ans
-            [[ "$ans" =~ ^[Yy] ]] || { echo "aborted"; exit 1; }
-        fi
+        confirm_flash "$assume" "$dev" "bootloader(s)" || { echo "aborted"; exit 1; }
         do_upload boot "$dev"
+        ;;
+    all | everything)
+        dev=all
+        assume="${ASSUME_YES:-0}"
+        for a in "${@:2}"; do
+            case "$a" in
+                -y | --yes) assume=1 ;;
+                tamu | das | all) dev="$a" ;;
+                *) die "unknown all option '$a' (use tamu|das|all|-y)" ;;
+            esac
+        done
+        confirm_flash "$assume" "$dev" "bootloader(s) and application(s)" || { echo "aborted"; exit 1; }
+        do_upload boot "$dev"
+        do_upload app "$dev"
         ;;
     build)
         do_build "${2:-all}"
