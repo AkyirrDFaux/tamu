@@ -25,12 +25,6 @@ File table contains file records. It's a file itself managed by this service, fi
 | ---------------- | ------------ | ---------------- | ------------ | ------------ |
 | Filetable itself | First file   | Invalidated file | Second file  | Unwritten    |
 File is given off to have data stored or read by other functions, it has it's own format.
-### Reduced variant
-Uses define USE_FIXED_STORAGE.
-The files have a fixed size, and fixed positions.
-Filetable is not a real file, but a const array within code.
-
-Useful for limited/simple devices.
 ### Commands (030x)
 
 | Function          | CID | Payload In                                  | Payload out                                  | Note                                                       |

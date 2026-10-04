@@ -40,7 +40,6 @@ Services:
 - Mandatory
 - RSBus Bootloader
 - Subscriptions (Provide only)
-- Uses reduced filesystem
 Modules:
 - Resistive measurement x2
 - Button
