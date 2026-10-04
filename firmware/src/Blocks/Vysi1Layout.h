@@ -31,27 +31,10 @@ const uint8_t LayoutVysiv1_0[10 * 11]{
 // w*h u16 LE 0-based LED indices (0xFFFF = unused).
 inline void PreloadVysiLayout()
 {
-    // Heal older preloads: an earlier 5x5 grid ("LAY5X5") and the first build's
-    // "VYSIV1 \0" name (a NUL inside the 8-byte record, unreachable through the
-    // space-padded lookups).
-    char name5[8];
-    PackName("LAY5X5", name5);
-    Storage.DeleteFile(name5);
-    const char legacyNul[8] = {'V', 'Y', 'S', 'I', 'V', '1', ' ', '\0'};
-    Storage.DeleteFileExact(legacyNul);
-
-    // Adopt the previous Vysi layout file as LAY_1 (keeps a user's customization).
     char lay1[8];
     PackName("LAY_1", lay1);
-    if (Storage.FileExists(lay1) == 0xFFFFFFFF)
-    {
-        char legacy[8];
-        PackName("VYSIV1", legacy);
-        if (Storage.FileExists(legacy) != 0xFFFFFFFF)
-            Storage.RenameFile(legacy, lay1);
-    }
     if (Storage.FileExists(lay1) != 0xFFFFFFFF)
-        return; // already present (renamed or preloaded earlier)
+        return; // already present (preloaded earlier)
 
     uint8_t buf[3 + 11 * 10 * 2];
     buf[0] = 178; // brightness limit: 0-255 as a percentage -> 70%
@@ -219,17 +202,15 @@ public:
         // Blank name (all spaces) -> built-in default layout.
         bool empty = true;
         for (int i = 0; i < 8; i++)
-            if (Per.LayoutFile[i] != ' ' && Per.LayoutFile[i] != '\0') empty = false;
+            if (Per.LayoutFile[i] != ' ') empty = false;
         if (empty)
         {
             LoadDefaultLayout();
             return true;
         }
 
-        char n8[8];
-        PackName(Per.LayoutFile, n8); // normalize to space-padded form
         uint32_t off, size;
-        if (!Storage.GetFileInfo(n8, &off, &size))
+        if (!Storage.GetFileInfo(Per.LayoutFile, &off, &size))
             return false;
         if (size < 3)
             return false;
@@ -259,16 +240,11 @@ public:
 inline Vysi1Display *Vysi1Display::s_instances[Vysi1Display::MaxInstances] = {};
 inline uint32_t Vysi1Display::s_instanceCount = 0;
 
-// Boot helper: migrates a persisted old-format "VYSIV1" reference to the renamed
-// "LAY_1", then loads the named layout file (blank name = compiled-in default). The
-// boot recall restores the LayoutFile RAM field but does not re-run its write trigger,
-// so the layout must be re-applied explicitly.
+// Boot helper: loads the named layout file (blank name = compiled-in default). The boot
+// recall restores the LayoutFile RAM field but does not re-run its write trigger, so the
+// layout must be re-applied explicitly.
 inline void Vysi1BootLayout(Vysi1Display &disp)
 {
-    char legacy[8];
-    PackName("VYSIV1", legacy);
-    if (memcmp(disp.Per.LayoutFile, legacy, 8) == 0)
-        PackName("LAY_1", disp.Per.LayoutFile);
     // A file that cannot be loaded (missing, truncated, or an older 2-byte-header format)
     // must not leave the display on its zero-initialised Layout[] - every cell there maps to
     // LED 0 - so fall back to the built-in default, whose LED mapping matches the .lay file.

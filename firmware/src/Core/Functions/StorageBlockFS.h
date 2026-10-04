@@ -25,52 +25,6 @@ public:
         file_table_offset = FindFiletable();
         if (file_table_offset == 0 || !ValidateTable()) {
             Format();
-        } else {
-            DeduplicateFiletable();
-            RemoveObsoleteFiles();
-        }
-    }
-
-    // Deletes files written by pre-release firmware that are no longer part of the spec.
-    // Dynamic memory moved from a single DYNMEM blob to the per-block DT_/DV_ files
-    // (Docs/Services/Register.md), so a leftover DYNMEM is dead weight.
-    void RemoveObsoleteFiles()
-    {
-        static const char *obsolete[] = {"DYNMEM"};
-        for (const char *name : obsolete) {
-            if (FileExists(name) != 0xFFFFFFFF) {
-                DeleteFile(name);
-                DeviceLog("STORAGE", "removed obsolete '%s'", name);
-            }
-        }
-    }
-
-    // Heals duplicate file names. An older RenameFile compared NUL-terminated C strings
-    // against space-padded records, so the superseded record was never invalidated and one
-    // new record was appended per save (many stale SUBREQ/DT_/DV_ entries). Keep the newest
-    // valid record for each name and invalidate the rest. Bounded by the written slot count,
-    // so it is O(entries^2) over a handful of records.
-    void DeduplicateFiletable()
-    {
-        uint32_t end = GetEndOfFiletable();
-        for (uint32_t i = 1; i < end; i++) {
-            FileEntry entry;
-            if (!ReadTableEntry(i, &entry)) return;
-            if (!FileEntryIsValid(entry.offset)) continue;
-            bool newer = false;
-            for (uint32_t j = i + 1; j < end; j++) {
-                FileEntry other;
-                if (!ReadTableEntry(j, &other)) break;
-                if (FileEntryIsValid(other.offset) && memcmp(other.name, entry.name, 8) == 0) {
-                    newer = true;
-                    break;
-                }
-            }
-            if (!newer) continue;
-            uint32_t zero[2] = {0, 0};
-            if (!Storage_FlashWrite(file_table_offset + i * TABLE_ENTRY_SIZE, &zero, sizeof(zero)))
-                return;
-            DeviceLog("STORAGE", "invalidated duplicate '%.8s'", entry.name);
         }
     }
 
@@ -207,14 +161,6 @@ public:
     bool DeleteFilerecord(const char name[8])
     {
         return DeleteMatching([&](const char *n) { return NameMatch(n, name); });
-    }
-
-    // Deletes every record whose 8 raw name bytes equal `name8` exactly. Used to heal
-    // records written by the old unpacked-name bug (a NUL inside the record name), which
-    // the space-padded lookups above cannot address.
-    bool DeleteFileExact(const char name8[8])
-    {
-        return DeleteMatching([&](const char *n) { return memcmp(n, name8, 8) == 0; });
     }
 
     // Calls `fn(name)` once for every live file record. A superseded record for the same

@@ -70,8 +70,6 @@ subscription, register, script, requester-persistence and backup-walk dedups are
 - Unused enum members (`DataType::NetAddr/UnknownKeyed/BlockInfo/Deleted`,
   `BlockType::Deleted/Undefined`, `AccGyrError::ErrTimeout`, Render `Mesh`/`Colour3`/
   `PointCoordinates`) - cross-cutting with `firmware_contract_test.dart`.
-- The one-shot healing paths (`RemoveObsoleteFiles`, `DeduplicateFiletable`, `DeleteFileExact`,
-  the `LAY5X5`/`VYSIV1` migration) run every boot; consider a one-shot migration marker.
 
 **App**
 - `script_value_dialog._changeType` -> `ScriptDraftValue.setType` (the dialog's local state
