@@ -4,7 +4,6 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../core/connection.dart';
-import '../core/device_db.dart';
 import '../core/host_files.dart';
 import '../core/platform_caps.dart';
 import '../core/register_client.dart';
@@ -53,10 +52,7 @@ class _StoragePageState extends State<StoragePage>
     showSnack(context, message);
   }
 
-  bool _hasStorageFiles() {
-    final dev = DeviceDatabase.instance.byId(widget.deviceId);
-    return dev != null && (dev.capabilities & Capability.storageFiles) != 0;
-  }
+  bool _hasStorageFiles() => !StorageClient(deviceId: widget.deviceId).fixedStorage;
 
   Future<void> _refresh() async {
     if (!ConnectionManager.instance.isConnected || _refreshing) return;

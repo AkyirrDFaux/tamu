@@ -245,17 +245,9 @@ class RegisterClient {
 
   /// Write field value (CID 2) for a specific block type and instance (static/dynamic blocks).
   /// Payload: BlockInfo (4) + ValueInfo (4) + value
-  Future<List<int>?> writeBlockField(int blockType, int instance, int field, int key, ValueInfo meta, List<int> value) async {
-    final payload = [
-      ...blockInfoBytes(blockType, instance, field, key),
-      ...meta.toBytes(),
-      ...value,
-    ];
-    final reply = await request(RegisterCid.write, payload: payload);
-    if (reply == null || reply.length < 8) return null;
-    final echoMeta = ValueInfo.fromBytes(reply, 4);
-    return valueSlice(reply, echoMeta.size);
-  }
+  Future<List<int>?> writeBlockField(int blockType, int instance, int field, int key,
+          ValueInfo meta, List<int> value) =>
+      _writeDynamicValue(blockInfoBytes(blockType, instance, field, key), meta, value);
 
   /// Reads all blocks (static + dynamic + loaded scripts) by enumerating types/instances.
   /// The System block (type 0, inst 0) is a virtual block not in the static registry.

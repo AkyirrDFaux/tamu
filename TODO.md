@@ -1864,3 +1864,41 @@ to the bank types, and a test helper put the Persistent flag in the ValueInfo *t
 Legacy to delete (covered by the layers): `BlockMeta` packing + conversions; dynamic Trigger path;
 `0x3FE`/`0x3FF` literals; `STATLOG`; the define rename; `HandleGetMemUsage`/`HandleReadBackup`;
 `scriptActiveMask`.
+
+## Code-cleanup backlog (from the 2026-10-04 duplication pass)
+
+Done: `abe921e` (reply/stream dedup + dead code; DAS -288 B, core -1 006 B) and
+`e56676e` (the script read/reply paths through the shared helpers). Remaining items, all
+Tamu-only unless noted (found by the two review agents + an exact-clone scan):
+
+**Firmware**
+- `ProviderStreamTable`/`RequesterStreamTable` (`SubscriptionsControl.h`) are the same
+  streamer; share one parameterised by the occupied predicate + entry size.
+- `RegisterRequesterProvider`'s same-device branch re-implements `ProviderInstall`.
+- `LoadAllBackups`'s dynamic loop vs `DynamicRecallAll` (`RestoreDynamicBlock`).
+- `DeleteFilerecord`/`DeleteFileExact` (a comparator parameter).
+- SNDB: seven `for i < num_entries { ReadEntry; ... }` scans (`ScanEntries`).
+- `ScriptGetEntry` on top of `ScriptGetIoPointer`.
+- `RegisterGetByBlockInfo`/`SubscriptionsGetField` share one resolver.
+- `ApplyRequesterValue`'s write dispatch -> `RegisterSetByBlockInfo`.
+- `SaveRequesterTable` re-implements `WriteBackupFile`'s staging.
+- `Vysi1Display::IdentityAffine` member -> the free `IdentityAffine23`.
+- Unused enum members (`DataType::NetAddr/UnknownKeyed/BlockInfo/Deleted`,
+  `BlockType::Deleted/Undefined`, `AccGyrError::ErrTimeout`, Render `Mesh`/`Colour3`/
+  `PointCoordinates`) - cross-cutting with `firmware_contract_test.dart`.
+- One-shot healing paths (`RemoveObsoleteFiles`, `DeduplicateFiletable`, `DeleteFileExact`,
+  the `LAY5X5`/`VYSIV1` migration) run every boot; consider a one-shot migration marker.
+- `Dispatcher`'s `case ServiceType::App` "legacy 0x11xx fallback" - confirm no app emits it.
+
+**App**
+- `backup_capture`/`backup_restore` share one field walker.
+- `subscriptions_dialog`/`block_info_picker` share the block/field selection fetchers.
+- `script_value_dialog._changeType` -> `ScriptDraftValue.setType`.
+- `script_file`'s `_align4`/`_putU32`/`_getU32`/`_numberToRaw`/`_rawToNumber` -> the
+  `types.dart` codecs; `ScriptValueInfo` vs `ValueInfo`.
+- `device_db.setName` -> `makeBlockInfo`/`writeBlockField`.
+- Three flag-name decoders (`flagWords`, `ValueFlags.describe`, `_flagsSuffix`) and three
+  BlockInfo->label decoders -> one each.
+- `register_page_tiles` renders the flag chips twice.
+- `system_block_view.formatSystemValue` -> delegate the generic types to `formatValue`
+  (mind the 32-bit enum / 16-bit integer / NUL-string differences).
