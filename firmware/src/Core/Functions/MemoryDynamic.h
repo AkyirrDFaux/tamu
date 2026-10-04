@@ -54,14 +54,19 @@ static void HexIndexName(char kind, uint16_t idx, char out[8])
 static void DynamicTableName(uint16_t idx, char out[8]) { HexIndexName('T', idx, out); }
 static void DynamicValuesName(uint16_t idx, char out[8]) { HexIndexName('V', idx, out); }
 
-// Removes a block's DT/DV files (tombstoned slots must not leave files behind).
+// Removes a block's DT/DV files (tombstoned slots must not leave files behind), plus any
+// staging names a half-finished atomic write left behind.
 static void DeleteDynamicBlockFiles(uint16_t idx)
 {
-    char tn[8], vn[8];
+    char tn[8], vn[8], ttn[8], tvn[8];
     DynamicTableName(idx, tn);
     DynamicValuesName(idx, vn);
+    BackupTempName(tn, ttn);
+    BackupTempName(vn, tvn);
     if (Storage.FileExists(tn) != 0xFFFFFFFF) Storage.DeleteFile(tn);
     if (Storage.FileExists(vn) != 0xFFFFFFFF) Storage.DeleteFile(vn);
+    if (Storage.FileExists(ttn) != 0xFFFFFFFF) Storage.DeleteFile(ttn);
+    if (Storage.FileExists(tvn) != 0xFFFFFFFF) Storage.DeleteFile(tvn);
 }
 
 // Cleans orphaned DT/DV files for tombstoned or beyond-registry slots. Called before

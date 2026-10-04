@@ -127,7 +127,10 @@ inline bool WriteBackupFile(const char name[8], const uint8_t *data, uint16_t le
     if (!Storage.CreateFile(tmp, len))
         return false;
     if (!Storage.WriteToFile(tmp, 0, len, (const char *)data))
+    {
+        Storage.DeleteFile(tmp); // don't leave an orphan staging file behind
         return false;
+    }
 
     // Commit atomically: the staging file becomes the live backup under its final name.
     if (!Storage.RenameFile(tmp, name))

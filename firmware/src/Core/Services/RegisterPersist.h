@@ -85,48 +85,34 @@ static bool DynamicRecallAll() {
 }
 
 static void HandleCreateDynamic(const PacketFrame &frame, uint16_t index) {
-    if (PayloadBytes(frame) < 8) { RespondStatus(frame,false); return; }
-    uint16_t name_len = PayloadBytes(frame) - 4;
-    DynamicBlockDescriptor *block = CreateDynamicBlock(frame.payload + 4, name_len, index);
+    if (PayloadBytes(frame) < 2) { RespondStatus(frame,false); return; }
+    uint16_t name_len = PayloadBytes(frame) - 2;
+    DynamicBlockDescriptor *block = CreateDynamicBlock(frame.payload + 2, name_len, index);
     if (!block) { RespondStatus(frame,false); return; }
     SendBlockIndexAck(frame, (uint8_t)index);
 }
 
-static void HandleDeleteDynamic(const PacketFrame &frame, uint16_t block_idx, uint8_t field_idx, uint8_t key) {
+static void HandleDeleteDynamic(const PacketFrame &frame, uint16_t block_idx) {
     if (block_idx >= dynamic_block_registry.block_count) { RespondStatus(frame,false); return; }
-    if (field_idx == INVALID_INDEX) { // delete the whole block -> tombstone (slot kept)
-        dynamic_block_registry.TombstoneBlock(block_idx);
-        RespondStatus(frame, true);
-        return;
-    }
-    DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(block_idx);
-    if (!block) { RespondStatus(frame,false); return; }
-    if (key != INVALID_INDEX) { RespondStatus(frame, block->DeleteEntry(field_idx, key)); return; }
-    // Delete every entry at `field` (the record compacts per removal).
-    uint8_t keys[256];
-    uint16_t n = block->ListKeys(field_idx, keys, 256);
-    bool ok = true;
-    for (uint16_t i = 0; i < n; i++)
-        ok &= block->DeleteEntry(field_idx, keys[i]);
-    RespondStatus(frame, ok);
+    // Delete Dynamic tombstones the whole block; entry/field deletion is the basic Write
+    // with type None (Docs/Services/Register.md "Dynamic commands").
+    dynamic_block_registry.TombstoneBlock(block_idx);
+    RespondStatus(frame, true);
 }
 
-static void HandleGetName(const PacketFrame &frame, uint32_t bi, uint16_t block_idx) {
+static void HandleGetName(const PacketFrame &frame, uint16_t block_idx) {
     if (block_idx >= dynamic_block_registry.block_count) { RespondStatus(frame,false); return; }
     DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(block_idx);
     if (!block) { RespondStatus(frame,false); return; }
-    uint8_t payload[sizeof(BlockIndex) + BLOCK_NAME_LEN];
-    memcpy(payload, &bi, 4);
-    memcpy(payload + 4, block->Name, BLOCK_NAME_LEN);
-    SendResponse(frame, payload, 4 + BLOCK_NAME_LEN);
+    SendResponse(frame, (const uint8_t *)block->Name, BLOCK_NAME_LEN);
 }
 
 static void HandleSetName(const PacketFrame &frame, uint16_t block_idx) {
     if (block_idx >= dynamic_block_registry.block_count) { RespondStatus(frame,false); return; }
-    if (PayloadBytes(frame) < 4) { RespondStatus(frame,false); return; }
+    if (PayloadBytes(frame) < 2) { RespondStatus(frame,false); return; }
     DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(block_idx);
     if (!block) { RespondStatus(frame,false); return; }
-    SetBlockName(block->Name, (const char *)(frame.payload + 4), (uint16_t)(PayloadBytes(frame) - 4));
+    SetBlockName(block->Name, (const char *)(frame.payload + 2), (uint16_t)(PayloadBytes(frame) - 2));
     RespondStatus(frame, true);
 }
 

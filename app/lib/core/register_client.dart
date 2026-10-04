@@ -410,9 +410,9 @@ class RegisterClient {
       }
       target = maxLive + 1;
     }
-    final bi = _dynBi(target, 0xFF, 0xFF);
     final reply = await request(DynamicCid.create, timeout: const Duration(seconds: 5), payload: [
-      ...bi,
+      target & 0xFF,
+      (target >> 8) & 0xFF,
       ...nameBytes,
     ]);
     if (reply == null || reply.length < 5) return null;
@@ -475,12 +475,35 @@ class RegisterClient {
         ValueInfo(type: e.meta.type, flags: nf, key: key, size: e.value.length), e.value);
   }
 
-  /// Deletes a dynamic block (tombstone), a field, or a (field, key) entry - CID 0x11.
-  /// Field 0xFF = whole block; key 0xFF = the whole field; otherwise the entry.
+  /// Deletes a dynamic block (tombstone), a field, or a (field, key) entry.
+  ///
+  /// The whole block goes through the Dynamic Delete command, whose request is the global
+  /// `Index (uint16)` (Docs/Services/Register.md "Dynamic commands"). Entry/field deletion
+  /// is the basic Write with type None, the documented way to delete here.
   Future<bool> deleteDynamic({required int block, int? field, int? key}) async {
-    final reply = await request(DynamicCid.delete, payload: _dynBi(block, field ?? 0xFF, key ?? 0xFF));
-    // The delete replies with a one-byte status (0 = success, 0xFF = refused).
-    return reply != null && reply.isNotEmpty && reply[0] == 0;
+    if (field == null) {
+      final reply = await request(DynamicCid.delete,
+          payload: [block & 0xFF, (block >> 8) & 0xFF]);
+      // The delete replies with a one-byte status (0 = success, 0xFF = refused).
+      return reply != null && reply.isNotEmpty && reply[0] == 0;
+    }
+    final dyn = DynBlock(
+        index: block, meta: ValueInfo(type: dynamicTypeForIndex(block)), name: '');
+    if (key != null) {
+      final e = await readDynamicField(dyn, field, key);
+      if (e == null) return false;
+      return await writeDynamicField(dyn, e, const [], newType: DataType.none, key: key) !=
+          null;
+    }
+    // Delete every key at the field (nothing to delete is a success).
+    var ok = true;
+    for (final k in await getDynamicKeys(block, field) ?? const <int>[]) {
+      final e = await readDynamicField(dyn, field, k);
+      if (e == null || await writeDynamicField(dyn, e, const [], newType: DataType.none, key: k) == null) {
+        ok = false;
+      }
+    }
+    return ok;
   }
 
   /// Reorders the live dynamic blocks to [newOrder] (the desired order of the live

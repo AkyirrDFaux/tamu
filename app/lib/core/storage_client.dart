@@ -45,7 +45,12 @@ class StorageClient {
 
   static bool _detectFixedStorage(int deviceId) {
     final dev = DeviceDatabase.instance.byId(deviceId);
-    return dev == null || (dev.capabilities & Capability.storageFiles) == 0;
+    // An unclassified device (no entry, or capabilities not read yet) must not be assumed
+    // fixed: doing so lists the full FS's invalidated (offset-0) records as real files. The
+    // reduced FS is the DAS, which reports its capabilities; the core is the device the app
+    // normally connects to first.
+    if (dev == null || dev.capabilities == 0) return false;
+    return (dev.capabilities & Capability.storageFiles) == 0;
   }
 
   ConnectionManager get _link => ConnectionManager.instance;

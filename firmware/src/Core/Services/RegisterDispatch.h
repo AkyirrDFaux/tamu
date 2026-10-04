@@ -94,6 +94,23 @@ static void HandleRegister(const PacketFrame &frame) {
     if (cid == (uint8_t)RegisterCid::EnumerateBlocks) { HandleEnumerateBlocks(frame); return; }
     if (cid == (uint8_t)RegisterCid::EnumerateFields) { HandleEnumerateFields(frame); return; }
 
+    // Dynamic management (Docs/Services/Register.md "Dynamic commands"): the request
+    // carries the global Index (uint16), not a BlockInfo, so handle it before the
+    // BlockInfo guard below.
+#ifdef USE_DYNAMIC_BLOCKS
+    if (cid >= (uint8_t)DynamicCid::Create && cid <= (uint8_t)DynamicCid::SetName) {
+        if (PayloadBytes(frame) < 2) { RespondStatus(frame, false); return; }
+        uint16_t gi = (uint16_t)(frame.payload[0] | (frame.payload[1] << 8));
+        switch ((DynamicCid)cid) {
+            case DynamicCid::Create:  HandleCreateDynamic(frame, gi); return;
+            case DynamicCid::Delete:  HandleDeleteDynamic(frame, gi); return;
+            case DynamicCid::GetName: HandleGetName(frame, gi); return;
+            case DynamicCid::SetName: HandleSetName(frame, gi); return;
+            default: break;
+        }
+    }
+#endif
+
     if (PayloadBytes(frame) < 4) return;
     
     // frame.payload is 4-byte aligned (PacketFrame is packed+aligned(4)), so this is one
@@ -152,18 +169,4 @@ static void HandleRegister(const PacketFrame &frame) {
         HandleStaticBlockWrite(frame, type, inst, field, key, desc, val, vlen);
         return;
     }
-
-    // Dynamic/keyed management (Docs/Services/Register.md "Dynamic commands").
-#ifdef USE_DYNAMIC_BLOCKS
-    if (BlockTypeRange::IsDynamic(type)) {
-        uint16_t gi = BlockTypeRange::DynamicGlobal(type, inst);
-        switch ((DynamicCid)cid) {
-            case DynamicCid::Create:  HandleCreateDynamic(frame, gi); return;
-            case DynamicCid::Delete:  HandleDeleteDynamic(frame, gi, field, key); return;
-            case DynamicCid::GetName: HandleGetName(frame, bi, gi); return;
-            case DynamicCid::SetName: HandleSetName(frame, gi); return;
-            default: break;
-        }
-    }
-#endif
 }

@@ -146,7 +146,7 @@ extension on _RegisterPageState {
     
     final dynBlock = DynBlock(index: block.inst, meta: block.meta, name: block.name);
     final dynField = DynField(index: fieldIndex, meta: field.meta, value: field.value);
-    final confirmed = await _client.writeDynamicField(dynBlock, dynField, [], newType: DataType.deleted);
+    final confirmed = await _client.writeDynamicField(dynBlock, dynField, [], newType: DataType.none);
     _snack(confirmed != null ? 'Entry deleted (save to free)' : 'Delete failed');
     await _refreshAll();
   }
