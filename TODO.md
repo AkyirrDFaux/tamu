@@ -35,10 +35,12 @@ suites need the rig (core on `/dev/ttyACM1`, one DAS on `/dev/ttyACM0` via WCH-L
 - [ ] **Bootloader** (`Docs/Services/Bootloader.md`). A per-device raw packet bootloader that
       replaces the main binary, entered by holding the button at boot. **Phase 1** = shared
       codec (done) + core Device `0020/0021` passthrough (done) + DAS bootloader (done: 2 KB at
-      `0x0`, app relocated to `0x800`, write/read over the passthrough verified end-to-end) +
-      app client/UI + HIL (button entry still needs a manual PC0-held test). **Phase 2** = the
-      core's USB bootloader as a small factory app + OTA. Locked: passthrough targets the
-      connected core; no capability bit; button-only entry.
+      `0x0`, app relocated to `0x800`) + app flashing client (`bootloader_client.dart`: write,
+      read-back verify, correct, re-verify until one clean pass; a read retries a timeout or a
+      relay `FAIL`) + HIL `hil_bootloader_test.dart` (flashes the whole 11 100 B DAS app through
+      the passthrough in ~23 s / 1 pass). Remaining: the app UI, and the button entry needs a
+      manual PC0-held test. **Phase 2** = the core's USB bootloader as a small factory app + OTA.
+      Locked: passthrough targets the connected core; no capability bit; button-only entry.
 - [ ] **DAS provider stale entries (low priority).** A subscription cancel is fire-and-forget
       (docs: "Sent once for deletion"), so a dropped cancel can hold a provider slot for up to
       the 120 s lease. Mitigated by the lease plus the orphan-cancel (a value update whose TRID
@@ -118,8 +120,9 @@ vocabularies/shapes.
   answers immediately (a running node's reply follows a full service-handler pass), it waits a
   widened 32-byte CSMA silence before replying so its frame cannot collide with the core's
   TX-enable release; the core relay releases TX-enable by polling the UART status instead of
-  `uart_wait_tx_done` (whose FreeRTOS wakeup adds a tick). The app paces writes and verifies by
-  read-back + retry; dropped writes/reads are acceptable.
+  `uart_wait_tx_done` (whose FreeRTOS wakeup adds a tick). The app paces writes ~50 ms (a page
+  erase+program cycle outlasts that and the next frame is lost), then verifies by read-back +
+  retry until one clean pass; dropped writes/reads are acceptable.
 
 ## Notes / gotchas
 
