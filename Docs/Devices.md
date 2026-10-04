@@ -13,6 +13,7 @@ defines TYPE_CORE, TYPE_ROUTER, TYPE_NODE
 | Unused exposed     | 1, 7, 8              |                                                    |
 Services:
 - Mandatory and Core
+- USB Bootloader & Passthrough
 - Dynamic memory
 - Script
 - Subscriptions (Request and Provide)
@@ -36,7 +37,8 @@ Memory: ...a lot (MBs)
 | Measuring 1      | PD2 (A3)                 |                                                            |
 | Measuring 2      | PC4 (A2)                 |                                                            |
 Services:
-- Mandatory services
+- Mandatory
+- RSBus Bootloader
 - Subscriptions (Provide only)
 - Uses reduced filesystem
 Modules:
@@ -60,6 +62,7 @@ Memory: 128B (single file from offset 0)
 | UART              | RX PA10, TX PA9                              |                                  |
 Services:
 - Mandatory
+- USB Bootloader
 - App interface (USB)
 - Dynamic memory
 - Script

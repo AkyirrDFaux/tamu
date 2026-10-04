@@ -2,25 +2,27 @@ Basic device information and description, shares memory internally with static m
 ### Block type 0
 F.K:SP = Field.Key:Struct Position
 
-| Name             | F.K:SP | Flags | Size            | Note                                      |
-| ---------------- | ------ | ----- | --------------- | ----------------------------------------- |
-| Device Type      | 0.0:0  | RO    | 32bit           |                                           |
-| Capability       | 0.0:1  | RO    | 32bit           |                                           |
-| Software version | 0.0:2  | RO    | (uint8 x4)      | YY:MM:DD:II<br>(year-month-day-iteration) |
-| Serial Number    | 1      | RO    | 14 bytes        |                                           |
-| ID               | 2      | RO    | uint16          |                                           |
-| Uptime           | 3.0:0  | RO    | uint32          | ms                                        |
-| Current time     | 3.0:1  | RO    | uint32          | ms                                        |
-| Time offset      | 3.0:2  | RO    | int32           | ms                                        |
-| Loop time        | 3.0:3  | RO    | Number (32-bit) | ms                                        |
-| Max Loop time    | 3.0:4  | RO    | Number (32-bit) | ms                                        |
-| Used RAM         | 4.0:0  | RO    | uint32          |                                           |
-| Total RAM        | 4.0:1  | RO    | uint32          |                                           |
-| Used FLASH       | 5.0:0  | RO    | uint32          | By filesystem                             |
-| Total FLASH      | 5.0:1  | RO    | uint32          | Avaliable to filesystem                   |
-| Name             | 6      | P     | 16 bytes        | Applies fully after reboot                |
-| NetID            | 7      | P     | uint8           | Core only, applies only after reboot      |
-| App Active       | 8      | RO    | enum            | Core only (No/USB/BLE)                    |
+| Name                        | F.K:SP | Flags | Size               | Note                                                    |
+| --------------------------- | ------ | ----- | ------------------ | ------------------------------------------------------- |
+| Device Type                 | 0.0:0  | RO    | 32bit              |                                                         |
+| Capability                  | 0.0:1  | RO    | 32bit              |                                                         |
+| Software version            | 0.0:2  | RO    | 32 bits (7+4+5+16) | YY:MM:DD:II<br>(year-month-day-iteration)               |
+| Serial Number               | 1      | RO    | 14 bytes           |                                                         |
+| ID                          | 2      | RO    | uint16             |                                                         |
+| Uptime                      | 3.0:0  | RO    | uint32             | ms                                                      |
+| Current time                | 3.0:1  | RO    | uint32             | ms                                                      |
+| Time offset                 | 3.0:2  | RO    | int32              | ms                                                      |
+| Loop time                   | 3.0:3  | RO    | Number (32-bit)    | ms                                                      |
+| Max Loop time               | 3.0:4  | RO    | Number (32-bit)    | ms                                                      |
+| Used RAM                    | 4.0:0  | RO    | uint32             |                                                         |
+| Total RAM                   | 4.0:1  | RO    | uint32             |                                                         |
+| Used FLASH                  | 5.0:0  | RO    | uint32             | By filesystem                                           |
+| Total FLASH                 | 5.0:1  | RO    | uint32             | Avaliable to filesystem                                 |
+| Name                        | 6      | P     | 16 bytes           | Applies fully after reboot                              |
+| NetID                       | 7      | P     | uint8              | Core only, applies only after reboot                    |
+| App Active                  | 8      | RO    | enum               | Core only (No/USB/BLE/Legacy BT/WiFi)                   |
+| WiFi connection information | 8.1    | P     |                    | SSID + Password, WiFi devices only field, autoconnects. |
+
 
 If possible, the device name is shown in BLE advertising and on USB.
 
@@ -33,7 +35,6 @@ Capability (32bit-field):
 	- Scripts
 	- Subscription Request
 	- Subscription Provide
-	- Reduced filesystem
 	- ...
 ### Commands for all devices (000x)
 

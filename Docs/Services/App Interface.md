@@ -11,9 +11,15 @@ App has reserved TRID range.
 | ------------- | ---- | ------ | ------------------------------------ | ---- |
 | 0xFA          | 8bit | 8bit   | 60 bytes max                         | 0xBF |
 CRC is over Length + Payload.
-
 #### BLE Packet:
+Preffered wireless method.
 
 | Length of this BLE packet | Payload (Packets, serialized stream) |
 | ------------------------- | ------------------------------------ |
 | uint16                    | (ATT_MTU - 2) bytes max              |
+#### UDP Packet:
+For Wi-Fi only devices. Connects as a device to an existing network. The app has to scan for it.
+
+| Valid payload size | Payload                                       |
+| ------------------ | --------------------------------------------- |
+| uint16             | limited maximum size to prevent fragmentation |
