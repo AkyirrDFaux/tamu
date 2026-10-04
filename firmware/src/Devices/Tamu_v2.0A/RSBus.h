@@ -182,7 +182,11 @@ bool RS485_SendRaw(const uint8_t *data, size_t len)
             }
             verified += n;
         }
-        uart_wait_tx_done(UART_NUM_1, pdMS_TO_TICKS(100));
+        // Release TX-enable as soon as the last bit is out. uart_wait_tx_done() wakes on a
+        // FreeRTOS notification (~a tick of latency), and the bootloader replies fast enough
+        // to collide with the line while we would still be driving it; poll the UART status
+        // directly so the standard silence window is enough.
+        while (UART1.status.txfifo_cnt != 0 || UART1.fsm_status.st_utx_out != 0) {}
         gpio_set_level(RS485_EN_PIN, 0);
 
         if (!collided && verified == len)

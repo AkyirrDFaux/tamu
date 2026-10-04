@@ -173,10 +173,14 @@ static void HandleBootloaderPassthrough(const PacketFrame &frame, uint8_t cid)
         return;
     }
 
-    // cid == 0x21: Request read -> Offset, Payload.
-    uint8_t req[Bootloader::READ_REQ_SIZE];
-    Bootloader::EncodeReadRequest(offset, req);
-    if (RS485_SendRaw(req, Bootloader::READ_REQ_SIZE)) {
+    // cid == 0x21: Request read -> Offset, Payload. The bootloader replies after the standard
+    // CSMA silence window, but a request can still be lost, so retry a few times; the app
+    // retries again if all fail.
+    for (int attempt = 0; attempt < 3; attempt++) {
+        uint8_t req[Bootloader::READ_REQ_SIZE];
+        Bootloader::EncodeReadRequest(offset, req);
+        if (!RS485_SendRaw(req, Bootloader::READ_REQ_SIZE))
+            continue;
         uint8_t resp[Bootloader::MAX_FRAME_SIZE];
         int n = RS485_ReceiveRaw(resp, sizeof(resp), 200);
         if (n == Bootloader::DATA_SIZE &&

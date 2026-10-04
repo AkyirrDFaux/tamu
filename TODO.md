@@ -34,10 +34,11 @@ suites need the rig (core on `/dev/ttyACM1`, one DAS on `/dev/ttyACM0` via WCH-L
       unconfirmed by eye.
 - [ ] **Bootloader** (`Docs/Services/Bootloader.md`). A per-device raw packet bootloader that
       replaces the main binary, entered by holding the button at boot. **Phase 1** = shared
-      codec (done) + core Device `0020/0021` passthrough + DAS bootloader (2 KB at `0x0`, app
-      relocated to `0x800`) + app client + HIL. **Phase 2** = the core's USB bootloader as a
-      small factory app + OTA. Locked: passthrough targets the connected core; no capability
-      bit; button-only entry.
+      codec (done) + core Device `0020/0021` passthrough (done) + DAS bootloader (done: 2 KB at
+      `0x0`, app relocated to `0x800`, write/read over the passthrough verified end-to-end) +
+      app client/UI + HIL (button entry still needs a manual PC0-held test). **Phase 2** = the
+      core's USB bootloader as a small factory app + OTA. Locked: passthrough targets the
+      connected core; no capability bit; button-only entry.
 - [ ] **DAS provider stale entries (low priority).** A subscription cancel is fire-and-forget
       (docs: "Sent once for deletion"), so a dropped cancel can hold a provider slot for up to
       the 120 s lease. Mitigated by the lease plus the orphan-cancel (a value update whose TRID
@@ -108,12 +109,17 @@ vocabularies/shapes.
 - **Scripts**: `SCR_XXX` (4096 file ids) but only 64 loaded slots (6-bit); the caller picks the
   slot. The editor/app keep file==slot in practice; boot-load prefers the identity slot.
 - **Bootloader**: raw frame `0xCA | control(5 pad, 1 even parity, 2 cmd) | offset u32 LE |
-  [32 B payload] | 0xBC`; parity is even over the whole frame except the parity bit itself;
-  cmds `01` write / `10` read-request / `11` read-response. The core's Device `0020/0021`
+  [32 B payload] | 0xBC`; parity is even over the rest of the packet (command + offset +
+  payload); cmds `01` write / `10` read-request / `11` read-response. The core's Device `0020/0021`
   passthrough targets the connected core and relays the raw frame onto its RSBus (broadcast,
   the frame carries no address). No capability bit (every device gets a bootloader, every
   core the passthrough). DAS: bootloader 2 KB at `0x0`, app relocated to `0x800` via
-  `board_upload.offset_address`; button-only entry (PC0), white LED PD0.
+  `board_upload.offset_address`; button-only entry (PC0), white LED PD0. Because the DAS
+  answers immediately (a running node's reply follows a full service-handler pass), it waits a
+  widened 32-byte CSMA silence before replying so its frame cannot collide with the core's
+  TX-enable release; the core relay releases TX-enable by polling the UART status instead of
+  `uart_wait_tx_done` (whose FreeRTOS wakeup adds a tick). The app paces writes and verifies by
+  read-back + retry; dropped writes/reads are acceptable.
 
 ## Notes / gotchas
 
