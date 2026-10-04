@@ -138,10 +138,6 @@ void ScriptsBootLoad() {
 
 // ===== Management commands (0x050X) =====
 
-static void ScriptReply(const PacketFrame &frame, const uint8_t *payload, uint16_t len) {
-    SendResponse(frame, payload, len);
-}
-
 __attribute__((noinline)) static void HandleScript(const PacketFrame &frame) {
     if (frame.flags & FLAG_TYPE) return; // responses are not handled locally
 
@@ -192,7 +188,7 @@ __attribute__((noinline)) static void HandleScript(const PacketFrame &frame) {
             LoadedScript *s = ScriptActive(frame.payload[0]);
             if (!s) { RespondStatus(frame, false); return; }
             uint8_t reply[2] = { s->state, s->errorCode };
-            ScriptReply(frame, reply, 2);
+            SendResponse(frame, reply, 2);
             break;
         }
 
@@ -216,7 +212,7 @@ __attribute__((noinline)) static void HandleScript(const PacketFrame &frame) {
             uint16_t n = s->varTotal;
             if (n > MAX_PAYLOAD_SIZE - 4) n = MAX_PAYLOAD_SIZE - 4;
             if (n) memcpy(buf + 4, s->varSpace + 4, n);
-            ScriptReply(frame, buf, 4 + n);
+            SendResponse(frame, buf, 4 + n);
             break;
         }
 

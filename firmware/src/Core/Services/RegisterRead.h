@@ -142,18 +142,14 @@ static void HandleScriptBlockRead(const PacketFrame &frame, uint32_t bi, uint16_
                               s->name, (uint16_t)strlen(s->name));
         return;
     }
-    uint8_t rpl[FIELD_RESPONSE_BUF_SIZE];
-    uint16_t pos = 0;
     ValueInfo m = {};
     uint8_t vbuf[FIELD_RESPONSE_BUF_SIZE];
     uint8_t vsz = 0;
     if (!ScriptGetEntry(inst, field, key, m, vbuf, vsz)) { RespondStatus(frame,false); return; }
-    memcpy(rpl + pos, &bi, 4); pos += 4;
-    memcpy(rpl + pos, &m, 4); pos += 4;
-    if (vsz) memcpy(rpl + pos, vbuf, vsz);
-    pos += vsz;
-    while (pos % 4) rpl[pos++] = 0;
-    SendResponse(frame, rpl, pos);
+    FieldResult fr;
+    fr.Descriptor = m;
+    fr.Data = vbuf;
+    SendFieldResponse(frame, bi, fr);
 }
 #endif
 
