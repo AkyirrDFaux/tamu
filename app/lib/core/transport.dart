@@ -257,6 +257,15 @@ class UsbTransport implements Transport {
     }
   }
 
+  /// Writes raw bytes to the port, bypassing the app-interface link framing. Used by the
+  /// core's USB bootloader, which speaks the raw 0xCA..0xBC frames directly on the port
+  /// (Docs/Services/Bootloader.md).
+  void writeRaw(List<int> bytes) {
+    final port = _port;
+    if (port == null || !port.isOpen) throw const TransportException('Port closed');
+    port.write(Uint8List.fromList(bytes), timeout: 200);
+  }
+
   @override
   Future<void> close() async {
     await _sub?.cancel();

@@ -7,6 +7,7 @@ import '../core/bootloader_client.dart';
 import '../core/connection.dart';
 import '../core/device_db.dart';
 import '../core/host_files.dart';
+import '../core/transport.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
@@ -29,11 +30,26 @@ class _UpdatePageState extends State<UpdatePage> {
   bool _probing = false;
   bool _busy = false;
   bool? _probeOk;
+  bool _directToCore = false;
   FlashProgress? _progress;
   FlashResult? _result;
   final _log = <String>[];
 
   ConnectionManager get _link => ConnectionManager.instance;
+
+  /// The bootloader channel: the connected core's own USB bootloader when selected, else the
+  /// core's Device `0020/0021` passthrough to the node bus.
+  BootloaderClient _client() {
+    if (_directToCore) {
+      final t = ConnectionManager.instance.transport;
+      if (t is UsbTransport) {
+        return BootloaderClient(
+            transport: DirectUsbTransport(t),
+            writePacing: const Duration(milliseconds: 3));
+      }
+    }
+    return BootloaderClient(coreId: coreId);
+  }
 
   void _addLog(String line) {
     if (!mounted) return;
@@ -73,7 +89,7 @@ class _UpdatePageState extends State<UpdatePage> {
     }
     setState(() => _probing = true);
     try {
-      final data = await BootloaderClient(coreId: coreId).readChunk(0);
+      final data = await _client().readChunk(0);
       final ok = data != null;
       setState(() => _probeOk = ok);
       _addLog(ok
@@ -107,7 +123,7 @@ class _UpdatePageState extends State<UpdatePage> {
     _addLog('Image "$_fileName" (${_formatBytes(image.length)}).');
     _addLog('Probing for a device in bootloader mode...');
 
-    final client = BootloaderClient(coreId: coreId);
+    final client = _client();
     try {
       if (await client.readChunk(0) == null) {
         _addLog('No bootloader reply - aborting. Enter bootloader mode and retry.');
@@ -211,6 +227,16 @@ class _UpdatePageState extends State<UpdatePage> {
             onPressed: (_probing || _busy || !connected) ? null : _probe,
           ),
         ),
+      ),
+      SwitchListTile(
+        dense: true,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+        title: const Text('Update the connected core directly (USB)'),
+        subtitle: const Text(
+            "Off: relay to a node on the core's bus. On: flash the core itself; "
+            "enter its bootloader by holding the button at reset."),
+        value: _directToCore,
+        onChanged: _busy ? null : (v) => setState(() => _directToCore = v),
       ),
     ]);
   }

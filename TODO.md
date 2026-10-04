@@ -55,9 +55,9 @@ suites need the rig (core on `/dev/ttyACM1`, one DAS on `/dev/ttyACM0` via WCH-L
         frames over USB into `ota_0` with per-4 KB-sector erase tracking, else boots `ota_0`),
         the main app's `otadata = factory` re-arm, and a Python HIL
         (`test/core_bootloader_flash.py`) that flashed the whole 647 KB core image over raw USB
-        with 0/20228 mismatches. Remaining: the app-side `DirectUsbTransport` and wiring the
-        Update page to update the connected core (the app upload still targets the default
-        offset).
+        with 0/20228 mismatches. Also done: the app-side `DirectUsbTransport` and an Update-page
+        toggle to flash the connected core directly over USB. Remaining: the dev upload offset
+        (production sends the main app through the bootloader).
   - [ ] Manual: hold the DAS button (PC0) at reset to confirm button entry.
       Locked: passthrough targets the connected core; no capability bit; button-only entry.
 - [ ] **DAS provider stale entries (low priority).** A subscription cancel is fire-and-forget

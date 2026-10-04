@@ -10,6 +10,7 @@
 /// its own USB bootloader.
 library;
 
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'bootloader.dart';
@@ -111,6 +112,63 @@ class PassthroughTransport implements BootloaderTransport {
         payload: uint32ToBytes(offset), timeout: timeout);
     if (reply.length < 4 + Bootloader.payloadSize) return null;
     return Uint8List.fromList(reply.sublist(4, 4 + Bootloader.payloadSize));
+  }
+}
+
+/// The core's own USB bootloader (Docs/Services/Bootloader.md): the raw 0xCA..0xBC frames
+/// go straight to the USB Serial/JTAG port with no core relay. Reads parse the raw
+/// read-response frames off the same port.
+class DirectUsbTransport implements BootloaderTransport {
+  final UsbTransport usb;
+
+  /// Pause after each write so the core's 4 KB sector erase (on the first chunk of a sector)
+  /// finishes before the next frame.
+  final Duration writePacing;
+
+  DirectUsbTransport(this.usb,
+      {this.writePacing = const Duration(milliseconds: 3)});
+
+  @override
+  Future<bool> writeChunk(int offset, List<int> data, Duration timeout) async {
+    usb.writeRaw(Bootloader.encodeWrite(offset, data));
+    if (writePacing > Duration.zero) await Future<void>.delayed(writePacing);
+    return true;
+  }
+
+  @override
+  Future<Uint8List?> readChunk(int offset, Duration timeout) async {
+    final buffer = <int>[];
+    final completer = Completer<Uint8List?>();
+    final sub = usb.linkBytes.listen((chunk) {
+      buffer.addAll(chunk);
+      while (buffer.isNotEmpty) {
+        if (buffer[0] != Bootloader.start) {
+          buffer.removeAt(0);
+          continue;
+        }
+        if (buffer.length < Bootloader.dataSize) break;
+        final frame = buffer.sublist(0, Bootloader.dataSize);
+        if ((frame[1] & 0x03) == Bootloader.cmdReadResponse &&
+            frame[Bootloader.dataSize - 1] == Bootloader.end) {
+          buffer.removeRange(0, Bootloader.dataSize);
+          if (!completer.isCompleted) {
+            completer.complete(Uint8List.fromList(
+                frame.sublist(Bootloader.headerSize,
+                    Bootloader.headerSize + Bootloader.payloadSize)));
+          }
+          return;
+        }
+        buffer.removeAt(0);
+      }
+    });
+    try {
+      usb.writeRaw(Bootloader.encodeReadRequest(offset));
+      return await completer.future.timeout(timeout);
+    } on TimeoutException {
+      return null;
+    } finally {
+      await sub.cancel();
+    }
   }
 }
 
