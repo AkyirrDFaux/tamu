@@ -234,6 +234,39 @@ DAS_v0.1:
   divide twice per loop (`Main.h:89-95,189,194`) - cache it on `SamplingRate` write;
   `Meas_SelectRange` drives all 6 range pins every sample (`MeasuringRun.h:42`) - only on change.
 
+Storage (firmware):
+- Cleanup: orphaned "Dynamic memory block" section header at the end of `MemoryBackup.h:155-165`;
+  duplicate "all matches removed" comment (`StorageBlockFS.h:136-142`); `wear_cursor` relies on
+  zero-init (`:637`); redundant `extern` before the definition (`MemoryDynamic.h:13`); dead no-op
+  `DeleteFile`/`RenameFile`/`ResizeFile` in fixed builds (`StorageFixedFS.h:130-135`); stale
+  `SubscriptionsPersist.h:14-17` staging comment; legacy NUL-strip in `normalizeFileName`.
+- Dedup: read/write clamp + `GetFileInfo` between the two file systems; `ReadBackupFile` should use
+  `Storage.ReadFromFile`; `DeleteDynamicBlockFiles`' redundant `FileExists`; `DeleteMatching` vs
+  `RenameFile` invalidation.
+- Optimization: the `used_bitmap` still does O(num_blocks x capacity) reads because `BlockUsed`
+  rescans the table per block (`StorageBlockFS.h:305-310,590-614`); `CleanupDynamicFiles` probes all
+  256 slots x 4 names on every save (`MemoryDynamic.h:74-83`); `DynamicRecallAll` probes 256 slots
+  (`RegisterPersist.h:81-85`); `ReadTableEntry` reads 16 B at a time (bulk-read the page);
+  `device_backup.dart:135-149` stride lacks the trailing `align4`.
+
+App (register UI):
+- Cleanup: block-actions popup always rendered though empty for non-dynamic blocks
+  (`register_page_tiles.dart:130-153`); System struct-member popup always empty (`:523-542`); dead
+  `_changeType`/`_deleteEntry` path (`:600-603`, `register_page.dart:587-591`); unreachable
+  per-field dynamic-save branch + unused `block` param (`register_page.dart:316-326,373-377`);
+  redundant ternary (`:352`); two imports on one line (`:17`); dead `hasValue` state
+  (`value_editor_containers.dart:30`).
+- Dedup: `field*256+key` / `256+f*256+key` magic repeated (`register_page.dart:312,464,480`,
+  `register_page_tiles.dart:33,218,480`, `register_page_edit.dart:215,421,425,462,482`); the
+  show-editor -> write -> reload flow across three editors; `_saveField`/`_recallField` &
+  friends; dynamic field read via two client paths.
+- Optimization: `readBlocks` re-issues the block-type enumeration per static type
+  (`register_client.dart:267-297`); simple value edits trigger a full topology refresh
+  (`register_page_edit.dart:229,327,454,473,511`); Backup auto-refresh re-reads every file every
+  0.5 s (`register_page.dart:228-273`); repeated file-table walks (`:295-342`); per-instance caches
+  never pruned on topology change (`:394,408,429`); repeated full enumerations in
+  `createDynamicBlock`/`moveDynamicBlockTo` (`register_client.dart:400-412,513-553`).
+
 **Deliberately left** (a merge would read worse): the three flag-name decoders (`flagWords` =
 full words for the backup format, `ValueFlags.describe` = RO/P/TR, `_flagsSuffix` = RO/P) and
 the two flag renderings in `register_page_tiles` (chips vs small text) are different

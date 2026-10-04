@@ -263,6 +263,65 @@ From the per-area audits; fixes pending unless noted.
 - **`DeviceVersion` is documented mandatory but only the Tamu defines it** (`DAS_v0.1/Main.h:14`,
   `Core/Functions/Device.h:38`). Define it for the DAS or relax the comment.
 
+**Storage (firmware)**
+- **`ResizeFile` deletes the file it just resized** (`firmware/src/Core/Functions/StorageBlockFS.h:412-414,438-442`):
+  both paths `WriteFilerecord(new_record)` then `DeleteFilerecord(name)`, and `DeleteMatching`
+  zeroes *every* same-named record including the just-appended one, orphaning the data region
+  (`FindInFiletable` then returns none). Invalidate the old generation before appending, or
+  invalidate by index like `RenameFile` (`:206-220`).
+- **`UsedFlashBytes()` counts the file table itself** (`StorageBlockFS.h:519-533`): the loop starts
+  at `i = 0` (the `.TABLE` record) despite the comment; start at `i = 1`.
+- **`ResizeFile` enlargement has no data-area bound and loops up to ~1M times** (`StorageBlockFS.h:405-430`):
+  `new_blocks` is never checked against `DataEnd()`, and `BlockUsed()` (a full-table scan) runs per
+  block - a single-packet flash/CPU DoS via CID 3. Reject past `DataEnd()` and bound the loop.
+- **`ValidateTable` bounds check can overflow** (`StorageBlockFS.h:630`): `file_table_offset + entry0.size > DataEnd()`
+  wraps for a corrupt size. Use `entry0.size > DataEnd() - file_table_offset`.
+- **Invalidation is inconsistent** (`StorageBlockFS.h:154` vs `:208/:216`): `DeleteMatching` zeroes
+  offset+size (8 B), `RenameFile` only offset (4 B); the app comment says the full FS leaves the
+  size. Choose one policy and align the comments.
+- **DT/DV save is not crash-atomic across the two files** (`MemoryDynamic.h:115-136` vs `:177-178`):
+  DT is renamed before DV, so a power cut yields a new DT with an old/absent DV and
+  `RestoreDynamicBlock` silently tombstones the block (values lost). Stage both and rename DV
+  first (or version them).
+- **`StaticBlockDescriptor::Set` can over-read a String/Filename source** (`MemoryTypes.h:151-174`):
+  when `Length < Size` and `Size > sizeof(pad_buf)` (32) it falls through and `memcpy`s `Size`
+  bytes from a `Length`-byte source. Reject/clamp.
+- **Reduced-FS clamp is not overflow-safe** (`StorageFixedFS.h:118,126`): `offset + length > sz`
+  wraps for a huge `length`; use `length > sz - offset` like the full FS.
+- **`Find*` return partial results on flash read failure** (`StorageBlockFS.h:42-43,96-97,112-113`):
+  a transient read error can resolve a stale/wrong record. Return an error sentinel.
+- **App client has no CID 3 `resizeFile`** (`app/lib/core/storage_client.dart`) although the
+  service implements it and Storage.md:41 lists it.
+
+**App (register UI)**
+- **System NetID is 1 byte but `_editNetAddr` reads/writes 2** (`app/lib/ui/value_editor_visual.dart:387-402`):
+  editing field 7 writes the wrong size/value (likely rejected). Make it size-aware (emit 1 byte
+  when the value is 1 byte).
+- **Dialog state uses the page `_rebuild` instead of the `StatefulBuilder` setState**
+  (`register_page_edit.dart:78,303,309,379`): the type dropdown and flag switches never repaint
+  (values change, visuals stay stale) because the dialog route is outside the page subtree.
+- **`...?.value.first` throws on an empty value** (`register_page_edit.dart:425,489`): a size-0
+  entry's `value` is empty, so `.first` raises `StateError`; `?? 0` doesn't guard it.
+- **`_editValue` always targets the primary key of a System struct field** (`register_page.dart:196`):
+  the struct-member `ExpansionTile` passes no member key, so editing a member would write key 0
+  (latent - struct fields are RO today).
+- **GBlockInfo picker offers app-only marker types** (`value_editor_containers.dart:239-247`):
+  `BlockType.script` (0x3FE) and `BlockType.dynamic` (0x3FF) are not wire types; picking one builds
+  an unaddressable BlockInfo.
+- **Backup recall evicts the wrong dynamic cache key** (`register_page.dart:282`): dynamic entries
+  are cached at `field * 256 + key`, but it removes `field`.
+- **Backup view doesn't hide dynamic tombstone slots** (`register_backup_view.dart:60-74`):
+  unlike the live view, it never calls `isHiddenRegisterSlot`, so tombs appear as "not backed up".
+- **`_systemRows` ignores `hasNetId`** (`register_backup_view.dart:104-119`): always emits a NetID
+  row, so a node shows a spurious "not backed up" row.
+- **Partial `.SV` save zero-pads string/filename** (`register_page.dart:335-337`): pads with NULs
+  where the docs require spaces (latent).
+- **Stale script-editability comment** (`register_page_tiles.dart:10-11` vs `:28`): says inputs and
+  variables are editable, but only `ScriptField.input` is.
+- **`_changeDynamicKey` reports success even if the old-key delete fails**
+  (`register_page_edit.dart:505-509`), and a partial write can leave duplicates
+  (`register_client.dart:597-615`).
+
 ## Naming/coverage gaps vs the docs (decision needed)
 - **OS notifications.** `Docs/App/Settings.md` lists "Allow notifications (To OS)" with
   per-event selection; the app persists `notifyOs`/`osEvents`/`suppressOsWhenOpen` but only
