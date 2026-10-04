@@ -130,6 +130,62 @@ From the per-area audits; fixes pending unless noted.
 - **Doc gap:** the dynamic range's 8.8 enumerate encoding is only in code comments
   (`RegisterEnumerate.h:53-55`), not in `Register.md:66`.
 
+**App (general)**
+- **Script editor treats a read failure as an empty script** (`app/lib/ui/script_editor_page.dart:97-100`):
+  `readFile` returns null for both "missing" and a transport timeout (`storage_client.dart:164`),
+  so a transient bus error yields an editable blank draft whose upload overwrites the real file.
+  Distinguish not-found from failure and show `_loadErrorBody()`.
+- **"Update (reload live)" discards unsaved edits** (`script_editor_page.dart:212-219,265-270`):
+  it re-reads the stored file instead of applying the edited draft, contrary to
+  `Docs/App/Service views/Script.md:32`; there is also no unsaved-changes guard (`_dirty` only
+  drives the FAB). Write-then-reload, and add a `PopScope` confirm.
+- **`storage_client.writeFile` deletes before creating** (`storage_client.dart:178-179`): if
+  `createFile` fails, the original is already gone (this is the script save/upload path). Stage to
+  a temp name and rename, or restore on failure.
+- **Update tab has no drawer affordance** (`update_page.dart:168`): `AppBar` lacks
+  `leading: ShellDrawerButton()`, unlike every other tab; on compact it is only reachable by edge
+  swipe.
+- **Settings save race** (`connection_page.dart:69,93`): `settings.load()` reloads immediately
+  before `update()`, and `AppSettings.save()` is fire-and-forget (`settings.dart:90-94`), so a
+  pending save can be clobbered. Drop the redundant `load()` (main loads once) or await/queue saves.
+- **Refresh error dot never shows** (`scripts_page.dart:263`, `script_editor_page.dart:281`):
+  `RefreshButton(error: false)` is hard-coded, so failures render as "No scripts loaded".
+- **`supportsUsb` is true on Windows/macOS** (`platform_caps.dart:22-26`) contrary to
+  `Docs/App/General info.md` ("Do not implement yet").
+- **`appBuildDate` is always `unknown`** (`settings.dart:20-21`): no build path passes
+  `--dart-define=APP_BUILD_DATE`; diverges from `Docs/App/Settings.md:9`.
+- **Script enum options are written for non-enum types** (`script_value_dialog.dart:84-87`): stale
+  `options` survive a type change into `SCR_XXX`.
+- **`SCR_` file match is case-sensitive** (`scripts_page.dart:157`, `script_file.dart:27-31`)
+  while other call sites uppercasing; a lowercase script file is hidden.
+- **Stale shell comment/doc** (`main.dart:46-47`): lists only 4 tabs but Update is inserted at
+  index 2.
+
+**App (connection / device)**
+- **App TimeSync uses raw Uptime instead of Current time** (`app/lib/core/device_db.dart:172,180`):
+  `_registerRead(coreId, 3, 0)` is System field 3 key 0 = `Uptime` (`TimeFromBoot`), but the
+  firmware requires the synchronized `Now()` (field 3 key 1, `Device.h:238-247`). `t1/t2` are
+  `Now()`, so the offset mixes two clocks. Read key 1 for `t0`/`t3`.
+- **Cached devices are never pinged, so "Device lost" never fires** (`device_db.dart:271-278`):
+  a known device with a serial is marked fresh without a ping, so an offline device still in the
+  SNDB stays listed. Ping every id before applying the stale/lost logic.
+- **BLE plain (non-permanent) denial is unrecoverable** (`connection.dart:248-262,349-354`):
+  on `denied` the blocked flag stays false, so no banner shows and the resume-retry is gated on it.
+- **`linkName`/`seedLinkName` is a dead identity path** (`device_db.dart:28,93-99`): `name` is
+  always defaulted non-empty, so `displayName` never consults `linkName`; the picked connection
+  name is not preserved. Make the default empty, or drop the field.
+- **`_rxBuffers` is not cleared on disconnect** (`connection.dart:447`): `_detach()` clears
+  `_pending` only, leaving stale per-txId buffers.
+- **`BleTransport.packetStream` maps a shared parser per access** (`transport.dart:320-321`): a
+  second subscriber would feed the same parser twice. Cache one stream.
+- **BLE scan entries are never cleared or expired** (`connection.dart:62,267-296`): `_bleEntries`
+  only grows, so out-of-range devices are listed forever. Add per-entry expiry/prune.
+- **`notifyAppEvent` wipes unrelated snackbars** (`notifications.dart:22-24`): `clearSnackBars()`
+  before every event can dismiss an in-flight autoconnect/backup confirmation.
+- **Docs:** Device view (`Docs/App/Device view.md:6-7`) says it "Interacts with the device service
+  only", but the app reads identity via the Register System block (matches Device Commands.md).
+  Stale doc; needs a ruling.
+
 ## Naming/coverage gaps vs the docs (decision needed)
 - **OS notifications.** `Docs/App/Settings.md` lists "Allow notifications (To OS)" with
   per-event selection; the app persists `notifyOs`/`osEvents`/`suppressOsWhenOpen` but only

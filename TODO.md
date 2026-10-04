@@ -157,6 +157,39 @@ Register:
   the app re-requests `enumerateBlockTypes` instead of caching (`register_client.dart:94`); the
   app reads one item per round-trip in `readBlocks`/`readStaticFieldLayout`/`createDynamicBlock`.
 
+App (general):
+- Cleanup: stale `settings.dart:3-5` header (claims Android not implemented); misplaced comment
+  `script_editor_view.dart:332-334`; `theme.dart:9-10` effectively-private `kOrangeDark`/`kWhite`;
+  `debugPrint` in `connection.dart:302,324` bypasses `AppDiagnostics`; pointless `_revision++`
+  (`scripts_page.dart:159`); unreachable non-enum branch in `script_widgets.dart:324-327`;
+  test-only core API (`ScriptDraftValue.setType/setValue`, `mathTransformOp`, `ScriptField.count`,
+  `script_client.writeVariable`).
+- Dedup: Start/Stop control rows (`scripts_page.dart:326-357` vs `script_editor_view.dart:29-51`);
+  `_card`/`_row` (`update_page.dart:342,363` vs `device_view_page.dart:178,198`); `SectionHeader`;
+  raw `ScaffoldMessenger` vs `showSnack`; `dataTypeLabel` vs `dataTypeWord`.
+- Optimization: `IndexedStack` eagerly builds all shell tabs (`main.dart:100`); `_probeLoaded`
+  scans slots 0..255 sequentially per refresh (`scripts_page.dart:91-150`); `_refresh` per-key
+  reads (`script_editor_page.dart:137-184`); unawaited whole-file `save()` per toggle
+  (`settings.dart:90-94`); redundant `settings.load()` (`settings_page.dart:21`); sync
+  `readAsBytesSync` (`host_files.dart:19`); `_events.removeAt(0)` O(n) (`diagnostics.dart:34`);
+  unbounded `_log` (`update_page.dart:36`).
+
+App (connection / device):
+- Cleanup: `takeTxId()` public but unused and doesn't record in `_pending`
+  (`connection.dart:512-525`); unused `pingCore()` (`device_db.dart:101-105`); inert
+  `appSourceId` (`protocol.dart:38,181`).
+- Dedup: five copies of the "request + try/catch -> null" wrapper (`device_db.dart:74-89`,
+  `script_client.dart:28-37`, `storage_client.dart:58-70`, `register_client.dart:46-54`,
+  `subscription_client.dart:45-53`); the 4-byte fragment strip (`connection.dart:477-479` vs
+  `:499-501`); a fresh `RegisterClient` per System read (`device_db.dart:108-111`).
+- Optimization: `DeviceDatabase.all` sorts/allocates per access and pages re-sort
+  (`device_db.dart:63`, `devices_page.dart:52,156-157`); per-device `notifyListeners` in a sweep
+  (`device_db.dart:123,151,190,203,245,299`); `discoveredLinks` rebuilds+sorts per call
+  (`connection.dart:81-113`); BLE scan event path O(n) + notify per event (`connection.dart:283-293`);
+  `StreamBuilder` resubscribes every rebuild (`connection_page.dart:162-169`); `_refreshUsb` opens a
+  `SerialPort` per port per refresh (`connection.dart:312-320`); log-page rebuild allocations
+  (`log_page.dart:127-128,169,228-232`).
+
 **Deliberately left** (a merge would read worse): the three flag-name decoders (`flagWords` =
 full words for the backup format, `ValueFlags.describe` = RO/P/TR, `_flagsSuffix` = RO/P) and
 the two flag renderings in `register_page_tiles` (chips vs small text) are different
