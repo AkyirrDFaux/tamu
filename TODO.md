@@ -67,9 +67,9 @@ subscription, register, script, requester-persistence and backup-walk dedups are
   add indirection; the loops are short and clear as-is).
 - `RegisterGetByBlockInfo`/`SubscriptionsGetField` share one resolver - awkward because
   `RegisterDispatch.h` precedes `SubscriptionsDefs.h` in the include order.
-- Unused enum members (`DataType::NetAddr/UnknownKeyed/BlockInfo/Deleted`,
-  `BlockType::Deleted/Undefined`, `AccGyrError::ErrTimeout`, Render `Mesh`/`Colour3`/
-  `PointCoordinates`) - cross-cutting with `firmware_contract_test.dart`.
+  (The enum-alias cleanup is done: `DataType::NetAddr/Unknown` and `AccGyrError::ErrTimeout`
+  removed; the remaining `BlockInfo`/`Deleted`/`Undefined` and the render `Mesh`/`Colour3`/
+  `PointCoordinates` entries are documented vocabulary or used by the app's tombstone paths.)
 
 **App**
 - `script_value_dialog._changeType` -> `ScriptDraftValue.setType` (the dialog's local state
