@@ -1,17 +1,18 @@
 /// Bootloader flashing client (Docs/Services/Bootloader.md).
 ///
-/// Drives the raw bootloader frames through the core's Device service passthrough
-/// (CID 0x20 write / 0x21 read): the core relays each raw frame onto its RSBus, so the app
-/// talks to whatever device is in bootloader mode without knowing its address.
-///
-/// The update is written first, then confirmed by reading it back. A read timeout is
-/// retried with a growing timeout and never counts as a mismatch; only a successful read
-/// whose bytes differ is a mistake, and mistakes are rewritten before the next pass. The
+/// The update is written first, then confirmed by reading it back. A read timeout (or a relay
+/// `FAIL`) is retried with a growing timeout and never counts as a mismatch; only a successful
+/// read whose bytes differ is a mistake, and mistakes are rewritten before the next pass. The
 /// image is confirmed only when one full pass reads every chunk back identical in one go.
+///
+/// The low-level channel lives behind [BootloaderTransport] so the same algorithm drives both
+/// a node over the core's Device passthrough ([PassthroughTransport]) and, later, a core over
+/// its own USB bootloader.
 library;
 
 import 'dart:typed_data';
 
+import 'bootloader.dart';
 import 'connection.dart';
 import 'protocol.dart';
 import 'transport.dart';
@@ -56,10 +57,10 @@ class FlashResult {
   /// Chunks rewritten while correcting mistakes.
   final int corrections;
 
-  /// Write requests issued, including retries.
+  /// Write operations issued (the initial pass plus corrections).
   final int writes;
 
-  /// Read requests issued, including retries.
+  /// Chunk reads issued across all verification passes.
   final int reads;
 
   const FlashResult({
@@ -71,6 +72,48 @@ class FlashResult {
   });
 }
 
+/// Low-level bootloader channel. One call is one attempt (no retries here); a timeout is
+/// reported as [TransportException]. [BootloaderClient] adds the pacing and the retry policy.
+abstract class BootloaderTransport {
+  /// Writes one 32-byte chunk at [offset]. Returns true when the channel acknowledged it.
+  /// The passthrough cannot tell a node's SUCCESS from FAIL (both are an empty ack), so it
+  /// reports true and the verify pass catches a dropped write.
+  Future<bool> writeChunk(int offset, List<int> data, Duration timeout);
+
+  /// Reads 32 bytes at [offset]. Returns null when the node answered FAIL or the request was
+  /// missed; throws [TransportException] on timeout.
+  Future<Uint8List?> readChunk(int offset, Duration timeout);
+}
+
+/// The core's Device `0020/0021` passthrough: the core relays each raw bootloader frame onto
+/// its RSBus, so the app reaches whatever node is in bootloader mode without knowing its
+/// address. Writes give no acknowledgement from the node; reads return `offset + payload`.
+class PassthroughTransport implements BootloaderTransport {
+  /// The core that relays our raw frames onto its RSBus.
+  final int coreId;
+
+  PassthroughTransport({this.coreId = 1});
+
+  ConnectionManager get _link => ConnectionManager.instance;
+
+  @override
+  Future<bool> writeChunk(int offset, List<int> data, Duration timeout) async {
+    final payload = <int>[...uint32ToBytes(offset), ...data];
+    await _link.request(coreId, ServiceType.device, 0x20,
+        payload: payload, timeout: timeout);
+    // SUCCESS and FAIL both carry an empty payload, so the write is treated as sent.
+    return true;
+  }
+
+  @override
+  Future<Uint8List?> readChunk(int offset, Duration timeout) async {
+    final reply = await _link.request(coreId, ServiceType.device, 0x21,
+        payload: uint32ToBytes(offset), timeout: timeout);
+    if (reply.length < 4 + Bootloader.payloadSize) return null;
+    return Uint8List.fromList(reply.sublist(4, 4 + Bootloader.payloadSize));
+  }
+}
+
 /// One 32-byte chunk of the image and its bootloader offset.
 class _Chunk {
   final int offset;
@@ -79,10 +122,11 @@ class _Chunk {
   const _Chunk(this.offset, this.data);
 }
 
-/// Flashes a device's main binary through the connected core's Device passthrough.
+/// Flashes a device's main binary: write it all, then read it back and correct the chunks
+/// that differ until one full pass is clean.
 class BootloaderClient {
-  /// The core that relays our raw frames onto its RSBus.
-  final int coreId;
+  /// The low-level channel (passthrough by default, so [coreId] selects the relay core).
+  final BootloaderTransport transport;
 
   /// Delay between write requests. A node erases the 64-byte page on the first half of a
   /// chunk and programs both halves; that cycle outlasts a request (measured ~40 ms), so a
@@ -104,62 +148,54 @@ class BootloaderClient {
   final int maxPasses;
 
   BootloaderClient({
-    this.coreId = 1,
+    int coreId = 1,
+    BootloaderTransport? transport,
     this.writePacing = const Duration(milliseconds: 50),
     this.timeoutGrowth = 1.5,
     this.readAttempts = 5,
     this.writeAttempts = 3,
     this.maxPasses = 20,
-  });
-
-  ConnectionManager get _link => ConnectionManager.instance;
+  }) : transport = transport ?? PassthroughTransport(coreId: coreId);
 
   Duration _grow(Duration timeout) {
     final grown = (timeout.inMicroseconds * timeoutGrowth).round();
     return Duration(microseconds: grown.clamp(1000, 10000000));
   }
 
-  /// Sends one bootloader frame through Device CID [cid] and returns the reply payload.
-  /// A timeout is retried with a growing timeout; when [accept] rejects a reply (the relay
-  /// can answer FAIL while the bus is still settling) the attempt is repeated too. Returns
-  /// null once [attempts] are spent.
-  Future<List<int>?> _send(
-      int cid, List<int> payload, Duration base, int attempts,
-      {bool Function(List<int> reply)? accept}) async {
-    var timeout = base;
-    for (var attempt = 0; attempt < attempts; attempt++) {
+  /// Writes one 32-byte chunk, retrying a timeout with a growing window and pacing after the
+  /// attempt. Returns true when the channel acknowledged the last attempt.
+  Future<bool> writeChunk(int offset, List<int> data) async {
+    var timeout = const Duration(seconds: 1);
+    var ok = false;
+    for (var attempt = 0; attempt < writeAttempts; attempt++) {
       try {
-        final reply = await _link.request(coreId, ServiceType.device, cid,
-            payload: payload, timeout: timeout);
-        if (accept == null || accept(reply)) return reply;
+        ok = await transport.writeChunk(offset, _chunkBytes(data), timeout);
+        if (ok) break;
+      } on TransportException {
+        // Timeout: retry with a longer window.
+      }
+      timeout = _grow(timeout);
+    }
+    if (writePacing > Duration.zero) {
+      await Future<void>.delayed(writePacing);
+    }
+    return ok;
+  }
+
+  /// Reads one 32-byte chunk, retrying a timeout or a FAIL with a growing window. Returns the
+  /// 32 bytes, or null when every attempt was missed (never counted as a mismatch by [flash]).
+  Future<Uint8List?> readChunk(int offset) async {
+    var timeout = const Duration(seconds: 1);
+    for (var attempt = 0; attempt < readAttempts; attempt++) {
+      try {
+        final data = await transport.readChunk(offset, timeout);
+        if (data != null) return data;
       } on TransportException {
         // Timeout: retry with a longer window.
       }
       timeout = _grow(timeout);
     }
     return null;
-  }
-
-  /// Writes one 32-byte chunk (Device CID 0x20). Returns true when the core answered.
-  Future<bool> writeChunk(int offset, List<int> data) async {
-    final payload = <int>[...uint32ToBytes(offset), ..._chunkBytes(data)];
-    final reply =
-        await _send(0x20, payload, const Duration(seconds: 1), writeAttempts);
-    if (writePacing > Duration.zero) {
-      await Future<void>.delayed(writePacing);
-    }
-    return reply != null;
-  }
-
-  /// Reads one 32-byte chunk (Device CID 0x21). Returns the 32 bytes, or null when every
-  /// attempt was missed (a timeout or a FAIL reply - both are retried, never counted as a
-  /// mismatch by [flash]).
-  Future<Uint8List?> readChunk(int offset) async {
-    final reply = await _send(0x21, uint32ToBytes(offset),
-        const Duration(seconds: 1), readAttempts,
-        accept: (r) => r.length >= 4 + _payloadSize);
-    if (reply == null) return null;
-    return Uint8List.fromList(reply.sublist(4, 4 + _payloadSize));
   }
 
   /// Flashes [image] and verifies it by read-back. The whole image is written first; then
@@ -242,7 +278,7 @@ class BootloaderClient {
 
   // --- helpers ---------------------------------------------------------------
 
-  static const int _payloadSize = 32;
+  static const int _payloadSize = Bootloader.payloadSize;
 
   /// Splits [image] into 32-byte chunks, padding the tail with 0xFF (erased flash) so every
   /// chunk is a full write.

@@ -9,6 +9,7 @@ import 'ui/connection_page.dart';
 import 'ui/devices_page.dart';
 import 'ui/settings_page.dart';
 import 'ui/theme.dart';
+import 'ui/update_page.dart';
 import 'ui/widgets.dart';
 
 void main() async {
@@ -57,6 +58,7 @@ class _ShellPageState extends State<ShellPage> {
   static const _pages = [
     ConnectionPage(),
     DevicesPage(),
+    UpdatePage(),
     BackupPage(),
     SettingsPage(),
   ];
@@ -64,11 +66,12 @@ class _ShellPageState extends State<ShellPage> {
   static const _icons = [
     Icons.link,
     Icons.device_hub,
+    Icons.system_update_alt,
     Icons.settings_backup_restore,
     Icons.settings,
   ];
 
-  static const _labels = ['Connection', 'Devices', 'Backup', 'Settings'];
+  static const _labels = ['Connection', 'Devices', 'Update', 'Backup', 'Settings'];
 
   void _select(int i) {
     setState(() => _index = i);
@@ -122,6 +125,9 @@ class _ShellPageState extends State<ShellPage> {
                       NavigationRailDestination(
                           icon: Icon(Icons.device_hub),
                           label: Text('Devices')),
+                      NavigationRailDestination(
+                          icon: Icon(Icons.system_update_alt),
+                          label: Text('Update')),
                       NavigationRailDestination(
                           icon: Icon(Icons.settings_backup_restore),
                           label: Text('Backup')),
