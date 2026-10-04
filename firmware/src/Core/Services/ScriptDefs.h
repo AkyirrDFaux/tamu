@@ -181,6 +181,22 @@ static inline void ScriptFileName(uint16_t id, char out[8]) {
     out[7] = ' ';
 }
 
+// Parses a `SCR_XXX` file name back to its id, or 0xFFFF when it is not a script file.
+static inline uint16_t ScriptFileIdFromName(const char name[8]) {
+    if (name[0] != 'S' || name[1] != 'C' || name[2] != 'R' || name[3] != '_') return 0xFFFF;
+    uint16_t id = 0;
+    for (int i = 4; i <= 6; i++) {
+        const char c = name[i];
+        uint8_t d;
+        if (c >= '0' && c <= '9') d = (uint8_t)(c - '0');
+        else if (c >= 'A' && c <= 'F') d = (uint8_t)(c - 'A' + 10);
+        else if (c >= 'a' && c <= 'f') d = (uint8_t)(c - 'a' + 10);
+        else return 0xFFFF;
+        id = (uint16_t)((id << 4) | d);
+    }
+    return id;
+}
+
 static inline uint32_t ScriptRdU32(const uint8_t *p) {
     uint32_t v; memcpy(&v, p, 4); return v;
 }

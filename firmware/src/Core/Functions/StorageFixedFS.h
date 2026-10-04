@@ -134,6 +134,14 @@ public:
         return SettingsFile(name) != nullptr && new_size <= STORAGE_FLASH_SIZE;
     }
 
+    // Interface parity: the fixed layout has a single file, the settings mirror.
+    template <typename F>
+    void ForEachFile(F fn)
+    {
+        for (uint32_t i = 0; i < (sizeof(FixedFiletable) / sizeof(FixedFile)); i++)
+            if (IsSettingsName(FixedFiletable[i].name)) fn(FixedFiletable[i].name);
+    }
+
     uint32_t UsedFlashBytes() {
         // The settings file (index 1) occupies the storage; the .TABLE is only a code
         // array with no flash footprint.

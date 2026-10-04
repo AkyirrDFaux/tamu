@@ -121,19 +121,35 @@ static void ScriptSetState(LoadedScript *s, uint8_t newState) {
 }
 
 // Boot: load every stored script flagged Load-on-boot; run those flagged Run-on-load.
+// The first inactive loaded-script slot, or MAX_SCRIPTS when all are in use.
+static uint16_t ScriptFreeSlot() {
+    for (uint16_t i = 0; i < MAX_SCRIPTS; i++)
+        if (!scriptRegistry[i].active) return i;
+    return MAX_SCRIPTS;
+}
+
+// Loads every stored `SCR_XXX` flagged Load-on-boot into a slot
+// (Docs/Services/Script.md). The storage file table is scanned rather than a fixed 0..63 id
+// range, so a script file with a higher id is still pre-loaded. The identity slot (file N ->
+// slot N) is preferred so the loaded table is deterministic across a reset; a file id beyond
+// the slot space (or one whose identity slot is taken) uses the first free slot.
 void ScriptsBootLoad() {
-    for (uint16_t i = 0; i < MAX_SCRIPTS; i++) {
-        char name[8];
-        ScriptFileName(i, name);
-        if (Storage.FileExists(name) == 0xFFFFFFFF) continue;
-        if (!ScriptLoad(i, i)) continue; // boot loads file i into slot i
-        if (!(scriptRegistry[i].properties & SCRIPT_PROP_LOAD_ON_BOOT)) {
-            scriptRegistry[i].Release(); // stored, but not pre-loaded
-            continue;
+    Storage.ForEachFile([](const char name[8]) {
+        uint16_t fileId = ScriptFileIdFromName(name);
+        if (fileId == 0xFFFF) return;
+        uint16_t slot = (fileId < MAX_SCRIPTS && !scriptRegistry[fileId].active)
+                            ? fileId
+                            : ScriptFreeSlot();
+        if (slot >= MAX_SCRIPTS) return; // no free slot
+        if (!ScriptLoad(fileId, slot)) return;
+        if (!(scriptRegistry[slot].properties & SCRIPT_PROP_LOAD_ON_BOOT)) {
+            scriptRegistry[slot].Release(); // stored, but not pre-loaded
+            ScriptMaskSet(slot, false);
+            return;
         }
-        if (scriptRegistry[i].properties & SCRIPT_PROP_RUN_ON_LOAD)
-            scriptRegistry[i].state = (uint8_t)ScriptState::Running;
-    }
+        if (scriptRegistry[slot].properties & SCRIPT_PROP_RUN_ON_LOAD)
+            scriptRegistry[slot].state = (uint8_t)ScriptState::Running;
+    });
 }
 
 // ===== Management commands (0x050X) =====

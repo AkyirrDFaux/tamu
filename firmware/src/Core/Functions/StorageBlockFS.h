@@ -221,6 +221,21 @@ public:
         return true;
     }
 
+    // Calls `fn(name)` once for every live file record. A superseded record for the same
+    // name can linger until the next save, so a name may repeat; callers that care dedupe.
+    template <typename F>
+    void ForEachFile(F fn)
+    {
+        if (file_table_offset == 0) return;
+        uint32_t capacity = TableCapacity();
+        for (uint32_t i = 1; i < capacity; i++) { // entry 0 (the table) is not a file
+            FileEntry entry;
+            if (!ReadTableEntry(i, &entry)) return;
+            if (FileSlotIsFree(entry.offset)) continue;
+            fn(entry.name);
+        }
+    }
+
     // Renames `old_name` to `new_name`: appends a record with the new name for the same
     // data area, then invalidates the superseded records (Docs/Services/Storage.md).
     //
