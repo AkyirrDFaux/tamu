@@ -1,8 +1,6 @@
 @Tags(['hil'])
 library;
 
-import 'dart:io';
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/device_db.dart';
 import 'package:tamuapp/core/register_client.dart';
@@ -12,21 +10,18 @@ import 'package:tamuapp/core/types.dart';
 import 'hil_helpers.dart';
 
 void main() {
-  final skipReason =
-      Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
+  final skipReason = hilSetup();
 
   late DeviceEntry tamu;
 
   setUpAll(() async {
-    if (skipReason is String) return;
-    await connectHil();
+    if (skipReason != null) return;
     final db = DeviceDatabase.instance;
     await db.refreshNetwork();
     await Future<void>.delayed(const Duration(seconds: 2));
     await db.refreshNetwork();
     tamu = findTamu(db) ?? (throw StateError('Tamu not found'));
   });
-  tearDownAll(disconnectHil);
 
   test('the file table never holds two files with the same name', skip: skipReason,
       () async {

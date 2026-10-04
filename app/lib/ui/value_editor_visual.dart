@@ -390,20 +390,15 @@ Future<List<int>?> _editNetAddr(BuildContext context, List<int> current) {
   return showDialog<List<int>>(
     context: context,
     builder: (context) => AlertDialog(
-      title: const Text('Net address (net:device)'),
+      title: const Text('Net address (net.device)'),
       content: TextField(controller: controller, autofocus: true),
       actions: [
         TextButton(
             onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
         FilledButton(
           onPressed: () {
-            final parts = controller.text.split(':');
-            final net = int.tryParse(parts[0], radix: 16);
-            final dev = parts.length > 1
-                ? int.tryParse(parts[1], radix: 16)
-                : null;
-            if (net == null || dev == null || net < 0 || dev < 0) return;
-            final id = ((net & 0x3F) << 10) | (dev & 0x3FF);
+            final id = idFromString(controller.text.trim());
+            if (id == null) return;
             Navigator.pop(context, [id & 0xFF, (id >> 8) & 0xFF]);
           },
           child: const Text('OK'),

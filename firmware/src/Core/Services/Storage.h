@@ -3,17 +3,6 @@
 #include "Core/Functions/Packet.h"
 #include "Core/Functions/Storage.h"
 
-// Replies to a storage request. Docs: responses are sent only if requested (REQACK set).
-static void StorageReply(PacketFrame &reply, const PacketFrame &req,
-                           const uint8_t *payload, uint16_t len)
-{
-    if (!(req.flags & FLAG_REQACK))
-        return;
-    PacketConstruct(&reply, req.id_src, req.srv_src, req.trid,
-                     FLAG_TYPE | FLAG_START | FLAG_STOP, payload, len);
-    DispatchPacket(reply);
-}
-
 static char s_write_name[8] = {0};
 static bool s_write_active = false;
 static uint16_t s_write_seq = 0;
@@ -29,7 +18,7 @@ void HandleStorageService(const PacketFrame &frame)
     switch (cid) {
         case 0: { // Format per docs 03.00
             Storage.Format();
-            StorageReply(tx_frame, frame, nullptr, 0);
+            SendResponse(frame, nullptr, 0);
             break;
         }
 
@@ -43,7 +32,7 @@ void HandleStorageService(const PacketFrame &frame)
                 bool ok = Storage.CreateFile(name, size);
                 if (!ok) DeviceLog("STORAGE", "create '%.8s' size %u failed", name, (unsigned)size);
                 uint8_t status = ok ? 0x01 : 0x00;
-                StorageReply(tx_frame, frame, &status, 1);
+                SendResponse(frame, &status, 1);
             } else {
                 DeviceLog("STORAGE", "create short payload (%u B)", (unsigned)PayloadBytes(frame));
             }
@@ -55,7 +44,7 @@ void HandleStorageService(const PacketFrame &frame)
                 const char *name = reinterpret_cast<const char *>(frame.payload);
                 bool ok = Storage.DeleteFile(name);
                 uint8_t status = ok ? 0x01 : 0x00;
-                StorageReply(tx_frame, frame, &status, 1);
+                SendResponse(frame, &status, 1);
             }
             break;
         }
@@ -67,7 +56,7 @@ void HandleStorageService(const PacketFrame &frame)
                 bool ok = Storage.ResizeFile(name, new_size);
                 if (!ok) DeviceLog("STORAGE", "resize '%.8s' -> %u failed", name, (unsigned)new_size);
                 uint8_t status = ok ? 0x01 : 0x00;
-                StorageReply(tx_frame, frame, &status, 1);
+                SendResponse(frame, &status, 1);
             } else {
                 DeviceLog("STORAGE", "resize short payload (%u B)", (unsigned)PayloadBytes(frame));
             }
@@ -81,7 +70,7 @@ void HandleStorageService(const PacketFrame &frame)
                 bool ok = Storage.RenameFile(old_name, new_name);
                 if (!ok) DeviceLog("STORAGE", "rename '%.8s' -> '%.8s' failed", old_name, new_name);
                 uint8_t status = ok ? 0x01 : 0x00;
-                StorageReply(tx_frame, frame, &status, 1);
+                SendResponse(frame, &status, 1);
             } else {
                 DeviceLog("STORAGE", "rename short payload (%u B)", (unsigned)PayloadBytes(frame));
             }
@@ -101,10 +90,6 @@ void HandleStorageService(const PacketFrame &frame)
                     uint16_t total_frags = (uint16_t)((total_content + contentCap - 1) / contentCap);
                     if (total_frags == 0) total_frags = 1;
                     for (uint16_t f = 0; f < total_frags; f++) {
-                        uint8_t flags = FLAG_TYPE | FLAG_FRAG;
-                        if (f == 0) flags |= FLAG_START;
-                        if (f == total_frags - 1) flags |= FLAG_STOP;
-                        WriteFragInfo(tx_frame.payload, f, total_frags);
                         uint16_t head = (f == 0) ? 8 : 0;
                         if (head) memcpy(tx_frame.payload + 4, name, 8);
                         uint32_t content_off = (uint32_t)f * contentCap;
@@ -124,12 +109,11 @@ void HandleStorageService(const PacketFrame &frame)
                             Storage_FlashRead(file_offset + content_off, tx_frame.payload + 4 + head, content_len);
 #endif
                         }
-                        FinalizeReply(tx_frame, frame, flags, (uint16_t)(4 + head + content_len));
-                        DispatchPacket(tx_frame);
+                        SendFragFragment(frame, f, total_frags, (uint16_t)(head + content_len));
                     }
                 } else {
                     DeviceLog("STORAGE", "read '%.8s' failed", name);
-                    StorageReply(tx_frame, frame, nullptr, 0);
+                    SendResponse(frame, nullptr, 0);
                 }
             }
             break;
@@ -180,7 +164,7 @@ void HandleStorageService(const PacketFrame &frame)
             }
             if (frame.flags & FLAG_REQACK) {
                 uint8_t ack[2] = {(uint8_t)(s_write_seq & 0xFF), (uint8_t)(s_write_seq >> 8)};
-                StorageReply(tx_frame, frame, ack, 2);
+                SendResponse(frame, ack, 2);
             }
             break;
         }

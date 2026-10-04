@@ -1,6 +1,5 @@
 @Tags(['hil'])
 library;
-import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/register_client.dart';
 import 'package:tamuapp/core/script_client.dart';
@@ -16,12 +15,7 @@ import 'hil_helpers.dart';
 /// written through the Register service (banked script types 0x3F4-0x3F7, addressed by the
 /// global slot).
 void main() async {
-  final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
-  setUpAll(() async {
-    if (skipReason is String) return;
-    await connectHil();
-  });
-  tearDownAll(disconnectHil);
+  final skipReason = hilSetup();
 
   test('script load / register exposure / unload', skip: skipReason, () async {
     final c = ScriptClient(deviceId: 1);
@@ -62,7 +56,7 @@ void main() async {
 
     // Listed by both the management command and Register enumerate.
     if (!(await c.loadedScripts()).contains(0)) fail('CID 0 list missing script 0');
-    if (!(await c.enumerateInstances()).contains(0)) fail('Register enumerate missing script 0');
+    if (!(await c.loadedScripts()).contains(0)) fail('Register enumerate missing script 0');
 
     // Block meta (name from the file's UI info + field count) - used by the list page.
     final blockMeta = await c.readBlockMeta(0);
@@ -158,7 +152,7 @@ void main() async {
     // Unload clears it from both tables.
     if (!await c.unload(0)) fail('unload failed');
     if ((await c.loadedScripts()).isNotEmpty) fail('script still loaded after unload');
-    if ((await c.enumerateInstances()).isNotEmpty) fail('Register enumerate not empty after unload');
+    if ((await c.loadedScripts()).isNotEmpty) fail('Register enumerate not empty after unload');
 
     await st.deleteFile('SCR_000');
   }, timeout: const Timeout(Duration(minutes: 2)));

@@ -33,9 +33,6 @@ int? scriptFileId(String name) {
 /// File header size: Properties + counts + the four lengths.
 const int scriptHeaderSize = 24;
 
-/// One instruction symbol: Type(u8) | Subtype(u8) | Value(u16).
-const int scriptSymbolSize = 4;
-
 /// Version byte of the UI-info blob (bumped when the layout changes).
 const int scriptUiInfoVersion = 2;
 
@@ -79,8 +76,8 @@ List<int> uiStylesForType(DataType type) => switch (type) {
 bool uiStyleSupportsLimits(int uiType) =>
     uiType == ScriptUiType.number || uiType == ScriptUiType.slider;
 
-/// One ValueInfo entry: type (low 10 bits) + flags (high 6 bits), key (unused),
-/// size (byte length of the value).
+/// One ValueInfo entry: Type(16) | Size(8) | Flags(8) on the wire (the same layout as
+/// [ValueInfo]; `key` is unused because the script block addresses the key separately).
 class ScriptValueInfo {
   final DataType type;
   final int size;

@@ -23,17 +23,6 @@ static void SubReply(const PacketFrame &frame, const uint8_t *payload, uint16_t 
 #endif
 }
 
-// Emits one FRAG fragment of a table stream (4-byte frag info + `n` content bytes already
-// placed at tx_frame.payload + 4).
-static void SubSendFragment(const PacketFrame &frame, uint16_t f, uint16_t frags, uint16_t n) {
-    uint8_t flags = FLAG_TYPE | FLAG_FRAG;
-    if (f == 0) flags |= FLAG_START;
-    if (f == frags - 1) flags |= FLAG_STOP;
-    WriteFragInfo(tx_frame.payload, f, frags);
-    FinalizeReply(tx_frame, frame, flags, (uint16_t)(4 + n));
-    DispatchPacket(tx_frame);
-}
-
 #ifdef USE_SUB_REQUEST
 // Cancels the provider side of a requester subscription (same-device: drop the local provider
 // entry; remote: send 0401 with an empty payload = None/cancel). Requester-only: the provider
@@ -97,7 +86,7 @@ static void ProviderStreamTable(const PacketFrame &frame) {
             n += PROVIDER_ENTRY_WIRE_SIZE;
             idx++;
         }
-        SubSendFragment(frame, f, frags, n);
+        SendFragFragment(frame, f, frags, n);
     }
 }
 #endif
@@ -123,7 +112,7 @@ static void RequesterStreamTable(const PacketFrame &frame) {
             n += REQUESTER_ENTRY_WIRE_SIZE;
             idx++;
         }
-        SubSendFragment(frame, f, frags, n);
+        SendFragFragment(frame, f, frags, n);
     }
 }
 #endif

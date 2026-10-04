@@ -278,26 +278,18 @@ List<SubreqEntry> decodeSubreq(List<int> bytes) {
     c += 2;
     final trid = _u16(bytes, c);
     c += 2;
-    final sourceReg = uint32FromBytes(bytes, c);
-    c += 4;
-    final trigger = bytes[c];
-    c += 1;
-    final minTimeMs = bytes[c] | (bytes[c + 1] << 8) | (bytes[c + 2] << 16);
-    c += 3;
-    final periodMs = uint32FromBytes(bytes, c);
-    c += 4;
-    final deadzone = numberFromBytes(bytes, c);
-    c += 4;
+    final table = SubscriptionTable.fromBytes(bytes, c);
+    c += 16;
     final targetReg = uint32FromBytes(bytes, c);
     c += 4;
     out.add(SubreqEntry(
       providerAddr: providerAddr,
       trid: trid,
-      sourceReg: sourceReg,
-      trigger: trigger,
-      minTimeMs: minTimeMs,
-      periodMs: periodMs,
-      deadzone: deadzone,
+      sourceReg: table.sourceReg,
+      trigger: table.trigger.value,
+      minTimeMs: table.minTimeMs,
+      periodMs: table.periodMs,
+      deadzone: table.deadzone,
       targetReg: targetReg,
     ));
   }
@@ -352,12 +344,7 @@ class DynamicTable {
 DynamicTable? decodeDynamicTable(List<int> bytes) {
   const nameLen = 16;
   if (bytes.length < nameLen + 4) return null;
-  final nameBytes = bytes.sublist(0, nameLen);
-  final nul = nameBytes.indexOf(0);
-  // The firmware space-pads the name (no NUL), so trim trailing spaces; a NUL, if present,
-  // still ends it.
-  final raw = nul >= 0 ? nameBytes.sublist(0, nul) : nameBytes;
-  final name = String.fromCharCodes(raw).trimRight();
+  final name = decodePaddedString(bytes.sublist(0, nameLen));
   final entryCount = _u16(bytes, nameLen);
   var c = nameLen + 4; // entry count (2) + reserved padding (2)
   if (c + entryCount * 8 > bytes.length) return null;

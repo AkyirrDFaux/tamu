@@ -1,7 +1,6 @@
 @Tags(['hil'])
 library;
 
-import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/device_db.dart';
 import 'package:tamuapp/core/register_client.dart';
@@ -23,14 +22,13 @@ Future<void> discoverDevices() async {
 }
 
 void main() async {
-  final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
+  final skipReason = hilSetup();
 
   late DeviceEntry tamu;
   late DeviceEntry? das;
 
   setUpAll(() async {
-    if (skipReason is String) return; // HIL not requested: leave the tests skipped
-    await connectHil();
+    if (skipReason != null) return; // HIL not requested: leave the tests skipped
     await discoverDevices();
     tamu = findTamu(DeviceDatabase.instance) ??
         (throw StateError('Tamu not found'));
@@ -50,7 +48,6 @@ void main() async {
     await reg.saveAll();
     await Future<void>.delayed(const Duration(milliseconds: 300));
   });
-  tearDownAll(disconnectHil);
 
   /// Creates a dynamic block at [index] with a single entry (field 0, key 0) and returns
   /// it, so the subscription target is a writable register.

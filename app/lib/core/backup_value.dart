@@ -102,7 +102,7 @@ Object? encodeSemantic(DataType type, List<int> bytes, {FieldInfo? info}) {
       return bytes.isEmpty ? null : bytes[0];
     case DataType.string:
     case DataType.filename:
-      return String.fromCharCodes(bytes).replaceAll('\x00', '').trimRight();
+      return decodePaddedString(bytes);
     case DataType.vector:
       if (bytes.length < 4) return hexBytes(bytes);
       final n = bytes.length ~/ 4;
@@ -244,13 +244,8 @@ int? _rawFromWord(Object? value, Map<int, String>? options) {
 List<int>? _idBytes(Object? value, int? size) {
   if (value is num) return intToBytes(value.toInt(), size ?? 2);
   if (value is String) {
-    final parts = value.split('.');
-    if (parts.length != 2) return null;
-    final net = int.tryParse(parts[0], radix: 16);
-    final dev = int.tryParse(parts[1], radix: 16);
-    if (net == null || dev == null) return null;
-    final id = ((net & 0x3F) << 10) | (dev & 0x3FF);
-    return [id & 0xFF, (id >> 8) & 0xFF];
+    final id = idFromString(value);
+    return id == null ? null : [id & 0xFF, (id >> 8) & 0xFF];
   }
   return null;
 }

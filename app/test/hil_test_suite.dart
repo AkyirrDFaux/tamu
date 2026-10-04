@@ -1,8 +1,6 @@
 @Tags(['hil'])
 library;
 
-import 'dart:io';
-
 import 'package:flutter_test/flutter_test.dart';
 
 import 'hil_helpers.dart';
@@ -11,14 +9,7 @@ import 'hardware_storage_test.dart' as storage_test;
 import 'dyn_flow_test.dart' as dyn_flow_test;
 
 void main() {
-  final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
-
-  setUpAll(() async {
-    if (skipReason is String) return;
-    await connectHil();
-  });
-
-  tearDownAll(disconnectHil);
+  final skipReason = hilSetup();
 
   test('Register Service Tests', () async {
     await register_test.runTests();

@@ -132,22 +132,16 @@ static void SendU16Stream(const PacketFrame &frame, uint16_t count, EnumSrc src,
     uint16_t frags = (uint16_t)((count + kWordsPerFrag - 1) / kWordsPerFrag);
     if (frags == 0) frags = 1;
 
-    PacketFrame tx;
     uint16_t idx = 0; // the next word to emit
     for (uint16_t f = 0; f < frags; f++) {
-        uint8_t *dst = tx.payload + 4;
+        uint8_t *dst = tx_frame.payload + 4;
         uint16_t n = 0;
         while (n < kWordsPerFrag * 2 && idx < count) {
             uint16_t w = EnumWord(src, ctx, idx++);
             dst[n++] = (uint8_t)w;
             dst[n++] = (uint8_t)(w >> 8);
         }
-        uint8_t flags = FLAG_TYPE | FLAG_FRAG;
-        if (f == 0) flags |= FLAG_START;
-        if (f == frags - 1) flags |= FLAG_STOP;
-        WriteFragInfo(tx.payload, f, frags);
-        FinalizeReply(tx, frame, flags, (uint16_t)(4 + n));
-        DispatchPacket(tx);
+        SendFragFragment(frame, f, frags, n);
     }
 }
 

@@ -18,8 +18,6 @@ class DynField {
   List<int> value;
 
   DynField({required this.index, required this.meta, required this.value});
-
-  bool get readOnly => meta.readOnly;
 }
 
 /// A user-created dynamic memory block.
@@ -27,9 +25,6 @@ class DynBlock {
   final int index;
   final ValueInfo meta;
   String name;
-
-  /// Entries loaded lazily (one request per field).
-  final Map<int, DynField> fields = {};
 
   DynBlock({required this.index, required this.meta, required this.name});
 
@@ -67,8 +62,7 @@ class RegisterClient {
   }
 
   /// Decodes a block name: a fixed 16-char field, space-padded (Docs "Dynamic Block Table").
-  static String _blockName(List<int> bytes) =>
-      String.fromCharCodes(bytes).replaceAll('\x00', '').trimRight();
+  static String _blockName(List<int> bytes) => decodePaddedString(bytes);
 
   /// Encodes a block name into the fixed 16-char field (space-padded).
   static List<int> _padBlockName(String name) {
@@ -379,7 +373,6 @@ class RegisterClient {
     return DynBlock(index: block, meta: meta, name: name);
   }
 
-  /// Enumerates a dynamic block's distinct field indexes (CID 0, Enum 2).
   /// Reads one dynamic entry's current value (CID 1) at (field, key).
   Future<DynField?> readDynamicField(DynBlock block, int field, [int key = 0]) async {
     final reply = await request(RegisterCid.read, payload: _dynBi(block.index, field, key));
@@ -425,10 +418,9 @@ class RegisterClient {
       }
       target = maxLive + 1;
     }
-    final typeBits = dynamicTypeForIndex(target) & 0x3FF;
-    final bi = (typeBits << 22) | (dynamicInstanceForIndex(target) << 16) | (0xFF << 8) | 0xFF;
+    final bi = _dynBi(target, 0xFF, 0xFF);
     final reply = await request(DynamicCid.create, timeout: const Duration(seconds: 5), payload: [
-      bi & 0xFF, (bi >> 8) & 0xFF, (bi >> 16) & 0xFF, (bi >> 24) & 0xFF,
+      ...bi,
       ...nameBytes,
     ]);
     if (reply == null || reply.length < 5) return null;
@@ -449,10 +441,6 @@ class RegisterClient {
     ]);
     return reply != null && reply.length >= 5 && reply[4] != 0;
   }
-
-  /// Re-reads a block's meta so callers get fresh map counts.
-  Future<DynBlock?> refreshDynamicBlockMeta(DynBlock block) async =>
-      readDynamicBlockMeta(block.index);
 
   /// Appends an entry to a dynamic block (CID 2), or fills the slot at `index`
   /// when given (a None placeholder keeps indexes stable).

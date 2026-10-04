@@ -16,8 +16,9 @@ void DispatchPacket(const PacketFrame &frame);
 #define INVALID_BLOCK 0xFF
 #define INVALID_INDEX 0xFF
 
-// Capacity of a serialised service backup buffer (Dynamic/Keyed/System backup files).
-// RAM-starved devices (DAS) build with a smaller value via the MEMORY_BACKUP_CAP build flag.
+// Capacity of a serialised service backup buffer (the `.SV` static space and the `DT_`/`DV_`
+// dynamic files). RAM-starved devices (DAS) build with a smaller value via the MEMORY_BACKUP_CAP
+// build flag.
 #ifndef MEMORY_BACKUP_CAP
 #define MEMORY_BACKUP_CAP 2048
 #endif
@@ -39,6 +40,20 @@ __attribute__((noinline)) void SendResponse(const PacketFrame &frame, const uint
         return;
     PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.trid,
                      FLAG_TYPE | FLAG_START | FLAG_STOP, payload, len);
+    DispatchPacket(tx_frame);
+}
+
+// Emits one FRAG fragment: the caller has placed `n` content bytes at tx_frame.payload + 4,
+// and the 4-byte frag info is written before the frame is finalized and dispatched. Every
+// streamed reply (enumerate, storage read, subscription tables, SNDB read-all, logs) uses it.
+__attribute__((noinline)) void SendFragFragment(const PacketFrame &frame, uint16_t f,
+                                                uint16_t frags, uint16_t n)
+{
+    uint8_t flags = FLAG_TYPE | FLAG_FRAG;
+    if (f == 0) flags |= FLAG_START;
+    if (f == frags - 1) flags |= FLAG_STOP;
+    WriteFragInfo(tx_frame.payload, f, frags);
+    FinalizeReply(tx_frame, frame, flags, (uint16_t)(4 + n));
     DispatchPacket(tx_frame);
 }
 

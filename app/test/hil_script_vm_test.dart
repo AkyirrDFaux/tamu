@@ -17,10 +17,9 @@ import 'hil_helpers.dart';
 /// Verifies the script VM (Docs/Services/Script.md): preloaded instructions, arithmetic,
 /// flow (While/EndBlock), time (Delay -> Waiting), and the state machine.
 void main() async {
-  final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
+  final skipReason = hilSetup();
   setUpAll(() async {
-    if (skipReason is String) return;
-    await connectHil();
+    if (skipReason != null) return;
     // The evaluation setup's subscriptions + dynamic blocks would overwrite the VM tests'
     // own dynamic memory (they share block indexes); clear them first.
     final subs = SubscriptionClient(deviceId: 1);
@@ -35,7 +34,6 @@ void main() async {
     }
     await reg.saveAll();
   });
-  tearDownAll(disconnectHil);
 
   /// Builds a draft and uploads + loads it into [slot]; returns the loaded slot.
   Future<(ScriptClient, StorageClient, int)> loadScript(int slot, ScriptDraft draft) async {

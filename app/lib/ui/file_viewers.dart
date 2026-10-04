@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import '../core/block_registry.dart' show blockInfoFor;
 import '../core/storage_client.dart' show normalizeFileName;
 import '../core/device_backup.dart';
+import '../core/system_schema.dart' show hasNetIdFor;
 import '../core/register_client.dart';
 import '../core/types.dart';
 import 'theme.dart' show kOrange, kSurfaceAlt;
@@ -272,9 +273,7 @@ class _FileViewPageState extends State<FileViewPage> {
       case StorageFileType.backup: {
         // The System segment is 20 B on a core (Name + NetID, padded) and 16 B on a node; the
         // System block's field count (>= 8 includes NetID) tells them apart.
-        final hasNetId = widget.blocks?.any((b) =>
-                b != null && b.type == systemBlockTypeValue && b.meta.size >= 8) ??
-            true;
+        final hasNetId = hasNetIdFor(widget.blocks);
         return MemoryBackupView(
             fileName: widget.name,
             data: data,
@@ -428,10 +427,7 @@ class MemoryBackupView extends StatelessWidget {
   // `.SV` - the static-block + System backup, decoded by device_backup.dart.
   // -------------------------------------------------------------------------
   List<Widget> _parseSv() {
-    final registry = <({int type, int inst})>[
-      for (final b in blocks ?? const [])
-        if (b != null && isStaticRegistryType(b.type)) (type: b.type, inst: b.inst),
-    ];
+    final registry = staticRegistryOf(blocks);
     final layout =
         StaticSpaceLayout.fromRegistry(registry, staticFields, hasNetId: hasNetId);
     final rows = <Widget>[];

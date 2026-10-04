@@ -227,7 +227,7 @@ class _NewScriptDialogState extends State<_NewScriptDialog> {
             decoration: const InputDecoration(labelText: 'Type'),
             items: [
               for (final t in scriptValueTypes)
-                DropdownMenuItem(value: t, child: Text(_typeLabel(t))),
+                DropdownMenuItem(value: t, child: Text(dataTypeWord(t))),
             ],
             onChanged: (t) => _changeType(e, t),
           ),
@@ -243,18 +243,4 @@ class _NewScriptDialogState extends State<_NewScriptDialog> {
       ]),
     );
   }
-
-  String _typeLabel(DataType t) => switch (t) {
-        DataType.bool_ => 'Bool',
-        DataType.integer => 'Index',
-        DataType.number => 'Number',
-        DataType.enum_ => 'Enum',
-        DataType.colour => 'Colour',
-        DataType.vector => 'Vector',
-        DataType.matrix => 'Matrix',
-        DataType.string => 'String',
-        DataType.filename => 'Filename',
-        DataType.uint32 => 'Uint32',
-        _ => t.name,
-      };
 }

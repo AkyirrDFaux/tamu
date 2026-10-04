@@ -102,46 +102,42 @@ inline int FindStaticBlock(uint16_t type, uint8_t inst) {
 #define FIELD_RESPONSE_BUF_SIZE 268
 #endif
 
+// Builds a `BlockInfo + ValueInfo + value` reply, 4-byte aligned, and sends it. The block
+// meta (a fixed BLOCK_NAME_LEN-char name) and the field/key read paths all share this shape.
+static inline void SendFieldLikeResponse(const PacketFrame &frame, uint32_t bi, const ValueInfo &v,
+                                         const uint8_t *data, uint16_t len) {
+    uint8_t rpl[FIELD_RESPONSE_BUF_SIZE]; uint16_t pos = 0;
+    memcpy(rpl + pos, &bi, 4); pos += 4;
+    memcpy(rpl + pos, &v, 4); pos += 4;
+    if (data && len) memcpy(rpl + pos, data, len);
+    pos += len;
+    while (pos % 4) rpl[pos++] = 0;
+    SendResponse(frame, rpl, pos);
+}
+
 static inline void SendBlockMetaResponse(const PacketFrame &frame, uint32_t bi, uint16_t type,
                                          uint8_t map_count, const char *name, uint16_t name_len) {
-    uint8_t rpl[4 + 4 + BLOCK_NAME_LEN]; uint16_t pos=0;
-    memcpy(rpl+pos, &bi,4); pos+=4;
-    // A block meta reports its field count in ValueInfo.Size and carries no flags.
+    // A block meta reports its field count in ValueInfo.Size and carries no flags; the name is
+    // a fixed BLOCK_NAME_LEN-char field (space-padded), not a C string.
+    char padded[BLOCK_NAME_LEN];
+    SetBlockName(padded, name, name_len);
     ValueInfo v = { (uint16_t)(type & 0x3FF), map_count, 0 };
-    memcpy(rpl+pos, &v,4); pos+=4;
-    // The name is a fixed BLOCK_NAME_LEN-char field (space-padded), not a C string.
-    SetBlockName((char *)(rpl + pos), name, name_len); pos += BLOCK_NAME_LEN;
-    while (pos % 4) rpl[pos++] = 0; // 4-byte alignment
-    SendResponse(frame,rpl,pos);
+    SendFieldLikeResponse(frame, bi, v, (const uint8_t *)padded, BLOCK_NAME_LEN);
 }
 
 static inline void SendFieldResponse(const PacketFrame &frame, uint32_t bi, const FieldResult &fr) {
-    uint8_t rpl[FIELD_RESPONSE_BUF_SIZE]; uint16_t pos=0;
-    memcpy(rpl+pos, &bi,4); pos+=4;
-    ValueInfo v = fr.Descriptor;
-    memcpy(rpl+pos, &v,4); pos+=4;
-    memcpy(rpl+pos, fr.Data, fr.Descriptor.Size); pos+=fr.Descriptor.Size;
-    while(pos%4) rpl[pos++]=0;
-    SendResponse(frame,rpl,pos);
+    SendFieldLikeResponse(frame, bi, fr.Descriptor, (const uint8_t *)fr.Data, fr.Descriptor.Size);
 }
 
 // Sends one dynamic entry (BlockInfo echo + ValueInfo + value, 4-aligned).
 static inline void SendKeyResponse(const PacketFrame &frame, uint32_t bi, const KeyResult &kr) {
-    uint8_t rpl[FIELD_RESPONSE_BUF_SIZE]; uint16_t pos = 0;
-    memcpy(rpl + pos, &bi, 4); pos += 4;
-    ValueInfo v = kr.meta;
-    memcpy(rpl + pos, &v, 4); pos += 4;
-    if (kr.data_ptr && kr.data_len) memcpy(rpl + pos, kr.data_ptr, kr.data_len);
-    pos += kr.data_len;
-    while (pos % 4) rpl[pos++] = 0;
-    SendResponse(frame, rpl, pos);
+    SendFieldLikeResponse(frame, bi, kr.meta, (const uint8_t *)kr.data_ptr, kr.data_len);
 }
 
 
 #ifdef USE_DYNAMIC_BLOCKS
 // Shared tail of "read a dynamic block": field 0xFF asks for the block meta, any other field
-// for one keyed entry. Both the live read and the backup read reply this same way, they only
-// differ in where the descriptor comes from.
+// for one keyed entry.
 static void ReplyDynamicBlockOrField(const PacketFrame &frame, uint32_t bi,
                                      DynamicBlockDescriptor &block, uint8_t field, uint8_t key)
 {

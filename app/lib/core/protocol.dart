@@ -236,8 +236,4 @@ class RegisterCid {
 class DynamicCid {
   static const create = 0x10;
   static const delete = 0x11;
-  static const getName = 0x12;
-  static const setName = 0x13;
-  // The old Get Memory Usage (0x14) / Read Backup (0x15) are dropped: the app reads the
-  // DT_/DV_ files directly.
 }

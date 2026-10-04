@@ -110,10 +110,6 @@ class ScriptClient {
   static Uint8List _bi(int inst, int field, int key) => blockInfoBytes(
       scriptTypeForIndex(inst), scriptInstanceForIndex(inst), field, key);
 
-  /// The loaded scripts' file ids - the Register enumerate no longer carries a separate script
-  /// level, so this is the Script service's CID 0 (the same list).
-  Future<List<int>> enumerateInstances() => loadedScripts();
-
   /// The keys (entity indexes) of a script field: the block's Field&Key list (Register CID 0),
   /// filtered to that field.
   late final RegisterClient _reg = RegisterClient(deviceId: deviceId);
@@ -146,8 +142,7 @@ class ScriptClient {
     );
     if (reply == null || reply.length < 8) return null;
     final meta = ValueInfo.fromBytes(reply, 4);
-    final raw = reply.sublist(8).takeWhile((b) => b != 0).toList();
-    final name = String.fromCharCodes(raw).trimRight();
+    final name = decodePaddedString(reply.sublist(8));
     return (meta: meta, name: name);
   }
 

@@ -166,7 +166,6 @@ class _RegisterPageState extends State<RegisterPage>
       final blocks = await _client.readBlocks(
           scriptSlots: await ScriptClient(deviceId: widget.deviceId).loadedScripts());
       if (!mounted) return;
-      if (!mounted) return;
       if (blocks == null) {
         setState(() => _error = 'Device did not respond');
         return;
@@ -252,10 +251,7 @@ Future<void> _loadVisibleFields() async {
       }
       // `.SV` is a raw mirror of the static persistent space, so the registry must be the same
       // ordered list the layout is computed from: every non-System block, in page order.
-      final registry = <({int type, int inst})>[
-        for (final b in _blockMetas ?? const [])
-          if (b != null && isStaticRegistryType(b.type)) (type: b.type, inst: b.inst),
-      ];
+      final registry = staticRegistryOf(_blockMetas);
       final dynamic = <int, ({List<int> table, List<int> values})>{
         for (final slot in tables.keys)
           slot: (table: tables[slot]!, values: values[slot] ?? const []),
@@ -289,17 +285,11 @@ Future<void> _loadVisibleFields() async {
 
   /// The static registry the `.SV` layout is computed from: every non-System block, in
   /// enumeration order (the same list the backup decoder is given).
-  List<({int type, int inst})> get _staticRegistry => [
-        for (final b in _blockMetas ?? const [])
-          if (b != null && isStaticRegistryType(b.type)) (type: b.type, inst: b.inst),
-      ];
+  List<({int type, int inst})> get _staticRegistry => staticRegistryOf(_blockMetas);
 
   /// The device has the System NetID field (a core) when its System block reports >= 8 fields;
   /// it changes the System segment size in the `.SV` space.
-  bool get _hasNetId =>
-      _blockMetas?.any((b) =>
-          b != null && b.type == systemBlockTypeValue && b.meta.size >= 8) ??
-      true;
+  bool get _hasNetId => hasNetIdFor(_blockMetas);
 
   /// Reads one storage file's bytes, or null when it is missing.
   Future<List<int>?> _readFile(String name) async {
@@ -373,7 +363,6 @@ Future<void> _loadVisibleFields() async {
 
   /// Persists the whole device to its backup (CID 4 "Save All", docs Register.md): the System
   /// block's persistent fields, every static block, and every dynamic block's DT_/DV_ files.
-  /// This is one command now - the per-block loop that used to live here was emulating it.
   Future<bool> _saveAll() => _client.saveAll();
 
   /// Recalls the whole device from its backup (CID 3 "Recall All").

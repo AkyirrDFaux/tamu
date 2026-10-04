@@ -1,10 +1,7 @@
 /// Shared helpers for hardware-in-the-loop tests.
 ///
-/// Usage:
-/// ```dart
-/// import 'hil_helpers.dart';
-/// void main() => runHilTests('my test file', [hilTest('name', () async { ... })]);
-/// ```
+/// Each HIL file reads `TAMU_HIL`, calls [connectHil] from `setUpAll` and [disconnectHil]
+/// from `tearDownAll`, and gates every `test` on the skip reason.
 library;
 
 import 'dart:io';
@@ -33,6 +30,19 @@ DeviceEntry? findDas(DeviceDatabase db) {
     if (d.id == 2) return d;
   }
   return null;
+}
+
+/// The HIL skip reason (`null` when `TAMU_HIL` is set) plus the `setUpAll`/`tearDownAll`
+/// wiring. Call it at the top of `main()`; a file that needs extra setup adds its own
+/// `setUpAll` guarded on the returned reason.
+String? hilSetup() {
+  final reason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : null;
+  setUpAll(() async {
+    if (reason != null) return;
+    await connectHil();
+  });
+  tearDownAll(disconnectHil);
+  return reason;
 }
 
 /// Automatically detects the correct serial port for the Tamu device.

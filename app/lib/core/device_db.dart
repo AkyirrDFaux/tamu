@@ -148,7 +148,7 @@ class DeviceDatabase extends ChangeNotifier {
     }
     final nameReply = await _registerRead(id, 6, 0xFF);
     if (nameReply != null && nameReply.isNotEmpty) {
-      entry.name = String.fromCharCodes(nameReply).replaceAll('\x00', '').trim();
+      entry.name = decodePaddedString(nameReply);
     }
     if (entry.name.isEmpty) entry.name = 'Device ${idToString(id)}';
 

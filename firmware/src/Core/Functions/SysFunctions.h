@@ -34,25 +34,37 @@ extern int32_t TimeOffsetMs;
 extern uint32_t TimeOffsetRefRaw;
 extern int32_t TimeDrift;
 
-// The drift part of the offset at `raw` (Q16.16 multiply, clamped so it cannot overflow).
-inline int32_t TimeOffsetExtrapolation(uint32_t raw)
+// Clamps the raw-time delta since the reference to bound the Q16.16 drift multiply.
+inline int32_t TimeClampDt(uint32_t raw)
 {
     int32_t dt = (int32_t)(raw - TimeOffsetRefRaw);
-    if (dt > 1000000) dt = 1000000; // clamp: bounds the Q16.16 multiply
+    if (dt > 1000000) dt = 1000000;
     else if (dt < -1000000) dt = -1000000;
-    return (int32_t)(((int32_t)TimeDrift * dt) >> 16);
+    return dt;
+}
+
+// The drift part of the offset at `raw` (Q16.16 multiply).
+inline int32_t TimeOffsetExtrapolation(uint32_t raw)
+{
+    return (int32_t)(((int32_t)TimeDrift * TimeClampDt(raw)) >> 16);
+}
+
+// The offset at a raw time: the live offset plus its drift extrapolation.
+inline int32_t OffsetAtRaw(uint32_t raw)
+{
+    return TimeOffsetMs + TimeOffsetExtrapolation(raw);
 }
 
 // The offset currently applied (for reporting; System field 3.2).
 inline int32_t CurrentTimeOffsetMs()
 {
-    return TimeOffsetMs + TimeOffsetExtrapolation(TimeFromBoot());
+    return OffsetAtRaw(TimeFromBoot());
 }
 
 // Applies the current offset to a raw timestamp.
 inline uint32_t ApplyTimeOffset(uint32_t raw)
 {
-    return raw + (uint32_t)(TimeOffsetMs + TimeOffsetExtrapolation(raw));
+    return raw + (uint32_t)OffsetAtRaw(raw);
 }
 
 // Applies a TimeSync offset measured at the current raw time and updates the drift
@@ -61,12 +73,8 @@ inline uint32_t ApplyTimeOffset(uint32_t raw)
 inline void ApplyTimeSync(int32_t offset)
 {
     uint32_t r = TimeFromBoot();
-    int32_t dt = (int32_t)(r - TimeOffsetRefRaw);
-    if (dt > 1000000) dt = 1000000;
-    else if (dt < -1000000) dt = -1000000;
-
-    int32_t applied = TimeOffsetMs + (int32_t)(((int32_t)TimeDrift * dt) >> 16);
-    int32_t target = applied + offset;
+    int32_t dt = TimeClampDt(r);
+    int32_t target = OffsetAtRaw(r) + offset;
 
     const bool haveRef = (TimeOffsetRefRaw != 0);
     if (haveRef && dt >= 1000 && offset <= 5000 && offset >= -5000)

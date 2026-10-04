@@ -434,8 +434,8 @@ public:
     }
 
     // Grows or shrinks a file to `new_size`. Shrinking always succeeds in place; growing
-    // extends in place when possible, otherwise copies only when `copy_if_failed` is set.
-    bool ResizeFile(const char name[8], uint32_t new_size, bool copy_if_failed = false)
+    // only succeeds when the run can be extended in place.
+    bool ResizeFile(const char name[8], uint32_t new_size)
     {
         uint32_t idx = FindInFiletable(name);
         if (idx == 0xFFFFFFFF) return false;
@@ -486,50 +486,8 @@ public:
             return true;
         }
 
-        // Extending in place is not possible: copy only if requested.
-        if (!copy_if_failed)
-            return false;
-
-        uint32_t new_offset = FindSpace(new_size);
-        if (new_offset == 0) return false;
-        if (!Storage_FlashErase(new_offset, new_blocks * PAGE_SIZE))
-            return false;
-
-        // Reserve the destination while the committing record is still unwritten, so a
-        // table move inside WriteFilerecord cannot land on this erased area.
-        pending_offset = new_offset;
-        pending_blocks = new_blocks;
-
-        uint8_t chunk[64];
-        uint32_t remaining = entry.size;
-        uint32_t source = entry.offset;
-        uint32_t destination = new_offset;
-        bool copy_ok = true;
-        while (remaining > 0) {
-            uint32_t chunk_size = (remaining > sizeof(chunk)) ? sizeof(chunk) : remaining;
-            if (Storage_FlashRead(source, chunk, chunk_size) != chunk_size) { copy_ok = false; break; }
-            if (!Storage_FlashWrite(destination, chunk, chunk_size)) { copy_ok = false; break; }
-            source += chunk_size;
-            destination += chunk_size;
-            remaining -= chunk_size;
-        }
-
-        bool ok = false;
-        if (copy_ok)
-        {
-            FileEntry new_record = entry;
-            new_record.offset = new_offset;
-            new_record.size = new_size;
-            ok = WriteFilerecord(new_record);
-        }
-
-        pending_offset = 0;
-        pending_blocks = 0;
-
-        if (!ok)
-            return false;
-        DeleteFilerecord(name);
-        return true;
+        // Extending in place is not possible.
+        return false;
     }
 
     // Utility wrapper for reading from a file; offset is from file start. Returns bytes read.

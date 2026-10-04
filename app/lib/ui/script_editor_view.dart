@@ -89,7 +89,7 @@ extension on _ScriptEditorPageState {
       ),
     );
     if (line == null || !mounted) return;
-    final ok = await _client.moveToInstruction(widget.fileId, line);
+    final ok = await _client.moveToInstruction(_slot, line);
     if (!mounted) return;
     showSnack(context, ok ? 'Moved to line $line' : 'Move failed');
     await _refresh();

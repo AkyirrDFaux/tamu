@@ -130,7 +130,7 @@ public:
     // Fixed single file: rename/delete/resize are no-ops (the file always exists).
     bool RenameFile(const char old_name[8], const char new_name[8]) { return true; }
     bool DeleteFile(const char name[8]) { return SettingsFile(name) != nullptr; }
-    bool ResizeFile(const char name[8], uint32_t new_size, bool copy_if_failed = false) {
+    bool ResizeFile(const char name[8], uint32_t new_size) {
         return SettingsFile(name) != nullptr && new_size <= STORAGE_FLASH_SIZE;
     }
 

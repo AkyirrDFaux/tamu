@@ -19,13 +19,12 @@ import 'current_setup.dart';
 import 'hil_helpers.dart';
 
 void main() {
-  final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
+  final skipReason = hilSetup();
 
   late ({DeviceEntry core, List<DeviceEntry> das}) found;
 
   setUpAll(() async {
-    if (skipReason is String) return;
-    await connectHil();
+    if (skipReason != null) return;
     final db = DeviceDatabase.instance;
     // Bounded discovery: the DAS re-register on their own schedule after a reset.
     for (var i = 0; i < 20; i++) {
@@ -36,7 +35,6 @@ void main() {
     found = findDevices(db);
     await applyCurrentSetup(db);
   });
-  tearDownAll(disconnectHil);
 
   test('setup: dynamic blocks exist with the expected fields', skip: skipReason, () async {
     final reg = RegisterClient(deviceId: found.core.id);

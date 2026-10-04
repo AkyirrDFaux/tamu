@@ -1,8 +1,6 @@
 @Tags(['hil'])
 library;
 
-import 'dart:io';
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/backup.dart';
 import 'package:tamuapp/core/backup_script.dart';
@@ -26,14 +24,12 @@ Future<void> discoverDevices() async {
 }
 
 void main() {
-  final skipReason =
-      Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
+  final skipReason = hilSetup();
 
   late DeviceEntry tamu;
 
   setUpAll(() async {
-    if (skipReason is String) return;
-    await connectHil();
+    if (skipReason != null) return;
     await discoverDevices();
     tamu = findTamu(DeviceDatabase.instance) ??
         (throw StateError('Tamu not found'));
@@ -44,7 +40,6 @@ void main() {
     await storage.deleteFile('BKTEST');
     await Future<void>.delayed(const Duration(milliseconds: 300));
   });
-  tearDownAll(disconnectHil);
 
   test('backup captures the whole registry semantically and restores entries',
       skip: skipReason, () async {

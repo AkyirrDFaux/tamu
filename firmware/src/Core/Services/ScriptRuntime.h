@@ -163,12 +163,7 @@ __attribute__((noinline)) static void HandleScript(const PacketFrame &frame) {
                 uint16_t off = (uint16_t)(f * kFrag);
                 uint16_t len = (uint16_t)((total - off > kFrag) ? kFrag : total - off);
                 memcpy(tx_frame.payload + 4, content + off, len);
-                uint8_t flags = FLAG_TYPE | FLAG_FRAG;
-                if (f == 0) flags |= FLAG_START;
-                if (f == frags - 1) flags |= FLAG_STOP;
-                WriteFragInfo(tx_frame.payload, f, frags);
-                FinalizeReply(tx_frame, frame, flags, (uint16_t)(4 + len));
-                DispatchPacket(tx_frame);
+                SendFragFragment(frame, f, frags, len);
             }
             break;
         }

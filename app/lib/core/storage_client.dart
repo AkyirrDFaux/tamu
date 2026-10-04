@@ -32,10 +32,6 @@ class FileRecord {
   bool get isFiletable => index == 0;
 }
 
-/// Contents chunk size per stream fragment (the max actual payload of a FRAG
-/// packet, Data Formats.md).
-const int fileFragContentSize = 112;
-
 class StorageClient {
   final int deviceId;
 

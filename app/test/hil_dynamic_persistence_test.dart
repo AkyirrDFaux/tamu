@@ -15,7 +15,7 @@ import 'package:tamuapp/core/protocol.dart';
 /// without shifting positions, and a device reset restores persistent entries from
 /// flash (volatile entries come back zeroed).
 void main() async {
-  final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
+  final skipReason = hilSetup();
   // Two tests below hard-reset the core with esptool over the USB serial port (TAMU_HIL). Over BLE
   // there is no such handle and the protocol has no reboot op, so the device would never reload
   // flash and the assertions (volatile zeroed, corrupt table rejected at boot) would test nothing.
@@ -23,11 +23,6 @@ void main() async {
   final resetReason = Platform.environment['TAMU_HIL'] == 'ble'
       ? 'needs an esptool hard reset over USB; the BLE link cannot reboot the core'
       : false;
-  setUpAll(() async {
-    if (skipReason is String) return;
-    await connectHil();
-  });
-  tearDownAll(disconnectHil);
 
   test('Save All writes the per-block DT/DV files and cleanup', skip: skipReason, () async {
     final c = RegisterClient(deviceId: 1);

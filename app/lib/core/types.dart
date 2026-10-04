@@ -27,6 +27,14 @@ int? idFromString(String text) {
   return ((net & 0x3F) << 10) | (dev & 0x3FF);
 }
 
+/// Decodes a fixed-width, space/NUL-padded string field (a block name or the System Name):
+/// a NUL ends it and trailing spaces are trimmed.
+String decodePaddedString(List<int> bytes) {
+  final nul = bytes.indexOf(0);
+  final end = nul >= 0 ? nul : bytes.length;
+  return String.fromCharCodes(bytes.sublist(0, end)).trimRight();
+}
+
 /// Sign-extends a 32 bit little-endian value (Dart ints are 64 bit, so the
 /// sign bit must be expanded manually).
 int _signExtend32(int raw) => (raw & 0x80000000) != 0 ? raw - 0x100000000 : raw;
@@ -280,7 +288,6 @@ enum BlockType {
 /// files carry that global index in hex (`.DT_XX` / `.DV_XX`).
 const int dynamicTypeBase = 0x3F0;
 const int dynamicTypeCount = 4;
-const int dynamicInstancesPerType = 64;
 
 bool isDynamicType(int type) =>
     type >= dynamicTypeBase && type < dynamicTypeBase + dynamicTypeCount;
@@ -321,6 +328,15 @@ int scriptInstanceForIndex(int global) => global & 0x3F;
 /// silently drift.
 bool isStaticRegistryType(int type) =>
     type != systemBlockTypeValue && !isScriptType(type) && !isDynamicType(type);
+
+/// The static-registry `(type, inst)` list a `.SV` layout is computed from: every non-System
+/// block, in enumeration order.
+List<({int type, int inst})> staticRegistryOf(
+        List<({int type, int inst, ValueInfo meta, String name})?>? blocks) =>
+    [
+      for (final b in blocks ?? const [])
+        if (b != null && isStaticRegistryType(b.type)) (type: b.type, inst: b.inst),
+    ];
 
 /// A static block type's persistent fields, in field order, as read from the device
 /// (Register CID 1 field list + CID 2 per-field ValueInfo). `type` is the wire DataType

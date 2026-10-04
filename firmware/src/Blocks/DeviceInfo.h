@@ -15,11 +15,6 @@ struct SerialNumber{
     bool operator==(const SerialNumber& other) const {
         return memcmp(this->bytes, other.bytes, sizeof(bytes)) == 0;
     }
-
-    // Inequality Operator: Often good practice to include if defining ==
-    bool operator!=(const SerialNumber& other) const {
-        return !(*this == other);
-    }
 } __attribute__((packed));
 
 // Device identity is mandatory per build: the device-type/capability constants and the

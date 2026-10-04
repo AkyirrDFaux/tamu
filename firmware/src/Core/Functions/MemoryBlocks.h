@@ -23,8 +23,7 @@ struct DynamicEntry
     ValueInfo info;        // type + size + flags
 };
 
-// Lookup result compatible with the older FieldResult/KeyResult consumers: the meta
-// (ValueInfo) + a pointer to the value bytes.
+// A dynamic lookup result: the meta (ValueInfo) + a pointer to the value bytes.
 struct KeyResult
 {
     ValueInfo meta = { (uint16_t)DataType::Unknown, 0, 0 };
@@ -235,13 +234,6 @@ struct DynamicBlockDescriptor
         res.exists = true;
         res.data_ptr = e.info.Size ? (Space(IsPersistent(e)) + e.memoryOffset) : nullptr;
         return res;
-    }
-
-    // The (field, key 0) entry - a field's "head" (its plain value or dictionary
-    // marker). Convenience for consumers that address whole fields.
-    KeyResult Get(uint8_t field)
-    {
-        return GetKey(field, 0);
     }
 
     // Reads a keyed value as type `T`, falling back to `defaultValue` when missing or

@@ -164,8 +164,6 @@ static void HandleRegister(const PacketFrame &frame) {
             case DynamicCid::SetName: HandleSetName(frame, gi); return;
             default: break;
         }
-        // The old Get Memory Usage (0x14) / Read Backup (0x15) are dropped by the docs: the app
-        // reads the DT_/DV_ files directly.
     }
 #endif
 }

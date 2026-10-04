@@ -1,7 +1,6 @@
 @Tags(['hil'])
 library;
 
-import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/connection.dart';
 import 'package:tamuapp/core/device_db.dart';
@@ -12,13 +11,7 @@ import 'package:tamuapp/core/types.dart';
 import 'hil_helpers.dart';
 
 void main() {
-  final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
-
-  setUpAll(() async {
-    if (skipReason is String) return;
-    await connectHil();
-  });
-  tearDownAll(disconnectHil);
+  final skipReason = hilSetup();
 
   // HIL: core ping and Register System block fields
   test('HIL: core ping and Register System block fields', skip: skipReason, () async {

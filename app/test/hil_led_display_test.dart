@@ -1,8 +1,6 @@
 @Tags(['hil'])
 library;
 
-import 'dart:io';
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/connection.dart';
 import 'package:tamuapp/core/protocol.dart';
@@ -250,13 +248,7 @@ Future<void> runTests() async {
 }
 
 void main() async {
-  final skipReason = Platform.environment['TAMU_HIL'] == null ? 'TAMU_HIL not set' : false;
-
-  setUpAll(() async {
-    if (skipReason is String) return;
-    await connectHil();
-  });
-  tearDownAll(disconnectHil);
+  final skipReason = hilSetup();
 
   test('LED display: flat dynamic model', () async {
     final link = ConnectionManager.instance;

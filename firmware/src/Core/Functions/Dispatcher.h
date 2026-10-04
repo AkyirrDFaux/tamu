@@ -152,9 +152,9 @@ void ProcessBus()
     DispatchPacket(rx_frame);
 }
 
-// Restores every memory service from its backup file at boot (Static, and Dynamic/Keyed
-// when compiled in). Not core-only: nodes with Static Memory (e.g. the DAS restores
-// Meas1/Meas2) reuse the same path instead of duplicating it per device.
+// Restores every memory service from its backup file at boot (the static `.SV` space, and
+// dynamic blocks when compiled in). Not core-only: nodes with Static Memory (e.g. the DAS
+// restores Meas1/Meas2) reuse the same path instead of duplicating it per device.
 void LoadAllBackups()
 {
     // Static memory: one 1:1 mirror read of `.SV` (the whole persistent space).
