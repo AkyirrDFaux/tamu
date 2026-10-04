@@ -90,38 +90,14 @@ static void ApplyRequesterValue(RequesterEntry *e, const uint8_t *val, uint8_t v
     if (!fr.Data) return;
     if (vlen > fr.Descriptor.Size) vlen = fr.Descriptor.Size;
 
-    uint16_t type = BlockInfoType(e->targetReg);
-    uint8_t inst = BlockInfoInstance(e->targetReg);
-    uint8_t field = BlockInfoField(e->targetReg);
-    uint8_t key = BlockInfoKey(e->targetReg);
-    if (type == 0 && inst == 0) return;
-
-#ifdef USE_SCRIPTS
-    if (BlockTypeRange::IsScript(type)) {
-        // Script I/O target: only inputs are writable (outputs are read-only).
-        ValueInfo meta = fr.Descriptor; meta.Size = vlen;
-        ScriptSetEntry(BlockTypeRange::ScriptGlobal(type, inst), field, key, meta, val, vlen);
-    } else
-#endif
-    {
-        int idx = FindStaticBlock(type, inst);
-        if (idx >= 0) {
-            ValueInfo meta = fr.Descriptor; meta.Size = vlen;
-            static_block_registry[idx].Set(field, key, val, vlen, meta);
-        }
-#ifdef USE_DYNAMIC_BLOCKS
-        else if (BlockTypeRange::IsDynamic(type)) {
-            uint16_t gi = BlockTypeRange::DynamicGlobal(type, inst);
-            if (gi < dynamic_block_registry.block_count) {
-                DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(gi);
-                if (block) {
-                    ValueInfo meta = fr.Descriptor; meta.Size = vlen;
-                    block->SetEntry(field, key, val, vlen, meta);
-                }
-            }
-        }
-#endif
+    // The System block (type 0) is not a subscription target; every other block kind is
+    // written through the shared Register setter (script inputs, dynamic entries, statics).
+    if (!(BlockInfoType(e->targetReg) == 0 && BlockInfoInstance(e->targetReg) == 0)) {
+        ValueInfo meta = fr.Descriptor;
+        meta.Size = vlen;
+        RegisterSetByBlockInfo(e->targetReg, meta, val, vlen);
     }
+
     e->lastValueMs = DeviceStatus.UptimeMs;
     e->timeout = SubTimeoutFrom(DeviceStatus.UptimeMs); // a value renews the 120 s lease
     if (!confirm) return;

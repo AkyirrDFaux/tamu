@@ -49,20 +49,24 @@ static bool DynamicSaveAll() {
     return true;
 }
 
+// Rebuilds slot `i` from its DT/DV files; a slot with no DT file stays a tombstone. Returns
+// false when the registry cannot grow to hold the slot.
+static bool RestoreDynamicBlock(uint16_t i) {
+    DynamicBlockDescriptor scratch;
+    if (!LoadDynamicBlockFiles(scratch, i)) return true; // absent file = empty slot
+    while (dynamic_block_registry.block_count <= i)
+        if (!dynamic_block_registry.AddTombstone()) { scratch.Release(); return false; }
+    dynamic_block_registry.TombstoneBlock(i);
+    *dynamic_block_registry.GetBlock(i) = scratch;
+    return true;
+}
+
 // Rebuilds every slot from its DT/DV files. Per the docs each block keeps its own files, so
 // a slot with no DT file stays a tombstone.
 static bool DynamicRecallAll() {
-    bool ok = true;
-    for (uint16_t i = 0; i < MAX_DYNAMIC_BLOCKS; i++) {
-        DynamicBlockDescriptor scratch;
-        if (!LoadDynamicBlockFiles(scratch, i)) continue;
-        while (dynamic_block_registry.block_count <= i)
-            if (!dynamic_block_registry.AddTombstone()) { ok = false; break; }
-        if (!ok) break;
-        dynamic_block_registry.TombstoneBlock(i);
-        *dynamic_block_registry.GetBlock(i) = scratch;
-    }
-    return ok;
+    for (uint16_t i = 0; i < MAX_DYNAMIC_BLOCKS; i++)
+        if (!RestoreDynamicBlock(i)) return false;
+    return true;
 }
 
 static void HandleCreateDynamic(const PacketFrame &frame, uint16_t index) {
@@ -70,11 +74,7 @@ static void HandleCreateDynamic(const PacketFrame &frame, uint16_t index) {
     uint16_t name_len = PayloadBytes(frame) - 4;
     DynamicBlockDescriptor *block = CreateDynamicBlock(frame.payload + 4, name_len, index);
     if (!block) { RespondStatus(frame,false); return; }
-    uint8_t payload[sizeof(BlockIndex) + 1];
-    BlockIndex out_index = {(uint8_t)index, 0xFF, 0xFF};
-    memcpy(payload, &out_index, sizeof(BlockIndex));
-    payload[sizeof(BlockIndex)] = 1;
-    SendResponse(frame, payload, sizeof(payload));
+    SendBlockIndexAck(frame, (uint8_t)index);
 }
 
 static void HandleDeleteDynamic(const PacketFrame &frame, uint16_t block_idx, uint8_t field_idx, uint8_t key) {

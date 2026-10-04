@@ -162,20 +162,8 @@ void LoadAllBackups()
 
 #ifdef USE_DYNAMIC_BLOCKS
     // Per-block DT/DV files: load every live slot (absent file = tombstone/empty).
-    for (uint16_t i = 0; i < MAX_DYNAMIC_BLOCKS; i++) {
-        DynamicBlockDescriptor scratch;
-        if (!LoadDynamicBlockFiles(scratch, i))
-            continue;
-        while (dynamic_block_registry.block_count <= i)
-            if (!dynamic_block_registry.AddTombstone())
-                break;
-        if (dynamic_block_registry.block_count > i) {
-            dynamic_block_registry.TombstoneBlock(i);
-            *dynamic_block_registry.GetBlock(i) = scratch;
-        } else {
-            scratch.Release();
-        }
-    }
+    for (uint16_t i = 0; i < MAX_DYNAMIC_BLOCKS; i++)
+        RestoreDynamicBlock(i);
 #endif
 
 #ifdef USE_SUB_REQUEST

@@ -134,6 +134,15 @@ static inline void SendKeyResponse(const PacketFrame &frame, uint32_t bi, const 
     SendFieldLikeResponse(frame, bi, kr.meta, (const uint8_t *)kr.data_ptr, kr.data_len);
 }
 
+// Replies to a dynamic create/name write with the assigned BlockIndex + a 1-byte ack.
+static inline void SendBlockIndexAck(const PacketFrame &frame, uint8_t index) {
+    uint8_t payload[sizeof(BlockIndex) + 1];
+    BlockIndex out_index = {index, 0xFF, 0xFF};
+    memcpy(payload, &out_index, sizeof(BlockIndex));
+    payload[sizeof(BlockIndex)] = 1;
+    SendResponse(frame, payload, sizeof(payload));
+}
+
 
 #ifdef USE_DYNAMIC_BLOCKS
 // Shared tail of "read a dynamic block": field 0xFF asks for the block meta, any other field

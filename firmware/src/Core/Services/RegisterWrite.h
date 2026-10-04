@@ -21,11 +21,7 @@ static void HandleDynamicBlockWrite(const PacketFrame &frame, uint16_t inst, uin
             return;
         }
         SetBlockName(block->Name, (const char *)val, vlen);
-        uint8_t payload[sizeof(BlockIndex) + 1];
-        BlockIndex out_index = {(uint8_t)inst, 0xFF, 0xFF};
-        memcpy(payload, &out_index, sizeof(BlockIndex));
-        payload[sizeof(BlockIndex)] = 1;
-        SendResponse(frame, payload, sizeof(payload));
+        SendBlockIndexAck(frame, (uint8_t)inst);
         return;
     }
 

@@ -66,6 +66,28 @@ static void ProviderClearEntry(ProviderEntry* e) {
     *e = ProviderEntry{};
 }
 
+// Installs (or updates) a provider entry from a subscription table. Returns the entry, or
+// nullptr when the table is full. Shared by 0401/0421 and the same-device re-registration.
+static ProviderEntry* ProviderInstall(uint16_t trid, uint16_t requesterAddr,
+                                      const SubscriptionTable &t) {
+    ProviderEntry* e = ProviderFindByTrid(trid);
+    bool isNew = (e == nullptr);
+    if (!e) e = ProviderFindFree();
+    if (!e) return nullptr;
+    e->requesterAddr = requesterAddr;
+    e->trid = trid;
+    e->sub = t;
+    e->timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
+    if (isNew) {
+        e->lastSentMs = 0;
+        e->hash = 0;
+        e->lastBool = false;
+        e->sentCounter = 0;
+        e->lastVec[0] = e->lastVec[1] = e->lastVec[2] = 0;
+    }
+    return e;
+}
+
 // The provider side of the requester's confirmation (CID 0 request): the payload is the
 // FNV-1a hash of the value the requester received; confirm-required triggers stop here.
 static void HandleProviderConfirmation(const PacketFrame &frame) {

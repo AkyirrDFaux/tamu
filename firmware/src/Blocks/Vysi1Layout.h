@@ -172,7 +172,6 @@ public:
     void ApplyGeometryField(DynamicBlockDescriptor *block, uint16_t field, uint16_t slot);
     void RenderTextureField(DynamicBlockDescriptor *block, uint16_t field);
     Matrix<3, 3> PromoteAffine(const Matrix<2, 3> &m);
-    Matrix<2, 3> IdentityAffine();
     Matrix<3, 3> BaseTransform();
     int32_t ReadKeyInt(DynamicBlockDescriptor *block, uint16_t field, uint8_t key, int32_t def);
     ColourClass LerpColour(const ColourClass &c1, const ColourClass &c2, Number t);

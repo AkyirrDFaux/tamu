@@ -230,6 +230,11 @@ String blockTypeLabel(int type) {
   return BlockType.fromValue(type).label;
 }
 
+/// A compact human-readable BlockInfo label: `Type[inst].f<field>.k<key>`.
+String blockInfoLabel(int bi) =>
+    '${blockTypeLabel(blockInfoType(bi))}[${blockInfoInstance(bi)}]'
+    '.f${blockInfoField(bi)}.k${blockInfoKey(bi)}';
+
 /// Whether a Register block slot should be hidden as a dynamic tombstone. Dynamic tombstone
 /// slots carry no block (their meta type is the "None" tombstone value), but the System block
 /// reports meta type 0x00 too - the same numeric value - so the slot type must be checked as

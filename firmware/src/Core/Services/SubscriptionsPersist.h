@@ -70,21 +70,8 @@ static void RegisterRequesterProvider(RequesterEntry* e) {
 
 #ifdef USE_SUB_PROVIDE
     if (e->providerAddr == DeviceStatus.ShortAddress) {
-        ProviderEntry* p = ProviderFindByTrid(e->trid);
-        bool isNew = (p == nullptr);
-        if (!p) p = ProviderFindFree();
-        if (!p) return;
-        p->requesterAddr = DeviceStatus.ShortAddress;
-        p->trid = e->trid;
-        p->sub = e->sub;
-        p->timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
-        if (isNew) {
-            p->lastSentMs = 0;
-            p->hash = 0;
-            p->lastBool = false;
-            p->sentCounter = 0;
-            p->lastVec[0] = p->lastVec[1] = p->lastVec[2] = 0;
-        }
+        // Same-device provider: install it directly (shared with the wire paths).
+        ProviderInstall(e->trid, DeviceStatus.ShortAddress, e->sub);
         return;
     }
 #endif

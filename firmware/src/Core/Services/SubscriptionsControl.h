@@ -42,78 +42,52 @@ static void SubscriptionsCancelProvider(uint16_t providerAddr, uint16_t trid) {
 }
 #endif
 
-#ifdef USE_SUB_PROVIDE
-// Installs (or updates) a provider entry from a subscription table. Returns the entry, or
-// nullptr when the table is full. Shared by 0401 and 0421.
-static ProviderEntry* ProviderInstall(uint16_t trid, uint16_t requesterAddr,
-                                      const SubscriptionTable &t) {
-    ProviderEntry* e = ProviderFindByTrid(trid);
-    bool isNew = (e == nullptr);
-    if (!e) e = ProviderFindFree();
-    if (!e) return nullptr;
-    e->requesterAddr = requesterAddr;
-    e->trid = trid;
-    e->sub = t;
-    e->timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
-    if (isNew) {
-        e->lastSentMs = 0;
-        e->hash = 0;
-        e->lastBool = false;
-        e->sentCounter = 0;
-        e->lastVec[0] = e->lastVec[1] = e->lastVec[2] = 0;
-    }
-    return e;
-}
-
-// Streams the provider table (u8 count, then 32 B entries) as FRAG fragments, copying each
-// entry straight into the fragment payload - no full-table buffer.
-static void ProviderStreamTable(const PacketFrame &frame) {
+// Streams a subscription table (u8 count, then `entrySize`-byte entries) as FRAG fragments,
+// copying each occupied entry straight into the fragment payload - no full-table buffer.
+// `occupied` reports whether entry `i` is live (the provider and requester tables differ).
+static void StreamSubscriptionTable(const PacketFrame &frame, const uint8_t *table, uint16_t max,
+                                    uint16_t entrySize, bool (*occupied)(const uint8_t *, uint16_t)) {
     uint8_t count = 0;
-    for (int i = 0; i < MAX_PROVIDER_SUBS; i++) if (providerTable[i].requesterAddr != 0) count++;
-    uint16_t total = (uint16_t)(1 + (uint16_t)count * PROVIDER_ENTRY_WIRE_SIZE);
+    for (uint16_t i = 0; i < max; i++) if (occupied(table, i)) count++;
+    uint16_t total = (uint16_t)(1 + (uint16_t)count * entrySize);
     uint16_t frags = (uint16_t)((total + MAX_FRAG_CONTENT_SIZE - 1) / MAX_FRAG_CONTENT_SIZE);
     if (frags == 0) frags = 1;
 
     bool countSent = false;
-    int idx = 0;
+    uint16_t idx = 0;
     for (uint16_t f = 0; f < frags; f++) {
         uint8_t *dst = tx_frame.payload + 4;
         uint16_t n = 0;
         if (!countSent) { dst[n++] = count; countSent = true; }
-        while (idx < MAX_PROVIDER_SUBS && n + PROVIDER_ENTRY_WIRE_SIZE <= MAX_FRAG_CONTENT_SIZE) {
-            if (providerTable[idx].requesterAddr == 0) { idx++; continue; }
-            memcpy(dst + n, &providerTable[idx], PROVIDER_ENTRY_WIRE_SIZE);
-            n += PROVIDER_ENTRY_WIRE_SIZE;
+        while (idx < max && n + entrySize <= MAX_FRAG_CONTENT_SIZE) {
+            if (!occupied(table, idx)) { idx++; continue; }
+            memcpy(dst + n, table + (size_t)idx * entrySize, entrySize);
+            n += entrySize;
             idx++;
         }
         SendFragFragment(frame, f, frags, n);
     }
+}
+
+#ifdef USE_SUB_PROVIDE
+static bool ProviderEntryLive(const uint8_t *table, uint16_t i) {
+    return ((const ProviderEntry *)table)[i].requesterAddr != 0;
+}
+// Streams the provider table (u8 count, then 32 B entries).
+static void ProviderStreamTable(const PacketFrame &frame) {
+    StreamSubscriptionTable(frame, (const uint8_t *)providerTable, MAX_PROVIDER_SUBS,
+                            PROVIDER_ENTRY_WIRE_SIZE, ProviderEntryLive);
 }
 #endif
 
 #ifdef USE_SUB_REQUEST
-// Streams the requester table (u8 count, then 28 B entries) as FRAG fragments.
+static bool RequesterEntryLive(const uint8_t *table, uint16_t i) {
+    return ((const RequesterEntry *)table)[i].active;
+}
+// Streams the requester table (u8 count, then 28 B entries).
 static void RequesterStreamTable(const PacketFrame &frame) {
-    uint8_t count = 0;
-    for (int i = 0; i < MAX_REQUESTER_SUBS; i++) if (requesterTable[i].active) count++;
-    uint16_t total = (uint16_t)(1 + (uint16_t)count * REQUESTER_ENTRY_WIRE_SIZE);
-    uint16_t frags = (uint16_t)((total + MAX_FRAG_CONTENT_SIZE - 1) / MAX_FRAG_CONTENT_SIZE);
-    if (frags == 0) frags = 1;
-
-    bool countSent = false;
-    int idx = 0;
-    for (uint16_t f = 0; f < frags; f++) {
-        uint8_t *dst = tx_frame.payload + 4;
-        uint16_t n = 0;
-        if (!countSent) { dst[n++] = count; countSent = true; }
-        while (idx < MAX_REQUESTER_SUBS && n + REQUESTER_ENTRY_WIRE_SIZE <= MAX_FRAG_CONTENT_SIZE) {
-            if (!requesterTable[idx].active) { idx++; continue; }
-            memcpy(dst + n, &requesterTable[idx], REQUESTER_ENTRY_WIRE_SIZE);
-            n += REQUESTER_ENTRY_WIRE_SIZE;
-            idx++;
-        }
-        SendFragFragment(frame, f, frags, n);
-    }
+    StreamSubscriptionTable(frame, (const uint8_t *)requesterTable, MAX_REQUESTER_SUBS,
+                            REQUESTER_ENTRY_WIRE_SIZE, RequesterEntryLive);
 }
 #endif
 

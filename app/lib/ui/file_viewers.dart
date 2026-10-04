@@ -469,9 +469,7 @@ class MemoryBackupView extends StatelessWidget {
   // -------------------------------------------------------------------------
   // SUBREQ - the requester-subscription backup, decoded by device_backup.dart.
   // -------------------------------------------------------------------------
-  static String _regLabel(int reg) =>
-      '${blockTypeLabel(blockInfoType(reg))}[${blockInfoInstance(reg)}]'
-      '.f${blockInfoField(reg)}.k${blockInfoKey(reg)}';
+  static String _regLabel(int reg) => blockInfoLabel(reg);
 
   List<Widget> _parseSubreq() {
     if (data.isEmpty) return [const Text('(corrupt backup)')];

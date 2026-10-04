@@ -7,13 +7,6 @@
 
 #include "Blocks/Vysi1Layout.h"
 
-// Identity 2x3 affine ([1 0 0; 0 1 0]).
-inline Matrix<2, 3> Vysi1Display::IdentityAffine()
-{
-    // Same matrix as the free IdentityAffine23() used for the data defaults.
-    return IdentityAffine23();
-}
-
 // Promotes a 2x3 affine to a 3x3 homogeneous matrix (docs store "Matrix 2x3",
 // internally we compose 3x3 homogeneous transforms).
 inline Matrix<3, 3> Vysi1Display::PromoteAffine(const Matrix<2, 3> &m)
@@ -41,7 +34,7 @@ inline void Vysi1Display::RenderGeometryField(DynamicBlockDescriptor *block, uin
         return;
 
     // Combined transform: (Position) * (Offset * centering).
-    Matrix<2, 3> pos = block->GetKeyValue<Matrix<2, 3>>(field, (uint8_t)GeometryKey::Position, DataType::Matrix, IdentityAffine());
+    Matrix<2, 3> pos = block->GetKeyValue<Matrix<2, 3>>(field, (uint8_t)GeometryKey::Position, DataType::Matrix, IdentityAffine23());
     Matrix<3, 3> local = PromoteAffine(pos);
     Matrix<3, 3> combined = local * BaseTransform();
 
@@ -121,7 +114,7 @@ inline void Vysi1Display::RenderTextureField(DynamicBlockDescriptor *block, uint
         return;
 
     // Texture-local transform for gradients: (Position) * (Offset * centering).
-    Matrix<2, 3> pos = block->GetKeyValue<Matrix<2, 3>>(field, (uint8_t)TextureKey::Position, DataType::Matrix, IdentityAffine());
+    Matrix<2, 3> pos = block->GetKeyValue<Matrix<2, 3>>(field, (uint8_t)TextureKey::Position, DataType::Matrix, IdentityAffine23());
     Matrix<3, 3> combined = PromoteAffine(pos) * BaseTransform();
 
     switch (type)

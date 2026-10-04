@@ -255,25 +255,29 @@ static uint8_t ScriptKeyCount(uint16_t slot, uint8_t field) {
     }
 }
 
+// Non-copying I/O lookup for subscription sources and cross-service register access:
+// returns a pointer straight into the I/O space (inputs then outputs).
+static bool ScriptGetIoPointer(uint16_t slot, uint8_t field, uint8_t key, ValueInfo &m, void *&data) {
+    LoadedScript *s = ScriptActive(slot);
+    if (!s) return false;
+    if (field == SCRIPT_FIELD_INPUT && key < s->inCount) {
+        m = s->inMeta[key];
+        data = s->ioSpace + s->InputOffset(key);
+        return true;
+    }
+    if (field == SCRIPT_FIELD_OUTPUT && key < s->outCount) {
+        m = s->outMeta[key];
+        data = s->ioSpace + s->OutputOffset(key);
+        return true;
+    }
+    return false;
+}
+
 // Resolves one I/O entry into a descriptor + value copy. Only inputs (field 1) and
 // outputs (field 2) are exposed through the Register.
 static bool ScriptGetEntry(uint16_t slot, uint8_t field, uint8_t key, ValueInfo &m, uint8_t *vbuf, uint8_t &vsz) {
-    LoadedScript *s = ScriptActive(slot);
-    if (!s) return false;
-    m = {};
-    vsz = 0;
-
-    const ValueInfo *meta = nullptr;
-    const uint8_t *data = nullptr;
-    if (field == SCRIPT_FIELD_INPUT && key < s->inCount) {
-        meta = &s->inMeta[key]; data = s->ioSpace + s->InputOffset(key);
-    } else if (field == SCRIPT_FIELD_OUTPUT && key < s->outCount) {
-        meta = &s->outMeta[key]; data = s->ioSpace + s->OutputOffset(key);
-    } else {
-        return false;
-    }
-
-    m = *meta;
+    void *data = nullptr;
+    if (!ScriptGetIoPointer(slot, field, key, m, data)) return false;
     uint8_t n = m.Size;
     if (n) memcpy(vbuf, data, n);
     vsz = n;
@@ -298,24 +302,6 @@ static bool ScriptSetEntry(uint16_t slot, uint8_t field, uint8_t key, const Valu
                        ? (uint8_t)' ' : 0;
     for (uint16_t i = vlen; i < meta->Size; i++) data[i] = fill;
     return true;
-}
-
-// Non-copying I/O lookup for subscription sources and cross-service register access:
-// returns a pointer straight into the I/O space (inputs then outputs).
-static bool ScriptGetIoPointer(uint16_t slot, uint8_t field, uint8_t key, ValueInfo &m, void *&data) {
-    LoadedScript *s = ScriptActive(slot);
-    if (!s) return false;
-    if (field == SCRIPT_FIELD_INPUT && key < s->inCount) {
-        m = s->inMeta[key];
-        data = s->ioSpace + s->InputOffset(key);
-        return true;
-    }
-    if (field == SCRIPT_FIELD_OUTPUT && key < s->outCount) {
-        m = s->outMeta[key];
-        data = s->ioSpace + s->OutputOffset(key);
-        return true;
-    }
-    return false;
 }
 
 // Writes a variable's RAM (Script management CID 7 "Write Variable" - editor debug).

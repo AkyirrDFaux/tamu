@@ -5,7 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:tamuapp/core/device_db.dart';
 import 'package:tamuapp/core/register_client.dart';
 import 'package:tamuapp/core/subscription_client.dart';
-import 'package:tamuapp/core/types.dart' show BlockType, Capability, ProviderSubscription, RequesterSubscription;
+import 'package:tamuapp/core/types.dart'
+    show Capability, ProviderSubscription, RequesterSubscription, blockInfoLabel;
 import 'subscriptions_dialog.dart' show SubscriptionDialog;
 
 class SubscriptionsPage extends StatefulWidget {
@@ -247,14 +248,7 @@ Widget _buildRequesterTab() {
     );
   }
 
-  String _formatBlockInfo(int bi) {
-    final type = (bi >> 22) & 0x3FF;
-    final inst = (bi >> 16) & 0x3F;
-    final field = (bi >> 8) & 0xFF;
-    final key = bi & 0xFF;
-    final typeLabel = BlockType.fromValue(type).label;
-    return '$typeLabel[$inst].f$field.k$key';
-  }
+  String _formatBlockInfo(int bi) => blockInfoLabel(bi);
 
   /// Opens the create/edit dialog: `existing` selects edit mode, null creates.
   void _showSubscriptionDialog([RequesterSubscription? existing]) {
