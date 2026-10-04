@@ -91,93 +91,9 @@ class LiveDevice {
 Future<LiveDevice?> readLiveDevice(int deviceId) async {
   final entry = DeviceDatabase.instance.byId(deviceId);
   final reg = RegisterClient(deviceId: deviceId);
-  final blocks = await reg.readBlocks();
-  if (blocks == null) return null;
-  final live = <LiveBlock>[];
-  for (final b in blocks) {
-    if (b == null) continue;
-    final type = b.type;
-    if (isScriptType(type)) continue;
-    if (isDynamicType(type) &&
-        (b.meta.type == BlockType.none.value ||
-            b.meta.type == BlockType.deleted.value)) {
-      continue;
-    }
-    if (isDynamicType(type)) {
-      final dyn = DynBlock(index: b.inst, meta: b.meta, name: b.name);
-      var fields = await reg.getDynamicFields(b.inst) ?? const <int>[];
-      if (fields.isEmpty && b.meta.size > 0) {
-        fields = [for (var i = 0; i < b.meta.size; i++) i];
-      }
-      final entries = <LiveEntry>[];
-      for (final field in fields) {
-        final keys = await reg.getDynamicKeys(b.inst, field) ?? const <int>[0];
-        for (final key in (keys.isEmpty ? const [0] : keys)) {
-          final read = await reg.readDynamicField(dyn, field, key);
-          if (read == null) continue;
-          entries.add(LiveEntry(
-            field: field,
-            key: key,
-            fieldName: 'Field $field',
-            keyName: 'Key $key',
-            meta: read.meta,
-          ));
-        }
-      }
-      live.add(LiveBlock(
-        type: b.meta.type,
-        instance: b.inst,
-        name: b.name,
-        isDynamic: true,
-        entries: entries,
-      ));
-    } else if (type == systemBlockTypeValue) {
-      final entries = <LiveEntry>[];
-      for (var field = 0; field < systemFieldCount; field++) {
-        final keys = systemFieldKeys[field] ?? const {0: 'Key 0'};
-        for (final key in keys.keys) {
-          final read = await reg.readField(field, key);
-          if (read == null) continue;
-          entries.add(LiveEntry(
-            field: field,
-            key: key,
-            fieldName: systemFieldName(field),
-            keyName: systemKeyName(field, key),
-            meta: read.meta,
-          ));
-        }
-      }
-      live.add(LiveBlock(
-        type: systemBlockTypeValue,
-        instance: 0,
-        name: 'System',
-        isDynamic: false,
-        entries: entries,
-      ));
-    } else {
-      final entries = <LiveEntry>[];
-      for (var field = 0; field < b.meta.size; field++) {
-        final read = await reg.readBlockField(type, b.inst, field, 0);
-        if (read == null) continue;
-        final info = _staticFieldInfo(type, field);
-        entries.add(LiveEntry(
-          field: field,
-          key: 0,
-          fieldName: info?.name ?? 'Field $field',
-          keyName: 'Key 0',
-          meta: read.meta,
-          info: info,
-        ));
-      }
-      live.add(LiveBlock(
-        type: type,
-        instance: b.inst,
-        name: b.name,
-        isDynamic: false,
-        entries: entries,
-      ));
-    }
-  }
+  final walked = await walkDeviceBlocks(reg);
+  if (walked == null) return null;
+  final live = [for (final b in walked) liveBlockFromVisited(b)];
   return LiveDevice(
     id: deviceId,
     name: entry?.displayName ?? 'Device ${idToString(deviceId)}',

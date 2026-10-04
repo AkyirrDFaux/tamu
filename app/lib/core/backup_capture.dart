@@ -9,27 +9,11 @@ Future<BackupDevice?> captureDevice(
   final reg = RegisterClient(deviceId: deviceId);
   final captured = <BackupBlock>[];
 
-  final live = await reg.readBlocks();
-  if (live != null) {
-    for (final b in live) {
-      if (b == null) continue;
-      final type = b.type;
-      if (isScriptType(type)) continue; // scripts captured semantically
-      // Dynamic tombstones (None/Deleted) carry no data; skip them like readDynamicBlocks.
-      if (isDynamicType(type) &&
-          (b.meta.type == BlockType.none.value ||
-              b.meta.type == BlockType.deleted.value)) {
-        continue;
-      }
-      BackupBlock? block;
-      if (isDynamicType(type)) {
-        block = await _captureDynamic(reg, b.inst, b.name, b.meta);
-      } else if (type == systemBlockTypeValue) {
-        block = await _captureSystem(reg);
-      } else {
-        block = await _captureStatic(reg, type, b.inst, b.name, b.meta);
-      }
-      if (block != null && block.entries.isNotEmpty) captured.add(block);
+  final walked = await walkDeviceBlocks(reg);
+  if (walked != null) {
+    for (final b in walked) {
+      final block = backupBlockFromVisited(b);
+      if (block.entries.isNotEmpty) captured.add(block);
     }
   }
 
@@ -109,99 +93,6 @@ Future<BackupDevice?> captureDevice(
     providerSubscriptions: providers,
     sndb: sndb,
     files: files,
-  );
-}
-
-Future<BackupBlock?> _captureStatic(RegisterClient reg, int type, int instance,
-    String name, ValueInfo meta) async {
-  final entries = <BackupEntry>[];
-  for (var field = 0; field < meta.size; field++) {
-    final read = await reg.readBlockField(type, instance, field, 0);
-    if (read == null) continue;
-    final info = _staticFieldInfo(type, field);
-    entries.add(BackupEntry(
-      field: info?.name ?? 'Field $field',
-      fieldIndex: field,
-      key: 'Key 0',
-      keyIndex: 0,
-      type: dataTypeWord(read.meta.dataType),
-      flags: flagWords(read.meta.flags),
-      unit: info?.unit,
-      value: encodeSemantic(read.meta.dataType, read.value, info: info),
-      size: read.value.length,
-    ));
-  }
-  return BackupBlock(
-    type: blockTypeWord(type),
-    typeIndex: type,
-    instance: instance,
-    name: name,
-    isDynamic: false,
-    entries: entries,
-  );
-}
-
-Future<BackupBlock?> _captureSystem(RegisterClient reg) async {
-  final entries = <BackupEntry>[];
-  for (var field = 0; field < systemFieldCount; field++) {
-    final keys = systemFieldKeys[field] ?? const {0: 'Key 0'};
-    for (final key in keys.keys) {
-      final read = await reg.readField(field, key);
-      if (read == null) continue;
-      entries.add(BackupEntry(
-        field: systemFieldName(field),
-        fieldIndex: field,
-        key: systemKeyName(field, key),
-        keyIndex: key,
-        type: dataTypeWord(read.meta.dataType),
-        flags: flagWords(read.meta.flags),
-        value: encodeSemantic(read.meta.dataType, read.value),
-        size: read.value.length,
-      ));
-    }
-  }
-  return BackupBlock(
-    type: 'System',
-    typeIndex: systemBlockTypeValue,
-    instance: 0,
-    name: 'System',
-    isDynamic: false,
-    entries: entries,
-  );
-}
-
-Future<BackupBlock?> _captureDynamic(
-    RegisterClient reg, int instance, String name, ValueInfo meta) async {
-  final block = DynBlock(index: instance, meta: meta, name: name);
-  var fields = await reg.getDynamicFields(instance) ?? const <int>[];
-  if (fields.isEmpty && meta.size > 0) {
-    fields = [for (var i = 0; i < meta.size; i++) i];
-  }
-  final entries = <BackupEntry>[];
-  for (final field in fields) {
-    final keys = await reg.getDynamicKeys(instance, field) ?? const <int>[0];
-    for (final key in (keys.isEmpty ? const [0] : keys)) {
-      final read = await reg.readDynamicField(block, field, key);
-      if (read == null) continue;
-      entries.add(BackupEntry(
-        field: 'Field $field',
-        fieldIndex: field,
-        key: 'Key $key',
-        keyIndex: key,
-        type: dataTypeWord(read.meta.dataType),
-        flags: flagWords(read.meta.flags),
-        value: encodeSemantic(read.meta.dataType, read.value),
-        size: read.value.length,
-      ));
-    }
-  }
-  return BackupBlock(
-    type: blockTypeWord(meta.type),
-    typeIndex: meta.type,
-    instance: instance,
-    name: name,
-    isDynamic: true,
-    entries: entries,
   );
 }
 

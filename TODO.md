@@ -60,7 +60,7 @@ suites need the rig (core on `/dev/ttyACM1`, one DAS on `/dev/ttyACM0` via WCH-L
 ## Code-cleanup backlog
 
 Non-urgent, no functional gaps (from the 2026-10-04 duplication pass; the reply/stream,
-subscription, register, script and requester-persistence dedups are done).
+subscription, register, script, requester-persistence and backup-walk dedups are done).
 
 **Firmware**
 - SNDB: five `for i < num_entries { ReadEntry; ... }` scans share a prologue (a visitor would
@@ -74,7 +74,6 @@ subscription, register, script and requester-persistence dedups are done).
   the `LAY5X5`/`VYSIV1` migration) run every boot; consider a one-shot migration marker.
 
 **App**
-- `backup_capture`/`backup_restore` share one field walker.
 - `script_value_dialog._changeType` -> `ScriptDraftValue.setType` (the dialog's local state
   shape differs, so this needs a small state refactor).
 - `ScriptValueInfo` vs `ValueInfo` (the raw codec helpers now live only in `types.dart`).
