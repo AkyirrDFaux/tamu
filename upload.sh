@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 #
-# Tamu flash helper - build and upload the core and DAS firmware.
+# Tamu flash helper - build and upload the Tamu core and DAS firmware.
 #
-#   ./sh app [core|das]         build + upload the application(s)   (default: both)
-#   ./sh boot [core|das] [-y]   build + upload the bootloader(s)    (default: both)
-#   ./sh build [core|das]       build only, no upload               (default: both)
-#   ./sh bin core [file] [off]  flash a raw .bin via esptool (default: built app @ 0x70000)
-#   ./sh bin das  [file] [off]  flash a raw .bin via minichlink (default: built app @ 0x800)
-#   ./sh ports                  list the serial ports the tools would use
-#   ./sh help                   this text
+#   ./upload.sh app [tamu|das]         build + upload the application(s)   (default: both)
+#   ./upload.sh boot [tamu|das] [-y]   build + upload the bootloader(s)    (default: both)
+#   ./upload.sh build [tamu|das]       build only, no upload               (default: both)
+#   ./upload.sh bin tamu [file] [off]  flash a raw .bin via esptool   (default: app @ 0x70000)
+#   ./upload.sh bin das  [file] [off]  flash a raw .bin via minichlink (default: app @ 0x800)
+#   ./upload.sh ports                  list the serial ports the tools would use
+#   ./upload.sh help                   this text
 #
-# Run `./sh help` for the full list and the port overrides.
+# `app`/`bin` write only the application slot, so the bootloader is preserved; only `boot`
+# overwrites a bootloader. Run `./upload.sh help` for the full list and port overrides.
 #
 set -euo pipefail
 
@@ -20,7 +21,7 @@ PIO="${PIO:-pio}"
 
 # Optional port overrides. Empty = let the tool autodetect (PlatformIO for `app`/`boot`,
 # minichlink/esptool for `bin`).
-CORE_PORT="${CORE_PORT:-}"
+TAMU_PORT="${TAMU_PORT:-}"
 DAS_PORT="${DAS_PORT:-}"
 
 # Tool locations (PlatformIO's bundled copies; the CLI is used first when on PATH).
@@ -28,53 +29,57 @@ ESPTOOL_PY="${ESPTOOL_PY:-$HOME/.platformio/packages/tool-esptoolpy/esptool.py}"
 MINICHLINK="${MINICHLINK:-$HOME/.platformio/packages/tool-minichlink/minichlink}"
 
 # Device -> PlatformIO environment names.
-CORE_APP_ENV=Tamu_v2_0A
-CORE_BOOT_ENV=Tamu_bootloader
+TAMU_APP_ENV=Tamu_v2_0A
+TAMU_BOOT_ENV=Tamu_bootloader
 DAS_APP_ENV=DAS_v0_1
 DAS_BOOT_ENV=DAS_bootloader
 
-# Raw-bin defaults (the address each app image is linked/flashed at).
-CORE_APP_OFFSET=0x70000   # ota_0, derived from partitions.csv (scripts/core_app_offset.py)
+# Raw-bin defaults (the address each app image is linked/flashed at; the bootloaders are
+# never touched by these defaults).
+TAMU_APP_OFFSET=0x70000   # ota_0, derived from partitions.csv (scripts/core_app_offset.py)
 DAS_APP_OFFSET=0x800      # app base; the DAS bootloader owns 0x0-0x800
 
 die() { echo "error: $*" >&2; exit 1; }
 
 usage() {
     cat <<'EOF'
-Tamu flash helper - build and upload the core and DAS firmware.
+Tamu flash helper - build and upload the Tamu core and DAS firmware.
 
-Usage: ./sh <command> [device] [args]
+Usage: ./upload.sh <command> [device] [args]
 
 Commands:
-  app   [core|das]            Build and upload the application(s).        (default: both)
-  boot  [core|das] [-y]       Build and upload the bootloader(s).         (default: both)
-  build [core|das]            Build only, no upload.                      (default: both)
-  bin   <core|das> [file] [offset]
+  app   [tamu|das]            Build and upload the application(s).        (default: both)
+  boot  [tamu|das] [-y]       Build and upload the bootloader(s).         (default: both)
+  build [tamu|das]            Build only, no upload.                      (default: both)
+  bin   <tamu|das> [file] [offset]
                               Flash a raw .bin. `file` defaults to the built app image,
-                              `offset` to the device's app address (core 0x70000, DAS 0x800).
+                              `offset` to the device's app address (tamu 0x70000, DAS 0x800).
   ports                       List /dev/ttyACM* and /dev/ttyUSB*.
   help                        Show this help.
 
 Devices:
-  core   ->  Tamu_v2_0A app          / Tamu_bootloader
+  tamu   ->  Tamu_v2_0A app          / Tamu_bootloader
   das    ->  DAS_v0_1 app            / DAS_bootloader
 
+The app commands write only the application slot (tamu ota_0, DAS 0x800), so the
+bootloader is preserved; only `boot` overwrites a bootloader.
+
 Examples:
-  ./sh app                    # reflash both applications
-  ./sh boot                   # reflash both bootloaders (prompts; -y to skip)
-  ./sh app das                # reflash just the DAS application
-  ./sh build core             # compile core app + bootloader, no upload
-  ./sh bin das                # flash the built DAS app image
-  ./sh bin core app.bin 0x70000
-  ./sh bin core bootloader.bin 0x10000
+  ./upload.sh app                 # reflash both applications
+  ./upload.sh boot                # reflash both bootloaders (prompts; -y to skip)
+  ./upload.sh app das             # reflash just the DAS application
+  ./upload.sh build tamu          # compile Tamu app + bootloader, no upload
+  ./upload.sh bin das             # flash the built DAS app image
+  ./upload.sh bin tamu app.bin 0x70000
+  ./upload.sh bin tamu bootloader.bin 0x10000
 
 Port overrides (else autodetected):
-  CORE_PORT=/dev/ttyACM1      core USB-serial port
+  TAMU_PORT=/dev/ttyACM1      Tamu core USB-serial port
   DAS_PORT=/dev/ttyACM0       WCH-Link port for the DAS
   PIO=pio                     PlatformIO command
 
-Typical rig: core on /dev/ttyACM1, DAS WCH-Link on /dev/ttyACM0:
-  CORE_PORT=/dev/ttyACM1 DAS_PORT=/dev/ttyACM0 ./sh app
+Typical rig: Tamu core on /dev/ttyACM1, DAS WCH-Link on /dev/ttyACM0:
+  TAMU_PORT=/dev/ttyACM1 DAS_PORT=/dev/ttyACM0 ./upload.sh app
 EOF
 }
 
@@ -82,30 +87,30 @@ pio_run() { # <env> [pio args...]
     local env="$1"; shift
     local port_args=()
     case "$env" in
-        "$CORE_APP_ENV" | "$CORE_BOOT_ENV") [ -n "$CORE_PORT" ] && port_args=(--upload-port "$CORE_PORT") ;;
-        *)                                    [ -n "$DAS_PORT" ]  && port_args=(--upload-port "$DAS_PORT") ;;
+        "$TAMU_APP_ENV" | "$TAMU_BOOT_ENV") [ -n "$TAMU_PORT" ] && port_args=(--upload-port "$TAMU_PORT") ;;
+        *)                                   [ -n "$DAS_PORT" ]  && port_args=(--upload-port "$DAS_PORT") ;;
     esac
     echo "==> $env $*"
     ( cd "$FW" && "$PIO" run -e "$env" "$@" "${port_args[@]}" )
 }
 
-app_env_for()  { case "$1" in core) echo "$CORE_APP_ENV" ;; das) echo "$DAS_APP_ENV" ;; esac; }
-boot_env_for() { case "$1" in core) echo "$CORE_BOOT_ENV" ;; das) echo "$DAS_BOOT_ENV" ;; esac; }
+app_env_for()  { case "$1" in tamu) echo "$TAMU_APP_ENV" ;; das) echo "$DAS_APP_ENV" ;; esac; }
+boot_env_for() { case "$1" in tamu) echo "$TAMU_BOOT_ENV" ;; das) echo "$DAS_BOOT_ENV" ;; esac; }
 
-devices() { # <core|das|all> -> space-separated list
-    if [ "$1" = all ]; then echo "core das"; else echo "$1"; fi
+devices() { # <tamu|das|all> -> space-separated list
+    if [ "$1" = all ]; then echo "tamu das"; else echo "$1"; fi
 }
 
-do_upload() { # <app|boot> <core|das|all>
+do_upload() { # <app|boot> <tamu|das|all>
     local kind="$1" dev="${2:-all}" d env
     for d in $(devices "$dev"); do
         if [ "$kind" = app ]; then env="$(app_env_for "$d")"; else env="$(boot_env_for "$d")"; fi
-        [ -n "$env" ] || die "unknown device '$d' (use core|das|all)"
+        [ -n "$env" ] || die "unknown device '$d' (use tamu|das|all)"
         pio_run "$env" -t upload
     done
 }
 
-do_build() { # <core|das|all>
+do_build() { # <tamu|das|all>
     local dev="${1:-all}" d env
     for d in $(devices "$dev"); do
         env="$(app_env_for "$d")";  [ -n "$env" ] || die "unknown device '$d'"; pio_run "$env"
@@ -113,17 +118,17 @@ do_build() { # <core|das|all>
     done
 }
 
-do_bin() { # <core|das> [file] [offset]
+do_bin() { # <tamu|das> [file] [offset]
     local dev="${1:-}" file off
-    [ -n "$dev" ] || die "usage: ./sh bin <core|das> [file] [offset]"
+    [ -n "$dev" ] || die "usage: ./upload.sh bin <tamu|das> [file] [offset]"
     shift
     case "$dev" in
-        core)
-            file="${1:-$FW/.pio/build/$CORE_APP_ENV/firmware.bin}"
-            off="${2:-$CORE_APP_OFFSET}"
-            [ -f "$file" ] || die "no binary '$file' (build it first: ./sh app core)"
+        tamu)
+            file="${1:-$FW/.pio/build/$TAMU_APP_ENV/firmware.bin}"
+            off="${2:-$TAMU_APP_OFFSET}"
+            [ -f "$file" ] || die "no binary '$file' (build it first: ./upload.sh app tamu)"
             local args=(--chip esp32c3 --baud 921600)
-            [ -n "$CORE_PORT" ] && args+=(--port "$CORE_PORT")
+            [ -n "$TAMU_PORT" ] && args+=(--port "$TAMU_PORT")
             args+=(write_flash "$off" "$file")
             echo "==> esptool: $file -> $off"
             if command -v esptool >/dev/null 2>&1; then
@@ -137,7 +142,7 @@ do_bin() { # <core|das> [file] [offset]
         das)
             file="${1:-$FW/.pio/build/$DAS_APP_ENV/firmware.bin}"
             off="${2:-$DAS_APP_OFFSET}"
-            [ -f "$file" ] || die "no binary '$file' (build it first: ./sh app das)"
+            [ -f "$file" ] || die "no binary '$file' (build it first: ./upload.sh app das)"
             [ -x "$MINICHLINK" ] || die "minichlink not found at $MINICHLINK (set MINICHLINK)"
             local args=()
             [ -n "$DAS_PORT" ] && args+=(-c "$DAS_PORT")
@@ -146,7 +151,7 @@ do_bin() { # <core|das> [file] [offset]
             "$MINICHLINK" "${args[@]}"
             ;;
         *)
-            die "unknown device '$dev' (use core|das)"
+            die "unknown device '$dev' (use tamu|das)"
             ;;
     esac
 }
@@ -165,8 +170,8 @@ case "$cmd" in
         for a in "${@:2}"; do
             case "$a" in
                 -y | --yes) assume=1 ;;
-                core | das | all) dev="$a" ;;
-                *) die "unknown boot option '$a' (use core|das|all|-y)" ;;
+                tamu | das | all) dev="$a" ;;
+                *) die "unknown boot option '$a' (use tamu|das|all|-y)" ;;
             esac
         done
         if [ "$assume" != 1 ]; then
