@@ -25,7 +25,6 @@
 #include <cstring>
 
 #include "ch32v00x.h"
-#include "ch32v00x_flash.h"
 #include "Core/Functions/Bootloader.h"
 
 // The app is linked here; the storage region starts at 0x3F00 and is never written.
@@ -65,35 +64,79 @@ static void GpioInPU(GPIO_TypeDef *port, uint32_t pin)
 }
 
 // ---------------------------------------------------------------------------
-// Flash (SPL)
+// Flash (direct registers)
 // ---------------------------------------------------------------------------
+//
+// The SPL flash helpers are not used: under LTO their unlock/lock sequences get inlined into
+// both the erase and the program paths (duplicated - the driver's cost is per call site, not
+// per function). Writing the sequences here once, `noinline`, keeps a single copy of each and
+// drops the SPL flash driver entirely. Register bit values mirror ch32v00x_flash.c.
+
+#define FLASH_KEY1 0x45670123u
+#define FLASH_KEY2 0xCDEF89ABu
+
+#define FCR_PG 0x00000001u      // program enable
+#define FCR_STRT 0x00000040u    // start
+#define FCR_LOCK 0x00000080u    // lock
+#define FCR_FLOCK 0x00008000u   // fast-program lock
+#define FCR_PAGE_ER 0x00020000u // page erase
+#define FSR_BSY 0x00000001u     // busy
+
+// Unlocks both the standard and the fast program/erase controller.
+__attribute__((noinline)) static void FlashUnlock()
+{
+    FLASH->KEYR = FLASH_KEY1;
+    FLASH->KEYR = FLASH_KEY2;
+    FLASH->MODEKEYR = FLASH_KEY1;
+    FLASH->MODEKEYR = FLASH_KEY2;
+}
+
+__attribute__((noinline)) static void FlashLock()
+{
+    FLASH->CTLR |= FCR_LOCK | FCR_FLOCK;
+}
+
+// Erases the 64-byte page containing `addr` (the 0x08000000 alias).
+__attribute__((noinline)) static void FlashErasePageFast(uint32_t addr)
+{
+    FLASH->CTLR |= FCR_PAGE_ER;
+    FLASH->ADDR = addr;
+    FLASH->CTLR |= FCR_STRT;
+    while (FLASH->STATR & FSR_BSY) {}
+    FLASH->CTLR &= ~FCR_PAGE_ER;
+}
+
+// Programs one 32-bit word as the two half-words the fast controller expects.
+__attribute__((noinline)) static void FlashProgramWord(uint32_t addr, uint32_t data)
+{
+    FLASH->CTLR |= FCR_PG;
+    *(volatile uint16_t *)addr = (uint16_t)data;
+    while (FLASH->STATR & FSR_BSY) {}
+    *(volatile uint16_t *)(addr + 2) = (uint16_t)(data >> 16);
+    while (FLASH->STATR & FSR_BSY) {}
+    FLASH->CTLR &= ~FCR_PG;
+}
 
 static bool FlashErasePage(uint32_t addr)
 {
-    FLASH_Unlock();
-    FLASH_Unlock_Fast();
-    FLASH_ErasePage_Fast(FLASH_CTRL_BASE + addr);
+    FlashUnlock();
+    FlashErasePageFast(FLASH_CTRL_BASE + addr);
     uint32_t check = 0;
     memcpy(&check, (const void *)addr, sizeof(check));
-    FLASH_Lock_Fast();
-    FLASH_Lock();
+    FlashLock();
     return check == 0xFFFFFFFFu;
 }
 
 static bool FlashWrite(uint32_t addr, const uint8_t *src, uint32_t len)
 {
-    FLASH_Unlock();
+    FlashUnlock();
     for (uint32_t off = 0; off < len; off += 4)
     {
         uint32_t w;
         memcpy(&w, src + off, sizeof(w));
-        if (FLASH_ProgramWord(FLASH_CTRL_BASE + addr + off, w) != FLASH_COMPLETE)
-        {
-            FLASH_Lock();
-            return false;
-        }
+        FlashProgramWord(FLASH_CTRL_BASE + addr + off, w);
     }
-    FLASH_Lock();
+    FlashLock();
     return true;
 }
 

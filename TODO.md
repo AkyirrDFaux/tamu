@@ -43,8 +43,13 @@ suites need the rig (core on `/dev/ttyACM1`, one DAS on `/dev/ttyACM0` via WCH-L
         user guide. The client's channel is behind `BootloaderTransport` (`PassthroughTransport`
         now; direct-USB drops in for Phase C). Tests: `bootloader_client_test`,
         `update_page_test`; HIL still 1 pass / 0 corrections.
-  - [ ] **B. DAS bootloader size/tuning.** Re-audit the 2004/2048 map (direct-register flash,
-        minimal `SystemInit`), free ~≥128 B, re-verify with the full-binary HIL.
+  - [x] **B. DAS bootloader size/tuning.** Done: **2004 → 1792 B (87.5%, 256 B free)**. The SPL
+        flash driver is now direct-register with shared `noinline` helpers (LTO had inlined the
+        unlock/lock into both the erase and program paths), and the framework debug code + C++
+        init/fini are dropped (`board_build.use_builtin_debug_code/cpp_support = false`). HIL
+        still 1 pass / 0 corrections. The remaining big block is the framework startup +
+        `SystemInit` (~650 B); replacing it needs a custom `board_build.startup` and a minimal
+        48 MHz `SystemInit` (clock-critical).
   - [ ] **C. Tamu (core) bootloader.** Small `factory` bootloader app + `ota_0` main app.
         **B1 entry**: the factory runs first and reads the button itself (held → update mode: raw
         `0xCA…0xBC` over USB straight into `ota_0`; not held → select `ota_0` + restart); the main
