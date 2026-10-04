@@ -102,6 +102,61 @@ App:
 - Stale comments: `file_viewers.dart:340` (old `DT_` layout) and `file_viewers_test.dart:152-163`
   (removed CLI capability in the sample cap word, wrong `DT_` layout).
 
+Bootloader:
+- Stale/misleading comments in `DAS_v0.1/Bootloader.cpp` (`:17-19` SPL claim, `:109-110` FCR
+  claim); `FlashWrite` (`:130-141`) returns a bool that is always true and ignored; blank lines
+  at `:310-311`.
+- `CoreBootloader.cpp:38` magic `0x2A0000u` duplicates `partitions.csv:6` (bitmap size silently
+  wrong if the partition changes).
+- Dedup: `ReceiveFrame`, `HandleRead` and the dispatch loop are duplicated between
+  `DAS_v0.1/Bootloader.cpp` and `Bootloader/CoreBootloader.cpp`; `_chunkBytes`
+  (`bootloader_client.dart:355-360`) duplicates `Bootloader._pad`.
+- Optimization: direct-USB write pacing is applied twice (~6 ms/chunk, ~2 min over the core
+  image) - zero one of the two pacings.
+
+Subscriptions:
+- Cleanup: `Periodic` computes an unused `hash` (`SubscriptionsProvider.h:205`); unused
+  `confirm = true` default (`SubscriptionsRequester.h:88`); stale staging comment
+  (`SubscriptionsPersist.h:14-16`); "Reduced subscription service" label
+  (`SubscriptionsDefs.h:13`) is stale; no firmware subscription tests exist.
+- Dedup: CID 0x01 `ProviderFindByTrid` + `ProviderInstall` re-searches; CID 0x11
+  `RequesterFindByTrid` + `RequesterUpsert` re-walks; OnChangeConfirm computes `Fnv1a` twice
+  (`SubscriptionsProvider.h:217` vs `:299`); `SaveRequesterTable` walks the table twice.
+- Optimization: OnChangePeriodic/Confirm hash before the `SubMinTime` gate
+  (`SubscriptionsProvider.h:209,217`); `SubscriptionsGetField` runs per entry per tick even for
+  not-due Periodic (`:195-199`); `.SUBREQ` rewritten on every set/cancel (`SubscriptionsPersist.h:44`);
+  `RequesterRemove` `i++` skips the entry shifted into the freed slot (`SubscriptionsControl.h:257-263`);
+  leftover `.SUBREQ~` is not deleted when the table empties.
+
+Device + Log:
+- Cleanup: `Dispatcher.h:36` Router TODO should point at `Router.md:9` ("not to be implemented
+  yet"); `0xFFFE` branches (also `SubscriptionsControl.h:16`); `ServiceType.router` /
+  `Capability.router`; `appSourceId`; stale `Device.h:360` comment.
+- Dedup: `SendFragFragment` (`MemoryBackup.h:46-58`) is reimplemented by SNDB Read All
+  (`Device.h:60-86`) and GetLogs (`LogHandler.h:97-126`); reply construction duplicated ~15x; the
+  streaming loop body is duplicated between those two.
+- Optimization: SNDB Read All counts then streams (two registry scans); `ClearReadLogs` is O(n*m);
+  log append/read rescan `LogCapacity` each time; `AppInterfacePump` shifts the whole RX queue per
+  frame (O(n^2)) and reads `AppRxCount` outside the lock (`AppInterface.h:174-183`); a 128-byte
+  stack copy per outgoing reply (`:75-77`); `APP_TX_RING_SIZE` comment claims ~4.5 KB but is 8192;
+  `GrowLogStorage` partial-failure path commits a grown buffer but returns false (`Log.h:89-106`).
+
+Register:
+- Cleanup: stale CID comments (off-by-one/wrong) in `Register.h:10-12`, `RegisterRead.h:3,9`,
+  `RegisterWrite.h:3,9`, `RegisterPersist.h:3,9,121`, `RegisterEnumerate.h:3` (actual Read=2,
+  Write=3, Recall=4, Save=5); dead `appendDynamicEntry` (`register_client.dart:439-450`);
+  `BlockType.render(0x100)` unused and collides with the 0x100 dictionary marker
+  (`types.dart:264,289`); `writeDynamicBlockMeta`'s `type` param is ignored by the firmware
+  (`register_client.dart:422-435`); `INVALID_INDEX` vs literal `0xFF` (RegisterWrite.h:17).
+- Dedup: `RegisterGetByBlockInfo`/`RegisterSetByBlockInfo` duplicate the script/dynamic/static
+  handler routing; the dynamic name is reachable via both 0x12/0x13 and field 0xFF; redundant thin
+  wrappers in the app client (`getFieldCount`/`getBlockKeys`/`getDynamic*`).
+- Optimization: block-type enumeration is O(types x blocks) (`RegisterEnumerate.h:56-86`);
+  `FieldCount()` allocates 256 B and scans on every meta read (`MemoryBlocks.h:283-287`);
+  `CleanupDynamicFiles` stats/deletes 256x4 files on every Save All (`MemoryDynamic.h:74-83`);
+  the app re-requests `enumerateBlockTypes` instead of caching (`register_client.dart:94`); the
+  app reads one item per round-trip in `readBlocks`/`readStaticFieldLayout`/`createDynamicBlock`.
+
 **Deliberately left** (a merge would read worse): the three flag-name decoders (`flagWords` =
 full words for the backup format, `ValueFlags.describe` = RO/P/TR, `_flagsSuffix` = RO/P) and
 the two flag renderings in `register_page_tiles` (chips vs small text) are different

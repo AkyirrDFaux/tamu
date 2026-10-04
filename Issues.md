@@ -3,11 +3,132 @@
 ## Code audit findings (2026-10-04)
 From the per-area audits; fixes pending unless noted.
 
+**App / storage**
 - **`StorageClient.unpadName` strips interior spaces** (`app/lib/core/storage_client.dart:89-91`).
   `text.replaceAll(' ', '').trim()` removes spaces *inside* a name, not just the 8-byte right
   padding, so a stored file such as `A B` reads back as `AB` and no longer matches the device's
   record. Latent today (no shipped firmware file has an interior space). Strip only trailing
   spaces/NULs, like `decodePaddedString` (`types.dart:32`).
+
+**Bootloader**
+- **Core bootloader: offset overflow bypasses the bounds check** (`firmware/src/Bootloader/CoreBootloader.cpp:97,112`).
+  `offset + PAYLOAD_SIZE > s_app->size` wraps for `offset >= 2^32-32`, so an out-of-range offset
+  passes, then `offset / SECTOR_SIZE` indexes `s_erased[]` out of bounds (into an 84-byte array)
+  and `esp_partition_read` leaves `data` uninitialised, leaking stack bytes in the read reply. The
+  DAS checks `addr < APP_BASE` first; the core has no equivalent. Use
+  `if (offset > s_app->size || s_app->size - offset < PAYLOAD_SIZE) return;`.
+- **Core bootloader: mid-session retry/reflash is unsafe** (`CoreBootloader.cpp:100-105`, bitmap `:38-48`).
+  Sectors are erased once per bootloader *session*; a second full write (retry, or flashing a
+  different image) skips the erase, so bits that must go 0->1 cannot be cleared and verification
+  never converges - contradicting `update_page.dart:202` ("safe to retry"). The DAS re-erases each
+  page per write so it is retry-safe. Add a session/pass reset or erase per write pass.
+- **Direct-USB replies are not matched to the request** (`app/lib/core/bootloader_client.dart:149-160`).
+  `DirectUsbTransport.readChunk` completes on the first 39-byte `0x11` frame and checks only
+  cmd/end bytes, not the offset or parity; a late reply from a previous read can be returned for
+  the wrong offset. Check `Bootloader.offset(frame) == offset` (and decode/parity).
+- **DAS bootloader reply silence-wait can hang forever** (`firmware/src/Devices/DAS_v0.1/Bootloader.cpp:206-225`).
+  `SendRaw`'s `for(;;)` silence loop has no deadline, so a continuously noisy/stuck bus blocks the
+  bootloader permanently; `ReceiveFrame` also applies the full timeout per byte. Bound the loop
+  and use a single per-frame deadline.
+- **`update_page` accepts non-raw firmware files** (`app/lib/ui/update_page.dart:62`).
+  `allowedExtensions: ['bin','img','uf2','hex']`, but the bootloader writes raw bytes, so a
+  `.hex`/`.uf2` is guaranteed to fail verification. Restrict to `['bin','img']` (or decode them).
+- **LED-entry doc inconsistency** (`Docs/Services/Bootloader.md:5` vs `Docs/Devices.md:12` /
+  `update_page.dart:195-196`): white LED vs "missing hardware" vs red LED. Code drives no LED in
+  the core bootloader. Needs a docs ruling.
+
+**Subscriptions**
+- **`DeltaPeriodic` with deadzone <= 0 always resends** (`SubscriptionsProvider.h:244-247` scalar,
+  `:264-266` vector). `dz`/`dz2` become 0 so `delta >= 0` / `dist2 >= 0` is always true, even for
+  an unchanged value - contradicts the doc's "distance / 0 = any change". Require a non-zero delta
+  when the deadzone is 0.
+- **120 s requester timeout removes the entry but never saves `.SUBREQ`** (`SubscriptionsControl.h:257-262`),
+  so the dead entry is restored on the next boot ("re-activates after boot"). Call
+  `SaveRequesterTable()` after the removal loop.
+- **The provider's CID 1 initial-value reply is never consumed by the requester**
+  (`SubscriptionsControl.h:126-139`): the reply CMD carries the request TRID (service byte 0x10),
+  so the dispatcher routes it to the app range / drops it. Periodic and Edge subscriptions get no
+  initial value. Route/consume it on the requester, or send an explicit CID 0 value after install.
+- **`ProviderInstall` on an existing entry keeps `hash`/`lastSentMs`/`lastVec`**
+  (`SubscriptionsProvider.h:81-87`), so changing source/deadzone can suppress the first send or
+  emit a stale delta. Reset trigger state when the target differs / on an explicit Set.
+- **`ApplyRequesterValue` doesn't renew the lease before the unresolvable-target return**
+  (`SubscriptionsRequester.h:88-102`): a subscription whose target register is temporarily
+  unresolvable still expires at 120 s and cancels its provider.
+- **OnChangeConfirm confirmation uses the default priority** (`SubscriptionsRequester.h:108-111`)
+  though it is a high-priority trigger. Pass `SUB_PRIORITY_HIGH`.
+- **Deadzone scaling for non-`Number` scalar types** (`SubscriptionsProvider.h:243-245` vs
+  `:160-164`): the deadzone is Q16.16 but `Uint32`/`Index` raw values are integers, so their
+  deadzone is scaled by 65536. Gate the deadzone by type, or restrict scalar delta to `Number`.
+- **Value updates set `FLAG_REQACK` for triggers that never ack** (`SubscriptionsProvider.h:302-309`);
+  only OnChangeConfirm answers. Set it only for that trigger.
+- **`kReRegisterMax = 4` silently drops further re-registration requests**
+  (`SubscriptionsPersist.h:128-129`). Loop/batch or grow the queue.
+- **Table-full / short-payload `break`s with no FAIL reply** (`SubscriptionsControl.h:125,178,219`),
+  so the app times out. Reply `FLAG_FAIL` consistently.
+- **App setters treat `reply != null` as success** (`app/lib/core/subscription_client.dart:44-53,91-95,138-143`);
+  `FLAG_SUCCESS`/`FLAG_FAIL` both carry a payload. Surface/check the response flags.
+- **Only one global subscription listener** (`app/lib/core/connection.dart:473-483`), but
+  `backup_restore.dart:324,381` makes a `SubscriptionClient` per device, so clients clobber each
+  other's `startListening`. Key listeners per device/TRID.
+
+**Device + Log**
+- **Net-ID collision detection is dead** (`firmware/src/Core/Functions/Device.h:42-46`,
+  `TimeSync.h:44-60`): `CoreCollisionFlag()` is only read (`Tamu_v2.0A/Main.h:182,200`), never
+  set; `HandleDiscoverResponse` never compares net bits. The docs require the check. Compare
+  `MakeId` net of the responder's `id_src` against `DeviceStatus.NetId` and set the flag.
+- **Net bits are never applied to addresses** (`Device.h` / `Packet.h:43`): `MakeId` is used only
+  for `ADDR_ALL_CORES`; `ShortAddress`/`assign->new_addr` store the bare shortID, so the documented
+  "core's NetID is automatically added" / foreign-net addressing never happens. Confirm intent.
+- **SNDB interrupted-compaction recovery can destroy the only good copy** (`SNDB.h:119-136`):
+  if `CreateFile(SNREG)` fails it still deletes the staged temp registry. Only delete the temp
+  after a successful restore.
+- **GetLogs is not "oldest first"** (`LogHandler.h:104-118`): it scans physical slot order, but
+  `LogSeq` diverges after a dedup refresh or an overwrite. Emit/sort by `LogSeq`.
+- **Device replies are disambiguated only by payload length** (`Device.h:215-256`): the 16-byte
+  SNDB Read reply has the same length as an Assign reply; it avoids the assign branch only because
+  SNDB replies echo an app TRID and are routed to the app first. Any future 12-17-byte Device
+  reply would be misparsed. Tag the reply kind explicitly.
+- **Assign reply discards the request TRID** (`Device.h:310-316`): hardcodes
+  `MakeService(Device,0)`/TRID 0 and broadcasts, violating "responses echo the request's TRID".
+  Echo `frame.trid` (high byte Device) or document the exception.
+- **`NextSystemTrid` is an 8-bit counter shared across service types** (`Packet.h:105-109`): the
+  docs give System/Logs a 12-bit range; this only cycles the low byte and never skips in-flight
+  IDs (could reuse within 256 outstanding). Low risk today; widen to 12-bit and/or per-service.
+- **Fragment reassembly ignores fragment sequence** (`app/lib/core/connection.dart:499-508`):
+  concatenates payloads regardless of `fragInfo.current`/`total`, so a lost/duplicated fragment
+  silently corrupts the stream. Track the expected `current` and abort on mismatch.
+- **`device_db` SNDB Read All parsing duplicated and inconsistent** (`device_db.dart:258-270` vs
+  `321-332`): `_doRefresh` skips `id == 0`, `sndbEntries` emits it. Share one parser. Also a stale
+  comment at `:219-220` says CID 12 where the read is CID 13.
+
+**Register**
+- **System "Used RAM" reports FREE RAM** (`firmware/src/Core/Services/RegisterRead.h:51`): the
+  field is labelled Used|Total and shown as "Used RAM" (`system_schema.dart:39`), but `used` is
+  `GetFreeRAM()`. Compute `GetTotalRAM() - GetFreeRAM()` (clamp >=0) or rename.
+- **Read/write responses > 108 bytes are silently truncated** (`RegisterDefs.h:99-116`):
+  `FIELD_RESPONSE_BUF_SIZE` is 268, but `SendResponse` clamps to `MAX_PAYLOAD_SIZE` (116) and
+  dynamic reads are not fragmented, so any dynamic entry with `Size > 108` loses bytes; writes
+  symmetric. Cap `ValueInfo.Size` to `MAX_PAYLOAD_SIZE-8` or fragment.
+- **Create Dynamic accepts an unbounded index** (`RegisterPersist.h:87-93` + `MemoryBlocks.h:336-357`):
+  `AddBlockAt` pads tombstones to any index, so `block_count` can exceed `MAX_DYNAMIC_BLOCKS` (256);
+  `EnumTypeWord` then truncates the index to 8 bits and save/cleanup only iterate 256, so such
+  blocks are unreachable/never saved. Reject `gi >= MAX_DYNAMIC_BLOCKS`.
+- **Recall All doesn't clear live blocks with no DT file** (`RegisterPersist.h:69-77`):
+  `RestoreDynamicBlock` returns early when no file is found, leaving an in-session live block
+  untouched (CID 4 is reachable at runtime). Tombstone the slot before the early return.
+- **Create Dynamic diverges from the docs** (`RegisterPersist.h:87-93` vs `Register.md:119-123`):
+  docs say request `Index (uint16)`, response `Success`; code consumes `Index + name` and replies
+  with a 5-byte `BlockIndexAck`. Reconcile the docs or the wire.
+- **Basic Write with field 0xFF returns `BlockIndexAck`, not the documented echo**
+  (`RegisterWrite.h:17-24` vs `Register.md:69`). Document the special case or echo.
+- **Short Read/Write payload is silently dropped** (`RegisterDispatch.h:114`): `if (PayloadBytes < 4) return;`
+  sends no reply, unlike every other guard. `RespondStatus(frame,false); return;`.
+- **Get/Set Name operate on tombstoned slots** (`RegisterPersist.h:103-117`): only guard
+  `block_idx >= block_count`, not `!present`.
+- **Static instance count truncates at 64** (`RegisterEnumerate.h:64`): `& 0x3F` wraps silently.
+- **Doc gap:** the dynamic range's 8.8 enumerate encoding is only in code comments
+  (`RegisterEnumerate.h:53-55`), not in `Register.md:66`.
 
 ## Naming/coverage gaps vs the docs (decision needed)
 - **OS notifications.** `Docs/App/Settings.md` lists "Allow notifications (To OS)" with
