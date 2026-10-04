@@ -12,7 +12,7 @@
 //
 // Flash rules: writes are 32-byte aligned (per the doc); the bootloader erases the 64-byte
 // page on the first half (offset % 64 == 0) and programs both halves. It never touches the
-// storage region at 0x3F00 (the app's `.SV`/table live there).
+// storage region at 0x3E00 (the app's `.SV`/table live there).
 //
 // It is written with direct register access (no SPL GPIO/USART/RCC/FLASH) to fit the 2 KB
 // region alongside the framework startup/SystemInit. The clock is already 48 MHz: the
@@ -27,12 +27,13 @@
 #include "ch32v00x.h"
 #include "Core/Functions/Bootloader.h"
 
-// The app is linked here; the storage region starts at 0x3F00 and is never written.
-// Must match `board_upload.offset_address` in platformio.ini (both the DAS_v0_1 app and
-// the DAS_bootloader image share the `[das]` base). The upload tool reads that option
-// (scripts/das_app_upload.py); this constant is the bootloader's matching copy.
+// The app is linked here; the storage region starts at 0x3E00 (512 B flush against the end
+// of the chip flash) and is never written. Must match `board_upload.offset_address` in
+// platformio.ini (both the DAS_v0_1 app and the DAS_bootloader image share the `[das]` base).
+// The upload tool reads that option (scripts/das_app_upload.py); this constant is the
+// bootloader's matching copy.
 #define APP_BASE 0x800u
-#define APP_LIMIT 0x3F00u
+#define APP_LIMIT 0x3E00u
 
 // The flash controller programs/erases through the 0x08000000 alias; the CPU reads/executes
 // through 0x00000000 (see Devices/DAS_v0.1/Storage.h).

@@ -167,7 +167,8 @@ int main(void)
                          MakeService(ServiceType::Device, 3),
                          NextSystemTrid(ServiceType::Device),
                          FLAG_REQACK | FLAG_START | FLAG_STOP,
-                         (const uint8_t *)&time_sent, sizeof(uint32_t));
+                         (const uint8_t *)&time_sent, sizeof(uint32_t),
+                         PRIORITY_TIMESYNC);
         DispatchPacket(tx_frame);
         // ProcessBus() in the main loop handles the reply (applies the offset).
     };

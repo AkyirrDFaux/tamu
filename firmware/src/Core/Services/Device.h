@@ -39,7 +39,7 @@ static inline void SendDeviceReply(const PacketFrame &frame, PacketFrame &reply,
 #define DEVICE_REPLY_KIND_ASSIGN 0xD1
 
 #ifdef TYPE_CORE
-// Dispatches SNDB requests: Read by ID/SN (11), Write (12) and Read All (13)
+// Dispatches SNDB requests: Read by ID/SN (0x11), Write (0x12) and Read All (0x13)
 // (Docs/Command ID table.md 0x0011-0x0013).
 void HandleSNDB(const PacketFrame &frame)
 {
@@ -49,7 +49,7 @@ void HandleSNDB(const PacketFrame &frame)
     if (is_response) return; // Core only handles requests
 
     switch (cid) {
-        case 13: { // SNDB Read All per docs 00.13
+        case 0x13: { // SNDB Read All per docs 00.13
             // The recovered registry tracks the valid-entry count, so one streaming scan
             // is enough (no separate counting pass over flash).
             SNDB::IterReset();
@@ -81,7 +81,7 @@ void HandleSNDB(const PacketFrame &frame)
             break;
         }
 
-        case 11: { // SNDB Read per docs 00.11
+        case 0x11: { // SNDB Read per docs 00.11
             RegistryEntry entry;
             bool found = false;
 
@@ -120,7 +120,7 @@ void HandleSNDB(const PacketFrame &frame)
             break;
         }
 
-        case 12: { // SNDB Write per docs 00.12
+        case 0x12: { // SNDB Write per docs 00.12
             if (PayloadBytes(frame) >= 16) {
                 const SerialNumber *write_sn = reinterpret_cast<const SerialNumber *>(frame.payload);
                 // Stored/allocated IDs are device-only (0..1023): strip any net bits the
@@ -370,13 +370,14 @@ void HandleDeviceService(const PacketFrame &frame)
                 memcpy(rpl + 4, &t1, 4);
                 memcpy(rpl + 8, &t2, 4);
                 PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.trid,
-                                 FLAG_TYPE | FLAG_START | FLAG_STOP, rpl, 12);
+                                 FLAG_TYPE | FLAG_START | FLAG_STOP, rpl, 12,
+                                 PRIORITY_TIMESYNC);
                 DispatchPacket(tx_frame);
             }
             break;
         }
 
-        case 10: // Core discover per docs 00.10
+        case 0x10: // Core discover per docs 00.10
         {
 #ifdef TYPE_CORE
             // Core discover reply: SN(14) + uptime(4) to the requesting core (3F.1 is the
@@ -393,9 +394,9 @@ void HandleDeviceService(const PacketFrame &frame)
         }
 
 #ifdef TYPE_CORE
-        case 11: // SNDB Read per docs 00.11
-        case 12: // SNDB Write per docs 00.12
-        case 13: // SNDB Read All per docs 00.13
+        case 0x11: // SNDB Read per docs 00.11
+        case 0x12: // SNDB Write per docs 00.12
+        case 0x13: // SNDB Read All per docs 00.13
         {
             HandleSNDB(frame);
             break;

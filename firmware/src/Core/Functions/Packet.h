@@ -27,6 +27,16 @@
 // default of 8 yields a 9-12 byte gap.
 #define DEFAULT_PRIORITY 8
 
+// The documented priority classes (Docs/RSBus and Packets.md "Priorities"), highest first.
+// The subscription values are the ones already carried by the subscription entries.
+#define PRIORITY_ERROR    0  // Errors (highest)
+#define PRIORITY_TIMESYNC 1  // TimeSync packets
+#define PRIORITY_SUB_HIGH 4  // High-priority subscriptions
+//                                     8 = DEFAULT_PRIORITY ("Other")
+#define PRIORITY_SUB_LOW  12 // Low-priority subscriptions
+#define PRIORITY_STREAM   13 // Streams
+#define PRIORITY_LOG      15 // Logs (lowest)
+
 // Docs/RSBus and Packets.md "Transaction IDs": each originating service owns a reserved TRID
 // range, and a reply echoes the request's TRID - so the range tells the dispatcher where to route
 // the response, and each service manages its own allocation (counter or slot table).
@@ -148,10 +158,13 @@ inline void PacketConstruct(PacketFrame *frame,
     PacketFinalize(frame, len);
 }
 
-inline void FinalizeReply(PacketFrame &reply, const PacketFrame &req, uint8_t flags, uint16_t len)
+// Finalises a fragmented reply. Every caller streams data, so the default is the Streams class;
+// the log database stream overrides it with the Logs class.
+inline void FinalizeReply(PacketFrame &reply, const PacketFrame &req, uint8_t flags, uint16_t len,
+                          uint8_t priority = PRIORITY_STREAM)
 {
     reply.flags = flags;
-    reply.priority = DEFAULT_PRIORITY;
+    reply.priority = priority;
     reply.id_tgt = req.id_src;
     reply.id_src = DeviceStatus.ShortAddress;
     reply.cmd = req.srv_src;   // Destination service (the originator's service tag)

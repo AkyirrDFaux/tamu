@@ -79,7 +79,7 @@ private:
         best_addr = 0;
         best_uptime = 0;
         PacketConstruct(&tx_frame, ADDR_ALL_CORES,
-                        MakeService(ServiceType::Device, 10),
+                        MakeService(ServiceType::Device, 0x10),
                         NextSystemTrid(ServiceType::Device),
                         FLAG_REQACK | FLAG_START | FLAG_STOP, nullptr, 0);
         DispatchPacket(tx_frame);
@@ -101,7 +101,8 @@ private:
                         MakeService(ServiceType::Device, 3),
                         NextSystemTrid(ServiceType::Device),
                         FLAG_REQACK | FLAG_START | FLAG_STOP,
-                        (const uint8_t *)&sent_time, sizeof(sent_time));
+                        (const uint8_t *)&sent_time, sizeof(sent_time),
+                        PRIORITY_TIMESYNC);
         DispatchPacket(tx_frame);
     }
 };

@@ -248,7 +248,7 @@ class DeviceDatabase extends ChangeNotifier {
 
       await refreshDevice(coreId);
 
-      final sndbReply = await _request(coreId, ServiceType.device, 13,
+      final sndbReply = await _request(coreId, ServiceType.device, 0x13,
           timeout: const Duration(seconds: 5));
       if (sndbReply == null) {
         throw Exception('SNDB read failed');
@@ -297,7 +297,7 @@ class DeviceDatabase extends ChangeNotifier {
 
   /// SNDB Write per docs 00.12
   Future<bool> sndbWrite(List<int> sn, int id) async {
-    final reply = await _request(coreId, ServiceType.device, 12,
+    final reply = await _request(coreId, ServiceType.device, 0x12,
         payload: [...sn, id & 0xFF, (id >> 8) & 0xFF],
         timeout: const Duration(seconds: 3));
     return reply != null && reply.length >= 16;
@@ -306,7 +306,7 @@ class DeviceDatabase extends ChangeNotifier {
   /// SNDB Delete per docs 00.12 with ID 0
   Future<bool> sndbDelete(List<int> sn) async {
     if (sn.length < 14) return false;
-    final reply = await _request(coreId, ServiceType.device, 12,
+    final reply = await _request(coreId, ServiceType.device, 0x12,
         payload: [...sn.take(14), 0, 0],
         timeout: const Duration(seconds: 3));
     return reply != null && reply.length >= 16;
@@ -314,7 +314,7 @@ class DeviceDatabase extends ChangeNotifier {
 
   /// Full SNDB dump for the SNDB viewer: [id, serial hex] pairs.
   Future<List<(int, String)>> sndbEntries() async {
-    final reply = await _request(coreId, ServiceType.device, 13,
+    final reply = await _request(coreId, ServiceType.device, 0x13,
         timeout: const Duration(seconds: 5));
     if (reply == null) return const [];
     return [for (final e in _parseSndb(reply)) (e.id, e.serial)];

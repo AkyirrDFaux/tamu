@@ -15,17 +15,21 @@ void DeviceLog(const char *tag, const char *fmt, ...);
 // Logs `len` bytes of `data` as a hex dump under the given `tag`
 #endif
 
-// Sends a log report to the LogHandler service (broadcast, outbound only). The timestamp is
-// filled from the synced time before sending.
+// Sends a log report to the local core's LogHandler service (Docs/Services/Log Handler.md:
+// "local core (ID 0.1)"). Address 0.1 has net 0 = the local net, resolved at match time
+// (`NetQualifyLocal`), so a node reaches its own net's core and a core addresses itself;
+// a broadcast would instead make every core on a shared bus store every node's log. The
+// timestamp is filled from the synced time before sending.
 inline void ReportLog(const LogMessage &log)
 {
     LogMessage message = log;
     message.timestamp = DeviceStatus.UptimeMs;
-    PacketConstruct(&tx_frame, ADDR_BROADCAST,
+    PacketConstruct(&tx_frame, MakeId(0, 1), // 0.1 = the local core
                      MakeService(ServiceType::LogHandler, 0),
                      NextSystemTrid(ServiceType::LogHandler),
                      FLAG_START | FLAG_STOP,
-                     (const uint8_t *)&message, sizeof(LogMessage));
+                     (const uint8_t *)&message, sizeof(LogMessage),
+                     PRIORITY_ERROR); // Errors are the highest class
     DispatchPacket(tx_frame);
 }
 

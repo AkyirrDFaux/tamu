@@ -20,9 +20,9 @@
 // The subscription TRID range (TRID_SUB_BASE..TRID_SUB_MAX) is defined in Functions/Packet.h.
 
 // Packet priorities (Docs/RSBus and Packets.md: high-priority subscriptions sit above
-// "Other" (default 8), low-priority ones below it).
-#define SUB_PRIORITY_HIGH 4
-#define SUB_PRIORITY_LOW  12
+// "Other" (default 8), low-priority ones below it). Shared with the class table in Packet.h.
+#define SUB_PRIORITY_HIGH PRIORITY_SUB_HIGH
+#define SUB_PRIORITY_LOW  PRIORITY_SUB_LOW
 
 // True for the high-priority triggers (confirmation and edge detection).
 static inline bool SubscriptionsHighPriority(TriggerType t) {

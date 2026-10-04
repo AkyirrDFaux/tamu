@@ -337,9 +337,17 @@ class LogEntry {
         timestampMs: uint32FromBytes(bytes, 8),
       );
 
-  bool get isBlock => srcAndCode & 0x1 != 0;
-  int get sourceId => (srcAndCode >> 1) & 0x7FFF;
-  int get code => (srcAndCode >> 16) & 0xFFFF;
+  // Log Struct (Docs/Services/Log Handler.md): source (BlockInfo type|instance, u16) |
+  // category (u8) | specifics (u8). A service log uses the reserved type 0x3FF with the
+  // ServiceType in the instance field.
+  int get source => srcAndCode & 0xFFFF;
+  bool get isBlock => (source & 0x3FF) != 0x3FF;
+  int get sourceType => source & 0x3FF;
+  int get instance => (source >> 10) & 0x3F;
+  int get sourceId => isBlock ? sourceType : instance;
+  int get category => (srcAndCode >> 16) & 0xFF;
+  int get specifics => (srcAndCode >> 24) & 0xFF;
+  int get code => (category << 8) | specifics;
 
   String sourceName() {
     if (isBlock) {

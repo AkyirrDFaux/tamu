@@ -12,9 +12,11 @@
 // from the main loop (SubscriptionsTick -> EvaluateProviderTriggers).
 // ===========================================================================
 #ifdef USE_SUB_PROVIDE
-#ifdef BOARD_DAS_v0_1
-#define MAX_PROVIDER_SUBS 4 // the DAS's 2 KB RAM: a couple of active providers suffice
-#else
+// The active provider table size. Defaults to 20; a RAM-constrained target overrides it with
+// -D MAX_PROVIDER_SUBS=N (the DAS's 2 KB RAM needs only a couple of active providers). Kept as
+// a build flag rather than a BOARD_X ifdef so Core/ stays board-agnostic (Docs/General
+// architecture.md code rules).
+#ifndef MAX_PROVIDER_SUBS
 #define MAX_PROVIDER_SUBS 20
 #endif
 

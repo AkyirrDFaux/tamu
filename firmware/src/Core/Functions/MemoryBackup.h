@@ -47,13 +47,14 @@ __attribute__((noinline)) void SendResponse(const PacketFrame &frame, const uint
 // and the 4-byte frag info is written before the frame is finalized and dispatched. Every
 // streamed reply (enumerate, storage read, subscription tables, SNDB read-all, logs) uses it.
 __attribute__((noinline)) void SendFragFragment(const PacketFrame &frame, uint16_t f,
-                                                uint16_t frags, uint16_t n)
+                                                uint16_t frags, uint16_t n,
+                                                uint8_t priority = PRIORITY_STREAM)
 {
     uint8_t flags = FLAG_TYPE | FLAG_FRAG;
     if (f == 0) flags |= FLAG_START;
     if (f == frags - 1) flags |= FLAG_STOP;
     WriteFragInfo(tx_frame.payload, f, frags);
-    FinalizeReply(tx_frame, frame, flags, (uint16_t)(4 + n));
+    FinalizeReply(tx_frame, frame, flags, (uint16_t)(4 + n), priority);
     DispatchPacket(tx_frame);
 }
 

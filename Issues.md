@@ -4,6 +4,11 @@ Open items only. The 2026-10-04 per-area audit findings (register, storage, devi
 subscriptions, tamu, das, bootloader, app, tooling, tests) were fixed and committed; the
 remaining low-value follow-ups live in `TODO.md`.
 
+## Code decisions needed (2026-10-04 docs-conformance sweep)
+- **Register write of a longer String/Filename.** `Register.md` says a longer value fails (only a
+  shorter one is allowed, space-padded); `MemoryTypes.h` clamps it instead. The app and the "System
+  Name clamps to 16 bytes" HIL rely on the clamp. Parked (minor detail).
+
 ## Docs decisions needed (parked unless noted)
 - **OS notifications.** `Docs/App/Settings.md` lists "Allow notifications (To OS)" with per-event
   selection; the app persists `notifyOs`/`osEvents`/`suppressOsWhenOpen` but only delivers in-app
@@ -34,13 +39,36 @@ remaining low-value follow-ups live in `TODO.md`.
 - **Bootloader LED entry.** `Bootloader.md` (white LED) vs `Devices.md` (core white LED "missing
   hardware") vs the app (red LED). Code drives no LED in the core bootloader.
 
+### Docs-conformance sweep wording (2026-10-04)
+- **Documented but not implemented** (future/planned, `Plan.md`): WiFi `App Active` values + System
+  field 8.1 SSID/Password; Router capability + service (stub only); branch-broadcast address
+  `0x3FE`; Valu v2.0 device; UDP app transport; the `Mesh` LED-display shape; the `Effect` data
+  type. Code-only types (`Deleted`, `Uint32`, `DevType`, `UnknownKeyed`) are undocumented.
+- **Register.md**: dynamic Create request also carries a 16-char name (doc lists only `Index`), and
+  the response is `BlockIndex(5)+ack` (doc says `Success`); System struct members are shown as keyed
+  positions but only the whole struct is exposed at key 0.
+- **Storage.md**: CID 5/6 payload order is frag-info first with the name at +4 (not Name first);
+  a file's size is the exact byte size (only allocation is page-aligned); the pointer page's
+  *newest* valid slot wins; `MoveFiletable` grow/shrink is `OPTIMIZE_SPEED`-only; utility signatures
+  are `bool` + out-params; the flash API is `Storage_FlashX`; size 0 is accepted; `FindSpace` scans
+  from an internal wear cursor.
+- **Script.md**: the leading varSpace word is a vestigial IC slot; the symbol-subtype list omits
+  `Number`; no size table (offsets are prefix sums); CID 5 truncates to 112 B; CID 6 takes a line
+  index, not an instruction counter.
+- **App Interface.md**: the BLE payload cap is MTU-5, not MTU-2.
+- **App docs**: `General info` omits the Update tab; `Devices` graph layout differs (no net
+  structure / router tree); `Device view` lists a nonexistent Bootloader capability and omits the
+  Subscriptions viewer; `Connection` has an undocumented autoconnect toggle; `Current setup v3` lux
+  cap is ~8.85k (not 10k) and the fan is not connected.
+- **RSBus/Packets.md**: the Script TRID range is unspecified and the System/Log counter is 8-bit
+  (within range) not 12-bit.
+- **Subscriptions.md**: the get-subscriptions stream starts with an undocumented count byte.
+
 ## Storage / DAS
-- **`Docs/Devices.md` / `Docs/Services/Storage.md` still describe the DAS "reduced file system".**
-  The reduced `StorageFixedFS.h` and `USE_FIXED_STORAGE` are gone; the DAS runs the shared full
-  multi-file filesystem (`StorageBlockFS`) in a 512 B region at `0x3E00` (pointer page + file table
-  + 384 B data) and now advertises `StorageFiles`. Update the reduced-variant description (the CMD
-  table's "not in reduced file system" notes, the `.SV` "fixed size, no presence bit" wording) and
-  the 128 B memory figure.
+- **A few reduced-FS doc leftovers.** `fd2ba14` removed the main "Reduced variant" text, but
+  `Docs/Services/Storage.md` still says "not in reduced file system" in the Create/Delete/Resize/
+  Rename command rows, and `Docs/Devices.md:48` still reads "Memory: 128B (single file from offset
+  0)" (the DAS is now a 512 B multi-file region at `0x3E00`). Optional wording cleanup.
 - **`.SUBREQ` on a provider-only node** was reported once; the empty-table file is deleted now.
   Re-check if it reappears.
 

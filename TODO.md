@@ -158,3 +158,16 @@ flag renderings in `register_page_tiles` (chips vs small text).
   leaving **376 B** app headroom at the 512 B region (24 B without them); the core keeps both speed
   shapes. File enlargement stays available on every target (gating it was rejected: the Storage docs
   require resize-to-larger).
+- **Docs-conformance sweep** (2026-10-04): four read-only audits of the whole Docs set. Code fixes:
+  the DAS bootloader `APP_LIMIT` `0x3F00 -> 0x3E00` (storage moved to `0x3E00`); the core
+  `BOARD_DAS_v0_1` ifdef replaced by the `MAX_PROVIDER_SUBS` build flag; Device core/SNDB CIDs
+  `10-13 -> 0x10-0x13` (firmware + app, matching `Command ID table.md`); log reports addressed to
+  the local core `0.1` instead of broadcast. The remaining doc-wording and design items are parked
+  in `Issues.md`.
+- **Log source + packet priorities** (2026-10-04): the log struct now matches `Log Handler.md` -
+  16-bit `source` = BlockType|Instance, 8-bit category, 8-bit specifics (a service log uses the
+  reserved source type `0x3FF` with the ServiceType in the instance field), so instances are no
+  longer dropped and the core dedups per instance; covered by a native `log_test` and an app decode
+  test. Packet priorities implement the documented classes (`PRIORITY_ERROR`, `TIMESYNC`,
+  `SUB_HIGH`, default, `SUB_LOW`, `STREAM`, `LOG`): error reports are highest, TimeSync next,
+  fragmented replies are Streams, the log DB stream is Logs, subscription updates keep 4/12.

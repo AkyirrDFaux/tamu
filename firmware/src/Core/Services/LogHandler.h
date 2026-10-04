@@ -65,7 +65,8 @@ void HandleLogHandler(const PacketFrame &frame)
             if (i < LogCount && LogUsed[i])
             {
                 if (LogBuffer[i].device_id == frame.id_src &&
-                    LogBuffer[i].msg.src_and_code == msg->src_and_code)
+                    LogBuffer[i].msg.source == msg->source &&
+                    LogCode(LogBuffer[i].msg) == LogCode(*msg))
                 {
                     // Dedup hit: refresh in place, newest wins the sequence number.
                     LogBuffer[i].count++;
@@ -137,7 +138,7 @@ void HandleLogHandler(const PacketFrame &frame)
                     off += sizeof(LogRecord);
                     sent++;
                 }
-                SendFragFragment(frame, f, total_frags, (uint16_t)(off - 4));
+                SendFragFragment(frame, f, total_frags, (uint16_t)(off - 4), PRIORITY_LOG);
             }
             return;
         }
