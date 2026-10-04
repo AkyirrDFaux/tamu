@@ -36,7 +36,7 @@ static_assert(STORAGE_CHIP_BASE + STORAGE_FLASH_SIZE == CHIP_FLASH_SIZE,
 
 #include "Core/Services/Storage.h"
 
-// Pinned at flash 0x3F00 by -Wl,--section-start=.fixed_data=0x3F00. The region is erased
+// Pinned at flash 0x3E00 by -Wl,--section-start=.fixed_data=0x3E00. The region is erased
 // (normalised to 0xFF) by Storage.Format() before any use; a code-size overflow fails the
 // link instead of corrupting the storage region at runtime.
 __attribute__((section(".fixed_data"), used))
@@ -146,9 +146,9 @@ bool Storage_FlashErase(uint32_t offset, uint32_t size)
     return true;
 }
 
-// Wipes the entire storage region. The region is small (256 B with USE_FIXED_STORAGE, 1 KB
-// otherwise), so it is erased with the 64-byte CR_PAGE_ER pages (like every other storage
-// op) - a coarse 1 KB CR_PER sector erase would spill past the region on the 256 B layout.
+// Wipes the entire storage region. The region is small (512 B on the DAS), so it is erased
+// with the 64-byte CR_PAGE_ER pages (like every other storage op) - a coarse 1 KB CR_PER
+// sector erase would spill past the region on the 512 B layout.
 bool Storage_FlashFormat()
 {
     return Storage_FlashErase(0, STORAGE_FLASH_SIZE);

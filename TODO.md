@@ -28,21 +28,11 @@ configs, both `OPTIMIZE_SPEED` states) + the app host suite + `flutter analyze`.
 
 ## Code-cleanup backlog
 
-Remaining low-value items; the 2026-10-04 audit's correctness fixes are done (no functional gaps).
-- **Storage (firmware):** `Find*` return an error sentinel on flash-read failure; unify the
-  invalidation policy (`DeleteMatching` offset+size vs `RenameFile` offset-only).
-- **Register/Subscriptions:** share the `RegisterGetByBlockInfo`/`SubscriptionsGetField` resolver;
-  skip the `.SUBREQ` rewrite when the bytes are unchanged.
-- **Bootloaders:** DAS/core `ReceiveFrame`/`HandleRead`/dispatch dedup (DAS has 256 B free);
-  `_chunkBytes` vs `Bootloader._pad`; the DAS `0x800` literal.
-- **App:** `script_value_dialog._changeType` -> `ScriptDraftValue.setType`; `ScriptValueInfo` vs
-  `ValueInfo`.
-- **Tooling:** 7/4/5/16 version packing cross-reference/`static_assert`s (added); `version.json`
-  stays tracked/mutated per build; no CI wiring.
-- **Tests:** coverage for the dynamic `Index (uint16)` bytes, `NextSystemTrid`, `StorageClient`
-  fixed-vs-full FS detection, `WriteBackupFile` staging cleanup, native `DeleteDynamicBlockFiles`;
-  stale fixtures still using retired opcodes / pre-renumbering render keys.
-- **Stale comments:** `MemoryBackup.h`/`StorageDefs.h` still say `DT_`/`DV_` (no dot).
+No open items: the 2026-10-04 audit's correctness fixes and the follow-up cleanups (storage `Find*`
+error signalling + offset-only invalidation; `RegisterResolveByBlockInfo` resolver sharing and the
+`.SUBREQ` unchanged-write skip; the core bootloader host-helper dedup + `Bootloader.padPayload`; the
+app `ScriptDraftValue.setType` / `ValueInfo` unification; the added coverage tests and fixture
+fixes) are committed.
 
 **Deliberately left** (a merge would read worse): the three flag-name decoders (`flagWords` = full
 words for the backup format, `ValueFlags.describe` = RO/P/TR, `_flagsSuffix` = RO/P) and the two
@@ -106,12 +96,12 @@ flag renderings in `register_page_tiles` (chips vs small text).
   store `t' = L * t` to keep the centre at `-t` for any rotation.
 - **Storage names are space-padded, not NUL-terminated** (`NameMatch` packs the plain name first).
   Files: `.SV` (static persistent mirror), `.TABLE`, `.DT_<xx>`/`.DV_<xx>` (dynamic), `SCR_XXX`,
-  `.SNREG` (SNDB), `LAY_1` (display layout), `.SUBREQ` (requester table). The DAS reduced filesystem
-  has one settings file and no rename.
-- **The reduced `.SV` has no file-presence bit.** Its fixed-size file always reports a full size, so
-  a never-written/Formatted mirror reads back erased; `StaticRecallAll` treats a `0xFF` System Name
-  as "not a valid mirror" and re-persists the live values instead. HIL: `HIL: DAS recalls over an
-  erased .SV`.
+  `.SNREG` (SNDB), `LAY_1` (display layout), `.SUBREQ` (requester table). The DAS runs the same
+  multi-file filesystem (384 B region); it only ever holds `.SV`.
+- **`.SV` presence is real on every target.** An absent/short mirror makes `StaticRecallAll` keep
+  the compiled-in defaults and re-persist them, so the mirror exists for the app's read-modify-write
+  partial saves; a present-but-erased mirror (torn write) is also re-persisted via the `0xFF` System
+  Name guard. HIL: `HIL: DAS recalls over an erased .SV`.
 - **The DAS's flash image does not cover the storage region** (code ends ~0x2B5C, storage at
   0x3F00), so reflashing preserves the `.SV`; the erased-mirror handling makes a reflash recover.
 - **`.SUBREQ` is removed when the requester table empties** (`SaveRequesterTable` deletes it at
@@ -150,3 +140,13 @@ flag renderings in `register_page_tiles` (chips vs small text).
   subscriptions, tamu, das, bootloader, app, tooling, tests) — correctness fixes, dedup,
   optimization, the subscription capability split, net-qualified addressing, `.DT_`/`.DV_` and
   `.SNREG` dotted names, the dynamic name commands, and the BLE service-UUID filter.
+- **Cleanup follow-ups** (2026-10-04): storage `Find*` bool error signalling + offset-only
+  invalidation; shared `RegisterResolveByBlockInfo` resolver + `.SUBREQ` unchanged-write skip; core
+  bootloader `BootloaderHost.h` dedup + `Bootloader.padPayload`; `RegisterRead` version-packing
+  cross-ref/`static_assert`s; app `ScriptDraftValue.setType` and `ValueInfo` unification; added
+  storage-client/dynamic-trace/TRID tests.
+- **DAS full filesystem** (2026-10-04): the DAS drops the reduced `StorageFixedFS` and runs the
+  shared `StorageBlockFS` in a 384 B region at `0x3E80` (pointer page + table + 256 B data,
+  `_etext` +176 B); `USE_FIXED_STORAGE` and the fixed branches are removed. `StaticRecallAll`
+  re-persists the defaults when `.SV` is absent/short so the full FS's real file presence keeps the
+  mirror valid. All four envs build; host gate + 6 HIL suites green.

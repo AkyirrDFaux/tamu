@@ -101,19 +101,6 @@ inline void BackupTempName(const char name[8], char out[8])
 // Writes `data` to the backup file `name` atomically (NOR-safe copy-and-rename):
 inline bool WriteBackupFile(const char name[8], const uint8_t *data, uint16_t len)
 {
-#ifdef USE_FIXED_STORAGE
-    // The reduced file system (the DAS) has exactly one pre-allocated file per settings name
-    // and no rename, so the staging dance below cannot work there: CreateFile
-    // of the temporary name fails outright, which made *every* static save on the DAS fail
-    // (status 255, the static backup left untouched - found on the rig; the block's Not-Saved flag could
-    // never clear). Its CreateFile erases the region and hands back the file ready for the
-    // whole content, so the write goes straight to the live name. No staging means no atomic
-    // swap - acceptable for the deliberately reduced file system, and still better than a save
-    // that cannot complete at all.
-    if (!Storage.CreateFile(name, len))
-        return false;
-    return Storage.WriteToFile(name, 0, len, (const char *)data);
-#else
     char tmp[8];
     BackupTempName(name, tmp);
     if (memcmp(name, tmp, 8) == 0)
@@ -139,7 +126,6 @@ inline bool WriteBackupFile(const char name[8], const uint8_t *data, uint16_t le
         return false;
     }
     return true;
-#endif
 }
 
 // Reads a backup file into `out`; returns the byte count (0 if absent or too large).

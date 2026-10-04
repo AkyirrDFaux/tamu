@@ -35,10 +35,11 @@ remaining low-value follow-ups live in `TODO.md`.
   hardware") vs the app (red LED). Code drives no LED in the core bootloader.
 
 ## Storage / DAS
-- **Reduced `.SV` region size.** `StorageFixedFS` declares `.SV` as `STORAGE_FLASH_SIZE` (256 B)
-  while `sizeof(staticPer)` is 40 B, and `Docs/Devices.md` says the DAS memory is **128 B**. Decide
-  the region size, and whether the fixed `.SV` should report only the persistent size (feed
-  `sizeof(staticPer)` into the const file table, guarded by a `static_assert`).
+- **`Docs/Devices.md` still documents the DAS "Reduced variant" file system.** The DAS now runs
+  the shared full multi-file filesystem (`StorageBlockFS`) with a 384 B region at `0x3E80`
+  (pointer page + file table + 256 B data); the reduced `StorageFixedFS.h` and `USE_FIXED_STORAGE`
+  were removed. The doc's reduced-variant description, the `.SV` "fixed size, no presence bit"
+  wording and the 128 B memory figure need updating.
 - **`.SUBREQ` on a provider-only node** was reported once; the empty-table file is deleted now.
   Re-check if it reappears.
 

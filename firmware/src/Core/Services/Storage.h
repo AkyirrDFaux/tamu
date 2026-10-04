@@ -22,9 +22,6 @@ void HandleStorageService(const PacketFrame &frame)
             break;
         }
 
-        // Create/Delete/Resize/Rename are NOT part of the reduced file system
-        // (docs: "not in reduced file system").
-#ifndef USE_FIXED_STORAGE
         case 1: { // Create per docs 03.01
             if (PayloadBytes(frame) >= 12) {
                 const char *name = reinterpret_cast<const char *>(frame.payload);
@@ -76,7 +73,6 @@ void HandleStorageService(const PacketFrame &frame)
             }
             break;
         }
-#endif // !USE_FIXED_STORAGE
 
         case 5: { // Read per docs 03.05
             if (PayloadBytes(frame) >= 8) {
@@ -97,17 +93,7 @@ void HandleStorageService(const PacketFrame &frame)
                                                    ? contentCap
                                                    : (uint16_t)(total_content - content_off);
                         if (content_len) {
-#ifdef USE_FIXED_STORAGE
-                            // The fixed filetable is a const array in code, not a flash
-                            // file: serialize it on the fly for the app's file browser.
-                            if (Storage.IsFixedTableName(name)) {
-                                Storage.CopyFixedTable(tx_frame.payload + 4 + head, content_off, content_len);
-                            } else {
-                                Storage_FlashRead(file_offset + content_off, tx_frame.payload + 4 + head, content_len);
-                            }
-#else
                             Storage_FlashRead(file_offset + content_off, tx_frame.payload + 4 + head, content_len);
-#endif
                         }
                         SendFragFragment(frame, f, total_frags, (uint16_t)(head + content_len));
                     }
