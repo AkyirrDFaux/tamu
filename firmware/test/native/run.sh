@@ -70,5 +70,9 @@ echo
 
 echo "### native stride-offset tests (script VM symbol resolution)"
 build_run "stride" "stride_test.cpp"
+echo
+
+echo "### native bootloader packet tests (codec layout + even parity)"
+build_run "bootloader" "bootloader_test.cpp"
 
 exit $fail
