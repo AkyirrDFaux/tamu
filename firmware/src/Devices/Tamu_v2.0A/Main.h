@@ -3,6 +3,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_heap_caps.h"
+#include "esp_ota_ops.h"
+#include "esp_partition.h"
 #include "nvs_flash.h"
 #include "esp_efuse.h"
 #include "esp_efuse_table.h"
@@ -279,6 +281,14 @@ extern "C"
     // FreeRTOS entry point: spawns the application task.
     void app_main(void)
     {
+        // Core bootloader (B1, Docs/Services/Bootloader.md): re-arm the factory slot so the
+        // bootloader runs first on the next reset and can catch the button; it boots this app
+        // again when the button is released. Updates only ever write ota_0, so the factory
+        // bootloader stays reachable even if this image is broken.
+        const esp_partition_t *factory = esp_partition_find_first(
+            ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_FACTORY, nullptr);
+        if (factory != nullptr) esp_ota_set_boot_partition(factory);
+
         // 16 KB: LoadAllBackups places a MEMORY_BACKUP_CAP-sized buffer on this stack and
         // ProcessBus dispatches full request/response chains recursively beneath it.
         xTaskCreate(ApplicationTask, "app_task", 16384, NULL, 5, NULL);
