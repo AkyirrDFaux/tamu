@@ -91,6 +91,37 @@ void main() async {
     await client.setRequesterSubscription(0);
   }, timeout: const Timeout(Duration(seconds: 20)));
 
+  test('subscriptions: .SUBREQ is removed when the table becomes empty',
+      skip: skipReason, () async {
+    final client = SubscriptionClient(deviceId: tamu.id);
+    final storage = StorageClient(deviceId: tamu.id);
+    Future<bool> hasSubreq() async {
+      final table = await storage.readFileTable() ?? const <FileRecord>[];
+      return table.any((f) => normalizeFileName(f.name) == '.SUBREQ');
+    }
+
+    final entry = RequesterSubscription(
+      index: 0,
+      providerAddr: 1,
+      trid: 0xFA01,
+      targetReg: makeBlockInfo(0, 0, 3, 0),
+      sourceReg: makeBlockInfo(0, 0, 3, 0),
+      trigger: TriggerType.periodic,
+      periodMs: 250,
+      minTimeMs: 50,
+      deadzone: 0,
+    );
+    expect(await client.setRequesterSubscription(0, entry: entry), isTrue);
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    expect(await hasSubreq(), isTrue,
+        reason: 'adding a subscription persists .SUBREQ');
+
+    expect(await client.setRequesterSubscription(0), isTrue);
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    expect(await hasSubreq(), isFalse,
+        reason: 'the last cancel removes .SUBREQ (no empty file left behind)');
+  }, timeout: const Timeout(Duration(seconds: 30)));
+
   test('subscriptions: DAS Measured Value flows to a Tamu target', skip: skipReason, () async {
     if (das == null) {
       print('DAS not found; skipping');

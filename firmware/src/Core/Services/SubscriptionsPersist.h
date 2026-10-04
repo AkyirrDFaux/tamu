@@ -22,6 +22,13 @@ static void SaveRequesterTable() {
     uint16_t off = 0;
     uint8_t count = 0;
     for (int i = 0; i < MAX_REQUESTER_SUBS; i++) if (requesterTable[i].active) count++;
+    // No subscriptions: remove the file rather than leaving an empty one behind (the app's
+    // file list showed a `.SUBREQ` with nothing in it after the last cancel). Absence is the
+    // same as an empty table on load.
+    if (count == 0) {
+        Storage.DeleteFile(SubscriptionsRequesterFile);
+        return;
+    }
     buf[off++] = count;
     for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
         RequesterEntry* e = &requesterTable[i];

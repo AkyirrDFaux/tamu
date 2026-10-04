@@ -238,6 +238,48 @@ void main() {
     expect(data.length, greaterThanOrEqualTo(20), reason: 'at least the System segment');
   }, timeout: const Timeout(Duration(seconds: 60)));
 
+  // HIL regression: the reduced file system has no file-presence bit, so a never-written (or
+  // Formatted) `.SV` reads back erased rather than "absent". Recall All must not copy that
+  // erased mirror over the live settings - the DAS used to come up with a 0xFF System Name
+  // (and 0xFF Meas values) after every reflash. It must keep the live values and re-persist
+  // them instead, so the mirror is valid again for the app's partial-save read-modify-write.
+  test('HIL: DAS recalls over an erased .SV without clobbering the live name',
+      skip: skipReason, () async {
+    final db = DeviceDatabase.instance;
+    await db.refreshRuntime(0);
+    final das = findDas(db);
+    if (das == null) {
+      print('DAS not found - skipping erased .SV check');
+      return;
+    }
+    final reg = RegisterClient(deviceId: das.id);
+    final storage = StorageClient(deviceId: das.id);
+
+    final before = await reg.readField(6, 0);
+    expect(before, isNotNull, reason: 'System Name readable');
+    final name =
+        String.fromCharCodes(before!.value).replaceAll('\x00', '').trimRight();
+    expect(name, isNotEmpty);
+    expect(name.codeUnits.any((c) => c == 0xFF), isFalse,
+        reason: 'the live name is valid before the test');
+
+    // Erase the mirror the way a reflash/Format does: the fixed region becomes all 0xFF.
+    expect(await storage.format(), isTrue, reason: 'the format is accepted');
+    expect(await reg.recallAll(), isTrue, reason: 'Recall All succeeds');
+
+    final after = await reg.readField(6, 0);
+    expect(after, isNotNull);
+    final recalled =
+        String.fromCharCodes(after!.value).replaceAll('\x00', '').trimRight();
+    expect(recalled, name, reason: 'an erased mirror must not clobber the live name');
+
+    // And the mirror is valid again (the fix re-persisted the live values).
+    final sv = await storage.readFile('.SV', size: 40);
+    expect(sv, isNotNull);
+    expect(sv!.any((b) => b != 0xFF), isTrue,
+        reason: 'the mirror was re-persisted after the erase');
+  }, timeout: const Timeout(Duration(seconds: 60)));
+
   // HIL: System Name is the documented fixed 16-byte field, space-padded (no terminator).
   test('HIL: System Name write clamps to 16 bytes', skip: skipReason, () async {
     final reg = RegisterClient(deviceId: 1);

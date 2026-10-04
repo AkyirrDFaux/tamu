@@ -30,6 +30,21 @@ static void StaticRecallAll() {
     uint8_t buf[sizeof(staticPer)];
     uint16_t cnt = ReadBackupFile(StaticValuesName(), buf, sizeof(buf));
     if (cnt < sizeof(staticPer)) return; // no (or short) backup: keep the compiled-in defaults
+
+    // The reduced filesystem (DAS) has no file-presence bit: its fixed-size `.SV` always reports
+    // a full size, so a never-written (or Formatted) file reads back erased (0xFF) rather than
+    // "absent". The System Name is the mirror's validity anchor: it is always space-padded text,
+    // so a 0xFF byte there means the whole mirror was never validly written. Treat that as "no
+    // backup" and persist the compiled-in defaults, so the mirror becomes valid for the app's
+    // read-modify-write partial saves instead of clobbering the defaults (and the Name) with
+    // erased bytes - the DAS used to come up with a 0xFF name after every reflash.
+    for (uint16_t i = 0; i < SYSTEM_NAME_LEN && i < cnt; i++) {
+        if (buf[i] == 0xFF) {
+            StaticSaveAll();
+            return;
+        }
+    }
+
     memcpy(&staticPer, buf, sizeof(staticPer));
 #ifdef TYPE_CORE
     DeviceStatus.NetId = staticPer.system.NetId;

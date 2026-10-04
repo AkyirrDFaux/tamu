@@ -143,6 +143,12 @@ class StorageClient {
     return reply != null && reply.isNotEmpty && reply[0] != 0;
   }
 
+  /// Formats the whole filesystem per docs 03.00 CID0 (wipes every file).
+  Future<bool> format() async {
+    final reply = await _request(0);
+    return reply != null;
+  }
+
   /// Reads the whole file per docs 03.05 CID5
   Future<List<int>?> readFile(String name, {int? size}) async {
     final reply = await _request(

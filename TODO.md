@@ -2,8 +2,8 @@
 
 Long-term plan (`Docs/Plan.md`): 1) Scripts, 2) blocks/modules + subscriptions, 3) app backup.
 
-**Baseline** (2026-10-04): core **623 630 B** (~20 % of the 3 MB partition), DAS **11 052 /
-16 384 B** (67.5 %), DAS RAM 2 048 B (statics 1 048 + stack 1 000, no heap). Host gate:
+**Baseline** (2026-10-04): core **623 824 B** (~20 % of the 3 MB partition), DAS **11 092 /
+16 384 B** (67.7 %), DAS RAM 2 048 B (statics 1 048 + stack 1 000, no heap). Host gate:
 `./test.sh` = the native numeric/geometry/CRC/stride/align tests (core, 32-bit and DAS
 configs, both `OPTIMIZE_SPEED` states) + the app host suite + `flutter analyze`. The 8 HIL
 suites need the rig (core on `/dev/ttyACM1`, one DAS on `/dev/ttyACM0` via WCH-Link).
@@ -127,6 +127,18 @@ vocabularies/shapes.
   first). Files: `.SV` (static persistent mirror), `.TABLE`, `DT_<xx>`/`DV_<xx>` (dynamic),
   `SCR_XXX`, `SNREG` (SNDB), `LAY_1` (display layout). The DAS reduced filesystem has one
   settings file and no rename.
+- **The reduced `.SV` has no file-presence bit.** Its fixed-size file always reports a full
+  size, so a never-written (or Formatted) mirror reads back erased instead of "absent".
+  `StaticRecallAll` treats a `0xFF` System Name as "not a valid mirror" (the Name is always
+  space-padded text) and re-persists the live values instead of copying erased bytes over
+  them - without this, a freshly flashed DAS came up with a `0xFF` Name and `0xFF` Meas
+  values, and the app showed "broken" fields. `Recall All` heals the same way; the HIL check
+  is `HIL: DAS recalls over an erased .SV`.
+- **The DAS's flash image does not cover the storage region** (code ends ~0x2B5C, storage at
+  0x3F00), so reflashing preserves whatever `.SV` was there - the erased-mirror handling above
+  is what makes a reflash recover cleanly.
+- **`.SUBREQ` is removed when the requester table empties** (`SaveRequesterTable` deletes it at
+  count 0); it used to leave a 0-entry file behind after the last cancel.
 - **Backup zips** are semantic format 2, one JSON per device (no manifest); entries must be
   built from UTF-8 bytes (archive sizes by UTF-16 code units otherwise). Large files are
   skipped above 128 kB by default.
@@ -170,3 +182,8 @@ vocabularies/shapes.
   rewrite), the core speed build (`-O2 -fwrapv`, the CRC8 table under `OPTIMIZE_SPEED`), the
   native numeric/geometry/CRC/stride/align host tests, the app↔firmware contract test, and the
   2026-10-04 duplication passes (`abe921e`, `e56676e`, `dfc8c56`, `4f433aa`).
+- **DAS erased-`.SV` recovery** (2026-10-04): `StaticRecallAll` detects a `0xFF` System Name in
+  the reduced filesystem's mirror and re-persists the live settings instead of clobbering them
+  with erased bytes; the DAS no longer comes up with a `0xFF` Name after a reflash. `.SUBREQ`
+  is deleted when the requester table empties. HIL: `tamu_hardware_verification_test`
+  (erased-`.SV`), `hil_subscriptions_test` (empty-`.SUBREQ` removal).

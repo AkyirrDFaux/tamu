@@ -111,6 +111,20 @@ Resolved in the TRID-range pass (2026-10-03, later):
   discover/timesync matching; converting it needs the documented TRID manager (the same gap as
   the DAS provider-cancel entry below). The current Device/Log tags already sit inside
   `0x0000-0x0FFF`.
+## Storage / DAS reduced filesystem
+- **The reduced `.SV`'s fixed size is the whole storage region, not the persistent space.**
+  `StorageFixedFS` declares `.SV` as `STORAGE_FLASH_SIZE` (256 B on the DAS), while
+  `sizeof(staticPer)` is only 40 B, so the app's raw `.SV` view shows ~216 trailing `0xFF`
+  bytes (the decoded backup view uses the layout and is correct). `Docs/Devices.md` says the
+  DAS memory is **128 B** while the build uses `STORAGE_FLASH_SIZE=256` - decide the region
+  size, and whether the fixed `.SV` should report only the persistent size (which would need
+  the device to feed `sizeof(staticPer)` into the const file table, e.g. via a build flag
+  guarded by a `static_assert`).
+- **`.SUBREQ` on a node with no subscriptions** was reported by the user; the provider-only
+  DAS cannot create it, and neither the core nor the app currently shows one. It is written
+  only by requester set/cancel (`0x11`) or Save All (`0x13`); the empty-table file is now
+  deleted (above). Re-check if it reappears.
+
 ## Android (on-device behaviour untested)
 
 - **On-device behavior not yet verified** (no Android device/emulator configured): the BLE
