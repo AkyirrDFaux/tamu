@@ -11,7 +11,10 @@
 // Requester persistence + provider re-registration (USE_SUB_REQUEST).
 // ===========================================================================
 #ifdef USE_SUB_REQUEST
-static const char* SubscriptionsRequesterFile = ".SUBREQ";
+// 8-byte padded name. The storage keys files by exactly 8 bytes and WriteBackupFile derives
+// its "~" staging name from this array, so the NUL keeps the on-flash name (and the derived
+// ".SUBREQ~") identical to the hand-rolled staging this replaced.
+static const char SubscriptionsRequesterFile[8] = {'.','S','U','B','R','E','Q','\0'};
 
 // Docs: "recalls values from a file, which is a 1:1 copy of the table except timeout value."
 // Entry: the requester wire prefix minus the timeout = providerAddr(2) + trid(2) + table(16)
@@ -36,12 +39,9 @@ static void SaveRequesterTable() {
         memcpy(buf + off, e, REQUESTER_FILE_ENTRY_SIZE);
         off += REQUESTER_FILE_ENTRY_SIZE;
     }
-    static const char tmp_name[8] = {'.','S','U','B','R','E','Q','~'};
-    if (Storage.FileExists(tmp_name) != 0xFFFFFFFF)
-        Storage.DeleteFile(tmp_name);
-    if (!Storage.CreateFile(tmp_name, off)) return;
-    if (!Storage.WriteToFile(tmp_name, 0, off, (const char*)buf)) { Storage.DeleteFile(tmp_name); return; }
-    if (!Storage.RenameFile(tmp_name, SubscriptionsRequesterFile)) { Storage.DeleteFile(tmp_name); }
+    // Shared atomic staging (copy to the "~" name, then rename); handles the reduced
+    // fixed-storage variant too, so no bespoke CreateFile/Write/Rename dance here.
+    WriteBackupFile(SubscriptionsRequesterFile, buf, off);
 }
 
 static void LoadRequesterTable() {

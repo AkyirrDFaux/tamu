@@ -60,14 +60,13 @@ suites need the rig (core on `/dev/ttyACM1`, one DAS on `/dev/ttyACM0` via WCH-L
 ## Code-cleanup backlog
 
 Non-urgent, no functional gaps (from the 2026-10-04 duplication pass; the reply/stream,
-subscription, register and script dedups are done).
+subscription, register, script and requester-persistence dedups are done).
 
 **Firmware**
 - SNDB: five `for i < num_entries { ReadEntry; ... }` scans share a prologue (a visitor would
   add indirection; the loops are short and clear as-is).
 - `RegisterGetByBlockInfo`/`SubscriptionsGetField` share one resolver - awkward because
   `RegisterDispatch.h` precedes `SubscriptionsDefs.h` in the include order.
-- `SaveRequesterTable` re-implements `WriteBackupFile`'s staging.
 - Unused enum members (`DataType::NetAddr/UnknownKeyed/BlockInfo/Deleted`,
   `BlockType::Deleted/Undefined`, `AccGyrError::ErrTimeout`, Render `Mesh`/`Colour3`/
   `PointCoordinates`) - cross-cutting with `firmware_contract_test.dart`.
