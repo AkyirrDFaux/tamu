@@ -190,6 +190,21 @@ App (connection / device):
   `SerialPort` per port per refresh (`connection.dart:312-320`); log-page rebuild allocations
   (`log_page.dart:127-128,169,228-232`).
 
+App (subscriptions):
+- Cleanup: the value-update listener path is unconsumed (`subscription_client.dart:11-13,21,31-42`);
+  `recallAll`/`saveAll`/`setProviderSubscription`/`_providerPayload` unused (`:132-156`);
+  `regClient` param unused (`subscriptions_dialog.dart:86,94`, `subscriptions_page.dart:29,41,259`);
+  unused `isEdit` getter; `_deadzoneController.text = '0'` hardcoded (`:136`); stale comments
+  (`subscription_client.dart:44`, `connection.dart:541-543`); magic `16` duplicates
+  `MAX_REQUESTER_SUBS`.
+- Dedup: `_fetchBlocks`/`_fetchFields` pure pass-throughs (`subscriptions_dialog.dart:206-212`);
+  `setRequesterSubscription` re-fetches the requester table and rebuilds the entry by hand
+  (`subscription_client.dart:107-130`) - use the passed list / a `copyWith`.
+- Optimization: `getProviderSubscriptions`/`getRequesterSubscriptions` run sequentially
+  (`subscriptions_page.dart:60-61`); nested `setState` in `_load*Fields*`
+  (`subscriptions_dialog.dart:169-190`); N+1 register round-trips (`subscriptions_dialog.dart:74`,
+  `subscription_client.dart:81`); redundant `toDevice` (`subscription_client.dart:141`).
+
 **Deliberately left** (a merge would read worse): the three flag-name decoders (`flagWords` =
 full words for the backup format, `ValueFlags.describe` = RO/P/TR, `_flagsSuffix` = RO/P) and
 the two flag renderings in `register_page_tiles` (chips vs small text) are different

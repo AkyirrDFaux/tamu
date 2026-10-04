@@ -186,6 +186,36 @@ From the per-area audits; fixes pending unless noted.
   only", but the app reads identity via the Register System block (matches Device Commands.md).
   Stale doc; needs a ruling.
 
+**App (subscriptions)**
+- **FAIL replies are reported as success** (`app/lib/core/subscription_client.dart:94,101,133,136,142`):
+  `ConnectionManager.request()` ignores `isFail` and returns an empty non-null payload, so
+  `reply != null` is true; adding a subscription on a provider-only DAS silently "succeeds".
+  Surface success/fail and check it.
+- **Editing a self/offline-provider subscription asserts** (`subscriptions_dialog.dart:166,174`):
+  the ProviderPicker excludes the local device but `_selectedProviderAddr` is forced to the
+  existing value, so `DropdownButtonFormField` asserts. Include the local/synthetic entry when it
+  is the current value.
+- **`fetchFieldSelections` treats a field *count* as a max *index*** (`subscriptions_dialog.dart:69-78`):
+  dynamic blocks accept arbitrary sparse field indexes, so a block with fields `{5,6}` reads 0/1
+  and the picker is empty; key 0 is always used for keyed fields. Iterate
+  `enumerateFieldIndexes`/`enumerateKeys`.
+- **`KeyPicker.keys = [0..7]` cannot address documented keys** (`subscriptions_pickers.dart:104`):
+  dictionary keys go to 11 (Point coordinates=10, Noise seed=11) and key 0 is a marker with no
+  value. Enumerate actual keys (or free entry); drop key 0 for dictionary markers.
+- **Requester UI is not capability-gated** (`subscriptions_page.dart:116` vs `:169-203`): the docs
+  model separate "Request"/"Provide" capabilities but app+firmware have one bit
+  (`types.dart:383`, `Enums.h:17`). Gate the requester tab once a request bit exists; for now at
+  least detect FAIL replies.
+- **`"${sub.lastSentMs} ms ago"` mislabels an absolute uptime** (`subscriptions_page.dart:157`):
+  the field is "ms in local uptime" (`Subscriptions.md:43`), not a delta.
+- **Trigger/field-type compatibility is never validated** (`subscriptions_dialog.dart:431-440`):
+  edges are bool-only and delta scalar/vector-only (`Subscriptions.md:72-82`), but `_canSave`
+  accepts any source type.
+- **Deadzone is never displayed** (`subscriptions_page.dart:154-161,221-224`) though it is an
+  entry field (getters exist at `types.dart:555,635`).
+- **Docs gap:** `Docs/App/Service views/Subscriptions.md` does not exist (only Register/Script/
+  Storage/Device view docs are present).
+
 ## Naming/coverage gaps vs the docs (decision needed)
 - **OS notifications.** `Docs/App/Settings.md` lists "Allow notifications (To OS)" with
   per-event selection; the app persists `notifyOs`/`osEvents`/`suppressOsWhenOpen` but only
