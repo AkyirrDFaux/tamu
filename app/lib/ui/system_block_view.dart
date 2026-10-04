@@ -13,49 +13,24 @@ export '../core/system_schema.dart';
 /// number, addresses, timestamps and the 4-byte software version). `field`/`key`
 /// let field-specific values (the capabilities bitmask under Device Type) decode.
 String formatSystemValue(DataType type, List<int> value, [int field = -1, int key = -1]) {
-  switch (type) {
-    case DataType.enum_:
-      // App Active (field 8) is a 1-byte enum: No / USB / BLE.
-      if (field == 8 && value.isNotEmpty) {
-        return const {0: 'No', 1: 'USB', 2: 'BLE'}[value[0]] ?? '?';
-      }
-      // Device type is a 32-bit enum
-      if (value.length >= 4) {
-        final val = value[0] | (value[1] << 8) | (value[2] << 16) | (value[3] << 24);
-        return DeviceType.fromValue(val).label;
-      }
-      if (value.isNotEmpty) return '0x${value[0].toRadixString(16).padLeft(2, '0')}';
-      return '-';
-    case DataType.sn:
-      return serialNumberToHex(value);
-    case DataType.id:
-      if (value.length >= 2) return idToString(value[0] | (value[1] << 8));
-      if (value.length == 1) return value[0].toString(); // 1-byte Id (System NetID)
-      return '-';
-    case DataType.integer:
-      // Device Type -> capabilities (field 0, key 1) is a bitmask of enabled services.
-      if (field == 0 && key == 1 && value.length >= 4) {
-        return formatCapabilities(int32FromBytes(value));
-      }
-      // System block fields like Time offset are signed 32-bit: sign-extend.
-      if (value.length >= 4) return int32FromBytes(value).toString();
-      if (value.length >= 2) {
-        final v = value[0] | (value[1] << 8);
-        return (v >= 0x8000 ? v - 0x10000 : v).toString();
-      }
-      return '-';
-    case DataType.string:
-      // Software version (Device Type / key 2) is 4 bytes: YY.MM.DD.Iteration.
-      if (field == 0 && key == 2 && value.length == 4) {
-        return '${value[0]}.${value[1]}.${value[2]}.${value[3]}';
-      }
-      // The System Name is a fixed 16-char space-padded field.
-      return decodePaddedString(value);
-    case DataType.bool_:
-      return value.isNotEmpty && value[0] != 0 ? 'true' : 'false';
-    default:
-      return formatValue(type, value);
+  // System-specific overrides first, then the shared scalar formatter for the rest.
+  if (field == 8 && type == DataType.enum_ && value.isNotEmpty) {
+    // App Active: 1-byte enum No / USB / BLE.
+    return const {0: 'No', 1: 'USB', 2: 'BLE'}[value[0]] ?? '?';
   }
+  if (field == 0 && key == 1 && value.length >= 4) {
+    // Device Type -> capabilities bitmask.
+    return formatCapabilities(int32FromBytes(value));
+  }
+  if (field == 0 && key == 2 && value.length >= 4) {
+    // Software version YY:MM:DD:II (7+4+5+16).
+    return formatSoftwareVersion(value);
+  }
+  if (type == DataType.enum_ && value.length >= 4) {
+    // The Device Type is a 32-bit enum; formatValue expects a 16-bit devType.
+    return DeviceType.fromValue(uint32FromBytes(value)).label;
+  }
+  return formatValue(type, value);
 }
 
 /// Decodes the capability bitmask (Device Type field, key 1) into readable names.

@@ -69,6 +69,13 @@ Uint8List uint32ToBytes(int value) {
     ..[3] = (v >> 24) & 0xFF;
 }
 
+/// The System-block software version (`YY:MM:DD:II`: 7 year + 4 month + 5 day + 16 iteration
+/// bits) formatted as `year.month.day.iteration`.
+String formatSoftwareVersion(List<int> bytes) {
+  final v = uint32FromBytes(bytes);
+  return '${(v >> 25) & 0x7F}.${(v >> 21) & 0x0F}.${(v >> 16) & 0x1F}.${v & 0xFFFF}';
+}
+
 // ---------------------------------------------------------------------------
 // BlockInfo (mirror of firmware Core/Services/Register.h MakeBlockInfo)
 // ---------------------------------------------------------------------------

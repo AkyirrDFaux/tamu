@@ -111,11 +111,6 @@ Resolved in the TRID-range pass (2026-10-03, later):
   discover/timesync matching; converting it needs the documented TRID manager (the same gap as
   the DAS provider-cancel entry below). The current Device/Log tags already sit inside
   `0x0000-0x0FFF`.
-## Bootloader
-- **The core's white LED is missing hardware** (`Docs/Devices.md`), so the spec's "lights up
-  white LED permanently" cannot be implemented on the Tamu v2.0A; the bootloader indication
-  will use the red notification LED (GPIO2, shared with the button).
-
 ## Storage / DAS reduced filesystem
 - **The reduced `.SV`'s fixed size is the whole storage region, not the persistent space.**
   `StorageFixedFS` declares `.SV` as `STORAGE_FLASH_SIZE` (256 B on the DAS), while
@@ -149,12 +144,7 @@ Resolved in the TRID-range pass (2026-10-03, later):
   probe (`hil_led_display_test`); the evaluation scene uses only `Replace` now that dark mode
   is a filled iris, and the *look* is verified by eye only. A render snapshot command would
   make the visuals testable.
-- **DAS provider subscriptions could accumulate stale entries.** The DAS provider table holds 4,
-  and a requester cancel is fire-and-forget (docs: "Sent once for deletion"), so a dropped
-  cancel left a stale provider that could block a new subscription. The 2026-10-03 subscription
-  rework adds a **120 s provider lease** renewed by the requester's keepalive, so an unrenewed
-  provider expires on its own, and a value update whose TRID matches no requester entry is
-  cancelled back (the orphan path). A missed cancel can still hold a slot for up to 120 s. The
-  revised `RSBus and Packets.md` specifies per-service TRID management (an incrementing counter
-  or a slot table), which the code implements - there is no handler-table requirement to meet,
-  so a confirmed cancel is a low-priority improvement, not a docs gap.
+- **DAS provider subscriptions could accumulate stale entries.** Effectively solved by the 120 s
+  provider lease (renewed by the requester's keepalive) plus the orphan-cancel path (a value
+  update whose TRID matches no requester entry is cancelled back); a missed cancel holds a slot
+  for at most 120 s. Low priority.

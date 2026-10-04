@@ -32,12 +32,8 @@ suites need the rig (core on `/dev/ttyACM1`, one DAS on `/dev/ttyACM0` via WCH-L
 - [ ] **D4 - confirm the LED brightness-cap value** on a display. The mechanism landed (the
       layout file's brightness limit, 178 = 70 %, enforced in the render); only the value is
       unconfirmed by eye.
-- [ ] **Bootloader** (`Docs/Services/Bootloader.md`). A per-device raw packet bootloader that
-      replaces the main binary, entered by holding the button at boot. **Done**: shared codec +
-      core Device `0020/0021` passthrough + DAS bootloader (2 KB at `0x0`, app at `0x800`) + app
-      flashing client (`bootloader_client.dart`: write, read-back verify, correct, re-verify until
-      one clean pass; a read retries a timeout or a relay `FAIL`) + HIL `hil_bootloader_test.dart`
-      (whole 11 100 B DAS app, ~23 s / 1 pass). **Remaining:**
+- [x] **Bootloader** (`Docs/Services/Bootloader.md`). A per-device raw packet bootloader that
+      replaces the main binary, entered by holding the button at boot. Complete:
   - [x] **A. Update page.** Done: a top-level left-sidebar tab that picks a `.bin`, probes for a
         node in bootloader mode, flashes with write/verify progress + errors, and carries the
         user guide. The client's channel is behind `BootloaderTransport` (`PassthroughTransport`
@@ -50,23 +46,16 @@ suites need the rig (core on `/dev/ttyACM1`, one DAS on `/dev/ttyACM0` via WCH-L
         still 1 pass / 0 corrections. The remaining big block is the framework startup +
         `SystemInit` (~650 B); replacing it needs a custom `board_build.startup` and a minimal
         48 MHz `SystemInit` (clock-critical).
-  - [~] **C. Tamu (core) bootloader.** Done: the partition split (`factory` 384 KB bootloader +
-        `ota_0` 2.75 MB main app), the factory app (B1: reads GPIO2, serves raw `0xCA…0xBC`
-        frames over USB into `ota_0` with per-4 KB-sector erase tracking, else boots `ota_0`),
-        the main app's `otadata = factory` re-arm, and a Python HIL
-        (`test/core_bootloader_flash.py`) that flashed the whole 647 KB core image over raw USB
-        with 0/20228 mismatches. Also done: the app-side `DirectUsbTransport` and an Update-page
-        toggle to flash the connected core directly over USB. Remaining: the dev upload offset
-        (production sends the main app through the bootloader).
-  - [ ] Manual: hold the DAS button (PC0) at reset to confirm button entry.
+  - [x] **C. Tamu (core) bootloader.** Done: partition split (`factory` bootloader + `ota_0`
+        main app), the factory app (B1), the `otadata = factory` re-arm, raw-USB HIL
+        (`test/core_bootloader_flash.py`, 0/20228), the app `DirectUsbTransport` + Update-page
+        toggle, and `Tamu_v2_0A -t upload` now targets `ota_0` (`scripts/core_app_offset.py`)
+        without touching the factory bootloader.
+  - [x] **Manual**: the DAS enters bootloader on a button-held reboot (confirmed).
       Locked: passthrough targets the connected core; no capability bit; button-only entry.
-- [ ] **DAS provider stale entries (low priority).** A subscription cancel is fire-and-forget
-      (docs: "Sent once for deletion"), so a dropped cancel can hold a provider slot for up to
-      the 120 s lease. Mitigated by the lease plus the orphan-cancel (a value update whose TRID
-      matches no requester entry is cancelled back). **No longer docs-blocked**: the revised
-      `RSBus and Packets.md` specifies per-service TRID management (an incrementing counter or a
-      slot table), which the code implements - there is no handler-table requirement to meet.
-      Revisit only if a *confirmed* cancel is wanted.
+- [ ] **DAS provider stale entries (low priority).** Effectively solved: a dropped cancel leaves
+      the provider for at most the 120 s lease, and if the requester still exists a later value
+      update re-cancels it (the orphan path). Revisit only if a *confirmed* cancel is wanted.
 
 ## Code-cleanup backlog
 
@@ -85,7 +74,6 @@ subscription, register and script dedups are done).
   `PointCoordinates`) - cross-cutting with `firmware_contract_test.dart`.
 - The one-shot healing paths (`RemoveObsoleteFiles`, `DeduplicateFiletable`, `DeleteFileExact`,
   the `LAY5X5`/`VYSIV1` migration) run every boot; consider a one-shot migration marker.
-- `Dispatcher`'s `case ServiceType::App` "legacy 0x11xx fallback" - confirm no app emits it.
 
 **App**
 - `backup_capture`/`backup_restore` share one field walker.
@@ -93,8 +81,6 @@ subscription, register and script dedups are done).
 - `script_value_dialog._changeType` -> `ScriptDraftValue.setType` (the dialog's local state
   shape differs, so this needs a small state refactor).
 - `ScriptValueInfo` vs `ValueInfo` (the raw codec helpers now live only in `types.dart`).
-- `system_block_view.formatSystemValue` -> delegate the generic types to `formatValue`
-  (mind the 32-bit enum / 16-bit integer / NUL-string differences).
 
 **Deliberately left** (a merge would read worse): the three flag-name decoders (`flagWords` =
 full words for the backup format, `ValueFlags.describe` = RO/P/TR, `_flagsSuffix` = RO/P) and
@@ -234,3 +220,7 @@ vocabularies/shapes.
   with erased bytes; the DAS no longer comes up with a `0xFF` Name after a reflash. `.SUBREQ`
   is deleted when the requester table empties. HIL: `tamu_hardware_verification_test`
   (erased-`.SV`), `hil_subscriptions_test` (empty-`.SUBREQ` removal).
+- **Core bootloader + App-service removal** (2026-10-04): the factory/`ota_0` split, B1 entry,
+  re-arm, raw-USB HIL, app `DirectUsbTransport`, and `Tamu_v2_0A -t upload` targeting `ota_0`;
+  the dead `ServiceType::App` (0x11) tag removed from firmware + app; `script_file` codecs
+  deduped onto `types.dart`; the missing test tags declared.
