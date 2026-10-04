@@ -88,7 +88,7 @@ void main() {
     // must normalize both space and NUL padding.
     expect(storageFileType('SUBREQ\u0000\u0000'), StorageFileType.backup);
     expect(storageFileType('.SV     '), StorageFileType.backup);
-    expect(storageFileType('SNREG   '), StorageFileType.snreg);
+    expect(storageFileType('.SNREG  '), StorageFileType.snreg);
     expect(storageFileType('LAY_1   '), StorageFileType.layout);
     // Per-block dynamic persistence (Docs/Services/Register.md).
     expect(storageFileType('.DT_0A   '), StorageFileType.dynamicTable);

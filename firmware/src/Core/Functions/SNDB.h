@@ -91,7 +91,7 @@ RegistryEntry SNDB::compact_buf[SNDB_MAX_ENTRIES] = {};
 // Registry file name (8 plain-text characters, space padded).
 static const char *SNDBFileName()
 {
-    static constexpr char name[8] = {'S', 'N', 'R', 'E', 'G', ' ', ' ', ' '};
+    static constexpr char name[8] = {'.', 'S', 'N', 'R', 'E', 'G', ' ', ' '};
     return name;
 }
 

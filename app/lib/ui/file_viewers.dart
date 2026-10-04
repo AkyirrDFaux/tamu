@@ -35,7 +35,7 @@ enum StorageFileType {
 
 StorageFileType storageFileType(String name) {
   final upper = normalizeFileName(name).toUpperCase();
-  if (upper == 'SNREG') return StorageFileType.snreg;
+  if (upper == '.SNREG') return StorageFileType.snreg;
   if (upper == '.SV' || upper == '.SUBREQ' || upper == 'SUBREQ') return StorageFileType.backup;
   // Per-block dynamic persistence (Docs/Services/Register.md: .DT_XXX table / .DV_XXX values).
   if (upper.startsWith('.DT_')) return StorageFileType.dynamicTable;
