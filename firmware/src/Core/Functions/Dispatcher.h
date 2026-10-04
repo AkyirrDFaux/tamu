@@ -112,15 +112,6 @@ void DispatchPacket(const PacketFrame &frame)
 #endif
                     break;
 
-                #ifdef USE_APP_INTERFACE
-                // Kept as a fallback for legacy 0x11xx app tags; the 0xF000+ range above is
-                // the documented App TRID range.
-                case ServiceType::App:
-                    (void)AppInterfaceSend(frame);
-                    break;
-                #endif
-
-
                 default:
                     DeviceLog("DISP", "unhandled service %u CID %u", (unsigned)target_srv, (unsigned)cid);
                     ReportLog(MakeLog(false, (uint16_t)target_srv, cid, 0));

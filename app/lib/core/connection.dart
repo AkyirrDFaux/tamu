@@ -548,9 +548,8 @@ class ConnectionManager extends ChangeNotifier {
     final frame = PacketFrame.single(
       targetId: targetId,
       srvTarget: makeService(service, functionCid),
-      // The app's identity is the App Interface service type (0x11); the TRID field carries
-      // our transaction ID from the reserved App range (0xF000-0xFFFF). The device echoes it,
-      // so replies route back by TRID and are matched on the full 16-bit value.
+      // The TRID field carries our transaction ID from the reserved App range (0xF000-0xFFFF).
+      // The device echoes it, so replies route back by TRID and are matched on the full value.
       srvSource: txId,
       response: false,
       payload: payload,

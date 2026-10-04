@@ -34,7 +34,7 @@ void main() {
       final frame = PacketFrame.single(
         targetId: 1,
         srvTarget: makeService(ServiceType.storage, 6),
-        srvSource: makeService(ServiceType.app, 1),
+        srvSource: makeService(ServiceType.router, 1),
         response: false,
         payload: payload,
       );
