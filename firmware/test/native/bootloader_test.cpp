@@ -33,16 +33,16 @@ static int checks = 0, failures = 0;
         }                                                                            \
     } while (0)
 
-// Independent even parity: XOR every bit of the frame except the parity bit (byte 1, bit 2).
+// Independent even parity over the "rest of the packet": the command (byte 1, bits 0-1), the
+// offset and the payload (bytes 2..len-2). The markers and the padding bits are excluded.
 static uint8_t RefParity(const uint8_t *f, uint16_t len)
 {
     uint8_t p = 0;
-    for (uint16_t i = 0; i < len; i++)
+    for (int bit = 0; bit < 2; bit++)
+        p ^= (uint8_t)((f[1] >> bit) & 1u);
+    for (uint16_t i = 2; i + 1 < len; i++)
         for (int bit = 0; bit < 8; bit++)
-        {
-            if (i == 1 && bit == 2) continue;
             p ^= (uint8_t)((f[i] >> bit) & 1u);
-        }
     return (uint8_t)(p & 1u);
 }
 

@@ -18,7 +18,7 @@ void main() {
     expect(f.length, Bootloader.dataSize);
     expect(
       hex(f),
-      'CA0100000000000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1FBC',
+      'CA0500000000000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1FBC',
     );
     expect(Bootloader.decode(f), Bootloader.cmdWrite);
     expect(Bootloader.offset(f), 0);
@@ -28,7 +28,7 @@ void main() {
   test('read request matches the firmware KAT', () {
     final f = Bootloader.encodeReadRequest(0x100);
     expect(f.length, Bootloader.readRequestSize);
-    expect(hex(f), 'CA0600010000BC');
+    expect(hex(f), 'CA0200010000BC');
     expect(Bootloader.decode(f), Bootloader.cmdReadRequest);
     expect(Bootloader.offset(f), 0x100);
   });
@@ -38,7 +38,7 @@ void main() {
     final f = Bootloader.encodeReadResponse(0x40, payload);
     expect(
       hex(f),
-      'CA0340000000A0A1A2A3A4A5A6A7A8A9AAABACADAEAFB0B1B2B3B4B5B6B7B8B9BABBBCBDBEBFBC',
+      'CA0740000000A0A1A2A3A4A5A6A7A8A9AAABACADAEAFB0B1B2B3B4B5B6B7B8B9BABBBCBDBEBFBC',
     );
     expect(Bootloader.decode(f), Bootloader.cmdReadResponse);
     expect(Bootloader.offset(f), 0x40);

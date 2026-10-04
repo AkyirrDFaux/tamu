@@ -112,11 +112,6 @@ Resolved in the TRID-range pass (2026-10-03, later):
   the DAS provider-cancel entry below). The current Device/Log tags already sit inside
   `0x0000-0x0FFF`.
 ## Bootloader
-- **The bootloader packet's parity scope is unspecified.** `Docs/Services/Bootloader.md` says
-  "Parity 1bit Even" but not over which bits. The code (firmware `Core/Functions/Bootloader.h`
-  + app `core/bootloader.dart`) uses even parity over the **whole frame except the parity bit
-  itself**. If it should be data-only (offset+payload), both codecs and their shared KAT
-  vectors must change.
 - **The core's white LED is missing hardware** (`Docs/Devices.md`), so the spec's "lights up
   white LED permanently" cannot be implemented on the Tamu v2.0A; the bootloader indication
   will use the red notification LED (GPIO2, shared with the button).

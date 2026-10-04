@@ -10,10 +10,11 @@
 ///   [38]     0xBC end marker  (write and read-response)
 ///
 /// A read-request is header-only (7 bytes). Commands: 01 write, 10 read-request, 11
-/// read-response. Parity is even over every bit of the frame except the parity bit itself,
-/// so a valid frame has an even total number of set bits. This mirrors the firmware's
-/// `Core/Functions/Bootloader.h` exactly; the known-answer vectors are shared between the
-/// two test suites so the codecs cannot drift.
+/// read-response. Parity is even over the "rest of the packet" after the control byte's
+/// padding/parity: the command, the offset and the payload (when present); the markers and
+/// the padding bits are excluded. This mirrors the firmware's `Core/Functions/Bootloader.h`
+/// exactly; the known-answer vectors are shared between the two test suites so the codecs
+/// cannot drift.
 library;
 
 import 'dart:typed_data';
@@ -34,12 +35,13 @@ class Bootloader {
   static const int dataSize = 39; // header + payload + end
   static const int maxFrameSize = dataSize;
 
-  /// Even parity over the whole frame, excluding the parity bit (byte 1, bit 2).
+  /// Even parity over the command (2 bits), the offset and the payload (bytes 2..len-2).
   static int parity(List<int> frame) {
     var p = 0;
-    for (var i = 0; i < frame.length; i++) {
+    final cmd = frame[1] & 0x03;
+    p ^= (cmd & 1) ^ ((cmd >> 1) & 1);
+    for (var i = 2; i + 1 < frame.length; i++) {
       var b = frame[i];
-      if (i == 1) b &= ~0x04;
       b ^= b >> 4;
       b ^= b >> 2;
       b ^= b >> 1;

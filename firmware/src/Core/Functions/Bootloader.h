@@ -14,9 +14,9 @@
 // A read-request is header-only: start | control | offset | end = 7 bytes.
 // Commands: 0b01 write, 0b10 read-request, 0b11 read-response.
 //
-// Parity is even over every bit of the frame EXCEPT the parity bit itself, so a valid frame
-// has an even total number of set bits. The doc only says "Even" - this is the strictest
-// whole-frame reading; see Issues.md if it should be data-only.
+// Parity is even over the "rest of the packet" after the control byte's padding/parity: the
+// command (2 bits), the offset (32 bits) and the payload (32 bytes, when present). The start
+// marker, the 5 padding bits and the end marker are excluded.
 
 #include <cstdint>
 #include <cstring>
@@ -36,15 +36,15 @@ namespace Bootloader
     constexpr uint8_t DATA_SIZE      = 39; // header + payload + end
     constexpr uint8_t MAX_FRAME_SIZE = DATA_SIZE;
 
-    // Even parity over the whole frame, excluding the parity bit (byte 1, bit 2).
+    // Even parity over the command (2 bits), the offset and the payload (bytes 2..len-2).
     inline uint8_t Parity(const uint8_t *frame, uint16_t len)
     {
         uint8_t p = 0;
-        for (uint16_t i = 0; i < len; i++)
+        uint8_t cmd = (uint8_t)(frame[1] & 0x03u);
+        p ^= (uint8_t)(cmd & 1u) ^ (uint8_t)((cmd >> 1) & 1u);
+        for (uint16_t i = 2; i + 1 < len; i++)
         {
             uint8_t b = frame[i];
-            if (i == 1)
-                b &= (uint8_t)~0x04u;
             b ^= (uint8_t)(b >> 4);
             b ^= (uint8_t)(b >> 2);
             b ^= (uint8_t)(b >> 1);
