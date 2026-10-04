@@ -17,10 +17,15 @@ static bool SystemFillValue(uint8_t field, uint8_t *vbuf) {
     case 0: { // Device Type struct: DeviceType | Capability | Software version
         uint32_t dt = (uint32_t)kDeviceType;
         uint32_t cap = kCapabilities;
-        uint8_t ver[4] = { (uint8_t)(VERSION_YEAR % 100), VERSION_MONTH, VERSION_DAY, VERSION_ITERATION };
+        // Software version YY:MM:DD:II (Docs/Services/System Block and Device Commands.md):
+        // 7 year + 4 month + 5 day + 16 iteration bits.
+        uint32_t ver = ((uint32_t)(VERSION_YEAR & 0x7Fu) << 25) |
+                       ((uint32_t)(VERSION_MONTH & 0x0Fu) << 21) |
+                       ((uint32_t)(VERSION_DAY & 0x1Fu) << 16) |
+                       ((uint32_t)(VERSION_ITERATION & 0xFFFFu));
         memcpy(vbuf, &dt, 4);
         memcpy(vbuf + 4, &cap, 4);
-        memcpy(vbuf + 8, ver, 4);
+        memcpy(vbuf + 8, &ver, 4);
         break;
     }
     case 1:

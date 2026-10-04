@@ -223,6 +223,13 @@ vocabularies/shapes.
   rewrite), the core speed build (`-O2 -fwrapv`, the CRC8 table under `OPTIMIZE_SPEED`), the
   native numeric/geometry/CRC/stride/align host tests, the app↔firmware contract test, and the
   2026-10-04 duplication passes (`abe921e`, `e56676e`, `dfc8c56`, `4f433aa`).
+- **Deterministic versioning** (2026-10-04). Per-target content-hash versions
+  (`scripts/version.py` + `version.json`): a build mints only when that target's sources change,
+  and a date change resets the iteration (same day grows it). Firmware envs stamp
+  `-D VERSION_*` via `firmware/scripts/auto_version.py` (bootloaders unversioned), and the System
+  block now packs the documented `YY:MM:DD:II` (7 year + 4 month + 5 day + 16 iteration) u32;
+  the app generates `app/lib/core/app_version.g.dart` via `scripts/gen_app_version.py` and shows
+  it on Settings.
 - **DAS erased-`.SV` recovery** (2026-10-04): `StaticRecallAll` detects a `0xFF` System Name in
   the reduced filesystem's mirror and re-persists the live settings instead of clobbering them
   with erased bytes; the DAS no longer comes up with a `0xFF` Name after a reflash. `.SUBREQ`

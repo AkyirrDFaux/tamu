@@ -136,10 +136,13 @@ class DeviceDatabase extends ChangeNotifier {
     }
     final versionReply = await _registerRead(id, 0, 2);
     if (versionReply != null && versionReply.length >= 4) {
-      final year = versionReply[0];
-      final month = versionReply[1];
-      final day = versionReply[2];
-      final iteration = versionReply[3];
+      // Software version YY:MM:DD:II (Docs/Services/System Block and Device Commands.md):
+      // 7 year + 4 month + 5 day + 16 iteration bits.
+      final v = uint32FromBytes(versionReply);
+      final year = (v >> 25) & 0x7F;
+      final month = (v >> 21) & 0x0F;
+      final day = (v >> 16) & 0x1F;
+      final iteration = v & 0xFFFF;
       entry.softwareVersion = '$year.$month.$day.$iteration';
     }
     final capReply = await _registerRead(id, 0, 1);
