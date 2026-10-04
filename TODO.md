@@ -147,8 +147,11 @@ flag renderings in `register_page_tiles` (chips vs small text).
   storage-client/dynamic-trace/TRID tests.
 - **DAS full filesystem** (2026-10-04): the DAS drops the reduced `StorageFixedFS` and runs the
   shared `StorageBlockFS` in a **512 B** region at `0x3E00` (pointer page + table + 384 B data);
-  `USE_FIXED_STORAGE` and the fixed branches are removed. `StaticRecallAll` re-persists the
-  defaults when `.SV` is absent/short so the full FS's real file presence keeps the mirror valid.
+  `USE_FIXED_STORAGE` and the fixed branches are removed, and the DAS now advertises
+  `StorageFiles`. `StaticRecallAll` re-persists the defaults when `.SV` is absent/short so the full
+  FS's real file presence keeps the mirror valid. The app's fixed-FS branches are gone too:
+  `StorageClient` no longer probes/detects fixed storage, `parseFileTable` always skips offset-0,
+  file writes always stage-and-rename, and the Storage page no longer hides create/rename/delete.
 - **Storage size variants** (2026-10-04): following the `Crc8` `OPTIMIZE_SPEED` pattern, `FindSpace`
   picks the bitmap best-fit (speed) or a linear first-fit (size), and `MoveFiletable` grows/shrinks
   the table (speed) or keeps the page count (size). The DAS takes the size shapes: **−328 B**,

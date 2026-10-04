@@ -197,11 +197,9 @@ void main() {
     expect(typeSet.contains(BlockType.led.value), isTrue);
   }, timeout: const Timeout(Duration(seconds: 60)));
 
-  // HIL: the DAS can save a static block. The reduced file system pre-allocates its settings
-  // file, which used to make the save appends see a "full" log and refuse, so *every* static
-  // save on the DAS failed (status 255) and nothing was ever restored after a reboot. This
-  // checks the save reports success and the log actually holds entries, which is what the
-  // persistence depends on; the restore itself needs a power-cycle and is done by hand.
+  // HIL: the DAS can save a static block. This checks the save reports success and `.SV`
+  // actually holds the saved space, which is what the persistence depends on; the restore
+  // itself needs a power-cycle and is done by hand.
   test('HIL: DAS static save writes the backup log', skip: skipReason, () async {
     final db = DeviceDatabase.instance;
     await db.refreshRuntime(0);
@@ -238,11 +236,10 @@ void main() {
     expect(data.length, greaterThanOrEqualTo(20), reason: 'at least the System segment');
   }, timeout: const Timeout(Duration(seconds: 60)));
 
-  // HIL regression: the reduced file system has no file-presence bit, so a never-written (or
-  // Formatted) `.SV` reads back erased rather than "absent". Recall All must not copy that
-  // erased mirror over the live settings - the DAS used to come up with a 0xFF System Name
-  // (and 0xFF Meas values) after every reflash. It must keep the live values and re-persist
-  // them instead, so the mirror is valid again for the app's partial-save read-modify-write.
+  // HIL regression: after a Format (or on a never-written device) `.SV` is absent/short, so
+  // Recall All must not clobber the live settings with it. It keeps the live values and
+  // re-persists them, so the mirror is valid again for the app's partial-save read-modify-write
+  // (the DAS used to come up with a 0xFF System Name after every reflash).
   test('HIL: DAS recalls over an erased .SV without clobbering the live name',
       skip: skipReason, () async {
     final db = DeviceDatabase.instance;
@@ -263,7 +260,7 @@ void main() {
     expect(name.codeUnits.any((c) => c == 0xFF), isFalse,
         reason: 'the live name is valid before the test');
 
-    // Erase the mirror the way a reflash/Format does: the fixed region becomes all 0xFF.
+    // Erase the mirror the way a Format does: `.SV` is removed.
     expect(await storage.format(), isTrue, reason: 'the format is accepted');
     expect(await reg.recallAll(), isTrue, reason: 'Recall All succeeds');
 

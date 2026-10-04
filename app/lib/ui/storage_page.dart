@@ -32,9 +32,6 @@ class _StoragePageState extends State<StoragePage>
   List<FileRecord>? _files;
   String? _error;
   bool _refreshing = false;
-  // Devices without the StorageFiles capability (e.g. USE_FIXED_STORAGE nodes like the
-  // DAS) have a read-only const file table; create/upload/rename/delete are hidden.
-  late final bool _reduced = !_hasStorageFiles();
 
   @override
   void initState() {
@@ -52,8 +49,6 @@ class _StoragePageState extends State<StoragePage>
     showSnack(context, message);
   }
 
-  bool _hasStorageFiles() => !StorageClient(deviceId: widget.deviceId).fixedStorage;
-
   Future<void> _refresh() async {
     if (!ConnectionManager.instance.isConnected || _refreshing) return;
     setState(() => _refreshing = true);
@@ -61,8 +56,7 @@ class _StoragePageState extends State<StoragePage>
     if (!mounted) return;
     setState(() {
       _refreshing = false;
-      // readFileTable() reads the ".TABLE  " file directly using CID 5. A reduced
-      // (USE_FIXED_STORAGE) device serves the fixed filetable through the same read.
+      // readFileTable() reads the ".TABLE  " file directly using CID 5.
       _error = null;
       _files = files ?? [];
     });
@@ -186,16 +180,14 @@ class _StoragePageState extends State<StoragePage>
       appBar: AppBar(
         title: Text('Storage - ${idToString(widget.deviceId)}'),
         actions: [
-          if (!_reduced) ...[
-            IconButton(
-                onPressed: _uploadFile,
-                tooltip: 'Upload file',
-                icon: const Icon(Icons.upload_outlined)),
-            IconButton(
-                onPressed: _createFile,
-                tooltip: 'Create file',
-                icon: const Icon(Icons.create_new_folder_outlined)),
-          ],
+          IconButton(
+              onPressed: _uploadFile,
+              tooltip: 'Upload file',
+              icon: const Icon(Icons.upload_outlined)),
+          IconButton(
+              onPressed: _createFile,
+              tooltip: 'Create file',
+              icon: const Icon(Icons.create_new_folder_outlined)),
           RefreshButton(
             onRefresh: _refresh,
             autoActive: autoRefreshActive,
@@ -248,18 +240,16 @@ leading: Icon(isTable
                 case 'download':
                   _downloadFile(file);
                 case 'rename':
-                  if (!_reduced) _renameFile(file);
+                  _renameFile(file);
                 case 'delete':
-                  if (!_reduced) _deleteFile(file);
+                  _deleteFile(file);
               }
             },
             itemBuilder: (_) => [
               PopupMenuItem(value: 'view', child: Text('View')),
               PopupMenuItem(value: 'download', child: Text('Download')),
-              if (!_reduced) ...[
-                PopupMenuItem(value: 'rename', child: Text('Rename')),
-                PopupMenuItem(value: 'delete', child: Text('Delete')),
-              ],
+              PopupMenuItem(value: 'rename', child: Text('Rename')),
+              PopupMenuItem(value: 'delete', child: Text('Delete')),
             ],
           ),
           onTap: () => isTable ? _showTable(file) : _showFile(file),
@@ -276,8 +266,7 @@ leading: Icon(isTable
     if (!mounted) return;
     Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => FileTableViewPage(
-            deviceId: widget.deviceId, size: table.size, data: data,
-            fixed: _reduced)));
+            deviceId: widget.deviceId, size: table.size, data: data)));
   }
 
   Future<void> _showFile(FileRecord file) async {
@@ -303,20 +292,18 @@ class FileTableViewPage extends StatelessWidget {
   final int deviceId;
   final int size;
   final List<int>? data;
-  final bool fixed;
 
   const FileTableViewPage(
       {super.key,
       required this.deviceId,
       required this.size,
-      required this.data,
-      this.fixed = false});
+      required this.data});
 
   @override
   Widget build(BuildContext context) {
     final body = data == null
         ? const Center(child: Text('Read failed'))
-        : _TableBody(data: data!, size: size, fixed: fixed);
+        : _TableBody(data: data!, size: size);
     return Scaffold(
       appBar: AppBar(title: const Text('File table')),
       body: body,
@@ -330,12 +317,10 @@ class FileTableViewPage extends StatelessWidget {
 class _TableBody extends StatefulWidget {
   final List<int> data;
   final int size;
-  final bool fixed;
 
   const _TableBody({
     required this.data,
     required this.size,
-    this.fixed = false,
   });
 
   @override
@@ -354,10 +339,9 @@ class _TableBodyState extends State<_TableBody> {
       final recOffset = uint32FromBytes(data, off);
       final fileSize = uint32FromBytes(data, off + 4);
       final unwritten = recOffset == 0xFFFFFFFF && fileSize == 0xFFFFFFFF;
-      // Offset 0 marks a superseded/invalidated record on the full file system (the
-      // device zeroes the 4-byte offset, leaving the size); on the fixed (reduced)
-      // storage offset-0 records are the real files.
-      final isInvalidated = !widget.fixed && !unwritten && recOffset == 0;
+      // Offset 0 marks a superseded/invalidated record (the device zeroes the 4-byte
+      // offset, leaving the size).
+      final isInvalidated = !unwritten && recOffset == 0;
       String name() =>
           normalizeFileName(String.fromCharCodes(data.sublist(off + 8, off + 16)));
       final row = ListTile(

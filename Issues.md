@@ -35,11 +35,12 @@ remaining low-value follow-ups live in `TODO.md`.
   hardware") vs the app (red LED). Code drives no LED in the core bootloader.
 
 ## Storage / DAS
-- **`Docs/Devices.md` still documents the DAS "Reduced variant" file system.** The DAS now runs
-  the shared full multi-file filesystem (`StorageBlockFS`) with a 384 B region at `0x3E80`
-  (pointer page + file table + 256 B data); the reduced `StorageFixedFS.h` and `USE_FIXED_STORAGE`
-  were removed. The doc's reduced-variant description, the `.SV` "fixed size, no presence bit"
-  wording and the 128 B memory figure need updating.
+- **`Docs/Devices.md` / `Docs/Services/Storage.md` still describe the DAS "reduced file system".**
+  The reduced `StorageFixedFS.h` and `USE_FIXED_STORAGE` are gone; the DAS runs the shared full
+  multi-file filesystem (`StorageBlockFS`) in a 512 B region at `0x3E00` (pointer page + file table
+  + 384 B data) and now advertises `StorageFiles`. Update the reduced-variant description (the CMD
+  table's "not in reduced file system" notes, the `.SV` "fixed size, no presence bit" wording) and
+  the 128 B memory figure.
 - **`.SUBREQ` on a provider-only node** was reported once; the empty-table file is deleted now.
   Re-check if it reappears.
 

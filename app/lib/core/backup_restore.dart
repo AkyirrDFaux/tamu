@@ -235,8 +235,8 @@ class RestorePlan {
             item.issue = 'Not a core';
           }
         case RestoreKind.file:
-          // File create/delete/write is the full file system only; the reduced
-          // (fixed) file system does not accept arbitrary files.
+          // The target must advertise the StorageFiles capability (full file
+          // create/delete/rename/resize).
           if (target.capabilities & Capability.storageFiles == 0) {
             item.issue = 'No file support';
           }

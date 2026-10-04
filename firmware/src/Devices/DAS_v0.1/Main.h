@@ -33,7 +33,9 @@ void SubscriptionsTick(uint32_t nowMs);
 
 // Device identity (mandatory, see Core/Functions/Device.h).
 extern const DeviceType kDeviceType = DeviceType::DualAnalogSensor;
-extern const uint32_t kCapabilities = Capabilities::Node | Capabilities::SubscriptionProvide;
+// The DAS runs the full multi-file filesystem (StorageFiles: create/delete/rename/resize).
+extern const uint32_t kCapabilities =
+    Capabilities::Node | Capabilities::StorageFiles | Capabilities::SubscriptionProvide;
 
 // Reads the CH32V003 32-bit unique chip ID as the 14-byte serial number (cached).
 const SerialNumber &GetSerialNumber()

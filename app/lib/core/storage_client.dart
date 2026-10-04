@@ -5,7 +5,6 @@ library;
 import 'dart:typed_data';
 
 import 'connection.dart';
-import 'device_db.dart';
 import 'diagnostics.dart';
 import 'protocol.dart';
 import 'types.dart';
@@ -46,33 +45,7 @@ class FileRecord {
 class StorageClient {
   final int deviceId;
 
-  /// True for fixed (USE_FIXED_STORAGE) devices whose file table is a const array served
-  /// at offset 0 (the DAS): there, offset-0 records are the real files. On the full file
-  /// system offset 0 marks a superseded/invalidated record (renames/table moves zero the
-  /// 4-byte offset but leave the size), so such records are skipped there.
-  ///
-  /// [fixedStorage] overrides the capability probe (tests); otherwise it is derived from the
-  /// device's capabilities.
-  final bool fixedStorage;
-
-  StorageClient({required this.deviceId, bool? fixedStorage})
-      : fixedStorage = fixedStorage ?? _detectFixedStorage(deviceId);
-
-  static bool _detectFixedStorage(int deviceId) {
-    final dev = DeviceDatabase.instance.byId(deviceId);
-    // An unclassified device (no entry, or capabilities not read yet) must not be assumed
-    // fixed: doing so lists the full FS's invalidated (offset-0) records as real files. The
-    // reduced FS is the DAS, which reports its capabilities; the core is the device the app
-    // normally connects to first.
-    if (dev == null) return false;
-    return isFixedStorage(dev.capabilities);
-  }
-
-  /// The fixed-vs-full decision from a capability word: a device that reports capabilities
-  /// but not `StorageFiles` is on the reduced (fixed) file system. A zero word (capabilities
-  /// not read yet) is treated as full, never presumed fixed.
-  static bool isFixedStorage(int capabilities) =>
-      capabilities != 0 && (capabilities & Capability.storageFiles) == 0;
+  StorageClient({required this.deviceId});
 
   ConnectionManager get _link => ConnectionManager.instance;
 
@@ -127,20 +100,20 @@ class StorageClient {
     if (reply == null || reply.length < nameLength) return null;
     // The response stream = [name echo (8)][contents...]
     final contents = reply.sublist(nameLength);
-    return parseFileTable(contents, fixedStorage: fixedStorage);
+    return parseFileTable(contents);
   }
 
   /// Parses 16-byte file-table records. Unwritten entries are all 0xFF and terminate the
-  /// table. A record with offset 0 is invalidated on the full file system (the device zeroes
-  /// the 4-byte offset on rename/delete/table moves, leaving the size), but is a real fixed
-  /// file on the reduced storage.
-  static List<FileRecord> parseFileTable(List<int> contents, {required bool fixedStorage}) {
+  /// table. A record with offset 0 is a superseded/invalidated entry (rename/delete/table
+  /// moves zero the 4-byte offset but leave the size), so it is skipped - on every device,
+  /// since all targets run the full multi-file filesystem now.
+  static List<FileRecord> parseFileTable(List<int> contents) {
     final records = <FileRecord>[];
     for (var offset = 0; offset + 16 <= contents.length; offset += 16) {
       final recOffset = uint32FromBytes(contents, offset);
       final size = uint32FromBytes(contents, offset + 4);
       if (recOffset == 0xFFFFFFFF && size == 0xFFFFFFFF) break;
-      if (!fixedStorage && recOffset == 0) continue; // full FS: offset 0 = invalidated
+      if (recOffset == 0) continue; // invalidated record
       records.add(
         FileRecord(
           index: records.length,
@@ -171,8 +144,7 @@ class StorageClient {
     return reply != null && reply.isNotEmpty && reply[0] != 0;
   }
 
-  /// Resizes a file per Docs 03.03 CID3 (full file system only; the reduced FS
-  /// has fixed positions and does not answer this command).
+  /// Resizes a file per Docs 03.03 CID3.
   Future<bool> resizeFile(String name, int size) async {
     final payload = <int>[...padName(name), ...uint32ToBytes(size)];
     final reply = await _request(3, payload: payload);
@@ -206,14 +178,9 @@ class StorageClient {
   /// content bytes (docs: "maximum 64 byte stream fragment"); every fragment carries
   /// the 4-byte frag info so the device can detect out-of-order delivery.
   ///
-  /// On the full file system the new content is staged under a temporary name first
-  /// and only swapped in after a successful write, so a failed create/write cannot
-  /// destroy the original. The reduced (fixed) file system has no create/delete
-  /// (CIDs 1/2 are compiled out), so the CID-6 fragment loop is used directly.
+  /// The new content is staged under a temporary name first and only swapped in after a
+  /// successful write, so a failed create/write cannot destroy the original.
   Future<bool> writeFile(String name, List<int> bytes) async {
-    if (fixedStorage) {
-      return _writeFragments(name, bytes);
-    }
     final temp = _tempName(name);
     await deleteFile(temp); // clear a stale temp from a previous failed write
     if (!await createFile(temp, bytes.length)) return false;

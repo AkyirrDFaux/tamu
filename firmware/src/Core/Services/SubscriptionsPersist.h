@@ -53,8 +53,7 @@ static void SaveRequesterTable() {
         uint16_t curLen = (uint16_t)Storage.ReadFromFile(SubscriptionsRequesterFile, 0, off, (char *)cur);
         if (curLen == off && memcmp(cur, buf, off) == 0) return;
     }
-    // Shared atomic staging (copy to the "~" name, then rename); handles the reduced
-    // fixed-storage variant too, so no bespoke CreateFile/Write/Rename dance here.
+    // Shared atomic staging (copy to the "~" name, then rename).
     WriteBackupFile(SubscriptionsRequesterFile, buf, off);
 }
 
