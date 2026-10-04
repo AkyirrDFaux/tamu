@@ -184,7 +184,10 @@ public:
     // (offset 0, size 0) records but lists (offset 0, size > 0) ones (a valid fixed-file
     // in the reduced file system). All matches are removed so pre-existing duplicates are
     // fully deleted, not just the newest one.
-    bool DeleteFilerecord(const char name[8])
+    // Zeroes the record for every live entry whose name satisfies `matches` (all matches, so
+    // pre-existing duplicates are fully removed, not just the newest).
+    template <typename Match>
+    bool DeleteMatching(Match matches)
     {
         if (file_table_offset == 0) return true;
         uint32_t capacity = TableCapacity();
@@ -193,7 +196,7 @@ public:
             if (!ReadTableEntry(i, &entry))
                 return false;
             if (FileSlotIsFree(entry.offset)) continue;
-            if (!NameMatch(entry.name, name)) continue;
+            if (!matches(entry.name)) continue;
             uint32_t zero[2] = {0, 0};
             if (!Storage_FlashWrite(file_table_offset + i * TABLE_ENTRY_SIZE, &zero, sizeof(zero)))
                 return false;
@@ -201,24 +204,17 @@ public:
         return true; // already gone is fine
     }
 
+    bool DeleteFilerecord(const char name[8])
+    {
+        return DeleteMatching([&](const char *n) { return NameMatch(n, name); });
+    }
+
     // Deletes every record whose 8 raw name bytes equal `name8` exactly. Used to heal
     // records written by the old unpacked-name bug (a NUL inside the record name), which
     // the space-padded lookups above cannot address.
     bool DeleteFileExact(const char name8[8])
     {
-        if (file_table_offset == 0) return true;
-        uint32_t capacity = TableCapacity();
-        for (uint32_t i = 1; i < capacity; i++) {
-            FileEntry entry;
-            if (!ReadTableEntry(i, &entry))
-                return false;
-            if (FileSlotIsFree(entry.offset)) continue;
-            if (memcmp(entry.name, name8, 8) != 0) continue;
-            uint32_t zero[2] = {0, 0};
-            if (!Storage_FlashWrite(file_table_offset + i * TABLE_ENTRY_SIZE, &zero, sizeof(zero)))
-                return false;
-        }
-        return true;
+        return DeleteMatching([&](const char *n) { return memcmp(n, name8, 8) == 0; });
     }
 
     // Calls `fn(name)` once for every live file record. A superseded record for the same

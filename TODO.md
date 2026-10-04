@@ -63,7 +63,6 @@ Non-urgent, no functional gaps (from the 2026-10-04 duplication pass; the reply/
 subscription, register and script dedups are done).
 
 **Firmware**
-- `DeleteFilerecord`/`DeleteFileExact` differ only in the name comparator.
 - SNDB: five `for i < num_entries { ReadEntry; ... }` scans share a prologue (a visitor would
   add indirection; the loops are short and clear as-is).
 - `RegisterGetByBlockInfo`/`SubscriptionsGetField` share one resolver - awkward because
