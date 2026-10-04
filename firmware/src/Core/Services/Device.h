@@ -7,6 +7,7 @@
 
 #ifdef TYPE_CORE
 #include "Core/Functions/SNDB.h"
+#include "Core/Functions/Bootloader.h"
 
 #ifdef USE_SUB_REQUEST
 // Defined in Core/Services/SubscriptionsPersist.h (included later in the same translation
@@ -145,6 +146,54 @@ void HandleSNDB(const PacketFrame &frame)
         default:
             break;
     }
+}
+
+// Bootloader passthrough (Docs/Services/Bootloader.md "Core bootloader passthrough
+// commands", CIDs 0x20/0x21). The app sends these to the connected core; the core relays the
+// raw frame onto its RSBus. The frame carries no address, so this is a broadcast: every node
+// currently in bootloader mode on that bus receives it. A write has no acknowledgement from
+// the node - the app paces and verifies with a read.
+static void HandleBootloaderPassthrough(const PacketFrame &frame, uint8_t cid)
+{
+    if (PayloadBytes(frame) < 4)
+        return;
+
+    uint32_t offset = *reinterpret_cast<const uint32_t *>(frame.payload);
+
+    if (cid == 0x20) { // Send write packet: Offset, Payload (32)
+        if (PayloadBytes(frame) < 4 + Bootloader::PAYLOAD_SIZE)
+            return;
+        uint8_t raw[Bootloader::DATA_SIZE];
+        Bootloader::EncodeWrite(offset, frame.payload + 4, raw);
+        bool ok = RS485_SendRaw(raw, Bootloader::DATA_SIZE);
+        PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.trid,
+                         FLAG_TYPE | FLAG_START | FLAG_STOP | (ok ? FLAG_SUCCESS : FLAG_FAIL),
+                         nullptr, 0);
+        DispatchPacket(tx_frame);
+        return;
+    }
+
+    // cid == 0x21: Request read -> Offset, Payload.
+    uint8_t req[Bootloader::READ_REQ_SIZE];
+    Bootloader::EncodeReadRequest(offset, req);
+    if (RS485_SendRaw(req, Bootloader::READ_REQ_SIZE)) {
+        uint8_t resp[Bootloader::MAX_FRAME_SIZE];
+        int n = RS485_ReceiveRaw(resp, sizeof(resp), 200);
+        if (n == Bootloader::DATA_SIZE &&
+            Bootloader::Decode(resp, (uint16_t)n) == Bootloader::CMD_READ_RESP) {
+            uint8_t out[4 + Bootloader::PAYLOAD_SIZE];
+            memcpy(out, &offset, 4);
+            memcpy(out + 4, Bootloader::Payload(resp), Bootloader::PAYLOAD_SIZE);
+            PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.trid,
+                             FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_SUCCESS,
+                             out, sizeof(out));
+            DispatchPacket(tx_frame);
+            return;
+        }
+    }
+    PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.trid,
+                     FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_FAIL, nullptr, 0);
+    DispatchPacket(tx_frame);
 }
 #endif // TYPE_CORE
 
@@ -324,6 +373,13 @@ void HandleDeviceService(const PacketFrame &frame)
         case 13: // SNDB Read All per docs 00.13
         {
             HandleSNDB(frame);
+            break;
+        }
+
+        case 0x20: // Bootloader passthrough: send write packet
+        case 0x21: // Bootloader passthrough: request read
+        {
+            HandleBootloaderPassthrough(frame, cid);
             break;
         }
 #endif
