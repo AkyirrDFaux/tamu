@@ -76,7 +76,12 @@ Future<BackupDevice?> captureDevice(
     }
   }
 
-  if (captured.isEmpty && files.isEmpty && scripts.isEmpty && requesters.isEmpty) {
+  if (captured.isEmpty &&
+      files.isEmpty &&
+      scripts.isEmpty &&
+      requesters.isEmpty &&
+      providers.isEmpty &&
+      sndb.isEmpty) {
     return null;
   }
 
@@ -166,7 +171,6 @@ List<BackupDevice> parseBackupZip(List<int> zipBytes) {
   for (final file in archive.files) {
     final name = file.name;
     if (name.endsWith('/') || !name.toLowerCase().endsWith('.json')) continue;
-    if (name == 'backup.json') continue; // a pre-release aggregate, never produced now
     final text = utf8.decode(file.content as List<int>);
     final json = jsonDecode(text) as Map<String, dynamic>;
     devices.add(BackupDevice.fromJson(json));

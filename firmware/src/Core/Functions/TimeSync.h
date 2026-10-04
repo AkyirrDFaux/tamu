@@ -43,13 +43,19 @@ public:
     // Called for every Core-discover RESPONSE (Device service CID 10).
     void HandleDiscoverResponse(const PacketFrame &frame)
     {
-        if (phase != Discovering)
-            return;
         if (PayloadBytes(frame) < 14 + 4)
             return;
         const SerialNumber *sn = reinterpret_cast<const SerialNumber *>(frame.payload);
         if (*sn == GetSerialNumber())
             return; // our own broadcast echoed back by the local dispatch
+
+        // Net-ID collision (Docs "Core functions"): a different core answering with OUR net
+        // claimed the net twice. Checked here so boot-time discovery (phase == Idle) catches
+        // it too, not just the periodic round.
+        NoteCoreNet((uint8_t)((frame.id_src >> 10) & 0x3F), DeviceStatus.NetId);
+
+        if (phase != Discovering)
+            return;
         uint32_t uptime = 0;
         memcpy(&uptime, frame.payload + 14, sizeof(uptime));
         if (uptime > best_uptime)

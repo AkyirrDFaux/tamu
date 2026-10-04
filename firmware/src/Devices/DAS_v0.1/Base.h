@@ -8,6 +8,8 @@
 // indication has priority over the LED block value).
 static bool DasErrorFlag = false;
 
+// NOTE: duplicates Tamu_v2.0A/Base.h's VOLTAGE; kept per-device until a shared Base is
+// factored out (the two targets have different pin maps but the same supply voltage).
 #define VOLTAGE (3.3)
 
 static uint32_t ms_accum = 0;

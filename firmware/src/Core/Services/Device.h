@@ -30,6 +30,14 @@ static inline void SendDeviceReply(const PacketFrame &frame, PacketFrame &reply,
     DispatchPacket(reply);
 }
 
+// Device reply kind tag. The System/Log TRID is an incrementing counter, so a Device
+// reply no longer carries the request's CID and the handler has to tell its replies
+// apart. Length alone is ambiguous (a 16-byte assign reply shares its length with an
+// SNDB read reply), so the assign reply is prefixed with this tag. Discover/TimeSync
+// keep their documented byte layout: the app parses the TimeSync reply directly and
+// never sends Discover, and the assign reply here is firmware-internal (no app change).
+#define DEVICE_REPLY_KIND_ASSIGN 0xD1
+
 #ifdef TYPE_CORE
 // Dispatches SNDB requests: Read by ID/SN (11), Write (12) and Read All (13)
 // (Docs/Command ID table.md 0x0011-0x0013).
@@ -42,46 +50,33 @@ void HandleSNDB(const PacketFrame &frame)
 
     switch (cid) {
         case 13: { // SNDB Read All per docs 00.13
-            // Count the entries IterNext will actually yield so the stream reliably
-            // terminates with STOP even if ActiveCount() ever desyncs from the scan.
+            // The recovered registry tracks the valid-entry count, so one streaming scan
+            // is enough (no separate counting pass over flash).
             SNDB::IterReset();
-            RegistryEntry entry;
-            int32_t count = 0;
-            while (SNDB::IterNext(entry)) count++;
+            uint32_t count = (uint32_t)SNDB::ActiveCount();
 
             if (count == 0) {
-                // Send an empty stop packet
-                PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.trid,
-                                 FLAG_TYPE | FLAG_START | FLAG_STOP, nullptr, 0);
-                DispatchPacket(tx_frame);
+                SendResponse(frame, nullptr, 0); // empty stop packet
                 break;
             }
 
             // Stream every entry as a FRAG stream (Docs/Services/System Block and Device Commands.md:
             // "Fragmentation, SN + ID stream"). Each fragment carries up to 112 bytes
-            // of 16-byte (SN + ID) entries; the fragmentation info is the first 4
-            // payload bytes (u16 current + u16 total fragments).
-            SNDB::IterReset();
-            uint32_t total = (uint32_t)count * 16;
+            // of 16-byte (SN + ID) entries; SendFragFragment writes the 4-byte frag info.
+            uint32_t total = count * 16;
             uint16_t total_frags = (uint16_t)((total + MAX_FRAG_CONTENT_SIZE - 1) / MAX_FRAG_CONTENT_SIZE);
-            uint8_t buf[MAX_PAYLOAD_SIZE];
-            int32_t sent = 0;
+            RegistryEntry entry;
+            uint32_t sent = 0;
             for (uint16_t f = 0; f < total_frags; f++) {
-                uint8_t flags = FLAG_TYPE | FLAG_FRAG;
-                if (f == 0) flags |= FLAG_START;
-                WriteFragInfo(buf, f, total_frags);
                 uint16_t off = 4;
                 while (off - 4 < MAX_FRAG_CONTENT_SIZE && sent < count && SNDB::IterNext(entry)) {
-                    memcpy(buf + off, entry.uid.bytes, 14);
-                    memcpy(buf + off + 14, &entry.shortID, 2);
+                    uint16_t wire_id = entry.shortID;
+                    memcpy(tx_frame.payload + off, entry.uid.bytes, 14);
+                    memcpy(tx_frame.payload + off + 14, &wire_id, 2);
                     off += 16;
                     sent++;
                 }
-                if (sent >= count || f == total_frags - 1) flags |= FLAG_STOP;
-                PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.trid,
-                                 flags, buf, off);
-                DispatchPacket(tx_frame);
-                if (sent >= count) break;
+                SendFragFragment(frame, f, total_frags, (uint16_t)(off - 4));
             }
             break;
         }
@@ -93,8 +88,12 @@ void HandleSNDB(const PacketFrame &frame)
             // Disambiguate by length (Docs: "ID or SN (based on length)"): an ID request is a
             // 2-byte uint16, an SN request the 14-byte serial. Payloads are not padded.
             if (PayloadBytes(frame) == 2) {
+                // The request carries a full net.device. Local node entries are stored
+                // device-only, while the core's own entry is net-qualified, so try the
+                // exact ID first and then the device field.
                 uint16_t lookup_id = *reinterpret_cast<const uint16_t *>(frame.payload);
-                found = SNDB::GetEntry(lookup_id, entry);
+                found = SNDB::GetEntry(lookup_id, entry) ||
+                        SNDB::GetEntry((uint16_t)(lookup_id & 0x3FF), entry);
             } else if (PayloadBytes(frame) >= 14) {
                 const SerialNumber *lookup_sn = reinterpret_cast<const SerialNumber *>(frame.payload);
                 uint16_t lookup_id = SNDB::FindShortID(*lookup_sn);
@@ -105,8 +104,9 @@ void HandleSNDB(const PacketFrame &frame)
 
             if (found) {
                 uint8_t payload[16];
+                uint16_t wire_id = entry.shortID;
                 memcpy(payload, entry.uid.bytes, 14);
-                memcpy(payload + 14, &entry.shortID, 2);
+                memcpy(payload + 14, &wire_id, 2);
                 PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.trid,
                                  FLAG_TYPE | FLAG_START | FLAG_STOP, payload, 16);
                 DispatchPacket(tx_frame);
@@ -123,7 +123,9 @@ void HandleSNDB(const PacketFrame &frame)
         case 12: { // SNDB Write per docs 00.12
             if (PayloadBytes(frame) >= 16) {
                 const SerialNumber *write_sn = reinterpret_cast<const SerialNumber *>(frame.payload);
-                uint16_t write_id = *reinterpret_cast<const uint16_t *>(frame.payload + 14);
+                // Stored/allocated IDs are device-only (0..1023): strip any net bits the
+                // app may have sent so the registry stays uniform.
+                uint16_t write_id = (uint16_t)(LoadUnaligned<uint16_t>(frame.payload + 14) & 0x3FF);
 
                 // Per Docs/Services/System Block and Device Commands.md: ID 0 = delete the
                 // entry carrying this serial number.
@@ -210,26 +212,36 @@ void HandleDeviceService(const PacketFrame &frame)
     if (is_response)
     {
         // The System/Log TRID is an incrementing counter, so a reply no longer carries the
-        // request's CID; tell the replies apart by payload (the assign reply is SN(14)+addr(2),
-        // a Core-discover reply SN(14)+uptime(4), a TimeSync reply the 12-byte triple).
+        // request's CID; tell the replies apart by their explicit kind. The assign reply is
+        // tagged (DEVICE_REPLY_KIND_ASSIGN) because its length is otherwise ambiguous; the
+        // discover reply is SN(14)+uptime(4) and the TimeSync reply the exact 12-byte triple.
         if (PayloadBytes(frame) >= 18) // Core-discover response
         {
 #ifdef TYPE_CORE
             CoreTimeSync.HandleDiscoverResponse(frame);
 #endif
         }
-        else if (PayloadBytes(frame) >= sizeof(AssignPayload)) // Discover (assign) response
+        else if (PayloadBytes(frame) >= 1 + sizeof(AssignPayload) &&
+                 frame.payload[0] == DEVICE_REPLY_KIND_ASSIGN) // Discover (assign) response
         {
 #ifdef TYPE_CORE
-            if (DeviceStatus.ShortAddress == 1) return; // a core is never assigned
+            // A core is never assigned. The reply's source is the assigning core: if it
+            // carries our net (and is not our own broadcast looped back) the net is
+            // claimed twice - the same collision the Core-discover path detects.
+            if (frame.id_src != DeviceStatus.ShortAddress)
+                NoteCoreNet((uint8_t)((frame.id_src >> 10) & 0x3F), DeviceStatus.NetId);
+            if (DeviceIsCore()) return; // a core is never assigned
 #endif
-            const AssignPayload *assign = reinterpret_cast<const AssignPayload *>(frame.payload);
+            const AssignPayload *assign = reinterpret_cast<const AssignPayload *>(frame.payload + 1);
             if (assign->sn == GetSerialNumber())
             {
+                // The core sends the net-qualified address; store it and adopt its net so
+                // local net-0 targets resolve correctly.
                 DeviceStatus.ShortAddress = assign->new_addr;
+                DeviceStatus.NetId = (uint8_t)((assign->new_addr >> 10) & 0x3F);
             }
         }
-        else if (PayloadBytes(frame) >= 12) // Time sync response per docs 00.03
+        else if (PayloadBytes(frame) == 12) // Time sync response per docs 00.03 (exact triple)
         {
             // TimeSync is synchronized-device initiated: the INITIATOR (a node syncing to
             // a core, or a core syncing to the longest-running core) applies the offset to
@@ -264,8 +276,8 @@ void HandleDeviceService(const PacketFrame &frame)
         {
 #ifdef TYPE_CORE
             // Per the docs, ID assignment is a *core capability*: only answer when we
-            // report the CORE bit and hold a valid short address.
-            if (!(kCapabilities & Capabilities::Core) || DeviceStatus.ShortAddress != 1)
+            // report the CORE bit and hold the core role (device ID 1 in a valid net).
+            if (!(kCapabilities & Capabilities::Core) || !DeviceIsCore())
                 return;
 
             if (PayloadBytes(frame) < sizeof(SerialNumber))
@@ -295,23 +307,33 @@ void HandleDeviceService(const PacketFrame &frame)
                 }
             }
 
+            // Reply with the kind tag + SN(14) + assigned address(2). The tag keeps the
+            // 16-byte body from being confused with an SNDB read reply (both would otherwise
+            // be told apart by length alone). The reply echoes the request's TRID (its high
+            // byte is the Device service), per "responses echo the request's TRID".
+            uint8_t response[1 + sizeof(AssignPayload)];
+            response[0] = DEVICE_REPLY_KIND_ASSIGN;
             AssignPayload response_data;
             response_data.sn = *incoming_sn;
-            response_data.new_addr = NewAddr;
+            // SNDB stores/allocates device-only IDs (0..1023); the core's NetID is
+            // automatically added here so the node's address is net-qualified.
+            response_data.new_addr = MakeId(DeviceStatus.NetId, NewAddr);
+            memcpy(response + 1, &response_data, sizeof(AssignPayload));
 
 #ifdef USE_SUB_REQUEST
             // The node just (re-)appeared with an empty provider table, so ask for this
             // device's subscriptions that point at it to be re-pushed - otherwise a node reboot
             // silently ends them. Only *requested* here: this runs inside packet dispatch and
-            // must not delay the assignment reply below.
-            SubscriptionsRequestReRegister(NewAddr);
+            // must not delay the assignment reply below. Provider addresses are wire
+            // addresses (net-qualified), so queue the qualified value.
+            SubscriptionsRequestReRegister(response_data.new_addr);
 #endif
 
             PacketConstruct(&tx_frame, ADDR_BROADCAST,
-                             MakeService(ServiceType::Device, 0),
-                             MakeService(ServiceType::Device, 0),
+                             frame.srv_src, // originator's service tag (== its echoed TRID)
+                             frame.trid,    // echo the request TRID
                              FLAG_TYPE | FLAG_START | FLAG_STOP,
-                             (uint8_t *)&response_data, sizeof(AssignPayload));
+                             response, sizeof(response));
 
             DispatchPacket(tx_frame);
 
@@ -357,7 +379,8 @@ void HandleDeviceService(const PacketFrame &frame)
         case 10: // Core discover per docs 00.10
         {
 #ifdef TYPE_CORE
-            // Core discover: broadcast to 3F.1 handled by SNDB? For now reply with SN+uptime
+            // Core discover reply: SN(14) + uptime(4) to the requesting core (3F.1 is the
+            // broadcast target). The SNDB is not involved; the responder only reports uptime.
             uint32_t uptime = TimeFromBoot();
             uint8_t rpl[14+4];
             memcpy(rpl, &GetSerialNumber(), 14);

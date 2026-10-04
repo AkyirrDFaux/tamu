@@ -2,11 +2,10 @@
 
 // Script service (Docs/Services/Script.md).
 //
-// Milestone A: SCR_XXX file parsing, the loaded-script registry, Register exposure (block
-// the Scripts range 0x3F4-0x3F7) and management commands 0x0500-0x0507.
-// Milestone B: preloaded instructions, line/block tables, the execution engine (the VM)
-// and the six-state machine. The opcode/symbol encoding is an internal convention shared
-// with the app's script_instructions.dart.
+// SCR_XXX file parsing, the loaded-script registry, Register exposure (the Scripts range
+// 0x3F4-0x3F7), management commands 0x0500-0x0507, and the execution engine: preloaded
+// instructions, line/block tables, the VM and its state machine. The opcode/symbol encoding
+// is an internal convention shared with the app's script_instructions.dart.
 //
 // The service is split into parts, all included here in dependency order so it stays a
 // single translation unit (the parts use file-local `static` helpers and share the

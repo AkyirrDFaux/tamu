@@ -24,12 +24,6 @@ void Sleep(uint32_t ms)
     vTaskDelay(pdMS_TO_TICKS(ms));
 }
 
-// Busy-waits for `us` microseconds (no task yield).
-void SleepMicro(uint32_t us)
-{
-    esp_rom_delay_us(us);
-}
-
 // Returns the current amount of free heap memory.
 int32_t GetFreeRAM()
 {

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../core/settings.dart';
-import 'theme.dart';
 import 'widgets.dart';
 
 /// Settings screen (Docs/App/Settings.md).
@@ -14,12 +13,6 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   final _settings = AppSettings.instance;
-
-  @override
-  void initState() {
-    super.initState();
-    _settings.load();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -115,21 +108,6 @@ class _SettingsPageState extends State<SettingsPage> {
           ],
         ),
       ),
-    );
-  }
-}
-
-class SectionHeader extends StatelessWidget {
-  final String text;
-
-  const SectionHeader(this.text, {super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-      child: Text(text.toUpperCase(),
-          style: TextStyle(color: kOrange, fontSize: 12, letterSpacing: 1)),
     );
   }
 }

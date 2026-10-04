@@ -46,7 +46,7 @@ private:
     uint32_t PinMaskB; // secondary strip (0 when unused)
 
 public:
-    // pinB is optional: -1 keeps the driver single-strip (Send only).
+    // pinB is optional: -1 keeps the driver single-strip (SendParallel with an empty mask).
     LEDDriver(int pinA, int pinB = -1)
         : PinMaskA(1ULL << pinA), PinMaskB(pinB >= 0 ? (1ULL << pinB) : 0) {}
 
@@ -62,51 +62,6 @@ public:
             .intr_type = GPIO_INTR_DISABLE,
         };
         gpio_config(&io_conf);
-    }
-
-    // Sends `length` pixels to a single WS2812 strip (primary pin) with bit-banged
-    // timing (the reference working driver's timing); reorders channels to GRB and
-    // finishes with a reset latch.
-    void IRAM_ATTR Send(ColourClass *pixels, uint16_t length)
-    {
-        uint32_t mask = PinMaskA;
-        static portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
-
-        portENTER_CRITICAL(&mux);
-
-        for (uint16_t i = 0; i < length; i++)
-        {
-            // Explicitly order GRB for WS2812 compatibility
-            uint8_t data[3] = {pixels[i].G, pixels[i].R, pixels[i].B};
-
-            for (uint8_t ch = 0; ch < 3; ch++)
-            {
-                uint8_t channel = data[ch];
-                for (int8_t b = 7; b >= 0; b--)
-                {
-                    if (channel & (1 << b))
-                    {
-                        // T1H: High for ~800ns (NOP144)
-                        GPIO.out_w1ts.val = mask;
-                        NOP144();
-                        GPIO.out_w1tc.val = mask;
-                        // T1L: Low for ~450ns (NOP64)
-                        NOP64();
-                    }
-                    else
-                    {
-                        // T0H: High for ~400ns (NOP36)
-                        GPIO.out_w1ts.val = mask;
-                        NOP36();
-                        GPIO.out_w1tc.val = mask;
-                        // T0L: Low for ~850ns (NOP144)
-                        NOP144();
-                    }
-                }
-            }
-        }
-        portEXIT_CRITICAL(&mux);
-        esp_rom_delay_us(80); // Reset Latch
     }
 
     // Sends `length` pixels to BOTH strips in parallel (pins A and B). Each bit-slot

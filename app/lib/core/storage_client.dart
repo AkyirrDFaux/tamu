@@ -10,10 +10,21 @@ import 'diagnostics.dart';
 import 'protocol.dart';
 import 'types.dart';
 
-/// Strips the 8-byte wire padding (spaces or, from older renames, NULs) from a
-/// file name so it matches the plain-name classification and display.
-String normalizeFileName(String name) =>
-    name.replaceAll('\x00', '').trim();
+/// The single file-name normalizer: strips only the 8-byte wire padding (trailing
+/// spaces or, from older renames, NULs), never interior characters, so a stored name
+/// such as `A B` survives intact.
+String normalizeFileName(String name) {
+  var end = name.length;
+  while (end > 0) {
+    final c = name.codeUnitAt(end - 1);
+    if (c == 0x20 || c == 0x00) {
+      end--;
+    } else {
+      break;
+    }
+  }
+  return name.substring(0, end);
+}
 
 /// One file table entry (Filerecord: Offset u32 | Filesize u32 | Name 8 bytes).
 class FileRecord {
@@ -90,10 +101,8 @@ class StorageClient {
     return bytes;
   }
 
-  static String unpadName(List<int> bytes) {
-    final text = String.fromCharCodes(bytes.take(nameLength));
-    return text.replaceAll(' ', '').trim();
-  }
+  static String unpadName(List<int> bytes) =>
+      normalizeFileName(String.fromCharCodes(bytes.take(nameLength)));
 
   /// Reads the file table by reading the ".TABLE  " file directly (CID 5).
   /// The file table is self-describing: the first entry points to itself with its size.
@@ -148,6 +157,14 @@ class StorageClient {
     return reply != null && reply.isNotEmpty && reply[0] != 0;
   }
 
+  /// Resizes a file per Docs 03.03 CID3 (full file system only; the reduced FS
+  /// has fixed positions and does not answer this command).
+  Future<bool> resizeFile(String name, int size) async {
+    final payload = <int>[...padName(name), ...uint32ToBytes(size)];
+    final reply = await _request(3, payload: payload);
+    return reply != null && reply.isNotEmpty && reply[0] != 0;
+  }
+
   /// Formats the whole filesystem per docs 03.00 CID0 (wipes every file).
   Future<bool> format() async {
     final reply = await _request(0);
@@ -174,18 +191,45 @@ class StorageClient {
   /// Writes a whole file per docs 03.06 CID6. Stream fragments are capped at 64
   /// content bytes (docs: "maximum 64 byte stream fragment"); every fragment carries
   /// the 4-byte frag info so the device can detect out-of-order delivery.
+  ///
+  /// On the full file system the new content is staged under a temporary name first
+  /// and only swapped in after a successful write, so a failed create/write cannot
+  /// destroy the original. The reduced (fixed) file system has no create/delete
+  /// (CIDs 1/2 are compiled out), so the CID-6 fragment loop is used directly.
   Future<bool> writeFile(String name, List<int> bytes) async {
+    if (fixedStorage) {
+      return _writeFragments(name, bytes);
+    }
+    final temp = _tempName(name);
+    await deleteFile(temp); // clear a stale temp from a previous failed write
+    if (!await createFile(temp, bytes.length)) return false;
+    if (!await _writeFragments(temp, bytes)) {
+      await deleteFile(temp);
+      return false;
+    }
+    // Replace only once the new content is safely staged.
     await deleteFile(name);
-    if (!await createFile(name, bytes.length)) return false;
+    if (!await renameFile(temp, name)) {
+      await deleteFile(temp);
+      return false;
+    }
+    return true;
+  }
+
+  /// The CID-6 fragment stream (first fragment carries the file name).
+  Future<bool> _writeFragments(String name, List<int> bytes) async {
     const dataMax = 64;
     var next = 0;
     var offset = 0;
     while (offset < bytes.length) {
       final isFirst = next == 0;
-      final end = (offset + dataMax > bytes.length)
-          ? bytes.length
-          : offset + dataMax;
-      final payload = <int>[...writeFragInfo(next, 0xFFFF), if (isFirst) ...padName(name), ...bytes.sublist(offset, end)];
+      final end =
+          (offset + dataMax > bytes.length) ? bytes.length : offset + dataMax;
+      final payload = <int>[
+        ...writeFragInfo(next, 0xFFFF),
+        if (isFirst) ...padName(name),
+        ...bytes.sublist(offset, end),
+      ];
       final reply = await _request(6, payload: payload, requestFrag: true);
       if (reply == null || reply.length < 2) return false;
       final lastSeq = reply[0] | (reply[1] << 8);
@@ -194,5 +238,11 @@ class StorageClient {
       offset = end;
     }
     return true;
+  }
+
+  /// A staging name that fits the 8-byte wire field and is unlikely to collide.
+  static String _tempName(String name) {
+    final base = name.length <= 7 ? name : name.substring(0, 7);
+    return '~$base';
   }
 }

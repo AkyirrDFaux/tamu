@@ -325,8 +325,9 @@ void main() {
         'scripts': Capability.scripts,
         'storageFiles': Capability.storageFiles,
         'appInterface': Capability.appInterface,
-        'subscriptions': Capability.subscriptions,
+        'subscriptionRequest': Capability.subscriptionRequest,
         'node': Capability.node,
+        'subscriptionProvide': Capability.subscriptionProvide,
       }, fw,
           // The firmware namespace does not define bit 1; the app names it Router from
           // Docs/Services/Router.md (the feature is not implemented).

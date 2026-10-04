@@ -17,11 +17,8 @@ if _env_name in version.TARGETS:
     _v = version.ensure_version(_env_name)
     env.Append(
         CPPDEFINES=[
-            ("VERSION_YEAR", _v["year"]),
-            ("VERSION_MONTH", _v["month"]),
-            ("VERSION_DAY", _v["day"]),
-            ("VERSION_ITERATION", _v["iteration"]),
+            ("VERSION_%s" % _field.upper(), _v[_field])
+            for _field in version.VERSION_FIELDS
         ]
     )
-    print("Tamu version %s: %d.%d.%d.%d" % (
-        _env_name, _v["year"], _v["month"], _v["day"], _v["iteration"]))
+    print("Tamu version %s: %s" % (_env_name, version.format_version(_v)))

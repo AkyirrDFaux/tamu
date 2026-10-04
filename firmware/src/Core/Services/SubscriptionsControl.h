@@ -29,7 +29,8 @@ static void SubReply(const PacketFrame &frame, const uint8_t *payload, uint16_t 
 // side never cancels anything, so the DAS does not compile it.
 static void SubscriptionsCancelProvider(uint16_t providerAddr, uint16_t trid) {
 #ifdef USE_SUB_PROVIDE
-    if (providerAddr == DeviceStatus.ShortAddress) {
+    uint8_t net = (uint8_t)((DeviceStatus.ShortAddress >> 10) & 0x3F);
+    if (NetQualifyLocal(providerAddr, net) == DeviceStatus.ShortAddress) {
         ProviderEntry* p = ProviderFindByTrid(trid);
         if (p) ProviderClearEntry(p);
         return;
@@ -92,6 +93,23 @@ static void RequesterStreamTable(const PacketFrame &frame) {
 #endif
 
 __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &frame) {
+#ifdef USE_SUB_REQUEST
+    // A provider's reply to a requester-originated install ("Change subscription", CID 1)
+    // echoes the TRID in CMD instead of carrying a service/CID, so the dispatcher routes it
+    // here by range. It carries the source's current value: apply it through the normal
+    // value-update path so a subscription starts from a known value instead of waiting for
+    // the next change/tick. A locally generated management reply (id_src is us) is routed to
+    // the app link and never reaches here.
+    if ((frame.flags & FLAG_TYPE) && frame.srv_tgt >= TRID_SUB_BASE &&
+        frame.srv_tgt <= TRID_SUB_MAX) {
+        RequesterEntry* e = RequesterFindByTrid((uint16_t)frame.srv_tgt);
+        // Stale reply after the entry was retargeted to a different provider: drop it. A
+        // cancelled entry no longer resolves, so it falls through to the orphan handling.
+        if (e && frame.id_src != e->providerAddr) return;
+        HandleRequesterValueUpdate(frame);
+        return;
+    }
+#endif
     uint8_t cid = GetServiceCID(frame.srv_tgt);
 
     switch (cid) {
@@ -121,8 +139,11 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
 
             SubscriptionTable t;
             memcpy((void *)&t, frame.payload, SUB_TABLE_WIRE_SIZE);
-            e = ProviderInstall(frame.trid, frame.id_src, t);
-            if (!e) break;
+            // Reuse the entry found above (no second search). An explicit Set resets its trigger
+            // state so a retargeted subscription sends its first value immediately.
+            if (!e) e = ProviderFindFree();
+            if (!e) { SubReply(frame, nullptr, 0, FLAG_FAIL); break; }
+            ProviderApply(e, frame.trid, frame.id_src, t, true);
             // Docs CID 1: the response to a change subscription is the CURRENT VALUE (so the
             // requester starts from a known state). Fall back to a 1-byte ack when the source
             // register does not resolve (yet).
@@ -156,7 +177,10 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
         }
 
         case 0x11: { // Set subscription (requester). Trigger None = cancel.
-            if (PayloadBytes(frame) < 2 + 2 + SUB_TABLE_WIRE_SIZE + 4 + 4) break;
+            if (PayloadBytes(frame) < 2 + 2 + SUB_TABLE_WIRE_SIZE + 4 + 4) {
+                SubReply(frame, nullptr, 0, FLAG_FAIL);
+                break;
+            }
             uint16_t providerAddr = LoadUnaligned<uint16_t>(frame.payload);
             SubscriptionTable t;
             memcpy((void *)&t, frame.payload + 4, SUB_TABLE_WIRE_SIZE);
@@ -174,8 +198,11 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
                 break;
             }
 
-            e = RequesterUpsert(frame.trid);
-            if (!e) break;
+            // Reuse the entry found above; only allocate when it does not exist yet.
+            if (!e) {
+                e = RequesterAlloc(frame.trid);
+                if (!e) { SubReply(frame, nullptr, 0, FLAG_FAIL); break; }
+            }
             e->providerAddr = providerAddr;
             e->sub = t;
             e->targetReg = targetReg;
@@ -216,7 +243,10 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
 
         case 0x21: { // Set subscription (provider). Trigger None = cancel.
 #ifdef USE_SUB_PROVIDE
-            if (PayloadBytes(frame) < 2 + 2 + SUB_TABLE_WIRE_SIZE + 4 + 4 + 4) break;
+            if (PayloadBytes(frame) < 2 + 2 + SUB_TABLE_WIRE_SIZE + 4 + 4 + 4) {
+                SubReply(frame, nullptr, 0, FLAG_FAIL);
+                break;
+            }
             uint16_t requesterAddr = LoadUnaligned<uint16_t>(frame.payload);
             SubscriptionTable t;
             memcpy((void *)&t, frame.payload + 4, SUB_TABLE_WIRE_SIZE);
@@ -227,7 +257,10 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
                 SubReply(frame, nullptr, 0, FLAG_SUCCESS);
                 break;
             }
-            if (!ProviderInstall(frame.trid, requesterAddr, t)) break;
+            if (!ProviderInstall(frame.trid, requesterAddr, t, true)) {
+                SubReply(frame, nullptr, 0, FLAG_FAIL);
+                break;
+            }
             SubReply(frame, nullptr, 0, FLAG_SUCCESS);
 #else
             SubReply(frame, nullptr, 0, FLAG_FAIL);
@@ -252,15 +285,20 @@ void SubscriptionsTick(uint32_t nowMs) {
     EvaluateProviderTriggers(nowMs);
 #endif
 #ifdef USE_SUB_REQUEST
+    bool requesterTableChanged = false;
     for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
         RequesterEntry* e = &requesterTable[i];
         if (e->active && e->timeout != 0 && (int32_t)(nowMs - e->timeout) >= 0) {
             uint16_t provider = e->providerAddr;
             uint16_t trid = e->trid;
-            RequesterRemove(e);
+            RequesterRemove(e);          // compacts the table, shifting the tail left
+            requesterTableChanged = true;
             SubscriptionsCancelProvider(provider, trid);
+            i--;                         // re-check the entry shifted into slot i
         }
     }
+    // Persist the removals: a timed-out entry must not be restored on the next boot.
+    if (requesterTableChanged) SaveRequesterTable();
     RequesterInitCheck(nowMs);
     SubscriptionsReRegisterPending();
 #endif

@@ -5,7 +5,7 @@
 #include "Core/Types/Number.h"
 #include "Core/Types/Enums.h"
 
-// Sensor types (Docs/Modules and blocks/Generic system blocks.md).
+// Sensor types (Docs/Modules and blocks/Measurement.md).
 enum MeasSensorType : uint8_t
 {
     MeasRawMeasurement = 0,
@@ -18,12 +18,13 @@ enum MeasSensorType : uint8_t
 
 // Resistive measurement block (Docs/Modules and blocks/Measurement.md):
 //   Sampling Rate (0, P, Number), Sensor Type (1, P, Enum), Filter Coefficient
-//   (2, P, Number, EMA 0-1 on the raw ADC), Measured Value (3, RO), Current Range (4, RO).
+//   (2, P, Number, EMA weight of the new raw sample, 1 = no filtering), Measured Value
+//   (3, RO), Current Range (4, RO).
 struct ResistiveMeasPersistent
 {
     Number SamplingRate = N(10);     // offset 0
     uint8_t SensorType = MeasRawMeasurement; // offset 4
-    Number FilterCoeff = N(0.5);     // offset 8, EMA weight 0-1
+    Number FilterCoeff = N(0.5);     // offset 8, EMA weight 0-1 (1 = no filtering)
 };
 struct ResistiveMeasVolatile
 {
@@ -67,7 +68,7 @@ static bool OnMeasFieldWrite(const StaticBlockDescriptor &block, uint16_t index,
         m->SamplingRate = v;
         return true;
 
-    case 2: // Filter Coefficient: EMA weight 0-1 (0 = no filtering)
+    case 2: // Filter Coefficient: EMA weight of the new sample, 0-1 (1 = no filtering)
         if (v < N(0)) v = N(0);
         if (v > N(1)) v = N(1);
         m->FilterCoeff = v;

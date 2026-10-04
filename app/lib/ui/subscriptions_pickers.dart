@@ -99,19 +99,25 @@ class FieldPicker extends StatelessWidget {
 class KeyPicker extends StatelessWidget {
   final String label;
   final int value;
-  final ValueChanged<int> onChanged;
 
-  static const keys = [0, 1, 2, 3, 4, 5, 6, 7];
+  /// The keys the field actually offers (dictionary markers omit key 0). Falls back to 0..7.
+  final List<int> keys;
+  final ValueChanged<int> onChanged;
 
   const KeyPicker({
     super.key,
     required this.label,
     required this.value,
     required this.onChanged,
+    this.keys = const [0, 1, 2, 3, 4, 5, 6, 7],
   });
 
   @override
   Widget build(BuildContext context) {
+    // Always include the current value so an existing entry never asserts the dropdown.
+    final effective = <int>[...(keys.isEmpty ? const [0] : keys)];
+    if (!effective.contains(value)) effective.add(value);
+    effective.sort();
     return DropdownButtonFormField<int>(
       initialValue: value,
       decoration: InputDecoration(
@@ -119,8 +125,12 @@ class KeyPicker extends StatelessWidget {
         border: const OutlineInputBorder(),
       ),
       isExpanded: true,
-      items: keys.map((k) => DropdownMenuItem(value: k, child: Text('Key $k'))).toList(),
-      onChanged: (v) => onChanged(v!),
+      items: effective
+          .map((k) => DropdownMenuItem(value: k, child: Text('Key $k')))
+          .toList(),
+      onChanged: (v) {
+        if (v != null) onChanged(v);
+      },
     );
   }
 }

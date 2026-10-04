@@ -42,6 +42,25 @@ class DiscoveredLink {
   });
 }
 
+/// A completed service reply: its reassembled payload plus the packet-level
+/// SUCCESS/FAIL flags. Most callers only need the payload ([ConnectionManager.request]);
+/// the subscription client checks the flags to tell an accepted write from a refusal.
+class PacketResponse {
+  final List<int> payload;
+  final bool success;
+  final bool fail;
+
+  const PacketResponse({
+    required this.payload,
+    required this.success,
+    required this.fail,
+  });
+
+  /// A reply is accepted only when it is explicitly successful. A FAIL response (or a
+  /// response with neither flag) is not a success.
+  bool get ok => success && !fail;
+}
+
 class ConnectionManager extends ChangeNotifier {
   ConnectionManager._();
 
@@ -67,6 +86,27 @@ class ConnectionManager extends ChangeNotifier {
   DateTime? _autoConnectSuppressedUntil;
   bool _bleScanActive = false;
 
+  /// BLE scan entries older than this are pruned: the scan backend only reports a
+  /// device when it is (re)seen, so this is what eventually drops an out-of-range one.
+  /// Kept generous because the BlueZ backend is silent for a stationary device whose
+  /// RSSI has not changed.
+  static const Duration _bleEntryTtl = Duration(minutes: 2);
+
+  // `discoveredLinks` is rebuilt only when the underlying scan state changes.
+  List<DiscoveredLink>? _linksCache;
+  void _invalidateLinks() => _linksCache = null;
+
+  // Coalesces the burst of per-scan-event UI rebuilds into one notification.
+  bool _notifyScheduled = false;
+  void _notifySoon() {
+    if (_notifyScheduled) return;
+    _notifyScheduled = true;
+    scheduleMicrotask(() {
+      _notifyScheduled = false;
+      notifyListeners();
+    });
+  }
+
   // Android runtime BLE permission state (see _refreshBle). The request is made
   // once; afterwards the user must fix it from the system settings page.
   bool _blePermissionRequested = false;
@@ -77,8 +117,11 @@ class ConnectionManager extends ChangeNotifier {
   /// permanently denied (only the system settings page can re-enable it).
   bool get blePermissionBlocked => _blePermissionBlocked;
 
-  /// The visible list: remaining devices, sorted as selected.
+  /// The visible list: remaining devices, sorted as selected. Memoized until the
+  /// scan state, source, sort or active link changes.
   List<DiscoveredLink> get discoveredLinks {
+    final cached = _linksCache;
+    if (cached != null) return cached;
     final links = <DiscoveredLink>[];
     // The connected device is represented by the connected-session banner, not
     // as a tappable list row.
@@ -109,6 +152,7 @@ class ConnectionManager extends ChangeNotifier {
         links.sort(
             (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     }
+    _linksCache = links;
     return links;
   }
 
@@ -130,8 +174,10 @@ class ConnectionManager extends ChangeNotifier {
   final PacketStreamParser _parser = PacketStreamParser();
   StreamSubscription<Uint8List>? _streamSub;
   int _nextTxId = tridAppBase;
-  final Map<int, Completer<List<int>>> _pending = {};
+  final Map<int, Completer<PacketResponse>> _pending = {};
   final Map<int, List<int>> _rxBuffers = {};
+  // Expected next fragment index + total for each in-flight fragmented reply.
+  final Map<int, ({int next, int total})> _rxFrag = {};
 
   // General listener for subscription value updates (service Subscriptions CID 0).
   // Only one listener is supported; SubscriptionClient uses it to feed its
@@ -216,12 +262,14 @@ class ConnectionManager extends ChangeNotifier {
 
   Future<void> setSource(LinkSource newSource) async {
     source = newSource;
+    _invalidateLinks();
     await _syncAutoTimer();
     notifyListeners();
   }
 
   void setSort(DeviceSort newSort) {
     sort = newSort;
+    _invalidateLinks();
     notifyListeners();
   }
 
@@ -243,8 +291,8 @@ class ConnectionManager extends ChangeNotifier {
 
   Future<void> _refreshBle() async {
     // Android needs runtime BLE permissions before the first scan. Request them
-    // once; if denied, stop scanning until the user grants them (the Connection
-    // page offers a shortcut to the system settings page).
+    // once; if denied, scanning is blocked until the user grants them (the
+    // Connection page shows the settings shortcut and retries on resume).
     if (isAndroid && !_blePermissionGranted) {
       if (_blePermissionRequested) {
         refreshError = true;
@@ -253,13 +301,16 @@ class ConnectionManager extends ChangeNotifier {
       _blePermissionRequested = true;
       final result = await ensureBlePermissions();
       _blePermissionGranted = result == BlePermissionResult.granted;
-      _blePermissionBlocked = result == BlePermissionResult.permanentlyDenied;
+      // A plain denial also blocks scanning: surface the banner and let the
+      // resume path re-request, instead of failing silently forever.
+      _blePermissionBlocked = !_blePermissionGranted;
       if (!_blePermissionGranted) {
         refreshError = true;
         notifyListeners();
         return;
       }
     }
+    _pruneBleEntries();
     try {
       if (!_bleScanActive) {
         await _scanSub?.cancel();
@@ -267,30 +318,34 @@ class ConnectionManager extends ChangeNotifier {
         // NOTE: deliberately NOT clearing _bleEntries here. The BlueZ backend
         // only emits a scan event when a device's RSSI property CHANGES, so a
         // stationary close-range device stays silent in later scans - clearing
-        // would make previously-found devices vanish mid-session.
+        // would make previously-found devices vanish mid-session. Old entries are
+        // instead aged out by _pruneBleEntries().
         _scanSub = UniversalBle.scanStream.listen((device) {
-          // A missing/unknown name must not disqualify a device: BlueZ caches
-          // stale names (or none), so identify OUR devices by the advertised
-          // App Interface service instead.
-          final advertisesAppService = device.services.any(
-              (s) => s.toLowerCase().contains('6e400001'));
+          // Identify OUR devices solely by the advertised App Interface GATT
+          // service, never by name: BlueZ caches stale names (or none) and the
+          // name is not a reliable, unique marker. Unrelated BLE devices are
+          // therefore hidden from the scan list.
+          if (!advertisesAppInterface(device.services)) return;
           final name = (device.name == null || device.name!.isEmpty)
               ? 'BLE device ${device.deviceId}'
               : device.name!;
-          if (device.name == null || device.name!.isEmpty) {
-            if (!advertisesAppService) return;
-          }
-          final existing =
-              _bleEntries.where((e) => e.deviceId == device.deviceId).toList();
-          if (existing.isNotEmpty) {
-            existing.first
+          final existing = _bleEntries
+              .where((e) => e.deviceId == device.deviceId)
+              .firstOrNull;
+          if (existing != null) {
+            existing
               ..rssi = device.rssi
-              ..name = name;
+              ..name = name
+              ..lastSeen = DateTime.now();
           } else {
             _bleEntries.add(BleScanEntry(
-                deviceId: device.deviceId, name: name, rssi: device.rssi));
+                deviceId: device.deviceId,
+                name: name,
+                rssi: device.rssi,
+                lastSeen: DateTime.now()));
           }
-          notifyListeners();
+          _invalidateLinks();
+          _notifySoon();
         });
         await UniversalBle.startScan();
         _bleScanActive = true;
@@ -303,9 +358,20 @@ class ConnectionManager extends ChangeNotifier {
     }
   }
 
+  /// Drops scan entries not seen for [_bleEntryTtl] (out-of-range devices).
+  void _pruneBleEntries() {
+    final cutoff = DateTime.now().subtract(_bleEntryTtl);
+    final before = _bleEntries.length;
+    _bleEntries.removeWhere((e) => e.lastSeen.isBefore(cutoff));
+    if (_bleEntries.length != before) _invalidateLinks();
+  }
+
   Future<void> _refreshUsb() async {
     if (!supportsUsb) {
-      _usbEntries = [];
+      if (_usbEntries.isNotEmpty) {
+        _usbEntries = [];
+        _invalidateLinks();
+      }
       return;
     }
     try {
@@ -318,6 +384,7 @@ class ConnectionManager extends ChangeNotifier {
         } catch (_) {}
         return UsbPortEntry(portName: n, description: description);
       }).toList();
+      _invalidateLinks();
       refreshError = false;
     } catch (error) {
       refreshError = true;
@@ -384,9 +451,7 @@ class ConnectionManager extends ChangeNotifier {
       }
       await _attach(transport);
       _activeLink = link;
-      // Keep the connection-list identity stable for the session (the reported
-      // device name may differ from the advertised one).
-      DeviceDatabase.instance.seedLinkName(link.name);
+      _invalidateLinks();
       // Pull the live network (core + SNDB devices) now that the link is up,
       // so the UI shows real data immediately after an autoconnect.
       unawaited(DeviceDatabase.instance.refreshNetwork());
@@ -438,6 +503,7 @@ class ConnectionManager extends ChangeNotifier {
     await _streamSub?.cancel();
     _streamSub = null;
     _activeLink = null; // re-list the device once the session ends
+    _invalidateLinks();
     connectedId = null;
     for (final completer in _pending.values) {
       if (!completer.isCompleted) {
@@ -445,6 +511,8 @@ class ConnectionManager extends ChangeNotifier {
       }
     }
     _pending.clear();
+    _rxBuffers.clear();
+    _rxFrag.clear();
     final transport = _transport;
     _transport = null;
     if (transport != null) {
@@ -496,16 +564,54 @@ class ConnectionManager extends ChangeNotifier {
       // lengths via the format fields (ValueInfo.Size etc.), so any service-level
       // 4-byte padding is simply ignored.
       final buffer = _rxBuffers.putIfAbsent(txId, () => <int>[]);
-      final data = frame.isFrag && frame.payload.length >= 4
-          ? frame.payload.sublist(4)
-          : frame.payload;
-      buffer.addAll(data);
+      if (frame.isFrag) {
+        if (frame.payload.length < 4) {
+          _abortFragment(completer, txId, 'FRAG packet without fragment info');
+          continue;
+        }
+        final info = fragInfoOf(frame.payload);
+        final state = _rxFrag[txId];
+        if (state == null) {
+          if (info.current != 0) {
+            _abortFragment(completer, txId, 'stream starts at fragment ${info.current}');
+            continue;
+          }
+        } else if (info.current != state.next || info.total != state.total) {
+          _abortFragment(
+              completer,
+              txId,
+              'fragment ${info.current}/${info.total} out of order '
+              '(expected ${state.next}/${state.total})');
+          continue;
+        }
+        _rxFrag[txId] = (next: info.current + 1, total: info.total);
+        buffer.addAll(frame.payload.sublist(4));
+      } else {
+        buffer.addAll(frame.payload);
+      }
       if (frame.isStop) {
         _rxBuffers.remove(txId);
-        completer.complete(buffer);
+        _rxFrag.remove(txId);
+        completer.complete(PacketResponse(
+          payload: buffer,
+          success: frame.isSuccess,
+          fail: frame.isFail,
+        ));
       } else {
         _pending[txId] = completer;
       }
+    }
+  }
+
+  /// Drops a reply whose fragment sequence is inconsistent (a lost or duplicated
+  /// fragment would otherwise silently corrupt the reassembled stream).
+  void _abortFragment(Completer<PacketResponse> completer, int txId, String reason) {
+    _rxBuffers.remove(txId);
+    _rxFrag.remove(txId);
+    _pending.remove(txId);
+    AppDiagnostics.log('link', 'fragment stream aborted: $reason');
+    if (!completer.isCompleted) {
+      completer.completeError(TransportException('Fragment stream aborted: $reason'));
     }
   }
 
@@ -527,6 +633,24 @@ class ConnectionManager extends ChangeNotifier {
   /// Sends a single-packet request and waits for its response payload (REQACK is
   /// always set). Throws [TransportException] on timeout.
   Future<List<int>> request(
+    int targetId,
+    ServiceType service,
+    int functionCid, {
+    List<int> payload = const [],
+    Duration timeout = const Duration(seconds: 2),
+    bool requestFrag = false,
+    int? transactionId,
+  }) async =>
+      (await requestWithFlags(targetId, service, functionCid,
+              payload: payload,
+              timeout: timeout,
+              requestFrag: requestFrag,
+              transactionId: transactionId))
+          .payload;
+
+  /// Like [request], but returns the packet-level SUCCESS/FAIL flags alongside the
+  /// payload so callers can tell an accepted write from a FAIL reply.
+  Future<PacketResponse> requestWithFlags(
     int targetId,
     ServiceType service,
     int functionCid, {
@@ -556,7 +680,7 @@ class ConnectionManager extends ChangeNotifier {
       requestFrag: requestFrag,
     );
 
-    final completer = Completer<List<int>>();
+    final completer = Completer<PacketResponse>();
     _pending[txId] = completer;
     _rxBuffers[txId] = <int>[];
     try {
@@ -564,12 +688,14 @@ class ConnectionManager extends ChangeNotifier {
       return await completer.future.timeout(timeout, onTimeout: () {
         _pending.remove(txId);
         _rxBuffers.remove(txId);
+        _rxFrag.remove(txId);
         throw TransportException(
             '${service.name} CID $functionCid request timed out');
       });
     } catch (error) {
       _pending.remove(txId);
       _rxBuffers.remove(txId);
+      _rxFrag.remove(txId);
       rethrow;
     }
   }

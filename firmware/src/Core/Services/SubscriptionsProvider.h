@@ -66,25 +66,34 @@ static void ProviderClearEntry(ProviderEntry* e) {
     *e = ProviderEntry{};
 }
 
-// Installs (or updates) a provider entry from a subscription table. Returns the entry, or
-// nullptr when the table is full. Shared by 0401/0421 and the same-device re-registration.
-static ProviderEntry* ProviderInstall(uint16_t trid, uint16_t requesterAddr,
-                                      const SubscriptionTable &t) {
-    ProviderEntry* e = ProviderFindByTrid(trid);
-    bool isNew = (e == nullptr);
-    if (!e) e = ProviderFindFree();
-    if (!e) return nullptr;
+// Fills an already-resolved provider entry from a subscription table. `reset` forces a trigger
+// state reset (an explicit Set); a new entry (requesterAddr 0) or a changed source register
+// resets anyway, so a retargeted or re-set subscription cannot suppress its first send with a
+// stale hash/last value from the previous target.
+static void ProviderApply(ProviderEntry* e, uint16_t trid, uint16_t requesterAddr,
+                          const SubscriptionTable &t, bool reset) {
+    bool targetChanged = e->requesterAddr == 0 || e->sub.sourceReg != t.sourceReg;
     e->requesterAddr = requesterAddr;
     e->trid = trid;
     e->sub = t;
     e->timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
-    if (isNew) {
+    if (reset || targetChanged) {
         e->lastSentMs = 0;
         e->hash = 0;
         e->lastBool = false;
         e->sentCounter = 0;
         e->lastVec[0] = e->lastVec[1] = e->lastVec[2] = 0;
     }
+}
+
+// Installs (or updates) a provider entry from a subscription table. Returns the entry, or
+// nullptr when the table is full. Shared by 0401/0421 and the same-device re-registration.
+static ProviderEntry* ProviderInstall(uint16_t trid, uint16_t requesterAddr,
+                                      const SubscriptionTable &t, bool reset = false) {
+    ProviderEntry* e = ProviderFindByTrid(trid);
+    if (!e) e = ProviderFindFree();
+    if (!e) return nullptr;
+    ProviderApply(e, trid, requesterAddr, t, reset);
     return e;
 }
 
@@ -192,30 +201,50 @@ static void EvaluateProviderTriggers(uint32_t nowMs) {
     for (int i = 0; i < MAX_PROVIDER_SUBS; i++) {
         ProviderEntry* e = &providerTable[i];
         if (e->requesterAddr == 0) continue;
+        uint32_t elapsed = nowMs - e->lastSentMs;
+        // A Periodic entry that is not due yet never sends, so skip it before resolving (and
+        // possibly faulting on) its source register.
+        if (e->sub.trigger == TriggerType::Periodic &&
+            !(e->sub.periodMs > 0 && elapsed >= e->sub.periodMs))
+            continue;
         FieldResult fr = SubscriptionsGetField(e->sub.sourceReg);
         if (!fr.Data) continue;
         uint8_t vlen = fr.Descriptor.Size;
         if (vlen > MAX_PAYLOAD_SIZE) vlen = MAX_PAYLOAD_SIZE;
-        uint32_t elapsed = nowMs - e->lastSentMs;
 
         bool send = false;
+#ifdef USE_SUB_REQUEST
+        // OnChangeConfirm's current value hash (computed once), reused by the self-loopback
+        // below instead of hashing the value a second time.
+        uint32_t pendingHash = 0;
+        bool havePendingHash = false;
+#endif
         switch (e->sub.trigger) {
         case TriggerType::Periodic:
-            send = (e->sub.periodMs > 0) && (elapsed >= e->sub.periodMs);
-            if (send) e->hash = Fnv1a((const uint8_t *)fr.Data, vlen);
+            send = true; // the not-due skip above already checked periodMs > 0 && elapsed >= periodMs
             break;
 
         case TriggerType::OnChangePeriodic: {
-            uint32_t h = Fnv1a((const uint8_t *)fr.Data, vlen);
-            if (h != e->hash && elapsed >= SubMinTime(e->sub)) { send = true; e->hash = h; }
-            else if (e->sub.periodMs > 0 && elapsed >= e->sub.periodMs) { send = true; e->hash = h; }
+            const bool due = elapsed >= SubMinTime(e->sub);
+            const bool periodic = e->sub.periodMs > 0 && elapsed >= e->sub.periodMs;
+            if (due || periodic) { // hash only once a send is actually possible
+                uint32_t h = Fnv1a((const uint8_t *)fr.Data, vlen);
+                if (due && h != e->hash) { send = true; e->hash = h; }
+                else if (periodic) { send = true; e->hash = h; }
+            }
             break;
         }
 
         case TriggerType::OnChangeConfirm: {
             // Pure bit comparison; repeats until confirmed (hash updates on confirmation).
-            uint32_t h = Fnv1a((const uint8_t *)fr.Data, vlen);
-            send = (h != e->hash) && (elapsed >= SubMinTime(e->sub));
+            if (elapsed >= SubMinTime(e->sub)) { // hash only after the gate
+                uint32_t h = Fnv1a((const uint8_t *)fr.Data, vlen);
+                send = (h != e->hash);
+#ifdef USE_SUB_REQUEST
+                pendingHash = h;
+                havePendingHash = true;
+#endif
+            }
             break;
         }
 
@@ -241,8 +270,15 @@ static void EvaluateProviderTriggers(uint32_t nowMs) {
                 int32_t raw = 0;
                 memcpy(&raw, fr.Data, 4);
                 uint32_t delta = SubscriptionsAbsDelta(raw, (int32_t)e->hash);
-                uint32_t dz = e->sub.deadzone.Value > 0 ? (uint32_t)e->sub.deadzone.Value : 0;
-                if (delta >= dz && elapsed >= SubMinTime(e->sub)) {
+                // The deadzone is Q16.16 for a Number source; an Index/Uint32 source is a
+                // plain integer, so only its integer part applies (Value >> 16).
+                int32_t dzRaw = ValueInfoType(fr.Descriptor.Type) == (uint16_t)DataType::Number
+                                    ? e->sub.deadzone.Value
+                                    : (e->sub.deadzone.Value >> 16);
+                uint32_t dz = dzRaw > 0 ? (uint32_t)dzRaw : 0;
+                // deadzone 0 means "any change": require a non-zero delta, not delta >= 0.
+                bool changed = dz == 0 ? delta != 0 : delta >= dz;
+                if (changed && elapsed >= SubMinTime(e->sub)) {
                     send = true;
                     e->hash = (uint32_t)raw;
                 } else if (e->sub.periodMs > 0 && elapsed >= e->sub.periodMs) {
@@ -263,7 +299,10 @@ static void EvaluateProviderTriggers(uint32_t nowMs) {
                 // units at 1/256 resolution; a deadzone below 1/256 still means "any change".
                 uint32_t dz = e->sub.deadzone.Value > 0 ? ((uint32_t)e->sub.deadzone.Value >> 8) : 0;
                 uint32_t dz2 = dz > 0xFFFFu ? 0xFFFFFFFFu : dz * dz;
-                if (SubscriptionsVectorDist2(fr, e->lastVec) >= dz2 && elapsed >= SubMinTime(e->sub))
+                uint32_t dist2 = SubscriptionsVectorDist2(fr, e->lastVec);
+                // deadzone 0 means "any change": require a non-zero distance.
+                bool changed = dz == 0 ? dist2 != 0 : dist2 >= dz2;
+                if (changed && elapsed >= SubMinTime(e->sub))
                     send = true;
                 else if (e->sub.periodMs > 0 && elapsed >= e->sub.periodMs)
                     send = true;
@@ -295,16 +334,19 @@ static void EvaluateProviderTriggers(uint32_t nowMs) {
         if (e->requesterAddr == DeviceStatus.ShortAddress) {
             RequesterEntry* r = RequesterFindByTrid(e->trid);
             if (r) { ApplyRequesterValue(r, (const uint8_t *)fr.Data, vlen, false); applied = true; }
-            if (e->sub.trigger == TriggerType::OnChangeConfirm)
-                e->hash = Fnv1a((const uint8_t *)fr.Data, vlen);
+            if (e->sub.trigger == TriggerType::OnChangeConfirm && havePendingHash)
+                e->hash = pendingHash;
         }
 #endif
         if (!applied) {
             uint8_t prio = SubscriptionsHighPriority(e->sub.trigger) ? SUB_PRIORITY_HIGH : SUB_PRIORITY_LOW;
+            // Only OnChangeConfirm repeats until acknowledged; tagging every update with
+            // FLAG_REQACK made the requester confirm triggers that never expect a reply.
+            uint8_t flags = FLAG_TYPE | FLAG_START | FLAG_STOP;
+            if (e->sub.trigger == TriggerType::OnChangeConfirm) flags |= FLAG_REQACK;
             PacketConstruct(&tx_frame, e->requesterAddr,
                             MakeService(ServiceType::Subscriptions, 0),
-                            e->trid,
-                            FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_REQACK,
+                            e->trid, flags,
                             (const uint8_t *)fr.Data, vlen, prio);
             SendAndVerifyPacket(tx_frame);
         }

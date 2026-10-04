@@ -8,6 +8,7 @@ import 'package:tamuapp/core/subscription_client.dart';
 import 'package:tamuapp/core/types.dart'
     show Capability, ProviderSubscription, RequesterSubscription, blockInfoLabel;
 import 'subscriptions_dialog.dart' show SubscriptionDialog;
+import 'widgets.dart' show showSnack;
 
 class SubscriptionsPage extends StatefulWidget {
   final int deviceId;
@@ -113,7 +114,7 @@ class _SubscriptionsPageState extends State<SubscriptionsPage> with SingleTicker
   Widget _buildProviderTab() {
     final db = DeviceDatabase.instance;
     final device = db.byId(widget.deviceId);
-    final hasProviderCapability = device?.capabilities != null && (device!.capabilities & Capability.subscriptions) != 0;
+    final hasProviderCapability = device?.capabilities != null && (device!.capabilities & Capability.subscriptionProvide) != 0;
     
     if (!hasProviderCapability) {
       return const Center(
@@ -154,7 +155,10 @@ class _SubscriptionsPageState extends State<SubscriptionsPage> with SingleTicker
                 _detailRow('Trigger', sub.trigger.label),
                 _detailRow('Period', '${sub.periodMs} ms'),
                 _detailRow('Min Interval', '${sub.minTimeMs} ms'),
-                _detailRow('Last Sent', '${sub.lastSentMs} ms ago'),
+                _detailRow('Deadzone', '${sub.deadzone}'),
+                // lastSentMs is an absolute ms value in the provider's local uptime, not a
+                // "time ago" delta (Docs/Services/Subscriptions.md:43).
+                _detailRow('Last Sent', '${sub.lastSentMs} ms (uptime)'),
                 _detailRow('Requester Addr', '${sub.requesterAddr}'),
                 _detailRow('TRID', '0x${sub.trid.toRadixString(16).padLeft(4, '0')}'),
                 _detailRow('Hash', '0x${sub.hash.toRadixString(16).padLeft(8, '0')}'),
@@ -167,6 +171,26 @@ class _SubscriptionsPageState extends State<SubscriptionsPage> with SingleTicker
   }
 
 Widget _buildRequesterTab() {
+    // Docs/Services/Subscriptions.md models separate Request/Provide capabilities; the
+    // app+firmware expose only one `subscriptions` bit (types.dart Capability), and the
+    // requester side is core-only today. Gate on Core and note that a dedicated requester
+    // capability bit is still needed (see Issues.md "App (subscriptions)").
+    final device = DeviceDatabase.instance.byId(widget.deviceId);
+    final canRequest =
+        device != null && (device.capabilities & Capability.core) != 0;
+    if (!canRequest) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(16),
+          child: Text(
+            'This device does not support requester subscriptions.\n'
+            'Requester subscriptions are a core feature.',
+            style: TextStyle(color: Colors.white54),
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
     final listChildren = <Widget>[
       Expanded(
         child: _requesterSubs.isEmpty
@@ -222,6 +246,7 @@ Widget _buildRequesterTab() {
                 _detailRow('Trigger', sub.trigger.label),
                 _detailRow('Period', '${sub.periodMs} ms'),
                 _detailRow('Min Interval', '${sub.minTimeMs} ms'),
+                _detailRow('Deadzone', '${sub.deadzone}'),
                 const SizedBox(height: 8),
                 FilledButton(
                   onPressed: () => _showSubscriptionDialog(sub),
@@ -265,16 +290,18 @@ Widget _buildRequesterTab() {
   }
 
   Future<void> _deleteRequesterSubscription(int index) async {
+    // NOTE: setRequesterSubscription() treats a non-null reply as success, but a FAIL reply
+    // also carries a payload (Issues.md "App (subscriptions)"); surfacing failure needs the
+    // core request() to expose the response flags. Until then a provider-only DAS can
+    // report a delete as successful.
     final ok = await _client.setRequesterSubscription(index, entry: null);
     if (ok) {
       await _loadSubscriptions();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Subscription deleted')));
+        showSnack(context, 'Subscription deleted');
       }
     } else {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to delete subscription')));
-      }
+      if (mounted) showSnack(context, 'Failed to delete subscription');
     }
   }
 }

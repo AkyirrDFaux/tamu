@@ -23,21 +23,21 @@ const int defaultPriority = 8;
 
 /// Reserved TRID ranges (Docs/RSBus and Packets.md "Transaction IDs"). The App owns
 /// 0xF000-0xFFFF: every app request draws its transaction ID from that range and a reply
-/// echoes the same TRID, so the app routes on the full 16-bit value.
-const int tridSysBase = 0x0000;
-const int tridSysMax = 0x0FFF;
+/// echoes the same TRID, so the app routes on the full 16-bit value. (The System/Logs and
+/// Script ranges are firmware-owned and unknown to the app, so they are not declared here.)
 const int tridSubBase = 0x1000;
 const int tridSubMax = 0x1FFF;
-const int tridScriptBase = 0x2000;
-const int tridScriptMax = 0x2FFF;
 const int tridAppBase = 0xF000;
 const int tridAppMax = 0xFFFF;
 
 /// Legacy placeholder address. The firmware rewrites id_src on app frames (the core
-/// proxies the app), so this value is inert - kept only as a safe default.
+/// proxies the app), so this value is inert - kept only as a safe default. It is the
+/// app's own source only; it must never be used as a subscription address.
 const int appSourceId = 0xFFFE;
 
 /// Service types (matches the firmware enum in Core/Functions/Packet.h).
+/// `router` (0x10) has no firmware service (Docs: "not to be implemented yet"); it is
+/// kept because a packet test exercises the parser with it.
 enum ServiceType {
   device(0x00),
   register(0x01),
@@ -235,4 +235,6 @@ class RegisterCid {
 class DynamicCid {
   static const create = 0x10;
   static const delete = 0x11;
+  static const getName = 0x12;
+  static const setName = 0x13;
 }

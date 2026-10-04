@@ -84,6 +84,11 @@ class RegisterClient {
     return words;
   }
 
+  /// The block types currently present, with their highest instance index. Cached for the
+  /// session because the static registry is fixed; dynamic mutations call
+  /// [invalidateBlockTypes].
+  List<({int type, int maxInstance})>? _blockTypesCache;
+
   /// Enumerate the present block types with their highest instance index (CID 0, empty
   /// request, Docs/Services/Register.md). The reply is a stream of packed words; a type with no
   /// instances is absent (a real type is never 0).
@@ -92,16 +97,23 @@ class RegisterClient {
   /// dynamic range is a single entry in an **8.8** split: the high byte is the owning bank type's
   /// low byte (0xF0-0xF3) and the low byte the highest occupied global index (0..255).
   Future<List<({int type, int maxInstance})>?> enumerateBlockTypes() async {
+    final cached = _blockTypesCache;
+    if (cached != null) return cached;
     final reply = await request(RegisterCid.enumerateBlocks, payload: const []);
     if (reply == null) return null;
-    return [
+    final types = [
       for (final w in _streamWords(reply))
         if ((w >> 8) >= 0xF0) // banked: reconstruct the 0x3F0-0x3F7 type
           (type: 0x300 | (w >> 8), maxInstance: w & 0xFF)
         else
           (type: (w >> 6) & 0x3FF, maxInstance: w & 0x3F),
     ];
+    _blockTypesCache = types;
+    return types;
   }
+
+  /// Drops the cached block-type enumeration (a dynamic create/delete changes it).
+  void invalidateBlockTypes() => _blockTypesCache = null;
 
   /// The occupied dynamic global indices (0..255), from the banked 8.8 enumerate entry.
   Future<List<int>?> enumerateDynamicIndices() async {
@@ -264,13 +276,13 @@ class RegisterClient {
       blocks.add((type: 0, inst: 0, meta: sysBlock.meta, name: 'System'));
     }
 
-    Future<void> addType(int type, {List<int>? ids}) async {
-      final list = ids ?? await enumerateInstanceIds(type);
-      if (list == null) return;
-      for (final inst in list) {
-        final block = await readBlockMeta(type, inst);
+    // Use the already-fetched type list; static instances are dense (0..maxInstance),
+    // so no per-type re-enumeration is needed.
+    Future<void> addType(({int type, int maxInstance}) t) async {
+      for (var inst = 0; inst <= t.maxInstance; inst++) {
+        final block = await readBlockMeta(t.type, inst);
         if (block != null) {
-          blocks.add((type: type, inst: inst, meta: block.meta, name: block.name));
+          blocks.add((type: t.type, inst: inst, meta: block.meta, name: block.name));
         }
       }
     }
@@ -293,7 +305,7 @@ class RegisterClient {
         }
         continue;
       }
-      await addType(t.type);
+      await addType(t);
     }
     // Loaded scripts: addressed by their global slot (the Script service owns the file↔slot map).
     for (final slot in scriptSlots ?? const []) {
@@ -355,13 +367,20 @@ class RegisterClient {
     return blocks;
   }
 
-  /// Reads one dynamic block's meta + name (CID 1).
+  /// Reads one dynamic block's meta + name. The meta (type + field count) comes from the basic
+  /// Read at field `0xFF`; the name comes from the Dynamic `Get Name` command (CID 0x12), which
+  /// returns the fixed 16-char name.
   Future<DynBlock?> readDynamicBlockMeta(int block) async {
     final reply = await request(RegisterCid.read, payload: _dynBi(block, 0xFF));
     if (reply == null || reply.length < 8) return null;
     final meta = ValueInfo.fromBytes(reply, 4);
-    // The name is a fixed 16-char field, space-padded (Docs "Dynamic Block Table").
-    final name = reply.length > 8 ? _blockName(reply.sublist(8)) : '';
+
+    // The name is a fixed 16-char field (Docs "Dynamic Block Table"), read by CID 0x12.
+    final nameReply = await request(DynamicCid.getName,
+        payload: [block & 0xFF, (block >> 8) & 0xFF]);
+    final name = (nameReply != null && nameReply.length >= 16)
+        ? _blockName(nameReply)
+        : '';
     return DynBlock(index: block, meta: meta, name: name);
   }
 
@@ -416,22 +435,22 @@ class RegisterClient {
       ...nameBytes,
     ]);
     if (reply == null || reply.length < 5) return null;
+    invalidateBlockTypes();
     return reply[0]; // BlockIndex echo, block byte
   }
 
-  /// Sets a dynamic block's name and/or type (CID 2, field 0xFF = block meta).
+  /// Sets a dynamic block's name through the Dynamic `Set Name` command (CID 0x13):
+  /// `Index (uint16)` + the fixed 16-char name. [type] is a legacy block-type argument the
+  /// command no longer carries (block deletion goes through [deleteDynamic]); it is ignored.
   Future<bool> writeDynamicBlockMeta(DynBlock block, String name, BlockType? type) async {
     final nameBytes = _padBlockName(name);
-    final meta = ValueInfo(
-      type: type?.value ?? dynamicTypeForIndex(block.index),
-      size: nameBytes.length,
-    );
-    final reply = await request(RegisterCid.write, payload: [
-      ..._dynBi(block.index, 0xFF),
-      ...meta.toBytes(),
+    final reply = await request(DynamicCid.setName, payload: [
+      block.index & 0xFF,
+      (block.index >> 8) & 0xFF,
       ...nameBytes,
     ]);
-    return reply != null && reply.length >= 5 && reply[4] != 0;
+    // The command replies with a one-byte status (0 = success).
+    return reply != null && reply.isNotEmpty && reply[0] == 0;
   }
 
   /// Appends an entry to a dynamic block (CID 2), or fills the slot at `index`
@@ -484,8 +503,12 @@ class RegisterClient {
     if (field == null) {
       final reply = await request(DynamicCid.delete,
           payload: [block & 0xFF, (block >> 8) & 0xFF]);
+      if (reply != null && reply.isNotEmpty && reply[0] == 0) {
+        invalidateBlockTypes();
+        return true;
+      }
       // The delete replies with a one-byte status (0 = success, 0xFF = refused).
-      return reply != null && reply.isNotEmpty && reply[0] == 0;
+      return false;
     }
     final dyn = DynBlock(
         index: block, meta: ValueInfo(type: dynamicTypeForIndex(block)), name: '');
@@ -615,7 +638,7 @@ class RegisterClient {
   }
 
   /// Saves the whole device to its backup (CID 4 "Save All"): the System block's persistent
-  /// fields, every static block, and every dynamic block's DT_/DV_ files. Per
+  /// fields, every static block, and every dynamic block's .DT_/.DV_ files. Per
   /// Docs/Services/Register.md the command carries no BlockInfo; partial saving is the app's
   /// job (direct file writes - see `saveFieldToBackup`).
   Future<bool> saveAll() async {

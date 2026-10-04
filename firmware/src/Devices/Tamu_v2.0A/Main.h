@@ -28,12 +28,14 @@ void ScriptsBootLoad();
 extern const DeviceType kDeviceType = DeviceType::Tamu_v2_0A;
 // Core (ID assignment, SN registry, time sync), the app link, and both user
 // memory services - matching the USE_* build flags so the app shows their views.
+// Subscriptions compiles both roles (USE_SUB_REQUEST + USE_SUB_PROVIDE).
 extern const uint32_t kCapabilities = Capabilities::Core |
                                         Capabilities::DynamicMemory |
                                         Capabilities::Scripts |
                                         Capabilities::StorageFiles |
                                         Capabilities::AppInterface |
-                                        Capabilities::Subscriptions;
+                                        Capabilities::SubscriptionRequest |
+                                        Capabilities::SubscriptionProvide;
 
 // Reads the factory MAC from eFuse as the 14-byte serial number (cached).
 const SerialNumber &GetSerialNumber()
@@ -83,10 +85,8 @@ StaticVolatile staticVol;
 Vysi1Display Display1(staticVol.display[0], staticPer.display[0]);
 Vysi1Display Display2(staticVol.display[1], staticPer.display[1]);
 
-const char* DeviceVersion = "Tamu v2.0A";
-
-// Registry order is load-bearing: the app reconstructs the registry index from the array,
-// reconstructs it from type + per-type instance order. Keep the entries grouped by type (see
+// Registry order is load-bearing: the app reconstructs each entry's registry index from
+// its block type + per-type instance order, so keep the entries grouped by type (see
 // FindStaticBlock in Core/Services/RegisterDefs.h).
 const StaticBlockDescriptor static_block_registry[] = {
     {&staticVol.ledButton, nullptr, &LEDButton_Schema, "LEDButton"},
@@ -117,25 +117,40 @@ PinModeOutput(LED_NOTIFICATION_PIN);
     PinLow(LED_NOTIFICATION_PIN);
     DeviceStatus.ShortAddress = 0;
 
-ESP_LOGI("INIT","b1 storage"); Storage.Init();
-ESP_LOGI("INIT","b2 backups"); LoadAllBackups(); // restores name + net-id from .SV too
+if (!AppConnected) { ESP_LOGI("INIT","b1 storage"); }
+    Storage.Init();
+if (!AppConnected) { ESP_LOGI("INIT","b2 backups"); }
+    LoadAllBackups(); // restores name + net-id from .SV too
 ScriptsBootLoad();         // loads SCR_XXX scripts flagged load-on-boot (Docs/Services/Script.md)
 PreloadVysiLayout();       // Vysi v1.0 layout file -> storage as "LAY_1"
 Vysi1BootLayout(Display1); // apply the (restored) layout file to each display
 Vysi1BootLayout(Display2);
-ESP_LOGI("INIT","b3 appif"); AppInterfaceInit();
+if (!AppConnected) { ESP_LOGI("INIT","b3 appif"); }
+    AppInterfaceInit();
 
-    // BLE app link (Nordic UART service); advertised under the device version string.
-ESP_LOGI("INIT","b4 ble"); AppBLEInit(DeviceVersion);
+    // BLE app link (Nordic UART service); advertised under the persisted System Name
+    // (Docs: "If possible, the device name is shown in BLE advertising"). The Name field is
+    // fixed 16-char space-padded with no terminator, so trim it into a C string.
+    char bleName[SYSTEM_NAME_LEN + 1];
+    uint8_t bleNameLen = SYSTEM_NAME_LEN;
+    while (bleNameLen > 0 && staticPer.system.Name[bleNameLen - 1] == ' ') bleNameLen--;
+    memcpy(bleName, staticPer.system.Name, bleNameLen);
+    bleName[bleNameLen] = '\0';
+if (!AppConnected) { ESP_LOGI("INIT","b4 ble"); }
+    AppBLEInit(bleName);
 
-ESP_LOGI("INIT","b5 usb"); AppUSBInit(); AppUSBStartTask();
+if (!AppConnected) { ESP_LOGI("INIT","b5 usb"); }
+    AppUSBInit(); AppUSBStartTask();
 
     // Seed PRNG with hardware RNG for CSMA backoff randomisation.
     SeedRand(esp_random());
 
-ESP_LOGI("INIT","b6 rs485"); SetupRS485();
-ESP_LOGI("INIT","b7 pwm"); SetupFanPWM();
-ESP_LOGI("INIT","b8 imu"); InitLSM6DS3();
+if (!AppConnected) { ESP_LOGI("INIT","b6 rs485"); }
+    SetupRS485();
+if (!AppConnected) { ESP_LOGI("INIT","b7 pwm"); }
+    SetupFanPWM();
+if (!AppConnected) { ESP_LOGI("INIT","b8 imu"); }
+    InitLSM6DS3();
 LED.Setup();
 
     PinHigh(LED_NOTIFICATION_PIN);
@@ -146,25 +161,27 @@ LED.Setup();
     // re-apply it to drive the pin to match the restored value (LED off by default).
     OnLEDStateChange(static_block_registry[0], 3, (const void *)&staticVol.ledButton.LEDState, sizeof(bool));
 
-    // The Tamu is always the core (ID 1): no discovery needed, no button check.
-    DeviceStatus.ShortAddress = 1;
+    // Restored net-ID (LoadAllBackups), or a random one: 0 and 0x3F are not allowed.
+    if (DeviceStatus.NetId == 0 || DeviceStatus.NetId >= 0x3F)
+    {
+        DeviceStatus.NetId = (uint8_t)(1 + (RawRand() % 61));
+    }
+    if (!AppConnected)
+        ESP_LOGI("INIT", "core net ID = %u", (unsigned)DeviceStatus.NetId);
+
+    // The Tamu is always the core: its address is NetID.1 (no discovery needed, no button
+    // check). Node addresses are MakeId(NetId, shortID) so id_src/id_tgt comparisons and
+    // routing are net-qualified.
+    DeviceStatus.ShortAddress = MakeId(DeviceStatus.NetId, 1);
 
     // Re-register the provider side of any restored requester subscriptions now that we
     // have our bus address (the provider table is non-persistent per the docs).
     ReRegisterSubscriptions();
 
-    // Core discover (docs, "Core functions"): the persistent net-ID was restored by
-    // LoadAllBackups from .SV (0 is not allowed -> randomly re-generated), then
-    // broadcast Core-discover to all cores (3F.1). A response carrying a MATCHING net
-    // within 500 ms means this net is claimed twice on the bus -> normal boot is
-    // aborted (issue logged; the main loop blinks the error LED) while the core stays
-    // reachable via the app link to change the net-ID.
-    if (DeviceStatus.NetId == 0 || DeviceStatus.NetId >= 0x3F)
-    {
-        DeviceStatus.NetId = (uint8_t)(1 + (RawRand() % 61));
-    }
-    ESP_LOGI("INIT", "core net ID = %u", (unsigned)DeviceStatus.NetId);
-
+    // Core discover (docs, "Core functions"): broadcast to all cores (3F.1) from NetID.1. A
+    // response carrying a MATCHING net within 500 ms means this net is claimed twice on the
+    // bus -> normal boot is aborted (issue logged; the main loop blinks the error LED) while
+    // the core stays reachable via the app link to change the net-ID.
     PacketFrame cd;
     PacketConstruct(&cd, ADDR_ALL_CORES,
                     MakeService(ServiceType::Device, 10),
@@ -179,15 +196,16 @@ LED.Setup();
         ProcessBus();
         Sleep(10);
     }
-    if (CoreCollisionFlag())
+    if (CoreCollisionFlag() && !AppConnected)
         ESP_LOGE("CORE", "Net-ID %u collides with another core - normal boot aborted",
                  (unsigned)DeviceStatus.NetId);
 
-    // Register the core's own serial number as ID 1 (once). Otherwise a Discover of its own
-    // SN (a stray broadcast) allocates a fresh ID (2) and leaves a bogus
-    // entry; AddDevice also replaces any wrong ID already stored for this SN.
+    // Register the core's own serial number (once). The SNDB stores device-only short IDs
+    // (net 0); the core is device 1. A net-0 target is resolved to the local net at match time
+    // (NetQualifyLocal), so no net is stored here. Otherwise a stray Discover of its own SN
+    // allocates a fresh device ID (2) and leaves a bogus entry; AddDevice replaces a wrong one.
     if (SNDB::FindShortID(GetSerialNumber()) != 1)
-        SNDB::AddDevice(GetSerialNumber(), 1);
+        SNDB::AddDevice(GetSerialNumber(), 1);;
 
     ReportLog(MakeLog(false, (uint16_t)ServiceType::Device, 0, 0));
 
@@ -229,7 +247,10 @@ LED.Setup();
         // Sample the IMU at its configured output data rate instead of every loop
         // (the sensor registers only change at ODR, so faster reads are wasted bus time).
         {
-            static const uint16_t OdrPeriodMs[8] = {80, 38, 19, 10, 5, 2, 1, 1};
+            // ODR periods (ms) for 12.5/26/52/104/208/416/833/1660 Hz. The loop below
+            // sleeps 2 ms, so the achieved rate is floored at ~500 Hz: entries 6/7
+            // (833/1660 Hz) clamp to 2 instead of the unreachable 1 ms.
+            static const uint16_t OdrPeriodMs[8] = {80, 38, 19, 10, 5, 2, 2, 2};
             static uint32_t lastImuMs = 0;
             uint8_t odr = staticPer.accgyr.SamplingRate < 8 ? staticPer.accgyr.SamplingRate : 3;
             if (DeviceStatus.UptimeMs - lastImuMs >= OdrPeriodMs[odr]) {

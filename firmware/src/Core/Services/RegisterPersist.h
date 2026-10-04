@@ -1,6 +1,6 @@
 #pragma once
 
-// CID 3/4 save+recall and the 0x10-0x13 dynamic management.
+// CID 4/5 save+recall and the 0x10-0x13 dynamic management.
 //
 // Part of Core/Services/Register.h (included from there).
 
@@ -64,11 +64,17 @@ static bool DynamicSaveAll() {
     return true;
 }
 
-// Rebuilds slot `i` from its DT/DV files; a slot with no DT file stays a tombstone. Returns
+// Rebuilds slot `i` from its DT/DV files; a slot with no DT file is tombstoned. Returns
 // false when the registry cannot grow to hold the slot.
 static bool RestoreDynamicBlock(uint16_t i) {
     DynamicBlockDescriptor scratch;
-    if (!LoadDynamicBlockFiles(scratch, i)) return true; // absent file = empty slot
+    if (!LoadDynamicBlockFiles(scratch, i)) {
+        // No DT file: any in-session live block still occupying this slot is stale, so
+        // tombstone it instead of leaving it untouched (Recall All is reachable at runtime).
+        if (i < dynamic_block_registry.block_count)
+            dynamic_block_registry.TombstoneBlock(i);
+        return true; // absent file = empty slot
+    }
     while (dynamic_block_registry.block_count <= i)
         if (!dynamic_block_registry.AddTombstone()) { scratch.Release(); return false; }
     dynamic_block_registry.TombstoneBlock(i);
@@ -77,7 +83,7 @@ static bool RestoreDynamicBlock(uint16_t i) {
 }
 
 // Rebuilds every slot from its DT/DV files. Per the docs each block keeps its own files, so
-// a slot with no DT file stays a tombstone.
+// a slot with no DT file is tombstoned (it might still hold an in-session live block).
 static bool DynamicRecallAll() {
     for (uint16_t i = 0; i < MAX_DYNAMIC_BLOCKS; i++)
         if (!RestoreDynamicBlock(i)) return false;
@@ -86,6 +92,11 @@ static bool DynamicRecallAll() {
 
 static void HandleCreateDynamic(const PacketFrame &frame, uint16_t index) {
     if (PayloadBytes(frame) < 2) { RespondStatus(frame,false); return; }
+    // The global index is one byte on the wire's dynamic address space, bounded by the
+    // registry/cleanup/save loops (all MAX_DYNAMIC_BLOCKS). A larger index would make
+    // AddBlockAt pad tombstones past `block_count` so the block is enumerated (8 bits,
+    // truncated) but never saved or cleaned up.
+    if (index >= MAX_DYNAMIC_BLOCKS) { RespondStatus(frame,false); return; }
     uint16_t name_len = PayloadBytes(frame) - 2;
     DynamicBlockDescriptor *block = CreateDynamicBlock(frame.payload + 2, name_len, index);
     if (!block) { RespondStatus(frame,false); return; }
@@ -103,7 +114,7 @@ static void HandleDeleteDynamic(const PacketFrame &frame, uint16_t block_idx) {
 static void HandleGetName(const PacketFrame &frame, uint16_t block_idx) {
     if (block_idx >= dynamic_block_registry.block_count) { RespondStatus(frame,false); return; }
     DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(block_idx);
-    if (!block) { RespondStatus(frame,false); return; }
+    if (!block || !block->present) { RespondStatus(frame,false); return; }
     SendResponse(frame, (const uint8_t *)block->Name, BLOCK_NAME_LEN);
 }
 
@@ -111,14 +122,14 @@ static void HandleSetName(const PacketFrame &frame, uint16_t block_idx) {
     if (block_idx >= dynamic_block_registry.block_count) { RespondStatus(frame,false); return; }
     if (PayloadBytes(frame) < 2) { RespondStatus(frame,false); return; }
     DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(block_idx);
-    if (!block) { RespondStatus(frame,false); return; }
+    if (!block || !block->present) { RespondStatus(frame,false); return; }
     SetBlockName(block->Name, (const char *)(frame.payload + 2), (uint16_t)(PayloadBytes(frame) - 2));
     RespondStatus(frame, true);
 }
 
 #endif
 
-// CID 3 (Recall All) / CID 4 (Save All): the whole device in one command
+// CID 4 (Recall All) / CID 5 (Save All): the whole device in one command
 // (Docs/Services/Register.md - no BlockInfo). Partial saving/recall is the app's job (direct
 // file writes / direct register writes), so nothing is addressed here. Each target keeps its
 // own bounded read-modify-write - a DAS's whole persistent set does not fit one

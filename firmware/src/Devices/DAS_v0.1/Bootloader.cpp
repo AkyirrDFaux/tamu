@@ -14,9 +14,9 @@
 // page on the first half (offset % 64 == 0) and programs both halves. It never touches the
 // storage region at 0x3F00 (the app's `.SV`/table live there).
 //
-// It is written with direct register access (no SPL GPIO/USART/RCC) to fit the 2 KB region
-// alongside the framework startup/SystemInit; only the FLASH helpers use the SPL. The clock
-// is already 48 MHz: the framework's `_start` calls SystemInit before main.
+// It is written with direct register access (no SPL GPIO/USART/RCC/FLASH) to fit the 2 KB
+// region alongside the framework startup/SystemInit. The clock is already 48 MHz: the
+// framework's `_start` calls SystemInit before main.
 //
 // This file is built ONLY into the `DAS_bootloader` env (the app env filters it out).
 
@@ -42,8 +42,10 @@
 // The running nodes only need the standard CSMA window (8 byte times) because their reply
 // follows a full service-handler pass; the bootloader answers immediately, so the window is
 // widened to cover the core's TX-enable release. Counted from the tick counter (bus-state
-// based), not a fixed delay.
+// based), not a fixed delay. The wait is capped so a continuously noisy/stuck bus cannot
+// block the reply forever.
 #define BL_SILENCE_BYTES 32u
+#define BL_SILENCE_MAX_US 10000u
 
 // ---------------------------------------------------------------------------
 // GPIO (direct register: CFGLR is 4 bits per pin; all DAS pins are < 8)
@@ -106,7 +108,8 @@ __attribute__((noinline)) static void FlashErasePageFast(uint32_t addr)
     FLASH->CTLR &= ~FCR_PAGE_ER;
 }
 
-// Programs one 32-bit word as the two half-words the fast controller expects.
+// Programs one 32-bit word with the standard two-half-word sequence (FCR_PG); the fast
+// controller (FCR_PAGE_ER) is used only by the 64-byte page erase.
 __attribute__((noinline)) static void FlashProgramWord(uint32_t addr, uint32_t data)
 {
     FLASH->CTLR |= FCR_PG;
@@ -127,7 +130,7 @@ static bool FlashErasePage(uint32_t addr)
     return check == 0xFFFFFFFFu;
 }
 
-static bool FlashWrite(uint32_t addr, const uint8_t *src, uint32_t len)
+static void FlashWrite(uint32_t addr, const uint8_t *src, uint32_t len)
 {
     FlashUnlock();
     for (uint32_t off = 0; off < len; off += 4)
@@ -137,7 +140,6 @@ static bool FlashWrite(uint32_t addr, const uint8_t *src, uint32_t len)
         FlashProgramWord(FLASH_CTRL_BASE + addr + off, w);
     }
     FlashLock();
-    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -163,10 +165,8 @@ static void SetupUart()
     USART1->CTLR1 |= 0x2000u /* UE */;
 }
 
-static bool WaitByte(uint8_t *b, uint32_t timeout_us)
+static bool WaitByte(uint8_t *b, uint32_t start, uint32_t timeout_cycles)
 {
-    uint32_t start = SysTick->CNT;
-    uint32_t timeout_cycles = timeout_us * CYCLES_PER_US;
     while ((SysTick->CNT - start) < timeout_cycles)
     {
         if (USART1->STATR & USART_FLAG_RXNE)
@@ -178,26 +178,30 @@ static bool WaitByte(uint8_t *b, uint32_t timeout_us)
     return false;
 }
 
-// Reads one raw frame into `out`; returns its length or 0 on timeout/invalid.
+// Reads one raw frame into `out`; returns its length or 0 on timeout/invalid. `timeout_us`
+// bounds the whole frame, not each byte, so a stalled frame is abandoned after one window
+// while a frame that keeps arriving still completes.
 static int ReceiveFrame(uint8_t *out, size_t cap, uint32_t timeout_us)
 {
+    uint32_t start = SysTick->CNT;
+    uint32_t timeout_cycles = timeout_us * CYCLES_PER_US;
     uint8_t b;
     for (;;)
     {
-        if (!WaitByte(&b, timeout_us)) return 0;
+        if (!WaitByte(&b, start, timeout_cycles)) return 0;
         if (b == Bootloader::START) break; // skip anything that is not a frame start
     }
 
     size_t got = 0;
     out[got++] = b;
-    if (!WaitByte(&b, timeout_us)) return 0;
+    if (!WaitByte(&b, start, timeout_cycles)) return 0;
     out[got++] = b;
 
     uint16_t need = Bootloader::FrameSize((uint8_t)(b & 0x03));
     if (need == 0 || need > cap) return 0;
     while (got < need)
     {
-        if (!WaitByte(&b, timeout_us)) return 0;
+        if (!WaitByte(&b, start, timeout_cycles)) return 0;
         out[got++] = b;
     }
     return Bootloader::Decode(out, need) ? (int)need : 0;
@@ -210,7 +214,9 @@ static void SendRaw(const uint8_t *data, size_t len)
     // immediately collides. Like the running nodes we count bus activity by draining RX and
     // time the quiet span with the tick counter, not a fixed delay.
     const uint32_t silence_cycles = BL_SILENCE_BYTES * BL_BYTE_TIME_US * CYCLES_PER_US;
-    uint32_t idle_since = SysTick->CNT;
+    const uint32_t silence_max_cycles = BL_SILENCE_MAX_US * CYCLES_PER_US;
+    uint32_t wait_start = SysTick->CNT;
+    uint32_t idle_since = wait_start;
     for (;;)
     {
         if (USART1->STATR & USART_FLAG_RXNE)
@@ -219,6 +225,11 @@ static void SendRaw(const uint8_t *data, size_t len)
             idle_since = SysTick->CNT;
         }
         else if ((uint32_t)(SysTick->CNT - idle_since) >= silence_cycles)
+        {
+            break;
+        }
+        // Bound the wait: a bus that never goes quiet must not block the bootloader.
+        if ((uint32_t)(SysTick->CNT - wait_start) >= silence_max_cycles)
         {
             break;
         }
@@ -306,8 +317,6 @@ int main(void)
     // Bootloader mode: white LED on, then serve frames until reset.
     GPIOD->BSHR = (1u << 0);
     SetupUart();
-
-
 
     for (;;)
     {

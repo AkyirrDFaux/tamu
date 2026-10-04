@@ -10,7 +10,7 @@
 #include "Core/Services/Storage.h"
 #include "Core/Types/Enums.h"
 
-// Reduced subscription service (Docs/Services/Subscriptions.md).
+// Subscription service (Docs/Services/Subscriptions.md).
 //   USE_SUB_PROVIDE - provider side: sends source values (raw bytes) with hash-based
 //                     on-change detection, checked from the main loop.
 //   USE_SUB_REQUEST - requester side (Tamu): stores target/source, applies values with the

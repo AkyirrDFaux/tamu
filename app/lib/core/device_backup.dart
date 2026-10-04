@@ -5,8 +5,8 @@
 ///   `.SV`       the static memory's persistent space (firmware `StaticMemory.h` + the board's
 ///               `StaticPersistent`): a raw 1:1 mirror with no per-record headers
 ///   `SUBREQ`    the requester-subscription table (firmware `Subscriptions.h`)
-///   `DT_<xx>`   a dynamic block's entry table (firmware `Memory.h`)
-///   `DV_<xx>`   that block's packed persistent values (firmware `Memory.h`)
+///   `.DT_<xx>`   a dynamic block's entry table (firmware `Memory.h`)
+///   `.DV_<xx>`   that block's packed persistent values (firmware `Memory.h`)
 ///
 /// `.SV` carries no offsets, so the app recomputes the static persistent layout from the
 /// per-type field sizes + the 32-bit alignment rule (see [StaticSpaceLayout]). The decoders
@@ -139,14 +139,17 @@ class StaticSpaceLayout {
         fieldType[f.field] = DataType.fromValue(f.type);
         inner += f.size;
       }
+      // The struct stride is 4-byte aligned too (the 32-bit alignment rule applies to
+      // the instance stride, not just each field).
+      final stride = align4(inner);
       types[t] = StaticTypeLayout(
         base: cursor,
-        stride: inner,
+        stride: stride,
         fieldOffset: fieldOffset,
         fieldSize: fieldSize,
         fieldType: fieldType,
       );
-      cursor += inner * counts[t]!;
+      cursor += stride * counts[t]!;
     }
     return StaticSpaceLayout(types);
   }
@@ -222,7 +225,7 @@ List<int>? svSaveField(
   return out;
 }
 
-/// Returns [values] (a block's `DV_<xx>` bytes) with the (`field`, `key`) entry's bytes
+/// Returns [values] (a block's `.DV_<xx>` bytes) with the (`field`, `key`) entry's bytes
 /// replaced by [value], or null when that entry is not persistent or [value] is not the size
 /// the table declares.
 ///
@@ -318,14 +321,14 @@ class DynamicTableEntry {
   bool get persistent => flags & ValueFlags.persistent != 0;
 }
 
-/// A dynamic block's saved table (`DT_<xx>`).
+/// A dynamic block's saved table (`.DT_<xx>`).
 class DynamicTable {
   final String name;
   final List<DynamicTableEntry> entries;
 
   const DynamicTable({required this.name, required this.entries});
 
-  /// Total bytes the persistent entries occupy in the sibling `DV_` file (the space is
+  /// Total bytes the persistent entries occupy in the sibling `.DV_` file (the space is
   /// compacted, so the highest persistent MemoryOffset + size is its length).
   int get persistentSize {
     var total = 0;
@@ -367,7 +370,7 @@ DynamicTable? decodeDynamicTable(List<int> bytes) {
   return DynamicTable(name: name, entries: entries);
 }
 
-/// Pairs a decoded table with its `DV_` bytes.
+/// Pairs a decoded table with its `.DV_` bytes.
 ///
 /// Each persistent entry's bytes sit at its stored MemoryOffset in the DV space (the
 /// firmware requires the DV length to be exactly [DynamicTable.persistentSize]); a mismatch
@@ -402,7 +405,7 @@ typedef _DynamicKey = ({int inst, int field, int key});
 class DeviceBackup {
   final Map<_StaticKey, BackupEntry> _static;
   final Map<_DynamicKey, BackupEntry> _dynamic;
-  /// slot -> decoded DT_ table (retains volatile entries, which have no stored value).
+  /// slot -> decoded .DT_ table (retains volatile entries, which have no stored value).
   final Map<int, DynamicTable> _tables;
 
   const DeviceBackup._(this._static, this._dynamic, this._tables);
@@ -452,7 +455,7 @@ class DeviceBackup {
   ///
   /// [staticRegistry] is the device's static blocks (type + per-type instance) in enumeration
   /// order; the `.SV` decoder recomputes each field's offset from it. [dynamic] maps a dynamic
-  /// slot index to its (`DT_`, `DV_`) file bytes.
+  /// slot index to its (`.DT_`, `.DV_`) file bytes.
   factory DeviceBackup.decode({
     List<int>? sv,
     List<({int type, int inst})> staticRegistry = const [],

@@ -35,6 +35,11 @@ class _LogViewerPageState extends State<LogViewerPage>
   String? _error;
   bool _loading = false;
 
+  /// Device ids and the per-device grouping of the current log store, computed once when the
+  /// log is (re)read instead of on every build.
+  List<int> _deviceIds = const [];
+  Map<int, List<LogEntry>> _groups = const {};
+
   /// null = show every device's entries.
   int? _deviceFilter;
 
@@ -96,11 +101,19 @@ class _LogViewerPageState extends State<LogViewerPage>
         _error = 'Device did not respond';
       } else if (reply.isEmpty) {
         _logs = [];
+        _deviceIds = const [];
+        _groups = const {};
       } else {
         _logs = [
           for (var offset = 0; offset + 12 <= reply.length; offset += 12)
             LogEntry.fromBytes(reply.sublist(offset, offset + 12))
         ];
+        _deviceIds = (_logs!.map((l) => l.deviceId).toSet().toList())..sort();
+        final groups = <int, List<LogEntry>>{};
+        for (final l in _logs!) {
+          (groups[l.deviceId] ??= []).add(l);
+        }
+        _groups = groups;
       }
     });
   }
@@ -166,8 +179,7 @@ class _LogViewerPageState extends State<LogViewerPage>
 
   @override
   Widget build(BuildContext context) {
-    final devices = _logs?.map((l) => l.deviceId).toSet().toList();
-    devices?.sort();
+    final devices = _logs == null ? null : _deviceIds;
     return Scaffold(
       appBar: AppBar(
         title: Text('Logs - ${idToString(widget.deviceId)}'),
@@ -224,11 +236,17 @@ class _LogViewerPageState extends State<LogViewerPage>
               ? 'No logs recorded'
               : 'No logs match the filter'));
     }
-    // Group the entries by source device so each device reads as one section.
-    final byDevice = <int, List<LogEntry>>{};
-    for (final l in logs) {
-      (byDevice[l.deviceId] ??= []).add(l);
-    }
+    // Group the entries by source device so each device reads as one section. The no-filter
+    // case reuses the grouping computed when the log was read.
+    final byDevice = _deviceFilter == null
+        ? _groups
+        : (() {
+            final groups = <int, List<LogEntry>>{};
+            for (final l in logs) {
+              (groups[l.deviceId] ??= []).add(l);
+            }
+            return groups;
+          })();
     final groupIds = byDevice.keys.toList()..sort();
 
     final children = <Widget>[];
@@ -327,7 +345,7 @@ class LogEntry {
     if (isBlock) {
       return blockTypeLabel(sourceId);
     }
-    final service = ServiceType.fromValue(sourceId & 0xFF);
+    final service = ServiceType.fromValue(sourceId);
     return service?.name ?? 'Service ${sourceId & 0xFF}';
   }
 
@@ -358,7 +376,7 @@ class LogEntry {
   /// Maps a service log (source = service type, code = the failing CID or 0 for
   /// a boot/plain report) to a descriptive sentence.
   String? _serviceMeaning() {
-    final srv = ServiceType.fromValue(sourceId & 0xFF);
+    final srv = ServiceType.fromValue(sourceId);
     if (srv == null) return null;
     switch (srv) {
       case ServiceType.device:

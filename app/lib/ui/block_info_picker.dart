@@ -120,7 +120,8 @@ class _BlockInfoDialogState extends State<_BlockInfoDialog> {
                 const SizedBox(height: 8),
                 KeyPicker(
                   label: 'Key',
-                  value: _key > 7 ? 0 : _key,
+                  value: _key,
+                  keys: _field?.keys ?? const [],
                   onChanged: (k) => setState(() => _key = k),
                 ),
               ]);

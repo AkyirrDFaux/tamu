@@ -29,11 +29,14 @@ The feature suites drive the same protocol through the app's own clients, so the
 the app sees. Set the port and run one or more files:
 
 ```
-TAMU_HIL=/dev/ttyACM0 bash app/test/run_hil_tests.sh \
-    app/test/tamu_hardware_verification_test.dart \
-    app/test/hil_subscriptions_test.dart \
-    app/test/hil_dynamic_persistence_test.dart
+cd app
+TAMU_HIL=/dev/ttyACM0 bash test/run_hil_tests.sh \
+    test/tamu_hardware_verification_test.dart \
+    test/hil_subscriptions_test.dart \
+    test/hil_dynamic_persistence_test.dart
 ```
+
+(The runner resolves paths relative to `app/` and batches every file into one `flutter test`.)
 
 They are non-destructive by design (scratch blocks/files are removed and defaults restored).
 The evaluation-setup suite (`hil_current_setup_test.dart`) needs displays and fans; it applies

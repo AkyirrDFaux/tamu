@@ -24,3 +24,7 @@ W x H logical grid to physical LED strip positions.
   `firmware/src/Blocks/Vysi1Display.h`), so the display renders identically whether the
   `LayoutFile` field is blank (built-in default) or set to this file. The file is
   preloaded to the Tamu's storage at boot (name `LAY_1`, 223 bytes) when it is missing.
+
+  The `.lay` file and the compiled-in array are two copies of the same data with no equality
+  check, so a drifted edit is only caught by eye. A host test could decode this file and compare
+  it against the `LayoutVysiv1_0` bytes (a suggested addition, not written here).

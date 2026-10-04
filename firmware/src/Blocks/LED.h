@@ -7,7 +7,8 @@ struct LEDVolatile {
     bool LEDState = false;
 };
 
-bool OnLEDStateChange(const StaticBlockDescriptor &block, uint16_t index, const void *data, uint16_t data_len);
+// OnLEDStateChange is declared once in Blocks/Button.h, which must be included before this
+// header (see Devices/DAS_v0.1/Main.h).
 
 const BlockEntry LED_Entries[] = {
     { MakeFieldKey(0, 0), 0, {(uint16_t)DataType::Bool, sizeof(bool), ValueTrigger} },

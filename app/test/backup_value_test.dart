@@ -176,10 +176,11 @@ void main() {
     expect(json.containsKey('semantic'), isTrue);
   });
 
-  test('legacy numeric device JSON is rejected with a clear error', () {
-    expect(
-      () => BackupDevice.fromJson({'format': 1, 'blocks': []}),
-      throwsA(isA<FormatException>()),
-    );
+  test('legacy numeric device JSON no longer throws (pre-release branch dropped)', () {
+    // Development phase: with no pre-release archives in the wild the legacy
+    // numeric-format rejection was removed, so the old format field is read as
+    // an ordinary device JSON instead of being refused.
+    final decoded = BackupDevice.fromJson({'format': 1, 'blocks': []});
+    expect(decoded.blocks, isEmpty);
   });
 }

@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../core/types.dart';
-import 'theme.dart' show kOrange;
+import 'theme.dart' show kOrange, kSurfaceAlt;
 
 /// Autorefresh plumbing shared by the periodic-refresh pages (Docs/App/
 /// Connection.md + Service views): owns the timer, remembers the selected
@@ -191,6 +191,74 @@ class ShellDrawerButton extends StatelessWidget {
       icon: const Icon(Icons.menu),
       tooltip: 'Menu',
       onPressed: () => shellScaffoldKey.currentState?.openDrawer(),
+    );
+  }
+}
+
+/// A small orange section label used by the Settings and info pages.
+class SectionHeader extends StatelessWidget {
+  final String text;
+
+  const SectionHeader(this.text, {super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+      child: Text(text.toUpperCase(),
+          style: const TextStyle(color: kOrange, fontSize: 12, letterSpacing: 1)),
+    );
+  }
+}
+
+/// A titled card holding a list of rows (shared by the Update and Device view pages).
+class InfoCard extends StatelessWidget {
+  final String title;
+  final List<Widget> children;
+
+  const InfoCard({super.key, required this.title, required this.children});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: kSurfaceAlt,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+              child: Text(title,
+                  style: const TextStyle(
+                      color: kOrange, fontWeight: FontWeight.w600)),
+            ),
+            ...children,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A label/value row used inside an [InfoCard].
+class InfoRow extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const InfoRow(this.label, this.value, {super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
+      child: Row(children: [
+        SizedBox(
+            width: 140,
+            child:
+                Text(label, style: Theme.of(context).textTheme.bodySmall)),
+        Expanded(child: Text(value)),
+      ]),
     );
   }
 }

@@ -16,7 +16,6 @@
 #define BLE_CHUNK 480          // stream bytes per notification (+2 byte length prefix);
                                // the actual chunk cap is BleMtu - 5 (ATT header + length
                                // prefix), so 480 is only the static buffer size
-#define BLE_PACE_MS 0          // no artificial pacing; the app-task loop (~2 ms) throttles
 
 static NimBLEServer *BleServer = nullptr;
 static NimBLECharacteristic *BleTx = nullptr;
@@ -33,9 +32,10 @@ static volatile bool BleConnected = false;
 static bool BleOldConnected = false;   // for deferred advertising restart
 static bool BleAdvRestart = false;     // advertising must be restarted
 static volatile uint16_t BleMtu = 23;  // negotiated ATT MTU (ATT default)
-static uint32_t LastBleSend = 0;
 
-static WireStreamParser s_ble_parser; // ApplicationTask-context only
+// Fed and reset only from the NimBLE host task (BleTxCallbacks::onWrite and the
+// connect/disconnect callbacks), never from AppBLETick - see the framer race note there.
+static WireStreamParser s_ble_parser;
 
 // Reassembles the length-prefixed BLE chunks (uint16 LE + stream). BlueZ may
 // deliver characteristic writes fragmented or coalesced arbitrarily, so this
@@ -46,9 +46,8 @@ struct BleRxAssembler
     uint16_t got       = 0;   // stream bytes accumulated so far
     bool     haveLen   = false;
     uint8_t  lenBuf[2] = {0, 0};
-    uint32_t malformed = 0;   // diagnostics: chunks dropped for zero length
 
-    // Clears the in-flight chunk state (the `malformed` counter is diagnostics and kept).
+    // Clears the in-flight chunk state.
     // Called on connect/disconnect: a session that ends mid-chunk would otherwise leave
     // haveLen/got set, and the next session's first bytes would be read as payload instead of
     // a length prefix - the frame then never completes and nothing is ever dispatched, with no
@@ -71,7 +70,7 @@ struct BleRxAssembler
                 need   = (uint16_t)(lenBuf[0] | (lenBuf[1] << 8));
                 got    = 0;
                 haveLen= true;
-                if (need == 0) { malformed++; DeviceLog("APPBLE", "Zero-length BLE chunk dropped"); haveLen = false; }
+                if (need == 0) { DeviceLog("APPBLE", "Zero-length BLE chunk dropped"); haveLen = false; }
             }
             return false;
         }
@@ -233,9 +232,9 @@ bool AppBLEActive()
     return BleConnected;
 }
 
-// Pumped from ApplicationTask: drains the RX ring into the packet parser and pushes
-// paced notifications out while TX data is pending. Also restarts advertising after
-// a disconnect (deferred out of the BLE callback context, retried until it succeeds).
+// Pumped from ApplicationTask: flushes pending TX data as notifications. Also restarts
+// advertising after a disconnect (deferred out of the BLE callback context, retried until
+// it succeeds). RX (assembler + parser) is fed from the NimBLE host task's GATT callbacks.
 void AppBLETick()
 {
     // Comm LED is a per-burst pulse: RX/TX below turn it on, and this tick turns
@@ -243,10 +242,7 @@ void AppBLETick()
 
     // Deferred advertising restart.
     if (!BleConnected && BleOldConnected)
-    {
-        BleAdvRestart = true;
-        s_ble_parser.Reset();
-    }
+        BleAdvRestart = true; // s_ble_parser was already reset by onDisconnect (host task)
     bool wasConnected = BleOldConnected;
     BleOldConnected = BleConnected;
     if (wasConnected && !BleConnected)
@@ -294,12 +290,9 @@ void AppBLETick()
     if (!BleConnected)
         return;
 
-    // ---- TX (paced) ----
-    uint32_t now = TimeFromBoot();
-#if BLE_PACE_MS > 0
-    if (now - LastBleSend < BLE_PACE_MS)
-        return;
-#endif
+    // ---- TX ----
+    // No artificial pacing: AppBLETick runs from the ~2 ms app-task loop, which throttles
+    // notifications by itself.
     if (!AppTxRing)
         return;
 
@@ -326,7 +319,6 @@ void AppBLETick()
     if (BleTx && BleTx->notify(pkt, (size_t)(2 + n)))
     {
         AppTxCommit(n); // consumed only when the stack accepted the notification
-        LastBleSend = now;
         s_notifyFails = 0;
     }
     else

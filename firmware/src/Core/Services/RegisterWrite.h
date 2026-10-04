@@ -1,12 +1,12 @@
 #pragma once
 
-// CID 2: write helpers.
+// CID 3: write helpers.
 //
 // Part of Core/Services/Register.h (included from there).
 
 #include "Core/Services/RegisterDefs.h"
 
-// ===== CID 2: Write helpers =====
+// ===== CID 3: Write helpers =====
 
 #ifdef USE_DYNAMIC_BLOCKS
 static void HandleDynamicBlockWrite(const PacketFrame &frame, uint16_t inst, uint8_t field, uint8_t key, const ValueInfo *desc, const uint8_t *val, uint16_t vlen) {

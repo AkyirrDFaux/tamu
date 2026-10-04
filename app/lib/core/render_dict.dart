@@ -43,7 +43,6 @@ List<KeyedEntry>? parseKeyedDict(List<int> fieldValue) {
       value: fieldValue.sublist(offset + 6, offset + 6 + meta.size),
     ));
     final aligned = (6 + meta.size + 3) & ~3;
-    if (aligned == 0) break;
     offset += aligned;
   }
   return entries;

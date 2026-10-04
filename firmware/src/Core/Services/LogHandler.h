@@ -7,6 +7,34 @@
 //   CID 0: Error reporter (outbound on nodes, inbound DB input on the core).
 //   CID 1: GetLogs - stream of LogRecord entries (core only).
 //   CID 2: ClearReadLogs - clear N logs from the end, confirm (core only).
+#ifdef TYPE_CORE
+// qsort comparator: orders used-slot indices by their LogSeq (ascending = oldest first).
+// Reads the shared LogSeq table, so it is only valid on the single task that runs the
+// handler (no concurrent log append).
+static int LogSeqSlotCompare(const void *a, const void *b)
+{
+    uint16_t ia = *reinterpret_cast<const uint16_t *>(a);
+    uint16_t ib = *reinterpret_cast<const uint16_t *>(b);
+    uint32_t sa = LogSeq[ia];
+    uint32_t sb = LogSeq[ib];
+    return (sa > sb) - (sa < sb);
+}
+
+// Fills `order` (at least LOG_MAX_CAPACITY entries) with the used slot indices sorted
+// oldest-first by LogSeq and returns how many were written. One ordered pass feeds both
+// GetLogs and ClearReadLogs.
+static uint32_t LogBuildOrder(uint16_t *order)
+{
+    uint32_t used = 0;
+    for (uint32_t i = 0; i < LogCount; i++)
+        if (LogUsed[i])
+            order[used++] = (uint16_t)i;
+    if (used > 1)
+        qsort(order, used, sizeof(uint16_t), LogSeqSlotCompare);
+    return used;
+}
+#endif
+
 void HandleLogHandler(const PacketFrame &frame)
 {
     uint8_t cid = GetServiceCID(frame.srv_tgt);
@@ -79,83 +107,50 @@ void HandleLogHandler(const PacketFrame &frame)
         return;
     }
 
-    if (cid == 1) // GetLogs: stream every stored LogRecord entry
+    if (cid == 1 || cid == 2)
     {
-        uint16_t active = 0;
-        for (uint32_t i = 0; i < LogCount; i++)
-            if (LogUsed[i])
-                active++;
+        // One ordered view of the database (oldest first by LogSeq) feeds both CIDs:
+        // GetLogs must emit oldest-first, and ClearReadLogs must drop the lowest sequences.
+        static uint16_t order[LOG_MAX_CAPACITY];
+        uint32_t active = LogBuildOrder(order);
 
-        if (active == 0)
+        if (cid == 1) // GetLogs: stream every stored LogRecord entry, oldest first
         {
-            PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.trid,
-                             FLAG_TYPE | FLAG_START | FLAG_STOP, nullptr, 0);
-            DispatchPacket(tx_frame);
+            if (active == 0)
+            {
+                SendResponse(frame, nullptr, 0);
+                return;
+            }
+
+            // Stream every record as a FRAG stream (Docs/Services/Log Handler.md:
+            // "Fragmentation, entries"). Each fragment carries up to 112 bytes of
+            // LogRecords; SendFragFragment writes the 4-byte frag info.
+            uint32_t total = active * sizeof(LogRecord);
+            uint16_t total_frags = (uint16_t)((total + MAX_FRAG_CONTENT_SIZE - 1) / MAX_FRAG_CONTENT_SIZE);
+            uint32_t sent = 0;
+            for (uint16_t f = 0; f < total_frags; f++)
+            {
+                uint16_t off = 4;
+                while (off - 4 + sizeof(LogRecord) <= MAX_FRAG_CONTENT_SIZE && sent < active)
+                {
+                    memcpy(tx_frame.payload + off, &LogBuffer[order[sent]], sizeof(LogRecord));
+                    off += sizeof(LogRecord);
+                    sent++;
+                }
+                SendFragFragment(frame, f, total_frags, (uint16_t)(off - 4));
+            }
             return;
         }
 
-        // Stream every record as a FRAG stream (Docs/Services/Log Handler.md:
-        // "Fragmentation, entries"). Each fragment carries up to 112 bytes of
-        // LogRecords; the fragmentation info is the first 4 payload bytes.
-        uint32_t total = (uint32_t)active * sizeof(LogRecord);
-        uint16_t total_frags = (uint16_t)((total + MAX_FRAG_CONTENT_SIZE - 1) / MAX_FRAG_CONTENT_SIZE);
-        uint8_t buf[MAX_PAYLOAD_SIZE];
-        uint16_t sent = 0;
-        uint32_t scan = 0;
-        for (uint16_t f = 0; f < total_frags && sent < active; f++)
-        {
-            uint8_t flags = FLAG_TYPE | FLAG_FRAG;
-            if (f == 0) flags |= FLAG_START;
-            WriteFragInfo(buf, f, total_frags);
-            uint16_t off = 4;
-            while (off - 4 + sizeof(LogRecord) <= MAX_FRAG_CONTENT_SIZE && sent < active)
-            {
-                while (scan < LogCount && !LogUsed[scan]) scan++;
-                if (scan >= LogCount) break;
-                memcpy(buf + off, &LogBuffer[scan], sizeof(LogRecord));
-                off += sizeof(LogRecord);
-                scan++;
-                sent++;
-            }
-            if (sent >= active || f == total_frags - 1) flags |= FLAG_STOP;
-
-            PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.trid,
-                             flags, buf, off);
-            DispatchPacket(tx_frame);
-            if (sent >= active) break;
-        }
-        return;
-    }
-
-    if (cid == 2) // ClearReadLogs: clear the `n` OLDEST entries (lowest seq), per Log Handler.md
-    {
+        // ClearReadLogs: clear the `n` OLDEST entries (lowest seq), per Log Handler.md
         uint32_t n = 0;
         if (PayloadBytes(frame) >= 4)
             memcpy(&n, frame.payload, sizeof(n));
-        while (n > 0)
-        {
-            int oldest = -1;
-            uint32_t oldest_seq = 0xFFFFFFFF;
-            for (uint32_t i = 0; i < LogCount; i++)
-            {
-                if (LogUsed[i] && LogSeq[i] < oldest_seq)
-                {
-                    oldest_seq = LogSeq[i];
-                    oldest = (int)i;
-                }
-            }
-            if (oldest < 0)
-                break; // database empty
-            LogUsed[oldest] = false;
-            n--;
-        }
-        if (frame.flags & FLAG_REQACK)
-        {
-            uint8_t status = 0;
-            PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.trid,
-                             FLAG_TYPE | FLAG_START | FLAG_STOP, &status, 1);
-            DispatchPacket(tx_frame);
-        }
+        uint32_t clear = (n < active) ? n : active;
+        for (uint32_t k = 0; k < clear; k++)
+            LogUsed[order[k]] = false;
+        uint8_t status = 0;
+        SendResponse(frame, &status, 1);
     }
 #endif
 }

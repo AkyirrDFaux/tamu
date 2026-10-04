@@ -10,7 +10,7 @@ import 'package:tamuapp/core/types.dart';
 import 'hil_helpers.dart';
 import 'package:tamuapp/core/protocol.dart';
 
-/// Verifies dynamic persistence through the device's per-block files (Register.md: DT_XX / DV_XX
+/// Verifies dynamic persistence through the device's per-block files (Register.md: .DT_XX / .DV_XX
 /// files): save writes a block's table + persistent space, delete+save cleans the files
 /// without shifting positions, and a device reset restores persistent entries from
 /// flash (volatile entries come back zeroed).
@@ -50,15 +50,15 @@ void main() async {
     await c.saveAll();
 
     var files = await names();
-    if (!files.contains('DT_00') || !files.contains('DV_00')) {
-      fail('DT_00/DV_00 missing after save: ${files.where((f) => f.startsWith('DT_') || f.startsWith('DV_')).join(',')}');
+    if (!files.contains('.DT_00') || !files.contains('.DV_00')) {
+      fail('.DT_00/.DV_00 missing after save: ${files.where((f) => f.startsWith('.DT_') || f.startsWith('.DV_')).join(',')}');
     }
 
-    // The persistent value is in DV_00 (the app reads the DT_/DV_ files directly, not a CID).
-    final dt = await st.readFile('DT_00');
-    final dv = await st.readFile('DV_00');
+    // The persistent value is in .DV_00 (the app reads the .DT_/.DV_ files directly, not a CID).
+    final dt = await st.readFile('.DT_00');
+    final dv = await st.readFile('.DV_00');
     final table = dt == null ? null : decodeDynamicTable(dt);
-    if (table == null || dv == null) fail('DT_00/DV_00 unreadable');
+    if (table == null || dv == null) fail('.DT_00/.DV_00 unreadable');
     final backup = decodeDynamicValues(0, table, dv)
         .where((e) => e.field == 0 && e.key == 0)
         .firstOrNull;
@@ -70,9 +70,9 @@ void main() async {
     await c.deleteDynamic(block: 0);
     await c.saveAll();
     files = await names();
-    if (files.contains('DT_00') || files.contains('DV_00')) {
+    if (files.contains('.DT_00') || files.contains('.DV_00')) {
       fail('tombstoned files not cleaned on save: '
-          '${files.where((f) => f.startsWith('DT_') || f.startsWith('DV_')).toList()}');
+          '${files.where((f) => f.startsWith('.DT_') || f.startsWith('.DV_')).toList()}');
     }
     final idx = await c.createDynamicBlock('RENDER', index: 0);
     if (idx != 0) fail('recreate not at index 0');
@@ -134,8 +134,8 @@ void main() async {
     final files = await st.readFileTable();
     final names = files == null ? <String>[] :
         files.map((f) => normalizeFileName(f.name)).toList();
-    print('[P] save=$saved DT_00=${names.contains('DT_00')} DV_00=${names.contains('DV_00')}');
-    if (!names.contains('DT_00') || !names.contains('DV_00')) fail('files missing after save');
+    print('[P] save=$saved .DT_00=${names.contains('.DT_00')} .DV_00=${names.contains('.DV_00')}');
+    if (!names.contains('.DT_00') || !names.contains('.DV_00')) fail('files missing after save');
 
     // Hard reset: release the link, reset via esptool, re-connect.
     await ConnectionManager.instance.disconnect();
@@ -166,7 +166,7 @@ void main() async {
     final c = RegisterClient(deviceId: 1);
     final st = StorageClient(deviceId: 1);
 
-    // Clean slate, then persist one block so DT_00 / DV_00 exist.
+    // Clean slate, then persist one block so .DT_00 / .DV_00 exist.
     final count = (await c.enumerateDynamicIndices())?.length ?? 0;
     for (var i = 0; i < count; i++) {
       await c.deleteDynamic(block: i);
@@ -187,7 +187,7 @@ void main() async {
       200, 0, // entry_count far past the file
       0, 0, // reserved padding
     ];
-    if (!await st.writeFile('DT_00', corrupt)) fail('could not write the corrupt DT_00');
+    if (!await st.writeFile('.DT_00', corrupt)) fail('could not write the corrupt .DT_00');
 
     await ConnectionManager.instance.disconnect();
     await Process.run(
@@ -203,7 +203,7 @@ void main() async {
     if (m != null) fail('malformed DT was accepted: block 0 name=${m.name}');
 
     // Clean up the corrupt files (block 0 does not exist, so delete the files directly).
-    await st.deleteFile('DT_00');
-    await st.deleteFile('DV_00');
+    await st.deleteFile('.DT_00');
+    await st.deleteFile('.DV_00');
   }, timeout: const Timeout(Duration(minutes: 2)));
 }

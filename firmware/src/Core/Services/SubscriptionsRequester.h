@@ -65,14 +65,11 @@ static void RequesterRemove(RequesterEntry* e) {
     RequesterClearEntry(&requesterTable[MAX_REQUESTER_SUBS - 1]);
 }
 
-// Finds the entry for `trid`, or allocates it at its sorted position. Returns nullptr when the
-// table is full. The new entry is marked active with only its TRID set.
-static RequesterEntry* RequesterUpsert(uint16_t trid) {
+// Allocates a new active entry at its TRID-sorted position (the table stays a sorted prefix).
+// Returns nullptr when the table is full. The new entry carries only its TRID.
+static RequesterEntry* RequesterAlloc(uint16_t trid) {
     int count = 0;
-    while (count < MAX_REQUESTER_SUBS && requesterTable[count].active) {
-        if (requesterTable[count].trid == trid) return &requesterTable[count];
-        count++;
-    }
+    while (count < MAX_REQUESTER_SUBS && requesterTable[count].active) count++;
     if (count >= MAX_REQUESTER_SUBS) return nullptr;
     int pos = 0;
     while (pos < count && requesterTable[pos].trid < trid) pos++;
@@ -83,9 +80,23 @@ static RequesterEntry* RequesterUpsert(uint16_t trid) {
     return &requesterTable[pos];
 }
 
+// Finds the entry for `trid`, or allocates it at its sorted position. Returns nullptr when the
+// table is full.
+static RequesterEntry* RequesterUpsert(uint16_t trid) {
+    RequesterEntry* e = RequesterFindByTrid(trid);
+    if (e) return e;
+    return RequesterAlloc(trid);
+}
+
 // Applies a received value to the requester's target register (raw bytes) and confirms with
 // the FNV-1a hash of the received bytes.
-static void ApplyRequesterValue(RequesterEntry *e, const uint8_t *val, uint8_t vlen, bool confirm = true) {
+static void ApplyRequesterValue(RequesterEntry *e, const uint8_t *val, uint8_t vlen, bool confirm) {
+    // A value update renews the 120 s lease even when the target register is momentarily
+    // unresolvable; otherwise a briefly unavailable target would let the entry expire and
+    // cancel its still-live provider.
+    e->lastValueMs = DeviceStatus.UptimeMs;
+    e->timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
+
     FieldResult fr = SubscriptionsGetField(e->targetReg);
     if (!fr.Data) return;
     if (vlen > fr.Descriptor.Size) vlen = fr.Descriptor.Size;
@@ -98,16 +109,15 @@ static void ApplyRequesterValue(RequesterEntry *e, const uint8_t *val, uint8_t v
         RegisterSetByBlockInfo(e->targetReg, meta, val, vlen);
     }
 
-    e->lastValueMs = DeviceStatus.UptimeMs;
-    e->timeout = SubTimeoutFrom(DeviceStatus.UptimeMs); // a value renews the 120 s lease
     if (!confirm) return;
 
     // Confirmation: the requester sends the hash of the received value (docs CID 0: the
-    // confirmation is a request, no FLAG_TYPE).
+    // confirmation is a request, no FLAG_TYPE), at the trigger's high priority.
     uint32_t h = Fnv1a(val, vlen);
     PacketFrame reply;
     PacketConstruct(&reply, e->providerAddr, MakeService(ServiceType::Subscriptions, 0),
-                    e->trid, FLAG_START | FLAG_STOP, (const uint8_t *)&h, sizeof(h));
+                    e->trid, FLAG_START | FLAG_STOP, (const uint8_t *)&h, sizeof(h),
+                    SUB_PRIORITY_HIGH);
     SendAndVerifyPacket(reply);
 }
 

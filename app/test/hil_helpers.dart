@@ -142,12 +142,10 @@ Future<String?> connectHil() async {
       while (link == null && DateTime.now().isBefore(deadline)) {
         await Future<void>.delayed(const Duration(milliseconds: 500));
         link = mgr.discoveredLinks
-            .where((l) =>
-                l.type == LinkType.ble &&
-                // Match by the advertised name rather than a hard-coded BLE address: the
-                // ESP32's address differs per board (and per configuration), so pinning one
-                // meant this test could only ever run against the unit it was written on.
-                l.name.toLowerCase().contains('tamu'))
+            // Discovery only lists devices that advertise the App Interface GATT
+            // service, so any BLE link here is a Tamu core. Do not match by name:
+            // the core's advertised name is not a reliable, unique marker.
+            .where((l) => l.type == LinkType.ble)
             .firstOrNull;
       }
       await mgr.stopScan();

@@ -21,6 +21,56 @@ Color scriptStateColor(int state) => switch (state) {
       _ => Colors.white38,
     };
 
+/// The Start/Pause/Stop/Restart control row shared by the Scripts list and the script editor.
+class ScriptControlBar extends StatelessWidget {
+  final int state;
+  final VoidCallback onStart;
+  final VoidCallback onPauseToggle;
+  final VoidCallback onStop;
+  final VoidCallback onRestart;
+
+  /// Page-specific trailing buttons (Unload/Open editor, Move to line, ...).
+  final List<Widget> extra;
+
+  const ScriptControlBar({
+    super.key,
+    required this.state,
+    required this.onStart,
+    required this.onPauseToggle,
+    required this.onStop,
+    required this.onRestart,
+    this.extra = const [],
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(spacing: 8, children: [
+      OutlinedButton.icon(
+        onPressed: onStart,
+        icon: const Icon(Icons.play_arrow, size: 18),
+        label: const Text('Start'),
+      ),
+      OutlinedButton.icon(
+        onPressed: onPauseToggle,
+        icon: Icon(state == ScriptState.paused ? Icons.play_arrow : Icons.pause,
+            size: 18),
+        label: Text(state == ScriptState.paused ? 'Continue' : 'Pause'),
+      ),
+      OutlinedButton.icon(
+        onPressed: onStop,
+        icon: const Icon(Icons.stop, size: 18),
+        label: const Text('Stop'),
+      ),
+      OutlinedButton.icon(
+        onPressed: onRestart,
+        icon: const Icon(Icons.restart_alt, size: 18),
+        label: const Text('Restart'),
+      ),
+      ...extra,
+    ]);
+  }
+}
+
 /// One category (inputs or outputs) of a loaded script's Register entries. Inputs are
 /// editable, outputs are read-only.
 class ScriptIoSection extends StatefulWidget {

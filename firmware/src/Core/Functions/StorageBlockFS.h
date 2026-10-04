@@ -138,8 +138,6 @@ public:
     // (offset 0, size 0) records but lists (offset 0, size > 0) ones (a valid fixed-file
     // in the reduced file system). All matches are removed so pre-existing duplicates are
     // fully deleted, not just the newest one.
-    // Zeroes the record for every live entry whose name satisfies `matches` (all matches, so
-    // pre-existing duplicates are fully removed, not just the newest).
     template <typename Match>
     bool DeleteMatching(Match matches)
     {
@@ -161,6 +159,29 @@ public:
     bool DeleteFilerecord(const char name[8])
     {
         return DeleteMatching([&](const char *n) { return NameMatch(n, name); });
+    }
+
+    // Invalidates every live record whose name satisfies `matches`, except the freshly appended
+    // generation at `keep_index`. Zeroes the offset word only (like RenameFile), so a replaced
+    // generation is never mistaken for the current file.
+    template <typename Match>
+    bool InvalidateMatchingExcept(Match matches, uint32_t keep_index)
+    {
+        if (file_table_offset == 0) return true;
+        uint32_t capacity = TableCapacity();
+        uint32_t zero = 0x00000000;
+        for (uint32_t i = 0; i < capacity; i++) {
+            if (i == keep_index) continue;
+            FileEntry e;
+            if (!ReadTableEntry(i, &e))
+                return false;
+            if (FileSlotIsFree(e.offset)) continue;
+            if (!matches(e.name)) continue;
+            if (!Storage_FlashWrite(file_table_offset + i * TABLE_ENTRY_SIZE,
+                                    &zero, sizeof(zero)))
+                return false;
+        }
+        return true;
     }
 
     // Calls `fn(name)` once for every live file record. A superseded record for the same
@@ -204,21 +225,9 @@ public:
         // The appended record sits at the current end; invalidate every OTHER valid
         // record still carrying either name (the previous generation under each).
         uint32_t appended = GetEndOfFiletable() - 1;
-        uint32_t capacity = TableCapacity();
-        uint32_t zero = 0x00000000;
-        for (uint32_t i = 0; i < capacity; i++) {
-            if (i == appended) continue;
-            FileEntry e;
-            if (!ReadTableEntry(i, &e))
-                break;
-            if (FileSlotIsFree(e.offset)) continue;
-            if (NameMatch(e.name, old_name) || NameMatch(e.name, new_name)) {
-                if (!Storage_FlashWrite(file_table_offset + i * TABLE_ENTRY_SIZE,
-                                        &zero, sizeof(zero)))
-                    return false;
-            }
-        }
-        return true;
+        return InvalidateMatchingExcept(
+            [&](const char *n) { return NameMatch(n, old_name) || NameMatch(n, new_name); },
+            appended);
     }
 
     // Counts valid entries; keeps the table between 25% and 75% full by growing or
@@ -300,14 +309,27 @@ public:
         if (blocks > num_blocks)
             return 0;
 
-        // Build the usage bitmap once: BlockUsed() rescans the whole file table per
-        // block, so the previous per-candidate probing was O(blocks x table) flash reads.
+        // Build the usage bitmap directly from the file table (~entries, not
+        // num_blocks x entries): per-candidate BlockUsed() rescans the whole table each time.
         uint8_t used_bitmap[(STORAGE_MAX_BLOCKS + 7) / 8] = {0};
-        for (uint32_t i = 0; i < num_blocks; i++)
+        auto markUsed = [&](uint32_t start, uint32_t nblocks)
         {
-            if (BlockUsed(data_start + i * PAGE_SIZE) || RangeIsPending(data_start + i * PAGE_SIZE))
-                used_bitmap[i >> 3] |= (uint8_t)(1u << (i & 7));
+            if (start < data_start || start >= data_end) return; // outside the data area
+            uint32_t first = (start - data_start) / PAGE_SIZE;
+            for (uint32_t k = 0; k < nblocks && first + k < num_blocks; k++)
+                used_bitmap[(first + k) >> 3] |= (uint8_t)(1u << ((first + k) & 7));
+        };
+        for (uint32_t i = 0; i < TableCapacity(); i++)
+        {
+            FileEntry entry;
+            if (!ReadTableEntry(i, &entry)) return 0; // unreadable table: no space is safe
+            if (FileSlotIsFree(entry.offset)) continue;
+            uint32_t blocks = BlocksForSize(entry.size);
+            if (blocks == 0) blocks = 1;
+            markUsed(entry.offset, blocks);
         }
+        if (pending_blocks)
+            markUsed(pending_offset, pending_blocks);
 
         uint32_t best_offset = 0;
         uint32_t best_run = 0;
@@ -391,7 +413,7 @@ public:
     }
 
     // Grows or shrinks a file to `new_size`. Shrinking always succeeds in place; growing
-    // only succeeds when the run can be extended in place.
+    // only succeeds when the run can be extended in place (and stays inside the data area).
     bool ResizeFile(const char name[8], uint32_t new_size)
     {
         uint32_t idx = FindInFiletable(name);
@@ -406,19 +428,25 @@ public:
         uint32_t new_blocks = BlocksForSize(new_size);
 
         if (new_blocks <= current_blocks) {
-            // Shrink or same size: same offset, new size record, invalidate old one.
+            // Shrink or same size: append the new record, then invalidate the previous
+            // generation (and any older duplicate) by index - never DeleteFilerecord, which
+            // would also remove the record just appended and orphan the data.
             FileEntry new_record = entry;
             new_record.size = new_size;
             if (!WriteFilerecord(new_record))
                 return false;
-            DeleteFilerecord(name);
-            return true;
+            uint32_t appended = GetEndOfFiletable() - 1;
+            return InvalidateMatchingExcept([&](const char *n) { return NameMatch(n, name); },
+                                            appended);
         }
 
-        // Enlargement: check if the run can be extended in place.
+        // Enlargement: reject before scanning if the file's linear range would leave the data
+        // area. This also bounds the scan below (new_blocks can otherwise be huge).
+        if (entry.offset >= DataEnd() || new_blocks > (DataEnd() - entry.offset) / PAGE_SIZE)
+            return false;
         bool can_extend = true;
-        for (uint32_t b = 0; b < new_blocks; b++) {
-            if (b >= current_blocks && BlockUsed(entry.offset + b * PAGE_SIZE)) {
+        for (uint32_t b = current_blocks; b < new_blocks; b++) {
+            if (BlockUsed(entry.offset + b * PAGE_SIZE)) {
                 can_extend = false;
                 break;
             }
@@ -439,8 +467,9 @@ public:
             pending_offset = 0;
             pending_blocks = 0;
             if (!ok) return false;
-            DeleteFilerecord(name);
-            return true;
+            uint32_t appended = GetEndOfFiletable() - 1;
+            return InvalidateMatchingExcept([&](const char *n) { return NameMatch(n, name); },
+                                            appended);
         }
 
         // Extending in place is not possible.
@@ -455,9 +484,7 @@ public:
             return 0;
         if (offset >= file_size)
             return 0;
-        // Overflow-safe clamp: `offset + length` could wrap for a huge length.
-        if (length > file_size - offset)
-            length = file_size - offset;
+        length = ClampFileLength(offset, length, file_size);
         return Storage_FlashRead(file_offset + offset, buffer, length);
     }
 
@@ -470,9 +497,7 @@ public:
             return false;
         if (offset >= file_size)
             return false;
-        // Overflow-safe clamp: `offset + length` could wrap for a huge length.
-        if (length > file_size - offset)
-            length = file_size - offset;
+        length = ClampFileLength(offset, length, file_size);
         return Storage_FlashWrite(file_offset + offset, buffer, length);
     }
 
@@ -511,7 +536,6 @@ public:
 
         file_table_offset = PAGE_SIZE;
         file_table_size = PAGE_SIZE;
-        wear_cursor = 0;
         DeviceLog("STORAGE", "Formatted, storage ready (%d bytes)", (int)DataEnd());
     }
 
@@ -521,7 +545,7 @@ public:
         if (file_table_offset == 0) return 0;
         uint32_t used = 0;
         uint32_t capacity = TableCapacity();
-        for (uint32_t i = 0; i < capacity; i++) {
+        for (uint32_t i = 1; i < capacity; i++) { // entry 0 is the table itself
             FileEntry entry;
             if (!ReadTableEntry(i, &entry)) continue;
             if (FileSlotIsFree(entry.offset)) continue;
@@ -627,12 +651,13 @@ private:
             entry0.offset != file_table_offset ||
             entry0.size < PAGE_SIZE ||
             (entry0.size % PAGE_SIZE) != 0 ||
-            file_table_offset + entry0.size > DataEnd())
+            file_table_offset > DataEnd() ||
+            entry0.size > DataEnd() - file_table_offset)
             return false;
 
         file_table_size = entry0.size;
         return true;
     }
 
-    uint32_t wear_cursor;  // Rotating allocation cursor for even wear (in data pages)
+    uint32_t wear_cursor = 0;  // Rotating allocation cursor for even wear (in data pages)
 } Storage;

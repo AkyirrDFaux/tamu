@@ -27,17 +27,15 @@
 // default of 8 yields a 9-12 byte gap.
 #define DEFAULT_PRIORITY 8
 
-// Docs/RSBus and Packets.md "Transaction IDs": every originating service owns a reserved TRID
+// Docs/RSBus and Packets.md "Transaction IDs": each originating service owns a reserved TRID
 // range, and a reply echoes the request's TRID - so the range tells the dispatcher where to route
 // the response, and each service manages its own allocation (counter or slot table).
-#define TRID_SYS_BASE    0x0000
-#define TRID_SYS_MAX     0x0FFF // System (Device) + Logs, incrementing
+#define TRID_SYSTEM_MAX  0x0FFF // System/Logs, single incrementing counter (0x0000-0x0FFF)
 #define TRID_SUB_BASE    0x1000
 #define TRID_SUB_MAX     0x1FFF // Subscriptions, table-managed
 #define TRID_SCRIPT_BASE 0x2000
 #define TRID_SCRIPT_MAX  0x2FFF // Scripts, slot-based
-#define TRID_APP_BASE    0xF000
-#define TRID_APP_MAX     0xFFFF // App, slot-based
+#define TRID_APP_BASE    0xF000 // App, slot-based (0xF000-0xFFFF)
 
 // ID helpers: 6 bit net + 10 bit device
 inline uint16_t MakeId(uint8_t net, uint16_t dev) { return (uint16_t)((net & 0x3F) << 10) | (dev & 0x3FF); }
@@ -48,6 +46,14 @@ inline uint16_t MakeId(uint8_t net, uint16_t dev) { return (uint16_t)((net & 0x3
 // Data Formats.md: 0x3F = broadcast into all nets.
 // 3F.1  = all cores (Core discover target), 3F.0 = all unassigned devices.
 #define ADDR_ALL_CORES        MakeId(0x3F, 1)
+
+// Net 0 means "the local net": when matching or building an address, a net-0 target resolves to
+// the local net number. Broadcasts (net 0x3F) and already net-qualified addresses are unchanged.
+inline uint16_t NetQualifyLocal(uint16_t addr, uint8_t localNet)
+{
+    if ((addr >> 10) == 0) return MakeId(localNet, addr & 0x3FF);
+    return addr;
+}
 
 enum class ServiceType : uint8_t
 {
@@ -98,10 +104,10 @@ inline uint8_t GetServiceCID(uint16_t cmd)
     return (uint8_t)(cmd & 0xFF);
 }
 
-// System/Log TRIDs are an incrementing counter (Docs "Transaction IDs", 0x0000-0x0FFF): the
-// service type stays in the high byte so an echoed reply still routes back to the service, and
-// the low byte is the counter (wrapping). A reply therefore no longer carries the request's CID,
-// so the Device handler tells its replies apart by payload.
+// System/Log TRIDs: an incrementing counter (Docs "Transaction IDs", 0x0000-0x0FFF). The
+// service type stays in the high byte so an echoed reply still routes to the service (a reply's
+// CMD is the originator's TRID); the low byte is the counter, which wraps. A reply therefore
+// does not carry the request's CID - the Device handler tells its replies apart by payload/kind.
 inline uint16_t NextSystemTrid(ServiceType type)
 {
     static uint8_t counter = 0;

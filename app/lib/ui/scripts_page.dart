@@ -51,6 +51,7 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
 
   bool _showLoaded = true;
   bool _refreshing = false;
+  String? _error;
   List<_LoadedScript> _loaded = [];
   List<FileRecord> _available = [];
   int _revision = 0;
@@ -72,13 +73,18 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
 
   Future<void> _refresh() async {
     if (_refreshing) return;
-    setState(() => _refreshing = true);
+    setState(() {
+      _refreshing = true;
+      _error = null;
+    });
     try {
       if (_showLoaded) {
         await _loadLoaded();
       } else {
         await _loadAvailable();
       }
+    } catch (e) {
+      if (mounted) setState(() => _error = '$e');
     } finally {
       if (mounted) setState(() => _refreshing = false);
     }
@@ -150,13 +156,17 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
   }
 
   Future<void> _loadAvailable() async {
-    final table = await _storage.readFileTable() ?? const <FileRecord>[];
+    final table = await _storage.readFileTable();
     if (!mounted) return;
+    if (table == null) {
+      setState(() => _error = 'Device did not respond');
+      return;
+    }
     setState(() {
       _available = table
-          .where((f) => normalizeFileName(f.name).startsWith('SCR_'))
+          .where((f) =>
+              normalizeFileName(f.name).toUpperCase().startsWith('SCR_'))
           .toList();
-      _revision++;
     });
   }
 
@@ -260,7 +270,7 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
             onRefresh: _refresh,
             autoActive: autoRefreshActive,
             refreshing: _refreshing,
-            error: false,
+            error: _error != null,
             selectedInterval: selectedInterval,
             onSelectAuto: applyAuto,
           ),
@@ -320,30 +330,14 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
             '${s.instructionCounter > 0 ? ' · IC ${s.instructionCounter}' : ''}'),
         childrenPadding: const EdgeInsets.only(bottom: 8),
         children: [
-          Wrap(
-            spacing: 8,
-            children: [
-              OutlinedButton.icon(
-                onPressed: () => _control(s, ScriptState.running),
-                icon: const Icon(Icons.play_arrow, size: 18),
-                label: const Text('Start'),
-              ),
-              OutlinedButton.icon(
-                onPressed: () => _control(
-                    s, s.state == ScriptState.paused ? ScriptState.running : ScriptState.paused),
-                icon: Icon(s.state == ScriptState.paused ? Icons.play_arrow : Icons.pause, size: 18),
-                label: Text(s.state == ScriptState.paused ? 'Continue' : 'Pause'),
-              ),
-              OutlinedButton.icon(
-                onPressed: () => _control(s, ScriptState.stopped, reset: true),
-                icon: const Icon(Icons.stop, size: 18),
-                label: const Text('Stop'),
-              ),
-              OutlinedButton.icon(
-                onPressed: () => _control(s, ScriptState.running, reset: true),
-                icon: const Icon(Icons.restart_alt, size: 18),
-                label: const Text('Restart'),
-              ),
+          ScriptControlBar(
+            state: s.state,
+            onStart: () => _control(s, ScriptState.running),
+            onPauseToggle: () => _control(s,
+                s.state == ScriptState.paused ? ScriptState.running : ScriptState.paused),
+            onStop: () => _control(s, ScriptState.stopped, reset: true),
+            onRestart: () => _control(s, ScriptState.running, reset: true),
+            extra: [
               OutlinedButton.icon(
                 onPressed: () => _unload(s),
                 icon: const Icon(Icons.eject, size: 18),

@@ -21,6 +21,13 @@ inline Matrix<3, 3> Vysi1Display::PromoteAffine(const Matrix<2, 3> &m)
     return out;
 }
 
+// The screen transform shared by geometry and texture fields: the field's 2x3 Position
+// composed with the display's base transform. Both passes previously spelled this out.
+inline Matrix<3, 3> Vysi1Display::FieldTransform(const Matrix<2, 3> &pos)
+{
+    return PromoteAffine(pos) * BaseTransform();
+}
+
 // Resolves geometry field `field` and fills GeoMask[field][led] with each LED's alpha.
 // Expensive per-LED shape math; only called when the block/offset/layout changed.
 inline void Vysi1Display::RenderGeometryField(DynamicBlockDescriptor *block, uint16_t field, uint16_t slot)
@@ -35,13 +42,13 @@ inline void Vysi1Display::RenderGeometryField(DynamicBlockDescriptor *block, uin
 
     // Combined transform: (Position) * (Offset * centering).
     Matrix<2, 3> pos = block->GetKeyValue<Matrix<2, 3>>(field, (uint8_t)GeometryKey::Position, DataType::Matrix, IdentityAffine23());
-    Matrix<3, 3> local = PromoteAffine(pos);
-    Matrix<3, 3> combined = local * BaseTransform();
+    Matrix<3, 3> combined = FieldTransform(pos);
 
     p.Rounding = block->GetKeyValue<Number>(field, (uint8_t)GeometryKey::Rounding, DataType::Number, N(0));
     p.Angles = block->GetKeyValue<Number>(field, (uint8_t)GeometryKey::Angles, DataType::Number, N(0));
     p.Fade = block->GetKeyValue<Number>(field, (uint8_t)GeometryKey::Fade, DataType::Number, N(1));
-    p.Alpha = block->GetKeyValue<Number>(field, (uint8_t)GeometryKey::Alpha, DataType::Number, N(1));
+    // Alpha is documented 0..1: clamp so a >1 value cannot wrap the mask modulo 256.
+    p.Alpha = LimitZeroToOne(block->GetKeyValue<Number>(field, (uint8_t)GeometryKey::Alpha, DataType::Number, N(1)));
     p.PointNumber = (uint8_t)ReadKeyInt(block, field, (uint8_t)GeometryKey::PointNumber, 0);
     p.NoiseSeed = (uint32_t)ReadKeyInt(block, field, (uint8_t)GeometryKey::NoiseSeed, 0);
 
@@ -69,6 +76,33 @@ inline void Vysi1Display::RenderGeometryField(DynamicBlockDescriptor *block, uin
     }
 
     PrepareGeometry(p); // per-geometry invariants for the per-LED loop below
+
+    // Fill is a constant 255 across every present LED; HalfFill's alpha depends only on the
+    // transformed y (the combined matrix's second row). Both skip the full per-LED
+    // Vector<3> transform + ShapeAlpha dispatch.
+    if (p.Shape == Geometries::Fill)
+    {
+        uint8_t a = (uint8_t)((Number(255) * p.Alpha).RoundToInt());
+        for (uint16_t led = 0; led < LedNum; led++)
+            if (LedPresent[led])
+                GeoMask[slot][led] = a;
+        return;
+    }
+    if (p.Shape == Geometries::HalfFill)
+    {
+        for (uint16_t led = 0; led < LedNum; led++)
+        {
+            if (!LedPresent[led])
+                continue;
+            Number dy = combined(1, 0) * Number(LedX[led]) +
+                        combined(1, 1) * Number(LedY[led]) + combined(1, 2);
+            uint8_t a = FadeAlpha(dy, p);
+            if (a == 0)
+                continue;
+            GeoMask[slot][led] = (uint8_t)((Number(a) * p.Alpha).RoundToInt());
+        }
+        return;
+    }
 
     for (uint16_t led = 0; led < LedNum; led++)
     {
@@ -101,6 +135,7 @@ inline void Vysi1Display::ApplyGeometryField(DynamicBlockDescriptor *block, uint
         case GeometryOperation::XOR: m = (m > g) ? m - g : g - m; break;
         }
         Mask[led] = (uint8_t)m;
+        if (m != 0) MaskAny = true;
     }
 }
 
@@ -109,13 +144,18 @@ inline void Vysi1Display::ApplyGeometryField(DynamicBlockDescriptor *block, uint
 // (InvertColour, HueShift, Contrast, Brightness) modify the buffer inside the mask.
 inline void Vysi1Display::RenderTextureField(DynamicBlockDescriptor *block, uint16_t field)
 {
+    // Every texture and effect is masked by the geometry pass; skip when it produced no
+    // non-zero alpha (nothing could be drawn).
+    if (!MaskAny)
+        return;
+
     Textures2D type = block->GetKeyValue<Textures2D>(field, (uint8_t)TextureKey::Type, DataType::Enum, Textures2D::None);
     if (type == Textures2D::None)
         return;
 
     // Texture-local transform for gradients: (Position) * (Offset * centering).
     Matrix<2, 3> pos = block->GetKeyValue<Matrix<2, 3>>(field, (uint8_t)TextureKey::Position, DataType::Matrix, IdentityAffine23());
-    Matrix<3, 3> combined = PromoteAffine(pos) * BaseTransform();
+    Matrix<3, 3> combined = FieldTransform(pos);
 
     switch (type)
     {
@@ -330,31 +370,38 @@ inline void Vysi1Display::Render()
         CacheLayoutGen = LayoutGen;
         CacheValid = true;
 
-        // Collect the block's distinct field indexes (the render "parts").
+        // Collect the block's distinct field indexes (the render "parts") and classify
+        // each once; the per-frame pass below reuses this instead of re-reading the type.
         uint8_t Fields[MaxCachedFields];
-        uint16_t nFields = block->ListFields(Fields, MaxCachedFields);
-        if (nFields > MaxCachedFields) nFields = MaxCachedFields;
+        CachedFieldCount = block->ListFields(Fields, MaxCachedFields);
+        if (CachedFieldCount > MaxCachedFields) CachedFieldCount = MaxCachedFields;
 
-        for (uint16_t fi = 0; fi < nFields; fi++)
+        for (uint16_t fi = 0; fi < CachedFieldCount; fi++)
         {
             uint8_t f = Fields[fi];
-            if (ValueInfoType(block->GetKey(f, 0).meta.Type) == (uint16_t)DataType::Geometry)
+            CachedFields[fi] = f;
+            uint16_t t = ValueInfoType(block->GetKey(f, 0).meta.Type);
+            if (t == (uint16_t)DataType::Geometry)
+            {
+                CachedFieldKind[fi] = 1;
                 RenderGeometryField(block, f, fi);
+            }
+            else
+            {
+                CachedFieldKind[fi] = (t == (uint16_t)DataType::Texture) ? 2 : 0;
+            }
         }
     }
 
     // ---- per-frame field pass: build the mask (geometries) and fill it (textures) ----
-    uint8_t Fields2[MaxCachedFields];
-    uint16_t nFields2 = block->ListFields(Fields2, MaxCachedFields);
-    if (nFields2 > MaxCachedFields) nFields2 = MaxCachedFields;
     memset((void *)Mask, 0, LedNum);
-    for (uint16_t fi = 0; fi < nFields2; fi++)
+    MaskAny = false;
+    for (uint16_t fi = 0; fi < CachedFieldCount; fi++)
     {
-        uint8_t f = Fields2[fi];
-        uint16_t t = ValueInfoType(block->GetKey(f, 0).meta.Type);
-        if (t == (uint16_t)DataType::Geometry)
+        uint8_t f = CachedFields[fi];
+        if (CachedFieldKind[fi] == 1)
             ApplyGeometryField(block, f, fi);
-        else if (t == (uint16_t)DataType::Texture)
+        else if (CachedFieldKind[fi] == 2)
         {
             RenderTextureField(block, f);
             // The mask persists: geometries accumulate into it and every texture/effect
@@ -373,6 +420,11 @@ inline void Vysi1Display::Render()
     if (brightness > limit) brightness = limit;
     // 256-scale so full brightness maps to exactly 255 after the >>8.
     uint32_t brightness_scale = (brightness >= 100) ? 256 : ((brightness * 256) / 100).ToInt();
+
+    // Identity scale (>= 100%): (v * 256) >> 8 == v for every byte, so the whole pass
+    // would just rewrite the buffer with itself.
+    if (brightness_scale >= 256)
+        return;
 
     for (uint16_t i = 0; i < LedNum; i++)
     {

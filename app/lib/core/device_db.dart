@@ -20,12 +20,6 @@ const int coreId = 1;
 class DeviceEntry {
   final int id;
   String name;
-  /// Name the transport link was established under (e.g. the BLE advertisement
-  /// name). When set it wins for display, keeping the identity the user picked
-  /// in the connection list stable even though the reported device name (CID 6)
-  /// may differ.
-  String? linkName;
-  String get displayName => name.isNotEmpty ? name : (linkName ?? 'Device ${idToString(id)}');
   DeviceType type;
   String? serialNumber; // 28-char hex
   String? softwareVersion;
@@ -45,6 +39,9 @@ class DeviceEntry {
   bool get isCore => id == coreId || capabilities & Capability.core != 0;
   int get net => idNet(id);
 
+  /// The name shown in the UI (the reported System Name, with a per-id fallback).
+  String get displayName => name;
+
   /// Marks a device unreachable this sweep.
   bool stale = false;
 }
@@ -55,6 +52,8 @@ class DeviceDatabase extends ChangeNotifier {
   static final DeviceDatabase instance = DeviceDatabase._();
 
   final Map<int, DeviceEntry> _devices = {};
+  // One Register client per target, reused across sweeps (no per-read allocation).
+  final Map<int, RegisterClient> _regClients = {};
   bool _refreshing = false;
   String? lastError;
 
@@ -88,16 +87,6 @@ class DeviceDatabase extends ChangeNotifier {
     }
   }
 
-  /// Seeds the name the transport link was established under (connection-list
-  /// identity) for the core device.
-  void seedLinkName(String name) {
-    final entry = _devices.putIfAbsent(coreId, () => DeviceEntry(id: coreId));
-    if (entry.linkName != name) {
-      entry.linkName = name;
-      notifyListeners();
-    }
-  }
-
   /// Pings the connected device (ID 1).
   Future<bool> pingCore() async {
     final reply = await _request(coreId, ServiceType.device, 1, timeout: const Duration(milliseconds: 800));
@@ -106,7 +95,9 @@ class DeviceDatabase extends ChangeNotifier {
 
   /// Reads one System-block field through the shared Register client.
   Future<List<int>?> _registerRead(int targetId, int field, int key) async {
-    final read = await RegisterClient(deviceId: targetId).readField(field, key);
+    final client = _regClients.putIfAbsent(
+        targetId, () => RegisterClient(deviceId: targetId));
+    final read = await client.readField(field, key);
     return read?.value;
   }
 
@@ -169,7 +160,9 @@ class DeviceDatabase extends ChangeNotifier {
     if (id == coreId) {
       entry.timeOffsetMs = 0;
     } else {
-      final coreBefore = await _registerRead(coreId, 3, 0);
+      // The core's synchronized clock is System field 3 key 1 (Current time); key 0 is
+      // the raw Uptime, which would mix two clocks in the offset below.
+      final coreBefore = await _registerRead(coreId, 3, 1);
       if (coreBefore != null && coreBefore.length >= 4) {
         final t0 = uint32FromBytes(coreBefore);
         final syncReply = await _request(id, ServiceType.device, 3,
@@ -177,7 +170,7 @@ class DeviceDatabase extends ChangeNotifier {
         if (syncReply != null && syncReply.length >= 12) {
           final t1 = uint32FromBytes(syncReply, 4);
           final t2 = uint32FromBytes(syncReply, 8);
-          final coreAfter = await _registerRead(coreId, 3, 0);
+          final coreAfter = await _registerRead(coreId, 3, 1);
           final t3 = (coreAfter != null && coreAfter.length >= 4)
               ? uint32FromBytes(coreAfter)
               : t0 + (t2 - t1);
@@ -217,7 +210,7 @@ class DeviceDatabase extends ChangeNotifier {
   // ===========================================================================
 
   /// Full sweep: query the core, then walk every registered device from the
-  /// SNDB (Device service CID 12). Safe to call repeatedly.
+  /// SNDB (Device service CID 13). Safe to call repeatedly.
   Future<void>? _refreshInFlight;
 
   Future<void> refreshNetwork() async {
@@ -260,21 +253,23 @@ class DeviceDatabase extends ChangeNotifier {
       if (sndbReply == null) {
         throw Exception('SNDB read failed');
       }
-      final ids = <int>{coreId};
-      for (var offset = 0; offset + 16 <= sndbReply.length; offset += 16) {
-        final id = sndbReply[offset + 14] | (sndbReply[offset + 15] << 8);
-        // ID 0 marks an unassigned entry; skip it so no phantom "device" is
-        // created and no requests are fired at an invalid target.
-        if (id == 0) continue;
-        ids.add(id);
-      }
+      final parsed = _parseSndb(sndbReply);
+      // ID 0 marks an unassigned entry; skip it so no phantom "device" is created
+      // and no requests are fired at an invalid target.
+      final ids = <int>{coreId, for (final e in parsed) if (e.id != 0) e.id};
       for (final id in ids) {
-        if (_devices[id] == null || _devices[id]!.serialNumber == null) {
+        final known = _devices[id];
+        if (known == null || known.serialNumber == null) {
           await refreshDevice(id);
         } else {
-          final entry = _devices[id]!;
-          entry.stale = false;
-          entry.lastSeen = DateTime.now();
+          // Ping every known id: a device still present in the SNDB but offline must
+          // fall through to the stale/lost notification, not be marked fresh.
+          final ping = await _request(id, ServiceType.device, 1,
+              timeout: const Duration(milliseconds: 800));
+          if (ping != null) {
+            known.stale = false;
+            known.lastSeen = DateTime.now();
+          }
         }
       }
 
@@ -321,15 +316,20 @@ class DeviceDatabase extends ChangeNotifier {
   Future<List<(int, String)>> sndbEntries() async {
     final reply = await _request(coreId, ServiceType.device, 13,
         timeout: const Duration(seconds: 5));
-    final entries = <(int, String)>[];
-    if (reply == null) return entries;
-    for (var offset = 0; offset + 16 <= reply.length; offset += 16) {
-      final id = reply[offset + 14] | (reply[offset + 15] << 8);
-      final sn = serialNumberToHex(reply.sublist(offset, offset + 14));
-      entries.add((id, sn));
-    }
-    return entries;
+    if (reply == null) return const [];
+    return [for (final e in _parseSndb(reply)) (e.id, e.serial)];
   }
+
+  /// The single SNDB record parser: the 16-byte entries are `serial (14) | id (u16)`
+  /// little-endian. Every record is emitted (including id 0, the unassigned marker);
+  /// callers filter as needed.
+  static List<({int id, String serial})> _parseSndb(List<int> reply) => [
+        for (var offset = 0; offset + 16 <= reply.length; offset += 16)
+          (
+            id: reply[offset + 14] | (reply[offset + 15] << 8),
+            serial: serialNumberToHex(reply.sublist(offset, offset + 14)),
+          ),
+      ];
 }
 
 extension _SortExt<T> on Iterable<T> {

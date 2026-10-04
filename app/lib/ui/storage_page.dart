@@ -213,14 +213,13 @@ class _StoragePageState extends State<StoragePage>
 Widget _buildBody() {
     final files = _files;
     if (files == null) return Center(child: Text(_error ?? 'Loading...'));
-    final realFiles = files.toList();
     if (files.isEmpty) {
       return const Center(child: Text('No file table'));
     }
     return ListView.builder(
-      itemCount: realFiles.length,
+      itemCount: files.length,
       itemBuilder: (context, index) {
-        final file = realFiles[index];
+        final file = files[index];
         final isTable = file.isFiletable;
         return ListTile(
           // The file table is read-only but still openable: tapping shows the
@@ -359,7 +358,8 @@ class _TableBodyState extends State<_TableBody> {
       // device zeroes the 4-byte offset, leaving the size); on the fixed (reduced)
       // storage offset-0 records are the real files.
       final isInvalidated = !widget.fixed && !unwritten && recOffset == 0;
-      String name() => String.fromCharCodes(data.sublist(off + 8, off + 16)).trim();
+      String name() =>
+          normalizeFileName(String.fromCharCodes(data.sublist(off + 8, off + 16)));
       final row = ListTile(
         dense: true,
         leading: Icon(

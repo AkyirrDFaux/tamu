@@ -56,6 +56,10 @@ public:
     void Init() {
         // No table to validate - the layout is fixed in code. A fresh/erased region is all
         // 0xFF, which the .SV reader treats as an empty file (a zero-length / missing file).
+        // The flash backend still needs its one-time init: opening the partition on the core
+        // and, on the DAS, the code/storage overlap reservation guard in Storage_FlashInit.
+        if (!Storage_FlashInit())
+            DeviceLog("STORAGE", "Storage flash not available!");
     }
 
     void Format() {
@@ -115,7 +119,7 @@ public:
         uint32_t off, sz;
         if (!GetFileInfo(name, &off, &sz)) return false;
         if (offset >= sz) return false;
-        if (offset + length > sz) length = sz - offset;
+        length = ClampFileLength(offset, length, sz);
         return Storage_FlashWrite(off + offset, buffer, length);
     }
 
@@ -123,13 +127,12 @@ public:
         uint32_t off, sz;
         if (!GetFileInfo(name, &off, &sz)) return 0;
         if (offset >= sz) return 0;
-        if (offset + length > sz) length = sz - offset;
+        length = ClampFileLength(offset, length, sz);
         return Storage_FlashRead(off + offset, buffer, length);
     }
 
-    // Fixed single file: rename/delete/resize are no-ops (the file always exists).
-    bool RenameFile(const char old_name[8], const char new_name[8]) { return true; }
-    bool DeleteFile(const char name[8]) { return SettingsFile(name) != nullptr; }
+    // Fixed single file: delete/rename are dead on this variant (there is only the settings
+    // mirror, always present, and CIDs 2/4 are compiled out).
     bool ResizeFile(const char name[8], uint32_t new_size) {
         return SettingsFile(name) != nullptr && new_size <= STORAGE_FLASH_SIZE;
     }

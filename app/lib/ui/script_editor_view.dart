@@ -26,29 +26,21 @@ extension on _ScriptEditorPageState {
                   style: const TextStyle(color: Colors.redAccent)),
             ),
           const SizedBox(height: 10),
-          Wrap(spacing: 8, children: [
-            OutlinedButton.icon(
-                onPressed: () => _control(ScriptState.running),
-                icon: const Icon(Icons.play_arrow, size: 18),
-                label: const Text('Start')),
-            OutlinedButton.icon(
-                onPressed: () => _control(
-                    _state == ScriptState.paused ? ScriptState.running : ScriptState.paused),
-                icon: Icon(_state == ScriptState.paused ? Icons.play_arrow : Icons.pause, size: 18),
-                label: Text(_state == ScriptState.paused ? 'Continue' : 'Pause')),
-            OutlinedButton.icon(
-                onPressed: () => _control(ScriptState.stopped, reset: true),
-                icon: const Icon(Icons.stop, size: 18),
-                label: const Text('Stop')),
-            OutlinedButton.icon(
-                onPressed: () => _control(ScriptState.running, reset: true),
-                icon: const Icon(Icons.restart_alt, size: 18),
-                label: const Text('Restart')),
-            OutlinedButton.icon(
-                onPressed: _moveToLine,
-                icon: const Icon(Icons.alt_route, size: 18),
-                label: const Text('Move to line')),
-          ]),
+          ScriptControlBar(
+            state: _state,
+            onStart: () => _control(ScriptState.running),
+            onPauseToggle: () => _control(_state == ScriptState.paused
+                ? ScriptState.running
+                : ScriptState.paused),
+            onStop: () => _control(ScriptState.stopped, reset: true),
+            onRestart: () => _control(ScriptState.running, reset: true),
+            extra: [
+              OutlinedButton.icon(
+                  onPressed: _moveToLine,
+                  icon: const Icon(Icons.alt_route, size: 18),
+                  label: const Text('Move to line')),
+            ],
+          ),
         ]),
       ),
     );

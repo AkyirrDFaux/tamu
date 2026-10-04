@@ -44,7 +44,7 @@ class TamuApp extends StatelessWidget {
 }
 
 /// Top-level layout (Docs/App/General info.md):
-/// Connection, Devices, Backup, Settings.
+/// Connection, Devices, Update, Backup, Settings.
 class ShellPage extends StatefulWidget {
   const ShellPage({super.key});
 
@@ -54,6 +54,10 @@ class ShellPage extends StatefulWidget {
 
 class _ShellPageState extends State<ShellPage> {
   int _index = 0;
+
+  /// Tabs built so far. [IndexedStack] builds every child eagerly, so unvisited tabs
+  /// are replaced with an empty placeholder until first selected (a lazily-built shell).
+  final Set<int> _visited = {0};
 
   static const _pages = [
     ConnectionPage(),
@@ -74,7 +78,10 @@ class _ShellPageState extends State<ShellPage> {
   static const _labels = ['Connection', 'Devices', 'Update', 'Backup', 'Settings'];
 
   void _select(int i) {
-    setState(() => _index = i);
+    setState(() {
+      _index = i;
+      _visited.add(i);
+    });
     ShellTabs.instance.update(i);
     shellScaffoldKey.currentState?.closeDrawer();
   }
@@ -97,7 +104,13 @@ class _ShellPageState extends State<ShellPage> {
   @override
   Widget build(BuildContext context) {
     final compact = ShellLayout.isCompact(context);
-    final content = IndexedStack(index: _index, children: _pages);
+    final content = IndexedStack(
+      index: _index,
+      children: [
+        for (var i = 0; i < _pages.length; i++)
+          _visited.contains(i) ? _pages[i] : const SizedBox.shrink(),
+      ],
+    );
     return Scaffold(
       key: shellScaffoldKey,
       // Phones get a hamburger drawer; wide screens keep the visible rail.
@@ -111,7 +124,10 @@ class _ShellPageState extends State<ShellPage> {
                   builder: (context, _) => NavigationRail(
                     selectedIndex: _index,
                     onDestinationSelected: (i) {
-                      setState(() => _index = i);
+                      setState(() {
+                        _index = i;
+                        _visited.add(i);
+                      });
                       ShellTabs.instance.update(i);
                     },
                     labelType: NavigationRailLabelType.all,

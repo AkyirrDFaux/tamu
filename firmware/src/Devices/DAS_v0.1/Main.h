@@ -10,9 +10,6 @@
 void LoadAllBackups();
 void SubscriptionsTick(uint32_t nowMs);
 
-// DAS has no app interface
-bool AppConnected = false;
-
 #include "Base.h"
 #include "RSBus.h"
 #include "Log.h"
@@ -26,15 +23,17 @@ bool AppConnected = false;
 #define CHIP_ID_ADDR  0x1FFFF7E8 // Fixed memory-mapped location of the chip's unique ID
 
 // Node time-sync interval. The docs say "repeated at random within the next 2-3 minutes";
-// 60 s keeps the DAS's internal-RC holdover within the required <10 ms (its drift changes
-// by ~0.02% between syncs, i.e. ~10 ms per 60 s).
+// the 60-75 s cadence (after the 30 s warm-up) keeps the holdover within the required
+// <10 ms. The DAS's internal RC oscillator drifts ~1% (see Core/Functions/SysFunctions.h);
+// the two-point drift estimate cancels that first-order term, leaving the residual change in
+// the drift rate (~0.02% across the interval, i.e. ~10 ms per 60 s).
 #define NODE_TIME_SYNC_INTERVAL_MS 60000u
 // First re-sync delay: a short warm-up so the drift estimate is seeded early.
 #define NODE_TIME_SYNC_WARMUP_MS 30000u
 
 // Device identity (mandatory, see Core/Functions/Device.h).
 extern const DeviceType kDeviceType = DeviceType::DualAnalogSensor;
-extern const uint32_t kCapabilities = Capabilities::Node | Capabilities::Subscriptions;
+extern const uint32_t kCapabilities = Capabilities::Node | Capabilities::SubscriptionProvide;
 
 // Reads the CH32V003 32-bit unique chip ID as the 14-byte serial number (cached).
 const SerialNumber &GetSerialNumber()
@@ -86,12 +85,23 @@ const size_t static_block_num = sizeof(static_block_registry) / sizeof(StaticBlo
 #include "MeasuringRun.h"
 
 // Converts a configured sampling rate (Hz) into the loop interval in ms (>= 1 ms).
-static inline uint32_t SampleIntervalMs(Number rate)
+// Memoised per channel: the 32-bit software divide runs only when the stored rate changes,
+// so polling both channels every loop costs a compare instead of two divides. The cache is
+// keyed on the rate itself (not just seeded by the Sampling Rate write trigger) so a Recall
+// that writes the persistent space directly also refreshes it.
+static inline uint32_t SampleIntervalMs(uint8_t channel)
 {
-    int32_t hz = rate.Value >> 16; // integer Hz
-    if (hz <= 0) return 100;       // disabled / invalid -> default 10 Hz
-    uint32_t interval = 1000u / (uint32_t)hz;
-    return interval == 0 ? 1 : interval;
+    static uint32_t s_cache[2] = {0, 0}; // (hz << 16) | interval_ms
+    int32_t hz = staticPer.meas[channel].SamplingRate.Value >> 16; // integer Hz
+    if (hz <= 0) hz = 10;     // disabled / invalid -> default 10 Hz
+    if (hz > 1000) hz = 1000; // matches the Sampling Rate write clamp
+    if ((s_cache[channel] >> 16) != (uint32_t)hz)
+    {
+        uint32_t interval = 1000u / (uint32_t)hz;
+        if (interval == 0) interval = 1;
+        s_cache[channel] = ((uint32_t)hz << 16) | interval;
+    }
+    return s_cache[channel] & 0xFFFFu;
 }
 
 // Device entry point: initialises hardware, discovers its short address over RS485, then blinks the status LED.
@@ -147,8 +157,11 @@ int main(void)
     auto sendTimeSync = []() {
         // NTP-like: send the SYNCHRONIZED local time (Now()), so the reply's offset is a
         // correction (delta) to add to TimeOffsetMs, not an absolute value to overwrite.
+        // TimeSync goes to the core of our net: our assigned address is NetID.shortID, so
+        // the core is the same net with device ID 1.
         uint32_t time_sent = Now();
-        PacketConstruct(&tx_frame, 1,
+        uint16_t coreAddr = MakeId((uint8_t)((DeviceStatus.ShortAddress >> 10) & 0x3F), 1);
+        PacketConstruct(&tx_frame, coreAddr,
                          MakeService(ServiceType::Device, 3),
                          NextSystemTrid(ServiceType::Device),
                          FLAG_REQACK | FLAG_START | FLAG_STOP,
@@ -164,8 +177,8 @@ int main(void)
     // Warm-up first (seed the drift estimate), then the documented 2-3 minute cadence.
     uint32_t next_sync_ms = NODE_TIME_SYNC_WARMUP_MS;
 
-    uint32_t last_sample_ms = 0;
-    uint32_t last_sample2_ms = 0;
+    uint32_t last_sample_ms[2] = {0, 0};
+    static const uint8_t meas_adc_ch[2] = {MEAS1_ADC_CH, MEAS2_ADC_CH};
 
     while (1)
     {
@@ -186,15 +199,13 @@ int main(void)
 
         // Sample each resistive measurement channel at its own configured rate.
         uint32_t now_ms = Now();
-        if ((now_ms - last_sample_ms) >= SampleIntervalMs(staticPer.meas[0].SamplingRate))
+        for (uint8_t c = 0; c < 2; c++)
         {
-            last_sample_ms = now_ms;
-            Measuring_Update(0, Meas_AdcRead(MEAS1_ADC_CH));
-        }
-        if ((now_ms - last_sample2_ms) >= SampleIntervalMs(staticPer.meas[1].SamplingRate))
-        {
-            last_sample2_ms = now_ms;
-            Measuring_Update(1, Meas_AdcRead(MEAS2_ADC_CH));
+            if ((now_ms - last_sample_ms[c]) >= SampleIntervalMs(c))
+            {
+                last_sample_ms[c] = now_ms;
+                Measuring_Update(c, Meas_AdcRead(meas_adc_ch[c]));
+            }
         }
 
         // Red LED with priority overlays: an active bus error blinks it (~2 Hz), else the

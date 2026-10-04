@@ -36,7 +36,7 @@ static_assert(STORAGE_CHIP_BASE + STORAGE_FLASH_SIZE == CHIP_FLASH_SIZE,
 
 #include "Core/Services/Storage.h"
 
-// Pinned at flash 0x3000 by -Wl,--section-start=.fixed_data=0x3000. The region is erased
+// Pinned at flash 0x3F00 by -Wl,--section-start=.fixed_data=0x3F00. The region is erased
 // (normalised to 0xFF) by Storage.Format() before any use; a code-size overflow fails the
 // link instead of corrupting the storage region at runtime.
 __attribute__((section(".fixed_data"), used))

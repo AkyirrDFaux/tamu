@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Run all HIL tests sequentially. Tests require the Tamu core on a USB port.
+# Run HIL tests in one batch. Tests require the Tamu core on a USB port.
 #
-# Usage:
+# Usage (paths are relative to app/):
 #   TAMU_HIL=/dev/ttyACM1 bash test/run_hil_tests.sh          # serial
 #   TAMU_HIL=ble       bash test/run_hil_tests.sh              # BLE
 #
 # To run a single file:
-#   TAMU_HIL=/dev/ttyACM1 bash test/run_hil_tests.sh test/hil_live_test.dart
+#   TAMU_HIL=/dev/ttyACM1 bash test/run_hil_tests.sh test/tamu_hardware_verification_test.dart
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -17,12 +17,18 @@ if [ -z "${TAMU_HIL:-}" ]; then
   exit 1
 fi
 
-# libserialport native lib
-export LD_LIBRARY_PATH="${APP_DIR}/build/linux/x64/debug/bundle/lib:${LD_LIBRARY_PATH:-}"
+# libserialport native lib ships next to the debug bundle. Resolve the arch directory
+# dynamically (the old hardcoded linux/x64 path broke on other hosts).
+for lib in "$APP_DIR"/build/linux/*/debug/bundle/lib; do
+  if [ -d "$lib" ]; then
+    export LD_LIBRARY_PATH="${lib}:${LD_LIBRARY_PATH:-}"
+    break
+  fi
+done
 
-# Which files to run. The default is the fast set for day-to-day work (the evaluation setup
-# covers the blocks, scripts, subscriptions, eye render and persistence). Run the feature
-# suites explicitly when a change touches them, e.g.
+# The default is the evaluation-setup suite: it applies the full setup and restores it, so it
+# needs the displays and fans attached. Run the feature suites explicitly when a change touches
+# them, e.g.
 #   TAMU_HIL=/dev/ttyACM0 bash test/run_hil_tests.sh test/hil_script_test.dart \
 #       test/hil_script_vm_test.dart test/hil_dynamic_persistence_test.dart \
 #       test/hil_backup_test.dart test/hil_storage_files_test.dart \
@@ -41,26 +47,33 @@ fi
 
 cd "$APP_DIR"
 
-PASSED=0
-FAILED=0
+# Keep only files that exist, then run them in a single `flutter test` so the Flutter tool
+# starts once instead of once per file.
+EXISTING=()
 SKIPPED=0
-
 for f in "${FILES[@]}"; do
-  if [ ! -f "$f" ]; then
+  if [ -f "$f" ]; then
+    EXISTING+=("$f")
+  else
     echo "SKIP  $f (file not found)"
     SKIPPED=$((SKIPPED + 1))
-    continue
   fi
-  echo "--- Running $f ---"
-  if flutter test --no-pub "$f" 2>&1; then
-    echo "--- $f PASSED ---"
-    PASSED=$((PASSED + 1))
-  else
-    echo "--- $f FAILED ---"
-    FAILED=$((FAILED + 1))
-  fi
-  echo
 done
+
+if [ "${#EXISTING[@]}" -eq 0 ]; then
+  echo "No test files to run."
+  echo "Results: 0 passed, 0 failed, $SKIPPED skipped"
+  exit 1
+fi
+
+echo "--- Running ${#EXISTING[@]} file(s) in one flutter test ---"
+if flutter test --no-pub --concurrency=1 "${EXISTING[@]}"; then
+  PASSED=${#EXISTING[@]}
+  FAILED=0
+else
+  PASSED=0
+  FAILED=${#EXISTING[@]}
+fi
 
 echo "========================================"
 echo "Results: $PASSED passed, $FAILED failed, $SKIPPED skipped"

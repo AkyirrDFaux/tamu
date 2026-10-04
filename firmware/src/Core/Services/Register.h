@@ -6,10 +6,10 @@
 //
 // Split into parts, included here in order so the service stays one translation unit:
 //   RegisterDefs.h      BlockInfo accessors, response helpers
-//   RegisterEnumerate.h CID 0
-//   RegisterRead.h      CID 1
-//   RegisterWrite.h     CID 2
-//   RegisterPersist.h   CID 3/4 and 0x10-0x13
+//   RegisterEnumerate.h CID 0/1 (block types, a block's Field&Keys)
+//   RegisterRead.h      CID 2
+//   RegisterWrite.h     CID 3
+//   RegisterPersist.h   CID 4 (Recall All) / CID 5 (Save All) and 0x10-0x13
 //   RegisterDispatch.h  the shared accessors and the dispatcher
 
 #include "Core/Services/RegisterDefs.h"

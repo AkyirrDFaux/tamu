@@ -3,7 +3,7 @@ import 'package:tamuapp/core/device_backup.dart';
 import 'package:tamuapp/core/types.dart';
 
 /// The device backup decoders, against synthetic bytes matching the firmware layouts
-/// (the static `.SV` space, `Subscriptions.h` SUBREQ, `Memory.h` DT_/DV_).
+/// (the static `.SV` space, `Subscriptions.h` SUBREQ, `Memory.h` .DT_/.DV_).
 void main() {
   List<int> u16(int v) => [v & 0xFF, (v >> 8) & 0xFF];
   List<int> u32(int v) => [v & 0xFF, (v >> 8) & 0xFF, (v >> 16) & 0xFF, (v >> 24) & 0xFF];
@@ -19,7 +19,7 @@ void main() {
       (field: 4, size: 4, type: DataType.number.value),
     ],
     0x06: [
-      (field: 1, size: 24, type: DataType.matrix.value),
+      (field: 1, size: 28, type: DataType.matrix.value),
       (field: 2, size: 4, type: DataType.integer.value),
       (field: 3, size: 8, type: DataType.filename.value),
     ],
@@ -30,7 +30,7 @@ void main() {
     ],
   };
 
-  /// DT_ table: Name (16 chars, space-padded), u16 entry_count, u16 reserved, then
+  /// .DT_ table: Name (16 chars, space-padded), u16 entry_count, u16 reserved, then
   /// 8 B per entry (Field&Key, MemoryOffset, ValueInfo). The offset is the entry's position
   /// in its (compacted) value space.
   List<int> dynamicTable(String name, List<(int, int, int, int)> entries) {
@@ -60,28 +60,28 @@ void main() {
 
   group('.SV', () {
     // One Vysi1 display (0x06) and one ResistiveMeasure (0x08), ascending - the space is stacked
-    // in block-type order. System (20 B) + 0x06 (36 B: Offset@0, RenderBlock@24, LayoutFile@28)
+    // in block-type order. System (20 B) + 0x06 (40 B: Offset@0, RenderBlock@28, LayoutFile@32)
     // + 0x08 (12 B: SamplingRate@0, SensorType@4, FilterCoeff@8).
     const registry = [(type: 0x06, inst: 0), (type: 0x08, inst: 0)];
 
     List<int> svBytes() {
-      final b = List<int>.filled(20 + 36 + 12, 0);
+      final b = List<int>.filled(20 + 40 + 12, 0);
       b.setRange(0, 3, 'Eye'.codeUnits); // System Name @ 0
       b[16] = 3; // System NetID @ 16
-      b[44] = 5; // 0x06 RenderBlock @ 20 + 24 = 44
-      b.setRange(56, 60, numberToBytes(10)); // 0x08 SamplingRate @ 20 + 36 = 56
-      b[60] = 2; // 0x08 SensorType @ 60
+      b[48] = 5; // 0x06 RenderBlock @ 20 + 28 = 48
+      b.setRange(60, 64, numberToBytes(10)); // 0x08 SamplingRate @ 20 + 40 = 60
+      b[64] = 2; // 0x08 SensorType @ 64
       return b;
     }
 
     test('computes each field offset from the field sizes + alignment', () {
       final layout = StaticSpaceLayout.fromRegistry(registry, staticFields);
       expect(layout.offsetOf(0x06, 0, 1), 20);
-      expect(layout.offsetOf(0x06, 0, 2), 44);
-      expect(layout.offsetOf(0x06, 0, 3), 48);
-      expect(layout.offsetOf(0x08, 0, 0), 56);
-      expect(layout.offsetOf(0x08, 0, 1), 60); // SensorType (1 B) follows the 4 B Number
-      expect(layout.offsetOf(0x08, 0, 2), 64); // FilterCoeff re-aligns to 4
+      expect(layout.offsetOf(0x06, 0, 2), 48);
+      expect(layout.offsetOf(0x06, 0, 3), 52);
+      expect(layout.offsetOf(0x08, 0, 0), 60);
+      expect(layout.offsetOf(0x08, 0, 1), 64); // SensorType (1 B) follows the 4 B Number
+      expect(layout.offsetOf(0x08, 0, 2), 68); // FilterCoeff re-aligns to 4
       // A volatile field and an absent type have no offset.
       expect(layout.offsetOf(0x08, 0, 3), isNull);
       expect(layout.offsetOf(0x05, 0, 0), isNull);
@@ -92,7 +92,7 @@ void main() {
       expect(layout.offsetOf(0, 0, systemNameField), 0);
       expect(layout.offsetOf(0, 0, systemNetIdField), isNull);
       expect(layout.offsetOf(0x06, 0, 1), 16); // the first static block starts at 16, not 20
-      expect(layout.offsetOf(0x08, 0, 0), 52);
+      expect(layout.offsetOf(0x08, 0, 0), 56);
     });
 
     test('decodes the System segment and every static persistent field', () {
@@ -149,7 +149,7 @@ void main() {
     });
   });
 
-  group('DT_ / DV_', () {
+  group('.DT_ / .DV_', () {
     DynamicTable table() => decodeDynamicTable(dynamicTable(
           'Box',
           [
@@ -360,7 +360,7 @@ void main() {
       ]))!;
       final values = <int>[...numberToBytes(1.0), 5, 6];
       final patched = dvSaveField(table, values, 1, 0, [7, 8])!;
-      expect(patched.length, values.length, reason: 'DV_ keeps its exact length');
+      expect(patched.length, values.length, reason: '.DV_ keeps its exact length');
       expect(patched.sublist(0, 4), numberToBytes(1.0)); // the first entry is untouched
       expect(patched.sublist(4), [7, 8]);
       // The patched file still pairs with its table.

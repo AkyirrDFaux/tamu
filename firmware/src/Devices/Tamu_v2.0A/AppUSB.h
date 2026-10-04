@@ -106,6 +106,11 @@ struct UsbFramer
 
 static UsbFramer s_app_framer;
 
+// Requests a framer resync on host disconnect. AppUSBTick (ApplicationTask) only sets it;
+// AppLinkTask, which feeds both framers, consumes it and performs the Reset() itself, so
+// every framer is fed and reset on a single task.
+static volatile bool s_usb_resync = false;
+
 // Installs the USJ driver and routes the VFS stdio to it so Crc8/log output has a home.
 void AppUSBInit()
 {
@@ -195,6 +200,13 @@ static void AppLinkTask(void *)
 
     for (;;)
     {
+        if (s_usb_resync)
+        {
+            s_usb_resync = false;
+            s_app_framer.Reset();
+            s_wire_parser.Reset();
+        }
+
         int n = usb_serial_jtag_read_bytes(buf, sizeof(buf), pdMS_TO_TICKS(20));
         if (n <= 0)
             continue;
@@ -261,8 +273,8 @@ void AppUSBTick()
     if (was_connected && !connected)
     {
         AppTxFlushAll();
-        s_app_framer.Reset();
-        s_wire_parser.Reset();
+        // AppLinkTask owns both framers; a Reset() here would race the task's Feed().
+        s_usb_resync = true;
     }
     was_connected = connected;
 }

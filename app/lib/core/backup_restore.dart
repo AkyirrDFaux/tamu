@@ -221,7 +221,7 @@ class RestorePlan {
             item.issue = 'No script support';
           }
         case RestoreKind.subscription:
-          if (target.capabilities & Capability.subscriptions == 0) {
+          if (target.capabilities & Capability.subscriptionRequest == 0) {
             item.issue = 'No subscription support';
           } else {
             final s = item.subscription!;
@@ -235,6 +235,11 @@ class RestorePlan {
             item.issue = 'Not a core';
           }
         case RestoreKind.file:
+          // File create/delete/write is the full file system only; the reduced
+          // (fixed) file system does not accept arbitrary files.
+          if (target.capabilities & Capability.storageFiles == 0) {
+            item.issue = 'No file support';
+          }
           break;
       }
     }
@@ -295,6 +300,9 @@ Future<RestorePlan> buildRestorePlan(List<BackupDevice> devices) async {
       items.add(RestoreItem(kind: RestoreKind.sndb, device: device, sndbEntry: sndb));
     }
     for (final file in device.files) {
+      // Scripts are restored semantically (`RestoreKind.script`); restoring the raw
+      // SCR_ file too would let it overwrite the rebuilt image.
+      if (file.kind == 'Script') continue;
       items.add(RestoreItem(kind: RestoreKind.file, device: device, file: file));
     }
   }

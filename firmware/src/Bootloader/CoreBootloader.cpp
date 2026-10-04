@@ -32,10 +32,17 @@
 // The main-app slot (found at boot).
 static const esp_partition_t *s_app = nullptr;
 
-// Which `ota_0` sectors have already been erased this session. The app writes sequentially
-// and may re-write (correct) a chunk, so a sector must be erased once - on its first write -
-// or a correction of the sector's first chunk would wipe the rest of the sector.
-static uint8_t s_erased[0x2A0000u / SECTOR_SIZE / 8u];
+// Which `ota_0` sectors have already been erased in the current write pass. The app writes
+// sequentially and may re-write (correct) a chunk, so a sector must be erased once - on its
+// first write - or a correction of the sector's first chunk would wipe the rest of the
+// sector. A new pass starts when the app writes offset 0 again, which resets the bitmap.
+//
+// The size must cover `ota_0` as allocated in `partitions.csv` (0x2A0000); `app_main`
+// refuses writes when the runtime partition is larger, so the sector index cannot run off
+// the end of this array.
+static constexpr uint32_t OTA_APP_SIZE = 0x2A0000u;
+static uint8_t s_erased[OTA_APP_SIZE / SECTOR_SIZE / 8u];
+static_assert(OTA_APP_SIZE % SECTOR_SIZE == 0, "ota_0 size must be a whole number of sectors");
 
 static bool SectorErased(uint32_t sector)
 {
@@ -94,7 +101,15 @@ static void HandleWrite(uint32_t offset, const uint8_t *payload)
 {
     if (s_app == nullptr) return;
     if ((offset & 31u) != 0) return; // 32-byte aligned
-    if (offset + Bootloader::PAYLOAD_SIZE > s_app->size) return;
+    // `offset + PAYLOAD_SIZE` wraps near 2^32, so subtract instead: the sector index below
+    // must stay inside `s_erased`.
+    if (offset > s_app->size || s_app->size - offset < Bootloader::PAYLOAD_SIZE) return;
+
+    // A write pass starts at offset 0 (the app writes the image from the beginning, including
+    // a retry after a failed verification), so forget the previous pass's erased sectors.
+    // A correction that re-writes offset 0 is safe: the bitmap is reset before that sector is
+    // erased, and the rest of the pass programs into the freshly erased sector.
+    if (offset == 0) memset(s_erased, 0, sizeof(s_erased));
 
     uint32_t sector = offset / SECTOR_SIZE;
     if (!SectorErased(sector))
@@ -109,7 +124,10 @@ static void HandleWrite(uint32_t offset, const uint8_t *payload)
 static void HandleRead(uint32_t offset)
 {
     uint8_t data[Bootloader::PAYLOAD_SIZE];
-    if (s_app == nullptr || offset + Bootloader::PAYLOAD_SIZE > s_app->size)
+    // Same wrap-safe bounds check as `HandleWrite`: an out-of-range offset reads back
+    // 0xFF (erased) instead of leaving `data` uninitialised and leaking stack bytes.
+    if (s_app == nullptr || offset > s_app->size ||
+        s_app->size - offset < Bootloader::PAYLOAD_SIZE)
         memset(data, 0xFF, sizeof(data));
     else
         esp_partition_read(s_app, offset, data, sizeof(data));
@@ -159,6 +177,11 @@ extern "C" void app_main(void)
     usb_serial_jtag_driver_config_t usb = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
     usb_serial_jtag_driver_install(&usb);
     s_app = main_app;
+    // Guard the sector bitmap against a `partitions.csv` size change: a larger `ota_0` would
+    // make the sector index run past `s_erased`. Refuse writes (reads return 0xFF) rather
+    // than corrupt memory.
+    if (s_app != nullptr && s_app->size > OTA_APP_SIZE)
+        s_app = nullptr;
 
     for (;;)
     {

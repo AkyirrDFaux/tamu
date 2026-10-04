@@ -11,8 +11,11 @@ endif()
 FILE(GLOB_RECURSE app_sources ${CMAKE_SOURCE_DIR}/src/*.*)
 # The factory bootloader has its own app_main and is a separate image.
 list(FILTER app_sources EXCLUDE REGEX .*src/Bootloader/.*)
-# Exclude DAS_v0.1 files for ESP32 builds
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "xtensa")
+# Exclude the CH32V003 DAS sources from every ESP-IDF target. The DAS belongs to the ch32v
+# `noneos-sdk` platform, not IDF. Key on the IDF target arch (xtensa *and* riscv) - the old
+# `CMAKE_SYSTEM_PROCESSOR MATCHES "xtensa"` was dead on the RISC-V ESP32-C3.
+idf_build_get_property(idf_target_arch IDF_TARGET_ARCH)
+if(idf_target_arch MATCHES "^(xtensa|riscv)")
     list(FILTER app_sources EXCLUDE REGEX .*src/Devices/DAS_v0\.1.*)
 endif()
 

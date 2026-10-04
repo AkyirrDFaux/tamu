@@ -75,7 +75,7 @@ extension on _RegisterPageState {
                   if (t != DataType.deleted && t != DataType.none && t != DataType.undefined)
                     DropdownMenuItem(value: t, child: Text(dataTypeLabel(t))),
               ],
-              onChanged: (t) => _rebuild(() => selectedType = t ?? DataType.number),
+              onChanged: (t) => setState(() => selectedType = t ?? DataType.number),
             ),
           ]),
           actions: [
@@ -119,38 +119,6 @@ extension on _RegisterPageState {
     await _refreshAll();
   }
 
-  Future<void> _changeType(int blockType, int inst,
-      ({int type, int inst, ValueInfo meta, String name})? block, int fieldIndex) async {
-    if (block == null || !mounted) return;
-    final dataType = await _pickDataType();
-    if (dataType == null || !mounted) return;
-    final seed = await showValueEditor(context, dataType, []);
-    if (seed == null || !mounted) return;
-    final cache = _fieldCache[(blockType << 8) | inst];
-    final field = cache?[fieldIndex];
-    if (field == null) return;
-    
-    final dynBlock = DynBlock(index: block.inst, meta: block.meta, name: block.name);
-    final dynField = DynField(index: fieldIndex, meta: field.meta, value: field.value);
-    final confirmed = await _client.writeDynamicField(dynBlock, dynField, seed, newType: dataType);
-    _snack(confirmed != null ? 'Type changed' : 'Change failed');
-    await _refreshAll();
-  }
-
-  Future<void> _deleteEntry(int blockType, int inst,
-      ({int type, int inst, ValueInfo meta, String name})? block, int fieldIndex) async {
-    if (block == null || !mounted) return;
-    final cache = _fieldCache[(blockType << 8) | inst];
-    final field = cache?[fieldIndex];
-    if (field == null) return;
-    
-    final dynBlock = DynBlock(index: block.inst, meta: block.meta, name: block.name);
-    final dynField = DynField(index: fieldIndex, meta: field.meta, value: field.value);
-    final confirmed = await _client.writeDynamicField(dynBlock, dynField, [], newType: DataType.none);
-    _snack(confirmed != null ? 'Entry deleted (save to free)' : 'Delete failed');
-    await _refreshAll();
-  }
-
   Future<DataType?> _pickDataType({DataType? selected}) {
     return showDialog<DataType>(
       context: context,
@@ -173,15 +141,21 @@ extension on _RegisterPageState {
     );
   }
 
-  Future<void> _editValue(int blockType, int inst, ({int type, int inst, ValueInfo meta, String name})? block, int fieldIndex) async {
+  Future<void> _editValue(int blockType, int inst, ({int type, int inst, ValueInfo meta, String name})? block, int fieldIndex,
+      {int? memberKey}) async {
     if (block == null || !mounted) return;
     final cacheKey = (blockType << 8) | inst;
     final cache = _fieldCache[cacheKey];
-    final field = cache?[fieldIndex];
-    if (field == null || field.meta.readOnly) return;
+    final isSystemField = blockType == 0 && inst == 0;
+    // A System struct member is cached under its member-key slot; everything else under the
+    // field index.
+    final lookup = (isSystemField && memberKey != null)
+        ? 256 + fieldIndex * 256 + memberKey
+        : fieldIndex;
+    final entry = cache?[lookup];
+    if (entry == null || entry.meta.readOnly) return;
     if (!mounted) return;
 
-    final isSystemField = blockType == 0 && inst == 0;
     final blockInfo = blockInfoFor(BlockType.fromValue(block.meta.type));
     // The System Name field is 16 bytes; cap the editor accordingly.
     final fieldInfo = isSystemField
@@ -189,19 +163,37 @@ extension on _RegisterPageState {
         : blockInfo?.field(fieldIndex);
 
     final newValue = await showValueEditor(
-        context, field.meta.dataType, field.value,
-        info: fieldInfo);
+        context, entry.meta.dataType, entry.value, info: fieldInfo);
     if (newValue == null) return;
 
-    final key = (blockType == 0) ? systemKeysForField(fieldIndex).first : (isDynamicType(blockType) ? 0 : 0xFF);
-    final meta = ValueInfo(type: field.meta.type, flags: field.meta.flags, size: newValue.length, key: key);
+    // A System struct member is addressed by its member key; the scalar/static paths keep
+    // their single primary key.
+    final key = memberKey ??
+        (blockType == 0
+            ? systemKeysForField(fieldIndex).first
+            : (isDynamicType(blockType) ? 0 : 0xFF));
+    final meta = ValueInfo(
+        type: entry.meta.type,
+        flags: entry.meta.flags,
+        size: newValue.length,
+        key: key);
     final confirmed = await _client.writeBlockField(blockType, inst, fieldIndex, key, meta, newValue);
     _snack(confirmed != null ? 'Value written' : 'Write failed');
     if (confirmed != null) {
-      final field = await _client.readBlockField(blockType, inst, fieldIndex, key);
-      if (field != null) {
+      // The System struct fields are read whole and sliced by member; everything else is a
+      // plain (field, key) read.
+      final fresh = isSystemField
+          ? await _client.readField(fieldIndex, key)
+          : await _client.readBlockField(blockType, inst, fieldIndex, key);
+      if (fresh != null) {
         final cache = _fieldCache[cacheKey];
-        if (cache != null) cache[fieldIndex] = field;
+        if (cache != null) {
+          if (isSystemField && memberKey != null) {
+            cache[256 + fieldIndex * 256 + memberKey] = fresh;
+          } else {
+            cache[fieldIndex] = fresh;
+          }
+        }
       }
       if (mounted) _rebuild(() {});
     }
@@ -300,13 +292,13 @@ extension on _RegisterPageState {
               title: const Text('Read-only'),
               subtitle: const Text('Blocks value edits from the app'),
               value: ro,
-              onChanged: (v) => _rebuild(() => ro = v),
+              onChanged: (v) => setState(() => ro = v),
             ),
             SwitchListTile(
               title: const Text('Persistent'),
               subtitle: const Text('Saved to the block DV file on Save; survives reboot'),
               value: per,
-              onChanged: (v) => _rebuild(() => per = v),
+              onChanged: (v) => setState(() => per = v),
             ),
           ]),
           actions: [
@@ -376,7 +368,7 @@ extension on _RegisterPageState {
                       child: Text('$k · ${renderDictKeyName(dictType, k)}'),
                     ),
                 ],
-                onChanged: (v) => _rebuild(() {
+                onChanged: (v) => setState(() {
                   if (v != null) {
                     chosenDropdown = v;
                     controller.text = '$v';
@@ -422,7 +414,9 @@ extension on _RegisterPageState {
     final dictType =
         (head != null && isRenderDictType(head.meta.type)) ? head.meta.type : 0;
     final isDict = isRenderDictType(dictType);
-    final selector = cache?[fieldIndex * 256 + 1]?.value.first ?? 0;
+    final selectorEntry = cache?[fieldIndex * 256 + 1];
+    final selector =
+        (selectorEntry != null && selectorEntry.value.isNotEmpty) ? selectorEntry.value.first : 0;
 
     var startKey = 0;
     while (keys.contains(startKey)) {
@@ -486,7 +480,9 @@ extension on _RegisterPageState {
     final dictType =
         (head != null && isRenderDictType(head.meta.type)) ? head.meta.type : 0;
     final isDict = isRenderDictType(dictType);
-    final selector = cache?[fieldIndex * 256 + 1]?.value.first ?? 0;
+    final selectorEntry = cache?[fieldIndex * 256 + 1];
+    final selector =
+        (selectorEntry != null && selectorEntry.value.isNotEmpty) ? selectorEntry.value.first : 0;
 
     final newKey = await _promptKey(
       title: 'Change key (was $key)',
@@ -504,10 +500,14 @@ extension on _RegisterPageState {
     final dynBlock = DynBlock(index: inst, meta: block.meta, name: block.name);
     final written = await _client.writeDynamicEntry(
         dynBlock, fieldIndex, newKey, entry.meta, entry.value);
-    if (written != null) {
-      await _client.deleteDynamic(block: inst, field: fieldIndex, key: key);
+    var ok = written != null;
+    if (ok) {
+      // Only report success when the old key was actually removed, otherwise the move
+      // leaves a duplicate behind.
+      final deleted = await _client.deleteDynamic(block: inst, field: fieldIndex, key: key);
+      if (deleted != true) ok = false;
     }
-    _snack(written != null ? 'Key changed' : 'Change failed');
+    _snack(ok ? 'Key changed' : 'Change failed');
     await _refreshAll();
   }
 

@@ -7,8 +7,9 @@ part of 'register_page.dart';
 
 extension on _RegisterPageState {
   /// Renders one category field of a loaded script (Header/Input/Output/Variable/
-  /// Constant) as a keyed list. Inputs and variables are editable; the header, outputs
-  /// and constants are read-only.
+  /// Constant) as a keyed list. Only `ScriptField.input` is editable; the header, outputs,
+  /// variables and constants are read-only (variables are edited through the script file,
+  /// not the Register view).
   Widget _scriptFieldTile(int blockType, int inst, int cacheKey, int fieldIndex,
       ({int type, int inst, ValueInfo meta, String name})? block, Key? cardKey) {
     // The Header category is script metadata and is intentionally not part of the
@@ -127,30 +128,29 @@ extension on _RegisterPageState {
                 ChipLabel('${block.meta.size} fields', subtle: true),
             ]),
           ),
-          trailing: PopupMenuButton<String>(
-            tooltip: 'Block actions',
-            onSelected: (action) {
-              if (action == 'edit') {
-                _editBlock(blockIndex, block);
-              } else if (action == 'add') {
-                _addEntry(blockIndex, block);
-              } else if (action == 'move') {
-                _moveBlock(block);
-              } else if (action == 'delete') {
-                _deleteBlock(blockIndex, block);
-              }
-            },
-            itemBuilder: (_) => [
-              if (isDynamicType(block.meta.type)) ...[
-                const PopupMenuItem(value: 'edit', child: Text('Rename')),
-                const PopupMenuItem(value: 'add', child: Text('Add field')),
-                if (_editMode) ...[
-                  const PopupMenuItem(value: 'move', child: Text('Move to index...')),
-                ],
-                const PopupMenuItem(value: 'delete', child: Text('Delete block')),
-              ],
-            ],
-          ),
+          trailing: isDynamicType(block.meta.type)
+              ? PopupMenuButton<String>(
+                  tooltip: 'Block actions',
+                  onSelected: (action) {
+                    if (action == 'edit') {
+                      _editBlock(blockIndex, block);
+                    } else if (action == 'add') {
+                      _addEntry(blockIndex, block);
+                    } else if (action == 'move') {
+                      _moveBlock(block);
+                    } else if (action == 'delete') {
+                      _deleteBlock(blockIndex, block);
+                    }
+                  },
+                  itemBuilder: (_) => [
+                    const PopupMenuItem(value: 'edit', child: Text('Rename')),
+                    const PopupMenuItem(value: 'add', child: Text('Add field')),
+                    if (_editMode)
+                      const PopupMenuItem(value: 'move', child: Text('Move to index...')),
+                    const PopupMenuItem(value: 'delete', child: Text('Delete block')),
+                  ],
+                )
+              : null,
           onTap: () async {
             _rebuild(() {
               isExpanded
@@ -520,26 +520,28 @@ extension on _RegisterPageState {
                 ),
             ]),
             subtitle: Text('${dataTypeLabel(f.meta.dataType)} [member=${systemStructMemberName(fieldIndex, key)}]', style: const TextStyle(fontSize: 10)),
-            trailing: PopupMenuButton<String>(
-              icon: const Icon(Icons.more_vert, size: 16),
-              onSelected: (action) {
-                if (action == 'edit' && !f.meta.readOnly) {
-                  _editValue(blockType, inst, block, fieldIndex);
-                } else if (action == 'save') {
-                  _saveField(blockType, inst, block, fieldIndex);
-                } else if (action == 'recall') {
-                  _recallField(blockType, inst, block, fieldIndex);
-                }
-              },
-              itemBuilder: (_) => [
-                if (!f.meta.readOnly)
-                  const PopupMenuItem(value: 'edit', child: Text('Edit value')),
-                if (!f.meta.readOnly && f.meta.persistent)
-                  const PopupMenuItem(value: 'save', child: Text('Save to backup')),
-                if (!f.meta.readOnly && f.meta.persistent)
-                  const PopupMenuItem(value: 'recall', child: Text('Recall from backup')),
-              ],
-            ),
+            trailing: f.meta.readOnly
+                ? null
+                : PopupMenuButton<String>(
+                    icon: const Icon(Icons.more_vert, size: 16),
+                    onSelected: (action) {
+                      if (action == 'edit') {
+                        _editValue(blockType, inst, block, fieldIndex,
+                            memberKey: key);
+                      } else if (action == 'save') {
+                        _saveField(blockType, inst, block, fieldIndex);
+                      } else if (action == 'recall') {
+                        _recallField(blockType, inst, block, fieldIndex);
+                      }
+                    },
+                    itemBuilder: (_) => [
+                      const PopupMenuItem(value: 'edit', child: Text('Edit value')),
+                      if (f.meta.persistent) ...[
+                        const PopupMenuItem(value: 'save', child: Text('Save to backup')),
+                        const PopupMenuItem(value: 'recall', child: Text('Recall from backup')),
+                      ],
+                    ],
+                  ),
           );
         }).toList(),
       );
@@ -574,35 +576,28 @@ extension on _RegisterPageState {
       ]),
       subtitle: Text('${dataTypeLabel(field.meta.dataType)}${!isSystemField && fieldInfo?.unit != null ? ' [${fieldInfo!.unit}]' : ''}',
           style: const TextStyle(fontSize: 11)),
-      trailing: PopupMenuButton<String>(
-        icon: const Icon(Icons.more_vert, size: 18),
-        tooltip: 'Field actions',
-        onSelected: (action) {
-          if (action == 'edit' && !field.meta.readOnly) {
-            _editValue(blockType, inst, block, fieldIndex);
-          } else if (action == 'save') {
-            _saveField(blockType, inst, block, fieldIndex);
-          } else if (action == 'recall') {
-            _recallField(blockType, inst, block, fieldIndex);
-          } else if (action == 'type') {
-            _changeType(blockType, inst, block, fieldIndex);
-          } else if (action == 'delentry') {
-            _deleteEntry(blockType, inst, block, fieldIndex);
-          }
-        },
-        itemBuilder: (_) => [
-          if (!field.meta.readOnly)
-            const PopupMenuItem(value: 'edit', child: Text('Edit value')),
-          if (!field.meta.readOnly && field.meta.persistent)
-            const PopupMenuItem(value: 'save', child: Text('Save to backup')),
-          if (!field.meta.readOnly && field.meta.persistent)
-            const PopupMenuItem(value: 'recall', child: Text('Recall from backup')),
-          if (isDynamicType(blockType) && !field.meta.readOnly) ...[
-            const PopupMenuItem(value: 'type', child: Text('Change type')),
-            const PopupMenuItem(value: 'delentry', child: Text('Delete entry')),
-          ],
-        ],
-      ),
+      trailing: field.meta.readOnly
+          ? null
+          : PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert, size: 18),
+              tooltip: 'Field actions',
+              onSelected: (action) {
+                if (action == 'edit') {
+                  _editValue(blockType, inst, block, fieldIndex);
+                } else if (action == 'save') {
+                  _saveField(blockType, inst, block, fieldIndex);
+                } else if (action == 'recall') {
+                  _recallField(blockType, inst, block, fieldIndex);
+                }
+              },
+              itemBuilder: (_) => [
+                const PopupMenuItem(value: 'edit', child: Text('Edit value')),
+                if (field.meta.persistent) ...[
+                  const PopupMenuItem(value: 'save', child: Text('Save to backup')),
+                  const PopupMenuItem(value: 'recall', child: Text('Recall from backup')),
+                ],
+              ],
+            ),
       onTap: (!field.meta.readOnly) ? () => _editValue(blockType, inst, block, fieldIndex) : null,
     );
   }

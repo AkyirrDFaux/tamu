@@ -91,8 +91,8 @@ void main() {
     expect(storageFileType('SNREG   '), StorageFileType.snreg);
     expect(storageFileType('LAY_1   '), StorageFileType.layout);
     // Per-block dynamic persistence (Docs/Services/Register.md).
-    expect(storageFileType('DT_0A   '), StorageFileType.dynamicTable);
-    expect(storageFileType('DV_0A   '), StorageFileType.dynamicValues);
+    expect(storageFileType('.DT_0A   '), StorageFileType.dynamicTable);
+    expect(storageFileType('.DV_0A   '), StorageFileType.dynamicValues);
   });
 
   testWidgets('layout file uses the brightness limit + u8 width/height header',
@@ -149,16 +149,17 @@ void main() {
   });
 
   test('capabilities format human-readable', () {
-    // Core|Cli|DynamicMemory|StorageFiles|AppInterface|Subscriptions|Node
-    expect(formatSystemValue(DataType.integer, u32(0x1ED).toList(), 0, 1),
+    // Core|DynMem|StorageFiles|AppInterface|SubscriptionRequest|Node
+    const caps = (1 << 0) | (1 << 3) | (1 << 5) | (1 << 6) | (1 << 7) | (1 << 8);
+    expect(formatSystemValue(DataType.integer, u32(caps).toList(), 0, 1),
         contains('Core'));
-    expect(formatSystemValue(DataType.integer, u32(0x1ED).toList(), 0, 1),
+    expect(formatSystemValue(DataType.integer, u32(caps).toList(), 0, 1),
         contains('Node'));
-    expect(formatSystemValue(DataType.integer, u32(0x1ED).toList(), 0, 1),
-        contains('Subs'));
+    expect(formatSystemValue(DataType.integer, u32(caps).toList(), 0, 1),
+        contains('SubReq'));
   });
 
-  testWidgets('DT_ dynamic block table renders', (tester) async {
+  testWidgets('.DT_ dynamic block table renders', (tester) async {
     // Name (16 chars, NUL-padded), u16 entry_count, u16 reserved, then
     // (fieldKey, type, size, flags) per entry.
     final data = <int>[
@@ -172,12 +173,12 @@ void main() {
       ...u16(DataType.string.value),
       5, 0,
     ];
-    await pump(tester, 'DT_00  ', data);
+    await pump(tester, '.DT_00  ', data);
     expect(find.textContaining('Box'), findsWidgets);
     expect(find.textContaining('Number'), findsWidgets);
     // Empty + corrupt tables must not throw.
-    await pump(tester, 'DT_01  ', []);
-    await pump(tester, 'DT_02  ', [9, 1, 2]);
+    await pump(tester, '.DT_01  ', []);
+    await pump(tester, '.DT_02  ', [9, 1, 2]);
   });
 
   testWidgets('FileViewPage renders formatted and raw hex', (tester) async {

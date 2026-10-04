@@ -3,7 +3,7 @@
 /// (current) / Recall button (backup)").
 ///
 /// Current view shows what is live in RAM; this shows what a Save actually persisted:
-/// static/System fields from `.SV` and dynamic entries from `DT_`/`DV_`. Fields with no
+/// static/System fields from `.SV` and dynamic entries from `.DT_`/`.DV_`. Fields with no
 /// stored entry are shown explicitly as "not backed up" rather than hidden, so a missing
 /// save is visible instead of looking like a normal empty field.
 library;
@@ -49,12 +49,16 @@ class RegisterBackupView extends StatelessWidget {
 
   final bool busy;
 
+  /// Whether the device has the System NetID field (a core). A node has no NetID row.
+  final bool hasNetId;
+
   const RegisterBackupView({
     super.key,
     required this.backup,
     required this.blocks,
     this.onRecall,
     this.busy = false,
+    this.hasNetId = true,
   });
 
   @override
@@ -62,6 +66,8 @@ class RegisterBackupView extends StatelessWidget {
     final children = <Widget>[];
     for (final b in blocks) {
       if (b == null) continue;
+      // Dynamic tombstone slots carry no block and are hidden, like the live view.
+      if (isHiddenRegisterSlot(b.type, b.meta)) continue;
       if (b.type == 0) {
         children.add(_card(b, _systemRows()));
       } else if (isScriptType(b.type)) {
@@ -102,9 +108,12 @@ class RegisterBackupView extends StatelessWidget {
   }
 
   List<_BackupRow> _systemRows() {
-    // Only Name (6) and NetID (7) are Save targets on the System block.
+    // Only Name (6) and, on a core with the NetID field, NetID (7) are Save targets.
+    final fields = hasNetId
+        ? const [systemNameField, systemNetIdField]
+        : const [systemNameField];
     final rows = <_BackupRow>[];
-    for (final field in const [systemNameField, systemNetIdField]) {
+    for (final field in fields) {
       final keys = systemFieldKeys[field];
       final key = keys == null || keys.isEmpty ? 0xFF : keys.keys.first;
       final entry = backup.staticField(0, 0, field);
@@ -118,7 +127,7 @@ class RegisterBackupView extends StatelessWidget {
     return rows;
   }
 
-  /// Dynamic blocks persist through DT_/DV_. The stored *table* lists every entry, so a
+  /// Dynamic blocks persist through .DT_/.DV_. The stored *table* lists every entry, so a
   /// volatile entry can be reported as "not persisted" rather than as a missing save.
   List<_BackupRow> _dynamicRows(int inst) {
     final table = backup.dynamicTableFor(inst);

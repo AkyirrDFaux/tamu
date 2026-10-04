@@ -46,6 +46,10 @@ public:
     static void IterReset();
     // Fetches the next entry during iteration
     static bool IterNext(RegistryEntry &out_entry);
+    // Number of valid entries in the recovered registry. Lets a caller size a stream
+    // without a separate counting pass; it must be called after EnsureRecovered() (or
+    // IterReset()) so the count reflects the file.
+    static int32_t ActiveCount() { return EnsureRecovered() ? active_count : 0; }
 
 private:
     static void RecoverState();
@@ -116,9 +120,9 @@ bool SNDB::Available()
         // always contains the full set, so it is authoritative at every crash window.
         DeviceLog("SNDB", "Restoring registry from interrupted compaction");
         Storage.DeleteFile(SNDBFileName());
-        bool recreated = Storage.CreateFile(SNDBFileName(),
-                                           SNDB_MAX_ENTRIES * sizeof(RegistryEntry));
-        if (recreated)
+        bool restored_ok = Storage.CreateFile(SNDBFileName(),
+                                             SNDB_MAX_ENTRIES * sizeof(RegistryEntry));
+        if (restored_ok)
         {
             int32_t restored = 0;
             uint32_t num_entries = temp_sz / sizeof(RegistryEntry);
@@ -126,12 +130,26 @@ bool SNDB::Available()
             {
                 RegistryEntry entry;
                 if (!ReadEntry(SNDBTempName(), i, entry))
+                {
+                    restored_ok = false;
                     break;
+                }
                 if (entry.valid != STATE_VALID)
                     continue;
-                WriteEntry(SNDBFileName(), (uint32_t)restored, &entry, sizeof(RegistryEntry));
+                if (!WriteEntry(SNDBFileName(), (uint32_t)restored, &entry, sizeof(RegistryEntry)))
+                {
+                    restored_ok = false;
+                    break;
+                }
                 restored++;
             }
+        }
+        if (!restored_ok)
+        {
+            // Keep the staged temp: the registry is not reliably rebuilt yet, so a
+            // later boot retries from the intact copy instead of losing it.
+            DeviceLog("SNDB", "Restore failed; keeping staged registry");
+            return false;
         }
         Storage.DeleteFile(SNDBTempName());
         recovered = false; // freshly written file: rescan

@@ -24,8 +24,7 @@ enum class GeometryKey : uint8_t
     NoiseSeed = 11,   // Integer
 };
 
-// Geometry shapes (docs order). Only a subset is rendered initially; the rest
-// resolve to zero alpha until implemented.
+// Geometry shapes (docs order); ShapeAlpha implements every entry.
 enum class Geometries : uint8_t
 {
     None = 0,

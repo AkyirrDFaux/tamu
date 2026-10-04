@@ -8,7 +8,6 @@ import 'scripts_page.dart';
 import 'sndb_page.dart';
 import 'storage_page.dart';
 import 'subscriptions_page.dart';
-import 'theme.dart';
 import 'widgets.dart';
 
 /// Device view (Docs/App/Device view.md): known facts about one device.
@@ -75,11 +74,9 @@ class _DeviceViewPageState extends State<DeviceViewPage>
               tooltip: 'Identify device (blink its LED)',
               icon: const Icon(Icons.visibility_outlined),
               onPressed: () async {
-                final messenger = ScaffoldMessenger.of(context);
                 final ok = await _db.identify(widget.deviceId);
-                if (mounted && !ok) {
-                  messenger.showSnackBar(
-                      const SnackBar(content: Text('Identify request failed')));
+                if (!ok && context.mounted) {
+                  showSnack(context, 'Identify request failed');
                 }
               },
             ),
@@ -109,28 +106,28 @@ class _DeviceViewPageState extends State<DeviceViewPage>
                         }),
                     const SizedBox(height: 12),
                   ],
-                  _card(context, 'Device info', [
-                    _row('ID', idToString(entry.id)),
-                    _row('Net', '${entry.net}'),
-                    _row('Device type', entry.type.label),
-                    _row('Serial number', entry.serialNumber ?? '-'),
-                    _row('Software version', entry.softwareVersion ?? '-'),
-                    _row('Uptime', _formatUptime(entry.uptimeMs)),
-                    _row('Avg loop time',
+                  InfoCard(title: 'Device info', children: [
+                    InfoRow('ID', idToString(entry.id)),
+                    InfoRow('Net', '${entry.net}'),
+                    InfoRow('Device type', entry.type.label),
+                    InfoRow('Serial number', entry.serialNumber ?? '-'),
+                    InfoRow('Software version', entry.softwareVersion ?? '-'),
+                    InfoRow('Uptime', _formatUptime(entry.uptimeMs)),
+                    InfoRow('Avg loop time',
                         entry.avgLoopTimeMs?.toStringAsFixed(2) ?? '-'),
-                    _row('Max loop time',
+                    InfoRow('Max loop time',
                         entry.maxLoopTimeMs?.toStringAsFixed(2) ?? '-'),
-                    _row('Time offset',
+                    InfoRow('Time offset',
                         entry.timeOffsetMs == null
                             ? '-'
                             : formatOffsetMs(entry.timeOffsetMs!)),
-                    _row('Capabilities',
+                    InfoRow('Capabilities',
                         Capability.describe(entry.capabilities).isEmpty
                             ? '-'
                             : Capability.describe(entry.capabilities).join(', ')),
                   ]),
                   const Divider(height: 24),
-_card(context, 'Services', [
+                  InfoCard(title: 'Services', children: [
                       // Per Docs/App/Device view.md: hide unavailable services
                       // based on the device's capability field. Register (covers the
                       // System block, static blocks and dynamic/keyed memory), Storage
@@ -142,7 +139,9 @@ _card(context, 'Services', [
                               hasDynamicMemory: entry.capabilities & Capability.dynamicMemory != 0)),
                       _serviceTile(context, Icons.save_outlined, 'Storage',
                           () => StoragePage(deviceId: widget.deviceId)),
-                      if (entry.capabilities & Capability.subscriptions != 0)
+                      if (entry.capabilities &
+                              (Capability.subscriptionRequest | Capability.subscriptionProvide) !=
+                          0)
                         _serviceTile(context, Icons.sync_alt, 'Subscriptions',
                           () => SubscriptionsPage(deviceId: widget.deviceId, deviceName: entry.displayName)),
                       if (entry.capabilities & Capability.scripts != 0)
@@ -172,36 +171,6 @@ _card(context, 'Services', [
       trailing: const Icon(Icons.chevron_right),
       onTap: () => Navigator.of(context)
           .push(MaterialPageRoute(builder: (_) => page())),
-    );
-  }
-
-  Widget _card(BuildContext context, String title, List<Widget> children) {
-    return Card(
-      color: kSurfaceAlt,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-              child: Text(title,
-                  style: TextStyle(color: kOrange, fontWeight: FontWeight.w600)),
-            ),
-            ...children,
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _row(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
-      child: Row(children: [
-        SizedBox(width: 140, child: Text(label, style: Theme.of(context).textTheme.bodySmall)),
-        Expanded(child: Text(value)),
-      ]),
     );
   }
 }

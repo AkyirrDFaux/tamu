@@ -288,12 +288,30 @@ const String appServiceUuid = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 const String appWriteCharUuid = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
 const String appNotifyCharUuid = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
 
+/// True when an advertised UUID is the App Interface GATT service. The core
+/// advertises the full 128-bit UUID, but platform-reported casing and
+/// dash/abbreviation formatting varies, so match on its leading 32-bit field
+/// (the same prefix encoded by [_appServiceUuidPrefix]) rather than the exact
+/// string.
+bool advertisesAppInterface(Iterable<String> serviceUuids) =>
+    serviceUuids.any((s) => s.toLowerCase().contains(_appServiceUuidPrefix));
+
+const String _appServiceUuidPrefix = '6e400001';
+
 class BleScanEntry {
   final String deviceId;
   String name;
   int? rssi;
 
-  BleScanEntry({required this.deviceId, required this.name, this.rssi});
+  /// When the scan backend last reported this device (for entry expiry).
+  DateTime lastSeen;
+
+  BleScanEntry({
+    required this.deviceId,
+    required this.name,
+    this.rssi,
+    DateTime? lastSeen,
+  }) : lastSeen = lastSeen ?? DateTime.now();
 }
 
 class BleTransport implements Transport {
@@ -316,9 +334,13 @@ class BleTransport implements Transport {
   @override
   Stream<Uint8List> get linkBytes => _linkController.stream;
 
-  @override
-  Stream<Uint8List> get packetStream =>
+  // One mapped stream: `.map(_parser.feed)` drives a single shared parser, so a
+  // second subscribe must reuse it instead of feeding the parser twice.
+  late final Stream<Uint8List> _packetStream =
       linkBytes.map(_parser.feed).where((bytes) => bytes.isNotEmpty);
+
+  @override
+  Stream<Uint8List> get packetStream => _packetStream;
 
   /// Connects, discovers the App service and subscribes to notifications.
   Future<void> connect() async {

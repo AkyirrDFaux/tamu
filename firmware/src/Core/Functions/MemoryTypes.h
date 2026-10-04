@@ -150,8 +150,12 @@ struct StaticBlockDescriptor
         // 8-char records; the System Name is a fixed 16).
         if (field_type == (uint16_t)DataType::String || field_type == (uint16_t)DataType::Filename)
         {
-            if (Length < Field.Descriptor.Size && Field.Descriptor.Size <= sizeof(pad_buf))
+            if (Length < Field.Descriptor.Size)
             {
+                // A value larger than the local staging buffer cannot be space-padded without
+                // reading past the caller's `Length`-byte source; reject it instead.
+                if (Field.Descriptor.Size > sizeof(pad_buf))
+                    return false;
                 memset(pad_buf, ' ', sizeof(pad_buf));
                 memcpy(pad_buf, Input, Length);
                 data = pad_buf;

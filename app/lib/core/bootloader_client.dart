@@ -121,17 +121,11 @@ class PassthroughTransport implements BootloaderTransport {
 class DirectUsbTransport implements BootloaderTransport {
   final UsbTransport usb;
 
-  /// Pause after each write so the core's 4 KB sector erase (on the first chunk of a sector)
-  /// finishes before the next frame.
-  final Duration writePacing;
-
-  DirectUsbTransport(this.usb,
-      {this.writePacing = const Duration(milliseconds: 3)});
+  DirectUsbTransport(this.usb);
 
   @override
   Future<bool> writeChunk(int offset, List<int> data, Duration timeout) async {
     usb.writeRaw(Bootloader.encodeWrite(offset, data));
-    if (writePacing > Duration.zero) await Future<void>.delayed(writePacing);
     return true;
   }
 
@@ -148,8 +142,11 @@ class DirectUsbTransport implements BootloaderTransport {
         }
         if (buffer.length < Bootloader.dataSize) break;
         final frame = buffer.sublist(0, Bootloader.dataSize);
-        if ((frame[1] & 0x03) == Bootloader.cmdReadResponse &&
-            frame[Bootloader.dataSize - 1] == Bootloader.end) {
+        // Match the reply to the request: a valid read-response frame (structure + parity)
+        // whose offset equals the one we asked for. A late reply from a previous read is
+        // dropped rather than returned for the wrong offset.
+        if (Bootloader.decode(frame) == Bootloader.cmdReadResponse &&
+            Bootloader.offset(frame) == offset) {
           buffer.removeRange(0, Bootloader.dataSize);
           if (!completer.isCompleted) {
             completer.complete(Uint8List.fromList(

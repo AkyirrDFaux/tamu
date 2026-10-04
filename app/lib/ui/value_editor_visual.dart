@@ -384,13 +384,16 @@ Future<List<int>?> _editInt(
 }
 
 Future<List<int>?> _editNetAddr(BuildContext context, List<int> current) {
+  // The System NetID is a single byte; a full NetAddr is two (net.device). Preserve the
+  // target size so a 1-byte field emits 1 byte.
+  final oneByte = current.length == 1;
   final currentId =
-      current.length >= 2 ? current[0] | (current[1] << 8) : 0;
+      current.length >= 2 ? current[0] | (current[1] << 8) : (oneByte ? current[0] : 0);
   final controller = TextEditingController(text: idToString(currentId));
   return showDialog<List<int>>(
     context: context,
     builder: (context) => AlertDialog(
-      title: const Text('Net address (net.device)'),
+      title: Text(oneByte ? 'Net ID' : 'Net address (net.device)'),
       content: TextField(controller: controller, autofocus: true),
       actions: [
         TextButton(
@@ -399,7 +402,8 @@ Future<List<int>?> _editNetAddr(BuildContext context, List<int> current) {
           onPressed: () {
             final id = idFromString(controller.text.trim());
             if (id == null) return;
-            Navigator.pop(context, [id & 0xFF, (id >> 8) & 0xFF]);
+            Navigator.pop(
+                context, oneByte ? [id & 0xFF] : [id & 0xFF, (id >> 8) & 0xFF]);
           },
           child: const Text('OK'),
         ),

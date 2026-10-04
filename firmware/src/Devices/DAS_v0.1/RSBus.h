@@ -1,15 +1,13 @@
 // Sized to hold at least two full transmissions: a frame is 12 header + 116 payload = 128
-// bytes, plus the 0xAA sync byte = 129 transmitted bytes; two = 258, rounded up to 300.
-#define BUFFER_SIZE 300
+// bytes, plus the 0xAA sync byte = 129 transmitted bytes; two = 258. The ring reserves one
+// empty slot for full detection, so 259 is the minimum; 260 round it up (RAM is scarce).
+#define BUFFER_SIZE 260
 #define RS485_EN_PORT GPIOD
 #define RS485_EN_PIN GPIO_Pin_4
 // Circular Buffer structure
 volatile uint8_t rx_buffer[BUFFER_SIZE];
 volatile uint16_t head = 0; // ISR writes here
 volatile uint16_t tail = 0; // Main reads here
-
-// True once SetupRS485() has enabled the transceiver (gates bus logging).
-static bool g_rs485_ready = false;
 
 #include "Core/Functions/Packet.h"
 #include "Core/Functions/Bus.h"
@@ -91,7 +89,6 @@ void SetupRS485()
     __enable_irq();
 
     USART_Cmd(USART1, ENABLE);
-    g_rs485_ready = true;
 }
 
 // Microsecond timestamp from the SysTick counter (32-bit math, no 64-bit division helper).

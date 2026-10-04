@@ -3,12 +3,12 @@
 // App Interface core (Docs/Services/App Interface.md): routing between the attached
 // app (USB / BLE links) and the packet dispatcher.
 //
-// Identity model: the app has NO network address. Its identity is the App service
-// type (ServiceType::App) carried in SRV SRC, with the CID byte used as an app-managed
-// transaction ID. Frames arriving from a link get id_src rewritten to our own short
-// address (the core acts as a proxy), so every response - local or relayed from the
-// bus - comes back addressed to us with SRV TGT type == App and is pushed to the app's
-// TX stream.
+// Identity model: the app has NO network address. Its transaction ID is allocated in
+// the App TRID range (0xF000-0xFFFF, Packet.h) and carried in SRV SRC / TRID; the app
+// matches replies on that full 16-bit value. Frames arriving from a link get id_src
+// rewritten to our own short address (the core acts as a proxy), and every response
+// echoes the request's TRID, so replies - local or relayed from the bus - carry a CMD
+// in the App range and are pushed back to the app's TX stream by the dispatcher.
 
 #ifdef USE_APP_INTERFACE
 
@@ -28,9 +28,9 @@ bool AppConnected = false;
 // Outgoing stream ring: serialized frames waiting to be flushed to the app links.
 // A synchronous service reply (e.g. Storage Read File, which streams a whole
 // file in one handler) can legitimately burst well past a small ring before
-// AppInterfacePump drains it. Sized to hold a full 4 KiB file read (~4.5 KB of
-// wire frames); larger reads would still truncate, so the app reads files in
-// 4 KiB slices.
+// AppInterfacePump drains it. 8 KiB absorbs a full 4 KiB file read (~4.5 KB of
+// wire frames) with headroom; larger reads would still truncate, so the app reads
+// files in 4 KiB slices.
 #define APP_TX_RING_SIZE 8192
 
 // Inbound frame queue depth: frames parsed by the link readers, dispatched by the pump
@@ -48,6 +48,7 @@ portMUX_TYPE AppTxMux = portMUX_INITIALIZER_UNLOCKED;
 
 PacketFrame AppRxQueue[APP_RX_QUEUE_DEPTH];
 volatile uint8_t AppRxCount = 0;
+volatile uint8_t AppRxTail = 0; // dequeue position (ring; avoids shifting the queue)
 portMUX_TYPE AppRxMux = portMUX_INITIALIZER_UNLOCKED;
 
 // Link hooks (implemented per device: Devices/Tamu_v2.0A/AppUSB.h + AppBLE.h).
@@ -72,9 +73,11 @@ inline bool AppInterfaceSend(const PacketFrame &frame)
     if (!AppConnected || !AppTxRing)
         return false;
 
-    uint8_t wire[12 + MAX_PAYLOAD_SIZE];
+    // Copy the wire bytes straight from the packed frame instead of staging a
+    // 128-byte stack copy per reply. PacketFrame is packed, so its bytes are the
+    // wire layout in order.
+    const uint8_t *wire = reinterpret_cast<const uint8_t *>(&frame);
     uint16_t n = PacketWireSize(&frame);
-    PacketToWire(&frame, wire);
 
     bool ok = false;
     portENTER_CRITICAL(&AppTxMux);
@@ -144,7 +147,8 @@ inline bool AppInterfaceEnqueue(const PacketFrame &frame)
     portENTER_CRITICAL(&AppRxMux);
     if (AppRxCount < APP_RX_QUEUE_DEPTH)
     {
-        AppRxQueue[AppRxCount] = frame;
+        uint8_t head = (uint8_t)((AppRxTail + AppRxCount) % APP_RX_QUEUE_DEPTH);
+        AppRxQueue[head] = frame;
         AppRxCount = (uint8_t)(AppRxCount + 1);
         ok = true;
     }
@@ -157,6 +161,8 @@ inline bool AppInterfaceEnqueue(const PacketFrame &frame)
 // foreign targets (bus forward via its forwarding rule) uniformly.
 inline void AppInterfaceRouteIn(PacketFrame &frame)
 {
+    // The app has no net context: it addresses devices by their device number on the local
+    // net (net 0). The dispatcher resolves net 0 to our net at match/forward time.
     frame.id_src = DeviceStatus.ShortAddress;
     DispatchPacket(frame);
 }
@@ -171,12 +177,17 @@ void AppInterfacePump()
     // Physical USB link loss ends an app session (the link task flushes and resets).
     AppUSBTick();
 
-    while (AppRxCount > 0)
+    for (;;)
     {
+        PacketFrame f;
         portENTER_CRITICAL(&AppRxMux);
-        PacketFrame f = AppRxQueue[0];
-        for (int i = 1; i < AppRxCount; i++)
-            AppRxQueue[i - 1] = AppRxQueue[i];
+        if (AppRxCount == 0) // read inside the lock so an enqueue can't corrupt the pop
+        {
+            portEXIT_CRITICAL(&AppRxMux);
+            break;
+        }
+        f = AppRxQueue[AppRxTail];
+        AppRxTail = (uint8_t)((AppRxTail + 1) % APP_RX_QUEUE_DEPTH);
         AppRxCount = (uint8_t)(AppRxCount - 1);
         portEXIT_CRITICAL(&AppRxMux);
         AppInterfaceRouteIn(f);

@@ -1,12 +1,12 @@
 #pragma once
 
-// CID 1: read helpers (System, multi-entry, static, dynamic, script).
+// CID 2: read helpers (System, multi-entry, static, dynamic, script).
 //
 // Part of Core/Services/Register.h (included from there).
 
 #include "Core/Services/RegisterDefs.h"
 
-// ===== CID 1: Read helpers =====
+// ===== CID 2: Read helpers =====
 
 // Fills the value bytes for one System-block field (type 0, inst 0). The descriptor comes from
 // System_Entries (the metadata is unified) and the caller has already resolved the entry, so this
@@ -48,8 +48,13 @@ static bool SystemFillValue(uint8_t field, uint8_t *vbuf) {
         break;
     }
     case 4: { // RAM struct: Used | Total
-        int32_t used = GetFreeRAM();
         uint32_t total = GetTotalRAM();
+        int32_t free_ram = GetFreeRAM();
+        // The field is labelled Used|Total and shown as "Used RAM": report the used bytes,
+        // clamped to zero when the free count is bogus/negative or exceeds the total.
+        int32_t used = (free_ram >= 0 && (uint32_t)free_ram < total)
+                           ? (int32_t)(total - (uint32_t)free_ram)
+                           : 0;
         memcpy(vbuf, &used, 4);
         memcpy(vbuf + 4, &total, 4);
         break;

@@ -6,7 +6,7 @@ Future<List<int>?> _editVector(
     BuildContext context, FieldInfo? info, List<int> current) {
   var n = current.length >= 4 ? (current.length ~/ 4) : 3;
   if (n < 1) n = 1;
-  var hasValue = current.length >= n * 4;
+  final hasValue = current.length >= n * 4;
   final controllers = List.generate(
       n,
       (i) => TextEditingController(
@@ -27,7 +27,6 @@ Future<List<int>?> _editVector(
       controllers.removeLast();
     }
     sizeCtrl.text = '$n';
-    hasValue = false;
   }
 
   return showDialog<List<int>>(
@@ -242,7 +241,9 @@ Future<List<int>?> _editBlockInfo(BuildContext context, List<int> current) {
       if (t != BlockType.none &&
           t != BlockType.undefined &&
           t != BlockType.deleted &&
-          t != BlockType.render)
+          // App-only markers with no wire type: not addressable.
+          t != BlockType.script &&
+          t != BlockType.dynamic)
         (t.value, t.label),
   ];
   if (!types.any((e) => e.$1 == type)) types.add((type, blockTypeLabel(type)));

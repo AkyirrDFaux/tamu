@@ -18,9 +18,7 @@ bool get isMobile =>
     (defaultTargetPlatform == TargetPlatform.android ||
         defaultTargetPlatform == TargetPlatform.iOS);
 
-/// USB serial links are a desktop feature; Android is BLE-only per the docs.
+/// USB serial links are a Linux desktop feature per the docs (Windows is
+/// "Do not implement yet"; macOS is not a listed target).
 bool get supportsUsb =>
-    !kIsWeb &&
-    (defaultTargetPlatform == TargetPlatform.linux ||
-        defaultTargetPlatform == TargetPlatform.macOS ||
-        defaultTargetPlatform == TargetPlatform.windows);
+    !kIsWeb && defaultTargetPlatform == TargetPlatform.linux;

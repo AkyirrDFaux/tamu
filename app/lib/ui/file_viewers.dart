@@ -4,7 +4,7 @@
 // - FileViewPage: previews one file's content (SNREG registry, LAY LED-index
 //   grid, text, hex).
 // - MemoryBackupView: decodes the `.SV` / SUBREQ registry backups and the
-//   DT_ dynamic block table.
+//   .DT_ dynamic block table.
 library;
 
 import 'package:flutter/material.dart';
@@ -37,9 +37,9 @@ StorageFileType storageFileType(String name) {
   final upper = normalizeFileName(name).toUpperCase();
   if (upper == 'SNREG') return StorageFileType.snreg;
   if (upper == '.SV' || upper == '.SUBREQ' || upper == 'SUBREQ') return StorageFileType.backup;
-  // Per-block dynamic persistence (Docs/Services/Register.md: DT_XXX table / DV_XXX values).
-  if (upper.startsWith('DT_')) return StorageFileType.dynamicTable;
-  if (upper.startsWith('DV_')) return StorageFileType.dynamicValues;
+  // Per-block dynamic persistence (Docs/Services/Register.md: .DT_XXX table / .DV_XXX values).
+  if (upper.startsWith('.DT_')) return StorageFileType.dynamicTable;
+  if (upper.startsWith('.DV_')) return StorageFileType.dynamicValues;
   if (upper.startsWith('LAY') || upper.endsWith('.LAY')) {
     return StorageFileType.layout;
   }
@@ -112,7 +112,12 @@ class _FileViewPageState extends State<FileViewPage> {
   void initState() {
     super.initState();
     _staticFields = widget.staticFields;
-    if (_staticFields.isEmpty) _loadStaticFields();
+    // Only the `.SV` decoder needs the static field layout; skip the read for the other
+    // file types (it is a device round-trip per opened file).
+    if (_staticFields.isEmpty &&
+        storageFileType(widget.name) == StorageFileType.backup) {
+      _loadStaticFields();
+    }
   }
 
   Future<void> _loadStaticFields() async {
@@ -143,42 +148,49 @@ class _FileViewPageState extends State<FileViewPage> {
       child: SelectableText(text,
           style: const TextStyle(fontFamily: 'monospace', fontSize: 12)));
 
-  /// Standard raw view: one row per N bytes with offset, grouped hex and ASCII.
+  /// Standard raw view: one lazily-built row per N bytes with offset, grouped hex and ASCII.
+  /// Each row scrolls horizontally so 32/64-byte widths scroll sideways instead of overflowing.
   Widget _hexView() {
     final data = widget.data!;
     if (data.isEmpty) return const Center(child: Text('(empty file)'));
     final per = _bytesPerLine;
-    final rows = <Widget>[];
-    for (var off = 0; off < data.length; off += per) {
-      final end = (off + per) < data.length ? off + per : data.length;
-      final chunk = data.sublist(off, end);
-      final hex = [
-        for (var i = 0; i < chunk.length; i++)
-          chunk[i].toRadixString(16).padLeft(2, '0')
-      ].join(' ');
-      final ascii = chunk.map((b) =>
-          (b >= 0x20 && b < 0x7F) ? String.fromCharCode(b) : '.').join();
-      rows.add(Row(mainAxisSize: MainAxisSize.min, children: [
-        SizedBox(
-            width: 82,
-            child: Text('0x${off.toRadixString(16).padLeft(8, '0')}',
-                style: const TextStyle(
-                    fontFamily: 'monospace', fontSize: 11, color: Colors.white38))),
-        const SizedBox(width: 8),
-        Text(hex,
-            style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
-        const SizedBox(width: 12),
-        Text(ascii,
-            style: const TextStyle(
-                fontFamily: 'monospace', fontSize: 11, color: Colors.white54)),
-      ]));
-    }
-    // Rows shrink-wrap so the 32/64-byte widths scroll horizontally instead of
-    // being squeezed into the viewport width.
-    return SingleChildScrollView(
+    final lines = (data.length + per - 1) ~/ per;
+    return ListView.builder(
       padding: const EdgeInsets.all(12),
-      scrollDirection: Axis.horizontal,
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: rows),
+      itemCount: lines,
+      itemBuilder: (context, line) {
+        final off = line * per;
+        final end = (off + per) < data.length ? off + per : data.length;
+        final chunk = data.sublist(off, end);
+        final hex = [
+          for (var i = 0; i < chunk.length; i++)
+            chunk[i].toRadixString(16).padLeft(2, '0')
+        ].join(' ');
+        final ascii = chunk
+            .map((b) => (b >= 0x20 && b < 0x7F) ? String.fromCharCode(b) : '.')
+            .join();
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            SizedBox(
+                width: 82,
+                child: Text('0x${off.toRadixString(16).padLeft(8, '0')}',
+                    style: const TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 11,
+                        color: Colors.white38))),
+            const SizedBox(width: 8),
+            Text(hex,
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
+            const SizedBox(width: 12),
+            Text(ascii,
+                style: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 11,
+                    color: Colors.white54)),
+          ]),
+        );
+      },
     );
   }
 
@@ -337,11 +349,11 @@ class _FileViewPageState extends State<FileViewPage> {
 //   .SUBREQ (SubscriptionsPersist.h SaveRequesterTable): u8 count, then 24 B per entry
 //     (provider, trid, subscription table [source, trigger, min u24, period, deadzone],
 //     target). The timeout is not persisted.
-//   DT_<hex2> (MemoryDynamic.h SaveDynamicBlockFiles): Name (16 chars, NUL-padded),
-//     u16 entry_count, u16 reserved, then fieldKey/flagsAndType/size/pad per entry.
+//   .DT_<hex2> (MemoryDynamic.h SaveDynamicBlockFiles): Name (16 chars, space-padded),
+//     u16 entry_count, u16 reserved, then Field&Key + MemoryOffset + ValueInfo per entry.
 // ---------------------------------------------------------------------------
 
-class MemoryBackupView extends StatelessWidget {
+class MemoryBackupView extends StatefulWidget {
   final String fileName;
   final List<int> data;
 
@@ -362,6 +374,23 @@ class MemoryBackupView extends StatelessWidget {
       this.blocks,
       this.staticFields = const {},
       this.hasNetId = true});
+
+  @override
+  State<MemoryBackupView> createState() => _MemoryBackupViewState();
+}
+
+class _MemoryBackupViewState extends State<MemoryBackupView> {
+  // Convenience accessors so the decoders below read as before.
+  String get fileName => widget.fileName;
+  List<int> get data => widget.data;
+  List<({int type, int inst, ValueInfo meta, String name})?>? get blocks => widget.blocks;
+  StaticFieldLayout get staticFields => widget.staticFields;
+  bool get hasNetId => widget.hasNetId;
+
+  /// The `.SV` layout is computed once per opened file instead of on every rebuild.
+  late final StaticSpaceLayout _svLayout = StaticSpaceLayout.fromRegistry(
+      staticRegistryOf(blocks), staticFields,
+      hasNetId: hasNetId);
 
   Widget _blockCard(String title, String subtitle, List<Widget> children) {
     return Card(
@@ -386,14 +415,14 @@ class MemoryBackupView extends StatelessWidget {
   }
 
   // -------------------------------------------------------------------------
-  // Dynamic block table (DT_<hex2>, decoded by device_backup.dart): the block's
-  // persistent value space lives in the sibling DV_<hex2> file. The table no
+  // Dynamic block table (.DT_<hex2>, decoded by device_backup.dart): the block's
+  // persistent value space lives in the sibling .DV_<hex2> file. The table no
   // longer stores the block's type; it is derived from the file's global index.
   // -------------------------------------------------------------------------
   int? _dynamicIndex() {
     final n = normalizeFileName(fileName).toUpperCase();
-    if (!n.startsWith('DT_')) return null;
-    return int.tryParse(n.substring(3), radix: 16);
+    if (!n.startsWith('.DT_')) return null;
+    return int.tryParse(n.substring(4), radix: 16);
   }
 
   List<Widget> _parseDynamicTable() {
@@ -428,10 +457,8 @@ class MemoryBackupView extends StatelessWidget {
   // -------------------------------------------------------------------------
   List<Widget> _parseSv() {
     final registry = staticRegistryOf(blocks);
-    final layout =
-        StaticSpaceLayout.fromRegistry(registry, staticFields, hasNetId: hasNetId);
     final rows = <Widget>[];
-    for (final e in decodeSv(data, layout, registry)) {
+    for (final e in decodeSv(data, _svLayout, registry)) {
       String title;
       String subtitle;
       if (e.blockType == systemBlockTypeValue) {
@@ -505,7 +532,7 @@ class MemoryBackupView extends StatelessWidget {
           '.SV' => _parseSv(),
           '.SUBREQ' => _parseSubreq(),
           'SUBREQ' => _parseSubreq(),
-          _ when upper.startsWith('DT_') => _parseDynamicTable(),
+          _ when upper.startsWith('.DT_') => _parseDynamicTable(),
           _ => [const Text('(unknown registry file)')],
         };
     if (rows.isEmpty) return const Center(child: Text('(empty backup)'));

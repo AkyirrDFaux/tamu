@@ -43,9 +43,10 @@ class _UpdatePageState extends State<UpdatePage> {
     if (_directToCore) {
       final t = ConnectionManager.instance.transport;
       if (t is UsbTransport) {
+        // Direct USB: the transport owns the per-write pacing (DirectUsbTransport's
+        // writePacing); zero the client's own pacing so a write is not delayed twice.
         return BootloaderClient(
-            transport: DirectUsbTransport(t),
-            writePacing: const Duration(milliseconds: 3));
+            transport: DirectUsbTransport(t), writePacing: Duration.zero);
       }
     }
     return BootloaderClient(coreId: coreId);
@@ -59,7 +60,7 @@ class _UpdatePageState extends State<UpdatePage> {
   Future<void> _chooseFile() async {
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['bin', 'img', 'uf2', 'hex'],
+      allowedExtensions: ['bin', 'img'],
       withData: true,
     );
     if (!mounted) return;
@@ -165,7 +166,10 @@ class _UpdatePageState extends State<UpdatePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Update')),
+      appBar: AppBar(
+        title: const Text('Update'),
+        leading: const ShellDrawerButton(),
+      ),
       body: ListenableBuilder(
         listenable: Listenable.merge([_link, _db]),
         builder: (context, _) => ListView(
@@ -188,7 +192,7 @@ class _UpdatePageState extends State<UpdatePage> {
 
   // --- sections --------------------------------------------------------------
 
-  Widget _guideCard(BuildContext context) => _card(context, 'How to update', [
+  Widget _guideCard(BuildContext context) => InfoCard(title: 'How to update', children: [
         _bullet(context, 'Choose the device\'s main binary (.bin) below.'),
         _bullet(context,
             'Put the target in bootloader mode: hold its button while resetting or '
@@ -206,10 +210,10 @@ class _UpdatePageState extends State<UpdatePage> {
   Widget _targetCard(BuildContext context) {
     final core = _db.byId(coreId);
     final connected = _link.isConnected;
-    return _card(context, 'Target', [
-      _row('Link', connected ? 'Connected' : 'Not connected'),
-      _row('Core', core?.displayName ?? 'Core 0.1'),
-      _row('Bootloader probe', _probeOk == null
+    return InfoCard(title: 'Target', children: [
+      InfoRow('Link', connected ? 'Connected' : 'Not connected'),
+      InfoRow('Core', core?.displayName ?? 'Core 0.1'),
+      InfoRow('Bootloader probe', _probeOk == null
           ? 'not checked'
           : (_probeOk! ? 'answered' : 'no reply')),
       Padding(
@@ -241,9 +245,9 @@ class _UpdatePageState extends State<UpdatePage> {
     ]);
   }
 
-  Widget _imageCard(BuildContext context) => _card(context, 'Image', [
-        _row('File', _fileName.isEmpty ? 'none chosen' : _fileName),
-        _row('Size', _image == null ? '-' : _formatBytes(_image!.length)),
+  Widget _imageCard(BuildContext context) => InfoCard(title: 'Image', children: [
+        InfoRow('File', _fileName.isEmpty ? 'none chosen' : _fileName),
+        InfoRow('Size', _image == null ? '-' : _formatBytes(_image!.length)),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
           child: Align(
@@ -260,7 +264,7 @@ class _UpdatePageState extends State<UpdatePage> {
   Widget _actionCard(BuildContext context) {
     final p = _progress;
     final result = _result;
-    return _card(context, 'Update', [
+    return InfoCard(title: 'Update', children: [
       if (_busy) ...[
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
@@ -315,7 +319,7 @@ class _UpdatePageState extends State<UpdatePage> {
     ]);
   }
 
-  Widget _logCard(BuildContext context) => _card(context, 'Log', [
+  Widget _logCard(BuildContext context) => InfoCard(title: 'Log', children: [
         if (_log.isEmpty)
           _bullet(context, 'Nothing yet.')
         else
@@ -338,38 +342,4 @@ class _UpdatePageState extends State<UpdatePage> {
           Expanded(child: Text(text)),
         ]),
       );
-
-  Widget _card(BuildContext context, String title, List<Widget> children) {
-    return Card(
-      color: kSurfaceAlt,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-              child: Text(title,
-                  style: const TextStyle(
-                      color: kOrange, fontWeight: FontWeight.w600)),
-            ),
-            ...children,
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _row(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
-      child: Row(children: [
-        SizedBox(
-            width: 140,
-            child:
-                Text(label, style: Theme.of(context).textTheme.bodySmall)),
-        Expanded(child: Text(value)),
-      ]),
-    );
-  }
 }

@@ -12,6 +12,8 @@
 #include "Core/Types/Matrix.h"
 #include "Core/Types/Vector.h"
 
+#include <cstddef> // offsetof
+
 const uint8_t LayoutVysiv1_0[10 * 11]{
     0, 0, 0, 28, 29, 48, 49, 68, 0, 0, 0,
     0, 0, 11, 27, 30, 47, 50, 67, 69, 0, 0,
@@ -70,20 +72,26 @@ struct Vysi1Volatile
 };
 struct Vysi1Persistent
 {
-    Matrix<2, 3> Offset = IdentityAffine23(); // 2x3 transformation, offset 0
-    int32_t RenderBlock = -1; // Signed index into dynamic_block_registry; -1 = none, offset 24
+    Matrix<2, 3> Offset = IdentityAffine23(); // 2x3 transformation, offset 0 (28 B: u16 height + u16 width + 6 Numbers)
+    int32_t RenderBlock = -1; // Signed index into dynamic_block_registry; -1 = none, offset 28
     // Layout File Name: plain 8-char storage file name, space padded. Defaults to the
     // preloaded "LAY_1" file (identical to the compiled-in layout); a blank name means
     // the built-in default layout. Written via trigger, which loads the layout file
     // immediately (write is rejected if the file cannot be loaded).
-    char LayoutFile[8] = {'L', 'A', 'Y', '_', '1', ' ', ' ', ' '}; // offset 28
+    char LayoutFile[8] = {'L', 'A', 'Y', '_', '1', ' ', ' ', ' '}; // offset 32
 };
+
+// The dynamic field offsets in Vysi1_Entries must track the struct layout: the 2x3
+// Offset Matrix occupies 28 B (4-byte header + 6 Numbers), so RenderBlock is at 28
+// and LayoutFile at 32. These asserts fail the build if either drifts.
+static_assert(offsetof(Vysi1Persistent, RenderBlock) == 28, "RenderBlock must be at offset 28");
+static_assert(offsetof(Vysi1Persistent, LayoutFile) == 32, "LayoutFile must be at offset 32");
 
 const BlockEntry Vysi1_Entries[] = {
     { MakeFieldKey(0, 0), 0,  {(uint16_t)DataType::Number, sizeof(Number), 0} },                     // Brightness
     { MakeFieldKey(1, 0), 0,  {(uint16_t)DataType::Matrix, sizeof(Matrix<2, 3>), ValuePersistent} }, // Offset (2x3)
-    { MakeFieldKey(2, 0), 24, {(uint16_t)DataType::Index, sizeof(int32_t), ValuePersistent} },       // Render Block Index (signed, -1 = none)
-    { MakeFieldKey(3, 0), 28, {(uint16_t)DataType::Filename, 8, ValueTrigger | ValuePersistent} },   // Layout File Name
+    { MakeFieldKey(2, 0), 28, {(uint16_t)DataType::Index, sizeof(int32_t), ValuePersistent} },       // Render Block Index (signed, -1 = none)
+    { MakeFieldKey(3, 0), 32, {(uint16_t)DataType::Filename, 8, ValueTrigger | ValuePersistent} },   // Layout File Name
     { MakeFieldKey(4, 0), 4,  {(uint16_t)DataType::Number, sizeof(Number), ValueReadOnly} },         // Refresh Rate
 };
 
@@ -130,12 +138,23 @@ public:
     uint8_t Mask[LedNum];
 
     // Cached per-field geometry alpha (0..255), invalidated on block/offset/layout change.
+    // ~1 KB per display (12 fields x 86 LEDs); two displays cost 2 KB of static RAM.
     uint8_t GeoMask[MaxCachedFields][LedNum];
     DynamicBlockDescriptor *CacheBlockPtr = nullptr;
     uint32_t CacheBlockGen = 0xFFFFFFFF;
     int32_t CacheOffset[6] = {0, 0, 0, 0, 0, 0};
     uint32_t CacheLayoutGen = 0xFFFFFFFF;
     bool CacheValid = false;
+
+    // Per-frame field classification, cached alongside the geometry mask and recomputed
+    // only when the block/offset/layout changes. Kind: 1 = geometry, 2 = texture, 0 = other.
+    uint8_t CachedFields[MaxCachedFields];
+    uint8_t CachedFieldKind[MaxCachedFields];
+    uint16_t CachedFieldCount = 0;
+
+    // Set by ApplyGeometryField when any geometry wrote a non-zero alpha this frame.
+    // Textures/effects apply only inside the mask, so an empty mask skips them entirely.
+    bool MaskAny = false;
 
     Vysi1Display(Vysi1Volatile &vol, Vysi1Persistent &per) : Vol(vol), Per(per) {
         if (s_instanceCount < MaxInstances) s_instances[s_instanceCount++] = this;
@@ -156,6 +175,7 @@ public:
     void RenderTextureField(DynamicBlockDescriptor *block, uint16_t field);
     Matrix<3, 3> PromoteAffine(const Matrix<2, 3> &m);
     Matrix<3, 3> BaseTransform();
+    Matrix<3, 3> FieldTransform(const Matrix<2, 3> &pos);
     int32_t ReadKeyInt(DynamicBlockDescriptor *block, uint16_t field, uint8_t key, int32_t def);
     ColourClass LerpColour(const ColourClass &c1, const ColourClass &c2, Number t);
     void ShiftHue(ColourClass &c, Number hueDeg);
@@ -219,16 +239,24 @@ public:
         // then the index table. Only this format is accepted - a file written to the older
         // 2-byte header fails here and the caller falls back to the built-in default.
         uint8_t hdr[3];
-        Storage_FlashRead(off, hdr, 3);
+        if (Storage_FlashRead(off, hdr, 3) != 3)
+            return false;
         uint32_t entries = (uint32_t)hdr[1] * hdr[2];
         if (hdr[1] == 0 || hdr[2] == 0 || entries > MaxLayoutEntries ||
             size < 3 + entries * 2)
             return false;
 
-        Storage_FlashRead(off + 3, (void *)Layout, entries * 2);
+        // Read into a scratch buffer and only commit to the display once the whole read
+        // succeeded, so a failed read leaves the previous layout/state untouched.
+        uint16_t pending[MaxLayoutEntries];
+        if (Storage_FlashRead(off + 3, (void *)pending, entries * 2) != entries * 2)
+            return false;
         for (uint32_t i = 0; i < entries; i++)
+        {
+            Layout[i] = pending[i];
             if (Layout[i] != 0xFFFF && Layout[i] >= LedNum)
                 Layout[i] = 0xFFFF; // index beyond this display's chain
+        }
         BrightnessLimit = hdr[0];
         Lw = hdr[1];
         Lh = hdr[2];

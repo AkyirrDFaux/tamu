@@ -260,8 +260,7 @@ enum BlockType {
   button(0x09),
   led(0x0A),
   script(0x3FE), // app marker for the Scripts service (wire range 0x3F4-0x3F7)
-  dynamic(0x3FF), // app marker for the Dynamic service (wire range 0x3F0-0x3F3)
-  render(0x100);
+  dynamic(0x3FF); // app marker for the Dynamic service (wire range 0x3F0-0x3F3)
 
   final int value;
   const BlockType(this.value);
@@ -286,7 +285,6 @@ enum BlockType {
         BlockType.led => 'LED',
         BlockType.script => 'Script',
         BlockType.dynamic => 'Dynamic',
-        BlockType.render => 'Render',
       };
 }
 
@@ -380,8 +378,9 @@ class Capability {
   static const scripts = 1 << 4;
   static const storageFiles = 1 << 5;
   static const appInterface = 1 << 6;
-  static const subscriptions = 1 << 7;
+  static const subscriptionRequest = 1 << 7;
   static const node = 1 << 8;
+  static const subscriptionProvide = 1 << 9;
 
   static List<String> describe(int caps) {
     final names = <String>[];
@@ -391,7 +390,8 @@ class Capability {
     if (caps & scripts != 0) names.add('Scripts');
     if (caps & storageFiles != 0) names.add('Files');
     if (caps & appInterface != 0) names.add('App');
-    if (caps & subscriptions != 0) names.add('Subs');
+    if (caps & subscriptionRequest != 0) names.add('SubReq');
+    if (caps & subscriptionProvide != 0) names.add('SubProv');
     if (caps & node != 0) names.add('Node');
     return names;
   }

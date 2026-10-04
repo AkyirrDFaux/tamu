@@ -23,6 +23,10 @@ class _ConnectionPageState extends State<ConnectionPage>
   bool _refreshing = false;
   Duration? _autoInterval = const Duration(seconds: 1); // docs default: on
 
+  /// Cached once: the getter maps a fresh availability stream on every access, which would
+  /// make the StreamBuilder resubscribe on every rebuild.
+  late final Stream<String?> _bluetoothWarning = _manager.bluetoothWarning;
+
   @override
   void initState() {
     super.initState();
@@ -66,15 +70,13 @@ class _ConnectionPageState extends State<ConnectionPage>
 
   Future<void> _setAutoConnectTarget() async {
     final settings = AppSettings.instance;
-    await settings.load();
     if (_autoTargetIsCurrent) {
       settings.update(() {
         settings.autoConnect = false;
         settings.autoConnectDeviceId = '';
       });
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Autoconnect disabled')));
+      showSnack(context, 'Autoconnect disabled');
       return;
     }
     settings.update(() {
@@ -83,21 +85,17 @@ class _ConnectionPageState extends State<ConnectionPage>
           _manager.connectedId ?? _manager.connectedName ?? '';
     });
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Autoconnect target set: '
-            '${_manager.connectedName}')));
+    showSnack(context, 'Autoconnect target set: ${_manager.connectedName}');
   }
 
   Future<void> _setAutoConnectFor(DiscoveredLink link) async {
     final settings = AppSettings.instance;
-    await settings.load();
     settings.update(() {
       settings.autoConnect = true;
       settings.autoConnectDeviceId = link.id;
     });
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Autoconnect target set: ${link.name}')));
+    showSnack(context, 'Autoconnect target set: ${link.name}');
   }
 
   Future<void> _refreshOnce() async {
@@ -160,7 +158,7 @@ class _ConnectionPageState extends State<ConnectionPage>
       );
     }
     return StreamBuilder<String?>(
-      stream: _manager.bluetoothWarning,
+      stream: _bluetoothWarning,
       builder: (context, snapshot) {
         final warning = snapshot.data;
         if (warning == null) return const SizedBox.shrink();
@@ -297,8 +295,7 @@ class _ConnectionPageState extends State<ConnectionPage>
         final error = await _manager.connectTo(link);
         if (!context.mounted) return;
         if (error != null) {
-          ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Connect failed: $error')));
+          showSnack(context, 'Connect failed: $error');
           return;
         }
         // Populate the Devices page as soon as a session is up.

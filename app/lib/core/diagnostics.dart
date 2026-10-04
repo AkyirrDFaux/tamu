@@ -23,17 +23,28 @@ class DiagEvent {
 class AppDiagnostics {
   static const int capacity = 200;
 
-  static final List<DiagEvent> _events = [];
+  // Fixed-size ring: `_start` is the oldest slot, `_count` the number of live
+  // events (<= capacity). Appends are O(1); no list shifting.
+  static final List<DiagEvent?> _events = List<DiagEvent?>.filled(capacity, null);
+  static int _start = 0;
+  static int _count = 0;
 
   /// Recent events, oldest first.
-  static List<DiagEvent> get events => List.unmodifiable(_events);
+  static List<DiagEvent> get events => List.unmodifiable([
+        for (var i = 0; i < _count; i++) _events[(_start + i) % capacity]!,
+      ]);
 
   static void log(String source, String message) {
     final event = DiagEvent(DateTime.now(), source, message);
-    _events.add(event);
-    if (_events.length > capacity) _events.removeAt(0);
+    if (_count < capacity) {
+      _events[(_start + _count) % capacity] = event;
+      _count++;
+    } else {
+      _events[_start] = event;
+      _start = (_start + 1) % capacity;
+    }
   }
 
   /// Dumps the ring as a multi-line string (bug reports, test failure output).
-  static String dump() => _events.map((e) => e.toString()).join('\n');
+  static String dump() => events.map((e) => e.toString()).join('\n');
 }

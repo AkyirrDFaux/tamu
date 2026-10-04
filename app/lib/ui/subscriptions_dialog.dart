@@ -9,7 +9,8 @@ import '../core/device_db.dart';
 import '../core/register_client.dart';
 import '../core/subscription_client.dart';
 import '../core/script_client.dart';
-import '../core/types.dart' show BlockType, ValueInfo, RequesterSubscription, TriggerType, makeBlockInfo;
+import '../core/render_dict.dart' show isRenderDictType;
+import '../core/types.dart' show BlockType, DataType, ValueInfo, RequesterSubscription, TriggerType, makeBlockInfo;
 import 'widgets.dart' show showSnack, DialogBody;
 
 part 'subscriptions_pickers.dart';
@@ -38,11 +39,16 @@ class FieldSelection {
   final String name;
   final bool keyed;
 
+  /// The keys that actually exist at this field (dictionary marker key 0 dropped), so the
+  /// key picker can offer the documented keys beyond 0..7.
+  final List<int> keys;
+
   const FieldSelection({
     required this.field,
     required this.meta,
     required this.name,
     required this.keyed,
+    this.keys = const [],
   });
 }
 
@@ -64,18 +70,33 @@ Future<List<BlockSelection>> fetchBlockSelections(int deviceId) async {
 
 /// Reads a block's fields as pickable selections; empty when the field enumeration is
 /// unavailable so navigation never blocks. Names come from the design-time schema when present.
+/// Fields and keys are the *enumerated* indexes (dynamic blocks may be sparse and keyed
+/// fields may use keys beyond 0..7).
 Future<List<FieldSelection>> fetchFieldSelections(int deviceId, BlockSelection block) async {
   final reg = RegisterClient(deviceId: deviceId);
-  final count = await reg.getFieldCount(block.type, block.inst);
-  if (count == null) return [];
+  final fieldIndexes = await reg.enumerateFieldIndexes(block.type, block.inst);
+  if (fieldIndexes == null) return [];
   final schema = blockInfoFor(BlockType.fromValue(block.type));
   final out = <FieldSelection>[];
-  for (var f = 0; f < count; f++) {
-    final r = await reg.readBlockField(block.type, block.inst, f, 0);
+  for (final f in fieldIndexes) {
+    final allKeys =
+        await reg.enumerateKeys(block.type, block.inst, f) ?? const <int>[0];
+    final readKey = allKeys.isNotEmpty ? allKeys.first : 0;
+    final r = await reg.readBlockField(block.type, block.inst, f, readKey);
     if (r == null) continue;
+    final keyed = r.meta.type >= 0x100;
+    // A render-dictionary field keeps key 0 as its shape/effect marker (no value); the
+    // picker offers only the value keys.
+    final keys = keyed && isRenderDictType(r.meta.type)
+        ? allKeys.where((k) => k != 0).toList()
+        : allKeys;
     final name = (schema != null && f < schema.fields.length) ? schema.fields[f].name : null;
     out.add(FieldSelection(
-        field: f, meta: r.meta, name: name ?? 'Field $f', keyed: r.meta.type >= 0x100));
+        field: f,
+        meta: r.meta,
+        name: name ?? 'Field $f',
+        keyed: keyed,
+        keys: keys));
   }
   return out;
 }
@@ -162,8 +183,17 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
       final devices = db.all.where((d) => d.id != widget.client.deviceId).toList();
 
       final targetBlocks = await _fetchBlocks(widget.client.deviceId);
+      // The picker normally excludes the local device, but an existing self/offline-provider
+      // subscription must still be selectable or the dropdown asserts; include the local (or
+      // a synthetic) entry when it is the current value.
+      final existingProvider = widget.existing?.providerAddr;
+      if (existingProvider != null &&
+          !devices.any((d) => d.id == existingProvider)) {
+        devices.insert(
+            0, db.byId(existingProvider) ?? DeviceEntry(id: existingProvider));
+      }
       final providerAddr =
-          widget.existing?.providerAddr ?? (devices.isNotEmpty ? devices.first.id : 1);
+          existingProvider ?? (devices.isNotEmpty ? devices.first.id : 1);
       final sourceBlocks = await _fetchBlocks(providerAddr);
 
       setState(() {
@@ -291,6 +321,7 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
                             KeyPicker(
                               label: 'Target Key',
                               value: _targetKey,
+                              keys: _selectedTargetField!.keys,
                               onChanged: (v) => setState(() => _targetKey = v),
                             ),
                           ],
@@ -340,6 +371,7 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
                             KeyPicker(
                               label: 'Source Key',
                               value: _sourceKey,
+                              keys: _selectedSourceField!.keys,
                               onChanged: (v) => setState(() => _sourceKey = v),
                             ),
                           ],
@@ -436,6 +468,15 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
     }
     if (_needsPeriod() && _periodMs <= 0) return false;
     if (_minTimeMs < 0) return false;
+    // Trigger/source-type compatibility (Docs/Services/Subscriptions.md): edges are
+    // bool-only, the delta trigger is scalar/vector-only.
+    final sourceType = _selectedSourceField!.meta.dataType;
+    if (_trigger.isEdge && sourceType != DataType.bool_) return false;
+    if (_trigger == TriggerType.deltaPeriodic &&
+        sourceType != DataType.number &&
+        sourceType != DataType.vector) {
+      return false;
+    }
     return true;
   }
 
@@ -476,6 +517,9 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
         Navigator.pop(context);
       }
     } else {
+      // NOTE: the client reports success when a reply arrives, but a FLAG_FAIL reply also
+      // carries a payload (Issues.md "App (subscriptions)"); true failure needs the core
+      // request() to surface the response flags.
       if (mounted) showSnack(context, 'Failed to save subscription');
     }
   }

@@ -111,8 +111,8 @@ static void HandleRegister(const PacketFrame &frame) {
     }
 #endif
 
-    if (PayloadBytes(frame) < 4) return;
-    
+    if (PayloadBytes(frame) < 4) { RespondStatus(frame, false); return; }
+
     // frame.payload is 4-byte aligned (PacketFrame is packed+aligned(4)), so this is one
     // word load rather than a 4-byte memcpy.
     uint32_t bi = *reinterpret_cast<const uint32_t *>(frame.payload);
@@ -148,10 +148,12 @@ static void HandleRegister(const PacketFrame &frame) {
         const ValueInfo *desc = (const ValueInfo *)(frame.payload + 4);
         const uint8_t *val = frame.payload+8;
         // The ValueInfo.Size must match the value bytes actually present: a larger Size
-        // would make the write path copy past the frame.
+        // would make the write path copy past the frame. It is also capped to what one
+        // packet can carry, symmetric with the read reply's cap.
         uint16_t vlen = desc->Size;
         uint16_t avail = (uint16_t)(PayloadBytes(frame) - 8);
         if (vlen > avail) vlen = avail;
+        if (vlen > FIELD_RESPONSE_MAX_VALUE) vlen = FIELD_RESPONSE_MAX_VALUE;
 #ifdef USE_SCRIPTS
         if (BlockTypeRange::IsScript(type)) {
             HandleScriptBlockWrite(frame, BlockTypeRange::ScriptGlobal(type, inst), field, key, desc, val, vlen);

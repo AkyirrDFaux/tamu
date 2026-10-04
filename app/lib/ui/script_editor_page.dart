@@ -60,6 +60,7 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
   String? _loadError;
   bool _busy = false;
   bool _dirty = false;
+  bool _refreshFailed = false;
   List<String>? _errors;
   int _state = ScriptState.stopped;
   int _instructionCounter = 0;
@@ -94,10 +95,26 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
       _loadError = null;
     });
     try {
-      final bytes = await _storage.readFile(_fileName);
-      final draft = bytes == null
-          ? ScriptDraft(functionName: widget.name)
-          : ScriptDraft.fromFile(ScriptFileData.parse(bytes));
+      // `readFile` returns null for both a missing file and a transport failure, so the
+      // file table is consulted to tell them apart: a missing entry means "new script",
+      // but a file that is listed yet cannot be read is a load error - never overwrite it
+      // with a blank draft.
+      final table = await _storage.readFileTable();
+      if (table == null) {
+        throw const FormatException('Could not read the file table');
+      }
+      final present = table.any((f) =>
+          normalizeFileName(f.name).toUpperCase() == _fileName.toUpperCase());
+      ScriptDraft draft;
+      if (!present) {
+        draft = ScriptDraft(functionName: widget.name);
+      } else {
+        final bytes = await _storage.readFile(_fileName);
+        if (bytes == null) {
+          throw FormatException('Could not read $_fileName');
+        }
+        draft = ScriptDraft.fromFile(ScriptFileData.parse(bytes));
+      }
       if (!mounted) return;
       setState(() {
         _draft = draft;
@@ -137,47 +154,55 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
   Future<void> _refresh() async {
     final draft = _draft;
     if (widget.loaded) {
-      final st = await _client.readState(_slot);
-      final internal = await _client.readInternalState(_slot);
-      final values = <ScriptValueCategory, List<String>>{};
+      try {
+        final st = await _client.readState(_slot);
+        final internal = await _client.readInternalState(_slot);
+        final values = <ScriptValueCategory, List<String>>{};
 
-      // I/O live values come from the Register (the only script content it exposes).
-      for (final cat in const [ScriptValueCategory.input, ScriptValueCategory.output]) {
-        final keys = await _client.enumerateKeys(_slot, cat.field);
-        final list = <String>[];
-        for (final key in keys) {
-          final e = await _client.readEntry(_slot, cat.field, key);
-          list.add(e == null ? '-' : formatValue(e.meta.dataType, e.value));
+        // I/O live values come from the Register (the only script content it exposes).
+        for (final cat in const [ScriptValueCategory.input, ScriptValueCategory.output]) {
+          final keys = await _client.enumerateKeys(_slot, cat.field);
+          final list = <String>[];
+          for (final key in keys) {
+            final e = await _client.readEntry(_slot, cat.field, key);
+            list.add(e == null ? '-' : formatValue(e.meta.dataType, e.value));
+          }
+          values[cat] = list;
         }
-        values[cat] = list;
-      }
 
-      // Variables live in the script RAM (CID 5); constants are file data.
-      if (draft != null) {
-        final ram = internal?.variables ?? const <int>[];
-        final varList = <String>[];
-        var off = 0;
-        for (final v in draft.variables) {
-          final size = v.size;
-          final end = off + size;
-          varList.add(end <= ram.length ? formatValue(v.type, ram.sublist(off, end)) : '-');
-          off += (size + 3) & ~3;
+        // Variables live in the script RAM (CID 5); constants are file data.
+        if (draft != null) {
+          final ram = internal?.variables ?? const <int>[];
+          final varList = <String>[];
+          var off = 0;
+          for (final v in draft.variables) {
+            final size = v.size;
+            final end = off + size;
+            varList.add(end <= ram.length ? formatValue(v.type, ram.sublist(off, end)) : '-');
+            off += (size + 3) & ~3;
+          }
+          values[ScriptValueCategory.variable] = varList;
+          values[ScriptValueCategory.constant] =
+              [for (final c in draft.constants) formatValue(c.type, c.value)];
         }
-        values[ScriptValueCategory.variable] = varList;
-        values[ScriptValueCategory.constant] =
-            [for (final c in draft.constants) formatValue(c.type, c.value)];
-      }
 
-      if (!mounted) return;
-      setState(() {
-        _state = st?.state ?? ScriptState.stopped;
-        _instructionCounter = internal?.instructionCounter ?? 0;
-        _errorCode = st?.error ?? 0;
-        _statusText..clear()..addAll(values);
-      });
+        if (!mounted) return;
+        setState(() {
+          // A loaded slot that does not answer is a refresh failure (the dot stays red).
+          _refreshFailed = st == null;
+          _state = st?.state ?? ScriptState.stopped;
+          _instructionCounter = internal?.instructionCounter ?? 0;
+          _errorCode = st?.error ?? 0;
+          _statusText..clear()..addAll(values);
+        });
+      } catch (_) {
+        if (!mounted) return;
+        setState(() => _refreshFailed = true);
+      }
     } else {
       if (!mounted) return;
       setState(() {
+        _refreshFailed = false;
         _statusText.clear();
       });
     }
@@ -209,7 +234,21 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
     }
   }
 
-  Future<void> _reloadLive() async {
+  /// Reloads the stored script into its slot. With [applyDraft] the current editor draft
+  /// is written first, so "Update (reload live)" applies the unsaved edits instead of
+  /// discarding them by re-reading the old file (Docs/App/Service views/Script.md:32).
+  Future<void> _reloadLive({bool applyDraft = false}) async {
+    if (applyDraft) {
+      final draft = _draft;
+      if (draft == null) return;
+      final written = await _storage.writeFile(_fileName, draft.toImage());
+      if (!mounted) return;
+      if (!written) {
+        showSnack(context, 'Upload failed');
+        return;
+      }
+      setState(() => _dirty = false);
+    }
     final slot = widget.slot ?? widget.fileId;
     await _client.unload(slot);
     final ok = await _client.load(widget.fileId, slot);
@@ -222,7 +261,10 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
     final ok = await _client.unload(widget.slot ?? widget.fileId);
     if (!mounted) return;
     showSnack(context, ok ? 'Unloaded' : 'Unload failed');
-    if (ok) Navigator.of(context).pop();
+    if (ok && mounted) {
+      setState(() => _dirty = false);
+      Navigator.of(context).pop();
+    }
   }
 
   void _check() {
@@ -248,7 +290,20 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
   @override
   Widget build(BuildContext context) {
     final draft = _draft;
-    return Scaffold(
+    return PopScope(
+      canPop: !_dirty,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop) return;
+        final leave = await confirmDialog(context,
+            title: 'Discard changes',
+            body: 'This script has unsaved edits. Leave without uploading?',
+            confirmLabel: 'Discard');
+        if (leave && mounted) {
+          setState(() => _dirty = false);
+          if (context.mounted) Navigator.of(context).pop();
+        }
+      },
+      child: Scaffold(
       appBar: AppBar(
         title: Text('Edit ${draft?.functionName.isNotEmpty == true ? draft!.functionName : widget.name}'),
         actions: [
@@ -266,7 +321,7 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
             IconButton(
               tooltip: 'Update (reload live)',
               icon: const Icon(Icons.sync),
-              onPressed: _busy ? null : _reloadLive,
+              onPressed: _busy ? null : () => _reloadLive(applyDraft: true),
             ),
           if (widget.loaded)
             IconButton(
@@ -278,7 +333,7 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
             onRefresh: _refresh,
             autoActive: autoRefreshActive,
             refreshing: false,
-            error: false,
+            error: _loadError != null || _refreshFailed,
             selectedInterval: selectedInterval,
             onSelectAuto: applyAuto,
           ),
@@ -311,6 +366,7 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
               label: const Text('Upload'),
             )
           : null,
+      ),
     );
   }
 

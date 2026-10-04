@@ -81,26 +81,35 @@ inline void EnsureLogStorage()
     }
 }
 
-// Grows the database to `new_capacity` slots. Each buffer is committed as soon as its own
-// realloc succeeds: realloc frees the old block on success, so growing them all and only
-// assigning at the end would leave dangling pointers if a later realloc failed (and freeing
-// the grown buffers would free the live data too). On failure every pointer stays valid and
-// the database simply remains at its previous capacity.
+// Grows the database to `new_capacity` slots atomically: all three new blocks are allocated
+// first and only swapped in once every allocation succeeded, so a partial failure leaves the
+// live database exactly as it was (no half-grown buffer committed). The old blocks are freed
+// after the copy.
 inline bool GrowLogStorage(uint32_t new_capacity)
 {
-    LogRecord *nb = (LogRecord *)realloc(LogBuffer, new_capacity * sizeof(LogRecord));
-    if (!nb) return false;
+    LogRecord *nb = (LogRecord *)malloc(new_capacity * sizeof(LogRecord));
+    bool *nu = (bool *)malloc(new_capacity * sizeof(bool));
+    uint32_t *ns = (uint32_t *)malloc(new_capacity * sizeof(uint32_t));
+    if (!nb || !nu || !ns)
+    {
+        free(nb);
+        free(nu);
+        free(ns);
+        return false;
+    }
+
+    memcpy(nb, LogBuffer, LogCapacity * sizeof(LogRecord));
+    memcpy(nu, LogUsed, LogCapacity * sizeof(bool));
+    memcpy(ns, LogSeq, LogCapacity * sizeof(uint32_t));
+    memset(nu + LogCapacity, 0, (new_capacity - LogCapacity) * sizeof(bool));
+    memset(ns + LogCapacity, 0, (new_capacity - LogCapacity) * sizeof(uint32_t));
+
+    free(LogBuffer);
+    free(LogUsed);
+    free(LogSeq);
     LogBuffer = nb;
-
-    bool *nu = (bool *)realloc(LogUsed, new_capacity * sizeof(bool));
-    if (!nu) return false;
     LogUsed = nu;
-
-    uint32_t *ns = (uint32_t *)realloc(LogSeq, new_capacity * sizeof(uint32_t));
-    if (!ns) return false;
     LogSeq = ns;
-
-    memset(LogUsed + LogCapacity, 0, (new_capacity - LogCapacity) * sizeof(bool));
     LogCapacity = new_capacity;
     return true;
 }

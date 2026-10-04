@@ -132,8 +132,9 @@ void InitLSM6DS3() {
     gpio_set_direction((gpio_num_t)GPIO_NUM_5, GPIO_MODE_INPUT);
     gpio_set_pull_mode((gpio_num_t)GPIO_NUM_4, GPIO_PULLUP_ONLY);
     gpio_set_pull_mode((gpio_num_t)GPIO_NUM_5, GPIO_PULLUP_ONLY);
-    ESP_LOGW("LSM6DS3", "Bus lines with pullup: SDA(GPIO4)=%d SCL(GPIO5)=%d",
-             gpio_get_level((gpio_num_t)GPIO_NUM_4), gpio_get_level((gpio_num_t)GPIO_NUM_5));
+    if (!AppConnected)
+        ESP_LOGW("LSM6DS3", "Bus lines with pullup: SDA(GPIO4)=%d SCL(GPIO5)=%d",
+                 gpio_get_level((gpio_num_t)GPIO_NUM_4), gpio_get_level((gpio_num_t)GPIO_NUM_5));
 
     // 2. Initialize I2C Master Bus. Internal pullups are essential: this board has no
     //    external pull-ups on SDA/SCL, and without them the bus floats low so every
@@ -185,13 +186,15 @@ void InitLSM6DS3() {
 
     if (configured)
     {
-        ESP_LOGI("LSM6DS3", "Configured (WHO_AM_I=0x%02X).", who);
-        if (!ApplyAccGyrConfig())
+        if (!AppConnected)
+            ESP_LOGI("LSM6DS3", "Configured (WHO_AM_I=0x%02X).", who);
+        if (!ApplyAccGyrConfig() && !AppConnected)
             ESP_LOGW("LSM6DS3", "Re-applying block config failed");
     }
     else
     {
-        ESP_LOGE("LSM6DS3", "Init failed after retries: WHO_AM_I=0x%02X err=0x%x", who, who_err);
+        if (!AppConnected)
+            ESP_LOGE("LSM6DS3", "Init failed after retries: WHO_AM_I=0x%02X err=0x%x", who, who_err);
         ReportAccGyrError(ErrInitFailed);
     }
 }
@@ -241,35 +244,41 @@ bool ReadIMUData() {
 }
 
 // Writes one of the enum fields (index into the option table) into the block. Shared by
-// the ODR and range triggers: clamps the index, applies the new register byte(s) with
-// read-back verification, and only commits the block field once the part accepted it.
+// the ODR and range triggers: clamps the index, commits it so ApplyAccGyrConfig builds the
+// register bytes from the NEW selection, then reverts the field if the part rejected the
+// write (read-back verified).
 static bool AccGyrWriteEnum(const StaticBlockDescriptor &block, uint16_t field, const void *data, uint16_t data_len)
 {
     if (data_len != sizeof(uint8_t)) return false;
     uint8_t index = *static_cast<const uint8_t *>(data);
+    uint8_t *target = nullptr;
     switch (field)
     {
     case 0: // Sampling Rate (ODR): clamps to [0, 7]
         if (index >= 8) index = 7;
+        target = &staticPer.accgyr.SamplingRate;
         break;
     case 1: // Range Acceleration: clamps to [0, 3]
         if (index >= 4) index = 3;
+        target = &staticPer.accgyr.RangeAcc;
         break;
     case 2: // Range Angular: clamps to [0, 4]
         if (index >= 5) index = 4;
+        target = &staticPer.accgyr.RangeAng;
         break;
     default:
         return false;
     }
 
+    // Commit the clamped index BEFORE applying: ApplyAccGyrConfig builds the CTRL1/CTRL2
+    // bytes from the block fields, so applying first would program the OLD selection while
+    // the field reports the new one. Revert the field if the part rejected the write.
+    uint8_t saved = *target;
+    *target = index;
     if (!ApplyAccGyrConfig())
-        return false;
-
-    switch (field)
     {
-    case 0: staticPer.accgyr.SamplingRate = index; break;
-    case 1: staticPer.accgyr.RangeAcc = index; break;
-    case 2: staticPer.accgyr.RangeAng = index; break;
+        *target = saved;
+        return false;
     }
     return true;
 }

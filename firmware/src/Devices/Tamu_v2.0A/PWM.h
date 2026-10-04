@@ -2,6 +2,15 @@
 
 #include "driver/ledc.h"
 
+// Maps a fan block to its index (Fan1 -> 0, Fan2 -> 1), or -1 when the block is not one
+// of the two fan instances. The LEDC timer/channel pairs follow the same index.
+static int FanIndex(const StaticBlockDescriptor &block)
+{
+    if (block.PersistentData == &staticPer.fan[0]) return 0;
+    if (block.PersistentData == &staticPer.fan[1]) return 1;
+    return -1;
+}
+
 // Configures LEDC timers and channels for both fans (25 kHz PWM on pins 6 and 10).
 void SetupFanPWM() {
     // Fan 1 (Timer 0, Channel 0, Pin 6)
@@ -62,8 +71,11 @@ bool OnPWMFrequencyChange(const StaticBlockDescriptor &block, uint16_t index, co
 {
     uint32_t new_freq = *static_cast<const uint32_t *>(data);
 
-    // Determine which timer to update based on the pointer
-    ledc_timer_t timer = (block.PersistentData == &staticPer.fan[0]) ? LEDC_TIMER_0 : LEDC_TIMER_1;
+    // Determine which timer to update based on the block instance
+    int fanIndex = FanIndex(block);
+    if (fanIndex < 0)
+        return false;
+    ledc_timer_t timer = (fanIndex == 0) ? LEDC_TIMER_0 : LEDC_TIMER_1;
 
     ledc_timer_config_t ledc_timer = {
         .speed_mode = LEDC_LOW_SPEED_MODE,
@@ -101,8 +113,11 @@ bool OnPWMDutyChange(const StaticBlockDescriptor &block, uint16_t index, const v
     // (ESP32-only file), so no precision is lost to early truncation.
     uint32_t duty = (uint32_t)(((int64_t)new_duty * 1023) / 100);
 
-    // Map data_ptr to channel
-    ledc_channel_t channel = (block.PersistentData == &staticPer.fan[0]) ? LEDC_CHANNEL_0 : LEDC_CHANNEL_1;
+    // Map the block instance to its channel
+    int fanIndex = FanIndex(block);
+    if (fanIndex < 0)
+        return false;
+    ledc_channel_t channel = (fanIndex == 0) ? LEDC_CHANNEL_0 : LEDC_CHANNEL_1;
 
     ledc_set_duty(LEDC_LOW_SPEED_MODE, channel, duty);
     bool applied = (ledc_update_duty(LEDC_LOW_SPEED_MODE, channel) == ESP_OK);

@@ -51,6 +51,11 @@ class _FakeRegister extends RegisterClient {
           return _reply(DataType.number.value, 4, numberToBytes(7));
         }
         return null;
+      case DynamicCid.getName:
+        // The dynamic name (CID 0x12): a raw 16-char name, no header.
+        final idx = payload[0] | (payload[1] << 8);
+        if (idx == 0) return _padded('Panel');
+        return null;
       default:
         return null;
     }

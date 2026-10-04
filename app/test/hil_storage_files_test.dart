@@ -58,7 +58,7 @@ void main() {
         minTimeMs: 100,
       );
       await subs.setRequesterSubscription(0, entry: entry);
-      await subs.setRequesterSubscription(0); // delete -> another save
+      if (i < 2) await subs.setRequesterSubscription(0); // delete -> another save
     }
     await Future<void>.delayed(const Duration(milliseconds: 300));
 
@@ -80,7 +80,7 @@ void main() {
         reason: 'the obsolete DYNMEM file must be gone');
   }, timeout: const Timeout(Duration(seconds: 90)));
 
-  test('dynamic persistence uses the DT_/DV_ files in the documented format',
+  test('dynamic persistence uses the .DT_/.DV_ files in the documented format',
       skip: skipReason, () async {
     final reg = RegisterClient(deviceId: tamu.id);
     final storage = StorageClient(deviceId: tamu.id);
@@ -103,13 +103,13 @@ void main() {
         .toSet();
     // ignore: avoid_print
     print('[STORAGE] after Save All: $names');
-    expect(names.any((n) => n.startsWith('DT_')), isTrue);
-    expect(names.any((n) => n.startsWith('DV_')), isTrue);
+    expect(names.any((n) => n.startsWith('.DT_')), isTrue);
+    expect(names.any((n) => n.startsWith('.DV_')), isTrue);
 
-    // The DT_ table format matches the app decoder: Name (16 chars, NUL-padded),
+    // The .DT_ table format matches the app decoder: Name (16 chars, NUL-padded),
     // u16 entry_count, u16 reserved, then 8 B per entry (Field&Key, MemoryOffset,
     // ValueInfo). The block's bank type is derived from the file's global index, not stored.
-    final dtName = names.firstWhere((n) => n.startsWith('DT_'));
+    final dtName = names.firstWhere((n) => n.startsWith('.DT_'));
     final bytes = await storage.readFile(dtName, size: 64);
     expect(bytes, isNotNull);
     expect(String.fromCharCodes(bytes!.sublist(0, 6)), 'DYNCHK');

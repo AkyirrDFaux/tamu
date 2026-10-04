@@ -103,7 +103,7 @@ inline bool WriteBackupFile(const char name[8], const uint8_t *data, uint16_t le
 {
 #ifdef USE_FIXED_STORAGE
     // The reduced file system (the DAS) has exactly one pre-allocated file per settings name
-    // and its RenameFile is a no-op, so the staging dance below cannot work there: CreateFile
+    // and no rename, so the staging dance below cannot work there: CreateFile
     // of the temporary name fails outright, which made *every* static save on the DAS fail
     // (status 255, the static backup left untouched - found on the rig; the block's Not-Saved flag could
     // never clear). Its CreateFile erases the region and hands back the file ready for the
@@ -145,21 +145,6 @@ inline bool WriteBackupFile(const char name[8], const uint8_t *data, uint16_t le
 // Reads a backup file into `out`; returns the byte count (0 if absent or too large).
 inline uint16_t ReadBackupFile(const char name[8], uint8_t *out, uint16_t cap)
 {
-    uint32_t off, sz;
-    if (!Storage.GetFileInfo(name, &off, &sz)) return 0;
-    if (sz > cap) sz = cap;
-    if (Storage_FlashRead(off, out, sz) != sz) return 0;
-    return (uint16_t)sz;
+    return (uint16_t)Storage.ReadFromFile(name, 0, cap, (char *)out);
 }
-
-//**********************************************************************
-//**********************************************************************
-// Dynamic memory block (Docs/Services/Register.md "Dynamic blocks").
-//
-// A block's contents are a FLAT table of entries, strictly ascending by Field&Key
-// (u16 = (field<<8)|key); fields and keys are equal entry types. Each entry carries a
-// ValueInfo (Type u16 + Size u8 + Flags u8) and a MemoryOffset into one of the block's two
-// value spaces (volatile / persistent, chosen by the entry's Persistent flag).
-// Deleting an entry removes it from the table (the sequential record compacts);
-// a deleted/skipped BLOCK keeps a tombstone slot in the registry.
 

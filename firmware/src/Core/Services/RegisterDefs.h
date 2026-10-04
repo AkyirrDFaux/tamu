@@ -92,9 +92,10 @@ inline int FindStaticBlock(uint16_t type, uint8_t inst) {
 }
 
 // ===== Helpers for common response patterns =====
-// Buffer size for field responses: 4 (BlockInfo) + 4 (ValueInfo) + max field size + padding.
-// Dynamic (keyed) fields hold concatenated dictionary entries and can reach the u8 size
-// limit of ValueInfo.Size (255 bytes), so the response buffer must cover 4+4+255+pad.
+// Stack buffer for a field response: BlockInfo(4) + ValueInfo(4) + value + padding. Value
+// replies are capped to FIELD_RESPONSE_MAX_VALUE at send time, so the buffer only has to cover
+// the descriptor shapes (the meta name, the SCALAR_ONLY string fields); it stays generous for
+// the non-SCALAR targets whose callers also use it as a local value buffer.
 // SCALAR_ONLY targets (DAS) carry no Vector/Matrix fields; the largest field is a 16-byte string.
 #ifdef SCALAR_ONLY
 #define FIELD_RESPONSE_BUF_SIZE 32
@@ -102,10 +103,21 @@ inline int FindStaticBlock(uint16_t type, uint8_t inst) {
 #define FIELD_RESPONSE_BUF_SIZE 268
 #endif
 
+// The largest value a value reply can carry. It is bounded by the packet (BlockInfo(4) +
+// ValueInfo(4) + value, payload capped at MAX_PAYLOAD_SIZE) and also by the response buffer
+// (SCALAR_ONLY builds a 32-byte one). ValueInfo.Size is 8 bits and a dynamic keyed entry may
+// describe more, but a single packet cannot carry it - a value reply caps both the bytes and
+// the reported Size together.
+#define FIELD_RESPONSE_MAX_VALUE \
+    (((MAX_PAYLOAD_SIZE - 8) < (FIELD_RESPONSE_BUF_SIZE - 8)) ? (MAX_PAYLOAD_SIZE - 8) \
+                                                              : (FIELD_RESPONSE_BUF_SIZE - 8))
+
 // Builds a `BlockInfo + ValueInfo + value` reply, 4-byte aligned, and sends it. The block
 // meta (a fixed BLOCK_NAME_LEN-char name) and the field/key read paths all share this shape.
+// `len` is clamped so the raw buffer cannot overrun when a caller reports an oversized value.
 static inline void SendFieldLikeResponse(const PacketFrame &frame, uint32_t bi, const ValueInfo &v,
                                          const uint8_t *data, uint16_t len) {
+    if (len > FIELD_RESPONSE_MAX_VALUE) len = FIELD_RESPONSE_MAX_VALUE;
     uint8_t rpl[FIELD_RESPONSE_BUF_SIZE]; uint16_t pos = 0;
     memcpy(rpl + pos, &bi, 4); pos += 4;
     memcpy(rpl + pos, &v, 4); pos += 4;
@@ -113,6 +125,19 @@ static inline void SendFieldLikeResponse(const PacketFrame &frame, uint32_t bi, 
     pos += len;
     while (pos % 4) rpl[pos++] = 0;
     SendResponse(frame, rpl, pos);
+}
+
+// A field *value* reply (as opposed to the block meta, whose ValueInfo.Size is a field count).
+// The value is capped to one packet and the echoed ValueInfo.Size is rewritten to match the
+// bytes actually sent, so the reply is self-consistent and a reader can round-trip what it
+// received (without this, SendResponse silently truncates an oversized value and the reported
+// Size lies about the bytes present).
+static inline void SendValueResponse(const PacketFrame &frame, uint32_t bi, const ValueInfo &v,
+                                     const uint8_t *data, uint16_t len) {
+    if (len > FIELD_RESPONSE_MAX_VALUE) len = FIELD_RESPONSE_MAX_VALUE;
+    ValueInfo capped = v;
+    capped.Size = (uint8_t)len;
+    SendFieldLikeResponse(frame, bi, capped, data, len);
 }
 
 static inline void SendBlockMetaResponse(const PacketFrame &frame, uint32_t bi, uint16_t type,
@@ -126,12 +151,12 @@ static inline void SendBlockMetaResponse(const PacketFrame &frame, uint32_t bi, 
 }
 
 static inline void SendFieldResponse(const PacketFrame &frame, uint32_t bi, const FieldResult &fr) {
-    SendFieldLikeResponse(frame, bi, fr.Descriptor, (const uint8_t *)fr.Data, fr.Descriptor.Size);
+    SendValueResponse(frame, bi, fr.Descriptor, (const uint8_t *)fr.Data, fr.Descriptor.Size);
 }
 
 // Sends one dynamic entry (BlockInfo echo + ValueInfo + value, 4-aligned).
 static inline void SendKeyResponse(const PacketFrame &frame, uint32_t bi, const KeyResult &kr) {
-    SendFieldLikeResponse(frame, bi, kr.meta, (const uint8_t *)kr.data_ptr, kr.data_len);
+    SendValueResponse(frame, bi, kr.meta, (const uint8_t *)kr.data_ptr, kr.data_len);
 }
 
 // Replies to a dynamic create/name write with the assigned BlockIndex + a 1-byte ack.
@@ -145,6 +170,19 @@ static inline void SendBlockIndexAck(const PacketFrame &frame, uint8_t index) {
 
 
 #ifdef USE_DYNAMIC_BLOCKS
+// Distinct field count for a dynamic block's meta reply. The descriptor's `FieldCount()`
+// allocates a 256-byte scratch on the stack and rescans; the table is sorted by Field&Key, so
+// counting field changes gives the same answer without the buffer. (A cross-call cache would
+// need a field on DynamicBlockDescriptor, i.e. MemoryBlocks.h, which is outside this file.)
+static inline uint16_t DynamicFieldCount(const DynamicBlockDescriptor &b) {
+    uint16_t count = 0, prev = 0xFFFF;
+    for (uint16_t i = 0; i < b.entry_count; i++) {
+        uint16_t f = FieldOf(b.table[i].fieldKey);
+        if (f != prev) { count++; prev = f; }
+    }
+    return count;
+}
+
 // Shared tail of "read a dynamic block": field 0xFF asks for the block meta, any other field
 // for one keyed entry.
 static void ReplyDynamicBlockOrField(const PacketFrame &frame, uint32_t bi,
@@ -154,7 +192,7 @@ static void ReplyDynamicBlockOrField(const PacketFrame &frame, uint32_t bi,
         // The block's bank type is derived from its global index, which the request's
         // BlockInfo carries; a tombstone reports None (Docs "Dynamic Block Descriptor").
         uint16_t type = block.present ? BlockInfoType(bi) : (uint16_t)BlockType::None;
-        SendBlockMetaResponse(frame, bi, type, (uint8_t)block.FieldCount(), block.Name, BLOCK_NAME_LEN);
+        SendBlockMetaResponse(frame, bi, type, (uint8_t)DynamicFieldCount(block), block.Name, BLOCK_NAME_LEN);
         return;
     }
     KeyResult kr = block.GetKey(field, key);

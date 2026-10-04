@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Blocks/DeviceInfo.h"
+#include "Core/Functions/Packet.h" // MakeId + the DeviceStatus extern
 
 // Payload for address assignment exchange (Discover Response)
 struct AssignPayload
@@ -33,16 +34,32 @@ extern const DeviceType kDeviceType;
 extern const uint32_t kCapabilities;
 const SerialNumber &GetSerialNumber();
 
-// Device software version string (provided per device, e.g. Devices/<device>/Main.h). The
-// device Name is a System-block persistent field (SystemPersistent, mirrored to .SV).
-extern const char* DeviceVersion;
-
 // Set when Core-discover detects another core with the SAME net-ID on the bus. The core
 // stays reachable via the app link (so the net can be changed) but blinks its error LED.
 inline bool &CoreCollisionFlag()
 {
     static bool collision = false;
     return collision;
+}
+
+// Core-discover net-collision check (Docs "Core functions"): a reply from a *different* core
+// whose net-ID equals ours means the net is claimed twice. `ours` is DeviceStatus.NetId, the
+// peer's net is decoded from its address (MakeId). A match latches CoreCollisionFlag, aborting
+// normal boot; the caller ignores our own echoed discover reply.
+inline void NoteCoreNet(uint8_t peer_net, uint8_t ours)
+{
+    if (peer_net != 0 && peer_net == ours)
+        CoreCollisionFlag() = true;
+}
+
+// True when this device is acting as the core of its net. A core's full address is
+// MakeId(NetId, 1): its device field is 1 (SNDB reserves short ID 1, allocation starts at
+// 2) and its net is a valid, non-broadcast net. A node's device field is >= 2, so it is
+// never mistaken for a core.
+inline bool DeviceIsCore()
+{
+    uint8_t net = (uint8_t)((DeviceStatus.ShortAddress >> 10) & 0x3F);
+    return (DeviceStatus.ShortAddress & 0x3FF) == 1 && net != 0 && net != 0x3F;
 }
 
 // Identify (Device service CID 2, Docs/Services/System Block and Device Commands.md): "True = blink red

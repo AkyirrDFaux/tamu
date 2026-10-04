@@ -19,7 +19,5 @@ void notifyAppEvent(String event, String message) {
   if (!s.notifyInApp || !s.inAppEvents.contains(event)) return;
   final messenger = appMessengerKey.currentState;
   if (messenger == null) return;
-  messenger
-    ..clearSnackBars()
-    ..showSnackBar(SnackBar(content: Text(message)));
+  messenger.showSnackBar(SnackBar(content: Text(message)));
 }

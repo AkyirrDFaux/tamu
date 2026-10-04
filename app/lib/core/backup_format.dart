@@ -333,11 +333,10 @@ class BackupDevice {
       };
 
   static BackupDevice fromJson(Map<String, dynamic> json) {
-    final format = (json['format'] as num?)?.toInt() ?? 1;
-    if (json['semantic'] != true && format < backupFormatVersion) {
-      throw const FormatException(
-          'This archive uses the legacy numeric format; re-create it with this app version');
-    }
+    // Development phase: no pre-release archives ship, so only the current
+    // semantic format is read. The legacy numeric-format rejection was dropped
+    // along with the other pre-release archive branches.
+    final format = (json['format'] as num?)?.toInt() ?? backupFormatVersion;
     final subs = json['subscriptions'] as Map<String, dynamic>? ?? const {};
     return BackupDevice(
       format: format,

@@ -1,6 +1,6 @@
 #pragma once
 
-// CID 0: enumerate blocks, fields and keys.
+// CID 0/1: enumerate blocks, fields and keys.
 //
 // Part of Core/Services/Register.h (included from there).
 //
@@ -43,35 +43,17 @@ static const BlockEntry System_Entries[] = {
 static const uint16_t System_EntryCount = sizeof(System_Entries) / sizeof(System_Entries[0]);
 
 // Which list is being streamed.
-enum class EnumSrc : uint8_t { Types, System, Static, Dynamic, Script };
+enum class EnumSrc : uint8_t { System, Static, Dynamic, Script };
 
-// The block-type list word at index `i`. The System block is always first: its word is the only
-// zero and it is first, which is what lets the app tell a real zero from the wire's trailing
-// padding. The static registry is grouped by type (see the board Main.h - the app's index depends
-// on it), so a run of equal types is one list entry with `run - 1` as its highest instance.
-//
-// The banked dynamic range is reported as a single entry in an **8.8** split (Docs/Services/
-// Register.md "Block types"): the high byte is the owning bank type's low byte (0xF0-0xF3) and
-// the low byte the highest occupied global index (0..255), instead of the normal 10.6.
-static uint16_t EnumTypeWord(uint16_t i) {
-    if (i == 0) return 0; // the System block: type 0, instance 0
-    uint16_t seen = 1;
-    for (size_t start = 0; start < static_block_num;) {
-        uint16_t t = (uint16_t)static_block_registry[start].Schema->Type;
-        size_t end = start + 1;
-        while (end < static_block_num &&
-               (uint16_t)static_block_registry[end].Schema->Type == t) end++;
-        if (seen++ == i) return (uint16_t)((t << 6) | ((end - start - 1) & 0x3F));
-        start = end;
-    }
-#ifdef USE_DYNAMIC_BLOCKS
-    if (seen == i && dynamic_block_registry.block_count > 0) {
-        uint16_t highest = (uint16_t)(dynamic_block_registry.block_count - 1);
-        uint16_t bankType = BlockTypeRange::DynamicType((uint16_t)(highest >> BlockTypeRange::BankShift));
-        return (uint16_t)((bankType << 8) | (highest & 0xFF));
-    }
-#endif
-    return 0;
+// The highest instance a 6-bit packed type word can carry. A type with more instances than
+// that cannot be addressed by BlockInfo anyway, so the packed highest instance must saturate
+// rather than truncate silently (the old `& 0x3F` wrapped a 64th instance back to 0).
+#define ENUM_MAX_INSTANCE 0x3F
+
+// Packs a normal (10.6) block-type word, saturating the instance field.
+static inline uint16_t EnumTypeWordOf(uint16_t type, size_t instances) {
+    uint16_t inst = instances > ENUM_MAX_INSTANCE ? ENUM_MAX_INSTANCE : (uint16_t)instances;
+    return (uint16_t)((type << 6) | inst);
 }
 
 static uint16_t EnumTypeCount() {
@@ -101,8 +83,6 @@ static uint16_t EnumScriptWord(uint16_t inst, uint16_t i) {
 // clone the streamer's loop once per list kind (which re-inflates it to the pre-refactor size).
 __attribute__((noinline)) static uint16_t EnumWord(EnumSrc src, const void *ctx, uint16_t i) {
     switch (src) {
-    case EnumSrc::Types:
-        return EnumTypeWord(i);
     case EnumSrc::System:
         return System_Entries[i].FieldKey;
     case EnumSrc::Static: {
@@ -145,9 +125,59 @@ static void SendU16Stream(const PacketFrame &frame, uint16_t count, EnumSrc src,
     }
 }
 
-// CID 0: the present block types, one packed `(type << 6) | maxInstance` word each.
+// CID 0: the present block types, one packed block-type word each. The list is generated
+// during the fragment loop in a single pass over the grouped static registry (the old
+// per-index lookup rescanned the registry for every emitted word, O(types x blocks)); the
+// count pass only sizes the reply. The System block is always first: its word is the only
+// zero and it is first, which is what lets the app tell a real zero from the wire's trailing
+// padding.
+static void SendTypeWordsStream(const PacketFrame &frame) {
+    const uint16_t kWordsPerFrag = 32; // 64-byte fragments, two bytes per word
+    uint16_t count = EnumTypeCount();
+    uint16_t frags = (uint16_t)((count + kWordsPerFrag - 1) / kWordsPerFrag);
+    if (frags == 0) frags = 1;
+
+    size_t start = 0;   // the first registry entry of the current type run
+    bool systemSent = false;
+    uint16_t idx = 0;   // the next word to emit
+
+    for (uint16_t f = 0; f < frags; f++) {
+        uint8_t *dst = tx_frame.payload + 4;
+        uint16_t n = 0;
+        while (n < kWordsPerFrag * 2 && idx < count) {
+            uint16_t w = 0;
+            if (!systemSent) {
+                systemSent = true; // word 0: the System block (type 0, instance 0)
+            } else if (start < static_block_num) {
+                uint16_t t = (uint16_t)static_block_registry[start].Schema->Type;
+                size_t end = start + 1;
+                while (end < static_block_num &&
+                       (uint16_t)static_block_registry[end].Schema->Type == t) end++;
+                w = EnumTypeWordOf(t, end - start - 1);
+                start = end;
+            }
+#ifdef USE_DYNAMIC_BLOCKS
+            else if (dynamic_block_registry.block_count > 0) {
+                // Doc gap: Register.md "Block types" does not describe the banked dynamic
+                // range's **8.8** encoding (high byte = the owning bank type's low byte,
+                // 0xF0-0xF3; low byte = the highest occupied global index, 0..255), which
+                // differs from the normal 10.6 word. It lives only in this code; tracked in
+                // Issues.md. `count` includes exactly one such word.
+                uint16_t highest = (uint16_t)(dynamic_block_registry.block_count - 1);
+                uint16_t bankType = BlockTypeRange::DynamicType((uint16_t)(highest >> BlockTypeRange::BankShift));
+                w = (uint16_t)((bankType << 8) | (highest & 0xFF));
+            }
+#endif
+            dst[n++] = (uint8_t)w;
+            dst[n++] = (uint8_t)(w >> 8);
+            idx++;
+        }
+        SendFragFragment(frame, f, frags, n);
+    }
+}
+
 static void HandleEnumerateBlocks(const PacketFrame &frame) {
-    SendU16Stream(frame, EnumTypeCount(), EnumSrc::Types, nullptr);
+    SendTypeWordsStream(frame);
 }
 
 // CID 1: a block's Field&Key words. The request carries the packed `(type << 6) | instance`
@@ -160,7 +190,7 @@ static void HandleEnumerateFields(const PacketFrame &frame) {
     uint8_t inst = (uint8_t)(packed & 0x3F);
     uint16_t gi = 0; // the global index of a banked (script/dynamic) block; ctx points at it
     (void)inst; (void)gi; // unused when neither USE_SCRIPTS nor USE_DYNAMIC_BLOCKS is set
-    EnumSrc src = EnumSrc::Types;
+    EnumSrc src = EnumSrc::System; // overridden below; unused for a zero-count reply
     const void *ctx = nullptr;
     uint16_t count = 0;
 

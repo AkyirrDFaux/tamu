@@ -21,16 +21,17 @@ class SubscriptionClient {
   Stream<List<int>> get valueUpdates => _valueUpdateController.stream;
 
   // --- CIDs (Docs "Requester commands (041x)" / "Provider commands (042x)") ---
+  // The requester table is 0x10/0x11; the provider table 0x20/0x21.
   static const int _cidGetRequester = 0x10;
   static const int _cidSetRequester = 0x11;
-  static const int _cidRecallAll = 0x12;
-  static const int _cidSaveAll = 0x13;
   static const int _cidGetProvider = 0x20;
-  static const int _cidSetProvider = 0x21;
 
   /// Registers the client as the receiver of firmware-pushed subscription value
   /// updates (service Subscriptions CID 0). Must be called while connected; call
   /// [stopListening] when the page closes.
+  ///
+  /// NOTE: no UI consumer subscribes to [valueUpdates] yet, so pushed values are
+  /// currently dropped. Wiring it into the Subscriptions page is a UI follow-up.
   void startListening() {
     ConnectionManager.instance.setSubscriptionListener((payload) {
       _valueUpdateController.add(payload);
@@ -41,11 +42,13 @@ class SubscriptionClient {
     ConnectionManager.instance.setSubscriptionListener(null);
   }
 
-  // Use normal request with ConnectionManager's transaction ID
-  Future<List<int>?> _request(int cid,
+  // Use normal request with ConnectionManager's transaction ID. The reply carries the
+  // packet SUCCESS/FAIL flags, so callers check [PacketResponse.ok] rather than just
+  // "a payload came back".
+  Future<PacketResponse?> _request(int cid,
       {List<int> payload = const [], Duration? timeout, int? toDevice, int? transactionId}) async {
     try {
-      return await ConnectionManager.instance.request(toDevice ?? deviceId, service, cid,
+      return await ConnectionManager.instance.requestWithFlags(toDevice ?? deviceId, service, cid,
           payload: payload, timeout: timeout ?? _requestTimeout, transactionId: transactionId);
     } catch (error) {
       return null;
@@ -57,13 +60,14 @@ class SubscriptionClient {
   Future<List<T>> _getSubscriptionList<T>(
       int cid, int entrySize, T Function(int index, List<int> bytes) decode) async {
     final reply = await _request(cid, payload: []);
-    if (reply == null || reply.isEmpty) return [];
+    final data = reply?.payload;
+    if (data == null || data.isEmpty) return [];
 
-    final count = reply[0];
+    final count = data[0];
     final result = <T>[];
     int offset = 1;
-    for (int i = 0; i < count && offset + entrySize <= reply.length; i++) {
-      result.add(decode(i, reply.sublist(offset, offset + entrySize)));
+    for (int i = 0; i < count && offset + entrySize <= data.length; i++) {
+      result.add(decode(i, data.sublist(offset, offset + entrySize)));
       offset += entrySize;
     }
     return result;
@@ -89,16 +93,16 @@ class SubscriptionClient {
   /// CID 0x11: Set (create/update) a requester subscription. The entry's TRID is the
   /// subscription identity; allocate one from 0x1000-0x1FFF for a new entry.
   Future<bool> setRequesterSubscriptionEntry(RequesterSubscription entry) async {
-    final reply =
-        await _request(_cidSetRequester, payload: entry.toCreatePayload(), transactionId: entry.trid);
-    return reply != null;
+    final reply = await _request(_cidSetRequester,
+        payload: entry.toCreatePayload(), transactionId: entry.trid);
+    return reply?.ok ?? false;
   }
 
   /// CID 0x11: Cancel the requester subscription with `trid` (trigger None = delete).
   Future<bool> cancelRequesterSubscription(int trid) async {
     final reply = await _request(_cidSetRequester,
         payload: RequesterSubscription.cancel(trid).toCreatePayload(), transactionId: trid);
-    return reply != null;
+    return reply?.ok ?? false;
   }
 
   /// UI-position facade over the TRID-keyed protocol: [index] is the row's position in the
@@ -129,31 +133,10 @@ class SubscriptionClient {
     return setRequesterSubscriptionEntry(e);
   }
 
-  /// CID 0x12: Recall all requester subscriptions from the persisted file.
-  Future<bool> recallAll() async => (await _request(_cidRecallAll, payload: [])) != null;
-
-  /// CID 0x13: Save all requester subscriptions to the persisted file.
-  Future<bool> saveAll() async => (await _request(_cidSaveAll, payload: [])) != null;
-
-  /// CID 0x21: Set a provider subscription directly (management; trigger None cancels).
-  Future<bool> setProviderSubscription(ProviderSubscription entry) async {
-    final reply = await _request(_cidSetProvider,
-        payload: _providerPayload(entry), transactionId: entry.trid, toDevice: deviceId);
-    return reply != null;
-  }
-
-  /// Provider entry wire (Docs "Provider table entry", 32 B): requesterAddr, trid, the shared
-  /// subscription table, lastSent, hash, timeout (ignored by Set).
-  List<int> _providerPayload(ProviderSubscription entry) {
-    final buf = <int>[];
-    buf.addAll([entry.requesterAddr & 0xFF, (entry.requesterAddr >> 8) & 0xFF]);
-    buf.addAll([entry.trid & 0xFF, (entry.trid >> 8) & 0xFF]);
-    buf.addAll(entry.table.toBytes());
-    buf.addAll(uint32ToBytes(entry.lastSentMs));
-    buf.addAll(uint32ToBytes(entry.hash));
-    buf.addAll(uint32ToBytes(entry.timeout));
-    return buf;
-  }
+  // The persisting recall/save CIDs (0x12/0x13) and the direct provider-set CID
+  // (0x21) are firmware-management commands the app does not currently expose:
+  // the Subscriptions page only edits the requester table. Add them here if a UI
+  // needs table persistence or direct provider management.
 
   void dispose() {
     _valueUpdateController.close();

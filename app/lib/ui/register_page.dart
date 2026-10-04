@@ -64,7 +64,7 @@ class _RegisterPageState extends State<RegisterPage>
 
   /// Docs/App/Service views/Register.md: a Current/Backup view toggle in the appbar.
   /// Current shows the live RAM values; Backup shows what a Save persisted (decoded from
-  /// the device's `.SV` / DT_ / DV_ files).
+  /// the device's `.SV` / .DT_ / .DV_ files).
   RegisterViewMode _viewMode = RegisterViewMode.current;
   DeviceBackup? _backup;
   bool _backupBusy = false;
@@ -224,7 +224,7 @@ Future<void> _loadVisibleFields() async {
   }
 
   /// Reads and decodes the device's backup files: `.SV` for the static/System fields
-  /// and `DT_`/`DV_` for each dynamic slot (docs Register.md "Save").
+  /// and `.DT_`/`.DV_` for each dynamic slot (docs Register.md "Save").
   Future<void> _loadBackup() async {
     if (_backupBusy) return;
     setState(() {
@@ -241,12 +241,12 @@ Future<void> _loadVisibleFields() async {
         final name = normalizeFileName(f.name).toUpperCase();
         if (name == '.SV') {
           sv = await store.readFile(f.name, size: f.size);
-        } else if (name.startsWith('DT_') || name.startsWith('DV_')) {
-          final slot = int.tryParse(name.substring(3).trim(), radix: 16);
+        } else if (name.startsWith('.DT_') || name.startsWith('.DV_')) {
+          final slot = int.tryParse(name.substring(4).trim(), radix: 16);
           if (slot == null) continue;
           final bytes = await store.readFile(f.name, size: f.size);
           if (bytes == null) continue;
-          (name.startsWith('DT_') ? tables : values)[slot] = bytes;
+          (name.startsWith('.DT_') ? tables : values)[slot] = bytes;
         }
       }
       // `.SV` is a raw mirror of the static persistent space, so the registry must be the same
@@ -278,8 +278,10 @@ Future<void> _loadVisibleFields() async {
     final ok = await _withBusy(() => _writeStoredFieldToRam(blockType, inst, field, key));
     _snack(ok ? 'Recalled' : 'Recall failed');
     if (ok && mounted) {
-      // The live cache no longer matches RAM; drop the recalled entry.
-      setState(() => _fieldCache[(blockType << 8) | inst]?.remove(field));
+      // The live cache no longer matches RAM; drop the recalled entry (dynamic entries are
+      // cached at field*256 + key, static/System entries at the field index).
+      final entryKey = isDynamicType(blockType) ? field * 256 + key : field;
+      setState(() => _fieldCache[(blockType << 8) | inst]?.remove(entryKey));
     }
   }
 
@@ -305,7 +307,7 @@ Future<void> _loadVisibleFields() async {
 
   /// Writes one field's live value into its backup file - the app-side half of a partial save
   /// (docs Register.md: "partial saving ... app with direct file writes"). `.SV` for the
-  /// System/static fields, at the field's computed offset; `DV_<xx>` for a dynamic entry.
+  /// System/static fields, at the field's computed offset; `.DV_<xx>` for a dynamic entry.
   Future<bool> _writeFieldToBackup(int blockType, int inst, int field, int key) async {
     final cacheKey = (blockType << 8) | inst;
     final isDynamic = isDynamicType(blockType);
@@ -315,14 +317,14 @@ Future<void> _loadVisibleFields() async {
 
     if (isDynamic) {
       final suffix = inst.toRadixString(16).toUpperCase().padLeft(2, '0');
-      final tableBytes = await _readFile('DT_$suffix');
-      final values = await _readFile('DV_$suffix');
+      final tableBytes = await _readFile('.DT_$suffix');
+      final values = await _readFile('.DV_$suffix');
       if (tableBytes == null) return false;
       final table = decodeDynamicTable(tableBytes);
       if (table == null) return false;
       final next = dvSaveField(table, values ?? const [], field, key, live.value);
       if (next == null) return false;
-      return store.writeFile('DV_$suffix', next);
+      return store.writeFile('.DV_$suffix', next);
     }
 
     // `.SV` is the raw static persistent space: write the field at its computed offset.
@@ -333,7 +335,12 @@ Future<void> _loadVisibleFields() async {
     if (size == null) return false;
     var value = live.value;
     if (value.length < size) {
-      value = [...value, ...List<int>.filled(size - value.length, 0)];
+      // Strings/filenames are space-padded on the wire (not NUL); numeric buffers stay 0.
+      final pad = (live.meta.dataType == DataType.string ||
+              live.meta.dataType == DataType.filename)
+          ? 0x20
+          : 0;
+      value = [...value, ...List<int>.filled(size - value.length, pad)];
     }
     final sv = await _readFile('.SV') ?? const <int>[];
     final next = svSaveField(sv, layout, blockType, inst, field, value);
@@ -362,7 +369,7 @@ Future<void> _loadVisibleFields() async {
   }
 
   /// Persists the whole device to its backup (CID 4 "Save All", docs Register.md): the System
-  /// block's persistent fields, every static block, and every dynamic block's DT_/DV_ files.
+  /// block's persistent fields, every static block, and every dynamic block's .DT_/.DV_ files.
   Future<bool> _saveAll() => _client.saveAll();
 
   /// Recalls the whole device from its backup (CID 3 "Recall All").
@@ -573,6 +580,7 @@ Future<void> _loadVisibleFields() async {
       backup: _backup ?? DeviceBackup.empty,
       blocks: blocks,
       busy: _busy,
+      hasNetId: _hasNetId,
       onRecall: _recallBackupField,
     );
   }

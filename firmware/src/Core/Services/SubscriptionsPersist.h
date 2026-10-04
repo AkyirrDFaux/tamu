@@ -11,9 +11,9 @@
 // Requester persistence + provider re-registration (USE_SUB_REQUEST).
 // ===========================================================================
 #ifdef USE_SUB_REQUEST
-// 8-byte padded name. The storage keys files by exactly 8 bytes and WriteBackupFile derives
-// its "~" staging name from this array, so the NUL keeps the on-flash name (and the derived
-// ".SUBREQ~") identical to the hand-rolled staging this replaced.
+// 8-byte storage name. The storage layer keys files by exactly 8 bytes; the trailing NUL is
+// replaced by a space on flash (PackName padding) and by '~' for WriteBackupFile's staging
+// name (".SUBREQ~").
 static const char SubscriptionsRequesterFile[8] = {'.','S','U','B','R','E','Q','\0'};
 
 // Docs: "recalls values from a file, which is a 1:1 copy of the table except timeout value."
@@ -22,23 +22,28 @@ static const char SubscriptionsRequesterFile[8] = {'.','S','U','B','R','E','Q','
 
 static void SaveRequesterTable() {
     uint8_t buf[1 + MAX_REQUESTER_SUBS * REQUESTER_FILE_ENTRY_SIZE];
-    uint16_t off = 0;
+    // Count and copy in one walk (the count byte is filled in last).
+    uint16_t off = 1;
     uint8_t count = 0;
-    for (int i = 0; i < MAX_REQUESTER_SUBS; i++) if (requesterTable[i].active) count++;
-    // No subscriptions: remove the file rather than leaving an empty one behind (the app's
-    // file list showed a `.SUBREQ` with nothing in it after the last cancel). Absence is the
-    // same as an empty table on load.
-    if (count == 0) {
-        Storage.DeleteFile(SubscriptionsRequesterFile);
-        return;
-    }
-    buf[off++] = count;
     for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
         RequesterEntry* e = &requesterTable[i];
         if (!e->active) continue;
         memcpy(buf + off, e, REQUESTER_FILE_ENTRY_SIZE);
         off += REQUESTER_FILE_ENTRY_SIZE;
+        count++;
     }
+    // No subscriptions: remove the file rather than leaving an empty one behind (the app's
+    // file list showed a `.SUBREQ` with nothing in it after the last cancel). Absence is the
+    // same as an empty table on load. Drop a leftover staging file too, so an interrupted save
+    // cannot leave `.SUBREQ~` behind.
+    if (count == 0) {
+        Storage.DeleteFile(SubscriptionsRequesterFile);
+        char tmp[8];
+        BackupTempName(SubscriptionsRequesterFile, tmp);
+        Storage.DeleteFile(tmp);
+        return;
+    }
+    buf[0] = count;
     // Shared atomic staging (copy to the "~" name, then rename); handles the reduced
     // fixed-storage variant too, so no bespoke CreateFile/Write/Rename dance here.
     WriteBackupFile(SubscriptionsRequesterFile, buf, off);
@@ -76,7 +81,8 @@ static void RegisterRequesterProvider(RequesterEntry* e) {
     e->lastRegisteredMs = DeviceStatus.UptimeMs;
 
 #ifdef USE_SUB_PROVIDE
-    if (e->providerAddr == DeviceStatus.ShortAddress) {
+    uint8_t net = (uint8_t)((DeviceStatus.ShortAddress >> 10) & 0x3F);
+    if (NetQualifyLocal(e->providerAddr, net) == DeviceStatus.ShortAddress) {
         // Same-device provider: install it directly (shared with the wire paths).
         ProviderInstall(e->trid, DeviceStatus.ShortAddress, e->sub);
         return;
@@ -116,8 +122,9 @@ void ReRegisterSubscriptionsForNode(uint16_t addr) {
 // it runs inside packet dispatch and must not be delayed by protocol traffic to a node that may
 // not even be answering yet (a verified send blocks and retries). SubscriptionsTick does the
 // sending from the main loop. A short address list (not a bitmask) keeps any 10-bit node id
-// addressable; a duplicate request is dropped.
-static const uint8_t kReRegisterMax = 4;
+// addressable; a duplicate request is dropped. The list is sized to the device registry's
+// capacity (SNDB_MAX_ENTRIES) so a burst of assignments can never silently drop a re-push.
+static const uint8_t kReRegisterMax = 128;
 static uint16_t s_reregisterPending[kReRegisterMax];
 static uint8_t s_reregisterCount = 0;
 

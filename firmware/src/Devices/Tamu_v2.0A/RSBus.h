@@ -4,8 +4,8 @@
 #include "Core/Functions/Bus.h"
 #include "Core/Functions/Bootloader.h"
 
-#define TXD_PIN (GPIO_NUM_21) // Change to your TX pin
-#define RXD_PIN (GPIO_NUM_20) // Change to your RX pin
+#define TXD_PIN (GPIO_NUM_21) // RS-485 transceiver TX (to DI)
+#define RXD_PIN (GPIO_NUM_20) // RS-485 transceiver RX (from RO)
 #define RS485_EN_PIN (GPIO_NUM_9)
 
 // Configures UART1 as the RS-485 transceiver (TX/RX pins, baud rate, driver install, enable pin).

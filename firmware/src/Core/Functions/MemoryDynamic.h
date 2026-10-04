@@ -10,7 +10,6 @@
 
 #ifdef USE_DYNAMIC_BLOCKS
 // One registry instance per dynamic memory service (defined in their service files).
-extern DynamicRegistry dynamic_block_registry;
 DynamicRegistry dynamic_block_registry;
 
 // Creates a dynamic block at position `index` (see AddBlockAt). Returns the block or nullptr.
@@ -33,29 +32,48 @@ static DynamicBlockDescriptor *CreateDynamicBlock(const uint8_t *name, uint16_t 
 }
 #pragma GCC diagnostic pop
 
-// Per-block dynamic persistence (Docs/Services/Register.md: DT_XXX / DV_XXX files).
-// A block's table lives in "DT_<hex2>", its persistent value space in "DV_<hex2>".
+// Per-block dynamic persistence (Docs/Services/Register.md: .DT_XX / .DV_XX files).
+// A block's table lives in ".DT_<hex2>", its persistent value space in ".DV_<hex2>".
 // The dynamic memory is four banked block types (0x3F0-0x3F3) of 64 instances each, addressed
 // by one global index 0..255 (Docs/Services/Register.md "Block types"). The file name carries
 // that global index in hex.
 #define MAX_DYNAMIC_BLOCKS 256
 
-// "D<kind>_<hex2>" space padded to 8 chars (kind = T or V).
+// ".D<kind>_<hex2>" space padded to 8 chars (kind = T or V).
 static void HexIndexName(char kind, uint16_t idx, char out[8])
 {
     const char *hex = "0123456789ABCDEF";
-    out[0] = 'D';
-    out[1] = kind;
-    out[2] = '_';
-    out[3] = hex[(idx >> 4) & 0xF];
-    out[4] = hex[idx & 0xF];
-    out[5] = out[6] = out[7] = ' ';
+    out[0] = '.';
+    out[1] = 'D';
+    out[2] = kind;
+    out[3] = '_';
+    out[4] = hex[(idx >> 4) & 0xF];
+    out[5] = hex[idx & 0xF];
+    out[6] = out[7] = ' ';
 }
 static void DynamicTableName(uint16_t idx, char out[8]) { HexIndexName('T', idx, out); }
 static void DynamicValuesName(uint16_t idx, char out[8]) { HexIndexName('V', idx, out); }
 
+// True when `name` is one of a dynamic block's .DT_/.DV_ files (or their "~" staging forms),
+// writing the global block index to `*idx`.
+static bool ParseDynamicFileName(const char name[8], uint16_t *idx)
+{
+    if (name[0] != '.' || name[1] != 'D' || (name[2] != 'T' && name[2] != 'V') || name[3] != '_')
+        return false;
+    const char *hex = "0123456789ABCDEF";
+    int hi = -1, lo = -1;
+    for (int k = 0; k < 16; k++) {
+        if (name[4] == hex[k]) hi = k;
+        if (name[5] == hex[k]) lo = k;
+    }
+    if (hi < 0 || lo < 0) return false;
+    *idx = (uint16_t)((hi << 4) | lo);
+    return true;
+}
+
 // Removes a block's DT/DV files (tombstoned slots must not leave files behind), plus any
-// staging names a half-finished atomic write left behind.
+// staging names a half-finished atomic write left behind. DeleteFile is a no-op on an absent
+// name, so no FileExists guard is needed.
 static void DeleteDynamicBlockFiles(uint16_t idx)
 {
     char tn[8], vn[8], ttn[8], tvn[8];
@@ -63,23 +81,25 @@ static void DeleteDynamicBlockFiles(uint16_t idx)
     DynamicValuesName(idx, vn);
     BackupTempName(tn, ttn);
     BackupTempName(vn, tvn);
-    if (Storage.FileExists(tn) != 0xFFFFFFFF) Storage.DeleteFile(tn);
-    if (Storage.FileExists(vn) != 0xFFFFFFFF) Storage.DeleteFile(vn);
-    if (Storage.FileExists(ttn) != 0xFFFFFFFF) Storage.DeleteFile(ttn);
-    if (Storage.FileExists(tvn) != 0xFFFFFFFF) Storage.DeleteFile(tvn);
+    Storage.DeleteFile(tn);
+    Storage.DeleteFile(vn);
+    Storage.DeleteFile(ttn);
+    Storage.DeleteFile(tvn);
 }
 
 // Cleans orphaned DT/DV files for tombstoned or beyond-registry slots. Called before
-// every save. File cleanup never changes registry positions.
+// every save. File cleanup never changes registry positions. Enumerates only the DT/DV files
+// that actually exist instead of probing all 256 slots (their name derives the index).
 static void CleanupDynamicFiles()
 {
-    for (uint16_t i = 0; i < MAX_DYNAMIC_BLOCKS; i++)
-    {
-        bool live = (i < dynamic_block_registry.block_count &&
-                     dynamic_block_registry.blocks[i].present);
+    Storage.ForEachFile([](const char name[8]) {
+        uint16_t idx;
+        if (!ParseDynamicFileName(name, &idx)) return;
+        bool live = (idx < dynamic_block_registry.block_count &&
+                     dynamic_block_registry.blocks[idx].present);
         if (!live)
-            DeleteDynamicBlockFiles(i);
-    }
+            DeleteDynamicBlockFiles(idx);
+    });
 }
 
 // Writes the block's DT (table) + DV (persistent value space) files atomically via the
@@ -92,12 +112,33 @@ static void CleanupDynamicFiles()
 // stored: it is derived from the file's global index.
 static bool SaveDynamicBlockFiles(const DynamicBlockDescriptor &b, uint16_t idx)
 {
+    char tn[8], vn[8];
+    DynamicTableName(idx, tn);
+    DynamicValuesName(idx, vn);
     uint8_t buf[MEMORY_BACKUP_CAP];
-    uint16_t cursor = 0;
+
     uint16_t need = (uint16_t)(BLOCK_NAME_LEN + 2 + 2 + (uint16_t)b.entry_count * (2 + 2 + (int)sizeof(ValueInfo)));
     if (need > sizeof(buf))
         return false;
 
+    // Write the persistent value space FIRST so the table (the block's existence marker) is
+    // the commit point: a power cut between the two commits leaves a new DV beside the old DT,
+    // and the loader tolerates a DV/table size mismatch rather than tombstoning the block.
+    if (b.persistent_len)
+    {
+        if (b.persistent_len > sizeof(buf))
+            return false;
+        memcpy(buf, b.persistent_data, b.persistent_len);
+        if (!WriteBackupFile(vn, buf, b.persistent_len))
+            return false;
+    }
+    else if (Storage.FileExists(vn) != 0xFFFFFFFF)
+    {
+        Storage.DeleteFile(vn); // block has no persistent values; drop a stale DV
+    }
+
+    // Build the DT (table) and commit it last.
+    uint16_t cursor = 0;
     memcpy(buf + cursor, b.Name, BLOCK_NAME_LEN); cursor += BLOCK_NAME_LEN;
     memcpy(buf + cursor, &b.entry_count, 2); cursor += 2;
     uint16_t reserved = 0; memcpy(buf + cursor, &reserved, 2); cursor += 2;
@@ -108,32 +149,7 @@ static bool SaveDynamicBlockFiles(const DynamicBlockDescriptor &b, uint16_t idx)
         memcpy(buf + cursor, &e.memoryOffset, 2); cursor += 2;
         memcpy(buf + cursor, &e.info, sizeof(ValueInfo)); cursor += sizeof(ValueInfo);
     }
-
-    char tn[8], vn[8];
-    DynamicTableName(idx, tn);
-    DynamicValuesName(idx, vn);
-    if (!WriteBackupFile(tn, buf, cursor))
-        return false;
-
-    if (b.persistent_len)
-    {
-        if (b.persistent_len > sizeof(buf))
-        {
-            DeleteDynamicBlockFiles(idx);
-            return false;
-        }
-        memcpy(buf, b.persistent_data, b.persistent_len);
-        if (!WriteBackupFile(vn, buf, b.persistent_len))
-        {
-            DeleteDynamicBlockFiles(idx);
-            return false;
-        }
-    }
-    else if (Storage.FileExists(vn) != 0xFFFFFFFF)
-    {
-        Storage.DeleteFile(vn); // block has no persistent values; drop a stale DV
-    }
-    return true;
+    return WriteBackupFile(tn, buf, cursor);
 }
 
 // Loads one block from its DT+DV files into `b` (fresh). Returns false when no DT file
@@ -174,8 +190,6 @@ static bool LoadDynamicBlockFiles(DynamicBlockDescriptor &b, uint16_t idx)
         cursor += 2 + 2 + sizeof(ValueInfo);
     }
     b.entry_count = entry_count;
-    if (p_needed != vlen)
-        return false; // DV length must equal the table's persistent size
 
     if (v_needed)
     {
@@ -189,7 +203,13 @@ static bool LoadDynamicBlockFiles(DynamicBlockDescriptor &b, uint16_t idx)
         b.persistent_data = (uint8_t *)malloc(p_needed);
         if (!b.persistent_data) return false;
         b.persistent_allocated = b.persistent_len = p_needed;
-        memcpy(b.persistent_data, vbuf, p_needed); // the DV is the compacted persistent space
+        // The DV holds the compacted persistent space. A power cut can leave it from a
+        // different generation (its length need not match the table); copy the overlap and
+        // keep the block instead of tombstoning it (any tail defaults to zero).
+        memset(b.persistent_data, 0, p_needed);
+        uint16_t copy = (vlen < p_needed) ? vlen : p_needed;
+        if (copy)
+            memcpy(b.persistent_data, vbuf, copy);
     }
     b.present = true;
     return true;

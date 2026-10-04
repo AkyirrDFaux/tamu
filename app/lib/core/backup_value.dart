@@ -49,7 +49,7 @@ String backupFileKind(String name) {
   if (upper.startsWith('SCR_')) return 'Script';
   if (upper == 'SNREG') return 'Serial registry';
   if (upper == '.SV' || upper == '.SUBREQ' || upper == 'SUBREQ') return 'Registry backup';
-  if (upper.startsWith('DV_') || upper.startsWith('DT_')) return 'Registry backup';
+  if (upper.startsWith('.DV_') || upper.startsWith('.DT_')) return 'Registry backup';
   if (upper.startsWith('LAY') || upper.endsWith('.LAY')) return 'LED layout';
   if (upper.endsWith('.TXT') || upper.endsWith('.LOG')) return 'Text';
   return 'Binary';
@@ -173,8 +173,14 @@ List<int>? decodeSemantic(DataType type, Object? value,
     case DataType.filename:
       if (value is! String) return null;
       var out = value.codeUnits;
-      if (size != null && out.length < size) {
-        out = [...out, ...List<int>.filled(size - out.length, 0x20)];
+      if (size != null) {
+        // Mirror the firmware's fixed-width field: truncate an over-long string and
+        // space-pad a short one, so the result is exactly `size` bytes.
+        if (out.length > size) {
+          out = out.sublist(0, size);
+        } else if (out.length < size) {
+          out = [...out, ...List<int>.filled(size - out.length, 0x20)];
+        }
       }
       return out;
     case DataType.vector:

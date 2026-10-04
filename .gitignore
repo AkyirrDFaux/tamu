@@ -5,6 +5,7 @@
 *.class
 *.log
 *.pyc
+__pycache__/
 *.swp
 .DS_Store
 .atom/
@@ -14,6 +15,7 @@
 .svn/
 .swiftpm/
 migrate_working_dir/
+version.json.lock
 
 # --- IntelliJ ---
 *.iml

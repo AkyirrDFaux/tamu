@@ -59,6 +59,16 @@ static inline uint32_t BlocksForSize(uint32_t size)
     return blocks;
 }
 
+// Clamps a file-relative byte range to the file's size without overflowing: `offset + length`
+// wraps for a huge length, which would let an out-of-range access pass a naive check. Returns
+// the clamped length; 0 means the offset is at or after the end.
+static inline uint32_t ClampFileLength(uint32_t offset, uint32_t length, uint32_t size)
+{
+    if (offset >= size) return 0;
+    if (length > size - offset) return size - offset;
+    return length;
+}
+
 // Number of 32-bit pointer slots in the first (pointer) page
 #define PTR_SLOTS (PAGE_SIZE / 4)
 
