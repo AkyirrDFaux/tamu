@@ -205,6 +205,35 @@ App (subscriptions):
   (`subscriptions_dialog.dart:169-190`); N+1 register round-trips (`subscriptions_dialog.dart:74`,
   `subscription_client.dart:81`); redundant `toDevice` (`subscription_client.dart:141`).
 
+App (storage / backup):
+- Cleanup: pre-release `backup.json` branch (`backup_capture.dart:169`); legacy numeric-format
+  rejection (`backup_format.dart:337-340`); three near-duplicate name normalizers
+  (`unpadName`/`normalizeFileName`/`decodePaddedString`); stale `.TABLE` "self-describing" comment
+  (`storage_client.dart:98-99`); `storage_page.dart:213-216` dead null/empty split + copy.
+- Dedup: file-table record parsing (`storage_client.dart:113-129` vs `storage_page.dart:354-389`);
+  file-kind classification (`backup_value.dart:47-56` vs `file_viewers.dart:36-70,504-510`);
+  file-table read + per-file loop (`backup_capture.dart:99-128`, `register_page.dart:240-251,294-304`).
+- Optimization: dynamic per-field save reads the table 3x (`register_page.dart:309-342`);
+  `_loadStaticFields` runs for every file type (`file_viewers.dart:111-121`); `.SV` read +
+  `readBlocks` then another layout read (`storage_page.dart:284-299`); `_hexView` materializes a Row
+  per line (`file_viewers.dart:147-183`); sequential `readLiveDevice` in `buildRestorePlan`
+  (`backup_restore.dart:255-261`); `StaticSpaceLayout.fromRegistry` recomputed per build
+  (`file_viewers.dart:429-432`).
+
+DAS_v0.1:
+- Cleanup: unused `AppConnected` (`Main.h:14`) and `g_rs485_ready` (`RSBus.h:12,94`); stale
+  comments (`Storage.h:39` says 0x3000, actual 0x3F00; `MeasuringRun.h:8,61`; `Measuring.h:8`;
+  `MeasuringRun.h:39-40` thresholds; `Main.h:26-31` drift).
+- Dedup: per-channel sample blocks copy-pasted (`Main.h:187-198`); the `[1,1022]` clamp repeated
+  (`MeasuringRun.h:89-90,101-102`); `log10` reimplemented (`MeasuringRun.h:92`); `VOLTAGE`
+  duplicated from the Tamu Base.h.
+- Optimization (RAM at 99.6%, 8 B headroom): `rx_buffer[300]` -> 258/260 (~40 B,
+  `RSBus.h:3,7`); `providerTable[4]` -> 2 if tolerable (~104 B, `SubscriptionsProvider.h:16,39`);
+  `s_sysValueBuf[24]` -> 20 (`RegisterRead.h:90`). Flash: the bootloader's per-byte timeout ->
+  single frame deadline (`Bootloader.cpp:182-204,315`). Per-tick: `SampleIntervalMs` software
+  divide twice per loop (`Main.h:89-95,189,194`) - cache it on `SamplingRate` write;
+  `Meas_SelectRange` drives all 6 range pins every sample (`MeasuringRun.h:42`) - only on change.
+
 **Deliberately left** (a merge would read worse): the three flag-name decoders (`flagWords` =
 full words for the backup format, `ValueFlags.describe` = RO/P/TR, `_flagsSuffix` = RO/P) and
 the two flag renderings in `register_page_tiles` (chips vs small text) are different

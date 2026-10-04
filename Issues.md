@@ -216,6 +216,53 @@ From the per-area audits; fixes pending unless noted.
 - **Docs gap:** `Docs/App/Service views/Subscriptions.md` does not exist (only Register/Script/
   Storage/Device view docs are present).
 
+**App (storage / backup)**
+- **`writeFile` always delete+create, unsupported on reduced storage** (`storage_client.dart:177-197`):
+  CIDs 1/2/3/4 are compiled out under `USE_FIXED_STORAGE`, so on a DAS `deleteFile`/`createFile`
+  get no reply and `writeFile` returns false after ~12 s of timeouts - breaking app-side per-field
+  `.SV` save (`register_page.dart:341`). When `fixedStorage`, skip delete/create and use the CID-6
+  fragment loop directly.
+- **File restore is offered on targets without create/delete** (`backup_restore.dart:237-238,414-423`):
+  `RestoreKind.file` never checks `Capability.storageFiles` (unlike script/subscription/sndb), so
+  reduced-FS targets show files "ready" and apply fails. Set "No file support".
+- **`SCR_` files are restored twice** (`backup_capture.dart:24-35`, `backup_restore.dart:287-289,297-299`):
+  capture keeps both the semantic script and the raw file; the plan emits both and apply writes
+  both, so the raw file can overwrite the semantically rebuilt image. Exclude `SCR_` files from
+  `RestoreKind.file`.
+- **Backup drop condition ignores providers and SNDB** (`backup_capture.dart:79`): a core whose
+  only content is `sndb`/provider subscriptions is dropped from the backup.
+- **String decode does not clamp to the target size** (`backup_value.dart:172-179`): a longer
+  semantic string resolves to more bytes than `target.meta.size`. Truncate to `size` (mirrors the
+  firmware) and validate the final length.
+- **Static-type stride is not 4-byte aligned** (`device_backup.dart:144,149`): per-field alignment
+  is applied, not the struct stride, contradicting the 32-bit alignment rule; latent for the
+  current 4-aligned structs. Use `stride: align4(inner)`.
+- **`unpadName` also disagrees with the storage page display** (`storage_page.dart:362` uses
+  `.trim()`), so a name with embedded spaces shows differently in the two views.
+- **`storage_client.dart:2` doc claims resize, but there is no `resizeFile`** (CID 3). Add it or
+  drop the mention.
+
+**DAS_v0.1**
+- **Auto-range applies the new reference before the transform uses it** (`firmware/src/Devices/DAS_v0.1/MeasuringRun.h:38-45`
+  with `:79,104`, `Main.h:189-197`): the ADC sample is taken with the previous reference, but the
+  code increments the range and computes `R` with the *new* Rref, so every range transition
+  reports a grossly wrong value and mis-seeds the EMA. Compute the transform with the range active
+  for the read, then apply the new range.
+- **`FilterCoeff` polarity is inverted; 0 freezes the channel** (`MeasuringRun.h:25,56`,
+  `Measuring.h:26,70`): the code is `raw*w + prev*(1-w)` (1 = no filtering, same as AccGyr) but the
+  comment/clamp say "0 = no filtering"; `0` outputs `prev` forever. Fix the comment (or invert the
+  weights and the AccGyr convention).
+- **The storage-overlap guard never runs on the DAS** (`Devices/DAS_v0.1/Storage.h:46-66` +
+  `Core/Functions/StorageFixedFS.h:56-59`): `Storage_FlashInit()` (reservation + `_etext` check,
+  the only reference to `storage_flash_reservation`) is called only from `StorageBlockFS.h:18`,
+  excluded under `USE_FIXED_STORAGE`; `StorageFixedFS::Init()` skips it, and `--gc-sections` may
+  discard the reservation. Call it from `StorageFixedFS::Init()`.
+- **`UsedFlashBytes()` reports the fixed `.SV` size** (`StorageFixedFS.h:145-150`,
+  `RegisterRead.h:57-62`): always `STORAGE_FLASH_SIZE` (256) though only `sizeof(staticPer)` (40) is
+  meaningful. Feed the real persistent size in.
+- **`DeviceVersion` is documented mandatory but only the Tamu defines it** (`DAS_v0.1/Main.h:14`,
+  `Core/Functions/Device.h:38`). Define it for the DAS or relax the comment.
+
 ## Naming/coverage gaps vs the docs (decision needed)
 - **OS notifications.** `Docs/App/Settings.md` lists "Allow notifications (To OS)" with
   per-event selection; the app persists `notifyOs`/`osEvents`/`suppressOsWhenOpen` but only
