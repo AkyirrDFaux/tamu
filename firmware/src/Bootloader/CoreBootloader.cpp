@@ -138,6 +138,9 @@ extern "C" void app_main(void)
 
     // Let the pull-up settle, then sample: released (high) boots the main app.
     vTaskDelay(pdMS_TO_TICKS(2));
+#ifndef TAMU_BOOTLOADER_FORCE
+    // TAMU_BOOTLOADER_FORCE (test hook) skips the button check so the USB update path can be
+    // exercised without physically holding GPIO2.
     if (gpio_get_level(BUTTON_PIN) != 0 && main_app != nullptr)
     {
         // Boot only when `ota_0` holds an app image (its header magic byte 0xE9); otherwise
@@ -150,6 +153,7 @@ extern "C" void app_main(void)
             esp_restart();
         }
     }
+#endif
 
     // Update mode: own the USB port and serve raw frames.
     usb_serial_jtag_driver_config_t usb = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();

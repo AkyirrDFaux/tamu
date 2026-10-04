@@ -50,12 +50,14 @@ suites need the rig (core on `/dev/ttyACM1`, one DAS on `/dev/ttyACM0` via WCH-L
         still 1 pass / 0 corrections. The remaining big block is the framework startup +
         `SystemInit` (~650 B); replacing it needs a custom `board_build.startup` and a minimal
         48 MHz `SystemInit` (clock-critical).
-  - [ ] **C. Tamu (core) bootloader.** Small `factory` bootloader app + `ota_0` main app.
-        **B1 entry**: the factory runs first and reads the button itself (held → update mode: raw
-        `0xCA…0xBC` over USB straight into `ota_0`; not held → select `ota_0` + restart); the main
-        app re-arms `otadata = factory` at startup so the factory keeps running first. No OTA
-        rollback. Bootloader stays dumb (no header parsing); the app owns flow + verify. App side
-        adds a `DirectUsbTransport`.
+  - [~] **C. Tamu (core) bootloader.** Done: the partition split (`factory` 384 KB bootloader +
+        `ota_0` 2.75 MB main app), the factory app (B1: reads GPIO2, serves raw `0xCA…0xBC`
+        frames over USB into `ota_0` with per-4 KB-sector erase tracking, else boots `ota_0`),
+        the main app's `otadata = factory` re-arm, and a Python HIL
+        (`test/core_bootloader_flash.py`) that flashed the whole 647 KB core image over raw USB
+        with 0/20228 mismatches. Remaining: the app-side `DirectUsbTransport` and wiring the
+        Update page to update the connected core (the app upload still targets the default
+        offset).
   - [ ] Manual: hold the DAS button (PC0) at reset to confirm button entry.
       Locked: passthrough targets the connected core; no capability bit; button-only entry.
 - [ ] **DAS provider stale entries (low priority).** A subscription cancel is fire-and-forget
