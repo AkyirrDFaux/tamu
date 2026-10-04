@@ -322,6 +322,33 @@ From the per-area audits; fixes pending unless noted.
   (`register_page_edit.dart:505-509`), and a partial write can leave duplicates
   (`register_client.dart:597-615`).
 
+**Tamu_v2.0A**
+- **CRITICAL: `Vysi1Persistent` field offsets overlap the 28-byte matrix - `RenderBlock` and
+  `LayoutFile` are addressed 4 bytes early** (`firmware/src/Blocks/Vysi1Layout.h:85-86`, comments
+  `:74,:79`). `Offset` is a `Matrix<2,3>` = 4-byte header + 6 Numbers = 28 B, but field 2 is
+  declared at offset 24 and field 3 at 28 (real struct offets are 28 and 32). Reads/writes of
+  field 2 hit the matrix's last cell; field 3 reads RenderBlock + half of LayoutFile. The app
+  derives the layout from reported sizes, so it computes 28/32 and disagrees. Set offsets to
+  28/32, update the comments and `app/test/device_backup_test.dart:22,63`, and add `static_assert`s.
+- **AccGyr write triggers apply the old config, then commit the new index**
+  (`Devices/Tamu_v2.0A/AccGyr.h:265,270-272`): `ApplyAccGyrConfig()` builds CTRL1/CTRL2 from the
+  not-yet-updated `staticPer.accgyr.*`, so the part keeps the old ODR/range while the field reports
+  the new one (read-back verifies the old value). Store the clamped index first, then apply (revert
+  on failure), or build the CTRL bytes from `index`.
+- **USB/BLE packet parsers are reset from a different task than the one feeding them (race)**
+  (`AppUSB.h:178,205` fed in `AppLinkTask` vs `:264-265` reset in ApplicationTask; `AppBLE.h:142-166`
+  fed from the NimBLE host task vs `:248` reset in ApplicationTask). `got`/`full`/`frame` mutate
+  concurrently with no lock. Feed and reset each parser on one task; fix the `AppBLE.h:38` comment.
+- **Device logs share the USB Serial/JTAG stream with the app link** (`Devices/Tamu_v2.0A/Log.h:15`
+  + `AppUSB.h:109-119`): `ESP_LOGI`/`DeviceLog` from `Button.h`, `AccGyr.h`, `AppBLE.h`, `Main.h`
+  can interleave into app frames on the shared TX FIFO, even though `RSBus.h:138-139` avoids
+  `ESP_LOG` for exactly that reason. Gate on `!AppConnected`.
+- **`LoadLayoutFromStorage` ignores flash-read failures and mutates state before validating**
+  (`Blocks/Vysi1Layout.h:221-235`): an unchecked/failed read leaves state half-applied; check both
+  reads and return false before mutating.
+- **Geometry `Alpha` is not clamped** (`Blocks/Vysi1Render.h:83`): a >1 value wraps the mask
+  modulo 256 though it is documented 0-1. Clamp with `LimitZeroToOne`.
+
 ## Naming/coverage gaps vs the docs (decision needed)
 - **OS notifications.** `Docs/App/Settings.md` lists "Allow notifications (To OS)" with
   per-event selection; the app persists `notifyOs`/`osEvents`/`suppressOsWhenOpen` but only

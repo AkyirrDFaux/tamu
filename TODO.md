@@ -267,6 +267,21 @@ App (register UI):
   never pruned on topology change (`:394,408,429`); repeated full enumerations in
   `createDynamicBlock`/`moveDynamicBlockTo` (`register_client.dart:400-412,513-553`).
 
+Tamu_v2.0A:
+- Cleanup: "Milestone A/B" plan comments (`Core/Services/Script.h:5-9`); dangling hex-dump comment
+  (`Devices/Tamu_v2.0A/Log.h:18-19`); dead `malformed` counter and `BLE_PACE_MS==0` write-only
+  `LastBleSend` (`AppBLE.h:24,19,36,299-302`); unused `LEDDriver::Send` (`LED.h:70-110`) and
+  `SleepMicro` (`Base.h:28-31`); garbled comment (`Main.h:88-90`); stale `Render.h:27-28`; RSBus
+  boilerplate (`RSBus.h:7-8`); duplicate `OnLEDStateChange` declaration (`Blocks/LED.h:10`,
+  `Blocks/Button.h:34`).
+- Dedup: `PromoteAffine(pos) * BaseTransform()` twice (`Vysi1Render.h:37-39,117-118`); the
+  field/type classification recomputed each frame (`Vysi1Render.h:334-343` vs `:347-356`); the fan
+  timer/channel selection (`PWM.h:66,105`).
+- Optimization: per-frame `GetKey` lookups + mask rebuild (`Vysi1Render.h:350-363`, overlaps A11);
+  loops over all 86 LEDs for identity scale / empty mask (`:125-133,377-386`); `Fill`/`HalfFill`
+  full per-LED matrix (`:73-84`); `GeoMask[12][86]` ~1 KB/display (`Vysi1Layout.h:130-133`);
+  `OdrPeriodMs` entries 6/7 map below the 2 ms loop (`Main.h:232-238`, harmless/misleading).
+
 **Deliberately left** (a merge would read worse): the three flag-name decoders (`flagWords` =
 full words for the backup format, `ValueFlags.describe` = RO/P/TR, `_flagsSuffix` = RO/P) and
 the two flag renderings in `register_page_tiles` (chips vs small text) are different
