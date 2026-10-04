@@ -203,18 +203,8 @@ int defaultSizeForType(DataType type) => switch (type) {
       _ => 4,
     };
 
-void _putU32(Uint8List out, int offset, int value) {
-  out[offset] = value & 0xFF;
-  out[offset + 1] = (value >> 8) & 0xFF;
-  out[offset + 2] = (value >> 16) & 0xFF;
-  out[offset + 3] = (value >> 24) & 0xFF;
-}
-
-int _getU32(List<int> bytes, int offset) =>
-    bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16) | (bytes[offset + 3] << 24);
-
-int _numberToRaw(double v) => (v * 65536.0).round();
-double _rawToNumber(int raw) => (raw & 0x80000000) != 0 ? (raw - 0x100000000) / 65536.0 : raw / 65536.0;
+// Codec helpers come from types.dart: uint32ToBytes/uint32FromBytes and
+// numberToBytes/numberFromBytes (Q16.16).
 
 /// Packs `values` (one byte list per entry) into the 4-byte-strided blob the firmware
 /// expects, padding/clamping each entry to its declared ValueInfo size.
@@ -310,9 +300,9 @@ class ScriptFileBuilder {
       final spec = i < inputSpecs.length ? inputSpecs[i] : const ScriptInputSpec();
       out.add(spec.uiType & 0xFF);
       out.addAll([0, 0, 0]);
-      final minB = Uint8List(4); _putU32(minB, 0, _numberToRaw(spec.min)); out.addAll(minB);
-      final maxB = Uint8List(4); _putU32(maxB, 0, _numberToRaw(spec.max)); out.addAll(maxB);
-      final stepB = Uint8List(4); _putU32(stepB, 0, _numberToRaw(spec.step)); out.addAll(stepB);
+      out.addAll(numberToBytes(spec.min));
+      out.addAll(numberToBytes(spec.max));
+      out.addAll(numberToBytes(spec.step));
     }
     // v2: named enum choices, one label list per input (count 0 when unused).
     for (var i = 0; i < inputs.length; i++) {
@@ -332,15 +322,15 @@ class ScriptFileBuilder {
         scriptHeaderSize + metaLen + constBlob.length + defBlob.length + instructions.length + ui.length;
     final out = Uint8List(total);
 
-    _putU32(out, 0, properties);
+    out.setAll(0, uint32ToBytes(properties));
     out[4] = inputs.length;
     out[5] = outputs.length;
     out[6] = variables.length;
     out[7] = constants.length;
-    _putU32(out, 8, constBlob.length);
-    _putU32(out, 12, defBlob.length);
-    _putU32(out, 16, instructions.length);
-    _putU32(out, 20, ui.length);
+    out.setAll(8, uint32ToBytes(constBlob.length));
+    out.setAll(12, uint32ToBytes(defBlob.length));
+    out.setAll(16, uint32ToBytes(instructions.length));
+    out.setAll(20, uint32ToBytes(ui.length));
 
     var offset = scriptHeaderSize;
     for (final info in [...inputs, ...outputs, ...variables, ...constants]) {
@@ -408,15 +398,15 @@ class ScriptFileData {
     if (bytes.length < scriptHeaderSize) {
       throw const FormatException('script file shorter than the header');
     }
-    final properties = _getU32(bytes, 0);
+    final properties = uint32FromBytes(bytes, 0);
     final inCount = bytes[4];
     final outCount = bytes[5];
     final varCount = bytes[6];
     final constCount = bytes[7];
-    final constLen = _getU32(bytes, 8);
-    final defLen = _getU32(bytes, 12);
-    final instrLen = _getU32(bytes, 16);
-    final uiLen = _getU32(bytes, 20);
+    final constLen = uint32FromBytes(bytes, 8);
+    final defLen = uint32FromBytes(bytes, 12);
+    final instrLen = uint32FromBytes(bytes, 16);
+    final uiLen = uint32FromBytes(bytes, 20);
 
     final metaLen = (inCount + outCount + varCount + constCount) * 4;
     final need = scriptHeaderSize + metaLen + constLen + defLen + instrLen + uiLen;
@@ -543,9 +533,9 @@ class _UiCursor {
       specs.add(ScriptInputSpec(uiType: uiType));
       continue;
     }
-    final min = _rawToNumber(_getU32(ui, c.pos)); c.pos += 4;
-    final max = _rawToNumber(_getU32(ui, c.pos)); c.pos += 4;
-    final step = _rawToNumber(_getU32(ui, c.pos)); c.pos += 4;
+    final min = numberFromBytes(ui, c.pos); c.pos += 4;
+    final max = numberFromBytes(ui, c.pos); c.pos += 4;
+    final step = numberFromBytes(ui, c.pos); c.pos += 4;
     specs.add(ScriptInputSpec(uiType: uiType, min: min, max: max, step: step));
   }
 

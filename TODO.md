@@ -92,8 +92,7 @@ subscription, register and script dedups are done).
 - `subscriptions_dialog`/`block_info_picker` share the block/field selection fetchers.
 - `script_value_dialog._changeType` -> `ScriptDraftValue.setType` (the dialog's local state
   shape differs, so this needs a small state refactor).
-- `script_file`'s `_align4`/`_putU32`/`_getU32`/`_numberToRaw`/`_rawToNumber` -> the
-  `types.dart` codecs; `ScriptValueInfo` vs `ValueInfo`.
+- `ScriptValueInfo` vs `ValueInfo` (the raw codec helpers now live only in `types.dart`).
 - `system_block_view.formatSystemValue` -> delegate the generic types to `formatValue`
   (mind the 32-bit enum / 16-bit integer / NUL-string differences).
 
