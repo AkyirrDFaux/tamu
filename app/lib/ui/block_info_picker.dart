@@ -5,12 +5,10 @@ library;
 
 import 'package:flutter/material.dart';
 
-import '../core/block_registry.dart' show blockInfoFor;
-import '../core/register_client.dart';
 import '../core/types.dart';
-import '../core/script_client.dart';
 import 'subscriptions_dialog.dart'
-    show BlockPicker, BlockSelection, FieldPicker, FieldSelection, KeyPicker;
+    show BlockPicker, BlockSelection, FieldPicker, FieldSelection, KeyPicker,
+        fetchBlockSelections, fetchFieldSelections;
 import 'widgets.dart' show DialogBody;
 
 /// Shows the tiered BlockInfo picker and returns the 4-byte value, or null when cancelled.
@@ -51,16 +49,7 @@ class _BlockInfoDialogState extends State<_BlockInfoDialog> {
 
   Future<void> _load() async {
     try {
-      final reg = RegisterClient(deviceId: widget.deviceId);
-      final blocks = await reg.readBlocks(
-          scriptSlots: await ScriptClient(deviceId: widget.deviceId).loadedScripts());
-      final list = <BlockSelection>[];
-      for (final b in blocks ?? <({int type, int inst, ValueInfo meta, String name})>[]) {
-        if (b == null) continue;
-        final label = b.name.trim().isNotEmpty ? b.name : BlockType.fromValue(b.type).label;
-        list.add(BlockSelection(
-            type: b.type, inst: b.inst, name: label, label: '$label [$b.inst]'));
-      }
+      final list = await fetchBlockSelections(widget.deviceId);
       final curType = (_bi >> 22) & 0x3FF;
       final curInst = (_bi >> 16) & 0x3F;
       final curField = (_bi >> 8) & 0xFF;
@@ -90,20 +79,7 @@ class _BlockInfoDialogState extends State<_BlockInfoDialog> {
   }
 
   Future<void> _loadFields(BlockSelection block, [int? select]) async {
-    final reg = RegisterClient(deviceId: widget.deviceId);
-    final count = await reg.getFieldCount(block.type, block.inst) ?? 0;
-    final fields = <FieldSelection>[];
-    for (var f = 0; f < count; f++) {
-      final r = await reg.readBlockField(block.type, block.inst, f, 0);
-      if (r == null) continue;
-      final info = blockInfoFor(BlockType.fromValue(block.type))?.field(f);
-      fields.add(FieldSelection(
-        field: f,
-        meta: r.meta,
-        name: info?.name ?? 'Field $f',
-        keyed: r.meta.dataType.value >= 0x100,
-      ));
-    }
+    final fields = await fetchFieldSelections(widget.deviceId, block);
     if (!mounted) return;
     setState(() {
       _fields = fields;

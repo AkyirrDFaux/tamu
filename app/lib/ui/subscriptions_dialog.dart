@@ -46,6 +46,40 @@ class FieldSelection {
   });
 }
 
+/// Reads a device's blocks (with any loaded-script slots) as pickable selections.
+Future<List<BlockSelection>> fetchBlockSelections(int deviceId) async {
+  final reg = RegisterClient(deviceId: deviceId);
+  final blocks = await reg.readBlocks(
+      scriptSlots: await ScriptClient(deviceId: deviceId).loadedScripts());
+  if (blocks == null) return [];
+  final out = <BlockSelection>[];
+  for (final b in blocks) {
+    if (b == null) continue;
+    final label = b.name.trim().isNotEmpty ? b.name : BlockType.fromValue(b.type).label;
+    out.add(BlockSelection(
+        type: b.type, inst: b.inst, name: label, label: '$label [${b.inst}]'));
+  }
+  return out;
+}
+
+/// Reads a block's fields as pickable selections; empty when the field enumeration is
+/// unavailable so navigation never blocks. Names come from the design-time schema when present.
+Future<List<FieldSelection>> fetchFieldSelections(int deviceId, BlockSelection block) async {
+  final reg = RegisterClient(deviceId: deviceId);
+  final count = await reg.getFieldCount(block.type, block.inst);
+  if (count == null) return [];
+  final schema = blockInfoFor(BlockType.fromValue(block.type));
+  final out = <FieldSelection>[];
+  for (var f = 0; f < count; f++) {
+    final r = await reg.readBlockField(block.type, block.inst, f, 0);
+    if (r == null) continue;
+    final name = (schema != null && f < schema.fields.length) ? schema.fields[f].name : null;
+    out.add(FieldSelection(
+        field: f, meta: r.meta, name: name ?? 'Field $f', keyed: r.meta.type >= 0x100));
+  }
+  return out;
+}
+
 /// Dialog for adding/editing requester subscriptions
 class SubscriptionDialog extends StatefulWidget {
   final SubscriptionClient client;
@@ -169,51 +203,13 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
     return null;
   }
 
-  Future<List<BlockSelection>> _fetchBlocks(int deviceId) async {
-    final regClient = RegisterClient(deviceId: deviceId);
-    final blocks = await regClient.readBlocks(
-        scriptSlots: await ScriptClient(deviceId: deviceId).loadedScripts());
-    if (blocks == null) return [];
-    final out = <BlockSelection>[];
-    for (final b in blocks) {
-      if (b == null) continue;
-      final blockType = BlockType.fromValue(b.type);
-      final name = b.name.trim().isNotEmpty ? b.name : blockType.label;
-      out.add(BlockSelection(
-        type: b.type,
-        inst: b.inst,
-        name: name,
-        label: '$name [${b.inst}]',
-      ));
-    }
-    return out;
-  }
+  Future<List<BlockSelection>> _fetchBlocks(int deviceId) =>
+      fetchBlockSelections(deviceId);
 
   /// Reads the fields of a block. Fails gracefully (empty list) when the field
   /// enumeration is unavailable so navigation never blocks.
-  Future<List<FieldSelection>> _fetchFields(int deviceId, BlockSelection block) async {
-    final regClient = RegisterClient(deviceId: deviceId);
-    final fieldCount = await regClient.getFieldCount(block.type, block.inst);
-    if (fieldCount == null) return [];
-
-    final out = <FieldSelection>[];
-    for (var f = 0; f < fieldCount; f++) {
-      final fieldResult = await regClient.readBlockField(block.type, block.inst, f, 0);
-      if (fieldResult == null) continue;
-      // Design-time field names when the block has a schema; "Field N" otherwise.
-      final blockSchema = blockInfoFor(BlockType.fromValue(block.type));
-      final fieldInfo = (blockSchema != null && f < blockSchema.fields.length)
-          ? blockSchema.fields[f].name
-          : null;
-      out.add(FieldSelection(
-        field: f,
-        meta: fieldResult.meta,
-        name: fieldInfo ?? 'Field $f',
-        keyed: fieldResult.meta.type >= 0x100,
-      ));
-    }
-    return out;
-  }
+  Future<List<FieldSelection>> _fetchFields(int deviceId, BlockSelection block) =>
+      fetchFieldSelections(deviceId, block);
 
   Future<void> _loadFieldsForTarget(BlockSelection block, [int? preField, int? preKey]) async {
     setState(() { _selectedTargetBlock = block; _selectedTargetField = null; _targetFields = []; _targetKey = 0; });
