@@ -44,6 +44,15 @@ static void SaveRequesterTable() {
         return;
     }
     buf[0] = count;
+    // Skip the rewrite when the stored file already holds exactly these bytes. A set/cancel
+    // rewrites `.SUBREQ` every time, so an unchanged re-set (or a redundant save-all) would
+    // otherwise keep erasing/programming the same sector for nothing.
+    uint32_t existing = Storage.FileExists(SubscriptionsRequesterFile);
+    if (existing == off) {
+        uint8_t cur[1 + MAX_REQUESTER_SUBS * REQUESTER_FILE_ENTRY_SIZE];
+        uint16_t curLen = (uint16_t)Storage.ReadFromFile(SubscriptionsRequesterFile, 0, off, (char *)cur);
+        if (curLen == off && memcmp(cur, buf, off) == 0) return;
+    }
     // Shared atomic staging (copy to the "~" name, then rename); handles the reduced
     // fixed-storage variant too, so no bespoke CreateFile/Write/Rename dance here.
     WriteBackupFile(SubscriptionsRequesterFile, buf, off);

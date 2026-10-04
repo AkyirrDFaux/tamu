@@ -64,47 +64,14 @@ static inline uint32_t SubMinTime(const SubscriptionTable &t) {
 
 static inline uint32_t SubTimeoutFrom(uint32_t nowMs) { return nowMs + SUB_TIMEOUT_MS; }
 
-// Reads the current value of the register addressed by a 32-bit BlockInfo.
+// Reads the current value of the register addressed by a 32-bit BlockInfo. Delegates the
+// script/dynamic/static routing to the register service (RegisterResolveByBlockInfo) so the
+// two services cannot drift; the returned Data points at the source value (or is null when
+// the BlockInfo does not resolve).
 static inline FieldResult SubscriptionsGetField(uint32_t blockInfo) {
-    uint16_t type = BlockInfoType(blockInfo);
-    uint8_t inst = BlockInfoInstance(blockInfo);
-    uint8_t field = BlockInfoField(blockInfo);
-    uint8_t key = BlockInfoKey(blockInfo);
-
-#ifdef USE_SCRIPTS
-    if (BlockTypeRange::IsScript(type)) { // Script I/O (inputs/outputs)
-        ValueInfo m;
-        void *p = nullptr;
-        if (ScriptGetIoPointer(BlockTypeRange::ScriptGlobal(type, inst), field, key, m, p)) {
-            FieldResult fr;
-            fr.Descriptor = m;
-            fr.Data = p;
-            return fr;
-        }
-        return FieldResult{};
-    }
-#endif
-#ifdef USE_DYNAMIC_BLOCKS
-    if (BlockTypeRange::IsDynamic(type)) {
-        uint16_t gi = BlockTypeRange::DynamicGlobal(type, inst);
-        if (gi < dynamic_block_registry.block_count) {
-            DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(gi);
-            if (block) {
-                KeyResult kr = block->GetKey(field, key);
-                FieldResult fr;
-                fr.Descriptor = kr.meta;
-                fr.Data = kr.data_ptr;
-                return fr;
-            }
-        }
-        return FieldResult{};
-    }
-#endif
-    // The System block (type 0) and every static block share the descriptor lookup; the System
-    // fields are synthesised by its VirtualGet into a shared buffer.
-    const StaticBlockDescriptor *blk = FindBlock(type, inst);
-    if (!blk) return FieldResult{};
-    return blk->Get(field, key);
+    FieldResult fr;
+    RegisterResolveByBlockInfo(blockInfo, fr);
+    return fr;
 }
 
 // ---------------------------------------------------------------------------

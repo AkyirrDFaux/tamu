@@ -16,7 +16,7 @@ void DispatchPacket(const PacketFrame &frame);
 #define INVALID_BLOCK 0xFF
 #define INVALID_INDEX 0xFF
 
-// Capacity of a serialised service backup buffer (the `.SV` static space and the `DT_`/`DV_`
+// Capacity of a serialised service backup buffer (the `.SV` static space and the `.DT_`/`.DV_`
 // dynamic files). RAM-starved devices (DAS) build with a smaller value via the MEMORY_BACKUP_CAP
 // build flag.
 #ifndef MEMORY_BACKUP_CAP

@@ -6,13 +6,13 @@ void main() {
   test('script file build/parse round-trip', () {
     final image = ScriptFileBuilder(
       properties: ScriptProperties.loadOnBoot | ScriptProperties.runOnLoad,
-      inputs: const [ScriptValueInfo(type: DataType.number, size: 4)],
-      outputs: const [ScriptValueInfo(type: DataType.number, size: 4)],
-      variables: const [
-        ScriptValueInfo(type: DataType.number, size: 4),
-        ScriptValueInfo(type: DataType.number, size: 4),
+      inputs: [ValueInfo(type: DataType.number.value, size: 4)],
+      outputs: [ValueInfo(type: DataType.number.value, size: 4)],
+      variables: [
+        ValueInfo(type: DataType.number.value, size: 4),
+        ValueInfo(type: DataType.number.value, size: 4),
       ],
-      constants: const [ScriptValueInfo(type: DataType.number, size: 4)],
+      constants: [ValueInfo(type: DataType.number.value, size: 4)],
       inputDefaults: [numberToBytes(3.5)],
       constantValues: [numberToBytes(9.0)],
       instructions: const [0x01, 0, 0, 0, 0x07, 0, 0, 0],
@@ -26,7 +26,7 @@ void main() {
     expect(parsed.outputs.length, 1);
     expect(parsed.variables.length, 2);
     expect(parsed.constants.length, 1);
-    expect(parsed.inputs.first.type, DataType.number);
+    expect(parsed.inputs.first.dataType, DataType.number);
     expect(parsed.inputs.first.size, 4);
     expect(parsed.instructions.length, 8);
     expect(parsed.functionName, 'Blink');
@@ -35,18 +35,18 @@ void main() {
   });
 
   test('script value info flags/type packing', () {
-    const info = ScriptValueInfo(
-        type: DataType.number, size: 4, flags: ValueFlags.readOnly);
+    final info = ValueInfo(
+        type: DataType.number.value, size: 4, flags: ValueFlags.readOnly);
     final bytes = info.toBytes();
-    final back = ScriptValueInfo.fromBytes(bytes);
-    expect(back.type, DataType.number);
+    final back = ValueInfo.fromBytes(bytes);
+    expect(back.dataType, DataType.number);
     expect(back.size, 4);
     expect(back.flags & ValueFlags.readOnly, ValueFlags.readOnly);
   });
 
   test('truncated script file is rejected', () {
     final image = ScriptFileBuilder(
-      inputs: const [ScriptValueInfo(type: DataType.number, size: 4)],
+      inputs: [ValueInfo(type: DataType.number.value, size: 4)],
       inputDefaults: [numberToBytes(1.0)],
     ).build();
     expect(

@@ -18,7 +18,14 @@ static bool SystemFillValue(uint8_t field, uint8_t *vbuf) {
         uint32_t dt = (uint32_t)kDeviceType;
         uint32_t cap = kCapabilities;
         // Software version YY:MM:DD:II (Docs/Services/System Block and Device Commands.md):
-        // 7 year + 4 month + 5 day + 16 iteration bits.
+        // 7 year + 4 month + 5 day + 16 iteration bits = 32. scripts/version.py is the single
+        // source of these field widths (VERSION_FIELDS + pack_version, which mirrors this code);
+        // keep the shifts and masks below in lockstep with it.
+        static_assert(7 + 4 + 5 + 16 == 32, "System version field widths must fill one u32");
+        static_assert(VERSION_YEAR <= 0x7Fu, "version year must fit 7 bits");
+        static_assert(VERSION_MONTH <= 0x0Fu, "version month must fit 4 bits");
+        static_assert(VERSION_DAY <= 0x1Fu, "version day must fit 5 bits");
+        static_assert(VERSION_ITERATION <= 0xFFFFu, "version iteration must fit 16 bits");
         uint32_t ver = ((uint32_t)(VERSION_YEAR & 0x7Fu) << 25) |
                        ((uint32_t)(VERSION_MONTH & 0x0Fu) << 21) |
                        ((uint32_t)(VERSION_DAY & 0x1Fu) << 16) |

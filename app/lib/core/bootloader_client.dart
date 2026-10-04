@@ -224,7 +224,7 @@ class BootloaderClient {
     var ok = false;
     for (var attempt = 0; attempt < writeAttempts; attempt++) {
       try {
-        ok = await transport.writeChunk(offset, _chunkBytes(data), timeout);
+        ok = await transport.writeChunk(offset, Bootloader.padPayload(data), timeout);
         if (ok) break;
       } on TransportException {
         // Timeout: retry with a longer window.
@@ -347,13 +347,6 @@ class BootloaderClient {
       chunks.add(_Chunk(offset, data));
     }
     return chunks;
-  }
-
-  static Uint8List _chunkBytes(List<int> data) {
-    final out = Uint8List(_payloadSize)..fillRange(0, _payloadSize, 0xFF);
-    final n = data.length > _payloadSize ? _payloadSize : data.length;
-    out.setRange(0, n, data);
-    return out;
   }
 
   static bool _sameBytes(List<int> a, List<int> b) {

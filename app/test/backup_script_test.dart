@@ -23,12 +23,21 @@ ScriptDraft _draft() {
       .add(ScriptDraftValue(name: 'K', type: DataType.number, value: numberToBytes(42)));
   draft.lines.add(ScriptLine(
     destinations: [ScriptSymbol.output(0)],
-    instruction: ScriptSymbol.instruction(catMath, 1), // Add
-    operands: [ScriptSymbol.input(0), ScriptSymbol.constant(0)],
+    instruction: ScriptSymbol.instruction(catMath, 0), // Set
+    operands: [
+      ScriptSymbol.input(0),
+      ScriptSymbol.predefine(preMathOp, 0), // +
+      ScriptSymbol.constant(0),
+    ],
   ));
   draft.lines.add(ScriptLine(
-    instruction: ScriptSymbol.instruction(catLogic, 6), // Compare =
-    operands: [ScriptSymbol.variable(0), ScriptSymbol.predefine(preBool, 1)],
+    destinations: [ScriptSymbol.variable(0)],
+    instruction: ScriptSymbol.instruction(catLogic, 12), // Select
+    operands: [
+      ScriptSymbol.variable(0),
+      ScriptSymbol.constant(0),
+      ScriptSymbol.predefine(preBool, 0),
+    ],
   ));
   draft.lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6))); // Halt
   return draft;

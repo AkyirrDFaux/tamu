@@ -59,7 +59,7 @@ class Bootloader {
     final f = Uint8List(dataSize);
     f[0] = start;
     f.setRange(2, 6, uint32ToBytes(offset));
-    f.setRange(6, 6 + payloadSize, _pad(payload));
+    f.setRange(6, 6 + payloadSize, padPayload(payload));
     f[dataSize - 1] = end;
     _writeControl(f, cmdWrite);
     return f;
@@ -78,13 +78,15 @@ class Bootloader {
     final f = Uint8List(dataSize);
     f[0] = start;
     f.setRange(2, 6, uint32ToBytes(offset));
-    f.setRange(6, 6 + payloadSize, _pad(payload));
+    f.setRange(6, 6 + payloadSize, padPayload(payload));
     f[dataSize - 1] = end;
     _writeControl(f, cmdReadResponse);
     return f;
   }
 
-  static Uint8List _pad(List<int> payload) {
+  /// Left-aligns [payload] in a `payloadSize`-byte buffer, truncating any excess. Shared
+  /// by the encoders here and by the flashing client, which pads a chunk before sending it.
+  static Uint8List padPayload(List<int> payload) {
     final out = Uint8List(payloadSize);
     final n = payload.length > payloadSize ? payloadSize : payload.length;
     out.setRange(0, n, payload);

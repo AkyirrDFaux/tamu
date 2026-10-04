@@ -14,6 +14,7 @@
 #include <cstring>
 
 #include "Core/Functions/Bootloader.h"
+#include "Core/Functions/BootloaderHost.h"
 #include "driver/gpio.h"
 #include "driver/usb_serial_jtag.h"
 #include "esp_ota_ops.h"
@@ -68,31 +69,6 @@ static bool ReadByte(uint8_t *b, TickType_t ticks)
     return usb_serial_jtag_read_bytes(b, 1, ticks) == 1;
 }
 
-// Reads one raw frame into `out`; returns its length or 0 on timeout/invalid.
-static int ReceiveFrame(uint8_t *out, size_t cap, TickType_t ticks)
-{
-    uint8_t b;
-    for (;;)
-    {
-        if (!ReadByte(&b, ticks)) return 0;
-        if (b == Bootloader::START) break; // skip anything that is not a frame start
-    }
-
-    size_t got = 0;
-    out[got++] = b;
-    if (!ReadByte(&b, ticks)) return 0;
-    out[got++] = b;
-
-    uint16_t need = Bootloader::FrameSize((uint8_t)(b & 0x03u));
-    if (need == 0 || need > cap) return 0;
-    while (got < need)
-    {
-        if (!ReadByte(&b, ticks)) return 0;
-        out[got++] = b;
-    }
-    return Bootloader::Decode(out, need) ? (int)need : 0;
-}
-
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
@@ -119,22 +95,6 @@ static void HandleWrite(uint32_t offset, const uint8_t *payload)
         MarkErased(sector);
     }
     esp_partition_write(s_app, offset, payload, Bootloader::PAYLOAD_SIZE);
-}
-
-static void HandleRead(uint32_t offset)
-{
-    uint8_t data[Bootloader::PAYLOAD_SIZE];
-    // Same wrap-safe bounds check as `HandleWrite`: an out-of-range offset reads back
-    // 0xFF (erased) instead of leaving `data` uninitialised and leaking stack bytes.
-    if (s_app == nullptr || offset > s_app->size ||
-        s_app->size - offset < Bootloader::PAYLOAD_SIZE)
-        memset(data, 0xFF, sizeof(data));
-    else
-        esp_partition_read(s_app, offset, data, sizeof(data));
-
-    uint8_t resp[Bootloader::DATA_SIZE];
-    Bootloader::EncodeReadResponse(offset, data, resp);
-    SendRaw(resp, sizeof(resp));
 }
 
 // ---------------------------------------------------------------------------
@@ -183,17 +143,22 @@ extern "C" void app_main(void)
     if (s_app != nullptr && s_app->size > OTA_APP_SIZE)
         s_app = nullptr;
 
-    for (;;)
-    {
-        uint8_t frame[Bootloader::MAX_FRAME_SIZE];
-        int n = ReceiveFrame(frame, sizeof(frame), pdMS_TO_TICKS(100));
-        if (n <= 0) continue;
-
-        uint8_t cmd = (uint8_t)(frame[1] & 0x03u);
-        uint32_t offset = Bootloader::Offset(frame);
-        if (cmd == Bootloader::CMD_WRITE)
-            HandleWrite(offset, Bootloader::Payload(frame));
-        else if (cmd == Bootloader::CMD_READ_REQ)
-            HandleRead(offset);
-    }
+    // Serve raw frames (the receive/read/dispatch plumbing is shared with the DAS host).
+    BootloaderHost::HostLoop(
+        [] {},
+        [](uint8_t *b) { return ReadByte(b, pdMS_TO_TICKS(100)); },
+        [](uint32_t offset, const uint8_t *payload) { HandleWrite(offset, payload); },
+        [](uint32_t offset) {
+            auto readPayload = [](uint32_t off, uint8_t *data) {
+                // Same wrap-safe bounds check as `HandleWrite`: an out-of-range offset
+                // reads back 0xFF (erased) instead of leaking stack bytes.
+                if (s_app == nullptr || off > s_app->size ||
+                    s_app->size - off < Bootloader::PAYLOAD_SIZE)
+                    return false;
+                esp_partition_read(s_app, off, data, Bootloader::PAYLOAD_SIZE);
+                return true;
+            };
+            auto send = [](const uint8_t *d, size_t n) { SendRaw(d, n); };
+            BootloaderHost::HandleRead(offset, readPayload, send);
+        });
 }

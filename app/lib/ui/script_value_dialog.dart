@@ -35,14 +35,17 @@ class _ScriptValueDialogState extends State<ScriptValueDialog> {
   late final TextEditingController _min = TextEditingController(text: _trim(widget.initial.spec.min));
   late final TextEditingController _max = TextEditingController(text: _trim(widget.initial.spec.max));
   late final TextEditingController _step = TextEditingController(text: _trim(widget.initial.spec.step));
-  late DataType _type = widget.initial.type;
-  late int _uiType = widget.initial.spec.uiType;
+  /// The edited value. The type-change rules live in [ScriptDraftValue.setType].
+  late final ScriptDraftValue _draft = ScriptDraftValue(
+    name: widget.initial.name,
+    type: widget.initial.type,
+    size: widget.initial.size,
+    value: widget.initial.value,
+    spec: widget.initial.spec,
+  );
   /// Custom enum option labels (the values stay the plain 0..N-1 indexes).
   late final List<TextEditingController> _options =
       [for (final o in widget.initial.spec.options) TextEditingController(text: o)];
-  late List<int> _value = widget.initial.value.isNotEmpty
-      ? List<int>.from(widget.initial.value)
-      : (_editableValue ? List<int>.filled(defaultSizeForType(widget.initial.type), 0) : <int>[]);
 
   bool get _isInput => widget.category == ScriptValueCategory.input;
   bool get _isConstant => widget.category == ScriptValueCategory.constant;
@@ -51,6 +54,15 @@ class _ScriptValueDialogState extends State<ScriptValueDialog> {
   bool get _editableValue => _isInput || _isConstant;
 
   static String _trim(double v) => v == v.roundToDouble() ? '${v.toInt()}' : '$v';
+
+  @override
+  void initState() {
+    super.initState();
+    // Value-bearing entries always present bytes; seed zeroed defaults when the file had none.
+    if (_editableValue && _draft.value.isEmpty) {
+      _draft.setValue(Uint8List.fromList(List<int>.filled(defaultSizeForType(_draft.type), 0)));
+    }
+  }
 
   @override
   void dispose() {
@@ -67,17 +79,18 @@ class _ScriptValueDialogState extends State<ScriptValueDialog> {
   void _changeType(DataType? t) {
     if (t == null) return;
     setState(() {
-      _type = t;
-      // Size follows the type (fixed types) or the value (value-bearing entries).
-      _value = List<int>.filled(defaultSizeForType(t), 0);
-      if (!uiStylesForType(t).contains(_uiType)) _uiType = ScriptUiType.auto;
+      // [ScriptDraftValue.setType] owns the type-change rules (size + UI-style reset).
+      _draft.setType(t);
+      if (_editableValue) {
+        _draft.setValue(Uint8List.fromList(List<int>.filled(defaultSizeForType(t), 0)));
+      }
     });
   }
 
   void _submit() {
     final spec = _isInput
         ? ScriptInputSpec(
-            uiType: _uiType,
+            uiType: _draft.spec.uiType,
             min: double.tryParse(_min.text.trim()) ?? 0,
             max: double.tryParse(_max.text.trim()) ?? 0,
             step: double.tryParse(_step.text.trim()) ?? 0,
@@ -91,10 +104,10 @@ class _ScriptValueDialogState extends State<ScriptValueDialog> {
       context,
       ScriptDraftValue(
         name: _name.text.trim(),
-        type: _type,
+        type: _draft.type,
         // Value-less entries keep the declared size from the file.
         size: _editableValue ? null : widget.initial.size,
-        value: _editableValue ? Uint8List.fromList(_value) : null,
+        value: _editableValue ? Uint8List.fromList(_draft.value) : null,
         spec: spec,
       ),
     );
@@ -102,8 +115,8 @@ class _ScriptValueDialogState extends State<ScriptValueDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final styles = uiStylesForType(_type);
-    final showLimits = _isInput && uiStyleSupportsLimits(_uiType);
+    final styles = uiStylesForType(_draft.type);
+    final showLimits = _isInput && uiStyleSupportsLimits(_draft.spec.uiType);
     return AlertDialog(
       scrollable: true,
       title: Text('${widget.category.label} ${widget.index}'),
@@ -116,15 +129,15 @@ class _ScriptValueDialogState extends State<ScriptValueDialog> {
           ),
           const SizedBox(height: 8),
           DropdownButtonFormField<DataType>(
-            key: ValueKey('type-${_type.name}'),
-            initialValue: _type,
+            key: ValueKey('type-${_draft.type.name}'),
+            initialValue: _draft.type,
             decoration: InputDecoration(
-                labelText: 'Type', helperText: 'Size: ${defaultSizeForType(_type)} bytes'),
+                labelText: 'Type', helperText: 'Size: ${defaultSizeForType(_draft.type)} bytes'),
             items: [
               // Guard against a value type the picker no longer offers (a handler reading an
               // unknown type would otherwise assert inside DropdownButtonFormField).
-              if (!scriptValueTypes.contains(_type))
-                DropdownMenuItem(value: _type, child: Text(dataTypeLabel(_type))),
+              if (!scriptValueTypes.contains(_draft.type))
+                DropdownMenuItem(value: _draft.type, child: Text(dataTypeLabel(_draft.type))),
               for (final t in scriptValueTypes)
                 DropdownMenuItem(value: t, child: Text(dataTypeLabel(t))),
             ],
@@ -133,18 +146,20 @@ class _ScriptValueDialogState extends State<ScriptValueDialog> {
           if (_isInput) ...[
             const SizedBox(height: 8),
             DropdownButtonFormField<int>(
-              initialValue: _uiType,
+              initialValue: _draft.spec.uiType,
               decoration: const InputDecoration(labelText: 'UI style'),
               items: [
-                if (!styles.contains(_uiType))
-                  DropdownMenuItem(value: _uiType, child: Text(ScriptUiType.label(_uiType))),
+                if (!styles.contains(_draft.spec.uiType))
+                  DropdownMenuItem(
+                      value: _draft.spec.uiType, child: Text(ScriptUiType.label(_draft.spec.uiType))),
                 for (final t in styles)
                   DropdownMenuItem(value: t, child: Text(ScriptUiType.label(t))),
               ],
-              onChanged: (t) => setState(() => _uiType = t ?? ScriptUiType.auto),
+              onChanged: (t) => setState(() =>
+                  _draft.spec = _draft.spec.copyWith(uiType: t ?? ScriptUiType.auto)),
             ),
             // Custom enum: name the values (the stored value stays the 0..N-1 index).
-            if (_type == DataType.enum_) ...[
+            if (_draft.type == DataType.enum_) ...[
               const SizedBox(height: 10),
               Row(children: [
                 const Text('Enum values',
@@ -192,17 +207,17 @@ class _ScriptValueDialogState extends State<ScriptValueDialog> {
           if (_editableValue) ...[
             const SizedBox(height: 12),
             Row(children: [
-              Text('Value: ${formatValue(_type, _value)}',
+              Text('Value: ${formatValue(_draft.type, _draft.value)}',
                   style: const TextStyle(fontFamily: 'monospace')),
               const Spacer(),
               TextButton(
                 onPressed: () async {
                   // BlockInfo uses the tiered block/field/key picker (device-aware).
-                  final next = _type == DataType.blockInfo
-                      ? await pickBlockInfo(context, widget.deviceId, current: _value)
-                      : await showValueEditor(context, _type, _value);
+                  final next = _draft.type == DataType.blockInfo
+                      ? await pickBlockInfo(context, widget.deviceId, current: _draft.value)
+                      : await showValueEditor(context, _draft.type, _draft.value);
                   if (next == null || !mounted) return;
-                  setState(() => _value = next);
+                  setState(() => _draft.setValue(Uint8List.fromList(next)));
                 },
                 child: const Text('Edit value'),
               ),

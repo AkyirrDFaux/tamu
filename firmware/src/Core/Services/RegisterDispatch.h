@@ -8,22 +8,23 @@
 
 // ===== Main dispatcher =====
 
-// Generic register access by BlockInfo (shared by the Subscriptions and Script services).
-bool RegisterGetByBlockInfo(uint32_t bi, ValueInfo &m, uint8_t *vbuf, uint8_t &vsz) {
+// Core BlockInfo routing, shared by the copy-out accessor below and the subscription service
+// (which needs the source pointer, not a copy). On success `fr` carries the descriptor and a
+// pointer to the source value (null for a size-0 dynamic entry); the bool reports whether the
+// BlockInfo resolved. Ordering: script I/O, dynamic entries, then statics/System.
+static bool RegisterResolveByBlockInfo(uint32_t bi, FieldResult &fr) {
+    fr = FieldResult{};
     uint16_t type = BlockInfoType(bi);
     uint8_t inst = BlockInfoInstance(bi);
     uint8_t field = BlockInfoField(bi);
     uint8_t key = BlockInfoKey(bi);
-    vsz = 0;
 #ifdef USE_SCRIPTS
     if (BlockTypeRange::IsScript(type)) { // Script I/O (inputs/outputs)
         ValueInfo sm;
         void *p = nullptr;
         if (!ScriptGetIoPointer(BlockTypeRange::ScriptGlobal(type, inst), field, key, sm, p)) return false;
-        m = sm;
-        uint8_t n = sm.Size;
-        if (n) memcpy(vbuf, p, n);
-        vsz = n;
+        fr.Descriptor = sm;
+        fr.Data = p;
         return true;
     }
 #endif
@@ -35,17 +36,24 @@ bool RegisterGetByBlockInfo(uint32_t bi, ValueInfo &m, uint8_t *vbuf, uint8_t &v
         if (!block) return false;
         KeyResult kr = block->GetKey(field, key);
         if (!kr.exists) return false;
-        m = kr.meta;
-        uint8_t n = kr.meta.Size;
-        if (n) memcpy(vbuf, kr.data_ptr, n);
-        vsz = n;
+        fr.Descriptor = kr.meta;
+        fr.Data = kr.data_ptr;
         return true;
     }
 #endif
     const StaticBlockDescriptor *blk = FindBlock(type, inst);
     if (!blk) return false;
-    FieldResult fr = blk->Get(field, key);
-    if (!fr.Data) return false;
+    FieldResult g = blk->Get(field, key);
+    if (!g.Data) return false;
+    fr = g;
+    return true;
+}
+
+// Generic register access by BlockInfo (shared by the Subscriptions and Script services).
+bool RegisterGetByBlockInfo(uint32_t bi, ValueInfo &m, uint8_t *vbuf, uint8_t &vsz) {
+    FieldResult fr;
+    vsz = 0;
+    if (!RegisterResolveByBlockInfo(bi, fr)) return false;
     m = fr.Descriptor;
     uint8_t n = fr.Descriptor.Size;
     if (n) memcpy(vbuf, fr.Data, n);

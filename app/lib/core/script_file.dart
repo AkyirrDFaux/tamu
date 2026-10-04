@@ -76,28 +76,6 @@ List<int> uiStylesForType(DataType type) => switch (type) {
 bool uiStyleSupportsLimits(int uiType) =>
     uiType == ScriptUiType.number || uiType == ScriptUiType.slider;
 
-/// One ValueInfo entry: Type(16) | Size(8) | Flags(8) on the wire (the same layout as
-/// [ValueInfo]; `key` is unused because the script block addresses the key separately).
-class ScriptValueInfo {
-  final DataType type;
-  final int size;
-  final int flags;
-
-  const ScriptValueInfo({required this.type, required this.size, this.flags = 0});
-
-  Uint8List toBytes() => Uint8List(4)
-    ..[0] = type.value & 0xFF
-    ..[1] = (type.value >> 8) & 0xFF
-    ..[2] = size & 0xFF
-    ..[3] = flags;
-
-  static ScriptValueInfo fromBytes(List<int> bytes, [int offset = 0]) => ScriptValueInfo(
-        type: DataType.fromValue(bytes[offset] | (bytes[offset + 1] << 8)),
-        size: bytes[offset + 2],
-        flags: bytes[offset + 3],
-      );
-}
-
 /// Per-input UI specification (limits are kept as 16.16 fixed point like Number).
 class ScriptInputSpec {
   final int uiType;
@@ -208,7 +186,7 @@ int defaultSizeForType(DataType type) => switch (type) {
 
 /// Packs `values` (one byte list per entry) into the 4-byte-strided blob the firmware
 /// expects, padding/clamping each entry to its declared ValueInfo size.
-Uint8List packScriptValues(List<ScriptValueInfo> infos, List<List<int>> values) {
+Uint8List packScriptValues(List<ValueInfo> infos, List<List<int>> values) {
   var total = 0;
   for (final info in infos) {
     total += _align4(info.size);
@@ -226,7 +204,7 @@ Uint8List packScriptValues(List<ScriptValueInfo> infos, List<List<int>> values) 
 }
 
 /// Extracts one entry's bytes from a strided blob.
-Uint8List unpackScriptValue(List<ScriptValueInfo> infos, List<int> blob, int index) {
+Uint8List unpackScriptValue(List<ValueInfo> infos, List<int> blob, int index) {
   var offset = 0;
   for (var i = 0; i < infos.length; i++) {
     if (i == index) {
@@ -244,10 +222,10 @@ Uint8List unpackScriptValue(List<ScriptValueInfo> infos, List<int> blob, int ind
 /// Builds a `SCR_XXX` file image.
 class ScriptFileBuilder {
   final int properties;
-  final List<ScriptValueInfo> inputs;
-  final List<ScriptValueInfo> outputs;
-  final List<ScriptValueInfo> variables;
-  final List<ScriptValueInfo> constants;
+  final List<ValueInfo> inputs;
+  final List<ValueInfo> outputs;
+  final List<ValueInfo> variables;
+  final List<ValueInfo> constants;
   final List<List<int>> inputDefaults;
   final List<List<int>> constantValues;
   final List<int> instructions;
@@ -351,10 +329,10 @@ class ScriptFileBuilder {
 /// A parsed `SCR_XXX` image.
 class ScriptFileData {
   final int properties;
-  final List<ScriptValueInfo> inputs;
-  final List<ScriptValueInfo> outputs;
-  final List<ScriptValueInfo> variables;
-  final List<ScriptValueInfo> constants;
+  final List<ValueInfo> inputs;
+  final List<ValueInfo> outputs;
+  final List<ValueInfo> variables;
+  final List<ValueInfo> constants;
   final Uint8List constantValues;
   final Uint8List inputDefaults;
   final Uint8List instructions;
@@ -415,10 +393,10 @@ class ScriptFileData {
     }
 
     var offset = scriptHeaderSize;
-    List<ScriptValueInfo> readMetas(int count) {
-      final list = <ScriptValueInfo>[];
+    List<ValueInfo> readMetas(int count) {
+      final list = <ValueInfo>[];
       for (var i = 0; i < count; i++) {
-        list.add(ScriptValueInfo.fromBytes(bytes, offset));
+        list.add(ValueInfo.fromBytes(bytes, offset));
         offset += 4;
       }
       return list;

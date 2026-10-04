@@ -74,5 +74,9 @@ echo
 
 echo "### native bootloader packet tests (codec layout + even parity)"
 build_run "bootloader" "bootloader_test.cpp"
+echo
+
+echo "### native TRID tests (System/Log counter range + increment/wrap)"
+build_run "trid" "trid_test.cpp"
 
 exit $fail

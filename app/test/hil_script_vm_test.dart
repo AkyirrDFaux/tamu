@@ -320,8 +320,8 @@ void main() async {
       ..outputs.add(ScriptDraftValue(name: 'Out', type: DataType.number, size: 4))
       ..variables.add(ScriptDraftValue(name: 'Vec', type: DataType.vector, size: 8))
       ..constants.add(ScriptDraftValue(name: 'One', type: DataType.number, size: 4, value: numberToBytes(1)))
-      // Add(Out, Vec, 1): Vector operand is not numeric -> operand error.
-      ..lines.add(ScriptLine(destinations: [ScriptSymbol.output(0)], instruction: ScriptSymbol.instruction(catMath, 1), operands: [ScriptSymbol.variable(0), ScriptSymbol.constant(0)]))
+      // Modulo(Out, Vec, 1): Vector operand is not a scalar -> operand error.
+      ..lines.add(ScriptLine(destinations: [ScriptSymbol.output(0)], instruction: ScriptSymbol.instruction(catMath, 5), operands: [ScriptSymbol.variable(0), ScriptSymbol.constant(0)]))
       ..lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)));
 
     final (c, st, slot) = await loadScript(5, draft);

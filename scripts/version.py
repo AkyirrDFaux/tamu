@@ -13,7 +13,12 @@ unrelated env (or the bootloader env) does not mint a version for this target.
 
 The version is the documented System-block shape YY:MM:DD:II (7 year + 4 month + 5 day + 16
 iteration bits; the same shape the firmware packs in Core/Services/RegisterRead.h). The state
-lives in `version.json` at the repo root.
+lives in `version.json` at the repo root: it is tracked in git and mutated in place on every
+content change, so a build that mints a new version intentionally dirties the tree. This is the
+deterministic cross-build iteration state - the iteration must keep growing across cleaned and
+rebuilt trees on the same day - so it is deliberately not moved to an untracked build directory.
+Commit the updated `version.json` with the content change that minted it. `version.json.lock`
+is transient and ignored.
 
     python3 scripts/version.py <target>          # print "year month day iteration"
     python3 scripts/version.py --all             # print every target's version

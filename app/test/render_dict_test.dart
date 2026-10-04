@@ -19,25 +19,25 @@ List<int> entry(int type, int key, List<int> value) {
 
 void main() {
   final geometry = [
-    ...entry(DataType.enum_.value, 0, [0]), // Operation: Replace
     ...entry(DataType.enum_.value, 1, [3]), // Shape: Square
-    ...entry(DataType.matrix.value, 2, [2, 0, 3, 0, for (var i = 0; i < 24; i++) 0]), // identity 2x3
-    ...entry(DataType.number.value, 3, numberToBytes(4.0)), // Size
-    ...entry(DataType.number.value, 4, numberToBytes(0.0)), // Fade
-    ...entry(DataType.number.value, 5, numberToBytes(1.0)), // Alpha
+    ...entry(DataType.enum_.value, 2, [0]), // Operation: Replace
+    ...entry(DataType.matrix.value, 3, [2, 0, 3, 0, for (var i = 0; i < 24; i++) 0]), // identity 2x3
+    ...entry(DataType.number.value, 4, numberToBytes(4.0)), // Size
+    ...entry(DataType.number.value, 5, numberToBytes(0.0)), // Fade
+    ...entry(DataType.number.value, 6, numberToBytes(1.0)), // Alpha
   ];
 
   test('parse keyed dict field into entries', () {
     final parsed = parseKeyedDict(geometry)!;
     expect(parsed.length, 6);
-    expect(parsed[0].key, 0);
-    expect(parsed[1].key, 1);
-    expect(parsed[2].key, 2);
+    expect(parsed[0].key, 1);
+    expect(parsed[1].key, 2);
+    expect(parsed[2].key, 3);
     expect(parsed[2].meta.dataType, DataType.matrix);
     expect(parsed[2].value.length, 28);
-    expect(parsed[3].key, 3);
+    expect(parsed[3].key, 4);
     expect(numberFromBytes(parsed[3].value), 4.0);
-    expect(parsed[5].key, 5);
+    expect(parsed[5].key, 6);
     expect(numberFromBytes(parsed[5].value), 1.0);
   });
 
@@ -49,12 +49,12 @@ void main() {
   test('editing one entry keeps the others intact', () {
     final parsed = parseKeyedDict(geometry)!;
     parsed[3] = KeyedEntry(
-        key: 3, meta: parsed[3].meta, value: numberToBytes(8.0));
+        key: 4, meta: parsed[3].meta, value: numberToBytes(8.0));
     final rebuilt = buildKeyedDict(parsed);
     final reparsed = parseKeyedDict(rebuilt)!;
     expect(numberFromBytes(reparsed[3].value), 8.0);
     expect(numberFromBytes(reparsed[5].value), 1.0);
-    expect(reparsed[1].value.first, 3); // Square unchanged
+    expect(reparsed[0].value.first, 3); // Shape: Square unchanged
   });
 
   test('render dict key names and enum labels', () {

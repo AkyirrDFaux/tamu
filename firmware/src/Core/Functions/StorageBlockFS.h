@@ -22,30 +22,37 @@ public:
             return;
         }
 
-        file_table_offset = FindFiletable();
+        // An unreadable pointer (FindFiletable returns false) is treated like "no table":
+        // the location is unknown, so (re)format rather than trust a partial result.
+        if (!FindFiletable(&file_table_offset))
+            file_table_offset = 0;
         if (file_table_offset == 0 || !ValidateTable()) {
             Format();
         }
     }
 
-    // Returns the current file table pointer from the first page. Slots are scanned one at a
-    // time so a large pointer page (4096 B on the Tamu) never needs a matching stack buffer.
-    // Returns the LAST valid slot, not the first: WriteTablePointer appends the new pointer
-    // before invalidating the older ones, so after an interrupted update both can be valid
-    // and the newest (highest slot) must win - otherwise a crash would silently boot the
-    // stale table while FindSpace considers the new table's pages free.
-    uint32_t FindFiletable()
+    // Reads the file-table pointer from the first page. Returns false when a flash read
+    // fails (the table location is unknown; the caller must not trust a partial result).
+    // On success `*offset` is the LAST valid slot (0 when no valid slot exists). Slots
+    // are scanned one at a time so a large pointer page (4096 B on the Tamu) never needs
+    // a matching stack buffer. The LAST valid slot wins, not the first: WriteTablePointer
+    // appends the new pointer before invalidating the older ones, so after an interrupted
+    // update both can be valid and the newest (highest slot) must win - otherwise a crash
+    // would silently boot the stale table while FindSpace considers the new table's pages
+    // free.
+    bool FindFiletable(uint32_t *offset)
     {
         uint32_t slot = 0;
         uint32_t newest = 0;
         for (uint32_t i = 0; i < PTR_SLOTS; i++) {
             if (Storage_FlashRead(i * 4, &slot, sizeof(slot)) != sizeof(slot))
-                return newest;
+                return false;
             // Track each valid slot (neither 0x00000000 nor 0xFFFFFFFF); later slots are newer.
             if (slot != 0x00000000 && slot != 0xFFFFFFFF)
                 newest = slot;
         }
-        return newest;
+        *offset = newest;
+        return true;
     }
 
     // Updates the pointer in the first page to point to a new table. The block is erased
@@ -83,49 +90,57 @@ public:
         return true;
     }
 
-    // Returns the index of the NEWEST file record matching `name`, or 0xFFFFFFFF if none.
-    // The newest (highest slot) wins so a duplicate left by an older build cannot shadow
-    // the current file (RenameFile appends the replacement).
-    uint32_t FindInFiletable(const char name[8])
+    // Finds the NEWEST file record matching `name`. Returns false when a flash read fails
+    // (the table is partially unreadable, so no result is trustworthy); on success `*index`
+    // is the record index, or 0xFFFFFFFF when none. The newest (highest slot) wins so a
+    // duplicate left by an older build cannot shadow the current file (RenameFile appends
+    // the replacement).
+    bool FindInFiletable(const char name[8], uint32_t *index)
     {
-        if (file_table_offset == 0) return 0xFFFFFFFF;
+        if (file_table_offset == 0) { *index = 0xFFFFFFFF; return true; }
         uint32_t capacity = TableCapacity();
         uint32_t found = 0xFFFFFFFF;
         for (uint32_t i = 0; i < capacity; i++) {
             FileEntry entry;
             if (!ReadTableEntry(i, &entry))
-                return found;
+                return false;
             if (FileEntryIsValid(entry.offset) && NameMatch(entry.name, name))
                 found = i;
         }
-        return found;
+        *index = found;
+        return true;
     }
 
-    // Returns the first non-written file record index (first slot with offset 0xFFFFFFFF).
-    // Invalidated (0x00) holes are never reused, so this is the append position.
-    uint32_t GetEndOfFiletable()
+    // Finds the first non-written file record index (first slot with offset 0xFFFFFFFF).
+    // Returns false when a flash read fails; on success `*index` is that slot, or the
+    // capacity when the table is full. Invalidated (0x00) holes are never reused, so this
+    // is the append position.
+    bool GetEndOfFiletable(uint32_t *index)
     {
-        if (file_table_offset == 0) return 0;
+        if (file_table_offset == 0) { *index = 0; return true; }
         uint32_t capacity = TableCapacity();
         for (uint32_t i = 0; i < capacity; i++) {
             FileEntry entry;
             if (!ReadTableEntry(i, &entry))
-                return capacity;
-            if (entry.offset == 0xFFFFFFFF)
-                return i;
+                return false;
+            if (entry.offset == 0xFFFFFFFF) { *index = i; return true; }
         }
-        return capacity;
+        *index = capacity;
+        return true;
     }
 
     // Writes a new file record at the end of the table. If no space is available, the table
     // is filtered and moved (MoveFiletable), then the write is retried.
     bool WriteFilerecord(const FileEntry &new_record)
     {
-        uint32_t slot = GetEndOfFiletable();
+        uint32_t slot;
+        if (!GetEndOfFiletable(&slot))
+            return false;
         if (slot >= TableCapacity()) {
             if (!MoveFiletable())
                 return false;
-            slot = GetEndOfFiletable();
+            if (!GetEndOfFiletable(&slot))
+                return false;
             if (slot >= TableCapacity())
                 return false;
         }
@@ -133,10 +148,10 @@ public:
                                   &new_record, TABLE_ENTRY_SIZE);
     }
 
-    // Invalidates EVERY file record matching `name` in place. Both the offset AND size
-    // are zeroed so a deleted record is unambiguous: the app's file browser skips
-    // (offset 0, size 0) records but lists (offset 0, size > 0) ones (a valid fixed-file
-    // in the reduced file system). All matches are removed so pre-existing duplicates are
+    // Invalidates EVERY file record matching `name` in place by zeroing the offset word
+    // only (the same 4-byte policy as every other invalidation path and as the app's
+    // readFileTable, which skips any record whose offset is 0 on the full file system;
+    // the size is left in place). All matches are removed so pre-existing duplicates are
     // fully deleted, not just the newest one.
     template <typename Match>
     bool DeleteMatching(Match matches)
@@ -149,7 +164,7 @@ public:
                 return false;
             if (FileSlotIsFree(entry.offset)) continue;
             if (!matches(entry.name)) continue;
-            uint32_t zero[2] = {0, 0};
+            uint32_t zero = 0x00000000;
             if (!Storage_FlashWrite(file_table_offset + i * TABLE_ENTRY_SIZE, &zero, sizeof(zero)))
                 return false;
         }
@@ -162,8 +177,8 @@ public:
     }
 
     // Invalidates every live record whose name satisfies `matches`, except the freshly appended
-    // generation at `keep_index`. Zeroes the offset word only (like RenameFile), so a replaced
-    // generation is never mistaken for the current file.
+    // generation at `keep_index`. Zeroes the offset word only (as every invalidation path does),
+    // so a replaced generation is never mistaken for the current file.
     template <typename Match>
     bool InvalidateMatchingExcept(Match matches, uint32_t keep_index)
     {
@@ -208,8 +223,9 @@ public:
     // area becomes unreferenced and therefore free for future allocation).
     bool RenameFile(const char old_name[8], const char new_name[8])
     {
-        uint32_t src = FindInFiletable(old_name);
-        if (src == 0xFFFFFFFF || src == 0) return false; // missing / the table itself
+        uint32_t src;
+        if (!FindInFiletable(old_name, &src) || src == 0xFFFFFFFF || src == 0)
+            return false; // read failure / missing / the table itself
 
         FileEntry entry;
         if (!ReadTableEntry(src, &entry)) return false;
@@ -223,11 +239,15 @@ public:
             return false;
 
         // The appended record sits at the current end; invalidate every OTHER valid
-        // record still carrying either name (the previous generation under each).
-        uint32_t appended = GetEndOfFiletable() - 1;
+        // record still carrying either name (the previous generation under each). If the
+        // end cannot be re-read the new record stays live and the old one is untouched
+        // (no data loss); report the failure.
+        uint32_t appended;
+        if (!GetEndOfFiletable(&appended) || appended == 0)
+            return false;
         return InvalidateMatchingExcept(
             [&](const char *n) { return NameMatch(n, old_name) || NameMatch(n, new_name); },
-            appended);
+            appended - 1);
     }
 
     // Counts valid entries; keeps the table between 25% and 75% full by growing or
@@ -380,7 +400,10 @@ public:
     // Creates a file of `size` bytes; returns true on success.
     bool CreateFile(const char name[8], uint32_t size)
     {
-        if (FindInFiletable(name) != 0xFFFFFFFF)
+        // Refuse a duplicate (and any unreadable table: a read failure must not create a
+        // second record for a name that might already exist).
+        uint32_t existing;
+        if (!FindInFiletable(name, &existing) || existing != 0xFFFFFFFF)
             return false;
 
         uint32_t data_offset = FindSpace(size);
@@ -416,9 +439,9 @@ public:
     // only succeeds when the run can be extended in place (and stays inside the data area).
     bool ResizeFile(const char name[8], uint32_t new_size)
     {
-        uint32_t idx = FindInFiletable(name);
-        if (idx == 0xFFFFFFFF) return false;
-        if (idx == 0) return false; // Entry 0 (the table itself) cannot be resized
+        uint32_t idx;
+        if (!FindInFiletable(name, &idx) || idx == 0xFFFFFFFF || idx == 0)
+            return false; // read failure / missing / entry 0 (the table itself)
 
         FileEntry entry;
         if (!ReadTableEntry(idx, &entry))
@@ -435,9 +458,11 @@ public:
             new_record.size = new_size;
             if (!WriteFilerecord(new_record))
                 return false;
-            uint32_t appended = GetEndOfFiletable() - 1;
+            uint32_t appended;
+            if (!GetEndOfFiletable(&appended) || appended == 0)
+                return false;
             return InvalidateMatchingExcept([&](const char *n) { return NameMatch(n, name); },
-                                            appended);
+                                            appended - 1);
         }
 
         // Enlargement: reject before scanning if the file's linear range would leave the data
@@ -467,9 +492,11 @@ public:
             pending_offset = 0;
             pending_blocks = 0;
             if (!ok) return false;
-            uint32_t appended = GetEndOfFiletable() - 1;
+            uint32_t appended;
+            if (!GetEndOfFiletable(&appended) || appended == 0)
+                return false;
             return InvalidateMatchingExcept([&](const char *n) { return NameMatch(n, name); },
-                                            appended);
+                                            appended - 1);
         }
 
         // Extending in place is not possible.
@@ -501,11 +528,12 @@ public:
         return Storage_FlashWrite(file_offset + offset, buffer, length);
     }
 
-    // Returns the file size if it exists, otherwise 0xFFFFFFFF.
+    // Returns the file size if it exists, otherwise 0xFFFFFFFF. A read failure is also
+    // reported as 0xFFFFFFFF (a caller cannot act on a size it could not read).
     uint32_t FileExists(const char name[8])
     {
-        uint32_t idx = FindInFiletable(name);
-        if (idx == 0xFFFFFFFF)
+        uint32_t idx;
+        if (!FindInFiletable(name, &idx) || idx == 0xFFFFFFFF)
             return 0xFFFFFFFF;
         FileEntry entry;
         if (!ReadTableEntry(idx, &entry))
@@ -559,8 +587,8 @@ public:
     // Looks up a file by its name; returns offset/size via the out params.
     bool GetFileInfo(const char name[8], uint32_t *offset, uint32_t *size)
     {
-        uint32_t idx = FindInFiletable(name);
-        if (idx == 0xFFFFFFFF) return false;
+        uint32_t idx;
+        if (!FindInFiletable(name, &idx) || idx == 0xFFFFFFFF) return false;
         FileEntry entry;
         if (!ReadTableEntry(idx, &entry))
             return false;

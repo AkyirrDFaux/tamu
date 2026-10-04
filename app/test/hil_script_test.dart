@@ -29,13 +29,13 @@ void main() async {
 
     final image = ScriptFileBuilder(
       properties: ScriptProperties.loadOnBoot,
-      inputs: const [ScriptValueInfo(type: DataType.number, size: 4)],
-      outputs: const [ScriptValueInfo(type: DataType.number, size: 4)],
-      variables: const [
-        ScriptValueInfo(type: DataType.number, size: 4),
-        ScriptValueInfo(type: DataType.number, size: 4),
+      inputs: [ValueInfo(type: DataType.number.value, size: 4)],
+      outputs: [ValueInfo(type: DataType.number.value, size: 4)],
+      variables: [
+        ValueInfo(type: DataType.number.value, size: 4),
+        ValueInfo(type: DataType.number.value, size: 4),
       ],
-      constants: const [ScriptValueInfo(type: DataType.number, size: 4)],
+      constants: [ValueInfo(type: DataType.number.value, size: 4)],
       inputDefaults: [numberToBytes(3.5)],
       constantValues: [numberToBytes(9.0)],
       instructions: const [

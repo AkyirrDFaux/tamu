@@ -53,7 +53,7 @@ class ScriptDraftValue {
     if (next.isNotEmpty) _declaredSize = next.length;
   }
 
-  ScriptValueInfo get info => ScriptValueInfo(type: type, size: size);
+  ValueInfo get info => ValueInfo(type: type.value, size: size);
 }
 
 class ScriptDraft {
@@ -84,7 +84,7 @@ class ScriptDraft {
     for (var i = 0; i < f.inputs.length; i++) {
       inputs.add(ScriptDraftValue(
         name: f.nameOf(f.inputNames, i, 'Input'),
-        type: f.inputs[i].type,
+        type: f.inputs[i].dataType,
         size: f.inputs[i].size,
         value: f.inputDefault(i),
         spec: i < f.inputSpecs.length ? f.inputSpecs[i] : const ScriptInputSpec(),
@@ -94,7 +94,7 @@ class ScriptDraft {
     for (var i = 0; i < f.outputs.length; i++) {
       outputs.add(ScriptDraftValue(
         name: f.nameOf(f.outputNames, i, 'Output'),
-        type: f.outputs[i].type,
+        type: f.outputs[i].dataType,
         size: f.outputs[i].size,
       ));
     }
@@ -102,7 +102,7 @@ class ScriptDraft {
     for (var i = 0; i < f.variables.length; i++) {
       variables.add(ScriptDraftValue(
         name: f.nameOf(f.variableNames, i, 'Variable'),
-        type: f.variables[i].type,
+        type: f.variables[i].dataType,
         size: f.variables[i].size,
       ));
     }
@@ -110,7 +110,7 @@ class ScriptDraft {
     for (var i = 0; i < f.constants.length; i++) {
       constants.add(ScriptDraftValue(
         name: f.nameOf(f.constantNames, i, 'Constant'),
-        type: f.constants[i].type,
+        type: f.constants[i].dataType,
         size: f.constants[i].size,
         value: f.constantValue(i),
       ));

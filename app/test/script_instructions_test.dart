@@ -9,7 +9,7 @@ import 'package:tamuapp/core/types.dart';
 void main() {
   test('instruction encode/decode round-trip', () {
     final lines = [
-      ScriptLine(destinations: [ScriptSymbol.output(0)], instruction: ScriptSymbol.instruction(catMath, 1), operands: [
+      ScriptLine(destinations: [ScriptSymbol.output(0)], instruction: ScriptSymbol.instruction(catMath, 5), operands: [
         ScriptSymbol.variable(0),
         ScriptSymbol.input(0),
       ]),
@@ -20,7 +20,7 @@ void main() {
     expect(back.length, 2);
     expect(back[0].destinations.single.type, symOutput);
     expect(back[0].instruction.subtype, catMath);
-    expect(back[0].instruction.value, 1);
+    expect(back[0].instruction.value, 5);
     expect(back[0].operands.map((s) => s.type), [symVariable, symInput]);
     expect(back[1].destinations, isEmpty);
     expect(back[1].instruction.subtype, catTime);
@@ -387,7 +387,7 @@ void main() {
         ],
       ));
     final parsed = ScriptFileData.parse(draft.toImage());
-    expect(parsed.constants.single.type, DataType.blockInfo);
+    expect(parsed.constants.single.dataType, DataType.blockInfo);
     final restored = ScriptDraft.fromFile(parsed);
     expect(restored.constants.single.type, DataType.blockInfo);
     expect(uint32FromBytes(restored.constants.single.value),

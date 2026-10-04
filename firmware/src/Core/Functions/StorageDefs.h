@@ -97,7 +97,7 @@ static inline void PackName(const char *plain, char out[8])
 // Compares an on-flash (space-padded) record name against a plain C string. A raw
 // `memcmp(record, "SUBREQ", 8)` compares the record's padding spaces against the C
 // string's NUL terminator and always differs for names shorter than 8 chars - which
-// silently broke FindInFiletable/DeleteFile and left a new SUBREQ/DT_/DV_ record behind
+// silently broke FindInFiletable/DeleteFile and left a new SUBREQ/.DT_/.DV_ record behind
 // on every save. Pack the plain name first so both sides use the same 8-byte form.
 static inline bool NameMatch(const char record[8], const char *plain)
 {

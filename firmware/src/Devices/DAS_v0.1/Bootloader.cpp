@@ -28,6 +28,9 @@
 #include "Core/Functions/Bootloader.h"
 
 // The app is linked here; the storage region starts at 0x3F00 and is never written.
+// Must match `board_upload.offset_address` in platformio.ini (both the DAS_v0_1 app and
+// the DAS_bootloader image share the `[das]` base). The upload tool reads that option
+// (scripts/das_app_upload.py); this constant is the bootloader's matching copy.
 #define APP_BASE 0x800u
 #define APP_LIMIT 0x3F00u
 

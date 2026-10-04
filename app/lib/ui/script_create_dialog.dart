@@ -15,10 +15,10 @@ class NewScriptResult {
   final String name;
   final int fileId;
   final int properties;
-  final List<ScriptValueInfo> inputs;
-  final List<ScriptValueInfo> outputs;
-  final List<ScriptValueInfo> variables;
-  final List<ScriptValueInfo> constants;
+  final List<ValueInfo> inputs;
+  final List<ValueInfo> outputs;
+  final List<ValueInfo> variables;
+  final List<ValueInfo> constants;
 
   const NewScriptResult({
     required this.name,
@@ -102,8 +102,8 @@ class _NewScriptDialogState extends State<_NewScriptDialog> {
     setState(() => e.type = type);
   }
 
-  List<ScriptValueInfo> _collect(List<_EntryDraft> drafts) =>
-      [for (final e in drafts) ScriptValueInfo(type: e.type, size: defaultSizeForType(e.type))];
+  List<ValueInfo> _collect(List<_EntryDraft> drafts) =>
+      [for (final e in drafts) ValueInfo(type: e.type.value, size: defaultSizeForType(e.type))];
 
   void _submit() {
     final id = _fileId;
