@@ -265,7 +265,7 @@ void main() {
         // The app spells Index/Enum/Bool differently (Dart keywords).
         alias: const {'integer': 'Index'},
         // Firmware aliases with no distinct app entry.
-        firmwareOnly: const {'unknown', 'unknownkeyed'},
+        firmwareOnly: const {'unknownkeyed'},
       );
     });
 

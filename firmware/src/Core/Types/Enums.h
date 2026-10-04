@@ -54,10 +54,8 @@ enum class DataType : uint16_t {
     Uint32         = 0x0E,
     DevType        = 0x0F,
     BlockInfo      = 0x10,  // 32-bit register pointer (type|inst|field|key)
-    NetAddr        = 0x03,  // alias to Id
-    Unknown        = 0x00,  // Alias for None
     // Dictionary/texture extensions (not used by DAS)
-    UnknownKeyed   = 0x100,
+    UnknownKeyed   = 0x100,  // generic dictionary marker (Docs/Data Formats.md 0x0100)
     Geometry       = 0x101,
     Texture        = 0x102
 };

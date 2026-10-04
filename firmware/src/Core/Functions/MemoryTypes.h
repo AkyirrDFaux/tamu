@@ -45,7 +45,7 @@ inline bool ValueIsPersistent(const ValueInfo &v) { return (v.Flags & ValuePersi
 
 struct FieldResult
 {
-    ValueInfo Descriptor = { (uint16_t)DataType::Unknown, 0, 0 };
+    ValueInfo Descriptor = { (uint16_t)DataType::None, 0, 0 };
     void *Data = nullptr;
 };
 

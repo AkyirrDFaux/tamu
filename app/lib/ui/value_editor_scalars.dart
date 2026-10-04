@@ -66,7 +66,6 @@ String formatValue(DataType type, List<int> bytes) {
       if (bytes.length < 2) return '-';
       return DeviceType.fromValue(bytes[0] | (bytes[1] << 8)).label;
     case DataType.id:
-    case DataType.netAddr:
       if (bytes.length >= 2) return idToString(bytes[0] | (bytes[1] << 8));
       if (bytes.length == 1) return bytes[0].toString(); // 1-byte Id (System NetID)
       return '-';

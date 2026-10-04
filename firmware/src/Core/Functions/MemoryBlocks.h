@@ -26,7 +26,7 @@ struct DynamicEntry
 // A dynamic lookup result: the meta (ValueInfo) + a pointer to the value bytes.
 struct KeyResult
 {
-    ValueInfo meta = { (uint16_t)DataType::Unknown, 0, 0 };
+    ValueInfo meta = { (uint16_t)DataType::None, 0, 0 };
     void *data_ptr = nullptr;
     uint16_t data_len = 0;
     bool exists = false; // entry present (a size-0 entry exists with no value)

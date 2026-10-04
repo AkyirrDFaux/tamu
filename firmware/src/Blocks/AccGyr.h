@@ -4,8 +4,7 @@ enum AccGyrError : uint16_t {
     ErrNone            = 0x0000,
     ErrBusGeneric      = 0x0001, // Failed to transmit/receive
     ErrDeviceNotFound  = 0x0002, // ACK failure (pullups/power)
-    ErrInitFailed      = 0x0003, // Reset/Config sequence failed
-    ErrTimeout         = 0x0004  // Transaction took too long
+    ErrInitFailed      = 0x0003  // Reset/Config sequence failed
 };
 
 // Acc&Gyr (Docs/Modules and blocks/Measurement.md): accelerometer + gyroscope combo.

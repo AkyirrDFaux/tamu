@@ -74,8 +74,6 @@ Future<List<int>?> showValueEditor(
         signed: true,
         hex: false,
       );
-    case DataType.netAddr:
-      return _editNetAddr(context, current);
     case DataType.string:
       return _editString(
           context, info?.name ?? 'String', String.fromCharCodes(current),

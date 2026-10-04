@@ -97,7 +97,6 @@ Object? encodeSemantic(DataType type, List<int> bytes, {FieldInfo? info}) {
     case DataType.sn:
       return bytes.length >= 14 ? serialNumberToHex(bytes.sublist(0, 14)) : hexBytes(bytes);
     case DataType.id:
-    case DataType.netAddr:
       if (bytes.length >= 2) return idToString(bytes[0] | (bytes[1] << 8));
       return bytes.isEmpty ? null : bytes[0];
     case DataType.string:
@@ -169,7 +168,6 @@ List<int>? decodeSemantic(DataType type, Object? value,
           ? unhexBytes(value).sublist(0, 14)
           : null;
     case DataType.id:
-    case DataType.netAddr:
       return _idBytes(value, size);
     case DataType.string:
     case DataType.filename:
