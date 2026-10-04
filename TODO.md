@@ -282,6 +282,24 @@ Tamu_v2.0A:
   full per-LED matrix (`:73-84`); `GeoMask[12][86]` ~1 KB/display (`Vysi1Layout.h:130-133`);
   `OdrPeriodMs` entries 6/7 map below the 2 ms loop (`Main.h:232-238`, harmless/misleading).
 
+Tests:
+- Coverage gaps: pin the dynamic `Index (uint16)` request bytes with a host `RegisterClient` test
+  (`register_client.dart:413-417,485-486`); test `NextSystemTrid` ranges/reply path; host-test
+  `StorageClient` fixed-vs-full FS detection + offset-0 skip (with a stub capability); fake-`Storage`
+  test for `WriteBackupFile` staging cleanup on failure (`MemoryBackup.h:117-142`); native test for
+  `DeleteDynamicBlockFiles`/staging cleanup.
+- Cleanup/dedup: `membackup_view_test.dart` is a near-duplicate of `file_viewers_test.dart:161-201`
+  (merge/delete); `hil_test_suite.dart` + `runTests()` are unreferenced by any runner
+  (`tamu_hardware_verification_test.dart` covers the same smoke); duplicated DAS-discovery loops
+  (`tamu_hardware_verification_test.dart:165-176,205-218,339-355`, `hil_subscriptions_test.dart:16`,
+  `hil_backup_test.dart:17`) should move into `hil_helpers.dart`; unreachable auto-detect branch
+  (`hil_helpers.dart:117-131`); duplicate 250-byte storage round-trip
+  (`hardware_storage_test.dart:11-23` vs `tamu_hardware_verification_test.dart:76-90`) and a raw
+  `'TESTFIL1 '` literal instead of `padName`.
+- Flakiness: fixed timing constants (`hil_helpers.dart:90,166-169`,
+  `core_bootloader_flash.py:103,107,108`); destructive-suite ordering not enforced by
+  `run_hil_tests.sh:23-40`.
+
 **Deliberately left** (a merge would read worse): the three flag-name decoders (`flagWords` =
 full words for the backup format, `ValueFlags.describe` = RO/P/TR, `_flagsSuffix` = RO/P) and
 the two flag renderings in `register_page_tiles` (chips vs small text) are different

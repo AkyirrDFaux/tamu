@@ -349,6 +349,31 @@ From the per-area audits; fixes pending unless noted.
 - **Geometry `Alpha` is not clamped** (`Blocks/Vysi1Render.h:83`): a >1 value wraps the mask
   modulo 256 though it is documented 0-1. Clamp with `LimitZeroToOne`.
 
+**Tests**
+- **Tests exercising retired opcodes** - `app/test/hil_script_vm_test.dart:318-334` ("type error
+  halts" uses `catMath,1` "Add", retired per `ScriptDefs.h:63`), `backup_script_test.dart:26,30`
+  (`catMath,1`, `catLogic,6`), `script_instructions_test.dart:12` (`catMath,1` while `:298-305`
+  asserts it is gone). They pass but no longer test the intended path.
+- **`render_dict_test.dart:21-28`** uses pre-renumbering geometry keys (Operation=0, Shape=1, ...)
+  vs the documented 0=Dictionary, 1=Shape, 2=Operation ... - key-agnostic so it tests nothing real.
+- **Stale Save/Recall CID comments** (`current_setup.dart:276`, `current_setup_apply.dart:98`,
+  `hil_backup_test.dart:172`): say Save=4/Recall=3, actual Recall=4/Save=5. A host test could pin
+  `RegisterCid` against the firmware enum.
+- **`file_viewers_test.dart:9` / `membackup_view_test.dart:8`** cite renamed firmware files;
+  `firmware/test/native/run.sh:8` cites the old `Crc8` location.
+- **`test/README.md:32-36`** invocation is wrong (`run_hil_tests.sh` resolves paths relative to
+  `app/`), and `run_hil_tests.sh:9` references a non-existent `test/hil_live_test.dart`.
+- **DAS-discovery race** (`hil_subscriptions_test.dart:16-22`, `tamu_hardware_verification_test.dart:165-180`):
+  rely on `connectTo`'s unawaited `refreshNetwork`, so tests silently `return` ("DAS not found")
+  and lose coverage. Await `refreshNetwork()` like `hil_backup_test.dart:17-24`.
+- **`connectHil` capabilities race** (`hil_helpers.dart:117-171`): waits only for a ping, so
+  `StorageClient.fixedStorage` can cache `false` from `capabilities == 0`. Force a network refresh.
+- **Hard-coded esptool paths + fixed sleeps, no BLE guard** (`hil_script_vm_test.dart:338-355,383-398`,
+  `hil_current_setup_test.dart:514-535`): the advertised `TAMU_HIL=ble` path will fail. Reuse the
+  `resetReason` guard, resolve the tool via env/`pio`, poll uptime.
+- **Subscription test TRIDs use the App range** (`0xFA00` etc.) though the docs reserve
+  `0x1000-0x1FFF`; use `0x1xxx` to exercise the reserved-range behaviour.
+
 ## Naming/coverage gaps vs the docs (decision needed)
 - **OS notifications.** `Docs/App/Settings.md` lists "Allow notifications (To OS)" with
   per-event selection; the app persists `notifyOs`/`osEvents`/`suppressOsWhenOpen` but only
