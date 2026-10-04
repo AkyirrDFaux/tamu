@@ -98,6 +98,16 @@ inline uint8_t GetServiceCID(uint16_t cmd)
     return (uint8_t)(cmd & 0xFF);
 }
 
+// System/Log TRIDs are an incrementing counter (Docs "Transaction IDs", 0x0000-0x0FFF): the
+// service type stays in the high byte so an echoed reply still routes back to the service, and
+// the low byte is the counter (wrapping). A reply therefore no longer carries the request's CID,
+// so the Device handler tells its replies apart by payload.
+inline uint16_t NextSystemTrid(ServiceType type)
+{
+    static uint8_t counter = 0;
+    return MakeService(type, counter++);
+}
+
 extern DeviceStatusStruct DeviceStatus;
 
 inline uint16_t PayloadBytes(const PacketFrame &frame)

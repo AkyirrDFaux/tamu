@@ -10,10 +10,6 @@
   list per input (the custom-enum / dropdown case). **v1 is no longer supported** (the app's
   parser and the firmware's function-name read accept version 2 only), so an old backup's script
   names fall back to the file name until re-saved - the format should be documented.
-- **`Docs/Current setup v3.md` predates the emote interface.** The implementation adds script 2
-  outputs (pupil offset L/R), script 3 inputs 2/3 (Force close / Max opening) and script 5
-  (Emote selector) with a custom-enum emote input; the spec still lists only script 2's two
-  inputs and no script 5 interface.
 - **Position matrices carry a pre-rotated translation.** The renderer samples the geometry and
   texture masks *forward*, so a shape's centre lands at `-L^-1 * t`; with a rotation baked into
   the Position the shape would drift. Both writers (`ScriptExecTransform` and the app's
@@ -45,8 +41,6 @@ and no "Subscription Source" bit, and the read no longer combines flags), and th
 extension is folded into CID 3** ("Read state" now returns `State, Last error code`). What the new
 text still disagrees about, and needs a ruling before the matching code lands:
 
-- **The trigger table's "Function pointer (Static)"** cannot be sent. Proposal: `Field&Key` plus a
-  reserved 32-bit word (0 for static, the Script ID for dynamic).
 - **Script CID 0 lists "Script File IDs", not slots.** CID 1 takes a separate loaded id, so the
   two may differ - and CID 0's list is then not addressable: the caller cannot recover which slot
   holds which file. The docs were updated to **uint16 file ids** (SCR_XXX, 4096 files) with the
@@ -54,11 +48,6 @@ text still disagrees about, and needs a ruling before the matching code lands:
   script's block meta carries its function name (not its file id), so an untracked slot can only
   fall back to the file==slot convention. Reporting the loaded **slots** in CID 0 (or a slot in
   each list entry) would remove the guesswork - a docs decision.
-
-Verified against the code (2026-10-03), still to pin:
-- **The dynamic commands' request shape (deferred).** The doc says `Index (uint16)`; the firmware
-  + app send a full 32-bit **BlockInfo** (the index in the upper half). The doc should say
-  `BlockInfo`.
 
 Resolved in the 2026-10-03 revision (code now matches): the trigger timing wording, the
 `VolatileSize`/`PersistentSize` units, the Dynamic Block Table header (the `.DT_XX` file is now
@@ -92,25 +81,16 @@ Resolved in the register doc-vs-implementation pass 2 (2026-10-03, later):
 
 Still open after the 2026-10-03 cleanup:
 - **The dynamic descriptor doc omits `Name`/`generation`/`present`** (deferred).
-- **The static write's over-long String/Filename behaviour is unspecified.** `Register.md` says
-  "Write of a different type and/or length fails (String/Filename writes may be shorter and are
-  space-padded to the field size)". The code *also* clamps a longer String/Filename write to the
-  field size (a 22-char System Name write is clamped to the documented 16, pinned by the
-  verification HIL test), which the parenthetical does not state.
-- **ResistiveMeasure trigger flags are device-specific.** The doc marks Sampling Rate "(TR)"; the
-  firmware gives it (and Filter Coefficient) a trigger function but no `ValueTrigger` flag, so the
-  wire flags don't advertise the trigger. Different devices may or may not need one.
 
 Resolved in the TRID-range pass (2026-10-03, later):
 - The reserved ranges are defined centrally (`TRID_*` in `Core/Functions/Packet.h`): System/Logs
   `0x0000-0x0FFF`, Subscriptions `0x1000-0x1FFF`, Scripts `0x2000-0x2FFF` (the docs leave the
   script range as "..."), App `0xF000-0xFFFF`. Replies echo the request's TRID
   (`FinalizeReply`), and the app allocates/matches on the full 16-bit App TRID.
-- **System/Logs is not yet a blind incrementing counter.** The Device service still discriminates
-  its responses by the tag's CID (`MakeService(Device, cid)`), so a plain counter would break
-  discover/timesync matching; converting it needs the documented TRID manager (the same gap as
-  the DAS provider-cancel entry below). The current Device/Log tags already sit inside
-  `0x0000-0x0FFF`.
+- **System/Logs now uses an incrementing counter** (`NextSystemTrid`): the service type stays in
+  the TRID's high byte so an echoed reply still routes to the service, the low byte is the
+  counter, and the Device handler identifies its replies by payload. Discover/TimeSync verified
+  on the rig (DAS synced to the core within 10 ms).
 ## Storage / DAS reduced filesystem
 - **The reduced `.SV`'s fixed size is the whole storage region, not the persistent space.**
   `StorageFixedFS` declares `.SV` as `STORAGE_FLASH_SIZE` (256 B on the DAS), while

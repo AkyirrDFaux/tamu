@@ -168,7 +168,7 @@ LED.Setup();
     PacketFrame cd;
     PacketConstruct(&cd, ADDR_ALL_CORES,
                     MakeService(ServiceType::Device, 10),
-                    MakeService(ServiceType::Device, 10),
+                    NextSystemTrid(ServiceType::Device),
                     FLAG_REQACK | FLAG_START | FLAG_STOP,
                     (const uint8_t *)&GetSerialNumber(), sizeof(SerialNumber));
     SendAndVerifyPacket(cd);

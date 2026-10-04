@@ -74,7 +74,7 @@ private:
         best_uptime = 0;
         PacketConstruct(&tx_frame, ADDR_ALL_CORES,
                         MakeService(ServiceType::Device, 10),
-                        MakeService(ServiceType::Device, 10),
+                        NextSystemTrid(ServiceType::Device),
                         FLAG_REQACK | FLAG_START | FLAG_STOP, nullptr, 0);
         DispatchPacket(tx_frame);
         deadline_ms = now_ms + DISCOVER_WINDOW_MS;
@@ -93,7 +93,7 @@ private:
         uint32_t sent_time = Now();
         PacketConstruct(&tx_frame, best_addr,
                         MakeService(ServiceType::Device, 3),
-                        MakeService(ServiceType::Device, 3),
+                        NextSystemTrid(ServiceType::Device),
                         FLAG_REQACK | FLAG_START | FLAG_STOP,
                         (const uint8_t *)&sent_time, sizeof(sent_time));
         DispatchPacket(tx_frame);

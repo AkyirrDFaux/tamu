@@ -131,7 +131,7 @@ int main(void)
     {
         PacketConstruct(&tx_frame, ADDR_BROADCAST,
                          MakeService(ServiceType::Device, 0),
-                         MakeService(ServiceType::Device, 0),
+                         NextSystemTrid(ServiceType::Device),
                          FLAG_REQACK | FLAG_START | FLAG_STOP,
                          (const uint8_t *)&GetSerialNumber(), sizeof(SerialNumber));
         DispatchPacket(tx_frame);
@@ -150,7 +150,7 @@ int main(void)
         uint32_t time_sent = Now();
         PacketConstruct(&tx_frame, 1,
                          MakeService(ServiceType::Device, 3),
-                         MakeService(ServiceType::Device, 3),
+                         NextSystemTrid(ServiceType::Device),
                          FLAG_REQACK | FLAG_START | FLAG_STOP,
                          (const uint8_t *)&time_sent, sizeof(uint32_t));
         DispatchPacket(tx_frame);

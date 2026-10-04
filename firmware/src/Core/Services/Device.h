@@ -209,23 +209,27 @@ void HandleDeviceService(const PacketFrame &frame)
 
     if (is_response)
     {
-        if (cid == 0) // Discover response
+        // The System/Log TRID is an incrementing counter, so a reply no longer carries the
+        // request's CID; tell the replies apart by payload (the assign reply is SN(14)+addr(2),
+        // a Core-discover reply SN(14)+uptime(4), a TimeSync reply the 12-byte triple).
+        if (PayloadBytes(frame) >= 18) // Core-discover response
         {
 #ifdef TYPE_CORE
-            if (DeviceStatus.ShortAddress == 1) // Is core
-                return;
+            CoreTimeSync.HandleDiscoverResponse(frame);
 #endif
-            if (PayloadBytes(frame) >= sizeof(AssignPayload))
+        }
+        else if (PayloadBytes(frame) >= sizeof(AssignPayload)) // Discover (assign) response
+        {
+#ifdef TYPE_CORE
+            if (DeviceStatus.ShortAddress == 1) return; // a core is never assigned
+#endif
+            const AssignPayload *assign = reinterpret_cast<const AssignPayload *>(frame.payload);
+            if (assign->sn == GetSerialNumber())
             {
-                const AssignPayload *assign = reinterpret_cast<const AssignPayload *>(frame.payload);
-
-                if (assign->sn == GetSerialNumber())
-                {
-                    DeviceStatus.ShortAddress = assign->new_addr;
-                }
+                DeviceStatus.ShortAddress = assign->new_addr;
             }
         }
-        else if (cid == 3 && PayloadBytes(frame) >= 12) // Time sync response per docs 00.03
+        else if (PayloadBytes(frame) >= 12) // Time sync response per docs 00.03
         {
             // TimeSync is synchronized-device initiated: the INITIATOR (a node syncing to
             // a core, or a core syncing to the longest-running core) applies the offset to
@@ -250,12 +254,6 @@ void HandleDeviceService(const PacketFrame &frame)
             // tracks the peer's rate between syncs, not just its value at this instant.
             ApplyTimeSync(offset);
         }
-#ifdef TYPE_CORE
-        else if (cid == 10) // Core discover response: remember the reference core
-        {
-            CoreTimeSync.HandleDiscoverResponse(frame);
-        }
-#endif
         return;
     }
 

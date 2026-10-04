@@ -23,7 +23,7 @@ inline void ReportLog(const LogMessage &log)
     message.timestamp = DeviceStatus.UptimeMs;
     PacketConstruct(&tx_frame, ADDR_BROADCAST,
                      MakeService(ServiceType::LogHandler, 0),
-                     MakeService(ServiceType::LogHandler, 0),
+                     NextSystemTrid(ServiceType::LogHandler),
                      FLAG_START | FLAG_STOP,
                      (const uint8_t *)&message, sizeof(LogMessage));
     DispatchPacket(tx_frame);
