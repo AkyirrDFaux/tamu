@@ -1,5 +1,14 @@
 # Issues
 
+## Code audit findings (2026-10-04)
+From the per-area audits; fixes pending unless noted.
+
+- **`StorageClient.unpadName` strips interior spaces** (`app/lib/core/storage_client.dart:89-91`).
+  `text.replaceAll(' ', '').trim()` removes spaces *inside* a name, not just the 8-byte right
+  padding, so a stored file such as `A B` reads back as `AB` and no longer matches the device's
+  record. Latent today (no shipped firmware file has an interior space). Strip only trailing
+  spaces/NULs, like `decodePaddedString` (`types.dart:32`).
+
 ## Naming/coverage gaps vs the docs (decision needed)
 - **OS notifications.** `Docs/App/Settings.md` lists "Allow notifications (To OS)" with
   per-event selection; the app persists `notifyOs`/`osEvents`/`suppressOsWhenOpen` but only

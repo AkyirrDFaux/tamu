@@ -76,6 +76,32 @@ subscription, register, script, requester-persistence and backup-walk dedups are
   shape differs, so this needs a small state refactor).
 - `ScriptValueInfo` vs `ValueInfo` (the raw codec helpers now live only in `types.dart`).
 
+**Audit findings (2026-10-04)** (legacy/dead-code sweep; more audits in flight)
+
+Firmware:
+- Dead build flag `-D USE_REGISTER_SERVICE` (`platformio.ini:44`) - referenced nowhere.
+- Unused defines `TRID_SYS_BASE`/`TRID_SYS_MAX`/`TRID_APP_MAX` (`Packet.h`), `Capabilities::None`
+  (`Enums.h:10`).
+- The `#ifndef BOOTLOADER_FORCE` / `TAMU_BOOTLOADER_FORCE` test hooks (`DAS_v0.1/Bootloader.cpp`,
+  `Bootloader/CoreBootloader.cpp`) are only selectable with an ad-hoc `-D`; no env defines them.
+  Add documented `*_force` envs, or drop the branches.
+- `AppBLE.h` `BLE_PACE_MS == 0`, so the paced-TX `#if BLE_PACE_MS > 0` branch never compiles.
+- Removed app-identity model remnants: the `id_tgt/id_src == 0xFFFE` branches and comment in
+  `Dispatcher.h`, the `id_src == 0xFFFE` branch in `SubscriptionsControl.h:16`, and the stale
+  `AppInterface.h` header comment (claims `ServiceType::App` identity + CID-as-TRID).
+- Dedup: `RS485_SendRaw` repeats the CSMA/echo loop of `SendAndVerifyPacket`; `SendResponse` and
+  `SendDeviceReply` repeat the same `PacketConstruct`.
+- Stale comments: `MemoryDynamic.h:36` says `DT_XXX`/`DV_XXX` (actual `DT_<hex2>`).
+
+App:
+- Unused `tridSysBase/Max`, `tridScriptBase/Max` (`protocol.dart`) and `ServiceType.router`
+  (0x10, no firmware Router service).
+- `render_dict.dart:45` `if (aligned == 0) break;` is unreachable.
+- `log_page.dart:330,361` duplicate `ServiceType.fromValue(sourceId & 0xFF)` (the `& 0xFF` is
+  vestigial - the wire already carries an 8-bit type).
+- Stale comments: `file_viewers.dart:340` (old `DT_` layout) and `file_viewers_test.dart:152-163`
+  (removed CLI capability in the sample cap word, wrong `DT_` layout).
+
 **Deliberately left** (a merge would read worse): the three flag-name decoders (`flagWords` =
 full words for the backup format, `ValueFlags.describe` = RO/P/TR, `_flagsSuffix` = RO/P) and
 the two flag renderings in `register_page_tiles` (chips vs small text) are different
