@@ -1867,22 +1867,17 @@ Legacy to delete (covered by the layers): `BlockMeta` packing + conversions; dyn
 
 ## Code-cleanup backlog (from the 2026-10-04 duplication pass)
 
-Done: `abe921e` (reply/stream dedup + dead code; DAS -288 B, core -1 006 B) and
-`e56676e` (the script read/reply paths through the shared helpers). Remaining items, all
-Tamu-only unless noted (found by the two review agents + an exact-clone scan):
+Done: `abe921e` (reply/stream dedup + dead code), `e56676e` (script read/reply), `dfc8c56`
+(app dedups), `4f433aa` (subscription/register/script dedup). Remaining items, all Tamu-only
+unless noted (found by the two review agents + an exact-clone scan):
 
 **Firmware**
-- `ProviderStreamTable`/`RequesterStreamTable` (`SubscriptionsControl.h`) are the same
-  streamer; share one parameterised by the occupied predicate + entry size.
-- `RegisterRequesterProvider`'s same-device branch re-implements `ProviderInstall`.
-- `LoadAllBackups`'s dynamic loop vs `DynamicRecallAll` (`RestoreDynamicBlock`).
-- `DeleteFilerecord`/`DeleteFileExact` (a comparator parameter).
-- SNDB: seven `for i < num_entries { ReadEntry; ... }` scans (`ScanEntries`).
-- `ScriptGetEntry` on top of `ScriptGetIoPointer`.
-- `RegisterGetByBlockInfo`/`SubscriptionsGetField` share one resolver.
-- `ApplyRequesterValue`'s write dispatch -> `RegisterSetByBlockInfo`.
+- `DeleteFilerecord`/`DeleteFileExact` differ only in the name comparator.
+- SNDB: five `for i < num_entries { ReadEntry; ... }` scans share a prologue (a visitor adds
+  indirection; the loops are short and clear as-is).
+- `RegisterGetByBlockInfo`/`SubscriptionsGetField` share one resolver - awkward because
+  `RegisterDispatch.h` precedes `SubscriptionsDefs.h` in the include order.
 - `SaveRequesterTable` re-implements `WriteBackupFile`'s staging.
-- `Vysi1Display::IdentityAffine` member -> the free `IdentityAffine23`.
 - Unused enum members (`DataType::NetAddr/UnknownKeyed/BlockInfo/Deleted`,
   `BlockType::Deleted/Undefined`, `AccGyrError::ErrTimeout`, Render `Mesh`/`Colour3`/
   `PointCoordinates`) - cross-cutting with `firmware_contract_test.dart`.
@@ -1893,12 +1888,14 @@ Tamu-only unless noted (found by the two review agents + an exact-clone scan):
 **App**
 - `backup_capture`/`backup_restore` share one field walker.
 - `subscriptions_dialog`/`block_info_picker` share the block/field selection fetchers.
-- `script_value_dialog._changeType` -> `ScriptDraftValue.setType`.
+- `script_value_dialog._changeType` -> `ScriptDraftValue.setType` (the dialog's local state
+  shape differs, so this needs a small state refactor).
 - `script_file`'s `_align4`/`_putU32`/`_getU32`/`_numberToRaw`/`_rawToNumber` -> the
   `types.dart` codecs; `ScriptValueInfo` vs `ValueInfo`.
-- `device_db.setName` -> `makeBlockInfo`/`writeBlockField`.
-- Three flag-name decoders (`flagWords`, `ValueFlags.describe`, `_flagsSuffix`) and three
-  BlockInfo->label decoders -> one each.
-- `register_page_tiles` renders the flag chips twice.
 - `system_block_view.formatSystemValue` -> delegate the generic types to `formatValue`
   (mind the 32-bit enum / 16-bit integer / NUL-string differences).
+
+**Deliberately left** (a merge would read worse, not better): the three flag-name decoders
+(`flagWords` = full words for the backup format, `ValueFlags.describe` = RO/P/TR, and
+`_flagsSuffix` = RO/P) and the two flag renderings in `register_page_tiles` (chips vs small
+text) are genuinely different vocabularies/shapes.
