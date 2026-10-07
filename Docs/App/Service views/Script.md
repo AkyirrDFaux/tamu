@@ -1,7 +1,13 @@
-Lists all loaded/avaliable (stored) scripts on that device (switch in page name).
+Lists all loaded/avaliable (stored) scripts on that device (Loaded/Available switch at the top of the page).
 
-Each entry allows for showing the state of the script, and control of the script (start, pause/continue, stop, restart, etc...)
-Expanding the entry shows input and outputs formatted with the UI specificiations (sliders, buttons, toggles, etc...).
+Each entry allows for showing the state of the script, and control of the script (start, pause/continue, stop, restart, etc...).
+- A loaded entry shows a state dot, the function name, the file name, the state label and
+  the instruction counter, and expands to its Input and Output sections.
+- Controls: Start, Pause/Resume, Stop, Restart, Unload, and "Open editor".
+- Input is interactive and editable (UI specifications read from the script file); Output
+  shows live values read-only.
+- The Available list shows stored `SCR_XXX` files with Open editor, Load (into the lowest
+  free slot) and Delete; a "New script" button creates a new stored file (not loaded).
 
 On tapping the entry's "Open editor" button opens the script editor page.
 # Script editor
@@ -29,4 +35,8 @@ Shows everything in a organised human-readable format.
 		- Variable/Constant creation shortcuts.
 
 Has to check type compability and program validity before sending to device.
-Appbar contains button for checking function validity and uploading (file)/updating (live) to the device
+The editor works on the stored `SCR_XXX` file, so loaded and available scripts alike are
+editable. Appbar buttons: **Check validity**, **Upload** (write the file), and for a loaded
+script **Update** (reload live to apply the draft) and **Unload**, plus a refresh button.
+The file id and the loaded slot are independent; the app tracks the mapping for the loads it
+starts (Issues.md, "Script CID 0 lists file IDs, not loaded slots").

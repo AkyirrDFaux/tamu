@@ -14,7 +14,18 @@
 
 #include <cstdint>
 #include <cstring>
+#include <cstdlib>
+#ifdef APP_INTERFACE_SINGLE_THREADED
+// No-OS targets (the CH32 Valu app): there is no RTOS, no separate link task, and the USB
+// ISR only services TinyUSB - never these rings - so the critical sections are plain no-ops.
+// The ESP32 (core) builds keep the FreeRTOS primitives unchanged below.
+typedef int portMUX_TYPE;
+#define portMUX_INITIALIZER_UNLOCKED 0
+#define portENTER_CRITICAL(m) ((void)(m))
+#define portEXIT_CRITICAL(m)  ((void)(m))
+#else
 #include "freertos/FreeRTOS.h"
+#endif
 #include "Core/Functions/Packet.h"
 
 // Defined in the device AppUSB.h (included after this header); used by the TX

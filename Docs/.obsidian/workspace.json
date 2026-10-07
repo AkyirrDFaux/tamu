@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Services/Storage.md",
+                "file": "Plan.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Storage"
+              "title": "Plan"
             }
           }
         ]
@@ -190,13 +190,13 @@
   },
   "active": "3416cbc61e8f4335",
   "lastOpenFiles": [
+    "Command ID table.md",
     "Devices.md",
     "Services/Storage.md",
     "Services/System Block and Device Commands.md",
     "App/Backup.md",
     "Plan.md",
     "Services/Register.md",
-    "Command ID table.md",
     "Current setup v3.md",
     "Data Formats.md",
     "General architecture.md",

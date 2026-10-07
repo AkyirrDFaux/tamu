@@ -5,8 +5,10 @@
 
 // The DAS reduces every DeviceLog to a structured LogHandler broadcast without free text
 // (see Devices/DAS_v0.1/Log.h), so the diagnostic format strings/varargs are pure flash
-// waste on this 16 KB part. The no-op macros must come before ANY Core include.
-#if defined BOARD_DAS_v0_1
+// waste on this 16 KB part. The Valu does the same (Devices/Valu_v2.0/Log.h): its only byte
+// stream is the USB App Interface, which the app link owns. The no-op macros must come
+// before ANY Core include.
+#if defined BOARD_DAS_v0_1 || defined BOARD_Valu_v2_0
 #define DEVICE_LOG_TEXTLESS 1
 #define DeviceLog(...) ((void)0)
 #endif
@@ -38,6 +40,8 @@ PacketFrame tx_frame;        // single shared output buffer — no handler needs
 #include "Devices/Tamu_v2.0A/Main.h"
 #elif defined BOARD_DAS_v0_1
 #include "Devices/DAS_v0.1/Main.h"
+#elif defined BOARD_Valu_v2_0
+#include "Devices/Valu_v2.0/Main.h"
 #endif
 
 // 3. Dispatcher must come last (it includes Storage and all handlers that need full definitions)

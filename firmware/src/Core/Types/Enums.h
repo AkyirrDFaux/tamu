@@ -3,6 +3,7 @@
 enum class DeviceType : uint16_t {
     Unknown         = 0x00,
     Tamu_v2_0A      = 0x01,
+    Valu_v2_0       = 0x02, // CH32V203G8R6 (Docs/Devices.md)
     DualAnalogSensor = 0x03,
 };
 

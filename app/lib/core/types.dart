@@ -120,6 +120,7 @@ List<int> intToBytes(int value, int size) {
 enum DeviceType {
   unknown(0x00),
   tamuV20A(0x01),
+  valuV20(0x02), // Valu v2.0 (CH32V203G8R6), Docs/Devices.md
   dualAnalogSensor(0x03);
 
   final int value;
@@ -135,6 +136,7 @@ enum DeviceType {
   String get label => switch (this) {
         DeviceType.unknown => 'Unknown',
         DeviceType.tamuV20A => 'Tamu v2.0A',
+        DeviceType.valuV20 => 'Valu v2.0',
         DeviceType.dualAnalogSensor => 'DAS v0.1',
       };
 }

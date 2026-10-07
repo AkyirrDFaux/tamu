@@ -65,6 +65,12 @@ TARGETS = {
         "exclude": [],
         "platformio_env": "Tamu_v2_0A",
     },
+    "Valu_v2_0": {
+        "roots": ["firmware/src/Core", "firmware/src/Blocks", "firmware/src/Devices/Valu_v2.0"],
+        "files": ["firmware/src/Main.cpp"],
+        "exclude": ["firmware/src/Devices/Valu_v2.0/Bootloader.cpp"],
+        "platformio_env": "Valu_v2_0",
+    },
     "app": {
         "roots": ["app/lib"],
         "files": ["app/pubspec.yaml", "app/pubspec.lock"],

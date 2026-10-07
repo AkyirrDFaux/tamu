@@ -4,10 +4,47 @@ Open items only. The 2026-10-04 per-area audit findings (register, storage, devi
 subscriptions, tamu, das, bootloader, app, tooling, tests) were fixed and committed; the
 remaining low-value follow-ups live in `TODO.md`.
 
+## Open (2026-10-06)
+
+- **Valu v2 bootloader: a sector erase does not take effect.** Full status and measurements in
+  `TODO.md`. It is **silent** - the controller sets `EOP` and reports no write-protection error
+  while the flash content is unchanged - so the app-facing consequence would be update failures
+  that look like nothing happened. Do not build Valu v2 features that depend on re-flashing the
+  board until this is resolved.
+- **The Valu bootloader can only ever be replaced over the ROM bootloader.** Our own bootloader
+  refuses writes below `APP_BASE` by design, and this board has no SWD header, so every bootloader
+  iteration needs an ISP session (`wchisp-nightly`, one command per USB reset). Worth keeping in
+  mind when deciding how much logic belongs in the bootloader rather than the app.
+- **`valu_upload.py` drives `wlink` over SWD, which this board cannot do.** The ISP recipe that
+  actually works (USB port reset, then a single `wchisp-nightly` invocation) needs folding into it
+  as an `--isp` mode so `./upload.sh boot valu` matches reality.
+
 ## Code decisions needed (2026-10-04 docs-conformance sweep)
 - **Register write of a longer String/Filename.** `Register.md` says a longer value fails (only a
   shorter one is allowed, space-padded); `MemoryTypes.h` clamps it instead. The app and the "System
   Name clamps to 16 bytes" HIL rely on the clamp. Parked (minor detail).
+
+## Valu v2.0 app (2026-10-06)
+- **Resistive measurement reference resistor is undefined.** `Docs/Devices.md` gives three ADC
+  inputs (PA6/PA1/PA0) but says "Reference resistor not defined." With no reference and no range
+  selectors, the resistance/LDR/NTC transforms in `Devices/Valu_v2.0/MeasuringRun.h` use a
+  placeholder `VALU_MEAS_REF_KOHM` (10 kOhm); raw and voltage measurements do not depend on it.
+  Needs a hardware value before a resistance-reading module is meaningful.
+- **"USB Bootloader" and "Script" services have no capability-bit mapping.** `Docs/Devices.md`
+  lists the Valu's services as Mandatory + USB Bootloader + App interface + Dynamic memory +
+  Script. `Capabilities::` (Core/Types/Enums.h) has bits for Node/AppInterface/DynamicMemory/
+  Scripts/StorageFeatures/Subscriptions but **none for a bootloader** - the code (and the
+  bootloader itself) already treats that as "no capability bit" (`TODO.md` Decisions). The Valu
+  app advertises `Node | StorageFiles | AppInterface | DynamicMemory | Scripts`.
+- **Valu modules not implemented in this pass.** `Docs/Devices.md` also lists "LED Display x2"
+  (needs the Vysi1 render/layout stack) and "OLED Display (TODO)" for the Valu. The app implements
+  the LED-Button, the three buttons, the one fan output and the three resistive channels (the
+  peripheral set the task specified); the two display modules are not built.
+- **`MAX_SCRIPTS` is reduced to 16 on the Valu.** The Script service's loaded-script registry is
+  `LoadedScript scriptRegistry[256]` (~38 KB) in `ScriptDefs.h`; the CH32V203's 20 KB cannot hold
+  it, so the registry is now a `#ifndef`-guarded build knob and the Valu sets `-D MAX_SCRIPTS=16`.
+  Higher Scripts-range indices report as unloaded.
+
 
 ## Docs decisions needed (parked unless noted)
 - **OS notifications.** `Docs/App/Settings.md` lists "Allow notifications (To OS)" with per-event
@@ -33,17 +70,20 @@ remaining low-value follow-ups live in `TODO.md`.
 - **Dynamic descriptor doc omits `Name`/`generation`/`present`** (deferred).
 - **Dynamic 8.8 enumerate encoding** is only in code comments (`RegisterEnumerate.h`), not in
   `Register.md`.
-- **Device view wording.** `Docs/App/Device view.md` says it "Interacts with the device service
-  only", but the app reads identity (type/SN/version/capability/name) via the Register System block
-  (which matches Device Commands.md). Stale side is the doc.
 - **Bootloader LED entry.** `Bootloader.md` (white LED) vs `Devices.md` (core white LED "missing
   hardware") vs the app (red LED). Code drives no LED in the core bootloader.
+- **Device-type numbering is undocumented.** `Docs/Data Formats.md` and `System Block and Device
+  Commands.md` name the System `Device Type` field but give no numeric table. `Enums.h` /
+  `types.dart` assign `Tamu_v2_0A = 0x01`, `Valu_v2_0 = 0x02`, `DualAnalogSensor = 0x03` as a code
+  convention (0x02 carried over from the pre-restructure tree) - confirm or document it.
 
 ### Docs-conformance sweep wording (2026-10-04)
 - **Documented but not implemented** (future/planned, `Plan.md`): WiFi `App Active` values + System
   field 8.1 SSID/Password; Router capability + service (stub only); branch-broadcast address
-  `0x3FE`; Valu v2.0 device; UDP app transport; the `Mesh` LED-display shape; the `Effect` data
-  type. Code-only types (`Deleted`, `Uint32`, `DevType`, `UnknownKeyed`) are undocumented.
+  `0x3FE`; UDP app transport; the `Mesh` LED-display shape; the `Effect` data
+  type. Code-only types (`Deleted`, `Uint32`, `DevType`, `UnknownKeyed`) are undocumented. (The
+  **Valu v2.0 app** is now implemented - `[env:Valu_v2_0]`, `Devices/Valu_v2.0/`; its LED-Display x2
+  and OLED modules remain unbuilt, see the Valu section above.)
 - **Register.md**: dynamic Create request also carries a 16-char name (doc lists only `Index`), and
   the response is `BlockIndex(5)+ack` (doc says `Success`); System struct members are shown as keyed
   positions but only the whole struct is exposed at key 0.
@@ -56,10 +96,10 @@ remaining low-value follow-ups live in `TODO.md`.
   `Number`; no size table (offsets are prefix sums); CID 5 truncates to 112 B; CID 6 takes a line
   index, not an instruction counter.
 - **App Interface.md**: the BLE payload cap is MTU-5, not MTU-2.
-- **App docs**: `General info` omits the Update tab; `Devices` graph layout differs (no net
-  structure / router tree); `Device view` lists a nonexistent Bootloader capability and omits the
-  Subscriptions viewer; `Connection` has an undocumented autoconnect toggle; `Current setup v3` lux
-  cap is ~8.85k (not 10k) and the fan is not connected.
+- **App docs** were synced to the app on 2026-10-07 (the Update tab, the Connection autoconnect
+  toggle, the Subscriptions viewer, the actual Devices graph layout and the Device view data
+  source/capability wording are now documented). Remaining item outside `Docs/App`: `Current setup
+  v3` lux cap is ~8.85k (not 10k) and the fan is not connected.
 - **RSBus/Packets.md**: the Script TRID range is unspecified and the System/Log counter is 8-bit
   (within range) not 12-bit.
 - **Subscriptions.md**: the get-subscriptions stream starts with an undocumented count byte.

@@ -26,7 +26,13 @@ bool RegisterSetByBlockInfo(uint32_t bi, const ValueInfo &m, const uint8_t *val,
 // 64 instances each, addressed by one global index 0..255 (Docs/Services/Register.md "Block
 // types"). The slot index doubles as that global Register index. The *stored file* space is
 // wider - see MAX_SCRIPT_FILES.
+//
+// RAM-sizing knob (like MAX_PROVIDER_SUBS): the registry is one LoadedScript per slot (~150 B),
+// so 256 slots cost ~38 KB. The ESP32 core can afford that; a RAM-constrained target (the
+// CH32 Valu, 20 KB) lowers it via -D MAX_SCRIPTS=N and simply cannot load the higher slots.
+#ifndef MAX_SCRIPTS
 #define MAX_SCRIPTS 256
+#endif
 // Stored script files are named SCR_XXX (three hex digits), so a file id is 0..0xFFF.
 #define MAX_SCRIPT_FILES 4096
 #define SCRIPT_HEADER_SIZE 24

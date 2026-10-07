@@ -7,8 +7,12 @@ Written in flutter.
 | Linux   | BLE, USB         | In development       |
 | Windows | BLE, USB         | Do not implement yet |
 ### Overall app layout:
+The app shell holds five tabs, in this order (phone/tablet shows them in a drawer, a wide
+window keeps a permanent navigation rail). The tab bar also carries a small link badge
+(`LINK`/`OFF`) showing whether a device session is up.
 - [[Connection]]
 - [[App/Devices|Devices]]
+- [[Update]]
 - [[Backup]]
 - [[Settings]]
 ### Overall function
