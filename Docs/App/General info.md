@@ -1,11 +1,11 @@
 Written in flutter.
 #### Target platforms:
 
-| OS      | Connection types | Status               |
-| ------- | ---------------- | -------------------- |
-| Android | BLE              | In development       |
-| Linux   | BLE, USB         | In development       |
-| Windows | BLE, USB         | Do not implement yet |
+| OS      | Connection types |
+| ------- | ---------------- |
+| Android | BLE              |
+| Linux   | BLE, USB         |
+| Windows | BLE, USB         |
 ### Overall app layout:
 The app shell holds five tabs, in this order (phone/tablet shows them in a drawer, a wide
 window keeps a permanent navigation rail). The tab bar also carries a small link badge

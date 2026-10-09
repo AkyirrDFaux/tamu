@@ -18,6 +18,127 @@ Serial ports renumber between sessions - resolve them from `/dev/serial/by-id` (
 core, WCH-Link = DAS) rather than remembering a `/dev/ttyACM<N>` number. `run_hil_tests.sh` does
 this itself; `TAMU_HIL` overrides it, or set it to `ble` for the BLE path.
 
+## Beta window plan (2026-10-07) - Tamu core/DAS + app; Valu v2 parked
+
+Reason: a tester is being handed updated builds. Targets are **Windows 11 + Android**. No hard date.
+Doc rule changed: docs (`Docs/`, `AGENTS.md`, READMEs) are approval-gated - Amp edits them directly,
+in batched change-sets per area, only after Akyirr approves. `TODO.md`/`Issues.md` stay working files.
+
+**Phase 0 - baseline gate.** `./test.sh`, `pio run -e Tamu_v2_0A` / `-e DAS_v0_1`, HIL small rig;
+record a numbers table (flash/RAM per env, suite counts, timings) and define the beta acceptance
+criteria. Everything after is measured against it.
+  **DONE 2026-10-08 - host and builds (HIL not yet run).**
+  - `./test.sh` **exit 0**: native suite clean, **168 app tests pass** ("All tests passed!"),
+    `flutter analyze` clean ("No issues found!").
+  - `Tamu_v2_0A` **SUCCESS** - RAM 21.0% (68892/327680), flash 23.5% (646846/2752512), bin 647520 B.
+  - `DAS_v0_1` **SUCCESS** - RAM **99.0%** (2028/2048), flash 93.8% (13440/14336), bin 14336 B.
+  - Android debug APK builds here (see Phase 1a); Linux desktop release builds here too.
+  - **HIL: 11 passed, 0 failed, 0 skipped, exit 0** (5 s) - core ping, System block fields, SystemMemory
+    blocks 6 + flags, storage 112-fragment churn, SNDB + TimeSync, Register Enumerate/BlockInfo, NetID
+    write, DAS static blocks, DAS static save, DAS `.SV` recall over an erased name, System Name clamp,
+    DAS clock within 10 ms of the core. Destructive suites deliberately not run (one DAS vs a two-DAS
+    evaluation setup - nothing could restore it).
+  **Found and fixed a regression (caused by the Valu work).** The Valu device folder's custom startup
+  `.S` files were compiled into both sibling envs: duplicate `_start` - on the DAS against the
+  framework's `startup_ch32v00x`, on the core against each other. Fixed by excluding
+  `Devices/Valu_v2.0/` in the DAS `build_src_filter` and in `src/CMakeLists.txt`'s GLOB exclusion.
+  Both images came back **byte-identical to the recorded baselines**, so the fix restored the prior
+  state rather than changing it. Pitfall recorded in the `tamu-project` skill's firmware reference.
+  **Proposed beta acceptance criteria:** host gate exit 0 with zero failures; both firmware envs build
+  with no size regression (DAS <= 2028 B RAM, <= 13440 B flash); the Android APK installs and connects
+  to the rig; the update flow completes end to end on Android.
+
+**Phase 1 - deliverability (Android is the only target delivered this window, and it builds here).**
+  a) Android: the SDK **was** present at `/home/akyirr/Programs/Android` (SDK 37, build-tools
+     35/36.1/37, ndk, platform-tools with `adb`) - Flutter simply had no path to it, and
+     `/home/akyirr/Programs` is mode 750 so filesystem searches cannot see it. Fixed with
+     `flutter config --android-sdk /home/akyirr/Programs/Android`. Doctor's "license status unknown"
+     is its own staleness - `--android-licenses` reports "no longer needed" in this toolchain and the
+     licenses dir holds accepted hashes; Gradle is the honest test. APKs from 2026-09-25 already sit
+     in `app/build/` (gitignored, `.gitignore:39`). Java in use is Studio's JBR 25; AGP 8.11
+     nominally wants 17-21, so watch the first real build.
+     **DONE 2026-10-08:** a debug APK built by Amp on this box - 156,017,696 B, sha256 `4c0a01db...`,
+     package `tamu.app.beta`, compileSdk 36, signer CN=Android Debug SHA-256 `76b2caa5...` vs Akyirr's
+     `f5bca9c7...`. The cross-host signing warning is now *measured*, not theorised. Build takes
+     ~8 min cold, ~7 s warm (just needs `JAVA_HOME` on JDK 21).
+     **Correction:** the move-aside preserved the 2026-09-25 *release* APK (56,123,794 B, also still in
+     `outputs/apk/release/`), but the 178,716,229 B Sep-25 *debug* APK did not survive it - the scratch
+     copy of `app-debug.apk` is the new build. Regenerable in one command, no source touched, but the
+     earlier "preserved, not deleted" claim was wrong for that one file. A first *release* build will
+     hit the same permissions wall on `outputs/apk/release/app-release.apk` (still his).
+  a2) **Signing trap - RESOLVED 2026-10-08 by Akyirr's call: one build host.** All distributable builds
+     are made on his machine, so the debug key stays consistent and the tester's installs update
+     normally. No release keystore is introduced. **Consequence: an APK built by the agent must never
+     be installed over an existing install or handed to anyone** - a different key breaks that update
+     path (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`). Agent builds are verification only (does it build,
+     does it run), not artefacts for distribution. Background: `build.gradle.kts` signs release with
+     `signingConfigs.debug`, and each host auto-generates its own `~/.android/debug.keystore` - his is
+     CN=Android Debug SHA-256 `f5bca9c7...`, the agent's is `76b2caa5...`.
+  a3) APK size: release 56.1 MB, debug 178.7 MB - ABI-fat. Phase 5 target: `--split-per-abi` or a
+     single-ABI build. `applicationIdSuffix = ".beta"` is deliberate (installs alongside the release).
+  a4) **Build-host friction.** `app/build/` holds artifacts owned by Akyirr (the 2026-09-25 APKs), so a
+     build run by Amp fails at the copy step - `Could not set file mode 664 on .../flutter-apk/...`.
+     Moved aside (preserved) to `~/.hermes/cache/scratch/stale-apk-2026-09-25/`; the durable fix is an
+     ACL/chown on `app/build/` (the mirror image of agent edits stripping Akyirr's write bit).
+     Also: the Java in use must be 21 - AGP 8.11 rejects Studio's JBR 25 with a bare `25.0.3`.
+  a5) **Forward-compat warning.** Flutter 3.44 warns that `build.gradle.kts` applies the Kotlin Gradle
+     Plugin and that `file_picker`, `flutter_libserialport` and `universal_ble` do too - a future
+     Flutter will *fail* on this. Track those plugin upgrades; do not take them mid-beta without a
+     full gate run.
+  b) Windows - **dropped by Akyirr's call (2026-10-08)**: no Windows build is needed this window, so no
+     steps are written and no Windows audit is done. Kept only as record: not buildable on Linux (needs
+     MSVC), `flutter_libserialport` 0.6.0 does ship `windows/`, and the platform-specific Dart surface
+     is `lib/core/{connection,transport,settings,platform_caps,host_files}.dart` (still relevant to
+     Android).
+  c) The update flow end to end (connect -> detect -> update app/bootloader) on Android - this is the
+     sequence the tester actually performs.
+
+**Phase 2 - app interface (audit done 2026-10-08, report-only - nothing changed).**
+  `flutter analyze` is clean, so this is design-level inconsistency, not lint-level. Full report lives at
+  `/var/lib/hermes-mgr/.hermes/notes/tamu-ui-audit-2026-10-08.md` (durable; kept out of the repo because
+  new docs are approval-gated).
+  *Root cause:* `theme.dart` exports 3 colours + 3 text styles, and `lib/ui/` bypasses them -
+  `TextStyle(` inline 149x, `fontSize:` 108x (10 distinct sizes), `Colors.<x>` 130x (four greys for one
+  secondary-text role), `EdgeInsets.` 131x, 17 distinct `Card(margin:)`, two card backgrounds for the same
+  role (~13 explicit `kSurfaceAlt` vs ~16 plain `Card(`).
+  *Duplication:* label/value row 3x; 7 ad-hoc prompt dialogs; ~30 bespoke dialog action rows; ad-hoc
+  empty/loading/error (20 `Center(Text)`; spinner vs the literal `'Loading...'` on the same class of page);
+  Subscriptions alone uses a bare refresh `IconButton` and lacks `AutoRefreshMixin`.
+  *Missing confirmations:* subscriptions delete, and register block/field/entry deletes, skip `confirmDialog`.
+  *Clunky flows:* Devices is a dead end when disconnected (no button at all - connecting lives only in the
+  Connection tab); the refresh button silently changes meaning by connection state; switching device
+  disconnects with no confirmation; autoconnect is long-press-only and shows a raw MAC in Settings;
+  register add-entry is 3-4 dialogs deep; the script editor has two "Upload" affordances told apart only by
+  tooltip.
+  *Spec mismatches:* Device view omits the documented Router-table row; Settings puts the target in the
+  title instead of the subtitle+hint.
+  *Ranked fixes (benefit/risk first):* 1) theme tokens + `AppCard`; 2) `Empty/Loading/ErrorState`;
+  3) `PromptDialog` + `DialogActions` + mandatory `confirmDialog`; 4) `RefreshButton` + `AutoRefreshMixin`
+  on Subscriptions; 5) autoconnect to a friendly name and surface it on Connection; 6) one labelled Upload
+  in the script editor; 7) `LabelValueRow` unification; 8) title/spacing normalisation.
+  *Not determinable from code:* realised contrast and tap targets, touch behaviour, and anything needing a
+  running app plus hardware; the ordering above is code-path evidence, not user data.
+  **Waiting on Akyirr** to pick or amend the order before any UI code changes.
+
+**Phase 3 - scripts.** Gap list (`Docs/Services/Script.md` vs the 8 `Script*.h`, ~2.2 kloc), macros,
+completion, tests.
+
+**Phase 4 - documentation consistency/completeness.** Collect proposals from day 1; deliver as batched
+change-sets per area - the one serial step in the plan.
+  **Style guide is in place:** `Docs/Style Guide.md` (written 2026-10-08, with Akyirr's approval), built
+  from his decisions on all 25 open items. **Carve-outs:** `Docs/Plan.md` is Akyirr's personal notes and
+  is out of scope for the style pass; `Docs/Services/Router.md` is `TBD`.
+  **Rewrite order:** Services docs first (most table-driven, they set the patterns), then the protocol
+  and structure docs (`RSBus and Packets`, `Data Formats`, `General architecture`), then
+  `Modules and blocks/`, then `App/`. Skip `Plan.md`. Commit before starting, so the rewrite can be
+  reverted.
+  **Two decisions the guide applies that already touch content:** command IDs are hex with the range
+  heading supplying the prefix (Akyirr has already applied this to the SNDB commands - verified
+  consistent with `Core/Services/Device.h:42-52`), and index/allocation tables are left unrelated.
+
+**Phase 5 - optimization + final verification pass.** DAS headroom (~94% flash / ~99% RAM), gate
+green, release checklist.
+
 ## Open work
 
 - [ ] **Valu v2.0 bootloader: flash erase is ineffective (flashed via ISP, erase path untested).**

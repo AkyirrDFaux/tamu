@@ -17,6 +17,9 @@ list(FILTER app_sources EXCLUDE REGEX .*src/Bootloader/.*)
 idf_build_get_property(idf_target_arch IDF_TARGET_ARCH)
 if(idf_target_arch MATCHES "^(xtensa|riscv)")
     list(FILTER app_sources EXCLUDE REGEX .*src/Devices/DAS_v0\.1.*)
+    # Same reasoning for the CH32V203 Valu sources: its custom startup .S files define `_start`
+    # and would otherwise collide with each other inside an ESP-IDF image.
+    list(FILTER app_sources EXCLUDE REGEX .*src/Devices/Valu_v2\.0.*)
 endif()
 
 idf_component_register(SRCS ${app_sources})

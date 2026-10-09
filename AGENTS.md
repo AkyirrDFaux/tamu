@@ -11,9 +11,10 @@ You are an autonomous embedded systems (/firmware) and multi-platform Flutter ap
    
 2. **General Rules**
    - Never touch the /Docs files, they are off limits to you. The documentation contains the specification, not the code.
-     - **Exception (app UI):** `Docs/App/**` — the app UI documentation — **is** writable. The UI creation
-       process is deliberately free-form, so agents may create/update the files under `Docs/App/`.
-       Everything else under /Docs stays off limits.
+     - **No exceptions for agents** — including `Docs/App/**`, whose earlier free-form exception was
+       revoked 2026-10-07. If a doc looks wrong or incomplete, do not edit it: report the exact
+       proposed change to the parent agent. The parent alone may edit documentation, and only with
+       Akyirr's explicit approval for that change.
    - Quality of code preffered versus quantity.
    - You are in no rush to finish the task, slow but steady progress is preffered instead of leaps.
    - Plan ahead.
@@ -54,8 +55,8 @@ Applies in addition to the rules above.
   fails to link above 2048 bytes by design.
 
 **Scope**
-- `/Docs` stays untouched (rule 2) — **except `Docs/App/**`**, which agents may edit (the app UI is
-  free-form). A code-vs-doc conflict elsewhere in /Docs is an `Issues.md` entry.
+- `/Docs` stays untouched (rule 2) — no exceptions, `Docs/App/**` included. A code-vs-doc conflict is
+  an `Issues.md` entry. Documentation edits are made by the parent agent only, after Akyirr approves.
 - Keep `TODO.md` / `Issues.md` current, per the rules above.
 - The tree is LF (no `.gitattributes`); a few files, e.g. `app/pubspec.yaml`, are CRLF — match the
   file you are editing.

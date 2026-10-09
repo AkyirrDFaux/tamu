@@ -22,6 +22,7 @@ F.K:SP = Field.Key:Struct Position
 | NetID                       | 7      | P     | uint8              | Core only, applies only after reboot                    |
 | App Active                  | 8      | RO    | enum               | Core only (No/USB/BLE/Legacy BT/WiFi)                   |
 | WiFi connection information | 8.1    | P     |                    | SSID + Password, WiFi devices only field, autoconnects. |
+|                             |        |       |                    |                                                         |
 
 
 If possible, the device name is shown in BLE advertising and on USB.
@@ -69,7 +70,7 @@ The NetID of the core is always automatically added.
 
 | Function      | ID  | Content request            | Content response                | Note                                  |
 | ------------- | --- | -------------------------- | ------------------------------- | ------------------------------------- |
-| Core discover | 10  | SN                         | SN, uptime                      | Core only, Sent to 3F.1, from NetID.1 |
-| SNDB Read     | 11  | ID or SN (based on length) | SN + ID                         |                                       |
-| SNDB Write    | 12  | SN + ID                    | SN + ID                         | Setting ID to 0 works as delete       |
-| SNDB Read All | 13  | -                          | Fragmentation, SN + ID (stream) |                                       |
+| Core discover | 0   | SN                         | SN, uptime                      | Core only, Sent to 3F.1, from NetID.1 |
+| SNDB Read     | 1   | ID or SN (based on length) | SN + ID                         |                                       |
+| SNDB Write    | 2   | SN + ID                    | SN + ID                         | Setting ID to 0 works as delete       |
+| SNDB Read All | 3   | -                          | Fragmentation, SN + ID (stream) |                                       |
