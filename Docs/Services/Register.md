@@ -101,7 +101,7 @@ The basic commands also work on dynamic blocks; these are extra. A basic Write w
 
 | Name           | ID | Request                  | Response      | Note                      |
 | -------------- | -- | ------------------------ | ------------- | ------------------------- |
-| Create Dynamic | 0  | Index (uint16)           | Success (bool)| Respond only if requested |
+| Create Dynamic | 0  | Index (uint16), `Name`   | Success (bool)| Respond only if requested |
 | Delete Dynamic | 1  | Index (uint16)           | Success (bool)| Respond only if requested |
 | Get Name       | 2  | Index (uint16)           | `Name`        |                           |
 | Set Name       | 3  | Index (uint16), `Name` | Success (bool)| Respond only if requested |

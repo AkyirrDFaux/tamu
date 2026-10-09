@@ -280,6 +280,8 @@ itself as device 1 with no net.
 
 **B8 Tamu is built as Core only.**
 
+**A58 `String` and `Filename` descriptions in Data Formats.** A consequence of A5: if those types are only ever fixed-size character fields, `Data Formats.md` should say so on both rows rather than describing them as variable-length.
+
 **B9 Create Dynamic replies with a redundant block index.** `RegisterPersist.h:107` replies `SendBlockIndexAck(frame, index)` - a 3-byte `BlockIndex` echo plus a 1-byte ack - while Delete and Set Name reply a plain status (`:115`, `:131`). The host already knows the index it sent (the app computes it, `register_client.dart:421-431`). Reply a plain status and drop the echo, then have the app use the index it sent instead of `reply[0]` (`register_client.dart:437-439`). `Devices.md:4` says "Core and Node"; `Tamu_v2.0A/Main.h:32-38`
 declares `Capabilities::Core` and no node build exists.
 
