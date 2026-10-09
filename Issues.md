@@ -155,19 +155,19 @@ Code `Log.h:32` always uses `PRIORITY_ERROR`. Replace with `at the highest prior
 texture enum. Delete the row and reword line 53 to name the three keyed types, adding `Texture values
 name textures and effects.`
 
-**A34 Data Formats: `Name` is not an enum member.** `Data Formats.md:17`. Code holds a 16-character
+**A34 Data Formats: `Name` is not an enum member.** - **revised**: `Name` becomes a real member (B28 at `0x12`), `Deleted` is removed (it is `None`; no code uses it, B29), and `String` is on its way out (B30, four call sites). `Data Formats.md:17`. Code holds a 16-character
 name as `String` with size 16 (`RegisterEnumerate.h:37`). Replace the description with `16 characters,
 held as a String of 16 bytes; not a distinct enum member.`
 
-**A35 RSBus: the Scripts TrID range is blank.** `RSBus and Packets.md:62` - the range cell is empty.
+**A35 RSBus: the Scripts TrID range is blank.** - **revised**: the range is the remainder, `0x2000-0xEFFF`, now written. The code caps scripts at `0x2FFF`, so B31 extends it. Also found: every piped wikilink inside a table row was splitting its cell (`[[Target|Label]]` needs `\|`); eight of them, in three files, are escaped now. `RSBus and Packets.md:62` - the range cell is empty.
 Code `Packet.h:46-47`: `TRID_SCRIPT_BASE 0x2000`, `TRID_SCRIPT_MAX 0x2FFF`. Fill in `0x2000-0x2FFF`.
 
-**A36 Data Formats: `BlockInfo` is a register pointer.** `Data Formats.md:22` - "A struct for pointing
+**A36 Data Formats: `BlockInfo` is a register pointer.** - **approved and applied**, and the note now says the type field addresses static, dynamic and script blocks alike. `Data Formats.md:22` - "A struct for pointing
 scripts". Code `Enums.h:57` and `RegisterDefs.h:21`: a 32-bit register pointer, `Type10 | Instance6 |
 Field8 | Key8`. Replace with `A 32-bit register pointer: 10-bit type, 6-bit instance, 8-bit field and
 8-bit key.`
 
-**A37 RSBus: the TrID counter is 8-bit.** `RSBus and Packets.md:60` - `0x0000-0x0FFF, Incrementing,
+**A37 RSBus: the TrID counter is 8-bit.** - **rejected**: no service tag belongs in the TrID, so the document stands and the code is wrong. B32 drops the tag from `NextSystemTrid`, which also means replies can no longer route by that byte. `RSBus and Packets.md:60` - `0x0000-0x0FFF, Incrementing,
 resets on overflow`. Code `Packet.h:121-125`: the high byte is the service tag, so each service uses
 `0x_00-0x_FF`. Append `The counter is 8 bits and wraps; the high byte carries the service tag, so a
 reply routes to the right service.`
@@ -281,6 +281,16 @@ itself as device 1 with no net.
 **B8 Tamu is built as Core only.**
 
 **A59 Storage: `Storage_FlashInit` is missing from the main functions.** The document lists four (`Docs/Services/Storage.md:40-47`); the code declares five, the extra being `bool Storage_FlashInit();` ("find/open the storage partition", `StorageDefs.h:31`). Add it to the list.
+
+**B28 `DataType::Name`.** From A34: add the member (`0x12`, next after `Char`) and use it for the 16-byte Name field (`RegisterEnumerate.h:37`) instead of `String`.
+
+**B29 `DataType::Deleted` is dead.** From A34: nothing in the firmware or app references it; the doc row is gone, so remove the enum member too.
+
+**B30 `DataType::String` is on its way out.** From A34: four call sites - `RegisterEnumerate.h:37` (the Name field), `ScriptExec.h:533` (a string element), and the `String || Filename` checks in `ScriptProgram.h` and `MemoryTypes.h:151`. Migrate them to `Name`/`Filename` and drop the member; the script path needs a decision on what a string value's type becomes.
+
+**B31 The scripts' TrID range is capped at `0x2FFF`.** From A35: the document gives scripts the remainder `0x2000-0xEFFF`; `Packet.h:47` caps it at `0x2FFF`.
+
+**B32 The TrID carries a service tag.** From A37: `Packet.h:117-125` puts the service type in the high byte of every system TrID so an echoed reply routes back to the right service. No tag belongs there; the counter should span the range, and reply routing needs another mechanism.
 
 **B26 The passthrough write reply carries flags, not a bool.** From A30: `Device.h:171-173` replies `FLAG_TYPE | FLAG_START | FLAG_STOP | (ok ? FLAG_SUCCESS : FLAG_FAIL)` with no payload. The reply should carry a bool in the payload as the document says.
 
