@@ -1,6 +1,13 @@
 The devices the firmware targets, with their pins, services, modules and storage geometry. Device-specific implementations are guarded with `BOARD_DeviceName`.
 
 Use define `TYPE_CORE`, `TYPE_ROUTER` or `TYPE_NODE`.
+### Device Types
+| Device             | Type |
+| ------------------ | ---- |
+| Unknown            | 0x00 |
+| Tamu v2.0A         | 0x01 |
+| Valu v2.0          | 0x02 |
+| Dual Analog Sensor | 0x03 |
 ### Tamu v2.0A (ESP32-C3), Core and Node
 | Feature            | Pins                 | Note |
 | ------------------ | -------------------- | ---- |

@@ -172,20 +172,20 @@ resets on overflow`. Code `Packet.h:121-125`: the high byte is the service tag, 
 `0x_00-0x_FF`. Append `The counter is 8 bits and wraps; the high byte carries the service tag, so a
 reply routes to the right service.`
 
-**A38 Data Formats: `DevType` cites a list that has no numbers.** `Data Formats.md:21` points at
+**A38 Data Formats: `DevType` cites a list that has no numbers.** - **approved and applied**: `Devices.md` now opens with a device-type table (`Unknown 0x00`, `Tamu_v2_0A 0x01`, `Valu_v2_0 0x02`, `DualAnalogSensor 0x03`). `Data Formats.md:21` points at
 `Devices.md`, which lists no numbers. Code `Enums.h:3-8`: `Tamu_v2_0A = 0x01`, `Valu_v2_0 = 0x02`,
 `DualAnalogSensor = 0x03`. Add the numbers to `Devices.md`.
 
-**A39 LED Display: `-1` is a valid sentinel.** `LED Display.md:9` - "Index of the block containing
+**A39 LED Display: `-1` is a valid sentinel.** - **approved and applied**. `LED Display.md:9` - "Index of the block containing
 shapes, textures and effects; -1 is invalid". Code `Vysi1Layout.h:76` (`-1 = none`) and
 `Vysi1Render.h:351` (`if (Per.RenderBlock < 0 ...) return;`). Replace the note with `-1 renders
 nothing`.
 
-**A40 LED Display: texture Size takes a `Number` only.** `LED Display.md:65` - `Vector<2>` or
+**A40 LED Display: texture Size takes a `Number` only.** - **rejected**: the document keeps both types, so the code must accept a `Vector<2>` for the texture `Size` (B33). `LED Display.md:65` - `Vector<2>` or
 `Number`. Code `Vysi1Render.h:180` reads a `Number` and silently defaults on a type mismatch. Replace the
 type cell with `Number`.
 
-**A41 LED Display: `Angles` takes a `Number` only.** `LED Display.md:35` - `Number` or `Vector`. Code
+**A41 LED Display: `Angles` takes a `Number` only.** - **approved and applied**: the type cell is `Number`. `LED Display.md:35` - `Number` or `Vector`. Code
 `Vysi1Render.h:48` reads a `Number`; no `Vector` path exists. Replace the type cell with `Number`.
 
 **A42 LED Display: `Bitmap` is not in the enum.** `LED Display.md:78` lists `- Bitmap (TODO)` between
@@ -281,6 +281,8 @@ itself as device 1 with no net.
 **B8 Tamu is built as Core only.**
 
 **A59 Storage: `Storage_FlashInit` is missing from the main functions.** The document lists four (`Docs/Services/Storage.md:40-47`); the code declares five, the extra being `bool Storage_FlashInit();` ("find/open the storage partition", `StorageDefs.h:31`). Add it to the list.
+
+**B33 Texture `Size` ignores a `Vector<2>`.** From A40: the document allows a `Vector<2>` or a `Number` for the texture `Size`, but `Vysi1Render.h:180` reads a `Number` and silently takes the default on a mismatch. Accept the vector as Geometry's `Size` does (`:59`).
 
 **B28 `DataType::Name`.** From A34: add the member (`0x12`, next after `Char`) and use it for the 16-byte Name field (`RegisterEnumerate.h:37`) instead of `String`.
 

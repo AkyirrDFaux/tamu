@@ -6,7 +6,7 @@ Contains the overall settings.
 | ----------------------- | --- | ----- | --------- | ---- |
 | Brightness              | 0   |       | Number    | % |
 | Offset                  | 1   | P     | `Matrix<2,3>` | A transformation that defines the 0,0 screen position and the default rotation |
-| Render KeyedBlock Index | 2   | P     | `Index`   | Index of the block containing shapes, textures and effects; -1 is invalid |
+| Render KeyedBlock Index | 2   | P     | `Index`   | Index of the block containing shapes, textures and effects; -1 renders nothing |
 | Layout File Name        | 3   | TR, P | `Filename` | The file containing the layout |
 | Refresh Rate            | 4   | RO    | Number    | In FPS, averaged |
 ### Layout File
@@ -32,7 +32,7 @@ The mask is an alpha channel modified by geometric definitions, and the geometry
 | Fade              | 5   | `Number`          | In pixels |
 | Alpha             | 6   | `Number`          | Default 1, range 0 to 1 |
 | Rounding          | 7   | `Number`          | In pixels |
-| Angles            | 8   | `Number` or `Vector` |      |
+| Angles            | 8   | `Number`          |      |
 | Point number      | 9   | `int32`           |      |
 | Point coordinates | 10  | `Matrix<2,N>`     |      |
 | Noise seed        | 11  | `int32`           |      |
