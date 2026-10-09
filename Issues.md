@@ -78,6 +78,61 @@ Every firmware document was checked against `firmware/src`; the closed dispositi
 (approved/applied or rejected) are in git history. Only the still-open items remain below.
 **Doc fixes need approval before they are applied**; code fixes are work for the beta window.
 
+### A. Doc fixes open (cross-reference rerun, 2026-10-10)
+
+The 2026-10-10 rerun confirmed the earlier sweep; these divergences are **doc-only** (the code
+matches the spec). Findings A61-A65 verified against the current code; **approval required before
+applying**.
+
+**A61 Re-sync interval is fixed, not stability-dependent.** `System Block and Device Commands.md:59`
+says the core re-syncs "at intervals that depend on its clock stability, jittered"; the code uses a
+fixed `DISCOVER_INTERVAL_MS = 150000` (~2.5 min) with ±10 % jitter (`TimeSync.h:24,31`). Proposed:
+"…at a fixed interval (~2.5 minutes), jittered by ±10 % so the reference core is not periodically
+overwhelmed."
+
+**A62 `String` → `Text` in Script.md.** `Script.md:71` still reads "A `String` element is a `Char`";
+the type is `Text` (`Enums.h:51`, `Data Formats.md:15`). Proposed: "A `Text` element is a `Char`…".
+
+**A63 Set-subscription reply is a Success flag.** `Subscriptions.md:85` and `:92` show "-" for the Set
+response; the code replies `FLAG_SUCCESS` (`SubscriptionsControl.h:197,217,257,264`). Proposed:
+response cell → "Success flag".
+
+**A64 Record type is `FileEntry`, not `Filerecord`.** `Storage.md:61` reads
+`WriteFilerecord(Filerecord NewRecord)`; the code is `WriteFilerecord(const FileEntry &)`
+(`StorageBlockFS.h:125`, `StorageDefs.h:58`). Proposed: `WriteFilerecord(FileEntry NewRecord)`.
+
+**A65 `Bitmap` sits after the effect list.** `LED Display.md:77` lists `Bitmap (reserved)` in the
+texture list, before "The effect list continues the texture enum" (`:79`); the enum value is 8, after
+the effects 4-7 (`Render.h:74-86`). Proposed: move the bullet after `- Brightness change`.
+
+**A66 Field name is `Render Block Index`.** `LED Display.md:9` says `Render KeyedBlock Index`; the code
+and app say "Render Block Index" (`Vysi1Layout.h:93`, `block_registry.dart:148`). Proposed: drop
+"Keyed".
+
+**A67 Boot-indicator LED wording (absorbs E8).** `Bootloader.md:3` says the bootloader "lights the
+white LED permanently"; only the DAS has a white LED and the running app uses it as the RS485 TX
+indicator, the Valu uses its red LED, and the core drives no LED. `Devices.md:43` calls the DAS white
+LED "the bootloader indicator". Proposed: state the per-device LED (DAS white / Valu red / core none)
+and describe the DAS white LED as the RS485 TX/communication indicator.
+
+**A68 Windows USB.** `App/General Info.md:7` lists Windows as "BLE, USB"; `supportsUsb` is Linux-only
+(`platform_caps.dart`, whose header says Windows = not yet). Proposed:
+`| Windows | BLE (USB not implemented yet) |`.
+
+**A69 Requester/Provider capability note.** `App/Service Views/Subscriptions.md:14` claims "the
+capability bits do not yet separate Request/Provide"; they do (`types.dart:386-388`, `Enums.h:17,19`).
+The gate itself is real (`subscriptions_page.dart` tests `Capability.core`). Proposed: "…gated on the
+Core capability - only cores currently act as requesters, though the advertised SubReq/SubProv bits
+distinguish the roles."
+
+**A70 Autoconnect toggle label.** `App/Settings.md:3` says the toggle's subtitle shows the target; the
+toggle changes its *title* to "Autoconnect: <target>" and the hint lives on the next row
+(`settings_page.dart:29-53`). Proposed wording fix.
+
+**A71 `.DV_` is shown as hex.** `App/Service Views/Storage.md:16` lists `.DT_`/`.DV_` as the
+human-readable dynamic files; `.DV_` is a raw hex dump (`file_viewers.dart:299-301`). Proposed: note
+the `.DV_` value space is shown as hex.
+
 ### B. Code fixes still open (the document is the specification)
 
 **B1 Router and branch broadcast are documented and unimplemented.** - **scope settled**: after the beta. The rig has no multi-bus device to test a tree topology on. `RSBus and Packets.md:3-7` and
@@ -89,6 +144,11 @@ information` at 8.1; there is no WiFi code in the firmware.
 
 **B6 The UDP framing has no code.** `App Interface.md:25-27` documents a UDP packet; the firmware
 implements USB and BLE only.
+
+**B40 The app's `DataType` enum omits `UnknownKeyed` (0x100).** `Data Formats.md:23` documents
+`UnknownKeyed` and the firmware defines it (`Enums.h:60`), but `types.dart` jumps from `name (0x12)`
+to `geometry (0x101)`. Add `unknownKeyed(0x100)` so the enum mirrors the firmware. (E10's old claim
+that these types are undocumented is now wrong - they are in `Data Formats.md`.)
 
 ### C. Checked and correct
 
@@ -164,10 +224,9 @@ are hardware-only.
   list is not slot-addressable; the app tracks file->slot and falls back to the file==slot
   convention. Reporting the loaded **slots** (or a slot per entry) would remove the guesswork.
 - **E6** **Dynamic descriptor doc omits `Name`/`generation`/`present`** (deferred).
-- **E7** **Dynamic 8.8 enumerate encoding** is only in code comments (`RegisterEnumerate.h`), not in
-  `Register.md`.
 - **E8** **Bootloader LED entry.** `Bootloader.md` (white LED) vs `Devices.md` (core white LED "missing
-  hardware") vs the app (red LED). Code drives no LED in the core bootloader.
+  hardware") vs the app (red LED). Code drives no LED in the core bootloader. *(Concrete doc wording
+  proposed as A67 below.)*
 - **E9** **Device-type numbering is undocumented.** `Docs/Data Formats.md` and `System Block and Device
   Commands.md` name the System `Device Type` field but give no numeric table. `Enums.h` /
   `types.dart` assign `Tamu_v2_0A = 0x01`, `Valu_v2_0 = 0x02`, `DualAnalogSensor = 0x03` as a code
@@ -177,17 +236,17 @@ are hardware-only.
 - **E10** **Documented but not implemented** (future/planned, `Plan.md`): WiFi `App Active` values + System
   field 8.1 SSID/Password; Router capability + service (stub only); branch-broadcast address
   `0x3FE`; UDP app transport; the `Mesh` LED-display shape; the `Effect` data
-  type. Code-only types (`Uint32`, `DevType`, `UnknownKeyed`) are undocumented. (The
+  type. (The
   **Valu v2.0 app** is now implemented - `[env:Valu_v2_0]`, `Devices/Valu_v2.0/`; its two LED
   displays are registered and the OLED module remains unbuilt, see the Valu section above.)
-- **E11** **Register.md**: dynamic Create request also carries a 16-char name (doc lists only `Index`), and
-  the response is `BlockIndex(5)+ack` (doc says `Success`); System struct members are shown as keyed
-  positions but only the whole struct is exposed at key 0.
+- **E11** **Register.md**: the System struct members are shown as keyed positions but only the whole
+  struct is exposed at key 0. (The dynamic Create request now lists `Name` and its response is
+  `Success flag` - that part is resolved.)
 - **E12** **Storage.md**: CID 5/6 payload order is frag-info first with the name at +4 (not Name first);
   a file's size is the exact byte size (only allocation is page-aligned); the pointer page's
   *newest* valid slot wins; `MoveFiletable` grow/shrink is `OPTIMIZE_SPEED`-only; utility signatures
-  are `bool` + out-params; the flash API is `Storage_FlashX`; size 0 is accepted; `FindSpace` scans
-  from an internal wear cursor.
+  are `bool` + out-params; the flash API is `Storage_FlashX`; `FindSpace` scans
+  from an internal wear cursor. (Size 0 is now rejected - B11. The record type name is A64.)
 - **E13** **Script.md**: the leading varSpace word is a vestigial IC slot; the symbol-subtype list omits
   `Number`; no size table (offsets are prefix sums); CID 5 truncates to 112 B; CID 6 takes a line
   index, not an instruction counter.
@@ -196,8 +255,6 @@ are hardware-only.
   toggle, the Subscriptions viewer, the actual Devices graph layout and the Device view data
   source/capability wording are now documented). Remaining item outside `Docs/App`: `Current setup
   v3` lux cap is ~8.85k (not 10k) and the fan is not connected.
-- **E16** **RSBus/Packets.md**: the Script TRID range is unspecified and the System/Log counter is 8-bit
-  (within range) not 12-bit.
 - **E17** **Subscriptions.md**: the get-subscriptions stream starts with an undocumented count byte.
 
 ## Storage / DAS
