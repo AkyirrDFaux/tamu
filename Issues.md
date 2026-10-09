@@ -4,6 +4,69 @@ Open items only. The 2026-10-04 per-area audit findings (register, storage, devi
 subscriptions, tamu, das, bootloader, app, tooling, tests) were fixed and committed; the
 remaining low-value follow-ups live in `TODO.md`.
 
+## Planned change: services as classes (2026-10-09, owner request)
+
+**Goal.** One service = one class with one instance, non-virtual methods, no `new`, no vtables. The
+CH32V003 has 2 KB of RAM and ~14 KB of flash and shares these sources with the ESP32-C3, so the shape has to
+cost nothing. The wire protocol, the block layouts and the CID map do not move.
+
+**Why.** The services are free functions over file-static state today - `HandleRegister`,
+`HandleEnumerateBlocks`, `HandleCreateDynamic`, `HandleSetName`, `HandleLogHandler`, `HandleDeviceService`,
+`HandleSNDB`, `HandleBootloaderPassthrough` - with 19 file-statics in the subscriptions provider alone and 6
+in the script runtime. Nothing owns that state, two services cannot both have an `Init`, and the dispatcher is
+a switch rather than a table. Two shapes already exist beside it: `CoreTimeSyncService` is a class with a
+`Tick()`, and `StorageBlockFS` is a struct behind a global `Storage`. The tree is inconsistent; this picks one.
+
+**Convention.**
+
+```cpp
+// Core/Services/Register.h
+class RegisterService
+{
+public:
+    void Init();                              // explicit, called from the device's Main
+    bool Handle(const PacketFrame &frame);    // this service's CID dispatch
+private:
+    // the file-static state, moved in as members
+};
+extern RegisterService Register;              // one instance, defined in the service's header
+```
+
+- Non-virtual methods only, no inheritance.
+- No constructor that needs runtime work: `Init()` is called explicitly from the device's `Main()`, so
+  static-initialisation order never matters.
+- One instance per binary, in `Core/Services/`, not per device. A device enables a service by which `Handle`
+  the dispatcher calls (today's `Capabilities` gate), not by allocating one.
+- The file splits stay: the class is declared in the service's top header and its methods are defined in the
+  sibling files. Register's seven files and Subscriptions' six stay as they are; nothing is merged for tidiness.
+- The `Cid` enums stay put; the app mirrors them.
+- `Handle` returns whether it consumed the packet, so the dispatch chain becomes explicit.
+
+**Benefits.** State ownership and a real `Init`/reset (testable), no name collisions between services, a small
+`(service, handler)` dispatcher table, and a name for the documents' "Implementation Functions" sections.
+
+**Cost, measured not guessed.** Method names live in debug info only, and the state moves from file-static to
+member without changing size or order, so both images should stay within a handful of bytes. The real cost is
+the diff across ~24 files, and the risk is a missed `static` acquiring a different lifetime - which is what the
+native tests and both builds are for.
+
+**Order** (each step builds and passes before the next):
+1. `Register` - the biggest, and the one that proves the convention fits a split service.
+2. `Storage` - already a struct with an object; mostly renaming and moving `Init` in.
+3. `Subscriptions` - 19 file-statics and three files that talk to each other.
+4. `Script` - 6 statics plus the VM and a loaded-program table: the riskiest.
+5. `LogHandler`, `Device`/SNDB and the bootloader passthrough - small; the dispatcher table lands here.
+6. `AppInterface` last. The `Core/Functions/` helpers (`Packet`, `Dispatcher`, `Crc8`, `TimeSync`) stay free
+   functions: only the *services* become classes, and `TimeSync` is already one and is the shape to copy.
+
+**Must not change:** the wire protocol, the CID map, the register/block layouts, the `.pio` envs, the
+per-device composition, or anything under `Docs/`. No document change is expected.
+
+**Verification per step:** `./test.sh` (native firmware tests + the app suite + analyze), both `pio run` envs,
+and the safe HIL sweep once the rig is flashed.
+
+**Sequencing:** after the in-flight wave (six units are editing these files now) and after B10.
+
 ## Planned change: packet flags (2026-10-09)
 
 **B39 Packet flags: success/fail carry detail and replace the status byte (planned, owner request
