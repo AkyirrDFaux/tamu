@@ -15,6 +15,8 @@ Memory with 32-bit alignment, covering system, static and dynamic blocks. It is 
 | Read Only  | Non-writable from outside |
 | Persistent | Retained after reboot |
 | Trigger    | A write to this field calls a function before the write itself, and that function applies the write instead of the standard one. |
+
+`P`, `RO` and `TR` in the block tables stand for Persistent, Read Only and Trigger.
 #### Block Types
 | Block Type         | Index       | Note            |
 | ------------------ | ----------- | --------------- |

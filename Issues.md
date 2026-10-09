@@ -282,7 +282,7 @@ itself as device 1 with no net.
 
 **A59 Storage: `Storage_FlashInit` is missing from the main functions.** - **approved and applied** as `bool Init()`, described as finding and opening the storage partition; the namespace refactor (A12) stays in the backlog. - **awaiting a ruling.**
 
-**A60 The flag abbreviations are never defined.** Raised by A48: `P`, `RO` and `TR` appear in every block table and none of them is explained anywhere in `Docs/`. Add the legend where the flags are first used (`Register.md` "ValueInfo Flags" or `Data Formats.md`). The document lists four (`Docs/Services/Storage.md:40-47`); the code declares five, the extra being `bool Storage_FlashInit();` ("find/open the storage partition", `StorageDefs.h:31`). Add it to the list.
+**A60 The flag abbreviations are never defined.** - **approved and applied**: the shortcuts are spelled out below the flag table in `Register.md`. Raised by A48: `P`, `RO` and `TR` appear in every block table and none of them is explained anywhere in `Docs/`. Add the legend where the flags are first used (`Register.md` "ValueInfo Flags" or `Data Formats.md`). The document lists four (`Docs/Services/Storage.md:40-47`); the code declares five, the extra being `bool Storage_FlashInit();` ("find/open the storage partition", `StorageDefs.h:31`). Add it to the list.
 
 **B38 The measurement field flags lack the trigger bit.** From A48: `Register.md:52` makes the flag the gate, but `ResistiveMeas_Entries` (`DAS_v0.1/Measuring.h:46-48`, `Valu_v2.0/Measuring.h:47-49`) carries only `ValuePersistent` while `ResistiveMeas_Triggers` (`:80-81`) registers functions for fields 0 and 2. Set the flag on those two entries.
 
