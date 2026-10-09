@@ -6,7 +6,7 @@ A voltage divider based measurement, with reference resistor switching.
 | ------------------ | --- | ------ | ------ | ---- |
 | Sampling Rate      | 0   | P, (TR) | Number | Hz. The trigger is device-implementation specific: it clamps the value so the stored one equals the applied one. |
 | Sensor Type        | 1   | P      | `Enum` |      |
-| Filter Coefficient | 2   | P, (TR)      | Number | EMA coefficient (0-1), applied to the raw ADC value |
+| Filter Coefficient | 2   | P, (TR)| Number | EMA coefficient (0-1), applied to the raw ADC value |
 | Measured Value     | 3   | RO     | Number | -/V/kOhm/Lux/°C |
 | Current Range      | 4   | RO     | Number | kOhm |
 
