@@ -55,7 +55,7 @@ Script 4: Brightness regulation
 
 Script 5: Emote selector
 
-- Replaces the pupil based on the selected emote, in both light and dark mode. Forces a blink when the pupil changes.
+- Replaces the pupil based on the selected emote, in both light and dark mode. Forces a blink when the pupil shape changes.
 - Emotes:
 	- Normal (double parabola)
 	- Happy (caret)

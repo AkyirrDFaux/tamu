@@ -249,7 +249,7 @@ the `0x` prefix - `| Discover | 0 |`, `| Enumerate fields | 1 |`. Values below `
 unambiguously, but the dynamic table's fix (A1) introduces `0x10`..`0x13`. Either normalise every ID
 cell to prefixed uppercase hex, or record the exception in the style guide.
 
-**A56 Current Setup: blink is forced on a shape change only.** `Current Setup v3.md:58` - "Forces a
+**A56 Current Setup: blink is forced on a shape change only.** - **approved and applied**: "Forces a blink when the pupil shape changes." `Current Setup v3.md:58` - "Forces a
 blink when the pupil changes". Code `current_setup_scripts.dart:686-689` forces it only when the shape
 class changes; a lid-only change does not blink. Replace with `when the pupil shape changes`.
 
@@ -280,7 +280,7 @@ itself as device 1 with no net.
 
 **B8 Tamu is built as Core only.**
 
-**A59 Storage: `Storage_FlashInit` is missing from the main functions.** - **awaiting a ruling.**
+**A59 Storage: `Storage_FlashInit` is missing from the main functions.** - **approved and applied** as `bool Init()`, described as finding and opening the storage partition; the namespace refactor (A12) stays in the backlog. - **awaiting a ruling.**
 
 **A60 The flag abbreviations are never defined.** Raised by A48: `P`, `RO` and `TR` appear in every block table and none of them is explained anywhere in `Docs/`. Add the legend where the flags are first used (`Register.md` "ValueInfo Flags" or `Data Formats.md`). The document lists four (`Docs/Services/Storage.md:40-47`); the code declares five, the extra being `bool Storage_FlashInit();` ("find/open the storage partition", `StorageDefs.h:31`). Add it to the list.
 

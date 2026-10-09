@@ -37,6 +37,8 @@ A file is handed to other functions to have data stored in it or read from it, a
 | Write File        | 6  | Fragmentation, Name, File contents (stream) | Last sequential fragmentation index written | Respond only if requested, maximum 64 byte stream fragment |
 ### Implementation Functions
 #### Main Functions (implement per device, preferably not exposed)
+- `bool Init()`
+	Finds and opens the storage partition. Returns true if successful.
 - `uint32_t Read(uint32_t Address, uint32_t Length, char* Buffer)`
 	Reads Length bytes directly from flash at Address, an offset from the start of the flash sector, into Buffer, which must hold at least Length bytes. Returns the number of bytes actually read.
 - `bool Write(uint32_t Address, uint32_t Length, char* Buffer)`
