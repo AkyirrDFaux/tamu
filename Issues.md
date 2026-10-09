@@ -50,10 +50,8 @@ Ordering: this goes first in the code phase. It supersedes B17 (Format's reply a
 B26, and B19's script-list reply is touched by the same helper change. Verification is the usual gates plus the
 safe HIL sweep; no destructive suite is needed, since no storage or script wire format moves.
 
-Open questions for the owner: (1) is the payload the right carrier for the extra information, given bit 7 is
-free - a flag sub-field would keep payloads clean but change the flag semantics further; (2) does a failure
-always carry a reason byte, or only when the sender has one; (3) confirm the document wording for the response
-cells.
+Settled by the owner (2026-10-09): the detail rides in the **payload**; a failure carries a reason only when the
+sender has one; the response cells read `Success flag` / `Fail flag`.
 
 ## Doc fact check (2026-10-09)
 
