@@ -13,28 +13,28 @@ fixes are work for the beta window. Answer by ID: approve, reject or amend each 
 
 ### A. Doc fixes
 
-**A1 Register: dynamic command IDs.** `Docs/Services/Register.md:102-107` - the ID column reads `0`,
+**A1 Register: dynamic command IDs.** - **rejected**, the document is correct. The ID cell holds the last digit of the CMD: `0` under the `011x` heading is `0x0110`. Matches the owner's own SNDB edit (`001x`: 10/11/12/13 to 0/1/2/3). The guide's wording is the thing to sharpen, see A57. `Docs/Services/Register.md:102-107` - the ID column reads `0`,
 `1`, `2`, `3` under the `011x` heading. Code `Core/Services/RegisterDefs.h:39-44`: `Create = 0x10,
 Delete = 0x11, GetName = 0x12, SetName = 0x13`. Replace the four ID cells with `0x10`, `0x11`, `0x12`,
 `0x13`.
 
-**A2 Register: instance count.** `Register.md:23-24` - `Instances 0-255` on the Dynamic and Scripts
+**A2 Register: instance count.** - **approved and applied**. `Register.md:23-24` - `Instances 0-255` on the Dynamic and Scripts
 rows, contradicting the 6-bit `BlockInstance` on line 6. Code `RegisterDefs.h:47-55`: 64 instances per
 type, a global index `0..255` over the four banks. Replace the note cell with `Instances 0-63 per type;
 global index 0-255 across the four banks`.
 
-**A3 Register: enumerate reply omits the dynamic word form.** `Register.md:58` - `Fragmentation, Block
+**A3 Register: enumerate reply omits the dynamic word form.** - **approved and applied**. `Register.md:58` - `Fragmentation, Block
 types + maximum instance for each (uint16) stream`. Code `RegisterEnumerate.h:161-168` packs System and
 static types as `10.6` and the dynamic range as `8.8`. Replace with `Fragmentation, one packed word per
 present type: (type << 6) | maximum instance for the System and static types, and (bank type << 8) |
 highest global index for the dynamic range`.
 
-**A4 Register: Create Dynamic request and reply.** `Register.md:104` - Request `Index (uint16)`,
+**A4 Register: Create Dynamic request and reply.** - **revised**. The request gains `Name` (`Index (uint16), Name`, a fixed 16-character field), applied. The response keeps `Success (bool)`: the reply's `BlockIndex` echo is redundant because the host already knows the index it asked for, so B9 drops it from the code rather than documenting it. `Register.md:104` - Request `Index (uint16)`,
 Response `Success (bool)`. Code `RegisterPersist.h:104-107` reads an index **and a name**
 (`name_len = PayloadBytes - 2`) and replies with a block index. Replace with Request `Index (uint16),
 Name`, Response `BlockIndex, Ack`.
 
-**A5 Register: longer strings are truncated, not rejected.** `Register.md:27` - a write of a different
+**A5 Register: longer strings are truncated, not rejected.** - **revised**. `String` and `Filename` are not variable-length strings: they are fixed-size character fields, typically 8, 16 or 24 bytes. Proposed sentence: `A write of a different type or length fails. String and Filename are fixed-size character fields, typically 8, 16 or 24 bytes: a shorter value is space-padded at the end, a longer one is cut off.` `Register.md:27` - a write of a different
 type or length fails, and `String`/`Filename` may be shorter. Code `MemoryTypes.h:148-178` pads a
 shorter one (`:153-162`) and clamps a longer one (`:164-166`, "clamp; memcpy copies Size bytes
 anyway"); only a non-string length mismatch fails (`:169`). Append `and may be longer and are truncated
@@ -244,7 +244,7 @@ three.
 column reads `>10k Lux`. Code `app/test/current_setup.dart:170-176`: `luxSpan = 8850`. Replace the column
 with `>8.8k Lux` (only if 10k is not deliberate).
 
-**A57 Command ID cells are prefix-less.** Every ID cell in the service documents is written without
+**A57 Command ID cells are prefix-less.** - **replaced**. The convention is that the heading carries every digit but the last and the cell holds the final one, so no prefix belongs in an ID cell. Instead, the style guide's line reads `the table's ID cell holds the low part, in hex`, which invited the misreading. Proposed: `The leading digits are the high part of the CMD and the ID cell holds the final digit, in hex.` Every ID cell in the service documents is written without
 the `0x` prefix - `| Discover | 0 |`, `| Enumerate fields | 1 |`. Values below `0x10` read
 unambiguously, but the dynamic table's fix (A1) introduces `0x10`..`0x13`. Either normalise every ID
 cell to prefixed uppercase hex, or record the exception in the style guide.
@@ -278,7 +278,9 @@ implements USB and BLE only.
 other cores by `NetID.1` and excluding foreign nets; `SNDB.h` stores device pairs only, and the core adds
 itself as device 1 with no net.
 
-**B8 Tamu is built as Core only.** `Devices.md:4` says "Core and Node"; `Tamu_v2.0A/Main.h:32-38`
+**B8 Tamu is built as Core only.**
+
+**B9 Create Dynamic replies with a redundant block index.** `RegisterPersist.h:107` replies `SendBlockIndexAck(frame, index)` - a 3-byte `BlockIndex` echo plus a 1-byte ack - while Delete and Set Name reply a plain status (`:115`, `:131`). The host already knows the index it sent (the app computes it, `register_client.dart:421-431`). Reply a plain status and drop the echo, then have the app use the index it sent instead of `reply[0]` (`register_client.dart:437-439`). `Devices.md:4` says "Core and Node"; `Tamu_v2.0A/Main.h:32-38`
 declares `Capabilities::Core` and no node build exists.
 
 ### C. Checked and correct

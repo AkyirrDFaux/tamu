@@ -20,8 +20,8 @@ Memory with 32-bit alignment, covering system, static and dynamic blocks. It is 
 | ------------------ | ----------- | --------------- |
 | System             | 0           |                 |
 | Static block types | ...         |                 |
-| Dynamic            | 0x3F0-0x3F3 | Instances 0-255 |
-| Scripts            | 0x3F4-0x3F7 | Instances 0-255 |
+| Dynamic            | 0x3F0-0x3F3 | Instances 0-63 per type; global index 0-255 across the four banks |
+| Scripts            | 0x3F4-0x3F7 | Instances 0-63 per type; global index 0-255 across the four banks |
 | Reserved           | 0x3F8-0x3FF |                 |
 ### System + Static Memory Blocks
 Basic flat memory, directly accessible internally by the device, with a compile-time layout. A write of a different type or length fails; `String` and `Filename` writes may be shorter and are space-padded to the field size.
@@ -55,7 +55,7 @@ Storage is a structural 1:1 mirror of the persistent memory, held in a `.SV` fil
 ### Basic Commands (010x)
 | Name             | ID | Request                                             | Response                                                               | Note                                |
 | ---------------- | -- | --------------------------------------------------- | ---------------------------------------------------------------------- | ----------------------------------- |
-| Enumerate blocks | 0  |                                                     | Fragmentation, Block types + maximum instance for each (uint16) stream |                                     |
+| Enumerate blocks | 0  |                                                     | Fragmentation, one word per present type: 10.6 (type, max instance) for the System and static types, 8.8 (bank type, highest global index) for the dynamic range |                                     |
 | Enumerate fields | 1  | (BlockType << 6) + instance (uint16, 4-byte padded) | Fragmentation, Field&Key (uint16) stream                               | Return empty if nonexistent         |
 | Read             | 2  | `BlockInfo`                                         | `BlockInfo`, `ValueInfo`, Value                                            | Single entry                        |
 | Write            | 3  | `BlockInfo`, `ValueInfo`, Value                         | Success (echoes the request)                                           | Respond when required, single entry |
