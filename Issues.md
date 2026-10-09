@@ -58,7 +58,7 @@ Code accepts 0 (`StorageDefs.h:57-58`, no zero check). Drop `(>0)` from both cel
 info first and the 8-byte name at offset 4. Reorder both cells to `Fragmentation, Name (first
 fragment), File contents (stream)`.
 
-**A10 Storage: newest entry wins.** `Storage.md:5` - "Its first valid entry is that pointer ... The
+**A10 Storage: newest entry wins.** - **approved and applied**, with two additions from the owner: older slots need not be invalidated at all (the newest wins), so B13 drops the invalidation loop, and the page is erased once it is full. `Storage.md:5` - "Its first valid entry is that pointer ... The
 block is erased only when the last entry is invalidated." Code `StorageBlockFS.h:40-52,73-78`: the newest
 valid slot is the pointer, and the page is erased only when no unused slot remains. Replace with `Its
 newest valid entry is that pointer ... The page is erased only when every entry is written.`
