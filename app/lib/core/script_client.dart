@@ -42,7 +42,7 @@ class ScriptClient {
 
   /// True when a management command replies FLAG_SUCCESS. These commands carry no status
   /// byte; the device sets the packet SUCCESS/FAIL flags instead. A transport failure or a
-  /// FLAG_FAIL reply is false.
+  /// FLAG_FAIL reply is false, via [PacketResponse.ok].
   Future<bool> _requestOk(
     ServiceType service,
     int cid, {
@@ -52,7 +52,7 @@ class ScriptClient {
     try {
       final response = await _link.requestWithFlags(deviceId, service, cid,
           payload: payload, timeout: timeout ?? const Duration(seconds: 3));
-      return response.success;
+      return response.ok; // success && !fail, matching the subscriptions client
     } catch (error) {
       AppDiagnostics.log('script', 'request failed: $error');
       return false;

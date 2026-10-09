@@ -70,7 +70,7 @@ class RegisterClient {
   /// True when a flag-answering command replies FLAG_SUCCESS; a transport failure or a
   /// FLAG_FAIL reply is false.
   Future<bool> _requestOk(int cid, {List<int> payload = const [], Duration? timeout}) async =>
-      (await requestWithFlags(cid, payload: payload, timeout: timeout))?.success ?? false;
+      (await requestWithFlags(cid, payload: payload, timeout: timeout))?.ok ?? false;
 
   /// Slices the value bytes after a ValueInfo header, clamped to the declared size
   /// (the reply may carry service-level padding past the value).
