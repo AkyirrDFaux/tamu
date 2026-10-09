@@ -12,15 +12,13 @@ The data types used across the protocol, with their enum value and encoding. A t
 | `Vector`       | 0x07  | A 1D array of `Number`, templated as `Vector<N>`.                        |
 | `Matrix`       | 0x08  | A 2D array of `Number`, templated as `Matrix<N,M>`.                      |
 | `Colour`       | 0x09  | Four `uint8` values, RGBA.                                               |
-| `String`       | 0x0A  | Text, 8 bits per character, standard.                                    |
 | `Filename`     | 0x0B  | 8 characters.                                                            |
-| `Name`         | 0x12  | 16 characters. The reusable type for any 16-character name.              |
 | `Enum`         | 0x0C  | A generic enum, used in dictionaries.                                    |
-| `Deleted`      | 0x0D  | A deleted entry.                                                         |
 | `Uint32`       | 0x0E  | An unsigned 32bit integer.                                               |
 | `DevType`      | 0x0F  | A device type, as listed in [[Devices]].                                 |
 | `BlockInfo`    | 0x10  | A 32-bit register pointer: 10-bit type, 6-bit instance, 8-bit field and 8-bit key.                                           |
-| `Char`         | 0x11  | One character, an element of a `String`. |
+| `Char`         | 0x11  | One character, an element of a `Name`.                                   |
+| `Name`         | 0x12  | 16 characters. The reusable type for any 16-character name.              |
 | `UnknownKeyed` | 0x100 | The generic dictionary marker.                                           |
 | `Geometry`     | 0x101 | A dictionary describing a geometric shape.                               |
 | `Texture`      | 0x102 | A dictionary describing a texture.                                       |
