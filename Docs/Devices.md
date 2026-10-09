@@ -9,7 +9,7 @@ Use define `TYPE_CORE`, `TYPE_ROUTER` or `TYPE_NODE`.
 | Gyr & Acc          | SDA 4, SCL 5         | LSM6DS3TR-C (0x6A), with 4k7 pull-ups |
 | Fan PWM Output     | 6, 10                |      |
 | LED Display Output | 0, 3                 |      |
-| White LED          | Missing hardware     | Ignore in the implementation |
+| White LED          | Missing hardware     | Ignore in the implementation; the bootloader's boot signal has nothing to drive |
 | Unused exposed     | 1, 7, 8              |      |
 Services:
 
@@ -33,7 +33,7 @@ Storage: ... a lot (MBs)
 | Feature          | Pins                     | Note |
 | ---------------- | ------------------------ | ---- |
 | RSBus 3V3        | TX PD5, RX PD6, TXEN PD4 |      |
-| LEDs             | Red PA1, White PD0       | Active high |
+| LEDs             | Red PA1, White PD0       | Active high; the white LED is the bootloader indicator |
 | Button           | PC0                      | Requires a pull-up; active low |
 | Range selector 1 | PA2 - PC7 - PD3          | 330 Ohm, 10k Ohm and 330k Ohm, P-channel switches (high is off) |
 | Range selector 2 | PC1 - PC2 - PC3          | 330 Ohm, 10k Ohm and 330k Ohm, P-channel switches (high is off) |

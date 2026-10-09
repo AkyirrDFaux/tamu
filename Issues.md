@@ -140,17 +140,17 @@ minutes`.
 **A29 System Block: discovery repeats at a fixed interval.** - **rejected**, the document is right: jitter is intended so the core and the network are not overwhelmed. The code sends a fixed 500 ms, so B25 adds the jitter. `System Block...md:47` - "at random
 intervals". Code `DAS_v0.1/Main.h:142-152` sleeps a fixed 500 ms. Replace with `every 500 ms`.
 
-**A30 Bootloader: the write reply is a flag.** `Bootloader.md:52` - Response `Success (bool)`. Code
+**A30 Bootloader: the write reply is a flag.** - **rejected**, the document is right: the reply carries a bool, is-ok or is-not. The code sends flags with no payload, so B26 gives it a bool. `Bootloader.md:52` - Response `Success (bool)`. Code
 `Services/Device.h:171-173` sets `FLAG_SUCCESS`/`FLAG_FAIL`. Replace with `Success (flag)`.
 
-**A31 Bootloader: the core lights no LED.** `Bootloader.md:3` - "lights the white LED permanently".
+**A31 Bootloader: the core lights no LED.** - **addressed in the devices file**, not in the bootloader document, whose intention stands. `Devices.md` records the Tamu board's missing white LED and the DAS's PD0 indicator. `Bootloader.md:3` - "lights the white LED permanently".
 Code `Bootloader/CoreBootloader.cpp:104-134` drives no LED; only the DAS does
 (`DAS_v0.1/Bootloader.cpp:307-322`). Append `(where fitted)`.
 
-**A32 Log Handler: priority is fixed.** `Log Handler.md:12` - "at the priority that corresponds to it".
+**A32 Log Handler: priority is fixed.** - **rejected**, the document is right: per-log priorities are the intention. Every send goes out at `PRIORITY_ERROR` today, so B27 implements proper priorities. `Log Handler.md:12` - "at the priority that corresponds to it".
 Code `Log.h:32` always uses `PRIORITY_ERROR`. Replace with `at the highest priority (errors)`.
 
-**A33 Data Formats: `Effect` is not a type.** `Data Formats.md:26` lists it; the enum
+**A33 Data Formats: `Effect` is not a type.** - **approved and applied.** `Data Formats.md:26` lists it; the enum
 (`Enums.h:59-61`) has `UnknownKeyed`, `Geometry`, `Texture` only, and effects are values continuing the
 texture enum. Delete the row and reword line 53 to name the three keyed types, adding `Texture values
 name textures and effects.`
@@ -281,6 +281,10 @@ itself as device 1 with no net.
 **B8 Tamu is built as Core only.**
 
 **A59 Storage: `Storage_FlashInit` is missing from the main functions.** The document lists four (`Docs/Services/Storage.md:40-47`); the code declares five, the extra being `bool Storage_FlashInit();` ("find/open the storage partition", `StorageDefs.h:31`). Add it to the list.
+
+**B26 The passthrough write reply carries flags, not a bool.** From A30: `Device.h:171-173` replies `FLAG_TYPE | FLAG_START | FLAG_STOP | (ok ? FLAG_SUCCESS : FLAG_FAIL)` with no payload. The reply should carry a bool in the payload as the document says.
+
+**B27 Log priorities are not implemented.** From A32: every report goes out at `PRIORITY_ERROR` (`Core/Functions/Log.h:32`, "Errors are the highest class"). Give each log its proper priority, `PRIORITY_LOG` being the lowest (`Packet.h:32-38`).
 
 **B22 The `DataType` enum gains `Char`.** From A22: a string element needs a character type, and the enum has none. The next free code below the keyed block is `0x11` (`BlockInfo` is `0x10`); the document's row already assumes it.
 

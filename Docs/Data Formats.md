@@ -24,7 +24,6 @@ The data types used across the protocol, with their enum value and encoding. A t
 | `UnknownKeyed` | 0x100 | The generic dictionary marker.                                           |
 | `Geometry`     | 0x101 | A dictionary describing a geometric shape.                               |
 | `Texture`      | 0x102 | A dictionary describing a texture.                                       |
-| `Effect`       | -     | A dictionary describing a graphical effect.                              |
 ### ID
 A device ID is 16 bits, of which 6 bits are the net and 10 bits are the device.
 
@@ -51,4 +50,4 @@ An address is written as `NetID.Device`:
 - 0.3FE: branch broadcast
 - 3.2: device 2 in net 3
 ### Dictionaries
-The keyed types, `UnknownKeyed`, `Geometry`, `Texture` and `Effect`, describe structured data as a dictionary of keys. The generic dictionary is always key 0 with no value, a length of 0 and an invalid offset, which makes it a marker. The keys of the geometry and the texture dictionaries are listed in [[Modules and Blocks/LED Display]].
+The keyed types, `UnknownKeyed`, `Geometry` and `Texture`, describe structured data as a dictionary of keys. Texture values name textures and effects. The generic dictionary is always key 0 with no value, a length of 0 and an invalid offset, which makes it a marker. The keys of the geometry and the texture dictionaries are listed in [[Modules and Blocks/LED Display]].
