@@ -328,7 +328,7 @@ itself as device 1 with no net.
 
 **B15 `MoveFiletable` resizes the table.** From A13: the table size is fixed per device and the table moves only when it is full, so the `OPTIMIZE_SPEED` grow/shrink arithmetic goes (`StorageBlockFS.h:262-280`).
 
-**B16 The table is formatted at a fixed one page.** From A13 and A51: `Format()` sets `entry0.size = PAGE_SIZE` (`StorageBlockFS.h:586-597`) and nothing grows it once B15 lands, so the per-device table size needs a constant the device declares (`Devices.md` says 4 pages for Tamu, 2 for Valu).
+**B16 The table is formatted at a fixed one page.** From A13 and A51: `Format()` sets `entry0.size = PAGE_SIZE` (`StorageBlockFS.h:586-597`) and nothing grows it once B15 lands, so the per-device table size needs a constant the device declares (`Devices.md:37` says 4 pages for Tamu, `:63` one page for Valu).
 
 **B11 Create and Resize File accept a zero size.** From A8: a zero-size file should not exist. `BlocksForSize(0)` divides to zero and is forced to one block (`StorageDefs.h:56-57`), and neither path rejects 0 (`StorageBlockFS.h:443`, `:481-489`). Reject size 0 with a failure status.
 
