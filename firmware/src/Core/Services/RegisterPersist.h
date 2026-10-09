@@ -39,7 +39,7 @@ static void StaticRecallAll() {
 
     // Defensive: a present-but-erased mirror (0xFF) is not a valid saved space. The filesystem
     // erases a file's blocks when it is created, so a valid `.SV` is never all 0xFF; this only
-    // guards a torn write. The System Name is the validity anchor (always space-padded text),
+    // guards a torn write. The System Name is the validity anchor (always NUL-padded text since B10),
     // so a 0xFF byte there means the mirror was never validly written - re-persist the live
     // values rather than clobbering the defaults and the Name with erased bytes.
     for (uint16_t i = 0; i < SYSTEM_NAME_LEN && i < cnt; i++) {

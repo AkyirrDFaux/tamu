@@ -24,7 +24,7 @@ void SubscriptionsRequestReRegister(uint16_t addr);
 static inline void SendDeviceReply(const PacketFrame &frame, PacketFrame &reply,
                                    const void *payload, uint8_t len)
 {
-    PacketConstruct(&reply, frame.id_src, frame.srv_src, frame.trid,
+    PacketConstruct(&reply, frame.id_src, frame.srv_tgt, frame.trid,
                      FLAG_TYPE | FLAG_START | FLAG_STOP,
                      (const uint8_t *)payload, len);
     DispatchPacket(reply);
@@ -62,7 +62,7 @@ void HandleSNDB(const PacketFrame &frame)
             for (uint16_t f = 0; f < total_frags; f++) {
                 uint16_t off = 4;
                 while (off - 4 < MAX_FRAG_CONTENT_SIZE && sent < count && SNDB::IterNext(entry)) {
-                    uint16_t wire_id = entry.shortID;
+                    uint16_t wire_id = RegistryAddress(entry);
                     memcpy(tx_frame.payload + off, entry.uid.bytes, 14);
                     memcpy(tx_frame.payload + off + 14, &wire_id, 2);
                     off += 16;
@@ -80,32 +80,33 @@ void HandleSNDB(const PacketFrame &frame)
             // Disambiguate by length (Docs: "ID or SN (based on length)"): an ID request is a
             // 2-byte uint16, an SN request the 14-byte serial. Payloads are not padded.
             if (PayloadBytes(frame) == 2) {
-                // The request carries a full net.device. Local node entries are stored
-                // device-only, while the core's own entry is net-qualified, so try the
-                // exact ID first and then the device field.
+                // The request carries a full net.device. Local devices are stored with net
+                // 0, so a net-qualified request for a local device also tries the net-0
+                // (device-only) form.
                 uint16_t lookup_id = *reinterpret_cast<const uint16_t *>(frame.payload);
                 found = SNDB::GetEntry(lookup_id, entry) ||
-                        SNDB::GetEntry((uint16_t)(lookup_id & 0x3FF), entry);
+                        (((lookup_id >> 10) != 0) &&
+                         SNDB::GetEntry((uint16_t)(lookup_id & 0x3FF), entry));
             } else if (PayloadBytes(frame) >= 14) {
                 const SerialNumber *lookup_sn = reinterpret_cast<const SerialNumber *>(frame.payload);
-                uint16_t lookup_id = SNDB::FindShortID(*lookup_sn);
-                if (lookup_id != ADDR_INVALID) {
-                    found = SNDB::GetEntry(lookup_id, entry);
+                uint16_t lookup_addr = SNDB::FindAddress(*lookup_sn);
+                if (lookup_addr != ADDR_INVALID) {
+                    found = SNDB::GetEntry(lookup_addr, entry);
                 }
             }
 
             if (found) {
                 uint8_t payload[16];
-                uint16_t wire_id = entry.shortID;
+                uint16_t wire_id = RegistryAddress(entry);
                 memcpy(payload, entry.uid.bytes, 14);
                 memcpy(payload + 14, &wire_id, 2);
-                PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.trid,
+                PacketConstruct(&tx_frame, frame.id_src, frame.srv_tgt, frame.trid,
                                  FLAG_TYPE | FLAG_START | FLAG_STOP, payload, 16);
                 DispatchPacket(tx_frame);
             } else {
                 // Send an empty response to indicate not found
                 DeviceLog("DEVICE", "SNDB lookup miss (id or sn)");
-                PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.trid,
+                PacketConstruct(&tx_frame, frame.id_src, frame.srv_tgt, frame.trid,
                                  FLAG_TYPE | FLAG_START | FLAG_STOP, nullptr, 0);
                 DispatchPacket(tx_frame);
             }
@@ -115,21 +116,21 @@ void HandleSNDB(const PacketFrame &frame)
         case 0x12: { // SNDB Write per docs 00.12
             if (PayloadBytes(frame) >= 16) {
                 const SerialNumber *write_sn = reinterpret_cast<const SerialNumber *>(frame.payload);
-                // Stored/allocated IDs are device-only (0..1023): strip any net bits the
-                // app may have sent so the registry stays uniform.
-                uint16_t write_id = (uint16_t)(LoadUnaligned<uint16_t>(frame.payload + 14) & 0x3FF);
+                // The ID is net-qualified (net.device): local devices carry net 0, other
+                // cores their NetID.1. AddDevice rejects a foreign-net address.
+                uint16_t write_id = LoadUnaligned<uint16_t>(frame.payload + 14);
 
                 // Per Docs/Services/System Block and Device Commands.md: ID 0 = delete the
                 // entry carrying this serial number.
                 bool success = (write_id != 0)
                                    ? SNDB::AddDevice(*write_sn, write_id)
                                    : SNDB::RemoveDevice(
-                                         SNDB::FindShortID(*write_sn));
+                                         SNDB::FindAddress(*write_sn));
                 if (!success) {
                     DeviceLog("DEVICE", "SNDB write id %u failed", (unsigned)write_id);
                 }
                 // Always acknowledge (empty frame = failure, like the CID 13 not-found case).
-                PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.trid,
+                PacketConstruct(&tx_frame, frame.id_src, frame.srv_tgt, frame.trid,
                                  FLAG_TYPE | FLAG_START | FLAG_STOP,
                                  success ? frame.payload : nullptr, success ? 16 : 0);
                 DispatchPacket(tx_frame);
@@ -160,7 +161,7 @@ static void HandleBootloaderPassthrough(const PacketFrame &frame, uint8_t cid)
         uint8_t raw[Bootloader::DATA_SIZE];
         Bootloader::EncodeWrite(offset, frame.payload + 4, raw);
         bool ok = RS485_SendRaw(raw, Bootloader::DATA_SIZE);
-        PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.trid,
+        PacketConstruct(&tx_frame, frame.id_src, frame.srv_tgt, frame.trid,
                          FLAG_TYPE | FLAG_START | FLAG_STOP | (ok ? FLAG_SUCCESS : FLAG_FAIL),
                          nullptr, 0);
         DispatchPacket(tx_frame);
@@ -182,14 +183,14 @@ static void HandleBootloaderPassthrough(const PacketFrame &frame, uint8_t cid)
             uint8_t out[4 + Bootloader::PAYLOAD_SIZE];
             memcpy(out, &offset, 4);
             memcpy(out + 4, Bootloader::Payload(resp), Bootloader::PAYLOAD_SIZE);
-            PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.trid,
+            PacketConstruct(&tx_frame, frame.id_src, frame.srv_tgt, frame.trid,
                              FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_SUCCESS,
                              out, sizeof(out));
             DispatchPacket(tx_frame);
             return;
         }
     }
-    PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.trid,
+    PacketConstruct(&tx_frame, frame.id_src, frame.srv_tgt, frame.trid,
                      FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_FAIL, nullptr, 0);
     DispatchPacket(tx_frame);
 }
@@ -211,6 +212,17 @@ void HandleDeviceService(const PacketFrame &frame)
         if (PayloadBytes(frame) >= 18) // Core-discover response
         {
 #ifdef TYPE_CORE
+            // Another core answered Core discover: store it as its NetID.1 (Docs: "Other
+            // cores are stored only with their NetID.1"). A net matching ours is the
+            // collision case (latched in HandleDiscoverResponse); it is not stored. Skip the
+            // write when the entry is already present so the periodic round does not churn.
+            const SerialNumber *peer_sn = reinterpret_cast<const SerialNumber *>(frame.payload);
+            uint8_t peer_net = (uint8_t)((frame.id_src >> 10) & 0x3F);
+            uint16_t peer_addr = MakeId(peer_net, 1);
+            if (peer_net != 0 && peer_net != DeviceStatus.NetId &&
+                !(*peer_sn == GetSerialNumber()) &&
+                SNDB::FindAddress(*peer_sn) != peer_addr)
+                SNDB::AddDevice(*peer_sn, peer_addr);
             CoreTimeSync.HandleDiscoverResponse(frame);
 #endif
         }
@@ -279,18 +291,38 @@ void HandleDeviceService(const PacketFrame &frame)
             const SerialNumber *incoming_sn = reinterpret_cast<const SerialNumber *>(frame.payload);
             SerialNumberToString(*incoming_sn, sn_str, sizeof(sn_str));
 
-            uint16_t NewAddr = SNDB::FindShortID(*incoming_sn);
+            // The core never registers itself, so a Discover carrying our own serial (a
+            // looped-back broadcast could deliver one) is ignored rather than allocating a
+            // bogus device ID.
+            if (*incoming_sn == GetSerialNumber())
+                return;
+
+            // Foreign nets: a device broadcasting from the local net (net 0 while unassigned,
+            // or our net) gets an ID and is stored; a device already addressed in another net
+            // is dropped - not stored, not assigned (Docs: "Devices from foreign nets are not
+            // stored").
+            uint8_t src_net = (uint8_t)((frame.id_src >> 10) & 0x3F);
+            if (src_net != 0 && src_net != DeviceStatus.NetId)
+            {
+                DeviceLog("CORE", "Discover from foreign net %u ignored: %s",
+                          (unsigned)src_net, sn_str);
+                return;
+            }
+
+            uint16_t NewAddr = SNDB::FindAddress(*incoming_sn);
 
             if (NewAddr != ADDR_INVALID)
             {
-                DeviceLog("CORE", "Re-discovered device: %s -> Assigned ID: %d", sn_str, NewAddr);
+                DeviceLog("CORE", "Re-discovered device: %s -> Assigned ID: %d", sn_str,
+                          (int)(NewAddr & 0x3FF));
             }
             else
             {
                 NewAddr = SNDB::NewDevice(*incoming_sn);
                 if (NewAddr != ADDR_INVALID)
                 {
-                    DeviceLog("CORE", "Registered new device: %s -> Assigned ID: %d", sn_str, NewAddr);
+                    DeviceLog("CORE", "Registered new device: %s -> Assigned ID: %d", sn_str,
+                              (int)(NewAddr & 0x3FF));
                 }
                 else
                 {
@@ -305,9 +337,9 @@ void HandleDeviceService(const PacketFrame &frame)
             // per "responses echo the request's TRID".
             AssignPayload response_data;
             response_data.sn = *incoming_sn;
-            // SNDB stores/allocates device-only IDs (0..1023); the core's NetID is
-            // automatically added here so the node's address is net-qualified.
-            response_data.new_addr = MakeId(DeviceStatus.NetId, NewAddr);
+            // Local devices are stored with net 0; the core's NetID is added here so the
+            // node's address is net-qualified.
+            response_data.new_addr = MakeId(DeviceStatus.NetId, (uint16_t)(NewAddr & 0x3FF));
 
 #ifdef USE_SUB_REQUEST
             // The node just (re-)appeared with an empty provider table, so ask for this
@@ -319,7 +351,7 @@ void HandleDeviceService(const PacketFrame &frame)
 #endif
 
             PacketConstruct(&tx_frame, ADDR_BROADCAST,
-                             frame.srv_src, // originator's service tag (== its echoed TRID)
+                             frame.srv_tgt, // the request CMD (Device service)
                              frame.trid,    // echo the request TRID
                              FLAG_TYPE | FLAG_START | FLAG_STOP,
                              reinterpret_cast<const uint8_t *>(&response_data),
@@ -359,7 +391,7 @@ void HandleDeviceService(const PacketFrame &frame)
                 memcpy(rpl + 0, &time_sent, 4);
                 memcpy(rpl + 4, &t1, 4);
                 memcpy(rpl + 8, &t2, 4);
-                PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.trid,
+                PacketConstruct(&tx_frame, frame.id_src, frame.srv_tgt, frame.trid,
                                  FLAG_TYPE | FLAG_START | FLAG_STOP, rpl, 12,
                                  PRIORITY_TIMESYNC);
                 DispatchPacket(tx_frame);
@@ -376,7 +408,7 @@ void HandleDeviceService(const PacketFrame &frame)
             uint8_t rpl[14+4];
             memcpy(rpl, &GetSerialNumber(), 14);
             memcpy(rpl+14, &uptime, 4);
-            PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.trid,
+            PacketConstruct(&tx_frame, frame.id_src, frame.srv_tgt, frame.trid,
                              FLAG_TYPE | FLAG_START | FLAG_STOP, rpl, 18);
             DispatchPacket(tx_frame);
 #endif

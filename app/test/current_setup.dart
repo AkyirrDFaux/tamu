@@ -408,7 +408,7 @@ Future<void> configureDisplays(RegisterClient reg) async {
   // Preserve the mounting rotations fixed on the device, by instance (not by side).
   await setStatic(reg, BlockType.vysiDisplay.value, 0, 1, dispOffsetInst0);
   await setStatic(reg, BlockType.vysiDisplay.value, 1, 1, dispOffsetInst1);
-  final layout = 'LAY_1'.padRight(8).codeUnits; // 8-char space-padded storage name
+  final layout = <int>[...'LAY_1'.codeUnits, ...List<int>.filled(3, 0)]; // 8-char null-padded storage name
   await setStatic(reg, BlockType.vysiDisplay.value, dispLeft, 3, layout);
   await setStatic(reg, BlockType.vysiDisplay.value, dispRight, 3, layout);
   // Start at the low end of the range; script 4 then drives it from the LDR. After the

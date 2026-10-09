@@ -242,7 +242,7 @@ void main() async {
     if (entry == null || entry.meta.size != 16) fail('string input missing/size wrong');
 
     // A shorter String write declares its real length; the device must fill the rest of the
-    // fixed-size input with spaces rather than leaving stale bytes.
+    // fixed-size input with NULs rather than leaving stale bytes.
     final meta = ValueInfo(type: entry.meta.type, flags: entry.meta.flags, key: 0, size: 3);
     if (!await c.writeEntry(1, ScriptField.input, 0, meta, 'abc'.codeUnits)) {
       fail('short string write failed');
@@ -250,7 +250,7 @@ void main() async {
     final back = await c.readEntry(1, ScriptField.input, 0);
     if (back == null || back.value.length != 16) fail('string input size wrong: ${back?.value.length}');
     final text = String.fromCharCodes(back.value);
-    if (text != 'abc${' ' * 13}') fail('short string not space-padded: "$text"');
+    if (text != 'abc${'\x00' * 13}') fail('short string not null-padded: "$text"');
 
     if (!await c.unload(1)) fail('unload failed');
     await st.deleteFile('SCR_001');

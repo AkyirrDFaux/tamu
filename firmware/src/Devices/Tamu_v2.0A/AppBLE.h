@@ -189,7 +189,7 @@ static void StartAppAdvertising()
     adv->removeServices();
     bool uuidOk = adv->addServiceUUID(BLE_SERVICE_UUID);
     adv->enableScanResponse(true); // must precede setName (see ordering note)
-    // The System Name is a fixed 16-char field (space-padded, no terminator); BLE wants a
+    // The System Name is a fixed 16-char field (NUL-padded since B10, no terminator); BLE wants a
     // NUL-terminated C string, so copy it trimmed.
     char advName[SYSTEM_NAME_LEN + 1];
     uint8_t n = SYSTEM_NAME_LEN;

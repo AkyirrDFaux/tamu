@@ -40,6 +40,17 @@ void main() {
     });
   });
 
+  group('padName', () {
+    test('pads a short name with NULs to the 8-byte wire field (B10)', () {
+      expect(StorageClient.padName('A'),
+          [0x41, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+    });
+
+    test('truncates an over-long name to 8 bytes', () {
+      expect(StorageClient.padName('ABCDEFGHIJ'), 'ABCDEFGH'.codeUnits);
+    });
+  });
+
   group('stripFragmentNames', () {
     // A reassembled CID-5 stream is [name (8)][content] per fragment (B12); the reassembly
     // layer has already removed the 4-byte frag info from each.

@@ -83,6 +83,35 @@ void main() {
     await pump(tester, 'SUBREQ', data);
   });
 
+  testWidgets('.SNREG decodes the owning net into net.device', (tester) async {
+    // 32-byte RegistryEntry (SNDB.h): u16 valid, u16 device, u8 net, 11 reserved, SN(14).
+    // Local devices store net 0; other cores store their NetID with device 1.
+    List<int> entry(int valid, int device, int net, List<int> sn) => <int>[
+          valid & 0xFF, (valid >> 8) & 0xFF,
+          device & 0xFF, (device >> 8) & 0xFF,
+          net & 0x3F,
+          ...List.filled(11, 0),
+          ...sn,
+          0, 0, // tail padding to 32 bytes
+        ];
+    final snA = List<int>.generate(14, (i) => i);
+    final snB = List<int>.generate(14, (i) => 0x80 + i);
+    // Device 5 on another core's net 3, then local device 2 (net 0).
+    final data = <int>[...entry(0x55AA, 5, 3, snA), ...entry(0x55AA, 2, 0, snB)];
+    expect(data.length, 64);
+    await tester.pumpWidget(MaterialApp(
+      theme: buildTheme(),
+      home: Scaffold(
+          body: FileViewPage(
+              deviceId: 1, name: '.SNREG', size: data.length, data: data)),
+    ));
+    await tester.pump();
+    expect(tester.takeException(), isNull, reason: '.SNREG threw');
+    expect(find.text('3.5'), findsOneWidget); // other core: net 3, device 5
+    expect(find.text('0.2'), findsOneWidget); // local device: net 0, device 2
+    expect(find.text(serialNumberToHex(snA)), findsOneWidget);
+  });
+
   test('file type detection tolerates wire padding', () {
     // Older renames stored NUL-padded names (SUBREQ\0\0); the classification
     // must normalize both space and NUL padding.

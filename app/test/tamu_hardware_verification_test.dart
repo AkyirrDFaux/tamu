@@ -97,7 +97,10 @@ void main() {
     expect(core, isNotNull);
     expect(core!.capabilities & Capability.core, isNot(0));
     final entries = await db.sndbEntries();
-    expect(entries.any((e) => e.$1 == 1), isTrue);
+    // The core does not register itself; the SNDB lists the net's devices (local devices with
+    // net 0, other cores with their NetID.1), so no entry should be the connected core (id 1).
+    expect(entries.any((e) => e.$1 == 1 || (idDevice(e.$1) == 1 && idNet(e.$1) != 0)),
+        isFalse);
     // TimeSync via Register uptime
     await db.refreshRuntime(1);
     expect(db.byId(1)!.uptimeMs, greaterThan(0));
@@ -277,7 +280,7 @@ void main() {
         reason: 'the mirror was re-persisted after the erase');
   }, timeout: const Timeout(Duration(seconds: 60)));
 
-  // HIL: System Name is the documented fixed 16-byte field, space-padded (no terminator).
+  // HIL: System Name is the documented fixed 16-byte field, null-padded.
   test('HIL: System Name write clamps to 16 bytes', skip: skipReason, () async {
     final reg = RegisterClient(deviceId: 1);
     final before = await reg.readField(6, 0);

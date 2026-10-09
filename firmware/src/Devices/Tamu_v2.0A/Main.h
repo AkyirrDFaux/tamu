@@ -29,10 +29,13 @@ extern const DeviceType kDeviceType = DeviceType::Tamu_v2_0A;
 // Core (ID assignment, SN registry, time sync), the app link, and both user
 // memory services - matching the USE_* build flags so the app shows their views.
 // Subscriptions compiles both roles (USE_SUB_REQUEST + USE_SUB_PROVIDE).
+// Node is advertised (Docs/Devices.md: "Tamu v2.0A ... Core and Node") but is decorative
+// for now: Node is an end device (sensor/actuator/display), and no firmware behaviour reads
+// the bit yet - it may matter for networking later.
 extern const uint32_t kCapabilities = Capabilities::Core |
+                                        Capabilities::Node |
                                         Capabilities::DynamicMemory |
                                         Capabilities::Scripts |
-                                        Capabilities::StorageFiles |
                                         Capabilities::AppInterface |
                                         Capabilities::SubscriptionRequest |
                                         Capabilities::SubscriptionProvide;
@@ -74,7 +77,7 @@ struct StaticVolatile {
     Vysi1Volatile display[2];     // BlockType 6
 };
 StaticPersistent staticPer = {
-    // Name is a fixed 16-char space-padded field (no terminator).
+    // Name is a fixed 16-char null-padded field.
     .system = {.Name = {'T','a','m','u',' ','v','2','.','0','A',' ',' ',' ',' ',' ',' '}, .NetId = 0},
     .fan = {},
     .accgyr = {},
@@ -130,7 +133,7 @@ if (!AppConnected) { ESP_LOGI("INIT","b3 appif"); }
 
     // BLE app link (Nordic UART service); advertised under the persisted System Name
     // (Docs: "If possible, the device name is shown in BLE advertising"). The Name field is
-    // fixed 16-char space-padded with no terminator, so trim it into a C string.
+    // fixed 16-char null-padded, so trim it into a C string.
     char bleName[SYSTEM_NAME_LEN + 1];
     uint8_t bleNameLen = SYSTEM_NAME_LEN;
     while (bleNameLen > 0 && staticPer.system.Name[bleNameLen - 1] == ' ') bleNameLen--;
@@ -200,12 +203,10 @@ LED.Setup();
         ESP_LOGE("CORE", "Net-ID %u collides with another core - normal boot aborted",
                  (unsigned)DeviceStatus.NetId);
 
-    // Register the core's own serial number (once). The SNDB stores device-only short IDs
-    // (net 0); the core is device 1. A net-0 target is resolved to the local net at match time
-    // (NetQualifyLocal), so no net is stored here. Otherwise a stray Discover of its own SN
-    // allocates a fresh device ID (2) and leaves a bogus entry; AddDevice replaces a wrong one.
-    if (SNDB::FindShortID(GetSerialNumber()) != 1)
-        SNDB::AddDevice(GetSerialNumber(), 1);;
+    // The SNDB lists the net's devices only: local devices with net 0, other cores with
+    // their NetID.1. The core does not store itself - the app models the connected core as
+    // id 1 - and the Discover handler ignores a request carrying our own serial, so a stray
+    // self-discover cannot mint a bogus device ID.
 
     // Boot announcement (code 0): an informational log, not an error.
     ReportLog(MakeLog(false, (uint16_t)ServiceType::Device, 0, 0), PRIORITY_LOG);

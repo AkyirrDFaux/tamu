@@ -90,22 +90,6 @@ information` at 8.1; there is no WiFi code in the firmware.
 **B6 The UDP framing has no code.** `App Interface.md:25-27` documents a UDP packet; the firmware
 implements USB and BLE only.
 
-**B7 SNDB does not store other cores or filter by net.** - **decided; implementing now.** `System Block...md:65,67` describes storing
-other cores by `NetID.1` and excluding foreign nets; `SNDB.h` stores device pairs only, and the core adds
-itself as device 1 with no net.
-
-**B8 Tamu is built as Core only.**
-
-**B31 The scripts' TrID range is capped at `0x2FFF`.** - *in progress.* The document gives scripts the remainder `0x2000-0xEFFF`; `Packet.h:47` caps it at `0x2FFF`.
-
-**B32 The TrID carries a service tag.** - **confirmed**; implementation queued behind B23/B31 (shares `Packet.h` and the device `Main.h` files): the service that replies is selected by CID, so the tag goes and `NextSystemTrid` becomes a plain 12-bit counter over `0x0000-0x0FFF`. Replies keep the request's CMD (the CID already names the service) and echo the TrID in the TrID field, matching `RSBus and Packets.md`. `Packet.h:117-125` puts the service type in the high byte of every system TrID so an echoed reply routes back to the right service. No tag belongs there; the counter should span the range, and reply routing needs another mechanism.
-
-**B23 `StorageFiles` is not a capability.** - *in progress.* **confirmed**: the flag comes off the three targets and the bit stays reserved, so no other capability moves. Every device has storage files, so the bit says nothing. It is set by all three targets (`Tamu_v2.0A/Main.h:35`, `DAS_v0.1/Main.h:38`, `Valu_v2.0/Main.h:38`) and can come off; the bit itself can stay reserved.
-
-**B11 Create and Resize File accept a zero size.** - *in progress.* A zero-size file should not exist. `BlocksForSize(0)` divides to zero and is forced to one block (`StorageDefs.h:56-57`), and neither path rejects 0 (`StorageBlockFS.h:443`, `:481-489`). Reject size 0 with a failure status.
-
-**B10 Character fields are padded with spaces, not nulls.** - *in progress.* **confirmed**: the pad becomes a null, together with the HIL test rewrites. The ruling makes the pad byte a null. The code pads with spaces in the Register path (`MemoryTypes.h:159`, `memset(pad_buf, ' ', ...)`) and the storage file-name path (`StorageDefs.h:86-97`; `TODO.md:346`), and every device Name field is commented as space-padded (`Tamu_v2.0A/Main.h:77`, `DAS_v0.1/Main.h:68`, `Valu_v2.0/Main.h:70`). The app pads the same way (`register_client.dart` `_padBlockName`, `device_backup.dart:28`, `current_setup.dart:411`), and the HIL asserts it: `hil_script_test.dart:253` fails with "short string not space-padded", plus `register_client_dynamic_test.dart:36`, `tamu_hardware_verification_test.dart:280` and `hil_backup_test.dart:197`. Making the pad a null is a wire- and storage-format change across firmware, app and HIL.
-
 ### C. Checked and correct
 
 The command ID table matches every service and the code constants. The Bootloader packet layouts, the

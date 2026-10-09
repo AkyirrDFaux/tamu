@@ -36,7 +36,7 @@ void main() {
   List<int> dynamicTable(String name, List<(int, int, int, int)> entries) {
     final nameBytes = name.codeUnits.take(16).toList();
     while (nameBytes.length < 16) {
-      nameBytes.add(0x20);
+      nameBytes.add(0x00);
     }
     final out = <int>[
       ...nameBytes,

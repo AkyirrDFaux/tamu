@@ -219,10 +219,11 @@ public:
     // Rejects files that are malformed or whose LED indexes exceed this display.
     bool LoadLayoutFromStorage()
     {
-        // Blank name (all spaces) -> built-in default layout.
+        // Blank name (all spaces or NULs; character fields are NUL-padded since B10) ->
+        // built-in default layout.
         bool empty = true;
         for (int i = 0; i < 8; i++)
-            if (Per.LayoutFile[i] != ' ') empty = false;
+            if (Per.LayoutFile[i] != ' ' && Per.LayoutFile[i] != '\0') empty = false;
         if (empty)
         {
             LoadDefaultLayout();

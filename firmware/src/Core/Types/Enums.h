@@ -12,7 +12,7 @@ namespace Capabilities {
     // 1u << 2 was the CLI capability; the bit stays reserved so no other bit moves.
     constexpr uint32_t DynamicMemory  = 1u << 3;
     constexpr uint32_t Scripts        = 1u << 4;
-    constexpr uint32_t StorageFiles   = 1u << 5; // full file create/delete/rename/resize
+    constexpr uint32_t StorageFiles   = 1u << 5; // reserved; every device has storage files, so this bit says nothing (was the StorageFiles capability)
     constexpr uint32_t AppInterface   = 1u << 6;
     constexpr uint32_t SubscriptionRequest = 1u << 7;
     constexpr uint32_t Node           = 1u << 8;

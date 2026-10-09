@@ -101,9 +101,9 @@ class StorageClient {
   /// The documented "maximum 64 byte stream fragment" content cap (Docs/Services/Storage.md).
   static const fragmentContentMax = 64;
 
-  /// Pads/truncates a file name to the wire format (8 bytes, space padded).
+  /// Pads/truncates a file name to the wire format (8 bytes, null padded).
   static Uint8List padName(String name) {
-    final bytes = Uint8List(nameLength)..fillRange(0, nameLength, 0x20);
+    final bytes = Uint8List(nameLength)..fillRange(0, nameLength, 0x00);
     final raw = name.codeUnits;
     for (var i = 0; i < nameLength && i < raw.length; i++) {
       bytes[i] = raw[i] & 0xFF;

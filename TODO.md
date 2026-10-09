@@ -242,7 +242,7 @@ flag renderings in `register_page_tiles` (chips vs small text).
   payload exactly `len` bytes, `12+len <= 128`. `SUCCESS`/`FAIL` flag bits exist.
 - **TRID ranges** (`Packet.h`): System/Logs `0x0000-0x0FFF` (incrementing counter; the service type
   stays in the high byte so echoed replies route), Subscriptions `0x1000-0x1FFF` (table), Scripts
-  `0x2000-0x2FFF` (slot), App `0xF000-0xFFFF` (slot). Replies echo the request's TRID.
+  `0x2000-0xEFFF` (slot), App `0xF000-0xFFFF` (slot). Replies echo the request's TRID.
 - **Addresses** are 6-bit net + 10-bit device (`MakeId`). Net 0 means the local net and is resolved
   to the local NetID at match/forward time (`NetQualifyLocal`); the core is `NetID.1`.
 - **Subscriptions**: shared 16-byte table (`sourceReg`, trigger, `minTime` uint24, period,

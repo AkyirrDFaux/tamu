@@ -177,12 +177,12 @@ List<int>? decodeSemantic(DataType type, Object? value,
       if (value is! String) return null;
       var out = value.codeUnits;
       if (size != null) {
-        // Mirror the firmware's fixed-width field: truncate an over-long string and
-        // space-pad a short one, so the result is exactly `size` bytes.
+        // Mirror the firmware's fixed-width character field (B10): truncate an over-long
+        // string and NUL-pad a short one, so the result is exactly `size` bytes.
         if (out.length > size) {
           out = out.sublist(0, size);
         } else if (out.length < size) {
-          out = [...out, ...List<int>.filled(size - out.length, 0x20)];
+          out = [...out, ...List<int>.filled(size - out.length, 0x00)];
         }
       }
       return out;

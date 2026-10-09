@@ -25,7 +25,7 @@ import 'types.dart';
 const int systemNameField = 6;
 const int systemNetIdField = 7;
 
-/// The System block's persistent segment: Name (16 bytes, fixed and space-padded, no NUL) then
+/// The System block's persistent segment: Name (16 bytes, fixed and null-padded) then
 /// NetID (1 byte, core only). The firmware pads the segment up to the 4-byte alignment of the
 /// first static block, so it is 16 B on a node and 20 B on a core.
 const int systemNameOffset = 0;

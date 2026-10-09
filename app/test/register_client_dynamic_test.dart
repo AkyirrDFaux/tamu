@@ -36,8 +36,8 @@ void main() {
     expect(call.payload.length, 18); // Index(2) + Name(16)
     expect(call.payload.sublist(0, 2), [0x34, 0x12]); // 0x1234 LE
     expect(call.payload.sublist(2, 5), 'Box'.codeUnits);
-    // Name is space-padded to the fixed 16-char field.
-    expect(call.payload.sublist(5), List<int>.filled(13, 0x20));
+    // Name is null-padded to the fixed 16-char field.
+    expect(call.payload.sublist(5), List<int>.filled(13, 0x00));
   });
 
   test('create with a small index still writes the full uint16', () async {

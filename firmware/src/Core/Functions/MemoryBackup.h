@@ -41,7 +41,7 @@ __attribute__((noinline)) void SendResponse(const PacketFrame &frame, const uint
 {
     if (!(frame.flags & FLAG_REQACK))
         return;
-    PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.trid,
+    PacketConstruct(&tx_frame, frame.id_src, frame.srv_tgt, frame.trid,
                      (uint8_t)(FLAG_TYPE | FLAG_START | FLAG_STOP | status), payload, len);
     DispatchPacket(tx_frame);
 }

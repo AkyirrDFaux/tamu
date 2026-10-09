@@ -1,22 +1,22 @@
 {
   "DAS_v0_1": {
-    "day": 9,
-    "hash": "2820879d3152f4c61882a2f771a8115ee4e766c48260f71c1191cfd38c2b4d59",
-    "iteration": 6,
+    "day": 10,
+    "hash": "9a9558c0c256271a462681946264df9813f37b999cc86fda22fbc500b592ce7a",
+    "iteration": 2,
     "month": 10,
     "year": 26
   },
   "Tamu_v2_0A": {
-    "day": 9,
-    "hash": "26bd5e7f31bc22f2e64084efbfb3d93e84b7c5ad2c26dfddaa8146a076ded96a",
-    "iteration": 10,
+    "day": 10,
+    "hash": "c64083b79e3e8c8aaa05404706871c0f8529a6447313a2536d5fa3533911091e",
+    "iteration": 3,
     "month": 10,
     "year": 26
   },
   "Valu_v2_0": {
-    "day": 9,
-    "hash": "f3b7d7e20c7cb63c7fd822a55d5a7ad88549ed9470ed1e475d27f94b11b7f71a",
-    "iteration": 1,
+    "day": 10,
+    "hash": "72d2e477c74b8f8aa72a7e697adeb71e213e19c5faa9c008a861f04f77851961",
+    "iteration": 2,
     "month": 10,
     "year": 26
   },

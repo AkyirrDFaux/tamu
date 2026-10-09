@@ -403,6 +403,9 @@ public:
     // Creates a file of `size` bytes; returns true on success.
     bool CreateFile(const char name[8], uint32_t size)
     {
+        // A zero-size file cannot exist (Docs/Services/Storage.md: Create File - "Size (>0)").
+        if (size == 0) return false;
+
         // Refuse a duplicate (and any unreadable table: a read failure must not create a
         // second record for a name that might already exist).
         uint32_t existing;
@@ -442,6 +445,9 @@ public:
     // only succeeds when the run can be extended in place (and stays inside the data area).
     bool ResizeFile(const char name[8], uint32_t new_size)
     {
+        // A zero-size file cannot exist (Docs/Services/Storage.md: Resize File - "New Size (>0)").
+        if (new_size == 0) return false;
+
         uint32_t idx;
         if (!FindInFiletable(name, &idx) || idx == 0xFFFFFFFF || idx == 0)
             return false; // read failure / missing / entry 0 (the table itself)

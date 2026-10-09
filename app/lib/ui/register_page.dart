@@ -335,13 +335,9 @@ Future<void> _loadVisibleFields() async {
     if (size == null) return false;
     var value = live.value;
     if (value.length < size) {
-      // Strings/filenames are space-padded on the wire (not NUL); numeric buffers stay 0.
-      final pad = (live.meta.dataType == DataType.text ||
-              live.meta.dataType == DataType.name ||
-              live.meta.dataType == DataType.filename)
-          ? 0x20
-          : 0;
-      value = [...value, ...List<int>.filled(size - value.length, pad)];
+      // Fixed-size character fields are null-padded on the wire (Docs/Services/Register.md);
+      // numeric buffers stay 0.
+      value = [...value, ...List<int>.filled(size - value.length, 0)];
     }
     final sv = await _readFile('.SV') ?? const <int>[];
     final next = svSaveField(sv, layout, blockType, inst, field, value);
@@ -728,7 +724,7 @@ Future<void> _loadVisibleFields() async {
     if (next == null || !mounted) return;
     // Declare the actual value length: sending the field's declared Size with a shorter
     // value (a trimmed String) makes the device copy stale payload bytes. A shorter String
-    // is space-padded by the firmware.
+    // is null-padded by the firmware.
     final meta = ValueInfo(
         type: entry.meta.type, flags: entry.meta.flags, size: next.length, key: entry.meta.key);
     final ok = await _client.writeBlockField(blockType, inst, field, key, meta, next);

@@ -27,8 +27,6 @@ extern const DeviceType kDeviceType = DeviceType::Valu_v2_0;
 // Capabilities per Docs/Services/System Block and Device Commands.md, matched to the build
 // flags and Docs/Devices.md's service list:
 //   Node                 - a standalone node (not a core: no SNDB, no core discovery)
-//   StorageFiles         - the full file create/delete/rename/resize service (Mandatory
-//                          Storage; the Valu has an 8 kB filesystem, like the DAS)
 //   AppInterface         - the USB CDC App Interface (USE_APP_INTERFACE)
 //   DynamicMemory        - the optional Dynamic memory service (USE_DYNAMIC_BLOCKS)
 //   Scripts              - the optional Script service (USE_SCRIPTS)
@@ -36,7 +34,7 @@ extern const DeviceType kDeviceType = DeviceType::Valu_v2_0;
 // field has no bit for it (Core/Types/Enums.h) - reported, not invented. The mandatory
 // System/Register and Log services are always compiled and carry no capability bit.
 extern const uint32_t kCapabilities =
-    Capabilities::Node | Capabilities::StorageFiles | Capabilities::AppInterface |
+    Capabilities::Node | Capabilities::AppInterface |
     Capabilities::DynamicMemory | Capabilities::Scripts;
 
 // Reads the CH32V203 96-bit unique ID as the 14-byte serial number (cached, zero-padded).
@@ -70,7 +68,7 @@ struct StaticVolatile {
     ResistiveMeasVolatile meas[3];    // BlockType 8
 };
 StaticPersistent staticPer = {
-    // Name is a fixed 16-char space-padded field (no terminator).
+    // Name is a fixed 16-char null-padded field.
     .system = {.Name = {'V','a','l','u',' ','v','2','.','0',' ',' ',' ',' ',' ',' ',' '}},
     .fan = {},
     .display = {},

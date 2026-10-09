@@ -80,14 +80,14 @@ class RegisterClient {
     return reply.sublist(8, 8 + ((size > avail) ? avail : size));
   }
 
-  /// Decodes a block name: a fixed 16-char field, space-padded (Docs "Dynamic Block Table").
+  /// Decodes a block name: a fixed 16-char field, null-padded (Docs "Dynamic Block Table").
   static String _blockName(List<int> bytes) => decodePaddedString(bytes);
 
-  /// Encodes a block name into the fixed 16-char field (space-padded).
+  /// Encodes a block name into the fixed 16-char field (null-padded).
   static List<int> _padBlockName(String name) {
     final out = name.codeUnits.take(16).toList();
     while (out.length < 16) {
-      out.add(0x20);
+      out.add(0x00);
     }
     return out;
   }

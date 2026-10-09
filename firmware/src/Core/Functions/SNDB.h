@@ -8,10 +8,29 @@
 typedef struct __attribute__((packed, aligned(4)))
 {
     uint16_t valid;
-    uint16_t shortID;
-    uint8_t reserved[12];
+    uint16_t shortID;      // device-only id (0..1023)
+    uint8_t net;           // owning net: 0 = local net, else the other core's NetID
+    uint8_t reserved[11];  // net is carved out of the old 12 reserved bytes
     SerialNumber uid;
-} RegistryEntry;          // Total: 32 bytes
+} RegistryEntry;           // Total: 32 bytes (net does NOT grow the record)
+static_assert(sizeof(RegistryEntry) == 32, "RegistryEntry layout must stay 32 bytes");
+
+// The wire address of a registry entry: MakeId(owning net, device id). Local devices carry
+// net 0; other cores carry their NetID with device 1 (Docs/Services/System Block and Device
+// Commands.md: "Local devices are stored with NetID 0. Other cores are stored only with their
+// NetID.1.").
+static inline uint16_t RegistryAddress(const RegistryEntry &entry)
+{
+    return MakeId(entry.net, entry.shortID);
+}
+
+// A storable address is a local-net device (net 0, any device id) or a core (net != 0, device
+// 1). Anything else is a device from a foreign net and is not stored, nor assigned an ID
+// (Docs: "Devices from foreign nets are not stored").
+static inline bool RegistryAddressStorable(uint16_t address)
+{
+    return ((address >> 10) & 0x3F) == 0 || (address & 0x3FF) == 1;
+}
 
 #define STATE_EMPTY    0xFFFF
 #define STATE_VALID    0x55AA
@@ -32,16 +51,18 @@ typedef struct __attribute__((packed, aligned(4)))
 class SNDB
 {
 public:
-    // Looks up the short ID for a serial number
-    static uint16_t FindShortID(const SerialNumber &serial);
-    // Registers a new device and returns its assigned ID
+    // Looks up the net-qualified address (MakeId(net, device)) stored for a serial number,
+    // or ADDR_INVALID.
+    static uint16_t FindAddress(const SerialNumber &serial);
+    // Registers a new local-net device (net 0) and returns its assigned device ID
     static uint16_t NewDevice(const SerialNumber &serial);
-    // Adds a device with an explicit short ID
-    static bool AddDevice(const SerialNumber &serial, uint16_t short_id);
-    // Reads the registry entry for a short ID
-    static bool GetEntry(uint16_t short_id, RegistryEntry &out_entry);
-    // Tombstones every entry with the given short ID (SNDB Delete)
-    static bool RemoveDevice(uint16_t short_id);
+    // Adds a device with an explicit net-qualified address (local = net 0; other cores =
+    // NetID.1). Foreign-net addresses are rejected.
+    static bool AddDevice(const SerialNumber &serial, uint16_t address);
+    // Reads the registry entry for a net-qualified address
+    static bool GetEntry(uint16_t address, RegistryEntry &out_entry);
+    // Tombstones every entry with the given net-qualified address (SNDB Delete)
+    static bool RemoveDevice(uint16_t address);
     // Resets iteration to the first entry
     static void IterReset();
     // Fetches the next entry during iteration
@@ -223,8 +244,8 @@ bool SNDB::EnsureRecovered()
     return true;
 }
 
-// Walks the file looking for `serial`; returns its short ID or ADDR_INVALID.
-uint16_t SNDB::FindShortID(const SerialNumber &serial)
+// Walks the file looking for `serial`; returns its net-qualified stored address, or ADDR_INVALID.
+uint16_t SNDB::FindAddress(const SerialNumber &serial)
 {
     if (!EnsureRecovered())
         return ADDR_INVALID;
@@ -239,20 +260,23 @@ uint16_t SNDB::FindShortID(const SerialNumber &serial)
             break;
         if (entry.valid == STATE_VALID &&
             memcmp(entry.uid.bytes, serial.bytes, sizeof(serial.bytes)) == 0)
-            return entry.shortID;
+            return RegistryAddress(entry);
     }
     return ADDR_INVALID;
 }
 
-// Registers a serial number with a short ID, removing any prior entry and compacting if full.
-bool SNDB::AddDevice(const SerialNumber &serial, uint16_t short_id)
+// Registers a serial number with a net-qualified address, removing any prior entry and
+// compacting if full. Rejects foreign-net addresses (net != 0 and device != 1).
+bool SNDB::AddDevice(const SerialNumber &serial, uint16_t address)
 {
+    if (!RegistryAddressStorable(address))
+        return false;
     if (!EnsureRecovered())
         return false;
 
-    uint16_t existing_id = FindShortID(serial);
-    if (existing_id != ADDR_INVALID)
-        RemoveDevice(existing_id);
+    uint16_t existing_addr = FindAddress(serial);
+    if (existing_addr != ADDR_INVALID)
+        RemoveDevice(existing_addr);
 
     if (IsFull())
     {
@@ -261,9 +285,10 @@ bool SNDB::AddDevice(const SerialNumber &serial, uint16_t short_id)
 
     RegistryEntry new_entry = {};
     new_entry.valid = STATE_VALID;
-    new_entry.shortID = short_id;
+    new_entry.shortID = (uint16_t)(address & 0x3FF);
+    new_entry.net = (uint8_t)((address >> 10) & 0x3F);
     new_entry.uid = serial;
-    memset(new_entry.reserved, 0, 12);
+    memset(new_entry.reserved, 0, sizeof(new_entry.reserved));
 
     if (write_head + sizeof(RegistryEntry) > registry_size)
         return false;
@@ -291,8 +316,8 @@ bool SNDB::IsFull()
     return write_head + sizeof(RegistryEntry) > registry_size;
 }
 
-// Marks every entry with the given short ID as removed (tombstone) and decrements the active count.
-bool SNDB::RemoveDevice(uint16_t short_id)
+// Marks every entry with the given net-qualified address as removed (tombstone) and decrements the active count.
+bool SNDB::RemoveDevice(uint16_t address)
 {
     if (!EnsureRecovered())
         return false;
@@ -306,7 +331,7 @@ bool SNDB::RemoveDevice(uint16_t short_id)
         RegistryEntry entry;
         if (!ReadEntry(SNDBFileName(), i, entry))
             break;
-        if (entry.valid == STATE_VALID && entry.shortID == short_id)
+        if (entry.valid == STATE_VALID && RegistryAddress(entry) == address)
         {
             uint16_t tombstone = STATE_REMOVED;
             if (WriteEntry(SNDBFileName(), i, &tombstone, sizeof(uint16_t)))
@@ -426,11 +451,11 @@ uint16_t SNDB::NewDevice(const SerialNumber &serial)
         return ADDR_INVALID;
     }
 
-    return AddDevice(serial, id) ? id : ADDR_INVALID;
+    return AddDevice(serial, MakeId(0, id)) ? id : ADDR_INVALID;
 }
 
-// Fills `out_entry` with the registry entry matching `short_id`; returns false if not found.
-bool SNDB::GetEntry(uint16_t short_id, RegistryEntry &out_entry)
+// Fills `out_entry` with the registry entry matching the net-qualified `address`.
+bool SNDB::GetEntry(uint16_t address, RegistryEntry &out_entry)
 {
     if (!EnsureRecovered())
         return false;
@@ -443,7 +468,7 @@ bool SNDB::GetEntry(uint16_t short_id, RegistryEntry &out_entry)
         RegistryEntry entry;
         if (!ReadEntry(SNDBFileName(), i, entry))
             break;
-        if (entry.valid == STATE_VALID && entry.shortID == short_id)
+        if (entry.valid == STATE_VALID && RegistryAddress(entry) == address)
         {
             out_entry = entry;
             return true;

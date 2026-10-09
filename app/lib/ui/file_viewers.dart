@@ -194,16 +194,19 @@ class _FileViewPageState extends State<FileViewPage> {
     );
   }
 
-  /// SNREG: 32-byte RegistryEntry records (SNDB.h): u16 valid marker, u16 short
-  /// ID, 12 reserved bytes, 14-byte serial number. Markers: 0x55AA valid,
-  /// 0x0000 removed, 0xFFFF unwritten.
+  /// SNREG: 32-byte RegistryEntry records (SNDB.h): u16 valid marker, u16 device ID,
+  /// u8 owning net, 11 reserved bytes, 14-byte serial number. The stored pair is
+  /// net.device: local-net devices carry net 0, other cores their NetID with device 1.
+  /// Markers: 0x55AA valid, 0x0000 removed, 0xFFFF unwritten.
   Widget _snregView() {
     final data = widget.data!;
     final rows = <Widget>[];
     for (var off = 0; off + 32 <= data.length; off += 32) {
       final valid = data[off] | (data[off + 1] << 8);
       if (valid == 0xFFFF) break; // unwritten slot
-      final id = data[off + 2] | (data[off + 3] << 8);
+      final device = data[off + 2] | (data[off + 3] << 8);
+      final net = data[off + 4] & 0x3F;
+      final id = (net << 10) | (device & 0x3FF);
       final removed = valid == 0x0000;
       final sn = serialNumberToHex(data.sublist(off + 16, off + 30));
       rows.add(Padding(

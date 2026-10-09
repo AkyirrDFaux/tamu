@@ -10,7 +10,7 @@
 // Shared reply for every subscription CID (docs: responses are packets with FLAG_TYPE).
 static void SubReply(const PacketFrame &frame, const uint8_t *payload, uint16_t len,
                      uint8_t extraFlags = 0) {
-    PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.trid,
+    PacketConstruct(&tx_frame, frame.id_src, frame.srv_tgt, frame.trid,
                     (uint8_t)(FLAG_TYPE | FLAG_START | FLAG_STOP | extraFlags), payload, len);
 #ifdef USE_APP_INTERFACE
     if (frame.id_src == 0xFFFE) {
@@ -95,14 +95,14 @@ static void RequesterStreamTable(const PacketFrame &frame) {
 __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &frame) {
 #ifdef USE_SUB_REQUEST
     // A provider's reply to a requester-originated install ("Change subscription", CID 1)
-    // echoes the TRID in CMD instead of carrying a service/CID, so the dispatcher routes it
-    // here by range. It carries the source's current value: apply it through the normal
-    // value-update path so a subscription starts from a known value instead of waiting for
-    // the next change/tick. A locally generated management reply (id_src is us) is routed to
-    // the app link and never reaches here.
-    if ((frame.flags & FLAG_TYPE) && frame.srv_tgt >= TRID_SUB_BASE &&
-        frame.srv_tgt <= TRID_SUB_MAX) {
-        RequesterEntry* e = RequesterFindByTrid((uint16_t)frame.srv_tgt);
+    // echoes the requester's Subscriptions TRID, so the dispatcher routes it here by range.
+    // It carries the source's current value: apply it through the normal value-update path so
+    // a subscription starts from a known value instead of waiting for the next change/tick.
+    // A locally generated management reply (id_src is us) is routed to the app link and never
+    // reaches here.
+    if ((frame.flags & FLAG_TYPE) && frame.trid >= TRID_SUB_BASE &&
+        frame.trid <= TRID_SUB_MAX) {
+        RequesterEntry* e = RequesterFindByTrid((uint16_t)frame.trid);
         // Stale reply after the entry was retargeted to a different provider: drop it. A
         // cancelled entry no longer resolves, so it falls through to the orphan handling.
         if (e && frame.id_src != e->providerAddr) return;

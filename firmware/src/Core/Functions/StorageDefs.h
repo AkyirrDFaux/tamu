@@ -102,26 +102,42 @@ static inline bool FileEntryIsValid(uint32_t offset)
     return !FileSlotIsFree(offset);
 }
 
-// Copies a plain C string into the 8-byte record form, space-padded to the full width so
-// names compare equal with an exact 8-byte memcmp regardless of how they were supplied.
+// Copies a file name into the fixed 8-byte record form, null-padded to the full width
+// (B10: the pad byte is a null, not a space). A NUL terminator ends the name, and trailing
+// pad spaces are dropped first, so a name supplied either way (a plain C string, a
+// space-padded 8-byte buffer or the NUL-padded wire form) canonicalises to the same record.
 static inline void PackName(const char *plain, char out[8])
 {
+    uint8_t len = 0;
+    if (plain)
+    {
+        while (len < 8 && plain[len]) len++;            // up to a NUL terminator or the width
+        while (len > 0 && plain[len - 1] == ' ') len--; // drop trailing pad spaces
+    }
     uint8_t i = 0;
-    for (; i < 8 && plain && plain[i]; i++)
+    for (; i < len; i++)
         out[i] = plain[i];
     for (; i < 8; i++)
-        out[i] = ' ';
+        out[i] = 0x00;
 }
 
-// Compares an on-flash (space-padded) record name against a plain C string. A raw
-// `memcmp(record, "SUBREQ", 8)` compares the record's padding spaces against the C
-// string's NUL terminator and always differs for names shorter than 8 chars - which
-// silently broke FindInFiletable/DeleteFile and left a new SUBREQ/.DT_/.DV_ record behind
-// on every save. Pack the plain name first so both sides use the same 8-byte form.
+// Compares an on-flash record name against a supplied name, ignoring the pad byte on both
+// sides: a null-padded record, a space-padded one (a pre-B10 record) and a plain C string
+// all compare equal. A raw `memcmp(record, "SUBREQ", 8)` compared the record's padding
+// against the C string's NUL terminator and always differed for names shorter than 8 chars -
+// which silently broke FindInFiletable/DeleteFile and left a new SUBREQ/.DT_/.DV_ record
+// behind on every save. Pack the plain name first so both sides use the same 8-byte form.
 static inline bool NameMatch(const char record[8], const char *plain)
 {
     char packed[8];
     PackName(plain, packed);
-    return memcmp(record, packed, 8) == 0;
+    uint8_t record_len = 8;
+    while (record_len > 0 && (record[record_len - 1] == ' ' || record[record_len - 1] == 0x00))
+        record_len--;
+    uint8_t packed_len = 8;
+    while (packed_len > 0 && packed[packed_len - 1] == 0x00)
+        packed_len--;
+    if (record_len != packed_len) return false;
+    return memcmp(record, packed, record_len) == 0;
 }
 

@@ -48,10 +48,10 @@ void DispatchPacket(const PacketFrame &frame)
         (frame.id_tgt == ADDR_BROADCAST))
     {
         DeviceLog("DISP", "local interest id_tgt=%d id_src=%d srv_tgt=0x%04X trid=0x%04X", frame.id_tgt, frame.id_src, frame.srv_tgt, frame.trid);
-        // A reply's CMD is the originator's TRID (Docs "Transaction IDs"). The System/Log TRID
-        // keeps the service type in its high byte, so a Device/Log reply routes by
-        // GetServiceType; a subscription install reply carries a Subscriptions TRID and is
-        // range-routed to the requester; App (0xF000-0xFFFF) and Scripts (0x2000-0x2FFF) too.
+        // A response echoes the request's TRID (Docs "Transaction IDs") and carries the
+        // request's CMD, so GetServiceType names the replying service. A System reply
+        // (0x0000-0x0FFF) therefore routes by CMD; the Subscriptions, App and Script ranges
+        // route by the echoed TRID, which each owner allocated.
         ServiceType target_srv = GetServiceType(frame.srv_tgt);
         uint8_t cid = GetServiceCID(frame.srv_tgt);
         bool is_response = (frame.flags & FLAG_TYPE) != 0;
@@ -59,32 +59,32 @@ void DispatchPacket(const PacketFrame &frame)
 
         bool handled = false;
 #ifdef USE_SUB_REQUEST
-        // A response whose CMD is a subscription TRID (not a service/CID) is a remote
-        // provider's reply to a requester-originated install: it carries the source's current
-        // value and must reach the requester, not the app link. A locally generated management
-        // reply (our own id_src) or a FLAG_SUCCESS/FAIL ack stays with the app.
+        // A remote provider's value update echoes the requester's Subscriptions TRID and
+        // must reach the requester, not the app link. A locally generated management reply
+        // (our own id_src) or a FLAG_SUCCESS/FAIL ack stays with the app.
         if (is_response && (frame.flags & (FLAG_SUCCESS | FLAG_FAIL)) == 0 &&
-            frame.srv_tgt >= TRID_SUB_BASE && frame.srv_tgt <= TRID_SUB_MAX &&
+            frame.trid >= TRID_SUB_BASE && frame.trid <= TRID_SUB_MAX &&
             frame.id_src != DeviceStatus.ShortAddress) {
             HandleSubscriptions(frame);
             handled = true;
         }
 #endif
 #ifdef USE_APP_INTERFACE
-        // A subscription-management reply carries a TRID from the Subscriptions range; both
-        // it and an App reply (whose CMD is the app's 0xF000-0xFFFF TRID) go back over the
-        // app link, where the app matches on TRID.
-        if (!handled &&
-            (frame.srv_tgt >= TRID_APP_BASE ||
-             (frame.srv_tgt >= TRID_SUB_BASE && frame.srv_tgt <= TRID_SUB_MAX))) {
+        // An App reply echoes the app's TRID (0xF000-0xFFFF); a subscription-management
+        // reply echoes a Subscriptions TRID. Both go back over the app link, where the app
+        // matches on TRID.
+        if (!handled && is_response &&
+            (frame.trid >= TRID_APP_BASE ||
+             (frame.trid >= TRID_SUB_BASE && frame.trid <= TRID_SUB_MAX))) {
             (void)AppInterfaceSend(frame);
             handled = true;
         }
 #endif
 #ifdef USE_SCRIPTS
-        // Script-instance replies (foreign register access): the reply's CMD is the
-        // script's slot tag, so it never matches a ServiceType and is routed by range.
-        if (!handled && frame.srv_tgt >= TRID_SCRIPT_BASE && frame.srv_tgt <= TRID_SCRIPT_MAX) {
+        // Script-instance replies (foreign register access) echo the script's TRID
+        // (0x2000-0xEFFF), so they route by range instead of by ServiceType.
+        if (!handled && is_response &&
+            frame.trid >= TRID_SCRIPT_BASE && frame.trid <= TRID_SCRIPT_MAX) {
             HandleScriptResponse(frame);
             handled = true;
         }

@@ -8,11 +8,11 @@
 #define BLOCK_NAME_LEN 16
 
 // Copies a block name into a fixed BLOCK_NAME_LEN field (Docs/Services/Register.md "Dynamic
-// Block Table": Name is 16 chars with no terminator). A shorter name is space-padded.
+// Block Table": Name is 16 chars). A shorter name is null-padded (B10).
 static inline void SetBlockName(char *dst, const char *src, uint16_t len) {
     if (len > BLOCK_NAME_LEN) len = BLOCK_NAME_LEN;
     if (len && src) memcpy(dst, src, len);
-    if (len < BLOCK_NAME_LEN) memset(dst + len, ' ', (size_t)(BLOCK_NAME_LEN - len));
+    if (len < BLOCK_NAME_LEN) memset(dst + len, 0x00, (size_t)(BLOCK_NAME_LEN - len));
 }
 
 // Combines a field index and a key into the 16-bit Field&Key sort key.
@@ -145,7 +145,7 @@ struct StaticBlockDescriptor
         const void *data = Input;
         uint16_t data_len = Length;
         uint16_t field_type = ValueInfoType(Field.Descriptor);
-        // String/Filename fields are space-padded up to their declared size when a shorter
+        // String/Filename fields are null-padded up to their declared size when a shorter
         // value is written, and clamped to it when a longer one is (filenames are fixed
         // 8-char records; the System Name is a fixed 16).
         // Text/Name/Filename are fixed-size character fields (Docs/Services/Register.md).
@@ -154,11 +154,11 @@ struct StaticBlockDescriptor
         {
             if (Length < Field.Descriptor.Size)
             {
-                // A value larger than the local staging buffer cannot be space-padded without
+                // A value larger than the local staging buffer cannot be null-padded without
                 // reading past the caller's `Length`-byte source; reject it instead.
                 if (Field.Descriptor.Size > sizeof(pad_buf))
                     return false;
-                memset(pad_buf, ' ', sizeof(pad_buf));
+                memset(pad_buf, 0x00, sizeof(pad_buf));
                 memcpy(pad_buf, Input, Length);
                 data = pad_buf;
                 data_len = Field.Descriptor.Size;

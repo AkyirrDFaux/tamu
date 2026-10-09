@@ -74,7 +74,7 @@ class _FakeRegister extends RegisterClient {
   static List<int> _padded(String s) {
     final out = s.codeUnits.take(16).toList();
     while (out.length < 16) {
-      out.add(0x20);
+      out.add(0x00);
     }
     return out;
   }

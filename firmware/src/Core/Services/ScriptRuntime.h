@@ -62,10 +62,10 @@ void ScriptsTick(uint32_t nowMs) {
     }
 }
 
-// Handles a reply to a foreign register request. The reply's CMD carries the script's
-// TRID, so the Dispatcher routes it here by range instead of by ServiceType.
+// Handles a reply to a foreign register request. The reply echoes the script's TRID, so the
+// Dispatcher routes it here by range instead of by ServiceType.
 static void HandleScriptResponse(const PacketFrame &frame) {
-    uint16_t trid = frame.srv_tgt;
+    uint16_t trid = frame.trid;
     for (uint16_t w = 0; w < kScriptMaskWords; w++) {
     uint64_t mask = scriptActiveMask[w];
     while (mask) {

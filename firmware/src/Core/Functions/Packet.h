@@ -44,7 +44,7 @@
 #define TRID_SUB_BASE    0x1000
 #define TRID_SUB_MAX     0x1FFF // Subscriptions, table-managed
 #define TRID_SCRIPT_BASE 0x2000
-#define TRID_SCRIPT_MAX  0x2FFF // Scripts, slot-based
+#define TRID_SCRIPT_MAX  0xEFFF // Scripts, slot-based (0x2000-0xEFFF)
 #define TRID_APP_BASE    0xF000 // App, slot-based (0xF000-0xFFFF)
 
 // ID helpers: 6 bit net + 10 bit device
@@ -114,14 +114,17 @@ inline uint8_t GetServiceCID(uint16_t cmd)
     return (uint8_t)(cmd & 0xFF);
 }
 
-// System/Log TRIDs: an incrementing counter (Docs "Transaction IDs", 0x0000-0x0FFF). The
-// service type stays in the high byte so an echoed reply still routes to the service (a reply's
-// CMD is the originator's TRID); the low byte is the counter, which wraps. A reply therefore
-// does not carry the request's CID - the Device handler tells its replies apart by payload length.
-inline uint16_t NextSystemTrid(ServiceType type)
+// System/Log TRIDs: a single incrementing 12-bit counter (Docs "Transaction IDs",
+// 0x0000-0x0FFF), shared by every service and wrapping at the range end. The service is not
+// encoded here: a reply carries the request's CMD (which names the service) and echoes the
+// TRID (see FinalizeReply), so a reply routes by its CMD and its TRID is a plain match key.
+// The `type` argument is retained only so existing call sites need not change.
+inline uint16_t NextSystemTrid(ServiceType /*type*/)
 {
-    static uint8_t counter = 0;
-    return MakeService(type, counter++);
+    static uint16_t counter = 0;
+    const uint16_t t = counter;
+    counter = (uint16_t)((counter + 1) & TRID_SYSTEM_MAX);
+    return t;
 }
 
 extern DeviceStatusStruct DeviceStatus;
@@ -167,7 +170,7 @@ inline void FinalizeReply(PacketFrame &reply, const PacketFrame &req, uint8_t fl
     reply.priority = priority;
     reply.id_tgt = req.id_src;
     reply.id_src = DeviceStatus.ShortAddress;
-    reply.cmd = req.srv_src;   // Destination service (the originator's service tag)
+    reply.cmd = req.srv_tgt;   // Destination service: the request's CMD names the service
     reply.trid = req.trid;     // Responses echo the request's TRID (Docs "Transaction IDs")
     PacketFinalize(&reply, len);
 }

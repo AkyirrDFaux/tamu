@@ -62,7 +62,7 @@ void main() {
     final src = _entry('Layout File Name', 3, 'Text', 'hello', size: 5);
     final bytes =
         resolveEntryBytes(src, _live('Layout File Name', 3, DataType.filename, size: 8));
-    expect(bytes, 'hello'.codeUnits + List.filled(3, 0x20));
+    expect(bytes, 'hello'.codeUnits + List.filled(3, 0x00));
   });
 
   test('enum names resolve against the target option set', () {

@@ -40,9 +40,10 @@ void SubscriptionsTick(uint32_t nowMs);
 
 // Device identity (mandatory, see Core/Functions/Device.h).
 extern const DeviceType kDeviceType = DeviceType::DualAnalogSensor;
-// The DAS runs the full multi-file filesystem (StorageFiles: create/delete/rename/resize).
+// The DAS runs the full multi-file filesystem (create/delete/rename/resize); storage files
+// are universal so they carry no capability bit (Core/Types/Enums.h).
 extern const uint32_t kCapabilities =
-    Capabilities::Node | Capabilities::StorageFiles | Capabilities::SubscriptionProvide;
+    Capabilities::Node | Capabilities::SubscriptionProvide;
 
 // Reads the CH32V003 32-bit unique chip ID as the 14-byte serial number (cached).
 const SerialNumber &GetSerialNumber()
@@ -72,7 +73,7 @@ struct StaticVolatile {
     LEDVolatile led;                  // BlockType 0x0A
 };
 StaticPersistent staticPer = {
-    // Name is a fixed 16-char space-padded field (no terminator).
+    // Name is a fixed 16-char null-padded field.
     .system = {.Name = {'D','A','S',' ','v','0','.','1',' ',' ',' ',' ',' ',' ',' ',' '}},
     .meas = {{.SensorType = MeasNTC100K}, {.SensorType = MeasLDR10K}},
 };

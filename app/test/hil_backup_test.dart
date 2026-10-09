@@ -194,8 +194,8 @@ void main() {
     final layout = StaticSpaceLayout.fromRegistry(const [], const {});
     List<int> padToName(String s) {
       final t = s.length > systemNameSize ? s.substring(0, systemNameSize) : s;
-      // The firmware Name is space-padded (no NUL).
-      return [...t.codeUnits, ...List<int>.filled(systemNameSize - t.length, 0x20)];
+      // The firmware Name is null-padded.
+      return [...t.codeUnits, ...List<int>.filled(systemNameSize - t.length, 0x00)];
     }
     final updated = svSaveField(sv!, layout, 0, 0, systemNameField, padToName(next))!;
     expect(await storage.writeFile('.SV', updated), isTrue,
