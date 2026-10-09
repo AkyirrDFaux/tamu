@@ -255,11 +255,11 @@ class changes; a lid-only change does not blink. Replace with `when the pupil sh
 
 ### B. Code fixes (the document is the specification)
 
-**B1 Router and branch broadcast are documented and unimplemented.** `RSBus and Packets.md:3-7` and
+**B1 Router and branch broadcast are documented and unimplemented.** - **scope settled**: after the beta. The rig has no multi-bus device to test a tree topology on. `RSBus and Packets.md:3-7` and
 `Data Formats.md:37` (`0x3FE`) describe a router tree; `Dispatcher.h:36-40` says the multi-bus topology
 is not implemented and `Docs/Services/Router.md` is a stub.
 
-**B2 Valu's LED display.** A50 above: two instances are declared, none implemented.
+**B2 Valu's LED display.** - **confirmed**: the strip geometry is flexible and comes from the layout file, so registering the two instances is bookkeeping rather than a fixed mapping. A50 above: two instances are declared, none implemented.
 
 **B3 Texture `Size` and Geometry `Angles` reject the `Vector` the documents allow** (A40, A41), and
 `Bitmap` has no slot (A42). Either the dictionary format is trimmed to the code or the code catches
@@ -290,11 +290,11 @@ itself as device 1 with no net.
 
 **B37 The I2C pull-up comment is wrong.** From A49: `Tamu_v2.0A/AccGyr.h:139-141` says the board has no external pull-ups on SDA/SCL. It has 4k7 ones; the internal pull-ups stay enabled as well, so only the comment changes.
 
-**B34 Reserve a texture slot for `Bitmap`.** From A42: the document lists `Bitmap` and `Textures2D` (`Render.h:72-82`) has no slot - `GradientCircular = 3` runs straight into the effects at `4`. Reserve a value; placing it after the effects (`Bitmap = 8`) keeps the effect numbers stable.
+**B34 Reserve a texture slot for `Bitmap`.** - **confirmed**: `Bitmap = 8`, after the effects, so their values stay put. From A42: the document lists `Bitmap` and `Textures2D` (`Render.h:72-82`) has no slot - `GradientCircular = 3` runs straight into the effects at `4`. Reserve a value; placing it after the effects (`Bitmap = 8`) keeps the effect numbers stable.
 
-**B35 Remove the equilateral triangle path.** From A45: the shape is isosceles overall. `GeometryMath.h:76` draws equilateral by default and switches to isosceles when `Angles` is set, so dropping it needs a defined default angle - 0 would give a degenerate triangle.
+**B35 Remove the equilateral triangle path.** - **confirmed**: `Angles` defaults to 60 degrees when unset, keeping the equilateral look as one case of isosceles. From A45: the shape is isosceles overall. `GeometryMath.h:76` draws equilateral by default and switches to isosceles when `Angles` is set, so dropping it needs a defined default angle - 0 would give a degenerate triangle.
 
-**B33 Texture `Size` ignores a `Vector<2>`.** From A40: the document allows a `Vector<2>` or a `Number` for the texture `Size`, but `Vysi1Render.h:180` reads a `Number` and silently takes the default on a mismatch. Accept the vector as Geometry's `Size` does (`:59`).
+**B33 Texture `Size` ignores a `Vector<2>`.** - **confirmed**: a vector size is width x height, a plain `Number` is uniform and scales both. From A40: the document allows a `Vector<2>` or a `Number` for the texture `Size`, but `Vysi1Render.h:180` reads a `Number` and silently takes the default on a mismatch. Accept the vector as Geometry's `Size` does (`:59`).
 
 **B28 `DataType::Name`.** From A34: add the member (`0x12`, next after `Char`) and use it for the 16-byte Name field (`RegisterEnumerate.h:37`) instead of `String`.
 
@@ -312,7 +312,7 @@ itself as device 1 with no net.
 
 **B22 The `DataType` enum gains `Char`.** From A22: a string element needs a character type, and the enum has none. The next free code below the keyed block is `0x11` (`BlockInfo` is `0x10`); the document's row already assumes it.
 
-**B23 `StorageFiles` is not a capability.** From A26: every device has storage files, so the bit says nothing. It is set by all three targets (`Tamu_v2.0A/Main.h:35`, `DAS_v0.1/Main.h:38`, `Valu_v2.0/Main.h:38`) and can come off; the bit itself can stay reserved.
+**B23 `StorageFiles` is not a capability.** - **confirmed**: the flag comes off the three targets and the bit stays reserved, so no other capability moves. From A26: every device has storage files, so the bit says nothing. It is set by all three targets (`Tamu_v2.0A/Main.h:35`, `DAS_v0.1/Main.h:38`, `Valu_v2.0/Main.h:38`) and can come off; the bit itself can stay reserved.
 
 **B24 The core re-sync has no jitter and no device dependence.** - **confirmed**, jitter of about 10 % around the nominal interval. From A28: `TimeSync.h:23` is a fixed `DISCOVER_INTERVAL_MS = 150000` scheduled with no variation (`:93`). The interval should follow the device's clock stability and be jittered so the reference core is not overwhelmed.
 
@@ -332,7 +332,7 @@ itself as device 1 with no net.
 
 **B15 `MoveFiletable` resizes the table.** From A13: the table size is fixed per device and the table moves only when it is full, so the `OPTIMIZE_SPEED` grow/shrink arithmetic goes (`StorageBlockFS.h:262-280`).
 
-**B16 The table is formatted at a fixed one page.** From A13 and A51: `Format()` sets `entry0.size = PAGE_SIZE` (`StorageBlockFS.h:586-597`) and nothing grows it once B15 lands, so the per-device table size needs a constant the device declares (`Devices.md:37` says 4 pages for Tamu, `:63` one page for Valu).
+**B16 The table is formatted at a fixed one page.** From A13 and A51: `Format()` sets `entry0.size = PAGE_SIZE` (`StorageBlockFS.h:586-597`) and nothing grows it once B15 lands, so the per-device table size needs a constant the device declares (`Devices.md` already carries them: 4 pages for Tamu at `:37`, 1 page for the DAS at `:63`, 2 pages for Valu at `:95`. My earlier note misattributed the DAS's line to Valu; corrected - the document was right all along.)
 
 **B11 Create and Resize File accept a zero size.** From A8: a zero-size file should not exist. `BlocksForSize(0)` divides to zero and is forced to one block (`StorageDefs.h:56-57`), and neither path rejects 0 (`StorageBlockFS.h:443`, `:481-489`). Reject size 0 with a failure status.
 
