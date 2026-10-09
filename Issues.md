@@ -9,7 +9,7 @@ remaining low-value follow-ups live in `TODO.md`.
 Every firmware document was checked against `firmware/src`. The documents are the specification, so a
 mismatch means one side is wrong, and the two lists below say which. Each item gives the current text,
 the evidence, and the proposed replacement. **Doc fixes need approval before they are applied**; code
-fixes are work for the beta window.
+fixes are work for the beta window. Answer by ID: approve, reject or amend each one.
 
 ### A. Doc fixes
 
