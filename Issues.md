@@ -280,6 +280,8 @@ itself as device 1 with no net.
 
 **B8 Tamu is built as Core only.**
 
+**A59 Storage: `Storage_FlashInit` is missing from the main functions.** The document lists four (`Docs/Services/Storage.md:40-47`); the code declares five, the extra being `bool Storage_FlashInit();` ("find/open the storage partition", `StorageDefs.h:31`). Add it to the list.
+
 **B11 Create and Resize File accept a zero size.** From A8: a zero-size file should not exist. `BlocksForSize(0)` divides to zero and is forced to one block (`StorageDefs.h:56-57`), and neither path rejects 0 (`StorageBlockFS.h:443`, `:481-489`). Reject size 0 with a failure status.
 
 **B12 The file name travels in the first fragment only.** From A9: the name belongs in every fragment. The write path reads the name from fragment 0 and contents-only afterwards (`Storage.h:115-128`), and the read response does the same (`Storage.h:89-90`). Carry the name in all fragments, at the cost of 8 payload bytes per fragment, and update the app's file transfer to match.
