@@ -261,14 +261,17 @@ up.
 **B4 Measurement fields 0 and 2 have a trigger function but no `ValueTrigger` flag** (A48), while
 `Register.md:52` makes that flag the gate.
 
-**B5 System block fields with no code.** `System Block...md:24` documents `WiFi connection information`
-at 8.1; there is no WiFi code. `App Interface.md:25-27` documents a UDP framing; there is no UDP code.
+**B5 System block field 8.1 has no code.** `System Block...md:24` documents `WiFi connection
+information` at 8.1; there is no WiFi code in the firmware.
 
-**B6 SNDB does not store other cores or filter by net.** `System Block...md:65,67` describes storing
+**B6 The UDP framing has no code.** `App Interface.md:25-27` documents a UDP packet; the firmware
+implements USB and BLE only.
+
+**B7 SNDB does not store other cores or filter by net.** `System Block...md:65,67` describes storing
 other cores by `NetID.1` and excluding foreign nets; `SNDB.h` stores device pairs only, and the core adds
 itself as device 1 with no net.
 
-**B7 Tamu is built as Core only.** `Devices.md:4` says "Core and Node"; `Tamu_v2.0A/Main.h:32-38`
+**B8 Tamu is built as Core only.** `Devices.md:4` says "Core and Node"; `Tamu_v2.0A/Main.h:32-38`
 declares `Capabilities::Core` and no node build exists.
 
 ### C. Checked and correct
