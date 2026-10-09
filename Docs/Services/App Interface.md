@@ -18,7 +18,7 @@ The preferred wireless method.
 
 | Length of this BLE packet | Payload (packets, serialized stream) |
 | ------------------------- | ------------------------------------ |
-| uint16                    | uint8[ATT_MTU - 2]                   |
+| uint16                    | uint8[ATT_MTU - 5]                   |
 #### UDP Packet
 For Wi-Fi only devices. The device connects as a client to an existing network, which the app scans for.
 

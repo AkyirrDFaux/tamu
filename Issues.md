@@ -109,19 +109,19 @@ Replace with `For Number, Index, Uint32 and Vector`.
 (uint8), Script File IDs (uint16)`. Code `ScriptRuntime.h:164-180` streams it as fragments. Replace with
 `Fragmentation, number of loaded scripts (uint8), Script File IDs (uint16) (stream)`.
 
-**A22 Script: Compose/Extract also handles `String`.** `Script.md:70`. Code `ScriptExec.h:509-538`
+**A22 Script: Compose/Extract also handles `String`.** - **approved**, with the element carrying a character type rather than a numeric one, so a string element is distinguishable from a number. Wording to confirm; the code types it `Uint32` today, which is B20. `Script.md:70`. Code `ScriptExec.h:509-538`
 includes `DataType::String`. Replace with `Vector, Matrix, Colour or String plus an Index convert to and
 from Number or uint8.`
 
-**A23 App Interface: BLE payload is `ATT_MTU - 5`.** `App Interface.md:21` - `uint8[ATT_MTU - 2]`. Code
+**A23 App Interface: BLE payload is `ATT_MTU - 5`.** - **approved and applied.** `App Interface.md:21` - `uint8[ATT_MTU - 2]`. Code
 `Devices/Tamu_v2.0A/AppBLE.h:307`: `chunkCap = budget - 3 - 2`. Replace the size cell with
 `uint8[ATT_MTU - 5]`.
 
-**A24 System Block: Discover reply carries a kind tag.** `System Block and Device Commands.md:42` -
+**A24 System Block: Discover reply carries a kind tag.** - **rejected**, the document is right: the request/reply distinction is a packet flag and the payload length is in the packet, so the tag is redundant. That makes it B21. `System Block and Device Commands.md:42` -
 Response `SN (of node) + ID (from core, assignment)`. Code `Services/Device.h:39,315` prefixes
 `0xD1`. Replace with `Kind tag (0xD1) + SN (of node) + ID (from core, assignment)`.
 
-**A25 System Block: App Active has three states.** `System Block...md:23` - `(No/USB/BLE/Legacy
+**A25 System Block: App Active has three states.** - **rejected**, the document is right: Legacy BT and WiFi are planned. The enum gains them later; noted in `TODO.md`. `System Block...md:23` - `(No/USB/BLE/Legacy
 BT/WiFi)`. Code `Enums.h:34-38`: `None`, `USB`, `BLE`. Replace with `(No/USB/BLE)`.
 
 **A26 System Block: the capability list names the wrong bit.** `System Block...md:30-38` - lists
@@ -281,6 +281,10 @@ itself as device 1 with no net.
 **B8 Tamu is built as Core only.**
 
 **A59 Storage: `Storage_FlashInit` is missing from the main functions.** The document lists four (`Docs/Services/Storage.md:40-47`); the code declares five, the extra being `bool Storage_FlashInit();` ("find/open the storage partition", `StorageDefs.h:31`). Add it to the list.
+
+**B20 A `String` element is typed `Uint32`.** From A22: `ScriptExec.h:533-538` returns a byte element for `DataType::String` but sets `*elemType = DataType::Uint32`, the same numeric type the `Colour` branch uses. A string element should carry a character type so it stays distinct from the numerics.
+
+**B21 The Discover reply prefixes a kind tag.** From A24: the tag is redundant. `Device.h:314-321` writes `response[0] = DEVICE_REPLY_KIND_ASSIGN` (`0xD1`) and the matching decode at `:216`, `:225` keys off it; the request/reply flag and the packet's payload length already disambiguate. Drop it and update the app's SNDB decoder.
 
 **B18 The deadzone is always a `Number`.** From A20: `SubscriptionsDeltaHash(const FieldResult &fr, Number deadzone)` (`SubscriptionsProvider.h:119`) reads `int32_t dz = deadzone.Value;` (`:127`) for every scalar, so an `Index` or `Uint32` value is gated against a `Number` deadzone. Take the deadzone as the value's scalar type instead.
 

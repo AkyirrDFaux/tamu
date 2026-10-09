@@ -275,6 +275,10 @@ green, release checklist.
 - [ ] **DAS provider stale entries (low priority).** Effectively solved by the 120 s provider lease
       + orphan re-cancel; revisit only if a *confirmed* cancel is wanted.
 
+## Open work
+
+- App Active enum: add `LegacyBt` and `WiFi` (`Enums.h:34-38`). The documents already list them as planned states (doc fact check A25).
+
 ## Code-cleanup backlog
 
 - Give the storage flash API a namespace or class instead of the `Storage_Flash*` free functions, and group it the same way in `Docs/Services/Storage.md` (from doc fact check A12).
