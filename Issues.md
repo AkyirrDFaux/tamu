@@ -211,7 +211,7 @@ to each table, `| Dictionary | 0 | DataType::Geometry | Reserved marker; holds n
 **A47 LED Display: the repeated sentence.** - **approved and applied.** `LED Display.md:71` repeats "Not every shape interacts with
 every parameter." under the texture table, where it refers to textures and effects. Reword.
 
-**A48 Measurement: the trigger flag.** - **revised and applied**: both rows carry `P, (TR)`, and the Sampling Rate note explains the write-time clamp. The schema's field flags still lack the trigger bit, which is B38. - **revised and applied** on the Sampling Rate row, whose note now says the trigger clamps the stored value to the applied one. The same trigger serves the Filter Coefficient (both fields are clamped at write time, `Measuring.h:60-74`), so that row is missing its `(TR)` marker - either it gains one or the code drops the field-2 trigger. `Measurement.md:7` - `Sampling Rate` flags `P, (TR)`. Code
+**A48 Measurement: the trigger flag.** - **revised and applied**: both rows carry `P, TR`, the Sampling Rate note explains the write-time clamp, and the code side is B38. - **revised and applied**: both rows carry `P, (TR)`, and the Sampling Rate note explains the write-time clamp. The schema's field flags still lack the trigger bit, which is B38. - **revised and applied** on the Sampling Rate row, whose note now says the trigger clamps the stored value to the applied one. The same trigger serves the Filter Coefficient (both fields are clamped at write time, `Measuring.h:60-74`), so that row is missing its `(TR)` marker - either it gains one or the code drops the field-2 trigger. `Measurement.md:7` - `Sampling Rate` flags `P, (TR)`. Code
 (`DAS_v0.1/Measuring.h:46,80-83`, `Valu_v2.0/Measuring.h:47,79-82`) sets only `ValuePersistent` and
 registers the trigger out of band; both boards also trigger field 2, listed as bare `P`. Replace the
 flags with `P` on both rows, or set `ValueTrigger` in code.
@@ -235,12 +235,12 @@ build. Replace with `1 page, grown and shrunk to stay between 25% and 75% full` 
 **A53 Current Setup: the script output names.** - **approved and applied** (`offset L`, `offset R`). `Current Setup v3.md:34-35` - `Position L`, `Position
 R`. Code `app/test/current_setup_scripts.dart:256-257`: `offset L`, `offset R`. Replace both.
 
-**A54 Current Setup: the script input labels.** `Current Setup v3.md:39,40,52` - `Delay between
+**A54 Current Setup: the script input labels.** - **approved and applied** (`Blink delay`, `Movement time`, `Manual mode`). `Current Setup v3.md:39,40,52` - `Delay between
 blinks`, `Movement time in each direction`, `Switch between auto and manual`. Code
 `current_setup_scripts.dart:340-341,127`: `Blink delay`, `Movement time`, `Manual mode`. Replace all
 three.
 
-**A55 Current Setup: the brightness cap is reached at 8.8k lux.** `Current Setup v3.md:48` - the last
+**A55 Current Setup: the brightness cap is reached at 8.8k lux.** - **deferred**: the column reads `>10k Lux (TODO)` and the owner recalculates the curve later. Measured today: `luxBrightMax = 70`, `luxSpan = 8850` (`app/test/current_setup.dart:170-174`). `Current Setup v3.md:48` - the last
 column reads `>10k Lux`. Code `app/test/current_setup.dart:170-176`: `luxSpan = 8850`. Replace the column
 with `>8.8k Lux` (only if 10k is not deliberate).
 
@@ -280,7 +280,9 @@ itself as device 1 with no net.
 
 **B8 Tamu is built as Core only.**
 
-**A59 Storage: `Storage_FlashInit` is missing from the main functions.** The document lists four (`Docs/Services/Storage.md:40-47`); the code declares five, the extra being `bool Storage_FlashInit();` ("find/open the storage partition", `StorageDefs.h:31`). Add it to the list.
+**A59 Storage: `Storage_FlashInit` is missing from the main functions.** - **awaiting a ruling.**
+
+**A60 The flag abbreviations are never defined.** Raised by A48: `P`, `RO` and `TR` appear in every block table and none of them is explained anywhere in `Docs/`. Add the legend where the flags are first used (`Register.md` "ValueInfo Flags" or `Data Formats.md`). The document lists four (`Docs/Services/Storage.md:40-47`); the code declares five, the extra being `bool Storage_FlashInit();` ("find/open the storage partition", `StorageDefs.h:31`). Add it to the list.
 
 **B38 The measurement field flags lack the trigger bit.** From A48: `Register.md:52` makes the flag the gate, but `ResistiveMeas_Entries` (`DAS_v0.1/Measuring.h:46-48`, `Valu_v2.0/Measuring.h:47-49`) carries only `ValuePersistent` while `ResistiveMeas_Triggers` (`:80-81`) registers functions for fields 0 and 2. Set the flag on those two entries.
 

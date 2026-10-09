@@ -36,8 +36,8 @@ Script 2: Eye movement
 
 Script 3: Lid timer
 
-- Input 0: Delay between blinks, default 10 s
-- Input 1: Movement time in each direction, default 200 ms
+- Input 0: Blink delay, default 10 s
+- Input 1: Movement time, default 200 ms
 - Input 2: Force close
 - Input 3: Max opening
 
@@ -45,11 +45,11 @@ Script 4: Brightness regulation
 
 - Uses one LDR to set the brightness of each display, switching between dark and light mode independently.
 
-| <10 Lux | 100 Lux | 3000 Lux | >10k Lux |
+| <10 Lux | 100 Lux | 3000 Lux | >10k Lux (TODO) |
 | ------- | ------- | -------- | -------- |
 | 5%      | 10%     | 40%      | 70%      |
 
-- Input 0: Switch between auto and manual, default auto
+- Input 0: Manual mode, default auto
 - Input 1: Manual mode, left eye switch selection (light or dark)
 - Input 2: Manual mode, right eye switch selection (light or dark)
 
