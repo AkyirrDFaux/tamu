@@ -1,5 +1,289 @@
 # Issues
 
+## Doc fact check (2026-10-09)
+
+Every firmware document was checked against `firmware/src`. The documents are the specification, so a
+mismatch means one side is wrong, and the two lists below say which. Each item gives the current text,
+the evidence, and the proposed replacement. **Doc fixes need approval before they are applied**; code
+fixes are work for the beta window.
+
+### A. Doc fixes
+
+**A1 Register: dynamic command IDs.** `Docs/Services/Register.md:102-107` - the ID column reads `0`,
+`1`, `2`, `3` under the `011x` heading. Code `Core/Services/RegisterDefs.h:39-44`: `Create = 0x10,
+Delete = 0x11, GetName = 0x12, SetName = 0x13`. Replace the four ID cells with `0x10`, `0x11`, `0x12`,
+`0x13`.
+
+**A2 Register: instance count.** `Register.md:23-24` - `Instances 0-255` on the Dynamic and Scripts
+rows, contradicting the 6-bit `BlockInstance` on line 6. Code `RegisterDefs.h:47-55`: 64 instances per
+type, a global index `0..255` over the four banks. Replace the note cell with `Instances 0-63 per type;
+global index 0-255 across the four banks`.
+
+**A3 Register: enumerate reply omits the dynamic word form.** `Register.md:58` - `Fragmentation, Block
+types + maximum instance for each (uint16) stream`. Code `RegisterEnumerate.h:161-168` packs System and
+static types as `10.6` and the dynamic range as `8.8`. Replace with `Fragmentation, one packed word per
+present type: (type << 6) | maximum instance for the System and static types, and (bank type << 8) |
+highest global index for the dynamic range`.
+
+**A4 Register: Create Dynamic request and reply.** `Register.md:104` - Request `Index (uint16)`,
+Response `Success (bool)`. Code `RegisterPersist.h:104-107` reads an index **and a name**
+(`name_len = PayloadBytes - 2`) and replies with a block index. Replace with Request `Index (uint16),
+Name`, Response `BlockIndex, Ack`.
+
+**A5 Register: longer strings are truncated, not rejected.** `Register.md:27` - a write of a different
+type or length fails, and `String`/`Filename` may be shorter. Code `MemoryBlocks.h:164-167` clamps a
+longer one. Append `and may be longer and are truncated to the field size`.
+
+**A6 Storage: the pointer magic does not exist.** `Storage.md:9` - the example row shows
+`0x53451345`. No such constant exists anywhere in the tree. The valid entry is the table's
+page-aligned flash offset. Replace the example with `0x00001000`.
+
+**A7 Storage: Filesize is the exact byte count.** `Storage.md:16` and `:19` say the size is "a multiple
+of a page". Code `StorageBlockFS.h:449` stores the exact size; only the reservation is page-rounded.
+Replace `:16` with `In bytes; the reserved space is rounded up to whole pages` and `:19` with `The start
+offset of a file is always page-aligned, and the space reserved for it is rounded up to whole pages; the
+recorded size is the exact byte count.`
+
+**A8 Storage: zero-length files are accepted.** `Storage.md:32,34` - `Size (>0)` and `New Size (>0)`.
+Code accepts 0 (`StorageDefs.h:57-58`, no zero check). Drop `(>0)` from both cells.
+
+**A9 Storage: fragmentation comes before the name.** `Storage.md:36-37` - Response and Request read
+`Name, Fragmentation, File contents (stream)`. Code `Core/Services/Storage.h:89-90` puts the 4-byte frag
+info first and the 8-byte name at offset 4. Reorder both cells to `Fragmentation, Name (first
+fragment), File contents (stream)`.
+
+**A10 Storage: newest entry wins.** `Storage.md:5` - "Its first valid entry is that pointer ... The
+block is erased only when the last entry is invalidated." Code `StorageBlockFS.h:40-52,73-78`: the newest
+valid slot is the pointer, and the page is erased only when no unused slot remains. Replace with `Its
+newest valid entry is that pointer ... The page is erased only when every entry is written.`
+
+**A11 Storage: utility signatures return bool with out-parameters.** `Storage.md:49,51,55` -
+`uint32_t FindFiletable()`, `uint32_t FindInFiletable(char[8] Filename)`, `uint32_t
+GetEndOfFiletable()`. Code `StorageBlockFS.h:43,98,118` returns `bool` and writes through a pointer.
+Replace with `bool FindFiletable(uint32_t* Offset)`, `bool FindInFiletable(char[8] Filename, uint32_t*
+Index)`, `bool GetEndOfFiletable(uint32_t* Index)`.
+
+**A12 Storage: main function names and parameter order.** `Storage.md:40-47` - `Read/Write/Erase/Format`
+with length before buffer. Code `StorageDefs.h:31-35` uses `Storage_FlashRead(uint32_t offset, void*
+data, uint32_t size)`, `Storage_FlashWrite`, `Storage_FlashErase(uint32_t offset, uint32_t size)`,
+`Storage_FlashFormat()`. Replace names and put the buffer before the length.
+
+**A13 Storage: grow/shrink is build-conditional.** `Storage.md:62` states the 75%/25% grow and shrink
+unconditionally. Code `StorageBlockFS.h:266-280` guards it with `#ifdef OPTIMIZE_SPEED`. Prefix `In a
+speed build, ` and add `a size build keeps the current size.`
+
+**A14 Storage: allocation starts at a wear cursor.** `Storage.md:54` - "starting from a start page".
+Code `StorageBlockFS.h:415` scans from `(wear_cursor + scanned) % num_blocks`. Replace with `starting
+from an internal wear cursor that rotates allocations across the storage`.
+
+**A15 Storage: Format replies with an empty ack.** `Storage.md:31` - Response `Success (bool)`. Code
+`Core/Services/Storage.h:20-21` sends `SendResponse(frame, nullptr, 0)`. Replace with `Ack (empty)`.
+
+**A16 Storage: the reduced file system does not exist.** `Storage.md:32-35` - the note `not in reduced
+file system` is stale; the DAS runs the full FS (`DAS_v0.1/Main.h:36-38`, `Capabilities::StorageFiles`).
+Delete the clause from all four rows.
+
+**A17 Storage: size range.** `Storage.md:1` - "from 4 kB to 2 MB". The real regions are 512 B (DAS),
+8 kB (Valu) and 948 kB (Tamu), `platformio.ini:97,165,299`. Replace with the measured range or per-device
+sizes.
+
+**A18 Script: the `Number` predefine is missing.** `Script.md:43-48` - the Predefine block ends at
+`Bool`. Code `ScriptDefs.h:67` defines `SCRIPT_PRE_NUMBER 6`, a 16-bit Q8.8 literal. Append the row
+`| | Number | 16-bit Q8.8 fixed-point literal |`.
+
+**A19 Subscriptions: the last value covers more types.** `Subscriptions.md:44` - "for `Number` and
+`int32` values only". Code `SubscriptionsProvider.h:171-176` accepts `Number`, `Index` and `Uint32`.
+Replace with `for Number, Index and Uint32 values only`.
+
+**A20 Subscriptions: the deadzone covers the integer scalars.** `Subscriptions.md:11` - Deadzone
+`Number`, "For Number and Vector". Code `SubscriptionsProvider.h:275-282` gates any 4-byte scalar.
+Replace with `For Number, Index, Uint32 and Vector`.
+
+**A21 Script: the list reply is fragmented.** `Script.md:88` - Response `Number of loaded scripts
+(uint8), Script File IDs (uint16)`. Code `ScriptRuntime.h:164-180` streams it as fragments. Replace with
+`Fragmentation, number of loaded scripts (uint8), Script File IDs (uint16) (stream)`.
+
+**A22 Script: Compose/Extract also handles `String`.** `Script.md:70`. Code `ScriptExec.h:509-538`
+includes `DataType::String`. Replace with `Vector, Matrix, Colour or String plus an Index convert to and
+from Number or uint8.`
+
+**A23 App Interface: BLE payload is `ATT_MTU - 5`.** `App Interface.md:21` - `uint8[ATT_MTU - 2]`. Code
+`Devices/Tamu_v2.0A/AppBLE.h:307`: `chunkCap = budget - 3 - 2`. Replace the size cell with
+`uint8[ATT_MTU - 5]`.
+
+**A24 System Block: Discover reply carries a kind tag.** `System Block and Device Commands.md:42` -
+Response `SN (of node) + ID (from core, assignment)`. Code `Services/Device.h:39,315` prefixes
+`0xD1`. Replace with `Kind tag (0xD1) + SN (of node) + ID (from core, assignment)`.
+
+**A25 System Block: App Active has three states.** `System Block...md:23` - `(No/USB/BLE/Legacy
+BT/WiFi)`. Code `Enums.h:34-38`: `None`, `USB`, `BLE`. Replace with `(No/USB/BLE)`.
+
+**A26 System Block: the capability list names the wrong bit.** `System Block...md:30-38` - lists
+`Router` and omits storage. Code `Enums.h:15` has `StorageFiles = 1u << 5`, set by all three targets, and
+no router bit. Replace `- Router` with `- Storage Files`.
+
+**A27 System Block: the CLI is gone.** `System Block...md:55` - "through the app or the CLI". Code
+`Tamu_v2.0A/AppUSB.h:8`: "There is no console/REPL: the CLI was removed". Replace with `the core remains
+accessible through the app to change its NetID, the issue is logged, and the red LED blinks
+periodically.`
+
+**A28 System Block: the re-sync interval is fixed.** `System Block...md:59` - "at random intervals".
+Code `TimeSync.h:23,93`: `DISCOVER_INTERVAL_MS = 150000` with no jitter. Replace with `every 2.5
+minutes`.
+
+**A29 System Block: discovery repeats at a fixed interval.** `System Block...md:47` - "at random
+intervals". Code `DAS_v0.1/Main.h:142-152` sleeps a fixed 500 ms. Replace with `every 500 ms`.
+
+**A30 Bootloader: the write reply is a flag.** `Bootloader.md:52` - Response `Success (bool)`. Code
+`Services/Device.h:171-173` sets `FLAG_SUCCESS`/`FLAG_FAIL`. Replace with `Success (flag)`.
+
+**A31 Bootloader: the core lights no LED.** `Bootloader.md:3` - "lights the white LED permanently".
+Code `Bootloader/CoreBootloader.cpp:104-134` drives no LED; only the DAS does
+(`DAS_v0.1/Bootloader.cpp:307-322`). Append `(where fitted)`.
+
+**A32 Log Handler: priority is fixed.** `Log Handler.md:12` - "at the priority that corresponds to it".
+Code `Log.h:32` always uses `PRIORITY_ERROR`. Replace with `at the highest priority (errors)`.
+
+**A33 Data Formats: `Effect` is not a type.** `Data Formats.md:26` lists it; the enum
+(`Enums.h:59-61`) has `UnknownKeyed`, `Geometry`, `Texture` only, and effects are values continuing the
+texture enum. Delete the row and reword line 53 to name the three keyed types, adding `Texture values
+name textures and effects.`
+
+**A34 Data Formats: `Name` is not an enum member.** `Data Formats.md:17`. Code holds a 16-character
+name as `String` with size 16 (`RegisterEnumerate.h:37`). Replace the description with `16 characters,
+held as a String of 16 bytes; not a distinct enum member.`
+
+**A35 RSBus: the Scripts TrID range is blank.** `RSBus and Packets.md:62` - the range cell is empty.
+Code `Packet.h:46-47`: `TRID_SCRIPT_BASE 0x2000`, `TRID_SCRIPT_MAX 0x2FFF`. Fill in `0x2000-0x2FFF`.
+
+**A36 Data Formats: `BlockInfo` is a register pointer.** `Data Formats.md:22` - "A struct for pointing
+scripts". Code `Enums.h:57` and `RegisterDefs.h:21`: a 32-bit register pointer, `Type10 | Instance6 |
+Field8 | Key8`. Replace with `A 32-bit register pointer: 10-bit type, 6-bit instance, 8-bit field and
+8-bit key.`
+
+**A37 RSBus: the TrID counter is 8-bit.** `RSBus and Packets.md:60` - `0x0000-0x0FFF, Incrementing,
+resets on overflow`. Code `Packet.h:121-125`: the high byte is the service tag, so each service uses
+`0x_00-0x_FF`. Append `The counter is 8 bits and wraps; the high byte carries the service tag, so a
+reply routes to the right service.`
+
+**A38 Data Formats: `DevType` cites a list that has no numbers.** `Data Formats.md:21` points at
+`Devices.md`, which lists no numbers. Code `Enums.h:3-8`: `Tamu_v2_0A = 0x01`, `Valu_v2_0 = 0x02`,
+`DualAnalogSensor = 0x03`. Add the numbers to `Devices.md`.
+
+**A39 LED Display: `-1` is a valid sentinel.** `LED Display.md:9` - "Index of the block containing
+shapes, textures and effects; -1 is invalid". Code `Vysi1Layout.h:76` (`-1 = none`) and
+`Vysi1Render.h:351` (`if (Per.RenderBlock < 0 ...) return;`). Replace the note with `-1 renders
+nothing`.
+
+**A40 LED Display: texture Size takes a `Number` only.** `LED Display.md:65` - `Vector<2>` or
+`Number`. Code `Vysi1Render.h:180` reads a `Number` and silently defaults on a type mismatch. Replace the
+type cell with `Number`.
+
+**A41 LED Display: `Angles` takes a `Number` only.** `LED Display.md:35` - `Number` or `Vector`. Code
+`Vysi1Render.h:48` reads a `Number`; no `Vector` path exists. Replace the type cell with `Number`.
+
+**A42 LED Display: `Bitmap` is not in the enum.** `LED Display.md:78` lists `- Bitmap (TODO)` between
+textures and effects, which shifts the effect numbering. Code `Render.h:72-82` has `GradientCircular =
+3` then the effects from `4`. Delete the bullet or move it after the effect list.
+
+**A43 LED Display: `Mesh` draws nothing.** `LED Display.md:56` lists `- Mesh`. Code `Render.h:42` has
+the value but `GeometryMath.h:119-228` has no case, so it falls through to `default: return 0`. Mark it
+`- Mesh (TODO)`.
+
+**A44 LED Display: `Point coordinates` is never read.** `LED Display.md:37` - key 10. Code holds
+`PointCoordinates = 10` in `Render.h:23`, but `RenderGeometryField` never reads it. Mark the note
+`TODO`.
+
+**A45 LED Display: two Triangle bullets, one enum value.** `LED Display.md:52-53`. Code `Render.h:39`
+has one `Triangle = 9` with two modes (`GeometryMath.h:76`). Replace both bullets with `- Triangle:
+equilateral (size only) or isosceles (angle and side length)`.
+
+**A46 LED Display: the reserved key 0 is missing from both dictionaries.** `LED Display.md:26-38` and
+`:61-69` start at key 1. Code `Render.h:13,60` reserves key 0 as the dictionary marker. Add a first row
+to each table, `| Dictionary | 0 | DataType::Geometry | Reserved marker; holds no value |`.
+
+**A47 LED Display: the repeated sentence.** `LED Display.md:71` repeats "Not every shape interacts with
+every parameter." under the texture table, where it refers to textures and effects. Reword.
+
+**A48 Measurement: the trigger flag.** `Measurement.md:7` - `Sampling Rate` flags `P, (TR)`. Code
+(`DAS_v0.1/Measuring.h:46,80-83`, `Valu_v2.0/Measuring.h:47,79-82`) sets only `ValuePersistent` and
+registers the trigger out of band; both boards also trigger field 2, listed as bare `P`. Replace the
+flags with `P` on both rows, or set `ValueTrigger` in code.
+
+**A49 Devices: Tamu I2C pull-ups.** `Devices.md:9` - "with 4k7 pull-ups". Code
+`Tamu_v2.0A/AccGyr.h:139-150`: "this board has no external pull-ups on SDA/SCL", and enables internal
+pull-ups. Replace the note with `internal pull-ups` if the board has none, or fix the code if it does.
+
+**A50 Devices: Valu declares an LED display it does not implement.** `Devices.md:79` - `- LED Display,
+2 instances`. Code `Valu_v2.0/Main.h:80-89` registers no LED display and no strip driver exists. Mark it
+`(TODO)` or implement it.
+
+**A51 Devices: table size has no firmware counterpart.** `Devices.md:30` and `:87` - `4 pages` and
+`2 pages`. Code `StorageBlockFS.h:586-597` formats one page of table and grows it only in a speed
+build. Replace with `1 page, grown and shrunk to stay between 25% and 75% full` (Tamu) and `1 page`
+(Valu).
+
+**A52 Devices: Tamu storage size.** `Devices.md:31` - "a lot (MBs)". Code `platformio.ini:165`:
+`STORAGE_FLASH_SIZE=0xED000`, 948 kB. Replace with `948 kB`.
+
+**A53 Current Setup: the script output names.** `Current Setup v3.md:34-35` - `Position L`, `Position
+R`. Code `app/test/current_setup_scripts.dart:256-257`: `offset L`, `offset R`. Replace both.
+
+**A54 Current Setup: the script input labels.** `Current Setup v3.md:39,40,52` - `Delay between
+blinks`, `Movement time in each direction`, `Switch between auto and manual`. Code
+`current_setup_scripts.dart:340-341,127`: `Blink delay`, `Movement time`, `Manual mode`. Replace all
+three.
+
+**A55 Current Setup: the brightness cap is reached at 8.8k lux.** `Current Setup v3.md:48` - the last
+column reads `>10k Lux`. Code `app/test/current_setup.dart:170-176`: `luxSpan = 8850`. Replace the column
+with `>8.8k Lux` (only if 10k is not deliberate).
+
+**A56 Current Setup: blink is forced on a shape change only.** `Current Setup v3.md:58` - "Forces a
+blink when the pupil changes". Code `current_setup_scripts.dart:686-689` forces it only when the shape
+class changes; a lid-only change does not blink. Replace with `when the pupil shape changes`.
+
+### B. Code fixes (the document is the specification)
+
+**B1 Router and branch broadcast are documented and unimplemented.** `RSBus and Packets.md:3-7` and
+`Data Formats.md:37` (`0x3FE`) describe a router tree; `Dispatcher.h:36-40` says the multi-bus topology
+is not implemented and `Docs/Services/Router.md` is a stub.
+
+**B2 Valu's LED display.** A50 above: two instances are declared, none implemented.
+
+**B3 Texture `Size` and Geometry `Angles` reject the `Vector` the documents allow** (A40, A41), and
+`Bitmap` has no slot (A42). Either the dictionary format is trimmed to the code or the code catches
+up.
+
+**B4 Measurement fields 0 and 2 have a trigger function but no `ValueTrigger` flag** (A48), while
+`Register.md:52` makes that flag the gate.
+
+**B5 System block fields with no code.** `System Block...md:24` documents `WiFi connection information`
+at 8.1; there is no WiFi code. `App Interface.md:25-27` documents a UDP framing; there is no UDP code.
+
+**B6 SNDB does not store other cores or filter by net.** `System Block...md:65,67` describes storing
+other cores by `NetID.1` and excluding foreign nets; `SNDB.h` stores device pairs only, and the core adds
+itself as device 1 with no net.
+
+**B7 Tamu is built as Core only.** `Devices.md:4` says "Core and Node"; `Tamu_v2.0A/Main.h:32-38`
+declares `Capabilities::Core` and no node build exists.
+
+### C. Checked and correct
+
+The command ID table matches every service and the code constants. The Bootloader packet layouts, the
+Log struct and database entries, the USB framing and CRC coverage, the App TrID range
+`0xF000-0xFFFF`, the Register field sizes and version packing, the subscription record sizes, the script
+header and block order, the symbol layout, the Acc & Gyr block, the Buttons/LED blocks, the Fan block,
+every device pin assignment, and the DAS/Valu storage geometry all verify against the code.
+
+### D. Unverifiable from code
+
+`RSBus and Packets.md:1` supply voltage and USB PD (hardware), `Data Formats.md:7` "14 byte UUID"
+(14 bytes confirmed, UUID loose), `Data Formats.md:53` the generic dictionary marker encoding,
+`Register.md:34` the Internal/External Access columns, `Register.md:48` "sorting by the whole uint32",
+`Storage.md:86-96` the dynamic block descriptor ordering (runtime only), and the Valu feature rows that
+are hardware-only.
+
+
 Open items only. The 2026-10-04 per-area audit findings (register, storage, device/log,
 subscriptions, tamu, das, bootloader, app, tooling, tests) were fixed and committed; the
 remaining low-value follow-ups live in `TODO.md`.
