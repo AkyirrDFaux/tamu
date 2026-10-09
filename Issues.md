@@ -34,7 +34,7 @@ Response `Success (bool)`. Code `RegisterPersist.h:104-107` reads an index **and
 (`name_len = PayloadBytes - 2`) and replies with a block index. Replace with Request `Index (uint16),
 Name`, Response `BlockIndex, Ack`.
 
-**A5 Register: longer strings are truncated, not rejected.** - **revised**. `String` and `Filename` are not variable-length strings: they are fixed-size character fields, typically 8, 16 or 24 bytes. Proposed sentence: `A write of a different type or length fails. String and Filename are fixed-size character fields, typically 8, 16 or 24 bytes: a shorter value is space-padded at the end, a longer one is cut off.` `Register.md:27` - a write of a different
+**A5 Register: longer strings are truncated, not rejected.** - **revised**. `String` and `Filename` are not variable-length strings: they are fixed-size character fields, typically 8, 16 or 24 bytes. Proposed sentence: `A write of a different type or length fails. String and Filename are fixed-size character fields, typically 8, 16 or 24 bytes: a shorter value is null-padded at the end, and a longer one is cut off.` - **approved and applied, with null padding**; the code's space padding is B10. `Register.md:27` - a write of a different
 type or length fails, and `String`/`Filename` may be shorter. Code `MemoryTypes.h:148-178` pads a
 shorter one (`:153-162`) and clamps a longer one (`:164-166`, "clamp; memcpy copies Size bytes
 anyway"); only a non-string length mismatch fails (`:169`). Append `and may be longer and are truncated
@@ -280,7 +280,9 @@ itself as device 1 with no net.
 
 **B8 Tamu is built as Core only.**
 
-**A58 `String` and `Filename` descriptions in Data Formats.** A consequence of A5: if those types are only ever fixed-size character fields, `Data Formats.md` should say so on both rows rather than describing them as variable-length.
+**B10 Character fields are padded with spaces, not nulls.** A5's ruling makes the pad byte a null. The code pads with spaces in the Register path (`MemoryTypes.h:159`, `memset(pad_buf, ' ', ...)`) and the storage file-name path (`StorageDefs.h:86-97`; `TODO.md:346`), and every device Name field is commented as space-padded (`Tamu_v2.0A/Main.h:77`, `DAS_v0.1/Main.h:68`, `Valu_v2.0/Main.h:70`). The app pads the same way (`register_client.dart` `_padBlockName`, `device_backup.dart:28`, `current_setup.dart:411`), and the HIL asserts it: `hil_script_test.dart:253` fails with "short string not space-padded", plus `register_client_dynamic_test.dart:36`, `tamu_hardware_verification_test.dart:280` and `hil_backup_test.dart:197`. Making the pad a null is a wire- and storage-format change across firmware, app and HIL.
+
+**A58 `String` and `Filename` descriptions in Data Formats.** A consequence of A5: if those types are only ever fixed-size character fields, `Data Formats.md` should say so on both rows rather than describing them as variable-length - null-padded, 8, 16 or 24 bytes.
 
 **B9 Create Dynamic replies with a redundant block index.** `RegisterPersist.h:107` replies `SendBlockIndexAck(frame, index)` - a 3-byte `BlockIndex` echo plus a 1-byte ack - while Delete and Set Name reply a plain status (`:115`, `:131`). The host already knows the index it sent (the app computes it, `register_client.dart:421-431`). Reply a plain status and drop the echo, then have the app use the index it sent instead of `reply[0]` (`register_client.dart:437-439`). `Devices.md:4` says "Core and Node"; `Tamu_v2.0A/Main.h:32-38`
 declares `Capabilities::Core` and no node build exists.
