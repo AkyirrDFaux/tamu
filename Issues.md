@@ -4,6 +4,57 @@ Open items only. The 2026-10-04 per-area audit findings (register, storage, devi
 subscriptions, tamu, das, bootloader, app, tooling, tests) were fixed and committed; the
 remaining low-value follow-ups live in `TODO.md`.
 
+## Planned change: packet flags (2026-10-09)
+
+**B39 Packet flags: success/fail carry detail and replace the status byte (planned, owner request
+2026-10-09).**
+
+The two response flags stop meaning "no extra information" and become the reply itself:
+`FLAG_SUCCESS`/`FLAG_FAIL` on the packet replace the 1-byte status payload in every place that uses it
+today. No payload at all means plain success or plain failure; an optional payload after a flag carries the
+detail. Bit 7 of the flag byte stays free.
+
+What exists now (all measured):
+
+- Flags `Packet.h:17-23`: `REQACK 1<<0`, `START 1<<1`, `STOP 1<<2`, `TYPE 1<<3`, `FRAG 1<<4`,
+  `SUCCESS 1<<5`, `FAIL 1<<6` - both commented "no extra information". Bit 7 unused.
+- `RespondStatus(frame, ok)` (`Core/Functions/MemoryBackup.h:65-90`) is the single status helper: it logs and
+  reports the failure, then sends `uint8_t status = ok ? 0 : 0xFF` as a 1-byte payload. **54 call sites**, in
+  `RegisterDefs.h`, `RegisterEnumerate.h`, `RegisterPersist.h`, `RegisterDispatch.h`, `RegisterRead.h`,
+  `RegisterWrite.h`, `ScriptRuntime.h`, `MemoryBackup.h`.
+- The flag style already exists: `SubscriptionsControl.h` replies through `SubReply(..., FLAG_SUCCESS|FLAG_FAIL)`
+  with an empty payload - 25 uses across firmware and app.
+- Bootloader passthrough already sends the flags with no payload (`Services/Device.h:171-173`), which is the
+  target shape; A30's ruling that it should carry a bool is superseded by this and B26 flips.
+- App: packet flags are already parsed - `protocol.dart:13-19` mirrors all seven and the frame exposes `flags`
+  (`:90`, with `isResponse`/`isStart`/`isStop`/`isFrag`). No success/fail getters yet, and roughly ten reply
+  checks read the status byte instead: `reply[0] == 0` in `register_client.dart:453,506,648,655`,
+  `script_client.dart:63,69,83`, plus `storage_client.dart`, `subscription_client.dart`, `bootloader_client.dart`.
+- Documents: 15 `Success (bool)` response cells across `Services/*.md`, plus the flag table in
+  `RSBus and Packets.md` and the flag shortcuts line in `Register.md`.
+
+The work, in one commit set because it is a wire change:
+
+1. **Firmware.** `RespondStatus` keeps its logging/reporting and sends the flag with no payload instead of the
+   status byte; the reply flag is chosen from `ok`. Keep `SubReply` as it is. Every `Success (bool)`-shaped
+   reply that does not use `RespondStatus` gets the same treatment.
+2. **App.** Add `isSuccess`/`isFail` to the frame (alongside the existing flag getters) and route every status
+   check through them. The status byte disappears, so each site has to move; a shared helper avoids ten copies
+   of the same two lines.
+3. **Documents (approval-gated).** The 15 response cells become the flag wording, the flag table in
+   `RSBus and Packets.md` drops "no extra information" for "an optional payload carries detail", and
+   `Register.md`'s shortcuts line stays as is. Needs Akyirr's sign-off on the wording before it is applied.
+4. **Tests.** The app's protocol tests and the HIL sweep assert on the status byte today; they move to the flag.
+
+Ordering: this goes first in the code phase. It supersedes B17 (Format's reply already becomes a flag) and flips
+B26, and B19's script-list reply is touched by the same helper change. Verification is the usual gates plus the
+safe HIL sweep; no destructive suite is needed, since no storage or script wire format moves.
+
+Open questions for the owner: (1) is the payload the right carrier for the extra information, given bit 7 is
+free - a flag sub-field would keep payloads clean but change the flag semantics further; (2) does a failure
+always carry a reason byte, or only when the sender has one; (3) confirm the document wording for the response
+cells.
+
 ## Doc fact check (2026-10-09)
 
 Every firmware document was checked against `firmware/src`. The documents are the specification, so a
