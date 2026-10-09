@@ -40,20 +40,20 @@ shorter one (`:153-162`) and clamps a longer one (`:164-166`, "clamp; memcpy cop
 anyway"); only a non-string length mismatch fails (`:169`). Append `and may be longer and are truncated
 to the field size`.
 
-**A6 Storage: the pointer magic does not exist.** `Storage.md:9` - the example row shows
+**A6 Storage: the pointer magic does not exist.** - **approved and applied.** `Storage.md:9` - the example row shows
 `0x53451345`. No such constant exists anywhere in the tree. The valid entry is the table's
 page-aligned flash offset. Replace the example with `0x00001000`.
 
-**A7 Storage: Filesize is the exact byte count.** `Storage.md:16` and `:19` say the size is "a multiple
+**A7 Storage: Filesize is the exact byte count.** - **approved and applied.** `Storage.md:16` and `:19` say the size is "a multiple
 of a page". Code `StorageBlockFS.h:449` stores the exact size; only the reservation is page-rounded.
 Replace `:16` with `In bytes; the reserved space is rounded up to whole pages` and `:19` with `The start
 offset of a file is always page-aligned, and the space reserved for it is rounded up to whole pages; the
 recorded size is the exact byte count.`
 
-**A8 Storage: zero-length files are accepted.** `Storage.md:32,34` - `Size (>0)` and `New Size (>0)`.
+**A8 Storage: zero-length files are accepted.** - **rejected**, the document is right: a zero-size file is pointless and should not exist. The code accepts one, so this becomes B11. `Storage.md:32,34` - `Size (>0)` and `New Size (>0)`.
 Code accepts 0 (`StorageDefs.h:57-58`, no zero check). Drop `(>0)` from both cells.
 
-**A9 Storage: fragmentation comes before the name.** `Storage.md:36-37` - Response and Request read
+**A9 Storage: fragmentation comes before the name.** - **approved and applied**, with the name in every fragment rather than the first, so the cells read `Fragmentation, Name, File contents (stream)`. The code carries the name in fragment 0 only, so this becomes B12. `Storage.md:36-37` - Response and Request read
 `Name, Fragmentation, File contents (stream)`. Code `Core/Services/Storage.h:89-90` puts the 4-byte frag
 info first and the 8-byte name at offset 4. Reorder both cells to `Fragmentation, Name (first
 fragment), File contents (stream)`.
@@ -279,6 +279,10 @@ other cores by `NetID.1` and excluding foreign nets; `SNDB.h` stores device pair
 itself as device 1 with no net.
 
 **B8 Tamu is built as Core only.**
+
+**B11 Create and Resize File accept a zero size.** From A8: a zero-size file should not exist. `BlocksForSize(0)` divides to zero and is forced to one block (`StorageDefs.h:56-57`), and neither path rejects 0 (`StorageBlockFS.h:443`, `:481-489`). Reject size 0 with a failure status.
+
+**B12 The file name travels in the first fragment only.** From A9: the name belongs in every fragment. The write path reads the name from fragment 0 and contents-only afterwards (`Storage.h:115-128`), and the read response does the same (`Storage.h:89-90`). Carry the name in all fragments, at the cost of 8 payload bytes per fragment, and update the app's file transfer to match.
 
 **B10 Character fields are padded with spaces, not nulls.** A5's ruling makes the pad byte a null. The code pads with spaces in the Register path (`MemoryTypes.h:159`, `memset(pad_buf, ' ', ...)`) and the storage file-name path (`StorageDefs.h:86-97`; `TODO.md:346`), and every device Name field is commented as space-padded (`Tamu_v2.0A/Main.h:77`, `DAS_v0.1/Main.h:68`, `Valu_v2.0/Main.h:70`). The app pads the same way (`register_client.dart` `_padBlockName`, `device_backup.dart:28`, `current_setup.dart:411`), and the HIL asserts it: `hil_script_test.dart:253` fails with "short string not space-padded", plus `register_client_dynamic_test.dart:36`, `tamu_hardware_verification_test.dart:280` and `hil_backup_test.dart:197`. Making the pad a null is a wire- and storage-format change across firmware, app and HIL.
 

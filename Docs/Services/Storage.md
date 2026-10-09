@@ -6,17 +6,17 @@ The first page, kept for low wear, holds only a pointer to the start of the file
 
 | Old entries | ... | Valid entry | ... | Unused entry |
 | ----------- | --- | ----------- | --- | ------------ |
-| 0x0         | ... | 0x53451345  | ... | 0xFFFFFFFF   |
+| 0x0         | ... | 0x00001000  | ... | 0xFFFFFFFF   |
 #### File Record
 A file record describes the location, size and name of a file. The offset is always measured from the start of the flash memory sector. An entry whose offset is `0x0` is invalidated, and an offset of `0xFFFFFFFF` means it has not been written yet.
 
 | Name     | Size       | Note |
 | -------- | ---------- | ---- |
 | Offset   | uint32     | From the start of the flash memory sector |
-| Filesize | uint32     | A multiple of a page |
+| Filesize | uint32     | In bytes; the reserved space is rounded up to whole pages |
 | Name     | `Filename` | 8 characters |
 
-The start offset of a file is always page-aligned, and its size is a multiple of a page.
+The start offset of a file is always page-aligned, and the space reserved for it is rounded up to whole pages; the recorded size is the exact byte count.
 #### File Table
 The file table holds file records. It is a file itself, managed by this service, and its first record always points to that file, which sets the table's length.
 
@@ -33,8 +33,8 @@ A file is handed to other functions to have data stored in it or read from it, a
 | Delete File       | 2  | Name                                        | Success (bool)                              | Respond only if requested, not in reduced file system |
 | Resize File       | 3  | Name, New Size (>0)                         | Success (bool)                              | Respond only if requested, not in reduced file system |
 | Rename File       | 4  | Old Name, New Name                          | Success (bool)                              | Respond only if requested, not in reduced file system |
-| Read File         | 5  | Name                                        | Name, Fragmentation, File contents (stream) | Maximum 64 byte stream fragment                       |
-| Write File        | 6  | Name, Fragmentation, File contents (stream) | Last sequential fragmentation index written | Respond only if requested, maximum 64 byte stream fragment |
+| Read File         | 5  | Name                                        | Fragmentation, Name, File contents (stream) | Maximum 64 byte stream fragment                       |
+| Write File        | 6  | Fragmentation, Name, File contents (stream) | Last sequential fragmentation index written | Respond only if requested, maximum 64 byte stream fragment |
 ### Implementation Functions
 #### Main Functions (implement per device, preferably not exposed)
 - `uint32_t Read(uint32_t Address, uint32_t Length, char* Buffer)`
