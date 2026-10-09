@@ -4,6 +4,8 @@ Open items only. The 2026-10-04 per-area audit findings (register, storage, devi
 subscriptions, tamu, das, bootloader, app, tooling, tests) were fixed and committed; the
 remaining low-value follow-ups live in `TODO.md`.
 
+Item codes: **A** = doc-fix rulings, **B** = code-fix items (both from the 2026-10-09 fact check); **E** = the remaining open backlog items, numbered for later handling.
+
 ## Planned change: services as classes (2026-10-09, owner request)
 
 **Goal.** One service = one class with one instance, non-virtual methods, no `new`, no vtables. The
@@ -52,7 +54,10 @@ native tests and both builds are for.
 
 **Order** (each step builds and passes before the next):
 1. `Register` - the biggest, and the one that proves the convention fits a split service.
-2. `Storage` - already a struct with an object; mostly renaming and moving `Init` in.
+2. `Storage` - already a struct with an object; mostly renaming and moving `Init` in. This also
+   absorbs the storage flash API refactor (Issues A12): the `Storage_Flash*` free functions become the
+   service's methods. The same class treatment extends to any other service still written as free
+   functions rather than a class (the point of this plan is one shape for every service).
 3. `Subscriptions` - 19 file-statics and three files that talk to each other.
 4. `Script` - 6 statics plus the VM and a loaded-program table: the riskiest.
 5. `LogHandler`, `Device`/SNDB and the bootloader passthrough - small; the dispatcher table lands here.
@@ -73,22 +78,6 @@ Every firmware document was checked against `firmware/src`; the closed dispositi
 (approved/applied or rejected) are in git history. Only the still-open items remain below.
 **Doc fixes need approval before they are applied**; code fixes are work for the beta window.
 
-### A. Doc fixes still open
-
-**A12 Storage: main function names and parameter order.** - **deferred** to the code-cleanup backlog: give the storage flash API a namespace or class, and group it in the document. `Storage.md:40-47` - `Read/Write/Erase/Format`
-with length before buffer. Code `StorageDefs.h:31-35` uses `Storage_FlashRead(uint32_t offset, void*
-data, uint32_t size)`, `Storage_FlashWrite`, `Storage_FlashErase(uint32_t offset, uint32_t size)`,
-`Storage_FlashFormat()`. Replace names and put the buffer before the length.
-
-**A51 Devices: table size has no firmware counterpart.** `Devices.md:30` and `:87` - `4 pages` and
-`2 pages`. Code `StorageBlockFS.h:586-597` formats one page of table and grows it only in a speed
-build. Replace with `1 page, grown and shrunk to stay between 25% and 75% full` (Tamu) and `1 page`
-(Valu).
-
-**A55 Current Setup: the brightness cap is reached at 8.8k lux.** - **deferred**: the column reads `>10k Lux (TODO)` and the owner recalculates the curve later. Measured today: `luxBrightMax = 70`, `luxSpan = 8850` (`app/test/current_setup.dart:170-174`). `Current Setup v3.md:48` - the last
-column reads `>10k Lux`. Code `app/test/current_setup.dart:170-176`: `luxSpan = 8850`. Replace the column
-with `>8.8k Lux` (only if 10k is not deliberate).
-
 ### B. Code fixes still open (the document is the specification)
 
 **B1 Router and branch broadcast are documented and unimplemented.** - **scope settled**: after the beta. The rig has no multi-bus device to test a tree topology on. `RSBus and Packets.md:3-7` and
@@ -101,23 +90,21 @@ information` at 8.1; there is no WiFi code in the firmware.
 **B6 The UDP framing has no code.** `App Interface.md:25-27` documents a UDP packet; the firmware
 implements USB and BLE only.
 
-**B7 SNDB does not store other cores or filter by net.** `System Block...md:65,67` describes storing
+**B7 SNDB does not store other cores or filter by net.** - **decided; implementing now.** `System Block...md:65,67` describes storing
 other cores by `NetID.1` and excluding foreign nets; `SNDB.h` stores device pairs only, and the core adds
 itself as device 1 with no net.
 
 **B8 Tamu is built as Core only.**
 
-**A59 Storage: `Storage_FlashInit` is missing from the main functions.** - **approved and applied** as `bool Init()`, described as finding and opening the storage partition; the namespace refactor (A12) stays in the backlog. - **awaiting a ruling.**
+**B31 The scripts' TrID range is capped at `0x2FFF`.** - *in progress.* The document gives scripts the remainder `0x2000-0xEFFF`; `Packet.h:47` caps it at `0x2FFF`.
 
-**B31 The scripts' TrID range is capped at `0x2FFF`.** The document gives scripts the remainder `0x2000-0xEFFF`; `Packet.h:47` caps it at `0x2FFF`.
+**B32 The TrID carries a service tag.** - **confirmed**; implementation queued behind B23/B31 (shares `Packet.h` and the device `Main.h` files): the service that replies is selected by CID, so the tag goes and `NextSystemTrid` becomes a plain 12-bit counter over `0x0000-0x0FFF`. Replies keep the request's CMD (the CID already names the service) and echo the TrID in the TrID field, matching `RSBus and Packets.md`. `Packet.h:117-125` puts the service type in the high byte of every system TrID so an echoed reply routes back to the right service. No tag belongs there; the counter should span the range, and reply routing needs another mechanism.
 
-**B32 The TrID carries a service tag.** - **confirmed**: the service that replies is selected by CID, so the tag goes and `NextSystemTrid` becomes a plain 12-bit counter over `0x0000-0x0FFF`. Replies keep the request's CMD (the CID already names the service) and echo the TrID in the TrID field, matching `RSBus and Packets.md`. `Packet.h:117-125` puts the service type in the high byte of every system TrID so an echoed reply routes back to the right service. No tag belongs there; the counter should span the range, and reply routing needs another mechanism.
+**B23 `StorageFiles` is not a capability.** - *in progress.* **confirmed**: the flag comes off the three targets and the bit stays reserved, so no other capability moves. Every device has storage files, so the bit says nothing. It is set by all three targets (`Tamu_v2.0A/Main.h:35`, `DAS_v0.1/Main.h:38`, `Valu_v2.0/Main.h:38`) and can come off; the bit itself can stay reserved.
 
-**B23 `StorageFiles` is not a capability.** - **confirmed**: the flag comes off the three targets and the bit stays reserved, so no other capability moves. Every device has storage files, so the bit says nothing. It is set by all three targets (`Tamu_v2.0A/Main.h:35`, `DAS_v0.1/Main.h:38`, `Valu_v2.0/Main.h:38`) and can come off; the bit itself can stay reserved.
+**B11 Create and Resize File accept a zero size.** - *in progress.* A zero-size file should not exist. `BlocksForSize(0)` divides to zero and is forced to one block (`StorageDefs.h:56-57`), and neither path rejects 0 (`StorageBlockFS.h:443`, `:481-489`). Reject size 0 with a failure status.
 
-**B11 Create and Resize File accept a zero size.** A zero-size file should not exist. `BlocksForSize(0)` divides to zero and is forced to one block (`StorageDefs.h:56-57`), and neither path rejects 0 (`StorageBlockFS.h:443`, `:481-489`). Reject size 0 with a failure status.
-
-**B10 Character fields are padded with spaces, not nulls.** - **confirmed**: the pad becomes a null, together with the HIL test rewrites. The ruling makes the pad byte a null. The code pads with spaces in the Register path (`MemoryTypes.h:159`, `memset(pad_buf, ' ', ...)`) and the storage file-name path (`StorageDefs.h:86-97`; `TODO.md:346`), and every device Name field is commented as space-padded (`Tamu_v2.0A/Main.h:77`, `DAS_v0.1/Main.h:68`, `Valu_v2.0/Main.h:70`). The app pads the same way (`register_client.dart` `_padBlockName`, `device_backup.dart:28`, `current_setup.dart:411`), and the HIL asserts it: `hil_script_test.dart:253` fails with "short string not space-padded", plus `register_client_dynamic_test.dart:36`, `tamu_hardware_verification_test.dart:280` and `hil_backup_test.dart:197`. Making the pad a null is a wire- and storage-format change across firmware, app and HIL.
+**B10 Character fields are padded with spaces, not nulls.** - *in progress.* **confirmed**: the pad becomes a null, together with the HIL test rewrites. The ruling makes the pad byte a null. The code pads with spaces in the Register path (`MemoryTypes.h:159`, `memset(pad_buf, ' ', ...)`) and the storage file-name path (`StorageDefs.h:86-97`; `TODO.md:346`), and every device Name field is commented as space-padded (`Tamu_v2.0A/Main.h:77`, `DAS_v0.1/Main.h:68`, `Valu_v2.0/Main.h:70`). The app pads the same way (`register_client.dart` `_padBlockName`, `device_backup.dart:28`, `current_setup.dart:411`), and the HIL asserts it: `hil_script_test.dart:253` fails with "short string not space-padded", plus `register_client_dynamic_test.dart:36`, `tamu_hardware_verification_test.dart:280` and `hil_backup_test.dart:197`. Making the pad a null is a wire- and storage-format change across firmware, app and HIL.
 
 ### C. Checked and correct
 
@@ -137,26 +124,26 @@ are hardware-only.
 
 ## Open (2026-10-06)
 
-- **The Valu bootloader can only ever be replaced over the ROM bootloader.** Our own bootloader
+- **E25** **The Valu bootloader can only ever be replaced over the ROM bootloader.** Our own bootloader
   refuses writes below `APP_BASE` by design, and this board has no SWD header, so every bootloader
   iteration needs an ISP session (`wchisp-nightly`, one command per USB reset). Worth keeping in
   mind when deciding how much logic belongs in the bootloader rather than the app.
-- **`valu_upload.py` drives `wlink` over SWD, which this board cannot do.** The ISP recipe that
+- **E26** **`valu_upload.py` drives `wlink` over SWD, which this board cannot do.** The ISP recipe that
   actually works (USB port reset, then a single `wchisp-nightly` invocation) needs folding into it
   as an `--isp` mode so `./upload.sh boot valu` matches reality.
 
 ## Code decisions needed (2026-10-04 docs-conformance sweep)
-- **Register write of a longer String/Filename.** `Register.md` says a longer value fails (only a
+- **E24** **Register write of a longer String/Filename.** `Register.md` says a longer value fails (only a
   shorter one is allowed, space-padded); `MemoryTypes.h` clamps it instead. The app and the "System
   Name clamps to 16 bytes" HIL rely on the clamp. Parked (minor detail).
 
 ## Valu v2.0 app (2026-10-06)
-- **Resistive measurement reference resistor is undefined.** `Docs/Devices.md` gives three ADC
+- **E27** **Resistive measurement reference resistor is undefined.** `Docs/Devices.md` gives three ADC
   inputs (PA6/PA1/PA0) but says "Reference resistor not defined." With no reference and no range
   selectors, the resistance/LDR/NTC transforms in `Devices/Valu_v2.0/MeasuringRun.h` use a
   placeholder `VALU_MEAS_REF_KOHM` (10 kOhm); raw and voltage measurements do not depend on it.
   Needs a hardware value before a resistance-reading module is meaningful.
-- **"USB Bootloader" and "Script" services have no capability-bit mapping.** `Docs/Devices.md`
+- **E28** **"USB Bootloader" and "Script" services have no capability-bit mapping.** `Docs/Devices.md`
   lists the Valu's services as Mandatory + USB Bootloader + App interface + Dynamic memory +
   Script. `Capabilities::` (Core/Types/Enums.h) has bits for Node/AppInterface/DynamicMemory/
   Scripts/StorageFeatures/Subscriptions but **none for a bootloader** - the code (and the
@@ -166,86 +153,86 @@ are hardware-only.
   and "OLED Display (TODO)" for the Valu. The two LED-display instances are now registered in
   `Devices/Valu_v2.0/Main.h` (the generic Vysi1 block; the strip geometry comes from the layout
   file at runtime). The OLED module is still not built.
-- **`MAX_SCRIPTS` is reduced to 16 on the Valu.** The Script service's loaded-script registry is
+- **E29** **`MAX_SCRIPTS` is reduced to 16 on the Valu.** The Script service's loaded-script registry is
   `LoadedScript scriptRegistry[256]` (~38 KB) in `ScriptDefs.h`; the CH32V203's 20 KB cannot hold
   it, so the registry is now a `#ifndef`-guarded build knob and the Valu sets `-D MAX_SCRIPTS=16`.
   Higher Scripts-range indices report as unloaded.
 
 ## Docs decisions needed (parked unless noted)
-- **OS notifications.** `Docs/App/Settings.md` lists "Allow notifications (To OS)" with per-event
+- **E1** **OS notifications.** `Docs/App/Settings.md` lists "Allow notifications (To OS)" with per-event
   selection; the app persists `notifyOs`/`osEvents`/`suppressOsWhenOpen` but only delivers in-app
   notifications (`app/lib/core/notifications.dart`). Implement OS delivery or mark the setting
   pending.
-- **Script UI info format.** `Script.md` describes the UI info as names + per-input limits/UI type;
+- **E2** **Script UI info format.** `Script.md` describes the UI info as names + per-input limits/UI type;
   the app writes **version 2** with a per-input label list (the custom-enum case). v1 is no longer
   supported, so an old backup's script names fall back to the file name until re-saved - document
   the format.
-- **Pre-rotated Position convention.** The renderer samples the geometry/texture masks *forward*,
+- **E3** **Pre-rotated Position convention.** The renderer samples the geometry/texture masks *forward*,
   so a shape's centre lands at `-L^-1 * t`; both writers (`ScriptExecTransform` and the app's
   `Transform23`) store `t' = L * t` to keep the centre at `-t` under rotation. `LED display.md`
   describes Position as a plain 2x3 matrix - document the convention.
-- **Cross-script macro calls.** `Script.md` names "Macro call" but gives no opcode, boundary rule
+- **E4** **Cross-script macro calls.** `Script.md` names "Macro call" but gives no opcode, boundary rule
   or argument passing. The VM runs **one script per tick** and every wait state lives on the
   callee, so it needs a call stack of `(script, line)` pairs and a tick loop that resumes whichever
   script is waiting. Proposal to confirm: a `Call script` flow op with operands
   `(loaded script id, entry line)`, blocking by construction, values exchanged through registers.
-- **Script CID 0 lists file IDs, not loaded slots.** CID 1 takes a separate loaded id, so CID 0's
+- **E5** **Script CID 0 lists file IDs, not loaded slots.** CID 1 takes a separate loaded id, so CID 0's
   list is not slot-addressable; the app tracks file->slot and falls back to the file==slot
   convention. Reporting the loaded **slots** (or a slot per entry) would remove the guesswork.
-- **Dynamic descriptor doc omits `Name`/`generation`/`present`** (deferred).
-- **Dynamic 8.8 enumerate encoding** is only in code comments (`RegisterEnumerate.h`), not in
+- **E6** **Dynamic descriptor doc omits `Name`/`generation`/`present`** (deferred).
+- **E7** **Dynamic 8.8 enumerate encoding** is only in code comments (`RegisterEnumerate.h`), not in
   `Register.md`.
-- **Bootloader LED entry.** `Bootloader.md` (white LED) vs `Devices.md` (core white LED "missing
+- **E8** **Bootloader LED entry.** `Bootloader.md` (white LED) vs `Devices.md` (core white LED "missing
   hardware") vs the app (red LED). Code drives no LED in the core bootloader.
-- **Device-type numbering is undocumented.** `Docs/Data Formats.md` and `System Block and Device
+- **E9** **Device-type numbering is undocumented.** `Docs/Data Formats.md` and `System Block and Device
   Commands.md` name the System `Device Type` field but give no numeric table. `Enums.h` /
   `types.dart` assign `Tamu_v2_0A = 0x01`, `Valu_v2_0 = 0x02`, `DualAnalogSensor = 0x03` as a code
   convention (0x02 carried over from the pre-restructure tree) - confirm or document it.
 
 ### Docs-conformance sweep wording (2026-10-04)
-- **Documented but not implemented** (future/planned, `Plan.md`): WiFi `App Active` values + System
+- **E10** **Documented but not implemented** (future/planned, `Plan.md`): WiFi `App Active` values + System
   field 8.1 SSID/Password; Router capability + service (stub only); branch-broadcast address
   `0x3FE`; UDP app transport; the `Mesh` LED-display shape; the `Effect` data
   type. Code-only types (`Uint32`, `DevType`, `UnknownKeyed`) are undocumented. (The
   **Valu v2.0 app** is now implemented - `[env:Valu_v2_0]`, `Devices/Valu_v2.0/`; its two LED
   displays are registered and the OLED module remains unbuilt, see the Valu section above.)
-- **Register.md**: dynamic Create request also carries a 16-char name (doc lists only `Index`), and
+- **E11** **Register.md**: dynamic Create request also carries a 16-char name (doc lists only `Index`), and
   the response is `BlockIndex(5)+ack` (doc says `Success`); System struct members are shown as keyed
   positions but only the whole struct is exposed at key 0.
-- **Storage.md**: CID 5/6 payload order is frag-info first with the name at +4 (not Name first);
+- **E12** **Storage.md**: CID 5/6 payload order is frag-info first with the name at +4 (not Name first);
   a file's size is the exact byte size (only allocation is page-aligned); the pointer page's
   *newest* valid slot wins; `MoveFiletable` grow/shrink is `OPTIMIZE_SPEED`-only; utility signatures
   are `bool` + out-params; the flash API is `Storage_FlashX`; size 0 is accepted; `FindSpace` scans
   from an internal wear cursor.
-- **Script.md**: the leading varSpace word is a vestigial IC slot; the symbol-subtype list omits
+- **E13** **Script.md**: the leading varSpace word is a vestigial IC slot; the symbol-subtype list omits
   `Number`; no size table (offsets are prefix sums); CID 5 truncates to 112 B; CID 6 takes a line
   index, not an instruction counter.
-- **App Interface.md**: the BLE payload cap is MTU-5, not MTU-2.
-- **App docs** were synced to the app on 2026-10-07 (the Update tab, the Connection autoconnect
+- **E14** **App Interface.md**: the BLE payload cap is MTU-5, not MTU-2.
+- **E15** **App docs** were synced to the app on 2026-10-07 (the Update tab, the Connection autoconnect
   toggle, the Subscriptions viewer, the actual Devices graph layout and the Device view data
   source/capability wording are now documented). Remaining item outside `Docs/App`: `Current setup
   v3` lux cap is ~8.85k (not 10k) and the fan is not connected.
-- **RSBus/Packets.md**: the Script TRID range is unspecified and the System/Log counter is 8-bit
+- **E16** **RSBus/Packets.md**: the Script TRID range is unspecified and the System/Log counter is 8-bit
   (within range) not 12-bit.
-- **Subscriptions.md**: the get-subscriptions stream starts with an undocumented count byte.
+- **E17** **Subscriptions.md**: the get-subscriptions stream starts with an undocumented count byte.
 
 ## Storage / DAS
-- **A few reduced-FS doc leftovers.** `fd2ba14` removed the main "Reduced variant" text, but
+- **E18** **A few reduced-FS doc leftovers.** `fd2ba14` removed the main "Reduced variant" text, but
   `Docs/Services/Storage.md` still says "not in reduced file system" in the Create/Delete/Resize/
   Rename command rows, and `Docs/Devices.md:48` still reads "Memory: 128B (single file from offset
   0)" (the DAS is now a 512 B multi-file region at `0x3E00`). Optional wording cleanup.
-- **`.SUBREQ` on a provider-only node** was reported once; the empty-table file is deleted now.
+- **E19** **`.SUBREQ` on a provider-only node** was reported once; the empty-table file is deleted now.
   Re-check if it reappears.
 
 ## Android (on-device behaviour untested)
-- No Android device/emulator: BLE runtime permission prompt + denied/permanently-denied paths, BLE
+- **E20** No Android device/emulator: BLE runtime permission prompt + denied/permanently-denied paths, BLE
   scan/connect/MTU, Storage Access Framework backup save + restore and file download, and the
   compact drawer shell on a phone form factor.
 
 ## Evaluation setup
-- **LED brightness can brown out the board.** The builder clamps the displays to 5 % and the
+- **E21** **LED brightness can brown out the board.** The builder clamps the displays to 5 % and the
   brightness script caps at 70 %, but a firmware-side current cap/ramp would be safer.
-- **The LED display has no framebuffer readback**, so visuals are verified by eye only; a render
+- **E22** **The LED display has no framebuffer readback**, so visuals are verified by eye only; a render
   snapshot command would make them testable.
-- **DAS provider stale entries** - effectively solved by the 120 s provider lease + orphan-cancel
+- **E23** **DAS provider stale entries** - effectively solved by the 120 s provider lease + orphan-cancel
   path; revisit only if a *confirmed* cancel is wanted.

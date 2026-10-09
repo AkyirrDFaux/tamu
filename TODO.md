@@ -155,6 +155,9 @@ green, release checklist.
 
 - Router capability bit: reserve one for the router service so the documented capability can be set.
 - App Active enum: add `LegacyBt` and `WiFi` (`Enums.h:34-38`). The documents already list them as planned states.
+- [ ] **A55 (Current Setup v3) - the brightness-cap column.** The lux curve is recalculated later.
+      Measured `luxSpan = 8850` (`app/test/current_setup.dart:170-174`), so the last column should read
+      `>8.8k Lux` unless `>10k Lux` is deliberate.
 - [ ] **Valu app works standalone but NOT when launched by the bootloader (open).** Verified
       2026-10-07: the identical app image, ISP-flashed at 0x0 (no bootloader), runs and enumerates
       as `1a86:6001 "Valu v2.0"` and reaches its main loop; launched from the bootloader
