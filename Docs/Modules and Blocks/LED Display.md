@@ -34,7 +34,7 @@ The mask is an alpha channel modified by geometric definitions, and the geometry
 | Rounding          | 7   | `Number`          | In pixels |
 | Angles            | 8   | `Number`          |      |
 | Point number      | 9   | `int32`           |      |
-| Point coordinates | 10  | `Matrix<2,N>`     |      |
+| Point coordinates | 10  | `Matrix<2,N>`     | TODO |
 | Noise seed        | 11  | `int32`           |      |
 
 Not every shape interacts with every parameter.
@@ -49,11 +49,10 @@ Shape list:
 - Circle
 - Ellipse
 - DoubleParabola
-- Triangle (equilateral): size only
-- Triangle (isosceles): angle and side length
+- Triangle: isosceles (angle and side length)
 - Polygon
 - Star
-- Mesh
+- Mesh (TODO)
 - Noise
 
 The fill is the texture or effect applied in the area specified by the mask. Textures and effects are described using a dictionary.
@@ -75,7 +74,7 @@ Texture list:
 - Fill
 - Gradient linear
 - Gradient circular
-- Bitmap (TODO)
+- Bitmap (reserved)
 
 The effect list continues the texture enum:
 

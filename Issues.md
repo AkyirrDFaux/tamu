@@ -188,19 +188,19 @@ type cell with `Number`.
 **A41 LED Display: `Angles` takes a `Number` only.** - **approved and applied**: the type cell is `Number`. `LED Display.md:35` - `Number` or `Vector`. Code
 `Vysi1Render.h:48` reads a `Number`; no `Vector` path exists. Replace the type cell with `Number`.
 
-**A42 LED Display: `Bitmap` is not in the enum.** `LED Display.md:78` lists `- Bitmap (TODO)` between
+**A42 LED Display: `Bitmap` is not in the enum.** - **approved, reserve the value**: the bullet stays and the code reserves a texture slot for `Bitmap` (B34). Putting it after the effects, `Bitmap = 8`, keeps `InvertColour`..`Brightness` where they are. `LED Display.md:78` lists `- Bitmap (TODO)` between
 textures and effects, which shifts the effect numbering. Code `Render.h:72-82` has `GradientCircular =
 3` then the effects from `4`. Delete the bullet or move it after the effect list.
 
-**A43 LED Display: `Mesh` draws nothing.** `LED Display.md:56` lists `- Mesh`. Code `Render.h:42` has
+**A43 LED Display: `Mesh` draws nothing.** - **approved and applied** (`- Mesh (TODO)`). `LED Display.md:56` lists `- Mesh`. Code `Render.h:42` has
 the value but `GeometryMath.h:119-228` has no case, so it falls through to `default: return 0`. Mark it
 `- Mesh (TODO)`.
 
-**A44 LED Display: `Point coordinates` is never read.** `LED Display.md:37` - key 10. Code holds
+**A44 LED Display: `Point coordinates` is never read.** - **approved and applied** (the note reads `TODO`). `LED Display.md:37` - key 10. Code holds
 `PointCoordinates = 10` in `Render.h:23`, but `RenderGeometryField` never reads it. Mark the note
 `TODO`.
 
-**A45 LED Display: two Triangle bullets, one enum value.** `LED Display.md:52-53`. Code `Render.h:39`
+**A45 LED Display: two Triangle bullets, one enum value.** - **approved and applied**: one bullet, `- Triangle: isosceles (angle and side length)`. The code's equilateral branch becomes a special case of the same shape, so B35 removes it. `LED Display.md:52-53`. Code `Render.h:39`
 has one `Triangle = 9` with two modes (`GeometryMath.h:76`). Replace both bullets with `- Triangle:
 equilateral (size only) or isosceles (angle and side length)`.
 
@@ -281,6 +281,10 @@ itself as device 1 with no net.
 **B8 Tamu is built as Core only.**
 
 **A59 Storage: `Storage_FlashInit` is missing from the main functions.** The document lists four (`Docs/Services/Storage.md:40-47`); the code declares five, the extra being `bool Storage_FlashInit();` ("find/open the storage partition", `StorageDefs.h:31`). Add it to the list.
+
+**B34 Reserve a texture slot for `Bitmap`.** From A42: the document lists `Bitmap` and `Textures2D` (`Render.h:72-82`) has no slot - `GradientCircular = 3` runs straight into the effects at `4`. Reserve a value; placing it after the effects (`Bitmap = 8`) keeps the effect numbers stable.
+
+**B35 Remove the equilateral triangle path.** From A45: the shape is isosceles overall. `GeometryMath.h:76` draws equilateral by default and switches to isosceles when `Angles` is set, so dropping it needs a defined default angle - 0 would give a degenerate triangle.
 
 **B33 Texture `Size` ignores a `Vector<2>`.** From A40: the document allows a `Vector<2>` or a `Number` for the texture `Size`, but `Vysi1Render.h:180` reads a `Number` and silently takes the default on a mismatch. Accept the vector as Geometry's `Size` does (`:59`).
 
