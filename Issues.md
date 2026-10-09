@@ -74,7 +74,7 @@ with length before buffer. Code `StorageDefs.h:31-35` uses `Storage_FlashRead(ui
 data, uint32_t size)`, `Storage_FlashWrite`, `Storage_FlashErase(uint32_t offset, uint32_t size)`,
 `Storage_FlashFormat()`. Replace names and put the buffer before the length.
 
-**A13 Storage: grow/shrink is build-conditional.** `Storage.md:62` states the 75%/25% grow and shrink
+**A13 Storage: grow/shrink is build-conditional.** - **revised**: the table size is fixed per device and the table moves only when it is full. Applied to the document; the code still resizes under `OPTIMIZE_SPEED` and still formats one page, so this becomes B15 and B16. `Storage.md:62` states the 75%/25% grow and shrink
 unconditionally. Code `StorageBlockFS.h:266-280` guards it with `#ifdef OPTIMIZE_SPEED`. Prefix `In a
 speed build, ` and add `a size build keeps the current size.`
 
@@ -281,6 +281,12 @@ itself as device 1 with no net.
 **B8 Tamu is built as Core only.**
 
 **A59 Storage: `Storage_FlashInit` is missing from the main functions.** The document lists four (`Docs/Services/Storage.md:40-47`); the code declares five, the extra being `bool Storage_FlashInit();` ("find/open the storage partition", `StorageDefs.h:31`). Add it to the list.
+
+**B13 The pointer slots need no invalidation.** From A10: the newest valid slot wins, so the loop that zeroes the earlier slots (`StorageBlockFS.h:84-87`) and the `0x00000000` marker it writes are unnecessary.
+
+**B15 `MoveFiletable` resizes the table.** From A13: the table size is fixed per device and the table moves only when it is full, so the `OPTIMIZE_SPEED` grow/shrink arithmetic goes (`StorageBlockFS.h:262-280`).
+
+**B16 The table is formatted at a fixed one page.** From A13 and A51: `Format()` sets `entry0.size = PAGE_SIZE` (`StorageBlockFS.h:586-597`) and nothing grows it once B15 lands, so the per-device table size needs a constant the device declares (`Devices.md` says 4 pages for Tamu, 2 for Valu).
 
 **B11 Create and Resize File accept a zero size.** From A8: a zero-size file should not exist. `BlocksForSize(0)` divides to zero and is forced to one block (`StorageDefs.h:56-57`), and neither path rejects 0 (`StorageBlockFS.h:443`, `:481-489`). Reject size 0 with a failure status.
 

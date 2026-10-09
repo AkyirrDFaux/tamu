@@ -2,7 +2,7 @@ Storage holds large chunks whose size varies widely, from 4 kB to 2 MB. It sits 
 ### File System
 Aligned with pages, the smallest erasable unit.
 
-The first page, kept for low wear, holds only a pointer to the start of the file table. Its first valid entry is that pointer, old entries are `0x0`, and unused entries read `0xFFFFFFFF` because they are erased. The block is erased only when the last entry is invalidated. If no valid entry is found, the block is new.
+The first page, kept for low wear, holds only a pointer to the start of the file table. Its last valid entry is that pointer, and unused entries read `0xFFFFFFFF` because they are erased. Older entries need not be invalidated, since the newest one wins. The page is erased once every slot is written. If no valid entry is found, the block is new.
 
 | Old entries | ... | Valid entry | ... | Unused entry |
 | ----------- | --- | ----------- | --- | ------------ |
@@ -59,7 +59,7 @@ A file is handed to other functions to have data stored in it or read from it, a
 - `bool WriteFilerecord(Filerecord NewRecord)`
 	Writes a new file record at the end. If no space remains after writing, the file table must be filtered and moved with `MoveFiletable()`.
 - `bool MoveFiletable()`
-	Counts the valid entries. If the table is more than 75% full it grows by one page, and if it is less than 25% full it shrinks by one page, to a minimum of one page. Finds a new location with `FindSpace`, initialises a new file table at that location, including its self-describing first entry, and copies the valid entries into it. Finally writes the new pointer to the first page and erases the old pointer from it.
+	The table has a fixed size per device and is moved only when it is full. It finds a new location with `FindSpace`, initialises a new file table of the same size at that location, including its self-describing first entry, and copies the valid entries into it. Finally it writes the new pointer to the first page.
 #### File Based Functions (accessible outside, universal)
 - `bool CreateFile(char[8] Filename, uint32_t Length)`
 	Finds available space with `FindSpace`, erases it, and marks it in the file table. Returns true if created.
