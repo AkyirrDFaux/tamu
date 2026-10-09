@@ -574,11 +574,11 @@ public:
 
     // Erases the pointer page and storage, then initializes an empty self-describing table
     // of one page at the first data page (block 1).
-    void Format()
+    bool Format()
     {
         if (!Storage_FlashFormat()) {
             DeviceLog("STORAGE", "Format failed!");
-            return;
+            return false;
         }
 
         FileEntry entry0;
@@ -588,14 +588,15 @@ public:
         memcpy(entry0.name, ".TABLE  ", 8);
 
         if (Storage_FlashWrite(PAGE_SIZE, &entry0, TABLE_ENTRY_SIZE) != true)
-            return;
+            return false;
 
         if (!WriteTablePointer(PAGE_SIZE))
-            return;
+            return false;
 
         file_table_offset = PAGE_SIZE;
         file_table_size = PAGE_SIZE;
         DeviceLog("STORAGE", "Formatted, storage ready (%d bytes)", (int)DataEnd());
+        return true;
     }
 
     // Returns the total number of bytes used by files in flash (excluding file table itself).

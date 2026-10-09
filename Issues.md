@@ -53,6 +53,13 @@ safe HIL sweep; no destructive suite is needed, since no storage or script wire 
 Settled by the owner (2026-10-09): the detail rides in the **payload**; a failure carries a reason only when the
 sender has one; the response cells read `Success flag` / `Fail flag`.
 
+Found while implementing, and missed by the plan above: the Storage service had a *second* status convention -
+its own one-byte bool `ok ? 0x01 : 0x00` (`Storage.h:31,43,55,69`, the opposite polarity to `RespondStatus`'s
+`0x00`/`0xFF`), plus an empty reply for Format and for a failed read (`:21`, `:102`). All six now send the flags,
+and `Format()` returns bool so its flag carries meaning. The app's four matching checks in
+`app/lib/core/storage_client.dart:133,138,144,151` (`reply[0] != 0`) are the last piece, followed by the app
+subagent's files.
+
 ## Doc fact check (2026-10-09)
 
 Every firmware document was checked against `firmware/src`. The documents are the specification, so a
@@ -375,7 +382,7 @@ itself as device 1 with no net.
 
 **B19 The script list reply carries a count byte.** From A21: the count goes. `ScriptRuntime.h:167-170` builds `content[0] = n` ahead of the ids; drop it and let the payload length carry the count, then update the app's reader.
 
-**B17 Format Filesystem replies with no payload.** From A15: it should reply a status. `Storage.h:19-21` sends `SendResponse(frame, nullptr, 0)` where every other command in that table replies through the shared status helper.
+**B17 Format Filesystem replies with no payload.** - **resolved by B39**: it replies `FLAG_SUCCESS`/`FLAG_FAIL`, and `Format()` now returns bool so the flag means something (`StorageBlockFS.h:577`, the three failure paths return false). From A15: it should reply a status. `Storage.h:19-21` sends `SendResponse(frame, nullptr, 0)` where every other command in that table replies through the shared status helper.
 
 **B13 The pointer slots need no invalidation.** From A10: the newest valid slot wins, so the loop that zeroes the earlier slots (`StorageBlockFS.h:84-87`) and the `0x00000000` marker it writes are unnecessary.
 

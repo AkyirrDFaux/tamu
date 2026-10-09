@@ -17,8 +17,8 @@ void HandleStorageService(const PacketFrame &frame)
 
     switch (cid) {
         case 0: { // Format per docs 03.00
-            Storage.Format();
-            SendResponse(frame, nullptr, 0);
+            bool ok = Storage.Format();
+            SendResponse(frame, nullptr, 0, (uint8_t)(ok ? FLAG_SUCCESS : FLAG_FAIL));
             break;
         }
 
@@ -28,8 +28,7 @@ void HandleStorageService(const PacketFrame &frame)
                 uint32_t size; memcpy(&size, frame.payload + 8, sizeof(size));
                 bool ok = Storage.CreateFile(name, size);
                 if (!ok) DeviceLog("STORAGE", "create '%.8s' size %u failed", name, (unsigned)size);
-                uint8_t status = ok ? 0x01 : 0x00;
-                SendResponse(frame, &status, 1);
+                SendResponse(frame, nullptr, 0, (uint8_t)(ok ? FLAG_SUCCESS : FLAG_FAIL));
             } else {
                 DeviceLog("STORAGE", "create short payload (%u B)", (unsigned)PayloadBytes(frame));
             }
@@ -40,8 +39,7 @@ void HandleStorageService(const PacketFrame &frame)
             if (PayloadBytes(frame) >= 8) {
                 const char *name = reinterpret_cast<const char *>(frame.payload);
                 bool ok = Storage.DeleteFile(name);
-                uint8_t status = ok ? 0x01 : 0x00;
-                SendResponse(frame, &status, 1);
+                SendResponse(frame, nullptr, 0, (uint8_t)(ok ? FLAG_SUCCESS : FLAG_FAIL));
             }
             break;
         }
@@ -52,8 +50,7 @@ void HandleStorageService(const PacketFrame &frame)
                 uint32_t new_size; memcpy(&new_size, frame.payload + 8, sizeof(new_size));
                 bool ok = Storage.ResizeFile(name, new_size);
                 if (!ok) DeviceLog("STORAGE", "resize '%.8s' -> %u failed", name, (unsigned)new_size);
-                uint8_t status = ok ? 0x01 : 0x00;
-                SendResponse(frame, &status, 1);
+                SendResponse(frame, nullptr, 0, (uint8_t)(ok ? FLAG_SUCCESS : FLAG_FAIL));
             } else {
                 DeviceLog("STORAGE", "resize short payload (%u B)", (unsigned)PayloadBytes(frame));
             }
@@ -66,8 +63,7 @@ void HandleStorageService(const PacketFrame &frame)
                 const char *new_name = reinterpret_cast<const char *>(frame.payload + 8);
                 bool ok = Storage.RenameFile(old_name, new_name);
                 if (!ok) DeviceLog("STORAGE", "rename '%.8s' -> '%.8s' failed", old_name, new_name);
-                uint8_t status = ok ? 0x01 : 0x00;
-                SendResponse(frame, &status, 1);
+                SendResponse(frame, nullptr, 0, (uint8_t)(ok ? FLAG_SUCCESS : FLAG_FAIL));
             } else {
                 DeviceLog("STORAGE", "rename short payload (%u B)", (unsigned)PayloadBytes(frame));
             }
@@ -99,7 +95,7 @@ void HandleStorageService(const PacketFrame &frame)
                     }
                 } else {
                     DeviceLog("STORAGE", "read '%.8s' failed", name);
-                    SendResponse(frame, nullptr, 0);
+                    SendResponse(frame, nullptr, 0, FLAG_FAIL);
                 }
             }
             break;
