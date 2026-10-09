@@ -15,8 +15,8 @@ const int flagStart = 1 << 1;
 const int flagStop = 1 << 2;
 const int flagType = 1 << 3; // 0 = request, 1 = response
 const int flagFrag = 1 << 4; // first 4 payload bytes = fragmentation info (u16 current + u16 total)
-const int flagSuccess = 1 << 5; // response: success, no extra information
-const int flagFail = 1 << 6; // response: error, no extra information
+const int flagSuccess = 1 << 5; // response: success; an optional payload after it carries detail
+const int flagFail = 1 << 6; // response: failure; an optional payload after it carries a reason
 
 /// Default priority byte (docs: Reserved(4) | Priority(4), 0 = highest, default 8).
 const int defaultPriority = 8;

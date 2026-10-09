@@ -53,6 +53,25 @@ class RegisterClient {
     }
   }
 
+  /// Like [request], but keeps the packet-level SUCCESS/FAIL flags alongside the payload.
+  /// The flag-answering commands (dynamic create/set-name/delete, Save/Recall All) report
+  /// their status there, not in a payload byte.
+  Future<PacketResponse?> requestWithFlags(int cid,
+      {List<int> payload = const [], Duration? timeout}) async {
+    try {
+      return await ConnectionManager.instance.requestWithFlags(deviceId, ServiceType.register, cid,
+          payload: payload, timeout: timeout ?? _requestTimeout);
+    } catch (error) {
+      AppDiagnostics.log('register', 'request failed: $error');
+      return null;
+    }
+  }
+
+  /// True when a flag-answering command replies FLAG_SUCCESS; a transport failure or a
+  /// FLAG_FAIL reply is false.
+  Future<bool> _requestOk(int cid, {List<int> payload = const [], Duration? timeout}) async =>
+      (await requestWithFlags(cid, payload: payload, timeout: timeout))?.success ?? false;
+
   /// Slices the value bytes after a ValueInfo header, clamped to the declared size
   /// (the reply may carry service-level padding past the value).
   static List<int> valueSlice(List<int> reply, int size) {
@@ -429,14 +448,17 @@ class RegisterClient {
       }
       target = maxLive + 1;
     }
-    final reply = await request(DynamicCid.create, timeout: const Duration(seconds: 5), payload: [
-      target & 0xFF,
-      (target >> 8) & 0xFF,
-      ...nameBytes,
-    ]);
-    if (reply == null || reply.length < 5) return null;
+    final ok = await _requestOk(DynamicCid.create,
+        timeout: const Duration(seconds: 5),
+        payload: [
+          target & 0xFF,
+          (target >> 8) & 0xFF,
+          ...nameBytes,
+        ]);
+    if (!ok) return null;
     invalidateBlockTypes();
-    return reply[0]; // BlockIndex echo, block byte
+    // The device no longer echoes the BlockIndex; the host already picked the target.
+    return target;
   }
 
   /// Sets a dynamic block's name through the Dynamic `Set Name` command (CID 0x13):
@@ -444,13 +466,12 @@ class RegisterClient {
   /// command no longer carries (block deletion goes through [deleteDynamic]); it is ignored.
   Future<bool> writeDynamicBlockMeta(DynBlock block, String name, BlockType? type) async {
     final nameBytes = _padBlockName(name);
-    final reply = await request(DynamicCid.setName, payload: [
+    // The command reports success through the packet SUCCESS flag, not a payload byte.
+    return _requestOk(DynamicCid.setName, payload: [
       block.index & 0xFF,
       (block.index >> 8) & 0xFF,
       ...nameBytes,
     ]);
-    // The command replies with a one-byte status (0 = success).
-    return reply != null && reply.isNotEmpty && reply[0] == 0;
   }
 
   /// Appends an entry to a dynamic block (CID 2), or fills the slot at `index`
@@ -501,14 +522,11 @@ class RegisterClient {
   /// is the basic Write with type None, the documented way to delete here.
   Future<bool> deleteDynamic({required int block, int? field, int? key}) async {
     if (field == null) {
-      final reply = await request(DynamicCid.delete,
+      // The command reports success through the packet SUCCESS flag, not a payload byte.
+      final ok = await _requestOk(DynamicCid.delete,
           payload: [block & 0xFF, (block >> 8) & 0xFF]);
-      if (reply != null && reply.isNotEmpty && reply[0] == 0) {
-        invalidateBlockTypes();
-        return true;
-      }
-      // The delete replies with a one-byte status (0 = success, 0xFF = refused).
-      return false;
+      if (ok) invalidateBlockTypes();
+      return ok;
     }
     final dyn = DynBlock(
         index: block, meta: ValueInfo(type: dynamicTypeForIndex(block)), name: '');
@@ -644,14 +662,14 @@ class RegisterClient {
   Future<bool> saveAll() async {
     // Writing every dynamic block runs the 64-slot orphan cleanup (flash page erases), which
     // can exceed the default request timeout.
-    final reply = await request(RegisterCid.saveAll, payload: const [], timeout: const Duration(seconds: 25));
-    return reply != null && reply.isNotEmpty && reply[0] == 0;
+    return _requestOk(RegisterCid.saveAll,
+        payload: const [], timeout: const Duration(seconds: 25));
   }
 
   /// Recalls the whole device from its backup (CID 3 "Recall All"), the counterpart of
   /// [saveAll]. Partial recall is the app's job (register writes of the stored values).
   Future<bool> recallAll() async {
-    final reply = await request(RegisterCid.recallAll, payload: const [], timeout: const Duration(seconds: 25));
-    return reply != null && reply.isNotEmpty && reply[0] == 0;
+    return _requestOk(RegisterCid.recallAll,
+        payload: const [], timeout: const Duration(seconds: 25));
   }
 }

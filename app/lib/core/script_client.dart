@@ -40,6 +40,25 @@ class ScriptClient {
     }
   }
 
+  /// True when a management command replies FLAG_SUCCESS. These commands carry no status
+  /// byte; the device sets the packet SUCCESS/FAIL flags instead. A transport failure or a
+  /// FLAG_FAIL reply is false.
+  Future<bool> _requestOk(
+    ServiceType service,
+    int cid, {
+    List<int> payload = const [],
+    Duration? timeout,
+  }) async {
+    try {
+      final response = await _link.requestWithFlags(deviceId, service, cid,
+          payload: payload, timeout: timeout ?? const Duration(seconds: 3));
+      return response.success;
+    } catch (error) {
+      AppDiagnostics.log('script', 'request failed: $error');
+      return false;
+    }
+  }
+
   // ---- Management commands (0x0500-0x0507) ----
 
   /// CID 0: the file ids of the currently loaded scripts (uint16 each).
@@ -58,15 +77,13 @@ class ScriptClient {
   /// Success - the caller picked the slot, so it already knows it. The file id and the slot are
   /// independent: many files (SCR_XXX) exist, at most [maxScripts] load at once.
   Future<bool> load(int fileId, int loadedId) async {
-    final reply = await _request(ServiceType.script, 1,
+    return _requestOk(ServiceType.script, 1,
         payload: [fileId & 0xFF, (fileId >> 8) & 0xFF, loadedId & 0xFF]);
-    return reply != null && reply.isNotEmpty && reply[0] == 0;
   }
 
   /// CID 2: unloads a loaded script.
   Future<bool> unload(int loadedId) async {
-    final reply = await _request(ServiceType.script, 2, payload: [loadedId & 0xFF]);
-    return reply != null && reply.isNotEmpty && reply[0] == 0;
+    return _requestOk(ServiceType.script, 2, payload: [loadedId & 0xFF]);
   }
 
   /// CID 3: a loaded script's state and its last error code (0 = OK).
@@ -78,9 +95,8 @@ class ScriptClient {
 
   /// CID 4: sets a loaded script's state.
   Future<bool> setState(int loadedId, int state) async {
-    final reply =
-        await _request(ServiceType.script, 4, payload: [loadedId & 0xFF, state & 0xFF]);
-    return reply != null && reply.isNotEmpty && reply[0] == 0;
+    return _requestOk(ServiceType.script, 4,
+        payload: [loadedId & 0xFF, state & 0xFF]);
   }
 
   /// CID 5: instruction counter + variable RAM (editor debug).
@@ -94,15 +110,13 @@ class ScriptClient {
   /// CID 6: moves the instruction counter (editor debug).
   Future<bool> moveToInstruction(int loadedId, int instruction) async {
     final payload = <int>[loadedId & 0xFF, ...uint32ToBytes(instruction)];
-    final reply = await _request(ServiceType.script, 6, payload: payload);
-    return reply != null && reply.isNotEmpty && reply[0] == 0;
+    return _requestOk(ServiceType.script, 6, payload: payload);
   }
 
   /// CID 7: writes a variable (editor debug).
   Future<bool> writeVariable(int loadedId, int variableId, List<int> value) async {
     final payload = <int>[loadedId & 0xFF, variableId & 0xFF, ...value];
-    final reply = await _request(ServiceType.script, 7, payload: payload);
-    return reply != null && reply.isNotEmpty && reply[0] == 0;
+    return _requestOk(ServiceType.script, 7, payload: payload);
   }
 
   // ---- Register access (the Scripts range 0x3F4-0x3F7, addressed by the global slot) ----

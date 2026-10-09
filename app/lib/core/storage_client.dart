@@ -72,6 +72,30 @@ class StorageClient {
     }
   }
 
+  /// The firmware answers status commands with the packet success/fail flags instead of a
+  /// payload, so the outcome is in the frame rather than the bytes.
+  Future<bool> _status(
+    int cid, {
+    List<int> payload = const [],
+    Duration? timeout,
+    bool requestFrag = false,
+  }) async {
+    try {
+      final response = await _link.requestWithFlags(
+        deviceId,
+        ServiceType.storage,
+        cid,
+        payload: payload,
+        timeout: timeout ?? const Duration(seconds: 6),
+        requestFrag: requestFrag,
+      );
+      return response.success;
+    } catch (error) {
+      AppDiagnostics.log('storage', 'request failed: $error');
+      return false;
+    }
+  }
+
   static const nameLength = 8;
 
   /// Pads/truncates a file name to the wire format (8 bytes, space padded).
@@ -129,32 +153,27 @@ class StorageClient {
   /// Creates a file per docs 03.01 CID1
   Future<bool> createFile(String name, int size) async {
     final payload = <int>[...padName(name), ...uint32ToBytes(size)];
-    final reply = await _request(1, payload: payload);
-    return reply != null && reply.isNotEmpty && reply[0] != 0;
+    return _status(1, payload: payload);
   }
 
   Future<bool> deleteFile(String name) async {
-    final reply = await _request(2, payload: padName(name));
-    return reply != null && reply.isNotEmpty && reply[0] != 0;
+    return _status(2, payload: padName(name));
   }
 
   Future<bool> renameFile(String oldName, String newName) async {
     final payload = <int>[...padName(oldName), ...padName(newName)];
-    final reply = await _request(4, payload: payload);
-    return reply != null && reply.isNotEmpty && reply[0] != 0;
+    return _status(4, payload: payload);
   }
 
   /// Resizes a file per Docs 03.03 CID3.
   Future<bool> resizeFile(String name, int size) async {
     final payload = <int>[...padName(name), ...uint32ToBytes(size)];
-    final reply = await _request(3, payload: payload);
-    return reply != null && reply.isNotEmpty && reply[0] != 0;
+    return _status(3, payload: payload);
   }
 
   /// Formats the whole filesystem per docs 03.00 CID0 (wipes every file).
   Future<bool> format() async {
-    final reply = await _request(0);
-    return reply != null;
+    return _status(0);
   }
 
   /// Reads the whole file per docs 03.05 CID5
