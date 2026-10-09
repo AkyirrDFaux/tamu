@@ -153,6 +153,7 @@ green, release checklist.
 
 ## Open work
 
+- App Active enum: add `LegacyBt` and `WiFi` (`Enums.h:34-38`). The documents already list them as planned states (doc fact check A25).
 - [ ] **Valu v2.0 bootloader: flash erase is ineffective (flashed via ISP, erase path untested).**
       Everything else is proven on the board: it enumerates as `1A86:6001` with our own descriptors,
       receives raw bootloader frames over USB CDC, answers read-requests, and programs flash (a
@@ -274,10 +275,6 @@ green, release checklist.
       limit 178 = 70 %, enforced in the render).
 - [ ] **DAS provider stale entries (low priority).** Effectively solved by the 120 s provider lease
       + orphan re-cancel; revisit only if a *confirmed* cancel is wanted.
-
-## Open work
-
-- App Active enum: add `LegacyBt` and `WiFi` (`Enums.h:34-38`). The documents already list them as planned states (doc fact check A25).
 
 ## Code-cleanup backlog
 
