@@ -153,73 +153,8 @@ green, release checklist.
 
 ## Open work
 
-- Router capability bit: reserve one for the router service so the documented capability can be set (doc fact check A26).
-- App Active enum: add `LegacyBt` and `WiFi` (`Enums.h:34-38`). The documents already list them as planned states (doc fact check A25).
-- [ ] **Valu v2.0 bootloader: flash erase is ineffective (flashed via ISP, erase path untested).**
-      Everything else is proven on the board: it enumerates as `1A86:6001` with our own descriptors,
-      receives raw bootloader frames over USB CDC, answers read-requests, and programs flash (a
-      write at offset 32 round-trips byte for byte). Only a write at a 4 KB-aligned offset - the
-      erase path - fails: the content is unchanged afterwards while the controller reports
-      completion (`STATR.EOP` set, no `WRPRTERR`). Measured on the chip with the firmware's own
-      diagnostics: `FLASH_ErasePage` returns `FLASH_TIMEOUT`, `STATR` after = `0x20`, the verify
-      word is the pre-erase content, and `CFGR0` (`0x00bc048a`) confirms HCLK was correctly halved
-      around the operation - so neither the status flags, the clock floor, nor the SPL's entry
-      check explains it. Built but **not yet flashed**: an image whose erase is hand-rolled
-      (PER -> ADDR -> STRT -> poll `BSY`, no SPL and no arbitrary timeout) that also reads the
-      verify word twice, to separate "erase ineffective" from "read served mid-operation". Also to
-      do while in ISP mode: `wchisp config info`, because a write-protected 4 KB block would
-      produce exactly this silent no-op.
-      **Update (2026-10-06): ISP session done.** The bootloader (this hand-rolled-erase image) is
-      now flashed over the ROM ISP with `wchisp-nightly flash`: 12 sectors erased, 11264 B written,
-      **Verify OK**. `wchisp config info` reports **Code Flash protected: false** (RDPR/WRP
-      unprotected), ruling out write protection; chip UID `CD-AB-D8-02-1B-BD-C0-6B`, ROM BTVER
-      02.70. The board now runs our bootloader (PA2 released -> it jumps to the still-empty 0x3000
-      app and drops off USB; hold PA2 at reset for bootloader mode). Next: exercise the erase path
-      over the bootloader protocol with this image. (`wchisp` needs one command per **USB port
-      reset** - a `USBDEVFS_RESET` ioctl on the device node is enough, no replug.)
-      **Update 2 (2026-10-06): the hand-rolled erase does NOT fix it.** With the board held in
-      bootloader mode (`1a86:6001 "Tamu Valu v2.0 Bootloader"`, `/dev/ttyACM0`) the frame protocol
-      works (read-requests and the `DIAG_OFFSET 0xFFFFFFE0` readout answer), and the app image
-      (28188 B / 881 x 32-byte chunks) was pushed over it. Read-back verify: **7/881 chunks wrong -
-      exactly the first 32 B of each 4 KiB sector** (7 sectors). Bootloader diagnostics after:
-      `calls=8`, `STATR before erase=0`, `STATR after erase=0x20` (EOP set, no error),
-      **verify word r1=r2=0xE339E339 = the pre-erase content**, `CFGR0` slowed `0x00BC048A`. So the
-      sector erase still has no effect; because `FlashEraseSector` returns false on that word, the
-      first chunk of every sector is skipped and keeps stale content. The app's vector table is
-      chunk 0, so the flashed app will not boot. **Leading hypothesis:** the flash-access clock is
-      still above the ceiling - halving HCLK gives 72 MHz, but `CH32VRM` RM 32.1 note 2 wants
-      `<= 60 MHz` flash access (the ROM ISP erases fine from system memory; our code runs from
-      flash at the halved-but-still-too-fast clock). Next: try a deeper clock reduction
-      (SYSCLK/2 or HCK/4 for the erase) or run the erase from RAM. App region left partially
-      written; board is in bootloader mode.
-      **Root cause CONFIRMED (RM 32.2 note 2 + FLASH_CTLR.SCKMOD):** the FLASH access clock is
-      **SYSCLK or SYSCLK/2** (`FLASH_CTLR` bit 25 `SCKMOD`, default /2) and *"cannot be more than
-      60 MHz"*. The board runs at 144 MHz, so even /2 is **72 MHz** - over the ceiling - and the
-      erase (and program) silently no-op while `STATR.EOP` still sets. **Dividing HCLK, which the
-      old `FlashSlowDown` did, does not change the flash access clock at all** - that was the bug.
-      **Fix applied:** drop SYSCLK to HSI (8 MHz) around the flash operations (flash access 4 MHz);
-      the PLL keeps running so `USBPRE = PLL/3` (48 MHz to USBD) is unaffected, and PLL is restored
-      after. Applied to both `FlashEraseSector` and `FlashWrite`. Rebuilt (10400 B) and ISP-flashed
-      (Verify OK). Awaiting a PA2-held reset to test the erase.
-      **Update 3 (2026-10-06): REAL root cause = the KNOWN issue - a read-back quirk, not the
-      clock.** With SYSCLK dropped to HSI (flash access 4 MHz) the erase still "failed", so the
-      clock was not it. The actual cause: **a just-erased word does NOT read back as `0xFFFFFFFF`
-      until it has been through a program cycle** - it reads a bogus pattern (measured
-      `0xE339E339`). The erase works (proved: programming a whole sector, then triggering the
-      erase, cleared it), but `FlashEraseSector`'s `verify == 0xFFFFFFFF` test therefore always
-      failed, so `HandleWrite` skipped the **first chunk of every sector** -> exactly the 7/881
-      read-back mismatches. The **previous working Valu v2 release hit the same thing** and works
-      around it in `Hardware/Memory.h` by programming `0xFFFFFFFF` over every erased word
-      (commented *"Prevent incorrect reading"*). Verified on hardware: programming 32 x `0xFF`
-      over an erased chunk makes it read `0xFFFFFFFF`. **Fix:** after each erase, program
-      `0xFFFFFFFF` over every word of the region (added to both the bootloader's
-      `FlashEraseSector` and the app's `Storage_FlashErase` - the app's storage has the same latent
-      bug). The clock reduction is kept (defensive, per RM 32.2) but was not the cause. Bootloader
-      + app rebuilt; awaiting an ISP session to install the fixed bootloader.
-      **Update 4 (2026-10-06): DONE - the app is correctly on flash.** Fixed bootloader installed
-      via ISP; app pushed over the bootloader: **882 chunks, 0/882 read-back mismatches**, and the
-      erase diagnostics now read `word r1 = word r2 = 0xFFFFFFFF`. Awaiting a PA2-released reset to
-      boot the app (the bootloader does not self-reset into it).
+- Router capability bit: reserve one for the router service so the documented capability can be set.
+- App Active enum: add `LegacyBt` and `WiFi` (`Enums.h:34-38`). The documents already list them as planned states.
 - [ ] **Valu app works standalone but NOT when launched by the bootloader (open).** Verified
       2026-10-07: the identical app image, ISP-flashed at 0x0 (no bootloader), runs and enumerates
       as `1a86:6001 "Valu v2.0"` and reaches its main loop; launched from the bootloader
@@ -240,8 +175,9 @@ green, release checklist.
       brings up the USB CDC App Interface (same `0xFA..0xBF` link protocol as the core), the
       LED-Button (PA2), three pull-down buttons (PB13-15), one fan PWM (PA8/TIM1) and three
       resistive inputs (PA6/PA1/PA0), and runs the mandatory + Dynamic-memory + Script services
-      over an 8 kB storage region at `0xE000`. It BUILDS (28 KB flash / 11.5 KB RAM); nothing is
-      flashed (the bootloader erase defect above; no hardware attached). Two unverifiable facts to
+      over an 8 kB storage region at `0xE000`. It BUILDS (29 KB flash / 16.5 KB RAM); nothing is
+      flashed on the rig (no hardware attached, and it still does not reach `main` when launched by
+      the bootloader - above). Two unverifiable facts to
       settle on hardware: (a) the app's flash writes run at the framework's 144 MHz HCLK, where
       `CH32VRM` RM 32.1 note 2 recommends <= 120 MHz / a <= 60 MHz flash access clock - the
       bootloader's flash path has the same open question and no mitigation; (b) the USB bring-up
@@ -280,12 +216,6 @@ green, release checklist.
 ## Code-cleanup backlog
 
 - Give the storage flash API a namespace or class instead of the `Storage_Flash*` free functions, and group it the same way in `Docs/Services/Storage.md` (from doc fact check A12).
-
-No open items: the 2026-10-04 audit's correctness fixes and the follow-up cleanups (storage `Find*`
-error signalling + offset-only invalidation; `RegisterResolveByBlockInfo` resolver sharing and the
-`.SUBREQ` unchanged-write skip; the core bootloader host-helper dedup + `Bootloader.padPayload`; the
-app `ScriptDraftValue.setType` / `ValueInfo` unification; the added coverage tests and fixture
-fixes) are committed.
 
 **Deliberately left** (a merge would read worse): the three flag-name decoders (`flagWords` = full
 words for the backup format, `ValueFlags.describe` = RO/P/TR, `_flagsSuffix` = RO/P) and the two
