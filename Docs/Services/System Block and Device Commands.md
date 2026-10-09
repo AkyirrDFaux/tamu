@@ -52,11 +52,11 @@ The `NetID` is set by the user for each core. Zero is not allowed and is replace
 
 After boot the core discover command is sent, and responses are expected within 500 ms.
 
-`NetID` collisions are checked. If one occurs, the normal boot of that core is aborted; the core remains accessible through the app or the CLI to change its `NetID`, the issue is logged, and the red LED blinks periodically.
+`NetID` collisions are checked. If one occurs, the normal boot of that core is aborted; the core remains accessible through the app to change its `NetID`, the issue is logged, and the red LED blinks periodically.
 
 If multiple cores are present, the core TimeSyncs to the longest running one, by uptime. After that it continues as normal, assigning IDs within the local net.
 
-The core provides the time reference to its own net, and re-syncs its own time with the longest running core at random intervals.
+The core provides the time reference to its own net, and re-syncs its own time with the longest running core at intervals that depend on its clock stability, jittered so the reference core is not periodically overwhelmed.
 #### SNDB
 Every core implements a persistent SN Database.
 

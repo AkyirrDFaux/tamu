@@ -153,6 +153,7 @@ green, release checklist.
 
 ## Open work
 
+- Router capability bit: reserve one for the router service so the documented capability can be set (doc fact check A26).
 - App Active enum: add `LegacyBt` and `WiFi` (`Enums.h:34-38`). The documents already list them as planned states (doc fact check A25).
 - [ ] **Valu v2.0 bootloader: flash erase is ineffective (flashed via ISP, erase path untested).**
       Everything else is proven on the board: it enumerates as `1A86:6001` with our own descriptors,

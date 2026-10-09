@@ -109,7 +109,7 @@ Replace with `For Number, Index, Uint32 and Vector`.
 (uint8), Script File IDs (uint16)`. Code `ScriptRuntime.h:164-180` streams it as fragments. Replace with
 `Fragmentation, number of loaded scripts (uint8), Script File IDs (uint16) (stream)`.
 
-**A22 Script: Compose/Extract also handles `String`.** - **approved**, with the element carrying a character type rather than a numeric one, so a string element is distinguishable from a number. Wording to confirm; the code types it `Uint32` today, which is B20. `Script.md:70`. Code `ScriptExec.h:509-538`
+**A22 Script: Compose/Extract also handles `String`.** - **approved**, with the element carrying a character type rather than a numeric one, so a string element is distinguishable from a number. Confirmed and applied: `Script.md:70` names the element, `Data Formats.md` gained a `Char` row, and the new enum member is B22. The code typing it `Uint32` is B20. `Script.md:70`. Code `ScriptExec.h:509-538`
 includes `DataType::String`. Replace with `Vector, Matrix, Colour or String plus an Index convert to and
 from Number or uint8.`
 
@@ -124,20 +124,20 @@ Response `SN (of node) + ID (from core, assignment)`. Code `Services/Device.h:39
 **A25 System Block: App Active has three states.** - **rejected**, the document is right: Legacy BT and WiFi are planned. The enum gains them later; noted in `TODO.md`. `System Block...md:23` - `(No/USB/BLE/Legacy
 BT/WiFi)`. Code `Enums.h:34-38`: `None`, `USB`, `BLE`. Replace with `(No/USB/BLE)`.
 
-**A26 System Block: the capability list names the wrong bit.** `System Block...md:30-38` - lists
+**A26 System Block: the capability list names the wrong bit.** - **rejected**: every device has storage files, so it is not a capability. The document keeps `Router`, which is reserved for expansion, and the CLI stays deprecated. That leaves B23 (drop `StorageFiles` from the capability sets) and a planned router bit in `TODO.md`. `System Block...md:30-38` - lists
 `Router` and omits storage. Code `Enums.h:15` has `StorageFiles = 1u << 5`, set by all three targets, and
 no router bit. Replace `- Router` with `- Storage Files`.
 
-**A27 System Block: the CLI is gone.** `System Block...md:55` - "through the app or the CLI". Code
+**A27 System Block: the CLI is gone.** - **approved and applied.** `System Block...md:55` - "through the app or the CLI". Code
 `Tamu_v2.0A/AppUSB.h:8`: "There is no console/REPL: the CLI was removed". Replace with `the core remains
 accessible through the app to change its NetID, the issue is logged, and the red LED blinks
 periodically.`
 
-**A28 System Block: the re-sync interval is fixed.** `System Block...md:59` - "at random intervals".
+**A28 System Block: the re-sync interval is fixed.** - **revised and applied**: the interval is device-dependent on the clock's stability and carries jitter so the reference core is not periodically overwhelmed. The code is a fixed 150 s with no jitter, so B24 adds both. `System Block...md:59` - "at random intervals".
 Code `TimeSync.h:23,93`: `DISCOVER_INTERVAL_MS = 150000` with no jitter. Replace with `every 2.5
 minutes`.
 
-**A29 System Block: discovery repeats at a fixed interval.** `System Block...md:47` - "at random
+**A29 System Block: discovery repeats at a fixed interval.** - **rejected**, the document is right: jitter is intended so the core and the network are not overwhelmed. The code sends a fixed 500 ms, so B25 adds the jitter. `System Block...md:47` - "at random
 intervals". Code `DAS_v0.1/Main.h:142-152` sleeps a fixed 500 ms. Replace with `every 500 ms`.
 
 **A30 Bootloader: the write reply is a flag.** `Bootloader.md:52` - Response `Success (bool)`. Code
@@ -281,6 +281,14 @@ itself as device 1 with no net.
 **B8 Tamu is built as Core only.**
 
 **A59 Storage: `Storage_FlashInit` is missing from the main functions.** The document lists four (`Docs/Services/Storage.md:40-47`); the code declares five, the extra being `bool Storage_FlashInit();` ("find/open the storage partition", `StorageDefs.h:31`). Add it to the list.
+
+**B22 The `DataType` enum gains `Char`.** From A22: a string element needs a character type, and the enum has none. The next free code below the keyed block is `0x11` (`BlockInfo` is `0x10`); the document's row already assumes it.
+
+**B23 `StorageFiles` is not a capability.** From A26: every device has storage files, so the bit says nothing. It is set by all three targets (`Tamu_v2.0A/Main.h:35`, `DAS_v0.1/Main.h:38`, `Valu_v2.0/Main.h:38`) and can come off; the bit itself can stay reserved.
+
+**B24 The core re-sync has no jitter and no device dependence.** From A28: `TimeSync.h:23` is a fixed `DISCOVER_INTERVAL_MS = 150000` scheduled with no variation (`:93`). The interval should follow the device's clock stability and be jittered so the reference core is not overwhelmed.
+
+**B25 The discovery repeat has no jitter.** From A29: `DAS_v0.1/Main.h:142-152` re-broadcasts every 500 ms with no variation. Add jitter so the core and the network are not overwhelmed by simultaneous discovery. The same loop exists on the other Node targets.
 
 **B20 A `String` element is typed `Uint32`.** From A22: `ScriptExec.h:533-538` returns a byte element for `DataType::String` but sets `*elemType = DataType::Uint32`, the same numeric type the `Colour` branch uses. A string element should carry a character type so it stays distinct from the numerics.
 

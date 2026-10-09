@@ -68,7 +68,7 @@ Execution happens in the main loop. All instructions run until the same instruct
 - Generic math and logic processor
 	 Var = (X+(Y-6)/Z^2 < P)&U
 - Compose and extract functions
-	`Vector`, `Matrix` or `Colour` plus an Index convert to and from `Number` or `uint8`.
+	`Vector`, `Matrix` and `Colour` plus an Index convert to and from `Number` or `uint8`. A `String` element is a `Char`, not a numeric value.
 - Register reader and writer
 	Var, success = read (BlockInfo) / readforeign (Address, BlockInfo).
 	Success = write (Val, BlockInfo) / writeforeign (Val, Address, BlockInfo).

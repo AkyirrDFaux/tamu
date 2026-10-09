@@ -20,6 +20,7 @@ The data types used across the protocol, with their enum value and encoding. A t
 | `Uint32`       | 0x0E  | An unsigned 32bit integer.                                               |
 | `DevType`      | 0x0F  | A device type, as listed in [[Devices]].                                 |
 | `BlockInfo`    | 0x10  | A struct for pointing scripts.                                           |
+| `Char`         | 0x11  | One character, an element of a `String`. |
 | `UnknownKeyed` | 0x100 | The generic dictionary marker.                                           |
 | `Geometry`     | 0x101 | A dictionary describing a geometric shape.                               |
 | `Texture`      | 0x102 | A dictionary describing a texture.                                       |
