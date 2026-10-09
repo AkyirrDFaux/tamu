@@ -1,5 +1,9 @@
 # Issues
 
+Open items only. The 2026-10-04 per-area audit findings (register, storage, device/log,
+subscriptions, tamu, das, bootloader, app, tooling, tests) were fixed and committed; the
+remaining low-value follow-ups live in `TODO.md`.
+
 ## Doc fact check (2026-10-09)
 
 Every firmware document was checked against `firmware/src`. The documents are the specification, so a
@@ -283,11 +287,6 @@ every device pin assignment, and the DAS/Valu storage geometry all verify agains
 `Storage.md:86-96` the dynamic block descriptor ordering (runtime only), and the Valu feature rows that
 are hardware-only.
 
-
-Open items only. The 2026-10-04 per-area audit findings (register, storage, device/log,
-subscriptions, tamu, das, bootloader, app, tooling, tests) were fixed and committed; the
-remaining low-value follow-ups live in `TODO.md`.
-
 ## Open (2026-10-09)
 
 - **Doc vs code: the `DataType` enum.** `Docs/Data Formats.md` now carries the values, read from
@@ -342,7 +341,6 @@ remaining low-value follow-ups live in `TODO.md`.
   `LoadedScript scriptRegistry[256]` (~38 KB) in `ScriptDefs.h`; the CH32V203's 20 KB cannot hold
   it, so the registry is now a `#ifndef`-guarded build knob and the Valu sets `-D MAX_SCRIPTS=16`.
   Higher Scripts-range indices report as unloaded.
-
 
 ## Docs decisions needed (parked unless noted)
 - **OS notifications.** `Docs/App/Settings.md` lists "Allow notifications (To OS)" with per-event
