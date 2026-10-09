@@ -204,19 +204,19 @@ the value but `GeometryMath.h:119-228` has no case, so it falls through to `defa
 has one `Triangle = 9` with two modes (`GeometryMath.h:76`). Replace both bullets with `- Triangle:
 equilateral (size only) or isosceles (angle and side length)`.
 
-**A46 LED Display: the reserved key 0 is missing from both dictionaries.** `LED Display.md:26-38` and
+**A46 LED Display: the reserved key 0 is missing from both dictionaries.** - **rejected**: key 0 carries the dictionary's type rather than being a key, so the tables correctly start at 1. The code comment calling it "reserved" is what invited the misreading; B36 rewords it. `LED Display.md:26-38` and
 `:61-69` start at key 1. Code `Render.h:13,60` reserves key 0 as the dictionary marker. Add a first row
 to each table, `| Dictionary | 0 | DataType::Geometry | Reserved marker; holds no value |`.
 
-**A47 LED Display: the repeated sentence.** `LED Display.md:71` repeats "Not every shape interacts with
+**A47 LED Display: the repeated sentence.** - **approved and applied.** `LED Display.md:71` repeats "Not every shape interacts with
 every parameter." under the texture table, where it refers to textures and effects. Reword.
 
-**A48 Measurement: the trigger flag.** `Measurement.md:7` - `Sampling Rate` flags `P, (TR)`. Code
+**A48 Measurement: the trigger flag.** - **revised and applied** on the Sampling Rate row, whose note now says the trigger clamps the stored value to the applied one. The same trigger serves the Filter Coefficient (both fields are clamped at write time, `Measuring.h:60-74`), so that row is missing its `(TR)` marker - either it gains one or the code drops the field-2 trigger. `Measurement.md:7` - `Sampling Rate` flags `P, (TR)`. Code
 (`DAS_v0.1/Measuring.h:46,80-83`, `Valu_v2.0/Measuring.h:47,79-82`) sets only `ValuePersistent` and
 registers the trigger out of band; both boards also trigger field 2, listed as bare `P`. Replace the
 flags with `P` on both rows, or set `ValueTrigger` in code.
 
-**A49 Devices: Tamu I2C pull-ups.** `Devices.md:9` - "with 4k7 pull-ups". Code
+**A49 Devices: Tamu I2C pull-ups.** - **rejected**: the board does carry the 4k7 pull-ups and the internal ones stay enabled, so the document is right. The driver's comment claiming there are none is what is wrong; B37 fixes it. `Devices.md:9` - "with 4k7 pull-ups". Code
 `Tamu_v2.0A/AccGyr.h:139-150`: "this board has no external pull-ups on SDA/SCL", and enables internal
 pull-ups. Replace the note with `internal pull-ups` if the board has none, or fix the code if it does.
 
@@ -281,6 +281,10 @@ itself as device 1 with no net.
 **B8 Tamu is built as Core only.**
 
 **A59 Storage: `Storage_FlashInit` is missing from the main functions.** The document lists four (`Docs/Services/Storage.md:40-47`); the code declares five, the extra being `bool Storage_FlashInit();` ("find/open the storage partition", `StorageDefs.h:31`). Add it to the list.
+
+**B36 The dictionary marker is not "reserved".** From A46: key 0 carries the dictionary's type, so the comment `reserved: the Geometry dictionary marker` in `Render.h:13` and `:60` should say so.
+
+**B37 The I2C pull-up comment is wrong.** From A49: `Tamu_v2.0A/AccGyr.h:139-141` says the board has no external pull-ups on SDA/SCL. It has 4k7 ones; the internal pull-ups stay enabled as well, so only the comment changes.
 
 **B34 Reserve a texture slot for `Bitmap`.** From A42: the document lists `Bitmap` and `Textures2D` (`Render.h:72-82`) has no slot - `GradientCircular = 3` runs straight into the effects at `4`. Reserve a value; placing it after the effects (`Bitmap = 8`) keeps the effect numbers stable.
 

@@ -67,7 +67,7 @@ The fill is the texture or effect applied in the area specified by the mask. Tex
 | Colour 3            | 6   | `Colour`          |      |
 | Amount              | 7   | `Number`          |      |
 
-Not every shape interacts with every parameter.
+Not every texture interacts with every parameter.
 
 Texture list:
 
