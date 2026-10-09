@@ -1,4 +1,4 @@
-Storage holds large chunks whose size varies widely, from 4 kB to 2 MB. It sits on NOR flash, where an erased bit reads 1 and a written bit reads 0, and access can be slow. It is implemented per device, behind a common interface.
+Storage holds large chunks whose size varies widely, from a few hundred bytes to about 1 MB. It sits on NOR flash, where an erased bit reads 1 and a written bit reads 0, and access can be slow. It is implemented per device, behind a common interface.
 ### File System
 Aligned with pages, the smallest erasable unit.
 
@@ -29,10 +29,10 @@ A file is handed to other functions to have data stored in it or read from it, a
 | Name              | ID | Request                                     | Response                                    | Note                                                  |
 | ----------------- | -- | ------------------------------------------- | ------------------------------------------- | ----------------------------------------------------- |
 | Format Filesystem | 0  | -                                           | Success (bool)                              |                                                       |
-| Create File       | 1  | Name, Size (>0)                             | Success (bool)                              | Respond only if requested, not in reduced file system |
-| Delete File       | 2  | Name                                        | Success (bool)                              | Respond only if requested, not in reduced file system |
-| Resize File       | 3  | Name, New Size (>0)                         | Success (bool)                              | Respond only if requested, not in reduced file system |
-| Rename File       | 4  | Old Name, New Name                          | Success (bool)                              | Respond only if requested, not in reduced file system |
+| Create File       | 1  | Name, Size (>0)                             | Success (bool)                              | Respond only if requested |
+| Delete File       | 2  | Name                                        | Success (bool)                              | Respond only if requested |
+| Resize File       | 3  | Name, New Size (>0)                         | Success (bool)                              | Respond only if requested |
+| Rename File       | 4  | Old Name, New Name                          | Success (bool)                              | Respond only if requested |
 | Read File         | 5  | Name                                        | Fragmentation, Name, File contents (stream) | Maximum 64 byte stream fragment                       |
 | Write File        | 6  | Fragmentation, Name, File contents (stream) | Last sequential fragmentation index written | Respond only if requested, maximum 64 byte stream fragment |
 ### Implementation Functions
@@ -46,13 +46,13 @@ A file is handed to other functions to have data stored in it or read from it, a
 - `bool Format()`
 	Wipes the entire storage system.
 #### Filesystem Utility Functions (filesystem only, universal)
-- `uint32_t FindFiletable()`
+- `bool FindFiletable(uint32_t* Offset)`
 	Reads the file table's location from the first page.
-- `uint32_t FindInFiletable(char[8] Filename)`
+- `bool FindInFiletable(char[8] Filename, uint32_t* Index)`
 	Returns the index of the file record in the file table, or `0xFFFFFFFF` if it does not exist.
 - `uint32_t FindSpace(uint32_t Size)`
-	Finds contiguous space of the requested size, starting from a start page and checking the file table, excluding existing files and the pointer page, and evening out flash wear. Returns the start address of the page found, as an offset from the start of the filesystem.
-- `uint32_t GetEndOfFiletable()`
+	Finds contiguous space of the requested size, starting from an internal wear cursor, and checking the file table, excluding existing files and the pointer page. Returns the start address of the page found, as an offset from the start of the filesystem.
+- `bool GetEndOfFiletable(uint32_t* Index)`
 	Returns the first unwritten file record.
 - `bool DeleteFilerecord(char[8] Filename)`
 	Deletes the file record. Returns true if successful.

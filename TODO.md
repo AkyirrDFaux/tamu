@@ -277,6 +277,8 @@ green, release checklist.
 
 ## Code-cleanup backlog
 
+- Give the storage flash API a namespace or class instead of the `Storage_Flash*` free functions, and group it the same way in `Docs/Services/Storage.md` (from doc fact check A12).
+
 No open items: the 2026-10-04 audit's correctness fixes and the follow-up cleanups (storage `Find*`
 error signalling + offset-only invalidation; `RegisterResolveByBlockInfo` resolver sharing and the
 `.SUBREQ` unchanged-write skip; the core bootloader host-helper dedup + `Bootloader.padPayload`; the

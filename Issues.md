@@ -63,13 +63,13 @@ block is erased only when the last entry is invalidated." Code `StorageBlockFS.h
 valid slot is the pointer, and the page is erased only when no unused slot remains. Replace with `Its
 newest valid entry is that pointer ... The page is erased only when every entry is written.`
 
-**A11 Storage: utility signatures return bool with out-parameters.** `Storage.md:49,51,55` -
+**A11 Storage: utility signatures return bool with out-parameters.** - **approved and applied.** `Storage.md:49,51,55` -
 `uint32_t FindFiletable()`, `uint32_t FindInFiletable(char[8] Filename)`, `uint32_t
 GetEndOfFiletable()`. Code `StorageBlockFS.h:43,98,118` returns `bool` and writes through a pointer.
 Replace with `bool FindFiletable(uint32_t* Offset)`, `bool FindInFiletable(char[8] Filename, uint32_t*
 Index)`, `bool GetEndOfFiletable(uint32_t* Index)`.
 
-**A12 Storage: main function names and parameter order.** `Storage.md:40-47` - `Read/Write/Erase/Format`
+**A12 Storage: main function names and parameter order.** - **deferred** to the code-cleanup backlog: give the storage flash API a namespace or class, and group it in the document. `Storage.md:40-47` - `Read/Write/Erase/Format`
 with length before buffer. Code `StorageDefs.h:31-35` uses `Storage_FlashRead(uint32_t offset, void*
 data, uint32_t size)`, `Storage_FlashWrite`, `Storage_FlashErase(uint32_t offset, uint32_t size)`,
 `Storage_FlashFormat()`. Replace names and put the buffer before the length.
@@ -78,18 +78,18 @@ data, uint32_t size)`, `Storage_FlashWrite`, `Storage_FlashErase(uint32_t offset
 unconditionally. Code `StorageBlockFS.h:266-280` guards it with `#ifdef OPTIMIZE_SPEED`. Prefix `In a
 speed build, ` and add `a size build keeps the current size.`
 
-**A14 Storage: allocation starts at a wear cursor.** `Storage.md:54` - "starting from a start page".
+**A14 Storage: allocation starts at a wear cursor.** - **approved and applied** with the owner's wording; the cursor replaces the start page and the wear remark goes. `Storage.md:54` - "starting from a start page".
 Code `StorageBlockFS.h:415` scans from `(wear_cursor + scanned) % num_blocks`. Replace with `starting
 from an internal wear cursor that rotates allocations across the storage`.
 
-**A15 Storage: Format replies with an empty ack.** `Storage.md:31` - Response `Success (bool)`. Code
+**A15 Storage: Format replies with an empty ack.** - **resolved in code**: it should reply a status, so this becomes B17. `Storage.md:31` - Response `Success (bool)`. Code
 `Core/Services/Storage.h:20-21` sends `SendResponse(frame, nullptr, 0)`. Replace with `Ack (empty)`.
 
-**A16 Storage: the reduced file system does not exist.** `Storage.md:32-35` - the note `not in reduced
+**A16 Storage: the reduced file system does not exist.** - **approved and applied**; the reduced filesystem was dropped. `Storage.md:32-35` - the note `not in reduced
 file system` is stale; the DAS runs the full FS (`DAS_v0.1/Main.h:36-38`, `Capabilities::StorageFiles`).
 Delete the clause from all four rows.
 
-**A17 Storage: size range.** `Storage.md:1` - "from 4 kB to 2 MB". The real regions are 512 B (DAS),
+**A17 Storage: size range.** - **approved and applied**; the range reflects the real scope without naming devices. `Storage.md:1` - "from 4 kB to 2 MB". The real regions are 512 B (DAS),
 8 kB (Valu) and 948 kB (Tamu), `platformio.ini:97,165,299`. Replace with the measured range or per-device
 sizes.
 
@@ -281,6 +281,8 @@ itself as device 1 with no net.
 **B8 Tamu is built as Core only.**
 
 **A59 Storage: `Storage_FlashInit` is missing from the main functions.** The document lists four (`Docs/Services/Storage.md:40-47`); the code declares five, the extra being `bool Storage_FlashInit();` ("find/open the storage partition", `StorageDefs.h:31`). Add it to the list.
+
+**B17 Format Filesystem replies with no payload.** From A15: it should reply a status. `Storage.h:19-21` sends `SendResponse(frame, nullptr, 0)` where every other command in that table replies through the shared status helper.
 
 **B13 The pointer slots need no invalidation.** From A10: the newest valid slot wins, so the loop that zeroes the earlier slots (`StorageBlockFS.h:84-87`) and the `0x00000000` marker it writes are unnecessary.
 
