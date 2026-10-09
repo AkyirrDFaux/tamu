@@ -35,7 +35,7 @@ Modules:
 
 Page size: 4096 bytes
 Table size: 4 pages
-Storage: ... a lot (MBs)
+Storage: 948 kB
 ### DAS v0.1 (CH32V003), Node
 | Feature          | Pins                     | Note |
 | ---------------- | ------------------------ | ---- |

@@ -31,8 +31,8 @@ Script 2: Eye movement
 - The rotational axis of the gyroscope (XY) moves the circle and pupil position
 - Input 0: Offset (`Vector<2>`). X is flipped for one of the eyes.
 - Input 1: Sensitivity (`Matrix<2,3>`), a multiplier for the movement and not a transformation; XYZ from the gyro to XY on the display.
-- Output 0: Position L
-- Output 1: Position R
+- Output 0: offset L
+- Output 1: offset R
 
 Script 3: Lid timer
 

@@ -211,7 +211,7 @@ to each table, `| Dictionary | 0 | DataType::Geometry | Reserved marker; holds n
 **A47 LED Display: the repeated sentence.** - **approved and applied.** `LED Display.md:71` repeats "Not every shape interacts with
 every parameter." under the texture table, where it refers to textures and effects. Reword.
 
-**A48 Measurement: the trigger flag.** - **revised and applied** on the Sampling Rate row, whose note now says the trigger clamps the stored value to the applied one. The same trigger serves the Filter Coefficient (both fields are clamped at write time, `Measuring.h:60-74`), so that row is missing its `(TR)` marker - either it gains one or the code drops the field-2 trigger. `Measurement.md:7` - `Sampling Rate` flags `P, (TR)`. Code
+**A48 Measurement: the trigger flag.** - **revised and applied**: both rows carry `P, (TR)`, and the Sampling Rate note explains the write-time clamp. The schema's field flags still lack the trigger bit, which is B38. - **revised and applied** on the Sampling Rate row, whose note now says the trigger clamps the stored value to the applied one. The same trigger serves the Filter Coefficient (both fields are clamped at write time, `Measuring.h:60-74`), so that row is missing its `(TR)` marker - either it gains one or the code drops the field-2 trigger. `Measurement.md:7` - `Sampling Rate` flags `P, (TR)`. Code
 (`DAS_v0.1/Measuring.h:46,80-83`, `Valu_v2.0/Measuring.h:47,79-82`) sets only `ValuePersistent` and
 registers the trigger out of band; both boards also trigger field 2, listed as bare `P`. Replace the
 flags with `P` on both rows, or set `ValueTrigger` in code.
@@ -220,7 +220,7 @@ flags with `P` on both rows, or set `ValueTrigger` in code.
 `Tamu_v2.0A/AccGyr.h:139-150`: "this board has no external pull-ups on SDA/SCL", and enables internal
 pull-ups. Replace the note with `internal pull-ups` if the board has none, or fix the code if it does.
 
-**A50 Devices: Valu declares an LED display it does not implement.** `Devices.md:79` - `- LED Display,
+**A50 Devices: Valu declares an LED display it does not implement.** - **rejected**: `Vysi` is an instance of the LED display block, and the LED driver is now generic, so it also serves LED strips. The document is right. `Devices.md:79` - `- LED Display,
 2 instances`. Code `Valu_v2.0/Main.h:80-89` registers no LED display and no strip driver exists. Mark it
 `(TODO)` or implement it.
 
@@ -229,10 +229,10 @@ pull-ups. Replace the note with `internal pull-ups` if the board has none, or fi
 build. Replace with `1 page, grown and shrunk to stay between 25% and 75% full` (Tamu) and `1 page`
 (Valu).
 
-**A52 Devices: Tamu storage size.** `Devices.md:31` - "a lot (MBs)". Code `platformio.ini:165`:
+**A52 Devices: Tamu storage size.** - **approved and applied**: `partitions.csv` reserves `storage` at `0xED000`, 970752 bytes, 948.0 kB, so the row now reads `Storage: 948 kB`. `Devices.md:31` - "a lot (MBs)". Code `platformio.ini:165`:
 `STORAGE_FLASH_SIZE=0xED000`, 948 kB. Replace with `948 kB`.
 
-**A53 Current Setup: the script output names.** `Current Setup v3.md:34-35` - `Position L`, `Position
+**A53 Current Setup: the script output names.** - **approved and applied** (`offset L`, `offset R`). `Current Setup v3.md:34-35` - `Position L`, `Position
 R`. Code `app/test/current_setup_scripts.dart:256-257`: `offset L`, `offset R`. Replace both.
 
 **A54 Current Setup: the script input labels.** `Current Setup v3.md:39,40,52` - `Delay between
@@ -281,6 +281,8 @@ itself as device 1 with no net.
 **B8 Tamu is built as Core only.**
 
 **A59 Storage: `Storage_FlashInit` is missing from the main functions.** The document lists four (`Docs/Services/Storage.md:40-47`); the code declares five, the extra being `bool Storage_FlashInit();` ("find/open the storage partition", `StorageDefs.h:31`). Add it to the list.
+
+**B38 The measurement field flags lack the trigger bit.** From A48: `Register.md:52` makes the flag the gate, but `ResistiveMeas_Entries` (`DAS_v0.1/Measuring.h:46-48`, `Valu_v2.0/Measuring.h:47-49`) carries only `ValuePersistent` while `ResistiveMeas_Triggers` (`:80-81`) registers functions for fields 0 and 2. Set the flag on those two entries.
 
 **B36 The dictionary marker is not "reserved".** From A46: key 0 carries the dictionary's type, so the comment `reserved: the Geometry dictionary marker` in `Render.h:13` and `:60` should say so.
 
@@ -336,7 +338,7 @@ itself as device 1 with no net.
 
 **B10 Character fields are padded with spaces, not nulls.** A5's ruling makes the pad byte a null. The code pads with spaces in the Register path (`MemoryTypes.h:159`, `memset(pad_buf, ' ', ...)`) and the storage file-name path (`StorageDefs.h:86-97`; `TODO.md:346`), and every device Name field is commented as space-padded (`Tamu_v2.0A/Main.h:77`, `DAS_v0.1/Main.h:68`, `Valu_v2.0/Main.h:70`). The app pads the same way (`register_client.dart` `_padBlockName`, `device_backup.dart:28`, `current_setup.dart:411`), and the HIL asserts it: `hil_script_test.dart:253` fails with "short string not space-padded", plus `register_client_dynamic_test.dart:36`, `tamu_hardware_verification_test.dart:280` and `hil_backup_test.dart:197`. Making the pad a null is a wire- and storage-format change across firmware, app and HIL.
 
-**A58 `String` and `Filename` descriptions in Data Formats.** A consequence of A5: if those types are only ever fixed-size character fields, `Data Formats.md` should say so on both rows rather than describing them as variable-length - null-padded, 8, 16 or 24 bytes.
+**A58 `String` and `Filename` descriptions in Data Formats.** - **resolved by A34**: `String` is gone, so only `Filename` and `Name` remain as the fixed-size character fields. A consequence of A5: if those types are only ever fixed-size character fields, `Data Formats.md` should say so on both rows rather than describing them as variable-length - null-padded, 8, 16 or 24 bytes.
 
 **B9 Create Dynamic replies with a redundant block index.** `RegisterPersist.h:107` replies `SendBlockIndexAck(frame, index)` - a 3-byte `BlockIndex` echo plus a 1-byte ack - while Delete and Set Name reply a plain status (`:115`, `:131`). The host already knows the index it sent (the app computes it, `register_client.dart:421-431`). Reply a plain status and drop the echo, then have the app use the index it sent instead of `reply[0]` (`register_client.dart:437-439`). `Devices.md:4` says "Core and Node"; `Tamu_v2.0A/Main.h:32-38`
 declares `Capabilities::Core` and no node build exists.
