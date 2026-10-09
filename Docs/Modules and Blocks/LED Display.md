@@ -1,0 +1,85 @@
+A generic LED display interface that renders shapes with textures and overlay effects. The LEDs are addressable and connected in series; the layout, or at least the size, must be specified.
+### Static Settings Block
+Contains the overall settings.
+
+| Name                    | F.K | Flags | Size      | Note |
+| ----------------------- | --- | ----- | --------- | ---- |
+| Brightness              | 0   |       | Number    | % |
+| Offset                  | 1   | P     | `Matrix<2,3>` | A transformation that defines the 0,0 screen position and the default rotation |
+| Render KeyedBlock Index | 2   | P     | `Index`   | Index of the block containing shapes, textures and effects; -1 is invalid |
+| Layout File Name        | 3   | TR, P | `Filename` | The file containing the layout |
+| Refresh Rate            | 4   | RO    | Number    | In FPS, averaged |
+### Layout File
+| Name                  | Size           | Note |
+| --------------------- | -------------- | ---- |
+| Brightness limit      | uint8          | 0-255 |
+| Display width         | uint8          |      |
+| Display height        | uint8          |      |
+| Table of LED indexes  | uint16[W x H]  | Row first |
+
+An index of `0xFFFF` means a missing LED. Index 0 is the first LED in the chain, 1 the second, and so on.
+### Rendering Dynamic Block
+The rendering pipeline has two parts, mask and fill. All parts are processed consecutively, in the index order they have in the block.
+
+The mask is an alpha channel modified by geometric definitions, and the geometry is defined using a dictionary.
+
+| Key Name          | Key | Usual Type        | Note |
+| ----------------- | --- | ----------------- | ---- |
+| Geometry shape    | 1   | `Enum`            |      |
+| Operation type    | 2   | `Enum`            | Replace, Add, Cut, Intersect, XOR |
+| Position          | 3   | `Matrix<2,3>`     | 2D transformation |
+| Size              | 4   | `Vector<2>` or `Number` |      |
+| Fade              | 5   | `Number`          | In pixels |
+| Alpha             | 6   | `Number`          | Default 1, range 0 to 1 |
+| Rounding          | 7   | `Number`          | In pixels |
+| Angles            | 8   | `Number` or `Vector` |      |
+| Point number      | 9   | `int32`           |      |
+| Point coordinates | 10  | `Matrix<2,N>`     |      |
+| Noise seed        | 11  | `int32`           |      |
+
+Not every shape interacts with every parameter.
+
+Shape list:
+
+- Fill
+- HalfFill
+- Square
+- Rectangle
+- Trapezoid
+- Circle
+- Ellipse
+- DoubleParabola
+- Triangle (equilateral): size only
+- Triangle (isosceles): angle and side length
+- Polygon
+- Star
+- Mesh
+- Noise
+
+The fill is the texture or effect applied in the area specified by the mask. Textures and effects are described using a dictionary.
+
+| Key Name            | Key | Usual Type        | Note |
+| ------------------- | --- | ----------------- | ---- |
+| Texture/Effect type | 1   | `Enum`            |      |
+| Position            | 2   | `Matrix<2,3>`     | A 2D transformation that defines the centre |
+| Size                | 3   | `Vector<2>` or `Number` |      |
+| Colour 1            | 4   | `Colour`          |      |
+| Colour 2            | 5   | `Colour`          |      |
+| Colour 3            | 6   | `Colour`          |      |
+| Amount              | 7   | `Number`          |      |
+
+Not every shape interacts with every parameter.
+
+Texture list:
+
+- Fill
+- Gradient linear
+- Gradient circular
+- Bitmap (TODO)
+
+The effect list continues the texture enum:
+
+- Colour inversion
+- Hue shift
+- Contrast change
+- Brightness change

@@ -1,25 +1,27 @@
-Per device specific, USB, BLE or both.
-Use define USE_APP_INTERFACE.
+Implemented per device, over USB, BLE or both.
 
-Provides forwarding of packets to the app via the avaliable interface.
-Maximize throughput (split into fragments, fully fill payload), since line is bi-directional peer to peer.
+Use define `USE_APP_INTERFACE`.
 
-App has reserved TRID range.
-#### USB Packet (64 bytes):
+Provides forwarding of packets to the app over the available interface. Throughput is maximised by splitting into fragments and filling the payload completely, since the line is a bi-directional peer-to-peer link.
 
-| Start trigger | CRC8 | Length | Payload (Packets, serialized stream) | Stop |
+The app has a reserved TrID range within [[RSBus and Packets]].
+#### USB Packet
+The USB packet is 64 bytes long:
+
+| Start Trigger | CRC8 | Length | Payload (packets, serialized stream) | Stop |
 | ------------- | ---- | ------ | ------------------------------------ | ---- |
-| 0xFA          | 8bit | 8bit   | 60 bytes max                         | 0xBF |
-CRC is over Length + Payload.
-#### BLE Packet:
-Preffered wireless method.
+| 0xFA          | uint8 | uint8 | uint8[60]                            | 0xBF |
 
-| Length of this BLE packet | Payload (Packets, serialized stream) |
+The CRC covers Length and Payload.
+#### BLE Packet
+The preferred wireless method.
+
+| Length of this BLE packet | Payload (packets, serialized stream) |
 | ------------------------- | ------------------------------------ |
-| uint16                    | (ATT_MTU - 2) bytes max              |
-#### UDP Packet:
-For Wi-Fi only devices. Connects as a device to an existing network. The app has to scan for it.
+| uint16                    | uint8[ATT_MTU - 2]                   |
+#### UDP Packet
+For Wi-Fi only devices. The device connects as a client to an existing network, which the app scans for.
 
-| Valid payload size | Payload                                       |
-| ------------------ | --------------------------------------------- |
-| uint16             | limited maximum size to prevent fragmentation |
+| Valid payload size | Payload |
+| ------------------ | ------- |
+| uint16             | Limited maximum size, to prevent fragmentation |

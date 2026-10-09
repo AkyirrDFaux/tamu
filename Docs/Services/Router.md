@@ -1,9 +1,9 @@
-TODO
-Use define TYPE_ROUTER.
-Stores ID table in RAM for each RSBus port.
-Appends/updates table if a packet arrives from that direction (tree topology).
-If target is broadcast, send in all directions.
+TBD
 
-This service is ommited for single bus devices.
+Use define `TYPE_ROUTER`.
 
-Not to be implemented yet, no multi-bus device avaliable.
+The service stores an ID table in RAM for each RSBus port. It appends to or updates the table when a packet arrives from that direction, following the tree topology. A broadcast target is sent in all directions.
+
+The service is omitted for single-bus devices.
+
+Not implemented yet; no multi-bus device is available.

@@ -6,7 +6,6 @@ Automatically refreshes the visible view (0.5s by default).
 - Edit mode button (for dynamic blocks, only if they are supported by the device)
 - Refresh button (with autorefresh function, opens a selection window, has a green dot if active)
 - A busy spinner while a Save/Recall runs
-
 ### Main view (current)
 - List containing nested lists
 	- Main list entries show block name, block type, flags and field count
@@ -17,12 +16,10 @@ Automatically refreshes the visible view (0.5s by default).
 - System struct fields expand into their keyed members; dynamic blocks use the flat
   (field, key) model, with dictionary (Geometry/Texture) fields showing named keys.
 - A persistent field's menu offers Save to backup / Recall from backup.
-
 ### Backup view
 - Shows the values a Save actually persisted, decoded from the device's `.SV` / `.DT_` / `.DV_`
   files, read-only, with a per-entry Recall button. A field with no stored entry is shown
   explicitly as not backed up.
-
 ### Edit view
 - Allows for adding/editing/moving dynamic blocks
 	- Add, rename, delete, and move a block to an index; drag to reorder

@@ -4,6 +4,20 @@ Open items only. The 2026-10-04 per-area audit findings (register, storage, devi
 subscriptions, tamu, das, bootloader, app, tooling, tests) were fixed and committed; the
 remaining low-value follow-ups live in `TODO.md`.
 
+## Open (2026-10-09)
+
+- **Doc vs code: the `DataType` enum.** `Docs/Data Formats.md` now carries the values, read from
+  `firmware/src/Core/Types/Enums.h:40-62`. Three deltas came out of that comparison:
+  - **`Name` (16 characters) has no `DataType` member.** The doc defines it as a reusable type; the
+    enum has no such entry, so a 16-character name is a `String` or `Filename` in code. Either the
+    enum gains a member or the doc drops the type.
+  - **`Effect` is documented but absent from the enum**, which has `Geometry` (0x101) and `Texture`
+    (0x102) only. `Docs/Modules and Blocks/LED Display.md` specifies effects as well.
+  - **Three enum members were undocumented:** `Deleted` (0x0D), `Uint32` (0x0E) and `DevType` (0x0F).
+    They are in the doc table now, with descriptions inferred from their names - confirm those.
+  - Naming: the doc used `Serial Number`, `ID` and `Generic dictionary` where the enum says `SN`, `Id`
+    and `UnknownKeyed`. The table uses the enum names for traceability.
+
 ## Open (2026-10-06)
 
 - **Valu v2 bootloader: a sector erase does not take effect.** Full status and measurements in

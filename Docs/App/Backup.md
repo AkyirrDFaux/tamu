@@ -1,7 +1,6 @@
 Unified tool for whole-network backup and restoration.
 Works with the device's file systems (backup restoration), optional live restore. 
 Creates a zipfile containing per device JSON files if backing up the entire network.
-
 ### Backup page
 - Shows "Not connected" until a session is up.
 - A checkbox list of the discovered devices (icon, name, ID and type); a stale device cannot
@@ -11,7 +10,6 @@ Creates a zipfile containing per device JSON files if backing up the entire netw
 - **Create backup** writes the selected devices to a `.zip` chosen through the host file
   picker and reports the device/entry count.
 - **Restore** picks a `.zip`, builds a restore plan and opens the plan page.
-
 ### Restore plan page
 Per part selection of synced items, can sync to different device/block/part if target compatible to source.
 - One expandable section per source device with a target-device dropdown (remap the whole

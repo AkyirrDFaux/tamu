@@ -135,6 +135,18 @@ change-sets per area - the one serial step in the plan.
   **Two decisions the guide applies that already touch content:** command IDs are hex with the range
   heading supplying the prefix (Akyirr has already applied this to the SNDB commands - verified
   consistent with `Core/Services/Device.h:42-52`), and index/allocation tables are left unrelated.
+  **Rewrite progress (2026-10-09).** Done: `Services/Storage.md` (approved as the template),
+  `Services/Register.md`, `Services/Subscriptions.md`, `Services/System Block and Device Commands.md`,
+  `Services/Router.md` (marked `TBD`), `Services/Bootloader.md`, `Services/Log Handler.md`,
+  `Services/App Interface.md`. Remaining: `Services/Script.md`, `RSBus and Packets.md`,
+  `Data Formats.md`, `Command ID table.md`, `General architecture.md`, `Devices.md`,
+  `Modules and blocks/*` (4 files), and `Current setup v3.md` (borderline - firmware, or rig notes?).
+  **ALL DONE (2026-10-09):** 19 firmware docs rewritten (Storage approved as the template first).
+  Verified clean: no `#`/`##` headings, no colon-ending headings, no old typos, no `TRID`, no old
+  command-table headers, no old range-heading form. 1000 insertions / 857 deletions across 20 files
+  (`Docs/Style Guide.md` included, for the `Name` type in its vocabulary list). `Docs/App/**` is a
+  separate pass, `Plan.md` stays out of scope. **Not committed** - awaiting Akyirr's review, and the
+  open style questions are listed in the session for him to rule on.
 
 **Phase 5 - optimization + final verification pass.** DAS headroom (~94% flash / ~99% RAM), gate
 green, release checklist.

@@ -1,27 +1,30 @@
-Handles logs or error reports from the entire device, sends them over RS bus.
-One implementation for all devices, extended by database for cores.
-Log Struct:
+Handles logs and error reports from the entire device and sends them over the RSBus. One implementation serves all devices, extended by a database for cores.
 
-| Source (BlockType+Instance) | Log Category | Log Specifics | Timestamp (synced) |
-| --------------------------- | ------------ | ------------- | ------------------ |
-| 16 bit                      | 8 bit        | 8 bit         | 32bit              |
-The log handler service sends the log imediately with corresponding priority.
+The Log Struct:
 
-### Log database (Core)
+| Name          | Size   | Note |
+| ------------- | ------ | ---- |
+| Source        | uint16 | BlockType and Instance |
+| Log Category  | uint8  |      |
+| Log Specifics | uint8  |      |
+| Timestamp     | uint32 | Synced |
 
-If the device is core, it keeps the errors in RAM, with the device of origin, occurance count, and latest timestamp. Database is on heap.
-Log Database Entry:
+The service sends the log immediately, at the priority that corresponds to it.
+### Log Database (Core)
+A core keeps the errors in RAM, with the device of origin, the occurrence count and the latest timestamp. The database lives on the heap.
 
-| Source Device | Count  | Log Struct |
-| ------------- | ------ | ---------- |
-| 16bit         | 16 bit | 64 bit     |
+A log database entry:
 
-Errors logs are accessible via the service, app should be able to decode into readable text.
+| Name          | Size   | Note |
+| ------------- | ------ | ---- |
+| Source Device | uint16 |      |
+| Count         | uint16 |      |
+| Log Struct    | `Log Struct` |      |
 
+Error logs are accessible through the service, and the app decodes them into readable text.
 ### Commands (020x)
-
-| Function       | CID | **Payload In**                                              | **Payload out**                                            | **Note**                         |
-| -------------- | --- | ----------------------------------------------------------- | ---------------------------------------------------------- | -------------------------------- |
-| Error reporter | 0   | -                                                           | Log Struct                                                 | Sends Log to local core (ID 0.1) |
-| GetLogs        | 1   | -                                                           | Fragmentation, Stream of LogDatabase entries, oldest first | Core only.                       |
-| ClearReadLogs  | 2   | Number of logs to be cleared, starting from oldest (uint32) | Confirmation                                               | Core only. Reply only if needed. |
+| Name           | ID | Request                                                     | Response                                                   | Note |
+| -------------- | -- | ----------------------------------------------------------- | ---------------------------------------------------------- | ---- |
+| Error reporter | 0  | -                                                           | Log Struct                                                 | Sends the log to the local core (ID 0.1) |
+| GetLogs        | 1  | -                                                           | Fragmentation, stream of LogDatabase entries, oldest first | Core only |
+| ClearReadLogs  | 2  | Number of logs to be cleared, starting from oldest (uint32) | Confirmation                                               | Core only; reply only if needed |

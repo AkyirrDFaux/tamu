@@ -5,7 +5,6 @@ List the avaliable devices via the supported interface.
 - Refresh (hold for autorefresh menu, with a 1s period **on by default**, green dot while
   autorefresh is active, red if the last refresh errored)
 - Sorting type (Signal strength / Alphabetical)
-
 ### Main window (list)
 - A Bluetooth permission/availability banner is shown at the top when the radio is unusable
   or permission was denied (with an "Open settings" shortcut).

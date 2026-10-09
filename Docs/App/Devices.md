@@ -17,7 +17,7 @@ Main interaction layer.
 	- Display name (a stale entry is marked " (stale)")
 	- A smaller subtext displays the ID and Device type in text
 	- Cores carry a star marker
-	- Tap on entry opens [[Device view]]
+	- Tap on entry opens [[Device View]]
 ### Main view (graph variant)
  - A pannable/zoomable graph view
 	- Cores drawn topmost (their contents are given by SNDB)
@@ -26,7 +26,7 @@ Main interaction layer.
 	- Use icons for rough device types
 	- Display name
 	- A smaller subtext displays the ID and Device type in text
-	- Tap on block opens [[Device view]]
+	- Tap on block opens [[Device View]]
  - The router tree / net hierarchy is not drawn yet (routers are not implemented in firmware);
    blocks are grouped cores-first, then nodes.
 ### States

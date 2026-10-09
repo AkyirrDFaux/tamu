@@ -2,7 +2,6 @@ Subscriptions service view (a device with a subscription capability).
 ### Appbar
 - Title "Subscriptions - <device name>"
 - Refresh button
-
 ### Tabs
 - **Provider (incoming)** — the tables this device serves to others. Hidden/short message
   when the device has no provider capability. Each entry expands to trigger, period,
