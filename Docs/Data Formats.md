@@ -12,6 +12,7 @@ The data types used across the protocol, with their enum value and encoding. A t
 | `Vector`       | 0x07  | A 1D array of `Number`, templated as `Vector<N>`.                        |
 | `Matrix`       | 0x08  | A 2D array of `Number`, templated as `Matrix<N,M>`.                      |
 | `Colour`       | 0x09  | Four `uint8` values, RGBA.                                               |
+| `Text`         | 0x0A  | A variable-size character array.                                         |
 | `Filename`     | 0x0B  | 8 characters.                                                            |
 | `Enum`         | 0x0C  | A generic enum, used in dictionaries.                                    |
 | `Uint32`       | 0x0E  | An unsigned 32bit integer.                                               |
