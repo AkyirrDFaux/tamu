@@ -6,11 +6,12 @@
 // build the alpha mask, Texture fields (DataType::Texture) fill it. Fields are
 // processed consecutively in the block's index order.
 
-// Keys of a Geometry dictionary (mask). Key 0 is reserved for the dictionary marker
-// itself (an entry with DataType::Geometry and no value); the value keys start at 1.
+// Keys of a Geometry dictionary (mask). Key 0 carries the dictionary's TYPE: its entry has
+// DataType::Geometry and no value of its own, so a reader can tell this field is a geometry
+// dictionary; the value keys start at 1.
 enum class GeometryKey : uint8_t
 {
-    Dictionary = 0,   // reserved: the Geometry dictionary marker
+    Dictionary = 0,   // key 0: carries this dictionary's DataType (Geometry), no value
     Shape = 1,        // Geometries
     Operation = 2,    // GeometryOperation
     Position = 3,     // Matrix 2x3 (2D transformation)
@@ -53,11 +54,12 @@ enum class GeometryOperation : uint8_t
     XOR = 4,
 };
 
-// Keys of a Texture dictionary (fill). Key 0 is reserved for the dictionary marker
-// itself (an entry with DataType::Texture and no value); the value keys start at 1.
+// Keys of a Texture dictionary (fill). Key 0 carries the dictionary's TYPE: its entry has
+// DataType::Texture and no value of its own, so a reader can tell this field is a texture
+// dictionary; the value keys start at 1.
 enum class TextureKey : uint8_t
 {
-    Dictionary = 0, // reserved: the Texture dictionary marker
+    Dictionary = 0, // key 0: carries this dictionary's DataType (Texture), no value
     Type = 1,       // Textures2D
     Position = 2,   // Matrix 2x3 (defines centre)
     Size = 3,       // Vector<2> / Number
@@ -79,4 +81,7 @@ enum class Textures2D : uint8_t
     HueShift = 5,
     Contrast = 6,
     Brightness = 7,
+    // Docs texture list reserves Bitmap. Its enum value sits AFTER the effects so their
+    // values (4..7) stay put; the stage is not implemented yet.
+    Bitmap = 8,
 };

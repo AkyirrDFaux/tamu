@@ -177,10 +177,26 @@ inline void Vysi1Display::RenderTextureField(DynamicBlockDescriptor *block, uint
     {
         ColourClass c1 = block->GetKeyValue<ColourClass>(field, (uint8_t)TextureKey::Colour1, DataType::Colour, ColourClass(0, 0, 0, 255));
         ColourClass c2 = block->GetKeyValue<ColourClass>(field, (uint8_t)TextureKey::Colour2, DataType::Colour, ColourClass(255, 255, 255, 255));
-        Number extent = block->GetKeyValue<Number>(field, (uint8_t)TextureKey::Size, DataType::Number, N(1));
-        if (extent.Value <= 0)
-            extent = N(1);
-        const Number invExtent = N(1) / extent; // constant per field: hoisted out of the loop
+        // Size accepts a Number (uniform: scales both axes) or a Vector<2> (width, height),
+        // the same two types a geometry's Size takes; a non-positive extent falls back to 1.
+        Number extentX = N(1), extentY = N(1);
+        {
+            KeyResult kr = block->GetKey(field, (uint8_t)TextureKey::Size);
+            if (ValueInfoType(kr.meta.Type) == (uint16_t)DataType::Vector && kr.data_ptr)
+            {
+                Vector<2> size = *reinterpret_cast<const Vector<2> *>(kr.data_ptr);
+                extentX = size[0];
+                extentY = size[1];
+            }
+            else if (ValueInfoType(kr.meta.Type) == (uint16_t)DataType::Number && kr.data_ptr)
+            {
+                extentX = extentY = *reinterpret_cast<const Number *>(kr.data_ptr);
+            }
+        }
+        if (extentX.Value <= 0) extentX = N(1);
+        if (extentY.Value <= 0) extentY = N(1);
+        const Number invExtentX = N(1) / extentX; // constant per field: hoisted out of the loop
+        const Number invExtentY = N(1) / extentY;
         for (uint16_t led = 0; led < LedNum; led++)
         {
             uint8_t a = Mask[led];
@@ -188,9 +204,11 @@ inline void Vysi1Display::RenderTextureField(DynamicBlockDescriptor *block, uint
                 continue;
             Vector<3> pp = combined * Vector<3>{Number(LedX[led]), Number(LedY[led]), N(1)};
             Vector<2> p2 = {pp[0], pp[1]};
+            // Linear uses the width alone; circular is an ellipse over both axes (a circle
+            // when they are equal, e.g. a Number Size).
             Number t = (type == Textures2D::GradientLinear)
-                ? LimitZeroToOne(p2[0] * invExtent + N(0.5))
-                : LimitZeroToOne(p2.norm2() * invExtent);
+                ? LimitZeroToOne(p2[0] * invExtentX + N(0.5))
+                : LimitZeroToOne(Vector<2>{p2[0] * invExtentX, p2[1] * invExtentY}.norm2());
             Buffer[led].Layer(Linearise(LerpColour(c1, c2, t)), ByteToPercent(a));
         }
         break;

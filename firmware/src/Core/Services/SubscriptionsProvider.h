@@ -116,7 +116,10 @@ static void HandleProviderConfirmation(const PacketFrame &frame) {
 // the subresolution pack (Docs/Services/Subscriptions.md "Subresolution Vector"): 10 bits
 // per axis (first 3 axes), each [5-bit above deadzone | 5-bit below], where "above" is a
 // sign bit plus a 4-bit hash of the magnitude and "below" is the distance bucket 0..31.
-static uint32_t SubscriptionsDeltaHash(const FieldResult &fr, Number deadzone) {
+// The deadzone is taken in the value's own scalar type (Docs "Deadzone": its type follows
+// the value): the Q16.16 raw bits for a Number/Vector, a plain integer for Index/Uint32 - a
+// raw 32-bit scalar either way, so it is passed as `uint32_t` rather than a `Number`.
+static uint32_t SubscriptionsDeltaHash(const FieldResult &fr, uint32_t deadzone) {
     uint16_t dtype = ValueInfoType(fr.Descriptor.Type);
     uint8_t size = fr.Descriptor.Size;
     const uint8_t *data = (const uint8_t *)fr.Data;
@@ -124,7 +127,7 @@ static uint32_t SubscriptionsDeltaHash(const FieldResult &fr, Number deadzone) {
     if (dtype == (uint16_t)DataType::Vector && size >= 4 && (size % 4) == 0) {
         uint8_t axes = (uint8_t)(size / 4);
         if (axes > 3) axes = 3;
-        int32_t dz = deadzone.Value;
+        int32_t dz = (int32_t)deadzone;
         uint32_t packed = 0;
         for (uint8_t a = 0; a < axes; a++) {
             int32_t raw = 0;
@@ -272,11 +275,10 @@ static void EvaluateProviderTriggers(uint32_t nowMs) {
                 int32_t raw = 0;
                 memcpy(&raw, fr.Data, 4);
                 uint32_t delta = SubscriptionsAbsDelta(raw, (int32_t)e->hash);
-                // The deadzone is Q16.16 for a Number source; an Index/Uint32 source is a
-                // plain integer, so only its integer part applies (Value >> 16).
-                int32_t dzRaw = ValueInfoType(fr.Descriptor.Type) == (uint16_t)DataType::Number
-                                    ? e->sub.deadzone.Value
-                                    : (e->sub.deadzone.Value >> 16);
+                // The deadzone is stored in the value's own scalar type (Docs "Deadzone"): the
+                // Q16.16 raw bits for a Number source, a plain integer for Index/Uint32, so the
+                // stored 32 bits compare as-is against the raw delta.
+                int32_t dzRaw = e->sub.deadzone.Value;
                 uint32_t dz = dzRaw > 0 ? (uint32_t)dzRaw : 0;
                 // deadzone 0 means "any change": require a non-zero delta, not delta >= 0.
                 bool changed = dz == 0 ? delta != 0 : delta >= dz;
@@ -311,12 +313,12 @@ static void EvaluateProviderTriggers(uint32_t nowMs) {
                 if (send) {
                     uint8_t n = fr.Descriptor.Size > 12 ? 12 : fr.Descriptor.Size;
                     memcpy(e->lastVec, fr.Data, n);
-                    e->hash = SubscriptionsDeltaHash(fr, e->sub.deadzone); // reported hashlike
+                    e->hash = SubscriptionsDeltaHash(fr, (uint32_t)e->sub.deadzone.Value); // reported hashlike
                 }
                 break;
             }
 #endif
-            uint32_t h = SubscriptionsDeltaHash(fr, e->sub.deadzone);
+            uint32_t h = SubscriptionsDeltaHash(fr, (uint32_t)e->sub.deadzone.Value);
             if (h != e->hash && elapsed >= SubMinTime(e->sub)) { send = true; e->hash = h; }
             else if (e->sub.periodMs > 0 && elapsed >= e->sub.periodMs) { send = true; e->hash = h; }
             break;

@@ -98,6 +98,9 @@ class StorageClient {
 
   static const nameLength = 8;
 
+  /// The documented "maximum 64 byte stream fragment" content cap (Docs/Services/Storage.md).
+  static const fragmentContentMax = 64;
+
   /// Pads/truncates a file name to the wire format (8 bytes, space padded).
   static Uint8List padName(String name) {
     final bytes = Uint8List(nameLength)..fillRange(0, nameLength, 0x20);
@@ -111,6 +114,24 @@ class StorageClient {
   static String unpadName(List<int> bytes) =>
       normalizeFileName(String.fromCharCodes(bytes.take(nameLength)));
 
+  /// Strips the per-fragment name echo from a reassembled CID-5 stream (B12). Every fragment
+  /// is [name (8)][content, at most fragmentContentMax] and the reassembly layer already
+  /// removed the 4-byte frag info, so the groups are walked from the front (each fragment but
+  /// the last is full).
+  static List<int> stripFragmentNames(List<int> reply) {
+    final out = <int>[];
+    var pos = 0;
+    while (pos + nameLength <= reply.length) {
+      pos += nameLength; // drop this fragment's name echo
+      final end = (pos + fragmentContentMax > reply.length)
+          ? reply.length
+          : pos + fragmentContentMax;
+      out.addAll(reply.sublist(pos, end));
+      pos = end;
+    }
+    return out;
+  }
+
   /// Reads the file table by reading the ".TABLE  " file directly (CID 5).
   /// The file table is self-describing: the first entry points to itself with its size.
   Future<List<FileRecord>?> readFileTable() async {
@@ -122,8 +143,8 @@ class StorageClient {
       timeout: const Duration(seconds: 10),
     );
     if (reply == null || reply.length < nameLength) return null;
-    // The response stream = [name echo (8)][contents...]
-    final contents = reply.sublist(nameLength);
+    // Each fragment = [name echo (8)][contents...] (B12).
+    final contents = stripFragmentNames(reply);
     return parseFileTable(contents);
   }
 
@@ -184,9 +205,9 @@ class StorageClient {
       timeout: const Duration(seconds: 10),
     );
     if (reply == null || reply.length < nameLength) return null;
-    // The response stream = [name echo (8)][contents...] (the reassembly layer
-    // already stripped the fragmentation info from every fragment).
-    var contents = reply.sublist(nameLength);
+    // Every fragment = [name echo (8)][contents...] (B12); the reassembly layer already
+    // stripped the 4-byte frag info from each.
+    var contents = stripFragmentNames(reply);
     if (size != null && contents.length > size) {
       contents = contents.sublist(0, size);
     }
@@ -216,18 +237,17 @@ class StorageClient {
     return true;
   }
 
-  /// The CID-6 fragment stream (first fragment carries the file name).
+  /// The CID-6 fragment stream; every fragment carries the file name (B12).
   Future<bool> _writeFragments(String name, List<int> bytes) async {
-    const dataMax = 64;
+    const dataMax = fragmentContentMax;
     var next = 0;
     var offset = 0;
     while (offset < bytes.length) {
-      final isFirst = next == 0;
       final end =
           (offset + dataMax > bytes.length) ? bytes.length : offset + dataMax;
       final payload = <int>[
         ...writeFragInfo(next, 0xFFFF),
-        if (isFirst) ...padName(name),
+        ...padName(name), // every fragment carries the name
         ...bytes.sublist(offset, end),
       ];
       final reply = await _request(6, payload: payload, requestFrag: true);

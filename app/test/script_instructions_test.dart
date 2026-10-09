@@ -130,7 +130,7 @@ void main() {
         containsAll([ScriptUiType.toggle, ScriptUiType.button]));
     expect(uiStylesForType(DataType.bool_), isNot(contains(ScriptUiType.slider)));
     expect(uiStylesForType(DataType.number), contains(ScriptUiType.slider));
-    expect(uiStylesForType(DataType.string), [ScriptUiType.auto]);
+    expect(uiStylesForType(DataType.text), [ScriptUiType.auto]);
 
     // Limits only apply to the numeric input styles.
     expect(uiStyleSupportsLimits(ScriptUiType.slider), isTrue);

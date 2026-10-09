@@ -99,7 +99,9 @@ Object? encodeSemantic(DataType type, List<int> bytes, {FieldInfo? info}) {
     case DataType.id:
       if (bytes.length >= 2) return idToString(bytes[0] | (bytes[1] << 8));
       return bytes.isEmpty ? null : bytes[0];
-    case DataType.string:
+    case DataType.text:
+    case DataType.name:
+    case DataType.char:
     case DataType.filename:
       return decodePaddedString(bytes);
     case DataType.vector:
@@ -137,7 +139,6 @@ Object? encodeSemantic(DataType type, List<int> bytes, {FieldInfo? info}) {
         'key': bi & 0xFF,
       };
     case DataType.undefined:
-    case DataType.deleted:
       return {'hex': hexBytes(bytes)};
   }
 }
@@ -169,7 +170,9 @@ List<int>? decodeSemantic(DataType type, Object? value,
           : null;
     case DataType.id:
       return _idBytes(value, size);
-    case DataType.string:
+    case DataType.text:
+    case DataType.name:
+    case DataType.char:
     case DataType.filename:
       if (value is! String) return null;
       var out = value.codeUnits;
@@ -211,7 +214,6 @@ List<int>? decodeSemantic(DataType type, Object? value,
       if (type == null || inst is! num || field is! num || key is! num) return null;
       return uint32ToBytes(makeBlockInfo(type, inst.toInt(), field.toInt(), key.toInt()));
     case DataType.undefined:
-    case DataType.deleted:
       if (value is Map && value['hex'] is String) return unhexBytes(value['hex'] as String);
       return null;
   }

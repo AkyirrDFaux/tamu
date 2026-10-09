@@ -59,7 +59,7 @@ void main() {
   });
 
   test('string and filename are cross-compatible and padded', () {
-    final src = _entry('Layout File Name', 3, 'String', 'hello', size: 5);
+    final src = _entry('Layout File Name', 3, 'Text', 'hello', size: 5);
     final bytes =
         resolveEntryBytes(src, _live('Layout File Name', 3, DataType.filename, size: 8));
     expect(bytes, 'hello'.codeUnits + List.filled(3, 0x20));

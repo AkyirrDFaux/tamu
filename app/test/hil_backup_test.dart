@@ -53,7 +53,7 @@ void main() {
     await reg.writeDynamicEntry(block, 0, 0,
         ValueInfo(type: DataType.number.value, size: 4), numberToBytes(42.0));
     await reg.writeDynamicEntry(block, 1, 0,
-        ValueInfo(type: DataType.string.value, size: 5), 'hello'.codeUnits);
+        ValueInfo(type: DataType.text.value, size: 5), 'hello'.codeUnits);
     await Future<void>.delayed(const Duration(milliseconds: 200));
 
     final device = await captureDevice(tamu.id, includeFiles: false);
@@ -77,7 +77,7 @@ void main() {
     await reg.writeDynamicEntry(block, 0, 0,
         ValueInfo(type: DataType.number.value, size: 4), numberToBytes(99.0));
     await reg.writeDynamicEntry(block, 1, 0,
-        ValueInfo(type: DataType.string.value, size: 5), 'bye!!'.codeUnits);
+        ValueInfo(type: DataType.text.value, size: 5), 'bye!!'.codeUnits);
     await Future<void>.delayed(const Duration(milliseconds: 200));
 
     final plan = await buildRestorePlan([device]);
@@ -184,7 +184,7 @@ void main() {
     // Point the device at a distinctive name in RAM, then persist it app-side.
     const next = 'PerField';
     final meta = ValueInfo(
-        type: DataType.string.value, flags: ValueFlags.persistent, size: next.length);
+        type: DataType.name.value, flags: ValueFlags.persistent, size: next.length);
     expect(await reg.writeBlockField(0, 0, 6, 0, meta, next.codeUnits), isNotNull);
 
     final table = await storage.readFileTable() ?? const <FileRecord>[];
@@ -204,7 +204,7 @@ void main() {
     // Change RAM again WITHOUT saving, so a device-side recall has something to undo.
     expect(
         await reg.writeBlockField(0, 0, 6, 0,
-            ValueInfo(type: DataType.string.value, flags: ValueFlags.persistent, size: 3),
+            ValueInfo(type: DataType.name.value, flags: ValueFlags.persistent, size: 3),
             'tmp'.codeUnits),
         isNotNull);
     expect(await reg.recallAll(), isTrue, reason: 'the device recalls the app-written log');
@@ -215,7 +215,7 @@ void main() {
 
     // Leave the device with its original name (write it and save it app-side, as the page does).
     final restoreMeta = ValueInfo(
-        type: DataType.string.value, flags: ValueFlags.persistent, size: original.length);
+        type: DataType.name.value, flags: ValueFlags.persistent, size: original.length);
     expect(await reg.writeBlockField(0, 0, 6, 0, restoreMeta, original.codeUnits), isNotNull);
     final fresh = table.isEmpty ? null : await storage.readFile(rec.name, size: rec.size);
     final back =

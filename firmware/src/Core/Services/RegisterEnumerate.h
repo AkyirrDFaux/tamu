@@ -34,7 +34,7 @@ static const BlockEntry System_Entries[] = {
     { MakeFieldKey(3, 0), 0,  { (uint16_t)DataType::Undefined, 20, ValueReadOnly } }, // Uptime + Now + Offset + AvgLoop + MaxLoop
     { MakeFieldKey(4, 0), 0,  { (uint16_t)DataType::Undefined,  8, ValueReadOnly } }, // UsedRAM + TotalRAM
     { MakeFieldKey(5, 0), 0,  { (uint16_t)DataType::Undefined,  8, ValueReadOnly } }, // UsedFlash + TotalFlash
-    { MakeFieldKey(6, 0), 0,  { (uint16_t)DataType::String,    16, ValuePersistent } }, // Name
+    { MakeFieldKey(6, 0), 0,  { (uint16_t)DataType::Name,      16, ValuePersistent } }, // Name
 #ifdef TYPE_CORE
     { MakeFieldKey(7, 0), 16, { (uint16_t)DataType::Id,         1, ValuePersistent } }, // NetID
     { MakeFieldKey(8, 0), 0,  { (uint16_t)DataType::Enum,       1, ValueReadOnly } },   // App Active

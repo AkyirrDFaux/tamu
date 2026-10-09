@@ -30,14 +30,6 @@ static inline void SendDeviceReply(const PacketFrame &frame, PacketFrame &reply,
     DispatchPacket(reply);
 }
 
-// Device reply kind tag. The System/Log TRID is an incrementing counter, so a Device
-// reply no longer carries the request's CID and the handler has to tell its replies
-// apart. Length alone is ambiguous (a 16-byte assign reply shares its length with an
-// SNDB read reply), so the assign reply is prefixed with this tag. Discover/TimeSync
-// keep their documented byte layout: the app parses the TimeSync reply directly and
-// never sends Discover, and the assign reply here is firmware-internal (no app change).
-#define DEVICE_REPLY_KIND_ASSIGN 0xD1
-
 #ifdef TYPE_CORE
 // Dispatches SNDB requests: Read by ID/SN (0x11), Write (0x12) and Read All (0x13)
 // (Docs/Command ID table.md 0x0011-0x0013).
@@ -212,17 +204,17 @@ void HandleDeviceService(const PacketFrame &frame)
     if (is_response)
     {
         // The System/Log TRID is an incrementing counter, so a reply no longer carries the
-        // request's CID; tell the replies apart by their explicit kind. The assign reply is
-        // tagged (DEVICE_REPLY_KIND_ASSIGN) because its length is otherwise ambiguous; the
-        // discover reply is SN(14)+uptime(4) and the TimeSync reply the exact 12-byte triple.
+        // request's CID; tell the replies apart by payload length. Only device-originated
+        // requests' replies reach here - Core-discover = SN(14)+uptime(4) (18 B), Discover
+        // = SN(14)+addr(2) (16 B), TimeSync = the exact 12-byte triple; app-originated
+        // replies route to the app by their TRID instead.
         if (PayloadBytes(frame) >= 18) // Core-discover response
         {
 #ifdef TYPE_CORE
             CoreTimeSync.HandleDiscoverResponse(frame);
 #endif
         }
-        else if (PayloadBytes(frame) >= 1 + sizeof(AssignPayload) &&
-                 frame.payload[0] == DEVICE_REPLY_KIND_ASSIGN) // Discover (assign) response
+        else if (PayloadBytes(frame) == sizeof(AssignPayload)) // Discover (assign) response
         {
 #ifdef TYPE_CORE
             // A core is never assigned. The reply's source is the assigning core: if it
@@ -232,7 +224,7 @@ void HandleDeviceService(const PacketFrame &frame)
                 NoteCoreNet((uint8_t)((frame.id_src >> 10) & 0x3F), DeviceStatus.NetId);
             if (DeviceIsCore()) return; // a core is never assigned
 #endif
-            const AssignPayload *assign = reinterpret_cast<const AssignPayload *>(frame.payload + 1);
+            const AssignPayload *assign = reinterpret_cast<const AssignPayload *>(frame.payload);
             if (assign->sn == GetSerialNumber())
             {
                 // The core sends the net-qualified address; store it and adopt its net so
@@ -307,18 +299,15 @@ void HandleDeviceService(const PacketFrame &frame)
                 }
             }
 
-            // Reply with the kind tag + SN(14) + assigned address(2). The tag keeps the
-            // 16-byte body from being confused with an SNDB read reply (both would otherwise
-            // be told apart by length alone). The reply echoes the request's TRID (its high
-            // byte is the Device service), per "responses echo the request's TRID".
-            uint8_t response[1 + sizeof(AssignPayload)];
-            response[0] = DEVICE_REPLY_KIND_ASSIGN;
+            // Reply with SN(14) + assigned address(2). The request/reply flag and the
+            // 16-byte payload length tell it apart from the other Device-service replies.
+            // The reply echoes the request's TRID (its high byte is the Device service),
+            // per "responses echo the request's TRID".
             AssignPayload response_data;
             response_data.sn = *incoming_sn;
             // SNDB stores/allocates device-only IDs (0..1023); the core's NetID is
             // automatically added here so the node's address is net-qualified.
             response_data.new_addr = MakeId(DeviceStatus.NetId, NewAddr);
-            memcpy(response + 1, &response_data, sizeof(AssignPayload));
 
 #ifdef USE_SUB_REQUEST
             // The node just (re-)appeared with an empty provider table, so ask for this
@@ -333,7 +322,8 @@ void HandleDeviceService(const PacketFrame &frame)
                              frame.srv_src, // originator's service tag (== its echoed TRID)
                              frame.trid,    // echo the request TRID
                              FLAG_TYPE | FLAG_START | FLAG_STOP,
-                             response, sizeof(response));
+                             reinterpret_cast<const uint8_t *>(&response_data),
+                             sizeof(response_data));
 
             DispatchPacket(tx_frame);
 

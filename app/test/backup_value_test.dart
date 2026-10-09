@@ -27,7 +27,7 @@ void main() {
 
     expect(encodeSemantic(DataType.uint32, uint32ToBytes(4000000000)), 4000000000);
 
-    expect(encodeSemantic(DataType.string, 'hello'.codeUnits), 'hello');
+    expect(encodeSemantic(DataType.text, 'hello'.codeUnits), 'hello');
     expect(encodeSemantic(DataType.filename, 'VYSIV1'.codeUnits), 'VYSIV1');
   });
 

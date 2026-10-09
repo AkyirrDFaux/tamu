@@ -31,6 +31,13 @@ void SubscriptionsTick(uint32_t nowMs);
 // First re-sync delay: a short warm-up so the drift estimate is seeded early.
 #define NODE_TIME_SYNC_WARMUP_MS 30000u
 
+// Node discovery repeat: while unregistered the node broadcasts Device CID 0 every ~500 ms,
+// jittered +/-25% so nodes that power up together do not synchronise their discover bursts
+// (Docs/Services/System Block and Device Commands.md: "at random intervals until their ID is
+// assigned"). Nominal unchanged; RawRand() is the shared codebase PRNG.
+#define NODE_DISCOVER_INTERVAL_MS 500u
+#define NODE_DISCOVER_JITTER_MS   125u // +/-25%
+
 // Device identity (mandatory, see Core/Functions/Device.h).
 extern const DeviceType kDeviceType = DeviceType::DualAnalogSensor;
 // The DAS runs the full multi-file filesystem (StorageFiles: create/delete/rename/resize).
@@ -147,7 +154,9 @@ int main(void)
                          FLAG_REQACK | FLAG_START | FLAG_STOP,
                          (const uint8_t *)&GetSerialNumber(), sizeof(SerialNumber));
         DispatchPacket(tx_frame);
-        Sleep(500);
+        // Jittered repeat: uniform over [375, 625] ms (+/-25% around 500 ms).
+        Sleep(NODE_DISCOVER_INTERVAL_MS - NODE_DISCOVER_JITTER_MS
+              + (RawRand() % (2 * NODE_DISCOVER_JITTER_MS + 1)));
         ProcessBus();
     }
     PinLow(LEDR);

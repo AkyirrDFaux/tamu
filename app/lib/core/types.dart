@@ -152,13 +152,14 @@ enum DataType {
   vector(0x07),
   matrix(0x08),
   colour(0x09),
-  string(0x0A),
+  text(0x0A), // variable-size character array (firmware DataType::Text)
   filename(0x0B),
   enum_(0x0C),
-  deleted(0x0D),
   uint32(0x0E), // Unsigned 32-bit (firmware DataType::Uint32)
   devType(0x0F), // alias to enum (firmware DataType::DevType)
   blockInfo(0x10), // register pointer type|inst|field|key (firmware DataType::BlockInfo)
+  char(0x11), // one character, an element of a string (firmware DataType::Char)
+  name(0x12), // 16-character reusable name (firmware DataType::Name)
   geometry(0x101), // dictionary marker (firmware DataType::Geometry = 0x101)
   texture(0x102); // dictionary marker (firmware DataType::Texture = 0x102)
 
@@ -186,13 +187,14 @@ String dataTypeWord(DataType type) => switch (type) {
       DataType.vector => 'Vector',
       DataType.matrix => 'Matrix',
       DataType.colour => 'Colour',
-      DataType.string => 'String',
+      DataType.text => 'Text',
       DataType.filename => 'Filename',
       DataType.enum_ => 'Enum',
-      DataType.deleted => 'Deleted',
       DataType.uint32 => 'Uint32',
       DataType.devType => 'Device type',
       DataType.blockInfo => 'BlockInfo',
+      DataType.char => 'Char',
+      DataType.name => 'Name',
       DataType.geometry => 'Geometry dict',
       DataType.texture => 'Texture dict',
     };
@@ -210,13 +212,14 @@ DataType? dataTypeFromWord(String word) {
     'Vector': DataType.vector,
     'Matrix': DataType.matrix,
     'Colour': DataType.colour,
-    'String': DataType.string,
+    'Text': DataType.text,
     'Filename': DataType.filename,
     'Enum': DataType.enum_,
-    'Deleted': DataType.deleted,
     'Uint32': DataType.uint32,
     'Device type': DataType.devType,
     'BlockInfo': DataType.blockInfo,
+    'Char': DataType.char,
+    'Name': DataType.name,
     'Geometry dict': DataType.geometry,
     'Texture dict': DataType.texture,
   };

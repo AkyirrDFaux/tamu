@@ -36,10 +36,9 @@ public:
     // On success `*offset` is the LAST valid slot (0 when no valid slot exists). Slots
     // are scanned one at a time so a large pointer page (4096 B on the Tamu) never needs
     // a matching stack buffer. The LAST valid slot wins, not the first: WriteTablePointer
-    // appends the new pointer before invalidating the older ones, so after an interrupted
-    // update both can be valid and the newest (highest slot) must win - otherwise a crash
-    // would silently boot the stale table while FindSpace considers the new table's pages
-    // free.
+    // only ever appends (older slots are never invalidated), so after an interrupted update
+    // both can be valid and the newest (highest slot) must win - otherwise a crash would
+    // silently boot the stale table while FindSpace considers the new table's pages free.
     bool FindFiletable(uint32_t *offset)
     {
         uint32_t slot = 0;
@@ -55,8 +54,9 @@ public:
         return true;
     }
 
-    // Updates the pointer in the first page to point to a new table. The block is erased
-    // only when the last slot is used (low-wear first page).
+    // Appends a new table pointer to the first page (erasing it only when the last slot is
+    // used; low-wear first page). Older slots are left untouched - the newest valid slot wins
+    // on read (B13), so invalidating them is only unnecessary flash writes.
     bool WriteTablePointer(uint32_t new_offset)
     {
         uint32_t slot = 0;
@@ -77,17 +77,8 @@ public:
             return Storage_FlashWrite(0, &new_offset, sizeof(uint32_t));
         }
 
-        // Write new offset to the found slot
-        if (!Storage_FlashWrite(write_slot * 4, &new_offset, sizeof(uint32_t)))
-            return false;
-
-        // Invalidate all earlier slots (set to 0x00000000)
-        uint32_t zero = 0x00000000;
-        for (uint32_t i = 0; i < write_slot; i++) {
-            if (!Storage_FlashWrite(i * 4, &zero, sizeof(uint32_t)))
-                return false;
-        }
-        return true;
+        // Write new offset to the found slot; older slots are left untouched (newest wins).
+        return Storage_FlashWrite(write_slot * 4, &new_offset, sizeof(uint32_t));
     }
 
     // Finds the NEWEST file record matching `name`. Returns false when a flash read fails
@@ -250,34 +241,15 @@ public:
             appended - 1);
     }
 
-    // Counts valid entries; keeps the table between 25% and 75% full by growing or
-    // shrinking one page per move (one page minimum). Finds a new space, writes a
-    // self-describing entry 0 and copies the valid entries, then updates the first-page
-    // pointer and invalidates the old pointer slot.
+    // Moves the full table into a fresh area of the same, fixed size (B15). Finds a new
+    // space, erases it, writes a self-describing entry 0 and copies the valid entries
+    // (compacting out the holes), then appends the new first-page pointer.
     bool MoveFiletable()
     {
         uint32_t capacity = TableCapacity();
         if (capacity == 0) return false;
 
-        // OPTIMIZE_SPEED builds keep the table between 25% and 75% full by growing or
-        // shrinking it one page per move; size builds keep the current page count (the extra
-        // entries are not needed on a space-constrained target and the arithmetic costs
-        // flash). Both compact the live entries into the (same-size) new table.
-        uint32_t new_size = file_table_size;
-#ifdef OPTIMIZE_SPEED
-        uint32_t valid_count = 0;
-        for (uint32_t i = 0; i < capacity; i++) {
-            FileEntry entry;
-            if (!ReadTableEntry(i, &entry))
-                return false;
-            if (FileEntryIsValid(entry.offset))
-                valid_count++;
-        }
-        if (valid_count * 4 > capacity * 3) // > 75% full: grow by one page
-            new_size += PAGE_SIZE;
-        else if (valid_count * 4 < capacity && new_size > PAGE_SIZE) // < 25% full: shrink
-            new_size -= PAGE_SIZE;
-#endif
+        uint32_t new_size = file_table_size; // fixed per device (STORAGE_TABLE_SIZE)
 
         uint32_t new_offset = FindSpace(new_size);
         if (new_offset == 0) return false; // Out of space
@@ -309,7 +281,7 @@ public:
             dest++;
         }
 
-        // Point at the new table and invalidate the old pointer slot.
+        // Point at the new table (the old pointer slot is left in place; newest wins).
         if (!WriteTablePointer(new_offset))
             return false;
 
@@ -573,7 +545,7 @@ public:
     }
 
     // Erases the pointer page and storage, then initializes an empty self-describing table
-    // of one page at the first data page (block 1).
+    // of the fixed per-device size (STORAGE_TABLE_SIZE) at the first data page (block 1).
     bool Format()
     {
         if (!Storage_FlashFormat()) {
@@ -584,7 +556,7 @@ public:
         FileEntry entry0;
         memset(&entry0, 0xFF, sizeof(entry0));
         entry0.offset = PAGE_SIZE;              // Table starts at block 1
-        entry0.size = PAGE_SIZE;                // One page of table capacity
+        entry0.size = STORAGE_TABLE_SIZE;       // Fixed per-device table capacity
         memcpy(entry0.name, ".TABLE  ", 8);
 
         if (Storage_FlashWrite(PAGE_SIZE, &entry0, TABLE_ENTRY_SIZE) != true)
@@ -594,7 +566,7 @@ public:
             return false;
 
         file_table_offset = PAGE_SIZE;
-        file_table_size = PAGE_SIZE;
+        file_table_size = STORAGE_TABLE_SIZE;
         DeviceLog("STORAGE", "Formatted, storage ready (%d bytes)", (int)DataEnd());
         return true;
     }

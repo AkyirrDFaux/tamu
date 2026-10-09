@@ -234,7 +234,7 @@ void main() async {
 
     // One 16-byte String input.
     final draft = ScriptDraft(functionName: 'Pad')
-      ..inputs.add(ScriptDraftValue(name: 'Name', type: DataType.string, size: 16));
+      ..inputs.add(ScriptDraftValue(name: 'Name', type: DataType.text, size: 16));
     if (!await st.writeFile('SCR_001', draft.toImage())) fail('upload SCR_001 failed');
     if (!await c.load(1, 1)) fail('load SCR_001 failed');
 

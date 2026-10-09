@@ -76,7 +76,7 @@ const Map<int, Map<int, ({DataType type, int size})>> systemStructFields = {
   0: {
     0: (type: DataType.enum_, size: 4), // Device Type
     1: (type: DataType.integer, size: 4), // Capability
-    2: (type: DataType.string, size: 4), // Software version
+    2: (type: DataType.text, size: 4), // Software version
   },
   3: {
     0: (type: DataType.integer, size: 4), // Uptime

@@ -3,6 +3,7 @@
 #include "Core/Functions/Packet.h"
 #include "Core/Functions/Device.h"
 #include "Core/Functions/SysFunctions.h"
+#include "Core/Types/Number.h" // RawRand() for interval jitter
 
 #ifdef TYPE_CORE
 
@@ -22,6 +23,12 @@ class CoreTimeSyncService
 public:
     static const uint32_t DISCOVER_INTERVAL_MS = 150000; // ~2.5 min (docs "2-3 minutes")
     static const uint32_t DISCOVER_WINDOW_MS   = 500;    // docs: responses within 500 ms
+
+    // Scheduling jitter: +/-10% around the nominal interval, so synchronised cores do not
+    // re-sync in lockstep and periodically swamp the reference core (Docs/Services/System
+    // Block and Device Commands.md: the core "re-syncs ... at intervals ... jittered so the
+    // reference core is not periodically overwhelmed").
+    static const uint32_t DISCOVER_JITTER_MS = DISCOVER_INTERVAL_MS / 10;
 
     // Main-loop tick: starts a discovery round when due and closes it after the window.
     // `now_ms` must be RAW time (TimeFromBoot): a clock correction changes
@@ -90,7 +97,11 @@ private:
     void FinishDiscover(uint32_t now_ms)
     {
         phase = Idle;
-        due_ms = now_ms + DISCOVER_INTERVAL_MS;
+        // Jittered interval: uniform over [nominal - 10%, nominal + 10%]. RawRand() is the
+        // shared codebase PRNG (Core/Types/Number.h) - no new dependency. Still scheduled
+        // from the raw now_ms passed in, so a clock correction cannot trigger the next round.
+        due_ms = now_ms + DISCOVER_INTERVAL_MS - DISCOVER_JITTER_MS
+                 + (RawRand() % (2 * DISCOVER_JITTER_MS + 1));
         if (best_addr == 0 || best_addr == DeviceStatus.ShortAddress)
             return; // no other core on the bus: this core is the reference
 

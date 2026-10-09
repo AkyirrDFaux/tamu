@@ -148,7 +148,9 @@ struct StaticBlockDescriptor
         // String/Filename fields are space-padded up to their declared size when a shorter
         // value is written, and clamped to it when a longer one is (filenames are fixed
         // 8-char records; the System Name is a fixed 16).
-        if (field_type == (uint16_t)DataType::String || field_type == (uint16_t)DataType::Filename)
+        // Text/Name/Filename are fixed-size character fields (Docs/Services/Register.md).
+        if (field_type == (uint16_t)DataType::Text || field_type == (uint16_t)DataType::Name ||
+            field_type == (uint16_t)DataType::Filename)
         {
             if (Length < Field.Descriptor.Size)
             {

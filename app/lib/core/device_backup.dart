@@ -120,7 +120,7 @@ class StaticSpaceLayout {
           if (hasNetId) systemNetIdField: systemNetIdSize,
         },
         fieldType: {
-          systemNameField: DataType.string,
+          systemNameField: DataType.name,
           if (hasNetId) systemNetIdField: DataType.id,
         },
       ),

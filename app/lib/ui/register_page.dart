@@ -336,7 +336,8 @@ Future<void> _loadVisibleFields() async {
     var value = live.value;
     if (value.length < size) {
       // Strings/filenames are space-padded on the wire (not NUL); numeric buffers stay 0.
-      final pad = (live.meta.dataType == DataType.string ||
+      final pad = (live.meta.dataType == DataType.text ||
+              live.meta.dataType == DataType.name ||
               live.meta.dataType == DataType.filename)
           ? 0x20
           : 0;

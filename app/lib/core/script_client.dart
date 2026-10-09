@@ -61,14 +61,15 @@ class ScriptClient {
 
   // ---- Management commands (0x0500-0x0507) ----
 
-  /// CID 0: the file ids of the currently loaded scripts (uint16 each).
+  /// CID 0: the file ids of the currently loaded scripts (uint16 each). The payload
+  /// length carries the count - there is no count byte (Docs/Services/Script.md CID 0).
   Future<List<int>> loadedScripts() async {
     final reply = await _request(ServiceType.script, 0);
     if (reply == null || reply.isEmpty) return const [];
-    final count = reply[0];
+    final count = reply.length ~/ 2;
     final fileIds = <int>[];
-    for (var i = 0; i < count && 2 + 2 * i < reply.length; i++) {
-      fileIds.add(reply[1 + 2 * i] | (reply[2 + 2 * i] << 8));
+    for (var i = 0; i < count; i++) {
+      fileIds.add(reply[2 * i] | (reply[2 * i + 1] << 8));
     }
     return fileIds;
   }

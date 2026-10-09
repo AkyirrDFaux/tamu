@@ -158,7 +158,7 @@ const List<DataType> scriptValueTypes = [
   DataType.colour,
   DataType.vector,
   DataType.matrix,
-  DataType.string,
+  DataType.text,
   DataType.filename,
   DataType.uint32,
   DataType.blockInfo,
@@ -174,7 +174,7 @@ int defaultSizeForType(DataType type) => switch (type) {
       DataType.colour => 4,
       DataType.vector => 8,
       DataType.matrix => 28, // 2x3 wire value: u16 h, u16 w + 6 Numbers
-      DataType.string => 16,
+      DataType.text => 16,
       DataType.filename => 8,
       DataType.sn => 14,
       DataType.blockInfo => 4,

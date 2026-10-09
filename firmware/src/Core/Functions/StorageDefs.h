@@ -27,6 +27,25 @@
 // usage bitmap in FindSpace (STORAGE_FLASH_SIZE / PAGE_SIZE bits).
 #define STORAGE_MAX_BLOCKS ((STORAGE_FLASH_SIZE / PAGE_SIZE) + 1)
 
+// Fixed file-table size, in pages, per device (Docs/Devices.md): 4 pages on Tamu v2.0A, 1 on
+// the DAS, 2 on Valu v2.0. The table never grows or shrinks; it is moved only when full
+// (Storage.md "MoveFiletable"). Declared here rather than in Devices/<device>/Storage.h
+// because Main.cpp pulls Core headers in first, so the device header is seen too late to
+// size the table; it is guarded on the device the same way every device-specific
+// implementation is (Docs/Devices.md), with a -D override still winning.
+#ifndef STORAGE_TABLE_PAGES
+#if defined(BOARD_Tamu_v2_0A)
+#define STORAGE_TABLE_PAGES 4
+#elif defined(BOARD_Valu_v2_0)
+#define STORAGE_TABLE_PAGES 2
+#elif defined(BOARD_DAS_v0_1)
+#define STORAGE_TABLE_PAGES 1
+#else
+#define STORAGE_TABLE_PAGES 1
+#endif
+#endif
+#define STORAGE_TABLE_SIZE (STORAGE_TABLE_PAGES * PAGE_SIZE)
+
 // --- Flash access (implemented per device, see Devices/<device>/Storage.h) ---
 bool Storage_FlashInit();                              // find/open the storage partition
 uint32_t Storage_FlashRead(uint32_t offset, void *data, uint32_t size);   // Reads `size` bytes from flash at `offset`; returns bytes actually read (0 on failure)

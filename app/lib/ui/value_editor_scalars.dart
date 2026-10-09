@@ -60,7 +60,9 @@ String formatValue(DataType type, List<int> bytes) {
         return bytesToInt(bytes).toString();
       }
       return int32FromBytes(bytes).toString();
-    case DataType.string:
+    case DataType.text:
+    case DataType.name:
+    case DataType.char:
       return bytes.isEmpty ? '-' : String.fromCharCodes(bytes).trimRight();
     case DataType.devType:
       if (bytes.length < 2) return '-';
@@ -94,8 +96,6 @@ String formatValue(DataType type, List<int> bytes) {
     case DataType.none:
       // Placeholder/deleted slot.
       return '∅';
-    case DataType.deleted:
-      return bytes.isEmpty ? '-' : _hex(bytes);
     default:
       return bytes.isEmpty ? '-' : _hex(bytes);
   }

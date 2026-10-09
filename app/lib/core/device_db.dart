@@ -186,7 +186,7 @@ class DeviceDatabase extends ChangeNotifier {
   /// Renames a device via Register System Name (Block 0 Field 6)
   Future<bool> setName(int id, String name) async {
     final bytes = name.codeUnits.take(16).toList();
-    final meta = ValueInfo(type: DataType.string.value, flags: ValueFlags.persistent, size: bytes.length);
+    final meta = ValueInfo(type: DataType.name.value, flags: ValueFlags.persistent, size: bytes.length);
     // System block (type 0), field 6 (Name), single key 0xFF.
     final payload = [...blockInfoBytes(0, 0, 6, 0xFF), ...meta.toBytes(), ...bytes];
     final reply = await _request(id, ServiceType.register, 2, payload: payload);

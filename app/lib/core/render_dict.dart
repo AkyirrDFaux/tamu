@@ -128,6 +128,9 @@ const Map<int, String> renderTextures = {
   5: 'Hue Shift',
   6: 'Contrast',
   7: 'Brightness',
+  // Reserved after the effects so their values stay put (matches Render.h Textures2D);
+  // the stage is not implemented yet.
+  8: 'Bitmap',
 };
 
 /// Geometry dict keys that are meaningful for a given shape value (the Shape enum

@@ -89,7 +89,7 @@ __attribute__((noinline)) void RespondStatus(const PacketFrame &frame, bool ok)
 #endif
         // Structured report (LogHandler CID 0): reaches the core's log DB even
         // from textless nodes; code = CID so failures dedup per service+op.
-        ReportLog(MakeLog(false, (uint8_t)GetServiceType(frame.srv_tgt), GetServiceCID(frame.srv_tgt), 0));
+        ReportLog(MakeLog(false, (uint8_t)GetServiceType(frame.srv_tgt), GetServiceCID(frame.srv_tgt), 0), PRIORITY_ERROR);
     }
     SendResponse(frame, nullptr, 0, (uint8_t)(ok ? FLAG_SUCCESS : FLAG_FAIL));
 }

@@ -362,7 +362,8 @@ static uint8_t ScriptExecService(LoadedScript *s, const ScriptLineInfo &ln, cons
                 int32_t v = 0;
                 if (ScriptResolveOperandInt(s, opbase, v)) code = (uint16_t)(v & 0xFFFF);
             }
-            ReportLog(MakeLog(false, (uint16_t)ServiceType::Script, code, 0));
+            // A custom log is an informational message, not an error report.
+            ReportLog(MakeLog(false, (uint16_t)ServiceType::Script, code, 0), PRIORITY_LOG);
             s->ic++;
             return SCRIPT_ERR_NONE;
         }
@@ -530,11 +531,11 @@ static bool ScriptContainerElement(LoadedScript *s, const uint8_t *sym, int32_t 
             *elemSize = 1;
             *elemType = (uint16_t)DataType::Uint32;
             return true;
-        case (uint16_t)DataType::String:
+        case (uint16_t)DataType::Text:
             if (index < 0 || index >= size) return false;
             *elem = data + index;
             *elemSize = 1;
-            *elemType = (uint16_t)DataType::Uint32;
+            *elemType = (uint16_t)DataType::Char;
             return true;
         default:
             if (index != 0) return false;

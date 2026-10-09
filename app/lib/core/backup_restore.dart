@@ -109,9 +109,12 @@ List<int>? resolveEntryBytes(BackupEntry source, LiveEntry target) {
   final sourceType = dataTypeFromWord(source.type);
   if (sourceType == null) return null;
   final targetType = target.meta.dataType;
-  final text = (sourceType == DataType.string ||
+  final text = (sourceType == DataType.text ||
+          sourceType == DataType.name ||
           sourceType == DataType.filename) &&
-      (targetType == DataType.string || targetType == DataType.filename);
+      (targetType == DataType.text ||
+          targetType == DataType.name ||
+          targetType == DataType.filename);
   if (!text && sourceType != targetType) return null;
   return decodeSemantic(targetType, source.value,
       info: target.info, size: target.meta.size);

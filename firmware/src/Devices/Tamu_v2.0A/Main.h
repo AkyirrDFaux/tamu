@@ -207,7 +207,8 @@ LED.Setup();
     if (SNDB::FindShortID(GetSerialNumber()) != 1)
         SNDB::AddDevice(GetSerialNumber(), 1);;
 
-    ReportLog(MakeLog(false, (uint16_t)ServiceType::Device, 0, 0));
+    // Boot announcement (code 0): an informational log, not an error.
+    ReportLog(MakeLog(false, (uint16_t)ServiceType::Device, 0, 0), PRIORITY_LOG);
 
     static bool s_identify_prev = false;
     while (1)

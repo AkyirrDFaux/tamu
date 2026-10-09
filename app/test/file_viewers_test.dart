@@ -142,9 +142,9 @@ void main() {
 
   test('formatSystemValue only decodes the version member as a version', () {
     // A 4-character Name must render as text, not as YY.MM.DD.II.
-    expect(formatSystemValue(DataType.string, 'DAS1'.codeUnits, 6, 0xFF), 'DAS1');
+    expect(formatSystemValue(DataType.name, 'DAS1'.codeUnits, 6, 0xFF), 'DAS1');
     // The version is packed YY:MM:DD:II (7+4+5+16), not four raw bytes.
-    expect(formatSystemValue(DataType.string, u32(0x33350001).toList(), 0, 2),
+    expect(formatSystemValue(DataType.text, u32(0x33350001).toList(), 0, 2),
         '25.9.21.1');
   });
 
@@ -170,7 +170,7 @@ void main() {
       ...u16(DataType.number.value),
       4, ValueFlags.persistent,
       ...u16((1 << 8) | 0), ...u16(0),
-      ...u16(DataType.string.value),
+      ...u16(DataType.text.value),
       5, 0,
     ];
     await pump(tester, '.DT_00  ', data);

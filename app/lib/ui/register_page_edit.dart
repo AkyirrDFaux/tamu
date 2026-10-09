@@ -72,7 +72,7 @@ extension on _RegisterPageState {
               decoration: const InputDecoration(labelText: 'Type'),
               items: [
                 for (final t in DataType.values)
-                  if (t != DataType.deleted && t != DataType.none && t != DataType.undefined)
+                  if (t != DataType.none && t != DataType.undefined)
                     DropdownMenuItem(value: t, child: Text(dataTypeLabel(t))),
               ],
               onChanged: (t) => setState(() => selectedType = t ?? DataType.number),
@@ -126,7 +126,7 @@ extension on _RegisterPageState {
         title: const Text('Entry data type'),
         children: [
           for (final t in DataType.values)
-            if (t != DataType.deleted && t != DataType.none && t != DataType.undefined)
+            if (t != DataType.none && t != DataType.undefined)
               SimpleDialogOption(
                 onPressed: () => Navigator.pop(context, t),
                 child: Row(children: [

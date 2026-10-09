@@ -26,6 +26,12 @@ void HandleStorageService(const PacketFrame &frame)
             if (PayloadBytes(frame) >= 12) {
                 const char *name = reinterpret_cast<const char *>(frame.payload);
                 uint32_t size; memcpy(&size, frame.payload + 8, sizeof(size));
+                // Docs 03.01: Size (>0). A zero-size file is pointless and rejected (B11).
+                if (size == 0) {
+                    DeviceLog("STORAGE", "create '%.8s' rejected: zero size", name);
+                    SendResponse(frame, nullptr, 0, FLAG_FAIL);
+                    break;
+                }
                 bool ok = Storage.CreateFile(name, size);
                 if (!ok) DeviceLog("STORAGE", "create '%.8s' size %u failed", name, (unsigned)size);
                 SendResponse(frame, nullptr, 0, (uint8_t)(ok ? FLAG_SUCCESS : FLAG_FAIL));
@@ -48,6 +54,12 @@ void HandleStorageService(const PacketFrame &frame)
             if (PayloadBytes(frame) >= 12) {
                 const char *name = reinterpret_cast<const char *>(frame.payload);
                 uint32_t new_size; memcpy(&new_size, frame.payload + 8, sizeof(new_size));
+                // Docs 03.03: New Size (>0). A zero-size file is pointless and rejected (B11).
+                if (new_size == 0) {
+                    DeviceLog("STORAGE", "resize '%.8s' rejected: zero size", name);
+                    SendResponse(frame, nullptr, 0, FLAG_FAIL);
+                    break;
+                }
                 bool ok = Storage.ResizeFile(name, new_size);
                 if (!ok) DeviceLog("STORAGE", "resize '%.8s' -> %u failed", name, (unsigned)new_size);
                 SendResponse(frame, nullptr, 0, (uint8_t)(ok ? FLAG_SUCCESS : FLAG_FAIL));
@@ -76,22 +88,21 @@ void HandleStorageService(const PacketFrame &frame)
                 uint32_t file_offset, file_size;
                 if (Storage.GetFileInfo(name, &file_offset, &file_size)) {
                     uint32_t total_content = file_size;
-                    // Docs: "maximum 64 byte stream fragment". Every fragment carries the
-                    // 4-byte frag info (fragment 0 additionally the 8-byte name echo).
+                    // Docs 03.05: "maximum 64 byte stream fragment". The name travels in EVERY
+                    // fragment (B12): each fragment is [frag info][name echo (8)][content].
                     uint16_t contentCap = 64;
                     uint16_t total_frags = (uint16_t)((total_content + contentCap - 1) / contentCap);
                     if (total_frags == 0) total_frags = 1;
                     for (uint16_t f = 0; f < total_frags; f++) {
-                        uint16_t head = (f == 0) ? 8 : 0;
-                        if (head) memcpy(tx_frame.payload + 4, name, 8);
+                        memcpy(tx_frame.payload + 4, name, 8);
                         uint32_t content_off = (uint32_t)f * contentCap;
                         uint16_t content_len = (total_content - content_off > contentCap)
                                                    ? contentCap
                                                    : (uint16_t)(total_content - content_off);
                         if (content_len) {
-                            Storage_FlashRead(file_offset + content_off, tx_frame.payload + 4 + head, content_len);
+                            Storage_FlashRead(file_offset + content_off, tx_frame.payload + 12, content_len);
                         }
-                        SendFragFragment(frame, f, total_frags, (uint16_t)(head + content_len));
+                        SendFragFragment(frame, f, total_frags, (uint16_t)(8 + content_len));
                     }
                 } else {
                     DeviceLog("STORAGE", "read '%.8s' failed", name);
@@ -105,23 +116,23 @@ void HandleStorageService(const PacketFrame &frame)
             if (!(frame.flags & FLAG_FRAG)) break;
             PacketFragInfo frag = PacketGetFrag(frame);
             uint16_t plen = PayloadBytes(frame);
-            const uint8_t *name = nullptr;
-            const uint8_t *contents = nullptr;
-            uint16_t content_len = 0;
+            // Docs 03.06 (B12): every fragment is [frag info][name (8)][content].
+            if (plen < 12) break;
+            const uint8_t *name = frame.payload + 4;
+            const uint8_t *contents = frame.payload + 12;
+            uint16_t content_len = plen - 12;
             if (frag.current == 0) {
-                if (plen < 12) break;
-                name = frame.payload + 4;
-                contents = frame.payload + 12;
-                content_len = plen - 12;
                 s_write_active = true;
                 memcpy(s_write_name, name, 8);
                 s_write_seq = 0xFFFF;
                 s_write_off = 0;
             } else {
                 if (!s_write_active) break;
-                name = (const uint8_t *)s_write_name;
-                contents = frame.payload + 4;
-                content_len = plen - 4;
+                // The name is carried in every fragment and must not change mid-stream.
+                if (memcmp(s_write_name, name, 8) != 0) {
+                    DeviceLog("STORAGE", "write stream name changed mid-stream");
+                    break;
+                }
             }
             uint32_t file_offset, file_size;
             if (content_len > 64) content_len = 64; // docs: "maximum 64 byte stream fragment"

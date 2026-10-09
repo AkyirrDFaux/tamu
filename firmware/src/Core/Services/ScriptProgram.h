@@ -295,10 +295,11 @@ static bool ScriptSetEntry(uint16_t slot, uint8_t field, uint8_t key, const Valu
     if (ValueInfoType(*meta) != ValueInfoType(m)) return false;
     if (vlen > meta->Size) return false;
     if (vlen) memcpy(data, val, vlen);
-    // A short write defines the rest of the fixed-size input too: spaces for a string
-    // (matching the static-block behaviour), zero otherwise, so no stale bytes survive.
+    // A short write defines the rest of the fixed-size input too: spaces for a character
+    // field (matching the static-block behaviour), zero otherwise, so no stale bytes survive.
     uint16_t type = ValueInfoType(*meta);
-    uint8_t fill = (type == (uint16_t)DataType::String || type == (uint16_t)DataType::Filename)
+    uint8_t fill = (type == (uint16_t)DataType::Text || type == (uint16_t)DataType::Name ||
+                    type == (uint16_t)DataType::Filename)
                        ? (uint8_t)' ' : 0;
     for (uint16_t i = vlen; i < meta->Size; i++) data[i] = fill;
     return true;

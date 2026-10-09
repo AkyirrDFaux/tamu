@@ -20,7 +20,12 @@ void DeviceLog(const char *tag, const char *fmt, ...);
 // (`NetQualifyLocal`), so a node reaches its own net's core and a core addresses itself;
 // a broadcast would instead make every core on a shared bus store every node's log. The
 // timestamp is filled from the synced time before sending.
-inline void ReportLog(const LogMessage &log)
+//
+// `priority` is the log's class (Docs/Services/Log Handler.md: "at the priority that
+// corresponds to it"): an error report goes out at PRIORITY_ERROR, an informational log at
+// PRIORITY_LOG. The caller states it per case - there is no default, so every send site has
+// to say which of the two it is.
+inline void ReportLog(const LogMessage &log, uint8_t priority)
 {
     LogMessage message = log;
     message.timestamp = DeviceStatus.UptimeMs;
@@ -29,7 +34,7 @@ inline void ReportLog(const LogMessage &log)
                      NextSystemTrid(ServiceType::LogHandler),
                      FLAG_START | FLAG_STOP,
                      (const uint8_t *)&message, sizeof(LogMessage),
-                     PRIORITY_ERROR); // Errors are the highest class
+                     priority);
     DispatchPacket(tx_frame);
 }
 

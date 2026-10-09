@@ -73,19 +73,13 @@ static inline void PrepareGeometry(GeometryParams &p)
     p.TrapTopHalf = top / two;
     p.TrapSlope = p.TrapTopHalf - p.HalfX;
 
-    // Triangle: equilateral (Size = side) by default, isosceles when Angles is set.
-    Number triW, triH;
-    if (p.Angles.Value > 0)
-    {
-        const Number halfApex = p.Angles * GetPI() / N(180) / two;
-        triW = two * p.SizeX * sin(halfApex);
-        triH = p.SizeX * cos(halfApex);
-    }
-    else
-    {
-        triW = p.SizeX;
-        triH = p.SizeX * sqrt(N(3)) / two;
-    }
+    // Triangle: isosceles (Size = equal-side length, Angles = apex angle in degrees).
+    // Angles defaults to 60 when unset; a 0-degree apex is degenerate and would collapse
+    // the shape, and 60 reproduces the equilateral case as one instance of isosceles.
+    const Number apex = (p.Angles.Value > 0) ? p.Angles : N(60);
+    const Number halfApex = apex * GetPI() / N(180) / two;
+    const Number triW = two * p.SizeX * sin(halfApex);
+    const Number triH = p.SizeX * cos(halfApex);
     p.TriHalfH = triH / two;
     p.TriFactor = (triW.Value != 0) ? two * triH / triW : N(0);
 
@@ -176,8 +170,8 @@ static inline uint8_t ShapeAlpha(const GeometryParams &p, const Vector<2> &P)
 
     case Geometries::Triangle:
     {
-        // Equilateral (Size = side) by default; isosceles (Size = equal side, Angles =
-        // apex angle in deg) when Angles is set. Centered: apex up, base horizontal.
+        // Isosceles (Size = equal side, Angles = apex angle in deg, default 60). Centered:
+        // apex up, base horizontal.
         Number d = min(p.TriHalfH - P[1] - p.TriFactor * abs(P[0]), P[1] + p.TriHalfH);
         return FadeAlpha(d, p);
     }

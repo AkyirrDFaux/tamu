@@ -74,10 +74,15 @@ Future<List<int>?> showValueEditor(
         signed: true,
         hex: false,
       );
-    case DataType.string:
+    case DataType.text:
+    case DataType.name:
       return _editString(
-          context, info?.name ?? 'String', String.fromCharCodes(current),
-          maxChars: info?.maxChars ?? 23);
+          context, info?.name ?? (type == DataType.name ? 'Name' : 'Text'),
+          String.fromCharCodes(current),
+          maxChars: type == DataType.name ? 16 : (info?.maxChars ?? 23));
+    case DataType.char:
+      return _editString(context, info?.name ?? 'Char', String.fromCharCodes(current),
+          maxChars: 1);
     case DataType.sn:
       return _editSerialNumber(context, current);
     case DataType.id:

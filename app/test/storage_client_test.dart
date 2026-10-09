@@ -39,4 +39,29 @@ void main() {
       expect(StorageClient.parseFileTable(const []), isEmpty);
     });
   });
+
+  group('stripFragmentNames', () {
+    // A reassembled CID-5 stream is [name (8)][content] per fragment (B12); the reassembly
+    // layer has already removed the 4-byte frag info from each.
+    final name = StorageClient.padName('A');
+    final full = List<int>.generate(StorageClient.fragmentContentMax, (i) => i & 0xFF);
+
+    test('single short fragment', () {
+      expect(StorageClient.stripFragmentNames([...name, 1, 2, 3]), [1, 2, 3]);
+    });
+
+    test('walks a full fragment and the short tail', () {
+      final tail = [9, 8, 7];
+      final reply = [...name, ...full, ...name, ...tail];
+      expect(StorageClient.stripFragmentNames(reply), [...full, ...tail]);
+    });
+
+    test('an exactly-full single fragment', () {
+      expect(StorageClient.stripFragmentNames([...name, ...full]), full);
+    });
+
+    test('an empty file carries the name only', () {
+      expect(StorageClient.stripFragmentNames(name), isEmpty);
+    });
+  });
 }

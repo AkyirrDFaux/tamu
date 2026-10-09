@@ -48,13 +48,14 @@ enum class DataType : uint16_t {
     Vector         = 0x07,
     Matrix         = 0x08,
     Colour         = 0x09,
-    String         = 0x0A,
+    Text           = 0x0A,  // variable-size character array
     Filename       = 0x0B,
     Enum           = 0x0C,
-    Deleted        = 0x0D,
     Uint32         = 0x0E,
     DevType        = 0x0F,
     BlockInfo      = 0x10,  // 32-bit register pointer (type|inst|field|key)
+    Char           = 0x11,  // one character, an element of a string
+    Name           = 0x12,  // 16-character reusable type (any 16-char name)
     // Dictionary/texture extensions (not used by DAS)
     UnknownKeyed   = 0x100,  // generic dictionary marker (Docs/Data Formats.md 0x0100)
     Geometry       = 0x101,

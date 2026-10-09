@@ -162,12 +162,12 @@ __attribute__((noinline)) static void HandleScript(const PacketFrame &frame) {
 
     switch (cid) {
         case 0: { // Get currently loaded scripts (their file ids, uint16 each)
-            // 64 ids = 129 B > MAX_PAYLOAD_SIZE (116), so stream it as FRAG fragments exactly
-            // like the Register enumerate; the app already reassembles those.
-            uint8_t content[1 + MAX_SCRIPTS * 2];
-            uint16_t n = ScriptListFiles(content + 1, MAX_SCRIPTS);
-            content[0] = n;
-            uint16_t total = (uint16_t)(1 + 2 * n);
+            // 64 ids = 128 B > MAX_PAYLOAD_SIZE (116), so stream it as FRAG fragments exactly
+            // like the Register enumerate; the app already reassembles those. The payload
+            // length carries the count - no count byte (Docs/Services/Script.md CID 0).
+            uint8_t content[MAX_SCRIPTS * 2];
+            uint16_t n = ScriptListFiles(content, MAX_SCRIPTS);
+            uint16_t total = (uint16_t)(2 * n);
             const uint16_t kFrag = 64;
             uint16_t frags = (uint16_t)((total + kFrag - 1) / kFrag);
             if (frags == 0) frags = 1;

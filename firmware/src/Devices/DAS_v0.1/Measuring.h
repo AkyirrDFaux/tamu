@@ -43,9 +43,9 @@ static_assert(offsetof(ResistiveMeasVolatile, CurrentRange) == 4, "Meas layout")
 
 
 const BlockEntry ResistiveMeas_Entries[] = {
-    { MakeFieldKey(0, 0), 0, {(uint16_t)DataType::Number, sizeof(Number), ValuePersistent} },
+    { MakeFieldKey(0, 0), 0, {(uint16_t)DataType::Number, sizeof(Number), ValueTrigger | ValuePersistent} },
     { MakeFieldKey(1, 0), 4, {(uint16_t)DataType::Enum, sizeof(uint8_t), ValuePersistent} },
-    { MakeFieldKey(2, 0), 8, {(uint16_t)DataType::Number, sizeof(Number), ValuePersistent} },
+    { MakeFieldKey(2, 0), 8, {(uint16_t)DataType::Number, sizeof(Number), ValueTrigger | ValuePersistent} },
     { MakeFieldKey(3, 0), 0, {(uint16_t)DataType::Number, sizeof(Number), ValueReadOnly} },
     { MakeFieldKey(4, 0), 4, {(uint16_t)DataType::Number, sizeof(Number), ValueReadOnly} },
 };

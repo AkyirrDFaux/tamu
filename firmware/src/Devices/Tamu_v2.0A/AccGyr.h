@@ -7,7 +7,7 @@
 
 // Reports an accelerometer/gyroscope error to the log service.
 static inline void ReportAccGyrError(AccGyrError code) {
-    ReportLog(MakeLog(true, (uint16_t)BlockType::AccGyr, (uint16_t)code, 0));
+    ReportLog(MakeLog(true, (uint16_t)BlockType::AccGyr, (uint16_t)code, 0), PRIORITY_ERROR);
 }
 
 static i2c_master_bus_handle_t i2c_bus_handle;
@@ -136,8 +136,9 @@ void InitLSM6DS3() {
         ESP_LOGW("LSM6DS3", "Bus lines with pullup: SDA(GPIO4)=%d SCL(GPIO5)=%d",
                  gpio_get_level((gpio_num_t)GPIO_NUM_4), gpio_get_level((gpio_num_t)GPIO_NUM_5));
 
-    // 2. Initialize I2C Master Bus. Internal pullups are essential: this board has no
-    //    external pull-ups on SDA/SCL, and without them the bus floats low so every
+    // 2. Initialize I2C Master Bus. The board carries 4k7 external pull-ups on SDA/SCL, and
+    //    the internal pull-ups are kept enabled as well (belt and braces): a missing or
+    //    wrongly-populated external part then cannot leave the bus floating low, where every
     //    transaction "succeeds" (ESP_OK) but reads return all zeros.
     i2c_master_bus_config_t bus_cfg = {
         .i2c_port = I2C_NUM_0,

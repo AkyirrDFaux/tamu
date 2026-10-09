@@ -293,7 +293,7 @@ void main() {
         6,
         0,
         ValueInfo(
-            type: DataType.string.value, flags: ValueFlags.persistent,
+            type: DataType.name.value, flags: ValueFlags.persistent,
             size: long.length),
         long.codeUnits);
     expect(wrote, isNotNull);
@@ -315,7 +315,7 @@ void main() {
         6,
         0,
         ValueInfo(
-            type: DataType.string.value, flags: ValueFlags.persistent,
+            type: DataType.name.value, flags: ValueFlags.persistent,
             size: original.length),
         original.codeUnits);
     expect((await reg.readField(6, 0))!.value, isNotEmpty);

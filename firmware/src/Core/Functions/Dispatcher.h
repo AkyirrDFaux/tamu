@@ -123,7 +123,8 @@ void DispatchPacket(const PacketFrame &frame)
 
         default:
             DeviceLog("DISP", "unhandled service %u CID %u", (unsigned)target_srv, (unsigned)cid);
-            ReportLog(MakeLog(false, (uint16_t)target_srv, cid, 0));
+            // An unhandled service is an error, so it goes out at the error class.
+            ReportLog(MakeLog(false, (uint16_t)target_srv, cid, 0), PRIORITY_ERROR);
             break;
         }
     } // end if (local interest)

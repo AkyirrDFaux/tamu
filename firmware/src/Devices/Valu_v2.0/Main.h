@@ -14,6 +14,7 @@ void ScriptsTick(uint32_t nowMs);
 #include "Measuring.h"
 #include "Blocks/Button.h"
 #include "Blocks/PWM.h"
+#include "Blocks/Vysi1Display.h"
 #include "Core/Functions/Device.h"
 #include "Core/Services/StaticMemory.h"
 
@@ -58,28 +59,43 @@ const SerialNumber &GetSerialNumber()
 struct StaticPersistent {
     SystemPersistent system;          // BlockType 0 (special)
     PWMPersistent fan[1];             // BlockType 4
+    Vysi1Persistent display[2];       // BlockType 6
     ResistiveMeasPersistent meas[3];  // BlockType 8
 };
 struct StaticVolatile {
     LEDButtonVolatile ledButton;      // BlockType 3
     ButtonVolatile button[3];         // BlockType 9
     PWMVolatile fan[1];               // BlockType 4
+    Vysi1Volatile display[2];         // BlockType 6
     ResistiveMeasVolatile meas[3];    // BlockType 8
 };
 StaticPersistent staticPer = {
     // Name is a fixed 16-char space-padded field (no terminator).
     .system = {.Name = {'V','a','l','u',' ','v','2','.','0',' ',' ',' ',' ',' ',' ',' '}},
     .fan = {},
+    .display = {},
     .meas = {},
 };
 StaticVolatile staticVol;
 
+// The two LED display instances (Docs/Devices.md "Valu v2.0": "LED Display, 2 instances").
+// The Vysi1 display block is generic - it also drives bare LED strips, with the strip
+// geometry coming from the layout file at runtime - so registering the two instances is
+// bookkeeping rather than a fixed pin mapping. Constructing them self-registers each into
+// Vysi1Display::s_instances, which the block's LayoutFile write trigger resolves the owner
+// from. No render/driver loop runs on this board yet (it has no WS2812 strip driver), so
+// the blocks are enumerable and writable but produce no light.
+Vysi1Display Display1(staticVol.display[0], staticPer.display[0]);
+Vysi1Display Display2(staticVol.display[1], staticPer.display[1]);
+
 // Registry order is load-bearing: the app reconstructs each entry's registry index from
 // its block type + per-type instance order, so keep the entries grouped by type, ascending
-// (LEDButton 0x03, PWM 0x04, ResistiveMeasure 0x08, Button 0x09).
+// (LEDButton 0x03, PWM 0x04, Vysi1Display 0x06, ResistiveMeasure 0x08, Button 0x09).
 const StaticBlockDescriptor static_block_registry[] = {
     {&staticVol.ledButton, nullptr, &LEDButton_Schema, "LEDButton"},
     {&staticVol.fan[0], &staticPer.fan[0], &PWM_Schema, "Fan1"},
+    {&staticVol.display[0], &staticPer.display[0], &Vysi1_Schema, "LEDDisplay"},
+    {&staticVol.display[1], &staticPer.display[1], &Vysi1_Schema, "LEDDisplay2"},
     {&staticVol.meas[0], &staticPer.meas[0], &ResistiveMeas_Schema, "Meas1"},
     {&staticVol.meas[1], &staticPer.meas[1], &ResistiveMeas_Schema, "Meas2"},
     {&staticVol.meas[2], &staticPer.meas[2], &ResistiveMeas_Schema, "Meas3"},
@@ -131,6 +147,14 @@ int main(void)
     // state (.SV).
     Storage.Init();
     LoadAllBackups();
+
+    // LED displays: preload the default layout file (LAY_1) if absent, then apply the
+    // (restored) LayoutFile to each display. The boot recall restores the LayoutFile RAM
+    // field but does not re-run its write trigger, so the layout must be applied explicitly
+    // (mirrors the core's boot sequence).
+    PreloadVysiLayout();
+    Vysi1BootLayout(Display1);
+    Vysi1BootLayout(Display2);
 
     ButtonsInit();
     Measuring_Init();
