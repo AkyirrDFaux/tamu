@@ -53,3 +53,6 @@ firmware/src/_old
 
 # --- Reference material (not committed) ---
 /datasheet/
+
+# Obsidian UI state: rewrites itself on every editor interaction.
+Docs/.obsidian/workspace.json
