@@ -35,8 +35,10 @@ Response `Success (bool)`. Code `RegisterPersist.h:104-107` reads an index **and
 Name`, Response `BlockIndex, Ack`.
 
 **A5 Register: longer strings are truncated, not rejected.** `Register.md:27` - a write of a different
-type or length fails, and `String`/`Filename` may be shorter. Code `MemoryBlocks.h:164-167` clamps a
-longer one. Append `and may be longer and are truncated to the field size`.
+type or length fails, and `String`/`Filename` may be shorter. Code `MemoryTypes.h:148-178` pads a
+shorter one (`:153-162`) and clamps a longer one (`:164-166`, "clamp; memcpy copies Size bytes
+anyway"); only a non-string length mismatch fails (`:169`). Append `and may be longer and are truncated
+to the field size`.
 
 **A6 Storage: the pointer magic does not exist.** `Storage.md:9` - the example row shows
 `0x53451345`. No such constant exists anywhere in the tree. The valid entry is the table's
@@ -241,6 +243,11 @@ three.
 **A55 Current Setup: the brightness cap is reached at 8.8k lux.** `Current Setup v3.md:48` - the last
 column reads `>10k Lux`. Code `app/test/current_setup.dart:170-176`: `luxSpan = 8850`. Replace the column
 with `>8.8k Lux` (only if 10k is not deliberate).
+
+**A57 Command ID cells are prefix-less.** Every ID cell in the service documents is written without
+the `0x` prefix - `| Discover | 0 |`, `| Enumerate fields | 1 |`. Values below `0x10` read
+unambiguously, but the dynamic table's fix (A1) introduces `0x10`..`0x13`. Either normalise every ID
+cell to prefixed uppercase hex, or record the exception in the style guide.
 
 **A56 Current Setup: blink is forced on a shape change only.** `Current Setup v3.md:58` - "Forces a
 blink when the pupil changes". Code `current_setup_scripts.dart:686-689` forces it only when the shape
