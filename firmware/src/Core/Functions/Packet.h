@@ -19,8 +19,8 @@
 #define FLAG_STOP   (1 << 2)
 #define FLAG_TYPE   (1 << 3)
 #define FLAG_FRAG   (1 << 4)
-#define FLAG_SUCCESS (1 << 5) // response: success, no extra information
-#define FLAG_FAIL    (1 << 6) // response: error, no extra information
+#define FLAG_SUCCESS (1 << 5) // response: success; an optional payload after it carries detail
+#define FLAG_FAIL    (1 << 6) // response: failure; an optional payload after it carries a reason
 
 // Docs/RSBus and Packets.md: the priority byte is Reserved(4) | Priority(4), 0 = highest,
 // default 8. The CSMA silence formula is 8 + (priority/8) + random bytes, so the 4-bit

@@ -61,8 +61,8 @@ Storage is a structural 1:1 mirror of the persistent memory, held in a `.SV` fil
 | Enumerate fields | 1  | (BlockType << 6) + instance (uint16, 4-byte padded) | Fragmentation, Field&Key (uint16) stream                               | Return empty if nonexistent         |
 | Read             | 2  | `BlockInfo`                                         | `BlockInfo`, `ValueInfo`, Value                                            | Single entry                        |
 | Write            | 3  | `BlockInfo`, `ValueInfo`, Value                         | Success (echoes the request)                                           | Respond when required, single entry |
-| Recall All       | 4  |                                                     | Success (bool)                                                         | Respond only if requested           |
-| Save All         | 5  |                                                     | Success (bool)                                                         | Respond only if requested           |
+| Recall All       | 4  |                                                     | Success flag                                                         | Respond only if requested           |
+| Save All         | 5  |                                                     | Success flag                                                         | Respond only if requested           |
 
 A read with field `0xFF`, any key, returns a block's metadata: `BlockInfo`, `ValueInfo` with the field count in Size, then the 16-character name.
 
@@ -103,7 +103,7 @@ The basic commands also work on dynamic blocks; these are extra. A basic Write w
 
 | Name           | ID | Request                  | Response      | Note                      |
 | -------------- | -- | ------------------------ | ------------- | ------------------------- |
-| Create Dynamic | 0  | Index (uint16), `Name`   | Success (bool)| Respond only if requested |
-| Delete Dynamic | 1  | Index (uint16)           | Success (bool)| Respond only if requested |
+| Create Dynamic | 0  | Index (uint16), `Name`   | Success flag| Respond only if requested |
+| Delete Dynamic | 1  | Index (uint16)           | Success flag| Respond only if requested |
 | Get Name       | 2  | Index (uint16)           | `Name`        |                           |
-| Set Name       | 3  | Index (uint16), `Name` | Success (bool)| Respond only if requested |
+| Set Name       | 3  | Index (uint16), `Name` | Success flag| Respond only if requested |

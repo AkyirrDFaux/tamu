@@ -104,7 +104,7 @@ static void HandleCreateDynamic(const PacketFrame &frame, uint16_t index) {
     uint16_t name_len = PayloadBytes(frame) - 2;
     DynamicBlockDescriptor *block = CreateDynamicBlock(frame.payload + 2, name_len, index);
     if (!block) { RespondStatus(frame,false); return; }
-    SendBlockIndexAck(frame, (uint8_t)index);
+    RespondStatus(frame, true); // the host knows the index it asked for (Docs: no BlockIndex echo)
 }
 
 static void HandleDeleteDynamic(const PacketFrame &frame, uint16_t block_idx) {

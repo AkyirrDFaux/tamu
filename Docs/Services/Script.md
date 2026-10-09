@@ -87,7 +87,7 @@ Execution happens in the main loop. All instructions run until the same instruct
 | Name                         | ID | Request                                             | Response                                                  | Note |
 | ---------------------------- | -- | --------------------------------------------------- | --------------------------------------------------------- | ---- |
 | Get currently loaded scripts | 0  | -                                                   | Fragmentation, Script File IDs (uint16) (stream) | Get actively loaded scripts |
-| Load Script                  | 1  | Script File ID (uint16), Script (loaded) ID (uint8) | Success (bool)                                            | Load into active memory |
+| Load Script                  | 1  | Script File ID (uint16), Script (loaded) ID (uint8) | Success flag                                            | Load into active memory |
 | Unload script                | 2  | Script (loaded) ID                                   |                                                           | Unload script from active memory |
 | Read state                   | 3  | Script ID                                           | State, Last error code                                    | 0 = OK |
 | Set state                    | 4  | Script ID, new state                                |                                                           | Clears error |

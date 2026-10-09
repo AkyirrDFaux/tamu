@@ -28,11 +28,11 @@ A file is handed to other functions to have data stored in it or read from it, a
 ### Commands (030x)
 | Name              | ID | Request                                     | Response                                    | Note                                                  |
 | ----------------- | -- | ------------------------------------------- | ------------------------------------------- | ----------------------------------------------------- |
-| Format Filesystem | 0  | -                                           | Success (bool)                              |                                                       |
-| Create File       | 1  | Name, Size (>0)                             | Success (bool)                              | Respond only if requested |
-| Delete File       | 2  | Name                                        | Success (bool)                              | Respond only if requested |
-| Resize File       | 3  | Name, New Size (>0)                         | Success (bool)                              | Respond only if requested |
-| Rename File       | 4  | Old Name, New Name                          | Success (bool)                              | Respond only if requested |
+| Format Filesystem | 0  | -                                           | Success flag                              |                                                       |
+| Create File       | 1  | Name, Size (>0)                             | Success flag                              | Respond only if requested |
+| Delete File       | 2  | Name                                        | Success flag                              | Respond only if requested |
+| Resize File       | 3  | Name, New Size (>0)                         | Success flag                              | Respond only if requested |
+| Rename File       | 4  | Old Name, New Name                          | Success flag                              | Respond only if requested |
 | Read File         | 5  | Name                                        | Fragmentation, Name, File contents (stream) | Maximum 64 byte stream fragment                       |
 | Write File        | 6  | Fragmentation, Name, File contents (stream) | Last sequential fragmentation index written | Respond only if requested, maximum 64 byte stream fragment |
 ### Implementation Functions

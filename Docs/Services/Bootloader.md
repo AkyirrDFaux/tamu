@@ -49,5 +49,5 @@ Allows the app to send bootloader packets to the RSBus, for the read and write c
 
 | Name              | ID | Request         | Response        | Note |
 | ----------------- | -- | --------------- | --------------- | ---- |
-| Send write packet | 0  | Offset, Payload | Success (bool)  |      |
+| Send write packet | 0  | Offset, Payload | Success flag  |      |
 | Request read      | 1  | Offset          | Offset, Payload |      |

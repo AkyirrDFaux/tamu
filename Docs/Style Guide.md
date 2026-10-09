@@ -70,7 +70,7 @@ document is corrected.
 - `-` means absent, `...` means continues, an empty cell means nothing to note.
 - The Note column carries behaviour and constraints as short sentences with the first word
   capitalised: "Respond only if requested", "Core only".
-- Success cells carry the type: `Success (bool)`.
+- Success cells carry the type: `Success flag`.
 - Layout and wire sketches keep their own shape, which reads better left-to-right than forced into
   rows, but their size cells use the same notation as every other table.
 ### Links

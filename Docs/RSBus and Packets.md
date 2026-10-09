@@ -38,8 +38,9 @@ Flags:
 	- STOP, the last packet
 	- TYPE, request or response
 	- FRAG, the first 4 payload bytes are fragmentation information: a `uint16` current fragment segment plus a `uint16` total segment count
-	- SUCCESS, a response indicating success with no extra information
-	- FAIL, a response indicating an error with no extra information
+	- SUCCESS, a response indicating success. It replaces the payload: an optional payload after it
+	  carries detail.
+	- FAIL, a response indicating an error. An optional payload after it carries the reason.
 
 Priorities, highest first:
 
@@ -55,12 +56,12 @@ The maximum length is 128 bytes in total, and all devices handle it in full.
 #### Transaction IDs
 Reserved ranges:
 
-| Service                  | Range           | Type                                |                                     |
-| ------------------------ | --------------- | ----------------------------------- | ----------------------------------- |
-| System, Logs             | 0x0000-0x0FFF   | Incrementing, resets on overflow    |                                     |
-| [[Services/Subscriptions\|Subscriptions]] | 0x1000-0x1FFF                       | Table                               |
-| [[Services/Script\|Scripts]]       | 0x2000-0xEFFF                                 | Slot based, asynchronous operations |
-| App                      | 0xF000-0xFFFF   | Slot based, asynchronous operations |                                     |
+| Service                                   | Range         | Type                                |
+| ----------------------------------------- | ------------- | ----------------------------------- |
+| System, Logs                              | 0x0000-0x0FFF | Incrementing, resets on overflow    |
+| [[Services/Subscriptions\|Subscriptions]] | 0x1000-0x1FFF | Table                               |
+| [[Services/Script\|Scripts]]              | 0x2000-0xEFFF | Slot based, asynchronous operations |
+| App                                       | 0xF000-0xFFFF | Slot based, asynchronous operations |
 
 Each new outgoing request packet carries a transaction ID, and repeats reuse it. Responses arrive on the same TrID as the request.
 

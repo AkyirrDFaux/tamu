@@ -34,12 +34,15 @@ struct BlockIndex
 };
 
 // Sends a single response packet back to the requester (only if REQACK was set).
-__attribute__((noinline)) void SendResponse(const PacketFrame &frame, const uint8_t *payload, uint16_t len)
+// `status` carries FLAG_SUCCESS or FLAG_FAIL for a status reply: the flag replaces the payload, and
+// a payload may follow it to carry detail (Docs/RSBus and Packets.md).
+__attribute__((noinline)) void SendResponse(const PacketFrame &frame, const uint8_t *payload, uint16_t len,
+                                            uint8_t status = 0)
 {
     if (!(frame.flags & FLAG_REQACK))
         return;
     PacketConstruct(&tx_frame, frame.id_src, frame.srv_src, frame.trid,
-                     FLAG_TYPE | FLAG_START | FLAG_STOP, payload, len);
+                     (uint8_t)(FLAG_TYPE | FLAG_START | FLAG_STOP | status), payload, len);
     DispatchPacket(tx_frame);
 }
 
@@ -58,7 +61,8 @@ __attribute__((noinline)) void SendFragFragment(const PacketFrame &frame, uint16
     DispatchPacket(tx_frame);
 }
 
-// Sends a one-byte status response (0 = OK, otherwise a non-zero failure code).
+// Replies with the success or fail packet flag and no payload. The flag is the whole reply;
+// a caller with more to say appends a payload after it.
 // Failures are logged on the core (DeviceLog is a no-op on textless nodes): the
 // service tag, CID and the request's block/field/key give a full audit trail for
 // every rejected memory operation without per-call-site logging.
@@ -87,8 +91,7 @@ __attribute__((noinline)) void RespondStatus(const PacketFrame &frame, bool ok)
         // from textless nodes; code = CID so failures dedup per service+op.
         ReportLog(MakeLog(false, (uint8_t)GetServiceType(frame.srv_tgt), GetServiceCID(frame.srv_tgt), 0));
     }
-    uint8_t status = ok ? 0 : 0xFF;
-    SendResponse(frame, &status, 1);
+    SendResponse(frame, nullptr, 0, (uint8_t)(ok ? FLAG_SUCCESS : FLAG_FAIL));
 }
 
 // Derives the staging-file name for an atomic backup update: the last character of the

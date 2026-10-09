@@ -159,7 +159,7 @@ static inline void SendKeyResponse(const PacketFrame &frame, uint32_t bi, const 
     SendValueResponse(frame, bi, kr.meta, (const uint8_t *)kr.data_ptr, kr.data_len);
 }
 
-// Replies to a dynamic create/name write with the assigned BlockIndex + a 1-byte ack.
+// Replies with the assigned BlockIndex followed by an ack (the dynamic field-write path).
 static inline void SendBlockIndexAck(const PacketFrame &frame, uint8_t index) {
     uint8_t payload[sizeof(BlockIndex) + 1];
     BlockIndex out_index = {index, 0xFF, 0xFF};
