@@ -46,6 +46,7 @@ A symbol is 32 bits: `Type` and `Subtype` are `uint8`, and `Value` is `uint16`.
 |                 | Char                                | Full ASCII (8-bit) |
 |                 | Math operation                      | ... |
 |                 | Bool                                | True/False |
+|                 | Number                              | 16-bit Q8.8 fixed-point literal |
 
 The editor checks the validity of a script: end matching, and type and size correctness.
 
@@ -85,7 +86,7 @@ Execution happens in the main loop. All instructions run until the same instruct
 ### Management Commands (050x)
 | Name                         | ID | Request                                             | Response                                                  | Note |
 | ---------------------------- | -- | --------------------------------------------------- | --------------------------------------------------------- | ---- |
-| Get currently loaded scripts | 0  | -                                                   | Number of loaded scripts (uint8), Script File IDs (uint16) | Get actively loaded scripts |
+| Get currently loaded scripts | 0  | -                                                   | Fragmentation, Script File IDs (uint16) (stream) | Get actively loaded scripts |
 | Load Script                  | 1  | Script File ID (uint16), Script (loaded) ID (uint8) | Success (bool)                                            | Load into active memory |
 | Unload script                | 2  | Script (loaded) ID                                   |                                                           | Unload script from active memory |
 | Read state                   | 3  | Script ID                                           | State, Last error code                                    | 0 = OK |

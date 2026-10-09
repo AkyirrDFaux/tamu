@@ -93,19 +93,19 @@ Delete the clause from all four rows.
 8 kB (Valu) and 948 kB (Tamu), `platformio.ini:97,165,299`. Replace with the measured range or per-device
 sizes.
 
-**A18 Script: the `Number` predefine is missing.** `Script.md:43-48` - the Predefine block ends at
+**A18 Script: the `Number` predefine is missing.** - **approved and applied.** `Script.md:43-48` - the Predefine block ends at
 `Bool`. Code `ScriptDefs.h:67` defines `SCRIPT_PRE_NUMBER 6`, a 16-bit Q8.8 literal. Append the row
 `| | Number | 16-bit Q8.8 fixed-point literal |`.
 
-**A19 Subscriptions: the last value covers more types.** `Subscriptions.md:44` - "for `Number` and
+**A19 Subscriptions: the last value covers more types.** - **approved and applied.** `Subscriptions.md:44` - "for `Number` and
 `int32` values only". Code `SubscriptionsProvider.h:171-176` accepts `Number`, `Index` and `Uint32`.
 Replace with `for Number, Index and Uint32 values only`.
 
-**A20 Subscriptions: the deadzone covers the integer scalars.** `Subscriptions.md:11` - Deadzone
+**A20 Subscriptions: the deadzone covers the integer scalars.** - **revised**: the deadzone takes the value's scalar type - `Number` for a `Number`, `uint32` for `Index` and `Uint32`, since a `Number` deadzone is not cleanly comparable against the integer scalars. Applied to the document; B18 makes the code match. `Subscriptions.md:11` - Deadzone
 `Number`, "For Number and Vector". Code `SubscriptionsProvider.h:275-282` gates any 4-byte scalar.
 Replace with `For Number, Index, Uint32 and Vector`.
 
-**A21 Script: the list reply is fragmented.** `Script.md:88` - Response `Number of loaded scripts
+**A21 Script: the list reply is fragmented.** - **approved and applied**, with the count removed from the reply. The code still sends it, so B19 drops it there too. `Script.md:88` - Response `Number of loaded scripts
 (uint8), Script File IDs (uint16)`. Code `ScriptRuntime.h:164-180` streams it as fragments. Replace with
 `Fragmentation, number of loaded scripts (uint8), Script File IDs (uint16) (stream)`.
 
@@ -281,6 +281,10 @@ itself as device 1 with no net.
 **B8 Tamu is built as Core only.**
 
 **A59 Storage: `Storage_FlashInit` is missing from the main functions.** The document lists four (`Docs/Services/Storage.md:40-47`); the code declares five, the extra being `bool Storage_FlashInit();` ("find/open the storage partition", `StorageDefs.h:31`). Add it to the list.
+
+**B18 The deadzone is always a `Number`.** From A20: `SubscriptionsDeltaHash(const FieldResult &fr, Number deadzone)` (`SubscriptionsProvider.h:119`) reads `int32_t dz = deadzone.Value;` (`:127`) for every scalar, so an `Index` or `Uint32` value is gated against a `Number` deadzone. Take the deadzone as the value's scalar type instead.
+
+**B19 The script list reply carries a count byte.** From A21: the count goes. `ScriptRuntime.h:167-170` builds `content[0] = n` ahead of the ids; drop it and let the payload length carry the count, then update the app's reader.
 
 **B17 Format Filesystem replies with no payload.** From A15: it should reply a status. `Storage.h:19-21` sends `SendResponse(frame, nullptr, 0)` where every other command in that table replies through the shared status helper.
 

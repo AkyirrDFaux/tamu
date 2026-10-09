@@ -53,6 +53,7 @@ Modules:
 - LED
 
 Page size: 64 bytes (fast mode)
+Table size: 1 page
 Storage: 512 B
 ### Valu v2.0 (CH32V203G8R6), Legacy Standalone Node with USB
 | Feature           | Pins                                         | Note |

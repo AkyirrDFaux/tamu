@@ -8,7 +8,7 @@ A minimum describing record, used for in-between device requests.
 | Trigger type       | `Enum` (8bit)  |                            |
 | Minimum/Retry time | uint24         | ms                         |
 | Period             | uint32         | ms                         |
-| Deadzone           | `Number`       | For Number and Vector      |
+| Deadzone           | `Number` or `uint32` | For `Number`, `Index`, `Uint32` and `Vector`; the type follows the value |
 ### Requester
 Use define `USE_SUB_REQUEST`.
 
@@ -41,7 +41,7 @@ The Hash/Hashlike field carries one of:
 
 - Hash: FNV-1a
 - Counter: for `Bool` edges only
-- Last value: for `Number` and `int32` values only
+- Last value: for `Number`, `Index` and `Uint32` values only
 - Subresolution Vector: a zoomed-in portion of the sensitive area. For 3D it is 10 bits per axis, that is 5 bits above the deadzone (Hash and Sign) plus 5 bits below (Distance measurement). It is not included if the device measures no Vectors and has no Script support.
 ### Trigger Types
 - None (cancelled or to be deleted)
