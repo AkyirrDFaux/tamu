@@ -10,7 +10,7 @@ library;
 import 'package:flutter/material.dart';
 
 import '../core/block_registry.dart' show blockInfoFor;
-import '../core/storage_client.dart' show normalizeFileName;
+import '../core/storage_client.dart' show normalizeFileName, StorageClient;
 import '../core/device_backup.dart';
 import '../core/system_schema.dart' show hasNetIdFor;
 import '../core/register_client.dart';
@@ -107,6 +107,7 @@ class _FileViewPageState extends State<FileViewPage> {
   bool _showRaw = false;
   int _bytesPerLine = 16;
   StaticFieldLayout _staticFields = const {};
+  List<int>? _dvTable; // sibling `.DT_<hex2>` bytes, for the `.DV_` value viewer
 
   @override
   void initState() {
@@ -118,11 +119,29 @@ class _FileViewPageState extends State<FileViewPage> {
         storageFileType(widget.name) == StorageFileType.backup) {
       _loadStaticFields();
     }
+    // The `.DV_` value viewer decodes against the sibling `.DT_` table.
+    if (storageFileType(widget.name) == StorageFileType.dynamicValues) {
+      _loadDynamicTable();
+    }
   }
 
   Future<void> _loadStaticFields() async {
     final fields = await RegisterClient(deviceId: widget.deviceId).readStaticFieldLayout();
     if (mounted) setState(() => _staticFields = fields);
+  }
+
+  int? _dvIndex() {
+    final n = normalizeFileName(widget.name).toUpperCase();
+    if (!n.startsWith('.DV_')) return null;
+    return int.tryParse(n.substring(4), radix: 16);
+  }
+
+  Future<void> _loadDynamicTable() async {
+    final inst = _dvIndex();
+    if (inst == null) return;
+    final name = '.DT_${inst.toRadixString(16).padLeft(2, '0').toUpperCase()}';
+    final bytes = await StorageClient(deviceId: widget.deviceId).readFile(name);
+    if (mounted) setState(() => _dvTable = bytes);
   }
 
   static final List<int> bytesPerLineOptions = [8, 16, 32, 64];
@@ -277,6 +296,41 @@ class _FileViewPageState extends State<FileViewPage> {
     );
   }
 
+  /// `.DV_<hex2>`: the block's packed persistent values, decoded against the sibling
+  /// `.DT_<hex2>` table (offsets and sizes) so each field/key shows its typed value.
+  Widget _dvView() {
+    final tableBytes = _dvTable;
+    final table = tableBytes == null ? null : decodeDynamicTable(tableBytes);
+    final inst = _dvIndex();
+    if (table == null || inst == null) {
+      // Still loading the sibling table, or it is missing: fall back to raw hex.
+      return _hexView();
+    }
+    final entries = decodeDynamicValues(inst, table, widget.data!);
+    if (entries.isEmpty) return _hexView();
+    final rows = <Widget>[
+      Padding(
+        padding: const EdgeInsets.only(left: 4, bottom: 6),
+        child: Text(
+            '${table.name.isEmpty ? 'Block' : table.name}'
+            ' (${blockTypeLabel(dynamicTypeForIndex(inst))})',
+            style: const TextStyle(color: Colors.white38, fontSize: 11)),
+      ),
+      for (final e in entries)
+        ListTile(
+          dense: true,
+          contentPadding: const EdgeInsets.only(left: 16, right: 12),
+          title: Text(
+              'f${e.field}.k${e.key}: ${dataTypeLabel(e.meta.dataType)}  ${e.meta.size} B',
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+          subtitle: Text(
+              e.meta.dataType == DataType.none ? '∅' : formatValue(e.meta.dataType, e.value),
+              style: const TextStyle(fontSize: 12)),
+        ),
+    ];
+    return ListView(padding: const EdgeInsets.all(12), children: rows);
+  }
+
   Widget _formattedBody() {
     final data = widget.data!;
     switch (storageFileType(widget.name)) {
@@ -297,8 +351,8 @@ class _FileViewPageState extends State<FileViewPage> {
             hasNetId: hasNetId);
       }
       case StorageFileType.dynamicValues:
-        // The persistent value space, addressable only together with its DT table.
-        return _hexView();
+        // The persistent value space, decoded against its sibling `.DT_` table.
+        return _dvView();
       case StorageFileType.text when _looksTextual:
         final text = String.fromCharCodes(data).replaceAll(RegExp(r' +'), ' ');
         return _mono(text);

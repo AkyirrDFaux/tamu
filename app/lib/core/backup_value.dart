@@ -126,6 +126,7 @@ Object? encodeSemantic(DataType type, List<int> bytes, {FieldInfo? info}) {
     case DataType.colour:
       if (bytes.length < 4) return hexBytes(bytes);
       return {'r': bytes[0], 'g': bytes[1], 'b': bytes[2], 'a': bytes[3]};
+    case DataType.unknownKeyed:
     case DataType.geometry:
     case DataType.texture:
       return encodeDictionary(type.value, bytes);
@@ -204,6 +205,7 @@ List<int>? decodeSemantic(DataType type, Object? value,
         }
       }
       return null;
+    case DataType.unknownKeyed:
     case DataType.geometry:
     case DataType.texture:
       return decodeDictionary(type.value, value);

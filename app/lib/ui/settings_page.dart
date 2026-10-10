@@ -39,7 +39,7 @@ class _SettingsPageState extends State<SettingsPage> {
               enabled: _settings.autoConnect,
               title: const Text('Autoconnect device'),
               subtitle: Text(_settings.autoConnectDeviceId.isEmpty
-                  ? 'Long-press a device on the Connection page to set it'
+                  ? 'Set the target with the star button on the Connection page'
                   : 'Target: ${_settings.autoConnectDeviceId}'),
               trailing: TextButton(
                 onPressed: _settings.autoConnect && _settings.autoConnectDeviceId.isNotEmpty

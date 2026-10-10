@@ -210,6 +210,20 @@ void main() {
     await pump(tester, '.DT_02  ', [9, 1, 2]);
   });
 
+  testWidgets('.DV_ opens the value viewer (hex fallback without its table)', (tester) async {
+    // The decoded `.DV_` view needs the sibling `.DT_` table (a device read); with no link
+    // it falls back to hex rather than throwing.
+    final data = [for (var i = 0; i < 24; i++) i];
+    await tester.pumpWidget(MaterialApp(
+      theme: buildTheme(),
+      home: Scaffold(
+          body:
+              FileViewPage(deviceId: 1, name: '.DV_00', size: data.length, data: data)),
+    ));
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('FileViewPage renders formatted and raw hex', (tester) async {
     // `.SV` via the full page (formatted view).
     await tester.pumpWidget(MaterialApp(

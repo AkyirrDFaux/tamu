@@ -88,14 +88,21 @@ class _ConnectionPageState extends State<ConnectionPage>
     showSnack(context, 'Autoconnect target set: ${_manager.connectedName}');
   }
 
-  Future<void> _setAutoConnectFor(DiscoveredLink link) async {
+  bool _isAutoTarget(DiscoveredLink link) =>
+      AppSettings.instance.autoConnect &&
+      AppSettings.instance.autoConnectDeviceId == link.id;
+
+  /// The star button on a device row: sets this device as the autoconnect target, or clears it.
+  Future<void> _toggleAutoConnectFor(DiscoveredLink link) async {
     final settings = AppSettings.instance;
+    final isTarget = _isAutoTarget(link);
     settings.update(() {
-      settings.autoConnect = true;
-      settings.autoConnectDeviceId = link.id;
+      settings.autoConnect = !isTarget;
+      settings.autoConnectDeviceId = isTarget ? '' : link.id;
     });
     if (!mounted) return;
-    showSnack(context, 'Autoconnect target set: ${link.name}');
+    showSnack(context,
+        isTarget ? 'Autoconnect disabled' : 'Autoconnect target set: ${link.name}');
   }
 
   Future<void> _refreshOnce() async {
@@ -277,14 +284,18 @@ class _ConnectionPageState extends State<ConnectionPage>
       leading: Icon(isBle ? Icons.bluetooth : Icons.usb),
       title: Text(link.name),
       subtitle: Text(isBle ? 'MAC ${link.id}' : link.id),
-      trailing: isBle && link.rssi != null
-          ? Row(mainAxisSize: MainAxisSize.min, children: [
-              Icon(Icons.signal_cellular_alt,
-                  size: 18, color: _rssiColor(link.rssi)),
-              const SizedBox(width: 4),
-              Text('${link.rssi} dBm'),
-            ])
-          : null,
+      trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+        if (isBle && link.rssi != null) ...[
+          Icon(Icons.signal_cellular_alt, size: 18, color: _rssiColor(link.rssi)),
+          const SizedBox(width: 4),
+          Text('${link.rssi} dBm'),
+        ],
+        IconButton(
+          icon: Icon(_isAutoTarget(link) ? Icons.star : Icons.star_border),
+          tooltip: 'Set as autoconnect target',
+          onPressed: () => _toggleAutoConnectFor(link),
+        ),
+      ]),
       onTap: () async {
         if (_manager.isConnecting) return;
         // While connected, tapping a (different) device switches the session:
@@ -301,9 +312,6 @@ class _ConnectionPageState extends State<ConnectionPage>
         // Populate the Devices page as soon as a session is up.
         unawaited(DeviceDatabase.instance.refreshNetwork());
       },
-      // Long-press picks this device as the autoconnect target (Settings page
-      // documents "Long-press a device on the Connection page to set it").
-      onLongPress: () => _setAutoConnectFor(link),
     );
   }
 }

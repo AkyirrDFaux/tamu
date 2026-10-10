@@ -160,6 +160,7 @@ enum DataType {
   blockInfo(0x10), // register pointer type|inst|field|key (firmware DataType::BlockInfo)
   char(0x11), // one character, an element of a string (firmware DataType::Char)
   name(0x12), // 16-character reusable name (firmware DataType::Name)
+  unknownKeyed(0x100), // generic dictionary marker (firmware DataType::UnknownKeyed)
   geometry(0x101), // dictionary marker (firmware DataType::Geometry = 0x101)
   texture(0x102); // dictionary marker (firmware DataType::Texture = 0x102)
 
@@ -195,6 +196,7 @@ String dataTypeWord(DataType type) => switch (type) {
       DataType.blockInfo => 'BlockInfo',
       DataType.char => 'Char',
       DataType.name => 'Name',
+      DataType.unknownKeyed => 'Dictionary marker',
       DataType.geometry => 'Geometry dict',
       DataType.texture => 'Texture dict',
     };
@@ -220,6 +222,7 @@ DataType? dataTypeFromWord(String word) {
     'BlockInfo': DataType.blockInfo,
     'Char': DataType.char,
     'Name': DataType.name,
+    'Dictionary marker': DataType.unknownKeyed,
     'Geometry dict': DataType.geometry,
     'Texture dict': DataType.texture,
   };

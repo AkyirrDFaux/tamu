@@ -1,8 +1,10 @@
 Settings screen, grouped into sections.
 ### Connection
-- Autoconnect to specified device (on/off). The subtitle shows the target or a hint
-  ("Long-press a device on the Connection page to set it").
-- Autoconnect device row with a Clear button (clears the on/off flag and the target).
+- Autoconnect to specified device (on/off); its label reads "Autoconnect: <target>" once a
+  target is set.
+- Autoconnect device row showing the target or a hint, with a Clear button (clears the on/off
+  flag and the target).
+- The target is set with the star button on a device in the Connection page.
 ### Notifications (app open)
 - Allow notifications (on/off)
 	- Per event selection (Device discovered, Device lost, Backup finished), shown only when enabled

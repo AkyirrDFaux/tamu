@@ -171,13 +171,11 @@ class _SubscriptionsPageState extends State<SubscriptionsPage> with SingleTicker
   }
 
 Widget _buildRequesterTab() {
-    // Docs/Services/Subscriptions.md models separate Request/Provide capabilities; the
-    // app+firmware expose only one `subscriptions` bit (types.dart Capability), and the
-    // requester side is core-only today. Gate on Core and note that a dedicated requester
-    // capability bit is still needed (see Issues.md "App (subscriptions)").
+    // The requester side is offered when the device advertises the Subscriptions Request
+    // capability (a requester need not be a core).
     final device = DeviceDatabase.instance.byId(widget.deviceId);
     final canRequest =
-        device != null && (device.capabilities & Capability.core) != 0;
+        device != null && (device.capabilities & Capability.subscriptionRequest) != 0;
     if (!canRequest) {
       return const Center(
         child: Padding(

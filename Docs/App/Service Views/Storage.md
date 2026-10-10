@@ -14,6 +14,6 @@ The file table is always read only (shown with a lock icon).
 ### File viewer
 - The viewer/editor of files formats the files based on the file name to provide a human readable interpretation
   (serial registry `.SNREG`, LED layout `LAY*`, registry backups `.SV`/`.SUBREQ`, dynamic
-  block table/values `.DT_`/`.DV_`, text `.TXT`/`.LOG`).
+  block table `.DT_` and its values `.DV_`).
 - Switching to hex reader is always possible (selectable bytes-per-line).
 - Files are previewed, not edited in place.

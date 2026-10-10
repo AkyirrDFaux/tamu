@@ -78,25 +78,10 @@ Every firmware document was checked against `firmware/src`; the closed dispositi
 (approved/applied or rejected) are in git history. Only the still-open items remain below.
 **Doc fixes need approval before they are applied**; code fixes are work for the beta window.
 
-### A. Doc fixes open (cross-reference rerun, 2026-10-10)
+### A. Doc fixes (cross-reference rerun, 2026-10-10) - all resolved
 
-The 2026-10-10 rerun confirmed the earlier sweep; these divergences are **doc-only** (the code
-matches the spec). **A61-A67 were ruled on and applied** (see git); **A68 is planned (a TODO), not a
-doc issue**; the rest await a ruling.
-
-**A69 Requester/Provider capability note.** `App/Service Views/Subscriptions.md:14` claims "the
-capability bits do not yet separate Request/Provide"; they do (`types.dart:386-388`, `Enums.h:17,19`).
-The gate itself is real (`subscriptions_page.dart` tests `Capability.core`). Proposed: "…gated on the
-Core capability - only cores currently act as requesters, though the advertised SubReq/SubProv bits
-distinguish the roles."
-
-**A70 Autoconnect toggle label.** `App/Settings.md:3` says the toggle's subtitle shows the target; the
-toggle changes its *title* to "Autoconnect: <target>" and the hint lives on the next row
-(`settings_page.dart:29-53`). Proposed wording fix.
-
-**A71 `.DV_` is shown as hex.** `App/Service Views/Storage.md:16` lists `.DT_`/`.DV_` as the
-human-readable dynamic files; `.DV_` is a raw hex dump (`file_viewers.dart:299-301`). Proposed: note
-the `.DV_` value space is shown as hex.
+The 2026-10-10 rerun is closed out: **A61-A67 and A69-A71 were ruled on and applied** (A69/A70/A71
+also required code changes), and **A68 is planned (a TODO), not a doc issue**. Applied wording is in git.
 
 ### B. Code fixes still open (the document is the specification)
 
@@ -109,11 +94,6 @@ information` at 8.1; there is no WiFi code in the firmware.
 
 **B6 The UDP framing has no code.** `App Interface.md:25-27` documents a UDP packet; the firmware
 implements USB and BLE only.
-
-**B40 The app's `DataType` enum omits `UnknownKeyed` (0x100).** `Data Formats.md:23` documents
-`UnknownKeyed` and the firmware defines it (`Enums.h:60`), but `types.dart` jumps from `name (0x12)`
-to `geometry (0x101)`. Add `unknownKeyed(0x100)` so the enum mirrors the firmware. (E10's old claim
-that these types are undocumented is now wrong - they are in `Data Formats.md`.)
 
 ### C. Checked and correct
 
