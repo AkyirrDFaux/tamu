@@ -196,52 +196,6 @@ bool RS485SendRaw(const uint8_t *Data, size_t Len)
     return false;
 }
 
-// Receives one raw bootloader response frame (0xCA ... 0xBC), for the asynchronous Device
-// passthrough. `TimeoutMs` bounds the wait for a frame to START; once a start byte is seen the
-// frame is read to completion (bounded by kFrameTimeoutMs), so a short caller budget can never
-// abandon a half-read frame - that would consume the leading 0xCA and leave the ring desynced,
-// losing the reply for good. A 39 B frame is ~0.85 ms of line time at 460800.
-int RS485ReceiveRaw(uint8_t *Out, size_t Cap, uint32_t TimeoutMs)
-{
-    constexpr uint32_t kFrameTimeoutMs = 8;
-    uint32_t Start = TimeFromBoot();
-    uint32_t FrameStart = 0;
-    size_t Got = 0;
-    bool InFrame = false;
-
-    for (;;) {
-        if (InFrame) {
-            if ((uint32_t)(TimeFromBoot() - FrameStart) >= kFrameTimeoutMs)
-                return 0;
-        } else if ((uint32_t)(TimeFromBoot() - Start) >= TimeoutMs) {
-            return 0;
-        }
-
-        uint8_t Byte;
-        if (uart_read_bytes(UART_NUM_1, &Byte, 1, pdMS_TO_TICKS(5)) != 1)
-            continue;
-        if (!InFrame) {
-            if (Byte == Bootloader::START) {
-                InFrame = true;
-                FrameStart = TimeFromBoot();
-                Got = 0;
-                Out[Got++] = Byte;
-            }
-            continue;
-        }
-        if (Got < Cap)
-            Out[Got++] = Byte;
-        if (Got >= 2) {
-            uint16_t Need = Bootloader::FrameSize((uint8_t)(Out[1] & 0x07));
-            if (Need == 0 || Need > Cap) { InFrame = false; Got = 0; continue; } // bad control
-            if (Got >= Need) {
-                if (Bootloader::Decode(Out, Need) != Bootloader::INVALID) return (int)Need;
-                InFrame = false; Got = 0; // corrupt frame: resync on the next 0xCA
-            }
-        }
-    }
-}
-
 // While a Device bootloader passthrough is outstanding the Device service installs a sink here:
 // the shared reader offers every byte to it first, so a raw 0xCA reply is stored for the
 // passthrough instead of being discarded as non-0xAA noise by the packet assembler. One pass

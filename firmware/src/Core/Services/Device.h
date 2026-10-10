@@ -52,7 +52,6 @@ private:
     // the idle main loop pays one bool load and no bus access. The routing fields let the
     // poll rebuild the Device response for the original requester after Handle* has returned.
     static constexpr uint32_t KPtTimeoutMs = 1000; // reply deadline (ms)
-    static constexpr uint32_t KPtPollMs    = 1;    // per-poll bus read budget (shortest usable)
     bool PtPending    = false;                    // a request is issued and not yet settled
     uint8_t PtCid     = 0;                        // passthrough CID (0x20/0x21/0x22)
     uint8_t PtExpect  = 0;                        // expected Bootloader reply command
