@@ -23,8 +23,11 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-// The board's LED-button (Docs/Devices.md): GPIO2, pull-up, active low.
+// The board's LED-button (Docs/Devices.md): GPIO2, pull-up, active low. The button and the
+// notification LED share the pin. The Tamu v2.0A has no white LED, so update mode lights this
+// one as its boot signal (Docs/Devices.md).
 #define BUTTON_PIN GPIO_NUM_2
+#define LED_PIN BUTTON_PIN
 
 // ESP32-C3 flash sector: `ota_0` is erased a sector at a time (the RSBus/DAS 64-byte page
 // granularity does not apply here).
@@ -181,6 +184,18 @@ extern "C" void app_main(void)
 #endif
 
     // Update mode: own the USB port and serve raw frames.
+    // Boot signal: light the notification LED for as long as update mode runs. The pin is
+    // active low, and while driven it can no longer be read as a button - which is fine once
+    // update mode has been chosen.
+    gpio_config_t Led = {};
+    Led.pin_bit_mask = 1ULL << LED_PIN;
+    Led.mode = GPIO_MODE_OUTPUT;
+    Led.pull_up_en = GPIO_PULLUP_DISABLE;
+    Led.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    Led.intr_type = GPIO_INTR_DISABLE;
+    gpio_config(&Led);
+    gpio_set_level(LED_PIN, 0);
+
     usb_serial_jtag_driver_config_t Usb = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
     usb_serial_jtag_driver_install(&Usb);
     App = MainApp;

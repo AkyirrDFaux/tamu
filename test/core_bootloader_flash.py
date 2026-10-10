@@ -3,11 +3,11 @@
 
 The core bootloader speaks the raw v2 bootloader frames (Docs/Services/Bootloader.md)
 directly on the USB Serial/JTAG port - no packet format, no app-interface framing. This
-harness identifies the bootloader, writes the image into ota_0, drains the write
-acknowledgements, then reads the image back and reports mismatches.
+harness identifies the bootloader, writes the image into ota_0 with an adaptive pipeline
+driven by the v2 write acknowledgements, then reads the image back and reports mismatches.
 
-Run with the bootloader in update mode: hold GPIO2 at reset, or use the
-TAMU_BOOTLOADER_FORCE test build.
+Run with the bootloader in update mode: hold GPIO2 at reset (the red LED stays lit), or use
+the TAMU_BOOTLOADER_FORCE test build.
 
 Usage:
     python3 test/core_bootloader_flash.py [port] [image]
@@ -38,6 +38,14 @@ CMD_WRITE_REQ = 0b010
 CMD_WRITE_RESP = 0b011
 CMD_READ_REQ = 0b100
 CMD_READ_RESP = 0b101
+
+# Adaptive write pipeline: the window is how many chunks may be in flight. It doubles while
+# the bootloader keeps acknowledging and halves whenever it falls behind, so the run is as
+# fast as the link and the flash allow without overrunning either buffer. The bootloader
+# blocks on a 4 KB sector erase, which the acks expose as a slower window - no fixed pacing.
+WINDOW_START = 4
+WINDOW_MIN = 1
+WINDOW_MAX = 256
 
 
 def _parity(frame):
@@ -89,31 +97,59 @@ def read_frame(port, want_cmd, size, timeout=0.5):
     return None
 
 
-def drain_write_responses(port, seconds):
-    """Counts the write acknowledgements still arriving; returns (count, last offset)."""
-    deadline = time.time() + seconds
-    count = 0
-    last = None
-    buf = bytearray()
-    while time.time() < deadline:
-        b = port.read(1)
-        if not b:
+def write_image(port, image):
+    """Writes the whole image, paced entirely by the write acknowledgements.
+
+    The bootloader answers every write request with the offset of the last chunk written
+    successfully, so the harness keeps a window of chunks in flight, grows it while the acks
+    keep up, halves it when they fall behind and resends from the last acknowledged chunk
+    when one is rejected. Returns (chunks, resends, peak window, seconds).
+    """
+    chunks = (len(image) + PAYLOAD - 1) // PAYLOAD
+    window = WINDOW_START
+    peak = window
+    sent = 0
+    acked = 0
+    resends = 0
+    last_ack_off = None
+    started = time.time()
+
+    def payload_of(i):
+        off = i * PAYLOAD
+        return image[off:off + PAYLOAD].ljust(PAYLOAD, b"\xff")
+
+    while acked < chunks:
+        # Fill the window.
+        while sent < chunks and (sent - acked) < window:
+            port.write(build(CMD_WRITE_REQ, sent * PAYLOAD, payload_of(sent)))
+            sent += 1
+        port.flush()
+
+        frame = read_frame(port, CMD_WRITE_RESP, WRITE_RESPONSE, timeout=2.0)
+        if frame is None:
+            # The bootloader is behind (a 4 KB sector erase) or a chunk is lost: back off.
+            window = max(WINDOW_MIN, window // 2)
+            if sent > acked:
+                sent = acked
+                resends += 1
             continue
-        if not buf:
-            if b[0] == START:
-                buf.append(b[0])
-            else:
-                continue
-        buf.append(b[0])
-        if len(buf) == 2 and (buf[1] & 0x07) != CMD_WRITE_RESP:
-            buf.clear()
+
+        ack_off = int.from_bytes(frame[2:6], "little")
+        if ack_off == last_ack_off and sent > acked:
+            # The same offset twice with chunks outstanding: the chunk after it was rejected
+            # (bad parity or a short buffer). Resync to it and resend from there.
+            resends += 1
+            sent = acked
+            window = max(WINDOW_MIN, window // 2)
             continue
-        if len(buf) == WRITE_RESPONSE:
-            if buf[-1] == END and (buf[1] & 0x07) == CMD_WRITE_RESP:
-                count += 1
-                last = int.from_bytes(buf[2:6], "little")
-            buf.clear()
-    return count, last
+        last_ack_off = ack_off
+        acked = min(ack_off // PAYLOAD + 1, sent)
+        # Grow while the bootloader keeps up; the link and the flash set the pace.
+        if (sent - acked) <= window // 2 and window < WINDOW_MAX:
+            window = min(WINDOW_MAX, window * 2)
+            peak = max(peak, window)
+
+    return chunks, resends, peak, time.time() - started
 
 
 def main():
@@ -124,7 +160,7 @@ def main():
     image = open(os.path.abspath(image_path), "rb").read()
     print("image %s: %d bytes" % (image_path, len(image)))
 
-    port = serial.Serial(port_path, 115200, timeout=0.05)
+    port = serial.Serial(port_path, 115200, timeout=0.02)
     try:
         # Identify: proves the v2 wire and that the bootloader is in update mode.
         port.reset_input_buffer()
@@ -133,7 +169,7 @@ def main():
         ident = read_frame(port, CMD_IDENTIFY_RESP, IDENTIFY_RESPONSE, timeout=1.0)
         if ident is None:
             print("no identify response - is the core in bootloader update mode "
-                  "(GPIO2 held at reset)?")
+                  "(GPIO2 held at reset, red LED lit)?")
             return 2
         app_size = int.from_bytes(ident[2:6], "little")
         name = ident[6:38].split(b"\x00", 1)[0].decode("ascii", "replace")
@@ -142,24 +178,9 @@ def main():
             print("image larger than the app space; refusing")
             return 3
 
-        # Write phase: 32-byte chunks, paced so the 4 KB sector erase (on the first chunk
-        # of each sector) finishes before the next frame arrives.
-        chunks = (len(image) + PAYLOAD - 1) // PAYLOAD
-        for i in range(chunks):
-            off = i * PAYLOAD
-            if off % SECTOR == 0:
-                time.sleep(0.05)  # let the previous sector erase complete
-            data = image[off:off + PAYLOAD].ljust(PAYLOAD, b"\xff")
-            port.write(build(CMD_WRITE_REQ, off, data))
-            port.flush()
-            time.sleep(0.002)
-        time.sleep(0.3)
-        print("wrote %d chunks" % chunks)
-
-        # Drain the write acknowledgements (v2 answers every write request with the offset
-        # of the last chunk written successfully).
-        acks, last_off = drain_write_responses(port, min(10.0, 2.0 + chunks * 0.0005))
-        print("write acks drained: %d, last offset %s" % (acks, last_off))
+        chunks, resends, peak, secs = write_image(port, image)
+        print("wrote %d chunks in %.1f s (%.1f KiB/s), resends %d, peak window %d"
+              % (chunks, secs, len(image) / secs / 1024.0, resends, peak))
 
         # Verify phase: read every chunk back and compare.
         mism = 0
