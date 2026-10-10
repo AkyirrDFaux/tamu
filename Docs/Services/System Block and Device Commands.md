@@ -1,6 +1,6 @@
 Basic device information and description. It shares memory internally with static memory, except for the precompiled and fixed information in fields 0 and 1.
 ### Block Type 0
-`F.K:SP` is Field.Key:Struct Position.
+`F.K:SP` is Field.Key:Struct Position. The notation is descriptive: the Register service exposes the System struct as a whole at key 0, not per member.
 
 | Name                        | F.K:SP | Flags | Size               | Note |
 | --------------------------- | ------ | ----- | ------------------ | ---- |
@@ -20,15 +20,15 @@ Basic device information and description. It shares memory internally with stati
 | Total FLASH                 | 5.0:1  | RO    | uint32             | Available to the filesystem |
 | Name                        | 6      | P     | `Name`             | Applies fully after reboot |
 | NetID                       | 7      | P     | uint8              | Core only; applies only after reboot |
-| App Active                  | 8      | RO    | Enum               | Core only (No/USB/BLE/Legacy BT/WiFi) |
-| WiFi connection information | 8.1    | P     |                    | SSID and Password. WiFi devices only, autoconnects |
+| App Active                  | 8      | RO    | Enum               | Core only (No/USB/BLE; WiFi planned) |
+| WiFi connection information | 8.1    | P     |                    | SSID and Password. WiFi devices only, autoconnects (planned; not implemented) |
 
 If possible, the device name is shown in BLE advertising and on USB.
 
 The Capability field is a 32bit field with one bit per entry:
 
 	- Core
-	- Router
+	- Router (reserved; not implemented)
 	- Node
 	- App Interface
 	- Dynamic Memory

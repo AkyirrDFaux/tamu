@@ -166,23 +166,10 @@ are hardware-only.
   closer look).
 
 ### Docs-conformance sweep wording (2026-10-04)
-- **E10** **Documented but not implemented** (future/planned, `Plan.md`): WiFi `App Active` values + System
-  field 8.1 SSID/Password; Router capability + service (stub only); branch-broadcast address
-  `0x3FE`; UDP app transport; the `Mesh` LED-display shape; the `Effect` data
-  type. (The
-  **Valu v2.0 app** is now implemented - `[env:Valu_v2_0]`, `Devices/Valu_v2.0/`; its two LED
-  displays are registered and the OLED module remains unbuilt, see the Valu section above.)
-- **E11** **Register.md**: the System struct members are shown as keyed positions but only the whole
-  struct is exposed at key 0. (The dynamic Create request now lists `Name` and its response is
-  `Success flag` - that part is resolved.)
-- **E12** **Storage.md**: CID 5/6 payload order is frag-info first with the name at +4 (not Name first);
-  a file's size is the exact byte size (only allocation is page-aligned); the pointer page's
-  *newest* valid slot wins; `MoveFiletable` grow/shrink is `OPTIMIZE_SPEED`-only; utility signatures
-  are `bool` + out-params; the flash API is `Storage_FlashX`; `FindSpace` scans
-  from an internal wear cursor. (Size 0 is now rejected - B11. The record type name is A64.)
-- **E13** **Script.md**: the leading varSpace word is a vestigial IC slot; the symbol-subtype list omits
-  `Number`; no size table (offsets are prefix sums); CID 5 truncates to 112 B; CID 6 takes a line
-  index, not an instruction counter.
+- **E12** **Storage.md flash API names.** The doc lists `Init/Read/Write/Erase/Format` (`Storage.md:40-48`);
+  the code is `Storage_FlashInit/…Read/…Write/…Erase/…Format` with `(offset, data, size)` order.
+  **Deferred**: no rename now — the services-as-classes refactor turns these free functions into
+  Storage methods (Issues A12), which supersedes this wording.
 - **E14** **App Interface.md**: the BLE payload cap is MTU-5, not MTU-2.
 - **E15** **App docs** were synced to the app on 2026-10-07 (the Update tab, the Connection autoconnect
   toggle, the Subscriptions viewer, the actual Devices graph layout and the Device view data

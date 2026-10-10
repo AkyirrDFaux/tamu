@@ -33,7 +33,7 @@ A device ID is 16 bits, of which 6 bits are the net and 10 bits are the device.
 - Device
 	- 0 is unassigned
 	- 0x3FF is a broadcast
-	- 0x3FE is a branch broadcast, not routed away
+	- 0x3FE is a branch broadcast, not routed away (router tree not implemented)
 	- 1021 (1024-3) maximum valid devices
 	- 1 is always the core
 
@@ -46,7 +46,7 @@ An address is written as `NetID.Device`:
 - 0.1: local core
 - 0.8: local device 8
 - 0.3FF: local broadcast
-- 0.3FE: branch broadcast
+- 0.3FE: branch broadcast (not implemented)
 - 3.2: device 2 in net 3
 ### Dictionaries
 The keyed types, `UnknownKeyed`, `Geometry` and `Texture`, describe structured data as a dictionary of keys. Texture values name textures and effects. The generic dictionary is always key 0 with no value, a length of 0 and an invalid offset, which makes it a marker. The keys of the geometry and the texture dictionaries are listed in [[Modules and Blocks/LED Display]].

@@ -173,7 +173,7 @@ static bool ScriptLoad(uint16_t fileId, uint16_t slot) {
         s->ioSpace = (uint8_t *)calloc(1, (size_t)s->inTotal + s->outTotal);
         if (!s->ioSpace) { s->Release(); free(buf); return false; }
     }
-    s->varSpace = (uint8_t *)calloc(1, (size_t)4 + s->varTotal);
+    s->varSpace = (uint8_t *)calloc(1, (size_t)(s->varTotal ? s->varTotal : 1));
     if (!s->varSpace) { s->Release(); free(buf); return false; }
     if (s->constTotal) {
         s->constSpace = (uint8_t *)calloc(1, s->constTotal);

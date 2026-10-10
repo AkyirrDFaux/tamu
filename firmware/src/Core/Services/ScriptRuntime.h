@@ -222,13 +222,23 @@ __attribute__((noinline)) static void HandleScript(const PacketFrame &frame) {
             if (bytes < 1) { RespondStatus(frame, false); return; }
             LoadedScript *s = ScriptActive(frame.payload[0]);
             if (!s) { RespondStatus(frame, false); return; }
-            uint8_t buf[MAX_PAYLOAD_SIZE];
+            // Streamed as FRAG: the 4-byte instruction counter then the variable RAM, which can
+            // exceed one payload.
             uint32_t ic = s->ic;
-            memcpy(buf, &ic, 4);
-            uint16_t n = s->varTotal;
-            if (n > MAX_PAYLOAD_SIZE - 4) n = MAX_PAYLOAD_SIZE - 4;
-            if (n) memcpy(buf + 4, s->varSpace + 4, n);
-            SendResponse(frame, buf, 4 + n);
+            uint16_t total = (uint16_t)(4 + s->varTotal);
+            uint16_t frags = (uint16_t)((total + MAX_FRAG_CONTENT_SIZE - 1) / MAX_FRAG_CONTENT_SIZE);
+            if (frags == 0) frags = 1;
+            for (uint16_t f = 0; f < frags; f++) {
+                uint16_t off = (uint16_t)(f * MAX_FRAG_CONTENT_SIZE);
+                uint16_t len = (uint16_t)((total - off > MAX_FRAG_CONTENT_SIZE)
+                                              ? MAX_FRAG_CONTENT_SIZE : (total - off));
+                uint8_t *dst = tx_frame.payload + 4;
+                for (uint16_t i = 0; i < len; i++) {
+                    uint16_t src = (uint16_t)(off + i);
+                    dst[i] = (src < 4) ? (uint8_t)(ic >> (8 * src)) : s->varSpace[src - 4];
+                }
+                SendFragFragment(frame, f, frags, len);
+            }
             break;
         }
 

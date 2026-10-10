@@ -103,8 +103,8 @@ int main()
     const uint16_t outTotal = (uint16_t)(table[k - 1] - inTotal);
     CHECK_EQ(k, StrideVarBase(inCount, outCount));
 
-    k = StrideOffsetsBuild(table, k, var, varCount, 4); // varSpace leads with the u32 IC
-    const uint16_t varTotal = (uint16_t)(table[k - 1] - 4);
+    k = StrideOffsetsBuild(table, k, var, varCount, 0);
+    const uint16_t varTotal = table[k - 1];
     CHECK_EQ(k, StrideConstBase(inCount, outCount, varCount));
 
     k = StrideOffsetsBuild(table, k, cst, constCount, 0);
@@ -119,7 +119,7 @@ int main()
 
     CheckSpace(table, StrideInBase(), in, inCount, 0, "input");
     CheckSpace(table, StrideOutBase(inCount), out, outCount, inTotal, "output");
-    CheckSpace(table, StrideVarBase(inCount, outCount), var, varCount, 4, "variable");
+    CheckSpace(table, StrideVarBase(inCount, outCount), var, varCount, 0, "variable");
     CheckSpace(table, StrideConstBase(inCount, outCount, varCount), cst, constCount, 0, "constant");
 
     // Totals must describe the spaces the allocations are sized from.

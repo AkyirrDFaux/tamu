@@ -2,7 +2,7 @@ Use define `USE_SCRIPTS`.
 
 Variables, constants and I/O are fixed in type and size. Variables live in a static RAM array inside the script. Constants work as read-only variables. I/O is a register, which is dynamic memory without persistence. Inputs need default values and a specification for the UI, such as whether they render as a switch or a button, and their names. Each script is stored as its own file, `SCR_XXX`.
 
-Scripts are pre-loaded first, which creates their register and variable space. One table stores the currently loaded Script File IDs, another the allocated sizes of variable space memory, and a third the loaded script states. Variable space memory holds the instruction counter at its start.
+Scripts are pre-loaded first, which creates their register and variable space. One table stores the currently loaded Script File IDs, another the allocated sizes of variable space memory, and a third the loaded script states. Variable space memory begins with a reserved word; the variables follow it.
 #### File Blocks
 | Name                    | Size                   | Note |
 | ----------------------- | ---------------------- | ---- |
@@ -92,5 +92,5 @@ Execution happens in the main loop. All instructions run until the same instruct
 | Read state                   | 3  | Script ID                                           | State, Last error code                                    | 0 = OK |
 | Set state                    | 4  | Script ID, new state                                | Success flag                                              | Clears error |
 | Read internal state          | 5  | Script ID                                           | Instruction counter, Variable RAM                         | (editor debug) |
-| Move to instruction          | 6  | Script ID, Instruction number                       | Success flag                                              | (editor debug) |
+| Move to instruction          | 6  | Script ID, Line index (uint32)                      |                                                           | (editor debug) |
 | Write Variable               | 7  | Script ID, Variable ID, Value                       | Success flag                                              | (editor debug) |

@@ -217,7 +217,7 @@ struct ScriptLineInfo {
 
 // One loaded script. Value spaces are parallel to the register tables:
 //   ioSpace    : inputs then outputs, 4-byte strided (volatile)
-//   varSpace   : leading u32 instruction counter + variables
+//   varSpace   : variables
 //   constSpace : constants (read-only)
 struct LoadedScript {
     bool active = false;
@@ -304,8 +304,8 @@ struct LoadedScript {
         inTotal = offsets[inCount];
         k = StrideOffsetsBuild(offsets, k, outMeta, outCount, inTotal); // outputs follow inputs
         outTotal = (uint16_t)(offsets[k - 1] - inTotal);
-        k = StrideOffsetsBuild(offsets, k, varMeta, varCount, 4); // varSpace leads with the u32 IC
-        varTotal = (uint16_t)(offsets[k - 1] - 4);
+        k = StrideOffsetsBuild(offsets, k, varMeta, varCount, 0);
+        varTotal = offsets[k - 1];
         k = StrideOffsetsBuild(offsets, k, constMeta, constCount, 0);
         constTotal = offsets[k - 1];
         return true;
