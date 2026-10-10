@@ -26,15 +26,3 @@ The architecture the firmware follows: what it needs, the services it is built f
 The value and payload types are defined in [[Data Formats]].
 ### Modules
 Sets of predefined memory blocks and the functions that together provide one unified feature to the device. A module is included per device by its capabilities, and almost always has device-specific implementations.
-### Code Rules
-[[Code Style]] owns these in full; this is the architecture-level summary.
-- Use PascalCase where possible.
-- Each service or large feature is a class.
-- Reuse code wherever possible.
-- Use structs for data organisation, such as command payloads.
-- Use malloc, realloc and free instead of new and delete.
-- Keep functions moderate in length, around 20 lines and at most 50, except for switches that only call functions.
-- Device-specific implementations have separate folders.
-- Avoid `BOARD_X` ifdefs in the core; guard on capabilities only.
-- Do not import new libraries, and do not use the float or double types, not even the standard ones, except for `<cstdint>`, `<cstddef>`, `<cstring>` and `<cstdlib>`, and those required within the ESP32 scope.
-- Remember that this is an embedded system with limited resources.

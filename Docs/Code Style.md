@@ -6,8 +6,9 @@ Applies to everything under `firmware/src/` and `app/lib/`. New and edited code 
 - One instance per binary, defined in that top header: `RegisterService Register;`. A device enables a service by which `Handle` the dispatcher calls, not by allocating an instance.
 - Non-virtual methods, no inheritance, no vtable, and no constructor that needs runtime work. `Init()` is explicit and called from the device's `Main()`, so static-initialisation order never matters; it resets the service's own state and does nothing else.
 - A service's member state is named for what it holds, with no prefix: `WriteOffset`, `NetId`, `RegistryTable`.
-- `Handle(const PacketFrame &Frame)` returns whether the service consumed the packet. The dispatcher is a table of `(service, handler)` entries rather than a switch.
+- `Handle(const PacketFrame &Frame)` returns whether the service consumed the packet.
 - A function that belongs to a service is a member of it. Only the framing helpers (`Packet`, `Dispatcher`, `Crc8`, `TimeSync`) stay free functions.
+- Device-specific implementations live in their own folder under `Devices/<board>/`; shared behaviour belongs in `Blocks/` and is enabled per device by capability flags.
 ### Naming
 - PascalCase for every identifier the project names: types, classes, functions and methods, enum types and their members, class members, locals, parameters and globals: `PacketFrame`, `HandleRegister`, `BlockTypeRange`, `StorageBlockFS`, `WriteOffset`, `ContentLen`.
 - No prefixes on state. A member or a static is named for what it holds, not for its storage class: `WriteOffset`, never `s_write_off` or `m_writeOffset`.
@@ -35,6 +36,9 @@ Applies to everything under `firmware/src/` and `app/lib/`. New and edited code 
 - `#pragma once` opens every header, and a header includes what it uses rather than relying on include order.
 - Compile-time guards name a feature (`USE_SCRIPTS`, `USE_APP_INTERFACE`) or an ability (`SCALAR_ONLY`, `TYPE_CORE`). Device identity is a capability, never a `BOARD_*` ifdef.
 - Anything crossing the wire or the flash is laid out to a known size and asserted with `static_assert`.
+- Reuse existing code before writing new code.
+- Use structs to organise data, such as command payloads.
+- Add no new libraries: this is an embedded system with limited resources.
 ### Functions
 - Around 20 lines, 50 at most, except a dispatcher switch whose arms only call functions.
 - One purpose each, and an early return in preference to nested conditionals.
