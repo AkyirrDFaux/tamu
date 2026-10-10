@@ -63,7 +63,7 @@ The suite runs from `app/` with the Flutter tool on the path.
 - `bash test/run_hil_tests.sh` runs every category, with the core port resolved automatically.
 - `TAMU_HIL=/dev/ttyACM1 bash test/run_hil_tests.sh` runs against an explicit port.
 - `TAMU_HIL=ble bash test/run_hil_tests.sh` runs over BLE.
-- `TAMU_HIL_BOOTLOADER=2 bash test/run_hil_tests.sh` declares device `2` to be in bootloader mode.
+- `TAMU_HIL_BOOTLOADER=1 bash test/run_hil_tests.sh` declares that a device is in bootloader mode. Such a device is off the bus - the bootloader ignores standard packets - so the scan cannot see it and the declaration stands in for the scan. Its value is irrelevant: bootloader frames carry no address, so the reply comes from whatever is in update mode.
 - `bash test/run_hil_tests.sh --scan` lists the rig and stops.
 - `bash test/run_hil_tests.sh --category module` runs one category.
 - `bash test/run_hil_tests.sh --bootloader` runs the bootloader category on its own.

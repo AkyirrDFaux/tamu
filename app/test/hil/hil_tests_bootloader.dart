@@ -65,17 +65,17 @@ final List<HilTest> bootloaderTests = <HilTest>[
     prereq: _inBootloader,
     body: (ctx) async {
       final boot = BootloaderClient(coreId: _relayCoreId(ctx));
-      for (final d in ctx.devices(_inBootloader)) {
+      for (final _ in ctx.devices(_inBootloader)) {
         final id = await boot.identify();
         expect(id, isNotNull,
-            reason: 'device ${d.id} did not answer identify - '
+            reason: 'the device did not answer identify - '
                 'is it in bootloader mode (BOOTLOADER_FORCE)?');
         if (id == null) return;
-        ctx.note('device ${d.id}: identified ${id.name} '
+        ctx.note('the device: identified ${id.name} '
             '(${id.appSize} byte app space)');
-        expect(id.name, isNotEmpty, reason: 'device ${d.id} reports a name');
+        expect(id.name, isNotEmpty, reason: 'the device reports a name');
         expect(id.appSize, greaterThan(0),
-            reason: 'device ${d.id} reports a non-zero app space');
+            reason: 'the device reports a non-zero app space');
       }
     },
   ),
@@ -86,25 +86,25 @@ final List<HilTest> bootloaderTests = <HilTest>[
     prereq: _inBootloader,
     body: (ctx) async {
       final boot = BootloaderClient(coreId: _relayCoreId(ctx));
-      for (final d in ctx.devices(_inBootloader)) {
+      for (final _ in ctx.devices(_inBootloader)) {
         final id = await boot.identify();
-        expect(id, isNotNull, reason: 'device ${d.id} did not answer identify');
+        expect(id, isNotNull, reason: 'the device did not answer identify');
         if (id == null) return;
         if (id.appSize > _wholeImageLimit) {
           markTestSkipped(
-              'device ${d.id} app space ${id.appSize} B exceeds the whole-image limit');
+              'the device app space ${id.appSize} B exceeds the whole-image limit');
           return;
         }
         final image = await _readImage(boot, id.appSize);
         expect(image, isNotNull,
-            reason: 'device ${d.id} app image did not read back completely');
+            reason: 'the device app image did not read back completely');
         if (image == null) return;
         expect(image.length, _chunkCount(id.appSize) * Bootloader.payloadSize,
-            reason: 'device ${d.id} app image has the expected length');
+            reason: 'the device app image has the expected length');
         // A programmed image: erased flash reads back all 0xFF.
         expect(image.any((b) => b != 0xFF), isTrue,
-            reason: 'device ${d.id} app space holds a programmed image');
-        ctx.note('device ${d.id}: read ${image.length} bytes of a '
+            reason: 'the device app space holds a programmed image');
+        ctx.note('the device: read ${image.length} bytes of a '
             '${id.appSize} byte app space');
       }
     },
@@ -116,13 +116,13 @@ final List<HilTest> bootloaderTests = <HilTest>[
     prereq: _inBootloader,
     body: (ctx) async {
       final boot = BootloaderClient(coreId: _relayCoreId(ctx));
-      for (final d in ctx.devices(_inBootloader)) {
+      for (final _ in ctx.devices(_inBootloader)) {
         final id = await boot.identify();
-        expect(id, isNotNull, reason: 'device ${d.id} did not answer identify');
+        expect(id, isNotNull, reason: 'the device did not answer identify');
         if (id == null) return;
         if (id.appSize > _wholeImageLimit) {
           markTestSkipped(
-              'device ${d.id} app space ${id.appSize} B exceeds the whole-image limit');
+              'the device app space ${id.appSize} B exceeds the whole-image limit');
           return;
         }
         // Read the device's own image first: the round trip only ever writes
@@ -131,7 +131,7 @@ final List<HilTest> bootloaderTests = <HilTest>[
         final image = await _readImage(boot, id.appSize);
         if (image == null) {
           markTestSkipped(
-              'device ${d.id} app image did not read back; refusing to write');
+              'the device app image did not read back; refusing to write');
           return;
         }
         final phases = <FlashPhase>[];
@@ -143,12 +143,12 @@ final List<HilTest> bootloaderTests = <HilTest>[
               }
             });
         expect(result.verified, isTrue,
-            reason: 'device ${d.id} image not verified after ${result.passes} '
+            reason: 'the device image not verified after ${result.passes} '
                 'passes (${result.corrections} corrections)');
         expect(phases, contains(FlashPhase.writing));
         expect(phases, contains(FlashPhase.verifying));
         expect(phases.last, FlashPhase.done);
-        ctx.note('device ${d.id}: rewrote ${image.length} bytes, '
+        ctx.note('the device: rewrote ${image.length} bytes, '
             'passes=${result.passes} corrections=${result.corrections} '
             'writes=${result.writes} reads=${result.reads}');
       }

@@ -9,7 +9,7 @@
 #   bash test/run_hil_tests.sh --category module --device 2
 #   TAMU_HIL=/dev/ttyACM0 bash test/run_hil_tests.sh # explicit port
 #   TAMU_HIL=ble bash test/run_hil_tests.sh          # BLE
-#   TAMU_HIL_BOOTLOADER=2 bash test/run_hil_tests.sh # device 2 is in bootloader mode
+#   TAMU_HIL_BOOTLOADER=1 bash test/run_hil_tests.sh # a device is in bootloader mode
 #
 # The core port is resolved from /dev/serial/by-id when TAMU_HIL is unset, because
 # the /dev/ttyACM<N> numbering changes between sessions and on replug. Every run

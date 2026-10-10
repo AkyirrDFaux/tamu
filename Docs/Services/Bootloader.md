@@ -94,6 +94,8 @@ Allows the app to send bootloader packets to the RSBus, for the identification, 
 
 The passthrough is asynchronous: the core issues the frame and keeps serving while it awaits the reply. A reply that does not arrive within 1 s returns the failure flag, and a request arriving while one is pending is refused.
 
+The two packet families share one UART, so while a passthrough is outstanding the core tells them apart: the bytes of a bootloader frame accumulate in the passthrough's own buffer and everything else continues through the standard packet assembler. Neither is dropped, and a bootloader reply is never mistaken for - or discarded as - standard traffic.
+
 | Name                   | ID | Request         | Response        | Note |
 | ---------------------- | -- | --------------- | --------------- | ---- |
 | Request identification | 0  | -               | App size, Name  |      |

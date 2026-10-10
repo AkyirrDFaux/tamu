@@ -151,13 +151,12 @@ class HilEnv {
     final db = DeviceDatabase.instance;
     await db.refreshNetwork();
 
-    final declared = (Platform.environment['TAMU_HIL_BOOTLOADER'] ?? '')
-        .split(',')
-        .map((s) => s.trim())
-        .where((s) => s.isNotEmpty)
-        .map(int.tryParse)
-        .whereType<int>()
-        .toSet();
+    // TAMU_HIL_BOOTLOADER declares that a device is in bootloader mode. Such a device is off
+    // the bus - the bootloader ignores the standard packets - so the scan cannot see it and the
+    // declaration stands in for the scan. Its value is irrelevant: bootloader frames carry no
+    // address, and the core's passthrough reaches whatever is in update mode.
+    final bootloaderDeclared =
+        (Platform.environment['TAMU_HIL_BOOTLOADER'] ?? '').trim().isNotEmpty;
 
     final devices = <HilDevice>[];
     for (final entry in db.all) {
@@ -182,20 +181,17 @@ class HilEnv {
         capabilities: entry.capabilities,
         name: entry.name,
         blocks: blocks,
-        bootloader: declared.contains(entry.id),
+        bootloader: false,
       ));
     }
-    // A device in bootloader mode is off the bus - the bootloader ignores the standard
-    // packets - so the scan cannot see it; the operator declares it with
-    // TAMU_HIL_BOOTLOADER. Add the declared ids the scan did not find, so the bootloader
-    // tests have a target. The core passthrough reaches it without addressing it.
-    for (final id in declared) {
-      if (devices.any((d) => d.id == id)) continue;
+    // The declaration stands in for the scan with a placeholder device: the tests address the
+    // core's passthrough, which reaches whatever is in update mode without naming it.
+    if (bootloaderDeclared) {
       devices.add(HilDevice(
-        id: id,
+        id: 0,
         type: DeviceType.unknown,
         capabilities: 0,
-        name: 'device $id (bootloader)',
+        name: 'a device in bootloader mode',
         bootloader: true,
       ));
     }
