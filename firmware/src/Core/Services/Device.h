@@ -26,14 +26,41 @@ public:
     void Init();                           // resets the service-owned state (none to date)
     bool Handle(const PacketFrame &Frame); // CID dispatch; true if consumed
 
+#ifdef TYPE_CORE
+    // Main-loop tick for the asynchronous bootloader passthrough (CIDs 0x20/0x21/0x22):
+    // returns immediately unless a request is outstanding, settles the awaited reply into a
+    // Device response, or fails it on the 1 s deadline. Call next to the other service ticks.
+    void PollBootloaderPassthrough();
+#endif
+
 private:
     // Dispatches SNDB requests: Read by ID/SN (0x11), Write (0x12) and Read All (0x13)
     // (Docs/Command ID table.md 0x0011-0x0013).
     void HandleSNDB(const PacketFrame &Frame);
 
     // Bootloader passthrough (Docs/Services/Bootloader.md "Core bootloader passthrough
-    // commands", CIDs 0x20/0x21).
+    // commands", CIDs 0x20 identify / 0x21 write / 0x22 read). Asynchronous: Handle* encodes
+    // the raw frame, RS485SendRaw's it, records the pending request and returns; the main
+    // loop's PollBootloaderPassthrough collects the reply.
     void HandleBootloaderPassthrough(const PacketFrame &Frame, uint8_t Cid);
+
+#ifdef TYPE_CORE
+    // One outstanding passthrough request at a time (issue-and-return). The state is only
+    // meaningful while PtPending; PollBootloaderPassthrough's first test is `!PtPending`, so
+    // the idle main loop pays one bool load and no bus access. The routing fields let the
+    // poll rebuild the Device response for the original requester after Handle* has returned.
+    static constexpr uint32_t kPtTimeoutMs = 1000; // reply deadline (ms)
+    static constexpr uint32_t kPtPollMs    = 1;    // per-poll bus read budget (shortest usable)
+    bool PtPending    = false;                    // a request is issued and not yet settled
+    uint8_t PtCid     = 0;                        // passthrough CID (0x20/0x21/0x22)
+    uint8_t PtExpect  = 0;                        // expected Bootloader reply command
+    uint16_t PtSrc    = 0;                        // reply routing: original request IdSrc
+    uint16_t PtCmd    = 0;                        // reply routing: original request Cmd
+    uint16_t PtTrid   = 0;                        // reply routing: original request Trid
+    uint32_t PtOffset = 0;                        // requested offset (write match; read echo)
+    uint32_t PtDeadline = 0;                      // DeviceStatus.UptimeMs deadline
+    uint8_t PtRx[Bootloader::MAX_FRAME_SIZE];     // receive buffer for the reply frame
+#endif
 
     // Sends a single-packet Device service reply back to the requester (src mirrored).
     // `reply` must be a PacketFrame provided by the caller: allocating one here would nest a
@@ -183,107 +210,131 @@ void DeviceService::HandleSNDB(const PacketFrame &Frame)
 
 // The app sends these to the connected core; the core relays the raw frame onto its RSBus.
 // The frame carries no address, so this is a broadcast: every node currently in bootloader
-// mode on that bus receives it. Both writes and reads are acknowledged by the node and the
-// reply is carried back into the passthrough response (Docs/Services/Bootloader.md).
+// mode on that bus receives it. CIDs (Docs/Services/Bootloader.md): 0x20 identify, 0x21 write,
+// 0x22 read. The handler only ISSUES the raw request and returns; PollBootloaderPassthrough
+// (main loop) collects the reply and builds the Device response. One request is outstanding at
+// a time - a second one while pending is refused, never queued.
 inline void DeviceService::HandleBootloaderPassthrough(const PacketFrame &Frame, uint8_t Cid)
 {
-    // cid == 0x22: Request identification (no request payload). The node answers with an
-    // identify response: the app-space size in the offset slot and the 32-byte null-padded
-    // device name as the payload. The request can be lost on the bus, so retry a few times.
-    if (Cid == 0x22)
+    // Busy: refuse a second request rather than queue it, so the app must wait for the
+    // outstanding one to settle (its reply or the 1 s timeout).
+    if (PtPending)
     {
-        for (int Attempt = 0; Attempt < 3; Attempt++)
-        {
-            uint8_t Req[Bootloader::READ_REQ_SIZE];
-            Bootloader::EncodeIdentifyRequest(Req);
-            if (!RS485SendRaw(Req, Bootloader::READ_REQ_SIZE))
-                continue;
-            uint8_t Resp[Bootloader::MAX_FRAME_SIZE];
-            int N = RS485ReceiveRaw(Resp, sizeof(Resp), 200);
-            if (N == Bootloader::DATA_SIZE &&
-                Bootloader::Decode(Resp, (uint16_t)N) == Bootloader::CMD_IDENTIFY_RESP)
-            {
-                uint8_t Out[4 + Bootloader::NAME_SIZE];
-                memcpy(Out, Resp + 2, 4); // app-space size (offset slot)
-                memcpy(Out + 4, Bootloader::Payload(Resp), Bootloader::NAME_SIZE);
-                PacketConstruct(&TxFrame, Frame.IdSrc, Frame.Cmd, Frame.Trid,
-                                 FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_SUCCESS,
-                                 Out, sizeof(Out));
-                DispatchPacket(TxFrame);
-                return;
-            }
-        }
         PacketConstruct(&TxFrame, Frame.IdSrc, Frame.Cmd, Frame.Trid,
-                         FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_FAIL, nullptr, 0);
+                        FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_FAIL, nullptr, 0);
         DispatchPacket(TxFrame);
         return;
     }
 
-    if (PayloadBytes(Frame) < 4)
-        return;
-
-    uint32_t Offset = *reinterpret_cast<const uint32_t *>(Frame.Payload);
-
+    // Encode the raw bootloader request for this CID.
+    uint8_t Raw[Bootloader::DATA_SIZE];
+    size_t Len;
+    uint32_t Offset = 0;
+    uint8_t Expect;
     if (Cid == 0x20)
-    { // Send write packet: Offset, Payload (32). v2: every write - accepted or rejected - is
-      // answered by a 7-byte write response carrying the offset of the last successfully
-      // written chunk; relay that offset so the app can resynchronise after a rejected chunk.
+    { // Identification: header-only request (no request payload).
+        Bootloader::EncodeIdentifyRequest(Raw);
+        Len = Bootloader::READ_REQ_SIZE;
+        Expect = Bootloader::CMD_IDENTIFY_RESP;
+    }
+    else if (Cid == 0x21)
+    { // Send write packet: Offset (4) + Payload (32).
         if (PayloadBytes(Frame) < 4 + Bootloader::PAYLOAD_SIZE)
             return;
-        uint8_t Raw[Bootloader::DATA_SIZE];
+        Offset = LoadUnaligned<uint32_t>(Frame.Payload);
         Bootloader::EncodeWrite(Offset, Frame.Payload + 4, Raw);
-        for (int Attempt = 0; Attempt < 3; Attempt++)
-        {
-            if (!RS485SendRaw(Raw, Bootloader::DATA_SIZE))
-                continue;
-            uint8_t Resp[Bootloader::MAX_FRAME_SIZE];
-            int N = RS485ReceiveRaw(Resp, sizeof(Resp), 200);
-            if (N == Bootloader::READ_REQ_SIZE &&
-                Bootloader::Decode(Resp, (uint16_t)N) == Bootloader::CMD_WRITE_RESP)
-            {
-                uint32_t Last = Bootloader::Offset(Resp);
-                uint8_t Out[4];
-                memcpy(Out, &Last, 4);
-                PacketConstruct(&TxFrame, Frame.IdSrc, Frame.Cmd, Frame.Trid,
-                                 FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_SUCCESS,
-                                 Out, sizeof(Out));
-                DispatchPacket(TxFrame);
-                return;
-            }
-        }
+        Len = Bootloader::DATA_SIZE;
+        Expect = Bootloader::CMD_WRITE_RESP;
+    }
+    else
+    { // Request read -> Offset (4).
+        if (PayloadBytes(Frame) < 4)
+            return;
+        Offset = LoadUnaligned<uint32_t>(Frame.Payload);
+        Bootloader::EncodeReadRequest(Offset, Raw);
+        Len = Bootloader::READ_REQ_SIZE;
+        Expect = Bootloader::CMD_READ_RESP;
+    }
+
+    // Issue and return. A send failure leaves nothing to await, so fail immediately; otherwise
+    // record the pending request and let the poll collect the reply. A lost request settles as
+    // FAIL on the deadline (no blocking, no retry loop in this handler).
+    if (!RS485SendRaw(Raw, Len))
+    {
         PacketConstruct(&TxFrame, Frame.IdSrc, Frame.Cmd, Frame.Trid,
-                         FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_FAIL, nullptr, 0);
+                        FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_FAIL, nullptr, 0);
         DispatchPacket(TxFrame);
         return;
     }
 
-    // cid == 0x21: Request read -> Offset, Payload. The bootloader replies after the standard
-    // CSMA silence window, but a request can still be lost, so retry a few times; the app
-    // retries again if all fail.
-    for (int Attempt = 0; Attempt < 3; Attempt++)
+    PtCid      = Cid;
+    PtExpect   = Expect;
+    PtSrc      = Frame.IdSrc;
+    PtCmd      = Frame.Cmd;
+    PtTrid     = Frame.Trid;
+    PtOffset   = Offset;
+    PtDeadline = DeviceStatus.UptimeMs + kPtTimeoutMs;
+    PtPending  = true;
+}
+
+// Main-loop tick for the passthrough: settle a pending reply without blocking the loop. Idle
+// cost is a single bool test. While expecting, it reads one reply frame with the shortest
+// usable timeout and, when that frame is the expected reply, builds the Device response;
+// otherwise it keeps waiting until the deadline, then replies FAIL. TIMEOUT = 1 s.
+inline void DeviceService::PollBootloaderPassthrough()
+{
+    if (!PtPending)
+        return; // not expecting a reply: one bool test, no bus access
+
+    // RS485ReceiveRaw(Out, Cap, 0) is a no-op: its `elapsed < TimeoutMs` loop never runs, so
+    // it reads nothing. The shortest timeout that actually reads is 1 ms, and a reply frame is
+    // at most 39 B (~0.85 ms of line time at 460800) whose leading 0xCA stays in the UART ring
+    // until read, so one poll captures the whole frame. Bounded to ~one frame of blocking.
+    int N = RS485ReceiveRaw(PtRx, sizeof(PtRx), kPtPollMs);
+    if (N > 0 && Bootloader::Decode(PtRx, (uint16_t)N) == PtExpect)
     {
-        uint8_t Req[Bootloader::READ_REQ_SIZE];
-        Bootloader::EncodeReadRequest(Offset, Req);
-        if (!RS485SendRaw(Req, Bootloader::READ_REQ_SIZE))
-            continue;
-        uint8_t Resp[Bootloader::MAX_FRAME_SIZE];
-        int N = RS485ReceiveRaw(Resp, sizeof(Resp), 200);
-        if (N == Bootloader::DATA_SIZE &&
-            Bootloader::Decode(Resp, (uint16_t)N) == Bootloader::CMD_READ_RESP)
-        {
-            uint8_t Out[4 + Bootloader::PAYLOAD_SIZE];
-            memcpy(Out, &Offset, 4);
-            memcpy(Out + 4, Bootloader::Payload(Resp), Bootloader::PAYLOAD_SIZE);
-            PacketConstruct(&TxFrame, Frame.IdSrc, Frame.Cmd, Frame.Trid,
-                             FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_SUCCESS,
-                             Out, sizeof(Out));
-            DispatchPacket(TxFrame);
-            return;
+        uint8_t Out[4 + Bootloader::NAME_SIZE];
+        uint8_t Flags = FLAG_TYPE | FLAG_START | FLAG_STOP;
+        uint8_t OutLen = 0;
+
+        if (PtCid == 0x20)
+        { // Identification: app-space size (offset slot) + 32-byte null-padded name.
+            memcpy(Out, PtRx + 2, 4);
+            memcpy(Out + 4, Bootloader::Payload(PtRx), Bootloader::NAME_SIZE);
+            OutLen = sizeof(Out);
+            Flags |= FLAG_SUCCESS;
         }
+        else if (PtCid == 0x21)
+        { // Write: SUCCESS only when the node reports the exact offset we asked it to write;
+          // otherwise FAIL. Either way carry the node's last-written offset so the app can
+          // resynchronise after a rejected chunk.
+            uint32_t Last = Bootloader::Offset(PtRx);
+            memcpy(Out, &Last, 4);
+            OutLen = 4;
+            Flags |= (Last == PtOffset) ? FLAG_SUCCESS : FLAG_FAIL;
+        }
+        else
+        { // Read: echo the requested offset + the 32-byte payload.
+            memcpy(Out, &PtOffset, 4);
+            memcpy(Out + 4, Bootloader::Payload(PtRx), Bootloader::PAYLOAD_SIZE);
+            OutLen = sizeof(Out);
+            Flags |= FLAG_SUCCESS;
+        }
+
+        PtPending = false;
+        PacketConstruct(&TxFrame, PtSrc, PtCmd, PtTrid, Flags, Out, OutLen);
+        DispatchPacket(TxFrame);
+        return;
     }
-    PacketConstruct(&TxFrame, Frame.IdSrc, Frame.Cmd, Frame.Trid,
-                     FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_FAIL, nullptr, 0);
-    DispatchPacket(TxFrame);
+
+    // No reply (or an unrelated frame) yet: settle as FAIL once the deadline passes.
+    if ((int32_t)(DeviceStatus.UptimeMs - PtDeadline) >= 0)
+    {
+        PtPending = false;
+        PacketConstruct(&TxFrame, PtSrc, PtCmd, PtTrid,
+                        FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_FAIL, nullptr, 0);
+        DispatchPacket(TxFrame);
+    }
 }
 #endif // TYPE_CORE
 
@@ -516,9 +567,9 @@ bool DeviceService::Handle(const PacketFrame &Frame)
             break;
         }
 
-        case 0x20: // Bootloader passthrough: send write packet
-        case 0x21: // Bootloader passthrough: request read
-        case 0x22: // Bootloader passthrough: request identification
+        case 0x20: // Bootloader passthrough: request identification
+        case 0x21: // Bootloader passthrough: send write packet
+        case 0x22: // Bootloader passthrough: request read
         {
             HandleBootloaderPassthrough(Frame, Cid);
             break;

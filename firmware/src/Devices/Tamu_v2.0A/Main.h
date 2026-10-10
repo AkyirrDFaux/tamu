@@ -113,6 +113,13 @@ LEDDriver LED(3, 0); // both LED strips: pins 3 (Display1) and 0 (Display2), sen
 #include "AppBLE.h"
 #include "RSBus.h"
 
+#ifdef TYPE_CORE
+// The Device service's asynchronous bootloader passthrough poll is called from the main loop
+// below. Dispatcher.h also includes Device.h, but only after this file's loop is written, so
+// pull it in here (after RSBus.h, whose RS485SendRaw/ReceiveRaw the passthrough uses).
+#include "Core/Services/Device.h"
+#endif
+
 
 
 // Main FreeRTOS task: initialises hardware, broadcasts its serial number to find a short address, then runs the main control loop (bus, buttons, IMU, display).
@@ -245,6 +252,9 @@ LED.Setup();
         ProcessBus();
         Subscriptions.Tick(DeviceStatus.UptimeMs); // periodic provider triggers (docs: checked from the main loop)
         Script.Tick(DeviceStatus.UptimeMs);       // run loaded script programs (Docs/Services/Script.md)
+#ifdef TYPE_CORE
+        DeviceSvc.PollBootloaderPassthrough();    // async Device passthrough reply (CIDs 0x20-0x22)
+#endif
         AppInterface.Pump();
         ButtonUpdate();
 
