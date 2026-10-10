@@ -69,20 +69,38 @@ The individual ranges are managed by the respective service, typically as an inc
 
 This connects asynchronous requests back to the correct function.
 #### Dispatcher
-Packets are routed through the dispatcher, between services and the outside.
+The dispatcher is the device's single routing decision point: it decides whether a packet belongs to this
+device or leaves it, and - when it stays - which local service owns it. Nothing else interprets the CMD
+to pick a service.
+
+**Inputs**
+- The packet: SRC, TGT, CMD, TrID, flags, payload.
+- This device's address and Net ID.
+- The set of services compiled into this device.
+
+**Decisions**, in order:
+1. **Drop** a packet whose TGT is the invalid address.
+2. **Stay in or leave?** The dispatcher makes this decision. A packet is "in" when its TGT is this
+   device's address (a net-0 TGT resolves to our net), the broadcast address, or - on a core - the
+   all-cores address; it then stays in for step 3. Any other TGT leaves the device on the bus. (A
+   packet a router relays for a third device is the router's path, not the dispatcher's.)
+3. **Owner.** A local packet goes to exactly one service:
+   - a **request** goes to the service that owns its CMD;
+   - a **reply** goes to the owner of its TrID, falling back to the CMD's service when the TrID is
+     shared (the System service reuses one incrementing counter). A reply's CMD echoes the request, so
+     the CMD alone cannot identify a replier.
+   A local packet with no owner is an error, reported to the Log service.
+
+**Outputs** - a single delivery to one local service, or a hand-off onto the bus, or nothing.
+
+A service owns its own command IDs and allocates its own TrID range; the dispatcher reads only the CMD
+and the TrID, never the payload.
 
 An internal packet:
 
-	- Service (sender)
-	- Dispatcher
-	- Service (receiver)
+	Service (sender) → Dispatcher → Service (receiver)
 
 An external packet:
 
-	- Service (sender)
-	- Dispatcher (sender)
-	- RSBus (sender)
-	- Routers, optionally
-	- RSBus (receiver)
-	- Dispatcher (receiver)
-	- Service (receiver)
+	Service (sender) → Dispatcher (sender) → RSBus (sender) → Routers, optionally
+	→ RSBus (receiver) → Dispatcher (receiver) → Service (receiver)
