@@ -36,6 +36,7 @@ Modules:
 Page size: 4096 bytes
 Table size: 4 pages
 Storage: 948 kB
+Clock re-sync interval: 150 s (+/-10% jitter)
 ### DAS v0.1 (CH32V003), Node
 | Feature          | Pins                     | Note |
 | ---------------- | ------------------------ | ---- |
@@ -62,6 +63,7 @@ Modules:
 Page size: 64 bytes (fast mode)
 Table size: 1 page
 Storage: 512 B
+Clock re-sync interval: 60 s (+0-15 s jitter)
 ### Valu v2.0 (CH32V203G8R6), Legacy Standalone Node with USB
 | Feature           | Pins                                         | Note |
 | ----------------- | -------------------------------------------- | ---- |

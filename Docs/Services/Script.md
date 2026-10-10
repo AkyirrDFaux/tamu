@@ -68,7 +68,7 @@ Execution happens in the main loop. All instructions run until the same instruct
 - Generic math and logic processor
 	 Var = (X+(Y-6)/Z^2 < P)&U
 - Compose and extract functions
-	`Vector`, `Matrix` and `Colour` plus an Index convert to and from `Number` or `uint8`. A `String` element is a `Char`, not a numeric value.
+	`Vector`, `Matrix` and `Colour` plus an Index convert to and from `Number` or `uint8`. A `Text` element is a `Char`, not a numeric value.
 - Register reader and writer
 	Var, success = read (BlockInfo) / readforeign (Address, BlockInfo).
 	Success = write (Val, BlockInfo) / writeforeign (Val, Address, BlockInfo).
@@ -88,9 +88,9 @@ Execution happens in the main loop. All instructions run until the same instruct
 | ---------------------------- | -- | --------------------------------------------------- | --------------------------------------------------------- | ---- |
 | Get currently loaded scripts | 0  | -                                                   | Fragmentation, Script File IDs (uint16) (stream) | Get actively loaded scripts |
 | Load Script                  | 1  | Script File ID (uint16), Script (loaded) ID (uint8) | Success flag                                            | Load into active memory |
-| Unload script                | 2  | Script (loaded) ID                                   |                                                           | Unload script from active memory |
+| Unload script                | 2  | Script (loaded) ID                                   | Success flag                                              | Unload script from active memory |
 | Read state                   | 3  | Script ID                                           | State, Last error code                                    | 0 = OK |
-| Set state                    | 4  | Script ID, new state                                |                                                           | Clears error |
+| Set state                    | 4  | Script ID, new state                                | Success flag                                              | Clears error |
 | Read internal state          | 5  | Script ID                                           | Instruction counter, Variable RAM                         | (editor debug) |
-| Move to instruction          | 6  | Script ID, Instruction number                       |                                                           | (editor debug) |
-| Write Variable               | 7  | Script ID, Variable ID, Value                       |                                                           | (editor debug) |
+| Move to instruction          | 6  | Script ID, Instruction number                       | Success flag                                              | (editor debug) |
+| Write Variable               | 7  | Script ID, Variable ID, Value                       | Success flag                                              | (editor debug) |

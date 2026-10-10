@@ -44,7 +44,7 @@ The Capability field is a 32bit field with one bit per entry:
 | Identify | 2  | -              | -                                                    | Blink the red LED fast for 10 s |
 | TimeSync | 3  | Local time     | Local time, foreign time received, foreign time sent | NTP-like |
 
-Devices send the discover packet at random intervals until their ID is assigned, then TimeSync to the core. TimeSync repeats at a random interval chosen to maintain accuracy below 10 ms; a larger difference is occasionally acceptable. A two-point approximation is used for drift and offset.
+Devices send the discover packet at random intervals until their ID is assigned, then TimeSync to the core. TimeSync repeats at a device-specific interval (see [[Devices]]) chosen to keep the total difference below 10 ms; a larger difference is occasionally acceptable. A slope and offset model tracks drift and offset.
 ### Core Functions
 Use define `TYPE_CORE`.
 
@@ -56,7 +56,7 @@ After boot the core discover command is sent, and responses are expected within 
 
 If multiple cores are present, the core TimeSyncs to the longest running one, by uptime. After that it continues as normal, assigning IDs within the local net.
 
-The core provides the time reference to its own net, and re-syncs its own time with the longest running core at intervals that depend on its clock stability, jittered so the reference core is not periodically overwhelmed.
+The core provides the time reference to its own net, and re-syncs its own time with the longest running core at a device-specific interval (see [[Devices]]), targeting under 10 ms total difference with the slope and offset model, jittered so the reference core is not periodically overwhelmed.
 #### SNDB
 Every core implements a persistent SN Database.
 

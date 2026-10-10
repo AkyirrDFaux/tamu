@@ -81,25 +81,13 @@ Every firmware document was checked against `firmware/src`; the closed dispositi
 ### A. Doc fixes open (cross-reference rerun, 2026-10-10)
 
 The 2026-10-10 rerun confirmed the earlier sweep; these divergences are **doc-only** (the code
-matches the spec). Findings A61-A65 verified against the current code; **approval required before
-applying**.
+matches the spec). **A61-A63 were ruled on and applied** (see git); the rest await a ruling.
 
-**A61 Re-sync interval is fixed, not stability-dependent.** `System Block and Device Commands.md:59`
-says the core re-syncs "at intervals that depend on its clock stability, jittered"; the code uses a
-fixed `DISCOVER_INTERVAL_MS = 150000` (~2.5 min) with ±10 % jitter (`TimeSync.h:24,31`). Proposed:
-"…at a fixed interval (~2.5 minutes), jittered by ±10 % so the reference core is not periodically
-overwhelmed."
-
-**A62 `String` → `Text` in Script.md.** `Script.md:71` still reads "A `String` element is a `Char`";
-the type is `Text` (`Enums.h:51`, `Data Formats.md:15`). Proposed: "A `Text` element is a `Char`…".
-
-**A63 Set-subscription reply is a Success flag.** `Subscriptions.md:85` and `:92` show "-" for the Set
-response; the code replies `FLAG_SUCCESS` (`SubscriptionsControl.h:197,217,257,264`). Proposed:
-response cell → "Success flag".
-
-**A64 Record type is `FileEntry`, not `Filerecord`.** `Storage.md:61` reads
-`WriteFilerecord(Filerecord NewRecord)`; the code is `WriteFilerecord(const FileEntry &)`
-(`StorageBlockFS.h:125`, `StorageDefs.h:58`). Proposed: `WriteFilerecord(FileEntry NewRecord)`.
+**A64 Record type name consistent everywhere.** `Storage.md:61` reads `WriteFilerecord(Filerecord
+NewRecord)` and the file-table diagram (`:23`) labels "Filerecord 0..4"; the code type is `FileEntry`
+(`StorageDefs.h:58`) while the functions are `WriteFilerecord`/`DeleteFilerecord`
+(`StorageBlockFS.h:125,165`). Ruling: make the term consistent - **file record or file entry**
+everywhere. **Awaiting the term choice.**
 
 **A65 `Bitmap` sits after the effect list.** `LED Display.md:77` lists `Bitmap (reserved)` in the
 texture list, before "The effect list continues the texture enum" (`:79`); the enum value is 8, after

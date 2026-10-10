@@ -82,11 +82,11 @@ The Hash/Hashlike field carries one of:
 | Name                     | ID | Request                  | Response                                | Note |
 | ------------------------ | -- | ------------------------ | --------------------------------------- | ---- |
 | Get subscriptions        | 0  | -                        | Fragmentation, Requester table (stream) |      |
-| Set subscription         | 1  | Entry of requester table | -                                       | A None type means cancel. |
+| Set subscription         | 1  | Entry of requester table | Success flag                            | A None type means cancel. |
 | Recall all subscriptions | 2  | -                        | Success flag                          |      |
 | Save all subscriptions   | 3  | -                        | Success flag                          |      |
 ### Provider Commands (042x)
 | Name              | ID | Request                 | Response                               | Note |
 | ----------------- | -- | ----------------------- | -------------------------------------- | ---- |
 | Get subscriptions | 0  | -                       | Fragmentation, Provider table (stream) |      |
-| Set subscription  | 1  | Entry of provider table | -                                      | A None type means cancel. |
+| Set subscription  | 1  | Entry of provider table | Success flag                           | A None type means cancel. |
