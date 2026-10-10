@@ -14,7 +14,7 @@ inline void SubscriptionsService::SubReply(const PacketFrame &frame, const uint8
                     (uint8_t)(FLAG_TYPE | FLAG_START | FLAG_STOP | extraFlags), payload, len);
 #ifdef USE_APP_INTERFACE
     if (frame.id_src == 0xFFFE) {
-        AppInterfaceSend(tx_frame);
+        AppInterface.Send(tx_frame);
     } else {
         DispatchPacket(tx_frame);
     }

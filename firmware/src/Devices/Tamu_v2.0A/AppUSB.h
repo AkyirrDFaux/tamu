@@ -182,7 +182,7 @@ static void AppRxStream(const uint8_t *data, uint16_t len)
     {
         if (s_wire_parser.Feed(data[i]))
         {
-            AppInterfaceEnqueue(s_wire_parser.frame);
+            AppInterface.Enqueue(s_wire_parser.frame);
             s_wire_parser.Reset();
         }
         else if (s_wire_parser.full || s_wire_parser.got > sizeof(PacketFrame))
@@ -272,7 +272,7 @@ void AppUSBTick()
     bool connected = usb_serial_jtag_is_connected();
     if (was_connected && !connected)
     {
-        AppTxFlushAll();
+        AppInterface.TxFlushAll();
         // AppLinkTask owns both framers; a Reset() here would race the task's Feed().
         s_usb_resync = true;
     }

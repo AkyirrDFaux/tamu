@@ -90,18 +90,6 @@ public:
 // One instance per binary.
 AppInterfaceService AppInterface;
 
-// ---- Temporary forwarders (deleted once every caller uses `AppInterface.` directly) ----
-// The device link hooks and the dispatcher still call the old free-function names.
-inline void AppInterfaceInit() { AppInterface.Init(); }
-inline bool AppInterfaceSend(const PacketFrame &Frame) { return AppInterface.Send(Frame); }
-inline bool AppInterfaceEnqueue(const PacketFrame &Frame) { return AppInterface.Enqueue(Frame); }
-inline void AppInterfaceRouteIn(PacketFrame &Frame) { AppInterface.RouteIn(Frame); }
-inline void AppInterfacePump() { AppInterface.Pump(); }
-inline uint16_t AppTxPeek(uint8_t *Dst, uint16_t Max) { return AppInterface.TxPeek(Dst, Max); }
-inline void AppTxCommit(uint16_t N) { AppInterface.TxCommit(N); }
-inline uint16_t AppTxPop(uint8_t *Dst, uint16_t Max) { return AppInterface.TxPop(Dst, Max); }
-inline void AppTxFlushAll() { AppInterface.TxFlushAll(); }
-
 inline void AppInterfaceService::Init()
 {
     if (!TxRing)

@@ -76,7 +76,7 @@ void DispatchPacket(const PacketFrame &frame)
         if (!handled && is_response &&
             (frame.trid >= TRID_APP_BASE ||
              (frame.trid >= TRID_SUB_BASE && frame.trid <= TRID_SUB_MAX))) {
-            (void)AppInterfaceSend(frame);
+            (void)AppInterface.Send(frame);
             handled = true;
         }
 #endif
@@ -85,7 +85,7 @@ void DispatchPacket(const PacketFrame &frame)
         // (0x2000-0xEFFF), so they route by range instead of by ServiceType.
         if (!handled && is_response &&
             frame.trid >= TRID_SCRIPT_BASE && frame.trid <= TRID_SCRIPT_MAX) {
-            HandleScriptResponse(frame);
+            Script.HandleResponse(frame);
             handled = true;
         }
 #endif
@@ -117,7 +117,7 @@ void DispatchPacket(const PacketFrame &frame)
         case ServiceType::Script:
 #ifdef USE_SCRIPTS
             DeviceLog("DISP", "dispatch Script cid=%d", cid);
-            HandleScript(frame);
+            Script.Handle(frame);
 #endif
             break;
 

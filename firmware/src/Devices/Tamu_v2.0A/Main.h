@@ -16,13 +16,10 @@
 #include "Core/Functions/TimeSync.h"
 #include "Core/Functions/Memory.h"
 #include "Core/Services/StaticMemory.h" // SystemPersistent + the active-flag array sizing
+#include "Core/Services/Script.h"
 
 // Function declarations
 void LoadAllBackups();
-void ReRegisterSubscriptions();
-void SubscriptionsTick(uint32_t nowMs);
-void ScriptsTick(uint32_t nowMs);
-void ScriptsBootLoad();
 
 // Device identity (mandatory, see Core/Functions/Device.h).
 extern const DeviceType kDeviceType = DeviceType::Tamu_v2_0A;
@@ -100,6 +97,10 @@ const StaticBlockDescriptor static_block_registry[] = {
     {&staticVol.display[1], &staticPer.display[1], &Vysi1_Schema, "LEDDisplay2"}};
 const size_t static_block_num = sizeof(static_block_registry) / sizeof(StaticBlockDescriptor);
 
+// The Subscriptions instance the main loop calls. Pulled here (not at the top) because
+// Subscriptions.h includes Register.h, whose split files name the board's staticPer above.
+#include "Core/Services/Subscriptions.h"
+
 #include "PWM.h"
 #include "Button.h"
 #include "AccGyr.h"
@@ -124,12 +125,12 @@ if (!AppConnected) { ESP_LOGI("INIT","b1 storage"); }
     Storage.Init();
 if (!AppConnected) { ESP_LOGI("INIT","b2 backups"); }
     LoadAllBackups(); // restores name + net-id from .SV too
-ScriptsBootLoad();         // loads SCR_XXX scripts flagged load-on-boot (Docs/Services/Script.md)
+Script.BootLoad();         // loads SCR_XXX scripts flagged load-on-boot (Docs/Services/Script.md)
 PreloadVysiLayout();       // Vysi v1.0 layout file -> storage as "LAY_1"
 Vysi1BootLayout(Display1); // apply the (restored) layout file to each display
 Vysi1BootLayout(Display2);
 if (!AppConnected) { ESP_LOGI("INIT","b3 appif"); }
-    AppInterfaceInit();
+    AppInterface.Init();
 
     // BLE app link (Nordic UART service); advertised under the persisted System Name
     // (Docs: "If possible, the device name is shown in BLE advertising"). The Name field is
@@ -179,7 +180,7 @@ LED.Setup();
 
     // Re-register the provider side of any restored requester subscriptions now that we
     // have our bus address (the provider table is non-persistent per the docs).
-    ReRegisterSubscriptions();
+    Subscriptions.ReRegister();
 
     // Core discover (docs, "Core functions"): broadcast to all cores (3F.1) from NetID.1. A
     // response carrying a MATCHING net within 500 ms means this net is claimed twice on the
@@ -241,9 +242,9 @@ LED.Setup();
         }
 
         ProcessBus();
-        SubscriptionsTick(DeviceStatus.UptimeMs); // periodic provider triggers (docs: checked from the main loop)
-        ScriptsTick(DeviceStatus.UptimeMs);       // run loaded script programs (Docs/Services/Script.md)
-        AppInterfacePump();
+        Subscriptions.Tick(DeviceStatus.UptimeMs); // periodic provider triggers (docs: checked from the main loop)
+        Script.Tick(DeviceStatus.UptimeMs);       // run loaded script programs (Docs/Services/Script.md)
+        AppInterface.Pump();
         ButtonUpdate();
 
         // Sample the IMU at its configured output data rate instead of every loop

@@ -110,7 +110,7 @@ class BleServerCallbacks : public NimBLEServerCallbacks
         staticBleRxAssembler.reset();
         s_ble_parser.Reset();
         BleMtu = 23;
-        AppTxFlushAll(); // pending responses belong to the dead session
+        AppInterface.TxFlushAll(); // pending responses belong to the dead session
         extern void appbleResetSessionBreadcrumbs();
         appbleResetSessionBreadcrumbs();
     }
@@ -161,7 +161,7 @@ class BleTxCallbacks : public NimBLECharacteristicCallbacks
             // complete frames are queued for the pump (no intermediate buffer).
             if (s_ble_parser.Feed(b))
             {
-                AppInterfaceEnqueue(s_ble_parser.frame);
+                AppInterface.Enqueue(s_ble_parser.frame);
                 s_ble_parser.Reset();
             }
             else if (s_ble_parser.full)
@@ -307,7 +307,7 @@ void AppBLETick()
     uint16_t chunkCap = budget - 3 - 2;
 
     static uint8_t chunk[BLE_CHUNK];   // static: ~1 KB, too big for the task stack slice
-    uint16_t n = AppTxPeek(chunk, chunkCap);
+    uint16_t n = AppInterface.TxPeek(chunk, chunkCap);
     if (n == 0)
         return;
 
@@ -318,7 +318,7 @@ void AppBLETick()
 
     if (BleTx && BleTx->notify(pkt, (size_t)(2 + n)))
     {
-        AppTxCommit(n); // consumed only when the stack accepted the notification
+        AppInterface.TxCommit(n); // consumed only when the stack accepted the notification
         s_notifyFails = 0;
     }
     else

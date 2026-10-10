@@ -150,13 +150,4 @@ inline void ScriptService::Init()
 #include "Core/Services/ScriptExec.h"
 #include "Core/Services/ScriptRuntime.h"
 
-// ---- Temporary forwarders (deleted once every caller uses `Script.` directly) ----
-// The Dispatcher (HandleScript/HandleScriptResponse) and Devices/*/Main.h (ScriptsTick/
-// ScriptsBootLoad) call these before the Script instance is in scope; the Register service now
-// calls `Script.` directly.
-void HandleScriptResponse(const PacketFrame &frame) { Script.HandleResponse(frame); }
-void ScriptsTick(uint32_t nowMs) { Script.Tick(nowMs); }
-void ScriptsBootLoad() { Script.BootLoad(); }
-static void HandleScript(const PacketFrame &frame) { Script.Handle(frame); }
-
 #endif // USE_SCRIPTS

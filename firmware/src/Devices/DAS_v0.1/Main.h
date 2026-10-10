@@ -8,7 +8,6 @@
 
 // Forward declaration for LoadAllBackups function
 void LoadAllBackups();
-void SubscriptionsTick(uint32_t nowMs);
 
 #include "Base.h"
 #include "RSBus.h"
@@ -88,6 +87,9 @@ const StaticBlockDescriptor static_block_registry[] = {
     {&staticVol.led, nullptr, &LED_Schema, "LED"},
 };
 const size_t static_block_num = sizeof(static_block_registry) / sizeof(StaticBlockDescriptor);
+
+// The Subscriptions instance the main loop calls, pulled after the board's staticPer above.
+#include "Core/Services/Subscriptions.h"
 
 // DAS device implementations (drive the actual pins); included after the block instances.
 #include "Button.h"
@@ -197,7 +199,7 @@ int main(void)
     {
         TimeUpdate();
         ProcessBus();
-        SubscriptionsTick(DeviceStatus.UptimeMs); // periodic provider triggers (main loop)
+        Subscriptions.Tick(DeviceStatus.UptimeMs); // periodic provider triggers (main loop)
 
         // Re-sync to the core every ~60-75 s (synchronized-device initiated, jittered so
         // nodes do not burst together). Measured in raw time so a clock correction cannot

@@ -102,9 +102,7 @@ SubscriptionsService Subscriptions;
 // Temporary forwarders: the device main loops (SubscriptionsTick/ReRegisterSubscriptions)
 // and the Device service (SubscriptionsRequestReRegister) still call the old free-function names.
 // ---------------------------------------------------------------------------
-inline void SubscriptionsTick(uint32_t nowMs) { Subscriptions.Tick(nowMs); }
 #ifdef USE_SUB_REQUEST
-inline void ReRegisterSubscriptions() { Subscriptions.ReRegister(); }
 inline void SubscriptionsRequestReRegister(uint16_t addr) { Subscriptions.RequestReRegister(addr); }
 #endif
 

@@ -5,7 +5,6 @@
 // Forward declarations for the core routines the device loop calls (defined in the shared
 // Core, included later in the translation unit).
 void LoadAllBackups();
-void ScriptsTick(uint32_t nowMs);
 
 #include "Base.h"
 #include "Bus.h"
@@ -17,6 +16,7 @@ void ScriptsTick(uint32_t nowMs);
 #include "Blocks/Vysi1Display.h"
 #include "Core/Functions/Device.h"
 #include "Core/Services/StaticMemory.h"
+#include "Core/Services/Script.h"
 
 // CH32V20x electronic signature area (same address the SDK's own FLASH_GetMACAddress reads):
 // the 96-bit unique device ID lives at 0x1FFFF7E8. Used as the 14-byte serial number.
@@ -159,7 +159,7 @@ int main(void)
     SetupFanPWM();
 
     // USB App Interface: allocate the TX ring (AppInterfaceInit) then bring the controller up.
-    AppInterfaceInit();
+    AppInterface.Init();
     AppUSBInit();
 
     // Standalone device: this board has no RSBus (Docs/Devices.md lists no bus/Router service),
@@ -181,11 +181,11 @@ int main(void)
     {
         TimeUpdate();
         // USB App Interface: pump TinyUSB, dispatch queued inbound app frames, flush replies.
-        AppInterfacePump();
+        AppInterface.Pump();
 
         ButtonsUpdate();
         LEDButtonUpdate();
-        ScriptsTick(DeviceStatus.UptimeMs); // run loaded script programs (Docs/Services/Script.md)
+        Script.Tick(DeviceStatus.UptimeMs); // run loaded script programs (Docs/Services/Script.md)
 
         uint32_t now_ms = Now();
 
