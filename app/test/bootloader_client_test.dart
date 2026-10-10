@@ -131,16 +131,36 @@ void main() {
   test('identify exposes the app size and name', () async {
     final t = FakeTransport()
       ..identity =
-          const BootloaderIdentity(appSize: 0x2A0000, name: 'Tamu core v2.0A');
+          const BootloaderIdentity(appSize: 0x2A0000, name: 'Tamu v2.0A');
     final id = await _client(t).identify();
 
     expect(id, isNotNull);
     expect(id!.appSize, 0x2A0000);
-    expect(id.name, 'Tamu core v2.0A');
+    expect(id.name, 'Tamu v2.0A');
   });
 
   test('identify returns null when the device does not answer', () async {
     final t = FakeTransport();
     expect(await _client(t).identify(), isNull);
+  });
+
+  // The passthrough CIDs are wire values shared with the firmware's Device.h; a remap on either
+  // side would silently break every passthrough operation (the codec KATs pin the frame bytes,
+  // but nothing pinned these). Docs/Services/Bootloader.md "Core Bootloader Passthrough
+  // Commands (002x)".
+  group('passthrough command IDs match the firmware', () {
+    test('0x20 identification, 0x21 write, 0x22 read', () {
+      expect(coreBootIdentify, 0x20);
+      expect(coreBootWrite, 0x21);
+      expect(coreBootRead, 0x22);
+    });
+
+    test('the three IDs are distinct and inside the 002x range', () {
+      final ids = {coreBootIdentify, coreBootWrite, coreBootRead};
+      expect(ids.length, 3);
+      for (final id in ids) {
+        expect(id, inInclusiveRange(0x20, 0x22));
+      }
+    });
   });
 }
