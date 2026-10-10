@@ -41,7 +41,7 @@ __attribute__((noinline)) void SendResponse(const PacketFrame &frame, const uint
 {
     if (!(frame.flags & FLAG_REQACK))
         return;
-    PacketConstruct(&tx_frame, frame.id_src, frame.srv_tgt, frame.trid,
+    PacketConstruct(&tx_frame, frame.id_src, frame.cmd, frame.trid,
                      (uint8_t)(FLAG_TYPE | FLAG_START | FLAG_STOP | status), payload, len);
     DispatchPacket(tx_frame);
 }
@@ -72,7 +72,7 @@ __attribute__((noinline)) void RespondStatus(const PacketFrame &frame, bool ok)
     {
 #ifndef DEVICE_LOG_TEXTLESS
         const char *tag = "MEM";
-        switch (GetServiceType(frame.srv_tgt))
+        switch (GetServiceType(frame.cmd))
         {
             case ServiceType::Storage:        tag = "STORAGE"; break;
             default: break;
@@ -84,12 +84,12 @@ __attribute__((noinline)) void RespondStatus(const PacketFrame &frame, bool ok)
             block = idx->Block; field = idx->Field; key = idx->Key;
         }
         DeviceLog(tag, "CID %u failed block=%u field=%u key=%u",
-                  (unsigned)GetServiceCID(frame.srv_tgt),
+                  (unsigned)GetServiceCID(frame.cmd),
                   (unsigned)block, (unsigned)field, (unsigned)key);
 #endif
         // Structured report (LogHandler CID 0): reaches the core's log DB even
         // from textless nodes; code = CID so failures dedup per service+op.
-        ReportLog(MakeLog(false, (uint8_t)GetServiceType(frame.srv_tgt), GetServiceCID(frame.srv_tgt), 0), PRIORITY_ERROR);
+        ReportLog(MakeLog(false, (uint8_t)GetServiceType(frame.cmd), GetServiceCID(frame.cmd), 0), PRIORITY_ERROR);
     }
     SendResponse(frame, nullptr, 0, (uint8_t)(ok ? FLAG_SUCCESS : FLAG_FAIL));
 }

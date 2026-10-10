@@ -34,7 +34,7 @@ inline void StorageService::Init()
 
 inline bool StorageService::Handle(const PacketFrame &frame)
 {
-    uint8_t cid = GetServiceCID(frame.srv_tgt);
+    uint8_t cid = GetServiceCID(frame.cmd);
     bool is_response = (frame.flags & FLAG_TYPE);
 
     if (is_response) return true;

@@ -305,7 +305,7 @@ inline void SubscriptionsService::EvaluateProviderTriggers(uint32_t nowMs) {
         }
 #endif
         if (!applied) {
-            uint8_t prio = SubscriptionsHighPriority(e->sub.trigger) ? SUB_PRIORITY_HIGH : SUB_PRIORITY_LOW;
+            uint8_t prio = SubscriptionsHighPriority(e->sub.trigger) ? PRIORITY_SUB_HIGH : PRIORITY_SUB_LOW;
             // Only OnChangeConfirm repeats until acknowledged; tagging every update with
             // FLAG_REQACK made the requester confirm triggers that never expect a reply.
             uint8_t flags = FLAG_TYPE | FLAG_START | FLAG_STOP;

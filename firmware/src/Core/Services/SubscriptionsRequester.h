@@ -84,7 +84,7 @@ inline void SubscriptionsService::ApplyRequesterValue(RequesterEntry *e, const u
     PacketFrame reply;
     PacketConstruct(&reply, e->providerAddr, MakeService(ServiceType::Subscriptions, 0),
                     e->trid, FLAG_START | FLAG_STOP, (const uint8_t *)&h, sizeof(h),
-                    SUB_PRIORITY_HIGH);
+                    PRIORITY_SUB_HIGH);
     SendAndVerifyPacket(reply);
 }
 

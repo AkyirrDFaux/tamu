@@ -47,13 +47,13 @@ void DispatchPacket(const PacketFrame &frame)
     if (all_cores || (NetQualifyLocal(frame.id_tgt, DeviceStatus.NetId) == DeviceStatus.ShortAddress) ||
         (frame.id_tgt == ADDR_BROADCAST))
     {
-        DeviceLog("DISP", "local interest id_tgt=%d id_src=%d srv_tgt=0x%04X trid=0x%04X", frame.id_tgt, frame.id_src, frame.srv_tgt, frame.trid);
+        DeviceLog("DISP", "local interest id_tgt=%d id_src=%d cmd=0x%04X trid=0x%04X", frame.id_tgt, frame.id_src, frame.cmd, frame.trid);
         // A response echoes the request's TRID (Docs "Transaction IDs") and carries the
         // request's CMD, so GetServiceType names the replying service. A System reply
         // (0x0000-0x0FFF) therefore routes by CMD; the Subscriptions, App and Script ranges
         // route by the echoed TRID, which each owner allocated.
-        ServiceType target_srv = GetServiceType(frame.srv_tgt);
-        uint8_t cid = GetServiceCID(frame.srv_tgt);
+        ServiceType target_srv = GetServiceType(frame.cmd);
+        uint8_t cid = GetServiceCID(frame.cmd);
         bool is_response = (frame.flags & FLAG_TYPE) != 0;
         DeviceLog("DISP", "dispatching to service=%d cid=%d", target_srv, cid);
 

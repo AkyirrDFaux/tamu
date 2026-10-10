@@ -156,7 +156,7 @@ inline void ScriptService::BootLoad() {
 __attribute__((noinline)) inline bool ScriptService::Handle(const PacketFrame &frame) {
     if (frame.flags & FLAG_TYPE) return true; // responses are not handled locally
 
-    uint8_t cid = GetServiceCID(frame.srv_tgt);
+    uint8_t cid = GetServiceCID(frame.cmd);
     uint16_t bytes = PayloadBytes(frame);
 
     switch (cid) {

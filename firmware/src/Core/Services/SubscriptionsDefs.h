@@ -23,8 +23,6 @@
 
 // Packet priorities (Docs/RSBus and Packets.md: high-priority subscriptions sit above
 // "Other" (default 8), low-priority ones below it). Shared with the class table in Packet.h.
-#define SUB_PRIORITY_HIGH PRIORITY_SUB_HIGH
-#define SUB_PRIORITY_LOW  PRIORITY_SUB_LOW
 
 // FNV-1a hash over the value bytes (provider on-change detection + requester confirmation).
 // A generic hash over data - not service state - so it stays a free helper.

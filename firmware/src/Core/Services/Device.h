@@ -48,7 +48,7 @@ DeviceService DeviceSvc;
 inline void DeviceService::SendDeviceReply(const PacketFrame &frame, PacketFrame &reply,
                                            const void *payload, uint8_t len)
 {
-    PacketConstruct(&reply, frame.id_src, frame.srv_tgt, frame.trid,
+    PacketConstruct(&reply, frame.id_src, frame.cmd, frame.trid,
                      FLAG_TYPE | FLAG_START | FLAG_STOP,
                      (const uint8_t *)payload, len);
     DispatchPacket(reply);
@@ -57,7 +57,7 @@ inline void DeviceService::SendDeviceReply(const PacketFrame &frame, PacketFrame
 #ifdef TYPE_CORE
 void DeviceService::HandleSNDB(const PacketFrame &frame)
 {
-    uint8_t cid = GetServiceCID(frame.srv_tgt);
+    uint8_t cid = GetServiceCID(frame.cmd);
     bool is_response = (frame.flags & FLAG_TYPE);
 
     if (is_response) return; // Core only handles requests
@@ -133,7 +133,7 @@ void DeviceService::HandleSNDB(const PacketFrame &frame)
                 uint16_t wire_id = RegistryAddress(entry);
                 memcpy(payload, entry.uid.bytes, 14);
                 memcpy(payload + 14, &wire_id, 2);
-                PacketConstruct(&tx_frame, frame.id_src, frame.srv_tgt, frame.trid,
+                PacketConstruct(&tx_frame, frame.id_src, frame.cmd, frame.trid,
                                  FLAG_TYPE | FLAG_START | FLAG_STOP, payload, 16);
                 DispatchPacket(tx_frame);
             }
@@ -141,7 +141,7 @@ void DeviceService::HandleSNDB(const PacketFrame &frame)
             {
                 // Send an empty response to indicate not found
                 DeviceLog("DEVICE", "SNDB lookup miss (id or sn)");
-                PacketConstruct(&tx_frame, frame.id_src, frame.srv_tgt, frame.trid,
+                PacketConstruct(&tx_frame, frame.id_src, frame.cmd, frame.trid,
                                  FLAG_TYPE | FLAG_START | FLAG_STOP, nullptr, 0);
                 DispatchPacket(tx_frame);
             }
@@ -168,7 +168,7 @@ void DeviceService::HandleSNDB(const PacketFrame &frame)
                     DeviceLog("DEVICE", "SNDB write id %u failed", (unsigned)write_id);
                 }
                 // Always acknowledge (empty frame = failure, like the CID 13 not-found case).
-                PacketConstruct(&tx_frame, frame.id_src, frame.srv_tgt, frame.trid,
+                PacketConstruct(&tx_frame, frame.id_src, frame.cmd, frame.trid,
                                  FLAG_TYPE | FLAG_START | FLAG_STOP,
                                  success ? frame.payload : nullptr, success ? 16 : 0);
                 DispatchPacket(tx_frame);
@@ -199,7 +199,7 @@ inline void DeviceService::HandleBootloaderPassthrough(const PacketFrame &frame,
         uint8_t raw[Bootloader::DATA_SIZE];
         Bootloader::EncodeWrite(offset, frame.payload + 4, raw);
         bool ok = RS485_SendRaw(raw, Bootloader::DATA_SIZE);
-        PacketConstruct(&tx_frame, frame.id_src, frame.srv_tgt, frame.trid,
+        PacketConstruct(&tx_frame, frame.id_src, frame.cmd, frame.trid,
                          FLAG_TYPE | FLAG_START | FLAG_STOP | (ok ? FLAG_SUCCESS : FLAG_FAIL),
                          nullptr, 0);
         DispatchPacket(tx_frame);
@@ -223,14 +223,14 @@ inline void DeviceService::HandleBootloaderPassthrough(const PacketFrame &frame,
             uint8_t out[4 + Bootloader::PAYLOAD_SIZE];
             memcpy(out, &offset, 4);
             memcpy(out + 4, Bootloader::Payload(resp), Bootloader::PAYLOAD_SIZE);
-            PacketConstruct(&tx_frame, frame.id_src, frame.srv_tgt, frame.trid,
+            PacketConstruct(&tx_frame, frame.id_src, frame.cmd, frame.trid,
                              FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_SUCCESS,
                              out, sizeof(out));
             DispatchPacket(tx_frame);
             return;
         }
     }
-    PacketConstruct(&tx_frame, frame.id_src, frame.srv_tgt, frame.trid,
+    PacketConstruct(&tx_frame, frame.id_src, frame.cmd, frame.trid,
                      FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_FAIL, nullptr, 0);
     DispatchPacket(tx_frame);
 }
@@ -240,7 +240,7 @@ inline void DeviceService::HandleBootloaderPassthrough(const PacketFrame &frame,
 // Name, Uptime, Time sync/offset, SNDB).
 bool DeviceService::Handle(const PacketFrame &frame)
 {
-    uint8_t cid = GetServiceCID(frame.srv_tgt);
+    uint8_t cid = GetServiceCID(frame.cmd);
     bool is_response = (frame.flags & FLAG_TYPE);
 
     if (is_response)
@@ -392,7 +392,7 @@ bool DeviceService::Handle(const PacketFrame &frame)
 #endif
 
             PacketConstruct(&tx_frame, ADDR_BROADCAST,
-                             frame.srv_tgt, // the request CMD (Device service)
+                             frame.cmd, // the request CMD (Device service)
                              frame.trid,    // echo the request TRID
                              FLAG_TYPE | FLAG_START | FLAG_STOP,
                              reinterpret_cast<const uint8_t *>(&response_data),
@@ -432,7 +432,7 @@ bool DeviceService::Handle(const PacketFrame &frame)
                 memcpy(rpl + 0, &time_sent, 4);
                 memcpy(rpl + 4, &t1, 4);
                 memcpy(rpl + 8, &t2, 4);
-                PacketConstruct(&tx_frame, frame.id_src, frame.srv_tgt, frame.trid,
+                PacketConstruct(&tx_frame, frame.id_src, frame.cmd, frame.trid,
                                  FLAG_TYPE | FLAG_START | FLAG_STOP, rpl, 12,
                                  PRIORITY_TIMESYNC);
                 DispatchPacket(tx_frame);
@@ -449,7 +449,7 @@ bool DeviceService::Handle(const PacketFrame &frame)
             uint8_t rpl[14+4];
             memcpy(rpl, &GetSerialNumber(), 14);
             memcpy(rpl+14, &uptime, 4);
-            PacketConstruct(&tx_frame, frame.id_src, frame.srv_tgt, frame.trid,
+            PacketConstruct(&tx_frame, frame.id_src, frame.cmd, frame.trid,
                              FLAG_TYPE | FLAG_START | FLAG_STOP, rpl, 18);
             DispatchPacket(tx_frame);
 #endif

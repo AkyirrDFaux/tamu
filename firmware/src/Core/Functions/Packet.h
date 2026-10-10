@@ -85,8 +85,8 @@ struct PacketFrame
     uint8_t payload_len; // payload length in bytes
     uint16_t id_src;                                 // Source device's address
     uint16_t id_tgt;                                 // Target device's address
-    union { uint16_t cmd; uint16_t srv_tgt; };       // Command (destination service)
-    union { uint16_t trid; uint16_t srv_src; };      // Transaction ID
+    uint16_t cmd;                                    // Command ID
+    uint16_t trid;                                   // Transaction ID
     uint8_t payload[MAX_PAYLOAD_SIZE];
 } __attribute__((packed, aligned(4)));
 
@@ -170,7 +170,7 @@ inline void FinalizeReply(PacketFrame &reply, const PacketFrame &req, uint8_t fl
     reply.priority = priority;
     reply.id_tgt = req.id_src;
     reply.id_src = DeviceStatus.ShortAddress;
-    reply.cmd = req.srv_tgt;   // Destination service: the request's CMD names the service
+    reply.cmd = req.cmd;   // Destination service: the request's CMD names the service
     reply.trid = req.trid;     // Responses echo the request's TRID (Docs "Transaction IDs")
     PacketFinalize(&reply, len);
 }

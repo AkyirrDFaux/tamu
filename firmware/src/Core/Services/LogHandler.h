@@ -65,7 +65,7 @@ inline uint32_t LogHandlerService::LogBuildOrder(uint16_t *order)
 
 inline bool LogHandlerService::Handle(const PacketFrame &frame)
 {
-    uint8_t cid = GetServiceCID(frame.srv_tgt);
+    uint8_t cid = GetServiceCID(frame.cmd);
     if (frame.flags & FLAG_TYPE) return true; // Ignore responses
 
 #ifndef TYPE_CORE

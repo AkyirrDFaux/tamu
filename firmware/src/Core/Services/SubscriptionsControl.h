@@ -10,7 +10,7 @@
 // Shared reply for every subscription CID (docs: responses are packets with FLAG_TYPE).
 inline void SubscriptionsService::SubReply(const PacketFrame &frame, const uint8_t *payload, uint16_t len,
                      uint8_t extraFlags) {
-    PacketConstruct(&tx_frame, frame.id_src, frame.srv_tgt, frame.trid,
+    PacketConstruct(&tx_frame, frame.id_src, frame.cmd, frame.trid,
                     (uint8_t)(FLAG_TYPE | FLAG_START | FLAG_STOP | extraFlags), payload, len);
 #ifdef USE_APP_INTERFACE
     if (frame.id_src == 0xFFFE) {
@@ -108,7 +108,7 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
         return true;
     }
 #endif
-    uint8_t cid = GetServiceCID(frame.srv_tgt);
+    uint8_t cid = GetServiceCID(frame.cmd);
 
     switch (cid) {
         case 0x00: {
