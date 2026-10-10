@@ -6,110 +6,34 @@ remaining low-value follow-ups live in `TODO.md`.
 
 Item codes: **A** = doc-fix rulings, **B** = code-fix items (both from the 2026-10-09 fact check); **E** = the remaining open backlog items, numbered for later handling.
 
-## Planned change: services as classes (2026-10-09, owner request)
+## Completed 2026-10-09/10 (detail in git history)
 
-**Goal.** One service = one class with one instance, non-virtual methods, no `new`, no vtables. The
-CH32V003 has 2 KB of RAM and ~14 KB of flash and shares these sources with the ESP32-C3, so the shape has to
-cost nothing. The wire protocol, the block layouts and the CID map do not move.
+**Services as classes.** Every service is one class with one instance, non-virtual, no `new`, no vtable;
+`Init()` explicit. The dispatcher keeps its `switch` - the `(service, handler)` table was prototyped and
+**rejected** (+204 B Tamu / +128 B DAS / +92 B Valu, over the DAS budget). Eight per-service forwarders
+were removed; `HandleScript`/`HandleScriptResponse` are kept (removing them grows Tamu 910 B).
 
-**Why.** The services are free functions over file-static state today - `HandleRegister`,
-`HandleEnumerateBlocks`, `HandleCreateDynamic`, `HandleSetName`, `HandleLogHandler`, `HandleDeviceService`,
-`HandleSNDB`, `HandleBootloaderPassthrough` - with 19 file-statics in the subscriptions provider alone and 6
-in the script runtime. Nothing owns that state, two services cannot both have an `Init`, and the dispatcher is
-a switch rather than a table. Two shapes already exist beside it: `CoreTimeSyncService` is a class with a
-`Tick()`, and `StorageBlockFS` is a struct behind a global `Storage`. The tree is inconsistent; this picks one.
+**Symbol sweep.** `PacketFrame` is `cmd`/`trid` only; `SUB_PRIORITY_*` -> `PRIORITY_SUB_*`; `PAGE_SIZE`
+collapsed into `STORAGE_BLOCK_SIZE`; the three `-Wno-unused-function` suppressions removed.
 
-**Convention.**
+**Naming.** PascalCase for every project identifier, no state prefixes; external-library symbols keep
+their spelling; a single-letter name is reserved for a short-lived loop index or scratch counter
+(`i`, `j`, `k`, `x`, `y`). The single-letter + lowerCamel remainder is in flight (agent running).
 
-```cpp
-// Core/Services/Register.h
-class RegisterService
-{
-public:
-    void Init();                              // explicit, called from the device's Main
-    bool Handle(const PacketFrame &frame);    // this service's CID dispatch
-private:
-    // the file-static state, moved in as members
-};
-extern RegisterService Register;              // one instance, defined in the service's header
-```
+**Bootloader protocol v2.** 3-bit command field (000 identify-req ... 101 read-resp), a write response
+carrying the last successfully written offset, and an identify request/response (app-space size in the
+offset slot + 32-byte null-padded name). Docs approved and applied (`e824825`, `af4eb79`); codec + all
+three bootloaders (`331de55`), core passthrough relay + RSBus length/decode fix (`7afc8aa`), async
+passthrough + passthrough CID remap (`0c88b33`), app client + native codec test (`6c66172`), app
+passthrough-CID alignment (`a894971`), passthrough-ID test (`37f05e2`), app pre-flash size guard
+(`67fc816`). Sizes: DAS_bootloader 1980/2048, Tamu_bootloader 171940/393216, Valu_bootloader 10568/12288;
+apps unchanged. Offline gate green; firmware and app KATs agree byte-for-byte.
 
-- Non-virtual methods only, no inheritance.
-- No constructor that needs runtime work: `Init()` is called explicitly from the device's `Main()`, so
-  static-initialisation order never matters.
-- One instance per binary, in `Core/Services/`, not per device. A device enables a service by which `Handle`
-  the dispatcher calls (today's `Capabilities` gate), not by allocating one.
-- The file splits stay: the class is declared in the service's top header and its methods are defined in the
-  sibling files. Register's seven files and Subscriptions' six stay as they are; nothing is merged for tidiness.
-- The `Cid` enums stay put; the app mirrors them.
-- `Handle` returns whether it consumed the packet, so the dispatch chain becomes explicit.
-
-**Benefits.** State ownership and a real `Init`/reset (testable), no name collisions between services, a small
-`(service, handler)` dispatcher table, and a name for the documents' "Implementation Functions" sections.
-
-**Cost, measured not guessed.** Method names live in debug info only, and the state moves from file-static to
-member without changing size or order, so both images should stay within a handful of bytes. The real cost is
-the diff across ~24 files, and the risk is a missed `static` acquiring a different lifetime - which is what the
-native tests and both builds are for.
-
-**Order** (each step builds and passes before the next):
-1. `Register` - the biggest, and the one that proves the convention fits a split service.
-2. `Storage` - already a struct with an object; mostly renaming and moving `Init` in. This also
-   absorbs the storage flash API refactor (E12): the `Storage_Flash*` free functions become the
-   service's methods. The same class treatment extends to any other service still written as free
-   functions rather than a class (the point of this plan is one shape for every service).
-3. `Subscriptions` - 19 file-statics and three files that talk to each other.
-4. `Script` - 6 statics plus the VM and a loaded-program table: the riskiest.
-5. `LogHandler`, `Device`/SNDB and the bootloader passthrough - small. The class conversions are done;
-   the dispatcher table is **rejected** (decision below), so the dispatcher keeps its `switch`. Its
-   calls now go straight to the instances: eight of the ten per-service forwarders were removed
-   (size-neutral); the two Script management forwarders (`HandleScript`/`HandleScriptResponse`) are
-   **kept** because removing them grows Tamu by 910 B (DAS/Valu unchanged).
-6. `AppInterface` last. The `Core/Functions/` helpers (`Packet`, `Dispatcher`, `Crc8`, `TimeSync`) stay free
-   functions: only the *services* become classes, and `TimeSync` is already one and is the shape to copy.
-
-**Dispatcher table - decided 2026-10-10 (rejected).** Prototyped as a `static constexpr`
-`(service, handler)` table binding each `ServiceType` to its instance's `Handle`. Measured on the
-settled tree: **+204 B Tamu, +128 B DAS, +92 B Valu**, RAM unchanged. +128 B on the DAS (94.0 % ->
-94.9 % flash, ~860 B free) is over budget, so the dispatcher stays a `switch` and the per-service
-forwarders stay. The `(service, handler)` claim was removed from `Code Style.md` (the dispatcher is a
-framing helper, not a service, so the rule did not belong there anyway).
-
-**Must not change:** the wire protocol, the CID map, the register/block layouts, the `.pio` envs, the
-per-device composition. One `Docs/` change was approved (2026-10-10): the architecture-level code
-rules moved from `General Architecture.md` into `Code Style.md`, which already owns them in full.
-
-**Obsolete-symbols sweep (planned, deferred).** After the class pass lands, remove symbols the
-refactor and history left behind, no behaviour change:
-- `PacketFrame` union aliases: drop `srv_tgt` and `srv_src`, keep `cmd`/`trid` only. `srv_src` is
-  used nowhere (only its definition) - delete outright; `srv_tgt` has 26 call sites across 8 files
-  (`Dispatcher.h`, `MemoryBackup.h`, `Storage.h`, `LogHandler.h`, `Device.h`,
-  `SubscriptionsControl.h`, `ScriptRuntime.h`) to rename to `cmd`.
-- Pure-rename macros in `Core/`: `SUB_PRIORITY_HIGH`/`SUB_PRIORITY_LOW` ->
-  `PRIORITY_SUB_HIGH`/`PRIORITY_SUB_LOW` (2 call sites); `PAGE_SIZE` -> `STORAGE_BLOCK_SIZE` (heavily
-  used in the storage code - confirm the short name is not wanted before collapsing).
-- Any dead forwarders/aliases left from the class pass.
-- The three `-Wno-unused-function` suppressions in `platformio.ini` (the `[valu]` base, `[env:DAS_v0_1]`,
-  `[env:DAS_bootloader]`) were **removed** (2026-10-10) so the warning is live. A clean DAS rebuild and
-  the Tamu build produce no unused-function warnings, so the suppression was masking nothing static;
-  the only low-use free functions (`LogSourceId`/`LogIsBlock`/`LogSourceType`) are exercised by
-  `test/native/log_test.cpp` and stay.
-(The device pin-name macros - `VALU_LED_PORT`, `DAS_BUTTON_PIN`, `MEAS_ADC`, `RS485_EN_PORT`, etc. -
-are deliberate hardware naming, not in scope.)
-
-**Register <-> Script dependency (deferred).** `RegisterDefs.h:16` and `Register.h:26` include
-`Script.h`, and the Script bank is driven through `Script.Active/KeyCount/GetIoPointer/GetEntry/
-SetEntry` (`RegisterDispatch.h:25,72`, `RegisterRead.h:155,165`, `RegisterWrite.h:37,38`,
-`RegisterEnumerate.h:71,200`); Script calls back via `RegisterGet/SetByBlockInfo`
-(`ScriptExec.h:392,406,419`) - a two-way include cycle. Register should name no Script: either a
-small ops table (`GetIoPointer`/`SetEntry`/...) or, better, make the Script bank self-describing the
-way a `DynamicBlockDescriptor` is. Deferred until the Script **respec** lands. Register's by-BlockInfo
-forwarders (`RegisterResolveByBlockInfo`/`Get`/`SetByBlockInfo`) stay until then.
-
-**Verification per step:** `./test.sh` (native firmware tests + the app suite + analyze), both `pio run` envs,
-and the safe HIL sweep once the rig is flashed.
-
-**Sequencing:** unblocked - the in-flight wave and B10 are both done; this is the next work item.
+**Open from this work - HIL.** The v2 wire, the async passthrough (1 ms poll, write success-match, the
+busy/refuse path) and the app's update flow have never run on hardware. Measure the half-duplex
+turn-around: `SendRaw` waits ~32 byte-times (~700 us) for silence before every ack, which may cost more
+than pipelining saves. This also gates TODO's beta criterion "the update flow completes end to end on
+Android".
 
 ## Doc fact check (2026-10-09) - open items
 

@@ -18,6 +18,19 @@ Serial ports renumber between sessions - resolve them from `/dev/serial/by-id` (
 core, WCH-Link = DAS) rather than remembering a `/dev/ttyACM<N>` number. `run_hil_tests.sh` does
 this itself; `TAMU_HIL` overrides it, or set it to `ble` for the BLE path.
 
+## Bootloader protocol v2 (2026-10-10) - implemented, HIL not run
+
+The bootloader wire changed (3-bit command field, write acknowledgement, identify request/response) and
+the core passthrough became asynchronous with remapped IDs (0x20 identification / 0x21 write / 0x22 read).
+Spec: `Docs/Services/Bootloader.md`; partition sizes are in `Docs/Devices.md`. Landed and committed - see
+`Issues.md` "Completed 2026-10-09/10" for the commit list.
+
+**Outstanding:** HIL. Nothing in this change set has run on hardware, and it moves the app's update flow,
+which the beta acceptance criteria below require to work end to end on Android. `hil_bootloader` needs
+the DAS built with `-D BOOTLOADER_FORCE`; the rig is core + 1 DAS. Measure pipelined write throughput
+against the old write-then-read-back path - the per-ack half-duplex turn-around may cost more than the
+ack saves.
+
 ## Beta window plan (2026-10-07) - Tamu core/DAS + app; Valu v2 parked
 
 Reason: a tester is being handed updated builds. Targets are **Windows 11 + Android**. No hard date.
