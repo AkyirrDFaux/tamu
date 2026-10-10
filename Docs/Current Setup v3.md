@@ -14,7 +14,7 @@ The evaluation setup the firmware is exercised against: two DAS nodes, two LED d
 		- A dark green circular iris, slight horizontal fade
 		- Desaturated green vertical pupil (double parabola by default)
 		- Black lid, closing from the top
-- 1x Fan, see [[Modules and Blocks/Generic System Blocks|Fan Output]]
+- 1x Fan, see [[Modules and Blocks/Generic System Blocks|Fan Output]] (not connected in this setup)
 ### Dynamic Blocks
 - Dynamic block 0: [[Services/Subscriptions|Subscriptions]]
 - Dynamic block 1: Left Eye
@@ -45,9 +45,9 @@ Script 4: Brightness regulation
 
 - Uses one LDR to set the brightness of each display, switching between dark and light mode independently.
 
-| <10 Lux | 100 Lux | 3000 Lux | >10k Lux (TODO) |
-| ------- | ------- | -------- | -------- |
-| 5%      | 10%     | 40%      | 70%      |
+| <10 Lux | 100 Lux | 3000 Lux | >8k Lux |
+| ------- | ------- | -------- | ------- |
+| 7%      | 14%     | 60%      | 100%    |
 
 - Input 0: Manual mode, default auto
 - Input 1: Manual mode, left eye switch selection (light or dark)

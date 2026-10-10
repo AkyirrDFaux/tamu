@@ -166,12 +166,12 @@ const List<int> dispOffsetInst1 = [
 /// Script tunables / input defaults (Docs/Current setup v3.md).
 const double targetTemp = 30; // degC (script 1 Input 0)
 const double pGain = 4; // %/degC (script 1 Input 1)
-const double luxBrightMin = 5; // % at 0 lux
-const double luxBrightMax = 70; // % cap
-// Brightness (Docs/Current setup v3.md): <10 lux -> the 5 % floor, 100 lux -> 10 %,
-// 3000 lux -> 40 %, 70 % from ~8.8k lux up. Below LUX_MIN the curve is flat at the floor, so
+const double luxBrightMin = 7; // % at 0 lux
+const double luxBrightMax = 100; // % cap (the layout limit, re-scaled to full scale)
+// Brightness (Docs/Current setup v3.md): <10 lux -> the 7 % floor, 100 lux -> 14 %,
+// 3000 lux -> 60 %, 100 % from 8k lux up. Below LUX_MIN the curve is flat at the floor, so
 // it is a power law over (lux - LUX_MIN) with the exponent fitted to the 100/3000 anchors.
-const double luxSpan = 8850; // lux at which the brightness cap is reached
+const double luxSpan = 8000; // lux at which the brightness cap is reached
 const double luxMin = 10; // lux below which the brightness stays at the floor
 const double brightExpA = 0.5721; // curve exponent (see above)
 /// Brightness script variable holding the clamped lux (index into `ScriptDraft.variables`).

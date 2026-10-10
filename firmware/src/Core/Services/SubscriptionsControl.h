@@ -43,23 +43,21 @@ static void SubscriptionsCancelProvider(uint16_t providerAddr, uint16_t trid) {
 }
 #endif
 
-// Streams a subscription table (u8 count, then `entrySize`-byte entries) as FRAG fragments,
+// Streams a subscription table (`entrySize`-byte entries, no count prefix) as FRAG fragments,
 // copying each occupied entry straight into the fragment payload - no full-table buffer.
 // `occupied` reports whether entry `i` is live (the provider and requester tables differ).
 static void StreamSubscriptionTable(const PacketFrame &frame, const uint8_t *table, uint16_t max,
                                     uint16_t entrySize, bool (*occupied)(const uint8_t *, uint16_t)) {
     uint8_t count = 0;
     for (uint16_t i = 0; i < max; i++) if (occupied(table, i)) count++;
-    uint16_t total = (uint16_t)(1 + (uint16_t)count * entrySize);
+    uint16_t total = (uint16_t)((uint16_t)count * entrySize);
     uint16_t frags = (uint16_t)((total + MAX_FRAG_CONTENT_SIZE - 1) / MAX_FRAG_CONTENT_SIZE);
     if (frags == 0) frags = 1;
 
-    bool countSent = false;
     uint16_t idx = 0;
     for (uint16_t f = 0; f < frags; f++) {
         uint8_t *dst = tx_frame.payload + 4;
         uint16_t n = 0;
-        if (!countSent) { dst[n++] = count; countSent = true; }
         while (idx < max && n + entrySize <= MAX_FRAG_CONTENT_SIZE) {
             if (!occupied(table, idx)) { idx++; continue; }
             memcpy(dst + n, table + (size_t)idx * entrySize, entrySize);

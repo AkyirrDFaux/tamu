@@ -170,18 +170,8 @@ are hardware-only.
   the code is `Storage_FlashInit/…Read/…Write/…Erase/…Format` with `(offset, data, size)` order.
   **Deferred**: no rename now — the services-as-classes refactor turns these free functions into
   Storage methods (Issues A12), which supersedes this wording.
-- **E14** **App Interface.md**: the BLE payload cap is MTU-5, not MTU-2.
-- **E15** **App docs** were synced to the app on 2026-10-07 (the Update tab, the Connection autoconnect
-  toggle, the Subscriptions viewer, the actual Devices graph layout and the Device view data
-  source/capability wording are now documented). Remaining item outside `Docs/App`: `Current setup
-  v3` lux cap is ~8.85k (not 10k) and the fan is not connected.
-- **E17** **Subscriptions.md**: the get-subscriptions stream starts with an undocumented count byte.
 
 ## Storage / DAS
-- **E18** **A few reduced-FS doc leftovers.** `fd2ba14` removed the main "Reduced variant" text, but
-  `Docs/Services/Storage.md` still says "not in reduced file system" in the Create/Delete/Resize/
-  Rename command rows, and `Docs/Devices.md:48` still reads "Memory: 128B (single file from offset
-  0)" (the DAS is now a 512 B multi-file region at `0x3E00`). Optional wording cleanup.
 - **E19** **`.SUBREQ` on a provider-only node** was reported once; the empty-table file is deleted now.
   Re-check if it reappears.
 

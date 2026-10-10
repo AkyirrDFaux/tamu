@@ -55,18 +55,17 @@ class SubscriptionClient {
     }
   }
 
-  /// Decodes a "count + fixed-size entries" reply: the provider table is 32-byte entries and
-  /// the requester table 28-byte ones (CIDs 0x20 and 0x10 respectively).
+  /// Decodes a fixed-size-entry table reply: the provider table is 32-byte entries and the
+  /// requester table 28-byte ones (CIDs 0x20 and 0x10 respectively). Entries fill the stream.
   Future<List<T>> _getSubscriptionList<T>(
       int cid, int entrySize, T Function(int index, List<int> bytes) decode) async {
     final reply = await _request(cid, payload: []);
     final data = reply?.payload;
     if (data == null || data.isEmpty) return [];
 
-    final count = data[0];
     final result = <T>[];
-    int offset = 1;
-    for (int i = 0; i < count && offset + entrySize <= data.length; i++) {
+    int offset = 0;
+    for (int i = 0; offset + entrySize <= data.length; i++) {
       result.add(decode(i, data.sublist(offset, offset + entrySize)));
       offset += entrySize;
     }
