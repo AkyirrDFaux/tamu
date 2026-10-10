@@ -42,21 +42,18 @@ static const BlockEntry System_Entries[] = {
 };
 static const uint16_t System_EntryCount = sizeof(System_Entries) / sizeof(System_Entries[0]);
 
-// Which list is being streamed.
-enum class EnumSrc : uint8_t { System, Static, Dynamic, Script };
-
 // The highest instance a 6-bit packed type word can carry. A type with more instances than
 // that cannot be addressed by BlockInfo anyway, so the packed highest instance must saturate
 // rather than truncate silently (the old `& 0x3F` wrapped a 64th instance back to 0).
 #define ENUM_MAX_INSTANCE 0x3F
 
 // Packs a normal (10.6) block-type word, saturating the instance field.
-static inline uint16_t EnumTypeWordOf(uint16_t type, size_t instances) {
+inline uint16_t RegisterService::EnumTypeWordOf(uint16_t type, size_t instances) {
     uint16_t inst = instances > ENUM_MAX_INSTANCE ? ENUM_MAX_INSTANCE : (uint16_t)instances;
     return (uint16_t)((type << 6) | inst);
 }
 
-static uint16_t EnumTypeCount() {
+inline uint16_t RegisterService::EnumTypeCount() {
     uint16_t count = 1; // the System block
     for (size_t i = 0; i < static_block_num; i++)
         if (i == 0 || static_block_registry[i].Schema->Type != static_block_registry[i - 1].Schema->Type)
@@ -68,7 +65,7 @@ static uint16_t EnumTypeCount() {
 }
 
 #ifdef USE_SCRIPTS
-static uint16_t EnumScriptWord(uint16_t inst, uint16_t i) {
+inline uint16_t RegisterService::EnumScriptWord(uint16_t inst, uint16_t i) {
     uint16_t seen = 0;
     for (uint16_t f = 0; f <= SCRIPT_FIELD_OUTPUT; f++) {
         uint8_t keys = ScriptKeyCount(inst, (uint8_t)f);
@@ -81,7 +78,7 @@ static uint16_t EnumScriptWord(uint16_t inst, uint16_t i) {
 
 // The word at index `i` of the requested list, or 0 past its end. Out of line so LTO cannot
 // clone the streamer's loop once per list kind (which re-inflates it to the pre-refactor size).
-__attribute__((noinline)) static uint16_t EnumWord(EnumSrc src, const void *ctx, uint16_t i) {
+__attribute__((noinline)) inline uint16_t RegisterService::EnumWord(EnumSrc src, const void *ctx, uint16_t i) {
     switch (src) {
     case EnumSrc::System:
         return System_Entries[i].FieldKey;
@@ -107,7 +104,7 @@ __attribute__((noinline)) static uint16_t EnumWord(EnumSrc src, const void *ctx,
 
 // Streams `count` words as FRAG fragments, one lookup at a time - no buffer, the content goes
 // straight into the frame payload the send path already has. `count` may be 0 (an empty reply).
-static void SendU16Stream(const PacketFrame &frame, uint16_t count, EnumSrc src, const void *ctx) {
+inline void RegisterService::SendU16Stream(const PacketFrame &frame, uint16_t count, EnumSrc src, const void *ctx) {
     const uint16_t kWordsPerFrag = 32; // 64-byte fragments, two bytes per word
     uint16_t frags = (uint16_t)((count + kWordsPerFrag - 1) / kWordsPerFrag);
     if (frags == 0) frags = 1;
@@ -131,7 +128,7 @@ static void SendU16Stream(const PacketFrame &frame, uint16_t count, EnumSrc src,
 // count pass only sizes the reply. The System block is always first: its word is the only
 // zero and it is first, which is what lets the app tell a real zero from the wire's trailing
 // padding.
-static void SendTypeWordsStream(const PacketFrame &frame) {
+inline void RegisterService::SendTypeWordsStream(const PacketFrame &frame) {
     const uint16_t kWordsPerFrag = 32; // 64-byte fragments, two bytes per word
     uint16_t count = EnumTypeCount();
     uint16_t frags = (uint16_t)((count + kWordsPerFrag - 1) / kWordsPerFrag);
@@ -176,14 +173,14 @@ static void SendTypeWordsStream(const PacketFrame &frame) {
     }
 }
 
-static void HandleEnumerateBlocks(const PacketFrame &frame) {
+inline void RegisterService::HandleEnumerateBlocks(const PacketFrame &frame) {
     SendTypeWordsStream(frame);
 }
 
 // CID 1: a block's Field&Key words. The request carries the packed `(type << 6) | instance`
 // word (a uint16 on the wire). An absent or tombstoned block reports an empty list rather than a
 // failure.
-static void HandleEnumerateFields(const PacketFrame &frame) {
+inline void RegisterService::HandleEnumerateFields(const PacketFrame &frame) {
     if (PayloadBytes(frame) != 4) { RespondStatus(frame, false); return; }
     uint16_t packed = (uint16_t)(frame.payload[0] | (frame.payload[1] << 8));
     uint16_t type = (packed >> 6) & 0x3FF;

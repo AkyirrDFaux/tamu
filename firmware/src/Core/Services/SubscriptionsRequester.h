@@ -2,7 +2,7 @@
 
 // Requester core (USE_SUB_REQUEST): the index table and triggers.
 //
-// Part of Core/Services/Subscriptions.h (included from there).
+// Part of Core/Services/Subscriptions.h (included from there, after the class).
 
 #include "Core/Services/SubscriptionsDefs.h"
 
@@ -12,77 +12,44 @@
 // (1:1 copy minus the non-persistent timeout, regenerated at boot).
 // ===========================================================================
 #ifdef USE_SUB_REQUEST
-#define MAX_REQUESTER_SUBS 16
-
-// Docs "Requester table entry" (28 B wire): providerAddr, TRID, the shared subscription
-// table, target register, timeout. The timeout is local uptime and is not persistent.
-struct RequesterEntry {
-    uint16_t providerAddr = 0;
-    uint16_t trid = 0;
-    SubscriptionTable sub;
-    uint32_t targetReg = 0;      // local write target
-    uint32_t timeout = 0;        // local uptime deadline (not persisted)
-    bool active = false;
-    // Initialization tracking (transient): the entry is "initialized" once a value update
-    // arrives; until then the requester re-sends the registration (CID 1) to wake the provider.
-    uint32_t registeredAtMs = 0;   // start of the initialization window (set/boot)
-    uint32_t lastRegisteredMs = 0; // last re-registration sent
-    uint32_t lastValueMs = 0;      // uptime of the last received value (0 = never)
-};
-
-#define SUB_RETRY_MS          100   // re-registration interval while un-initialized
-#define SUB_INIT_WINDOW_MS    10000 // give up re-registering after this long
-#define SUB_KEEPALIVE_MS      60000 // renew the provider's 120 s lease once values flow
-
-static RequesterEntry requesterTable[MAX_REQUESTER_SUBS];
-
-// The wire prefix of the entry IS the struct prefix, so serialization is a plain copy of the
-// first 28 bytes (Docs "Requester table entry"): providerAddr, trid, table, targetReg, timeout.
-static_assert(offsetof(RequesterEntry, providerAddr) == 0, "wire order: providerAddr first");
-static_assert(offsetof(RequesterEntry, trid) == 2, "wire order: trid after providerAddr");
-static_assert(offsetof(RequesterEntry, sub) == 4, "wire order: subscription table after trid");
-static_assert(offsetof(RequesterEntry, targetReg) == 20, "wire order: targetReg after the table");
-static_assert(offsetof(RequesterEntry, timeout) == 24, "wire order: timeout after targetReg");
-#define REQUESTER_ENTRY_WIRE_SIZE 28
-#define REQUESTER_FILE_ENTRY_SIZE 24 // the wire entry minus the timeout (not persisted)
 
 // What makes a requester entry occupied (used by the shared table search).
-static bool RequesterOccupied(const RequesterEntry &e) { return e.active; }
+inline bool SubscriptionsService::RequesterOccupied(const RequesterEntry &e) { return e.active; }
 
-static RequesterEntry* RequesterFindByTrid(uint16_t trid) {
-    return SubTableFindByTrid(requesterTable, trid, RequesterOccupied);
+inline RequesterEntry* SubscriptionsService::RequesterFindByTrid(uint16_t trid) {
+    return SubTableFindByTrid(RequesterTable, trid, RequesterOccupied);
 }
 
-static void RequesterClearEntry(RequesterEntry* e) {
+inline void SubscriptionsService::RequesterClearEntry(RequesterEntry* e) {
     *e = RequesterEntry{};
 }
 
 // Deletes `e` and compacts the table, so the active entries stay a TRID-sorted prefix
 // (Docs: "stored in a sequential table, sorted by TRID").
-static void RequesterRemove(RequesterEntry* e) {
-    int idx = (int)(e - requesterTable);
-    for (int i = idx; i < MAX_REQUESTER_SUBS - 1; i++) requesterTable[i] = requesterTable[i + 1];
-    RequesterClearEntry(&requesterTable[MAX_REQUESTER_SUBS - 1]);
+inline void SubscriptionsService::RequesterRemove(RequesterEntry* e) {
+    int idx = (int)(e - RequesterTable);
+    for (int i = idx; i < MAX_REQUESTER_SUBS - 1; i++) RequesterTable[i] = RequesterTable[i + 1];
+    RequesterClearEntry(&RequesterTable[MAX_REQUESTER_SUBS - 1]);
 }
 
 // Allocates a new active entry at its TRID-sorted position (the table stays a sorted prefix).
 // Returns nullptr when the table is full. The new entry carries only its TRID.
-static RequesterEntry* RequesterAlloc(uint16_t trid) {
+inline RequesterEntry* SubscriptionsService::RequesterAlloc(uint16_t trid) {
     int count = 0;
-    while (count < MAX_REQUESTER_SUBS && requesterTable[count].active) count++;
+    while (count < MAX_REQUESTER_SUBS && RequesterTable[count].active) count++;
     if (count >= MAX_REQUESTER_SUBS) return nullptr;
     int pos = 0;
-    while (pos < count && requesterTable[pos].trid < trid) pos++;
-    for (int i = count; i > pos; i--) requesterTable[i] = requesterTable[i - 1];
-    RequesterClearEntry(&requesterTable[pos]);
-    requesterTable[pos].trid = trid;
-    requesterTable[pos].active = true;
-    return &requesterTable[pos];
+    while (pos < count && RequesterTable[pos].trid < trid) pos++;
+    for (int i = count; i > pos; i--) RequesterTable[i] = RequesterTable[i - 1];
+    RequesterClearEntry(&RequesterTable[pos]);
+    RequesterTable[pos].trid = trid;
+    RequesterTable[pos].active = true;
+    return &RequesterTable[pos];
 }
 
 // Finds the entry for `trid`, or allocates it at its sorted position. Returns nullptr when the
 // table is full.
-static RequesterEntry* RequesterUpsert(uint16_t trid) {
+inline RequesterEntry* SubscriptionsService::RequesterUpsert(uint16_t trid) {
     RequesterEntry* e = RequesterFindByTrid(trid);
     if (e) return e;
     return RequesterAlloc(trid);
@@ -90,7 +57,7 @@ static RequesterEntry* RequesterUpsert(uint16_t trid) {
 
 // Applies a received value to the requester's target register (raw bytes) and confirms with
 // the FNV-1a hash of the received bytes.
-static void ApplyRequesterValue(RequesterEntry *e, const uint8_t *val, uint8_t vlen, bool confirm) {
+inline void SubscriptionsService::ApplyRequesterValue(RequesterEntry *e, const uint8_t *val, uint8_t vlen, bool confirm) {
     // A value update renews the 120 s lease even when the target register is momentarily
     // unresolvable; otherwise a briefly unavailable target would let the entry expire and
     // cancel its still-live provider.
@@ -121,7 +88,7 @@ static void ApplyRequesterValue(RequesterEntry *e, const uint8_t *val, uint8_t v
     SendAndVerifyPacket(reply);
 }
 
-static void HandleRequesterValueUpdate(const PacketFrame &frame) {
+inline void SubscriptionsService::HandleRequesterValueUpdate(const PacketFrame &frame) {
     if (!(frame.flags & FLAG_TYPE)) return;
     RequesterEntry* e = RequesterFindByTrid(frame.trid);
     if (!e) {

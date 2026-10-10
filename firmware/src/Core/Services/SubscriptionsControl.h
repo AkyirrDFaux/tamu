@@ -2,14 +2,14 @@
 
 // Replies, management commands and the tick.
 //
-// Part of Core/Services/Subscriptions.h (included from there).
+// Part of Core/Services/Subscriptions.h (included from there, after the class).
 
 #include "Core/Services/SubscriptionsDefs.h"
 
 
 // Shared reply for every subscription CID (docs: responses are packets with FLAG_TYPE).
-static void SubReply(const PacketFrame &frame, const uint8_t *payload, uint16_t len,
-                     uint8_t extraFlags = 0) {
+inline void SubscriptionsService::SubReply(const PacketFrame &frame, const uint8_t *payload, uint16_t len,
+                     uint8_t extraFlags) {
     PacketConstruct(&tx_frame, frame.id_src, frame.srv_tgt, frame.trid,
                     (uint8_t)(FLAG_TYPE | FLAG_START | FLAG_STOP | extraFlags), payload, len);
 #ifdef USE_APP_INTERFACE
@@ -27,7 +27,7 @@ static void SubReply(const PacketFrame &frame, const uint8_t *payload, uint16_t 
 // Cancels the provider side of a requester subscription (same-device: drop the local provider
 // entry; remote: send 0401 with an empty payload = None/cancel). Requester-only: the provider
 // side never cancels anything, so the DAS does not compile it.
-static void SubscriptionsCancelProvider(uint16_t providerAddr, uint16_t trid) {
+inline void SubscriptionsService::SubscriptionsCancelProvider(uint16_t providerAddr, uint16_t trid) {
 #ifdef USE_SUB_PROVIDE
     uint8_t net = (uint8_t)((DeviceStatus.ShortAddress >> 10) & 0x3F);
     if (NetQualifyLocal(providerAddr, net) == DeviceStatus.ShortAddress) {
@@ -46,7 +46,7 @@ static void SubscriptionsCancelProvider(uint16_t providerAddr, uint16_t trid) {
 // Streams a subscription table (`entrySize`-byte entries, no count prefix) as FRAG fragments,
 // copying each occupied entry straight into the fragment payload - no full-table buffer.
 // `occupied` reports whether entry `i` is live (the provider and requester tables differ).
-static void StreamSubscriptionTable(const PacketFrame &frame, const uint8_t *table, uint16_t max,
+inline void SubscriptionsService::StreamSubscriptionTable(const PacketFrame &frame, const uint8_t *table, uint16_t max,
                                     uint16_t entrySize, bool (*occupied)(const uint8_t *, uint16_t)) {
     uint8_t count = 0;
     for (uint16_t i = 0; i < max; i++) if (occupied(table, i)) count++;
@@ -69,28 +69,28 @@ static void StreamSubscriptionTable(const PacketFrame &frame, const uint8_t *tab
 }
 
 #ifdef USE_SUB_PROVIDE
-static bool ProviderEntryLive(const uint8_t *table, uint16_t i) {
+inline bool SubscriptionsService::ProviderEntryLive(const uint8_t *table, uint16_t i) {
     return ((const ProviderEntry *)table)[i].requesterAddr != 0;
 }
 // Streams the provider table (u8 count, then 32 B entries).
-static void ProviderStreamTable(const PacketFrame &frame) {
-    StreamSubscriptionTable(frame, (const uint8_t *)providerTable, MAX_PROVIDER_SUBS,
+inline void SubscriptionsService::ProviderStreamTable(const PacketFrame &frame) {
+    StreamSubscriptionTable(frame, (const uint8_t *)ProviderTable, MAX_PROVIDER_SUBS,
                             PROVIDER_ENTRY_WIRE_SIZE, ProviderEntryLive);
 }
 #endif
 
 #ifdef USE_SUB_REQUEST
-static bool RequesterEntryLive(const uint8_t *table, uint16_t i) {
+inline bool SubscriptionsService::RequesterEntryLive(const uint8_t *table, uint16_t i) {
     return ((const RequesterEntry *)table)[i].active;
 }
 // Streams the requester table (u8 count, then 28 B entries).
-static void RequesterStreamTable(const PacketFrame &frame) {
-    StreamSubscriptionTable(frame, (const uint8_t *)requesterTable, MAX_REQUESTER_SUBS,
+inline void SubscriptionsService::RequesterStreamTable(const PacketFrame &frame) {
+    StreamSubscriptionTable(frame, (const uint8_t *)RequesterTable, MAX_REQUESTER_SUBS,
                             REQUESTER_ENTRY_WIRE_SIZE, RequesterEntryLive);
 }
 #endif
 
-__attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &frame) {
+__attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketFrame &frame) {
 #ifdef USE_SUB_REQUEST
     // A provider's reply to a requester-originated install ("Change subscription", CID 1)
     // echoes the requester's Subscriptions TRID, so the dispatcher routes it here by range.
@@ -103,9 +103,9 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
         RequesterEntry* e = RequesterFindByTrid((uint16_t)frame.trid);
         // Stale reply after the entry was retargeted to a different provider: drop it. A
         // cancelled entry no longer resolves, so it falls through to the orphan handling.
-        if (e && frame.id_src != e->providerAddr) return;
+        if (e && frame.id_src != e->providerAddr) return true;
         HandleRequesterValueUpdate(frame);
-        return;
+        return true;
     }
 #endif
     uint8_t cid = GetServiceCID(frame.srv_tgt);
@@ -270,13 +270,14 @@ __attribute__((noinline)) static void HandleSubscriptions(const PacketFrame &fra
             SubReply(frame, nullptr, 0, FLAG_FAIL);
             break;
     }
+    return true;
 }
 
-void SubscriptionsTick(uint32_t nowMs) {
+inline void SubscriptionsService::Tick(uint32_t nowMs) {
 #ifdef USE_SUB_PROVIDE
     // Docs "Timeout 120s, renewed with new request": drop providers that stopped being renewed.
     for (int i = 0; i < MAX_PROVIDER_SUBS; i++) {
-        ProviderEntry* e = &providerTable[i];
+        ProviderEntry* e = &ProviderTable[i];
         if (e->requesterAddr != 0 && e->timeout != 0 && (int32_t)(nowMs - e->timeout) >= 0)
             ProviderClearEntry(e);
     }
@@ -285,7 +286,7 @@ void SubscriptionsTick(uint32_t nowMs) {
 #ifdef USE_SUB_REQUEST
     bool requesterTableChanged = false;
     for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
-        RequesterEntry* e = &requesterTable[i];
+        RequesterEntry* e = &RequesterTable[i];
         if (e->active && e->timeout != 0 && (int32_t)(nowMs - e->timeout) >= 0) {
             uint16_t provider = e->providerAddr;
             uint16_t trid = e->trid;

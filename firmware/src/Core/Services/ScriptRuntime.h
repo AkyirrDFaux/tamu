@@ -2,7 +2,7 @@
 
 // Tick, boot load and the management commands (ScriptRuntime.h) - part of the script service.
 //
-// The per-pass scheduler, the not-found/response handlers, ScriptsBootLoad
+// The per-pass scheduler, the response handler, BootLoad
 // and the 0x050X service commands.
 //
 // Split out of Script.h; included by it in order so the whole service stays one
@@ -15,33 +15,31 @@
 #include "Core/Services/ScriptVm.h"
 #include "Core/Services/ScriptExec.h"
 
-static uint32_t scriptTick = 0;
-
-static void ScriptRun(LoadedScript *s, uint32_t nowMs) {
+inline void ScriptService::Run(LoadedScript *s, uint32_t nowMs) {
     uint16_t steps = 0;
     while (steps++ < SCRIPT_INSTR_BUDGET) {
         if (s->lineCount == 0 || s->ic >= s->lineCount) { s->state = (uint8_t)ScriptState::Finished; return; }
-        if (s->lineStamp && s->lineStamp[s->ic] == scriptTick) return; // looped this tick -> yield
-        if (s->lineStamp) s->lineStamp[s->ic] = scriptTick;
+        if (s->lineStamp && s->lineStamp[s->ic] == TickCount) return; // looped this tick -> yield
+        if (s->lineStamp) s->lineStamp[s->ic] = TickCount;
         bool yield = false;
-        uint8_t err = ScriptExecLine(s, nowMs, yield);
+        uint8_t err = ExecLine(s, nowMs, yield);
         if (err) { s->errorCode = err; s->state = (uint8_t)ScriptState::Error; return; }
         if (yield) return;
         if (s->state != (uint8_t)ScriptState::Running) return; // Finished/Error/Paused set by the op
     }
 }
 
-void ScriptsTick(uint32_t nowMs) {
-    scriptTick++;
+inline void ScriptService::Tick(uint32_t nowMs) {
+    TickCount++;
     for (uint16_t w = 0; w < kScriptMaskWords; w++) {
-        uint64_t mask = scriptActiveMask[w];
+        uint64_t mask = ActiveMask[w];
         while (mask) {
             uint16_t i = (uint16_t)(w * 64 + __builtin_ctzll(mask));
             mask &= mask - 1;
-            LoadedScript *s = &scriptRegistry[i];
+            LoadedScript *s = &Registry[i];
             if (!s->active) continue;
             if (s->state == (uint8_t)ScriptState::Running) {
-                ScriptRun(s, nowMs);
+                Run(s, nowMs);
             } else if (s->state == (uint8_t)ScriptState::Waiting) {
                 if (s->pendingForeign) {
                     if ((int32_t)(nowMs - s->pendingDeadline) >= 0) {
@@ -64,14 +62,14 @@ void ScriptsTick(uint32_t nowMs) {
 
 // Handles a reply to a foreign register request. The reply echoes the script's TRID, so the
 // Dispatcher routes it here by range instead of by ServiceType.
-static void HandleScriptResponse(const PacketFrame &frame) {
+inline void ScriptService::HandleResponse(const PacketFrame &frame) {
     uint16_t trid = frame.trid;
     for (uint16_t w = 0; w < kScriptMaskWords; w++) {
-    uint64_t mask = scriptActiveMask[w];
+    uint64_t mask = ActiveMask[w];
     while (mask) {
         uint16_t i = (uint16_t)(w * 64 + __builtin_ctzll(mask));
         mask &= mask - 1;
-        LoadedScript *s = &scriptRegistry[i];
+        LoadedScript *s = &Registry[i];
         if (!s->active || !s->pendingForeign || s->pendingTrid != trid) continue;
         s->pendingForeign = false;
         if (s->pendingRead) {
@@ -89,8 +87,8 @@ static void HandleScriptResponse(const PacketFrame &frame) {
             uint16_t dtype = 0;
             uint8_t *dest = nullptr;
             uint8_t dsize = 0;
-            if (ScriptResolveDest(s, s->pendingDest, dtype, dest, dsize))
-                ScriptAssignResolved(dtype, dest, dsize, val, (uint8_t)vsz, ValueInfoType(rm.Type));
+            if (ResolveDest(s, s->pendingDest, dtype, dest, dsize))
+                AssignResolved(dtype, dest, dsize, val, (uint8_t)vsz, ValueInfoType(rm.Type));
         }
         // Only a script still waiting on this confirmation resumes.
         if (s->state == (uint8_t)ScriptState::Waiting)
@@ -100,7 +98,7 @@ static void HandleScriptResponse(const PacketFrame &frame) {
     }
 }
 
-static void ScriptSetState(LoadedScript *s, uint8_t newState) {
+inline void ScriptService::SetState(LoadedScript *s, uint8_t newState) {
     if (newState == (uint8_t)ScriptState::Running) {
         if (s->state == (uint8_t)ScriptState::Stopped || s->state == (uint8_t)ScriptState::Finished ||
             s->state == (uint8_t)ScriptState::Error) {
@@ -122,9 +120,9 @@ static void ScriptSetState(LoadedScript *s, uint8_t newState) {
 
 // Boot: load every stored script flagged Load-on-boot; run those flagged Run-on-load.
 // The first inactive loaded-script slot, or MAX_SCRIPTS when all are in use.
-static uint16_t ScriptFreeSlot() {
+inline uint16_t ScriptService::FreeSlot() {
     for (uint16_t i = 0; i < MAX_SCRIPTS; i++)
-        if (!scriptRegistry[i].active) return i;
+        if (!Registry[i].active) return i;
     return MAX_SCRIPTS;
 }
 
@@ -133,29 +131,30 @@ static uint16_t ScriptFreeSlot() {
 // range, so a script file with a higher id is still pre-loaded. The identity slot (file N ->
 // slot N) is preferred so the loaded table is deterministic across a reset; a file id beyond
 // the slot space (or one whose identity slot is taken) uses the first free slot.
-void ScriptsBootLoad() {
-    Storage.ForEachFile([](const char name[8]) {
-        uint16_t fileId = ScriptFileIdFromName(name);
+inline void ScriptService::BootLoad() {
+    // `this` capture: the registry and the helpers are members now.
+    Storage.ForEachFile([this](const char name[8]) {
+        uint16_t fileId = FileIdFromName(name);
         if (fileId == 0xFFFF) return;
-        uint16_t slot = (fileId < MAX_SCRIPTS && !scriptRegistry[fileId].active)
+        uint16_t slot = (fileId < MAX_SCRIPTS && !Registry[fileId].active)
                             ? fileId
-                            : ScriptFreeSlot();
+                            : FreeSlot();
         if (slot >= MAX_SCRIPTS) return; // no free slot
-        if (!ScriptLoad(fileId, slot)) return;
-        if (!(scriptRegistry[slot].properties & SCRIPT_PROP_LOAD_ON_BOOT)) {
-            scriptRegistry[slot].Release(); // stored, but not pre-loaded
-            ScriptMaskSet(slot, false);
+        if (!Load(fileId, slot)) return;
+        if (!(Registry[slot].properties & SCRIPT_PROP_LOAD_ON_BOOT)) {
+            Registry[slot].Release(); // stored, but not pre-loaded
+            MaskSet(slot, false);
             return;
         }
-        if (scriptRegistry[slot].properties & SCRIPT_PROP_RUN_ON_LOAD)
-            scriptRegistry[slot].state = (uint8_t)ScriptState::Running;
+        if (Registry[slot].properties & SCRIPT_PROP_RUN_ON_LOAD)
+            Registry[slot].state = (uint8_t)ScriptState::Running;
     });
 }
 
 // ===== Management commands (0x050X) =====
 
-__attribute__((noinline)) static void HandleScript(const PacketFrame &frame) {
-    if (frame.flags & FLAG_TYPE) return; // responses are not handled locally
+__attribute__((noinline)) inline bool ScriptService::Handle(const PacketFrame &frame) {
+    if (frame.flags & FLAG_TYPE) return true; // responses are not handled locally
 
     uint8_t cid = GetServiceCID(frame.srv_tgt);
     uint16_t bytes = PayloadBytes(frame);
@@ -166,7 +165,7 @@ __attribute__((noinline)) static void HandleScript(const PacketFrame &frame) {
             // like the Register enumerate; the app already reassembles those. The payload
             // length carries the count - no count byte (Docs/Services/Script.md CID 0).
             uint8_t content[MAX_SCRIPTS * 2];
-            uint16_t n = ScriptListFiles(content, MAX_SCRIPTS);
+            uint16_t n = ListFiles(content, MAX_SCRIPTS);
             uint16_t total = (uint16_t)(2 * n);
             const uint16_t kFrag = 64;
             uint16_t frags = (uint16_t)((total + kFrag - 1) / kFrag);
@@ -183,45 +182,45 @@ __attribute__((noinline)) static void HandleScript(const PacketFrame &frame) {
         case 1: { // Load Script (file id uint16, loaded id uint8) -> Success
             // Docs/Services/Script.md: the caller picks the loaded id (the slot); the reply is
             // just Success, so it must have chosen it.
-            if (bytes < 3) { RespondStatus(frame, false); return; }
+            if (bytes < 3) { RespondStatus(frame, false); return true; }
             uint16_t fileId = (uint16_t)(frame.payload[0] | (frame.payload[1] << 8));
-            bool ok = ScriptLoad(fileId, frame.payload[2]);
+            bool ok = Load(fileId, frame.payload[2]);
             RespondStatus(frame, ok);
             break;
         }
 
         case 2: { // Unload script (loaded ID)
-            if (bytes < 1) { RespondStatus(frame, false); return; }
+            if (bytes < 1) { RespondStatus(frame, false); return true; }
             uint16_t slot = frame.payload[0];
-            bool ok = ScriptActive(slot) != nullptr;
-            if (ok) ScriptUnload(slot);
+            bool ok = Active(slot) != nullptr;
+            if (ok) Unload(slot);
             RespondStatus(frame, ok);
             break;
         }
 
         case 3: { // Read state (loaded ID -> state, last error code)
-            if (bytes < 1) { RespondStatus(frame, false); return; }
-            LoadedScript *s = ScriptActive(frame.payload[0]);
-            if (!s) { RespondStatus(frame, false); return; }
+            if (bytes < 1) { RespondStatus(frame, false); return true; }
+            LoadedScript *s = Active(frame.payload[0]);
+            if (!s) { RespondStatus(frame, false); return true; }
             uint8_t reply[2] = { s->state, s->errorCode };
             SendResponse(frame, reply, 2);
             break;
         }
 
         case 4: { // Set state (loaded ID, new state; clears the error)
-            if (bytes < 2) { RespondStatus(frame, false); return; }
-            LoadedScript *s = ScriptActive(frame.payload[0]);
-            if (!s || frame.payload[1] > (uint8_t)ScriptState::Error) { RespondStatus(frame, false); return; }
-            ScriptSetState(s, frame.payload[1]);
+            if (bytes < 2) { RespondStatus(frame, false); return true; }
+            LoadedScript *s = Active(frame.payload[0]);
+            if (!s || frame.payload[1] > (uint8_t)ScriptState::Error) { RespondStatus(frame, false); return true; }
+            SetState(s, frame.payload[1]);
             s->errorCode = SCRIPT_ERR_NONE; // docs: setting the state clears the error
             RespondStatus(frame, true);
             break;
         }
 
         case 5: { // Read internal state (loaded ID -> instruction counter (line) + variable RAM)
-            if (bytes < 1) { RespondStatus(frame, false); return; }
-            LoadedScript *s = ScriptActive(frame.payload[0]);
-            if (!s) { RespondStatus(frame, false); return; }
+            if (bytes < 1) { RespondStatus(frame, false); return true; }
+            LoadedScript *s = Active(frame.payload[0]);
+            if (!s) { RespondStatus(frame, false); return true; }
             // Streamed as FRAG: the 4-byte instruction counter then the variable RAM, which can
             // exceed one payload.
             uint32_t ic = s->ic;
@@ -243,9 +242,9 @@ __attribute__((noinline)) static void HandleScript(const PacketFrame &frame) {
         }
 
         case 6: { // Move to instruction (loaded ID, line index u32)
-            if (bytes < 5) { RespondStatus(frame, false); return; }
-            LoadedScript *s = ScriptActive(frame.payload[0]);
-            if (!s) { RespondStatus(frame, false); return; }
+            if (bytes < 5) { RespondStatus(frame, false); return true; }
+            LoadedScript *s = Active(frame.payload[0]);
+            if (!s) { RespondStatus(frame, false); return true; }
             uint32_t line = 0;
             memcpy(&line, frame.payload + 1, 4);
             if (s->lineCount && line >= s->lineCount) line = s->lineCount - 1;
@@ -255,15 +254,15 @@ __attribute__((noinline)) static void HandleScript(const PacketFrame &frame) {
         }
 
         case 7: { // Write Variable (loaded ID, variable ID, value)
-            if (bytes < 2) { RespondStatus(frame, false); return; }
-            LoadedScript *s = ScriptActive(frame.payload[0]);
+            if (bytes < 2) { RespondStatus(frame, false); return true; }
+            LoadedScript *s = Active(frame.payload[0]);
             uint8_t varId = frame.payload[1];
-            if (!s || varId >= s->varCount) { RespondStatus(frame, false); return; }
+            if (!s || varId >= s->varCount) { RespondStatus(frame, false); return true; }
             // The value length comes from the variable's declared size (the request carries
             // exactly that many value bytes).
             uint16_t vlen = s->varMeta[varId].Size;
-            if ((uint16_t)(2 + vlen) > bytes) { RespondStatus(frame, false); return; }
-            RespondStatus(frame, ScriptSetVariable(frame.payload[0], varId, frame.payload + 2, vlen));
+            if ((uint16_t)(2 + vlen) > bytes) { RespondStatus(frame, false); return true; }
+            RespondStatus(frame, SetVariable(frame.payload[0], varId, frame.payload + 2, vlen));
             break;
         }
 
@@ -271,6 +270,7 @@ __attribute__((noinline)) static void HandleScript(const PacketFrame &frame) {
             RespondStatus(frame, false);
             break;
     }
+    return true;
 }
 
 

@@ -65,7 +65,7 @@ void DispatchPacket(const PacketFrame &frame)
         if (is_response && (frame.flags & (FLAG_SUCCESS | FLAG_FAIL)) == 0 &&
             frame.trid >= TRID_SUB_BASE && frame.trid <= TRID_SUB_MAX &&
             frame.id_src != DeviceStatus.ShortAddress) {
-            HandleSubscriptions(frame);
+            Subscriptions.Handle(frame);
             handled = true;
         }
 #endif
@@ -92,25 +92,25 @@ void DispatchPacket(const PacketFrame &frame)
         if (!handled) switch (target_srv)
         {
         case ServiceType::Device:
-            HandleDeviceService(frame);
+            DeviceSvc.Handle(frame);
             break;
 
         case ServiceType::LogHandler:
-            HandleLogHandler(frame);
+            LogHandler.Handle(frame);
             break;
 
         case ServiceType::Register:
-            HandleRegister(frame);
+            Register.Handle(frame);
             break;
 
         case ServiceType::Storage:
-            HandleStorageService(frame);
+            StorageSvc.Handle(frame);
             break;
 
         case ServiceType::Subscriptions:
 #if defined(USE_SUB_PROVIDE) || defined(USE_SUB_REQUEST)
             DeviceLog("DISP", "dispatch Subscriptions cid=%d", cid);
-            HandleSubscriptions(frame);
+            Subscriptions.Handle(frame);
 #endif
             break;
 
@@ -158,16 +158,16 @@ void ProcessBus()
 void LoadAllBackups()
 {
     // Static memory: one 1:1 mirror read of `.SV` (the whole persistent space).
-    StaticRecallAll();
+    Register.StaticRecallAll();
 
 #ifdef USE_DYNAMIC_BLOCKS
     // Per-block DT/DV files: load every live slot (absent file = tombstone/empty).
     for (uint16_t i = 0; i < MAX_DYNAMIC_BLOCKS; i++)
-        RestoreDynamicBlock(i);
+        Register.RestoreDynamicBlock(i);
 #endif
 
 #ifdef USE_SUB_REQUEST
-    LoadRequesterTable();
+    Subscriptions.LoadRequesterTable();
 #endif
 }
 

@@ -12,7 +12,7 @@
 // (which needs the source pointer, not a copy). On success `fr` carries the descriptor and a
 // pointer to the source value (null for a size-0 dynamic entry); the bool reports whether the
 // BlockInfo resolved. Ordering: script I/O, dynamic entries, then statics/System.
-static bool RegisterResolveByBlockInfo(uint32_t bi, FieldResult &fr) {
+inline bool RegisterService::RegisterResolveByBlockInfo(uint32_t bi, FieldResult &fr) {
     fr = FieldResult{};
     uint16_t type = BlockInfoType(bi);
     uint8_t inst = BlockInfoInstance(bi);
@@ -50,7 +50,7 @@ static bool RegisterResolveByBlockInfo(uint32_t bi, FieldResult &fr) {
 }
 
 // Generic register access by BlockInfo (shared by the Subscriptions and Script services).
-bool RegisterGetByBlockInfo(uint32_t bi, ValueInfo &m, uint8_t *vbuf, uint8_t &vsz) {
+inline bool RegisterService::RegisterGetByBlockInfo(uint32_t bi, ValueInfo &m, uint8_t *vbuf, uint8_t &vsz) {
     FieldResult fr;
     vsz = 0;
     if (!RegisterResolveByBlockInfo(bi, fr)) return false;
@@ -62,7 +62,7 @@ bool RegisterGetByBlockInfo(uint32_t bi, ValueInfo &m, uint8_t *vbuf, uint8_t &v
 }
 
 // Writes a register value by BlockInfo. `m` carries the value type and the passive flags.
-bool RegisterSetByBlockInfo(uint32_t bi, const ValueInfo &m, const uint8_t *val, uint16_t vlen) {
+inline bool RegisterService::RegisterSetByBlockInfo(uint32_t bi, const ValueInfo &m, const uint8_t *val, uint16_t vlen) {
     uint16_t type = BlockInfoType(bi);
     uint8_t inst = BlockInfoInstance(bi);
     uint8_t field = BlockInfoField(bi);
@@ -88,38 +88,38 @@ bool RegisterSetByBlockInfo(uint32_t bi, const ValueInfo &m, const uint8_t *val,
     return blk->Set(field, key, val, vlen, m);
 }
 
-static void HandleRegister(const PacketFrame &frame) {
+inline bool RegisterService::Handle(const PacketFrame &frame) {
     uint8_t cid = GetServiceCID(frame.cmd);
-    if (frame.flags & FLAG_TYPE) return;
+    if (frame.flags & FLAG_TYPE) return true;
 
     // Recall All / Save All - the whole device, no BlockInfo (Docs/Services/Register.md).
     // Partial saving/recall is the app's job (direct file writes / direct register writes).
-    if (cid == (uint8_t)RegisterCid::RecallAll) { HandleSaveRecallAll(frame, false); return; }
-    if (cid == (uint8_t)RegisterCid::SaveAll)    { HandleSaveRecallAll(frame, true);  return; }
+    if (cid == (uint8_t)RegisterCid::RecallAll) { HandleSaveRecallAll(frame, false); return true; }
+    if (cid == (uint8_t)RegisterCid::SaveAll)    { HandleSaveRecallAll(frame, true);  return true; }
 
     // Enumerate: CID 0 lists the block types, CID 1 a block's Field&Keys. Handled before the
     // BlockInfo guard below (which every other command needs).
-    if (cid == (uint8_t)RegisterCid::EnumerateBlocks) { HandleEnumerateBlocks(frame); return; }
-    if (cid == (uint8_t)RegisterCid::EnumerateFields) { HandleEnumerateFields(frame); return; }
+    if (cid == (uint8_t)RegisterCid::EnumerateBlocks) { HandleEnumerateBlocks(frame); return true; }
+    if (cid == (uint8_t)RegisterCid::EnumerateFields) { HandleEnumerateFields(frame); return true; }
 
     // Dynamic management (Docs/Services/Register.md "Dynamic commands"): the request
     // carries the global Index (uint16), not a BlockInfo, so handle it before the
     // BlockInfo guard below.
 #ifdef USE_DYNAMIC_BLOCKS
     if (cid >= (uint8_t)DynamicCid::Create && cid <= (uint8_t)DynamicCid::SetName) {
-        if (PayloadBytes(frame) < 2) { RespondStatus(frame, false); return; }
+        if (PayloadBytes(frame) < 2) { RespondStatus(frame, false); return true; }
         uint16_t gi = (uint16_t)(frame.payload[0] | (frame.payload[1] << 8));
         switch ((DynamicCid)cid) {
-            case DynamicCid::Create:  HandleCreateDynamic(frame, gi); return;
-            case DynamicCid::Delete:  HandleDeleteDynamic(frame, gi); return;
-            case DynamicCid::GetName: HandleGetName(frame, gi); return;
-            case DynamicCid::SetName: HandleSetName(frame, gi); return;
+            case DynamicCid::Create:  HandleCreateDynamic(frame, gi); return true;
+            case DynamicCid::Delete:  HandleDeleteDynamic(frame, gi); return true;
+            case DynamicCid::GetName: HandleGetName(frame, gi); return true;
+            case DynamicCid::SetName: HandleSetName(frame, gi); return true;
             default: break;
         }
     }
 #endif
 
-    if (PayloadBytes(frame) < 4) { RespondStatus(frame, false); return; }
+    if (PayloadBytes(frame) < 4) { RespondStatus(frame, false); return true; }
 
     // frame.payload is 4-byte aligned (PacketFrame is packed+aligned(4)), so this is one
     // word load rather than a 4-byte memcpy.
@@ -131,28 +131,28 @@ static void HandleRegister(const PacketFrame &frame) {
 
     // Read (single entry: the request carries one BlockInfo).
     if (cid == (uint8_t)RegisterCid::Read) {
-        if (PayloadBytes(frame) != 4) { RespondStatus(frame,false); return; }
+        if (PayloadBytes(frame) != 4) { RespondStatus(frame,false); return true; }
 #ifdef USE_SCRIPTS
         if (BlockTypeRange::IsScript(type)) {
             HandleScriptBlockRead(frame, bi, BlockTypeRange::ScriptGlobal(type, inst), field, key);
-            return;
+            return true;
         }
 #endif
 #ifdef USE_DYNAMIC_BLOCKS
         if (BlockTypeRange::IsDynamic(type)) {
             HandleDynamicBlockRead(frame, bi, BlockTypeRange::DynamicGlobal(type, inst), field, key);
-            return;
+            return true;
         }
 #else
-        if (BlockTypeRange::IsDynamic(type)) { RespondStatus(frame, false); return; }
+        if (BlockTypeRange::IsDynamic(type)) { RespondStatus(frame, false); return true; }
 #endif
         HandleStaticBlockRead(frame, bi, type, inst, field, key);
-        return;
+        return true;
     }
 
     // Write.
     if (cid == (uint8_t)RegisterCid::Write) {
-        if (PayloadBytes(frame) < 8) { RespondStatus(frame,false); return; }
+        if (PayloadBytes(frame) < 8) { RespondStatus(frame,false); return true; }
         const ValueInfo *desc = (const ValueInfo *)(frame.payload + 4);
         const uint8_t *val = frame.payload+8;
         // The ValueInfo.Size must match the value bytes actually present: a larger Size
@@ -165,18 +165,19 @@ static void HandleRegister(const PacketFrame &frame) {
 #ifdef USE_SCRIPTS
         if (BlockTypeRange::IsScript(type)) {
             HandleScriptBlockWrite(frame, BlockTypeRange::ScriptGlobal(type, inst), field, key, desc, val, vlen);
-            return;
+            return true;
         }
 #endif
 #ifdef USE_DYNAMIC_BLOCKS
         if (BlockTypeRange::IsDynamic(type)) {
             HandleDynamicBlockWrite(frame, BlockTypeRange::DynamicGlobal(type, inst), field, key, desc, val, vlen);
-            return;
+            return true;
         }
 #else
-        if (BlockTypeRange::IsDynamic(type)) { RespondStatus(frame, false); return; }
+        if (BlockTypeRange::IsDynamic(type)) { RespondStatus(frame, false); return true; }
 #endif
         HandleStaticBlockWrite(frame, type, inst, field, key, desc, val, vlen);
-        return;
+        return true;
     }
+    return true;
 }

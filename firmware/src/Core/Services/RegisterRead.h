@@ -12,7 +12,7 @@
 // System_Entries (the metadata is unified) and the caller has already resolved the entry, so this
 // only synthesises the value. The struct fields (0, 3, 4, 5) fill the whole struct; the struct
 // position is not on the wire.
-static bool SystemFillValue(uint8_t field, uint8_t *vbuf) {
+inline bool RegisterService::SystemFillValue(uint8_t field, uint8_t *vbuf) {
     switch (field) {
     case 0: { // Device Type struct: DeviceType | Capability | Software version
         uint32_t dt = (uint32_t)kDeviceType;
@@ -88,26 +88,26 @@ static bool SystemFillValue(uint8_t field, uint8_t *vbuf) {
 
 // The System block as a static descriptor: System_Entries is the schema, Name/NetID are the
 // storage-backed persistent fields, and the computed fields come from SystemGet.
-static void* SystemGet(uint16_t field, uint8_t key) {
+inline void* RegisterService::SystemGet(uint16_t field, uint8_t key)
+{
     (void)key; // the struct position is not addressed on the wire
     if (field == SYSTEM_FIELD_NAME) return nullptr; // storage-backed (fixed 16-char field)
 #ifdef TYPE_CORE
-    if (field == SYSTEM_FIELD_NETID) {
+    if (field == SYSTEM_FIELD_NETID)
+    {
         // The live net (the stored value applies on reboot); the write stores it via a trigger.
-        static uint8_t s_netId;
-        s_netId = DeviceStatus.NetId;
-        return &s_netId;
+        Register.NetId = DeviceStatus.NetId;
+        return &Register.NetId;
     }
 #endif
-    static uint8_t s_sysValueBuf[24];
-    if (!SystemFillValue((uint8_t)field, s_sysValueBuf)) return nullptr;
-    return s_sysValueBuf;
+    if (!SystemFillValue((uint8_t)field, Register.SysValueBuf)) return nullptr;
+    return Register.SysValueBuf;
 }
 
 #ifdef TYPE_CORE
 // Docs: NetID 0 is unassigned and 0x3F is all-nets, so neither is a valid stored value. The
 // write stores it (applied on reboot) without touching the live DeviceStatus.NetId.
-static bool OnSystemNetIdWrite(const StaticBlockDescriptor &block, uint16_t field, const void *data, uint16_t len) {
+inline bool RegisterService::OnSystemNetIdWrite(const StaticBlockDescriptor &block, uint16_t field, const void *data, uint16_t len) {
     (void)block; (void)field;
     if (len < 1) return false;
     const uint8_t v = *static_cast<const uint8_t *>(data);
@@ -115,7 +115,7 @@ static bool OnSystemNetIdWrite(const StaticBlockDescriptor &block, uint16_t fiel
     memcpy(&staticPer.system.NetId, data, 1);
     return true;
 }
-static const BlockTrigger System_Triggers[] = { { MakeFieldKey(SYSTEM_FIELD_NETID, 0), OnSystemNetIdWrite } };
+static const BlockTrigger System_Triggers[] = { { MakeFieldKey(SYSTEM_FIELD_NETID, 0), RegisterService::OnSystemNetIdWrite } };
 #endif
 
 static const BlockSchema System_Schema = {
@@ -128,19 +128,19 @@ static const BlockSchema System_Schema = {
     BlockType::System
 };
 static const StaticBlockDescriptor System_Block = {
-    nullptr, &staticPer, &System_Schema, "", SystemGet
+    nullptr, &staticPer, &System_Schema, "", RegisterService::SystemGet
 };
 
 // The descriptor for a (type, instance): the System block (type 0, inst 0) or a static registry
 // entry; nullptr when neither exists.
-static const StaticBlockDescriptor* FindBlock(uint16_t type, uint8_t inst) {
+inline const StaticBlockDescriptor* RegisterService::FindBlock(uint16_t type, uint8_t inst) {
     if (type == 0 && inst == 0) return &System_Block;
     int idx = FindStaticBlock(type, inst);
     return idx >= 0 ? &static_block_registry[idx] : nullptr;
 }
 
 #ifdef USE_DYNAMIC_BLOCKS
-static void HandleDynamicBlockRead(const PacketFrame &frame, uint32_t bi, uint16_t inst, uint8_t field, uint8_t key) {
+inline void RegisterService::HandleDynamicBlockRead(const PacketFrame &frame, uint32_t bi, uint16_t inst, uint8_t field, uint8_t key) {
     if (inst >= dynamic_block_registry.block_count) { RespondStatus(frame,false); return; }
     DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(inst);
     if (!block) { RespondStatus(frame,false); return; }
@@ -151,7 +151,7 @@ static void HandleDynamicBlockRead(const PacketFrame &frame, uint32_t bi, uint16
 #ifdef USE_SCRIPTS
 // Reads one entry of a loaded script (block type 0x3F4-0x3F7) or its block meta. The script's
 // input/output/variable/constant tables are addressed as fields 1-4 with key = index.
-static void HandleScriptBlockRead(const PacketFrame &frame, uint32_t bi, uint16_t inst, uint8_t field, uint8_t key) {
+inline void RegisterService::HandleScriptBlockRead(const PacketFrame &frame, uint32_t bi, uint16_t inst, uint8_t field, uint8_t key) {
     LoadedScript *s = ScriptActive(inst);
     if (!s) { RespondStatus(frame,false); return; }
     if (field == 0xFF) {
@@ -170,7 +170,7 @@ static void HandleScriptBlockRead(const PacketFrame &frame, uint32_t bi, uint16_
 }
 #endif
 
-static void HandleStaticBlockRead(const PacketFrame &frame, uint32_t bi, uint16_t type, uint8_t inst, uint8_t field, uint8_t key) {
+inline void RegisterService::HandleStaticBlockRead(const PacketFrame &frame, uint32_t bi, uint16_t type, uint8_t inst, uint8_t field, uint8_t key) {
     const StaticBlockDescriptor *blk = FindBlock(type, inst);
     if (!blk) { RespondStatus(frame,false); return; }
     if (field==0xFF) { // block meta

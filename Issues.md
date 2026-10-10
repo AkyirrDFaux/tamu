@@ -60,12 +60,42 @@ native tests and both builds are for.
    functions rather than a class (the point of this plan is one shape for every service).
 3. `Subscriptions` - 19 file-statics and three files that talk to each other.
 4. `Script` - 6 statics plus the VM and a loaded-program table: the riskiest.
-5. `LogHandler`, `Device`/SNDB and the bootloader passthrough - small; the dispatcher table lands here.
+5. `LogHandler`, `Device`/SNDB and the bootloader passthrough - small. The class conversions are done;
+   the dispatcher table is **rejected** (decision below), so the dispatcher keeps its `switch`. Its
+   calls now go straight to the instances: eight of the ten per-service forwarders were removed
+   (size-neutral); the two Script management forwarders (`HandleScript`/`HandleScriptResponse`) are
+   **kept** because removing them grows Tamu by 910 B (DAS/Valu unchanged).
 6. `AppInterface` last. The `Core/Functions/` helpers (`Packet`, `Dispatcher`, `Crc8`, `TimeSync`) stay free
    functions: only the *services* become classes, and `TimeSync` is already one and is the shape to copy.
 
+**Dispatcher table - decided 2026-10-10 (rejected).** Prototyped as a `static constexpr`
+`(service, handler)` table binding each `ServiceType` to its instance's `Handle`. Measured on the
+settled tree: **+204 B Tamu, +128 B DAS, +92 B Valu**, RAM unchanged. +128 B on the DAS (94.0 % ->
+94.9 % flash, ~860 B free) is over budget, so the dispatcher stays a `switch` and the per-service
+forwarders stay. The `(service, handler)` claim was removed from `Code Style.md` (the dispatcher is a
+framing helper, not a service, so the rule did not belong there anyway).
+
 **Must not change:** the wire protocol, the CID map, the register/block layouts, the `.pio` envs, the
-per-device composition, or anything under `Docs/`. No document change is expected.
+per-device composition. One `Docs/` change was approved (2026-10-10): the architecture-level code
+rules moved from `General Architecture.md` into `Code Style.md`, which already owns them in full.
+
+**Obsolete-symbols sweep (planned, deferred).** After the class pass lands, remove symbols the
+refactor and history left behind, no behaviour change:
+- `PacketFrame` union aliases: drop `srv_tgt` and `srv_src`, keep `cmd`/`trid` only. `srv_src` is
+  used nowhere (only its definition) - delete outright; `srv_tgt` has 26 call sites across 8 files
+  (`Dispatcher.h`, `MemoryBackup.h`, `Storage.h`, `LogHandler.h`, `Device.h`,
+  `SubscriptionsControl.h`, `ScriptRuntime.h`) to rename to `cmd`.
+- Pure-rename macros in `Core/`: `SUB_PRIORITY_HIGH`/`SUB_PRIORITY_LOW` ->
+  `PRIORITY_SUB_HIGH`/`PRIORITY_SUB_LOW` (2 call sites); `PAGE_SIZE` -> `STORAGE_BLOCK_SIZE` (heavily
+  used in the storage code - confirm the short name is not wanted before collapsing).
+- Any dead forwarders/aliases left from the class pass.
+- The three `-Wno-unused-function` suppressions in `platformio.ini` (the `[valu]` base, `[env:DAS_v0_1]`,
+  `[env:DAS_bootloader]`) were **removed** (2026-10-10) so the warning is live. A clean DAS rebuild and
+  the Tamu build produce no unused-function warnings, so the suppression was masking nothing static;
+  the only low-use free functions (`LogSourceId`/`LogIsBlock`/`LogSourceType`) are exercised by
+  `test/native/log_test.cpp` and stay.
+(The device pin-name macros - `VALU_LED_PORT`, `DAS_BUTTON_PIN`, `MEAS_ADC`, `RS485_EN_PORT`, etc. -
+are deliberate hardware naming, not in scope.)
 
 **Verification per step:** `./test.sh` (native firmware tests + the app suite + analyze), both `pio run` envs,
 and the safe HIL sweep once the rig is flashed.

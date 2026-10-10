@@ -1,12 +1,12 @@
 #pragma once
 
-// Constants, symbol/opcode tables and the script registry (ScriptDefs.h) - part of the script service.
+// Constants, symbol/opcode tables and the script structures (ScriptDefs.h) - part of the script service.
 //
-// Shared definitions: the SCRIPT_* encodings, ScriptLineInfo/ScriptLoaded
-// tables and the loaded-script registry accessors.
+// Shared definitions: the SCRIPT_* encodings and the ScriptLineInfo/LoadedScript
+// tables. Included by Script.h BEFORE the ScriptService class so the class can store the
+// loaded-script registry by value; the service's own functions live as members now.
 //
-// Split out of Script.h; included by it in order so the whole service stays one
-// translation unit. Wrapped in the same guard so it is a no-op without USE_SCRIPTS.
+// Wrapped in the same guard so it is a no-op without USE_SCRIPTS.
 
 #ifdef USE_SCRIPTS
 
@@ -177,36 +177,6 @@ enum class ScriptState : uint8_t {
 // 4-byte stride alignment lives in Core/Functions/StrideOffsets.h (shared with the offset
 // tables below).
 
-// SCR_XXX (8-char space-padded name, the file id in three hex digits).
-static inline void ScriptFileName(uint16_t id, char out[8]) {
-    static const char hex[] = "0123456789ABCDEF";
-    out[0] = 'S'; out[1] = 'C'; out[2] = 'R'; out[3] = '_';
-    out[4] = hex[(id >> 8) & 0x0F];
-    out[5] = hex[(id >> 4) & 0x0F];
-    out[6] = hex[id & 0x0F];
-    out[7] = ' ';
-}
-
-// Parses a `SCR_XXX` file name back to its id, or 0xFFFF when it is not a script file.
-static inline uint16_t ScriptFileIdFromName(const char name[8]) {
-    if (name[0] != 'S' || name[1] != 'C' || name[2] != 'R' || name[3] != '_') return 0xFFFF;
-    uint16_t id = 0;
-    for (int i = 4; i <= 6; i++) {
-        const char c = name[i];
-        uint8_t d;
-        if (c >= '0' && c <= '9') d = (uint8_t)(c - '0');
-        else if (c >= 'A' && c <= 'F') d = (uint8_t)(c - 'A' + 10);
-        else if (c >= 'a' && c <= 'f') d = (uint8_t)(c - 'a' + 10);
-        else return 0xFFFF;
-        id = (uint16_t)((id << 4) | d);
-    }
-    return id;
-}
-
-static inline uint32_t ScriptRdU32(const uint8_t *p) {
-    uint32_t v; memcpy(&v, p, 4); return v;
-}
-
 // Precompiled line descriptor: the instruction symbol sits at start+destCount, its
 // operands follow, and the line ends with an Endline symbol.
 struct ScriptLineInfo {
@@ -322,22 +292,8 @@ struct LoadedScript {
     uint16_t ConstOffset(uint8_t i) const { return OffsetAt(StrideConstBase(inCount, outCount, varCount), i, constCount); }
 };
 
-static LoadedScript scriptRegistry[MAX_SCRIPTS];
 // One bit per slot, set for every slot that may hold a loaded script (a superset of the active
 // slots, so hot loops can skip the empty registry entries). MAX_SCRIPTS is a multiple of 64.
 static constexpr uint16_t kScriptMaskWords = MAX_SCRIPTS / 64;
-static uint64_t scriptActiveMask[kScriptMaskWords];
-
-static inline void ScriptMaskSet(uint16_t slot, bool on) {
-    uint16_t w = (uint16_t)(slot >> 6), b = (uint16_t)(slot & 63);
-    if (on) scriptActiveMask[w] |= (uint64_t)1 << b;
-    else    scriptActiveMask[w] &= ~((uint64_t)1 << b);
-}
-
-static LoadedScript *ScriptActive(uint16_t slot) {
-    if (slot >= MAX_SCRIPTS) return nullptr;
-    return scriptRegistry[slot].active ? &scriptRegistry[slot] : nullptr;
-}
-
 
 #endif // USE_SCRIPTS

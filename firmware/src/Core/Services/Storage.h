@@ -3,17 +3,41 @@
 #include "Core/Functions/Packet.h"
 #include "Core/Functions/Storage.h"
 
-static char s_write_name[8] = {0};
-static bool s_write_active = false;
-static uint16_t s_write_seq = 0;
-static uint32_t s_write_off = 0;
+// Storage service (Docs/Services/Storage.md): the file commands (format, create, delete,
+// resize, rename, read/write streams). The filesystem itself is StorageBlockFS behind the
+// `Storage` global; this class owns the service's own stream state.
+class StorageService
+{
+public:
+    void Init();                           // resets the write-stream state
+    bool Handle(const PacketFrame &frame); // CID dispatch; true if consumed
 
-void HandleStorageService(const PacketFrame &frame)
+private:
+    // The in-flight fragmented write: the name travels in every fragment and must not change
+    // mid-stream; the sequence and offset resume across fragments.
+    char s_write_name[8] = {0};
+    bool s_write_active = false;
+    uint16_t s_write_seq = 0;
+    uint32_t s_write_off = 0;
+};
+
+// One instance per binary, in Core/Services/ (the FS global `Storage` is a different object).
+StorageService StorageSvc;
+
+inline void StorageService::Init()
+{
+    s_write_active = false;
+    s_write_seq = 0;
+    s_write_off = 0;
+    memset(s_write_name, 0, sizeof(s_write_name));
+}
+
+inline bool StorageService::Handle(const PacketFrame &frame)
 {
     uint8_t cid = GetServiceCID(frame.srv_tgt);
     bool is_response = (frame.flags & FLAG_TYPE);
 
-    if (is_response) return;
+    if (is_response) return true;
 
     switch (cid) {
         case 0: { // Format per docs 03.00
@@ -165,4 +189,5 @@ void HandleStorageService(const PacketFrame &frame)
         default:
             break;
     }
+    return true;
 }

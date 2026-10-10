@@ -2,7 +2,7 @@
 
 // Provider (USE_SUB_PROVIDE): the active provider table and triggers.
 //
-// Part of Core/Services/Subscriptions.h (included from there).
+// Part of Core/Services/Subscriptions.h (included from there, after the class).
 
 #include "Core/Services/SubscriptionsDefs.h"
 
@@ -12,59 +12,21 @@
 // from the main loop (SubscriptionsTick -> EvaluateProviderTriggers).
 // ===========================================================================
 #ifdef USE_SUB_PROVIDE
-// The active provider table size. Defaults to 20; a RAM-constrained target overrides it with
-// -D MAX_PROVIDER_SUBS=N (the DAS's 2 KB RAM needs only a couple of active providers). Kept as
-// a build flag rather than a BOARD_X ifdef so Core/ stays board-agnostic (Docs/General
-// architecture.md code rules).
-#ifndef MAX_PROVIDER_SUBS
-#define MAX_PROVIDER_SUBS 20
-#endif
-
-// Docs "Provider table entry" (32 B wire): requesterAddr, trid, the shared subscription
-// table, last sent, hash/hashlike, timeout. Active until canceled; not persistent.
-struct ProviderEntry {
-    uint16_t requesterAddr = 0;  // 0 = invalid entry
-    uint16_t trid = 0;
-    SubscriptionTable sub;
-    uint32_t lastSentMs = 0;
-    uint32_t hash = 0;           // FNV-1a hash / edge counter / last value / subresolution
-    uint32_t timeout = 0;        // local uptime deadline
-    // Transient (not serialized): last boolean sample for edge detection and the last
-    // counter value that was transmitted.
-    bool lastBool = false;
-    uint32_t sentCounter = 0;
-    // Last SENT vector for a delta subscription on a Vector source (up to 3 axes); the
-    // scalar delta reuses `hash` for the same purpose.
-    int32_t lastVec[3] = {0, 0, 0};
-};
-
-static ProviderEntry providerTable[MAX_PROVIDER_SUBS];
-
-// The wire prefix of the entry IS the struct prefix, so serialization is a plain copy of the
-// first 32 bytes (Docs "Provider table entry"): requesterAddr, trid, table, lastSent, hash,
-// timeout. The provider table is not ordered (only the requester table is TRID-sorted).
-static_assert(offsetof(ProviderEntry, requesterAddr) == 0, "wire order: requesterAddr first");
-static_assert(offsetof(ProviderEntry, trid) == 2, "wire order: trid after requesterAddr");
-static_assert(offsetof(ProviderEntry, sub) == 4, "wire order: subscription table after trid");
-static_assert(offsetof(ProviderEntry, lastSentMs) == 20, "wire order: lastSent after the table");
-static_assert(offsetof(ProviderEntry, hash) == 24, "wire order: hash after lastSent");
-static_assert(offsetof(ProviderEntry, timeout) == 28, "wire order: timeout after hash");
-#define PROVIDER_ENTRY_WIRE_SIZE 32
 
 // What makes a provider entry occupied (used by the shared table search).
-static bool ProviderOccupied(const ProviderEntry &e) { return e.requesterAddr != 0; }
+inline bool SubscriptionsService::ProviderOccupied(const ProviderEntry &e) { return e.requesterAddr != 0; }
 
-static ProviderEntry* ProviderFindByTrid(uint16_t trid) {
-    return SubTableFindByTrid(providerTable, trid, ProviderOccupied);
+inline ProviderEntry* SubscriptionsService::ProviderFindByTrid(uint16_t trid) {
+    return SubTableFindByTrid(ProviderTable, trid, ProviderOccupied);
 }
 
-static ProviderEntry* ProviderFindFree() {
+inline ProviderEntry* SubscriptionsService::ProviderFindFree() {
     for (int i = 0; i < MAX_PROVIDER_SUBS; i++)
-        if (providerTable[i].requesterAddr == 0) return &providerTable[i];
+        if (ProviderTable[i].requesterAddr == 0) return &ProviderTable[i];
     return nullptr;
 }
 
-static void ProviderClearEntry(ProviderEntry* e) {
+inline void SubscriptionsService::ProviderClearEntry(ProviderEntry* e) {
     *e = ProviderEntry{};
 }
 
@@ -72,7 +34,7 @@ static void ProviderClearEntry(ProviderEntry* e) {
 // state reset (an explicit Set); a new entry (requesterAddr 0) or a changed source register
 // resets anyway, so a retargeted or re-set subscription cannot suppress its first send with a
 // stale hash/last value from the previous target.
-static void ProviderApply(ProviderEntry* e, uint16_t trid, uint16_t requesterAddr,
+inline void SubscriptionsService::ProviderApply(ProviderEntry* e, uint16_t trid, uint16_t requesterAddr,
                           const SubscriptionTable &t, bool reset) {
     bool targetChanged = e->requesterAddr == 0 || e->sub.sourceReg != t.sourceReg;
     e->requesterAddr = requesterAddr;
@@ -90,8 +52,8 @@ static void ProviderApply(ProviderEntry* e, uint16_t trid, uint16_t requesterAdd
 
 // Installs (or updates) a provider entry from a subscription table. Returns the entry, or
 // nullptr when the table is full. Shared by 0401/0421 and the same-device re-registration.
-static ProviderEntry* ProviderInstall(uint16_t trid, uint16_t requesterAddr,
-                                      const SubscriptionTable &t, bool reset = false) {
+inline ProviderEntry* SubscriptionsService::ProviderInstall(uint16_t trid, uint16_t requesterAddr,
+                                      const SubscriptionTable &t, bool reset) {
     ProviderEntry* e = ProviderFindByTrid(trid);
     if (!e) e = ProviderFindFree();
     if (!e) return nullptr;
@@ -101,7 +63,7 @@ static ProviderEntry* ProviderInstall(uint16_t trid, uint16_t requesterAddr,
 
 // The provider side of the requester's confirmation (CID 0 request): the payload is the
 // FNV-1a hash of the value the requester received; confirm-required triggers stop here.
-static void HandleProviderConfirmation(const PacketFrame &frame) {
+inline void SubscriptionsService::HandleProviderConfirmation(const PacketFrame &frame) {
     ProviderEntry* e = ProviderFindByTrid(frame.trid);
     if (!e) return;
     e->timeout = SubTimeoutFrom(DeviceStatus.UptimeMs); // a confirmation renews the lease
@@ -119,7 +81,7 @@ static void HandleProviderConfirmation(const PacketFrame &frame) {
 // The deadzone is taken in the value's own scalar type (Docs "Deadzone": its type follows
 // the value): the Q16.16 raw bits for a Number/Vector, a plain integer for Index/Uint32 - a
 // raw 32-bit scalar either way, so it is passed as `uint32_t` rather than a `Number`.
-static uint32_t SubscriptionsDeltaHash(const FieldResult &fr, uint32_t deadzone) {
+inline uint32_t SubscriptionsService::SubscriptionsDeltaHash(const FieldResult &fr, uint32_t deadzone) {
     uint16_t dtype = ValueInfoType(fr.Descriptor.Type);
     uint8_t size = fr.Descriptor.Size;
     const uint8_t *data = (const uint8_t *)fr.Data;
@@ -163,7 +125,7 @@ static uint32_t SubscriptionsDeltaHash(const FieldResult &fr, uint32_t deadzone)
 // 0 C - then looks like a change of nearly 2^32 and defeats every deadzone, so the delta send
 // fires every minimum interval. Found on the rig: the vector delta "huge deadzone" test failed
 // because the source's X axis (-0.38, Y 0.07) idles across zero.
-static inline uint32_t SubscriptionsAbsDelta(int32_t now, int32_t last) {
+inline uint32_t SubscriptionsService::SubscriptionsAbsDelta(int32_t now, int32_t last) {
     const int32_t diff = now - last; // wraps safely (-fwrapv); the unsigned negation below
     return (diff < 0) ? (uint32_t)(0u - (uint32_t)diff) : (uint32_t)diff; // handles INT32_MIN
 }
@@ -171,7 +133,7 @@ static inline uint32_t SubscriptionsAbsDelta(int32_t now, int32_t last) {
 // True for a 4-byte scalar numeric value. Delta subscriptions gate these on the change
 // magnitude against the deadzone (Docs "Checks distance ... Last scalar value"); the
 // vector path uses [SubscriptionsDeltaHash]'s subresolution pack instead.
-static bool SubscriptionsIsScalar(const FieldResult &fr) {
+inline bool SubscriptionsService::SubscriptionsIsScalar(const FieldResult &fr) {
     if (fr.Descriptor.Size < 4) return false;
     uint16_t t = ValueInfoType(fr.Descriptor.Type);
     return t == (uint16_t)DataType::Number || t == (uint16_t)DataType::Index ||
@@ -182,7 +144,7 @@ static bool SubscriptionsIsScalar(const FieldResult &fr) {
 // Squared euclidean distance between a Vector value (up to 3 axes) and `last`, saturated so
 // the comparison against the squared deadzone can never overflow (Docs: the delta trigger
 // "Checks distance (euclidian for vectors)").
-static uint32_t SubscriptionsVectorDist2(const FieldResult &fr, const int32_t *last) {
+inline uint32_t SubscriptionsService::SubscriptionsVectorDist2(const FieldResult &fr, const int32_t *last) {
     uint8_t axes = (uint8_t)(fr.Descriptor.Size / 4);
     if (axes > 3) axes = 3;
     const uint8_t *data = (const uint8_t *)fr.Data;
@@ -202,9 +164,9 @@ static uint32_t SubscriptionsVectorDist2(const FieldResult &fr, const int32_t *l
 }
 #endif
 
-static void EvaluateProviderTriggers(uint32_t nowMs) {
+inline void SubscriptionsService::EvaluateProviderTriggers(uint32_t nowMs) {
     for (int i = 0; i < MAX_PROVIDER_SUBS; i++) {
-        ProviderEntry* e = &providerTable[i];
+        ProviderEntry* e = &ProviderTable[i];
         if (e->requesterAddr == 0) continue;
         uint32_t elapsed = nowMs - e->lastSentMs;
         // A Periodic entry that is not due yet never sends, so skip it before resolving (and

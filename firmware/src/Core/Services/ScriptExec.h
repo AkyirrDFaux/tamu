@@ -16,7 +16,7 @@
 
 
 // Evaluates the Set line's token stream and stores it into the destination.
-static uint8_t ScriptExecSet(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase,
+inline uint8_t ScriptService::ExecSet(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase,
                              uint16_t dtype, uint8_t *dest, uint8_t dsize)
 {
     if (ln.opCount < 1) return SCRIPT_ERR_OPERAND;
@@ -27,7 +27,7 @@ static uint8_t ScriptExecSet(LoadedScript *s, const ScriptLineInfo &ln, const ui
     p.i = 0;
     p.depth = 0;
     ExprValue v;
-    if (!ScriptExprBin(&p, v, 1)) return SCRIPT_ERR_OPERAND;
+    if (!ExprBin(&p, v, 1)) return SCRIPT_ERR_OPERAND;
     if (p.i != p.n) return SCRIPT_ERR_OPERAND; // trailing tokens
 
     if (dtype == (uint16_t)DataType::Vector)
@@ -62,7 +62,7 @@ static uint8_t ScriptExecSet(LoadedScript *s, const ScriptLineInfo &ln, const ui
         ScriptScalar sc;
         sc.n = v.e[0];
         sc.i = v.e[0].RoundToInt();
-        ScriptStoreScalar(dtype, dest, dsize, dtype == (uint16_t)DataType::Number, sc);
+        StoreScalar(dtype, dest, dsize, dtype == (uint16_t)DataType::Number, sc);
     }
     s->ic++;
     return SCRIPT_ERR_NONE;
@@ -70,7 +70,7 @@ static uint8_t ScriptExecSet(LoadedScript *s, const ScriptLineInfo &ln, const ui
 
 // Evaluates a token stream as an expression and returns its truth value (used by the flow
 // instructions and Wait until).
-static bool ScriptExprTruthy(LoadedScript *s, const uint8_t *tok, uint8_t n, bool &ok)
+inline bool ScriptService::ExprTruthy(LoadedScript *s, const uint8_t *tok, uint8_t n, bool &ok)
 {
     if (n < 1) return false;
     ExprParser p;
@@ -80,7 +80,7 @@ static bool ScriptExprTruthy(LoadedScript *s, const uint8_t *tok, uint8_t n, boo
     p.i = 0;
     p.depth = 0;
     ExprValue v;
-    if (!ScriptExprBin(&p, v, 1)) return false;
+    if (!ExprBin(&p, v, 1)) return false;
     if (p.i != p.n) return false;
     ok = (v.count > 0) && (v.e[0].Value != 0);
     return true;
@@ -88,7 +88,7 @@ static bool ScriptExprTruthy(LoadedScript *s, const uint8_t *tok, uint8_t n, boo
 
 // Transform dest = rot, ox, oy, sx, sy [, skew] -> a 2x3 affine matrix (rotation in
 // radians), matching the render Position/Offset format.
-static uint8_t ScriptExecTransform(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase,
+inline uint8_t ScriptService::ExecTransform(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase,
                                    uint16_t dtype, uint8_t *dest, uint8_t dsize)
 {
     if (dtype != (uint16_t)DataType::Matrix || dsize < 4 + 6 * 4) return SCRIPT_ERR_TYPE;
@@ -99,7 +99,7 @@ static uint8_t ScriptExecTransform(LoadedScript *s, const ScriptLineInfo &ln, co
     for (uint8_t i = 0; i < n; i++)
     {
         ScriptScalar sc;
-        if (!ScriptResolveOperandScalar(s, opbase + (size_t)i * 4, true, sc)) return SCRIPT_ERR_OPERAND;
+        if (!ResolveOperandScalar(s, opbase + (size_t)i * 4, true, sc)) return SCRIPT_ERR_OPERAND;
         v[i] = sc.n;
     }
     Number rot = v[0], tx = v[1], ty = v[2], sx = v[3], sy = v[4], skew = v[5];
@@ -136,27 +136,27 @@ static uint8_t ScriptExecTransform(LoadedScript *s, const ScriptLineInfo &ln, co
     return SCRIPT_ERR_NONE;
 }
 
-static uint8_t ScriptExecMath(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase, uint8_t cat, uint8_t op) {
+inline uint8_t ScriptService::ExecMath(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase, uint8_t cat, uint8_t op) {
     if (ln.destCount < 1) return SCRIPT_ERR_OPERAND;
     uint16_t dtype = 0;
     uint8_t *dest = nullptr;
     uint8_t dsize = 0;
-    if (!ScriptResolveDest(s, s->instr + (size_t)ln.start * 4, dtype, dest, dsize)) return SCRIPT_ERR_OPERAND;
+    if (!ResolveDest(s, s->instr + (size_t)ln.start * 4, dtype, dest, dsize)) return SCRIPT_ERR_OPERAND;
     bool num = (dtype == (uint16_t)DataType::Number);
 
     // SET evaluates an infix expression (scalar / vector / matrix).
     if (cat == SCRIPT_CAT_MATH && op == SCRIPT_OP_MATH_SET) {
-        return ScriptExecSet(s, ln, opbase, dtype, dest, dsize);
+        return ExecSet(s, ln, opbase, dtype, dest, dsize);
     }
 
     // Transform: a 2x3 affine matrix from (rot, ox, oy, sx, sy[, skew]).
     if (cat == SCRIPT_CAT_MATH && op == SCRIPT_OP_MATH_TRANSFORM) {
-        return ScriptExecTransform(s, ln, opbase, dtype, dest, dsize);
+        return ExecTransform(s, ln, opbase, dtype, dest, dsize);
     }
 
     // Vector/Matrix destination: element-wise math (operands resolved raw).
     if (dtype == (uint16_t)DataType::Vector || dtype == (uint16_t)DataType::Matrix) {
-        return ScriptExecVectorMath(s, ln, opbase, cat, op, dtype, dest, dsize);
+        return ExecVectorMath(s, ln, opbase, cat, op, dtype, dest, dsize);
     }
 
     ScriptScalar in[8];
@@ -164,7 +164,7 @@ static uint8_t ScriptExecMath(LoadedScript *s, const ScriptLineInfo &ln, const u
     if (n > 8) n = 8;
     if (n < 1) return SCRIPT_ERR_OPERAND;
     for (uint8_t i = 0; i < n; i++) {
-        if (!ScriptResolveOperandScalar(s, opbase + (size_t)i * 4, num, in[i])) return SCRIPT_ERR_OPERAND;
+        if (!ResolveOperandScalar(s, opbase + (size_t)i * 4, num, in[i])) return SCRIPT_ERR_OPERAND;
     }
 
     ScriptScalar out;
@@ -220,17 +220,17 @@ static uint8_t ScriptExecMath(LoadedScript *s, const ScriptLineInfo &ln, const u
             return SCRIPT_ERR_UNKNOWN_OP;
     }
 
-    ScriptStoreScalar(dtype, dest, dsize, num, out);
+    StoreScalar(dtype, dest, dsize, num, out);
     s->ic++;
     return SCRIPT_ERR_NONE;
 }
 
-static uint8_t ScriptExecFlow(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase, uint8_t op) {
+inline uint8_t ScriptService::ExecFlow(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase, uint8_t op) {
     switch (op) {
         case SCRIPT_OP_FLOW_IF: {
             if (ln.opCount < 1) return SCRIPT_ERR_OPERAND;
             bool ok = false;
-            if (!ScriptExprTruthy(s, opbase, ln.opCount, ok)) return SCRIPT_ERR_OPERAND;
+            if (!ExprTruthy(s, opbase, ln.opCount, ok)) return SCRIPT_ERR_OPERAND;
             uint16_t match = s->blockMatch[s->ic];
             s->ic = ok ? s->ic + 1 : (match == 0xFFFF ? s->ic + 1 : match + 1);
             return SCRIPT_ERR_NONE;
@@ -238,7 +238,7 @@ static uint8_t ScriptExecFlow(LoadedScript *s, const ScriptLineInfo &ln, const u
         case SCRIPT_OP_FLOW_WHILE: {
             if (ln.opCount < 1) return SCRIPT_ERR_OPERAND;
             bool ok = false;
-            if (!ScriptExprTruthy(s, opbase, ln.opCount, ok)) return SCRIPT_ERR_OPERAND;
+            if (!ExprTruthy(s, opbase, ln.opCount, ok)) return SCRIPT_ERR_OPERAND;
             uint16_t match = s->blockMatch[s->ic];
             s->ic = ok ? s->ic + 1 : (match == 0xFFFF ? s->ic + 1 : match + 1);
             return SCRIPT_ERR_NONE;
@@ -252,7 +252,7 @@ static uint8_t ScriptExecFlow(LoadedScript *s, const ScriptLineInfo &ln, const u
         case SCRIPT_OP_FLOW_JUMP: {
             if (ln.opCount < 1) return SCRIPT_ERR_OPERAND;
             int32_t target = 0;
-            if (!ScriptResolveOperandInt(s, opbase, target)) return SCRIPT_ERR_OPERAND;
+            if (!ResolveOperandInt(s, opbase, target)) return SCRIPT_ERR_OPERAND;
             if (target < 0 || target >= s->lineCount) return SCRIPT_ERR_BOUNDS;
             s->ic = (uint16_t)target;
             return SCRIPT_ERR_NONE;
@@ -260,7 +260,7 @@ static uint8_t ScriptExecFlow(LoadedScript *s, const ScriptLineInfo &ln, const u
         case SCRIPT_OP_FLOW_CALL: {
             if (ln.opCount < 1) return SCRIPT_ERR_OPERAND;
             int32_t target = 0;
-            if (!ScriptResolveOperandInt(s, opbase, target)) return SCRIPT_ERR_OPERAND;
+            if (!ResolveOperandInt(s, opbase, target)) return SCRIPT_ERR_OPERAND;
             if (target < 0 || target >= s->lineCount) return SCRIPT_ERR_BOUNDS;
             if (s->callDepth >= SCRIPT_MAX_CALL_DEPTH) return SCRIPT_ERR_STACK;
             s->callStack[s->callDepth++] = (uint16_t)(s->ic + 1);
@@ -280,12 +280,12 @@ static uint8_t ScriptExecFlow(LoadedScript *s, const ScriptLineInfo &ln, const u
     }
 }
 
-static uint8_t ScriptExecTime(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase, uint8_t op, uint32_t nowMs, bool &yield) {
+inline uint8_t ScriptService::ExecTime(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase, uint8_t op, uint32_t nowMs, bool &yield) {
     switch (op) {
         case SCRIPT_OP_TIME_DELAY: {
             if (ln.opCount < 1) return SCRIPT_ERR_OPERAND;
             int32_t ms = 0;
-            if (!ScriptResolveOperandInt(s, opbase, ms)) return SCRIPT_ERR_OPERAND;
+            if (!ResolveOperandInt(s, opbase, ms)) return SCRIPT_ERR_OPERAND;
             if (ms < 0) ms = 0;
             s->ic++;
             s->waitUntil = nowMs + (uint32_t)ms;
@@ -297,7 +297,7 @@ static uint8_t ScriptExecTime(LoadedScript *s, const ScriptLineInfo &ln, const u
         case SCRIPT_OP_TIME_WAIT: {
             if (ln.opCount < 1) return SCRIPT_ERR_OPERAND;
             bool ok = false;
-            if (!ScriptExprTruthy(s, opbase, ln.opCount, ok)) return SCRIPT_ERR_OPERAND;
+            if (!ExprTruthy(s, opbase, ln.opCount, ok)) return SCRIPT_ERR_OPERAND;
             if (!ok) {
                 s->waitingOnTime = false;
                 s->state = (uint8_t)ScriptState::Waiting;
@@ -310,7 +310,7 @@ static uint8_t ScriptExecTime(LoadedScript *s, const ScriptLineInfo &ln, const u
         case SCRIPT_OP_TIME_GET: {
             if (ln.destCount < 1) return SCRIPT_ERR_OPERAND;
             uint16_t dtype = 0; uint8_t *dest = nullptr; uint8_t dsize = 0;
-            if (!ScriptResolveDest(s, s->instr + (size_t)ln.start * 4, dtype, dest, dsize)) return SCRIPT_ERR_OPERAND;
+            if (!ResolveDest(s, s->instr + (size_t)ln.start * 4, dtype, dest, dsize)) return SCRIPT_ERR_OPERAND;
             // Time is a whole millisecond count. A Q16.16 Number destination only has a
             // 15-bit integer part (it overflows past ~32767 ms), so restrict Get time to
             // the integer types.
@@ -319,7 +319,7 @@ static uint8_t ScriptExecTime(LoadedScript *s, const ScriptLineInfo &ln, const u
             ScriptScalar v;
             v.i = (int32_t)nowMs;
             v.n = Number::FromRaw(0); // unused: integer destination
-            ScriptStoreScalar(dtype, dest, dsize, false, v);
+            StoreScalar(dtype, dest, dsize, false, v);
             s->ic++;
             return SCRIPT_ERR_NONE;
         }
@@ -329,18 +329,18 @@ static uint8_t ScriptExecTime(LoadedScript *s, const ScriptLineInfo &ln, const u
 }
 
 // Reads a 4-byte BlockInfo from a Constant operand.
-static bool ScriptOperandBlockInfo(LoadedScript *s, const uint8_t *sym, uint32_t &bi) {
+inline bool ScriptService::OperandBlockInfo(LoadedScript *s, const uint8_t *sym, uint32_t &bi) {
     uint8_t scratch[4];
     const uint8_t *data = nullptr;
     uint8_t size = 0;
     uint16_t dtype = 0;
-    if (!ScriptResolve(s, sym[0], sym[1], ScriptSymVal(sym), scratch, &data, &size, &dtype)) return false;
+    if (!Resolve(s, sym[0], sym[1], SymVal(sym), scratch, &data, &size, &dtype)) return false;
     if (size < 4) return false;
     memcpy(&bi, data, 4);
     return true;
 }
 
-static void ScriptSendRegisterRequest(LoadedScript *s, uint16_t addr, uint8_t cid,
+inline void ScriptService::SendRegisterRequest(LoadedScript *s, uint16_t addr, uint8_t cid,
                                       const uint8_t *payload, uint16_t len) {
     PacketFrame req;
     PacketConstruct(&req, addr, MakeService(ServiceType::Register, cid), s->trid,
@@ -348,7 +348,7 @@ static void ScriptSendRegisterRequest(LoadedScript *s, uint16_t addr, uint8_t ci
     SendAndVerifyPacket(req);
 }
 
-static uint8_t ScriptExecService(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase,
+inline uint8_t ScriptService::ExecService(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase,
                                  uint8_t op, uint32_t nowMs, bool &yield) {
     switch (op) {
         case SCRIPT_OP_SERVICE_NOP:
@@ -360,7 +360,7 @@ static uint8_t ScriptExecService(LoadedScript *s, const ScriptLineInfo &ln, cons
             uint16_t code = (uint16_t)(s->slot & 0xFF);
             if (ln.opCount >= 1) {
                 int32_t v = 0;
-                if (ScriptResolveOperandInt(s, opbase, v)) code = (uint16_t)(v & 0xFFFF);
+                if (ResolveOperandInt(s, opbase, v)) code = (uint16_t)(v & 0xFFFF);
             }
             // A custom log is an informational message, not an error report.
             ReportLog(MakeLog(false, (uint16_t)ServiceType::Script, code, 0), PRIORITY_LOG);
@@ -370,9 +370,9 @@ static uint8_t ScriptExecService(LoadedScript *s, const ScriptLineInfo &ln, cons
         case SCRIPT_OP_SERVICE_STATE: {
             if (ln.opCount < 1) return SCRIPT_ERR_OPERAND;
             if (opbase[0] == SCRIPT_SYM_PREDEFINE && opbase[1] == SCRIPT_PRE_STATE) {
-                uint8_t st = (uint8_t)(ScriptSymVal(opbase) & 0xFF);
+                uint8_t st = (uint8_t)(SymVal(opbase) & 0xFF);
                 if (st > (uint8_t)ScriptState::Error) return SCRIPT_ERR_OPERAND;
-                ScriptSetState(s, st);
+                SetState(s, st);
                 if (st == (uint8_t)ScriptState::Stopped || st == (uint8_t)ScriptState::Finished ||
                     st == (uint8_t)ScriptState::Error)
                     return SCRIPT_ERR_NONE; // terminal: the run loop stops here
@@ -385,12 +385,12 @@ static uint8_t ScriptExecService(LoadedScript *s, const ScriptLineInfo &ln, cons
         case SCRIPT_OP_SERVICE_REG_READ: { // dest = register[BlockInfo]
             if (ln.destCount < 1 || ln.opCount < 1) return SCRIPT_ERR_OPERAND;
             uint32_t bi = 0;
-            if (!ScriptOperandBlockInfo(s, opbase, bi)) return SCRIPT_ERR_OPERAND;
+            if (!OperandBlockInfo(s, opbase, bi)) return SCRIPT_ERR_OPERAND;
             ValueInfo rm;
             uint8_t rbuf[256]; // a register value can be up to the u8 size limit
             uint8_t rsz = 0;
             if (!RegisterGetByBlockInfo(bi, rm, rbuf, rsz)) return SCRIPT_ERR_REGISTER;
-            uint8_t err = ScriptAssign(s, s->instr + (size_t)ln.start * 4, rbuf, rsz,
+            uint8_t err = Assign(s, s->instr + (size_t)ln.start * 4, rbuf, rsz,
                                        ValueInfoType(rm.Type));
             if (err) return err;
             s->ic++;
@@ -399,7 +399,7 @@ static uint8_t ScriptExecService(LoadedScript *s, const ScriptLineInfo &ln, cons
         case SCRIPT_OP_SERVICE_REG_WRITE: { // register[BlockInfo] = operand2
             if (ln.opCount < 2) return SCRIPT_ERR_OPERAND;
             uint32_t bi = 0;
-            if (!ScriptOperandBlockInfo(s, opbase, bi)) return SCRIPT_ERR_OPERAND;
+            if (!OperandBlockInfo(s, opbase, bi)) return SCRIPT_ERR_OPERAND;
             ValueInfo rm;
             uint8_t rbuf[256];
             uint8_t rsz = 0;
@@ -408,11 +408,11 @@ static uint8_t ScriptExecService(LoadedScript *s, const ScriptLineInfo &ln, cons
             const uint8_t *val = nullptr;
             uint8_t vsize = 0;
             uint16_t vtype = 0;
-            if (!ScriptResolve(s, opbase[4], opbase[5], ScriptSymVal(opbase + 4), scratch, &val, &vsize, &vtype))
+            if (!Resolve(s, opbase[4], opbase[5], SymVal(opbase + 4), scratch, &val, &vsize, &vtype))
                 return SCRIPT_ERR_OPERAND;
             uint8_t wbuf[256];
             memset(wbuf, 0, sizeof(wbuf));
-            uint8_t err = ScriptAssignResolved(ValueInfoType(rm.Type), wbuf, rm.Size, val, vsize, vtype);
+            uint8_t err = AssignResolved(ValueInfoType(rm.Type), wbuf, rm.Size, val, vsize, vtype);
             if (err) return err;
             ValueInfo wm = rm;
             wm.Size = rm.Size;
@@ -423,9 +423,9 @@ static uint8_t ScriptExecService(LoadedScript *s, const ScriptLineInfo &ln, cons
         case SCRIPT_OP_SERVICE_REG_READ_FOREIGN: { // dest = register[addr, BlockInfo]
             if (ln.destCount < 1 || ln.opCount < 2) return SCRIPT_ERR_OPERAND;
             int32_t addr = 0;
-            if (!ScriptResolveOperandInt(s, opbase, addr)) return SCRIPT_ERR_OPERAND;
+            if (!ResolveOperandInt(s, opbase, addr)) return SCRIPT_ERR_OPERAND;
             uint32_t bi = 0;
-            if (!ScriptOperandBlockInfo(s, opbase + 4, bi)) return SCRIPT_ERR_OPERAND;
+            if (!OperandBlockInfo(s, opbase + 4, bi)) return SCRIPT_ERR_OPERAND;
             memcpy(s->pendingDest, s->instr + (size_t)ln.start * 4, 4);
             s->pendingRead = true;
             s->pendingForeign = true;
@@ -437,20 +437,20 @@ static uint8_t ScriptExecService(LoadedScript *s, const ScriptLineInfo &ln, cons
             yield = true;
             uint8_t payload[4];
             memcpy(payload, &bi, 4);
-            ScriptSendRegisterRequest(s, (uint16_t)addr, 1, payload, 4);
+            SendRegisterRequest(s, (uint16_t)addr, 1, payload, 4);
             return SCRIPT_ERR_NONE;
         }
         case SCRIPT_OP_SERVICE_REG_WRITE_FOREIGN: { // register[addr, BlockInfo] = operand3
             if (ln.opCount < 3) return SCRIPT_ERR_OPERAND;
             int32_t addr = 0;
-            if (!ScriptResolveOperandInt(s, opbase, addr)) return SCRIPT_ERR_OPERAND;
+            if (!ResolveOperandInt(s, opbase, addr)) return SCRIPT_ERR_OPERAND;
             uint32_t bi = 0;
-            if (!ScriptOperandBlockInfo(s, opbase + 4, bi)) return SCRIPT_ERR_OPERAND;
+            if (!OperandBlockInfo(s, opbase + 4, bi)) return SCRIPT_ERR_OPERAND;
             uint8_t scratch[4];
             const uint8_t *val = nullptr;
             uint8_t vsize = 0;
             uint16_t vtype = 0;
-            if (!ScriptResolve(s, opbase[8], opbase[9], ScriptSymVal(opbase + 8), scratch, &val, &vsize, &vtype))
+            if (!Resolve(s, opbase[8], opbase[9], SymVal(opbase + 8), scratch, &val, &vsize, &vtype))
                 return SCRIPT_ERR_OPERAND;
             if (vsize > 64) vsize = 64;
             uint8_t payload[8 + 64];
@@ -466,19 +466,19 @@ static uint8_t ScriptExecService(LoadedScript *s, const ScriptLineInfo &ln, cons
             s->state = (uint8_t)ScriptState::Waiting;
             s->waitingOnTime = false;
             yield = true;
-            ScriptSendRegisterRequest(s, (uint16_t)addr, 2, payload, (uint16_t)(8 + vsize));
+            SendRegisterRequest(s, (uint16_t)addr, 2, payload, (uint16_t)(8 + vsize));
             return SCRIPT_ERR_NONE;
         }
         case SCRIPT_OP_SERVICE_SCRIPT_LOAD: { // load(script file id, loaded script id)
             // Mirrors management CID 1: the script picks the slot and the pair may differ.
             if (ln.opCount < 2) return SCRIPT_ERR_OPERAND;
             int32_t fileId = 0, slot = 0;
-            if (!ScriptResolveOperandInt(s, opbase, fileId)) return SCRIPT_ERR_OPERAND;
-            if (!ScriptResolveOperandInt(s, opbase + 4, slot)) return SCRIPT_ERR_OPERAND;
+            if (!ResolveOperandInt(s, opbase, fileId)) return SCRIPT_ERR_OPERAND;
+            if (!ResolveOperandInt(s, opbase + 4, slot)) return SCRIPT_ERR_OPERAND;
             // Loading over the running script would free the program currently being executed.
             if (slot == (int32_t)s->slot) return SCRIPT_ERR_OPERAND;
             if (fileId >= 0 && fileId < MAX_SCRIPT_FILES && slot >= 0 && slot < MAX_SCRIPTS)
-                ScriptLoad((uint16_t)fileId, (uint8_t)slot);
+                Load((uint16_t)fileId, (uint8_t)slot);
             s->ic++;
             return SCRIPT_ERR_NONE;
         }
@@ -487,10 +487,10 @@ static uint8_t ScriptExecService(LoadedScript *s, const ScriptLineInfo &ln, cons
             // that CID reporting no work rather than failing.
             if (ln.opCount < 1) return SCRIPT_ERR_OPERAND;
             int32_t slot = 0;
-            if (!ScriptResolveOperandInt(s, opbase, slot)) return SCRIPT_ERR_OPERAND;
+            if (!ResolveOperandInt(s, opbase, slot)) return SCRIPT_ERR_OPERAND;
             // Never unload the running script: its program and spaces are what is executing.
             if (slot == (int32_t)s->slot) return SCRIPT_ERR_OPERAND;
-            if (slot >= 0 && slot < MAX_SCRIPTS && ScriptActive((uint8_t)slot)) ScriptUnload((uint8_t)slot);
+            if (slot >= 0 && slot < MAX_SCRIPTS && Active((uint8_t)slot)) Unload((uint8_t)slot);
             s->ic++;
             return SCRIPT_ERR_NONE;
         }
@@ -500,13 +500,13 @@ static uint8_t ScriptExecService(LoadedScript *s, const ScriptLineInfo &ln, cons
 }
 
 // Resolves one element of a vector/matrix/colour/string container.
-static bool ScriptContainerElement(LoadedScript *s, const uint8_t *sym, int32_t index,
+inline bool ScriptService::ContainerElement(LoadedScript *s, const uint8_t *sym, int32_t index,
                                    uint8_t *scratch, const uint8_t **elem, uint8_t *elemSize,
                                    uint16_t *elemType) {
     const uint8_t *data = nullptr;
     uint8_t size = 0;
     uint16_t dtype = 0;
-    if (!ScriptResolve(s, sym[0], sym[1], ScriptSymVal(sym), scratch, &data, &size, &dtype)) return false;
+    if (!Resolve(s, sym[0], sym[1], SymVal(sym), scratch, &data, &size, &dtype)) return false;
     switch (dtype) {
         case (uint16_t)DataType::Vector:
             if (index < 0 || (uint32_t)(index + 1) * 4 > size) return false;
@@ -547,7 +547,7 @@ static bool ScriptContainerElement(LoadedScript *s, const uint8_t *sym, int32_t 
 }
 
 // Compose: container[index...] = value...   Extract: dest = container[index]
-static uint8_t ScriptExecCompose(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase, uint8_t op) {
+inline uint8_t ScriptService::ExecCompose(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase, uint8_t op) {
     if (op == SCRIPT_OP_COMPOSE) {
         if (ln.destCount < 1 || ln.opCount < 2) return SCRIPT_ERR_OPERAND;
         const uint8_t *destSym = s->instr + (size_t)ln.start * 4;
@@ -555,13 +555,13 @@ static uint8_t ScriptExecCompose(LoadedScript *s, const ScriptLineInfo &ln, cons
         if (destSym[0] != SCRIPT_SYM_VARIABLE && destSym[0] != SCRIPT_SYM_OUTPUT)
             return SCRIPT_ERR_OPERAND;
         int32_t index = 0;
-        if (!ScriptResolveOperandInt(s, opbase, index)) return SCRIPT_ERR_OPERAND;
+        if (!ResolveOperandInt(s, opbase, index)) return SCRIPT_ERR_OPERAND;
         for (uint8_t k = 1; k < ln.opCount; k++) {
             uint8_t vscratch[4];
             const uint8_t *val = nullptr;
             uint8_t vsize = 0;
             uint16_t vtype = 0;
-            if (!ScriptResolve(s, opbase[k * 4], opbase[k * 4 + 1], ScriptSymVal(opbase + (size_t)k * 4),
+            if (!Resolve(s, opbase[k * 4], opbase[k * 4 + 1], SymVal(opbase + (size_t)k * 4),
                                vscratch, &val, &vsize, &vtype))
                 return SCRIPT_ERR_OPERAND;
             const uint8_t *elem = nullptr;
@@ -569,9 +569,9 @@ static uint8_t ScriptExecCompose(LoadedScript *s, const ScriptLineInfo &ln, cons
             uint16_t etype = 0;
             // Separate scratch: `val` may point into `vscratch`.
             uint8_t escratch[4];
-            if (!ScriptContainerElement(s, destSym, index + (k - 1), escratch, &elem, &esize, &etype))
+            if (!ContainerElement(s, destSym, index + (k - 1), escratch, &elem, &esize, &etype))
                 return SCRIPT_ERR_BOUNDS;
-            uint8_t err = ScriptAssignResolved(etype, const_cast<uint8_t *>(elem), esize, val, vsize, vtype);
+            uint8_t err = AssignResolved(etype, const_cast<uint8_t *>(elem), esize, val, vsize, vtype);
             if (err) return err;
         }
         s->ic++;
@@ -580,13 +580,13 @@ static uint8_t ScriptExecCompose(LoadedScript *s, const ScriptLineInfo &ln, cons
     if (op == SCRIPT_OP_EXTRACT) {
         if (ln.destCount < 1 || ln.opCount < 2) return SCRIPT_ERR_OPERAND;
         int32_t index = 0;
-        if (!ScriptResolveOperandInt(s, opbase + 4, index)) return SCRIPT_ERR_OPERAND;
+        if (!ResolveOperandInt(s, opbase + 4, index)) return SCRIPT_ERR_OPERAND;
         uint8_t scratch[4];
         const uint8_t *elem = nullptr;
         uint8_t esize = 0;
         uint16_t etype = 0;
-        if (!ScriptContainerElement(s, opbase, index, scratch, &elem, &esize, &etype)) return SCRIPT_ERR_BOUNDS;
-        uint8_t err = ScriptAssign(s, s->instr + (size_t)ln.start * 4, elem, esize, etype);
+        if (!ContainerElement(s, opbase, index, scratch, &elem, &esize, &etype)) return SCRIPT_ERR_BOUNDS;
+        uint8_t err = Assign(s, s->instr + (size_t)ln.start * 4, elem, esize, etype);
         if (err) return err;
         s->ic++;
         return SCRIPT_ERR_NONE;
@@ -594,7 +594,7 @@ static uint8_t ScriptExecCompose(LoadedScript *s, const ScriptLineInfo &ln, cons
     return SCRIPT_ERR_UNKNOWN_OP;
 }
 
-static uint8_t ScriptExecLine(LoadedScript *s, uint32_t nowMs, bool &yield) {
+inline uint8_t ScriptService::ExecLine(LoadedScript *s, uint32_t nowMs, bool &yield) {
     const ScriptLineInfo &ln = s->lines[s->ic];
     const uint8_t *instr = s->instr + (size_t)(ln.start + ln.destCount) * 4;
     uint8_t cat = instr[1];
@@ -603,15 +603,15 @@ static uint8_t ScriptExecLine(LoadedScript *s, uint32_t nowMs, bool &yield) {
     switch (cat) {
         case SCRIPT_CAT_MATH:
         case SCRIPT_CAT_LOGIC:
-            return ScriptExecMath(s, ln, opbase, cat, op);
+            return ExecMath(s, ln, opbase, cat, op);
         case SCRIPT_CAT_FLOW:
-            return ScriptExecFlow(s, ln, opbase, op);
+            return ExecFlow(s, ln, opbase, op);
         case SCRIPT_CAT_TIME:
-            return ScriptExecTime(s, ln, opbase, op, nowMs, yield);
+            return ExecTime(s, ln, opbase, op, nowMs, yield);
         case SCRIPT_CAT_SERVICE:
-            return ScriptExecService(s, ln, opbase, op, nowMs, yield);
+            return ExecService(s, ln, opbase, op, nowMs, yield);
         case SCRIPT_CAT_COMPOSE:
-            return ScriptExecCompose(s, ln, opbase, op);
+            return ExecCompose(s, ln, opbase, op);
         default:
             return SCRIPT_ERR_UNKNOWN_OP;
     }

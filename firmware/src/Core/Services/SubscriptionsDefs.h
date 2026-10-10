@@ -1,8 +1,10 @@
 #pragma once
 
-// Shared subscription tables, lookups and field access.
+// Shared subscription tables, lookups and field access, plus the wire entry structs.
 //
-// Part of Core/Services/Subscriptions.h (included from there).
+// Part of Core/Services/Subscriptions.h (included from there, before the service class,
+// because the SubscriptionsService member layout and the role files both need the entry
+// structs and their sizes).
 
 #include "Core/Functions/Packet.h"
 #include "Core/Functions/MemoryTypes.h"
@@ -24,13 +26,8 @@
 #define SUB_PRIORITY_HIGH PRIORITY_SUB_HIGH
 #define SUB_PRIORITY_LOW  PRIORITY_SUB_LOW
 
-// True for the high-priority triggers (confirmation and edge detection).
-static inline bool SubscriptionsHighPriority(TriggerType t) {
-    return t == TriggerType::OnChangeConfirm || t == TriggerType::EdgeRising ||
-           t == TriggerType::EdgeFalling || t == TriggerType::EdgeAny;
-}
-
 // FNV-1a hash over the value bytes (provider on-change detection + requester confirmation).
+// A generic hash over data - not service state - so it stays a free helper.
 static inline uint32_t Fnv1a(const uint8_t *data, uint8_t len) {
     uint32_t hash = 0x811C9DC5u;
     for (uint8_t i = 0; i < len; i++) {
@@ -64,16 +61,6 @@ static inline uint32_t SubMinTime(const SubscriptionTable &t) {
 
 static inline uint32_t SubTimeoutFrom(uint32_t nowMs) { return nowMs + SUB_TIMEOUT_MS; }
 
-// Reads the current value of the register addressed by a 32-bit BlockInfo. Delegates the
-// script/dynamic/static routing to the register service (RegisterResolveByBlockInfo) so the
-// two services cannot drift; the returned Data points at the source value (or is null when
-// the BlockInfo does not resolve).
-static inline FieldResult SubscriptionsGetField(uint32_t blockInfo) {
-    FieldResult fr;
-    RegisterResolveByBlockInfo(blockInfo, fr);
-    return fr;
-}
-
 // ---------------------------------------------------------------------------
 // Shared table search. The requester and provider tables are searched the same
 // way; only what makes an entry "occupied" differs (RequesterEntry::active vs
@@ -88,3 +75,85 @@ static T *SubTableFindByTrid(T (&table)[N], uint16_t trid, Occupied occupied) {
     }
     return nullptr;
 }
+
+// ===========================================================================
+// Entry wire structs. These live before the SubscriptionsService class (whose
+// member layout is these tables) and before the role files that operate on them.
+// ===========================================================================
+
+#ifdef USE_SUB_REQUEST
+#define MAX_REQUESTER_SUBS 16
+
+// Docs "Requester table entry" (28 B wire): providerAddr, TRID, the shared subscription
+// table, target register, timeout. The timeout is local uptime and is not persistent.
+struct RequesterEntry {
+    uint16_t providerAddr = 0;
+    uint16_t trid = 0;
+    SubscriptionTable sub;
+    uint32_t targetReg = 0;      // local write target
+    uint32_t timeout = 0;        // local uptime deadline (not persisted)
+    bool active = false;
+    // Initialization tracking (transient): the entry is "initialized" once a value update
+    // arrives; until then the requester re-sends the registration (CID 1) to wake the provider.
+    uint32_t registeredAtMs = 0;   // start of the initialization window (set/boot)
+    uint32_t lastRegisteredMs = 0; // last re-registration sent
+    uint32_t lastValueMs = 0;      // uptime of the last received value (0 = never)
+};
+
+#define SUB_RETRY_MS          100   // re-registration interval while un-initialized
+#define SUB_INIT_WINDOW_MS    10000 // give up re-registering after this long
+#define SUB_KEEPALIVE_MS      60000 // renew the provider's 120 s lease once values flow
+
+// The wire prefix of the entry IS the struct prefix, so serialization is a plain copy of the
+// first 28 bytes (Docs "Requester table entry"): providerAddr, trid, table, targetReg, timeout.
+static_assert(offsetof(RequesterEntry, providerAddr) == 0, "wire order: providerAddr first");
+static_assert(offsetof(RequesterEntry, trid) == 2, "wire order: trid after providerAddr");
+static_assert(offsetof(RequesterEntry, sub) == 4, "wire order: subscription table after trid");
+static_assert(offsetof(RequesterEntry, targetReg) == 20, "wire order: targetReg after the table");
+static_assert(offsetof(RequesterEntry, timeout) == 24, "wire order: timeout after targetReg");
+#define REQUESTER_ENTRY_WIRE_SIZE 28
+#define REQUESTER_FILE_ENTRY_SIZE 24 // the wire entry minus the timeout (not persisted)
+
+// The deferred re-registration queue capacity: a short address list (not a bitmask) keeps any
+// 10-bit node id addressable, sized to the device registry's capacity (SNDB_MAX_ENTRIES) so a
+// burst of assignments can never silently drop a re-push.
+static const uint8_t kReRegisterMax = 128;
+#endif // USE_SUB_REQUEST
+
+#ifdef USE_SUB_PROVIDE
+// The active provider table size. Defaults to 20; a RAM-constrained target overrides it with
+// -D MAX_PROVIDER_SUBS=N (the DAS's 2 KB RAM needs only a couple of active providers). Kept as
+// a build flag rather than a BOARD_X ifdef so Core/ stays board-agnostic (Docs/Code Style.md).
+#ifndef MAX_PROVIDER_SUBS
+#define MAX_PROVIDER_SUBS 20
+#endif
+
+// Docs "Provider table entry" (32 B wire): requesterAddr, trid, the shared subscription
+// table, last sent, hash/hashlike, timeout. Active until canceled; not persistent.
+struct ProviderEntry {
+    uint16_t requesterAddr = 0;  // 0 = invalid entry
+    uint16_t trid = 0;
+    SubscriptionTable sub;
+    uint32_t lastSentMs = 0;
+    uint32_t hash = 0;           // FNV-1a hash / edge counter / last value / subresolution
+    uint32_t timeout = 0;        // local uptime deadline
+    // Transient (not serialized): last boolean sample for edge detection and the last
+    // counter value that was transmitted.
+    bool lastBool = false;
+    uint32_t sentCounter = 0;
+    // Last SENT vector for a delta subscription on a Vector source (up to 3 axes); the
+    // scalar delta reuses `hash` for the same purpose.
+    int32_t lastVec[3] = {0, 0, 0};
+};
+
+// The wire prefix of the entry IS the struct prefix, so serialization is a plain copy of the
+// first 32 bytes (Docs "Provider table entry"): requesterAddr, trid, table, lastSent, hash,
+// timeout. The provider table is not ordered (only the requester table is TRID-sorted).
+static_assert(offsetof(ProviderEntry, requesterAddr) == 0, "wire order: requesterAddr first");
+static_assert(offsetof(ProviderEntry, trid) == 2, "wire order: trid after requesterAddr");
+static_assert(offsetof(ProviderEntry, sub) == 4, "wire order: subscription table after trid");
+static_assert(offsetof(ProviderEntry, lastSentMs) == 20, "wire order: lastSent after the table");
+static_assert(offsetof(ProviderEntry, hash) == 24, "wire order: hash after lastSent");
+static_assert(offsetof(ProviderEntry, timeout) == 28, "wire order: timeout after hash");
+#define PROVIDER_ENTRY_WIRE_SIZE 32
+#endif // USE_SUB_PROVIDE

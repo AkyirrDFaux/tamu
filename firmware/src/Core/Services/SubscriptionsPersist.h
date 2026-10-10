@@ -2,7 +2,7 @@
 
 // Requester persistence and provider re-registration.
 //
-// Part of Core/Services/Subscriptions.h (included from there).
+// Part of Core/Services/Subscriptions.h (included from there, after the class).
 
 #include "Core/Services/SubscriptionsDefs.h"
 
@@ -11,22 +11,17 @@
 // Requester persistence + provider re-registration (USE_SUB_REQUEST).
 // ===========================================================================
 #ifdef USE_SUB_REQUEST
-// 8-byte storage name. The storage layer keys files by exactly 8 bytes; the trailing NUL is
-// replaced by a space on flash (PackName padding) and by '~' for WriteBackupFile's staging
-// name (".SUBREQ~").
-static const char SubscriptionsRequesterFile[8] = {'.','S','U','B','R','E','Q','\0'};
 
 // Docs: "recalls values from a file, which is a 1:1 copy of the table except timeout value."
 // Entry: the requester wire prefix minus the timeout = providerAddr(2) + trid(2) + table(16)
 // + targetReg(4) = 24 B, so it is copied whole.
-
-static void SaveRequesterTable() {
+inline void SubscriptionsService::SaveRequesterTable() {
     uint8_t buf[1 + MAX_REQUESTER_SUBS * REQUESTER_FILE_ENTRY_SIZE];
     // Count and copy in one walk (the count byte is filled in last).
     uint16_t off = 1;
     uint8_t count = 0;
     for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
-        RequesterEntry* e = &requesterTable[i];
+        RequesterEntry* e = &RequesterTable[i];
         if (!e->active) continue;
         memcpy(buf + off, e, REQUESTER_FILE_ENTRY_SIZE);
         off += REQUESTER_FILE_ENTRY_SIZE;
@@ -57,11 +52,11 @@ static void SaveRequesterTable() {
     WriteBackupFile(SubscriptionsRequesterFile, buf, off);
 }
 
-static void LoadRequesterTable() {
+inline void SubscriptionsService::LoadRequesterTable() {
     // The whole file: a count byte plus every entry (1 + 16*24 = 385 B).
     uint8_t buf[1 + MAX_REQUESTER_SUBS * REQUESTER_FILE_ENTRY_SIZE];
     uint16_t len = Storage.ReadFromFile(SubscriptionsRequesterFile, 0, sizeof(buf), (char*)buf);
-    for (int i = 0; i < MAX_REQUESTER_SUBS; i++) RequesterClearEntry(&requesterTable[i]);
+    for (int i = 0; i < MAX_REQUESTER_SUBS; i++) RequesterClearEntry(&RequesterTable[i]);
     if (len == 0) return;
 
     uint16_t off = 0;
@@ -82,7 +77,7 @@ static void LoadRequesterTable() {
 // Re-registers the (non-persistent) provider side for a requester subscription so a
 // restored table keeps pushing values after boot. Same-device providers get a direct
 // provider-table entry; remote providers get a 0401 "Change subscription" packet.
-static void RegisterRequesterProvider(RequesterEntry* e) {
+inline void SubscriptionsService::RegisterRequesterProvider(RequesterEntry* e) {
     if (!e || !e->active) return;
 
     e->timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
@@ -105,10 +100,10 @@ static void RegisterRequesterProvider(RequesterEntry* e) {
     SendAndVerifyPacket(req);
 }
 
-void ReRegisterSubscriptions() {
+inline void SubscriptionsService::ReRegister() {
     for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
-        if (requesterTable[i].active)
-            RegisterRequesterProvider(&requesterTable[i]);
+        if (RequesterTable[i].active)
+            RegisterRequesterProvider(&RequesterTable[i]);
     }
 }
 
@@ -118,9 +113,9 @@ void ReRegisterSubscriptions() {
 // while the core's requester entries still look active and healthy - the subscription then
 // dies silently until the setup is re-applied. The node's add is TRID-keyed, so this replaces
 // its entry rather than duplicating it.
-void ReRegisterSubscriptionsForNode(uint16_t addr) {
+inline void SubscriptionsService::ReRegisterForNode(uint16_t addr) {
     for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
-        RequesterEntry &e = requesterTable[i];
+        RequesterEntry &e = RequesterTable[i];
         if (e.active && e.providerAddr == addr)
             RegisterRequesterProvider(&e);
     }
@@ -132,33 +127,29 @@ void ReRegisterSubscriptionsForNode(uint16_t addr) {
 // sending from the main loop. A short address list (not a bitmask) keeps any 10-bit node id
 // addressable; a duplicate request is dropped. The list is sized to the device registry's
 // capacity (SNDB_MAX_ENTRIES) so a burst of assignments can never silently drop a re-push.
-static const uint8_t kReRegisterMax = 128;
-static uint16_t s_reregisterPending[kReRegisterMax];
-static uint8_t s_reregisterCount = 0;
-
-void SubscriptionsRequestReRegister(uint16_t addr) {
+inline void SubscriptionsService::RequestReRegister(uint16_t addr) {
     if (addr == ADDR_INVALID) return;
-    for (uint8_t i = 0; i < s_reregisterCount; i++)
-        if (s_reregisterPending[i] == addr) return; // already queued
-    if (s_reregisterCount < kReRegisterMax)
-        s_reregisterPending[s_reregisterCount++] = addr;
+    for (uint8_t i = 0; i < ReRegisterCount; i++)
+        if (ReRegisterPending[i] == addr) return; // already queued
+    if (ReRegisterCount < kReRegisterMax)
+        ReRegisterPending[ReRegisterCount++] = addr;
 }
 
 // Called from SubscriptionsTick: performs the deferred re-pushes.
-static void SubscriptionsReRegisterPending() {
-    uint8_t count = s_reregisterCount;
-    s_reregisterCount = 0;
+inline void SubscriptionsService::SubscriptionsReRegisterPending() {
+    uint8_t count = ReRegisterCount;
+    ReRegisterCount = 0;
     for (uint8_t i = 0; i < count; i++)
-        ReRegisterSubscriptionsForNode(s_reregisterPending[i]);
+        ReRegisterForNode(ReRegisterPending[i]);
 }
 
 // Keeps the provider side alive: until the first value arrives the entry re-registers on a
 // short retry interval; afterwards it renews the provider's 120 s lease on a slow keepalive
 // (a value update only travels provider -> requester, so the requester must renew the
 // provider explicitly - Docs "Timeout 120s, renewed with new request").
-static void RequesterInitCheck(uint32_t nowMs) {
+inline void SubscriptionsService::RequesterInitCheck(uint32_t nowMs) {
     for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
-        RequesterEntry* e = &requesterTable[i];
+        RequesterEntry* e = &RequesterTable[i];
         if (!e->active) continue;
         uint32_t interval;
         if (e->lastValueMs == 0) {

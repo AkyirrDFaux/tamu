@@ -115,8 +115,8 @@ inline int FindStaticBlock(uint16_t type, uint8_t inst) {
 // Builds a `BlockInfo + ValueInfo + value` reply, 4-byte aligned, and sends it. The block
 // meta (a fixed BLOCK_NAME_LEN-char name) and the field/key read paths all share this shape.
 // `len` is clamped so the raw buffer cannot overrun when a caller reports an oversized value.
-static inline void SendFieldLikeResponse(const PacketFrame &frame, uint32_t bi, const ValueInfo &v,
-                                         const uint8_t *data, uint16_t len) {
+inline void RegisterService::SendFieldLikeResponse(const PacketFrame &frame, uint32_t bi, const ValueInfo &v,
+                                                   const uint8_t *data, uint16_t len) {
     if (len > FIELD_RESPONSE_MAX_VALUE) len = FIELD_RESPONSE_MAX_VALUE;
     uint8_t rpl[FIELD_RESPONSE_BUF_SIZE]; uint16_t pos = 0;
     memcpy(rpl + pos, &bi, 4); pos += 4;
@@ -132,16 +132,16 @@ static inline void SendFieldLikeResponse(const PacketFrame &frame, uint32_t bi, 
 // bytes actually sent, so the reply is self-consistent and a reader can round-trip what it
 // received (without this, SendResponse silently truncates an oversized value and the reported
 // Size lies about the bytes present).
-static inline void SendValueResponse(const PacketFrame &frame, uint32_t bi, const ValueInfo &v,
-                                     const uint8_t *data, uint16_t len) {
+inline void RegisterService::SendValueResponse(const PacketFrame &frame, uint32_t bi, const ValueInfo &v,
+                                               const uint8_t *data, uint16_t len) {
     if (len > FIELD_RESPONSE_MAX_VALUE) len = FIELD_RESPONSE_MAX_VALUE;
     ValueInfo capped = v;
     capped.Size = (uint8_t)len;
     SendFieldLikeResponse(frame, bi, capped, data, len);
 }
 
-static inline void SendBlockMetaResponse(const PacketFrame &frame, uint32_t bi, uint16_t type,
-                                         uint8_t map_count, const char *name, uint16_t name_len) {
+inline void RegisterService::SendBlockMetaResponse(const PacketFrame &frame, uint32_t bi, uint16_t type,
+                                                   uint8_t map_count, const char *name, uint16_t name_len) {
     // A block meta reports its field count in ValueInfo.Size and carries no flags; the name is
     // a fixed BLOCK_NAME_LEN-char field (space-padded), not a C string.
     char padded[BLOCK_NAME_LEN];
@@ -150,17 +150,17 @@ static inline void SendBlockMetaResponse(const PacketFrame &frame, uint32_t bi, 
     SendFieldLikeResponse(frame, bi, v, (const uint8_t *)padded, BLOCK_NAME_LEN);
 }
 
-static inline void SendFieldResponse(const PacketFrame &frame, uint32_t bi, const FieldResult &fr) {
+inline void RegisterService::SendFieldResponse(const PacketFrame &frame, uint32_t bi, const FieldResult &fr) {
     SendValueResponse(frame, bi, fr.Descriptor, (const uint8_t *)fr.Data, fr.Descriptor.Size);
 }
 
 // Sends one dynamic entry (BlockInfo echo + ValueInfo + value, 4-aligned).
-static inline void SendKeyResponse(const PacketFrame &frame, uint32_t bi, const KeyResult &kr) {
+inline void RegisterService::SendKeyResponse(const PacketFrame &frame, uint32_t bi, const KeyResult &kr) {
     SendValueResponse(frame, bi, kr.meta, (const uint8_t *)kr.data_ptr, kr.data_len);
 }
 
 // Replies with the assigned BlockIndex followed by an ack (the dynamic field-write path).
-static inline void SendBlockIndexAck(const PacketFrame &frame, uint8_t index) {
+inline void RegisterService::SendBlockIndexAck(const PacketFrame &frame, uint8_t index) {
     uint8_t payload[sizeof(BlockIndex) + 1];
     BlockIndex out_index = {index, 0xFF, 0xFF};
     memcpy(payload, &out_index, sizeof(BlockIndex));
@@ -174,7 +174,7 @@ static inline void SendBlockIndexAck(const PacketFrame &frame, uint8_t index) {
 // allocates a 256-byte scratch on the stack and rescans; the table is sorted by Field&Key, so
 // counting field changes gives the same answer without the buffer. (A cross-call cache would
 // need a field on DynamicBlockDescriptor, i.e. MemoryBlocks.h, which is outside this file.)
-static inline uint16_t DynamicFieldCount(const DynamicBlockDescriptor &b) {
+inline uint16_t RegisterService::DynamicFieldCount(const DynamicBlockDescriptor &b) {
     uint16_t count = 0, prev = 0xFFFF;
     for (uint16_t i = 0; i < b.entry_count; i++) {
         uint16_t f = FieldOf(b.table[i].fieldKey);
@@ -185,8 +185,8 @@ static inline uint16_t DynamicFieldCount(const DynamicBlockDescriptor &b) {
 
 // Shared tail of "read a dynamic block": field 0xFF asks for the block meta, any other field
 // for one keyed entry.
-static void ReplyDynamicBlockOrField(const PacketFrame &frame, uint32_t bi,
-                                     DynamicBlockDescriptor &block, uint8_t field, uint8_t key)
+inline void RegisterService::ReplyDynamicBlockOrField(const PacketFrame &frame, uint32_t bi,
+                                                      DynamicBlockDescriptor &block, uint8_t field, uint8_t key)
 {
     if (field == 0xFF) {
         // The block's bank type is derived from its global index, which the request's

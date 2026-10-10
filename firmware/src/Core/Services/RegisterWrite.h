@@ -9,7 +9,7 @@
 // ===== CID 3: Write helpers =====
 
 #ifdef USE_DYNAMIC_BLOCKS
-static void HandleDynamicBlockWrite(const PacketFrame &frame, uint16_t inst, uint8_t field, uint8_t key, const ValueInfo *desc, const uint8_t *val, uint16_t vlen) {
+inline void RegisterService::HandleDynamicBlockWrite(const PacketFrame &frame, uint16_t inst, uint8_t field, uint8_t key, const ValueInfo *desc, const uint8_t *val, uint16_t vlen) {
     if (inst >= dynamic_block_registry.block_count) { RespondStatus(frame,false); return; }
     DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(inst);
     if (!block || !block->present) { RespondStatus(frame,false); return; }
@@ -33,14 +33,14 @@ static void HandleDynamicBlockWrite(const PacketFrame &frame, uint16_t inst, uin
 
 #ifdef USE_SCRIPTS
 // Writes a script input (field 1) or variable (field 3) entry.
-static void HandleScriptBlockWrite(const PacketFrame &frame, uint16_t inst, uint8_t field, uint8_t key, const ValueInfo *desc, const uint8_t *val, uint16_t vlen) {
+inline void RegisterService::HandleScriptBlockWrite(const PacketFrame &frame, uint16_t inst, uint8_t field, uint8_t key, const ValueInfo *desc, const uint8_t *val, uint16_t vlen) {
     if (!ScriptActive(inst)) { RespondStatus(frame,false); return; }
     if (!ScriptSetEntry(inst, field, key, *desc, val, vlen)) { RespondStatus(frame,false); return; }
     SendResponse(frame, frame.payload, PayloadBytes(frame));
 }
 #endif
 
-static void HandleStaticBlockWrite(const PacketFrame &frame, uint16_t type, uint8_t inst, uint8_t field, uint8_t key, const ValueInfo *desc, const uint8_t *val, uint16_t vlen) {
+inline void RegisterService::HandleStaticBlockWrite(const PacketFrame &frame, uint16_t type, uint8_t inst, uint8_t field, uint8_t key, const ValueInfo *desc, const uint8_t *val, uint16_t vlen) {
     const StaticBlockDescriptor *blk = FindBlock(type, inst);
     if(!blk) { RespondStatus(frame,false); return; }
     if(!blk->Set(field, key, val, vlen, *desc)) { RespondStatus(frame,false); return; }

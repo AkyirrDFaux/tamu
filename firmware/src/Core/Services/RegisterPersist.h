@@ -17,7 +17,7 @@
 static_assert(sizeof(staticPer) <= MEMORY_BACKUP_CAP,
               "static persistent space must fit the backup buffer");
 
-static bool StaticSaveAll() {
+inline bool RegisterService::StaticSaveAll() {
     // Snapshot the live System fields into the space (the only persistent values not already
     // written through it), then mirror the whole space to .SV in one write.
 #ifdef TYPE_CORE
@@ -26,7 +26,7 @@ static bool StaticSaveAll() {
     return WriteBackupFile(StaticValuesName(), (const uint8_t *)&staticPer, sizeof(staticPer));
 }
 
-static void StaticRecallAll() {
+inline void RegisterService::StaticRecallAll() {
     uint8_t buf[sizeof(staticPer)];
     uint16_t cnt = ReadBackupFile(StaticValuesName(), buf, sizeof(buf));
     if (cnt < sizeof(staticPer)) {
@@ -57,7 +57,7 @@ static void StaticRecallAll() {
 
 #ifdef USE_DYNAMIC_BLOCKS
 // Saves every dynamic block to its DT_/DV_ files (the dynamic half of "Save All").
-static bool DynamicSaveAll() {
+inline bool RegisterService::DynamicSaveAll() {
     // Clean tombstoned/orphan files BEFORE writing, so deleted blocks release their storage;
     // positions in the registry are never touched.
     CleanupDynamicFiles();
@@ -70,7 +70,7 @@ static bool DynamicSaveAll() {
 
 // Rebuilds slot `i` from its DT/DV files; a slot with no DT file is tombstoned. Returns
 // false when the registry cannot grow to hold the slot.
-static bool RestoreDynamicBlock(uint16_t i) {
+inline bool RegisterService::RestoreDynamicBlock(uint16_t i) {
     DynamicBlockDescriptor scratch;
     if (!LoadDynamicBlockFiles(scratch, i)) {
         // No DT file: any in-session live block still occupying this slot is stale, so
@@ -88,13 +88,13 @@ static bool RestoreDynamicBlock(uint16_t i) {
 
 // Rebuilds every slot from its DT/DV files. Per the docs each block keeps its own files, so
 // a slot with no DT file is tombstoned (it might still hold an in-session live block).
-static bool DynamicRecallAll() {
+inline bool RegisterService::DynamicRecallAll() {
     for (uint16_t i = 0; i < MAX_DYNAMIC_BLOCKS; i++)
         if (!RestoreDynamicBlock(i)) return false;
     return true;
 }
 
-static void HandleCreateDynamic(const PacketFrame &frame, uint16_t index) {
+inline void RegisterService::HandleCreateDynamic(const PacketFrame &frame, uint16_t index) {
     if (PayloadBytes(frame) < 2) { RespondStatus(frame,false); return; }
     // The global index is one byte on the wire's dynamic address space, bounded by the
     // registry/cleanup/save loops (all MAX_DYNAMIC_BLOCKS). A larger index would make
@@ -107,7 +107,7 @@ static void HandleCreateDynamic(const PacketFrame &frame, uint16_t index) {
     RespondStatus(frame, true); // the host knows the index it asked for (Docs: no BlockIndex echo)
 }
 
-static void HandleDeleteDynamic(const PacketFrame &frame, uint16_t block_idx) {
+inline void RegisterService::HandleDeleteDynamic(const PacketFrame &frame, uint16_t block_idx) {
     if (block_idx >= dynamic_block_registry.block_count) { RespondStatus(frame,false); return; }
     // Delete Dynamic tombstones the whole block; entry/field deletion is the basic Write
     // with type None (Docs/Services/Register.md "Dynamic commands").
@@ -115,14 +115,14 @@ static void HandleDeleteDynamic(const PacketFrame &frame, uint16_t block_idx) {
     RespondStatus(frame, true);
 }
 
-static void HandleGetName(const PacketFrame &frame, uint16_t block_idx) {
+inline void RegisterService::HandleGetName(const PacketFrame &frame, uint16_t block_idx) {
     if (block_idx >= dynamic_block_registry.block_count) { RespondStatus(frame,false); return; }
     DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(block_idx);
     if (!block || !block->present) { RespondStatus(frame,false); return; }
     SendResponse(frame, (const uint8_t *)block->Name, BLOCK_NAME_LEN);
 }
 
-static void HandleSetName(const PacketFrame &frame, uint16_t block_idx) {
+inline void RegisterService::HandleSetName(const PacketFrame &frame, uint16_t block_idx) {
     if (block_idx >= dynamic_block_registry.block_count) { RespondStatus(frame,false); return; }
     if (PayloadBytes(frame) < 2) { RespondStatus(frame,false); return; }
     DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(block_idx);
@@ -138,7 +138,7 @@ static void HandleSetName(const PacketFrame &frame, uint16_t block_idx) {
 // file writes / direct register writes), so nothing is addressed here. Each target keeps its
 // own bounded read-modify-write - a DAS's whole persistent set does not fit one
 // MEMORY_BACKUP_CAP buffer - and the results are aggregated into a single reply.
-static void HandleSaveRecallAll(const PacketFrame &frame, bool save) {
+inline void RegisterService::HandleSaveRecallAll(const PacketFrame &frame, bool save) {
     bool ok = true;
     if (save) {
         ok &= StaticSaveAll();
