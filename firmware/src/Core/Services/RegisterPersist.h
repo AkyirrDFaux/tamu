@@ -102,7 +102,7 @@ inline void RegisterService::HandleCreateDynamic(const PacketFrame &frame, uint1
     // truncated) but never saved or cleaned up.
     if (index >= MAX_DYNAMIC_BLOCKS) { RespondStatus(frame,false); return; }
     uint16_t name_len = PayloadBytes(frame) - 2;
-    DynamicBlockDescriptor *block = CreateDynamicBlock(frame.payload + 2, name_len, index);
+    DynamicBlockDescriptor *block = CreateDynamicBlock(frame.Payload + 2, name_len, index);
     if (!block) { RespondStatus(frame,false); return; }
     RespondStatus(frame, true); // the host knows the index it asked for (Docs: no BlockIndex echo)
 }
@@ -127,7 +127,7 @@ inline void RegisterService::HandleSetName(const PacketFrame &frame, uint16_t bl
     if (PayloadBytes(frame) < 2) { RespondStatus(frame,false); return; }
     DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(block_idx);
     if (!block || !block->present) { RespondStatus(frame,false); return; }
-    SetBlockName(block->Name, (const char *)(frame.payload + 2), (uint16_t)(PayloadBytes(frame) - 2));
+    SetBlockName(block->Name, (const char *)(frame.Payload + 2), (uint16_t)(PayloadBytes(frame) - 2));
     RespondStatus(frame, true);
 }
 

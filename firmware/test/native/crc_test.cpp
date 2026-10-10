@@ -105,9 +105,9 @@ int main()
     }
 
 #ifdef OPTIMIZE_SPEED
-    std::printf("== crc8 tests (OPTIMIZE_SPEED: table): %d checks, %d failures ==\n", checks, failures);
+    std::printf("== Crc8 tests (OPTIMIZE_SPEED: table): %d checks, %d failures ==\n", checks, failures);
 #else
-    std::printf("== crc8 tests (size: bit loop): %d checks, %d failures ==\n", checks, failures);
+    std::printf("== Crc8 tests (size: bit loop): %d checks, %d failures ==\n", checks, failures);
 #endif
     return failures == 0 ? 0 : 1;
 }

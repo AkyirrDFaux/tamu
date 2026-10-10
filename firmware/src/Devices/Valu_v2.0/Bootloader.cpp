@@ -387,7 +387,7 @@ static uint8_t s_frame[Bootloader::MAX_FRAME_SIZE];
 static uint16_t s_have = 0; // bytes currently in s_frame
 static uint16_t s_need = 0; // total bytes the frame needs once known
 
-static void HandleWrite(uint32_t offset, const uint8_t *payload);
+static void HandleWrite(uint32_t offset, const uint8_t *Payload);
 
 static void SendReadResponse(uint32_t offset)
 {
@@ -414,11 +414,11 @@ static void SendReadResponse(uint32_t offset)
 
 static void DispatchFrame(const uint8_t *frame)
 {
-    uint8_t cmd = (uint8_t)(frame[1] & 0x03u);
+    uint8_t Cmd = (uint8_t)(frame[1] & 0x03u);
     uint32_t offset = Bootloader::Offset(frame);
-    if (cmd == Bootloader::CMD_WRITE)
+    if (Cmd == Bootloader::CMD_WRITE)
         HandleWrite(offset, Bootloader::Payload(frame));
-    else if (cmd == Bootloader::CMD_READ_REQ)
+    else if (Cmd == Bootloader::CMD_READ_REQ)
         SendReadResponse(offset);
 }
 
@@ -458,7 +458,7 @@ static void FeedByte(uint8_t b)
     }
 }
 
-static void HandleWrite(uint32_t offset, const uint8_t *payload)
+static void HandleWrite(uint32_t offset, const uint8_t *Payload)
 {
     if ((offset & 31u) != 0)
         return; // 32-byte aligned per the doc
@@ -473,7 +473,7 @@ static void HandleWrite(uint32_t offset, const uint8_t *payload)
         if (!FlashEraseSector(addr))
             return;
     }
-    FlashWrite(addr, payload, Bootloader::PAYLOAD_SIZE);
+    FlashWrite(addr, Payload, Bootloader::PAYLOAD_SIZE);
 }
 
 // ===========================================================================

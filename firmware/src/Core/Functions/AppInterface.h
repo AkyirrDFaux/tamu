@@ -32,10 +32,6 @@ typedef int portMUX_TYPE;
 // pump to stop draining responses into a USB port the app has stopped reading.
 bool AppUsbSilent();
 
-// Doc requirement: global status bool reporting whether an app is actually connected
-// (either link active). Read widely by device code; kept a plain global for now.
-bool AppConnected = false;
-
 // Outgoing stream ring: serialized frames waiting to be flushed to the app links.
 // A synchronous service reply (e.g. Storage Read File, which streams a whole
 // file in one handler) can legitimately burst well past a small ring before
@@ -75,6 +71,7 @@ public:
     uint16_t TxPop(uint8_t *Dst, uint16_t Max);
     void TxFlushAll();
 
+    bool Connected = false;    // an app is connected on either link (Doc requirement)
     uint8_t *TxRing = nullptr; // malloc'd in Init; the link hooks read it before pumping
     volatile uint16_t TxHead = 0; // write position
     volatile uint16_t TxTail = 0; // read position
@@ -100,7 +97,7 @@ inline void AppInterfaceService::Init()
 // belongs to streams already in flight; dropping the head would corrupt them anyway).
 inline bool AppInterfaceService::Send(const PacketFrame &Frame)
 {
-    if (!AppConnected || !TxRing)
+    if (!Connected || !TxRing)
         return false;
 
     // Copy the wire bytes straight from the packed frame instead of staging a
@@ -193,7 +190,7 @@ inline void AppInterfaceService::RouteIn(PacketFrame &Frame)
 {
     // The app has no net context: it addresses devices by their device number on the local
     // net (net 0). The dispatcher resolves net 0 to our net at match/forward time.
-    Frame.id_src = DeviceStatus.ShortAddress;
+    Frame.IdSrc = DeviceStatus.ShortAddress;
     DispatchPacket(Frame);
 }
 
@@ -202,7 +199,7 @@ inline void AppInterfaceService::RouteIn(PacketFrame &Frame)
 // which must be called right after this whenever the BLE link may be active).
 void AppInterfaceService::Pump()
 {
-    AppConnected = AppUSBActive() || AppBLEActive();
+    Connected = AppUSBActive() || AppBLEActive();
 
     // Physical USB link loss ends an app session (the link task flushes and resets).
     AppUSBTick();

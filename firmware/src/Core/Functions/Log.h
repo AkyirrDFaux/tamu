@@ -25,17 +25,17 @@ void DeviceLog(const char *tag, const char *fmt, ...);
 // corresponds to it"): an error report goes out at PRIORITY_ERROR, an informational log at
 // PRIORITY_LOG. The caller states it per case - there is no default, so every send site has
 // to say which of the two it is.
-inline void ReportLog(const LogMessage &log, uint8_t priority)
+inline void ReportLog(const LogMessage &log, uint8_t Priority)
 {
     LogMessage message = log;
     message.timestamp = DeviceStatus.UptimeMs;
-    PacketConstruct(&tx_frame, MakeId(0, 1), // 0.1 = the local core
+    PacketConstruct(&TxFrame, MakeId(0, 1), // 0.1 = the local core
                      MakeService(ServiceType::LogHandler, 0),
                      NextSystemTrid(ServiceType::LogHandler),
                      FLAG_START | FLAG_STOP,
                      (const uint8_t *)&message, sizeof(LogMessage),
-                     priority);
-    DispatchPacket(tx_frame);
+                     Priority);
+    DispatchPacket(TxFrame);
 }
 
 // Core RAM log database entry (Docs/Services/Log Handler.md):

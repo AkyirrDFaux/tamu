@@ -65,8 +65,8 @@ inline uint32_t LogHandlerService::LogBuildOrder(uint16_t *order)
 
 inline bool LogHandlerService::Handle(const PacketFrame &frame)
 {
-    uint8_t cid = GetServiceCID(frame.cmd);
-    if (frame.flags & FLAG_TYPE) return true; // Ignore responses
+    uint8_t cid = GetServiceCID(frame.Cmd);
+    if (frame.Flags & FLAG_TYPE) return true; // Ignore responses
 
 #ifndef TYPE_CORE
     // Nodes are outbound-only log reporters; they do not process incoming reports.
@@ -85,7 +85,7 @@ inline bool LogHandlerService::Handle(const PacketFrame &frame)
         // Inbound log report -> keep in RAM, deduplicated per device + source + code.
         if (PayloadBytes(frame) < sizeof(LogMessage))
             return true;
-        const LogMessage *msg = reinterpret_cast<const LogMessage *>(frame.payload);
+        const LogMessage *msg = reinterpret_cast<const LogMessage *>(frame.Payload);
         uint32_t seq = ++Clock;
 
         int free_slot = -1;
@@ -95,7 +95,7 @@ inline bool LogHandlerService::Handle(const PacketFrame &frame)
         {
             if (i < LogCount && LogUsed[i])
             {
-                if (LogBuffer[i].device_id == frame.id_src &&
+                if (LogBuffer[i].device_id == frame.IdSrc &&
                     LogBuffer[i].msg.source == msg->source &&
                     LogCode(LogBuffer[i].msg) == LogCode(*msg))
                 {
@@ -130,7 +130,7 @@ inline bool LogHandlerService::Handle(const PacketFrame &frame)
                 slot = (uint32_t)oldest_slot; // growth failed / hard cap: drop the oldest record
         }
 
-        LogBuffer[slot].device_id = frame.id_src;
+        LogBuffer[slot].device_id = frame.IdSrc;
         LogBuffer[slot].count = 1;
         LogBuffer[slot].msg = *msg;
         LogUsed[slot] = true;
@@ -156,15 +156,15 @@ inline bool LogHandlerService::Handle(const PacketFrame &frame)
             // Stream every record as a FRAG stream (Docs/Services/Log Handler.md:
             // "Fragmentation, entries"). Each fragment carries up to 112 bytes of
             // LogRecords; SendFragFragment writes the 4-byte frag info.
-            uint32_t total = active * sizeof(LogRecord);
-            uint16_t total_frags = (uint16_t)((total + MAX_FRAG_CONTENT_SIZE - 1) / MAX_FRAG_CONTENT_SIZE);
+            uint32_t Total = active * sizeof(LogRecord);
+            uint16_t total_frags = (uint16_t)((Total + MAX_FRAG_CONTENT_SIZE - 1) / MAX_FRAG_CONTENT_SIZE);
             uint32_t sent = 0;
             for (uint16_t f = 0; f < total_frags; f++)
             {
                 uint16_t off = 4;
                 while (off - 4 + sizeof(LogRecord) <= MAX_FRAG_CONTENT_SIZE && sent < active)
                 {
-                    memcpy(tx_frame.payload + off, &LogBuffer[Order[sent]], sizeof(LogRecord));
+                    memcpy(TxFrame.Payload + off, &LogBuffer[Order[sent]], sizeof(LogRecord));
                     off += sizeof(LogRecord);
                     sent++;
                 }
@@ -176,7 +176,7 @@ inline bool LogHandlerService::Handle(const PacketFrame &frame)
         // ClearReadLogs: clear the `n` OLDEST entries (lowest seq), per Log Handler.md
         uint32_t n = 0;
         if (PayloadBytes(frame) >= 4)
-            memcpy(&n, frame.payload, sizeof(n));
+            memcpy(&n, frame.Payload, sizeof(n));
         uint32_t clear = (n < active) ? n : active;
         for (uint32_t k = 0; k < clear; k++)
             LogUsed[Order[k]] = false;

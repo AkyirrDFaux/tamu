@@ -59,10 +59,10 @@ int main()
 
     // --- write frame layout -------------------------------------------------
     {
-        uint8_t payload[PAYLOAD_SIZE];
-        for (int i = 0; i < PAYLOAD_SIZE; i++) payload[i] = (uint8_t)i;
+        uint8_t PayloadBuf[PAYLOAD_SIZE];
+        for (int i = 0; i < PAYLOAD_SIZE; i++) PayloadBuf[i] = (uint8_t)i;
         uint8_t f[DATA_SIZE];
-        EncodeWrite(0x00000000u, payload, f);
+        EncodeWrite(0x00000000u, PayloadBuf, f);
 
         CHECK_EQ(sizeof(f), 39);
         CHECK_EQ(f[0], START);
@@ -71,7 +71,7 @@ int main()
         CHECK_EQ(f[1] & 0xF8u, 0);            // padding zero
         CHECK_EQ((f[1] >> 2) & 1u, RefParity(f, DATA_SIZE));
         CHECK_EQ(Offset(f), 0u);
-        CHECK(std::memcmp(Payload(f), payload, PAYLOAD_SIZE) == 0);
+        CHECK(std::memcmp(Payload(f), PayloadBuf, PAYLOAD_SIZE) == 0);
         CHECK_EQ(Decode(f, DATA_SIZE), CMD_WRITE);
     }
 
@@ -90,25 +90,25 @@ int main()
 
     // --- read-response layout ----------------------------------------------
     {
-        uint8_t payload[PAYLOAD_SIZE];
-        for (int i = 0; i < PAYLOAD_SIZE; i++) payload[i] = (uint8_t)(0xFF - i);
+        uint8_t PayloadBuf[PAYLOAD_SIZE];
+        for (int i = 0; i < PAYLOAD_SIZE; i++) PayloadBuf[i] = (uint8_t)(0xFF - i);
         uint8_t f[DATA_SIZE];
-        EncodeReadResponse(0x00000040u, payload, f);
+        EncodeReadResponse(0x00000040u, PayloadBuf, f);
         CHECK_EQ(f[0], START);
         CHECK_EQ(f[38], END);
         CHECK_EQ(f[1] & 0x03u, CMD_READ_RESP);
         CHECK_EQ((f[1] >> 2) & 1u, RefParity(f, DATA_SIZE));
         CHECK_EQ(Offset(f), 0x00000040u);
-        CHECK(std::memcmp(Payload(f), payload, PAYLOAD_SIZE) == 0);
+        CHECK(std::memcmp(Payload(f), PayloadBuf, PAYLOAD_SIZE) == 0);
         CHECK_EQ(Decode(f, DATA_SIZE), CMD_READ_RESP);
     }
 
     // --- every single-bit flip must be rejected -----------------------------
     {
-        uint8_t payload[PAYLOAD_SIZE];
-        for (int i = 0; i < PAYLOAD_SIZE; i++) payload[i] = (uint8_t)(i * 3 + 1);
+        uint8_t PayloadBuf[PAYLOAD_SIZE];
+        for (int i = 0; i < PAYLOAD_SIZE; i++) PayloadBuf[i] = (uint8_t)(i * 3 + 1);
         uint8_t f[DATA_SIZE];
-        EncodeWrite(0x00000100u, payload, f);
+        EncodeWrite(0x00000100u, PayloadBuf, f);
         for (uint16_t i = 0; i < DATA_SIZE; i++)
             for (int bit = 0; bit < 8; bit++)
             {
@@ -122,8 +122,8 @@ int main()
     // --- structural rejections ---------------------------------------------
     {
         uint8_t f[DATA_SIZE];
-        uint8_t payload[PAYLOAD_SIZE] = {0};
-        EncodeWrite(0, payload, f);
+        uint8_t PayloadBuf[PAYLOAD_SIZE] = {0};
+        EncodeWrite(0, PayloadBuf, f);
 
         uint8_t bad[DATA_SIZE];
         std::memcpy(bad, f, DATA_SIZE);
@@ -144,19 +144,19 @@ int main()
 
     // Known-answer vectors, mirrored verbatim in the app's bootloader codec test.
     {
-        uint8_t payload[PAYLOAD_SIZE];
-        for (int i = 0; i < PAYLOAD_SIZE; i++) payload[i] = (uint8_t)i;
+        uint8_t PayloadBuf[PAYLOAD_SIZE];
+        for (int i = 0; i < PAYLOAD_SIZE; i++) PayloadBuf[i] = (uint8_t)i;
         uint8_t w[DATA_SIZE];
-        EncodeWrite(0, payload, w);
+        EncodeWrite(0, PayloadBuf, w);
         PrintHex("write0", w, DATA_SIZE);
 
         uint8_t rr[READ_REQ_SIZE];
         EncodeReadRequest(0x100, rr);
         PrintHex("readreq100", rr, READ_REQ_SIZE);
 
-        for (int i = 0; i < PAYLOAD_SIZE; i++) payload[i] = (uint8_t)(0xA0 + i);
+        for (int i = 0; i < PAYLOAD_SIZE; i++) PayloadBuf[i] = (uint8_t)(0xA0 + i);
         uint8_t rs[DATA_SIZE];
-        EncodeReadResponse(0x40, payload, rs);
+        EncodeReadResponse(0x40, PayloadBuf, rs);
         PrintHex("readresp40", rs, DATA_SIZE);
     }
 

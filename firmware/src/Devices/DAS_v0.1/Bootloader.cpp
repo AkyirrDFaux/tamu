@@ -257,7 +257,7 @@ static void SendRaw(const uint8_t *data, size_t len)
 // Handlers
 // ---------------------------------------------------------------------------
 
-static void HandleWrite(uint32_t offset, const uint8_t *payload)
+static void HandleWrite(uint32_t offset, const uint8_t *Payload)
 {
     if ((offset & 31u) != 0) return; // 32-byte aligned per the doc
     uint32_t addr = APP_BASE + offset;
@@ -268,7 +268,7 @@ static void HandleWrite(uint32_t offset, const uint8_t *payload)
     {
         if (!FlashErasePage(addr)) return;
     }
-    FlashWrite(addr, payload, Bootloader::PAYLOAD_SIZE);
+    FlashWrite(addr, Payload, Bootloader::PAYLOAD_SIZE);
 }
 
 static void HandleRead(uint32_t offset)
@@ -328,11 +328,11 @@ int main(void)
         int n = ReceiveFrame(frame, sizeof(frame), 2000000u); // 2 s per byte
         if (n <= 0) continue;
 
-        uint8_t cmd = (uint8_t)(frame[1] & 0x03);
+        uint8_t Cmd = (uint8_t)(frame[1] & 0x03);
         uint32_t offset = Bootloader::Offset(frame);
-        if (cmd == Bootloader::CMD_WRITE)
+        if (Cmd == Bootloader::CMD_WRITE)
             HandleWrite(offset, Bootloader::Payload(frame));
-        else if (cmd == Bootloader::CMD_READ_REQ)
+        else if (Cmd == Bootloader::CMD_READ_REQ)
             HandleRead(offset);
     }
 }

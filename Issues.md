@@ -97,6 +97,15 @@ refactor and history left behind, no behaviour change:
 (The device pin-name macros - `VALU_LED_PORT`, `DAS_BUTTON_PIN`, `MEAS_ADC`, `RS485_EN_PORT`, etc. -
 are deliberate hardware naming, not in scope.)
 
+**Register <-> Script dependency (deferred).** `RegisterDefs.h:16` and `Register.h:26` include
+`Script.h`, and the Script bank is driven through `Script.Active/KeyCount/GetIoPointer/GetEntry/
+SetEntry` (`RegisterDispatch.h:25,72`, `RegisterRead.h:155,165`, `RegisterWrite.h:37,38`,
+`RegisterEnumerate.h:71,200`); Script calls back via `RegisterGet/SetByBlockInfo`
+(`ScriptExec.h:392,406,419`) - a two-way include cycle. Register should name no Script: either a
+small ops table (`GetIoPointer`/`SetEntry`/...) or, better, make the Script bank self-describing the
+way a `DynamicBlockDescriptor` is. Deferred until the Script **respec** lands. Register's by-BlockInfo
+forwarders (`RegisterResolveByBlockInfo`/`Get`/`SetByBlockInfo`) stay until then.
+
 **Verification per step:** `./test.sh` (native firmware tests + the app suite + analyze), both `pio run` envs,
 and the safe HIL sweep once the rig is flashed.
 

@@ -27,7 +27,7 @@ inline void RegisterService::HandleDynamicBlockWrite(const PacketFrame &frame, u
 
     // Position-specified entry write; writing type None deletes the entry.
     if (!block->SetEntry(field, key, val, vlen, *desc)) { RespondStatus(frame,false); return; }
-    SendResponse(frame, frame.payload, PayloadBytes(frame));
+    SendResponse(frame, frame.Payload, PayloadBytes(frame));
 }
 #endif
 
@@ -36,7 +36,7 @@ inline void RegisterService::HandleDynamicBlockWrite(const PacketFrame &frame, u
 inline void RegisterService::HandleScriptBlockWrite(const PacketFrame &frame, uint16_t inst, uint8_t field, uint8_t key, const ValueInfo *desc, const uint8_t *val, uint16_t vlen) {
     if (!Script.Active(inst)) { RespondStatus(frame,false); return; }
     if (!Script.SetEntry(inst, field, key, *desc, val, vlen)) { RespondStatus(frame,false); return; }
-    SendResponse(frame, frame.payload, PayloadBytes(frame));
+    SendResponse(frame, frame.Payload, PayloadBytes(frame));
 }
 #endif
 
@@ -44,5 +44,5 @@ inline void RegisterService::HandleStaticBlockWrite(const PacketFrame &frame, ui
     const StaticBlockDescriptor *blk = FindBlock(type, inst);
     if(!blk) { RespondStatus(frame,false); return; }
     if(!blk->Set(field, key, val, vlen, *desc)) { RespondStatus(frame,false); return; }
-    SendResponse(frame, frame.payload, PayloadBytes(frame));
+    SendResponse(frame, frame.Payload, PayloadBytes(frame));
 }

@@ -45,7 +45,7 @@ struct SubscriptionTable {
     uint32_t periodMs = 0;
     Number deadzone = N(0);              // for number/vector triggers
 };
-static_assert(sizeof(SubscriptionTable) == 16, "the subscription table is 16 bytes on the wire");
+static_assert(sizeof(SubscriptionTable) == 16, "the subscription table is 16 Bytes on the wire");
 
 #define SUB_TABLE_WIRE_SIZE 16
 
@@ -67,9 +67,9 @@ static inline uint32_t SubTimeoutFrom(uint32_t nowMs) { return nowMs + SUB_TIMEO
 
 // First occupied entry with `trid`, or nullptr.
 template <typename T, size_t N, typename Occupied>
-static T *SubTableFindByTrid(T (&table)[N], uint16_t trid, Occupied occupied) {
+static T *SubTableFindByTrid(T (&table)[N], uint16_t Trid, Occupied occupied) {
     for (size_t i = 0; i < N; i++) {
-        if (occupied(table[i]) && table[i].trid == trid) return &table[i];
+        if (occupied(table[i]) && table[i].Trid == Trid) return &table[i];
     }
     return nullptr;
 }
@@ -86,7 +86,7 @@ static T *SubTableFindByTrid(T (&table)[N], uint16_t trid, Occupied occupied) {
 // table, target register, timeout. The timeout is local uptime and is not persistent.
 struct RequesterEntry {
     uint16_t providerAddr = 0;
-    uint16_t trid = 0;
+    uint16_t Trid = 0;
     SubscriptionTable sub;
     uint32_t targetReg = 0;      // local write target
     uint32_t timeout = 0;        // local uptime deadline (not persisted)
@@ -105,8 +105,8 @@ struct RequesterEntry {
 // The wire prefix of the entry IS the struct prefix, so serialization is a plain copy of the
 // first 28 bytes (Docs "Requester table entry"): providerAddr, trid, table, targetReg, timeout.
 static_assert(offsetof(RequesterEntry, providerAddr) == 0, "wire order: providerAddr first");
-static_assert(offsetof(RequesterEntry, trid) == 2, "wire order: trid after providerAddr");
-static_assert(offsetof(RequesterEntry, sub) == 4, "wire order: subscription table after trid");
+static_assert(offsetof(RequesterEntry, Trid) == 2, "wire order: Trid after providerAddr");
+static_assert(offsetof(RequesterEntry, sub) == 4, "wire order: subscription table after Trid");
 static_assert(offsetof(RequesterEntry, targetReg) == 20, "wire order: targetReg after the table");
 static_assert(offsetof(RequesterEntry, timeout) == 24, "wire order: timeout after targetReg");
 #define REQUESTER_ENTRY_WIRE_SIZE 28
@@ -130,7 +130,7 @@ static const uint8_t kReRegisterMax = 128;
 // table, last sent, hash/hashlike, timeout. Active until canceled; not persistent.
 struct ProviderEntry {
     uint16_t requesterAddr = 0;  // 0 = invalid entry
-    uint16_t trid = 0;
+    uint16_t Trid = 0;
     SubscriptionTable sub;
     uint32_t lastSentMs = 0;
     uint32_t hash = 0;           // FNV-1a hash / edge counter / last value / subresolution
@@ -148,8 +148,8 @@ struct ProviderEntry {
 // first 32 bytes (Docs "Provider table entry"): requesterAddr, trid, table, lastSent, hash,
 // timeout. The provider table is not ordered (only the requester table is TRID-sorted).
 static_assert(offsetof(ProviderEntry, requesterAddr) == 0, "wire order: requesterAddr first");
-static_assert(offsetof(ProviderEntry, trid) == 2, "wire order: trid after requesterAddr");
-static_assert(offsetof(ProviderEntry, sub) == 4, "wire order: subscription table after trid");
+static_assert(offsetof(ProviderEntry, Trid) == 2, "wire order: Trid after requesterAddr");
+static_assert(offsetof(ProviderEntry, sub) == 4, "wire order: subscription table after Trid");
 static_assert(offsetof(ProviderEntry, lastSentMs) == 20, "wire order: lastSent after the table");
 static_assert(offsetof(ProviderEntry, hash) == 24, "wire order: hash after lastSent");
 static_assert(offsetof(ProviderEntry, timeout) == 28, "wire order: timeout after hash");

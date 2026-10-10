@@ -73,7 +73,7 @@ static bool ReadByte(uint8_t *b, TickType_t ticks)
 // Handlers
 // ---------------------------------------------------------------------------
 
-static void HandleWrite(uint32_t offset, const uint8_t *payload)
+static void HandleWrite(uint32_t offset, const uint8_t *Payload)
 {
     if (s_app == nullptr) return;
     if ((offset & 31u) != 0) return; // 32-byte aligned
@@ -94,7 +94,7 @@ static void HandleWrite(uint32_t offset, const uint8_t *payload)
             return;
         MarkErased(sector);
     }
-    esp_partition_write(s_app, offset, payload, Bootloader::PAYLOAD_SIZE);
+    esp_partition_write(s_app, offset, Payload, Bootloader::PAYLOAD_SIZE);
 }
 
 // ---------------------------------------------------------------------------
@@ -147,7 +147,7 @@ extern "C" void app_main(void)
     BootloaderHost::HostLoop(
         [] {},
         [](uint8_t *b) { return ReadByte(b, pdMS_TO_TICKS(100)); },
-        [](uint32_t offset, const uint8_t *payload) { HandleWrite(offset, payload); },
+        [](uint32_t offset, const uint8_t *Payload) { HandleWrite(offset, Payload); },
         [](uint32_t offset) {
             auto readPayload = [](uint32_t off, uint8_t *data) {
                 // Same wrap-safe bounds check as `HandleWrite`: an out-of-range offset

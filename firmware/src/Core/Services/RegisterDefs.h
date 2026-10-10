@@ -161,11 +161,11 @@ inline void RegisterService::SendKeyResponse(const PacketFrame &frame, uint32_t 
 
 // Replies with the assigned BlockIndex followed by an ack (the dynamic field-write path).
 inline void RegisterService::SendBlockIndexAck(const PacketFrame &frame, uint8_t index) {
-    uint8_t payload[sizeof(BlockIndex) + 1];
+    uint8_t Payload[sizeof(BlockIndex) + 1];
     BlockIndex out_index = {index, 0xFF, 0xFF};
-    memcpy(payload, &out_index, sizeof(BlockIndex));
-    payload[sizeof(BlockIndex)] = 1;
-    SendResponse(frame, payload, sizeof(payload));
+    memcpy(Payload, &out_index, sizeof(BlockIndex));
+    Payload[sizeof(BlockIndex)] = 1;
+    SendResponse(frame, Payload, sizeof(Payload));
 }
 
 

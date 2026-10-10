@@ -170,7 +170,7 @@ inline bool ScriptService::Load(uint16_t fileId, uint16_t slot) {
     MaskSet(slot, false);
     s->slot = slot;
     s->fileId = fileId;
-    s->trid = (uint16_t)(TRID_SCRIPT_BASE + slot);
+    s->Trid = (uint16_t)(TRID_SCRIPT_BASE + slot);
 
     s->properties = RdU32(buf + 0);
     s->inCount    = buf[4];

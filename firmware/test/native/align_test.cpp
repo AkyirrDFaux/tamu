@@ -35,10 +35,10 @@ int main() {
     // a real word boundary and a u16 at an even offset is fine too.
     PacketFrame local;
     PacketFrame arr[3];
-    CHECK((uintptr_t)local.payload % 4 == 0);
-    CHECK((uintptr_t)arr[0].payload % 4 == 0);
-    CHECK((uintptr_t)arr[1].payload % 4 == 0);
-    CHECK((uintptr_t)arr[2].payload % 4 == 0);
+    CHECK((uintptr_t)local.Payload % 4 == 0);
+    CHECK((uintptr_t)arr[0].Payload % 4 == 0);
+    CHECK((uintptr_t)arr[1].Payload % 4 == 0);
+    CHECK((uintptr_t)arr[2].Payload % 4 == 0);
     CHECK(sizeof(PacketFrame) % 4 == 0);
 
     // A byte buffer with an odd base: access it at every offset and every phase.

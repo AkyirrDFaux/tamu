@@ -63,14 +63,14 @@ inline void ScriptService::Tick(uint32_t nowMs) {
 // Handles a reply to a foreign register request. The reply echoes the script's TRID, so the
 // Dispatcher routes it here by range instead of by ServiceType.
 inline void ScriptService::HandleResponse(const PacketFrame &frame) {
-    uint16_t trid = frame.trid;
+    uint16_t Trid = frame.Trid;
     for (uint16_t w = 0; w < kScriptMaskWords; w++) {
     uint64_t mask = ActiveMask[w];
     while (mask) {
         uint16_t i = (uint16_t)(w * 64 + __builtin_ctzll(mask));
         mask &= mask - 1;
         LoadedScript *s = &Registry[i];
-        if (!s->active || !s->pendingForeign || s->pendingTrid != trid) continue;
+        if (!s->active || !s->pendingForeign || s->pendingTrid != Trid) continue;
         s->pendingForeign = false;
         if (s->pendingRead) {
             uint16_t pb = PayloadBytes(frame);
@@ -79,8 +79,8 @@ inline void ScriptService::HandleResponse(const PacketFrame &frame) {
                 s->state = (uint8_t)ScriptState::Error;
                 return;
             }
-            ValueInfo rm = *reinterpret_cast<const ValueInfo *>(frame.payload + 4);
-            const uint8_t *val = frame.payload + 8;
+            ValueInfo rm = *reinterpret_cast<const ValueInfo *>(frame.Payload + 4);
+            const uint8_t *val = frame.Payload + 8;
             uint8_t avail = (uint8_t)(pb - 8);
             uint16_t vsz = rm.Size;
             if (vsz > avail) vsz = avail;
@@ -154,10 +154,10 @@ inline void ScriptService::BootLoad() {
 // ===== Management commands (0x050X) =====
 
 __attribute__((noinline)) inline bool ScriptService::Handle(const PacketFrame &frame) {
-    if (frame.flags & FLAG_TYPE) return true; // responses are not handled locally
+    if (frame.Flags & FLAG_TYPE) return true; // responses are not handled locally
 
-    uint8_t cid = GetServiceCID(frame.cmd);
-    uint16_t bytes = PayloadBytes(frame);
+    uint8_t cid = GetServiceCID(frame.Cmd);
+    uint16_t Bytes = PayloadBytes(frame);
 
     switch (cid) {
         case 0: { // Get currently loaded scripts (their file ids, uint16 each)
@@ -166,14 +166,14 @@ __attribute__((noinline)) inline bool ScriptService::Handle(const PacketFrame &f
             // length carries the count - no count byte (Docs/Services/Script.md CID 0).
             uint8_t content[MAX_SCRIPTS * 2];
             uint16_t n = ListFiles(content, MAX_SCRIPTS);
-            uint16_t total = (uint16_t)(2 * n);
+            uint16_t Total = (uint16_t)(2 * n);
             const uint16_t kFrag = 64;
-            uint16_t frags = (uint16_t)((total + kFrag - 1) / kFrag);
+            uint16_t frags = (uint16_t)((Total + kFrag - 1) / kFrag);
             if (frags == 0) frags = 1;
             for (uint16_t f = 0; f < frags; f++) {
                 uint16_t off = (uint16_t)(f * kFrag);
-                uint16_t len = (uint16_t)((total - off > kFrag) ? kFrag : total - off);
-                memcpy(tx_frame.payload + 4, content + off, len);
+                uint16_t len = (uint16_t)((Total - off > kFrag) ? kFrag : Total - off);
+                memcpy(TxFrame.Payload + 4, content + off, len);
                 SendFragFragment(frame, f, frags, len);
             }
             break;
@@ -182,16 +182,16 @@ __attribute__((noinline)) inline bool ScriptService::Handle(const PacketFrame &f
         case 1: { // Load Script (file id uint16, loaded id uint8) -> Success
             // Docs/Services/Script.md: the caller picks the loaded id (the slot); the reply is
             // just Success, so it must have chosen it.
-            if (bytes < 3) { RespondStatus(frame, false); return true; }
-            uint16_t fileId = (uint16_t)(frame.payload[0] | (frame.payload[1] << 8));
-            bool ok = Load(fileId, frame.payload[2]);
+            if (Bytes < 3) { RespondStatus(frame, false); return true; }
+            uint16_t fileId = (uint16_t)(frame.Payload[0] | (frame.Payload[1] << 8));
+            bool ok = Load(fileId, frame.Payload[2]);
             RespondStatus(frame, ok);
             break;
         }
 
         case 2: { // Unload script (loaded ID)
-            if (bytes < 1) { RespondStatus(frame, false); return true; }
-            uint16_t slot = frame.payload[0];
+            if (Bytes < 1) { RespondStatus(frame, false); return true; }
+            uint16_t slot = frame.Payload[0];
             bool ok = Active(slot) != nullptr;
             if (ok) Unload(slot);
             RespondStatus(frame, ok);
@@ -199,8 +199,8 @@ __attribute__((noinline)) inline bool ScriptService::Handle(const PacketFrame &f
         }
 
         case 3: { // Read state (loaded ID -> state, last error code)
-            if (bytes < 1) { RespondStatus(frame, false); return true; }
-            LoadedScript *s = Active(frame.payload[0]);
+            if (Bytes < 1) { RespondStatus(frame, false); return true; }
+            LoadedScript *s = Active(frame.Payload[0]);
             if (!s) { RespondStatus(frame, false); return true; }
             uint8_t reply[2] = { s->state, s->errorCode };
             SendResponse(frame, reply, 2);
@@ -208,30 +208,30 @@ __attribute__((noinline)) inline bool ScriptService::Handle(const PacketFrame &f
         }
 
         case 4: { // Set state (loaded ID, new state; clears the error)
-            if (bytes < 2) { RespondStatus(frame, false); return true; }
-            LoadedScript *s = Active(frame.payload[0]);
-            if (!s || frame.payload[1] > (uint8_t)ScriptState::Error) { RespondStatus(frame, false); return true; }
-            SetState(s, frame.payload[1]);
+            if (Bytes < 2) { RespondStatus(frame, false); return true; }
+            LoadedScript *s = Active(frame.Payload[0]);
+            if (!s || frame.Payload[1] > (uint8_t)ScriptState::Error) { RespondStatus(frame, false); return true; }
+            SetState(s, frame.Payload[1]);
             s->errorCode = SCRIPT_ERR_NONE; // docs: setting the state clears the error
             RespondStatus(frame, true);
             break;
         }
 
         case 5: { // Read internal state (loaded ID -> instruction counter (line) + variable RAM)
-            if (bytes < 1) { RespondStatus(frame, false); return true; }
-            LoadedScript *s = Active(frame.payload[0]);
+            if (Bytes < 1) { RespondStatus(frame, false); return true; }
+            LoadedScript *s = Active(frame.Payload[0]);
             if (!s) { RespondStatus(frame, false); return true; }
             // Streamed as FRAG: the 4-byte instruction counter then the variable RAM, which can
             // exceed one payload.
             uint32_t ic = s->ic;
-            uint16_t total = (uint16_t)(4 + s->varTotal);
-            uint16_t frags = (uint16_t)((total + MAX_FRAG_CONTENT_SIZE - 1) / MAX_FRAG_CONTENT_SIZE);
+            uint16_t Total = (uint16_t)(4 + s->varTotal);
+            uint16_t frags = (uint16_t)((Total + MAX_FRAG_CONTENT_SIZE - 1) / MAX_FRAG_CONTENT_SIZE);
             if (frags == 0) frags = 1;
             for (uint16_t f = 0; f < frags; f++) {
                 uint16_t off = (uint16_t)(f * MAX_FRAG_CONTENT_SIZE);
-                uint16_t len = (uint16_t)((total - off > MAX_FRAG_CONTENT_SIZE)
-                                              ? MAX_FRAG_CONTENT_SIZE : (total - off));
-                uint8_t *dst = tx_frame.payload + 4;
+                uint16_t len = (uint16_t)((Total - off > MAX_FRAG_CONTENT_SIZE)
+                                              ? MAX_FRAG_CONTENT_SIZE : (Total - off));
+                uint8_t *dst = TxFrame.Payload + 4;
                 for (uint16_t i = 0; i < len; i++) {
                     uint16_t src = (uint16_t)(off + i);
                     dst[i] = (src < 4) ? (uint8_t)(ic >> (8 * src)) : s->varSpace[src - 4];
@@ -242,11 +242,11 @@ __attribute__((noinline)) inline bool ScriptService::Handle(const PacketFrame &f
         }
 
         case 6: { // Move to instruction (loaded ID, line index u32)
-            if (bytes < 5) { RespondStatus(frame, false); return true; }
-            LoadedScript *s = Active(frame.payload[0]);
+            if (Bytes < 5) { RespondStatus(frame, false); return true; }
+            LoadedScript *s = Active(frame.Payload[0]);
             if (!s) { RespondStatus(frame, false); return true; }
             uint32_t line = 0;
-            memcpy(&line, frame.payload + 1, 4);
+            memcpy(&line, frame.Payload + 1, 4);
             if (s->lineCount && line >= s->lineCount) line = s->lineCount - 1;
             s->ic = (uint16_t)line;
             RespondStatus(frame, true);
@@ -254,15 +254,15 @@ __attribute__((noinline)) inline bool ScriptService::Handle(const PacketFrame &f
         }
 
         case 7: { // Write Variable (loaded ID, variable ID, value)
-            if (bytes < 2) { RespondStatus(frame, false); return true; }
-            LoadedScript *s = Active(frame.payload[0]);
-            uint8_t varId = frame.payload[1];
+            if (Bytes < 2) { RespondStatus(frame, false); return true; }
+            LoadedScript *s = Active(frame.Payload[0]);
+            uint8_t varId = frame.Payload[1];
             if (!s || varId >= s->varCount) { RespondStatus(frame, false); return true; }
             // The value length comes from the variable's declared size (the request carries
             // exactly that many value bytes).
             uint16_t vlen = s->varMeta[varId].Size;
-            if ((uint16_t)(2 + vlen) > bytes) { RespondStatus(frame, false); return true; }
-            RespondStatus(frame, SetVariable(frame.payload[0], varId, frame.payload + 2, vlen));
+            if ((uint16_t)(2 + vlen) > Bytes) { RespondStatus(frame, false); return true; }
+            RespondStatus(frame, SetVariable(frame.Payload[0], varId, frame.Payload + 2, vlen));
             break;
         }
 

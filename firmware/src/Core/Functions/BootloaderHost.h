@@ -75,11 +75,11 @@ namespace BootloaderHost
             int n = ReceiveFrame(frame, sizeof(frame), begin, read);
             if (n <= 0) continue;
 
-            uint8_t cmd = (uint8_t)(frame[1] & 0x03u);
+            uint8_t Cmd = (uint8_t)(frame[1] & 0x03u);
             uint32_t offset = Bootloader::Offset(frame);
-            if (cmd == Bootloader::CMD_WRITE)
+            if (Cmd == Bootloader::CMD_WRITE)
                 onWrite(offset, Bootloader::Payload(frame));
-            else if (cmd == Bootloader::CMD_READ_REQ)
+            else if (Cmd == Bootloader::CMD_READ_REQ)
                 onRead(offset);
         }
     }

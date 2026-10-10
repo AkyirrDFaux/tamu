@@ -89,8 +89,8 @@ inline bool RegisterService::RegisterSetByBlockInfo(uint32_t bi, const ValueInfo
 }
 
 inline bool RegisterService::Handle(const PacketFrame &frame) {
-    uint8_t cid = GetServiceCID(frame.cmd);
-    if (frame.flags & FLAG_TYPE) return true;
+    uint8_t cid = GetServiceCID(frame.Cmd);
+    if (frame.Flags & FLAG_TYPE) return true;
 
     // Recall All / Save All - the whole device, no BlockInfo (Docs/Services/Register.md).
     // Partial saving/recall is the app's job (direct file writes / direct register writes).
@@ -108,7 +108,7 @@ inline bool RegisterService::Handle(const PacketFrame &frame) {
 #ifdef USE_DYNAMIC_BLOCKS
     if (cid >= (uint8_t)DynamicCid::Create && cid <= (uint8_t)DynamicCid::SetName) {
         if (PayloadBytes(frame) < 2) { RespondStatus(frame, false); return true; }
-        uint16_t gi = (uint16_t)(frame.payload[0] | (frame.payload[1] << 8));
+        uint16_t gi = (uint16_t)(frame.Payload[0] | (frame.Payload[1] << 8));
         switch ((DynamicCid)cid) {
             case DynamicCid::Create:  HandleCreateDynamic(frame, gi); return true;
             case DynamicCid::Delete:  HandleDeleteDynamic(frame, gi); return true;
@@ -123,7 +123,7 @@ inline bool RegisterService::Handle(const PacketFrame &frame) {
 
     // frame.payload is 4-byte aligned (PacketFrame is packed+aligned(4)), so this is one
     // word load rather than a 4-byte memcpy.
-    uint32_t bi = *reinterpret_cast<const uint32_t *>(frame.payload);
+    uint32_t bi = *reinterpret_cast<const uint32_t *>(frame.Payload);
     uint16_t type = BlockInfoType(bi);
     uint8_t inst = BlockInfoInstance(bi);
     uint8_t field = BlockInfoField(bi);
@@ -153,8 +153,8 @@ inline bool RegisterService::Handle(const PacketFrame &frame) {
     // Write.
     if (cid == (uint8_t)RegisterCid::Write) {
         if (PayloadBytes(frame) < 8) { RespondStatus(frame,false); return true; }
-        const ValueInfo *desc = (const ValueInfo *)(frame.payload + 4);
-        const uint8_t *val = frame.payload+8;
+        const ValueInfo *desc = (const ValueInfo *)(frame.Payload + 4);
+        const uint8_t *val = frame.Payload+8;
         // The ValueInfo.Size must match the value bytes actually present: a larger Size
         // would make the write path copy past the frame. It is also capped to what one
         // packet can carry, symmetric with the read reply's cap.

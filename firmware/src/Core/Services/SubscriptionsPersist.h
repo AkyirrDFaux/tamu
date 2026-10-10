@@ -62,8 +62,8 @@ inline void SubscriptionsService::LoadRequesterTable() {
     uint16_t off = 0;
     uint8_t count = buf[off++];
     for (uint8_t i = 0; i < count && off + REQUESTER_FILE_ENTRY_SIZE <= len; i++) {
-        uint16_t trid = LoadUnaligned<uint16_t>(buf + off + 2);
-        RequesterEntry* e = RequesterUpsert(trid);
+        uint16_t Trid = LoadUnaligned<uint16_t>(buf + off + 2);
+        RequesterEntry* e = RequesterUpsert(Trid);
         if (!e) break;
         memcpy((void *)e, buf + off, REQUESTER_FILE_ENTRY_SIZE);
         off += REQUESTER_FILE_ENTRY_SIZE;
@@ -87,16 +87,16 @@ inline void SubscriptionsService::RegisterRequesterProvider(RequesterEntry* e) {
     uint8_t net = (uint8_t)((DeviceStatus.ShortAddress >> 10) & 0x3F);
     if (NetQualifyLocal(e->providerAddr, net) == DeviceStatus.ShortAddress) {
         // Same-device provider: install it directly (shared with the wire paths).
-        ProviderInstall(e->trid, DeviceStatus.ShortAddress, e->sub);
+        ProviderInstall(e->Trid, DeviceStatus.ShortAddress, e->sub);
         return;
     }
 #endif
     // Remote provider: send the subscription table (0401, fire and forget).
-    uint8_t payload[SUB_TABLE_WIRE_SIZE];
-    memcpy(payload, &e->sub, SUB_TABLE_WIRE_SIZE);
+    uint8_t Payload[SUB_TABLE_WIRE_SIZE];
+    memcpy(Payload, &e->sub, SUB_TABLE_WIRE_SIZE);
     PacketFrame req;
     PacketConstruct(&req, e->providerAddr, MakeService(ServiceType::Subscriptions, 1),
-                    e->trid, FLAG_START | FLAG_STOP, payload, SUB_TABLE_WIRE_SIZE);
+                    e->Trid, FLAG_START | FLAG_STOP, Payload, SUB_TABLE_WIRE_SIZE);
     SendAndVerifyPacket(req);
 }
 

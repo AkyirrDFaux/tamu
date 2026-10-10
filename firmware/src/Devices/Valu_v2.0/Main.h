@@ -44,8 +44,8 @@ const SerialNumber &GetSerialNumber()
     static bool init = false;
     if (!init)
     {
-        memset(sn.bytes, 0, sizeof(sn.bytes));
-        memcpy(sn.bytes, (const void *)CHIP_ID_ADDR, 12);
+        memset(sn.Bytes, 0, sizeof(sn.Bytes));
+        memcpy(sn.Bytes, (const void *)CHIP_ID_ADDR, 12);
         init = true;
     }
     return sn;

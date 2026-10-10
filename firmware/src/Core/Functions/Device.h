@@ -7,20 +7,20 @@
 struct AssignPayload
 {
     SerialNumber sn;
-    uint16_t new_addr;
+    uint16_t NewAddr;
 } __attribute__((packed));
 
 // Formats a serial number as a null-terminated hex string (needs 2*sizeof(bytes)+1 chars).
 inline void SerialNumberToString(const SerialNumber &sn, char *buffer, size_t buffer_size)
 {
-    if (!buffer || buffer_size < sizeof(sn.bytes) * 2 + 1)
+    if (!buffer || buffer_size < sizeof(sn.Bytes) * 2 + 1)
         return;
-    for (size_t i = 0; i < sizeof(sn.bytes); i++)
+    for (size_t i = 0; i < sizeof(sn.Bytes); i++)
     {
-        buffer[i * 2] = "0123456789ABCDEF"[sn.bytes[i] >> 4];
-        buffer[i * 2 + 1] = "0123456789ABCDEF"[sn.bytes[i] & 0x0F];
+        buffer[i * 2] = "0123456789ABCDEF"[sn.Bytes[i] >> 4];
+        buffer[i * 2 + 1] = "0123456789ABCDEF"[sn.Bytes[i] & 0x0F];
     }
-    buffer[sizeof(sn.bytes) * 2] = '\0'; // Null terminate
+    buffer[sizeof(sn.Bytes) * 2] = '\0'; // Null terminate
 }
 
 // Device identity is mandatory for every device build. Each device must provide the

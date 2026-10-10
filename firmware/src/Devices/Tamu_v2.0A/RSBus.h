@@ -45,9 +45,9 @@ void SetupRS485()
 
 // Shared CSMA/CD silence wait (Core/Functions/Bus.h): drain the UART buffer, count
 // silence in esp_timer microseconds, sleep 1 ms between polls (the Tamu has a scheduler).
-static void RS485_WaitForSilence(uint8_t priority)
+static void RS485_WaitForSilence(uint8_t Priority)
 {
-    RS485_WaitForSilence(priority,
+    RS485_WaitForSilence(Priority,
         [](void) -> bool {
             size_t len = 0;
             uart_get_buffered_data_len(UART_NUM_1, &len);
@@ -78,25 +78,25 @@ static void RS485_WaitForSilence(uint8_t priority)
 bool SendAndVerifyPacket(const PacketFrame &Data)
 {
     // 1. Create a working copy
-    PacketFrame tx_frame = Data;
+    PacketFrame TxFrame = Data;
 
     // 2. Finalize CRC (Calculated over all fields starting at flags)
-    uint16_t crc_len = 11 + PayloadBytes(tx_frame);
-    tx_frame.crc8 = Crc8(&tx_frame.flags, crc_len);
+    uint16_t crc_len = 11 + PayloadBytes(TxFrame);
+    TxFrame.Crc8 = Crc8(&TxFrame.Flags, crc_len);
 
     // 3. Prepare for transmission: the frame is header + payload bytes, max 128 total.
     // The 0xAA sync byte is sent separately (not part of the frame).
-    size_t packet_size = 12 + PayloadBytes(tx_frame);
-    static_assert(MAX_PAYLOAD_SIZE <= 116, "RSBus TX buffer assumes a 116-byte payload");
+    size_t packet_size = 12 + PayloadBytes(TxFrame);
+    static_assert(MAX_PAYLOAD_SIZE <= 116, "RSBus TX buffer assumes a 116-byte Payload");
     uint8_t tx_buffer[128];
-    memcpy(tx_buffer, &tx_frame, packet_size);
+    memcpy(tx_buffer, &TxFrame, packet_size);
 
     const size_t CHUNK = 16;               // ~1.4 ms of line time per chunk
     uint8_t rx_chunk[CHUNK];
 
     for (int attempt = 0; attempt < RS485_RETRIES; attempt++) {
         // CSMA/CD: only transmit once the line has been silent
-        RS485_WaitForSilence(Data.priority);
+        RS485_WaitForSilence(Data.Priority);
 
         // Prepare bus for transmission
         gpio_set_level(RS485_EN_PIN, 1);
@@ -142,7 +142,7 @@ bool SendAndVerifyPacket(const PacketFrame &Data)
 
         // Collision or failed echo: back off with a fresh random delay
         uint32_t backoff_ms = (RawRand() % 16) + 1;
-        if (!AppConnected) // diagnostics only when no app is attached to the console
+        if (!AppInterface.Connected) // diagnostics only when no app is attached to the console
         {
             ESP_LOGW("RS485", "Attempt %d failed (%s), backoff %lums", attempt + 1,
                      collided ? "collision" : "echo incomplete", (unsigned long)backoff_ms);
@@ -150,7 +150,7 @@ bool SendAndVerifyPacket(const PacketFrame &Data)
         vTaskDelay(pdMS_TO_TICKS(backoff_ms));
     }
 
-    if (!AppConnected)
+    if (!AppInterface.Connected)
     {
         ESP_LOGE("RS485", "Transmission failed after %d attempts", RS485_RETRIES);
     }

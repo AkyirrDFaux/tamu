@@ -149,7 +149,7 @@ class BleTxCallbacks : public NimBLECharacteristicCallbacks
         if (!s_loggedFirstWrite)
         {
             s_loggedFirstWrite = true;
-            DeviceLog("APPBLE", "first write: %u bytes", (unsigned)n);
+            DeviceLog("APPBLE", "first write: %u Bytes", (unsigned)n);
         }
 
         for (size_t i = 0; i < n; i++)

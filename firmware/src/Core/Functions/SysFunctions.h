@@ -95,7 +95,7 @@ inline void ApplyTimeSync(int32_t offset)
 }
 
 // Single shared output buffer — all handlers build replies here instead of stack-allocating.
-extern PacketFrame tx_frame;
+extern PacketFrame TxFrame;
 
 // Updates uptime/delta time bookkeeping and the loop-time statistics each main-loop tick
 inline void TimeUpdate()

@@ -341,10 +341,10 @@ inline bool ScriptService::OperandBlockInfo(LoadedScript *s, const uint8_t *sym,
 }
 
 inline void ScriptService::SendRegisterRequest(LoadedScript *s, uint16_t addr, uint8_t cid,
-                                      const uint8_t *payload, uint16_t len) {
+                                      const uint8_t *Payload, uint16_t len) {
     PacketFrame req;
-    PacketConstruct(&req, addr, MakeService(ServiceType::Register, cid), s->trid,
-                    FLAG_REQACK | FLAG_START | FLAG_STOP, payload, len);
+    PacketConstruct(&req, addr, MakeService(ServiceType::Register, cid), s->Trid,
+                    FLAG_REQACK | FLAG_START | FLAG_STOP, Payload, len);
     SendAndVerifyPacket(req);
 }
 
@@ -429,15 +429,15 @@ inline uint8_t ScriptService::ExecService(LoadedScript *s, const ScriptLineInfo 
             memcpy(s->pendingDest, s->instr + (size_t)ln.start * 4, 4);
             s->pendingRead = true;
             s->pendingForeign = true;
-            s->pendingTrid = s->trid;
+            s->pendingTrid = s->Trid;
             s->pendingDeadline = nowMs + 500;
             s->ic++;
             s->state = (uint8_t)ScriptState::Waiting;
             s->waitingOnTime = false;
             yield = true;
-            uint8_t payload[4];
-            memcpy(payload, &bi, 4);
-            SendRegisterRequest(s, (uint16_t)addr, 1, payload, 4);
+            uint8_t Payload[4];
+            memcpy(Payload, &bi, 4);
+            SendRegisterRequest(s, (uint16_t)addr, 1, Payload, 4);
             return SCRIPT_ERR_NONE;
         }
         case SCRIPT_OP_SERVICE_REG_WRITE_FOREIGN: { // register[addr, BlockInfo] = operand3
@@ -453,20 +453,20 @@ inline uint8_t ScriptService::ExecService(LoadedScript *s, const ScriptLineInfo 
             if (!Resolve(s, opbase[8], opbase[9], SymVal(opbase + 8), scratch, &val, &vsize, &vtype))
                 return SCRIPT_ERR_OPERAND;
             if (vsize > 64) vsize = 64;
-            uint8_t payload[8 + 64];
-            memcpy(payload, &bi, 4);
+            uint8_t Payload[8 + 64];
+            memcpy(Payload, &bi, 4);
             ValueInfo wm = { (uint16_t)vtype, vsize, 0 };
-            memcpy(payload + 4, &wm, 4);
-            if (vsize) memcpy(payload + 8, val, vsize);
+            memcpy(Payload + 4, &wm, 4);
+            if (vsize) memcpy(Payload + 8, val, vsize);
             s->pendingRead = false;
             s->pendingForeign = true;
-            s->pendingTrid = s->trid;
+            s->pendingTrid = s->Trid;
             s->pendingDeadline = nowMs + 500;
             s->ic++;
             s->state = (uint8_t)ScriptState::Waiting;
             s->waitingOnTime = false;
             yield = true;
-            SendRegisterRequest(s, (uint16_t)addr, 2, payload, (uint16_t)(8 + vsize));
+            SendRegisterRequest(s, (uint16_t)addr, 2, Payload, (uint16_t)(8 + vsize));
             return SCRIPT_ERR_NONE;
         }
         case SCRIPT_OP_SERVICE_SCRIPT_LOAD: { // load(script file id, loaded script id)

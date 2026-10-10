@@ -37,12 +37,12 @@ private:
 
     static bool ProviderOccupied(const ProviderEntry &e);
     static bool ProviderEntryLive(const uint8_t *table, uint16_t i);
-    ProviderEntry* ProviderFindByTrid(uint16_t trid);
+    ProviderEntry* ProviderFindByTrid(uint16_t Trid);
     ProviderEntry* ProviderFindFree();
     void ProviderClearEntry(ProviderEntry* e);
-    void ProviderApply(ProviderEntry* e, uint16_t trid, uint16_t requesterAddr,
+    void ProviderApply(ProviderEntry* e, uint16_t Trid, uint16_t requesterAddr,
                        const SubscriptionTable &t, bool reset);
-    ProviderEntry* ProviderInstall(uint16_t trid, uint16_t requesterAddr,
+    ProviderEntry* ProviderInstall(uint16_t Trid, uint16_t requesterAddr,
                                    const SubscriptionTable &t, bool reset = false);
     void HandleProviderConfirmation(const PacketFrame &frame);
     uint32_t SubscriptionsDeltaHash(const FieldResult &fr, uint32_t deadzone);
@@ -69,11 +69,11 @@ private:
 
     static bool RequesterOccupied(const RequesterEntry &e);
     static bool RequesterEntryLive(const uint8_t *table, uint16_t i);
-    RequesterEntry* RequesterFindByTrid(uint16_t trid);
+    RequesterEntry* RequesterFindByTrid(uint16_t Trid);
     void RequesterClearEntry(RequesterEntry* e);
     void RequesterRemove(RequesterEntry* e);
-    RequesterEntry* RequesterAlloc(uint16_t trid);
-    RequesterEntry* RequesterUpsert(uint16_t trid);
+    RequesterEntry* RequesterAlloc(uint16_t Trid);
+    RequesterEntry* RequesterUpsert(uint16_t Trid);
     void ApplyRequesterValue(RequesterEntry *e, const uint8_t *val, uint8_t vlen, bool confirm);
     void HandleRequesterValueUpdate(const PacketFrame &frame);
     void SaveRequesterTable();
@@ -81,7 +81,7 @@ private:
     void SubscriptionsReRegisterPending();
     void RequesterInitCheck(uint32_t nowMs);
     void RequesterStreamTable(const PacketFrame &frame);
-    void SubscriptionsCancelProvider(uint16_t providerAddr, uint16_t trid);
+    void SubscriptionsCancelProvider(uint16_t providerAddr, uint16_t Trid);
 #endif
 
     // ---------------------------------------------------------------------
@@ -89,7 +89,7 @@ private:
     // ---------------------------------------------------------------------
     bool SubscriptionsHighPriority(TriggerType t);
     FieldResult SubscriptionsGetField(uint32_t blockInfo);
-    void SubReply(const PacketFrame &frame, const uint8_t *payload, uint16_t len,
+    void SubReply(const PacketFrame &frame, const uint8_t *Payload, uint16_t len,
                   uint8_t extraFlags = 0);
     void StreamSubscriptionTable(const PacketFrame &frame, const uint8_t *table, uint16_t max,
                                  uint16_t entrySize, bool (*occupied)(const uint8_t *, uint16_t));

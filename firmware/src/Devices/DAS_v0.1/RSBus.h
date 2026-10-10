@@ -100,9 +100,9 @@ static uint32_t RS485_Micros()
 
 // Shared CSMA/CD silence wait (Core/Functions/Bus.h): drain the ring, count silence in
 // SysTick microseconds, busy-wait (the DAS's tight loop keeps bus turnaround latency low).
-static void RS485_WaitForSilence(uint8_t priority)
+static void RS485_WaitForSilence(uint8_t Priority)
 {
-    RS485_WaitForSilence(priority,
+    RS485_WaitForSilence(Priority,
         [](void) -> bool {
             if (!UART_Available()) return false;
             while (UART_Available())
@@ -120,11 +120,11 @@ static void RS485_WaitForSilence(uint8_t priority)
 bool SendAndVerifyPacket(const PacketFrame &Data) {
     size_t packet_size = 12 + PayloadBytes(Data);    // frame: header + payload, max 128
     size_t total_tx_size = 1 + packet_size;          // sync byte + frame (echo count)
-    const uint8_t *bytes = (const uint8_t *)&Data;
+    const uint8_t *Bytes = (const uint8_t *)&Data;
 
     for (int attempt = 0; attempt < RS485_RETRIES; attempt++) {
         // CSMA/CD: only transmit once the line has been silent
-        RS485_WaitForSilence(Data.priority);
+        RS485_WaitForSilence(Data.Priority);
 
         PinHigh(LEDW);
         // Prepare Bus: Enable TX
@@ -134,7 +134,7 @@ bool SendAndVerifyPacket(const PacketFrame &Data) {
         USART_SendData(USART1, 0xAA);
         while (USART_GetFlagStatus(USART1, USART_FLAG_TXE) == RESET);
         for (size_t i = 0; i < packet_size; i++) {
-            USART_SendData(USART1, bytes[i]);
+            USART_SendData(USART1, Bytes[i]);
             while (USART_GetFlagStatus(USART1, USART_FLAG_TXE) == RESET);
         }
         while (USART_GetFlagStatus(USART1, USART_FLAG_TC) == RESET);
@@ -151,7 +151,7 @@ bool SendAndVerifyPacket(const PacketFrame &Data) {
         while (got < total_tx_size && (Now() - start_tick) < 50) {
             if (UART_Available()) {
                 uint8_t b = UART_ReadByte();
-                uint8_t expect = (got == 0) ? 0xAA : bytes[got - 1];
+                uint8_t expect = (got == 0) ? 0xAA : Bytes[got - 1];
                 if (b != expect) match = false;
                 got++;
             }

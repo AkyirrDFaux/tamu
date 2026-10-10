@@ -9,6 +9,7 @@
 #include "esp_efuse.h"
 #include "esp_efuse_table.h"
 
+#include "Core/Functions/AppInterface.h"
 #include "Storage.h"
 #include "Log.h"
 #include "Core/Functions/Device.h"
@@ -121,15 +122,15 @@ PinModeOutput(LED_NOTIFICATION_PIN);
     PinLow(LED_NOTIFICATION_PIN);
     DeviceStatus.ShortAddress = 0;
 
-if (!AppConnected) { ESP_LOGI("INIT","b1 storage"); }
+if (!AppInterface.Connected) { ESP_LOGI("INIT","b1 storage"); }
     Storage.Init();
-if (!AppConnected) { ESP_LOGI("INIT","b2 backups"); }
+if (!AppInterface.Connected) { ESP_LOGI("INIT","b2 backups"); }
     LoadAllBackups(); // restores name + net-id from .SV too
 Script.BootLoad();         // loads SCR_XXX scripts flagged load-on-boot (Docs/Services/Script.md)
 PreloadVysiLayout();       // Vysi v1.0 layout file -> storage as "LAY_1"
 Vysi1BootLayout(Display1); // apply the (restored) layout file to each display
 Vysi1BootLayout(Display2);
-if (!AppConnected) { ESP_LOGI("INIT","b3 appif"); }
+if (!AppInterface.Connected) { ESP_LOGI("INIT","b3 appif"); }
     AppInterface.Init();
 
     // BLE app link (Nordic UART service); advertised under the persisted System Name
@@ -140,20 +141,20 @@ if (!AppConnected) { ESP_LOGI("INIT","b3 appif"); }
     while (bleNameLen > 0 && staticPer.system.Name[bleNameLen - 1] == ' ') bleNameLen--;
     memcpy(bleName, staticPer.system.Name, bleNameLen);
     bleName[bleNameLen] = '\0';
-if (!AppConnected) { ESP_LOGI("INIT","b4 ble"); }
+if (!AppInterface.Connected) { ESP_LOGI("INIT","b4 ble"); }
     AppBLEInit(bleName);
 
-if (!AppConnected) { ESP_LOGI("INIT","b5 usb"); }
+if (!AppInterface.Connected) { ESP_LOGI("INIT","b5 usb"); }
     AppUSBInit(); AppUSBStartTask();
 
     // Seed PRNG with hardware RNG for CSMA backoff randomisation.
     SeedRand(esp_random());
 
-if (!AppConnected) { ESP_LOGI("INIT","b6 rs485"); }
+if (!AppInterface.Connected) { ESP_LOGI("INIT","b6 rs485"); }
     SetupRS485();
-if (!AppConnected) { ESP_LOGI("INIT","b7 pwm"); }
+if (!AppInterface.Connected) { ESP_LOGI("INIT","b7 pwm"); }
     SetupFanPWM();
-if (!AppConnected) { ESP_LOGI("INIT","b8 imu"); }
+if (!AppInterface.Connected) { ESP_LOGI("INIT","b8 imu"); }
     InitLSM6DS3();
 LED.Setup();
 
@@ -170,7 +171,7 @@ LED.Setup();
     {
         DeviceStatus.NetId = (uint8_t)(1 + (RawRand() % 61));
     }
-    if (!AppConnected)
+    if (!AppInterface.Connected)
         ESP_LOGI("INIT", "core net ID = %u", (unsigned)DeviceStatus.NetId);
 
     // The Tamu is always the core: its address is NetID.1 (no discovery needed, no button
@@ -200,7 +201,7 @@ LED.Setup();
         ProcessBus();
         Sleep(10);
     }
-    if (CoreCollisionFlag() && !AppConnected)
+    if (CoreCollisionFlag() && !AppInterface.Connected)
         ESP_LOGE("CORE", "Net-ID %u collides with another core - normal boot aborted",
                  (unsigned)DeviceStatus.NetId);
 

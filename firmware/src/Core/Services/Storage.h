@@ -34,8 +34,8 @@ inline void StorageService::Init()
 
 inline bool StorageService::Handle(const PacketFrame &frame)
 {
-    uint8_t cid = GetServiceCID(frame.cmd);
-    bool is_response = (frame.flags & FLAG_TYPE);
+    uint8_t cid = GetServiceCID(frame.Cmd);
+    bool is_response = (frame.Flags & FLAG_TYPE);
 
     if (is_response) return true;
 
@@ -48,8 +48,8 @@ inline bool StorageService::Handle(const PacketFrame &frame)
 
         case 1: { // Create per docs 03.01
             if (PayloadBytes(frame) >= 12) {
-                const char *name = reinterpret_cast<const char *>(frame.payload);
-                uint32_t size; memcpy(&size, frame.payload + 8, sizeof(size));
+                const char *name = reinterpret_cast<const char *>(frame.Payload);
+                uint32_t size; memcpy(&size, frame.Payload + 8, sizeof(size));
                 // Docs 03.01: Size (>0). A zero-size file is pointless and rejected (B11).
                 if (size == 0) {
                     DeviceLog("STORAGE", "create '%.8s' rejected: zero size", name);
@@ -60,14 +60,14 @@ inline bool StorageService::Handle(const PacketFrame &frame)
                 if (!ok) DeviceLog("STORAGE", "create '%.8s' size %u failed", name, (unsigned)size);
                 SendResponse(frame, nullptr, 0, (uint8_t)(ok ? FLAG_SUCCESS : FLAG_FAIL));
             } else {
-                DeviceLog("STORAGE", "create short payload (%u B)", (unsigned)PayloadBytes(frame));
+                DeviceLog("STORAGE", "create short Payload (%u B)", (unsigned)PayloadBytes(frame));
             }
             break;
         }
 
         case 2: { // Delete per docs 03.02
             if (PayloadBytes(frame) >= 8) {
-                const char *name = reinterpret_cast<const char *>(frame.payload);
+                const char *name = reinterpret_cast<const char *>(frame.Payload);
                 bool ok = Storage.DeleteFile(name);
                 SendResponse(frame, nullptr, 0, (uint8_t)(ok ? FLAG_SUCCESS : FLAG_FAIL));
             }
@@ -76,8 +76,8 @@ inline bool StorageService::Handle(const PacketFrame &frame)
 
         case 3: { // Resize per docs 03.03
             if (PayloadBytes(frame) >= 12) {
-                const char *name = reinterpret_cast<const char *>(frame.payload);
-                uint32_t new_size; memcpy(&new_size, frame.payload + 8, sizeof(new_size));
+                const char *name = reinterpret_cast<const char *>(frame.Payload);
+                uint32_t new_size; memcpy(&new_size, frame.Payload + 8, sizeof(new_size));
                 // Docs 03.03: New Size (>0). A zero-size file is pointless and rejected (B11).
                 if (new_size == 0) {
                     DeviceLog("STORAGE", "resize '%.8s' rejected: zero size", name);
@@ -88,27 +88,27 @@ inline bool StorageService::Handle(const PacketFrame &frame)
                 if (!ok) DeviceLog("STORAGE", "resize '%.8s' -> %u failed", name, (unsigned)new_size);
                 SendResponse(frame, nullptr, 0, (uint8_t)(ok ? FLAG_SUCCESS : FLAG_FAIL));
             } else {
-                DeviceLog("STORAGE", "resize short payload (%u B)", (unsigned)PayloadBytes(frame));
+                DeviceLog("STORAGE", "resize short Payload (%u B)", (unsigned)PayloadBytes(frame));
             }
             break;
         }
 
         case 4: { // Rename per docs 03.04
             if (PayloadBytes(frame) >= 16) {
-                const char *old_name = reinterpret_cast<const char *>(frame.payload);
-                const char *new_name = reinterpret_cast<const char *>(frame.payload + 8);
+                const char *old_name = reinterpret_cast<const char *>(frame.Payload);
+                const char *new_name = reinterpret_cast<const char *>(frame.Payload + 8);
                 bool ok = Storage.RenameFile(old_name, new_name);
                 if (!ok) DeviceLog("STORAGE", "rename '%.8s' -> '%.8s' failed", old_name, new_name);
                 SendResponse(frame, nullptr, 0, (uint8_t)(ok ? FLAG_SUCCESS : FLAG_FAIL));
             } else {
-                DeviceLog("STORAGE", "rename short payload (%u B)", (unsigned)PayloadBytes(frame));
+                DeviceLog("STORAGE", "rename short Payload (%u B)", (unsigned)PayloadBytes(frame));
             }
             break;
         }
 
         case 5: { // Read per docs 03.05
             if (PayloadBytes(frame) >= 8) {
-                const char *name = reinterpret_cast<const char *>(frame.payload);
+                const char *name = reinterpret_cast<const char *>(frame.Payload);
                 uint32_t file_offset, file_size;
                 if (Storage.GetFileInfo(name, &file_offset, &file_size)) {
                     uint32_t total_content = file_size;
@@ -118,13 +118,13 @@ inline bool StorageService::Handle(const PacketFrame &frame)
                     uint16_t total_frags = (uint16_t)((total_content + contentCap - 1) / contentCap);
                     if (total_frags == 0) total_frags = 1;
                     for (uint16_t f = 0; f < total_frags; f++) {
-                        memcpy(tx_frame.payload + 4, name, 8);
+                        memcpy(TxFrame.Payload + 4, name, 8);
                         uint32_t content_off = (uint32_t)f * contentCap;
                         uint16_t content_len = (total_content - content_off > contentCap)
                                                    ? contentCap
                                                    : (uint16_t)(total_content - content_off);
                         if (content_len) {
-                            Storage_FlashRead(file_offset + content_off, tx_frame.payload + 12, content_len);
+                            Storage_FlashRead(file_offset + content_off, TxFrame.Payload + 12, content_len);
                         }
                         SendFragFragment(frame, f, total_frags, (uint16_t)(8 + content_len));
                     }
@@ -137,15 +137,15 @@ inline bool StorageService::Handle(const PacketFrame &frame)
         }
 
         case 6: { // Write per docs 03.06
-            if (!(frame.flags & FLAG_FRAG)) break;
+            if (!(frame.Flags & FLAG_FRAG)) break;
             PacketFragInfo frag = PacketGetFrag(frame);
             uint16_t plen = PayloadBytes(frame);
             // Docs 03.06 (B12): every fragment is [frag info][name (8)][content].
             if (plen < 12) break;
-            const uint8_t *name = frame.payload + 4;
-            const uint8_t *contents = frame.payload + 12;
+            const uint8_t *name = frame.Payload + 4;
+            const uint8_t *contents = frame.Payload + 12;
             uint16_t content_len = plen - 12;
-            if (frag.current == 0) {
+            if (frag.Current == 0) {
                 s_write_active = true;
                 memcpy(s_write_name, name, 8);
                 s_write_seq = 0xFFFF;
@@ -161,7 +161,7 @@ inline bool StorageService::Handle(const PacketFrame &frame)
             uint32_t file_offset, file_size;
             if (content_len > 64) content_len = 64; // docs: "maximum 64 byte stream fragment"
             if (Storage.GetFileInfo((const char *)name, &file_offset, &file_size)) {
-                if (frag.current == (uint16_t)(s_write_seq + 1)) {
+                if (frag.Current == (uint16_t)(s_write_seq + 1)) {
                     uint32_t room = (s_write_off < file_size) ? (file_size - s_write_off) : 0;
                     uint32_t chunk = content_len;
                     if (chunk > room) chunk = room;
@@ -170,16 +170,16 @@ inline bool StorageService::Handle(const PacketFrame &frame)
                             DeviceLog("STORAGE", "write file '%.8s' flash write failed", name);
                         else {
                             s_write_off += chunk;
-                            s_write_seq = frag.current;
+                            s_write_seq = frag.Current;
                         }
                     } else {
-                        s_write_seq = frag.current;
+                        s_write_seq = frag.Current;
                     }
                 }
             } else {
                 DeviceLog("STORAGE", "write stream target '%.8s' missing", name);
             }
-            if (frame.flags & FLAG_REQACK) {
+            if (frame.Flags & FLAG_REQACK) {
                 uint8_t ack[2] = {(uint8_t)(s_write_seq & 0xFF), (uint8_t)(s_write_seq >> 8)};
                 SendResponse(frame, ack, 2);
             }

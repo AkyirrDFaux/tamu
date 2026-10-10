@@ -232,7 +232,7 @@ struct LoadedScript {
     uint8_t errorCode = SCRIPT_ERR_NONE;
 
     // Foreign register access (per-instance TRID + pending confirmation).
-    uint16_t trid = 0;
+    uint16_t Trid = 0;
     bool pendingForeign = false;
     bool pendingRead = false;
     uint16_t pendingTrid = 0;
@@ -256,7 +256,7 @@ struct LoadedScript {
         uiLen = 0; instrLen = 0; instrSymbols = 0; lineCount = 0;
         ic = 0; waitingOnTime = false; waitUntil = 0;
         callDepth = 0; errorCode = SCRIPT_ERR_NONE;
-        trid = 0; pendingForeign = false; pendingRead = false; pendingTrid = 0; pendingDeadline = 0;
+        Trid = 0; pendingForeign = false; pendingRead = false; pendingTrid = 0; pendingDeadline = 0;
         memset(pendingDest, 0, sizeof(pendingDest));
         name[0] = '\0';
     }

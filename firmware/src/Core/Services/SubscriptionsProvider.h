@@ -16,8 +16,8 @@
 // What makes a provider entry occupied (used by the shared table search).
 inline bool SubscriptionsService::ProviderOccupied(const ProviderEntry &e) { return e.requesterAddr != 0; }
 
-inline ProviderEntry* SubscriptionsService::ProviderFindByTrid(uint16_t trid) {
-    return SubTableFindByTrid(ProviderTable, trid, ProviderOccupied);
+inline ProviderEntry* SubscriptionsService::ProviderFindByTrid(uint16_t Trid) {
+    return SubTableFindByTrid(ProviderTable, Trid, ProviderOccupied);
 }
 
 inline ProviderEntry* SubscriptionsService::ProviderFindFree() {
@@ -34,11 +34,11 @@ inline void SubscriptionsService::ProviderClearEntry(ProviderEntry* e) {
 // state reset (an explicit Set); a new entry (requesterAddr 0) or a changed source register
 // resets anyway, so a retargeted or re-set subscription cannot suppress its first send with a
 // stale hash/last value from the previous target.
-inline void SubscriptionsService::ProviderApply(ProviderEntry* e, uint16_t trid, uint16_t requesterAddr,
+inline void SubscriptionsService::ProviderApply(ProviderEntry* e, uint16_t Trid, uint16_t requesterAddr,
                           const SubscriptionTable &t, bool reset) {
     bool targetChanged = e->requesterAddr == 0 || e->sub.sourceReg != t.sourceReg;
     e->requesterAddr = requesterAddr;
-    e->trid = trid;
+    e->Trid = Trid;
     e->sub = t;
     e->timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
     if (reset || targetChanged) {
@@ -52,24 +52,24 @@ inline void SubscriptionsService::ProviderApply(ProviderEntry* e, uint16_t trid,
 
 // Installs (or updates) a provider entry from a subscription table. Returns the entry, or
 // nullptr when the table is full. Shared by 0401/0421 and the same-device re-registration.
-inline ProviderEntry* SubscriptionsService::ProviderInstall(uint16_t trid, uint16_t requesterAddr,
+inline ProviderEntry* SubscriptionsService::ProviderInstall(uint16_t Trid, uint16_t requesterAddr,
                                       const SubscriptionTable &t, bool reset) {
-    ProviderEntry* e = ProviderFindByTrid(trid);
+    ProviderEntry* e = ProviderFindByTrid(Trid);
     if (!e) e = ProviderFindFree();
     if (!e) return nullptr;
-    ProviderApply(e, trid, requesterAddr, t, reset);
+    ProviderApply(e, Trid, requesterAddr, t, reset);
     return e;
 }
 
 // The provider side of the requester's confirmation (CID 0 request): the payload is the
 // FNV-1a hash of the value the requester received; confirm-required triggers stop here.
 inline void SubscriptionsService::HandleProviderConfirmation(const PacketFrame &frame) {
-    ProviderEntry* e = ProviderFindByTrid(frame.trid);
+    ProviderEntry* e = ProviderFindByTrid(frame.Trid);
     if (!e) return;
     e->timeout = SubTimeoutFrom(DeviceStatus.UptimeMs); // a confirmation renews the lease
     if (PayloadBytes(frame) >= 4) {
         uint32_t h;
-        h = *reinterpret_cast<const uint32_t *>(frame.payload); // 4-byte aligned
+        h = *reinterpret_cast<const uint32_t *>(frame.Payload); // 4-byte aligned
         e->hash = h;
     }
 }
@@ -298,7 +298,7 @@ inline void SubscriptionsService::EvaluateProviderTriggers(uint32_t nowMs) {
         bool applied = false;
 #ifdef USE_SUB_REQUEST
         if (e->requesterAddr == DeviceStatus.ShortAddress) {
-            RequesterEntry* r = RequesterFindByTrid(e->trid);
+            RequesterEntry* r = RequesterFindByTrid(e->Trid);
             if (r) { ApplyRequesterValue(r, (const uint8_t *)fr.Data, vlen, false); applied = true; }
             if (e->sub.trigger == TriggerType::OnChangeConfirm && havePendingHash)
                 e->hash = pendingHash;
@@ -308,13 +308,13 @@ inline void SubscriptionsService::EvaluateProviderTriggers(uint32_t nowMs) {
             uint8_t prio = SubscriptionsHighPriority(e->sub.trigger) ? PRIORITY_SUB_HIGH : PRIORITY_SUB_LOW;
             // Only OnChangeConfirm repeats until acknowledged; tagging every update with
             // FLAG_REQACK made the requester confirm triggers that never expect a reply.
-            uint8_t flags = FLAG_TYPE | FLAG_START | FLAG_STOP;
-            if (e->sub.trigger == TriggerType::OnChangeConfirm) flags |= FLAG_REQACK;
-            PacketConstruct(&tx_frame, e->requesterAddr,
+            uint8_t Flags = FLAG_TYPE | FLAG_START | FLAG_STOP;
+            if (e->sub.trigger == TriggerType::OnChangeConfirm) Flags |= FLAG_REQACK;
+            PacketConstruct(&TxFrame, e->requesterAddr,
                             MakeService(ServiceType::Subscriptions, 0),
-                            e->trid, flags,
+                            e->Trid, Flags,
                             (const uint8_t *)fr.Data, vlen, prio);
-            SendAndVerifyPacket(tx_frame);
+            SendAndVerifyPacket(TxFrame);
         }
     }
 }

@@ -117,7 +117,7 @@ private:
                      uint32_t nowMs, bool &yield);
     bool OperandBlockInfo(LoadedScript *s, const uint8_t *sym, uint32_t &bi);
     void SendRegisterRequest(LoadedScript *s, uint16_t addr, uint8_t cid,
-                             const uint8_t *payload, uint16_t len);
+                             const uint8_t *Payload, uint16_t len);
     uint8_t ExecService(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase,
                         uint8_t op, uint32_t nowMs, bool &yield);
     bool ContainerElement(LoadedScript *s, const uint8_t *sym, int32_t index,

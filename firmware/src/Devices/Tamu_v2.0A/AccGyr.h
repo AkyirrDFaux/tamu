@@ -25,8 +25,8 @@ static esp_err_t LSM6DS3ReadRegs(uint8_t reg, uint8_t *data, uint8_t size)
 // mid-boot part are dropped silently, so the read-back is the source of truth).
 static bool LSM6DS3WriteReg(uint8_t reg, uint8_t value)
 {
-    uint8_t cmd[] = {reg, value};
-    if (i2c_master_transmit(lsm6ds3_handle, cmd, 2, 1000) != ESP_OK)
+    uint8_t Cmd[] = {reg, value};
+    if (i2c_master_transmit(lsm6ds3_handle, Cmd, 2, 1000) != ESP_OK)
         return false;
     uint8_t check = 0;
     if (LSM6DS3ReadRegs(reg, &check, 1) != ESP_OK)
@@ -132,7 +132,7 @@ void InitLSM6DS3() {
     gpio_set_direction((gpio_num_t)GPIO_NUM_5, GPIO_MODE_INPUT);
     gpio_set_pull_mode((gpio_num_t)GPIO_NUM_4, GPIO_PULLUP_ONLY);
     gpio_set_pull_mode((gpio_num_t)GPIO_NUM_5, GPIO_PULLUP_ONLY);
-    if (!AppConnected)
+    if (!AppInterface.Connected)
         ESP_LOGW("LSM6DS3", "Bus lines with pullup: SDA(GPIO4)=%d SCL(GPIO5)=%d",
                  gpio_get_level((gpio_num_t)GPIO_NUM_4), gpio_get_level((gpio_num_t)GPIO_NUM_5));
 
@@ -187,14 +187,14 @@ void InitLSM6DS3() {
 
     if (configured)
     {
-        if (!AppConnected)
+        if (!AppInterface.Connected)
             ESP_LOGI("LSM6DS3", "Configured (WHO_AM_I=0x%02X).", who);
-        if (!ApplyAccGyrConfig() && !AppConnected)
+        if (!ApplyAccGyrConfig() && !AppInterface.Connected)
             ESP_LOGW("LSM6DS3", "Re-applying block config failed");
     }
     else
     {
-        if (!AppConnected)
+        if (!AppInterface.Connected)
             ESP_LOGE("LSM6DS3", "Init failed after retries: WHO_AM_I=0x%02X err=0x%x", who, who_err);
         ReportAccGyrError(ErrInitFailed);
     }

@@ -30,7 +30,7 @@ uint32_t LogCount = 0;
 void DispatchPacket(const PacketFrame &frame)
 {
     // 1. Validation: Drop invalid packets
-    if (frame.id_tgt == ADDR_INVALID)
+    if (frame.IdTgt == ADDR_INVALID)
         return;
 
     // TODO (Router): multi-bus tree topology is NOT implemented - see
@@ -42,19 +42,19 @@ void DispatchPacket(const PacketFrame &frame)
     // 2. Determine "Local Interest"
     bool all_cores = false;
 #ifdef TYPE_CORE
-    all_cores = (frame.id_tgt == ADDR_ALL_CORES); // 3F.1 Core-discover broadcast
+    all_cores = (frame.IdTgt == ADDR_ALL_CORES); // 3F.1 Core-discover broadcast
 #endif
-    if (all_cores || (NetQualifyLocal(frame.id_tgt, DeviceStatus.NetId) == DeviceStatus.ShortAddress) ||
-        (frame.id_tgt == ADDR_BROADCAST))
+    if (all_cores || (NetQualifyLocal(frame.IdTgt, DeviceStatus.NetId) == DeviceStatus.ShortAddress) ||
+        (frame.IdTgt == ADDR_BROADCAST))
     {
-        DeviceLog("DISP", "local interest id_tgt=%d id_src=%d cmd=0x%04X trid=0x%04X", frame.id_tgt, frame.id_src, frame.cmd, frame.trid);
+        DeviceLog("DISP", "local interest IdTgt=%d IdSrc=%d Cmd=0x%04X Trid=0x%04X", frame.IdTgt, frame.IdSrc, frame.Cmd, frame.Trid);
         // A response echoes the request's TRID (Docs "Transaction IDs") and carries the
         // request's CMD, so GetServiceType names the replying service. A System reply
         // (0x0000-0x0FFF) therefore routes by CMD; the Subscriptions, App and Script ranges
         // route by the echoed TRID, which each owner allocated.
-        ServiceType target_srv = GetServiceType(frame.cmd);
-        uint8_t cid = GetServiceCID(frame.cmd);
-        bool is_response = (frame.flags & FLAG_TYPE) != 0;
+        ServiceType target_srv = GetServiceType(frame.Cmd);
+        uint8_t cid = GetServiceCID(frame.Cmd);
+        bool is_response = (frame.Flags & FLAG_TYPE) != 0;
         DeviceLog("DISP", "dispatching to service=%d cid=%d", target_srv, cid);
 
         bool handled = false;
@@ -62,9 +62,9 @@ void DispatchPacket(const PacketFrame &frame)
         // A remote provider's value update echoes the requester's Subscriptions TRID and
         // must reach the requester, not the app link. A locally generated management reply
         // (our own id_src) or a FLAG_SUCCESS/FAIL ack stays with the app.
-        if (is_response && (frame.flags & (FLAG_SUCCESS | FLAG_FAIL)) == 0 &&
-            frame.trid >= TRID_SUB_BASE && frame.trid <= TRID_SUB_MAX &&
-            frame.id_src != DeviceStatus.ShortAddress) {
+        if (is_response && (frame.Flags & (FLAG_SUCCESS | FLAG_FAIL)) == 0 &&
+            frame.Trid >= TRID_SUB_BASE && frame.Trid <= TRID_SUB_MAX &&
+            frame.IdSrc != DeviceStatus.ShortAddress) {
             Subscriptions.Handle(frame);
             handled = true;
         }
@@ -74,8 +74,8 @@ void DispatchPacket(const PacketFrame &frame)
         // reply echoes a Subscriptions TRID. Both go back over the app link, where the app
         // matches on TRID.
         if (!handled && is_response &&
-            (frame.trid >= TRID_APP_BASE ||
-             (frame.trid >= TRID_SUB_BASE && frame.trid <= TRID_SUB_MAX))) {
+            (frame.Trid >= TRID_APP_BASE ||
+             (frame.Trid >= TRID_SUB_BASE && frame.Trid <= TRID_SUB_MAX))) {
             (void)AppInterface.Send(frame);
             handled = true;
         }
@@ -84,7 +84,7 @@ void DispatchPacket(const PacketFrame &frame)
         // Script-instance replies (foreign register access) echo the script's TRID
         // (0x2000-0xEFFF), so they route by range instead of by ServiceType.
         if (!handled && is_response &&
-            frame.trid >= TRID_SCRIPT_BASE && frame.trid <= TRID_SCRIPT_MAX) {
+            frame.Trid >= TRID_SCRIPT_BASE && frame.Trid <= TRID_SCRIPT_MAX) {
             Script.HandleResponse(frame);
             handled = true;
         }
@@ -132,8 +132,8 @@ void DispatchPacket(const PacketFrame &frame)
     // Forwarding Rule: Always forward to physical bus if the target is external and it
     // originated locally. (The app link's frames are rewritten to our own short address
     // by AppInterfaceRouteIn, so they forward through the same path.)
-    if (NetQualifyLocal(frame.id_tgt, DeviceStatus.NetId) != DeviceStatus.ShortAddress &&
-        frame.id_src == DeviceStatus.ShortAddress)
+    if (NetQualifyLocal(frame.IdTgt, DeviceStatus.NetId) != DeviceStatus.ShortAddress &&
+        frame.IdSrc == DeviceStatus.ShortAddress)
     {
         SendAndVerifyPacket(frame);
     }

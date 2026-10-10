@@ -21,11 +21,10 @@
 #ifndef STORAGE_BLOCK_SIZE
 #define STORAGE_BLOCK_SIZE 4096
 #endif
-#define PAGE_SIZE STORAGE_BLOCK_SIZE
 
 // Upper bound on allocatable data pages (worst-case flash geometry); sizes the per-call
-// usage bitmap in FindSpace (STORAGE_FLASH_SIZE / PAGE_SIZE bits).
-#define STORAGE_MAX_BLOCKS ((STORAGE_FLASH_SIZE / PAGE_SIZE) + 1)
+// usage bitmap in FindSpace (STORAGE_FLASH_SIZE / STORAGE_BLOCK_SIZE bits).
+#define STORAGE_MAX_BLOCKS ((STORAGE_FLASH_SIZE / STORAGE_BLOCK_SIZE) + 1)
 
 // Fixed file-table size, in pages, per device (Docs/Devices.md): 4 pages on Tamu v2.0A, 1 on
 // the DAS, 2 on Valu v2.0. The table never grows or shrinks; it is moved only when full
@@ -44,7 +43,7 @@
 #define STORAGE_TABLE_PAGES 1
 #endif
 #endif
-#define STORAGE_TABLE_SIZE (STORAGE_TABLE_PAGES * PAGE_SIZE)
+#define STORAGE_TABLE_SIZE (STORAGE_TABLE_PAGES * STORAGE_BLOCK_SIZE)
 
 // --- Flash access (implemented per device, see Devices/<device>/Storage.h) ---
 bool Storage_FlashInit();                              // find/open the storage partition
@@ -65,14 +64,14 @@ struct FileRecord
 #define TABLE_ENTRY_SIZE sizeof(FileRecord)
 
 // Number of whole pages a byte size occupies, clamped to [1, MAX_DATA_BLOCKS].
-// Plain `(size + PAGE_SIZE - 1) / PAGE_SIZE` overflows uint32 for sizes near
+// Plain `(size + STORAGE_BLOCK_SIZE - 1) / STORAGE_BLOCK_SIZE` overflows uint32 for sizes near
 // 0xFFFFFFFF (the Storage service passes untrusted sizes straight in), silently
 // yielding a tiny block count for a huge file.
 static inline uint32_t BlocksForSize(uint32_t size)
 {
-    if (size > (0xFFFFFFFFu - PAGE_SIZE + 1))
-        return (0xFFFFFFFFu / PAGE_SIZE) + 1; // saturate: no overflow
-    uint32_t blocks = (size + PAGE_SIZE - 1) / PAGE_SIZE;
+    if (size > (0xFFFFFFFFu - STORAGE_BLOCK_SIZE + 1))
+        return (0xFFFFFFFFu / STORAGE_BLOCK_SIZE) + 1; // saturate: no overflow
+    uint32_t blocks = (size + STORAGE_BLOCK_SIZE - 1) / STORAGE_BLOCK_SIZE;
     if (blocks == 0) blocks = 1;
     if (blocks > STORAGE_MAX_BLOCKS) blocks = STORAGE_MAX_BLOCKS;
     return blocks;
@@ -89,7 +88,7 @@ static inline uint32_t ClampFileLength(uint32_t offset, uint32_t length, uint32_
 }
 
 // Number of 32-bit pointer slots in the first (pointer) page
-#define PTR_SLOTS (PAGE_SIZE / 4)
+#define PTR_SLOTS (STORAGE_BLOCK_SIZE / 4)
 
 // File-table slot state (Docs/Services/Storage.md): offset 0x00 = invalidated entry,
 // 0xFFFFFFFF = unused slot, anything else = a real (page-aligned) flash offset.

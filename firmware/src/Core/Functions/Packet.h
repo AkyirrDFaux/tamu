@@ -79,39 +79,39 @@ enum class ServiceType : uint8_t
 // Priority(4) | Payload Length (bytes) | SRC ID | TGT ID | CMD | TRID | Payload.
 struct PacketFrame
 {
-    uint8_t crc8;
-    uint8_t flags;
-    uint8_t priority;    // Reserved(4) | Priority(4), 0 = highest
-    uint8_t payload_len; // payload length in bytes
-    uint16_t id_src;                                 // Source device's address
-    uint16_t id_tgt;                                 // Target device's address
-    uint16_t cmd;                                    // Command ID
-    uint16_t trid;                                   // Transaction ID
-    uint8_t payload[MAX_PAYLOAD_SIZE];
+    uint8_t Crc8;
+    uint8_t Flags;
+    uint8_t Priority;    // Reserved(4) | Priority(4), 0 = highest
+    uint8_t PayloadLen; // payload length in bytes
+    uint16_t IdSrc;                                 // Source device's address
+    uint16_t IdTgt;                                 // Target device's address
+    uint16_t Cmd;                                    // Command ID
+    uint16_t Trid;                                   // Transaction ID
+    uint8_t Payload[MAX_PAYLOAD_SIZE];
 } __attribute__((packed, aligned(4)));
 
 // `packed` fixes the wire layout but on its own drops the type's alignment to 1, which would
 // let a `PacketFrame` local sit anywhere and make every typed payload access misaligned. The
 // explicit 4-byte alignment keeps the layout/size identical and makes `payload + 4k` genuinely
 // 4-aligned (a u16 at an even offset is fine too).
-static_assert(alignof(PacketFrame) == 4, "the payload must be 4-byte aligned for typed access");
-static_assert(offsetof(PacketFrame, payload) % 4 == 0, "payload must stay 4-byte aligned");
-static_assert(offsetof(PacketFrame, id_src) == 4, "wire order: SRC ID after the length");
-static_assert(offsetof(PacketFrame, id_tgt) == 6, "wire order: TGT ID after SRC ID");
-static_assert(offsetof(PacketFrame, cmd) == 8, "wire order: CMD after TGT ID");
-static_assert(offsetof(PacketFrame, trid) == 10, "wire order: TRID after CMD");
+static_assert(alignof(PacketFrame) == 4, "the Payload must be 4-byte aligned for typed access");
+static_assert(offsetof(PacketFrame, Payload) % 4 == 0, "Payload must stay 4-byte aligned");
+static_assert(offsetof(PacketFrame, IdSrc) == 4, "wire order: SRC ID after the length");
+static_assert(offsetof(PacketFrame, IdTgt) == 6, "wire order: TGT ID after SRC ID");
+static_assert(offsetof(PacketFrame, Cmd) == 8, "wire order: CMD after TGT ID");
+static_assert(offsetof(PacketFrame, Trid) == 10, "wire order: TRID after CMD");
 
 inline uint16_t MakeService(ServiceType type, uint8_t cid)
 {
     return ((uint16_t)type << 8) | cid;
 }
-inline ServiceType GetServiceType(uint16_t cmd)
+inline ServiceType GetServiceType(uint16_t Cmd)
 {
-    return (ServiceType)(cmd >> 8);
+    return (ServiceType)(Cmd >> 8);
 }
-inline uint8_t GetServiceCID(uint16_t cmd)
+inline uint8_t GetServiceCID(uint16_t Cmd)
 {
-    return (uint8_t)(cmd & 0xFF);
+    return (uint8_t)(Cmd & 0xFF);
 }
 
 // System/Log TRIDs: a single incrementing 12-bit counter (Docs "Transaction IDs",
@@ -131,62 +131,62 @@ extern DeviceStatusStruct DeviceStatus;
 
 inline uint16_t PayloadBytes(const PacketFrame &frame)
 {
-    return (uint16_t)frame.payload_len; // bytes (Docs: "Payload Length, in bytes")
+    return (uint16_t)frame.PayloadLen; // bytes (Docs: "Payload Length, in bytes")
 }
 
 inline void PacketFinalize(PacketFrame *frame, uint16_t len)
 {
     if (len > MAX_PAYLOAD_SIZE) len = MAX_PAYLOAD_SIZE;
-    frame->payload_len = (uint8_t)len;
-    frame->crc8 = Crc8(&frame->flags, (uint16_t)(11 + len));
+    frame->PayloadLen = (uint8_t)len;
+    frame->Crc8 = Crc8(&frame->Flags, (uint16_t)(11 + len));
 }
 
 inline void PacketConstruct(PacketFrame *frame,
                             uint16_t dest_addr,
                             uint16_t dest_cmd,
-                            uint16_t trid,
-                            uint8_t flags,
-                            const uint8_t *payload,
+                            uint16_t Trid,
+                            uint8_t Flags,
+                            const uint8_t *Payload,
                             uint16_t len,
-                            uint8_t priority = DEFAULT_PRIORITY)
+                            uint8_t Priority = DEFAULT_PRIORITY)
 {
     if (len > MAX_PAYLOAD_SIZE) len = MAX_PAYLOAD_SIZE;
-    frame->flags = flags;
-    frame->priority = priority;
-    frame->id_tgt = dest_addr;
-    frame->id_src = DeviceStatus.ShortAddress;
-    frame->cmd = dest_cmd;
-    frame->trid = trid;
-    if (payload && len > 0) memcpy(frame->payload, payload, len);
+    frame->Flags = Flags;
+    frame->Priority = Priority;
+    frame->IdTgt = dest_addr;
+    frame->IdSrc = DeviceStatus.ShortAddress;
+    frame->Cmd = dest_cmd;
+    frame->Trid = Trid;
+    if (Payload && len > 0) memcpy(frame->Payload, Payload, len);
     PacketFinalize(frame, len);
 }
 
 // Finalises a fragmented reply. Every caller streams data, so the default is the Streams class;
 // the log database stream overrides it with the Logs class.
-inline void FinalizeReply(PacketFrame &reply, const PacketFrame &req, uint8_t flags, uint16_t len,
-                          uint8_t priority = PRIORITY_STREAM)
+inline void FinalizeReply(PacketFrame &reply, const PacketFrame &req, uint8_t Flags, uint16_t len,
+                          uint8_t Priority = PRIORITY_STREAM)
 {
-    reply.flags = flags;
-    reply.priority = priority;
-    reply.id_tgt = req.id_src;
-    reply.id_src = DeviceStatus.ShortAddress;
-    reply.cmd = req.cmd;   // Destination service: the request's CMD names the service
-    reply.trid = req.trid;     // Responses echo the request's TRID (Docs "Transaction IDs")
+    reply.Flags = Flags;
+    reply.Priority = Priority;
+    reply.IdTgt = req.IdSrc;
+    reply.IdSrc = DeviceStatus.ShortAddress;
+    reply.Cmd = req.Cmd;   // Destination service: the request's CMD names the service
+    reply.Trid = req.Trid;     // Responses echo the request's TRID (Docs "Transaction IDs")
     PacketFinalize(&reply, len);
 }
 
-inline void WriteFragInfo(uint8_t *out, uint16_t current, uint16_t total)
+inline void WriteFragInfo(uint8_t *out, uint16_t Current, uint16_t Total)
 {
-    out[0] = (uint8_t)current;
-    out[1] = (uint8_t)(current >> 8);
-    out[2] = (uint8_t)total;
-    out[3] = (uint8_t)(total >> 8);
+    out[0] = (uint8_t)Current;
+    out[1] = (uint8_t)(Current >> 8);
+    out[2] = (uint8_t)Total;
+    out[3] = (uint8_t)(Total >> 8);
 }
 
 struct PacketFragInfo
 {
-    uint16_t current;
-    uint16_t total;
+    uint16_t Current;
+    uint16_t Total;
 };
 
 inline PacketFragInfo PacketGetFrag(const PacketFrame &frame)
@@ -198,12 +198,12 @@ inline PacketFragInfo PacketGetFrag(const PacketFrame &frame)
     PacketFragInfo fi;
     if (PayloadBytes(frame) < 4)
     {
-        fi.current = 0xFFFF;
-        fi.total = 0xFFFF;
+        fi.Current = 0xFFFF;
+        fi.Total = 0xFFFF;
         return fi;
     }
-    fi.current = (uint16_t)(frame.payload[0] | (frame.payload[1] << 8));
-    fi.total = (uint16_t)(frame.payload[2] | (frame.payload[3] << 8));
+    fi.Current = (uint16_t)(frame.Payload[0] | (frame.Payload[1] << 8));
+    fi.Total = (uint16_t)(frame.Payload[2] | (frame.Payload[3] << 8));
     return fi;
 }
 

@@ -52,23 +52,23 @@ public:
     {
         if (PayloadBytes(frame) < 14 + 4)
             return;
-        const SerialNumber *sn = reinterpret_cast<const SerialNumber *>(frame.payload);
+        const SerialNumber *sn = reinterpret_cast<const SerialNumber *>(frame.Payload);
         if (*sn == GetSerialNumber())
             return; // our own broadcast echoed back by the local dispatch
 
         // Net-ID collision (Docs "Core functions"): a different core answering with OUR net
         // claimed the net twice. Checked here so boot-time discovery (phase == Idle) catches
         // it too, not just the periodic round.
-        NoteCoreNet((uint8_t)((frame.id_src >> 10) & 0x3F), DeviceStatus.NetId);
+        NoteCoreNet((uint8_t)((frame.IdSrc >> 10) & 0x3F), DeviceStatus.NetId);
 
         if (phase != Discovering)
             return;
         uint32_t uptime = 0;
-        memcpy(&uptime, frame.payload + 14, sizeof(uptime));
+        memcpy(&uptime, frame.Payload + 14, sizeof(uptime));
         if (uptime > best_uptime)
         {
             best_uptime = uptime;
-            best_addr = frame.id_src;
+            best_addr = frame.IdSrc;
         }
     }
 
@@ -85,11 +85,11 @@ private:
     {
         best_addr = 0;
         best_uptime = 0;
-        PacketConstruct(&tx_frame, ADDR_ALL_CORES,
+        PacketConstruct(&TxFrame, ADDR_ALL_CORES,
                         MakeService(ServiceType::Device, 0x10),
                         NextSystemTrid(ServiceType::Device),
                         FLAG_REQACK | FLAG_START | FLAG_STOP, nullptr, 0);
-        DispatchPacket(tx_frame);
+        DispatchPacket(TxFrame);
         deadline_ms = now_ms + DISCOVER_WINDOW_MS;
         phase = Discovering;
     }
@@ -108,13 +108,13 @@ private:
         // NTP-like: send the SYNCHRONIZED local time so the reply's offset is a
         // correction (delta) to add, not an absolute value to overwrite.
         uint32_t sent_time = Now();
-        PacketConstruct(&tx_frame, best_addr,
+        PacketConstruct(&TxFrame, best_addr,
                         MakeService(ServiceType::Device, 3),
                         NextSystemTrid(ServiceType::Device),
                         FLAG_REQACK | FLAG_START | FLAG_STOP,
                         (const uint8_t *)&sent_time, sizeof(sent_time),
                         PRIORITY_TIMESYNC);
-        DispatchPacket(tx_frame);
+        DispatchPacket(TxFrame);
     }
 };
 

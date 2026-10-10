@@ -58,12 +58,12 @@ int main() {
 
     // The wire order is source(LE u16) | category | specifics | timestamp (does not depend on
     // the host's native layout because the struct is packed and written/read as bytes).
-    uint8_t bytes[8];
-    std::memcpy(bytes, &b, sizeof(bytes));
-    CHECK_EQ(bytes[0], 0x05);
-    CHECK_EQ(bytes[1], 0x1C);
-    CHECK_EQ(bytes[2], 0x12);
-    CHECK_EQ(bytes[3], 0x34);
+    uint8_t Bytes[8];
+    std::memcpy(Bytes, &b, sizeof(Bytes));
+    CHECK_EQ(Bytes[0], 0x05);
+    CHECK_EQ(Bytes[1], 0x1C);
+    CHECK_EQ(Bytes[2], 0x12);
+    CHECK_EQ(Bytes[3], 0x34);
 
     std::printf("== log tests: %d checks, %d failures ==\n", checks, failures);
     return failures == 0 ? 0 : 1;

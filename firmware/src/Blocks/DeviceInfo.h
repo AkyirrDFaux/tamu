@@ -10,10 +10,10 @@
 // (Device type, Serial number, Capability, Uptime, Loop Time) and the System block.
 
 struct SerialNumber{
-    uint8_t bytes[14];
+    uint8_t Bytes[14];
     // Equality: compares the ID bytes.
     bool operator==(const SerialNumber& other) const {
-        return memcmp(this->bytes, other.bytes, sizeof(bytes)) == 0;
+        return memcmp(this->Bytes, other.Bytes, sizeof(Bytes)) == 0;
     }
 } __attribute__((packed));
 

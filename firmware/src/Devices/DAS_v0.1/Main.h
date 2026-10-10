@@ -52,8 +52,8 @@ const SerialNumber &GetSerialNumber()
     if (!init)
     {
         uint32_t chip_id = *(uint32_t *)(CHIP_ID_ADDR);
-        memset(sn.bytes, 0, 14);
-        memcpy(sn.bytes, &chip_id, 4);
+        memset(sn.Bytes, 0, 14);
+        memcpy(sn.Bytes, &chip_id, 4);
         init = true;
     }
     return sn;
@@ -151,12 +151,12 @@ int main(void)
     // Core distinction loop
     while (DeviceStatus.ShortAddress == 0)
     {
-        PacketConstruct(&tx_frame, ADDR_BROADCAST,
+        PacketConstruct(&TxFrame, ADDR_BROADCAST,
                          MakeService(ServiceType::Device, 0),
                          NextSystemTrid(ServiceType::Device),
                          FLAG_REQACK | FLAG_START | FLAG_STOP,
                          (const uint8_t *)&GetSerialNumber(), sizeof(SerialNumber));
-        DispatchPacket(tx_frame);
+        DispatchPacket(TxFrame);
         // Jittered repeat: uniform over [375, 625] ms (+/-25% around 500 ms).
         Sleep(NODE_DISCOVER_INTERVAL_MS - NODE_DISCOVER_JITTER_MS
               + (RawRand() % (2 * NODE_DISCOVER_JITTER_MS + 1)));
@@ -175,13 +175,13 @@ int main(void)
         // the core is the same net with device ID 1.
         uint32_t time_sent = Now();
         uint16_t coreAddr = MakeId((uint8_t)((DeviceStatus.ShortAddress >> 10) & 0x3F), 1);
-        PacketConstruct(&tx_frame, coreAddr,
+        PacketConstruct(&TxFrame, coreAddr,
                          MakeService(ServiceType::Device, 3),
                          NextSystemTrid(ServiceType::Device),
                          FLAG_REQACK | FLAG_START | FLAG_STOP,
                          (const uint8_t *)&time_sent, sizeof(uint32_t),
                          PRIORITY_TIMESYNC);
-        DispatchPacket(tx_frame);
+        DispatchPacket(TxFrame);
         // ProcessBus() in the main loop handles the reply (applies the offset).
     };
     sendTimeSync(); // initial sync right after discovery

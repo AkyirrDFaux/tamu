@@ -40,8 +40,8 @@ int main() {
                                  ServiceType::LogHandler, ServiceType::Storage,
                                  ServiceType::Subscriptions, ServiceType::Script};
     for (ServiceType t : types) {
-        const uint16_t trid = NextSystemTrid(t);
-        CHECK((trid & 0xF000) == 0); // within the documented 0x0FFF range
+        const uint16_t Trid = NextSystemTrid(t);
+        CHECK((Trid & 0xF000) == 0); // within the documented 0x0FFF range
     }
 
     // One shared counter: every successive allocation increments by one and wraps from
@@ -67,6 +67,6 @@ int main() {
     const uint16_t cross = NextSystemTrid(ServiceType::LogHandler);
     CHECK_EQ(cross, (uint16_t)((before + 1) & TRID_SYSTEM_MAX));
 
-    std::printf("== trid tests: %d checks, %d failures ==\n", checks, failures);
+    std::printf("== Trid tests: %d checks, %d failures ==\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

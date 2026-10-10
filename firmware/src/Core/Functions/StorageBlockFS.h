@@ -10,7 +10,7 @@ class StorageSystem
 {
 public:
     uint32_t file_table_offset;  // Offset of the current file table (0 if none)
-    uint32_t file_table_size;    // Current file table size in bytes (multiple of PAGE_SIZE)
+    uint32_t file_table_size;    // Current file table size in bytes (multiple of STORAGE_BLOCK_SIZE)
 
     // Initializes flash access, recovers the file table and formats if none is valid.
     void Init()
@@ -72,7 +72,7 @@ public:
 
         if (write_slot == PTR_SLOTS) {
             // Block is full, erase it and start fresh (erased flash is 0xFFFFFFFF = "unused").
-            if (!Storage_FlashErase(0, PAGE_SIZE))
+            if (!Storage_FlashErase(0, STORAGE_BLOCK_SIZE))
                 return false;
             return Storage_FlashWrite(0, &new_offset, sizeof(uint32_t));
         }
@@ -308,7 +308,7 @@ public:
         uint32_t data_end = DataEnd();
         if (data_end <= data_start)
             return 0;
-        uint32_t num_blocks = (data_end - data_start) / PAGE_SIZE;
+        uint32_t num_blocks = (data_end - data_start) / STORAGE_BLOCK_SIZE;
         if (blocks > num_blocks)
             return 0;
 
@@ -319,7 +319,7 @@ public:
         auto markUsed = [&](uint32_t start, uint32_t nblocks)
         {
             if (start < data_start || start >= data_end) return; // outside the data area
-            uint32_t first = (start - data_start) / PAGE_SIZE;
+            uint32_t first = (start - data_start) / STORAGE_BLOCK_SIZE;
             for (uint32_t k = 0; k < nblocks && first + k < num_blocks; k++)
                 used_bitmap[(first + k) >> 3] |= (uint8_t)(1u << ((first + k) & 7));
         };
@@ -342,7 +342,7 @@ public:
         // rotates across the storage over time, then pick the best-fit run.
         for (uint32_t scanned = 0; scanned < num_blocks; ) {
             uint32_t idx = (wear_cursor + scanned) % num_blocks;
-            uint32_t block_offset = data_start + idx * PAGE_SIZE;
+            uint32_t block_offset = data_start + idx * STORAGE_BLOCK_SIZE;
 
             if (used_bitmap[idx >> 3] & (1u << (idx & 7))) {
                 scanned++;
@@ -376,7 +376,7 @@ public:
             return 0;
 
         // Advance the wear cursor past the allocated run so the next allocation starts later.
-        uint32_t idx = (best_offset - data_start) / PAGE_SIZE;
+        uint32_t idx = (best_offset - data_start) / STORAGE_BLOCK_SIZE;
         wear_cursor = (idx + blocks) % num_blocks;
         return best_offset;
 #else
@@ -388,12 +388,12 @@ public:
             if (idx + blocks > num_blocks)
                 continue; // would wrap the linear data area
             uint32_t run = 0;
-            while (run < blocks && !BlockUsed(data_start + (idx + run) * PAGE_SIZE))
+            while (run < blocks && !BlockUsed(data_start + (idx + run) * STORAGE_BLOCK_SIZE))
                 run++;
             if (run == blocks)
             {
                 wear_cursor = (idx + blocks) % num_blocks;
-                return data_start + idx * PAGE_SIZE;
+                return data_start + idx * STORAGE_BLOCK_SIZE;
             }
         }
         return 0;
@@ -416,7 +416,7 @@ public:
         if (data_offset == 0) return false; // Out of space
 
         uint32_t data_blocks = BlocksForSize(size);
-        if (!Storage_FlashErase(data_offset, data_blocks * PAGE_SIZE))
+        if (!Storage_FlashErase(data_offset, data_blocks * STORAGE_BLOCK_SIZE))
             return false;
 
         FileRecord new_record;
@@ -476,20 +476,20 @@ public:
 
         // Enlargement: reject before scanning if the file's linear range would leave the data
         // area. This also bounds the scan below (new_blocks can otherwise be huge).
-        if (entry.offset >= DataEnd() || new_blocks > (DataEnd() - entry.offset) / PAGE_SIZE)
+        if (entry.offset >= DataEnd() || new_blocks > (DataEnd() - entry.offset) / STORAGE_BLOCK_SIZE)
             return false;
         bool can_extend = true;
         for (uint32_t b = current_blocks; b < new_blocks; b++) {
-            if (BlockUsed(entry.offset + b * PAGE_SIZE)) {
+            if (BlockUsed(entry.offset + b * STORAGE_BLOCK_SIZE)) {
                 can_extend = false;
                 break;
             }
         }
         if (can_extend) {
             // Erase the newly-added tail pages (they are free, so erasing is safe).
-            uint32_t tail_offset = entry.offset + current_blocks * PAGE_SIZE;
+            uint32_t tail_offset = entry.offset + current_blocks * STORAGE_BLOCK_SIZE;
             uint32_t tail_blocks = new_blocks - current_blocks;
-            if (!Storage_FlashErase(tail_offset, tail_blocks * PAGE_SIZE))
+            if (!Storage_FlashErase(tail_offset, tail_blocks * STORAGE_BLOCK_SIZE))
                 return false;
             FileRecord new_record = entry;
             new_record.size = new_size;
@@ -561,19 +561,19 @@ public:
 
         FileRecord entry0;
         memset(&entry0, 0xFF, sizeof(entry0));
-        entry0.offset = PAGE_SIZE;              // Table starts at block 1
+        entry0.offset = STORAGE_BLOCK_SIZE;              // Table starts at block 1
         entry0.size = STORAGE_TABLE_SIZE;       // Fixed per-device table capacity
         memcpy(entry0.name, ".TABLE  ", 8);
 
-        if (Storage_FlashWrite(PAGE_SIZE, &entry0, TABLE_ENTRY_SIZE) != true)
+        if (Storage_FlashWrite(STORAGE_BLOCK_SIZE, &entry0, TABLE_ENTRY_SIZE) != true)
             return false;
 
-        if (!WriteTablePointer(PAGE_SIZE))
+        if (!WriteTablePointer(STORAGE_BLOCK_SIZE))
             return false;
 
-        file_table_offset = PAGE_SIZE;
+        file_table_offset = STORAGE_BLOCK_SIZE;
         file_table_size = STORAGE_TABLE_SIZE;
-        DeviceLog("STORAGE", "Formatted, storage ready (%d bytes)", (int)DataEnd());
+        DeviceLog("STORAGE", "Formatted, storage ready (%d Bytes)", (int)DataEnd());
         return true;
     }
 
@@ -589,7 +589,7 @@ public:
             if (FileSlotIsFree(entry.offset)) continue;
             uint32_t blocks = BlocksForSize(entry.size);
             if (blocks == 0) blocks = 1; // zero-size file still occupies one block
-            used += blocks * PAGE_SIZE;
+            used += blocks * STORAGE_BLOCK_SIZE;
         }
         return used;
     }
@@ -627,12 +627,12 @@ private:
         if (pending_blocks == 0)
             return false;
         uint32_t start = pending_offset;
-        uint32_t end = pending_offset + pending_blocks * PAGE_SIZE;
+        uint32_t end = pending_offset + pending_blocks * STORAGE_BLOCK_SIZE;
         return offset >= start && offset < end;
     }
 
     // Returns the first flash offset of the file data area (after the pointer page).
-    uint32_t DataStart() const { return PAGE_SIZE; }
+    uint32_t DataStart() const { return STORAGE_BLOCK_SIZE; }
 
     // Returns the exclusive end of the file data area (the full flash region).
     uint32_t DataEnd() const
@@ -668,7 +668,7 @@ private:
             // resizing ZERO up, ZERO shadowed BETA's data region).
             uint32_t blocks = BlocksForSize(entry.size);
             if (blocks == 0) blocks = 1;
-            uint32_t end = entry.offset + blocks * PAGE_SIZE;
+            uint32_t end = entry.offset + blocks * STORAGE_BLOCK_SIZE;
             if (offset >= start && offset < end)
                 return true;
         }
@@ -687,8 +687,8 @@ private:
 
         if (!FileRecordIsValid(entry0.offset) ||
             entry0.offset != file_table_offset ||
-            entry0.size < PAGE_SIZE ||
-            (entry0.size % PAGE_SIZE) != 0 ||
+            entry0.size < STORAGE_BLOCK_SIZE ||
+            (entry0.size % STORAGE_BLOCK_SIZE) != 0 ||
             file_table_offset > DataEnd() ||
             entry0.size > DataEnd() - file_table_offset)
             return false;

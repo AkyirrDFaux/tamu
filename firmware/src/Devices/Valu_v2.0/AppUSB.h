@@ -168,7 +168,7 @@ struct UsbFramer
     }
 
     // Feeds one byte. Returns: 0 = incomplete, >0 = valid frame (payload length), -1 = invalid.
-    int Feed(uint8_t b, uint8_t *payload)
+    int Feed(uint8_t b, uint8_t *Payload)
     {
         if (!in_frame)
         {
@@ -202,7 +202,7 @@ struct UsbFramer
         if (Crc8(&buf[1], (uint16_t)(1 + n)) != buf[0]) // CRC8 over Length + Payload
             return -1;
 
-        memcpy(payload, &buf[2], n);
+        memcpy(Payload, &buf[2], n);
         return n;
     }
 };
@@ -243,7 +243,7 @@ struct WireStreamParser
             return false;
 
         full = true;
-        bool ok = Crc8(&frame.flags, (uint16_t)(11 + PayloadBytes(frame))) == frame.crc8;
+        bool ok = Crc8(&frame.Flags, (uint16_t)(11 + PayloadBytes(frame))) == frame.Crc8;
         return ok; // invalid CRC: caller should Reset() and resync
     }
 };
@@ -338,10 +338,10 @@ void AppUSBTick()
             break;
         for (uint32_t i = 0; i < n; i++)
         {
-            uint8_t payload[USB_FRAME_MAX_PAYLOAD];
-            int r = s_app_framer.Feed(buf[i], payload);
+            uint8_t Payload[USB_FRAME_MAX_PAYLOAD];
+            int r = s_app_framer.Feed(buf[i], Payload);
             if (r > 0)
-                AppRxStream(payload, (uint16_t)r);
+                AppRxStream(Payload, (uint16_t)r);
             else if (r < 0)
                 s_wire_parser.Reset(); // broken link frame: resync the stream too
         }

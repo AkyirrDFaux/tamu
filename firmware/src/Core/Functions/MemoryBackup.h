@@ -36,14 +36,14 @@ struct BlockIndex
 // Sends a single response packet back to the requester (only if REQACK was set).
 // `status` carries FLAG_SUCCESS or FLAG_FAIL for a status reply: the flag replaces the payload, and
 // a payload may follow it to carry detail (Docs/RSBus and Packets.md).
-__attribute__((noinline)) void SendResponse(const PacketFrame &frame, const uint8_t *payload, uint16_t len,
+__attribute__((noinline)) void SendResponse(const PacketFrame &frame, const uint8_t *Payload, uint16_t len,
                                             uint8_t status = 0)
 {
-    if (!(frame.flags & FLAG_REQACK))
+    if (!(frame.Flags & FLAG_REQACK))
         return;
-    PacketConstruct(&tx_frame, frame.id_src, frame.cmd, frame.trid,
-                     (uint8_t)(FLAG_TYPE | FLAG_START | FLAG_STOP | status), payload, len);
-    DispatchPacket(tx_frame);
+    PacketConstruct(&TxFrame, frame.IdSrc, frame.Cmd, frame.Trid,
+                     (uint8_t)(FLAG_TYPE | FLAG_START | FLAG_STOP | status), Payload, len);
+    DispatchPacket(TxFrame);
 }
 
 // Emits one FRAG fragment: the caller has placed `n` content bytes at tx_frame.payload + 4,
@@ -51,14 +51,14 @@ __attribute__((noinline)) void SendResponse(const PacketFrame &frame, const uint
 // streamed reply (enumerate, storage read, subscription tables, SNDB read-all, logs) uses it.
 __attribute__((noinline)) void SendFragFragment(const PacketFrame &frame, uint16_t f,
                                                 uint16_t frags, uint16_t n,
-                                                uint8_t priority = PRIORITY_STREAM)
+                                                uint8_t Priority = PRIORITY_STREAM)
 {
-    uint8_t flags = FLAG_TYPE | FLAG_FRAG;
-    if (f == 0) flags |= FLAG_START;
-    if (f == frags - 1) flags |= FLAG_STOP;
-    WriteFragInfo(tx_frame.payload, f, frags);
-    FinalizeReply(tx_frame, frame, flags, (uint16_t)(4 + n), priority);
-    DispatchPacket(tx_frame);
+    uint8_t Flags = FLAG_TYPE | FLAG_FRAG;
+    if (f == 0) Flags |= FLAG_START;
+    if (f == frags - 1) Flags |= FLAG_STOP;
+    WriteFragInfo(TxFrame.Payload, f, frags);
+    FinalizeReply(TxFrame, frame, Flags, (uint16_t)(4 + n), Priority);
+    DispatchPacket(TxFrame);
 }
 
 // Replies with the success or fail packet flag and no payload. The flag is the whole reply;
@@ -72,7 +72,7 @@ __attribute__((noinline)) void RespondStatus(const PacketFrame &frame, bool ok)
     {
 #ifndef DEVICE_LOG_TEXTLESS
         const char *tag = "MEM";
-        switch (GetServiceType(frame.cmd))
+        switch (GetServiceType(frame.Cmd))
         {
             case ServiceType::Storage:        tag = "STORAGE"; break;
             default: break;
@@ -80,16 +80,16 @@ __attribute__((noinline)) void RespondStatus(const PacketFrame &frame, bool ok)
         uint16_t block = INVALID_INDEX, field = INVALID_INDEX, key = INVALID_INDEX;
         if (PayloadBytes(frame) >= sizeof(BlockIndex))
         {
-            const BlockIndex *idx = reinterpret_cast<const BlockIndex *>(frame.payload);
+            const BlockIndex *idx = reinterpret_cast<const BlockIndex *>(frame.Payload);
             block = idx->Block; field = idx->Field; key = idx->Key;
         }
         DeviceLog(tag, "CID %u failed block=%u field=%u key=%u",
-                  (unsigned)GetServiceCID(frame.cmd),
+                  (unsigned)GetServiceCID(frame.Cmd),
                   (unsigned)block, (unsigned)field, (unsigned)key);
 #endif
         // Structured report (LogHandler CID 0): reaches the core's log DB even
         // from textless nodes; code = CID so failures dedup per service+op.
-        ReportLog(MakeLog(false, (uint8_t)GetServiceType(frame.cmd), GetServiceCID(frame.cmd), 0), PRIORITY_ERROR);
+        ReportLog(MakeLog(false, (uint8_t)GetServiceType(frame.Cmd), GetServiceCID(frame.Cmd), 0), PRIORITY_ERROR);
     }
     SendResponse(frame, nullptr, 0, (uint8_t)(ok ? FLAG_SUCCESS : FLAG_FAIL));
 }

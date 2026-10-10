@@ -31,7 +31,7 @@ int32_t TimeDrift = 0;
 
 #include "Core/Functions/Packet.h"
 
-PacketFrame tx_frame;        // single shared output buffer — no handler needs its own
+PacketFrame TxFrame;        // single shared output buffer — no handler needs its own
 #include "Core/Functions/SysFunctions.h"
 #include "Core/Functions/Memory.h"
 

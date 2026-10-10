@@ -26,9 +26,9 @@
 //   now_us() - a microsecond clock (may wrap; only short spans are compared).
 //   yield()  - a short cooperative pause for the tight retry loop.
 template <typename DrainFn, typename NowUs, typename YieldFn>
-static void RS485_WaitForSilence(uint8_t priority, DrainFn drain, NowUs now_us, YieldFn yield_fn)
+static void RS485_WaitForSilence(uint8_t Priority, DrainFn drain, NowUs now_us, YieldFn yield_fn)
 {
-    uint32_t silence_us = (RS485_SILENCE_BYTES + (priority / 8) + (RawRand() % 4)) * RS485_BYTE_TIME_US;
+    uint32_t silence_us = (RS485_SILENCE_BYTES + (Priority / 8) + (RawRand() % 4)) * RS485_BYTE_TIME_US;
     uint32_t idle_since = now_us();
     uint32_t wait_start = idle_since;
 
@@ -49,7 +49,7 @@ static void RS485_WaitForSilence(uint8_t priority, DrainFn drain, NowUs now_us, 
 // the byte count, so the covered length is 11 + PayloadBytes()).
 inline int RxValidateFrame(PacketFrame *Data)
 {
-    if (Crc8(&Data->flags, (uint16_t)(11 + PayloadBytes(*Data))) != Data->crc8)
+    if (Crc8(&Data->Flags, (uint16_t)(11 + PayloadBytes(*Data))) != Data->Crc8)
         return 0; // corrupted: keep scanning for the next 0xAA
     return (int)(1 + 12 + PayloadBytes(*Data));
 }
@@ -109,23 +109,23 @@ int ReceivePacketFrame(PacketFrame *Data, ReadByte read_byte)
 
             stage = RX_PAYLOAD;
             got = 0;
-            if (Data->payload_len == 0)
+            if (Data->PayloadLen == 0)
             {
                 // Zero-payload frames finish here.
                 stage = RX_SYNC;
-                int total = RxValidateFrame(Data);
-                if (total > 0) return total;
+                int Total = RxValidateFrame(Data);
+                if (Total > 0) return Total;
             }
             break;
 
         case RX_PAYLOAD:
-            Data->payload[got++] = b;
+            Data->Payload[got++] = b;
             if (got >= PayloadBytes(*Data))
             {
                 stage = RX_SYNC;
                 got = 0;
-                int total = RxValidateFrame(Data);
-                if (total > 0) return total;
+                int Total = RxValidateFrame(Data);
+                if (Total > 0) return Total;
             }
             break;
         }

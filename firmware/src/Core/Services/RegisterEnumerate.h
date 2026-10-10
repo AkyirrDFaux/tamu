@@ -111,7 +111,7 @@ inline void RegisterService::SendU16Stream(const PacketFrame &frame, uint16_t co
 
     uint16_t idx = 0; // the next word to emit
     for (uint16_t f = 0; f < frags; f++) {
-        uint8_t *dst = tx_frame.payload + 4;
+        uint8_t *dst = TxFrame.Payload + 4;
         uint16_t n = 0;
         while (n < kWordsPerFrag * 2 && idx < count) {
             uint16_t w = EnumWord(src, ctx, idx++);
@@ -139,7 +139,7 @@ inline void RegisterService::SendTypeWordsStream(const PacketFrame &frame) {
     uint16_t idx = 0;   // the next word to emit
 
     for (uint16_t f = 0; f < frags; f++) {
-        uint8_t *dst = tx_frame.payload + 4;
+        uint8_t *dst = TxFrame.Payload + 4;
         uint16_t n = 0;
         while (n < kWordsPerFrag * 2 && idx < count) {
             uint16_t w = 0;
@@ -182,7 +182,7 @@ inline void RegisterService::HandleEnumerateBlocks(const PacketFrame &frame) {
 // failure.
 inline void RegisterService::HandleEnumerateFields(const PacketFrame &frame) {
     if (PayloadBytes(frame) != 4) { RespondStatus(frame, false); return; }
-    uint16_t packed = (uint16_t)(frame.payload[0] | (frame.payload[1] << 8));
+    uint16_t packed = (uint16_t)(frame.Payload[0] | (frame.Payload[1] << 8));
     uint16_t type = (packed >> 6) & 0x3FF;
     uint8_t inst = (uint8_t)(packed & 0x3F);
     uint16_t gi = 0; // the global index of a banked (script/dynamic) block; ctx points at it

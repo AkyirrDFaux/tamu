@@ -63,11 +63,11 @@ static void CheckSpace(const uint16_t *table, uint16_t base, const ValueInfo *me
         std::snprintf(msg, sizeof(msg), "%s offset %u", label, (unsigned)i);
         CHECK_EQ(table[base + i], (uint16_t)(start + NaiveOffset(meta, count, i)));
     }
-    uint16_t total = (uint16_t)(start + NaiveOffset(meta, count, count));
-    std::snprintf(msg, sizeof(msg), "%s total", label);
-    CHECK_EQ(table[base + count], total);
+    uint16_t Total = (uint16_t)(start + NaiveOffset(meta, count, count));
+    std::snprintf(msg, sizeof(msg), "%s Total", label);
+    CHECK_EQ(table[base + count], Total);
     // Saturating read (what LoadedScript::OffsetAt does for an out-of-range index).
-    CHECK_EQ(table[base + count], total);
+    CHECK_EQ(table[base + count], Total);
 }
 
 int main()

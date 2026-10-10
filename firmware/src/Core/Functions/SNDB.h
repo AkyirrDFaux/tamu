@@ -13,7 +13,7 @@ typedef struct __attribute__((packed, aligned(4)))
     uint8_t reserved[11];  // net is carved out of the old 12 reserved bytes
     SerialNumber uid;
 } RegistryEntry;           // Total: 32 bytes (net does NOT grow the record)
-static_assert(sizeof(RegistryEntry) == 32, "RegistryEntry layout must stay 32 bytes");
+static_assert(sizeof(RegistryEntry) == 32, "RegistryEntry layout must stay 32 Bytes");
 
 // The wire address of a registry entry: MakeId(owning net, device id). Local devices carry
 // net 0; other cores carry their NetID with device 1 (Docs/Services/System Block and Device
@@ -259,7 +259,7 @@ uint16_t SNDB::FindAddress(const SerialNumber &serial)
         if (!ReadEntry(SNDBFileName(), i, entry))
             break;
         if (entry.valid == STATE_VALID &&
-            memcmp(entry.uid.bytes, serial.bytes, sizeof(serial.bytes)) == 0)
+            memcmp(entry.uid.Bytes, serial.Bytes, sizeof(serial.Bytes)) == 0)
             return RegistryAddress(entry);
     }
     return ADDR_INVALID;

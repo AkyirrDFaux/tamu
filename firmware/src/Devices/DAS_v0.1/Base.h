@@ -39,9 +39,9 @@ uint32_t TimeFromBoot(void) {
     uint32_t elapsed = current_cnt - last_cnt;
     last_cnt = current_cnt;
     uint32_t divisor = (SystemCoreClock / 1000);
-    uint32_t total = elapsed + ms_rem;
-    ms_rem = total % divisor;
-    ms_accum += total / divisor;
+    uint32_t Total = elapsed + ms_rem;
+    ms_rem = Total % divisor;
+    ms_accum += Total / divisor;
     return ms_accum;
 }
 

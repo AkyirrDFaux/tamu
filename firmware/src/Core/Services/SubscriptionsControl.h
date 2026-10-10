@@ -8,18 +8,18 @@
 
 
 // Shared reply for every subscription CID (docs: responses are packets with FLAG_TYPE).
-inline void SubscriptionsService::SubReply(const PacketFrame &frame, const uint8_t *payload, uint16_t len,
+inline void SubscriptionsService::SubReply(const PacketFrame &frame, const uint8_t *Payload, uint16_t len,
                      uint8_t extraFlags) {
-    PacketConstruct(&tx_frame, frame.id_src, frame.cmd, frame.trid,
-                    (uint8_t)(FLAG_TYPE | FLAG_START | FLAG_STOP | extraFlags), payload, len);
+    PacketConstruct(&TxFrame, frame.IdSrc, frame.Cmd, frame.Trid,
+                    (uint8_t)(FLAG_TYPE | FLAG_START | FLAG_STOP | extraFlags), Payload, len);
 #ifdef USE_APP_INTERFACE
-    if (frame.id_src == 0xFFFE) {
-        AppInterface.Send(tx_frame);
+    if (frame.IdSrc == 0xFFFE) {
+        AppInterface.Send(TxFrame);
     } else {
-        DispatchPacket(tx_frame);
+        DispatchPacket(TxFrame);
     }
 #else
-    SendAndVerifyPacket(tx_frame);
+    SendAndVerifyPacket(TxFrame);
 #endif
 }
 
@@ -27,17 +27,17 @@ inline void SubscriptionsService::SubReply(const PacketFrame &frame, const uint8
 // Cancels the provider side of a requester subscription (same-device: drop the local provider
 // entry; remote: send 0401 with an empty payload = None/cancel). Requester-only: the provider
 // side never cancels anything, so the DAS does not compile it.
-inline void SubscriptionsService::SubscriptionsCancelProvider(uint16_t providerAddr, uint16_t trid) {
+inline void SubscriptionsService::SubscriptionsCancelProvider(uint16_t providerAddr, uint16_t Trid) {
 #ifdef USE_SUB_PROVIDE
     uint8_t net = (uint8_t)((DeviceStatus.ShortAddress >> 10) & 0x3F);
     if (NetQualifyLocal(providerAddr, net) == DeviceStatus.ShortAddress) {
-        ProviderEntry* p = ProviderFindByTrid(trid);
+        ProviderEntry* p = ProviderFindByTrid(Trid);
         if (p) ProviderClearEntry(p);
         return;
     }
 #endif
     PacketFrame cancel;
-    PacketConstruct(&cancel, providerAddr, MakeService(ServiceType::Subscriptions, 1), trid,
+    PacketConstruct(&cancel, providerAddr, MakeService(ServiceType::Subscriptions, 1), Trid,
                     FLAG_START | FLAG_STOP, nullptr, 0);
     SendAndVerifyPacket(cancel);
 }
@@ -50,13 +50,13 @@ inline void SubscriptionsService::StreamSubscriptionTable(const PacketFrame &fra
                                     uint16_t entrySize, bool (*occupied)(const uint8_t *, uint16_t)) {
     uint8_t count = 0;
     for (uint16_t i = 0; i < max; i++) if (occupied(table, i)) count++;
-    uint16_t total = (uint16_t)((uint16_t)count * entrySize);
-    uint16_t frags = (uint16_t)((total + MAX_FRAG_CONTENT_SIZE - 1) / MAX_FRAG_CONTENT_SIZE);
+    uint16_t Total = (uint16_t)((uint16_t)count * entrySize);
+    uint16_t frags = (uint16_t)((Total + MAX_FRAG_CONTENT_SIZE - 1) / MAX_FRAG_CONTENT_SIZE);
     if (frags == 0) frags = 1;
 
     uint16_t idx = 0;
     for (uint16_t f = 0; f < frags; f++) {
-        uint8_t *dst = tx_frame.payload + 4;
+        uint8_t *dst = TxFrame.Payload + 4;
         uint16_t n = 0;
         while (idx < max && n + entrySize <= MAX_FRAG_CONTENT_SIZE) {
             if (!occupied(table, idx)) { idx++; continue; }
@@ -98,17 +98,17 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
     // a subscription starts from a known value instead of waiting for the next change/tick.
     // A locally generated management reply (id_src is us) is routed to the app link and never
     // reaches here.
-    if ((frame.flags & FLAG_TYPE) && frame.trid >= TRID_SUB_BASE &&
-        frame.trid <= TRID_SUB_MAX) {
-        RequesterEntry* e = RequesterFindByTrid((uint16_t)frame.trid);
+    if ((frame.Flags & FLAG_TYPE) && frame.Trid >= TRID_SUB_BASE &&
+        frame.Trid <= TRID_SUB_MAX) {
+        RequesterEntry* e = RequesterFindByTrid((uint16_t)frame.Trid);
         // Stale reply after the entry was retargeted to a different provider: drop it. A
         // cancelled entry no longer resolves, so it falls through to the orphan handling.
-        if (e && frame.id_src != e->providerAddr) return true;
+        if (e && frame.IdSrc != e->providerAddr) return true;
         HandleRequesterValueUpdate(frame);
         return true;
     }
 #endif
-    uint8_t cid = GetServiceCID(frame.cmd);
+    uint8_t cid = GetServiceCID(frame.Cmd);
 
     switch (cid) {
         case 0x00: {
@@ -118,7 +118,7 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
 #endif
 #ifdef USE_SUB_PROVIDE
             // Requester confirmation (request): update the provider's hash.
-            if (!(frame.flags & FLAG_TYPE))
+            if (!(frame.Flags & FLAG_TYPE))
                 HandleProviderConfirmation(frame);
 #endif
             break;
@@ -126,9 +126,9 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
 
         case 0x01: { // Change subscription (inter-device, requester -> provider).
 #ifdef USE_SUB_PROVIDE
-            ProviderEntry* e = ProviderFindByTrid(frame.trid);
+            ProviderEntry* e = ProviderFindByTrid(frame.Trid);
             bool cancel = PayloadBytes(frame) < SUB_TABLE_WIRE_SIZE ||
-                          frame.payload[4] == (uint8_t)TriggerType::None;
+                          frame.Payload[4] == (uint8_t)TriggerType::None;
             if (cancel) {
                 if (e) ProviderClearEntry(e);
                 SubReply(frame, nullptr, 0, FLAG_SUCCESS);
@@ -136,12 +136,12 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
             }
 
             SubscriptionTable t;
-            memcpy((void *)&t, frame.payload, SUB_TABLE_WIRE_SIZE);
+            memcpy((void *)&t, frame.Payload, SUB_TABLE_WIRE_SIZE);
             // Reuse the entry found above (no second search). An explicit Set resets its trigger
             // state so a retargeted subscription sends its first value immediately.
             if (!e) e = ProviderFindFree();
             if (!e) { SubReply(frame, nullptr, 0, FLAG_FAIL); break; }
-            ProviderApply(e, frame.trid, frame.id_src, t, true);
+            ProviderApply(e, frame.Trid, frame.IdSrc, t, true);
             // Docs CID 1: the response to a change subscription is the CURRENT VALUE (so the
             // requester starts from a known state). Fall back to a 1-byte ack when the source
             // register does not resolve (yet).
@@ -179,18 +179,18 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
                 SubReply(frame, nullptr, 0, FLAG_FAIL);
                 break;
             }
-            uint16_t providerAddr = LoadUnaligned<uint16_t>(frame.payload);
+            uint16_t providerAddr = LoadUnaligned<uint16_t>(frame.Payload);
             SubscriptionTable t;
-            memcpy((void *)&t, frame.payload + 4, SUB_TABLE_WIRE_SIZE);
-            uint32_t targetReg = LoadUnaligned<uint32_t>(frame.payload + 4 + SUB_TABLE_WIRE_SIZE);
+            memcpy((void *)&t, frame.Payload + 4, SUB_TABLE_WIRE_SIZE);
+            uint32_t targetReg = LoadUnaligned<uint32_t>(frame.Payload + 4 + SUB_TABLE_WIRE_SIZE);
 
-            RequesterEntry* e = RequesterFindByTrid(frame.trid);
+            RequesterEntry* e = RequesterFindByTrid(frame.Trid);
             if (t.trigger == TriggerType::None) {
                 if (e) {
                     uint16_t provider = e->providerAddr;
                     RequesterRemove(e);
                     SaveRequesterTable();
-                    SubscriptionsCancelProvider(provider, frame.trid);
+                    SubscriptionsCancelProvider(provider, frame.Trid);
                 }
                 SubReply(frame, nullptr, 0, FLAG_SUCCESS);
                 break;
@@ -198,7 +198,7 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
 
             // Reuse the entry found above; only allocate when it does not exist yet.
             if (!e) {
-                e = RequesterAlloc(frame.trid);
+                e = RequesterAlloc(frame.Trid);
                 if (!e) { SubReply(frame, nullptr, 0, FLAG_FAIL); break; }
             }
             e->providerAddr = providerAddr;
@@ -245,17 +245,17 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
                 SubReply(frame, nullptr, 0, FLAG_FAIL);
                 break;
             }
-            uint16_t requesterAddr = LoadUnaligned<uint16_t>(frame.payload);
+            uint16_t requesterAddr = LoadUnaligned<uint16_t>(frame.Payload);
             SubscriptionTable t;
-            memcpy((void *)&t, frame.payload + 4, SUB_TABLE_WIRE_SIZE);
+            memcpy((void *)&t, frame.Payload + 4, SUB_TABLE_WIRE_SIZE);
 
             if (t.trigger == TriggerType::None) {
-                ProviderEntry* e = ProviderFindByTrid(frame.trid);
+                ProviderEntry* e = ProviderFindByTrid(frame.Trid);
                 if (e) ProviderClearEntry(e);
                 SubReply(frame, nullptr, 0, FLAG_SUCCESS);
                 break;
             }
-            if (!ProviderInstall(frame.trid, requesterAddr, t, true)) {
+            if (!ProviderInstall(frame.Trid, requesterAddr, t, true)) {
                 SubReply(frame, nullptr, 0, FLAG_FAIL);
                 break;
             }
@@ -289,10 +289,10 @@ inline void SubscriptionsService::Tick(uint32_t nowMs) {
         RequesterEntry* e = &RequesterTable[i];
         if (e->active && e->timeout != 0 && (int32_t)(nowMs - e->timeout) >= 0) {
             uint16_t provider = e->providerAddr;
-            uint16_t trid = e->trid;
+            uint16_t Trid = e->Trid;
             RequesterRemove(e);          // compacts the table, shifting the tail left
             requesterTableChanged = true;
-            SubscriptionsCancelProvider(provider, trid);
+            SubscriptionsCancelProvider(provider, Trid);
             i--;                         // re-check the entry shifted into slot i
         }
     }

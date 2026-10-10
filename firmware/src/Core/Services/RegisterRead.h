@@ -36,7 +36,7 @@ inline bool RegisterService::SystemFillValue(uint8_t field, uint8_t *vbuf) {
         break;
     }
     case 1:
-        memcpy(vbuf, GetSerialNumber().bytes, 14);
+        memcpy(vbuf, GetSerialNumber().Bytes, 14);
         break;
     case 2: {
         uint16_t v = DeviceStatus.ShortAddress;
@@ -55,22 +55,22 @@ inline bool RegisterService::SystemFillValue(uint8_t field, uint8_t *vbuf) {
         break;
     }
     case 4: { // RAM struct: Used | Total
-        uint32_t total = GetTotalRAM();
+        uint32_t Total = GetTotalRAM();
         int32_t free_ram = GetFreeRAM();
         // The field is labelled Used|Total and shown as "Used RAM": report the used bytes,
         // clamped to zero when the free count is bogus/negative or exceeds the total.
-        int32_t used = (free_ram >= 0 && (uint32_t)free_ram < total)
-                           ? (int32_t)(total - (uint32_t)free_ram)
+        int32_t used = (free_ram >= 0 && (uint32_t)free_ram < Total)
+                           ? (int32_t)(Total - (uint32_t)free_ram)
                            : 0;
         memcpy(vbuf, &used, 4);
-        memcpy(vbuf + 4, &total, 4);
+        memcpy(vbuf + 4, &Total, 4);
         break;
     }
     case 5: { // FLASH struct: Used | Total
         uint32_t used = Storage.UsedFlashBytes();
-        uint32_t total = STORAGE_FLASH_SIZE;
+        uint32_t Total = STORAGE_FLASH_SIZE;
         memcpy(vbuf, &used, 4);
-        memcpy(vbuf + 4, &total, 4);
+        memcpy(vbuf + 4, &Total, 4);
         break;
     }
 #ifdef TYPE_CORE

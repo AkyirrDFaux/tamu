@@ -16,8 +16,8 @@
 // What makes a requester entry occupied (used by the shared table search).
 inline bool SubscriptionsService::RequesterOccupied(const RequesterEntry &e) { return e.active; }
 
-inline RequesterEntry* SubscriptionsService::RequesterFindByTrid(uint16_t trid) {
-    return SubTableFindByTrid(RequesterTable, trid, RequesterOccupied);
+inline RequesterEntry* SubscriptionsService::RequesterFindByTrid(uint16_t Trid) {
+    return SubTableFindByTrid(RequesterTable, Trid, RequesterOccupied);
 }
 
 inline void SubscriptionsService::RequesterClearEntry(RequesterEntry* e) {
@@ -34,25 +34,25 @@ inline void SubscriptionsService::RequesterRemove(RequesterEntry* e) {
 
 // Allocates a new active entry at its TRID-sorted position (the table stays a sorted prefix).
 // Returns nullptr when the table is full. The new entry carries only its TRID.
-inline RequesterEntry* SubscriptionsService::RequesterAlloc(uint16_t trid) {
+inline RequesterEntry* SubscriptionsService::RequesterAlloc(uint16_t Trid) {
     int count = 0;
     while (count < MAX_REQUESTER_SUBS && RequesterTable[count].active) count++;
     if (count >= MAX_REQUESTER_SUBS) return nullptr;
     int pos = 0;
-    while (pos < count && RequesterTable[pos].trid < trid) pos++;
+    while (pos < count && RequesterTable[pos].Trid < Trid) pos++;
     for (int i = count; i > pos; i--) RequesterTable[i] = RequesterTable[i - 1];
     RequesterClearEntry(&RequesterTable[pos]);
-    RequesterTable[pos].trid = trid;
+    RequesterTable[pos].Trid = Trid;
     RequesterTable[pos].active = true;
     return &RequesterTable[pos];
 }
 
 // Finds the entry for `trid`, or allocates it at its sorted position. Returns nullptr when the
 // table is full.
-inline RequesterEntry* SubscriptionsService::RequesterUpsert(uint16_t trid) {
-    RequesterEntry* e = RequesterFindByTrid(trid);
+inline RequesterEntry* SubscriptionsService::RequesterUpsert(uint16_t Trid) {
+    RequesterEntry* e = RequesterFindByTrid(Trid);
     if (e) return e;
-    return RequesterAlloc(trid);
+    return RequesterAlloc(Trid);
 }
 
 // Applies a received value to the requester's target register (raw bytes) and confirms with
@@ -83,14 +83,14 @@ inline void SubscriptionsService::ApplyRequesterValue(RequesterEntry *e, const u
     uint32_t h = Fnv1a(val, vlen);
     PacketFrame reply;
     PacketConstruct(&reply, e->providerAddr, MakeService(ServiceType::Subscriptions, 0),
-                    e->trid, FLAG_START | FLAG_STOP, (const uint8_t *)&h, sizeof(h),
+                    e->Trid, FLAG_START | FLAG_STOP, (const uint8_t *)&h, sizeof(h),
                     PRIORITY_SUB_HIGH);
     SendAndVerifyPacket(reply);
 }
 
 inline void SubscriptionsService::HandleRequesterValueUpdate(const PacketFrame &frame) {
-    if (!(frame.flags & FLAG_TYPE)) return;
-    RequesterEntry* e = RequesterFindByTrid(frame.trid);
+    if (!(frame.Flags & FLAG_TYPE)) return;
+    RequesterEntry* e = RequesterFindByTrid(frame.Trid);
     if (!e) {
         // The sender holds a subscription this device does not have: an orphan provider entry.
         // That happens when a cancel could not land (the node was offline, or the verified
@@ -99,8 +99,8 @@ inline void SubscriptionsService::HandleRequesterValueUpdate(const PacketFrame &
         // and if this cancel is lost too the orphan simply announces itself again on its next
         // period, so the table converges on its own.
         PacketFrame cancel;
-        PacketConstruct(&cancel, frame.id_src, MakeService(ServiceType::Subscriptions, 1),
-                        frame.trid, FLAG_START | FLAG_STOP, nullptr, 0);
+        PacketConstruct(&cancel, frame.IdSrc, MakeService(ServiceType::Subscriptions, 1),
+                        frame.Trid, FLAG_START | FLAG_STOP, nullptr, 0);
         SendAndVerifyPacket(cancel);
         return;
     }
@@ -109,6 +109,6 @@ inline void SubscriptionsService::HandleRequesterValueUpdate(const PacketFrame &
     // overwrite the provider's Hash/Hashlike state, which the delta trigger uses as its last
     // sent scalar value.
     const bool confirm = e->sub.trigger == TriggerType::OnChangeConfirm;
-    ApplyRequesterValue(e, frame.payload, PayloadBytes(frame), confirm);
+    ApplyRequesterValue(e, frame.Payload, PayloadBytes(frame), confirm);
 }
 #endif // USE_SUB_REQUEST

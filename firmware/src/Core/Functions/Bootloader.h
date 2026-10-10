@@ -40,8 +40,8 @@ namespace Bootloader
     inline uint8_t Parity(const uint8_t *frame, uint16_t len)
     {
         uint8_t p = 0;
-        uint8_t cmd = (uint8_t)(frame[1] & 0x03u);
-        p ^= (uint8_t)(cmd & 1u) ^ (uint8_t)((cmd >> 1) & 1u);
+        uint8_t Cmd = (uint8_t)(frame[1] & 0x03u);
+        p ^= (uint8_t)(Cmd & 1u) ^ (uint8_t)((Cmd >> 1) & 1u);
         for (uint16_t i = 2; i + 1 < len; i++)
         {
             uint8_t b = frame[i];
@@ -54,17 +54,17 @@ namespace Bootloader
     }
 
     // Fills byte 1: padding 0, even parity, command. `frame` must already hold the full body.
-    inline void WriteControl(uint8_t *frame, uint8_t cmd, uint16_t len)
+    inline void WriteControl(uint8_t *frame, uint8_t Cmd, uint16_t len)
     {
-        frame[1] = (uint8_t)(cmd & 0x03u);
+        frame[1] = (uint8_t)(Cmd & 0x03u);
         frame[1] |= (uint8_t)(Parity(frame, len) << 2);
     }
 
-    inline void EncodeWrite(uint32_t offset, const uint8_t *payload, uint8_t *out)
+    inline void EncodeWrite(uint32_t offset, const uint8_t *Payload, uint8_t *out)
     {
         out[0] = START;
         memcpy(out + 2, &offset, 4);
-        memcpy(out + 6, payload, PAYLOAD_SIZE);
+        memcpy(out + 6, Payload, PAYLOAD_SIZE);
         out[DATA_SIZE - 1] = END;
         WriteControl(out, CMD_WRITE, DATA_SIZE);
     }
@@ -77,11 +77,11 @@ namespace Bootloader
         WriteControl(out, CMD_READ_REQ, READ_REQ_SIZE);
     }
 
-    inline void EncodeReadResponse(uint32_t offset, const uint8_t *payload, uint8_t *out)
+    inline void EncodeReadResponse(uint32_t offset, const uint8_t *Payload, uint8_t *out)
     {
         out[0] = START;
         memcpy(out + 2, &offset, 4);
-        memcpy(out + 6, payload, PAYLOAD_SIZE);
+        memcpy(out + 6, Payload, PAYLOAD_SIZE);
         out[DATA_SIZE - 1] = END;
         WriteControl(out, CMD_READ_RESP, DATA_SIZE);
     }
@@ -96,10 +96,10 @@ namespace Bootloader
     inline const uint8_t *Payload(const uint8_t *frame) { return frame + 6; }
 
     // The frame length for a command, or 0 when the command is unknown.
-    inline uint16_t FrameSize(uint8_t cmd)
+    inline uint16_t FrameSize(uint8_t Cmd)
     {
-        if (cmd == CMD_READ_REQ) return READ_REQ_SIZE;
-        if (cmd == CMD_WRITE || cmd == CMD_READ_RESP) return DATA_SIZE;
+        if (Cmd == CMD_READ_REQ) return READ_REQ_SIZE;
+        if (Cmd == CMD_WRITE || Cmd == CMD_READ_RESP) return DATA_SIZE;
         return 0;
     }
 
@@ -110,11 +110,11 @@ namespace Bootloader
             return 0;
         if ((frame[1] & 0xF8u) != 0) // padding must be zero
             return 0;
-        uint8_t cmd = (uint8_t)(frame[1] & 0x03u);
-        uint16_t expect = FrameSize(cmd);
+        uint8_t Cmd = (uint8_t)(frame[1] & 0x03u);
+        uint16_t expect = FrameSize(Cmd);
         if (expect == 0 || len != expect || frame[len - 1] != END)
             return 0;
         uint8_t got = (uint8_t)((frame[1] >> 2) & 1u);
-        return (got == Parity(frame, len)) ? cmd : 0;
+        return (got == Parity(frame, len)) ? Cmd : 0;
     }
 }
