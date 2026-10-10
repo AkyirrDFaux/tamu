@@ -1,6 +1,8 @@
 The devices the firmware targets, with their pins, services, modules and storage geometry. Device-specific implementations are guarded with `BOARD_DeviceName`.
 
 Use define `TYPE_CORE`, `TYPE_ROUTER` or `TYPE_NODE`.
+
+The bootloader drives the white LED as its boot indicator (see [[Services/Bootloader]]); the Tamu v2.0A and Valu v2.0 pre-date that specification and drive their red LED instead (the Tamu v2.0A has no white LED).
 ### Device Types
 | Device             | Type |
 | ------------------ | ---- |

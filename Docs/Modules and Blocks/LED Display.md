@@ -6,7 +6,7 @@ Contains the overall settings.
 | ----------------------- | --- | ----- | --------- | ---- |
 | Brightness              | 0   |       | Number    | % |
 | Offset                  | 1   | P     | `Matrix<2,3>` | A transformation that defines the 0,0 screen position and the default rotation |
-| Render KeyedBlock Index | 2   | P     | `Index`   | Index of the block containing shapes, textures and effects; -1 renders nothing |
+| Render Block Index | 2   | P     | `Index`   | Index of the block containing shapes, textures and effects; -1 renders nothing |
 | Layout File Name        | 3   | TR, P | `Filename` | The file containing the layout |
 | Refresh Rate            | 4   | RO    | Number    | In FPS, averaged |
 ### Layout File
@@ -74,7 +74,6 @@ Texture list:
 - Fill
 - Gradient linear
 - Gradient circular
-- Bitmap (reserved)
 
 The effect list continues the texture enum:
 
@@ -82,3 +81,4 @@ The effect list continues the texture enum:
 - Hue shift
 - Contrast change
 - Brightness change
+- Bitmap (reserved)

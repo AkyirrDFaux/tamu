@@ -81,25 +81,8 @@ Every firmware document was checked against `firmware/src`; the closed dispositi
 ### A. Doc fixes open (cross-reference rerun, 2026-10-10)
 
 The 2026-10-10 rerun confirmed the earlier sweep; these divergences are **doc-only** (the code
-matches the spec). **A61-A64 were ruled on and applied** (see git); the rest await a ruling.
-
-**A65 `Bitmap` sits after the effect list.** `LED Display.md:77` lists `Bitmap (reserved)` in the
-texture list, before "The effect list continues the texture enum" (`:79`); the enum value is 8, after
-the effects 4-7 (`Render.h:74-86`). Proposed: move the bullet after `- Brightness change`.
-
-**A66 Field name is `Render Block Index`.** `LED Display.md:9` says `Render KeyedBlock Index`; the code
-and app say "Render Block Index" (`Vysi1Layout.h:93`, `block_registry.dart:148`). Proposed: drop
-"Keyed".
-
-**A67 Boot-indicator LED wording (absorbs E8).** `Bootloader.md:3` says the bootloader "lights the
-white LED permanently"; only the DAS has a white LED and the running app uses it as the RS485 TX
-indicator, the Valu uses its red LED, and the core drives no LED. `Devices.md:43` calls the DAS white
-LED "the bootloader indicator". Proposed: state the per-device LED (DAS white / Valu red / core none)
-and describe the DAS white LED as the RS485 TX/communication indicator.
-
-**A68 Windows USB.** `App/General Info.md:7` lists Windows as "BLE, USB"; `supportsUsb` is Linux-only
-(`platform_caps.dart`, whose header says Windows = not yet). Proposed:
-`| Windows | BLE (USB not implemented yet) |`.
+matches the spec). **A61-A67 were ruled on and applied** (see git); **A68 is planned (a TODO), not a
+doc issue**; the rest await a ruling.
 
 **A69 Requester/Provider capability note.** `App/Service Views/Subscriptions.md:14` claims "the
 capability bits do not yet separate Request/Provide"; they do (`types.dart:386-388`, `Enums.h:17,19`).
@@ -206,9 +189,6 @@ are hardware-only.
   list is not slot-addressable; the app tracks file->slot and falls back to the file==slot
   convention. Reporting the loaded **slots** (or a slot per entry) would remove the guesswork.
 - **E6** **Dynamic descriptor doc omits `Name`/`generation`/`present`** (deferred).
-- **E8** **Bootloader LED entry.** `Bootloader.md` (white LED) vs `Devices.md` (core white LED "missing
-  hardware") vs the app (red LED). Code drives no LED in the core bootloader. *(Concrete doc wording
-  proposed as A67 below.)*
 - **E9** **Device-type numbering is undocumented.** `Docs/Data Formats.md` and `System Block and Device
   Commands.md` name the System `Device Type` field but give no numeric table. `Enums.h` /
   `types.dart` assign `Tamu_v2_0A = 0x01`, `Valu_v2_0 = 0x02`, `DualAnalogSensor = 0x03` as a code
