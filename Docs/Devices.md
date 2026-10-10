@@ -18,7 +18,7 @@ The bootloader drives the white LED as its boot indicator (see [[Services/Bootlo
 | Gyr & Acc          | SDA 4, SCL 5         | LSM6DS3TR-C (0x6A), with 4k7 pull-ups |
 | Fan PWM Output     | 6, 10                |      |
 | LED Display Output | 0, 3                 |      |
-| White LED          | Missing hardware     | Ignore in the implementation; the bootloader's boot signal has nothing to drive |
+| White LED          | Missing hardware     | Exception: the bootloader drives the red LED-Button (pin 2, active low) as its boot signal instead |
 | Unused exposed     | 1, 7, 8              |      |
 Services:
 
@@ -71,7 +71,7 @@ Clock re-sync interval: 60 s (+0-15 s jitter)
 ### Valu v2.0 (CH32V203G8R6), Legacy Standalone Node with USB
 | Feature           | Pins                                         | Note |
 | ----------------- | -------------------------------------------- | ---- |
-| LED-Button        | PA2                                          | Red, active high |
+| LED-Button        | PA2                                          | Red, active high; exception: the bootloader drives this red LED as its boot signal |
 | Buttons           | PB15, PB14, PB13                             | Requires a pull-down; active high |
 | Fan PWM output    | PA8                                          |      |
 | Measuring         | PA6 (ADC6), PA1 (ADC1), PA0 (ADC0)           | Reference resistor not defined |

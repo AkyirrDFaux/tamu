@@ -27,12 +27,7 @@ the core passthrough became asynchronous with remapped IDs (0x20 identification 
 Spec: `Docs/Services/Bootloader.md`; partition sizes are in `Docs/Devices.md`. Landed and committed - see
 `Issues.md` "Completed 2026-10-09/10" for the commit list.
 
-**Outstanding:** HIL. Nothing in this change set has run on hardware, and it moves the app's update flow,
-which the beta acceptance criteria below require to work end to end on Android. The bootloader
-category (`--bootloader`) needs the DAS built with `-D BOOTLOADER_FORCE` and declared with
-`TAMU_HIL_BOOTLOADER=<id>`; the rig is core + 1 DAS. Measure pipelined write throughput
-against the old write-then-read-back path - the per-ack half-duplex turn-around may cost more than the
-ack saves.
+**Outstanding:** the *core's own* bootloader is now exercised on hardware (2026-10-10): `test/core_bootloader_flash.py` identifies it (app space 2752512, name "Tamu v2.0A"), writes `ota_0` through the adaptive ack-driven pipeline (20496 chunks, 38.2 KiB/s, 0 resends) and reads the whole image back with 0/20496 mismatches. Still unrun: the *node* bootloader over the core passthrough (`--bootloader`, needs the DAS built with `-D BOOTLOADER_FORCE` and `TAMU_HIL_BOOTLOADER=<id>`), and the app's update flow end to end on Android, which the beta criteria below require.
 
 ## Beta window plan (2026-10-07) - Tamu core/DAS + app; Valu v2 parked
 
