@@ -25,7 +25,7 @@ String normalizeFileName(String name) {
   return name.substring(0, end);
 }
 
-/// One file table entry (Filerecord: Offset u32 | Filesize u32 | Name 8 bytes).
+/// One file table record (FileRecord: Offset u32 | Filesize u32 | Name 8 bytes).
 class FileRecord {
   final int index;
   final int offset;

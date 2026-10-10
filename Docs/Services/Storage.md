@@ -20,7 +20,7 @@ The start offset of a file is always page-aligned, and the space reserved for it
 #### File Table
 The file table holds file records. It is a file itself, managed by this service, and its first record always points to that file, which sets the table's length.
 
-| Filerecord 0     | Filerecord 1 | Filerecord 2     | Filerecord 3 | Filerecord 4 |
+| File record 0     | File record 1 | File record 2     | File record 3 | File record 4 |
 | ---------------- | ------------ | ---------------- | ------------ | ------------ |
 | Filetable itself | First file   | Invalidated file | Second file  | Unwritten    |
 
@@ -56,9 +56,9 @@ A file is handed to other functions to have data stored in it or read from it, a
 	Finds contiguous space of the requested size, starting from an internal wear cursor, and checking the file table, excluding existing files and the pointer page. Returns the start address of the page found, as an offset from the start of the filesystem.
 - `bool GetEndOfFiletable(uint32_t* Index)`
 	Returns the first unwritten file record.
-- `bool DeleteFilerecord(char[8] Filename)`
+- `bool DeleteFileRecord(char[8] Filename)`
 	Deletes the file record. Returns true if successful.
-- `bool WriteFilerecord(Filerecord NewRecord)`
+- `bool WriteFileRecord(FileRecord NewRecord)`
 	Writes a new file record at the end. If no space remains after writing, the file table must be filtered and moved with `MoveFiletable()`.
 - `bool MoveFiletable()`
 	The table has a fixed size per device and is moved only when it is full. It finds a new location with `FindSpace`, initialises a new file table of the same size at that location, including its self-describing first entry, and copies the valid entries into it. Finally it writes the new pointer to the first page.

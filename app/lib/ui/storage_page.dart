@@ -258,7 +258,7 @@ leading: Icon(isTable
     );
   }
 
-  /// The file table itself, decoded: one row per Filerecord.
+  /// The file table itself, decoded: one row per file record.
   Future<void> _showTable(FileRecord table) async {
     _snack('Reading file table...');
     // Read the table file directly using CID 5 (read file) instead of CID 7.
@@ -287,7 +287,7 @@ leading: Icon(isTable
   }
 }
 
-/// Decoded file-table view: every 16-byte Filerecord as offset/size/name.
+/// Decoded file-table view: every 16-byte file record as offset/size/name.
 class FileTableViewPage extends StatelessWidget {
   final int deviceId;
   final int size;

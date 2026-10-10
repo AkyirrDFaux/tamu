@@ -81,13 +81,7 @@ Every firmware document was checked against `firmware/src`; the closed dispositi
 ### A. Doc fixes open (cross-reference rerun, 2026-10-10)
 
 The 2026-10-10 rerun confirmed the earlier sweep; these divergences are **doc-only** (the code
-matches the spec). **A61-A63 were ruled on and applied** (see git); the rest await a ruling.
-
-**A64 Record type name consistent everywhere.** `Storage.md:61` reads `WriteFilerecord(Filerecord
-NewRecord)` and the file-table diagram (`:23`) labels "Filerecord 0..4"; the code type is `FileEntry`
-(`StorageDefs.h:58`) while the functions are `WriteFilerecord`/`DeleteFilerecord`
-(`StorageBlockFS.h:125,165`). Ruling: make the term consistent - **file record or file entry**
-everywhere. **Awaiting the term choice.**
+matches the spec). **A61-A64 were ruled on and applied** (see git); the rest await a ruling.
 
 **A65 `Bitmap` sits after the effect list.** `LED Display.md:77` lists `Bitmap (reserved)` in the
 texture list, before "The effect list continues the texture enum" (`:79`); the enum value is 8, after

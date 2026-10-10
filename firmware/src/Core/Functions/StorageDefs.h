@@ -1,6 +1,6 @@
 #pragma once
 
-// Storage geometry, the flash backend hooks and the FileEntry helpers.
+// Storage geometry, the flash backend hooks and the FileRecord helpers.
 //
 // Part of Core/Functions/Storage.h (included from there).
 
@@ -55,14 +55,14 @@ bool Storage_FlashFormat();                            // Wipes the entire stora
 
 // File record format (16 bytes, naturally 4-aligned, Docs/Services/Storage.md):
 // Offset is from flash start, Filesize in bytes, Name is 8 plain-text characters.
-struct FileEntry
+struct FileRecord
 {
     uint32_t offset;    // 0x00 = invalidated entry, 0xFFFFFFFF = unwritten slot
     uint32_t size;
     char name[8];
 };
 
-#define TABLE_ENTRY_SIZE sizeof(FileEntry)
+#define TABLE_ENTRY_SIZE sizeof(FileRecord)
 
 // Number of whole pages a byte size occupies, clamped to [1, MAX_DATA_BLOCKS].
 // Plain `(size + PAGE_SIZE - 1) / PAGE_SIZE` overflows uint32 for sizes near
@@ -97,7 +97,7 @@ static inline bool FileSlotIsFree(uint32_t offset)
 {
     return offset == 0x00 || offset == 0xFFFFFFFF;
 }
-static inline bool FileEntryIsValid(uint32_t offset)
+static inline bool FileRecordIsValid(uint32_t offset)
 {
     return !FileSlotIsFree(offset);
 }

@@ -475,7 +475,7 @@ class Tamu:
                                 RegCid.Recall, 0, b""), addr)
 
     def file_table(self, addr, timeout=4.0):
-        """Storage read of '.TABLE' -> the raw FileEntry records (offset u32, size u32, name[8])."""
+        """Storage read of '.TABLE' -> the raw FileRecord records (offset u32, size u32, name[8])."""
         name = b".TABLE  "
         p = self.send(Packet(FLAG_REQACK | FLAG_START | FLAG_STOP, 1, Srv.Storage,
                              StoreCid.Read, 0, name), addr)
