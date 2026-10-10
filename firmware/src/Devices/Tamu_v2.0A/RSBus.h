@@ -196,22 +196,37 @@ bool RS485SendRaw(const uint8_t *Data, size_t Len)
     return false;
 }
 
-// Receives one raw bootloader response frame (0xCA ... 0xBC). Scans past non-frame bytes,
-// derives the length from the control byte and validates with the codec. Returns the frame
-// length, or 0 on timeout/invalid. Reads the UART directly: the caller is the synchronous
-// Device 0021 handler, so the normal assembler is not running concurrently.
+// Receives one raw bootloader response frame (0xCA ... 0xBC), for the asynchronous Device
+// passthrough. `TimeoutMs` bounds the wait for a frame to START; once a start byte is seen the
+// frame is read to completion (bounded by kFrameTimeoutMs), so a short caller budget can never
+// abandon a half-read frame - that would consume the leading 0xCA and leave the ring desynced,
+// losing the reply for good. A 39 B frame is ~0.85 ms of line time at 460800.
 int RS485ReceiveRaw(uint8_t *Out, size_t Cap, uint32_t TimeoutMs)
 {
+    constexpr uint32_t kFrameTimeoutMs = 8;
     uint32_t Start = TimeFromBoot();
+    uint32_t FrameStart = 0;
     size_t Got = 0;
     bool InFrame = false;
 
-    while ((uint32_t)(TimeFromBoot() - Start) < TimeoutMs) {
+    for (;;) {
+        if (InFrame) {
+            if ((uint32_t)(TimeFromBoot() - FrameStart) >= kFrameTimeoutMs)
+                return 0;
+        } else if ((uint32_t)(TimeFromBoot() - Start) >= TimeoutMs) {
+            return 0;
+        }
+
         uint8_t Byte;
         if (uart_read_bytes(UART_NUM_1, &Byte, 1, pdMS_TO_TICKS(5)) != 1)
             continue;
         if (!InFrame) {
-            if (Byte == Bootloader::START) { InFrame = true; Got = 0; Out[Got++] = Byte; }
+            if (Byte == Bootloader::START) {
+                InFrame = true;
+                FrameStart = TimeFromBoot();
+                Got = 0;
+                Out[Got++] = Byte;
+            }
             continue;
         }
         if (Got < Cap)
@@ -225,14 +240,26 @@ int RS485ReceiveRaw(uint8_t *Out, size_t Cap, uint32_t TimeoutMs)
             }
         }
     }
-    return 0;
 }
+
+// While a Device bootloader passthrough is outstanding the Device service installs a sink here:
+// the shared reader offers every byte to it first, so a raw 0xCA reply is stored for the
+// passthrough instead of being discarded as non-0xAA noise by the packet assembler. One pass
+// over the UART therefore serves both packet types. Null when nothing is expected, so the
+// normal path is byte-for-byte unchanged.
+bool (*BootloaderRxSink)(uint8_t Byte) = nullptr;
 
 // Receives and validates a full PacketFrame using the shared bus assembler
 // (Core/Functions/Bus.h); the byte source pulls from the ESP32 UART driver.
 int ReceivePacket(PacketFrame *Data)
 {
     return ReceivePacketFrame(Data, [](uint8_t &Byte) -> bool {
-        return uart_read_bytes(UART_NUM_1, &Byte, 1, 0) == 1;
+        for (;;) {
+            if (uart_read_bytes(UART_NUM_1, &Byte, 1, 0) != 1)
+                return false;
+            if (BootloaderRxSink && BootloaderRxSink(Byte))
+                continue; // consumed by the bootloader passthrough
+            return true;
+        }
     });
 }

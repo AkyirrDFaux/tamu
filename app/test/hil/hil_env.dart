@@ -185,6 +185,21 @@ class HilEnv {
         bootloader: declared.contains(entry.id),
       ));
     }
+    // A device in bootloader mode is off the bus - the bootloader ignores the standard
+    // packets - so the scan cannot see it; the operator declares it with
+    // TAMU_HIL_BOOTLOADER. Add the declared ids the scan did not find, so the bootloader
+    // tests have a target. The core passthrough reaches it without addressing it.
+    for (final id in declared) {
+      if (devices.any((d) => d.id == id)) continue;
+      devices.add(HilDevice(
+        id: id,
+        type: DeviceType.unknown,
+        capabilities: 0,
+        name: 'device $id (bootloader)',
+        bootloader: true,
+      ));
+    }
+
     final wanted = deviceFilter;
     rig = HilRig(
         wanted == null ? devices : devices.where((d) => wanted.contains(d.id)).toList());

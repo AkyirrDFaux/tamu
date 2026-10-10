@@ -43,6 +43,8 @@ private:
     // the raw frame, RS485SendRaw's it, records the pending request and returns; the main
     // loop's PollBootloaderPassthrough collects the reply.
     void HandleBootloaderPassthrough(const PacketFrame &Frame, uint8_t Cid);
+    bool BootloaderRxFeed(uint8_t Byte);               // sink for raw bootloader reply bytes
+    static inline DeviceService *RxInstance = nullptr; // the single instance, for that hook
 
 #ifdef TYPE_CORE
     // One outstanding passthrough request at a time (issue-and-return). The state is only
@@ -59,7 +61,9 @@ private:
     uint16_t PtTrid   = 0;                        // reply routing: original request Trid
     uint32_t PtOffset = 0;                        // requested offset (write match; read echo)
     uint32_t PtDeadline = 0;                      // DeviceStatus.UptimeMs deadline
-    uint8_t PtRx[Bootloader::MAX_FRAME_SIZE];     // receive buffer for the reply frame
+    uint8_t PtRx[Bootloader::MAX_FRAME_SIZE];     // bootloader reply frame
+    uint16_t PtRxLen = 0;                         // bytes accumulated in PtRx
+    bool PtRxReady = false;                       // PtRx holds a complete, decoded reply frame
 #endif
 
     // Sends a single-packet Device service reply back to the requester (src mirrored).
@@ -259,39 +263,81 @@ inline void DeviceService::HandleBootloaderPassthrough(const PacketFrame &Frame,
     // Issue and return. A send failure leaves nothing to await, so fail immediately; otherwise
     // record the pending request and let the poll collect the reply. A lost request settles as
     // FAIL on the deadline (no blocking, no retry loop in this handler).
-    if (!RS485SendRaw(Raw, Len))
-    {
-        PacketConstruct(&TxFrame, Frame.IdSrc, Frame.Cmd, Frame.Trid,
-                        FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_FAIL, nullptr, 0);
-        DispatchPacket(TxFrame);
-        return;
-    }
-
+    // Arm the sink and mark pending BEFORE the request goes out. The node answers within one
+    // frame time (~700 us) of our last byte - inside RS485SendRaw's own echo read - so arming
+    // afterwards races and loses the reply to the packet assembler as non-0xAA noise.
+    RxInstance = this;
+    BootloaderRxSink = [](uint8_t Byte) { return RxInstance->BootloaderRxFeed(Byte); };
     PtCid      = Cid;
     PtExpect   = Expect;
     PtSrc      = Frame.IdSrc;
     PtCmd      = Frame.Cmd;
     PtTrid     = Frame.Trid;
     PtOffset   = Offset;
+    PtRxLen    = 0;
+    PtRxReady  = false;
     PtDeadline = DeviceStatus.UptimeMs + KPtTimeoutMs;
     PtPending  = true;
+
+    if (!RS485SendRaw(Raw, Len))
+    {
+        PtPending = false;
+        BootloaderRxSink = nullptr;
+        PacketConstruct(&TxFrame, Frame.IdSrc, Frame.Cmd, Frame.Trid,
+                        FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_FAIL, nullptr, 0);
+        DispatchPacket(TxFrame);
+        return;
+    }
 }
 
-// Main-loop tick for the passthrough: settle a pending reply without blocking the loop. Idle
-// cost is a single bool test. While expecting, it reads one reply frame with the shortest
-// usable timeout and, when that frame is the expected reply, builds the Device response;
-// otherwise it keeps waiting until the deadline, then replies FAIL. TIMEOUT = 1 s.
+// Byte sink for the bootloader reply, installed on the shared bus reader (RSBus.h
+// BootloaderRxFeed) while a passthrough is outstanding. It consumes 0xCA frame bytes into PtRx
+// and returns true; any other byte returns false and falls through to the packet assembler, so
+// one pass over the UART serves both packet types and neither is lost. A completed, valid frame
+// sets PtRxReady for the poll.
+inline bool DeviceService::BootloaderRxFeed(uint8_t Byte)
+{
+    if (!PtPending || PtRxReady)
+        return false;
+    if (PtRxLen == 0)
+    {
+        if (Byte != Bootloader::START)
+            return false;
+        PtRx[0] = Byte;
+        PtRxLen = 1;
+        return true;
+    }
+    if (PtRxLen < sizeof(PtRx))
+        PtRx[PtRxLen++] = Byte;
+    if (PtRxLen >= 2)
+    {
+        uint16_t Need = Bootloader::FrameSize((uint8_t)(PtRx[1] & 0x07));
+        if (Need == 0 || Need > sizeof(PtRx))
+        {
+            PtRxLen = 0; // bad control: resync on the next 0xCA
+            return true;
+        }
+        if (PtRxLen >= Need)
+        {
+            if (Bootloader::Decode(PtRx, Need) != Bootloader::INVALID)
+                PtRxReady = true;
+            PtRxLen = 0; // corrupt frame: resync on the next 0xCA
+        }
+    }
+    return true;
+}
+
+// Main-loop tick for the passthrough: settle the outstanding request without blocking the loop.
+// Idle cost is a single bool test. The reply frame is assembled by BootloaderRxFeed, so this
+// only builds the Device response (or FAILs on the deadline). TIMEOUT = 1 s.
 inline void DeviceService::PollBootloaderPassthrough()
 {
     if (!PtPending)
         return; // not expecting a reply: one bool test, no bus access
 
-    // RS485ReceiveRaw(Out, Cap, 0) is a no-op: its `elapsed < TimeoutMs` loop never runs, so
-    // it reads nothing. The shortest timeout that actually reads is 1 ms, and a reply frame is
-    // at most 39 B (~0.85 ms of line time at 460800) whose leading 0xCA stays in the UART ring
-    // until read, so one poll captures the whole frame. Bounded to ~one frame of blocking.
-    int Length = RS485ReceiveRaw(PtRx, sizeof(PtRx), KPtPollMs);
-    if (Length > 0 && Bootloader::Decode(PtRx, (uint16_t)Length) == PtExpect)
+    // The reply frame is assembled by BootloaderRxFeed on the shared bus reader (RSBus.h);
+    // there is no bus access here. Build the Device response from it, or FAIL on the deadline.
+    if (PtRxReady)
     {
         uint8_t Out[4 + Bootloader::NAME_SIZE];
         uint8_t Flags = FLAG_TYPE | FLAG_START | FLAG_STOP;
@@ -322,6 +368,7 @@ inline void DeviceService::PollBootloaderPassthrough()
         }
 
         PtPending = false;
+        BootloaderRxSink = nullptr;
         PacketConstruct(&TxFrame, PtSrc, PtCmd, PtTrid, Flags, Out, OutLen);
         DispatchPacket(TxFrame);
         return;
@@ -331,6 +378,7 @@ inline void DeviceService::PollBootloaderPassthrough()
     if ((int32_t)(DeviceStatus.UptimeMs - PtDeadline) >= 0)
     {
         PtPending = false;
+        BootloaderRxSink = nullptr;
         PacketConstruct(&TxFrame, PtSrc, PtCmd, PtTrid,
                         FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_FAIL, nullptr, 0);
         DispatchPacket(TxFrame);

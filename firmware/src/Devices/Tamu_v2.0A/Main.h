@@ -261,7 +261,7 @@ LED.Setup();
         Subscriptions.Tick(DeviceStatus.UptimeMs); // periodic provider triggers (docs: checked from the main loop)
         Script.Tick(DeviceStatus.UptimeMs);       // run loaded script programs (Docs/Services/Script.md)
 #ifdef TYPE_CORE
-        DeviceSvc.PollBootloaderPassthrough();    // async Device passthrough reply (CIDs 0x20-0x22)
+        DeviceSvc.PollBootloaderPassthrough();    // settles a bootloader passthrough (CIDs 0x20-0x22)
 #endif
         AppInterface.Pump();
         ButtonUpdate();

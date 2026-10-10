@@ -198,6 +198,11 @@ static int ReceiveFrame(uint8_t *Out, size_t Cap, uint32_t TimeoutUs)
 
     size_t Got = 0;
     Out[Got++] = Byte;
+    // Restart the window now the frame has started: the whole-frame budget must cover the body,
+    // not the idle search before it. Reusing the search's Start lets a request that arrives late
+    // in the window be dropped mid-frame, so the core's own deadline expires - which shows up as
+    // intermittent read failures.
+    Start = SysTick->CNT;
     if (!WaitByte(&Byte, Start, TimeoutCycles)) return 0;
     Out[Got++] = Byte;
 
@@ -285,14 +290,16 @@ static void HandleWrite(uint32_t Offset, const uint8_t *Payload)
 
 static void HandleRead(uint32_t Offset)
 {
-    uint8_t Data[Bootloader::PAYLOAD_SIZE];
+    // Static, not stack: this runs from main()'s frame, which already holds the 39-byte receive
+    // buffer, and the bootloader's stack is small (the image is within a byte or two of 2 KB).
+    static uint8_t Data[Bootloader::PAYLOAD_SIZE];
+    static uint8_t Resp[Bootloader::DATA_SIZE];
     uint32_t Addr = APP_BASE + Offset;
     if (Addr < APP_BASE || Addr + Bootloader::PAYLOAD_SIZE > APP_LIMIT)
         memset(Data, 0xFF, sizeof(Data));
     else
         memcpy(Data, (const void *)Addr, sizeof(Data));
 
-    uint8_t Resp[Bootloader::DATA_SIZE];
     Bootloader::EncodeReadResponse(Offset, Data, Resp);
     SendRaw(Resp, sizeof(Resp));
 }
