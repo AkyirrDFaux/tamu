@@ -44,12 +44,13 @@ void main() {
     final image = file.readAsBytesSync();
     expect(image, isNotEmpty);
 
-    // The node answers a read only while in bootloader mode; the running app waits for 0xAA
-    // and ignores the raw 0xCA frame.
-    final probe = await boot.readChunk(0);
-    expect(probe, isNotNull,
+    // The node answers an identify request only while in bootloader mode; the running app
+    // waits for 0xAA and ignores the raw 0xCA frame.
+    final id = await boot.identify();
+    expect(id, isNotNull,
         reason: 'no bootloader reply - is the node in bootloader mode (BOOTLOADER_FORCE)?');
-
+    // ignore: avoid_print
+    print('identified ${id!.name} (${id.appSize} byte app space)');
     final phases = <FlashPhase>[];
     final result = await boot.flash(image, onProgress: (p) {
       if (phases.isEmpty || phases.last != p.phase) {

@@ -30,6 +30,7 @@ class _UpdatePageState extends State<UpdatePage> {
   bool _probing = false;
   bool _busy = false;
   bool? _probeOk;
+  BootloaderIdentity? _identity;
   bool _directToCore = false;
   FlashProgress? _progress;
   FlashResult? _result;
@@ -77,12 +78,14 @@ class _UpdatePageState extends State<UpdatePage> {
       _result = null;
       _progress = null;
       _probeOk = null;
+      _identity = null;
       _log.clear();
     });
   }
 
-  /// Probes offset 0: only a device in bootloader mode answers a read. The running app waits
-  /// for the standard sync byte and ignores the raw 0xCA frame.
+  /// Probes with an identify request: only a device in bootloader mode answers, and it replies
+  /// with its app-space size and name. The running app waits for the standard sync byte and
+  /// ignores the raw 0xCA frame.
   Future<bool> _probe() async {
     if (!_link.isConnected) {
       _addLog('No link: connect to the core on the Connection page first.');
@@ -90,13 +93,19 @@ class _UpdatePageState extends State<UpdatePage> {
     }
     setState(() => _probing = true);
     try {
-      final data = await _client().readChunk(0);
-      final ok = data != null;
-      setState(() => _probeOk = ok);
-      _addLog(ok
-          ? 'Bootloader answered at offset 0 - ready to update.'
-          : 'No bootloader reply. Put the target in bootloader mode '
-              '(hold its button while resetting/powering it on), then retry.');
+      final id = await _client().identify();
+      final ok = id != null;
+      setState(() {
+        _probeOk = ok;
+        _identity = id;
+      });
+      if (id != null) {
+        _addLog('Bootloader identified: ${id.name} - '
+            '${_formatBytes(id.appSize)} app space. Ready to update.');
+      } else {
+        _addLog('No bootloader reply. Put the target in bootloader mode '
+            '(hold its button while resetting/powering it on), then retry.');
+      }
       return ok;
     } finally {
       if (mounted) setState(() => _probing = false);
@@ -119,6 +128,7 @@ class _UpdatePageState extends State<UpdatePage> {
       _result = null;
       _progress = null;
       _probeOk = null;
+      _identity = null;
     });
     _log.clear();
     _addLog('Image "$_fileName" (${_formatBytes(image.length)}).');
@@ -126,11 +136,15 @@ class _UpdatePageState extends State<UpdatePage> {
 
     final client = _client();
     try {
-      if (await client.readChunk(0) == null) {
+      final id = await client.identify();
+      if (id == null) {
         _addLog('No bootloader reply - aborting. Enter bootloader mode and retry.');
         return;
       }
-      _addLog('Bootloader found. Writing ${_formatBytes(image.length)}...');
+      setState(() => _identity = id);
+      _addLog('Bootloader identified: ${id.name} '
+          '(${_formatBytes(id.appSize)} app space). Writing '
+          '${_formatBytes(image.length)}...');
       final result = await client.flash(image, onProgress: (p) {
         if (mounted) setState(() => _progress = p);
       });
@@ -199,9 +213,8 @@ class _UpdatePageState extends State<UpdatePage> {
             'powering it on. The DAS shows its white LED; the core shows its red '
             'notification LED.'),
         _bullet(context,
-            'Tap Update. Writes are broadcast on the connected core\'s RSBus, then '
-            'read back and corrected until verified. The node gives no write '
-            'acknowledgement, so verification is what confirms the image.'),
+            'Tap Update. Writes are acknowledged by the target (it reports the last '
+            'successfully written chunk), then read back and corrected until verified.'),
         _bullet(context,
             'Reset/power-cycle the device to run the new firmware. A failed or '
             'interrupted update is safe to retry.'),
@@ -216,6 +229,10 @@ class _UpdatePageState extends State<UpdatePage> {
       InfoRow('Bootloader probe', _probeOk == null
           ? 'not checked'
           : (_probeOk! ? 'answered' : 'no reply')),
+      if (_identity != null) ...[
+        InfoRow('Device', _identity!.name),
+        InfoRow('App space', _formatBytes(_identity!.appSize)),
+      ],
       Padding(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
         child: Align(

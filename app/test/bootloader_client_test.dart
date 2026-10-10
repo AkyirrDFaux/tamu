@@ -5,22 +5,45 @@ import 'package:tamuapp/core/bootloader.dart';
 import 'package:tamuapp/core/bootloader_client.dart';
 import 'package:tamuapp/core/transport.dart';
 
-/// In-memory bootloader channel: records written chunks, caches them, and can simulate a
-/// dropped write, a read timeout, or a permanently unreachable node.
+/// In-memory bootloader channel: records written chunks, tracks the device's last-written
+/// offset, and can simulate a rejected write (direct-USB style: a stale write-response offset),
+/// a dropped write (passthrough style: ACKed but never programmed), a read timeout, a
+/// permanently unreachable node, and an identify reply.
 class FakeTransport implements BootloaderTransport {
   final Map<int, Uint8List> flash = {};
+  final Set<int> rejectOnce = {};
   final Set<int> dropOnce = {};
   final Set<int> timeoutOnce = {};
   bool alwaysNullRead = false;
+
+  /// True to mirror the passthrough: writes are ACKed with a success flag but no last-written
+  /// offset, so the client cannot reconcile per chunk and the verify pass must catch a drop.
+  bool nullOffsetAcks = false;
+
+  BootloaderIdentity? identity;
   int writes = 0, reads = 0;
+  int _last = Bootloader.nothingWritten;
 
   @override
-  Future<bool> writeChunk(int offset, List<int> data, Duration timeout) async {
+  Future<WriteAck> writeChunk(int offset, List<int> data, Duration timeout) async {
     writes++;
+    // A rejected write is acknowledged with the device's (stale) last-written offset.
+    if (rejectOnce.remove(offset)) {
+      return nullOffsetAcks
+          ? const WriteAck(false)
+          : WriteAck(false, lastWrittenOffset: _last);
+    }
     // A dropped write is acknowledged by the core but never reaches the node.
-    if (dropOnce.remove(offset)) return true;
+    if (dropOnce.remove(offset)) {
+      return nullOffsetAcks
+          ? const WriteAck(true)
+          : WriteAck(false, lastWrittenOffset: _last);
+    }
     flash[offset] = Uint8List.fromList(data);
-    return true;
+    _last = offset;
+    return nullOffsetAcks
+        ? const WriteAck(true)
+        : WriteAck(true, lastWrittenOffset: offset);
   }
 
   @override
@@ -30,8 +53,13 @@ class FakeTransport implements BootloaderTransport {
       throw const TransportException('timeout');
     }
     if (alwaysNullRead) return null;
-    return flash[offset] ?? (Uint8List(Bootloader.payloadSize)..fillRange(0, Bootloader.payloadSize, 0xFF));
+    return flash[offset] ??
+        (Uint8List(Bootloader.payloadSize)
+          ..fillRange(0, Bootloader.payloadSize, 0xFF));
   }
+
+  @override
+  Future<BootloaderIdentity?> identify(Duration timeout) async => identity;
 }
 
 Uint8List _image(int length) =>
@@ -54,8 +82,26 @@ void main() {
     expect(result.reads, 4);
   });
 
-  test('dropped chunks are corrected and the image re-verifies', () async {
-    final t = FakeTransport()..dropOnce.addAll({0, 64});
+  test('the write response lets a rejected chunk be retried immediately', () async {
+    // A rejected write is reported with a stale last-written offset, so the client retries it
+    // inside the write loop instead of waiting for the verify pass.
+    final t = FakeTransport()..rejectOnce.add(64);
+    final result = await _client(t).flash(_image(100));
+
+    expect(result.verified, isTrue);
+    expect(result.corrections, 0);
+    expect(result.passes, 1);
+    // 4 chunks issued, plus one retry of the rejected chunk.
+    expect(t.writes, 5);
+    expect(t.flash[64], isNotNull);
+  });
+
+  test('the passthrough catches a dropped write in the verify pass', () async {
+    // The passthrough ACKs without a last-written offset, so a dropped write only shows up as
+    // a read mismatch and is corrected.
+    final t = FakeTransport()
+      ..nullOffsetAcks = true
+      ..dropOnce.addAll({0, 64});
     final result = await _client(t).flash(_image(100));
 
     expect(result.verified, isTrue);
@@ -80,5 +126,21 @@ void main() {
     expect(result.verified, isFalse);
     expect(result.corrections, 0);
     expect(result.passes, greaterThan(1));
+  });
+
+  test('identify exposes the app size and name', () async {
+    final t = FakeTransport()
+      ..identity =
+          const BootloaderIdentity(appSize: 0x2A0000, name: 'Tamu core v2.0A');
+    final id = await _client(t).identify();
+
+    expect(id, isNotNull);
+    expect(id!.appSize, 0x2A0000);
+    expect(id.name, 'Tamu core v2.0A');
+  });
+
+  test('identify returns null when the device does not answer', () async {
+    final t = FakeTransport();
+    expect(await _client(t).identify(), isNull);
   });
 }

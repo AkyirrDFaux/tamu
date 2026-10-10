@@ -1,13 +1,18 @@
 /// Bootloader flashing client (Docs/Services/Bootloader.md).
 ///
-/// The update is written first, then confirmed by reading it back. A read timeout (or a relay
-/// `FAIL`) is retried with a growing timeout and never counts as a mismatch; only a successful
-/// read whose bytes differ is a mistake, and mistakes are rewritten before the next pass. The
-/// image is confirmed only when one full pass reads every chunk back identical in one go.
+/// The update is written first, then confirmed by reading it back. Writes are now
+/// acknowledged: every write request draws a write-response carrying the offset of the last
+/// successfully written chunk, so the client can reconcile a chunk against the device's
+/// acknowledged progress and resynchronise after a rejected chunk without read-back-verifying
+/// every chunk individually. Final verification of the image remains the app's job: one full
+/// read-back pass must come back identical before the image is confirmed. A read timeout (or
+/// a relay `FAIL`) is retried with a growing timeout and never counts as a mismatch; only a
+/// successful read whose bytes differ is a mistake, and mistakes are rewritten before the next
+/// pass.
 ///
 /// The low-level channel lives behind [BootloaderTransport] so the same algorithm drives both
-/// a node over the core's Device passthrough ([PassthroughTransport]) and, later, a core over
-/// its own USB bootloader.
+/// a node over the core's Device passthrough ([PassthroughTransport]) and the core over its
+/// own USB bootloader ([DirectUsbTransport]).
 library;
 
 import 'dart:async';
@@ -73,22 +78,62 @@ class FlashResult {
   });
 }
 
+/// A device's identity: the size of its main-binary space and its name.
+class BootloaderIdentity {
+  /// The app-space size in bytes (the identify-response's offset slot).
+  final int appSize;
+
+  /// The device name (the identify-response's 32-byte, null-padded payload).
+  final String name;
+
+  const BootloaderIdentity({required this.appSize, required this.name});
+
+  @override
+  String toString() => '$name ($appSize bytes)';
+}
+
+/// The outcome of one low-level write attempt.
+class WriteAck {
+  /// True when the channel reported the write accepted (and, when [lastWrittenOffset] is
+  /// known, that the device reached this chunk).
+  final bool accepted;
+
+  /// The offset of the device's last successfully written chunk, or null when the channel
+  /// cannot expose it (the node passthrough only relays a success flag). A value of
+  /// [Bootloader.nothingWritten] means nothing has been written yet.
+  final int? lastWrittenOffset;
+
+  const WriteAck(this.accepted, {this.lastWrittenOffset});
+}
+
 /// Low-level bootloader channel. One call is one attempt (no retries here); a timeout is
-/// reported as [TransportException]. [BootloaderClient] adds the pacing and the retry policy.
+/// reported as null (or [TransportException] when the transport chooses to throw).
+/// [BootloaderClient] adds the pacing and the retry policy.
 abstract class BootloaderTransport {
-  /// Writes one 32-byte chunk at [offset]. Returns true when the channel acknowledged it.
-  /// The passthrough cannot tell a node's SUCCESS from FAIL (both are an empty ack), so it
-  /// reports true and the verify pass catches a dropped write.
-  Future<bool> writeChunk(int offset, List<int> data, Duration timeout);
+  /// Writes one 32-byte chunk at [offset]. The core's own USB bootloader reports the
+  /// device's [WriteAck.lastWrittenOffset]; the passthrough only relays a success flag
+  /// (both SUCCESS and FAIL carry an empty ack), so it reports the flag with a null offset
+  /// and the verify pass catches a dropped write.
+  Future<WriteAck> writeChunk(int offset, List<int> data, Duration timeout);
 
   /// Reads 32 bytes at [offset]. Returns null when the node answered FAIL or the request was
   /// missed; throws [TransportException] on timeout.
   Future<Uint8List?> readChunk(int offset, Duration timeout);
+
+  /// Asks the device to identify itself. Returns null when it did not answer.
+  Future<BootloaderIdentity?> identify(Duration timeout);
 }
 
-/// The core's Device `0020/0021` passthrough: the core relays each raw bootloader frame onto
-/// its RSBus, so the app reaches whatever node is in bootloader mode without knowing its
-/// address. Writes give no acknowledgement from the node; reads return `offset + payload`.
+/// Core passthrough command IDs (Docs/Services/Bootloader.md "Core Bootloader Passthrough
+/// Commands (002x)"): the core relays the app's request onto its RSBus and echoes the reply.
+const int coreBootWrite = 0x20; // send write packet     (request: offset + payload)
+const int coreBootRead = 0x21; // request read          (request: offset)
+const int coreBootIdentify = 0x22; // request identification (response: app size + name)
+
+/// The core's Device `0020/0021/0022` passthrough: the core relays each raw bootloader frame
+/// onto its RSBus, so the app reaches whatever node is in bootloader mode without knowing its
+/// address. The write reply carries the success flag (the node's write-response offset is not
+/// relayed); reads return `offset + payload`; identification returns `app size + name`.
 class PassthroughTransport implements BootloaderTransport {
   /// The core that relays our raw frames onto its RSBus.
   final int coreId;
@@ -98,68 +143,116 @@ class PassthroughTransport implements BootloaderTransport {
   ConnectionManager get _link => ConnectionManager.instance;
 
   @override
-  Future<bool> writeChunk(int offset, List<int> data, Duration timeout) async {
+  Future<WriteAck> writeChunk(int offset, List<int> data, Duration timeout) async {
     final payload = <int>[...uint32ToBytes(offset), ...data];
-    await _link.request(coreId, ServiceType.device, 0x20,
+    final reply = await _link.requestWithFlags(coreId, ServiceType.device, coreBootWrite,
         payload: payload, timeout: timeout);
-    // SUCCESS and FAIL both carry an empty payload, so the write is treated as sent.
-    return true;
+    // The core ACKs the relay with its SUCCESS/FAIL flag; the node's own write-response
+    // offset is not relayed back here.
+    return WriteAck(reply.ok);
   }
 
   @override
   Future<Uint8List?> readChunk(int offset, Duration timeout) async {
-    final reply = await _link.request(coreId, ServiceType.device, 0x21,
+    final reply = await _link.request(coreId, ServiceType.device, coreBootRead,
         payload: uint32ToBytes(offset), timeout: timeout);
     if (reply.length < 4 + Bootloader.payloadSize) return null;
     return Uint8List.fromList(reply.sublist(4, 4 + Bootloader.payloadSize));
   }
+
+  @override
+  Future<BootloaderIdentity?> identify(Duration timeout) async {
+    final reply = await _link.requestWithFlags(
+        coreId, ServiceType.device, coreBootIdentify,
+        timeout: timeout);
+    if (!reply.ok || reply.payload.length < 4) return null;
+    final appSize = uint32FromBytes(reply.payload, 0);
+    final nameBytes = reply.payload.sublist(4);
+    var n = nameBytes.length;
+    while (n > 0 && nameBytes[n - 1] == 0) {
+      n--;
+    }
+    return BootloaderIdentity(
+        appSize: appSize, name: String.fromCharCodes(nameBytes.sublist(0, n)));
+  }
 }
 
-/// The core's own USB bootloader (Docs/Services/Bootloader.md): the raw 0xCA..0xBC frames
-/// go straight to the USB Serial/JTAG port with no core relay. Reads parse the raw
-/// read-response frames off the same port.
+/// The core's own USB bootloader (Docs/Services/Bootloader.md): the raw 0xCA..0xBC frames go
+/// straight to the USB Serial/JTAG port with no core relay. Each request's response frame is
+/// parsed off the same port; a write is acknowledged by a write-response carrying the offset
+/// of the last successfully written chunk, so the client can reconcile its progress.
 class DirectUsbTransport implements BootloaderTransport {
   final UsbTransport usb;
 
   DirectUsbTransport(this.usb);
 
   @override
-  Future<bool> writeChunk(int offset, List<int> data, Duration timeout) async {
-    usb.writeRaw(Bootloader.encodeWrite(offset, data));
-    return true;
+  Future<WriteAck> writeChunk(int offset, List<int> data, Duration timeout) async {
+    final reply = await _requestFrame(Bootloader.encodeWrite(offset, data),
+        command: Bootloader.cmdWriteResponse,
+        size: Bootloader.readRequestSize,
+        timeout: timeout);
+    if (reply == null) return const WriteAck(false);
+    final last = Bootloader.offset(reply);
+    return WriteAck(last == offset, lastWrittenOffset: last);
   }
 
   @override
   Future<Uint8List?> readChunk(int offset, Duration timeout) async {
+    final reply = await _requestFrame(Bootloader.encodeReadRequest(offset),
+        command: Bootloader.cmdReadResponse,
+        size: Bootloader.dataSize,
+        matchOffset: offset,
+        timeout: timeout);
+    if (reply == null) return null;
+    return Uint8List.fromList(reply.sublist(
+        Bootloader.headerSize, Bootloader.headerSize + Bootloader.payloadSize));
+  }
+
+  @override
+  Future<BootloaderIdentity?> identify(Duration timeout) async {
+    final reply = await _requestFrame(Bootloader.encodeIdentifyRequest(),
+        command: Bootloader.cmdIdentifyResponse,
+        size: Bootloader.dataSize,
+        timeout: timeout);
+    if (reply == null) return null;
+    return BootloaderIdentity(
+        appSize: Bootloader.appSize(reply), name: Bootloader.name(reply));
+  }
+
+  /// Writes [request] and waits for its response frame: a valid frame of [command] and
+  /// [size], matched additionally on [matchOffset] when given (a late reply from a previous
+  /// transaction at another offset is dropped rather than returned). Returns null on timeout.
+  Future<Uint8List?> _requestFrame(List<int> request,
+      {required int command,
+      required int size,
+      int? matchOffset,
+      required Duration timeout}) async {
     final buffer = <int>[];
     final completer = Completer<Uint8List?>();
     final sub = usb.linkBytes.listen((chunk) {
+      if (completer.isCompleted) return;
       buffer.addAll(chunk);
       while (buffer.isNotEmpty) {
         if (buffer[0] != Bootloader.start) {
           buffer.removeAt(0);
           continue;
         }
-        if (buffer.length < Bootloader.dataSize) break;
-        final frame = buffer.sublist(0, Bootloader.dataSize);
-        // Match the reply to the request: a valid read-response frame (structure + parity)
-        // whose offset equals the one we asked for. A late reply from a previous read is
-        // dropped rather than returned for the wrong offset.
-        if (Bootloader.decode(frame) == Bootloader.cmdReadResponse &&
-            Bootloader.offset(frame) == offset) {
-          buffer.removeRange(0, Bootloader.dataSize);
-          if (!completer.isCompleted) {
-            completer.complete(Uint8List.fromList(
-                frame.sublist(Bootloader.headerSize,
-                    Bootloader.headerSize + Bootloader.payloadSize)));
-          }
+        if (buffer.length < size) break;
+        final frame = buffer.sublist(0, size);
+        // Match the reply to the request: a valid frame (structure + parity) of the expected
+        // command, and the requested offset when one is expected.
+        if (Bootloader.decode(frame) == command &&
+            (matchOffset == null || Bootloader.offset(frame) == matchOffset)) {
+          buffer.removeRange(0, size);
+          completer.complete(Uint8List.fromList(frame));
           return;
         }
         buffer.removeAt(0);
       }
     });
     try {
-      usb.writeRaw(Bootloader.encodeReadRequest(offset));
+      usb.writeRaw(request);
       return await completer.future.timeout(timeout);
     } on TimeoutException {
       return null;
@@ -185,8 +278,9 @@ class BootloaderClient {
 
   /// Delay between write requests. A node erases the 64-byte page on the first half of a
   /// chunk and programs both halves; that cycle outlasts a request (measured ~40 ms), so a
-  /// frame arriving too soon is lost. Writes are paced past it; a dropped write is still
-  /// acceptable because the verify/correct pass catches it.
+  /// frame arriving too soon is lost. Writes are paced past it; with the write acknowledgement
+  /// a dropped write is retried immediately, and the verify/correct pass still catches any
+  /// that slipped through.
   final Duration writePacing;
 
   /// Timeout growth factor applied on each retry ("dynamic adjustment").
@@ -217,14 +311,38 @@ class BootloaderClient {
     return Duration(microseconds: grown.clamp(1000, 10000000));
   }
 
-  /// Writes one 32-byte chunk, retrying a timeout with a growing window and pacing after the
-  /// attempt. Returns true when the channel acknowledged the last attempt.
+  /// Asks the device to identify itself (app size + name), retrying a miss with a growing
+  /// window. Returns null when every attempt was missed.
+  Future<BootloaderIdentity?> identify() async {
+    var timeout = const Duration(seconds: 1);
+    for (var attempt = 0; attempt < readAttempts; attempt++) {
+      try {
+        final id = await transport.identify(timeout);
+        if (id != null) return id;
+      } on TransportException {
+        // Timeout: retry with a longer window.
+      }
+      timeout = _grow(timeout);
+    }
+    return null;
+  }
+
+  /// Writes one 32-byte chunk, retrying a timeout or a rejected write with a growing window
+  /// and pacing after the attempt. When the channel exposes the device's last-written offset,
+  /// a write is only accepted once that offset names this chunk - so a rejected or dropped
+  /// chunk is retried here instead of being left for the verify pass.
   Future<bool> writeChunk(int offset, List<int> data) async {
     var timeout = const Duration(seconds: 1);
     var ok = false;
     for (var attempt = 0; attempt < writeAttempts; attempt++) {
       try {
-        ok = await transport.writeChunk(offset, Bootloader.padPayload(data), timeout);
+        final ack =
+            await transport.writeChunk(offset, Bootloader.padPayload(data), timeout);
+        ok = ack.accepted;
+        final last = ack.lastWrittenOffset;
+        // Reconcile against the device's acknowledged progress: a last-written offset that
+        // does not name this chunk means the device did not program it, so retry.
+        if (ok && last != null && last != offset) ok = false;
         if (ok) break;
       } on TransportException {
         // Timeout: retry with a longer window.
@@ -253,9 +371,10 @@ class BootloaderClient {
     return null;
   }
 
-  /// Flashes [image] and verifies it by read-back. The whole image is written first; then
-  /// every chunk is read back in one pass, mistakes are rewritten, and the pass repeats
-  /// until one pass finds nothing to correct. Returns [FlashResult.verified] only then.
+  /// Flashes [image] and verifies it by read-back. The whole image is written first (each
+  /// chunk confirmed against the device's write acknowledgement); then every chunk is read
+  /// back in one pass, mistakes are rewritten, and the pass repeats until one pass finds
+  /// nothing to correct. Returns [FlashResult.verified] only then.
   Future<FlashResult> flash(
     Uint8List image, {
     void Function(FlashProgress progress)? onProgress,
@@ -264,7 +383,8 @@ class BootloaderClient {
     final total = chunks.length;
     var writes = 0, reads = 0, corrections = 0;
 
-    // 1. Write the entire binary.
+    // 1. Write the entire binary. Each write is acknowledged, so a rejected/dropped chunk is
+    //    reconciled and retried right here rather than deferred to the verify pass.
     for (var i = 0; i < total; i++) {
       await writeChunk(chunks[i].offset, chunks[i].data);
       writes++;
