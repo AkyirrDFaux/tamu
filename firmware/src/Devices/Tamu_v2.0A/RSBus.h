@@ -217,10 +217,10 @@ int RS485ReceiveRaw(uint8_t *Out, size_t Cap, uint32_t TimeoutMs)
         if (Got < Cap)
             Out[Got++] = B;
         if (Got >= 2) {
-            uint16_t Need = Bootloader::FrameSize((uint8_t)(Out[1] & 0x03));
+            uint16_t Need = Bootloader::FrameSize((uint8_t)(Out[1] & 0x07));
             if (Need == 0 || Need > Cap) { InFrame = false; Got = 0; continue; } // bad control
             if (Got >= Need) {
-                if (Bootloader::Decode(Out, Need)) return (int)Need;
+                if (Bootloader::Decode(Out, Need) != Bootloader::INVALID) return (int)Need;
                 InFrame = false; Got = 0; // corrupt frame: resync on the next 0xCA
             }
         }

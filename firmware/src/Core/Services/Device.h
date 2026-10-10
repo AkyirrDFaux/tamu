@@ -183,25 +183,76 @@ void DeviceService::HandleSNDB(const PacketFrame &Frame)
 
 // The app sends these to the connected core; the core relays the raw frame onto its RSBus.
 // The frame carries no address, so this is a broadcast: every node currently in bootloader
-// mode on that bus receives it. A write has no acknowledgement from the node - the app
-// paces and verifies with a read.
+// mode on that bus receives it. Both writes and reads are acknowledged by the node and the
+// reply is carried back into the passthrough response (Docs/Services/Bootloader.md).
 inline void DeviceService::HandleBootloaderPassthrough(const PacketFrame &Frame, uint8_t Cid)
 {
+    // cid == 0x22: Request identification (no request payload). The node answers with an
+    // identify response: the app-space size in the offset slot and the 32-byte null-padded
+    // device name as the payload. The request can be lost on the bus, so retry a few times.
+    if (Cid == 0x22)
+    {
+        for (int Attempt = 0; Attempt < 3; Attempt++)
+        {
+            uint8_t Req[Bootloader::READ_REQ_SIZE];
+            Bootloader::EncodeIdentifyRequest(Req);
+            if (!RS485SendRaw(Req, Bootloader::READ_REQ_SIZE))
+                continue;
+            uint8_t Resp[Bootloader::MAX_FRAME_SIZE];
+            int N = RS485ReceiveRaw(Resp, sizeof(Resp), 200);
+            if (N == Bootloader::DATA_SIZE &&
+                Bootloader::Decode(Resp, (uint16_t)N) == Bootloader::CMD_IDENTIFY_RESP)
+            {
+                uint8_t Out[4 + Bootloader::NAME_SIZE];
+                memcpy(Out, Resp + 2, 4); // app-space size (offset slot)
+                memcpy(Out + 4, Bootloader::Payload(Resp), Bootloader::NAME_SIZE);
+                PacketConstruct(&TxFrame, Frame.IdSrc, Frame.Cmd, Frame.Trid,
+                                 FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_SUCCESS,
+                                 Out, sizeof(Out));
+                DispatchPacket(TxFrame);
+                return;
+            }
+        }
+        PacketConstruct(&TxFrame, Frame.IdSrc, Frame.Cmd, Frame.Trid,
+                         FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_FAIL, nullptr, 0);
+        DispatchPacket(TxFrame);
+        return;
+    }
+
     if (PayloadBytes(Frame) < 4)
         return;
 
     uint32_t Offset = *reinterpret_cast<const uint32_t *>(Frame.Payload);
 
     if (Cid == 0x20)
-    { // Send write packet: Offset, Payload (32)
+    { // Send write packet: Offset, Payload (32). v2: every write - accepted or rejected - is
+      // answered by a 7-byte write response carrying the offset of the last successfully
+      // written chunk; relay that offset so the app can resynchronise after a rejected chunk.
         if (PayloadBytes(Frame) < 4 + Bootloader::PAYLOAD_SIZE)
             return;
         uint8_t Raw[Bootloader::DATA_SIZE];
         Bootloader::EncodeWrite(Offset, Frame.Payload + 4, Raw);
-        bool Ok = RS485SendRaw(Raw, Bootloader::DATA_SIZE);
+        for (int Attempt = 0; Attempt < 3; Attempt++)
+        {
+            if (!RS485SendRaw(Raw, Bootloader::DATA_SIZE))
+                continue;
+            uint8_t Resp[Bootloader::MAX_FRAME_SIZE];
+            int N = RS485ReceiveRaw(Resp, sizeof(Resp), 200);
+            if (N == Bootloader::READ_REQ_SIZE &&
+                Bootloader::Decode(Resp, (uint16_t)N) == Bootloader::CMD_WRITE_RESP)
+            {
+                uint32_t Last = Bootloader::Offset(Resp);
+                uint8_t Out[4];
+                memcpy(Out, &Last, 4);
+                PacketConstruct(&TxFrame, Frame.IdSrc, Frame.Cmd, Frame.Trid,
+                                 FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_SUCCESS,
+                                 Out, sizeof(Out));
+                DispatchPacket(TxFrame);
+                return;
+            }
+        }
         PacketConstruct(&TxFrame, Frame.IdSrc, Frame.Cmd, Frame.Trid,
-                         FLAG_TYPE | FLAG_START | FLAG_STOP | (Ok ? FLAG_SUCCESS : FLAG_FAIL),
-                         nullptr, 0);
+                         FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_FAIL, nullptr, 0);
         DispatchPacket(TxFrame);
         return;
     }
@@ -467,6 +518,7 @@ bool DeviceService::Handle(const PacketFrame &Frame)
 
         case 0x20: // Bootloader passthrough: send write packet
         case 0x21: // Bootloader passthrough: request read
+        case 0x22: // Bootloader passthrough: request identification
         {
             HandleBootloaderPassthrough(Frame, Cid);
             break;
