@@ -30,8 +30,8 @@ inline void SerialNumberToString(const SerialNumber &Sn, char *Buffer, size_t Bu
 //   extern const DeviceType kDeviceType = DeviceType::Tamu_v2_0A;
 //   extern const uint32_t kCapabilities = 0;
 //   const SerialNumber& GetSerialNumber() { ... }
-extern const DeviceType kDeviceType;
-extern const uint32_t kCapabilities;
+extern const DeviceType KDeviceType;
+extern const uint32_t KCapabilities;
 const SerialNumber &GetSerialNumber();
 
 // Set when Core-discover detects another core with the SAME net-ID on the bus. The core

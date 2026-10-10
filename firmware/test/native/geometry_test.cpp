@@ -42,24 +42,24 @@ static int checks = 0, failures = 0;
 // Number has no double constructor by design (fixed point is the only representation), so the
 // test states its intent as "value * 65536" in one place.
 static Number num(double value) { return Number::FromRaw((int32_t)(value * 65536.0)); }
-static double toD(Number value) { return value.Value / 65536.0; }
+static double ToD(Number value) { return value.Value / 65536.0; }
 
 static const double PI = 3.14159265358979;
 
-static GeometryParams Make(Geometries shape, double sizeX, double sizeY, double fade,
+static GeometryParams Make(Geometries shape, double SizeX, double SizeY, double fade,
                            double angles = 0.0, uint8_t points = 0, double rounding = 0.0)
 {
-    GeometryParams p;
-    p.Shape = shape;
-    p.SizeX = num(sizeX);
-    p.SizeY = num(sizeY);
-    p.Fade = num(fade);
-    p.Rounding = num(rounding);
-    p.Angles = num(angles);
-    p.PointNumber = points;
-    p.Alpha = N(1);
-    PrepareGeometry(p);
-    return p;
+    GeometryParams Params;
+    Params.Shape = shape;
+    Params.SizeX = num(SizeX);
+    Params.SizeY = num(SizeY);
+    Params.Fade = num(fade);
+    Params.Rounding = num(rounding);
+    Params.Angles = num(angles);
+    Params.PointNumber = points;
+    Params.Alpha = N(1);
+    PrepareGeometry(Params);
+    return Params;
 }
 
 static Vector<2> At(double x, double y) { return Vector<2>{num(x), num(y)}; }
@@ -67,15 +67,15 @@ static Vector<2> At(double x, double y) { return Vector<2>{num(x), num(y)}; }
 // Reflects P across the line through the origin at angle `phi` (phi = 0 is the x axis).
 static Vector<2> Mirror(double x, double y, double phi)
 {
-    const double c = std::cos(2 * phi), s = std::sin(2 * phi);
-    return At(c * x + s * y, s * x - c * y);
+    const double Cos = std::cos(2 * phi), Sin = std::sin(2 * phi);
+    return At(Cos * x + Sin * y, Sin * x - Cos * y);
 }
 
 // Rotates P by `phi` about the origin.
 static Vector<2> Rotate(double x, double y, double phi)
 {
-    const double c = std::cos(phi), s = std::sin(phi);
-    return At(c * x - s * y, s * x + c * y);
+    const double Cos = std::cos(phi), Sin = std::sin(phi);
+    return At(Cos * x - Sin * y, Sin * x + Cos * y);
 }
 
 // Mirror images are compared with a small tolerance: the two sides take different
@@ -85,10 +85,10 @@ static Vector<2> Rotate(double x, double y, double phi)
 // The shapes under test carry a small fade for the same reason.
 static const int AlphaTol = 2;
 
-static bool Close(uint8_t a, uint8_t b)
+static bool Close(uint8_t Alpha, uint8_t Beta)
 {
-    const int d = (int)a - (int)b;
-    return d <= AlphaTol && d >= -AlphaTol;
+    const int Diff = (int)Alpha - (int)Beta;
+    return Diff <= AlphaTol && Diff >= -AlphaTol;
 }
 
 // Near a shape's edge the alpha is genuinely discontinuous: a point exactly on the boundary
@@ -96,25 +96,25 @@ static bool Close(uint8_t a, uint8_t b)
 // star's sector steps do this at every boundary line). Points in the fade band are therefore
 // skipped - the comparison still catches any real asymmetry, which shows up as a *definite*
 // inside vs *definite* outside.
-static bool OnEdge(uint8_t a) { return a > 4 && a < 251; }
+static bool OnEdge(uint8_t Alpha) { return Alpha > 4 && Alpha < 251; }
 
 // Asserts ShapeAlpha is a mirror symmetry about `phi` over a grid, and reports each failure
 // once per axis rather than per point (the sweep is deliberately dense).
-static void CheckMirror(const GeometryParams &p, const char *label, double phi)
+static void CheckMirror(const GeometryParams &Params, const char *label, double phi)
 {
     int bad = 0, compared = 0;
     for (double x = -8; x <= 8; x += 0.5)
         for (double y = -8; y <= 8; y += 0.5)
         {
-            const uint8_t a = ShapeAlpha(p, At(x, y));
-            const uint8_t m = ShapeAlpha(p, Mirror(x, y, phi));
-            if (OnEdge(a) || OnEdge(m)) continue;
+            const uint8_t Alpha = ShapeAlpha(Params, At(x, y));
+            const uint8_t Mirrored = ShapeAlpha(Params, Mirror(x, y, phi));
+            if (OnEdge(Alpha) || OnEdge(Mirrored)) continue;
             compared++;
-            if (!Close(a, m))
+            if (!Close(Alpha, Mirrored))
             {
                 if (bad == 0)
                     std::printf("  [%s] mirror %.1f deg: (%g,%g) %u vs %u\n", label,
-                                phi * 180 / PI, x, y, (unsigned)a, (unsigned)m);
+                                phi * 180 / PI, x, y, (unsigned)Alpha, (unsigned)Mirrored);
                 bad++;
             }
         }
@@ -134,21 +134,21 @@ static void CheckMirror(const GeometryParams &p, const char *label, double phi)
 }
 
 // Asserts the shape is invariant under a rotation by `phi`.
-static void CheckRotate(const GeometryParams &p, const char *label, double phi)
+static void CheckRotate(const GeometryParams &Params, const char *label, double phi)
 {
     int bad = 0, compared = 0;
     for (double x = -8; x <= 8; x += 0.5)
         for (double y = -8; y <= 8; y += 0.5)
         {
-            const uint8_t a = ShapeAlpha(p, At(x, y));
-            const uint8_t r = ShapeAlpha(p, Rotate(x, y, phi));
-            if (OnEdge(a) || OnEdge(r)) continue;
+            const uint8_t Alpha = ShapeAlpha(Params, At(x, y));
+            const uint8_t Rotated = ShapeAlpha(Params, Rotate(x, y, phi));
+            if (OnEdge(Alpha) || OnEdge(Rotated)) continue;
             compared++;
-            if (!Close(a, r))
+            if (!Close(Alpha, Rotated))
             {
                 if (bad == 0)
                     std::printf("  [%s] rotate %.1f deg: (%g,%g) %u vs %u\n", label,
-                                phi * 180 / PI, x, y, (unsigned)a, (unsigned)r);
+                                phi * 180 / PI, x, y, (unsigned)Alpha, (unsigned)Rotated);
                 bad++;
             }
         }
@@ -171,27 +171,27 @@ static void CheckRotate(const GeometryParams &p, const char *label, double phi)
 // meet there), so a grid sample lands exactly on a boundary ray and the alpha there depends on
 // which side a rounding picks - not on whether the sector math is right. These sample polar
 // points offset from every boundary instead, where the shape is well defined.
-static void CheckSymmetryPolar(const GeometryParams &p, const char *label, double sector,
+static void CheckSymmetryPolar(const GeometryParams &Params, const char *label, double sector,
                                double phi, bool rotate)
 {
     int bad = 0, compared = 0;
     for (int k = 0; k < 40; k++)
     {
         const double theta = (k + 0.37) * sector / 4.0;
-        for (double r : {0.5, 1.5, 3.0, 4.5, 6.0, 7.0})
+        for (double Radius : {0.5, 1.5, 3.0, 4.5, 6.0, 7.0})
         {
-            const double x = r * std::cos(theta), y = r * std::sin(theta);
-            const uint8_t a = ShapeAlpha(p, At(x, y));
-            const Vector<2> q = rotate ? Rotate(x, y, phi) : Mirror(x, y, phi);
-            const uint8_t b = ShapeAlpha(p, q);
+            const double x = Radius * std::cos(theta), y = Radius * std::sin(theta);
+            const uint8_t Alpha = ShapeAlpha(Params, At(x, y));
+            const Vector<2> Reflected = rotate ? Rotate(x, y, phi) : Mirror(x, y, phi);
+            const uint8_t Beta = ShapeAlpha(Params, Reflected);
             compared++;
-            if (OnEdge(a) || OnEdge(b)) continue;
-            if (!Close(a, b))
+            if (OnEdge(Alpha) || OnEdge(Beta)) continue;
+            if (!Close(Alpha, Beta))
             {
                 if (bad == 0)
                     std::printf("  [%s] %s %.1f deg: (%g,%g) %u vs %u\n", label,
                                 rotate ? "rotate" : "mirror", phi * 180 / PI, x, y,
-                                (unsigned)a, (unsigned)b);
+                                (unsigned)Alpha, (unsigned)Beta);
                 bad++;
             }
         }
@@ -232,44 +232,44 @@ int main()
 
     // --- Circle: Size is the diameter, so the radius is Size/2 ------------------
     {
-        GeometryParams c = Make(Geometries::Circle, 10, 10, 0);
-        CHECK(c.HalfX.Value == num(5).Value);
-        CHECK_EQ(ShapeAlpha(c, At(0, 0)), 255);
-        CHECK_EQ(ShapeAlpha(c, At(3, 4)), 255);   // r = 5, exactly on the radius
-        CHECK_EQ(ShapeAlpha(c, At(4.5, 0)), 255); // inside
-        CHECK_EQ(ShapeAlpha(c, At(5.5, 0)), 0);   // outside
-        CHECK_EQ(ShapeAlpha(c, At(0, -30)), 0);
-        CheckMirror(c, "Circle", 0.0);
-        CheckMirror(c, "Circle", PI / 2);
-        CheckMirror(c, "Circle", PI / 4); // a circle is symmetric about every axis
-        CheckRotate(c, "Circle", PI / 3);
+        GeometryParams Circle = Make(Geometries::Circle, 10, 10, 0);
+        CHECK(Circle.HalfX.Value == num(5).Value);
+        CHECK_EQ(ShapeAlpha(Circle, At(0, 0)), 255);
+        CHECK_EQ(ShapeAlpha(Circle, At(3, 4)), 255);   // r = 5, exactly on the radius
+        CHECK_EQ(ShapeAlpha(Circle, At(4.5, 0)), 255); // inside
+        CHECK_EQ(ShapeAlpha(Circle, At(5.5, 0)), 0);   // outside
+        CHECK_EQ(ShapeAlpha(Circle, At(0, -30)), 0);
+        CheckMirror(Circle, "Circle", 0.0);
+        CheckMirror(Circle, "Circle", PI / 2);
+        CheckMirror(Circle, "Circle", PI / 4); // a circle is symmetric about every axis
+        CheckRotate(Circle, "Circle", PI / 3);
     }
 
     // --- The fade is monotone and bounded --------------------------------------
     {
-        GeometryParams c = Make(Geometries::Circle, 10, 10, 4); // 4 px soft edge
+        GeometryParams Circle = Make(Geometries::Circle, 10, 10, 4); // 4 px soft edge
         int prev = 256;
         for (int i = 0; i <= 60; i++)
         {
-            const uint8_t a = ShapeAlpha(c, At(i * 0.25, 0));
-            CHECK(a <= prev); // non-increasing with radius
-            prev = a;
+            const uint8_t Alpha = ShapeAlpha(Circle, At(i * 0.25, 0));
+            CHECK(Alpha <= prev); // non-increasing with radius
+            prev = Alpha;
         }
-        CHECK_EQ(ShapeAlpha(c, At(0, 0)), 255);
-        CHECK_EQ(ShapeAlpha(c, At(20, 0)), 0);
+        CHECK_EQ(ShapeAlpha(Circle, At(0, 0)), 255);
+        CHECK_EQ(ShapeAlpha(Circle, At(20, 0)), 0);
     }
 
     // --- Square / Rectangle: extents, both axes, and both diagonals -------------
     for (const auto shape : {Geometries::Square, Geometries::Rectangle})
     {
-        GeometryParams p = Make(shape, 8, 6, 0.5);
-        CHECK_EQ(ShapeAlpha(p, At(0, 0)), 255);
-        CHECK_EQ(ShapeAlpha(p, At(3.5, 2.5)), 255); // inside HalfX = 4, HalfY = 3
-        CHECK_EQ(ShapeAlpha(p, At(4.5, 0)), 0);     // outside HalfX
-        CHECK_EQ(ShapeAlpha(p, At(0, 3.5)), 0);     // outside HalfY
-        CheckMirror(p, "Square/Rect", 0.0);
-        CheckMirror(p, "Square/Rect", PI / 2);
-        CheckRotate(p, "Square/Rect", PI);
+        GeometryParams Params = Make(shape, 8, 6, 0.5);
+        CHECK_EQ(ShapeAlpha(Params, At(0, 0)), 255);
+        CHECK_EQ(ShapeAlpha(Params, At(3.5, 2.5)), 255); // inside HalfX = 4, HalfY = 3
+        CHECK_EQ(ShapeAlpha(Params, At(4.5, 0)), 0);     // outside HalfX
+        CHECK_EQ(ShapeAlpha(Params, At(0, 3.5)), 0);     // outside HalfY
+        CheckMirror(Params, "Square/Rect", 0.0);
+        CheckMirror(Params, "Square/Rect", PI / 2);
+        CheckRotate(Params, "Square/Rect", PI);
     }
     {
         // A square is also symmetric about its diagonals (a rectangle is not).
@@ -280,12 +280,12 @@ int main()
 
     // --- Circle / Ellipse: a circle has every axis, an ellipse its two ----------
     {
-        GeometryParams c = Make(Geometries::Circle, 12, 12, 1);
-        GeometryParams e = Make(Geometries::Ellipse, 12, 8, 1);
-        CheckMirror(c, "Circle(fade)", PI / 6);
-        CheckMirror(e, "Ellipse", 0.0);
-        CheckMirror(e, "Ellipse", PI / 2);
-        CheckRotate(e, "Ellipse", PI);
+        GeometryParams Circle = Make(Geometries::Circle, 12, 12, 1);
+        GeometryParams Ellipse = Make(Geometries::Ellipse, 12, 8, 1);
+        CheckMirror(Circle, "Circle(fade)", PI / 6);
+        CheckMirror(Ellipse, "Ellipse", 0.0);
+        CheckMirror(Ellipse, "Ellipse", PI / 2);
+        CheckRotate(Ellipse, "Ellipse", PI);
         // An ellipse with equal semi-axes is a circle (up to the fixed-point path).
         GeometryParams e2 = Make(Geometries::Ellipse, 10, 10, 0);
         GeometryParams c2 = Make(Geometries::Circle, 10, 10, 0);
@@ -293,25 +293,25 @@ int main()
         for (double x = -6; x <= 6; x += 1.0)
             for (double y = -6; y <= 6; y += 1.0)
             {
-                const int d = (int)ShapeAlpha(e2, At(x, y)) - (int)ShapeAlpha(c2, At(x, y));
-                if (d < 0 ? -d > worst : d > worst) worst = d < 0 ? -d : d;
+                const int Diff = (int)ShapeAlpha(e2, At(x, y)) - (int)ShapeAlpha(c2, At(x, y));
+                if (Diff < 0 ? -Diff > worst : Diff > worst) worst = Diff < 0 ? -Diff : Diff;
             }
         CHECK(worst <= 2);
     }
 
     // --- Triangle / Trapezoid / DoubleParabola: symmetric under x -> -x only ---
     {
-        GeometryParams t = Make(Geometries::Triangle, 8, 8, 1.5);
+        GeometryParams Tri = Make(Geometries::Triangle, 8, 8, 1.5);
         GeometryParams tr = Make(Geometries::Trapezoid, 10, 6, 1.5, 30);
         GeometryParams dp = Make(Geometries::DoubleParabola, 8, 6, 1.5);
-        for (auto *p : {&t, &tr, &dp})
+        for (auto *Params : {&Tri, &tr, &dp})
         {
-            CheckMirror(*p, "upward shape", PI / 2);
-            CheckRotate(*p, "upward shape", 0.0); // trivial: rotation by 0
+            CheckMirror(*Params, "upward shape", PI / 2);
+            CheckRotate(*Params, "upward shape", 0.0); // trivial: rotation by 0
         }
-        CHECK_EQ(ShapeAlpha(t, At(0, 0)), 255);
-        CHECK_EQ(ShapeAlpha(t, At(0, 6)), 0);  // above the apex
-        CHECK_EQ(ShapeAlpha(t, At(100, 0)), 0);
+        CHECK_EQ(ShapeAlpha(Tri, At(0, 0)), 255);
+        CHECK_EQ(ShapeAlpha(Tri, At(0, 6)), 0);  // above the apex
+        CHECK_EQ(ShapeAlpha(Tri, At(100, 0)), 0);
         CHECK_EQ(ShapeAlpha(tr, At(0, 0)), 255);
         CHECK(tr.TrapTopHalf.Value < tr.HalfX.Value); // top narrower than the bottom
         CHECK_EQ(ShapeAlpha(tr, At(20, 0)), 0);
@@ -341,7 +341,7 @@ int main()
         GeometryParams poly = Make(Geometries::Polygon, 8, 8, 0.5, 0, 5);
         CHECK_EQ(ShapeAlpha(poly, At(0, 0)), 255);
         CHECK_EQ(ShapeAlpha(poly, At(8.5, 0)), 0); // beyond the radius
-        const double sector = toD(poly.PolySector), half = toD(poly.PolyHalfSector);
+        const double sector = ToD(poly.PolySector), half = ToD(poly.PolyHalfSector);
         CHECK(std::fabs(half - sector / 2) < 1e-6);
         CheckSymmetryPolar(poly, "Polygon(5)", sector, 0.0, false);
         CheckSymmetryPolar(poly, "Polygon(5)", sector, half, false);
@@ -350,24 +350,24 @@ int main()
         CheckSymmetryPolar(poly, "Polygon(5)", sector, 2 * sector, true);
         // An even-sided polygon is also symmetric about the y axis (90 deg).
         GeometryParams poly6 = Make(Geometries::Polygon, 8, 8, 0.5, 0, 6);
-        CheckSymmetryPolar(poly6, "Polygon(6)", toD(poly6.PolySector), PI / 2, false);
+        CheckSymmetryPolar(poly6, "Polygon(6)", ToD(poly6.PolySector), PI / 2, false);
     }
 
     // --- Star: 2n sectors alternating outer/inner, inner = Angles * R ----------
     {
         GeometryParams star = Make(Geometries::Star, 8, 8, 0.5, 0.5, 5);
-        CHECK(toD(star.StarInnerR) == 4.0);
-        CHECK(std::fabs(toD(star.PolySector) * 2 * 5 - 2 * PI) < 0.01); // 2n sectors
+        CHECK(ToD(star.StarInnerR) == 4.0);
+        CHECK(std::fabs(ToD(star.PolySector) * 2 * 5 - 2 * PI) < 0.01); // 2n sectors
         CHECK_EQ(ShapeAlpha(star, At(0, 0)), 255);
-        const double half = toD(star.PolyHalfSector);
+        const double half = ToD(star.PolyHalfSector);
         // The outer wedges are centred on the bisectors, so a point inside the outer radius
         // but outside the inner one is cut at the inner bisectors.
-        const double outer = 0.6 * 8.0, r = outer;
-        CHECK(ShapeAlpha(star, Rotate(r, 0, half)) > 224);        // outer wedge bisector
-        CHECK(ShapeAlpha(star, Rotate(r, 0, 3 * half)) < 32);     // inner wedge bisector
+        const double outer = 0.6 * 8.0, Radius = outer;
+        CHECK(ShapeAlpha(star, Rotate(Radius, 0, half)) > 224);        // outer wedge bisector
+        CHECK(ShapeAlpha(star, Rotate(Radius, 0, 3 * half)) < 32);     // inner wedge bisector
         CHECK(ShapeAlpha(star, Rotate(0.4 * 8.0, 0, 3 * half)) > 224); // inside the inner
-        CheckSymmetryPolar(star, "Star", toD(star.PolySector), half, false);
-        CheckSymmetryPolar(star, "Star", toD(star.PolySector), 2 * PI / 5, true);
+        CheckSymmetryPolar(star, "Star", ToD(star.PolySector), half, false);
+        CheckSymmetryPolar(star, "Star", ToD(star.PolySector), 2 * PI / 5, true);
     }
 
     // --- Noise: deterministic and in range ------------------------------------
@@ -378,9 +378,9 @@ int main()
         for (double x = -5; x <= 5; x += 0.9)
             for (double y = -5; y <= 5; y += 0.9)
             {
-                const uint8_t a = ShapeAlpha(n1, At(x, y));
-                CHECK_EQ(ShapeAlpha(n2, At(x, y)), a);
-                CHECK_EQ(ShapeAlpha(n1, At(x, y)), a);
+                const uint8_t Alpha = ShapeAlpha(n1, At(x, y));
+                CHECK_EQ(ShapeAlpha(n2, At(x, y)), Alpha);
+                CHECK_EQ(ShapeAlpha(n1, At(x, y)), Alpha);
             }
     }
 
@@ -399,14 +399,14 @@ int main()
                 {
                     for (double angles : {0.0, 0.25, 45.0, 160.0})
                     {
-                        GeometryParams p = Make(shape, size, size * 0.75, fade, angles, points, 1.5);
-                        p.NoiseSeed = (uint32_t)(size * 1000) ^ points;
+                        GeometryParams Params = Make(shape, size, size * 0.75, fade, angles, points, 1.5);
+                        Params.NoiseSeed = (uint32_t)(size * 1000) ^ points;
                         for (double x = -3 * size; x <= 3 * size; x += size)
                             for (double y = -3 * size; y <= 3 * size; y += size)
                             {
-                                const uint8_t a = ShapeAlpha(p, At(x, y));
-                                CHECK(a <= 255); // the return type; asserts no wrap
-                                (void)a;
+                                const uint8_t Alpha = ShapeAlpha(Params, At(x, y));
+                                CHECK(Alpha <= 255); // the return type; asserts no wrap
+                                (void)Alpha;
                             }
                     }
                 }

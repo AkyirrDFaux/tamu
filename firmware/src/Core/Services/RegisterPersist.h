@@ -14,22 +14,22 @@
 // single copy in; targeted saves/recalls are the app's job (a direct file write at the field's
 // offset).
 
-static_assert(sizeof(staticPer) <= MEMORY_BACKUP_CAP,
+static_assert(sizeof(StaticPer) <= MEMORY_BACKUP_CAP,
               "static persistent space must fit the backup buffer");
 
 inline bool RegisterService::StaticSaveAll() {
     // Snapshot the live System fields into the space (the only persistent values not already
     // written through it), then mirror the whole space to .SV in one write.
 #ifdef TYPE_CORE
-    staticPer.System.NetId = DeviceStatus.NetId;
+    StaticPer.System.NetId = DeviceStatus.NetId;
 #endif
-    return WriteBackupFile(StaticValuesName(), (const uint8_t *)&staticPer, sizeof(staticPer));
+    return WriteBackupFile(StaticValuesName(), (const uint8_t *)&StaticPer, sizeof(StaticPer));
 }
 
 inline void RegisterService::StaticRecallAll() {
-    uint8_t Buf[sizeof(staticPer)];
+    uint8_t Buf[sizeof(StaticPer)];
     uint16_t Cnt = ReadBackupFile(StaticValuesName(), Buf, sizeof(Buf));
-    if (Cnt < sizeof(staticPer)) {
+    if (Cnt < sizeof(StaticPer)) {
         // No (or short) backup: keep the compiled-in defaults, but persist them now so the
         // mirror exists with the right size for the app's read-modify-write partial saves (a
         // direct write to an absent `.SV` cannot succeed).
@@ -49,9 +49,9 @@ inline void RegisterService::StaticRecallAll() {
         }
     }
 
-    memcpy(&staticPer, Buf, sizeof(staticPer));
+    memcpy(&StaticPer, Buf, sizeof(StaticPer));
 #ifdef TYPE_CORE
-    DeviceStatus.NetId = staticPer.System.NetId;
+    DeviceStatus.NetId = StaticPer.System.NetId;
 #endif
 }
 

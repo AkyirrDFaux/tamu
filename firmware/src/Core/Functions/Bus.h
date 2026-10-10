@@ -77,14 +77,14 @@ int ReceivePacketFrame(PacketFrame *Data, ReadByte ReadByteCb)
 
     for (;;)
     {
-        uint8_t b = 0;
-        if (!ReadByteCb(b))
+        uint8_t Byte = 0;
+        if (!ReadByteCb(Byte))
             break; // no more bytes available right now
 
         switch (Stage)
         {
         case RX_SYNC:
-            if (b == 0xAA)
+            if (Byte == 0xAA)
             {
                 Stage = RX_HEADER;
                 Got = 0;
@@ -93,7 +93,7 @@ int ReceivePacketFrame(PacketFrame *Data, ReadByte ReadByteCb)
             break;
 
         case RX_HEADER:
-            ((uint8_t *)Data)[Got++] = b;
+            ((uint8_t *)Data)[Got++] = Byte;
             if (Got < 12)
                 break;
 
@@ -119,7 +119,7 @@ int ReceivePacketFrame(PacketFrame *Data, ReadByte ReadByteCb)
             break;
 
         case RX_PAYLOAD:
-            Data->Payload[Got++] = b;
+            Data->Payload[Got++] = Byte;
             if (Got >= PayloadBytes(*Data))
             {
                 Stage = RX_SYNC;

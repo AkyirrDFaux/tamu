@@ -39,25 +39,25 @@ static inline uint32_t Fnv1a(const uint8_t *Data, uint8_t Len) {
 // The struct IS the wire layout (sourceReg u32, trigger u8, minTime u24, period u32, deadzone
 // i32) with every u32 on a 4-byte offset, so it is copied whole - no field-by-field codec.
 struct SubscriptionTable {
-    uint32_t sourceReg = 0;              // BlockInfo at the provider's register
+    uint32_t SourceReg = 0;              // BlockInfo at the provider's register
     TriggerType Trigger = TriggerType::None;
-    uint8_t minTime[3] = {0, 0, 0};      // minimum/retry interval, uint24 little-endian
-    uint32_t periodMs = 0;
+    uint8_t MinTime[3] = {0, 0, 0};      // minimum/retry interval, uint24 little-endian
+    uint32_t PeriodMs = 0;
     Number Deadzone = N(0);              // for number/vector triggers
 };
 static_assert(sizeof(SubscriptionTable) == 16, "the subscription table is 16 Bytes on the wire");
 
 #define SUB_TABLE_WIRE_SIZE 16
 
-static inline uint32_t SubMinTime(const SubscriptionTable &t) {
-    return (uint32_t)t.minTime[0] | ((uint32_t)t.minTime[1] << 8) | ((uint32_t)t.minTime[2] << 16);
+static inline uint32_t SubMinTime(const SubscriptionTable &Table) {
+    return (uint32_t)Table.MinTime[0] | ((uint32_t)Table.MinTime[1] << 8) | ((uint32_t)Table.MinTime[2] << 16);
 }
 
 // Docs: "Timeout 120s, renewed with new request." Both sides expire entries that stop being
 // renewed (a value update / re-registration refreshes the deadline).
 #define SUB_TIMEOUT_MS 120000u
 
-static inline uint32_t SubTimeoutFrom(uint32_t nowMs) { return nowMs + SUB_TIMEOUT_MS; }
+static inline uint32_t SubTimeoutFrom(uint32_t NowMs) { return NowMs + SUB_TIMEOUT_MS; }
 
 // ---------------------------------------------------------------------------
 // Shared table search. The requester and provider tables are searched the same
@@ -66,9 +66,9 @@ static inline uint32_t SubTimeoutFrom(uint32_t nowMs) { return nowMs + SUB_TIMEO
 // ---------------------------------------------------------------------------
 
 // First occupied entry with `trid`, or nullptr.
-template <typename T, size_t N, typename Occupied>
-static T *SubTableFindByTrid(T (&Table)[N], uint16_t Trid, Occupied IsOccupied) {
-    for (size_t i = 0; i < N; i++) {
+template <typename Value, size_t Size, typename Occupied>
+static Value *SubTableFindByTrid(Value (&Table)[Size], uint16_t Trid, Occupied IsOccupied) {
+    for (size_t i = 0; i < Size; i++) {
         if (IsOccupied(Table[i]) && Table[i].Trid == Trid) return &Table[i];
     }
     return nullptr;
@@ -85,17 +85,17 @@ static T *SubTableFindByTrid(T (&Table)[N], uint16_t Trid, Occupied IsOccupied) 
 // Docs "Requester table entry" (28 B wire): providerAddr, TRID, the shared subscription
 // table, target register, timeout. The timeout is local uptime and is not persistent.
 struct RequesterEntry {
-    uint16_t providerAddr = 0;
+    uint16_t ProviderAddr = 0;
     uint16_t Trid = 0;
     SubscriptionTable Sub;
-    uint32_t targetReg = 0;      // local write target
+    uint32_t TargetReg = 0;      // local write target
     uint32_t Timeout = 0;        // local uptime deadline (not persisted)
     bool Active = false;
     // Initialization tracking (transient): the entry is "initialized" once a value update
     // arrives; until then the requester re-sends the registration (CID 1) to wake the provider.
-    uint32_t registeredAtMs = 0;   // start of the initialization window (set/boot)
-    uint32_t lastRegisteredMs = 0; // last re-registration sent
-    uint32_t lastValueMs = 0;      // uptime of the last received value (0 = never)
+    uint32_t RegisteredAtMs = 0;   // start of the initialization window (set/boot)
+    uint32_t LastRegisteredMs = 0; // last re-registration sent
+    uint32_t LastValueMs = 0;      // uptime of the last received value (0 = never)
 };
 
 #define SUB_RETRY_MS          100   // re-registration interval while un-initialized
@@ -104,10 +104,10 @@ struct RequesterEntry {
 
 // The wire prefix of the entry IS the struct prefix, so serialization is a plain copy of the
 // first 28 bytes (Docs "Requester table entry"): providerAddr, trid, table, targetReg, timeout.
-static_assert(offsetof(RequesterEntry, providerAddr) == 0, "wire order: providerAddr first");
+static_assert(offsetof(RequesterEntry, ProviderAddr) == 0, "wire order: providerAddr first");
 static_assert(offsetof(RequesterEntry, Trid) == 2, "wire order: Trid after providerAddr");
 static_assert(offsetof(RequesterEntry, Sub) == 4, "wire order: subscription table after Trid");
-static_assert(offsetof(RequesterEntry, targetReg) == 20, "wire order: targetReg after the table");
+static_assert(offsetof(RequesterEntry, TargetReg) == 20, "wire order: targetReg after the table");
 static_assert(offsetof(RequesterEntry, Timeout) == 24, "wire order: timeout after targetReg");
 #define REQUESTER_ENTRY_WIRE_SIZE 28
 #define REQUESTER_FILE_ENTRY_SIZE 24 // the wire entry minus the timeout (not persisted)
@@ -115,7 +115,7 @@ static_assert(offsetof(RequesterEntry, Timeout) == 24, "wire order: timeout afte
 // The deferred re-registration queue capacity: a short address list (not a bitmask) keeps any
 // 10-bit node id addressable, sized to the device registry's capacity (SNDB_MAX_ENTRIES) so a
 // burst of assignments can never silently drop a re-push.
-static const uint8_t kReRegisterMax = 128;
+static const uint8_t KReRegisterMax = 128;
 #endif // USE_SUB_REQUEST
 
 #ifdef USE_SUB_PROVIDE
@@ -129,28 +129,28 @@ static const uint8_t kReRegisterMax = 128;
 // Docs "Provider table entry" (32 B wire): requesterAddr, trid, the shared subscription
 // table, last sent, hash/hashlike, timeout. Active until canceled; not persistent.
 struct ProviderEntry {
-    uint16_t requesterAddr = 0;  // 0 = invalid entry
+    uint16_t RequesterAddr = 0;  // 0 = invalid entry
     uint16_t Trid = 0;
     SubscriptionTable Sub;
-    uint32_t lastSentMs = 0;
+    uint32_t LastSentMs = 0;
     uint32_t Hash = 0;           // FNV-1a hash / edge counter / last value / subresolution
     uint32_t Timeout = 0;        // local uptime deadline
     // Transient (not serialized): last boolean sample for edge detection and the last
     // counter value that was transmitted.
-    bool lastBool = false;
-    uint32_t sentCounter = 0;
+    bool LastBool = false;
+    uint32_t SentCounter = 0;
     // Last SENT vector for a delta subscription on a Vector source (up to 3 axes); the
     // scalar delta reuses `hash` for the same purpose.
-    int32_t lastVec[3] = {0, 0, 0};
+    int32_t LastVec[3] = {0, 0, 0};
 };
 
 // The wire prefix of the entry IS the struct prefix, so serialization is a plain copy of the
 // first 32 bytes (Docs "Provider table entry"): requesterAddr, trid, table, lastSent, hash,
 // timeout. The provider table is not ordered (only the requester table is TRID-sorted).
-static_assert(offsetof(ProviderEntry, requesterAddr) == 0, "wire order: requesterAddr first");
+static_assert(offsetof(ProviderEntry, RequesterAddr) == 0, "wire order: requesterAddr first");
 static_assert(offsetof(ProviderEntry, Trid) == 2, "wire order: Trid after requesterAddr");
 static_assert(offsetof(ProviderEntry, Sub) == 4, "wire order: subscription table after Trid");
-static_assert(offsetof(ProviderEntry, lastSentMs) == 20, "wire order: lastSent after the table");
+static_assert(offsetof(ProviderEntry, LastSentMs) == 20, "wire order: lastSent after the table");
 static_assert(offsetof(ProviderEntry, Hash) == 24, "wire order: hash after lastSent");
 static_assert(offsetof(ProviderEntry, Timeout) == 28, "wire order: timeout after hash");
 #define PROVIDER_ENTRY_WIRE_SIZE 32

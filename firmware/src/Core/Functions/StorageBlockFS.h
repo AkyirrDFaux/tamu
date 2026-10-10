@@ -164,7 +164,7 @@ public:
 
     bool DeleteFileRecord(const char Name[8])
     {
-        return DeleteMatching([&](const char *n) { return NameMatch(n, Name); });
+        return DeleteMatching([&](const char *EntryName) { return NameMatch(EntryName, Name); });
     }
 
     // Invalidates every live record whose name satisfies `matches`, except the freshly appended
@@ -178,11 +178,11 @@ public:
         uint32_t Zero = 0x00000000;
         for (uint32_t i = 0; i < Capacity; i++) {
             if (i == KeepIndex) continue;
-            FileRecord e;
-            if (!ReadTableEntry(i, &e))
+            FileRecord Entry;
+            if (!ReadTableEntry(i, &Entry))
                 return false;
-            if (FileSlotIsFree(e.Offset)) continue;
-            if (!Matches(e.Name)) continue;
+            if (FileSlotIsFree(Entry.Offset)) continue;
+            if (!Matches(Entry.Name)) continue;
             if (!StorageFlashWrite(FileTableOffset + i * TABLE_ENTRY_SIZE,
                                     &Zero, sizeof(Zero)))
                 return false;
@@ -192,8 +192,8 @@ public:
 
     // Calls `fn(name)` once for every live file record. A superseded record for the same
     // name can linger until the next save, so a name may repeat; callers that care dedupe.
-    template <typename F>
-    void ForEachFile(F Fn)
+    template <typename Func>
+    void ForEachFile(Func Fn)
     {
         if (FileTableOffset == 0) return;
         uint32_t Capacity = TableCapacity();
@@ -237,7 +237,7 @@ public:
         if (!GetEndOfFiletable(&Appended) || Appended == 0)
             return false;
         return InvalidateMatchingExcept(
-            [&](const char *n) { return NameMatch(n, OldName) || NameMatch(n, NewName); },
+            [&](const char *EntryName) { return NameMatch(EntryName, OldName) || NameMatch(EntryName, NewName); },
             Appended - 1);
     }
 
@@ -470,7 +470,7 @@ public:
             uint32_t Appended;
             if (!GetEndOfFiletable(&Appended) || Appended == 0)
                 return false;
-            return InvalidateMatchingExcept([&](const char *n) { return NameMatch(n, Name); },
+            return InvalidateMatchingExcept([&](const char *EntryName) { return NameMatch(EntryName, Name); },
                                             Appended - 1);
         }
 
@@ -479,8 +479,8 @@ public:
         if (Entry.Offset >= DataEnd() || NewBlocks > (DataEnd() - Entry.Offset) / STORAGE_BLOCK_SIZE)
             return false;
         bool CanExtend = true;
-        for (uint32_t b = CurrentBlocks; b < NewBlocks; b++) {
-            if (BlockUsed(Entry.Offset + b * STORAGE_BLOCK_SIZE)) {
+        for (uint32_t BlockIdx = CurrentBlocks; BlockIdx < NewBlocks; BlockIdx++) {
+            if (BlockUsed(Entry.Offset + BlockIdx * STORAGE_BLOCK_SIZE)) {
                 CanExtend = false;
                 break;
             }
@@ -504,7 +504,7 @@ public:
             uint32_t Appended;
             if (!GetEndOfFiletable(&Appended) || Appended == 0)
                 return false;
-            return InvalidateMatchingExcept([&](const char *n) { return NameMatch(n, Name); },
+            return InvalidateMatchingExcept([&](const char *EntryName) { return NameMatch(EntryName, Name); },
                                             Appended - 1);
         }
 

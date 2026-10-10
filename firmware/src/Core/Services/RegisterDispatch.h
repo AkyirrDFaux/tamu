@@ -21,10 +21,10 @@ inline bool RegisterService::RegisterResolveByBlockInfo(uint32_t Bi, FieldResult
 #ifdef USE_SCRIPTS
     if (BlockTypeRange::IsScript(Type)) { // Script I/O (inputs/outputs)
         ValueInfo Sm;
-        void *p = nullptr;
-        if (!Script.GetIoPointer(BlockTypeRange::ScriptGlobal(Type, Inst), Field, Key, Sm, p)) return false;
+        void *Ptr = nullptr;
+        if (!Script.GetIoPointer(BlockTypeRange::ScriptGlobal(Type, Inst), Field, Key, Sm, Ptr)) return false;
         Fr.Descriptor = Sm;
-        Fr.Data = p;
+        Fr.Data = Ptr;
         return true;
     }
 #endif
@@ -43,33 +43,33 @@ inline bool RegisterService::RegisterResolveByBlockInfo(uint32_t Bi, FieldResult
 #endif
     const StaticBlockDescriptor *Blk = FindBlock(Type, Inst);
     if (!Blk) return false;
-    FieldResult g = Blk->Get(Field, Key);
-    if (!g.Data) return false;
-    Fr = g;
+    FieldResult Result = Blk->Get(Field, Key);
+    if (!Result.Data) return false;
+    Fr = Result;
     return true;
 }
 
 // Generic register access by BlockInfo (shared by the Subscriptions and Script services).
-inline bool RegisterService::RegisterGetByBlockInfo(uint32_t Bi, ValueInfo &m, uint8_t *Vbuf, uint8_t &Vsz) {
+inline bool RegisterService::RegisterGetByBlockInfo(uint32_t Bi, ValueInfo &Meta, uint8_t *Vbuf, uint8_t &Vsz) {
     FieldResult Fr;
     Vsz = 0;
     if (!RegisterResolveByBlockInfo(Bi, Fr)) return false;
-    m = Fr.Descriptor;
-    uint8_t n = Fr.Descriptor.Size;
-    if (n) memcpy(Vbuf, Fr.Data, n);
-    Vsz = n;
+    Meta = Fr.Descriptor;
+    uint8_t Size = Fr.Descriptor.Size;
+    if (Size) memcpy(Vbuf, Fr.Data, Size);
+    Vsz = Size;
     return true;
 }
 
 // Writes a register value by BlockInfo. `m` carries the value type and the passive flags.
-inline bool RegisterService::RegisterSetByBlockInfo(uint32_t Bi, const ValueInfo &m, const uint8_t *Val, uint16_t Vlen) {
+inline bool RegisterService::RegisterSetByBlockInfo(uint32_t Bi, const ValueInfo &Meta, const uint8_t *Val, uint16_t Vlen) {
     uint16_t Type = BlockInfoType(Bi);
     uint8_t Inst = BlockInfoInstance(Bi);
     uint8_t Field = BlockInfoField(Bi);
     uint8_t Key = BlockInfoKey(Bi);
 #ifdef USE_SCRIPTS
     if (BlockTypeRange::IsScript(Type)) { // Script I/O: only inputs are writable
-        return Script.SetEntry(BlockTypeRange::ScriptGlobal(Type, Inst), Field, Key, m, Val, Vlen);
+        return Script.SetEntry(BlockTypeRange::ScriptGlobal(Type, Inst), Field, Key, Meta, Val, Vlen);
     }
 #endif
     if (BlockTypeRange::IsDynamic(Type)) {
@@ -78,14 +78,14 @@ inline bool RegisterService::RegisterSetByBlockInfo(uint32_t Bi, const ValueInfo
         if (Gi >= DynamicBlockRegistry.BlockCount) return false;
         DynamicBlockDescriptor *Block = DynamicBlockRegistry.GetBlock(Gi);
         if (!Block) return false;
-        return Block->SetEntry(Field, Key, Val, Vlen, m);
+        return Block->SetEntry(Field, Key, Val, Vlen, Meta);
 #else
         return false;
 #endif
     }
     const StaticBlockDescriptor *Blk = FindBlock(Type, Inst);
     if (!Blk) return false;
-    return Blk->Set(Field, Key, Val, Vlen, m);
+    return Blk->Set(Field, Key, Val, Vlen, Meta);
 }
 
 inline bool RegisterService::Handle(const PacketFrame &Frame) {

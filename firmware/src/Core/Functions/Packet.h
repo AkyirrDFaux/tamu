@@ -122,9 +122,9 @@ inline uint8_t GetServiceCID(uint16_t Cmd)
 inline uint16_t NextSystemTrid(ServiceType /*type*/)
 {
     static uint16_t Counter = 0;
-    const uint16_t t = Counter;
+    const uint16_t Trid = Counter;
     Counter = (uint16_t)((Counter + 1) & TRID_SYSTEM_MAX);
-    return t;
+    return Trid;
 }
 
 extern DeviceStatusStruct DeviceStatus;

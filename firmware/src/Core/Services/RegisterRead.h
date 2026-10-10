@@ -15,8 +15,8 @@
 inline bool RegisterService::SystemFillValue(uint8_t Field, uint8_t *Vbuf) {
     switch (Field) {
     case 0: { // Device Type struct: DeviceType | Capability | Software version
-        uint32_t Dt = (uint32_t)kDeviceType;
-        uint32_t Cap = kCapabilities;
+        uint32_t Dt = (uint32_t)KDeviceType;
+        uint32_t Cap = KCapabilities;
         // Software version YY:MM:DD:II (Docs/Services/System Block and Device Commands.md):
         // 7 year + 4 month + 5 day + 16 iteration bits = 32. scripts/version.py is the single
         // source of these field widths (VERSION_FIELDS + pack_version, which mirrors this code);
@@ -39,8 +39,8 @@ inline bool RegisterService::SystemFillValue(uint8_t Field, uint8_t *Vbuf) {
         memcpy(Vbuf, GetSerialNumber().Bytes, 14);
         break;
     case 2: {
-        uint16_t v = DeviceStatus.ShortAddress;
-        memcpy(Vbuf, &v, 2);
+        uint16_t Addr = DeviceStatus.ShortAddress;
+        memcpy(Vbuf, &Addr, 2);
         break;
     }
     case 3: { // Time struct: Uptime | Current time | Time offset | Loop time | Max Loop time
@@ -110,9 +110,9 @@ inline void* RegisterService::SystemGet(uint16_t Field, uint8_t Key)
 inline bool RegisterService::OnSystemNetIdWrite(const StaticBlockDescriptor &Block, uint16_t Field, const void *Data, uint16_t Len) {
     (void)Block; (void)Field;
     if (Len < 1) return false;
-    const uint8_t v = *static_cast<const uint8_t *>(Data);
-    if (v == 0 || v >= 0x3F) return false;
-    memcpy(&staticPer.System.NetId, Data, 1);
+    const uint8_t Value = *static_cast<const uint8_t *>(Data);
+    if (Value == 0 || Value >= 0x3F) return false;
+    memcpy(&StaticPer.System.NetId, Data, 1);
     return true;
 }
 static const BlockTrigger SystemTriggers[] = { { MakeFieldKey(SYSTEM_FIELD_NETID, 0), RegisterService::OnSystemNetIdWrite } };
@@ -128,7 +128,7 @@ static const BlockSchema SystemSchema = {
     BlockType::System
 };
 static const StaticBlockDescriptor SystemBlock = {
-    nullptr, &staticPer, &SystemSchema, "", RegisterService::SystemGet
+    nullptr, &StaticPer, &SystemSchema, "", RegisterService::SystemGet
 };
 
 // The descriptor for a (type, instance): the System block (type 0, inst 0) or a static registry
@@ -152,19 +152,19 @@ inline void RegisterService::HandleDynamicBlockRead(const PacketFrame &Frame, ui
 // Reads one entry of a loaded script (block type 0x3F4-0x3F7) or its block meta. The script's
 // input/output/variable/constant tables are addressed as fields 1-4 with key = index.
 inline void RegisterService::HandleScriptBlockRead(const PacketFrame &Frame, uint32_t Bi, uint16_t Inst, uint8_t Field, uint8_t Key) {
-    LoadedScript *s = Script.Active(Inst);
-    if (!s) { RespondStatus(Frame,false); return; }
+    LoadedScript *Loaded = Script.Active(Inst);
+    if (!Loaded) { RespondStatus(Frame,false); return; }
     if (Field == 0xFF) {
         SendBlockMetaResponse(Frame, Bi, BlockTypeRange::ScriptTypeOf(Inst), SCRIPT_FIELD_COUNT,
-                              s->Name, (uint16_t)strlen(s->Name));
+                              Loaded->Name, (uint16_t)strlen(Loaded->Name));
         return;
     }
-    ValueInfo m = {};
+    ValueInfo Meta = {};
     uint8_t Vbuf[FIELD_RESPONSE_BUF_SIZE];
     uint8_t Vsz = 0;
-    if (!Script.GetEntry(Inst, Field, Key, m, Vbuf, Vsz)) { RespondStatus(Frame,false); return; }
+    if (!Script.GetEntry(Inst, Field, Key, Meta, Vbuf, Vsz)) { RespondStatus(Frame,false); return; }
     FieldResult Fr;
-    Fr.Descriptor = m;
+    Fr.Descriptor = Meta;
     Fr.Data = Vbuf;
     SendFieldResponse(Frame, Bi, Fr);
 }

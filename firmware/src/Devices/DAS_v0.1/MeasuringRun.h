@@ -36,7 +36,7 @@ static void MeasuringUpdate(uint8_t Index, uint16_t Raw)
     // raw value); 0 = hold the previous sample (maximum smoothing) - the same convention as
     // AccGyr. The raw scale depends on the selected reference resistor, so the filter
     // history is re-seeded whenever the auto-range switches the excitation.
-    Number Coeff = staticPer.Meas[Index].FilterCoeff;
+    Number Coeff = StaticPer.Meas[Index].FilterCoeff;
     if (Coeff < N(0)) Coeff = N(0);
     if (Coeff > N(1)) Coeff = N(1);
 
@@ -47,7 +47,7 @@ static void MeasuringUpdate(uint8_t Index, uint16_t Raw)
     // transition and mis-seeded the EMA.)
     uint8_t Range = MeasRange[Index];
     static const Number RrefKohm[3] = {N(0.33), N(10.0), N(330.0)};
-    staticVol.Meas[Index].CurrentRange = RrefKohm[Range];
+    StaticVol.Meas[Index].CurrentRange = RrefKohm[Range];
 
     // EMA over the RAW ADC value. The history is in the active range's ADC units, so it is
     // re-seeded when that range differs from the one the history belongs to.
@@ -68,7 +68,7 @@ static void MeasuringUpdate(uint8_t Index, uint16_t Raw)
     static const Number ADCRES = N(1023);
     Number In = FilteredRaw;
 
-    switch (staticPer.Meas[Index].SensorType)
+    switch (StaticPer.Meas[Index].SensorType)
     {
     case MeasRawMeasurement: // raw counts
         break;
@@ -90,8 +90,8 @@ static void MeasuringUpdate(uint8_t Index, uint16_t Raw)
         // Number.h helper) plus the per-range constant division, then the shared pow10.
         In = MeasClampAdc(In);
         const Number Ratio = In / (ADCRES - In);
-        const Number log10Ratio = log10(Ratio);
-        const Number Decades = (Number::FromRaw(kLdrLog10R10OverRref[Range]) - log10Ratio) / N(LDR_GAMMA);
+        const Number Log10Ratio = log10(Ratio);
+        const Number Decades = (Number::FromRaw(KLdrLog10R10OverRref[Range]) - Log10Ratio) / N(LDR_GAMMA);
         In = pow10(N(1) + Decades);
         break;
     }
@@ -101,7 +101,7 @@ static void MeasuringUpdate(uint8_t Index, uint16_t Raw)
     {
         In = MeasClampAdc(In);
         In = N(1) / (N(0.003354) + log((In / (ADCRES - In)) *
-                   (RrefKohm[Range] / (staticPer.Meas[Index].SensorType == MeasNTC100K ? N(100.0) : N(10.0)))) / N(3950)) - N(273.15);
+                   (RrefKohm[Range] / (StaticPer.Meas[Index].SensorType == MeasNTC100K ? N(100.0) : N(10.0)))) / N(3950)) - N(273.15);
         break;
     }
 
@@ -109,7 +109,7 @@ static void MeasuringUpdate(uint8_t Index, uint16_t Raw)
         break;
     }
 
-    staticVol.Meas[Index].MeasuredValue = In;
+    StaticVol.Meas[Index].MeasuredValue = In;
 
     // Auto-range from the raw sample, applied AFTER the transform used the active range. The
     // divider ratio R_sensor/R_ref = raw/(1023-raw) is independent of the selected reference,

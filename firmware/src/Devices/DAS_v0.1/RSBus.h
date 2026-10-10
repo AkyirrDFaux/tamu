@@ -133,8 +133,8 @@ bool SendAndVerifyPacket(const PacketFrame &Data) {
         // Transmit
         USART_SendData(USART1, 0xAA);
         while (USART_GetFlagStatus(USART1, USART_FLAG_TXE) == RESET);
-        for (size_t I = 0; I < PacketSize; I++) {
-            USART_SendData(USART1, Bytes[I]);
+        for (size_t i = 0; i < PacketSize; i++) {
+            USART_SendData(USART1, Bytes[i]);
             while (USART_GetFlagStatus(USART1, USART_FLAG_TXE) == RESET);
         }
         while (USART_GetFlagStatus(USART1, USART_FLAG_TC) == RESET);
@@ -150,9 +150,9 @@ bool SendAndVerifyPacket(const PacketFrame &Data) {
         uint32_t StartTick = Now();
         while (Got < TotalTxSize && (Now() - StartTick) < 50) {
             if (UARTAvailable()) {
-                uint8_t B = UARTReadByte();
+                uint8_t Byte = UARTReadByte();
                 uint8_t Expect = (Got == 0) ? 0xAA : Bytes[Got - 1];
-                if (B != Expect) Match = false;
+                if (Byte != Expect) Match = false;
                 Got++;
             }
         }
@@ -174,9 +174,9 @@ bool SendAndVerifyPacket(const PacketFrame &Data) {
 // (Core/Functions/Bus.h); the byte source pulls from the DAS ring buffer.
 int ReceivePacket(PacketFrame *Data)
 {
-    return ReceivePacketFrame(Data, [](uint8_t &B) -> bool {
+    return ReceivePacketFrame(Data, [](uint8_t &Byte) -> bool {
         if (!UARTAvailable()) return false;
-        B = UARTReadByte();
+        Byte = UARTReadByte();
         return true;
     });
 }

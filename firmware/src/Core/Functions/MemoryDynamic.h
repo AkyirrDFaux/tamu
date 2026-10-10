@@ -110,26 +110,26 @@ static void CleanupDynamicFiles()
 // entry count (uint16), 16-bit reserved padding, then the entries, each
 // Field&Key (uint16) + MemoryOffset (uint16) + ValueInfo. The block's bank type is not
 // stored: it is derived from the file's global index.
-static bool SaveDynamicBlockFiles(const DynamicBlockDescriptor &b, uint16_t Idx)
+static bool SaveDynamicBlockFiles(const DynamicBlockDescriptor &Block, uint16_t Idx)
 {
     char Tn[8], Vn[8];
     DynamicTableName(Idx, Tn);
     DynamicValuesName(Idx, Vn);
     uint8_t Buf[MEMORY_BACKUP_CAP];
 
-    uint16_t Need = (uint16_t)(BLOCK_NAME_LEN + 2 + 2 + (uint16_t)b.EntryCount * (2 + 2 + (int)sizeof(ValueInfo)));
+    uint16_t Need = (uint16_t)(BLOCK_NAME_LEN + 2 + 2 + (uint16_t)Block.EntryCount * (2 + 2 + (int)sizeof(ValueInfo)));
     if (Need > sizeof(Buf))
         return false;
 
     // Write the persistent value space FIRST so the table (the block's existence marker) is
     // the commit point: a power cut between the two commits leaves a new DV beside the old DT,
     // and the loader tolerates a DV/table size mismatch rather than tombstoning the block.
-    if (b.PersistentLen)
+    if (Block.PersistentLen)
     {
-        if (b.PersistentLen > sizeof(Buf))
+        if (Block.PersistentLen > sizeof(Buf))
             return false;
-        memcpy(Buf, b.PersistentData, b.PersistentLen);
-        if (!WriteBackupFile(Vn, Buf, b.PersistentLen))
+        memcpy(Buf, Block.PersistentData, Block.PersistentLen);
+        if (!WriteBackupFile(Vn, Buf, Block.PersistentLen))
             return false;
     }
     else if (Storage.FileExists(Vn) != 0xFFFFFFFF)
@@ -139,15 +139,15 @@ static bool SaveDynamicBlockFiles(const DynamicBlockDescriptor &b, uint16_t Idx)
 
     // Build the DT (table) and commit it last.
     uint16_t Cursor = 0;
-    memcpy(Buf + Cursor, b.Name, BLOCK_NAME_LEN); Cursor += BLOCK_NAME_LEN;
-    memcpy(Buf + Cursor, &b.EntryCount, 2); Cursor += 2;
+    memcpy(Buf + Cursor, Block.Name, BLOCK_NAME_LEN); Cursor += BLOCK_NAME_LEN;
+    memcpy(Buf + Cursor, &Block.EntryCount, 2); Cursor += 2;
     uint16_t Reserved = 0; memcpy(Buf + Cursor, &Reserved, 2); Cursor += 2;
-    for (uint16_t i = 0; i < b.EntryCount; i++)
+    for (uint16_t i = 0; i < Block.EntryCount; i++)
     {
-        const DynamicEntry &e = b.Table[i];
-        memcpy(Buf + Cursor, &e.FieldKey, 2); Cursor += 2;
-        memcpy(Buf + Cursor, &e.MemoryOffset, 2); Cursor += 2;
-        memcpy(Buf + Cursor, &e.Info, sizeof(ValueInfo)); Cursor += sizeof(ValueInfo);
+        const DynamicEntry &Entry = Block.Table[i];
+        memcpy(Buf + Cursor, &Entry.FieldKey, 2); Cursor += 2;
+        memcpy(Buf + Cursor, &Entry.MemoryOffset, 2); Cursor += 2;
+        memcpy(Buf + Cursor, &Entry.Info, sizeof(ValueInfo)); Cursor += sizeof(ValueInfo);
     }
     return WriteBackupFile(Tn, Buf, Cursor);
 }
@@ -155,7 +155,7 @@ static bool SaveDynamicBlockFiles(const DynamicBlockDescriptor &b, uint16_t Idx)
 // Loads one block from its DT+DV files into `b` (fresh). Returns false when no DT file
 // exists (an empty/tombstone slot). The persistent space is restored; the volatile
 // space is zero-filled (its values are not persisted).
-static bool LoadDynamicBlockFiles(DynamicBlockDescriptor &b, uint16_t Idx)
+static bool LoadDynamicBlockFiles(DynamicBlockDescriptor &Block, uint16_t Idx)
 {
     char Tn[8], Vn[8];
     DynamicTableName(Idx, Tn);
@@ -168,50 +168,50 @@ static bool LoadDynamicBlockFiles(DynamicBlockDescriptor &b, uint16_t Idx)
 
     uint16_t Cursor = 0;
     if (Cursor + BLOCK_NAME_LEN + 4 > Tlen) return false;
-    memcpy(b.Name, Tbuf + Cursor, BLOCK_NAME_LEN);
+    memcpy(Block.Name, Tbuf + Cursor, BLOCK_NAME_LEN);
     Cursor += BLOCK_NAME_LEN;
     uint16_t EntryCount; memcpy(&EntryCount, Tbuf + Cursor, 2); Cursor += 2;
     Cursor += 2; // 16-bit reserved padding (Docs "Dynamic Block Table")
     if (Cursor + (uint16_t)EntryCount * (2 + 2 + (int)sizeof(ValueInfo)) > Tlen) return false;
-    if (EntryCount && !b.EnsureTable(EntryCount)) return false;
+    if (EntryCount && !Block.EnsureTable(EntryCount)) return false;
 
     // The stored MemoryOffset is the file's source of truth (Docs "Dynamic Block Table");
     // each space's size follows from it.
     uint16_t PNeeded = 0, VNeeded = 0;
     for (uint16_t i = 0; i < EntryCount; i++)
     {
-        DynamicEntry &e = b.Table[i];
-        memcpy(&e.FieldKey, Tbuf + Cursor, 2);
-        memcpy(&e.MemoryOffset, Tbuf + Cursor + 2, 2);
-        memcpy(&e.Info, Tbuf + Cursor + 4, sizeof(ValueInfo));
-        uint16_t &n = ValueIsPersistent(e.Info) ? PNeeded : VNeeded;
-        uint16_t End = (uint16_t)(e.MemoryOffset + e.Info.Size);
-        if (End > n) n = End;
+        DynamicEntry &Entry = Block.Table[i];
+        memcpy(&Entry.FieldKey, Tbuf + Cursor, 2);
+        memcpy(&Entry.MemoryOffset, Tbuf + Cursor + 2, 2);
+        memcpy(&Entry.Info, Tbuf + Cursor + 4, sizeof(ValueInfo));
+        uint16_t &Needed = ValueIsPersistent(Entry.Info) ? PNeeded : VNeeded;
+        uint16_t End = (uint16_t)(Entry.MemoryOffset + Entry.Info.Size);
+        if (End > Needed) Needed = End;
         Cursor += 2 + 2 + sizeof(ValueInfo);
     }
-    b.EntryCount = EntryCount;
+    Block.EntryCount = EntryCount;
 
     if (VNeeded)
     {
-        b.VolatileData = (uint8_t *)malloc(VNeeded);
-        if (!b.VolatileData) return false;
-        b.VolatileAllocated = b.VolatileLen = VNeeded;
-        memset(b.VolatileData, 0, VNeeded);
+        Block.VolatileData = (uint8_t *)malloc(VNeeded);
+        if (!Block.VolatileData) return false;
+        Block.VolatileAllocated = Block.VolatileLen = VNeeded;
+        memset(Block.VolatileData, 0, VNeeded);
     }
     if (PNeeded)
     {
-        b.PersistentData = (uint8_t *)malloc(PNeeded);
-        if (!b.PersistentData) return false;
-        b.PersistentAllocated = b.PersistentLen = PNeeded;
+        Block.PersistentData = (uint8_t *)malloc(PNeeded);
+        if (!Block.PersistentData) return false;
+        Block.PersistentAllocated = Block.PersistentLen = PNeeded;
         // The DV holds the compacted persistent space. A power cut can leave it from a
         // different generation (its length need not match the table); copy the overlap and
         // keep the block instead of tombstoning it (any tail defaults to zero).
-        memset(b.PersistentData, 0, PNeeded);
+        memset(Block.PersistentData, 0, PNeeded);
         uint16_t Copy = (Vlen < PNeeded) ? Vlen : PNeeded;
         if (Copy)
-            memcpy(b.PersistentData, Vbuf, Copy);
+            memcpy(Block.PersistentData, Vbuf, Copy);
     }
-    b.Present = true;
+    Block.Present = true;
     return true;
 }
 #endif

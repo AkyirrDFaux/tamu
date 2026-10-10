@@ -11,14 +11,14 @@ static const uint16_t ButtonPin[3] = {GPIO_Pin_15, GPIO_Pin_14, GPIO_Pin_13};
 void ButtonsInit()
 {
     RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOB, ENABLE);
-    for (uint8_t I = 0; I < 3; I++)
-        PinModeInputPullDown(ButtonPort[I], ButtonPin[I]);
+    for (uint8_t i = 0; i < 3; i++)
+        PinModeInputPullDown(ButtonPort[i], ButtonPin[i]);
 }
 
 // Samples the three button pins into their Button block states. Called every main-loop
 // iteration.
 void ButtonsUpdate()
 {
-    for (uint8_t I = 0; I < 3; I++)
-        staticVol.Button[I].ButtonState = PinRead(ButtonPort[I], ButtonPin[I]);
+    for (uint8_t i = 0; i < 3; i++)
+        StaticVol.Button[i].ButtonState = PinRead(ButtonPort[i], ButtonPin[i]);
 }

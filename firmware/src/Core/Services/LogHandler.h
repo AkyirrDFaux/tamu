@@ -18,7 +18,7 @@ private:
     // qsort comparator: orders used-slot indices by their LogSeq (ascending = oldest first).
     // Reads the shared LogSeq table, so it is only valid on the single task that runs the
     // handler (no concurrent log append).
-    static int LogSeqSlotCompare(const void *a, const void *b);
+    static int LogSeqSlotCompare(const void *Left, const void *Right);
 
     // Fills `order` (at least LOG_MAX_CAPACITY entries) with the used slot indices sorted
     // oldest-first by LogSeq and returns how many were written. One ordered pass feeds both
@@ -42,10 +42,10 @@ inline void LogHandlerService::Init()
 }
 
 #ifdef TYPE_CORE
-inline int LogHandlerService::LogSeqSlotCompare(const void *a, const void *b)
+inline int LogHandlerService::LogSeqSlotCompare(const void *Left, const void *Right)
 {
-    uint16_t Ia = *reinterpret_cast<const uint16_t *>(a);
-    uint16_t Ib = *reinterpret_cast<const uint16_t *>(b);
+    uint16_t Ia = *reinterpret_cast<const uint16_t *>(Left);
+    uint16_t Ib = *reinterpret_cast<const uint16_t *>(Right);
     uint32_t Sa = LogSeq[Ia];
     uint32_t Sb = LogSeq[Ib];
     return (Sa > Sb) - (Sa < Sb);
@@ -159,7 +159,7 @@ inline bool LogHandlerService::Handle(const PacketFrame &Frame)
             uint32_t Total = Active * sizeof(LogRecord);
             uint16_t TotalFrags = (uint16_t)((Total + MAX_FRAG_CONTENT_SIZE - 1) / MAX_FRAG_CONTENT_SIZE);
             uint32_t Sent = 0;
-            for (uint16_t f = 0; f < TotalFrags; f++)
+            for (uint16_t Frag = 0; Frag < TotalFrags; Frag++)
             {
                 uint16_t Off = 4;
                 while (Off - 4 + sizeof(LogRecord) <= MAX_FRAG_CONTENT_SIZE && Sent < Active)
@@ -168,16 +168,16 @@ inline bool LogHandlerService::Handle(const PacketFrame &Frame)
                     Off += sizeof(LogRecord);
                     Sent++;
                 }
-                SendFragFragment(Frame, f, TotalFrags, (uint16_t)(Off - 4), PRIORITY_LOG);
+                SendFragFragment(Frame, Frag, TotalFrags, (uint16_t)(Off - 4), PRIORITY_LOG);
             }
             return true;
         }
 
         // ClearReadLogs: clear the `n` OLDEST entries (lowest seq), per Log Handler.md
-        uint32_t n = 0;
+        uint32_t Count = 0;
         if (PayloadBytes(Frame) >= 4)
-            memcpy(&n, Frame.Payload, sizeof(n));
-        uint32_t Clear = (n < Active) ? n : Active;
+            memcpy(&Count, Frame.Payload, sizeof(Count));
+        uint32_t Clear = (Count < Active) ? Count : Active;
         for (uint32_t k = 0; k < Clear; k++)
             LogUsed[Order[k]] = false;
         uint8_t Status = 0;

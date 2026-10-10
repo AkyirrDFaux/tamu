@@ -64,9 +64,9 @@ static void SendRaw(const uint8_t *Data, size_t Len)
     usb_serial_jtag_write_bytes(Data, Len, pdMS_TO_TICKS(1000));
 }
 
-static bool ReadByte(uint8_t *B, TickType_t Ticks)
+static bool ReadByte(uint8_t *Byte, TickType_t Ticks)
 {
-    return usb_serial_jtag_read_bytes(B, 1, Ticks) == 1;
+    return usb_serial_jtag_read_bytes(Byte, 1, Ticks) == 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -119,30 +119,30 @@ static void HandleWrite(uint32_t Offset, const uint8_t *Payload)
 // The identify response is entirely build-time constant (app size + name), so the whole
 // frame - control/parity included - is precomputed and lives in flash. Nothing is built at
 // runtime: the handler just sends the constant.
-struct IdentifyFrame { uint8_t B[Bootloader::DATA_SIZE]; };
+struct IdentifyFrame { uint8_t Bytes[Bootloader::DATA_SIZE]; };
 
 constexpr IdentifyFrame MakeIdentify(uint32_t Space, const char *Name)
 {
-    IdentifyFrame f{};
-    f.B[0] = Bootloader::START;
-    f.B[1] = Bootloader::CMD_IDENTIFY_RESP;
-    f.B[2] = (uint8_t)(Space & 0xFFu);
-    f.B[3] = (uint8_t)((Space >> 8) & 0xFFu);
-    f.B[4] = (uint8_t)((Space >> 16) & 0xFFu);
-    f.B[5] = (uint8_t)((Space >> 24) & 0xFFu);
+    IdentifyFrame Frame{};
+    Frame.Bytes[0] = Bootloader::START;
+    Frame.Bytes[1] = Bootloader::CMD_IDENTIFY_RESP;
+    Frame.Bytes[2] = (uint8_t)(Space & 0xFFu);
+    Frame.Bytes[3] = (uint8_t)((Space >> 8) & 0xFFu);
+    Frame.Bytes[4] = (uint8_t)((Space >> 16) & 0xFFu);
+    Frame.Bytes[5] = (uint8_t)((Space >> 24) & 0xFFu);
     for (uint8_t i = 0; i < Bootloader::NAME_SIZE; i++)
     {
         if (Name[i] == '\0') break;
-        f.B[6 + i] = (uint8_t)Name[i];
+        Frame.Bytes[6 + i] = (uint8_t)Name[i];
     }
-    f.B[Bootloader::DATA_SIZE - 1] = Bootloader::END;
-    f.B[1] |= (uint8_t)(Bootloader::Parity(f.B, Bootloader::DATA_SIZE) << 3);
-    return f;
+    Frame.Bytes[Bootloader::DATA_SIZE - 1] = Bootloader::END;
+    Frame.Bytes[1] |= (uint8_t)(Bootloader::Parity(Frame.Bytes, Bootloader::DATA_SIZE) << 3);
+    return Frame;
 }
 
 constexpr IdentifyFrame Identify = MakeIdentify(OTA_APP_SIZE, "Tamu v2.0A");
 
-static void HandleIdentify() { SendRaw(Identify.B, Bootloader::DATA_SIZE); }
+static void HandleIdentify() { SendRaw(Identify.Bytes, Bootloader::DATA_SIZE); }
 
 // ---------------------------------------------------------------------------
 // Entry
@@ -193,10 +193,10 @@ extern "C" void app_main(void)
     // Serve raw frames (the receive/read/dispatch plumbing is shared with the DAS host).
     BootloaderHost::HostLoop(
         [] {},
-        [](uint8_t *B) { return ReadByte(B, pdMS_TO_TICKS(100)); },
+        [](uint8_t *Byte) { return ReadByte(Byte, pdMS_TO_TICKS(100)); },
         [](uint32_t Offset, const uint8_t *Payload) { HandleWrite(Offset, Payload); },
         [](uint32_t Offset) {
-            auto readPayload = [](uint32_t Off, uint8_t *Data) {
+            auto ReadPayload = [](uint32_t Off, uint8_t *Data) {
                 // Same wrap-safe bounds check as `HandleWrite`: an out-of-range offset
                 // reads back 0xFF (erased) instead of leaking stack bytes.
                 if (App == nullptr || Off > App->size ||
@@ -205,8 +205,8 @@ extern "C" void app_main(void)
                 esp_partition_read(App, Off, Data, Bootloader::PAYLOAD_SIZE);
                 return true;
             };
-            auto Send = [](const uint8_t *D, size_t N) { SendRaw(D, N); };
-            BootloaderHost::HandleRead(Offset, readPayload, Send);
+            auto Send = [](const uint8_t *Data, size_t Length) { SendRaw(Data, Length); };
+            BootloaderHost::HandleRead(Offset, ReadPayload, Send);
         },
         [] { HandleIdentify(); });
 }

@@ -1,4 +1,4 @@
-part of 'current_setup.dart';
+part of 'example_setup.dart';
 
 Future<void> buildScripts(StorageClient storage, ScriptClient scripts) async {
   final drafts = <int, ScriptDraft>{
@@ -52,7 +52,7 @@ Future<void> clampBrightness(RegisterClient reg, double pct) async {
 }
 
 /// Applies the whole scenario. Returns the core + DAS for verification.
-Future<({DeviceEntry core, List<DeviceEntry> das})> applyCurrentSetup(
+Future<({DeviceEntry core, List<DeviceEntry> das})> applyExampleSetup(
     DeviceDatabase db, {
   bool clear = true,
   bool scripts = true,

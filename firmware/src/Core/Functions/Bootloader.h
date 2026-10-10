@@ -51,18 +51,18 @@ namespace Bootloader
     // Even parity over the command (3 bits), the offset and the payload (bytes 2..len-2).
     constexpr uint8_t Parity(const uint8_t *Frame, uint16_t Len)
     {
-        uint8_t p = 0;
+        uint8_t Parity = 0;
         uint8_t Cmd = (uint8_t)(Frame[1] & 0x07u);
-        p ^= (uint8_t)(Cmd & 1u) ^ (uint8_t)((Cmd >> 1) & 1u) ^ (uint8_t)((Cmd >> 2) & 1u);
+        Parity ^= (uint8_t)(Cmd & 1u) ^ (uint8_t)((Cmd >> 1) & 1u) ^ (uint8_t)((Cmd >> 2) & 1u);
         for (uint16_t i = 2; i + 1 < Len; i++)
         {
-            uint8_t b = Frame[i];
-            b ^= (uint8_t)(b >> 4);
-            b ^= (uint8_t)(b >> 2);
-            b ^= (uint8_t)(b >> 1);
-            p ^= (uint8_t)(b & 1u);
+            uint8_t Byte = Frame[i];
+            Byte ^= (uint8_t)(Byte >> 4);
+            Byte ^= (uint8_t)(Byte >> 2);
+            Byte ^= (uint8_t)(Byte >> 1);
+            Parity ^= (uint8_t)(Byte & 1u);
         }
-        return (uint8_t)(p & 1u);
+        return (uint8_t)(Parity & 1u);
     }
 
     // Fills byte 1: padding 0, even parity, command. `Frame` must already hold the full body.
@@ -135,9 +135,9 @@ namespace Bootloader
 
     inline uint32_t Offset(const uint8_t *Frame)
     {
-        uint32_t o;
-        memcpy(&o, Frame + 2, 4);
-        return o;
+        uint32_t Offset;
+        memcpy(&Offset, Frame + 2, 4);
+        return Offset;
     }
 
     inline const uint8_t *Payload(const uint8_t *Frame) { return Frame + 6; }

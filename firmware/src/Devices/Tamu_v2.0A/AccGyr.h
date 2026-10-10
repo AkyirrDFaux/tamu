@@ -92,15 +92,15 @@ static const uint8_t AccGyrAngFsNib[5] = {0b0010, 0b0000, 0b0100, 0b1000, 0b1100
 // (LPF1_BW_SEL / BW0_XL / bit 0 are left cleared).
 static uint8_t AccGyrCtrl1Byte()
 {
-    uint8_t Odr = staticPer.Accgyr.SamplingRate < 8 ? AccGyrOdrCode[staticPer.Accgyr.SamplingRate] : 0;
-    uint8_t Fs = staticPer.Accgyr.RangeAcc < 4 ? AccGyrAccFsCode[staticPer.Accgyr.RangeAcc] : 0;
+    uint8_t Odr = StaticPer.Accgyr.SamplingRate < 8 ? AccGyrOdrCode[StaticPer.Accgyr.SamplingRate] : 0;
+    uint8_t Fs = StaticPer.Accgyr.RangeAcc < 4 ? AccGyrAccFsCode[StaticPer.Accgyr.RangeAcc] : 0;
     return (uint8_t)((Odr << 4) | (Fs << 2));
 }
 
 static uint8_t AccGyrCtrl2Byte()
 {
-    uint8_t Odr = staticPer.Accgyr.SamplingRate < 8 ? AccGyrOdrCode[staticPer.Accgyr.SamplingRate] : 0;
-    uint8_t Fs = staticPer.Accgyr.RangeAng < 5 ? AccGyrAngFsNib[staticPer.Accgyr.RangeAng] : 0;
+    uint8_t Odr = StaticPer.Accgyr.SamplingRate < 8 ? AccGyrOdrCode[StaticPer.Accgyr.SamplingRate] : 0;
+    uint8_t Fs = StaticPer.Accgyr.RangeAng < 5 ? AccGyrAngFsNib[StaticPer.Accgyr.RangeAng] : 0;
     return (uint8_t)((Odr << 4) | Fs);
 }
 
@@ -215,31 +215,31 @@ bool ReadIMUData() {
     // (Table 51: 0.061/0.122/0.244/0.488 mg/LSb; Table 54: 4.375/8.75/17.5/35/70 mdps/LSb)
     // and anchored to the previously-calibrated defaults: accel 209 @ +-16 g, gyro 939 @
     // +-2000 dps, so the default ranges keep today's readings.
-    uint8_t Ri = staticPer.Accgyr.RangeAcc > 3 ? 3 : staticPer.Accgyr.RangeAcc;
-    uint8_t Gi = staticPer.Accgyr.RangeAng > 4 ? 4 : staticPer.Accgyr.RangeAng;
+    uint8_t Ri = StaticPer.Accgyr.RangeAcc > 3 ? 3 : StaticPer.Accgyr.RangeAcc;
+    uint8_t Gi = StaticPer.Accgyr.RangeAng > 4 ? 4 : StaticPer.Accgyr.RangeAng;
     static const Number AccelDiv[4] = {N(1672), N(836), N(418), N(209)};
     static const Number GyroDiv[5] = {N(15024), N(7512), N(3756), N(1878), N(939)};
 
     // EMA coefficients (0-1); clamp so a remotely-written out-of-range value cannot make
     // the low-pass diverge. 1 = no filtering (output tracks the raw value).
-    Number AccW = staticPer.Accgyr.AccFilter;
+    Number AccW = StaticPer.Accgyr.AccFilter;
     if (AccW < N(0)) AccW = N(0);
     if (AccW > N(1)) AccW = N(1);
-    Number AngW = staticPer.Accgyr.AngFilter;
+    Number AngW = StaticPer.Accgyr.AngFilter;
     if (AngW < N(0)) AngW = N(0);
     if (AngW > N(1)) AngW = N(1);
 
     Vector<3> NextGyro, NextAcc;
-    for (int I = 0; I < 3; I++)
+    for (int i = 0; i < 3; i++)
     {
-        NextGyro.Data[I] = (Number(Raw[I]) / GyroDiv[Gi]) * AngW +
-                            (staticVol.Accgyr.AngularVelocity.Data[I] * (N(1) - AngW));
-        NextAcc.Data[I] = (Number(Raw[3 + I]) / AccelDiv[Ri]) * AccW +
-                           (staticVol.Accgyr.Acceleration.Data[I] * (N(1) - AccW));
+        NextGyro.Data[i] = (Number(Raw[i]) / GyroDiv[Gi]) * AngW +
+                            (StaticVol.Accgyr.AngularVelocity.Data[i] * (N(1) - AngW));
+        NextAcc.Data[i] = (Number(Raw[3 + i]) / AccelDiv[Ri]) * AccW +
+                           (StaticVol.Accgyr.Acceleration.Data[i] * (N(1) - AccW));
     }
 
-    staticVol.Accgyr.AngularVelocity = NextGyro;
-    staticVol.Accgyr.Acceleration = NextAcc;
+    StaticVol.Accgyr.AngularVelocity = NextGyro;
+    StaticVol.Accgyr.Acceleration = NextAcc;
 
     return true;
 }
@@ -257,15 +257,15 @@ static bool AccGyrWriteEnum(const StaticBlockDescriptor &Block, uint16_t Field, 
     {
     case 0: // Sampling Rate (ODR): clamps to [0, 7]
         if (Index >= 8) Index = 7;
-        Target = &staticPer.Accgyr.SamplingRate;
+        Target = &StaticPer.Accgyr.SamplingRate;
         break;
     case 1: // Range Acceleration: clamps to [0, 3]
         if (Index >= 4) Index = 3;
-        Target = &staticPer.Accgyr.RangeAcc;
+        Target = &StaticPer.Accgyr.RangeAcc;
         break;
     case 2: // Range Angular: clamps to [0, 4]
         if (Index >= 5) Index = 4;
-        Target = &staticPer.Accgyr.RangeAng;
+        Target = &StaticPer.Accgyr.RangeAng;
         break;
     default:
         return false;

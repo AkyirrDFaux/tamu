@@ -64,11 +64,11 @@ struct UsbFramer
 
     // Feeds one byte. Returns: 0 = incomplete, >0 = valid frame, payload length written
     // to `payload`, -1 = invalid sequence (resync automatically).
-    int Feed(uint8_t B, uint8_t *Payload)
+    int Feed(uint8_t Byte, uint8_t *Payload)
     {
         if (!FrameOpen)
         {
-            if (B == USB_FRAME_START)
+            if (Byte == USB_FRAME_START)
             {
                 FrameOpen = true;
                 Len = 0;
@@ -76,31 +76,31 @@ struct UsbFramer
             return 0;
         }
 
-        Buf[Len++] = B;
+        Buf[Len++] = Byte;
 
         if (Len < 2)
             return 0; // CRC pending
 
-        uint8_t N = Buf[1];
-        if (N > USB_FRAME_MAX_PAYLOAD)
+        uint8_t PayloadLen = Buf[1];
+        if (PayloadLen > USB_FRAME_MAX_PAYLOAD)
         {
             Reset();
             return -1; // impossible length: resync
         }
 
-        if (Len < (uint8_t)(2 + N + 1))
+        if (Len < (uint8_t)(2 + PayloadLen + 1))
             return 0; // payload/stop pending
 
         FrameOpen = false;
-        if (Buf[2 + N] != USB_FRAME_STOP)
+        if (Buf[2 + PayloadLen] != USB_FRAME_STOP)
             return -1;
 
         // CRC8 over Length + Payload
-        if (Crc8(&Buf[1], (uint16_t)(1 + N)) != Buf[0])
+        if (Crc8(&Buf[1], (uint16_t)(1 + PayloadLen)) != Buf[0])
             return -1;
 
-        memcpy(Payload, &Buf[2], N);
-        return N;
+        memcpy(Payload, &Buf[2], PayloadLen);
+        return PayloadLen;
     }
 };
 
@@ -142,7 +142,7 @@ struct WireStreamParser
 
     // Feeds one stream byte. Returns true when a complete CRC-valid PacketFrame was
     // assembled into `frame` (ready for AppInterfaceEnqueue).
-    bool Feed(uint8_t B)
+    bool Feed(uint8_t Byte)
     {
         if (Full)
             return false;
@@ -152,7 +152,7 @@ struct WireStreamParser
             Reset();
             return false;
         }
-        ((uint8_t *)&Frame)[Got++] = B;
+        ((uint8_t *)&Frame)[Got++] = Byte;
 
         if (Got < 4)
             return false; // payload_len not known yet
@@ -178,9 +178,9 @@ static WireStreamParser WireParser;
 static void AppRxStream(const uint8_t *Data, uint16_t Len)
 {
     UsbLastRx = TimeFromBoot();
-    for (uint16_t I = 0; I < Len; I++)
+    for (uint16_t i = 0; i < Len; i++)
     {
-        if (WireParser.Feed(Data[I]))
+        if (WireParser.Feed(Data[i]))
         {
             AppInterface.Enqueue(WireParser.Frame);
             WireParser.Reset();
@@ -207,17 +207,17 @@ static void AppLinkTask(void *)
             WireParser.Reset();
         }
 
-        int N = usb_serial_jtag_read_bytes(Buf, sizeof(Buf), pdMS_TO_TICKS(20));
-        if (N <= 0)
+        int ReadLen = usb_serial_jtag_read_bytes(Buf, sizeof(Buf), pdMS_TO_TICKS(20));
+        if (ReadLen <= 0)
             continue;
 
-        for (int I = 0; I < N; I++)
+        for (int i = 0; i < ReadLen; i++)
         {
             uint8_t Payload[USB_FRAME_MAX_PAYLOAD];
-            int R = AppFramer.Feed(Buf[I], Payload);
-            if (R > 0)
-                AppRxStream(Payload, (uint16_t)R);
-            else if (R < 0)
+            int FeedResult = AppFramer.Feed(Buf[i], Payload);
+            if (FeedResult > 0)
+                AppRxStream(Payload, (uint16_t)FeedResult);
+            else if (FeedResult < 0)
                 WireParser.Reset(); // broken link frame: resync the stream too
         }
     }

@@ -1,4 +1,4 @@
-part of 'current_setup.dart';
+part of 'example_setup.dart';
 
 ScriptSymbol _c(int i) => ScriptSymbol.constant(i);
 ScriptSymbol _v(int i) => ScriptSymbol.variable(i);
@@ -28,7 +28,7 @@ ScriptDraftValue _cVector2(String name, double x, double y) => ScriptDraftValue(
 ScriptDraftValue _var(String name, DataType type, int size) =>
     ScriptDraftValue(name: name, type: type, size: size);
 
-// Script inputs (Docs/Current setup v3.md): live values the Register/editor can drive.
+// Script inputs (Docs/Example Setup.md): live values the Register/editor can drive.
 ScriptDraftValue _inNum(String name, double v,
         {double? min, double? max, double step = 0, int ui = ScriptUiType.auto}) =>
     ScriptDraftValue(

@@ -47,8 +47,8 @@ private:
 
 public:
     // pinB is optional: -1 keeps the driver single-strip (SendParallel with an empty mask).
-    LEDDriver(int pinA, int pinB = -1)
-        : PinMaskA(1ULL << pinA), PinMaskB(pinB >= 0 ? (1ULL << pinB) : 0) {}
+    LEDDriver(int PinA, int PinB = -1)
+        : PinMaskA(1ULL << PinA), PinMaskB(PinB >= 0 ? (1ULL << PinB) : 0) {}
 
     // Configures the WS2812 data pin(s) as outputs (same config as the reference
     // working driver: pull-up off, pull-down on, interrupts disabled).
@@ -68,27 +68,27 @@ public:
     // drives both data lines from `pixelsA`/`pixelsB`: both go high, then pins carrying a
     // "0" drop at T0H and pins carrying a "1" drop at T1H (see class comment). Reorders
     // channels to GRB and finishes with a shared reset latch.
-    void IRAM_ATTR SendParallel(ColourClass *pixelsA, ColourClass *pixelsB, uint16_t Length)
+    void IRAM_ATTR SendParallel(ColourClass *PixelsA, ColourClass *PixelsB, uint16_t Length)
     {
         uint32_t Mask = PinMaskA | PinMaskB;
         static portMUX_TYPE Mux = portMUX_INITIALIZER_UNLOCKED;
 
         portENTER_CRITICAL(&Mux);
 
-        for (uint16_t I = 0; I < Length; I++)
+        for (uint16_t i = 0; i < Length; i++)
         {
             // Explicitly order GRB for WS2812 compatibility
-            uint8_t dataA[3] = {pixelsA[I].G, pixelsA[I].R, pixelsA[I].B};
-            uint8_t dataB[3] = {pixelsB[I].G, pixelsB[I].R, pixelsB[I].B};
+            uint8_t DataA[3] = {PixelsA[i].Green, PixelsA[i].Red, PixelsA[i].Blue};
+            uint8_t DataB[3] = {PixelsB[i].Green, PixelsB[i].Red, PixelsB[i].Blue};
 
             for (uint8_t Ch = 0; Ch < 3; Ch++)
             {
-                uint8_t A = dataA[Ch];
-                uint8_t B = dataB[Ch];
+                uint8_t ByteA = DataA[Ch];
+                uint8_t ByteB = DataB[Ch];
                 for (int8_t Bitpos = 7; Bitpos >= 0; Bitpos--)
                 {
-                    bool Ba = (A >> Bitpos) & 1;
-                    bool Bb = (B >> Bitpos) & 1;
+                    bool Ba = (ByteA >> Bitpos) & 1;
+                    bool Bb = (ByteB >> Bitpos) & 1;
 
                     GPIO.out_w1ts.val = Mask; // both data lines high
                     if (Ba != Bb)

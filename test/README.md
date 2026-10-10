@@ -23,24 +23,30 @@ Two device-side behaviours to respect: the TX pump treats the port as dead if no
 arrived for ~500 ms (so send and read within that window), and a malformed packet costs a
 stream resync (compare against `app/lib/core/protocol.dart`).
 
-## `app/test/hil_*_test.dart` — Flutter HIL suites
+## `app/test/hil/` — the HIL suite
 
-The feature suites drive the same protocol through the app's own clients, so they verify what
-the app sees. Set the port and run one or more files:
+One entry point drives the protocol through the app's own clients, so it verifies what the app sees.
+It scans the bus, builds a rig inventory and runs every test whose prerequisite the rig satisfies; an
+unmet prerequisite is a **skip, never a failure**. `Docs/HIL Tests.md` is the spec. Run it from `app/`:
 
 ```
-cd app
-TAMU_HIL=/dev/ttyACM0 bash test/run_hil_tests.sh \
-    test/tamu_hardware_verification_test.dart \
-    test/hil_subscriptions_test.dart \
-    test/hil_dynamic_persistence_test.dart
+bash test/run_hil_tests.sh                  # every category except bootloader
+bash test/run_hil_tests.sh --scan           # list the rig and stop
+bash test/run_hil_tests.sh --category module
+bash test/run_hil_tests.sh --device 2
+bash test/run_hil_tests.sh --bootloader     # a device in bootloader mode
+TAMU_HIL=/dev/ttyACM0 bash test/run_hil_tests.sh
+TAMU_HIL=ble bash test/run_hil_tests.sh
 ```
 
-(The runner resolves paths relative to `app/` and batches every file into one `flutter test`.)
+The core port is resolved from `/dev/serial/by-id` when `TAMU_HIL` is unset. Categories are generic,
+service, module and partner; the bootloader category runs on its own because it takes its device off
+the bus. Every run writes `app/test/hil/logs/hil_<stamp>.log` (gitignored) with the rig inventory,
+each result and the reason behind every skip.
 
-They are non-destructive by design (scratch blocks/files are removed and defaults restored).
-The evaluation-setup suite (`hil_current_setup_test.dart`) needs displays and fans; it applies
-the setup and also restores it, so run it last when the full rig is attached.
+The tests are **destructive**: they change blocks, files, subscriptions and addresses, and the device
+is not restored afterwards. Each test clears the temporaries it creates. Bootloader tests need the DAS
+built with `-D BOOTLOADER_FORCE` and declared with `TAMU_HIL_BOOTLOADER=<id>`.
 
 ## Host-only tests
 

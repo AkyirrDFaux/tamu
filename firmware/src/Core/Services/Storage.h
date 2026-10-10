@@ -114,19 +114,19 @@ inline bool StorageService::Handle(const PacketFrame &Frame)
                     uint32_t TotalContent = FileSize;
                     // Docs 03.05: "maximum 64 byte stream fragment". The name travels in EVERY
                     // fragment (B12): each fragment is [frag info][name echo (8)][content].
-                    uint16_t contentCap = 64;
-                    uint16_t TotalFrags = (uint16_t)((TotalContent + contentCap - 1) / contentCap);
+                    uint16_t ContentCap = 64;
+                    uint16_t TotalFrags = (uint16_t)((TotalContent + ContentCap - 1) / ContentCap);
                     if (TotalFrags == 0) TotalFrags = 1;
-                    for (uint16_t f = 0; f < TotalFrags; f++) {
+                    for (uint16_t Frag = 0; Frag < TotalFrags; Frag++) {
                         memcpy(TxFrame.Payload + 4, Name, 8);
-                        uint32_t ContentOff = (uint32_t)f * contentCap;
-                        uint16_t ContentLen = (TotalContent - ContentOff > contentCap)
-                                                   ? contentCap
+                        uint32_t ContentOff = (uint32_t)Frag * ContentCap;
+                        uint16_t ContentLen = (TotalContent - ContentOff > ContentCap)
+                                                   ? ContentCap
                                                    : (uint16_t)(TotalContent - ContentOff);
                         if (ContentLen) {
                             StorageFlashRead(FileOffset + ContentOff, TxFrame.Payload + 12, ContentLen);
                         }
-                        SendFragFragment(Frame, f, TotalFrags, (uint16_t)(8 + ContentLen));
+                        SendFragFragment(Frame, Frag, TotalFrags, (uint16_t)(8 + ContentLen));
                     }
                 } else {
                     DeviceLog("STORAGE", "read '%.8s' failed", Name);

@@ -384,7 +384,8 @@ class Capability {
   static const router = 1 << 1;
   static const dynamicMemory = 1 << 3;
   static const scripts = 1 << 4;
-  static const storageFiles = 1 << 5;
+  // Bit 5 is obsolete: it named a storage-files capability, but every device has
+  // storage files, so the bit carries no meaning.
   static const appInterface = 1 << 6;
   static const subscriptionRequest = 1 << 7;
   static const node = 1 << 8;
@@ -396,7 +397,6 @@ class Capability {
     if (caps & router != 0) names.add('Router');
     if (caps & dynamicMemory != 0) names.add('DynMem');
     if (caps & scripts != 0) names.add('Scripts');
-    if (caps & storageFiles != 0) names.add('Files');
     if (caps & appInterface != 0) names.add('App');
     if (caps & subscriptionRequest != 0) names.add('SubReq');
     if (caps & subscriptionProvide != 0) names.add('SubProv');

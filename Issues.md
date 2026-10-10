@@ -35,6 +35,35 @@ turn-around: `SendRaw` waits ~32 byte-times (~700 us) for silence before every a
 than pipelining saves. This also gates TODO's beta criterion "the update flow completes end to end on
 Android".
 
+## HIL suite findings (2026-10-10)
+
+From the first full run of the new HIL suite (`app/test/hil/`, spec `Docs/HIL Tests.md`) on the bench
+rig (core #1 + DAS #2): 43 passed, 4 failed, 0 skipped. Each failure reproduces in isolation.
+
+**Resolved 2026-10-10 - B1/B2 (subscription value updates dropped) root-caused and fixed.** The app
+addresses a local device by its net-0 shorthand (the SNDB stores local devices with NetID 0), but the
+wire carries the qualified address: the node adopts `MakeId(localNet, shortId)`. Measured on the bench:
+core own ID `0x8C01`, node own ID `0x8C02`, while the requester entry held `providerAddr = 2`. So the
+sender's `IdSrc` (`0x8C02`) never matched the stored provider address and `SubscriptionsControl.h`'s
+value-update routing dropped every update; the provider entry then also timed out. Fix: qualify the
+address at install time with the existing helper already used for the self-loopback check
+(compare `SubscriptionsControl.h:33`) -
+`Entry->ProviderAddr = NetQualifyLocal(ProviderAddr, DeviceStatus.NetId)`
+(`Core/Services/SubscriptionsControl.h`, CID `0x11`). HIL after the fix: **47 passed, 0 failed,
+0 skipped**. Tamu flash +32 B, DAS unchanged.
+
+**Resolved 2026-10-10 - B3 (short-write padding) and B4 (SNDB self-entry) fixed, verified on hardware.**
+Padding: `ScriptService::SetEntry` now null-fills the tail (`memset(Data + Vlen, 0, ...)`), matching the
+static path and `Docs/Services/Register.md`. SNDB: live self-registration was already gone (commit
+`5788df2`); the stale `NetID.1` entry survived in the persistent `.SNREG`, so `SNDB::AddDevice` now
+rejects `MakeId(0,1)` and boot purges any stale self-entry. HIL after the fix: 45 passed, 2 failed (the
+two subscription items above). Sizes: Tamu flash -100 B, Valu -40 B, DAS unchanged.
+
+**Resolved 2026-10-10 - the old StorageFiles capability bit is obsolete.** Removed from code and docs:
+the firmware define (`Core/Types/Enums.h`), the app constant, its `describe()` label, the
+`backup_restore.dart` file-support gate, and the `firmware_contract_test.dart` entry. Bit 5 survives
+only as a historical comment so it is not reused.
+
 ## Doc fact check (2026-10-09) - open items
 
 Every firmware document was checked against `firmware/src`; the closed dispositions

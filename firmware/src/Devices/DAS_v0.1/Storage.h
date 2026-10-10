@@ -96,16 +96,16 @@ bool StorageFlashWrite(uint32_t Offset, const void *Data, uint32_t Size)
     uint32_t Faddr = STORAGE_FLASH_BASE + Offset;
     uint32_t Start = Faddr & ~3u;
     uint32_t End = (Faddr + Size + 3u) & ~3u;
-    for (uint32_t A = Start; A < End; A += 4) {
-        uint32_t W = 0;
-        for (uint32_t K = 0; K < 4; K++) {
-            uint32_t ByteAddr = A + K;
+    for (uint32_t Addr = Start; Addr < End; Addr += 4) {
+        uint32_t Word = 0;
+        for (uint32_t ByteIndex = 0; ByteIndex < 4; ByteIndex++) {
+            uint32_t ByteAddr = Addr + ByteIndex;
             if (ByteAddr >= Faddr && ByteAddr < Faddr + Size)
-                W |= ((uint32_t)Src[ByteAddr - Faddr]) << (8 * K);
+                Word |= ((uint32_t)Src[ByteAddr - Faddr]) << (8 * ByteIndex);
             else
-                W |= ((uint32_t)Maddr[ByteAddr - Faddr]) << (8 * K);
+                Word |= ((uint32_t)Maddr[ByteAddr - Faddr]) << (8 * ByteIndex);
         }
-        if (FLASH_ProgramWord(A, W) != FLASH_COMPLETE) {
+        if (FLASH_ProgramWord(Addr, Word) != FLASH_COMPLETE) {
             FLASH_Lock();
             return false;
         }
@@ -131,10 +131,10 @@ bool StorageFlashErase(uint32_t Offset, uint32_t Size)
 
     FLASH_Unlock();
     FLASH_Unlock_Fast();
-    for (uint32_t O = Offset; O < Offset + Size; O += FLASH_ERASE_PAGE_SIZE) {
-        FLASH_ErasePage_Fast(STORAGE_FLASH_BASE + O);
+    for (uint32_t PageOffset = Offset; PageOffset < Offset + Size; PageOffset += FLASH_ERASE_PAGE_SIZE) {
+        FLASH_ErasePage_Fast(STORAGE_FLASH_BASE + PageOffset);
         uint32_t Check = 0;
-        memcpy(&Check, (const void *)(STORAGE_CHIP_BASE + O), sizeof(Check));
+        memcpy(&Check, (const void *)(STORAGE_CHIP_BASE + PageOffset), sizeof(Check));
         if (Check != 0xFFFFFFFFu) {
             FLASH_Lock_Fast();
             FLASH_Lock();

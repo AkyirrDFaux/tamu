@@ -36,11 +36,11 @@ bool OnLEDStateChange(const StaticBlockDescriptor& Block, uint16_t Index, const 
 // LED is on the shared line is driven, so the button cannot be read (ButtonState = false).
 void ButtonUpdate()
 {
-    if (staticVol.ledButton.LEDState != false)
+    if (StaticVol.LedButton.LEDState != false)
     {
-        staticVol.ledButton.ButtonState = false; // line is driven by the LED: not readable
+        StaticVol.LedButton.ButtonState = false; // line is driven by the LED: not readable
         return;
     }
 
-    staticVol.ledButton.ButtonState = !PinRead(LED_NOTIFICATION_PIN);
+    StaticVol.LedButton.ButtonState = !PinRead(LED_NOTIFICATION_PIN);
 }

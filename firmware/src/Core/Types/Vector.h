@@ -2,11 +2,11 @@
 
 // Vector/Matrix support is compiled out on SCALAR_ONLY targets (DAS).
 #ifndef SCALAR_ONLY
-template <size_t N>
+template <size_t Size>
 class Vector
 {
 public:
-    Number Data[N];
+    Number Data[Size];
     // Mutable element access by index
     Number &operator[](size_t i) { return Data[i]; }
     // Const element access by index
@@ -16,7 +16,7 @@ public:
     Vector operator+(const Vector &Other) const
     {
         Vector Result;
-        for (size_t i = 0; i < N; ++i)
+        for (size_t i = 0; i < Size; ++i)
         {
             Result.Data[i] = this->Data[i] + Other.Data[i];
         }
@@ -27,7 +27,7 @@ public:
     Vector operator-(const Vector &Other) const
     {
         Vector Result;
-        for (size_t i = 0; i < N; ++i)
+        for (size_t i = 0; i < Size; ++i)
         {
             Result.Data[i] = this->Data[i] - Other.Data[i];
         }
@@ -41,7 +41,7 @@ public:
     Vector operator*(const Number &Scalar) const
     {
         Vector Result;
-        for (size_t i = 0; i < N; ++i)
+        for (size_t i = 0; i < Size; ++i)
             Result.Data[i] = Data[i] * Scalar;
         return Result;
     }
@@ -50,7 +50,7 @@ public:
     Number Norm2() const
     {
         Number Sum = 0;
-        for (size_t i = 0; i < N; ++i)
+        for (size_t i = 0; i < Size; ++i)
         {
             Sum = Sum + (Data[i] * Data[i]);
         }
@@ -59,15 +59,15 @@ public:
 
     // Returns a NEW vector of size N-1 with the element at `pos` removed.
     // Note: Requires template specialization or conditional check for N > 0
-    Vector<N - 1> Remove(size_t Pos) const
+    Vector<Size - 1> Remove(size_t Pos) const
     {
-        if (Pos >= N)
-            Pos = N - 1; // clamp: a bad index would be a silent out-of-bounds read
-        Vector<N - 1> NextVec;
+        if (Pos >= Size)
+            Pos = Size - 1; // clamp: a bad index would be a silent out-of-bounds read
+        Vector<Size - 1> NextVec;
         for (size_t i = 0; i < Pos; ++i)
             NextVec.Data[i] = this->Data[i];
 
-        for (size_t i = Pos + 1; i < N; ++i)
+        for (size_t i = Pos + 1; i < Size; ++i)
             NextVec.Data[i - 1] = this->Data[i];
 
         return NextVec;

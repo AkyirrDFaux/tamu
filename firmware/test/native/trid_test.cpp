@@ -39,8 +39,8 @@ int main() {
     const ServiceType types[] = {ServiceType::Device, ServiceType::Register,
                                  ServiceType::LogHandler, ServiceType::Storage,
                                  ServiceType::Subscriptions, ServiceType::Script};
-    for (ServiceType t : types) {
-        const uint16_t Trid = NextSystemTrid(t);
+    for (ServiceType Service : types) {
+        const uint16_t Trid = NextSystemTrid(Service);
         CHECK((Trid & 0xF000) == 0); // within the documented 0x0FFF range
     }
 
@@ -53,11 +53,11 @@ int main() {
     uint16_t prev = first;
     int wraps = 0;
     for (int i = 0; i < 0x2000; i++) {
-        const uint16_t v = NextSystemTrid(ServiceType::Register);
-        CHECK_EQ(v, (uint16_t)((prev + 1) & TRID_SYSTEM_MAX));
-        CHECK((v & 0xF000) == 0);
-        if (v == 0) wraps++;
-        prev = v;
+        const uint16_t Got = NextSystemTrid(ServiceType::Register);
+        CHECK_EQ(Got, (uint16_t)((prev + 1) & TRID_SYSTEM_MAX));
+        CHECK((Got & 0xF000) == 0);
+        if (Got == 0) wraps++;
+        prev = Got;
     }
     CHECK(wraps >= 1); // the counter wrapped inside the sampled span
 

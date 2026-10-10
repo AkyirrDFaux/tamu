@@ -38,10 +38,10 @@ enum ValueFlags : uint8_t
     ValueTrigger    = 0x04,
 };
 
-inline uint16_t ValueInfoType(const ValueInfo &v) { return (uint16_t)(v.Type & 0x3FF); }
+inline uint16_t ValueInfoType(const ValueInfo &Info) { return (uint16_t)(Info.Type & 0x3FF); }
 inline uint16_t ValueInfoType(uint16_t Type) { return (uint16_t)(Type & 0x3FF); }
-inline bool ValueIsReadOnly(const ValueInfo &v)   { return (v.Flags & ValueReadOnly) != 0; }
-inline bool ValueIsPersistent(const ValueInfo &v) { return (v.Flags & ValuePersistent) != 0; }
+inline bool ValueIsReadOnly(const ValueInfo &Info)   { return (Info.Flags & ValueReadOnly) != 0; }
+inline bool ValueIsPersistent(const ValueInfo &Info) { return (Info.Flags & ValuePersistent) != 0; }
 
 struct FieldResult
 {
@@ -116,15 +116,15 @@ struct StaticBlockDescriptor
 
     // Unified entry retrieval by (field, key) (linear over the literal table).
     FieldResult Get(uint16_t Field, uint8_t Key) const {
-        const BlockEntry *e = FindEntry(Field, Key);
-        if (!e) return FieldResult{};
+        const BlockEntry *Entry = FindEntry(Field, Key);
+        if (!Entry) return FieldResult{};
         FieldResult Output;
-        Output.Descriptor = e->Info;
+        Output.Descriptor = Entry->Info;
         if (VirtualGet) {
-            void *p = VirtualGet(Field, Key);
-            if (p) { Output.Data = p; return Output; }
+            void *Ptr = VirtualGet(Field, Key);
+            if (Ptr) { Output.Data = Ptr; return Output; }
         }
-        Output.Data = const_cast<uint8_t*>(static_cast<const uint8_t*>(Base(e->Info))) + e->Offset;
+        Output.Data = const_cast<uint8_t*>(static_cast<const uint8_t*>(Base(Entry->Info))) + Entry->Offset;
         return Output;
     }
 

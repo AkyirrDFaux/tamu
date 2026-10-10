@@ -27,10 +27,10 @@
 // Tiny assertion framework
 // ---------------------------------------------------------------------------
 
-static int gChecks = 0;
-static int gFailures = 0;
+static int GChecks = 0;
+static int GFailures = 0;
 
-static double toD(Number value) { return value.Value / 65536.0; }
+static double ToD(Number value) { return value.Value / 65536.0; }
 
 // Number(double) is deliberately ambiguous (every integer constructor needs a conversion),
 // so doubles go through the N() idiom or this helper.
@@ -39,10 +39,10 @@ static Number num(double value) { return Number::FromRaw((int32_t)(value * 65536
 #define CHECK(cond)                                                                              \
     do                                                                                           \
     {                                                                                            \
-        gChecks++;                                                                               \
+        GChecks++;                                                                               \
         if (!(cond))                                                                             \
         {                                                                                        \
-            gFailures++;                                                                         \
+            GFailures++;                                                                         \
             std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                          \
         }                                                                                        \
     } while (0)
@@ -51,12 +51,12 @@ static Number num(double value) { return Number::FromRaw((int32_t)(value * 65536
 #define CHECK_NEAR(actual, expect, tol)                                                          \
     do                                                                                           \
     {                                                                                            \
-        gChecks++;                                                                               \
-        const double a_ = toD(actual);                                                           \
+        GChecks++;                                                                               \
+        const double a_ = ToD(actual);                                                           \
         const double e_ = (expect);                                                              \
         if (!(std::fabs(a_ - e_) <= (tol)))                                                      \
         {                                                                                        \
-            gFailures++;                                                                         \
+            GFailures++;                                                                         \
             std::printf("FAIL %s:%d: %s = %.6f, expected %.6f +/- %.6f\n", __FILE__, __LINE__,   \
                         #actual, a_, e_, (double)(tol));                                         \
         }                                                                                        \
@@ -65,10 +65,10 @@ static Number num(double value) { return Number::FromRaw((int32_t)(value * 65536
 #define CHECK_EQ(actual, expect)                                                                 \
     do                                                                                           \
     {                                                                                            \
-        gChecks++;                                                                               \
+        GChecks++;                                                                               \
         if (!((actual) == (expect)))                                                             \
         {                                                                                        \
-            gFailures++;                                                                         \
+            GFailures++;                                                                         \
             std::printf("FAIL %s:%d: %s != %s\n", __FILE__, __LINE__, #actual, #expect);         \
         }                                                                                        \
     } while (0)
@@ -77,7 +77,7 @@ static Number num(double value) { return Number::FromRaw((int32_t)(value * 65536
 // Construction, arithmetic, conversion
 // ---------------------------------------------------------------------------
 
-static void testBasics()
+static void TestBasics()
 {
     CHECK_EQ(Number(5).Value, 5 << DECIMAL);
     CHECK_EQ(Number(0).Value, 0);
@@ -149,57 +149,57 @@ static void testBasics()
 // 32-bit-only fixed-point primitives (used by the DAS)
 // ---------------------------------------------------------------------------
 
-static void testFixedPrimitives()
+static void TestFixedPrimitives()
 {
     const int32_t values[] = {0,       1,        -1,       2,       -2,       100,      -100,
                               65536,   12345,    -12345,   1000000, -1000000, (1 << 20), -(1 << 20),
                               46341,   -46341,   46340,    -46340,  252645135, -252645135};
 
     // FixedMul32 must equal the exact ((int64_t)a * b) >> 16.
-    for (int32_t a : values)
+    for (int32_t Lhs : values)
     {
-        for (int32_t b : values)
+        for (int32_t Rhs : values)
         {
-            const int32_t expected = (int32_t)(((int64_t)a * b) >> DECIMAL);
-            const int32_t got = FixedMul32(a, b);
+            const int32_t expected = (int32_t)(((int64_t)Lhs * Rhs) >> DECIMAL);
+            const int32_t got = FixedMul32(Lhs, Rhs);
             if (got != expected)
             {
-                gFailures++;
-                std::printf("FAIL FixedMul32(%d, %d) = %d, expected %d\n", a, b, got, expected);
+                GFailures++;
+                std::printf("FAIL FixedMul32(%d, %d) = %d, expected %d\n", Lhs, Rhs, got, expected);
             }
-            gChecks++;
+            GChecks++;
         }
     }
 
     // MulHigh32 must equal the high 32 bits of the exact product.
-    for (int32_t a : values)
+    for (int32_t Lhs : values)
     {
-        for (int32_t b : values)
+        for (int32_t Rhs : values)
         {
-            const int32_t expected = (int32_t)(((int64_t)a * (int64_t)b) >> 32);
-            const int32_t got = MulHigh32(a, b);
+            const int32_t expected = (int32_t)(((int64_t)Lhs * (int64_t)Rhs) >> 32);
+            const int32_t got = MulHigh32(Lhs, Rhs);
             if (got != expected)
             {
-                gFailures++;
-                std::printf("FAIL MulHigh32(%d, %d) = %d, expected %d\n", a, b, got, expected);
+                GFailures++;
+                std::printf("FAIL MulHigh32(%d, %d) = %d, expected %d\n", Lhs, Rhs, got, expected);
             }
-            gChecks++;
+            GChecks++;
         }
     }
 
     // FixedDiv32 must equal the exact (a << 16) / b, truncating toward zero, and 0 for b == 0.
-    for (int32_t a : values)
+    for (int32_t Lhs : values)
     {
-        for (int32_t b : values)
+        for (int32_t Rhs : values)
         {
-            const int32_t expected = b == 0 ? 0 : (int32_t)(((int64_t)a << DECIMAL) / b);
-            const int32_t got = FixedDiv32(a, b);
+            const int32_t expected = Rhs == 0 ? 0 : (int32_t)(((int64_t)Lhs << DECIMAL) / Rhs);
+            const int32_t got = FixedDiv32(Lhs, Rhs);
             if (got != expected)
             {
-                gFailures++;
-                std::printf("FAIL FixedDiv32(%d, %d) = %d, expected %d\n", a, b, got, expected);
+                GFailures++;
+                std::printf("FAIL FixedDiv32(%d, %d) = %d, expected %d\n", Lhs, Rhs, got, expected);
             }
-            gChecks++;
+            GChecks++;
         }
     }
     CHECK_EQ(FixedDiv32(5 << DECIMAL, 0), 0);
@@ -211,25 +211,25 @@ static void testFixedPrimitives()
     for (int i = 0; i < 200000; i++)
     {
         state = state * 1103515245u + 12345u;
-        const int32_t a = (int32_t)state;
+        const int32_t Lhs = (int32_t)state;
         state = state * 1103515245u + 12345u;
-        const int32_t b = (int32_t)state;
+        const int32_t Rhs = (int32_t)state;
 
-        if (MulHigh32(a, b) != (int32_t)(((int64_t)a * b) >> 32)) mismatches++;
-        if (FixedMul32(a, b) != (int32_t)(((int64_t)a * b) >> DECIMAL)) mismatches++;
+        if (MulHigh32(Lhs, Rhs) != (int32_t)(((int64_t)Lhs * Rhs) >> 32)) mismatches++;
+        if (FixedMul32(Lhs, Rhs) != (int32_t)(((int64_t)Lhs * Rhs) >> DECIMAL)) mismatches++;
         // Skip quotients that cannot fit in 32 bits: FixedDiv32 is documented to be exact
         // only in that range (and the reference would overflow the cast as well).
-        if (b != 0)
+        if (Rhs != 0)
         {
-            const int64_t q = ((int64_t)a << DECIMAL) / b;
-            if (q >= INT32_MIN && q <= INT32_MAX &&
-                FixedDiv32(a, b) != (int32_t)q) mismatches++;
+            const int64_t Quotient = ((int64_t)Lhs << DECIMAL) / Rhs;
+            if (Quotient >= INT32_MIN && Quotient <= INT32_MAX &&
+                FixedDiv32(Lhs, Rhs) != (int32_t)Quotient) mismatches++;
         }
     }
-    gChecks++;
+    GChecks++;
     if (mismatches != 0)
     {
-        gFailures++;
+        GFailures++;
         std::printf("FAIL randomised fixed-point sweep: %d mismatches\n", mismatches);
     }
 }
@@ -240,7 +240,7 @@ static void testFixedPrimitives()
 
 #ifndef SCALAR_ONLY
 
-static void testSqrt()
+static void TestSqrt()
 {
     CHECK_NEAR(sqrt(Number(0)), 0.0, 1e-6);
     CHECK_NEAR(sqrt(Number(-1)), 0.0, 1e-6); // non-positive returns zero, never NaN
@@ -257,7 +257,7 @@ static void testSqrt()
     for (int i = 1; i <= 1000; i++)
     {
         const double x = i * 0.1;
-        const double got = toD(sqrt(num(x)));
+        const double got = ToD(sqrt(num(x)));
         const double want = std::sqrt(x);
         worst = std::max(worst, std::fabs(got - want) / want);
     }
@@ -279,19 +279,19 @@ static void testSqrt()
 // Trigonometry
 // ---------------------------------------------------------------------------
 
-static void testTrig()
+static void TestTrig()
 {
     const Number pi = GetPI();
-    const Number halfPi = Number::FromRaw(RAW_HALF_PI);
+    const Number HalfPi = Number::FromRaw(RAW_HALF_PI);
 
     CHECK_NEAR(pi, 3.14159265, 1e-4);
     CHECK_NEAR(sin(Number(0)), 0.0, 1e-5);
     CHECK_NEAR(sin(pi), 0.0, 2e-3);
-    CHECK_NEAR(sin(halfPi), 1.0, 2e-3);
-    CHECK_NEAR(sin(-halfPi), -1.0, 2e-3);
+    CHECK_NEAR(sin(HalfPi), 1.0, 2e-3);
+    CHECK_NEAR(sin(-HalfPi), -1.0, 2e-3);
     CHECK_NEAR(cos(Number(0)), 1.0, 2e-3);
     CHECK_NEAR(cos(pi), -1.0, 2e-3);
-    CHECK_NEAR(cos(halfPi), 0.0, 2e-3);
+    CHECK_NEAR(cos(HalfPi), 0.0, 2e-3);
 
     // The 45-degree cell of the rotation matrix is what the improved parabola fixed.
     // The plain Bx + Cx|x| was ~5.6 % high here; guard it explicitly.
@@ -303,32 +303,32 @@ static void testTrig()
     // a fractional part. This is inherent to the fixed-point representation, not a defect.
     for (int deg = -170; deg <= 170; deg += 10)
     {
-        const Number a = Number::FromRaw((int32_t)((double)deg * (RAW_PI / 180.0)));
-        CHECK_NEAR(sin(-a), -toD(sin(a)), 1e-4);
-        CHECK_NEAR(cos(-a), toD(cos(a)), 1e-4);
+        const Number Lhs = Number::FromRaw((int32_t)((double)deg * (RAW_PI / 180.0)));
+        CHECK_NEAR(sin(-Lhs), -ToD(sin(Lhs)), 1e-4);
+        CHECK_NEAR(cos(-Lhs), ToD(cos(Lhs)), 1e-4);
     }
 
     // Accuracy across a full turn, and periodicity.
-    double worstSin = 0;
-    double worstCos = 0;
+    double WorstSin = 0;
+    double WorstCos = 0;
     const int steps = 3600;
     for (int i = 0; i <= steps; i++)
     {
         const double rad = (i * 2.0 * 3.14159265358979) / steps;
-        const Number a = num(rad);
-        worstSin = std::max(worstSin, std::fabs(toD(sin(a)) - std::sin(rad)));
-        worstCos = std::max(worstCos, std::fabs(toD(cos(a)) - std::cos(rad)));
+        const Number Lhs = num(rad);
+        WorstSin = std::max(WorstSin, std::fabs(ToD(sin(Lhs)) - std::sin(rad)));
+        WorstCos = std::max(WorstCos, std::fabs(ToD(cos(Lhs)) - std::cos(rad)));
     }
-    std::printf("  sin max absolute error: %.5f\n", worstSin);
-    std::printf("  cos max absolute error: %.5f\n", worstCos);
-    CHECK(worstSin < 0.005);
-    CHECK(worstCos < 0.005);
+    std::printf("  sin max absolute error: %.5f\n", WorstSin);
+    std::printf("  cos max absolute error: %.5f\n", WorstCos);
+    CHECK(WorstSin < 0.005);
+    CHECK(WorstCos < 0.005);
 
     // sin(x + 2*PI) == sin(x).
     for (int deg = -180; deg <= 180; deg += 30)
     {
-        const Number a = Number::FromRaw((int32_t)((double)deg * (RAW_PI / 180.0)));
-        CHECK_NEAR(sin(a + Number::FromRaw(RAW_TWO_PI)), toD(sin(a)), 1e-3);
+        const Number Lhs = Number::FromRaw((int32_t)((double)deg * (RAW_PI / 180.0)));
+        CHECK_NEAR(sin(Lhs + Number::FromRaw(RAW_TWO_PI)), ToD(sin(Lhs)), 1e-3);
     }
 
     // Range reduction for large arguments: the raw value is taken modulo 2*PI, so a large
@@ -341,31 +341,31 @@ static void testTrig()
     CHECK_NEAR(sin(Number::FromRaw(-(RAW_TWO_PI * 37))), 0.0, 5e-3);
 
     // Amplitude must be ~1 everywhere (the shape the renderer depends on).
-    double maxAmp = 0;
+    double MaxAmp = 0;
     for (int i = 0; i <= 360; i++)
     {
-        const Number a = Number::FromRaw((int32_t)((double)i * (RAW_PI / 180.0)));
-        maxAmp = std::max(maxAmp, std::fabs(toD(sin(a))));
+        const Number Lhs = Number::FromRaw((int32_t)((double)i * (RAW_PI / 180.0)));
+        MaxAmp = std::max(MaxAmp, std::fabs(ToD(sin(Lhs))));
     }
-    std::printf("  sin peak amplitude: %.5f\n", maxAmp);
-    CHECK(std::fabs(maxAmp - 1.0) < 0.005);
+    std::printf("  sin peak amplitude: %.5f\n", MaxAmp);
+    CHECK(std::fabs(MaxAmp - 1.0) < 0.005);
 }
 
-static void testAtan2()
+static void TestAtan2()
 {
     const Number pi = GetPI();
 
     // Exact quadrant boundaries (X = 0 is the tricky one, it must not divide by zero).
     CHECK_NEAR(atan2(Number(0), Number(1)), 0.0, 1e-4);
-    CHECK_NEAR(atan2(Number(1), Number(0)), toD(pi) / 2, 1e-4);
-    CHECK_NEAR(atan2(Number(-1), Number(0)), -toD(pi) / 2, 1e-4);
-    CHECK_NEAR(atan2(Number(0), Number(-1)), toD(pi), 1e-4); // +PI, as std::atan2
+    CHECK_NEAR(atan2(Number(1), Number(0)), ToD(pi) / 2, 1e-4);
+    CHECK_NEAR(atan2(Number(-1), Number(0)), -ToD(pi) / 2, 1e-4);
+    CHECK_NEAR(atan2(Number(0), Number(-1)), ToD(pi), 1e-4); // +PI, as std::atan2
     CHECK_NEAR(atan2(Number(0), Number(0)), 0.0, 1e-6);
 
-    CHECK_NEAR(atan2(Number(1), Number(1)), toD(pi) / 4, 1e-3);
-    CHECK_NEAR(atan2(Number(-1), Number(1)), -toD(pi) / 4, 1e-3);
-    CHECK_NEAR(atan2(Number(1), Number(-1)), 3 * toD(pi) / 4, 1e-3);
-    CHECK_NEAR(atan2(Number(-1), Number(-1)), -3 * toD(pi) / 4, 1e-3);
+    CHECK_NEAR(atan2(Number(1), Number(1)), ToD(pi) / 4, 1e-3);
+    CHECK_NEAR(atan2(Number(-1), Number(1)), -ToD(pi) / 4, 1e-3);
+    CHECK_NEAR(atan2(Number(1), Number(-1)), 3 * ToD(pi) / 4, 1e-3);
+    CHECK_NEAR(atan2(Number(-1), Number(-1)), -3 * ToD(pi) / 4, 1e-3);
 
     // The rational reduction plus cubic in a^2 is accurate to ~3e-4 rad everywhere. Bound it
     // tightly: the previous form was off by up to 0.071 rad (4 deg), which is what this guards.
@@ -378,7 +378,7 @@ static void testAtan2()
             if (i == 0 && j == 0) continue;
             const double y = i / 180.0 * 3.14159265;
             const double x = j / 180.0 * 3.14159265;
-            double diff = toD(atan2(num(y), num(x))) - std::atan2(y, x);
+            double diff = ToD(atan2(num(y), num(x))) - std::atan2(y, x);
             while (diff > 3.14159265358979) diff -= 2 * 3.14159265358979;
             while (diff < -3.14159265358979) diff += 2 * 3.14159265358979;
             worst = std::max(worst, std::fabs(diff));
@@ -392,7 +392,7 @@ static void testAtan2()
 // log / log10 / pow10
 // ---------------------------------------------------------------------------
 
-static void testLogExp()
+static void TestLogExp()
 {
     CHECK_NEAR(log(Number(1)), 0.0, 1e-4);
     CHECK_NEAR(log(Number(0)), 0.0, 1e-6);
@@ -418,18 +418,18 @@ static void testLogExp()
     for (int i = 1; i <= 2000; i++)
     {
         const double x = i * 0.5;
-        worst = std::max(worst, std::fabs(toD(log(num(x))) - std::log(x)));
+        worst = std::max(worst, std::fabs(ToD(log(num(x))) - std::log(x)));
     }
     std::printf("  log max absolute error: %.5f\n", worst);
     CHECK(worst < 0.005);
 
     // Monotonicity holds despite the truncation, and the LDR lux chain depends on it.
-    Number prevLog = log(num(0.01));
+    Number PrevLog = log(num(0.01));
     for (int i = 1; i <= 2000; i++)
     {
         const Number cur = log(num(i * 0.5));
-        CHECK(cur >= prevLog);
-        prevLog = cur;
+        CHECK(cur >= PrevLog);
+        PrevLog = cur;
     }
 
     CHECK_NEAR(pow10(Number(0)), 1.0, 1e-4);
@@ -441,7 +441,7 @@ static void testLogExp()
     // 10^4.5 = 31623 is the documented saturation point.
     CHECK_NEAR(pow10(N(4.5)), 31623.0, 20.0);
     CHECK_NEAR(pow10(Number(20)), 31623.0, 20.0);
-    CHECK(std::fabs(toD(pow10(Number(-20)))) < 1e-4);
+    CHECK(std::fabs(ToD(pow10(Number(-20)))) < 1e-4);
 
     // pow10(log10(x)) round-trip. The script "Power" op does NOT use this pair (it uses
     // nested square roots), so this only serves the DAS LDR chain; its error is the log10
@@ -449,15 +449,15 @@ static void testLogExp()
     for (int k = 0; k <= 12; k++)
         CHECK_NEAR(pow10(log10(Number(1 << k))), (double)(1 << k), (1 << k) * 2e-3);
 
-    double worstRt = 0;
+    double WorstRt = 0;
     for (int i = 1; i <= 200; i++)
     {
         const double x = i * 1.5;
-        const double rt = toD(pow10(log10(num(x))));
-        worstRt = std::max(worstRt, std::fabs(rt - x) / x);
+        const double rt = ToD(pow10(log10(num(x))));
+        WorstRt = std::max(WorstRt, std::fabs(rt - x) / x);
     }
-    std::printf("  pow10(log10(x)) max relative error: %.5f%%\n", worstRt * 100.0);
-    CHECK(worstRt < 0.005);
+    std::printf("  pow10(log10(x)) max relative error: %.5f%%\n", WorstRt * 100.0);
+    CHECK(WorstRt < 0.005);
 }
 
 // ---------------------------------------------------------------------------
@@ -465,38 +465,38 @@ static void testLogExp()
 // ---------------------------------------------------------------------------
 
 #ifndef SCALAR_ONLY
-static void testVectors()
+static void TestVectors()
 {
-    Vector<2> a;
-    a[0] = Number(3);
-    a[1] = Number(4);
-    CHECK_NEAR(a.Norm2(), 5.0, 1e-3);
+    Vector<2> Lhs;
+    Lhs[0] = Number(3);
+    Lhs[1] = Number(4);
+    CHECK_NEAR(Lhs.Norm2(), 5.0, 1e-3);
 
-    Vector<2> b;
-    b[0] = Number(1);
-    b[1] = Number(2);
-    CHECK_NEAR((a + b)[0], 4.0, 1e-6);
-    CHECK_NEAR((a - b)[1], 2.0, 1e-6);
-    CHECK_NEAR((a * Number(2))[0], 6.0, 1e-6);
+    Vector<2> Rhs;
+    Rhs[0] = Number(1);
+    Rhs[1] = Number(2);
+    CHECK_NEAR((Lhs + Rhs)[0], 4.0, 1e-6);
+    CHECK_NEAR((Lhs - Rhs)[1], 2.0, 1e-6);
+    CHECK_NEAR((Lhs * Number(2))[0], 6.0, 1e-6);
 
-    Vector<3> c;
-    for (int i = 0; i < 3; i++) c[i] = Number(i);
-    const Vector<2> removed = c.Remove(1);
+    Vector<3> Vec;
+    for (int i = 0; i < 3; i++) Vec[i] = Number(i);
+    const Vector<2> removed = Vec.Remove(1);
     CHECK_NEAR(removed[0], 0.0, 1e-6);
     CHECK_NEAR(removed[1], 2.0, 1e-6);
 
     // An out-of-range index is clamped rather than reading out of bounds.
-    const Vector<2> clamped = c.Remove(99);
+    const Vector<2> clamped = Vec.Remove(99);
     CHECK_NEAR(clamped[0], 0.0, 1e-6);
     CHECK_NEAR(clamped[1], 1.0, 1e-6);
 }
 
-static void testMatrix()
+static void TestMatrix()
 {
     const Matrix<3, 3> identity = Matrix<3, 3>::Identity();
-    for (int r = 0; r < 3; r++)
-        for (int c = 0; c < 3; c++)
-            CHECK_NEAR(identity(r, c), r == c ? 1.0 : 0.0, 1e-6);
+    for (int Row = 0; Row < 3; Row++)
+        for (int Col = 0; Col < 3; Col++)
+            CHECK_NEAR(identity(Row, Col), Row == Col ? 1.0 : 0.0, 1e-6);
 
     // Scale and translation with no rotation must be exact.
     Vector<2> translate;
@@ -541,42 +541,42 @@ static void testMatrix()
 
     // Matrix-matrix composition: Identity * M == M.
     const Matrix<3, 3> composed = identity.Multiply(rotated);
-    for (int r = 0; r < 3; r++)
-        for (int c = 0; c < 3; c++)
-            CHECK_NEAR(composed(r, c), toD(rotated(r, c)), 1e-4);
+    for (int Row = 0; Row < 3; Row++)
+        for (int Col = 0; Col < 3; Col++)
+            CHECK_NEAR(composed(Row, Col), ToD(rotated(Row, Col)), 1e-4);
 }
 
-static void testColour()
+static void TestColour()
 {
     ColourClass black(0, 0, 0, 255);
     const ColourClass white(255, 255, 255, 255);
 
     black.Layer(white, Number(1));
-    CHECK_EQ(black.R, 255);
-    CHECK_EQ(black.A, 255);
+    CHECK_EQ(black.Red, 255);
+    CHECK_EQ(black.Alpha, 255);
 
     ColourClass dark(0, 0, 0, 255);
     dark.Layer(white, Number(0));
-    CHECK_EQ(dark.R, 0);
+    CHECK_EQ(dark.Red, 0);
 
     ColourClass mid(0, 0, 0, 255);
     mid.Layer(white, N(0.5));
-    CHECK(mid.R >= 126 && mid.R <= 129);
+    CHECK(mid.Red >= 126 && mid.Red <= 129);
 
     // An out-of-range overlap used to extrapolate and wrap in the uint8_t channels.
     ColourClass over(10, 20, 30, 255);
     over.Layer(white, Number(4));
-    CHECK_EQ(over.R, 255);
-    CHECK_EQ(over.G, 255);
-    CHECK_EQ(over.B, 255);
+    CHECK_EQ(over.Red, 255);
+    CHECK_EQ(over.Green, 255);
+    CHECK_EQ(over.Blue, 255);
 
     // A negative overlap extrapolates below zero; the clamp floors it at 0 rather than
     // letting the subtraction wrap around in the uint8_t channels.
     ColourClass under(10, 20, 30, 255);
     under.Layer(white, Number(-4));
-    CHECK_EQ(under.R, 0);
-    CHECK_EQ(under.G, 0);
-    CHECK_EQ(under.B, 0);
+    CHECK_EQ(under.Red, 0);
+    CHECK_EQ(under.Green, 0);
+    CHECK_EQ(under.Blue, 0);
 }
 #endif
 
@@ -594,18 +594,18 @@ int main()
 #endif
     );
 
-    testBasics();
-    testFixedPrimitives();
-    testTrig();
-    testAtan2();
-    testLogExp();
+    TestBasics();
+    TestFixedPrimitives();
+    TestTrig();
+    TestAtan2();
+    TestLogExp();
 #ifndef SCALAR_ONLY
-    testSqrt();
-    testVectors();
-    testMatrix();
-    testColour();
+    TestSqrt();
+    TestVectors();
+    TestMatrix();
+    TestColour();
 #endif
 
-    std::printf("== %d checks, %d failures ==\n", gChecks, gFailures);
-    return gFailures == 0 ? 0 : 1;
+    std::printf("== %d checks, %d failures ==\n", GChecks, GFailures);
+    return GFailures == 0 ? 0 : 1;
 }

@@ -62,9 +62,9 @@ Every core implements a persistent SN Database.
 
 It has its own file, which stores Serial number and ID pairs.
 
-Local devices are stored with NetID 0. Other cores are stored only with their NetID.1. Devices from foreign nets are not stored.
+Local devices are stored with NetID 0. Other cores are stored only with their NetID.1. Devices from foreign nets are not stored. A core does not store its own entry or its own `NetID`.
 
-ID assignment first checks the database by SN; if nothing is found, a new ID is selected. The core's own `NetID` is always added automatically.
+ID assignment first checks the database by SN; if nothing is found, a new ID is selected.
 ### Commands for Cores (001x)
 | Name          | ID | Request                    | Response                        | Note |
 | ------------- | -- | -------------------------- | ------------------------------- | ---- |

@@ -72,9 +72,9 @@ inline uint32_t ApplyTimeOffset(uint32_t Raw)
 // offset is stepped but the drift (a property of this device's oscillator) is kept.
 inline void ApplyTimeSync(int32_t Offset)
 {
-    uint32_t r = TimeFromBoot();
-    int32_t Dt = TimeClampDt(r);
-    int32_t Target = OffsetAtRaw(r) + Offset;
+    uint32_t Raw = TimeFromBoot();
+    int32_t Dt = TimeClampDt(Raw);
+    int32_t Target = OffsetAtRaw(Raw) + Offset;
 
     const bool HaveRef = (TimeOffsetRefRaw != 0);
     if (HaveRef && Dt >= 1000 && Offset <= 5000 && Offset >= -5000)
@@ -91,7 +91,7 @@ inline void ApplyTimeSync(int32_t Offset)
     }
 
     TimeOffsetMs = Target;
-    TimeOffsetRefRaw = r;
+    TimeOffsetRefRaw = Raw;
 }
 
 // Single shared output buffer — all handlers build replies here instead of stack-allocating.

@@ -49,8 +49,8 @@ private:
     // meaningful while PtPending; PollBootloaderPassthrough's first test is `!PtPending`, so
     // the idle main loop pays one bool load and no bus access. The routing fields let the
     // poll rebuild the Device response for the original requester after Handle* has returned.
-    static constexpr uint32_t kPtTimeoutMs = 1000; // reply deadline (ms)
-    static constexpr uint32_t kPtPollMs    = 1;    // per-poll bus read budget (shortest usable)
+    static constexpr uint32_t KPtTimeoutMs = 1000; // reply deadline (ms)
+    static constexpr uint32_t KPtPollMs    = 1;    // per-poll bus read budget (shortest usable)
     bool PtPending    = false;                    // a request is issued and not yet settled
     uint8_t PtCid     = 0;                        // passthrough CID (0x20/0x21/0x22)
     uint8_t PtExpect  = 0;                        // expected Bootloader reply command
@@ -111,7 +111,7 @@ void DeviceService::HandleSNDB(const PacketFrame &Frame)
             uint16_t TotalFrags = (uint16_t)((Total + MAX_FRAG_CONTENT_SIZE - 1) / MAX_FRAG_CONTENT_SIZE);
             RegistryEntry Entry;
             uint32_t Sent = 0;
-            for (uint16_t f = 0; f < TotalFrags; f++)
+            for (uint16_t Frag = 0; Frag < TotalFrags; Frag++)
             {
                 uint16_t Off = 4;
                 while (Off - 4 < MAX_FRAG_CONTENT_SIZE && Sent < Count && SNDB::IterNext(Entry))
@@ -122,7 +122,7 @@ void DeviceService::HandleSNDB(const PacketFrame &Frame)
                     Off += 16;
                     Sent++;
                 }
-                SendFragFragment(Frame, f, TotalFrags, (uint16_t)(Off - 4));
+                SendFragFragment(Frame, Frag, TotalFrags, (uint16_t)(Off - 4));
             }
             break;
         }
@@ -273,7 +273,7 @@ inline void DeviceService::HandleBootloaderPassthrough(const PacketFrame &Frame,
     PtCmd      = Frame.Cmd;
     PtTrid     = Frame.Trid;
     PtOffset   = Offset;
-    PtDeadline = DeviceStatus.UptimeMs + kPtTimeoutMs;
+    PtDeadline = DeviceStatus.UptimeMs + KPtTimeoutMs;
     PtPending  = true;
 }
 
@@ -290,8 +290,8 @@ inline void DeviceService::PollBootloaderPassthrough()
     // it reads nothing. The shortest timeout that actually reads is 1 ms, and a reply frame is
     // at most 39 B (~0.85 ms of line time at 460800) whose leading 0xCA stays in the UART ring
     // until read, so one poll captures the whole frame. Bounded to ~one frame of blocking.
-    int N = RS485ReceiveRaw(PtRx, sizeof(PtRx), kPtPollMs);
-    if (N > 0 && Bootloader::Decode(PtRx, (uint16_t)N) == PtExpect)
+    int Length = RS485ReceiveRaw(PtRx, sizeof(PtRx), KPtPollMs);
+    if (Length > 0 && Bootloader::Decode(PtRx, (uint16_t)Length) == PtExpect)
     {
         uint8_t Out[4 + Bootloader::NAME_SIZE];
         uint8_t Flags = FLAG_TYPE | FLAG_START | FLAG_STOP;
@@ -424,7 +424,7 @@ bool DeviceService::Handle(const PacketFrame &Frame)
 #ifdef TYPE_CORE
             // Per the docs, ID assignment is a *core capability*: only answer when we
             // report the CORE bit and hold the core role (device ID 1 in a valid net).
-            if (!(kCapabilities & Capabilities::Core) || !DeviceIsCore())
+            if (!(KCapabilities & Capabilities::Core) || !DeviceIsCore())
                 return true;
 
             if (PayloadBytes(Frame) < sizeof(SerialNumber))

@@ -42,7 +42,7 @@ void SetupFanPWM()
     GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
     GPIO_Init(GPIOA, &GPIO_InitStructure);
 
-    FanApplyPeriod(FanPeriodForFreq(staticPer.Fan[0].PWMFreq));
+    FanApplyPeriod(FanPeriodForFreq(StaticPer.Fan[0].PWMFreq));
 
     TIM_OCInitTypeDef TIM_OCInitStructure = {0};
     TIM_OCInitStructure.TIM_OCMode = TIM_OCMode_PWM1;

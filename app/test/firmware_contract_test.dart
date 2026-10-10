@@ -323,7 +323,6 @@ void main() {
         'router': Capability.router,
         'dynamicMemory': Capability.dynamicMemory,
         'scripts': Capability.scripts,
-        'storageFiles': Capability.storageFiles,
         'appInterface': Capability.appInterface,
         'subscriptionRequest': Capability.subscriptionRequest,
         'node': Capability.node,

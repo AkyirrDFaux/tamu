@@ -120,7 +120,7 @@ static void UsbHwInit(void)
     // Reset the USBD peripheral before use, as the working release does: the controller may be in
     // an unknown state left by the ROM bootloader's USB session, and would then stay silent.
     RCC->APB1PRSTR |= RCC_APB1Periph_USB;
-    for (volatile uint32_t I = 0; I < 200000u; I++) {} // ~1 ms at 144 MHz
+    for (volatile uint32_t i = 0; i < 200000u; i++) {} // ~1 ms at 144 MHz
     RCC->APB1PRSTR &= ~RCC_APB1Periph_USB;
 }
 
@@ -224,8 +224,8 @@ uint16_t const *tud_descriptor_string_cb(uint8_t Index, uint16_t Langid)
         if (ChrCount > 32)
             ChrCount = 32;
 
-        for (size_t I = 0; I < ChrCount; I++)
-            DescStr[1 + I] = (uint16_t)Str[I];
+        for (size_t i = 0; i < ChrCount; i++)
+            DescStr[1 + i] = (uint16_t)Str[i];
     }
 
     DescStr[0] = (uint16_t)((TUSB_DESC_STRING << 8) | (2 * ChrCount + 2));
@@ -336,19 +336,19 @@ static bool FlashEraseSector(uint32_t Addr /* 0x00000000 domain, 4 KB aligned */
     // every word of the sector so reads become correct; writing all-1s does not change an erased
     // cell. Without this the verify below "fails" and HandleWrite skips the sector's FIRST chunk -
     // which is exactly the 7/881 read-back mismatches (one per sector).
-    for (uint32_t O = 0; O < FLASH_ERASE_SECTOR; O += 4)
+    for (uint32_t PageOffset = 0; PageOffset < FLASH_ERASE_SECTOR; PageOffset += 4)
     {
-        uint32_t W;
-        memcpy(&W, (const void *)(Addr + O), sizeof(W));
-        if (W != 0xFFFFFFFFu)
-            FLASH_ProgramWord(FLASH_CTRL_BASE + Addr + O, 0xFFFFFFFFu);
+        uint32_t Word;
+        memcpy(&Word, (const void *)(Addr + PageOffset), sizeof(Word));
+        if (Word != 0xFFFFFFFFu)
+            FLASH_ProgramWord(FLASH_CTRL_BASE + Addr + PageOffset, 0xFFFFFFFFu);
     }
 
     // Verify: both reads are now expected to be 0xFFFFFFFF. The first is taken immediately, the
     // second after a delay, in case the first was served while an operation was still settling.
     uint32_t R1 = 0, R2 = 0;
     memcpy(&R1, (const void *)Addr, sizeof(R1));
-    for (volatile uint32_t I = 0; I < 200000u; I++) {} // ~1 ms
+    for (volatile uint32_t i = 0; i < 200000u; i++) {} // ~1 ms
     memcpy(&R2, (const void *)Addr, sizeof(R2));
     Diag[4] = R1;
     Diag[5] = R2;
@@ -366,9 +366,9 @@ static void FlashWrite(uint32_t Addr /* 0x00000000 domain */, const uint8_t *Src
     FLASH->CTLR &= ~FLASH_CTLR_EHMOD;
     for (uint32_t Off = 0; Off < Len; Off += 4)
     {
-        uint32_t W;
-        memcpy(&W, Src + Off, sizeof(W));
-        FLASH_ProgramWord(FLASH_CTRL_BASE + Addr + Off, W); // two 16-bit writes (RM 32.5.3)
+        uint32_t Word;
+        memcpy(&Word, Src + Off, sizeof(Word));
+        FLASH_ProgramWord(FLASH_CTRL_BASE + Addr + Off, Word); // two 16-bit writes (RM 32.5.3)
     }
     FLASH_Lock();
     FlashRestore(Clk);
@@ -419,32 +419,32 @@ static void SendReadResponse(uint32_t Offset)
 // The identify response is entirely build-time constant (app-space size + device name), so the
 // whole frame - control byte and parity included - is precomputed and lives in flash. Nothing
 // is assembled at runtime: the handler just sends the constant (mirrors the DAS MakeIdentify).
-struct IdentifyFrame { uint8_t B[Bootloader::DATA_SIZE]; };
+struct IdentifyFrame { uint8_t Bytes[Bootloader::DATA_SIZE]; };
 
 constexpr IdentifyFrame MakeIdentify(uint32_t Space, const char *Name)
 {
-    IdentifyFrame F{};
-    F.B[0] = Bootloader::START;
-    F.B[1] = Bootloader::CMD_IDENTIFY_RESP;
-    F.B[2] = (uint8_t)(Space & 0xFFu);
-    F.B[3] = (uint8_t)((Space >> 8) & 0xFFu);
-    F.B[4] = (uint8_t)((Space >> 16) & 0xFFu);
-    F.B[5] = (uint8_t)((Space >> 24) & 0xFFu);
-    for (uint8_t I = 0; I < Bootloader::NAME_SIZE; I++)
+    IdentifyFrame Frame{};
+    Frame.Bytes[0] = Bootloader::START;
+    Frame.Bytes[1] = Bootloader::CMD_IDENTIFY_RESP;
+    Frame.Bytes[2] = (uint8_t)(Space & 0xFFu);
+    Frame.Bytes[3] = (uint8_t)((Space >> 8) & 0xFFu);
+    Frame.Bytes[4] = (uint8_t)((Space >> 16) & 0xFFu);
+    Frame.Bytes[5] = (uint8_t)((Space >> 24) & 0xFFu);
+    for (uint8_t i = 0; i < Bootloader::NAME_SIZE; i++)
     {
-        if (Name[I] == '\0') break;
-        F.B[6 + I] = (uint8_t)Name[I];
+        if (Name[i] == '\0') break;
+        Frame.Bytes[6 + i] = (uint8_t)Name[i];
     }
-    F.B[Bootloader::DATA_SIZE - 1] = Bootloader::END;
-    F.B[1] |= (uint8_t)(Bootloader::Parity(F.B, Bootloader::DATA_SIZE) << 3);
-    return F;
+    Frame.Bytes[Bootloader::DATA_SIZE - 1] = Bootloader::END;
+    Frame.Bytes[1] |= (uint8_t)(Bootloader::Parity(Frame.Bytes, Bootloader::DATA_SIZE) << 3);
+    return Frame;
 }
 
 constexpr IdentifyFrame Identify = MakeIdentify(APP_LIMIT - APP_BASE, "Valu v2.0");
 
 static void HandleIdentify()
 {
-    tud_cdc_write(Identify.B, Bootloader::DATA_SIZE);
+    tud_cdc_write(Identify.Bytes, Bootloader::DATA_SIZE);
     tud_cdc_write_flush();
 }
 
@@ -460,24 +460,24 @@ static void DispatchFrame(const uint8_t *Frame)
         SendReadResponse(Offset);
 }
 
-static void FeedByte(uint8_t B)
+static void FeedByte(uint8_t Byte)
 {
     if (Have == 0)
     {
-        if (B == Bootloader::START)
+        if (Byte == Bootloader::START)
         {
-            FrameBuf[0] = B;
+            FrameBuf[0] = Byte;
             Have = 1;
             TotalNeed = 2; // need the control byte to learn the length
         }
         return;
     }
 
-    FrameBuf[Have++] = B;
+    FrameBuf[Have++] = Byte;
 
     if (Have == 2)
     {
-        uint16_t Need = Bootloader::FrameSize((uint8_t)(B & 0x07u));
+        uint16_t Need = Bootloader::FrameSize((uint8_t)(Byte & 0x07u));
         if (Need == 0) // unknown command: drop and resync
         {
             Have = 0;
@@ -544,7 +544,7 @@ int main(void)
     GpioCfg(GPIOA, 2, 0x8u);
 
     // Let the pull-down settle, then sample: released (low) launches the app.
-    for (volatile uint32_t I = 0; I < 200000u; I++) {}
+    for (volatile uint32_t i = 0; i < 200000u; i++) {}
 #ifndef BOOTLOADER_FORCE
     // BOOTLOADER_FORCE (test hook) skips the button check so the USB update path can be
     // exercised without physically holding PA2.
@@ -574,11 +574,11 @@ int main(void)
         while (tud_cdc_available())
         {
             uint8_t Buf[64];
-            uint32_t N = tud_cdc_read(Buf, sizeof(Buf));
-            if (N == 0)
+            uint32_t ReadLen = tud_cdc_read(Buf, sizeof(Buf));
+            if (ReadLen == 0)
                 break;
-            for (uint32_t I = 0; I < N; I++)
-                FeedByte(Buf[I]);
+            for (uint32_t i = 0; i < ReadLen; i++)
+                FeedByte(Buf[i]);
         }
     }
 }

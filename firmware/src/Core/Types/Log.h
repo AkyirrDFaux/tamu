@@ -38,41 +38,41 @@ inline uint16_t MakeLogSource(uint16_t Type, uint8_t Instance)
 inline LogMessage MakeLog(bool IsBlock, uint16_t TypeOrService, uint16_t Code,
                           uint32_t Timestamp, uint8_t Instance = 0)
 {
-    LogMessage m;
-    m.Source = IsBlock ? MakeLogSource(TypeOrService, Instance)
+    LogMessage Message;
+    Message.Source = IsBlock ? MakeLogSource(TypeOrService, Instance)
                         : MakeLogSource(LOG_SOURCE_SERVICE, (uint8_t)TypeOrService);
-    m.Category = (uint8_t)(Code >> 8);
-    m.Specifics = (uint8_t)(Code & 0xFF);
-    m.Timestamp = Timestamp;
-    return m;
+    Message.Category = (uint8_t)(Code >> 8);
+    Message.Specifics = (uint8_t)(Code & 0xFF);
+    Message.Timestamp = Timestamp;
+    return Message;
 }
 
 // True if the source is a block (rather than a service).
-inline bool LogIsBlock(const LogMessage &m)
+inline bool LogIsBlock(const LogMessage &Message)
 {
-    return (m.Source & 0x3FF) != LOG_SOURCE_SERVICE;
+    return (Message.Source & 0x3FF) != LOG_SOURCE_SERVICE;
 }
 
 // The source's block type (or LOG_SOURCE_SERVICE).
-inline uint16_t LogSourceType(const LogMessage &m)
+inline uint16_t LogSourceType(const LogMessage &Message)
 {
-    return (uint16_t)(m.Source & 0x3FF);
+    return (uint16_t)(Message.Source & 0x3FF);
 }
 
 // The source's instance (a block instance, or the ServiceType for a service log).
-inline uint8_t LogSourceInstance(const LogMessage &m)
+inline uint8_t LogSourceInstance(const LogMessage &Message)
 {
-    return (uint8_t)(m.Source >> 10);
+    return (uint8_t)(Message.Source >> 10);
 }
 
 // The block type or service type the log came from.
-inline uint16_t LogSourceId(const LogMessage &m)
+inline uint16_t LogSourceId(const LogMessage &Message)
 {
-    return LogIsBlock(m) ? LogSourceType(m) : LogSourceInstance(m);
+    return LogIsBlock(Message) ? LogSourceType(Message) : LogSourceInstance(Message);
 }
 
 // The 16-bit code (category << 8 | specifics).
-inline uint16_t LogCode(const LogMessage &m)
+inline uint16_t LogCode(const LogMessage &Message)
 {
-    return (uint16_t)(((uint16_t)m.Category << 8) | m.Specifics);
+    return (uint16_t)(((uint16_t)Message.Category << 8) | Message.Specifics);
 }

@@ -7,16 +7,18 @@ configs, both `OPTIMIZE_SPEED` states) + the app host suite + `flutter analyze`.
 `PLATFORMIO_CORE_DIR=~/.platformio`, build one env per `pio run` invocation, and delete
 `.pio/build/<env>` after a platform change (the stale CMake cache reports `Source ... not found`).
 
-HIL: the rig is core + 1 DAS, no displays or fans, so `bash app/test/run_hil_tests.sh` defaults to
-the `small` profile (`tamu_hardware_verification_test.dart`). `--rig full` is the evaluation-setup
-suite and needs two DAS nodes plus the displays/fans; it fails fast with that reason rather than
-dying inside `setUpAll`. The feature suites are destructive and nothing on a 1-DAS rig can restore
-the evaluation setup, so run them deliberately. `hil_bootloader` needs the DAS built with
-`-D BOOTLOADER_FORCE`.
+HIL: one entry point, `bash app/test/run_hil_tests.sh`. It scans the bus, builds a rig inventory and
+runs every test whose prerequisite the rig satisfies; an unmet prerequisite is a skip, never a
+failure (spec: `Docs/HIL Tests.md`). Categories: generic, service, module and partner - plus
+bootloader, which runs on its own (`--bootloader`) because it takes its device off the bus. `--scan`
+lists the rig and stops; `--category <name>` and `--device <id>` narrow a run. Every run writes
+`app/test/hil/logs/hil_<stamp>.log` (gitignored). Tests are destructive - they change blocks, files,
+subscriptions and addresses - but clear their own temporaries. Source lives under `app/test/hil/`.
 
 Serial ports renumber between sessions - resolve them from `/dev/serial/by-id` (Espressif USB-JTAG =
 core, WCH-Link = DAS) rather than remembering a `/dev/ttyACM<N>` number. `run_hil_tests.sh` does
-this itself; `TAMU_HIL` overrides it, or set it to `ble` for the BLE path.
+this itself; `TAMU_HIL` overrides it, or set it to `ble` for the BLE path. `TAMU_HIL_BOOTLOADER=<id>`
+declares a device in bootloader mode for the bootloader category.
 
 ## Bootloader protocol v2 (2026-10-10) - implemented, HIL not run
 
@@ -26,8 +28,9 @@ Spec: `Docs/Services/Bootloader.md`; partition sizes are in `Docs/Devices.md`. L
 `Issues.md` "Completed 2026-10-09/10" for the commit list.
 
 **Outstanding:** HIL. Nothing in this change set has run on hardware, and it moves the app's update flow,
-which the beta acceptance criteria below require to work end to end on Android. `hil_bootloader` needs
-the DAS built with `-D BOOTLOADER_FORCE`; the rig is core + 1 DAS. Measure pipelined write throughput
+which the beta acceptance criteria below require to work end to end on Android. The bootloader
+category (`--bootloader`) needs the DAS built with `-D BOOTLOADER_FORCE` and declared with
+`TAMU_HIL_BOOTLOADER=<id>`; the rig is core + 1 DAS. Measure pipelined write throughput
 against the old write-then-read-back path - the per-ack half-duplex turn-around may cost more than the
 ack saves.
 
@@ -154,7 +157,7 @@ change-sets per area - the one serial step in the plan.
   `Services/Router.md` (marked `TBD`), `Services/Bootloader.md`, `Services/Log Handler.md`,
   `Services/App Interface.md`. Remaining: `Services/Script.md`, `RSBus and Packets.md`,
   `Data Formats.md`, `Command ID table.md`, `General architecture.md`, `Devices.md`,
-  `Modules and blocks/*` (4 files), and `Current setup v3.md` (borderline - firmware, or rig notes?).
+  `Modules and blocks/*` (4 files), and `Example Setup.md` (borderline - firmware, or rig notes?).
   **ALL DONE (2026-10-09):** 19 firmware docs rewritten (Storage approved as the template first).
   Verified clean: no `#`/`##` headings, no colon-ending headings, no old typos, no `TRID`, no old
   command-table headers, no old range-heading form. 1000 insertions / 857 deletions across 20 files
@@ -169,7 +172,7 @@ green, release checklist.
 - Router capability bit: reserve one for the router service so the documented capability can be set.
 - App Active enum: add `WiFi` (`Enums.h:34-38`) when that work starts. E10 dropped `LegacyBt` from
   the documents, so it is no longer listed as a planned state.
-- [x] **A55 (Current Setup v3) - the brightness-cap column. DONE 2026-10-10 (E15).** The curve was
+- [x] **A55 (Example Setup) - the brightness-cap column. DONE 2026-10-10 (E15).** The curve was
       rescaled to 7-100 % with the cap at 8 000 lux; the table now reads the four anchors.
 - [ ] **Valu app works standalone but NOT when launched by the bootloader (open).** Verified
       2026-10-07: the identical app image, ISP-flashed at 0x0 (no bootloader), runs and enumerates
@@ -314,7 +317,7 @@ green, release checklist.
 - **App backup** (`Docs/App/Backup.md`): semantic format; capture/restore of the whole register,
   subscriptions, scripts, SNDB and every file; per-part sync UI with remap; HIL round-trip.
 - **Register service** (revised `Register.md`): L0-L6 + P1-P8; the doc-vs-code passes.
-- **Evaluation setup** (`Docs/Current setup v3.md`): the setup builder, the emote system, tuning
+- **Evaluation setup** (`Docs/Example Setup.md`): the setup builder, the emote system, tuning
   rounds, the LED transfer curve + ring look, the LDR/brightness calibration, the setup HIL suite.
 - **RSBus packet + TRID + subscriptions rework** (docs 2026-10-03): byte payload length, central
   TRID ranges + reply echo, the subscription rework, the `.SUBREQ` name, the System-block rework.

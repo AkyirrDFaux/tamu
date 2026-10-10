@@ -271,6 +271,13 @@ bool SNDB::AddDevice(const SerialNumber &Serial, uint16_t Address)
 {
     if (!RegistryAddressStorable(Address))
         return false;
+    // The core never stores itself (Docs/Services/System Block and Device Commands.md: "A core
+    // does not store its own entry or its own NetID"). Short ID 1 is reserved for the core, so
+    // the net-0 device-1 slot is always the core's own entry, never a storeable device; reject
+    // it here so no write path can mint it. Other cores are stored as their NetID.1
+    // (device 1 in a foreign net, a different address) and local devices start at ID 2.
+    if (Address == MakeId(0, 1))
+        return false;
     if (!EnsureRecovered())
         return false;
 

@@ -9,9 +9,9 @@
 
 // Shared reply for every subscription CID (docs: responses are packets with FLAG_TYPE).
 inline void SubscriptionsService::SubReply(const PacketFrame &Frame, const uint8_t *Payload, uint16_t Len,
-                     uint8_t extraFlags) {
+                     uint8_t ExtraFlags) {
     PacketConstruct(&TxFrame, Frame.IdSrc, Frame.Cmd, Frame.Trid,
-                    (uint8_t)(FLAG_TYPE | FLAG_START | FLAG_STOP | extraFlags), Payload, Len);
+                    (uint8_t)(FLAG_TYPE | FLAG_START | FLAG_STOP | ExtraFlags), Payload, Len);
 #ifdef USE_APP_INTERFACE
     if (Frame.IdSrc == 0xFFFE) {
         AppInterface.Send(TxFrame);
@@ -27,17 +27,17 @@ inline void SubscriptionsService::SubReply(const PacketFrame &Frame, const uint8
 // Cancels the provider side of a requester subscription (same-device: drop the local provider
 // entry; remote: send 0401 with an empty payload = None/cancel). Requester-only: the provider
 // side never cancels anything, so the DAS does not compile it.
-inline void SubscriptionsService::SubscriptionsCancelProvider(uint16_t providerAddr, uint16_t Trid) {
+inline void SubscriptionsService::SubscriptionsCancelProvider(uint16_t ProviderAddr, uint16_t Trid) {
 #ifdef USE_SUB_PROVIDE
     uint8_t Net = (uint8_t)((DeviceStatus.ShortAddress >> 10) & 0x3F);
-    if (NetQualifyLocal(providerAddr, Net) == DeviceStatus.ShortAddress) {
-        ProviderEntry* p = ProviderFindByTrid(Trid);
-        if (p) ProviderClearEntry(p);
+    if (NetQualifyLocal(ProviderAddr, Net) == DeviceStatus.ShortAddress) {
+        ProviderEntry* Provider = ProviderFindByTrid(Trid);
+        if (Provider) ProviderClearEntry(Provider);
         return;
     }
 #endif
     PacketFrame Cancel;
-    PacketConstruct(&Cancel, providerAddr, MakeService(ServiceType::Subscriptions, 1), Trid,
+    PacketConstruct(&Cancel, ProviderAddr, MakeService(ServiceType::Subscriptions, 1), Trid,
                     FLAG_START | FLAG_STOP, nullptr, 0);
     SendAndVerifyPacket(Cancel);
 }
@@ -47,30 +47,30 @@ inline void SubscriptionsService::SubscriptionsCancelProvider(uint16_t providerA
 // copying each occupied entry straight into the fragment payload - no full-table buffer.
 // `occupied` reports whether entry `i` is live (the provider and requester tables differ).
 inline void SubscriptionsService::StreamSubscriptionTable(const PacketFrame &Frame, const uint8_t *Table, uint16_t Max,
-                                    uint16_t entrySize, bool (*Occupied)(const uint8_t *, uint16_t)) {
+                                    uint16_t EntrySize, bool (*Occupied)(const uint8_t *, uint16_t)) {
     uint8_t Count = 0;
     for (uint16_t i = 0; i < Max; i++) if (Occupied(Table, i)) Count++;
-    uint16_t Total = (uint16_t)((uint16_t)Count * entrySize);
+    uint16_t Total = (uint16_t)((uint16_t)Count * EntrySize);
     uint16_t Frags = (uint16_t)((Total + MAX_FRAG_CONTENT_SIZE - 1) / MAX_FRAG_CONTENT_SIZE);
     if (Frags == 0) Frags = 1;
 
     uint16_t Idx = 0;
-    for (uint16_t f = 0; f < Frags; f++) {
+    for (uint16_t Frag = 0; Frag < Frags; Frag++) {
         uint8_t *Dst = TxFrame.Payload + 4;
-        uint16_t n = 0;
-        while (Idx < Max && n + entrySize <= MAX_FRAG_CONTENT_SIZE) {
+        uint16_t Count = 0;
+        while (Idx < Max && Count + EntrySize <= MAX_FRAG_CONTENT_SIZE) {
             if (!Occupied(Table, Idx)) { Idx++; continue; }
-            memcpy(Dst + n, Table + (size_t)Idx * entrySize, entrySize);
-            n += entrySize;
+            memcpy(Dst + Count, Table + (size_t)Idx * EntrySize, EntrySize);
+            Count += EntrySize;
             Idx++;
         }
-        SendFragFragment(Frame, f, Frags, n);
+        SendFragFragment(Frame, Frag, Frags, Count);
     }
 }
 
 #ifdef USE_SUB_PROVIDE
 inline bool SubscriptionsService::ProviderEntryLive(const uint8_t *Table, uint16_t i) {
-    return ((const ProviderEntry *)Table)[i].requesterAddr != 0;
+    return ((const ProviderEntry *)Table)[i].RequesterAddr != 0;
 }
 // Streams the provider table (u8 count, then 32 B entries).
 inline void SubscriptionsService::ProviderStreamTable(const PacketFrame &Frame) {
@@ -100,10 +100,10 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
     // reaches here.
     if ((Frame.Flags & FLAG_TYPE) && Frame.Trid >= TRID_SUB_BASE &&
         Frame.Trid <= TRID_SUB_MAX) {
-        RequesterEntry* e = RequesterFindByTrid((uint16_t)Frame.Trid);
+        RequesterEntry* Entry = RequesterFindByTrid((uint16_t)Frame.Trid);
         // Stale reply after the entry was retargeted to a different provider: drop it. A
         // cancelled entry no longer resolves, so it falls through to the orphan handling.
-        if (e && Frame.IdSrc != e->providerAddr) return true;
+        if (Entry && Frame.IdSrc != Entry->ProviderAddr) return true;
         HandleRequesterValueUpdate(Frame);
         return true;
     }
@@ -126,27 +126,27 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
 
         case 0x01: { // Change subscription (inter-device, requester -> provider).
 #ifdef USE_SUB_PROVIDE
-            ProviderEntry* e = ProviderFindByTrid(Frame.Trid);
+            ProviderEntry* Entry = ProviderFindByTrid(Frame.Trid);
             bool Cancel = PayloadBytes(Frame) < SUB_TABLE_WIRE_SIZE ||
                           Frame.Payload[4] == (uint8_t)TriggerType::None;
             if (Cancel) {
-                if (e) ProviderClearEntry(e);
+                if (Entry) ProviderClearEntry(Entry);
                 SubReply(Frame, nullptr, 0, FLAG_SUCCESS);
                 break;
             }
 
-            SubscriptionTable t;
-            memcpy((void *)&t, Frame.Payload, SUB_TABLE_WIRE_SIZE);
+            SubscriptionTable Table;
+            memcpy((void *)&Table, Frame.Payload, SUB_TABLE_WIRE_SIZE);
             // Reuse the entry found above (no second search). An explicit Set resets its trigger
             // state so a retargeted subscription sends its first value immediately.
-            if (!e) e = ProviderFindFree();
-            if (!e) { SubReply(Frame, nullptr, 0, FLAG_FAIL); break; }
-            ProviderApply(e, Frame.Trid, Frame.IdSrc, t, true);
+            if (!Entry) Entry = ProviderFindFree();
+            if (!Entry) { SubReply(Frame, nullptr, 0, FLAG_FAIL); break; }
+            ProviderApply(Entry, Frame.Trid, Frame.IdSrc, Table, true);
             // Docs CID 1: the response to a change subscription is the CURRENT VALUE (so the
             // requester starts from a known state). Fall back to a 1-byte ack when the source
             // register does not resolve (yet).
             {
-                FieldResult Cur = SubscriptionsGetField(t.sourceReg);
+                FieldResult Cur = SubscriptionsGetField(Table.SourceReg);
                 if (Cur.Data) {
                     uint8_t Vlen = Cur.Descriptor.Size;
                     if (Vlen > MAX_PAYLOAD_SIZE) Vlen = MAX_PAYLOAD_SIZE;
@@ -179,16 +179,16 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
                 SubReply(Frame, nullptr, 0, FLAG_FAIL);
                 break;
             }
-            uint16_t providerAddr = LoadUnaligned<uint16_t>(Frame.Payload);
-            SubscriptionTable t;
-            memcpy((void *)&t, Frame.Payload + 4, SUB_TABLE_WIRE_SIZE);
-            uint32_t targetReg = LoadUnaligned<uint32_t>(Frame.Payload + 4 + SUB_TABLE_WIRE_SIZE);
+            uint16_t ProviderAddr = LoadUnaligned<uint16_t>(Frame.Payload);
+            SubscriptionTable Table;
+            memcpy((void *)&Table, Frame.Payload + 4, SUB_TABLE_WIRE_SIZE);
+            uint32_t TargetReg = LoadUnaligned<uint32_t>(Frame.Payload + 4 + SUB_TABLE_WIRE_SIZE);
 
-            RequesterEntry* e = RequesterFindByTrid(Frame.Trid);
-            if (t.Trigger == TriggerType::None) {
-                if (e) {
-                    uint16_t Provider = e->providerAddr;
-                    RequesterRemove(e);
+            RequesterEntry* Entry = RequesterFindByTrid(Frame.Trid);
+            if (Table.Trigger == TriggerType::None) {
+                if (Entry) {
+                    uint16_t Provider = Entry->ProviderAddr;
+                    RequesterRemove(Entry);
                     SaveRequesterTable();
                     SubscriptionsCancelProvider(Provider, Frame.Trid);
                 }
@@ -197,23 +197,28 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
             }
 
             // Reuse the entry found above; only allocate when it does not exist yet.
-            if (!e) {
-                e = RequesterAlloc(Frame.Trid);
-                if (!e) { SubReply(Frame, nullptr, 0, FLAG_FAIL); break; }
+            if (!Entry) {
+                Entry = RequesterAlloc(Frame.Trid);
+                if (!Entry) { SubReply(Frame, nullptr, 0, FLAG_FAIL); break; }
             }
-            e->providerAddr = providerAddr;
-            e->Sub = t;
-            e->targetReg = targetReg;
-            e->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
-            e->registeredAtMs = DeviceStatus.UptimeMs;
-            e->lastRegisteredMs = 0;
-            e->lastValueMs = 0;
+            // The app addresses a local device with its net-0 shorthand (the SNDB stores
+            // local devices with NetID 0), but the wire carries the fully qualified address:
+            // a node adopts MakeId(localNet, shortId). Qualify it here so the stored provider
+            // address matches the sender's IdSrc - otherwise every value update is dropped as
+            // coming from a foreign address (SubscriptionsControl.h, value-update routing).
+            Entry->ProviderAddr = NetQualifyLocal(ProviderAddr, DeviceStatus.NetId);
+            Entry->Sub = Table;
+            Entry->TargetReg = TargetReg;
+            Entry->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
+            Entry->RegisteredAtMs = DeviceStatus.UptimeMs;
+            Entry->LastRegisteredMs = 0;
+            Entry->LastValueMs = 0;
             SaveRequesterTable();
 
             // Respond first (the app waits on the transaction ID), then register the provider
             // side (same-device or 0401 to the remote provider).
             SubReply(Frame, nullptr, 0, FLAG_SUCCESS);
-            RegisterRequesterProvider(e);
+            RegisterRequesterProvider(Entry);
             break;
         }
 
@@ -245,17 +250,17 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
                 SubReply(Frame, nullptr, 0, FLAG_FAIL);
                 break;
             }
-            uint16_t requesterAddr = LoadUnaligned<uint16_t>(Frame.Payload);
-            SubscriptionTable t;
-            memcpy((void *)&t, Frame.Payload + 4, SUB_TABLE_WIRE_SIZE);
+            uint16_t RequesterAddr = LoadUnaligned<uint16_t>(Frame.Payload);
+            SubscriptionTable Table;
+            memcpy((void *)&Table, Frame.Payload + 4, SUB_TABLE_WIRE_SIZE);
 
-            if (t.Trigger == TriggerType::None) {
-                ProviderEntry* e = ProviderFindByTrid(Frame.Trid);
-                if (e) ProviderClearEntry(e);
+            if (Table.Trigger == TriggerType::None) {
+                ProviderEntry* Entry = ProviderFindByTrid(Frame.Trid);
+                if (Entry) ProviderClearEntry(Entry);
                 SubReply(Frame, nullptr, 0, FLAG_SUCCESS);
                 break;
             }
-            if (!ProviderInstall(Frame.Trid, requesterAddr, t, true)) {
+            if (!ProviderInstall(Frame.Trid, RequesterAddr, Table, true)) {
                 SubReply(Frame, nullptr, 0, FLAG_FAIL);
                 break;
             }
@@ -273,32 +278,32 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
     return true;
 }
 
-inline void SubscriptionsService::Tick(uint32_t nowMs) {
+inline void SubscriptionsService::Tick(uint32_t NowMs) {
 #ifdef USE_SUB_PROVIDE
     // Docs "Timeout 120s, renewed with new request": drop providers that stopped being renewed.
     for (int i = 0; i < MAX_PROVIDER_SUBS; i++) {
-        ProviderEntry* e = &ProviderTable[i];
-        if (e->requesterAddr != 0 && e->Timeout != 0 && (int32_t)(nowMs - e->Timeout) >= 0)
-            ProviderClearEntry(e);
+        ProviderEntry* Entry = &ProviderTable[i];
+        if (Entry->RequesterAddr != 0 && Entry->Timeout != 0 && (int32_t)(NowMs - Entry->Timeout) >= 0)
+            ProviderClearEntry(Entry);
     }
-    EvaluateProviderTriggers(nowMs);
+    EvaluateProviderTriggers(NowMs);
 #endif
 #ifdef USE_SUB_REQUEST
-    bool requesterTableChanged = false;
+    bool RequesterTableChanged = false;
     for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
-        RequesterEntry* e = &RequesterTable[i];
-        if (e->Active && e->Timeout != 0 && (int32_t)(nowMs - e->Timeout) >= 0) {
-            uint16_t Provider = e->providerAddr;
-            uint16_t Trid = e->Trid;
-            RequesterRemove(e);          // compacts the table, shifting the tail left
-            requesterTableChanged = true;
+        RequesterEntry* Entry = &RequesterTable[i];
+        if (Entry->Active && Entry->Timeout != 0 && (int32_t)(NowMs - Entry->Timeout) >= 0) {
+            uint16_t Provider = Entry->ProviderAddr;
+            uint16_t Trid = Entry->Trid;
+            RequesterRemove(Entry);          // compacts the table, shifting the tail left
+            RequesterTableChanged = true;
             SubscriptionsCancelProvider(Provider, Trid);
             i--;                         // re-check the entry shifted into slot i
         }
     }
     // Persist the removals: a timed-out entry must not be restored on the next boot.
-    if (requesterTableChanged) SaveRequesterTable();
-    RequesterInitCheck(nowMs);
+    if (RequesterTableChanged) SaveRequesterTable();
+    RequesterInitCheck(NowMs);
     SubscriptionsReRegisterPending();
 #endif
 }

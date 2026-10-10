@@ -62,9 +62,9 @@ int main()
 
     // Every byte value in isolation, then every value as a prefix to a fixed tail: that covers
     // all 256 table entries both as a starting state and as an indexed byte.
-    for (int b = 0; b < 256; b++)
+    for (int i = 0; i < 256; i++)
     {
-        const uint8_t one[1] = {(uint8_t)b};
+        const uint8_t one[1] = {(uint8_t)i};
         CHECK_EQ(Crc8(one, 1), RefCrc8(one, 1));
     }
 

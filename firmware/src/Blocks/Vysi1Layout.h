@@ -55,14 +55,14 @@ inline void PreloadVysiLayout()
 // Identity 2x3 affine ([1 0 0; 0 1 0]), the default Offset transform.
 static inline Matrix<2, 3> IdentityAffine23()
 {
-    Matrix<2, 3> m;
-    m(0, 0) = Number(1);
-    m(0, 1) = Number(0);
-    m(0, 2) = Number(0);
-    m(1, 0) = Number(0);
-    m(1, 1) = Number(1);
-    m(1, 2) = Number(0);
-    return m;
+    Matrix<2, 3> Mat;
+    Mat(0, 0) = Number(1);
+    Mat(0, 1) = Number(0);
+    Mat(0, 2) = Number(0);
+    Mat(1, 0) = Number(0);
+    Mat(1, 1) = Number(1);
+    Mat(1, 2) = Number(0);
+    return Mat;
 }
 
 struct Vysi1Volatile
@@ -173,12 +173,12 @@ public:
     void RenderGeometryField(DynamicBlockDescriptor *Block, uint16_t Field, uint16_t Slot);
     void ApplyGeometryField(DynamicBlockDescriptor *Block, uint16_t Field, uint16_t Slot);
     void RenderTextureField(DynamicBlockDescriptor *Block, uint16_t Field);
-    Matrix<3, 3> PromoteAffine(const Matrix<2, 3> &m);
+    Matrix<3, 3> PromoteAffine(const Matrix<2, 3> &Mat);
     Matrix<3, 3> BaseTransform();
     Matrix<3, 3> FieldTransform(const Matrix<2, 3> &Pos);
     int32_t ReadKeyInt(DynamicBlockDescriptor *Block, uint16_t Field, uint8_t Key, int32_t Def);
-    ColourClass LerpColour(const ColourClass &C1, const ColourClass &C2, Number t);
-    void ShiftHue(ColourClass &c, Number HueDeg);
+    ColourClass LerpColour(const ColourClass &C1, const ColourClass &C2, Number Factor);
+    void ShiftHue(ColourClass &Colour, Number HueDeg);
 
     // Rebuilds the per-LED screen-coordinate table from the current layout and bumps
     // LayoutGen (invalidates the geometry cache).
@@ -190,13 +190,13 @@ public:
             LedX[i] = 0;
             LedY[i] = 0;
         }
-        for (uint32_t r = 0; r < (uint32_t)Lw * Lh && r < MaxLayoutEntries; r++)
+        for (uint32_t Index = 0; Index < (uint32_t)Lw * Lh && Index < MaxLayoutEntries; Index++)
         {
-            uint16_t Idx = Layout[r];
+            uint16_t Idx = Layout[Index];
             if (Idx == 0xFFFF || Idx >= LedNum)
                 continue;
-            LedX[Idx] = (uint8_t)(r % Lw);
-            LedY[Idx] = (uint8_t)(Lh - 1 - (r / Lw)); // screen y, 0 at bottom
+            LedX[Idx] = (uint8_t)(Index % Lw);
+            LedY[Idx] = (uint8_t)(Lh - 1 - (Index / Lw)); // screen y, 0 at bottom
             LedPresent[Idx] = true;
         }
         LayoutGen++;

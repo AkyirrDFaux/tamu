@@ -6,8 +6,8 @@
 // of the two fan instances. The LEDC timer/channel pairs follow the same index.
 static int FanIndex(const StaticBlockDescriptor &Block)
 {
-    if (Block.PersistentData == &staticPer.Fan[0]) return 0;
-    if (Block.PersistentData == &staticPer.Fan[1]) return 1;
+    if (Block.PersistentData == &StaticPer.Fan[0]) return 0;
+    if (Block.PersistentData == &StaticPer.Fan[1]) return 1;
     return -1;
 }
 
@@ -72,10 +72,10 @@ bool OnPWMFrequencyChange(const StaticBlockDescriptor &Block, uint16_t Index, co
     uint32_t NewFreq = *static_cast<const uint32_t *>(Data);
 
     // Determine which timer to update based on the block instance
-    int fanIndex = FanIndex(Block);
-    if (fanIndex < 0)
+    int FanSlot = FanIndex(Block);
+    if (FanSlot < 0)
         return false;
-    ledc_timer_t Timer = (fanIndex == 0) ? LEDC_TIMER_0 : LEDC_TIMER_1;
+    ledc_timer_t Timer = (FanSlot == 0) ? LEDC_TIMER_0 : LEDC_TIMER_1;
 
     ledc_timer_config_t LedcTimer = {
         .speed_mode = LEDC_LOW_SPEED_MODE,
@@ -114,10 +114,10 @@ bool OnPWMDutyChange(const StaticBlockDescriptor &Block, uint16_t Index, const v
     uint32_t Duty = (uint32_t)(((int64_t)NewDuty * 1023) / 100);
 
     // Map the block instance to its channel
-    int fanIndex = FanIndex(Block);
-    if (fanIndex < 0)
+    int FanSlot = FanIndex(Block);
+    if (FanSlot < 0)
         return false;
-    ledc_channel_t Channel = (fanIndex == 0) ? LEDC_CHANNEL_0 : LEDC_CHANNEL_1;
+    ledc_channel_t Channel = (FanSlot == 0) ? LEDC_CHANNEL_0 : LEDC_CHANNEL_1;
 
     ledc_set_duty(LEDC_LOW_SPEED_MODE, Channel, Duty);
     bool Applied = (ledc_update_duty(LEDC_LOW_SPEED_MODE, Channel) == ESP_OK);

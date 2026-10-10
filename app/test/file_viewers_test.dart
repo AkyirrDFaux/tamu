@@ -178,8 +178,8 @@ void main() {
   });
 
   test('capabilities format human-readable', () {
-    // Core|DynMem|StorageFiles|AppInterface|SubscriptionRequest|Node
-    const caps = (1 << 0) | (1 << 3) | (1 << 5) | (1 << 6) | (1 << 7) | (1 << 8);
+    // Core|DynMem|AppInterface|SubscriptionRequest|Node
+    const caps = (1 << 0) | (1 << 3) | (1 << 6) | (1 << 7) | (1 << 8);
     expect(formatSystemValue(DataType.integer, u32(caps).toList(), 0, 1),
         contains('Core'));
     expect(formatSystemValue(DataType.integer, u32(caps).toList(), 0, 1),

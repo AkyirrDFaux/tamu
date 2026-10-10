@@ -38,10 +38,10 @@ void LoadAllBackups();
 #define NODE_DISCOVER_JITTER_MS   125u // +/-25%
 
 // Device identity (mandatory, see Core/Functions/Device.h).
-extern const DeviceType kDeviceType = DeviceType::DualAnalogSensor;
+extern const DeviceType KDeviceType = DeviceType::DualAnalogSensor;
 // The DAS runs the full multi-file filesystem (create/delete/rename/resize); storage files
 // are universal so they carry no capability bit (Core/Types/Enums.h).
-extern const uint32_t kCapabilities =
+extern const uint32_t KCapabilities =
     Capabilities::Node | Capabilities::SubscriptionProvide;
 
 // Reads the CH32V003 32-bit unique chip ID as the 14-byte serial number (cached).
@@ -71,20 +71,20 @@ struct StaticVolatile {
     ButtonVolatile Button;            // BlockType 9
     LEDVolatile Led;                  // BlockType 0x0A
 };
-StaticPersistent staticPer = {
+StaticPersistent StaticPer = {
     // Name is a fixed 16-char null-padded field.
     .System = {.Name = {'D','A','S',' ','v','0','.','1',' ',' ',' ',' ',' ',' ',' ',' '}},
     .Meas = {{.SensorType = MeasNTC100K}, {.SensorType = MeasLDR10K}},
 };
-StaticVolatile staticVol;
+StaticVolatile StaticVol;
 
 // Registry order is load-bearing: the app derives the registry index from type + per-type
 // instance order - keep the entries grouped by type.
 const StaticBlockDescriptor StaticBlockRegistry[] = {
-    {&staticVol.Meas[0], &staticPer.Meas[0], &ResistiveMeasSchema, "Meas1"},
-    {&staticVol.Meas[1], &staticPer.Meas[1], &ResistiveMeasSchema, "Meas2"},
-    {&staticVol.Button, nullptr, &ButtonSchema, "Button"},
-    {&staticVol.Led, nullptr, &LEDSchema, "LED"},
+    {&StaticVol.Meas[0], &StaticPer.Meas[0], &ResistiveMeasSchema, "Meas1"},
+    {&StaticVol.Meas[1], &StaticPer.Meas[1], &ResistiveMeasSchema, "Meas2"},
+    {&StaticVol.Button, nullptr, &ButtonSchema, "Button"},
+    {&StaticVol.Led, nullptr, &LEDSchema, "LED"},
 };
 const size_t StaticBlockNum = sizeof(StaticBlockRegistry) / sizeof(StaticBlockDescriptor);
 
@@ -104,7 +104,7 @@ const size_t StaticBlockNum = sizeof(StaticBlockRegistry) / sizeof(StaticBlockDe
 static inline uint32_t SampleIntervalMs(uint8_t Channel)
 {
     static uint32_t Cache[2] = {0, 0}; // (hz << 16) | interval_ms
-    int32_t Hz = staticPer.Meas[Channel].SamplingRate.Value >> 16; // integer Hz
+    int32_t Hz = StaticPer.Meas[Channel].SamplingRate.Value >> 16; // integer Hz
     if (Hz <= 0) Hz = 10;     // disabled / invalid -> default 10 Hz
     if (Hz > 1000) Hz = 1000; // matches the Sampling Rate write clamp
     if ((Cache[Channel] >> 16) != (uint32_t)Hz)
@@ -168,14 +168,14 @@ int main(void)
     // sending Device service CID 3 and computing the offset locally from the reply. Repeat
     // every 2-3 minutes, jittered so devices do not all burst at once
     // (Docs/Services/System Block and Device Commands.md).
-    auto sendTimeSync = []() {
+    auto SendTimeSync = []() {
         // NTP-like: send the SYNCHRONIZED local time (Now()), so the reply's offset is a
         // correction (delta) to add to TimeOffsetMs, not an absolute value to overwrite.
         // TimeSync goes to the core of our net: our assigned address is NetID.shortID, so
         // the core is the same net with device ID 1.
         uint32_t TimeSent = Now();
-        uint16_t coreAddr = MakeId((uint8_t)((DeviceStatus.ShortAddress >> 10) & 0x3F), 1);
-        PacketConstruct(&TxFrame, coreAddr,
+        uint16_t CoreAddr = MakeId((uint8_t)((DeviceStatus.ShortAddress >> 10) & 0x3F), 1);
+        PacketConstruct(&TxFrame, CoreAddr,
                          MakeService(ServiceType::Device, 3),
                          NextSystemTrid(ServiceType::Device),
                          FLAG_REQACK | FLAG_START | FLAG_STOP,
@@ -184,7 +184,7 @@ int main(void)
         DispatchPacket(TxFrame);
         // ProcessBus() in the main loop handles the reply (applies the offset).
     };
-    sendTimeSync(); // initial sync right after discovery
+    SendTimeSync(); // initial sync right after discovery
     // The re-sync interval is measured in RAW time (TimeFromBoot): a clock correction
     // changes DeviceStatus.UptimeMs, and measuring against it would let the correction
     // itself satisfy the interval (a TimeSync storm).
@@ -207,19 +207,19 @@ int main(void)
         if ((TimeFromBoot() - LastSyncMs) >= NextSyncMs) {
             LastSyncMs = TimeFromBoot();
             NextSyncMs = NODE_TIME_SYNC_INTERVAL_MS + (RawRand() % 15000);
-            sendTimeSync();
+            SendTimeSync();
         }
 
         DasButtonUpdate(); // Button block edge detection/counter
 
         // Sample each resistive measurement channel at its own configured rate.
         uint32_t NowMs = Now();
-        for (uint8_t C = 0; C < 2; C++)
+        for (uint8_t Channel = 0; Channel < 2; Channel++)
         {
-            if ((NowMs - LastSampleMs[C]) >= SampleIntervalMs(C))
+            if ((NowMs - LastSampleMs[Channel]) >= SampleIntervalMs(Channel))
             {
-                LastSampleMs[C] = NowMs;
-                MeasuringUpdate(C, MeasAdcRead(MeasAdcCh[C]));
+                LastSampleMs[Channel] = NowMs;
+                MeasuringUpdate(Channel, MeasAdcRead(MeasAdcCh[Channel]));
             }
         }
 
@@ -232,7 +232,7 @@ int main(void)
         else if (DeviceIdentifyActive(NowMs))
             RedState = ((NowMs / 100) & 1) == 0;
         else
-            RedState = staticVol.Led.LEDState;
+            RedState = StaticVol.Led.LEDState;
         if (RedState) PinHigh(LEDR); else PinLow(LEDR);
     }
 }

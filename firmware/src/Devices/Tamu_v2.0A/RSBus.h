@@ -115,17 +115,17 @@ bool SendAndVerifyPacket(const PacketFrame &Data)
 
         for (size_t Off = 0; !Collided && Off < PacketSize; Off += CHUNK)
         {
-            size_t N = (PacketSize - Off < CHUNK) ? PacketSize - Off : CHUNK;
-            uart_write_bytes(UART_NUM_1, (const char *)(TxBuffer + Off), N);
+            size_t ChunkLen = (PacketSize - Off < CHUNK) ? PacketSize - Off : CHUNK;
+            uart_write_bytes(UART_NUM_1, (const char *)(TxBuffer + Off), ChunkLen);
 
             // The echo of this chunk must come back intact while we keep sending.
-            int Got = uart_read_bytes(UART_NUM_1, RxChunk, N, pdMS_TO_TICKS(20));
-            if (Got != (int)N || memcmp(TxBuffer + Off, RxChunk, N) != 0)
+            int Got = uart_read_bytes(UART_NUM_1, RxChunk, ChunkLen, pdMS_TO_TICKS(20));
+            if (Got != (int)ChunkLen || memcmp(TxBuffer + Off, RxChunk, ChunkLen) != 0)
             {
                 Collided = true;
                 break;
             }
-            Verified += N;
+            Verified += ChunkLen;
         }
 
         uart_wait_tx_done(UART_NUM_1, pdMS_TO_TICKS(100));
@@ -173,14 +173,14 @@ bool RS485SendRaw(const uint8_t *Data, size_t Len)
         bool Collided = false;
         size_t Verified = 0;
         for (size_t Off = 0; !Collided && Off < Len; Off += CHUNK) {
-            size_t N = (Len - Off < CHUNK) ? (Len - Off) : CHUNK;
-            uart_write_bytes(UART_NUM_1, (const char *)(Data + Off), N);
-            int Got = uart_read_bytes(UART_NUM_1, RxChunk, N, pdMS_TO_TICKS(20));
-            if (Got != (int)N || memcmp(Data + Off, RxChunk, N) != 0) {
+            size_t ChunkLen = (Len - Off < CHUNK) ? (Len - Off) : CHUNK;
+            uart_write_bytes(UART_NUM_1, (const char *)(Data + Off), ChunkLen);
+            int Got = uart_read_bytes(UART_NUM_1, RxChunk, ChunkLen, pdMS_TO_TICKS(20));
+            if (Got != (int)ChunkLen || memcmp(Data + Off, RxChunk, ChunkLen) != 0) {
                 Collided = true;
                 break;
             }
-            Verified += N;
+            Verified += ChunkLen;
         }
         // Release TX-enable as soon as the last bit is out. uart_wait_tx_done() wakes on a
         // FreeRTOS notification (~a tick of latency), and the bootloader replies fast enough
@@ -207,15 +207,15 @@ int RS485ReceiveRaw(uint8_t *Out, size_t Cap, uint32_t TimeoutMs)
     bool InFrame = false;
 
     while ((uint32_t)(TimeFromBoot() - Start) < TimeoutMs) {
-        uint8_t B;
-        if (uart_read_bytes(UART_NUM_1, &B, 1, pdMS_TO_TICKS(5)) != 1)
+        uint8_t Byte;
+        if (uart_read_bytes(UART_NUM_1, &Byte, 1, pdMS_TO_TICKS(5)) != 1)
             continue;
         if (!InFrame) {
-            if (B == Bootloader::START) { InFrame = true; Got = 0; Out[Got++] = B; }
+            if (Byte == Bootloader::START) { InFrame = true; Got = 0; Out[Got++] = Byte; }
             continue;
         }
         if (Got < Cap)
-            Out[Got++] = B;
+            Out[Got++] = Byte;
         if (Got >= 2) {
             uint16_t Need = Bootloader::FrameSize((uint8_t)(Out[1] & 0x07));
             if (Need == 0 || Need > Cap) { InFrame = false; Got = 0; continue; } // bad control
@@ -232,7 +232,7 @@ int RS485ReceiveRaw(uint8_t *Out, size_t Cap, uint32_t TimeoutMs)
 // (Core/Functions/Bus.h); the byte source pulls from the ESP32 UART driver.
 int ReceivePacket(PacketFrame *Data)
 {
-    return ReceivePacketFrame(Data, [](uint8_t &B) -> bool {
-        return uart_read_bytes(UART_NUM_1, &B, 1, 0) == 1;
+    return ReceivePacketFrame(Data, [](uint8_t &Byte) -> bool {
+        return uart_read_bytes(UART_NUM_1, &Byte, 1, 0) == 1;
     });
 }

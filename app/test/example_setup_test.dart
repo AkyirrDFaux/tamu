@@ -1,4 +1,4 @@
-/// Host-side checks for the evaluation-setup builder (app/test/current_setup.dart). The
+/// Host-side checks for the evaluation-setup builder (app/test/example_setup.dart). The
 /// scripts it produces are otherwise only exercised against real hardware, so validate the
 /// structure and the constant wiring here.
 library;
@@ -9,7 +9,7 @@ import 'package:tamuapp/core/script_file.dart';
 import 'package:tamuapp/core/script_instructions.dart';
 import 'package:tamuapp/core/types.dart';
 
-import 'current_setup.dart';
+import 'example_setup.dart';
 
 void main() {
   test('the five setup scripts build and validate', () {

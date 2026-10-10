@@ -23,7 +23,7 @@ static uint32_t NotifyFails = 0;   // consecutive failed notify() calls
 
 static bool LoggedFirstWrite = false;
 
-void appbleResetSessionBreadcrumbs()
+void AppbleResetSessionBreadcrumbs()
 {
     NotifyFails = 0;
     LoggedFirstWrite = false;
@@ -44,8 +44,8 @@ struct BleRxAssembler
 {
     uint16_t Need      = 0;   // stream bytes of the current chunk
     uint16_t Got       = 0;   // stream bytes accumulated so far
-    bool     haveLen   = false;
-    uint8_t  lenBuf[2] = {0, 0};
+    bool     HaveLen   = false;
+    uint8_t  LenBuf[2] = {0, 0};
 
     // Clears the in-flight chunk state.
     // Called on connect/disconnect: a session that ends mid-chunk would otherwise leave
@@ -56,85 +56,85 @@ struct BleRxAssembler
     {
         Need    = 0;
         Got     = 0;
-        haveLen = false;
+        HaveLen = false;
     }
 
     // Feeds one raw byte; returns true when a stream byte should go into the RX ring.
-    inline bool Feed(uint8_t B, uint8_t *Out)
+    inline bool Feed(uint8_t Byte, uint8_t *Out)
     {
-        if (!haveLen)
+        if (!HaveLen)
         {
-            lenBuf[Got++] = B;
+            LenBuf[Got++] = Byte;
             if (Got == 2)
             {
-                Need   = (uint16_t)(lenBuf[0] | (lenBuf[1] << 8));
+                Need   = (uint16_t)(LenBuf[0] | (LenBuf[1] << 8));
                 Got    = 0;
-                haveLen= true;
-                if (Need == 0) { DeviceLog("APPBLE", "Zero-length BLE chunk dropped"); haveLen = false; }
+                HaveLen= true;
+                if (Need == 0) { DeviceLog("APPBLE", "Zero-length BLE chunk dropped"); HaveLen = false; }
             }
             return false;
         }
 
-        *Out = B;
+        *Out = Byte;
         if (++Got >= Need)
         {
             Got = 0;
-            haveLen = false;
+            HaveLen = false;
         }
         return true;
     }
-} staticBleRxAssembler;
+} StaticBleRxAssembler;
 
 class BleServerCallbacks : public NimBLEServerCallbacks
 {
-    void onConnect(NimBLEServer *pServer, NimBLEConnInfo &connInfo) override
+    void onConnect(NimBLEServer *PServer, NimBLEConnInfo &ConnInfo) override
     {
-        BleMtu = connInfo.getMTU();
+        BleMtu = ConnInfo.getMTU();
         BleConnected = true;
-        staticBleRxAssembler.Reset();
+        StaticBleRxAssembler.Reset();
         BleParser.Reset();
         // Prefer 2M PHY when the central supports it: halves air time per packet
         // (helps multi-notification transfers); stays at 1M otherwise.
-        pServer->updatePhy(connInfo.getConnHandle(),
+        PServer->updatePhy(ConnInfo.getConnHandle(),
                            BLE_GAP_LE_PHY_2M_MASK, BLE_GAP_LE_PHY_2M_MASK, 0);
         // BlueZ defaults to a long connection interval (~30-60 ms); request a
         // fast one so transactions do not wait multiple connection events.
         // Units: interval 1.25 ms (6..12 -> 7.5..15 ms), timeout 10 ms (400 -> 4 s).
-        pServer->updateConnParams(connInfo.getConnHandle(), 6, 12, 0, 400);
+        PServer->updateConnParams(ConnInfo.getConnHandle(), 6, 12, 0, 400);
     }
 
-    void onDisconnect(NimBLEServer *pServer, NimBLEConnInfo &connInfo, int Reason) override
+    void onDisconnect(NimBLEServer *PServer, NimBLEConnInfo &ConnInfo, int Reason) override
     {
         BleConnected = false;
         // Drop any half-received chunk with the session (see BleRxAssembler::reset).
-        staticBleRxAssembler.Reset();
+        StaticBleRxAssembler.Reset();
         BleParser.Reset();
         BleMtu = 23;
         AppInterface.TxFlushAll(); // pending responses belong to the dead session
-        extern void appbleResetSessionBreadcrumbs();
-        appbleResetSessionBreadcrumbs();
+        extern void AppbleResetSessionBreadcrumbs();
+        AppbleResetSessionBreadcrumbs();
     }
 
-    void onMTUChange(uint16_t MTU, NimBLEConnInfo &connInfo) override
+    void onMTUChange(uint16_t MTU, NimBLEConnInfo &ConnInfo) override
     {
         BleMtu = MTU;
     }
 
-    void onPhyUpdate(NimBLEConnInfo &connInfo, uint8_t txPhy, uint8_t rxPhy) override
+    void onPhyUpdate(NimBLEConnInfo &ConnInfo, uint8_t TxPhy, uint8_t RxPhy) override
     {
-        DeviceLog("APPBLE", "phy updated: tx=%u rx=%u", txPhy, rxPhy);
+        DeviceLog("APPBLE", "phy updated: tx=%u rx=%u", TxPhy, RxPhy);
     }
 
-    void onConnParamsUpdate(NimBLEConnInfo &connInfo) override
+    void onConnParamsUpdate(NimBLEConnInfo &ConnInfo) override
     {
         // Diagnostic breadcrumb: confirms the fast-interval request was accepted
         // by the central (7..15 ms keeps transaction round trips short).
         DeviceLog("APPBLE", "conn params: itvl=%u.%02u ms mtu=%u",
-                  connInfo.getConnInterval() * 125 / 100,
-                  connInfo.getConnInterval() * 125 % 100,
-                  connInfo.getMTU());
+                  ConnInfo.getConnInterval() * 125 / 100,
+                  ConnInfo.getConnInterval() * 125 % 100,
+                  ConnInfo.getMTU());
     }
-} staticBleServerCallbacks;
+} StaticBleServerCallbacks;
 
 class BleTxCallbacks : public NimBLECharacteristicCallbacks
 {
@@ -142,24 +142,24 @@ class BleTxCallbacks : public NimBLECharacteristicCallbacks
     // Writes carry length-prefixed chunks (uint16 LE + stream, Docs/Services/App
     // Interface.md) but BlueZ may deliver them fragmented or coalesced arbitrarily,
     // so every byte goes through the reassembler instead of assuming write==chunk.
-    void onWrite(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo &connInfo) override
+    void onWrite(NimBLECharacteristic *PCharacteristic, NimBLEConnInfo &ConnInfo) override
     {
-        std::string V = pCharacteristic->getValue();
-        size_t N = V.length();
+        std::string Value = PCharacteristic->getValue();
+        size_t Len = Value.length();
         if (!LoggedFirstWrite)
         {
             LoggedFirstWrite = true;
-            DeviceLog("APPBLE", "first write: %u Bytes", (unsigned)N);
+            DeviceLog("APPBLE", "first write: %u Bytes", (unsigned)Len);
         }
 
-        for (size_t I = 0; I < N; I++)
+        for (size_t i = 0; i < Len; i++)
         {
-            uint8_t B;
-            if (!staticBleRxAssembler.Feed((uint8_t)V[I], &B))
+            uint8_t Byte;
+            if (!StaticBleRxAssembler.Feed((uint8_t)Value[i], &Byte))
                 continue;
             // Assembled stream bytes go straight into the wire-stream parser;
             // complete frames are queued for the pump (no intermediate buffer).
-            if (BleParser.Feed(B))
+            if (BleParser.Feed(Byte))
             {
                 AppInterface.Enqueue(BleParser.Frame);
                 BleParser.Reset();
@@ -172,7 +172,7 @@ class BleTxCallbacks : public NimBLECharacteristicCallbacks
         }
 
     }
-} staticBleTxCallbacks;
+} StaticBleTxCallbacks;
 
 
 // Rebuilds and starts the advertisement from scratch. Used for the initial
@@ -187,19 +187,19 @@ static void StartAppAdvertising()
     Adv->stop();
     Adv->clearData();
     Adv->removeServices();
-    bool uuidOk = Adv->addServiceUUID(BLE_SERVICE_UUID);
+    bool UuidOk = Adv->addServiceUUID(BLE_SERVICE_UUID);
     Adv->enableScanResponse(true); // must precede setName (see ordering note)
     // The System Name is a fixed 16-char field (NUL-padded since B10, no terminator); BLE wants a
     // NUL-terminated C string, so copy it trimmed.
-    char advName[SYSTEM_NAME_LEN + 1];
-    uint8_t N = SYSTEM_NAME_LEN;
-    while (N > 0 && staticPer.System.Name[N - 1] == ' ') N--;
-    memcpy(advName, staticPer.System.Name, N);
-    advName[N] = '\0';
-    bool nameOk = Adv->setName(advName);
+    char AdvName[SYSTEM_NAME_LEN + 1];
+    uint8_t NameLen = SYSTEM_NAME_LEN;
+    while (NameLen > 0 && StaticPer.System.Name[NameLen - 1] == ' ') NameLen--;
+    memcpy(AdvName, StaticPer.System.Name, NameLen);
+    AdvName[NameLen] = '\0';
+    bool NameOk = Adv->setName(AdvName);
     bool Started = Adv->start();
     DeviceLog("APPBLE", "adv restart: uuid=%d name=%d started=%d",
-              uuidOk, nameOk, Started);
+              UuidOk, NameOk, Started);
 }
 
 void AppBLEInit(const char *DeviceName)
@@ -208,14 +208,14 @@ void AppBLEInit(const char *DeviceName)
     NimBLEDevice::setMTU(512);
 
     BleServer = NimBLEDevice::createServer();
-    BleServer->setCallbacks(&staticBleServerCallbacks);
+    BleServer->setCallbacks(&StaticBleServerCallbacks);
 
     NimBLEService *Svc = BleServer->createService(BLE_SERVICE_UUID);
 
     NimBLECharacteristic *Rx = Svc->createCharacteristic(
         BLE_RX_CHAR_UUID,
         NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
-    Rx->setCallbacks(&staticBleTxCallbacks);
+    Rx->setCallbacks(&StaticBleTxCallbacks);
 
     BleTx = Svc->createCharacteristic(BLE_TX_CHAR_UUID, NIMBLE_PROPERTY::NOTIFY);
 
@@ -243,11 +243,11 @@ void AppBLETick()
     // Deferred advertising restart.
     if (!BleConnected && BleOldConnected)
         BleAdvRestart = true; // s_ble_parser was already reset by onDisconnect (host task)
-    bool wasConnected = BleOldConnected;
+    bool WasConnected = BleOldConnected;
     BleOldConnected = BleConnected;
-    if (wasConnected && !BleConnected)
+    if (WasConnected && !BleConnected)
         DeviceLog("APPBLE", "BLE session ended");
-    else if (!wasConnected && BleConnected)
+    else if (!WasConnected && BleConnected)
         DeviceLog("APPBLE", "BLE session started");
 
     NimBLEAdvertising *Adv = NimBLEDevice::getAdvertising();
@@ -268,16 +268,16 @@ void AppBLETick()
     static uint32_t IdleSince = 0;
     if (!BleConnected && !BleOldConnected)
     {
-        const bool advUp = Adv && Adv->isAdvertising();
+        const bool AdvUp = Adv && Adv->isAdvertising();
         if (IdleSince == 0) IdleSince = TimeFromBoot();
-        const uint32_t idleMs = TimeFromBoot() - IdleSince;
-        if (!advUp && idleMs > 3000)
+        const uint32_t IdleMs = TimeFromBoot() - IdleSince;
+        if (!AdvUp && IdleMs > 3000)
         {
-            DeviceLog("APPBLE", "advertising down %u ms, rebuilding", idleMs);
+            DeviceLog("APPBLE", "advertising down %u ms, rebuilding", IdleMs);
             IdleSince = TimeFromBoot();
             StartAppAdvertising();
         }
-        else if (advUp && idleMs > 120000)
+        else if (AdvUp && IdleMs > 120000)
         {
             DeviceLog("APPBLE", "no BLE session for 120 s, forcing adv rebuild");
             IdleSince = TimeFromBoot();
@@ -304,21 +304,21 @@ void AppBLETick()
         Budget = 23;
     if (Budget > 3 + 2 + BLE_CHUNK)
         Budget = 3 + 2 + BLE_CHUNK;
-    uint16_t chunkCap = Budget - 3 - 2;
+    uint16_t ChunkCap = Budget - 3 - 2;
 
     static uint8_t Chunk[BLE_CHUNK];   // static: ~1 KB, too big for the task stack slice
-    uint16_t N = AppInterface.TxPeek(Chunk, chunkCap);
-    if (N == 0)
+    uint16_t Len = AppInterface.TxPeek(Chunk, ChunkCap);
+    if (Len == 0)
         return;
 
     static uint8_t Pkt[2 + BLE_CHUNK]; // only touched here (single app-task context)
-    Pkt[0] = (uint8_t)(N & 0xFF);
-    Pkt[1] = (uint8_t)(N >> 8);
-    memcpy(&Pkt[2], Chunk, N);
+    Pkt[0] = (uint8_t)(Len & 0xFF);
+    Pkt[1] = (uint8_t)(Len >> 8);
+    memcpy(&Pkt[2], Chunk, Len);
 
-    if (BleTx && BleTx->notify(Pkt, (size_t)(2 + N)))
+    if (BleTx && BleTx->notify(Pkt, (size_t)(2 + Len)))
     {
-        AppInterface.TxCommit(N); // consumed only when the stack accepted the notification
+        AppInterface.TxCommit(Len); // consumed only when the stack accepted the notification
         NotifyFails = 0;
     }
     else

@@ -39,10 +39,10 @@ bool OnLEDStateChange(const StaticBlockDescriptor &Block, uint16_t Index, const 
 // the button cannot be read. Called every main-loop iteration.
 void LEDButtonUpdate()
 {
-    if (staticVol.ledButton.LEDState != false)
+    if (StaticVol.LedButton.LEDState != false)
     {
-        staticVol.ledButton.ButtonState = false; // line is driven by the LED: not readable
+        StaticVol.LedButton.ButtonState = false; // line is driven by the LED: not readable
         return;
     }
-    staticVol.ledButton.ButtonState = PinRead(VALU_LED_PORT, VALU_LED_PIN);
+    StaticVol.LedButton.ButtonState = PinRead(VALU_LED_PORT, VALU_LED_PIN);
 }

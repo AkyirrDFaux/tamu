@@ -48,7 +48,7 @@ static void UsbHwInit(void)
     // Reset the USBD peripheral before use (the ROM bootloader may have left it in an
     // unknown state).
     RCC->APB1PRSTR |= RCC_APB1Periph_USB;
-    for (volatile uint32_t I = 0; I < 200000u; I++) {} // ~1 ms at 144 MHz
+    for (volatile uint32_t i = 0; i < 200000u; i++) {} // ~1 ms at 144 MHz
     RCC->APB1PRSTR &= ~RCC_APB1Periph_USB;
 }
 
@@ -141,8 +141,8 @@ uint16_t const *tud_descriptor_string_cb(uint8_t Index, uint16_t Langid)
         if (ChrCount > 32)
             ChrCount = 32;
 
-        for (size_t I = 0; I < ChrCount; I++)
-            DescStr[1 + I] = (uint16_t)Str[I];
+        for (size_t i = 0; i < ChrCount; i++)
+            DescStr[1 + i] = (uint16_t)Str[i];
     }
 
     DescStr[0] = (uint16_t)((TUSB_DESC_STRING << 8) | (2 * ChrCount + 2));
@@ -168,11 +168,11 @@ struct UsbFramer
     }
 
     // Feeds one byte. Returns: 0 = incomplete, >0 = valid frame (payload length), -1 = invalid.
-    int Feed(uint8_t B, uint8_t *Payload)
+    int Feed(uint8_t Byte, uint8_t *Payload)
     {
         if (!InFrame)
         {
-            if (B == USB_FRAME_START)
+            if (Byte == USB_FRAME_START)
             {
                 InFrame = true;
                 Len = 0;
@@ -180,30 +180,30 @@ struct UsbFramer
             return 0;
         }
 
-        Buf[Len++] = B;
+        Buf[Len++] = Byte;
 
         if (Len < 2)
             return 0; // CRC pending
 
-        uint8_t N = Buf[1];
-        if (N > USB_FRAME_MAX_PAYLOAD)
+        uint8_t PayloadLen = Buf[1];
+        if (PayloadLen > USB_FRAME_MAX_PAYLOAD)
         {
             Reset();
             return -1; // impossible length: resync
         }
 
-        if (Len < (uint8_t)(2 + N + 1))
+        if (Len < (uint8_t)(2 + PayloadLen + 1))
             return 0; // payload/stop pending
 
         InFrame = false;
-        if (Buf[2 + N] != USB_FRAME_STOP)
+        if (Buf[2 + PayloadLen] != USB_FRAME_STOP)
             return -1;
 
-        if (Crc8(&Buf[1], (uint16_t)(1 + N)) != Buf[0]) // CRC8 over Length + Payload
+        if (Crc8(&Buf[1], (uint16_t)(1 + PayloadLen)) != Buf[0]) // CRC8 over Length + Payload
             return -1;
 
-        memcpy(Payload, &Buf[2], N);
-        return N;
+        memcpy(Payload, &Buf[2], PayloadLen);
+        return PayloadLen;
     }
 };
 
@@ -223,7 +223,7 @@ struct WireStreamParser
     }
 
     // Returns true when a complete CRC-valid PacketFrame was assembled into `frame`.
-    bool Feed(uint8_t B)
+    bool Feed(uint8_t Byte)
     {
         if (Full)
             return false;
@@ -233,7 +233,7 @@ struct WireStreamParser
             Reset();
             return false;
         }
-        ((uint8_t *)&Frame)[Got++] = B;
+        ((uint8_t *)&Frame)[Got++] = Byte;
 
         if (Got < 4)
             return false; // payload_len not known yet
@@ -254,9 +254,9 @@ static WireStreamParser WireParser;
 // complete packets for dispatch by AppInterfacePump.
 static void AppRxStream(const uint8_t *Data, uint16_t Len)
 {
-    for (uint16_t I = 0; I < Len; I++)
+    for (uint16_t i = 0; i < Len; i++)
     {
-        if (WireParser.Feed(Data[I]))
+        if (WireParser.Feed(Data[i]))
         {
             AppInterface.Enqueue(WireParser.Frame);
             WireParser.Reset();
@@ -333,16 +333,16 @@ void AppUSBTick()
     while (tud_cdc_available())
     {
         uint8_t Buf[64];
-        uint32_t N = tud_cdc_read(Buf, sizeof(Buf));
-        if (N == 0)
+        uint32_t ReadLen = tud_cdc_read(Buf, sizeof(Buf));
+        if (ReadLen == 0)
             break;
-        for (uint32_t I = 0; I < N; I++)
+        for (uint32_t i = 0; i < ReadLen; i++)
         {
             uint8_t Payload[USB_FRAME_MAX_PAYLOAD];
-            int R = AppFramer.Feed(Buf[I], Payload);
-            if (R > 0)
-                AppRxStream(Payload, (uint16_t)R);
-            else if (R < 0)
+            int FeedResult = AppFramer.Feed(Buf[i], Payload);
+            if (FeedResult > 0)
+                AppRxStream(Payload, (uint16_t)FeedResult);
+            else if (FeedResult < 0)
                 WireParser.Reset(); // broken link frame: resync the stream too
         }
     }

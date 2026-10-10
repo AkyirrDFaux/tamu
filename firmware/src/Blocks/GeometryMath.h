@@ -44,65 +44,65 @@ struct GeometryParams
 };
 
 // Precomputes the per-geometry invariants above. Called once per geometry field (not per LED).
-static inline void PrepareGeometry(GeometryParams &p)
+static inline void PrepareGeometry(GeometryParams &Params)
 {
     const Number Two = N(2);
-    p.HalfX = p.SizeX / Two;
-    p.HalfY = p.SizeY / Two;
-    p.InvHalfX = (p.HalfX.Value != 0) ? N(1) / p.HalfX : N(0);
-    p.InvHalfY = (p.HalfY.Value != 0) ? N(1) / p.HalfY : N(0);
-    p.InvFade = (p.Fade.Value > 0) ? N(1) / p.Fade : N(0);
-    p.InvSizeX = (p.SizeX.Value != 0) ? N(1) / p.SizeX : N(0);
-    p.InvSizeY = (p.SizeY.Value != 0) ? N(1) / p.SizeY : N(0);
-    p.RectInnerX = p.HalfX - p.Rounding;
-    p.RectInnerY = p.HalfY - p.Rounding;
-    p.EllipseMinHalf = (p.HalfX.Value < p.HalfY.Value) ? p.HalfX : p.HalfY;
+    Params.HalfX = Params.SizeX / Two;
+    Params.HalfY = Params.SizeY / Two;
+    Params.InvHalfX = (Params.HalfX.Value != 0) ? N(1) / Params.HalfX : N(0);
+    Params.InvHalfY = (Params.HalfY.Value != 0) ? N(1) / Params.HalfY : N(0);
+    Params.InvFade = (Params.Fade.Value > 0) ? N(1) / Params.Fade : N(0);
+    Params.InvSizeX = (Params.SizeX.Value != 0) ? N(1) / Params.SizeX : N(0);
+    Params.InvSizeY = (Params.SizeY.Value != 0) ? N(1) / Params.SizeY : N(0);
+    Params.RectInnerX = Params.HalfX - Params.Rounding;
+    Params.RectInnerY = Params.HalfY - Params.Rounding;
+    Params.EllipseMinHalf = (Params.HalfX.Value < Params.HalfY.Value) ? Params.HalfX : Params.HalfY;
     // The Noise cell lookup clamps its divisor to at least 1 (a zero size is an empty shape).
-    p.NoiseInvX = (p.SizeX.Value > 0) ? p.InvSizeX : N(1);
-    p.NoiseInvY = (p.SizeY.Value > 0) ? p.InvSizeY : N(1);
+    Params.NoiseInvX = (Params.SizeX.Value > 0) ? Params.InvSizeX : N(1);
+    Params.NoiseInvY = (Params.SizeY.Value > 0) ? Params.InvSizeY : N(1);
 
-    const Number SqH = sq(p.SizeY);
-    p.ParabolaK = (SqH.Value != 0) ? p.SizeX / SqH : N(0);
+    const Number SqH = sq(Params.SizeY);
+    Params.ParabolaK = (SqH.Value != 0) ? Params.SizeX / SqH : N(0);
 
     // Trapezoid: Size = [bottom width, height], Angles = side slant (deg).
-    const Number SlantRad = p.Angles * GetPI() / N(180);
+    const Number SlantRad = Params.Angles * GetPI() / N(180);
     const Number CosSlant = cos(SlantRad);
-    p.SlantTan = (CosSlant.Value != 0) ? sin(SlantRad) / CosSlant : N(0);
-    Number Top = p.SizeX - Two * p.SizeY * p.SlantTan;
+    Params.SlantTan = (CosSlant.Value != 0) ? sin(SlantRad) / CosSlant : N(0);
+    Number Top = Params.SizeX - Two * Params.SizeY * Params.SlantTan;
     if (Top.Value < 0) Top = N(0);
-    p.TrapTopHalf = Top / Two;
-    p.TrapSlope = p.TrapTopHalf - p.HalfX;
+    Params.TrapTopHalf = Top / Two;
+    Params.TrapSlope = Params.TrapTopHalf - Params.HalfX;
 
     // Triangle: isosceles (Size = equal-side length, Angles = apex angle in degrees).
     // Angles defaults to 60 when unset; a 0-degree apex is degenerate and would collapse
     // the shape, and 60 reproduces the equilateral case as one instance of isosceles.
-    const Number Apex = (p.Angles.Value > 0) ? p.Angles : N(60);
+    const Number Apex = (Params.Angles.Value > 0) ? Params.Angles : N(60);
     const Number HalfApex = Apex * GetPI() / N(180) / Two;
-    const Number TriW = Two * p.SizeX * sin(HalfApex);
-    const Number TriH = p.SizeX * cos(HalfApex);
-    p.TriHalfH = TriH / Two;
-    p.TriFactor = (TriW.Value != 0) ? Two * TriH / TriW : N(0);
+    const Number TriW = Two * Params.SizeX * sin(HalfApex);
+    const Number TriH = Params.SizeX * cos(HalfApex);
+    Params.TriHalfH = TriH / Two;
+    Params.TriFactor = (TriW.Value != 0) ? Two * TriH / TriW : N(0);
 
     // Polygon/Star: the sector is constant per geometry.
-    int n = p.PointNumber < 3 ? 3 : p.PointNumber;
-    if (n > 32) n = 32;
-    p.PolySector = (p.Shape == Geometries::Star) ? (Two * GetPI() / Number(n * 2))
-                                                 : (Two * GetPI() / Number(n));
-    p.PolyHalfSector = p.PolySector / Two;
-    p.PolyCosHalf = cos(p.PolyHalfSector);
-    p.InvSector = (p.PolySector.Value != 0) ? N(1) / p.PolySector : N(0);
-    const Number Inner = (p.Angles.Value > 0) ? p.Angles : N(0.5);
-    p.StarInnerR = p.SizeX * Inner;
+    int Points = Params.PointNumber < 3 ? 3 : Params.PointNumber;
+    if (Points > 32) Points = 32;
+    Params.PolySector = (Params.Shape == Geometries::Star) ? (Two * GetPI() / Number(Points * 2))
+                                                 : (Two * GetPI() / Number(Points));
+    Params.PolyHalfSector = Params.PolySector / Two;
+    Params.PolyCosHalf = cos(Params.PolyHalfSector);
+    Params.InvSector = (Params.PolySector.Value != 0) ? N(1) / Params.PolySector : N(0);
+    const Number Inner = (Params.Angles.Value > 0) ? Params.Angles : N(0.5);
+    Params.StarInnerR = Params.SizeX * Inner;
 }
 
 // Converts a signed edge distance (pixels, positive inside) into a 0..255 alpha with a
 // `fade`-pixel soft edge (alpha 1 at distance >= fade/2, 0 at <= -fade/2). Fade <= 0 = hard edge.
-static inline uint8_t FadeAlpha(Number Distance, const GeometryParams &p)
+static inline uint8_t FadeAlpha(Number Distance, const GeometryParams &Params)
 {
-    if (p.Fade.Value <= 0)
+    if (Params.Fade.Value <= 0)
         return (Distance.Value >= 0) ? 255 : 0;
     // Multiply by the reciprocal prepared once per geometry instead of dividing per LED.
-    return (uint8_t)(LimitZeroToOne(Distance * p.InvFade + N(0.5)) * N(255)).RoundToInt();
+    return (uint8_t)(LimitZeroToOne(Distance * Params.InvFade + N(0.5)) * N(255)).RoundToInt();
 }
 
 // Computes the 0..255 alpha of the shape in `p` at point P (shape-local space).
@@ -110,21 +110,21 @@ static inline uint8_t FadeAlpha(Number Distance, const GeometryParams &p)
 //
 // This is also the *reference* for the pipeline's per-LED loop: the loop specialises the shape
 // dispatch, and the host test checks the two agree over a parameter sweep.
-static inline uint8_t ShapeAlpha(const GeometryParams &p, const Vector<2> &P)
+static inline uint8_t ShapeAlpha(const GeometryParams &Params, const Vector<2> &Point)
 {
-    switch (p.Shape)
+    switch (Params.Shape)
     {
     case Geometries::Fill:
         return 255;
 
     case Geometries::HalfFill:
         // Half-plane: fill where y >= 0 (tilt/offset via the transform).
-        return FadeAlpha(P[1], p);
+        return FadeAlpha(Point[1], Params);
 
     case Geometries::Square:
     case Geometries::Rectangle:
     {
-        if (p.Rounding.Value > 0)
+        if (Params.Rounding.Value > 0)
         {
             // Rounded-rectangle signed distance, positive inside. The standard form is
             //   d = r - length(max(q,0)) - min(max(q.x,q.y), 0)
@@ -133,88 +133,88 @@ static inline uint8_t ShapeAlpha(const GeometryParams &p, const Vector<2> &P)
             // where q is positive. Subtracting it there pulled every *straight* side in
             // towards the inner rectangle, so a rounded Square/Rectangle lost ~Rounding px
             // from all four sides instead of only rounding the corners.
-            Number Rx = abs(P[0]) - p.RectInnerX;
-            Number Ry = abs(P[1]) - p.RectInnerY;
+            Number Rx = abs(Point[0]) - Params.RectInnerX;
+            Number Ry = abs(Point[1]) - Params.RectInnerY;
             Number Lx = Rx.Value > 0 ? Rx : N(0);
             Number Ly = Ry.Value > 0 ? Ry : N(0);
-            Number m = Rx.Value > Ry.Value ? Rx : Ry;
-            Number d = p.Rounding - Vector<2>{Lx, Ly}.Norm2() - (m.Value < 0 ? m : N(0));
-            return FadeAlpha(d, p);
+            Number CornerDist = Rx.Value > Ry.Value ? Rx : Ry;
+            Number Dist = Params.Rounding - Vector<2>{Lx, Ly}.Norm2() - (CornerDist.Value < 0 ? CornerDist : N(0));
+            return FadeAlpha(Dist, Params);
         }
-        return FadeAlpha(min(p.HalfX - abs(P[0]), p.HalfY - abs(P[1])), p);
+        return FadeAlpha(min(Params.HalfX - abs(Point[0]), Params.HalfY - abs(Point[1])), Params);
     }
 
     case Geometries::Circle:
-        return FadeAlpha(p.HalfX - P.Norm2(), p);
+        return FadeAlpha(Params.HalfX - Point.Norm2(), Params);
 
     case Geometries::Ellipse:
     {
-        Number t = sqrt(sq(P[0] * p.InvHalfX) + sq(P[1] * p.InvHalfY));
-        return FadeAlpha((N(1) - t) * p.EllipseMinHalf, p);
+        Number Radial = sqrt(sq(Point[0] * Params.InvHalfX) + sq(Point[1] * Params.InvHalfY));
+        return FadeAlpha((N(1) - Radial) * Params.EllipseMinHalf, Params);
     }
 
     case Geometries::Trapezoid:
     {
         // Isosceles trapezoid: Size = [bottom width, height], Angles = side slant (deg).
         // 0 at the bottom, 1 at the top; the half-widths and the slope are per-geometry.
-        Number f = (P[1] + p.HalfY) * p.InvSizeY;
-        Number Hw = p.HalfX + p.TrapSlope * f;
-        Number d = min(p.HalfY - abs(P[1]), Hw - abs(P[0]));
-        return FadeAlpha(d, p);
+        Number Frac = (Point[1] + Params.HalfY) * Params.InvSizeY;
+        Number Hw = Params.HalfX + Params.TrapSlope * Frac;
+        Number Dist = min(Params.HalfY - abs(Point[1]), Hw - abs(Point[0]));
+        return FadeAlpha(Dist, Params);
     }
 
     case Geometries::DoubleParabola:
     {
-        return FadeAlpha(-(abs(P[0]) - p.SizeX + sq(P[1]) * p.ParabolaK), p);
+        return FadeAlpha(-(abs(Point[0]) - Params.SizeX + sq(Point[1]) * Params.ParabolaK), Params);
     }
 
     case Geometries::Triangle:
     {
         // Isosceles (Size = equal side, Angles = apex angle in deg, default 60). Centered:
         // apex up, base horizontal.
-        Number d = min(p.TriHalfH - P[1] - p.TriFactor * abs(P[0]), P[1] + p.TriHalfH);
-        return FadeAlpha(d, p);
+        Number Dist = min(Params.TriHalfH - Point[1] - Params.TriFactor * abs(Point[0]), Point[1] + Params.TriHalfH);
+        return FadeAlpha(Dist, Params);
     }
 
     case Geometries::Polygon:
     case Geometries::Star:
     {
-        Number R = p.SizeX;
-        if (R.Value <= 0) return 0;
-        int n = p.PointNumber < 3 ? 3 : p.PointNumber;
-        if (n > 32) n = 32;
-        Number r = P.Norm2();
-        if (r.Value <= 0) return FadeAlpha(R, p);
-        Number Theta = atan2(P[1], P[0]);
+        Number OuterR = Params.SizeX;
+        if (OuterR.Value <= 0) return 0;
+        int Points = Params.PointNumber < 3 ? 3 : Params.PointNumber;
+        if (Points > 32) Points = 32;
+        Number PointR = Point.Norm2();
+        if (PointR.Value <= 0) return FadeAlpha(OuterR, Params);
+        Number Theta = atan2(Point[1], Point[0]);
         if (Theta.Value < 0) Theta = Theta + 2 * GetPI();
 
-        const Number Sector = p.PolySector;
-        Number v = R;
-        if (p.Shape == Geometries::Star)
+        const Number Sector = Params.PolySector;
+        Number Radius = OuterR;
+        if (Params.Shape == Geometries::Star)
         {
             // Star: 2n vertices alternating outer R / inner R*ratio (Angles or 0.5).
-            uint16_t Vi = (uint16_t)(Theta * p.InvSector).ToInt();
-            v = (Vi & 1) ? p.StarInnerR : R;
+            uint16_t Vi = (uint16_t)(Theta * Params.InvSector).ToInt();
+            Radius = (Vi & 1) ? Params.StarInnerR : OuterR;
         }
-        Number Ang = (Theta - Number((Theta * p.InvSector).ToInt()) * Sector) - p.PolyHalfSector;
+        Number Ang = (Theta - Number((Theta * Params.InvSector).ToInt()) * Sector) - Params.PolyHalfSector;
         // The per-pixel cos(ang) keeps a divide (it cannot be hoisted); everything else is
         // precomputed per geometry.
-        Number d = v * p.PolyCosHalf / cos(Ang) - r;
-        return FadeAlpha(d, p);
+        Number Dist = Radius * Params.PolyCosHalf / cos(Ang) - PointR;
+        return FadeAlpha(Dist, Params);
     }
 
     case Geometries::Noise:
     {
         // Deterministic per-cell hash of (NoiseSeed, scaled coords) -> 0..255.
-        int32_t x = (P[0] * p.NoiseInvX).ToInt();
-        int32_t y = (P[1] * p.NoiseInvY).ToInt();
-        uint32_t h = p.NoiseSeed;
-        h ^= (uint32_t)(x * 2654435761);
-        h *= 16777619;
-        h ^= (uint32_t)(y * 1597334677);
-        h *= 16777619;
-        h ^= h >> 13;
-        return (uint8_t)((h >> 8) & 0xFF);
+        int32_t x = (Point[0] * Params.NoiseInvX).ToInt();
+        int32_t y = (Point[1] * Params.NoiseInvY).ToInt();
+        uint32_t Hash = Params.NoiseSeed;
+        Hash ^= (uint32_t)(x * 2654435761);
+        Hash *= 16777619;
+        Hash ^= (uint32_t)(y * 1597334677);
+        Hash *= 16777619;
+        Hash ^= Hash >> 13;
+        return (uint8_t)((Hash >> 8) & 0xFF);
     }
 
     default:

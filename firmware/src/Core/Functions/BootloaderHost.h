@@ -26,24 +26,24 @@ namespace BootloaderHost
     inline int ReceiveFrame(uint8_t *Out, size_t Cap, BeginFrame Begin, ReadByte Read)
     {
         Begin();
-        uint8_t b;
+        uint8_t Byte;
         for (;;)
         {
-            if (!Read(&b)) return 0;
-            if (b == Bootloader::START) break; // skip anything that is not a frame start
+            if (!Read(&Byte)) return 0;
+            if (Byte == Bootloader::START) break; // skip anything that is not a frame start
         }
 
         size_t Got = 0;
-        Out[Got++] = b;
-        if (!Read(&b)) return 0;
-        Out[Got++] = b;
+        Out[Got++] = Byte;
+        if (!Read(&Byte)) return 0;
+        Out[Got++] = Byte;
 
-        uint16_t Need = Bootloader::FrameSize((uint8_t)(b & 0x07u));
+        uint16_t Need = Bootloader::FrameSize((uint8_t)(Byte & 0x07u));
         if (Need == 0 || Need > Cap) return 0;
         while (Got < Need)
         {
-            if (!Read(&b)) return 0;
-            Out[Got++] = b;
+            if (!Read(&Byte)) return 0;
+            Out[Got++] = Byte;
         }
         return Bootloader::Decode(Out, Need) != Bootloader::INVALID ? (int)Need : 0;
     }
@@ -73,8 +73,8 @@ namespace BootloaderHost
         for (;;)
         {
             uint8_t Frame[Bootloader::MAX_FRAME_SIZE];
-            int n = ReceiveFrame(Frame, sizeof(Frame), Begin, Read);
-            if (n <= 0) continue;
+            int Len = ReceiveFrame(Frame, sizeof(Frame), Begin, Read);
+            if (Len <= 0) continue;
 
             uint8_t Cmd = (uint8_t)(Frame[1] & 0x07u);
             uint32_t Offset = Bootloader::Offset(Frame);

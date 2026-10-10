@@ -67,7 +67,7 @@ public:
     void RouteIn(PacketFrame &Frame);
     void Pump();
     uint16_t TxPeek(uint8_t *Dst, uint16_t Max);
-    void TxCommit(uint16_t N);
+    void TxCommit(uint16_t Count);
     uint16_t TxPop(uint8_t *Dst, uint16_t Max);
     void TxFlushAll();
 
@@ -104,14 +104,14 @@ inline bool AppInterfaceService::Send(const PacketFrame &Frame)
     // 128-byte stack copy per reply. PacketFrame is packed, so its bytes are the
     // wire layout in order.
     const uint8_t *Wire = reinterpret_cast<const uint8_t *>(&Frame);
-    uint16_t n = PacketWireSize(&Frame);
+    uint16_t Count = PacketWireSize(&Frame);
 
     bool Ok = false;
     portENTER_CRITICAL(&TxMux);
     uint16_t Used = (uint16_t)(TxHead - TxTail);
-    if (n <= APP_TX_RING_SIZE - 1 - Used)
+    if (Count <= APP_TX_RING_SIZE - 1 - Used)
     {
-        for (uint16_t i = 0; i < n; i++)
+        for (uint16_t i = 0; i < Count; i++)
         {
             TxRing[TxHead % APP_TX_RING_SIZE] = Wire[i];
             TxHead = (uint16_t)(TxHead + 1);
@@ -129,23 +129,23 @@ inline bool AppInterfaceService::Send(const PacketFrame &Frame)
 // (used by the BLE link so a failed notify does not lose data).
 inline uint16_t AppInterfaceService::TxPeek(uint8_t *Dst, uint16_t Max)
 {
-    uint16_t n = 0;
+    uint16_t Count = 0;
     portENTER_CRITICAL(&TxMux);
     uint16_t Used = (uint16_t)(TxHead - TxTail);
     if (Used > Max)
         Used = Max;
-    for (n = 0; n < Used; n++)
-        Dst[n] = TxRing[(TxTail + n) % APP_TX_RING_SIZE];
+    for (Count = 0; Count < Used; Count++)
+        Dst[Count] = TxRing[(TxTail + Count) % APP_TX_RING_SIZE];
     portEXIT_CRITICAL(&TxMux);
-    return n;
+    return Count;
 }
 
-inline void AppInterfaceService::TxCommit(uint16_t N)
+inline void AppInterfaceService::TxCommit(uint16_t Count)
 {
-    if (N == 0)
+    if (Count == 0)
         return;
     portENTER_CRITICAL(&TxMux);
-    TxTail = (uint16_t)(TxTail + N);
+    TxTail = (uint16_t)(TxTail + Count);
     portEXIT_CRITICAL(&TxMux);
 }
 
@@ -161,9 +161,9 @@ inline void AppInterfaceService::TxFlushAll()
 // Pops up to `Max` stream bytes into `Dst` (peek + commit).
 inline uint16_t AppInterfaceService::TxPop(uint8_t *Dst, uint16_t Max)
 {
-    uint16_t n = TxPeek(Dst, Max);
-    TxCommit(n);
-    return n;
+    uint16_t Count = TxPeek(Dst, Max);
+    TxCommit(Count);
+    return Count;
 }
 
 // Called by the link readers (USB console task / BLE RX drain) to hand over a fully
@@ -206,18 +206,18 @@ void AppInterfaceService::Pump()
 
     for (;;)
     {
-        PacketFrame f;
+        PacketFrame Frame;
         portENTER_CRITICAL(&RxMux);
         if (RxCount == 0) // read inside the lock so an enqueue can't corrupt the pop
         {
             portEXIT_CRITICAL(&RxMux);
             break;
         }
-        f = RxQueue[RxTail];
+        Frame = RxQueue[RxTail];
         RxTail = (uint8_t)((RxTail + 1) % APP_RX_QUEUE_DEPTH);
         RxCount = (uint8_t)(RxCount - 1);
         portEXIT_CRITICAL(&RxMux);
-        RouteIn(f);
+        RouteIn(Frame);
     }
 
     // Flush as many 60-byte USB link frames as possible. AppUSBSend blocks briefly
@@ -228,11 +228,11 @@ void AppInterfaceService::Pump()
     if (AppUSBActive() && TxRing && !(AppBLEActive() && AppUsbSilent()))
     {
         uint8_t Chunk[60];
-        uint16_t n = TxPop(Chunk, sizeof(Chunk));
-        while (n > 0)
+        uint16_t Count = TxPop(Chunk, sizeof(Chunk));
+        while (Count > 0)
         {
-            AppUSBSend(Chunk, n);
-            n = TxPop(Chunk, sizeof(Chunk));
+            AppUSBSend(Chunk, Count);
+            Count = TxPop(Chunk, sizeof(Chunk));
         }
     }
 

@@ -14,20 +14,20 @@
 #ifdef USE_SUB_REQUEST
 
 // What makes a requester entry occupied (used by the shared table search).
-inline bool SubscriptionsService::RequesterOccupied(const RequesterEntry &e) { return e.Active; }
+inline bool SubscriptionsService::RequesterOccupied(const RequesterEntry &Entry) { return Entry.Active; }
 
 inline RequesterEntry* SubscriptionsService::RequesterFindByTrid(uint16_t Trid) {
     return SubTableFindByTrid(RequesterTable, Trid, RequesterOccupied);
 }
 
-inline void SubscriptionsService::RequesterClearEntry(RequesterEntry* e) {
-    *e = RequesterEntry{};
+inline void SubscriptionsService::RequesterClearEntry(RequesterEntry* Entry) {
+    *Entry = RequesterEntry{};
 }
 
 // Deletes `e` and compacts the table, so the active entries stay a TRID-sorted prefix
 // (Docs: "stored in a sequential table, sorted by TRID").
-inline void SubscriptionsService::RequesterRemove(RequesterEntry* e) {
-    int Idx = (int)(e - RequesterTable);
+inline void SubscriptionsService::RequesterRemove(RequesterEntry* Entry) {
+    int Idx = (int)(Entry - RequesterTable);
     for (int i = Idx; i < MAX_REQUESTER_SUBS - 1; i++) RequesterTable[i] = RequesterTable[i + 1];
     RequesterClearEntry(&RequesterTable[MAX_REQUESTER_SUBS - 1]);
 }
@@ -50,48 +50,48 @@ inline RequesterEntry* SubscriptionsService::RequesterAlloc(uint16_t Trid) {
 // Finds the entry for `trid`, or allocates it at its sorted position. Returns nullptr when the
 // table is full.
 inline RequesterEntry* SubscriptionsService::RequesterUpsert(uint16_t Trid) {
-    RequesterEntry* e = RequesterFindByTrid(Trid);
-    if (e) return e;
+    RequesterEntry* Entry = RequesterFindByTrid(Trid);
+    if (Entry) return Entry;
     return RequesterAlloc(Trid);
 }
 
 // Applies a received value to the requester's target register (raw bytes) and confirms with
 // the FNV-1a hash of the received bytes.
-inline void SubscriptionsService::ApplyRequesterValue(RequesterEntry *e, const uint8_t *Val, uint8_t Vlen, bool Confirm) {
+inline void SubscriptionsService::ApplyRequesterValue(RequesterEntry *Entry, const uint8_t *Val, uint8_t Vlen, bool Confirm) {
     // A value update renews the 120 s lease even when the target register is momentarily
     // unresolvable; otherwise a briefly unavailable target would let the entry expire and
     // cancel its still-live provider.
-    e->lastValueMs = DeviceStatus.UptimeMs;
-    e->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
+    Entry->LastValueMs = DeviceStatus.UptimeMs;
+    Entry->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
 
-    FieldResult Fr = SubscriptionsGetField(e->targetReg);
+    FieldResult Fr = SubscriptionsGetField(Entry->TargetReg);
     if (!Fr.Data) return;
     if (Vlen > Fr.Descriptor.Size) Vlen = Fr.Descriptor.Size;
 
     // The System block (type 0) is not a subscription target; every other block kind is
     // written through the shared Register setter (script inputs, dynamic entries, statics).
-    if (!(BlockInfoType(e->targetReg) == 0 && BlockInfoInstance(e->targetReg) == 0)) {
+    if (!(BlockInfoType(Entry->TargetReg) == 0 && BlockInfoInstance(Entry->TargetReg) == 0)) {
         ValueInfo Meta = Fr.Descriptor;
         Meta.Size = Vlen;
-        RegisterSetByBlockInfo(e->targetReg, Meta, Val, Vlen);
+        RegisterSetByBlockInfo(Entry->TargetReg, Meta, Val, Vlen);
     }
 
     if (!Confirm) return;
 
     // Confirmation: the requester sends the hash of the received value (docs CID 0: the
     // confirmation is a request, no FLAG_TYPE), at the trigger's high priority.
-    uint32_t h = Fnv1a(Val, Vlen);
+    uint32_t Hash = Fnv1a(Val, Vlen);
     PacketFrame Reply;
-    PacketConstruct(&Reply, e->providerAddr, MakeService(ServiceType::Subscriptions, 0),
-                    e->Trid, FLAG_START | FLAG_STOP, (const uint8_t *)&h, sizeof(h),
+    PacketConstruct(&Reply, Entry->ProviderAddr, MakeService(ServiceType::Subscriptions, 0),
+                    Entry->Trid, FLAG_START | FLAG_STOP, (const uint8_t *)&Hash, sizeof(Hash),
                     PRIORITY_SUB_HIGH);
     SendAndVerifyPacket(Reply);
 }
 
 inline void SubscriptionsService::HandleRequesterValueUpdate(const PacketFrame &Frame) {
     if (!(Frame.Flags & FLAG_TYPE)) return;
-    RequesterEntry* e = RequesterFindByTrid(Frame.Trid);
-    if (!e) {
+    RequesterEntry* Entry = RequesterFindByTrid(Frame.Trid);
+    if (!Entry) {
         // The sender holds a subscription this device does not have: an orphan provider entry.
         // That happens when a cancel could not land (the node was offline, or the verified
         // retries ran out) and is the *only* notification we get - the node's table is its own.
@@ -108,7 +108,7 @@ inline void SubscriptionsService::HandleRequesterValueUpdate(const PacketFrame &
     // only OnChangeConfirm repeats until confirmed. Confirming every trigger would also
     // overwrite the provider's Hash/Hashlike state, which the delta trigger uses as its last
     // sent scalar value.
-    const bool Confirm = e->Sub.Trigger == TriggerType::OnChangeConfirm;
-    ApplyRequesterValue(e, Frame.Payload, PayloadBytes(Frame), Confirm);
+    const bool Confirm = Entry->Sub.Trigger == TriggerType::OnChangeConfirm;
+    ApplyRequesterValue(Entry, Frame.Payload, PayloadBytes(Frame), Confirm);
 }
 #endif // USE_SUB_REQUEST

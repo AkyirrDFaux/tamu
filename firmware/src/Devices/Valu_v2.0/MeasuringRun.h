@@ -32,7 +32,7 @@ static inline Number MeasClampAdc(Number In)
 static inline uint32_t SampleIntervalMs(uint8_t Channel)
 {
     static uint32_t Cache[MEAS_CHANNEL_COUNT] = {0};
-    int32_t Hz = staticPer.Meas[Channel].SamplingRate.Value >> 16; // integer Hz
+    int32_t Hz = StaticPer.Meas[Channel].SamplingRate.Value >> 16; // integer Hz
     if (Hz <= 0) Hz = 10;     // disabled / invalid -> default 10 Hz
     if (Hz > 1000) Hz = 1000; // matches the Sampling Rate write clamp
     if ((Cache[Channel] >> 16) != (uint32_t)Hz)
@@ -51,12 +51,12 @@ static void MeasuringUpdate(uint8_t Index, uint16_t Raw)
 {
     if (Index >= MEAS_CHANNEL_COUNT) return;
 
-    Number Coeff = staticPer.Meas[Index].FilterCoeff;
+    Number Coeff = StaticPer.Meas[Index].FilterCoeff;
     if (Coeff < N(0)) Coeff = N(0);
     if (Coeff > N(1)) Coeff = N(1);
 
     const Number RrefKohm = N(VALU_MEAS_REF_KOHM);
-    staticVol.Meas[Index].CurrentRange = RrefKohm;
+    StaticVol.Meas[Index].CurrentRange = RrefKohm;
 
     // EMA over the RAW ADC value (same convention as the DAS: FilterCoeff is the weight of
     // the NEW sample; 1 = no filtering, 0 = hold the previous value).
@@ -75,7 +75,7 @@ static void MeasuringUpdate(uint8_t Index, uint16_t Raw)
     static const Number ADCRES = N(1023);
     Number In = FilteredRaw;
 
-    switch (staticPer.Meas[Index].SensorType)
+    switch (StaticPer.Meas[Index].SensorType)
     {
     case MeasRawMeasurement: // raw counts
         break;
@@ -103,7 +103,7 @@ static void MeasuringUpdate(uint8_t Index, uint16_t Raw)
     {
         In = MeasClampAdc(In);
         In = N(1) / (N(0.003354) + log((In / (ADCRES - In)) *
-                   (RrefKohm / (staticPer.Meas[Index].SensorType == MeasNTC100K ? N(100.0) : N(10.0)))) / N(3950)) - N(273.15);
+                   (RrefKohm / (StaticPer.Meas[Index].SensorType == MeasNTC100K ? N(100.0) : N(10.0)))) / N(3950)) - N(273.15);
         break;
     }
 
@@ -111,5 +111,5 @@ static void MeasuringUpdate(uint8_t Index, uint16_t Raw)
         break;
     }
 
-    staticVol.Meas[Index].MeasuredValue = In;
+    StaticVol.Meas[Index].MeasuredValue = In;
 }

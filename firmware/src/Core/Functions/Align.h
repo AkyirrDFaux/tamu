@@ -11,16 +11,16 @@
 // fault on one and the node dies. GCC is entitled to compile the cast to a single `lw`/`sw`
 // (it does), so every such access must go through these helpers, which memcpy through a
 // properly-aligned temporary. Where alignment is provable the compiler emits the same code.
-template <typename T>
-static inline T LoadUnaligned(const void *p) {
-    T v;
+template <typename Value>
+static inline Value LoadUnaligned(const void *Ptr) {
+    Value Val;
     // The void* cast keeps -Wclass-memaccess quiet for small POD-like classes (e.g. ColourClass,
     // whose user-defined operator= is not a copy-assignment); the byte copy is still correct.
-    memcpy(static_cast<void *>(&v), p, sizeof(T));
-    return v;
+    memcpy(static_cast<void *>(&Val), Ptr, sizeof(Value));
+    return Val;
 }
 
-template <typename T>
-static inline void StoreUnaligned(void *p, T v) {
-    memcpy(p, static_cast<const void *>(&v), sizeof(T));
+template <typename Value>
+static inline void StoreUnaligned(void *Ptr, Value Val) {
+    memcpy(Ptr, static_cast<const void *>(&Val), sizeof(Value));
 }

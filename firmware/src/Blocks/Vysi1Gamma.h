@@ -45,7 +45,7 @@ const uint8_t GammaTable[256] = {
 // as they enter the render buffer, so every alpha blend / composite below happens in linear
 // light (blending encoded values and applying the curve afterwards quantises partial-alpha
 // edges wrongly, especially at low brightness).
-inline ColourClass Linearise(ColourClass c)
+inline ColourClass Linearise(ColourClass Colour)
 {
-    return ColourClass(GammaTable[c.R], GammaTable[c.G], GammaTable[c.B], c.A);
+    return ColourClass(GammaTable[Colour.Red], GammaTable[Colour.Green], GammaTable[Colour.Blue], Colour.Alpha);
 }

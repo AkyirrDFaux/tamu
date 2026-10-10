@@ -74,69 +74,69 @@ int main()
 {
     // Awkward sizes on purpose (1..8 with zeros): every alignment remainder is covered, and a
     // zero-size entry must not shift anything.
-    const uint8_t inSizes[]  = {1, 5, 4, 2, 8};
-    const uint8_t outSizes[] = {3, 0, 6};
-    const uint8_t varSizes[] = {4, 1, 1, 7, 2, 3, 4};
-    const uint8_t cstSizes[] = {2, 4, 1, 5};
+    const uint8_t InSizes[]  = {1, 5, 4, 2, 8};
+    const uint8_t OutSizes[] = {3, 0, 6};
+    const uint8_t VarSizes[] = {4, 1, 1, 7, 2, 3, 4};
+    const uint8_t CstSizes[] = {2, 4, 1, 5};
 
-    const uint8_t inCount = sizeof(inSizes), outCount = sizeof(outSizes);
-    const uint8_t varCount = sizeof(varSizes), constCount = sizeof(cstSizes);
+    const uint8_t InCount = sizeof(InSizes), OutCount = sizeof(OutSizes);
+    const uint8_t VarCount = sizeof(VarSizes), ConstCount = sizeof(CstSizes);
 
     ValueInfo in[16], out[16], var[16], cst[16];
-    Fill(in, inSizes, inCount);
-    Fill(out, outSizes, outCount);
-    Fill(var, varSizes, varCount);
-    Fill(cst, cstSizes, constCount);
+    Fill(in, InSizes, InCount);
+    Fill(out, OutSizes, OutCount);
+    Fill(var, VarSizes, VarCount);
+    Fill(cst, CstSizes, ConstCount);
 
-    const uint16_t n = StrideTableSize(inCount, outCount, varCount, constCount);
-    CHECK_EQ(n, (uint16_t)(inCount + outCount + varCount + constCount + 4));
+    const uint16_t TableSize = StrideTableSize(InCount, OutCount, VarCount, ConstCount);
+    CHECK_EQ(TableSize, (uint16_t)(InCount + OutCount + VarCount + ConstCount + 4));
 
     uint16_t table[64] = {0};
-    CHECK(n <= sizeof(table) / sizeof(table[0]));
+    CHECK(TableSize <= sizeof(table) / sizeof(table[0]));
 
     // Build exactly as LoadedScript::BuildOffsets does, through the shared base helpers.
-    uint16_t k = StrideOffsetsBuild(table, StrideInBase(), in, inCount, 0);
-    const uint16_t inTotal = table[inCount];
-    CHECK_EQ(k, StrideOutBase(inCount));
+    uint16_t k = StrideOffsetsBuild(table, StrideInBase(), in, InCount, 0);
+    const uint16_t InTotal = table[InCount];
+    CHECK_EQ(k, StrideOutBase(InCount));
 
-    k = StrideOffsetsBuild(table, k, out, outCount, inTotal);
-    const uint16_t outTotal = (uint16_t)(table[k - 1] - inTotal);
-    CHECK_EQ(k, StrideVarBase(inCount, outCount));
+    k = StrideOffsetsBuild(table, k, out, OutCount, InTotal);
+    const uint16_t OutTotal = (uint16_t)(table[k - 1] - InTotal);
+    CHECK_EQ(k, StrideVarBase(InCount, OutCount));
 
-    k = StrideOffsetsBuild(table, k, var, varCount, 0);
-    const uint16_t varTotal = table[k - 1];
-    CHECK_EQ(k, StrideConstBase(inCount, outCount, varCount));
+    k = StrideOffsetsBuild(table, k, var, VarCount, 0);
+    const uint16_t VarTotal = table[k - 1];
+    CHECK_EQ(k, StrideConstBase(InCount, OutCount, VarCount));
 
-    k = StrideOffsetsBuild(table, k, cst, constCount, 0);
-    const uint16_t constTotal = table[k - 1];
-    CHECK_EQ(k, n);
+    k = StrideOffsetsBuild(table, k, cst, ConstCount, 0);
+    const uint16_t ConstTotal = table[k - 1];
+    CHECK_EQ(k, TableSize);
 
     // The four segments partition the table exactly, in the documented order.
     CHECK_EQ(StrideInBase(), 0);
-    CHECK_EQ(StrideOutBase(inCount), (uint16_t)(inCount + 1));
-    CHECK_EQ(StrideVarBase(inCount, outCount), (uint16_t)(inCount + outCount + 2));
-    CHECK_EQ(StrideConstBase(inCount, outCount, varCount), (uint16_t)(inCount + outCount + varCount + 3));
+    CHECK_EQ(StrideOutBase(InCount), (uint16_t)(InCount + 1));
+    CHECK_EQ(StrideVarBase(InCount, OutCount), (uint16_t)(InCount + OutCount + 2));
+    CHECK_EQ(StrideConstBase(InCount, OutCount, VarCount), (uint16_t)(InCount + OutCount + VarCount + 3));
 
-    CheckSpace(table, StrideInBase(), in, inCount, 0, "input");
-    CheckSpace(table, StrideOutBase(inCount), out, outCount, inTotal, "output");
-    CheckSpace(table, StrideVarBase(inCount, outCount), var, varCount, 0, "variable");
-    CheckSpace(table, StrideConstBase(inCount, outCount, varCount), cst, constCount, 0, "constant");
+    CheckSpace(table, StrideInBase(), in, InCount, 0, "input");
+    CheckSpace(table, StrideOutBase(InCount), out, OutCount, InTotal, "output");
+    CheckSpace(table, StrideVarBase(InCount, OutCount), var, VarCount, 0, "variable");
+    CheckSpace(table, StrideConstBase(InCount, OutCount, VarCount), cst, ConstCount, 0, "constant");
 
     // Totals must describe the spaces the allocations are sized from.
-    CHECK_EQ(inTotal, (uint16_t)(NaiveOffset(in, inCount, inCount)));
-    CHECK_EQ(outTotal, (uint16_t)(NaiveOffset(out, outCount, outCount)));
-    CHECK_EQ(varTotal, (uint16_t)(NaiveOffset(var, varCount, varCount)));
-    CHECK_EQ(constTotal, (uint16_t)(NaiveOffset(cst, constCount, constCount)));
+    CHECK_EQ(InTotal, (uint16_t)(NaiveOffset(in, InCount, InCount)));
+    CHECK_EQ(OutTotal, (uint16_t)(NaiveOffset(out, OutCount, OutCount)));
+    CHECK_EQ(VarTotal, (uint16_t)(NaiveOffset(var, VarCount, VarCount)));
+    CHECK_EQ(ConstTotal, (uint16_t)(NaiveOffset(cst, ConstCount, ConstCount)));
 
     // Empty spaces must still contribute their total entry and not disturb the order.
     {
-        uint16_t t[8] = {0};
-        uint16_t j = StrideOffsetsBuild(t, StrideInBase(), in, 0, 0);
-        CHECK_EQ(j, 1);
-        CHECK_EQ(t[0], 0);
-        j = StrideOffsetsBuild(t, j, out, 0, 0);
-        CHECK_EQ(j, 2);
-        CHECK_EQ(t[1], 0);
+        uint16_t Table[8] = {0};
+        uint16_t Cursor = StrideOffsetsBuild(Table, StrideInBase(), in, 0, 0);
+        CHECK_EQ(Cursor, 1);
+        CHECK_EQ(Table[0], 0);
+        Cursor = StrideOffsetsBuild(Table, Cursor, out, 0, 0);
+        CHECK_EQ(Cursor, 2);
+        CHECK_EQ(Table[1], 0);
     }
 
     std::printf("== stride offset tests: %d checks, %d failures ==\n", checks, failures);

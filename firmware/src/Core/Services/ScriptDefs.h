@@ -19,8 +19,8 @@
 
 // Defined in Core/Services/Register.h (shared with the Subscriptions service); declared
 // here so the VM resolves registers through the exact same access path.
-bool RegisterGetByBlockInfo(uint32_t Bi, ValueInfo &m, uint8_t *Vbuf, uint8_t &Vsz);
-bool RegisterSetByBlockInfo(uint32_t Bi, const ValueInfo &m, const uint8_t *Val, uint16_t Vlen);
+bool RegisterGetByBlockInfo(uint32_t Bi, ValueInfo &Meta, uint8_t *Vbuf, uint8_t &Vsz);
+bool RegisterSetByBlockInfo(uint32_t Bi, const ValueInfo &Meta, const uint8_t *Val, uint16_t Vlen);
 
 // Number of loaded script slots. The Scripts range is four banked block types (0x3F4-0x3F7) of
 // 64 instances each, addressed by one global index 0..255 (Docs/Services/Register.md "Block
@@ -181,8 +181,8 @@ enum class ScriptState : uint8_t {
 // operands follow, and the line ends with an Endline symbol.
 struct ScriptLineInfo {
     uint16_t Start;
-    uint8_t destCount;
-    uint8_t opCount;
+    uint8_t DestCount;
+    uint8_t OpCount;
 };
 
 // One loaded script. Value spaces are parallel to the register tables:
@@ -192,17 +192,17 @@ struct ScriptLineInfo {
 struct LoadedScript {
     bool Active = false;
     uint16_t Slot = 0;
-    uint16_t fileId = 0; // the stored SCR_XXX file this slot was loaded from
+    uint16_t FileId = 0; // the stored SCR_XXX file this slot was loaded from
     uint8_t State = (uint8_t)ScriptState::Stopped;
     uint32_t Properties = 0;
 
-    uint8_t inCount = 0, outCount = 0, varCount = 0, constCount = 0;
-    ValueInfo *inMeta = nullptr, *outMeta = nullptr, *varMeta = nullptr, *constMeta = nullptr;
+    uint8_t InCount = 0, OutCount = 0, VarCount = 0, ConstCount = 0;
+    ValueInfo *InMeta = nullptr, *OutMeta = nullptr, *VarMeta = nullptr, *ConstMeta = nullptr;
 
-    uint8_t *ioSpace = nullptr;
-    uint8_t *varSpace = nullptr;
-    uint8_t *constSpace = nullptr;
-    uint16_t inTotal = 0, outTotal = 0, varTotal = 0, constTotal = 0;
+    uint8_t *IoSpace = nullptr;
+    uint8_t *VarSpace = nullptr;
+    uint8_t *ConstSpace = nullptr;
+    uint16_t InTotal = 0, OutTotal = 0, VarTotal = 0, ConstTotal = 0;
 
     // Prefix sums of the four spaces' aligned strides, one segment per space in the order
     // inputs, outputs, variables, constants. Layout: [0..inCount] inputs, then [..outCount]
@@ -210,54 +210,54 @@ struct LoadedScript {
     // total. Built once by BuildOffsets() at load; see Core/Functions/StrideOffsets.h for why.
     uint16_t *Offsets = nullptr;
 
-    uint16_t uiLen = 0;
-    uint32_t instrLen = 0;
+    uint16_t UiLen = 0;
+    uint32_t InstrLen = 0;
     char Name[BLOCK_NAME_LEN] = {0};
 
     // Program (preloaded instructions + compiled line/block tables).
     uint8_t *Instr = nullptr;
-    uint16_t instrSymbols = 0;
+    uint16_t InstrSymbols = 0;
     ScriptLineInfo *Lines = nullptr;
-    uint16_t lineCount = 0;
-    uint16_t *blockMatch = nullptr; // per line: matching If/While <-> EndBlock (0xFFFF none)
-    uint8_t *blockKind = nullptr;   // 0 none, 1 If, 2 While, 3 EndBlock
-    uint32_t *lineStamp = nullptr;  // loop-detection stamp per line
+    uint16_t LineCount = 0;
+    uint16_t *BlockMatch = nullptr; // per line: matching If/While <-> EndBlock (0xFFFF none)
+    uint8_t *BlockKind = nullptr;   // 0 none, 1 If, 2 While, 3 EndBlock
+    uint32_t *LineStamp = nullptr;  // loop-detection stamp per line
 
     // Runtime state.
     uint16_t Ic = 0; // line index
-    bool waitingOnTime = false;
-    uint32_t waitUntil = 0;
-    uint16_t callStack[SCRIPT_MAX_CALL_DEPTH] = {0};
-    uint8_t callDepth = 0;
-    uint8_t errorCode = SCRIPT_ERR_NONE;
+    bool WaitingOnTime = false;
+    uint32_t WaitUntil = 0;
+    uint16_t CallStack[SCRIPT_MAX_CALL_DEPTH] = {0};
+    uint8_t CallDepth = 0;
+    uint8_t ErrorCode = SCRIPT_ERR_NONE;
 
     // Foreign register access (per-instance TRID + pending confirmation).
     uint16_t Trid = 0;
-    bool pendingForeign = false;
-    bool pendingRead = false;
-    uint16_t pendingTrid = 0;
-    uint32_t pendingDeadline = 0;
-    uint8_t pendingDest[4] = {0};
+    bool PendingForeign = false;
+    bool PendingRead = false;
+    uint16_t PendingTrid = 0;
+    uint32_t PendingDeadline = 0;
+    uint8_t PendingDest[4] = {0};
 
     void Release() {
-        free(inMeta); free(outMeta); free(varMeta); free(constMeta);
-        free(ioSpace); free(varSpace); free(constSpace);
-        free(Instr); free(Lines); free(blockMatch); free(blockKind); free(lineStamp);
+        free(InMeta); free(OutMeta); free(VarMeta); free(ConstMeta);
+        free(IoSpace); free(VarSpace); free(ConstSpace);
+        free(Instr); free(Lines); free(BlockMatch); free(BlockKind); free(LineStamp);
         free(Offsets);
-        inMeta = outMeta = varMeta = constMeta = nullptr;
-        ioSpace = varSpace = constSpace = nullptr;
-        Instr = nullptr; Lines = nullptr; blockMatch = nullptr; blockKind = nullptr; lineStamp = nullptr;
+        InMeta = OutMeta = VarMeta = ConstMeta = nullptr;
+        IoSpace = VarSpace = ConstSpace = nullptr;
+        Instr = nullptr; Lines = nullptr; BlockMatch = nullptr; BlockKind = nullptr; LineStamp = nullptr;
         Offsets = nullptr;
         Active = false;
         State = (uint8_t)ScriptState::Stopped;
         Properties = 0;
-        inCount = outCount = varCount = constCount = 0;
-        inTotal = outTotal = varTotal = constTotal = 0;
-        uiLen = 0; instrLen = 0; instrSymbols = 0; lineCount = 0;
-        Ic = 0; waitingOnTime = false; waitUntil = 0;
-        callDepth = 0; errorCode = SCRIPT_ERR_NONE;
-        Trid = 0; pendingForeign = false; pendingRead = false; pendingTrid = 0; pendingDeadline = 0;
-        memset(pendingDest, 0, sizeof(pendingDest));
+        InCount = OutCount = VarCount = ConstCount = 0;
+        InTotal = OutTotal = VarTotal = ConstTotal = 0;
+        UiLen = 0; InstrLen = 0; InstrSymbols = 0; LineCount = 0;
+        Ic = 0; WaitingOnTime = false; WaitUntil = 0;
+        CallDepth = 0; ErrorCode = SCRIPT_ERR_NONE;
+        Trid = 0; PendingForeign = false; PendingRead = false; PendingTrid = 0; PendingDeadline = 0;
+        memset(PendingDest, 0, sizeof(PendingDest));
         Name[0] = '\0';
     }
 
@@ -267,17 +267,17 @@ struct LoadedScript {
     bool BuildOffsets() {
         free(Offsets);
         Offsets = nullptr;
-        const uint16_t n = StrideTableSize(inCount, outCount, varCount, constCount);
-        Offsets = (uint16_t *)malloc((size_t)n * sizeof(uint16_t));
+        const uint16_t Size = StrideTableSize(InCount, OutCount, VarCount, ConstCount);
+        Offsets = (uint16_t *)malloc((size_t)Size * sizeof(uint16_t));
         if (!Offsets) return false;
-        uint16_t k = StrideOffsetsBuild(Offsets, StrideInBase(), inMeta, inCount, 0);
-        inTotal = Offsets[inCount];
-        k = StrideOffsetsBuild(Offsets, k, outMeta, outCount, inTotal); // outputs follow inputs
-        outTotal = (uint16_t)(Offsets[k - 1] - inTotal);
-        k = StrideOffsetsBuild(Offsets, k, varMeta, varCount, 0);
-        varTotal = Offsets[k - 1];
-        k = StrideOffsetsBuild(Offsets, k, constMeta, constCount, 0);
-        constTotal = Offsets[k - 1];
+        uint16_t k = StrideOffsetsBuild(Offsets, StrideInBase(), InMeta, InCount, 0);
+        InTotal = Offsets[InCount];
+        k = StrideOffsetsBuild(Offsets, k, OutMeta, OutCount, InTotal); // outputs follow inputs
+        OutTotal = (uint16_t)(Offsets[k - 1] - InTotal);
+        k = StrideOffsetsBuild(Offsets, k, VarMeta, VarCount, 0);
+        VarTotal = Offsets[k - 1];
+        k = StrideOffsetsBuild(Offsets, k, ConstMeta, ConstCount, 0);
+        ConstTotal = Offsets[k - 1];
         return true;
     }
 
@@ -286,14 +286,14 @@ struct LoadedScript {
     uint16_t OffsetAt(uint16_t Base, uint8_t i, uint8_t Count) const {
         return Offsets[Base + (i < Count ? i : Count)];
     }
-    uint16_t InputOffset(uint8_t i) const { return OffsetAt(StrideInBase(), i, inCount); }
-    uint16_t OutputOffset(uint8_t i) const { return OffsetAt(StrideOutBase(inCount), i, outCount); }
-    uint16_t VarOffset(uint8_t i) const { return OffsetAt(StrideVarBase(inCount, outCount), i, varCount); }
-    uint16_t ConstOffset(uint8_t i) const { return OffsetAt(StrideConstBase(inCount, outCount, varCount), i, constCount); }
+    uint16_t InputOffset(uint8_t i) const { return OffsetAt(StrideInBase(), i, InCount); }
+    uint16_t OutputOffset(uint8_t i) const { return OffsetAt(StrideOutBase(InCount), i, OutCount); }
+    uint16_t VarOffset(uint8_t i) const { return OffsetAt(StrideVarBase(InCount, OutCount), i, VarCount); }
+    uint16_t ConstOffset(uint8_t i) const { return OffsetAt(StrideConstBase(InCount, OutCount, VarCount), i, ConstCount); }
 };
 
 // One bit per slot, set for every slot that may hold a loaded script (a superset of the active
 // slots, so hot loops can skip the empty registry entries). MAX_SCRIPTS is a multiple of 64.
-static constexpr uint16_t kScriptMaskWords = MAX_SCRIPTS / 64;
+static constexpr uint16_t KScriptMaskWords = MAX_SCRIPTS / 64;
 
 #endif // USE_SCRIPTS

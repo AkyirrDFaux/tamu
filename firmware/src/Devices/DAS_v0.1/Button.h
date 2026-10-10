@@ -15,5 +15,5 @@ void DasButtonInit()
 // iteration.
 void DasButtonUpdate()
 {
-    staticVol.Button.ButtonState = !PinRead(DAS_BUTTON_PORT, DAS_BUTTON_PIN);
+    StaticVol.Button.ButtonState = !PinRead(DAS_BUTTON_PORT, DAS_BUTTON_PIN);
 }

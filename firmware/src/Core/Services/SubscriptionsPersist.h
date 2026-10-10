@@ -21,9 +21,9 @@ inline void SubscriptionsService::SaveRequesterTable() {
     uint16_t Off = 1;
     uint8_t Count = 0;
     for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
-        RequesterEntry* e = &RequesterTable[i];
-        if (!e->Active) continue;
-        memcpy(Buf + Off, e, REQUESTER_FILE_ENTRY_SIZE);
+        RequesterEntry* Entry = &RequesterTable[i];
+        if (!Entry->Active) continue;
+        memcpy(Buf + Off, Entry, REQUESTER_FILE_ENTRY_SIZE);
         Off += REQUESTER_FILE_ENTRY_SIZE;
         Count++;
     }
@@ -45,8 +45,8 @@ inline void SubscriptionsService::SaveRequesterTable() {
     uint32_t Existing = Storage.FileExists(SubscriptionsRequesterFile);
     if (Existing == Off) {
         uint8_t Cur[1 + MAX_REQUESTER_SUBS * REQUESTER_FILE_ENTRY_SIZE];
-        uint16_t curLen = (uint16_t)Storage.ReadFromFile(SubscriptionsRequesterFile, 0, Off, (char *)Cur);
-        if (curLen == Off && memcmp(Cur, Buf, Off) == 0) return;
+        uint16_t CurLen = (uint16_t)Storage.ReadFromFile(SubscriptionsRequesterFile, 0, Off, (char *)Cur);
+        if (CurLen == Off && memcmp(Cur, Buf, Off) == 0) return;
     }
     // Shared atomic staging (copy to the "~" name, then rename).
     WriteBackupFile(SubscriptionsRequesterFile, Buf, Off);
@@ -63,40 +63,40 @@ inline void SubscriptionsService::LoadRequesterTable() {
     uint8_t Count = Buf[Off++];
     for (uint8_t i = 0; i < Count && Off + REQUESTER_FILE_ENTRY_SIZE <= Len; i++) {
         uint16_t Trid = LoadUnaligned<uint16_t>(Buf + Off + 2);
-        RequesterEntry* e = RequesterUpsert(Trid);
-        if (!e) break;
-        memcpy((void *)e, Buf + Off, REQUESTER_FILE_ENTRY_SIZE);
+        RequesterEntry* Entry = RequesterUpsert(Trid);
+        if (!Entry) break;
+        memcpy((void *)Entry, Buf + Off, REQUESTER_FILE_ENTRY_SIZE);
         Off += REQUESTER_FILE_ENTRY_SIZE;
-        e->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
-        e->registeredAtMs = DeviceStatus.UptimeMs;
-        e->lastRegisteredMs = 0;
-        e->lastValueMs = 0;
+        Entry->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
+        Entry->RegisteredAtMs = DeviceStatus.UptimeMs;
+        Entry->LastRegisteredMs = 0;
+        Entry->LastValueMs = 0;
     }
 }
 
 // Re-registers the (non-persistent) provider side for a requester subscription so a
 // restored table keeps pushing values after boot. Same-device providers get a direct
 // provider-table entry; remote providers get a 0401 "Change subscription" packet.
-inline void SubscriptionsService::RegisterRequesterProvider(RequesterEntry* e) {
-    if (!e || !e->Active) return;
+inline void SubscriptionsService::RegisterRequesterProvider(RequesterEntry* Entry) {
+    if (!Entry || !Entry->Active) return;
 
-    e->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
-    e->lastRegisteredMs = DeviceStatus.UptimeMs;
+    Entry->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
+    Entry->LastRegisteredMs = DeviceStatus.UptimeMs;
 
 #ifdef USE_SUB_PROVIDE
     uint8_t Net = (uint8_t)((DeviceStatus.ShortAddress >> 10) & 0x3F);
-    if (NetQualifyLocal(e->providerAddr, Net) == DeviceStatus.ShortAddress) {
+    if (NetQualifyLocal(Entry->ProviderAddr, Net) == DeviceStatus.ShortAddress) {
         // Same-device provider: install it directly (shared with the wire paths).
-        ProviderInstall(e->Trid, DeviceStatus.ShortAddress, e->Sub);
+        ProviderInstall(Entry->Trid, DeviceStatus.ShortAddress, Entry->Sub);
         return;
     }
 #endif
     // Remote provider: send the subscription table (0401, fire and forget).
     uint8_t Payload[SUB_TABLE_WIRE_SIZE];
-    memcpy(Payload, &e->Sub, SUB_TABLE_WIRE_SIZE);
+    memcpy(Payload, &Entry->Sub, SUB_TABLE_WIRE_SIZE);
     PacketFrame Req;
-    PacketConstruct(&Req, e->providerAddr, MakeService(ServiceType::Subscriptions, 1),
-                    e->Trid, FLAG_START | FLAG_STOP, Payload, SUB_TABLE_WIRE_SIZE);
+    PacketConstruct(&Req, Entry->ProviderAddr, MakeService(ServiceType::Subscriptions, 1),
+                    Entry->Trid, FLAG_START | FLAG_STOP, Payload, SUB_TABLE_WIRE_SIZE);
     SendAndVerifyPacket(Req);
 }
 
@@ -115,9 +115,9 @@ inline void SubscriptionsService::ReRegister() {
 // its entry rather than duplicating it.
 inline void SubscriptionsService::ReRegisterForNode(uint16_t Addr) {
     for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
-        RequesterEntry &e = RequesterTable[i];
-        if (e.Active && e.providerAddr == Addr)
-            RegisterRequesterProvider(&e);
+        RequesterEntry &Entry = RequesterTable[i];
+        if (Entry.Active && Entry.ProviderAddr == Addr)
+            RegisterRequesterProvider(&Entry);
     }
 }
 
@@ -131,7 +131,7 @@ inline void SubscriptionsService::RequestReRegister(uint16_t Addr) {
     if (Addr == ADDR_INVALID) return;
     for (uint8_t i = 0; i < ReRegisterCount; i++)
         if (ReRegisterPending[i] == Addr) return; // already queued
-    if (ReRegisterCount < kReRegisterMax)
+    if (ReRegisterCount < KReRegisterMax)
         ReRegisterPending[ReRegisterCount++] = Addr;
 }
 
@@ -147,19 +147,19 @@ inline void SubscriptionsService::SubscriptionsReRegisterPending() {
 // short retry interval; afterwards it renews the provider's 120 s lease on a slow keepalive
 // (a value update only travels provider -> requester, so the requester must renew the
 // provider explicitly - Docs "Timeout 120s, renewed with new request").
-inline void SubscriptionsService::RequesterInitCheck(uint32_t nowMs) {
+inline void SubscriptionsService::RequesterInitCheck(uint32_t NowMs) {
     for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
-        RequesterEntry* e = &RequesterTable[i];
-        if (!e->Active) continue;
+        RequesterEntry* Entry = &RequesterTable[i];
+        if (!Entry->Active) continue;
         uint32_t Interval;
-        if (e->lastValueMs == 0) {
-            if (nowMs - e->registeredAtMs > SUB_INIT_WINDOW_MS) continue; // gave up
+        if (Entry->LastValueMs == 0) {
+            if (NowMs - Entry->RegisteredAtMs > SUB_INIT_WINDOW_MS) continue; // gave up
             Interval = SUB_RETRY_MS;
         } else {
             Interval = SUB_KEEPALIVE_MS;
         }
-        if (nowMs - e->lastRegisteredMs < Interval) continue;
-        RegisterRequesterProvider(e);
+        if (NowMs - Entry->LastRegisteredMs < Interval) continue;
+        RegisterRequesterProvider(Entry);
     }
 }
 #endif // USE_SUB_REQUEST

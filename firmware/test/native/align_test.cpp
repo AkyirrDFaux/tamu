@@ -21,9 +21,9 @@ static int failures = 0;
     } while (0)
 
 struct Pod {
-    uint16_t a;
-    uint8_t b;
-    uint8_t c;
+    uint16_t Word;
+    uint8_t Byte1;
+    uint8_t Byte2;
 };
 
 int main() {
@@ -50,8 +50,8 @@ int main() {
 
             uint32_t v32 = 0xA1B2C3D4u + (uint32_t)off * 0x01010101u;
             StoreUnaligned(base + off, v32);
-            for (int b = 0; b < 4; b++)
-                CHECK((base + off)[b] == (uint8_t)(v32 >> (8 * b))); // little-endian, exact spot
+            for (int i = 0; i < 4; i++)
+                CHECK((base + off)[i] == (uint8_t)(v32 >> (8 * i))); // little-endian, exact spot
             CHECK(LoadUnaligned<uint32_t>(base + off) == v32);
 
             int32_t s32 = -1000000 - off * 7;
@@ -69,10 +69,10 @@ int main() {
     // Struct round-trip at an odd address.
     alignas(8) uint8_t sbuf[8];
     for (int phase = 1; phase < 4; phase++) {
-        Pod p = {0xBEEF, 0x12, 0x34};
-        StoreUnaligned(sbuf + phase, p);
-        Pod q = LoadUnaligned<Pod>(sbuf + phase);
-        CHECK(q.a == p.a && q.b == p.b && q.c == p.c);
+        Pod Stored = {0xBEEF, 0x12, 0x34};
+        StoreUnaligned(sbuf + phase, Stored);
+        Pod Loaded = LoadUnaligned<Pod>(sbuf + phase);
+        CHECK(Loaded.Word == Stored.Word && Loaded.Byte1 == Stored.Byte1 && Loaded.Byte2 == Stored.Byte2);
     }
 
     if (failures == 0)

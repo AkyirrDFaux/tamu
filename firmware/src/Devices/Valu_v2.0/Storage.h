@@ -99,16 +99,16 @@ bool StorageFlashWrite(uint32_t Offset, const void *Data, uint32_t Size)
     uint32_t Faddr = STORAGE_FLASH_BASE + Offset;
     uint32_t Start = Faddr & ~3u;
     uint32_t End = (Faddr + Size + 3u) & ~3u;
-    for (uint32_t A = Start; A < End; A += 4) {
-        uint32_t W = 0;
-        for (uint32_t K = 0; K < 4; K++) {
-            uint32_t ByteAddr = A + K;
+    for (uint32_t Addr = Start; Addr < End; Addr += 4) {
+        uint32_t Word = 0;
+        for (uint32_t ByteIndex = 0; ByteIndex < 4; ByteIndex++) {
+            uint32_t ByteAddr = Addr + ByteIndex;
             if (ByteAddr >= Faddr && ByteAddr < Faddr + Size)
-                W |= ((uint32_t)Src[ByteAddr - Faddr]) << (8 * K);
+                Word |= ((uint32_t)Src[ByteAddr - Faddr]) << (8 * ByteIndex);
             else
-                W |= ((uint32_t)Maddr[ByteAddr - Faddr]) << (8 * K);
+                Word |= ((uint32_t)Maddr[ByteAddr - Faddr]) << (8 * ByteIndex);
         }
-        if (FLASH_ProgramWord(A, W) != FLASH_COMPLETE) {
+        if (FLASH_ProgramWord(Addr, Word) != FLASH_COMPLETE) {
             FLASH_Lock();
             StorageFlashRestore(Clk);
             return false;
@@ -136,21 +136,21 @@ bool StorageFlashErase(uint32_t Offset, uint32_t Size)
     uint32_t Clk = StorageFlashSlowDown();
     FLASH_Unlock();
     FLASH_Unlock_Fast();
-    for (uint32_t O = Offset; O < Offset + Size; O += FLASH_ERASE_PAGE_SIZE) {
-        FLASH_ErasePage_Fast(STORAGE_FLASH_BASE + O);
+    for (uint32_t PageOffset = Offset; PageOffset < Offset + Size; PageOffset += FLASH_ERASE_PAGE_SIZE) {
+        FLASH_ErasePage_Fast(STORAGE_FLASH_BASE + PageOffset);
         // CH32V203 flash quirk (same one the Valu bootloader works around - see its
         // FlashEraseSector, and the previous release's Hardware/Memory.h "Prevent incorrect
         // reading"): a just-erased word does NOT read back as 0xFFFFFFFF until it has been through
         // a program cycle; it reads a bogus pattern. Program 0xFFFFFFFF over each word so reads
         // (including the verify below) are correct; writing all-1s does not change an erased cell.
-        for (uint32_t W = 0; W < FLASH_ERASE_PAGE_SIZE; W += 4) {
-            uint32_t V;
-            memcpy(&V, (const void *)(STORAGE_CHIP_BASE + O + W), sizeof(V));
-            if (V != 0xFFFFFFFFu)
-                FLASH_ProgramWord(STORAGE_FLASH_BASE + O + W, 0xFFFFFFFFu);
+        for (uint32_t Word = 0; Word < FLASH_ERASE_PAGE_SIZE; Word += 4) {
+            uint32_t ReadWord;
+            memcpy(&ReadWord, (const void *)(STORAGE_CHIP_BASE + PageOffset + Word), sizeof(ReadWord));
+            if (ReadWord != 0xFFFFFFFFu)
+                FLASH_ProgramWord(STORAGE_FLASH_BASE + PageOffset + Word, 0xFFFFFFFFu);
         }
         uint32_t Check = 0;
-        memcpy(&Check, (const void *)(STORAGE_CHIP_BASE + O), sizeof(Check));
+        memcpy(&Check, (const void *)(STORAGE_CHIP_BASE + PageOffset), sizeof(Check));
         if (Check != 0xFFFFFFFFu) {
             FLASH_Lock_Fast();
             FLASH_Lock();

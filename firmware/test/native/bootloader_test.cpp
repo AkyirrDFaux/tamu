@@ -38,21 +38,21 @@ static int checks = 0, failures = 0;
 
 // Independent even parity over the "rest of the packet": the command (byte 1, bits 0-2), the
 // offset and the payload (bytes 2..len-2). The markers and the padding bits are excluded.
-static uint8_t RefParity(const uint8_t *f, uint16_t len)
+static uint8_t RefParity(const uint8_t *Frame, uint16_t len)
 {
-    uint8_t p = 0;
+    uint8_t Parity = 0;
     for (int bit = 0; bit < 3; bit++)
-        p ^= (uint8_t)((f[1] >> bit) & 1u);
+        Parity ^= (uint8_t)((Frame[1] >> bit) & 1u);
     for (uint16_t i = 2; i + 1 < len; i++)
         for (int bit = 0; bit < 8; bit++)
-            p ^= (uint8_t)((f[i] >> bit) & 1u);
-    return (uint8_t)(p & 1u);
+            Parity ^= (uint8_t)((Frame[i] >> bit) & 1u);
+    return (uint8_t)(Parity & 1u);
 }
 
-static void PrintHex(const char *label, const uint8_t *f, uint16_t len)
+static void PrintHex(const char *label, const uint8_t *Frame, uint16_t len)
 {
     std::printf("KAT %s = ", label);
-    for (uint16_t i = 0; i < len; i++) std::printf("%02X", f[i]);
+    for (uint16_t i = 0; i < len; i++) std::printf("%02X", Frame[i]);
     std::printf("\n");
 }
 
@@ -64,59 +64,59 @@ int main()
     {
         uint8_t PayloadBuf[PAYLOAD_SIZE];
         for (int i = 0; i < PAYLOAD_SIZE; i++) PayloadBuf[i] = (uint8_t)i;
-        uint8_t f[DATA_SIZE];
-        EncodeWrite(0x00000000u, PayloadBuf, f);
+        uint8_t Frame[DATA_SIZE];
+        EncodeWrite(0x00000000u, PayloadBuf, Frame);
 
-        CHECK_EQ(sizeof(f), 39);
-        CHECK_EQ(f[0], START);
-        CHECK_EQ(f[38], END);
-        CHECK_EQ(f[1] & 0x07u, CMD_WRITE);
-        CHECK_EQ(f[1] & 0xF0u, 0);            // padding zero
-        CHECK_EQ((f[1] >> 3) & 1u, RefParity(f, DATA_SIZE));
-        CHECK_EQ(Offset(f), 0u);
-        CHECK(std::memcmp(Payload(f), PayloadBuf, PAYLOAD_SIZE) == 0);
-        CHECK_EQ(Decode(f, DATA_SIZE), CMD_WRITE);
+        CHECK_EQ(sizeof(Frame), 39);
+        CHECK_EQ(Frame[0], START);
+        CHECK_EQ(Frame[38], END);
+        CHECK_EQ(Frame[1] & 0x07u, CMD_WRITE);
+        CHECK_EQ(Frame[1] & 0xF0u, 0);            // padding zero
+        CHECK_EQ((Frame[1] >> 3) & 1u, RefParity(Frame, DATA_SIZE));
+        CHECK_EQ(Offset(Frame), 0u);
+        CHECK(std::memcmp(Payload(Frame), PayloadBuf, PAYLOAD_SIZE) == 0);
+        CHECK_EQ(Decode(Frame, DATA_SIZE), CMD_WRITE);
     }
 
     // --- read-request layout ------------------------------------------------
     {
-        uint8_t f[READ_REQ_SIZE];
-        EncodeReadRequest(0x12345678u, f);
-        CHECK_EQ(sizeof(f), 7);
-        CHECK_EQ(f[0], START);
-        CHECK_EQ(f[6], END);
-        CHECK_EQ(f[1] & 0x07u, CMD_READ_REQ);
-        CHECK_EQ((f[1] >> 3) & 1u, RefParity(f, READ_REQ_SIZE));
-        CHECK_EQ(Offset(f), 0x12345678u);
-        CHECK_EQ(Decode(f, READ_REQ_SIZE), CMD_READ_REQ);
+        uint8_t Frame[READ_REQ_SIZE];
+        EncodeReadRequest(0x12345678u, Frame);
+        CHECK_EQ(sizeof(Frame), 7);
+        CHECK_EQ(Frame[0], START);
+        CHECK_EQ(Frame[6], END);
+        CHECK_EQ(Frame[1] & 0x07u, CMD_READ_REQ);
+        CHECK_EQ((Frame[1] >> 3) & 1u, RefParity(Frame, READ_REQ_SIZE));
+        CHECK_EQ(Offset(Frame), 0x12345678u);
+        CHECK_EQ(Decode(Frame, READ_REQ_SIZE), CMD_READ_REQ);
     }
 
     // --- read-response layout ----------------------------------------------
     {
         uint8_t PayloadBuf[PAYLOAD_SIZE];
         for (int i = 0; i < PAYLOAD_SIZE; i++) PayloadBuf[i] = (uint8_t)(0xFF - i);
-        uint8_t f[DATA_SIZE];
-        EncodeReadResponse(0x00000040u, PayloadBuf, f);
-        CHECK_EQ(f[0], START);
-        CHECK_EQ(f[38], END);
-        CHECK_EQ(f[1] & 0x07u, CMD_READ_RESP);
-        CHECK_EQ((f[1] >> 3) & 1u, RefParity(f, DATA_SIZE));
-        CHECK_EQ(Offset(f), 0x00000040u);
-        CHECK(std::memcmp(Payload(f), PayloadBuf, PAYLOAD_SIZE) == 0);
-        CHECK_EQ(Decode(f, DATA_SIZE), CMD_READ_RESP);
+        uint8_t Frame[DATA_SIZE];
+        EncodeReadResponse(0x00000040u, PayloadBuf, Frame);
+        CHECK_EQ(Frame[0], START);
+        CHECK_EQ(Frame[38], END);
+        CHECK_EQ(Frame[1] & 0x07u, CMD_READ_RESP);
+        CHECK_EQ((Frame[1] >> 3) & 1u, RefParity(Frame, DATA_SIZE));
+        CHECK_EQ(Offset(Frame), 0x00000040u);
+        CHECK(std::memcmp(Payload(Frame), PayloadBuf, PAYLOAD_SIZE) == 0);
+        CHECK_EQ(Decode(Frame, DATA_SIZE), CMD_READ_RESP);
     }
 
     // --- write-response layout (header-only, carries the last written offset) ---
     {
-        uint8_t f[READ_REQ_SIZE];
-        EncodeWriteResponse(0x00001040u, f);
-        CHECK_EQ(sizeof(f), 7);
-        CHECK_EQ(f[0], START);
-        CHECK_EQ(f[6], END);
-        CHECK_EQ(f[1] & 0x07u, CMD_WRITE_RESP);
-        CHECK_EQ((f[1] >> 3) & 1u, RefParity(f, READ_REQ_SIZE));
-        CHECK_EQ(Offset(f), 0x00001040u);
-        CHECK_EQ(Decode(f, READ_REQ_SIZE), CMD_WRITE_RESP);
+        uint8_t Frame[READ_REQ_SIZE];
+        EncodeWriteResponse(0x00001040u, Frame);
+        CHECK_EQ(sizeof(Frame), 7);
+        CHECK_EQ(Frame[0], START);
+        CHECK_EQ(Frame[6], END);
+        CHECK_EQ(Frame[1] & 0x07u, CMD_WRITE_RESP);
+        CHECK_EQ((Frame[1] >> 3) & 1u, RefParity(Frame, READ_REQ_SIZE));
+        CHECK_EQ(Offset(Frame), 0x00001040u);
+        CHECK_EQ(Decode(Frame, READ_REQ_SIZE), CMD_WRITE_RESP);
     }
 
     // --- identify: request is header-only, response carries size + name -------
@@ -147,13 +147,13 @@ int main()
     {
         uint8_t PayloadBuf[PAYLOAD_SIZE];
         for (int i = 0; i < PAYLOAD_SIZE; i++) PayloadBuf[i] = (uint8_t)(i * 3 + 1);
-        uint8_t f[DATA_SIZE];
-        EncodeWrite(0x00000100u, PayloadBuf, f);
+        uint8_t Frame[DATA_SIZE];
+        EncodeWrite(0x00000100u, PayloadBuf, Frame);
         for (uint16_t i = 0; i < DATA_SIZE; i++)
             for (int bit = 0; bit < 8; bit++)
             {
                 uint8_t flipped[DATA_SIZE];
-                std::memcpy(flipped, f, DATA_SIZE);
+                std::memcpy(flipped, Frame, DATA_SIZE);
                 flipped[i] ^= (uint8_t)(1u << bit);
                 CHECK_EQ(Decode(flipped, DATA_SIZE), INVALID);
             }
@@ -161,27 +161,27 @@ int main()
 
     // --- structural rejections ---------------------------------------------
     {
-        uint8_t f[DATA_SIZE];
+        uint8_t Frame[DATA_SIZE];
         uint8_t PayloadBuf[PAYLOAD_SIZE] = {0};
-        EncodeWrite(0, PayloadBuf, f);
+        EncodeWrite(0, PayloadBuf, Frame);
 
         uint8_t bad[DATA_SIZE];
-        std::memcpy(bad, f, DATA_SIZE);
+        std::memcpy(bad, Frame, DATA_SIZE);
         bad[1] |= 0x10u; // non-zero padding (bit 4 is now padding)
         CHECK_EQ(Decode(bad, DATA_SIZE), INVALID);
 
-        std::memcpy(bad, f, DATA_SIZE);
+        std::memcpy(bad, Frame, DATA_SIZE);
         bad[0] = 0x00; // missing start
         CHECK_EQ(Decode(bad, DATA_SIZE), INVALID);
 
-        std::memcpy(bad, f, DATA_SIZE);
+        std::memcpy(bad, Frame, DATA_SIZE);
         bad[DATA_SIZE - 1] = 0x00; // missing end
         CHECK_EQ(Decode(bad, DATA_SIZE), INVALID);
 
-        CHECK_EQ(Decode(f, READ_REQ_SIZE), INVALID); // wrong length for the command
-        CHECK_EQ(Decode(f, 0), INVALID);
+        CHECK_EQ(Decode(Frame, READ_REQ_SIZE), INVALID); // wrong length for the command
+        CHECK_EQ(Decode(Frame, 0), INVALID);
 
-        std::memcpy(bad, f, DATA_SIZE);
+        std::memcpy(bad, Frame, DATA_SIZE);
         bad[1] = (uint8_t)((bad[1] & 0x07u) | 0x06u); // undefined command 0b110
         CHECK_EQ(Decode(bad, DATA_SIZE), INVALID);
     }
@@ -190,9 +190,9 @@ int main()
     {
         uint8_t PayloadBuf[PAYLOAD_SIZE];
         for (int i = 0; i < PAYLOAD_SIZE; i++) PayloadBuf[i] = (uint8_t)i;
-        uint8_t w[DATA_SIZE];
-        EncodeWrite(0, PayloadBuf, w);
-        PrintHex("write0", w, DATA_SIZE);
+        uint8_t Frame[DATA_SIZE];
+        EncodeWrite(0, PayloadBuf, Frame);
+        PrintHex("write0", Frame, DATA_SIZE);
 
         uint8_t rr[READ_REQ_SIZE];
         EncodeReadRequest(0x100, rr);

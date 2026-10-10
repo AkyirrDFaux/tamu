@@ -1,11 +1,11 @@
-/// Builds the evaluation scenario described in `Docs/Current setup v3.md`:
+/// Builds the evaluation scenario described in `Docs/Example Setup.md`:
 /// 2x DAS (NTC on ch1, LDR on ch2), 2x LED display eyes (light/dark mode), 1x fan, the
 /// "Subscriptions" scratch block, and the four scripts with their documented inputs.
 ///
 /// This is a test-side tool (not production UI): it drives the existing
 /// [RegisterClient]/[SubscriptionClient]/[ScriptClient]/[StorageClient] to
 /// create the whole configuration, so the scenario is reproducible and can be
-/// captured to a backup zip. Run through `hil_current_setup_test.dart`.
+/// captured to a backup zip. Run through `hil_example_setup_test.dart`.
 library;
 
 
@@ -22,11 +22,11 @@ import 'package:tamuapp/core/subscription_client.dart';
 import 'package:tamuapp/core/transform_23.dart';
 import 'package:tamuapp/core/types.dart';
 
-part 'current_setup_scripts.dart'; // script symbol helpers + the five script builders
-part 'current_setup_apply.dart'; // build/stop/clamp and the whole-scenario apply
+part 'example_setup_scripts.dart'; // script symbol helpers + the five script builders
+part 'example_setup_apply.dart'; // build/stop/clamp and the whole-scenario apply
 
 // ---------------------------------------------------------------------------
-// Scenario constants (Docs/Current setup v3.md)
+// Scenario constants (Docs/Example Setup.md)
 // ---------------------------------------------------------------------------
 
 /// Core dynamic blocks.
@@ -163,12 +163,12 @@ const List<int> dispOffsetInst1 = [
   2, 0, 3, 0, 6, 1, 255, 255, 70, 22, 0, 0, 0, 0, 0, 0, 186, 233, 255, 255, 6, 1, 255, 255, 0, 0, 0, 0,
 ];
 
-/// Script tunables / input defaults (Docs/Current setup v3.md).
+/// Script tunables / input defaults (Docs/Example Setup.md).
 const double targetTemp = 30; // degC (script 1 Input 0)
 const double pGain = 4; // %/degC (script 1 Input 1)
 const double luxBrightMin = 7; // % at 0 lux
 const double luxBrightMax = 100; // % cap (the layout limit, re-scaled to full scale)
-// Brightness (Docs/Current setup v3.md): <10 lux -> the 7 % floor, 100 lux -> 14 %,
+// Brightness (Docs/Example Setup.md): <10 lux -> the 7 % floor, 100 lux -> 14 %,
 // 3000 lux -> 60 %, 100 % from 8k lux up. Below LUX_MIN the curve is flat at the floor, so
 // it is a power law over (lux - LUX_MIN) with the exponent fitted to the 100/3000 anchors.
 const double luxSpan = 8000; // lux at which the brightness cap is reached

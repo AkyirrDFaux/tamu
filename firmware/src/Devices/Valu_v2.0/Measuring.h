@@ -55,22 +55,22 @@ const BlockEntry ResistiveMeasEntries[] = {
 // APPLIED value (the sampling loop additionally defends in depth), same as the DAS.
 static bool OnMeasFieldWrite(const StaticBlockDescriptor &Block, uint16_t Index, const void *Data, uint16_t Len)
 {
-    auto *M = static_cast<ResistiveMeasPersistent *>(Block.PersistentData);
+    auto *Persistent = static_cast<ResistiveMeasPersistent *>(Block.PersistentData);
     if (Len != sizeof(Number)) return false;
-    Number V = *static_cast<const Number *>(Data);
+    Number Value = *static_cast<const Number *>(Data);
 
     switch (Index)
     {
     case 0: // Sampling Rate (Hz): the loop divides by it, keep >= 1 Hz and bounded
-        if (V < N(1)) V = N(1);
-        if (V > N(1000)) V = N(1000);
-        M->SamplingRate = V;
+        if (Value < N(1)) Value = N(1);
+        if (Value > N(1000)) Value = N(1000);
+        Persistent->SamplingRate = Value;
         return true;
 
     case 2: // Filter Coefficient: EMA weight of the new sample, 0-1 (1 = no filtering)
-        if (V < N(0)) V = N(0);
-        if (V > N(1)) V = N(1);
-        M->FilterCoeff = V;
+        if (Value < N(0)) Value = N(0);
+        if (Value > N(1)) Value = N(1);
+        Persistent->FilterCoeff = Value;
         return true;
     }
     return false;

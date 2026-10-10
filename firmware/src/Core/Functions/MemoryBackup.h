@@ -49,15 +49,15 @@ __attribute__((noinline)) void SendResponse(const PacketFrame &Frame, const uint
 // Emits one FRAG fragment: the caller has placed `n` content bytes at tx_frame.payload + 4,
 // and the 4-byte frag info is written before the frame is finalized and dispatched. Every
 // streamed reply (enumerate, storage read, subscription tables, SNDB read-all, logs) uses it.
-__attribute__((noinline)) void SendFragFragment(const PacketFrame &Frame, uint16_t f,
-                                                uint16_t Frags, uint16_t n,
+__attribute__((noinline)) void SendFragFragment(const PacketFrame &Frame, uint16_t Frag,
+                                                uint16_t Frags, uint16_t Len,
                                                 uint8_t Priority = PRIORITY_STREAM)
 {
     uint8_t Flags = FLAG_TYPE | FLAG_FRAG;
-    if (f == 0) Flags |= FLAG_START;
-    if (f == Frags - 1) Flags |= FLAG_STOP;
-    WriteFragInfo(TxFrame.Payload, f, Frags);
-    FinalizeReply(TxFrame, Frame, Flags, (uint16_t)(4 + n), Priority);
+    if (Frag == 0) Flags |= FLAG_START;
+    if (Frag == Frags - 1) Flags |= FLAG_STOP;
+    WriteFragInfo(TxFrame.Payload, Frag, Frags);
+    FinalizeReply(TxFrame, Frame, Flags, (uint16_t)(4 + Len), Priority);
     DispatchPacket(TxFrame);
 }
 

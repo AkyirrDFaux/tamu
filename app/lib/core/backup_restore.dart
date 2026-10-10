@@ -238,11 +238,7 @@ class RestorePlan {
             item.issue = 'Not a core';
           }
         case RestoreKind.file:
-          // The target must advertise the StorageFiles capability (full file
-          // create/delete/rename/resize).
-          if (target.capabilities & Capability.storageFiles == 0) {
-            item.issue = 'No file support';
-          }
+          // Every device has storage files, so there is nothing to gate on.
           break;
       }
     }

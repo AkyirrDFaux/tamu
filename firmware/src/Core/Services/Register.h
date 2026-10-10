@@ -39,8 +39,8 @@ public:
 
     // Generic BlockInfo access (shared with the Subscriptions and Script services).
     bool RegisterResolveByBlockInfo(uint32_t Bi, FieldResult &Fr);
-    bool RegisterGetByBlockInfo(uint32_t Bi, ValueInfo &m, uint8_t *Vbuf, uint8_t &Vsz);
-    bool RegisterSetByBlockInfo(uint32_t Bi, const ValueInfo &m, const uint8_t *Val, uint16_t Vlen);
+    bool RegisterGetByBlockInfo(uint32_t Bi, ValueInfo &Meta, uint8_t *Vbuf, uint8_t &Vsz);
+    bool RegisterSetByBlockInfo(uint32_t Bi, const ValueInfo &Meta, const uint8_t *Val, uint16_t Vlen);
 
     // Called by the boot path (Dispatcher.h's LoadAllBackups) until it self-wires.
     void StaticRecallAll();
@@ -64,9 +64,9 @@ private:
     uint8_t SysValueBuf[24] = {0};
 
     // Response helpers (RegisterDefs.h).
-    void SendFieldLikeResponse(const PacketFrame &Frame, uint32_t Bi, const ValueInfo &v,
+    void SendFieldLikeResponse(const PacketFrame &Frame, uint32_t Bi, const ValueInfo &Info,
                                const uint8_t *Data, uint16_t Len);
-    void SendValueResponse(const PacketFrame &Frame, uint32_t Bi, const ValueInfo &v,
+    void SendValueResponse(const PacketFrame &Frame, uint32_t Bi, const ValueInfo &Info,
                            const uint8_t *Data, uint16_t Len);
     void SendBlockMetaResponse(const PacketFrame &Frame, uint32_t Bi, uint16_t Type,
                                uint8_t MapCount, const char *Name, uint16_t NameLen);
@@ -74,7 +74,7 @@ private:
     void SendKeyResponse(const PacketFrame &Frame, uint32_t Bi, const KeyResult &Kr);
     void SendBlockIndexAck(const PacketFrame &Frame, uint8_t Index);
 #ifdef USE_DYNAMIC_BLOCKS
-    uint16_t DynamicFieldCount(const DynamicBlockDescriptor &b);
+    uint16_t DynamicFieldCount(const DynamicBlockDescriptor &Block);
     void ReplyDynamicBlockOrField(const PacketFrame &Frame, uint32_t Bi,
                                   DynamicBlockDescriptor &Block, uint8_t Field, uint8_t Key);
 #endif
@@ -138,8 +138,8 @@ RegisterService Register;
 
 // Temporary forwarders still used by the Subscriptions service (removed when it self-wires).
 inline bool RegisterResolveByBlockInfo(uint32_t Bi, FieldResult &Fr) { return Register.RegisterResolveByBlockInfo(Bi, Fr); }
-inline bool RegisterGetByBlockInfo(uint32_t Bi, ValueInfo &m, uint8_t *Vbuf, uint8_t &Vsz) { return Register.RegisterGetByBlockInfo(Bi, m, Vbuf, Vsz); }
-inline bool RegisterSetByBlockInfo(uint32_t Bi, const ValueInfo &m, const uint8_t *Val, uint16_t Vlen) { return Register.RegisterSetByBlockInfo(Bi, m, Val, Vlen); }
+inline bool RegisterGetByBlockInfo(uint32_t Bi, ValueInfo &Meta, uint8_t *Vbuf, uint8_t &Vsz) { return Register.RegisterGetByBlockInfo(Bi, Meta, Vbuf, Vsz); }
+inline bool RegisterSetByBlockInfo(uint32_t Bi, const ValueInfo &Meta, const uint8_t *Val, uint16_t Vlen) { return Register.RegisterSetByBlockInfo(Bi, Meta, Val, Vlen); }
 
 #include "Core/Services/RegisterDefs.h"
 #include "Core/Services/RegisterEnumerate.h"

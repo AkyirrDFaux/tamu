@@ -23,14 +23,14 @@
 void LoadAllBackups();
 
 // Device identity (mandatory, see Core/Functions/Device.h).
-extern const DeviceType kDeviceType = DeviceType::Tamu_v2_0A;
+extern const DeviceType KDeviceType = DeviceType::Tamu_v2_0A;
 // Core (ID assignment, SN registry, time sync), the app link, and both user
 // memory services - matching the USE_* build flags so the app shows their views.
 // Subscriptions compiles both roles (USE_SUB_REQUEST + USE_SUB_PROVIDE).
 // Node is advertised (Docs/Devices.md: "Tamu v2.0A ... Core and Node") but is decorative
 // for now: Node is an end device (sensor/actuator/display), and no firmware behaviour reads
 // the bit yet - it may matter for networking later.
-extern const uint32_t kCapabilities = Capabilities::Core |
+extern const uint32_t KCapabilities = Capabilities::Core |
                                         Capabilities::Node |
                                         Capabilities::DynamicMemory |
                                         Capabilities::Scripts |
@@ -69,33 +69,33 @@ struct StaticPersistent {
     Vysi1Persistent Display[2];   // BlockType 6
 };
 struct StaticVolatile {
-    LEDButtonVolatile ledButton;  // BlockType 3
+    LEDButtonVolatile LedButton;  // BlockType 3
     PWMVolatile Fan[2];           // BlockType 4
     AccGyrVolatile Accgyr;        // BlockType 5
     Vysi1Volatile Display[2];     // BlockType 6
 };
-StaticPersistent staticPer = {
+StaticPersistent StaticPer = {
     // Name is a fixed 16-char null-padded field.
     .System = {.Name = {'T','a','m','u',' ','v','2','.','0','A',' ',' ',' ',' ',' ',' '}, .NetId = 0},
     .Fan = {},
     .Accgyr = {},
     .Display = {},
 };
-StaticVolatile staticVol;
+StaticVolatile StaticVol;
 
-Vysi1Display Display1(staticVol.Display[0], staticPer.Display[0]);
-Vysi1Display Display2(staticVol.Display[1], staticPer.Display[1]);
+Vysi1Display Display1(StaticVol.Display[0], StaticPer.Display[0]);
+Vysi1Display Display2(StaticVol.Display[1], StaticPer.Display[1]);
 
 // Registry order is load-bearing: the app reconstructs each entry's registry index from
 // its block type + per-type instance order, so keep the entries grouped by type (see
 // FindStaticBlock in Core/Services/RegisterDefs.h).
 const StaticBlockDescriptor StaticBlockRegistry[] = {
-    {&staticVol.ledButton, nullptr, &LEDButtonSchema, "LEDButton"},
-    {&staticVol.Fan[0], &staticPer.Fan[0], &PWMSchema, "Fan1"},
-    {&staticVol.Fan[1], &staticPer.Fan[1], &PWMSchema, "Fan2"},
-    {&staticVol.Accgyr, &staticPer.Accgyr, &AccGyrSchema, "AccGyr"},
-    {&staticVol.Display[0], &staticPer.Display[0], &Vysi1Schema, "LEDDisplay"},
-    {&staticVol.Display[1], &staticPer.Display[1], &Vysi1Schema, "LEDDisplay2"}};
+    {&StaticVol.LedButton, nullptr, &LEDButtonSchema, "LEDButton"},
+    {&StaticVol.Fan[0], &StaticPer.Fan[0], &PWMSchema, "Fan1"},
+    {&StaticVol.Fan[1], &StaticPer.Fan[1], &PWMSchema, "Fan2"},
+    {&StaticVol.Accgyr, &StaticPer.Accgyr, &AccGyrSchema, "AccGyr"},
+    {&StaticVol.Display[0], &StaticPer.Display[0], &Vysi1Schema, "LEDDisplay"},
+    {&StaticVol.Display[1], &StaticPer.Display[1], &Vysi1Schema, "LEDDisplay2"}};
 const size_t StaticBlockNum = sizeof(StaticBlockRegistry) / sizeof(StaticBlockDescriptor);
 
 // The Subscriptions instance the main loop calls. Pulled here (not at the top) because
@@ -123,7 +123,7 @@ LEDDriver LED(3, 0); // both LED strips: pins 3 (Display1) and 0 (Display2), sen
 
 
 // Main FreeRTOS task: initialises hardware, broadcasts its serial number to find a short address, then runs the main control loop (bus, buttons, IMU, display).
-void ApplicationTask(void *pvParameters)
+void ApplicationTask(void *PvParameters)
 {
 PinModeOutput(LED_NOTIFICATION_PIN);
     PinLow(LED_NOTIFICATION_PIN);
@@ -143,13 +143,13 @@ if (!AppInterface.Connected) { ESP_LOGI("INIT","b3 appif"); }
     // BLE app link (Nordic UART service); advertised under the persisted System Name
     // (Docs: "If possible, the device name is shown in BLE advertising"). The Name field is
     // fixed 16-char null-padded, so trim it into a C string.
-    char bleName[SYSTEM_NAME_LEN + 1];
-    uint8_t bleNameLen = SYSTEM_NAME_LEN;
-    while (bleNameLen > 0 && staticPer.System.Name[bleNameLen - 1] == ' ') bleNameLen--;
-    memcpy(bleName, staticPer.System.Name, bleNameLen);
-    bleName[bleNameLen] = '\0';
+    char BleName[SYSTEM_NAME_LEN + 1];
+    uint8_t BleNameLen = SYSTEM_NAME_LEN;
+    while (BleNameLen > 0 && StaticPer.System.Name[BleNameLen - 1] == ' ') BleNameLen--;
+    memcpy(BleName, StaticPer.System.Name, BleNameLen);
+    BleName[BleNameLen] = '\0';
 if (!AppInterface.Connected) { ESP_LOGI("INIT","b4 ble"); }
-    AppBLEInit(bleName);
+    AppBLEInit(BleName);
 
 if (!AppInterface.Connected) { ESP_LOGI("INIT","b5 usb"); }
     AppUSBInit(); AppUSBStartTask();
@@ -171,7 +171,7 @@ LED.Setup();
     // The LED state is a writable static-block field persisted in the .SV backup;
     // the boot restore writes the RAM field but does not re-run its write trigger, so
     // re-apply it to drive the pin to match the restored value (LED off by default).
-    OnLEDStateChange(StaticBlockRegistry[0], 3, (const void *)&staticVol.ledButton.LEDState, sizeof(bool));
+    OnLEDStateChange(StaticBlockRegistry[0], 3, (const void *)&StaticVol.LedButton.LEDState, sizeof(bool));
 
     // Restored net-ID (LoadAllBackups), or a random one: 0 and 0x3F are not allowed.
     if (DeviceStatus.NetId == 0 || DeviceStatus.NetId >= 0x3F)
@@ -216,6 +216,14 @@ LED.Setup();
     // their NetID.1. The core does not store itself - the app models the connected core as
     // id 1 - and the Discover handler ignores a request carrying our own serial, so a stray
     // self-discover cannot mint a bogus device ID.
+    //
+    // An earlier firmware registered the core as device 1 in its own SNDB; the registry is a
+    // persistent file, so a device that already carries that entry keeps it across reflashes.
+    // Drop any such stale self-entry (net 0 device 1, or our own NetID.1) on boot so the SNDB
+    // matches "A core does not store its own entry or its own NetID". Foreign-net and
+    // other-core entries are untouched.
+    SNDB::RemoveDevice(MakeId(0, 1));
+    SNDB::RemoveDevice(MakeId(DeviceStatus.NetId, 1));
 
     // Boot announcement (code 0): an informational log, not an error.
     ReportLog(MakeLog(false, (uint16_t)ServiceType::Device, 0, 0), PRIORITY_LOG);
@@ -223,7 +231,7 @@ LED.Setup();
     static bool IdentifyPrev = false;
     while (1)
     {
-        int64_t loopStart = esp_timer_get_time();
+        int64_t LoopStart = esp_timer_get_time();
         // Net-ID collision (Core-discover): blink the error LED slowly (~1 Hz) until
         // the net is changed. Takes priority over identify and the LED-button state.
         if (CoreCollisionFlag())
@@ -242,7 +250,7 @@ LED.Setup();
             if (Ident)
                 PinModeOutput(LED_NOTIFICATION_PIN);
             else
-                OnLEDStateChange(StaticBlockRegistry[0], 3, (const void *)&staticVol.ledButton.LEDState, sizeof(bool));
+                OnLEDStateChange(StaticBlockRegistry[0], 3, (const void *)&StaticVol.LedButton.LEDState, sizeof(bool));
             IdentifyPrev = Ident;
         }
         if (Ident)
@@ -265,10 +273,10 @@ LED.Setup();
             // sleeps 2 ms, so the achieved rate is floored at ~500 Hz: entries 6/7
             // (833/1660 Hz) clamp to 2 instead of the unreachable 1 ms.
             static const uint16_t OdrPeriodMs[8] = {80, 38, 19, 10, 5, 2, 2, 2};
-            static uint32_t lastImuMs = 0;
-            uint8_t Odr = staticPer.Accgyr.SamplingRate < 8 ? staticPer.Accgyr.SamplingRate : 3;
-            if (DeviceStatus.UptimeMs - lastImuMs >= OdrPeriodMs[Odr]) {
-                lastImuMs = DeviceStatus.UptimeMs;
+            static uint32_t LastImuMs = 0;
+            uint8_t Odr = StaticPer.Accgyr.SamplingRate < 8 ? StaticPer.Accgyr.SamplingRate : 3;
+            if (DeviceStatus.UptimeMs - LastImuMs >= OdrPeriodMs[Odr]) {
+                LastImuMs = DeviceStatus.UptimeMs;
                 ReadIMUData();
             }
         }
@@ -286,17 +294,17 @@ LED.Setup();
             // 1.0 so the average does not drift.
             static const Number FpsEmaNew = Number::FromRaw(6554);          // 0.1
             static const Number FpsEmaKeep = Number::FromRaw(65536 - 6554); // 0.9
-            static int64_t lastFrameUs = 0;
-            if (lastFrameUs != 0)
+            static int64_t LastFrameUs = 0;
+            if (LastFrameUs != 0)
             {
                 // FPS = 1e6 / period_us, kept in 16.16 fixed point (no float).
-                int64_t PeriodUs = loopStart - lastFrameUs;
+                int64_t PeriodUs = LoopStart - LastFrameUs;
                 if (PeriodUs <= 0) PeriodUs = 1;
                 Number Inst = Number::FromRaw((int32_t)((1000000LL << 16) / PeriodUs));
                 Display1.Vol.RefreshRate = Display1.Vol.RefreshRate * FpsEmaKeep + Inst * FpsEmaNew;
                 Display2.Vol.RefreshRate = Display2.Vol.RefreshRate * FpsEmaKeep + Inst * FpsEmaNew;
             }
-            lastFrameUs = loopStart;
+            LastFrameUs = LoopStart;
         }
 
         // Poll the bus again after the LED bit-bang (which masks interrupts for ~6 ms):

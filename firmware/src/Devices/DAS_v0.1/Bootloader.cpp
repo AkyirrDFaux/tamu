@@ -139,9 +139,9 @@ static void FlashWrite(uint32_t Addr, const uint8_t *Src, uint32_t Len)
     FlashUnlock();
     for (uint32_t Off = 0; Off < Len; Off += 4)
     {
-        uint32_t W;
-        memcpy(&W, Src + Off, sizeof(W));
-        FlashProgramWord(FLASH_CTRL_BASE + Addr + Off, W);
+        uint32_t Word;
+        memcpy(&Word, Src + Off, sizeof(Word));
+        FlashProgramWord(FLASH_CTRL_BASE + Addr + Off, Word);
     }
     FlashLock();
 }
@@ -169,13 +169,13 @@ static void SetupUart()
     USART1->CTLR1 |= 0x2000u /* UE */;
 }
 
-static bool WaitByte(uint8_t *B, uint32_t Start, uint32_t TimeoutCycles)
+static bool WaitByte(uint8_t *Byte, uint32_t Start, uint32_t TimeoutCycles)
 {
     while ((SysTick->CNT - Start) < TimeoutCycles)
     {
         if (USART1->STATR & USART_FLAG_RXNE)
         {
-            *B = (uint8_t)USART1->DATAR;
+            *Byte = (uint8_t)USART1->DATAR;
             return true;
         }
     }
@@ -189,24 +189,24 @@ static int ReceiveFrame(uint8_t *Out, size_t Cap, uint32_t TimeoutUs)
 {
     uint32_t Start = SysTick->CNT;
     uint32_t TimeoutCycles = TimeoutUs * CYCLES_PER_US;
-    uint8_t B;
+    uint8_t Byte;
     for (;;)
     {
-        if (!WaitByte(&B, Start, TimeoutCycles)) return 0;
-        if (B == Bootloader::START) break; // skip anything that is not a frame start
+        if (!WaitByte(&Byte, Start, TimeoutCycles)) return 0;
+        if (Byte == Bootloader::START) break; // skip anything that is not a frame start
     }
 
     size_t Got = 0;
-    Out[Got++] = B;
-    if (!WaitByte(&B, Start, TimeoutCycles)) return 0;
-    Out[Got++] = B;
+    Out[Got++] = Byte;
+    if (!WaitByte(&Byte, Start, TimeoutCycles)) return 0;
+    Out[Got++] = Byte;
 
-    uint16_t Need = Bootloader::FrameSize((uint8_t)(B & 0x07));
+    uint16_t Need = Bootloader::FrameSize((uint8_t)(Byte & 0x07));
     if (Need == 0 || Need > Cap) return 0;
     while (Got < Need)
     {
-        if (!WaitByte(&B, Start, TimeoutCycles)) return 0;
-        Out[Got++] = B;
+        if (!WaitByte(&Byte, Start, TimeoutCycles)) return 0;
+        Out[Got++] = Byte;
     }
     return Bootloader::Decode(Out, Need) != Bootloader::INVALID ? (int)Need : 0;
 }
@@ -240,10 +240,10 @@ static void SendRaw(const uint8_t *Data, size_t Len)
     }
 
     GPIOD->BSHR = (1u << 4); // drive the line
-    for (size_t I = 0; I < Len; I++)
+    for (size_t i = 0; i < Len; i++)
     {
         while ((USART1->STATR & USART_FLAG_TXE) == 0) {}
-        USART1->DATAR = Data[I];
+        USART1->DATAR = Data[i];
     }
     while ((USART1->STATR & USART_FLAG_TC) == 0) {}
     GPIOD->BCR = (1u << 4);
@@ -299,32 +299,32 @@ static void HandleRead(uint32_t Offset)
 
 // The identify response is entirely build-time constant (app size + name), so the whole frame
 // - control/parity included - is precomputed and lives in flash. Nothing is built at runtime.
-struct IdentifyFrame { uint8_t B[Bootloader::DATA_SIZE]; };
+struct IdentifyFrame { uint8_t Bytes[Bootloader::DATA_SIZE]; };
 
 constexpr IdentifyFrame MakeIdentify(uint32_t Space, const char *Name)
 {
-    IdentifyFrame F{};
-    F.B[0] = Bootloader::START;
-    F.B[1] = Bootloader::CMD_IDENTIFY_RESP;
-    F.B[2] = (uint8_t)(Space & 0xFFu);
-    F.B[3] = (uint8_t)((Space >> 8) & 0xFFu);
-    F.B[4] = (uint8_t)((Space >> 16) & 0xFFu);
-    F.B[5] = (uint8_t)((Space >> 24) & 0xFFu);
-    for (uint8_t I = 0; I < Bootloader::NAME_SIZE; I++)
+    IdentifyFrame Frame{};
+    Frame.Bytes[0] = Bootloader::START;
+    Frame.Bytes[1] = Bootloader::CMD_IDENTIFY_RESP;
+    Frame.Bytes[2] = (uint8_t)(Space & 0xFFu);
+    Frame.Bytes[3] = (uint8_t)((Space >> 8) & 0xFFu);
+    Frame.Bytes[4] = (uint8_t)((Space >> 16) & 0xFFu);
+    Frame.Bytes[5] = (uint8_t)((Space >> 24) & 0xFFu);
+    for (uint8_t i = 0; i < Bootloader::NAME_SIZE; i++)
     {
-        if (Name[I] == '\0') break;
-        F.B[6 + I] = (uint8_t)Name[I];
+        if (Name[i] == '\0') break;
+        Frame.Bytes[6 + i] = (uint8_t)Name[i];
     }
-    F.B[Bootloader::DATA_SIZE - 1] = Bootloader::END;
-    F.B[1] |= (uint8_t)(Bootloader::Parity(F.B, Bootloader::DATA_SIZE) << 3);
-    return F;
+    Frame.Bytes[Bootloader::DATA_SIZE - 1] = Bootloader::END;
+    Frame.Bytes[1] |= (uint8_t)(Bootloader::Parity(Frame.Bytes, Bootloader::DATA_SIZE) << 3);
+    return Frame;
 }
 
 constexpr IdentifyFrame Identify = MakeIdentify(APP_LIMIT - APP_BASE, "DAS v0.1");
 
 static void HandleIdentify()
 {
-    SendRaw(Identify.B, Bootloader::DATA_SIZE);
+    SendRaw(Identify.Bytes, Bootloader::DATA_SIZE);
 }
 
 // ---------------------------------------------------------------------------
@@ -352,7 +352,7 @@ int main(void)
     GPIOD->BCR = (1u << 0);
 
     // Let the pull-up settle, then sample the button: released (high) launches the app.
-    for (volatile uint32_t I = 0; I < 200000u; I++) {}
+    for (volatile uint32_t i = 0; i < 200000u; i++) {}
 #ifndef BOOTLOADER_FORCE
     // BOOTLOADER_FORCE (test hook) skips the button check so the RSBus update path can be
     // exercised without physically holding PC0.
@@ -367,8 +367,8 @@ int main(void)
     for (;;)
     {
         uint8_t Frame[Bootloader::MAX_FRAME_SIZE];
-        int N = ReceiveFrame(Frame, sizeof(Frame), 2000000u); // 2 s per byte
-        if (N <= 0) continue;
+        int Length = ReceiveFrame(Frame, sizeof(Frame), 2000000u); // 2 s per byte
+        if (Length <= 0) continue;
 
         uint8_t Cmd = (uint8_t)(Frame[1] & 0x07);
         uint32_t Offset = Bootloader::Offset(Frame);

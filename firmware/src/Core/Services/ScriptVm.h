@@ -17,8 +17,8 @@
 // ===== VM =====
 
 struct ScriptScalar {
-    Number n;
-    int32_t i;
+    Number Num;
+    int32_t Int;
 };
 
 // SetState is declared as a ScriptService member (Script.h) and defined in ScriptRuntime.h;
@@ -42,45 +42,45 @@ inline bool ScriptService::IsNumericDtype(uint16_t Dtype) {
     }
 }
 
-inline int32_t ScriptService::LoadInt(const uint8_t *d, uint8_t Sz, bool Sign) {
-    int32_t v = 0;
-    for (uint8_t i = 0; i < Sz && i < 4; i++) v |= (int32_t)d[i] << (8 * i);
-    if (Sign && Sz > 0 && Sz < 4 && (d[Sz - 1] & 0x80)) v |= ~((1 << (8 * Sz)) - 1);
-    return v;
+inline int32_t ScriptService::LoadInt(const uint8_t *Data, uint8_t Sz, bool Sign) {
+    int32_t Acc = 0;
+    for (uint8_t i = 0; i < Sz && i < 4; i++) Acc |= (int32_t)Data[i] << (8 * i);
+    if (Sign && Sz > 0 && Sz < 4 && (Data[Sz - 1] & 0x80)) Acc |= ~((1 << (8 * Sz)) - 1);
+    return Acc;
 }
 
-inline void ScriptService::StoreInt(uint8_t *d, uint8_t Sz, int32_t v) {
-    for (uint8_t i = 0; i < Sz && i < 4; i++) d[i] = (uint8_t)((v >> (8 * i)) & 0xFF);
-    for (uint8_t i = 4; i < Sz; i++) d[i] = 0;
+inline void ScriptService::StoreInt(uint8_t *Data, uint8_t Sz, int32_t Acc) {
+    for (uint8_t i = 0; i < Sz && i < 4; i++) Data[i] = (uint8_t)((Acc >> (8 * i)) & 0xFF);
+    for (uint8_t i = 4; i < Sz; i++) Data[i] = 0;
 }
 
 // Resolves a source symbol into bytes. Predefines are materialised into `scratch`.
-inline bool ScriptService::Resolve(LoadedScript *s, uint8_t Stype, uint8_t Ssub, uint16_t Sval,
+inline bool ScriptService::Resolve(LoadedScript *Script, uint8_t Stype, uint8_t Ssub, uint16_t Sval,
                           uint8_t *Scratch, const uint8_t **Data, uint8_t *Size, uint16_t *Dtype) {
     switch (Stype) {
         case SCRIPT_SYM_INPUT:
-            if (Sval >= s->inCount || !s->ioSpace) return false;
-            *Data = s->ioSpace + s->InputOffset((uint8_t)Sval);
-            *Size = s->inMeta[Sval].Size;
-            *Dtype = ValueInfoType(s->inMeta[Sval].Type);
+            if (Sval >= Script->InCount || !Script->IoSpace) return false;
+            *Data = Script->IoSpace + Script->InputOffset((uint8_t)Sval);
+            *Size = Script->InMeta[Sval].Size;
+            *Dtype = ValueInfoType(Script->InMeta[Sval].Type);
             return true;
         case SCRIPT_SYM_OUTPUT:
-            if (Sval >= s->outCount || !s->ioSpace) return false;
-            *Data = s->ioSpace + s->OutputOffset((uint8_t)Sval);
-            *Size = s->outMeta[Sval].Size;
-            *Dtype = ValueInfoType(s->outMeta[Sval].Type);
+            if (Sval >= Script->OutCount || !Script->IoSpace) return false;
+            *Data = Script->IoSpace + Script->OutputOffset((uint8_t)Sval);
+            *Size = Script->OutMeta[Sval].Size;
+            *Dtype = ValueInfoType(Script->OutMeta[Sval].Type);
             return true;
         case SCRIPT_SYM_VARIABLE:
-            if (Sval >= s->varCount) return false;
-            *Data = s->varSpace + s->VarOffset((uint8_t)Sval);
-            *Size = s->varMeta[Sval].Size;
-            *Dtype = ValueInfoType(s->varMeta[Sval].Type);
+            if (Sval >= Script->VarCount) return false;
+            *Data = Script->VarSpace + Script->VarOffset((uint8_t)Sval);
+            *Size = Script->VarMeta[Sval].Size;
+            *Dtype = ValueInfoType(Script->VarMeta[Sval].Type);
             return true;
         case SCRIPT_SYM_CONSTANT:
-            if (Sval >= s->constCount) return false;
-            *Data = s->constSpace + s->ConstOffset((uint8_t)Sval);
-            *Size = s->constMeta[Sval].Size;
-            *Dtype = ValueInfoType(s->constMeta[Sval].Type);
+            if (Sval >= Script->ConstCount) return false;
+            *Data = Script->ConstSpace + Script->ConstOffset((uint8_t)Sval);
+            *Size = Script->ConstMeta[Sval].Size;
+            *Dtype = ValueInfoType(Script->ConstMeta[Sval].Type);
             return true;
         case SCRIPT_SYM_PREDEFINE:
             memset(Scratch, 0, 4);
@@ -107,89 +107,89 @@ inline bool ScriptService::Resolve(LoadedScript *s, uint8_t Stype, uint8_t Ssub,
 }
 
 inline bool ScriptService::ToScalar(const uint8_t *Data, uint8_t Size, uint16_t Dtype, bool Num, ScriptScalar &Out) {
-    Out.n = Number(0);
-    Out.i = 0;
+    Out.Num = Number(0);
+    Out.Int = 0;
     if (Num) {
         switch (Dtype) {
             case (uint16_t)DataType::Number: {
                 if (Size < 4) return false;
-                int32_t Raw = 0; memcpy(&Raw, Data, 4); Out.n = Number::FromRaw(Raw); return true;
+                int32_t Raw = 0; memcpy(&Raw, Data, 4); Out.Num = Number::FromRaw(Raw); return true;
             }
-            case (uint16_t)DataType::Index: Out.n = Number(LoadInt(Data, Size, true)); return true;
-            case (uint16_t)DataType::Uint32: Out.n = Number((int32_t)LoadInt(Data, Size, false)); return true;
-            case (uint16_t)DataType::Bool: Out.n = Number(Data[0] ? 1 : 0); return true;
-            case (uint16_t)DataType::Enum: Out.n = Number((int32_t)LoadInt(Data, Size, false)); return true;
-            case (uint16_t)DataType::DevType: Out.n = Number((int32_t)LoadInt(Data, Size, false)); return true;
-            case (uint16_t)DataType::Id: Out.n = Number((int32_t)LoadInt(Data, Size, false)); return true;
+            case (uint16_t)DataType::Index: Out.Num = Number(LoadInt(Data, Size, true)); return true;
+            case (uint16_t)DataType::Uint32: Out.Num = Number((int32_t)LoadInt(Data, Size, false)); return true;
+            case (uint16_t)DataType::Bool: Out.Num = Number(Data[0] ? 1 : 0); return true;
+            case (uint16_t)DataType::Enum: Out.Num = Number((int32_t)LoadInt(Data, Size, false)); return true;
+            case (uint16_t)DataType::DevType: Out.Num = Number((int32_t)LoadInt(Data, Size, false)); return true;
+            case (uint16_t)DataType::Id: Out.Num = Number((int32_t)LoadInt(Data, Size, false)); return true;
             default: return false;
         }
     }
     switch (Dtype) {
         case (uint16_t)DataType::Number: {
             if (Size < 4) return false;
-            int32_t Raw = 0; memcpy(&Raw, Data, 4); Out.i = Number::FromRaw(Raw).ToInt(); return true;
+            int32_t Raw = 0; memcpy(&Raw, Data, 4); Out.Int = Number::FromRaw(Raw).ToInt(); return true;
         }
-        case (uint16_t)DataType::Index: Out.i = LoadInt(Data, Size, true); return true;
-        case (uint16_t)DataType::Uint32: Out.i = LoadInt(Data, Size, false); return true;
-        case (uint16_t)DataType::Bool: Out.i = Data[0] ? 1 : 0; return true;
-        case (uint16_t)DataType::Enum: Out.i = LoadInt(Data, Size, false); return true;
-        case (uint16_t)DataType::DevType: Out.i = LoadInt(Data, Size, false); return true;
-        case (uint16_t)DataType::Id: Out.i = LoadInt(Data, Size, false); return true;
+        case (uint16_t)DataType::Index: Out.Int = LoadInt(Data, Size, true); return true;
+        case (uint16_t)DataType::Uint32: Out.Int = LoadInt(Data, Size, false); return true;
+        case (uint16_t)DataType::Bool: Out.Int = Data[0] ? 1 : 0; return true;
+        case (uint16_t)DataType::Enum: Out.Int = LoadInt(Data, Size, false); return true;
+        case (uint16_t)DataType::DevType: Out.Int = LoadInt(Data, Size, false); return true;
+        case (uint16_t)DataType::Id: Out.Int = LoadInt(Data, Size, false); return true;
         default: return false;
     }
 }
 
-inline bool ScriptService::ResolveOperandScalar(LoadedScript *s, const uint8_t *Sym, bool Num, ScriptScalar &Out) {
+inline bool ScriptService::ResolveOperandScalar(LoadedScript *Script, const uint8_t *Sym, bool Num, ScriptScalar &Out) {
     uint8_t Scratch[4];
     const uint8_t *Data = nullptr;
     uint8_t Size = 0;
     uint16_t Dtype = 0;
-    if (!Resolve(s, Sym[0], Sym[1], SymVal(Sym), Scratch, &Data, &Size, &Dtype)) return false;
+    if (!Resolve(Script, Sym[0], Sym[1], SymVal(Sym), Scratch, &Data, &Size, &Dtype)) return false;
     return ToScalar(Data, Size, Dtype, Num, Out);
 }
 
-inline bool ScriptService::ResolveOperandInt(LoadedScript *s, const uint8_t *Sym, int32_t &Out) {
+inline bool ScriptService::ResolveOperandInt(LoadedScript *Script, const uint8_t *Sym, int32_t &Out) {
     ScriptScalar Sc;
-    if (!ResolveOperandScalar(s, Sym, false, Sc)) return false;
-    Out = Sc.i;
+    if (!ResolveOperandScalar(Script, Sym, false, Sc)) return false;
+    Out = Sc.Int;
     return true;
 }
 
 // Resolves a destination symbol (variable or output) into its storage.
-inline bool ScriptService::ResolveDest(LoadedScript *s, const uint8_t *Sym, uint16_t &Dtype, uint8_t *&Data, uint8_t &Size) {
+inline bool ScriptService::ResolveDest(LoadedScript *Script, const uint8_t *Sym, uint16_t &Dtype, uint8_t *&Data, uint8_t &Size) {
     if (Sym[0] == SCRIPT_SYM_VARIABLE) {
         uint16_t Idx = SymVal(Sym);
-        if (Idx >= s->varCount) return false;
-        Data = s->varSpace + s->VarOffset((uint8_t)Idx);
-        Size = s->varMeta[Idx].Size;
-        Dtype = ValueInfoType(s->varMeta[Idx].Type);
+        if (Idx >= Script->VarCount) return false;
+        Data = Script->VarSpace + Script->VarOffset((uint8_t)Idx);
+        Size = Script->VarMeta[Idx].Size;
+        Dtype = ValueInfoType(Script->VarMeta[Idx].Type);
         return true;
     }
     if (Sym[0] == SCRIPT_SYM_OUTPUT) {
         uint16_t Idx = SymVal(Sym);
-        if (Idx >= s->outCount || !s->ioSpace) return false;
-        Data = s->ioSpace + s->OutputOffset((uint8_t)Idx);
-        Size = s->outMeta[Idx].Size;
-        Dtype = ValueInfoType(s->outMeta[Idx].Type);
+        if (Idx >= Script->OutCount || !Script->IoSpace) return false;
+        Data = Script->IoSpace + Script->OutputOffset((uint8_t)Idx);
+        Size = Script->OutMeta[Idx].Size;
+        Dtype = ValueInfoType(Script->OutMeta[Idx].Type);
         return true;
     }
     return false;
 }
 
-inline void ScriptService::StoreScalar(uint16_t Dtype, uint8_t *Data, uint8_t Size, bool Num, const ScriptScalar &v) {
+inline void ScriptService::StoreScalar(uint16_t Dtype, uint8_t *Data, uint8_t Size, bool Num, const ScriptScalar &Scalar) {
     switch (Dtype) {
         case (uint16_t)DataType::Number: {
-            int32_t Raw = Num ? v.n.Value : Number(v.i).Value;
+            int32_t Raw = Num ? Scalar.Num.Value : Number(Scalar.Int).Value;
             memcpy(Data, &Raw, 4);
             break;
         }
         case (uint16_t)DataType::Bool: {
-            int32_t Iv = Num ? v.n.RoundToInt() : v.i;
+            int32_t Iv = Num ? Scalar.Num.RoundToInt() : Scalar.Int;
             Data[0] = Iv ? 1 : 0;
             break;
         }
         default: {
-            int32_t Iv = Num ? v.n.RoundToInt() : v.i;
+            int32_t Iv = Num ? Scalar.Num.RoundToInt() : Scalar.Int;
             StoreInt(Data, Size, Iv);
             break;
         }
@@ -206,19 +206,19 @@ inline uint8_t ScriptService::AssignResolved(uint16_t Dtype, uint8_t *Dest, uint
         if (!ToScalar(Src, Ssize, Stype, Num, Sc)) return SCRIPT_ERR_TYPE;
         StoreScalar(Dtype, Dest, Dsize, Num, Sc);
     } else {
-        uint8_t n = Ssize < Dsize ? Ssize : Dsize;
-        if (n) memcpy(Dest, Src, n);
-        for (uint8_t i = n; i < Dsize; i++) Dest[i] = 0;
+        uint8_t Len = Ssize < Dsize ? Ssize : Dsize;
+        if (Len) memcpy(Dest, Src, Len);
+        for (uint8_t i = Len; i < Dsize; i++) Dest[i] = 0;
     }
     return SCRIPT_ERR_NONE;
 }
 
-inline uint8_t ScriptService::Assign(LoadedScript *s, const uint8_t *destSym, const uint8_t *Src,
+inline uint8_t ScriptService::Assign(LoadedScript *Script, const uint8_t *DestSym, const uint8_t *Src,
                             uint8_t Ssize, uint16_t Stype) {
     uint16_t Dtype = 0;
     uint8_t *Dest = nullptr;
     uint8_t Dsize = 0;
-    if (!ResolveDest(s, destSym, Dtype, Dest, Dsize)) return SCRIPT_ERR_OPERAND;
+    if (!ResolveDest(Script, DestSym, Dtype, Dest, Dsize)) return SCRIPT_ERR_OPERAND;
     return AssignResolved(Dtype, Dest, Dsize, Src, Ssize, Stype);
 }
 
@@ -227,17 +227,17 @@ inline uint16_t ScriptService::ContainerCount(uint16_t Dtype, uint8_t Size, cons
     if (Dtype == (uint16_t)DataType::Vector) return Size / 4;
     if (Dtype == (uint16_t)DataType::Matrix) {
         if (Size < 4 || !Data) return 0;
-        uint16_t h = (uint16_t)(Data[0] | (Data[1] << 8));
-        uint16_t w = (uint16_t)(Data[2] | (Data[3] << 8));
-        uint32_t n = (uint32_t)h * w;
-        if (n > (uint32_t)(Size - 4) / 4) return 0;
-        return (uint16_t)n;
+        uint16_t Rows = (uint16_t)(Data[0] | (Data[1] << 8));
+        uint16_t Cols = (uint16_t)(Data[2] | (Data[3] << 8));
+        uint32_t Count = (uint32_t)Rows * Cols;
+        if (Count > (uint32_t)(Size - 4) / 4) return 0;
+        return (uint16_t)Count;
     }
     return 0;
 }
 
 // Reads element `e` of a value as a Number. Scalars broadcast (the same value for any e).
-inline bool ScriptService::VectorElement(const uint8_t *Data, uint8_t Size, uint16_t Dtype, uint32_t e, Number &Out) {
+inline bool ScriptService::VectorElement(const uint8_t *Data, uint8_t Size, uint16_t Dtype, uint32_t Index, Number &Out) {
     int32_t Raw = 0;
     switch (Dtype) {
         case (uint16_t)DataType::Number:
@@ -250,18 +250,18 @@ inline bool ScriptService::VectorElement(const uint8_t *Data, uint8_t Size, uint
         case (uint16_t)DataType::DevType:
         case (uint16_t)DataType::Id: Out = Number((int32_t)LoadInt(Data, Size, false)); return true;
         case (uint16_t)DataType::Vector:
-            if ((e + 1) * 4 > Size) return false;
-            memcpy(&Raw, Data + e * 4, 4); Out = Number::FromRaw(Raw); return true;
+            if ((Index + 1) * 4 > Size) return false;
+            memcpy(&Raw, Data + Index * 4, 4); Out = Number::FromRaw(Raw); return true;
         case (uint16_t)DataType::Matrix:
-            if (e >= ContainerCount(Dtype, Size, Data)) return false;
-            memcpy(&Raw, Data + 4 + e * 4, 4); Out = Number::FromRaw(Raw); return true;
+            if (Index >= ContainerCount(Dtype, Size, Data)) return false;
+            memcpy(&Raw, Data + 4 + Index * 4, 4); Out = Number::FromRaw(Raw); return true;
         default: return false;
     }
 }
 
 // Element-wise math on a Vector/Matrix destination (Mod/Min/Max/Abs/Limit). Scalar
 // operands broadcast, same-size containers apply element-wise.
-inline uint8_t ScriptService::ExecVectorMath(LoadedScript *s, const ScriptLineInfo &Ln, const uint8_t *Opbase,
+inline uint8_t ScriptService::ExecVectorMath(LoadedScript *Script, const ScriptLineInfo &Ln, const uint8_t *Opbase,
                                     uint8_t Cat, uint8_t Op, uint16_t Dtype, uint8_t *Dest, uint8_t Dsize) {
     // Only the element-wise instructions that remain (Modulo/Minimum/Maximum/Absolute/Limit);
     // arithmetic on a container goes through the Set expression.
@@ -274,54 +274,54 @@ inline uint8_t ScriptService::ExecVectorMath(LoadedScript *s, const ScriptLineIn
     if (Count == 0) return SCRIPT_ERR_TYPE;
     uint8_t Off = (Dtype == (uint16_t)DataType::Matrix) ? 4 : 0;
 
-    uint8_t n = Ln.opCount;
-    if (n > 8) n = 8;
-    if (n < 1) return SCRIPT_ERR_OPERAND;
+    uint8_t OpCount = Ln.OpCount;
+    if (OpCount > 8) OpCount = 8;
+    if (OpCount < 1) return SCRIPT_ERR_OPERAND;
     const uint8_t *Odata[8];
     uint8_t Osize[8];
     uint16_t Otype[8];
     uint8_t Oscratch[8][4];
-    for (uint8_t i = 0; i < n; i++) {
-        if (!Resolve(s, Opbase[(size_t)i * 4], Opbase[(size_t)i * 4 + 1],
+    for (uint8_t i = 0; i < OpCount; i++) {
+        if (!Resolve(Script, Opbase[(size_t)i * 4], Opbase[(size_t)i * 4 + 1],
                            SymVal(Opbase + (size_t)i * 4), Oscratch[i],
                            &Odata[i], &Osize[i], &Otype[i]))
             return SCRIPT_ERR_OPERAND;
     }
 
-    for (uint32_t e = 0; e < Count; e++) {
+    for (uint32_t Index = 0; Index < Count; Index++) {
         Number Acc;
-        if (!VectorElement(Odata[0], Osize[0], Otype[0], e, Acc)) return SCRIPT_ERR_TYPE;
+        if (!VectorElement(Odata[0], Osize[0], Otype[0], Index, Acc)) return SCRIPT_ERR_TYPE;
         if (Op == SCRIPT_OP_MATH_LIMIT) {
             Number Lo, Hi;
-            if (n < 3) return SCRIPT_ERR_OPERAND;
-            if (!VectorElement(Odata[1], Osize[1], Otype[1], e, Lo)) return SCRIPT_ERR_TYPE;
-            if (!VectorElement(Odata[2], Osize[2], Otype[2], e, Hi)) return SCRIPT_ERR_TYPE;
+            if (OpCount < 3) return SCRIPT_ERR_OPERAND;
+            if (!VectorElement(Odata[1], Osize[1], Otype[1], Index, Lo)) return SCRIPT_ERR_TYPE;
+            if (!VectorElement(Odata[2], Osize[2], Otype[2], Index, Hi)) return SCRIPT_ERR_TYPE;
             if (Acc < Lo) Acc = Lo;
             if (Acc > Hi) Acc = Hi;
         } else if (Op == SCRIPT_OP_MATH_ABS) {
-            if (n != 1) return SCRIPT_ERR_TYPE; // Absolute is unary
+            if (OpCount != 1) return SCRIPT_ERR_TYPE; // Absolute is unary
             Acc = abs(Acc);
         } else {
-            for (uint8_t k = 1; k < n; k++) {
-                Number v;
-                if (!VectorElement(Odata[k], Osize[k], Otype[k], e, v)) return SCRIPT_ERR_TYPE;
+            for (uint8_t k = 1; k < OpCount; k++) {
+                Number Elem;
+                if (!VectorElement(Odata[k], Osize[k], Otype[k], Index, Elem)) return SCRIPT_ERR_TYPE;
                 switch (Op) {
                     case SCRIPT_OP_MATH_MOD: {
-                        int32_t b = v.RoundToInt();
-                        if (b == 0) return SCRIPT_ERR_TYPE;
-                        Acc = Number(Acc.RoundToInt() % b);
+                        int32_t Divisor = Elem.RoundToInt();
+                        if (Divisor == 0) return SCRIPT_ERR_TYPE;
+                        Acc = Number(Acc.RoundToInt() % Divisor);
                         break;
                     }
-                    case SCRIPT_OP_MATH_MIN: Acc = min(Acc, v); break;
-                    case SCRIPT_OP_MATH_MAX: Acc = max(Acc, v); break;
+                    case SCRIPT_OP_MATH_MIN: Acc = min(Acc, Elem); break;
+                    case SCRIPT_OP_MATH_MAX: Acc = max(Acc, Elem); break;
                     default: return SCRIPT_ERR_TYPE;
                 }
             }
         }
         int32_t Raw = Acc.Value;
-        memcpy(Dest + Off + e * 4, &Raw, 4);
+        memcpy(Dest + Off + Index * 4, &Raw, 4);
     }
-    s->Ic++;
+    Script->Ic++;
     return SCRIPT_ERR_NONE;
 }
 

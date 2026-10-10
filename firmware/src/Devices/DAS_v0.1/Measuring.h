@@ -56,22 +56,22 @@ const BlockEntry ResistiveMeasEntries[] = {
 // would mislead.
 static bool OnMeasFieldWrite(const StaticBlockDescriptor &Block, uint16_t Index, const void *Data, uint16_t Len)
 {
-    auto *M = static_cast<ResistiveMeasPersistent *>(Block.PersistentData);
+    auto *Persistent = static_cast<ResistiveMeasPersistent *>(Block.PersistentData);
     if (Len != sizeof(Number)) return false;
-    Number V = *static_cast<const Number *>(Data);
+    Number Value = *static_cast<const Number *>(Data);
 
     switch (Index)
     {
     case 0: // Sampling Rate (Hz): the loop divides by it, keep >= 1 Hz and bounded
-        if (V < N(1)) V = N(1);
-        if (V > N(1000)) V = N(1000);
-        M->SamplingRate = V;
+        if (Value < N(1)) Value = N(1);
+        if (Value > N(1000)) Value = N(1000);
+        Persistent->SamplingRate = Value;
         return true;
 
     case 2: // Filter Coefficient: EMA weight of the new sample, 0-1 (1 = no filtering)
-        if (V < N(0)) V = N(0);
-        if (V > N(1)) V = N(1);
-        M->FilterCoeff = V;
+        if (Value < N(0)) Value = N(0);
+        if (Value > N(1)) Value = N(1);
+        Persistent->FilterCoeff = Value;
         return true;
     }
     return false;
@@ -129,8 +129,8 @@ static uint16_t MeasAdcRead(uint8_t Channel)
 static void MeasSelectRange(uint8_t Index, uint8_t Range)
 {
     if (Index > 1) return;
-    for (uint8_t R = 0; R < 3; R++)
-        PinHigh(RangePins[Index][R].Port, RangePins[Index][R].Pin);
+    for (uint8_t RangeIndex = 0; RangeIndex < 3; RangeIndex++)
+        PinHigh(RangePins[Index][RangeIndex].Port, RangePins[Index][RangeIndex].Pin);
     if (Range < 3)
         PinLow(RangePins[Index][Range].Port, RangePins[Index][Range].Pin);
 }
@@ -142,9 +142,9 @@ void MeasuringInit()
                            RCC_APB2Periph_GPIOD | RCC_APB2Periph_ADC1, ENABLE);
 
     // Range selectors as push-pull outputs.
-    for (uint8_t C = 0; C < 2; C++)
-        for (uint8_t R = 0; R < 3; R++)
-            PinModeOutput(RangePins[C][R].Port, RangePins[C][R].Pin);
+    for (uint8_t Channel = 0; Channel < 2; Channel++)
+        for (uint8_t RangeIndex = 0; RangeIndex < 3; RangeIndex++)
+            PinModeOutput(RangePins[Channel][RangeIndex].Port, RangePins[Channel][RangeIndex].Pin);
 
     // Measuring pins as analog inputs (PD2 and PC4).
     GPIO_InitTypeDef GPIO_InitStructure = {0};
@@ -189,4 +189,4 @@ void MeasuringInit()
 // logarithms out of the lux path is exactly equivalent (the same numbers to within one Q16.16
 // step, a 0.006 % lux difference) and removes two log() calls and two fixed-point divisions
 // from every sample.
-static const int32_t kLdrLog10R10OverRref[3] = {88903, -8188, -107705};
+static const int32_t KLdrLog10R10OverRref[3] = {88903, -8188, -107705};

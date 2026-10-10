@@ -29,32 +29,32 @@ public:
     inline uint16_t ColCount() const { return Buffer.Width; }
 
     // Logic uses the buffer variables as the source of truth
-    inline Number &operator()(uint16_t r, uint16_t c)
+    inline Number &operator()(uint16_t Row, uint16_t Col)
     {
-        return Buffer.Data[r * Buffer.Width + c];
+        return Buffer.Data[Row * Buffer.Width + Col];
     }
 
-    inline const Number &operator()(uint16_t r, uint16_t c) const
+    inline const Number &operator()(uint16_t Row, uint16_t Col) const
     {
-        return Buffer.Data[r * Buffer.Width + c];
+        return Buffer.Data[Row * Buffer.Width + Col];
     }
 
     // Matrix-Vector Multiplication: Result = This * Vec (columns must match vector size)
-    template <size_t N>
-    Vector<Rows> operator*(const Vector<N> &Vec) const
+    template <size_t Size>
+    Vector<Rows> operator*(const Vector<Size> &Vec) const
     {
-        static_assert(N == Cols, "Matrix columns must match Vector size");
+        static_assert(Size == Cols, "Matrix columns must match Vector size");
 
         Vector<Rows> Result;
-        for (uint16_t r = 0; r < Buffer.Height; ++r)
+        for (uint16_t Row = 0; Row < Buffer.Height; ++Row)
         {
             Number RowSum = 0;
-            for (uint16_t c = 0; c < Buffer.Width; ++c)
+            for (uint16_t Col = 0; Col < Buffer.Width; ++Col)
             {
                 // Accessing row-major data using header as source of truth
-                RowSum = RowSum + ((*this)(r, c) * Vec.Data[c]);
+                RowSum = RowSum + ((*this)(Row, Col) * Vec.Data[Col]);
             }
-            Result.Data[r] = RowSum;
+            Result.Data[Row] = RowSum;
         }
         return Result;
     }
@@ -86,14 +86,14 @@ public:
     {
         Matrix<3, 3> Mat = Matrix<3, 3>::Identity();
 
-        Number c = cos(Angle);
-        Number s = sin(Angle);
+        Number CosA = cos(Angle);
+        Number SinA = sin(Angle);
 
         // 1. Calculate Rotation/Scale components
-        Number R00 = c * Scale[0];
-        Number R01 = (-s) * Scale[1];
-        Number R10 = s * Scale[0];
-        Number R11 = c * Scale[1];
+        Number R00 = CosA * Scale[0];
+        Number R01 = (-SinA) * Scale[1];
+        Number R10 = SinA * Scale[0];
+        Number R11 = CosA * Scale[1];
 
         Mat(0, 0) = R00;
         Mat(0, 1) = R01;
