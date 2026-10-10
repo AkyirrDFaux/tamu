@@ -11,6 +11,7 @@ Applies to everything under `firmware/src/` and `app/lib/`. New and edited code 
 - Device-specific implementations live in their own folder under `Devices/<board>/`; shared behaviour belongs in `Blocks/` and is enabled per device by capability flags.
 ### Naming
 - PascalCase for every identifier the project names: types, classes, functions and methods, enum types and their members, class members, locals, parameters and globals: `PacketFrame`, `HandleRegister`, `BlockTypeRange`, `StorageBlockFS`, `WriteOffset`, `ContentLen`.
+- A single-letter name is reserved for a short-lived loop index or scratch counter, in the conventional lowercase form: `i`, `j`, `k`, `x`, `y`. Any other identifier is named for what it holds: `Byte`, `Pin`, `EntryIndex`, `Slot`.
 - No prefixes on state. A member or a static is named for what it holds, not for its storage class: `WriteOffset`, never `s_write_off` or `m_writeOffset`.
 - Identifiers that belong to an external library keep their own spelling and are never converted: the NimBLE and ESP-IDF symbols, the CH32 device headers, and what they return.
 - An acronym keeps its canonical spelling instead of being re-cased into PascalCase: `GetServiceCID`, `NextSystemTrID`, `SNDBFile`, `CRC8`. The canonical forms are listed in [[General Architecture]].
