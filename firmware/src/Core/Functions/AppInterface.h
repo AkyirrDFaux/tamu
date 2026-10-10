@@ -33,7 +33,7 @@ typedef int portMUX_TYPE;
 bool AppUsbSilent();
 
 // Doc requirement: global status bool reporting whether an app is actually connected
-// (either link active).
+// (either link active). Read widely by device code; kept a plain global for now.
 bool AppConnected = false;
 
 // Outgoing stream ring: serialized frames waiting to be flushed to the app links.
@@ -51,17 +51,6 @@ bool AppConnected = false;
 // frames when an app fired 8 parallel requests (observed on hardware).
 #define APP_RX_QUEUE_DEPTH 12
 
-uint8_t *AppTxRing = nullptr;
-volatile uint16_t AppTxHead = 0; // write position
-volatile uint16_t AppTxTail = 0; // read position
-volatile uint32_t AppTxDropped = 0;
-portMUX_TYPE AppTxMux = portMUX_INITIALIZER_UNLOCKED;
-
-PacketFrame AppRxQueue[APP_RX_QUEUE_DEPTH];
-volatile uint8_t AppRxCount = 0;
-volatile uint8_t AppRxTail = 0; // dequeue position (ring; avoids shifting the queue)
-portMUX_TYPE AppRxMux = portMUX_INITIALIZER_UNLOCKED;
-
 // Link hooks (implemented per device: Devices/Tamu_v2.0A/AppUSB.h + AppBLE.h).
 bool AppUSBActive();
 bool AppBLEActive();
@@ -71,117 +60,159 @@ void AppBLETick();
 // Defined in Dispatcher.h (single translation unit: forward declaration suffices here).
 void DispatchPacket(const PacketFrame &frame);
 
-inline void AppInterfaceInit()
+// The App Interface service (Docs/Services/App Interface.md): one class, one instance. The
+// ring/queue state is public because the device link hooks read and write it directly.
+class AppInterfaceService
 {
-    if (!AppTxRing)
-        AppTxRing = (uint8_t *)malloc(APP_TX_RING_SIZE);
+public:
+    void Init();
+    bool Send(const PacketFrame &Frame);
+    bool Enqueue(const PacketFrame &Frame);
+    void RouteIn(PacketFrame &Frame);
+    void Pump();
+    uint16_t TxPeek(uint8_t *Dst, uint16_t Max);
+    void TxCommit(uint16_t N);
+    uint16_t TxPop(uint8_t *Dst, uint16_t Max);
+    void TxFlushAll();
+
+    uint8_t *TxRing = nullptr; // malloc'd in Init; the link hooks read it before pumping
+    volatile uint16_t TxHead = 0; // write position
+    volatile uint16_t TxTail = 0; // read position
+    volatile uint32_t TxDropped = 0;
+    portMUX_TYPE TxMux = portMUX_INITIALIZER_UNLOCKED;
+
+    PacketFrame RxQueue[APP_RX_QUEUE_DEPTH];
+    volatile uint8_t RxCount = 0;
+    volatile uint8_t RxTail = 0; // dequeue position (ring; avoids shifting the queue)
+    portMUX_TYPE RxMux = portMUX_INITIALIZER_UNLOCKED;
+};
+
+// One instance per binary.
+AppInterfaceService AppInterface;
+
+// ---- Temporary forwarders (deleted once every caller uses `AppInterface.` directly) ----
+// The device link hooks and the dispatcher still call the old free-function names.
+inline void AppInterfaceInit() { AppInterface.Init(); }
+inline bool AppInterfaceSend(const PacketFrame &Frame) { return AppInterface.Send(Frame); }
+inline bool AppInterfaceEnqueue(const PacketFrame &Frame) { return AppInterface.Enqueue(Frame); }
+inline void AppInterfaceRouteIn(PacketFrame &Frame) { AppInterface.RouteIn(Frame); }
+inline void AppInterfacePump() { AppInterface.Pump(); }
+inline uint16_t AppTxPeek(uint8_t *Dst, uint16_t Max) { return AppInterface.TxPeek(Dst, Max); }
+inline void AppTxCommit(uint16_t N) { AppInterface.TxCommit(N); }
+inline uint16_t AppTxPop(uint8_t *Dst, uint16_t Max) { return AppInterface.TxPop(Dst, Max); }
+inline void AppTxFlushAll() { AppInterface.TxFlushAll(); }
+
+inline void AppInterfaceService::Init()
+{
+    if (!TxRing)
+        TxRing = (uint8_t *)malloc(APP_TX_RING_SIZE);
 }
 
-// Serializes `frame` into the TX ring. Drop-newest policy when full (the oldest data
+// Serializes `Frame` into the TX ring. Drop-newest policy when full (the oldest data
 // belongs to streams already in flight; dropping the head would corrupt them anyway).
-inline bool AppInterfaceSend(const PacketFrame &frame)
+inline bool AppInterfaceService::Send(const PacketFrame &Frame)
 {
-    if (!AppConnected || !AppTxRing)
+    if (!AppConnected || !TxRing)
         return false;
 
     // Copy the wire bytes straight from the packed frame instead of staging a
     // 128-byte stack copy per reply. PacketFrame is packed, so its bytes are the
     // wire layout in order.
-    const uint8_t *wire = reinterpret_cast<const uint8_t *>(&frame);
-    uint16_t n = PacketWireSize(&frame);
+    const uint8_t *wire = reinterpret_cast<const uint8_t *>(&Frame);
+    uint16_t n = PacketWireSize(&Frame);
 
     bool ok = false;
-    portENTER_CRITICAL(&AppTxMux);
-    uint16_t used = (uint16_t)(AppTxHead - AppTxTail);
+    portENTER_CRITICAL(&TxMux);
+    uint16_t used = (uint16_t)(TxHead - TxTail);
     if (n <= APP_TX_RING_SIZE - 1 - used)
     {
         for (uint16_t i = 0; i < n; i++)
         {
-            AppTxRing[AppTxHead % APP_TX_RING_SIZE] = wire[i];
-            AppTxHead = (uint16_t)(AppTxHead + 1);
+            TxRing[TxHead % APP_TX_RING_SIZE] = wire[i];
+            TxHead = (uint16_t)(TxHead + 1);
         }
         ok = true;
     }
-    portEXIT_CRITICAL(&AppTxMux);
+    portEXIT_CRITICAL(&TxMux);
     if (!ok)
-        AppTxDropped = AppTxDropped + 1;
+        TxDropped = TxDropped + 1;
     return ok;
 }
 
-// Peek/commit variant: copies up to `max` pending bytes WITHOUT consuming them; the
-// caller confirms consumption with AppTxCommit(n) once they are actually on the wire
+// Peek/commit variant: copies up to `Max` pending bytes WITHOUT consuming them; the
+// caller confirms consumption with TxCommit(n) once they are actually on the wire
 // (used by the BLE link so a failed notify does not lose data).
-inline uint16_t AppTxPeek(uint8_t *dst, uint16_t max)
+inline uint16_t AppInterfaceService::TxPeek(uint8_t *Dst, uint16_t Max)
 {
     uint16_t n = 0;
-    portENTER_CRITICAL(&AppTxMux);
-    uint16_t used = (uint16_t)(AppTxHead - AppTxTail);
-    if (used > max)
-        used = max;
+    portENTER_CRITICAL(&TxMux);
+    uint16_t used = (uint16_t)(TxHead - TxTail);
+    if (used > Max)
+        used = Max;
     for (n = 0; n < used; n++)
-        dst[n] = AppTxRing[(AppTxTail + n) % APP_TX_RING_SIZE];
-    portEXIT_CRITICAL(&AppTxMux);
+        Dst[n] = TxRing[(TxTail + n) % APP_TX_RING_SIZE];
+    portEXIT_CRITICAL(&TxMux);
     return n;
 }
 
-inline void AppTxCommit(uint16_t n)
+inline void AppInterfaceService::TxCommit(uint16_t N)
 {
-    if (n == 0)
+    if (N == 0)
         return;
-    portENTER_CRITICAL(&AppTxMux);
-    AppTxTail = (uint16_t)(AppTxTail + n);
-    portEXIT_CRITICAL(&AppTxMux);
+    portENTER_CRITICAL(&TxMux);
+    TxTail = (uint16_t)(TxTail + N);
+    portEXIT_CRITICAL(&TxMux);
 }
 
 // Drops all pending TX data (called when an app session starts or ends: queued
 // responses belong to the previous session's transactions and must not leak).
-inline void AppTxFlushAll()
+inline void AppInterfaceService::TxFlushAll()
 {
-    portENTER_CRITICAL(&AppTxMux);
-    AppTxTail = AppTxHead;
-    portEXIT_CRITICAL(&AppTxMux);
+    portENTER_CRITICAL(&TxMux);
+    TxTail = TxHead;
+    portEXIT_CRITICAL(&TxMux);
 }
 
-// Pops up to `max` stream bytes into `dst` (peek + commit).
-inline uint16_t AppTxPop(uint8_t *dst, uint16_t max)
+// Pops up to `Max` stream bytes into `Dst` (peek + commit).
+inline uint16_t AppInterfaceService::TxPop(uint8_t *Dst, uint16_t Max)
 {
-    uint16_t n = AppTxPeek(dst, max);
-    AppTxCommit(n);
+    uint16_t n = TxPeek(Dst, Max);
+    TxCommit(n);
     return n;
 }
 
 // Called by the link readers (USB console task / BLE RX drain) to hand over a fully
 // parsed frame. Returns false when the queue is full (caller should drop the frame).
-inline bool AppInterfaceEnqueue(const PacketFrame &frame)
+inline bool AppInterfaceService::Enqueue(const PacketFrame &Frame)
 {
     bool ok = false;
-    portENTER_CRITICAL(&AppRxMux);
-    if (AppRxCount < APP_RX_QUEUE_DEPTH)
+    portENTER_CRITICAL(&RxMux);
+    if (RxCount < APP_RX_QUEUE_DEPTH)
     {
-        uint8_t head = (uint8_t)((AppRxTail + AppRxCount) % APP_RX_QUEUE_DEPTH);
-        AppRxQueue[head] = frame;
-        AppRxCount = (uint8_t)(AppRxCount + 1);
+        uint8_t head = (uint8_t)((RxTail + RxCount) % APP_RX_QUEUE_DEPTH);
+        RxQueue[head] = Frame;
+        RxCount = (uint8_t)(RxCount + 1);
         ok = true;
     }
-    portEXIT_CRITICAL(&AppRxMux);
+    portEXIT_CRITICAL(&RxMux);
     return ok;
 }
 
 // Routes one app-originated frame: rewrites id_src to our address (proxy) and lets the
 // dispatcher do all the work - it handles local targets, broadcasts (local + bus) and
 // foreign targets (bus forward via its forwarding rule) uniformly.
-inline void AppInterfaceRouteIn(PacketFrame &frame)
+inline void AppInterfaceService::RouteIn(PacketFrame &Frame)
 {
     // The app has no net context: it addresses devices by their device number on the local
     // net (net 0). The dispatcher resolves net 0 to our net at match/forward time.
-    frame.id_src = DeviceStatus.ShortAddress;
-    DispatchPacket(frame);
+    Frame.id_src = DeviceStatus.ShortAddress;
+    DispatchPacket(Frame);
 }
 
 // Main loop pump: dispatches queued inbound frames, refreshes the connection status
 // and flushes pending TX stream bytes to the USB link (BLE paces itself in AppBLETick,
 // which must be called right after this whenever the BLE link may be active).
-void AppInterfacePump()
+void AppInterfaceService::Pump()
 {
     AppConnected = AppUSBActive() || AppBLEActive();
 
@@ -191,17 +222,17 @@ void AppInterfacePump()
     for (;;)
     {
         PacketFrame f;
-        portENTER_CRITICAL(&AppRxMux);
-        if (AppRxCount == 0) // read inside the lock so an enqueue can't corrupt the pop
+        portENTER_CRITICAL(&RxMux);
+        if (RxCount == 0) // read inside the lock so an enqueue can't corrupt the pop
         {
-            portEXIT_CRITICAL(&AppRxMux);
+            portEXIT_CRITICAL(&RxMux);
             break;
         }
-        f = AppRxQueue[AppRxTail];
-        AppRxTail = (uint8_t)((AppRxTail + 1) % APP_RX_QUEUE_DEPTH);
-        AppRxCount = (uint8_t)(AppRxCount - 1);
-        portEXIT_CRITICAL(&AppRxMux);
-        AppInterfaceRouteIn(f);
+        f = RxQueue[RxTail];
+        RxTail = (uint8_t)((RxTail + 1) % APP_RX_QUEUE_DEPTH);
+        RxCount = (uint8_t)(RxCount - 1);
+        portEXIT_CRITICAL(&RxMux);
+        RouteIn(f);
     }
 
     // Flush as many 60-byte USB link frames as possible. AppUSBSend blocks briefly
@@ -209,14 +240,14 @@ void AppInterfacePump()
     // here is considered delivered. When a BLE session is up and USB has been
     // silent, the app has switched links (closed its USB port, cable still
     // plugged): skip USB so responses route to BLE.
-    if (AppUSBActive() && AppTxRing && !(AppBLEActive() && AppUsbSilent()))
+    if (AppUSBActive() && TxRing && !(AppBLEActive() && AppUsbSilent()))
     {
         uint8_t chunk[60];
-        uint16_t n = AppTxPop(chunk, sizeof(chunk));
+        uint16_t n = TxPop(chunk, sizeof(chunk));
         while (n > 0)
         {
             AppUSBSend(chunk, n);
-            n = AppTxPop(chunk, sizeof(chunk));
+            n = TxPop(chunk, sizeof(chunk));
         }
     }
 
@@ -224,4 +255,3 @@ void AppInterfacePump()
 }
 
 #endif // USE_APP_INTERFACE
-

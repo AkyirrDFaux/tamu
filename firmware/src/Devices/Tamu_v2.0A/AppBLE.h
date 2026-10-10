@@ -293,7 +293,7 @@ void AppBLETick()
     // ---- TX ----
     // No artificial pacing: AppBLETick runs from the ~2 ms app-task loop, which throttles
     // notifications by itself.
-    if (!AppTxRing)
+    if (!AppInterface.TxRing)
         return;
 
     // Notification payload must fit the NEGOTIATED ATT MTU: mtu - 3 for the ATT
