@@ -73,29 +73,76 @@ static bool ReadByte(uint8_t *B, TickType_t Ticks)
 // Handlers
 // ---------------------------------------------------------------------------
 
+// Offset of the last successfully programmed chunk (0xFFFFFFFF = nothing yet). Reported
+// back on every write so the app resynchronises after a rejected chunk instead of guessing.
+static uint32_t LastWritten = 0xFFFFFFFFu;
+
 static void HandleWrite(uint32_t Offset, const uint8_t *Payload)
 {
-    if (App == nullptr) return;
-    if ((Offset & 31u) != 0) return; // 32-byte aligned
+    // Compute success without early returns: every write - accepted or rejected - is
+    // acknowledged with a write response carrying LastWritten, so the app can recover.
+    bool Ok = (App != nullptr);
+    if (Ok && (Offset & 31u) != 0) Ok = false; // 32-byte aligned
     // `offset + PAYLOAD_SIZE` wraps near 2^32, so subtract instead: the sector index below
-    // must stay inside `s_erased`.
-    if (Offset > App->size || App->size - Offset < Bootloader::PAYLOAD_SIZE) return;
+    // must stay inside `Erased`.
+    if (Ok && (Offset > App->size || App->size - Offset < Bootloader::PAYLOAD_SIZE)) Ok = false;
 
-    // A write pass starts at offset 0 (the app writes the image from the beginning, including
-    // a retry after a failed verification), so forget the previous pass's erased sectors.
-    // A correction that re-writes offset 0 is safe: the bitmap is reset before that sector is
-    // erased, and the rest of the pass programs into the freshly erased sector.
-    if (Offset == 0) memset(Erased, 0, sizeof(Erased));
-
-    uint32_t Sector = Offset / SECTOR_SIZE;
-    if (!SectorErased(Sector))
+    if (Ok)
     {
-        if (esp_partition_erase_range(App, Sector * SECTOR_SIZE, SECTOR_SIZE) != ESP_OK)
-            return;
-        MarkErased(Sector);
+        // A write pass starts at offset 0 (the app writes the image from the beginning,
+        // including a retry after a failed verification), so forget the previous pass's
+        // erased sectors. A correction that re-writes offset 0 is safe: the bitmap is reset
+        // before that sector is erased, and the rest of the pass programs into the freshly
+        // erased sector.
+        if (Offset == 0) memset(Erased, 0, sizeof(Erased));
+
+        uint32_t Sector = Offset / SECTOR_SIZE;
+        if (!SectorErased(Sector))
+        {
+            if (esp_partition_erase_range(App, Sector * SECTOR_SIZE, SECTOR_SIZE) != ESP_OK)
+                Ok = false;
+            else
+                MarkErased(Sector);
+        }
+        if (Ok)
+        {
+            esp_partition_write(App, Offset, Payload, Bootloader::PAYLOAD_SIZE);
+            LastWritten = Offset;
+        }
     }
-    esp_partition_write(App, Offset, Payload, Bootloader::PAYLOAD_SIZE);
+
+    uint8_t Resp[Bootloader::READ_REQ_SIZE];
+    Bootloader::EncodeWriteResponse(LastWritten, Resp);
+    SendRaw(Resp, sizeof(Resp));
 }
+
+// The identify response is entirely build-time constant (app size + name), so the whole
+// frame - control/parity included - is precomputed and lives in flash. Nothing is built at
+// runtime: the handler just sends the constant.
+struct IdentifyFrame { uint8_t B[Bootloader::DATA_SIZE]; };
+
+constexpr IdentifyFrame MakeIdentify(uint32_t Space, const char *Name)
+{
+    IdentifyFrame f{};
+    f.B[0] = Bootloader::START;
+    f.B[1] = Bootloader::CMD_IDENTIFY_RESP;
+    f.B[2] = (uint8_t)(Space & 0xFFu);
+    f.B[3] = (uint8_t)((Space >> 8) & 0xFFu);
+    f.B[4] = (uint8_t)((Space >> 16) & 0xFFu);
+    f.B[5] = (uint8_t)((Space >> 24) & 0xFFu);
+    for (uint8_t i = 0; i < Bootloader::NAME_SIZE; i++)
+    {
+        if (Name[i] == '\0') break;
+        f.B[6 + i] = (uint8_t)Name[i];
+    }
+    f.B[Bootloader::DATA_SIZE - 1] = Bootloader::END;
+    f.B[1] |= (uint8_t)(Bootloader::Parity(f.B, Bootloader::DATA_SIZE) << 3);
+    return f;
+}
+
+constexpr IdentifyFrame Identify = MakeIdentify(OTA_APP_SIZE, "Tamu v2.0A");
+
+static void HandleIdentify() { SendRaw(Identify.B, Bootloader::DATA_SIZE); }
 
 // ---------------------------------------------------------------------------
 // Entry
@@ -160,5 +207,6 @@ extern "C" void app_main(void)
             };
             auto Send = [](const uint8_t *D, size_t N) { SendRaw(D, N); };
             BootloaderHost::HandleRead(Offset, readPayload, Send);
-        });
+        },
+        [] { HandleIdentify(); });
 }

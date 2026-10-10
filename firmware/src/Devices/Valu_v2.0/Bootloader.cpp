@@ -389,6 +389,10 @@ static uint16_t TotalNeed = 0; // total bytes the frame needs once known
 
 static void HandleWrite(uint32_t Offset, const uint8_t *Payload);
 
+// Offset of the last successfully programmed chunk (0xFFFFFFFF = nothing yet). Reported back
+// on every write so the app resynchronises after a rejected chunk instead of guessing.
+static uint32_t LastWritten = 0xFFFFFFFFu;
+
 static void SendReadResponse(uint32_t Offset)
 {
     uint8_t Data[Bootloader::PAYLOAD_SIZE];
@@ -412,11 +416,45 @@ static void SendReadResponse(uint32_t Offset)
     tud_cdc_write_flush();
 }
 
+// The identify response is entirely build-time constant (app-space size + device name), so the
+// whole frame - control byte and parity included - is precomputed and lives in flash. Nothing
+// is assembled at runtime: the handler just sends the constant (mirrors the DAS MakeIdentify).
+struct IdentifyFrame { uint8_t B[Bootloader::DATA_SIZE]; };
+
+constexpr IdentifyFrame MakeIdentify(uint32_t Space, const char *Name)
+{
+    IdentifyFrame F{};
+    F.B[0] = Bootloader::START;
+    F.B[1] = Bootloader::CMD_IDENTIFY_RESP;
+    F.B[2] = (uint8_t)(Space & 0xFFu);
+    F.B[3] = (uint8_t)((Space >> 8) & 0xFFu);
+    F.B[4] = (uint8_t)((Space >> 16) & 0xFFu);
+    F.B[5] = (uint8_t)((Space >> 24) & 0xFFu);
+    for (uint8_t I = 0; I < Bootloader::NAME_SIZE; I++)
+    {
+        if (Name[I] == '\0') break;
+        F.B[6 + I] = (uint8_t)Name[I];
+    }
+    F.B[Bootloader::DATA_SIZE - 1] = Bootloader::END;
+    F.B[1] |= (uint8_t)(Bootloader::Parity(F.B, Bootloader::DATA_SIZE) << 3);
+    return F;
+}
+
+constexpr IdentifyFrame Identify = MakeIdentify(APP_LIMIT - APP_BASE, "Valu v2.0");
+
+static void HandleIdentify()
+{
+    tud_cdc_write(Identify.B, Bootloader::DATA_SIZE);
+    tud_cdc_write_flush();
+}
+
 static void DispatchFrame(const uint8_t *Frame)
 {
-    uint8_t Cmd = (uint8_t)(Frame[1] & 0x03u);
+    uint8_t Cmd = (uint8_t)(Frame[1] & 0x07u);
     uint32_t Offset = Bootloader::Offset(Frame);
-    if (Cmd == Bootloader::CMD_WRITE)
+    if (Cmd == Bootloader::CMD_IDENTIFY_REQ)
+        HandleIdentify();
+    else if (Cmd == Bootloader::CMD_WRITE)
         HandleWrite(Offset, Bootloader::Payload(Frame));
     else if (Cmd == Bootloader::CMD_READ_REQ)
         SendReadResponse(Offset);
@@ -439,7 +477,7 @@ static void FeedByte(uint8_t B)
 
     if (Have == 2)
     {
-        uint16_t Need = Bootloader::FrameSize((uint8_t)(B & 0x03u));
+        uint16_t Need = Bootloader::FrameSize((uint8_t)(B & 0x07u));
         if (Need == 0) // unknown command: drop and resync
         {
             Have = 0;
@@ -451,7 +489,7 @@ static void FeedByte(uint8_t B)
 
     if (Have >= TotalNeed)
     {
-        if (Bootloader::Decode(FrameBuf, TotalNeed))
+        if (Bootloader::Decode(FrameBuf, TotalNeed) != Bootloader::INVALID)
             DispatchFrame(FrameBuf);
         Have = 0;
         TotalNeed = 0;
@@ -460,20 +498,26 @@ static void FeedByte(uint8_t B)
 
 static void HandleWrite(uint32_t Offset, const uint8_t *Payload)
 {
-    if ((Offset & 31u) != 0)
-        return; // 32-byte aligned per the doc
     uint32_t Addr = APP_BASE + Offset;
-    if (Addr < APP_BASE || Addr + Bootloader::PAYLOAD_SIZE > APP_LIMIT)
-        return;
+    bool Ok = (Offset & 31u) == 0; // 32-byte aligned per the doc
+    if (Ok) Ok = Addr >= APP_BASE && Addr + Bootloader::PAYLOAD_SIZE <= APP_LIMIT;
 
     // Erase the containing 4 KB sector on the first write into it, then the 128 32-byte
     // writes of the sector program into the freshly erased sector.
-    if ((Addr & (FLASH_ERASE_SECTOR - 1u)) == 0)
+    if (Ok && (Addr & (FLASH_ERASE_SECTOR - 1u)) == 0)
+        Ok = FlashEraseSector(Addr);
+
+    if (Ok)
     {
-        if (!FlashEraseSector(Addr))
-            return;
+        FlashWrite(Addr, Payload, Bootloader::PAYLOAD_SIZE);
+        LastWritten = Offset;
     }
-    FlashWrite(Addr, Payload, Bootloader::PAYLOAD_SIZE);
+
+    // Always acknowledge, even a rejected chunk, so the app can resynchronise on LastWritten.
+    uint8_t Resp[Bootloader::READ_REQ_SIZE];
+    Bootloader::EncodeWriteResponse(LastWritten, Resp);
+    tud_cdc_write(Resp, sizeof(Resp));
+    tud_cdc_write_flush();
 }
 
 // ===========================================================================

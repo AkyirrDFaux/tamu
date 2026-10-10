@@ -7,8 +7,8 @@
 // holding the button (PC0, active low) at reset, in which case the white LED (PD0) comes on;
 // otherwise the app is launched immediately. It deliberately ignores the standard packet
 // format and speaks the raw bootloader frame on the RS485 bus (no 0xAA sync, so the running
-// nodes - which wait for 0xAA - ignore it). Writes give no acknowledgement: the app paces
-// the flash and verifies with read requests.
+// nodes - which wait for 0xAA - ignore it). Every write is answered by a write response carrying
+// the last successfully written offset, and an identify request returns the app size and name.
 //
 // Flash rules: writes are 32-byte aligned (per the doc); the bootloader erases the 64-byte
 // page on the first half (offset % 64 == 0) and programs both halves. It never touches the
@@ -201,14 +201,14 @@ static int ReceiveFrame(uint8_t *Out, size_t Cap, uint32_t TimeoutUs)
     if (!WaitByte(&B, Start, TimeoutCycles)) return 0;
     Out[Got++] = B;
 
-    uint16_t Need = Bootloader::FrameSize((uint8_t)(B & 0x03));
+    uint16_t Need = Bootloader::FrameSize((uint8_t)(B & 0x07));
     if (Need == 0 || Need > Cap) return 0;
     while (Got < Need)
     {
         if (!WaitByte(&B, Start, TimeoutCycles)) return 0;
         Out[Got++] = B;
     }
-    return Bootloader::Decode(Out, Need) ? (int)Need : 0;
+    return Bootloader::Decode(Out, Need) != Bootloader::INVALID ? (int)Need : 0;
 }
 
 static void SendRaw(const uint8_t *Data, size_t Len)
@@ -257,18 +257,30 @@ static void SendRaw(const uint8_t *Data, size_t Len)
 // Handlers
 // ---------------------------------------------------------------------------
 
+// Offset of the last successfully programmed chunk (0xFFFFFFFF = nothing yet). Reported back
+// on every write so the app resynchronises after a rejected chunk instead of guessing.
+static uint32_t LastWritten = 0xFFFFFFFFu;
+
 static void HandleWrite(uint32_t Offset, const uint8_t *Payload)
 {
-    if ((Offset & 31u) != 0) return; // 32-byte aligned per the doc
     uint32_t Addr = APP_BASE + Offset;
-    if (Addr < APP_BASE || Addr + Bootloader::PAYLOAD_SIZE > APP_LIMIT) return;
+    bool Ok = (Offset & 31u) == 0; // 32-byte aligned per the doc
+    if (Ok) Ok = Addr >= APP_BASE && Addr + Bootloader::PAYLOAD_SIZE <= APP_LIMIT;
 
     // Erase the 64-byte page on its first half; the second half programs the erased page.
-    if ((Addr & 63u) == 0)
+    if (Ok && (Addr & 63u) == 0)
     {
-        if (!FlashErasePage(Addr)) return;
+        Ok = FlashErasePage(Addr);
     }
-    FlashWrite(Addr, Payload, Bootloader::PAYLOAD_SIZE);
+    if (Ok)
+    {
+        FlashWrite(Addr, Payload, Bootloader::PAYLOAD_SIZE);
+        LastWritten = Offset;
+    }
+
+    uint8_t Resp[Bootloader::READ_REQ_SIZE];
+    Bootloader::EncodeWriteResponse(LastWritten, Resp);
+    SendRaw(Resp, sizeof(Resp));
 }
 
 static void HandleRead(uint32_t Offset)
@@ -283,6 +295,36 @@ static void HandleRead(uint32_t Offset)
     uint8_t Resp[Bootloader::DATA_SIZE];
     Bootloader::EncodeReadResponse(Offset, Data, Resp);
     SendRaw(Resp, sizeof(Resp));
+}
+
+// The identify response is entirely build-time constant (app size + name), so the whole frame
+// - control/parity included - is precomputed and lives in flash. Nothing is built at runtime.
+struct IdentifyFrame { uint8_t B[Bootloader::DATA_SIZE]; };
+
+constexpr IdentifyFrame MakeIdentify(uint32_t Space, const char *Name)
+{
+    IdentifyFrame F{};
+    F.B[0] = Bootloader::START;
+    F.B[1] = Bootloader::CMD_IDENTIFY_RESP;
+    F.B[2] = (uint8_t)(Space & 0xFFu);
+    F.B[3] = (uint8_t)((Space >> 8) & 0xFFu);
+    F.B[4] = (uint8_t)((Space >> 16) & 0xFFu);
+    F.B[5] = (uint8_t)((Space >> 24) & 0xFFu);
+    for (uint8_t I = 0; I < Bootloader::NAME_SIZE; I++)
+    {
+        if (Name[I] == '\0') break;
+        F.B[6 + I] = (uint8_t)Name[I];
+    }
+    F.B[Bootloader::DATA_SIZE - 1] = Bootloader::END;
+    F.B[1] |= (uint8_t)(Bootloader::Parity(F.B, Bootloader::DATA_SIZE) << 3);
+    return F;
+}
+
+constexpr IdentifyFrame Identify = MakeIdentify(APP_LIMIT - APP_BASE, "DAS v0.1");
+
+static void HandleIdentify()
+{
+    SendRaw(Identify.B, Bootloader::DATA_SIZE);
 }
 
 // ---------------------------------------------------------------------------
@@ -328,9 +370,11 @@ int main(void)
         int N = ReceiveFrame(Frame, sizeof(Frame), 2000000u); // 2 s per byte
         if (N <= 0) continue;
 
-        uint8_t Cmd = (uint8_t)(Frame[1] & 0x03);
+        uint8_t Cmd = (uint8_t)(Frame[1] & 0x07);
         uint32_t Offset = Bootloader::Offset(Frame);
-        if (Cmd == Bootloader::CMD_WRITE)
+        if (Cmd == Bootloader::CMD_IDENTIFY_REQ)
+            HandleIdentify();
+        else if (Cmd == Bootloader::CMD_WRITE)
             HandleWrite(Offset, Bootloader::Payload(Frame));
         else if (Cmd == Bootloader::CMD_READ_REQ)
             HandleRead(Offset);

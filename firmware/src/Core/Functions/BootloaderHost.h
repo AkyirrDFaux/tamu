@@ -38,14 +38,14 @@ namespace BootloaderHost
         if (!Read(&b)) return 0;
         Out[Got++] = b;
 
-        uint16_t Need = Bootloader::FrameSize((uint8_t)(b & 0x03u));
+        uint16_t Need = Bootloader::FrameSize((uint8_t)(b & 0x07u));
         if (Need == 0 || Need > Cap) return 0;
         while (Got < Need)
         {
             if (!Read(&b)) return 0;
             Out[Got++] = b;
         }
-        return Bootloader::Decode(Out, Need) ? (int)Need : 0;
+        return Bootloader::Decode(Out, Need) != Bootloader::INVALID ? (int)Need : 0;
     }
 
     // Answers one read-request: reads `PAYLOAD_SIZE` bytes at `offset`, encodes the
@@ -64,10 +64,11 @@ namespace BootloaderHost
         SendCb(Resp, sizeof(Resp));
     }
 
-    // Serves raw frames forever. `onWrite` is void(uint32_t, const uint8_t *) and
-    // `onRead` is void(uint32_t); the host's own write/read handlers do the flashing.
-    template <typename BeginFrame, typename ReadByte, typename OnWrite, typename OnRead>
-    inline void HostLoop(BeginFrame Begin, ReadByte Read, OnWrite OnWriteCb, OnRead OnReadCb)
+    // Serves raw frames forever. `OnWrite` is void(uint32_t, const uint8_t *), `OnRead` is
+    // void(uint32_t) and `OnIdentify` is void(); the host's own handlers do the flashing
+    // and send the identify response (its app size/name are build-time constants).
+    template <typename BeginFrame, typename ReadByte, typename OnWrite, typename OnRead, typename OnIdentify>
+    inline void HostLoop(BeginFrame Begin, ReadByte Read, OnWrite OnWriteCb, OnRead OnReadCb, OnIdentify OnIdentifyCb)
     {
         for (;;)
         {
@@ -75,9 +76,11 @@ namespace BootloaderHost
             int n = ReceiveFrame(Frame, sizeof(Frame), Begin, Read);
             if (n <= 0) continue;
 
-            uint8_t Cmd = (uint8_t)(Frame[1] & 0x03u);
+            uint8_t Cmd = (uint8_t)(Frame[1] & 0x07u);
             uint32_t Offset = Bootloader::Offset(Frame);
-            if (Cmd == Bootloader::CMD_WRITE)
+            if (Cmd == Bootloader::CMD_IDENTIFY_REQ)
+                OnIdentifyCb();
+            else if (Cmd == Bootloader::CMD_WRITE)
                 OnWriteCb(Offset, Bootloader::Payload(Frame));
             else if (Cmd == Bootloader::CMD_READ_REQ)
                 OnReadCb(Offset);
