@@ -16,188 +16,188 @@
 
 
 // Evaluates the Set line's token stream and stores it into the destination.
-inline uint8_t ScriptService::ExecSet(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase,
-                             uint16_t dtype, uint8_t *dest, uint8_t dsize)
+inline uint8_t ScriptService::ExecSet(LoadedScript *s, const ScriptLineInfo &Ln, const uint8_t *Opbase,
+                             uint16_t Dtype, uint8_t *Dest, uint8_t Dsize)
 {
-    if (ln.opCount < 1) return SCRIPT_ERR_OPERAND;
+    if (Ln.opCount < 1) return SCRIPT_ERR_OPERAND;
     ExprParser p;
     p.s = s;
-    p.tok = opbase;
-    p.n = ln.opCount;
+    p.Tok = Opbase;
+    p.n = Ln.opCount;
     p.i = 0;
-    p.depth = 0;
+    p.Depth = 0;
     ExprValue v;
     if (!ExprBin(&p, v, 1)) return SCRIPT_ERR_OPERAND;
     if (p.i != p.n) return SCRIPT_ERR_OPERAND; // trailing tokens
 
-    if (dtype == (uint16_t)DataType::Vector)
+    if (Dtype == (uint16_t)DataType::Vector)
     {
-        uint8_t dcount = dsize / 4;
-        if (dcount == 0 || v.count != dcount) return SCRIPT_ERR_TYPE;
-        for (uint8_t k = 0; k < dcount; k++)
+        uint8_t Dcount = Dsize / 4;
+        if (Dcount == 0 || v.Count != Dcount) return SCRIPT_ERR_TYPE;
+        for (uint8_t k = 0; k < Dcount; k++)
         {
-            int32_t raw = v.e[k].Value;
-            memcpy(dest + (size_t)k * 4, &raw, 4);
+            int32_t Raw = v.e[k].Value;
+            memcpy(Dest + (size_t)k * 4, &Raw, 4);
         }
     }
-    else if (dtype == (uint16_t)DataType::Matrix)
+    else if (Dtype == (uint16_t)DataType::Matrix)
     {
         // A Matrix destination takes its dimensions from the value's header (the dest slot
         // may be uninitialised). The value must be a Matrix (or a Matrix expression result).
-        if (v.dtype != (uint16_t)DataType::Matrix || v.count == 0) return SCRIPT_ERR_TYPE;
-        if ((uint32_t)dsize < 4u + (uint32_t)v.count * 4u) return SCRIPT_ERR_TYPE;
-        dest[0] = (uint8_t)(v.mh & 0xFF);
-        dest[1] = (uint8_t)(v.mh >> 8);
-        dest[2] = (uint8_t)(v.mw & 0xFF);
-        dest[3] = (uint8_t)(v.mw >> 8);
-        for (uint8_t k = 0; k < v.count; k++)
+        if (v.Dtype != (uint16_t)DataType::Matrix || v.Count == 0) return SCRIPT_ERR_TYPE;
+        if ((uint32_t)Dsize < 4u + (uint32_t)v.Count * 4u) return SCRIPT_ERR_TYPE;
+        Dest[0] = (uint8_t)(v.Mh & 0xFF);
+        Dest[1] = (uint8_t)(v.Mh >> 8);
+        Dest[2] = (uint8_t)(v.Mw & 0xFF);
+        Dest[3] = (uint8_t)(v.Mw >> 8);
+        for (uint8_t k = 0; k < v.Count; k++)
         {
-            int32_t raw = v.e[k].Value;
-            memcpy(dest + 4 + (size_t)k * 4, &raw, 4);
+            int32_t Raw = v.e[k].Value;
+            memcpy(Dest + 4 + (size_t)k * 4, &Raw, 4);
         }
     }
     else
     {
-        if (v.count != 1) return SCRIPT_ERR_TYPE;
-        ScriptScalar sc;
-        sc.n = v.e[0];
-        sc.i = v.e[0].RoundToInt();
-        StoreScalar(dtype, dest, dsize, dtype == (uint16_t)DataType::Number, sc);
+        if (v.Count != 1) return SCRIPT_ERR_TYPE;
+        ScriptScalar Sc;
+        Sc.n = v.e[0];
+        Sc.i = v.e[0].RoundToInt();
+        StoreScalar(Dtype, Dest, Dsize, Dtype == (uint16_t)DataType::Number, Sc);
     }
-    s->ic++;
+    s->Ic++;
     return SCRIPT_ERR_NONE;
 }
 
 // Evaluates a token stream as an expression and returns its truth value (used by the flow
 // instructions and Wait until).
-inline bool ScriptService::ExprTruthy(LoadedScript *s, const uint8_t *tok, uint8_t n, bool &ok)
+inline bool ScriptService::ExprTruthy(LoadedScript *s, const uint8_t *Tok, uint8_t n, bool &Ok)
 {
     if (n < 1) return false;
     ExprParser p;
     p.s = s;
-    p.tok = tok;
+    p.Tok = Tok;
     p.n = n;
     p.i = 0;
-    p.depth = 0;
+    p.Depth = 0;
     ExprValue v;
     if (!ExprBin(&p, v, 1)) return false;
     if (p.i != p.n) return false;
-    ok = (v.count > 0) && (v.e[0].Value != 0);
+    Ok = (v.Count > 0) && (v.e[0].Value != 0);
     return true;
 }
 
 // Transform dest = rot, ox, oy, sx, sy [, skew] -> a 2x3 affine matrix (rotation in
 // radians), matching the render Position/Offset format.
-inline uint8_t ScriptService::ExecTransform(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase,
-                                   uint16_t dtype, uint8_t *dest, uint8_t dsize)
+inline uint8_t ScriptService::ExecTransform(LoadedScript *s, const ScriptLineInfo &Ln, const uint8_t *Opbase,
+                                   uint16_t Dtype, uint8_t *Dest, uint8_t Dsize)
 {
-    if (dtype != (uint16_t)DataType::Matrix || dsize < 4 + 6 * 4) return SCRIPT_ERR_TYPE;
-    if (ln.opCount < 5) return SCRIPT_ERR_OPERAND;
+    if (Dtype != (uint16_t)DataType::Matrix || Dsize < 4 + 6 * 4) return SCRIPT_ERR_TYPE;
+    if (Ln.opCount < 5) return SCRIPT_ERR_OPERAND;
     Number v[6] = {Number(0), Number(0), Number(0), Number(0), Number(0), Number(0)};
-    uint8_t n = ln.opCount;
+    uint8_t n = Ln.opCount;
     if (n > 6) n = 6;
     for (uint8_t i = 0; i < n; i++)
     {
-        ScriptScalar sc;
-        if (!ResolveOperandScalar(s, opbase + (size_t)i * 4, true, sc)) return SCRIPT_ERR_OPERAND;
-        v[i] = sc.n;
+        ScriptScalar Sc;
+        if (!ResolveOperandScalar(s, Opbase + (size_t)i * 4, true, Sc)) return SCRIPT_ERR_OPERAND;
+        v[i] = Sc.n;
     }
-    Number rot = v[0], tx = v[1], ty = v[2], sx = v[3], sy = v[4], skew = v[5];
-    Number c = cos(rot), s2 = sin(rot);
+    Number Rot = v[0], Tx = v[1], Ty = v[2], Sx = v[3], Sy = v[4], Skew = v[5];
+    Number c = cos(Rot), S2 = sin(Rot);
     Number k = Number(0);
-    if (skew.Value != 0)
+    if (Skew.Value != 0)
     {
-        Number cd = cos(skew);
-        if (cd.Value != 0) k = sin(skew) / cd;
+        Number Cd = cos(Skew);
+        if (Cd.Value != 0) k = sin(Skew) / Cd;
     }
     // Cells [a b tx; c d ty] (matches the app's Transform23).
-    Number cells[6];
-    cells[0] = sx * c;
-    cells[1] = sx * c * k + sy * s2;
-    cells[2] = tx;
-    cells[3] = -sx * s2;
-    cells[4] = -sx * s2 * k + sy * c;
-    cells[5] = ty;
+    Number Cells[6];
+    Cells[0] = Sx * c;
+    Cells[1] = Sx * c * k + Sy * S2;
+    Cells[2] = Tx;
+    Cells[3] = -Sx * S2;
+    Cells[4] = -Sx * S2 * k + Sy * c;
+    Cells[5] = Ty;
     // The renderer samples the geometry mask forward (pp = Position * coord), so the shape's
     // centre lands where the sampled point is zero: Position^-1(0) = -L^-1 * t. To keep the
     // centre where the caller asked for it (-t, the same as an unrotated translation) the
     // stored translation is pre-rotated by the linear part: t' = L * t.
-    Number txr = cells[0] * tx + cells[1] * ty;
-    Number tyr = cells[3] * tx + cells[4] * ty;
-    cells[2] = txr;
-    cells[5] = tyr;
-    dest[0] = 2; dest[1] = 0; dest[2] = 3; dest[3] = 0;
+    Number Txr = Cells[0] * Tx + Cells[1] * Ty;
+    Number Tyr = Cells[3] * Tx + Cells[4] * Ty;
+    Cells[2] = Txr;
+    Cells[5] = Tyr;
+    Dest[0] = 2; Dest[1] = 0; Dest[2] = 3; Dest[3] = 0;
     for (uint8_t i = 0; i < 6; i++)
     {
-        int32_t raw = cells[i].Value;
-        memcpy(dest + 4 + (size_t)i * 4, &raw, 4);
+        int32_t Raw = Cells[i].Value;
+        memcpy(Dest + 4 + (size_t)i * 4, &Raw, 4);
     }
-    s->ic++;
+    s->Ic++;
     return SCRIPT_ERR_NONE;
 }
 
-inline uint8_t ScriptService::ExecMath(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase, uint8_t cat, uint8_t op) {
-    if (ln.destCount < 1) return SCRIPT_ERR_OPERAND;
-    uint16_t dtype = 0;
-    uint8_t *dest = nullptr;
-    uint8_t dsize = 0;
-    if (!ResolveDest(s, s->instr + (size_t)ln.start * 4, dtype, dest, dsize)) return SCRIPT_ERR_OPERAND;
-    bool num = (dtype == (uint16_t)DataType::Number);
+inline uint8_t ScriptService::ExecMath(LoadedScript *s, const ScriptLineInfo &Ln, const uint8_t *Opbase, uint8_t Cat, uint8_t Op) {
+    if (Ln.destCount < 1) return SCRIPT_ERR_OPERAND;
+    uint16_t Dtype = 0;
+    uint8_t *Dest = nullptr;
+    uint8_t Dsize = 0;
+    if (!ResolveDest(s, s->Instr + (size_t)Ln.Start * 4, Dtype, Dest, Dsize)) return SCRIPT_ERR_OPERAND;
+    bool Num = (Dtype == (uint16_t)DataType::Number);
 
     // SET evaluates an infix expression (scalar / vector / matrix).
-    if (cat == SCRIPT_CAT_MATH && op == SCRIPT_OP_MATH_SET) {
-        return ExecSet(s, ln, opbase, dtype, dest, dsize);
+    if (Cat == SCRIPT_CAT_MATH && Op == SCRIPT_OP_MATH_SET) {
+        return ExecSet(s, Ln, Opbase, Dtype, Dest, Dsize);
     }
 
     // Transform: a 2x3 affine matrix from (rot, ox, oy, sx, sy[, skew]).
-    if (cat == SCRIPT_CAT_MATH && op == SCRIPT_OP_MATH_TRANSFORM) {
-        return ExecTransform(s, ln, opbase, dtype, dest, dsize);
+    if (Cat == SCRIPT_CAT_MATH && Op == SCRIPT_OP_MATH_TRANSFORM) {
+        return ExecTransform(s, Ln, Opbase, Dtype, Dest, Dsize);
     }
 
     // Vector/Matrix destination: element-wise math (operands resolved raw).
-    if (dtype == (uint16_t)DataType::Vector || dtype == (uint16_t)DataType::Matrix) {
-        return ExecVectorMath(s, ln, opbase, cat, op, dtype, dest, dsize);
+    if (Dtype == (uint16_t)DataType::Vector || Dtype == (uint16_t)DataType::Matrix) {
+        return ExecVectorMath(s, Ln, Opbase, Cat, Op, Dtype, Dest, Dsize);
     }
 
-    ScriptScalar in[8];
-    uint8_t n = ln.opCount;
+    ScriptScalar In[8];
+    uint8_t n = Ln.opCount;
     if (n > 8) n = 8;
     if (n < 1) return SCRIPT_ERR_OPERAND;
     for (uint8_t i = 0; i < n; i++) {
-        if (!ResolveOperandScalar(s, opbase + (size_t)i * 4, num, in[i])) return SCRIPT_ERR_OPERAND;
+        if (!ResolveOperandScalar(s, Opbase + (size_t)i * 4, Num, In[i])) return SCRIPT_ERR_OPERAND;
     }
 
-    ScriptScalar out;
-    out.n = Number(0);
-    out.i = 0;
-    switch (cat) {
+    ScriptScalar Out;
+    Out.n = Number(0);
+    Out.i = 0;
+    switch (Cat) {
         case SCRIPT_CAT_MATH:
             // Fold every operand left-to-right (n-ary: dest = a op b op c ...).
-            out = in[0];
-            switch (op) {
+            Out = In[0];
+            switch (Op) {
                 case SCRIPT_OP_MATH_MOD:
                     for (uint8_t k = 1; k < n; k++) {
-                        if (num) { int32_t b = in[k].n.RoundToInt(); if (b == 0) return SCRIPT_ERR_TYPE; out.n = Number(out.n.RoundToInt() % b); }
-                        else { if (in[k].i == 0) return SCRIPT_ERR_TYPE; out.i %= in[k].i; }
+                        if (Num) { int32_t b = In[k].n.RoundToInt(); if (b == 0) return SCRIPT_ERR_TYPE; Out.n = Number(Out.n.RoundToInt() % b); }
+                        else { if (In[k].i == 0) return SCRIPT_ERR_TYPE; Out.i %= In[k].i; }
                     }
                     break;
                 case SCRIPT_OP_MATH_MIN:
-                    for (uint8_t k = 1; k < n; k++) { if (num) out.n = min(out.n, in[k].n); else out.i = out.i < in[k].i ? out.i : in[k].i; }
+                    for (uint8_t k = 1; k < n; k++) { if (Num) Out.n = min(Out.n, In[k].n); else Out.i = Out.i < In[k].i ? Out.i : In[k].i; }
                     break;
                 case SCRIPT_OP_MATH_MAX:
-                    for (uint8_t k = 1; k < n; k++) { if (num) out.n = max(out.n, in[k].n); else out.i = out.i > in[k].i ? out.i : in[k].i; }
+                    for (uint8_t k = 1; k < n; k++) { if (Num) Out.n = max(Out.n, In[k].n); else Out.i = Out.i > In[k].i ? Out.i : In[k].i; }
                     break;
-                case SCRIPT_OP_MATH_ABS: if (num) out.n = abs(out.n); else out.i = out.i < 0 ? -out.i : out.i; break;
+                case SCRIPT_OP_MATH_ABS: if (Num) Out.n = abs(Out.n); else Out.i = Out.i < 0 ? -Out.i : Out.i; break;
                 case SCRIPT_OP_MATH_LIMIT: {
                     if (n < 3) return SCRIPT_ERR_OPERAND;
-                    if (num) {
-                        Number lo = in[1].n, hi = in[2].n;
-                        if (out.n.Value < lo.Value) out.n = lo;
-                        if (out.n.Value > hi.Value) out.n = hi;
+                    if (Num) {
+                        Number Lo = In[1].n, Hi = In[2].n;
+                        if (Out.n.Value < Lo.Value) Out.n = Lo;
+                        if (Out.n.Value > Hi.Value) Out.n = Hi;
                     } else {
-                        int32_t lo = in[1].i, hi = in[2].i;
-                        if (out.i < lo) out.i = lo;
-                        if (out.i > hi) out.i = hi;
+                        int32_t Lo = In[1].i, Hi = In[2].i;
+                        if (Out.i < Lo) Out.i = Lo;
+                        if (Out.i > Hi) Out.i = Hi;
                     }
                     break;
                 }
@@ -206,11 +206,11 @@ inline uint8_t ScriptService::ExecMath(LoadedScript *s, const ScriptLineInfo &ln
             break;
         case SCRIPT_CAT_LOGIC:
             // Comparisons/logic moved into the expression (Set/If/While); only Select remains.
-            switch (op) {
+            switch (Op) {
                 case SCRIPT_OP_LOGIC_SELECT: {
                     if (n < 3) return SCRIPT_ERR_OPERAND;
-                    bool cond = num ? (in[0].n.Value != 0) : (in[0].i != 0);
-                    if (num) out.n = cond ? in[1].n : in[2].n; else out.i = cond ? in[1].i : in[2].i;
+                    bool Cond = Num ? (In[0].n.Value != 0) : (In[0].i != 0);
+                    if (Num) Out.n = Cond ? In[1].n : In[2].n; else Out.i = Cond ? In[1].i : In[2].i;
                     break;
                 }
                 default: return SCRIPT_ERR_UNKNOWN_OP;
@@ -220,107 +220,107 @@ inline uint8_t ScriptService::ExecMath(LoadedScript *s, const ScriptLineInfo &ln
             return SCRIPT_ERR_UNKNOWN_OP;
     }
 
-    StoreScalar(dtype, dest, dsize, num, out);
-    s->ic++;
+    StoreScalar(Dtype, Dest, Dsize, Num, Out);
+    s->Ic++;
     return SCRIPT_ERR_NONE;
 }
 
-inline uint8_t ScriptService::ExecFlow(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase, uint8_t op) {
-    switch (op) {
+inline uint8_t ScriptService::ExecFlow(LoadedScript *s, const ScriptLineInfo &Ln, const uint8_t *Opbase, uint8_t Op) {
+    switch (Op) {
         case SCRIPT_OP_FLOW_IF: {
-            if (ln.opCount < 1) return SCRIPT_ERR_OPERAND;
-            bool ok = false;
-            if (!ExprTruthy(s, opbase, ln.opCount, ok)) return SCRIPT_ERR_OPERAND;
-            uint16_t match = s->blockMatch[s->ic];
-            s->ic = ok ? s->ic + 1 : (match == 0xFFFF ? s->ic + 1 : match + 1);
+            if (Ln.opCount < 1) return SCRIPT_ERR_OPERAND;
+            bool Ok = false;
+            if (!ExprTruthy(s, Opbase, Ln.opCount, Ok)) return SCRIPT_ERR_OPERAND;
+            uint16_t Match = s->blockMatch[s->Ic];
+            s->Ic = Ok ? s->Ic + 1 : (Match == 0xFFFF ? s->Ic + 1 : Match + 1);
             return SCRIPT_ERR_NONE;
         }
         case SCRIPT_OP_FLOW_WHILE: {
-            if (ln.opCount < 1) return SCRIPT_ERR_OPERAND;
-            bool ok = false;
-            if (!ExprTruthy(s, opbase, ln.opCount, ok)) return SCRIPT_ERR_OPERAND;
-            uint16_t match = s->blockMatch[s->ic];
-            s->ic = ok ? s->ic + 1 : (match == 0xFFFF ? s->ic + 1 : match + 1);
+            if (Ln.opCount < 1) return SCRIPT_ERR_OPERAND;
+            bool Ok = false;
+            if (!ExprTruthy(s, Opbase, Ln.opCount, Ok)) return SCRIPT_ERR_OPERAND;
+            uint16_t Match = s->blockMatch[s->Ic];
+            s->Ic = Ok ? s->Ic + 1 : (Match == 0xFFFF ? s->Ic + 1 : Match + 1);
             return SCRIPT_ERR_NONE;
         }
         case SCRIPT_OP_FLOW_END: {
-            uint16_t open = (s->blockMatch[s->ic] == 0xFFFF) ? 0xFFFF : s->blockMatch[s->ic];
-            if (open != 0xFFFF && s->blockKind[open] == 2) { s->ic = open; return SCRIPT_ERR_NONE; } // while -> re-check
-            s->ic++;
+            uint16_t Open = (s->blockMatch[s->Ic] == 0xFFFF) ? 0xFFFF : s->blockMatch[s->Ic];
+            if (Open != 0xFFFF && s->blockKind[Open] == 2) { s->Ic = Open; return SCRIPT_ERR_NONE; } // while -> re-check
+            s->Ic++;
             return SCRIPT_ERR_NONE;
         }
         case SCRIPT_OP_FLOW_JUMP: {
-            if (ln.opCount < 1) return SCRIPT_ERR_OPERAND;
-            int32_t target = 0;
-            if (!ResolveOperandInt(s, opbase, target)) return SCRIPT_ERR_OPERAND;
-            if (target < 0 || target >= s->lineCount) return SCRIPT_ERR_BOUNDS;
-            s->ic = (uint16_t)target;
+            if (Ln.opCount < 1) return SCRIPT_ERR_OPERAND;
+            int32_t Target = 0;
+            if (!ResolveOperandInt(s, Opbase, Target)) return SCRIPT_ERR_OPERAND;
+            if (Target < 0 || Target >= s->lineCount) return SCRIPT_ERR_BOUNDS;
+            s->Ic = (uint16_t)Target;
             return SCRIPT_ERR_NONE;
         }
         case SCRIPT_OP_FLOW_CALL: {
-            if (ln.opCount < 1) return SCRIPT_ERR_OPERAND;
-            int32_t target = 0;
-            if (!ResolveOperandInt(s, opbase, target)) return SCRIPT_ERR_OPERAND;
-            if (target < 0 || target >= s->lineCount) return SCRIPT_ERR_BOUNDS;
+            if (Ln.opCount < 1) return SCRIPT_ERR_OPERAND;
+            int32_t Target = 0;
+            if (!ResolveOperandInt(s, Opbase, Target)) return SCRIPT_ERR_OPERAND;
+            if (Target < 0 || Target >= s->lineCount) return SCRIPT_ERR_BOUNDS;
             if (s->callDepth >= SCRIPT_MAX_CALL_DEPTH) return SCRIPT_ERR_STACK;
-            s->callStack[s->callDepth++] = (uint16_t)(s->ic + 1);
-            s->ic = (uint16_t)target;
+            s->callStack[s->callDepth++] = (uint16_t)(s->Ic + 1);
+            s->Ic = (uint16_t)Target;
             return SCRIPT_ERR_NONE;
         }
         case SCRIPT_OP_FLOW_RETURN: {
-            if (s->callDepth == 0) { s->state = (uint8_t)ScriptState::Finished; return SCRIPT_ERR_NONE; }
-            s->ic = s->callStack[--s->callDepth];
+            if (s->callDepth == 0) { s->State = (uint8_t)ScriptState::Finished; return SCRIPT_ERR_NONE; }
+            s->Ic = s->callStack[--s->callDepth];
             return SCRIPT_ERR_NONE;
         }
         case SCRIPT_OP_FLOW_HALT:
-            s->state = (uint8_t)ScriptState::Finished;
+            s->State = (uint8_t)ScriptState::Finished;
             return SCRIPT_ERR_NONE;
         default:
             return SCRIPT_ERR_UNKNOWN_OP;
     }
 }
 
-inline uint8_t ScriptService::ExecTime(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase, uint8_t op, uint32_t nowMs, bool &yield) {
-    switch (op) {
+inline uint8_t ScriptService::ExecTime(LoadedScript *s, const ScriptLineInfo &Ln, const uint8_t *Opbase, uint8_t Op, uint32_t nowMs, bool &Yield) {
+    switch (Op) {
         case SCRIPT_OP_TIME_DELAY: {
-            if (ln.opCount < 1) return SCRIPT_ERR_OPERAND;
-            int32_t ms = 0;
-            if (!ResolveOperandInt(s, opbase, ms)) return SCRIPT_ERR_OPERAND;
-            if (ms < 0) ms = 0;
-            s->ic++;
-            s->waitUntil = nowMs + (uint32_t)ms;
+            if (Ln.opCount < 1) return SCRIPT_ERR_OPERAND;
+            int32_t Ms = 0;
+            if (!ResolveOperandInt(s, Opbase, Ms)) return SCRIPT_ERR_OPERAND;
+            if (Ms < 0) Ms = 0;
+            s->Ic++;
+            s->waitUntil = nowMs + (uint32_t)Ms;
             s->waitingOnTime = true;
-            s->state = (uint8_t)ScriptState::Waiting;
-            yield = true;
+            s->State = (uint8_t)ScriptState::Waiting;
+            Yield = true;
             return SCRIPT_ERR_NONE;
         }
         case SCRIPT_OP_TIME_WAIT: {
-            if (ln.opCount < 1) return SCRIPT_ERR_OPERAND;
-            bool ok = false;
-            if (!ExprTruthy(s, opbase, ln.opCount, ok)) return SCRIPT_ERR_OPERAND;
-            if (!ok) {
+            if (Ln.opCount < 1) return SCRIPT_ERR_OPERAND;
+            bool Ok = false;
+            if (!ExprTruthy(s, Opbase, Ln.opCount, Ok)) return SCRIPT_ERR_OPERAND;
+            if (!Ok) {
                 s->waitingOnTime = false;
-                s->state = (uint8_t)ScriptState::Waiting;
-                yield = true; // ic stays: re-evaluated on resume
+                s->State = (uint8_t)ScriptState::Waiting;
+                Yield = true; // ic stays: re-evaluated on resume
                 return SCRIPT_ERR_NONE;
             }
-            s->ic++;
+            s->Ic++;
             return SCRIPT_ERR_NONE;
         }
         case SCRIPT_OP_TIME_GET: {
-            if (ln.destCount < 1) return SCRIPT_ERR_OPERAND;
-            uint16_t dtype = 0; uint8_t *dest = nullptr; uint8_t dsize = 0;
-            if (!ResolveDest(s, s->instr + (size_t)ln.start * 4, dtype, dest, dsize)) return SCRIPT_ERR_OPERAND;
+            if (Ln.destCount < 1) return SCRIPT_ERR_OPERAND;
+            uint16_t Dtype = 0; uint8_t *Dest = nullptr; uint8_t Dsize = 0;
+            if (!ResolveDest(s, s->Instr + (size_t)Ln.Start * 4, Dtype, Dest, Dsize)) return SCRIPT_ERR_OPERAND;
             // Time is a whole millisecond count. A Q16.16 Number destination only has a
             // 15-bit integer part (it overflows past ~32767 ms), so restrict Get time to
             // the integer types.
-            if (dtype != (uint16_t)DataType::Index && dtype != (uint16_t)DataType::Uint32)
+            if (Dtype != (uint16_t)DataType::Index && Dtype != (uint16_t)DataType::Uint32)
                 return SCRIPT_ERR_TYPE;
             ScriptScalar v;
             v.i = (int32_t)nowMs;
             v.n = Number::FromRaw(0); // unused: integer destination
-            StoreScalar(dtype, dest, dsize, false, v);
-            s->ic++;
+            StoreScalar(Dtype, Dest, Dsize, false, v);
+            s->Ic++;
             return SCRIPT_ERR_NONE;
         }
         default:
@@ -329,169 +329,169 @@ inline uint8_t ScriptService::ExecTime(LoadedScript *s, const ScriptLineInfo &ln
 }
 
 // Reads a 4-byte BlockInfo from a Constant operand.
-inline bool ScriptService::OperandBlockInfo(LoadedScript *s, const uint8_t *sym, uint32_t &bi) {
-    uint8_t scratch[4];
-    const uint8_t *data = nullptr;
-    uint8_t size = 0;
-    uint16_t dtype = 0;
-    if (!Resolve(s, sym[0], sym[1], SymVal(sym), scratch, &data, &size, &dtype)) return false;
-    if (size < 4) return false;
-    memcpy(&bi, data, 4);
+inline bool ScriptService::OperandBlockInfo(LoadedScript *s, const uint8_t *Sym, uint32_t &Bi) {
+    uint8_t Scratch[4];
+    const uint8_t *Data = nullptr;
+    uint8_t Size = 0;
+    uint16_t Dtype = 0;
+    if (!Resolve(s, Sym[0], Sym[1], SymVal(Sym), Scratch, &Data, &Size, &Dtype)) return false;
+    if (Size < 4) return false;
+    memcpy(&Bi, Data, 4);
     return true;
 }
 
-inline void ScriptService::SendRegisterRequest(LoadedScript *s, uint16_t addr, uint8_t cid,
-                                      const uint8_t *Payload, uint16_t len) {
-    PacketFrame req;
-    PacketConstruct(&req, addr, MakeService(ServiceType::Register, cid), s->Trid,
-                    FLAG_REQACK | FLAG_START | FLAG_STOP, Payload, len);
-    SendAndVerifyPacket(req);
+inline void ScriptService::SendRegisterRequest(LoadedScript *s, uint16_t Addr, uint8_t Cid,
+                                      const uint8_t *Payload, uint16_t Len) {
+    PacketFrame Req;
+    PacketConstruct(&Req, Addr, MakeService(ServiceType::Register, Cid), s->Trid,
+                    FLAG_REQACK | FLAG_START | FLAG_STOP, Payload, Len);
+    SendAndVerifyPacket(Req);
 }
 
-inline uint8_t ScriptService::ExecService(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase,
-                                 uint8_t op, uint32_t nowMs, bool &yield) {
-    switch (op) {
+inline uint8_t ScriptService::ExecService(LoadedScript *s, const ScriptLineInfo &Ln, const uint8_t *Opbase,
+                                 uint8_t Op, uint32_t nowMs, bool &Yield) {
+    switch (Op) {
         case SCRIPT_OP_SERVICE_NOP:
-            s->ic++;
+            s->Ic++;
             return SCRIPT_ERR_NONE;
         case SCRIPT_OP_SERVICE_LOG: {
             // Custom log (docs "Custom logs"): the first operand's value becomes the
             // log code; the source is the Script service tagged with the instance.
-            uint16_t code = (uint16_t)(s->slot & 0xFF);
-            if (ln.opCount >= 1) {
+            uint16_t Code = (uint16_t)(s->Slot & 0xFF);
+            if (Ln.opCount >= 1) {
                 int32_t v = 0;
-                if (ResolveOperandInt(s, opbase, v)) code = (uint16_t)(v & 0xFFFF);
+                if (ResolveOperandInt(s, Opbase, v)) Code = (uint16_t)(v & 0xFFFF);
             }
             // A custom log is an informational message, not an error report.
-            ReportLog(MakeLog(false, (uint16_t)ServiceType::Script, code, 0), PRIORITY_LOG);
-            s->ic++;
+            ReportLog(MakeLog(false, (uint16_t)ServiceType::Script, Code, 0), PRIORITY_LOG);
+            s->Ic++;
             return SCRIPT_ERR_NONE;
         }
         case SCRIPT_OP_SERVICE_STATE: {
-            if (ln.opCount < 1) return SCRIPT_ERR_OPERAND;
-            if (opbase[0] == SCRIPT_SYM_PREDEFINE && opbase[1] == SCRIPT_PRE_STATE) {
-                uint8_t st = (uint8_t)(SymVal(opbase) & 0xFF);
-                if (st > (uint8_t)ScriptState::Error) return SCRIPT_ERR_OPERAND;
-                SetState(s, st);
-                if (st == (uint8_t)ScriptState::Stopped || st == (uint8_t)ScriptState::Finished ||
-                    st == (uint8_t)ScriptState::Error)
+            if (Ln.opCount < 1) return SCRIPT_ERR_OPERAND;
+            if (Opbase[0] == SCRIPT_SYM_PREDEFINE && Opbase[1] == SCRIPT_PRE_STATE) {
+                uint8_t St = (uint8_t)(SymVal(Opbase) & 0xFF);
+                if (St > (uint8_t)ScriptState::Error) return SCRIPT_ERR_OPERAND;
+                SetState(s, St);
+                if (St == (uint8_t)ScriptState::Stopped || St == (uint8_t)ScriptState::Finished ||
+                    St == (uint8_t)ScriptState::Error)
                     return SCRIPT_ERR_NONE; // terminal: the run loop stops here
-                s->ic++;
+                s->Ic++;
                 return SCRIPT_ERR_NONE;
             }
-            s->ic++;
+            s->Ic++;
             return SCRIPT_ERR_NONE;
         }
         case SCRIPT_OP_SERVICE_REG_READ: { // dest = register[BlockInfo]
-            if (ln.destCount < 1 || ln.opCount < 1) return SCRIPT_ERR_OPERAND;
-            uint32_t bi = 0;
-            if (!OperandBlockInfo(s, opbase, bi)) return SCRIPT_ERR_OPERAND;
-            ValueInfo rm;
-            uint8_t rbuf[256]; // a register value can be up to the u8 size limit
-            uint8_t rsz = 0;
-            if (!RegisterGetByBlockInfo(bi, rm, rbuf, rsz)) return SCRIPT_ERR_REGISTER;
-            uint8_t err = Assign(s, s->instr + (size_t)ln.start * 4, rbuf, rsz,
-                                       ValueInfoType(rm.Type));
-            if (err) return err;
-            s->ic++;
+            if (Ln.destCount < 1 || Ln.opCount < 1) return SCRIPT_ERR_OPERAND;
+            uint32_t Bi = 0;
+            if (!OperandBlockInfo(s, Opbase, Bi)) return SCRIPT_ERR_OPERAND;
+            ValueInfo Rm;
+            uint8_t Rbuf[256]; // a register value can be up to the u8 size limit
+            uint8_t Rsz = 0;
+            if (!RegisterGetByBlockInfo(Bi, Rm, Rbuf, Rsz)) return SCRIPT_ERR_REGISTER;
+            uint8_t Err = Assign(s, s->Instr + (size_t)Ln.Start * 4, Rbuf, Rsz,
+                                       ValueInfoType(Rm.Type));
+            if (Err) return Err;
+            s->Ic++;
             return SCRIPT_ERR_NONE;
         }
         case SCRIPT_OP_SERVICE_REG_WRITE: { // register[BlockInfo] = operand2
-            if (ln.opCount < 2) return SCRIPT_ERR_OPERAND;
-            uint32_t bi = 0;
-            if (!OperandBlockInfo(s, opbase, bi)) return SCRIPT_ERR_OPERAND;
-            ValueInfo rm;
-            uint8_t rbuf[256];
-            uint8_t rsz = 0;
-            if (!RegisterGetByBlockInfo(bi, rm, rbuf, rsz)) return SCRIPT_ERR_REGISTER;
-            uint8_t scratch[4];
-            const uint8_t *val = nullptr;
-            uint8_t vsize = 0;
-            uint16_t vtype = 0;
-            if (!Resolve(s, opbase[4], opbase[5], SymVal(opbase + 4), scratch, &val, &vsize, &vtype))
+            if (Ln.opCount < 2) return SCRIPT_ERR_OPERAND;
+            uint32_t Bi = 0;
+            if (!OperandBlockInfo(s, Opbase, Bi)) return SCRIPT_ERR_OPERAND;
+            ValueInfo Rm;
+            uint8_t Rbuf[256];
+            uint8_t Rsz = 0;
+            if (!RegisterGetByBlockInfo(Bi, Rm, Rbuf, Rsz)) return SCRIPT_ERR_REGISTER;
+            uint8_t Scratch[4];
+            const uint8_t *Val = nullptr;
+            uint8_t Vsize = 0;
+            uint16_t Vtype = 0;
+            if (!Resolve(s, Opbase[4], Opbase[5], SymVal(Opbase + 4), Scratch, &Val, &Vsize, &Vtype))
                 return SCRIPT_ERR_OPERAND;
-            uint8_t wbuf[256];
-            memset(wbuf, 0, sizeof(wbuf));
-            uint8_t err = AssignResolved(ValueInfoType(rm.Type), wbuf, rm.Size, val, vsize, vtype);
-            if (err) return err;
-            ValueInfo wm = rm;
-            wm.Size = rm.Size;
-            if (!RegisterSetByBlockInfo(bi, wm, wbuf, rm.Size)) return SCRIPT_ERR_REGISTER;
-            s->ic++;
+            uint8_t Wbuf[256];
+            memset(Wbuf, 0, sizeof(Wbuf));
+            uint8_t Err = AssignResolved(ValueInfoType(Rm.Type), Wbuf, Rm.Size, Val, Vsize, Vtype);
+            if (Err) return Err;
+            ValueInfo Wm = Rm;
+            Wm.Size = Rm.Size;
+            if (!RegisterSetByBlockInfo(Bi, Wm, Wbuf, Rm.Size)) return SCRIPT_ERR_REGISTER;
+            s->Ic++;
             return SCRIPT_ERR_NONE;
         }
         case SCRIPT_OP_SERVICE_REG_READ_FOREIGN: { // dest = register[addr, BlockInfo]
-            if (ln.destCount < 1 || ln.opCount < 2) return SCRIPT_ERR_OPERAND;
-            int32_t addr = 0;
-            if (!ResolveOperandInt(s, opbase, addr)) return SCRIPT_ERR_OPERAND;
-            uint32_t bi = 0;
-            if (!OperandBlockInfo(s, opbase + 4, bi)) return SCRIPT_ERR_OPERAND;
-            memcpy(s->pendingDest, s->instr + (size_t)ln.start * 4, 4);
+            if (Ln.destCount < 1 || Ln.opCount < 2) return SCRIPT_ERR_OPERAND;
+            int32_t Addr = 0;
+            if (!ResolveOperandInt(s, Opbase, Addr)) return SCRIPT_ERR_OPERAND;
+            uint32_t Bi = 0;
+            if (!OperandBlockInfo(s, Opbase + 4, Bi)) return SCRIPT_ERR_OPERAND;
+            memcpy(s->pendingDest, s->Instr + (size_t)Ln.Start * 4, 4);
             s->pendingRead = true;
             s->pendingForeign = true;
             s->pendingTrid = s->Trid;
             s->pendingDeadline = nowMs + 500;
-            s->ic++;
-            s->state = (uint8_t)ScriptState::Waiting;
+            s->Ic++;
+            s->State = (uint8_t)ScriptState::Waiting;
             s->waitingOnTime = false;
-            yield = true;
+            Yield = true;
             uint8_t Payload[4];
-            memcpy(Payload, &bi, 4);
-            SendRegisterRequest(s, (uint16_t)addr, 1, Payload, 4);
+            memcpy(Payload, &Bi, 4);
+            SendRegisterRequest(s, (uint16_t)Addr, 1, Payload, 4);
             return SCRIPT_ERR_NONE;
         }
         case SCRIPT_OP_SERVICE_REG_WRITE_FOREIGN: { // register[addr, BlockInfo] = operand3
-            if (ln.opCount < 3) return SCRIPT_ERR_OPERAND;
-            int32_t addr = 0;
-            if (!ResolveOperandInt(s, opbase, addr)) return SCRIPT_ERR_OPERAND;
-            uint32_t bi = 0;
-            if (!OperandBlockInfo(s, opbase + 4, bi)) return SCRIPT_ERR_OPERAND;
-            uint8_t scratch[4];
-            const uint8_t *val = nullptr;
-            uint8_t vsize = 0;
-            uint16_t vtype = 0;
-            if (!Resolve(s, opbase[8], opbase[9], SymVal(opbase + 8), scratch, &val, &vsize, &vtype))
+            if (Ln.opCount < 3) return SCRIPT_ERR_OPERAND;
+            int32_t Addr = 0;
+            if (!ResolveOperandInt(s, Opbase, Addr)) return SCRIPT_ERR_OPERAND;
+            uint32_t Bi = 0;
+            if (!OperandBlockInfo(s, Opbase + 4, Bi)) return SCRIPT_ERR_OPERAND;
+            uint8_t Scratch[4];
+            const uint8_t *Val = nullptr;
+            uint8_t Vsize = 0;
+            uint16_t Vtype = 0;
+            if (!Resolve(s, Opbase[8], Opbase[9], SymVal(Opbase + 8), Scratch, &Val, &Vsize, &Vtype))
                 return SCRIPT_ERR_OPERAND;
-            if (vsize > 64) vsize = 64;
+            if (Vsize > 64) Vsize = 64;
             uint8_t Payload[8 + 64];
-            memcpy(Payload, &bi, 4);
-            ValueInfo wm = { (uint16_t)vtype, vsize, 0 };
-            memcpy(Payload + 4, &wm, 4);
-            if (vsize) memcpy(Payload + 8, val, vsize);
+            memcpy(Payload, &Bi, 4);
+            ValueInfo Wm = { (uint16_t)Vtype, Vsize, 0 };
+            memcpy(Payload + 4, &Wm, 4);
+            if (Vsize) memcpy(Payload + 8, Val, Vsize);
             s->pendingRead = false;
             s->pendingForeign = true;
             s->pendingTrid = s->Trid;
             s->pendingDeadline = nowMs + 500;
-            s->ic++;
-            s->state = (uint8_t)ScriptState::Waiting;
+            s->Ic++;
+            s->State = (uint8_t)ScriptState::Waiting;
             s->waitingOnTime = false;
-            yield = true;
-            SendRegisterRequest(s, (uint16_t)addr, 2, Payload, (uint16_t)(8 + vsize));
+            Yield = true;
+            SendRegisterRequest(s, (uint16_t)Addr, 2, Payload, (uint16_t)(8 + Vsize));
             return SCRIPT_ERR_NONE;
         }
         case SCRIPT_OP_SERVICE_SCRIPT_LOAD: { // load(script file id, loaded script id)
             // Mirrors management CID 1: the script picks the slot and the pair may differ.
-            if (ln.opCount < 2) return SCRIPT_ERR_OPERAND;
-            int32_t fileId = 0, slot = 0;
-            if (!ResolveOperandInt(s, opbase, fileId)) return SCRIPT_ERR_OPERAND;
-            if (!ResolveOperandInt(s, opbase + 4, slot)) return SCRIPT_ERR_OPERAND;
+            if (Ln.opCount < 2) return SCRIPT_ERR_OPERAND;
+            int32_t fileId = 0, Slot = 0;
+            if (!ResolveOperandInt(s, Opbase, fileId)) return SCRIPT_ERR_OPERAND;
+            if (!ResolveOperandInt(s, Opbase + 4, Slot)) return SCRIPT_ERR_OPERAND;
             // Loading over the running script would free the program currently being executed.
-            if (slot == (int32_t)s->slot) return SCRIPT_ERR_OPERAND;
-            if (fileId >= 0 && fileId < MAX_SCRIPT_FILES && slot >= 0 && slot < MAX_SCRIPTS)
-                Load((uint16_t)fileId, (uint8_t)slot);
-            s->ic++;
+            if (Slot == (int32_t)s->Slot) return SCRIPT_ERR_OPERAND;
+            if (fileId >= 0 && fileId < MAX_SCRIPT_FILES && Slot >= 0 && Slot < MAX_SCRIPTS)
+                Load((uint16_t)fileId, (uint8_t)Slot);
+            s->Ic++;
             return SCRIPT_ERR_NONE;
         }
         case SCRIPT_OP_SERVICE_SCRIPT_UNLOAD: { // unload(loaded script id)
             // Same operation as management CID 2. A script that is not loaded is a no-op, like
             // that CID reporting no work rather than failing.
-            if (ln.opCount < 1) return SCRIPT_ERR_OPERAND;
-            int32_t slot = 0;
-            if (!ResolveOperandInt(s, opbase, slot)) return SCRIPT_ERR_OPERAND;
+            if (Ln.opCount < 1) return SCRIPT_ERR_OPERAND;
+            int32_t Slot = 0;
+            if (!ResolveOperandInt(s, Opbase, Slot)) return SCRIPT_ERR_OPERAND;
             // Never unload the running script: its program and spaces are what is executing.
-            if (slot == (int32_t)s->slot) return SCRIPT_ERR_OPERAND;
-            if (slot >= 0 && slot < MAX_SCRIPTS && Active((uint8_t)slot)) Unload((uint8_t)slot);
-            s->ic++;
+            if (Slot == (int32_t)s->Slot) return SCRIPT_ERR_OPERAND;
+            if (Slot >= 0 && Slot < MAX_SCRIPTS && Active((uint8_t)Slot)) Unload((uint8_t)Slot);
+            s->Ic++;
             return SCRIPT_ERR_NONE;
         }
         default:
@@ -500,118 +500,118 @@ inline uint8_t ScriptService::ExecService(LoadedScript *s, const ScriptLineInfo 
 }
 
 // Resolves one element of a vector/matrix/colour/string container.
-inline bool ScriptService::ContainerElement(LoadedScript *s, const uint8_t *sym, int32_t index,
-                                   uint8_t *scratch, const uint8_t **elem, uint8_t *elemSize,
+inline bool ScriptService::ContainerElement(LoadedScript *s, const uint8_t *Sym, int32_t Index,
+                                   uint8_t *Scratch, const uint8_t **Elem, uint8_t *elemSize,
                                    uint16_t *elemType) {
-    const uint8_t *data = nullptr;
-    uint8_t size = 0;
-    uint16_t dtype = 0;
-    if (!Resolve(s, sym[0], sym[1], SymVal(sym), scratch, &data, &size, &dtype)) return false;
-    switch (dtype) {
+    const uint8_t *Data = nullptr;
+    uint8_t Size = 0;
+    uint16_t Dtype = 0;
+    if (!Resolve(s, Sym[0], Sym[1], SymVal(Sym), Scratch, &Data, &Size, &Dtype)) return false;
+    switch (Dtype) {
         case (uint16_t)DataType::Vector:
-            if (index < 0 || (uint32_t)(index + 1) * 4 > size) return false;
-            *elem = data + (size_t)index * 4;
+            if (Index < 0 || (uint32_t)(Index + 1) * 4 > Size) return false;
+            *Elem = Data + (size_t)Index * 4;
             *elemSize = 4;
             *elemType = (uint16_t)DataType::Number;
             return true;
         case (uint16_t)DataType::Matrix: {
-            if (size < 4 || index < 0) return false;
-            uint16_t h = (uint16_t)(data[0] | (data[1] << 8));
-            uint16_t w = (uint16_t)(data[2] | (data[3] << 8));
-            if ((uint32_t)index >= (uint32_t)h * w) return false;
-            if (4u + (uint32_t)(index + 1) * 4 > size) return false;
-            *elem = data + 4 + (size_t)index * 4;
+            if (Size < 4 || Index < 0) return false;
+            uint16_t h = (uint16_t)(Data[0] | (Data[1] << 8));
+            uint16_t w = (uint16_t)(Data[2] | (Data[3] << 8));
+            if ((uint32_t)Index >= (uint32_t)h * w) return false;
+            if (4u + (uint32_t)(Index + 1) * 4 > Size) return false;
+            *Elem = Data + 4 + (size_t)Index * 4;
             *elemSize = 4;
             *elemType = (uint16_t)DataType::Number;
             return true;
         }
         case (uint16_t)DataType::Colour:
-            if (index < 0 || index > 3 || size < 4) return false;
-            *elem = data + index;
+            if (Index < 0 || Index > 3 || Size < 4) return false;
+            *Elem = Data + Index;
             *elemSize = 1;
             *elemType = (uint16_t)DataType::Uint32;
             return true;
         case (uint16_t)DataType::Text:
-            if (index < 0 || index >= size) return false;
-            *elem = data + index;
+            if (Index < 0 || Index >= Size) return false;
+            *Elem = Data + Index;
             *elemSize = 1;
             *elemType = (uint16_t)DataType::Char;
             return true;
         default:
-            if (index != 0) return false;
-            *elem = data;
-            *elemSize = size;
-            *elemType = dtype;
+            if (Index != 0) return false;
+            *Elem = Data;
+            *elemSize = Size;
+            *elemType = Dtype;
             return true;
     }
 }
 
 // Compose: container[index...] = value...   Extract: dest = container[index]
-inline uint8_t ScriptService::ExecCompose(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase, uint8_t op) {
-    if (op == SCRIPT_OP_COMPOSE) {
-        if (ln.destCount < 1 || ln.opCount < 2) return SCRIPT_ERR_OPERAND;
-        const uint8_t *destSym = s->instr + (size_t)ln.start * 4;
+inline uint8_t ScriptService::ExecCompose(LoadedScript *s, const ScriptLineInfo &Ln, const uint8_t *Opbase, uint8_t Op) {
+    if (Op == SCRIPT_OP_COMPOSE) {
+        if (Ln.destCount < 1 || Ln.opCount < 2) return SCRIPT_ERR_OPERAND;
+        const uint8_t *destSym = s->Instr + (size_t)Ln.Start * 4;
         // The container must be writable (a variable or an output).
         if (destSym[0] != SCRIPT_SYM_VARIABLE && destSym[0] != SCRIPT_SYM_OUTPUT)
             return SCRIPT_ERR_OPERAND;
-        int32_t index = 0;
-        if (!ResolveOperandInt(s, opbase, index)) return SCRIPT_ERR_OPERAND;
-        for (uint8_t k = 1; k < ln.opCount; k++) {
-            uint8_t vscratch[4];
-            const uint8_t *val = nullptr;
-            uint8_t vsize = 0;
-            uint16_t vtype = 0;
-            if (!Resolve(s, opbase[k * 4], opbase[k * 4 + 1], SymVal(opbase + (size_t)k * 4),
-                               vscratch, &val, &vsize, &vtype))
+        int32_t Index = 0;
+        if (!ResolveOperandInt(s, Opbase, Index)) return SCRIPT_ERR_OPERAND;
+        for (uint8_t k = 1; k < Ln.opCount; k++) {
+            uint8_t Vscratch[4];
+            const uint8_t *Val = nullptr;
+            uint8_t Vsize = 0;
+            uint16_t Vtype = 0;
+            if (!Resolve(s, Opbase[k * 4], Opbase[k * 4 + 1], SymVal(Opbase + (size_t)k * 4),
+                               Vscratch, &Val, &Vsize, &Vtype))
                 return SCRIPT_ERR_OPERAND;
-            const uint8_t *elem = nullptr;
-            uint8_t esize = 0;
-            uint16_t etype = 0;
+            const uint8_t *Elem = nullptr;
+            uint8_t Esize = 0;
+            uint16_t Etype = 0;
             // Separate scratch: `val` may point into `vscratch`.
-            uint8_t escratch[4];
-            if (!ContainerElement(s, destSym, index + (k - 1), escratch, &elem, &esize, &etype))
+            uint8_t Escratch[4];
+            if (!ContainerElement(s, destSym, Index + (k - 1), Escratch, &Elem, &Esize, &Etype))
                 return SCRIPT_ERR_BOUNDS;
-            uint8_t err = AssignResolved(etype, const_cast<uint8_t *>(elem), esize, val, vsize, vtype);
-            if (err) return err;
+            uint8_t Err = AssignResolved(Etype, const_cast<uint8_t *>(Elem), Esize, Val, Vsize, Vtype);
+            if (Err) return Err;
         }
-        s->ic++;
+        s->Ic++;
         return SCRIPT_ERR_NONE;
     }
-    if (op == SCRIPT_OP_EXTRACT) {
-        if (ln.destCount < 1 || ln.opCount < 2) return SCRIPT_ERR_OPERAND;
-        int32_t index = 0;
-        if (!ResolveOperandInt(s, opbase + 4, index)) return SCRIPT_ERR_OPERAND;
-        uint8_t scratch[4];
-        const uint8_t *elem = nullptr;
-        uint8_t esize = 0;
-        uint16_t etype = 0;
-        if (!ContainerElement(s, opbase, index, scratch, &elem, &esize, &etype)) return SCRIPT_ERR_BOUNDS;
-        uint8_t err = Assign(s, s->instr + (size_t)ln.start * 4, elem, esize, etype);
-        if (err) return err;
-        s->ic++;
+    if (Op == SCRIPT_OP_EXTRACT) {
+        if (Ln.destCount < 1 || Ln.opCount < 2) return SCRIPT_ERR_OPERAND;
+        int32_t Index = 0;
+        if (!ResolveOperandInt(s, Opbase + 4, Index)) return SCRIPT_ERR_OPERAND;
+        uint8_t Scratch[4];
+        const uint8_t *Elem = nullptr;
+        uint8_t Esize = 0;
+        uint16_t Etype = 0;
+        if (!ContainerElement(s, Opbase, Index, Scratch, &Elem, &Esize, &Etype)) return SCRIPT_ERR_BOUNDS;
+        uint8_t Err = Assign(s, s->Instr + (size_t)Ln.Start * 4, Elem, Esize, Etype);
+        if (Err) return Err;
+        s->Ic++;
         return SCRIPT_ERR_NONE;
     }
     return SCRIPT_ERR_UNKNOWN_OP;
 }
 
-inline uint8_t ScriptService::ExecLine(LoadedScript *s, uint32_t nowMs, bool &yield) {
-    const ScriptLineInfo &ln = s->lines[s->ic];
-    const uint8_t *instr = s->instr + (size_t)(ln.start + ln.destCount) * 4;
-    uint8_t cat = instr[1];
-    uint8_t op = instr[2];
-    const uint8_t *opbase = instr + 4;
-    switch (cat) {
+inline uint8_t ScriptService::ExecLine(LoadedScript *s, uint32_t nowMs, bool &Yield) {
+    const ScriptLineInfo &Ln = s->Lines[s->Ic];
+    const uint8_t *Instr = s->Instr + (size_t)(Ln.Start + Ln.destCount) * 4;
+    uint8_t Cat = Instr[1];
+    uint8_t Op = Instr[2];
+    const uint8_t *Opbase = Instr + 4;
+    switch (Cat) {
         case SCRIPT_CAT_MATH:
         case SCRIPT_CAT_LOGIC:
-            return ExecMath(s, ln, opbase, cat, op);
+            return ExecMath(s, Ln, Opbase, Cat, Op);
         case SCRIPT_CAT_FLOW:
-            return ExecFlow(s, ln, opbase, op);
+            return ExecFlow(s, Ln, Opbase, Op);
         case SCRIPT_CAT_TIME:
-            return ExecTime(s, ln, opbase, op, nowMs, yield);
+            return ExecTime(s, Ln, Opbase, Op, nowMs, Yield);
         case SCRIPT_CAT_SERVICE:
-            return ExecService(s, ln, opbase, op, nowMs, yield);
+            return ExecService(s, Ln, Opbase, Op, nowMs, Yield);
         case SCRIPT_CAT_COMPOSE:
-            return ExecCompose(s, ln, opbase, op);
+            return ExecCompose(s, Ln, Opbase, Op);
         default:
             return SCRIPT_ERR_UNKNOWN_OP;
     }

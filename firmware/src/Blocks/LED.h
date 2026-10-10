@@ -18,7 +18,7 @@ const BlockTrigger LED_Triggers[] = {
     { MakeFieldKey(0, 0), OnLEDStateChange },
 };
 
-const BlockSchema LED_Schema = {
+const BlockSchema LEDSchema = {
     .Entries = LED_Entries,
     .EntryCount = sizeof(LED_Entries) / sizeof(BlockEntry),
     .Triggers = LED_Triggers,

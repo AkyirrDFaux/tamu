@@ -9,16 +9,16 @@
 
 // Copies a block name into a fixed BLOCK_NAME_LEN field (Docs/Services/Register.md "Dynamic
 // Block Table": Name is 16 chars). A shorter name is null-padded (B10).
-static inline void SetBlockName(char *dst, const char *src, uint16_t len) {
-    if (len > BLOCK_NAME_LEN) len = BLOCK_NAME_LEN;
-    if (len && src) memcpy(dst, src, len);
-    if (len < BLOCK_NAME_LEN) memset(dst + len, 0x00, (size_t)(BLOCK_NAME_LEN - len));
+static inline void SetBlockName(char *Dst, const char *Src, uint16_t Len) {
+    if (Len > BLOCK_NAME_LEN) Len = BLOCK_NAME_LEN;
+    if (Len && Src) memcpy(Dst, Src, Len);
+    if (Len < BLOCK_NAME_LEN) memset(Dst + Len, 0x00, (size_t)(BLOCK_NAME_LEN - Len));
 }
 
 // Combines a field index and a key into the 16-bit Field&Key sort key.
-constexpr uint16_t MakeFieldKey(uint8_t field, uint8_t key) { return (uint16_t)(((uint16_t)field << 8) | key); }
-constexpr uint8_t FieldOf(uint16_t fieldKey) { return (uint8_t)(fieldKey >> 8); }
-constexpr uint8_t KeyOf(uint16_t fieldKey) { return (uint8_t)fieldKey; }
+constexpr uint16_t MakeFieldKey(uint8_t Field, uint8_t Key) { return (uint16_t)(((uint16_t)Field << 8) | Key); }
+constexpr uint8_t FieldOf(uint16_t FieldKey) { return (uint8_t)(FieldKey >> 8); }
+constexpr uint8_t KeyOf(uint16_t FieldKey) { return (uint8_t)FieldKey; }
 
 // The descriptor (Docs/Services/Register.md "Map entry"): Type(16) | Size(8) | Flags(8).
 // One type, internal and on the wire. The key is not part of it - it travels in the request's /
@@ -39,7 +39,7 @@ enum ValueFlags : uint8_t
 };
 
 inline uint16_t ValueInfoType(const ValueInfo &v) { return (uint16_t)(v.Type & 0x3FF); }
-inline uint16_t ValueInfoType(uint16_t type) { return (uint16_t)(type & 0x3FF); }
+inline uint16_t ValueInfoType(uint16_t Type) { return (uint16_t)(Type & 0x3FF); }
 inline bool ValueIsReadOnly(const ValueInfo &v)   { return (v.Flags & ValueReadOnly) != 0; }
 inline bool ValueIsPersistent(const ValueInfo &v) { return (v.Flags & ValuePersistent) != 0; }
 
@@ -92,36 +92,36 @@ struct StaticBlockDescriptor
     const char *const Name;
     // Computed-field getter (the System block): returns the field's value pointer, or nullptr
     // to fall back to the storage path (so the persistent Name/NetID keep their real storage).
-    void* (*const VirtualGet)(uint16_t field, uint8_t key) = nullptr;
+    void* (*const VirtualGet)(uint16_t Field, uint8_t Key) = nullptr;
 
-    const void* Base(const ValueInfo &info) const {
-        return ValueIsPersistent(info) ? PersistentData : VolatileData;
+    const void* Base(const ValueInfo &Info) const {
+        return ValueIsPersistent(Info) ? PersistentData : VolatileData;
     }
 
-    const BlockEntry* FindEntry(uint16_t field, uint8_t key) const {
+    const BlockEntry* FindEntry(uint16_t Field, uint8_t Key) const {
         // Static single-key fields are addressed with key 0xFF by the app; normalise it to the
         // entries' key 0. Multi-key blocks (e.g. the System block) match their exact key.
-        const uint16_t fk = MakeFieldKey(field, key == 0xFF ? 0 : key);
+        const uint16_t Fk = MakeFieldKey(Field, Key == 0xFF ? 0 : Key);
         for (uint16_t i = 0; i < Schema->EntryCount; i++)
-            if (Schema->Entries[i].FieldKey == fk) return &Schema->Entries[i];
+            if (Schema->Entries[i].FieldKey == Fk) return &Schema->Entries[i];
         return nullptr;
     }
 
-    FieldTrigger FindTrigger(uint16_t field, uint8_t key) const {
-        const uint16_t fk = MakeFieldKey(field, key == 0xFF ? 0 : key);
+    FieldTrigger FindTrigger(uint16_t Field, uint8_t Key) const {
+        const uint16_t Fk = MakeFieldKey(Field, Key == 0xFF ? 0 : Key);
         for (uint16_t i = 0; i < Schema->TriggerCount; i++)
-            if (Schema->Triggers[i].FieldKey == fk) return Schema->Triggers[i].Fn;
+            if (Schema->Triggers[i].FieldKey == Fk) return Schema->Triggers[i].Fn;
         return nullptr;
     }
 
     // Unified entry retrieval by (field, key) (linear over the literal table).
-    FieldResult Get(uint16_t field, uint8_t key) const {
-        const BlockEntry *e = FindEntry(field, key);
+    FieldResult Get(uint16_t Field, uint8_t Key) const {
+        const BlockEntry *e = FindEntry(Field, Key);
         if (!e) return FieldResult{};
         FieldResult Output;
         Output.Descriptor = e->Info;
         if (VirtualGet) {
-            void *p = VirtualGet(field, key);
+            void *p = VirtualGet(Field, Key);
             if (p) { Output.Data = p; return Output; }
         }
         Output.Data = const_cast<uint8_t*>(static_cast<const uint8_t*>(Base(e->Info))) + e->Offset;
@@ -129,58 +129,58 @@ struct StaticBlockDescriptor
     }
 
     // Unified setter interface. `desc` is the request's ValueInfo (type + flags).
-    bool Set(uint16_t field, uint8_t key, const void* Input, uint16_t Length, const ValueInfo &desc) const {
-        FieldResult Field = Get(field, key);
+    bool Set(uint16_t Field, uint8_t Key, const void* Input, uint16_t Length, const ValueInfo &Desc) const {
+        FieldResult Result = Get(Field, Key);
 
-        if (!Field.Data)
+        if (!Result.Data)
             return false;
 
-        if (ValueIsReadOnly(Field.Descriptor))
+        if (ValueIsReadOnly(Result.Descriptor))
             return false;
 
-        if (ValueInfoType(Field.Descriptor) != ValueInfoType(desc))
+        if (ValueInfoType(Result.Descriptor) != ValueInfoType(Desc))
             return false;
 
-        uint8_t pad_buf[32];
-        const void *data = Input;
-        uint16_t data_len = Length;
-        uint16_t field_type = ValueInfoType(Field.Descriptor);
+        uint8_t PadBuf[32];
+        const void *Data = Input;
+        uint16_t DataLen = Length;
+        uint16_t FieldType = ValueInfoType(Result.Descriptor);
         // String/Filename fields are null-padded up to their declared size when a shorter
         // value is written, and clamped to it when a longer one is (filenames are fixed
         // 8-char records; the System Name is a fixed 16).
         // Text/Name/Filename are fixed-size character fields (Docs/Services/Register.md).
-        if (field_type == (uint16_t)DataType::Text || field_type == (uint16_t)DataType::Name ||
-            field_type == (uint16_t)DataType::Filename)
+        if (FieldType == (uint16_t)DataType::Text || FieldType == (uint16_t)DataType::Name ||
+            FieldType == (uint16_t)DataType::Filename)
         {
-            if (Length < Field.Descriptor.Size)
+            if (Length < Result.Descriptor.Size)
             {
                 // A value larger than the local staging buffer cannot be null-padded without
                 // reading past the caller's `Length`-byte source; reject it instead.
-                if (Field.Descriptor.Size > sizeof(pad_buf))
+                if (Result.Descriptor.Size > sizeof(PadBuf))
                     return false;
-                memset(pad_buf, 0x00, sizeof(pad_buf));
-                memcpy(pad_buf, Input, Length);
-                data = pad_buf;
-                data_len = Field.Descriptor.Size;
+                memset(PadBuf, 0x00, sizeof(PadBuf));
+                memcpy(PadBuf, Input, Length);
+                Data = PadBuf;
+                DataLen = Result.Descriptor.Size;
             }
-            else if (Length > Field.Descriptor.Size)
+            else if (Length > Result.Descriptor.Size)
             {
-                data_len = Field.Descriptor.Size; // clamp; memcpy copies Size bytes anyway
+                DataLen = Result.Descriptor.Size; // clamp; memcpy copies Size bytes anyway
             }
         }
-        else if (Length != Field.Descriptor.Size)
+        else if (Length != Result.Descriptor.Size)
         {
             return false;
         }
 
-        const FieldTrigger fn = FindTrigger(field, key);
-        if (fn != nullptr)
-            return fn(*this, field, data, data_len);
+        const FieldTrigger Fn = FindTrigger(Field, Key);
+        if (Fn != nullptr)
+            return Fn(*this, Field, Data, DataLen);
 
-        memcpy(Field.Data, data, Field.Descriptor.Size);
+        memcpy(Result.Data, Data, Result.Descriptor.Size);
         return true;
     }
 };
 
-extern const StaticBlockDescriptor static_block_registry[];
-extern const size_t static_block_num;
+extern const StaticBlockDescriptor StaticBlockRegistry[];
+extern const size_t StaticBlockNum;

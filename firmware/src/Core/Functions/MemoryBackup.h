@@ -11,7 +11,7 @@
 #include "Core/Functions/Packet.h"
 #include "Core/Functions/Storage.h"
 
-void DispatchPacket(const PacketFrame &frame);
+void DispatchPacket(const PacketFrame &Frame);
 
 #define INVALID_BLOCK 0xFF
 #define INVALID_INDEX 0xFF
@@ -36,28 +36,28 @@ struct BlockIndex
 // Sends a single response packet back to the requester (only if REQACK was set).
 // `status` carries FLAG_SUCCESS or FLAG_FAIL for a status reply: the flag replaces the payload, and
 // a payload may follow it to carry detail (Docs/RSBus and Packets.md).
-__attribute__((noinline)) void SendResponse(const PacketFrame &frame, const uint8_t *Payload, uint16_t len,
-                                            uint8_t status = 0)
+__attribute__((noinline)) void SendResponse(const PacketFrame &Frame, const uint8_t *Payload, uint16_t Len,
+                                            uint8_t Status = 0)
 {
-    if (!(frame.Flags & FLAG_REQACK))
+    if (!(Frame.Flags & FLAG_REQACK))
         return;
-    PacketConstruct(&TxFrame, frame.IdSrc, frame.Cmd, frame.Trid,
-                     (uint8_t)(FLAG_TYPE | FLAG_START | FLAG_STOP | status), Payload, len);
+    PacketConstruct(&TxFrame, Frame.IdSrc, Frame.Cmd, Frame.Trid,
+                     (uint8_t)(FLAG_TYPE | FLAG_START | FLAG_STOP | Status), Payload, Len);
     DispatchPacket(TxFrame);
 }
 
 // Emits one FRAG fragment: the caller has placed `n` content bytes at tx_frame.payload + 4,
 // and the 4-byte frag info is written before the frame is finalized and dispatched. Every
 // streamed reply (enumerate, storage read, subscription tables, SNDB read-all, logs) uses it.
-__attribute__((noinline)) void SendFragFragment(const PacketFrame &frame, uint16_t f,
-                                                uint16_t frags, uint16_t n,
+__attribute__((noinline)) void SendFragFragment(const PacketFrame &Frame, uint16_t f,
+                                                uint16_t Frags, uint16_t n,
                                                 uint8_t Priority = PRIORITY_STREAM)
 {
     uint8_t Flags = FLAG_TYPE | FLAG_FRAG;
     if (f == 0) Flags |= FLAG_START;
-    if (f == frags - 1) Flags |= FLAG_STOP;
-    WriteFragInfo(TxFrame.Payload, f, frags);
-    FinalizeReply(TxFrame, frame, Flags, (uint16_t)(4 + n), Priority);
+    if (f == Frags - 1) Flags |= FLAG_STOP;
+    WriteFragInfo(TxFrame.Payload, f, Frags);
+    FinalizeReply(TxFrame, Frame, Flags, (uint16_t)(4 + n), Priority);
     DispatchPacket(TxFrame);
 }
 
@@ -66,75 +66,75 @@ __attribute__((noinline)) void SendFragFragment(const PacketFrame &frame, uint16
 // Failures are logged on the core (DeviceLog is a no-op on textless nodes): the
 // service tag, CID and the request's block/field/key give a full audit trail for
 // every rejected memory operation without per-call-site logging.
-__attribute__((noinline)) void RespondStatus(const PacketFrame &frame, bool ok)
+__attribute__((noinline)) void RespondStatus(const PacketFrame &Frame, bool Ok)
 {
-    if (!ok)
+    if (!Ok)
     {
 #ifndef DEVICE_LOG_TEXTLESS
-        const char *tag = "MEM";
-        switch (GetServiceType(frame.Cmd))
+        const char *Tag = "MEM";
+        switch (GetServiceType(Frame.Cmd))
         {
-            case ServiceType::Storage:        tag = "STORAGE"; break;
+            case ServiceType::Storage:        Tag = "STORAGE"; break;
             default: break;
         }
-        uint16_t block = INVALID_INDEX, field = INVALID_INDEX, key = INVALID_INDEX;
-        if (PayloadBytes(frame) >= sizeof(BlockIndex))
+        uint16_t Block = INVALID_INDEX, Field = INVALID_INDEX, Key = INVALID_INDEX;
+        if (PayloadBytes(Frame) >= sizeof(BlockIndex))
         {
-            const BlockIndex *idx = reinterpret_cast<const BlockIndex *>(frame.Payload);
-            block = idx->Block; field = idx->Field; key = idx->Key;
+            const BlockIndex *Idx = reinterpret_cast<const BlockIndex *>(Frame.Payload);
+            Block = Idx->Block; Field = Idx->Field; Key = Idx->Key;
         }
-        DeviceLog(tag, "CID %u failed block=%u field=%u key=%u",
-                  (unsigned)GetServiceCID(frame.Cmd),
-                  (unsigned)block, (unsigned)field, (unsigned)key);
+        DeviceLog(Tag, "CID %u failed block=%u field=%u key=%u",
+                  (unsigned)GetServiceCID(Frame.Cmd),
+                  (unsigned)Block, (unsigned)Field, (unsigned)Key);
 #endif
         // Structured report (LogHandler CID 0): reaches the core's log DB even
         // from textless nodes; code = CID so failures dedup per service+op.
-        ReportLog(MakeLog(false, (uint8_t)GetServiceType(frame.Cmd), GetServiceCID(frame.Cmd), 0), PRIORITY_ERROR);
+        ReportLog(MakeLog(false, (uint8_t)GetServiceType(Frame.Cmd), GetServiceCID(Frame.Cmd), 0), PRIORITY_ERROR);
     }
-    SendResponse(frame, nullptr, 0, (uint8_t)(ok ? FLAG_SUCCESS : FLAG_FAIL));
+    SendResponse(Frame, nullptr, 0, (uint8_t)(Ok ? FLAG_SUCCESS : FLAG_FAIL));
 }
 
 // Derives the staging-file name for an atomic backup update: the last character of the
 // padded 8-byte name becomes '~' (e.g. ".SV     " -> ".SV    ~"). Backup names never end in '~'.
-inline void BackupTempName(const char name[8], char out[8])
+inline void BackupTempName(const char Name[8], char Out[8])
 {
-    memcpy(out, name, 8);
-    out[7] = '~';
+    memcpy(Out, Name, 8);
+    Out[7] = '~';
 }
 
 // Writes `data` to the backup file `name` atomically (NOR-safe copy-and-rename):
-inline bool WriteBackupFile(const char name[8], const uint8_t *data, uint16_t len)
+inline bool WriteBackupFile(const char Name[8], const uint8_t *Data, uint16_t Len)
 {
-    char tmp[8];
-    BackupTempName(name, tmp);
-    if (memcmp(name, tmp, 8) == 0)
+    char Tmp[8];
+    BackupTempName(Name, Tmp);
+    if (memcmp(Name, Tmp, 8) == 0)
         return false; // naming convention violation guard
 
     // Remove a staging file left over from an interrupted update.
-    if (Storage.FileExists(tmp) != 0xFFFFFFFF)
-        Storage.DeleteFile(tmp);
+    if (Storage.FileExists(Tmp) != 0xFFFFFFFF)
+        Storage.DeleteFile(Tmp);
 
     // Stage the new generation in its own file (CreateFile provides freshly erased blocks).
-    if (!Storage.CreateFile(tmp, len))
+    if (!Storage.CreateFile(Tmp, Len))
         return false;
-    if (!Storage.WriteToFile(tmp, 0, len, (const char *)data))
+    if (!Storage.WriteToFile(Tmp, 0, Len, (const char *)Data))
     {
-        Storage.DeleteFile(tmp); // don't leave an orphan staging file behind
+        Storage.DeleteFile(Tmp); // don't leave an orphan staging file behind
         return false;
     }
 
     // Commit atomically: the staging file becomes the live backup under its final name.
-    if (!Storage.RenameFile(tmp, name))
+    if (!Storage.RenameFile(Tmp, Name))
     {
-        Storage.DeleteFile(tmp);
+        Storage.DeleteFile(Tmp);
         return false;
     }
     return true;
 }
 
 // Reads a backup file into `out`; returns the byte count (0 if absent or too large).
-inline uint16_t ReadBackupFile(const char name[8], uint8_t *out, uint16_t cap)
+inline uint16_t ReadBackupFile(const char Name[8], uint8_t *Out, uint16_t Cap)
 {
-    return (uint16_t)Storage.ReadFromFile(name, 0, cap, (char *)out);
+    return (uint16_t)Storage.ReadFromFile(Name, 0, Cap, (char *)Out);
 }
 

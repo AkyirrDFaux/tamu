@@ -48,7 +48,7 @@ static void UsbHwInit(void)
     // Reset the USBD peripheral before use (the ROM bootloader may have left it in an
     // unknown state).
     RCC->APB1PRSTR |= RCC_APB1Periph_USB;
-    for (volatile uint32_t i = 0; i < 200000u; i++) {} // ~1 ms at 144 MHz
+    for (volatile uint32_t I = 0; I < 200000u; I++) {} // ~1 ms at 144 MHz
     RCC->APB1PRSTR &= ~RCC_APB1Periph_USB;
 }
 
@@ -73,7 +73,7 @@ extern "C" {
 //--------------------------------------------------------------------
 // Descriptors: one CDC-ACM function
 //--------------------------------------------------------------------
-static const tusb_desc_device_t s_desc_device = {
+static const tusb_desc_device_t DescDevice = {
     .bLength            = sizeof(tusb_desc_device_t),
     .bDescriptorType    = TUSB_DESC_DEVICE,
     .bcdUSB             = USB_BCD,
@@ -90,7 +90,7 @@ static const tusb_desc_device_t s_desc_device = {
     .bNumConfigurations = 0x01,
 };
 
-uint8_t const *tud_descriptor_device_cb(void) { return (uint8_t const *)&s_desc_device; }
+uint8_t const *tud_descriptor_device_cb(void) { return (uint8_t const *)&DescDevice; }
 
 enum { ITF_NUM_CDC = 0, ITF_NUM_CDC_DATA, ITF_NUM_TOTAL };
 
@@ -100,18 +100,18 @@ enum { ITF_NUM_CDC = 0, ITF_NUM_CDC_DATA, ITF_NUM_TOTAL };
 
 #define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN)
 
-static const uint8_t s_desc_configuration[] = {
+static const uint8_t DescConfiguration[] = {
     TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN, 0x00, 100),
     TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, 4, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, EPNUM_CDC_IN, 64),
 };
 
-uint8_t const *tud_descriptor_configuration_cb(uint8_t index)
+uint8_t const *tud_descriptor_configuration_cb(uint8_t Index)
 {
-    (void)index;
-    return s_desc_configuration;
+    (void)Index;
+    return DescConfiguration;
 }
 
-static char const *const s_string_desc_arr[] = {
+static char const *const StringDescArr[] = {
     (const char[]){0x09, 0x04}, // 0: supported language = English (0x0409)
     "Tamu",                     // 1: Manufacturer
     "Valu v2.0",                // 2: Product
@@ -119,34 +119,34 @@ static char const *const s_string_desc_arr[] = {
     "Valu v2.0 CDC",            // 4: CDC interface
 };
 
-static uint16_t s_desc_str[32 + 1];
+static uint16_t DescStr[32 + 1];
 
-uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid)
+uint16_t const *tud_descriptor_string_cb(uint8_t Index, uint16_t Langid)
 {
-    (void)langid;
-    size_t chr_count;
+    (void)Langid;
+    size_t ChrCount;
 
-    if (index == 0)
+    if (Index == 0)
     {
-        memcpy(&s_desc_str[1], s_string_desc_arr[0], 2);
-        chr_count = 1;
+        memcpy(&DescStr[1], StringDescArr[0], 2);
+        ChrCount = 1;
     }
     else
     {
-        if (index >= sizeof(s_string_desc_arr) / sizeof(s_string_desc_arr[0]))
+        if (Index >= sizeof(StringDescArr) / sizeof(StringDescArr[0]))
             return NULL;
 
-        const char *str = s_string_desc_arr[index];
-        chr_count = strlen(str);
-        if (chr_count > 32)
-            chr_count = 32;
+        const char *Str = StringDescArr[Index];
+        ChrCount = strlen(Str);
+        if (ChrCount > 32)
+            ChrCount = 32;
 
-        for (size_t i = 0; i < chr_count; i++)
-            s_desc_str[1 + i] = (uint16_t)str[i];
+        for (size_t I = 0; I < ChrCount; I++)
+            DescStr[1 + I] = (uint16_t)Str[I];
     }
 
-    s_desc_str[0] = (uint16_t)((TUSB_DESC_STRING << 8) | (2 * chr_count + 2));
-    return s_desc_str;
+    DescStr[0] = (uint16_t)((TUSB_DESC_STRING << 8) | (2 * ChrCount + 2));
+    return DescStr;
 }
 
 } // extern "C"
@@ -157,113 +157,113 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid)
 
 struct UsbFramer
 {
-    bool in_frame = false;
-    uint16_t len = 0;
-    uint8_t buf[2 + USB_FRAME_MAX_PAYLOAD + 1]; // crc + len + payload + stop
+    bool InFrame = false;
+    uint16_t Len = 0;
+    uint8_t Buf[2 + USB_FRAME_MAX_PAYLOAD + 1]; // crc + len + payload + stop
 
     void Reset()
     {
-        in_frame = false;
-        len = 0;
+        InFrame = false;
+        Len = 0;
     }
 
     // Feeds one byte. Returns: 0 = incomplete, >0 = valid frame (payload length), -1 = invalid.
-    int Feed(uint8_t b, uint8_t *Payload)
+    int Feed(uint8_t B, uint8_t *Payload)
     {
-        if (!in_frame)
+        if (!InFrame)
         {
-            if (b == USB_FRAME_START)
+            if (B == USB_FRAME_START)
             {
-                in_frame = true;
-                len = 0;
+                InFrame = true;
+                Len = 0;
             }
             return 0;
         }
 
-        buf[len++] = b;
+        Buf[Len++] = B;
 
-        if (len < 2)
+        if (Len < 2)
             return 0; // CRC pending
 
-        uint8_t n = buf[1];
-        if (n > USB_FRAME_MAX_PAYLOAD)
+        uint8_t N = Buf[1];
+        if (N > USB_FRAME_MAX_PAYLOAD)
         {
             Reset();
             return -1; // impossible length: resync
         }
 
-        if (len < (uint8_t)(2 + n + 1))
+        if (Len < (uint8_t)(2 + N + 1))
             return 0; // payload/stop pending
 
-        in_frame = false;
-        if (buf[2 + n] != USB_FRAME_STOP)
+        InFrame = false;
+        if (Buf[2 + N] != USB_FRAME_STOP)
             return -1;
 
-        if (Crc8(&buf[1], (uint16_t)(1 + n)) != buf[0]) // CRC8 over Length + Payload
+        if (Crc8(&Buf[1], (uint16_t)(1 + N)) != Buf[0]) // CRC8 over Length + Payload
             return -1;
 
-        memcpy(Payload, &buf[2], n);
-        return n;
+        memcpy(Payload, &Buf[2], N);
+        return N;
     }
 };
 
-static UsbFramer s_app_framer;
+static UsbFramer AppFramer;
 
 // Turns the continuous crc8-first packet stream into frames (same parser as the core).
 struct WireStreamParser
 {
-    PacketFrame frame __attribute__((aligned(4)));
-    uint16_t got = 0;
-    bool full = false;
+    PacketFrame Frame __attribute__((aligned(4)));
+    uint16_t Got = 0;
+    bool Full = false;
 
     void Reset()
     {
-        got = 0;
-        full = false;
+        Got = 0;
+        Full = false;
     }
 
     // Returns true when a complete CRC-valid PacketFrame was assembled into `frame`.
-    bool Feed(uint8_t b)
+    bool Feed(uint8_t B)
     {
-        if (full)
+        if (Full)
             return false;
 
-        if (got >= sizeof(PacketFrame))
+        if (Got >= sizeof(PacketFrame))
         {
             Reset();
             return false;
         }
-        ((uint8_t *)&frame)[got++] = b;
+        ((uint8_t *)&Frame)[Got++] = B;
 
-        if (got < 4)
+        if (Got < 4)
             return false; // payload_len not known yet
 
-        uint16_t need = PacketWireSize(&frame);
-        if (got < need)
+        uint16_t Need = PacketWireSize(&Frame);
+        if (Got < Need)
             return false;
 
-        full = true;
-        bool ok = Crc8(&frame.Flags, (uint16_t)(11 + PayloadBytes(frame))) == frame.Crc8;
-        return ok; // invalid CRC: caller should Reset() and resync
+        Full = true;
+        bool Ok = Crc8(&Frame.Flags, (uint16_t)(11 + PayloadBytes(Frame))) == Frame.Crc8;
+        return Ok; // invalid CRC: caller should Reset() and resync
     }
 };
 
-static WireStreamParser s_wire_parser;
+static WireStreamParser WireParser;
 
 // Handles one validated link-frame payload: parses the contained packet stream and queues
 // complete packets for dispatch by AppInterfacePump.
-static void AppRxStream(const uint8_t *data, uint16_t len)
+static void AppRxStream(const uint8_t *Data, uint16_t Len)
 {
-    for (uint16_t i = 0; i < len; i++)
+    for (uint16_t I = 0; I < Len; I++)
     {
-        if (s_wire_parser.Feed(data[i]))
+        if (WireParser.Feed(Data[I]))
         {
-            AppInterface.Enqueue(s_wire_parser.frame);
-            s_wire_parser.Reset();
+            AppInterface.Enqueue(WireParser.Frame);
+            WireParser.Reset();
         }
-        else if (s_wire_parser.full || s_wire_parser.got > sizeof(PacketFrame))
+        else if (WireParser.Full || WireParser.Got > sizeof(PacketFrame))
         {
-            s_wire_parser.Reset(); // CRC failure / overflow: drop and resync
+            WireParser.Reset(); // CRC failure / overflow: drop and resync
         }
     }
 }
@@ -288,33 +288,33 @@ bool AppUSBActive()
 }
 
 // Sends up to `len` stream bytes as one or more link frames.
-void AppUSBSend(const uint8_t *data, uint16_t len)
+void AppUSBSend(const uint8_t *Data, uint16_t Len)
 {
-    uint16_t off = 0;
-    while (off < len)
+    uint16_t Off = 0;
+    while (Off < Len)
     {
-        uint8_t chunk = (uint8_t)((len - off > USB_FRAME_MAX_PAYLOAD) ? USB_FRAME_MAX_PAYLOAD : (len - off));
+        uint8_t Chunk = (uint8_t)((Len - Off > USB_FRAME_MAX_PAYLOAD) ? USB_FRAME_MAX_PAYLOAD : (Len - Off));
 
-        uint8_t frame[4 + USB_FRAME_MAX_PAYLOAD];
-        frame[0] = USB_FRAME_START;
-        frame[2] = chunk;
-        memcpy(&frame[3], data + off, chunk);
-        frame[3 + chunk] = USB_FRAME_STOP;
-        frame[1] = Crc8(&frame[2], (uint16_t)(1 + chunk)); // CRC8 over Length + Payload
+        uint8_t Frame[4 + USB_FRAME_MAX_PAYLOAD];
+        Frame[0] = USB_FRAME_START;
+        Frame[2] = Chunk;
+        memcpy(&Frame[3], Data + Off, Chunk);
+        Frame[3 + Chunk] = USB_FRAME_STOP;
+        Frame[1] = Crc8(&Frame[2], (uint16_t)(1 + Chunk)); // CRC8 over Length + Payload
 
-        uint32_t timeout = 1000; // bounded wait for TX buffer space, pumping the stack
-        while (tud_cdc_write_available() < (uint32_t)(4 + chunk) && timeout > 0)
+        uint32_t Timeout = 1000; // bounded wait for TX buffer space, pumping the stack
+        while (tud_cdc_write_available() < (uint32_t)(4 + Chunk) && Timeout > 0)
         {
             tud_task();
-            timeout--;
+            Timeout--;
         }
-        if (timeout == 0)
+        if (Timeout == 0)
             break;
 
-        tud_cdc_write(frame, (uint32_t)(4 + chunk));
+        tud_cdc_write(Frame, (uint32_t)(4 + Chunk));
         tud_cdc_write_flush();
 
-        off += chunk;
+        Off += Chunk;
     }
 }
 
@@ -332,18 +332,18 @@ void AppUSBTick()
 
     while (tud_cdc_available())
     {
-        uint8_t buf[64];
-        uint32_t n = tud_cdc_read(buf, sizeof(buf));
-        if (n == 0)
+        uint8_t Buf[64];
+        uint32_t N = tud_cdc_read(Buf, sizeof(Buf));
+        if (N == 0)
             break;
-        for (uint32_t i = 0; i < n; i++)
+        for (uint32_t I = 0; I < N; I++)
         {
             uint8_t Payload[USB_FRAME_MAX_PAYLOAD];
-            int r = s_app_framer.Feed(buf[i], Payload);
-            if (r > 0)
-                AppRxStream(Payload, (uint16_t)r);
-            else if (r < 0)
-                s_wire_parser.Reset(); // broken link frame: resync the stream too
+            int R = AppFramer.Feed(Buf[I], Payload);
+            if (R > 0)
+                AppRxStream(Payload, (uint16_t)R);
+            else if (R < 0)
+                WireParser.Reset(); // broken link frame: resync the stream too
         }
     }
 }

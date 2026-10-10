@@ -39,19 +39,19 @@ static_assert(STORAGE_CHIP_BASE + STORAGE_FLASH_SIZE == CHIP_FLASH_SIZE,
 #define VALU_CFGR0_SWS  0xCu
 static uint32_t StorageFlashSlowDown(void)
 {
-    uint32_t old = RCC->CFGR0 & VALU_CFGR0_SW;
+    uint32_t Old = RCC->CFGR0 & VALU_CFGR0_SW;
     RCC->CFGR0 = (RCC->CFGR0 & ~VALU_CFGR0_SW) | 0x0u; // SW = HSI (8 MHz)
     while ((RCC->CFGR0 & VALU_CFGR0_SWS) != 0x0u) {}
-    return old;
+    return Old;
 }
-static void StorageFlashRestore(uint32_t old)
+static void StorageFlashRestore(uint32_t Old)
 {
-    RCC->CFGR0 = (RCC->CFGR0 & ~VALU_CFGR0_SW) | (old & VALU_CFGR0_SW);
-    while ((RCC->CFGR0 & VALU_CFGR0_SWS) != (old & VALU_CFGR0_SWS)) {}
+    RCC->CFGR0 = (RCC->CFGR0 & ~VALU_CFGR0_SW) | (Old & VALU_CFGR0_SW);
+    while ((RCC->CFGR0 & VALU_CFGR0_SWS) != (Old & VALU_CFGR0_SWS)) {}
 }
 
 // Opens the flash controller and checks that the code does not overlap the storage region.
-bool Storage_FlashInit()
+bool StorageFlashInit()
 {
     // The linker region is the app window [0x3000, 0xE000) (board_upload.maximum_size), so a
     // build that grows into storage fails to link. This runtime check is the belt-and-braces
@@ -68,54 +68,54 @@ bool Storage_FlashInit()
 }
 
 // Reads `size` bytes from flash at `offset` into `data` (0x00000000 domain).
-uint32_t Storage_FlashRead(uint32_t offset, void *data, uint32_t size)
+uint32_t StorageFlashRead(uint32_t Offset, void *Data, uint32_t Size)
 {
     // Overflow-safe bound: `offset + size` could wrap for a huge size.
-    if (offset > STORAGE_FLASH_SIZE || size > STORAGE_FLASH_SIZE - offset)
+    if (Offset > STORAGE_FLASH_SIZE || Size > STORAGE_FLASH_SIZE - Offset)
         return 0;
-    memcpy(data, (const void *)(STORAGE_CHIP_BASE + offset), size);
-    return size;
+    memcpy(Data, (const void *)(STORAGE_CHIP_BASE + Offset), Size);
+    return Size;
 }
 
 // Writes `size` bytes from `data` to flash at `offset`. The target must be freshly erased:
 // flash only programs 1s to 0s, so a word is written as a read-modify-write that keeps the
 // surrounding (0xFF) bytes intact.
-bool Storage_FlashWrite(uint32_t offset, const void *data, uint32_t size)
+bool StorageFlashWrite(uint32_t Offset, const void *Data, uint32_t Size)
 {
-    if (size == 0)
+    if (Size == 0)
         return true;
-    if (offset > STORAGE_FLASH_SIZE || size > STORAGE_FLASH_SIZE - offset)
+    if (Offset > STORAGE_FLASH_SIZE || Size > STORAGE_FLASH_SIZE - Offset)
         return false;
     // The read-modify-write below indexes `maddr[byte_addr - faddr]`; for the leading
     // partial word `byte_addr < faddr`, so require a word-aligned target to keep that
     // index non-negative (all storage structures are 4-byte aligned).
-    if (offset & 3u)
+    if (Offset & 3u)
         return false;
 
-    uint32_t clk = StorageFlashSlowDown();
+    uint32_t Clk = StorageFlashSlowDown();
     FLASH_Unlock();
-    const uint8_t *src = (const uint8_t *)data;
-    const uint8_t *maddr = (const uint8_t *)(STORAGE_CHIP_BASE + offset);
-    uint32_t faddr = STORAGE_FLASH_BASE + offset;
-    uint32_t start = faddr & ~3u;
-    uint32_t end = (faddr + size + 3u) & ~3u;
-    for (uint32_t a = start; a < end; a += 4) {
-        uint32_t w = 0;
-        for (uint32_t k = 0; k < 4; k++) {
-            uint32_t byte_addr = a + k;
-            if (byte_addr >= faddr && byte_addr < faddr + size)
-                w |= ((uint32_t)src[byte_addr - faddr]) << (8 * k);
+    const uint8_t *Src = (const uint8_t *)Data;
+    const uint8_t *Maddr = (const uint8_t *)(STORAGE_CHIP_BASE + Offset);
+    uint32_t Faddr = STORAGE_FLASH_BASE + Offset;
+    uint32_t Start = Faddr & ~3u;
+    uint32_t End = (Faddr + Size + 3u) & ~3u;
+    for (uint32_t A = Start; A < End; A += 4) {
+        uint32_t W = 0;
+        for (uint32_t K = 0; K < 4; K++) {
+            uint32_t ByteAddr = A + K;
+            if (ByteAddr >= Faddr && ByteAddr < Faddr + Size)
+                W |= ((uint32_t)Src[ByteAddr - Faddr]) << (8 * K);
             else
-                w |= ((uint32_t)maddr[byte_addr - faddr]) << (8 * k);
+                W |= ((uint32_t)Maddr[ByteAddr - Faddr]) << (8 * K);
         }
-        if (FLASH_ProgramWord(a, w) != FLASH_COMPLETE) {
+        if (FLASH_ProgramWord(A, W) != FLASH_COMPLETE) {
             FLASH_Lock();
-            StorageFlashRestore(clk);
+            StorageFlashRestore(Clk);
             return false;
         }
     }
     FLASH_Lock();
-    StorageFlashRestore(clk);
+    StorageFlashRestore(Clk);
     return true;
 }
 
@@ -125,47 +125,47 @@ bool Storage_FlashWrite(uint32_t offset, const void *data, uint32_t size)
 // erased page is verified by reading back its first word - a failed erase must not be reported
 // as success into table/file commits. The fast erase needs its own unlock (FLASH_Unlock_Fast,
 // CR_PAGE_ER is the fast-mode page erase keyed by MODEKEYR on the CH32V20x).
-bool Storage_FlashErase(uint32_t offset, uint32_t size)
+bool StorageFlashErase(uint32_t Offset, uint32_t Size)
 {
-    if ((offset & (FLASH_ERASE_PAGE_SIZE - 1)) || (size & (FLASH_ERASE_PAGE_SIZE - 1)))
+    if ((Offset & (FLASH_ERASE_PAGE_SIZE - 1)) || (Size & (FLASH_ERASE_PAGE_SIZE - 1)))
         return false;
     // Overflow-safe bound: `offset + size` could wrap for a huge size.
-    if (offset > STORAGE_FLASH_SIZE || size > STORAGE_FLASH_SIZE - offset)
+    if (Offset > STORAGE_FLASH_SIZE || Size > STORAGE_FLASH_SIZE - Offset)
         return false;
 
-    uint32_t clk = StorageFlashSlowDown();
+    uint32_t Clk = StorageFlashSlowDown();
     FLASH_Unlock();
     FLASH_Unlock_Fast();
-    for (uint32_t o = offset; o < offset + size; o += FLASH_ERASE_PAGE_SIZE) {
-        FLASH_ErasePage_Fast(STORAGE_FLASH_BASE + o);
+    for (uint32_t O = Offset; O < Offset + Size; O += FLASH_ERASE_PAGE_SIZE) {
+        FLASH_ErasePage_Fast(STORAGE_FLASH_BASE + O);
         // CH32V203 flash quirk (same one the Valu bootloader works around - see its
         // FlashEraseSector, and the previous release's Hardware/Memory.h "Prevent incorrect
         // reading"): a just-erased word does NOT read back as 0xFFFFFFFF until it has been through
         // a program cycle; it reads a bogus pattern. Program 0xFFFFFFFF over each word so reads
         // (including the verify below) are correct; writing all-1s does not change an erased cell.
-        for (uint32_t w = 0; w < FLASH_ERASE_PAGE_SIZE; w += 4) {
-            uint32_t v;
-            memcpy(&v, (const void *)(STORAGE_CHIP_BASE + o + w), sizeof(v));
-            if (v != 0xFFFFFFFFu)
-                FLASH_ProgramWord(STORAGE_FLASH_BASE + o + w, 0xFFFFFFFFu);
+        for (uint32_t W = 0; W < FLASH_ERASE_PAGE_SIZE; W += 4) {
+            uint32_t V;
+            memcpy(&V, (const void *)(STORAGE_CHIP_BASE + O + W), sizeof(V));
+            if (V != 0xFFFFFFFFu)
+                FLASH_ProgramWord(STORAGE_FLASH_BASE + O + W, 0xFFFFFFFFu);
         }
-        uint32_t check = 0;
-        memcpy(&check, (const void *)(STORAGE_CHIP_BASE + o), sizeof(check));
-        if (check != 0xFFFFFFFFu) {
+        uint32_t Check = 0;
+        memcpy(&Check, (const void *)(STORAGE_CHIP_BASE + O), sizeof(Check));
+        if (Check != 0xFFFFFFFFu) {
             FLASH_Lock_Fast();
             FLASH_Lock();
-            StorageFlashRestore(clk);
+            StorageFlashRestore(Clk);
             return false;
         }
     }
     FLASH_Lock_Fast();
     FLASH_Lock();
-    StorageFlashRestore(clk);
+    StorageFlashRestore(Clk);
     return true;
 }
 
 // Wipes the entire storage region, one fast page at a time (the whole region is page-aligned).
-bool Storage_FlashFormat()
+bool StorageFlashFormat()
 {
-    return Storage_FlashErase(0, STORAGE_FLASH_SIZE);
+    return StorageFlashErase(0, STORAGE_FLASH_SIZE);
 }

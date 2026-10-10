@@ -33,23 +33,23 @@ const uint8_t LayoutVysiv1_0[10 * 11]{
 // w*h u16 LE 0-based LED indices (0xFFFF = unused).
 inline void PreloadVysiLayout()
 {
-    char lay1[8];
-    PackName("LAY_1", lay1);
-    if (Storage.FileExists(lay1) != 0xFFFFFFFF)
+    char Lay1[8];
+    PackName("LAY_1", Lay1);
+    if (Storage.FileExists(Lay1) != 0xFFFFFFFF)
         return; // already present (preloaded earlier)
 
-    uint8_t buf[3 + 11 * 10 * 2];
-    buf[0] = 178; // brightness limit: 0-255 as a percentage -> 70%
-    buf[1] = 11;  // width
-    buf[2] = 10;  // height
+    uint8_t Buf[3 + 11 * 10 * 2];
+    Buf[0] = 178; // brightness limit: 0-255 as a percentage -> 70%
+    Buf[1] = 11;  // width
+    Buf[2] = 10;  // height
     // The 3-byte header puts every u16 at an odd offset, so write them through memcpy.
     for (uint32_t i = 0; i < 11 * 10; i++)
-        StoreUnaligned(buf + 3 + i * 2,
+        StoreUnaligned(Buf + 3 + i * 2,
                        (uint16_t)((LayoutVysiv1_0[i] == 0) ? 0xFFFF : (LayoutVysiv1_0[i] - 1)));
 
-    if (!Storage.CreateFile(lay1, sizeof(buf)))
+    if (!Storage.CreateFile(Lay1, sizeof(Buf)))
         return;
-    Storage.WriteToFile(lay1, 0, sizeof(buf), (const char *)buf);
+    Storage.WriteToFile(Lay1, 0, sizeof(Buf), (const char *)Buf);
 }
 
 // Identity 2x3 affine ([1 0 0; 0 1 0]), the default Offset transform.
@@ -114,8 +114,8 @@ public:
     // The field-write trigger is handed only the block, so the displays self-register to let it
     // recover the owning instance from a block's persistent half.
     static const uint32_t MaxInstances = 4;
-    static Vysi1Display *s_instances[MaxInstances];
-    static uint32_t s_instanceCount;
+    static Vysi1Display *Instances[MaxInstances];
+    static uint32_t InstanceCount;
 
     uint16_t Layout[MaxLayoutEntries];
     uint8_t Lw = 11;
@@ -156,29 +156,29 @@ public:
     // Textures/effects apply only inside the mask, so an empty mask skips them entirely.
     bool MaskAny = false;
 
-    Vysi1Display(Vysi1Volatile &vol, Vysi1Persistent &per) : Vol(vol), Per(per) {
-        if (s_instanceCount < MaxInstances) s_instances[s_instanceCount++] = this;
+    Vysi1Display(Vysi1Volatile &Vol, Vysi1Persistent &Per) : Vol(Vol), Per(Per) {
+        if (InstanceCount < MaxInstances) Instances[InstanceCount++] = this;
         LoadDefaultLayout();
     }
 
     // Resolves the owning display from a block's persistent half (the field-write trigger only
     // receives the block, not the instance).
-    static Vysi1Display *FromPersistent(const void *per) {
-        for (uint32_t i = 0; i < s_instanceCount; i++)
-            if ((const void *)&s_instances[i]->Per == per) return s_instances[i];
+    static Vysi1Display *FromPersistent(const void *Per) {
+        for (uint32_t i = 0; i < InstanceCount; i++)
+            if ((const void *)&Instances[i]->Per == Per) return Instances[i];
         return nullptr;
     }
 
     void Render();
-    void RenderGeometryField(DynamicBlockDescriptor *block, uint16_t field, uint16_t slot);
-    void ApplyGeometryField(DynamicBlockDescriptor *block, uint16_t field, uint16_t slot);
-    void RenderTextureField(DynamicBlockDescriptor *block, uint16_t field);
+    void RenderGeometryField(DynamicBlockDescriptor *Block, uint16_t Field, uint16_t Slot);
+    void ApplyGeometryField(DynamicBlockDescriptor *Block, uint16_t Field, uint16_t Slot);
+    void RenderTextureField(DynamicBlockDescriptor *Block, uint16_t Field);
     Matrix<3, 3> PromoteAffine(const Matrix<2, 3> &m);
     Matrix<3, 3> BaseTransform();
-    Matrix<3, 3> FieldTransform(const Matrix<2, 3> &pos);
-    int32_t ReadKeyInt(DynamicBlockDescriptor *block, uint16_t field, uint8_t key, int32_t def);
-    ColourClass LerpColour(const ColourClass &c1, const ColourClass &c2, Number t);
-    void ShiftHue(ColourClass &c, Number hueDeg);
+    Matrix<3, 3> FieldTransform(const Matrix<2, 3> &Pos);
+    int32_t ReadKeyInt(DynamicBlockDescriptor *Block, uint16_t Field, uint8_t Key, int32_t Def);
+    ColourClass LerpColour(const ColourClass &C1, const ColourClass &C2, Number t);
+    void ShiftHue(ColourClass &c, Number HueDeg);
 
     // Rebuilds the per-LED screen-coordinate table from the current layout and bumps
     // LayoutGen (invalidates the geometry cache).
@@ -192,12 +192,12 @@ public:
         }
         for (uint32_t r = 0; r < (uint32_t)Lw * Lh && r < MaxLayoutEntries; r++)
         {
-            uint16_t idx = Layout[r];
-            if (idx == 0xFFFF || idx >= LedNum)
+            uint16_t Idx = Layout[r];
+            if (Idx == 0xFFFF || Idx >= LedNum)
                 continue;
-            LedX[idx] = (uint8_t)(r % Lw);
-            LedY[idx] = (uint8_t)(Lh - 1 - (r / Lw)); // screen y, 0 at bottom
-            LedPresent[idx] = true;
+            LedX[Idx] = (uint8_t)(r % Lw);
+            LedY[Idx] = (uint8_t)(Lh - 1 - (r / Lw)); // screen y, 0 at bottom
+            LedPresent[Idx] = true;
         }
         LayoutGen++;
     }
@@ -221,96 +221,96 @@ public:
     {
         // Blank name (all spaces or NULs; character fields are NUL-padded since B10) ->
         // built-in default layout.
-        bool empty = true;
+        bool Empty = true;
         for (int i = 0; i < 8; i++)
-            if (Per.LayoutFile[i] != ' ' && Per.LayoutFile[i] != '\0') empty = false;
-        if (empty)
+            if (Per.LayoutFile[i] != ' ' && Per.LayoutFile[i] != '\0') Empty = false;
+        if (Empty)
         {
             LoadDefaultLayout();
             return true;
         }
 
-        uint32_t off, size;
-        if (!Storage.GetFileInfo(Per.LayoutFile, &off, &size))
+        uint32_t Off, Size;
+        if (!Storage.GetFileInfo(Per.LayoutFile, &Off, &Size))
             return false;
-        if (size < 3)
+        if (Size < 3)
             return false;
 
         // Docs/Modules and blocks/LED display.md: u8 brightness limit, u8 width, u8 height,
         // then the index table. Only this format is accepted - a file written to the older
         // 2-byte header fails here and the caller falls back to the built-in default.
-        uint8_t hdr[3];
-        if (Storage_FlashRead(off, hdr, 3) != 3)
+        uint8_t Hdr[3];
+        if (StorageFlashRead(Off, Hdr, 3) != 3)
             return false;
-        uint32_t entries = (uint32_t)hdr[1] * hdr[2];
-        if (hdr[1] == 0 || hdr[2] == 0 || entries > MaxLayoutEntries ||
-            size < 3 + entries * 2)
+        uint32_t Entries = (uint32_t)Hdr[1] * Hdr[2];
+        if (Hdr[1] == 0 || Hdr[2] == 0 || Entries > MaxLayoutEntries ||
+            Size < 3 + Entries * 2)
             return false;
 
         // Read into a scratch buffer and only commit to the display once the whole read
         // succeeded, so a failed read leaves the previous layout/state untouched.
-        uint16_t pending[MaxLayoutEntries];
-        if (Storage_FlashRead(off + 3, (void *)pending, entries * 2) != entries * 2)
+        uint16_t Pending[MaxLayoutEntries];
+        if (StorageFlashRead(Off + 3, (void *)Pending, Entries * 2) != Entries * 2)
             return false;
-        for (uint32_t i = 0; i < entries; i++)
+        for (uint32_t i = 0; i < Entries; i++)
         {
-            Layout[i] = pending[i];
+            Layout[i] = Pending[i];
             if (Layout[i] != 0xFFFF && Layout[i] >= LedNum)
                 Layout[i] = 0xFFFF; // index beyond this display's chain
         }
-        BrightnessLimit = hdr[0];
-        Lw = hdr[1];
-        Lh = hdr[2];
+        BrightnessLimit = Hdr[0];
+        Lw = Hdr[1];
+        Lh = Hdr[2];
         RebuildLedTable();
         return true;
     }
 };
 
-inline Vysi1Display *Vysi1Display::s_instances[Vysi1Display::MaxInstances] = {};
-inline uint32_t Vysi1Display::s_instanceCount = 0;
+inline Vysi1Display *Vysi1Display::Instances[Vysi1Display::MaxInstances] = {};
+inline uint32_t Vysi1Display::InstanceCount = 0;
 
 // Boot helper: loads the named layout file (blank name = compiled-in default). The boot
 // recall restores the LayoutFile RAM field but does not re-run its write trigger, so the
 // layout must be re-applied explicitly.
-inline void Vysi1BootLayout(Vysi1Display &disp)
+inline void Vysi1BootLayout(Vysi1Display &Disp)
 {
     // A file that cannot be loaded (missing, truncated, or an older 2-byte-header format)
     // must not leave the display on its zero-initialised Layout[] - every cell there maps to
     // LED 0 - so fall back to the built-in default, whose LED mapping matches the .lay file.
-    if (!disp.LoadLayoutFromStorage())
-        disp.LoadDefaultLayout();
+    if (!Disp.LoadLayoutFromStorage())
+        Disp.LoadDefaultLayout();
 }
 
 // Layout-file write trigger: stores the new Name and loads the layout file immediately
 // so the stored name always matches the layout in use. The owning Vysi1Display is recovered
 // from the block's persistent half, which recovers the per-display runtime layout.
-inline bool OnVysi1FieldWrite(const StaticBlockDescriptor& block, uint16_t index, const void* data, uint16_t len)
+inline bool OnVysi1FieldWrite(const StaticBlockDescriptor& Block, uint16_t Index, const void* Data, uint16_t Len)
 {
-    if (index != 3 || len != 8)
+    if (Index != 3 || Len != 8)
         return false;
-    Vysi1Display* disp = Vysi1Display::FromPersistent(block.PersistentData);
-    if (!disp)
+    Vysi1Display* Disp = Vysi1Display::FromPersistent(Block.PersistentData);
+    if (!Disp)
         return false;
     // Validate against the NEW name before committing it, so a failed layout
     // load leaves the stored name matching the layout actually in use
     // ("stored value equals applied value"). LoadLayoutFromStorage reads
     // Per.LayoutFile, so load through a temporary and only copy on success.
-    char pending[8];
-    memcpy(pending, data, 8);
-    char saved[8];
-    memcpy(saved, disp->Per.LayoutFile, 8);
-    memcpy(disp->Per.LayoutFile, pending, 8);
-    bool ok = disp->LoadLayoutFromStorage();
-    if (!ok)
-        memcpy(disp->Per.LayoutFile, saved, 8); // revert the RAM field
-    return ok;
+    char Pending[8];
+    memcpy(Pending, Data, 8);
+    char Saved[8];
+    memcpy(Saved, Disp->Per.LayoutFile, 8);
+    memcpy(Disp->Per.LayoutFile, Pending, 8);
+    bool Ok = Disp->LoadLayoutFromStorage();
+    if (!Ok)
+        memcpy(Disp->Per.LayoutFile, Saved, 8); // revert the RAM field
+    return Ok;
 }
 
 const BlockTrigger Vysi1_Triggers[] = {
     { MakeFieldKey(3, 0), OnVysi1FieldWrite },
 };
 
-const BlockSchema Vysi1_Schema = {
+const BlockSchema Vysi1Schema = {
     .Entries = Vysi1_Entries,
     .EntryCount = sizeof(Vysi1_Entries) / sizeof(BlockEntry),
     .Triggers = Vysi1_Triggers,

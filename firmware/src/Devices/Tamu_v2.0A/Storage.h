@@ -6,21 +6,21 @@
 
 #include "Core/Services/Storage.h"
 
-static const esp_partition_t *g_storage_part = nullptr;
+static const esp_partition_t *StoragePart = nullptr;
 
 // Locates the SPIFFS "storage" partition and caches a handle to it; returns false if absent.
-bool Storage_FlashInit()
+bool StorageFlashInit()
 {
-    g_storage_part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
+    StoragePart = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
                                               ESP_PARTITION_SUBTYPE_DATA_SPIFFS,
                                               STORAGE_PARTITION_NAME);
-    if (!g_storage_part) {
+    if (!StoragePart) {
         DeviceLog("STORAGE", "Partition '%s' not found!", STORAGE_PARTITION_NAME);
         return false;
     }
-    if (g_storage_part->size != STORAGE_FLASH_SIZE) {
+    if (StoragePart->size != STORAGE_FLASH_SIZE) {
         DeviceLog("STORAGE", "Partition size %d does not match STORAGE_FLASH_SIZE %d!",
-                  (int)g_storage_part->size, (int)STORAGE_FLASH_SIZE);
+                  (int)StoragePart->size, (int)STORAGE_FLASH_SIZE);
         return false;
     }
     return true;
@@ -28,29 +28,29 @@ bool Storage_FlashInit()
 
 // Returns the size of the storage partition in bytes (0 if not initialised).
 // Reads `size` bytes from the flash partition at `offset` into `data`.
-uint32_t Storage_FlashRead(uint32_t offset, void *data, uint32_t size)
+uint32_t StorageFlashRead(uint32_t Offset, void *Data, uint32_t Size)
 {
-    if (!g_storage_part || size == 0) return 0;
-    return (esp_partition_read(g_storage_part, offset, data, size) == ESP_OK) ? size : 0;
+    if (!StoragePart || Size == 0) return 0;
+    return (esp_partition_read(StoragePart, Offset, Data, Size) == ESP_OK) ? Size : 0;
 }
 
 // Writes `size` bytes from `data` to the flash partition at `offset`.
-bool Storage_FlashWrite(uint32_t offset, const void *data, uint32_t size)
+bool StorageFlashWrite(uint32_t Offset, const void *Data, uint32_t Size)
 {
-    if (!g_storage_part) return false;
-    return esp_partition_write(g_storage_part, offset, data, size) == ESP_OK;
+    if (!StoragePart) return false;
+    return esp_partition_write(StoragePart, Offset, Data, Size) == ESP_OK;
 }
 
 // Erases `size` bytes in the flash partition starting at `offset`.
-bool Storage_FlashErase(uint32_t offset, uint32_t size)
+bool StorageFlashErase(uint32_t Offset, uint32_t Size)
 {
-    if (!g_storage_part) return false;
-    return esp_partition_erase_range(g_storage_part, offset, size) == ESP_OK;
+    if (!StoragePart) return false;
+    return esp_partition_erase_range(StoragePart, Offset, Size) == ESP_OK;
 }
 
 // Wipes the entire storage partition.
-bool Storage_FlashFormat()
+bool StorageFlashFormat()
 {
-    if (!g_storage_part) return false;
-    return esp_partition_erase_range(g_storage_part, 0, g_storage_part->size) == ESP_OK;
+    if (!StoragePart) return false;
+    return esp_partition_erase_range(StoragePart, 0, StoragePart->size) == ESP_OK;
 }

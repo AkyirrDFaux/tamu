@@ -15,10 +15,10 @@
 // bit - the full 16-bit source is available for BlockType+Instance).
 typedef struct __attribute__((packed))
 {
-    uint16_t source;
-    uint8_t category;
-    uint8_t specifics;
-    uint32_t timestamp;
+    uint16_t Source;
+    uint8_t Category;
+    uint8_t Specifics;
+    uint32_t Timestamp;
 } LogMessage;
 
 // Reserved source type marking a service-originated log (the instance field then holds the
@@ -26,43 +26,43 @@ typedef struct __attribute__((packed))
 constexpr uint16_t LOG_SOURCE_SERVICE = 0x3FF;
 
 // Packs a source from a block type (10 bits) and an instance (6 bits).
-inline uint16_t MakeLogSource(uint16_t type, uint8_t instance)
+inline uint16_t MakeLogSource(uint16_t Type, uint8_t Instance)
 {
-    return (uint16_t)((type & 0x3FF) | ((uint16_t)(instance & 0x3F) << 10));
+    return (uint16_t)((Type & 0x3FF) | ((uint16_t)(Instance & 0x3F) << 10));
 }
 
 // Builds a LogMessage. `is_block` selects a block log (`type_or_service` is the BlockType and
 // `instance` the block instance) or a service log (`type_or_service` is the ServiceType, placed
 // in the instance field under LOG_SOURCE_SERVICE). `code` splits into category (high byte) and
 // specifics (low byte), matching the doc's two 8-bit fields.
-inline LogMessage MakeLog(bool is_block, uint16_t type_or_service, uint16_t code,
-                          uint32_t timestamp, uint8_t instance = 0)
+inline LogMessage MakeLog(bool IsBlock, uint16_t TypeOrService, uint16_t Code,
+                          uint32_t Timestamp, uint8_t Instance = 0)
 {
     LogMessage m;
-    m.source = is_block ? MakeLogSource(type_or_service, instance)
-                        : MakeLogSource(LOG_SOURCE_SERVICE, (uint8_t)type_or_service);
-    m.category = (uint8_t)(code >> 8);
-    m.specifics = (uint8_t)(code & 0xFF);
-    m.timestamp = timestamp;
+    m.Source = IsBlock ? MakeLogSource(TypeOrService, Instance)
+                        : MakeLogSource(LOG_SOURCE_SERVICE, (uint8_t)TypeOrService);
+    m.Category = (uint8_t)(Code >> 8);
+    m.Specifics = (uint8_t)(Code & 0xFF);
+    m.Timestamp = Timestamp;
     return m;
 }
 
 // True if the source is a block (rather than a service).
 inline bool LogIsBlock(const LogMessage &m)
 {
-    return (m.source & 0x3FF) != LOG_SOURCE_SERVICE;
+    return (m.Source & 0x3FF) != LOG_SOURCE_SERVICE;
 }
 
 // The source's block type (or LOG_SOURCE_SERVICE).
 inline uint16_t LogSourceType(const LogMessage &m)
 {
-    return (uint16_t)(m.source & 0x3FF);
+    return (uint16_t)(m.Source & 0x3FF);
 }
 
 // The source's instance (a block instance, or the ServiceType for a service log).
 inline uint8_t LogSourceInstance(const LogMessage &m)
 {
-    return (uint8_t)(m.source >> 10);
+    return (uint8_t)(m.Source >> 10);
 }
 
 // The block type or service type the log came from.
@@ -74,5 +74,5 @@ inline uint16_t LogSourceId(const LogMessage &m)
 // The 16-bit code (category << 8 | specifics).
 inline uint16_t LogCode(const LogMessage &m)
 {
-    return (uint16_t)(((uint16_t)m.category << 8) | m.specifics);
+    return (uint16_t)(((uint16_t)m.Category << 8) | m.Specifics);
 }

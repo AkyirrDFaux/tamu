@@ -54,74 +54,74 @@ public:
     // working driver: pull-up off, pull-down on, interrupts disabled).
     void Setup()
     {
-        gpio_config_t io_conf = {
+        gpio_config_t IoConf = {
             .pin_bit_mask = (uint64_t)PinMaskA | PinMaskB,
             .mode = GPIO_MODE_OUTPUT,
             .pull_up_en = GPIO_PULLUP_DISABLE,
             .pull_down_en = GPIO_PULLDOWN_ENABLE,
             .intr_type = GPIO_INTR_DISABLE,
         };
-        gpio_config(&io_conf);
+        gpio_config(&IoConf);
     }
 
     // Sends `length` pixels to BOTH strips in parallel (pins A and B). Each bit-slot
     // drives both data lines from `pixelsA`/`pixelsB`: both go high, then pins carrying a
     // "0" drop at T0H and pins carrying a "1" drop at T1H (see class comment). Reorders
     // channels to GRB and finishes with a shared reset latch.
-    void IRAM_ATTR SendParallel(ColourClass *pixelsA, ColourClass *pixelsB, uint16_t length)
+    void IRAM_ATTR SendParallel(ColourClass *pixelsA, ColourClass *pixelsB, uint16_t Length)
     {
-        uint32_t mask = PinMaskA | PinMaskB;
-        static portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
+        uint32_t Mask = PinMaskA | PinMaskB;
+        static portMUX_TYPE Mux = portMUX_INITIALIZER_UNLOCKED;
 
-        portENTER_CRITICAL(&mux);
+        portENTER_CRITICAL(&Mux);
 
-        for (uint16_t i = 0; i < length; i++)
+        for (uint16_t I = 0; I < Length; I++)
         {
             // Explicitly order GRB for WS2812 compatibility
-            uint8_t dataA[3] = {pixelsA[i].G, pixelsA[i].R, pixelsA[i].B};
-            uint8_t dataB[3] = {pixelsB[i].G, pixelsB[i].R, pixelsB[i].B};
+            uint8_t dataA[3] = {pixelsA[I].G, pixelsA[I].R, pixelsA[I].B};
+            uint8_t dataB[3] = {pixelsB[I].G, pixelsB[I].R, pixelsB[I].B};
 
-            for (uint8_t ch = 0; ch < 3; ch++)
+            for (uint8_t Ch = 0; Ch < 3; Ch++)
             {
-                uint8_t a = dataA[ch];
-                uint8_t b = dataB[ch];
-                for (int8_t bitpos = 7; bitpos >= 0; bitpos--)
+                uint8_t A = dataA[Ch];
+                uint8_t B = dataB[Ch];
+                for (int8_t Bitpos = 7; Bitpos >= 0; Bitpos--)
                 {
-                    bool ba = (a >> bitpos) & 1;
-                    bool bb = (b >> bitpos) & 1;
+                    bool Ba = (A >> Bitpos) & 1;
+                    bool Bb = (B >> Bitpos) & 1;
 
-                    GPIO.out_w1ts.val = mask; // both data lines high
-                    if (ba != bb)
+                    GPIO.out_w1ts.val = Mask; // both data lines high
+                    if (Ba != Bb)
                     {
                         // Mixed bits: "0"-pin drops at T0H (~400ns, NOP36), "1"-pin at
                         // T1H (~800ns from the start, NOP144), then both stay low for the
                         // shared tail (T1L ~450ns). Each pin sees its own T0/T1 waveform.
-                        uint32_t drop0 = (ba ? 0 : PinMaskA) | (bb ? 0 : PinMaskB);
-                        uint32_t drop1 = (ba ? PinMaskA : 0) | (bb ? PinMaskB : 0);
+                        uint32_t Drop0 = (Ba ? 0 : PinMaskA) | (Bb ? 0 : PinMaskB);
+                        uint32_t Drop1 = (Ba ? PinMaskA : 0) | (Bb ? PinMaskB : 0);
                         NOP36();
-                        GPIO.out_w1tc.val = drop0;
+                        GPIO.out_w1tc.val = Drop0;
                         NOP108();
-                        GPIO.out_w1tc.val = drop1;
+                        GPIO.out_w1tc.val = Drop1;
                         NOP64();
                     }
-                    else if (ba)
+                    else if (Ba)
                     {
                         // both "1": T1H high (NOP144), T1L low (NOP64)
                         NOP144();
-                        GPIO.out_w1tc.val = mask;
+                        GPIO.out_w1tc.val = Mask;
                         NOP64();
                     }
                     else
                     {
                         // both "0": T0H high (NOP36), T0L low (NOP144)
                         NOP36();
-                        GPIO.out_w1tc.val = mask;
+                        GPIO.out_w1tc.val = Mask;
                         NOP144();
                     }
                 }
             }
         }
-        portEXIT_CRITICAL(&mux);
+        portEXIT_CRITICAL(&Mux);
         esp_rom_delay_us(80); // Reset Latch
     }
 };

@@ -37,14 +37,14 @@ namespace Bootloader
     constexpr uint8_t MAX_FRAME_SIZE = DATA_SIZE;
 
     // Even parity over the command (2 bits), the offset and the payload (bytes 2..len-2).
-    inline uint8_t Parity(const uint8_t *frame, uint16_t len)
+    inline uint8_t Parity(const uint8_t *Frame, uint16_t Len)
     {
         uint8_t p = 0;
-        uint8_t Cmd = (uint8_t)(frame[1] & 0x03u);
+        uint8_t Cmd = (uint8_t)(Frame[1] & 0x03u);
         p ^= (uint8_t)(Cmd & 1u) ^ (uint8_t)((Cmd >> 1) & 1u);
-        for (uint16_t i = 2; i + 1 < len; i++)
+        for (uint16_t i = 2; i + 1 < Len; i++)
         {
-            uint8_t b = frame[i];
+            uint8_t b = Frame[i];
             b ^= (uint8_t)(b >> 4);
             b ^= (uint8_t)(b >> 2);
             b ^= (uint8_t)(b >> 1);
@@ -54,46 +54,46 @@ namespace Bootloader
     }
 
     // Fills byte 1: padding 0, even parity, command. `frame` must already hold the full body.
-    inline void WriteControl(uint8_t *frame, uint8_t Cmd, uint16_t len)
+    inline void WriteControl(uint8_t *Frame, uint8_t Cmd, uint16_t Len)
     {
-        frame[1] = (uint8_t)(Cmd & 0x03u);
-        frame[1] |= (uint8_t)(Parity(frame, len) << 2);
+        Frame[1] = (uint8_t)(Cmd & 0x03u);
+        Frame[1] |= (uint8_t)(Parity(Frame, Len) << 2);
     }
 
-    inline void EncodeWrite(uint32_t offset, const uint8_t *Payload, uint8_t *out)
+    inline void EncodeWrite(uint32_t Offset, const uint8_t *Payload, uint8_t *Out)
     {
-        out[0] = START;
-        memcpy(out + 2, &offset, 4);
-        memcpy(out + 6, Payload, PAYLOAD_SIZE);
-        out[DATA_SIZE - 1] = END;
-        WriteControl(out, CMD_WRITE, DATA_SIZE);
+        Out[0] = START;
+        memcpy(Out + 2, &Offset, 4);
+        memcpy(Out + 6, Payload, PAYLOAD_SIZE);
+        Out[DATA_SIZE - 1] = END;
+        WriteControl(Out, CMD_WRITE, DATA_SIZE);
     }
 
-    inline void EncodeReadRequest(uint32_t offset, uint8_t *out)
+    inline void EncodeReadRequest(uint32_t Offset, uint8_t *Out)
     {
-        out[0] = START;
-        memcpy(out + 2, &offset, 4);
-        out[READ_REQ_SIZE - 1] = END;
-        WriteControl(out, CMD_READ_REQ, READ_REQ_SIZE);
+        Out[0] = START;
+        memcpy(Out + 2, &Offset, 4);
+        Out[READ_REQ_SIZE - 1] = END;
+        WriteControl(Out, CMD_READ_REQ, READ_REQ_SIZE);
     }
 
-    inline void EncodeReadResponse(uint32_t offset, const uint8_t *Payload, uint8_t *out)
+    inline void EncodeReadResponse(uint32_t Offset, const uint8_t *Payload, uint8_t *Out)
     {
-        out[0] = START;
-        memcpy(out + 2, &offset, 4);
-        memcpy(out + 6, Payload, PAYLOAD_SIZE);
-        out[DATA_SIZE - 1] = END;
-        WriteControl(out, CMD_READ_RESP, DATA_SIZE);
+        Out[0] = START;
+        memcpy(Out + 2, &Offset, 4);
+        memcpy(Out + 6, Payload, PAYLOAD_SIZE);
+        Out[DATA_SIZE - 1] = END;
+        WriteControl(Out, CMD_READ_RESP, DATA_SIZE);
     }
 
-    inline uint32_t Offset(const uint8_t *frame)
+    inline uint32_t Offset(const uint8_t *Frame)
     {
         uint32_t o;
-        memcpy(&o, frame + 2, 4);
+        memcpy(&o, Frame + 2, 4);
         return o;
     }
 
-    inline const uint8_t *Payload(const uint8_t *frame) { return frame + 6; }
+    inline const uint8_t *Payload(const uint8_t *Frame) { return Frame + 6; }
 
     // The frame length for a command, or 0 when the command is unknown.
     inline uint16_t FrameSize(uint8_t Cmd)
@@ -104,17 +104,17 @@ namespace Bootloader
     }
 
     // Validates a complete frame; returns the command, or 0 when invalid.
-    inline uint8_t Decode(const uint8_t *frame, uint16_t len)
+    inline uint8_t Decode(const uint8_t *Frame, uint16_t Len)
     {
-        if (len < READ_REQ_SIZE || frame[0] != START)
+        if (Len < READ_REQ_SIZE || Frame[0] != START)
             return 0;
-        if ((frame[1] & 0xF8u) != 0) // padding must be zero
+        if ((Frame[1] & 0xF8u) != 0) // padding must be zero
             return 0;
-        uint8_t Cmd = (uint8_t)(frame[1] & 0x03u);
-        uint16_t expect = FrameSize(Cmd);
-        if (expect == 0 || len != expect || frame[len - 1] != END)
+        uint8_t Cmd = (uint8_t)(Frame[1] & 0x03u);
+        uint16_t Expect = FrameSize(Cmd);
+        if (Expect == 0 || Len != Expect || Frame[Len - 1] != END)
             return 0;
-        uint8_t got = (uint8_t)((frame[1] >> 2) & 1u);
-        return (got == Parity(frame, len)) ? Cmd : 0;
+        uint8_t Got = (uint8_t)((Frame[1] >> 2) & 1u);
+        return (Got == Parity(Frame, Len)) ? Cmd : 0;
     }
 }

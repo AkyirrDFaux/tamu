@@ -11,15 +11,15 @@
 
 // Logs a printf-formatted message with the given tag via ESP_LOGI. Suppressed while an app
 // is connected (see AppInterface.Connected above).
-void DeviceLog(const char *tag, const char *fmt, ...)
+void DeviceLog(const char *Tag, const char *Fmt, ...)
 {
     if (AppInterface.Connected)
         return;
-    char buffer[128];
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(buffer, sizeof(buffer), fmt, args);
-    va_end(args);
-    ESP_LOGI(tag, "%s", buffer);
+    char Buffer[128];
+    va_list Args;
+    va_start(Args, Fmt);
+    vsnprintf(Buffer, sizeof(Buffer), Fmt, Args);
+    va_end(Args);
+    ESP_LOGI(Tag, "%s", Buffer);
 }
 

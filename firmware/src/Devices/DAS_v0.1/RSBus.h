@@ -5,9 +5,9 @@
 #define RS485_EN_PORT GPIOD
 #define RS485_EN_PIN GPIO_Pin_4
 // Circular Buffer structure
-volatile uint8_t rx_buffer[BUFFER_SIZE];
-volatile uint16_t head = 0; // ISR writes here
-volatile uint16_t tail = 0; // Main reads here
+volatile uint8_t RxBuffer[BUFFER_SIZE];
+volatile uint16_t Head = 0; // ISR writes here
+volatile uint16_t Tail = 0; // Main reads here
 
 #include "Core/Functions/Packet.h"
 #include "Core/Functions/Bus.h"
@@ -19,15 +19,15 @@ extern "C" {
         // Test the RXNE *status* flag (USART_IT_RXNE is an interrupt-config constant
         // whose encoding also matches PE/NE/LBD bits and would admit error bytes).
         if (USART1->STATR & USART_FLAG_RXNE) {
-            uint8_t data = (uint8_t)USART1->DATAR;
+            uint8_t Data = (uint8_t)USART1->DATAR;
 
             // Calculate next position
-            uint16_t next_head = (head + 1) % BUFFER_SIZE;
+            uint16_t NextHead = (Head + 1) % BUFFER_SIZE;
 
             // Only write if buffer is not full
-            if (next_head != tail) {
-                rx_buffer[head] = data;
-                head = next_head;
+            if (NextHead != Tail) {
+                RxBuffer[Head] = Data;
+                Head = NextHead;
             }
         }
 
@@ -40,17 +40,17 @@ extern "C" {
 }
 
 // Function to check if data is available
-bool UART_Available() {
-    return (head != tail);
+bool UARTAvailable() {
+    return (Head != Tail);
 }
 
 // Function to read one byte from the buffer (tail update guarded against ISR race)
-uint8_t UART_ReadByte() {
+uint8_t UARTReadByte() {
     __disable_irq();
-    uint8_t data = rx_buffer[tail];
-    tail = (tail + 1) % BUFFER_SIZE;
+    uint8_t Data = RxBuffer[Tail];
+    Tail = (Tail + 1) % BUFFER_SIZE;
     __enable_irq();
-    return data;
+    return Data;
 }
 
 // Configures GPIO, USART1, and interrupts for half-duplex RS485 communication.
@@ -92,24 +92,24 @@ void SetupRS485()
 }
 
 // Microsecond timestamp from the SysTick counter (32-bit math, no 64-bit division helper).
-static uint32_t RS485_Micros()
+static uint32_t RS485Micros()
 {
-    const uint32_t cycles_per_us = SystemCoreClock / 1000000;
-    return SysTick->CNT / cycles_per_us;
+    const uint32_t CyclesPerUs = SystemCoreClock / 1000000;
+    return SysTick->CNT / CyclesPerUs;
 }
 
 // Shared CSMA/CD silence wait (Core/Functions/Bus.h): drain the ring, count silence in
 // SysTick microseconds, busy-wait (the DAS's tight loop keeps bus turnaround latency low).
-static void RS485_WaitForSilence(uint8_t Priority)
+static void RS485WaitForSilence(uint8_t Priority)
 {
-    RS485_WaitForSilence(Priority,
+    RS485WaitForSilence(Priority,
         [](void) -> bool {
-            if (!UART_Available()) return false;
-            while (UART_Available())
-                UART_ReadByte();
+            if (!UARTAvailable()) return false;
+            while (UARTAvailable())
+                UARTReadByte();
             return true;
         },
-        RS485_Micros,
+        RS485Micros,
         [](void) {});
 }
 
@@ -118,13 +118,13 @@ static void RS485_WaitForSilence(uint8_t Priority)
 // DAS's small stack is not exhausted even when called from a service handler that already
 // holds its own frame (the frame's CRC is set by PacketConstruct/Append before we get here).
 bool SendAndVerifyPacket(const PacketFrame &Data) {
-    size_t packet_size = 12 + PayloadBytes(Data);    // frame: header + payload, max 128
-    size_t total_tx_size = 1 + packet_size;          // sync byte + frame (echo count)
+    size_t PacketSize = 12 + PayloadBytes(Data);    // frame: header + payload, max 128
+    size_t TotalTxSize = 1 + PacketSize;          // sync byte + frame (echo count)
     const uint8_t *Bytes = (const uint8_t *)&Data;
 
-    for (int attempt = 0; attempt < RS485_RETRIES; attempt++) {
+    for (int Attempt = 0; Attempt < RS485_RETRIES; Attempt++) {
         // CSMA/CD: only transmit once the line has been silent
-        RS485_WaitForSilence(Data.Priority);
+        RS485WaitForSilence(Data.Priority);
 
         PinHigh(LEDW);
         // Prepare Bus: Enable TX
@@ -133,8 +133,8 @@ bool SendAndVerifyPacket(const PacketFrame &Data) {
         // Transmit
         USART_SendData(USART1, 0xAA);
         while (USART_GetFlagStatus(USART1, USART_FLAG_TXE) == RESET);
-        for (size_t i = 0; i < packet_size; i++) {
-            USART_SendData(USART1, Bytes[i]);
+        for (size_t I = 0; I < PacketSize; I++) {
+            USART_SendData(USART1, Bytes[I]);
             while (USART_GetFlagStatus(USART1, USART_FLAG_TXE) == RESET);
         }
         while (USART_GetFlagStatus(USART1, USART_FLAG_TC) == RESET);
@@ -145,19 +145,19 @@ bool SendAndVerifyPacket(const PacketFrame &Data) {
         PinLow(LEDW);
 
         // Verify the echo byte-by-byte against what we just sent.
-        size_t got = 0;
-        bool match = true;
-        uint32_t start_tick = Now();
-        while (got < total_tx_size && (Now() - start_tick) < 50) {
-            if (UART_Available()) {
-                uint8_t b = UART_ReadByte();
-                uint8_t expect = (got == 0) ? 0xAA : Bytes[got - 1];
-                if (b != expect) match = false;
-                got++;
+        size_t Got = 0;
+        bool Match = true;
+        uint32_t StartTick = Now();
+        while (Got < TotalTxSize && (Now() - StartTick) < 50) {
+            if (UARTAvailable()) {
+                uint8_t B = UARTReadByte();
+                uint8_t Expect = (Got == 0) ? 0xAA : Bytes[Got - 1];
+                if (B != Expect) Match = false;
+                Got++;
             }
         }
 
-        if (got == total_tx_size && match) {
+        if (Got == TotalTxSize && Match) {
             DasErrorFlag = false; // a successful transmit clears the latched bus error
             return true; // Success!
         }
@@ -174,9 +174,9 @@ bool SendAndVerifyPacket(const PacketFrame &Data) {
 // (Core/Functions/Bus.h); the byte source pulls from the DAS ring buffer.
 int ReceivePacket(PacketFrame *Data)
 {
-    return ReceivePacketFrame(Data, [](uint8_t &b) -> bool {
-        if (!UART_Available()) return false;
-        b = UART_ReadByte();
+    return ReceivePacketFrame(Data, [](uint8_t &B) -> bool {
+        if (!UARTAvailable()) return false;
+        B = UARTReadByte();
         return true;
     });
 }

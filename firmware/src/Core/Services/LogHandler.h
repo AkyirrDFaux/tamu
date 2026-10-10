@@ -11,7 +11,7 @@ class LogHandlerService
 {
 public:
     void Init();
-    bool Handle(const PacketFrame &frame); // CID dispatch; true if consumed
+    bool Handle(const PacketFrame &Frame); // CID dispatch; true if consumed
 
 private:
 #ifdef TYPE_CORE
@@ -23,7 +23,7 @@ private:
     // Fills `order` (at least LOG_MAX_CAPACITY entries) with the used slot indices sorted
     // oldest-first by LogSeq and returns how many were written. One ordered pass feeds both
     // GetLogs and ClearReadLogs.
-    static uint32_t LogBuildOrder(uint16_t *order);
+    static uint32_t LogBuildOrder(uint16_t *Order);
 
     uint32_t Clock = 0;               // monotonic sequence source for "oldest" tracking
     uint16_t Order[LOG_MAX_CAPACITY];
@@ -44,33 +44,33 @@ inline void LogHandlerService::Init()
 #ifdef TYPE_CORE
 inline int LogHandlerService::LogSeqSlotCompare(const void *a, const void *b)
 {
-    uint16_t ia = *reinterpret_cast<const uint16_t *>(a);
-    uint16_t ib = *reinterpret_cast<const uint16_t *>(b);
-    uint32_t sa = LogSeq[ia];
-    uint32_t sb = LogSeq[ib];
-    return (sa > sb) - (sa < sb);
+    uint16_t Ia = *reinterpret_cast<const uint16_t *>(a);
+    uint16_t Ib = *reinterpret_cast<const uint16_t *>(b);
+    uint32_t Sa = LogSeq[Ia];
+    uint32_t Sb = LogSeq[Ib];
+    return (Sa > Sb) - (Sa < Sb);
 }
 
-inline uint32_t LogHandlerService::LogBuildOrder(uint16_t *order)
+inline uint32_t LogHandlerService::LogBuildOrder(uint16_t *Order)
 {
-    uint32_t used = 0;
+    uint32_t Used = 0;
     for (uint32_t i = 0; i < LogCount; i++)
         if (LogUsed[i])
-            order[used++] = (uint16_t)i;
-    if (used > 1)
-        qsort(order, used, sizeof(uint16_t), LogSeqSlotCompare);
-    return used;
+            Order[Used++] = (uint16_t)i;
+    if (Used > 1)
+        qsort(Order, Used, sizeof(uint16_t), LogSeqSlotCompare);
+    return Used;
 }
 #endif
 
-inline bool LogHandlerService::Handle(const PacketFrame &frame)
+inline bool LogHandlerService::Handle(const PacketFrame &Frame)
 {
-    uint8_t cid = GetServiceCID(frame.Cmd);
-    if (frame.Flags & FLAG_TYPE) return true; // Ignore responses
+    uint8_t Cid = GetServiceCID(Frame.Cmd);
+    if (Frame.Flags & FLAG_TYPE) return true; // Ignore responses
 
 #ifndef TYPE_CORE
     // Nodes are outbound-only log reporters; they do not process incoming reports.
-    (void)cid;
+    (void)Cid;
     return true;
 #else
     EnsureLogStorage();
@@ -80,108 +80,108 @@ inline bool LogHandlerService::Handle(const PacketFrame &frame)
         return true;
     }
 
-    if (cid == 0)
+    if (Cid == 0)
     {
         // Inbound log report -> keep in RAM, deduplicated per device + source + code.
-        if (PayloadBytes(frame) < sizeof(LogMessage))
+        if (PayloadBytes(Frame) < sizeof(LogMessage))
             return true;
-        const LogMessage *msg = reinterpret_cast<const LogMessage *>(frame.Payload);
-        uint32_t seq = ++Clock;
+        const LogMessage *Msg = reinterpret_cast<const LogMessage *>(Frame.Payload);
+        uint32_t Seq = ++Clock;
 
-        int free_slot = -1;
-        int oldest_slot = -1;
-        uint32_t oldest_seq = 0xFFFFFFFF;
+        int FreeSlot = -1;
+        int OldestSlot = -1;
+        uint32_t OldestSeq = 0xFFFFFFFF;
         for (uint32_t i = 0; i < LogCapacity; i++)
         {
             if (i < LogCount && LogUsed[i])
             {
-                if (LogBuffer[i].device_id == frame.IdSrc &&
-                    LogBuffer[i].msg.source == msg->source &&
-                    LogCode(LogBuffer[i].msg) == LogCode(*msg))
+                if (LogBuffer[i].DeviceId == Frame.IdSrc &&
+                    LogBuffer[i].Msg.Source == Msg->Source &&
+                    LogCode(LogBuffer[i].Msg) == LogCode(*Msg))
                 {
                     // Dedup hit: refresh in place, newest wins the sequence number.
-                    LogBuffer[i].count++;
-                    LogBuffer[i].msg.timestamp = msg->timestamp;
-                    LogSeq[i] = seq;
+                    LogBuffer[i].Count++;
+                    LogBuffer[i].Msg.Timestamp = Msg->Timestamp;
+                    LogSeq[i] = Seq;
                     return true;
                 }
-                if (LogSeq[i] < oldest_seq)
+                if (LogSeq[i] < OldestSeq)
                 {
-                    oldest_seq = LogSeq[i];
-                    oldest_slot = (int)i;
+                    OldestSeq = LogSeq[i];
+                    OldestSlot = (int)i;
                 }
             }
-            else if (free_slot == -1)
-                free_slot = (int)i; // any unused slot: tail or a cleared-by-ClearReadLogs hole
+            else if (FreeSlot == -1)
+                FreeSlot = (int)i; // any unused slot: tail or a cleared-by-ClearReadLogs hole
         }
 
-        uint32_t slot;
-        if (free_slot >= 0)
+        uint32_t Slot;
+        if (FreeSlot >= 0)
         {
-            slot = (uint32_t)free_slot;
+            Slot = (uint32_t)FreeSlot;
         }
         else
         {
             // Database full: try to GROW it on the heap first; only when the heap cannot
             // provide more room, drop the OLDEST record to make space for this one.
             if (LogCapacity < LOG_MAX_CAPACITY && GrowLogStorage(LogCapacity + LOG_GROW_STEP))
-                slot = LogCount++;
+                Slot = LogCount++;
             else
-                slot = (uint32_t)oldest_slot; // growth failed / hard cap: drop the oldest record
+                Slot = (uint32_t)OldestSlot; // growth failed / hard cap: drop the oldest record
         }
 
-        LogBuffer[slot].device_id = frame.IdSrc;
-        LogBuffer[slot].count = 1;
-        LogBuffer[slot].msg = *msg;
-        LogUsed[slot] = true;
-        LogSeq[slot] = seq;
-        if ((uint32_t)slot >= LogCount) LogCount = slot + 1;
+        LogBuffer[Slot].DeviceId = Frame.IdSrc;
+        LogBuffer[Slot].Count = 1;
+        LogBuffer[Slot].Msg = *Msg;
+        LogUsed[Slot] = true;
+        LogSeq[Slot] = Seq;
+        if ((uint32_t)Slot >= LogCount) LogCount = Slot + 1;
         return true;
     }
 
-    if (cid == 1 || cid == 2)
+    if (Cid == 1 || Cid == 2)
     {
         // One ordered view of the database (oldest first by LogSeq) feeds both CIDs:
         // GetLogs must emit oldest-first, and ClearReadLogs must drop the lowest sequences.
-        uint32_t active = LogBuildOrder(Order);
+        uint32_t Active = LogBuildOrder(Order);
 
-        if (cid == 1) // GetLogs: stream every stored LogRecord entry, oldest first
+        if (Cid == 1) // GetLogs: stream every stored LogRecord entry, oldest first
         {
-            if (active == 0)
+            if (Active == 0)
             {
-                SendResponse(frame, nullptr, 0);
+                SendResponse(Frame, nullptr, 0);
                 return true;
             }
 
             // Stream every record as a FRAG stream (Docs/Services/Log Handler.md:
             // "Fragmentation, entries"). Each fragment carries up to 112 bytes of
             // LogRecords; SendFragFragment writes the 4-byte frag info.
-            uint32_t Total = active * sizeof(LogRecord);
-            uint16_t total_frags = (uint16_t)((Total + MAX_FRAG_CONTENT_SIZE - 1) / MAX_FRAG_CONTENT_SIZE);
-            uint32_t sent = 0;
-            for (uint16_t f = 0; f < total_frags; f++)
+            uint32_t Total = Active * sizeof(LogRecord);
+            uint16_t TotalFrags = (uint16_t)((Total + MAX_FRAG_CONTENT_SIZE - 1) / MAX_FRAG_CONTENT_SIZE);
+            uint32_t Sent = 0;
+            for (uint16_t f = 0; f < TotalFrags; f++)
             {
-                uint16_t off = 4;
-                while (off - 4 + sizeof(LogRecord) <= MAX_FRAG_CONTENT_SIZE && sent < active)
+                uint16_t Off = 4;
+                while (Off - 4 + sizeof(LogRecord) <= MAX_FRAG_CONTENT_SIZE && Sent < Active)
                 {
-                    memcpy(TxFrame.Payload + off, &LogBuffer[Order[sent]], sizeof(LogRecord));
-                    off += sizeof(LogRecord);
-                    sent++;
+                    memcpy(TxFrame.Payload + Off, &LogBuffer[Order[Sent]], sizeof(LogRecord));
+                    Off += sizeof(LogRecord);
+                    Sent++;
                 }
-                SendFragFragment(frame, f, total_frags, (uint16_t)(off - 4), PRIORITY_LOG);
+                SendFragFragment(Frame, f, TotalFrags, (uint16_t)(Off - 4), PRIORITY_LOG);
             }
             return true;
         }
 
         // ClearReadLogs: clear the `n` OLDEST entries (lowest seq), per Log Handler.md
         uint32_t n = 0;
-        if (PayloadBytes(frame) >= 4)
-            memcpy(&n, frame.Payload, sizeof(n));
-        uint32_t clear = (n < active) ? n : active;
-        for (uint32_t k = 0; k < clear; k++)
+        if (PayloadBytes(Frame) >= 4)
+            memcpy(&n, Frame.Payload, sizeof(n));
+        uint32_t Clear = (n < Active) ? n : Active;
+        for (uint32_t k = 0; k < Clear; k++)
             LogUsed[Order[k]] = false;
-        uint8_t status = 0;
-        SendResponse(frame, &status, 1);
+        uint8_t Status = 0;
+        SendResponse(Frame, &Status, 1);
     }
     return true;
 #endif

@@ -10,18 +10,18 @@
 
 // Turns the notification LED on/off. LEDState is field 3 of the LED-Button schema
 // (Docs/Modules and blocks/Buttons & LEDS.md).
-bool OnLEDStateChange(const StaticBlockDescriptor &block, uint16_t index, const void *data, uint16_t data_len)
+bool OnLEDStateChange(const StaticBlockDescriptor &Block, uint16_t Index, const void *Data, uint16_t DataLen)
 {
-    if (data_len != sizeof(bool)) return false;
-    bool new_state = *static_cast<const bool *>(data);
+    if (DataLen != sizeof(bool)) return false;
+    bool NewState = *static_cast<const bool *>(Data);
 
-    auto *led_data = static_cast<LEDButtonVolatile *>(block.VolatileData);
+    auto *LedData = static_cast<LEDButtonVolatile *>(Block.VolatileData);
 
-    if (new_state)
+    if (NewState)
     {
         // Drive the pin high (active high LED) and mark the shared line unreadable.
         PinModeOutput(VALU_LED_PORT, VALU_LED_PIN);
-        led_data->ButtonState = false;
+        LedData->ButtonState = false;
         PinHigh(VALU_LED_PORT, VALU_LED_PIN);
     }
     else
@@ -30,7 +30,7 @@ bool OnLEDStateChange(const StaticBlockDescriptor &block, uint16_t index, const 
         PinModeInputPullDown(VALU_LED_PORT, VALU_LED_PIN);
     }
 
-    led_data->LEDState = new_state;
+    LedData->LEDState = NewState;
     return true;
 }
 

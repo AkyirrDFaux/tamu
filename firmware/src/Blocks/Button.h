@@ -11,7 +11,7 @@ const BlockEntry Button_Entries[] = {
     { MakeFieldKey(0, 0), 0, {(uint16_t)DataType::Bool, sizeof(bool), ValueReadOnly} },
 };
 
-const BlockSchema Button_Schema = {
+const BlockSchema ButtonSchema = {
     .Entries = Button_Entries,
     .EntryCount = sizeof(Button_Entries) / sizeof(BlockEntry),
     .Triggers = nullptr,
@@ -31,7 +31,7 @@ struct LEDButtonVolatile {
     bool LEDState = false;    // field 3
 };
 
-bool OnLEDStateChange(const StaticBlockDescriptor &block, uint16_t index, const void *data, uint16_t data_len);
+bool OnLEDStateChange(const StaticBlockDescriptor &Block, uint16_t Index, const void *Data, uint16_t DataLen);
 
 const BlockEntry LEDButton_Entries[] = {
     { MakeFieldKey(0, 0), 0, {(uint16_t)DataType::Bool, sizeof(bool), ValueReadOnly} }, // Button raw state
@@ -42,7 +42,7 @@ const BlockTrigger LEDButton_Triggers[] = {
     { MakeFieldKey(3, 0), OnLEDStateChange },
 };
 
-const BlockSchema LEDButton_Schema = {
+const BlockSchema LEDButtonSchema = {
     .Entries = LEDButton_Entries,
     .EntryCount = sizeof(LEDButton_Entries) / sizeof(BlockEntry),
     .Triggers = LEDButton_Triggers,

@@ -26,13 +26,13 @@
 
 // FNV-1a hash over the value bytes (provider on-change detection + requester confirmation).
 // A generic hash over data - not service state - so it stays a free helper.
-static inline uint32_t Fnv1a(const uint8_t *data, uint8_t len) {
-    uint32_t hash = 0x811C9DC5u;
-    for (uint8_t i = 0; i < len; i++) {
-        hash ^= data[i];
-        hash *= 0x01000193u;
+static inline uint32_t Fnv1a(const uint8_t *Data, uint8_t Len) {
+    uint32_t Hash = 0x811C9DC5u;
+    for (uint8_t i = 0; i < Len; i++) {
+        Hash ^= Data[i];
+        Hash *= 0x01000193u;
     }
-    return hash;
+    return Hash;
 }
 
 // Docs/Services/Subscriptions.md "Subscription table": the shared 16-byte describing record.
@@ -40,10 +40,10 @@ static inline uint32_t Fnv1a(const uint8_t *data, uint8_t len) {
 // i32) with every u32 on a 4-byte offset, so it is copied whole - no field-by-field codec.
 struct SubscriptionTable {
     uint32_t sourceReg = 0;              // BlockInfo at the provider's register
-    TriggerType trigger = TriggerType::None;
+    TriggerType Trigger = TriggerType::None;
     uint8_t minTime[3] = {0, 0, 0};      // minimum/retry interval, uint24 little-endian
     uint32_t periodMs = 0;
-    Number deadzone = N(0);              // for number/vector triggers
+    Number Deadzone = N(0);              // for number/vector triggers
 };
 static_assert(sizeof(SubscriptionTable) == 16, "the subscription table is 16 Bytes on the wire");
 
@@ -67,9 +67,9 @@ static inline uint32_t SubTimeoutFrom(uint32_t nowMs) { return nowMs + SUB_TIMEO
 
 // First occupied entry with `trid`, or nullptr.
 template <typename T, size_t N, typename Occupied>
-static T *SubTableFindByTrid(T (&table)[N], uint16_t Trid, Occupied occupied) {
+static T *SubTableFindByTrid(T (&Table)[N], uint16_t Trid, Occupied IsOccupied) {
     for (size_t i = 0; i < N; i++) {
-        if (occupied(table[i]) && table[i].Trid == Trid) return &table[i];
+        if (IsOccupied(Table[i]) && Table[i].Trid == Trid) return &Table[i];
     }
     return nullptr;
 }
@@ -87,10 +87,10 @@ static T *SubTableFindByTrid(T (&table)[N], uint16_t Trid, Occupied occupied) {
 struct RequesterEntry {
     uint16_t providerAddr = 0;
     uint16_t Trid = 0;
-    SubscriptionTable sub;
+    SubscriptionTable Sub;
     uint32_t targetReg = 0;      // local write target
-    uint32_t timeout = 0;        // local uptime deadline (not persisted)
-    bool active = false;
+    uint32_t Timeout = 0;        // local uptime deadline (not persisted)
+    bool Active = false;
     // Initialization tracking (transient): the entry is "initialized" once a value update
     // arrives; until then the requester re-sends the registration (CID 1) to wake the provider.
     uint32_t registeredAtMs = 0;   // start of the initialization window (set/boot)
@@ -106,9 +106,9 @@ struct RequesterEntry {
 // first 28 bytes (Docs "Requester table entry"): providerAddr, trid, table, targetReg, timeout.
 static_assert(offsetof(RequesterEntry, providerAddr) == 0, "wire order: providerAddr first");
 static_assert(offsetof(RequesterEntry, Trid) == 2, "wire order: Trid after providerAddr");
-static_assert(offsetof(RequesterEntry, sub) == 4, "wire order: subscription table after Trid");
+static_assert(offsetof(RequesterEntry, Sub) == 4, "wire order: subscription table after Trid");
 static_assert(offsetof(RequesterEntry, targetReg) == 20, "wire order: targetReg after the table");
-static_assert(offsetof(RequesterEntry, timeout) == 24, "wire order: timeout after targetReg");
+static_assert(offsetof(RequesterEntry, Timeout) == 24, "wire order: timeout after targetReg");
 #define REQUESTER_ENTRY_WIRE_SIZE 28
 #define REQUESTER_FILE_ENTRY_SIZE 24 // the wire entry minus the timeout (not persisted)
 
@@ -131,10 +131,10 @@ static const uint8_t kReRegisterMax = 128;
 struct ProviderEntry {
     uint16_t requesterAddr = 0;  // 0 = invalid entry
     uint16_t Trid = 0;
-    SubscriptionTable sub;
+    SubscriptionTable Sub;
     uint32_t lastSentMs = 0;
-    uint32_t hash = 0;           // FNV-1a hash / edge counter / last value / subresolution
-    uint32_t timeout = 0;        // local uptime deadline
+    uint32_t Hash = 0;           // FNV-1a hash / edge counter / last value / subresolution
+    uint32_t Timeout = 0;        // local uptime deadline
     // Transient (not serialized): last boolean sample for edge detection and the last
     // counter value that was transmitted.
     bool lastBool = false;
@@ -149,9 +149,9 @@ struct ProviderEntry {
 // timeout. The provider table is not ordered (only the requester table is TRID-sorted).
 static_assert(offsetof(ProviderEntry, requesterAddr) == 0, "wire order: requesterAddr first");
 static_assert(offsetof(ProviderEntry, Trid) == 2, "wire order: Trid after requesterAddr");
-static_assert(offsetof(ProviderEntry, sub) == 4, "wire order: subscription table after Trid");
+static_assert(offsetof(ProviderEntry, Sub) == 4, "wire order: subscription table after Trid");
 static_assert(offsetof(ProviderEntry, lastSentMs) == 20, "wire order: lastSent after the table");
-static_assert(offsetof(ProviderEntry, hash) == 24, "wire order: hash after lastSent");
-static_assert(offsetof(ProviderEntry, timeout) == 28, "wire order: timeout after hash");
+static_assert(offsetof(ProviderEntry, Hash) == 24, "wire order: hash after lastSent");
+static_assert(offsetof(ProviderEntry, Timeout) == 28, "wire order: timeout after hash");
 #define PROVIDER_ENTRY_WIRE_SIZE 32
 #endif // USE_SUB_PROVIDE

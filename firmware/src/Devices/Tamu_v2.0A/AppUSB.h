@@ -31,14 +31,14 @@
 // CLOSED its USB port but left the cable plugged in: the SOF-based
 // usb_serial_jtag_is_connected() stays true, so without this the TX pump would keep draining
 // responses into the dead port.
-static uint32_t s_usb_last_rx = 0;
+static uint32_t UsbLastRx = 0;
 #define USB_TX_SILENCE_MS 500
 
 // True when no app frame has arrived over USB for a while (the port is open but the app is
 // gone). Only meaningful as a TX guard.
 bool AppUsbSilent()
 {
-    return (uint32_t)(TimeFromBoot() - s_usb_last_rx) > USB_TX_SILENCE_MS;
+    return (uint32_t)(TimeFromBoot() - UsbLastRx) > USB_TX_SILENCE_MS;
 }
 
 // ---------------------------------------------------------------------------
@@ -47,79 +47,79 @@ bool AppUsbSilent()
 
 struct UsbFramer
 {
-    bool in_frame = false;
-    uint16_t len = 0;
-    uint8_t buf[2 + USB_FRAME_MAX_PAYLOAD + 1]; // crc + len + payload + stop
+    bool FrameOpen = false;
+    uint16_t Len = 0;
+    uint8_t Buf[2 + USB_FRAME_MAX_PAYLOAD + 1]; // crc + len + payload + stop
 
     bool InFrame() const
     {
-        return in_frame;
+        return FrameOpen;
     }
 
     void Reset()
     {
-        in_frame = false;
-        len = 0;
+        FrameOpen = false;
+        Len = 0;
     }
 
     // Feeds one byte. Returns: 0 = incomplete, >0 = valid frame, payload length written
     // to `payload`, -1 = invalid sequence (resync automatically).
-    int Feed(uint8_t b, uint8_t *Payload)
+    int Feed(uint8_t B, uint8_t *Payload)
     {
-        if (!in_frame)
+        if (!FrameOpen)
         {
-            if (b == USB_FRAME_START)
+            if (B == USB_FRAME_START)
             {
-                in_frame = true;
-                len = 0;
+                FrameOpen = true;
+                Len = 0;
             }
             return 0;
         }
 
-        buf[len++] = b;
+        Buf[Len++] = B;
 
-        if (len < 2)
+        if (Len < 2)
             return 0; // CRC pending
 
-        uint8_t n = buf[1];
-        if (n > USB_FRAME_MAX_PAYLOAD)
+        uint8_t N = Buf[1];
+        if (N > USB_FRAME_MAX_PAYLOAD)
         {
             Reset();
             return -1; // impossible length: resync
         }
 
-        if (len < (uint8_t)(2 + n + 1))
+        if (Len < (uint8_t)(2 + N + 1))
             return 0; // payload/stop pending
 
-        in_frame = false;
-        if (buf[2 + n] != USB_FRAME_STOP)
+        FrameOpen = false;
+        if (Buf[2 + N] != USB_FRAME_STOP)
             return -1;
 
         // CRC8 over Length + Payload
-        if (Crc8(&buf[1], (uint16_t)(1 + n)) != buf[0])
+        if (Crc8(&Buf[1], (uint16_t)(1 + N)) != Buf[0])
             return -1;
 
-        memcpy(Payload, &buf[2], n);
-        return n;
+        memcpy(Payload, &Buf[2], N);
+        return N;
     }
 };
 
-static UsbFramer s_app_framer;
+static UsbFramer AppFramer;
 
 // Requests a framer resync on host disconnect. AppUSBTick (ApplicationTask) only sets it;
 // AppLinkTask, which feeds both framers, consumes it and performs the Reset() itself, so
 // every framer is fed and reset on a single task.
-static volatile bool s_usb_resync = false;
+static volatile bool UsbResync = false;
 
 // Installs the USJ driver and routes the VFS stdio to it so Crc8/log output has a home.
 void AppUSBInit()
 {
     if (!usb_serial_jtag_is_driver_installed())
     {
-        usb_serial_jtag_driver_config_t cfg = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
-        cfg.tx_buffer_size = 2048;
-        cfg.rx_buffer_size = 1024;
-        usb_serial_jtag_driver_install(&cfg);
+        usb_serial_jtag_driver_config_t Cfg = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
+        Cfg.tx_buffer_size = 2048;
+        Cfg.rx_buffer_size = 1024;
+        usb_serial_jtag_driver_install(&Cfg);
     }
     usb_serial_jtag_vfs_use_driver();
 }
@@ -130,44 +130,44 @@ void AppUSBInit()
 
 struct WireStreamParser
 {
-    PacketFrame frame __attribute__((aligned(4)));
-    uint16_t got = 0;
-    bool full = false;
+    PacketFrame Frame __attribute__((aligned(4)));
+    uint16_t Got = 0;
+    bool Full = false;
 
     void Reset()
     {
-        got = 0;
-        full = false;
+        Got = 0;
+        Full = false;
     }
 
     // Feeds one stream byte. Returns true when a complete CRC-valid PacketFrame was
     // assembled into `frame` (ready for AppInterfaceEnqueue).
-    bool Feed(uint8_t b)
+    bool Feed(uint8_t B)
     {
-        if (full)
+        if (Full)
             return false;
 
-        if (got >= sizeof(PacketFrame))
+        if (Got >= sizeof(PacketFrame))
         {
             Reset();
             return false;
         }
-        ((uint8_t *)&frame)[got++] = b;
+        ((uint8_t *)&Frame)[Got++] = B;
 
-        if (got < 4)
+        if (Got < 4)
             return false; // payload_len not known yet
 
-        uint16_t need = PacketWireSize(&frame);
-        if (got < need)
+        uint16_t Need = PacketWireSize(&Frame);
+        if (Got < Need)
             return false;
 
-        full = true;
-        bool ok = Crc8(&frame.Flags, (uint16_t)(11 + PayloadBytes(frame))) == frame.Crc8;
-        return ok; // invalid CRC: caller should Reset() and resync
+        Full = true;
+        bool Ok = Crc8(&Frame.Flags, (uint16_t)(11 + PayloadBytes(Frame))) == Frame.Crc8;
+        return Ok; // invalid CRC: caller should Reset() and resync
     }
 };
 
-static WireStreamParser s_wire_parser;
+static WireStreamParser WireParser;
 
 // ---------------------------------------------------------------------------
 // RX: link frames -> queued packets
@@ -175,19 +175,19 @@ static WireStreamParser s_wire_parser;
 
 // Handles one validated app link-frame payload: parses the contained packet-stream
 // bytes and queues complete packets for dispatch.
-static void AppRxStream(const uint8_t *data, uint16_t len)
+static void AppRxStream(const uint8_t *Data, uint16_t Len)
 {
-    s_usb_last_rx = TimeFromBoot();
-    for (uint16_t i = 0; i < len; i++)
+    UsbLastRx = TimeFromBoot();
+    for (uint16_t I = 0; I < Len; I++)
     {
-        if (s_wire_parser.Feed(data[i]))
+        if (WireParser.Feed(Data[I]))
         {
-            AppInterface.Enqueue(s_wire_parser.frame);
-            s_wire_parser.Reset();
+            AppInterface.Enqueue(WireParser.Frame);
+            WireParser.Reset();
         }
-        else if (s_wire_parser.full || s_wire_parser.got > sizeof(PacketFrame))
+        else if (WireParser.Full || WireParser.Got > sizeof(PacketFrame))
         {
-            s_wire_parser.Reset(); // CRC failure / overflow: drop and resync
+            WireParser.Reset(); // CRC failure / overflow: drop and resync
         }
     }
 }
@@ -196,29 +196,29 @@ static void AppRxStream(const uint8_t *data, uint16_t len)
 // stray byte outside a frame is simply ignored by the framer.
 static void AppLinkTask(void *)
 {
-    uint8_t buf[128];
+    uint8_t Buf[128];
 
     for (;;)
     {
-        if (s_usb_resync)
+        if (UsbResync)
         {
-            s_usb_resync = false;
-            s_app_framer.Reset();
-            s_wire_parser.Reset();
+            UsbResync = false;
+            AppFramer.Reset();
+            WireParser.Reset();
         }
 
-        int n = usb_serial_jtag_read_bytes(buf, sizeof(buf), pdMS_TO_TICKS(20));
-        if (n <= 0)
+        int N = usb_serial_jtag_read_bytes(Buf, sizeof(Buf), pdMS_TO_TICKS(20));
+        if (N <= 0)
             continue;
 
-        for (int i = 0; i < n; i++)
+        for (int I = 0; I < N; I++)
         {
             uint8_t Payload[USB_FRAME_MAX_PAYLOAD];
-            int r = s_app_framer.Feed(buf[i], Payload);
-            if (r > 0)
-                AppRxStream(Payload, (uint16_t)r);
-            else if (r < 0)
-                s_wire_parser.Reset(); // broken link frame: resync the stream too
+            int R = AppFramer.Feed(Buf[I], Payload);
+            if (R > 0)
+                AppRxStream(Payload, (uint16_t)R);
+            else if (R < 0)
+                WireParser.Reset(); // broken link frame: resync the stream too
         }
     }
 }
@@ -242,24 +242,24 @@ bool AppUSBActive()
 
 // Sends up to `len` stream bytes as one or more link frames. Blocks briefly until the
 // driver accepted the bytes (bounded by the write timeout).
-void AppUSBSend(const uint8_t *data, uint16_t len)
+void AppUSBSend(const uint8_t *Data, uint16_t Len)
 {
-    uint16_t off = 0;
-    while (off < len)
+    uint16_t Off = 0;
+    while (Off < Len)
     {
-        uint8_t chunk = (uint8_t)((len - off > USB_FRAME_MAX_PAYLOAD) ? USB_FRAME_MAX_PAYLOAD : (len - off));
+        uint8_t Chunk = (uint8_t)((Len - Off > USB_FRAME_MAX_PAYLOAD) ? USB_FRAME_MAX_PAYLOAD : (Len - Off));
 
         // Wire layout (Docs/Services/App Interface.md): START | CRC8 | Length |
         // Payload | STOP. The CRC covers Length + Payload.
-        uint8_t frame[4 + USB_FRAME_MAX_PAYLOAD];
-        frame[0] = USB_FRAME_START;
-        frame[2] = chunk;
-        memcpy(&frame[3], data + off, chunk);
-        frame[3 + chunk] = USB_FRAME_STOP;
-        frame[1] = Crc8(&frame[2], (uint16_t)(1 + chunk)); // CRC8 over Length + Payload
+        uint8_t Frame[4 + USB_FRAME_MAX_PAYLOAD];
+        Frame[0] = USB_FRAME_START;
+        Frame[2] = Chunk;
+        memcpy(&Frame[3], Data + Off, Chunk);
+        Frame[3 + Chunk] = USB_FRAME_STOP;
+        Frame[1] = Crc8(&Frame[2], (uint16_t)(1 + Chunk)); // CRC8 over Length + Payload
 
-        usb_serial_jtag_write_bytes(frame, (size_t)(4 + chunk), pdMS_TO_TICKS(50));
-        off += chunk;
+        usb_serial_jtag_write_bytes(Frame, (size_t)(4 + Chunk), pdMS_TO_TICKS(50));
+        Off += Chunk;
     }
 }
 
@@ -268,13 +268,13 @@ void AppUSBSend(const uint8_t *data, uint16_t len)
 // starts from a clean stream.
 void AppUSBTick()
 {
-    static bool was_connected = false;
-    bool connected = usb_serial_jtag_is_connected();
-    if (was_connected && !connected)
+    static bool WasConnected = false;
+    bool Connected = usb_serial_jtag_is_connected();
+    if (WasConnected && !Connected)
     {
         AppInterface.TxFlushAll();
         // AppLinkTask owns both framers; a Reset() here would race the task's Feed().
-        s_usb_resync = true;
+        UsbResync = true;
     }
-    was_connected = connected;
+    WasConnected = Connected;
 }

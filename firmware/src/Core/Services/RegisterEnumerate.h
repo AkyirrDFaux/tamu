@@ -27,7 +27,7 @@
 // The System block's schema (Docs/Services/System Block and Device Commands.md). One entry per
 // field, key 0: the struct fields (0, 3, 4, 5) are Undefined raw bytes whose Size is the sum of
 // their members. The struct position is never addressed on the wire - the whole struct is sent.
-static const BlockEntry System_Entries[] = {
+static const BlockEntry SystemEntries[] = {
     { MakeFieldKey(0, 0), 0,  { (uint16_t)DataType::Undefined, 12, ValueReadOnly } }, // DeviceType + Capability + Version
     { MakeFieldKey(1, 0), 0,  { (uint16_t)DataType::SN,        14, ValueReadOnly } },
     { MakeFieldKey(2, 0), 0,  { (uint16_t)DataType::Id,         2, ValueReadOnly } },
@@ -40,7 +40,7 @@ static const BlockEntry System_Entries[] = {
     { MakeFieldKey(8, 0), 0,  { (uint16_t)DataType::Enum,       1, ValueReadOnly } },   // App Active
 #endif
 };
-static const uint16_t System_EntryCount = sizeof(System_Entries) / sizeof(System_Entries[0]);
+static const uint16_t SystemEntryCount = sizeof(SystemEntries) / sizeof(SystemEntries[0]);
 
 // The highest instance a 6-bit packed type word can carry. A type with more instances than
 // that cannot be addressed by BlockInfo anyway, so the packed highest instance must saturate
@@ -48,29 +48,29 @@ static const uint16_t System_EntryCount = sizeof(System_Entries) / sizeof(System
 #define ENUM_MAX_INSTANCE 0x3F
 
 // Packs a normal (10.6) block-type word, saturating the instance field.
-inline uint16_t RegisterService::EnumTypeWordOf(uint16_t type, size_t instances) {
-    uint16_t inst = instances > ENUM_MAX_INSTANCE ? ENUM_MAX_INSTANCE : (uint16_t)instances;
-    return (uint16_t)((type << 6) | inst);
+inline uint16_t RegisterService::EnumTypeWordOf(uint16_t Type, size_t Instances) {
+    uint16_t Inst = Instances > ENUM_MAX_INSTANCE ? ENUM_MAX_INSTANCE : (uint16_t)Instances;
+    return (uint16_t)((Type << 6) | Inst);
 }
 
 inline uint16_t RegisterService::EnumTypeCount() {
-    uint16_t count = 1; // the System block
-    for (size_t i = 0; i < static_block_num; i++)
-        if (i == 0 || static_block_registry[i].Schema->Type != static_block_registry[i - 1].Schema->Type)
-            count++;
+    uint16_t Count = 1; // the System block
+    for (size_t i = 0; i < StaticBlockNum; i++)
+        if (i == 0 || StaticBlockRegistry[i].Schema->Type != StaticBlockRegistry[i - 1].Schema->Type)
+            Count++;
 #ifdef USE_DYNAMIC_BLOCKS
-    if (dynamic_block_registry.block_count > 0) count++;
+    if (DynamicBlockRegistry.BlockCount > 0) Count++;
 #endif
-    return count;
+    return Count;
 }
 
 #ifdef USE_SCRIPTS
-inline uint16_t RegisterService::EnumScriptWord(uint16_t inst, uint16_t i) {
-    uint16_t seen = 0;
+inline uint16_t RegisterService::EnumScriptWord(uint16_t Inst, uint16_t i) {
+    uint16_t Seen = 0;
     for (uint16_t f = 0; f <= SCRIPT_FIELD_OUTPUT; f++) {
-        uint8_t keys = Script.KeyCount(inst, (uint8_t)f);
-        for (uint8_t k = 0; k < keys; k++)
-            if (seen++ == i) return (uint16_t)((f << 8) | k);
+        uint8_t Keys = Script.KeyCount(Inst, (uint8_t)f);
+        for (uint8_t k = 0; k < Keys; k++)
+            if (Seen++ == i) return (uint16_t)((f << 8) | k);
     }
     return 0;
 }
@@ -78,23 +78,23 @@ inline uint16_t RegisterService::EnumScriptWord(uint16_t inst, uint16_t i) {
 
 // The word at index `i` of the requested list, or 0 past its end. Out of line so LTO cannot
 // clone the streamer's loop once per list kind (which re-inflates it to the pre-refactor size).
-__attribute__((noinline)) inline uint16_t RegisterService::EnumWord(EnumSrc src, const void *ctx, uint16_t i) {
-    switch (src) {
+__attribute__((noinline)) inline uint16_t RegisterService::EnumWord(EnumSrc Src, const void *Ctx, uint16_t i) {
+    switch (Src) {
     case EnumSrc::System:
-        return System_Entries[i].FieldKey;
+        return SystemEntries[i].FieldKey;
     case EnumSrc::Static: {
-        const BlockSchema *s = (const BlockSchema *)ctx;
+        const BlockSchema *s = (const BlockSchema *)Ctx;
         return s->Entries[i].FieldKey; // the literal table carries the Field&Key
     }
 #ifdef USE_DYNAMIC_BLOCKS
     case EnumSrc::Dynamic: {
-        const DynamicBlockDescriptor *b = (const DynamicBlockDescriptor *)ctx;
-        return b->table[i].fieldKey;
+        const DynamicBlockDescriptor *b = (const DynamicBlockDescriptor *)Ctx;
+        return b->Table[i].FieldKey;
     }
 #endif
 #ifdef USE_SCRIPTS
     case EnumSrc::Script:
-        return EnumScriptWord(*(const uint16_t *)ctx, i);
+        return EnumScriptWord(*(const uint16_t *)Ctx, i);
 #endif
     default:
         break;
@@ -104,21 +104,21 @@ __attribute__((noinline)) inline uint16_t RegisterService::EnumWord(EnumSrc src,
 
 // Streams `count` words as FRAG fragments, one lookup at a time - no buffer, the content goes
 // straight into the frame payload the send path already has. `count` may be 0 (an empty reply).
-inline void RegisterService::SendU16Stream(const PacketFrame &frame, uint16_t count, EnumSrc src, const void *ctx) {
+inline void RegisterService::SendU16Stream(const PacketFrame &Frame, uint16_t Count, EnumSrc Src, const void *Ctx) {
     const uint16_t kWordsPerFrag = 32; // 64-byte fragments, two bytes per word
-    uint16_t frags = (uint16_t)((count + kWordsPerFrag - 1) / kWordsPerFrag);
-    if (frags == 0) frags = 1;
+    uint16_t Frags = (uint16_t)((Count + kWordsPerFrag - 1) / kWordsPerFrag);
+    if (Frags == 0) Frags = 1;
 
-    uint16_t idx = 0; // the next word to emit
-    for (uint16_t f = 0; f < frags; f++) {
-        uint8_t *dst = TxFrame.Payload + 4;
+    uint16_t Idx = 0; // the next word to emit
+    for (uint16_t f = 0; f < Frags; f++) {
+        uint8_t *Dst = TxFrame.Payload + 4;
         uint16_t n = 0;
-        while (n < kWordsPerFrag * 2 && idx < count) {
-            uint16_t w = EnumWord(src, ctx, idx++);
-            dst[n++] = (uint8_t)w;
-            dst[n++] = (uint8_t)(w >> 8);
+        while (n < kWordsPerFrag * 2 && Idx < Count) {
+            uint16_t w = EnumWord(Src, Ctx, Idx++);
+            Dst[n++] = (uint8_t)w;
+            Dst[n++] = (uint8_t)(w >> 8);
         }
-        SendFragFragment(frame, f, frags, n);
+        SendFragFragment(Frame, f, Frags, n);
     }
 }
 
@@ -128,101 +128,101 @@ inline void RegisterService::SendU16Stream(const PacketFrame &frame, uint16_t co
 // count pass only sizes the reply. The System block is always first: its word is the only
 // zero and it is first, which is what lets the app tell a real zero from the wire's trailing
 // padding.
-inline void RegisterService::SendTypeWordsStream(const PacketFrame &frame) {
+inline void RegisterService::SendTypeWordsStream(const PacketFrame &Frame) {
     const uint16_t kWordsPerFrag = 32; // 64-byte fragments, two bytes per word
-    uint16_t count = EnumTypeCount();
-    uint16_t frags = (uint16_t)((count + kWordsPerFrag - 1) / kWordsPerFrag);
-    if (frags == 0) frags = 1;
+    uint16_t Count = EnumTypeCount();
+    uint16_t Frags = (uint16_t)((Count + kWordsPerFrag - 1) / kWordsPerFrag);
+    if (Frags == 0) Frags = 1;
 
-    size_t start = 0;   // the first registry entry of the current type run
+    size_t Start = 0;   // the first registry entry of the current type run
     bool systemSent = false;
-    uint16_t idx = 0;   // the next word to emit
+    uint16_t Idx = 0;   // the next word to emit
 
-    for (uint16_t f = 0; f < frags; f++) {
-        uint8_t *dst = TxFrame.Payload + 4;
+    for (uint16_t f = 0; f < Frags; f++) {
+        uint8_t *Dst = TxFrame.Payload + 4;
         uint16_t n = 0;
-        while (n < kWordsPerFrag * 2 && idx < count) {
+        while (n < kWordsPerFrag * 2 && Idx < Count) {
             uint16_t w = 0;
             if (!systemSent) {
                 systemSent = true; // word 0: the System block (type 0, instance 0)
-            } else if (start < static_block_num) {
-                uint16_t t = (uint16_t)static_block_registry[start].Schema->Type;
-                size_t end = start + 1;
-                while (end < static_block_num &&
-                       (uint16_t)static_block_registry[end].Schema->Type == t) end++;
-                w = EnumTypeWordOf(t, end - start - 1);
-                start = end;
+            } else if (Start < StaticBlockNum) {
+                uint16_t t = (uint16_t)StaticBlockRegistry[Start].Schema->Type;
+                size_t End = Start + 1;
+                while (End < StaticBlockNum &&
+                       (uint16_t)StaticBlockRegistry[End].Schema->Type == t) End++;
+                w = EnumTypeWordOf(t, End - Start - 1);
+                Start = End;
             }
 #ifdef USE_DYNAMIC_BLOCKS
-            else if (dynamic_block_registry.block_count > 0) {
+            else if (DynamicBlockRegistry.BlockCount > 0) {
                 // Doc gap: Register.md "Block types" does not describe the banked dynamic
                 // range's **8.8** encoding (high byte = the owning bank type's low byte,
                 // 0xF0-0xF3; low byte = the highest occupied global index, 0..255), which
                 // differs from the normal 10.6 word. It lives only in this code; tracked in
                 // Issues.md. `count` includes exactly one such word.
-                uint16_t highest = (uint16_t)(dynamic_block_registry.block_count - 1);
-                uint16_t bankType = BlockTypeRange::DynamicType((uint16_t)(highest >> BlockTypeRange::BankShift));
-                w = (uint16_t)((bankType << 8) | (highest & 0xFF));
+                uint16_t Highest = (uint16_t)(DynamicBlockRegistry.BlockCount - 1);
+                uint16_t bankType = BlockTypeRange::DynamicType((uint16_t)(Highest >> BlockTypeRange::BankShift));
+                w = (uint16_t)((bankType << 8) | (Highest & 0xFF));
             }
 #endif
-            dst[n++] = (uint8_t)w;
-            dst[n++] = (uint8_t)(w >> 8);
-            idx++;
+            Dst[n++] = (uint8_t)w;
+            Dst[n++] = (uint8_t)(w >> 8);
+            Idx++;
         }
-        SendFragFragment(frame, f, frags, n);
+        SendFragFragment(Frame, f, Frags, n);
     }
 }
 
-inline void RegisterService::HandleEnumerateBlocks(const PacketFrame &frame) {
-    SendTypeWordsStream(frame);
+inline void RegisterService::HandleEnumerateBlocks(const PacketFrame &Frame) {
+    SendTypeWordsStream(Frame);
 }
 
 // CID 1: a block's Field&Key words. The request carries the packed `(type << 6) | instance`
 // word (a uint16 on the wire). An absent or tombstoned block reports an empty list rather than a
 // failure.
-inline void RegisterService::HandleEnumerateFields(const PacketFrame &frame) {
-    if (PayloadBytes(frame) != 4) { RespondStatus(frame, false); return; }
-    uint16_t packed = (uint16_t)(frame.Payload[0] | (frame.Payload[1] << 8));
-    uint16_t type = (packed >> 6) & 0x3FF;
-    uint8_t inst = (uint8_t)(packed & 0x3F);
-    uint16_t gi = 0; // the global index of a banked (script/dynamic) block; ctx points at it
-    (void)inst; (void)gi; // unused when neither USE_SCRIPTS nor USE_DYNAMIC_BLOCKS is set
-    EnumSrc src = EnumSrc::System; // overridden below; unused for a zero-count reply
-    const void *ctx = nullptr;
-    uint16_t count = 0;
+inline void RegisterService::HandleEnumerateFields(const PacketFrame &Frame) {
+    if (PayloadBytes(Frame) != 4) { RespondStatus(Frame, false); return; }
+    uint16_t packed = (uint16_t)(Frame.Payload[0] | (Frame.Payload[1] << 8));
+    uint16_t Type = (packed >> 6) & 0x3FF;
+    uint8_t Inst = (uint8_t)(packed & 0x3F);
+    uint16_t Gi = 0; // the global index of a banked (script/dynamic) block; ctx points at it
+    (void)Inst; (void)Gi; // unused when neither USE_SCRIPTS nor USE_DYNAMIC_BLOCKS is set
+    EnumSrc Src = EnumSrc::System; // overridden below; unused for a zero-count reply
+    const void *Ctx = nullptr;
+    uint16_t Count = 0;
 
-    if (type == 0) { // the System block: virtual, its schema is the fixed System_Entries
-        src = EnumSrc::System;
-        count = System_EntryCount;
+    if (Type == 0) { // the System block: virtual, its schema is the fixed System_Entries
+        Src = EnumSrc::System;
+        Count = SystemEntryCount;
 #ifdef USE_SCRIPTS
-    } else if (BlockTypeRange::IsScript(type)) { // a loaded script: its inputs and outputs, per instance
-        gi = BlockTypeRange::ScriptGlobal(type, inst);
-        LoadedScript *s = Script.Active(gi);
+    } else if (BlockTypeRange::IsScript(Type)) { // a loaded script: its inputs and outputs, per instance
+        Gi = BlockTypeRange::ScriptGlobal(Type, Inst);
+        LoadedScript *s = Script.Active(Gi);
         if (s) {
-            src = EnumSrc::Script;
-            ctx = &gi;
-            count = (uint16_t)(s->inCount + s->outCount);
+            Src = EnumSrc::Script;
+            Ctx = &Gi;
+            Count = (uint16_t)(s->inCount + s->outCount);
         }
 #endif
 #ifdef USE_DYNAMIC_BLOCKS
-    } else if (BlockTypeRange::IsDynamic(type)) { // a dynamic block: its live entries, per instance
-        gi = BlockTypeRange::DynamicGlobal(type, inst);
-        DynamicBlockDescriptor *b = gi < dynamic_block_registry.block_count
-                                        ? dynamic_block_registry.GetBlock(gi)
+    } else if (BlockTypeRange::IsDynamic(Type)) { // a dynamic block: its live entries, per instance
+        Gi = BlockTypeRange::DynamicGlobal(Type, Inst);
+        DynamicBlockDescriptor *b = Gi < DynamicBlockRegistry.BlockCount
+                                        ? DynamicBlockRegistry.GetBlock(Gi)
                                         : nullptr;
-        if (b && b->present) {
-            src = EnumSrc::Dynamic;
-            ctx = b;
-            count = b->entry_count;
+        if (b && b->Present) {
+            Src = EnumSrc::Dynamic;
+            Ctx = b;
+            Count = b->EntryCount;
         }
 #endif
     } else { // a static registry entry: the schema is the type's, every instance answers alike
-        int idx = FindStaticBlock(type, 0);
-        if (idx >= 0) {
-            src = EnumSrc::Static;
-            ctx = static_block_registry[idx].Schema;
-            count = static_block_registry[idx].Schema->EntryCount;
+        int Idx = FindStaticBlock(Type, 0);
+        if (Idx >= 0) {
+            Src = EnumSrc::Static;
+            Ctx = StaticBlockRegistry[Idx].Schema;
+            Count = StaticBlockRegistry[Idx].Schema->EntryCount;
         }
     }
-    SendU16Stream(frame, count, src, ctx);
+    SendU16Stream(Frame, Count, Src, Ctx);
 }

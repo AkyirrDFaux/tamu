@@ -13,9 +13,9 @@
 // supply voltage).
 #define VOLTAGE (3.3)
 
-static uint32_t ms_accum = 0;
-static uint32_t last_cnt = 0;
-static uint32_t ms_rem = 0; // fractional milliseconds (cycles) carried between calls
+static uint32_t MsAccum = 0;
+static uint32_t LastCnt = 0;
+static uint32_t MsRem = 0; // fractional milliseconds (cycles) carried between calls
 
 // Returns the RAW time since boot in milliseconds, tracking SysTick rollovers and unaffected
 // by any time offset. Runs at HCLK (144 MHz here); the SysTick free-runs with CMP = 0, so a
@@ -24,22 +24,22 @@ static uint32_t ms_rem = 0; // fractional milliseconds (cycles) carried between 
 // 64-bit division helper (__udivdi3) is not pulled in.
 uint32_t TimeFromBoot(void)
 {
-    static bool s_inited = false;
-    uint32_t current_cnt = SysTick->CNT;
+    static bool Inited = false;
+    uint32_t CurrentCnt = SysTick->CNT;
     // Prime the baseline on the first call (the WCH SysTick counter is not guaranteed to
     // start at 0 on every reset).
-    if (!s_inited)
+    if (!Inited)
     {
-        last_cnt = current_cnt;
-        s_inited = true;
+        LastCnt = CurrentCnt;
+        Inited = true;
     }
-    uint32_t elapsed = current_cnt - last_cnt;
-    last_cnt = current_cnt;
-    uint32_t divisor = (SystemCoreClock / 1000);
-    uint32_t Total = elapsed + ms_rem;
-    ms_rem = Total % divisor;
-    ms_accum += Total / divisor;
-    return ms_accum;
+    uint32_t Elapsed = CurrentCnt - LastCnt;
+    LastCnt = CurrentCnt;
+    uint32_t Divisor = (SystemCoreClock / 1000);
+    uint32_t Total = Elapsed + MsRem;
+    MsRem = Total % Divisor;
+    MsAccum += Total / Divisor;
+    return MsAccum;
 }
 
 // Returns the current SYNCHRONIZED time in milliseconds (raw timer + the offset this device
@@ -51,20 +51,20 @@ uint32_t Now(void)
 }
 
 // Busy-wait delay for `ms` milliseconds based on the SysTick counter.
-void Sleep(uint32_t ms)
+void Sleep(uint32_t Ms)
 {
-    uint32_t start = Now();
-    while ((Now() - start) < ms)
+    uint32_t Start = Now();
+    while ((Now() - Start) < Ms)
     {
     }
 }
 
 // Busy-wait delay for `us` microseconds using raw SysTick cycle counting.
-void SleepMicro(uint32_t us)
+void SleepMicro(uint32_t Us)
 {
-    uint32_t start_cycles = SysTick->CNT;
-    uint32_t target_cycles = (us * (SystemCoreClock / 1000000));
-    while ((SysTick->CNT - start_cycles) < target_cycles)
+    uint32_t StartCycles = SysTick->CNT;
+    uint32_t TargetCycles = (Us * (SystemCoreClock / 1000000));
+    while ((SysTick->CNT - StartCycles) < TargetCycles)
     {
         __asm__ volatile("nop");
     }
@@ -75,9 +75,9 @@ void SleepMicro(uint32_t us)
 int32_t GetFreeRAM()
 {
     extern uint32_t _ebss;
-    uint32_t sp;
-    __asm__ volatile("mv %0, sp" : "=r"(sp));
-    return (int32_t)(sp - (uint32_t)&_ebss);
+    uint32_t Sp;
+    __asm__ volatile("mv %0, sp" : "=r"(Sp));
+    return (int32_t)(Sp - (uint32_t)&_ebss);
 }
 
 // Returns the total available RAM in bytes.
@@ -89,57 +89,57 @@ uint32_t GetTotalRAM()
 
 // Configures the given GPIO pin as a push-pull output. `cfg` 0x3 in CFGLR/CFGHR = output
 // push-pull, 50 MHz (the same 4-bit encoding the Valu bootloader drives PA2 with).
-void PinModeOutput(GPIO_TypeDef *port, uint16_t pin)
+void PinModeOutput(GPIO_TypeDef *Port, uint16_t Pin)
 {
     GPIO_InitTypeDef GPIO_InitStructure = {0};
-    GPIO_InitStructure.GPIO_Pin = pin;
+    GPIO_InitStructure.GPIO_Pin = Pin;
     GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_PP;
     GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
-    GPIO_Init(port, &GPIO_InitStructure);
+    GPIO_Init(Port, &GPIO_InitStructure);
 }
 
 // Configures the given GPIO pin as a floating input.
-void PinModeInput(GPIO_TypeDef *port, uint16_t pin)
+void PinModeInput(GPIO_TypeDef *Port, uint16_t Pin)
 {
     GPIO_InitTypeDef GPIO_InitStructure = {0};
-    GPIO_InitStructure.GPIO_Pin = pin;
+    GPIO_InitStructure.GPIO_Pin = Pin;
     GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IN_FLOATING;
-    GPIO_Init(port, &GPIO_InitStructure);
+    GPIO_Init(Port, &GPIO_InitStructure);
 }
 
 // Configures the given GPIO pin as an input with internal pull-down (the Valu's buttons are
 // pull-down, active-high: the line idles LOW and a press drives it HIGH).
-void PinModeInputPullDown(GPIO_TypeDef *port, uint16_t pin)
+void PinModeInputPullDown(GPIO_TypeDef *Port, uint16_t Pin)
 {
     GPIO_InitTypeDef GPIO_InitStructure = {0};
-    GPIO_InitStructure.GPIO_Pin = pin;
+    GPIO_InitStructure.GPIO_Pin = Pin;
     GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IPD; // Input Pull-Down
-    GPIO_Init(port, &GPIO_InitStructure);
+    GPIO_Init(Port, &GPIO_InitStructure);
 }
 
 // Configures the given GPIO pin as an input with internal pull-up.
-void PinModeInputPullUp(GPIO_TypeDef *port, uint16_t pin)
+void PinModeInputPullUp(GPIO_TypeDef *Port, uint16_t Pin)
 {
     GPIO_InitTypeDef GPIO_InitStructure = {0};
-    GPIO_InitStructure.GPIO_Pin = pin;
+    GPIO_InitStructure.GPIO_Pin = Pin;
     GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IPU; // Input Pull-Up
-    GPIO_Init(port, &GPIO_InitStructure);
+    GPIO_Init(Port, &GPIO_InitStructure);
 }
 
 // Reads the current digital level of the given GPIO pin.
-bool PinRead(GPIO_TypeDef *port, uint16_t pin)
+bool PinRead(GPIO_TypeDef *Port, uint16_t Pin)
 {
-    return GPIO_ReadInputDataBit(port, pin) != Bit_RESET;
+    return GPIO_ReadInputDataBit(Port, Pin) != Bit_RESET;
 }
 
 // Drives the given GPIO pin high.
-void PinHigh(GPIO_TypeDef *port, uint16_t pin)
+void PinHigh(GPIO_TypeDef *Port, uint16_t Pin)
 {
-    GPIO_WriteBit(port, pin, Bit_SET);
+    GPIO_WriteBit(Port, Pin, Bit_SET);
 }
 
 // Drives the given GPIO pin low.
-void PinLow(GPIO_TypeDef *port, uint16_t pin)
+void PinLow(GPIO_TypeDef *Port, uint16_t Pin)
 {
-    GPIO_WriteBit(port, pin, Bit_RESET);
+    GPIO_WriteBit(Port, Pin, Bit_RESET);
 }

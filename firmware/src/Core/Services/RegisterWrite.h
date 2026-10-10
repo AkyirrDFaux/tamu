@@ -9,40 +9,40 @@
 // ===== CID 3: Write helpers =====
 
 #ifdef USE_DYNAMIC_BLOCKS
-inline void RegisterService::HandleDynamicBlockWrite(const PacketFrame &frame, uint16_t inst, uint8_t field, uint8_t key, const ValueInfo *desc, const uint8_t *val, uint16_t vlen) {
-    if (inst >= dynamic_block_registry.block_count) { RespondStatus(frame,false); return; }
-    DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(inst);
-    if (!block || !block->present) { RespondStatus(frame,false); return; }
+inline void RegisterService::HandleDynamicBlockWrite(const PacketFrame &Frame, uint16_t Inst, uint8_t Field, uint8_t Key, const ValueInfo *Desc, const uint8_t *Val, uint16_t Vlen) {
+    if (Inst >= DynamicBlockRegistry.BlockCount) { RespondStatus(Frame,false); return; }
+    DynamicBlockDescriptor *Block = DynamicBlockRegistry.GetBlock(Inst);
+    if (!Block || !Block->Present) { RespondStatus(Frame,false); return; }
 
-    if (field == INVALID_INDEX) { // set block name; writing type None deletes the block
-        if (ValueInfoType(*desc) == (uint16_t)DataType::None) {
-            dynamic_block_registry.TombstoneBlock(inst);
-            RespondStatus(frame, true);
+    if (Field == INVALID_INDEX) { // set block name; writing type None deletes the block
+        if (ValueInfoType(*Desc) == (uint16_t)DataType::None) {
+            DynamicBlockRegistry.TombstoneBlock(Inst);
+            RespondStatus(Frame, true);
             return;
         }
-        SetBlockName(block->Name, (const char *)val, vlen);
-        SendBlockIndexAck(frame, (uint8_t)inst);
+        SetBlockName(Block->Name, (const char *)Val, Vlen);
+        SendBlockIndexAck(Frame, (uint8_t)Inst);
         return;
     }
 
     // Position-specified entry write; writing type None deletes the entry.
-    if (!block->SetEntry(field, key, val, vlen, *desc)) { RespondStatus(frame,false); return; }
-    SendResponse(frame, frame.Payload, PayloadBytes(frame));
+    if (!Block->SetEntry(Field, Key, Val, Vlen, *Desc)) { RespondStatus(Frame,false); return; }
+    SendResponse(Frame, Frame.Payload, PayloadBytes(Frame));
 }
 #endif
 
 #ifdef USE_SCRIPTS
 // Writes a script input (field 1) or variable (field 3) entry.
-inline void RegisterService::HandleScriptBlockWrite(const PacketFrame &frame, uint16_t inst, uint8_t field, uint8_t key, const ValueInfo *desc, const uint8_t *val, uint16_t vlen) {
-    if (!Script.Active(inst)) { RespondStatus(frame,false); return; }
-    if (!Script.SetEntry(inst, field, key, *desc, val, vlen)) { RespondStatus(frame,false); return; }
-    SendResponse(frame, frame.Payload, PayloadBytes(frame));
+inline void RegisterService::HandleScriptBlockWrite(const PacketFrame &Frame, uint16_t Inst, uint8_t Field, uint8_t Key, const ValueInfo *Desc, const uint8_t *Val, uint16_t Vlen) {
+    if (!Script.Active(Inst)) { RespondStatus(Frame,false); return; }
+    if (!Script.SetEntry(Inst, Field, Key, *Desc, Val, Vlen)) { RespondStatus(Frame,false); return; }
+    SendResponse(Frame, Frame.Payload, PayloadBytes(Frame));
 }
 #endif
 
-inline void RegisterService::HandleStaticBlockWrite(const PacketFrame &frame, uint16_t type, uint8_t inst, uint8_t field, uint8_t key, const ValueInfo *desc, const uint8_t *val, uint16_t vlen) {
-    const StaticBlockDescriptor *blk = FindBlock(type, inst);
-    if(!blk) { RespondStatus(frame,false); return; }
-    if(!blk->Set(field, key, val, vlen, *desc)) { RespondStatus(frame,false); return; }
-    SendResponse(frame, frame.Payload, PayloadBytes(frame));
+inline void RegisterService::HandleStaticBlockWrite(const PacketFrame &Frame, uint16_t Type, uint8_t Inst, uint8_t Field, uint8_t Key, const ValueInfo *Desc, const uint8_t *Val, uint16_t Vlen) {
+    const StaticBlockDescriptor *Blk = FindBlock(Type, Inst);
+    if(!Blk) { RespondStatus(Frame,false); return; }
+    if(!Blk->Set(Field, Key, Val, Vlen, *Desc)) { RespondStatus(Frame,false); return; }
+    SendResponse(Frame, Frame.Payload, PayloadBytes(Frame));
 }

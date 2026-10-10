@@ -16,58 +16,58 @@
 // Entry: the requester wire prefix minus the timeout = providerAddr(2) + trid(2) + table(16)
 // + targetReg(4) = 24 B, so it is copied whole.
 inline void SubscriptionsService::SaveRequesterTable() {
-    uint8_t buf[1 + MAX_REQUESTER_SUBS * REQUESTER_FILE_ENTRY_SIZE];
+    uint8_t Buf[1 + MAX_REQUESTER_SUBS * REQUESTER_FILE_ENTRY_SIZE];
     // Count and copy in one walk (the count byte is filled in last).
-    uint16_t off = 1;
-    uint8_t count = 0;
+    uint16_t Off = 1;
+    uint8_t Count = 0;
     for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
         RequesterEntry* e = &RequesterTable[i];
-        if (!e->active) continue;
-        memcpy(buf + off, e, REQUESTER_FILE_ENTRY_SIZE);
-        off += REQUESTER_FILE_ENTRY_SIZE;
-        count++;
+        if (!e->Active) continue;
+        memcpy(Buf + Off, e, REQUESTER_FILE_ENTRY_SIZE);
+        Off += REQUESTER_FILE_ENTRY_SIZE;
+        Count++;
     }
     // No subscriptions: remove the file rather than leaving an empty one behind (the app's
     // file list showed a `.SUBREQ` with nothing in it after the last cancel). Absence is the
     // same as an empty table on load. Drop a leftover staging file too, so an interrupted save
     // cannot leave `.SUBREQ~` behind.
-    if (count == 0) {
+    if (Count == 0) {
         Storage.DeleteFile(SubscriptionsRequesterFile);
-        char tmp[8];
-        BackupTempName(SubscriptionsRequesterFile, tmp);
-        Storage.DeleteFile(tmp);
+        char Tmp[8];
+        BackupTempName(SubscriptionsRequesterFile, Tmp);
+        Storage.DeleteFile(Tmp);
         return;
     }
-    buf[0] = count;
+    Buf[0] = Count;
     // Skip the rewrite when the stored file already holds exactly these bytes. A set/cancel
     // rewrites `.SUBREQ` every time, so an unchanged re-set (or a redundant save-all) would
     // otherwise keep erasing/programming the same sector for nothing.
-    uint32_t existing = Storage.FileExists(SubscriptionsRequesterFile);
-    if (existing == off) {
-        uint8_t cur[1 + MAX_REQUESTER_SUBS * REQUESTER_FILE_ENTRY_SIZE];
-        uint16_t curLen = (uint16_t)Storage.ReadFromFile(SubscriptionsRequesterFile, 0, off, (char *)cur);
-        if (curLen == off && memcmp(cur, buf, off) == 0) return;
+    uint32_t Existing = Storage.FileExists(SubscriptionsRequesterFile);
+    if (Existing == Off) {
+        uint8_t Cur[1 + MAX_REQUESTER_SUBS * REQUESTER_FILE_ENTRY_SIZE];
+        uint16_t curLen = (uint16_t)Storage.ReadFromFile(SubscriptionsRequesterFile, 0, Off, (char *)Cur);
+        if (curLen == Off && memcmp(Cur, Buf, Off) == 0) return;
     }
     // Shared atomic staging (copy to the "~" name, then rename).
-    WriteBackupFile(SubscriptionsRequesterFile, buf, off);
+    WriteBackupFile(SubscriptionsRequesterFile, Buf, Off);
 }
 
 inline void SubscriptionsService::LoadRequesterTable() {
     // The whole file: a count byte plus every entry (1 + 16*24 = 385 B).
-    uint8_t buf[1 + MAX_REQUESTER_SUBS * REQUESTER_FILE_ENTRY_SIZE];
-    uint16_t len = Storage.ReadFromFile(SubscriptionsRequesterFile, 0, sizeof(buf), (char*)buf);
+    uint8_t Buf[1 + MAX_REQUESTER_SUBS * REQUESTER_FILE_ENTRY_SIZE];
+    uint16_t Len = Storage.ReadFromFile(SubscriptionsRequesterFile, 0, sizeof(Buf), (char*)Buf);
     for (int i = 0; i < MAX_REQUESTER_SUBS; i++) RequesterClearEntry(&RequesterTable[i]);
-    if (len == 0) return;
+    if (Len == 0) return;
 
-    uint16_t off = 0;
-    uint8_t count = buf[off++];
-    for (uint8_t i = 0; i < count && off + REQUESTER_FILE_ENTRY_SIZE <= len; i++) {
-        uint16_t Trid = LoadUnaligned<uint16_t>(buf + off + 2);
+    uint16_t Off = 0;
+    uint8_t Count = Buf[Off++];
+    for (uint8_t i = 0; i < Count && Off + REQUESTER_FILE_ENTRY_SIZE <= Len; i++) {
+        uint16_t Trid = LoadUnaligned<uint16_t>(Buf + Off + 2);
         RequesterEntry* e = RequesterUpsert(Trid);
         if (!e) break;
-        memcpy((void *)e, buf + off, REQUESTER_FILE_ENTRY_SIZE);
-        off += REQUESTER_FILE_ENTRY_SIZE;
-        e->timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
+        memcpy((void *)e, Buf + Off, REQUESTER_FILE_ENTRY_SIZE);
+        Off += REQUESTER_FILE_ENTRY_SIZE;
+        e->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
         e->registeredAtMs = DeviceStatus.UptimeMs;
         e->lastRegisteredMs = 0;
         e->lastValueMs = 0;
@@ -78,31 +78,31 @@ inline void SubscriptionsService::LoadRequesterTable() {
 // restored table keeps pushing values after boot. Same-device providers get a direct
 // provider-table entry; remote providers get a 0401 "Change subscription" packet.
 inline void SubscriptionsService::RegisterRequesterProvider(RequesterEntry* e) {
-    if (!e || !e->active) return;
+    if (!e || !e->Active) return;
 
-    e->timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
+    e->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
     e->lastRegisteredMs = DeviceStatus.UptimeMs;
 
 #ifdef USE_SUB_PROVIDE
-    uint8_t net = (uint8_t)((DeviceStatus.ShortAddress >> 10) & 0x3F);
-    if (NetQualifyLocal(e->providerAddr, net) == DeviceStatus.ShortAddress) {
+    uint8_t Net = (uint8_t)((DeviceStatus.ShortAddress >> 10) & 0x3F);
+    if (NetQualifyLocal(e->providerAddr, Net) == DeviceStatus.ShortAddress) {
         // Same-device provider: install it directly (shared with the wire paths).
-        ProviderInstall(e->Trid, DeviceStatus.ShortAddress, e->sub);
+        ProviderInstall(e->Trid, DeviceStatus.ShortAddress, e->Sub);
         return;
     }
 #endif
     // Remote provider: send the subscription table (0401, fire and forget).
     uint8_t Payload[SUB_TABLE_WIRE_SIZE];
-    memcpy(Payload, &e->sub, SUB_TABLE_WIRE_SIZE);
-    PacketFrame req;
-    PacketConstruct(&req, e->providerAddr, MakeService(ServiceType::Subscriptions, 1),
+    memcpy(Payload, &e->Sub, SUB_TABLE_WIRE_SIZE);
+    PacketFrame Req;
+    PacketConstruct(&Req, e->providerAddr, MakeService(ServiceType::Subscriptions, 1),
                     e->Trid, FLAG_START | FLAG_STOP, Payload, SUB_TABLE_WIRE_SIZE);
-    SendAndVerifyPacket(req);
+    SendAndVerifyPacket(Req);
 }
 
 inline void SubscriptionsService::ReRegister() {
     for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
-        if (RequesterTable[i].active)
+        if (RequesterTable[i].Active)
             RegisterRequesterProvider(&RequesterTable[i]);
     }
 }
@@ -113,10 +113,10 @@ inline void SubscriptionsService::ReRegister() {
 // while the core's requester entries still look active and healthy - the subscription then
 // dies silently until the setup is re-applied. The node's add is TRID-keyed, so this replaces
 // its entry rather than duplicating it.
-inline void SubscriptionsService::ReRegisterForNode(uint16_t addr) {
+inline void SubscriptionsService::ReRegisterForNode(uint16_t Addr) {
     for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
         RequesterEntry &e = RequesterTable[i];
-        if (e.active && e.providerAddr == addr)
+        if (e.Active && e.providerAddr == Addr)
             RegisterRequesterProvider(&e);
     }
 }
@@ -127,19 +127,19 @@ inline void SubscriptionsService::ReRegisterForNode(uint16_t addr) {
 // sending from the main loop. A short address list (not a bitmask) keeps any 10-bit node id
 // addressable; a duplicate request is dropped. The list is sized to the device registry's
 // capacity (SNDB_MAX_ENTRIES) so a burst of assignments can never silently drop a re-push.
-inline void SubscriptionsService::RequestReRegister(uint16_t addr) {
-    if (addr == ADDR_INVALID) return;
+inline void SubscriptionsService::RequestReRegister(uint16_t Addr) {
+    if (Addr == ADDR_INVALID) return;
     for (uint8_t i = 0; i < ReRegisterCount; i++)
-        if (ReRegisterPending[i] == addr) return; // already queued
+        if (ReRegisterPending[i] == Addr) return; // already queued
     if (ReRegisterCount < kReRegisterMax)
-        ReRegisterPending[ReRegisterCount++] = addr;
+        ReRegisterPending[ReRegisterCount++] = Addr;
 }
 
 // Called from SubscriptionsTick: performs the deferred re-pushes.
 inline void SubscriptionsService::SubscriptionsReRegisterPending() {
-    uint8_t count = ReRegisterCount;
+    uint8_t Count = ReRegisterCount;
     ReRegisterCount = 0;
-    for (uint8_t i = 0; i < count; i++)
+    for (uint8_t i = 0; i < Count; i++)
         ReRegisterForNode(ReRegisterPending[i]);
 }
 
@@ -150,15 +150,15 @@ inline void SubscriptionsService::SubscriptionsReRegisterPending() {
 inline void SubscriptionsService::RequesterInitCheck(uint32_t nowMs) {
     for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
         RequesterEntry* e = &RequesterTable[i];
-        if (!e->active) continue;
-        uint32_t interval;
+        if (!e->Active) continue;
+        uint32_t Interval;
         if (e->lastValueMs == 0) {
             if (nowMs - e->registeredAtMs > SUB_INIT_WINDOW_MS) continue; // gave up
-            interval = SUB_RETRY_MS;
+            Interval = SUB_RETRY_MS;
         } else {
-            interval = SUB_KEEPALIVE_MS;
+            Interval = SUB_KEEPALIVE_MS;
         }
-        if (nowMs - e->lastRegisteredMs < interval) continue;
+        if (nowMs - e->lastRegisteredMs < Interval) continue;
         RegisterRequesterProvider(e);
     }
 }

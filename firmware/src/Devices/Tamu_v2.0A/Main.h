@@ -41,14 +41,14 @@ extern const uint32_t kCapabilities = Capabilities::Core |
 // Reads the factory MAC from eFuse as the 14-byte serial number (cached).
 const SerialNumber &GetSerialNumber()
 {
-    static SerialNumber sn;
-    static bool init = false;
-    if (!init)
+    static SerialNumber Sn;
+    static bool Init = false;
+    if (!Init)
     {
-        esp_efuse_read_field_blob(ESP_EFUSE_MAC_FACTORY, &sn, 48);
-        init = true;
+        esp_efuse_read_field_blob(ESP_EFUSE_MAC_FACTORY, &Sn, 48);
+        Init = true;
     }
-    return sn;
+    return Sn;
 }
 
 
@@ -63,40 +63,40 @@ const SerialNumber &GetSerialNumber()
 // BlockInfo order (lowest BlockType first, instances contiguous per type). The block code
 // addresses the fields through these, so the whole space is one compile-time layout.
 struct StaticPersistent {
-    SystemPersistent system;      // BlockType 0 (special)
-    PWMPersistent fan[2];         // BlockType 4
-    AccGyrPersistent accgyr;      // BlockType 5
-    Vysi1Persistent display[2];   // BlockType 6
+    SystemPersistent System;      // BlockType 0 (special)
+    PWMPersistent Fan[2];         // BlockType 4
+    AccGyrPersistent Accgyr;      // BlockType 5
+    Vysi1Persistent Display[2];   // BlockType 6
 };
 struct StaticVolatile {
     LEDButtonVolatile ledButton;  // BlockType 3
-    PWMVolatile fan[2];           // BlockType 4
-    AccGyrVolatile accgyr;        // BlockType 5
-    Vysi1Volatile display[2];     // BlockType 6
+    PWMVolatile Fan[2];           // BlockType 4
+    AccGyrVolatile Accgyr;        // BlockType 5
+    Vysi1Volatile Display[2];     // BlockType 6
 };
 StaticPersistent staticPer = {
     // Name is a fixed 16-char null-padded field.
-    .system = {.Name = {'T','a','m','u',' ','v','2','.','0','A',' ',' ',' ',' ',' ',' '}, .NetId = 0},
-    .fan = {},
-    .accgyr = {},
-    .display = {},
+    .System = {.Name = {'T','a','m','u',' ','v','2','.','0','A',' ',' ',' ',' ',' ',' '}, .NetId = 0},
+    .Fan = {},
+    .Accgyr = {},
+    .Display = {},
 };
 StaticVolatile staticVol;
 
-Vysi1Display Display1(staticVol.display[0], staticPer.display[0]);
-Vysi1Display Display2(staticVol.display[1], staticPer.display[1]);
+Vysi1Display Display1(staticVol.Display[0], staticPer.Display[0]);
+Vysi1Display Display2(staticVol.Display[1], staticPer.Display[1]);
 
 // Registry order is load-bearing: the app reconstructs each entry's registry index from
 // its block type + per-type instance order, so keep the entries grouped by type (see
 // FindStaticBlock in Core/Services/RegisterDefs.h).
-const StaticBlockDescriptor static_block_registry[] = {
-    {&staticVol.ledButton, nullptr, &LEDButton_Schema, "LEDButton"},
-    {&staticVol.fan[0], &staticPer.fan[0], &PWM_Schema, "Fan1"},
-    {&staticVol.fan[1], &staticPer.fan[1], &PWM_Schema, "Fan2"},
-    {&staticVol.accgyr, &staticPer.accgyr, &AccGyr_Schema, "AccGyr"},
-    {&staticVol.display[0], &staticPer.display[0], &Vysi1_Schema, "LEDDisplay"},
-    {&staticVol.display[1], &staticPer.display[1], &Vysi1_Schema, "LEDDisplay2"}};
-const size_t static_block_num = sizeof(static_block_registry) / sizeof(StaticBlockDescriptor);
+const StaticBlockDescriptor StaticBlockRegistry[] = {
+    {&staticVol.ledButton, nullptr, &LEDButtonSchema, "LEDButton"},
+    {&staticVol.Fan[0], &staticPer.Fan[0], &PWMSchema, "Fan1"},
+    {&staticVol.Fan[1], &staticPer.Fan[1], &PWMSchema, "Fan2"},
+    {&staticVol.Accgyr, &staticPer.Accgyr, &AccGyrSchema, "AccGyr"},
+    {&staticVol.Display[0], &staticPer.Display[0], &Vysi1Schema, "LEDDisplay"},
+    {&staticVol.Display[1], &staticPer.Display[1], &Vysi1Schema, "LEDDisplay2"}};
+const size_t StaticBlockNum = sizeof(StaticBlockRegistry) / sizeof(StaticBlockDescriptor);
 
 // The Subscriptions instance the main loop calls. Pulled here (not at the top) because
 // Subscriptions.h includes Register.h, whose split files name the board's staticPer above.
@@ -138,8 +138,8 @@ if (!AppInterface.Connected) { ESP_LOGI("INIT","b3 appif"); }
     // fixed 16-char null-padded, so trim it into a C string.
     char bleName[SYSTEM_NAME_LEN + 1];
     uint8_t bleNameLen = SYSTEM_NAME_LEN;
-    while (bleNameLen > 0 && staticPer.system.Name[bleNameLen - 1] == ' ') bleNameLen--;
-    memcpy(bleName, staticPer.system.Name, bleNameLen);
+    while (bleNameLen > 0 && staticPer.System.Name[bleNameLen - 1] == ' ') bleNameLen--;
+    memcpy(bleName, staticPer.System.Name, bleNameLen);
     bleName[bleNameLen] = '\0';
 if (!AppInterface.Connected) { ESP_LOGI("INIT","b4 ble"); }
     AppBLEInit(bleName);
@@ -164,7 +164,7 @@ LED.Setup();
     // The LED state is a writable static-block field persisted in the .SV backup;
     // the boot restore writes the RAM field but does not re-run its write trigger, so
     // re-apply it to drive the pin to match the restored value (LED off by default).
-    OnLEDStateChange(static_block_registry[0], 3, (const void *)&staticVol.ledButton.LEDState, sizeof(bool));
+    OnLEDStateChange(StaticBlockRegistry[0], 3, (const void *)&staticVol.ledButton.LEDState, sizeof(bool));
 
     // Restored net-ID (LoadAllBackups), or a random one: 0 and 0x3F are not allowed.
     if (DeviceStatus.NetId == 0 || DeviceStatus.NetId >= 0x3F)
@@ -187,16 +187,16 @@ LED.Setup();
     // response carrying a MATCHING net within 500 ms means this net is claimed twice on the
     // bus -> normal boot is aborted (issue logged; the main loop blinks the error LED) while
     // the core stays reachable via the app link to change the net-ID.
-    PacketFrame cd;
-    PacketConstruct(&cd, ADDR_ALL_CORES,
+    PacketFrame Cd;
+    PacketConstruct(&Cd, ADDR_ALL_CORES,
                     MakeService(ServiceType::Device, 0x10),
                     NextSystemTrid(ServiceType::Device),
                     FLAG_REQACK | FLAG_START | FLAG_STOP,
                     (const uint8_t *)&GetSerialNumber(), sizeof(SerialNumber));
-    SendAndVerifyPacket(cd);
+    SendAndVerifyPacket(Cd);
 
-    uint32_t cd_end = TimeFromBoot() + 500; // docs: responses expected within 500 ms
-    while ((int32_t)(TimeFromBoot() - cd_end) < 0)
+    uint32_t CdEnd = TimeFromBoot() + 500; // docs: responses expected within 500 ms
+    while ((int32_t)(TimeFromBoot() - CdEnd) < 0)
     {
         ProcessBus();
         Sleep(10);
@@ -213,7 +213,7 @@ LED.Setup();
     // Boot announcement (code 0): an informational log, not an error.
     ReportLog(MakeLog(false, (uint16_t)ServiceType::Device, 0, 0), PRIORITY_LOG);
 
-    static bool s_identify_prev = false;
+    static bool IdentifyPrev = false;
     while (1)
     {
         int64_t loopStart = esp_timer_get_time();
@@ -223,22 +223,22 @@ LED.Setup();
         {
             PinModeOutput(LED_NOTIFICATION_PIN);
             gpio_set_level(LED_NOTIFICATION_PIN, ((DeviceStatus.UptimeMs / 500) & 1) ? 1 : 0);
-            s_identify_prev = false; // keep the identify restore logic in sync
+            IdentifyPrev = false; // keep the identify restore logic in sync
         }
         else
         {
         // Identify (Device CID 2): blink the notification LED fast (~5 Hz) while a
         // host asks us to identify ourselves, then re-apply the LED-button state.
-        bool ident = DeviceIdentifyActive(DeviceStatus.UptimeMs);
-        if (ident != s_identify_prev)
+        bool Ident = DeviceIdentifyActive(DeviceStatus.UptimeMs);
+        if (Ident != IdentifyPrev)
         {
-            if (ident)
+            if (Ident)
                 PinModeOutput(LED_NOTIFICATION_PIN);
             else
-                OnLEDStateChange(static_block_registry[0], 3, (const void *)&staticVol.ledButton.LEDState, sizeof(bool));
-            s_identify_prev = ident;
+                OnLEDStateChange(StaticBlockRegistry[0], 3, (const void *)&staticVol.ledButton.LEDState, sizeof(bool));
+            IdentifyPrev = Ident;
         }
-        if (ident)
+        if (Ident)
             gpio_set_level(LED_NOTIFICATION_PIN, ((DeviceStatus.UptimeMs / 100) & 1) ? 1 : 0);
         }
 
@@ -256,8 +256,8 @@ LED.Setup();
             // (833/1660 Hz) clamp to 2 instead of the unreachable 1 ms.
             static const uint16_t OdrPeriodMs[8] = {80, 38, 19, 10, 5, 2, 2, 2};
             static uint32_t lastImuMs = 0;
-            uint8_t odr = staticPer.accgyr.SamplingRate < 8 ? staticPer.accgyr.SamplingRate : 3;
-            if (DeviceStatus.UptimeMs - lastImuMs >= OdrPeriodMs[odr]) {
+            uint8_t Odr = staticPer.Accgyr.SamplingRate < 8 ? staticPer.Accgyr.SamplingRate : 3;
+            if (DeviceStatus.UptimeMs - lastImuMs >= OdrPeriodMs[Odr]) {
                 lastImuMs = DeviceStatus.UptimeMs;
                 ReadIMUData();
             }
@@ -280,11 +280,11 @@ LED.Setup();
             if (lastFrameUs != 0)
             {
                 // FPS = 1e6 / period_us, kept in 16.16 fixed point (no float).
-                int64_t period_us = loopStart - lastFrameUs;
-                if (period_us <= 0) period_us = 1;
-                Number inst = Number::FromRaw((int32_t)((1000000LL << 16) / period_us));
-                Display1.Vol.RefreshRate = Display1.Vol.RefreshRate * FpsEmaKeep + inst * FpsEmaNew;
-                Display2.Vol.RefreshRate = Display2.Vol.RefreshRate * FpsEmaKeep + inst * FpsEmaNew;
+                int64_t PeriodUs = loopStart - lastFrameUs;
+                if (PeriodUs <= 0) PeriodUs = 1;
+                Number Inst = Number::FromRaw((int32_t)((1000000LL << 16) / PeriodUs));
+                Display1.Vol.RefreshRate = Display1.Vol.RefreshRate * FpsEmaKeep + Inst * FpsEmaNew;
+                Display2.Vol.RefreshRate = Display2.Vol.RefreshRate * FpsEmaKeep + Inst * FpsEmaNew;
             }
             lastFrameUs = loopStart;
         }
@@ -310,9 +310,9 @@ extern "C"
         // bootloader runs first on the next reset and can catch the button; it boots this app
         // again when the button is released. Updates only ever write ota_0, so the factory
         // bootloader stays reachable even if this image is broken.
-        const esp_partition_t *factory = esp_partition_find_first(
+        const esp_partition_t *Factory = esp_partition_find_first(
             ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_FACTORY, nullptr);
-        if (factory != nullptr) esp_ota_set_boot_partition(factory);
+        if (Factory != nullptr) esp_ota_set_boot_partition(Factory);
 
         // 16 KB: LoadAllBackups places a MEMORY_BACKUP_CAP-sized buffer on this stack and
         // ProcessBus dispatches full request/response chains recursively beneath it.

@@ -47,46 +47,46 @@ extern const uint32_t kCapabilities =
 // Reads the CH32V003 32-bit unique chip ID as the 14-byte serial number (cached).
 const SerialNumber &GetSerialNumber()
 {
-    static SerialNumber sn;
-    static bool init = false;
-    if (!init)
+    static SerialNumber Sn;
+    static bool Init = false;
+    if (!Init)
     {
-        uint32_t chip_id = *(uint32_t *)(CHIP_ID_ADDR);
-        memset(sn.Bytes, 0, 14);
-        memcpy(sn.Bytes, &chip_id, 4);
-        init = true;
+        uint32_t ChipId = *(uint32_t *)(CHIP_ID_ADDR);
+        memset(Sn.Bytes, 0, 14);
+        memcpy(Sn.Bytes, &ChipId, 4);
+        Init = true;
     }
-    return sn;
+    return Sn;
 }
 
 // The static memory: two flat spaces (Docs/Services/Register.md "System + Static memory
 // blocks"). Persistent settings (mirrored 1:1 to .SV) and volatile values, stacked in
 // BlockInfo order (lowest BlockType first, instances contiguous per type).
 struct StaticPersistent {
-    SystemPersistent system;          // BlockType 0 (special)
-    ResistiveMeasPersistent meas[2];  // BlockType 8
+    SystemPersistent System;          // BlockType 0 (special)
+    ResistiveMeasPersistent Meas[2];  // BlockType 8
 };
 struct StaticVolatile {
-    ResistiveMeasVolatile meas[2];    // BlockType 8
-    ButtonVolatile button;            // BlockType 9
-    LEDVolatile led;                  // BlockType 0x0A
+    ResistiveMeasVolatile Meas[2];    // BlockType 8
+    ButtonVolatile Button;            // BlockType 9
+    LEDVolatile Led;                  // BlockType 0x0A
 };
 StaticPersistent staticPer = {
     // Name is a fixed 16-char null-padded field.
-    .system = {.Name = {'D','A','S',' ','v','0','.','1',' ',' ',' ',' ',' ',' ',' ',' '}},
-    .meas = {{.SensorType = MeasNTC100K}, {.SensorType = MeasLDR10K}},
+    .System = {.Name = {'D','A','S',' ','v','0','.','1',' ',' ',' ',' ',' ',' ',' ',' '}},
+    .Meas = {{.SensorType = MeasNTC100K}, {.SensorType = MeasLDR10K}},
 };
 StaticVolatile staticVol;
 
 // Registry order is load-bearing: the app derives the registry index from type + per-type
 // instance order - keep the entries grouped by type.
-const StaticBlockDescriptor static_block_registry[] = {
-    {&staticVol.meas[0], &staticPer.meas[0], &ResistiveMeas_Schema, "Meas1"},
-    {&staticVol.meas[1], &staticPer.meas[1], &ResistiveMeas_Schema, "Meas2"},
-    {&staticVol.button, nullptr, &Button_Schema, "Button"},
-    {&staticVol.led, nullptr, &LED_Schema, "LED"},
+const StaticBlockDescriptor StaticBlockRegistry[] = {
+    {&staticVol.Meas[0], &staticPer.Meas[0], &ResistiveMeasSchema, "Meas1"},
+    {&staticVol.Meas[1], &staticPer.Meas[1], &ResistiveMeasSchema, "Meas2"},
+    {&staticVol.Button, nullptr, &ButtonSchema, "Button"},
+    {&staticVol.Led, nullptr, &LEDSchema, "LED"},
 };
-const size_t static_block_num = sizeof(static_block_registry) / sizeof(StaticBlockDescriptor);
+const size_t StaticBlockNum = sizeof(StaticBlockRegistry) / sizeof(StaticBlockDescriptor);
 
 // The Subscriptions instance the main loop calls, pulled after the board's staticPer above.
 #include "Core/Services/Subscriptions.h"
@@ -101,19 +101,19 @@ const size_t static_block_num = sizeof(static_block_registry) / sizeof(StaticBlo
 // so polling both channels every loop costs a compare instead of two divides. The cache is
 // keyed on the rate itself (not just seeded by the Sampling Rate write trigger) so a Recall
 // that writes the persistent space directly also refreshes it.
-static inline uint32_t SampleIntervalMs(uint8_t channel)
+static inline uint32_t SampleIntervalMs(uint8_t Channel)
 {
-    static uint32_t s_cache[2] = {0, 0}; // (hz << 16) | interval_ms
-    int32_t hz = staticPer.meas[channel].SamplingRate.Value >> 16; // integer Hz
-    if (hz <= 0) hz = 10;     // disabled / invalid -> default 10 Hz
-    if (hz > 1000) hz = 1000; // matches the Sampling Rate write clamp
-    if ((s_cache[channel] >> 16) != (uint32_t)hz)
+    static uint32_t Cache[2] = {0, 0}; // (hz << 16) | interval_ms
+    int32_t Hz = staticPer.Meas[Channel].SamplingRate.Value >> 16; // integer Hz
+    if (Hz <= 0) Hz = 10;     // disabled / invalid -> default 10 Hz
+    if (Hz > 1000) Hz = 1000; // matches the Sampling Rate write clamp
+    if ((Cache[Channel] >> 16) != (uint32_t)Hz)
     {
-        uint32_t interval = 1000u / (uint32_t)hz;
-        if (interval == 0) interval = 1;
-        s_cache[channel] = ((uint32_t)hz << 16) | interval;
+        uint32_t Interval = 1000u / (uint32_t)Hz;
+        if (Interval == 0) Interval = 1;
+        Cache[Channel] = ((uint32_t)Hz << 16) | Interval;
     }
-    return s_cache[channel] & 0xFFFFu;
+    return Cache[Channel] & 0xFFFFu;
 }
 
 // Device entry point: initialises hardware, discovers its short address over RS485, then blinks the status LED.
@@ -138,7 +138,7 @@ int main(void)
     SeedRand(SysTick->CNT);
 
     SetupRS485();
-    Measuring_Init();
+    MeasuringInit();
     DasButtonInit();
 
     // Persistent storage: formats the flash directory if needed and restores the saved
@@ -173,13 +173,13 @@ int main(void)
         // correction (delta) to add to TimeOffsetMs, not an absolute value to overwrite.
         // TimeSync goes to the core of our net: our assigned address is NetID.shortID, so
         // the core is the same net with device ID 1.
-        uint32_t time_sent = Now();
+        uint32_t TimeSent = Now();
         uint16_t coreAddr = MakeId((uint8_t)((DeviceStatus.ShortAddress >> 10) & 0x3F), 1);
         PacketConstruct(&TxFrame, coreAddr,
                          MakeService(ServiceType::Device, 3),
                          NextSystemTrid(ServiceType::Device),
                          FLAG_REQACK | FLAG_START | FLAG_STOP,
-                         (const uint8_t *)&time_sent, sizeof(uint32_t),
+                         (const uint8_t *)&TimeSent, sizeof(uint32_t),
                          PRIORITY_TIMESYNC);
         DispatchPacket(TxFrame);
         // ProcessBus() in the main loop handles the reply (applies the offset).
@@ -188,12 +188,12 @@ int main(void)
     // The re-sync interval is measured in RAW time (TimeFromBoot): a clock correction
     // changes DeviceStatus.UptimeMs, and measuring against it would let the correction
     // itself satisfy the interval (a TimeSync storm).
-    uint32_t last_sync_ms = TimeFromBoot();
+    uint32_t LastSyncMs = TimeFromBoot();
     // Warm-up first (seed the drift estimate), then the documented 2-3 minute cadence.
-    uint32_t next_sync_ms = NODE_TIME_SYNC_WARMUP_MS;
+    uint32_t NextSyncMs = NODE_TIME_SYNC_WARMUP_MS;
 
-    uint32_t last_sample_ms[2] = {0, 0};
-    static const uint8_t meas_adc_ch[2] = {MEAS1_ADC_CH, MEAS2_ADC_CH};
+    uint32_t LastSampleMs[2] = {0, 0};
+    static const uint8_t MeasAdcCh[2] = {MEAS1_ADC_CH, MEAS2_ADC_CH};
 
     while (1)
     {
@@ -204,35 +204,35 @@ int main(void)
         // Re-sync to the core every ~60-75 s (synchronized-device initiated, jittered so
         // nodes do not burst together). Measured in raw time so a clock correction cannot
         // trigger the next sync.
-        if ((TimeFromBoot() - last_sync_ms) >= next_sync_ms) {
-            last_sync_ms = TimeFromBoot();
-            next_sync_ms = NODE_TIME_SYNC_INTERVAL_MS + (RawRand() % 15000);
+        if ((TimeFromBoot() - LastSyncMs) >= NextSyncMs) {
+            LastSyncMs = TimeFromBoot();
+            NextSyncMs = NODE_TIME_SYNC_INTERVAL_MS + (RawRand() % 15000);
             sendTimeSync();
         }
 
         DasButtonUpdate(); // Button block edge detection/counter
 
         // Sample each resistive measurement channel at its own configured rate.
-        uint32_t now_ms = Now();
-        for (uint8_t c = 0; c < 2; c++)
+        uint32_t NowMs = Now();
+        for (uint8_t C = 0; C < 2; C++)
         {
-            if ((now_ms - last_sample_ms[c]) >= SampleIntervalMs(c))
+            if ((NowMs - LastSampleMs[C]) >= SampleIntervalMs(C))
             {
-                last_sample_ms[c] = now_ms;
-                Measuring_Update(c, Meas_AdcRead(meas_adc_ch[c]));
+                LastSampleMs[C] = NowMs;
+                MeasuringUpdate(C, MeasAdcRead(MeasAdcCh[C]));
             }
         }
 
         // Red LED with priority overlays: an active bus error blinks it (~2 Hz), else the
         // identify blink (~10 Hz), else the LED block's LEDState field. The white LED is
         // the RS485 TX activity indicator (driven inside RSBus.h).
-        bool red_state;
+        bool RedState;
         if (DasErrorFlag)
-            red_state = ((now_ms / 500) & 1) == 0;
-        else if (DeviceIdentifyActive(now_ms))
-            red_state = ((now_ms / 100) & 1) == 0;
+            RedState = ((NowMs / 500) & 1) == 0;
+        else if (DeviceIdentifyActive(NowMs))
+            RedState = ((NowMs / 100) & 1) == 0;
         else
-            red_state = staticVol.led.LEDState;
-        if (red_state) PinHigh(LEDR); else PinLow(LEDR);
+            RedState = staticVol.Led.LEDState;
+        if (RedState) PinHigh(LEDR); else PinLow(LEDR);
     }
 }

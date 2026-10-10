@@ -6,8 +6,8 @@
 struct PWMPersistent { uint32_t PWMFreq = 25000; }; // offset 0
 struct PWMVolatile   { uint32_t Duty = 0; };        // offset 0
 
-bool OnPWMFrequencyChange(const StaticBlockDescriptor& block, uint16_t index, const void* data, uint16_t data_len);
-bool OnPWMDutyChange(const StaticBlockDescriptor& block, uint16_t index, const void* data, uint16_t data_len);
+bool OnPWMFrequencyChange(const StaticBlockDescriptor& Block, uint16_t Index, const void* Data, uint16_t DataLen);
+bool OnPWMDutyChange(const StaticBlockDescriptor& Block, uint16_t Index, const void* Data, uint16_t DataLen);
 
 const BlockEntry PWM_Entries[] = {
     { MakeFieldKey(0, 0), 0, { (uint16_t)DataType::Uint32, sizeof(uint32_t), ValueTrigger | ValuePersistent } },
@@ -19,7 +19,7 @@ const BlockTrigger PWM_Triggers[] = {
     { MakeFieldKey(1, 0), OnPWMDutyChange },
 };
 
-const BlockSchema PWM_Schema = {
+const BlockSchema PWMSchema = {
     .Entries = PWM_Entries,
     .EntryCount = sizeof(PWM_Entries) / sizeof(BlockEntry),
     .Triggers = PWM_Triggers,

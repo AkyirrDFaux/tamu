@@ -12,171 +12,171 @@
 // (which needs the source pointer, not a copy). On success `fr` carries the descriptor and a
 // pointer to the source value (null for a size-0 dynamic entry); the bool reports whether the
 // BlockInfo resolved. Ordering: script I/O, dynamic entries, then statics/System.
-inline bool RegisterService::RegisterResolveByBlockInfo(uint32_t bi, FieldResult &fr) {
-    fr = FieldResult{};
-    uint16_t type = BlockInfoType(bi);
-    uint8_t inst = BlockInfoInstance(bi);
-    uint8_t field = BlockInfoField(bi);
-    uint8_t key = BlockInfoKey(bi);
+inline bool RegisterService::RegisterResolveByBlockInfo(uint32_t Bi, FieldResult &Fr) {
+    Fr = FieldResult{};
+    uint16_t Type = BlockInfoType(Bi);
+    uint8_t Inst = BlockInfoInstance(Bi);
+    uint8_t Field = BlockInfoField(Bi);
+    uint8_t Key = BlockInfoKey(Bi);
 #ifdef USE_SCRIPTS
-    if (BlockTypeRange::IsScript(type)) { // Script I/O (inputs/outputs)
-        ValueInfo sm;
+    if (BlockTypeRange::IsScript(Type)) { // Script I/O (inputs/outputs)
+        ValueInfo Sm;
         void *p = nullptr;
-        if (!Script.GetIoPointer(BlockTypeRange::ScriptGlobal(type, inst), field, key, sm, p)) return false;
-        fr.Descriptor = sm;
-        fr.Data = p;
+        if (!Script.GetIoPointer(BlockTypeRange::ScriptGlobal(Type, Inst), Field, Key, Sm, p)) return false;
+        Fr.Descriptor = Sm;
+        Fr.Data = p;
         return true;
     }
 #endif
 #ifdef USE_DYNAMIC_BLOCKS
-    if (BlockTypeRange::IsDynamic(type)) {
-        uint16_t gi = BlockTypeRange::DynamicGlobal(type, inst);
-        if (gi >= dynamic_block_registry.block_count) return false;
-        DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(gi);
-        if (!block) return false;
-        KeyResult kr = block->GetKey(field, key);
-        if (!kr.exists) return false;
-        fr.Descriptor = kr.meta;
-        fr.Data = kr.data_ptr;
+    if (BlockTypeRange::IsDynamic(Type)) {
+        uint16_t Gi = BlockTypeRange::DynamicGlobal(Type, Inst);
+        if (Gi >= DynamicBlockRegistry.BlockCount) return false;
+        DynamicBlockDescriptor *Block = DynamicBlockRegistry.GetBlock(Gi);
+        if (!Block) return false;
+        KeyResult Kr = Block->GetKey(Field, Key);
+        if (!Kr.Exists) return false;
+        Fr.Descriptor = Kr.Meta;
+        Fr.Data = Kr.DataPtr;
         return true;
     }
 #endif
-    const StaticBlockDescriptor *blk = FindBlock(type, inst);
-    if (!blk) return false;
-    FieldResult g = blk->Get(field, key);
+    const StaticBlockDescriptor *Blk = FindBlock(Type, Inst);
+    if (!Blk) return false;
+    FieldResult g = Blk->Get(Field, Key);
     if (!g.Data) return false;
-    fr = g;
+    Fr = g;
     return true;
 }
 
 // Generic register access by BlockInfo (shared by the Subscriptions and Script services).
-inline bool RegisterService::RegisterGetByBlockInfo(uint32_t bi, ValueInfo &m, uint8_t *vbuf, uint8_t &vsz) {
-    FieldResult fr;
-    vsz = 0;
-    if (!RegisterResolveByBlockInfo(bi, fr)) return false;
-    m = fr.Descriptor;
-    uint8_t n = fr.Descriptor.Size;
-    if (n) memcpy(vbuf, fr.Data, n);
-    vsz = n;
+inline bool RegisterService::RegisterGetByBlockInfo(uint32_t Bi, ValueInfo &m, uint8_t *Vbuf, uint8_t &Vsz) {
+    FieldResult Fr;
+    Vsz = 0;
+    if (!RegisterResolveByBlockInfo(Bi, Fr)) return false;
+    m = Fr.Descriptor;
+    uint8_t n = Fr.Descriptor.Size;
+    if (n) memcpy(Vbuf, Fr.Data, n);
+    Vsz = n;
     return true;
 }
 
 // Writes a register value by BlockInfo. `m` carries the value type and the passive flags.
-inline bool RegisterService::RegisterSetByBlockInfo(uint32_t bi, const ValueInfo &m, const uint8_t *val, uint16_t vlen) {
-    uint16_t type = BlockInfoType(bi);
-    uint8_t inst = BlockInfoInstance(bi);
-    uint8_t field = BlockInfoField(bi);
-    uint8_t key = BlockInfoKey(bi);
+inline bool RegisterService::RegisterSetByBlockInfo(uint32_t Bi, const ValueInfo &m, const uint8_t *Val, uint16_t Vlen) {
+    uint16_t Type = BlockInfoType(Bi);
+    uint8_t Inst = BlockInfoInstance(Bi);
+    uint8_t Field = BlockInfoField(Bi);
+    uint8_t Key = BlockInfoKey(Bi);
 #ifdef USE_SCRIPTS
-    if (BlockTypeRange::IsScript(type)) { // Script I/O: only inputs are writable
-        return Script.SetEntry(BlockTypeRange::ScriptGlobal(type, inst), field, key, m, val, vlen);
+    if (BlockTypeRange::IsScript(Type)) { // Script I/O: only inputs are writable
+        return Script.SetEntry(BlockTypeRange::ScriptGlobal(Type, Inst), Field, Key, m, Val, Vlen);
     }
 #endif
-    if (BlockTypeRange::IsDynamic(type)) {
+    if (BlockTypeRange::IsDynamic(Type)) {
 #ifdef USE_DYNAMIC_BLOCKS
-        uint16_t gi = BlockTypeRange::DynamicGlobal(type, inst);
-        if (gi >= dynamic_block_registry.block_count) return false;
-        DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(gi);
-        if (!block) return false;
-        return block->SetEntry(field, key, val, vlen, m);
+        uint16_t Gi = BlockTypeRange::DynamicGlobal(Type, Inst);
+        if (Gi >= DynamicBlockRegistry.BlockCount) return false;
+        DynamicBlockDescriptor *Block = DynamicBlockRegistry.GetBlock(Gi);
+        if (!Block) return false;
+        return Block->SetEntry(Field, Key, Val, Vlen, m);
 #else
         return false;
 #endif
     }
-    const StaticBlockDescriptor *blk = FindBlock(type, inst);
-    if (!blk) return false;
-    return blk->Set(field, key, val, vlen, m);
+    const StaticBlockDescriptor *Blk = FindBlock(Type, Inst);
+    if (!Blk) return false;
+    return Blk->Set(Field, Key, Val, Vlen, m);
 }
 
-inline bool RegisterService::Handle(const PacketFrame &frame) {
-    uint8_t cid = GetServiceCID(frame.Cmd);
-    if (frame.Flags & FLAG_TYPE) return true;
+inline bool RegisterService::Handle(const PacketFrame &Frame) {
+    uint8_t Cid = GetServiceCID(Frame.Cmd);
+    if (Frame.Flags & FLAG_TYPE) return true;
 
     // Recall All / Save All - the whole device, no BlockInfo (Docs/Services/Register.md).
     // Partial saving/recall is the app's job (direct file writes / direct register writes).
-    if (cid == (uint8_t)RegisterCid::RecallAll) { HandleSaveRecallAll(frame, false); return true; }
-    if (cid == (uint8_t)RegisterCid::SaveAll)    { HandleSaveRecallAll(frame, true);  return true; }
+    if (Cid == (uint8_t)RegisterCid::RecallAll) { HandleSaveRecallAll(Frame, false); return true; }
+    if (Cid == (uint8_t)RegisterCid::SaveAll)    { HandleSaveRecallAll(Frame, true);  return true; }
 
     // Enumerate: CID 0 lists the block types, CID 1 a block's Field&Keys. Handled before the
     // BlockInfo guard below (which every other command needs).
-    if (cid == (uint8_t)RegisterCid::EnumerateBlocks) { HandleEnumerateBlocks(frame); return true; }
-    if (cid == (uint8_t)RegisterCid::EnumerateFields) { HandleEnumerateFields(frame); return true; }
+    if (Cid == (uint8_t)RegisterCid::EnumerateBlocks) { HandleEnumerateBlocks(Frame); return true; }
+    if (Cid == (uint8_t)RegisterCid::EnumerateFields) { HandleEnumerateFields(Frame); return true; }
 
     // Dynamic management (Docs/Services/Register.md "Dynamic commands"): the request
     // carries the global Index (uint16), not a BlockInfo, so handle it before the
     // BlockInfo guard below.
 #ifdef USE_DYNAMIC_BLOCKS
-    if (cid >= (uint8_t)DynamicCid::Create && cid <= (uint8_t)DynamicCid::SetName) {
-        if (PayloadBytes(frame) < 2) { RespondStatus(frame, false); return true; }
-        uint16_t gi = (uint16_t)(frame.Payload[0] | (frame.Payload[1] << 8));
-        switch ((DynamicCid)cid) {
-            case DynamicCid::Create:  HandleCreateDynamic(frame, gi); return true;
-            case DynamicCid::Delete:  HandleDeleteDynamic(frame, gi); return true;
-            case DynamicCid::GetName: HandleGetName(frame, gi); return true;
-            case DynamicCid::SetName: HandleSetName(frame, gi); return true;
+    if (Cid >= (uint8_t)DynamicCid::Create && Cid <= (uint8_t)DynamicCid::SetName) {
+        if (PayloadBytes(Frame) < 2) { RespondStatus(Frame, false); return true; }
+        uint16_t Gi = (uint16_t)(Frame.Payload[0] | (Frame.Payload[1] << 8));
+        switch ((DynamicCid)Cid) {
+            case DynamicCid::Create:  HandleCreateDynamic(Frame, Gi); return true;
+            case DynamicCid::Delete:  HandleDeleteDynamic(Frame, Gi); return true;
+            case DynamicCid::GetName: HandleGetName(Frame, Gi); return true;
+            case DynamicCid::SetName: HandleSetName(Frame, Gi); return true;
             default: break;
         }
     }
 #endif
 
-    if (PayloadBytes(frame) < 4) { RespondStatus(frame, false); return true; }
+    if (PayloadBytes(Frame) < 4) { RespondStatus(Frame, false); return true; }
 
     // frame.payload is 4-byte aligned (PacketFrame is packed+aligned(4)), so this is one
     // word load rather than a 4-byte memcpy.
-    uint32_t bi = *reinterpret_cast<const uint32_t *>(frame.Payload);
-    uint16_t type = BlockInfoType(bi);
-    uint8_t inst = BlockInfoInstance(bi);
-    uint8_t field = BlockInfoField(bi);
-    uint8_t key = BlockInfoKey(bi);
+    uint32_t Bi = *reinterpret_cast<const uint32_t *>(Frame.Payload);
+    uint16_t Type = BlockInfoType(Bi);
+    uint8_t Inst = BlockInfoInstance(Bi);
+    uint8_t Field = BlockInfoField(Bi);
+    uint8_t Key = BlockInfoKey(Bi);
 
     // Read (single entry: the request carries one BlockInfo).
-    if (cid == (uint8_t)RegisterCid::Read) {
-        if (PayloadBytes(frame) != 4) { RespondStatus(frame,false); return true; }
+    if (Cid == (uint8_t)RegisterCid::Read) {
+        if (PayloadBytes(Frame) != 4) { RespondStatus(Frame,false); return true; }
 #ifdef USE_SCRIPTS
-        if (BlockTypeRange::IsScript(type)) {
-            HandleScriptBlockRead(frame, bi, BlockTypeRange::ScriptGlobal(type, inst), field, key);
+        if (BlockTypeRange::IsScript(Type)) {
+            HandleScriptBlockRead(Frame, Bi, BlockTypeRange::ScriptGlobal(Type, Inst), Field, Key);
             return true;
         }
 #endif
 #ifdef USE_DYNAMIC_BLOCKS
-        if (BlockTypeRange::IsDynamic(type)) {
-            HandleDynamicBlockRead(frame, bi, BlockTypeRange::DynamicGlobal(type, inst), field, key);
+        if (BlockTypeRange::IsDynamic(Type)) {
+            HandleDynamicBlockRead(Frame, Bi, BlockTypeRange::DynamicGlobal(Type, Inst), Field, Key);
             return true;
         }
 #else
-        if (BlockTypeRange::IsDynamic(type)) { RespondStatus(frame, false); return true; }
+        if (BlockTypeRange::IsDynamic(Type)) { RespondStatus(Frame, false); return true; }
 #endif
-        HandleStaticBlockRead(frame, bi, type, inst, field, key);
+        HandleStaticBlockRead(Frame, Bi, Type, Inst, Field, Key);
         return true;
     }
 
     // Write.
-    if (cid == (uint8_t)RegisterCid::Write) {
-        if (PayloadBytes(frame) < 8) { RespondStatus(frame,false); return true; }
-        const ValueInfo *desc = (const ValueInfo *)(frame.Payload + 4);
-        const uint8_t *val = frame.Payload+8;
+    if (Cid == (uint8_t)RegisterCid::Write) {
+        if (PayloadBytes(Frame) < 8) { RespondStatus(Frame,false); return true; }
+        const ValueInfo *Desc = (const ValueInfo *)(Frame.Payload + 4);
+        const uint8_t *Val = Frame.Payload+8;
         // The ValueInfo.Size must match the value bytes actually present: a larger Size
         // would make the write path copy past the frame. It is also capped to what one
         // packet can carry, symmetric with the read reply's cap.
-        uint16_t vlen = desc->Size;
-        uint16_t avail = (uint16_t)(PayloadBytes(frame) - 8);
-        if (vlen > avail) vlen = avail;
-        if (vlen > FIELD_RESPONSE_MAX_VALUE) vlen = FIELD_RESPONSE_MAX_VALUE;
+        uint16_t Vlen = Desc->Size;
+        uint16_t Avail = (uint16_t)(PayloadBytes(Frame) - 8);
+        if (Vlen > Avail) Vlen = Avail;
+        if (Vlen > FIELD_RESPONSE_MAX_VALUE) Vlen = FIELD_RESPONSE_MAX_VALUE;
 #ifdef USE_SCRIPTS
-        if (BlockTypeRange::IsScript(type)) {
-            HandleScriptBlockWrite(frame, BlockTypeRange::ScriptGlobal(type, inst), field, key, desc, val, vlen);
+        if (BlockTypeRange::IsScript(Type)) {
+            HandleScriptBlockWrite(Frame, BlockTypeRange::ScriptGlobal(Type, Inst), Field, Key, Desc, Val, Vlen);
             return true;
         }
 #endif
 #ifdef USE_DYNAMIC_BLOCKS
-        if (BlockTypeRange::IsDynamic(type)) {
-            HandleDynamicBlockWrite(frame, BlockTypeRange::DynamicGlobal(type, inst), field, key, desc, val, vlen);
+        if (BlockTypeRange::IsDynamic(Type)) {
+            HandleDynamicBlockWrite(Frame, BlockTypeRange::DynamicGlobal(Type, Inst), Field, Key, Desc, Val, Vlen);
             return true;
         }
 #else
-        if (BlockTypeRange::IsDynamic(type)) { RespondStatus(frame, false); return true; }
+        if (BlockTypeRange::IsDynamic(Type)) { RespondStatus(Frame, false); return true; }
 #endif
-        HandleStaticBlockWrite(frame, type, inst, field, key, desc, val, vlen);
+        HandleStaticBlockWrite(Frame, Type, Inst, Field, Key, Desc, Val, Vlen);
         return true;
     }
     return true;

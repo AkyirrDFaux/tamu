@@ -26,21 +26,21 @@
 //   now_us() - a microsecond clock (may wrap; only short spans are compared).
 //   yield()  - a short cooperative pause for the tight retry loop.
 template <typename DrainFn, typename NowUs, typename YieldFn>
-static void RS485_WaitForSilence(uint8_t Priority, DrainFn drain, NowUs now_us, YieldFn yield_fn)
+static void RS485WaitForSilence(uint8_t Priority, DrainFn Drain, NowUs NowUsCb, YieldFn YieldCb)
 {
-    uint32_t silence_us = (RS485_SILENCE_BYTES + (Priority / 8) + (RawRand() % 4)) * RS485_BYTE_TIME_US;
-    uint32_t idle_since = now_us();
-    uint32_t wait_start = idle_since;
+    uint32_t SilenceUs = (RS485_SILENCE_BYTES + (Priority / 8) + (RawRand() % 4)) * RS485_BYTE_TIME_US;
+    uint32_t IdleSince = NowUsCb();
+    uint32_t WaitStart = IdleSince;
 
     for (;;)
     {
-        if (drain())
-            idle_since = now_us(); // bus activity: restart the silence window
-        if ((now_us() - idle_since) >= silence_us)
+        if (Drain())
+            IdleSince = NowUsCb(); // bus activity: restart the silence window
+        if ((NowUsCb() - IdleSince) >= SilenceUs)
             return;
-        if ((now_us() - wait_start) >= (uint32_t)RS485_SILENCE_TIMEOUT_MS * 1000u)
+        if ((NowUsCb() - WaitStart) >= (uint32_t)RS485_SILENCE_TIMEOUT_MS * 1000u)
             return; // Give up: transmit into the best window we had
-        yield_fn();
+        YieldCb();
     }
 }
 
@@ -67,34 +67,34 @@ inline int RxValidateFrame(PacketFrame *Data)
 // aborts mid-frame, the stale stage consumes following bytes until length/CRC checks
 // fail and the machine falls back to RX_SYNC.
 template <typename ReadByte>
-int ReceivePacketFrame(PacketFrame *Data, ReadByte read_byte)
+int ReceivePacketFrame(PacketFrame *Data, ReadByte ReadByteCb)
 {
     if (!Data) return 0;
 
     enum RxStage : uint8_t { RX_SYNC, RX_HEADER, RX_PAYLOAD };
-    static uint8_t stage = RX_SYNC;
-    static uint16_t got = 0; // bytes of the current stage stored so far
+    static uint8_t Stage = RX_SYNC;
+    static uint16_t Got = 0; // bytes of the current stage stored so far
 
     for (;;)
     {
         uint8_t b = 0;
-        if (!read_byte(b))
+        if (!ReadByteCb(b))
             break; // no more bytes available right now
 
-        switch (stage)
+        switch (Stage)
         {
         case RX_SYNC:
             if (b == 0xAA)
             {
-                stage = RX_HEADER;
-                got = 0;
+                Stage = RX_HEADER;
+                Got = 0;
             }
             // else: inter-frame garbage, skip
             break;
 
         case RX_HEADER:
-            ((uint8_t *)Data)[got++] = b;
-            if (got < 12)
+            ((uint8_t *)Data)[Got++] = b;
+            if (Got < 12)
                 break;
 
             // Header complete: payload_len is the payload byte count.
@@ -102,28 +102,28 @@ int ReceivePacketFrame(PacketFrame *Data, ReadByte read_byte)
             // so reject such frames instead of overflowing.
             if (PayloadBytes(*Data) > MAX_PAYLOAD_SIZE)
             {
-                stage = RX_SYNC;
-                got = 0;
+                Stage = RX_SYNC;
+                Got = 0;
                 break;
             }
 
-            stage = RX_PAYLOAD;
-            got = 0;
+            Stage = RX_PAYLOAD;
+            Got = 0;
             if (Data->PayloadLen == 0)
             {
                 // Zero-payload frames finish here.
-                stage = RX_SYNC;
+                Stage = RX_SYNC;
                 int Total = RxValidateFrame(Data);
                 if (Total > 0) return Total;
             }
             break;
 
         case RX_PAYLOAD:
-            Data->Payload[got++] = b;
-            if (got >= PayloadBytes(*Data))
+            Data->Payload[Got++] = b;
+            if (Got >= PayloadBytes(*Data))
             {
-                stage = RX_SYNC;
-                got = 0;
+                Stage = RX_SYNC;
+                Got = 0;
                 int Total = RxValidateFrame(Data);
                 if (Total > 0) return Total;
             }

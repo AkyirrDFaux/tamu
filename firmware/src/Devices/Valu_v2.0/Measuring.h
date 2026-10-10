@@ -43,7 +43,7 @@ static_assert(offsetof(ResistiveMeasPersistent, FilterCoeff) == 8, "Meas layout"
 static_assert(offsetof(ResistiveMeasVolatile, MeasuredValue) == 0, "Meas layout");
 static_assert(offsetof(ResistiveMeasVolatile, CurrentRange) == 4, "Meas layout");
 
-const BlockEntry ResistiveMeas_Entries[] = {
+const BlockEntry ResistiveMeasEntries[] = {
     { MakeFieldKey(0, 0), 0, {(uint16_t)DataType::Number, sizeof(Number), ValueTrigger | ValuePersistent} },
     { MakeFieldKey(1, 0), 4, {(uint16_t)DataType::Enum, sizeof(uint8_t), ValuePersistent} },
     { MakeFieldKey(2, 0), 8, {(uint16_t)DataType::Number, sizeof(Number), ValueTrigger | ValuePersistent} },
@@ -53,73 +53,73 @@ const BlockEntry ResistiveMeas_Entries[] = {
 
 // Write-time clamping for the writable Meas fields, so the STORED value always equals the
 // APPLIED value (the sampling loop additionally defends in depth), same as the DAS.
-static bool OnMeasFieldWrite(const StaticBlockDescriptor &block, uint16_t index, const void *data, uint16_t len)
+static bool OnMeasFieldWrite(const StaticBlockDescriptor &Block, uint16_t Index, const void *Data, uint16_t Len)
 {
-    auto *m = static_cast<ResistiveMeasPersistent *>(block.PersistentData);
-    if (len != sizeof(Number)) return false;
-    Number v = *static_cast<const Number *>(data);
+    auto *M = static_cast<ResistiveMeasPersistent *>(Block.PersistentData);
+    if (Len != sizeof(Number)) return false;
+    Number V = *static_cast<const Number *>(Data);
 
-    switch (index)
+    switch (Index)
     {
     case 0: // Sampling Rate (Hz): the loop divides by it, keep >= 1 Hz and bounded
-        if (v < N(1)) v = N(1);
-        if (v > N(1000)) v = N(1000);
-        m->SamplingRate = v;
+        if (V < N(1)) V = N(1);
+        if (V > N(1000)) V = N(1000);
+        M->SamplingRate = V;
         return true;
 
     case 2: // Filter Coefficient: EMA weight of the new sample, 0-1 (1 = no filtering)
-        if (v < N(0)) v = N(0);
-        if (v > N(1)) v = N(1);
-        m->FilterCoeff = v;
+        if (V < N(0)) V = N(0);
+        if (V > N(1)) V = N(1);
+        M->FilterCoeff = V;
         return true;
     }
     return false;
 }
 
-const BlockTrigger ResistiveMeas_Triggers[] = {
+const BlockTrigger ResistiveMeasTriggers[] = {
     { MakeFieldKey(0, 0), OnMeasFieldWrite },
     { MakeFieldKey(2, 0), OnMeasFieldWrite },
 };
 
-const BlockSchema ResistiveMeas_Schema = {
-    .Entries = ResistiveMeas_Entries,
-    .EntryCount = sizeof(ResistiveMeas_Entries) / sizeof(BlockEntry),
-    .Triggers = ResistiveMeas_Triggers,
-    .TriggerCount = sizeof(ResistiveMeas_Triggers) / sizeof(BlockTrigger),
+const BlockSchema ResistiveMeasSchema = {
+    .Entries = ResistiveMeasEntries,
+    .EntryCount = sizeof(ResistiveMeasEntries) / sizeof(BlockEntry),
+    .Triggers = ResistiveMeasTriggers,
+    .TriggerCount = sizeof(ResistiveMeasTriggers) / sizeof(BlockTrigger),
     .Type = BlockType::ResistiveMeasure,
 };
 
 // Measuring inputs (Docs/Devices.md): PA6 (ADC6), PA1 (ADC1), PA0 (ADC0).
 #define MEAS_ADC ADC1
 #define MEAS_CHANNEL_COUNT 3
-static const uint8_t s_meas_adc_ch[MEAS_CHANNEL_COUNT] = {6, 1, 0};
-static const uint16_t s_meas_pin[MEAS_CHANNEL_COUNT] = {GPIO_Pin_6, GPIO_Pin_1, GPIO_Pin_0};
+static const uint8_t MeasAdcCh[MEAS_CHANNEL_COUNT] = {6, 1, 0};
+static const uint16_t MeasPin[MEAS_CHANNEL_COUNT] = {GPIO_Pin_6, GPIO_Pin_1, GPIO_Pin_0};
 
 // Reads one 10-bit ADC sample from `channel`. Bounded by ADC_EOC_TIMEOUT_CYCLES so a stuck
 // ADC cannot spin forever; returns the last conversion result on timeout.
 #define ADC_EOC_TIMEOUT_CYCLES 14400000UL // ~100 ms at 144 MHz
 
-static uint16_t Meas_AdcRead(uint8_t channel)
+static uint16_t MeasAdcRead(uint8_t Channel)
 {
-    ADC_RegularChannelConfig(MEAS_ADC, channel, 1, ADC_SampleTime_239Cycles5);
+    ADC_RegularChannelConfig(MEAS_ADC, Channel, 1, ADC_SampleTime_239Cycles5);
     ADC_SoftwareStartConvCmd(MEAS_ADC, ENABLE);
-    uint32_t start = SysTick->CNT;
+    uint32_t Start = SysTick->CNT;
     while (!ADC_GetFlagStatus(MEAS_ADC, ADC_FLAG_EOC))
     {
-        if ((SysTick->CNT - start) > ADC_EOC_TIMEOUT_CYCLES)
+        if ((SysTick->CNT - Start) > ADC_EOC_TIMEOUT_CYCLES)
             break;
     }
     return ADC_GetConversionValue(MEAS_ADC);
 }
 
 // Configures the ADC and the three measuring pins (analog inputs) for the measurement block.
-void Measuring_Init()
+void MeasuringInit()
 {
     RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA | RCC_APB2Periph_ADC1, ENABLE);
 
     // Measuring pins as analog inputs (PA6, PA1, PA0).
     GPIO_InitTypeDef GPIO_InitStructure = {0};
-    GPIO_InitStructure.GPIO_Pin = s_meas_pin[0] | s_meas_pin[1] | s_meas_pin[2];
+    GPIO_InitStructure.GPIO_Pin = MeasPin[0] | MeasPin[1] | MeasPin[2];
     GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AIN;
     GPIO_Init(GPIOA, &GPIO_InitStructure);
 

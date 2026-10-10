@@ -470,7 +470,7 @@ static void testVectors()
     Vector<2> a;
     a[0] = Number(3);
     a[1] = Number(4);
-    CHECK_NEAR(a.norm2(), 5.0, 1e-3);
+    CHECK_NEAR(a.Norm2(), 5.0, 1e-3);
 
     Vector<2> b;
     b[0] = Number(1);
@@ -481,12 +481,12 @@ static void testVectors()
 
     Vector<3> c;
     for (int i = 0; i < 3; i++) c[i] = Number(i);
-    const Vector<2> removed = c.remove(1);
+    const Vector<2> removed = c.Remove(1);
     CHECK_NEAR(removed[0], 0.0, 1e-6);
     CHECK_NEAR(removed[1], 2.0, 1e-6);
 
     // An out-of-range index is clamped rather than reading out of bounds.
-    const Vector<2> clamped = c.remove(99);
+    const Vector<2> clamped = c.Remove(99);
     CHECK_NEAR(clamped[0], 0.0, 1e-6);
     CHECK_NEAR(clamped[1], 1.0, 1e-6);
 }
@@ -540,7 +540,7 @@ static void testMatrix()
     CHECK_NEAR(turned[2], 1.0, 3e-3);
 
     // Matrix-matrix composition: Identity * M == M.
-    const Matrix<3, 3> composed = identity.multiply(rotated);
+    const Matrix<3, 3> composed = identity.Multiply(rotated);
     for (int r = 0; r < 3; r++)
         for (int c = 0; c < 3; c++)
             CHECK_NEAR(composed(r, c), toD(rotated(r, c)), 1e-4);

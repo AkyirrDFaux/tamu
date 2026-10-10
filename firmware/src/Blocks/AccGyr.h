@@ -59,9 +59,9 @@ static_assert(offsetof(AccGyrPersistent, AccFilter) == 4, "AccGyr layout");
 static_assert(offsetof(AccGyrVolatile, Acceleration) == 0, "AccGyr layout");
 static_assert(offsetof(AccGyrVolatile, AngularVelocity) == 12, "AccGyr layout");
 
-bool OnAccGyrFrequencyChange(const StaticBlockDescriptor& block, uint16_t index, const void* data, uint16_t data_len);
-bool OnAccGyrAccRangeChange(const StaticBlockDescriptor& block, uint16_t index, const void* data, uint16_t data_len);
-bool OnAccGyrAngRangeChange(const StaticBlockDescriptor& block, uint16_t index, const void* data, uint16_t data_len);
+bool OnAccGyrFrequencyChange(const StaticBlockDescriptor& Block, uint16_t Index, const void* Data, uint16_t DataLen);
+bool OnAccGyrAccRangeChange(const StaticBlockDescriptor& Block, uint16_t Index, const void* Data, uint16_t DataLen);
+bool OnAccGyrAngRangeChange(const StaticBlockDescriptor& Block, uint16_t Index, const void* Data, uint16_t DataLen);
 
 const BlockEntry AccGyr_Entries[] = {
     { MakeFieldKey(0, 0), 0, {(uint16_t)DataType::Enum, sizeof(uint8_t), ValueTrigger | ValuePersistent} },
@@ -79,7 +79,7 @@ const BlockTrigger AccGyr_Triggers[] = {
     { MakeFieldKey(2, 0), OnAccGyrAngRangeChange },
 };
 
-const BlockSchema AccGyr_Schema = {
+const BlockSchema AccGyrSchema = {
     .Entries = AccGyr_Entries,
     .EntryCount = sizeof(AccGyr_Entries) / sizeof(BlockEntry),
     .Triggers = AccGyr_Triggers,

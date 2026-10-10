@@ -23,29 +23,29 @@ namespace BootloaderHost
     // when one byte was received. Keeping the deadline reset in `begin` preserves a
     // whole-frame (not per-byte) timeout for hosts that use one.
     template <typename BeginFrame, typename ReadByte>
-    inline int ReceiveFrame(uint8_t *out, size_t cap, BeginFrame begin, ReadByte read)
+    inline int ReceiveFrame(uint8_t *Out, size_t Cap, BeginFrame Begin, ReadByte Read)
     {
-        begin();
+        Begin();
         uint8_t b;
         for (;;)
         {
-            if (!read(&b)) return 0;
+            if (!Read(&b)) return 0;
             if (b == Bootloader::START) break; // skip anything that is not a frame start
         }
 
-        size_t got = 0;
-        out[got++] = b;
-        if (!read(&b)) return 0;
-        out[got++] = b;
+        size_t Got = 0;
+        Out[Got++] = b;
+        if (!Read(&b)) return 0;
+        Out[Got++] = b;
 
-        uint16_t need = Bootloader::FrameSize((uint8_t)(b & 0x03u));
-        if (need == 0 || need > cap) return 0;
-        while (got < need)
+        uint16_t Need = Bootloader::FrameSize((uint8_t)(b & 0x03u));
+        if (Need == 0 || Need > Cap) return 0;
+        while (Got < Need)
         {
-            if (!read(&b)) return 0;
-            out[got++] = b;
+            if (!Read(&b)) return 0;
+            Out[Got++] = b;
         }
-        return Bootloader::Decode(out, need) ? (int)need : 0;
+        return Bootloader::Decode(Out, Need) ? (int)Need : 0;
     }
 
     // Answers one read-request: reads `PAYLOAD_SIZE` bytes at `offset`, encodes the
@@ -53,34 +53,34 @@ namespace BootloaderHost
     // were read, false when `offset` is out of range (the buffer is then 0xFF/erased).
     // `send` is void(const uint8_t *, size_t).
     template <typename ReadPayload, typename Send>
-    inline void HandleRead(uint32_t offset, ReadPayload read, Send send)
+    inline void HandleRead(uint32_t Offset, ReadPayload Read, Send SendCb)
     {
-        uint8_t data[Bootloader::PAYLOAD_SIZE];
-        if (!read(offset, data))
-            memset(data, 0xFF, sizeof(data));
+        uint8_t Data[Bootloader::PAYLOAD_SIZE];
+        if (!Read(Offset, Data))
+            memset(Data, 0xFF, sizeof(Data));
 
-        uint8_t resp[Bootloader::DATA_SIZE];
-        Bootloader::EncodeReadResponse(offset, data, resp);
-        send(resp, sizeof(resp));
+        uint8_t Resp[Bootloader::DATA_SIZE];
+        Bootloader::EncodeReadResponse(Offset, Data, Resp);
+        SendCb(Resp, sizeof(Resp));
     }
 
     // Serves raw frames forever. `onWrite` is void(uint32_t, const uint8_t *) and
     // `onRead` is void(uint32_t); the host's own write/read handlers do the flashing.
     template <typename BeginFrame, typename ReadByte, typename OnWrite, typename OnRead>
-    inline void HostLoop(BeginFrame begin, ReadByte read, OnWrite onWrite, OnRead onRead)
+    inline void HostLoop(BeginFrame Begin, ReadByte Read, OnWrite OnWriteCb, OnRead OnReadCb)
     {
         for (;;)
         {
-            uint8_t frame[Bootloader::MAX_FRAME_SIZE];
-            int n = ReceiveFrame(frame, sizeof(frame), begin, read);
+            uint8_t Frame[Bootloader::MAX_FRAME_SIZE];
+            int n = ReceiveFrame(Frame, sizeof(Frame), Begin, Read);
             if (n <= 0) continue;
 
-            uint8_t Cmd = (uint8_t)(frame[1] & 0x03u);
-            uint32_t offset = Bootloader::Offset(frame);
+            uint8_t Cmd = (uint8_t)(Frame[1] & 0x03u);
+            uint32_t Offset = Bootloader::Offset(Frame);
             if (Cmd == Bootloader::CMD_WRITE)
-                onWrite(offset, Bootloader::Payload(frame));
+                OnWriteCb(Offset, Bootloader::Payload(Frame));
             else if (Cmd == Bootloader::CMD_READ_REQ)
-                onRead(offset);
+                OnReadCb(Offset);
         }
     }
 } // namespace BootloaderHost

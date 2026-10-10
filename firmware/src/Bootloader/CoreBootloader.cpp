@@ -31,7 +31,7 @@
 #define SECTOR_SIZE 4096u
 
 // The main-app slot (found at boot).
-static const esp_partition_t *s_app = nullptr;
+static const esp_partition_t *App = nullptr;
 
 // Which `ota_0` sectors have already been erased in the current write pass. The app writes
 // sequentially and may re-write (correct) a chunk, so a sector must be erased once - on its
@@ -42,59 +42,59 @@ static const esp_partition_t *s_app = nullptr;
 // refuses writes when the runtime partition is larger, so the sector index cannot run off
 // the end of this array.
 static constexpr uint32_t OTA_APP_SIZE = 0x2A0000u;
-static uint8_t s_erased[OTA_APP_SIZE / SECTOR_SIZE / 8u];
+static uint8_t Erased[OTA_APP_SIZE / SECTOR_SIZE / 8u];
 static_assert(OTA_APP_SIZE % SECTOR_SIZE == 0, "ota_0 size must be a whole number of sectors");
 
-static bool SectorErased(uint32_t sector)
+static bool SectorErased(uint32_t Sector)
 {
-    return (s_erased[sector >> 3] & (uint8_t)(1u << (sector & 7u))) != 0;
+    return (Erased[Sector >> 3] & (uint8_t)(1u << (Sector & 7u))) != 0;
 }
 
-static void MarkErased(uint32_t sector)
+static void MarkErased(uint32_t Sector)
 {
-    s_erased[sector >> 3] |= (uint8_t)(1u << (sector & 7u));
+    Erased[Sector >> 3] |= (uint8_t)(1u << (Sector & 7u));
 }
 
 // ---------------------------------------------------------------------------
 // USB (raw bootloader frames over the USB Serial/JTAG port)
 // ---------------------------------------------------------------------------
 
-static void SendRaw(const uint8_t *data, size_t len)
+static void SendRaw(const uint8_t *Data, size_t Len)
 {
-    usb_serial_jtag_write_bytes(data, len, pdMS_TO_TICKS(1000));
+    usb_serial_jtag_write_bytes(Data, Len, pdMS_TO_TICKS(1000));
 }
 
-static bool ReadByte(uint8_t *b, TickType_t ticks)
+static bool ReadByte(uint8_t *B, TickType_t Ticks)
 {
-    return usb_serial_jtag_read_bytes(b, 1, ticks) == 1;
+    return usb_serial_jtag_read_bytes(B, 1, Ticks) == 1;
 }
 
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
 
-static void HandleWrite(uint32_t offset, const uint8_t *Payload)
+static void HandleWrite(uint32_t Offset, const uint8_t *Payload)
 {
-    if (s_app == nullptr) return;
-    if ((offset & 31u) != 0) return; // 32-byte aligned
+    if (App == nullptr) return;
+    if ((Offset & 31u) != 0) return; // 32-byte aligned
     // `offset + PAYLOAD_SIZE` wraps near 2^32, so subtract instead: the sector index below
     // must stay inside `s_erased`.
-    if (offset > s_app->size || s_app->size - offset < Bootloader::PAYLOAD_SIZE) return;
+    if (Offset > App->size || App->size - Offset < Bootloader::PAYLOAD_SIZE) return;
 
     // A write pass starts at offset 0 (the app writes the image from the beginning, including
     // a retry after a failed verification), so forget the previous pass's erased sectors.
     // A correction that re-writes offset 0 is safe: the bitmap is reset before that sector is
     // erased, and the rest of the pass programs into the freshly erased sector.
-    if (offset == 0) memset(s_erased, 0, sizeof(s_erased));
+    if (Offset == 0) memset(Erased, 0, sizeof(Erased));
 
-    uint32_t sector = offset / SECTOR_SIZE;
-    if (!SectorErased(sector))
+    uint32_t Sector = Offset / SECTOR_SIZE;
+    if (!SectorErased(Sector))
     {
-        if (esp_partition_erase_range(s_app, sector * SECTOR_SIZE, SECTOR_SIZE) != ESP_OK)
+        if (esp_partition_erase_range(App, Sector * SECTOR_SIZE, SECTOR_SIZE) != ESP_OK)
             return;
-        MarkErased(sector);
+        MarkErased(Sector);
     }
-    esp_partition_write(s_app, offset, Payload, Bootloader::PAYLOAD_SIZE);
+    esp_partition_write(App, Offset, Payload, Bootloader::PAYLOAD_SIZE);
 }
 
 // ---------------------------------------------------------------------------
@@ -103,15 +103,15 @@ static void HandleWrite(uint32_t offset, const uint8_t *Payload)
 
 extern "C" void app_main(void)
 {
-    gpio_config_t button = {};
-    button.pin_bit_mask = 1ULL << BUTTON_PIN;
-    button.mode = GPIO_MODE_INPUT;
-    button.pull_up_en = GPIO_PULLUP_ENABLE;
-    button.pull_down_en = GPIO_PULLDOWN_DISABLE;
-    button.intr_type = GPIO_INTR_DISABLE;
-    gpio_config(&button);
+    gpio_config_t Button = {};
+    Button.pin_bit_mask = 1ULL << BUTTON_PIN;
+    Button.mode = GPIO_MODE_INPUT;
+    Button.pull_up_en = GPIO_PULLUP_ENABLE;
+    Button.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    Button.intr_type = GPIO_INTR_DISABLE;
+    gpio_config(&Button);
 
-    const esp_partition_t *main_app = esp_partition_find_first(
+    const esp_partition_t *MainApp = esp_partition_find_first(
         ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, nullptr);
 
     // Let the pull-up settle, then sample: released (high) boots the main app.
@@ -119,46 +119,46 @@ extern "C" void app_main(void)
 #ifndef TAMU_BOOTLOADER_FORCE
     // TAMU_BOOTLOADER_FORCE (test hook) skips the button check so the USB update path can be
     // exercised without physically holding GPIO2.
-    if (gpio_get_level(BUTTON_PIN) != 0 && main_app != nullptr)
+    if (gpio_get_level(BUTTON_PIN) != 0 && MainApp != nullptr)
     {
         // Boot only when `ota_0` holds an app image (its header magic byte 0xE9); otherwise
         // stay in update mode, or a fresh device would reboot-loop through this app.
-        uint8_t magic = 0xFF;
-        esp_partition_read(main_app, 0, &magic, 1);
-        if (magic == 0xE9)
+        uint8_t Magic = 0xFF;
+        esp_partition_read(MainApp, 0, &Magic, 1);
+        if (Magic == 0xE9)
         {
-            esp_ota_set_boot_partition(main_app);
+            esp_ota_set_boot_partition(MainApp);
             esp_restart();
         }
     }
 #endif
 
     // Update mode: own the USB port and serve raw frames.
-    usb_serial_jtag_driver_config_t usb = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
-    usb_serial_jtag_driver_install(&usb);
-    s_app = main_app;
+    usb_serial_jtag_driver_config_t Usb = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
+    usb_serial_jtag_driver_install(&Usb);
+    App = MainApp;
     // Guard the sector bitmap against a `partitions.csv` size change: a larger `ota_0` would
     // make the sector index run past `s_erased`. Refuse writes (reads return 0xFF) rather
     // than corrupt memory.
-    if (s_app != nullptr && s_app->size > OTA_APP_SIZE)
-        s_app = nullptr;
+    if (App != nullptr && App->size > OTA_APP_SIZE)
+        App = nullptr;
 
     // Serve raw frames (the receive/read/dispatch plumbing is shared with the DAS host).
     BootloaderHost::HostLoop(
         [] {},
-        [](uint8_t *b) { return ReadByte(b, pdMS_TO_TICKS(100)); },
-        [](uint32_t offset, const uint8_t *Payload) { HandleWrite(offset, Payload); },
-        [](uint32_t offset) {
-            auto readPayload = [](uint32_t off, uint8_t *data) {
+        [](uint8_t *B) { return ReadByte(B, pdMS_TO_TICKS(100)); },
+        [](uint32_t Offset, const uint8_t *Payload) { HandleWrite(Offset, Payload); },
+        [](uint32_t Offset) {
+            auto readPayload = [](uint32_t Off, uint8_t *Data) {
                 // Same wrap-safe bounds check as `HandleWrite`: an out-of-range offset
                 // reads back 0xFF (erased) instead of leaking stack bytes.
-                if (s_app == nullptr || off > s_app->size ||
-                    s_app->size - off < Bootloader::PAYLOAD_SIZE)
+                if (App == nullptr || Off > App->size ||
+                    App->size - Off < Bootloader::PAYLOAD_SIZE)
                     return false;
-                esp_partition_read(s_app, off, data, Bootloader::PAYLOAD_SIZE);
+                esp_partition_read(App, Off, Data, Bootloader::PAYLOAD_SIZE);
                 return true;
             };
-            auto send = [](const uint8_t *d, size_t n) { SendRaw(d, n); };
-            BootloaderHost::HandleRead(offset, readPayload, send);
+            auto Send = [](const uint8_t *D, size_t N) { SendRaw(D, N); };
+            BootloaderHost::HandleRead(Offset, readPayload, Send);
         });
 }

@@ -24,48 +24,48 @@
 
 struct ExprValue
 {
-    uint16_t dtype = (uint16_t)DataType::None;
-    uint16_t mh = 0, mw = 0; // Matrix header (0 otherwise)
-    uint8_t count = 0;       // elements (1 = scalar)
+    uint16_t Dtype = (uint16_t)DataType::None;
+    uint16_t Mh = 0, Mw = 0; // Matrix header (0 otherwise)
+    uint8_t Count = 0;       // elements (1 = scalar)
     Number e[SCRIPT_EXPR_MAX_ELEMS];
 };
 
 struct ExprParser
 {
     LoadedScript *s;
-    const uint8_t *tok;
+    const uint8_t *Tok;
     uint8_t n;
     uint8_t i;
-    uint8_t depth;
-    uint8_t scratch[4];
+    uint8_t Depth;
+    uint8_t Scratch[4];
 };
 
 // Resolves a value token into an ExprValue (scalar / Vector / Matrix).
-inline bool ScriptService::ExprResolve(ExprParser *p, const uint8_t *sym, ExprValue &out)
+inline bool ScriptService::ExprResolve(ExprParser *p, const uint8_t *Sym, ExprValue &Out)
 {
-    const uint8_t *data = nullptr;
-    uint8_t size = 0;
-    uint16_t dtype = 0;
-    if (!Resolve(p->s, sym[0], sym[1], SymVal(sym), p->scratch, &data, &size, &dtype))
+    const uint8_t *Data = nullptr;
+    uint8_t Size = 0;
+    uint16_t Dtype = 0;
+    if (!Resolve(p->s, Sym[0], Sym[1], SymVal(Sym), p->Scratch, &Data, &Size, &Dtype))
         return false;
-    out.dtype = dtype;
-    out.mh = 0;
-    out.mw = 0;
+    Out.Dtype = Dtype;
+    Out.Mh = 0;
+    Out.Mw = 0;
 
-    uint16_t cnt = 1;
-    if (dtype == (uint16_t)DataType::Vector || dtype == (uint16_t)DataType::Matrix)
+    uint16_t Cnt = 1;
+    if (Dtype == (uint16_t)DataType::Vector || Dtype == (uint16_t)DataType::Matrix)
     {
-        cnt = ContainerCount(dtype, size, data);
-        if (cnt == 0 || cnt > SCRIPT_EXPR_MAX_ELEMS) return false;
-        if (dtype == (uint16_t)DataType::Matrix)
+        Cnt = ContainerCount(Dtype, Size, Data);
+        if (Cnt == 0 || Cnt > SCRIPT_EXPR_MAX_ELEMS) return false;
+        if (Dtype == (uint16_t)DataType::Matrix)
         {
-            out.mh = (uint16_t)(data[0] | (data[1] << 8));
-            out.mw = (uint16_t)(data[2] | (data[3] << 8));
+            Out.Mh = (uint16_t)(Data[0] | (Data[1] << 8));
+            Out.Mw = (uint16_t)(Data[2] | (Data[3] << 8));
         }
     }
-    for (uint16_t i = 0; i < cnt; i++)
-        if (!VectorElement(data, size, dtype, i, out.e[i])) return false;
-    out.count = (uint8_t)cnt;
+    for (uint16_t i = 0; i < Cnt; i++)
+        if (!VectorElement(Data, Size, Dtype, i, Out.e[i])) return false;
+    Out.Count = (uint8_t)Cnt;
     return true;
 }
 
@@ -73,9 +73,9 @@ inline bool ScriptService::ExprResolve(ExprParser *p, const uint8_t *sym, ExprVa
 inline uint8_t ScriptService::ExprPeekOp(ExprParser *p)
 {
     if (p->i >= p->n) return 0xFF;
-    const uint8_t *sym = p->tok + (size_t)p->i * 4;
-    if (sym[0] == SCRIPT_SYM_PREDEFINE && sym[1] == SCRIPT_PRE_MATHOP)
-        return (uint8_t)(SymVal(sym) & 0xFF);
+    const uint8_t *Sym = p->Tok + (size_t)p->i * 4;
+    if (Sym[0] == SCRIPT_SYM_PREDEFINE && Sym[1] == SCRIPT_PRE_MATHOP)
+        return (uint8_t)(SymVal(Sym) & 0xFF);
     return 0xFF;
 }
 
@@ -84,55 +84,55 @@ inline uint8_t ScriptService::ExprPeekOp(ExprParser *p)
 // the set fraction bits, x^exp = x^int * prod(x^(2^-k)), and x^(2^-k) is k nested square
 // roots. Fixed point end to end (no log/exp tables); the chain is only deepened while a lower
 // fraction bit still needs it.
-inline bool ScriptService::ExprPow(Number base, Number exp, Number &out)
+inline bool ScriptService::ExprPow(Number Base, Number Exp, Number &Out)
 {
-    if (exp.Value == (int32_t)(1 << 15)) { out = sqrt(base); return true; } // 0.5
+    if (Exp.Value == (int32_t)(1 << 15)) { Out = sqrt(Base); return true; } // 0.5
 
-    bool neg = exp.Value < 0;
-    if (neg) exp = -exp;
-    int32_t ip = exp.Value >> 16;      // integer part
-    int32_t frac = exp.Value & 0xFFFF; // Q16.16 fraction
-    if (ip > 64) return false;
-    if (frac && base.Value < 0) return false; // no real fractional power of a negative base
+    bool Neg = Exp.Value < 0;
+    if (Neg) Exp = -Exp;
+    int32_t Ip = Exp.Value >> 16;      // integer part
+    int32_t Frac = Exp.Value & 0xFFFF; // Q16.16 fraction
+    if (Ip > 64) return false;
+    if (Frac && Base.Value < 0) return false; // no real fractional power of a negative base
 
     Number r = Number(1);
-    for (int32_t i = 0; i < ip; i++) r = r * base;
-    if (frac)
+    for (int32_t i = 0; i < Ip; i++) r = r * Base;
+    if (Frac)
     {
-        Number chain = sqrt(base); // base^(2^-1)
-        int32_t bit = 0x8000;
-        while (bit)
+        Number Chain = sqrt(Base); // base^(2^-1)
+        int32_t Bit = 0x8000;
+        while (Bit)
         {
-            if (frac & bit) r = r * chain;
-            bit >>= 1;
+            if (Frac & Bit) r = r * Chain;
+            Bit >>= 1;
             // The chain must track the next bit's exponent; only skip a sqrt when no bit at
             // or below the new one is set (otherwise it would be one level too shallow).
-            if (bit && (frac & ((bit << 1) - 1))) chain = sqrt(chain);
+            if (Bit && (Frac & ((Bit << 1) - 1))) Chain = sqrt(Chain);
         }
     }
-    if (neg) { if (r.Value == 0) return false; r = Number(1) / r; }
-    out = r;
+    if (Neg) { if (r.Value == 0) return false; r = Number(1) / r; }
+    Out = r;
     return true;
 }
 
 // Comparisons and logic ops (scalar operands -> Bool).
-inline bool ScriptService::ExprIsBoolOp(uint8_t op)
+inline bool ScriptService::ExprIsBoolOp(uint8_t Op)
 {
-    return op == SCRIPT_MATHOP_EQ || op == SCRIPT_MATHOP_NE || op == SCRIPT_MATHOP_LT ||
-           op == SCRIPT_MATHOP_LE || op == SCRIPT_MATHOP_GT || op == SCRIPT_MATHOP_GE ||
-           op == SCRIPT_MATHOP_AND || op == SCRIPT_MATHOP_OR || op == SCRIPT_MATHOP_XOR;
+    return Op == SCRIPT_MATHOP_EQ || Op == SCRIPT_MATHOP_NE || Op == SCRIPT_MATHOP_LT ||
+           Op == SCRIPT_MATHOP_LE || Op == SCRIPT_MATHOP_GT || Op == SCRIPT_MATHOP_GE ||
+           Op == SCRIPT_MATHOP_AND || Op == SCRIPT_MATHOP_OR || Op == SCRIPT_MATHOP_XOR;
 }
 
 // a = a <op> b, element-wise (a scalar broadcasts to a container's shape). Comparisons and
 // logic produce a scalar Bool and require scalar operands.
-inline bool ScriptService::ExprApply(ExprValue &a, const ExprValue &b, uint8_t op)
+inline bool ScriptService::ExprApply(ExprValue &a, const ExprValue &b, uint8_t Op)
 {
-    if (ExprIsBoolOp(op))
+    if (ExprIsBoolOp(Op))
     {
-        if (a.count != 1 || b.count != 1) return false;
+        if (a.Count != 1 || b.Count != 1) return false;
         int32_t x = a.e[0].Value, y = b.e[0].Value;
         bool r;
-        switch (op)
+        switch (Op)
         {
         case SCRIPT_MATHOP_EQ: r = (x == y); break;
         case SCRIPT_MATHOP_NE: r = (x != y); break;
@@ -145,194 +145,194 @@ inline bool ScriptService::ExprApply(ExprValue &a, const ExprValue &b, uint8_t o
         case SCRIPT_MATHOP_XOR: r = (x != 0) != (y != 0); break;
         default: return false;
         }
-        a.dtype = (uint16_t)DataType::Bool;
-        a.mh = 0;
-        a.mw = 0;
-        a.count = 1;
+        a.Dtype = (uint16_t)DataType::Bool;
+        a.Mh = 0;
+        a.Mw = 0;
+        a.Count = 1;
         a.e[0] = Number(r ? 1 : 0);
         return true;
     }
 
-    uint8_t count;
-    if (a.count == b.count) count = a.count;
-    else if (a.count == 1) count = b.count;
-    else if (b.count == 1) count = a.count;
+    uint8_t Count;
+    if (a.Count == b.Count) Count = a.Count;
+    else if (a.Count == 1) Count = b.Count;
+    else if (b.Count == 1) Count = a.Count;
     else return false;
-    const bool abcast = (a.count == 1);
-    const Number asrc = abcast ? a.e[0] : Number(); // cached before the in-place writes
-    if (abcast && b.count > 1) { a.dtype = b.dtype; a.mh = b.mh; a.mw = b.mw; }
-    a.count = count;
-    for (uint8_t k = 0; k < count; k++)
+    const bool Abcast = (a.Count == 1);
+    const Number Asrc = Abcast ? a.e[0] : Number(); // cached before the in-place writes
+    if (Abcast && b.Count > 1) { a.Dtype = b.Dtype; a.Mh = b.Mh; a.Mw = b.Mw; }
+    a.Count = Count;
+    for (uint8_t k = 0; k < Count; k++)
     {
-        Number va = abcast ? asrc : a.e[k];
-        Number vb = (b.count == 1) ? b.e[0] : b.e[k];
-        switch (op)
+        Number Va = Abcast ? Asrc : a.e[k];
+        Number Vb = (b.Count == 1) ? b.e[0] : b.e[k];
+        switch (Op)
         {
-        case SCRIPT_MATHOP_ADD: va = va + vb; break;
-        case SCRIPT_MATHOP_SUB: va = va - vb; break;
-        case SCRIPT_MATHOP_MUL: va = va * vb; break;
-        case SCRIPT_MATHOP_DIV: if (vb.Value == 0) return false; va = va / vb; break;
+        case SCRIPT_MATHOP_ADD: Va = Va + Vb; break;
+        case SCRIPT_MATHOP_SUB: Va = Va - Vb; break;
+        case SCRIPT_MATHOP_MUL: Va = Va * Vb; break;
+        case SCRIPT_MATHOP_DIV: if (Vb.Value == 0) return false; Va = Va / Vb; break;
         case SCRIPT_MATHOP_MOD: {
-            int32_t b = vb.RoundToInt();
+            int32_t b = Vb.RoundToInt();
             if (b == 0) return false;
-            va = Number(va.RoundToInt() % b);
+            Va = Number(Va.RoundToInt() % b);
             break;
         }
-        case SCRIPT_MATHOP_POW: if (!ExprPow(va, vb, va)) return false; break;
+        case SCRIPT_MATHOP_POW: if (!ExprPow(Va, Vb, Va)) return false; break;
         default: return false;
         }
-        a.e[k] = va;
+        a.e[k] = Va;
     }
     return true;
 }
 
-inline bool ScriptService::ExprPrimary(ExprParser *p, ExprValue &out)
+inline bool ScriptService::ExprPrimary(ExprParser *p, ExprValue &Out)
 {
-    if (p->depth >= SCRIPT_EXPR_MAX_DEPTH) return false;
-    p->depth++;
-    bool ok;
+    if (p->Depth >= SCRIPT_EXPR_MAX_DEPTH) return false;
+    p->Depth++;
+    bool Ok;
     if (ExprPeekOp(p) == SCRIPT_MATHOP_OPEN)
     {
         p->i++;
-        ok = ExprBin(p, out, 1);
-        if (ok)
+        Ok = ExprBin(p, Out, 1);
+        if (Ok)
         {
-            if (ExprPeekOp(p) != SCRIPT_MATHOP_CLOSE) ok = false;
+            if (ExprPeekOp(p) != SCRIPT_MATHOP_CLOSE) Ok = false;
             else p->i++;
         }
     }
     else if (p->i < p->n)
     {
-        const uint8_t *sym = p->tok + (size_t)p->i * 4;
-        ok = ExprResolve(p, sym, out);
-        if (ok) p->i++;
+        const uint8_t *Sym = p->Tok + (size_t)p->i * 4;
+        Ok = ExprResolve(p, Sym, Out);
+        if (Ok) p->i++;
     }
     else
     {
-        ok = false;
+        Ok = false;
     }
-    p->depth--;
-    return ok;
+    p->Depth--;
+    return Ok;
 }
 
 // dot a b: sum(a_i * b_i) -> Number.
-inline bool ScriptService::ExprFnDot(const ExprValue &a, const ExprValue &b, ExprValue &out)
+inline bool ScriptService::ExprFnDot(const ExprValue &a, const ExprValue &b, ExprValue &Out)
 {
-    if (a.count == 0 || a.count != b.count) return false;
+    if (a.Count == 0 || a.Count != b.Count) return false;
     Number s = Number(0);
-    for (uint8_t k = 0; k < a.count; k++) s = s + a.e[k] * b.e[k];
-    out.dtype = (uint16_t)DataType::Number;
-    out.mh = 0;
-    out.mw = 0;
-    out.count = 1;
-    out.e[0] = s;
+    for (uint8_t k = 0; k < a.Count; k++) s = s + a.e[k] * b.e[k];
+    Out.Dtype = (uint16_t)DataType::Number;
+    Out.Mh = 0;
+    Out.Mw = 0;
+    Out.Count = 1;
+    Out.e[0] = s;
     return true;
 }// transpose m: Matrix R x C -> C x R.
-inline bool ScriptService::ExprFnTranspose(const ExprValue &a, ExprValue &out)
+inline bool ScriptService::ExprFnTranspose(const ExprValue &a, ExprValue &Out)
 {
-    if (a.dtype != (uint16_t)DataType::Matrix || a.mh == 0 || a.mw == 0) return false;
-    uint16_t R = a.mh, C = a.mw;
+    if (a.Dtype != (uint16_t)DataType::Matrix || a.Mh == 0 || a.Mw == 0) return false;
+    uint16_t R = a.Mh, C = a.Mw;
     if ((uint32_t)R * C > SCRIPT_EXPR_MAX_ELEMS) return false;
-    out.dtype = (uint16_t)DataType::Matrix;
-    out.mh = C;
-    out.mw = R;
-    out.count = a.count;
+    Out.Dtype = (uint16_t)DataType::Matrix;
+    Out.Mh = C;
+    Out.Mw = R;
+    Out.Count = a.Count;
     for (uint16_t r = 0; r < R; r++)
         for (uint16_t c = 0; c < C; c++)
-            out.e[c * R + r] = a.e[r * C + c];
+            Out.e[c * R + r] = a.e[r * C + c];
     return true;
 }// size v: Euclidean norm -> Number, i.e. sqrt(dot(v, v)).
-inline bool ScriptService::ExprFnSize(const ExprValue &a, ExprValue &out)
+inline bool ScriptService::ExprFnSize(const ExprValue &a, ExprValue &Out)
 {
     // A resolved value always has at least one element, so dot's non-empty guard never
     // rejects a size().
-    if (!ExprFnDot(a, a, out)) return false;
-    out.e[0] = sqrt(out.e[0]);
+    if (!ExprFnDot(a, a, Out)) return false;
+    Out.e[0] = sqrt(Out.e[0]);
     return true;
 }
 
 // cross a b: Vector3 x Vector3 -> Vector3.
-inline bool ScriptService::ExprFnCross(const ExprValue &a, const ExprValue &b, ExprValue &out)
+inline bool ScriptService::ExprFnCross(const ExprValue &a, const ExprValue &b, ExprValue &Out)
 {
-    if (a.count != 3 || b.count != 3) return false;
-    out.dtype = (uint16_t)DataType::Vector;
-    out.mh = 0;
-    out.mw = 0;
-    out.count = 3;
-    out.e[0] = a.e[1] * b.e[2] - a.e[2] * b.e[1];
-    out.e[1] = a.e[2] * b.e[0] - a.e[0] * b.e[2];
-    out.e[2] = a.e[0] * b.e[1] - a.e[1] * b.e[0];
+    if (a.Count != 3 || b.Count != 3) return false;
+    Out.Dtype = (uint16_t)DataType::Vector;
+    Out.Mh = 0;
+    Out.Mw = 0;
+    Out.Count = 3;
+    Out.e[0] = a.e[1] * b.e[2] - a.e[2] * b.e[1];
+    Out.e[1] = a.e[2] * b.e[0] - a.e[0] * b.e[2];
+    Out.e[2] = a.e[0] * b.e[1] - a.e[1] * b.e[0];
     return true;
 }
 
-inline bool ScriptService::ExprUnary(ExprParser *p, ExprValue &out)
+inline bool ScriptService::ExprUnary(ExprParser *p, ExprValue &Out)
 {
-    uint8_t op = ExprPeekOp(p);
-    if (op == SCRIPT_MATHOP_FN_SIZE || op == SCRIPT_MATHOP_FN_TRANSPOSE)
+    uint8_t Op = ExprPeekOp(p);
+    if (Op == SCRIPT_MATHOP_FN_SIZE || Op == SCRIPT_MATHOP_FN_TRANSPOSE)
     {
         p->i++;
         ExprValue a;
         if (!ExprUnary(p, a)) return false;
-        return (op == SCRIPT_MATHOP_FN_SIZE) ? ExprFnSize(a, out)
-                                             : ExprFnTranspose(a, out);
+        return (Op == SCRIPT_MATHOP_FN_SIZE) ? ExprFnSize(a, Out)
+                                             : ExprFnTranspose(a, Out);
     }
-    if (op == SCRIPT_MATHOP_FN_DOT || op == SCRIPT_MATHOP_FN_CROSS)
+    if (Op == SCRIPT_MATHOP_FN_DOT || Op == SCRIPT_MATHOP_FN_CROSS)
     {
         p->i++;
         ExprValue a, b;
         if (!ExprUnary(p, a)) return false;
         if (!ExprUnary(p, b)) return false;
-        return (op == SCRIPT_MATHOP_FN_DOT) ? ExprFnDot(a, b, out)
-                                            : ExprFnCross(a, b, out);
+        return (Op == SCRIPT_MATHOP_FN_DOT) ? ExprFnDot(a, b, Out)
+                                            : ExprFnCross(a, b, Out);
     }
-    if (op == SCRIPT_MATHOP_SUB)
+    if (Op == SCRIPT_MATHOP_SUB)
     {
         p->i++;
         ExprValue a;
         if (!ExprUnary(p, a)) return false;
-        for (uint8_t k = 0; k < a.count; k++) a.e[k] = -a.e[k];
-        out = a;
+        for (uint8_t k = 0; k < a.Count; k++) a.e[k] = -a.e[k];
+        Out = a;
         return true;
     }
-    if (op == SCRIPT_MATHOP_NOT)
+    if (Op == SCRIPT_MATHOP_NOT)
     {
         p->i++;
         ExprValue a;
         if (!ExprUnary(p, a)) return false;
-        if (a.count != 1) return false;
-        out.dtype = (uint16_t)DataType::Bool;
-        out.mh = 0;
-        out.mw = 0;
-        out.count = 1;
-        out.e[0] = Number(a.e[0].Value == 0 ? 1 : 0);
+        if (a.Count != 1) return false;
+        Out.Dtype = (uint16_t)DataType::Bool;
+        Out.Mh = 0;
+        Out.Mw = 0;
+        Out.Count = 1;
+        Out.e[0] = Number(a.e[0].Value == 0 ? 1 : 0);
         return true;
     }
-    return ExprPrimary(p, out);
+    return ExprPrimary(p, Out);
 }
 
 // Precedence climbing: MUL/DIV bind tighter than ADD/SUB; POW is right-associative.
-inline bool ScriptService::ExprBin(ExprParser *p, ExprValue &out, uint8_t minPrec)
+inline bool ScriptService::ExprBin(ExprParser *p, ExprValue &Out, uint8_t minPrec)
 {
-    if (!ExprUnary(p, out)) return false;
+    if (!ExprUnary(p, Out)) return false;
     for (;;)
     {
-        uint8_t op = ExprPeekOp(p);
-        uint8_t prec = (op == SCRIPT_MATHOP_POW) ? 9
-                       : (op == SCRIPT_MATHOP_MUL || op == SCRIPT_MATHOP_DIV ||
-                          op == SCRIPT_MATHOP_MOD) ? 8
-                       : (op == SCRIPT_MATHOP_ADD || op == SCRIPT_MATHOP_SUB) ? 7
-                       : (op == SCRIPT_MATHOP_LT || op == SCRIPT_MATHOP_LE ||
-                          op == SCRIPT_MATHOP_GT || op == SCRIPT_MATHOP_GE) ? 5
-                       : (op == SCRIPT_MATHOP_EQ || op == SCRIPT_MATHOP_NE) ? 4
-                       : (op == SCRIPT_MATHOP_AND) ? 3
-                       : (op == SCRIPT_MATHOP_XOR) ? 2
-                       : (op == SCRIPT_MATHOP_OR) ? 1 : 0;
-        if (prec == 0 || prec < minPrec) break;
+        uint8_t Op = ExprPeekOp(p);
+        uint8_t Prec = (Op == SCRIPT_MATHOP_POW) ? 9
+                       : (Op == SCRIPT_MATHOP_MUL || Op == SCRIPT_MATHOP_DIV ||
+                          Op == SCRIPT_MATHOP_MOD) ? 8
+                       : (Op == SCRIPT_MATHOP_ADD || Op == SCRIPT_MATHOP_SUB) ? 7
+                       : (Op == SCRIPT_MATHOP_LT || Op == SCRIPT_MATHOP_LE ||
+                          Op == SCRIPT_MATHOP_GT || Op == SCRIPT_MATHOP_GE) ? 5
+                       : (Op == SCRIPT_MATHOP_EQ || Op == SCRIPT_MATHOP_NE) ? 4
+                       : (Op == SCRIPT_MATHOP_AND) ? 3
+                       : (Op == SCRIPT_MATHOP_XOR) ? 2
+                       : (Op == SCRIPT_MATHOP_OR) ? 1 : 0;
+        if (Prec == 0 || Prec < minPrec) break;
         p->i++;
         ExprValue b;
-        uint8_t next = (op == SCRIPT_MATHOP_POW) ? prec : (uint8_t)(prec + 1);
-        if (!ExprBin(p, b, next)) return false;
-        if (!ExprApply(out, b, op)) return false;
+        uint8_t Next = (Op == SCRIPT_MATHOP_POW) ? Prec : (uint8_t)(Prec + 1);
+        if (!ExprBin(p, b, Next)) return false;
+        if (!ExprApply(Out, b, Op)) return false;
     }
     return true;
 }

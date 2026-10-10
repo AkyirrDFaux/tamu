@@ -7,8 +7,8 @@
 // file; targeted saves/recalls are the app's job (direct file writes at a field's offset).
 static const char *StaticValuesName()
 {
-    static constexpr char name[8] = {'.', 'S', 'V', ' ', ' ', ' ', ' ', ' '};
-    return name;
+    static constexpr char Name[8] = {'.', 'S', 'V', ' ', ' ', ' ', ' ', ' '};
+    return Name;
 }
 
 // The System block (BlockType 0) is a special static block every device has. Its persistent

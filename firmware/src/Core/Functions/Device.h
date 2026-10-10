@@ -6,21 +6,21 @@
 // Payload for address assignment exchange (Discover Response)
 struct AssignPayload
 {
-    SerialNumber sn;
+    SerialNumber Sn;
     uint16_t NewAddr;
 } __attribute__((packed));
 
 // Formats a serial number as a null-terminated hex string (needs 2*sizeof(bytes)+1 chars).
-inline void SerialNumberToString(const SerialNumber &sn, char *buffer, size_t buffer_size)
+inline void SerialNumberToString(const SerialNumber &Sn, char *Buffer, size_t BufferSize)
 {
-    if (!buffer || buffer_size < sizeof(sn.Bytes) * 2 + 1)
+    if (!Buffer || BufferSize < sizeof(Sn.Bytes) * 2 + 1)
         return;
-    for (size_t i = 0; i < sizeof(sn.Bytes); i++)
+    for (size_t i = 0; i < sizeof(Sn.Bytes); i++)
     {
-        buffer[i * 2] = "0123456789ABCDEF"[sn.Bytes[i] >> 4];
-        buffer[i * 2 + 1] = "0123456789ABCDEF"[sn.Bytes[i] & 0x0F];
+        Buffer[i * 2] = "0123456789ABCDEF"[Sn.Bytes[i] >> 4];
+        Buffer[i * 2 + 1] = "0123456789ABCDEF"[Sn.Bytes[i] & 0x0F];
     }
-    buffer[sizeof(sn.Bytes) * 2] = '\0'; // Null terminate
+    Buffer[sizeof(Sn.Bytes) * 2] = '\0'; // Null terminate
 }
 
 // Device identity is mandatory for every device build. Each device must provide the
@@ -38,17 +38,17 @@ const SerialNumber &GetSerialNumber();
 // stays reachable via the app link (so the net can be changed) but blinks its error LED.
 inline bool &CoreCollisionFlag()
 {
-    static bool collision = false;
-    return collision;
+    static bool Collision = false;
+    return Collision;
 }
 
 // Core-discover net-collision check (Docs "Core functions"): a reply from a *different* core
 // whose net-ID equals ours means the net is claimed twice. `ours` is DeviceStatus.NetId, the
 // peer's net is decoded from its address (MakeId). A match latches CoreCollisionFlag, aborting
 // normal boot; the caller ignores our own echoed discover reply.
-inline void NoteCoreNet(uint8_t peer_net, uint8_t ours)
+inline void NoteCoreNet(uint8_t PeerNet, uint8_t Ours)
 {
-    if (peer_net != 0 && peer_net == ours)
+    if (PeerNet != 0 && PeerNet == Ours)
         CoreCollisionFlag() = true;
 }
 
@@ -58,8 +58,8 @@ inline void NoteCoreNet(uint8_t peer_net, uint8_t ours)
 // never mistaken for a core.
 inline bool DeviceIsCore()
 {
-    uint8_t net = (uint8_t)((DeviceStatus.ShortAddress >> 10) & 0x3F);
-    return (DeviceStatus.ShortAddress & 0x3FF) == 1 && net != 0 && net != 0x3F;
+    uint8_t Net = (uint8_t)((DeviceStatus.ShortAddress >> 10) & 0x3F);
+    return (DeviceStatus.ShortAddress & 0x3FF) == 1 && Net != 0 && Net != 0x3F;
 }
 
 // Identify (Device service CID 2, Docs/Services/System Block and Device Commands.md): "True = blink red
@@ -69,25 +69,25 @@ inline bool DeviceIsCore()
 // guaranteed to be a single shared instance across all translation units.
 inline bool &DeviceIdentifyRequested()
 {
-    static bool requested = false;
-    return requested;
+    static bool Requested = false;
+    return Requested;
 }
 inline uint32_t &DeviceIdentifyUntil()
 {
-    static uint32_t until = 0;
-    return until;
+    static uint32_t Until = 0;
+    return Until;
 }
-inline void DeviceIdentifyStart(bool on, uint32_t now_ms)
+inline void DeviceIdentifyStart(bool On, uint32_t NowMs)
 {
-    DeviceIdentifyRequested() = on;
-    if (on)
-        DeviceIdentifyUntil() = now_ms + 10000; // blink for ~10 s (docs)
+    DeviceIdentifyRequested() = On;
+    if (On)
+        DeviceIdentifyUntil() = NowMs + 10000; // blink for ~10 s (docs)
 }
-inline bool DeviceIdentifyActive(uint32_t now_ms)
+inline bool DeviceIdentifyActive(uint32_t NowMs)
 {
-    bool &requested = DeviceIdentifyRequested();
-    if (requested && (int32_t)(now_ms - DeviceIdentifyUntil()) >= 0)
-        requested = false; // window expired
-    return requested;
+    bool &Requested = DeviceIdentifyRequested();
+    if (Requested && (int32_t)(NowMs - DeviceIdentifyUntil()) >= 0)
+        Requested = false; // window expired
+    return Requested;
 }
 

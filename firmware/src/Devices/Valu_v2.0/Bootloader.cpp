@@ -75,13 +75,13 @@
 // GPIO (direct register: CFGLR is 4 bits per pin; PA2 < 8)
 // ---------------------------------------------------------------------------
 
-static void GpioCfg(GPIO_TypeDef *port, uint32_t pin, uint32_t cfg)
+static void GpioCfg(GPIO_TypeDef *Port, uint32_t Pin, uint32_t Cfg)
 {
-    uint32_t shift = pin * 4u;
-    port->CFGLR = (port->CFGLR & ~(0xFu << shift)) | (cfg << shift);
+    uint32_t Shift = Pin * 4u;
+    Port->CFGLR = (Port->CFGLR & ~(0xFu << Shift)) | (Cfg << Shift);
 }
 
-static void GpioOutPP(GPIO_TypeDef *port, uint32_t pin) { GpioCfg(port, pin, 0x3u); } // out push-pull
+static void GpioOutPP(GPIO_TypeDef *Port, uint32_t Pin) { GpioCfg(Port, Pin, 0x3u); } // out push-pull
 
 
 // ===========================================================================
@@ -120,7 +120,7 @@ static void UsbHwInit(void)
     // Reset the USBD peripheral before use, as the working release does: the controller may be in
     // an unknown state left by the ROM bootloader's USB session, and would then stay silent.
     RCC->APB1PRSTR |= RCC_APB1Periph_USB;
-    for (volatile uint32_t i = 0; i < 200000u; i++) {} // ~1 ms at 144 MHz
+    for (volatile uint32_t I = 0; I < 200000u; I++) {} // ~1 ms at 144 MHz
     RCC->APB1PRSTR &= ~RCC_APB1Periph_USB;
 }
 
@@ -147,7 +147,7 @@ extern "C" {
 //--------------------------------------------------------------------
 // Device descriptor
 //--------------------------------------------------------------------
-static const tusb_desc_device_t s_desc_device = {
+static const tusb_desc_device_t DescDevice = {
     .bLength            = sizeof(tusb_desc_device_t),
     .bDescriptorType    = TUSB_DESC_DEVICE,
     .bcdUSB             = USB_BCD,
@@ -164,7 +164,7 @@ static const tusb_desc_device_t s_desc_device = {
     .bNumConfigurations = 0x01,
 };
 
-uint8_t const *tud_descriptor_device_cb(void) { return (uint8_t const *)&s_desc_device; }
+uint8_t const *tud_descriptor_device_cb(void) { return (uint8_t const *)&DescDevice; }
 
 //--------------------------------------------------------------------
 // Configuration descriptor: one interface, notification + two data EPs
@@ -177,7 +177,7 @@ enum { ITF_NUM_CDC = 0, ITF_NUM_CDC_DATA, ITF_NUM_TOTAL };
 
 #define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN)
 
-static const uint8_t s_desc_configuration[] = {
+static const uint8_t DescConfiguration[] = {
     // config number, interface count, string index, total length, attribute, power in mA
     TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN, 0x00, 100),
     // interface number, string index, EP notification address and size, EP data address
@@ -185,16 +185,16 @@ static const uint8_t s_desc_configuration[] = {
     TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, 4, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, EPNUM_CDC_IN, 64),
 };
 
-uint8_t const *tud_descriptor_configuration_cb(uint8_t index)
+uint8_t const *tud_descriptor_configuration_cb(uint8_t Index)
 {
-    (void)index;
-    return s_desc_configuration;
+    (void)Index;
+    return DescConfiguration;
 }
 
 //--------------------------------------------------------------------
 // String descriptors
 //--------------------------------------------------------------------
-static char const *const s_string_desc_arr[] = {
+static char const *const StringDescArr[] = {
     (const char[]){0x09, 0x04}, // 0: supported language = English (0x0409)
     "Tamu",                     // 1: Manufacturer
     "Valu v2.0 Bootloader",     // 2: Product
@@ -202,34 +202,34 @@ static char const *const s_string_desc_arr[] = {
     "Valu v2.0 CDC",            // 4: CDC interface
 };
 
-static uint16_t s_desc_str[32 + 1];
+static uint16_t DescStr[32 + 1];
 
-uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid)
+uint16_t const *tud_descriptor_string_cb(uint8_t Index, uint16_t Langid)
 {
-    (void)langid;
-    size_t chr_count;
+    (void)Langid;
+    size_t ChrCount;
 
-    if (index == 0)
+    if (Index == 0)
     {
-        memcpy(&s_desc_str[1], s_string_desc_arr[0], 2);
-        chr_count = 1;
+        memcpy(&DescStr[1], StringDescArr[0], 2);
+        ChrCount = 1;
     }
     else
     {
-        if (index >= sizeof(s_string_desc_arr) / sizeof(s_string_desc_arr[0]))
+        if (Index >= sizeof(StringDescArr) / sizeof(StringDescArr[0]))
             return NULL;
 
-        const char *str = s_string_desc_arr[index];
-        chr_count = strlen(str);
-        if (chr_count > 32)
-            chr_count = 32;
+        const char *Str = StringDescArr[Index];
+        ChrCount = strlen(Str);
+        if (ChrCount > 32)
+            ChrCount = 32;
 
-        for (size_t i = 0; i < chr_count; i++)
-            s_desc_str[1 + i] = (uint16_t)str[i];
+        for (size_t I = 0; I < ChrCount; I++)
+            DescStr[1 + I] = (uint16_t)Str[I];
     }
 
-    s_desc_str[0] = (uint16_t)((TUSB_DESC_STRING << 8) | (2 * chr_count + 2));
-    return s_desc_str;
+    DescStr[0] = (uint16_t)((TUSB_DESC_STRING << 8) | (2 * ChrCount + 2));
+    return DescStr;
 }
 
 } // extern "C"
@@ -270,7 +270,7 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid)
 // erase path can be inspected from the host. Real app offsets are < APP_LIMIT, so it cannot
 // collide with one.
 #define DIAG_OFFSET 0xFFFFFFE0u
-static uint32_t g_diag[8]; // [0] calls, [1] STATR after the flag clear, [2] STATR before erase,
+static uint32_t Diag[8]; // [0] calls, [1] STATR after the flag clear, [2] STATR before erase,
                            // [3] FLASH_ErasePage status, [4] STATR after, [5] verify word,
                            // [6] CTLR after, [7] CFGR0 while slowed
 
@@ -287,33 +287,33 @@ static uint32_t g_diag[8]; // [0] calls, [1] STATR after the flag clear, [2] STA
 
 static uint32_t FlashSlowDown(void)
 {
-    uint32_t old = RCC->CFGR0 & CFGR0_SW_MASK;
+    uint32_t Old = RCC->CFGR0 & CFGR0_SW_MASK;
     RCC->CFGR0 = (RCC->CFGR0 & ~CFGR0_SW_MASK) | 0x0u; // SW = HSI (8 MHz)
     while ((RCC->CFGR0 & CFGR0_SWS_MASK) != 0x0u) {}    // wait until SWS reports HSI
-    return old;
+    return Old;
 }
 
-static void FlashRestore(uint32_t old)
+static void FlashRestore(uint32_t Old)
 {
-    RCC->CFGR0 = (RCC->CFGR0 & ~CFGR0_SW_MASK) | (old & CFGR0_SW_MASK); // back to PLL
-    while ((RCC->CFGR0 & CFGR0_SWS_MASK) != (old & CFGR0_SWS_MASK)) {}
+    RCC->CFGR0 = (RCC->CFGR0 & ~CFGR0_SW_MASK) | (Old & CFGR0_SW_MASK); // back to PLL
+    while ((RCC->CFGR0 & CFGR0_SWS_MASK) != (Old & CFGR0_SWS_MASK)) {}
 }
 
-static bool FlashEraseSector(uint32_t addr /* 0x00000000 domain, 4 KB aligned */)
+static bool FlashEraseSector(uint32_t Addr /* 0x00000000 domain, 4 KB aligned */)
 {
-    g_diag[0]++;
+    Diag[0]++;
     // Clear the status flags first: STATR is write-1-to-clear, and a pending WRPRTERR would make
     // the SPL's entry check report an error (that path is gone now, but the flags still must not
     // be left set for the next operation).
     FLASH_ClearFlag(FLASH_FLAG_EOP | FLASH_FLAG_WRPRTERR);
-    g_diag[1] = FLASH->STATR;
+    Diag[1] = FLASH->STATR;
 
-    uint32_t hpre = FlashSlowDown(); // RM 32.1 note 2
-    g_diag[7] = RCC->CFGR0;
+    uint32_t Hpre = FlashSlowDown(); // RM 32.1 note 2
+    Diag[7] = RCC->CFGR0;
 
     FLASH_Unlock(); // RM 32.5.2: KEYR = 0x45670123 then 0xCDEF89AB (releases LOCK)
     FLASH->CTLR &= ~FLASH_CTLR_EHMOD;
-    g_diag[2] = FLASH->STATR;
+    Diag[2] = FLASH->STATR;
 
     // Hand-rolled standard erase (RM 32.5.4): PER, page address, STRT, then poll BSY.
     // Deliberately NOT the SPL's FLASH_ErasePage any more - measured on hardware it reported
@@ -321,13 +321,13 @@ static bool FlashEraseSector(uint32_t addr /* 0x00000000 domain, 4 KB aligned */
     // cannot be trusted on this part. Polling BSY directly has no arbitrary timeout to expire
     // early, so when this returns the erase has genuinely finished.
     FLASH->CTLR |= (1u << 1);         // PER
-    FLASH->ADDR = FLASH_CTRL_BASE + addr;
+    FLASH->ADDR = FLASH_CTRL_BASE + Addr;
     FLASH->CTLR |= (1u << 6);         // STRT
     while (FLASH->STATR & 1u) {}      // BSY
     FLASH->CTLR &= ~(1u << 1);        // clear PER
 
-    g_diag[3] = FLASH->STATR;
-    g_diag[6] = FLASH->CTLR;
+    Diag[3] = FLASH->STATR;
+    Diag[6] = FLASH->CTLR;
 
     // CH32V203 flash quirk (the previous working Valu v2 release hit it too: its
     // Hardware/Memory.h programs 0xFFFFFFFF after every erase, commented "Prevent incorrect
@@ -336,42 +336,42 @@ static bool FlashEraseSector(uint32_t addr /* 0x00000000 domain, 4 KB aligned */
     // every word of the sector so reads become correct; writing all-1s does not change an erased
     // cell. Without this the verify below "fails" and HandleWrite skips the sector's FIRST chunk -
     // which is exactly the 7/881 read-back mismatches (one per sector).
-    for (uint32_t o = 0; o < FLASH_ERASE_SECTOR; o += 4)
+    for (uint32_t O = 0; O < FLASH_ERASE_SECTOR; O += 4)
     {
-        uint32_t w;
-        memcpy(&w, (const void *)(addr + o), sizeof(w));
-        if (w != 0xFFFFFFFFu)
-            FLASH_ProgramWord(FLASH_CTRL_BASE + addr + o, 0xFFFFFFFFu);
+        uint32_t W;
+        memcpy(&W, (const void *)(Addr + O), sizeof(W));
+        if (W != 0xFFFFFFFFu)
+            FLASH_ProgramWord(FLASH_CTRL_BASE + Addr + O, 0xFFFFFFFFu);
     }
 
     // Verify: both reads are now expected to be 0xFFFFFFFF. The first is taken immediately, the
     // second after a delay, in case the first was served while an operation was still settling.
-    uint32_t r1 = 0, r2 = 0;
-    memcpy(&r1, (const void *)addr, sizeof(r1));
-    for (volatile uint32_t i = 0; i < 200000u; i++) {} // ~1 ms
-    memcpy(&r2, (const void *)addr, sizeof(r2));
-    g_diag[4] = r1;
-    g_diag[5] = r2;
+    uint32_t R1 = 0, R2 = 0;
+    memcpy(&R1, (const void *)Addr, sizeof(R1));
+    for (volatile uint32_t I = 0; I < 200000u; I++) {} // ~1 ms
+    memcpy(&R2, (const void *)Addr, sizeof(R2));
+    Diag[4] = R1;
+    Diag[5] = R2;
 
     FLASH_Lock();
-    FlashRestore(hpre);
-    return r2 == 0xFFFFFFFFu;
+    FlashRestore(Hpre);
+    return R2 == 0xFFFFFFFFu;
 }
 
-static void FlashWrite(uint32_t addr /* 0x00000000 domain */, const uint8_t *src, uint32_t len)
+static void FlashWrite(uint32_t Addr /* 0x00000000 domain */, const uint8_t *Src, uint32_t Len)
 {
-    uint32_t clk = FlashSlowDown(); // flash access clock <= 60 MHz, same rule as the erase
+    uint32_t Clk = FlashSlowDown(); // flash access clock <= 60 MHz, same rule as the erase
     FLASH_ClearFlag(FLASH_FLAG_EOP | FLASH_FLAG_WRPRTERR);
     FLASH_Unlock();
     FLASH->CTLR &= ~FLASH_CTLR_EHMOD;
-    for (uint32_t off = 0; off < len; off += 4)
+    for (uint32_t Off = 0; Off < Len; Off += 4)
     {
-        uint32_t w;
-        memcpy(&w, src + off, sizeof(w));
-        FLASH_ProgramWord(FLASH_CTRL_BASE + addr + off, w); // two 16-bit writes (RM 32.5.3)
+        uint32_t W;
+        memcpy(&W, Src + Off, sizeof(W));
+        FLASH_ProgramWord(FLASH_CTRL_BASE + Addr + Off, W); // two 16-bit writes (RM 32.5.3)
     }
     FLASH_Lock();
-    FlashRestore(clk);
+    FlashRestore(Clk);
 }
 
 // ===========================================================================
@@ -383,97 +383,97 @@ static void FlashWrite(uint32_t addr /* 0x00000000 domain */, const uint8_t *src
 // 0xCA start marker and only then trusts the control byte's length (the DAS's ReceiveFrame
 // does the same scan, byte-at-a-time, on the UART).
 
-static uint8_t s_frame[Bootloader::MAX_FRAME_SIZE];
-static uint16_t s_have = 0; // bytes currently in s_frame
-static uint16_t s_need = 0; // total bytes the frame needs once known
+static uint8_t FrameBuf[Bootloader::MAX_FRAME_SIZE];
+static uint16_t Have = 0; // bytes currently in s_frame
+static uint16_t TotalNeed = 0; // total bytes the frame needs once known
 
-static void HandleWrite(uint32_t offset, const uint8_t *Payload);
+static void HandleWrite(uint32_t Offset, const uint8_t *Payload);
 
-static void SendReadResponse(uint32_t offset)
+static void SendReadResponse(uint32_t Offset)
 {
-    uint8_t data[Bootloader::PAYLOAD_SIZE];
-    if (offset == DIAG_OFFSET)
+    uint8_t Data[Bootloader::PAYLOAD_SIZE];
+    if (Offset == DIAG_OFFSET)
     {
         // Diagnostics pseudo-offset (see g_diag): report the flash path's own state.
-        memcpy(data, g_diag, sizeof(data));
+        memcpy(Data, Diag, sizeof(Data));
     }
     else
     {
-        uint32_t addr = APP_BASE + offset;
-        if (addr < APP_BASE || addr + Bootloader::PAYLOAD_SIZE > APP_LIMIT)
-            memset(data, 0xFF, sizeof(data));
+        uint32_t Addr = APP_BASE + Offset;
+        if (Addr < APP_BASE || Addr + Bootloader::PAYLOAD_SIZE > APP_LIMIT)
+            memset(Data, 0xFF, sizeof(Data));
         else
-            memcpy(data, (const void *)addr, sizeof(data));
+            memcpy(Data, (const void *)Addr, sizeof(Data));
     }
 
-    uint8_t resp[Bootloader::DATA_SIZE];
-    Bootloader::EncodeReadResponse(offset, data, resp);
-    tud_cdc_write(resp, sizeof(resp));
+    uint8_t Resp[Bootloader::DATA_SIZE];
+    Bootloader::EncodeReadResponse(Offset, Data, Resp);
+    tud_cdc_write(Resp, sizeof(Resp));
     tud_cdc_write_flush();
 }
 
-static void DispatchFrame(const uint8_t *frame)
+static void DispatchFrame(const uint8_t *Frame)
 {
-    uint8_t Cmd = (uint8_t)(frame[1] & 0x03u);
-    uint32_t offset = Bootloader::Offset(frame);
+    uint8_t Cmd = (uint8_t)(Frame[1] & 0x03u);
+    uint32_t Offset = Bootloader::Offset(Frame);
     if (Cmd == Bootloader::CMD_WRITE)
-        HandleWrite(offset, Bootloader::Payload(frame));
+        HandleWrite(Offset, Bootloader::Payload(Frame));
     else if (Cmd == Bootloader::CMD_READ_REQ)
-        SendReadResponse(offset);
+        SendReadResponse(Offset);
 }
 
-static void FeedByte(uint8_t b)
+static void FeedByte(uint8_t B)
 {
-    if (s_have == 0)
+    if (Have == 0)
     {
-        if (b == Bootloader::START)
+        if (B == Bootloader::START)
         {
-            s_frame[0] = b;
-            s_have = 1;
-            s_need = 2; // need the control byte to learn the length
+            FrameBuf[0] = B;
+            Have = 1;
+            TotalNeed = 2; // need the control byte to learn the length
         }
         return;
     }
 
-    s_frame[s_have++] = b;
+    FrameBuf[Have++] = B;
 
-    if (s_have == 2)
+    if (Have == 2)
     {
-        uint16_t need = Bootloader::FrameSize((uint8_t)(b & 0x03u));
-        if (need == 0) // unknown command: drop and resync
+        uint16_t Need = Bootloader::FrameSize((uint8_t)(B & 0x03u));
+        if (Need == 0) // unknown command: drop and resync
         {
-            s_have = 0;
-            s_need = 0;
+            Have = 0;
+            TotalNeed = 0;
             return;
         }
-        s_need = need;
+        TotalNeed = Need;
     }
 
-    if (s_have >= s_need)
+    if (Have >= TotalNeed)
     {
-        if (Bootloader::Decode(s_frame, s_need))
-            DispatchFrame(s_frame);
-        s_have = 0;
-        s_need = 0;
+        if (Bootloader::Decode(FrameBuf, TotalNeed))
+            DispatchFrame(FrameBuf);
+        Have = 0;
+        TotalNeed = 0;
     }
 }
 
-static void HandleWrite(uint32_t offset, const uint8_t *Payload)
+static void HandleWrite(uint32_t Offset, const uint8_t *Payload)
 {
-    if ((offset & 31u) != 0)
+    if ((Offset & 31u) != 0)
         return; // 32-byte aligned per the doc
-    uint32_t addr = APP_BASE + offset;
-    if (addr < APP_BASE || addr + Bootloader::PAYLOAD_SIZE > APP_LIMIT)
+    uint32_t Addr = APP_BASE + Offset;
+    if (Addr < APP_BASE || Addr + Bootloader::PAYLOAD_SIZE > APP_LIMIT)
         return;
 
     // Erase the containing 4 KB sector on the first write into it, then the 128 32-byte
     // writes of the sector program into the freshly erased sector.
-    if ((addr & (FLASH_ERASE_SECTOR - 1u)) == 0)
+    if ((Addr & (FLASH_ERASE_SECTOR - 1u)) == 0)
     {
-        if (!FlashEraseSector(addr))
+        if (!FlashEraseSector(Addr))
             return;
     }
-    FlashWrite(addr, Payload, Bootloader::PAYLOAD_SIZE);
+    FlashWrite(Addr, Payload, Bootloader::PAYLOAD_SIZE);
 }
 
 // ===========================================================================
@@ -500,7 +500,7 @@ int main(void)
     GpioCfg(GPIOA, 2, 0x8u);
 
     // Let the pull-down settle, then sample: released (low) launches the app.
-    for (volatile uint32_t i = 0; i < 200000u; i++) {}
+    for (volatile uint32_t I = 0; I < 200000u; I++) {}
 #ifndef BOOTLOADER_FORCE
     // BOOTLOADER_FORCE (test hook) skips the button check so the USB update path can be
     // exercised without physically holding PA2.
@@ -529,12 +529,12 @@ int main(void)
 
         while (tud_cdc_available())
         {
-            uint8_t buf[64];
-            uint32_t n = tud_cdc_read(buf, sizeof(buf));
-            if (n == 0)
+            uint8_t Buf[64];
+            uint32_t N = tud_cdc_read(Buf, sizeof(Buf));
+            if (N == 0)
                 break;
-            for (uint32_t i = 0; i < n; i++)
-                FeedByte(buf[i]);
+            for (uint32_t I = 0; I < N; I++)
+                FeedByte(Buf[I]);
         }
     }
 }

@@ -17,14 +17,14 @@ class SubscriptionsService
 {
 public:
     void Init();                           // resets the service state
-    bool Handle(const PacketFrame &frame); // CID dispatch; true if consumed
+    bool Handle(const PacketFrame &Frame); // CID dispatch; true if consumed
     void Tick(uint32_t nowMs);             // main-loop trigger evaluation + expiry
 
 #ifdef USE_SUB_REQUEST
     // Provider-side re-registration of every (or one node's) restored requester entry.
     void ReRegister();
-    void ReRegisterForNode(uint16_t addr);
-    void RequestReRegister(uint16_t addr);
+    void ReRegisterForNode(uint16_t Addr);
+    void RequestReRegister(uint16_t Addr);
     void LoadRequesterTable(); // boot restore (Dispatcher.h LoadAllBackups)
 #endif
 
@@ -36,23 +36,23 @@ private:
     ProviderEntry ProviderTable[MAX_PROVIDER_SUBS];
 
     static bool ProviderOccupied(const ProviderEntry &e);
-    static bool ProviderEntryLive(const uint8_t *table, uint16_t i);
+    static bool ProviderEntryLive(const uint8_t *Table, uint16_t i);
     ProviderEntry* ProviderFindByTrid(uint16_t Trid);
     ProviderEntry* ProviderFindFree();
     void ProviderClearEntry(ProviderEntry* e);
     void ProviderApply(ProviderEntry* e, uint16_t Trid, uint16_t requesterAddr,
-                       const SubscriptionTable &t, bool reset);
+                       const SubscriptionTable &t, bool Reset);
     ProviderEntry* ProviderInstall(uint16_t Trid, uint16_t requesterAddr,
-                                   const SubscriptionTable &t, bool reset = false);
-    void HandleProviderConfirmation(const PacketFrame &frame);
-    uint32_t SubscriptionsDeltaHash(const FieldResult &fr, uint32_t deadzone);
-    uint32_t SubscriptionsAbsDelta(int32_t now, int32_t last);
-    bool SubscriptionsIsScalar(const FieldResult &fr);
+                                   const SubscriptionTable &t, bool Reset = false);
+    void HandleProviderConfirmation(const PacketFrame &Frame);
+    uint32_t SubscriptionsDeltaHash(const FieldResult &Fr, uint32_t Deadzone);
+    uint32_t SubscriptionsAbsDelta(int32_t NowMs, int32_t Last);
+    bool SubscriptionsIsScalar(const FieldResult &Fr);
 #ifndef SCALAR_ONLY
-    uint32_t SubscriptionsVectorDist2(const FieldResult &fr, const int32_t *last);
+    uint32_t SubscriptionsVectorDist2(const FieldResult &Fr, const int32_t *Last);
 #endif
     void EvaluateProviderTriggers(uint32_t nowMs);
-    void ProviderStreamTable(const PacketFrame &frame);
+    void ProviderStreamTable(const PacketFrame &Frame);
 #endif
 
     // ---------------------------------------------------------------------
@@ -68,19 +68,19 @@ private:
     uint8_t ReRegisterCount = 0;
 
     static bool RequesterOccupied(const RequesterEntry &e);
-    static bool RequesterEntryLive(const uint8_t *table, uint16_t i);
+    static bool RequesterEntryLive(const uint8_t *Table, uint16_t i);
     RequesterEntry* RequesterFindByTrid(uint16_t Trid);
     void RequesterClearEntry(RequesterEntry* e);
     void RequesterRemove(RequesterEntry* e);
     RequesterEntry* RequesterAlloc(uint16_t Trid);
     RequesterEntry* RequesterUpsert(uint16_t Trid);
-    void ApplyRequesterValue(RequesterEntry *e, const uint8_t *val, uint8_t vlen, bool confirm);
-    void HandleRequesterValueUpdate(const PacketFrame &frame);
+    void ApplyRequesterValue(RequesterEntry *e, const uint8_t *Val, uint8_t Vlen, bool Confirm);
+    void HandleRequesterValueUpdate(const PacketFrame &Frame);
     void SaveRequesterTable();
     void RegisterRequesterProvider(RequesterEntry* e);
     void SubscriptionsReRegisterPending();
     void RequesterInitCheck(uint32_t nowMs);
-    void RequesterStreamTable(const PacketFrame &frame);
+    void RequesterStreamTable(const PacketFrame &Frame);
     void SubscriptionsCancelProvider(uint16_t providerAddr, uint16_t Trid);
 #endif
 
@@ -89,10 +89,10 @@ private:
     // ---------------------------------------------------------------------
     bool SubscriptionsHighPriority(TriggerType t);
     FieldResult SubscriptionsGetField(uint32_t blockInfo);
-    void SubReply(const PacketFrame &frame, const uint8_t *Payload, uint16_t len,
+    void SubReply(const PacketFrame &Frame, const uint8_t *Payload, uint16_t Len,
                   uint8_t extraFlags = 0);
-    void StreamSubscriptionTable(const PacketFrame &frame, const uint8_t *table, uint16_t max,
-                                 uint16_t entrySize, bool (*occupied)(const uint8_t *, uint16_t));
+    void StreamSubscriptionTable(const PacketFrame &Frame, const uint8_t *Table, uint16_t Max,
+                                 uint16_t entrySize, bool (*Occupied)(const uint8_t *, uint16_t));
 };
 
 // One instance per binary, in Core/Services/.
@@ -103,7 +103,7 @@ SubscriptionsService Subscriptions;
 // and the Device service (SubscriptionsRequestReRegister) still call the old free-function names.
 // ---------------------------------------------------------------------------
 #ifdef USE_SUB_REQUEST
-inline void SubscriptionsRequestReRegister(uint16_t addr) { Subscriptions.RequestReRegister(addr); }
+inline void SubscriptionsRequestReRegister(uint16_t Addr) { Subscriptions.RequestReRegister(Addr); }
 #endif
 
 inline void SubscriptionsService::Init()
@@ -131,9 +131,9 @@ inline bool SubscriptionsService::SubscriptionsHighPriority(TriggerType t)
 // the BlockInfo does not resolve).
 inline FieldResult SubscriptionsService::SubscriptionsGetField(uint32_t blockInfo)
 {
-    FieldResult fr;
-    RegisterResolveByBlockInfo(blockInfo, fr);
-    return fr;
+    FieldResult Fr;
+    RegisterResolveByBlockInfo(blockInfo, Fr);
+    return Fr;
 }
 
 #include "Core/Services/SubscriptionsRequester.h"

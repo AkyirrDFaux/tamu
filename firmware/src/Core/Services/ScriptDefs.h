@@ -19,8 +19,8 @@
 
 // Defined in Core/Services/Register.h (shared with the Subscriptions service); declared
 // here so the VM resolves registers through the exact same access path.
-bool RegisterGetByBlockInfo(uint32_t bi, ValueInfo &m, uint8_t *vbuf, uint8_t &vsz);
-bool RegisterSetByBlockInfo(uint32_t bi, const ValueInfo &m, const uint8_t *val, uint16_t vlen);
+bool RegisterGetByBlockInfo(uint32_t Bi, ValueInfo &m, uint8_t *Vbuf, uint8_t &Vsz);
+bool RegisterSetByBlockInfo(uint32_t Bi, const ValueInfo &m, const uint8_t *Val, uint16_t Vlen);
 
 // Number of loaded script slots. The Scripts range is four banked block types (0x3F4-0x3F7) of
 // 64 instances each, addressed by one global index 0..255 (Docs/Services/Register.md "Block
@@ -180,7 +180,7 @@ enum class ScriptState : uint8_t {
 // Precompiled line descriptor: the instruction symbol sits at start+destCount, its
 // operands follow, and the line ends with an Endline symbol.
 struct ScriptLineInfo {
-    uint16_t start;
+    uint16_t Start;
     uint8_t destCount;
     uint8_t opCount;
 };
@@ -190,11 +190,11 @@ struct ScriptLineInfo {
 //   varSpace   : variables
 //   constSpace : constants (read-only)
 struct LoadedScript {
-    bool active = false;
-    uint16_t slot = 0;
+    bool Active = false;
+    uint16_t Slot = 0;
     uint16_t fileId = 0; // the stored SCR_XXX file this slot was loaded from
-    uint8_t state = (uint8_t)ScriptState::Stopped;
-    uint32_t properties = 0;
+    uint8_t State = (uint8_t)ScriptState::Stopped;
+    uint32_t Properties = 0;
 
     uint8_t inCount = 0, outCount = 0, varCount = 0, constCount = 0;
     ValueInfo *inMeta = nullptr, *outMeta = nullptr, *varMeta = nullptr, *constMeta = nullptr;
@@ -208,23 +208,23 @@ struct LoadedScript {
     // inputs, outputs, variables, constants. Layout: [0..inCount] inputs, then [..outCount]
     // outputs, [..varCount] variables, [..constCount] constants, each segment ending in its
     // total. Built once by BuildOffsets() at load; see Core/Functions/StrideOffsets.h for why.
-    uint16_t *offsets = nullptr;
+    uint16_t *Offsets = nullptr;
 
     uint16_t uiLen = 0;
     uint32_t instrLen = 0;
-    char name[BLOCK_NAME_LEN] = {0};
+    char Name[BLOCK_NAME_LEN] = {0};
 
     // Program (preloaded instructions + compiled line/block tables).
-    uint8_t *instr = nullptr;
+    uint8_t *Instr = nullptr;
     uint16_t instrSymbols = 0;
-    ScriptLineInfo *lines = nullptr;
+    ScriptLineInfo *Lines = nullptr;
     uint16_t lineCount = 0;
     uint16_t *blockMatch = nullptr; // per line: matching If/While <-> EndBlock (0xFFFF none)
     uint8_t *blockKind = nullptr;   // 0 none, 1 If, 2 While, 3 EndBlock
     uint32_t *lineStamp = nullptr;  // loop-detection stamp per line
 
     // Runtime state.
-    uint16_t ic = 0; // line index
+    uint16_t Ic = 0; // line index
     bool waitingOnTime = false;
     uint32_t waitUntil = 0;
     uint16_t callStack[SCRIPT_MAX_CALL_DEPTH] = {0};
@@ -242,49 +242,49 @@ struct LoadedScript {
     void Release() {
         free(inMeta); free(outMeta); free(varMeta); free(constMeta);
         free(ioSpace); free(varSpace); free(constSpace);
-        free(instr); free(lines); free(blockMatch); free(blockKind); free(lineStamp);
-        free(offsets);
+        free(Instr); free(Lines); free(blockMatch); free(blockKind); free(lineStamp);
+        free(Offsets);
         inMeta = outMeta = varMeta = constMeta = nullptr;
         ioSpace = varSpace = constSpace = nullptr;
-        instr = nullptr; lines = nullptr; blockMatch = nullptr; blockKind = nullptr; lineStamp = nullptr;
-        offsets = nullptr;
-        active = false;
-        state = (uint8_t)ScriptState::Stopped;
-        properties = 0;
+        Instr = nullptr; Lines = nullptr; blockMatch = nullptr; blockKind = nullptr; lineStamp = nullptr;
+        Offsets = nullptr;
+        Active = false;
+        State = (uint8_t)ScriptState::Stopped;
+        Properties = 0;
         inCount = outCount = varCount = constCount = 0;
         inTotal = outTotal = varTotal = constTotal = 0;
         uiLen = 0; instrLen = 0; instrSymbols = 0; lineCount = 0;
-        ic = 0; waitingOnTime = false; waitUntil = 0;
+        Ic = 0; waitingOnTime = false; waitUntil = 0;
         callDepth = 0; errorCode = SCRIPT_ERR_NONE;
         Trid = 0; pendingForeign = false; pendingRead = false; pendingTrid = 0; pendingDeadline = 0;
         memset(pendingDest, 0, sizeof(pendingDest));
-        name[0] = '\0';
+        Name[0] = '\0';
     }
 
     // Builds the offset table and the four space totals from the meta arrays. Called once by
     // ScriptLoad, after the metadata is parsed and before anything resolves a symbol. The
     // layout cannot change while the script stays loaded, so nothing needs invalidating.
     bool BuildOffsets() {
-        free(offsets);
-        offsets = nullptr;
+        free(Offsets);
+        Offsets = nullptr;
         const uint16_t n = StrideTableSize(inCount, outCount, varCount, constCount);
-        offsets = (uint16_t *)malloc((size_t)n * sizeof(uint16_t));
-        if (!offsets) return false;
-        uint16_t k = StrideOffsetsBuild(offsets, StrideInBase(), inMeta, inCount, 0);
-        inTotal = offsets[inCount];
-        k = StrideOffsetsBuild(offsets, k, outMeta, outCount, inTotal); // outputs follow inputs
-        outTotal = (uint16_t)(offsets[k - 1] - inTotal);
-        k = StrideOffsetsBuild(offsets, k, varMeta, varCount, 0);
-        varTotal = offsets[k - 1];
-        k = StrideOffsetsBuild(offsets, k, constMeta, constCount, 0);
-        constTotal = offsets[k - 1];
+        Offsets = (uint16_t *)malloc((size_t)n * sizeof(uint16_t));
+        if (!Offsets) return false;
+        uint16_t k = StrideOffsetsBuild(Offsets, StrideInBase(), inMeta, inCount, 0);
+        inTotal = Offsets[inCount];
+        k = StrideOffsetsBuild(Offsets, k, outMeta, outCount, inTotal); // outputs follow inputs
+        outTotal = (uint16_t)(Offsets[k - 1] - inTotal);
+        k = StrideOffsetsBuild(Offsets, k, varMeta, varCount, 0);
+        varTotal = Offsets[k - 1];
+        k = StrideOffsetsBuild(Offsets, k, constMeta, constCount, 0);
+        constTotal = Offsets[k - 1];
         return true;
     }
 
     // Offset of entry `i` in the space starting at table index `base`. An index past the end
     // saturates on the space total rather than reading a neighbouring space's segment.
-    uint16_t OffsetAt(uint16_t base, uint8_t i, uint8_t count) const {
-        return offsets[base + (i < count ? i : count)];
+    uint16_t OffsetAt(uint16_t Base, uint8_t i, uint8_t Count) const {
+        return Offsets[Base + (i < Count ? i : Count)];
     }
     uint16_t InputOffset(uint8_t i) const { return OffsetAt(StrideInBase(), i, inCount); }
     uint16_t OutputOffset(uint8_t i) const { return OffsetAt(StrideOutBase(inCount), i, outCount); }

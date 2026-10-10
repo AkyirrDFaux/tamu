@@ -36,19 +36,19 @@ class ScriptService
 {
 public:
     void Init();                           // resets the loaded-script registry and tick
-    bool Handle(const PacketFrame &frame); // management CID dispatch; true if consumed
+    bool Handle(const PacketFrame &Frame); // management CID dispatch; true if consumed
 
     // Exported to the rest of the tree through temporary forwarders (see below): these entry
     // points are called from the Dispatcher, Devices/*/Main.h and the Register service.
-    void HandleResponse(const PacketFrame &frame);
+    void HandleResponse(const PacketFrame &Frame);
     void Tick(uint32_t nowMs);
     void BootLoad();
-    LoadedScript *Active(uint16_t slot);
-    uint8_t KeyCount(uint16_t slot, uint8_t field);
-    bool GetIoPointer(uint16_t slot, uint8_t field, uint8_t key, ValueInfo &m, void *&data);
-    bool GetEntry(uint16_t slot, uint8_t field, uint8_t key, ValueInfo &m, uint8_t *vbuf, uint8_t &vsz);
-    bool SetEntry(uint16_t slot, uint8_t field, uint8_t key, const ValueInfo &m,
-                  const uint8_t *val, uint16_t vlen);
+    LoadedScript *Active(uint16_t Slot);
+    uint8_t KeyCount(uint16_t Slot, uint8_t Field);
+    bool GetIoPointer(uint16_t Slot, uint8_t Field, uint8_t Key, ValueInfo &m, void *&Data);
+    bool GetEntry(uint16_t Slot, uint8_t Field, uint8_t Key, ValueInfo &m, uint8_t *Vbuf, uint8_t &Vsz);
+    bool SetEntry(uint16_t Slot, uint8_t Field, uint8_t Key, const ValueInfo &m,
+                  const uint8_t *Val, uint16_t Vlen);
 
 private:
     // ===== Loaded-script registry (was file-scope static) =====
@@ -59,71 +59,71 @@ private:
     uint32_t TickCount = 0;
 
     // ===== ScriptProgram.h: names, registry access, parsing/compilation, entry access =====
-    void FileName(uint16_t id, char out[8]);
-    uint16_t FileIdFromName(const char name[8]);
+    void FileName(uint16_t Id, char Out[8]);
+    uint16_t FileIdFromName(const char Name[8]);
     uint32_t RdU32(const uint8_t *p);
-    void MaskSet(uint16_t slot, bool on);
-    ValueInfo *AllocMetas(uint8_t count);
-    bool BuildProgram(LoadedScript *s, const uint8_t *instr, uint32_t instrLen);
-    bool Load(uint16_t fileId, uint16_t slot);
-    void Unload(uint16_t slot);
-    uint16_t ListFiles(uint8_t *out, uint16_t max);
-    bool SetVariable(uint16_t slot, uint8_t varId, const uint8_t *val, uint16_t vlen);
+    void MaskSet(uint16_t Slot, bool On);
+    ValueInfo *AllocMetas(uint8_t Count);
+    bool BuildProgram(LoadedScript *s, const uint8_t *Instr, uint32_t instrLen);
+    bool Load(uint16_t fileId, uint16_t Slot);
+    void Unload(uint16_t Slot);
+    uint16_t ListFiles(uint8_t *Out, uint16_t Max);
+    bool SetVariable(uint16_t Slot, uint8_t varId, const uint8_t *Val, uint16_t Vlen);
 
     // ===== ScriptVm.h: value model =====
-    uint16_t SymVal(const uint8_t *sym);
-    bool IsNumericDtype(uint16_t dtype);
-    int32_t LoadInt(const uint8_t *d, uint8_t sz, bool sign);
-    void StoreInt(uint8_t *d, uint8_t sz, int32_t v);
-    bool Resolve(LoadedScript *s, uint8_t stype, uint8_t ssub, uint16_t sval,
-                 uint8_t *scratch, const uint8_t **data, uint8_t *size, uint16_t *dtype);
-    bool ToScalar(const uint8_t *data, uint8_t size, uint16_t dtype, bool num, ScriptScalar &out);
-    bool ResolveOperandScalar(LoadedScript *s, const uint8_t *sym, bool num, ScriptScalar &out);
-    bool ResolveOperandInt(LoadedScript *s, const uint8_t *sym, int32_t &out);
-    bool ResolveDest(LoadedScript *s, const uint8_t *sym, uint16_t &dtype, uint8_t *&data, uint8_t &size);
-    void StoreScalar(uint16_t dtype, uint8_t *data, uint8_t size, bool num, const ScriptScalar &v);
-    uint8_t AssignResolved(uint16_t dtype, uint8_t *dest, uint8_t dsize,
-                           const uint8_t *src, uint8_t ssize, uint16_t stype);
-    uint8_t Assign(LoadedScript *s, const uint8_t *destSym, const uint8_t *src,
-                   uint8_t ssize, uint16_t stype);
-    uint16_t ContainerCount(uint16_t dtype, uint8_t size, const uint8_t *data);
-    bool VectorElement(const uint8_t *data, uint8_t size, uint16_t dtype, uint32_t e, Number &out);
-    uint8_t ExecVectorMath(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase,
-                           uint8_t cat, uint8_t op, uint16_t dtype, uint8_t *dest, uint8_t dsize);
+    uint16_t SymVal(const uint8_t *Sym);
+    bool IsNumericDtype(uint16_t Dtype);
+    int32_t LoadInt(const uint8_t *d, uint8_t Sz, bool Sign);
+    void StoreInt(uint8_t *d, uint8_t Sz, int32_t v);
+    bool Resolve(LoadedScript *s, uint8_t Stype, uint8_t Ssub, uint16_t Sval,
+                 uint8_t *Scratch, const uint8_t **Data, uint8_t *Size, uint16_t *Dtype);
+    bool ToScalar(const uint8_t *Data, uint8_t Size, uint16_t Dtype, bool Num, ScriptScalar &Out);
+    bool ResolveOperandScalar(LoadedScript *s, const uint8_t *Sym, bool Num, ScriptScalar &Out);
+    bool ResolveOperandInt(LoadedScript *s, const uint8_t *Sym, int32_t &Out);
+    bool ResolveDest(LoadedScript *s, const uint8_t *Sym, uint16_t &Dtype, uint8_t *&Data, uint8_t &Size);
+    void StoreScalar(uint16_t Dtype, uint8_t *Data, uint8_t Size, bool Num, const ScriptScalar &v);
+    uint8_t AssignResolved(uint16_t Dtype, uint8_t *Dest, uint8_t Dsize,
+                           const uint8_t *Src, uint8_t Ssize, uint16_t Stype);
+    uint8_t Assign(LoadedScript *s, const uint8_t *destSym, const uint8_t *Src,
+                   uint8_t Ssize, uint16_t Stype);
+    uint16_t ContainerCount(uint16_t Dtype, uint8_t Size, const uint8_t *Data);
+    bool VectorElement(const uint8_t *Data, uint8_t Size, uint16_t Dtype, uint32_t e, Number &Out);
+    uint8_t ExecVectorMath(LoadedScript *s, const ScriptLineInfo &Ln, const uint8_t *Opbase,
+                           uint8_t Cat, uint8_t Op, uint16_t Dtype, uint8_t *Dest, uint8_t Dsize);
 
     // ===== ScriptExpr.h: infix expression evaluation =====
-    bool ExprResolve(ExprParser *p, const uint8_t *sym, ExprValue &out);
+    bool ExprResolve(ExprParser *p, const uint8_t *Sym, ExprValue &Out);
     uint8_t ExprPeekOp(ExprParser *p);
-    bool ExprPow(Number base, Number exp, Number &out);
-    bool ExprIsBoolOp(uint8_t op);
-    bool ExprApply(ExprValue &a, const ExprValue &b, uint8_t op);
-    bool ExprPrimary(ExprParser *p, ExprValue &out);
-    bool ExprFnDot(const ExprValue &a, const ExprValue &b, ExprValue &out);
-    bool ExprFnTranspose(const ExprValue &a, ExprValue &out);
-    bool ExprFnSize(const ExprValue &a, ExprValue &out);
-    bool ExprFnCross(const ExprValue &a, const ExprValue &b, ExprValue &out);
-    bool ExprUnary(ExprParser *p, ExprValue &out);
-    bool ExprBin(ExprParser *p, ExprValue &out, uint8_t minPrec);
+    bool ExprPow(Number Base, Number Exp, Number &Out);
+    bool ExprIsBoolOp(uint8_t Op);
+    bool ExprApply(ExprValue &a, const ExprValue &b, uint8_t Op);
+    bool ExprPrimary(ExprParser *p, ExprValue &Out);
+    bool ExprFnDot(const ExprValue &a, const ExprValue &b, ExprValue &Out);
+    bool ExprFnTranspose(const ExprValue &a, ExprValue &Out);
+    bool ExprFnSize(const ExprValue &a, ExprValue &Out);
+    bool ExprFnCross(const ExprValue &a, const ExprValue &b, ExprValue &Out);
+    bool ExprUnary(ExprParser *p, ExprValue &Out);
+    bool ExprBin(ExprParser *p, ExprValue &Out, uint8_t minPrec);
 
     // ===== ScriptExec.h: per-line instruction execution =====
-    uint8_t ExecSet(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase,
-                    uint16_t dtype, uint8_t *dest, uint8_t dsize);
-    bool ExprTruthy(LoadedScript *s, const uint8_t *tok, uint8_t n, bool &ok);
-    uint8_t ExecTransform(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase,
-                          uint16_t dtype, uint8_t *dest, uint8_t dsize);
-    uint8_t ExecMath(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase, uint8_t cat, uint8_t op);
-    uint8_t ExecFlow(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase, uint8_t op);
-    uint8_t ExecTime(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase, uint8_t op,
-                     uint32_t nowMs, bool &yield);
-    bool OperandBlockInfo(LoadedScript *s, const uint8_t *sym, uint32_t &bi);
-    void SendRegisterRequest(LoadedScript *s, uint16_t addr, uint8_t cid,
-                             const uint8_t *Payload, uint16_t len);
-    uint8_t ExecService(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase,
-                        uint8_t op, uint32_t nowMs, bool &yield);
-    bool ContainerElement(LoadedScript *s, const uint8_t *sym, int32_t index,
-                          uint8_t *scratch, const uint8_t **elem, uint8_t *elemSize, uint16_t *elemType);
-    uint8_t ExecCompose(LoadedScript *s, const ScriptLineInfo &ln, const uint8_t *opbase, uint8_t op);
-    uint8_t ExecLine(LoadedScript *s, uint32_t nowMs, bool &yield);
+    uint8_t ExecSet(LoadedScript *s, const ScriptLineInfo &Ln, const uint8_t *Opbase,
+                    uint16_t Dtype, uint8_t *Dest, uint8_t Dsize);
+    bool ExprTruthy(LoadedScript *s, const uint8_t *Tok, uint8_t n, bool &Ok);
+    uint8_t ExecTransform(LoadedScript *s, const ScriptLineInfo &Ln, const uint8_t *Opbase,
+                          uint16_t Dtype, uint8_t *Dest, uint8_t Dsize);
+    uint8_t ExecMath(LoadedScript *s, const ScriptLineInfo &Ln, const uint8_t *Opbase, uint8_t Cat, uint8_t Op);
+    uint8_t ExecFlow(LoadedScript *s, const ScriptLineInfo &Ln, const uint8_t *Opbase, uint8_t Op);
+    uint8_t ExecTime(LoadedScript *s, const ScriptLineInfo &Ln, const uint8_t *Opbase, uint8_t Op,
+                     uint32_t nowMs, bool &Yield);
+    bool OperandBlockInfo(LoadedScript *s, const uint8_t *Sym, uint32_t &Bi);
+    void SendRegisterRequest(LoadedScript *s, uint16_t Addr, uint8_t Cid,
+                             const uint8_t *Payload, uint16_t Len);
+    uint8_t ExecService(LoadedScript *s, const ScriptLineInfo &Ln, const uint8_t *Opbase,
+                        uint8_t Op, uint32_t nowMs, bool &Yield);
+    bool ContainerElement(LoadedScript *s, const uint8_t *Sym, int32_t Index,
+                          uint8_t *Scratch, const uint8_t **Elem, uint8_t *elemSize, uint16_t *elemType);
+    uint8_t ExecCompose(LoadedScript *s, const ScriptLineInfo &Ln, const uint8_t *Opbase, uint8_t Op);
+    uint8_t ExecLine(LoadedScript *s, uint32_t nowMs, bool &Yield);
 
     // ===== ScriptRuntime.h: scheduler, boot load =====
     void Run(LoadedScript *s, uint32_t nowMs);

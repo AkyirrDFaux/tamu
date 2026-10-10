@@ -48,7 +48,7 @@
 #define TRID_APP_BASE    0xF000 // App, slot-based (0xF000-0xFFFF)
 
 // ID helpers: 6 bit net + 10 bit device
-inline uint16_t MakeId(uint8_t net, uint16_t dev) { return (uint16_t)((net & 0x3F) << 10) | (dev & 0x3FF); }
+inline uint16_t MakeId(uint8_t Net, uint16_t Dev) { return (uint16_t)((Net & 0x3F) << 10) | (Dev & 0x3FF); }
 
 #define ADDR_INVALID   0x0000
 #define ADDR_BROADCAST 0xFFFF
@@ -59,10 +59,10 @@ inline uint16_t MakeId(uint8_t net, uint16_t dev) { return (uint16_t)((net & 0x3
 
 // Net 0 means "the local net": when matching or building an address, a net-0 target resolves to
 // the local net number. Broadcasts (net 0x3F) and already net-qualified addresses are unchanged.
-inline uint16_t NetQualifyLocal(uint16_t addr, uint8_t localNet)
+inline uint16_t NetQualifyLocal(uint16_t Addr, uint8_t LocalNet)
 {
-    if ((addr >> 10) == 0) return MakeId(localNet, addr & 0x3FF);
-    return addr;
+    if ((Addr >> 10) == 0) return MakeId(LocalNet, Addr & 0x3FF);
+    return Addr;
 }
 
 enum class ServiceType : uint8_t
@@ -101,9 +101,9 @@ static_assert(offsetof(PacketFrame, IdTgt) == 6, "wire order: TGT ID after SRC I
 static_assert(offsetof(PacketFrame, Cmd) == 8, "wire order: CMD after TGT ID");
 static_assert(offsetof(PacketFrame, Trid) == 10, "wire order: TRID after CMD");
 
-inline uint16_t MakeService(ServiceType type, uint8_t cid)
+inline uint16_t MakeService(ServiceType Type, uint8_t Cid)
 {
-    return ((uint16_t)type << 8) | cid;
+    return ((uint16_t)Type << 8) | Cid;
 }
 inline ServiceType GetServiceType(uint16_t Cmd)
 {
@@ -121,66 +121,66 @@ inline uint8_t GetServiceCID(uint16_t Cmd)
 // The `type` argument is retained only so existing call sites need not change.
 inline uint16_t NextSystemTrid(ServiceType /*type*/)
 {
-    static uint16_t counter = 0;
-    const uint16_t t = counter;
-    counter = (uint16_t)((counter + 1) & TRID_SYSTEM_MAX);
+    static uint16_t Counter = 0;
+    const uint16_t t = Counter;
+    Counter = (uint16_t)((Counter + 1) & TRID_SYSTEM_MAX);
     return t;
 }
 
 extern DeviceStatusStruct DeviceStatus;
 
-inline uint16_t PayloadBytes(const PacketFrame &frame)
+inline uint16_t PayloadBytes(const PacketFrame &Frame)
 {
-    return (uint16_t)frame.PayloadLen; // bytes (Docs: "Payload Length, in bytes")
+    return (uint16_t)Frame.PayloadLen; // bytes (Docs: "Payload Length, in bytes")
 }
 
-inline void PacketFinalize(PacketFrame *frame, uint16_t len)
+inline void PacketFinalize(PacketFrame *Frame, uint16_t Len)
 {
-    if (len > MAX_PAYLOAD_SIZE) len = MAX_PAYLOAD_SIZE;
-    frame->PayloadLen = (uint8_t)len;
-    frame->Crc8 = Crc8(&frame->Flags, (uint16_t)(11 + len));
+    if (Len > MAX_PAYLOAD_SIZE) Len = MAX_PAYLOAD_SIZE;
+    Frame->PayloadLen = (uint8_t)Len;
+    Frame->Crc8 = Crc8(&Frame->Flags, (uint16_t)(11 + Len));
 }
 
-inline void PacketConstruct(PacketFrame *frame,
-                            uint16_t dest_addr,
-                            uint16_t dest_cmd,
+inline void PacketConstruct(PacketFrame *Frame,
+                            uint16_t DestAddr,
+                            uint16_t DestCmd,
                             uint16_t Trid,
                             uint8_t Flags,
                             const uint8_t *Payload,
-                            uint16_t len,
+                            uint16_t Len,
                             uint8_t Priority = DEFAULT_PRIORITY)
 {
-    if (len > MAX_PAYLOAD_SIZE) len = MAX_PAYLOAD_SIZE;
-    frame->Flags = Flags;
-    frame->Priority = Priority;
-    frame->IdTgt = dest_addr;
-    frame->IdSrc = DeviceStatus.ShortAddress;
-    frame->Cmd = dest_cmd;
-    frame->Trid = Trid;
-    if (Payload && len > 0) memcpy(frame->Payload, Payload, len);
-    PacketFinalize(frame, len);
+    if (Len > MAX_PAYLOAD_SIZE) Len = MAX_PAYLOAD_SIZE;
+    Frame->Flags = Flags;
+    Frame->Priority = Priority;
+    Frame->IdTgt = DestAddr;
+    Frame->IdSrc = DeviceStatus.ShortAddress;
+    Frame->Cmd = DestCmd;
+    Frame->Trid = Trid;
+    if (Payload && Len > 0) memcpy(Frame->Payload, Payload, Len);
+    PacketFinalize(Frame, Len);
 }
 
 // Finalises a fragmented reply. Every caller streams data, so the default is the Streams class;
 // the log database stream overrides it with the Logs class.
-inline void FinalizeReply(PacketFrame &reply, const PacketFrame &req, uint8_t Flags, uint16_t len,
+inline void FinalizeReply(PacketFrame &Reply, const PacketFrame &Req, uint8_t Flags, uint16_t Len,
                           uint8_t Priority = PRIORITY_STREAM)
 {
-    reply.Flags = Flags;
-    reply.Priority = Priority;
-    reply.IdTgt = req.IdSrc;
-    reply.IdSrc = DeviceStatus.ShortAddress;
-    reply.Cmd = req.Cmd;   // Destination service: the request's CMD names the service
-    reply.Trid = req.Trid;     // Responses echo the request's TRID (Docs "Transaction IDs")
-    PacketFinalize(&reply, len);
+    Reply.Flags = Flags;
+    Reply.Priority = Priority;
+    Reply.IdTgt = Req.IdSrc;
+    Reply.IdSrc = DeviceStatus.ShortAddress;
+    Reply.Cmd = Req.Cmd;   // Destination service: the request's CMD names the service
+    Reply.Trid = Req.Trid;     // Responses echo the request's TRID (Docs "Transaction IDs")
+    PacketFinalize(&Reply, Len);
 }
 
-inline void WriteFragInfo(uint8_t *out, uint16_t Current, uint16_t Total)
+inline void WriteFragInfo(uint8_t *Out, uint16_t Current, uint16_t Total)
 {
-    out[0] = (uint8_t)Current;
-    out[1] = (uint8_t)(Current >> 8);
-    out[2] = (uint8_t)Total;
-    out[3] = (uint8_t)(Total >> 8);
+    Out[0] = (uint8_t)Current;
+    Out[1] = (uint8_t)(Current >> 8);
+    Out[2] = (uint8_t)Total;
+    Out[3] = (uint8_t)(Total >> 8);
 }
 
 struct PacketFragInfo
@@ -189,30 +189,30 @@ struct PacketFragInfo
     uint16_t Total;
 };
 
-inline PacketFragInfo PacketGetFrag(const PacketFrame &frame)
+inline PacketFragInfo PacketGetFrag(const PacketFrame &Frame)
 {
     // A fragment must carry at least its 4-byte frag info (u16 current + u16 total). A
     // malformed frame that sets FLAG_FRAG with no payload would otherwise read whatever the
     // struct's payload area holds; return an empty range instead. Handlers still bound-check
     // before using the values.
-    PacketFragInfo fi;
-    if (PayloadBytes(frame) < 4)
+    PacketFragInfo Fi;
+    if (PayloadBytes(Frame) < 4)
     {
-        fi.Current = 0xFFFF;
-        fi.Total = 0xFFFF;
-        return fi;
+        Fi.Current = 0xFFFF;
+        Fi.Total = 0xFFFF;
+        return Fi;
     }
-    fi.Current = (uint16_t)(frame.Payload[0] | (frame.Payload[1] << 8));
-    fi.Total = (uint16_t)(frame.Payload[2] | (frame.Payload[3] << 8));
-    return fi;
+    Fi.Current = (uint16_t)(Frame.Payload[0] | (Frame.Payload[1] << 8));
+    Fi.Total = (uint16_t)(Frame.Payload[2] | (Frame.Payload[3] << 8));
+    return Fi;
 }
 
-inline uint16_t PacketWireSize(const PacketFrame *frame)
+inline uint16_t PacketWireSize(const PacketFrame *Frame)
 {
-    return (uint16_t)(12 + PayloadBytes(*frame));
+    return (uint16_t)(12 + PayloadBytes(*Frame));
 }
 
-inline void PacketToWire(const PacketFrame *frame, uint8_t *out)
+inline void PacketToWire(const PacketFrame *Frame, uint8_t *Out)
 {
-    memcpy(out, frame, PacketWireSize(frame));
+    memcpy(Out, Frame, PacketWireSize(Frame));
 }

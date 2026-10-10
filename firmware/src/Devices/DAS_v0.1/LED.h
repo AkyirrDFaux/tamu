@@ -7,10 +7,10 @@
 
 // Stores the written LEDState. The pin itself is driven by the main loop, which resolves
 // the priority overlays (error > identify > block) so a write can never fight a blink.
-bool OnLEDStateChange(const StaticBlockDescriptor& block, uint16_t index, const void* data, uint16_t data_len)
+bool OnLEDStateChange(const StaticBlockDescriptor& Block, uint16_t Index, const void* Data, uint16_t DataLen)
 {
-    if (data_len != sizeof(bool)) return false;
-    auto *led = static_cast<LEDVolatile *>(block.VolatileData);
-    led->LEDState = *static_cast<const bool *>(data);
+    if (DataLen != sizeof(bool)) return false;
+    auto *Led = static_cast<LEDVolatile *>(Block.VolatileData);
+    Led->LEDState = *static_cast<const bool *>(Data);
     return true;
 }

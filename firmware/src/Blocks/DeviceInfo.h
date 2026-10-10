@@ -12,8 +12,8 @@
 struct SerialNumber{
     uint8_t Bytes[14];
     // Equality: compares the ID bytes.
-    bool operator==(const SerialNumber& other) const {
-        return memcmp(this->Bytes, other.Bytes, sizeof(Bytes)) == 0;
+    bool operator==(const SerialNumber& Other) const {
+        return memcmp(this->Bytes, Other.Bytes, sizeof(Bytes)) == 0;
     }
 } __attribute__((packed));
 

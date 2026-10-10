@@ -55,18 +55,18 @@
 // GPIO (direct register: CFGLR is 4 bits per pin; all DAS pins are < 8)
 // ---------------------------------------------------------------------------
 
-static void GpioCfg(GPIO_TypeDef *port, uint32_t pin, uint32_t cfg)
+static void GpioCfg(GPIO_TypeDef *Port, uint32_t Pin, uint32_t Cfg)
 {
-    uint32_t shift = pin * 4u;
-    port->CFGLR = (port->CFGLR & ~(0xFu << shift)) | (cfg << shift);
+    uint32_t Shift = Pin * 4u;
+    Port->CFGLR = (Port->CFGLR & ~(0xFu << Shift)) | (Cfg << Shift);
 }
 
-static void GpioOutPP(GPIO_TypeDef *port, uint32_t pin) { GpioCfg(port, pin, 0x3u); }  // out push-pull 50 MHz
-static void GpioAfPP(GPIO_TypeDef *port, uint32_t pin) { GpioCfg(port, pin, 0xBu); }   // AF push-pull 50 MHz
-static void GpioInPU(GPIO_TypeDef *port, uint32_t pin)
+static void GpioOutPP(GPIO_TypeDef *Port, uint32_t Pin) { GpioCfg(Port, Pin, 0x3u); }  // out push-pull 50 MHz
+static void GpioAfPP(GPIO_TypeDef *Port, uint32_t Pin) { GpioCfg(Port, Pin, 0xBu); }   // AF push-pull 50 MHz
+static void GpioInPU(GPIO_TypeDef *Port, uint32_t Pin)
 {
-    port->BSHR = (1u << pin); // pull-up
-    GpioCfg(port, pin, 0x8u); // input, pull-up/down
+    Port->BSHR = (1u << Pin); // pull-up
+    GpioCfg(Port, Pin, 0x8u); // input, pull-up/down
 }
 
 // ---------------------------------------------------------------------------
@@ -103,10 +103,10 @@ __attribute__((noinline)) static void FlashLock()
 }
 
 // Erases the 64-byte page containing `addr` (the 0x08000000 alias).
-__attribute__((noinline)) static void FlashErasePageFast(uint32_t addr)
+__attribute__((noinline)) static void FlashErasePageFast(uint32_t Addr)
 {
     FLASH->CTLR |= FCR_PAGE_ER;
-    FLASH->ADDR = addr;
+    FLASH->ADDR = Addr;
     FLASH->CTLR |= FCR_STRT;
     while (FLASH->STATR & FSR_BSY) {}
     FLASH->CTLR &= ~FCR_PAGE_ER;
@@ -114,34 +114,34 @@ __attribute__((noinline)) static void FlashErasePageFast(uint32_t addr)
 
 // Programs one 32-bit word with the standard two-half-word sequence (FCR_PG); the fast
 // controller (FCR_PAGE_ER) is used only by the 64-byte page erase.
-__attribute__((noinline)) static void FlashProgramWord(uint32_t addr, uint32_t data)
+__attribute__((noinline)) static void FlashProgramWord(uint32_t Addr, uint32_t Data)
 {
     FLASH->CTLR |= FCR_PG;
-    *(volatile uint16_t *)addr = (uint16_t)data;
+    *(volatile uint16_t *)Addr = (uint16_t)Data;
     while (FLASH->STATR & FSR_BSY) {}
-    *(volatile uint16_t *)(addr + 2) = (uint16_t)(data >> 16);
+    *(volatile uint16_t *)(Addr + 2) = (uint16_t)(Data >> 16);
     while (FLASH->STATR & FSR_BSY) {}
     FLASH->CTLR &= ~FCR_PG;
 }
 
-static bool FlashErasePage(uint32_t addr)
+static bool FlashErasePage(uint32_t Addr)
 {
     FlashUnlock();
-    FlashErasePageFast(FLASH_CTRL_BASE + addr);
-    uint32_t check = 0;
-    memcpy(&check, (const void *)addr, sizeof(check));
+    FlashErasePageFast(FLASH_CTRL_BASE + Addr);
+    uint32_t Check = 0;
+    memcpy(&Check, (const void *)Addr, sizeof(Check));
     FlashLock();
-    return check == 0xFFFFFFFFu;
+    return Check == 0xFFFFFFFFu;
 }
 
-static void FlashWrite(uint32_t addr, const uint8_t *src, uint32_t len)
+static void FlashWrite(uint32_t Addr, const uint8_t *Src, uint32_t Len)
 {
     FlashUnlock();
-    for (uint32_t off = 0; off < len; off += 4)
+    for (uint32_t Off = 0; Off < Len; Off += 4)
     {
-        uint32_t w;
-        memcpy(&w, src + off, sizeof(w));
-        FlashProgramWord(FLASH_CTRL_BASE + addr + off, w);
+        uint32_t W;
+        memcpy(&W, Src + Off, sizeof(W));
+        FlashProgramWord(FLASH_CTRL_BASE + Addr + Off, W);
     }
     FlashLock();
 }
@@ -169,13 +169,13 @@ static void SetupUart()
     USART1->CTLR1 |= 0x2000u /* UE */;
 }
 
-static bool WaitByte(uint8_t *b, uint32_t start, uint32_t timeout_cycles)
+static bool WaitByte(uint8_t *B, uint32_t Start, uint32_t TimeoutCycles)
 {
-    while ((SysTick->CNT - start) < timeout_cycles)
+    while ((SysTick->CNT - Start) < TimeoutCycles)
     {
         if (USART1->STATR & USART_FLAG_RXNE)
         {
-            *b = (uint8_t)USART1->DATAR;
+            *B = (uint8_t)USART1->DATAR;
             return true;
         }
     }
@@ -185,65 +185,65 @@ static bool WaitByte(uint8_t *b, uint32_t start, uint32_t timeout_cycles)
 // Reads one raw frame into `out`; returns its length or 0 on timeout/invalid. `timeout_us`
 // bounds the whole frame, not each byte, so a stalled frame is abandoned after one window
 // while a frame that keeps arriving still completes.
-static int ReceiveFrame(uint8_t *out, size_t cap, uint32_t timeout_us)
+static int ReceiveFrame(uint8_t *Out, size_t Cap, uint32_t TimeoutUs)
 {
-    uint32_t start = SysTick->CNT;
-    uint32_t timeout_cycles = timeout_us * CYCLES_PER_US;
-    uint8_t b;
+    uint32_t Start = SysTick->CNT;
+    uint32_t TimeoutCycles = TimeoutUs * CYCLES_PER_US;
+    uint8_t B;
     for (;;)
     {
-        if (!WaitByte(&b, start, timeout_cycles)) return 0;
-        if (b == Bootloader::START) break; // skip anything that is not a frame start
+        if (!WaitByte(&B, Start, TimeoutCycles)) return 0;
+        if (B == Bootloader::START) break; // skip anything that is not a frame start
     }
 
-    size_t got = 0;
-    out[got++] = b;
-    if (!WaitByte(&b, start, timeout_cycles)) return 0;
-    out[got++] = b;
+    size_t Got = 0;
+    Out[Got++] = B;
+    if (!WaitByte(&B, Start, TimeoutCycles)) return 0;
+    Out[Got++] = B;
 
-    uint16_t need = Bootloader::FrameSize((uint8_t)(b & 0x03));
-    if (need == 0 || need > cap) return 0;
-    while (got < need)
+    uint16_t Need = Bootloader::FrameSize((uint8_t)(B & 0x03));
+    if (Need == 0 || Need > Cap) return 0;
+    while (Got < Need)
     {
-        if (!WaitByte(&b, start, timeout_cycles)) return 0;
-        out[got++] = b;
+        if (!WaitByte(&B, Start, TimeoutCycles)) return 0;
+        Out[Got++] = B;
     }
-    return Bootloader::Decode(out, need) ? (int)need : 0;
+    return Bootloader::Decode(Out, Need) ? (int)Need : 0;
 }
 
-static void SendRaw(const uint8_t *data, size_t len)
+static void SendRaw(const uint8_t *Data, size_t Len)
 {
     // Wait for the line to be quiet (BL_SILENCE_BYTES) before driving the half-duplex line:
     // a request's last byte reaches us before the core drops its TX enable, so replying
     // immediately collides. Like the running nodes we count bus activity by draining RX and
     // time the quiet span with the tick counter, not a fixed delay.
-    const uint32_t silence_cycles = BL_SILENCE_BYTES * BL_BYTE_TIME_US * CYCLES_PER_US;
-    const uint32_t silence_max_cycles = BL_SILENCE_MAX_US * CYCLES_PER_US;
-    uint32_t wait_start = SysTick->CNT;
-    uint32_t idle_since = wait_start;
+    const uint32_t SilenceCycles = BL_SILENCE_BYTES * BL_BYTE_TIME_US * CYCLES_PER_US;
+    const uint32_t SilenceMaxCycles = BL_SILENCE_MAX_US * CYCLES_PER_US;
+    uint32_t WaitStart = SysTick->CNT;
+    uint32_t IdleSince = WaitStart;
     for (;;)
     {
         if (USART1->STATR & USART_FLAG_RXNE)
         {
             (void)USART1->DATAR;
-            idle_since = SysTick->CNT;
+            IdleSince = SysTick->CNT;
         }
-        else if ((uint32_t)(SysTick->CNT - idle_since) >= silence_cycles)
+        else if ((uint32_t)(SysTick->CNT - IdleSince) >= SilenceCycles)
         {
             break;
         }
         // Bound the wait: a bus that never goes quiet must not block the bootloader.
-        if ((uint32_t)(SysTick->CNT - wait_start) >= silence_max_cycles)
+        if ((uint32_t)(SysTick->CNT - WaitStart) >= SilenceMaxCycles)
         {
             break;
         }
     }
 
     GPIOD->BSHR = (1u << 4); // drive the line
-    for (size_t i = 0; i < len; i++)
+    for (size_t I = 0; I < Len; I++)
     {
         while ((USART1->STATR & USART_FLAG_TXE) == 0) {}
-        USART1->DATAR = data[i];
+        USART1->DATAR = Data[I];
     }
     while ((USART1->STATR & USART_FLAG_TC) == 0) {}
     GPIOD->BCR = (1u << 4);
@@ -257,32 +257,32 @@ static void SendRaw(const uint8_t *data, size_t len)
 // Handlers
 // ---------------------------------------------------------------------------
 
-static void HandleWrite(uint32_t offset, const uint8_t *Payload)
+static void HandleWrite(uint32_t Offset, const uint8_t *Payload)
 {
-    if ((offset & 31u) != 0) return; // 32-byte aligned per the doc
-    uint32_t addr = APP_BASE + offset;
-    if (addr < APP_BASE || addr + Bootloader::PAYLOAD_SIZE > APP_LIMIT) return;
+    if ((Offset & 31u) != 0) return; // 32-byte aligned per the doc
+    uint32_t Addr = APP_BASE + Offset;
+    if (Addr < APP_BASE || Addr + Bootloader::PAYLOAD_SIZE > APP_LIMIT) return;
 
     // Erase the 64-byte page on its first half; the second half programs the erased page.
-    if ((addr & 63u) == 0)
+    if ((Addr & 63u) == 0)
     {
-        if (!FlashErasePage(addr)) return;
+        if (!FlashErasePage(Addr)) return;
     }
-    FlashWrite(addr, Payload, Bootloader::PAYLOAD_SIZE);
+    FlashWrite(Addr, Payload, Bootloader::PAYLOAD_SIZE);
 }
 
-static void HandleRead(uint32_t offset)
+static void HandleRead(uint32_t Offset)
 {
-    uint8_t data[Bootloader::PAYLOAD_SIZE];
-    uint32_t addr = APP_BASE + offset;
-    if (addr < APP_BASE || addr + Bootloader::PAYLOAD_SIZE > APP_LIMIT)
-        memset(data, 0xFF, sizeof(data));
+    uint8_t Data[Bootloader::PAYLOAD_SIZE];
+    uint32_t Addr = APP_BASE + Offset;
+    if (Addr < APP_BASE || Addr + Bootloader::PAYLOAD_SIZE > APP_LIMIT)
+        memset(Data, 0xFF, sizeof(Data));
     else
-        memcpy(data, (const void *)addr, sizeof(data));
+        memcpy(Data, (const void *)Addr, sizeof(Data));
 
-    uint8_t resp[Bootloader::DATA_SIZE];
-    Bootloader::EncodeReadResponse(offset, data, resp);
-    SendRaw(resp, sizeof(resp));
+    uint8_t Resp[Bootloader::DATA_SIZE];
+    Bootloader::EncodeReadResponse(Offset, Data, Resp);
+    SendRaw(Resp, sizeof(Resp));
 }
 
 // ---------------------------------------------------------------------------
@@ -310,7 +310,7 @@ int main(void)
     GPIOD->BCR = (1u << 0);
 
     // Let the pull-up settle, then sample the button: released (high) launches the app.
-    for (volatile uint32_t i = 0; i < 200000u; i++) {}
+    for (volatile uint32_t I = 0; I < 200000u; I++) {}
 #ifndef BOOTLOADER_FORCE
     // BOOTLOADER_FORCE (test hook) skips the button check so the RSBus update path can be
     // exercised without physically holding PC0.
@@ -324,16 +324,16 @@ int main(void)
 
     for (;;)
     {
-        uint8_t frame[Bootloader::MAX_FRAME_SIZE];
-        int n = ReceiveFrame(frame, sizeof(frame), 2000000u); // 2 s per byte
-        if (n <= 0) continue;
+        uint8_t Frame[Bootloader::MAX_FRAME_SIZE];
+        int N = ReceiveFrame(Frame, sizeof(Frame), 2000000u); // 2 s per byte
+        if (N <= 0) continue;
 
-        uint8_t Cmd = (uint8_t)(frame[1] & 0x03);
-        uint32_t offset = Bootloader::Offset(frame);
+        uint8_t Cmd = (uint8_t)(Frame[1] & 0x03);
+        uint32_t Offset = Bootloader::Offset(Frame);
         if (Cmd == Bootloader::CMD_WRITE)
-            HandleWrite(offset, Bootloader::Payload(frame));
+            HandleWrite(Offset, Bootloader::Payload(Frame));
         else if (Cmd == Bootloader::CMD_READ_REQ)
-            HandleRead(offset);
+            HandleRead(Offset);
     }
 }
 

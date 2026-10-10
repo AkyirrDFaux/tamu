@@ -13,7 +13,7 @@
 // Defined in Core/Services/SubscriptionsPersist.h (included later in the same translation
 // unit): ask for this device's requester entries for `addr` to be re-pushed. Deferred on
 // purpose - see SubscriptionsRequestReRegister.
-void SubscriptionsRequestReRegister(uint16_t addr);
+void SubscriptionsRequestReRegister(uint16_t Addr);
 #endif
 #include "Core/Functions/TimeSync.h"
 #endif
@@ -90,7 +90,7 @@ void DeviceService::HandleSNDB(const PacketFrame &Frame)
                 while (Off - 4 < MAX_FRAG_CONTENT_SIZE && Sent < Count && SNDB::IterNext(Entry))
                 {
                     uint16_t WireId = RegistryAddress(Entry);
-                    memcpy(TxFrame.Payload + Off, Entry.uid.Bytes, 14);
+                    memcpy(TxFrame.Payload + Off, Entry.Uid.Bytes, 14);
                     memcpy(TxFrame.Payload + Off + 14, &WireId, 2);
                     Off += 16;
                     Sent++;
@@ -131,7 +131,7 @@ void DeviceService::HandleSNDB(const PacketFrame &Frame)
             {
                 uint8_t Payload[16];
                 uint16_t WireId = RegistryAddress(Entry);
-                memcpy(Payload, Entry.uid.Bytes, 14);
+                memcpy(Payload, Entry.Uid.Bytes, 14);
                 memcpy(Payload + 14, &WireId, 2);
                 PacketConstruct(&TxFrame, Frame.IdSrc, Frame.Cmd, Frame.Trid,
                                  FLAG_TYPE | FLAG_START | FLAG_STOP, Payload, 16);
@@ -198,7 +198,7 @@ inline void DeviceService::HandleBootloaderPassthrough(const PacketFrame &Frame,
             return;
         uint8_t Raw[Bootloader::DATA_SIZE];
         Bootloader::EncodeWrite(Offset, Frame.Payload + 4, Raw);
-        bool Ok = RS485_SendRaw(Raw, Bootloader::DATA_SIZE);
+        bool Ok = RS485SendRaw(Raw, Bootloader::DATA_SIZE);
         PacketConstruct(&TxFrame, Frame.IdSrc, Frame.Cmd, Frame.Trid,
                          FLAG_TYPE | FLAG_START | FLAG_STOP | (Ok ? FLAG_SUCCESS : FLAG_FAIL),
                          nullptr, 0);
@@ -213,10 +213,10 @@ inline void DeviceService::HandleBootloaderPassthrough(const PacketFrame &Frame,
     {
         uint8_t Req[Bootloader::READ_REQ_SIZE];
         Bootloader::EncodeReadRequest(Offset, Req);
-        if (!RS485_SendRaw(Req, Bootloader::READ_REQ_SIZE))
+        if (!RS485SendRaw(Req, Bootloader::READ_REQ_SIZE))
             continue;
         uint8_t Resp[Bootloader::MAX_FRAME_SIZE];
-        int N = RS485_ReceiveRaw(Resp, sizeof(Resp), 200);
+        int N = RS485ReceiveRaw(Resp, sizeof(Resp), 200);
         if (N == Bootloader::DATA_SIZE &&
             Bootloader::Decode(Resp, (uint16_t)N) == Bootloader::CMD_READ_RESP)
         {
@@ -278,7 +278,7 @@ bool DeviceService::Handle(const PacketFrame &Frame)
             if (DeviceIsCore()) return true; // a core is never assigned
 #endif
             const AssignPayload *Assign = reinterpret_cast<const AssignPayload *>(Frame.Payload);
-            if (Assign->sn == GetSerialNumber())
+            if (Assign->Sn == GetSerialNumber())
             {
                 // The core sends the net-qualified address; store it and adopt its net so
                 // local net-0 targets resolve correctly.
@@ -377,7 +377,7 @@ bool DeviceService::Handle(const PacketFrame &Frame)
             // The reply echoes the request's TRID (its high byte is the Device service),
             // per "responses echo the request's TRID".
             AssignPayload ResponseData;
-            ResponseData.sn = *IncomingSn;
+            ResponseData.Sn = *IncomingSn;
             // Local devices are stored with net 0; the core's NetID is added here so the
             // node's address is net-qualified.
             ResponseData.NewAddr = MakeId(DeviceStatus.NetId, (uint16_t)(NewAddr & 0x3FF));

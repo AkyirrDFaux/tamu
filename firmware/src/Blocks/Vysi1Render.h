@@ -11,61 +11,61 @@
 // internally we compose 3x3 homogeneous transforms).
 inline Matrix<3, 3> Vysi1Display::PromoteAffine(const Matrix<2, 3> &m)
 {
-    Matrix<3, 3> out = Matrix<3, 3>::Identity();
-    out(0, 0) = m(0, 0);
-    out(0, 1) = m(0, 1);
-    out(0, 2) = m(0, 2);
-    out(1, 0) = m(1, 0);
-    out(1, 1) = m(1, 1);
-    out(1, 2) = m(1, 2);
-    return out;
+    Matrix<3, 3> Out = Matrix<3, 3>::Identity();
+    Out(0, 0) = m(0, 0);
+    Out(0, 1) = m(0, 1);
+    Out(0, 2) = m(0, 2);
+    Out(1, 0) = m(1, 0);
+    Out(1, 1) = m(1, 1);
+    Out(1, 2) = m(1, 2);
+    return Out;
 }
 
 // The screen transform shared by geometry and texture fields: the field's 2x3 Position
 // composed with the display's base transform. Both passes previously spelled this out.
-inline Matrix<3, 3> Vysi1Display::FieldTransform(const Matrix<2, 3> &pos)
+inline Matrix<3, 3> Vysi1Display::FieldTransform(const Matrix<2, 3> &Pos)
 {
-    return PromoteAffine(pos) * BaseTransform();
+    return PromoteAffine(Pos) * BaseTransform();
 }
 
 // Resolves geometry field `field` and fills GeoMask[field][led] with each LED's alpha.
 // Expensive per-LED shape math; only called when the block/offset/layout changed.
-inline void Vysi1Display::RenderGeometryField(DynamicBlockDescriptor *block, uint16_t field, uint16_t slot)
+inline void Vysi1Display::RenderGeometryField(DynamicBlockDescriptor *Block, uint16_t Field, uint16_t Slot)
 {
     for (uint16_t i = 0; i < LedNum; i++)
-        GeoMask[slot][i] = 0;
+        GeoMask[Slot][i] = 0;
 
     GeometryParams p;
-    p.Shape = block->GetKeyValue<Geometries>(field, (uint8_t)GeometryKey::Shape, DataType::Enum, Geometries::None);
+    p.Shape = Block->GetKeyValue<Geometries>(Field, (uint8_t)GeometryKey::Shape, DataType::Enum, Geometries::None);
     if (p.Shape == Geometries::None)
         return;
 
     // Combined transform: (Position) * (Offset * centering).
-    Matrix<2, 3> pos = block->GetKeyValue<Matrix<2, 3>>(field, (uint8_t)GeometryKey::Position, DataType::Matrix, IdentityAffine23());
-    Matrix<3, 3> combined = FieldTransform(pos);
+    Matrix<2, 3> Pos = Block->GetKeyValue<Matrix<2, 3>>(Field, (uint8_t)GeometryKey::Position, DataType::Matrix, IdentityAffine23());
+    Matrix<3, 3> Combined = FieldTransform(Pos);
 
-    p.Rounding = block->GetKeyValue<Number>(field, (uint8_t)GeometryKey::Rounding, DataType::Number, N(0));
-    p.Angles = block->GetKeyValue<Number>(field, (uint8_t)GeometryKey::Angles, DataType::Number, N(0));
-    p.Fade = block->GetKeyValue<Number>(field, (uint8_t)GeometryKey::Fade, DataType::Number, N(1));
+    p.Rounding = Block->GetKeyValue<Number>(Field, (uint8_t)GeometryKey::Rounding, DataType::Number, N(0));
+    p.Angles = Block->GetKeyValue<Number>(Field, (uint8_t)GeometryKey::Angles, DataType::Number, N(0));
+    p.Fade = Block->GetKeyValue<Number>(Field, (uint8_t)GeometryKey::Fade, DataType::Number, N(1));
     // Alpha is documented 0..1: clamp so a >1 value cannot wrap the mask modulo 256.
-    p.Alpha = LimitZeroToOne(block->GetKeyValue<Number>(field, (uint8_t)GeometryKey::Alpha, DataType::Number, N(1)));
-    p.PointNumber = (uint8_t)ReadKeyInt(block, field, (uint8_t)GeometryKey::PointNumber, 0);
-    p.NoiseSeed = (uint32_t)ReadKeyInt(block, field, (uint8_t)GeometryKey::NoiseSeed, 0);
+    p.Alpha = LimitZeroToOne(Block->GetKeyValue<Number>(Field, (uint8_t)GeometryKey::Alpha, DataType::Number, N(1)));
+    p.PointNumber = (uint8_t)ReadKeyInt(Block, Field, (uint8_t)GeometryKey::PointNumber, 0);
+    p.NoiseSeed = (uint32_t)ReadKeyInt(Block, Field, (uint8_t)GeometryKey::NoiseSeed, 0);
 
     // Size: accept either a Number (side/diameter/radius/scale) or a Vector<2>
     // (width, height) regardless of the shape, so switching shapes or re-typing an
     // entry never silently leaves an invisible shape.
     {
-        KeyResult kr = block->GetKey(field, (uint8_t)GeometryKey::Size);
-        if (ValueInfoType(kr.meta.Type) == (uint16_t)DataType::Vector && kr.data_ptr)
+        KeyResult Kr = Block->GetKey(Field, (uint8_t)GeometryKey::Size);
+        if (ValueInfoType(Kr.Meta.Type) == (uint16_t)DataType::Vector && Kr.DataPtr)
         {
-            Vector<2> size = *reinterpret_cast<const Vector<2> *>(kr.data_ptr);
-            p.SizeX = size[0];
-            p.SizeY = size[1];
+            Vector<2> Size = *reinterpret_cast<const Vector<2> *>(Kr.DataPtr);
+            p.SizeX = Size[0];
+            p.SizeY = Size[1];
         }
-        else if (ValueInfoType(kr.meta.Type) == (uint16_t)DataType::Number && kr.data_ptr)
+        else if (ValueInfoType(Kr.Meta.Type) == (uint16_t)DataType::Number && Kr.DataPtr)
         {
-            Number s = *reinterpret_cast<const Number *>(kr.data_ptr);
+            Number s = *reinterpret_cast<const Number *>(Kr.DataPtr);
             p.SizeX = s;
             p.SizeY = s;
         }
@@ -83,50 +83,50 @@ inline void Vysi1Display::RenderGeometryField(DynamicBlockDescriptor *block, uin
     if (p.Shape == Geometries::Fill)
     {
         uint8_t a = (uint8_t)((Number(255) * p.Alpha).RoundToInt());
-        for (uint16_t led = 0; led < LedNum; led++)
-            if (LedPresent[led])
-                GeoMask[slot][led] = a;
+        for (uint16_t Led = 0; Led < LedNum; Led++)
+            if (LedPresent[Led])
+                GeoMask[Slot][Led] = a;
         return;
     }
     if (p.Shape == Geometries::HalfFill)
     {
-        for (uint16_t led = 0; led < LedNum; led++)
+        for (uint16_t Led = 0; Led < LedNum; Led++)
         {
-            if (!LedPresent[led])
+            if (!LedPresent[Led])
                 continue;
-            Number dy = combined(1, 0) * Number(LedX[led]) +
-                        combined(1, 1) * Number(LedY[led]) + combined(1, 2);
-            uint8_t a = FadeAlpha(dy, p);
+            Number Dy = Combined(1, 0) * Number(LedX[Led]) +
+                        Combined(1, 1) * Number(LedY[Led]) + Combined(1, 2);
+            uint8_t a = FadeAlpha(Dy, p);
             if (a == 0)
                 continue;
-            GeoMask[slot][led] = (uint8_t)((Number(a) * p.Alpha).RoundToInt());
+            GeoMask[Slot][Led] = (uint8_t)((Number(a) * p.Alpha).RoundToInt());
         }
         return;
     }
 
-    for (uint16_t led = 0; led < LedNum; led++)
+    for (uint16_t Led = 0; Led < LedNum; Led++)
     {
-        if (!LedPresent[led])
+        if (!LedPresent[Led])
             continue;
-        Vector<3> pp = combined * Vector<3>{Number(LedX[led]), Number(LedY[led]), N(1)};
-        Vector<2> p2 = {pp[0], pp[1]};
-        uint8_t a = ShapeAlpha(p, p2);
+        Vector<3> Pp = Combined * Vector<3>{Number(LedX[Led]), Number(LedY[Led]), N(1)};
+        Vector<2> P2 = {Pp[0], Pp[1]};
+        uint8_t a = ShapeAlpha(p, P2);
         if (a == 0)
             continue;
         // a is already 0..255; scale by the geometry Alpha (0..1) back to 0..255.
-        GeoMask[slot][led] = (uint8_t)((Number(a) * p.Alpha).RoundToInt());
+        GeoMask[Slot][Led] = (uint8_t)((Number(a) * p.Alpha).RoundToInt());
     }
 }
 
 // Combines GeoMask[field] into the current mask with the field's operation.
-inline void Vysi1Display::ApplyGeometryField(DynamicBlockDescriptor *block, uint16_t field, uint16_t slot)
+inline void Vysi1Display::ApplyGeometryField(DynamicBlockDescriptor *Block, uint16_t Field, uint16_t Slot)
 {
-    GeometryOperation op = block->GetKeyValue<GeometryOperation>(field, (uint8_t)GeometryKey::Operation, DataType::Enum, GeometryOperation::Replace);
-    for (uint16_t led = 0; led < LedNum; led++)
+    GeometryOperation Op = Block->GetKeyValue<GeometryOperation>(Field, (uint8_t)GeometryKey::Operation, DataType::Enum, GeometryOperation::Replace);
+    for (uint16_t Led = 0; Led < LedNum; Led++)
     {
-        uint16_t g = GeoMask[slot][led];
-        uint16_t m = Mask[led];
-        switch (op)
+        uint16_t g = GeoMask[Slot][Led];
+        uint16_t m = Mask[Led];
+        switch (Op)
         {
         case GeometryOperation::Replace: m = g; break;
         case GeometryOperation::Add: m = m + g; if (m > 255) m = 255; break;
@@ -134,7 +134,7 @@ inline void Vysi1Display::ApplyGeometryField(DynamicBlockDescriptor *block, uint
         case GeometryOperation::Intersect: m = (m * g) >> 8; break;
         case GeometryOperation::XOR: m = (m > g) ? m - g : g - m; break;
         }
-        Mask[led] = (uint8_t)m;
+        Mask[Led] = (uint8_t)m;
         if (m != 0) MaskAny = true;
     }
 }
@@ -142,32 +142,32 @@ inline void Vysi1Display::ApplyGeometryField(DynamicBlockDescriptor *block, uint
 // Applies texture field `field` onto the buffer over the current mask, then (called by
 // Render) the mask is reset. Textures: Fill, GradientLinear, GradientCircular; effects
 // (InvertColour, HueShift, Contrast, Brightness) modify the buffer inside the mask.
-inline void Vysi1Display::RenderTextureField(DynamicBlockDescriptor *block, uint16_t field)
+inline void Vysi1Display::RenderTextureField(DynamicBlockDescriptor *Block, uint16_t Field)
 {
     // Every texture and effect is masked by the geometry pass; skip when it produced no
     // non-zero alpha (nothing could be drawn).
     if (!MaskAny)
         return;
 
-    Textures2D type = block->GetKeyValue<Textures2D>(field, (uint8_t)TextureKey::Type, DataType::Enum, Textures2D::None);
-    if (type == Textures2D::None)
+    Textures2D Type = Block->GetKeyValue<Textures2D>(Field, (uint8_t)TextureKey::Type, DataType::Enum, Textures2D::None);
+    if (Type == Textures2D::None)
         return;
 
     // Texture-local transform for gradients: (Position) * (Offset * centering).
-    Matrix<2, 3> pos = block->GetKeyValue<Matrix<2, 3>>(field, (uint8_t)TextureKey::Position, DataType::Matrix, IdentityAffine23());
-    Matrix<3, 3> combined = FieldTransform(pos);
+    Matrix<2, 3> Pos = Block->GetKeyValue<Matrix<2, 3>>(Field, (uint8_t)TextureKey::Position, DataType::Matrix, IdentityAffine23());
+    Matrix<3, 3> Combined = FieldTransform(Pos);
 
-    switch (type)
+    switch (Type)
     {
     case Textures2D::Fill:
     {
-        ColourClass colour = block->GetKeyValue<ColourClass>(field, (uint8_t)TextureKey::Colour1, DataType::Colour, ColourClass(0, 0, 0, 0));
-        for (uint16_t led = 0; led < LedNum; led++)
+        ColourClass Colour = Block->GetKeyValue<ColourClass>(Field, (uint8_t)TextureKey::Colour1, DataType::Colour, ColourClass(0, 0, 0, 0));
+        for (uint16_t Led = 0; Led < LedNum; Led++)
         {
-            uint8_t a = Mask[led];
+            uint8_t a = Mask[Led];
             if (a == 0)
                 continue;
-            Buffer[led].Layer(Linearise(colour), ByteToPercent(a));
+            Buffer[Led].Layer(Linearise(Colour), ByteToPercent(a));
         }
         break;
     }
@@ -175,41 +175,41 @@ inline void Vysi1Display::RenderTextureField(DynamicBlockDescriptor *block, uint
     case Textures2D::GradientLinear:
     case Textures2D::GradientCircular:
     {
-        ColourClass c1 = block->GetKeyValue<ColourClass>(field, (uint8_t)TextureKey::Colour1, DataType::Colour, ColourClass(0, 0, 0, 255));
-        ColourClass c2 = block->GetKeyValue<ColourClass>(field, (uint8_t)TextureKey::Colour2, DataType::Colour, ColourClass(255, 255, 255, 255));
+        ColourClass C1 = Block->GetKeyValue<ColourClass>(Field, (uint8_t)TextureKey::Colour1, DataType::Colour, ColourClass(0, 0, 0, 255));
+        ColourClass C2 = Block->GetKeyValue<ColourClass>(Field, (uint8_t)TextureKey::Colour2, DataType::Colour, ColourClass(255, 255, 255, 255));
         // Size accepts a Number (uniform: scales both axes) or a Vector<2> (width, height),
         // the same two types a geometry's Size takes; a non-positive extent falls back to 1.
-        Number extentX = N(1), extentY = N(1);
+        Number ExtentX = N(1), ExtentY = N(1);
         {
-            KeyResult kr = block->GetKey(field, (uint8_t)TextureKey::Size);
-            if (ValueInfoType(kr.meta.Type) == (uint16_t)DataType::Vector && kr.data_ptr)
+            KeyResult Kr = Block->GetKey(Field, (uint8_t)TextureKey::Size);
+            if (ValueInfoType(Kr.Meta.Type) == (uint16_t)DataType::Vector && Kr.DataPtr)
             {
-                Vector<2> size = *reinterpret_cast<const Vector<2> *>(kr.data_ptr);
-                extentX = size[0];
-                extentY = size[1];
+                Vector<2> Size = *reinterpret_cast<const Vector<2> *>(Kr.DataPtr);
+                ExtentX = Size[0];
+                ExtentY = Size[1];
             }
-            else if (ValueInfoType(kr.meta.Type) == (uint16_t)DataType::Number && kr.data_ptr)
+            else if (ValueInfoType(Kr.Meta.Type) == (uint16_t)DataType::Number && Kr.DataPtr)
             {
-                extentX = extentY = *reinterpret_cast<const Number *>(kr.data_ptr);
+                ExtentX = ExtentY = *reinterpret_cast<const Number *>(Kr.DataPtr);
             }
         }
-        if (extentX.Value <= 0) extentX = N(1);
-        if (extentY.Value <= 0) extentY = N(1);
-        const Number invExtentX = N(1) / extentX; // constant per field: hoisted out of the loop
-        const Number invExtentY = N(1) / extentY;
-        for (uint16_t led = 0; led < LedNum; led++)
+        if (ExtentX.Value <= 0) ExtentX = N(1);
+        if (ExtentY.Value <= 0) ExtentY = N(1);
+        const Number InvExtentX = N(1) / ExtentX; // constant per field: hoisted out of the loop
+        const Number InvExtentY = N(1) / ExtentY;
+        for (uint16_t Led = 0; Led < LedNum; Led++)
         {
-            uint8_t a = Mask[led];
-            if (a == 0 || !LedPresent[led])
+            uint8_t a = Mask[Led];
+            if (a == 0 || !LedPresent[Led])
                 continue;
-            Vector<3> pp = combined * Vector<3>{Number(LedX[led]), Number(LedY[led]), N(1)};
-            Vector<2> p2 = {pp[0], pp[1]};
+            Vector<3> Pp = Combined * Vector<3>{Number(LedX[Led]), Number(LedY[Led]), N(1)};
+            Vector<2> P2 = {Pp[0], Pp[1]};
             // Linear uses the width alone; circular is an ellipse over both axes (a circle
             // when they are equal, e.g. a Number Size).
-            Number t = (type == Textures2D::GradientLinear)
-                ? LimitZeroToOne(p2[0] * invExtentX + N(0.5))
-                : LimitZeroToOne(Vector<2>{p2[0] * invExtentX, p2[1] * invExtentY}.norm2());
-            Buffer[led].Layer(Linearise(LerpColour(c1, c2, t)), ByteToPercent(a));
+            Number t = (Type == Textures2D::GradientLinear)
+                ? LimitZeroToOne(P2[0] * InvExtentX + N(0.5))
+                : LimitZeroToOne(Vector<2>{P2[0] * InvExtentX, P2[1] * InvExtentY}.Norm2());
+            Buffer[Led].Layer(Linearise(LerpColour(C1, C2, t)), ByteToPercent(a));
         }
         break;
     }
@@ -218,52 +218,52 @@ inline void Vysi1Display::RenderTextureField(DynamicBlockDescriptor *block, uint
     // geometries); the mask persists across texture fields, so an effect following a
     // Fill modifies that Fill's area. A Fill before an effect is the expected setup.
     case Textures2D::InvertColour:
-        for (uint16_t led = 0; led < LedNum; led++)
+        for (uint16_t Led = 0; Led < LedNum; Led++)
         {
-            if (Mask[led] == 0)
+            if (Mask[Led] == 0)
                 continue;
-            Buffer[led].R = (uint8_t)(255 - Buffer[led].R);
-            Buffer[led].G = (uint8_t)(255 - Buffer[led].G);
-            Buffer[led].B = (uint8_t)(255 - Buffer[led].B);
+            Buffer[Led].R = (uint8_t)(255 - Buffer[Led].R);
+            Buffer[Led].G = (uint8_t)(255 - Buffer[Led].G);
+            Buffer[Led].B = (uint8_t)(255 - Buffer[Led].B);
         }
         break;
 
     case Textures2D::HueShift:
     {
-        Number amount = block->GetKeyValue<Number>(field, (uint8_t)TextureKey::Amount, DataType::Number, N(0));
-        for (uint16_t led = 0; led < LedNum; led++)
+        Number Amount = Block->GetKeyValue<Number>(Field, (uint8_t)TextureKey::Amount, DataType::Number, N(0));
+        for (uint16_t Led = 0; Led < LedNum; Led++)
         {
-            if (Mask[led] == 0)
+            if (Mask[Led] == 0)
                 continue;
-            ShiftHue(Buffer[led], amount);
+            ShiftHue(Buffer[Led], Amount);
         }
         break;
     }
 
     case Textures2D::Contrast:
     {
-        Number amount = block->GetKeyValue<Number>(field, (uint8_t)TextureKey::Amount, DataType::Number, N(1));
-        for (uint16_t led = 0; led < LedNum; led++)
+        Number Amount = Block->GetKeyValue<Number>(Field, (uint8_t)TextureKey::Amount, DataType::Number, N(1));
+        for (uint16_t Led = 0; Led < LedNum; Led++)
         {
-            if (Mask[led] == 0)
+            if (Mask[Led] == 0)
                 continue;
-            Buffer[led].R = LimitByte(((Number(Buffer[led].R) - N(128)) * amount + N(128)).RoundToInt());
-            Buffer[led].G = LimitByte(((Number(Buffer[led].G) - N(128)) * amount + N(128)).RoundToInt());
-            Buffer[led].B = LimitByte(((Number(Buffer[led].B) - N(128)) * amount + N(128)).RoundToInt());
+            Buffer[Led].R = LimitByte(((Number(Buffer[Led].R) - N(128)) * Amount + N(128)).RoundToInt());
+            Buffer[Led].G = LimitByte(((Number(Buffer[Led].G) - N(128)) * Amount + N(128)).RoundToInt());
+            Buffer[Led].B = LimitByte(((Number(Buffer[Led].B) - N(128)) * Amount + N(128)).RoundToInt());
         }
         break;
     }
 
     case Textures2D::Brightness:
     {
-        Number amount = block->GetKeyValue<Number>(field, (uint8_t)TextureKey::Amount, DataType::Number, N(1));
-        for (uint16_t led = 0; led < LedNum; led++)
+        Number Amount = Block->GetKeyValue<Number>(Field, (uint8_t)TextureKey::Amount, DataType::Number, N(1));
+        for (uint16_t Led = 0; Led < LedNum; Led++)
         {
-            if (Mask[led] == 0)
+            if (Mask[Led] == 0)
                 continue;
-            Buffer[led].R = LimitByte((Number(Buffer[led].R) * amount).RoundToInt());
-            Buffer[led].G = LimitByte((Number(Buffer[led].G) * amount).RoundToInt());
-            Buffer[led].B = LimitByte((Number(Buffer[led].B) * amount).RoundToInt());
+            Buffer[Led].R = LimitByte((Number(Buffer[Led].R) * Amount).RoundToInt());
+            Buffer[Led].G = LimitByte((Number(Buffer[Led].G) * Amount).RoundToInt());
+            Buffer[Led].B = LimitByte((Number(Buffer[Led].B) * Amount).RoundToInt());
         }
         break;
     }
@@ -281,51 +281,51 @@ inline Matrix<3, 3> Vysi1Display::BaseTransform()
 }
 
 // Reads an integer (Index/Uint32) dictionary entry, else `def`.
-inline int32_t Vysi1Display::ReadKeyInt(DynamicBlockDescriptor *block, uint16_t field, uint8_t key, int32_t def)
+inline int32_t Vysi1Display::ReadKeyInt(DynamicBlockDescriptor *Block, uint16_t Field, uint8_t Key, int32_t Def)
 {
-    KeyResult res = block->GetKey(field, key);
-    if (res.data_ptr && res.data_len >= 4)
+    KeyResult Res = Block->GetKey(Field, Key);
+    if (Res.DataPtr && Res.DataLen >= 4)
     {
-        uint16_t t = ValueInfoType(res.meta.Type);
+        uint16_t t = ValueInfoType(Res.Meta.Type);
         if (t == (uint16_t)DataType::Index || t == (uint16_t)DataType::Uint32)
         {
             int32_t v;
-            memcpy(&v, res.data_ptr, 4);
+            memcpy(&v, Res.DataPtr, 4);
             return v;
         }
     }
-    return def;
+    return Def;
 }
 
 // Linear blend of two colours by t (0..1).
-inline ColourClass Vysi1Display::LerpColour(const ColourClass &c1, const ColourClass &c2, Number t)
+inline ColourClass Vysi1Display::LerpColour(const ColourClass &C1, const ColourClass &C2, Number t)
 {
-    ColourClass out;
-    out.R = (uint8_t)LimitByte((Number(c1.R) + (Number(c2.R) - Number(c1.R)) * t).RoundToInt());
-    out.G = (uint8_t)LimitByte((Number(c1.G) + (Number(c2.G) - Number(c1.G)) * t).RoundToInt());
-    out.B = (uint8_t)LimitByte((Number(c1.B) + (Number(c2.B) - Number(c1.B)) * t).RoundToInt());
-    out.A = (uint8_t)LimitByte((Number(c1.A) + (Number(c2.A) - Number(c1.A)) * t).RoundToInt());
-    return out;
+    ColourClass Out;
+    Out.R = (uint8_t)LimitByte((Number(C1.R) + (Number(C2.R) - Number(C1.R)) * t).RoundToInt());
+    Out.G = (uint8_t)LimitByte((Number(C1.G) + (Number(C2.G) - Number(C1.G)) * t).RoundToInt());
+    Out.B = (uint8_t)LimitByte((Number(C1.B) + (Number(C2.B) - Number(C1.B)) * t).RoundToInt());
+    Out.A = (uint8_t)LimitByte((Number(C1.A) + (Number(C2.A) - Number(C1.A)) * t).RoundToInt());
+    return Out;
 }
 
 // Rotates the colour's hue by `hueDeg` (RGB -> HSV -> rotate -> RGB, fixed point).
-inline void Vysi1Display::ShiftHue(ColourClass &c, Number hueDeg)
+inline void Vysi1Display::ShiftHue(ColourClass &c, Number HueDeg)
 {
     Number r = ByteToPercent(c.R), g = ByteToPercent(c.G), b = ByteToPercent(c.B);
-    Number mx = max(max(r, g), b), mn = min(min(r, g), b);
-    Number delta = mx - mn;
-    Number h = N(0), s = N(0), v = mx;
-    if (delta.Value > 0)
+    Number Mx = max(max(r, g), b), Mn = min(min(r, g), b);
+    Number Delta = Mx - Mn;
+    Number h = N(0), s = N(0), v = Mx;
+    if (Delta.Value > 0)
     {
-        s = delta / mx;
-        Number seg;
-        if (mx == r) seg = (g - b) / delta;
-        else if (mx == g) seg = N(2) + (b - r) / delta;
-        else seg = N(4) + (r - g) / delta;
-        h = seg / N(6);
+        s = Delta / Mx;
+        Number Seg;
+        if (Mx == r) Seg = (g - b) / Delta;
+        else if (Mx == g) Seg = N(2) + (b - r) / Delta;
+        else Seg = N(4) + (r - g) / Delta;
+        h = Seg / N(6);
         if (h.Value < 0) h = h + N(1);
     }
-    h = h + hueDeg / N(360);
+    h = h + HueDeg / N(360);
     if (h.Value >= 1) h = h - N(1);
     if (h.Value < 0) h = h + N(1);
 
@@ -335,27 +335,27 @@ inline void Vysi1Display::ShiftHue(ColourClass &c, Number hueDeg)
         return;
     }
 
-    Number h6 = h * N(6);
-    int i = h6.ToInt();
+    Number H6 = h * N(6);
+    int i = H6.ToInt();
     if (i < 0) i = 0;
     if (i > 5) i = 5;
-    Number f = h6 - Number(i);
+    Number f = H6 - Number(i);
     Number p = v * (N(1) - s);
     Number q = v * (N(1) - s * f);
-    Number tt = v * (N(1) - s * (N(1) - f));
-    Number cr = N(0), cg = N(0), cb = N(0);
+    Number Tt = v * (N(1) - s * (N(1) - f));
+    Number Cr = N(0), Cg = N(0), Cb = N(0);
     switch (i)
     {
-    case 0: cr = v; cg = tt; cb = p; break;
-    case 1: cr = q; cg = v; cb = p; break;
-    case 2: cr = p; cg = v; cb = tt; break;
-    case 3: cr = p; cg = q; cb = v; break;
-    case 4: cr = tt; cg = p; cb = v; break;
-    default: cr = v; cg = p; cb = q; break;
+    case 0: Cr = v; Cg = Tt; Cb = p; break;
+    case 1: Cr = q; Cg = v; Cb = p; break;
+    case 2: Cr = p; Cg = v; Cb = Tt; break;
+    case 3: Cr = p; Cg = q; Cb = v; break;
+    case 4: Cr = Tt; Cg = p; Cb = v; break;
+    default: Cr = v; Cg = p; Cb = q; break;
     }
-    c.R = (uint8_t)LimitByte((cr * N(255)).RoundToInt());
-    c.G = (uint8_t)LimitByte((cg * N(255)).RoundToInt());
-    c.B = (uint8_t)LimitByte((cb * N(255)).RoundToInt());
+    c.R = (uint8_t)LimitByte((Cr * N(255)).RoundToInt());
+    c.G = (uint8_t)LimitByte((Cg * N(255)).RoundToInt());
+    c.B = (uint8_t)LimitByte((Cb * N(255)).RoundToInt());
 }
 
 // Renders the configured render block into the LED buffer, applying brightness and gamma correction.
@@ -366,47 +366,47 @@ inline void Vysi1Display::Render()
     // frame or pixels not covered by the current render would keep stale colours.
     memset((void *)Buffer, 0, LedNum * sizeof(ColourClass));
 
-    if (Per.RenderBlock < 0 || Per.RenderBlock >= dynamic_block_registry.block_count)
+    if (Per.RenderBlock < 0 || Per.RenderBlock >= DynamicBlockRegistry.BlockCount)
         return;
-    DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock((uint16_t)Per.RenderBlock);
-    if (!block)
+    DynamicBlockDescriptor *Block = DynamicBlockRegistry.GetBlock((uint16_t)Per.RenderBlock);
+    if (!Block)
         return;
 
     // ---- geometry cache (mask): recompute only when the scene actually changed ----
-    const Matrix<2, 3> &off = Per.Offset;
-    bool offsetChanged = false;
+    const Matrix<2, 3> &Off = Per.Offset;
+    bool OffsetChanged = false;
     for (int i = 0; i < 6; i++)
-        if (off.buffer.data[i].Value != CacheOffset[i]) { offsetChanged = true; break; }
+        if (Off.Buffer.Data[i].Value != CacheOffset[i]) { OffsetChanged = true; break; }
 
-    if (!CacheValid || block != CacheBlockPtr || offsetChanged ||
-        block->generation != CacheBlockGen || LayoutGen != CacheLayoutGen)
+    if (!CacheValid || Block != CacheBlockPtr || OffsetChanged ||
+        Block->Generation != CacheBlockGen || LayoutGen != CacheLayoutGen)
     {
         for (int i = 0; i < 6; i++)
-            CacheOffset[i] = off.buffer.data[i].Value;
-        CacheBlockPtr = block;
-        CacheBlockGen = block->generation;
+            CacheOffset[i] = Off.Buffer.Data[i].Value;
+        CacheBlockPtr = Block;
+        CacheBlockGen = Block->Generation;
         CacheLayoutGen = LayoutGen;
         CacheValid = true;
 
         // Collect the block's distinct field indexes (the render "parts") and classify
         // each once; the per-frame pass below reuses this instead of re-reading the type.
         uint8_t Fields[MaxCachedFields];
-        CachedFieldCount = block->ListFields(Fields, MaxCachedFields);
+        CachedFieldCount = Block->ListFields(Fields, MaxCachedFields);
         if (CachedFieldCount > MaxCachedFields) CachedFieldCount = MaxCachedFields;
 
-        for (uint16_t fi = 0; fi < CachedFieldCount; fi++)
+        for (uint16_t Fi = 0; Fi < CachedFieldCount; Fi++)
         {
-            uint8_t f = Fields[fi];
-            CachedFields[fi] = f;
-            uint16_t t = ValueInfoType(block->GetKey(f, 0).meta.Type);
+            uint8_t f = Fields[Fi];
+            CachedFields[Fi] = f;
+            uint16_t t = ValueInfoType(Block->GetKey(f, 0).Meta.Type);
             if (t == (uint16_t)DataType::Geometry)
             {
-                CachedFieldKind[fi] = 1;
-                RenderGeometryField(block, f, fi);
+                CachedFieldKind[Fi] = 1;
+                RenderGeometryField(Block, f, Fi);
             }
             else
             {
-                CachedFieldKind[fi] = (t == (uint16_t)DataType::Texture) ? 2 : 0;
+                CachedFieldKind[Fi] = (t == (uint16_t)DataType::Texture) ? 2 : 0;
             }
         }
     }
@@ -414,14 +414,14 @@ inline void Vysi1Display::Render()
     // ---- per-frame field pass: build the mask (geometries) and fill it (textures) ----
     memset((void *)Mask, 0, LedNum);
     MaskAny = false;
-    for (uint16_t fi = 0; fi < CachedFieldCount; fi++)
+    for (uint16_t Fi = 0; Fi < CachedFieldCount; Fi++)
     {
-        uint8_t f = CachedFields[fi];
-        if (CachedFieldKind[fi] == 1)
-            ApplyGeometryField(block, f, fi);
-        else if (CachedFieldKind[fi] == 2)
+        uint8_t f = CachedFields[Fi];
+        if (CachedFieldKind[Fi] == 1)
+            ApplyGeometryField(Block, f, Fi);
+        else if (CachedFieldKind[Fi] == 2)
         {
-            RenderTextureField(block, f);
+            RenderTextureField(Block, f);
             // The mask persists: geometries accumulate into it and every texture/effect
             // applies within the same active region (docs "mask and fill").
         }
@@ -429,28 +429,28 @@ inline void Vysi1Display::Render()
 
     // The render buffer already holds linear LED duty (colours are linearised as they are
     // filled, see Linearise), so only scale by Brightness here.
-    Number brightness = Vol.Brightness;
-    if (brightness < N(0)) brightness = N(0);
-    if (brightness > N(100)) brightness = N(100);
+    Number Brightness = Vol.Brightness;
+    if (Brightness < N(0)) Brightness = N(0);
+    if (Brightness > N(100)) Brightness = N(100);
     // The layout file's brightness limit (Docs/Modules and blocks/LED display.md) is a 0-255
     // byte read as a percentage: it is the physical ceiling the board's current allows. The
     // register holds 0-100 % and maps linearly onto it, so 100 % reaches the layout maximum
     // (178 -> 70 %).
-    const Number limit((int32_t)(((uint32_t)BrightnessLimit * 100u + 127u) / 255u));
-    brightness = (brightness * limit) / 100;
+    const Number Limit((int32_t)(((uint32_t)BrightnessLimit * 100u + 127u) / 255u));
+    Brightness = (Brightness * Limit) / 100;
     // 256-scale so full brightness maps to exactly 255 after the >>8.
-    uint32_t brightness_scale = (brightness >= 100) ? 256 : ((brightness * 256) / 100).ToInt();
+    uint32_t BrightnessScale = (Brightness >= 100) ? 256 : ((Brightness * 256) / 100).ToInt();
 
     // Identity scale (>= 100%): (v * 256) >> 8 == v for every byte, so the whole pass
     // would just rewrite the buffer with itself.
-    if (brightness_scale >= 256)
+    if (BrightnessScale >= 256)
         return;
 
     for (uint16_t i = 0; i < LedNum; i++)
     {
-        uint32_t r = (Buffer[i].R * brightness_scale) >> 8;
-        uint32_t g = (Buffer[i].G * brightness_scale) >> 8;
-        uint32_t b = (Buffer[i].B * brightness_scale) >> 8;
+        uint32_t r = (Buffer[i].R * BrightnessScale) >> 8;
+        uint32_t g = (Buffer[i].G * BrightnessScale) >> 8;
+        uint32_t b = (Buffer[i].B * BrightnessScale) >> 8;
 
         Buffer[i].R = r > 255 ? 255 : r;
         Buffer[i].G = g > 255 ? 255 : g;

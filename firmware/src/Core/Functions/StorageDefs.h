@@ -46,19 +46,19 @@
 #define STORAGE_TABLE_SIZE (STORAGE_TABLE_PAGES * STORAGE_BLOCK_SIZE)
 
 // --- Flash access (implemented per device, see Devices/<device>/Storage.h) ---
-bool Storage_FlashInit();                              // find/open the storage partition
-uint32_t Storage_FlashRead(uint32_t offset, void *data, uint32_t size);   // Reads `size` bytes from flash at `offset`; returns bytes actually read (0 on failure)
-bool Storage_FlashWrite(uint32_t offset, const void *data, uint32_t size); // Writes `size` bytes to flash at `offset`
-bool Storage_FlashErase(uint32_t offset, uint32_t size);   // Erases `size` bytes of flash starting at `offset`
-bool Storage_FlashFormat();                            // Wipes the entire storage region (per-device)
+bool StorageFlashInit();                              // find/open the storage partition
+uint32_t StorageFlashRead(uint32_t Offset, void *Data, uint32_t Size);   // Reads `size` bytes from flash at `offset`; returns bytes actually read (0 on failure)
+bool StorageFlashWrite(uint32_t Offset, const void *Data, uint32_t Size); // Writes `size` bytes to flash at `offset`
+bool StorageFlashErase(uint32_t Offset, uint32_t Size);   // Erases `size` bytes of flash starting at `offset`
+bool StorageFlashFormat();                            // Wipes the entire storage region (per-device)
 
 // File record format (16 bytes, naturally 4-aligned, Docs/Services/Storage.md):
 // Offset is from flash start, Filesize in bytes, Name is 8 plain-text characters.
 struct FileRecord
 {
-    uint32_t offset;    // 0x00 = invalidated entry, 0xFFFFFFFF = unwritten slot
-    uint32_t size;
-    char name[8];
+    uint32_t Offset;    // 0x00 = invalidated entry, 0xFFFFFFFF = unwritten slot
+    uint32_t Size;
+    char Name[8];
 };
 
 #define TABLE_ENTRY_SIZE sizeof(FileRecord)
@@ -67,24 +67,24 @@ struct FileRecord
 // Plain `(size + STORAGE_BLOCK_SIZE - 1) / STORAGE_BLOCK_SIZE` overflows uint32 for sizes near
 // 0xFFFFFFFF (the Storage service passes untrusted sizes straight in), silently
 // yielding a tiny block count for a huge file.
-static inline uint32_t BlocksForSize(uint32_t size)
+static inline uint32_t BlocksForSize(uint32_t Size)
 {
-    if (size > (0xFFFFFFFFu - STORAGE_BLOCK_SIZE + 1))
+    if (Size > (0xFFFFFFFFu - STORAGE_BLOCK_SIZE + 1))
         return (0xFFFFFFFFu / STORAGE_BLOCK_SIZE) + 1; // saturate: no overflow
-    uint32_t blocks = (size + STORAGE_BLOCK_SIZE - 1) / STORAGE_BLOCK_SIZE;
-    if (blocks == 0) blocks = 1;
-    if (blocks > STORAGE_MAX_BLOCKS) blocks = STORAGE_MAX_BLOCKS;
-    return blocks;
+    uint32_t Blocks = (Size + STORAGE_BLOCK_SIZE - 1) / STORAGE_BLOCK_SIZE;
+    if (Blocks == 0) Blocks = 1;
+    if (Blocks > STORAGE_MAX_BLOCKS) Blocks = STORAGE_MAX_BLOCKS;
+    return Blocks;
 }
 
 // Clamps a file-relative byte range to the file's size without overflowing: `offset + length`
 // wraps for a huge length, which would let an out-of-range access pass a naive check. Returns
 // the clamped length; 0 means the offset is at or after the end.
-static inline uint32_t ClampFileLength(uint32_t offset, uint32_t length, uint32_t size)
+static inline uint32_t ClampFileLength(uint32_t Offset, uint32_t Length, uint32_t Size)
 {
-    if (offset >= size) return 0;
-    if (length > size - offset) return size - offset;
-    return length;
+    if (Offset >= Size) return 0;
+    if (Length > Size - Offset) return Size - Offset;
+    return Length;
 }
 
 // Number of 32-bit pointer slots in the first (pointer) page
@@ -92,32 +92,32 @@ static inline uint32_t ClampFileLength(uint32_t offset, uint32_t length, uint32_
 
 // File-table slot state (Docs/Services/Storage.md): offset 0x00 = invalidated entry,
 // 0xFFFFFFFF = unused slot, anything else = a real (page-aligned) flash offset.
-static inline bool FileSlotIsFree(uint32_t offset)
+static inline bool FileSlotIsFree(uint32_t Offset)
 {
-    return offset == 0x00 || offset == 0xFFFFFFFF;
+    return Offset == 0x00 || Offset == 0xFFFFFFFF;
 }
-static inline bool FileRecordIsValid(uint32_t offset)
+static inline bool FileRecordIsValid(uint32_t Offset)
 {
-    return !FileSlotIsFree(offset);
+    return !FileSlotIsFree(Offset);
 }
 
 // Copies a file name into the fixed 8-byte record form, null-padded to the full width
 // (B10: the pad byte is a null, not a space). A NUL terminator ends the name, and trailing
 // pad spaces are dropped first, so a name supplied either way (a plain C string, a
 // space-padded 8-byte buffer or the NUL-padded wire form) canonicalises to the same record.
-static inline void PackName(const char *plain, char out[8])
+static inline void PackName(const char *Plain, char Out[8])
 {
-    uint8_t len = 0;
-    if (plain)
+    uint8_t Len = 0;
+    if (Plain)
     {
-        while (len < 8 && plain[len]) len++;            // up to a NUL terminator or the width
-        while (len > 0 && plain[len - 1] == ' ') len--; // drop trailing pad spaces
+        while (Len < 8 && Plain[Len]) Len++;            // up to a NUL terminator or the width
+        while (Len > 0 && Plain[Len - 1] == ' ') Len--; // drop trailing pad spaces
     }
     uint8_t i = 0;
-    for (; i < len; i++)
-        out[i] = plain[i];
+    for (; i < Len; i++)
+        Out[i] = Plain[i];
     for (; i < 8; i++)
-        out[i] = 0x00;
+        Out[i] = 0x00;
 }
 
 // Compares an on-flash record name against a supplied name, ignoring the pad byte on both
@@ -126,17 +126,17 @@ static inline void PackName(const char *plain, char out[8])
 // against the C string's NUL terminator and always differed for names shorter than 8 chars -
 // which silently broke FindInFiletable/DeleteFile and left a new SUBREQ/.DT_/.DV_ record
 // behind on every save. Pack the plain name first so both sides use the same 8-byte form.
-static inline bool NameMatch(const char record[8], const char *plain)
+static inline bool NameMatch(const char Record[8], const char *Plain)
 {
     char packed[8];
-    PackName(plain, packed);
-    uint8_t record_len = 8;
-    while (record_len > 0 && (record[record_len - 1] == ' ' || record[record_len - 1] == 0x00))
-        record_len--;
-    uint8_t packed_len = 8;
-    while (packed_len > 0 && packed[packed_len - 1] == 0x00)
-        packed_len--;
-    if (record_len != packed_len) return false;
-    return memcmp(record, packed, record_len) == 0;
+    PackName(Plain, packed);
+    uint8_t RecordLen = 8;
+    while (RecordLen > 0 && (Record[RecordLen - 1] == ' ' || Record[RecordLen - 1] == 0x00))
+        RecordLen--;
+    uint8_t PackedLen = 8;
+    while (PackedLen > 0 && packed[PackedLen - 1] == 0x00)
+        PackedLen--;
+    if (RecordLen != PackedLen) return false;
+    return memcmp(Record, packed, RecordLen) == 0;
 }
 

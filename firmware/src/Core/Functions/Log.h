@@ -11,7 +11,7 @@
 // TEXTLESS builds (DAS) define DeviceLog as a no-op macro before including
 // this header - their formatted call sites only waste flash where no text is transmitted.
 #ifndef DEVICE_LOG_TEXTLESS
-void DeviceLog(const char *tag, const char *fmt, ...);
+void DeviceLog(const char *Tag, const char *Fmt, ...);
 // Logs `len` bytes of `data` as a hex dump under the given `tag`
 #endif
 
@@ -27,13 +27,13 @@ void DeviceLog(const char *tag, const char *fmt, ...);
 // to say which of the two it is.
 inline void ReportLog(const LogMessage &log, uint8_t Priority)
 {
-    LogMessage message = log;
-    message.timestamp = DeviceStatus.UptimeMs;
+    LogMessage Message = log;
+    Message.Timestamp = DeviceStatus.UptimeMs;
     PacketConstruct(&TxFrame, MakeId(0, 1), // 0.1 = the local core
                      MakeService(ServiceType::LogHandler, 0),
                      NextSystemTrid(ServiceType::LogHandler),
                      FLAG_START | FLAG_STOP,
-                     (const uint8_t *)&message, sizeof(LogMessage),
+                     (const uint8_t *)&Message, sizeof(LogMessage),
                      Priority);
     DispatchPacket(TxFrame);
 }
@@ -42,9 +42,9 @@ inline void ReportLog(const LogMessage &log, uint8_t Priority)
 // | Source Device | Count | Log Struct | = 16bit + 16bit + 64bit.
 typedef struct __attribute__((packed))
 {
-    uint16_t device_id;
-    uint16_t count;
-    LogMessage msg;
+    uint16_t DeviceId;
+    uint16_t Count;
+    LogMessage Msg;
 } LogRecord;
 
 // Heap-backed database sizing (Docs/Services/Log Handler.md): the database lives on the
@@ -94,32 +94,32 @@ inline void EnsureLogStorage()
 // first and only swapped in once every allocation succeeded, so a partial failure leaves the
 // live database exactly as it was (no half-grown buffer committed). The old blocks are freed
 // after the copy.
-inline bool GrowLogStorage(uint32_t new_capacity)
+inline bool GrowLogStorage(uint32_t NewCapacity)
 {
-    LogRecord *nb = (LogRecord *)malloc(new_capacity * sizeof(LogRecord));
-    bool *nu = (bool *)malloc(new_capacity * sizeof(bool));
-    uint32_t *ns = (uint32_t *)malloc(new_capacity * sizeof(uint32_t));
-    if (!nb || !nu || !ns)
+    LogRecord *Nb = (LogRecord *)malloc(NewCapacity * sizeof(LogRecord));
+    bool *Nu = (bool *)malloc(NewCapacity * sizeof(bool));
+    uint32_t *Ns = (uint32_t *)malloc(NewCapacity * sizeof(uint32_t));
+    if (!Nb || !Nu || !Ns)
     {
-        free(nb);
-        free(nu);
-        free(ns);
+        free(Nb);
+        free(Nu);
+        free(Ns);
         return false;
     }
 
-    memcpy(nb, LogBuffer, LogCapacity * sizeof(LogRecord));
-    memcpy(nu, LogUsed, LogCapacity * sizeof(bool));
-    memcpy(ns, LogSeq, LogCapacity * sizeof(uint32_t));
-    memset(nu + LogCapacity, 0, (new_capacity - LogCapacity) * sizeof(bool));
-    memset(ns + LogCapacity, 0, (new_capacity - LogCapacity) * sizeof(uint32_t));
+    memcpy(Nb, LogBuffer, LogCapacity * sizeof(LogRecord));
+    memcpy(Nu, LogUsed, LogCapacity * sizeof(bool));
+    memcpy(Ns, LogSeq, LogCapacity * sizeof(uint32_t));
+    memset(Nu + LogCapacity, 0, (NewCapacity - LogCapacity) * sizeof(bool));
+    memset(Ns + LogCapacity, 0, (NewCapacity - LogCapacity) * sizeof(uint32_t));
 
     free(LogBuffer);
     free(LogUsed);
     free(LogSeq);
-    LogBuffer = nb;
-    LogUsed = nu;
-    LogSeq = ns;
-    LogCapacity = new_capacity;
+    LogBuffer = Nb;
+    LogUsed = Nu;
+    LogSeq = Ns;
+    LogCapacity = NewCapacity;
     return true;
 }
 #endif

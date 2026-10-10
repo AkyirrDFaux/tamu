@@ -9,23 +9,23 @@
 
 // Auto-reload value for a frequency: period = SystemCoreClock / freq - 1, clamped to the
 // 16-bit timer range (the reference release's formula, at the 144 MHz HCLK).
-static uint32_t FanPeriodForFreq(uint32_t freq)
+static uint32_t FanPeriodForFreq(uint32_t Freq)
 {
-    const uint32_t min_freq = (SystemCoreClock / (FAN_PWM_PERIOD_MAX + 1u)); // lowest representable
-    if (freq < min_freq) freq = min_freq;
-    uint32_t period = (SystemCoreClock / freq);
-    if (period == 0) period = 1;
-    period -= 1;
-    if (period > FAN_PWM_PERIOD_MAX) period = FAN_PWM_PERIOD_MAX;
-    return period;
+    const uint32_t MinFreq = (SystemCoreClock / (FAN_PWM_PERIOD_MAX + 1u)); // lowest representable
+    if (Freq < MinFreq) Freq = MinFreq;
+    uint32_t Period = (SystemCoreClock / Freq);
+    if (Period == 0) Period = 1;
+    Period -= 1;
+    if (Period > FAN_PWM_PERIOD_MAX) Period = FAN_PWM_PERIOD_MAX;
+    return Period;
 }
 
 // Applies a new auto-reload value to TIM1 (channel 1 keeps its duty ratio until a duty write).
-static void FanApplyPeriod(uint32_t period)
+static void FanApplyPeriod(uint32_t Period)
 {
     TIM_TimeBaseInitTypeDef TIM_TimeBaseStructure = {0};
     TIM_TimeBaseStructure.TIM_Prescaler = 0;
-    TIM_TimeBaseStructure.TIM_Period = (uint16_t)period;
+    TIM_TimeBaseStructure.TIM_Period = (uint16_t)Period;
     TIM_TimeBaseStructure.TIM_ClockDivision = TIM_CKD_DIV1;
     TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
     TIM_TimeBaseInit(TIM1, &TIM_TimeBaseStructure);
@@ -42,7 +42,7 @@ void SetupFanPWM()
     GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
     GPIO_Init(GPIOA, &GPIO_InitStructure);
 
-    FanApplyPeriod(FanPeriodForFreq(staticPer.fan[0].PWMFreq));
+    FanApplyPeriod(FanPeriodForFreq(staticPer.Fan[0].PWMFreq));
 
     TIM_OCInitTypeDef TIM_OCInitStructure = {0};
     TIM_OCInitStructure.TIM_OCMode = TIM_OCMode_PWM1;
@@ -58,32 +58,32 @@ void SetupFanPWM()
 }
 
 // Reconfigures the fan PWM frequency (stored in the block) on TIM1.
-bool OnPWMFrequencyChange(const StaticBlockDescriptor &block, uint16_t index, const void *data, uint16_t data_len)
+bool OnPWMFrequencyChange(const StaticBlockDescriptor &Block, uint16_t Index, const void *Data, uint16_t DataLen)
 {
-    if (data_len != sizeof(uint32_t)) return false;
-    uint32_t new_freq = *static_cast<const uint32_t *>(data);
+    if (DataLen != sizeof(uint32_t)) return false;
+    uint32_t NewFreq = *static_cast<const uint32_t *>(Data);
 
-    FanApplyPeriod(FanPeriodForFreq(new_freq));
+    FanApplyPeriod(FanPeriodForFreq(NewFreq));
 
-    auto *fan = static_cast<PWMPersistent *>(block.PersistentData);
-    fan->PWMFreq = new_freq;
+    auto *Fan = static_cast<PWMPersistent *>(Block.PersistentData);
+    Fan->PWMFreq = NewFreq;
     return true;
 }
 
 // Clamps the new duty (0-100 %), converts it to the timer's compare value and applies it to
 // TIM1 CH1. The block field stores the CLAMPED value, so read-back matches what was applied.
-bool OnPWMDutyChange(const StaticBlockDescriptor &block, uint16_t index, const void *data, uint16_t data_len)
+bool OnPWMDutyChange(const StaticBlockDescriptor &Block, uint16_t Index, const void *Data, uint16_t DataLen)
 {
-    if (data_len != sizeof(uint32_t)) return false;
-    uint32_t new_duty = *static_cast<const uint32_t *>(data);
-    if (new_duty > 100) new_duty = 100;
+    if (DataLen != sizeof(uint32_t)) return false;
+    uint32_t NewDuty = *static_cast<const uint32_t *>(Data);
+    if (NewDuty > 100) NewDuty = 100;
 
-    uint32_t period = TIM1->ATRLR;
-    uint32_t duty = (new_duty * period) / 100u;
-    if (duty > period) duty = period;
-    TIM1->CH1CVR = (uint16_t)duty;
+    uint32_t Period = TIM1->ATRLR;
+    uint32_t Duty = (NewDuty * Period) / 100u;
+    if (Duty > Period) Duty = Period;
+    TIM1->CH1CVR = (uint16_t)Duty;
 
-    auto *fan = static_cast<PWMVolatile *>(block.VolatileData);
-    fan->Duty = new_duty;
+    auto *Fan = static_cast<PWMVolatile *>(Block.VolatileData);
+    Fan->Duty = NewDuty;
     return true;
 }

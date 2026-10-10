@@ -19,44 +19,44 @@
 #ifdef OPTIMIZE_SPEED
 namespace PacketDetail
 {
-constexpr uint8_t Crc8Step(uint8_t crc, uint8_t byte)
+constexpr uint8_t Crc8Step(uint8_t Crc, uint8_t Byte)
 {
-    crc ^= byte;
+    Crc ^= Byte;
     for (uint8_t j = 0; j < 8; j++)
-        crc = (crc & 0x80) ? (uint8_t)((crc << 1) ^ 0x07) : (uint8_t)(crc << 1);
-    return crc;
+        Crc = (Crc & 0x80) ? (uint8_t)((Crc << 1) ^ 0x07) : (uint8_t)(Crc << 1);
+    return Crc;
 }
 struct Crc8Table
 {
-    uint8_t entry[256];
-    constexpr Crc8Table() : entry()
+    uint8_t Entry[256];
+    constexpr Crc8Table() : Entry()
     {
-        for (int i = 0; i < 256; i++) entry[i] = Crc8Step(0, (uint8_t)i);
+        for (int i = 0; i < 256; i++) Entry[i] = Crc8Step(0, (uint8_t)i);
     }
 };
 inline constexpr Crc8Table kCrc8Table{};
 } // namespace PacketDetail
 #endif
 
-inline uint8_t Crc8(const uint8_t *data, uint16_t len)
+inline uint8_t Crc8(const uint8_t *Data, uint16_t Len)
 {
 #ifdef OPTIMIZE_SPEED
-    uint8_t crc = 0x00;
-    for (uint16_t i = 0; i < len; i++)
-        crc = PacketDetail::kCrc8Table.entry[crc ^ data[i]];
-    return crc;
+    uint8_t Crc = 0x00;
+    for (uint16_t i = 0; i < Len; i++)
+        Crc = PacketDetail::kCrc8Table.Entry[Crc ^ Data[i]];
+    return Crc;
 #else
-    uint8_t crc = 0x00;
-    for (uint16_t i = 0; i < len; i++)
+    uint8_t Crc = 0x00;
+    for (uint16_t i = 0; i < Len; i++)
     {
-        crc ^= data[i];
+        Crc ^= Data[i];
         for (uint8_t j = 0; j < 8; j++)
         {
-            if (crc & 0x80) crc = (crc << 1) ^ 0x07;
-            else crc <<= 1;
+            if (Crc & 0x80) Crc = (Crc << 1) ^ 0x07;
+            else Crc <<= 1;
         }
     }
-    return crc;
+    return Crc;
 #endif
 }
 

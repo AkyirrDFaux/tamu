@@ -12,11 +12,11 @@
 // System_Entries (the metadata is unified) and the caller has already resolved the entry, so this
 // only synthesises the value. The struct fields (0, 3, 4, 5) fill the whole struct; the struct
 // position is not on the wire.
-inline bool RegisterService::SystemFillValue(uint8_t field, uint8_t *vbuf) {
-    switch (field) {
+inline bool RegisterService::SystemFillValue(uint8_t Field, uint8_t *Vbuf) {
+    switch (Field) {
     case 0: { // Device Type struct: DeviceType | Capability | Software version
-        uint32_t dt = (uint32_t)kDeviceType;
-        uint32_t cap = kCapabilities;
+        uint32_t Dt = (uint32_t)kDeviceType;
+        uint32_t Cap = kCapabilities;
         // Software version YY:MM:DD:II (Docs/Services/System Block and Device Commands.md):
         // 7 year + 4 month + 5 day + 16 iteration bits = 32. scripts/version.py is the single
         // source of these field widths (VERSION_FIELDS + pack_version, which mirrors this code);
@@ -26,57 +26,57 @@ inline bool RegisterService::SystemFillValue(uint8_t field, uint8_t *vbuf) {
         static_assert(VERSION_MONTH <= 0x0Fu, "version month must fit 4 bits");
         static_assert(VERSION_DAY <= 0x1Fu, "version day must fit 5 bits");
         static_assert(VERSION_ITERATION <= 0xFFFFu, "version iteration must fit 16 bits");
-        uint32_t ver = ((uint32_t)(VERSION_YEAR & 0x7Fu) << 25) |
+        uint32_t Ver = ((uint32_t)(VERSION_YEAR & 0x7Fu) << 25) |
                        ((uint32_t)(VERSION_MONTH & 0x0Fu) << 21) |
                        ((uint32_t)(VERSION_DAY & 0x1Fu) << 16) |
                        ((uint32_t)(VERSION_ITERATION & 0xFFFFu));
-        memcpy(vbuf, &dt, 4);
-        memcpy(vbuf + 4, &cap, 4);
-        memcpy(vbuf + 8, &ver, 4);
+        memcpy(Vbuf, &Dt, 4);
+        memcpy(Vbuf + 4, &Cap, 4);
+        memcpy(Vbuf + 8, &Ver, 4);
         break;
     }
     case 1:
-        memcpy(vbuf, GetSerialNumber().Bytes, 14);
+        memcpy(Vbuf, GetSerialNumber().Bytes, 14);
         break;
     case 2: {
         uint16_t v = DeviceStatus.ShortAddress;
-        memcpy(vbuf, &v, 2);
+        memcpy(Vbuf, &v, 2);
         break;
     }
     case 3: { // Time struct: Uptime | Current time | Time offset | Loop time | Max Loop time
-        uint32_t up = TimeFromBoot();
-        uint32_t now = Now();
-        int32_t off = CurrentTimeOffsetMs();
-        memcpy(vbuf, &up, 4);
-        memcpy(vbuf + 4, &now, 4);
-        memcpy(vbuf + 8, &off, 4);
-        memcpy(vbuf + 12, &DeviceStatus.AvgLoopTimeMs, 4);
-        memcpy(vbuf + 16, &DeviceStatus.MaxLoopTimeMs, 4);
+        uint32_t Up = TimeFromBoot();
+        uint32_t NowMs = Now();
+        int32_t Off = CurrentTimeOffsetMs();
+        memcpy(Vbuf, &Up, 4);
+        memcpy(Vbuf + 4, &NowMs, 4);
+        memcpy(Vbuf + 8, &Off, 4);
+        memcpy(Vbuf + 12, &DeviceStatus.AvgLoopTimeMs, 4);
+        memcpy(Vbuf + 16, &DeviceStatus.MaxLoopTimeMs, 4);
         break;
     }
     case 4: { // RAM struct: Used | Total
         uint32_t Total = GetTotalRAM();
-        int32_t free_ram = GetFreeRAM();
+        int32_t FreeRam = GetFreeRAM();
         // The field is labelled Used|Total and shown as "Used RAM": report the used bytes,
         // clamped to zero when the free count is bogus/negative or exceeds the total.
-        int32_t used = (free_ram >= 0 && (uint32_t)free_ram < Total)
-                           ? (int32_t)(Total - (uint32_t)free_ram)
+        int32_t Used = (FreeRam >= 0 && (uint32_t)FreeRam < Total)
+                           ? (int32_t)(Total - (uint32_t)FreeRam)
                            : 0;
-        memcpy(vbuf, &used, 4);
-        memcpy(vbuf + 4, &Total, 4);
+        memcpy(Vbuf, &Used, 4);
+        memcpy(Vbuf + 4, &Total, 4);
         break;
     }
     case 5: { // FLASH struct: Used | Total
-        uint32_t used = Storage.UsedFlashBytes();
+        uint32_t Used = Storage.UsedFlashBytes();
         uint32_t Total = STORAGE_FLASH_SIZE;
-        memcpy(vbuf, &used, 4);
-        memcpy(vbuf + 4, &Total, 4);
+        memcpy(Vbuf, &Used, 4);
+        memcpy(Vbuf + 4, &Total, 4);
         break;
     }
 #ifdef TYPE_CORE
     case 8:
         // Docs/Services/System Block and Device Commands.md: App Active (No/USB/BLE), RO.
-        vbuf[0] = AppBLEActive() ? (uint8_t)AppActive::BLE
+        Vbuf[0] = AppBLEActive() ? (uint8_t)AppActive::BLE
                 : (AppUSBActive() ? (uint8_t)AppActive::USB : (uint8_t)AppActive::None);
         break;
 #endif
@@ -88,97 +88,97 @@ inline bool RegisterService::SystemFillValue(uint8_t field, uint8_t *vbuf) {
 
 // The System block as a static descriptor: System_Entries is the schema, Name/NetID are the
 // storage-backed persistent fields, and the computed fields come from SystemGet.
-inline void* RegisterService::SystemGet(uint16_t field, uint8_t key)
+inline void* RegisterService::SystemGet(uint16_t Field, uint8_t Key)
 {
-    (void)key; // the struct position is not addressed on the wire
-    if (field == SYSTEM_FIELD_NAME) return nullptr; // storage-backed (fixed 16-char field)
+    (void)Key; // the struct position is not addressed on the wire
+    if (Field == SYSTEM_FIELD_NAME) return nullptr; // storage-backed (fixed 16-char field)
 #ifdef TYPE_CORE
-    if (field == SYSTEM_FIELD_NETID)
+    if (Field == SYSTEM_FIELD_NETID)
     {
         // The live net (the stored value applies on reboot); the write stores it via a trigger.
         Register.NetId = DeviceStatus.NetId;
         return &Register.NetId;
     }
 #endif
-    if (!SystemFillValue((uint8_t)field, Register.SysValueBuf)) return nullptr;
+    if (!SystemFillValue((uint8_t)Field, Register.SysValueBuf)) return nullptr;
     return Register.SysValueBuf;
 }
 
 #ifdef TYPE_CORE
 // Docs: NetID 0 is unassigned and 0x3F is all-nets, so neither is a valid stored value. The
 // write stores it (applied on reboot) without touching the live DeviceStatus.NetId.
-inline bool RegisterService::OnSystemNetIdWrite(const StaticBlockDescriptor &block, uint16_t field, const void *data, uint16_t len) {
-    (void)block; (void)field;
-    if (len < 1) return false;
-    const uint8_t v = *static_cast<const uint8_t *>(data);
+inline bool RegisterService::OnSystemNetIdWrite(const StaticBlockDescriptor &Block, uint16_t Field, const void *Data, uint16_t Len) {
+    (void)Block; (void)Field;
+    if (Len < 1) return false;
+    const uint8_t v = *static_cast<const uint8_t *>(Data);
     if (v == 0 || v >= 0x3F) return false;
-    memcpy(&staticPer.system.NetId, data, 1);
+    memcpy(&staticPer.System.NetId, Data, 1);
     return true;
 }
-static const BlockTrigger System_Triggers[] = { { MakeFieldKey(SYSTEM_FIELD_NETID, 0), RegisterService::OnSystemNetIdWrite } };
+static const BlockTrigger SystemTriggers[] = { { MakeFieldKey(SYSTEM_FIELD_NETID, 0), RegisterService::OnSystemNetIdWrite } };
 #endif
 
-static const BlockSchema System_Schema = {
-    System_Entries, System_EntryCount,
+static const BlockSchema SystemSchema = {
+    SystemEntries, SystemEntryCount,
 #ifdef TYPE_CORE
-    System_Triggers, (uint16_t)(sizeof(System_Triggers) / sizeof(System_Triggers[0])),
+    SystemTriggers, (uint16_t)(sizeof(SystemTriggers) / sizeof(SystemTriggers[0])),
 #else
     nullptr, 0,
 #endif
     BlockType::System
 };
-static const StaticBlockDescriptor System_Block = {
-    nullptr, &staticPer, &System_Schema, "", RegisterService::SystemGet
+static const StaticBlockDescriptor SystemBlock = {
+    nullptr, &staticPer, &SystemSchema, "", RegisterService::SystemGet
 };
 
 // The descriptor for a (type, instance): the System block (type 0, inst 0) or a static registry
 // entry; nullptr when neither exists.
-inline const StaticBlockDescriptor* RegisterService::FindBlock(uint16_t type, uint8_t inst) {
-    if (type == 0 && inst == 0) return &System_Block;
-    int idx = FindStaticBlock(type, inst);
-    return idx >= 0 ? &static_block_registry[idx] : nullptr;
+inline const StaticBlockDescriptor* RegisterService::FindBlock(uint16_t Type, uint8_t Inst) {
+    if (Type == 0 && Inst == 0) return &SystemBlock;
+    int Idx = FindStaticBlock(Type, Inst);
+    return Idx >= 0 ? &StaticBlockRegistry[Idx] : nullptr;
 }
 
 #ifdef USE_DYNAMIC_BLOCKS
-inline void RegisterService::HandleDynamicBlockRead(const PacketFrame &frame, uint32_t bi, uint16_t inst, uint8_t field, uint8_t key) {
-    if (inst >= dynamic_block_registry.block_count) { RespondStatus(frame,false); return; }
-    DynamicBlockDescriptor *block = dynamic_block_registry.GetBlock(inst);
-    if (!block) { RespondStatus(frame,false); return; }
-    ReplyDynamicBlockOrField(frame, bi, *block, field, key);
+inline void RegisterService::HandleDynamicBlockRead(const PacketFrame &Frame, uint32_t Bi, uint16_t Inst, uint8_t Field, uint8_t Key) {
+    if (Inst >= DynamicBlockRegistry.BlockCount) { RespondStatus(Frame,false); return; }
+    DynamicBlockDescriptor *Block = DynamicBlockRegistry.GetBlock(Inst);
+    if (!Block) { RespondStatus(Frame,false); return; }
+    ReplyDynamicBlockOrField(Frame, Bi, *Block, Field, Key);
 }
 #endif
 
 #ifdef USE_SCRIPTS
 // Reads one entry of a loaded script (block type 0x3F4-0x3F7) or its block meta. The script's
 // input/output/variable/constant tables are addressed as fields 1-4 with key = index.
-inline void RegisterService::HandleScriptBlockRead(const PacketFrame &frame, uint32_t bi, uint16_t inst, uint8_t field, uint8_t key) {
-    LoadedScript *s = Script.Active(inst);
-    if (!s) { RespondStatus(frame,false); return; }
-    if (field == 0xFF) {
-        SendBlockMetaResponse(frame, bi, BlockTypeRange::ScriptTypeOf(inst), SCRIPT_FIELD_COUNT,
-                              s->name, (uint16_t)strlen(s->name));
+inline void RegisterService::HandleScriptBlockRead(const PacketFrame &Frame, uint32_t Bi, uint16_t Inst, uint8_t Field, uint8_t Key) {
+    LoadedScript *s = Script.Active(Inst);
+    if (!s) { RespondStatus(Frame,false); return; }
+    if (Field == 0xFF) {
+        SendBlockMetaResponse(Frame, Bi, BlockTypeRange::ScriptTypeOf(Inst), SCRIPT_FIELD_COUNT,
+                              s->Name, (uint16_t)strlen(s->Name));
         return;
     }
     ValueInfo m = {};
-    uint8_t vbuf[FIELD_RESPONSE_BUF_SIZE];
-    uint8_t vsz = 0;
-    if (!Script.GetEntry(inst, field, key, m, vbuf, vsz)) { RespondStatus(frame,false); return; }
-    FieldResult fr;
-    fr.Descriptor = m;
-    fr.Data = vbuf;
-    SendFieldResponse(frame, bi, fr);
+    uint8_t Vbuf[FIELD_RESPONSE_BUF_SIZE];
+    uint8_t Vsz = 0;
+    if (!Script.GetEntry(Inst, Field, Key, m, Vbuf, Vsz)) { RespondStatus(Frame,false); return; }
+    FieldResult Fr;
+    Fr.Descriptor = m;
+    Fr.Data = Vbuf;
+    SendFieldResponse(Frame, Bi, Fr);
 }
 #endif
 
-inline void RegisterService::HandleStaticBlockRead(const PacketFrame &frame, uint32_t bi, uint16_t type, uint8_t inst, uint8_t field, uint8_t key) {
-    const StaticBlockDescriptor *blk = FindBlock(type, inst);
-    if (!blk) { RespondStatus(frame,false); return; }
-    if (field==0xFF) { // block meta
-        SendBlockMetaResponse(frame, bi, (uint16_t)blk->Schema->Type, (uint8_t)blk->Schema->EntryCount,
-                              blk->Name, (uint16_t)strlen(blk->Name));
+inline void RegisterService::HandleStaticBlockRead(const PacketFrame &Frame, uint32_t Bi, uint16_t Type, uint8_t Inst, uint8_t Field, uint8_t Key) {
+    const StaticBlockDescriptor *Blk = FindBlock(Type, Inst);
+    if (!Blk) { RespondStatus(Frame,false); return; }
+    if (Field==0xFF) { // block meta
+        SendBlockMetaResponse(Frame, Bi, (uint16_t)Blk->Schema->Type, (uint8_t)Blk->Schema->EntryCount,
+                              Blk->Name, (uint16_t)strlen(Blk->Name));
         return;
     }
-    FieldResult fr = blk->Get(field, key);
-    if(!fr.Data) { RespondStatus(frame,false); return; }
-    SendFieldResponse(frame, bi, fr);
+    FieldResult Fr = Blk->Get(Field, Key);
+    if(!Fr.Data) { RespondStatus(Frame,false); return; }
+    SendFieldResponse(Frame, Bi, Fr);
 }

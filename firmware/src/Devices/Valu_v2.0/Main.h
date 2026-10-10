@@ -40,39 +40,39 @@ extern const uint32_t kCapabilities =
 // Reads the CH32V203 96-bit unique ID as the 14-byte serial number (cached, zero-padded).
 const SerialNumber &GetSerialNumber()
 {
-    static SerialNumber sn;
-    static bool init = false;
-    if (!init)
+    static SerialNumber Sn;
+    static bool Init = false;
+    if (!Init)
     {
-        memset(sn.Bytes, 0, sizeof(sn.Bytes));
-        memcpy(sn.Bytes, (const void *)CHIP_ID_ADDR, 12);
-        init = true;
+        memset(Sn.Bytes, 0, sizeof(Sn.Bytes));
+        memcpy(Sn.Bytes, (const void *)CHIP_ID_ADDR, 12);
+        Init = true;
     }
-    return sn;
+    return Sn;
 }
 
 // The static memory: two flat spaces (Docs/Services/Register.md "System + Static memory
 // blocks"). Persistent settings (mirrored 1:1 to .SV) and volatile values, stacked in
 // BlockInfo order (lowest BlockType first, instances contiguous per type).
 struct StaticPersistent {
-    SystemPersistent system;          // BlockType 0 (special)
-    PWMPersistent fan[1];             // BlockType 4
-    Vysi1Persistent display[2];       // BlockType 6
-    ResistiveMeasPersistent meas[3];  // BlockType 8
+    SystemPersistent System;          // BlockType 0 (special)
+    PWMPersistent Fan[1];             // BlockType 4
+    Vysi1Persistent Display[2];       // BlockType 6
+    ResistiveMeasPersistent Meas[3];  // BlockType 8
 };
 struct StaticVolatile {
     LEDButtonVolatile ledButton;      // BlockType 3
-    ButtonVolatile button[3];         // BlockType 9
-    PWMVolatile fan[1];               // BlockType 4
-    Vysi1Volatile display[2];         // BlockType 6
-    ResistiveMeasVolatile meas[3];    // BlockType 8
+    ButtonVolatile Button[3];         // BlockType 9
+    PWMVolatile Fan[1];               // BlockType 4
+    Vysi1Volatile Display[2];         // BlockType 6
+    ResistiveMeasVolatile Meas[3];    // BlockType 8
 };
 StaticPersistent staticPer = {
     // Name is a fixed 16-char null-padded field.
-    .system = {.Name = {'V','a','l','u',' ','v','2','.','0',' ',' ',' ',' ',' ',' ',' '}},
-    .fan = {},
-    .display = {},
-    .meas = {},
+    .System = {.Name = {'V','a','l','u',' ','v','2','.','0',' ',' ',' ',' ',' ',' ',' '}},
+    .Fan = {},
+    .Display = {},
+    .Meas = {},
 };
 StaticVolatile staticVol;
 
@@ -83,25 +83,25 @@ StaticVolatile staticVol;
 // Vysi1Display::s_instances, which the block's LayoutFile write trigger resolves the owner
 // from. No render/driver loop runs on this board yet (it has no WS2812 strip driver), so
 // the blocks are enumerable and writable but produce no light.
-Vysi1Display Display1(staticVol.display[0], staticPer.display[0]);
-Vysi1Display Display2(staticVol.display[1], staticPer.display[1]);
+Vysi1Display Display1(staticVol.Display[0], staticPer.Display[0]);
+Vysi1Display Display2(staticVol.Display[1], staticPer.Display[1]);
 
 // Registry order is load-bearing: the app reconstructs each entry's registry index from
 // its block type + per-type instance order, so keep the entries grouped by type, ascending
 // (LEDButton 0x03, PWM 0x04, Vysi1Display 0x06, ResistiveMeasure 0x08, Button 0x09).
-const StaticBlockDescriptor static_block_registry[] = {
-    {&staticVol.ledButton, nullptr, &LEDButton_Schema, "LEDButton"},
-    {&staticVol.fan[0], &staticPer.fan[0], &PWM_Schema, "Fan1"},
-    {&staticVol.display[0], &staticPer.display[0], &Vysi1_Schema, "LEDDisplay"},
-    {&staticVol.display[1], &staticPer.display[1], &Vysi1_Schema, "LEDDisplay2"},
-    {&staticVol.meas[0], &staticPer.meas[0], &ResistiveMeas_Schema, "Meas1"},
-    {&staticVol.meas[1], &staticPer.meas[1], &ResistiveMeas_Schema, "Meas2"},
-    {&staticVol.meas[2], &staticPer.meas[2], &ResistiveMeas_Schema, "Meas3"},
-    {&staticVol.button[0], nullptr, &Button_Schema, "Button1"},
-    {&staticVol.button[1], nullptr, &Button_Schema, "Button2"},
-    {&staticVol.button[2], nullptr, &Button_Schema, "Button3"},
+const StaticBlockDescriptor StaticBlockRegistry[] = {
+    {&staticVol.ledButton, nullptr, &LEDButtonSchema, "LEDButton"},
+    {&staticVol.Fan[0], &staticPer.Fan[0], &PWMSchema, "Fan1"},
+    {&staticVol.Display[0], &staticPer.Display[0], &Vysi1Schema, "LEDDisplay"},
+    {&staticVol.Display[1], &staticPer.Display[1], &Vysi1Schema, "LEDDisplay2"},
+    {&staticVol.Meas[0], &staticPer.Meas[0], &ResistiveMeasSchema, "Meas1"},
+    {&staticVol.Meas[1], &staticPer.Meas[1], &ResistiveMeasSchema, "Meas2"},
+    {&staticVol.Meas[2], &staticPer.Meas[2], &ResistiveMeasSchema, "Meas3"},
+    {&staticVol.Button[0], nullptr, &ButtonSchema, "Button1"},
+    {&staticVol.Button[1], nullptr, &ButtonSchema, "Button2"},
+    {&staticVol.Button[2], nullptr, &ButtonSchema, "Button3"},
 };
-const size_t static_block_num = sizeof(static_block_registry) / sizeof(StaticBlockDescriptor);
+const size_t StaticBlockNum = sizeof(StaticBlockRegistry) / sizeof(StaticBlockDescriptor);
 
 // The registry index of the LED-Button (the LED state lives on field 3); used to re-apply the
 // restored LED state after boot.
@@ -155,7 +155,7 @@ int main(void)
     Vysi1BootLayout(Display2);
 
     ButtonsInit();
-    Measuring_Init();
+    MeasuringInit();
     SetupFanPWM();
 
     // USB App Interface: allocate the TX ring (AppInterfaceInit) then bring the controller up.
@@ -171,11 +171,11 @@ int main(void)
 
     // Re-apply the restored LED state to the pin (the boot restore writes the RAM field but
     // does not re-run its write trigger).
-    OnLEDStateChange(static_block_registry[LEDBUTTON_REG_INDEX], 3,
+    OnLEDStateChange(StaticBlockRegistry[LEDBUTTON_REG_INDEX], 3,
                      (const void *)&staticVol.ledButton.LEDState, sizeof(bool));
 
-    uint32_t last_sample_ms[MEAS_CHANNEL_COUNT] = {0, 0, 0};
-    static bool s_ident_prev = false;
+    uint32_t LastSampleMs[MEAS_CHANNEL_COUNT] = {0, 0, 0};
+    static bool IdentPrev = false;
 
     while (1)
     {
@@ -187,32 +187,32 @@ int main(void)
         LEDButtonUpdate();
         Script.Tick(DeviceStatus.UptimeMs); // run loaded script programs (Docs/Services/Script.md)
 
-        uint32_t now_ms = Now();
+        uint32_t NowMs = Now();
 
         // Sample each resistive channel at its own configured rate.
-        for (uint8_t c = 0; c < MEAS_CHANNEL_COUNT; c++)
+        for (uint8_t C = 0; C < MEAS_CHANNEL_COUNT; C++)
         {
-            if ((now_ms - last_sample_ms[c]) >= SampleIntervalMs(c))
+            if ((NowMs - LastSampleMs[C]) >= SampleIntervalMs(C))
             {
-                last_sample_ms[c] = now_ms;
-                Measuring_Update(c, Meas_AdcRead(s_meas_adc_ch[c]));
+                LastSampleMs[C] = NowMs;
+                MeasuringUpdate(C, MeasAdcRead(MeasAdcCh[C]));
             }
         }
 
         // Red LED (LED-Button PA2), priority overlays like the other devices: an active
         // identify blink overrides the block's LEDState; otherwise the block value drives it.
-        bool ident = DeviceIdentifyActive(now_ms);
-        if (ident != s_ident_prev)
+        bool Ident = DeviceIdentifyActive(NowMs);
+        if (Ident != IdentPrev)
         {
-            if (!ident)
-                OnLEDStateChange(static_block_registry[LEDBUTTON_REG_INDEX], 3,
+            if (!Ident)
+                OnLEDStateChange(StaticBlockRegistry[LEDBUTTON_REG_INDEX], 3,
                                  (const void *)&staticVol.ledButton.LEDState, sizeof(bool));
-            s_ident_prev = ident;
+            IdentPrev = Ident;
         }
-        if (ident)
+        if (Ident)
         {
             PinModeOutput(VALU_LED_PORT, VALU_LED_PIN);
-            if (((now_ms / 100) & 1) == 0) PinHigh(VALU_LED_PORT, VALU_LED_PIN);
+            if (((NowMs / 100) & 1) == 0) PinHigh(VALU_LED_PORT, VALU_LED_PIN);
             else PinLow(VALU_LED_PORT, VALU_LED_PIN);
         }
 

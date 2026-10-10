@@ -13,37 +13,37 @@
 //
 // Host-testable on its own (no device dependency): see test/native/stride_test.cpp.
 
-inline uint16_t StrideAlign4(uint16_t size) { return (uint16_t)((size + 3u) & ~3u); }
+inline uint16_t StrideAlign4(uint16_t Size) { return (uint16_t)((Size + 3u) & ~3u); }
 
 // A four-space table holds one segment per space, in the fixed order inputs, outputs,
 // variables, constants, each with one entry per member plus a trailing total. These give the
 // segment bases (and the table size) from the counts, so the layout arithmetic lives in one
 // place instead of being open-coded at each lookup.
 inline uint16_t StrideInBase() { return 0; }
-inline uint16_t StrideOutBase(uint8_t inCount) { return (uint16_t)(inCount + 1); }
-inline uint16_t StrideVarBase(uint8_t inCount, uint8_t outCount) { return (uint16_t)(inCount + outCount + 2); }
-inline uint16_t StrideConstBase(uint8_t inCount, uint8_t outCount, uint8_t varCount)
+inline uint16_t StrideOutBase(uint8_t InCount) { return (uint16_t)(InCount + 1); }
+inline uint16_t StrideVarBase(uint8_t InCount, uint8_t OutCount) { return (uint16_t)(InCount + OutCount + 2); }
+inline uint16_t StrideConstBase(uint8_t InCount, uint8_t OutCount, uint8_t VarCount)
 {
-    return (uint16_t)(inCount + outCount + varCount + 3);
+    return (uint16_t)(InCount + OutCount + VarCount + 3);
 }
-inline uint16_t StrideTableSize(uint8_t inCount, uint8_t outCount, uint8_t varCount, uint8_t constCount)
+inline uint16_t StrideTableSize(uint8_t InCount, uint8_t OutCount, uint8_t VarCount, uint8_t ConstCount)
 {
-    return (uint16_t)(inCount + outCount + varCount + constCount + 4);
+    return (uint16_t)(InCount + OutCount + VarCount + ConstCount + 4);
 }
 
 // Writes the offsets of `count` entries into `table` starting at index `base`: entry i at
 // table[base + i] (relative to `start`), the space total at table[base + count] - so an index
 // equal to the count is still addressable and no bounds check is needed to read the total.
 // Returns the first free index after the segment.
-inline uint16_t StrideOffsetsBuild(uint16_t *table, uint16_t base, const ValueInfo *meta,
-                                   uint8_t count, uint16_t start)
+inline uint16_t StrideOffsetsBuild(uint16_t *Table, uint16_t Base, const ValueInfo *Meta,
+                                   uint8_t Count, uint16_t Start)
 {
-    uint16_t off = start;
-    for (uint8_t i = 0; i < count; i++)
+    uint16_t Off = Start;
+    for (uint8_t i = 0; i < Count; i++)
     {
-        table[base + i] = off;
-        off = (uint16_t)(off + StrideAlign4(meta[i].Size));
+        Table[Base + i] = Off;
+        Off = (uint16_t)(Off + StrideAlign4(Meta[i].Size));
     }
-    table[base + count] = off;
-    return (uint16_t)(base + count + 1);
+    Table[Base + Count] = Off;
+    return (uint16_t)(Base + Count + 1);
 }

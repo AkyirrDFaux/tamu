@@ -19,9 +19,9 @@ uint32_t Now()
 }
 
 // Blocks the task for `ms` milliseconds.
-void Sleep(uint32_t ms)
+void Sleep(uint32_t Ms)
 {
-    vTaskDelay(pdMS_TO_TICKS(ms));
+    vTaskDelay(pdMS_TO_TICKS(Ms));
 }
 
 // Returns the current amount of free heap memory.

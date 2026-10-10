@@ -9,24 +9,24 @@
 class StorageSystem
 {
 public:
-    uint32_t file_table_offset;  // Offset of the current file table (0 if none)
-    uint32_t file_table_size;    // Current file table size in bytes (multiple of STORAGE_BLOCK_SIZE)
+    uint32_t FileTableOffset;  // Offset of the current file table (0 if none)
+    uint32_t FileTableSize;    // Current file table size in bytes (multiple of STORAGE_BLOCK_SIZE)
 
     // Initializes flash access, recovers the file table and formats if none is valid.
     void Init()
     {
-        if (!Storage_FlashInit()) {
+        if (!StorageFlashInit()) {
             DeviceLog("STORAGE", "Storage flash not available!");
-            file_table_offset = 0;
-            file_table_size = 0;
+            FileTableOffset = 0;
+            FileTableSize = 0;
             return;
         }
 
         // An unreadable pointer (FindFiletable returns false) is treated like "no table":
         // the location is unknown, so (re)format rather than trust a partial result.
-        if (!FindFiletable(&file_table_offset))
-            file_table_offset = 0;
-        if (file_table_offset == 0 || !ValidateTable()) {
+        if (!FindFiletable(&FileTableOffset))
+            FileTableOffset = 0;
+        if (FileTableOffset == 0 || !ValidateTable()) {
             Format();
         }
     }
@@ -39,46 +39,46 @@ public:
     // only ever appends (older slots are never invalidated), so after an interrupted update
     // both can be valid and the newest (highest slot) must win - otherwise a crash would
     // silently boot the stale table while FindSpace considers the new table's pages free.
-    bool FindFiletable(uint32_t *offset)
+    bool FindFiletable(uint32_t *Offset)
     {
-        uint32_t slot = 0;
-        uint32_t newest = 0;
+        uint32_t Slot = 0;
+        uint32_t Newest = 0;
         for (uint32_t i = 0; i < PTR_SLOTS; i++) {
-            if (Storage_FlashRead(i * 4, &slot, sizeof(slot)) != sizeof(slot))
+            if (StorageFlashRead(i * 4, &Slot, sizeof(Slot)) != sizeof(Slot))
                 return false;
             // Track each valid slot (neither 0x00000000 nor 0xFFFFFFFF); later slots are newer.
-            if (slot != 0x00000000 && slot != 0xFFFFFFFF)
-                newest = slot;
+            if (Slot != 0x00000000 && Slot != 0xFFFFFFFF)
+                Newest = Slot;
         }
-        *offset = newest;
+        *Offset = Newest;
         return true;
     }
 
     // Appends a new table pointer to the first page (erasing it only when the last slot is
     // used; low-wear first page). Older slots are left untouched - the newest valid slot wins
     // on read (B13), so invalidating them is only unnecessary flash writes.
-    bool WriteTablePointer(uint32_t new_offset)
+    bool WriteTablePointer(uint32_t NewOffset)
     {
-        uint32_t slot = 0;
-        uint32_t write_slot = PTR_SLOTS;
+        uint32_t Slot = 0;
+        uint32_t WriteSlot = PTR_SLOTS;
         for (uint32_t i = 0; i < PTR_SLOTS; i++) {
-            if (Storage_FlashRead(i * 4, &slot, sizeof(slot)) != sizeof(slot))
+            if (StorageFlashRead(i * 4, &Slot, sizeof(Slot)) != sizeof(Slot))
                 return false;
-            if (slot == 0xFFFFFFFF) { // first unused slot
-                write_slot = i;
+            if (Slot == 0xFFFFFFFF) { // first unused slot
+                WriteSlot = i;
                 break;
             }
         }
 
-        if (write_slot == PTR_SLOTS) {
+        if (WriteSlot == PTR_SLOTS) {
             // Block is full, erase it and start fresh (erased flash is 0xFFFFFFFF = "unused").
-            if (!Storage_FlashErase(0, STORAGE_BLOCK_SIZE))
+            if (!StorageFlashErase(0, STORAGE_BLOCK_SIZE))
                 return false;
-            return Storage_FlashWrite(0, &new_offset, sizeof(uint32_t));
+            return StorageFlashWrite(0, &NewOffset, sizeof(uint32_t));
         }
 
         // Write new offset to the found slot; older slots are left untouched (newest wins).
-        return Storage_FlashWrite(write_slot * 4, &new_offset, sizeof(uint32_t));
+        return StorageFlashWrite(WriteSlot * 4, &NewOffset, sizeof(uint32_t));
     }
 
     // Finds the NEWEST file record matching `name`. Returns false when a flash read fails
@@ -86,19 +86,19 @@ public:
     // is the record index, or 0xFFFFFFFF when none. The newest (highest slot) wins so a
     // duplicate left by an older build cannot shadow the current file (RenameFile appends
     // the replacement).
-    bool FindInFiletable(const char name[8], uint32_t *index)
+    bool FindInFiletable(const char Name[8], uint32_t *Index)
     {
-        if (file_table_offset == 0) { *index = 0xFFFFFFFF; return true; }
-        uint32_t capacity = TableCapacity();
-        uint32_t found = 0xFFFFFFFF;
-        for (uint32_t i = 0; i < capacity; i++) {
-            FileRecord entry;
-            if (!ReadTableEntry(i, &entry))
+        if (FileTableOffset == 0) { *Index = 0xFFFFFFFF; return true; }
+        uint32_t Capacity = TableCapacity();
+        uint32_t Found = 0xFFFFFFFF;
+        for (uint32_t i = 0; i < Capacity; i++) {
+            FileRecord Entry;
+            if (!ReadTableEntry(i, &Entry))
                 return false;
-            if (FileRecordIsValid(entry.offset) && NameMatch(entry.name, name))
-                found = i;
+            if (FileRecordIsValid(Entry.Offset) && NameMatch(Entry.Name, Name))
+                Found = i;
         }
-        *index = found;
+        *Index = Found;
         return true;
     }
 
@@ -106,37 +106,37 @@ public:
     // Returns false when a flash read fails; on success `*index` is that slot, or the
     // capacity when the table is full. Invalidated (0x00) holes are never reused, so this
     // is the append position.
-    bool GetEndOfFiletable(uint32_t *index)
+    bool GetEndOfFiletable(uint32_t *Index)
     {
-        if (file_table_offset == 0) { *index = 0; return true; }
-        uint32_t capacity = TableCapacity();
-        for (uint32_t i = 0; i < capacity; i++) {
-            FileRecord entry;
-            if (!ReadTableEntry(i, &entry))
+        if (FileTableOffset == 0) { *Index = 0; return true; }
+        uint32_t Capacity = TableCapacity();
+        for (uint32_t i = 0; i < Capacity; i++) {
+            FileRecord Entry;
+            if (!ReadTableEntry(i, &Entry))
                 return false;
-            if (entry.offset == 0xFFFFFFFF) { *index = i; return true; }
+            if (Entry.Offset == 0xFFFFFFFF) { *Index = i; return true; }
         }
-        *index = capacity;
+        *Index = Capacity;
         return true;
     }
 
     // Writes a new file record at the end of the table. If no space is available, the table
     // is filtered and moved (MoveFiletable), then the write is retried.
-    bool WriteFileRecord(const FileRecord &new_record)
+    bool WriteFileRecord(const FileRecord &NewRecord)
     {
-        uint32_t slot;
-        if (!GetEndOfFiletable(&slot))
+        uint32_t Slot;
+        if (!GetEndOfFiletable(&Slot))
             return false;
-        if (slot >= TableCapacity()) {
+        if (Slot >= TableCapacity()) {
             if (!MoveFiletable())
                 return false;
-            if (!GetEndOfFiletable(&slot))
+            if (!GetEndOfFiletable(&Slot))
                 return false;
-            if (slot >= TableCapacity())
+            if (Slot >= TableCapacity())
                 return false;
         }
-        return Storage_FlashWrite(file_table_offset + slot * TABLE_ENTRY_SIZE,
-                                  &new_record, TABLE_ENTRY_SIZE);
+        return StorageFlashWrite(FileTableOffset + Slot * TABLE_ENTRY_SIZE,
+                                  &NewRecord, TABLE_ENTRY_SIZE);
     }
 
     // Invalidates EVERY file record matching `name` in place by zeroing the offset word
@@ -145,46 +145,46 @@ public:
     // the size is left in place). All matches are removed so pre-existing duplicates are
     // fully deleted, not just the newest one.
     template <typename Match>
-    bool DeleteMatching(Match matches)
+    bool DeleteMatching(Match Matches)
     {
-        if (file_table_offset == 0) return true;
-        uint32_t capacity = TableCapacity();
-        for (uint32_t i = 1; i < capacity; i++) { // entry 0 (the table) is never deleted
-            FileRecord entry;
-            if (!ReadTableEntry(i, &entry))
+        if (FileTableOffset == 0) return true;
+        uint32_t Capacity = TableCapacity();
+        for (uint32_t i = 1; i < Capacity; i++) { // entry 0 (the table) is never deleted
+            FileRecord Entry;
+            if (!ReadTableEntry(i, &Entry))
                 return false;
-            if (FileSlotIsFree(entry.offset)) continue;
-            if (!matches(entry.name)) continue;
-            uint32_t zero = 0x00000000;
-            if (!Storage_FlashWrite(file_table_offset + i * TABLE_ENTRY_SIZE, &zero, sizeof(zero)))
+            if (FileSlotIsFree(Entry.Offset)) continue;
+            if (!Matches(Entry.Name)) continue;
+            uint32_t Zero = 0x00000000;
+            if (!StorageFlashWrite(FileTableOffset + i * TABLE_ENTRY_SIZE, &Zero, sizeof(Zero)))
                 return false;
         }
         return true; // already gone is fine
     }
 
-    bool DeleteFileRecord(const char name[8])
+    bool DeleteFileRecord(const char Name[8])
     {
-        return DeleteMatching([&](const char *n) { return NameMatch(n, name); });
+        return DeleteMatching([&](const char *n) { return NameMatch(n, Name); });
     }
 
     // Invalidates every live record whose name satisfies `matches`, except the freshly appended
     // generation at `keep_index`. Zeroes the offset word only (as every invalidation path does),
     // so a replaced generation is never mistaken for the current file.
     template <typename Match>
-    bool InvalidateMatchingExcept(Match matches, uint32_t keep_index)
+    bool InvalidateMatchingExcept(Match Matches, uint32_t KeepIndex)
     {
-        if (file_table_offset == 0) return true;
-        uint32_t capacity = TableCapacity();
-        uint32_t zero = 0x00000000;
-        for (uint32_t i = 0; i < capacity; i++) {
-            if (i == keep_index) continue;
+        if (FileTableOffset == 0) return true;
+        uint32_t Capacity = TableCapacity();
+        uint32_t Zero = 0x00000000;
+        for (uint32_t i = 0; i < Capacity; i++) {
+            if (i == KeepIndex) continue;
             FileRecord e;
             if (!ReadTableEntry(i, &e))
                 return false;
-            if (FileSlotIsFree(e.offset)) continue;
-            if (!matches(e.name)) continue;
-            if (!Storage_FlashWrite(file_table_offset + i * TABLE_ENTRY_SIZE,
-                                    &zero, sizeof(zero)))
+            if (FileSlotIsFree(e.Offset)) continue;
+            if (!Matches(e.Name)) continue;
+            if (!StorageFlashWrite(FileTableOffset + i * TABLE_ENTRY_SIZE,
+                                    &Zero, sizeof(Zero)))
                 return false;
         }
         return true;
@@ -193,15 +193,15 @@ public:
     // Calls `fn(name)` once for every live file record. A superseded record for the same
     // name can linger until the next save, so a name may repeat; callers that care dedupe.
     template <typename F>
-    void ForEachFile(F fn)
+    void ForEachFile(F Fn)
     {
-        if (file_table_offset == 0) return;
-        uint32_t capacity = TableCapacity();
-        for (uint32_t i = 1; i < capacity; i++) { // entry 0 (the table) is not a file
-            FileRecord entry;
-            if (!ReadTableEntry(i, &entry)) return;
-            if (FileSlotIsFree(entry.offset)) continue;
-            fn(entry.name);
+        if (FileTableOffset == 0) return;
+        uint32_t Capacity = TableCapacity();
+        for (uint32_t i = 1; i < Capacity; i++) { // entry 0 (the table) is not a file
+            FileRecord Entry;
+            if (!ReadTableEntry(i, &Entry)) return;
+            if (FileSlotIsFree(Entry.Offset)) continue;
+            Fn(Entry.Name);
         }
     }
 
@@ -212,33 +212,33 @@ public:
     // record invalidation, so a power cut leaves readers resolving either the old or the
     // new name to a complete file. An existing `new_name` is replaced (its previous data
     // area becomes unreferenced and therefore free for future allocation).
-    bool RenameFile(const char old_name[8], const char new_name[8])
+    bool RenameFile(const char OldName[8], const char NewName[8])
     {
-        uint32_t src;
-        if (!FindInFiletable(old_name, &src) || src == 0xFFFFFFFF || src == 0)
+        uint32_t Src;
+        if (!FindInFiletable(OldName, &Src) || Src == 0xFFFFFFFF || Src == 0)
             return false; // read failure / missing / the table itself
 
-        FileRecord entry;
-        if (!ReadTableEntry(src, &entry)) return false;
+        FileRecord Entry;
+        if (!ReadTableEntry(Src, &Entry)) return false;
 
-        FileRecord rec = entry;
+        FileRecord Rec = Entry;
         // Space-pad the new name: the caller passes a plain C string and a raw
         // memcpy would copy its NUL terminator into the record (breaking later
         // 8-byte memcmp lookups and the app's file-type detection).
-        PackName(new_name, rec.name);
-        if (!WriteFileRecord(rec))
+        PackName(NewName, Rec.Name);
+        if (!WriteFileRecord(Rec))
             return false;
 
         // The appended record sits at the current end; invalidate every OTHER valid
         // record still carrying either name (the previous generation under each). If the
         // end cannot be re-read the new record stays live and the old one is untouched
         // (no data loss); report the failure.
-        uint32_t appended;
-        if (!GetEndOfFiletable(&appended) || appended == 0)
+        uint32_t Appended;
+        if (!GetEndOfFiletable(&Appended) || Appended == 0)
             return false;
         return InvalidateMatchingExcept(
-            [&](const char *n) { return NameMatch(n, old_name) || NameMatch(n, new_name); },
-            appended - 1);
+            [&](const char *n) { return NameMatch(n, OldName) || NameMatch(n, NewName); },
+            Appended - 1);
     }
 
     // Moves the full table into a fresh area of the same, fixed size (B15). Finds a new
@@ -246,49 +246,49 @@ public:
     // (compacting out the holes), then appends the new first-page pointer.
     bool MoveFiletable()
     {
-        uint32_t capacity = TableCapacity();
-        if (capacity == 0) return false;
+        uint32_t Capacity = TableCapacity();
+        if (Capacity == 0) return false;
 
-        uint32_t new_size = file_table_size; // fixed per device (STORAGE_TABLE_SIZE)
+        uint32_t NewSize = FileTableSize; // fixed per device (STORAGE_TABLE_SIZE)
 
-        uint32_t new_offset = FindSpace(new_size);
-        if (new_offset == 0) return false; // Out of space
+        uint32_t NewOffset = FindSpace(NewSize);
+        if (NewOffset == 0) return false; // Out of space
 
-        if (!Storage_FlashErase(new_offset, new_size))
+        if (!StorageFlashErase(NewOffset, NewSize))
             return false;
 
         // Entry 0: self-describing table (points to its own location and length)
-        FileRecord entry0;
-        memset(&entry0, 0xFF, sizeof(entry0));
-        entry0.offset = new_offset;
-        entry0.size = new_size;
-        memcpy(entry0.name, ".TABLE  ", 8);
-        if (!Storage_FlashWrite(new_offset, &entry0, TABLE_ENTRY_SIZE))
+        FileRecord Entry0;
+        memset(&Entry0, 0xFF, sizeof(Entry0));
+        Entry0.Offset = NewOffset;
+        Entry0.Size = NewSize;
+        memcpy(Entry0.Name, ".TABLE  ", 8);
+        if (!StorageFlashWrite(NewOffset, &Entry0, TABLE_ENTRY_SIZE))
             return false;
 
         // Copy valid entries (dense, skipping holes); entry 0 is regenerated above.
-        uint32_t dest = 1;
-        for (uint32_t i = 0; i < capacity; i++) {
+        uint32_t Dest = 1;
+        for (uint32_t i = 0; i < Capacity; i++) {
             if (i == 0) continue;
-            FileRecord entry;
-            if (!ReadTableEntry(i, &entry))
+            FileRecord Entry;
+            if (!ReadTableEntry(i, &Entry))
                 return false;
-            if (!FileRecordIsValid(entry.offset)) continue;
-            if (dest * TABLE_ENTRY_SIZE >= new_size)
+            if (!FileRecordIsValid(Entry.Offset)) continue;
+            if (Dest * TABLE_ENTRY_SIZE >= NewSize)
                 return false;
-            if (!Storage_FlashWrite(new_offset + dest * TABLE_ENTRY_SIZE, &entry, TABLE_ENTRY_SIZE))
+            if (!StorageFlashWrite(NewOffset + Dest * TABLE_ENTRY_SIZE, &Entry, TABLE_ENTRY_SIZE))
                 return false;
-            dest++;
+            Dest++;
         }
 
         // Point at the new table (the old pointer slot is left in place; newest wins).
-        if (!WriteTablePointer(new_offset))
+        if (!WriteTablePointer(NewOffset))
             return false;
 
-        file_table_offset = new_offset;
-        file_table_size = new_size;
-        DeviceLog("STORAGE", "Table moved to 0x%x (%d B)", (unsigned)new_offset,
-                  (int)new_size);
+        FileTableOffset = NewOffset;
+        FileTableSize = NewSize;
+        DeviceLog("STORAGE", "Table moved to 0x%x (%d B)", (unsigned)NewOffset,
+                  (int)NewSize);
         return true;
     }
 
@@ -300,52 +300,52 @@ public:
     // room. Size builds (the DAS and any space-constrained target) do a linear first-fit,
     // re-reading the table once per candidate page through BlockUsed; the extra flash reads
     // are negligible on a small device and the code is a fraction of the bitmap shape.
-    uint32_t FindSpace(uint32_t size_bytes)
+    uint32_t FindSpace(uint32_t SizeBytes)
     {
-        uint32_t blocks = BlocksForSize(size_bytes);
+        uint32_t Blocks = BlocksForSize(SizeBytes);
 
-        uint32_t data_start = DataStart();
-        uint32_t data_end = DataEnd();
-        if (data_end <= data_start)
+        uint32_t DataAreaStart = DataStart();
+        uint32_t DataAreaEnd = DataEnd();
+        if (DataAreaEnd <= DataAreaStart)
             return 0;
-        uint32_t num_blocks = (data_end - data_start) / STORAGE_BLOCK_SIZE;
-        if (blocks > num_blocks)
+        uint32_t NumBlocks = (DataAreaEnd - DataAreaStart) / STORAGE_BLOCK_SIZE;
+        if (Blocks > NumBlocks)
             return 0;
 
 #ifdef OPTIMIZE_SPEED
         // Build the usage bitmap directly from the file table (~entries, not
         // num_blocks x entries): per-candidate BlockUsed() rescans the whole table each time.
-        uint8_t used_bitmap[(STORAGE_MAX_BLOCKS + 7) / 8] = {0};
-        auto markUsed = [&](uint32_t start, uint32_t nblocks)
+        uint8_t UsedBitmap[(STORAGE_MAX_BLOCKS + 7) / 8] = {0};
+        auto MarkUsed = [&](uint32_t Start, uint32_t Nblocks)
         {
-            if (start < data_start || start >= data_end) return; // outside the data area
-            uint32_t first = (start - data_start) / STORAGE_BLOCK_SIZE;
-            for (uint32_t k = 0; k < nblocks && first + k < num_blocks; k++)
-                used_bitmap[(first + k) >> 3] |= (uint8_t)(1u << ((first + k) & 7));
+            if (Start < DataAreaStart || Start >= DataAreaEnd) return; // outside the data area
+            uint32_t First = (Start - DataAreaStart) / STORAGE_BLOCK_SIZE;
+            for (uint32_t k = 0; k < Nblocks && First + k < NumBlocks; k++)
+                UsedBitmap[(First + k) >> 3] |= (uint8_t)(1u << ((First + k) & 7));
         };
         for (uint32_t i = 0; i < TableCapacity(); i++)
         {
-            FileRecord entry;
-            if (!ReadTableEntry(i, &entry)) return 0; // unreadable table: no space is safe
-            if (FileSlotIsFree(entry.offset)) continue;
-            uint32_t blocks = BlocksForSize(entry.size);
-            if (blocks == 0) blocks = 1;
-            markUsed(entry.offset, blocks);
+            FileRecord Entry;
+            if (!ReadTableEntry(i, &Entry)) return 0; // unreadable table: no space is safe
+            if (FileSlotIsFree(Entry.Offset)) continue;
+            uint32_t Blocks = BlocksForSize(Entry.Size);
+            if (Blocks == 0) Blocks = 1;
+            MarkUsed(Entry.Offset, Blocks);
         }
-        if (pending_blocks)
-            markUsed(pending_offset, pending_blocks);
+        if (PendingBlocks)
+            MarkUsed(PendingOffset, PendingBlocks);
 
-        uint32_t best_offset = 0;
-        uint32_t best_run = 0;
+        uint32_t BestOffset = 0;
+        uint32_t BestRun = 0;
 
         // Scan free runs starting at the wear cursor (wrapping) so allocation placement
         // rotates across the storage over time, then pick the best-fit run.
-        for (uint32_t scanned = 0; scanned < num_blocks; ) {
-            uint32_t idx = (wear_cursor + scanned) % num_blocks;
-            uint32_t block_offset = data_start + idx * STORAGE_BLOCK_SIZE;
+        for (uint32_t Scanned = 0; Scanned < NumBlocks; ) {
+            uint32_t Idx = (WearCursor + Scanned) % NumBlocks;
+            uint32_t BlockOffset = DataAreaStart + Idx * STORAGE_BLOCK_SIZE;
 
-            if (used_bitmap[idx >> 3] & (1u << (idx & 7))) {
-                scanned++;
+            if (UsedBitmap[Idx >> 3] & (1u << (Idx & 7))) {
+                Scanned++;
                 continue;
             }
 
@@ -355,45 +355,45 @@ public:
             // allocate pages that physically live at the start of storage, outside the
             // file's linear range - invisible to BlockUsed (double-allocation) and
             // unreadable/unwritable through the file API.
-            uint32_t run = 0;
-            while (run < num_blocks)
+            uint32_t Run = 0;
+            while (Run < NumBlocks)
             {
-                uint32_t probe = idx + run;
-                if (probe >= num_blocks) break;
-                if (used_bitmap[probe >> 3] & (1u << (probe & 7)))
+                uint32_t Probe = Idx + Run;
+                if (Probe >= NumBlocks) break;
+                if (UsedBitmap[Probe >> 3] & (1u << (Probe & 7)))
                     break;
-                run++;
+                Run++;
             }
 
-            if (run >= blocks && (best_offset == 0 || run < best_run)) {
-                best_offset = block_offset;
-                best_run = run;
+            if (Run >= Blocks && (BestOffset == 0 || Run < BestRun)) {
+                BestOffset = BlockOffset;
+                BestRun = Run;
             }
-            scanned += run; // skip the measured run
+            Scanned += Run; // skip the measured run
         }
 
-        if (best_offset == 0)
+        if (BestOffset == 0)
             return 0;
 
         // Advance the wear cursor past the allocated run so the next allocation starts later.
-        uint32_t idx = (best_offset - data_start) / STORAGE_BLOCK_SIZE;
-        wear_cursor = (idx + blocks) % num_blocks;
-        return best_offset;
+        uint32_t Idx = (BestOffset - DataAreaStart) / STORAGE_BLOCK_SIZE;
+        WearCursor = (Idx + Blocks) % NumBlocks;
+        return BestOffset;
 #else
         // Size variant: first-fit linear scan from the wear cursor. A run must not wrap past
         // the data end (files are a linear [offset, offset+blocks*PAGE) range).
-        for (uint32_t scanned = 0; scanned < num_blocks; scanned++)
+        for (uint32_t Scanned = 0; Scanned < NumBlocks; Scanned++)
         {
-            uint32_t idx = (wear_cursor + scanned) % num_blocks;
-            if (idx + blocks > num_blocks)
+            uint32_t Idx = (WearCursor + Scanned) % NumBlocks;
+            if (Idx + Blocks > NumBlocks)
                 continue; // would wrap the linear data area
-            uint32_t run = 0;
-            while (run < blocks && !BlockUsed(data_start + (idx + run) * STORAGE_BLOCK_SIZE))
-                run++;
-            if (run == blocks)
+            uint32_t Run = 0;
+            while (Run < Blocks && !BlockUsed(DataAreaStart + (Idx + Run) * STORAGE_BLOCK_SIZE))
+                Run++;
+            if (Run == Blocks)
             {
-                wear_cursor = (idx + blocks) % num_blocks;
-                return data_start + idx * STORAGE_BLOCK_SIZE;
+                WearCursor = (Idx + Blocks) % NumBlocks;
+                return DataAreaStart + Idx * STORAGE_BLOCK_SIZE;
             }
         }
         return 0;
@@ -401,111 +401,111 @@ public:
     }
 
     // Creates a file of `size` bytes; returns true on success.
-    bool CreateFile(const char name[8], uint32_t size)
+    bool CreateFile(const char Name[8], uint32_t Size)
     {
         // A zero-size file cannot exist (Docs/Services/Storage.md: Create File - "Size (>0)").
-        if (size == 0) return false;
+        if (Size == 0) return false;
 
         // Refuse a duplicate (and any unreadable table: a read failure must not create a
         // second record for a name that might already exist).
-        uint32_t existing;
-        if (!FindInFiletable(name, &existing) || existing != 0xFFFFFFFF)
+        uint32_t Existing;
+        if (!FindInFiletable(Name, &Existing) || Existing != 0xFFFFFFFF)
             return false;
 
-        uint32_t data_offset = FindSpace(size);
-        if (data_offset == 0) return false; // Out of space
+        uint32_t DataOffset = FindSpace(Size);
+        if (DataOffset == 0) return false; // Out of space
 
-        uint32_t data_blocks = BlocksForSize(size);
-        if (!Storage_FlashErase(data_offset, data_blocks * STORAGE_BLOCK_SIZE))
+        uint32_t DataBlocks = BlocksForSize(Size);
+        if (!StorageFlashErase(DataOffset, DataBlocks * STORAGE_BLOCK_SIZE))
             return false;
 
-        FileRecord new_record;
-        new_record.offset = data_offset;
-        new_record.size = size;
-        PackName(name, new_record.name);
+        FileRecord NewRecord;
+        NewRecord.Offset = DataOffset;
+        NewRecord.Size = Size;
+        PackName(Name, NewRecord.Name);
 
         // The committing record is not in the table yet. Reserve the area so a table
         // move triggered by WriteFileRecord can never relocate the file table onto
         // this freshly erased (and invisible) space.
-        pending_offset = data_offset;
-        pending_blocks = data_blocks;
-        bool ok = WriteFileRecord(new_record);
-        pending_offset = 0;
-        pending_blocks = 0;
-        return ok;
+        PendingOffset = DataOffset;
+        PendingBlocks = DataBlocks;
+        bool Ok = WriteFileRecord(NewRecord);
+        PendingOffset = 0;
+        PendingBlocks = 0;
+        return Ok;
     }
 
     // Invalidates the file table entry for `name`; true if it existed (or was already gone).
-    bool DeleteFile(const char name[8])
+    bool DeleteFile(const char Name[8])
     {
-        return DeleteFileRecord(name);
+        return DeleteFileRecord(Name);
     }
 
     // Grows or shrinks a file to `new_size`. Shrinking always succeeds in place; growing
     // only succeeds when the run can be extended in place (and stays inside the data area).
-    bool ResizeFile(const char name[8], uint32_t new_size)
+    bool ResizeFile(const char Name[8], uint32_t NewSize)
     {
         // A zero-size file cannot exist (Docs/Services/Storage.md: Resize File - "New Size (>0)").
-        if (new_size == 0) return false;
+        if (NewSize == 0) return false;
 
-        uint32_t idx;
-        if (!FindInFiletable(name, &idx) || idx == 0xFFFFFFFF || idx == 0)
+        uint32_t Idx;
+        if (!FindInFiletable(Name, &Idx) || Idx == 0xFFFFFFFF || Idx == 0)
             return false; // read failure / missing / entry 0 (the table itself)
 
-        FileRecord entry;
-        if (!ReadTableEntry(idx, &entry))
+        FileRecord Entry;
+        if (!ReadTableEntry(Idx, &Entry))
             return false;
 
-        uint32_t current_blocks = BlocksForSize(entry.size);
-        uint32_t new_blocks = BlocksForSize(new_size);
+        uint32_t CurrentBlocks = BlocksForSize(Entry.Size);
+        uint32_t NewBlocks = BlocksForSize(NewSize);
 
-        if (new_blocks <= current_blocks) {
+        if (NewBlocks <= CurrentBlocks) {
             // Shrink or same size: append the new record, then invalidate the previous
             // generation (and any older duplicate) by index - never DeleteFileRecord, which
             // would also remove the record just appended and orphan the data.
-            FileRecord new_record = entry;
-            new_record.size = new_size;
-            if (!WriteFileRecord(new_record))
+            FileRecord NewRecord = Entry;
+            NewRecord.Size = NewSize;
+            if (!WriteFileRecord(NewRecord))
                 return false;
-            uint32_t appended;
-            if (!GetEndOfFiletable(&appended) || appended == 0)
+            uint32_t Appended;
+            if (!GetEndOfFiletable(&Appended) || Appended == 0)
                 return false;
-            return InvalidateMatchingExcept([&](const char *n) { return NameMatch(n, name); },
-                                            appended - 1);
+            return InvalidateMatchingExcept([&](const char *n) { return NameMatch(n, Name); },
+                                            Appended - 1);
         }
 
         // Enlargement: reject before scanning if the file's linear range would leave the data
         // area. This also bounds the scan below (new_blocks can otherwise be huge).
-        if (entry.offset >= DataEnd() || new_blocks > (DataEnd() - entry.offset) / STORAGE_BLOCK_SIZE)
+        if (Entry.Offset >= DataEnd() || NewBlocks > (DataEnd() - Entry.Offset) / STORAGE_BLOCK_SIZE)
             return false;
-        bool can_extend = true;
-        for (uint32_t b = current_blocks; b < new_blocks; b++) {
-            if (BlockUsed(entry.offset + b * STORAGE_BLOCK_SIZE)) {
-                can_extend = false;
+        bool CanExtend = true;
+        for (uint32_t b = CurrentBlocks; b < NewBlocks; b++) {
+            if (BlockUsed(Entry.Offset + b * STORAGE_BLOCK_SIZE)) {
+                CanExtend = false;
                 break;
             }
         }
-        if (can_extend) {
+        if (CanExtend) {
             // Erase the newly-added tail pages (they are free, so erasing is safe).
-            uint32_t tail_offset = entry.offset + current_blocks * STORAGE_BLOCK_SIZE;
-            uint32_t tail_blocks = new_blocks - current_blocks;
-            if (!Storage_FlashErase(tail_offset, tail_blocks * STORAGE_BLOCK_SIZE))
+            uint32_t TailOffset = Entry.Offset + CurrentBlocks * STORAGE_BLOCK_SIZE;
+            uint32_t TailBlocks = NewBlocks - CurrentBlocks;
+            if (!StorageFlashErase(TailOffset, TailBlocks * STORAGE_BLOCK_SIZE))
                 return false;
-            FileRecord new_record = entry;
-            new_record.size = new_size;
+            FileRecord NewRecord = Entry;
+            NewRecord.Size = NewSize;
             // Reserve the erased tail so a table move triggered by WriteFileRecord
             // cannot relocate the table onto it (same rule as CreateFile).
-            pending_offset = tail_offset;
-            pending_blocks = tail_blocks;
-            bool ok = WriteFileRecord(new_record);
-            pending_offset = 0;
-            pending_blocks = 0;
-            if (!ok) return false;
-            uint32_t appended;
-            if (!GetEndOfFiletable(&appended) || appended == 0)
+            PendingOffset = TailOffset;
+            PendingBlocks = TailBlocks;
+            bool Ok = WriteFileRecord(NewRecord);
+            PendingOffset = 0;
+            PendingBlocks = 0;
+            if (!Ok) return false;
+            uint32_t Appended;
+            if (!GetEndOfFiletable(&Appended) || Appended == 0)
                 return false;
-            return InvalidateMatchingExcept([&](const char *n) { return NameMatch(n, name); },
-                                            appended - 1);
+            return InvalidateMatchingExcept([&](const char *n) { return NameMatch(n, Name); },
+                                            Appended - 1);
         }
 
         // Extending in place is not possible.
@@ -513,66 +513,66 @@ public:
     }
 
     // Utility wrapper for reading from a file; offset is from file start. Returns bytes read.
-    uint32_t ReadFromFile(const char name[8], uint32_t offset, uint32_t length, char *buffer)
+    uint32_t ReadFromFile(const char Name[8], uint32_t Offset, uint32_t Length, char *Buffer)
     {
-        uint32_t file_offset, file_size;
-        if (!GetFileInfo(name, &file_offset, &file_size))
+        uint32_t FileOffset, FileSize;
+        if (!GetFileInfo(Name, &FileOffset, &FileSize))
             return 0;
-        if (offset >= file_size)
+        if (Offset >= FileSize)
             return 0;
-        length = ClampFileLength(offset, length, file_size);
-        return Storage_FlashRead(file_offset + offset, buffer, length);
+        Length = ClampFileLength(Offset, Length, FileSize);
+        return StorageFlashRead(FileOffset + Offset, Buffer, Length);
     }
 
     // Safer wrapper for writing to a file; offset is from file start. Writes are clamped to
     // the file size. Returns true if the write succeeded.
-    bool WriteToFile(const char name[8], uint32_t offset, uint32_t length, const char *buffer)
+    bool WriteToFile(const char Name[8], uint32_t Offset, uint32_t Length, const char *Buffer)
     {
-        uint32_t file_offset, file_size;
-        if (!GetFileInfo(name, &file_offset, &file_size))
+        uint32_t FileOffset, FileSize;
+        if (!GetFileInfo(Name, &FileOffset, &FileSize))
             return false;
-        if (offset >= file_size)
+        if (Offset >= FileSize)
             return false;
-        length = ClampFileLength(offset, length, file_size);
-        return Storage_FlashWrite(file_offset + offset, buffer, length);
+        Length = ClampFileLength(Offset, Length, FileSize);
+        return StorageFlashWrite(FileOffset + Offset, Buffer, Length);
     }
 
     // Returns the file size if it exists, otherwise 0xFFFFFFFF. A read failure is also
     // reported as 0xFFFFFFFF (a caller cannot act on a size it could not read).
-    uint32_t FileExists(const char name[8])
+    uint32_t FileExists(const char Name[8])
     {
-        uint32_t idx;
-        if (!FindInFiletable(name, &idx) || idx == 0xFFFFFFFF)
+        uint32_t Idx;
+        if (!FindInFiletable(Name, &Idx) || Idx == 0xFFFFFFFF)
             return 0xFFFFFFFF;
-        FileRecord entry;
-        if (!ReadTableEntry(idx, &entry))
+        FileRecord Entry;
+        if (!ReadTableEntry(Idx, &Entry))
             return 0xFFFFFFFF;
-        return entry.size;
+        return Entry.Size;
     }
 
     // Erases the pointer page and storage, then initializes an empty self-describing table
     // of the fixed per-device size (STORAGE_TABLE_SIZE) at the first data page (block 1).
     bool Format()
     {
-        if (!Storage_FlashFormat()) {
+        if (!StorageFlashFormat()) {
             DeviceLog("STORAGE", "Format failed!");
             return false;
         }
 
-        FileRecord entry0;
-        memset(&entry0, 0xFF, sizeof(entry0));
-        entry0.offset = STORAGE_BLOCK_SIZE;              // Table starts at block 1
-        entry0.size = STORAGE_TABLE_SIZE;       // Fixed per-device table capacity
-        memcpy(entry0.name, ".TABLE  ", 8);
+        FileRecord Entry0;
+        memset(&Entry0, 0xFF, sizeof(Entry0));
+        Entry0.Offset = STORAGE_BLOCK_SIZE;              // Table starts at block 1
+        Entry0.Size = STORAGE_TABLE_SIZE;       // Fixed per-device table capacity
+        memcpy(Entry0.Name, ".TABLE  ", 8);
 
-        if (Storage_FlashWrite(STORAGE_BLOCK_SIZE, &entry0, TABLE_ENTRY_SIZE) != true)
+        if (StorageFlashWrite(STORAGE_BLOCK_SIZE, &Entry0, TABLE_ENTRY_SIZE) != true)
             return false;
 
         if (!WriteTablePointer(STORAGE_BLOCK_SIZE))
             return false;
 
-        file_table_offset = STORAGE_BLOCK_SIZE;
-        file_table_size = STORAGE_TABLE_SIZE;
+        FileTableOffset = STORAGE_BLOCK_SIZE;
+        FileTableSize = STORAGE_TABLE_SIZE;
         DeviceLog("STORAGE", "Formatted, storage ready (%d Bytes)", (int)DataEnd());
         return true;
     }
@@ -580,55 +580,55 @@ public:
     // Returns the total number of bytes used by files in flash (excluding file table itself).
     uint32_t UsedFlashBytes()
     {
-        if (file_table_offset == 0) return 0;
-        uint32_t used = 0;
-        uint32_t capacity = TableCapacity();
-        for (uint32_t i = 1; i < capacity; i++) { // entry 0 is the table itself
-            FileRecord entry;
-            if (!ReadTableEntry(i, &entry)) continue;
-            if (FileSlotIsFree(entry.offset)) continue;
-            uint32_t blocks = BlocksForSize(entry.size);
-            if (blocks == 0) blocks = 1; // zero-size file still occupies one block
-            used += blocks * STORAGE_BLOCK_SIZE;
+        if (FileTableOffset == 0) return 0;
+        uint32_t Used = 0;
+        uint32_t Capacity = TableCapacity();
+        for (uint32_t i = 1; i < Capacity; i++) { // entry 0 is the table itself
+            FileRecord Entry;
+            if (!ReadTableEntry(i, &Entry)) continue;
+            if (FileSlotIsFree(Entry.Offset)) continue;
+            uint32_t Blocks = BlocksForSize(Entry.Size);
+            if (Blocks == 0) Blocks = 1; // zero-size file still occupies one block
+            Used += Blocks * STORAGE_BLOCK_SIZE;
         }
-        return used;
+        return Used;
     }
 
     // Looks up a file by its name; returns offset/size via the out params.
-    bool GetFileInfo(const char name[8], uint32_t *offset, uint32_t *size)
+    bool GetFileInfo(const char Name[8], uint32_t *Offset, uint32_t *Size)
     {
-        uint32_t idx;
-        if (!FindInFiletable(name, &idx) || idx == 0xFFFFFFFF) return false;
-        FileRecord entry;
-        if (!ReadTableEntry(idx, &entry))
+        uint32_t Idx;
+        if (!FindInFiletable(Name, &Idx) || Idx == 0xFFFFFFFF) return false;
+        FileRecord Entry;
+        if (!ReadTableEntry(Idx, &Entry))
             return false;
-        *offset = entry.offset;
-        *size = entry.size;
+        *Offset = Entry.Offset;
+        *Size = Entry.Size;
         return true;
     }
 
     // Returns the number of records the current table can hold.
     uint32_t TableCapacity()
     {
-        if (file_table_size == 0) return 0;
-        return file_table_size / TABLE_ENTRY_SIZE;
+        if (FileTableSize == 0) return 0;
+        return FileTableSize / TABLE_ENTRY_SIZE;
     }
 
 private:
     // Pending (reserved) allocation: a data area that has been erased for a new/moved
     // file but whose committing table record is not written yet. Treated as used so a
     // concurrent table move can never be placed over it.
-    uint32_t pending_offset = 0;
-    uint32_t pending_blocks = 0;
+    uint32_t PendingOffset = 0;
+    uint32_t PendingBlocks = 0;
 
     // True when the page at `offset` overlaps the pending reservation.
-    bool RangeIsPending(uint32_t offset) const
+    bool RangeIsPending(uint32_t Offset) const
     {
-        if (pending_blocks == 0)
+        if (PendingBlocks == 0)
             return false;
-        uint32_t start = pending_offset;
-        uint32_t end = pending_offset + pending_blocks * STORAGE_BLOCK_SIZE;
-        return offset >= start && offset < end;
+        uint32_t Start = PendingOffset;
+        uint32_t End = PendingOffset + PendingBlocks * STORAGE_BLOCK_SIZE;
+        return Offset >= Start && Offset < End;
     }
 
     // Returns the first flash offset of the file data area (after the pointer page).
@@ -641,61 +641,61 @@ private:
     }
 
     // Reads a single table entry from the current table.
-    bool ReadTableEntry(uint32_t idx, FileRecord *entry)
+    bool ReadTableEntry(uint32_t Idx, FileRecord *Entry)
     {
-        if (file_table_offset == 0 || idx >= TableCapacity())
+        if (FileTableOffset == 0 || Idx >= TableCapacity())
             return false;
-        return Storage_FlashRead(file_table_offset + idx * TABLE_ENTRY_SIZE, entry, TABLE_ENTRY_SIZE) == TABLE_ENTRY_SIZE;
+        return StorageFlashRead(FileTableOffset + Idx * TABLE_ENTRY_SIZE, Entry, TABLE_ENTRY_SIZE) == TABLE_ENTRY_SIZE;
     }
 
     // True when any valid file record (or the pending reservation) covers the page at `offset`.
-    bool BlockUsed(uint32_t offset)
+    bool BlockUsed(uint32_t Offset)
     {
-        if (file_table_offset == 0)
-            return RangeIsPending(offset);
-        uint32_t capacity = TableCapacity();
-        for (uint32_t i = 0; i < capacity; i++) {
-            FileRecord entry;
-            if (!ReadTableEntry(i, &entry))
+        if (FileTableOffset == 0)
+            return RangeIsPending(Offset);
+        uint32_t Capacity = TableCapacity();
+        for (uint32_t i = 0; i < Capacity; i++) {
+            FileRecord Entry;
+            if (!ReadTableEntry(i, &Entry))
                 return true;
-            if (FileSlotIsFree(entry.offset)) continue;
-            uint32_t start = entry.offset;
+            if (FileSlotIsFree(Entry.Offset)) continue;
+            uint32_t Start = Entry.Offset;
             // A file always occupies at least one block, even when its size is 0:
             // CreateFile/ResizeFile reserve (and erase) one block for a zero-size file,
             // so BlockUsed must report it as used. Without this clamp a size-0 file's
             // block looks free and FindSpace hands it to another file -> two live records
             // alias the same flash (observed on hardware: ZERO@512 + BETA@512, and after
             // resizing ZERO up, ZERO shadowed BETA's data region).
-            uint32_t blocks = BlocksForSize(entry.size);
-            if (blocks == 0) blocks = 1;
-            uint32_t end = entry.offset + blocks * STORAGE_BLOCK_SIZE;
-            if (offset >= start && offset < end)
+            uint32_t Blocks = BlocksForSize(Entry.Size);
+            if (Blocks == 0) Blocks = 1;
+            uint32_t End = Entry.Offset + Blocks * STORAGE_BLOCK_SIZE;
+            if (Offset >= Start && Offset < End)
                 return true;
         }
-        return RangeIsPending(offset);
+        return RangeIsPending(Offset);
     }
 
     // Validates the current table (entry 0 must point to itself with correct size) and
     // derives the table length. Reads entry 0 directly: file_table_size is not known yet.
     bool ValidateTable()
     {
-        if (file_table_offset == 0) return false;
+        if (FileTableOffset == 0) return false;
 
-        FileRecord entry0;
-        if (Storage_FlashRead(file_table_offset, &entry0, TABLE_ENTRY_SIZE) != TABLE_ENTRY_SIZE)
+        FileRecord Entry0;
+        if (StorageFlashRead(FileTableOffset, &Entry0, TABLE_ENTRY_SIZE) != TABLE_ENTRY_SIZE)
             return false;
 
-        if (!FileRecordIsValid(entry0.offset) ||
-            entry0.offset != file_table_offset ||
-            entry0.size < STORAGE_BLOCK_SIZE ||
-            (entry0.size % STORAGE_BLOCK_SIZE) != 0 ||
-            file_table_offset > DataEnd() ||
-            entry0.size > DataEnd() - file_table_offset)
+        if (!FileRecordIsValid(Entry0.Offset) ||
+            Entry0.Offset != FileTableOffset ||
+            Entry0.Size < STORAGE_BLOCK_SIZE ||
+            (Entry0.Size % STORAGE_BLOCK_SIZE) != 0 ||
+            FileTableOffset > DataEnd() ||
+            Entry0.Size > DataEnd() - FileTableOffset)
             return false;
 
-        file_table_size = entry0.size;
+        FileTableSize = Entry0.Size;
         return true;
     }
 
-    uint32_t wear_cursor = 0;  // Rotating allocation cursor for even wear (in data pages)
+    uint32_t WearCursor = 0;  // Rotating allocation cursor for even wear (in data pages)
 } Storage;

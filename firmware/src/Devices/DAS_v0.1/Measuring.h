@@ -42,7 +42,7 @@ static_assert(offsetof(ResistiveMeasVolatile, CurrentRange) == 4, "Meas layout")
 
 
 
-const BlockEntry ResistiveMeas_Entries[] = {
+const BlockEntry ResistiveMeasEntries[] = {
     { MakeFieldKey(0, 0), 0, {(uint16_t)DataType::Number, sizeof(Number), ValueTrigger | ValuePersistent} },
     { MakeFieldKey(1, 0), 4, {(uint16_t)DataType::Enum, sizeof(uint8_t), ValuePersistent} },
     { MakeFieldKey(2, 0), 8, {(uint16_t)DataType::Number, sizeof(Number), ValueTrigger | ValuePersistent} },
@@ -54,39 +54,39 @@ const BlockEntry ResistiveMeas_Entries[] = {
 // APPLIED value (the sampling loop additionally defends in depth). Without this, an
 // out-of-range write is stored verbatim while the loop silently clamps it - read-back
 // would mislead.
-static bool OnMeasFieldWrite(const StaticBlockDescriptor &block, uint16_t index, const void *data, uint16_t len)
+static bool OnMeasFieldWrite(const StaticBlockDescriptor &Block, uint16_t Index, const void *Data, uint16_t Len)
 {
-    auto *m = static_cast<ResistiveMeasPersistent *>(block.PersistentData);
-    if (len != sizeof(Number)) return false;
-    Number v = *static_cast<const Number *>(data);
+    auto *M = static_cast<ResistiveMeasPersistent *>(Block.PersistentData);
+    if (Len != sizeof(Number)) return false;
+    Number V = *static_cast<const Number *>(Data);
 
-    switch (index)
+    switch (Index)
     {
     case 0: // Sampling Rate (Hz): the loop divides by it, keep >= 1 Hz and bounded
-        if (v < N(1)) v = N(1);
-        if (v > N(1000)) v = N(1000);
-        m->SamplingRate = v;
+        if (V < N(1)) V = N(1);
+        if (V > N(1000)) V = N(1000);
+        M->SamplingRate = V;
         return true;
 
     case 2: // Filter Coefficient: EMA weight of the new sample, 0-1 (1 = no filtering)
-        if (v < N(0)) v = N(0);
-        if (v > N(1)) v = N(1);
-        m->FilterCoeff = v;
+        if (V < N(0)) V = N(0);
+        if (V > N(1)) V = N(1);
+        M->FilterCoeff = V;
         return true;
     }
     return false;
 }
 
-const BlockTrigger ResistiveMeas_Triggers[] = {
+const BlockTrigger ResistiveMeasTriggers[] = {
     { MakeFieldKey(0, 0), OnMeasFieldWrite },
     { MakeFieldKey(2, 0), OnMeasFieldWrite },
 };
 
-const BlockSchema ResistiveMeas_Schema = {
-    .Entries = ResistiveMeas_Entries,
-    .EntryCount = sizeof(ResistiveMeas_Entries) / sizeof(BlockEntry),
-    .Triggers = ResistiveMeas_Triggers,
-    .TriggerCount = sizeof(ResistiveMeas_Triggers) / sizeof(BlockTrigger),
+const BlockSchema ResistiveMeasSchema = {
+    .Entries = ResistiveMeasEntries,
+    .EntryCount = sizeof(ResistiveMeasEntries) / sizeof(BlockEntry),
+    .Triggers = ResistiveMeasTriggers,
+    .TriggerCount = sizeof(ResistiveMeasTriggers) / sizeof(BlockTrigger),
     .Type = BlockType::ResistiveMeasure,
 };
 
@@ -94,10 +94,10 @@ const BlockSchema ResistiveMeas_Schema = {
 // between 330 Ohm / 10 kOhm / 330 kOhm. Table-driven: {port, pin} per channel x range.
 struct MeasRangePin
 {
-    GPIO_TypeDef *port;
-    uint16_t pin;
+    GPIO_TypeDef *Port;
+    uint16_t Pin;
 };
-static const MeasRangePin s_range_pins[2][3] = {
+static const MeasRangePin RangePins[2][3] = {
     // 330R              10k                330k
     {{GPIOA, GPIO_Pin_2}, {GPIOC, GPIO_Pin_7}, {GPIOD, GPIO_Pin_3}}, // channel 1
     {{GPIOC, GPIO_Pin_1}, {GPIOC, GPIO_Pin_2}, {GPIOC, GPIO_Pin_3}}, // channel 2
@@ -112,39 +112,39 @@ static const MeasRangePin s_range_pins[2][3] = {
 // stuck ADC cannot spin forever; returns the last conversion result on timeout.
 #define ADC_EOC_TIMEOUT_CYCLES 480000UL // ~10 ms at 48 MHz
 
-static uint16_t Meas_AdcRead(uint8_t channel)
+static uint16_t MeasAdcRead(uint8_t Channel)
 {
-    ADC_RegularChannelConfig(MEAS_ADC, channel, 1, ADC_SampleTime_73Cycles);
+    ADC_RegularChannelConfig(MEAS_ADC, Channel, 1, ADC_SampleTime_73Cycles);
     ADC_SoftwareStartConvCmd(MEAS_ADC, ENABLE);
-    uint32_t start = SysTick->CNT;
+    uint32_t Start = SysTick->CNT;
     while (!ADC_GetFlagStatus(MEAS_ADC, ADC_FLAG_EOC))
     {
-        if ((SysTick->CNT - start) > ADC_EOC_TIMEOUT_CYCLES)
+        if ((SysTick->CNT - Start) > ADC_EOC_TIMEOUT_CYCLES)
             break;
     }
     return ADC_GetConversionValue(MEAS_ADC);
 }
 
 // Selects the reference resistor for measurement channel `index` (0 = 330R, 1 = 10k, 2 = 330k).
-static void Meas_SelectRange(uint8_t index, uint8_t range)
+static void MeasSelectRange(uint8_t Index, uint8_t Range)
 {
-    if (index > 1) return;
-    for (uint8_t r = 0; r < 3; r++)
-        PinHigh(s_range_pins[index][r].port, s_range_pins[index][r].pin);
-    if (range < 3)
-        PinLow(s_range_pins[index][range].port, s_range_pins[index][range].pin);
+    if (Index > 1) return;
+    for (uint8_t R = 0; R < 3; R++)
+        PinHigh(RangePins[Index][R].Port, RangePins[Index][R].Pin);
+    if (Range < 3)
+        PinLow(RangePins[Index][Range].Port, RangePins[Index][Range].Pin);
 }
 
 // Configures the ADC and the range-selector GPIOs for both measurement channels.
-void Measuring_Init()
+void MeasuringInit()
 {
     RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA | RCC_APB2Periph_GPIOC |
                            RCC_APB2Periph_GPIOD | RCC_APB2Periph_ADC1, ENABLE);
 
     // Range selectors as push-pull outputs.
-    for (uint8_t c = 0; c < 2; c++)
-        for (uint8_t r = 0; r < 3; r++)
-            PinModeOutput(s_range_pins[c][r].port, s_range_pins[c][r].pin);
+    for (uint8_t C = 0; C < 2; C++)
+        for (uint8_t R = 0; R < 3; R++)
+            PinModeOutput(RangePins[C][R].Port, RangePins[C][R].Pin);
 
     // Measuring pins as analog inputs (PD2 and PC4).
     GPIO_InitTypeDef GPIO_InitStructure = {0};
@@ -173,8 +173,8 @@ void Measuring_Init()
     {
     }
 
-    Meas_SelectRange(0, 1);
-    Meas_SelectRange(1, 1);
+    MeasSelectRange(0, 1);
+    MeasSelectRange(1, 1);
 }
 
 // LDR calibration (datasheet/dsh.520-084.1.pdf): the board's part is the GL55 5-10 kOhm

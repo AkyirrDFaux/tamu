@@ -21,26 +21,26 @@
 // unaffected - but anyone else calling this would have been off by 65536.)
 inline int32_t MulHigh32(int32_t a, int32_t b)
 {
-    const uint32_t aL = (uint32_t)a & 0xFFFFu;
-    const uint32_t bL = (uint32_t)b & 0xFFFFu;
-    const int32_t aH = a >> 16;
-    const int32_t bH = b >> 16;
+    const uint32_t AL = (uint32_t)a & 0xFFFFu;
+    const uint32_t BL = (uint32_t)b & 0xFFFFu;
+    const int32_t AH = a >> 16;
+    const int32_t BH = b >> 16;
 
-    const uint32_t lowProduct = aL * bL;
+    const uint32_t LowProduct = AL * BL;
     // Both intermediates fit in 32 bits: |aH*bL| <= 2147450880 and |aL*bH| <= 2147385345, so
     // adding the (< 2^16) carry can never reach past INT32_MIN/MAX.
-    const int32_t t = aH * (int32_t)bL + (int32_t)(lowProduct >> 16);
-    const int32_t w1 = (t & 0xFFFF) + aL * bH;
+    const int32_t t = AH * (int32_t)BL + (int32_t)(LowProduct >> 16);
+    const int32_t W1 = (t & 0xFFFF) + AL * BH;
 
-    return aH * bH + (t >> 16) + (w1 >> 16);
+    return AH * BH + (t >> 16) + (W1 >> 16);
 }
 
 // (a * b) >> 16 as Q16.16: bits [16..47] of the signed 64-bit product, 32-bit only.
 inline int32_t FixedMul32(int32_t a, int32_t b)
 {
-    uint32_t low = (uint32_t)a * (uint32_t)b;              // low 32 bits of the product
-    uint32_t high = (uint32_t)MulHigh32(a, b);             // bits [32..63]
-    return (int32_t)((high << 16) + (low >> 16));
+    uint32_t Low = (uint32_t)a * (uint32_t)b;              // low 32 bits of the product
+    uint32_t High = (uint32_t)MulHigh32(a, b);             // bits [32..63]
+    return (int32_t)((High << 16) + (Low >> 16));
 }
 
 // (a << 16) / b as Q16.16, 32-bit only (bit-by-bit long division over the 48-bit
@@ -51,18 +51,18 @@ inline int32_t FixedDiv32(int32_t a, int32_t b)
 {
     if (b == 0) return 0;
 
-    uint32_t ma = (uint32_t)a, mb = (uint32_t)b;
-    ma = (a < 0) ? (uint32_t)(0u - ma) : ma;               // |a|
-    mb = (b < 0) ? (uint32_t)(0u - mb) : mb;               // |b|
+    uint32_t Ma = (uint32_t)a, Mb = (uint32_t)b;
+    Ma = (a < 0) ? (uint32_t)(0u - Ma) : Ma;               // |a|
+    Mb = (b < 0) ? (uint32_t)(0u - Mb) : Mb;               // |b|
 
-    uint32_t rem = 0, q = 0;
+    uint32_t Rem = 0, q = 0;
     for (int i = 0; i < 48; i++)                           // dividend = |a| << 16
     {
-        uint32_t bit = (i < 32) ? (ma >> 31) : 0;
-        ma <<= 1;
-        rem = (rem << 1) | bit;
-        q = (q << 1) | ((rem >= mb) ? 1u : 0u);
-        if (rem >= mb) rem -= mb;
+        uint32_t Bit = (i < 32) ? (Ma >> 31) : 0;
+        Ma <<= 1;
+        Rem = (Rem << 1) | Bit;
+        q = (q << 1) | ((Rem >= Mb) ? 1u : 0u);
+        if (Rem >= Mb) Rem -= Mb;
     }
 
     uint32_t r = q;
@@ -92,10 +92,10 @@ public:
 #endif
 
     // Wraps an already-scaled raw 16.16 value without re-scaling
-    static constexpr Number FromRaw(int32_t raw)
+    static constexpr Number FromRaw(int32_t Raw)
     {
         Number n;
-        n.Value = raw;
+        n.Value = Raw;
         return n;
     }
 
@@ -113,10 +113,10 @@ public:
         // floor, and subtracting half for negatives rounded every negative down by one).
         // The add is guarded so a Value within half of the Q16.16 limit cannot overflow the
         // 32-bit intermediate (there is no representable fraction left to round there).
-        constexpr int32_t half = 1 << (DECIMAL - 1);
-        if (Value > INT32_MAX - half || Value < INT32_MIN + half)
+        constexpr int32_t Half = 1 << (DECIMAL - 1);
+        if (Value > INT32_MAX - Half || Value < INT32_MIN + Half)
             return Value >> DECIMAL;
-        return (Value + half) >> DECIMAL;
+        return (Value + Half) >> DECIMAL;
     }
 
     // Compound add: adds `Other` in fixed-point
@@ -218,23 +218,23 @@ inline Number abs(Number A)
 inline uint32_t isqrt32(uint32_t x)
 {
     if (x == 0) return 0;
-    uint32_t result = 0;
-    uint32_t bit = 1u << 30;
-    while (bit > x) bit >>= 2;
-    while (bit != 0)
+    uint32_t Result = 0;
+    uint32_t Bit = 1u << 30;
+    while (Bit > x) Bit >>= 2;
+    while (Bit != 0)
     {
-        if (x >= result + bit)
+        if (x >= Result + Bit)
         {
-            x -= result + bit;
-            result = (result >> 1) + bit;
+            x -= Result + Bit;
+            Result = (Result >> 1) + Bit;
         }
         else
         {
-            result >>= 1;
+            Result >>= 1;
         }
-        bit >>= 2;
+        Bit >>= 2;
     }
-    return result;
+    return Result;
 }
 inline Number sqrt(Number A)
 {
@@ -253,22 +253,22 @@ inline Number sqrt(Number A)
     if (A.Value <= 0)
         return Number(0);
 
-    uint64_t val = (uint64_t)A.Value << 16; // Shift up to maintain 16.16 precision
-    uint64_t res = 0;
-    uint64_t add = (uint64_t)1 << 46; // Start at a high bit
+    uint64_t Val = (uint64_t)A.Value << 16; // Shift up to maintain 16.16 precision
+    uint64_t Res = 0;
+    uint64_t Add = (uint64_t)1 << 46; // Start at a high bit
 
     for (int i = 0; i < 24; i++)
     {
-        uint64_t temp = res + add;
-        res >>= 1;
-        if (val >= temp)
+        uint64_t Temp = Res + Add;
+        Res >>= 1;
+        if (Val >= Temp)
         {
-            val -= temp;
-            res += add;
+            Val -= Temp;
+            Res += Add;
         }
-        add >>= 2;
+        Add >>= 2;
     }
-    return Number::FromRaw((int32_t)res);
+    return Number::FromRaw((int32_t)Res);
 }
 #endif
 #endif // SCALAR_ONLY
@@ -280,8 +280,8 @@ inline Number sqrt(Number A)
 // duplicated (with internal linkage) in every translation unit including this header.
 inline const Number &GetPI()
 {
-    static const Number pi = Number::FromRaw(RAW_PI);
-    return pi;
+    static const Number Pi = Number::FromRaw(RAW_PI);
+    return Pi;
 }
 #define RAW_TWO_PI 411774
 #define RAW_HALF_PI 102943 // PI / 2 in 16.16
@@ -310,19 +310,19 @@ inline Number sin(Number X)
     int32_t P1 = FixedMul32(RAW_SIN_B, x);
 
     // Calculate x * |x|
-    int32_t xAbs = (x < 0) ? -x : x;
-    int32_t xSquared = FixedMul32(x, xAbs);
+    int32_t XAbs = (x < 0) ? -x : x;
+    int32_t XSquared = FixedMul32(x, XAbs);
 
-    int32_t P2 = FixedMul32(RAW_SIN_C, xSquared);
+    int32_t P2 = FixedMul32(RAW_SIN_C, XSquared);
 
     // Improved parabola: the plain Bx + Cx|x| has a ~5.6% amplitude error (visible as an
     // oversized shape from a rotated transform), corrected to ~0.1% by
     // y' = P*(y*|y| - y) + y.
     int32_t y = P1 - P2;
-    int32_t yAbs = (y < 0) ? -y : y;
-    int32_t corr = FixedMul32(RAW_SIN_P, FixedMul32(y, yAbs) - y);
+    int32_t YAbs = (y < 0) ? -y : y;
+    int32_t Corr = FixedMul32(RAW_SIN_P, FixedMul32(y, YAbs) - y);
 
-    return Number::FromRaw(y + corr);
+    return Number::FromRaw(y + Corr);
 }
 
 // Fixed-point cosine computed as sine of (angle + PI/2)
@@ -343,22 +343,22 @@ inline Number cos(Number X)
 // the LED renderer.)
 inline Number atan2(Number Y, Number X)
 {
-    const int32_t ax = abs(X).Value;
-    const int32_t ay = abs(Y).Value;
-    if (ax == 0 && ay == 0)
+    const int32_t Ax = abs(X).Value;
+    const int32_t Ay = abs(Y).Value;
+    if (Ax == 0 && Ay == 0)
         return Number(0);
 
-    const bool yLarger = ay > ax;
-    const int32_t hi = yLarger ? ay : ax;
-    const int32_t lo = yLarger ? ax : ay;
-    const Number a = Number::FromRaw(lo) / Number::FromRaw(hi); // in [0, 1]
+    const bool YLarger = Ay > Ax;
+    const int32_t Hi = YLarger ? Ay : Ax;
+    const int32_t Lo = YLarger ? Ax : Ay;
+    const Number a = Number::FromRaw(Lo) / Number::FromRaw(Hi); // in [0, 1]
 
     const Number s = a * a;
     Number t = Number::FromRaw(RAW_ATAN_C0) * s + Number::FromRaw(RAW_ATAN_C1);
     t = t * s + Number::FromRaw(RAW_ATAN_C2);
     Number r = (t * s) * a + a;
 
-    if (yLarger)
+    if (YLarger)
         r = Number::FromRaw(RAW_HALF_PI) - r;
     if (X.Value < 0)
         r = GetPI() - r;
@@ -373,24 +373,24 @@ inline Number log(Number x)
     if (x.Value <= 0)
         return Number::FromRaw(0);
 
-    int32_t val = x.Value;
-    int32_t log2_count = 0;
+    int32_t Val = x.Value;
+    int32_t Log2Count = 0;
 
     // 1. Range Reduction: bring the mantissa into [1, 2)...
-    if (val >= 0x10000)
+    if (Val >= 0x10000)
     {
-        while (val >= 0x20000)
+        while (Val >= 0x20000)
         {
-            val >>= 1;
-            log2_count++;
+            Val >>= 1;
+            Log2Count++;
         }
     }
     else
     {
-        while (val < 0x10000)
+        while (Val < 0x10000)
         {
-            val <<= 1;
-            log2_count--;
+            Val <<= 1;
+            Log2Count--;
         }
     }
 
@@ -399,15 +399,15 @@ inline Number log(Number x)
     // so its error grows quickly with |y|: without this the worst case (just below a power of
     // two) was 0.109 absolute, ~16 % relative at ln 2. Centring cuts it to ~0.002, and the
     // powers of two stay exact because either way the mantissa lands on y = 0.
-    if (val >= RAW_SQRT2)
+    if (Val >= RAW_SQRT2)
     {
-        val >>= 1;
-        log2_count++;
+        Val >>= 1;
+        Log2Count++;
     }
 
     // 2. Polynomial Approximation using Horner's Method
     // Target: y - y²/2 + y³/3 - y⁴/4  =>  y * (1 - y * (1/2 - y * (1/3 - y/4)))
-    int32_t y = val - 0x10000;
+    int32_t y = Val - 0x10000;
 
     // Constants in 16.16 fixed point
     // 1/4 = 0x4000, 1/3 = 0x5555, 1/2 = 0x8000, 1 = 0x10000
@@ -420,12 +420,12 @@ inline Number log(Number x)
     // c = (1 - y*b)
     int32_t c = 0x10000 - FixedMul32(y, b);
     // ln_m = y * c
-    int32_t ln_m = FixedMul32(y, c);
+    int32_t LnM = FixedMul32(y, c);
 
     // 3. Final Reconstruction
     const int32_t LN2 = 45426;
 
-    return Number::FromRaw((log2_count * LN2) + ln_m);
+    return Number::FromRaw((Log2Count * LN2) + LnM);
 }
 
 // Base-10 logarithm (natural log scaled by 1/ln 10).
@@ -447,8 +447,8 @@ inline Number pow10(Number y)
     if (y.Value >= 294912) return Number::FromRaw(31623 << DECIMAL);
 
     const int32_t n = y.Value >> DECIMAL;               // 0..4
-    const int32_t frac = y.Value & 0xFFFF;              // Q16.16 fraction, [0,1)
-    const int32_t u = FixedMul32(frac, RAW_LOG2_10);    // f * log2(10)
+    const int32_t Frac = y.Value & 0xFFFF;              // Q16.16 fraction, [0,1)
+    const int32_t u = FixedMul32(Frac, RAW_LOG2_10);    // f * log2(10)
     const int32_t v = u & 0xFFFF;                       // fraction of u
 
     // 2^v for v in [0,1): Horner with the coefficients (ln 2)^k / k!.
@@ -459,10 +459,10 @@ inline Number pow10(Number y)
     r = FixedMul32(r, v) + 65536;
     r <<= (u >> DECIMAL);                               // * 2^(integer part of u)
 
-    Number result = Number::FromRaw(r);
+    Number Result = Number::FromRaw(r);
     int32_t k = n;
-    while (k-- > 0) result = result * Number(10);
-    return result;
+    while (k-- > 0) Result = Result * Number(10);
+    return Result;
 }
 
 // Returns the smaller of `A` and `B` (fixed-point)
@@ -477,23 +477,23 @@ inline Number max(Number A, Number B) { return (A.Value > B.Value) ? A : B; }
 // header share the same object because it's declared `inline` (C++17).
 inline uint32_t &RandState()
 {
-    static uint32_t state = 1;
-    return state;
+    static uint32_t State = 1;
+    return State;
 }
 
 // Seed the PRNG from a platform entropy source. Call once at boot before any
 // RawRand() usage. The seed is XOR'd into the state so calling multiple times
 // (e.g. from different subsystems) mixes entropy rather than resetting it.
-inline void SeedRand(uint32_t seed)
+inline void SeedRand(uint32_t Seed)
 {
-    RandState() ^= seed;
+    RandState() ^= Seed;
 }
 
 inline uint32_t RawRand()
 {
-    uint32_t &next_rand = RandState();
-    next_rand = next_rand * 1103515245 + 12345;
-    return next_rand;
+    uint32_t &NextRand = RandState();
+    NextRand = NextRand * 1103515245 + 12345;
+    return NextRand;
 }
 
 // Clamps `Value` into the range [0, 1]

@@ -9,93 +9,93 @@
 
 // Value alignment (Docs/Services/Register.md "Memory with 32-bit alignment"): a value is
 // aligned to its own size, capped at 4 - 1 -> 1, 2 -> 2, >= 3 -> 4. Offsets stay byte offsets.
-static inline uint16_t AlignValue(uint16_t off, uint8_t size) {
-    uint16_t a = (size >= 3) ? 4 : (size == 2 ? 2 : 1);
-    return (uint16_t)((off + a - 1) & ~(uint16_t)(a - 1));
+static inline uint16_t AlignValue(uint16_t Off, uint8_t Size) {
+    uint16_t a = (Size >= 3) ? 4 : (Size == 2 ? 2 : 1);
+    return (uint16_t)((Off + a - 1) & ~(uint16_t)(a - 1));
 }
 
 // One entry in a dynamic block's table (Docs/Services/Register.md "Dynamic Block Table"):
 // Field&Key(16) + MemoryOffset(16) + ValueInfo(32).
 struct DynamicEntry
 {
-    uint16_t fieldKey;     // (field << 8) | key
-    uint16_t memoryOffset; // offset into the entry's volatile/persistent value space
-    ValueInfo info;        // type + size + flags
+    uint16_t FieldKey;     // (field << 8) | key
+    uint16_t MemoryOffset; // offset into the entry's volatile/persistent value space
+    ValueInfo Info;        // type + size + flags
 };
 
 // A dynamic lookup result: the meta (ValueInfo) + a pointer to the value bytes.
 struct KeyResult
 {
-    ValueInfo meta = { (uint16_t)DataType::None, 0, 0 };
-    void *data_ptr = nullptr;
-    uint16_t data_len = 0;
-    bool exists = false; // entry present (a size-0 entry exists with no value)
+    ValueInfo Meta = { (uint16_t)DataType::None, 0, 0 };
+    void *DataPtr = nullptr;
+    uint16_t DataLen = 0;
+    bool Exists = false; // entry present (a size-0 entry exists with no value)
 };
 
 struct DynamicBlockDescriptor
 {
-    DynamicEntry *table = nullptr;
-    uint16_t entry_count = 0;
-    uint16_t entry_allocated = 0;
-    uint8_t *volatile_data = nullptr;
-    uint16_t volatile_len = 0, volatile_allocated = 0;
-    uint8_t *persistent_data = nullptr;
-    uint16_t persistent_len = 0, persistent_allocated = 0;
+    DynamicEntry *Table = nullptr;
+    uint16_t EntryCount = 0;
+    uint16_t EntryAllocated = 0;
+    uint8_t *VolatileData = nullptr;
+    uint16_t VolatileLen = 0, VolatileAllocated = 0;
+    uint8_t *PersistentData = nullptr;
+    uint16_t PersistentLen = 0, PersistentAllocated = 0;
     char Name[BLOCK_NAME_LEN] = {};
-    uint32_t generation = 0;
+    uint32_t Generation = 0;
     // A live block occupies its slot; a tombstone is an empty slot that keeps the position
     // stable (Docs/Services/Register.md: "Create/write is in specified place"). The block's
     // bank type is derived from its global index (BlockTypeRange::DynamicType), not stored.
-    bool present = false;
+    bool Present = false;
 
-    bool IsPersistent(const DynamicEntry &e) const { return ValueIsPersistent(e.info); }
-    uint8_t *Space(bool persistent) const { return persistent ? persistent_data : volatile_data; }
-    uint16_t &SpaceLen(bool persistent) { return persistent ? persistent_len : volatile_len; }
-    uint16_t &SpaceAlloc(bool persistent) { return persistent ? persistent_allocated : volatile_allocated; }
-    uint8_t *&SpaceData(bool persistent) { return persistent ? persistent_data : volatile_data; }
+    bool IsPersistent(const DynamicEntry &e) const { return ValueIsPersistent(e.Info); }
+    uint8_t *Space(bool Persistent) const { return Persistent ? PersistentData : VolatileData; }
+    uint16_t &SpaceLen(bool Persistent) { return Persistent ? PersistentLen : VolatileLen; }
+    uint16_t &SpaceAlloc(bool Persistent) { return Persistent ? PersistentAllocated : VolatileAllocated; }
+    uint8_t *&SpaceData(bool Persistent) { return Persistent ? PersistentData : VolatileData; }
 
     // Binary search for `fieldKey`; returns the insert position (first >= fieldKey).
-    uint16_t FindEntry(uint16_t fieldKey) const
+    uint16_t FindEntry(uint16_t FieldKey) const
     {
-        uint16_t lo = 0, hi = entry_count;
-        while (lo < hi)
+        uint16_t Lo = 0, Hi = EntryCount;
+        while (Lo < Hi)
         {
-            uint16_t mid = (lo + hi) >> 1;
-            if (table[mid].fieldKey < fieldKey) lo = mid + 1; else hi = mid;
+            uint16_t Mid = (Lo + Hi) >> 1;
+            if (Table[Mid].FieldKey < FieldKey) Lo = Mid + 1; else Hi = Mid;
         }
-        return lo;
+        return Lo;
     }
 
-    bool EnsureTable(uint16_t count)
+    bool EnsureTable(uint16_t Count)
     {
-        if (count <= entry_allocated) return true;
-        uint16_t new_cap = count + 4;
-        DynamicEntry *nt = (DynamicEntry *)realloc(table, new_cap * sizeof(DynamicEntry));
-        if (!nt) return false;
-        table = nt;
-        entry_allocated = new_cap;
+        if (Count <= EntryAllocated) return true;
+        uint16_t NewCap = Count + 4;
+        DynamicEntry *Nt = (DynamicEntry *)realloc(Table, NewCap * sizeof(DynamicEntry));
+        if (!Nt) return false;
+        Table = Nt;
+        EntryAllocated = NewCap;
         return true;
     }
 
     // Appends `value` to the value space chosen by `persistent`; returns the offset
     // (0xFFFF on allocation failure).
-    uint16_t AppendValue(bool persistent, const void *value, uint8_t len)
+    uint16_t AppendValue(bool Persistent, const void *Value, uint8_t Len)
     {
-        uint16_t &used = SpaceLen(persistent);
-        uint16_t &alloc = SpaceAlloc(persistent);
-        uint8_t *&sp = SpaceData(persistent);
-        uint16_t offset = AlignValue(used, len);
-        if (offset + len > alloc)
+        uint16_t &Used = SpaceLen(Persistent);
+        uint16_t &Alloc = SpaceAlloc(Persistent);
+        uint8_t *&Sp = SpaceData(Persistent);
+        uint16_t Offset = AlignValue(Used, Len);
+        if (Offset + Len > Alloc)
         {
-            uint16_t new_cap = offset + len + 16;
-            uint8_t *nb = (uint8_t *)realloc(sp, new_cap);
-            if (!nb) return 0xFFFF;
-            sp = nb;
-            alloc = new_cap;
+            uint16_t NewCap = Offset + Len + 16;
+            uint8_t *Nb = (uint8_t *)realloc(Sp, NewCap);
+            if (!Nb) return 0xFFFF;
+            Sp = Nb;
+            Alloc = NewCap;
         }
-        if (len) memcpy(sp + offset, value, len);
-        used = offset + len;
-        return offset;
+        if (Len) memcpy(Sp + Offset, Value, Len);
+        Used = Offset + Len;
+        return Offset;
     }
 
     // Rebuilds the value spaces (compaction): copies every entry's value from its
@@ -103,203 +103,203 @@ struct DynamicBlockDescriptor
     // values between spaces when the Persistent flag changed. Called after any change.
     bool RebuildSpaces()
     {
-        uint16_t v_needed = 0, p_needed = 0;
-        for (uint16_t i = 0; i < entry_count; i++)
+        uint16_t VNeeded = 0, PNeeded = 0;
+        for (uint16_t i = 0; i < EntryCount; i++)
         {
-            uint16_t &n = IsPersistent(table[i]) ? p_needed : v_needed;
-            n = AlignValue(n, table[i].info.Size);
-            n += table[i].info.Size;
+            uint16_t &n = IsPersistent(Table[i]) ? PNeeded : VNeeded;
+            n = AlignValue(n, Table[i].Info.Size);
+            n += Table[i].Info.Size;
         }
 
-        uint8_t *nv = v_needed ? (uint8_t *)malloc(v_needed) : nullptr;
-        uint8_t *np = p_needed ? (uint8_t *)malloc(p_needed) : nullptr;
-        if ((v_needed && !nv) || (p_needed && !np)) {
+        uint8_t *Nv = VNeeded ? (uint8_t *)malloc(VNeeded) : nullptr;
+        uint8_t *Np = PNeeded ? (uint8_t *)malloc(PNeeded) : nullptr;
+        if ((VNeeded && !Nv) || (PNeeded && !Np)) {
             // Out of memory: skip compaction. The value just written already sits at its
             // entry's memoryOffset in the right space and the other entries are untouched,
             // so the block stays consistent (just less compact) instead of dereferencing
             // a null buffer.
-            if (nv) free(nv);
-            if (np) free(np);
+            if (Nv) free(Nv);
+            if (Np) free(Np);
             return true;
         }
-        uint16_t vo = 0, po = 0;
-        for (uint16_t i = 0; i < entry_count; i++)
+        uint16_t Vo = 0, Po = 0;
+        for (uint16_t i = 0; i < EntryCount; i++)
         {
-            DynamicEntry &e = table[i];
-            bool pers = IsPersistent(e);
-            uint8_t *src = pers ? persistent_data : volatile_data;
-            uint8_t *dst = pers ? np : nv;
-            uint16_t &off = pers ? po : vo;
-            off = AlignValue(off, e.info.Size);
-            if (e.info.Size && src)
-                memcpy(dst + off, src + e.memoryOffset, e.info.Size);
-            e.memoryOffset = off;
-            off += e.info.Size;
+            DynamicEntry &e = Table[i];
+            bool Pers = IsPersistent(e);
+            uint8_t *Src = Pers ? PersistentData : VolatileData;
+            uint8_t *Dst = Pers ? Np : Nv;
+            uint16_t &Off = Pers ? Po : Vo;
+            Off = AlignValue(Off, e.Info.Size);
+            if (e.Info.Size && Src)
+                memcpy(Dst + Off, Src + e.MemoryOffset, e.Info.Size);
+            e.MemoryOffset = Off;
+            Off += e.Info.Size;
         }
-        if (volatile_data) free(volatile_data);
-        if (persistent_data) free(persistent_data);
-        volatile_data = nv;
-        persistent_data = np;
-        volatile_len = vo;
-        persistent_len = po;
-        volatile_allocated = v_needed;
-        persistent_allocated = p_needed;
+        if (VolatileData) free(VolatileData);
+        if (PersistentData) free(PersistentData);
+        VolatileData = Nv;
+        PersistentData = Np;
+        VolatileLen = Vo;
+        PersistentLen = Po;
+        VolatileAllocated = VNeeded;
+        PersistentAllocated = PNeeded;
         return true;
     }
 
     // Writes the value at (field, key), creating/updating the sorted entry.
     // Writing type None deletes the entry (docs "Setting the type to None deletes").
-    bool SetEntry(uint8_t field, uint8_t key, const void *value, uint8_t len, const ValueInfo &desc)
+    bool SetEntry(uint8_t Field, uint8_t Key, const void *Value, uint8_t Len, const ValueInfo &Desc)
     {
-        uint16_t fk = MakeFieldKey(field, key);
-        uint16_t i = FindEntry(fk);
-        bool exists = (i < entry_count && table[i].fieldKey == fk);
+        uint16_t Fk = MakeFieldKey(Field, Key);
+        uint16_t i = FindEntry(Fk);
+        bool Exists = (i < EntryCount && Table[i].FieldKey == Fk);
 
         // Read Only (Docs "ValueInfo Flags"): a stored read-only entry is non-writable from
         // outside, so neither its value nor its flags can change (the delete included).
-        if (exists && ValueIsReadOnly(table[i].info))
+        if (Exists && ValueIsReadOnly(Table[i].Info))
             return false;
 
-        if (ValueInfoType(desc) == (uint16_t)DataType::None)
-            return DeleteEntry(field, key);
+        if (ValueInfoType(Desc) == (uint16_t)DataType::None)
+            return DeleteEntry(Field, Key);
 
-        ValueInfo info = desc;
-        info.Size = len;              // the stored length is the bytes actually present
-        info.Flags &= ~ValueTrigger;  // the Trigger flag is static-only (Docs: dynamic triggers are gone)
-        bool pers = ValueIsPersistent(info);
+        ValueInfo Info = Desc;
+        Info.Size = Len;              // the stored length is the bytes actually present
+        Info.Flags &= ~ValueTrigger;  // the Trigger flag is static-only (Docs: dynamic triggers are gone)
+        bool Pers = ValueIsPersistent(Info);
 
-        if (exists)
+        if (Exists)
         {
             // Fast path: same size and persistence - overwrite the value in place. This is
             // the hot path (e.g. a script rewriting the same render matrix every tick) and
             // avoids the append + full-space compaction.
-            if (table[i].info.Size == len && IsPersistent(table[i]) == pers)
+            if (Table[i].Info.Size == Len && IsPersistent(Table[i]) == Pers)
             {
-                uint8_t *sp = pers ? persistent_data : volatile_data;
-                if (len && sp) memcpy(sp + table[i].memoryOffset, value, len);
-                table[i].info = info;
-                generation++;
+                uint8_t *Sp = Pers ? PersistentData : VolatileData;
+                if (Len && Sp) memcpy(Sp + Table[i].MemoryOffset, Value, Len);
+                Table[i].Info = Info;
+                Generation++;
                 return true;
             }
             // Size/persistence changed: stash the new value at the end of its space first,
             // then RebuildSpaces compacts (reads the new value from the tail).
-            uint16_t off = AppendValue(pers, value, len);
-            if (off == 0xFFFF) return false;
-            table[i].info = info;
-            table[i].memoryOffset = off;
+            uint16_t Off = AppendValue(Pers, Value, Len);
+            if (Off == 0xFFFF) return false;
+            Table[i].Info = Info;
+            Table[i].MemoryOffset = Off;
         }
         else
         {
-            uint16_t off = AppendValue(pers, value, len);
-            if (off == 0xFFFF) return false;
-            if (!EnsureTable(entry_count + 1)) return false;
-            for (uint16_t j = entry_count; j > i; j--)
-                table[j] = table[j - 1];
-            DynamicEntry &e = table[i];
-            e.fieldKey = fk;
-            e.info = info;
-            e.memoryOffset = off;
-            entry_count++;
+            uint16_t Off = AppendValue(Pers, Value, Len);
+            if (Off == 0xFFFF) return false;
+            if (!EnsureTable(EntryCount + 1)) return false;
+            for (uint16_t j = EntryCount; j > i; j--)
+                Table[j] = Table[j - 1];
+            DynamicEntry &e = Table[i];
+            e.FieldKey = Fk;
+            e.Info = Info;
+            e.MemoryOffset = Off;
+            EntryCount++;
         }
-        generation++;
+        Generation++;
         return RebuildSpaces();
     }
 
     // Removes the entry at (field, key) from the table (the record compacts).
-    bool DeleteEntry(uint8_t field, uint8_t key)
+    bool DeleteEntry(uint8_t Field, uint8_t Key)
     {
-        uint16_t fk = MakeFieldKey(field, key);
-        uint16_t i = FindEntry(fk);
-        if (i >= entry_count || table[i].fieldKey != fk) return false;
+        uint16_t Fk = MakeFieldKey(Field, Key);
+        uint16_t i = FindEntry(Fk);
+        if (i >= EntryCount || Table[i].FieldKey != Fk) return false;
         // Read Only (Docs "ValueInfo Flags"): a stored read-only entry is non-writable from
         // outside, the delete included.
-        if (ValueIsReadOnly(table[i].info)) return false;
-        for (uint16_t j = i; j + 1 < entry_count; j++)
-            table[j] = table[j + 1];
-        entry_count--;
-        generation++;
+        if (ValueIsReadOnly(Table[i].Info)) return false;
+        for (uint16_t j = i; j + 1 < EntryCount; j++)
+            Table[j] = Table[j + 1];
+        EntryCount--;
+        Generation++;
         return RebuildSpaces();
     }
 
     // Returns the entry at (field, key) as a KeyResult (meta + value pointer).
-    KeyResult GetKey(uint8_t field, uint8_t key)
+    KeyResult GetKey(uint8_t Field, uint8_t Key)
     {
-        KeyResult res;
-        uint16_t i = FindEntry(MakeFieldKey(field, key));
-        if (i >= entry_count || table[i].fieldKey != MakeFieldKey(field, key))
-            return res;
-        const DynamicEntry &e = table[i];
-        res.meta = e.info;
-        res.data_len = e.info.Size;
-        res.exists = true;
-        res.data_ptr = e.info.Size ? (Space(IsPersistent(e)) + e.memoryOffset) : nullptr;
-        return res;
+        KeyResult Res;
+        uint16_t i = FindEntry(MakeFieldKey(Field, Key));
+        if (i >= EntryCount || Table[i].FieldKey != MakeFieldKey(Field, Key))
+            return Res;
+        const DynamicEntry &e = Table[i];
+        Res.Meta = e.Info;
+        Res.DataLen = e.Info.Size;
+        Res.Exists = true;
+        Res.DataPtr = e.Info.Size ? (Space(IsPersistent(e)) + e.MemoryOffset) : nullptr;
+        return Res;
     }
 
     // Reads a keyed value as type `T`, falling back to `defaultValue` when missing or
     // of a different type.
     template <typename T>
-    T GetKeyValue(uint16_t field, uint8_t key, DataType expectedType, T defaultValue = 0)
+    T GetKeyValue(uint16_t Field, uint8_t Key, DataType ExpectedType, T DefaultValue = 0)
     {
-        KeyResult res = GetKey((uint8_t)field, key);
+        KeyResult Res = GetKey((uint8_t)Field, Key);
         // The allocator aligns each value to its size (capped at 4), so a value of type T is
         // aligned for T - a direct load.
-        if (res.data_ptr && (ValueInfoType(res.meta) == (uint16_t)expectedType))
-            return *reinterpret_cast<const T *>(res.data_ptr);
-        return defaultValue;
+        if (Res.DataPtr && (ValueInfoType(Res.Meta) == (uint16_t)ExpectedType))
+            return *reinterpret_cast<const T *>(Res.DataPtr);
+        return DefaultValue;
     }
 
     // Distinct field indexes present among the entries.
-    uint16_t ListFields(uint8_t *fields, uint16_t cap)
+    uint16_t ListFields(uint8_t *Fields, uint16_t Cap)
     {
-        uint16_t count = 0, prev = 0xFFFF;
-        for (uint16_t i = 0; i < entry_count; i++)
+        uint16_t Count = 0, Prev = 0xFFFF;
+        for (uint16_t i = 0; i < EntryCount; i++)
         {
-            uint8_t f = FieldOf(table[i].fieldKey);
-            if (f != prev)
+            uint8_t f = FieldOf(Table[i].FieldKey);
+            if (f != Prev)
             {
-                if (count < cap) fields[count] = f;
-                count++;
-                prev = f;
+                if (Count < Cap) Fields[Count] = f;
+                Count++;
+                Prev = f;
             }
         }
-        return count;
+        return Count;
     }
 
     // Keys present at `field`.
-    uint16_t ListKeys(uint8_t field, uint8_t *keys, uint16_t cap)
+    uint16_t ListKeys(uint8_t Field, uint8_t *Keys, uint16_t Cap)
     {
-        uint16_t count = 0;
-        uint16_t i = FindEntry(MakeFieldKey(field, 0));
-        for (; i < entry_count && FieldOf(table[i].fieldKey) == field; i++)
+        uint16_t Count = 0;
+        uint16_t i = FindEntry(MakeFieldKey(Field, 0));
+        for (; i < EntryCount && FieldOf(Table[i].FieldKey) == Field; i++)
         {
-            if (count < cap) keys[count] = KeyOf(table[i].fieldKey);
-            count++;
+            if (Count < Cap) Keys[Count] = KeyOf(Table[i].FieldKey);
+            Count++;
         }
-        return count;
+        return Count;
     }
 
     // Number of distinct fields (for enumeration / UI display).
     uint16_t FieldCount()
     {
-        uint8_t scratch[256];
-        return ListFields(scratch, 256);
+        uint8_t Scratch[256];
+        return ListFields(Scratch, 256);
     }
 
     // Frees all owned allocations and resets the block to a tombstone-like empty state.
     void Release()
     {
-        if (table) free(table);
-        if (volatile_data) free(volatile_data);
-        if (persistent_data) free(persistent_data);
-        table = nullptr;
-        volatile_data = nullptr;
-        persistent_data = nullptr;
-        entry_count = entry_allocated = 0;
-        volatile_len = volatile_allocated = 0;
-        persistent_len = persistent_allocated = 0;
+        if (Table) free(Table);
+        if (VolatileData) free(VolatileData);
+        if (PersistentData) free(PersistentData);
+        Table = nullptr;
+        VolatileData = nullptr;
+        PersistentData = nullptr;
+        EntryCount = EntryAllocated = 0;
+        VolatileLen = VolatileAllocated = 0;
+        PersistentLen = PersistentAllocated = 0;
         memset(Name, 0, sizeof(Name));
-        present = false;
+        Present = false;
     }
 };
 
@@ -307,17 +307,17 @@ struct DynamicBlockDescriptor
 template <typename T>
 struct BlockRegistry
 {
-    T *blocks = nullptr;
-    uint16_t block_count = 0;
-    uint16_t block_allocated = 0;
+    T *Blocks = nullptr;
+    uint16_t BlockCount = 0;
+    uint16_t BlockAllocated = 0;
 
     // Appends a new live empty block, growing the descriptor array as needed.
     bool AddBlock()
     {
         if (!Grow()) return false;
-        blocks[block_count] = T();
-        blocks[block_count].present = true;
-        block_count++;
+        Blocks[BlockCount] = T();
+        Blocks[BlockCount].Present = true;
+        BlockCount++;
         return true;
     }
 
@@ -325,65 +325,65 @@ struct BlockRegistry
     bool AddTombstone()
     {
         if (!Grow()) return false;
-        blocks[block_count] = T();
-        block_count++;
+        Blocks[BlockCount] = T();
+        BlockCount++;
         return true;
     }
 
     // Creates a live block at a specified position (docs "create/write is in specified
     // place, not an append necessarily"): fills a tombstone slot, pads with tombstones
     // beyond, or inserts (shifting later blocks) when the slot is occupied.
-    bool AddBlockAt(uint16_t index)
+    bool AddBlockAt(uint16_t Index)
     {
-        if (index >= block_count)
+        if (Index >= BlockCount)
         {
-            while (block_count < index)
+            while (BlockCount < Index)
                 if (!AddTombstone()) return false;
             return AddBlock();
         }
-        if (!blocks[index].present)
+        if (!Blocks[Index].Present)
         {
-            blocks[index] = T();
-            blocks[index].present = true;
+            Blocks[Index] = T();
+            Blocks[Index].Present = true;
             return true;
         }
         // Insert: shift the occupied slot and everything after it right by one.
         if (!AddTombstone()) return false;
-        for (uint16_t i = block_count - 1; i > index; i--)
-            blocks[i] = blocks[i - 1];
-        blocks[index] = T();
-        blocks[index].present = true;
+        for (uint16_t i = BlockCount - 1; i > Index; i--)
+            Blocks[i] = Blocks[i - 1];
+        Blocks[Index] = T();
+        Blocks[Index].Present = true;
         return true;
     }
 
     // Marks the block at `index` as a tombstone (keeps the slot; no compaction).
-    void TombstoneBlock(uint16_t index)
+    void TombstoneBlock(uint16_t Index)
     {
-        if (index >= block_count) return;
-        blocks[index].Release();
-        blocks[index] = T();
-        blocks[index].present = false;
+        if (Index >= BlockCount) return;
+        Blocks[Index].Release();
+        Blocks[Index] = T();
+        Blocks[Index].Present = false;
     }
 
     // Returns the block descriptor at `index`, or nullptr if out of range.
-    T *GetBlock(uint16_t index)
+    T *GetBlock(uint16_t Index)
     {
-        if (index >= block_count)
+        if (Index >= BlockCount)
             return nullptr;
-        return &blocks[index];
+        return &Blocks[Index];
     }
 
 private:
     bool Grow()
     {
-        if (block_count + 1 <= block_allocated) return true;
-        uint16_t new_cap = block_allocated + 4;
-        T *new_blocks = (T *)realloc(blocks, new_cap * sizeof(T));
-        if (!new_blocks)
+        if (BlockCount + 1 <= BlockAllocated) return true;
+        uint16_t NewCap = BlockAllocated + 4;
+        T *NewBlocks = (T *)realloc(Blocks, NewCap * sizeof(T));
+        if (!NewBlocks)
             return false;
-        memset((void *)(new_blocks + block_allocated), 0, (new_cap - block_allocated) * sizeof(T));
-        blocks = new_blocks;
-        block_allocated = new_cap;
+        memset((void *)(NewBlocks + BlockAllocated), 0, (NewCap - BlockAllocated) * sizeof(T));
+        Blocks = NewBlocks;
+        BlockAllocated = NewCap;
         return true;
     }
 };

@@ -27,10 +27,10 @@ uint32_t LogCount = 0;
 
 // The Main Packet Dispatcher: routes an incoming frame to the local service
 // handler (or forwards it to the bus when it targets another device).
-void DispatchPacket(const PacketFrame &frame)
+void DispatchPacket(const PacketFrame &Frame)
 {
     // 1. Validation: Drop invalid packets
-    if (frame.IdTgt == ADDR_INVALID)
+    if (Frame.IdTgt == ADDR_INVALID)
         return;
 
     // TODO (Router): multi-bus tree topology is NOT implemented - see
@@ -40,91 +40,91 @@ void DispatchPacket(const PacketFrame &frame)
     // be added here if a multi-bus device appears.
 
     // 2. Determine "Local Interest"
-    bool all_cores = false;
+    bool AllCores = false;
 #ifdef TYPE_CORE
-    all_cores = (frame.IdTgt == ADDR_ALL_CORES); // 3F.1 Core-discover broadcast
+    AllCores = (Frame.IdTgt == ADDR_ALL_CORES); // 3F.1 Core-discover broadcast
 #endif
-    if (all_cores || (NetQualifyLocal(frame.IdTgt, DeviceStatus.NetId) == DeviceStatus.ShortAddress) ||
-        (frame.IdTgt == ADDR_BROADCAST))
+    if (AllCores || (NetQualifyLocal(Frame.IdTgt, DeviceStatus.NetId) == DeviceStatus.ShortAddress) ||
+        (Frame.IdTgt == ADDR_BROADCAST))
     {
-        DeviceLog("DISP", "local interest IdTgt=%d IdSrc=%d Cmd=0x%04X Trid=0x%04X", frame.IdTgt, frame.IdSrc, frame.Cmd, frame.Trid);
+        DeviceLog("DISP", "local interest IdTgt=%d IdSrc=%d Cmd=0x%04X Trid=0x%04X", Frame.IdTgt, Frame.IdSrc, Frame.Cmd, Frame.Trid);
         // A response echoes the request's TRID (Docs "Transaction IDs") and carries the
         // request's CMD, so GetServiceType names the replying service. A System reply
         // (0x0000-0x0FFF) therefore routes by CMD; the Subscriptions, App and Script ranges
         // route by the echoed TRID, which each owner allocated.
-        ServiceType target_srv = GetServiceType(frame.Cmd);
-        uint8_t cid = GetServiceCID(frame.Cmd);
-        bool is_response = (frame.Flags & FLAG_TYPE) != 0;
-        DeviceLog("DISP", "dispatching to service=%d cid=%d", target_srv, cid);
+        ServiceType TargetSrv = GetServiceType(Frame.Cmd);
+        uint8_t Cid = GetServiceCID(Frame.Cmd);
+        bool IsResponse = (Frame.Flags & FLAG_TYPE) != 0;
+        DeviceLog("DISP", "dispatching to service=%d cid=%d", TargetSrv, Cid);
 
-        bool handled = false;
+        bool Handled = false;
 #ifdef USE_SUB_REQUEST
         // A remote provider's value update echoes the requester's Subscriptions TRID and
         // must reach the requester, not the app link. A locally generated management reply
         // (our own id_src) or a FLAG_SUCCESS/FAIL ack stays with the app.
-        if (is_response && (frame.Flags & (FLAG_SUCCESS | FLAG_FAIL)) == 0 &&
-            frame.Trid >= TRID_SUB_BASE && frame.Trid <= TRID_SUB_MAX &&
-            frame.IdSrc != DeviceStatus.ShortAddress) {
-            Subscriptions.Handle(frame);
-            handled = true;
+        if (IsResponse && (Frame.Flags & (FLAG_SUCCESS | FLAG_FAIL)) == 0 &&
+            Frame.Trid >= TRID_SUB_BASE && Frame.Trid <= TRID_SUB_MAX &&
+            Frame.IdSrc != DeviceStatus.ShortAddress) {
+            Subscriptions.Handle(Frame);
+            Handled = true;
         }
 #endif
 #ifdef USE_APP_INTERFACE
         // An App reply echoes the app's TRID (0xF000-0xFFFF); a subscription-management
         // reply echoes a Subscriptions TRID. Both go back over the app link, where the app
         // matches on TRID.
-        if (!handled && is_response &&
-            (frame.Trid >= TRID_APP_BASE ||
-             (frame.Trid >= TRID_SUB_BASE && frame.Trid <= TRID_SUB_MAX))) {
-            (void)AppInterface.Send(frame);
-            handled = true;
+        if (!Handled && IsResponse &&
+            (Frame.Trid >= TRID_APP_BASE ||
+             (Frame.Trid >= TRID_SUB_BASE && Frame.Trid <= TRID_SUB_MAX))) {
+            (void)AppInterface.Send(Frame);
+            Handled = true;
         }
 #endif
 #ifdef USE_SCRIPTS
         // Script-instance replies (foreign register access) echo the script's TRID
         // (0x2000-0xEFFF), so they route by range instead of by ServiceType.
-        if (!handled && is_response &&
-            frame.Trid >= TRID_SCRIPT_BASE && frame.Trid <= TRID_SCRIPT_MAX) {
-            Script.HandleResponse(frame);
-            handled = true;
+        if (!Handled && IsResponse &&
+            Frame.Trid >= TRID_SCRIPT_BASE && Frame.Trid <= TRID_SCRIPT_MAX) {
+            Script.HandleResponse(Frame);
+            Handled = true;
         }
 #endif
-        if (!handled) switch (target_srv)
+        if (!Handled) switch (TargetSrv)
         {
         case ServiceType::Device:
-            DeviceSvc.Handle(frame);
+            DeviceSvc.Handle(Frame);
             break;
 
         case ServiceType::LogHandler:
-            LogHandler.Handle(frame);
+            LogHandler.Handle(Frame);
             break;
 
         case ServiceType::Register:
-            Register.Handle(frame);
+            Register.Handle(Frame);
             break;
 
         case ServiceType::Storage:
-            StorageSvc.Handle(frame);
+            StorageSvc.Handle(Frame);
             break;
 
         case ServiceType::Subscriptions:
 #if defined(USE_SUB_PROVIDE) || defined(USE_SUB_REQUEST)
-            DeviceLog("DISP", "dispatch Subscriptions cid=%d", cid);
-            Subscriptions.Handle(frame);
+            DeviceLog("DISP", "dispatch Subscriptions cid=%d", Cid);
+            Subscriptions.Handle(Frame);
 #endif
             break;
 
         case ServiceType::Script:
 #ifdef USE_SCRIPTS
-            DeviceLog("DISP", "dispatch Script cid=%d", cid);
-            Script.Handle(frame);
+            DeviceLog("DISP", "dispatch Script cid=%d", Cid);
+            Script.Handle(Frame);
 #endif
             break;
 
         default:
-            DeviceLog("DISP", "unhandled service %u CID %u", (unsigned)target_srv, (unsigned)cid);
+            DeviceLog("DISP", "unhandled service %u CID %u", (unsigned)TargetSrv, (unsigned)Cid);
             // An unhandled service is an error, so it goes out at the error class.
-            ReportLog(MakeLog(false, (uint16_t)target_srv, cid, 0), PRIORITY_ERROR);
+            ReportLog(MakeLog(false, (uint16_t)TargetSrv, Cid, 0), PRIORITY_ERROR);
             break;
         }
     } // end if (local interest)
@@ -132,10 +132,10 @@ void DispatchPacket(const PacketFrame &frame)
     // Forwarding Rule: Always forward to physical bus if the target is external and it
     // originated locally. (The app link's frames are rewritten to our own short address
     // by AppInterfaceRouteIn, so they forward through the same path.)
-    if (NetQualifyLocal(frame.IdTgt, DeviceStatus.NetId) != DeviceStatus.ShortAddress &&
-        frame.IdSrc == DeviceStatus.ShortAddress)
+    if (NetQualifyLocal(Frame.IdTgt, DeviceStatus.NetId) != DeviceStatus.ShortAddress &&
+        Frame.IdSrc == DeviceStatus.ShortAddress)
     {
-        SendAndVerifyPacket(frame);
+        SendAndVerifyPacket(Frame);
     }
 }
 
@@ -143,13 +143,13 @@ void DispatchPacket(const PacketFrame &frame)
 // handlers (the main loop calls this repeatedly to drain the queue).
 void ProcessBus()
 {
-    static PacketFrame rx_frame __attribute__((aligned(4)));
-    int frame_size = ReceivePacket(&rx_frame);
-    if (frame_size == 0)
+    static PacketFrame RxFrame __attribute__((aligned(4)));
+    int FrameSize = ReceivePacket(&RxFrame);
+    if (FrameSize == 0)
     {
         return;
     }
-    DispatchPacket(rx_frame);
+    DispatchPacket(RxFrame);
 }
 
 // Restores every memory service from its backup file at boot (the static `.SV` space, and
