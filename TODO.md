@@ -164,39 +164,6 @@ change-sets per area - the one serial step in the plan.
 **Phase 5 - optimization + final verification pass.** DAS headroom (~94% flash / ~99% RAM), gate
 green, release checklist.
 
-## Code style sweep (planned, after the services refactor and the optimize/cleanup pass)
-
-`Docs/Code Style.md` is the rule set. The sweep is its own phase so it never mixes with a behavioural
-change; each pass is one commit with the gate and the image sizes quoted.
-
-**Tooling, committed once before any pass**
-- `firmware/.clang-format`: `BreakBeforeBraces: Allman`, `IndentWidth: 4`, `UseTab: Never`,
-  `ColumnLimit: 120`, `RemoveBracesLLVM: true` (a single-statement body loses its braces).
-- `.clang-tidy`: `readability-identifier-naming` for PascalCase plus the acronym prefixes/suffixes.
-- `.editorconfig`: indentation, width and EOL basics.
-- `./style.sh`: `clang-format --dry-run --Werror`, `dart format --set-exit-if-changed` and
-  `flutter analyze`, so the rules stay enforceable instead of being a one-off.
-
-**Passes, in order**
-1. Formatting and braces (clang-format). Whitespace only, so the three images must come out
-   **byte-identical** - anything else is a bug in the pass.
-2. Naming, the bulk of the work (~390 project identifiers): drop the remaining `s_` prefixes,
-   snake_case to PascalCase, acronyms to their canonical spelling (`TrID`, `CID`, `SNDB`, `CRC8`,
-   `NetID`, `RSBus`). Scripted per file-group with the gate between groups. **Guardrail:** grep the app
-   for an identifier before renaming it - anything the app mirrors or that crosses the wire keeps its
-   spelling - and run the firmware/app contract test afterwards.
-3. Comments: drop commented-out code, changelog notes and restatements; keep the constraint comments.
-4. Functions: split anything over 50 lines, hoist early returns, define `static` helpers before use.
-5. C++ subset: grep-verify no `std::`, `float`, `double`, `new` or `delete` outside comments, and
-   `#pragma once` in every header.
-6. Enum classes: give every member an explicit value.
-7. App: `dart format` and `flutter analyze`; the app follows Effective Dart, so no PascalCase there.
-
-**Guardrails, every pass** - `./test.sh`, the three `pio run` envs, sizes against the sweep baseline,
-and `git status` for version churn. Never rename an external-library symbol, a macro name (UPPER_SNAKE
-is their rule), a wire or contract name, or anything under `Docs/`. Residual exceptions are listed in
-the sweep's final commit message.
-
 ## Open work
 
 - Router capability bit: reserve one for the router service so the documented capability can be set.
@@ -262,14 +229,6 @@ the sweep's final commit message.
       top of the E15 curve looks right at the ceiling.
 - [ ] **DAS provider stale entries** (= `Issues.md` E23; low priority). Effectively solved by the 120 s
       provider lease + orphan re-cancel; revisit only if a *confirmed* cancel is wanted.
-
-## Code-cleanup backlog
-
-- Give the storage flash API a namespace or class instead of the `Storage_Flash*` free functions, and group it the same way in `Docs/Services/Storage.md` (= `Issues.md` E12; folded into the services-as-classes refactor).
-
-**Deliberately left** (a merge would read worse): the three flag-name decoders (`flagWords` = full
-words for the backup format, `ValueFlags.describe` = RO/P/TR, `_flagsSuffix` = RO/P) and the two
-flag renderings in `register_page_tiles` (chips vs small text).
 
 ## Decisions (locked)
 
