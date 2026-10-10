@@ -151,28 +151,12 @@ inline void ScriptService::Init()
 #include "Core/Services/ScriptRuntime.h"
 
 // ---- Temporary forwarders (deleted once every caller uses `Script.` directly) ----
-// Free functions with today's names/signatures that forward to the one instance, so the
-// Dispatcher (HandleScript/HandleScriptResponse), Devices/*/Main.h (ScriptsTick/
-// ScriptsBootLoad) and the Register service (ScriptActive/ScriptKeyCount/ScriptGetIoPointer/
-// ScriptGetEntry/ScriptSetEntry) keep compiling unchanged.
+// The Dispatcher (HandleScript/HandleScriptResponse) and Devices/*/Main.h (ScriptsTick/
+// ScriptsBootLoad) call these before the Script instance is in scope; the Register service now
+// calls `Script.` directly.
 void HandleScriptResponse(const PacketFrame &frame) { Script.HandleResponse(frame); }
 void ScriptsTick(uint32_t nowMs) { Script.Tick(nowMs); }
 void ScriptsBootLoad() { Script.BootLoad(); }
 static void HandleScript(const PacketFrame &frame) { Script.Handle(frame); }
-static LoadedScript *ScriptActive(uint16_t slot) { return Script.Active(slot); }
-static uint8_t ScriptKeyCount(uint16_t slot, uint8_t field) { return Script.KeyCount(slot, field); }
-static bool ScriptGetIoPointer(uint16_t slot, uint8_t field, uint8_t key, ValueInfo &m, void *&data)
-{
-    return Script.GetIoPointer(slot, field, key, m, data);
-}
-static bool ScriptGetEntry(uint16_t slot, uint8_t field, uint8_t key, ValueInfo &m, uint8_t *vbuf, uint8_t &vsz)
-{
-    return Script.GetEntry(slot, field, key, m, vbuf, vsz);
-}
-static bool ScriptSetEntry(uint16_t slot, uint8_t field, uint8_t key, const ValueInfo &m,
-                           const uint8_t *val, uint16_t vlen)
-{
-    return Script.SetEntry(slot, field, key, m, val, vlen);
-}
 
 #endif // USE_SCRIPTS

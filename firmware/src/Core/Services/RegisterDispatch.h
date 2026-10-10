@@ -22,7 +22,7 @@ inline bool RegisterService::RegisterResolveByBlockInfo(uint32_t bi, FieldResult
     if (BlockTypeRange::IsScript(type)) { // Script I/O (inputs/outputs)
         ValueInfo sm;
         void *p = nullptr;
-        if (!ScriptGetIoPointer(BlockTypeRange::ScriptGlobal(type, inst), field, key, sm, p)) return false;
+        if (!Script.GetIoPointer(BlockTypeRange::ScriptGlobal(type, inst), field, key, sm, p)) return false;
         fr.Descriptor = sm;
         fr.Data = p;
         return true;
@@ -69,7 +69,7 @@ inline bool RegisterService::RegisterSetByBlockInfo(uint32_t bi, const ValueInfo
     uint8_t key = BlockInfoKey(bi);
 #ifdef USE_SCRIPTS
     if (BlockTypeRange::IsScript(type)) { // Script I/O: only inputs are writable
-        return ScriptSetEntry(BlockTypeRange::ScriptGlobal(type, inst), field, key, m, val, vlen);
+        return Script.SetEntry(BlockTypeRange::ScriptGlobal(type, inst), field, key, m, val, vlen);
     }
 #endif
     if (BlockTypeRange::IsDynamic(type)) {

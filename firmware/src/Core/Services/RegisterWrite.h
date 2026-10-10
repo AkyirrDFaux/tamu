@@ -34,8 +34,8 @@ inline void RegisterService::HandleDynamicBlockWrite(const PacketFrame &frame, u
 #ifdef USE_SCRIPTS
 // Writes a script input (field 1) or variable (field 3) entry.
 inline void RegisterService::HandleScriptBlockWrite(const PacketFrame &frame, uint16_t inst, uint8_t field, uint8_t key, const ValueInfo *desc, const uint8_t *val, uint16_t vlen) {
-    if (!ScriptActive(inst)) { RespondStatus(frame,false); return; }
-    if (!ScriptSetEntry(inst, field, key, *desc, val, vlen)) { RespondStatus(frame,false); return; }
+    if (!Script.Active(inst)) { RespondStatus(frame,false); return; }
+    if (!Script.SetEntry(inst, field, key, *desc, val, vlen)) { RespondStatus(frame,false); return; }
     SendResponse(frame, frame.payload, PayloadBytes(frame));
 }
 #endif

@@ -68,7 +68,7 @@ inline uint16_t RegisterService::EnumTypeCount() {
 inline uint16_t RegisterService::EnumScriptWord(uint16_t inst, uint16_t i) {
     uint16_t seen = 0;
     for (uint16_t f = 0; f <= SCRIPT_FIELD_OUTPUT; f++) {
-        uint8_t keys = ScriptKeyCount(inst, (uint8_t)f);
+        uint8_t keys = Script.KeyCount(inst, (uint8_t)f);
         for (uint8_t k = 0; k < keys; k++)
             if (seen++ == i) return (uint16_t)((f << 8) | k);
     }
@@ -197,7 +197,7 @@ inline void RegisterService::HandleEnumerateFields(const PacketFrame &frame) {
 #ifdef USE_SCRIPTS
     } else if (BlockTypeRange::IsScript(type)) { // a loaded script: its inputs and outputs, per instance
         gi = BlockTypeRange::ScriptGlobal(type, inst);
-        LoadedScript *s = ScriptActive(gi);
+        LoadedScript *s = Script.Active(gi);
         if (s) {
             src = EnumSrc::Script;
             ctx = &gi;

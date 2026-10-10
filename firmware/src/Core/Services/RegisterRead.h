@@ -152,7 +152,7 @@ inline void RegisterService::HandleDynamicBlockRead(const PacketFrame &frame, ui
 // Reads one entry of a loaded script (block type 0x3F4-0x3F7) or its block meta. The script's
 // input/output/variable/constant tables are addressed as fields 1-4 with key = index.
 inline void RegisterService::HandleScriptBlockRead(const PacketFrame &frame, uint32_t bi, uint16_t inst, uint8_t field, uint8_t key) {
-    LoadedScript *s = ScriptActive(inst);
+    LoadedScript *s = Script.Active(inst);
     if (!s) { RespondStatus(frame,false); return; }
     if (field == 0xFF) {
         SendBlockMetaResponse(frame, bi, BlockTypeRange::ScriptTypeOf(inst), SCRIPT_FIELD_COUNT,
@@ -162,7 +162,7 @@ inline void RegisterService::HandleScriptBlockRead(const PacketFrame &frame, uin
     ValueInfo m = {};
     uint8_t vbuf[FIELD_RESPONSE_BUF_SIZE];
     uint8_t vsz = 0;
-    if (!ScriptGetEntry(inst, field, key, m, vbuf, vsz)) { RespondStatus(frame,false); return; }
+    if (!Script.GetEntry(inst, field, key, m, vbuf, vsz)) { RespondStatus(frame,false); return; }
     FieldResult fr;
     fr.Descriptor = m;
     fr.Data = vbuf;
