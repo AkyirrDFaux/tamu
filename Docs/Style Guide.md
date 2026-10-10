@@ -100,8 +100,9 @@ document is corrected.
 - [[Services/Register]] and the other service documents own protocol and firmware behaviour. The
   documents under `App/Service views/` own UI presentation and link to the service document for
   anything protocol-level rather than restating it.
-- [[General Architecture]] owns the code rules. `AGENTS.md` keeps only agent-operational rules: git,
-  gate commands, budgets: and points there.
+- [[Code Style]] owns the rules for the source. [[General Architecture]] describes what the firmware
+  is built from. `AGENTS.md` keeps only agent-operational rules: git, gate commands, budgets: and
+  points there.
 ### Spellings to Fix
 - `recieved` to received, `avalible` to available, `prefferably` to preferably, `preffered` to
   preferred, `persistance` to persistence, `neccesarily` to necessarily, `accesible` to accessible,

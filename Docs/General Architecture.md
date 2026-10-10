@@ -27,6 +27,7 @@ The value and payload types are defined in [[Data Formats]].
 ### Modules
 Sets of predefined memory blocks and the functions that together provide one unified feature to the device. A module is included per device by its capabilities, and almost always has device-specific implementations.
 ### Code Rules
+[[Code Style]] owns these in full; this is the architecture-level summary.
 - Use PascalCase where possible.
 - Each service or large feature is a class.
 - Reuse code wherever possible.
