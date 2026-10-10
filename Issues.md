@@ -152,14 +152,6 @@ are hardware-only.
   selection; the app persists `notifyOs`/`osEvents`/`suppressOsWhenOpen` but only delivers in-app
   notifications (`app/lib/core/notifications.dart`). Implement OS delivery or mark the setting
   pending.
-- **E2** **Script UI info format.** `Script.md` describes the UI info as names + per-input limits/UI type;
-  the app writes **version 2** with a per-input label list (the custom-enum case). v1 is no longer
-  supported, so an old backup's script names fall back to the file name until re-saved - document
-  the format.
-- **E3** **Pre-rotated Position convention.** The renderer samples the geometry/texture masks *forward*,
-  so a shape's centre lands at `-L^-1 * t`; both writers (`ScriptExecTransform` and the app's
-  `Transform23`) store `t' = L * t` to keep the centre at `-t` under rotation. `LED display.md`
-  describes Position as a plain 2x3 matrix - document the convention.
 - **E4** **Cross-script macro calls.** `Script.md` names "Macro call" but gives no opcode, boundary rule
   or argument passing. The VM runs **one script per tick** and every wait state lives on the
   callee, so it needs a call stack of `(script, line)` pairs and a tick loop that resumes whichever
@@ -168,11 +160,10 @@ are hardware-only.
 - **E5** **Script CID 0 lists file IDs, not loaded slots.** CID 1 takes a separate loaded id, so CID 0's
   list is not slot-addressable; the app tracks file->slot and falls back to the file==slot
   convention. Reporting the loaded **slots** (or a slot per entry) would remove the guesswork.
-- **E6** **Dynamic descriptor doc omits `Name`/`generation`/`present`** (deferred).
-- **E9** **Device-type numbering is undocumented.** `Docs/Data Formats.md` and `System Block and Device
-  Commands.md` name the System `Device Type` field but give no numeric table. `Enums.h` /
-  `types.dart` assign `Tamu_v2_0A = 0x01`, `Valu_v2_0 = 0x02`, `DualAnalogSensor = 0x03` as a code
-  convention (0x02 carried over from the pre-restructure tree) - confirm or document it.
+- **E6** **Dynamic descriptor doc omits `Name`/`generation`/`present`.** The `DynamicBlockDescriptor`
+  (`MemoryBlocks.h:35-49`) has `char Name[`BLOCK_NAME_LEN`]`, `uint32_t generation` and `bool present`
+  beyond the documented pointers and sizes (`Register.md:88-98`). **Under review** (owner wants a
+  closer look).
 
 ### Docs-conformance sweep wording (2026-10-04)
 - **E10** **Documented but not implemented** (future/planned, `Plan.md`): WiFi `App Active` values + System

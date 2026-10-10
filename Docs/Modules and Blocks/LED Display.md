@@ -27,7 +27,7 @@ The mask is an alpha channel modified by geometric definitions, and the geometry
 | ----------------- | --- | ----------------- | ---- |
 | Geometry shape    | 1   | `Enum`            |      |
 | Operation type    | 2   | `Enum`            | Replace, Add, Cut, Intersect, XOR |
-| Position          | 3   | `Matrix<2,3>`     | 2D transformation |
+| Position          | 3   | `Matrix<2,3>`     | 2D transformation; the writer stores the translation pre-rotated by the linear part (`t' = L * t`) so a shape's centre stays at `-t` under rotation |
 | Size              | 4   | `Vector<2>` or `Number` |      |
 | Fade              | 5   | `Number`          | In pixels |
 | Alpha             | 6   | `Number`          | Default 1, range 0 to 1 |
@@ -60,7 +60,7 @@ The fill is the texture or effect applied in the area specified by the mask. Tex
 | Key Name            | Key | Usual Type        | Note |
 | ------------------- | --- | ----------------- | ---- |
 | Texture/Effect type | 1   | `Enum`            |      |
-| Position            | 2   | `Matrix<2,3>`     | A 2D transformation that defines the centre |
+| Position            | 2   | `Matrix<2,3>`     | A 2D transformation that defines the centre; pre-rotated by the linear part (`t' = L * t`) like the geometry Position |
 | Size                | 3   | `Vector<2>` or `Number` |      |
 | Colour 1            | 4   | `Colour`          |      |
 | Colour 2            | 5   | `Colour`          |      |

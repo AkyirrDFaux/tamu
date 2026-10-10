@@ -40,3 +40,20 @@ editable. Appbar buttons: **Check validity**, **Upload** (write the file), and f
 script **Update** (reload live to apply the draft) and **Unload**, plus a refresh button.
 The file id and the loaded slot are independent; the app tracks the mapping for the loads it
 starts (Issues.md, "Script CID 0 lists file IDs, not loaded slots").
+
+# Script UI info
+The stored script's UI-info blob is decoded only by the app (the firmware treats it as opaque
+bytes; its length is the header's UI-info size field). Layout, version 2:
+
+| Part           | Size                                                        | Note                                    |
+| -------------- | ----------------------------------------------------------- | --------------------------------------- |
+| Version        | uint8                                                       | UI-info format version; currently 2     |
+| Function name  | length-prefixed                                             |                                         |
+| Input names    | uint8 count, then length-prefixed names                     |                                         |
+| Output names   | uint8 count, then length-prefixed names                     |                                         |
+| Variable names | uint8 count, then length-prefixed names                     |                                         |
+| Constant names | uint8 count, then length-prefixed names                     |                                         |
+| Input UI       | per input: uint8 type, 3 reserved bytes, Number min, Number max, Number step |          |
+| Input options  | per input: uint8 count, then length-prefixed labels         | Version 2; empty when the input has no choices |
+
+A length-prefixed string is a `uint8` count followed by that many characters.

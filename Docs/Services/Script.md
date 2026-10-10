@@ -26,7 +26,7 @@ Scripts are pre-loaded first, which creates their register and variable space. O
 
 Properties carry information about the script type, such as whether it loads on boot.
 
-The UI info contains the function name; the input, output, variable and constant names; the input limits; and the UI type.
+The UI info is decoded only by the app (the firmware treats it as opaque bytes); see [[App/Service Views/Script|the app]] for its format.
 
 Predefines are commonly reused enums and small data, which compress better as symbols than as stored constants.
 #### Symbol
