@@ -380,8 +380,16 @@ class BootloaderClient {
   /// nothing to correct. Returns [FlashResult.verified] only then.
   Future<FlashResult> flash(
     Uint8List image, {
+    int? maxImageSize,
     void Function(FlashProgress progress)? onProgress,
   }) async {
+    // Refuse an image the device's app space cannot hold, before spending a write pass on it.
+    // The caller gets the size from identify(); the device would reject the out-of-range writes
+    // anyway, but only after the whole pass had run and failed verification.
+    if (maxImageSize != null && image.length > maxImageSize) {
+      throw ArgumentError(
+          'image is ${image.length} bytes; the device app space is $maxImageSize');
+    }
     final chunks = _chunk(image);
     final total = chunks.length;
     var writes = 0, reads = 0, corrections = 0;

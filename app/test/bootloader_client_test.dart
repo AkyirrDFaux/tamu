@@ -144,6 +144,17 @@ void main() {
     expect(await _client(t).identify(), isNull);
   });
 
+  test('an image larger than the device app space is refused before writing', () async {
+    final t = FakeTransport();
+    await expectLater(_client(t).flash(_image(100), maxImageSize: 64),
+        throwsA(isA<ArgumentError>()));
+    expect(t.writes, 0); // nothing was written
+
+    // The same image fits when the app space is large enough.
+    final ok = await _client(t).flash(_image(100), maxImageSize: 100);
+    expect(ok.verified, isTrue);
+  });
+
   // The passthrough CIDs are wire values shared with the firmware's Device.h; a remap on either
   // side would silently break every passthrough operation (the codec KATs pin the frame bytes,
   // but nothing pinned these). Docs/Services/Bootloader.md "Core Bootloader Passthrough

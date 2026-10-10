@@ -142,10 +142,16 @@ class _UpdatePageState extends State<UpdatePage> {
         return;
       }
       setState(() => _identity = id);
+      if (image.length > id.appSize) {
+        _addLog('Image is ${_formatBytes(image.length)}, but ${id.name} has only '
+            '${_formatBytes(id.appSize)} of app space - aborting before writing.');
+        return;
+      }
       _addLog('Bootloader identified: ${id.name} '
           '(${_formatBytes(id.appSize)} app space). Writing '
           '${_formatBytes(image.length)}...');
-      final result = await client.flash(image, onProgress: (p) {
+      final result =
+          await client.flash(image, maxImageSize: id.appSize, onProgress: (p) {
         if (mounted) setState(() => _progress = p);
       });
       setState(() => _result = result);
