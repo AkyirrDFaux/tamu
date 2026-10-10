@@ -4,7 +4,7 @@ Contains the overall settings.
 
 | Name                    | F.K | Flags | Size      | Note |
 | ----------------------- | --- | ----- | --------- | ---- |
-| Brightness              | 0   |       | Number    | % |
+| Brightness              | 0   |       | Number    | 0-100 %; mapped linearly onto the layout's brightness limit |
 | Offset                  | 1   | P     | `Matrix<2,3>` | A transformation that defines the 0,0 screen position and the default rotation |
 | Render Block Index | 2   | P     | `Index`   | Index of the block containing shapes, textures and effects; -1 renders nothing |
 | Layout File Name        | 3   | TR, P | `Filename` | The file containing the layout |
@@ -12,7 +12,7 @@ Contains the overall settings.
 ### Layout File
 | Name                  | Size           | Note |
 | --------------------- | -------------- | ---- |
-| Brightness limit      | uint8          | 0-255 |
+| Brightness limit      | uint8          | 0-255, read as a percentage: the physical ceiling the 0-100 % Brightness setting maps onto (178 = 70 %) |
 | Display width         | uint8          |      |
 | Display height        | uint8          |      |
 | Table of LED indexes  | uint16[W x H]  | Row first |

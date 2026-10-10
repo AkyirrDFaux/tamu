@@ -431,11 +431,13 @@ inline void Vysi1Display::Render()
     // filled, see Linearise), so only scale by Brightness here.
     Number brightness = Vol.Brightness;
     if (brightness < N(0)) brightness = N(0);
+    if (brightness > N(100)) brightness = N(100);
     // The layout file's brightness limit (Docs/Modules and blocks/LED display.md) is a 0-255
-    // byte read as a percentage: it caps the configured brightness, which is the board's
-    // current ceiling. 178 -> 70%, the same ceiling the brightness script uses.
+    // byte read as a percentage: it is the physical ceiling the board's current allows. The
+    // register holds 0-100 % and maps linearly onto it, so 100 % reaches the layout maximum
+    // (178 -> 70 %).
     const Number limit((int32_t)(((uint32_t)BrightnessLimit * 100u + 127u) / 255u));
-    if (brightness > limit) brightness = limit;
+    brightness = (brightness * limit) / 100;
     // 256-scale so full brightness maps to exactly 255 after the >>8.
     uint32_t brightness_scale = (brightness >= 100) ? 256 : ((brightness * 256) / 100).ToInt();
 

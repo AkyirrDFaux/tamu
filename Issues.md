@@ -181,12 +181,6 @@ are hardware-only.
   compact drawer shell on a phone form factor.
 
 ## Evaluation setup
-- **E21** **Brightness ceiling vs the script cap.** The builder clamps the displays to **7 %** and the
-  brightness script now caps at **100 %** (E15's rescaled curve), but the layout's brightness limit
-  (`178` ≈ 70 %, `Vysi1Layout.h:42`, enforced in `Vysi1Render.h:437-438`) is the real ceiling, so the
-  top of the curve flat-tops from ~5 000 lux. Brown-out itself is settled (the layout limit covers
-  it); decide whether to raise the layout limit so 100 % is realised, or document the table as the
-  *requested* brightness.
 - **E22** **The LED display has no framebuffer readback**, so visuals are verified by eye only; a render
   snapshot command would make them testable.
 - **E23** **DAS provider stale entries** - effectively solved by the 120 s provider lease + orphan-cancel

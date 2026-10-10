@@ -211,9 +211,9 @@ green, release checklist.
       **Blocked on a docs decision.**
 - [ ] **Rig looks.** `Polygon`/`Star` after the `atan2` fix; a rounded `Square`/`Rectangle`
       (eye-only; the evaluation scene sets no `Rounding`). Needs the display rig.
-- [ ] **D4 - confirm the LED brightness-cap value** by eye. The mechanism landed (layout brightness
-      limit 178 = 70 %, enforced in the render). **Re-check after E15**: the script cap is now 100 %,
-      so the curve flat-tops at the 70 % ceiling - see `Issues.md` E21.
+- [ ] **D4 - confirm the LED brightness-cap value** by eye. The layout brightness limit (178 = 70 %)
+      maps the register's 0-100 % linearly onto the physical ceiling (`Vysi1Render.h`); confirm the
+      top of the E15 curve looks right at the ceiling.
 - [ ] **DAS provider stale entries** (= `Issues.md` E23; low priority). Effectively solved by the 120 s
       provider lease + orphan re-cancel; revisit only if a *confirmed* cancel is wanted.
 
@@ -277,9 +277,9 @@ flag renderings in `register_page_tiles` (chips vs small text).
   keep chains short. Exponent/weight literals are Q8.8.
 - **DAS sensors**: the NTC is a **100 kΩ** part (`MeasNTC100K`); the LDR uses `R(E)=R10*(E/10)^-gamma`
   with `LDR_R10_KOHM`/`LDR_GAMMA` knobs. The lux path wants a lux-meter calibration of R10.
-- **LED strips can brown out the board**; the builder clamps the displays to 7 % and the
-  brightness script caps at 100 %, but the layout file's brightness limit (178 ≈ 70 %) is the real
-  ceiling and is enforced in the render.
+- **LED strips can brown out the board**; the builder clamps the displays to 7 % and the brightness
+  script caps at 100 %, but the register's 0-100 % maps **linearly** onto the layout file's
+  brightness limit (178 ≈ 70 %, `Vysi1Render.h`), which is the physical ceiling.
 - **The renderer samples the geometry mask forward** (`pp = Position * coord`), so both writers
   store `t' = L * t` to keep the centre at `-t` for any rotation.
 - **Storage names are space-padded, not NUL-terminated** (`NameMatch` packs the plain name first).
