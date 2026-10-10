@@ -99,7 +99,7 @@ class WriteAck {
   final bool accepted;
 
   /// The offset of the device's last successfully written chunk, or null when the channel
-  /// cannot expose it (the node passthrough only relays a success flag). A value of
+  /// could not expose it (a relay timeout carries no payload). A value of
   /// [Bootloader.nothingWritten] means nothing has been written yet.
   final int? lastWrittenOffset;
 
@@ -110,10 +110,9 @@ class WriteAck {
 /// reported as null (or [TransportException] when the transport chooses to throw).
 /// [BootloaderClient] adds the pacing and the retry policy.
 abstract class BootloaderTransport {
-  /// Writes one 32-byte chunk at [offset]. The core's own USB bootloader reports the
-  /// device's [WriteAck.lastWrittenOffset]; the passthrough only relays a success flag
-  /// (both SUCCESS and FAIL carry an empty ack), so it reports the flag with a null offset
-  /// and the verify pass catches a dropped write.
+  /// Writes one 32-byte chunk at [offset]. Both channels report the device's
+  /// [WriteAck.lastWrittenOffset]; it is null only when a relay timeout carried no payload,
+  /// in which case the verify pass catches a dropped write.
   Future<WriteAck> writeChunk(int offset, List<int> data, Duration timeout);
 
   /// Reads 32 bytes at [offset]. Returns null when the node answered FAIL or the request was
@@ -126,14 +125,16 @@ abstract class BootloaderTransport {
 
 /// Core passthrough command IDs (Docs/Services/Bootloader.md "Core Bootloader Passthrough
 /// Commands (002x)"): the core relays the app's request onto its RSBus and echoes the reply.
-const int coreBootWrite = 0x20; // send write packet     (request: offset + payload)
-const int coreBootRead = 0x21; // request read          (request: offset)
-const int coreBootIdentify = 0x22; // request identification (response: app size + name)
+const int coreBootIdentify = 0x20; // request identification (response: app size + name)
+const int coreBootWrite =
+    0x21; // send write packet      (request: offset + payload; response: last-written offset)
+const int coreBootRead = 0x22; // request read           (request: offset; response: offset + payload)
 
 /// The core's Device `0020/0021/0022` passthrough: the core relays each raw bootloader frame
 /// onto its RSBus, so the app reaches whatever node is in bootloader mode without knowing its
-/// address. The write reply carries the success flag (the node's write-response offset is not
-/// relayed); reads return `offset + payload`; identification returns `app size + name`.
+/// address. A write reply carries the node's last-written offset (the flag is SUCCESS only when
+/// that offset names the requested chunk); reads return `offset + payload`; identification
+/// returns `app size + name`.
 class PassthroughTransport implements BootloaderTransport {
   /// The core that relays our raw frames onto its RSBus.
   final int coreId;
@@ -147,9 +148,11 @@ class PassthroughTransport implements BootloaderTransport {
     final payload = <int>[...uint32ToBytes(offset), ...data];
     final reply = await _link.requestWithFlags(coreId, ServiceType.device, coreBootWrite,
         payload: payload, timeout: timeout);
-    // The core ACKs the relay with its SUCCESS/FAIL flag; the node's own write-response
-    // offset is not relayed back here.
-    return WriteAck(reply.ok);
+    // The core relays the node's write-response offset; the flag is SUCCESS only when it names
+    // this chunk. A FAIL still carries the offset (the node's last successfully written one),
+    // and a timeout carries none, so the client can retry or resynchronise.
+    final last = reply.payload.length >= 4 ? uint32FromBytes(reply.payload, 0) : null;
+    return WriteAck(reply.ok, lastWrittenOffset: last);
   }
 
   @override
