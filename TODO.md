@@ -28,7 +28,8 @@ in batched change-sets per area, only after Akyirr approves. `TODO.md`/`Issues.m
 record a numbers table (flash/RAM per env, suite counts, timings) and define the beta acceptance
 criteria. Everything after is measured against it.
   **DONE 2026-10-08 - host and builds (HIL not yet run).**
-  - `./test.sh` **exit 0**: native suite clean, **168 app tests pass** ("All tests passed!"),
+  - `./test.sh` **exit 0**: native suite clean, **168 app tests pass** ("All tests passed!") - **178** after
+    the 2026-10-10 fact-check wave,
     `flutter analyze` clean ("No issues found!").
   - `Tamu_v2_0A` **SUCCESS** - RAM 21.0% (68892/327680), flash 23.5% (646846/2752512), bin 647520 B.
   - `DAS_v0_1` **SUCCESS** - RAM **99.0%** (2028/2048), flash 93.8% (13440/14336), bin 14336 B.
@@ -145,8 +146,7 @@ change-sets per area - the one serial step in the plan.
   Verified clean: no `#`/`##` headings, no colon-ending headings, no old typos, no `TRID`, no old
   command-table headers, no old range-heading form. 1000 insertions / 857 deletions across 20 files
   (`Docs/Style Guide.md` included, for the `Name` type in its vocabulary list). `Docs/App/**` is a
-  separate pass, `Plan.md` stays out of scope. **Not committed** - awaiting Akyirr's review, and the
-  open style questions are listed in the session for him to rule on.
+  separate pass, `Plan.md` stays out of scope. **Committed 2026-10-09** (the `docs:` series that day).
 
 **Phase 5 - optimization + final verification pass.** DAS headroom (~94% flash / ~99% RAM), gate
 green, release checklist.
@@ -154,10 +154,10 @@ green, release checklist.
 ## Open work
 
 - Router capability bit: reserve one for the router service so the documented capability can be set.
-- App Active enum: add `LegacyBt` and `WiFi` (`Enums.h:34-38`). The documents already list them as planned states.
-- [ ] **A55 (Current Setup v3) - the brightness-cap column.** The lux curve is recalculated later.
-      Measured `luxSpan = 8850` (`app/test/current_setup.dart:170-174`), so the last column should read
-      `>8.8k Lux` unless `>10k Lux` is deliberate.
+- App Active enum: add `WiFi` (`Enums.h:34-38`) when that work starts. E10 dropped `LegacyBt` from
+  the documents, so it is no longer listed as a planned state.
+- [x] **A55 (Current Setup v3) - the brightness-cap column. DONE 2026-10-10 (E15).** The curve was
+      rescaled to 7-100 % with the cap at 8 000 lux; the table now reads the four anchors.
 - [ ] **Valu app works standalone but NOT when launched by the bootloader (open).** Verified
       2026-10-07: the identical app image, ISP-flashed at 0x0 (no bootloader), runs and enumerates
       as `1a86:6001 "Valu v2.0"` and reaches its main loop; launched from the bootloader
@@ -199,26 +199,27 @@ green, release checklist.
       substitutes for a replug). The bootloader cannot rewrite itself - `HandleWrite` refuses
       anything below `APP_BASE` by design - so every bootloader change costs an ISP session, and
       the board has no SWD header to fall back on.
-- [ ] **A11 / D3 - per-field geometry-mask versioning.** A write to an eye block bumps the block
+- [ ] **D3 - per-field geometry-mask versioning.** A write to an eye block bumps the block
       generation and the renderer recomputes all 9 masks; the panel is at its cap (~127-132 FPS),
       so not urgent. Needs a per-field invalidation token: a per-field version array, or comparing
       the cached geometry inputs each frame and recomputing only the changed fields (host-checkable).
       **Deferred to the display/rig batch.**
-- [ ] **A10 part 2 / D5 - cross-script macro calls.** `Script.md` names "Macro call" but gives no
+- [ ] **D5 - cross-script macro calls** (= `Issues.md` E4). `Script.md` names "Macro call" but gives no
       opcode/boundary/argument rules. The VM runs one script per tick and wait state lives on the
       callee, so it needs a `(script, line)` call stack and a tick loop that resumes the waiting
-      script. Proposal (in `Issues.md`): a blocking `Call script` op, values via registers.
+      script. Proposal: a blocking `Call script` op, values via registers.
       **Blocked on a docs decision.**
 - [ ] **Rig looks.** `Polygon`/`Star` after the `atan2` fix; a rounded `Square`/`Rectangle`
       (eye-only; the evaluation scene sets no `Rounding`). Needs the display rig.
-- [ ] **D4 - confirm the LED brightness-cap value** by eye (mechanism landed: layout brightness
-      limit 178 = 70 %, enforced in the render).
-- [ ] **DAS provider stale entries (low priority).** Effectively solved by the 120 s provider lease
-      + orphan re-cancel; revisit only if a *confirmed* cancel is wanted.
+- [ ] **D4 - confirm the LED brightness-cap value** by eye. The mechanism landed (layout brightness
+      limit 178 = 70 %, enforced in the render). **Re-check after E15**: the script cap is now 100 %,
+      so the curve flat-tops at the 70 % ceiling - see `Issues.md` E21.
+- [ ] **DAS provider stale entries** (= `Issues.md` E23; low priority). Effectively solved by the 120 s
+      provider lease + orphan re-cancel; revisit only if a *confirmed* cancel is wanted.
 
 ## Code-cleanup backlog
 
-- Give the storage flash API a namespace or class instead of the `Storage_Flash*` free functions, and group it the same way in `Docs/Services/Storage.md` (from doc fact check A12).
+- Give the storage flash API a namespace or class instead of the `Storage_Flash*` free functions, and group it the same way in `Docs/Services/Storage.md` (= `Issues.md` E12; folded into the services-as-classes refactor).
 
 **Deliberately left** (a merge would read worse): the three flag-name decoders (`flagWords` = full
 words for the backup format, `ValueFlags.describe` = RO/P/TR, `_flagsSuffix` = RO/P) and the two
@@ -276,8 +277,9 @@ flag renderings in `register_page_tiles` (chips vs small text).
   keep chains short. Exponent/weight literals are Q8.8.
 - **DAS sensors**: the NTC is a **100 kΩ** part (`MeasNTC100K`); the LDR uses `R(E)=R10*(E/10)^-gamma`
   with `LDR_R10_KOHM`/`LDR_GAMMA` knobs. The lux path wants a lux-meter calibration of R10.
-- **LED strips can brown out the board**; the builder clamps the displays to 5 % and the
-  brightness script caps at 70 %, and the layout file's brightness limit enforces it in the render.
+- **LED strips can brown out the board**; the builder clamps the displays to 7 % and the
+  brightness script caps at 100 %, but the layout file's brightness limit (178 ≈ 70 %) is the real
+  ceiling and is enforced in the render.
 - **The renderer samples the geometry mask forward** (`pp = Position * coord`), so both writers
   store `t' = L * t` to keep the centre at `-t` for any rotation.
 - **Storage names are space-padded, not NUL-terminated** (`NameMatch` packs the plain name first).

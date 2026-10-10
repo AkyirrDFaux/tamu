@@ -55,7 +55,7 @@ native tests and both builds are for.
 **Order** (each step builds and passes before the next):
 1. `Register` - the biggest, and the one that proves the convention fits a split service.
 2. `Storage` - already a struct with an object; mostly renaming and moving `Init` in. This also
-   absorbs the storage flash API refactor (Issues A12): the `Storage_Flash*` free functions become the
+   absorbs the storage flash API refactor (E12): the `Storage_Flash*` free functions become the
    service's methods. The same class treatment extends to any other service still written as free
    functions rather than a class (the point of this plan is one shape for every service).
 3. `Subscriptions` - 19 file-statics and three files that talk to each other.
@@ -70,7 +70,7 @@ per-device composition, or anything under `Docs/`. No document change is expecte
 **Verification per step:** `./test.sh` (native firmware tests + the app suite + analyze), both `pio run` envs,
 and the safe HIL sweep once the rig is flashed.
 
-**Sequencing:** after the in-flight wave (six units are editing these files now) and after B10.
+**Sequencing:** unblocked - the in-flight wave and B10 are both done; this is the next work item.
 
 ## Doc fact check (2026-10-09) - open items
 
@@ -80,8 +80,8 @@ Every firmware document was checked against `firmware/src`; the closed dispositi
 
 ### A. Doc fixes (cross-reference rerun, 2026-10-10) - all resolved
 
-The 2026-10-10 rerun is closed out: **A61-A67 and A69-A71 were ruled on and applied** (A69/A70/A71
-also required code changes), and **A68 is planned (a TODO), not a doc issue**. Applied wording is in git.
+A61-A67 and A69-A71 were ruled on and applied (A69/A70/A71 also required code changes); A68 is a
+TODO, not a doc issue.
 
 ### B. Code fixes still open (the document is the specification)
 
@@ -169,7 +169,7 @@ are hardware-only.
 - **E12** **Storage.md flash API names.** The doc lists `Init/Read/Write/Erase/Format` (`Storage.md:40-48`);
   the code is `Storage_FlashInit/…Read/…Write/…Erase/…Format` with `(offset, data, size)` order.
   **Deferred**: no rename now — the services-as-classes refactor turns these free functions into
-  Storage methods (Issues A12), which supersedes this wording.
+  Storage methods, which supersedes this wording.
 
 ## Storage / DAS
 - **E19** **`.SUBREQ` on a provider-only node** was reported once; the empty-table file is deleted now.
@@ -181,8 +181,12 @@ are hardware-only.
   compact drawer shell on a phone form factor.
 
 ## Evaluation setup
-- **E21** **LED brightness can brown out the board.** The builder clamps the displays to 5 % and the
-  brightness script caps at 70 %, but a firmware-side current cap/ramp would be safer.
+- **E21** **Brightness ceiling vs the script cap.** The builder clamps the displays to **7 %** and the
+  brightness script now caps at **100 %** (E15's rescaled curve), but the layout's brightness limit
+  (`178` ≈ 70 %, `Vysi1Layout.h:42`, enforced in `Vysi1Render.h:437-438`) is the real ceiling, so the
+  top of the curve flat-tops from ~5 000 lux. Brown-out itself is settled (the layout limit covers
+  it); decide whether to raise the layout limit so 100 % is realised, or document the table as the
+  *requested* brightness.
 - **E22** **The LED display has no framebuffer readback**, so visuals are verified by eye only; a render
   snapshot command would make them testable.
 - **E23** **DAS provider stale entries** - effectively solved by the 120 s provider lease + orphan-cancel
