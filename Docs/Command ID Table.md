@@ -8,7 +8,7 @@ An index of every command ID, grouped by the section that owns it. The payloads 
 |  | TimeSync | 0x0003 |
 |  | Core discover | 0x0010 |
 |  | SNDB | 0x0011-0x0013 |
-|  | Bootloader passthrough | 0x0020-0x0021 |
+|  | Bootloader passthrough | 0x0020-0x0022 |
 | [[Services/Register\|Register]] | Enumerate blocks | 0x0100 |
 |  | Enumerate fields | 0x0101 |
 |  | Read | 0x0102 |

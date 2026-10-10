@@ -90,10 +90,12 @@ Read response packet:
 
 The packets are sent whenever the USB or RSBus is clear, and all actions are blocking.
 ### Core Bootloader Passthrough Commands (002x)
-Allows the app to send bootloader packets to the RSBus, for the identify, read and write commands. Routers route the bootloader packets as well, acting as a broadcast; they are treated as high priority traffic on the same physical layer.
+Allows the app to send bootloader packets to the RSBus, for the identification, write and read commands. Routers route the bootloader packets as well, acting as a broadcast; they are treated as high priority traffic on the same physical layer.
+
+The passthrough is asynchronous: the core issues the frame and keeps serving while it awaits the reply. A reply that does not arrive within 1 s returns the failure flag, and a request arriving while one is pending is refused.
 
 | Name                   | ID | Request         | Response        | Note |
 | ---------------------- | -- | --------------- | --------------- | ---- |
-| Send write packet      | 0  | Offset, Payload | Success flag    |      |
-| Request read           | 1  | Offset          | Offset, Payload |      |
-| Request identification | 2  | -               | App size, Name  |      |
+| Request identification | 0  | -               | App size, Name  |      |
+| Send write packet      | 1  | Offset, Payload | Offset          | Success only if the offset matches the request |
+| Request read           | 2  | Offset          | Offset, Payload |      |
