@@ -40,7 +40,7 @@ A test carries a prerequisite the rig satisfies or not. The runner reads the pre
 | partner | Another device satisfies a prerequisite of its own |
 | peers | The rig holds a minimum number of devices that satisfy a prerequisite |
 ### Independence and Ordering
-The HIL suite is destructive: a test changes the device's blocks, files, subscriptions and addresses, and the device is not restored to the [[Example Setup|example setup]] afterwards. A test clears the temporaries it creates.
+The HIL suite is destructive: a test changes the device's blocks, files, subscriptions and addresses, and the device is not restored to the example setup afterwards. A test clears the temporaries it creates.
 An independent test touches only its own device's state. Independent tests run in any order, and two devices run different tests at the same time.
 A coupled test changes state the whole network shares, such as a [[Services/Subscriptions|subscription]] table, a broadcast or an address assignment. Coupled tests run one at a time, after the independent set. A coupled test on a rig of one device is a skip.
 A device runs every test its prerequisites allow, so a rig of one core, one [[Devices|DAS]] and one [[Devices|Valu]] runs a different set per device in the same pass.
