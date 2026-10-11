@@ -30,6 +30,70 @@ Spec: `Docs/Services/Bootloader.md`; partition sizes are in `Docs/Devices.md`. L
 
 **Outstanding:** both bootloader paths are now exercised on hardware (2026-10-10). The *core's own* bootloader takes the app image end to end: `test/core_bootloader_flash.py` identifies it (app space 2752512, name "Tamu v2.0A"), writes `ota_0` through the adaptive ack-driven pipeline (20496 chunks, 38.2 KiB/s, 0 resends) and reads the whole image back with 0/20496 mismatches. The *node* bootloader is reachable over the core passthrough: with the DAS in update mode, identify, whole-image read and rewrite+verify all pass (`TAMU_HIL_BOOTLOADER=1 bash test/run_hil_tests.sh --bootloader`, 3/3, 6-8 ms per request). Still unrun: the app's update flow end to end on Android, which the beta criteria below require.
 
+## Script system improvements (2026-10-11) - planning
+
+Goal: round out the script system - the registry/block representation, reusable functions (macros), loading
+and unloading, error reporting, and the instruction set with its documentation. A read-only review of the
+firmware VM, the app's editor and their tests is the basis below.
+
+Later stages, not yet started: **3** reusable functions - local (defined in the file) and global (a stored
+library), expanded at assemble time in the app, so the VM needs no calling convention until the line limit
+actually bites; **4** loading/unloading - atomic activation, explicit slot with a lowest-free convenience,
+Unload that reports failure, and settling the 256-slot vs the Valu's 16; **5** instruction set - implement or
+strike the doc's promised restart/report-info/halt-on-error state ops, implement or remove the shift ops the
+app already offers, and give `Pow` failures and the `Get time` integer-only rule a defined outcome; **6**
+documentation - make `Script.md` normative for the opcode/category/predefine and error-code enumerations,
+the 4-byte value packing it leaves unstated, and the CID 3/4/6/7 "script id = loaded slot" clarification.
+
+### Stage 2 - the script block and the load contract (in progress)
+
+Decisions taken:
+
+- A script's register block is its own type space, not the dynamic-block machinery: it needs no runtime
+  management by the user and exists only as a link to the script's memory space. The link is a translation
+  layer - the Script service synthesises the block's metadata (name, fields, types) from the script's own.
+- Only I/O appears in the register (input and output fields). Variables and constants stay off the register
+  path, reached through the management CIDs as today.
+- The block space is reserved unconditionally, so block numbering never shifts between builds; the Register
+  interface to it is gated on `USE_SCRIPT`.
+- Up to 256 loaded scripts, as today. That count comes from the space being a family of four types x 64
+  instances, which is what the 6-bit `BlockInfo` instance field allows; a single type would cap at 64, and
+  widening the field would renumber existing types.
+- The Valu v2.0 carries a script service too, on its own smaller slot count. The device-block space is shared,
+  so the reserved type numbers and the `USE_SCRIPT` gating have to work for a script build on a different
+  target; the app must stop assuming 256 slots everywhere.
+- Script files are portable in the weak sense only: a file loads and runs on another device, but positional
+  references mean it need not behave correctly there. References stay positional `BlockInfo`
+  (Type.Instance.Field.Key). No name binding and no file versioning - the device's software version is the
+  compatibility signal.
+- Scripts are independent. A reference to a block that is not present is a run-time error on the read/write
+  instruction (target not found), not a load failure and not a tracked dependency.
+
+The load contract:
+
+- **Validation at load is memory bounds only.** The requirement is computed from the file header - the
+  declared input/output/variable/constant sizes, the constants and input-defaults lengths, and the instruction
+  length - and checked against available memory. Every other fault - unknown opcode, out-of-range index or
+  operand, bad flow target, unresolvable reference - is a run-time error, raised when execution reaches it.
+  A malformed script can therefore run part-way and then stop; that is accepted, and it is why the error must
+  carry the position of the failing instruction.
+- **Two allocations per script, both made once at load**: the variable spaces (I/O, variables, constants) and
+  the instruction (bytecode) space, kept separate. Nothing allocates later.
+- Everything the script runs on is copied into that allocation before the slot goes active: the VM never
+  aliases storage, so rewriting the stored file under a running script cannot corrupt it. Optimization
+  deferred.
+- Load may hold the main loop briefly while it reads, parses, allocates and copies. Accepted for now;
+  an incremental load is deferred.
+- A memory-bound failure leaves the slot inactive and the caller sees the failure, as today.
+
+Open in this stage: whether the editor pre-checks a script against the device's free memory and slot count
+before upload. A memory-bound failure's reporting is deferred to the error-reporting stage. Note that a slot
+count is not a memory promise: with 256 slots on the core, scripts averaging more than a fraction of a
+kilobyte each will run the RAM out long before the slots do.
+
+Knock-on: with rejection only at run time, Stage 1 (error reporting - state, code, and the position of the
+failing instruction, plus a log entry) stops being polish and becomes what makes Stage 2 usable.
+
 ## Beta window plan (2026-10-07) - Tamu core/DAS + app; Valu v2 parked
 
 Reason: a tester is being handed updated builds. Targets are **Windows 11 + Android**. No hard date.
