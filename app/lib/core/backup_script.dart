@@ -458,6 +458,9 @@ class BackupScript {
     for (var i = 0; i < _propertyWords.length; i++) {
       if (properties.contains(_propertyWords[i])) props |= 1 << i;
     }
+    // The Properties word also declares the slot (bits 8-15). The boot load reads it to know
+    // where an on-boot file goes; without it every file declares slot 0 and they collide.
+    if (slot >= 0) props = scriptPropertiesWithSlot(props, slot);
     return ScriptDraft(
       functionName: functionName,
       properties: props,

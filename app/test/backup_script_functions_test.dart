@@ -58,10 +58,19 @@ ScriptDraft _scriptWithFunctions() {
   return draft;
 }
 
+/// An image with the slot declared in its Properties word (bits 8-15), as a real `SCR_` file is.
+List<int> _withSlot(List<int> image, int slot) {
+  final props = scriptPropertiesWithSlot(image[0] | (image[1] << 8), slot);
+  final out = [...image];
+  out[0] = props & 0xFF;
+  out[1] = (props >> 8) & 0xFF;
+  return out;
+}
+
 void main() {
   test('a script with functions round-trips byte-identically through JSON (fromDraft)', () {
     final draft = _scriptWithFunctions();
-    final image = draft.toImage();
+    final image = _withSlot(draft.toImage(), 7);
 
     // Sanity: the image really carries a Function block and a reservation record.
     final parsed = ScriptFileData.parse(image);
@@ -82,7 +91,7 @@ void main() {
   });
 
   test('a script read from a raw SCR image round-trips byte-identically (fromImage)', () {
-    final image = _scriptWithFunctions().toImage();
+    final image = _withSlot(_scriptWithFunctions().toImage(), 7);
 
     final backup = BackupScript.fromImage(7, image);
     expect(backup.functions.length, 2);
@@ -100,14 +109,16 @@ void main() {
   test('a functions-less script with reservations round-trips byte-identically', () {
     // An image with a reservation record but no app-only function block (an older file): the
     // reservations must survive the backup on their own, since assembly cannot regenerate them.
-    final bits = ScriptFileBuilder(
-      instructions: encodeScriptLines([
-        ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)),
-      ]),
-      functionReservations: [
-        encodeFunctionReservation(fileId: 0x1AB, memOffset: 0x20, instrOffset: 0x30),
-      ],
-    ).build();
+    final bits = _withSlot(
+        ScriptFileBuilder(
+          instructions: encodeScriptLines([
+            ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)),
+          ]),
+          functionReservations: [
+            encodeFunctionReservation(fileId: 0x1AB, memOffset: 0x20, instrOffset: 0x30),
+          ],
+        ).build(),
+        2);
 
     final backup = BackupScript.fromImage(2, bits);
     expect(backup.functions, isEmpty);

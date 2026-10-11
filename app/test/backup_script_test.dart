@@ -43,6 +43,15 @@ ScriptDraft _draft() {
   return draft;
 }
 
+/// A draft's image with the slot declared in the Properties word, as a real `SCR_` file is.
+List<int> _imageFor(ScriptDraft draft, int slot) {
+  final image = draft.toImage();
+  final props = scriptPropertiesWithSlot(draft.properties, slot);
+  image[0] = props & 0xFF;
+  image[1] = (props >> 8) & 0xFF;
+  return image;
+}
+
 void main() {
   test('script serialises semantically and re-serialises identically', () {
     final draft = _draft();
@@ -57,18 +66,20 @@ void main() {
 
     final restored = BackupScript.fromJson(backup.toJson()).toDraft();
     expect(restored.functionName, 'TestFn');
-    expect(restored.properties, draft.properties);
+    // The rebuilt Properties word carries the flags and the declared slot (bits 8-15).
+    expect(restored.properties & 0xFF, draft.properties);
+    expect(scriptPropertiesSlot(restored.properties), 3);
     expect(restored.inputs.single.spec.uiType, ScriptUiType.slider);
     expect(restored.inputs.single.spec.max, 10);
     expect(restored.inputs.single.value, numberToBytes(1.5));
     expect(restored.constants.single.value, numberToBytes(42));
     expect(restored.lines.length, 3);
     // The rebuilt SCR_XX image is byte-identical to the original.
-    expect(restored.toImage(), draft.toImage());
+    expect(restored.toImage(), _imageFor(draft, 3));
   });
 
   test('script can be decoded from a raw SCR_XX image', () {
-    final image = _draft().toImage();
+    final image = _imageFor(_draft(), 5);
     final backup = BackupScript.fromImage(5, image);
     expect(backup.slot, 5);
     expect(backup.functionName, 'TestFn');
