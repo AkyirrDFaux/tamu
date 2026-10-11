@@ -43,8 +43,9 @@ functions - local (defined in the file) and global (a stored library),
 expanded at assemble time in the app, so the VM needs no calling convention until the line limit
 actually bites; **4** loading/unloading - atomic activation, explicit slot with a lowest-free convenience,
 Unload that reports failure, and settling the 256-slot vs the Valu's 16; **5** instruction set - implement or
-strike the doc's promised restart/report-info/halt-on-error state ops, implement or remove the shift ops the
-app already offers, and give `Pow` failures and the `Get time` integer-only rule a defined outcome; **6**
+strike the doc's promised restart/report-info/halt-on-error state ops, settle the reserved shift ops
+(math-op 10/11, which neither side offers yet), and give `Pow` failures and the `Get time` integer-only rule a
+defined outcome; **6**
 documentation - make `Script.md` normative for the opcode/category/predefine and error-code enumerations,
 the 4-byte value packing it leaves unstated, and the CID 3/4/6/7 "script id = loaded slot" clarification.
 
