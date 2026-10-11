@@ -78,7 +78,7 @@ int _dynReg(int global, int field, [int key = 0]) =>
         field, key);
 
 /// Cancels every requester subscription on [client]: a deterministic start for a
-/// coupled test and the cleanup for any left behind.
+/// coupled test.
 Future<void> _clearRequesterTable(SubscriptionClient client) async {
   var subs = await client.getRequesterSubscriptions();
   while (subs.isNotEmpty) {
@@ -86,6 +86,20 @@ Future<void> _clearRequesterTable(SubscriptionClient client) async {
     subs = await client.getRequesterSubscriptions();
   }
 }
+
+/// Puts the requester table back the way [saved] recorded it, so a coupled test
+/// never leaves the device's subscriptions changed.
+Future<void> _restoreRequesterTable(
+    SubscriptionClient client, List<RequesterSubscription> saved) async {
+  await _clearRequesterTable(client);
+  for (final s in saved) {
+    await client.setRequesterSubscription(s.index, entry: s);
+  }
+}
+
+/// The scratch subscription target's dynamic index, clear of the deployed
+/// scenario's blocks (0-2).
+const int _scrSubTgt = 32;
 
 final List<HilTest> partnerTests = <HilTest>[
   HilTest(
@@ -103,14 +117,16 @@ final List<HilTest> partnerTests = <HilTest>[
       final dasReg = RegisterClient(deviceId: node.id);
       final client = SubscriptionClient(deviceId: core.id);
       DynBlock? target;
+      List<RequesterSubscription>? saved;
       try {
+        saved = await client.getRequesterSubscriptions();
         await _clearRequesterTable(client);
-        final t = await _scratchTarget(reg, 0, DataType.number, 4);
+        final t = await _scratchTarget(reg, _scrSubTgt, DataType.number, 4);
         target = t;
 
         // Node Meas1 (ResistiveMeasure inst 0) Measured Value = field 3.
         final sourceReg = makeBlockInfo(BlockType.resistiveMeasure.value, 0, 3, 0);
-        final targetReg = _dynReg(0, 0, 0);
+        final targetReg = _dynReg(_scrSubTgt, 0, 0);
 
         // Read the provider value directly so we can compare after the flow.
         final direct =
@@ -147,8 +163,8 @@ final List<HilTest> partnerTests = <HilTest>[
         expect(value, isNot(0.0),
             reason: 'the node Measured Value must reach the core target');
       } finally {
-        await client.setRequesterSubscription(0);
         if (target != null) await reg.deleteDynamic(block: target.index);
+        if (saved != null) await _restoreRequesterTable(client, saved);
       }
     },
   ),
@@ -169,9 +185,11 @@ final List<HilTest> partnerTests = <HilTest>[
       DynBlock? target;
       ValueInfo? srcMeta;
       List<int>? coeffBefore;
+      List<RequesterSubscription>? saved;
       try {
+        saved = await client.getRequesterSubscriptions();
         await _clearRequesterTable(client);
-        final t = await _scratchTarget(reg, 4, DataType.number, 4,
+        final t = await _scratchTarget(reg, _scrSubTgt, DataType.number, 4,
             value: numberToBytes(-1));
         target = t;
 
@@ -181,7 +199,7 @@ final List<HilTest> partnerTests = <HilTest>[
         // fire-and-forget delta push can leave the provider's last-sent hash
         // ahead of the value that reached the target.)
         final sourceReg = makeBlockInfo(BlockType.resistiveMeasure.value, 0, 2, 0);
-        final targetReg = _dynReg(4, 0, 0);
+        final targetReg = _dynReg(_scrSubTgt, 0, 0);
         final before =
             await dasReg.readBlockField(BlockType.resistiveMeasure.value, 0, 2, 0);
         expect(before, isNotNull, reason: 'node FilterCoeff readable');
@@ -247,12 +265,12 @@ final List<HilTest> partnerTests = <HilTest>[
         expect(hash, raw,
             reason: 'the provider Hash must hold the last sent scalar, not a hash');
       } finally {
-        await client.setRequesterSubscription(0);
         if (srcMeta != null && coeffBefore != null) {
           await dasReg.writeBlockField(BlockType.resistiveMeasure.value, 0, 2, 0,
               srcMeta, coeffBefore);
         }
         if (target != null) await reg.deleteDynamic(block: target.index);
+        if (saved != null) await _restoreRequesterTable(client, saved);
       }
     },
   ),
