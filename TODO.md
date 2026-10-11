@@ -421,16 +421,6 @@ green, release checklist.
 
 ## Open work
 
-- [ ] **Setup: the brightness curve does not match its own table, and it faults below 10 lux.** The
-      brightness script computes `5 + 65 * ((lux - 10) / 8850)^0.5703`, which gives 9.7 % at 100 lux,
-      40 % at 3000 and 70 % at 8850 - a physical ceiling of ~49 % once the register's 0-100 % is mapped
-      onto the layout's limit (178 ~ 70 %). `Example Setup.md` (the A55 rescale, 2026-10-10) reads 7 % /
-      14 % / 60 % / 100 %, i.e. the physical ceiling - so the script still carries the pre-A55 curve.
-      Worse, at or below `LUX_MIN` the base is negative and the fractional power faults, so the script
-      stops regulating entirely (the displays kept the restored 6.06/7.49 %, and a dark channel reads
-      ~0.14 lux). The doc's four anchors fit `7 + 93 * (lux / 8000)^0.59` within ~1 %, with the floor
-      clamped so a sub-floor lux reads 7 % instead of faulting. Needs Akyirr's call: update the script
-      to the doc, or the doc to the script.
 
 
 - Router capability bit: reserve one for the router service so the documented capability can be set.
@@ -570,6 +560,17 @@ green, release checklist.
   UTF-8 bytes. Large files are skipped above 128 kB by default.
 
 ## Done (condensed)
+
+- **Setup: the brightness curve brought up to its own table (2026-10-11).** The script was computing
+  `5 + 65 * ((max(lux,10) - 10) / 8840)^0.5703` - 9.7 % at 100 lux, 40 % at 3000, 70 % at 8850, so a
+  physical ceiling of ~49 % against the layout's 178 limit (~70 %). That is the pre-A55 curve; the
+  setup's own table had already been rescaled to 7 % / 14 % / 60 % / 100 % at <10 / 100 / 3000 / >8000 lux.
+  The constants now match: floor 7, span 93, divisor 7990, exponent 147/256 = 0.5742, ceiling 100 -
+  which reproduces all four anchors (100 -> 14.1 %, 3000 -> 59.9 %, 8000 -> 100 %). Measured on
+  hardware after the rebuild: a dark channel (0.13 lux) now yields exactly 7.0 % on both displays.
+  Note the script never faulted on a sub-floor lux - `Maximum` clamps the input at 10 first, so the
+  power's base cannot go negative; an earlier claim to the contrary here was wrong. The cached
+  `SCR_XXX` blobs were also stale (they predate the slot-in-Properties fix) and are regenerated.
 
 - **Setup restore: a recreated dynamic block kept none of its values (2026-10-11).** The blocks came
   back with the right field/key structure but every value zero, so the restored scene's eyes had no shape
