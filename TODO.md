@@ -45,7 +45,16 @@ app already offers, and give `Pow` failures and the `Get time` integer-only rule
 documentation - make `Script.md` normative for the opcode/category/predefine and error-code enumerations,
 the 4-byte value packing it leaves unstated, and the CID 3/4/6/7 "script id = loaded slot" clarification.
 
-### Stage 2 - the script block and the load contract (in progress)
+### Stage 2 - the script block and the load contract
+
+**Register representation: settled.** A loaded script is *addressed*, not registered. The script block range
+(0x3F4-0x3F7, four types x 64 instances = 256 slots) is a fixed set of block-type numbers at which a
+`BlockInfo` can name a script's I/O, and the Register dispatcher forwards an access in that range to the Script
+service. Nothing is stored, allocated or registered in the registry for a script, and it takes no part in the
+dynamic-block lifecycle - no create, delete or resize. The type numbers are unconditional constants in
+`BlockTypeRange`; only the routing on top of them is gated by `USE_SCRIPTS`. Only I/O is exposed (inputs and
+outputs), and the block's metadata is synthesised by the Script service from the script's own. This is what
+the code already does; no change is planned here.
 
 Decisions taken:
 
