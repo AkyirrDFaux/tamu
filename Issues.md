@@ -1,92 +1,17 @@
 # Issues
 
-Open items only. The 2026-10-04 per-area audit findings (register, storage, device/log,
-subscriptions, tamu, das, bootloader, app, tooling, tests) were fixed and committed; the
-remaining low-value follow-ups live in `TODO.md`.
+Open items only. Resolved findings, the 2026-10-04 per-area audits and the doc-fact-check rulings
+that were applied are in the git history.
 
 Item codes: **A** = doc-fix rulings, **B** = code-fix items (both from the 2026-10-09 fact check); **E** = the remaining open backlog items, numbered for later handling.
 
-## Completed 2026-10-09/10 (detail in git history)
+## A. Doc fixes still open
 
-**Services as classes.** Every service is one class with one instance, non-virtual, no `new`, no vtable;
-`Init()` explicit. The dispatcher keeps its `switch` - the `(service, handler)` table was prototyped and
-**rejected** (+204 B Tamu / +128 B DAS / +92 B Valu, over the DAS budget). Eight per-service forwarders
-were removed; `HandleScript`/`HandleScriptResponse` are kept (removing them grows Tamu 910 B).
+**A68 Windows USB.** `App/General Info.md:7` lists Windows as "BLE, USB"; `supportsUsb` is Linux-only
+(`platform_caps.dart`). Proposed row: `| Windows | BLE (USB not implemented yet) |`. Windows is dropped
+for this window, so this is doc accuracy only.
 
-**Symbol sweep.** `PacketFrame` is `cmd`/`trid` only; `SUB_PRIORITY_*` -> `PRIORITY_SUB_*`; `PAGE_SIZE`
-collapsed into `STORAGE_BLOCK_SIZE`; the three `-Wno-unused-function` suppressions removed.
-
-**Naming.** PascalCase for every project identifier, no state prefixes; external-library symbols keep
-their spelling; a single-letter name is reserved for a short-lived loop index or scratch counter
-(`i`, `j`, `k`, `x`, `y`). The single-letter + lowerCamel remainder is in flight (agent running).
-
-**Bootloader protocol v2.** 3-bit command field (000 identify-req ... 101 read-resp), a write response
-carrying the last successfully written offset, and an identify request/response (app-space size in the
-offset slot + 32-byte null-padded name). Docs approved and applied (`e824825`, `af4eb79`); codec + all
-three bootloaders (`331de55`), core passthrough relay + RSBus length/decode fix (`7afc8aa`), async
-passthrough + passthrough CID remap (`0c88b33`), app client + native codec test (`6c66172`), app
-passthrough-CID alignment (`a894971`), passthrough-ID test (`37f05e2`), app pre-flash size guard
-(`67fc816`). Sizes: DAS_bootloader 1980/2048, Tamu_bootloader 171940/393216, Valu_bootloader 10568/12288;
-apps unchanged. Offline gate green; firmware and app KATs agree byte-for-byte.
-
-**Resolved 2026-10-10 - HIL.** The v2 wire, the passthrough and the node bootloader now run on
-hardware. The core's own bootloader takes the app image end to end (`test/core_bootloader_flash.py`),
-and the passthrough reaches the DAS in update mode for identify, whole-image read and rewrite+verify
-(3/3). Measured cost of the half-duplex turn-around: 6-8 ms per passthrough request, so `SendRaw`'s
-~700 us silence wait is small against the frame it precedes. Still open: the app's update flow end to
-end on Android, which gates TODO's beta criterion.
-
-## HIL suite findings (2026-10-10)
-
-From the first full run of the new HIL suite (`app/test/hil/`, spec `Docs/HIL Tests.md`) on the bench
-rig (core #1 + DAS #2): 43 passed, 4 failed, 0 skipped. Each failure reproduces in isolation.
-
-**Resolved 2026-10-10 - B1/B2 (subscription value updates dropped) root-caused and fixed.** The app
-addresses a local device by its net-0 shorthand (the SNDB stores local devices with NetID 0), but the
-wire carries the qualified address: the node adopts `MakeId(localNet, shortId)`. Measured on the bench:
-core own ID `0x8C01`, node own ID `0x8C02`, while the requester entry held `providerAddr = 2`. So the
-sender's `IdSrc` (`0x8C02`) never matched the stored provider address and `SubscriptionsControl.h`'s
-value-update routing dropped every update; the provider entry then also timed out. Fix: qualify the
-address at install time with the existing helper already used for the self-loopback check
-(compare `SubscriptionsControl.h:33`) -
-`Entry->ProviderAddr = NetQualifyLocal(ProviderAddr, DeviceStatus.NetId)`
-(`Core/Services/SubscriptionsControl.h`, CID `0x11`). HIL after the fix: **47 passed, 0 failed,
-0 skipped**. Tamu flash +32 B, DAS unchanged.
-
-**Resolved 2026-10-10 - B3 (short-write padding) and B4 (SNDB self-entry) fixed, verified on hardware.**
-Padding: `ScriptService::SetEntry` now null-fills the tail (`memset(Data + Vlen, 0, ...)`), matching the
-static path and `Docs/Services/Register.md`. SNDB: live self-registration was already gone (commit
-`5788df2`); the stale `NetID.1` entry survived in the persistent `.SNREG`, so `SNDB::AddDevice` now
-rejects `MakeId(0,1)` and boot purges any stale self-entry. HIL after the fix: 45 passed, 2 failed (the
-two subscription items above). Sizes: Tamu flash -100 B, Valu -40 B, DAS unchanged.
-
-**Resolved 2026-10-10 - the old StorageFiles capability bit is obsolete.** Removed from code and docs:
-the firmware define (`Core/Types/Enums.h`), the app constant, its `describe()` label, the
-`backup_restore.dart` file-support gate, and the `firmware_contract_test.dart` entry. Bit 5 survives
-only as a historical comment so it is not reused.
-
-## Completed 2026-10-11 - the script system revamp
-
-The staged script plan in `TODO.md` landed on both sides (offline gate green, HIL 48/48): the 24-byte
-`SCR_XXX` header (16-bit `Properties` + five counts + a padding byte, plus the Function reservations
-block), the Function-library flag and the load-on-boot slot at Properties bits 8-15, the Service
-instruction set with `Start`/`Stop`/`Pause`/`Resume`/`Error`/`Report info` (opcode 3 retired), the CID 3
-report record, CID 5's fixed-size call stack + variable RAM, the whole streamed CID 0 slot map with a
-lowest-free load convenience, and local/macro/global functions with link-at-load. This closes **B7**,
-**B8** and **E5** below. The per-instruction error-code catalogue stays open (Stage 1's Open item).
-
-## Doc fact check (2026-10-09) - open items
-
-Every firmware document was checked against `firmware/src`; the closed dispositions
-(approved/applied or rejected) are in git history. Only the still-open items remain below.
-**Doc fixes need approval before they are applied**; code fixes are work for the beta window.
-
-### A. Doc fixes (cross-reference rerun, 2026-10-10) - all resolved
-
-A61-A67 and A69-A71 were ruled on and applied (A69/A70/A71 also required code changes); A68 is a
-TODO, not a doc issue.
-
-### B. Code fixes still open (the document is the specification)
+## B. Code fixes still open (the document is the specification)
 
 **B1 Router and branch broadcast are documented and unimplemented.** - **scope settled**: after the beta. The rig has no multi-bus device to test a tree topology on. `RSBus and Packets.md:3-7` and
 `Data Formats.md:37` (`0x3FE`) describe a router tree; `Dispatcher.h:36-40` says the multi-bus topology
@@ -98,15 +23,7 @@ information` at 8.1; there is no WiFi code in the firmware.
 **B6 The UDP framing has no code.** `App Interface.md:25-27` documents a UDP packet; the firmware
 implements USB and BLE only.
 
-### C. Checked and correct
-
-The command ID table matches every service and the code constants. The Bootloader packet layouts, the
-Log struct and database entries, the USB framing and CRC coverage, the App TrID range
-`0xF000-0xFFFF`, the Register field sizes and version packing, the subscription record sizes, the script
-header and block order, the symbol layout, the Acc & Gyr block, the Buttons/LED blocks, the Fan block,
-every device pin assignment, and the DAS/Valu storage geometry all verify against the code.
-
-### D. Unverifiable from code
+## D. Unverifiable from code
 
 `RSBus and Packets.md:1` supply voltage and USB PD (hardware), `Data Formats.md:7` "14 byte UUID"
 (14 bytes confirmed, UUID loose), `Data Formats.md:53` the generic dictionary marker encoding,
@@ -181,7 +98,8 @@ are hardware-only.
 ## Android (on-device behaviour untested)
 - **E20** No Android device/emulator: BLE runtime permission prompt + denied/permanently-denied paths, BLE
   scan/connect/MTU, Storage Access Framework backup save + restore and file download, and the
-  compact drawer shell on a phone form factor.
+  compact drawer shell on a phone form factor. The app's **update flow end to end** is the other
+  Android item, and it gates the beta criteria in `TODO.md`.
 
 ## Evaluation setup
 - **E22** **The LED display has no framebuffer readback**, so visuals are verified by eye only; a render

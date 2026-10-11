@@ -21,413 +21,53 @@ this itself; `TAMU_HIL` overrides it, or set it to `ble` for the BLE path. `TAMU
 declares that a device is in bootloader mode for the bootloader category; the value is ignored, since
 bootloader frames carry no address.
 
-## Bootloader protocol v2 (2026-10-10) - implemented and verified on hardware
+## Script system (2026-10-11) - implemented; three items open
 
-The bootloader wire changed (3-bit command field, write acknowledgement, identify request/response) and
-the core passthrough became asynchronous with remapped IDs (0x20 identification / 0x21 write / 0x22 read).
-Spec: `Docs/Services/Bootloader.md`; partition sizes are in `Docs/Devices.md`. Landed and committed - see
-`Issues.md` "Completed 2026-10-09/10" for the commit list.
+The staged plan landed on both sides: the 24-byte `SCR_XXX` header with the Function reservations
+block; the Function-library flag and the load-on-boot slot in Properties bits 8-15; the Service
+instruction set (`Start`/`Stop`/`Pause`/`Resume`/`Error`/`Report info`, opcode 3 retired); the CID 3
+report record; CID 5's fixed-size call stack plus variable RAM; the whole streamed CID 0 slot map
+with a lowest-free load; and local/macro/global functions with link-at-load. The extended Log struct
+- 32-bit source carrying the whole block index, 32-bit source-specific code - landed with it. Gate
+green; HIL 48/48 at the time, 55/55 after the later waves.
 
-**Outstanding:** both bootloader paths are now exercised on hardware (2026-10-10). The *core's own* bootloader takes the app image end to end: `test/core_bootloader_flash.py` identifies it (app space 2752512, name "Tamu v2.0A"), writes `ota_0` through the adaptive ack-driven pipeline (20496 chunks, 38.2 KiB/s, 0 resends) and reads the whole image back with 0/20496 mismatches. The *node* bootloader is reachable over the core passthrough: with the DAS in update mode, identify, whole-image read and rewrite+verify all pass (`TAMU_HIL_BOOTLOADER=1 bash test/run_hil_tests.sh --bootloader`, 3/3, 6-8 ms per request). Still unrun: the app's update flow end to end on Android, which the beta criteria below require.
+Still open:
 
-## Script system improvements (2026-10-11) - implemented
-
-Goal: round out the script system - the registry/block representation, reusable functions (macros), loading
-and unloading, error reporting, and the instruction set with its documentation. A read-only review of the
-firmware VM, the app's editor and their tests is the basis below.
-
-**Implemented (2026-10-11), both sides, gated and hardware-verified.** The 24-byte `SCR_XXX` header with the
-Function reservations block and the Function-library flag / load-on-boot slot in Properties; the CID 3 report
-record and CID 5's fixed-size call stack + variable RAM; load/unload with the whole streamed slot map, a
-lowest-free convenience and the two load states in the enum; local/macro/global functions with link-at-load;
-the Service set with Start/Stop/Pause/Resume/Error/Report info and opcode 3 retired; and the `Script.md`
-revision. Offline gate green; HIL suite 48/48. Still open: the per-instruction error-code catalogue (Stage 1's
-Open item) and the Valu's script flash headroom (Stage 4's remaining).
-
-Stages, in order: **0** fixes needing no design decision; **1** error reporting; **2** the script block and the
-load contract; **3** reusable functions (local + a linked global library); **4** loading/unloading; **5** the
-instruction set; **6** documentation.
-
-### Stage 0 - fixes needing no design decision
-
-- App: validate block end matching - an `If`/`While` with no `End` passes the editor today, and the doc already
-  requires the check.
-- Firmware: honour run-on-load for a script loaded at any time, not only during the boot scan.
-- Firmware: **load-on-boot is a flag bit plus an index.** The enable bit says whether to load at boot and the
-  index says which slot (uint8, 0-255), so a boot load is deterministic instead of guessing the identity slot
-  or the first free one, and all 256 slots stay addressable. This is also what makes the file-to-slot mapping
-  knowable without asking the device.
-- Firmware: the in-script `Load script` / `Unload script` ops return the code as their result instead of
-  silently advancing.
-- No change to CID 0: it reports file ids for positioning only.
-- Firmware: log both load-time and run-time errors - today a VM error exists only in RAM until CID 3 is polled.
-- Native tests for the script VM, of which there are none today, covering the above.
-- **Extend the Log service's log struct.** The source becomes **32 bits** - the whole block index, i.e. the type,
-  the instance and the 16-bit field/key specifier - so an entry names the block that emitted it. The log
-  **code becomes 32 bits** as well, and its meaning is **source-specific**, the same principle as the
-  instruction-specific errors. This is a Log-service change rather than a script one, driven by the in-script
-  log, the custom error throw and the log-only `report info`; it also moves the app's log view and the Log
-  service's own documentation. The entry grows from 8 bytes to 12 (source, code, timestamp), and the core's
-  database entry from 12 to 16 with it. `Log Handler.md` is updated.
-
-Open detail: none. Broken existing `SCR_XXX` files are accepted as the cost of the header change.
-
-### Stage 1 - error reporting
-
-Decided:
-
-- **Being not fully loaded is a state, not an error.** The state set expresses partial loading directly, so an
-  incomplete load is never reported as a fault.
-- **The report record:** `state (8b) | reserved (8b) | line (16b)` = **4 bytes**, with `instruction (32b) |
-  error (32b)` appended **only for an error** = **12 bytes** total. The reserved byte pads it so `line` sits on
-  a 2-byte boundary and the error's two 32-bit fields land on 4-byte boundaries - line at offset 2,
-  instruction at 4, error at 8. There is no separate symbol field: the error's instruction-specific detail
-  carries it. `line` is the instruction counter, **moved from CID 5 to CID 3**; CID 5 keeps the rest of the
-  internal picture (the variable RAM) and is still how a full dump is taken.
-- **On an error, `instruction (32b)` is the offending instruction's own encoding** - the context the failure
-  happened in, so the app can show which instruction failed.
-- **The error is instruction-specific, with no class layer.** The 32-bit `error` field is a code whose meaning is
-  defined by the instruction that faulted, and the `instruction` field in the same record is what makes it
-  interpretable - the app looks the code up in that instruction's table. The eight codes that exist today
-  become per-instruction codes, sharing a number wherever the meaning is the same.
-- **Code 0 is universally "no error"** - for faults and for results alike - so every instruction's code space
-  starts at 1.
-- **Instruction 0 is not a valid program instruction**: it says the fault has no instruction behind it, i.e. it
-  is engine-wide. `(instruction 0, error 0)` therefore means "no error", and `(instruction 0, error N)` reports
-  an engine-level fault - which is what covers the faults that are not any instruction's doing.
-- **A result is an error code, not a separate type.** An external-facing instruction returns 0 for success or an
-  error code otherwise, in the same space the report uses.
-- **Error names are app-side only.** The app keeps the human-readable text; nothing goes on the device and there
-  is no mirroring contract. (The error codes are still wire values, so the spec still enumerates them.)
-- **Failures surface two ways, both wanted:** an instruction carries its success flag out so a script can
-  check it further down, and a failure that is not checked becomes an error. The mechanism by which a script
-  reads an instruction's success belongs with the instruction work (Stage 5).
-
-Open:
-
-- The per-instruction error-code catalogue: the engine-level codes that report with instruction 0, the codes for
-  each instruction that can fault, and the result codes the external-facing instructions return.
-- Logging both load and run errors is Stage 0, not here; the `Load` code is shared by the CID 1 reply and the
-  in-script `Load script` op result (Stage 0).
-
-### Stage 3 - reusable functions
-
-Decided:
-
-- Reuse is via the existing Flow `Call`/`Return` - no new VM instruction and no expansion at run time. One
-  body per script, a `Call` at each use site, so a body is stored once and called from as many places as
-  wanted.
-- Parameters are **by value**: the caller writes them into the body's variables before the call. With no stack
-  frame, the body's variables are its parameter channel.
-- **Nested calls are allowed.** The app refuses, at assembly, any cyclic macro call graph and any nesting
-  deeper than the VM's call-depth cap of 8, so the no-frame limits become build errors rather than run-time
-  surprises. Recursion and re-entrancy are impossible by design and accepted.
-- **Local** functions are laid out by the app from definitions kept in the file's app-only UI blob.
-- **Global** functions are **linked at load**, not copied into the script file: the device reads the function
-  file, places the referenced bodies' memory and instruction space into the script's allocations, and patches
-  the calls. This moves the copy from storage (one per script, permanently) to RAM (one per loaded script,
-  transitory), and both totals are computable from the headers before anything is allocated.
-- **The function file is the script file format with a flag** in Properties marking it as a function library -
-  no new format.
-- **A script declares the functions it uses** as records of 16 bytes each: the file the function lives in plus
-  two offsets - one for that function's memory space and one for its instruction space.
-- **Calls are precompiled**: the interface (inputs and outputs) is known at assembly, and only the address is
-  filled in at load, by the same relocation.
-
-Report changes:
-
-- CID 3 gains the **call depth** (the `reserved` byte) alongside the instruction, and its `line` is the
-  **deepest** frame's position - where execution actually is.
-- CID 5 carries the **entire instruction-counter stack**, alongside the variable RAM.
-
-Consequences:
-
-- A script using global functions is **no longer self-contained**: it needs the function file present on the
-  target.
-- A referenced function **missing at load is a load error**, and the slot enters the load-failed state (Stage
-  4). This amends the load rule: validation at load is now memory bounds **and link resolution**.
-
-### Stage 5 - instruction set
-
-Decided:
-
-- **The reserved shift ops (math-op 10/11) are dropped.** Neither side implemented them and they are not
-  useful; the numbers stay reserved so they can never be reused by accident.
-- **`Pow` failures carry a detail.** A domain failure - negative base with a fractional exponent, integer part
-  > 64, zero reciprocal - keeps the `operand` class and adds a specific detail.
-- **`Get time` takes integer destinations only** (`Index`/`Uint32`). A `Number` destination is refused as a type
-  error because its range cannot represent the value - the bound belongs to the representation, not to the
-  instruction.
-- **Whether an instruction faults is decided by what it faces, not per call site:**
-  - *External-facing* instructions - register read and write including the foreign variants, and the in-script
-    `Load script`/`Unload script` - **never fault**. They carry an **error code** into a destination, where 0
-    means success.
-  - *Internal* instructions - `Get time`, `Pow` - **always fault**, with a detailed error. A bad domain or a
-    bad type is a programming error, not a condition to handle.
-  - Consequence: those external instructions always need a result destination, so the app emits one - a scratch
-    destination when the script ignores it - and the firmware requires it. Existing programs change shape and
-    need re-uploading.
-
-- **The state verbs become separate instructions, not one instruction with an action enum.** The state enum
-  describes conditions; start, stop, pause and resume are actions, and carrying them as state values muddled
-  the two. **No new states are added for them** - the actions act on the states that already exist.
-- The existing state instruction is **retired with its opcode reserved**, never reused, the same discipline as
-  the retired math ops.
-- **The action set is `Start`, `Stop`, `Pause`, `Resume`, `Error`.** Start covers restart, since entering
-  `Running` already resets the instruction counter and the call depth; finishing is the existing Flow `Halt`.
-  `Error` is a **custom error throw**: it logs and halts, carrying a script-defined code.
-- **`report info` is a log-only action**: like the error throw, but it does not halt - it logs the script's state
-  and carries on. The remaining doc verbs resolve as restart = `Start` and halt-on-error = the faulting rule.
-- **CID 4 takes an action enum** corresponding to those actions, matching both the instructions and the app's
-  existing Start/Pause/Continue/Stop buttons.
-
-- No class is needed for the custom error throw: the script's code is a code in the `Error` instruction's own
-  space, reported as an instruction-specific error like any other.
-
-### Stage 4 - loading and unloading
-
-Decided:
-
-- **CID 0 streams the whole slot map, in slot order** - the file id in each slot, with `0xFFFF` for an
-  unoccupied slot. That is the file-to-slot mapping the app needs, and the stream length is what tells it the
-  device's slot count, so the app stops assuming 256 everywhere.
-- **Loading into an occupied slot fails.** Only empty slots accept a load.
-- **The state enum gains two load-related members**: `reserved-but-not-ready` (the slot's space exists but the
-  script cannot run yet; it leaves by becoming ready (`Stopped`) or by being released) and `load-failed` (the
-  load was refused - see Stage 2's load rule - and the slot keeps its reservation in this state until an
-  explicit unload clears it, so the failure is visible per slot). A link failure is detected before anything
-  is allocated, so a load-failed slot holds only its slot record and no spaces.
-- **Unload reports success or failure only**, nothing more.
-- **The app learns which slots are empty from CID 0's map and keeps its own bookkeeping.** There is no
-  separate slot-request command; a load that names no slot takes the lowest free one.
-- No addition to the synthesised block metadata is needed.
-
-Remaining:
-
-- **CID 0's 512-byte slot map (256 slots x uint16) and CID 5's internal-state dump (the variable RAM) both far
-  exceed one frame** and must stream through the app interface's fragmentation. The spec already calls for it
-  on CID 0 - the `Fragmentation` field in that command's response row - but the firmware does not emit it yet,
-  and CID 5 must do the same. So this is implementation plus test coverage: reassembly is currently untested,
-  and the slot map is the first thing that will exercise it. The Valu's 16 slots fit one frame.
-
-### Stage 2 - the script block and the load contract
-
-**Register representation: settled.** A loaded script is *addressed*, not registered. The script block range
-(0x3F4-0x3F7, four types x 64 instances = 256 slots) is a fixed set of block-type numbers at which a
-`BlockInfo` can name a script's I/O, and the Register dispatcher forwards an access in that range to the Script
-service. Nothing is stored, allocated or registered in the registry for a script, and it takes no part in the
-dynamic-block lifecycle - no create, delete or resize. The type numbers are unconditional constants in
-`BlockTypeRange`; only the routing on top of them is gated by `USE_SCRIPTS`. Only I/O is exposed (inputs and
-outputs), and the block's metadata is synthesised by the Script service from the script's own. This is what
-the code already does; no change is planned here.
-
-Decisions taken:
-
-- The script register block is an addressing window, not a registry entity: nothing is stored, allocated or
-  registered for a script. A fixed range of block-type numbers (0x3F4-0x3F7, four types x 64 instances) lets
-  a `BlockInfo` name a script's I/O, and the Register dispatcher routes an access in that range straight to
-  the Script service. The block's metadata (name, fields, types) is synthesised there from the script's own.
-- Only I/O appears in the register (input and output fields). Variables and constants stay off the register
-  path, reached through the management CIDs as today.
-- Already true in the code and to be kept, not a change: the type numbers are plain constants in
-  `BlockTypeRange`, defined in every build, and only the routing behind them is gated by `USE_SCRIPTS` (four
-  `#ifdef` sites in the Register dispatch). The script range shares the four-types-by-64-instances banking
-  scheme with the dynamic range only because `BlockInstance` is 6 bits - arithmetic, not a dependency.
-- Up to 256 loaded scripts, as today. That count comes from the space being a family of four types x 64
-  instances, which is what the 6-bit `BlockInfo` instance field allows; a single type would cap at 64, and
-  widening the field would renumber existing types.
-- The Valu v2.0 carries a script service too, on its own smaller slot count. The device-block space is shared,
-  so the reserved type numbers and the `USE_SCRIPT` gating have to work for a script build on a different
-  target; the app must stop assuming 256 slots everywhere.
-- Script files are portable in the weak sense only: a file loads and runs on another device, but positional
-  references mean it need not behave correctly there. References stay positional `BlockInfo`
-  (Type.Instance.Field.Key). No name binding and no file versioning - the device's software version is the
-  compatibility signal.
-- Scripts are independent. A reference to a block that is not present is a run-time error on the read/write
-  instruction (target not found), not a load failure and not a tracked dependency.
-
-The load contract:
-
-- **Validation at load is memory bounds and link resolution.** The requirement is computed from the file header
-  - the declared input/output/variable/constant sizes, the constants and input-defaults lengths, and the
-  instruction length - plus the sizes of the functions it links (Stage 3), and checked against available
-  memory; a referenced function that is absent is a load error. Every other fault - unknown opcode,
-  out-of-range index or operand, bad flow target, unresolvable reference - is a run-time error, raised when
-  execution reaches it. A malformed script can therefore run part-way and then stop; that is accepted, and it
-  is why the error must carry the position of the failing instruction.
-- **Two allocations per script, both made once at load**: the variable spaces (I/O, variables, constants) and
-  the instruction (bytecode) space, kept separate. Nothing allocates later.
-- Everything the script runs on is copied into that allocation before the slot goes active: the VM never
-  aliases storage, so rewriting the stored file under a running script cannot corrupt it. Optimization
-  deferred.
-- Load may hold the main loop briefly while it reads, parses, allocates and copies. Accepted for now;
-  an incremental load is deferred.
-- A memory-bound failure leaves the slot inactive and the caller sees the failure, as today.
-
-Remaining in this stage:
-
-- No block-space change is needed. The script range is already out of the registry and out of the
-  dynamic-block lifecycle; the numbers are unconditional and the routing is gated.
-- The load contract: two allocations at load (variable spaces, bytecode), the header-derived memory check as
-  the only load-time rejection, and the copy-not-alias rule.
-- The Valu's script service (a new build, not a change): enable `USE_SCRIPTS` there and size its slot table
-  against the RAM budget - the slot table is static, so the count is a per-target decision, and the app must
-  query the slot count rather than assume 256.
-- Docs (proposal): the load contract, and that the script range is an addressing window into the script
-  memory space rather than a registry entity.
-- Tests: native for a load that fits versus one over the memory, and for nothing allocating after load; HIL
-  for the copy-not-alias rule - rewrite the stored file under a running script and assert it is unaffected.
-
-Open in this stage: whether the editor pre-checks a script against the device's free memory and slot count
-before upload. A memory-bound failure's reporting is deferred to the error-reporting stage. Note that a slot
-count is not a memory promise: with 256 slots on the core, scripts averaging more than a fraction of a
-kilobyte each will run the RAM out long before the slots do.
-
-Knock-on: with rejection only at run time, Stage 1 (error reporting - state, code, and the position of the
-failing instruction, plus a log entry) stops being polish and becomes what makes Stage 2 usable.
+- **The per-instruction error-code catalogue** - the engine-level codes that report with instruction
+  0, the codes for each instruction that can fault, and the result codes the external-facing
+  instructions return. `Pow`'s failure detail is the only one settled.
+- **The Valu's script flash headroom** - its 16-slot registry costs ~9 KB flash to restore the tick
+  path (32 788 -> 42 176, 93.6 %), parked. See `Issues.md` E29.
+- **Whether the editor pre-checks a script** against the device's free memory and slot count before
+  upload, and how a memory-bound load failure surfaces (reporting belongs with the catalogue above).
 
 ## Beta window plan (2026-10-07) - Tamu core/DAS + app; Valu v2 parked
 
-Reason: a tester is being handed updated builds. Targets are **Windows 11 + Android**. No hard date.
-Doc rule changed: docs (`Docs/`, `AGENTS.md`, READMEs) are approval-gated - Amp edits them directly,
-in batched change-sets per area, only after Akyirr approves. `TODO.md`/`Issues.md` stay working files.
+Targets Windows 11 + Android; **Windows is dropped for this window**, so Android is the only
+delivered target. No hard date.
 
-**Phase 0 - baseline gate.** `./test.sh`, `pio run -e Tamu_v2_0A` / `-e DAS_v0_1`, HIL small rig;
-record a numbers table (flash/RAM per env, suite counts, timings) and define the beta acceptance
-criteria. Everything after is measured against it.
-  **DONE 2026-10-08 - host and builds (HIL not yet run).**
-  - `./test.sh` **exit 0**: native suite clean, **168 app tests pass** ("All tests passed!") - **178** after
-    the 2026-10-10 fact-check wave,
-    `flutter analyze` clean ("No issues found!").
-  - `Tamu_v2_0A` **SUCCESS** - RAM 21.0% (68892/327680), flash 23.5% (646846/2752512), bin 647520 B.
-  - `DAS_v0_1` **SUCCESS** - RAM **99.0%** (2028/2048), flash 93.8% (13440/14336), bin 14336 B.
-  - Android debug APK builds here (see Phase 1a); Linux desktop release builds here too.
-  - **HIL: 11 passed, 0 failed, 0 skipped, exit 0** (5 s) - core ping, System block fields, SystemMemory
-    blocks 6 + flags, storage 112-fragment churn, SNDB + TimeSync, Register Enumerate/BlockInfo, NetID
-    write, DAS static blocks, DAS static save, DAS `.SV` recall over an erased name, System Name clamp,
-    DAS clock within 10 ms of the core. Destructive suites deliberately not run (one DAS vs a two-DAS
-    evaluation setup - nothing could restore it).
-  **Found and fixed a regression (caused by the Valu work).** The Valu device folder's custom startup
-  `.S` files were compiled into both sibling envs: duplicate `_start` - on the DAS against the
-  framework's `startup_ch32v00x`, on the core against each other. Fixed by excluding
-  `Devices/Valu_v2.0/` in the DAS `build_src_filter` and in `src/CMakeLists.txt`'s GLOB exclusion.
-  Both images came back **byte-identical to the recorded baselines**, so the fix restored the prior
-  state rather than changing it. Pitfall recorded in the `tamu-project` skill's firmware reference.
-  **Proposed beta acceptance criteria:** host gate exit 0 with zero failures; both firmware envs build
-  with no size regression (DAS <= 2028 B RAM, <= 13440 B flash); the Android APK installs and connects
-  to the rig; the update flow completes end to end on Android.
+**Proposed acceptance criteria:** host gate exit 0 with zero failures; both firmware envs build with
+no size regression (DAS <= 2028 B RAM, <= 13440 B flash); the Android APK installs and connects to
+the rig; the update flow completes end to end on Android.
 
-**Phase 1 - deliverability (Android is the only target delivered this window, and it builds here).**
-  a) Android: the SDK **was** present at `/home/akyirr/Programs/Android` (SDK 37, build-tools
-     35/36.1/37, ndk, platform-tools with `adb`) - Flutter simply had no path to it, and
-     `/home/akyirr/Programs` is mode 750 so filesystem searches cannot see it. Fixed with
-     `flutter config --android-sdk /home/akyirr/Programs/Android`. Doctor's "license status unknown"
-     is its own staleness - `--android-licenses` reports "no longer needed" in this toolchain and the
-     licenses dir holds accepted hashes; Gradle is the honest test. APKs from 2026-09-25 already sit
-     in `app/build/` (gitignored, `.gitignore:39`). Java in use is Studio's JBR 25; AGP 8.11
-     nominally wants 17-21, so watch the first real build.
-     **DONE 2026-10-08:** a debug APK built by Amp on this box - 156,017,696 B, sha256 `4c0a01db...`,
-     package `tamu.app.beta`, compileSdk 36, signer CN=Android Debug SHA-256 `76b2caa5...` vs Akyirr's
-     `f5bca9c7...`. The cross-host signing warning is now *measured*, not theorised. Build takes
-     ~8 min cold, ~7 s warm (just needs `JAVA_HOME` on JDK 21).
-     **Correction:** the move-aside preserved the 2026-09-25 *release* APK (56,123,794 B, also still in
-     `outputs/apk/release/`), but the 178,716,229 B Sep-25 *debug* APK did not survive it - the scratch
-     copy of `app-debug.apk` is the new build. Regenerable in one command, no source touched, but the
-     earlier "preserved, not deleted" claim was wrong for that one file. A first *release* build will
-     hit the same permissions wall on `outputs/apk/release/app-release.apk` (still his).
-  a2) **Signing trap - RESOLVED 2026-10-08 by Akyirr's call: one build host.** All distributable builds
-     are made on his machine, so the debug key stays consistent and the tester's installs update
-     normally. No release keystore is introduced. **Consequence: an APK built by the agent must never
-     be installed over an existing install or handed to anyone** - a different key breaks that update
-     path (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`). Agent builds are verification only (does it build,
-     does it run), not artefacts for distribution. Background: `build.gradle.kts` signs release with
-     `signingConfigs.debug`, and each host auto-generates its own `~/.android/debug.keystore` - his is
-     CN=Android Debug SHA-256 `f5bca9c7...`, the agent's is `76b2caa5...`.
-  a3) APK size: release 56.1 MB, debug 178.7 MB - ABI-fat. Phase 5 target: `--split-per-abi` or a
-     single-ABI build. `applicationIdSuffix = ".beta"` is deliberate (installs alongside the release).
-  a4) **Build-host friction.** `app/build/` holds artifacts owned by Akyirr (the 2026-09-25 APKs), so a
-     build run by Amp fails at the copy step - `Could not set file mode 664 on .../flutter-apk/...`.
-     Moved aside (preserved) to `~/.hermes/cache/scratch/stale-apk-2026-09-25/`; the durable fix is an
-     ACL/chown on `app/build/` (the mirror image of agent edits stripping Akyirr's write bit).
-     Also: the Java in use must be 21 - AGP 8.11 rejects Studio's JBR 25 with a bare `25.0.3`.
-  a5) **Forward-compat warning.** Flutter 3.44 warns that `build.gradle.kts` applies the Kotlin Gradle
-     Plugin and that `file_picker`, `flutter_libserialport` and `universal_ble` do too - a future
-     Flutter will *fail* on this. Track those plugin upgrades; do not take them mid-beta without a
-     full gate run.
-  b) Windows - **dropped by Akyirr's call (2026-10-08)**: no Windows build is needed this window, so no
-     steps are written and no Windows audit is done. Kept only as record: not buildable on Linux (needs
-     MSVC), `flutter_libserialport` 0.6.0 does ship `windows/`, and the platform-specific Dart surface
-     is `lib/core/{connection,transport,settings,platform_caps,host_files}.dart` (still relevant to
-     Android).
-  c) The update flow end to end (connect -> detect -> update app/bootloader) on Android - this is the
-     sequence the tester actually performs.
+Open:
 
-**Phase 2 - app interface (audit done 2026-10-08, report-only - nothing changed).**
-  `flutter analyze` is clean, so this is design-level inconsistency, not lint-level. Full report lives at
-  `/var/lib/hermes-mgr/.hermes/notes/tamu-ui-audit-2026-10-08.md` (durable; kept out of the repo because
-  new docs are approval-gated).
-  *Root cause:* `theme.dart` exports 3 colours + 3 text styles, and `lib/ui/` bypasses them -
-  `TextStyle(` inline 149x, `fontSize:` 108x (10 distinct sizes), `Colors.<x>` 130x (four greys for one
-  secondary-text role), `EdgeInsets.` 131x, 17 distinct `Card(margin:)`, two card backgrounds for the same
-  role (~13 explicit `kSurfaceAlt` vs ~16 plain `Card(`).
-  *Duplication:* label/value row 3x; 7 ad-hoc prompt dialogs; ~30 bespoke dialog action rows; ad-hoc
-  empty/loading/error (20 `Center(Text)`; spinner vs the literal `'Loading...'` on the same class of page);
-  Subscriptions alone uses a bare refresh `IconButton` and lacks `AutoRefreshMixin`.
-  *Missing confirmations:* subscriptions delete, and register block/field/entry deletes, skip `confirmDialog`.
-  *Clunky flows:* Devices is a dead end when disconnected (no button at all - connecting lives only in the
-  Connection tab); the refresh button silently changes meaning by connection state; switching device
-  disconnects with no confirmation; autoconnect is long-press-only and shows a raw MAC in Settings;
-  register add-entry is 3-4 dialogs deep; the script editor has two "Upload" affordances told apart only by
-  tooltip.
-  *Spec mismatches:* Device view omits the documented Router-table row; Settings puts the target in the
-  title instead of the subtitle+hint.
-  *Ranked fixes (benefit/risk first):* 1) theme tokens + `AppCard`; 2) `Empty/Loading/ErrorState`;
-  3) `PromptDialog` + `DialogActions` + mandatory `confirmDialog`; 4) `RefreshButton` + `AutoRefreshMixin`
-  on Subscriptions; 5) autoconnect to a friendly name and surface it on Connection; 6) one labelled Upload
-  in the script editor; 7) `LabelValueRow` unification; 8) title/spacing normalisation.
-  *Not determinable from code:* realised contrast and tap targets, touch behaviour, and anything needing a
-  running app plus hardware; the ordering above is code-path evidence, not user data.
-  **Waiting on Akyirr** to pick or amend the order before any UI code changes.
-
-**Phase 3 - scripts.** Gap list (`Docs/Services/Script.md` vs the 8 `Script*.h`, ~2.2 kloc), macros,
-completion, tests.
-
-**Phase 4 - documentation consistency/completeness.** Collect proposals from day 1; deliver as batched
-change-sets per area - the one serial step in the plan.
-  **Style guide is in place:** `Docs/Style Guide.md` (written 2026-10-08, with Akyirr's approval), built
-  from his decisions on all 25 open items. **Carve-outs:** `Docs/Plan.md` is Akyirr's personal notes and
-  is out of scope for the style pass; `Docs/Services/Router.md` is `TBD`.
-  **Rewrite order:** Services docs first (most table-driven, they set the patterns), then the protocol
-  and structure docs (`RSBus and Packets`, `Data Formats`, `General architecture`), then
-  `Modules and blocks/`, then `App/`. Skip `Plan.md`. Commit before starting, so the rewrite can be
-  reverted.
-  **Two decisions the guide applies that already touch content:** command IDs are hex with the range
-  heading supplying the prefix (Akyirr has already applied this to the SNDB commands - verified
-  consistent with `Core/Services/Device.h:42-52`), and index/allocation tables are left unrelated.
-  **Rewrite progress (2026-10-09).** Done: `Services/Storage.md` (approved as the template),
-  `Services/Register.md`, `Services/Subscriptions.md`, `Services/System Block and Device Commands.md`,
-  `Services/Router.md` (marked `TBD`), `Services/Bootloader.md`, `Services/Log Handler.md`,
-  `Services/App Interface.md`. Remaining: `Services/Script.md`, `RSBus and Packets.md`,
-  `Data Formats.md`, `Command ID table.md`, `General architecture.md`, `Devices.md`,
-  `Modules and blocks/*` (4 files), and `Example Setup.md` (borderline - firmware, or rig notes?).
-  **ALL DONE (2026-10-09):** 19 firmware docs rewritten (Storage approved as the template first).
-  Verified clean: no `#`/`##` headings, no colon-ending headings, no old typos, no `TRID`, no old
-  command-table headers, no old range-heading form. 1000 insertions / 857 deletions across 20 files
-  (`Docs/Style Guide.md` included, for the `Name` type in its vocabulary list). `Docs/App/**` is a
-  separate pass, `Plan.md` stays out of scope. **Committed 2026-10-09** (the `docs:` series that day).
-
-**Phase 5 - optimization + final verification pass.** DAS headroom (~94% flash / ~99% RAM), gate
-green, release checklist.
+- **The update flow end to end on Android** (connect -> detect -> update app/bootloader) - the
+  sequence the tester performs, and the last acceptance criterion. Tracked with `Issues.md` E20.
+- **The app interface pass** (`Docs/App/**`), waiting on Akyirr to pick or amend the ranked fix
+  order. The audit report lives at `~/.hermes/notes/tamu-ui-audit-2026-10-08.md`.
+- **Phase 5 - optimization + final verification**: DAS headroom (~94 % flash / ~99 % RAM), a final
+  gate run, and the release checklist.
 
 ## Open work
 
-
+- [ ] **The DAS firmware still lacks the subscription-stream stride fix** (`SubscriptionsControl.h`).
+      The core is flashed; the DAS is not, so the app's *provider*-table reads on a DAS are still
+      wrong. Reflash the DAS app with it in update mode (`./upload.sh app das`).
 
 - Router capability bit: reserve one for the router service so the documented capability can be set.
 - App Active enum: add `WiFi` (`Enums.h:34-38`) when that work starts. E10 dropped `LegacyBt` from
   the documents, so it is no longer listed as a planned state.
-- [x] **A55 (Example Setup) - the brightness-cap column. DONE 2026-10-10 (E15).** The curve was
-      rescaled to 7-100 % with the cap at 8 000 lux; the table now reads the four anchors.
 - [ ] **Valu app works standalone but NOT when launched by the bootloader (open).** Verified
       2026-10-07: the identical app image, ISP-flashed at 0x0 (no bootloader), runs and enumerates
       as `1a86:6001 "Valu v2.0"` and reaches its main loop; launched from the bootloader
@@ -553,93 +193,15 @@ green, release checklist.
   partial saves; a present-but-erased mirror (torn write) is also re-persisted via the `0xFF` System
   Name guard. HIL: `HIL: DAS recalls over an erased .SV`.
 - **The DAS's flash image does not cover the storage region** (code ends ~0x2B5C, storage at
-  0x3F00), so reflashing preserves the `.SV`; the erased-mirror handling makes a reflash recover.
+  **0x3E00**), so reflashing preserves the `.SV`; the erased-mirror handling makes a reflash recover.
 - **`.SUBREQ` is removed when the requester table empties** (`SaveRequesterTable` deletes it at
   count 0).
 - **Backup zips** are semantic format 2, one JSON per device (no manifest); entries are built from
   UTF-8 bytes. Large files are skipped above 128 kB by default.
 
-## Done (condensed)
-
-- **Setup: the brightness curve brought up to its own table (2026-10-11).** The script was computing
-  `5 + 65 * ((max(lux,10) - 10) / 8840)^0.5703` - 9.7 % at 100 lux, 40 % at 3000, 70 % at 8850, so a
-  physical ceiling of ~49 % against the layout's 178 limit (~70 %). That is the pre-A55 curve; the
-  setup's own table had already been rescaled to 7 % / 14 % / 60 % / 100 % at <10 / 100 / 3000 / >8000 lux.
-  The constants now match: floor 7, span 93, divisor 7990, exponent 147/256 = 0.5742, ceiling 100 -
-  which reproduces all four anchors (100 -> 14.1 %, 3000 -> 59.9 %, 8000 -> 100 %). Measured on
-  hardware after the rebuild: a dark channel (0.13 lux) now yields exactly 7.0 % on both displays.
-  Note the script never faulted on a sub-floor lux - `Maximum` clamps the input at 10 first, so the
-  power's base cannot go negative; an earlier claim to the contrary here was wrong. The cached
-  `SCR_XXX` blobs were also stale (they predate the slot-in-Properties fix) and are regenerated.
-
-- **Setup restore: a recreated dynamic block kept none of its values (2026-10-11).** The blocks came
-  back with the right field/key structure but every value zero, so the restored scene's eyes had no shape
-  or colour and the LED panel stayed dark. Two causes: `appendDynamicEntry` only ever creates key 0, so a
-  block whose fields carry several keys needs `writeDynamicEntry` for the rest; and the recreated
-  entries were built with `flags = 0`, so their values never reached the `.DV` persistent space and the
-  boot recall dropped them. Measured after the fix: a booted device matches the saved value space
-  (`f0k1=0x01`, `f1k4=0xffffffff`, `f2k1=0x06`, `f2k4=0x00000900`, `f2k5=0x9a990000`, all persistent).
-  The old-format `.DT_`/`.DV_` decoder, for reference: `[len+name][typeIndex u16][count u16]`, entry
-  `[fieldKey u16][flagsAndType u16][size u8][pad u8]`; the value space is sequential in table order and
-  the sizes sum to the `.DV` length (validated: 43 entries, 222 B).
-
-- **Scripts** (`Docs/Services/Script.md`): `SCR_XXX` parser, loaded-script registry (banked types
-  `0x3F4-0x3F7`), management CIDs `0x0500-0x0507`; the VM (preloaded instructions, line/block
-  tables, math/logic/flow/time/services, infix expressions with vectors/matrices, per-instance
-  TRIDs, loop guard); boot/load; in-script (un)load (ops 7/8); the app list page + editor.
-- **Blocks/modules + subscriptions**: schemas aligned; `Deadzone` on both entries; all trigger
-  types; per-trigger hashlike; high/low priorities; script I/O as source/target; auto-save on
-  set/delete; two-device HIL.
-- **App backup** (`Docs/App/Backup.md`): semantic format; capture/restore of the whole register,
-  subscriptions, scripts, SNDB and every file; per-part sync UI with remap; HIL round-trip.
-- **Register service** (revised `Register.md`): L0-L6 + P1-P8; the doc-vs-code passes.
-- **Evaluation setup** (`Docs/Example Setup.md`): the setup builder, the emote system, tuning
-  rounds, the LED transfer curve + ring look, the LDR/brightness calibration, the setup HIL suite.
-- **RSBus packet + TRID + subscriptions rework** (docs 2026-10-03): byte payload length, central
-  TRID ranges + reply echo, the subscription rework, the `.SUBREQ` name, the System-block rework.
-- **Cleanup / optimization passes**: split files, DAS flash reductions, core speed build, native
-  host tests, the app↔firmware contract test, and the 2026-10-04 duplication passes.
-- **Deterministic versioning** (2026-10-04): per-target content-hash versions
-  (`scripts/version.py` + `version.json`); firmware envs stamp `VERSION_*`
-  (`firmware/scripts/auto_version.py`, bootloaders unversioned); the System block packs
-  `YY:MM:DD:II` (7/4/5/16); the app generates `app_version.g.dart` and shows it on Settings.
-- **DAS erased-`.SV` recovery** (2026-10-04): `StaticRecallAll` detects a `0xFF` System Name and
-  re-persists the live settings; `.SUBREQ` is deleted when the requester table empties.
-- **Bootloader + App-service removal** (2026-10-04): the core factory/`ota_0` split, B1 entry,
-  re-arm, raw-USB HIL, app `DirectUsbTransport`, `Tamu_v2_0A -t upload` -> `ota_0`; the dead
-  `ServiceType::App` removed.
-- **Audit fixes** (2026-10-04): the 15 per-area audits (register, storage, device/log,
-  subscriptions, tamu, das, bootloader, app, tooling, tests) — correctness fixes, dedup,
-  optimization, the subscription capability split, net-qualified addressing, `.DT_`/`.DV_` and
-  `.SNREG` dotted names, the dynamic name commands, and the BLE service-UUID filter.
-- **Cleanup follow-ups** (2026-10-04): storage `Find*` bool error signalling + offset-only
-  invalidation; shared `RegisterResolveByBlockInfo` resolver + `.SUBREQ` unchanged-write skip; core
-  bootloader `BootloaderHost.h` dedup + `Bootloader.padPayload`; `RegisterRead` version-packing
-  cross-ref/`static_assert`s; app `ScriptDraftValue.setType` and `ValueInfo` unification; added
-  storage-client/dynamic-trace/TRID tests.
-- **DAS full filesystem** (2026-10-04): the DAS drops the reduced `StorageFixedFS` and runs the
-  shared `StorageBlockFS` in a **512 B** region at `0x3E00` (pointer page + table + 384 B data);
-  `USE_FIXED_STORAGE` and the fixed branches are removed, and the DAS now advertises
-  `StorageFiles`. `StaticRecallAll` re-persists the defaults when `.SV` is absent/short so the full
-  FS's real file presence keeps the mirror valid. The app's fixed-FS branches are gone too:
-  `StorageClient` no longer probes/detects fixed storage, `parseFileTable` always skips offset-0,
-  file writes always stage-and-rename, and the Storage page no longer hides create/rename/delete.
-- **Storage size variants** (2026-10-04): following the `Crc8` `OPTIMIZE_SPEED` pattern, `FindSpace`
-  picks the bitmap best-fit (speed) or a linear first-fit (size), and `MoveFiletable` grows/shrinks
-  the table (speed) or keeps the page count (size). The DAS takes the size shapes: **−328 B**,
-  leaving **376 B** app headroom at the 512 B region (24 B without them); the core keeps both speed
-  shapes. File enlargement stays available on every target (gating it was rejected: the Storage docs
-  require resize-to-larger).
-- **Docs-conformance sweep** (2026-10-04): four read-only audits of the whole Docs set. Code fixes:
-  the DAS bootloader `APP_LIMIT` `0x3F00 -> 0x3E00` (storage moved to `0x3E00`); the core
-  `BOARD_DAS_v0_1` ifdef replaced by the `MAX_PROVIDER_SUBS` build flag; Device core/SNDB CIDs
-  `10-13 -> 0x10-0x13` (firmware + app, matching `Command ID table.md`); log reports addressed to
-  the local core `0.1` instead of broadcast. The remaining doc-wording and design items are parked
-  in `Issues.md`.
-- **Log source + packet priorities** (2026-10-04): the log struct now matches `Log Handler.md` -
-  16-bit `source` = BlockType|Instance, 8-bit category, 8-bit specifics (a service log uses the
-  reserved source type `0x3FF` with the ServiceType in the instance field), so instances are no
-  longer dropped and the core dedups per instance; covered by a native `log_test` and an app decode
-  test. Packet priorities implement the documented classes (`PRIORITY_ERROR`, `TIMESYNC`,
-  `SUB_HIGH`, default, `SUB_LOW`, `STREAM`, `LOG`): error reports are highest, TimeSync next,
-  fragmented replies are Streams, the log DB stream is Logs, subscription updates keep 4/12.
+- **Android builds.** All distributable APKs are built on Akyirr's machine; a build made here signs
+  with a different debug key, so one must never be installed over an existing install or handed to
+  anyone (agent builds are verification only). Java must be 21 - AGP 8.11 rejects Studio's JBR 25.
+  `app/build/` holds Akyirr's artifacts, so an agent build fails at the copy step
+  (`Could not set file mode 664`). Flutter 3.44 warns that `build.gradle.kts` and three plugins
+  apply the Kotlin Gradle Plugin; a future Flutter will fail on that.
