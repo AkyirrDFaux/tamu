@@ -59,7 +59,7 @@ inline LoadedScript *ScriptService::Active(uint16_t Slot) {
 // record until an explicit unload clears it - Docs/Services/Script.md "State").
 inline bool ScriptService::Occupied(uint16_t Slot) {
     if (Slot >= MAX_SCRIPTS) return false;
-    return Registry[Slot].Active || Registry[Slot].LoadFailed;
+    return ScriptSlotReserved(Registry[Slot]);
 }
 
 inline ValueInfo *ScriptService::AllocMetas(uint8_t Count) {
@@ -274,7 +274,7 @@ inline bool ScriptService::Load(uint16_t FileId, uint16_t Slot) {
         free(Combined);
         Script->Release();
         free(Buf);
-        if (MarkFailed) { Script->LoadFailed = true; Script->Slot = Slot; Script->FileId = FileId; }
+        if (MarkFailed) { Script->State = (uint8_t)ScriptState::LoadFailed; Script->Slot = Slot; Script->FileId = FileId; }
         return LoadRefused(SCRIPT_ERR_BOUNDS);
     };
 
@@ -533,7 +533,7 @@ inline void ScriptService::Unload(uint16_t Slot) {
 inline uint16_t ScriptService::ListFiles(uint8_t *Out, uint16_t Max) {
     uint8_t Count = 0;
     for (uint16_t i = 0; i < MAX_SCRIPTS && Count < Max; i++)
-        if (Registry[i].Active || Registry[i].LoadFailed) {
+        if (ScriptSlotReserved(Registry[i])) {
             Out[2 * Count] = (uint8_t)(Registry[i].FileId & 0xFF);
             Out[2 * Count + 1] = (uint8_t)(Registry[i].FileId >> 8);
             Count++;

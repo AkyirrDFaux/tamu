@@ -158,7 +158,7 @@ inline uint16_t ScriptService::FreeSlot() {
         for (uint16_t b = 0; b < 64; b++) {
             uint16_t i = (uint16_t)(Base + b);
             if (i >= MAX_SCRIPTS) break;
-            if (Registry[i].Active || Registry[i].LoadFailed) Occupied |= (uint64_t)1 << b;
+            if (ScriptSlotReserved(Registry[i])) Occupied |= (uint64_t)1 << b;
         }
         uint16_t Bit = ScriptLowestFreeBit(Occupied);
         if (Bit < 64) {
@@ -249,8 +249,11 @@ __attribute__((noinline)) inline bool ScriptService::Handle(const PacketFrame &F
 
         case 3: { // Read state (loaded ID -> report record; Docs/Services/Script.md "Report Record")
             if (Bytes < 1) { RespondStatus(Frame, false); return true; }
-            LoadedScript *Script = Active(Frame.Payload[0]);
-            if (!Script) { RespondStatus(Frame, false); return true; }
+            // A reservation-holding slot answers, so a load-failed slot reports its state; an
+            // unused slot does not.
+            uint16_t Slot = Frame.Payload[0];
+            if (Slot >= MAX_SCRIPTS || !ScriptSlotReserved(Registry[Slot])) { RespondStatus(Frame, false); return true; }
+            LoadedScript *Script = &Registry[Slot];
             // state (u8) | depth (u8) | line (u16): 4 bytes. On an error, instruction (u32) and
             // error (u32) are appended -> 12 bytes. `line` is the instruction counter of the
             // deepest frame (where execution actually is): the live Ic normally, the captured

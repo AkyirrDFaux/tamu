@@ -214,7 +214,13 @@ enum class ScriptState : uint8_t {
     Paused   = 2,
     Waiting  = 3,
     Finished = 4,
-    Error    = 5
+    Error    = 5,
+    // Load-related states, appended so the existing values keep their numbers. In
+    // `reserved-but-not-ready` the slot's space exists but the script cannot run yet; it leaves
+    // by becoming ready (Stopped) or by being released. In `load-failed` the load was refused
+    // and the slot keeps its reservation until an explicit unload clears it.
+    ReservedNotReady = 6,
+    LoadFailed       = 7
 };
 
 // Maps a CID 4 management action to the script state it sets (Docs/Services/Script.md CID 4).
@@ -366,13 +372,11 @@ struct LoadedScript {
     uint16_t Slot = 0;
     uint16_t FileId = 0; // the stored SCR_XXX file this slot was loaded from
     uint8_t State = (uint8_t)ScriptState::Stopped;
-    // A refused load's slot keeps its reservation (Slot/FileId below) in this status; the
-    // explicit unload clears it (Docs/Services/Script.md "State": the load-failed state "keeps
-    // its reservation until an explicit unload clears it"). A link failure is detected before
-    // anything is allocated, so a load-failed slot holds only its slot record and no spaces.
-    // It is a non-numeric status (the spec gives the two load-related states no value), so it
-    // rides alongside the numeric `State` rather than overloading the wire enum.
-    bool LoadFailed = false;
+    // A refused load's slot keeps its reservation (Slot/FileId below): its State is
+    // ScriptState::LoadFailed, and the explicit unload clears it (Docs/Services/Script.md
+    // "State": the load-failed state "keeps its reservation until an explicit unload clears
+    // it"). A link failure is detected before anything is allocated, so a load-failed slot
+    // holds only its slot record and no spaces.
     uint32_t Properties = 0;
 
     uint8_t InCount = 0, OutCount = 0, VarCount = 0, ConstCount = 0;
@@ -439,7 +443,6 @@ struct LoadedScript {
         Offsets = nullptr;
         Active = false;
         State = (uint8_t)ScriptState::Stopped;
-        LoadFailed = false;
         Properties = 0;
         InCount = OutCount = VarCount = ConstCount = 0;
         FuncCount = 0;
@@ -483,6 +486,12 @@ struct LoadedScript {
     uint16_t VarOffset(uint8_t i) const { return OffsetAt(StrideVarBase(InCount, OutCount), i, VarCount); }
     uint16_t ConstOffset(uint8_t i) const { return OffsetAt(StrideConstBase(InCount, OutCount, VarCount), i, ConstCount); }
 };
+
+// True when a slot holds any reservation: an active script, or a load-failed one that keeps its
+// slot record until an explicit unload (Docs/Services/Script.md "State").
+inline bool ScriptSlotReserved(const LoadedScript &S) {
+    return S.Active || S.State == (uint8_t)ScriptState::LoadFailed;
+}
 
 // One bit per slot, set for every slot that may hold a loaded script (a superset of the active
 // slots, so hot loops can skip the empty registry entries). Rounded UP, so a MAX_SCRIPTS that is

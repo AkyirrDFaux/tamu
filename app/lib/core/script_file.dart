@@ -142,6 +142,11 @@ class ScriptState {
   static const waiting = 3;
   static const finished = 4;
   static const error = 5;
+  // Load-related states, appended so the existing values keep their numbers (Docs/Services/
+  // Script.md "State"): the slot's space exists but it cannot run yet, or the load was refused
+  // and the slot keeps its reservation until an explicit unload.
+  static const reservedNotReady = 6;
+  static const loadFailed = 7;
 
   static String label(int state) => switch (state) {
         stopped => 'Stopped',
@@ -150,6 +155,8 @@ class ScriptState {
         waiting => 'Waiting',
         finished => 'Finished',
         error => 'Error',
+        reservedNotReady => 'Reserved (not ready)',
+        loadFailed => 'Load failed',
         _ => 'Unknown ($state)',
       };
 }
