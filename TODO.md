@@ -84,15 +84,23 @@ Decided:
   defined by the instruction that faulted, and the `instruction` field in the same record is what makes it
   interpretable - the app looks the code up in that instruction's table. The eight codes that exist today
   become per-instruction codes, sharing a number wherever the meaning is the same.
-- **Error names are app-side only.** The app keeps the human-readable text; nothing goes on the device and
-  there is no mirroring contract. (The error codes are still wire values, so the spec still enumerates them.)
+- **Code 0 is universally "no error"** - for faults and for results alike - so every instruction's code space
+  starts at 1.
+- **Instruction 0 is not a valid program instruction**: it says the fault has no instruction behind it, i.e. it
+  is engine-wide. `(instruction 0, error 0)` therefore means "no error", and `(instruction 0, error N)` reports
+  an engine-level fault - which is what covers the faults that are not any instruction's doing.
+- **A result is an error code, not a separate type.** An external-facing instruction returns 0 for success or an
+  error code otherwise, in the same space the report uses.
+- **Error names are app-side only.** The app keeps the human-readable text; nothing goes on the device and there
+  is no mirroring contract. (The error codes are still wire values, so the spec still enumerates them.)
 - **Failures surface two ways, both wanted:** an instruction carries its success flag out so a script can
   check it further down, and a failure that is not checked becomes an error. The mechanism by which a script
   reads an instruction's success belongs with the instruction work (Stage 5).
 
 Open:
 
-- The per-instruction error-code catalogue: the codes for each instruction that can fault, and their meanings.
+- The per-instruction error-code catalogue: the engine-level codes that report with instruction 0, the codes for
+  each instruction that can fault, and the result codes the external-facing instructions return.
 - Logging both load and run errors is Stage 0, not here; the `Load` code is shared by the CID 1 reply and the
   in-script `Load script` op result (Stage 0).
 
@@ -146,8 +154,8 @@ Decided:
   instruction.
 - **Whether an instruction faults is decided by what it faces, not per call site:**
   - *External-facing* instructions - register read and write including the foreign variants, and the in-script
-    `Load script`/`Unload script` - **never fault**. They carry their result into a destination: a success flag,
-    or the code, for the load/unload pair.
+    `Load script`/`Unload script` - **never fault**. They carry an **error code** into a destination, where 0
+    means success.
   - *Internal* instructions - `Get time`, `Pow` - **always fault**, with a detailed error. A bad domain or a
     bad type is a programming error, not a condition to handle.
   - Consequence: those external instructions always need a result destination, so the app emits one - a scratch
