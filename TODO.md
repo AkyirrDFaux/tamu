@@ -95,6 +95,44 @@ Open:
 - Logging both load and run errors is Stage 0, not here; the `Load` code is shared by the CID 1 reply and the
   in-script `Load script` op result (Stage 0).
 
+### Stage 3 - reusable functions (settled)
+
+Decided:
+
+- Reuse is via the existing Flow `Call`/`Return` - no new VM instruction and no expansion at run time. One
+  body per script, a `Call` at each use site, so a body is stored once and called from as many places as
+  wanted.
+- Parameters are **by value**: the caller writes them into the body's variables before the call. With no stack
+  frame, the body's variables are its parameter channel.
+- **Nested calls are allowed.** The app refuses, at assembly, any cyclic macro call graph and any nesting
+  deeper than the VM's call-depth cap of 8, so the no-frame limits become build errors rather than run-time
+  surprises. Recursion and re-entrancy are impossible by design and accepted.
+- **Local** functions are laid out by the app from definitions kept in the file's app-only UI blob.
+- **Global** functions are **linked at load**, not copied into the script file: the device reads the function
+  file, places the referenced bodies' memory and instruction space into the script's allocations, and patches
+  the calls. This moves the copy from storage (one per script, permanently) to RAM (one per loaded script,
+  transitory), and both totals are computable from the headers before anything is allocated.
+- **The function file is the script file format with a flag** in Properties marking it as a function library -
+  no new format.
+- **A script declares the functions it uses** as records of 16 bytes each: the file the function lives in plus
+  two offsets - one for that function's memory space and one for its instruction space.
+- **Calls are precompiled**: the interface (inputs and outputs) is known at assembly, and only the address is
+  filled in at load, by the same relocation.
+
+Report changes:
+
+- CID 3 gains the **call depth** (the `reserved` byte) alongside the instruction, and its `line` is the
+  **deepest** frame's position - where execution actually is.
+- CID 5 carries the **entire instruction-counter stack**, alongside the variable RAM.
+
+Consequences:
+
+- A script using global functions is **no longer self-contained**: it needs the function file present on the
+  target.
+- Still open: whether a referenced function missing at load is a load failure or a run-time fault at the call.
+  Recommended: the run-time fault, matching how a missing block reference behaves, which keeps load-time
+  validation to memory bounds only.
+
 ### Stage 4 - loading and unloading
 
 Decided:
