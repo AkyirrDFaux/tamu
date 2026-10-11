@@ -49,13 +49,16 @@ the 4-byte value packing it leaves unstated, and the CID 3/4/6/7 "script id = lo
 
 Decisions taken:
 
-- A script's register block is its own type space, not the dynamic-block machinery: it needs no runtime
-  management by the user and exists only as a link to the script's memory space. The link is a translation
-  layer - the Script service synthesises the block's metadata (name, fields, types) from the script's own.
+- The script register block is an addressing window, not a registry entity: nothing is stored, allocated or
+  registered for a script. A fixed range of block-type numbers (0x3F4-0x3F7, four types x 64 instances) lets
+  a `BlockInfo` name a script's I/O, and the Register dispatcher routes an access in that range straight to
+  the Script service. The block's metadata (name, fields, types) is synthesised there from the script's own.
 - Only I/O appears in the register (input and output fields). Variables and constants stay off the register
   path, reached through the management CIDs as today.
-- The block space is reserved unconditionally, so block numbering never shifts between builds; the Register
-  interface to it is gated on `USE_SCRIPT`.
+- Already true in the code and to be kept, not a change: the type numbers are plain constants in
+  `BlockTypeRange`, defined in every build, and only the routing behind them is gated by `USE_SCRIPTS` (four
+  `#ifdef` sites in the Register dispatch). The script range shares the four-types-by-64-instances banking
+  scheme with the dynamic range only because `BlockInstance` is 6 bits - arithmetic, not a dependency.
 - Up to 256 loaded scripts, as today. That count comes from the space being a family of four types x 64
   instances, which is what the 6-bit `BlockInfo` instance field allows; a single type would cap at 64, and
   widening the field would renumber existing types.
@@ -85,6 +88,20 @@ The load contract:
 - Load may hold the main loop briefly while it reads, parses, allocates and copies. Accepted for now;
   an incremental load is deferred.
 - A memory-bound failure leaves the slot inactive and the caller sees the failure, as today.
+
+Remaining in this stage:
+
+- No block-space change is needed. The script range is already out of the registry and out of the
+  dynamic-block lifecycle; the numbers are unconditional and the routing is gated.
+- The load contract: two allocations at load (variable spaces, bytecode), the header-derived memory check as
+  the only load-time rejection, and the copy-not-alias rule.
+- The Valu's script service (a new build, not a change): enable `USE_SCRIPTS` there and size its slot table
+  against the RAM budget - the slot table is static, so the count is a per-target decision, and the app must
+  query the slot count rather than assume 256.
+- Docs (proposal): the load contract, and that the script range is an addressing window into the script
+  memory space rather than a registry entity.
+- Tests: native for a load that fits versus one over the memory, and for nothing allocating after load; HIL
+  for the copy-not-alias rule - rewrite the stored file under a running script and assert it is unaffected.
 
 Open in this stage: whether the editor pre-checks a script against the device's free memory and slot count
 before upload. A memory-bound failure's reporting is deferred to the error-reporting stage. Note that a slot
