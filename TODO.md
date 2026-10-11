@@ -103,20 +103,21 @@ Decided:
   unoccupied slot. That is the file-to-slot mapping the app needs, and the stream length is what tells it the
   device's slot count, so the app stops assuming 256 everywhere.
 - **Loading into an occupied slot fails.** Only empty slots accept a load.
-- **The device offers a slot, defaulting to the lowest free**, so a caller need not compute one and two
-  loaders cannot collide.
+- **"Not fully loaded" means reserved but not ready**: the slot's space exists but the script cannot run yet.
+  It leaves that state by becoming ready (`Stopped`) or by being released when the load fails.
 - **Unload reports success or failure only**, nothing more.
-- **The state enum gains "not fully loaded"**, so an incomplete load is a state rather than a fault. No
-  addition to the synthesised block metadata is needed.
+- **The state enum gains reserved-but-not-ready**, so an incomplete load is a state rather than a fault.
+- **The app learns which slots are empty from CID 0's map and keeps its own bookkeeping.** There is no
+  separate slot-request command; a load that names no slot takes the lowest free one.
+- No addition to the synthesised block metadata is needed.
 
 Remaining:
 
-- Define what "not fully loaded" means operationally and its legal transitions - the one part of this stage
-  still to pin down.
-- CID 0's payload becomes a 512-byte stream on the core (256 slots x uint16), far past a single frame, so the
-  app interface's fragmentation and reassembly path becomes a hard requirement for it - and that path is
-  currently untested. The Valu's 16 slots fit in one frame.
-- The stale `Fragmentation` field in the doc's CID 0 row goes (Stage 6 carries the doc edit).
+- **CID 0's 512-byte slot map (256 slots x uint16) and CID 5's internal-state dump (the variable RAM) both far
+  exceed one frame** and must stream through the app interface's fragmentation. The spec already calls for it
+  on CID 0 - the `Fragmentation` field in that command's response row - but the firmware does not emit it yet,
+  and CID 5 must do the same. So this is implementation plus test coverage: reassembly is currently untested,
+  and the slot map is the first thing that will exercise it. The Valu's 16 slots fit one frame.
 
 ### Stage 2 - the script block and the load contract
 
