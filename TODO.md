@@ -72,27 +72,24 @@ Decided:
 - **Being not fully loaded is a state, not an error.** The state set expresses partial loading directly, so an
   incomplete load is never reported as a fault.
 - **The report record:** `state (8b) | symbol (8b) | line (16b)`, with `instruction (32b)` and `error (32b)`
-  appended **only for an error** - 4 bytes for a plain state report, 12 for an error report.
-- CID 5 (read internal state) remains the way to get the full internal picture; this record is the summary
-  that CID 3-style reads return.
+  appended **only for an error** - 4 bytes for a plain state report, 12 for an error report. `line` is the
+  instruction counter, **moved from CID 5 to CID 3**; CID 5 keeps the rest of the internal picture (the
+  variable RAM) and is still how a full dump is taken.
+- **The error is structured, not a flat list:** `class (8b) | instruction-specific detail (24b)`. The class set
+  stays the eight that exist today; the detail's meaning is defined by the instruction that faulted, so
+  "no such block" versus "read refused" are the same class and different details.
+- **Error names are app-side only.** The app keeps the human-readable text; nothing goes on the device and
+  there is no mirroring contract. (The class numbers are still wire values, so the spec still enumerates them.)
+- **Failures surface two ways, both wanted:** an instruction carries its success flag out so a script can
+  check it further down, and a failure that is not checked becomes an error. The mechanism by which a script
+  reads an instruction's success belongs with the instruction work (Stage 5).
 
 Open:
 
-- Is `line`/`symbol` the *current* position (a program counter, meaningful at any time) or the *failing*
-  position (only meaningful on an error)? The record carries them always, so they must mean something when
-  there is no error.
-- **Is `error (32b)` a flat list or an instruction-specific value?** Today the firmware has eight flat codes
-  (0 none, 1 unknown opcode, 2 type, 3 operand, 4 bounds, 5 stack, 6 register access, 7 timeout, 8 not
-  implemented). One option: `class (8b) | instruction-specific detail (24b)`, so the detail's meaning is
-  defined by the instruction that faulted (e.g. a read's "no such block" versus "read refused"; `Pow`'s
-  "negative base" versus "exponent too large") without an unbounded global list.
-- **Fatal or recoverable per case?** Both are wanted, so the design has to allow it: a missing reference might
-  stop the script while a failed read yields a default and continues. That needs the affected instructions to
-  have somewhere to put the failure, which is an instruction-set change.
-- **Where the human-readable error names live.** Today the app hardcodes the text per code; if the firmware's
-  list changes the labels drift silently. Options: written in the spec and mirrored by the app with a contract
-  test asserting they agree (the existing `firmware_contract_test.dart` is the mechanism), kept on the device,
-  or dropped entirely (numbers only).
+- What `instruction (32b)` carries on an error - the offending instruction's own encoding, so the app can show
+  which one failed.
+- The per-instruction detail catalogue: the detail values for each instruction that can fail (a register
+  access, `Pow`, `Get time`, the in-script `Load`/`Unload`).
 - Logging both load and run errors is Stage 0, not here; the `Load` code is shared by the CID 1 reply and the
   in-script `Load script` op result (Stage 0).
 
