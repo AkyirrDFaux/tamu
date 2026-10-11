@@ -167,7 +167,11 @@ bool RegisterSetByBlockInfo(uint32_t Bi, const ValueInfo &Meta, const uint8_t *V
 #define SCRIPT_OP_COMPOSE 0
 #define SCRIPT_OP_EXTRACT 1
 
-// Error codes (surfaced through the header's Error entry).
+// Error codes. The 32-bit report `error` field is instruction-specific (Docs/Services/Script.md
+// "Error Model"): a code's meaning is defined by the instruction that faulted, and the
+// instruction field in the same record makes it interpretable. These generic values are what
+// the engine carries today; the per-instruction catalogue is still undecided, so nothing here
+// is invented per instruction.
 #define SCRIPT_ERR_NONE 0
 #define SCRIPT_ERR_UNKNOWN_OP 1
 #define SCRIPT_ERR_TYPE 2
@@ -177,6 +181,28 @@ bool RegisterSetByBlockInfo(uint32_t Bi, const ValueInfo &Meta, const uint8_t *V
 #define SCRIPT_ERR_REGISTER 6
 #define SCRIPT_ERR_TIMEOUT 7
 #define SCRIPT_ERR_NOT_IMPL 8
+
+// The report record's `instruction` field: the offending instruction's own encoding, i.e.
+// `1 + ((category << 8) | opcode)`, where category/opcode are the Instruction symbol's
+// Subtype/Value. The `+1` makes a valid instruction never 0, so 0 can mean "no instruction
+// behind the fault" (engine-level, Docs/Services/Script.md "Error Model"). This is the one
+// underdetermined point of the spec: it is isolated here so a different encoding is a one-line
+// change at this single helper.
+inline uint32_t ScriptInstructionEncoding(uint8_t Category, uint8_t Opcode) {
+    return 1u + (((uint32_t)Category << 8) | (uint32_t)Opcode);
+}
+
+// CID 3 report record layout (Docs/Services/Script.md "Report Record"): state (u8) | depth (u8) |
+// line (u16) = 4 bytes, with instruction (u32) | error (u32) appended only on an error = 12.
+// The depth byte pads the record so `line` sits on a 2-byte boundary and the error's two 32-bit
+// fields land on 4-byte boundaries.
+#define SCRIPT_REPORT_OFF_STATE 0
+#define SCRIPT_REPORT_OFF_DEPTH 1
+#define SCRIPT_REPORT_OFF_LINE 2
+#define SCRIPT_REPORT_OFF_INSTRUCTION 4
+#define SCRIPT_REPORT_OFF_ERROR 8
+#define SCRIPT_REPORT_SIZE 4      // no error: state | depth | line
+#define SCRIPT_REPORT_SIZE_ERR 12 // on an error: + instruction | error
 
 // Per-instance script transaction IDs for foreign register access (TRID_SCRIPT_BASE..MAX,
 // defined in Functions/Packet.h).
@@ -190,6 +216,20 @@ enum class ScriptState : uint8_t {
     Finished = 4,
     Error    = 5
 };
+
+// Maps a CID 4 management action to the script state it sets (Docs/Services/Script.md CID 4).
+// The action enum is the state verbs only - Start 9, Stop 10, Pause 11, Resume 12. The in-script
+// Error op (13) is a throw, not a management action, so it and any other value are rejected
+// (returns false). Host-testable in the native suite.
+inline bool ScriptActionToState(uint8_t Action, uint8_t &State) {
+    switch (Action) {
+        case SCRIPT_OP_SERVICE_START:  State = (uint8_t)ScriptState::Running; return true;
+        case SCRIPT_OP_SERVICE_STOP:   State = (uint8_t)ScriptState::Stopped; return true;
+        case SCRIPT_OP_SERVICE_PAUSE:  State = (uint8_t)ScriptState::Paused;  return true;
+        case SCRIPT_OP_SERVICE_RESUME: State = (uint8_t)ScriptState::Running; return true;
+        default: return false;
+    }
+}
 
 // Properties bits (Docs/Services/Script.md "Properties"). The word is 16 bits: a flags field
 // and, at bits 8-15, the uint8 slot a load-on-boot script loads into. A boot load is the flag
@@ -305,7 +345,16 @@ struct LoadedScript {
     uint32_t WaitUntil = 0;
     uint16_t CallStack[SCRIPT_MAX_CALL_DEPTH] = {0};
     uint8_t CallDepth = 0;
-    uint8_t ErrorCode = SCRIPT_ERR_NONE;
+    uint32_t ErrorCode = SCRIPT_ERR_NONE;
+
+    // CID 3 report bookkeeping (Docs/Services/Script.md "Report Record"). Captured at a fault
+    // by SetFault: the call depth and the deepest frame's line at that moment, plus the
+    // offending instruction's own encoding (0 = engine-level: no instruction behind the fault).
+    // A non-error report reads CallDepth/Ic live instead. SetState clears all three with the
+    // error, since setting the state clears the error.
+    uint8_t ReportDepth = 0;
+    uint16_t ReportLine = 0;
+    uint32_t FaultInstruction = 0;
 
     // Foreign register access (per-instance TRID + pending confirmation).
     uint16_t Trid = 0;
@@ -333,6 +382,7 @@ struct LoadedScript {
         UiLen = 0; InstrLen = 0; InstrSymbols = 0; LineCount = 0;
         Ic = 0; WaitingOnTime = false; WaitUntil = 0;
         CallDepth = 0; ErrorCode = SCRIPT_ERR_NONE;
+        ReportDepth = 0; ReportLine = 0; FaultInstruction = 0;
         Trid = 0; PendingForeign = false; PendingRead = false; PendingTrid = 0; PendingDeadline = 0;
         memset(PendingDest, 0, sizeof(PendingDest));
         Name[0] = '\0';

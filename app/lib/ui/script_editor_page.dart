@@ -64,7 +64,9 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
   List<String>? _errors;
   int _state = ScriptState.stopped;
   int _instructionCounter = 0;
+  int _callDepth = 0;
   int _errorCode = 0;
+  int _errorInstruction = 0;
 
   final _statusText = <ScriptValueCategory, List<String>>{};
 
@@ -191,8 +193,12 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
           // A loaded slot that does not answer is a refresh failure (the dot stays red).
           _refreshFailed = st == null;
           _state = st?.state ?? ScriptState.stopped;
-          _instructionCounter = internal?.instructionCounter ?? 0;
+          // The instruction counter is the report record's line (CID 3); CID 5 carries the stack.
+          _instructionCounter = st?.line ?? 0;
+          _callDepth = st?.depth ?? 0;
+          // The error is instruction-specific: keep the raw code and decode the instruction.
           _errorCode = st?.error ?? 0;
+          _errorInstruction = st?.instruction ?? 0;
           _statusText..clear()..addAll(values);
         });
       } catch (_) {

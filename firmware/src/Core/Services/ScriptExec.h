@@ -393,12 +393,13 @@ inline uint8_t ScriptService::ExecService(LoadedScript *Script, const ScriptLine
             SetState(Script, (uint8_t)ScriptState::Running);
             return SCRIPT_ERR_NONE;
         case SCRIPT_OP_SERVICE_ERROR: {
-            // A custom error throw: log the script-defined code and halt (state Error). The code
-            // is the script's own - the per-instruction error catalogue is app-side (Stage 1).
+            // A custom error throw: halt (state Error) and log the script-defined code. The code
+            // is the script's own 32-bit value; the offending instruction is this Error op, so
+            // the CID 3 report record names it via the single encoding helper.
             int32_t Code = 0;
             if (Ln.OpCount >= 1 && !ResolveOperandInt(Script, Opbase, Code)) return SCRIPT_ERR_OPERAND;
-            ReportLog(MakeLog(false, (uint16_t)ServiceType::Script, (uint32_t)Code, 0), PRIORITY_ERROR);
-            Script->State = (uint8_t)ScriptState::Error;
+            SetFault(Script, ScriptInstructionEncoding(SCRIPT_CAT_SERVICE, SCRIPT_OP_SERVICE_ERROR),
+                     (uint32_t)Code);
             return SCRIPT_ERR_NONE;
         }
         case SCRIPT_OP_SERVICE_REPORT_INFO:

@@ -120,8 +120,7 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
     final probed = await _probeLoaded();
     final list = <_LoadedScript>[];
     for (final p in probed) {
-      final state = (await _client.readState(p.slot))?.state ?? ScriptState.stopped;
-      final internal = await _client.readInternalState(p.slot);
+      final report = await _client.readState(p.slot);
       // The input UI specifications and function name live in the script file.
       var specs = const <ScriptInputSpec>[];
       var names = const <String>[];
@@ -142,8 +141,8 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
         slot: p.slot,
         fileId: p.fileId,
         name: display.isNotEmpty ? display : 'Script ${p.slot}',
-        state: state,
-        instructionCounter: internal?.instructionCounter ?? 0,
+        state: report?.state ?? ScriptState.stopped,
+        instructionCounter: report?.line ?? 0,
         inputSpecs: specs,
         inputNames: names,
       ));

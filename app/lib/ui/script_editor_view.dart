@@ -17,12 +17,15 @@ extension on _ScriptEditorPageState {
             const SizedBox(width: 8),
             Text(ScriptState.label(_state), style: const TextStyle(fontWeight: FontWeight.w600)),
             const Spacer(),
-            Text('IC $_instructionCounter', style: const TextStyle(color: Colors.white54)),
+            Text(_callDepth > 0
+                ? 'IC $_instructionCounter · depth $_callDepth'
+                : 'IC $_instructionCounter',
+                style: const TextStyle(color: Colors.white54)),
           ]),
-          if (_errorCode != 0)
+          if (_errorCode != 0 || _errorInstruction != 0)
             Padding(
               padding: const EdgeInsets.only(top: 6),
-              child: Text('Error: ${_errorLabel(_errorCode)}',
+              child: Text('Error $_errorCode ${_errorLocation()}',
                   style: const TextStyle(color: Colors.redAccent)),
             ),
           const SizedBox(height: 10),
@@ -46,18 +49,15 @@ extension on _ScriptEditorPageState {
     );
   }
 
-  String _errorLabel(int code) => switch (code) {
-        0 => 'None',
-        1 => 'Unknown opcode',
-        2 => 'Type mismatch',
-        3 => 'Bad operand',
-        4 => 'Out of bounds',
-        5 => 'Call stack overflow',
-        6 => 'Register access failed',
-        7 => 'Confirmation timeout',
-        8 => 'Not implemented',
-        _ => 'Error $code',
-      };
+  /// Where the fault happened, decoded from the report record's instruction encoding
+  /// (`1 + ((category << 8) | opcode)`). The error code itself is instruction-specific, so its
+  /// name is only meaningful against this instruction; the code catalogue is undecided, so the
+  /// raw code is shown as-is (no invented names).
+  String _errorLocation() {
+    final decoded = ScriptReport.decodeInstruction(_errorInstruction);
+    if (decoded == null) return '(engine)';
+    return 'at cat ${decoded.$1} op ${decoded.$2}';
+  }
 
   Future<void> _moveToLine() async {
     final controller = TextEditingController(text: '$_instructionCounter');

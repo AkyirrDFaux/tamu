@@ -147,23 +147,32 @@ inline bool ScriptService::BuildProgram(LoadedScript *Script, const uint8_t *Ins
     return true;
 }
 
+// Emits the load-time error log entry (Stage 1: a load failure logs through the Log service)
+// and returns false, so every refusal in Load() reports exactly once. The code reuses the
+// existing generic SCRIPT_ERR_* space: the load contract's coded fault is a memory-bound
+// failure, so a refused load reports SCRIPT_ERR_BOUNDS rather than inventing a code.
+inline bool ScriptService::LoadRefused(uint32_t Code) {
+    ReportLog(MakeLog(false, (uint16_t)ServiceType::Script, Code, 0), PRIORITY_ERROR);
+    return false;
+}
+
 // Parses SCR_<fileId> into registry `slot`. Docs/Services/Script.md: the loaded-script table
 // maps a loaded id (the slot) to a file id, and the caller picks the slot - so the two need not
 // be equal. The file id space is wider than the slot space (SCR_XXX vs the 6-bit instance), so
 // the app stores many files and loads them into free slots. Returns false (and leaves the slot
 // inactive) when the file is missing, malformed, or the slot/file id is out of range.
 inline bool ScriptService::Load(uint16_t FileId, uint16_t Slot) {
-    if (FileId >= MAX_SCRIPT_FILES || Slot >= MAX_SCRIPTS) return false;
+    if (FileId >= MAX_SCRIPT_FILES || Slot >= MAX_SCRIPTS) return LoadRefused(SCRIPT_ERR_BOUNDS);
 
     char Name[8];
     FileName(FileId, Name);
     uint32_t Size = Storage.FileExists(Name);
-    if (Size == 0xFFFFFFFF || Size < SCRIPT_HEADER_SIZE) return false;
+    if (Size == 0xFFFFFFFF || Size < SCRIPT_HEADER_SIZE) return LoadRefused(SCRIPT_ERR_BOUNDS);
 
     uint8_t *Buf = (uint8_t *)malloc(Size);
-    if (!Buf) return false;
+    if (!Buf) return LoadRefused(SCRIPT_ERR_BOUNDS);
     uint32_t Got = Storage.ReadFromFile(Name, 0, Size, (char *)Buf);
-    if (Got < SCRIPT_HEADER_SIZE) { free(Buf); return false; }
+    if (Got < SCRIPT_HEADER_SIZE) { free(Buf); return LoadRefused(SCRIPT_ERR_BOUNDS); }
 
     LoadedScript *Script = &Registry[Slot];
     Script->Release();
@@ -173,7 +182,7 @@ inline bool ScriptService::Load(uint16_t FileId, uint16_t Slot) {
     Script->Trid = (uint16_t)(TRID_SCRIPT_BASE + Slot);
 
     ScriptHeader Hdr;
-    if (!ParseScriptHeader(Buf, Got, Hdr)) { free(Buf); return false; }
+    if (!ParseScriptHeader(Buf, Got, Hdr)) { free(Buf); return LoadRefused(SCRIPT_ERR_BOUNDS); }
     Script->Properties = Hdr.Properties;
     Script->InCount    = Hdr.InCount;
     Script->OutCount   = Hdr.OutCount;
@@ -191,7 +200,7 @@ inline bool ScriptService::Load(uint16_t FileId, uint16_t Slot) {
 
     uint32_t Entries = (uint32_t)(Script->InCount + Script->OutCount + Script->VarCount + Script->ConstCount);
     uint32_t Need = SCRIPT_HEADER_SIZE + Entries * 4 + ConstLen + DefLen + FuncLen + Script->InstrLen + UiLen;
-    if (Need > Got || Need > Size) { free(Buf); return false; }
+    if (Need > Got || Need > Size) { free(Buf); return LoadRefused(SCRIPT_ERR_BOUNDS); }
 
     Script->InMeta    = AllocMetas(Script->InCount);
     Script->OutMeta   = AllocMetas(Script->OutCount);
@@ -199,7 +208,7 @@ inline bool ScriptService::Load(uint16_t FileId, uint16_t Slot) {
     Script->ConstMeta = AllocMetas(Script->ConstCount);
     if ((Script->InCount && !Script->InMeta) || (Script->OutCount && !Script->OutMeta) ||
         (Script->VarCount && !Script->VarMeta) || (Script->ConstCount && !Script->ConstMeta)) {
-        Script->Release(); free(Buf); return false;
+        Script->Release(); free(Buf); return LoadRefused(SCRIPT_ERR_BOUNDS);
     }
 
     uint32_t Off = SCRIPT_HEADER_SIZE;
@@ -210,7 +219,7 @@ inline bool ScriptService::Load(uint16_t FileId, uint16_t Slot) {
 
     // Prefix-sum the strides once: symbol resolution then costs a table lookup instead of a
     // walk over the preceding entries (the VM does that per operand per line per tick).
-    if (!Script->BuildOffsets()) { Script->Release(); free(Buf); return false; }
+    if (!Script->BuildOffsets()) { Script->Release(); free(Buf); return LoadRefused(SCRIPT_ERR_BOUNDS); }
 
     const uint8_t *ConstBlob = Buf + Off; Off += ConstLen;
     const uint8_t *DefBlob   = Buf + Off; Off += DefLen;
@@ -220,17 +229,17 @@ inline bool ScriptService::Load(uint16_t FileId, uint16_t Slot) {
 
     if (Script->InTotal + Script->OutTotal) {
         Script->IoSpace = (uint8_t *)calloc(1, (size_t)Script->InTotal + Script->OutTotal);
-        if (!Script->IoSpace) { Script->Release(); free(Buf); return false; }
+        if (!Script->IoSpace) { Script->Release(); free(Buf); return LoadRefused(SCRIPT_ERR_BOUNDS); }
     }
     Script->VarSpace = (uint8_t *)calloc(1, (size_t)(Script->VarTotal ? Script->VarTotal : 1));
-    if (!Script->VarSpace) { Script->Release(); free(Buf); return false; }
+    if (!Script->VarSpace) { Script->Release(); free(Buf); return LoadRefused(SCRIPT_ERR_BOUNDS); }
     if (Script->ConstTotal) {
         Script->ConstSpace = (uint8_t *)calloc(1, Script->ConstTotal);
-        if (!Script->ConstSpace) { Script->Release(); free(Buf); return false; }
+        if (!Script->ConstSpace) { Script->Release(); free(Buf); return LoadRefused(SCRIPT_ERR_BOUNDS); }
     }
 
     // Compile the program (also copies the instruction symbols into RAM).
-    if (!BuildProgram(Script, InstrBlob, Script->InstrLen)) { Script->Release(); free(Buf); return false; }
+    if (!BuildProgram(Script, InstrBlob, Script->InstrLen)) { Script->Release(); free(Buf); return LoadRefused(SCRIPT_ERR_BOUNDS); }
 
     // Inputs carry their defaults from the file (same 4-byte-strided packing as the space,
     // so the file's offset is the space's own offset - no need to re-walk the strides).

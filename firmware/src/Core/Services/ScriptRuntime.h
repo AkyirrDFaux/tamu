@@ -23,10 +23,32 @@ inline void ScriptService::Run(LoadedScript *Script, uint32_t NowMs) {
         if (Script->LineStamp) Script->LineStamp[Script->Ic] = TickCount;
         bool Yield = false;
         uint8_t Err = ExecLine(Script, NowMs, Yield);
-        if (Err) { Script->ErrorCode = Err; Script->State = (uint8_t)ScriptState::Error; return; }
+        if (Err) {
+            // A run-time fault names the instruction behind it: the deepest frame's line (where
+            // execution actually is) carries the offending Instruction symbol at start+destCount.
+            // Its category/opcode encode through the single ScriptInstructionEncoding helper.
+            const ScriptLineInfo &Ln = Script->Lines[Script->Ic];
+            const uint8_t *Ins = Script->Instr + (size_t)(Ln.Start + Ln.DestCount) * 4;
+            SetFault(Script, ScriptInstructionEncoding(Ins[1], Ins[2]), Err);
+            return;
+        }
         if (Yield) return;
         if (Script->State != (uint8_t)ScriptState::Running) return; // Finished/Error/Paused set by the op
     }
+}
+
+// Records a run-time fault into the CID 3 report bookkeeping and emits the run-time error log
+// entry (Stage 1: a VM fault logs through the Log service). `Instruction` is the offending
+// instruction's encoding from ScriptInstructionEncoding, or 0 for an engine-level fault - one
+// that is not any instruction's doing. Setting the state clears the error, so SetState resets
+// all of this bookkeeping along with the code.
+inline void ScriptService::SetFault(LoadedScript *Script, uint32_t Instruction, uint32_t Err) {
+    Script->ReportDepth = Script->CallDepth;
+    Script->ReportLine = Script->Ic;
+    Script->FaultInstruction = Instruction;
+    Script->ErrorCode = Err;
+    Script->State = (uint8_t)ScriptState::Error;
+    ReportLog(MakeLog(false, (uint16_t)ServiceType::Script, Err, 0), PRIORITY_ERROR);
 }
 
 inline void ScriptService::Tick(uint32_t NowMs) {
@@ -44,8 +66,9 @@ inline void ScriptService::Tick(uint32_t NowMs) {
                 if (Script->PendingForeign) {
                     if ((int32_t)(NowMs - Script->PendingDeadline) >= 0) {
                         Script->PendingForeign = false;
-                        Script->ErrorCode = SCRIPT_ERR_TIMEOUT;
-                        Script->State = (uint8_t)ScriptState::Error;
+                        // Engine-level fault: a foreign confirmation never arrived, so no
+                        // program instruction is behind it (instruction encoding 0).
+                        SetFault(Script, 0, SCRIPT_ERR_TIMEOUT);
                     }
                     continue;
                 }
@@ -75,8 +98,8 @@ inline void ScriptService::HandleResponse(const PacketFrame &Frame) {
         if (Script->PendingRead) {
             uint16_t Pb = PayloadBytes(Frame);
             if (Pb < 8) {
-                Script->ErrorCode = SCRIPT_ERR_REGISTER;
-                Script->State = (uint8_t)ScriptState::Error;
+                // Engine-level: the reply is malformed, not any program instruction's doing.
+                SetFault(Script, 0, SCRIPT_ERR_REGISTER);
                 return;
             }
             ValueInfo Rm = *reinterpret_cast<const ValueInfo *>(Frame.Payload + 4);
@@ -107,11 +130,17 @@ inline void ScriptService::SetState(LoadedScript *Script, uint8_t NewState) {
         }
         Script->WaitingOnTime = false;
         Script->ErrorCode = SCRIPT_ERR_NONE;
+        Script->FaultInstruction = 0;
+        Script->ReportLine = 0;
+        Script->ReportDepth = 0;
     } else if (NewState == (uint8_t)ScriptState::Stopped) {
         Script->Ic = 0;
         Script->CallDepth = 0;
         Script->WaitingOnTime = false;
         Script->ErrorCode = SCRIPT_ERR_NONE;
+        Script->FaultInstruction = 0;
+        Script->ReportLine = 0;
+        Script->ReportDepth = 0;
     }
     // A manual state change abandons any outstanding foreign confirmation.
     if (NewState != (uint8_t)ScriptState::Waiting) Script->PendingForeign = false;
@@ -195,44 +224,72 @@ __attribute__((noinline)) inline bool ScriptService::Handle(const PacketFrame &F
             break;
         }
 
-        case 3: { // Read state (loaded ID -> state, last error code)
+        case 3: { // Read state (loaded ID -> report record; Docs/Services/Script.md "Report Record")
             if (Bytes < 1) { RespondStatus(Frame, false); return true; }
             LoadedScript *Script = Active(Frame.Payload[0]);
             if (!Script) { RespondStatus(Frame, false); return true; }
-            uint8_t Reply[2] = { Script->State, Script->ErrorCode };
-            SendResponse(Frame, Reply, 2);
+            // state (u8) | depth (u8) | line (u16): 4 bytes. On an error, instruction (u32) and
+            // error (u32) are appended -> 12 bytes. `line` is the instruction counter of the
+            // deepest frame (where execution actually is): the live Ic normally, the captured
+            // fault line on an error. The depth byte pads `line` to a 2-byte boundary and the two
+            // 32-bit error fields to 4-byte boundaries.
+            const bool IsError = Script->State == (uint8_t)ScriptState::Error;
+            const uint8_t Depth = IsError ? Script->ReportDepth : Script->CallDepth;
+            const uint16_t Line = IsError ? Script->ReportLine : Script->Ic;
+            uint8_t Reply[SCRIPT_REPORT_SIZE_ERR];
+            Reply[SCRIPT_REPORT_OFF_STATE] = Script->State;
+            Reply[SCRIPT_REPORT_OFF_DEPTH] = Depth;
+            Reply[SCRIPT_REPORT_OFF_LINE] = (uint8_t)(Line & 0xFF);
+            Reply[SCRIPT_REPORT_OFF_LINE + 1] = (uint8_t)(Line >> 8);
+            uint16_t Len = SCRIPT_REPORT_SIZE;
+            if (IsError) {
+                const uint32_t Instruction = Script->FaultInstruction;
+                const uint32_t Error = Script->ErrorCode;
+                for (uint8_t k = 0; k < 4; k++) {
+                    Reply[SCRIPT_REPORT_OFF_INSTRUCTION + k] = (uint8_t)(Instruction >> (8 * k));
+                    Reply[SCRIPT_REPORT_OFF_ERROR + k] = (uint8_t)(Error >> (8 * k));
+                }
+                Len = SCRIPT_REPORT_SIZE_ERR;
+            }
+            SendResponse(Frame, Reply, Len);
             break;
         }
 
-        case 4: { // Set state (loaded ID, action): the CID 4 action enum, mirroring the Service
-                  // state-op instructions - Start 9, Stop 10, Pause 11, Resume 12, Error 13
-                  // (Docs/Services/Script.md CID 4). Setting the state clears the error.
+        case 4: { // Set state (loaded ID, action): the CID 4 action enum is the state verbs only
+                  // - Start 9, Stop 10, Pause 11, Resume 12 (Docs/Services/Script.md CID 4). The
+                  // Error op (13) is an in-script throw, not a management action, so it and any
+                  // other value are rejected. Setting the state clears the error.
             if (Bytes < 2) { RespondStatus(Frame, false); return true; }
             LoadedScript *Script = Active(Frame.Payload[0]);
             if (!Script) { RespondStatus(Frame, false); return true; }
             uint8_t NewState;
-            switch (Frame.Payload[1]) {
-                case SCRIPT_OP_SERVICE_START:  NewState = (uint8_t)ScriptState::Running; break;
-                case SCRIPT_OP_SERVICE_STOP:   NewState = (uint8_t)ScriptState::Stopped; break;
-                case SCRIPT_OP_SERVICE_PAUSE:  NewState = (uint8_t)ScriptState::Paused;  break;
-                case SCRIPT_OP_SERVICE_RESUME: NewState = (uint8_t)ScriptState::Running; break;
-                case SCRIPT_OP_SERVICE_ERROR:  NewState = (uint8_t)ScriptState::Error;   break;
-                default: RespondStatus(Frame, false); return true;
-            }
+            if (!ScriptActionToState(Frame.Payload[1], NewState)) { RespondStatus(Frame, false); return true; }
             SetState(Script, NewState);
-            Script->ErrorCode = SCRIPT_ERR_NONE; // docs: setting the state clears the error
+            // docs: setting the state clears the error (and its report bookkeeping)
+            Script->ErrorCode = SCRIPT_ERR_NONE;
+            Script->FaultInstruction = 0;
+            Script->ReportLine = 0;
+            Script->ReportDepth = 0;
             RespondStatus(Frame, true);
             break;
         }
 
-        case 5: { // Read internal state (loaded ID -> instruction counter (line) + variable RAM)
+        case 5: { // Read internal state (loaded ID -> variable RAM + the instruction-counter
+                  // call stack; Docs/Services/Script.md CID 5). The `line` moved to CID 3; this
+                  // streams the rest of the internal picture, fragmented like CID 0.
             if (Bytes < 1) { RespondStatus(Frame, false); return true; }
             LoadedScript *Script = Active(Frame.Payload[0]);
             if (!Script) { RespondStatus(Frame, false); return true; }
-            // Streamed as FRAG: the 4-byte instruction counter then the variable RAM, which can
-            // exceed one payload.
-            uint32_t Ic = Script->Ic;
-            uint16_t Total = (uint16_t)(4 + Script->VarTotal);
+            // Content: a leading depth byte, then the variable RAM (VarSpace, VarTotal bytes),
+            // then the entire instruction-counter call stack - the return-address stack Flow
+            // Call pushes and Flow Return pops, one u16 per frame in push order (outermost
+            // first). The depth byte mirrors the report record and delimits the two
+            // variable-length parts, so the reply decodes from itself. Length can exceed one
+            // frame, so it streams as FRAG.
+            const uint8_t Depth = Script->CallDepth;
+            const uint16_t Vars = Script->VarTotal;
+            const uint16_t StackBytes = (uint16_t)(Depth * 2);
+            const uint16_t Total = (uint16_t)(1 + Vars + StackBytes);
             uint16_t Frags = (uint16_t)((Total + MAX_FRAG_CONTENT_SIZE - 1) / MAX_FRAG_CONTENT_SIZE);
             if (Frags == 0) Frags = 1;
             for (uint16_t Frag = 0; Frag < Frags; Frag++) {
@@ -242,7 +299,16 @@ __attribute__((noinline)) inline bool ScriptService::Handle(const PacketFrame &F
                 uint8_t *Dst = TxFrame.Payload + 4;
                 for (uint16_t i = 0; i < Len; i++) {
                     uint16_t Src = (uint16_t)(Off + i);
-                    Dst[i] = (Src < 4) ? (uint8_t)(Ic >> (8 * Src)) : Script->VarSpace[Src - 4];
+                    if (Src == 0) {
+                        Dst[i] = Depth;
+                    } else if (Src < (uint16_t)(1 + Vars)) {
+                        Dst[i] = Script->VarSpace[Src - 1];
+                    } else {
+                        uint16_t Rel = (uint16_t)(Src - 1 - Vars); // byte offset into the stack
+                        uint16_t Frame = (uint16_t)(Rel >> 1);     // one u16 per frame
+                        uint16_t Entry = Script->CallStack[Frame];
+                        Dst[i] = (Rel & 1) ? (uint8_t)(Entry >> 8) : (uint8_t)(Entry & 0xFF);
+                    }
                 }
                 SendFragFragment(Frame, Frag, Frags, Len);
             }

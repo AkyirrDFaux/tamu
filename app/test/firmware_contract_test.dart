@@ -249,6 +249,17 @@ void main() {
       expect(fw['SCRIPT_HEADER_SIZE'], scriptHeaderSize);
       expect(fw['SCRIPT_FUNC_RESERVATION_SIZE'], scriptFunctionReservationSize);
     });
+
+    test('the CID 3 report-record layout matches', () {
+      // ScriptClient.readState decodes these offsets; a drift would mis-read the record.
+      expect(fw['SCRIPT_REPORT_OFF_STATE'], 0);
+      expect(fw['SCRIPT_REPORT_OFF_DEPTH'], 1);
+      expect(fw['SCRIPT_REPORT_OFF_LINE'], 2);
+      expect(fw['SCRIPT_REPORT_OFF_INSTRUCTION'], 4);
+      expect(fw['SCRIPT_REPORT_OFF_ERROR'], 8);
+      expect(fw['SCRIPT_REPORT_SIZE'], 4);
+      expect(fw['SCRIPT_REPORT_SIZE_ERR'], 12);
+    });
   }, skip: skipReason);
 
   group('core enum contract (app vs firmware)', () {

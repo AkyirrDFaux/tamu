@@ -582,6 +582,8 @@ final List<HilTest> serviceTests = <HilTest>[
         expect((await c.readState(slot))!.state, ScriptState.running);
         expect((await c.readState(slot))!.error, 0,
             reason: 'setState clears the error code');
+        expect((await c.readState(slot))!.hasError, isFalse,
+            reason: 'a clean run reports no error');
 
         // File metadata lives in SCR_XXX; the Register exposes only the I/O.
         final parsed = ScriptFileData.parse((await st.readFile(name))!);
@@ -619,12 +621,16 @@ final List<HilTest> serviceTests = <HilTest>[
         expect((numberFromBytes(internal2.variables, 4) - 2.5).abs() <= 0.001,
             isTrue);
 
-        // Editor debug: stop, move to a line, read the internal state (IC is a line index).
+        // Editor debug: stop, move to a line. The current line is the report record's Line
+        // (CID 3); CID 5 carries the call stack, empty here (no frames).
         await c.setState(slot, ScriptState.stopped);
         expect(await c.moveToInstruction(slot, 1), isTrue);
+        final moved = await c.readState(slot);
+        expect(moved, isNotNull);
+        expect(moved!.line, 1);
         final internal = await c.readInternalState(slot);
         expect(internal, isNotNull);
-        expect(internal!.instructionCounter, 1);
+        expect(internal!.callStack, isEmpty, reason: 'a flat script has no call frames');
 
         // Inputs are writable through Register.
         expect(
@@ -729,6 +735,7 @@ final List<HilTest> serviceTests = <HilTest>[
         expect(meta!.name, 'Edited', reason: 'the edited name is restored');
         final parsed = ScriptFileData.parse((await st.readFile(name))!);
         expect(parsed.variables.length, 1);
+        // Editor debug: re-load the edited script and read its variable RAM (CID 5).
         final internal = await c.readInternalState(slot);
         expect(internal, isNotNull);
         expect(internal!.variables.length, 4);
@@ -928,7 +935,15 @@ final List<HilTest> serviceTests = <HilTest>[
             reason: 'upload + load the faulty script');
         await c.setState(slot, ScriptState.running);
         expect(await _waitState(c, slot, ScriptState.error), ScriptState.error);
-        expect((await c.readState(slot))?.error, 3, reason: 'SCRIPT_ERR_OPERAND');
+        // The report record names the offending instruction - the Modulo (catMath, op 5) - and
+        // carries an instruction-specific error code; the code catalogue is undecided, so the
+        // value itself is not pinned, only that a fault is reported.
+        final report = await c.readState(slot);
+        expect(report, isNotNull);
+        expect(report!.hasError, isTrue, reason: 'a fault is reported');
+        expect(report.error, isNot(0), reason: 'instruction-specific error code');
+        expect(ScriptReport.decodeInstruction(report.instruction), (catMath, 5),
+            reason: 'the offending instruction is the Modulo');
 
         await _removeScript(c, st, slot);
       }

@@ -295,16 +295,16 @@ void main() {
     expect(service(13)!.operandRole(0), 'code');
     expect(service(13)!.minOperands, 1);
 
-    // The CID 4 action enum mirrors those actions.
+    // The CID 4 action enum is the app's command set: Start / Stop / Pause / Resume. There is
+    // no Error action (the Service Error instruction is not a CID 4 command).
     expect(
         {
           ScriptAction.start,
           ScriptAction.stop,
           ScriptAction.pause,
           ScriptAction.resume,
-          ScriptAction.error,
         },
-        {9, 10, 11, 12, 13});
+        {9, 10, 11, 12});
   });
 
   test('Load script / Unload script validate like the management commands', () {
@@ -485,6 +485,25 @@ void main() {
     expect(back.constants.single.type, DataType.blockInfo);
     expect(uint32FromBytes(back.constants.single.value),
         makeBlockInfo(BlockType.pwm.value, 0, 1, 0));
+  });
+
+  test('the CID 3 report record decodes its instruction encoding', () {
+    // The `instruction` field is `1 + ((category << 8) | opcode)`; 0 means no instruction
+    // behind the fault (engine-level, or no error).
+    const ok = ScriptReport(state: ScriptState.running, depth: 0, line: 3);
+    expect(ok.hasError, isFalse, reason: 'a 4-byte record reports no error');
+    expect(ok.line, 3);
+    expect(ScriptReport.decodeInstruction(0), isNull);
+    for (final (cat, op) in [(catMath, 5), (catFlow, 4), (catService, 9)]) {
+      final encoded = 1 + ((cat << 8) | op);
+      expect(ScriptReport.decodeInstruction(encoded), (cat, op),
+          reason: 'encoding $encoded -> ($cat, $op)');
+    }
+    // A 12-byte record names the fault.
+    const bad = ScriptReport(
+        state: ScriptState.error, depth: 2, line: 7, instruction: 6, error: 3);
+    expect(bad.hasError, isTrue);
+    expect(ScriptReport.decodeInstruction(bad.instruction), (catMath, 5));
   });
 
   test('foreign register ops validate the address operand', () {

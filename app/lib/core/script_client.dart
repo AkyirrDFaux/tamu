@@ -22,25 +22,68 @@ class ScriptEntry {
 /// CID 4 action enum (Docs/Services/Script.md management command 4: "Script ID, action ...
 /// The action enum drives start, stop, pause and resume; clears the error").
 ///
-/// The members correspond to the Service state-op instructions (Start 9 .. Error 13) and to
+/// The members correspond to the Service state-op instructions (Start 9 .. Resume 12) and to
 /// the app's Start / Pause / Continue / Stop buttons, so the instruction set and the action
-/// enum stay aligned. The spec does not pin the CID 4 numbering independently, so the values
-/// reuse the documented instruction opcodes rather than inventing a second catalogue.
+/// enum stay aligned. There is no Error action: the Service `Error` instruction (opcode 13,
+/// inside a script) is not something the app commands over CID 4.
 class ScriptAction {
   static const start = 9;
   static const stop = 10;
   static const pause = 11;
   static const resume = 12;
-  static const error = 13;
 
   static String label(int action) => switch (action) {
         start => 'Start',
         stop => 'Stop',
         pause => 'Pause',
         resume => 'Resume',
-        error => 'Error',
         _ => 'Action $action',
       };
+}
+
+/// A CID 3 report record (Docs/Services/Script.md "Report Record"): `State (u8) | Depth (u8) |
+/// Line (u16)` = 4 bytes, with `Instruction (u32) | Error (u32)` appended only on an error =
+/// 12 bytes. The depth byte pads the record so `line` sits on a 2-byte boundary and the error's
+/// two 32-bit fields land on 4-byte boundaries (line at offset 2, instruction at 4, error at 8).
+class ScriptReport {
+  /// The script state ([ScriptState]).
+  final int state;
+
+  /// The call depth (the number of active frames).
+  final int depth;
+
+  /// The instruction counter - the deepest frame's position, where execution actually is.
+  final int line;
+
+  /// The offending instruction's own encoding, `1 + ((category << 8) | opcode)`, or 0 when the
+  /// record names no instruction (an engine-level fault, or no error).
+  final int instruction;
+
+  /// The instruction-specific error code, or 0 for no error. Its meaning is defined by the
+  /// instruction named by [instruction].
+  final int error;
+
+  const ScriptReport({
+    required this.state,
+    required this.depth,
+    required this.line,
+    this.instruction = 0,
+    this.error = 0,
+  });
+
+  /// True when the record names an error (it carried the instruction/error fields).
+  bool get hasError => instruction != 0 || error != 0;
+
+  /// Decodes the [instruction] encoding `1 + ((category << 8) | opcode)` back into
+  /// `(category, opcode)`, so the UI can look the instruction up. Returns null when the encoding
+  /// is 0 - a fault not attributable to an instruction (engine-level), or no fault at all - so
+  /// the caller shows the raw error code alone. This maps the encoding only; it does not name
+  /// error codes (that catalogue is undecided - keep the raw code).
+  static (int category, int opcode)? decodeInstruction(int instruction) {
+    if (instruction == 0) return null;
+    final encoded = instruction - 1;
+    return (encoded >> 8, encoded & 0xFF);
+  }
 }
 
 class ScriptClient {
@@ -112,11 +155,21 @@ class ScriptClient {
     return _requestOk(ServiceType.script, 2, payload: [loadedId & 0xFF]);
   }
 
-  /// CID 3: a loaded script's state and its last error code (0 = OK).
-  Future<({int state, int error})?> readState(int loadedId) async {
+  /// CID 3: a loaded script's report record (Docs "Report Record"). 4 bytes normally -
+  /// state, call depth and the deepest frame's line - or 12 bytes on an error, which appends
+  /// the offending instruction and the instruction-specific error code. Returns null when the
+  /// device does not answer (fewer than the 4-byte base record).
+  Future<ScriptReport?> readState(int loadedId) async {
     final reply = await _request(ServiceType.script, 3, payload: [loadedId & 0xFF]);
-    if (reply == null || reply.isEmpty) return null;
-    return (state: reply[0], error: reply.length > 1 ? reply[1] : 0);
+    if (reply == null || reply.length < 4) return null;
+    final onError = reply.length >= 12;
+    return ScriptReport(
+      state: reply[0],
+      depth: reply[1],
+      line: reply[2] | (reply[3] << 8),
+      instruction: onError ? uint32FromBytes(reply, 4) : 0,
+      error: onError ? uint32FromBytes(reply, 8) : 0,
+    );
   }
 
   /// CID 4: sets a loaded script's state. The wire carries the action enum (Docs
@@ -140,12 +193,27 @@ class ScriptClient {
         payload: [loadedId & 0xFF, action & 0xFF]);
   }
 
-  /// CID 5: instruction counter + variable RAM (editor debug).
-  Future<({int instructionCounter, List<int> variables})?> readInternalState(int loadedId) async {
+  /// CID 5: the variable RAM and the entire instruction-counter call stack (editor debug),
+  /// replacing the single instruction counter (which moved to CID 3's report record). Streamed
+  /// as `Depth (u8) | variable RAM | Depth x Line (u16)`: the leading depth byte mirrors the
+  /// report record and delimits the two variable-length parts, so both decode from the reply
+  /// alone (Docs: "Variable RAM, instruction-counter stack (stream)").
+  ///
+  /// Returns null when the reply is too short to hold the depth byte and its stack entries.
+  Future<({List<int> callStack, List<int> variables})?> readInternalState(
+      int loadedId) async {
     final reply = await _request(ServiceType.script, 5, payload: [loadedId & 0xFF]);
-    if (reply == null || reply.length < 4) return null;
-    final ic = uint32FromBytes(reply, 0);
-    return (instructionCounter: ic, variables: reply.sublist(4));
+    if (reply == null || reply.isEmpty) return null;
+    final depth = reply[0];
+    final stackBytes = 2 * depth;
+    if (reply.length < 1 + stackBytes) return null;
+    final variables = reply.sublist(1, reply.length - stackBytes);
+    final callStack = <int>[];
+    for (var i = 0; i < depth; i++) {
+      final off = reply.length - stackBytes + 2 * i;
+      callStack.add(reply[off] | (reply[off + 1] << 8));
+    }
+    return (callStack: callStack, variables: variables);
   }
 
   /// CID 6: moves the instruction counter (editor debug).

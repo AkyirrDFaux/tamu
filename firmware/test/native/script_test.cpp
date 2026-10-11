@@ -157,6 +157,48 @@ int main() {
     // Shift math ops (10/11) are dropped; the next operator keeps its number.
     CHECK_EQ(SCRIPT_MATHOP_EQ, 12);
 
+    // --- CID 3 report record layout (Docs/Services/Script.md "Report Record") ---
+    CHECK_EQ(SCRIPT_REPORT_OFF_STATE, 0);
+    CHECK_EQ(SCRIPT_REPORT_OFF_DEPTH, 1);
+    CHECK_EQ(SCRIPT_REPORT_OFF_LINE, 2);           // 2-byte boundary (depth pads it there)
+    CHECK_EQ(SCRIPT_REPORT_OFF_INSTRUCTION, 4);    // 4-byte boundary
+    CHECK_EQ(SCRIPT_REPORT_OFF_ERROR, 8);          // 4-byte boundary
+    CHECK_EQ(SCRIPT_REPORT_SIZE, 4);               // state | depth | line
+    CHECK_EQ(SCRIPT_REPORT_SIZE_ERR, 12);          // + instruction | error on an error
+
+    // --- The report record's `instruction` encoding helper ---
+    // 1 + ((category << 8) | opcode); valid instructions are never 0, so 0 can mean
+    // "no instruction behind the fault" (engine-level).
+    CHECK_EQ(ScriptInstructionEncoding(SCRIPT_CAT_MATH, SCRIPT_OP_MATH_SET), 1u);        // 0,0
+    CHECK_EQ(ScriptInstructionEncoding(SCRIPT_CAT_FLOW, SCRIPT_OP_FLOW_CALL),
+             1u + ((uint32_t)SCRIPT_CAT_FLOW << 8) + SCRIPT_OP_FLOW_CALL);
+    CHECK_EQ(ScriptInstructionEncoding(SCRIPT_CAT_SERVICE, SCRIPT_OP_SERVICE_ERROR),
+             1u + ((uint32_t)SCRIPT_CAT_SERVICE << 8) + SCRIPT_OP_SERVICE_ERROR);         // 4,13 -> 1038
+    // A valid instruction is never 0 for any category/opcode in range.
+    CHECK(ScriptInstructionEncoding(0, 0) != 0);
+    CHECK(ScriptInstructionEncoding(SCRIPT_CAT_COMPOSE, SCRIPT_OP_EXTRACT) != 0);
+
+    // --- CID 4 action enum: state verbs only; the Error op is NOT a management action ---
+    {
+        uint8_t St = 0xFF;
+        CHECK(ScriptActionToState(SCRIPT_OP_SERVICE_START, St));
+        CHECK_EQ(St, (uint8_t)ScriptState::Running);
+        CHECK(ScriptActionToState(SCRIPT_OP_SERVICE_STOP, St));
+        CHECK_EQ(St, (uint8_t)ScriptState::Stopped);
+        CHECK(ScriptActionToState(SCRIPT_OP_SERVICE_PAUSE, St));
+        CHECK_EQ(St, (uint8_t)ScriptState::Paused);
+        CHECK(ScriptActionToState(SCRIPT_OP_SERVICE_RESUME, St));
+        CHECK_EQ(St, (uint8_t)ScriptState::Running);
+        // 13 (the in-script Error throw) and anything outside {9,10,11,12} are rejected.
+        St = 0xEE;
+        CHECK(!ScriptActionToState(SCRIPT_OP_SERVICE_ERROR, St));
+        CHECK_EQ(St, 0xEE); // untouched on rejection
+        CHECK(!ScriptActionToState(0, St));
+        CHECK(!ScriptActionToState(3, St));  // the retired state op
+        CHECK(!ScriptActionToState(13, St));
+        CHECK(!ScriptActionToState(255, St));
+    }
+
     std::printf("== script tests: %d checks, %d failures ==\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }
