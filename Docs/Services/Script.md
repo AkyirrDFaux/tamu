@@ -2,7 +2,7 @@ Use define `USE_SCRIPTS`.
 
 A script is a stored program that runs on the device, driven by a symbol-based instruction set executed in the main loop. Each script is stored as its own file, `SCR_XXX`, pre-loaded into RAM before it runs. A script that shares functions also needs the function library file present on the target.
 ### Variables, Constants and I/O
-Variables, constants and I/O are fixed in type and size. Variables live in a static RAM array inside the script; constants work as read-only variables; I/O is a register, which is dynamic memory without persistence. Inputs need default values and a specification for the UI, such as whether they render as a switch or a button, and their names.
+Variables, constants and I/O are fixed in type and size. Variables live in a static RAM array inside the script, with no reserved words ahead of them; constants work as read-only variables; I/O is a register, which is dynamic memory without persistence. Inputs need default values and a specification for the UI, such as whether they render as a switch or a button, and their names.
 ### File Format
 #### File Blocks
 | Name                    | Size                   | Note            |
@@ -52,7 +52,7 @@ Predefines are commonly reused enums and small data, which compress better as sy
 | Char      | 3   | Full ASCII (8-bit)                 |
 | Math op   | 4   | A Math op value below              |
 | Bool      | 5   | True/False                         |
-| Number    | 6   | 16-bit Q8.8 fixed-point literal    |
+| Number    | 6   | Q8.8 fixed-point literal, a sub-resolution value: a wider one cannot fit in 16 bits |
 
 The Math op values form the operators of an inline expression. Values 10 and 11 (shifts) are reserved and never reused.
 

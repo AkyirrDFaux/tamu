@@ -2,12 +2,13 @@ Handles logs and error reports from the entire device and sends them over the RS
 
 The Log Struct:
 
-| Name          | Size   | Note |
-| ------------- | ------ | ---- |
-| Source        | uint16 | BlockType and Instance |
-| Log Category  | uint8  |      |
-| Log Specifics | uint8  |      |
-| Timestamp     | uint32 | Synced |
+| Name      | Size   | Note |
+| --------- | ------ | ---- |
+| Source    | uint32 | The whole block index: the block type, the instance and the 16-bit field/key specifier |
+| Log code  | uint32 | Source-specific |
+| Timestamp | uint32 | Synced |
+
+The source names the block that emitted the entry, and the code means whatever that source says it means - the same principle as the script errors being instruction-specific. The former 8-bit log category and log specifics fields together become the code.
 
 The service sends the log immediately, at the priority that corresponds to it.
 ### Log Database (Core)

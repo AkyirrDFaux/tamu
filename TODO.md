@@ -68,7 +68,8 @@ the 4-byte value packing it leaves unstated, and the CID 3/4/6/7 "script id = lo
   **code becomes 32 bits** as well, and its meaning is **source-specific**, the same principle as the
   instruction-specific errors. This is a Log-service change rather than a script one, driven by the in-script
   log, the custom error throw and the log-only `report info`; it also moves the app's log view and the Log
-  service's own documentation.
+  service's own documentation. The entry grows from 8 bytes to 12 (source, code, timestamp), and the core's
+  database entry from 12 to 16 with it. `Log Handler.md` is updated.
 
 Open detail: none. Broken existing `SCR_XXX` files are accepted as the cost of the header change.
 
