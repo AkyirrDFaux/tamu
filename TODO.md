@@ -71,10 +71,11 @@ Decided:
 
 - **Being not fully loaded is a state, not an error.** The state set expresses partial loading directly, so an
   incomplete load is never reported as a fault.
-- **The report record:** `state (8b) | symbol (8b) | line (16b)`, with `instruction (32b)` and `error (32b)`
-  appended **only for an error** - 4 bytes for a plain state report, 12 for an error report. `line` is the
-  instruction counter, **moved from CID 5 to CID 3**; CID 5 keeps the rest of the internal picture (the
-  variable RAM) and is still how a full dump is taken.
+- **The report record:** `state (8b) | line (16b)`, with `instruction (32b)` and `error (32b)` appended **only
+  for an error** - 3 bytes for a plain state report, 11 for an error report. There is no separate symbol field:
+  the error's instruction-specific detail carries it. `line` is the instruction counter, **moved from CID 5 to
+  CID 3**; CID 5 keeps the rest of the internal picture (the variable RAM) and is still how a full dump is
+  taken.
 - **The error is structured, not a flat list:** `class (8b) | instruction-specific detail (24b)`. The class set
   stays the eight that exist today; the detail's meaning is defined by the instruction that faulted, so
   "no such block" versus "read refused" are the same class and different details.
