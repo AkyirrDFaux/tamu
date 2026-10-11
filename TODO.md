@@ -95,6 +95,29 @@ Open:
 - Logging both load and run errors is Stage 0, not here; the `Load` code is shared by the CID 1 reply and the
   in-script `Load script` op result (Stage 0).
 
+### Stage 4 - loading and unloading
+
+Decided:
+
+- **CID 0 streams the whole slot map, in slot order** - the file id in each slot, with `0xFFFF` for an
+  unoccupied slot. That is the file-to-slot mapping the app needs, and the stream length is what tells it the
+  device's slot count, so the app stops assuming 256 everywhere.
+- **Loading into an occupied slot fails.** Only empty slots accept a load.
+- **The device offers a slot, defaulting to the lowest free**, so a caller need not compute one and two
+  loaders cannot collide.
+- **Unload reports success or failure only**, nothing more.
+- **The state enum gains "not fully loaded"**, so an incomplete load is a state rather than a fault. No
+  addition to the synthesised block metadata is needed.
+
+Remaining:
+
+- Define what "not fully loaded" means operationally and its legal transitions - the one part of this stage
+  still to pin down.
+- CID 0's payload becomes a 512-byte stream on the core (256 slots x uint16), far past a single frame, so the
+  app interface's fragmentation and reassembly path becomes a hard requirement for it - and that path is
+  currently untested. The Valu's 16 slots fit in one frame.
+- The stale `Fragmentation` field in the doc's CID 0 row goes (Stage 6 carries the doc edit).
+
 ### Stage 2 - the script block and the load contract
 
 **Register representation: settled.** A loaded script is *addressed*, not registered. The script block range
