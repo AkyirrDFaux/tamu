@@ -159,15 +159,19 @@ Decided:
   the two. **No new states are added for them** - the actions act on the states that already exist.
 - The existing state instruction is **retired with its opcode reserved**, never reused, the same discipline as
   the retired math ops.
-- Proposed action set, for confirmation: `Start`, `Stop`, `Pause`, `Resume`. **Start covers restart**, since
-  entering `Running` already resets the instruction counter and the call depth; **finishing is the existing
-  Flow `Halt`**; and a deliberate "set Error" action is dropped, since `Error` is the engine's verdict rather
-  than something a script asserts about itself.
+- **The action set is `Start`, `Stop`, `Pause`, `Resume`, `Error`.** Start covers restart, since entering
+  `Running` already resets the instruction counter and the call depth; finishing is the existing Flow `Halt`.
+  `Error` is a **custom error throw**: it logs and halts, carrying a script-defined code.
+- **`report info` is a log-only action**: like the error throw, but it does not halt - it logs the script's state
+  and carries on. The remaining doc verbs resolve as restart = `Start` and halt-on-error = the faulting rule.
+- **CID 4 takes an action enum** corresponding to those actions, matching both the instructions and the app's
+  existing Start/Pause/Continue/Stop buttons.
 
 Open:
 
-- **`report info`** - its own read instruction, writing the state and error into destinations, or struck. The
-  other two doc verbs are now resolved: restart is `Start`, halt on error is covered by the faulting rule.
+- The **custom error throw's class**: a script-defined error does not fit the eight existing error classes, so it
+  needs either a ninth class of its own - with the script's code in the detail - or a defined reuse of an
+  existing one. This amends Stage 1's "the class set stays the eight".
 
 ### Stage 4 - loading and unloading
 
