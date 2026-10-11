@@ -172,6 +172,15 @@ class ScriptClient {
         payload: [fileId & 0xFF, (fileId >> 8) & 0xFF, loadedId & 0xFF]);
   }
 
+  /// CID 1: loads `SCR_<fileId>` into the lowest free slot - the request names no slot, so it
+  /// is only the 2-byte file id (Docs/Services/Script.md CID 1: "a load that names no slot takes
+  /// the lowest free one"; the request is then "Script File ID (uint16)"). The reply is Success
+  /// only, so the caller learns which slot was chosen from the CID 0 slot map.
+  Future<bool> loadLowestFree(int fileId) async {
+    return _requestOk(ServiceType.script, 1,
+        payload: [fileId & 0xFF, (fileId >> 8) & 0xFF]);
+  }
+
   /// CID 2: unloads a loaded script.
   Future<bool> unload(int loadedId) async {
     return _requestOk(ServiceType.script, 2, payload: [loadedId & 0xFF]);

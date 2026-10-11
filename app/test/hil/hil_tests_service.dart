@@ -1060,6 +1060,317 @@ final List<HilTest> serviceTests = <HilTest>[
     },
   ),
 
+  HilTest(
+    'script VM: Flow Call runs a local function body and Return resumes it',
+    category: HilCategory.service,
+    prereq: _script,
+    body: (ctx) async {
+      for (final d in ctx.devices(_script)) {
+        final c = ScriptClient(deviceId: d.id);
+        final st = StorageClient(deviceId: d.id);
+        final slot = _scrSlotBase + 12;
+
+        // The main body calls a local function once; the body writes a variable and an
+        // output, then Returns. Assembly lays the body out after the main program and each
+        // use site's Call becomes the body's absolute line index (Docs/Services/Script.md
+        // "Functions and Macros"; the app lays local functions out, the device does not).
+        final draft = ScriptDraft(functionName: 'CallRet')
+          ..outputs
+              .add(ScriptDraftValue(name: 'Out', type: DataType.number, size: 4))
+          ..variables
+              .add(ScriptDraftValue(name: 'A', type: DataType.number, size: 4))
+          ..lines.add(ScriptLine.callTo(0))
+          ..lines.add(ScriptLine(
+              instruction: ScriptSymbol.instruction(catFlow, 6))) // Halt
+          ..functions.add(ScriptFunction(name: 'Body', body: [
+            ScriptLine(
+                destinations: [ScriptSymbol.variable(0)],
+                instruction: ScriptSymbol.instruction(catMath, 0), // Set
+                operands: [ScriptSymbol.predefine(preIndex, 42)]),
+            ScriptLine(
+                destinations: [ScriptSymbol.output(0)],
+                instruction: ScriptSymbol.instruction(catMath, 0), // Set
+                operands: [ScriptSymbol.variable(0)]),
+            ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 5)), // Return
+          ]));
+
+        expect(await _uploadScript(c, st, slot, draft), isTrue,
+            reason: 'upload + load the Call/Return script');
+        await c.setState(slot, ScriptState.running);
+        final state = await _waitState(c, slot, ScriptState.finished);
+        expect(state, ScriptState.finished,
+            reason: 'error code ${(await c.readState(slot))?.error}');
+
+        // The body actually ran: its variable (script RAM) and the output it copied both carry
+        // the value only the body wrote.
+        final ram = (await c.readInternalState(slot))!.variables;
+        expect(numberFromBytes(ram, 0), closeTo(42.0, 0.001),
+            reason: 'the called body wrote its variable');
+        final out = await c.readEntry(slot, ScriptField.output, 0);
+        expect(out, isNotNull);
+        expect(numberFromBytes(out!.value), closeTo(42.0, 0.001),
+            reason: 'the body set the output');
+        // Return restored the caller: the call depth is back to zero.
+        expect((await c.readState(slot))!.depth, 0,
+            reason: 'Return popped the call frame');
+
+        await _removeScript(c, st, slot);
+      }
+    },
+  ),
+
+  HilTest(
+    'script Service Report info (14) logs and carries on to Finished',
+    category: HilCategory.service,
+    prereq: _script,
+    body: (ctx) async {
+      for (final d in ctx.devices(_script)) {
+        final c = ScriptClient(deviceId: d.id);
+        final st = StorageClient(deviceId: d.id);
+        final slot = _scrSlotBase + 13;
+
+        // Report info is a log-only action (Docs/Services/Script.md Service op 14): it must not
+        // halt or fault. A Set AFTER it proves execution carried past it.
+        final draft = ScriptDraft(functionName: 'ReportInfo')
+          ..variables
+              .add(ScriptDraftValue(name: 'A', type: DataType.number, size: 4))
+          ..lines.add(ScriptLine(
+              instruction: ScriptSymbol.instruction(catService, 14))) // Report info
+          ..lines.add(ScriptLine(
+              destinations: [ScriptSymbol.variable(0)],
+              instruction: ScriptSymbol.instruction(catMath, 0), // Set
+              operands: [ScriptSymbol.predefine(preIndex, 5)]))
+          ..lines.add(ScriptLine(
+              instruction: ScriptSymbol.instruction(catFlow, 6))); // Halt
+
+        expect(await _uploadScript(c, st, slot, draft), isTrue,
+            reason: 'upload + load the Report info script');
+        await c.setState(slot, ScriptState.running);
+        expect(await _waitState(c, slot, ScriptState.finished),
+            ScriptState.finished);
+        expect((await c.readState(slot))?.error, 0,
+            reason: 'Report info does not fault');
+        final ram = (await c.readInternalState(slot))!.variables;
+        expect(numberFromBytes(ram, 0), closeTo(5.0, 0.001),
+            reason: 'execution carried on past Report info');
+
+        await _removeScript(c, st, slot);
+      }
+    },
+  ),
+
+  HilTest(
+    'script Service Error (13) throws: state Error with the script-defined code',
+    category: HilCategory.service,
+    prereq: _script,
+    body: (ctx) async {
+      for (final d in ctx.devices(_script)) {
+        final c = ScriptClient(deviceId: d.id);
+        final st = StorageClient(deviceId: d.id);
+        final slot = _scrSlotBase + 14;
+
+        // Error is a custom throw (Docs/Services/Script.md Service op 13): it logs and halts,
+        // carrying a script-defined code. The code is the script's own operand value - NOT a
+        // catalogue code (that catalogue is undecided), so the test uses a distinctive literal.
+        const code = 0x1234;
+        final draft = ScriptDraft(functionName: 'Throw')
+          ..lines.add(ScriptLine(
+              instruction: ScriptSymbol.instruction(catService, 13), // Error
+              operands: [ScriptSymbol.predefine(preIndex, code)]))
+          ..lines.add(ScriptLine(
+              instruction: ScriptSymbol.instruction(catFlow, 6))); // Halt (never reached)
+
+        expect(await _uploadScript(c, st, slot, draft), isTrue,
+            reason: 'upload + load the Error script');
+        await c.setState(slot, ScriptState.running);
+        expect(await _waitState(c, slot, ScriptState.error), ScriptState.error);
+
+        final report = await c.readState(slot);
+        expect(report, isNotNull);
+        expect(report!.hasError, isTrue, reason: 'a throw is reported');
+        expect(report.error, code,
+            reason: 'the report carries the script-defined code');
+        expect(ScriptReport.decodeInstruction(report.instruction), (catService, 13),
+            reason: 'the offending instruction is the Service Error op');
+
+        await _removeScript(c, st, slot);
+      }
+    },
+  ),
+
+  HilTest(
+    'script Service state verbs (Stop/Pause/Resume) do not fault',
+    category: HilCategory.service,
+    prereq: _script,
+    body: (ctx) async {
+      // Start (9) is deliberately absent: entered while Running (the only state the VM runs in),
+      // it neither advances the counter nor resets it, so the loop guard re-runs it every tick
+      // and the script never leaves Running - testing it would wedge the VM. Stop/Pause/Resume
+      // all advance or terminate.
+      for (final d in ctx.devices(_script)) {
+        final c = ScriptClient(deviceId: d.id);
+        final st = StorageClient(deviceId: d.id);
+
+        // Stop (10): ends Stopped.
+        final stopSlot = _scrSlotBase + 15;
+        final stopDraft = ScriptDraft(functionName: 'StopVerb')
+          ..lines.add(ScriptLine(
+              instruction: ScriptSymbol.instruction(catService, 10))); // Stop
+        expect(await _uploadScript(c, st, stopSlot, stopDraft), isTrue,
+            reason: 'upload + load the Stop script');
+        await c.setState(stopSlot, ScriptState.running);
+        expect(await _waitState(c, stopSlot, ScriptState.stopped),
+            ScriptState.stopped);
+        expect((await c.readState(stopSlot))?.error, 0,
+            reason: 'Stop does not fault');
+        await _removeScript(c, st, stopSlot);
+
+        // Pause (11): ends Paused and resumes past the Pause on the next start.
+        final pauseSlot = _scrSlotBase + 16;
+        final pauseDraft = ScriptDraft(functionName: 'PauseVerb')
+          ..lines.add(ScriptLine(
+              instruction: ScriptSymbol.instruction(catService, 11))) // Pause
+          ..lines.add(ScriptLine(
+              instruction: ScriptSymbol.instruction(catFlow, 6))); // Halt
+        expect(await _uploadScript(c, st, pauseSlot, pauseDraft), isTrue,
+            reason: 'upload + load the Pause script');
+        await c.setState(pauseSlot, ScriptState.running);
+        expect(await _waitState(c, pauseSlot, ScriptState.paused),
+            ScriptState.paused);
+        expect((await c.readState(pauseSlot))?.error, 0,
+            reason: 'Pause does not fault');
+        await _removeScript(c, st, pauseSlot);
+
+        // Resume (12): a no-op on a running script, so execution reaches the Halt.
+        final resumeSlot = _scrSlotBase + 17;
+        final resumeDraft = ScriptDraft(functionName: 'ResumeVerb')
+          ..lines.add(ScriptLine(
+              instruction: ScriptSymbol.instruction(catService, 12))) // Resume
+          ..lines.add(ScriptLine(
+              instruction: ScriptSymbol.instruction(catFlow, 6))); // Halt
+        expect(await _uploadScript(c, st, resumeSlot, resumeDraft), isTrue,
+            reason: 'upload + load the Resume script');
+        await c.setState(resumeSlot, ScriptState.running);
+        expect(await _waitState(c, resumeSlot, ScriptState.finished),
+            ScriptState.finished);
+        expect((await c.readState(resumeSlot))?.error, 0,
+            reason: 'Resume does not fault');
+        await _removeScript(c, st, resumeSlot);
+      }
+    },
+  ),
+
+  HilTest(
+    'script load-failed: a missing function library refuses the load and holds the slot',
+    category: HilCategory.service,
+    prereq: _script,
+    body: (ctx) async {
+      for (final d in ctx.devices(_script)) {
+        final c = ScriptClient(deviceId: d.id);
+        final st = StorageClient(deviceId: d.id);
+        final slot = _scrSlotBase + 18;
+        final name = scriptFileName(slot);
+
+        // Clean the scratch slot and guarantee the referenced library is absent.
+        if (await c.readState(slot) != null) await c.unload(slot);
+        await st.deleteFile(name);
+        const missingLib = 0xFFF; // a function-library file id that is not present
+        await st.deleteFile(scriptFileName(missingLib));
+
+        // A script linking one global function from an absent library: assembly keeps the
+        // reservation, so the load reaches the link step. A referenced function that is absent
+        // is a load error, detected before anything is allocated (Docs/Services/Script.md
+        // "Load Contract"/"State": the slot holds only its slot record, state Load-failed 7).
+        final draft = ScriptDraft(functionName: 'LinkFail')
+          ..lines.add(ScriptLine.callTo(0))
+          ..lines.add(ScriptLine(
+              instruction: ScriptSymbol.instruction(catFlow, 6))) // Halt
+          ..functions.add(ScriptFunction(
+              name: 'Missing',
+              kind: ScriptFunctionKind.global,
+              globalFileId: missingLib));
+        expect(await st.writeFile(name, draft.toImage()), isTrue,
+            reason: 'upload $name');
+
+        // CID 1 refuses the load (the library is absent) ...
+        expect(await c.load(slot, slot), isFalse,
+            reason: 'a script linking an absent library is refused');
+        // ... but the slot keeps its reservation and reports the Load-failed state via CID 3.
+        final report = await c.readState(slot);
+        expect(report, isNotNull, reason: 'a load-failed slot still answers CID 3');
+        expect(report!.state, ScriptState.loadFailed,
+            reason: 'the slot reports state 7 (Load failed)');
+        // The slot appears in the CID 0 slot map as a reservation (its file id), not 0xFFFF.
+        final map = await c.slotMap();
+        expect(map.length, greaterThan(slot));
+        expect(map[slot], slot,
+            reason: 'the load-failed slot shows its file id in the slot map');
+        // The reservation is honoured: the occupied slot refuses a retry load.
+        expect(await c.load(slot, slot), isFalse,
+            reason: 'a load-failed slot counts as occupied');
+        // An explicit unload clears the reservation.
+        expect(await c.unload(slot), isTrue,
+            reason: 'unload clears the load-failed reservation');
+        expect(await c.readState(slot), isNull,
+            reason: 'the slot is no longer reserved');
+        final cleared = await c.slotMap();
+        expect(cleared[slot], scriptSlotEmpty,
+            reason: 'the slot is empty again after the explicit unload');
+
+        await st.deleteFile(name);
+      }
+    },
+  ),
+
+  HilTest(
+    'script CID 1 loads into the lowest free slot when no slot is named',
+    category: HilCategory.service,
+    prereq: _script,
+    body: (ctx) async {
+      for (final d in ctx.devices(_script)) {
+        final c = ScriptClient(deviceId: d.id);
+        final st = StorageClient(deviceId: d.id);
+        const fId = 0x2AB; // a scratch script file id, distinct from any slot-named image
+        final name = scriptFileName(fId);
+        await st.deleteFile(name);
+
+        // A minimal valid script image (a single Halt).
+        final draft = ScriptDraft(functionName: 'LowFree')
+          ..lines.add(ScriptLine(
+              instruction: ScriptSymbol.instruction(catFlow, 6))); // Halt
+        expect(await st.writeFile(name, draft.toImage()), isTrue,
+            reason: 'upload $name');
+
+        // The lowest slot that is currently free (Docs/Services/Script.md CID 1: "a load that
+        // names no slot takes the lowest free one").
+        final before = await c.slotMap();
+        expect(before, isNotEmpty, reason: 'the device streams its slot map');
+        final expected = before.indexOf(scriptSlotEmpty);
+        expect(expected, isNot(-1), reason: 'the rig has at least one free slot');
+
+        // Load with the file id alone (no slot): the device picks the slot.
+        expect(await c.loadLowestFree(fId), isTrue,
+            reason: 'the lowest-free load succeeds');
+        final after = await c.slotMap();
+        expect(after.length, before.length);
+        expect(after[expected], fId,
+            reason: 'the device chose the lowest free slot ($expected)');
+        // Only that slot changed: exactly one more occupied slot than before.
+        expect(
+            after.where((id) => id != scriptSlotEmpty).length,
+            before.where((id) => id != scriptSlotEmpty).length + 1,
+            reason: 'exactly one slot was taken');
+
+        // Restore.
+        expect(await c.unload(expected), isTrue);
+        await st.deleteFile(name);
+        final restored = await c.slotMap();
+        expect(restored[expected], scriptSlotEmpty,
+            reason: 'the scratch slot is released');
+      }
+    },
+  ),
+
   // --------------------------------------------------- Subscriptions (table)
 
   HilTest(

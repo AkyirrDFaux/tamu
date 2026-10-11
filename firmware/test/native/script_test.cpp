@@ -246,6 +246,92 @@ int main() {
         CHECK_EQ(ScriptLowestFreeBit(~((uint64_t)1 << 63)), 63); // only slot 63 free
     }
 
+    // --- State enum values (Docs/Services/Script.md "State") ---
+    // The two load states were appended so the pre-existing values keep their numbers.
+    CHECK_EQ((int)ScriptState::Stopped, 0);
+    CHECK_EQ((int)ScriptState::Running, 1);
+    CHECK_EQ((int)ScriptState::Paused, 2);
+    CHECK_EQ((int)ScriptState::Waiting, 3);
+    CHECK_EQ((int)ScriptState::Finished, 4);
+    CHECK_EQ((int)ScriptState::Error, 5);
+    CHECK_EQ((int)ScriptState::ReservedNotReady, 6);
+    CHECK_EQ((int)ScriptState::LoadFailed, 7);
+
+    // --- Load-state helper: a slot is reserved when active OR load-failed
+    //     (Docs/Services/Script.md "State") ---
+    {
+        LoadedScript S; // default: inactive, Stopped
+        CHECK_EQ(S.Active, false);
+        CHECK_EQ((int)S.State, (int)ScriptState::Stopped);
+        CHECK(!ScriptSlotReserved(S)); // an empty slot reserves nothing
+
+        S.Active = true;
+        CHECK(ScriptSlotReserved(S)); // an active script reserves its slot
+
+        S.Active = false;
+        S.State = (uint8_t)ScriptState::LoadFailed;
+        CHECK(ScriptSlotReserved(S)); // load-failed keeps its slot record until an unload
+
+        S.Active = true;
+        CHECK(ScriptSlotReserved(S)); // active and load-failed is still a reservation
+
+        // The helper keys on active-or-load-failed, so a bare non-active state does not reserve.
+        S.Active = false;
+        const uint8_t NonReserved[] = { (uint8_t)ScriptState::Stopped, (uint8_t)ScriptState::Running,
+                                        (uint8_t)ScriptState::Paused, (uint8_t)ScriptState::Waiting,
+                                        (uint8_t)ScriptState::Finished, (uint8_t)ScriptState::Error,
+                                        (uint8_t)ScriptState::ReservedNotReady };
+        for (uint8_t St : NonReserved) {
+            S.State = St;
+            CHECK(!ScriptSlotReserved(S));
+        }
+    }
+
+    // --- CID 5 fixed-size call-stack layout (Docs/Services/Script.md CID 5) ---
+    // The reply is SCRIPT_MAX_CALL_DEPTH uint16 counter entries (outermost first) then the
+    // variable RAM; the stack is fixed-size, so the two split with no delimiter.
+    CHECK_EQ(SCRIPT_MAX_CALL_DEPTH, 8);      // the documented call-depth cap
+    CHECK_EQ(SCRIPT_MAX_CALL_DEPTH * 2, 16); // bytes of counter stack in the reply
+    {
+        LoadedScript S;
+        CHECK_EQ(sizeof(S.CallStack) / sizeof(S.CallStack[0]), (size_t)SCRIPT_MAX_CALL_DEPTH);
+        CHECK_EQ((int)S.CallDepth, 0); // starts empty
+    }
+    // The cap fits the CID 3 report's uint8 depth byte, and a line index fits its uint16 field.
+    CHECK(SCRIPT_MAX_CALL_DEPTH <= 0xFF);
+    CHECK(SCRIPT_MAX_LINES <= 0xFFFF);
+
+    // --- Instruction-encoding helper range (ScriptInstructionEncoding): distinct and never 0
+    //     across the whole in-range category/opcode space ---
+    {
+        uint32_t Seen[6 * 256];
+        uint16_t N = 0;
+        bool NonZero = true, Distinct = true;
+        for (uint8_t Cat = 0; Cat < 6; Cat++) {
+            for (uint16_t Op = 0; Op < 256; Op++) {
+                const uint32_t E = ScriptInstructionEncoding(Cat, (uint8_t)Op);
+                if (E == 0) NonZero = false;
+                for (uint16_t k = 0; k < N; k++) if (Seen[k] == E) Distinct = false;
+                Seen[N++] = E;
+            }
+        }
+        CHECK(NonZero);
+        CHECK(Distinct);
+        CHECK_EQ(N, 6 * 256);
+    }
+
+    // --- Global-call operand round-trip over representative indices ---
+    {
+        const uint16_t Idx[] = { 0, 1, 3, 255, 1023, 0x7FFF }; // 15-bit reservation index range
+        for (uint16_t i : Idx) {
+            const uint16_t Op = ScriptGlobalCallOperand(i);
+            CHECK(ScriptIsGlobalCall(Op));
+            CHECK_EQ(ScriptGlobalCallIndex(Op), i);
+        }
+        // An operand that already carries the marker masks cleanly (idempotent).
+        CHECK_EQ(ScriptGlobalCallOperand(ScriptGlobalCallOperand(3)), ScriptGlobalCallOperand(3));
+    }
+
     std::printf("== script tests: %d checks, %d failures ==\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }
