@@ -361,27 +361,26 @@ Future<int> prepareDynamicBlocks(RestorePlan plan) async {
       final dyn = DynBlock(
           index: global, meta: ValueInfo(type: block.typeIndex), name: block.name);
       if (await reg.createDynamicBlock(block.name, index: global) == null) continue;
-      // Recreate the block's field/key structure. An append's `index` is the FIELD it lands
-      // in, so walking the fields in order creates them 0,1,2,... and each field's keys follow
-      // into the field that now exists.
+      // Recreate the block's field/key structure. `appendDynamicEntry` writes through a
+      // BlockInfo whose key is always 0, so it creates one entry per FIELD; a keyed entry
+      // (the eyes have several keys per field) has to go through `writeDynamicEntry`, which
+      // carries the key in its address.
       final seen = <String>{};
       final entries = [...block.entries]..sort((a, b) => a.fieldIndex == b.fieldIndex
           ? a.keyIndex.compareTo(b.keyIndex)
           : a.fieldIndex.compareTo(b.fieldIndex));
-      var fieldCount = 0;
       for (final entry in entries) {
         if (!seen.add('${entry.fieldIndex}:${entry.keyIndex}')) continue;
         final type = dataTypeFromWord(entry.type);
         if (type == null) continue;
-        // The next field is created by appending at the current count; a repeat field takes
-        // its explicit index.
-        final at = entry.fieldIndex > fieldCount ? fieldCount : entry.fieldIndex;
-        final created2 = await reg.appendDynamicEntry(
-            dyn,
-            ValueInfo(type: type.value, key: entry.keyIndex, size: entry.size),
-            List<int>.filled(entry.size, 0),
-            index: at);
-        if (created2 != null) fieldCount = at + 1;
+        final meta = ValueInfo(
+            type: type.value, key: entry.keyIndex, size: entry.size);
+        final zero = List<int>.filled(entry.size, 0);
+        if (entry.keyIndex == 0) {
+          await reg.appendDynamicEntry(dyn, meta, zero, index: entry.fieldIndex);
+        } else {
+          await reg.writeDynamicEntry(dyn, entry.fieldIndex, entry.keyIndex, meta, zero);
+        }
       }
       created++;
     }
