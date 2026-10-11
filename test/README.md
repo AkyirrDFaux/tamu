@@ -37,6 +37,7 @@ bash test/run_hil_tests.sh --device 2
 bash test/run_hil_tests.sh --bootloader     # a device in bootloader mode
 TAMU_HIL=/dev/ttyACM0 bash test/run_hil_tests.sh
 TAMU_HIL=ble bash test/run_hil_tests.sh
+TAMU_HIL_BOOTLOADER=1 bash test/run_hil_tests.sh --bootloader  # a device is in update mode
 ```
 
 The core port is resolved from `/dev/serial/by-id` when `TAMU_HIL` is unset. Categories are generic,

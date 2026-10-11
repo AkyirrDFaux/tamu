@@ -17,17 +17,18 @@ subscriptions and addresses - but clear their own temporaries. Source lives unde
 
 Serial ports renumber between sessions - resolve them from `/dev/serial/by-id` (Espressif USB-JTAG =
 core, WCH-Link = DAS) rather than remembering a `/dev/ttyACM<N>` number. `run_hil_tests.sh` does
-this itself; `TAMU_HIL` overrides it, or set it to `ble` for the BLE path. `TAMU_HIL_BOOTLOADER=<id>`
-declares a device in bootloader mode for the bootloader category.
+this itself; `TAMU_HIL` overrides it, or set it to `ble` for the BLE path. `TAMU_HIL_BOOTLOADER=1`
+declares that a device is in bootloader mode for the bootloader category; the value is ignored, since
+bootloader frames carry no address.
 
-## Bootloader protocol v2 (2026-10-10) - implemented, HIL not run
+## Bootloader protocol v2 (2026-10-10) - implemented and verified on hardware
 
 The bootloader wire changed (3-bit command field, write acknowledgement, identify request/response) and
 the core passthrough became asynchronous with remapped IDs (0x20 identification / 0x21 write / 0x22 read).
 Spec: `Docs/Services/Bootloader.md`; partition sizes are in `Docs/Devices.md`. Landed and committed - see
 `Issues.md` "Completed 2026-10-09/10" for the commit list.
 
-**Outstanding:** the *core's own* bootloader is now exercised on hardware (2026-10-10): `test/core_bootloader_flash.py` identifies it (app space 2752512, name "Tamu v2.0A"), writes `ota_0` through the adaptive ack-driven pipeline (20496 chunks, 38.2 KiB/s, 0 resends) and reads the whole image back with 0/20496 mismatches. Still unrun: the *node* bootloader over the core passthrough (`--bootloader`, needs the DAS built with `-D BOOTLOADER_FORCE` and `TAMU_HIL_BOOTLOADER=<id>`), and the app's update flow end to end on Android, which the beta criteria below require.
+**Outstanding:** both bootloader paths are now exercised on hardware (2026-10-10). The *core's own* bootloader takes the app image end to end: `test/core_bootloader_flash.py` identifies it (app space 2752512, name "Tamu v2.0A"), writes `ota_0` through the adaptive ack-driven pipeline (20496 chunks, 38.2 KiB/s, 0 resends) and reads the whole image back with 0/20496 mismatches. The *node* bootloader is reachable over the core passthrough: with the DAS in update mode, identify, whole-image read and rewrite+verify all pass (`TAMU_HIL_BOOTLOADER=1 bash test/run_hil_tests.sh --bootloader`, 3/3, 6-8 ms per request). Still unrun: the app's update flow end to end on Android, which the beta criteria below require.
 
 ## Beta window plan (2026-10-07) - Tamu core/DAS + app; Valu v2 parked
 

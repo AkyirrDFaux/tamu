@@ -29,11 +29,12 @@ passthrough-CID alignment (`a894971`), passthrough-ID test (`37f05e2`), app pre-
 (`67fc816`). Sizes: DAS_bootloader 1980/2048, Tamu_bootloader 171940/393216, Valu_bootloader 10568/12288;
 apps unchanged. Offline gate green; firmware and app KATs agree byte-for-byte.
 
-**Open from this work - HIL.** The v2 wire, the async passthrough (1 ms poll, write success-match, the
-busy/refuse path) and the app's update flow have never run on hardware. Measure the half-duplex
-turn-around: `SendRaw` waits ~32 byte-times (~700 us) for silence before every ack, which may cost more
-than pipelining saves. This also gates TODO's beta criterion "the update flow completes end to end on
-Android".
+**Resolved 2026-10-10 - HIL.** The v2 wire, the passthrough and the node bootloader now run on
+hardware. The core's own bootloader takes the app image end to end (`test/core_bootloader_flash.py`),
+and the passthrough reaches the DAS in update mode for identify, whole-image read and rewrite+verify
+(3/3). Measured cost of the half-duplex turn-around: 6-8 ms per passthrough request, so `SendRaw`'s
+~700 us silence wait is small against the frame it precedes. Still open: the app's update flow end to
+end on Android, which gates TODO's beta criterion.
 
 ## HIL suite findings (2026-10-10)
 
