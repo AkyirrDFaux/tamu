@@ -99,8 +99,8 @@ The program is pre-loaded into RAM when space allows, using read-only pointers f
 | Waiting                | 3     | Program is waiting for a condition to be met, a timer or an external input.                                                                                                                                       |
 | Finished               | 4     | Program has reached the final instruction.                                                                                                                                                                        |
 | Error                  | 5     | Program has been stopped, the current instruction produced an error.                                                                                                                                              |
-| Reserved-but-not-ready | -     | The slot's space exists but the script cannot run yet; it leaves by becoming ready (`Stopped`) or by being released.                                                                                              |
-| Load-failed            | -     | The load was refused; the slot keeps its reservation until an explicit unload clears it. A link failure is detected before anything is allocated, so a load-failed slot holds only its slot record and no spaces. |
+| Reserved-but-not-ready | 6     | The slot's space exists but the script cannot run yet; it leaves by becoming ready (`Stopped`) or by being released.                                                                                              |
+| Load-failed            | 7     | The load was refused; the slot keeps its reservation until an explicit unload clears it. A link failure is detected before anything is allocated, so a load-failed slot holds only its slot record and no spaces. |
 #### Validation
 The editor checks a script before upload: block-end matching (every `If`/`While` has its `End block`), and type and size correctness.
 ### Instructions
