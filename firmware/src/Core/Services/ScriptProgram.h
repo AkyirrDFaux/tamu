@@ -172,18 +172,25 @@ inline bool ScriptService::Load(uint16_t FileId, uint16_t Slot) {
     Script->FileId = FileId;
     Script->Trid = (uint16_t)(TRID_SCRIPT_BASE + Slot);
 
-    Script->Properties = RdU32(Buf + 0);
-    Script->InCount    = Buf[4];
-    Script->OutCount   = Buf[5];
-    Script->VarCount   = Buf[6];
-    Script->ConstCount = Buf[7];
-    uint32_t ConstLen = RdU32(Buf + 8);
-    uint32_t DefLen   = RdU32(Buf + 12);
-    Script->InstrLen       = RdU32(Buf + 16);
-    uint32_t UiLen    = RdU32(Buf + 20);
+    ScriptHeader Hdr;
+    if (!ParseScriptHeader(Buf, Got, Hdr)) { free(Buf); return false; }
+    Script->Properties = Hdr.Properties;
+    Script->InCount    = Hdr.InCount;
+    Script->OutCount   = Hdr.OutCount;
+    Script->VarCount   = Hdr.VarCount;
+    Script->ConstCount = Hdr.ConstCount;
+    Script->FuncCount  = Hdr.FuncCount;
+    uint32_t ConstLen = Hdr.ConstLen;
+    uint32_t DefLen   = Hdr.DefLen;
+    Script->InstrLen  = Hdr.InstrLen;
+    uint32_t UiLen    = Hdr.UiLen;
+
+    // The function reservations block (Function count x 16 bytes) sits between the input
+    // defaults and the instructions. It is reserved here, not parsed: global linking is Stage 3.
+    uint32_t FuncLen = (uint32_t)Script->FuncCount * SCRIPT_FUNC_RESERVATION_SIZE;
 
     uint32_t Entries = (uint32_t)(Script->InCount + Script->OutCount + Script->VarCount + Script->ConstCount);
-    uint32_t Need = SCRIPT_HEADER_SIZE + Entries * 4 + ConstLen + DefLen + Script->InstrLen + UiLen;
+    uint32_t Need = SCRIPT_HEADER_SIZE + Entries * 4 + ConstLen + DefLen + FuncLen + Script->InstrLen + UiLen;
     if (Need > Got || Need > Size) { free(Buf); return false; }
 
     Script->InMeta    = AllocMetas(Script->InCount);
@@ -207,6 +214,7 @@ inline bool ScriptService::Load(uint16_t FileId, uint16_t Slot) {
 
     const uint8_t *ConstBlob = Buf + Off; Off += ConstLen;
     const uint8_t *DefBlob   = Buf + Off; Off += DefLen;
+    Off += FuncLen; // skip the function reservations block (linking is Stage 3)
     const uint8_t *InstrBlob = Buf + Off; Off += Script->InstrLen;
     const uint8_t *UiBlob    = Buf + Off; Off += UiLen;
 
@@ -261,7 +269,11 @@ inline bool ScriptService::Load(uint16_t FileId, uint16_t Slot) {
 
     Script->Active = true;
     MaskSet(Slot, true);
-    Script->State = (uint8_t)ScriptState::Stopped;
+    // Run-on-load applies whenever the script is loaded, not only during the boot scan
+    // (Docs/Services/Script.md Properties: "Runs the script as soon as it is loaded").
+    Script->State = ScriptPropRunOnLoad((uint16_t)Script->Properties)
+                        ? (uint8_t)ScriptState::Running
+                        : (uint8_t)ScriptState::Stopped;
     Script->Ic = 0;
     free(Buf);
     return true;

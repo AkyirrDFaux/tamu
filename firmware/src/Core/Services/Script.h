@@ -120,6 +120,7 @@ private:
                              const uint8_t *Payload, uint16_t Len);
     uint8_t ExecService(LoadedScript *Script, const ScriptLineInfo &Ln, const uint8_t *Opbase,
                         uint8_t Op, uint32_t NowMs, bool &Yield);
+    uint8_t StoreResultCode(LoadedScript *Script, const uint8_t *DestSym, uint8_t Code);
     bool ContainerElement(LoadedScript *Script, const uint8_t *Sym, int32_t Index,
                           uint8_t *Scratch, const uint8_t **Elem, uint8_t *ElemSize, uint16_t *ElemType);
     uint8_t ExecCompose(LoadedScript *Script, const ScriptLineInfo &Ln, const uint8_t *Opbase, uint8_t Op);

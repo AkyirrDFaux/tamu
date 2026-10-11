@@ -30,8 +30,14 @@ int? scriptFileId(String name) {
   return int.tryParse(n.substring(4), radix: 16);
 }
 
-/// File header size: Properties + counts + the four lengths.
+/// File header: a 16-bit Properties word, then five uint8 counts (Input, Output, Variable,
+/// Constant, Function), one padding byte, and the four uint32 lengths - 24 bytes total
+/// (Docs/Services/Script.md "File Blocks").
 const int scriptHeaderSize = 24;
+
+/// Size of one function-reservation record: the file a linked global function lives in, its
+/// memory-space offset and its instruction-space offset (Docs "File Blocks").
+const int scriptFunctionReservationSize = 16;
 
 /// Version byte of the UI-info blob (bumped when the layout changes).
 const int scriptUiInfoVersion = 2;
@@ -140,11 +146,28 @@ class ScriptState {
       };
 }
 
-/// Properties bits.
+/// Properties bits (Docs/Services/Script.md "Properties").
 class ScriptProperties {
   static const loadOnBoot = 1 << 0;
   static const runOnLoad = 1 << 1;
+
+  /// The file is a function library, not a script.
+  static const functionLibrary = 1 << 2;
+
+  /// The uint8 slot a load-on-boot script loads into (bits 8-15); a boot load is
+  /// deterministic rather than the identity slot or the first free one.
+  static const slotShift = 8;
+  static const slotMask = 0xFF << slotShift;
 }
+
+/// The slot index stored in a Properties word (bits 8-15).
+int scriptPropertiesSlot(int properties) =>
+    (properties & ScriptProperties.slotMask) >> ScriptProperties.slotShift;
+
+/// [properties] with its slot field (bits 8-15) set to [slot].
+int scriptPropertiesWithSlot(int properties, int slot) =>
+    (properties & ~ScriptProperties.slotMask) |
+    ((slot & 0xFF) << ScriptProperties.slotShift);
 
 int _align4(int size) => (size + 3) & ~3;
 
@@ -236,6 +259,10 @@ class ScriptFileBuilder {
   final List<String> constantNames;
   final List<ScriptInputSpec> inputSpecs;
 
+  /// Function reservations (one 16-byte record per linked global function). The count is the
+  /// header's Function count.
+  final List<List<int>> functionReservations;
+
   const ScriptFileBuilder({
     this.properties = 0,
     this.inputs = const [],
@@ -251,7 +278,22 @@ class ScriptFileBuilder {
     this.variableNames = const [],
     this.constantNames = const [],
     this.inputSpecs = const [],
+    this.functionReservations = const [],
   });
+
+  /// Packs the function reservations, one record per entry padded/clamped to 16 bytes.
+  Uint8List _functionBlob() {
+    final out = Uint8List(functionReservations.length * scriptFunctionReservationSize);
+    var offset = 0;
+    for (final record in functionReservations) {
+      final n = record.length < scriptFunctionReservationSize
+          ? record.length
+          : scriptFunctionReservationSize;
+      out.setRange(offset, offset + n, record);
+      offset += scriptFunctionReservationSize;
+    }
+    return out;
+  }
 
   Uint8List _uiInfo() {
     final out = <int>[scriptUiInfoVersion];
@@ -293,18 +335,28 @@ class ScriptFileBuilder {
   Uint8List build() {
     final constBlob = packScriptValues(constants, constantValues);
     final defBlob = packScriptValues(inputs, inputDefaults);
+    final funcBlob = _functionBlob();
     final ui = _uiInfo();
 
     final metaLen = (inputs.length + outputs.length + variables.length + constants.length) * 4;
-    final total =
-        scriptHeaderSize + metaLen + constBlob.length + defBlob.length + instructions.length + ui.length;
+    final total = scriptHeaderSize +
+        metaLen +
+        constBlob.length +
+        defBlob.length +
+        funcBlob.length +
+        instructions.length +
+        ui.length;
     final out = Uint8List(total);
 
-    out.setAll(0, uint32ToBytes(properties));
-    out[4] = inputs.length;
-    out[5] = outputs.length;
-    out[6] = variables.length;
-    out[7] = constants.length;
+    // 16-bit Properties, then Input/Output/Variable/Constant/Function counts, one padding byte.
+    out[0] = properties & 0xFF;
+    out[1] = (properties >> 8) & 0xFF;
+    out[2] = inputs.length;
+    out[3] = outputs.length;
+    out[4] = variables.length;
+    out[5] = constants.length;
+    out[6] = functionReservations.length;
+    out[7] = 0; // reserved: pads the counts to 4-byte alignment
     out.setAll(8, uint32ToBytes(constBlob.length));
     out.setAll(12, uint32ToBytes(defBlob.length));
     out.setAll(16, uint32ToBytes(instructions.length));
@@ -319,6 +371,8 @@ class ScriptFileBuilder {
     offset += constBlob.length;
     out.setRange(offset, offset + defBlob.length, defBlob);
     offset += defBlob.length;
+    out.setRange(offset, offset + funcBlob.length, funcBlob);
+    offset += funcBlob.length;
     out.setRange(offset, offset + instructions.length, instructions);
     offset += instructions.length;
     out.setRange(offset, offset + ui.length, ui);
@@ -335,6 +389,9 @@ class ScriptFileData {
   final List<ValueInfo> constants;
   final Uint8List constantValues;
   final Uint8List inputDefaults;
+
+  /// Function reservations: one 16-byte record per linked global function.
+  final Uint8List functionReservations;
   final Uint8List instructions;
   final String functionName;
   final List<String> inputNames;
@@ -351,6 +408,7 @@ class ScriptFileData {
     required this.constants,
     required this.constantValues,
     required this.inputDefaults,
+    required this.functionReservations,
     required this.instructions,
     required this.functionName,
     required this.inputNames,
@@ -359,6 +417,9 @@ class ScriptFileData {
     required this.constantNames,
     required this.inputSpecs,
   });
+
+  /// Number of declared functions (the header's Function count).
+  int get functionCount => functionReservations.length ~/ scriptFunctionReservationSize;
 
   /// Value bytes of one constant.
   Uint8List constantValue(int index) =>
@@ -376,18 +437,22 @@ class ScriptFileData {
     if (bytes.length < scriptHeaderSize) {
       throw const FormatException('script file shorter than the header');
     }
-    final properties = uint32FromBytes(bytes, 0);
-    final inCount = bytes[4];
-    final outCount = bytes[5];
-    final varCount = bytes[6];
-    final constCount = bytes[7];
+    // 16-bit Properties, then Input/Output/Variable/Constant/Function counts, one padding byte.
+    final properties = bytes[0] | (bytes[1] << 8);
+    final inCount = bytes[2];
+    final outCount = bytes[3];
+    final varCount = bytes[4];
+    final constCount = bytes[5];
+    final funcCount = bytes[6];
+    // bytes[7] is the reserved padding byte.
     final constLen = uint32FromBytes(bytes, 8);
     final defLen = uint32FromBytes(bytes, 12);
     final instrLen = uint32FromBytes(bytes, 16);
     final uiLen = uint32FromBytes(bytes, 20);
 
     final metaLen = (inCount + outCount + varCount + constCount) * 4;
-    final need = scriptHeaderSize + metaLen + constLen + defLen + instrLen + uiLen;
+    final funcLen = funcCount * scriptFunctionReservationSize;
+    final need = scriptHeaderSize + metaLen + constLen + defLen + funcLen + instrLen + uiLen;
     if (need > bytes.length) {
       throw const FormatException('script file lengths exceed the file size');
     }
@@ -411,6 +476,8 @@ class ScriptFileData {
     offset += constLen;
     final inputDefaults = Uint8List.fromList(bytes.sublist(offset, offset + defLen));
     offset += defLen;
+    final functionReservations = Uint8List.fromList(bytes.sublist(offset, offset + funcLen));
+    offset += funcLen;
     final instructions = Uint8List.fromList(bytes.sublist(offset, offset + instrLen));
     offset += instrLen;
     final ui = bytes.sublist(offset, offset + uiLen);
@@ -424,6 +491,7 @@ class ScriptFileData {
       constants: constants,
       constantValues: constantValues,
       inputDefaults: inputDefaults,
+      functionReservations: functionReservations,
       instructions: instructions,
       functionName: info.functionName,
       inputNames: info.inputNames,

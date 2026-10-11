@@ -8,6 +8,7 @@ import 'connection.dart';
 import 'diagnostics.dart';
 import 'protocol.dart';
 import 'register_client.dart';
+import 'script_file.dart';
 import 'types.dart';
 
 /// A loaded-script register entry (ValueInfo + value).
@@ -16,6 +17,30 @@ class ScriptEntry {
   final List<int> value;
 
   const ScriptEntry({required this.meta, required this.value});
+}
+
+/// CID 4 action enum (Docs/Services/Script.md management command 4: "Script ID, action ...
+/// The action enum drives start, stop, pause and resume; clears the error").
+///
+/// The members correspond to the Service state-op instructions (Start 9 .. Error 13) and to
+/// the app's Start / Pause / Continue / Stop buttons, so the instruction set and the action
+/// enum stay aligned. The spec does not pin the CID 4 numbering independently, so the values
+/// reuse the documented instruction opcodes rather than inventing a second catalogue.
+class ScriptAction {
+  static const start = 9;
+  static const stop = 10;
+  static const pause = 11;
+  static const resume = 12;
+  static const error = 13;
+
+  static String label(int action) => switch (action) {
+        start => 'Start',
+        stop => 'Stop',
+        pause => 'Pause',
+        resume => 'Resume',
+        error => 'Error',
+        _ => 'Action $action',
+      };
 }
 
 class ScriptClient {
@@ -94,10 +119,25 @@ class ScriptClient {
     return (state: reply[0], error: reply.length > 1 ? reply[1] : 0);
   }
 
-  /// CID 4: sets a loaded script's state.
+  /// CID 4: sets a loaded script's state. The wire carries the action enum (Docs
+  /// CID 4: "Script ID, action ... drives start, stop, pause and resume; clears the error"),
+  /// so this convenience maps a target [ScriptState] to its matching action.
   Future<bool> setState(int loadedId, int state) async {
+    final action = switch (state) {
+      ScriptState.stopped => ScriptAction.stop,
+      ScriptState.running => ScriptAction.start,
+      ScriptState.paused => ScriptAction.pause,
+      _ => null,
+    };
+    if (action == null) return false;
+    return setAction(loadedId, action);
+  }
+
+  /// CID 4: applies a [ScriptAction] to a loaded script (Docs CID 4: "Script ID, action ...
+  /// drives start, stop, pause and resume; clears the error").
+  Future<bool> setAction(int loadedId, int action) async {
     return _requestOk(ServiceType.script, 4,
-        payload: [loadedId & 0xFF, state & 0xFF]);
+        payload: [loadedId & 0xFF, action & 0xFF]);
   }
 
   /// CID 5: instruction counter + variable RAM (editor debug).

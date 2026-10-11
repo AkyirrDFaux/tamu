@@ -175,11 +175,11 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
     _refresh();
   }
 
-  Future<void> _control(_LoadedScript s, int state, {bool reset = false}) async {
+  Future<void> _control(_LoadedScript s, int action, {bool reset = false}) async {
     if (reset) await _client.moveToInstruction(s.slot, 0);
-    final ok = await _client.setState(s.slot, state);
+    final ok = await _client.setAction(s.slot, action);
     if (!mounted) return;
-    showSnack(context, ok ? '${s.name}: ${ScriptState.label(state)}' : 'Command failed');
+    showSnack(context, ok ? '${s.name}: ${ScriptAction.label(action)}' : 'Command failed');
     await _loadLoaded();
   }
 
@@ -332,11 +332,11 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
         children: [
           ScriptControlBar(
             state: s.state,
-            onStart: () => _control(s, ScriptState.running),
+            onStart: () => _control(s, ScriptAction.start),
             onPauseToggle: () => _control(s,
-                s.state == ScriptState.paused ? ScriptState.running : ScriptState.paused),
-            onStop: () => _control(s, ScriptState.stopped, reset: true),
-            onRestart: () => _control(s, ScriptState.running, reset: true),
+                s.state == ScriptState.paused ? ScriptAction.resume : ScriptAction.pause),
+            onStop: () => _control(s, ScriptAction.stop, reset: true),
+            onRestart: () => _control(s, ScriptAction.start, reset: true),
             extra: [
               OutlinedButton.icon(
                 onPressed: () => _unload(s),

@@ -28,12 +28,12 @@ extension on _ScriptEditorPageState {
           const SizedBox(height: 10),
           ScriptControlBar(
             state: _state,
-            onStart: () => _control(ScriptState.running),
+            onStart: () => _control(ScriptAction.start),
             onPauseToggle: () => _control(_state == ScriptState.paused
-                ? ScriptState.running
-                : ScriptState.paused),
-            onStop: () => _control(ScriptState.stopped, reset: true),
-            onRestart: () => _control(ScriptState.running, reset: true),
+                ? ScriptAction.resume
+                : ScriptAction.pause),
+            onStop: () => _control(ScriptAction.stop, reset: true),
+            onRestart: () => _control(ScriptAction.start, reset: true),
             extra: [
               OutlinedButton.icon(
                   onPressed: _moveToLine,
@@ -139,7 +139,43 @@ extension on _ScriptEditorPageState {
               _touch();
             },
           ),
+          SwitchListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Function library'),
+            subtitle: const Text('The file is a function library, not a script',
+                style: TextStyle(fontSize: 11, color: Colors.white54)),
+            value: draft.properties & ScriptProperties.functionLibrary != 0,
+            onChanged: (v) {
+              draft.properties = v
+                  ? draft.properties | ScriptProperties.functionLibrary
+                  : draft.properties & ~ScriptProperties.functionLibrary;
+              _touch();
+            },
+          ),
+          // The slot a load-on-boot script loads into (Properties bits 8-15).
+          if (draft.properties & ScriptProperties.loadOnBoot != 0) _bootSlotField(draft),
         ]),
+      ),
+    );
+  }
+
+  Widget _bootSlotField(ScriptDraft draft) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: TextFormField(
+        initialValue: '${scriptPropertiesSlot(draft.properties)}',
+        keyboardType: TextInputType.number,
+        decoration: const InputDecoration(
+          labelText: 'Boot slot (0-255)',
+          helperText: 'The slot a load-on-boot script loads into',
+        ),
+        onChanged: (v) {
+          final n = int.tryParse(v.trim());
+          if (n == null || n < 0 || n > 255) return;
+          draft.properties = scriptPropertiesWithSlot(draft.properties, n);
+          _touch();
+        },
       ),
     );
   }

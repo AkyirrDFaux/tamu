@@ -58,8 +58,10 @@ class _NewScriptDialog extends StatefulWidget {
 class _NewScriptDialogState extends State<_NewScriptDialog> {
   final _nameController = TextEditingController();
   final _idController = TextEditingController();
+  final _slotController = TextEditingController(text: '0');
   bool _loadOnBoot = false;
   bool _runOnLoad = false;
+  bool _functionLibrary = false;
 
   final _inputs = <_EntryDraft>[];
   final _outputs = <_EntryDraft>[];
@@ -79,6 +81,7 @@ class _NewScriptDialogState extends State<_NewScriptDialog> {
   void dispose() {
     _nameController.dispose();
     _idController.dispose();
+    _slotController.dispose();
     super.dispose();
   }
 
@@ -111,6 +114,11 @@ class _NewScriptDialogState extends State<_NewScriptDialog> {
     var properties = 0;
     if (_loadOnBoot) properties |= ScriptProperties.loadOnBoot;
     if (_runOnLoad) properties |= ScriptProperties.runOnLoad;
+    if (_functionLibrary) properties |= ScriptProperties.functionLibrary;
+    if (_loadOnBoot) {
+      final slot = int.tryParse(_slotController.text.trim()) ?? 0;
+      properties = scriptPropertiesWithSlot(properties, slot.clamp(0, 255));
+    }
     Navigator.pop(
       context,
       NewScriptResult(
@@ -169,6 +177,24 @@ class _NewScriptDialogState extends State<_NewScriptDialog> {
               value: _runOnLoad,
               onChanged: (v) => setState(() => _runOnLoad = v),
             ),
+            SwitchListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Function library'),
+              subtitle: const Text('The file is a function library, not a script',
+                  style: TextStyle(fontSize: 11, color: Colors.white54)),
+              value: _functionLibrary,
+              onChanged: (v) => setState(() => _functionLibrary = v),
+            ),
+            if (_loadOnBoot)
+              TextField(
+                controller: _slotController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Boot slot (0-255)',
+                  helperText: 'The slot a load-on-boot script loads into',
+                ),
+              ),
             const Divider(),
             _section('Inputs', _inputs),
             _section('Outputs', _outputs),

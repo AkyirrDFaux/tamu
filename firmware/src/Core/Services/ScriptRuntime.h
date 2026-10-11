@@ -126,28 +126,25 @@ inline uint16_t ScriptService::FreeSlot() {
     return MAX_SCRIPTS;
 }
 
-// Loads every stored `SCR_XXX` flagged Load-on-boot into a slot
-// (Docs/Services/Script.md). The storage file table is scanned rather than a fixed 0..63 id
-// range, so a script file with a higher id is still pre-loaded. The identity slot (file N ->
-// slot N) is preferred so the loaded table is deterministic across a reset; a file id beyond
-// the slot space (or one whose identity slot is taken) uses the first free slot.
+// Loads every stored `SCR_XXX` that declares load-on-boot (Docs/Services/Script.md). A boot
+// load is the flag bit plus the uint8 slot in Properties bits 8-15: deterministic, not the
+// identity slot or the first free one, so the file-to-slot mapping is known without asking the
+// device. The storage file table is scanned rather than a fixed id range, so a script file with
+// a higher id is still pre-loaded. Run-on-load is honoured by Load() itself.
 inline void ScriptService::BootLoad() {
     // `this` capture: the registry and the helpers are members now.
     Storage.ForEachFile([this](const char Name[8]) {
         uint16_t FileId = FileIdFromName(Name);
         if (FileId == 0xFFFF) return;
-        uint16_t Slot = (FileId < MAX_SCRIPTS && !Registry[FileId].Active)
-                            ? FileId
-                            : FreeSlot();
-        if (Slot >= MAX_SCRIPTS) return; // no free slot
-        if (!Load(FileId, Slot)) return;
-        if (!(Registry[Slot].Properties & SCRIPT_PROP_LOAD_ON_BOOT)) {
-            Registry[Slot].Release(); // stored, but not pre-loaded
-            MaskSet(Slot, false);
-            return;
-        }
-        if (Registry[Slot].Properties & SCRIPT_PROP_RUN_ON_LOAD)
-            Registry[Slot].State = (uint8_t)ScriptState::Running;
+        // Peek the header's 16-bit Properties word so the declared slot is known before the
+        // load allocates anything (a non-boot file is skipped without being loaded).
+        uint8_t Hdr[2];
+        if (Storage.ReadFromFile(Name, 0, 2, (char *)Hdr) < 2) return;
+        uint16_t Props = (uint16_t)(Hdr[0] | (Hdr[1] << 8));
+        if (!ScriptPropLoadOnBoot(Props)) return;
+        uint16_t Slot = ScriptPropSlot(Props);
+        if (Slot >= MAX_SCRIPTS) return;
+        Load(FileId, Slot);
     });
 }
 
@@ -207,11 +204,22 @@ __attribute__((noinline)) inline bool ScriptService::Handle(const PacketFrame &F
             break;
         }
 
-        case 4: { // Set state (loaded ID, new state; clears the error)
+        case 4: { // Set state (loaded ID, action): the CID 4 action enum, mirroring the Service
+                  // state-op instructions - Start 9, Stop 10, Pause 11, Resume 12, Error 13
+                  // (Docs/Services/Script.md CID 4). Setting the state clears the error.
             if (Bytes < 2) { RespondStatus(Frame, false); return true; }
             LoadedScript *Script = Active(Frame.Payload[0]);
-            if (!Script || Frame.Payload[1] > (uint8_t)ScriptState::Error) { RespondStatus(Frame, false); return true; }
-            SetState(Script, Frame.Payload[1]);
+            if (!Script) { RespondStatus(Frame, false); return true; }
+            uint8_t NewState;
+            switch (Frame.Payload[1]) {
+                case SCRIPT_OP_SERVICE_START:  NewState = (uint8_t)ScriptState::Running; break;
+                case SCRIPT_OP_SERVICE_STOP:   NewState = (uint8_t)ScriptState::Stopped; break;
+                case SCRIPT_OP_SERVICE_PAUSE:  NewState = (uint8_t)ScriptState::Paused;  break;
+                case SCRIPT_OP_SERVICE_RESUME: NewState = (uint8_t)ScriptState::Running; break;
+                case SCRIPT_OP_SERVICE_ERROR:  NewState = (uint8_t)ScriptState::Error;   break;
+                default: RespondStatus(Frame, false); return true;
+            }
+            SetState(Script, NewState);
             Script->ErrorCode = SCRIPT_ERR_NONE; // docs: setting the state clears the error
             RespondStatus(Frame, true);
             break;

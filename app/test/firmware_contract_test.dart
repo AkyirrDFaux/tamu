@@ -206,12 +206,19 @@ void main() {
         0: 'LOG',
         1: 'REG_READ',
         2: 'REG_WRITE',
-        3: 'STATE',
+        // 3 is reserved: the retired "Script state" instruction, never reused (Script.md).
         4: 'NOP',
         5: 'REG_READ_FOREIGN',
         6: 'REG_WRITE_FOREIGN',
         7: 'SCRIPT_LOAD',
         8: 'SCRIPT_UNLOAD',
+        // The state verbs as separate Service instructions (Script.md Stage 5).
+        9: 'START',
+        10: 'STOP',
+        11: 'PAUSE',
+        12: 'RESUME',
+        13: 'ERROR',
+        14: 'REPORT_INFO',
       };
       const composeOps = {0: 'COMPOSE', 1: 'EXTRACT'};
 
@@ -240,6 +247,7 @@ void main() {
     test('the file-format sizes match', () {
       expect(fw['MAX_SCRIPTS'], maxScripts);
       expect(fw['SCRIPT_HEADER_SIZE'], scriptHeaderSize);
+      expect(fw['SCRIPT_FUNC_RESERVATION_SIZE'], scriptFunctionReservationSize);
     });
   }, skip: skipReason);
 

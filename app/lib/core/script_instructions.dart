@@ -238,16 +238,26 @@ const List<ScriptInstructionDef> scriptInstructions = [
   ScriptInstructionDef(op: 0, category: catService, label: 'Log', minOperands: 1, maxOperands: 4, operandRoles: ['code']),
   ScriptInstructionDef(op: 1, category: catService, label: 'Register read', destination: true, minOperands: 1, maxOperands: 1, constantIndex: 0, operandRoles: ['register'], destinationRole: 'value'),
   ScriptInstructionDef(op: 2, category: catService, label: 'Register write', minOperands: 2, maxOperands: 2, constantIndex: 0, operandRoles: ['register', 'value']),
-  ScriptInstructionDef(op: 3, category: catService, label: 'Script state', minOperands: 1, maxOperands: 1, operandRoles: ['state']),
+  // Opcode 3 is reserved: the retired "Script state" instruction, never reused (Script.md).
   ScriptInstructionDef(op: 4, category: catService, label: 'Nop', minOperands: 0, maxOperands: 0),
   ScriptInstructionDef(op: 5, category: catService, label: 'Register read (foreign)', destination: true, minOperands: 2, maxOperands: 2, constantIndex: 1, addressIndex: 0, operandRoles: ['device', 'register'], destinationRole: 'value'),
   ScriptInstructionDef(op: 6, category: catService, label: 'Register write (foreign)', minOperands: 3, maxOperands: 3, constantIndex: 1, addressIndex: 0, operandRoles: ['device', 'register', 'value']),
   // Script (un)loading from within a script (Docs/Services/Script.md functions list). Same
   // operations as management CIDs 1/2: the caller picks the loaded slot, so load takes
-  // (file id, loaded id) and answers nothing; unloading a script that is not loaded does
+  // (file id, loaded id). Both are external-facing, so their result code (0 = success) goes
+  // to a destination, as the spec requires; unloading a script that is not loaded does
   // nothing. A script cannot (un)load itself.
-  ScriptInstructionDef(op: 7, category: catService, label: 'Load script', minOperands: 2, maxOperands: 2, operandRoles: ['file', 'script']),
-  ScriptInstructionDef(op: 8, category: catService, label: 'Unload script', minOperands: 1, maxOperands: 1, operandRoles: ['script']),
+  ScriptInstructionDef(op: 7, category: catService, label: 'Load script', destination: true, minOperands: 2, maxOperands: 2, operandRoles: ['file', 'script'], destinationRole: 'result'),
+  ScriptInstructionDef(op: 8, category: catService, label: 'Unload script', destination: true, minOperands: 1, maxOperands: 1, operandRoles: ['script'], destinationRole: 'result'),
+  // State verbs as separate instructions (Script.md "The state verbs are separate
+  // instructions, not values of one state instruction"). These act on the script itself;
+  // only Error carries an operand (its script-defined code).
+  ScriptInstructionDef(op: 9, category: catService, label: 'Start', minOperands: 0, maxOperands: 0),
+  ScriptInstructionDef(op: 10, category: catService, label: 'Stop', minOperands: 0, maxOperands: 0),
+  ScriptInstructionDef(op: 11, category: catService, label: 'Pause', minOperands: 0, maxOperands: 0),
+  ScriptInstructionDef(op: 12, category: catService, label: 'Resume', minOperands: 0, maxOperands: 0),
+  ScriptInstructionDef(op: 13, category: catService, label: 'Error', minOperands: 1, maxOperands: 1, operandRoles: ['code']),
+  ScriptInstructionDef(op: 14, category: catService, label: 'Report info', minOperands: 0, maxOperands: 0),
   // Compose
   ScriptInstructionDef(op: 0, category: catCompose, label: 'Compose', destination: true, minOperands: 2, maxOperands: 4, operandRoles: ['index', 'value'], destinationRole: 'container'),
   ScriptInstructionDef(op: 1, category: catCompose, label: 'Extract', destination: true, minOperands: 2, maxOperands: 2, operandRoles: ['container', 'index'], destinationRole: 'element'),
@@ -365,10 +375,37 @@ class ScriptValidationContext {
 bool scriptTypeIsNumeric(int type) => const {0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0C, 0x0E, 0x0F}
     .contains(type & 0x03FF);
 
+/// Block-end matching (Docs/Services/Script.md "Validation"): every Flow `If`/`While` must be
+/// closed by a Flow `End block`, and an `End block` with no opener is an error too. Returns the
+/// problems found (empty when the blocks balance).
+List<String> validateScriptBlocks(List<ScriptLine> lines) {
+  final errors = <String>[];
+  final open = <int>[]; // line indices of the open If/While blocks
+  for (var i = 0; i < lines.length; i++) {
+    final def = lines[i].def;
+    if (def == null || def.category != catFlow) continue;
+    if (def.op == 0 || def.op == 1) {
+      open.add(i); // If / While
+    } else if (def.op == 2) {
+      if (open.isEmpty) {
+        errors.add('Line ${i + 1} (End block): no matching If/While');
+      } else {
+        open.removeLast();
+      }
+    }
+  }
+  for (final start in open) {
+    final label = lines[start].def?.label ?? 'If';
+    errors.add('Line ${start + 1} ($label): missing End block');
+  }
+  return errors;
+}
+
 /// Checks a program for structural/type problems (Docs: "check type compatibility and
 /// program validity before sending"). Returns an empty list when valid.
 List<String> validateScriptLines(List<ScriptLine> lines, ScriptValidationContext context) {
   final errors = <String>[];
+  errors.addAll(validateScriptBlocks(lines));
   for (var i = 0; i < lines.length; i++) {
     final line = lines[i];
     final def = line.def;

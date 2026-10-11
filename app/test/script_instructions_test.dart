@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/backup_script.dart';
+import 'package:tamuapp/core/script_client.dart';
 import 'package:tamuapp/core/script_draft.dart';
 import 'package:tamuapp/core/script_file.dart';
 import 'package:tamuapp/core/script_instructions.dart';
@@ -241,27 +242,90 @@ void main() {
       ],
     );
     final ctx = ScriptValidationContext(variableTypes: [DataType.number.value]);
-    expect(validateScriptLines([line], ctx), isEmpty);
+    // A lone If is refused: block-end matching requires a matching End block.
+    expect(validateScriptLines([line], ctx).any((e) => e.contains('missing End block')), isTrue);
+    // Paired with its End block the boolean expression validates.
+    final end = ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 2));
+    expect(validateScriptLines([line, end], ctx), isEmpty);
+  });
+
+  test('block-end matching requires every If/While to be closed', () {
+    ScriptLine block(int op) => ScriptLine(
+        instruction: ScriptSymbol.instruction(catFlow, op),
+        operands: op <= 1
+            ? [ScriptSymbol.predefine(preBool, 1)]
+            : const []);
+    final end = ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 2));
+    const ctx = ScriptValidationContext();
+
+    // A balanced If + End block is accepted.
+    expect(validateScriptLines([block(0), end], ctx), isEmpty);
+    // A nested While/If pair balances.
+    expect(validateScriptLines([block(1), block(0), end, end], ctx), isEmpty);
+    // An unclosed If is refused with a clear message.
+    final missing = validateScriptBlocks([block(0)]);
+    expect(missing.single, contains('missing End block'));
+    // An End block with no opener is refused too.
+    expect(validateScriptBlocks([end]).single, contains('no matching If/While'));
+  });
+
+  test('the state verbs are separate Service instructions and op 3 is reserved', () {
+    ScriptInstructionDef? service(int op) {
+      for (final d in scriptInstructions) {
+        if (d.category == catService && d.op == op) return d;
+      }
+      return null;
+    }
+
+    // The retired "Script state" instruction (op 3) is gone.
+    expect(service(3), isNull);
+    // Start 9, Stop 10, Pause 11, Resume 12, Error 13, Report info 14.
+    expect(service(9)!.label, 'Start');
+    expect(service(10)!.label, 'Stop');
+    expect(service(11)!.label, 'Pause');
+    expect(service(12)!.label, 'Resume');
+    expect(service(13)!.label, 'Error');
+    expect(service(14)!.label, 'Report info');
+    // The state verbs are operand-free; Error carries its script-defined code.
+    for (final op in [9, 10, 11, 12, 14]) {
+      expect(service(op)!.destination, isFalse, reason: 'op $op');
+      expect(service(op)!.minOperands, 0, reason: 'op $op');
+      expect(service(op)!.maxOperands, 0, reason: 'op $op');
+    }
+    expect(service(13)!.operandRole(0), 'code');
+    expect(service(13)!.minOperands, 1);
+
+    // The CID 4 action enum mirrors those actions.
+    expect(
+        {
+          ScriptAction.start,
+          ScriptAction.stop,
+          ScriptAction.pause,
+          ScriptAction.resume,
+          ScriptAction.error,
+        },
+        {9, 10, 11, 12, 13});
   });
 
   test('Load script / Unload script validate like the management commands', () {
     ScriptInstructionDef defFor(int op) =>
         scriptInstructions.firstWhere((d) => d.category == catService && d.op == op);
 
-    // Load takes (file id, loaded id) and answers nothing, like CID 1; Unload takes the loaded
-    // id, like CID 2. Neither has a destination.
+    // Load takes (file id, loaded id) and Unload the loaded id, like CIDs 1/2. Both are
+    // external-facing, so their result code (0 = success) goes to a destination (Script.md).
     expect(defFor(7).minOperands, 2);
     expect(defFor(7).maxOperands, 2);
-    expect(defFor(7).destination, isFalse);
+    expect(defFor(7).destination, isTrue);
     expect(defFor(8).minOperands, 1);
     expect(defFor(8).maxOperands, 1);
-    expect(defFor(8).destination, isFalse);
+    expect(defFor(8).destination, isTrue);
 
     final ctx = ScriptValidationContext(variableTypes: [DataType.integer.value]);
-    // Load(5, 5) - file 5 into slot 5.
+    // Load(5, 5) -> v0: file 5 into slot 5.
     expect(
         validateScriptLines([
           ScriptLine(
+            destinations: [ScriptSymbol.variable(0)],
             instruction: ScriptSymbol.instruction(catService, 7),
             operands: [
               ScriptSymbol.predefine(preIndex, 5),
@@ -274,15 +338,29 @@ void main() {
     expect(
         validateScriptLines([
           ScriptLine(
+            destinations: [ScriptSymbol.variable(0)],
             instruction: ScriptSymbol.instruction(catService, 7),
             operands: [ScriptSymbol.predefine(preIndex, 5)],
           )
         ], ctx),
         isNotEmpty);
-    // Unload(3)
+    // Load without a destination -> invalid (the result code needs somewhere to go).
     expect(
         validateScriptLines([
           ScriptLine(
+            instruction: ScriptSymbol.instruction(catService, 7),
+            operands: [
+              ScriptSymbol.predefine(preIndex, 5),
+              ScriptSymbol.predefine(preIndex, 5),
+            ],
+          )
+        ], ctx),
+        isNotEmpty);
+    // Unload(3) -> v0.
+    expect(
+        validateScriptLines([
+          ScriptLine(
+            destinations: [ScriptSymbol.variable(0)],
             instruction: ScriptSymbol.instruction(catService, 8),
             operands: [ScriptSymbol.predefine(preIndex, 3)],
           )
@@ -290,8 +368,12 @@ void main() {
         isEmpty);
     // Unload with no operand -> invalid.
     expect(
-        validateScriptLines(
-            [ScriptLine(instruction: ScriptSymbol.instruction(catService, 8))], ctx),
+        validateScriptLines([
+          ScriptLine(
+            destinations: [ScriptSymbol.variable(0)],
+            instruction: ScriptSymbol.instruction(catService, 8),
+          )
+        ], ctx),
         isNotEmpty);
   });
 

@@ -55,6 +55,53 @@ void main() {
     );
   });
 
+  test('header is a 16-bit Properties word + five counts + the four lengths', () {
+    final image = ScriptFileBuilder(
+      properties: scriptPropertiesWithSlot(
+          ScriptProperties.loadOnBoot | ScriptProperties.functionLibrary, 7),
+      inputs: [ValueInfo(type: DataType.number.value, size: 4)],
+      outputs: [ValueInfo(type: DataType.bool_.value, size: 1)],
+      variables: [ValueInfo(type: DataType.number.value, size: 4)],
+      constants: [ValueInfo(type: DataType.number.value, size: 4)],
+      inputDefaults: [numberToBytes(1.0)],
+      constantValues: [numberToBytes(2.0)],
+      functionReservations: [
+        [for (var i = 0; i < scriptFunctionReservationSize; i++) i],
+      ],
+      instructions: const [0x01, 0, 0, 0],
+    ).build();
+
+    // Properties is a 16-bit little-endian word at bytes 0-1.
+    expect(image[0] | (image[1] << 8),
+        ScriptProperties.loadOnBoot | ScriptProperties.functionLibrary | (7 << 8));
+    // Five uint8 counts (Input, Output, Variable, Constant, Function), then a padding byte.
+    expect(image[2], 1);
+    expect(image[3], 1);
+    expect(image[4], 1);
+    expect(image[5], 1);
+    expect(image[6], 1); // function count
+    expect(image[7], 0); // reserved padding
+
+    final parsed = ScriptFileData.parse(image);
+    expect(parsed.properties & ScriptProperties.functionLibrary,
+        ScriptProperties.functionLibrary);
+    expect(scriptPropertiesSlot(parsed.properties), 7);
+    expect(parsed.functionCount, 1);
+    expect(parsed.functionReservations, hasLength(scriptFunctionReservationSize));
+    expect(parsed.functionReservations.first, 0);
+    expect(parsed.functionReservations.last, scriptFunctionReservationSize - 1);
+  });
+
+  test('the boot slot round-trips independently of the flag bits', () {
+    var p = ScriptProperties.loadOnBoot;
+    p = scriptPropertiesWithSlot(p, 200);
+    expect(scriptPropertiesSlot(p), 200);
+    expect(p & ScriptProperties.loadOnBoot, ScriptProperties.loadOnBoot);
+    p = scriptPropertiesWithSlot(p, 3); // re-slotting leaves the flags alone
+    expect(scriptPropertiesSlot(p), 3);
+    expect(p & ScriptProperties.loadOnBoot, ScriptProperties.loadOnBoot);
+  });
+
   test('state labels', () {
     expect(ScriptState.label(ScriptState.stopped), 'Stopped');
     expect(ScriptState.label(ScriptState.error), 'Error');

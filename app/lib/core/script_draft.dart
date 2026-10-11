@@ -63,6 +63,10 @@ class ScriptDraft {
   final List<ScriptDraftValue> outputs;
   final List<ScriptDraftValue> variables;
   final List<ScriptDraftValue> constants;
+
+  /// Function reservations carried through unchanged (one 16-byte record per linked global
+  /// function; the count is the file header's Function count).
+  List<List<int>> functionReservations;
   List<ScriptLine> lines;
 
   ScriptDraft({
@@ -72,11 +76,13 @@ class ScriptDraft {
     List<ScriptDraftValue>? outputs,
     List<ScriptDraftValue>? variables,
     List<ScriptDraftValue>? constants,
+    List<List<int>>? functionReservations,
     List<ScriptLine>? lines,
   })  : inputs = inputs ?? [],
         outputs = outputs ?? [],
         variables = variables ?? [],
         constants = constants ?? [],
+        functionReservations = functionReservations ?? [],
         lines = lines ?? [];
 
   factory ScriptDraft.fromFile(ScriptFileData f) {
@@ -122,6 +128,11 @@ class ScriptDraft {
       outputs: outputs,
       variables: variables,
       constants: constants,
+      functionReservations: [
+        for (var o = 0; o + scriptFunctionReservationSize <= f.functionReservations.length;
+            o += scriptFunctionReservationSize)
+          f.functionReservations.sublist(o, o + scriptFunctionReservationSize),
+      ],
       lines: decodeScriptLines(f.instructions),
     );
   }
@@ -141,6 +152,7 @@ class ScriptDraft {
         variableNames: [for (final v in variables) v.name],
         constantNames: [for (final v in constants) v.name],
         inputSpecs: [for (final v in inputs) v.spec],
+        functionReservations: functionReservations,
       ).build();
 
   ScriptValidationContext get validationContext => ScriptValidationContext(

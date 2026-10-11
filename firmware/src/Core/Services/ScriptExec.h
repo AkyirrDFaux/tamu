@@ -348,6 +348,15 @@ inline void ScriptService::SendRegisterRequest(LoadedScript *Script, uint16_t Ad
     SendAndVerifyPacket(Req);
 }
 
+// Writes an external-facing instruction's result code into its destination (0 = success). The
+// code is a value like any other: a numeric destination converts it, another takes the raw bytes.
+inline uint8_t ScriptService::StoreResultCode(LoadedScript *Script, const uint8_t *DestSym, uint8_t Code) {
+    uint32_t CodeVal = Code;
+    uint8_t Buf[4];
+    memcpy(Buf, &CodeVal, 4);
+    return Assign(Script, DestSym, Buf, 4, (uint16_t)DataType::Uint32);
+}
+
 inline uint8_t ScriptService::ExecService(LoadedScript *Script, const ScriptLineInfo &Ln, const uint8_t *Opbase,
                                  uint8_t Op, uint32_t NowMs, bool &Yield) {
     switch (Op) {
@@ -367,21 +376,36 @@ inline uint8_t ScriptService::ExecService(LoadedScript *Script, const ScriptLine
             Script->Ic++;
             return SCRIPT_ERR_NONE;
         }
-        case SCRIPT_OP_SERVICE_STATE: {
-            if (Ln.OpCount < 1) return SCRIPT_ERR_OPERAND;
-            if (Opbase[0] == SCRIPT_SYM_PREDEFINE && Opbase[1] == SCRIPT_PRE_STATE) {
-                uint8_t St = (uint8_t)(SymVal(Opbase) & 0xFF);
-                if (St > (uint8_t)ScriptState::Error) return SCRIPT_ERR_OPERAND;
-                SetState(Script, St);
-                if (St == (uint8_t)ScriptState::Stopped || St == (uint8_t)ScriptState::Finished ||
-                    St == (uint8_t)ScriptState::Error)
-                    return SCRIPT_ERR_NONE; // terminal: the run loop stops here
-                Script->Ic++;
-                return SCRIPT_ERR_NONE;
-            }
+        case SCRIPT_OP_SERVICE_START:
+            // Entering Running resets the instruction counter and the call depth, so a restart
+            // resolves to Start. No advance: SetState may have reset the counter to 0.
+            SetState(Script, (uint8_t)ScriptState::Running);
+            return SCRIPT_ERR_NONE;
+        case SCRIPT_OP_SERVICE_STOP:
+            SetState(Script, (uint8_t)ScriptState::Stopped);
+            return SCRIPT_ERR_NONE; // terminal: the run loop stops here
+        case SCRIPT_OP_SERVICE_PAUSE:
+            Script->Ic++; // resume continues past the Pause
+            SetState(Script, (uint8_t)ScriptState::Paused);
+            return SCRIPT_ERR_NONE;
+        case SCRIPT_OP_SERVICE_RESUME:
             Script->Ic++;
+            SetState(Script, (uint8_t)ScriptState::Running);
+            return SCRIPT_ERR_NONE;
+        case SCRIPT_OP_SERVICE_ERROR: {
+            // A custom error throw: log the script-defined code and halt (state Error). The code
+            // is the script's own - the per-instruction error catalogue is app-side (Stage 1).
+            int32_t Code = 0;
+            if (Ln.OpCount >= 1 && !ResolveOperandInt(Script, Opbase, Code)) return SCRIPT_ERR_OPERAND;
+            ReportLog(MakeLog(false, (uint16_t)ServiceType::Script, (uint32_t)Code, 0), PRIORITY_ERROR);
+            Script->State = (uint8_t)ScriptState::Error;
             return SCRIPT_ERR_NONE;
         }
+        case SCRIPT_OP_SERVICE_REPORT_INFO:
+            // A log-only action: report the script's state and carry on (no halt).
+            ReportLog(MakeLog(false, (uint16_t)ServiceType::Script, (uint32_t)Script->State, 0), PRIORITY_LOG);
+            Script->Ic++;
+            return SCRIPT_ERR_NONE;
         case SCRIPT_OP_SERVICE_REG_READ: { // dest = register[BlockInfo]
             if (Ln.DestCount < 1 || Ln.OpCount < 1) return SCRIPT_ERR_OPERAND;
             uint32_t Bi = 0;
@@ -469,28 +493,36 @@ inline uint8_t ScriptService::ExecService(LoadedScript *Script, const ScriptLine
             SendRegisterRequest(Script, (uint16_t)Addr, 2, Payload, (uint16_t)(8 + Vsize));
             return SCRIPT_ERR_NONE;
         }
-        case SCRIPT_OP_SERVICE_SCRIPT_LOAD: { // load(script file id, loaded script id)
-            // Mirrors management CID 1: the script picks the slot and the pair may differ.
-            if (Ln.OpCount < 2) return SCRIPT_ERR_OPERAND;
+        case SCRIPT_OP_SERVICE_SCRIPT_LOAD: { // dest = load(script file id, loaded script id)
+            // Mirrors management CID 1: the script picks the slot and the pair may differ. It is
+            // external-facing, so it never faults - it carries its result code into a destination
+            // (0 = success).
+            if (Ln.DestCount < 1 || Ln.OpCount < 2) return SCRIPT_ERR_OPERAND;
             int32_t FileId = 0, Slot = 0;
             if (!ResolveOperandInt(Script, Opbase, FileId)) return SCRIPT_ERR_OPERAND;
             if (!ResolveOperandInt(Script, Opbase + 4, Slot)) return SCRIPT_ERR_OPERAND;
             // Loading over the running script would free the program currently being executed.
-            if (Slot == (int32_t)Script->Slot) return SCRIPT_ERR_OPERAND;
-            if (FileId >= 0 && FileId < MAX_SCRIPT_FILES && Slot >= 0 && Slot < MAX_SCRIPTS)
-                Load((uint16_t)FileId, (uint8_t)Slot);
+            uint8_t Code = SCRIPT_ERR_NONE;
+            if (Slot == (int32_t)Script->Slot) Code = SCRIPT_ERR_OPERAND;
+            else if (FileId < 0 || FileId >= MAX_SCRIPT_FILES || Slot < 0 || Slot >= MAX_SCRIPTS) Code = SCRIPT_ERR_BOUNDS;
+            else if (!Load((uint16_t)FileId, (uint16_t)Slot)) Code = SCRIPT_ERR_BOUNDS;
+            uint8_t Err = StoreResultCode(Script, Script->Instr + (size_t)Ln.Start * 4, Code);
+            if (Err) return Err;
             Script->Ic++;
             return SCRIPT_ERR_NONE;
         }
-        case SCRIPT_OP_SERVICE_SCRIPT_UNLOAD: { // unload(loaded script id)
-            // Same operation as management CID 2. A script that is not loaded is a no-op, like
-            // that CID reporting no work rather than failing.
-            if (Ln.OpCount < 1) return SCRIPT_ERR_OPERAND;
+        case SCRIPT_OP_SERVICE_SCRIPT_UNLOAD: { // dest = unload(loaded script id)
+            // Same operation as management CID 2 (which reports success or failure only).
+            if (Ln.DestCount < 1 || Ln.OpCount < 1) return SCRIPT_ERR_OPERAND;
             int32_t Slot = 0;
             if (!ResolveOperandInt(Script, Opbase, Slot)) return SCRIPT_ERR_OPERAND;
             // Never unload the running script: its program and spaces are what is executing.
-            if (Slot == (int32_t)Script->Slot) return SCRIPT_ERR_OPERAND;
-            if (Slot >= 0 && Slot < MAX_SCRIPTS && Active((uint8_t)Slot)) Unload((uint8_t)Slot);
+            uint8_t Code = SCRIPT_ERR_NONE;
+            if (Slot == (int32_t)Script->Slot) Code = SCRIPT_ERR_OPERAND;
+            else if (Slot < 0 || Slot >= MAX_SCRIPTS || !Active((uint16_t)Slot)) Code = SCRIPT_ERR_BOUNDS;
+            else Unload((uint16_t)Slot);
+            uint8_t Err = StoreResultCode(Script, Script->Instr + (size_t)Ln.Start * 4, Code);
+            if (Err) return Err;
             Script->Ic++;
             return SCRIPT_ERR_NONE;
         }

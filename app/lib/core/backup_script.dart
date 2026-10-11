@@ -187,7 +187,7 @@ int _category(String? name) {
   return catService;
 }
 
-const List<String> _propertyWords = ['Load on boot', 'Run on load'];
+const List<String> _propertyWords = ['Load on boot', 'Run on load', 'Function library'];
 
 class BackupScript {
   final int slot; // SCR file id (0..4095), or -1 when unknown

@@ -217,6 +217,7 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
   Future<void> _save() async {
     final draft = _draft;
     if (draft == null) return;
+    if (!await _ensureValid(draft)) return;
     setState(() => _busy = true);
     final ok = await _storage.writeFile(_fileName, draft.toImage());
     if (!mounted) return;
@@ -234,6 +235,28 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
     }
   }
 
+  /// Runs the assemble-time validation (Docs/Services/Script.md "Validation": block-end
+  /// matching and type/size correctness). Returns true when clean; otherwise records the
+  /// problems, surfaces them, and returns false so the script is not assembled/uploaded.
+  Future<bool> _ensureValid(ScriptDraft draft) async {
+    final errors = validateScriptLines(draft.lines, draft.validationContext);
+    setState(() => _errors = errors);
+    if (errors.isEmpty) return true;
+    if (!mounted) return false;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Cannot upload'),
+        content: Text('${errors.length} problem(s):\n\n'
+            '${errors.map((e) => '• $e').join('\n')}'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK')),
+        ],
+      ),
+    );
+    return false;
+  }
+
   /// Reloads the stored script into its slot. With [applyDraft] the current editor draft
   /// is written first, so "Update (reload live)" applies the unsaved edits instead of
   /// discarding them by re-reading the old file (Docs/App/Service views/Script.md:32).
@@ -241,6 +264,7 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
     if (applyDraft) {
       final draft = _draft;
       if (draft == null) return;
+      if (!await _ensureValid(draft)) return;
       final written = await _storage.writeFile(_fileName, draft.toImage());
       if (!mounted) return;
       if (!written) {
@@ -275,11 +299,11 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
     showSnack(context, errors.isEmpty ? 'Script is valid' : '${errors.length} problem(s) found');
   }
 
-  Future<void> _control(int state, {bool reset = false}) async {
+  Future<void> _control(int action, {bool reset = false}) async {
     if (reset) await _client.moveToInstruction(_slot, 0);
-    final ok = await _client.setState(_slot, state);
+    final ok = await _client.setAction(_slot, action);
     if (!mounted) return;
-    showSnack(context, ok ? ScriptState.label(state) : 'Command failed');
+    showSnack(context, ok ? ScriptAction.label(action) : 'Command failed');
     await _refresh();
   }
 

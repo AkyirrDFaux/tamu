@@ -11,11 +11,19 @@
 #ifdef USE_SCRIPTS
 
 #include <cstdint>
-#include "Core/Functions/Memory.h"
-#include "Core/Functions/Storage.h"
-#include "Core/Functions/StrideOffsets.h" // StrideAlign4 + the prefix-sum build
+#include <cstdlib>
+#include <cstring>
+// ValueInfo and BLOCK_NAME_LEN come from Core/Functions/MemoryTypes.h (via StrideOffsets.h);
+// the Memory/Storage subsystems are only needed by the real firmware, so the host-side test
+// (test/native/script_test.cpp) can include this header with SCRIPT_HOST_TEST to exercise the
+// file-header parse and the opcode/property constants without dragging in the device layer.
+#include "Core/Functions/StrideOffsets.h" // MemoryTypes (ValueInfo) + StrideAlign4 + the prefix-sum build
 #include "Core/Types/Enums.h"
 #include "Core/Types/Number.h"
+#ifndef SCRIPT_HOST_TEST
+#include "Core/Functions/Memory.h"
+#include "Core/Functions/Storage.h"
+#endif
 
 // Defined in Core/Services/Register.h (shared with the Subscriptions service); declared
 // here so the VM resolves registers through the exact same access path.
@@ -35,7 +43,13 @@ bool RegisterSetByBlockInfo(uint32_t Bi, const ValueInfo &Meta, const uint8_t *V
 #endif
 // Stored script files are named SCR_XXX (three hex digits), so a file id is 0..0xFFF.
 #define MAX_SCRIPT_FILES 4096
+// The file header is 24 bytes (Docs/Services/Script.md "File Blocks"): a 16-bit Properties word,
+// five uint8 counts (Input, Output, Variable, Constant, Function) and one padding byte, then
+// four uint32 lengths (constants, input-defaults, instruction, UI info).
 #define SCRIPT_HEADER_SIZE 24
+// One function reservation record: the file a linked global function lives in, its memory-space
+// offset and its instruction-space offset.
+#define SCRIPT_FUNC_RESERVATION_SIZE 16
 #define SCRIPT_MAX_LINES 1024
 #define SCRIPT_INSTR_BUDGET 512
 #define SCRIPT_MAX_CALL_DEPTH 8
@@ -90,6 +104,7 @@ bool RegisterSetByBlockInfo(uint32_t Bi, const ValueInfo &Meta, const uint8_t *V
 #define SCRIPT_MATHOP_OR 7
 #define SCRIPT_MATHOP_XOR 8
 #define SCRIPT_MATHOP_NOT 9
+// 10-11 were the shift operators; dropped and left reserved so the numbers are never reused.
 #define SCRIPT_MATHOP_EQ 12
 #define SCRIPT_MATHOP_NE 13
 #define SCRIPT_MATHOP_LT 14
@@ -126,14 +141,27 @@ bool RegisterSetByBlockInfo(uint32_t Bi, const ValueInfo &Meta, const uint8_t *V
 #define SCRIPT_OP_SERVICE_LOG 0
 #define SCRIPT_OP_SERVICE_REG_READ 1
 #define SCRIPT_OP_SERVICE_REG_WRITE 2
-#define SCRIPT_OP_SERVICE_STATE 3
+// Service op 3 was the single state instruction; retired - the number is reserved and never
+// reused (Docs/Services/Script.md Service table). The state verbs are separate instructions.
+#define SCRIPT_OP_SERVICE_RESERVED 3
 #define SCRIPT_OP_SERVICE_NOP 4
 #define SCRIPT_OP_SERVICE_REG_READ_FOREIGN 5
 #define SCRIPT_OP_SERVICE_REG_WRITE_FOREIGN 6
 // Script (un)loading from within a script (Docs/Services/Script.md functions list): the same
-// operations as management CIDs 1 and 2, so the two paths cannot drift apart.
+// operations as management CIDs 1 and 2, so the two paths cannot drift apart. Both return their
+// result code into a destination (0 = success) instead of advancing silently.
 #define SCRIPT_OP_SERVICE_SCRIPT_LOAD 7
 #define SCRIPT_OP_SERVICE_SCRIPT_UNLOAD 8
+// State verbs: actions on the states, not values of one state instruction. Start enters Running
+// and resets the instruction counter and the call depth, so a restart resolves to Start.
+#define SCRIPT_OP_SERVICE_START 9
+#define SCRIPT_OP_SERVICE_STOP 10
+#define SCRIPT_OP_SERVICE_PAUSE 11
+#define SCRIPT_OP_SERVICE_RESUME 12
+// A custom error throw: logs the script-defined code and halts (state Error).
+#define SCRIPT_OP_SERVICE_ERROR 13
+// A log-only action: logs the script's state and carries on.
+#define SCRIPT_OP_SERVICE_REPORT_INFO 14
 
 // Compose ops.
 #define SCRIPT_OP_COMPOSE 0
@@ -163,9 +191,56 @@ enum class ScriptState : uint8_t {
     Error    = 5
 };
 
-// Properties bits ("information about script type (load on boot etc..)").
+// Properties bits (Docs/Services/Script.md "Properties"). The word is 16 bits: a flags field
+// and, at bits 8-15, the uint8 slot a load-on-boot script loads into. A boot load is the flag
+// bit plus that slot - deterministic, not the identity slot or the first free one.
 #define SCRIPT_PROP_LOAD_ON_BOOT (1u << 0)
 #define SCRIPT_PROP_RUN_ON_LOAD  (1u << 1)
+#define SCRIPT_PROP_FUNCTION_LIB (1u << 2) // the file is a function library, not a script
+#define SCRIPT_PROP_SLOT_SHIFT 8
+#define SCRIPT_PROP_SLOT_MASK  (0xFFu << SCRIPT_PROP_SLOT_SHIFT)
+
+inline bool ScriptPropLoadOnBoot(uint16_t Props)  { return (Props & SCRIPT_PROP_LOAD_ON_BOOT) != 0; }
+inline bool ScriptPropRunOnLoad(uint16_t Props)   { return (Props & SCRIPT_PROP_RUN_ON_LOAD) != 0; }
+inline bool ScriptPropFunctionLib(uint16_t Props) { return (Props & SCRIPT_PROP_FUNCTION_LIB) != 0; }
+inline uint8_t ScriptPropSlot(uint16_t Props)     { return (uint8_t)((Props & SCRIPT_PROP_SLOT_MASK) >> SCRIPT_PROP_SLOT_SHIFT); }
+
+// The parsed 24-byte file header. The offsets live here (host-testable) so the parser and the
+// block walk in ScriptProgram.h cannot drift.
+struct ScriptHeader {
+    uint16_t Properties;
+    uint8_t InCount;
+    uint8_t OutCount;
+    uint8_t VarCount;
+    uint8_t ConstCount;
+    uint8_t FuncCount;
+    uint32_t ConstLen;
+    uint32_t DefLen;   // input defaults length
+    uint32_t InstrLen;
+    uint32_t UiLen;
+};
+
+inline uint16_t ScriptRd16(const uint8_t *P) { return (uint16_t)(P[0] | (P[1] << 8)); }
+inline uint32_t ScriptRd32(const uint8_t *P) {
+    return (uint32_t)P[0] | ((uint32_t)P[1] << 8) | ((uint32_t)P[2] << 16) | ((uint32_t)P[3] << 24);
+}
+
+// Reads the header from the start of a script file. Returns false for a buffer shorter than the
+// header. Buf[7] is the padding byte that aligns the counts to 4 bytes.
+inline bool ParseScriptHeader(const uint8_t *Buf, uint32_t Size, ScriptHeader &H) {
+    if (Size < SCRIPT_HEADER_SIZE) return false;
+    H.Properties = ScriptRd16(Buf + 0);
+    H.InCount    = Buf[2];
+    H.OutCount   = Buf[3];
+    H.VarCount   = Buf[4];
+    H.ConstCount = Buf[5];
+    H.FuncCount  = Buf[6];
+    H.ConstLen   = ScriptRd32(Buf + 8);
+    H.DefLen     = ScriptRd32(Buf + 12);
+    H.InstrLen   = ScriptRd32(Buf + 16);
+    H.UiLen      = ScriptRd32(Buf + 20);
+    return true;
+}
 
 // Register field categories for the Scripts range (0x3F4-0x3F7). Only the I/O categories are
 // exposed through the Register (docs: "IO is in register"); Variables/Constants are
@@ -197,6 +272,7 @@ struct LoadedScript {
     uint32_t Properties = 0;
 
     uint8_t InCount = 0, OutCount = 0, VarCount = 0, ConstCount = 0;
+    uint8_t FuncCount = 0; // declared function reservations (function count)
     ValueInfo *InMeta = nullptr, *OutMeta = nullptr, *VarMeta = nullptr, *ConstMeta = nullptr;
 
     uint8_t *IoSpace = nullptr;
@@ -252,6 +328,7 @@ struct LoadedScript {
         State = (uint8_t)ScriptState::Stopped;
         Properties = 0;
         InCount = OutCount = VarCount = ConstCount = 0;
+        FuncCount = 0;
         InTotal = OutTotal = VarTotal = ConstTotal = 0;
         UiLen = 0; InstrLen = 0; InstrSymbols = 0; LineCount = 0;
         Ic = 0; WaitingOnTime = false; WaitUntil = 0;

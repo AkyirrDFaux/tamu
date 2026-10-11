@@ -5,6 +5,7 @@
 #
 #   numeric_test.cpp  Number.h + Vector/Matrix/Colour, in the three shapes the targets select
 #   stride_test.cpp   the script VM's prefix-sum symbol offsets (Core/Functions/StrideOffsets.h)
+#   script_test.cpp   the script file header + Service opcode set (Core/Services/ScriptDefs.h)
 #   crc_test.cpp      Crc8 (Core/Functions/Packet.h), both OPTIMIZE_SPEED shapes
 #
 # The numeric core is built in three shapes: the core (64-bit) and the DAS (32-bit, no
@@ -70,6 +71,10 @@ echo
 
 echo "### native stride-offset tests (script VM symbol resolution)"
 build_run "stride" "stride_test.cpp"
+echo
+
+echo "### native script tests (file header + Properties + Service opcode set)"
+build_run "script" "script_test.cpp" -DUSE_SCRIPTS -DSCRIPT_HOST_TEST
 echo
 
 echo "### native bootloader packet tests (codec layout + even parity)"
