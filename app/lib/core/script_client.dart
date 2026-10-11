@@ -9,6 +9,7 @@ import 'diagnostics.dart';
 import 'protocol.dart';
 import 'register_client.dart';
 import 'script_file.dart';
+import 'script_functions.dart';
 import 'types.dart';
 
 /// A loaded-script register entry (ValueInfo + value).
@@ -224,17 +225,17 @@ class ScriptClient {
   Future<({List<int> callStack, List<int> variables})?> readInternalState(
       int loadedId) async {
     final reply = await _request(ServiceType.script, 5, payload: [loadedId & 0xFF]);
-    if (reply == null || reply.isEmpty) return null;
-    final depth = reply[0];
-    final stackBytes = 2 * depth;
-    if (reply.length < 1 + stackBytes) return null;
-    // The call stack (one u16 per frame, outermost first) precedes the variable RAM.
+    if (reply == null) return null;
+    // A fixed-size instruction-counter stack (one u16 per frame) precedes the variable RAM,
+    // which is the remainder (Docs/Services/Script.md CID 5).
+    final stackBytes = 2 * scriptMaxCallDepth;
+    if (reply.length < stackBytes) return null;
     final callStack = <int>[];
-    for (var i = 0; i < depth; i++) {
-      final off = 1 + 2 * i;
+    for (var i = 0; i < scriptMaxCallDepth; i++) {
+      final off = 2 * i;
       callStack.add(reply[off] | (reply[off + 1] << 8));
     }
-    final variables = reply.sublist(1 + stackBytes);
+    final variables = reply.sublist(stackBytes);
     return (callStack: callStack, variables: variables);
   }
 

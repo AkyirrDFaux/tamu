@@ -14,6 +14,7 @@ import 'package:tamuapp/core/register_client.dart';
 import 'package:tamuapp/core/script_client.dart';
 import 'package:tamuapp/core/script_draft.dart';
 import 'package:tamuapp/core/script_file.dart';
+import 'package:tamuapp/core/script_functions.dart';
 import 'package:tamuapp/core/script_instructions.dart';
 import 'package:tamuapp/core/storage_client.dart';
 import 'package:tamuapp/core/subscription_client.dart';
@@ -622,7 +623,7 @@ final List<HilTest> serviceTests = <HilTest>[
             isTrue);
 
         // Editor debug: stop, move to a line. The current line is the report record's Line
-        // (CID 3); CID 5 carries the call stack, empty here (no frames).
+        // (CID 3); CID 5 carries the fixed-size call stack, all zero here (no frames).
         await c.setState(slot, ScriptState.stopped);
         expect(await c.moveToInstruction(slot, 1), isTrue);
         final moved = await c.readState(slot);
@@ -630,7 +631,10 @@ final List<HilTest> serviceTests = <HilTest>[
         expect(moved!.line, 1);
         final internal = await c.readInternalState(slot);
         expect(internal, isNotNull);
-        expect(internal!.callStack, isEmpty, reason: 'a flat script has no call frames');
+        expect(internal!.callStack.length, scriptMaxCallDepth,
+            reason: 'the call stack is a fixed size');
+        expect(internal.callStack.every((frame) => frame == 0), isTrue,
+            reason: 'a flat script has no call frames');
 
         // Inputs are writable through Register.
         expect(
