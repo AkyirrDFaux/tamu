@@ -374,7 +374,13 @@ Future<int> prepareDynamicBlocks(RestorePlan plan) async {
         final type = dataTypeFromWord(entry.type);
         if (type == null) continue;
         final meta = ValueInfo(
-            type: type.value, key: entry.keyIndex, size: entry.size);
+            type: type.value,
+            key: entry.keyIndex,
+            size: entry.size,
+            // The flags decide whether the value reaches the .DV persistent space (and so
+            // survives the boot recall): dropping them restores the structure but loses every
+            // value on the next reboot.
+            flags: flagsFromWords(entry.flags));
         final zero = List<int>.filled(entry.size, 0);
         if (entry.keyIndex == 0) {
           await reg.appendDynamicEntry(dyn, meta, zero, index: entry.fieldIndex);

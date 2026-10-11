@@ -421,6 +421,7 @@ green, release checklist.
 
 ## Open work
 
+
 - Router capability bit: reserve one for the router service so the documented capability can be set.
 - App Active enum: add `WiFi` (`Enums.h:34-38`) when that work starts. E10 dropped `LegacyBt` from
   the documents, so it is no longer listed as a planned state.
@@ -558,6 +559,17 @@ green, release checklist.
   UTF-8 bytes. Large files are skipped above 128 kB by default.
 
 ## Done (condensed)
+
+- **Setup restore: a recreated dynamic block kept none of its values (2026-10-11).** The blocks came
+  back with the right field/key structure but every value zero, so the restored scene's eyes had no shape
+  or colour and the LED panel stayed dark. Two causes: `appendDynamicEntry` only ever creates key 0, so a
+  block whose fields carry several keys needs `writeDynamicEntry` for the rest; and the recreated
+  entries were built with `flags = 0`, so their values never reached the `.DV` persistent space and the
+  boot recall dropped them. Measured after the fix: a booted device matches the saved value space
+  (`f0k1=0x01`, `f1k4=0xffffffff`, `f2k1=0x06`, `f2k4=0x00000900`, `f2k5=0x9a990000`, all persistent).
+  The old-format `.DT_`/`.DV_` decoder, for reference: `[len+name][typeIndex u16][count u16]`, entry
+  `[fieldKey u16][flagsAndType u16][size u8][pad u8]`; the value space is sequential in table order and
+  the sizes sum to the `.DV` length (validated: 43 entries, 222 B).
 
 - **Scripts** (`Docs/Services/Script.md`): `SCR_XXX` parser, loaded-script registry (banked types
   `0x3F4-0x3F7`), management CIDs `0x0500-0x0507`; the VM (preloaded instructions, line/block
