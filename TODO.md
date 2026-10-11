@@ -65,6 +65,37 @@ the 4-byte value packing it leaves unstated, and the CID 3/4/6/7 "script id = lo
 
 Open detail: none. Broken existing `SCR_XXX` files are accepted as the cost of the header change.
 
+### Stage 1 - error reporting (in progress)
+
+Decided:
+
+- **Being not fully loaded is a state, not an error.** The state set expresses partial loading directly, so an
+  incomplete load is never reported as a fault.
+- **The report record:** `state (8b) | symbol (8b) | line (16b)`, with `instruction (32b)` and `error (32b)`
+  appended **only for an error** - 4 bytes for a plain state report, 12 for an error report.
+- CID 5 (read internal state) remains the way to get the full internal picture; this record is the summary
+  that CID 3-style reads return.
+
+Open:
+
+- Is `line`/`symbol` the *current* position (a program counter, meaningful at any time) or the *failing*
+  position (only meaningful on an error)? The record carries them always, so they must mean something when
+  there is no error.
+- **Is `error (32b)` a flat list or an instruction-specific value?** Today the firmware has eight flat codes
+  (0 none, 1 unknown opcode, 2 type, 3 operand, 4 bounds, 5 stack, 6 register access, 7 timeout, 8 not
+  implemented). One option: `class (8b) | instruction-specific detail (24b)`, so the detail's meaning is
+  defined by the instruction that faulted (e.g. a read's "no such block" versus "read refused"; `Pow`'s
+  "negative base" versus "exponent too large") without an unbounded global list.
+- **Fatal or recoverable per case?** Both are wanted, so the design has to allow it: a missing reference might
+  stop the script while a failed read yields a default and continues. That needs the affected instructions to
+  have somewhere to put the failure, which is an instruction-set change.
+- **Where the human-readable error names live.** Today the app hardcodes the text per code; if the firmware's
+  list changes the labels drift silently. Options: written in the spec and mirrored by the app with a contract
+  test asserting they agree (the existing `firmware_contract_test.dart` is the mechanism), kept on the device,
+  or dropped entirely (numbers only).
+- Logging both load and run errors is Stage 0, not here; the `Load` code is shared by the CID 1 reply and the
+  in-script `Load script` op result (Stage 0).
+
 ### Stage 2 - the script block and the load contract
 
 **Register representation: settled.** A loaded script is *addressed*, not registered. The script block range
