@@ -63,6 +63,12 @@ the 4-byte value packing it leaves unstated, and the CID 3/4/6/7 "script id = lo
 - No change to CID 0: it reports file ids for positioning only.
 - Firmware: log both load-time and run-time errors - today a VM error exists only in RAM until CID 3 is polled.
 - Native tests for the script VM, of which there are none today, covering the above.
+- **Extend the Log service's log struct.** The source becomes **32 bits** - the whole block index, i.e. the type,
+  the instance and the 16-bit field/key specifier - so an entry names the block that emitted it. The log
+  **code becomes 32 bits** as well, and its meaning is **source-specific**, the same principle as the
+  instruction-specific errors. This is a Log-service change rather than a script one, driven by the in-script
+  log, the custom error throw and the log-only `report info`; it also moves the app's log view and the Log
+  service's own documentation.
 
 Open detail: none. Broken existing `SCR_XXX` files are accepted as the cost of the header change.
 
