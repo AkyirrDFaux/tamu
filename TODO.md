@@ -421,6 +421,17 @@ green, release checklist.
 
 ## Open work
 
+- [ ] **Setup: the brightness curve does not match its own table, and it faults below 10 lux.** The
+      brightness script computes `5 + 65 * ((lux - 10) / 8850)^0.5703`, which gives 9.7 % at 100 lux,
+      40 % at 3000 and 70 % at 8850 - a physical ceiling of ~49 % once the register's 0-100 % is mapped
+      onto the layout's limit (178 ~ 70 %). `Example Setup.md` (the A55 rescale, 2026-10-10) reads 7 % /
+      14 % / 60 % / 100 %, i.e. the physical ceiling - so the script still carries the pre-A55 curve.
+      Worse, at or below `LUX_MIN` the base is negative and the fractional power faults, so the script
+      stops regulating entirely (the displays kept the restored 6.06/7.49 %, and a dark channel reads
+      ~0.14 lux). The doc's four anchors fit `7 + 93 * (lux / 8000)^0.59` within ~1 %, with the floor
+      clamped so a sub-floor lux reads 7 % instead of faulting. Needs Akyirr's call: update the script
+      to the doc, or the doc to the script.
+
 
 - Router capability bit: reserve one for the router service so the documented capability can be set.
 - App Active enum: add `WiFi` (`Enums.h:34-38`) when that work starts. E10 dropped `LegacyBt` from
