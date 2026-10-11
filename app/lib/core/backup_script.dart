@@ -149,16 +149,23 @@ class BackupLine {
   final BackupSymbol instruction;
   final List<BackupSymbol> operands;
 
+  /// The declared function a Flow `Call` on this line targets (an index into the script's
+  /// functions), or null when the line is not a call into a declared function. The wire operand
+  /// carries only the assembled address; the target is what the app-only UI blob preserves.
+  final int? functionTarget;
+
   const BackupLine({
     required this.destinations,
     required this.instruction,
     required this.operands,
+    this.functionTarget,
   });
 
   Map<String, dynamic> toJson() => {
         'destinations': [for (final d in destinations) d.toJson()],
         'instruction': instruction.toJson(),
         'operands': [for (final o in operands) o.toJson()],
+        if (functionTarget != null) 'function': functionTarget,
       };
 
   static BackupLine fromJson(Map<String, dynamic> json) => BackupLine(
@@ -170,8 +177,134 @@ class BackupLine {
         operands: (json['operands'] as List? ?? [])
             .map((e) => BackupSymbol.fromJson(e as Map<String, dynamic>))
             .toList(),
+        functionTarget: (json['function'] as num?)?.toInt(),
+      );
+
+  static BackupLine of(ScriptLine l) => BackupLine(
+        destinations: [for (final d in l.destinations) BackupSymbol.of(d)],
+        instruction: BackupSymbol.of(l.instruction),
+        operands: [for (final o in l.operands) BackupSymbol.of(o)],
+        functionTarget: l.functionTarget,
+      );
+
+  ScriptLine toLine() => ScriptLine(
+        destinations: [for (final d in destinations) d.toSymbol()],
+        instruction: instruction.toSymbol(),
+        operands: [for (final o in operands) o.toSymbol()],
+        functionTarget: functionTarget,
       );
 }
+
+/// A referenced global function's reservation record (Docs/Services/Script.md "File Blocks": a
+/// 16-byte record holding the file a linked global function lives in, its memory-space offset
+/// and its instruction-space offset).
+class BackupFunctionReservation {
+  final int library; // file id of the function library
+  final int memoryOffset;
+  final int instructionOffset;
+
+  const BackupFunctionReservation({
+    this.library = 0,
+    this.memoryOffset = 0,
+    this.instructionOffset = 0,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'library': library,
+        'memoryOffset': memoryOffset,
+        'instructionOffset': instructionOffset,
+      };
+
+  static BackupFunctionReservation fromJson(Map<String, dynamic> json) =>
+      BackupFunctionReservation(
+        library: (json['library'] as num?)?.toInt() ?? 0,
+        memoryOffset: (json['memoryOffset'] as num?)?.toInt() ?? 0,
+        instructionOffset: (json['instructionOffset'] as num?)?.toInt() ?? 0,
+      );
+
+  /// Reads the semantic fields from a raw 16-byte reservation record.
+  static BackupFunctionReservation of(List<int> record) {
+    int u16(int at) => at + 1 < record.length ? record[at] | (record[at + 1] << 8) : 0;
+    return BackupFunctionReservation(
+      library: u16(0),
+      memoryOffset: u16(2),
+      instructionOffset: u16(4),
+    );
+  }
+
+  /// The 16-byte record this reservation encodes to (Docs "File Blocks").
+  List<int> toRecord() => encodeFunctionReservation(
+        fileId: library,
+        memOffset: memoryOffset,
+        instrOffset: instructionOffset,
+      );
+}
+
+/// One declared function (Docs/Services/Script.md "Functions and Macros"): a local/macro body
+/// kept in the file's app-only UI blob, or a linked global function's library parameters.
+class BackupFunction {
+  final String name;
+  final String kind; // ScriptFunctionKind label
+  final List<BackupLine> body; // local/macro only
+  final int library; // global only
+  final int memoryOffset; // global only
+  final int instructionOffset; // global only
+
+  const BackupFunction({
+    this.name = '',
+    this.kind = 'Local',
+    this.body = const [],
+    this.library = 0,
+    this.memoryOffset = 0,
+    this.instructionOffset = 0,
+  });
+
+  bool get isGlobal => kind == 'Global';
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'kind': kind,
+        if (!isGlobal) 'body': [for (final l in body) l.toJson()],
+        if (isGlobal) 'library': library,
+        if (isGlobal) 'memoryOffset': memoryOffset,
+        if (isGlobal) 'instructionOffset': instructionOffset,
+      };
+
+  static BackupFunction fromJson(Map<String, dynamic> json) => BackupFunction(
+        name: json['name'] as String? ?? '',
+        kind: json['kind'] as String? ?? 'Local',
+        body: (json['body'] as List? ?? [])
+            .map((e) => BackupLine.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        library: (json['library'] as num?)?.toInt() ?? 0,
+        memoryOffset: (json['memoryOffset'] as num?)?.toInt() ?? 0,
+        instructionOffset: (json['instructionOffset'] as num?)?.toInt() ?? 0,
+      );
+
+  static BackupFunction of(ScriptFunction f) => BackupFunction(
+        name: f.name,
+        kind: f.kind.label,
+        body: [for (final l in f.body) BackupLine.of(l)],
+        library: f.globalFileId,
+        memoryOffset: f.globalMemOffset,
+        instructionOffset: f.globalInstrOffset,
+      );
+
+  ScriptFunction toFunction() => ScriptFunction(
+        name: name,
+        kind: _functionKind(kind),
+        body: [for (final l in body) l.toLine()],
+        globalFileId: library,
+        globalMemOffset: memoryOffset,
+        globalInstrOffset: instructionOffset,
+      );
+}
+
+ScriptFunctionKind _functionKind(String word) => switch (word) {
+      'Macro' => ScriptFunctionKind.macro,
+      'Global' => ScriptFunctionKind.global,
+      _ => ScriptFunctionKind.local,
+    };
 
 int _predefineSubtype(String? name) {
   for (final (value, label) in scriptPredefineSubtypes) {
@@ -199,6 +332,16 @@ class BackupScript {
   final List<BackupScriptValue> constants;
   final List<BackupLine> lines;
 
+  /// Declared functions (local/macro bodies + global parameters) kept in the file's app-only
+  /// UI blob (Docs/Services/Script.md "Functions and Macros"). Absent in an older setup JSON
+  /// that predates the field: no functions.
+  final List<BackupFunction> functions;
+
+  /// Function reservations, one per referenced global function (the file's Function count).
+  /// Regenerated on assembly when [functions] is present, so a backup carries them only to
+  /// preserve a file that has no function block (an older image).
+  final List<BackupFunctionReservation> functionReservations;
+
   const BackupScript({
     required this.slot,
     required this.functionName,
@@ -208,6 +351,8 @@ class BackupScript {
     required this.variables,
     required this.constants,
     required this.lines,
+    this.functions = const [],
+    this.functionReservations = const [],
   });
 
   Map<String, dynamic> toJson() => {
@@ -219,6 +364,10 @@ class BackupScript {
         'variables': [for (final v in variables) v.toJson()],
         'constants': [for (final v in constants) v.toJson()],
         'lines': [for (final l in lines) l.toJson()],
+        if (functions.isNotEmpty)
+          'functions': [for (final f in functions) f.toJson()],
+        if (functionReservations.isNotEmpty)
+          'functionReservations': [for (final r in functionReservations) r.toJson()],
       };
 
   static BackupScript fromJson(Map<String, dynamic> json) => BackupScript(
@@ -231,6 +380,12 @@ class BackupScript {
         constants: _values(json['constants']),
         lines: (json['lines'] as List? ?? [])
             .map((e) => BackupLine.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        functions: (json['functions'] as List? ?? [])
+            .map((e) => BackupFunction.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        functionReservations: (json['functionReservations'] as List? ?? [])
+            .map((e) => BackupFunctionReservation.fromJson(e as Map<String, dynamic>))
             .toList(),
       );
 
@@ -271,13 +426,10 @@ class BackupScript {
       outputs: [for (final v in draft.outputs) value(v, isInput: false)],
       variables: [for (final v in draft.variables) value(v, isInput: false)],
       constants: [for (final v in draft.constants) value(v, isInput: false)],
-      lines: [
-        for (final l in draft.lines)
-          BackupLine(
-            destinations: [for (final d in l.destinations) BackupSymbol.of(d)],
-            instruction: BackupSymbol.of(l.instruction),
-            operands: [for (final o in l.operands) BackupSymbol.of(o)],
-          )
+      lines: [for (final l in draft.lines) BackupLine.of(l)],
+      functions: [for (final f in draft.functions) BackupFunction.of(f)],
+      functionReservations: [
+        for (final r in draft.functionReservations) BackupFunctionReservation.of(r)
       ],
     );
   }
@@ -313,14 +465,9 @@ class BackupScript {
       outputs: [for (final v in outputs) value(v)],
       variables: [for (final v in variables) value(v)],
       constants: [for (final v in constants) value(v)],
-      lines: [
-        for (final l in lines)
-          ScriptLine(
-            destinations: [for (final d in l.destinations) d.toSymbol()],
-            instruction: l.instruction.toSymbol(),
-            operands: [for (final o in l.operands) o.toSymbol()],
-          )
-      ],
+      lines: [for (final l in lines) l.toLine()],
+      functions: [for (final f in functions) f.toFunction()],
+      functionReservations: [for (final r in functionReservations) r.toRecord()],
     );
   }
 }
