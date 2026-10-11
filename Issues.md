@@ -88,6 +88,11 @@ information` at 8.1; there is no WiFi code in the firmware.
 **B6 The UDP framing has no code.** `App Interface.md:25-27` documents a UDP packet; the firmware
 implements USB and BLE only.
 
+**B7 The `Extract` opcode has no named define.** `ScriptExec.h:551` branches on
+`Op == SCRIPT_OP_COMPOSE` and treats anything else as extract, so extract works but its opcode has no
+`SCRIPT_OP_*` name - `ScriptDefs.h:139` defines `SCRIPT_OP_COMPOSE 0` alone. The revised `Script.md`
+states Compose 0 / Extract 1 as normative, so the second number wants a define beside the others.
+
 ### C. Checked and correct
 
 The command ID table matches every service and the code constants. The Bootloader packet layouts, the
