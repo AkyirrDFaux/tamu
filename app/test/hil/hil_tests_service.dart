@@ -991,6 +991,75 @@ final List<HilTest> serviceTests = <HilTest>[
     },
   ),
 
+  HilTest(
+    'script CID 0 slot map and CID 5 internal state round-trip through fragmentation',
+    category: HilCategory.service,
+    prereq: _script,
+    body: (ctx) async {
+      for (final d in ctx.devices(_script)) {
+        final c = ScriptClient(deviceId: d.id);
+        final st = StorageClient(deviceId: d.id);
+        final slot = _scrSlotBase + 4;
+        final fileId = slot; // _uploadScript loads with load(slot, slot).
+        final emptySlot = _scrSlotBase + 5; // no example-setup or scratch script here.
+        final name = scriptFileName(fileId);
+
+        // Clean the scratch slot only (the example setup owns slots 0-4).
+        if (await c.readState(slot) != null) await c.unload(slot);
+        await st.deleteFile(name);
+
+        // Two 4-byte variables, so CID 5's variable RAM is a known 8 bytes, and a
+        // Halt so the script is a valid image.
+        final draft = ScriptDraft(functionName: 'Stream')
+          ..variables.add(ScriptDraftValue(name: 'A', type: DataType.number, size: 4))
+          ..variables.add(ScriptDraftValue(name: 'B', type: DataType.number, size: 4))
+          ..lines.add(
+              ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6))); // Halt
+
+        expect(await _uploadScript(c, st, slot, draft), isTrue,
+            reason: 'upload + load the streaming script');
+
+        // ---- CID 0: the streamed slot map ------------------------------------
+        // The whole map streams through the app interface's fragmentation (Docs:
+        // CIDs 0 and 5 both exceed one frame); slotMap() decodes the reassembled
+        // payload as one uint16 per slot, with the slot count taken from the stream
+        // length rather than an assumed 256.
+        final map = await c.slotMap();
+        expect(map, isNotEmpty, reason: 'device ${d.id} streams its slot map');
+        ctx.note('${d.label}: slot map has ${map.length} slot(s)'
+            '${map.length > 58 ? ' (> 58, so CID 0 fragmented past one frame)' : ''}');
+
+        // The per-slot uint16 map: the loaded scratch slot shows its file id, and
+        // the slot count is at least past both scratch slots (the stream length is
+        // what bounds the map, so indexing must not run off it).
+        expect(map.length, greaterThan(emptySlot),
+            reason: 'the streamed map covers the scratch slots');
+        expect(map.length, lessThanOrEqualTo(maxScripts));
+        expect(map[slot], fileId, reason: 'the loaded slot shows its file id');
+        expect(map[emptySlot], scriptSlotEmpty,
+            reason: 'an empty slot reads 0xFFFF');
+
+        // loadedSlotMap() is the same stream read as `slot -> file id`.
+        final occupied = await c.loadedSlotMap();
+        expect(occupied[slot], fileId);
+        expect(occupied.containsKey(emptySlot), isFalse);
+        expect(occupied.length, lessThanOrEqualTo(map.length));
+
+        // ---- CID 5: fixed-size call stack followed by the variable RAM -------
+        final internal = await c.readInternalState(slot);
+        expect(internal, isNotNull, reason: 'device ${d.id} answers CID 5');
+        expect(internal!.callStack.length, scriptMaxCallDepth,
+            reason: 'the instruction-counter stack is a fixed size');
+        expect(internal.callStack.every((frame) => frame == 0), isTrue,
+            reason: 'a flat script has no call frames');
+        expect(internal.variables.length, 8,
+            reason: 'the two 4-byte variables follow the fixed-size stack');
+
+        await _removeScript(c, st, slot);
+      }
+    },
+  ),
+
   // --------------------------------------------------- Subscriptions (table)
 
   HilTest(

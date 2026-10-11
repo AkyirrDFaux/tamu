@@ -61,6 +61,110 @@ class PacketResponse {
   bool get ok => success && !fail;
 }
 
+/// The result of feeding one response frame into a [FragmentReassembler].
+sealed class FragmentEvent {
+  const FragmentEvent();
+}
+
+/// More fragments are still expected before the reply completes.
+class FragmentPending extends FragmentEvent {
+  const FragmentPending();
+}
+
+/// The reply completed: [payload] is the reassembled service data (its per-fragment
+/// info stripped), carrying the packet-level SUCCESS/FAIL flags of the STOP frame.
+class FragmentComplete extends FragmentEvent {
+  final List<int> payload;
+  final bool success;
+  final bool fail;
+
+  const FragmentComplete({
+    required this.payload,
+    required this.success,
+    required this.fail,
+  });
+}
+
+/// A reply whose fragment sequence is inconsistent (a lost, duplicated,
+/// out-of-order or short fragment) - dropped rather than allowed to silently
+/// truncate or corrupt the reassembled stream. [reason] is logged by the caller.
+class FragmentAbort extends FragmentEvent {
+  final String reason;
+
+  const FragmentAbort(this.reason);
+}
+
+/// Reassembles a fragmented service reply into one payload
+/// (Docs/Services/App Interface.md "fragmentation"; Docs/RSBus and Packets.md "FRAG").
+///
+/// A reply streams as FRAG-flagged frames. Each FRAG payload begins with four bytes
+/// of fragmentation info - a little-endian `u16 current` fragment index and a `u16
+/// total` fragment count - which is stripped as the fragments accumulate. The frame
+/// with STOP set ends the reply. A non-FRAG frame is the payload verbatim (a single
+/// frame carries START|STOP). Fragment index/count consistency is checked, so a stream
+/// that starts at a non-zero index, jumps, or changes its declared total is aborted.
+///
+/// This is the pure state machine behind [ConnectionManager]'s reply path, split out
+/// so the framing can be exercised without a live transport.
+class FragmentReassembler {
+  final Map<int, List<int>> _buffers = {};
+  // Expected next fragment index + declared total for each in-flight reply.
+  final Map<int, ({int next, int total})> _frag = {};
+
+  /// Opens (or restarts) a reply buffer for transaction [txId]; called when a request
+  /// goes out, so an empty reply is distinguishable from no reply.
+  void begin(int txId) {
+    _buffers[txId] = <int>[];
+    _frag.remove(txId);
+  }
+
+  /// Forgets any reassembly state for [txId] (reply completed, timed out or cancelled).
+  void discard(int txId) {
+    _buffers.remove(txId);
+    _frag.remove(txId);
+  }
+
+  /// Drops every in-flight reply (the link went down).
+  void clear() {
+    _buffers.clear();
+    _frag.clear();
+  }
+
+  /// Feeds one response [frame] for transaction [txId].
+  FragmentEvent feed(int txId, PacketFrame frame) {
+    final buffer = _buffers.putIfAbsent(txId, () => <int>[]);
+    if (frame.isFrag) {
+      if (frame.payload.length < 4) {
+        discard(txId);
+        return const FragmentAbort('FRAG packet without fragment info');
+      }
+      final info = fragInfoOf(frame.payload);
+      final state = _frag[txId];
+      if (state == null) {
+        if (info.current != 0) {
+          discard(txId);
+          return FragmentAbort('stream starts at fragment ${info.current}');
+        }
+      } else if (info.current != state.next || info.total != state.total) {
+        discard(txId);
+        return FragmentAbort('fragment ${info.current}/${info.total} out of order '
+            '(expected ${state.next}/${state.total})');
+      }
+      _frag[txId] = (next: info.current + 1, total: info.total);
+      buffer.addAll(frame.payload.sublist(4));
+    } else {
+      buffer.addAll(frame.payload);
+    }
+    if (!frame.isStop) return const FragmentPending();
+    discard(txId);
+    return FragmentComplete(
+      payload: buffer,
+      success: frame.isSuccess,
+      fail: frame.isFail,
+    );
+  }
+}
+
 class ConnectionManager extends ChangeNotifier {
   ConnectionManager._();
 
@@ -175,9 +279,8 @@ class ConnectionManager extends ChangeNotifier {
   StreamSubscription<Uint8List>? _streamSub;
   int _nextTxId = tridAppBase;
   final Map<int, Completer<PacketResponse>> _pending = {};
-  final Map<int, List<int>> _rxBuffers = {};
-  // Expected next fragment index + total for each in-flight fragmented reply.
-  final Map<int, ({int next, int total})> _rxFrag = {};
+  // Reassembles multi-fragment replies ([FragmentReassembler]).
+  final FragmentReassembler _reassembler = FragmentReassembler();
 
   // General listener for subscription value updates (service Subscriptions CID 0).
   // Only one listener is supported; SubscriptionClient uses it to feed its
@@ -511,8 +614,7 @@ class ConnectionManager extends ChangeNotifier {
       }
     }
     _pending.clear();
-    _rxBuffers.clear();
-    _rxFrag.clear();
+    _reassembler.clear();
     final transport = _transport;
     _transport = null;
     if (transport != null) {
@@ -557,61 +659,28 @@ class ConnectionManager extends ChangeNotifier {
       final txId = frame.srvSource;
       final completer = _pending.remove(txId);
       if (completer == null || completer.isCompleted) continue;
-      // Multi-packet streams accumulate until the fragment with STOP set. FRAG packets
-      // carry 4 bytes of fragmentation info (u16 current + u16 total) at the start of the
-      // payload; it is stripped here so streams reassemble into the raw service data.
-      // Non-FRAG single packets are exactly PayloadLen bytes; clients slice the real
-      // lengths via the format fields (ValueInfo.Size etc.), so any service-level
-      // 4-byte padding is simply ignored.
-      final buffer = _rxBuffers.putIfAbsent(txId, () => <int>[]);
-      if (frame.isFrag) {
-        if (frame.payload.length < 4) {
-          _abortFragment(completer, txId, 'FRAG packet without fragment info');
-          continue;
-        }
-        final info = fragInfoOf(frame.payload);
-        final state = _rxFrag[txId];
-        if (state == null) {
-          if (info.current != 0) {
-            _abortFragment(completer, txId, 'stream starts at fragment ${info.current}');
-            continue;
+      // Multi-packet streams accumulate until the fragment with STOP set (see
+      // [FragmentReassembler]): FRAG packets carry 4 bytes of fragmentation info
+      // (u16 current + u16 total) at the start of the payload, stripped here so streams
+      // reassemble into the raw service data. Non-FRAG single packets are exactly
+      // PayloadLen bytes; clients slice the real lengths via the format fields
+      // (ValueInfo.Size etc.), so any service-level 4-byte padding is simply ignored.
+      switch (_reassembler.feed(txId, frame)) {
+        case FragmentPending():
+          _pending[txId] = completer;
+        case FragmentComplete(:final payload, :final success, :final fail):
+          completer.complete(PacketResponse(
+            payload: payload,
+            success: success,
+            fail: fail,
+          ));
+        case FragmentAbort(:final reason):
+          AppDiagnostics.log('link', 'fragment stream aborted: $reason');
+          if (!completer.isCompleted) {
+            completer.completeError(
+                TransportException('Fragment stream aborted: $reason'));
           }
-        } else if (info.current != state.next || info.total != state.total) {
-          _abortFragment(
-              completer,
-              txId,
-              'fragment ${info.current}/${info.total} out of order '
-              '(expected ${state.next}/${state.total})');
-          continue;
-        }
-        _rxFrag[txId] = (next: info.current + 1, total: info.total);
-        buffer.addAll(frame.payload.sublist(4));
-      } else {
-        buffer.addAll(frame.payload);
       }
-      if (frame.isStop) {
-        _rxBuffers.remove(txId);
-        _rxFrag.remove(txId);
-        completer.complete(PacketResponse(
-          payload: buffer,
-          success: frame.isSuccess,
-          fail: frame.isFail,
-        ));
-      } else {
-        _pending[txId] = completer;
-      }
-    }
-  }
-
-  /// Drops a reply whose fragment sequence is inconsistent (a lost or duplicated
-  /// fragment would otherwise silently corrupt the reassembled stream).
-  void _abortFragment(Completer<PacketResponse> completer, int txId, String reason) {
-    _rxBuffers.remove(txId);
-    _rxFrag.remove(txId);
-    _pending.remove(txId);
-    AppDiagnostics.log('link', 'fragment stream aborted: $reason');
-    if (!completer.isCompleted) {
-      completer.completeError(TransportException('Fragment stream aborted: $reason'));
     }
   }
 
@@ -682,20 +751,18 @@ class ConnectionManager extends ChangeNotifier {
 
     final completer = Completer<PacketResponse>();
     _pending[txId] = completer;
-    _rxBuffers[txId] = <int>[];
+    _reassembler.begin(txId);
     try {
       await transport.send(frame.toBytes());
       return await completer.future.timeout(timeout, onTimeout: () {
         _pending.remove(txId);
-        _rxBuffers.remove(txId);
-        _rxFrag.remove(txId);
+        _reassembler.discard(txId);
         throw TransportException(
             '${service.name} CID $functionCid request timed out');
       });
     } catch (error) {
       _pending.remove(txId);
-      _rxBuffers.remove(txId);
-      _rxFrag.remove(txId);
+      _reassembler.discard(txId);
       rethrow;
     }
   }
