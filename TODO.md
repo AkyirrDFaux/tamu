@@ -36,14 +36,34 @@ Goal: round out the script system - the registry/block representation, reusable 
 and unloading, error reporting, and the instruction set with its documentation. A read-only review of the
 firmware VM, the app's editor and their tests is the basis below.
 
-Later stages, not yet started: **3** reusable functions - local (defined in the file) and global (a stored
-library), expanded at assemble time in the app, so the VM needs no calling convention until the line limit
+Stages in order: **0** fixes needing no design decision (below; settled, not started); **1** error reporting -
+load and run failures carry state, code, the position of the failing instruction and a log entry, which is the
+critical path for everything after it; **2** the script block and the load contract (below); **3** reusable
+functions - local (defined in the file) and global (a stored library),
+expanded at assemble time in the app, so the VM needs no calling convention until the line limit
 actually bites; **4** loading/unloading - atomic activation, explicit slot with a lowest-free convenience,
 Unload that reports failure, and settling the 256-slot vs the Valu's 16; **5** instruction set - implement or
 strike the doc's promised restart/report-info/halt-on-error state ops, implement or remove the shift ops the
 app already offers, and give `Pow` failures and the `Get time` integer-only rule a defined outcome; **6**
 documentation - make `Script.md` normative for the opcode/category/predefine and error-code enumerations,
 the 4-byte value packing it leaves unstated, and the CID 3/4/6/7 "script id = loaded slot" clarification.
+
+### Stage 0 - fixes needing no design decision (settled, not started)
+
+- App: validate block end matching - an `If`/`While` with no `End` passes the editor today, and the doc already
+  requires the check.
+- Firmware: honour run-on-load for a script loaded at any time, not only during the boot scan.
+- Firmware: **load-on-boot names its slot.** The file's boot property carries a uint8 slot (0-255) rather than
+  a plain bit, so a boot load is deterministic instead of guessing the identity slot or the first free one.
+  This is also what makes the file-to-slot mapping knowable without asking the device.
+- Firmware: the in-script `Load script` / `Unload script` ops return the code as their result instead of
+  silently advancing.
+- No change to CID 0: it reports file ids for positioning only.
+- Firmware: log both load-time and run-time errors - today a VM error exists only in RAM until CID 3 is polled.
+- Native tests for the script VM, of which there are none today, covering the above.
+
+Open detail: 0-255 fills the whole byte, so "no load on boot" cannot be expressed inside it - it needs an
+enable bit alongside the slot, or the slot range stops at 254.
 
 ### Stage 2 - the script block and the load contract
 
