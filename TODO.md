@@ -129,9 +129,8 @@ Consequences:
 
 - A script using global functions is **no longer self-contained**: it needs the function file present on the
   target.
-- Still open: whether a referenced function missing at load is a load failure or a run-time fault at the call.
-  Recommended: the run-time fault, matching how a missing block reference behaves, which keeps load-time
-  validation to memory bounds only.
+- A referenced function **missing at load is a load error**, and the slot enters the load-failed state (Stage
+  4). This amends the load rule: validation at load is now memory bounds **and link resolution**.
 
 ### Stage 4 - loading and unloading
 
@@ -141,10 +140,12 @@ Decided:
   unoccupied slot. That is the file-to-slot mapping the app needs, and the stream length is what tells it the
   device's slot count, so the app stops assuming 256 everywhere.
 - **Loading into an occupied slot fails.** Only empty slots accept a load.
-- **"Not fully loaded" means reserved but not ready**: the slot's space exists but the script cannot run yet.
-  It leaves that state by becoming ready (`Stopped`) or by being released when the load fails.
+- **The state enum gains two load-related members**: `reserved-but-not-ready` (the slot's space exists but the
+  script cannot run yet; it leaves by becoming ready (`Stopped`) or by being released) and `load-failed` (the
+  load was refused - see Stage 2's load rule - and the slot keeps its reservation in this state until an
+  explicit unload clears it, so the failure is visible per slot). A link failure is detected before anything
+  is allocated, so a load-failed slot holds only its slot record and no spaces.
 - **Unload reports success or failure only**, nothing more.
-- **The state enum gains reserved-but-not-ready**, so an incomplete load is a state rather than a fault.
 - **The app learns which slots are empty from CID 0's map and keeps its own bookkeeping.** There is no
   separate slot-request command; a load that names no slot takes the lowest free one.
 - No addition to the synthesised block metadata is needed.
@@ -195,12 +196,13 @@ Decisions taken:
 
 The load contract:
 
-- **Validation at load is memory bounds only.** The requirement is computed from the file header - the
-  declared input/output/variable/constant sizes, the constants and input-defaults lengths, and the instruction
-  length - and checked against available memory. Every other fault - unknown opcode, out-of-range index or
-  operand, bad flow target, unresolvable reference - is a run-time error, raised when execution reaches it.
-  A malformed script can therefore run part-way and then stop; that is accepted, and it is why the error must
-  carry the position of the failing instruction.
+- **Validation at load is memory bounds and link resolution.** The requirement is computed from the file header
+  - the declared input/output/variable/constant sizes, the constants and input-defaults lengths, and the
+  instruction length - plus the sizes of the functions it links (Stage 3), and checked against available
+  memory; a referenced function that is absent is a load error. Every other fault - unknown opcode,
+  out-of-range index or operand, bad flow target, unresolvable reference - is a run-time error, raised when
+  execution reaches it. A malformed script can therefore run part-way and then stop; that is accepted, and it
+  is why the error must carry the position of the failing instruction.
 - **Two allocations per script, both made once at load**: the variable spaces (I/O, variables, constants) and
   the instruction (bytecode) space, kept separate. Nothing allocates later.
 - Everything the script runs on is copied into that allocation before the slot goes active: the VM never
