@@ -289,6 +289,63 @@ inline bool ParseScriptHeader(const uint8_t *Buf, uint32_t Size, ScriptHeader &H
 #define SCRIPT_FIELD_OUTPUT   2
 #define SCRIPT_FIELD_COUNT    3 // register categories: Header (reserved) + Input + Output
 
+// ===== Global-function linking (Stage 3, Docs/Services/Script.md "Functions and Macros") =====
+//
+// A script that links global functions declares them as 16-byte reservation records - one per
+// function, in the block between the input defaults and the instructions. The spec fixes the
+// record SIZE (16) and its CONTENT ("the file a linked global function lives in, its
+// memory-space offset and its instruction-space offset", Script.md "File Blocks") but NOT its
+// byte layout. That layout is the spec's weakest point; it is OUR documented choice below and is
+// isolated here so pinning it later is a one-place change:
+//
+//   offset  size  field         meaning
+//   0       2     FileId        the function library SCR_XXX the function lives in
+//   2       2     MemOffset     byte offset of the body's memory space within the library file's
+//                               memory space (0 for a single-body library)
+//   4       2     InstrOffset   symbol offset (4-byte symbols) of the body's first instruction
+//                               within the library file's instruction space (0 for a single body)
+//   6       10    reserved      zero
+//
+// A function library is the script file format with the Function-library Properties flag (bit 2).
+struct ScriptFuncReservation {
+    uint16_t FileId;
+    uint16_t MemOffset;
+    uint16_t InstrOffset;
+};
+
+inline ScriptFuncReservation ParseFuncReservation(const uint8_t *P) {
+    ScriptFuncReservation R;
+    R.FileId      = ScriptRd16(P + 0);
+    R.MemOffset   = ScriptRd16(P + 2);
+    R.InstrOffset = ScriptRd16(P + 4);
+    return R;
+}
+
+// A Flow Call to a LINKED global function carries the reservation INDEX in its operand, not a
+// line number (Script.md: "Calls are precompiled: ... only the address is filled in at load").
+// A line target is always < SCRIPT_MAX_LINES (1024), so bit 15 is free to mark a global call and
+// the low 15 bits hold the reservation index. This operand encoding is the spec's OTHER weak
+// point; isolated in these three helpers so pinning it is a one-place change. (The app must emit
+// ScriptGlobalCallOperand(index) for a global call and a plain line for a local one.)
+#define SCRIPT_CALL_GLOBAL_BIT 0x8000u
+inline bool     ScriptIsGlobalCall(uint16_t Operand)      { return (Operand & SCRIPT_CALL_GLOBAL_BIT) != 0; }
+inline uint16_t ScriptGlobalCallIndex(uint16_t Operand)   { return (uint16_t)(Operand & ~SCRIPT_CALL_GLOBAL_BIT); }
+inline uint16_t ScriptGlobalCallOperand(uint16_t Index)   { return (uint16_t)(SCRIPT_CALL_GLOBAL_BIT | (Index & ~SCRIPT_CALL_GLOBAL_BIT)); }
+
+// Relocation arithmetic: the line (or symbol) a body-local target moves to once the body is
+// placed at `Base` in the combined program. Straight addition, but kept as a named helper so the
+// placement math lives in one place (host-tested).
+inline uint16_t ScriptRelocate(uint16_t Base, uint16_t Offset) { return (uint16_t)(Base + Offset); }
+
+// Lowest slot index whose bit is clear in a 64-slot occupancy word (0..63), or 64 when every
+// slot in the word is occupied. The host-testable core of the lowest-free-slot search; FreeSlot()
+// applies it word by word over the registry's occupancy (active OR load-failed).
+inline uint16_t ScriptLowestFreeBit(uint64_t Occupied) {
+    uint64_t Free = ~Occupied;
+    if (Free == 0) return 64;
+    return (uint16_t)__builtin_ctzll(Free);
+}
+
 // 4-byte stride alignment lives in Core/Functions/StrideOffsets.h (shared with the offset
 // tables below).
 
@@ -309,6 +366,13 @@ struct LoadedScript {
     uint16_t Slot = 0;
     uint16_t FileId = 0; // the stored SCR_XXX file this slot was loaded from
     uint8_t State = (uint8_t)ScriptState::Stopped;
+    // A refused load's slot keeps its reservation (Slot/FileId below) in this status; the
+    // explicit unload clears it (Docs/Services/Script.md "State": the load-failed state "keeps
+    // its reservation until an explicit unload clears it"). A link failure is detected before
+    // anything is allocated, so a load-failed slot holds only its slot record and no spaces.
+    // It is a non-numeric status (the spec gives the two load-related states no value), so it
+    // rides alongside the numeric `State` rather than overloading the wire enum.
+    bool LoadFailed = false;
     uint32_t Properties = 0;
 
     uint8_t InCount = 0, OutCount = 0, VarCount = 0, ConstCount = 0;
@@ -375,6 +439,7 @@ struct LoadedScript {
         Offsets = nullptr;
         Active = false;
         State = (uint8_t)ScriptState::Stopped;
+        LoadFailed = false;
         Properties = 0;
         InCount = OutCount = VarCount = ConstCount = 0;
         FuncCount = 0;
@@ -420,7 +485,8 @@ struct LoadedScript {
 };
 
 // One bit per slot, set for every slot that may hold a loaded script (a superset of the active
-// slots, so hot loops can skip the empty registry entries). MAX_SCRIPTS is a multiple of 64.
-static constexpr uint16_t KScriptMaskWords = MAX_SCRIPTS / 64;
+// slots, so hot loops can skip the empty registry entries). Rounded UP, so a MAX_SCRIPTS that is
+// not a multiple of 64 (the Valu's 16) still gets one word instead of a zero-length mask.
+static constexpr uint16_t KScriptMaskWords = (MAX_SCRIPTS + 63) / 64;
 
 #endif // USE_SCRIPTS

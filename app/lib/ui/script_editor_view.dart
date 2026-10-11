@@ -259,12 +259,13 @@ extension on _ScriptEditorPageState {
   }
 
   void _dropSymbolReferences(ScriptValueCategory category, int removed) {
-    final draft = _draft!;
     final type = category.symbolType;
     bool bad(ScriptSymbol s) => s.type == type && s.value >= removed;
-    for (final line in draft.lines) {
-      line.destinations.removeWhere(bad);
-      line.operands.removeWhere(bad);
+    for (final lines in _allLineLists) {
+      for (final line in lines) {
+        line.destinations.removeWhere(bad);
+        line.operands.removeWhere(bad);
+      }
     }
   }
 
@@ -297,7 +298,9 @@ extension on _ScriptEditorPageState {
   // ---------------------------------------------------------------------------
 
   Widget _instructionsCard(ScriptDraft draft) {
-    final depths = _ScriptEditorPageState._blockDepths(draft.lines);
+    final lines = _activeLines;
+    final depths = _ScriptEditorPageState._blockDepths(lines);
+    final scope = _activeFunction ?? -1;
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: Padding(
@@ -307,7 +310,7 @@ extension on _ScriptEditorPageState {
             const Text('Instructions',
                 style: TextStyle(color: kOrange, fontWeight: FontWeight.w600)),
             const SizedBox(width: 6),
-            Text('(${draft.lines.length} lines)',
+            Text('(${lines.length} lines)',
                 style: const TextStyle(color: Colors.white54, fontSize: 12)),
             const Spacer(),
             IconButton(
@@ -315,14 +318,31 @@ extension on _ScriptEditorPageState {
               icon: const Icon(Icons.add, size: 20),
               tooltip: 'Add line',
               onPressed: () => _rebuild(() {
-                draft.lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catMath, 0)));
+                lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catMath, 0)));
                 _dirty = true;
               }),
             ),
           ]),
+          // Scope: edit the main program or a function's body. The app lays a body out at
+          // assembly (Docs/Services/Script.md "Functions and Macros").
+          DropdownButton<int>(
+            isExpanded: true,
+            value: scope,
+            items: [
+              const DropdownMenuItem(value: -1, child: Text('Main program')),
+              for (var i = 0; i < draft.functions.length; i++)
+                DropdownMenuItem(
+                  value: i,
+                  enabled: draft.functions[i].hasBody,
+                  child: Text('${draft.functions[i].kind.label} · '
+                      '${draft.functions[i].name.isEmpty ? '#$i' : draft.functions[i].name}'),
+                ),
+            ],
+            onChanged: (v) => _rebuild(() => _activeFunction = (v ?? -1) < 0 ? null : v),
+          ),
           const SizedBox(height: 4),
           _legend(),
-          if (draft.lines.isEmpty)
+          if (lines.isEmpty)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 8),
               child: Text('No instructions yet. Add a line to start the program.',
@@ -333,15 +353,198 @@ extension on _ScriptEditorPageState {
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
               buildDefaultDragHandles: false,
-              itemCount: draft.lines.length,
+              itemCount: lines.length,
               onReorderItem: (oldIndex, newIndex) => _rebuild(() {
-                final line = draft.lines.removeAt(oldIndex);
-                draft.lines.insert(newIndex, line);
+                final line = lines.removeAt(oldIndex);
+                lines.insert(newIndex, line);
                 _dirty = true;
               }),
               itemBuilder: (context, i) => _lineEditor(draft, i, depths[i]),
             ),
         ]),
+      ),
+    );
+  }
+
+  /// The declared functions (local, macro and global). Local/macro bodies are edited through
+  /// the Instructions card's scope selector; a global function is a link declaration with no
+  /// body (it lives in a function-library file).
+  Widget _functionsCard(ScriptDraft draft) {
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            const Text('Functions & macros',
+                style: TextStyle(color: kOrange, fontWeight: FontWeight.w600)),
+            const SizedBox(width: 6),
+            Text('(${draft.functions.length})',
+                style: const TextStyle(color: Colors.white54, fontSize: 12)),
+            const Spacer(),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.add, size: 20),
+              tooltip: 'Add function',
+              onPressed: _addFunction,
+            ),
+          ]),
+          if (draft.functions.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: Text(
+                  'No functions. A local function or macro is expanded into a Flow Call plus a '
+                  'body; a global function is linked at load.',
+                  style: TextStyle(color: Colors.white54, fontSize: 12)),
+            ),
+          for (var i = 0; i < draft.functions.length; i++)
+            ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: Text(draft.functions[i].name.isEmpty
+                  ? '#$i'
+                  : draft.functions[i].name),
+              subtitle: Text(
+                draft.functions[i].isGlobal
+                    ? 'Global · ${scriptFileName(draft.functions[i].globalFileId)} · '
+                        'mem ${draft.functions[i].globalMemOffset}, '
+                        'instr ${draft.functions[i].globalInstrOffset}'
+                    : '${draft.functions[i].kind.label} · '
+                        '${draft.functions[i].body.length} lines',
+                style: const TextStyle(fontSize: 11, color: Colors.white54),
+              ),
+              trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                if (draft.functions[i].hasBody)
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    tooltip: 'Edit body',
+                    icon: const Icon(Icons.edit_note, size: 18),
+                    onPressed: () => _rebuild(() => _activeFunction = i),
+                  ),
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.remove_circle_outline,
+                      size: 18, color: Colors.redAccent),
+                  onPressed: () => _rebuild(() {
+                    draft.functions.removeAt(i);
+                    if (_activeFunction == i) _activeFunction = null;
+                    _dirty = true;
+                  }),
+                ),
+              ]),
+            ),
+        ]),
+      ),
+    );
+  }
+
+  Future<void> _addFunction() async {
+    final draft = _draft!;
+    final nameController = TextEditingController();
+    final fileController = TextEditingController();
+    final memController = TextEditingController(text: '0');
+    final instrController = TextEditingController(text: '0');
+    var kind = ScriptFunctionKind.local;
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setLocal) => AlertDialog(
+          title: const Text('Add function'),
+          content: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              TextField(
+                controller: nameController,
+                autofocus: true,
+                decoration: const InputDecoration(labelText: 'Name'),
+              ),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<ScriptFunctionKind>(
+                initialValue: kind,
+                decoration: const InputDecoration(labelText: 'Kind'),
+                items: [
+                  for (final k in ScriptFunctionKind.values)
+                    DropdownMenuItem(value: k, child: Text(k.label)),
+                ],
+                onChanged: (v) => setLocal(() => kind = v ?? ScriptFunctionKind.local),
+              ),
+              if (kind == ScriptFunctionKind.global) ...[
+                const SizedBox(height: 8),
+                TextField(
+                  controller: fileController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                      labelText: 'Library file id (SCR_XXX, decimal)'),
+                ),
+                TextField(
+                  controller: memController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(labelText: 'Memory-space offset'),
+                ),
+                TextField(
+                  controller: instrController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(labelText: 'Instruction-space offset'),
+                ),
+              ],
+            ]),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel')),
+            FilledButton(
+                onPressed: () => Navigator.pop(context, true), child: const Text('Add')),
+          ],
+        ),
+      ),
+    );
+    if (result != true || !mounted) return;
+    _rebuild(() {
+      draft.functions.add(ScriptFunction(
+        name: nameController.text.trim(),
+        kind: kind,
+        globalFileId: int.tryParse(fileController.text.trim()) ?? 0,
+        globalMemOffset: int.tryParse(memController.text.trim()) ?? 0,
+        globalInstrOffset: int.tryParse(instrController.text.trim()) ?? 0,
+      ));
+      if (kind != ScriptFunctionKind.global) {
+        _activeFunction = draft.functions.length - 1;
+      }
+      _dirty = true;
+    });
+  }
+
+  /// Picks the function a Flow `Call` targets. Returns the function index, or null when the
+  /// dialog is dismissed. Assembly turns the choice into the resolved address (a body line
+  /// index for a local/macro, a reservation reference for a global).
+  Future<int?> _pickCallTarget(ScriptDraft draft) {
+    return showDialog<int>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Call target'),
+        content: DialogBody(
+          maxWidth: 360,
+          height: 380,
+          child: ListView(
+            children: [
+              for (var i = 0; i < draft.functions.length; i++)
+                ListTile(
+                  dense: true,
+                  leading: const Icon(Icons.call_made, size: 18),
+                  title: Text(draft.functions[i].name.isEmpty
+                      ? '#$i'
+                      : draft.functions[i].name),
+                  subtitle: Text(draft.functions[i].kind.label,
+                      style: const TextStyle(fontSize: 11, color: Colors.white54)),
+                  onTap: () => Navigator.pop(context, i),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        ],
       ),
     );
   }

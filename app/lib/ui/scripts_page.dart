@@ -56,9 +56,6 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
   List<FileRecord> _available = [];
   int _revision = 0;
 
-  /// The file->slot mapping for the loads this page started (the device cannot report it).
-  final Map<int, int> _slotByFile = {};
-
   @override
   void initState() {
     super.initState();
@@ -90,28 +87,17 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
     }
   }
 
-  /// Resolves the loaded scripts. CID 0 lists the loaded *file ids*; the slot is the
-  /// addressable register instance. The app tracks the file->slot mapping for the loads it
-  /// starts (the block meta carries the function name, not the file id, so it cannot be
-  /// recovered from the device); an untracked slot falls back to the file==slot convention.
+  /// Resolves the loaded scripts from CID 0's streamed slot map (Stage 4): the map gives both
+  /// which slots are occupied and the device's actual slot count, so nothing assumes 256. The
+  /// slot is the addressable register instance; the file id is independent of it.
   Future<List<({int slot, int fileId, String metaName})>> _probeLoaded() async {
-    final fileIds = await _client.loadedScripts();
+    final map = await _client.slotMap();
     final out = <({int slot, int fileId, String metaName})>[];
-    final used = <int>{};
-    for (final fileId in fileIds) {
-      final slot = _slotByFile[fileId];
-      if (slot == null || used.contains(slot)) continue;
+    for (var slot = 0; slot < map.length; slot++) {
+      final fileId = map[slot];
+      if (fileId == scriptSlotEmpty) continue;
       final meta = await _client.readBlockMeta(slot);
-      if (meta == null) continue; // stale mapping
-      out.add((slot: slot, fileId: fileId, metaName: meta.name));
-      used.add(slot);
-    }
-    for (var slot = 0; slot < maxScripts && out.length < fileIds.length; slot++) {
-      if (used.contains(slot)) continue;
-      final meta = await _client.readBlockMeta(slot);
-      if (meta == null) continue;
-      out.add((slot: slot, fileId: slot, metaName: meta.name));
-      used.add(slot);
+      out.add((slot: slot, fileId: fileId, metaName: meta?.name ?? ''));
     }
     return out;
   }
@@ -184,7 +170,6 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
 
   Future<void> _unload(_LoadedScript s) async {
     final ok = await _client.unload(s.slot);
-    if (ok) _slotByFile.remove(s.fileId);
     if (!mounted) return;
     showSnack(context, ok ? 'Unloaded ${s.name}' : 'Unload failed');
     await _loadLoaded();
@@ -197,19 +182,24 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
       showSnack(context, 'Bad script file name');
       return;
     }
-    // The file id and the loaded slot are independent: pick the lowest free slot.
-    final probed = await _probeLoaded();
-    final used = {for (final p in probed) p.slot};
-    final free = [for (var i = 0; i < maxScripts; i++) if (!used.contains(i)) i];
+    // The file id and the loaded slot are independent: pick the lowest free slot from CID 0's
+    // slot map (the device reports which slots are empty).
+    final map = await _client.slotMap();
+    var free = -1;
+    for (var i = 0; i < map.length; i++) {
+      if (map[i] == scriptSlotEmpty) {
+        free = i;
+        break;
+      }
+    }
     if (!mounted) return;
-    if (free.isEmpty) {
+    if (free < 0) {
       showSnack(context, 'No free script slot');
       return;
     }
-    final loaded = await _client.load(id, free.first);
-    if (loaded) _slotByFile[id] = free.first;
+    final loaded = await _client.load(id, free);
     if (!mounted) return;
-    showSnack(context, loaded ? 'Loaded $name into slot ${free.first}' : 'Load failed');
+    showSnack(context, loaded ? 'Loaded $name into slot $free' : 'Load failed');
     await _loadLoaded();
   }
 

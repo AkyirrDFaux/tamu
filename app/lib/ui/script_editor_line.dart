@@ -9,7 +9,8 @@ extension on _ScriptEditorPageState {
   /// Adding destinations/operands is limited by the selected instruction. [depth] is the
   /// block nesting depth (the line is indented like formatted code).
   Widget _lineEditor(ScriptDraft draft, int index, int depth) {
-    final line = draft.lines[index];
+    final lines = _activeLines;
+    final line = lines[index];
     final def = line.def;
     // The instruction counter is a line index, so the active line is a direct match.
     final active = widget.loaded && _instructionCounter == index;
@@ -28,6 +29,24 @@ extension on _ScriptEditorPageState {
 
     Future<void> addOperand() async {
       final operandIndex = line.operands.length;
+      // A Flow Call's target is a function when the script declares any: offer the function
+      // table (the app resolves the address at assembly). Otherwise fall through to the
+      // ordinary symbol picker (a raw line-index target).
+      if (line.isCall && operandIndex == 0 && draft.functions.isNotEmpty) {
+        final target = await _pickCallTarget(draft);
+        if (target == null || !mounted) return;
+        _rebuild(() {
+          line.functionTarget = target;
+          final symbol = ScriptSymbol.predefine(preIndex, target);
+          if (line.operands.isEmpty) {
+            line.operands.add(symbol);
+          } else {
+            line.operands[0] = symbol;
+          }
+          _dirty = true;
+        });
+        return;
+      }
       final s = await _pickSymbol(draft,
           destination: false, def: def, operandIndex: operandIndex);
       if (s == null || !mounted) return;
@@ -111,7 +130,7 @@ extension on _ScriptEditorPageState {
           visualDensity: VisualDensity.compact,
           icon: const Icon(Icons.delete_outline, size: 18, color: Colors.redAccent),
           onPressed: () => _rebuild(() {
-            draft.lines.removeAt(index);
+            lines.removeAt(index);
             _dirty = true;
           }),
         ),

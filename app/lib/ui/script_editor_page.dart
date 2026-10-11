@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import '../core/script_client.dart';
 import '../core/script_draft.dart';
 import '../core/script_file.dart';
+import '../core/script_functions.dart';
 import '../core/script_instructions.dart';
 import '../core/storage_client.dart';
 import '../core/types.dart';
@@ -69,6 +70,30 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
   int _errorInstruction = 0;
 
   final _statusText = <ScriptValueCategory, List<String>>{};
+
+  /// Which program the instructions card is editing: null = the main program, otherwise an
+  /// index into [ScriptDraft.functions]. A local/macro function's body is edited like the main
+  /// program; the app lays it out at assembly.
+  int? _activeFunction;
+
+  /// The line list the instruction editor is working on (main program or a function body).
+  List<ScriptLine> get _activeLines {
+    final draft = _draft!;
+    final i = _activeFunction;
+    if (i == null || i < 0 || i >= draft.functions.length) return draft.lines;
+    return draft.functions[i].body;
+  }
+
+  /// All editable line lists (main + every body), for cross-references such as dropping a
+  /// removed value's symbols.
+  Iterable<List<ScriptLine>> get _allLineLists sync* {
+    final draft = _draft;
+    if (draft == null) return;
+    yield draft.lines;
+    for (final f in draft.functions) {
+      if (f.hasBody) yield f.body;
+    }
+  }
 
   String get _fileName => scriptFileName(widget.fileId);
 
@@ -245,7 +270,13 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
   /// matching and type/size correctness). Returns true when clean; otherwise records the
   /// problems, surfaces them, and returns false so the script is not assembled/uploaded.
   Future<bool> _ensureValid(ScriptDraft draft) async {
-    final errors = validateScriptLines(draft.lines, draft.validationContext);
+    final errors = [
+      ...validateScriptLines(draft.lines, draft.validationContext),
+      // Assembly-time function checks: a cyclic call graph or nesting past the call-depth cap
+      // (Docs/Services/Script.md "Functions and Macros").
+      ...validateScriptFunctions(
+          mainLines: draft.lines, functions: draft.functions),
+    ];
     setState(() => _errors = errors);
     if (errors.isEmpty) return true;
     if (!mounted) return false;
@@ -300,7 +331,11 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
   void _check() {
     final draft = _draft;
     if (draft == null) return;
-    final errors = validateScriptLines(draft.lines, draft.validationContext);
+    final errors = [
+      ...validateScriptLines(draft.lines, draft.validationContext),
+      ...validateScriptFunctions(
+          mainLines: draft.lines, functions: draft.functions),
+    ];
     setState(() => _errors = errors);
     showSnack(context, errors.isEmpty ? 'Script is valid' : '${errors.length} problem(s) found');
   }
@@ -385,6 +420,7 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
                 _valueSection(draft, ScriptValueCategory.output),
                 _valueSection(draft, ScriptValueCategory.variable),
                 _valueSection(draft, ScriptValueCategory.constant),
+                _functionsCard(draft),
                 _instructionsCard(draft),
                 _validityCard(),
               ],

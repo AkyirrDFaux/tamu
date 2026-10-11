@@ -6,6 +6,7 @@ library;
 import 'dart:typed_data';
 
 import 'script_file.dart';
+import 'script_functions.dart';
 import 'script_instructions.dart';
 import 'types.dart';
 
@@ -67,6 +68,11 @@ class ScriptDraft {
   /// Function reservations carried through unchanged (one 16-byte record per linked global
   /// function; the count is the file header's Function count).
   List<List<int>> functionReservations;
+
+  /// Declared functions (local/macro bodies + global parameters), kept in the file's app-only
+  /// UI blob and laid out at assembly (Docs/Services/Script.md "Functions and Macros").
+  final List<ScriptFunction> functions;
+
   List<ScriptLine> lines;
 
   ScriptDraft({
@@ -77,12 +83,14 @@ class ScriptDraft {
     List<ScriptDraftValue>? variables,
     List<ScriptDraftValue>? constants,
     List<List<int>>? functionReservations,
+    List<ScriptFunction>? functions,
     List<ScriptLine>? lines,
   })  : inputs = inputs ?? [],
         outputs = outputs ?? [],
         variables = variables ?? [],
         constants = constants ?? [],
         functionReservations = functionReservations ?? [],
+        functions = functions ?? [],
         lines = lines ?? [];
 
   factory ScriptDraft.fromFile(ScriptFileData f) {
@@ -121,6 +129,21 @@ class ScriptDraft {
         value: f.constantValue(i),
       ));
     }
+    final allLines = decodeScriptLines(f.instructions);
+    // With functions the instruction stream is the assembled program (main then bodies); the
+    // bodies are reconstructed from the UI-blob definitions, so only the main program's head is
+    // kept as the editable program.
+    final mainCount = f.functions.isEmpty
+        ? allLines.length
+        : (f.functionMainLineCount <= allLines.length
+            ? f.functionMainLineCount
+            : allLines.length);
+    final mainLines = allLines.sublist(0, mainCount);
+    for (final e in f.mainCallTargets.entries) {
+      if (e.key >= 0 && e.key < mainLines.length) {
+        mainLines[e.key].functionTarget = e.value;
+      }
+    }
     return ScriptDraft(
       functionName: f.functionName,
       properties: f.properties,
@@ -133,27 +156,53 @@ class ScriptDraft {
             o += scriptFunctionReservationSize)
           f.functionReservations.sublist(o, o + scriptFunctionReservationSize),
       ],
-      lines: decodeScriptLines(f.instructions),
+      functions: [for (final fn in f.functions) fn.copy()],
+      lines: mainLines,
     );
   }
 
-  Uint8List toImage() => ScriptFileBuilder(
-        properties: properties,
-        inputs: [for (final v in inputs) v.info],
-        outputs: [for (final v in outputs) v.info],
-        variables: [for (final v in variables) v.info],
-        constants: [for (final v in constants) v.info],
-        inputDefaults: [for (final v in inputs) v.value.toList()],
-        constantValues: [for (final v in constants) v.value.toList()],
-        instructions: encodeScriptLines(lines),
-        functionName: functionName,
-        inputNames: [for (final v in inputs) v.name],
-        outputNames: [for (final v in outputs) v.name],
-        variableNames: [for (final v in variables) v.name],
-        constantNames: [for (final v in constants) v.name],
-        inputSpecs: [for (final v in inputs) v.spec],
-        functionReservations: functionReservations,
-      ).build();
+  /// Assembles the program with its functions: the instruction stream (main + laid-out
+  /// bodies), the function reservations for referenced global functions, and any assembly
+  /// errors (a cycle or too-deep nesting).
+  ScriptAssembly assemble() =>
+      assembleScriptProgram(mainLines: lines, functions: functions);
+
+  /// Main-program `Call` line index -> function index, for the file's UI blob.
+  Map<int, int> get _mainCallTargets => {
+        for (var i = 0; i < lines.length; i++)
+          if (lines[i].isCall && lines[i].functionTarget != null)
+            i: lines[i].functionTarget!,
+      };
+
+  Uint8List toImage() {
+    final assembly = assemble();
+    // Assembly must be clean before upload - the editor refuses a cyclic/too-deep graph first.
+    // If it is not (a direct toImage caller skipped validation), fall back to the unassembled
+    // program rather than writing an empty instruction stream.
+    final hasFunctions = functions.isNotEmpty;
+    final assembled = hasFunctions && assembly.ok;
+    return ScriptFileBuilder(
+      properties: properties,
+      inputs: [for (final v in inputs) v.info],
+      outputs: [for (final v in outputs) v.info],
+      variables: [for (final v in variables) v.info],
+      constants: [for (final v in constants) v.info],
+      inputDefaults: [for (final v in inputs) v.value.toList()],
+      constantValues: [for (final v in constants) v.value.toList()],
+      instructions: encodeScriptLines(assembled ? assembly.lines : lines),
+      functionName: functionName,
+      inputNames: [for (final v in inputs) v.name],
+      outputNames: [for (final v in outputs) v.name],
+      variableNames: [for (final v in variables) v.name],
+      constantNames: [for (final v in constants) v.name],
+      inputSpecs: [for (final v in inputs) v.spec],
+      functionReservations:
+          assembled ? assembly.reservations : functionReservations,
+      functions: functions,
+      functionMainLineCount: assembled ? assembly.mainLineCount : 0,
+      mainCallTargets: assembled ? _mainCallTargets : const {},
+    ).build();
+  }
 
   ScriptValidationContext get validationContext => ScriptValidationContext(
         inputTypes: [for (final v in inputs) v.type.value],

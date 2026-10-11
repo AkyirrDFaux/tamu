@@ -277,14 +277,41 @@ class ScriptLine {
   ScriptSymbol instruction;
   final List<ScriptSymbol> operands;
 
+  /// Authoring-only annotation: when this is a Flow `Call` line, the index of the (local,
+  /// macro or global) function it calls in the draft's function table. It is not part of the
+  /// symbol stream - assembly rewrites the line's operand into the concrete address (a line
+  /// index for a local/macro body, a reservation reference for a global function). A `null`
+  /// target means a raw line-index Call, laid out by hand, which assembly leaves untouched
+  /// (Script.md "Functions and Macros": the app lays local functions out; a Call at each use
+  /// site).
+  int? functionTarget;
+
   ScriptLine({
     List<ScriptSymbol>? destinations,
     required this.instruction,
     List<ScriptSymbol>? operands,
+    this.functionTarget,
   })  : destinations = destinations ?? [],
         operands = operands ?? [];
 
   ScriptInstructionDef? get def => scriptInstructionFor(instruction);
+
+  /// True when this line is a Flow `Call` (Docs/Services/Script.md Flow opcodes: Call = 4).
+  bool get isCall => def?.category == catFlow && def?.op == 4;
+
+  /// A Flow `Call` to function [functionIndex] (assembly resolves the address).
+  static ScriptLine callTo(int functionIndex) => ScriptLine(
+        instruction: ScriptSymbol.instruction(catFlow, 4),
+        functionTarget: functionIndex,
+      );
+
+  /// A shallow copy (symbol lists shared; used by assembly to avoid mutating the draft).
+  ScriptLine clone() => ScriptLine(
+        destinations: List.of(destinations),
+        instruction: instruction,
+        operands: List.of(operands),
+        functionTarget: functionTarget,
+      );
 }
 
 /// Encodes lines to the symbol stream (each line ends with an Endline symbol).

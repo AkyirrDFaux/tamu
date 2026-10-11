@@ -10,6 +10,7 @@ library;
 
 import 'dart:typed_data';
 
+import 'script_instructions.dart';
 import 'types.dart';
 
 /// Number of loaded script slots. The Scripts range is four banked block types (0x3F4-0x3F7)
@@ -39,8 +40,15 @@ const int scriptHeaderSize = 24;
 /// memory-space offset and its instruction-space offset (Docs "File Blocks").
 const int scriptFunctionReservationSize = 16;
 
-/// Version byte of the UI-info blob (bumped when the layout changes).
+/// Version byte of the UI-info blob. Kept at 2: the firmware reads the function name from a v2
+/// blob (`UiBlob[0] == 2`), so the function block is a *trailing append* the firmware ignores,
+/// not a version bump. The v2 sections are self-delimiting, so any bytes after them are the
+/// function block.
 const int scriptUiInfoVersion = 2;
+
+/// The file id stored in a slot-map entry for an empty slot (Docs CID 0: "0xFFFF for an empty
+/// slot").
+const int scriptSlotEmpty = 0xFFFF;
 
 /// UI widget kinds an input can be rendered as (Docs/App/Service views/Script.md:
 /// "UI preview ... sliders, buttons, toggles").
@@ -171,6 +179,93 @@ int scriptPropertiesWithSlot(int properties, int slot) =>
 
 int _align4(int size) => (size + 3) & ~3;
 
+/// The kind of a script function (Docs/Services/Script.md "Functions and Macros"). Local and
+/// macro are laid out by the app into the instruction stream; global is linked at load.
+enum ScriptFunctionKind {
+  local,
+  macro,
+  global;
+
+  static const int _localCode = 0;
+  static const int _macroCode = 1;
+  static const int _globalCode = 2;
+
+  int get code => switch (this) {
+        local => _localCode,
+        macro => _macroCode,
+        global => _globalCode,
+      };
+
+  static ScriptFunctionKind fromCode(int code) => switch (code) {
+        _macroCode => macro,
+        _globalCode => global,
+        _ => local,
+      };
+
+  String get label => switch (this) {
+        local => 'Local',
+        macro => 'Macro',
+        global => 'Global',
+      };
+}
+
+/// One declared function (Docs/Services/Script.md "Functions and Macros").
+///
+/// A local/macro function owns its [body]; a global function carries the library [globalFileId]
+/// and the two offsets a function reservation records (its body lives in the library file).
+class ScriptFunction {
+  String name;
+  ScriptFunctionKind kind;
+  List<ScriptLine> body;
+  int globalFileId;
+  int globalMemOffset;
+  int globalInstrOffset;
+
+  ScriptFunction({
+    this.name = '',
+    this.kind = ScriptFunctionKind.local,
+    List<ScriptLine>? body,
+    this.globalFileId = 0,
+    this.globalMemOffset = 0,
+    this.globalInstrOffset = 0,
+  }) : body = body ?? [];
+
+  bool get isGlobal => kind == ScriptFunctionKind.global;
+
+  /// True when the app lays the body out (local or macro).
+  bool get hasBody => !isGlobal;
+
+  ScriptFunction copy() => ScriptFunction(
+        name: name,
+        kind: kind,
+        body: [for (final l in body) l.clone()],
+        globalFileId: globalFileId,
+        globalMemOffset: globalMemOffset,
+        globalInstrOffset: globalInstrOffset,
+      );
+}
+
+/// A 16-byte function-reservation record for a referenced global function.
+///
+/// Script.md does not pin the layout; the firmware (`Core/Services/ScriptDefs.h`
+/// `ParseFuncReservation`, the parallel Stage 3 change) does, and this matches it exactly:
+/// `FileId u16 | MemOffset u16 | InstrOffset u16 | 10 reserved (zero)`, little-endian.
+List<int> encodeFunctionReservation({
+  required int fileId,
+  required int memOffset,
+  required int instrOffset,
+}) {
+  final out = List<int>.filled(scriptFunctionReservationSize, 0);
+  out[0] = fileId & 0xFF;
+  out[1] = (fileId >> 8) & 0xFF;
+  out[2] = memOffset & 0xFF;
+  out[3] = (memOffset >> 8) & 0xFF;
+  out[4] = instrOffset & 0xFF;
+  out[5] = (instrOffset >> 8) & 0xFF;
+  // bytes 6..16 are reserved zero.
+  return out;
+}
+
 /// Data types offered for script IO/variable/constant declarations (the dictionary marker
 /// types are not valid here).
 const List<DataType> scriptValueTypes = [
@@ -263,6 +358,18 @@ class ScriptFileBuilder {
   /// header's Function count.
   final List<List<int>> functionReservations;
 
+  /// Declared functions, serialised into the app-only UI blob (local/macro bodies with their
+  /// `Call` targets + global-function parameters). Empty leaves the blob at its v2 shape.
+  final List<ScriptFunction> functions;
+
+  /// The line count of the main program at the head of the assembled instruction stream. Read
+  /// back to split main + bodies when [functions] is non-empty.
+  final int functionMainLineCount;
+
+  /// Main-program `Call` line index -> function index (the UI blob preserves which function a
+  /// main-program Call targets, since assembly rewrites the wire operand to a bare line index).
+  final Map<int, int> mainCallTargets;
+
   const ScriptFileBuilder({
     this.properties = 0,
     this.inputs = const [],
@@ -279,6 +386,9 @@ class ScriptFileBuilder {
     this.constantNames = const [],
     this.inputSpecs = const [],
     this.functionReservations = const [],
+    this.functions = const [],
+    this.functionMainLineCount = 0,
+    this.mainCallTargets = const {},
   });
 
   /// Packs the function reservations, one record per entry padded/clamped to 16 bytes.
@@ -328,6 +438,39 @@ class ScriptFileBuilder {
     for (var i = 0; i < inputs.length; i++) {
       final spec = i < inputSpecs.length ? inputSpecs[i] : const ScriptInputSpec();
       putNames(spec.options, spec.options.length);
+    }
+
+    // The function block (a trailing append after the v2 sections; the firmware ignores it).
+    // Omitted entirely when there are no functions, so an ordinary script's blob is unchanged.
+    if (functions.isNotEmpty) {
+      void putU16(int v) => out.addAll([v & 0xFF, (v >> 8) & 0xFF]);
+      void putU32(int v) => out.addAll(uint32ToBytes(v));
+      out.add(functions.length & 0xFF);
+      putU16(functionMainLineCount);
+      putU16(mainCallTargets.length);
+      final targetKeys = mainCallTargets.keys.toList()..sort();
+      for (final key in targetKeys) {
+        putU16(key);
+        putU16(mainCallTargets[key]!);
+      }
+      for (final f in functions) {
+        putString(f.name);
+        out.add(f.kind.code & 0xFF);
+        if (f.isGlobal) {
+          putU32(f.globalFileId);
+          putU32(f.globalMemOffset);
+          putU32(f.globalInstrOffset);
+        } else {
+          putU16(f.body.length);
+          for (final line in f.body) {
+            final target = line.functionTarget;
+            out.add(target == null || target > 0xFE ? 0xFF : target);
+            final bytes = encodeScriptLines([line]);
+            putU16(bytes.length);
+            out.addAll(bytes);
+          }
+        }
+      }
     }
     return Uint8List.fromList(out);
   }
@@ -392,6 +535,17 @@ class ScriptFileData {
 
   /// Function reservations: one 16-byte record per linked global function.
   final Uint8List functionReservations;
+
+  /// Declared functions decoded from the UI blob (empty for a v2 blob).
+  final List<ScriptFunction> functions;
+
+  /// The line count of the main program at the head of [instructions] (0 when no function
+  /// block is present).
+  final int functionMainLineCount;
+
+  /// Main-program `Call` line index -> function index.
+  final Map<int, int> mainCallTargets;
+
   final Uint8List instructions;
   final String functionName;
   final List<String> inputNames;
@@ -416,6 +570,9 @@ class ScriptFileData {
     required this.variableNames,
     required this.constantNames,
     required this.inputSpecs,
+    this.functions = const [],
+    this.functionMainLineCount = 0,
+    this.mainCallTargets = const {},
   });
 
   /// Number of declared functions (the header's Function count).
@@ -499,6 +656,9 @@ class ScriptFileData {
       variableNames: info.variableNames,
       constantNames: info.constantNames,
       inputSpecs: info.inputSpecs,
+      functions: info.functions,
+      functionMainLineCount: info.functionMainLineCount,
+      mainCallTargets: info.mainCallTargets,
     );
   }
 }
@@ -522,10 +682,24 @@ class _UiCursor {
     if (pos >= ui.length) return 0;
     return ui[pos++];
   }
+
+  int u16() {
+    if (pos + 2 > ui.length) return 0;
+    final v = ui[pos] | (ui[pos + 1] << 8);
+    pos += 2;
+    return v;
+  }
+
+  int u32() {
+    if (pos + 4 > ui.length) return 0;
+    final v = uint32FromBytes(ui, pos);
+    pos += 4;
+    return v;
+  }
 }
 
-/// Parses the whole UI-info blob in a single walk: function name, the four name lists and
-/// the per-input specifications.
+/// Parses the whole UI-info blob in a single walk: function name, the four name lists, the
+/// per-input specifications and (v3) the function block.
 ({
   String functionName,
   List<String> inputNames,
@@ -533,6 +707,9 @@ class _UiCursor {
   List<String> variableNames,
   List<String> constantNames,
   List<ScriptInputSpec> inputSpecs,
+  List<ScriptFunction> functions,
+  int functionMainLineCount,
+  Map<int, int> mainCallTargets,
 }) _parseUiInfo(List<int> ui, int inputCount) {
   if (ui.isEmpty) {
     return (
@@ -542,9 +719,13 @@ class _UiCursor {
       variableNames: const <String>[],
       constantNames: const <String>[],
       inputSpecs: const <ScriptInputSpec>[],
+      functions: const <ScriptFunction>[],
+      functionMainLineCount: 0,
+      mainCallTargets: const <int, int>{},
     );
   }
-  if (ui[0] != scriptUiInfoVersion) {
+  final version = ui[0];
+  if (version != scriptUiInfoVersion) {
     // Unknown/older blob (UI info v1 is no longer supported): the first byte was the
     // function-name length in the pre-versioned layout, so recover the name if we can.
     final n = ui[0];
@@ -556,6 +737,9 @@ class _UiCursor {
       variableNames: const <String>[],
       constantNames: const <String>[],
       inputSpecs: const <ScriptInputSpec>[],
+      functions: const <ScriptFunction>[],
+      functionMainLineCount: 0,
+      mainCallTargets: const <int, int>{},
     );
   }
 
@@ -585,17 +769,63 @@ class _UiCursor {
     specs.add(ScriptInputSpec(uiType: uiType, min: min, max: max, step: step));
   }
 
-  // enum option labels (UI info v2).
-  if (ui[0] == scriptUiInfoVersion) {
-    for (var i = 0; i < specs.length && c.pos < ui.length; i++) {
-      final n = c.u8();
-      final options = <String>[];
-      for (var k = 0; k < n && c.pos < ui.length; k++) {
-        options.add(c.string());
+  // enum option labels (UI info v2+).
+  for (var i = 0; i < specs.length && c.pos < ui.length; i++) {
+    final n = c.u8();
+    final options = <String>[];
+    for (var k = 0; k < n && c.pos < ui.length; k++) {
+      options.add(c.string());
+    }
+    if (options.isNotEmpty) specs[i] = specs[i].copyWith(options: options);
+  }
+
+  // Function block (a trailing append after the v2 sections; the firmware ignores it).
+  final functions = <ScriptFunction>[];
+  var mainLineCount = 0;
+  final mainCallTargets = <int, int>{};
+  if (c.pos < ui.length) {
+    final functionCount = c.u8();
+    if (functionCount > 0 && c.pos < ui.length) {
+      mainLineCount = c.u16();
+      final targetCount = c.u16();
+      for (var i = 0; i < targetCount && c.pos + 4 <= ui.length; i++) {
+        mainCallTargets[c.u16()] = c.u16();
       }
-      if (options.isNotEmpty) specs[i] = specs[i].copyWith(options: options);
+      for (var i = 0; i < functionCount && c.pos < ui.length; i++) {
+        final name = c.string();
+        final kind = ScriptFunctionKind.fromCode(c.u8());
+        if (kind == ScriptFunctionKind.global) {
+          final fileId = c.u32();
+          final memOffset = c.u32();
+          final instrOffset = c.u32();
+          functions.add(ScriptFunction(
+            name: name,
+            kind: kind,
+            globalFileId: fileId,
+            globalMemOffset: memOffset,
+            globalInstrOffset: instrOffset,
+          ));
+        } else {
+          final lineCount = c.u16();
+          final body = <ScriptLine>[];
+          for (var l = 0; l < lineCount && c.pos < ui.length; l++) {
+            final target = c.u8();
+            final len = c.u16();
+            if (c.pos + len > ui.length) break;
+            final decoded = decodeScriptLines(ui.sublist(c.pos, c.pos + len));
+            c.pos += len;
+            if (decoded.isNotEmpty) {
+              final line = decoded.first;
+              line.functionTarget = target == 0xFF ? null : target;
+              body.add(line);
+            }
+          }
+          functions.add(ScriptFunction(name: name, kind: kind, body: body));
+        }
+      }
     }
   }
+
   return (
     functionName: functionName,
     inputNames: inputNames,
@@ -603,5 +833,8 @@ class _UiCursor {
     variableNames: variableNames,
     constantNames: constantNames,
     inputSpecs: specs,
+    functions: functions,
+    functionMainLineCount: mainLineCount,
+    mainCallTargets: mainCallTargets,
   );
 }

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/render_dict.dart';
 import 'package:tamuapp/core/script_file.dart';
+import 'package:tamuapp/core/script_functions.dart';
 import 'package:tamuapp/core/types.dart';
 import 'package:tamuapp/core/script_instructions.dart';
 
@@ -25,9 +26,14 @@ Map<String, int> _firmwareDefines() {
     final file = File(path);
     if (!file.existsSync()) continue;
     final defines = <String, int>{};
-    final re = RegExp(r'^#define\s+(SCRIPT_\w+|MAX_SCRIPTS)\s+(-?\d+)', multiLine: true);
+    final re = RegExp(
+        r'^#define\s+(SCRIPT_\w+|MAX_SCRIPTS)\s+(0x[0-9A-Fa-f]+|-?\d+)[uUlL]*',
+        multiLine: true);
     for (final m in re.allMatches(file.readAsStringSync())) {
-      defines[m.group(1)!] = int.parse(m.group(2)!);
+      final raw = m.group(2)!;
+      defines[m.group(1)!] = raw.startsWith('0x')
+          ? int.parse(raw.substring(2), radix: 16)
+          : int.parse(raw);
     }
     return defines;
   }
@@ -248,6 +254,23 @@ void main() {
       expect(fw['MAX_SCRIPTS'], maxScripts);
       expect(fw['SCRIPT_HEADER_SIZE'], scriptHeaderSize);
       expect(fw['SCRIPT_FUNC_RESERVATION_SIZE'], scriptFunctionReservationSize);
+    });
+
+    test('the function-reservation + global-call encoding matches', () {
+      // The reservation record layout is the spec's weak point; both sides isolate it. Guard the
+      // byte positions the app writes against the record the firmware parses.
+      final r = encodeFunctionReservation(fileId: 0x1234, memOffset: 7, instrOffset: 9);
+      expect(r[0] | (r[1] << 8), 0x1234, reason: 'FileId at offset 0');
+      expect(r[2] | (r[3] << 8), 7, reason: 'MemOffset at offset 2');
+      expect(r[4] | (r[5] << 8), 9, reason: 'InstrOffset at offset 4');
+      // The global-call operand marks the reservation index with bit 15 (firmware
+      // SCRIPT_CALL_GLOBAL_BIT). The low bits hold the index.
+      expect(fw['SCRIPT_CALL_GLOBAL_BIT'], scriptCallGlobalBit);
+      expect(scriptGlobalCallOperandValue(5), scriptCallGlobalBit | 5);
+    });
+
+    test('the max call depth matches', () {
+      expect(fw['SCRIPT_MAX_CALL_DEPTH'], scriptMaxCallDepth);
     });
 
     test('the CID 3 report-record layout matches', () {

@@ -66,6 +66,9 @@ private:
     ValueInfo *AllocMetas(uint8_t Count);
     bool BuildProgram(LoadedScript *Script, const uint8_t *Instr, uint32_t InstrLen);
     bool Load(uint16_t FileId, uint16_t Slot);
+    // True when `Slot` holds a reservation: an active script or a load-failed one (whose slot
+    // record is kept until an explicit unload clears it). Occupied slots refuse a load.
+    bool Occupied(uint16_t Slot);
     // Emits the load-time error log entry (Stage 1: a load failure logs through the Log
     // service) and returns false, so every refusal in Load() logs exactly once.
     bool LoadRefused(uint32_t Code);

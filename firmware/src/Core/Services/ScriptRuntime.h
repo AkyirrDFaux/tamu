@@ -148,10 +148,25 @@ inline void ScriptService::SetState(LoadedScript *Script, uint8_t NewState) {
 }
 
 // Boot: load every stored script flagged Load-on-boot; run those flagged Run-on-load.
-// The first inactive loaded-script slot, or MAX_SCRIPTS when all are in use.
+// The lowest slot that holds no reservation (neither active nor load-failed), or MAX_SCRIPTS when
+// all are in use. The per-word search is the host-testable ScriptLowestFreeBit helper. Bounded by
+// MAX_SCRIPTS directly (not KScriptMaskWords, which is 0 when MAX_SCRIPTS is not a multiple of 64
+// - e.g. the Valu's 16 slots).
 inline uint16_t ScriptService::FreeSlot() {
-    for (uint16_t i = 0; i < MAX_SCRIPTS; i++)
-        if (!Registry[i].Active) return i;
+    for (uint16_t Base = 0; Base < MAX_SCRIPTS; Base = (uint16_t)(Base + 64)) {
+        uint64_t Occupied = 0;
+        for (uint16_t b = 0; b < 64; b++) {
+            uint16_t i = (uint16_t)(Base + b);
+            if (i >= MAX_SCRIPTS) break;
+            if (Registry[i].Active || Registry[i].LoadFailed) Occupied |= (uint64_t)1 << b;
+        }
+        uint16_t Bit = ScriptLowestFreeBit(Occupied);
+        if (Bit < 64) {
+            uint16_t i = (uint16_t)(Base + Bit);
+            if (i < MAX_SCRIPTS) return i;
+        }
+        if ((uint16_t)(MAX_SCRIPTS - Base) <= 64) break;
+    }
     return MAX_SCRIPTS;
 }
 
@@ -205,12 +220,20 @@ __attribute__((noinline)) inline bool ScriptService::Handle(const PacketFrame &F
             break;
         }
 
-        case 1: { // Load Script (file id uint16, loaded id uint8) -> Success
-            // Docs/Services/Script.md: the caller picks the loaded id (the slot); the reply is
-            // just Success, so it must have chosen it.
-            if (Bytes < 3) { RespondStatus(Frame, false); return true; }
+        case 1: { // Load Script (file id uint16 [, loaded id uint8]) -> Success
+            // Docs/Services/Script.md CID 1: the caller may pick the loaded id (the slot), which
+            // fails on an occupied slot; a load that names NO slot takes the lowest free one
+            // (payload is then just the 2-byte file id). The reply is only Success.
+            if (Bytes < 2) { RespondStatus(Frame, false); return true; }
             uint16_t FileId = (uint16_t)(Frame.Payload[0] | (Frame.Payload[1] << 8));
-            bool Ok = Load(FileId, Frame.Payload[2]);
+            uint16_t Slot;
+            if (Bytes >= 3) {
+                Slot = Frame.Payload[2];
+            } else {
+                Slot = FreeSlot();
+                if (Slot >= MAX_SCRIPTS) { RespondStatus(Frame, false); return true; }
+            }
+            bool Ok = Load(FileId, Slot);
             RespondStatus(Frame, Ok);
             break;
         }
@@ -218,7 +241,7 @@ __attribute__((noinline)) inline bool ScriptService::Handle(const PacketFrame &F
         case 2: { // Unload script (loaded ID)
             if (Bytes < 1) { RespondStatus(Frame, false); return true; }
             uint16_t Slot = Frame.Payload[0];
-            bool Ok = Active(Slot) != nullptr;
+            bool Ok = Occupied(Slot); // active or load-failed both hold a reservation
             if (Ok) Unload(Slot);
             RespondStatus(Frame, Ok);
             break;

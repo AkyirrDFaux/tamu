@@ -129,17 +129,38 @@ class ScriptClient {
 
   // ---- Management commands (0x0500-0x0507) ----
 
-  /// CID 0: the file ids of the currently loaded scripts (uint16 each). The payload
-  /// length carries the count - there is no count byte (Docs/Services/Script.md CID 0).
-  Future<List<int>> loadedScripts() async {
+  /// CID 0: the whole slot map, in slot order - one uint16 file id per slot, [scriptSlotEmpty]
+  /// (`0xFFFF`) for an empty slot. The payload length is what tells the app the device's slot
+  /// count, so nothing assumes 256 (Docs/Services/Script.md CID 0: "the stream length gives the
+  /// slot count"; Stage 4: the app learns which slots are empty here, with no separate
+  /// slot-request command). Returns an empty list when the device does not answer.
+  Future<List<int>> slotMap() async {
     final reply = await _request(ServiceType.script, 0);
     if (reply == null || reply.isEmpty) return const [];
     final count = reply.length ~/ 2;
-    final fileIds = <int>[];
-    for (var i = 0; i < count; i++) {
-      fileIds.add(reply[2 * i] | (reply[2 * i + 1] << 8));
-    }
-    return fileIds;
+    return [
+      for (var i = 0; i < count; i++) reply[2 * i] | (reply[2 * i + 1] << 8),
+    ];
+  }
+
+  /// CID 0: the file ids of the currently loaded scripts, in slot order (empty slots dropped).
+  /// Built from [slotMap], so the count follows the device rather than [maxScripts].
+  Future<List<int>> loadedScripts() async {
+    final map = await slotMap();
+    return [
+      for (final id in map)
+        if (id != scriptSlotEmpty) id,
+    ];
+  }
+
+  /// CID 0: the occupied slots as `slot -> file id`. The complement of this set within
+  /// [slotMap] is the free slots a load may take.
+  Future<Map<int, int>> loadedSlotMap() async {
+    final map = await slotMap();
+    return {
+      for (var slot = 0; slot < map.length; slot++)
+        if (map[slot] != scriptSlotEmpty) slot: map[slot],
+    };
   }
 
   /// CID 1: loads `SCR_<fileId>` (uint16) into slot `loadedId` (uint8). The device answers

@@ -199,6 +199,53 @@ int main() {
         CHECK(!ScriptActionToState(255, St));
     }
 
+    // --- Stage 3: function-reservation encoding (16 bytes; a documented choice, see the
+    //     header comment in ScriptDefs.h - the spec fixes the size and content, not the layout) ---
+    {
+        uint8_t R[SCRIPT_FUNC_RESERVATION_SIZE];
+        std::memset(R, 0xAA, sizeof(R)); // the reserved bytes are ignored
+        Put16(R + 0, 0x123); // file id
+        Put16(R + 2, 64);    // memory-space offset
+        Put16(R + 4, 7);     // instruction-space offset (in symbols)
+        ScriptFuncReservation Fr = ParseFuncReservation(R);
+        CHECK_EQ(Fr.FileId, 0x123);
+        CHECK_EQ(Fr.MemOffset, 64);
+        CHECK_EQ(Fr.InstrOffset, 7);
+    }
+
+    // --- Stage 3: global-call operand encoding (bit 15 marks a reservation index). A local/line
+    //     target is always < SCRIPT_MAX_LINES, so bit 15 never collides ---
+    {
+        CHECK_EQ(SCRIPT_CALL_GLOBAL_BIT, 0x8000u);
+        CHECK(!ScriptIsGlobalCall(0));
+        CHECK(!ScriptIsGlobalCall(SCRIPT_MAX_LINES - 1));
+        CHECK_EQ(ScriptGlobalCallOperand(0), 0x8000);
+        CHECK_EQ(ScriptGlobalCallOperand(3), 0x8003);
+        CHECK(ScriptIsGlobalCall(ScriptGlobalCallOperand(3)));
+        CHECK_EQ(ScriptGlobalCallIndex(ScriptGlobalCallOperand(3)), 3);
+        CHECK_EQ(ScriptGlobalCallIndex(ScriptGlobalCallOperand(0x7FFF)), 0x7FFF); // 15-bit index
+    }
+
+    // --- Stage 3: relocation arithmetic (a body placed at a base line/symbol) ---
+    {
+        const uint16_t Body0Base = 5, Body1Base = 8; // script is 5 lines; body 0 has 3 lines
+        CHECK_EQ(ScriptRelocate(Body0Base, 0), 5);   // body-local line 0 -> absolute 5
+        CHECK_EQ(ScriptRelocate(Body0Base, 2), 7);
+        CHECK_EQ(ScriptRelocate(Body1Base, 1), 9);
+        CHECK_EQ(ScriptRelocate(200, 4), 204);       // symbol bases relocate the same way
+    }
+
+    // --- Stage 4: lowest-free slot search (ScriptLowestFreeBit) ---
+    {
+        CHECK_EQ(ScriptLowestFreeBit(0), 0);                 // nothing occupied
+        CHECK_EQ(ScriptLowestFreeBit(0x1), 1);               // slot 0 taken
+        CHECK_EQ(ScriptLowestFreeBit(0x2), 0);               // slot 1 taken -> 0 is free
+        CHECK_EQ(ScriptLowestFreeBit(0x7), 3);               // 0,1,2 taken
+        CHECK_EQ(ScriptLowestFreeBit(~(uint64_t)0), 64);     // all 64 occupied
+        CHECK_EQ(ScriptLowestFreeBit((uint64_t)1 << 63), 0);
+        CHECK_EQ(ScriptLowestFreeBit(~((uint64_t)1 << 63)), 63); // only slot 63 free
+    }
+
     std::printf("== script tests: %d checks, %d failures ==\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }
