@@ -188,39 +188,55 @@ final List<HilTest> moduleTests = <HilTest>[
     body: (ctx) async {
       for (final d in ctx.devices(_display)) {
         final reg = RegisterClient(deviceId: d.id);
-        final before =
-            await reg.readBlockField(BlockType.vysiDisplay.value, 0, 3, 0);
-        expect(before, isNotNull);
-        final original = before!.value;
+        List<int>? originalValue;
+        var done = false;
+        try {
+          final before =
+              await reg.readBlockField(BlockType.vysiDisplay.value, 0, 3, 0);
+          expect(before, isNotNull);
+          final original = before!.value;
+          originalValue = original;
 
-        // A name that names no file must be refused, and must not become the
-        // stored value (the trigger validates before committing).
-        final rejected = await reg.writeBlockField(
-            BlockType.vysiDisplay.value,
-            0,
-            3,
-            0,
-            ValueInfo(type: DataType.filename.value, size: 8),
-            _pad8('HILNONE').codeUnits);
-        ctx.note('${d.label}: unloadable layout name -> '
-            '${rejected == null ? 'rejected' : 'accepted'}');
-        expect(rejected, isNull,
-            reason: '${d.label} rejects a layout file it cannot load');
-        final after =
-            await reg.readBlockField(BlockType.vysiDisplay.value, 0, 3, 0);
-        expect(after!.value, equals(original),
-            reason: 'the stored name still matches the layout in use');
+          // A name that names no file must be refused, and must not become the
+          // stored value (the trigger validates before committing).
+          final rejected = await reg.writeBlockField(
+              BlockType.vysiDisplay.value,
+              0,
+              3,
+              0,
+              ValueInfo(type: DataType.filename.value, size: 8),
+              _pad8('HILNONE').codeUnits);
+          ctx.note('${d.label}: unloadable layout name -> '
+              '${rejected == null ? 'rejected' : 'accepted'}');
+          expect(rejected, isNull,
+              reason: '${d.label} rejects a layout file it cannot load');
+          final after =
+              await reg.readBlockField(BlockType.vysiDisplay.value, 0, 3, 0);
+          expect(after!.value, equals(original),
+              reason: 'the stored name still matches the layout in use');
 
-        // Put the original name back (it loads, so it is accepted).
-        final restored = await reg.writeBlockField(
-            BlockType.vysiDisplay.value,
-            0,
-            3,
-            0,
-            ValueInfo(type: DataType.filename.value, size: 8),
-            original);
-        expect(restored, isNotNull,
-            reason: '${d.label} restores the original layout');
+          // Put the original name back (it loads, so it is accepted).
+          final restored = await reg.writeBlockField(
+              BlockType.vysiDisplay.value,
+              0,
+              3,
+              0,
+              ValueInfo(type: DataType.filename.value, size: 8),
+              original);
+          expect(restored, isNotNull,
+              reason: '${d.label} restores the original layout');
+          done = true;
+        } finally {
+          if (!done && originalValue != null) {
+            await reg.writeBlockField(
+                BlockType.vysiDisplay.value,
+                0,
+                3,
+                0,
+                ValueInfo(type: DataType.filename.value, size: 8),
+                originalValue);
+          }
+        }
       }
     },
   ),
@@ -267,45 +283,64 @@ final List<HilTest> moduleTests = <HilTest>[
     body: (ctx) async {
       for (final d in ctx.devices(_pwm)) {
         final reg = RegisterClient(deviceId: d.id);
-        final freqBefore =
-            await reg.readBlockField(BlockType.pwm.value, 0, 0, 0);
-        final dutyBefore =
-            await reg.readBlockField(BlockType.pwm.value, 0, 1, 0);
-        expect(freqBefore != null && dutyBefore != null, isTrue);
-        final freqOriginal = freqBefore!.value;
-        final dutyOriginal = dutyBefore!.value;
+        List<int>? freqOriginalV;
+        List<int>? dutyOriginalV;
+        var done = false;
+        try {
+          final freqBefore =
+              await reg.readBlockField(BlockType.pwm.value, 0, 0, 0);
+          final dutyBefore =
+              await reg.readBlockField(BlockType.pwm.value, 0, 1, 0);
+          expect(freqBefore != null && dutyBefore != null, isTrue);
+          final freqOriginal = freqBefore!.value;
+          final dutyOriginal = dutyBefore!.value;
+          freqOriginalV = freqOriginal;
+          dutyOriginalV = dutyOriginal;
 
-        // Probe both triggers with a safe value, then read it back.
-        const probeFreq = 20000;
-        const probeDuty = 42;
-        expect(
-            await reg.writeBlockField(BlockType.pwm.value, 0, 0, 0,
-                ValueInfo(type: DataType.uint32.value, size: 4), _u32(probeFreq)),
-            isNotNull,
-            reason: '${d.label} accepts a frequency write');
-        expect(
-            await reg.writeBlockField(BlockType.pwm.value, 0, 1, 0,
-                ValueInfo(type: DataType.uint32.value, size: 4), _u32(probeDuty)),
-            isNotNull,
-            reason: '${d.label} accepts a duty write');
+          // Probe both triggers with a safe value, then read it back.
+          const probeFreq = 20000;
+          const probeDuty = 42;
+          expect(
+              await reg.writeBlockField(BlockType.pwm.value, 0, 0, 0,
+                  ValueInfo(type: DataType.uint32.value, size: 4), _u32(probeFreq)),
+              isNotNull,
+              reason: '${d.label} accepts a frequency write');
+          expect(
+              await reg.writeBlockField(BlockType.pwm.value, 0, 1, 0,
+                  ValueInfo(type: DataType.uint32.value, size: 4), _u32(probeDuty)),
+              isNotNull,
+              reason: '${d.label} accepts a duty write');
 
-        final freqRead = await reg.readBlockField(BlockType.pwm.value, 0, 0, 0);
-        final dutyRead = await reg.readBlockField(BlockType.pwm.value, 0, 1, 0);
-        expect(uint32FromBytes(freqRead!.value), probeFreq);
-        expect(uint32FromBytes(dutyRead!.value), probeDuty);
+          final freqRead = await reg.readBlockField(BlockType.pwm.value, 0, 0, 0);
+          final dutyRead = await reg.readBlockField(BlockType.pwm.value, 0, 1, 0);
+          expect(uint32FromBytes(freqRead!.value), probeFreq);
+          expect(uint32FromBytes(dutyRead!.value), probeDuty);
 
-        // Restore the values found (the fan is an actuator).
-        await reg.writeBlockField(BlockType.pwm.value, 0, 0, 0,
-            ValueInfo(type: DataType.uint32.value, size: 4), freqOriginal);
-        await reg.writeBlockField(BlockType.pwm.value, 0, 1, 0,
-            ValueInfo(type: DataType.uint32.value, size: 4), dutyOriginal);
-        expect(uint32FromBytes(
-                (await reg.readBlockField(BlockType.pwm.value, 0, 0, 0))!.value),
-            uint32FromBytes(freqOriginal));
-        expect(uint32FromBytes(
-                (await reg.readBlockField(BlockType.pwm.value, 0, 1, 0))!.value),
-            uint32FromBytes(dutyOriginal));
-        ctx.note('${d.label}: PWM probed $probeFreq Hz/$probeDuty % and restored');
+          // Restore the values found (the fan is an actuator).
+          await reg.writeBlockField(BlockType.pwm.value, 0, 0, 0,
+              ValueInfo(type: DataType.uint32.value, size: 4), freqOriginal);
+          await reg.writeBlockField(BlockType.pwm.value, 0, 1, 0,
+              ValueInfo(type: DataType.uint32.value, size: 4), dutyOriginal);
+          expect(uint32FromBytes(
+                  (await reg.readBlockField(BlockType.pwm.value, 0, 0, 0))!.value),
+              uint32FromBytes(freqOriginal));
+          expect(uint32FromBytes(
+                  (await reg.readBlockField(BlockType.pwm.value, 0, 1, 0))!.value),
+              uint32FromBytes(dutyOriginal));
+          ctx.note('${d.label}: PWM probed $probeFreq Hz/$probeDuty % and restored');
+          done = true;
+        } finally {
+          if (!done) {
+            if (freqOriginalV != null) {
+              await reg.writeBlockField(BlockType.pwm.value, 0, 0, 0,
+                  ValueInfo(type: DataType.uint32.value, size: 4), freqOriginalV);
+            }
+            if (dutyOriginalV != null) {
+              await reg.writeBlockField(BlockType.pwm.value, 0, 1, 0,
+                  ValueInfo(type: DataType.uint32.value, size: 4), dutyOriginalV);
+            }
+          }
+        }
       }
     },
   ),
@@ -342,30 +377,41 @@ final List<HilTest> moduleTests = <HilTest>[
     body: (ctx) async {
       for (final d in ctx.devices(_led)) {
         final reg = RegisterClient(deviceId: d.id);
-        final fields = await reg.enumerateFieldIndexes(BlockType.led.value, 0);
-        expect(fields, equals([0]), reason: '${d.label} LED has one field');
-        final before = await reg.readBlockField(BlockType.led.value, 0, 0, 0);
-        expect(before, isNotNull);
-        expect(before!.meta.dataType, DataType.bool_);
-        expect(before.meta.flags & ValueFlags.trigger, isNot(0));
-        expect(before.meta.readOnly, isFalse);
-        final original = before.value;
-        final probe = (original.isNotEmpty && original.first != 0) ? 0 : 1;
+        List<int>? originalValue;
+        var done = false;
+        try {
+          final fields = await reg.enumerateFieldIndexes(BlockType.led.value, 0);
+          expect(fields, equals([0]), reason: '${d.label} LED has one field');
+          final before = await reg.readBlockField(BlockType.led.value, 0, 0, 0);
+          expect(before, isNotNull);
+          expect(before!.meta.dataType, DataType.bool_);
+          expect(before.meta.flags & ValueFlags.trigger, isNot(0));
+          expect(before.meta.readOnly, isFalse);
+          final original = before.value;
+          originalValue = original;
+          final probe = (original.isNotEmpty && original.first != 0) ? 0 : 1;
 
-        expect(
+          expect(
+              await reg.writeBlockField(BlockType.led.value, 0, 0, 0,
+                  ValueInfo(type: DataType.bool_.value, size: 1), [probe]),
+              isNotNull,
+              reason: '${d.label} accepts an LED state write');
+          final lit = await reg.readBlockField(BlockType.led.value, 0, 0, 0);
+          expect(lit!.value.first, probe);
+
+          // Restore what was found.
+          await reg.writeBlockField(BlockType.led.value, 0, 0, 0,
+              ValueInfo(type: DataType.bool_.value, size: 1), original);
+          final restored = await reg.readBlockField(BlockType.led.value, 0, 0, 0);
+          expect(restored!.value, equals(original));
+          ctx.note('${d.label}: LED toggled to $probe and restored');
+          done = true;
+        } finally {
+          if (!done && originalValue != null) {
             await reg.writeBlockField(BlockType.led.value, 0, 0, 0,
-                ValueInfo(type: DataType.bool_.value, size: 1), [probe]),
-            isNotNull,
-            reason: '${d.label} accepts an LED state write');
-        final lit = await reg.readBlockField(BlockType.led.value, 0, 0, 0);
-        expect(lit!.value.first, probe);
-
-        // Restore what was found.
-        await reg.writeBlockField(BlockType.led.value, 0, 0, 0,
-            ValueInfo(type: DataType.bool_.value, size: 1), original);
-        final restored = await reg.readBlockField(BlockType.led.value, 0, 0, 0);
-        expect(restored!.value, equals(original));
-        ctx.note('${d.label}: LED toggled to $probe and restored');
+                ValueInfo(type: DataType.bool_.value, size: 1), originalValue);
+          }
+        }
       }
     },
   ),
@@ -377,40 +423,51 @@ final List<HilTest> moduleTests = <HilTest>[
     body: (ctx) async {
       for (final d in ctx.devices(_ledButton)) {
         final reg = RegisterClient(deviceId: d.id);
-        final fields =
-            await reg.enumerateFieldIndexes(BlockType.ledButton.value, 0);
-        expect(fields, equals([0, 3]),
-            reason: '${d.label} LED/Button exposes Button (0) and LEDState (3)');
+        List<int>? originalValue;
+        var done = false;
+        try {
+          final fields =
+              await reg.enumerateFieldIndexes(BlockType.ledButton.value, 0);
+          expect(fields, equals([0, 3]),
+              reason: '${d.label} LED/Button exposes Button (0) and LEDState (3)');
 
-        final button =
-            await reg.readBlockField(BlockType.ledButton.value, 0, 0, 0);
-        expect(button!.meta.dataType, DataType.bool_);
-        expect(button.meta.readOnly, isTrue,
-            reason: '${d.label} button raw state is read-only');
+          final button =
+              await reg.readBlockField(BlockType.ledButton.value, 0, 0, 0);
+          expect(button!.meta.dataType, DataType.bool_);
+          expect(button.meta.readOnly, isTrue,
+              reason: '${d.label} button raw state is read-only');
 
-        final ledState =
-            await reg.readBlockField(BlockType.ledButton.value, 0, 3, 0);
-        expect(ledState!.meta.dataType, DataType.bool_);
-        expect(ledState.meta.flags & ValueFlags.trigger, isNot(0),
-            reason: '${d.label} LEDState is a trigger field');
-        expect(ledState.meta.readOnly, isFalse);
+          final ledState =
+              await reg.readBlockField(BlockType.ledButton.value, 0, 3, 0);
+          expect(ledState!.meta.dataType, DataType.bool_);
+          expect(ledState.meta.flags & ValueFlags.trigger, isNot(0),
+              reason: '${d.label} LEDState is a trigger field');
+          expect(ledState.meta.readOnly, isFalse);
 
-        final original = ledState.value;
-        final probe = (original.isNotEmpty && original.first != 0) ? 0 : 1;
-        expect(
+          final original = ledState.value;
+          originalValue = original;
+          final probe = (original.isNotEmpty && original.first != 0) ? 0 : 1;
+          expect(
+              await reg.writeBlockField(BlockType.ledButton.value, 0, 3, 0,
+                  ValueInfo(type: DataType.bool_.value, size: 1), [probe]),
+              isNotNull,
+              reason: '${d.label} accepts an LEDState write');
+          expect(
+              (await reg.readBlockField(BlockType.ledButton.value, 0, 3, 0))!
+                  .value
+                  .first,
+              probe);
+          // Restore what was found.
+          await reg.writeBlockField(BlockType.ledButton.value, 0, 3, 0,
+              ValueInfo(type: DataType.bool_.value, size: 1), original);
+          ctx.note('${d.label}: LED/Button LEDState toggled to $probe and restored');
+          done = true;
+        } finally {
+          if (!done && originalValue != null) {
             await reg.writeBlockField(BlockType.ledButton.value, 0, 3, 0,
-                ValueInfo(type: DataType.bool_.value, size: 1), [probe]),
-            isNotNull,
-            reason: '${d.label} accepts an LEDState write');
-        expect(
-            (await reg.readBlockField(BlockType.ledButton.value, 0, 3, 0))!
-                .value
-                .first,
-            probe);
-        // Restore what was found.
-        await reg.writeBlockField(BlockType.ledButton.value, 0, 3, 0,
-            ValueInfo(type: DataType.bool_.value, size: 1), original);
-        ctx.note('${d.label}: LED/Button LEDState toggled to $probe and restored');
+                ValueInfo(type: DataType.bool_.value, size: 1), originalValue);
+          }
+        }
       }
     },
   ),
@@ -484,33 +541,44 @@ final List<HilTest> moduleTests = <HilTest>[
     body: (ctx) async {
       for (final d in ctx.devices(_resistive)) {
         final reg = RegisterClient(deviceId: d.id);
-        final before = await reg.readBlockField(
-            BlockType.resistiveMeasure.value, 0, 2, 0);
-        expect(before, isNotNull);
-        final original = before!.value;
+        List<int>? originalValue;
+        var done = false;
+        try {
+          final before = await reg.readBlockField(
+              BlockType.resistiveMeasure.value, 0, 2, 0);
+          expect(before, isNotNull);
+          final original = before!.value;
+          originalValue = original;
 
-        expect(
-            await reg.writeBlockField(
-                BlockType.resistiveMeasure.value,
-                0,
-                2,
-                0,
-                ValueInfo(type: DataType.number.value, size: 4),
-                numberToBytes(0.5)),
-            isNotNull,
-            reason: '${d.label} accepts a filter coefficient write');
-        final read = await reg.readBlockField(
-            BlockType.resistiveMeasure.value, 0, 2, 0);
-        expect(numberFromBytes(read!.value), closeTo(0.5, 0.01));
+          expect(
+              await reg.writeBlockField(
+                  BlockType.resistiveMeasure.value,
+                  0,
+                  2,
+                  0,
+                  ValueInfo(type: DataType.number.value, size: 4),
+                  numberToBytes(0.5)),
+              isNotNull,
+              reason: '${d.label} accepts a filter coefficient write');
+          final read = await reg.readBlockField(
+              BlockType.resistiveMeasure.value, 0, 2, 0);
+          expect(numberFromBytes(read!.value), closeTo(0.5, 0.01));
 
-        // Restore the value found.
-        await reg.writeBlockField(BlockType.resistiveMeasure.value, 0, 2, 0,
-            ValueInfo(type: DataType.number.value, size: 4), original);
-        final restored = await reg.readBlockField(
-            BlockType.resistiveMeasure.value, 0, 2, 0);
-        expect(numberFromBytes(restored!.value),
-            closeTo(numberFromBytes(original), 0.01));
-        ctx.note('${d.label}: filter coefficient probed 0.5 and restored');
+          // Restore the value found.
+          await reg.writeBlockField(BlockType.resistiveMeasure.value, 0, 2, 0,
+              ValueInfo(type: DataType.number.value, size: 4), original);
+          final restored = await reg.readBlockField(
+              BlockType.resistiveMeasure.value, 0, 2, 0);
+          expect(numberFromBytes(restored!.value),
+              closeTo(numberFromBytes(original), 0.01));
+          ctx.note('${d.label}: filter coefficient probed 0.5 and restored');
+          done = true;
+        } finally {
+          if (!done && originalValue != null) {
+            await reg.writeBlockField(BlockType.resistiveMeasure.value, 0, 2, 0,
+                ValueInfo(type: DataType.number.value, size: 4), originalValue);
+          }
+        }
       }
     },
   ),
@@ -576,28 +644,39 @@ final List<HilTest> moduleTests = <HilTest>[
     body: (ctx) async {
       for (final d in ctx.devices(_accGyr)) {
         final reg = RegisterClient(deviceId: d.id);
-        final before =
-            await reg.readBlockField(BlockType.accGyr.value, 0, 0, 0);
-        expect(before, isNotNull);
-        final original = before!.value.first;
-        final probe = (original + 1) % 8; // a valid ODR index
+        int? originalValue;
+        var done = false;
+        try {
+          final before =
+              await reg.readBlockField(BlockType.accGyr.value, 0, 0, 0);
+          expect(before, isNotNull);
+          final original = before!.value.first;
+          originalValue = original;
+          final probe = (original + 1) % 8; // a valid ODR index
 
-        expect(
+          expect(
+              await reg.writeBlockField(BlockType.accGyr.value, 0, 0, 0,
+                  ValueInfo(type: DataType.enum_.value, size: 1), [probe]),
+              isNotNull,
+              reason: '${d.label} accepts an ODR write');
+          final read = await reg.readBlockField(BlockType.accGyr.value, 0, 0, 0);
+          expect(read!.value.first, probe,
+              reason: 'the stored ODR matches the applied one');
+
+          // Restore the index found.
+          await reg.writeBlockField(BlockType.accGyr.value, 0, 0, 0,
+              ValueInfo(type: DataType.enum_.value, size: 1), [original]);
+          final restored =
+              await reg.readBlockField(BlockType.accGyr.value, 0, 0, 0);
+          expect(restored!.value.first, original);
+          ctx.note('${d.label}: ODR probed index $probe and restored $original');
+          done = true;
+        } finally {
+          if (!done && originalValue != null) {
             await reg.writeBlockField(BlockType.accGyr.value, 0, 0, 0,
-                ValueInfo(type: DataType.enum_.value, size: 1), [probe]),
-            isNotNull,
-            reason: '${d.label} accepts an ODR write');
-        final read = await reg.readBlockField(BlockType.accGyr.value, 0, 0, 0);
-        expect(read!.value.first, probe,
-            reason: 'the stored ODR matches the applied one');
-
-        // Restore the index found.
-        await reg.writeBlockField(BlockType.accGyr.value, 0, 0, 0,
-            ValueInfo(type: DataType.enum_.value, size: 1), [original]);
-        final restored =
-            await reg.readBlockField(BlockType.accGyr.value, 0, 0, 0);
-        expect(restored!.value.first, original);
-        ctx.note('${d.label}: ODR probed index $probe and restored $original');
+                ValueInfo(type: DataType.enum_.value, size: 1), [originalValue]);
+          }
+        }
       }
     },
   ),
