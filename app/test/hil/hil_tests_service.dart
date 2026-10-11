@@ -3,7 +3,7 @@
 /// Ported from the legacy `hil_*` / `hardware_*` / `dyn_flow_*` files; each test
 /// carries the capability bits its service needs, so an unmet prerequisite is a
 /// skip. Every test isolates its scratch state (a scratch file, a scratch script
-/// slot, a scratch dynamic block index) and restores it, so the example setup
+/// slot, a scratch dynamic block index) and restores it, so the deployed scenario
 /// (scripts 0-4, dynamic blocks 0-2) is never left disturbed.
 library;
 
@@ -51,10 +51,10 @@ const HilPrereq _script = HilPrereq(capabilities: [Capability.scripts]);
 const HilPrereq _subscription =
     HilPrereq(capabilities: [Capability.subscriptionRequest]);
 
-/// Scratch script slots, clear of the example setup's slots (0-4).
+/// Scratch script slots, clear of the deployed scenario's slots (0-4).
 const int _scrSlotBase = 40;
 
-/// A scratch dynamic block index, clear of the example setup's blocks (0-2).
+/// A scratch dynamic block index, clear of the deployed scenario's blocks (0-2).
 const int _scrDyn = 32;
 
 /// The two hex digits the `.DT_XX` / `.DV_XX` files use for a global index.
@@ -139,7 +139,7 @@ final List<HilTest> serviceTests = <HilTest>[
       for (final d in ctx.devices(_dynamic)) {
         final dyn = RegisterClient(deviceId: d.id);
 
-        // Scratch block only - never the example setup's blocks.
+        // Scratch block only - never the deployed scenario's blocks.
         await dyn.deleteDynamic(block: _scrDyn);
 
         expect(await dyn.createDynamicBlock('DPROBE', index: _scrDyn), isNotNull,
@@ -429,7 +429,7 @@ final List<HilTest> serviceTests = <HilTest>[
 
         // Each requester-table save writes .SUBREQ through a temp+rename. Use a
         // scratch entry (its TRID is allocated by the client) and cancel it after,
-        // so the example setup's subscriptions are left untouched.
+        // so the deployed scenario's subscriptions are left untouched.
         final before =
             (await subs.getRequesterSubscriptions()).map((s) => s.trid).toSet();
 
@@ -518,7 +518,7 @@ final List<HilTest> serviceTests = <HilTest>[
         final slot = _scrSlotBase;
         final name = scriptFileName(slot);
 
-        // Clean scratch slot only (the example setup owns slots 0-4).
+        // Clean scratch slot only (the deployed scenario owns slots 0-4).
         if (await c.readState(slot) != null) await c.unload(slot);
         await st.deleteFile(name);
 
@@ -1001,10 +1001,10 @@ final List<HilTest> serviceTests = <HilTest>[
         final st = StorageClient(deviceId: d.id);
         final slot = _scrSlotBase + 4;
         final fileId = slot; // _uploadScript loads with load(slot, slot).
-        final emptySlot = _scrSlotBase + 5; // no example-setup or scratch script here.
+        final emptySlot = _scrSlotBase + 5; // no deployed-scenario or scratch script here.
         final name = scriptFileName(fileId);
 
-        // Clean the scratch slot only (the example setup owns slots 0-4).
+        // Clean the scratch slot only (the deployed scenario owns slots 0-4).
         if (await c.readState(slot) != null) await c.unload(slot);
         await st.deleteFile(name);
 
