@@ -69,8 +69,14 @@ class LiveDevice {
 
   /// Resolves a semantic subscription address to a live BlockInfo, or null.
   int? resolveRef(BackupBlockRef ref) {
-    final block = blocks.where((b) => b.type == ref.typeIndex).firstOrNull ??
-        blocks.where((b) => b.typeWord == ref.block).firstOrNull;
+    var block = blocks.where((b) => b.type == ref.typeIndex).firstOrNull;
+    // A ref may name a banked block by its service word (a capture made before the banked
+    // types, or a descriptor carrying the app's marker): match the word AND the instance, so
+    // two blocks of one kind - the two eyes - never swap.
+    block ??= blocks
+        .where((b) => b.typeWord == ref.block && b.instance == ref.instance)
+        .firstOrNull;
+    block ??= blocks.where((b) => b.typeWord == ref.block).firstOrNull;
     if (block == null) return null;
     LiveEntry? entry;
     for (final e in block.entries) {
@@ -227,8 +233,15 @@ class RestorePlan {
           if (target.capabilities & Capability.subscriptionRequest == 0) {
             item.issue = 'No subscription support';
           } else {
+            // A requester entry's source lives on the PROVIDER device and its target on the
+            // requester, so each ref resolves against its own device.
             final s = item.subscription!;
-            if (target.resolveRef(s.source) == null ||
+            final providerId = idFromString(s.provider);
+            final provider = providerId == null
+                ? null
+                : liveDevices.where((d) => d.id == providerId).firstOrNull;
+            if (provider == null ||
+                provider.resolveRef(s.source) == null ||
                 target.resolveRef(s.target) == null) {
               item.issue = 'Address not found';
             }
@@ -348,15 +361,27 @@ Future<int> prepareDynamicBlocks(RestorePlan plan) async {
       final dyn = DynBlock(
           index: global, meta: ValueInfo(type: block.typeIndex), name: block.name);
       if (await reg.createDynamicBlock(block.name, index: global) == null) continue;
+      // Recreate the block's field/key structure. An append's `index` is the FIELD it lands
+      // in, so walking the fields in order creates them 0,1,2,... and each field's keys follow
+      // into the field that now exists.
       final seen = <String>{};
-      for (final entry in block.entries) {
+      final entries = [...block.entries]..sort((a, b) => a.fieldIndex == b.fieldIndex
+          ? a.keyIndex.compareTo(b.keyIndex)
+          : a.fieldIndex.compareTo(b.fieldIndex));
+      var fieldCount = 0;
+      for (final entry in entries) {
         if (!seen.add('${entry.fieldIndex}:${entry.keyIndex}')) continue;
         final type = dataTypeFromWord(entry.type);
         if (type == null) continue;
-        await reg.appendDynamicEntry(
+        // The next field is created by appending at the current count; a repeat field takes
+        // its explicit index.
+        final at = entry.fieldIndex > fieldCount ? fieldCount : entry.fieldIndex;
+        final created2 = await reg.appendDynamicEntry(
             dyn,
             ValueInfo(type: type.value, key: entry.keyIndex, size: entry.size),
-            List<int>.filled(entry.size, 0));
+            List<int>.filled(entry.size, 0),
+            index: at);
+        if (created2 != null) fieldCount = at + 1;
       }
       created++;
     }
@@ -387,27 +412,59 @@ Future<int> prepareDynamicBlocks(RestorePlan plan) async {
 
 /// Applies the ready + selected items of [plan]. Returns the number of written
 /// items and failures.
-Future<({int written, int failed})> applyRestorePlan(RestorePlan plan) async {
+Future<({int written, int failed, List<String> failures})> applyRestorePlan(
+    RestorePlan plan) async {
   // A dynamic block's values can only be written into a block that exists.
   await prepareDynamicBlocks(plan);
 
   var written = 0;
   var failed = 0;
+  final failures = <String>[];
   final register = <int, RegisterClient>{};
   final storage = <int, StorageClient>{};
   final subscriptions = <int, SubscriptionClient>{};
   final subIndex = <int, int>{};
   final sndbWritten = <String>{};
 
-  void done(bool ok) {
+  void done(bool ok, RestoreItem item, String what) {
     if (ok) {
       written++;
     } else {
       failed++;
+      if (failures.length < 100) {
+        failures.add('${item.device.name}: ${item.kind.name} $what');
+      }
     }
   }
 
-  for (final item in plan.items) {
+  // One item could not be written; record what it was so a run can be diagnosed.
+  void failItem(RestoreItem item, String why) {
+    failed++;
+    if (failures.length < 100) {
+      failures.add('${item.device.name}: ${item.kind.name} $why');
+    }
+  }
+
+  String describe(RestoreItem i) => switch (i.kind) {
+        RestoreKind.entry => '${i.block?.name}/${i.entry?.field}[${i.entry?.key}]',
+        RestoreKind.script => 'script slot ${i.script?.slot}',
+        RestoreKind.subscription => 'from ${i.subscription?.provider}',
+        RestoreKind.sndb => 'sndb ${i.sndbEntry?.serial}',
+        RestoreKind.file => 'file ${i.file?.name}',
+      };
+
+  // Files first: an entry may name one (the LED display's layout file name is only accepted
+  // once the file exists), then the block entries, then the rest.
+  int order(RestoreKind kind) => switch (kind) {
+        RestoreKind.file => 0,
+        RestoreKind.sndb => 1,
+        RestoreKind.script => 2,
+        RestoreKind.entry => 3,
+        RestoreKind.subscription => 4,
+      };
+  final ordered = [...plan.items]..sort((a, b) => order(a.kind).compareTo(order(b.kind)));
+
+  for (final item in ordered) {
     if (!item.selected || !item.ready) continue;
     final target = item.targetDevice!;
     switch (item.kind) {
@@ -416,7 +473,7 @@ Future<({int written, int failed})> applyRestorePlan(RestorePlan plan) async {
             target.id, () => RegisterClient(deviceId: target.id));
         final bytes = resolveEntryBytes(item.entry!, item.targetEntry!);
         if (bytes == null) {
-          failed++;
+          failItem(item, describe(item));
           break;
         }
         final meta = ValueInfo(
@@ -431,13 +488,19 @@ Future<({int written, int failed})> applyRestorePlan(RestorePlan plan) async {
               index: block.instance,
               meta: ValueInfo(type: block.type),
               name: block.name);
-          done(await reg.writeDynamicEntry(
-                  dyn, item.targetEntry!.field, item.targetEntry!.key, meta, bytes) !=
-              null);
+          done(
+              await reg.writeDynamicEntry(
+                      dyn, item.targetEntry!.field, item.targetEntry!.key, meta, bytes) !=
+                  null,
+              item,
+              describe(item));
         } else {
-          done(await reg.writeBlockField(block.type, block.instance,
-                  item.targetEntry!.field, item.targetEntry!.key, meta, bytes) !=
-              null);
+          done(
+              await reg.writeBlockField(block.type, block.instance,
+                      item.targetEntry!.field, item.targetEntry!.key, meta, bytes) !=
+                  null,
+              item,
+              describe(item));
         }
       case RestoreKind.script:
         final store = storage
@@ -445,20 +508,24 @@ Future<({int written, int failed})> applyRestorePlan(RestorePlan plan) async {
         final slot = item.script!.slot;
         final name = scriptFileName(slot);
         try {
-          done(await store.writeFile(name, item.script!.toDraft().toImage()));
+          done(await store.writeFile(name, item.script!.toDraft().toImage()), item,
+              describe(item));
         } catch (error) {
           AppDiagnostics.log('backup', 'script ${item.script!.functionName} failed: $error');
-          failed++;
+          failItem(item, describe(item));
         }
       case RestoreKind.subscription:
         final sub = subscriptions.putIfAbsent(
             target.id, () => SubscriptionClient(deviceId: target.id));
         final s = item.subscription!;
-        final source = target.resolveRef(s.source);
-        final targetReg = target.resolveRef(s.target);
         final provider = idFromString(s.provider);
+        final providerDev = provider == null
+            ? null
+            : plan.liveDevices.where((d) => d.id == provider).firstOrNull;
+        final source = providerDev?.resolveRef(s.source);
+        final targetReg = target.resolveRef(s.target);
         if (source == null || targetReg == null || provider == null) {
-          failed++;
+          failItem(item, describe(item));
           break;
         }
         final index = subIndex[target.id] ?? 0;
@@ -475,7 +542,7 @@ Future<({int written, int failed})> applyRestorePlan(RestorePlan plan) async {
         );
         final ok = await sub.setRequesterSubscription(index, entry: entry);
         if (ok) subIndex[target.id] = index + 1;
-        done(ok);
+        done(ok, item, describe(item));
       case RestoreKind.sndb:
         final e = item.sndbEntry!;
         final key = '${e.serial}:${e.address}';
@@ -483,19 +550,23 @@ Future<({int written, int failed})> applyRestorePlan(RestorePlan plan) async {
           break; // the SNDB is global; write each entry once
         }
         final id = idFromString(e.address);
-        done(id != null &&
-            await DeviceDatabase.instance.sndbWrite(unhexBytes(e.serial), id));
+        // A device is not an entry in its own SNDB (the firmware refuses it), so skip the
+        // target's own row rather than counting it as a failure.
+        if (id == null || id == target.id) break;
+        done(await DeviceDatabase.instance.sndbWrite(unhexBytes(e.serial), id), item,
+            describe(item));
       case RestoreKind.file:
         final store = storage
             .putIfAbsent(target.id, () => StorageClient(deviceId: target.id));
         if (item.file!.name == '.TABLE') break;
         try {
-          done(await store.writeFile(item.file!.name, item.file!.bytes));
+          done(await store.writeFile(item.file!.name, item.file!.bytes), item,
+              describe(item));
         } catch (error) {
           AppDiagnostics.log('backup', 'file ${item.file!.name} failed: $error');
-          failed++;
+          failItem(item, describe(item));
         }
     }
   }
-  return (written: written, failed: failed);
+  return (written: written, failed: failed, failures: failures);
 }
