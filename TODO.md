@@ -133,6 +133,37 @@ Consequences:
 - A referenced function **missing at load is a load error**, and the slot enters the load-failed state (Stage
   4). This amends the load rule: validation at load is now memory bounds **and link resolution**.
 
+### Stage 5 - instruction set (in progress)
+
+Decided:
+
+- **The reserved shift ops (math-op 10/11) are dropped.** Neither side implemented them and they are not
+  useful; the numbers stay reserved so they can never be reused by accident.
+- **`Pow` failures carry a detail.** A domain failure - negative base with a fractional exponent, integer part
+  > 64, zero reciprocal - keeps the `operand` class and adds a specific detail.
+- **`Get time` takes integer destinations only** (`Index`/`Uint32`). A `Number` destination is refused as a type
+  error because its range cannot represent the value - the bound belongs to the representation, not to the
+  instruction.
+- **Whether an instruction faults is decided by what it faces, not per call site:**
+  - *External-facing* instructions - register read and write including the foreign variants, and the in-script
+    `Load script`/`Unload script` - **never fault**. They carry their result into a destination: a success flag,
+    or the code, for the load/unload pair.
+  - *Internal* instructions - `Get time`, `Pow` - **always fault**, with a detailed error. A bad domain or a
+    bad type is a programming error, not a condition to handle.
+  - Consequence: those external instructions always need a result destination, so the app emits one - a scratch
+    destination when the script ignores it - and the firmware requires it. Existing programs change shape and
+    need re-uploading.
+
+Open:
+
+- The doc's state reader and writer (`Script.md:82`) lists pause, resume, terminate, restart, report info and
+  halt on error. In the implementation that is **one instruction plus an action enum** - a literal state
+  operand - so the verbs are enum values, not opcodes, and three of them do not exist. Per verb: **restart** as
+  a new enum value, or struck, since setting `Running` already resets the instruction counter and call depth;
+  **report info** implemented as its own instruction, since it is a read and cannot be an enum value on a
+  state-setting instruction, or struck; **halt on error** struck, since the faulting rule above already covers
+  it.
+
 ### Stage 4 - loading and unloading
 
 Decided:
