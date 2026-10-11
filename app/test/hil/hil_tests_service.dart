@@ -57,6 +57,12 @@ const int _scrSlotBase = 40;
 /// A scratch dynamic block index, clear of the deployed scenario's blocks (0-2).
 const int _scrDyn = 32;
 
+/// A scratch function-library file id, clear of the deployed scenario's scripts and the other
+/// scratch scripts. A function library is a `SCR_XXX` file carrying the Function-library
+/// Properties flag (Docs/Services/Script.md "Functions and Macros"), named by the same scheme
+/// the firmware links against (`ScriptService::FileName`, three hex digits).
+const int _scrLibFileId = _scrSlotBase + 20;
+
 /// The two hex digits the `.DT_XX` / `.DV_XX` files use for a global index.
 String _dynSuffix(int global) =>
     global.toRadixString(16).toUpperCase().padLeft(2, '0');
@@ -1318,6 +1324,103 @@ final List<HilTest> serviceTests = <HilTest>[
             reason: 'the slot is empty again after the explicit unload');
 
         await st.deleteFile(name);
+      }
+    },
+  ),
+
+  HilTest(
+    'script global function links at load and runs: the linked body executes and finishes',
+    category: HilCategory.service,
+    prereq: _script,
+    body: (ctx) async {
+      for (final d in ctx.devices(_script)) {
+        final c = ScriptClient(deviceId: d.id);
+        final st = StorageClient(deviceId: d.id);
+        final slot = _scrSlotBase + 19; // clear of the deployed scenario (0-4) and the others.
+        final name = scriptFileName(slot);
+        final libName = scriptFileName(_scrLibFileId);
+
+        // Clean the scratch slot and the scratch library so a stale file cannot mask the link.
+        if (await c.readState(slot) != null) await c.unload(slot);
+        await st.deleteFile(name);
+        await st.deleteFile(libName);
+
+        // The function library: the script file format with the Function-library Properties flag.
+        // Its instruction space IS the linked body (one body, so its offset is 0 for a
+        // single-body library, Docs/Services/Script.md "Functions and Macros"). The body writes
+        // its own variable (the parameter channel) and copies it out, then Returns; its variable
+        // is relocated into the script's variable RAM at load.
+        final libImage = ScriptFileBuilder(
+          properties: ScriptProperties.functionLibrary,
+          variables: [ValueInfo(type: DataType.number.value, size: 4)],
+          instructions: encodeScriptLines([
+            ScriptLine(
+                destinations: [ScriptSymbol.variable(0)],
+                instruction: ScriptSymbol.instruction(catMath, 0), // Set
+                operands: [ScriptSymbol.predefine(preIndex, 42)]),
+            ScriptLine(
+                destinations: [ScriptSymbol.output(0)],
+                instruction: ScriptSymbol.instruction(catMath, 0), // Set
+                operands: [ScriptSymbol.variable(0)]),
+            ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 5)), // Return
+          ]),
+          functionName: 'LibFn',
+        ).build();
+
+        // The script declares the global function as a reservation (file id + the body's two
+        // offsets) and calls it; the Call operand carries the reservation index with bit 15 set
+        // (the app's global-call operand). Assembly keeps the reservation, so the load reaches
+        // the link step; a resolvable link places the body and patches the Call.
+        final draft = ScriptDraft(functionName: 'GlobalLink')
+          ..outputs
+              .add(ScriptDraftValue(name: 'Out', type: DataType.number, size: 4))
+          ..lines.add(ScriptLine.callTo(0))
+          ..lines.add(ScriptLine(
+              instruction: ScriptSymbol.instruction(catFlow, 6))) // Halt
+          ..functions.add(ScriptFunction(
+              name: 'LibFn',
+              kind: ScriptFunctionKind.global,
+              globalFileId: _scrLibFileId,
+              globalMemOffset: 0,
+              globalInstrOffset: 0));
+
+        // The library must be present BEFORE the load: the link resolves at load.
+        expect(await st.writeFile(libName, libImage), isTrue,
+            reason: 'upload the function library $libName');
+        expect(await _uploadScript(c, st, slot, draft), isTrue,
+            reason: 'the positive load resolves the link');
+
+        // The positive load must NOT report the load-failed state (the contrast with the
+        // missing-library test): a resolvable link loads normally into Stopped.
+        final loaded = await c.readState(slot);
+        expect(loaded, isNotNull, reason: 'a linked script answers CID 3');
+        expect(loaded!.state, isNot(ScriptState.loadFailed),
+            reason: 'a resolvable link does not enter Load-failed');
+        expect(loaded.state, ScriptState.stopped,
+            reason: 'the linked script loaded into Stopped');
+
+        // Run it: the caller's Call jumps into the linked body and Return resumes the caller.
+        await c.setState(slot, ScriptState.running);
+        final state = await _waitState(c, slot, ScriptState.finished);
+        expect(state, ScriptState.finished,
+            reason: 'error code ${(await c.readState(slot))?.error}');
+        final report = await c.readState(slot);
+        expect(report!.error, 0, reason: 'the linked run does not fault');
+        expect(report.depth, 0, reason: 'Return popped the linked body');
+
+        // The linked body actually executed: its variable (relocated into the script variable
+        // RAM) and the output it copied both carry the value only the body wrote.
+        final ram = (await c.readInternalState(slot))!.variables;
+        expect(numberFromBytes(ram, 0), closeTo(42.0, 0.001),
+            reason: 'the linked body wrote its variable');
+        final out = await c.readEntry(slot, ScriptField.output, 0);
+        expect(out, isNotNull);
+        expect(numberFromBytes(out!.value), closeTo(42.0, 0.001),
+            reason: 'the linked body set the output');
+
+        // Clean up both files and the slot.
+        await _removeScript(c, st, slot);
+        await st.deleteFile(libName);
       }
     },
   ),
