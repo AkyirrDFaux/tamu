@@ -207,12 +207,13 @@ class ScriptClient {
     final depth = reply[0];
     final stackBytes = 2 * depth;
     if (reply.length < 1 + stackBytes) return null;
-    final variables = reply.sublist(1, reply.length - stackBytes);
+    // The call stack (one u16 per frame, outermost first) precedes the variable RAM.
     final callStack = <int>[];
     for (var i = 0; i < depth; i++) {
-      final off = reply.length - stackBytes + 2 * i;
+      final off = 1 + 2 * i;
       callStack.add(reply[off] | (reply[off + 1] << 8));
     }
+    final variables = reply.sublist(1 + stackBytes);
     return (callStack: callStack, variables: variables);
   }
 

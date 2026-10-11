@@ -280,16 +280,15 @@ __attribute__((noinline)) inline bool ScriptService::Handle(const PacketFrame &F
             if (Bytes < 1) { RespondStatus(Frame, false); return true; }
             LoadedScript *Script = Active(Frame.Payload[0]);
             if (!Script) { RespondStatus(Frame, false); return true; }
-            // Content: a leading depth byte, then the variable RAM (VarSpace, VarTotal bytes),
-            // then the entire instruction-counter call stack - the return-address stack Flow
-            // Call pushes and Flow Return pops, one u16 per frame in push order (outermost
-            // first). The depth byte mirrors the report record and delimits the two
-            // variable-length parts, so the reply decodes from itself. Length can exceed one
-            // frame, so it streams as FRAG.
+            // Content: a leading depth byte, then the entire instruction-counter call stack -
+            // the return-address stack Flow Call pushes and Flow Return pops, one u16 per frame
+            // in push order (outermost first) - then the variable RAM (VarSpace, VarTotal
+            // bytes). The depth byte delimits the variable-length stack so the reply decodes
+            // from itself. Length can exceed one frame, so it streams as FRAG.
             const uint8_t Depth = Script->CallDepth;
             const uint16_t Vars = Script->VarTotal;
             const uint16_t StackBytes = (uint16_t)(Depth * 2);
-            const uint16_t Total = (uint16_t)(1 + Vars + StackBytes);
+            const uint16_t Total = (uint16_t)(1 + StackBytes + Vars);
             uint16_t Frags = (uint16_t)((Total + MAX_FRAG_CONTENT_SIZE - 1) / MAX_FRAG_CONTENT_SIZE);
             if (Frags == 0) Frags = 1;
             for (uint16_t Frag = 0; Frag < Frags; Frag++) {
@@ -301,13 +300,13 @@ __attribute__((noinline)) inline bool ScriptService::Handle(const PacketFrame &F
                     uint16_t Src = (uint16_t)(Off + i);
                     if (Src == 0) {
                         Dst[i] = Depth;
-                    } else if (Src < (uint16_t)(1 + Vars)) {
-                        Dst[i] = Script->VarSpace[Src - 1];
-                    } else {
-                        uint16_t Rel = (uint16_t)(Src - 1 - Vars); // byte offset into the stack
-                        uint16_t Frame = (uint16_t)(Rel >> 1);     // one u16 per frame
+                    } else if (Src < (uint16_t)(1 + StackBytes)) {
+                        uint16_t Rel = (uint16_t)(Src - 1);    // byte offset into the stack
+                        uint16_t Frame = (uint16_t)(Rel >> 1); // one u16 per frame
                         uint16_t Entry = Script->CallStack[Frame];
                         Dst[i] = (Rel & 1) ? (uint8_t)(Entry >> 8) : (uint8_t)(Entry & 0xFF);
+                    } else {
+                        Dst[i] = Script->VarSpace[Src - 1 - StackBytes];
                     }
                 }
                 SendFragFragment(Frame, Frag, Frags, Len);
