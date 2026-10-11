@@ -80,19 +80,19 @@ Decided:
   internal picture (the variable RAM) and is still how a full dump is taken.
 - **On an error, `instruction (32b)` is the offending instruction's own encoding** - the context the failure
   happened in, so the app can show which instruction failed.
-- **The error is structured, not a flat list:** `class (8b) | instruction-specific detail (24b)`. The class set
-  stays the eight that exist today; the detail's meaning is defined by the instruction that faulted, so
-  "no such block" versus "read refused" are the same class and different details.
+- **The error is instruction-specific, with no class layer.** The 32-bit `error` field is a code whose meaning is
+  defined by the instruction that faulted, and the `instruction` field in the same record is what makes it
+  interpretable - the app looks the code up in that instruction's table. The eight codes that exist today
+  become per-instruction codes, sharing a number wherever the meaning is the same.
 - **Error names are app-side only.** The app keeps the human-readable text; nothing goes on the device and
-  there is no mirroring contract. (The class numbers are still wire values, so the spec still enumerates them.)
+  there is no mirroring contract. (The error codes are still wire values, so the spec still enumerates them.)
 - **Failures surface two ways, both wanted:** an instruction carries its success flag out so a script can
   check it further down, and a failure that is not checked becomes an error. The mechanism by which a script
   reads an instruction's success belongs with the instruction work (Stage 5).
 
 Open:
 
-- The per-instruction detail catalogue: the detail values for each instruction that can fail (a register
-  access, `Pow`, `Get time`, the in-script `Load`/`Unload`).
+- The per-instruction error-code catalogue: the codes for each instruction that can fault, and their meanings.
 - Logging both load and run errors is Stage 0, not here; the `Load` code is shared by the CID 1 reply and the
   in-script `Load script` op result (Stage 0).
 
@@ -167,11 +167,8 @@ Decided:
 - **CID 4 takes an action enum** corresponding to those actions, matching both the instructions and the app's
   existing Start/Pause/Continue/Stop buttons.
 
-Open:
-
-- The **custom error throw's class**: a script-defined error does not fit the eight existing error classes, so it
-  needs either a ninth class of its own - with the script's code in the detail - or a defined reuse of an
-  existing one. This amends Stage 1's "the class set stays the eight".
+- No class is needed for the custom error throw: the script's code is a code in the `Error` instruction's own
+  space, reported as an instruction-specific error like any other.
 
 ### Stage 4 - loading and unloading
 
