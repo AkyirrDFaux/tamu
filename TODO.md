@@ -53,17 +53,17 @@ the 4-byte value packing it leaves unstated, and the CID 3/4/6/7 "script id = lo
 - App: validate block end matching - an `If`/`While` with no `End` passes the editor today, and the doc already
   requires the check.
 - Firmware: honour run-on-load for a script loaded at any time, not only during the boot scan.
-- Firmware: **load-on-boot names its slot.** The file's boot property carries a uint8 slot (0-255) rather than
-  a plain bit, so a boot load is deterministic instead of guessing the identity slot or the first free one.
-  This is also what makes the file-to-slot mapping knowable without asking the device.
+- Firmware: **load-on-boot is a flag bit plus an index.** The enable bit says whether to load at boot and the
+  index says which slot (uint8, 0-255), so a boot load is deterministic instead of guessing the identity slot
+  or the first free one, and all 256 slots stay addressable. This is also what makes the file-to-slot mapping
+  knowable without asking the device.
 - Firmware: the in-script `Load script` / `Unload script` ops return the code as their result instead of
   silently advancing.
 - No change to CID 0: it reports file ids for positioning only.
 - Firmware: log both load-time and run-time errors - today a VM error exists only in RAM until CID 3 is polled.
 - Native tests for the script VM, of which there are none today, covering the above.
 
-Open detail: 0-255 fills the whole byte, so "no load on boot" cannot be expressed inside it - it needs an
-enable bit alongside the slot, or the slot range stops at 254.
+Open detail: none. Broken existing `SCR_XXX` files are accepted as the cost of the header change.
 
 ### Stage 2 - the script block and the load contract
 
