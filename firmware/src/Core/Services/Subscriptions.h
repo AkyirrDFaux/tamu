@@ -92,7 +92,8 @@ private:
     void SubReply(const PacketFrame &Frame, const uint8_t *Payload, uint16_t Len,
                   uint8_t ExtraFlags = 0);
     void StreamSubscriptionTable(const PacketFrame &Frame, const uint8_t *Table, uint16_t Max,
-                                 uint16_t EntrySize, bool (*Occupied)(const uint8_t *, uint16_t));
+                                 uint16_t EntrySize, uint16_t Stride,
+                                 bool (*Occupied)(const uint8_t *, uint16_t));
 };
 
 // One instance per binary, in Core/Services/.

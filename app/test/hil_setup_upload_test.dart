@@ -52,6 +52,14 @@ void main() {
         // ignore: avoid_print
         print('CLEAN device $targetId dynamic ${b.name}($global) -> $gone');
       }
+      // The requester table is TRID-keyed and persisted, so clear it as well: a leftover entry
+      // stays alive and holds a TRID the restore's deterministic allocation would reuse.
+      final subs = SubscriptionClient(deviceId: targetId);
+      for (final r in await subs.getRequesterSubscriptions()) {
+        final gone = await subs.cancelRequesterSubscription(r.trid);
+        // ignore: avoid_print
+        print('CLEAN device $targetId requester trid=0x${r.trid.toRadixString(16)} -> $gone');
+      }
     }
 
     final plan = await buildRestorePlan(devices);

@@ -69,7 +69,11 @@ class LiveDevice {
 
   /// Resolves a semantic subscription address to a live BlockInfo, or null.
   int? resolveRef(BackupBlockRef ref) {
-    var block = blocks.where((b) => b.type == ref.typeIndex).firstOrNull;
+    // Match the type AND the instance: a bank of blocks shares one type (the DAS's resistive
+    // channels, the eyes), so matching the type alone always resolves to the first instance.
+    var block = blocks
+        .where((b) => b.type == ref.typeIndex && b.instance == ref.instance)
+        .firstOrNull;
     // A ref may name a banked block by its service word (a capture made before the banked
     // types, or a descriptor carrying the app's marker): match the word AND the instance, so
     // two blocks of one kind - the two eyes - never swap.
@@ -533,11 +537,15 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
           failItem(item, describe(item));
           break;
         }
+        // A requester entry's identity is its TRID, so allocate it here instead of leaving it
+        // to the client: the client picks "the lowest free" from a read of the table, and in a
+        // restore that read does not yet show the entries written moments before, so every
+        // entry would take the same TRID and overwrite the one before it.
         final index = subIndex[target.id] ?? 0;
         final entry = RequesterSubscription(
           index: index,
           providerAddr: provider,
-          trid: 0,
+          trid: tridSubBase + index,
           targetReg: targetReg,
           sourceReg: source,
           trigger: TriggerType.fromWord(s.trigger) ?? TriggerType.periodic,

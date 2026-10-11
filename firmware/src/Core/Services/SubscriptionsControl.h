@@ -47,7 +47,8 @@ inline void SubscriptionsService::SubscriptionsCancelProvider(uint16_t ProviderA
 // copying each occupied entry straight into the fragment payload - no full-table buffer.
 // `occupied` reports whether entry `i` is live (the provider and requester tables differ).
 inline void SubscriptionsService::StreamSubscriptionTable(const PacketFrame &Frame, const uint8_t *Table, uint16_t Max,
-                                    uint16_t EntrySize, bool (*Occupied)(const uint8_t *, uint16_t)) {
+                                    uint16_t EntrySize, uint16_t Stride,
+                                    bool (*Occupied)(const uint8_t *, uint16_t)) {
     uint8_t Count = 0;
     for (uint16_t i = 0; i < Max; i++) if (Occupied(Table, i)) Count++;
     uint16_t Total = (uint16_t)((uint16_t)Count * EntrySize);
@@ -60,7 +61,7 @@ inline void SubscriptionsService::StreamSubscriptionTable(const PacketFrame &Fra
         uint16_t Count = 0;
         while (Idx < Max && Count + EntrySize <= MAX_FRAG_CONTENT_SIZE) {
             if (!Occupied(Table, Idx)) { Idx++; continue; }
-            memcpy(Dst + Count, Table + (size_t)Idx * EntrySize, EntrySize);
+            memcpy(Dst + Count, Table + (size_t)Idx * Stride, EntrySize);
             Count += EntrySize;
             Idx++;
         }
@@ -75,7 +76,7 @@ inline bool SubscriptionsService::ProviderEntryLive(const uint8_t *Table, uint16
 // Streams the provider table (u8 count, then 32 B entries).
 inline void SubscriptionsService::ProviderStreamTable(const PacketFrame &Frame) {
     StreamSubscriptionTable(Frame, (const uint8_t *)ProviderTable, MAX_PROVIDER_SUBS,
-                            PROVIDER_ENTRY_WIRE_SIZE, ProviderEntryLive);
+                            PROVIDER_ENTRY_WIRE_SIZE, sizeof(ProviderEntry), ProviderEntryLive);
 }
 #endif
 
@@ -86,7 +87,7 @@ inline bool SubscriptionsService::RequesterEntryLive(const uint8_t *Table, uint1
 // Streams the requester table (u8 count, then 28 B entries).
 inline void SubscriptionsService::RequesterStreamTable(const PacketFrame &Frame) {
     StreamSubscriptionTable(Frame, (const uint8_t *)RequesterTable, MAX_REQUESTER_SUBS,
-                            REQUESTER_ENTRY_WIRE_SIZE, RequesterEntryLive);
+                            REQUESTER_ENTRY_WIRE_SIZE, sizeof(RequesterEntry), RequesterEntryLive);
 }
 #endif
 
