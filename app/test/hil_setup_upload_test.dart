@@ -110,6 +110,15 @@ void main() {
       // ignore: avoid_print
       print('FAILED-ITEM $f');
     }
+    // The device owns its persistence files (.DT_/.DV_/.SUBREQ/.SNREG are written by the
+    // firmware in the current format): ask it to save the restored state, so a later boot
+    // recalls the dynamic blocks and the tables instead of the stale captured files.
+    for (final d in env.rig.devices) {
+      final saved = await RegisterClient(deviceId: d.id).saveAll();
+      // ignore: avoid_print
+      print('SAVE-ALL ${d.name}#${d.id} -> $saved');
+    }
+
     // Verify what landed on each device.
     for (final d in env.rig.devices) {
       final reg = RegisterClient(deviceId: d.id);
