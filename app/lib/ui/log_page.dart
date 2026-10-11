@@ -105,8 +105,8 @@ class _LogViewerPageState extends State<LogViewerPage>
         _groups = const {};
       } else {
         _logs = [
-          for (var offset = 0; offset + 12 <= reply.length; offset += 12)
-            LogEntry.fromBytes(reply.sublist(offset, offset + 12))
+          for (var offset = 0; offset + 16 <= reply.length; offset += 16)
+            LogEntry.fromBytes(reply.sublist(offset, offset + 16))
         ];
         _deviceIds = (_logs!.map((l) => l.deviceId).toSet().toList())..sort();
         final groups = <int, List<LogEntry>>{};
@@ -317,37 +317,36 @@ class _LogViewerPageState extends State<LogViewerPage>
 }
 
 /// One LogDatabase entry (Docs/Services/Log Handler.md):
-/// Source Device u16 | Count u16 | Log Struct (src_and_code u32 + timestamp u32).
+/// Source Device u16 | Count u16 | Log Struct (source u32 + code u32 + timestamp u32).
 class LogEntry {
   final int deviceId;
   final int count;
-  final int srcAndCode;
+  final int source;
+  final int code;
   final int timestampMs;
 
   LogEntry(
       {required this.deviceId,
       required this.count,
-      required this.srcAndCode,
+      required this.source,
+      required this.code,
       required this.timestampMs});
 
   factory LogEntry.fromBytes(List<int> bytes) => LogEntry(
         deviceId: bytes[0] | (bytes[1] << 8),
         count: bytes[2] | (bytes[3] << 8),
-        srcAndCode: uint32FromBytes(bytes, 4),
-        timestampMs: uint32FromBytes(bytes, 8),
+        source: uint32FromBytes(bytes, 4),
+        code: uint32FromBytes(bytes, 8),
+        timestampMs: uint32FromBytes(bytes, 12),
       );
 
-  // Log Struct (Docs/Services/Log Handler.md): source (BlockInfo type|instance, u16) |
-  // category (u8) | specifics (u8). A service log uses the reserved type 0x3FF with the
-  // ServiceType in the instance field.
-  int get source => srcAndCode & 0xFFFF;
-  bool get isBlock => (source & 0x3FF) != 0x3FF;
-  int get sourceType => source & 0x3FF;
-  int get instance => (source >> 10) & 0x3F;
+  // Log Struct (Docs/Services/Log Handler.md): source = the whole block index (BlockInfo
+  // type|instance|field|key, u32), code = the source-specific 32-bit code. A service log uses
+  // the reserved type 0x3FF with the ServiceType in the instance field.
+  bool get isBlock => sourceType != 0x3FF;
+  int get sourceType => blockInfoType(source);
+  int get instance => blockInfoInstance(source);
   int get sourceId => isBlock ? sourceType : instance;
-  int get category => (srcAndCode >> 16) & 0xFF;
-  int get specifics => (srcAndCode >> 24) & 0xFF;
-  int get code => (category << 8) | specifics;
 
   String sourceName() {
     if (isBlock) {

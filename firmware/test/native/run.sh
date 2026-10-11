@@ -80,7 +80,7 @@ echo "### native TRID tests (System/Log counter range + increment/wrap)"
 build_run "trid" "trid_test.cpp"
 echo
 
-echo "### native log layout tests (LogMessage source/category/specifics)"
+echo "### native log layout tests (LogMessage source/code/timestamp)"
 build_run "log" "log_test.cpp"
 
 exit $fail

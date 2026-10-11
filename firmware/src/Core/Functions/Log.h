@@ -39,7 +39,7 @@ inline void ReportLog(const LogMessage &log, uint8_t Priority)
 }
 
 // Core RAM log database entry (Docs/Services/Log Handler.md):
-// | Source Device | Count | Log Struct | = 16bit + 16bit + 64bit.
+// | Source Device | Count | Log Struct | = 16bit + 16bit + 96bit.
 typedef struct __attribute__((packed))
 {
     uint16_t DeviceId;

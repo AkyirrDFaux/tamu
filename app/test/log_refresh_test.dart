@@ -6,7 +6,7 @@ void main() {
   testWidgets('a quiet log view polls progressively less often, and a change resets it',
       (tester) async {
     var fetches = 0;
-    var payload = <int>[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]; // one 12-byte LogRecord
+    var payload = <int>[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]; // one 16-byte LogRecord
 
     await tester.pumpWidget(MaterialApp(
       home: LogViewerPage(deviceId: 1, logFetcher: (id) async {
@@ -33,7 +33,7 @@ void main() {
 
     // A device that logs again is picked up within one skip period - that delay is the point of
     // the backoff - and from then on the cadence is live again.
-    payload = <int>[...payload, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24];
+    payload = <int>[...payload, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32];
     for (var i = 0; i < 10; i++) {
       await (state as dynamic).onAutoRefresh();
     }
