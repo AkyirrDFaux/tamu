@@ -154,15 +154,20 @@ Decided:
     destination when the script ignores it - and the firmware requires it. Existing programs change shape and
     need re-uploading.
 
+- **The state verbs become separate instructions, not one instruction with an action enum.** The state enum
+  describes conditions; start, stop, pause and resume are actions, and carrying them as state values muddled
+  the two. **No new states are added for them** - the actions act on the states that already exist.
+- The existing state instruction is **retired with its opcode reserved**, never reused, the same discipline as
+  the retired math ops.
+- Proposed action set, for confirmation: `Start`, `Stop`, `Pause`, `Resume`. **Start covers restart**, since
+  entering `Running` already resets the instruction counter and the call depth; **finishing is the existing
+  Flow `Halt`**; and a deliberate "set Error" action is dropped, since `Error` is the engine's verdict rather
+  than something a script asserts about itself.
+
 Open:
 
-- The doc's state reader and writer (`Script.md:82`) lists pause, resume, terminate, restart, report info and
-  halt on error. In the implementation that is **one instruction plus an action enum** - a literal state
-  operand - so the verbs are enum values, not opcodes, and three of them do not exist. Per verb: **restart** as
-  a new enum value, or struck, since setting `Running` already resets the instruction counter and call depth;
-  **report info** implemented as its own instruction, since it is a read and cannot be an enum value on a
-  state-setting instruction, or struck; **halt on error** struck, since the faulting rule above already covers
-  it.
+- **`report info`** - its own read instruction, writing the state and error into destinations, or struck. The
+  other two doc verbs are now resolved: restart is `Start`, halt on error is covered by the faulting rule.
 
 ### Stage 4 - loading and unloading
 
