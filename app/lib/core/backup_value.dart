@@ -214,7 +214,16 @@ List<int>? decodeSemantic(DataType type, Object? value,
       final type = _blockTypeRaw(value['block']);
       final inst = value['instance'], field = value['field'], key = value['key'];
       if (type == null || inst is! num || field is! num || key is! num) return null;
-      return uint32ToBytes(makeBlockInfo(type, inst.toInt(), field.toInt(), key.toInt()));
+      // A banked block's semantic word is the service marker (`BlockType.dynamic`/`script`),
+      // which is not a wire type: the wire needs the bank the global index selects, or the
+      // firmware's block-range check rejects the address outright.
+      final global = inst.toInt();
+      final wire = type == BlockType.dynamic.value
+          ? dynamicTypeForIndex(global)
+          : type == BlockType.script.value
+              ? scriptTypeForIndex(global)
+              : type;
+      return uint32ToBytes(makeBlockInfo(wire, global, field.toInt(), key.toInt()));
     case DataType.undefined:
       if (value is Map && value['hex'] is String) return unhexBytes(value['hex'] as String);
       return null;

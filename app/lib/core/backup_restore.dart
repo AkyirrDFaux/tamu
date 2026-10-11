@@ -255,6 +255,22 @@ class RestorePlan {
   }
 }
 
+/// The live device a source device restores into: serial first (exact identity), then the
+/// id, the name, a device carrying the source's first block type, and finally any live device.
+LiveDevice? matchLiveDevice(BackupDevice source, List<LiveDevice> live) {
+  if (source.serial != null) {
+    final bySerial = live.where((d) => d.serial == source.serial).firstOrNull;
+    if (bySerial != null) return bySerial;
+  }
+  return live.where((d) => d.id == source.id).firstOrNull ??
+      live.where((d) => d.name.toLowerCase() == source.name.toLowerCase()).firstOrNull ??
+      live
+          .where((d) =>
+              d.blocks.any((b) => b.type == source.blocks.firstOrNull?.typeIndex))
+          .firstOrNull ??
+      live.firstOrNull;
+}
+
 /// Builds a restore plan for [devices] against the currently known devices.
 Future<RestorePlan> buildRestorePlan(List<BackupDevice> devices) async {
   final live = <LiveDevice>[];
@@ -266,17 +282,7 @@ Future<RestorePlan> buildRestorePlan(List<BackupDevice> devices) async {
 
   final targets = <int, LiveDevice>{};
   for (final source in devices) {
-    LiveDevice? match;
-    if (source.serial != null) {
-      match = live.where((d) => d.serial == source.serial).firstOrNull;
-    }
-    match ??= live.where((d) => d.id == source.id).firstOrNull;
-    match ??= live
-        .where((d) => d.name.toLowerCase() == source.name.toLowerCase())
-        .firstOrNull;
-    match ??= live.where((d) => d.blocks.any((b) =>
-        b.type == source.blocks.firstOrNull?.typeIndex)).firstOrNull;
-    match ??= live.firstOrNull;
+    final match = matchLiveDevice(source, live);
     if (match != null) targets[source.id] = match;
   }
 
@@ -321,9 +327,70 @@ Future<RestorePlan> buildRestorePlan(List<BackupDevice> devices) async {
   return plan;
 }
 
+/// Creates the dynamic blocks a plan's targets are missing, filling their entry structure from
+/// the backup, so their values can then be restored - a restore writes entries into a block
+/// that must already exist. A device wiped by a full flash carries none of its dynamic blocks,
+/// and without this none of their values would restore.
+///
+/// Re-reads the live devices and re-points the plan afterwards, so it resolves against the
+/// blocks that now exist; newly restorable items join the default selection. A block that
+/// cannot be created is left alone (its entries stay unready). Returns how many were created.
+Future<int> prepareDynamicBlocks(RestorePlan plan) async {
+  var created = 0;
+  for (final source in plan.devices) {
+    final target = plan.deviceTargets[source.id];
+    if (target == null) continue;
+    final reg = RegisterClient(deviceId: target.id);
+    for (final block in source.blocks) {
+      if (!isDynamicType(block.typeIndex)) continue;
+      if (target.findBlock(block) != null) continue;
+      final global = ((block.typeIndex - dynamicTypeBase) << 6) | block.instance;
+      final dyn = DynBlock(
+          index: global, meta: ValueInfo(type: block.typeIndex), name: block.name);
+      if (await reg.createDynamicBlock(block.name, index: global) == null) continue;
+      final seen = <String>{};
+      for (final entry in block.entries) {
+        if (!seen.add('${entry.fieldIndex}:${entry.keyIndex}')) continue;
+        final type = dataTypeFromWord(entry.type);
+        if (type == null) continue;
+        await reg.appendDynamicEntry(
+            dyn,
+            ValueInfo(type: type.value, key: entry.keyIndex, size: entry.size),
+            List<int>.filled(entry.size, 0));
+      }
+      created++;
+    }
+  }
+  if (created == 0) return 0;
+
+  final live = <LiveDevice>[];
+  for (final device in DeviceDatabase.instance.all) {
+    if (device.stale) continue;
+    final snapshot = await readLiveDevice(device.id);
+    if (snapshot != null) live.add(snapshot);
+  }
+  plan.liveDevices
+    ..clear()
+    ..addAll(live);
+  plan.deviceTargets.clear();
+  for (final source in plan.devices) {
+    final match = matchLiveDevice(source, live);
+    if (match != null) plan.deviceTargets[source.id] = match;
+  }
+  final readyBefore = {for (final item in plan.items) item: item.ready};
+  plan.resolve();
+  for (final item in plan.items) {
+    if (item.ready && !(readyBefore[item] ?? false)) item.selected = true;
+  }
+  return created;
+}
+
 /// Applies the ready + selected items of [plan]. Returns the number of written
 /// items and failures.
 Future<({int written, int failed})> applyRestorePlan(RestorePlan plan) async {
+  // A dynamic block's values can only be written into a block that exists.
+  await prepareDynamicBlocks(plan);
+
   var written = 0;
   var failed = 0;
   final register = <int, RegisterClient>{};
