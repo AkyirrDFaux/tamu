@@ -71,11 +71,14 @@ Decided:
 
 - **Being not fully loaded is a state, not an error.** The state set expresses partial loading directly, so an
   incomplete load is never reported as a fault.
-- **The report record:** `state (8b) | line (16b)`, with `instruction (32b)` and `error (32b)` appended **only
-  for an error** - 3 bytes for a plain state report, 11 for an error report. There is no separate symbol field:
-  the error's instruction-specific detail carries it. `line` is the instruction counter, **moved from CID 5 to
-  CID 3**; CID 5 keeps the rest of the internal picture (the variable RAM) and is still how a full dump is
-  taken.
+- **The report record:** `state (8b) | reserved (8b) | line (16b)` = **4 bytes**, with `instruction (32b) |
+  error (32b)` appended **only for an error** = **12 bytes** total. The reserved byte pads it so `line` sits on
+  a 2-byte boundary and the error's two 32-bit fields land on 4-byte boundaries - line at offset 2,
+  instruction at 4, error at 8. There is no separate symbol field: the error's instruction-specific detail
+  carries it. `line` is the instruction counter, **moved from CID 5 to CID 3**; CID 5 keeps the rest of the
+  internal picture (the variable RAM) and is still how a full dump is taken.
+- **On an error, `instruction (32b)` is the offending instruction's own encoding** - the context the failure
+  happened in, so the app can show which instruction failed.
 - **The error is structured, not a flat list:** `class (8b) | instruction-specific detail (24b)`. The class set
   stays the eight that exist today; the detail's meaning is defined by the instruction that faulted, so
   "no such block" versus "read refused" are the same class and different details.
@@ -87,8 +90,6 @@ Decided:
 
 Open:
 
-- What `instruction (32b)` carries on an error - the offending instruction's own encoding, so the app can show
-  which one failed.
 - The per-instruction detail catalogue: the detail values for each instruction that can fail (a register
   access, `Pow`, `Get time`, the in-script `Load`/`Unload`).
 - Logging both load and run errors is Stage 0, not here; the `Load` code is shared by the CID 1 reply and the
