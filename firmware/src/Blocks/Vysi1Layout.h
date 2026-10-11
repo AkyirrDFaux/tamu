@@ -26,11 +26,10 @@ const uint8_t LayoutVysiv1_0[10 * 11]{
     0, 0, 18, 20, 37, 40, 57, 60, 76, 0, 0,
     0, 0, 0, 19, 38, 39, 58, 59, 0, 0, 0};
 
-// Preloads the Vysi v1.0 LED layout into storage as "LAY_1" on first boot (the
-// project's layouts/ directory holds the same bytes). Only created when absent, so a
-// user's customized layout is never overwritten. File format per Docs/Modules/LED
-// display.md: u8 brightness limit (0-255 as a percentage), u8 width, u8 height, then
-// w*h u16 LE 0-based LED indices (0xFFFF = unused).
+// Preloads the Vysi v1.0 LED layout into storage as "LAY_1" on first boot. Only created
+// when absent, so a user's customized layout is never overwritten. File format per
+// Docs/Modules/LED display.md: u8 brightness limit (0-255 as a percentage), u8 width, u8
+// height, then w*h u16 LE 0-based LED indices (0xFFFF = unused).
 inline void PreloadVysiLayout()
 {
     char Lay1[8];
@@ -276,7 +275,7 @@ inline void Vysi1BootLayout(Vysi1Display &Disp)
 {
     // A file that cannot be loaded (missing, truncated, or an older 2-byte-header format)
     // must not leave the display on its zero-initialised Layout[] - every cell there maps to
-    // LED 0 - so fall back to the built-in default, whose LED mapping matches the .lay file.
+    // LED 0 - so fall back to the built-in default.
     if (!Disp.LoadLayoutFromStorage())
         Disp.LoadDefaultLayout();
 }

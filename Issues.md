@@ -65,6 +65,16 @@ the firmware define (`Core/Types/Enums.h`), the app constant, its `describe()` l
 `backup_restore.dart` file-support gate, and the `firmware_contract_test.dart` entry. Bit 5 survives
 only as a historical comment so it is not reused.
 
+## Completed 2026-10-11 - the script system revamp
+
+The staged script plan in `TODO.md` landed on both sides (offline gate green, HIL 48/48): the 24-byte
+`SCR_XXX` header (16-bit `Properties` + five counts + a padding byte, plus the Function reservations
+block), the Function-library flag and the load-on-boot slot at Properties bits 8-15, the Service
+instruction set with `Start`/`Stop`/`Pause`/`Resume`/`Error`/`Report info` (opcode 3 retired), the CID 3
+report record, CID 5's fixed-size call stack + variable RAM, the whole streamed CID 0 slot map with a
+lowest-free load convenience, and local/macro/global functions with link-at-load. This closes **B7**,
+**B8** and **E5** below. The per-instruction error-code catalogue stays open (Stage 1's Open item).
+
 ## Doc fact check (2026-10-09) - open items
 
 Every firmware document was checked against `firmware/src`; the closed dispositions
@@ -87,20 +97,6 @@ information` at 8.1; there is no WiFi code in the firmware.
 
 **B6 The UDP framing has no code.** `App Interface.md:25-27` documents a UDP packet; the firmware
 implements USB and BLE only.
-
-**B7 The `Extract` opcode has no named define.** `ScriptExec.h:551` branches on
-`Op == SCRIPT_OP_COMPOSE` and treats anything else as extract, so extract works but its opcode has no
-`SCRIPT_OP_*` name - `ScriptDefs.h:139` defines `SCRIPT_OP_COMPOSE 0` alone. The revised `Script.md`
-states Compose 0 / Extract 1 as normative, so the second number wants a define beside the others.
-
-**B8 The script specification is ahead of the code.** The staged script plan in `TODO.md` is designed but
-unimplemented, and the revised `Script.md` now specifies three things `ScriptDefs.h` does not have: a 16-bit
-`Properties` with a fifth uint8 count and one padding byte, where the code still has a 32-bit `Properties`
-and four counts (`SCRIPT_HEADER_SIZE`); the `Function library` flag and the uint8 slot index at bits 8-15,
-where the code defines only `LOAD_ON_BOOT` bit 0 and `RUN_ON_LOAD` bit 1; and Service opcodes 9-14 for
-`Start`, `Stop`, `Pause`, `Resume`, `Error` and `Report info`, where the code stops at
-`SCRIPT_OP_SERVICE_SCRIPT_UNLOAD 8`. Section C's "the script header and block order" line above describes
-the pre-plan state.
 
 ### C. Checked and correct
 
@@ -152,7 +148,10 @@ are hardware-only.
 - **E29** **`MAX_SCRIPTS` is reduced to 16 on the Valu.** The Script service's loaded-script registry is
   `LoadedScript scriptRegistry[256]` (~38 KB) in `ScriptDefs.h`; the CH32V203's 20 KB cannot hold
   it, so the registry is now a `#ifndef`-guarded build knob and the Valu sets `-D MAX_SCRIPTS=16`.
-  Higher Scripts-range indices report as unloaded.
+  Higher Scripts-range indices report as unloaded. **Update 2026-10-11:** the mask word count is now
+  `(MAX_SCRIPTS + 63) / 64`, so the Valu's 16 slots get one mask word (it was 0 - an out-of-bounds write
+  that also left the script tick path uncompiled); restoring that path costs the Valu ~9 KB flash
+  (32 788 -> 42 176, 93.6%), parked.
 
 ## Docs decisions needed (parked unless noted)
 - **E1** **OS notifications.** `Docs/App/Settings.md` lists "Allow notifications (To OS)" with per-event
@@ -164,9 +163,6 @@ are hardware-only.
   callee, so it needs a call stack of `(script, line)` pairs and a tick loop that resumes whichever
   script is waiting. Proposal to confirm: a `Call script` flow op with operands
   `(loaded script id, entry line)`, blocking by construction, values exchanged through registers.
-- **E5** **Script CID 0 lists file IDs, not loaded slots.** CID 1 takes a separate loaded id, so CID 0's
-  list is not slot-addressable; the app tracks file->slot and falls back to the file==slot
-  convention. Reporting the loaded **slots** (or a slot per entry) would remove the guesswork.
 - **E6** **Dynamic descriptor doc omits `Name`/`generation`/`present`.** The `DynamicBlockDescriptor`
   (`MemoryBlocks.h:35-49`) has `char Name[`BLOCK_NAME_LEN`]`, `uint32_t generation` and `bool present`
   beyond the documented pointers and sizes (`Register.md:88-98`). **Under review** (owner wants a

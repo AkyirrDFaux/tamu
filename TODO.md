@@ -30,26 +30,25 @@ Spec: `Docs/Services/Bootloader.md`; partition sizes are in `Docs/Devices.md`. L
 
 **Outstanding:** both bootloader paths are now exercised on hardware (2026-10-10). The *core's own* bootloader takes the app image end to end: `test/core_bootloader_flash.py` identifies it (app space 2752512, name "Tamu v2.0A"), writes `ota_0` through the adaptive ack-driven pipeline (20496 chunks, 38.2 KiB/s, 0 resends) and reads the whole image back with 0/20496 mismatches. The *node* bootloader is reachable over the core passthrough: with the DAS in update mode, identify, whole-image read and rewrite+verify all pass (`TAMU_HIL_BOOTLOADER=1 bash test/run_hil_tests.sh --bootloader`, 3/3, 6-8 ms per request). Still unrun: the app's update flow end to end on Android, which the beta criteria below require.
 
-## Script system improvements (2026-10-11) - planning
+## Script system improvements (2026-10-11) - implemented
 
 Goal: round out the script system - the registry/block representation, reusable functions (macros), loading
 and unloading, error reporting, and the instruction set with its documentation. A read-only review of the
 firmware VM, the app's editor and their tests is the basis below.
 
-Stages in order: **0** fixes needing no design decision (below; settled, not started); **1** error reporting -
-load and run failures carry state, code, the position of the failing instruction and a log entry, which is the
-critical path for everything after it; **2** the script block and the load contract (below); **3** reusable
-functions - local (defined in the file) and global (a stored library),
-expanded at assemble time in the app, so the VM needs no calling convention until the line limit
-actually bites; **4** loading/unloading - atomic activation, explicit slot with a lowest-free convenience,
-Unload that reports failure, and settling the 256-slot vs the Valu's 16; **5** instruction set - implement or
-strike the doc's promised restart/report-info/halt-on-error state ops, settle the reserved shift ops
-(math-op 10/11, which neither side offers yet), and give `Pow` failures and the `Get time` integer-only rule a
-defined outcome; **6**
-documentation - make `Script.md` normative for the opcode/category/predefine and error-code enumerations,
-the 4-byte value packing it leaves unstated, and the CID 3/4/6/7 "script id = loaded slot" clarification.
+**Implemented (2026-10-11), both sides, gated and hardware-verified.** The 24-byte `SCR_XXX` header with the
+Function reservations block and the Function-library flag / load-on-boot slot in Properties; the CID 3 report
+record and CID 5's fixed-size call stack + variable RAM; load/unload with the whole streamed slot map, a
+lowest-free convenience and the two load states in the enum; local/macro/global functions with link-at-load;
+the Service set with Start/Stop/Pause/Resume/Error/Report info and opcode 3 retired; and the `Script.md`
+revision. Offline gate green; HIL suite 48/48. Still open: the per-instruction error-code catalogue (Stage 1's
+Open item) and the Valu's script flash headroom (Stage 4's remaining).
 
-### Stage 0 - fixes needing no design decision (settled, not started)
+Stages, in order: **0** fixes needing no design decision; **1** error reporting; **2** the script block and the
+load contract; **3** reusable functions (local + a linked global library); **4** loading/unloading; **5** the
+instruction set; **6** documentation.
+
+### Stage 0 - fixes needing no design decision
 
 - App: validate block end matching - an `If`/`While` with no `End` passes the editor today, and the doc already
   requires the check.
@@ -73,7 +72,7 @@ the 4-byte value packing it leaves unstated, and the CID 3/4/6/7 "script id = lo
 
 Open detail: none. Broken existing `SCR_XXX` files are accepted as the cost of the header change.
 
-### Stage 1 - error reporting (in progress)
+### Stage 1 - error reporting
 
 Decided:
 
@@ -111,7 +110,7 @@ Open:
 - Logging both load and run errors is Stage 0, not here; the `Load` code is shared by the CID 1 reply and the
   in-script `Load script` op result (Stage 0).
 
-### Stage 3 - reusable functions (settled)
+### Stage 3 - reusable functions
 
 Decided:
 
@@ -148,7 +147,7 @@ Consequences:
 - A referenced function **missing at load is a load error**, and the slot enters the load-failed state (Stage
   4). This amends the load rule: validation at load is now memory bounds **and link resolution**.
 
-### Stage 5 - instruction set (in progress)
+### Stage 5 - instruction set
 
 Decided:
 
