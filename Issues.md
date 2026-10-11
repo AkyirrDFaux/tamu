@@ -93,6 +93,15 @@ implements USB and BLE only.
 `SCRIPT_OP_*` name - `ScriptDefs.h:139` defines `SCRIPT_OP_COMPOSE 0` alone. The revised `Script.md`
 states Compose 0 / Extract 1 as normative, so the second number wants a define beside the others.
 
+**B8 The script specification is ahead of the code.** The staged script plan in `TODO.md` is designed but
+unimplemented, and the revised `Script.md` now specifies three things `ScriptDefs.h` does not have: a 16-bit
+`Properties` with a fifth uint8 count and one padding byte, where the code still has a 32-bit `Properties`
+and four counts (`SCRIPT_HEADER_SIZE`); the `Function library` flag and the uint8 slot index at bits 8-15,
+where the code defines only `LOAD_ON_BOOT` bit 0 and `RUN_ON_LOAD` bit 1; and Service opcodes 9-14 for
+`Start`, `Stop`, `Pause`, `Resume`, `Error` and `Report info`, where the code stops at
+`SCRIPT_OP_SERVICE_SCRIPT_UNLOAD 8`. Section C's "the script header and block order" line above describes
+the pre-plan state.
+
 ### C. Checked and correct
 
 The command ID table matches every service and the code constants. The Bootloader packet layouts, the
