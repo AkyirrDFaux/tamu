@@ -652,11 +652,25 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
         // to the client: the client picks "the lowest free" from a read of the table, and in a
         // restore that read does not yet show the entries written moments before, so every
         // entry would take the same TRID and overwrite the one before it.
-        final index = subIndex[target.id] ?? 0;
+        // A restore is a snapshot, so it must not stack a second entry beside an identical
+        // one: an archive subscription naming the same (provider, source, target) reuses the
+        // target's own entry and TRID. Writing a fresh TRID instead left two subscriptions
+        // racing for one source, with one of them inert.
+        final mine = await sub.getRequesterSubscriptions();
+        final match = mine
+            .where(
+              (e) =>
+                  idDevice(e.providerAddr) == idDevice(provider) &&
+                  e.sourceReg == source &&
+                  e.targetReg == targetReg,
+            )
+            .firstOrNull;
+        final next = subIndex[target.id] ?? 0;
+        final index = match?.index ?? next;
         final entry = RequesterSubscription(
           index: index,
           providerAddr: provider,
-          trid: tridSubBase + index,
+          trid: match?.trid ?? tridSubBase + next,
           targetReg: targetReg,
           sourceReg: source,
           trigger: TriggerType.fromWord(s.trigger) ?? TriggerType.periodic,
@@ -665,7 +679,8 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
           deadzone: s.deadzone,
         );
         final ok = await sub.setRequesterSubscription(index, entry: entry);
-        if (ok) subIndex[target.id] = index + 1;
+        // Only a fresh entry consumes a slot; a reused one keeps its own index.
+        if (ok && match == null) subIndex[target.id] = next + 1;
         done(ok, item, describe(item));
       case RestoreKind.sndb:
         final e = item.sndbEntry!;
