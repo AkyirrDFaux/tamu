@@ -113,6 +113,18 @@ class LiveDevice {
   }
 }
 
+/// The live device a subscription's provider address names, or null.
+///
+/// The stored `provider` is a WIRE address (net << 10 | node), while [LiveDevice.id] is the
+/// database id, whose low 10 bits carry the same node number - so the two must be compared as
+/// node numbers. Comparing the raw values never matches: node 3 against address 1027 ("1.3").
+LiveDevice? providerDeviceFor(List<LiveDevice> live, String providerAddress) {
+  final id = idFromString(providerAddress);
+  if (id == null) return null;
+  final node = idDevice(id);
+  return live.where((d) => idDevice(d.id) == node).firstOrNull;
+}
+
 /// Reads a live device's block/entry layout (metadata only, no values).
 Future<LiveDevice?> readLiveDevice(int deviceId) async {
   final entry = DeviceDatabase.instance.byId(deviceId);
@@ -273,10 +285,7 @@ class RestorePlan {
             // A requester entry's source lives on the PROVIDER device and its target on the
             // requester, so each ref resolves against its own device.
             final s = item.subscription!;
-            final providerId = idFromString(s.provider);
-            final provider = providerId == null
-                ? null
-                : liveDevices.where((d) => d.id == providerId).firstOrNull;
+            final provider = providerDeviceFor(liveDevices, s.provider);
             if (provider == null ||
                 provider.resolveRef(s.source) == null ||
                 target.resolveRef(s.target) == null) {
@@ -631,10 +640,8 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
           () => SubscriptionClient(deviceId: target.id),
         );
         final s = item.subscription!;
-        final provider = idFromString(s.provider);
-        final providerDev = provider == null
-            ? null
-            : plan.liveDevices.where((d) => d.id == provider).firstOrNull;
+        final provider = idFromString(s.provider); // the wire form, written back below
+        final providerDev = providerDeviceFor(plan.liveDevices, s.provider);
         final source = providerDev?.resolveRef(s.source);
         final targetReg = target.resolveRef(s.target);
         if (source == null || targetReg == null || provider == null) {
