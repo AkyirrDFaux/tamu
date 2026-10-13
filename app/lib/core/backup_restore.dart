@@ -39,6 +39,38 @@ LiveEntry? _matchLiveEntry(
   return null;
 }
 
+/// The register address an archive ref names, encoded from the ARCHIVE's own block map.
+///
+/// A restore creates dynamic blocks and their entries as it writes, so a live snapshot taken
+/// before those writes does not yet carry them and a ref into a dynamic block fails to resolve.
+/// The item is then dropped as "Address not found" with no failure recorded, which silently
+/// loses subscriptions - and whole eye blocks - when restoring onto a device that was empty.
+/// The archive carries the address in full, so encode it from there; callers fall back to the
+/// live lookup for anything the archive does not describe.
+int? archiveRefReg(BackupDevice device, BackupBlockRef ref) {
+  BackupBlock? block = device.blocks
+      .where((b) => b.typeIndex == ref.typeIndex && b.instance == ref.instance)
+      .firstOrNull;
+  block ??= device.blocks
+      .where((b) => b.type == ref.block && b.instance == ref.instance)
+      .firstOrNull;
+  block ??= device.blocks.where((b) => b.type == ref.block).firstOrNull;
+  if (block == null) return null;
+  BackupEntry? entry = block.entries
+      .where((e) => e.fieldIndex == ref.fieldIndex && e.keyIndex == ref.keyIndex)
+      .firstOrNull;
+  entry ??= block.entries
+      .where((e) => e.field == ref.field && e.key == ref.key)
+      .firstOrNull;
+  if (entry == null) return null;
+  return makeBlockInfo(
+    block.typeIndex,
+    block.instance,
+    entry.fieldIndex,
+    entry.keyIndex,
+  );
+}
+
 class LiveBlock {
   final int type;
   final int instance;
@@ -286,9 +318,14 @@ class RestorePlan {
             // requester, so each ref resolves against its own device.
             final s = item.subscription!;
             final provider = providerDeviceFor(liveDevices, s.provider);
+            // The target sits on the requester, inside a dynamic block the restore itself is
+            // about to fill, so the live snapshot can predate it and the lookup fails.
+            final targetReg =
+                target.resolveRef(s.target) ??
+                archiveRefReg(item.device, s.target);
             if (provider == null ||
                 provider.resolveRef(s.source) == null ||
-                target.resolveRef(s.target) == null) {
+                targetReg == null) {
               item.issue = 'Address not found';
             }
           }
@@ -524,6 +561,10 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
   final storage = <int, StorageClient>{};
   final subscriptions = <int, SubscriptionClient>{};
   final sndbWritten = <String>{};
+  // TRIDs this run has handed out. The table read can lag the writes made moments before it, so
+  // trusting the read alone lets two items choose the same TRID and the second silently replaces
+  // the first - which loses an entry when restoring onto a wiped device.
+  final allocatedTrids = <int>{};
   // One write per distinct (provider, source, target): an archive can carry the same
   // subscription twice (a device that already held a duplicate captures it), and writing both
   // leaves two entries racing for one source with the second never firing.
@@ -661,7 +702,9 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
         final provider = idFromString(s.provider); // the wire form, written back below
         final providerDev = providerDeviceFor(plan.liveDevices, s.provider);
         final source = providerDev?.resolveRef(s.source);
-        final targetReg = target.resolveRef(s.target);
+        final targetReg =
+            target.resolveRef(s.target) ??
+            archiveRefReg(item.device, s.target);
         if (source == null || targetReg == null || provider == null) {
           failItem(item, describe(item));
           break;
@@ -694,11 +737,15 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
         // local counter collides with the entries the device carries and the writes then
         // overwrite one another - a restore silently replaces subscriptions instead of adding
         // them, and the replaced ones look like subscriptions that never update.
-        final usedTrids = mine.map((e) => e.trid).toSet();
+        final usedTrids = <int>{
+          ...mine.map((e) => e.trid),
+          ...allocatedTrids,
+        };
         var freeTrid = tridSubBase;
         while (usedTrids.contains(freeTrid) && freeTrid < tridSubMax) {
           freeTrid++;
         }
+        allocatedTrids.add(freeTrid);
         final index = match?.index ?? mine.length;
         final entry = RequesterSubscription(
           index: index,

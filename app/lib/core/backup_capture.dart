@@ -17,9 +17,13 @@ Future<BackupDevice?> captureDevice(
     }
   }
 
-  final files = includeFiles
-      ? await _captureFiles(deviceId, maxFileBytes)
-      : <BackupFile>[];
+  // A mutable copy: the semantic pass below drops entries, and `_captureFiles` returns a const
+  // list when the file table is empty, which cannot be modified.
+  final files = <BackupFile>[
+    ...includeFiles
+        ? await _captureFiles(deviceId, maxFileBytes)
+        : const <BackupFile>[],
+  ];
 
   // Scripts: decode every SCR_XXX file into the semantic form and DROP the binary copy. A file is
   // archived only when it has no semantic form; the restore rebuilds it from that form
