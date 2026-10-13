@@ -184,7 +184,7 @@ inline void ScriptService::BootLoad() {
         // load allocates anything (a non-boot file is skipped without being loaded).
         uint8_t Hdr[2];
         if (Storage.ReadFromFile(Name, 0, 2, (char *)Hdr) < 2) return;
-        uint16_t Props = (uint16_t)(Hdr[0] | (Hdr[1] << 8));
+        uint16_t Props = ScriptRd16(Hdr);
         if (!ScriptPropLoadOnBoot(Props)) return;
         uint16_t Slot = ScriptPropSlot(Props);
         if (Slot >= MAX_SCRIPTS) return;
@@ -204,17 +204,22 @@ __attribute__((noinline)) inline bool ScriptService::Handle(const PacketFrame &F
         case 0: { // Get currently loaded scripts (their file ids, uint16 each)
             // 64 ids = 128 B > MAX_PAYLOAD_SIZE (116), so stream it as FRAG fragments exactly
             // like the Register enumerate; the app already reassembles those. The payload
-            // length carries the count - no count byte (Docs/Services/Script.md CID 0).
-            uint8_t Content[MAX_SCRIPTS * 2];
-            uint16_t Count = ListFiles(Content, MAX_SCRIPTS);
+            // length carries the count - no count byte (Docs/Services/Script.md CID 0). The
+            // whole slot map is generated a fragment at a time - no full-map buffer.
+            uint16_t Count = MAX_SCRIPTS;
             uint16_t Total = (uint16_t)(2 * Count);
-            const uint16_t KFrag = 64;
-            uint16_t Frags = (uint16_t)((Total + KFrag - 1) / KFrag);
+            uint16_t Frags = (uint16_t)((Total + MAX_FRAG_WORD_BYTES - 1) / MAX_FRAG_WORD_BYTES);
             if (Frags == 0) Frags = 1;
             for (uint16_t Frag = 0; Frag < Frags; Frag++) {
-                uint16_t Off = (uint16_t)(Frag * KFrag);
-                uint16_t Len = (uint16_t)((Total - Off > KFrag) ? KFrag : Total - Off);
-                memcpy(TxFrame.Payload + 4, Content + Off, Len);
+                uint16_t Off = (uint16_t)(Frag * MAX_FRAG_WORD_BYTES);
+                uint16_t Len = (uint16_t)((Total - Off > MAX_FRAG_WORD_BYTES) ? MAX_FRAG_WORD_BYTES : Total - Off);
+                uint8_t *Dst = TxFrame.Payload + 4;
+                for (uint16_t i = 0; i < Len; i++) {
+                    uint16_t Src = (uint16_t)(Off + i);
+                    uint16_t Slot = (uint16_t)(Src >> 1); // one u16 file id per slot
+                    uint16_t Id = ScriptSlotReserved(Registry[Slot]) ? Registry[Slot].FileId : 0xFFFF;
+                    Dst[i] = (Src & 1) ? (uint8_t)(Id >> 8) : (uint8_t)(Id & 0xFF);
+                }
                 SendFragFragment(Frame, Frag, Frags, Len);
             }
             break;
@@ -225,7 +230,7 @@ __attribute__((noinline)) inline bool ScriptService::Handle(const PacketFrame &F
             // fails on an occupied slot; a load that names NO slot takes the lowest free one
             // (payload is then just the 2-byte file id). The reply is only Success.
             if (Bytes < 2) { RespondStatus(Frame, false); return true; }
-            uint16_t FileId = (uint16_t)(Frame.Payload[0] | (Frame.Payload[1] << 8));
+            uint16_t FileId = ScriptRd16(Frame.Payload);
             uint16_t Slot;
             if (Bytes >= 3) {
                 Slot = Frame.Payload[2];

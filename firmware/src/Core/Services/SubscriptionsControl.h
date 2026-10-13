@@ -37,7 +37,7 @@ inline void SubscriptionsService::SubscriptionsCancelProvider(uint16_t ProviderA
     }
 #endif
     PacketFrame Cancel;
-    PacketConstruct(&Cancel, ProviderAddr, MakeService(ServiceType::Subscriptions, 1), Trid,
+    PacketConstruct(&Cancel, ProviderAddr, MakeService(ServiceType::Subscriptions, (uint8_t)SubCid::Change), Trid,
                     FLAG_START | FLAG_STOP, nullptr, 0);
     SendAndVerifyPacket(Cancel);
 }
@@ -45,12 +45,13 @@ inline void SubscriptionsService::SubscriptionsCancelProvider(uint16_t ProviderA
 
 // Streams a subscription table (`entrySize`-byte entries, no count prefix) as FRAG fragments,
 // copying each occupied entry straight into the fragment payload - no full-table buffer.
-// `occupied` reports whether entry `i` is live (the provider and requester tables differ).
+// `occupied` reports whether an entry (already resolved to its address) is live; the entry
+// stride is applied here, once, so the predicate never re-derives it.
 inline void SubscriptionsService::StreamSubscriptionTable(const PacketFrame &Frame, const uint8_t *Table, uint16_t Max,
                                     uint16_t EntrySize, uint16_t Stride,
-                                    bool (*Occupied)(const uint8_t *, uint16_t)) {
+                                    bool (*Occupied)(const uint8_t *)) {
     uint8_t Count = 0;
-    for (uint16_t i = 0; i < Max; i++) if (Occupied(Table, i)) Count++;
+    for (uint16_t i = 0; i < Max; i++) if (Occupied(Table + (size_t)i * Stride)) Count++;
     uint16_t Total = (uint16_t)((uint16_t)Count * EntrySize);
     uint16_t Frags = (uint16_t)((Total + MAX_FRAG_CONTENT_SIZE - 1) / MAX_FRAG_CONTENT_SIZE);
     if (Frags == 0) Frags = 1;
@@ -58,20 +59,21 @@ inline void SubscriptionsService::StreamSubscriptionTable(const PacketFrame &Fra
     uint16_t Idx = 0;
     for (uint16_t Frag = 0; Frag < Frags; Frag++) {
         uint8_t *Dst = TxFrame.Payload + 4;
-        uint16_t Count = 0;
-        while (Idx < Max && Count + EntrySize <= MAX_FRAG_CONTENT_SIZE) {
-            if (!Occupied(Table, Idx)) { Idx++; continue; }
-            memcpy(Dst + Count, Table + (size_t)Idx * Stride, EntrySize);
-            Count += EntrySize;
+        uint16_t Used = 0;
+        while (Idx < Max && Used + EntrySize <= MAX_FRAG_CONTENT_SIZE) {
+            const uint8_t *Entry = Table + (size_t)Idx * Stride;
+            if (!Occupied(Entry)) { Idx++; continue; }
+            memcpy(Dst + Used, Entry, EntrySize);
+            Used += EntrySize;
             Idx++;
         }
-        SendFragFragment(Frame, Frag, Frags, Count);
+        SendFragFragment(Frame, Frag, Frags, Used);
     }
 }
 
 #ifdef USE_SUB_PROVIDE
-inline bool SubscriptionsService::ProviderEntryLive(const uint8_t *Table, uint16_t i) {
-    return ((const ProviderEntry *)Table)[i].RequesterAddr != 0;
+inline bool SubscriptionsService::ProviderEntryLive(const uint8_t *Entry) {
+    return ((const ProviderEntry *)Entry)->RequesterAddr != 0;
 }
 // Streams the provider table (u8 count, then 32 B entries).
 inline void SubscriptionsService::ProviderStreamTable(const PacketFrame &Frame) {
@@ -81,8 +83,8 @@ inline void SubscriptionsService::ProviderStreamTable(const PacketFrame &Frame) 
 #endif
 
 #ifdef USE_SUB_REQUEST
-inline bool SubscriptionsService::RequesterEntryLive(const uint8_t *Table, uint16_t i) {
-    return ((const RequesterEntry *)Table)[i].Active;
+inline bool SubscriptionsService::RequesterEntryLive(const uint8_t *Entry) {
+    return ((const RequesterEntry *)Entry)->Active;
 }
 // Streams the requester table (u8 count, then 28 B entries).
 inline void SubscriptionsService::RequesterStreamTable(const PacketFrame &Frame) {
@@ -112,7 +114,7 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
     uint8_t Cid = GetServiceCID(Frame.Cmd);
 
     switch (Cid) {
-        case 0x00: {
+        case (uint8_t)SubCid::ValueUpdate: {
 #ifdef USE_SUB_REQUEST
             // Provider value update (response): apply + confirm (requester role).
             HandleRequesterValueUpdate(Frame);
@@ -125,7 +127,7 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
             break;
         }
 
-        case 0x01: { // Change subscription (inter-device, requester -> provider).
+        case (uint8_t)SubCid::Change: { // Change subscription (inter-device, requester -> provider).
 #ifdef USE_SUB_PROVIDE
             ProviderEntry* Entry = ProviderFindByTrid(Frame.Trid);
             bool Cancel = PayloadBytes(Frame) < SUB_TABLE_WIRE_SIZE ||
@@ -166,16 +168,19 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
         // Requester management commands (041x). A build without the requester role answers
         // them all with FAIL through one shared stub.
 #if !defined(USE_SUB_REQUEST)
-        case 0x10: case 0x11: case 0x12: case 0x13:
+        case (uint8_t)SubCid::RequesterGet:
+        case (uint8_t)SubCid::RequesterSet:
+        case (uint8_t)SubCid::RequesterRecall:
+        case (uint8_t)SubCid::RequesterSave:
             SubReply(Frame, nullptr, 0, FLAG_FAIL);
             break;
 #else
-        case 0x10: { // Get subscriptions (requester).
+        case (uint8_t)SubCid::RequesterGet: { // Get subscriptions (requester).
             RequesterStreamTable(Frame);
             break;
         }
 
-        case 0x11: { // Set subscription (requester). Trigger None = cancel.
+        case (uint8_t)SubCid::RequesterSet: { // Set subscription (requester). Trigger None = cancel.
             if (PayloadBytes(Frame) < 2 + 2 + SUB_TABLE_WIRE_SIZE + 4 + 4) {
                 SubReply(Frame, nullptr, 0, FLAG_FAIL);
                 break;
@@ -223,20 +228,20 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
             break;
         }
 
-        case 0x12: { // Recall all subscriptions (requester).
+        case (uint8_t)SubCid::RequesterRecall: { // Recall all subscriptions (requester).
             LoadRequesterTable();
             SubReply(Frame, nullptr, 0, FLAG_SUCCESS);
             break;
         }
 
-        case 0x13: { // Save all subscriptions (requester).
+        case (uint8_t)SubCid::RequesterSave: { // Save all subscriptions (requester).
             SaveRequesterTable();
             SubReply(Frame, nullptr, 0, FLAG_SUCCESS);
             break;
         }
 #endif // USE_SUB_REQUEST
 
-        case 0x20: { // Get subscriptions (provider).
+        case (uint8_t)SubCid::ProviderGet: { // Get subscriptions (provider).
 #ifdef USE_SUB_PROVIDE
             ProviderStreamTable(Frame);
 #else
@@ -245,7 +250,7 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
             break;
         }
 
-        case 0x21: { // Set subscription (provider). Trigger None = cancel.
+        case (uint8_t)SubCid::ProviderSet: { // Set subscription (provider). Trigger None = cancel.
 #ifdef USE_SUB_PROVIDE
             if (PayloadBytes(Frame) < 2 + 2 + SUB_TABLE_WIRE_SIZE + 4 + 4 + 4) {
                 SubReply(Frame, nullptr, 0, FLAG_FAIL);

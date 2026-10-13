@@ -14,6 +14,12 @@
 
 #define MAX_FRAG_CONTENT_SIZE 112
 
+// Word-stream senders (Register enumerate, the Script slot map, the Storage read stream) pack
+// whole u16 words into one fragment: 32 words = 64 content bytes, well inside
+// MAX_FRAG_CONTENT_SIZE. Defined once so the senders cannot drift apart.
+#define MAX_FRAG_WORDS 32
+#define MAX_FRAG_WORD_BYTES (MAX_FRAG_WORDS * 2)
+
 #define FLAG_REQACK (1 << 0)
 #define FLAG_START  (1 << 1)
 #define FLAG_STOP   (1 << 2)

@@ -82,7 +82,7 @@ inline void SubscriptionsService::ApplyRequesterValue(RequesterEntry *Entry, con
     // confirmation is a request, no FLAG_TYPE), at the trigger's high priority.
     uint32_t Hash = Fnv1a(Val, Vlen);
     PacketFrame Reply;
-    PacketConstruct(&Reply, Entry->ProviderAddr, MakeService(ServiceType::Subscriptions, 0),
+    PacketConstruct(&Reply, Entry->ProviderAddr, MakeService(ServiceType::Subscriptions, (uint8_t)SubCid::ValueUpdate),
                     Entry->Trid, FLAG_START | FLAG_STOP, (const uint8_t *)&Hash, sizeof(Hash),
                     PRIORITY_SUB_HIGH);
     SendAndVerifyPacket(Reply);
@@ -99,7 +99,7 @@ inline void SubscriptionsService::HandleRequesterValueUpdate(const PacketFrame &
         // and if this cancel is lost too the orphan simply announces itself again on its next
         // period, so the table converges on its own.
         PacketFrame Cancel;
-        PacketConstruct(&Cancel, Frame.IdSrc, MakeService(ServiceType::Subscriptions, 1),
+        PacketConstruct(&Cancel, Frame.IdSrc, MakeService(ServiceType::Subscriptions, (uint8_t)SubCid::Change),
                         Frame.Trid, FLAG_START | FLAG_STOP, nullptr, 0);
         SendAndVerifyPacket(Cancel);
         return;

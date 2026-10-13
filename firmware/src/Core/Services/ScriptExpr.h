@@ -59,8 +59,8 @@ inline bool ScriptService::ExprResolve(ExprParser *Parser, const uint8_t *Sym, E
         if (Cnt == 0 || Cnt > SCRIPT_EXPR_MAX_ELEMS) return false;
         if (Dtype == (uint16_t)DataType::Matrix)
         {
-            Out.Mh = (uint16_t)(Data[0] | (Data[1] << 8));
-            Out.Mw = (uint16_t)(Data[2] | (Data[3] << 8));
+            Out.Mh = ScriptRd16(Data);
+            Out.Mw = ScriptRd16(Data + 2);
         }
     }
     for (uint16_t i = 0; i < Cnt; i++)

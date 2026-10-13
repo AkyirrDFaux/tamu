@@ -44,9 +44,16 @@ inline void SubscriptionsService::SaveRequesterTable() {
     // otherwise keep erasing/programming the same sector for nothing.
     uint32_t Existing = Storage.FileExists(SubscriptionsRequesterFile);
     if (Existing == Off) {
-        uint8_t Cur[1 + MAX_REQUESTER_SUBS * REQUESTER_FILE_ENTRY_SIZE];
-        uint16_t CurLen = (uint16_t)Storage.ReadFromFile(SubscriptionsRequesterFile, 0, Off, (char *)Cur);
-        if (CurLen == Off && memcmp(Cur, Buf, Off) == 0) return;
+        // Compare against the file in entry-sized chunks - one small buffer instead of a second
+        // full-size copy of the table - and stop at the first difference.
+        uint8_t Chunk[REQUESTER_FILE_ENTRY_SIZE];
+        bool Same = true;
+        for (uint32_t Pos = 0; Pos < Off; Pos += sizeof(Chunk)) {
+            uint16_t Want = (uint16_t)((Off - Pos > sizeof(Chunk)) ? sizeof(Chunk) : (Off - Pos));
+            uint16_t Got = (uint16_t)Storage.ReadFromFile(SubscriptionsRequesterFile, Pos, Want, (char *)Chunk);
+            if (Got != Want || memcmp(Chunk, Buf + Pos, Want) != 0) { Same = false; break; }
+        }
+        if (Same) return;
     }
     // Shared atomic staging (copy to the "~" name, then rename).
     WriteBackupFile(SubscriptionsRequesterFile, Buf, Off);
@@ -95,7 +102,7 @@ inline void SubscriptionsService::RegisterRequesterProvider(RequesterEntry* Entr
     uint8_t Payload[SUB_TABLE_WIRE_SIZE];
     memcpy(Payload, &Entry->Sub, SUB_TABLE_WIRE_SIZE);
     PacketFrame Req;
-    PacketConstruct(&Req, Entry->ProviderAddr, MakeService(ServiceType::Subscriptions, 1),
+    PacketConstruct(&Req, Entry->ProviderAddr, MakeService(ServiceType::Subscriptions, (uint8_t)SubCid::Change),
                     Entry->Trid, FLAG_START | FLAG_STOP, Payload, SUB_TABLE_WIRE_SIZE);
     SendAndVerifyPacket(Req);
 }

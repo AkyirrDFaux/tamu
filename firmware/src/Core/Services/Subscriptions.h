@@ -36,7 +36,7 @@ private:
     ProviderEntry ProviderTable[MAX_PROVIDER_SUBS];
 
     static bool ProviderOccupied(const ProviderEntry &Entry);
-    static bool ProviderEntryLive(const uint8_t *Table, uint16_t i);
+    static bool ProviderEntryLive(const uint8_t *Entry);
     ProviderEntry* ProviderFindByTrid(uint16_t Trid);
     ProviderEntry* ProviderFindFree();
     void ProviderClearEntry(ProviderEntry* Entry);
@@ -68,7 +68,7 @@ private:
     uint8_t ReRegisterCount = 0;
 
     static bool RequesterOccupied(const RequesterEntry &Entry);
-    static bool RequesterEntryLive(const uint8_t *Table, uint16_t i);
+    static bool RequesterEntryLive(const uint8_t *Entry);
     RequesterEntry* RequesterFindByTrid(uint16_t Trid);
     void RequesterClearEntry(RequesterEntry* Entry);
     void RequesterRemove(RequesterEntry* Entry);
@@ -93,15 +93,16 @@ private:
                   uint8_t ExtraFlags = 0);
     void StreamSubscriptionTable(const PacketFrame &Frame, const uint8_t *Table, uint16_t Max,
                                  uint16_t EntrySize, uint16_t Stride,
-                                 bool (*Occupied)(const uint8_t *, uint16_t));
+                                 bool (*Occupied)(const uint8_t *));
 };
 
 // One instance per binary, in Core/Services/.
 SubscriptionsService Subscriptions;
 
 // ---------------------------------------------------------------------------
-// Temporary forwarders: the device main loops (SubscriptionsTick/ReRegisterSubscriptions)
-// and the Device service (SubscriptionsRequestReRegister) still call the old free-function names.
+// Include-cycle workaround: Device.h must request a re-registration (its response handler)
+// but cannot include Subscriptions.h - the service's headers already pull in Device.h - so it
+// declares SubscriptionsRequestReRegister and this forwarder supplies the definition.
 // ---------------------------------------------------------------------------
 #ifdef USE_SUB_REQUEST
 inline void SubscriptionsRequestReRegister(uint16_t Addr) { Subscriptions.RequestReRegister(Addr); }

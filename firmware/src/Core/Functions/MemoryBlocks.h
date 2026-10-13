@@ -250,7 +250,7 @@ struct DynamicBlockDescriptor
     }
 
     // Distinct field indexes present among the entries.
-    uint16_t ListFields(uint8_t *Fields, uint16_t Cap)
+    uint16_t ListFields(uint8_t *Fields, uint16_t Cap) const
     {
         uint16_t Count = 0, Prev = 0xFFFF;
         for (uint16_t i = 0; i < EntryCount; i++)
@@ -277,13 +277,6 @@ struct DynamicBlockDescriptor
             Count++;
         }
         return Count;
-    }
-
-    // Number of distinct fields (for enumeration / UI display).
-    uint16_t FieldCount()
-    {
-        uint8_t Scratch[256];
-        return ListFields(Scratch, 256);
     }
 
     // Frees all owned allocations and resets the block to a tombstone-like empty state.

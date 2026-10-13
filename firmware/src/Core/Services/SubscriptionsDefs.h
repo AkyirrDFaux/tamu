@@ -24,6 +24,20 @@
 // Packet priorities (Docs/RSBus and Packets.md: high-priority subscriptions sit above
 // "Other" (default 8), low-priority ones below it). Shared with the class table in Packet.h.
 
+// Subscription service command IDs (Docs/Services/Subscriptions.md). The same numbers are the
+// packet-build CIDs; the provider and requester roles split them into the low (0x0X) and high
+// (0x2X) management ranges, with 0x1X for the requester's management commands.
+enum class SubCid : uint8_t {
+    ValueUpdate     = 0x00, // provider -> requester value (and the requester's confirmation)
+    Change          = 0x01, // requester -> provider install/cancel
+    RequesterGet    = 0x10, // get subscriptions (requester)
+    RequesterSet    = 0x11, // set subscription (requester)
+    RequesterRecall = 0x12, // recall all subscriptions (requester)
+    RequesterSave   = 0x13, // save all subscriptions (requester)
+    ProviderGet     = 0x20, // get subscriptions (provider)
+    ProviderSet     = 0x21, // set subscription (provider)
+};
+
 // FNV-1a hash over the value bytes (provider on-change detection + requester confirmation).
 // A generic hash over data - not service state - so it stays a free helper.
 static inline uint32_t Fnv1a(const uint8_t *Data, uint8_t Len) {
@@ -47,7 +61,9 @@ struct SubscriptionTable {
 };
 static_assert(sizeof(SubscriptionTable) == 16, "the subscription table is 16 Bytes on the wire");
 
-#define SUB_TABLE_WIRE_SIZE 16
+// The wire size IS the struct size (pinned by the static_assert above), derived here so the
+// two cannot drift apart.
+static constexpr uint16_t SUB_TABLE_WIRE_SIZE = sizeof(SubscriptionTable);
 
 static inline uint32_t SubMinTime(const SubscriptionTable &Table) {
     return (uint32_t)Table.MinTime[0] | ((uint32_t)Table.MinTime[1] << 8) | ((uint32_t)Table.MinTime[2] << 16);

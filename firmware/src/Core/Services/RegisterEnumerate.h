@@ -105,15 +105,14 @@ __attribute__((noinline)) inline uint16_t RegisterService::EnumWord(EnumSrc Src,
 // Streams `count` words as FRAG fragments, one lookup at a time - no buffer, the content goes
 // straight into the frame payload the send path already has. `count` may be 0 (an empty reply).
 inline void RegisterService::SendU16Stream(const PacketFrame &Frame, uint16_t Count, EnumSrc Src, const void *Ctx) {
-    const uint16_t KWordsPerFrag = 32; // 64-byte fragments, two bytes per word
-    uint16_t Frags = (uint16_t)((Count + KWordsPerFrag - 1) / KWordsPerFrag);
+    uint16_t Frags = (uint16_t)((Count + MAX_FRAG_WORDS - 1) / MAX_FRAG_WORDS);
     if (Frags == 0) Frags = 1;
 
     uint16_t Idx = 0; // the next word to emit
     for (uint16_t Field = 0; Field < Frags; Field++) {
         uint8_t *Dst = TxFrame.Payload + 4;
         uint16_t Len = 0;
-        while (Len < KWordsPerFrag * 2 && Idx < Count) {
+        while (Len < MAX_FRAG_WORD_BYTES && Idx < Count) {
             uint16_t Word = EnumWord(Src, Ctx, Idx++);
             Dst[Len++] = (uint8_t)Word;
             Dst[Len++] = (uint8_t)(Word >> 8);
@@ -129,9 +128,8 @@ inline void RegisterService::SendU16Stream(const PacketFrame &Frame, uint16_t Co
 // zero and it is first, which is what lets the app tell a real zero from the wire's trailing
 // padding.
 inline void RegisterService::SendTypeWordsStream(const PacketFrame &Frame) {
-    const uint16_t KWordsPerFrag = 32; // 64-byte fragments, two bytes per word
     uint16_t Count = EnumTypeCount();
-    uint16_t Frags = (uint16_t)((Count + KWordsPerFrag - 1) / KWordsPerFrag);
+    uint16_t Frags = (uint16_t)((Count + MAX_FRAG_WORDS - 1) / MAX_FRAG_WORDS);
     if (Frags == 0) Frags = 1;
 
     size_t Start = 0;   // the first registry entry of the current type run
@@ -141,7 +139,7 @@ inline void RegisterService::SendTypeWordsStream(const PacketFrame &Frame) {
     for (uint16_t Field = 0; Field < Frags; Field++) {
         uint8_t *Dst = TxFrame.Payload + 4;
         uint16_t Len = 0;
-        while (Len < KWordsPerFrag * 2 && Idx < Count) {
+        while (Len < MAX_FRAG_WORD_BYTES && Idx < Count) {
             uint16_t Word = 0;
             if (!SystemSent) {
                 SystemSent = true; // word 0: the System block (type 0, instance 0)

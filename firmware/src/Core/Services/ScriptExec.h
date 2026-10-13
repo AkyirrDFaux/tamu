@@ -227,14 +227,9 @@ inline uint8_t ScriptService::ExecMath(LoadedScript *Script, const ScriptLineInf
 
 inline uint8_t ScriptService::ExecFlow(LoadedScript *Script, const ScriptLineInfo &Ln, const uint8_t *Opbase, uint8_t Op) {
     switch (Op) {
-        case SCRIPT_OP_FLOW_IF: {
-            if (Ln.OpCount < 1) return SCRIPT_ERR_OPERAND;
-            bool Ok = false;
-            if (!ExprTruthy(Script, Opbase, Ln.OpCount, Ok)) return SCRIPT_ERR_OPERAND;
-            uint16_t Match = Script->BlockMatch[Script->Ic];
-            Script->Ic = Ok ? Script->Ic + 1 : (Match == 0xFFFF ? Script->Ic + 1 : Match + 1);
-            return SCRIPT_ERR_NONE;
-        }
+        // While is a byte-for-byte twin of If: both evaluate the condition and jump past the
+        // block when it is false (an END of kind 2 returns to a While's line).
+        case SCRIPT_OP_FLOW_IF:
         case SCRIPT_OP_FLOW_WHILE: {
             if (Ln.OpCount < 1) return SCRIPT_ERR_OPERAND;
             bool Ok = false;
@@ -425,10 +420,11 @@ inline uint8_t ScriptService::ExecService(LoadedScript *Script, const ScriptLine
             if (Ln.OpCount < 2) return SCRIPT_ERR_OPERAND;
             uint32_t Bi = 0;
             if (!OperandBlockInfo(Script, Opbase, Bi)) return SCRIPT_ERR_OPERAND;
-            ValueInfo Rm;
-            uint8_t Rbuf[256];
-            uint8_t Rsz = 0;
-            if (!RegisterGetByBlockInfo(Bi, Rm, Rbuf, Rsz)) return SCRIPT_ERR_REGISTER;
+            // Only the descriptor is needed here, so resolve without copying the current value
+            // into a stack buffer (the read path still needs the copy).
+            FieldResult Rf;
+            if (!RegisterResolveByBlockInfo(Bi, Rf)) return SCRIPT_ERR_REGISTER;
+            const ValueInfo Rm = Rf.Descriptor;
             uint8_t Scratch[4];
             const uint8_t *Val = nullptr;
             uint8_t Vsize = 0;
@@ -436,11 +432,9 @@ inline uint8_t ScriptService::ExecService(LoadedScript *Script, const ScriptLine
             if (!Resolve(Script, Opbase[4], Opbase[5], SymVal(Opbase + 4), Scratch, &Val, &Vsize, &Vtype))
                 return SCRIPT_ERR_OPERAND;
             uint8_t Wbuf[256];
-            memset(Wbuf, 0, sizeof(Wbuf));
             uint8_t Err = AssignResolved(ValueInfoType(Rm.Type), Wbuf, Rm.Size, Val, Vsize, Vtype);
             if (Err) return Err;
             ValueInfo Wm = Rm;
-            Wm.Size = Rm.Size;
             if (!RegisterSetByBlockInfo(Bi, Wm, Wbuf, Rm.Size)) return SCRIPT_ERR_REGISTER;
             Script->Ic++;
             return SCRIPT_ERR_NONE;
@@ -549,8 +543,8 @@ inline bool ScriptService::ContainerElement(LoadedScript *Script, const uint8_t 
             return true;
         case (uint16_t)DataType::Matrix: {
             if (Size < 4 || Index < 0) return false;
-            uint16_t Rows = (uint16_t)(Data[0] | (Data[1] << 8));
-            uint16_t Cols = (uint16_t)(Data[2] | (Data[3] << 8));
+            uint16_t Rows = ScriptRd16(Data);
+            uint16_t Cols = ScriptRd16(Data + 2);
             if ((uint32_t)Index >= (uint32_t)Rows * Cols) return false;
             if (4u + (uint32_t)(Index + 1) * 4 > Size) return false;
             *Elem = Data + 4 + (size_t)Index * 4;

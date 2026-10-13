@@ -170,17 +170,11 @@ inline void RegisterService::SendBlockIndexAck(const PacketFrame &Frame, uint8_t
 
 
 #ifdef USE_DYNAMIC_BLOCKS
-// Distinct field count for a dynamic block's meta reply. The descriptor's `FieldCount()`
-// allocates a 256-byte scratch on the stack and rescans; the table is sorted by Field&Key, so
-// counting field changes gives the same answer without the buffer. (A cross-call cache would
-// need a field on DynamicBlockDescriptor, i.e. MemoryBlocks.h, which is outside this file.)
+// Distinct field count for a dynamic block's meta reply. The table is sorted by Field&Key, so
+// the block's own ListFields counts field changes; a zero cap makes it skip writing the
+// caller's buffer, so the count costs no scratch.
 inline uint16_t RegisterService::DynamicFieldCount(const DynamicBlockDescriptor &Block) {
-    uint16_t Count = 0, Prev = 0xFFFF;
-    for (uint16_t i = 0; i < Block.EntryCount; i++) {
-        uint16_t Field = FieldOf(Block.Table[i].FieldKey);
-        if (Field != Prev) { Count++; Prev = Field; }
-    }
-    return Count;
+    return Block.ListFields(nullptr, 0);
 }
 
 // Shared tail of "read a dynamic block": field 0xFF asks for the block meta, any other field

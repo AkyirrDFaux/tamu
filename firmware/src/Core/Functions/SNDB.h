@@ -94,6 +94,14 @@ private:
         return Storage.WriteToFile(File, Index * sizeof(RegistryEntry), Count, (const char *)Data);
     }
 
+    // Calls `Fn(Index, Entry)` for every valid entry in the registry file, in file order.
+    // `Fn` returns false to stop the scan early (an early return / first match); a failed read
+    // ends the walk exactly as the old per-site `break` did. The five scans all walk the same
+    // valid-entry set, so they share this walk instead of re-deriving the offset arithmetic.
+    // Defined after the file-name helper (SNDBFileName) that its body calls.
+    template <typename Fn>
+    static void ForEachValid(Fn Visit);
+
     static uint32_t RegistrySize;   // Actual registry file size in bytes
     static uint32_t WriteHead;      // Next append offset (file-relative)
     static int32_t ActiveEntryCount;     // Number of valid entries
@@ -123,6 +131,19 @@ static const char *SNDBTempName()
 {
     static constexpr char Name[8] = {'S', 'N', 'R', 'T', 'M', 'P', ' ', ' '};
     return Name;
+}
+
+template <typename Fn>
+void SNDB::ForEachValid(Fn Visit)
+{
+    uint32_t NumEntries = RegistrySize / sizeof(RegistryEntry);
+    for (uint32_t i = 0; i < NumEntries; i++)
+    {
+        RegistryEntry Entry;
+        if (!ReadEntry(SNDBFileName(), i, Entry)) return;
+        if (Entry.Valid != STATE_VALID) continue;
+        if (!Visit(i, Entry)) return;
+    }
 }
 
 // Ensures the registry file exists (creating it on first use) and returns true when usable.
@@ -252,17 +273,16 @@ uint16_t SNDB::FindAddress(const SerialNumber &Serial)
     if (ActiveEntryCount == 0)
         return ADDR_INVALID;
 
-    uint32_t NumEntries = RegistrySize / sizeof(RegistryEntry);
-    for (uint32_t i = 0; i < NumEntries; i++)
-    {
-        RegistryEntry Entry;
-        if (!ReadEntry(SNDBFileName(), i, Entry))
-            break;
-        if (Entry.Valid == STATE_VALID &&
-            memcmp(Entry.Uid.Bytes, Serial.Bytes, sizeof(Serial.Bytes)) == 0)
-            return RegistryAddress(Entry);
-    }
-    return ADDR_INVALID;
+    uint16_t Found = ADDR_INVALID;
+    ForEachValid([&](uint32_t, const RegistryEntry &Entry) {
+        if (memcmp(Entry.Uid.Bytes, Serial.Bytes, sizeof(Serial.Bytes)) == 0)
+        {
+            Found = RegistryAddress(Entry);
+            return false;
+        }
+        return true;
+    });
+    return Found;
 }
 
 // Registers a serial number with a net-qualified address, removing any prior entry and
@@ -331,14 +351,9 @@ bool SNDB::RemoveDevice(uint16_t Address)
     if (ActiveEntryCount == 0)
         return false;
 
-    uint32_t NumEntries = RegistrySize / sizeof(RegistryEntry);
     bool Found = false;
-    for (uint32_t i = 0; i < NumEntries; i++)
-    {
-        RegistryEntry Entry;
-        if (!ReadEntry(SNDBFileName(), i, Entry))
-            break;
-        if (Entry.Valid == STATE_VALID && RegistryAddress(Entry) == Address)
+    ForEachValid([&](uint32_t i, const RegistryEntry &Entry) {
+        if (RegistryAddress(Entry) == Address)
         {
             uint16_t Tombstone = STATE_REMOVED;
             if (WriteEntry(SNDBFileName(), i, &Tombstone, sizeof(uint16_t)))
@@ -347,7 +362,8 @@ bool SNDB::RemoveDevice(uint16_t Address)
                 Found = true;
             }
         }
-    }
+        return true;
+    });
     return Found;
 }
 
@@ -361,15 +377,11 @@ bool SNDB::RemoveDevice(uint16_t Address)
 bool SNDB::Compact()
 {
     uint32_t Count = 0;
-    uint32_t NumEntries = RegistrySize / sizeof(RegistryEntry);
-    for (uint32_t i = 0; i < NumEntries; i++)
-    {
-        RegistryEntry Entry;
-        if (!ReadEntry(SNDBFileName(), i, Entry))
-            break;
-        if (Entry.Valid == STATE_VALID && Count < SNDB_MAX_ENTRIES)
+    ForEachValid([&](uint32_t, const RegistryEntry &Entry) {
+        if (Count < SNDB_MAX_ENTRIES)
             CompactBuf[Count++] = Entry;
-    }
+        return true;
+    });
 
     // 1. Stage all valid entries in the temp file (SNREG still intact).
     if (!Storage.DeleteFile(SNDBTempName()))
@@ -423,18 +435,14 @@ uint16_t SNDB::FindLowestAvailableID()
 
     uint16_t Candidate = 2; // ID 1 reserved for Master/Core Node
 
-    uint32_t NumEntries = RegistrySize / sizeof(RegistryEntry);
-    for (uint32_t i = 0; i < NumEntries; i++)
-    {
-        RegistryEntry Entry;
-        if (!ReadEntry(SNDBFileName(), i, Entry))
-            break;
-        if (Entry.Valid == STATE_VALID && Entry.ShortID < ID_SCAN_LIMIT)
+    ForEachValid([&](uint32_t, const RegistryEntry &Entry) {
+        if (Entry.ShortID < ID_SCAN_LIMIT)
         {
             uint16_t Id = Entry.ShortID;
             Used[Id >> 3] |= (uint8_t)(1u << (Id & 7));
         }
-    }
+        return true;
+    });
 
     while (Candidate < 0xFFFF)
     {
@@ -469,19 +477,17 @@ bool SNDB::GetEntry(uint16_t Address, RegistryEntry &OutEntry)
     if (ActiveEntryCount == 0)
         return false;
 
-    uint32_t NumEntries = RegistrySize / sizeof(RegistryEntry);
-    for (uint32_t i = 0; i < NumEntries; i++)
-    {
-        RegistryEntry Entry;
-        if (!ReadEntry(SNDBFileName(), i, Entry))
-            break;
-        if (Entry.Valid == STATE_VALID && RegistryAddress(Entry) == Address)
+    bool Found = false;
+    ForEachValid([&](uint32_t, const RegistryEntry &Entry) {
+        if (RegistryAddress(Entry) == Address)
         {
             OutEntry = Entry;
-            return true;
+            Found = true;
+            return false;
         }
-    }
-    return false;
+        return true;
+    });
+    return Found;
 }
 
 // Resets the iteration cursor to the first registry entry.

@@ -38,8 +38,9 @@ public:
     void Init();                           // resets the loaded-script registry and tick
     bool Handle(const PacketFrame &Frame); // management CID dispatch; true if consumed
 
-    // Exported to the rest of the tree through temporary forwarders (see below): these entry
-    // points are called from the Dispatcher, Devices/*/Main.h and the Register service.
+    // Called directly across the tree: the Dispatcher (HandleResponse), the device main loops
+    // (Tick, BootLoad) and the Register service (Active, KeyCount, GetIoPointer, GetEntry,
+    // SetEntry).
     void HandleResponse(const PacketFrame &Frame);
     void Tick(uint32_t NowMs);
     void BootLoad();
@@ -61,7 +62,6 @@ private:
     // ===== ScriptProgram.h: names, registry access, parsing/compilation, entry access =====
     void FileName(uint16_t Id, char Out[8]);
     uint16_t FileIdFromName(const char Name[8]);
-    uint32_t RdU32(const uint8_t *Ptr);
     void MaskSet(uint16_t Slot, bool On);
     ValueInfo *AllocMetas(uint8_t Count);
     bool BuildProgram(LoadedScript *Script, const uint8_t *Instr, uint32_t InstrLen);
@@ -81,6 +81,7 @@ private:
     bool IsNumericDtype(uint16_t Dtype);
     int32_t LoadInt(const uint8_t *Data, uint8_t Sz, bool Sign);
     void StoreInt(uint8_t *Data, uint8_t Sz, int32_t Val);
+    int32_t DecodeScalarInt(const uint8_t *Data, uint8_t Size, uint16_t Dtype, bool &Ok);
     bool Resolve(LoadedScript *Script, uint8_t Stype, uint8_t Ssub, uint16_t Sval,
                  uint8_t *Scratch, const uint8_t **Data, uint8_t *Size, uint16_t *Dtype);
     bool ToScalar(const uint8_t *Data, uint8_t Size, uint16_t Dtype, bool Num, ScriptScalar &Out);

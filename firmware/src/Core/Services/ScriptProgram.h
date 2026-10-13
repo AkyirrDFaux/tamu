@@ -40,10 +40,6 @@ inline uint16_t ScriptService::FileIdFromName(const char Name[8]) {
     return Id;
 }
 
-inline uint32_t ScriptService::RdU32(const uint8_t *Ptr) {
-    uint32_t Raw; memcpy(&Raw, Ptr, 4); return Raw;
-}
-
 inline void ScriptService::MaskSet(uint16_t Slot, bool On) {
     uint16_t Word = (uint16_t)(Slot >> 6), Bit = (uint16_t)(Slot & 63);
     if (On) ActiveMask[Word] |= (uint64_t)1 << Bit;
@@ -351,7 +347,7 @@ inline bool ScriptService::Load(uint16_t FileId, uint16_t Slot) {
             const uint8_t *Src = FInstr + (size_t)Lk.InstrOff[f] * 4;
             uint8_t *Dst = Combined + (size_t)Lk.SymBase[f] * 4;
             for (uint16_t s = 0; s < Lk.SymCount[f]; s++) {
-                uint16_t Val = (uint16_t)(Src[2] | (Src[3] << 8));
+                uint16_t Val = ScriptRd16(Src + 2);
                 if (Src[0] == SCRIPT_SYM_VARIABLE)      Val = (uint16_t)(Val + VarBase);
                 else if (Src[0] == SCRIPT_SYM_CONSTANT) Val = (uint16_t)(Val + ConstBase);
                 Dst[0] = Src[0]; Dst[1] = Src[1]; Dst[2] = (uint8_t)(Val & 0xFF); Dst[3] = (uint8_t)(Val >> 8);
@@ -428,7 +424,7 @@ inline bool ScriptService::Load(uint16_t FileId, uint16_t Slot) {
             if (Ln.OpCount < 1) continue;
             uint8_t *Op = Script->Instr + (size_t)(Ln.Start + Ln.DestCount + 1) * 4;
             if (Op[0] != SCRIPT_SYM_PREDEFINE || Op[1] != SCRIPT_PRE_INDEX) continue;
-            uint16_t Val = (uint16_t)(Op[2] | (Op[3] << 8));
+            uint16_t Val = ScriptRd16(Op + 2);
             int Body = -1;
             for (uint16_t f = 0; f < Lk.Count; f++)
                 if (Lk.SymCount[f] && Ln.Start >= Lk.SymBase[f] && Ln.Start < (uint16_t)(Lk.SymBase[f] + Lk.SymCount[f])) { Body = f; break; }

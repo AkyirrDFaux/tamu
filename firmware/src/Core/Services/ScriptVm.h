@@ -25,7 +25,7 @@ struct ScriptScalar {
 // the Script-state opcode uses it so self state changes follow the same transition rules
 // (IC reset, pending-confirmation clearing) as CID 4.
 
-inline uint16_t ScriptService::SymVal(const uint8_t *Sym) { return (uint16_t)(Sym[2] | (Sym[3] << 8)); }
+inline uint16_t ScriptService::SymVal(const uint8_t *Sym) { return ScriptRd16(Sym + 2); }
 
 inline bool ScriptService::IsNumericDtype(uint16_t Dtype) {
     switch (Dtype) {
@@ -106,37 +106,36 @@ inline bool ScriptService::Resolve(LoadedScript *Script, uint8_t Stype, uint8_t 
     }
 }
 
+// Decodes a scalar value's bytes to its raw integer form: the Q16.16 word for Number, the
+// sign/width-correct integer for the integer dtypes. `Ok` reports whether the dtype is a
+// scalar that decodes; the Q16.16/plain-integer choice is left to the caller.
+inline int32_t ScriptService::DecodeScalarInt(const uint8_t *Data, uint8_t Size, uint16_t Dtype, bool &Ok) {
+    Ok = true;
+    switch (Dtype) {
+        case (uint16_t)DataType::Number: {
+            if (Size < 4) { Ok = false; return 0; }
+            int32_t Raw = 0; memcpy(&Raw, Data, 4); return Raw;
+        }
+        case (uint16_t)DataType::Index: return LoadInt(Data, Size, true);
+        case (uint16_t)DataType::Uint32: return LoadInt(Data, Size, false);
+        case (uint16_t)DataType::Bool: return Data[0] ? 1 : 0;
+        case (uint16_t)DataType::Enum:
+        case (uint16_t)DataType::DevType:
+        case (uint16_t)DataType::Id: return LoadInt(Data, Size, false);
+        default: Ok = false; return 0;
+    }
+}
+
 inline bool ScriptService::ToScalar(const uint8_t *Data, uint8_t Size, uint16_t Dtype, bool Num, ScriptScalar &Out) {
     Out.Num = Number(0);
     Out.Int = 0;
-    if (Num) {
-        switch (Dtype) {
-            case (uint16_t)DataType::Number: {
-                if (Size < 4) return false;
-                int32_t Raw = 0; memcpy(&Raw, Data, 4); Out.Num = Number::FromRaw(Raw); return true;
-            }
-            case (uint16_t)DataType::Index: Out.Num = Number(LoadInt(Data, Size, true)); return true;
-            case (uint16_t)DataType::Uint32: Out.Num = Number((int32_t)LoadInt(Data, Size, false)); return true;
-            case (uint16_t)DataType::Bool: Out.Num = Number(Data[0] ? 1 : 0); return true;
-            case (uint16_t)DataType::Enum: Out.Num = Number((int32_t)LoadInt(Data, Size, false)); return true;
-            case (uint16_t)DataType::DevType: Out.Num = Number((int32_t)LoadInt(Data, Size, false)); return true;
-            case (uint16_t)DataType::Id: Out.Num = Number((int32_t)LoadInt(Data, Size, false)); return true;
-            default: return false;
-        }
-    }
-    switch (Dtype) {
-        case (uint16_t)DataType::Number: {
-            if (Size < 4) return false;
-            int32_t Raw = 0; memcpy(&Raw, Data, 4); Out.Int = Number::FromRaw(Raw).ToInt(); return true;
-        }
-        case (uint16_t)DataType::Index: Out.Int = LoadInt(Data, Size, true); return true;
-        case (uint16_t)DataType::Uint32: Out.Int = LoadInt(Data, Size, false); return true;
-        case (uint16_t)DataType::Bool: Out.Int = Data[0] ? 1 : 0; return true;
-        case (uint16_t)DataType::Enum: Out.Int = LoadInt(Data, Size, false); return true;
-        case (uint16_t)DataType::DevType: Out.Int = LoadInt(Data, Size, false); return true;
-        case (uint16_t)DataType::Id: Out.Int = LoadInt(Data, Size, false); return true;
-        default: return false;
-    }
+    bool Ok = false;
+    int32_t Raw = DecodeScalarInt(Data, Size, Dtype, Ok);
+    if (!Ok) return false;
+    const bool IsNum = (Dtype == (uint16_t)DataType::Number);
+    if (Num) Out.Num = IsNum ? Number::FromRaw(Raw) : Number(Raw);
+    else     Out.Int = IsNum ? Number::FromRaw(Raw).ToInt() : Raw;
+    return true;
 }
 
 inline bool ScriptService::ResolveOperandScalar(LoadedScript *Script, const uint8_t *Sym, bool Num, ScriptScalar &Out) {
@@ -227,8 +226,8 @@ inline uint16_t ScriptService::ContainerCount(uint16_t Dtype, uint8_t Size, cons
     if (Dtype == (uint16_t)DataType::Vector) return Size / 4;
     if (Dtype == (uint16_t)DataType::Matrix) {
         if (Size < 4 || !Data) return 0;
-        uint16_t Rows = (uint16_t)(Data[0] | (Data[1] << 8));
-        uint16_t Cols = (uint16_t)(Data[2] | (Data[3] << 8));
+        uint16_t Rows = ScriptRd16(Data);
+        uint16_t Cols = ScriptRd16(Data + 2);
         uint32_t Count = (uint32_t)Rows * Cols;
         if (Count > (uint32_t)(Size - 4) / 4) return 0;
         return (uint16_t)Count;
@@ -238,25 +237,21 @@ inline uint16_t ScriptService::ContainerCount(uint16_t Dtype, uint8_t Size, cons
 
 // Reads element `e` of a value as a Number. Scalars broadcast (the same value for any e).
 inline bool ScriptService::VectorElement(const uint8_t *Data, uint8_t Size, uint16_t Dtype, uint32_t Index, Number &Out) {
-    int32_t Raw = 0;
-    switch (Dtype) {
-        case (uint16_t)DataType::Number:
-            if (Size < 4) return false;
-            memcpy(&Raw, Data, 4); Out = Number::FromRaw(Raw); return true;
-        case (uint16_t)DataType::Index: Out = Number(LoadInt(Data, Size, true)); return true;
-        case (uint16_t)DataType::Uint32: Out = Number((int32_t)LoadInt(Data, Size, false)); return true;
-        case (uint16_t)DataType::Bool: Out = Number(Data[0] ? 1 : 0); return true;
-        case (uint16_t)DataType::Enum:
-        case (uint16_t)DataType::DevType:
-        case (uint16_t)DataType::Id: Out = Number((int32_t)LoadInt(Data, Size, false)); return true;
-        case (uint16_t)DataType::Vector:
-            if ((Index + 1) * 4 > Size) return false;
-            memcpy(&Raw, Data + Index * 4, 4); Out = Number::FromRaw(Raw); return true;
-        case (uint16_t)DataType::Matrix:
-            if (Index >= ContainerCount(Dtype, Size, Data)) return false;
-            memcpy(&Raw, Data + 4 + Index * 4, 4); Out = Number::FromRaw(Raw); return true;
-        default: return false;
+    if (Dtype == (uint16_t)DataType::Vector) {
+        if ((Index + 1) * 4 > Size) return false;
+        int32_t Raw = 0;
+        memcpy(&Raw, Data + Index * 4, 4); Out = Number::FromRaw(Raw); return true;
     }
+    if (Dtype == (uint16_t)DataType::Matrix) {
+        if (Index >= ContainerCount(Dtype, Size, Data)) return false;
+        int32_t Raw = 0;
+        memcpy(&Raw, Data + 4 + Index * 4, 4); Out = Number::FromRaw(Raw); return true;
+    }
+    bool Ok = false;
+    int32_t Raw = DecodeScalarInt(Data, Size, Dtype, Ok);
+    if (!Ok) return false;
+    Out = (Dtype == (uint16_t)DataType::Number) ? Number::FromRaw(Raw) : Number(Raw);
+    return true;
 }
 
 // Element-wise math on a Vector/Matrix destination (Mod/Min/Max/Abs/Limit). Scalar

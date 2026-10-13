@@ -311,7 +311,7 @@ inline void SubscriptionsService::EvaluateProviderTriggers(uint32_t NowMs) {
             uint8_t Flags = FLAG_TYPE | FLAG_START | FLAG_STOP;
             if (Entry->Sub.Trigger == TriggerType::OnChangeConfirm) Flags |= FLAG_REQACK;
             PacketConstruct(&TxFrame, Entry->RequesterAddr,
-                            MakeService(ServiceType::Subscriptions, 0),
+                            MakeService(ServiceType::Subscriptions, (uint8_t)SubCid::ValueUpdate),
                             Entry->Trid, Flags,
                             (const uint8_t *)Fr.Data, Vlen, Prio);
             SendAndVerifyPacket(TxFrame);

@@ -114,7 +114,7 @@ inline bool StorageService::Handle(const PacketFrame &Frame)
                     uint32_t TotalContent = FileSize;
                     // Docs 03.05: "maximum 64 byte stream fragment". The name travels in EVERY
                     // fragment (B12): each fragment is [frag info][name echo (8)][content].
-                    uint16_t ContentCap = 64;
+                    uint16_t ContentCap = MAX_FRAG_WORD_BYTES;
                     uint16_t TotalFrags = (uint16_t)((TotalContent + ContentCap - 1) / ContentCap);
                     if (TotalFrags == 0) TotalFrags = 1;
                     for (uint16_t Frag = 0; Frag < TotalFrags; Frag++) {

@@ -26,7 +26,9 @@
 #endif
 
 // Defined in Core/Services/Register.h (shared with the Subscriptions service); declared
-// here so the VM resolves registers through the exact same access path.
+// here so the VM resolves registers through the exact same access path. The resolve variant
+// returns the descriptor and a pointer to the source value without copying it.
+bool RegisterResolveByBlockInfo(uint32_t Bi, FieldResult &Fr);
 bool RegisterGetByBlockInfo(uint32_t Bi, ValueInfo &Meta, uint8_t *Vbuf, uint8_t &Vsz);
 bool RegisterSetByBlockInfo(uint32_t Bi, const ValueInfo &Meta, const uint8_t *Val, uint16_t Vlen);
 
