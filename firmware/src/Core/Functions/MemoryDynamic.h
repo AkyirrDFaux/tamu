@@ -90,16 +90,29 @@ static void DeleteDynamicBlockFiles(uint16_t Idx)
 // Cleans orphaned DT/DV files for tombstoned or beyond-registry slots. Called before
 // every save. File cleanup never changes registry positions. Enumerates only the DT/DV files
 // that actually exist instead of probing all 256 slots (their name derives the index).
+//
+// The stale slots are collected first and deleted only once the walk has finished. ForEachFile
+// reads the table lazily by index and every create/delete rewrites or moves that table, so
+// deleting from inside the callback leaves the walk reading records that have shifted underneath
+// it: it then both misses files and leaves the table in a state the save that follows records
+// into, which loses the DT/DV files it has just written.
 static void CleanupDynamicFiles()
 {
-    Storage.ForEachFile([](const char Name[8]) {
+    uint16_t Stale[MAX_DYNAMIC_BLOCKS];
+    uint16_t StaleCount = 0;
+    Storage.ForEachFile([&](const char Name[8]) {
         uint16_t Idx;
         if (!ParseDynamicFileName(Name, &Idx)) return;
         bool Live = (Idx < DynamicBlockRegistry.BlockCount &&
                      DynamicBlockRegistry.Blocks[Idx].Present);
-        if (!Live)
-            DeleteDynamicBlockFiles(Idx);
+        if (Live) return;
+        for (uint16_t k = 0; k < StaleCount; k++)
+            if (Stale[k] == Idx) return; // .DT_ and .DV_ name the same slot
+        if (StaleCount < MAX_DYNAMIC_BLOCKS)
+            Stale[StaleCount++] = Idx;
     });
+    for (uint16_t k = 0; k < StaleCount; k++)
+        DeleteDynamicBlockFiles(Stale[k]);
 }
 
 // Writes the block's DT (table) + DV (persistent value space) files atomically via the
