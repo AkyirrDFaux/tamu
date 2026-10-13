@@ -455,13 +455,16 @@ Future<RestorePlan> buildRestorePlan(List<BackupDevice> devices) async {
   return plan;
 }
 
-/// Creates the dynamic blocks a plan's targets are missing, filling their entry structure from
-/// the backup, so their values can then be restored - a restore writes entries into a block
-/// that must already exist. A device wiped by a full flash carries none of its dynamic blocks,
-/// and without this none of their values would restore.
+/// Creates the dynamic structure a plan's targets are missing - the blocks when absent, and the
+/// entries the backup carries that the device does not - so their values can then be restored: a
+/// restore writes entries into a structure that must already exist. A device wiped by a full
+/// flash carries none of its dynamic blocks; one brought up by the firmware carries the blocks
+/// but only the fields that firmware creates. Without this, an entry at a field the device never
+/// made has no live counterpart to match and is dropped as "No matching entry" with no failure
+/// recorded.
 ///
 /// Re-reads the live devices and re-points the plan afterwards, so it resolves against the
-/// blocks that now exist; newly restorable items join the default selection. A block that
+/// structure that now exists; newly restorable items join the default selection. A structure that
 /// cannot be created is left alone (its entries stay unready). Returns how many were created.
 Future<int> prepareDynamicBlocks(RestorePlan plan) async {
   var created = 0;
@@ -471,7 +474,7 @@ Future<int> prepareDynamicBlocks(RestorePlan plan) async {
     final reg = RegisterClient(deviceId: target.id);
     for (final block in source.blocks) {
       if (!isDynamicType(block.typeIndex)) continue;
-      if (target.findBlock(block) != null) continue;
+      final existing = target.findBlock(block);
       final global =
           ((block.typeIndex - dynamicTypeBase) << 6) | block.instance;
       final dyn = DynBlock(
@@ -479,9 +482,22 @@ Future<int> prepareDynamicBlocks(RestorePlan plan) async {
         meta: ValueInfo(type: block.typeIndex),
         name: block.name,
       );
-      if (await reg.createDynamicBlock(block.name, index: global) == null) {
-        continue;
+      if (existing == null) {
+        if (await reg.createDynamicBlock(block.name, index: global) == null) {
+          continue;
+        }
       }
+      // Only what the device is MISSING is created here: the block when it is absent, and any
+      // entry the backup carries that the device does not. A device brought up by the firmware
+      // carries just the fields that firmware creates, so an entry at a low field - the
+      // subscription outputs at field 0, the eyes at fields 0-2 - has no live counterpart to
+      // match and the ordinary entry write drops it as "No matching entry" with no failure
+      // recorded. Values are still written by the restore proper; this only makes the addresses
+      // exist so they can be.
+      final present = <String>{
+        for (final e in existing?.entries ?? const <LiveEntry>[])
+          '${e.field}:${e.key}',
+      };
       // Recreate the block's field/key structure. `appendDynamicEntry` writes through a
       // BlockInfo whose key is always 0, so it creates one entry per FIELD; a keyed entry
       // (the eyes have several keys per field) has to go through `writeDynamicEntry`, which
@@ -495,6 +511,8 @@ Future<int> prepareDynamicBlocks(RestorePlan plan) async {
         );
       for (final entry in entries) {
         if (!seen.add('${entry.fieldIndex}:${entry.keyIndex}')) continue;
+        // Already on the device: the ordinary value write will fill it.
+        if (present.contains('${entry.fieldIndex}:${entry.keyIndex}')) continue;
         final type = dataTypeFromWord(entry.type);
         if (type == null) continue;
         final meta = ValueInfo(
@@ -523,8 +541,8 @@ Future<int> prepareDynamicBlocks(RestorePlan plan) async {
             zero,
           );
         }
+        created++;
       }
-      created++;
     }
   }
   if (created == 0) return 0;
