@@ -54,7 +54,7 @@ class LiveBlock {
     required this.entries,
   });
 
-  String get typeWord => blockTypeWord(type);
+  String get typeWord => blockTypeDisplayName(type);
 }
 
 /// A live device snapshot for restore matching.

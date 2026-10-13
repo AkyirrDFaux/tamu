@@ -238,9 +238,10 @@ DataType? dataTypeFromWord(String word) {
 /// duplicate the enum value). Use this constant for system-block comparisons.
 const int systemBlockTypeValue = 0x00;
 
-/// Block type label for a raw type value, with the System block and the banked dynamic types
-/// resolved explicitly ([BlockType.fromValue] maps 0 to the "None" tombstone and does not know
-/// the 0x3F0-0x3F3 banks).
+/// Block type label for a raw type value: the canonical SEMANTIC word a backup archive stores
+/// and the decoder matches, with the System block and the banked dynamic types resolved
+/// explicitly ([BlockType.fromValue] maps 0 to the "None" tombstone and does not know the
+/// 0x3F0-0x3F3 banks). For a human-readable name use [blockTypeDisplayName].
 String blockTypeLabel(int type) {
   if (type == systemBlockTypeValue) return 'System';
   if (isDynamicType(type)) return 'Dynamic';

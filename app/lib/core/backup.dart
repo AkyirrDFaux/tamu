@@ -43,8 +43,12 @@ const int defaultMaxFileBytes = 128 * 1024;
 // Semantic naming helpers
 // ---------------------------------------------------------------------------
 
-/// Block type name in words (registry name when known, System block resolved explicitly).
-String blockTypeWord(int typeValue) {
+/// The block type's DISPLAY name: the block registry's name when known ("Accelerometer"), the
+/// System block resolved explicitly, and the enum label as the fallback.
+///
+/// Not the semantic vocabulary: the word a backup archive stores and the decoder matches is
+/// [blockTypeLabel] (the enum label, "Acc"). Use this one for anything a person reads.
+String blockTypeDisplayName(int typeValue) {
   if (typeValue == systemBlockTypeValue) return 'System';
   if (isDynamicType(typeValue)) return 'Dynamic';
   if (isScriptType(typeValue)) return 'Script';
@@ -74,7 +78,7 @@ BackupBlockRef _blockRef(int blockInfo) {
   final field = blockInfoField(blockInfo);
   final key = blockInfoKey(blockInfo);
   return BackupBlockRef(
-    block: blockTypeWord(type),
+    block: blockTypeDisplayName(type),
     typeIndex: type,
     instance: inst,
     field: registerFieldName(type, field),
@@ -241,7 +245,7 @@ Future<List<VisitedBlock>?> walkDeviceBlocks(RegisterClient reg) async {
 
 /// Capture side of the shared walk: a walked block as the semantic backup model.
 BackupBlock backupBlockFromVisited(VisitedBlock b) => BackupBlock(
-  type: blockTypeWord(b.type),
+  type: blockTypeDisplayName(b.type),
   typeIndex: b.type,
   instance: b.instance,
   name: b.name,
