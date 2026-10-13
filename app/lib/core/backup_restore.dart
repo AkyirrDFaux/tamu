@@ -593,10 +593,14 @@ Future<int> _bringUpScripts(RestorePlan plan) async {
     ];
     for (final script in ordered) {
       if (script.slot < 0) continue;
-      if (!(await client.loadedSlotMap()).containsKey(script.slot)) {
-        // The file id and the loaded slot are independent; a restored file sits at its own slot.
-        if (!await client.load(script.slot, script.slot)) continue;
+      // Unload and reload so the script links against the library as it now stands. A script the
+      // device loaded at boot did so before the library was loaded, and a stale link leaves its
+      // global-function calls dead while the script itself reports no error. The file id and the
+      // loaded slot are independent; a restored file sits at its own slot.
+      if ((await client.loadedSlotMap()).containsKey(script.slot)) {
+        await client.unload(script.slot);
       }
+      if (!await client.load(script.slot, script.slot)) continue;
       if (script.properties.contains('Run on load')) {
         await client.setAction(script.slot, ScriptAction.start);
         started++;
