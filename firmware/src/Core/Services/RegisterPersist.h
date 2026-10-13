@@ -73,8 +73,18 @@ inline bool RegisterService::DynamicSaveAll() {
 inline bool RegisterService::RestoreDynamicBlock(uint16_t i) {
     DynamicBlockDescriptor Scratch;
     if (!LoadDynamicBlockFiles(Scratch, i)) {
-        // No DT file: any in-session live block still occupying this slot is stale, so
-        // tombstone it instead of leaving it untouched (Recall All is reachable at runtime).
+        // Tombstone only on genuine ABSENCE. A DT file that exists but cannot be read or decoded
+        // is a failed read, not a removed block, and a failed read deletes nothing - the slot is
+        // left as it stands.
+        char Tn[8];
+        DynamicTableName(i, Tn);
+        if (Storage.FileExists(Tn) != 0xFFFFFFFF) {
+            DeviceLog("STORAGE", "recall: slot %d has an unreadable DT, kept",
+                      (int)i);
+            return true;
+        }
+        // No DT file: any in-session live block still occupying this slot is stale, so tombstone
+        // it instead of leaving it untouched (Recall All is reachable at runtime).
         if (i < DynamicBlockRegistry.BlockCount)
             DynamicBlockRegistry.TombstoneBlock(i);
         return true; // absent file = empty slot
@@ -90,12 +100,15 @@ inline bool RegisterService::RestoreDynamicBlock(uint16_t i) {
 // a slot with no DT file is tombstoned (it might still hold an in-session live block).
 //
 // The files are enumerated once instead of probing all 256 slots: each probe is a lookup in the
-// fixed 16 KB table, which makes a boot take seconds. What is on flash is the truth, so the
-// registry is cleared first and only the slots that actually have a DT file are rebuilt.
+// fixed 16 KB table, which makes a boot take seconds.
+//
+// Nothing is deleted unless the enumeration completed. A walk that fails part way - or a table
+// that cannot be read at all - reports no files, and treating that as "flash is empty" would
+// tombstone every block. A failed read deletes nothing: the recall gives up instead.
 inline bool RegisterService::DynamicRecallAll() {
     uint16_t Present[MAX_DYNAMIC_BLOCKS];
     uint16_t PresentCount = 0;
-    Storage.ForEachFile([&](const char Name[8]) {
+    bool Complete = Storage.ForEachFile([&](const char Name[8]) {
         if (Name[2] != 'T') return; // the DT file is the block's existence marker
         uint16_t Idx;
         if (!ParseDynamicFileName(Name, &Idx)) return;
@@ -104,10 +117,22 @@ inline bool RegisterService::DynamicRecallAll() {
         if (PresentCount < MAX_DYNAMIC_BLOCKS)
             Present[PresentCount++] = Idx;
     });
-    for (uint16_t i = 0; i < DynamicBlockRegistry.BlockCount; i++)
-        DynamicBlockRegistry.TombstoneBlock(i);
+    if (!Complete) {
+        DeviceLog("STORAGE", "recall: file table unreadable, leaving blocks alone");
+        return false;
+    }
+    // Only slots with no DT file are tombstoned, so a block whose file exists but will not load is
+    // kept rather than dropped.
+    for (uint16_t i = 0; i < DynamicBlockRegistry.BlockCount; i++) {
+        bool HasFile = false;
+        for (uint16_t k = 0; k < PresentCount; k++)
+            if (Present[k] == i) { HasFile = true; break; }
+        if (!HasFile)
+            DynamicBlockRegistry.TombstoneBlock(i);
+    }
     for (uint16_t k = 0; k < PresentCount; k++)
         if (!RestoreDynamicBlock(Present[k])) return false;
+    DeviceLog("STORAGE", "recall: %d block file(s)", (int)PresentCount);
     return true;
 }
 

@@ -193,16 +193,20 @@ public:
     // Calls `fn(name)` once for every live file record. A superseded record for the same
     // name can linger until the next save, so a name may repeat; callers that care dedupe.
     template <typename Func>
-    void ForEachFile(Func Fn)
+    // Returns true only when the whole table was read. It reads the table lazily by index, so an
+    // early return is a PARTIAL walk, not an empty table: callers that delete on absence must check
+    // this, or a failed read looks exactly like "nothing is there".
+    bool ForEachFile(Func Fn)
     {
-        if (FileTableOffset == 0) return;
+        if (FileTableOffset == 0) return false;
         uint32_t Capacity = TableCapacity();
         for (uint32_t i = 1; i < Capacity; i++) { // entry 0 (the table) is not a file
             FileRecord Entry;
-            if (!ReadTableEntry(i, &Entry)) return;
+            if (!ReadTableEntry(i, &Entry)) return false;
             if (FileSlotIsFree(Entry.Offset)) continue;
             Fn(Entry.Name);
         }
+        return true;
     }
 
     // Renames `old_name` to `new_name`: appends a record with the new name for the same
