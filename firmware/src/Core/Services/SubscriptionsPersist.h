@@ -63,22 +63,37 @@ inline void SubscriptionsService::LoadRequesterTable() {
     // The whole file: a count byte plus every entry (1 + 16*24 = 385 B).
     uint8_t Buf[1 + MAX_REQUESTER_SUBS * REQUESTER_FILE_ENTRY_SIZE];
     uint16_t Len = Storage.ReadFromFile(SubscriptionsRequesterFile, 0, sizeof(Buf), (char*)Buf);
-    for (int i = 0; i < MAX_REQUESTER_SUBS; i++) RequesterClearEntry(&RequesterTable[i]);
-    if (Len == 0) return;
+    if (Len < 1) {
+        DeviceLog("SUB", "requester recall: no file (%u B)", (unsigned)Len);
+        return;
+    }
+    uint8_t Count = Buf[0];
+    // Validate before touching the table: a short or garbled file must not wipe a working table,
+    // because the next save writes only the active entries and would make that loss permanent.
+    if (Count > MAX_REQUESTER_SUBS || Len < 1 + (uint16_t)Count * REQUESTER_FILE_ENTRY_SIZE) {
+        DeviceLog("SUB", "requester recall: bad file len=%u count=%u",
+                  (unsigned)Len, (unsigned)Count);
+        return;
+    }
 
-    uint16_t Off = 0;
-    uint8_t Count = Buf[Off++];
-    for (uint8_t i = 0; i < Count && Off + REQUESTER_FILE_ENTRY_SIZE <= Len; i++) {
+    for (int i = 0; i < MAX_REQUESTER_SUBS; i++) RequesterClearEntry(&RequesterTable[i]);
+
+    uint16_t Off = 1;
+    uint16_t Loaded = 0;
+    for (uint8_t i = 0; i < Count; i++) {
         uint16_t Trid = LoadUnaligned<uint16_t>(Buf + Off + 2);
         RequesterEntry* Entry = RequesterUpsert(Trid);
         if (!Entry) break;
         memcpy((void *)Entry, Buf + Off, REQUESTER_FILE_ENTRY_SIZE);
         Off += REQUESTER_FILE_ENTRY_SIZE;
+        Loaded++;
         Entry->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
         Entry->RegisteredAtMs = DeviceStatus.UptimeMs;
         Entry->LastRegisteredMs = 0;
         Entry->LastValueMs = 0;
     }
+    DeviceLog("SUB", "requester recall: %u of %u entries from %u B",
+              (unsigned)Loaded, (unsigned)Count, (unsigned)Len);
 }
 
 // Re-registers the (non-persistent) provider side for a requester subscription so a
