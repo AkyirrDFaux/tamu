@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'connection.dart';
 import 'diagnostics.dart';
 import 'protocol.dart';
+import 'service_request.dart';
 import 'types.dart';
 
 /// The single file-name normalizer: strips only the 8-byte wire padding (trailing
@@ -54,23 +55,18 @@ class StorageClient {
     List<int> payload = const [],
     Duration? timeout,
     bool requestFrag = false,
-  }) async {
-    try {
-      // Mutating ops (create/resize/delete) trigger flash erases on slow nodes
-      // and can legitimately exceed the default transaction timeout.
-      return await _link.request(
-        deviceId,
-        ServiceType.storage,
-        cid,
-        payload: payload,
-        timeout: timeout ?? const Duration(seconds: 6),
-        requestFrag: requestFrag,
-      );
-    } catch (error) {
-      AppDiagnostics.log('storage', 'request failed: $error');
-      return null;
-    }
-  }
+  }) => serviceRequest(
+    deviceId,
+    ServiceType.storage,
+    cid,
+    payload: payload,
+    timeout: timeout,
+    // Mutating ops (create/resize/delete) trigger flash erases on slow nodes and can
+    // legitimately exceed the default transaction timeout.
+    defaultTimeout: const Duration(seconds: 6),
+    requestFrag: requestFrag,
+    tag: 'storage',
+  );
 
   /// The firmware answers status commands with the packet success/fail flags instead of a
   /// payload, so the outcome is in the frame rather than the bytes.

@@ -8,10 +8,10 @@ library;
 import 'package:flutter/foundation.dart';
 
 import 'connection.dart';
-import 'diagnostics.dart';
 import 'notifications.dart';
 import 'protocol.dart';
 import 'register_client.dart';
+import 'service_request.dart';
 import 'types.dart';
 
 const int coreId = 1;
@@ -76,23 +76,14 @@ class DeviceDatabase extends ChangeNotifier {
     int cid, {
     List<int> payload = const [],
     Duration timeout = const Duration(seconds: 2),
-  }) async {
-    try {
-      return await _link.request(
-        targetId,
-        service,
-        cid,
-        payload: payload,
-        timeout: timeout,
-      );
-    } catch (error) {
-      AppDiagnostics.log(
-        'db',
-        'dev ${idToString(targetId)} $service/$cid failed: $error',
-      );
-      return null;
-    }
-  }
+  }) => serviceRequest(
+    targetId,
+    service,
+    cid,
+    payload: payload,
+    timeout: timeout,
+    tag: 'db',
+  );
 
   /// Pings the connected device (ID 1).
   Future<bool> pingCore() async {

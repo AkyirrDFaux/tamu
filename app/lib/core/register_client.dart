@@ -8,6 +8,7 @@ import 'dart:typed_data';
 import 'connection.dart';
 import 'diagnostics.dart';
 import 'protocol.dart';
+import 'service_request.dart';
 import 'system_schema.dart';
 import 'types.dart';
 
@@ -47,20 +48,15 @@ class RegisterClient {
     int cid, {
     List<int> payload = const [],
     Duration? timeout,
-  }) async {
-    try {
-      return await ConnectionManager.instance.request(
-        deviceId,
-        ServiceType.register,
-        cid,
-        payload: payload,
-        timeout: timeout ?? _requestTimeout,
-      );
-    } catch (error) {
-      AppDiagnostics.log('register', 'request failed: $error');
-      return null;
-    }
-  }
+  }) => serviceRequest(
+    deviceId,
+    ServiceType.register,
+    cid,
+    payload: payload,
+    timeout: timeout,
+    defaultTimeout: _requestTimeout,
+    tag: 'register',
+  );
 
   /// Like [request], but keeps the packet-level SUCCESS/FAIL flags alongside the payload.
   /// The flag-answering commands (dynamic create/set-name/delete, Save/Recall All) report

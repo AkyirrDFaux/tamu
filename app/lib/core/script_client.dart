@@ -10,6 +10,7 @@ import 'protocol.dart';
 import 'register_client.dart';
 import 'script_file.dart';
 import 'script_functions.dart';
+import 'service_request.dart';
 import 'types.dart';
 
 /// A loaded-script register entry (ValueInfo + value).
@@ -99,20 +100,14 @@ class ScriptClient {
     int cid, {
     List<int> payload = const [],
     Duration? timeout,
-  }) async {
-    try {
-      return await _link.request(
-        deviceId,
-        service,
-        cid,
-        payload: payload,
-        timeout: timeout ?? const Duration(seconds: 3),
-      );
-    } catch (error) {
-      AppDiagnostics.log('script', 'request failed: $error');
-      return null;
-    }
-  }
+  }) => serviceRequest(
+    deviceId,
+    service,
+    cid,
+    payload: payload,
+    timeout: timeout,
+    tag: 'script',
+  );
 
   /// True when a management command replies FLAG_SUCCESS. These commands carry no status
   /// byte; the device sets the packet SUCCESS/FAIL flags instead. A transport failure or a
