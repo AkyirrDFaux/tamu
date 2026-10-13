@@ -99,6 +99,10 @@ class SubscriptionClient {
   /// register to the requester that asked. The entry is keyed by its TRID, and a table whose
   /// trigger is None cancels it. This is the half that makes a restored subscription live: the
   /// requester table alone leaves the node with nothing to send.
+  /// Reads the reply as acceptance. The device answers a provider change with the source's
+  /// CURRENT VALUE (so the requester starts from a known state), or with a short ack when the
+  /// source does not resolve - either way a reply means the entry was accepted; only a timeout
+  /// (null) is a failure. Checking `ok` instead reported false on every success.
   Future<bool> setProviderSubscriptionEntry(
     ProviderSubscription entry,
   ) async {
@@ -107,7 +111,7 @@ class SubscriptionClient {
       payload: entry.toChangePayload(),
       transactionId: entry.trid,
     );
-    return reply?.ok ?? false;
+    return reply != null;
   }
 
   /// CID 0x10: Get requester subscriptions (device as requester - Tamu only)

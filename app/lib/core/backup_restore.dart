@@ -707,6 +707,33 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
         final ok = await sub.setRequesterSubscription(index, entry: entry);
         // Only a fresh entry consumes a slot; a reused one keeps its own index.
         if (ok && match == null) subIndex[target.id] = next + 1;
+
+        // A subscription has two sides: the node that sends must carry a provider entry with the
+        // SAME TRID, or the requester table points at a source that never arrives. The device
+        // takes the requester's address from the packet source, so only the table is sent.
+        if (ok && providerDev != null) {
+          final nodeSubs = subscriptions.putIfAbsent(
+            providerDev.id,
+            () => SubscriptionClient(deviceId: providerDev.id),
+          );
+          final installed = await nodeSubs.setProviderSubscriptionEntry(
+            ProviderSubscription(
+              index: 0,
+              requesterAddr: provider,
+              trid: entry.trid,
+              table: entry.table,
+              lastSentMs: 0,
+              hash: 0,
+              timeout: 0,
+            ),
+          );
+          if (!installed) {
+            AppDiagnostics.log(
+              'backup',
+              'provider install failed on ${providerDev.name} trid ${entry.trid}',
+            );
+          }
+        }
         done(ok, item, describe(item));
       case RestoreKind.sndb:
         final e = item.sndbEntry!;
