@@ -220,13 +220,14 @@ class DeviceDatabase extends ChangeNotifier {
       flags: ValueFlags.persistent,
       size: bytes.length,
     );
-    // System block (type 0), field 6 (Name), single key 0xFF.
+    // System block (type 0), field 6 (Name). The Register service exposes the System struct as
+    // a whole at key 0, not per member (Docs/Services/System Block and Device Commands.md).
     final payload = [
-      ...blockInfoBytes(0, 0, 6, 0xFF),
+      ...blockInfoBytes(0, 0, 6, 0),
       ...meta.toBytes(),
       ...bytes,
     ];
-    final reply = await _request(id, ServiceType.register, 2, payload: payload);
+    final reply = await _request(id, ServiceType.register, RegisterCid.write, payload: payload);
     if (reply == null) return false;
     final entry = _devices[id];
     if (entry != null) entry.name = name;
