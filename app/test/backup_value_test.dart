@@ -209,4 +209,37 @@ void main() {
       expect(decoded.blocks, isEmpty);
     },
   );
+
+  test('a banked block carries its global index, not the local instance', () {
+    // Bank 1: the wire address is type 0x3F1 with a LOCAL instance, but the semantic form must
+    // carry the global index so the decoder rebuilds the same bank. A global >= 64 used to be
+    // written as the local instance and restored into bank 0.
+    final bank1 = makeBlockInfo(dynamicTypeBase + 1, 5, 3, 7);
+    final semantic = encodeSemantic(DataType.blockInfo, uint32ToBytes(bank1)) as Map;
+    expect(semantic['block'], 'Dynamic');
+    expect(semantic['instance'], 64 + 5);
+    expect(
+      uint32FromBytes(round(DataType.blockInfo, uint32ToBytes(bank1))),
+      bank1,
+    );
+
+    // Bank 0 is unchanged (the global and the local coincide), so existing archives still
+    // restore exactly.
+    final bank0 = makeBlockInfo(dynamicTypeBase, 5, 3, 7);
+    expect(
+      uint32FromBytes(round(DataType.blockInfo, uint32ToBytes(bank0))),
+      bank0,
+    );
+
+    // A script slot in bank 1 follows the same rule.
+    final script = makeBlockInfo(scriptTypeBase + 1, 2, 1, 0);
+    expect(
+      (encodeSemantic(DataType.blockInfo, uint32ToBytes(script)) as Map)['block'],
+      'Script',
+    );
+    expect(
+      uint32FromBytes(round(DataType.blockInfo, uint32ToBytes(script))),
+      script,
+    );
+  });
 }

@@ -146,9 +146,13 @@ Object? encodeSemantic(DataType type, List<int> bytes, {FieldInfo? info}) {
     case DataType.blockInfo:
       if (bytes.length < 4) return hexBytes(bytes);
       final bi = uint32FromBytes(bytes);
+      final type = (bi >> 22) & 0x3FF;
       return {
-        'block': blockTypeLabel((bi >> 22) & 0x3FF),
-        'instance': (bi >> 16) & 0x3F,
+        'block': blockTypeLabel(type),
+        // The semantic form carries the GLOBAL index of a banked block, not the wire's 6-bit
+        // local instance: the decoder rebuilds the bank type from it (decodeSemantic's blockInfo
+        // arm). A global index >= 64 used to round-trip into bank 0.
+        'instance': globalIndexFor(type, (bi >> 16) & 0x3F),
         'field': (bi >> 8) & 0xFF,
         'key': bi & 0xFF,
       };

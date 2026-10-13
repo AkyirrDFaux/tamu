@@ -337,6 +337,19 @@ int scriptTypeForIndex(int global) => scriptTypeBase + (global >> 6);
 /// The BlockInstance (0..63) of global script index `global`.
 int scriptInstanceForIndex(int global) => global & 0x3F;
 
+/// The global index a banked block is addressed by, from its wire address (`type`, `instance`) -
+/// the inverse of the bank helpers above. A block outside both banked ranges is not banked and
+/// keeps its instance.
+int globalIndexFor(int type, int instance) {
+  if (isDynamicType(type)) {
+    return ((type - dynamicTypeBase) << 6) | (instance & 0x3F);
+  }
+  if (isScriptType(type)) {
+    return ((type - scriptTypeBase) << 6) | (instance & 0x3F);
+  }
+  return instance;
+}
+
 /// True for the block types that live in the firmware's `static_block_registry[]` - the device's
 /// static memory, persisted 1:1 in `.SV` (Docs/Services/Register.md "System + Static memory
 /// blocks"). The types are stacked in ascending block-type order with their instances contiguous,
