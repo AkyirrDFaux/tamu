@@ -522,6 +522,30 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
   final subscriptions = <int, SubscriptionClient>{};
   final subIndex = <int, int>{};
   final sndbWritten = <String>{};
+  // One write per distinct (provider, source, target): an archive can carry the same
+  // subscription twice (a device that already held a duplicate captures it), and writing both
+  // leaves two entries racing for one source with the second never firing.
+  final seenSubKeys = <String>{};
+
+  String subKey(int providerAddr, int sourceReg, int targetReg) =>
+      '${idDevice(providerAddr)}:$sourceReg:$targetReg';
+
+  // A restore is a snapshot: a requester subscription the target carries but the archive does
+  // not name is cancelled, so the device ends with exactly the archive's set. Left behind, an
+  // old entry and the restored one race for the same source and one of them goes inert.
+  final wantedSubs = <int, Set<String>>{};
+  for (final item in plan.items) {
+    if (item.kind != RestoreKind.subscription || !item.ready) continue;
+    final t = item.targetDevice;
+    final s = item.subscription;
+    if (t == null || s == null) continue;
+    final providerId = idFromString(s.provider);
+    final providerDev = providerDeviceFor(plan.liveDevices, s.provider);
+    final src = providerDev?.resolveRef(s.source);
+    final tgt = t.resolveRef(s.target);
+    if (providerId == null || src == null || tgt == null) continue;
+    (wantedSubs[t.id] ??= <String>{}).add(subKey(providerId, src, tgt));
+  }
 
   // One item could not be written; record what it was so a run can be diagnosed.
   void failItem(RestoreItem item, String why) {
@@ -558,6 +582,24 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
   };
   final ordered = [...plan.items]
     ..sort((a, b) => order(a.kind).compareTo(order(b.kind)));
+
+  // Cancel what the archive does not name, before writing the archive's own entries.
+  for (final entry in wantedSubs.entries) {
+    final targetId = entry.key;
+    final client = subscriptions.putIfAbsent(
+      targetId,
+      () => SubscriptionClient(deviceId: targetId),
+    );
+    // Keep the first live entry per identity; cancel anything the archive does not name, and
+    // any duplicate identity - a second entry behind the first never fires, which is how a
+    // subscription "exists" yet never updates.
+    final seenLive = <String>{};
+    for (final live in await client.getRequesterSubscriptions()) {
+      final key = subKey(live.providerAddr, live.sourceReg, live.targetReg);
+      if (entry.value.contains(key) && seenLive.add(key)) continue;
+      await client.cancelRequesterSubscription(live.trid);
+    }
+  }
 
   for (final item in ordered) {
     if (!item.selected || !item.ready) continue;
@@ -646,6 +688,13 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
         final targetReg = target.resolveRef(s.target);
         if (source == null || targetReg == null || provider == null) {
           failItem(item, describe(item));
+          break;
+        }
+        // One entry per distinct identity: the archive can name the same subscription twice
+        // (captured from a device that already held a duplicate), and a second entry would sit
+        // inert behind the first.
+        if (!seenSubKeys.add(subKey(provider, source, targetReg))) {
+          written++;
           break;
         }
         // A requester entry's identity is its TRID, so allocate it here instead of leaving it
