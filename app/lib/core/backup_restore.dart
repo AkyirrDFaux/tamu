@@ -391,9 +391,12 @@ Future<RestorePlan> buildRestorePlan(List<BackupDevice> devices) async {
       );
     }
     for (final file in device.files) {
-      // Scripts are restored semantically (`RestoreKind.script`); restoring the raw
-      // SCR_ file too would let it overwrite the rebuilt image.
-      if (file.kind == 'Script') continue;
+      // A file is not restored when it has a semantic form. Scripts come back from
+      // `RestoreKind.script` and the requester-subscription table from
+      // `RestoreKind.subscription`; the device regenerates its own `.SUBREQ` when it saves.
+      // Restoring the raw file as well would let a stale binary overwrite what the semantic
+      // side just wrote.
+      if (file.kind == 'Script' || isSubscriptionTable(file.name)) continue;
       items.add(
         RestoreItem(kind: RestoreKind.file, device: device, file: file),
       );
@@ -530,23 +533,6 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
   String subKey(int providerAddr, int sourceReg, int targetReg) =>
       '${idDevice(providerAddr)}:$sourceReg:$targetReg';
 
-  // A restore is a snapshot: a requester subscription the target carries but the archive does
-  // not name is cancelled, so the device ends with exactly the archive's set. Left behind, an
-  // old entry and the restored one race for the same source and one of them goes inert.
-  final wantedSubs = <int, Set<String>>{};
-  for (final item in plan.items) {
-    if (item.kind != RestoreKind.subscription || !item.ready) continue;
-    final t = item.targetDevice;
-    final s = item.subscription;
-    if (t == null || s == null) continue;
-    final providerId = idFromString(s.provider);
-    final providerDev = providerDeviceFor(plan.liveDevices, s.provider);
-    final src = providerDev?.resolveRef(s.source);
-    final tgt = t.resolveRef(s.target);
-    if (providerId == null || src == null || tgt == null) continue;
-    (wantedSubs[t.id] ??= <String>{}).add(subKey(providerId, src, tgt));
-  }
-
   // One item could not be written; record what it was so a run can be diagnosed.
   void failItem(RestoreItem item, String why) {
     failed++;
@@ -583,23 +569,14 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
   final ordered = [...plan.items]
     ..sort((a, b) => order(a.kind).compareTo(order(b.kind)));
 
-  // Cancel what the archive does not name, before writing the archive's own entries.
-  for (final entry in wantedSubs.entries) {
-    final targetId = entry.key;
-    final client = subscriptions.putIfAbsent(
-      targetId,
-      () => SubscriptionClient(deviceId: targetId),
-    );
-    // Keep the first live entry per identity; cancel anything the archive does not name, and
-    // any duplicate identity - a second entry behind the first never fires, which is how a
-    // subscription "exists" yet never updates.
-    final seenLive = <String>{};
-    for (final live in await client.getRequesterSubscriptions()) {
-      final key = subKey(live.providerAddr, live.sourceReg, live.targetReg);
-      if (entry.value.contains(key) && seenLive.add(key)) continue;
-      await client.cancelRequesterSubscription(live.trid);
-    }
-  }
+  // NOTE: the target's requester table is deliberately NOT pruned. An earlier version cancelled
+  // every entry the archive did not name, which is destructive: a partial or older archive then
+  // silently deletes subscriptions the device legitimately carries. The table belongs to the
+  // device - a restore adds and updates, and two entries of one identity are collapsed by the
+  // write below, but nothing is ever removed.
+  //
+  // (The same-identity collapse is what fixed an inert duplicate; cancellation is not needed
+  // for that.)
 
   for (final item in ordered) {
     if (!item.selected || !item.ready) continue;

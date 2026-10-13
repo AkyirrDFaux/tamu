@@ -39,7 +39,10 @@ Future<BackupDevice?> captureDevice(
       AppDiagnostics.log('backup', 'script ${file.name} parse failed: $error');
     }
   }
-  files.removeWhere((f) => semanticallyArchived.contains(f.name));
+  files.removeWhere(
+    (f) =>
+        semanticallyArchived.contains(f.name) || isSubscriptionTable(f.name),
+  );
 
   // Subscriptions (requester is restorable; provider is informational).
   final subClient = SubscriptionClient(deviceId: deviceId);

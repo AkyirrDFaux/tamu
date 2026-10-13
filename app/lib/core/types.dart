@@ -613,6 +613,11 @@ class ProviderSubscription {
       timeout: timeout,
     );
   }
+
+  /// Wire layout for the provider-change request: the subscription table alone (16 B). The
+  /// device takes the TRID from the packet header and the requester's address from the packet's
+  /// source, so neither is in the payload. A trigger of None cancels the entry.
+  List<int> toChangePayload() => table.toBytes();
 }
 
 /// Requester-side subscription entry (Docs "Requester table entry", 28 B wire).

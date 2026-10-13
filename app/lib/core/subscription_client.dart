@@ -26,6 +26,9 @@ class SubscriptionClient {
   static const int _cidGetRequester = 0x10;
   static const int _cidSetRequester = 0x11;
   static const int _cidGetProvider = 0x20;
+  /// SubCid::Change (0x01): the requester installs/cancels a provider entry on a node. This is
+  /// the install command - `ProviderSet` (0x21) is a different one and is not it.
+  static const int _cidSetProvider = 0x01;
 
   /// Registers the client as the receiver of firmware-pushed subscription value
   /// updates (service Subscriptions CID 0). Must be called while connected; call
@@ -91,6 +94,21 @@ class SubscriptionClient {
   /// CID 0x20: Get provider subscriptions (device as provider)
   Future<List<ProviderSubscription>> getProviderSubscriptions() =>
       _getSubscriptionList(_cidGetProvider, 32, ProviderSubscription.fromBytes);
+
+  /// CID 0x21: change a provider subscription on a node, telling it to send [entry]'s source
+  /// register to the requester that asked. The entry is keyed by its TRID, and a table whose
+  /// trigger is None cancels it. This is the half that makes a restored subscription live: the
+  /// requester table alone leaves the node with nothing to send.
+  Future<bool> setProviderSubscriptionEntry(
+    ProviderSubscription entry,
+  ) async {
+    final reply = await _request(
+      _cidSetProvider,
+      payload: entry.toChangePayload(),
+      transactionId: entry.trid,
+    );
+    return reply?.ok ?? false;
+  }
 
   /// CID 0x10: Get requester subscriptions (device as requester - Tamu only)
   Future<List<RequesterSubscription>> getRequesterSubscriptions() =>

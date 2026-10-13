@@ -44,6 +44,15 @@ int flagsFromWords(List<String> words) {
 
 /// Semantic kind of a device file, derived from its 8-char name
 /// (Docs/App/Service views/Storage.md: "formats the files based on the file name").
+/// True when [name] is the requester-subscription table's file.
+///
+/// Its contents are captured and restored semantically (`RestoreKind.subscription`), so the file
+/// itself is never archived or written back - the device regenerates its own `.SUBREQ` on save.
+bool isSubscriptionTable(String name) {
+  final upper = name.replaceAll('\x00', '').trim().toUpperCase();
+  return upper == '.SUBREQ' || upper == 'SUBREQ';
+}
+
 String backupFileKind(String name) {
   final upper = name.replaceAll('\x00', '').trim().toUpperCase();
   if (upper.startsWith('SCR_')) return 'Script';
