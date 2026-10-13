@@ -292,20 +292,26 @@ inline void SubscriptionsService::Tick(uint32_t NowMs) {
     EvaluateProviderTriggers(NowMs);
 #endif
 #ifdef USE_SUB_REQUEST
-    bool RequesterTableChanged = false;
+    uint16_t Expired = 0;
     for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
         RequesterEntry* Entry = &RequesterTable[i];
         if (Entry->Active && Entry->Timeout != 0 && (int32_t)(NowMs - Entry->Timeout) >= 0) {
             uint16_t Provider = Entry->ProviderAddr;
             uint16_t Trid = Entry->Trid;
             RequesterRemove(Entry);          // compacts the table, shifting the tail left
-            RequesterTableChanged = true;
+            Expired++;
             SubscriptionsCancelProvider(Provider, Trid);
             i--;                         // re-check the entry shifted into slot i
         }
     }
-    // Persist the removals: a timed-out entry must not be restored on the next boot.
-    if (RequesterTableChanged) SaveRequesterTable();
+    // Persist deliberate changes only. An expiry is a FAILURE - no value arrived, so the lease was
+    // never renewed - and a failure must not delete anything: with the table empty the save removes
+    // .SUBREQ, destroying the setup that a later boot would have restored. The entry is dropped
+    // from the table so it stops retrying, but the file keeps the last known-good state; an
+    // explicit cancel is what persists a removal.
+    if (Expired)
+        DeviceLog("SUB", "tick: %d requester entr(ies) expired, file kept",
+                  (int)Expired);
     RequesterInitCheck(NowMs);
     SubscriptionsReRegisterPending();
 #endif
