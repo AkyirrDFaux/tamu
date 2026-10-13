@@ -24,6 +24,7 @@ import 'device_db.dart';
 import 'diagnostics.dart';
 import 'protocol.dart';
 import 'register_client.dart';
+import 'script_client.dart';
 import 'script_file.dart';
 import 'storage_client.dart';
 import 'subscription_client.dart';

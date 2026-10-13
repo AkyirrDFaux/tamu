@@ -569,6 +569,43 @@ Future<int> prepareDynamicBlocks(RestorePlan plan) async {
   return created;
 }
 
+/// Brings up the scripts a restore wrote.
+///
+/// A restored script is only a stored file: the device runs what it loads, not what it holds. The
+/// load-on-boot scripts come back at the next boot, but a function library is not one, so nothing
+/// loads it - and every script that calls into it faults on its Service instruction. A script that
+/// faulted earlier also STAYS in Error until it is explicitly started, and a restore does not
+/// reboot, so without this a restored rig sits with its automation dead while the restore reports
+/// success. Load the libraries first (their users link against them as they load), then start the
+/// ones marked to run on load.
+Future<int> _bringUpScripts(RestorePlan plan) async {
+  var started = 0;
+  for (final source in plan.devices) {
+    final target = plan.deviceTargets[source.id];
+    if (target == null || source.scripts.isEmpty) continue;
+    final client = ScriptClient(deviceId: target.id);
+    final libraries = source.scripts
+        .where((s) => s.properties.contains('Function library'))
+        .toList();
+    final ordered = [
+      ...libraries,
+      ...source.scripts.where((s) => !libraries.contains(s)),
+    ];
+    for (final script in ordered) {
+      if (script.slot < 0) continue;
+      if (!(await client.loadedSlotMap()).containsKey(script.slot)) {
+        // The file id and the loaded slot are independent; a restored file sits at its own slot.
+        if (!await client.load(script.slot, script.slot)) continue;
+      }
+      if (script.properties.contains('Run on load')) {
+        await client.setAction(script.slot, ScriptAction.start);
+        started++;
+      }
+    }
+  }
+  return started;
+}
+
 /// Applies the ready + selected items of [plan]. Returns the number of written
 /// items and failures.
 Future<({int written, int failed, List<String> failures})> applyRestorePlan(
@@ -846,5 +883,7 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
         }
     }
   }
+  // Last, so the scripts read the values this restore has just written.
+  await _bringUpScripts(plan);
   return (written: written, failed: failed, failures: failures);
 }
