@@ -21,18 +21,25 @@ Future<BackupDevice?> captureDevice(
       ? await _captureFiles(deviceId, maxFileBytes)
       : <BackupFile>[];
 
-  // Scripts: decode every SCR_XXX file into the semantic form (the file is kept too).
+  // Scripts: decode every SCR_XXX file into the semantic form and DROP the binary copy. A file is
+  // archived only when it has no semantic form; the restore rebuilds it from that form
+  // (`BackupScript.toDraft().toImage()`) and skips a matching file item, so keeping both would
+  // store the same script twice and let one overwrite the other. A file that fails to parse keeps
+  // its bytes, which is the right fallback: the binary is then the last good copy.
   final scripts = <BackupScript>[];
+  final semanticallyArchived = <String>{};
   for (final file in files) {
     if (file.kind != 'Script') continue;
     final slot = scriptFileId(file.name);
     if (slot == null) continue;
     try {
       scripts.add(BackupScript.fromImage(slot, file.bytes));
+      semanticallyArchived.add(file.name);
     } catch (error) {
       AppDiagnostics.log('backup', 'script ${file.name} parse failed: $error');
     }
   }
+  files.removeWhere((f) => semanticallyArchived.contains(f.name));
 
   // Subscriptions (requester is restorable; provider is informational).
   final subClient = SubscriptionClient(deviceId: deviceId);

@@ -7,6 +7,10 @@ Item codes: **A** = doc-fix rulings, **B** = code-fix items (both from the 2026-
 
 ## A. Doc fixes still open
 
+**A70 A file with a semantic form is not archived as a binary.** The backup now stores a `SCR_XXX`
+script only in its semantic form; the file is rebuilt on restore. The archive-format docs do not
+state that rule.
+
 **A69 The backup's semantic block address carries the global index.** The semantic `blockInfo`
 value stores `instance` as the GLOBAL index - the decoder rebuilds the bank type from it - but no
 doc says so. One line is missing: a global index >= 64 is what keeps a banked block in its own bank
