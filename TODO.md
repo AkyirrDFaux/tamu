@@ -61,10 +61,6 @@ Open:
 
 ## Open work
 
-- [ ] **The DAS firmware still lacks the subscription-stream stride fix** (`SubscriptionsControl.h`).
-      The core is flashed; the DAS is not, so the app's *provider*-table reads on a DAS are still
-      wrong. Reflash the DAS app with it in update mode (`./upload.sh app das`).
-
 - Router capability bit: reserve one for the router service so the documented capability can be set.
 - App Active enum: add `WiFi` (`Enums.h:34-38`) when that work starts. E10 dropped `LegacyBt` from
   the documents, so it is no longer listed as a planned state.

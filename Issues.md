@@ -7,6 +7,11 @@ Item codes: **A** = doc-fix rulings, **B** = code-fix items (both from the 2026-
 
 ## A. Doc fixes still open
 
+**A69 The backup's semantic block address carries the global index.** The semantic `blockInfo`
+value stores `instance` as the GLOBAL index - the decoder rebuilds the bank type from it - but no
+doc says so. One line is missing: a global index >= 64 is what keeps a banked block in its own bank
+on restore, where the wire's 6-bit instance would send it to bank 0.
+
 **A68 Windows USB.** `App/General Info.md:7` lists Windows as "BLE, USB"; `supportsUsb` is Linux-only
 (`platform_caps.dart`). Proposed row: `| Windows | BLE (USB not implemented yet) |`. Windows is dropped
 for this window, so this is doc accuracy only.
