@@ -51,10 +51,16 @@ class _BackupPageState extends State<BackupPage> {
       );
       if (target == null) return; // cancelled
       final items = devices.fold<int>(
-          0, (sum, d) => sum + d.blocks.fold<int>(0, (s, b) => s + b.entries.length));
-      _snack('Backup saved (${devices.length} device(s), $items register entries)');
-      notifyAppEvent('Backup finished',
-          'Backup saved (${devices.length} device(s), $items register entries)');
+        0,
+        (sum, d) => sum + d.blocks.fold<int>(0, (s, b) => s + b.entries.length),
+      );
+      _snack(
+        'Backup saved (${devices.length} device(s), $items register entries)',
+      );
+      notifyAppEvent(
+        'Backup finished',
+        'Backup saved (${devices.length} device(s), $items register entries)',
+      );
     } catch (error) {
       _snack('Backup failed: $error');
     } finally {
@@ -114,77 +120,89 @@ class _BackupPageState extends State<BackupPage> {
           ),
           body: !connected
               ? const Center(child: Text('Not connected'))
-              : Column(children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-                    child: Row(children: [
-                      Text(
-                          '${_selected.length} of ${devices.length} selected',
-                          style: Theme.of(context).textTheme.bodySmall),
-                      const Spacer(),
-                      TextButton(
-                        onPressed: () => setState(() =>
-                            _selected.length == devices.length
-                                ? _selected.clear()
-                                : _selected
-                                    .addAll(devices.map((d) => d.id))),
-                        child: Text(_selected.length == devices.length &&
-                                devices.isNotEmpty
-                            ? 'Deselect all'
-                            : 'Select all'),
+              : Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+                      child: Row(
+                        children: [
+                          Text(
+                            '${_selected.length} of ${devices.length} selected',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          const Spacer(),
+                          TextButton(
+                            onPressed: () => setState(
+                              () => _selected.length == devices.length
+                                  ? _selected.clear()
+                                  : _selected.addAll(devices.map((d) => d.id)),
+                            ),
+                            child: Text(
+                              _selected.length == devices.length &&
+                                      devices.isNotEmpty
+                                  ? 'Deselect all'
+                                  : 'Select all',
+                            ),
+                          ),
+                        ],
                       ),
-                    ]),
-                  ),
-                  SwitchListTile(
-                    dense: true,
-                    title: const Text('Include device files'),
-                    value: _includeFiles,
-                    onChanged: (v) => setState(() => _includeFiles = v),
-                  ),
-                  const Divider(height: 1),
-                  Expanded(
-                    child: ListView.builder(
-                      itemCount: devices.length,
-                      itemBuilder: (context, index) {
-                        final device = devices[index];
-                        return CheckboxListTile(
-                          secondary: Icon(deviceTypeIcon(device.type)),
-                          title: Text(device.name),
-                          subtitle:
-                              Text('${idToString(device.id)} - ${device.type.label}'),
-                          value: _selected.contains(device.id),
-                          onChanged: device.stale
-                              ? null
-                              : (value) => setState(() {
+                    ),
+                    SwitchListTile(
+                      dense: true,
+                      title: const Text('Include device files'),
+                      value: _includeFiles,
+                      onChanged: (v) => setState(() => _includeFiles = v),
+                    ),
+                    const Divider(height: 1),
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: devices.length,
+                        itemBuilder: (context, index) {
+                          final device = devices[index];
+                          return CheckboxListTile(
+                            secondary: Icon(deviceTypeIcon(device.type)),
+                            title: Text(device.name),
+                            subtitle: Text(
+                              '${idToString(device.id)} - ${device.type.label}',
+                            ),
+                            value: _selected.contains(device.id),
+                            onChanged: device.stale
+                                ? null
+                                : (value) => setState(() {
                                     value == true
                                         ? _selected.add(device.id)
                                         : _selected.remove(device.id);
                                   }),
-                        );
-                      },
+                          );
+                        },
+                      ),
                     ),
-                  ),
-                ]),
+                  ],
+                ),
           bottomNavigationBar: SafeArea(
             child: Padding(
               padding: const EdgeInsets.all(12),
-              child: Row(children: [
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: _busy || _selected.isEmpty ? null : _createBackup,
-                    icon: const Icon(Icons.archive),
-                    label: const Text('Create backup'),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: _busy || _selected.isEmpty
+                          ? null
+                          : _createBackup,
+                      icon: const Icon(Icons.archive),
+                      label: const Text('Create backup'),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: _busy || !connected ? null : _restoreBackup,
-                    icon: const Icon(Icons.restore),
-                    label: const Text('Restore'),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: _busy || !connected ? null : _restoreBackup,
+                      icon: const Icon(Icons.restore),
+                      label: const Text('Restore'),
+                    ),
                   ),
-                ),
-              ]),
+                ],
+              ),
             ),
           ),
         );
@@ -229,9 +247,10 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
       final result = await applyRestorePlan(plan);
       if (mounted) {
         showSnack(
-            context,
-            'Restored ${result.written} item(s)'
-            '${result.failed > 0 ? ', ${result.failed} failed' : ''}');
+          context,
+          'Restored ${result.written} item(s)'
+          '${result.failed > 0 ? ', ${result.failed} failed' : ''}',
+        );
         Navigator.of(context).pop(true);
       }
     } catch (error) {
@@ -262,20 +281,22 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
       bottomNavigationBar: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(12),
-          child: Row(children: [
-            Expanded(
-              child: Text(
-                '${plan.selectedCount} selected'
-                '${plan.issueCount > 0 ? '\n${plan.issueCount} unavailable' : ''}',
-                style: Theme.of(context).textTheme.bodySmall,
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '${plan.selectedCount} selected'
+                  '${plan.issueCount > 0 ? '\n${plan.issueCount} unavailable' : ''}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
               ),
-            ),
-            FilledButton.icon(
-              onPressed: _busy || plan.selectedCount == 0 ? null : _apply,
-              icon: const Icon(Icons.restore),
-              label: const Text('Restore'),
-            ),
-          ]),
+              FilledButton.icon(
+                onPressed: _busy || plan.selectedCount == 0 ? null : _apply,
+                icon: const Icon(Icons.restore),
+                label: const Text('Restore'),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -287,7 +308,9 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
     final entries = items.where((i) => i.kind == RestoreKind.entry).toList();
     final blocks = <BackupBlock>{for (final i in entries) i.block!}.toList();
     final scripts = items.where((i) => i.kind == RestoreKind.script).toList();
-    final subs = items.where((i) => i.kind == RestoreKind.subscription).toList();
+    final subs = items
+        .where((i) => i.kind == RestoreKind.subscription)
+        .toList();
     final sndb = items.where((i) => i.kind == RestoreKind.sndb).toList();
     final files = items.where((i) => i.kind == RestoreKind.file).toList();
     return Card(
@@ -319,8 +342,10 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
         for (final live in plan.liveDevices)
           DropdownMenuItem(
             value: live.id,
-            child:
-                Text('${live.name} (${idToString(live.id)})', overflow: TextOverflow.ellipsis),
+            child: Text(
+              '${live.name} (${idToString(live.id)})',
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
       ],
       onChanged: (id) {
@@ -348,7 +373,12 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
 
   Widget _blockSection(BackupDevice device, BackupBlock block) {
     final items = plan.items
-        .where((i) => i.device.id == device.id && i.kind == RestoreKind.entry && identical(i.block, block))
+        .where(
+          (i) =>
+              i.device.id == device.id &&
+              i.kind == RestoreKind.entry &&
+              identical(i.block, block),
+        )
         .toList();
     final head = items.isNotEmpty ? items.first : null;
     final targetDevice = plan.deviceTargets[device.id];
@@ -360,28 +390,34 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(children: [
-            Expanded(
-              child: Text('${block.type} "${block.name}" #${block.instance}',
-                  style: Theme.of(context).textTheme.titleSmall),
-            ),
-            if (options.length > 1)
-              DropdownButton<LiveBlock>(
-                value: head?.targetBlock,
-                hint: const Text('Target'),
-                items: [
-                  for (final live in options)
-                    DropdownMenuItem(
-                      value: live,
-                      child: Text('${live.name} #${live.instance}',
-                          overflow: TextOverflow.ellipsis),
-                    ),
-                ],
-                onChanged: (live) {
-                  if (live != null) _reselectBlock(device.id, block, live);
-                },
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '${block.type} "${block.name}" #${block.instance}',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
               ),
-          ]),
+              if (options.length > 1)
+                DropdownButton<LiveBlock>(
+                  value: head?.targetBlock,
+                  hint: const Text('Target'),
+                  items: [
+                    for (final live in options)
+                      DropdownMenuItem(
+                        value: live,
+                        child: Text(
+                          '${live.name} #${live.instance}',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                  onChanged: (live) {
+                    if (live != null) _reselectBlock(device.id, block, live);
+                  },
+                ),
+            ],
+          ),
           for (final item in items) _itemTile(item),
         ],
       ),
@@ -396,11 +432,13 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
           ? (v) => setState(() => item.selected = v == true)
           : null,
       title: Text(_title(item), overflow: TextOverflow.ellipsis),
-      subtitle: Text(_subtitle(item),
-          overflow: TextOverflow.ellipsis,
-          style: item.issue != null
-              ? const TextStyle(color: Colors.orangeAccent)
-              : null),
+      subtitle: Text(
+        _subtitle(item),
+        overflow: TextOverflow.ellipsis,
+        style: item.issue != null
+            ? const TextStyle(color: Colors.orangeAccent)
+            : null,
+      ),
     );
   }
 

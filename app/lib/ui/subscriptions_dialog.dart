@@ -10,7 +10,14 @@ import '../core/register_client.dart';
 import '../core/subscription_client.dart';
 import '../core/script_client.dart';
 import '../core/render_dict.dart' show isRenderDictType;
-import '../core/types.dart' show BlockType, DataType, ValueInfo, RequesterSubscription, TriggerType, makeBlockInfo;
+import '../core/types.dart'
+    show
+        BlockType,
+        DataType,
+        ValueInfo,
+        RequesterSubscription,
+        TriggerType,
+        makeBlockInfo;
 import 'widgets.dart' show showSnack, DialogBody;
 
 part 'subscriptions_pickers.dart';
@@ -56,14 +63,23 @@ class FieldSelection {
 Future<List<BlockSelection>> fetchBlockSelections(int deviceId) async {
   final reg = RegisterClient(deviceId: deviceId);
   final blocks = await reg.readBlocks(
-      scriptSlots: await ScriptClient(deviceId: deviceId).loadedScripts());
+    scriptSlots: await ScriptClient(deviceId: deviceId).loadedScripts(),
+  );
   if (blocks == null) return [];
   final out = <BlockSelection>[];
   for (final b in blocks) {
     if (b == null) continue;
-    final label = b.name.trim().isNotEmpty ? b.name : BlockType.fromValue(b.type).label;
-    out.add(BlockSelection(
-        type: b.type, inst: b.inst, name: label, label: '$label [${b.inst}]'));
+    final label = b.name.trim().isNotEmpty
+        ? b.name
+        : BlockType.fromValue(b.type).label;
+    out.add(
+      BlockSelection(
+        type: b.type,
+        inst: b.inst,
+        name: label,
+        label: '$label [${b.inst}]',
+      ),
+    );
   }
   return out;
 }
@@ -72,7 +88,10 @@ Future<List<BlockSelection>> fetchBlockSelections(int deviceId) async {
 /// unavailable so navigation never blocks. Names come from the design-time schema when present.
 /// Fields and keys are the *enumerated* indexes (dynamic blocks may be sparse and keyed
 /// fields may use keys beyond 0..7).
-Future<List<FieldSelection>> fetchFieldSelections(int deviceId, BlockSelection block) async {
+Future<List<FieldSelection>> fetchFieldSelections(
+  int deviceId,
+  BlockSelection block,
+) async {
   final reg = RegisterClient(deviceId: deviceId);
   final fieldIndexes = await reg.enumerateFieldIndexes(block.type, block.inst);
   if (fieldIndexes == null) return [];
@@ -90,13 +109,18 @@ Future<List<FieldSelection>> fetchFieldSelections(int deviceId, BlockSelection b
     final keys = keyed && isRenderDictType(r.meta.type)
         ? allKeys.where((k) => k != 0).toList()
         : allKeys;
-    final name = (schema != null && f < schema.fields.length) ? schema.fields[f].name : null;
-    out.add(FieldSelection(
+    final name = (schema != null && f < schema.fields.length)
+        ? schema.fields[f].name
+        : null;
+    out.add(
+      FieldSelection(
         field: f,
         meta: r.meta,
         name: name ?? 'Field $f',
         keyed: keyed,
-        keys: keys));
+        keys: keys,
+      ),
+    );
   }
   return out;
 }
@@ -180,7 +204,9 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
       // (editing keeps the existing subscription's provider).
       final db = DeviceDatabase.instance;
       await db.refreshNetwork();
-      final devices = db.all.where((d) => d.id != widget.client.deviceId).toList();
+      final devices = db.all
+          .where((d) => d.id != widget.client.deviceId)
+          .toList();
 
       final targetBlocks = await _fetchBlocks(widget.client.deviceId);
       // The picker normally excludes the local device, but an existing self/offline-provider
@@ -190,7 +216,9 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
       if (existingProvider != null &&
           !devices.any((d) => d.id == existingProvider)) {
         devices.insert(
-            0, db.byId(existingProvider) ?? DeviceEntry(id: existingProvider));
+          0,
+          db.byId(existingProvider) ?? DeviceEntry(id: existingProvider),
+        );
       }
       final providerAddr =
           existingProvider ?? (devices.isNotEmpty ? devices.first.id : 1);
@@ -206,15 +234,31 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
         // Pre-select the existing subscription's target/source once the blocks are known.
         final existing = widget.existing;
         if (existing != null) {
-          _selectedTargetBlock = _matchBlock(_targetBlocks, existing.blockType, existing.blockInst);
+          _selectedTargetBlock = _matchBlock(
+            _targetBlocks,
+            existing.blockType,
+            existing.blockInst,
+          );
           if (_selectedTargetBlock != null) {
             _targetKey = existing.blockKey;
-            _loadFieldsForTarget(_selectedTargetBlock!, existing.blockField, existing.blockKey);
+            _loadFieldsForTarget(
+              _selectedTargetBlock!,
+              existing.blockField,
+              existing.blockKey,
+            );
           }
-          _selectedSourceBlock = _matchBlock(_sourceBlocks, existing.blockTypeS, existing.blockInstS);
+          _selectedSourceBlock = _matchBlock(
+            _sourceBlocks,
+            existing.blockTypeS,
+            existing.blockInstS,
+          );
           if (_selectedSourceBlock != null) {
             _sourceKey = existing.blockKeyS;
-            _loadFieldsForSource(_selectedSourceBlock!, existing.blockFieldS, existing.blockKeyS);
+            _loadFieldsForSource(
+              _selectedSourceBlock!,
+              existing.blockFieldS,
+              existing.blockKeyS,
+            );
           }
         }
       });
@@ -226,7 +270,11 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
     }
   }
 
-  static BlockSelection? _matchBlock(List<BlockSelection> blocks, int type, int inst) {
+  static BlockSelection? _matchBlock(
+    List<BlockSelection> blocks,
+    int type,
+    int inst,
+  ) {
     for (final b in blocks) {
       if (b.type == type && b.inst == inst) return b;
     }
@@ -238,33 +286,59 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
 
   /// Reads the fields of a block. Fails gracefully (empty list) when the field
   /// enumeration is unavailable so navigation never blocks.
-  Future<List<FieldSelection>> _fetchFields(int deviceId, BlockSelection block) =>
-      fetchFieldSelections(deviceId, block);
+  Future<List<FieldSelection>> _fetchFields(
+    int deviceId,
+    BlockSelection block,
+  ) => fetchFieldSelections(deviceId, block);
 
-  Future<void> _loadFieldsForTarget(BlockSelection block, [int? preField, int? preKey]) async {
-    setState(() { _selectedTargetBlock = block; _selectedTargetField = null; _targetFields = []; _targetKey = 0; });
+  Future<void> _loadFieldsForTarget(
+    BlockSelection block, [
+    int? preField,
+    int? preKey,
+  ]) async {
+    setState(() {
+      _selectedTargetBlock = block;
+      _selectedTargetField = null;
+      _targetFields = [];
+      _targetKey = 0;
+    });
     final fields = await _fetchFields(widget.client.deviceId, block);
     if (!mounted) return;
     setState(() {
       _targetFields = fields;
       if (preField != null) {
         for (final fl in fields) {
-          if (fl.field == preField) { _selectedTargetField = fl; break; }
+          if (fl.field == preField) {
+            _selectedTargetField = fl;
+            break;
+          }
         }
       }
       if (preKey != null) _targetKey = preKey;
     });
   }
 
-  Future<void> _loadFieldsForSource(BlockSelection block, [int? preField, int? preKey]) async {
-    setState(() { _selectedSourceBlock = block; _selectedSourceField = null; _sourceFields = []; _sourceKey = 0; });
+  Future<void> _loadFieldsForSource(
+    BlockSelection block, [
+    int? preField,
+    int? preKey,
+  ]) async {
+    setState(() {
+      _selectedSourceBlock = block;
+      _selectedSourceField = null;
+      _sourceFields = [];
+      _sourceKey = 0;
+    });
     final fields = await _fetchFields(_selectedProviderAddr ?? 0, block);
     if (!mounted) return;
     setState(() {
       _sourceFields = fields;
       if (preField != null) {
         for (final fl in fields) {
-          if (fl.field == preField) { _selectedSourceField = fl; break; }
+          if (fl.field == preField) {
+            _selectedSourceField = fl;
+            break;
+          }
         }
       }
       if (preKey != null) _sourceKey = preKey;
@@ -295,143 +369,169 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
         child: _loadingBlocks
             ? const Center(child: CircularProgressIndicator())
             : _blockError != null
-                ? Text('Error loading blocks: $_blockError', style: TextStyle(color: theme.colorScheme.error))
-                : SingleChildScrollView(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        // Target Block -> Field -> Key (local)
-                        BlockPicker(
-                          label: 'Target Block',
-                          hint: 'Where to write received values',
-                          blocks: _targetBlocks,
-                          value: _selectedTargetBlock,
-                          onChanged: (v) { if (v != null) { _loadFieldsForTarget(v); } },
-                        ),
-                        if (_selectedTargetBlock != null) ...[
-                          const SizedBox(height: 12),
-                          FieldPicker(
-                            label: 'Target Field',
-                            fields: _targetFields,
-                            value: _selectedTargetField,
-                            onChanged: (v) => setState(() => _selectedTargetField = v),
-                          ),
-                          if (_selectedTargetField != null && _selectedTargetField!.keyed) ...[
-                            const SizedBox(height: 12),
-                            KeyPicker(
-                              label: 'Target Key',
-                              value: _targetKey,
-                              keys: _selectedTargetField!.keys,
-                              onChanged: (v) => setState(() => _targetKey = v),
-                            ),
-                          ],
-                        ],
-                        const SizedBox(height: 12),
-
-                        // Provider Device
-                        ProviderPicker(
-                          label: 'Provider Device',
-                          hint: 'Device providing the data',
-                          devices: _devices,
-                          value: _selectedProviderAddr,
-                          onChanged: (v) async {
-                            setState(() {
-                              _selectedProviderAddr = v;
-                              _selectedSourceBlock = null;
-                              _selectedSourceField = null;
-                              _sourceFields = [];
-                            });
-                            if (v != null) {
-                              final blocks = await _fetchBlocks(v);
-                              if (!mounted) return;
-                              setState(() => _sourceBlocks = blocks);
-                            }
-                          },
-                        ),
-                        const SizedBox(height: 12),
-
-                        // Source Block -> Field -> Key (remote)
-                        BlockPicker(
-                          label: 'Source Block',
-                          hint: 'Which value to subscribe to',
-                          blocks: _sourceBlocks,
-                          value: _selectedSourceBlock,
-                          onChanged: (v) { if (v != null) { _loadFieldsForSource(v); } },
-                        ),
-                        if (_selectedSourceBlock != null) ...[
-                          const SizedBox(height: 12),
-                          FieldPicker(
-                            label: 'Source Field',
-                            fields: _sourceFields,
-                            value: _selectedSourceField,
-                            onChanged: (v) => setState(() => _selectedSourceField = v),
-                          ),
-                          if (_selectedSourceField != null && _selectedSourceField!.keyed) ...[
-                            const SizedBox(height: 12),
-                            KeyPicker(
-                              label: 'Source Key',
-                              value: _sourceKey,
-                              keys: _selectedSourceField!.keys,
-                              onChanged: (v) => setState(() => _sourceKey = v),
-                            ),
-                          ],
-                        ],
-                        const SizedBox(height: 12),
-
-                        // Trigger Type
-                        DropdownButtonFormField<TriggerType>(
-                          initialValue: _trigger,
-                          decoration: const InputDecoration(labelText: 'Trigger Type'),
-                          items: TriggerType.values
-                              .where((t) => t != TriggerType.none)
-                              .map((t) => DropdownMenuItem(
-                                    value: t,
-                                    child: Text(t.label),
-                                  ))
-                              .toList(),
-                          onChanged: (v) => setState(() => _trigger = v!),
-                        ),
-                        const SizedBox(height: 12),
-
-                        // Period (ms) - shown for periodic triggers
-                        if (_needsPeriod())
-                          NumberField(
-                            label: 'Period (ms)',
-                            controller: _periodController,
-                            onChanged: (v) => _periodMs = v,
-                            min: 1,
-                          ),
-                        if (_needsPeriod()) const SizedBox(height: 12),
-
-                        // Min interval (periodic) / retry interval (confirm).
-                        // Docs/Services/Subscriptions.md: plain Periodic only needs a Period.
-                        if (_needsInterval()) ...[
-                          NumberField(
-                            label: _intervalLabel(),
-                            controller: _minTimeController,
-                            onChanged: (v) => _minTimeMs = v,
-                            min: 0,
-                          ),
-                          const SizedBox(height: 12),
-                        ],
-
-                        // Deadzone (docs: "for number/vector") - Delta triggers.
-                        if (_needsDeadzone()) ...[
-                          TextFormField(
-                            controller: _deadzoneController,
-                            decoration: const InputDecoration(
-                                labelText: 'Deadzone', border: OutlineInputBorder()),
-                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                            onChanged: (v) => _deadzone = double.tryParse(v) ?? 0,
-                          ),
-                          const SizedBox(height: 12),
-                        ],
-                      ],
+            ? Text(
+                'Error loading blocks: $_blockError',
+                style: TextStyle(color: theme.colorScheme.error),
+              )
+            : SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Target Block -> Field -> Key (local)
+                    BlockPicker(
+                      label: 'Target Block',
+                      hint: 'Where to write received values',
+                      blocks: _targetBlocks,
+                      value: _selectedTargetBlock,
+                      onChanged: (v) {
+                        if (v != null) {
+                          _loadFieldsForTarget(v);
+                        }
+                      },
                     ),
-                  ),
+                    if (_selectedTargetBlock != null) ...[
+                      const SizedBox(height: 12),
+                      FieldPicker(
+                        label: 'Target Field',
+                        fields: _targetFields,
+                        value: _selectedTargetField,
+                        onChanged: (v) =>
+                            setState(() => _selectedTargetField = v),
+                      ),
+                      if (_selectedTargetField != null &&
+                          _selectedTargetField!.keyed) ...[
+                        const SizedBox(height: 12),
+                        KeyPicker(
+                          label: 'Target Key',
+                          value: _targetKey,
+                          keys: _selectedTargetField!.keys,
+                          onChanged: (v) => setState(() => _targetKey = v),
+                        ),
+                      ],
+                    ],
+                    const SizedBox(height: 12),
+
+                    // Provider Device
+                    ProviderPicker(
+                      label: 'Provider Device',
+                      hint: 'Device providing the data',
+                      devices: _devices,
+                      value: _selectedProviderAddr,
+                      onChanged: (v) async {
+                        setState(() {
+                          _selectedProviderAddr = v;
+                          _selectedSourceBlock = null;
+                          _selectedSourceField = null;
+                          _sourceFields = [];
+                        });
+                        if (v != null) {
+                          final blocks = await _fetchBlocks(v);
+                          if (!mounted) return;
+                          setState(() => _sourceBlocks = blocks);
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 12),
+
+                    // Source Block -> Field -> Key (remote)
+                    BlockPicker(
+                      label: 'Source Block',
+                      hint: 'Which value to subscribe to',
+                      blocks: _sourceBlocks,
+                      value: _selectedSourceBlock,
+                      onChanged: (v) {
+                        if (v != null) {
+                          _loadFieldsForSource(v);
+                        }
+                      },
+                    ),
+                    if (_selectedSourceBlock != null) ...[
+                      const SizedBox(height: 12),
+                      FieldPicker(
+                        label: 'Source Field',
+                        fields: _sourceFields,
+                        value: _selectedSourceField,
+                        onChanged: (v) =>
+                            setState(() => _selectedSourceField = v),
+                      ),
+                      if (_selectedSourceField != null &&
+                          _selectedSourceField!.keyed) ...[
+                        const SizedBox(height: 12),
+                        KeyPicker(
+                          label: 'Source Key',
+                          value: _sourceKey,
+                          keys: _selectedSourceField!.keys,
+                          onChanged: (v) => setState(() => _sourceKey = v),
+                        ),
+                      ],
+                    ],
+                    const SizedBox(height: 12),
+
+                    // Trigger Type
+                    DropdownButtonFormField<TriggerType>(
+                      initialValue: _trigger,
+                      decoration: const InputDecoration(
+                        labelText: 'Trigger Type',
+                      ),
+                      items: TriggerType.values
+                          .where((t) => t != TriggerType.none)
+                          .map(
+                            (t) => DropdownMenuItem(
+                              value: t,
+                              child: Text(t.label),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (v) => setState(() => _trigger = v!),
+                    ),
+                    const SizedBox(height: 12),
+
+                    // Period (ms) - shown for periodic triggers
+                    if (_needsPeriod())
+                      NumberField(
+                        label: 'Period (ms)',
+                        controller: _periodController,
+                        onChanged: (v) => _periodMs = v,
+                        min: 1,
+                      ),
+                    if (_needsPeriod()) const SizedBox(height: 12),
+
+                    // Min interval (periodic) / retry interval (confirm).
+                    // Docs/Services/Subscriptions.md: plain Periodic only needs a Period.
+                    if (_needsInterval()) ...[
+                      NumberField(
+                        label: _intervalLabel(),
+                        controller: _minTimeController,
+                        onChanged: (v) => _minTimeMs = v,
+                        min: 0,
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+
+                    // Deadzone (docs: "for number/vector") - Delta triggers.
+                    if (_needsDeadzone()) ...[
+                      TextFormField(
+                        controller: _deadzoneController,
+                        decoration: const InputDecoration(
+                          labelText: 'Deadzone',
+                          border: OutlineInputBorder(),
+                        ),
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        onChanged: (v) => _deadzone = double.tryParse(v) ?? 0,
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                  ],
+                ),
+              ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
         FilledButton(
           onPressed: _canSave() ? _save : null,
           child: Text(isEdit ? 'Save' : 'Add'),
@@ -442,8 +542,8 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
 
   bool _needsPeriod() {
     return _trigger == TriggerType.periodic ||
-           _trigger == TriggerType.onChangePeriodic ||
-           _trigger == TriggerType.deltaPeriodic;
+        _trigger == TriggerType.onChangePeriodic ||
+        _trigger == TriggerType.deltaPeriodic;
   }
 
   // Docs: OnChange+Period uses a Minimum interval; OnChange+Confirm/Edge a Retry interval.
@@ -461,8 +561,10 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
   bool _needsDeadzone() => _trigger == TriggerType.deltaPeriodic;
 
   bool _canSave() {
-    if (_selectedTargetBlock == null || _selectedTargetField == null ||
-        _selectedSourceBlock == null || _selectedSourceField == null ||
+    if (_selectedTargetBlock == null ||
+        _selectedTargetField == null ||
+        _selectedSourceBlock == null ||
+        _selectedSourceField == null ||
         _selectedProviderAddr == null) {
       return false;
     }
@@ -481,10 +583,18 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
   }
 
   Future<void> _save() async {
-    final targetReg = makeBlockInfo(_selectedTargetBlock!.type, _selectedTargetBlock!.inst,
-        _selectedTargetField!.field, _targetKey);
-    final sourceReg = makeBlockInfo(_selectedSourceBlock!.type, _selectedSourceBlock!.inst,
-        _selectedSourceField!.field, _sourceKey);
+    final targetReg = makeBlockInfo(
+      _selectedTargetBlock!.type,
+      _selectedTargetBlock!.inst,
+      _selectedTargetField!.field,
+      _targetKey,
+    );
+    final sourceReg = makeBlockInfo(
+      _selectedSourceBlock!.type,
+      _selectedSourceBlock!.inst,
+      _selectedSourceField!.field,
+      _sourceKey,
+    );
     final providerAddr = _selectedProviderAddr!;
 
     final index = widget.existing?.index ?? _findFreeIndex();
@@ -509,11 +619,17 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
       trid: trid,
     );
 
-    final ok = await widget.client.setRequesterSubscription(index, entry: entry);
+    final ok = await widget.client.setRequesterSubscription(
+      index,
+      entry: entry,
+    );
     if (ok) {
       await widget.onSaved();
       if (mounted) {
-        showSnack(context, isEdit ? 'Subscription updated' : 'Subscription added');
+        showSnack(
+          context,
+          isEdit ? 'Subscription updated' : 'Subscription added',
+        );
         Navigator.pop(context);
       }
     } else {
@@ -534,4 +650,3 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
     return index;
   }
 }
-

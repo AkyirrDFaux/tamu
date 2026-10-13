@@ -31,8 +31,11 @@ Future<BlePermissionResult> ensureBlePermissions() async {
     return BlePermissionResult.granted;
   }
   AppDiagnostics.log(
-      'ble', 'runtime permissions not granted (scan=$scan, connect=$connect)');
-  final permanent = (scan?.isPermanentlyDenied ?? false) ||
+    'ble',
+    'runtime permissions not granted (scan=$scan, connect=$connect)',
+  );
+  final permanent =
+      (scan?.isPermanentlyDenied ?? false) ||
       (connect?.isPermanentlyDenied ?? false);
   return permanent
       ? BlePermissionResult.permanentlyDenied

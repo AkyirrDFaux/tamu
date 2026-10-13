@@ -42,8 +42,6 @@ class _StoragePageState extends State<StoragePage>
   @override
   Future<void> onAutoRefresh() => _refresh();
 
-
-
   void _snack(String message) {
     if (!mounted) return;
     showSnack(context, message);
@@ -71,26 +69,32 @@ class _StoragePageState extends State<StoragePage>
   Future<bool> _confirm(String title, String body) async =>
       confirmDialog(context, title: title, body: body);
 
-  Future<String?> _promptText(String title, String label, String initial,
-      {int maxChars = 8}) async {
+  Future<String?> _promptText(
+    String title,
+    String label,
+    String initial, {
+    int maxChars = 8,
+  }) async {
     final controller = TextEditingController(text: initial);
     return await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text(title),
         content: TextField(
-            controller: controller,
-            autofocus: true,
-            maxLength: maxChars,
-            decoration: InputDecoration(labelText: label)),
+          controller: controller,
+          autofocus: true,
+          maxLength: maxChars,
+          decoration: InputDecoration(labelText: label),
+        ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel')),
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
           FilledButton(
-              onPressed: () =>
-                  Navigator.pop(context, controller.text.trim()),
-              child: const Text('OK')),
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('OK'),
+          ),
         ],
       ),
     );
@@ -98,10 +102,18 @@ class _StoragePageState extends State<StoragePage>
 
   Future<void> _createFile() async {
     final name = await _promptText(
-        'New file', 'Name (max 8 chars)', '', maxChars: 8);
+      'New file',
+      'Name (max 8 chars)',
+      '',
+      maxChars: 8,
+    );
     if (name == null || name.isEmpty) return;
-    final sizeText = await _promptText('Size of "$name"', 'Bytes', '4096',
-        maxChars: 7);
+    final sizeText = await _promptText(
+      'Size of "$name"',
+      'Bytes',
+      '4096',
+      maxChars: 7,
+    );
     final size = sizeText == null ? null : int.tryParse(sizeText);
     if (size == null || size <= 0) return;
     final ok = await _client.createFile(name, size);
@@ -136,9 +148,10 @@ class _StoragePageState extends State<StoragePage>
 
   Future<void> _deleteFile(FileRecord file) async {
     if (!await _confirm(
-        'Delete "${file.name}"?',
-        'The file record is invalidated; the space is reused on the next '
-        'matching allocation.')) {
+      'Delete "${file.name}"?',
+      'The file record is invalidated; the space is reused on the next '
+          'matching allocation.',
+    )) {
       return;
     }
     final ok = await _client.deleteFile(file.name);
@@ -148,8 +161,11 @@ class _StoragePageState extends State<StoragePage>
 
   Future<void> _renameFile(FileRecord file) async {
     final newName = await _promptText(
-        'Rename "${file.name}"', 'New name (max 8 chars)', file.name,
-        maxChars: 8);
+      'Rename "${file.name}"',
+      'New name (max 8 chars)',
+      file.name,
+      maxChars: 8,
+    );
     if (newName == null || newName.isEmpty || newName == file.name) return;
     final ok = await _client.renameFile(file.name, newName);
     _snack(ok ? 'File renamed' : 'Rename failed');
@@ -165,7 +181,9 @@ class _StoragePageState extends State<StoragePage>
       return;
     }
     final target = await saveBytesWithPicker(
-        fileName: '${file.name}_download.bin', bytes: data);
+      fileName: '${file.name}_download.bin',
+      bytes: data,
+    );
     if (target == null) {
       _snack('Download cancelled');
       return;
@@ -181,13 +199,15 @@ class _StoragePageState extends State<StoragePage>
         title: Text('Storage - ${idToString(widget.deviceId)}'),
         actions: [
           IconButton(
-              onPressed: _uploadFile,
-              tooltip: 'Upload file',
-              icon: const Icon(Icons.upload_outlined)),
+            onPressed: _uploadFile,
+            tooltip: 'Upload file',
+            icon: const Icon(Icons.upload_outlined),
+          ),
           IconButton(
-              onPressed: _createFile,
-              tooltip: 'Create file',
-              icon: const Icon(Icons.create_new_folder_outlined)),
+            onPressed: _createFile,
+            tooltip: 'Create file',
+            icon: const Icon(Icons.create_new_folder_outlined),
+          ),
           RefreshButton(
             onRefresh: _refresh,
             autoActive: autoRefreshActive,
@@ -202,7 +222,7 @@ class _StoragePageState extends State<StoragePage>
     );
   }
 
-Widget _buildBody() {
+  Widget _buildBody() {
     final files = _files;
     if (files == null) return Center(child: Text(_error ?? 'Loading...'));
     if (files.isEmpty) {
@@ -217,41 +237,43 @@ Widget _buildBody() {
           // The file table is read-only but still openable: tapping shows the
           // decoded directory (Docs/Services/Storage.md). Read-only-ness is
           // signalled by the lock icon, not by disabling the row.
-leading: Icon(isTable
-              ? Icons.table_rows_outlined
-              : storageFileIcon(file.name)),
-          title: Text(isTable
-              ? '${normalizeFileName(file.name)} (file table)'
-              : normalizeFileName(file.name),
-              style: isTable ? const TextStyle(color: Colors.white38) : null),
-          subtitle:
-              Text('${isTable ? "Internal directory" : fileTypeLabel(file.name)}   '
-                  '${_formatSize(file.size)}   '
-                  'offset ${hex32(file.offset)}'),
-          trailing: isTable
-              ? const Icon(Icons.lock_outline,
-                  size: 16, color: Colors.white24)
-              : PopupMenuButton<String>(
-            tooltip: 'Actions',
-            onSelected: (action) {
-              switch (action) {
-                case 'view':
-                  _showFile(file);
-                case 'download':
-                  _downloadFile(file);
-                case 'rename':
-                  _renameFile(file);
-                case 'delete':
-                  _deleteFile(file);
-              }
-            },
-            itemBuilder: (_) => [
-              PopupMenuItem(value: 'view', child: Text('View')),
-              PopupMenuItem(value: 'download', child: Text('Download')),
-              PopupMenuItem(value: 'rename', child: Text('Rename')),
-              PopupMenuItem(value: 'delete', child: Text('Delete')),
-            ],
+          leading: Icon(
+            isTable ? Icons.table_rows_outlined : storageFileIcon(file.name),
           ),
+          title: Text(
+            isTable
+                ? '${normalizeFileName(file.name)} (file table)'
+                : normalizeFileName(file.name),
+            style: isTable ? const TextStyle(color: Colors.white38) : null,
+          ),
+          subtitle: Text(
+            '${isTable ? "Internal directory" : fileTypeLabel(file.name)}   '
+            '${_formatSize(file.size)}   '
+            'offset ${hex32(file.offset)}',
+          ),
+          trailing: isTable
+              ? const Icon(Icons.lock_outline, size: 16, color: Colors.white24)
+              : PopupMenuButton<String>(
+                  tooltip: 'Actions',
+                  onSelected: (action) {
+                    switch (action) {
+                      case 'view':
+                        _showFile(file);
+                      case 'download':
+                        _downloadFile(file);
+                      case 'rename':
+                        _renameFile(file);
+                      case 'delete':
+                        _deleteFile(file);
+                    }
+                  },
+                  itemBuilder: (_) => [
+                    PopupMenuItem(value: 'view', child: Text('View')),
+                    PopupMenuItem(value: 'download', child: Text('Download')),
+                    PopupMenuItem(value: 'rename', child: Text('Rename')),
+                    PopupMenuItem(value: 'delete', child: Text('Delete')),
+                  ],
+                ),
           onTap: () => isTable ? _showTable(file) : _showFile(file),
         );
       },
@@ -264,26 +286,41 @@ leading: Icon(isTable
     // Read the table file directly using CID 5 (read file) instead of CID 7.
     final data = await _client.readFile(table.name, size: table.size);
     if (!mounted) return;
-    Navigator.of(context).push(MaterialPageRoute(
+    Navigator.of(context).push(
+      MaterialPageRoute(
         builder: (_) => FileTableViewPage(
-            deviceId: widget.deviceId, size: table.size, data: data)));
+          deviceId: widget.deviceId,
+          size: table.size,
+          data: data,
+        ),
+      ),
+    );
   }
 
   Future<void> _showFile(FileRecord file) async {
     _snack('Reading ${file.name}...');
-    final data =
-        await _client.readFile(file.name, size: file.size);
+    final data = await _client.readFile(file.name, size: file.size);
     // `.SV` is a raw static persistent-space mirror; fetch the device's blocks so
     // the decoder can compute the field layout and name the blocks and fields.
     List<({int type, int inst, ValueInfo meta, String name})?>? blocks;
     if (normalizeFileName(file.name).toUpperCase() == '.SV') {
       final all = await RegisterClient(deviceId: widget.deviceId).readBlocks();
-      blocks = all?.where((b) => b != null && isStaticRegistryType(b.type)).toList();
+      blocks = all
+          ?.where((b) => b != null && isStaticRegistryType(b.type))
+          .toList();
     }
     if (!mounted) return;
-    Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => FileViewPage(deviceId: widget.deviceId,
-            name: file.name, size: file.size, data: data, blocks: blocks)));
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => FileViewPage(
+          deviceId: widget.deviceId,
+          name: file.name,
+          size: file.size,
+          data: data,
+          blocks: blocks,
+        ),
+      ),
+    );
   }
 }
 
@@ -293,11 +330,12 @@ class FileTableViewPage extends StatelessWidget {
   final int size;
   final List<int>? data;
 
-  const FileTableViewPage(
-      {super.key,
-      required this.deviceId,
-      required this.size,
-      required this.data});
+  const FileTableViewPage({
+    super.key,
+    required this.deviceId,
+    required this.size,
+    required this.data,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -318,10 +356,7 @@ class _TableBody extends StatefulWidget {
   final List<int> data;
   final int size;
 
-  const _TableBody({
-    required this.data,
-    required this.size,
-  });
+  const _TableBody({required this.data, required this.size});
 
   @override
   State<_TableBody> createState() => _TableBodyState();
@@ -342,28 +377,32 @@ class _TableBodyState extends State<_TableBody> {
       // Offset 0 marks a superseded/invalidated record (the device zeroes the 4-byte
       // offset, leaving the size).
       final isInvalidated = !unwritten && recOffset == 0;
-      String name() =>
-          normalizeFileName(String.fromCharCodes(data.sublist(off + 8, off + 16)));
+      String name() => normalizeFileName(
+        String.fromCharCodes(data.sublist(off + 8, off + 16)),
+      );
       final row = ListTile(
         dense: true,
         leading: Icon(
-            isInvalidated
-                ? Icons.delete_outline
-                : Icons.table_rows_outlined,
-            size: 18,
-            color: isInvalidated ? Colors.white24 : Colors.white38),
+          isInvalidated ? Icons.delete_outline : Icons.table_rows_outlined,
+          size: 18,
+          color: isInvalidated ? Colors.white24 : Colors.white38,
+        ),
         title: Text(
-            '#${off ~/ 16}  '
-            '${isInvalidated ? "(invalidated)" : name()}'
-            '   ${!isInvalidated ? "${(fileSize / 1024).toStringAsFixed(1)} kB" : ""}',
-            style: TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 12,
-                color: isInvalidated ? Colors.white24 : Colors.white70)),
+          '#${off ~/ 16}  '
+          '${isInvalidated ? "(invalidated)" : name()}'
+          '   ${!isInvalidated ? "${(fileSize / 1024).toStringAsFixed(1)} kB" : ""}',
+          style: TextStyle(
+            fontFamily: 'monospace',
+            fontSize: 12,
+            color: isInvalidated ? Colors.white24 : Colors.white70,
+          ),
+        ),
         subtitle: isInvalidated
             ? null
-            : Text('offset ${hex32(recOffset)}   $fileSize B',
-                style: const TextStyle(fontSize: 11)),
+            : Text(
+                'offset ${hex32(recOffset)}   $fileSize B',
+                style: const TextStyle(fontSize: 11),
+              ),
       );
       if (isInvalidated) {
         invalidated.add(row);
@@ -371,27 +410,36 @@ class _TableBodyState extends State<_TableBody> {
         live.add(row);
       }
     }
-    return ListView(padding: const EdgeInsets.all(12), children: [
-      Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Text('File table (${widget.size} B) - '
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text(
+            'File table (${widget.size} B) - '
             '${live.length} live, ${invalidated.length} invalidated',
-            style: const TextStyle(color: kOrange)),
-      ),
-      ...live,
-      if (invalidated.isNotEmpty) ...[
-        const Divider(height: 20),
-        ListTile(
-          dense: true,
-          leading: Icon(_showInvalidated
-              ? Icons.expand_less
-              : Icons.expand_more, size: 18, color: Colors.white38),
-          title: Text('${invalidated.length} invalidated (old) records',
-              style: const TextStyle(fontSize: 12, color: Colors.white54)),
-          onTap: () => setState(() => _showInvalidated = !_showInvalidated),
+            style: const TextStyle(color: kOrange),
+          ),
         ),
-        if (_showInvalidated) ...invalidated,
+        ...live,
+        if (invalidated.isNotEmpty) ...[
+          const Divider(height: 20),
+          ListTile(
+            dense: true,
+            leading: Icon(
+              _showInvalidated ? Icons.expand_less : Icons.expand_more,
+              size: 18,
+              color: Colors.white38,
+            ),
+            title: Text(
+              '${invalidated.length} invalidated (old) records',
+              style: const TextStyle(fontSize: 12, color: Colors.white54),
+            ),
+            onTap: () => setState(() => _showInvalidated = !_showInvalidated),
+          ),
+          if (_showInvalidated) ...invalidated,
+        ],
       ],
-    ]);
+    );
   }
 }

@@ -185,7 +185,9 @@ class Bootloader {
     if ((frame[1] & 0xF0) != 0) return invalid; // padding must be zero
     final cmd = frame[1] & 0x07;
     final expect = frameSize(cmd);
-    if (expect == 0 || frame.length != expect || frame[frame.length - 1] != end) {
+    if (expect == 0 ||
+        frame.length != expect ||
+        frame[frame.length - 1] != end) {
       return invalid;
     }
     final got = (frame[1] >> 3) & 1;

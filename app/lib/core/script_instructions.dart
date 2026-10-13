@@ -48,8 +48,10 @@ class ScriptSymbol {
 
   static ScriptSymbol input(int index) => ScriptSymbol(symInput, 0, index);
   static ScriptSymbol output(int index) => ScriptSymbol(symOutput, 0, index);
-  static ScriptSymbol variable(int index) => ScriptSymbol(symVariable, 0, index);
-  static ScriptSymbol constant(int index) => ScriptSymbol(symConstant, 0, index);
+  static ScriptSymbol variable(int index) =>
+      ScriptSymbol(symVariable, 0, index);
+  static ScriptSymbol constant(int index) =>
+      ScriptSymbol(symConstant, 0, index);
   static ScriptSymbol predefine(int subtype, int value) =>
       ScriptSymbol(symPredefine, subtype, value);
   static ScriptSymbol instruction(int category, int op) =>
@@ -64,19 +66,23 @@ class ScriptSymbol {
     ..[2] = value & 0xFF
     ..[3] = (value >> 8) & 0xFF;
 
-  static ScriptSymbol fromBytes(List<int> bytes, [int offset = 0]) => ScriptSymbol(
-        bytes[offset], bytes[offset + 1], bytes[offset + 2] | (bytes[offset + 3] << 8));
+  static ScriptSymbol fromBytes(List<int> bytes, [int offset = 0]) =>
+      ScriptSymbol(
+        bytes[offset],
+        bytes[offset + 1],
+        bytes[offset + 2] | (bytes[offset + 3] << 8),
+      );
 
   static String predefineName(int subtype) => switch (subtype) {
-        preState => 'State',
-        preType => 'Type',
-        preIndex => 'Index',
-        preChar => 'Char',
-        preMathOp => 'Math op',
-        preBool => 'Bool',
-        preNumber => 'Number',
-        _ => 'Predefine',
-      };
+    preState => 'State',
+    preType => 'Type',
+    preIndex => 'Index',
+    preChar => 'Char',
+    preMathOp => 'Math op',
+    preBool => 'Bool',
+    preNumber => 'Number',
+    _ => 'Predefine',
+  };
 }
 
 /// One instruction definition: opcode, category, label and the operand shape used by the
@@ -136,14 +142,14 @@ class ScriptInstructionDef {
   int get maxDestinations => destination ? 1 : 0;
 
   static String categoryName(int category) => switch (category) {
-        catMath => 'Math',
-        catLogic => 'Logic',
-        catFlow => 'Flow',
-        catTime => 'Time',
-        catService => 'Service',
-        catCompose => 'Compose',
-        _ => '?',
-      };
+    catMath => 'Math',
+    catLogic => 'Logic',
+    catFlow => 'Flow',
+    catTime => 'Time',
+    catService => 'Service',
+    catCompose => 'Compose',
+    _ => '?',
+  };
 }
 
 /// Predefine "Math op." values (Docs/Services/Script.md predefine subtypes). Values 0..17
@@ -213,54 +219,332 @@ const List<(int, String)> scriptPredefineSubtypes = [
 const List<ScriptInstructionDef> scriptInstructions = [
   // Math: Set evaluates an infix expression (scalar/vector/matrix, element-wise with
   // scalar broadcast). Modulo/Minimum/Maximum/Absolute/Limit remain separate instructions.
-  ScriptInstructionDef(op: 0, category: catMath, label: 'Set', destination: true, minOperands: 1, maxOperands: 32, numeric: true, expression: true, destinationRole: 'result'),
-  ScriptInstructionDef(op: 5, category: catMath, label: 'Modulo', destination: true, minOperands: 2, maxOperands: 8, numeric: true, operandRoles: ['value', 'modulus'], destinationRole: 'result'),
-  ScriptInstructionDef(op: 6, category: catMath, label: 'Minimum', destination: true, minOperands: 2, maxOperands: 8, numeric: true, operandRoles: ['value', '+'], destinationRole: 'result'),
-  ScriptInstructionDef(op: 7, category: catMath, label: 'Maximum', destination: true, minOperands: 2, maxOperands: 8, numeric: true, operandRoles: ['value', '+'], destinationRole: 'result'),
-  ScriptInstructionDef(op: 9, category: catMath, label: 'Absolute', destination: true, minOperands: 1, maxOperands: 1, numeric: true, operandRoles: ['value'], destinationRole: 'result'),
-  ScriptInstructionDef(op: 10, category: catMath, label: 'Limit', destination: true, minOperands: 3, maxOperands: 3, numeric: true, operandRoles: ['value', 'min', 'max'], destinationRole: 'result'),
-  ScriptInstructionDef(op: 11, category: catMath, label: 'Transform', destination: true, minOperands: 5, maxOperands: 6, numeric: true, operandRoles: ['rot', 'offset X', 'offset Y', 'scale X', 'scale Y', 'skew'], destinationRole: 'matrix'),
+  ScriptInstructionDef(
+    op: 0,
+    category: catMath,
+    label: 'Set',
+    destination: true,
+    minOperands: 1,
+    maxOperands: 32,
+    numeric: true,
+    expression: true,
+    destinationRole: 'result',
+  ),
+  ScriptInstructionDef(
+    op: 5,
+    category: catMath,
+    label: 'Modulo',
+    destination: true,
+    minOperands: 2,
+    maxOperands: 8,
+    numeric: true,
+    operandRoles: ['value', 'modulus'],
+    destinationRole: 'result',
+  ),
+  ScriptInstructionDef(
+    op: 6,
+    category: catMath,
+    label: 'Minimum',
+    destination: true,
+    minOperands: 2,
+    maxOperands: 8,
+    numeric: true,
+    operandRoles: ['value', '+'],
+    destinationRole: 'result',
+  ),
+  ScriptInstructionDef(
+    op: 7,
+    category: catMath,
+    label: 'Maximum',
+    destination: true,
+    minOperands: 2,
+    maxOperands: 8,
+    numeric: true,
+    operandRoles: ['value', '+'],
+    destinationRole: 'result',
+  ),
+  ScriptInstructionDef(
+    op: 9,
+    category: catMath,
+    label: 'Absolute',
+    destination: true,
+    minOperands: 1,
+    maxOperands: 1,
+    numeric: true,
+    operandRoles: ['value'],
+    destinationRole: 'result',
+  ),
+  ScriptInstructionDef(
+    op: 10,
+    category: catMath,
+    label: 'Limit',
+    destination: true,
+    minOperands: 3,
+    maxOperands: 3,
+    numeric: true,
+    operandRoles: ['value', 'min', 'max'],
+    destinationRole: 'result',
+  ),
+  ScriptInstructionDef(
+    op: 11,
+    category: catMath,
+    label: 'Transform',
+    destination: true,
+    minOperands: 5,
+    maxOperands: 6,
+    numeric: true,
+    operandRoles: ['rot', 'offset X', 'offset Y', 'scale X', 'scale Y', 'skew'],
+    destinationRole: 'matrix',
+  ),
   // Logic: only Select remains (comparisons/logic moved into the expression).
-  ScriptInstructionDef(op: 12, category: catLogic, label: 'Select', destination: true, minOperands: 3, maxOperands: 3, operandRoles: ['condition', 'if true', 'if false'], destinationRole: 'result'),
+  ScriptInstructionDef(
+    op: 12,
+    category: catLogic,
+    label: 'Select',
+    destination: true,
+    minOperands: 3,
+    maxOperands: 3,
+    operandRoles: ['condition', 'if true', 'if false'],
+    destinationRole: 'result',
+  ),
   // Flow (If/While take a boolean expression)
-  ScriptInstructionDef(op: 0, category: catFlow, label: 'If', minOperands: 1, maxOperands: 32, numeric: true, expression: true, operandRoles: ['condition']),
-  ScriptInstructionDef(op: 1, category: catFlow, label: 'While', minOperands: 1, maxOperands: 32, numeric: true, expression: true, operandRoles: ['condition']),
-  ScriptInstructionDef(op: 2, category: catFlow, label: 'End block', minOperands: 0, maxOperands: 0),
-  ScriptInstructionDef(op: 3, category: catFlow, label: 'Jump', minOperands: 1, maxOperands: 1, operandRoles: ['line']),
-  ScriptInstructionDef(op: 4, category: catFlow, label: 'Call', minOperands: 1, maxOperands: 1, operandRoles: ['line']),
-  ScriptInstructionDef(op: 5, category: catFlow, label: 'Return', minOperands: 0, maxOperands: 0),
-  ScriptInstructionDef(op: 6, category: catFlow, label: 'Halt', minOperands: 0, maxOperands: 0),
+  ScriptInstructionDef(
+    op: 0,
+    category: catFlow,
+    label: 'If',
+    minOperands: 1,
+    maxOperands: 32,
+    numeric: true,
+    expression: true,
+    operandRoles: ['condition'],
+  ),
+  ScriptInstructionDef(
+    op: 1,
+    category: catFlow,
+    label: 'While',
+    minOperands: 1,
+    maxOperands: 32,
+    numeric: true,
+    expression: true,
+    operandRoles: ['condition'],
+  ),
+  ScriptInstructionDef(
+    op: 2,
+    category: catFlow,
+    label: 'End block',
+    minOperands: 0,
+    maxOperands: 0,
+  ),
+  ScriptInstructionDef(
+    op: 3,
+    category: catFlow,
+    label: 'Jump',
+    minOperands: 1,
+    maxOperands: 1,
+    operandRoles: ['line'],
+  ),
+  ScriptInstructionDef(
+    op: 4,
+    category: catFlow,
+    label: 'Call',
+    minOperands: 1,
+    maxOperands: 1,
+    operandRoles: ['line'],
+  ),
+  ScriptInstructionDef(
+    op: 5,
+    category: catFlow,
+    label: 'Return',
+    minOperands: 0,
+    maxOperands: 0,
+  ),
+  ScriptInstructionDef(
+    op: 6,
+    category: catFlow,
+    label: 'Halt',
+    minOperands: 0,
+    maxOperands: 0,
+  ),
   // Time
-  ScriptInstructionDef(op: 0, category: catTime, label: 'Delay', minOperands: 1, maxOperands: 1, operandRoles: ['ms']),
-  ScriptInstructionDef(op: 1, category: catTime, label: 'Wait until', minOperands: 1, maxOperands: 32, numeric: true, expression: true, operandRoles: ['condition']),
-  ScriptInstructionDef(op: 2, category: catTime, label: 'Get time', destination: true, minOperands: 0, maxOperands: 0, integerDestination: true, destinationRole: 'time'),
+  ScriptInstructionDef(
+    op: 0,
+    category: catTime,
+    label: 'Delay',
+    minOperands: 1,
+    maxOperands: 1,
+    operandRoles: ['ms'],
+  ),
+  ScriptInstructionDef(
+    op: 1,
+    category: catTime,
+    label: 'Wait until',
+    minOperands: 1,
+    maxOperands: 32,
+    numeric: true,
+    expression: true,
+    operandRoles: ['condition'],
+  ),
+  ScriptInstructionDef(
+    op: 2,
+    category: catTime,
+    label: 'Get time',
+    destination: true,
+    minOperands: 0,
+    maxOperands: 0,
+    integerDestination: true,
+    destinationRole: 'time',
+  ),
   // Service
-  ScriptInstructionDef(op: 0, category: catService, label: 'Log', minOperands: 1, maxOperands: 4, operandRoles: ['code']),
-  ScriptInstructionDef(op: 1, category: catService, label: 'Register read', destination: true, minOperands: 1, maxOperands: 1, constantIndex: 0, operandRoles: ['register'], destinationRole: 'value'),
-  ScriptInstructionDef(op: 2, category: catService, label: 'Register write', minOperands: 2, maxOperands: 2, constantIndex: 0, operandRoles: ['register', 'value']),
+  ScriptInstructionDef(
+    op: 0,
+    category: catService,
+    label: 'Log',
+    minOperands: 1,
+    maxOperands: 4,
+    operandRoles: ['code'],
+  ),
+  ScriptInstructionDef(
+    op: 1,
+    category: catService,
+    label: 'Register read',
+    destination: true,
+    minOperands: 1,
+    maxOperands: 1,
+    constantIndex: 0,
+    operandRoles: ['register'],
+    destinationRole: 'value',
+  ),
+  ScriptInstructionDef(
+    op: 2,
+    category: catService,
+    label: 'Register write',
+    minOperands: 2,
+    maxOperands: 2,
+    constantIndex: 0,
+    operandRoles: ['register', 'value'],
+  ),
   // Opcode 3 is reserved: the retired "Script state" instruction, never reused (Script.md).
-  ScriptInstructionDef(op: 4, category: catService, label: 'Nop', minOperands: 0, maxOperands: 0),
-  ScriptInstructionDef(op: 5, category: catService, label: 'Register read (foreign)', destination: true, minOperands: 2, maxOperands: 2, constantIndex: 1, addressIndex: 0, operandRoles: ['device', 'register'], destinationRole: 'value'),
-  ScriptInstructionDef(op: 6, category: catService, label: 'Register write (foreign)', minOperands: 3, maxOperands: 3, constantIndex: 1, addressIndex: 0, operandRoles: ['device', 'register', 'value']),
+  ScriptInstructionDef(
+    op: 4,
+    category: catService,
+    label: 'Nop',
+    minOperands: 0,
+    maxOperands: 0,
+  ),
+  ScriptInstructionDef(
+    op: 5,
+    category: catService,
+    label: 'Register read (foreign)',
+    destination: true,
+    minOperands: 2,
+    maxOperands: 2,
+    constantIndex: 1,
+    addressIndex: 0,
+    operandRoles: ['device', 'register'],
+    destinationRole: 'value',
+  ),
+  ScriptInstructionDef(
+    op: 6,
+    category: catService,
+    label: 'Register write (foreign)',
+    minOperands: 3,
+    maxOperands: 3,
+    constantIndex: 1,
+    addressIndex: 0,
+    operandRoles: ['device', 'register', 'value'],
+  ),
   // Script (un)loading from within a script (Docs/Services/Script.md functions list). Same
   // operations as management CIDs 1/2: the caller picks the loaded slot, so load takes
   // (file id, loaded id). Both are external-facing, so their result code (0 = success) goes
   // to a destination, as the spec requires; unloading a script that is not loaded does
   // nothing. A script cannot (un)load itself.
-  ScriptInstructionDef(op: 7, category: catService, label: 'Load script', destination: true, minOperands: 2, maxOperands: 2, operandRoles: ['file', 'script'], destinationRole: 'result'),
-  ScriptInstructionDef(op: 8, category: catService, label: 'Unload script', destination: true, minOperands: 1, maxOperands: 1, operandRoles: ['script'], destinationRole: 'result'),
+  ScriptInstructionDef(
+    op: 7,
+    category: catService,
+    label: 'Load script',
+    destination: true,
+    minOperands: 2,
+    maxOperands: 2,
+    operandRoles: ['file', 'script'],
+    destinationRole: 'result',
+  ),
+  ScriptInstructionDef(
+    op: 8,
+    category: catService,
+    label: 'Unload script',
+    destination: true,
+    minOperands: 1,
+    maxOperands: 1,
+    operandRoles: ['script'],
+    destinationRole: 'result',
+  ),
   // State verbs as separate instructions (Script.md "The state verbs are separate
   // instructions, not values of one state instruction"). These act on the script itself;
   // only Error carries an operand (its script-defined code).
-  ScriptInstructionDef(op: 9, category: catService, label: 'Start', minOperands: 0, maxOperands: 0),
-  ScriptInstructionDef(op: 10, category: catService, label: 'Stop', minOperands: 0, maxOperands: 0),
-  ScriptInstructionDef(op: 11, category: catService, label: 'Pause', minOperands: 0, maxOperands: 0),
-  ScriptInstructionDef(op: 12, category: catService, label: 'Resume', minOperands: 0, maxOperands: 0),
-  ScriptInstructionDef(op: 13, category: catService, label: 'Error', minOperands: 1, maxOperands: 1, operandRoles: ['code']),
-  ScriptInstructionDef(op: 14, category: catService, label: 'Report info', minOperands: 0, maxOperands: 0),
+  ScriptInstructionDef(
+    op: 9,
+    category: catService,
+    label: 'Start',
+    minOperands: 0,
+    maxOperands: 0,
+  ),
+  ScriptInstructionDef(
+    op: 10,
+    category: catService,
+    label: 'Stop',
+    minOperands: 0,
+    maxOperands: 0,
+  ),
+  ScriptInstructionDef(
+    op: 11,
+    category: catService,
+    label: 'Pause',
+    minOperands: 0,
+    maxOperands: 0,
+  ),
+  ScriptInstructionDef(
+    op: 12,
+    category: catService,
+    label: 'Resume',
+    minOperands: 0,
+    maxOperands: 0,
+  ),
+  ScriptInstructionDef(
+    op: 13,
+    category: catService,
+    label: 'Error',
+    minOperands: 1,
+    maxOperands: 1,
+    operandRoles: ['code'],
+  ),
+  ScriptInstructionDef(
+    op: 14,
+    category: catService,
+    label: 'Report info',
+    minOperands: 0,
+    maxOperands: 0,
+  ),
   // Compose
-  ScriptInstructionDef(op: 0, category: catCompose, label: 'Compose', destination: true, minOperands: 2, maxOperands: 4, operandRoles: ['index', 'value'], destinationRole: 'container'),
-  ScriptInstructionDef(op: 1, category: catCompose, label: 'Extract', destination: true, minOperands: 2, maxOperands: 2, operandRoles: ['container', 'index'], destinationRole: 'element'),
+  ScriptInstructionDef(
+    op: 0,
+    category: catCompose,
+    label: 'Compose',
+    destination: true,
+    minOperands: 2,
+    maxOperands: 4,
+    operandRoles: ['index', 'value'],
+    destinationRole: 'container',
+  ),
+  ScriptInstructionDef(
+    op: 1,
+    category: catCompose,
+    label: 'Extract',
+    destination: true,
+    minOperands: 2,
+    maxOperands: 2,
+    operandRoles: ['container', 'index'],
+    destinationRole: 'element',
+  ),
 ];
 
 ScriptInstructionDef? scriptInstructionFor(ScriptSymbol symbol) {
@@ -291,8 +575,8 @@ class ScriptLine {
     required this.instruction,
     List<ScriptSymbol>? operands,
     this.functionTarget,
-  })  : destinations = destinations ?? [],
-        operands = operands ?? [];
+  }) : destinations = destinations ?? [],
+       operands = operands ?? [];
 
   ScriptInstructionDef? get def => scriptInstructionFor(instruction);
 
@@ -301,17 +585,17 @@ class ScriptLine {
 
   /// A Flow `Call` to function [functionIndex] (assembly resolves the address).
   static ScriptLine callTo(int functionIndex) => ScriptLine(
-        instruction: ScriptSymbol.instruction(catFlow, 4),
-        functionTarget: functionIndex,
-      );
+    instruction: ScriptSymbol.instruction(catFlow, 4),
+    functionTarget: functionIndex,
+  );
 
   /// A shallow copy (symbol lists shared; used by assembly to avoid mutating the draft).
   ScriptLine clone() => ScriptLine(
-        destinations: List.of(destinations),
-        instruction: instruction,
-        operands: List.of(operands),
-        functionTarget: functionTarget,
-      );
+    destinations: List.of(destinations),
+    instruction: instruction,
+    operands: List.of(operands),
+    functionTarget: functionTarget,
+  );
 }
 
 /// Encodes lines to the symbol stream (each line ends with an Endline symbol).
@@ -343,7 +627,9 @@ List<ScriptLine> decodeScriptLines(List<int> bytes) {
     final destinations = <ScriptSymbol>[];
     ScriptSymbol? instruction;
     final operands = <ScriptSymbol>[];
-    while (i < symbols.length && !symbols[i].isInstruction && !symbols[i].isEndline) {
+    while (i < symbols.length &&
+        !symbols[i].isInstruction &&
+        !symbols[i].isEndline) {
       destinations.add(symbols[i++]);
     }
     if (i < symbols.length && symbols[i].isInstruction) {
@@ -354,14 +640,22 @@ List<ScriptLine> decodeScriptLines(List<int> bytes) {
     }
     if (i < symbols.length && symbols[i].isEndline) i++; // consume Endline
     if (instruction != null) {
-      lines.add(ScriptLine(destinations: destinations, instruction: instruction, operands: operands));
+      lines.add(
+        ScriptLine(
+          destinations: destinations,
+          instruction: instruction,
+          operands: operands,
+        ),
+      );
     } else if (destinations.isNotEmpty) {
       // Orphan symbols without an instruction: keep them editable as a Nop line.
-      lines.add(ScriptLine(
-        destinations: destinations,
-        instruction: ScriptSymbol.instruction(catService, 4),
-        operands: operands,
-      ));
+      lines.add(
+        ScriptLine(
+          destinations: destinations,
+          instruction: ScriptSymbol.instruction(catService, 4),
+          operands: operands,
+        ),
+      );
     }
   }
   return lines;
@@ -399,8 +693,17 @@ class ScriptValidationContext {
 }
 
 /// Numeric data types (the fixed-point number and the integer-like types).
-bool scriptTypeIsNumeric(int type) => const {0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0C, 0x0E, 0x0F}
-    .contains(type & 0x03FF);
+bool scriptTypeIsNumeric(int type) => const {
+  0x04,
+  0x05,
+  0x06,
+  0x07,
+  0x08,
+  0x09,
+  0x0C,
+  0x0E,
+  0x0F,
+}.contains(type & 0x03FF);
 
 /// Block-end matching (Docs/Services/Script.md "Validation"): every Flow `If`/`While` must be
 /// closed by a Flow `End block`, and an `End block` with no opener is an error too. Returns the
@@ -430,7 +733,10 @@ List<String> validateScriptBlocks(List<ScriptLine> lines) {
 
 /// Checks a program for structural/type problems (Docs: "check type compatibility and
 /// program validity before sending"). Returns an empty list when valid.
-List<String> validateScriptLines(List<ScriptLine> lines, ScriptValidationContext context) {
+List<String> validateScriptLines(
+  List<ScriptLine> lines,
+  ScriptValidationContext context,
+) {
   final errors = <String>[];
   errors.addAll(validateScriptBlocks(lines));
   for (var i = 0; i < lines.length; i++) {
@@ -453,31 +759,47 @@ List<String> validateScriptLines(List<ScriptLine> lines, ScriptValidationContext
       } else if (def.integerDestination) {
         final t = context.typeOf(d);
         if (t != null && !integerDestinationTypes.contains(t)) {
-          errors.add('$where (${def.label}): destination must be an integer (Index/Uint32)');
+          errors.add(
+            '$where (${def.label}): destination must be an integer (Index/Uint32)',
+          );
         }
       }
     }
-    if (line.operands.length < def.minOperands || line.operands.length > def.maxOperands) {
-      errors.add('$where (${def.label}): expects ${def.minOperands}..${def.maxOperands} operands '
-          '(${line.operands.length} given)');
+    if (line.operands.length < def.minOperands ||
+        line.operands.length > def.maxOperands) {
+      errors.add(
+        '$where (${def.label}): expects ${def.minOperands}..${def.maxOperands} operands '
+        '(${line.operands.length} given)',
+      );
     }
     if (def.constantIndex >= 0 && line.operands.length > def.constantIndex) {
       final o = line.operands[def.constantIndex];
       final t = context.typeOf(o);
       if (o.type != symConstant) {
-        errors.add('$where (${def.label}): operand ${def.constantIndex + 1} must be a constant '
-            '(BlockInfo)');
+        errors.add(
+          '$where (${def.label}): operand ${def.constantIndex + 1} must be a constant '
+          '(BlockInfo)',
+        );
       } else if (t != null && t != DataType.blockInfo.value) {
-        errors.add('$where (${def.label}): operand ${def.constantIndex + 1} must be a BlockInfo');
+        errors.add(
+          '$where (${def.label}): operand ${def.constantIndex + 1} must be a BlockInfo',
+        );
       }
     }
     if (def.addressIndex >= 0 && line.operands.length > def.addressIndex) {
       final a = line.operands[def.addressIndex];
       final t = context.typeOf(a);
-      const addrTypes = {0x03 /*Id*/, 0x05 /*Index*/, 0x06 /*Number*/, 0x0E /*Uint32*/};
+      const addrTypes = {
+        0x03 /*Id*/,
+        0x05 /*Index*/,
+        0x06 /*Number*/,
+        0x0E /*Uint32*/,
+      };
       if (a.type != symConstant && t != null && !addrTypes.contains(t)) {
-        errors.add('$where (${def.label}): operand ${def.addressIndex + 1} must be a device '
-            'address (Id)');
+        errors.add(
+          '$where (${def.label}): operand ${def.addressIndex + 1} must be a device '
+          'address (Id)',
+        );
       }
     }
     if (def.numeric) {
@@ -504,8 +826,11 @@ List<String> _validateExpression(ScriptLine line, int lineIndex) {
   var i = 0;
 
   bool isMathOpAt(int idx) =>
-      idx < n && toks[idx].type == symPredefine && toks[idx].subtype == preMathOp;
-  bool isOpAt(int idx, int value) => isMathOpAt(idx) && toks[idx].value == value;
+      idx < n &&
+      toks[idx].type == symPredefine &&
+      toks[idx].subtype == preMathOp;
+  bool isOpAt(int idx, int value) =>
+      isMathOpAt(idx) && toks[idx].value == value;
   bool isBinary(int op) =>
       op == 0 || op == 1 || (op >= 2 && op <= 8) || (op >= 12 && op <= 17);
 

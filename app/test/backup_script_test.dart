@@ -10,36 +10,57 @@ ScriptDraft _draft() {
     functionName: 'TestFn',
     properties: ScriptProperties.loadOnBoot | ScriptProperties.runOnLoad,
   );
-  draft.inputs.add(ScriptDraftValue(
-    name: 'In',
-    type: DataType.number,
-    value: numberToBytes(1.5),
-    spec: const ScriptInputSpec(uiType: ScriptUiType.slider, min: 0, max: 10, step: 0.5),
-  ));
-  draft.outputs.add(ScriptDraftValue(name: 'Out', type: DataType.number, size: 4));
-  draft.variables
-      .add(ScriptDraftValue(name: 'Var', type: DataType.integer, size: 4));
-  draft.constants
-      .add(ScriptDraftValue(name: 'K', type: DataType.number, value: numberToBytes(42)));
-  draft.lines.add(ScriptLine(
-    destinations: [ScriptSymbol.output(0)],
-    instruction: ScriptSymbol.instruction(catMath, 0), // Set
-    operands: [
-      ScriptSymbol.input(0),
-      ScriptSymbol.predefine(preMathOp, 0), // +
-      ScriptSymbol.constant(0),
-    ],
-  ));
-  draft.lines.add(ScriptLine(
-    destinations: [ScriptSymbol.variable(0)],
-    instruction: ScriptSymbol.instruction(catLogic, 12), // Select
-    operands: [
-      ScriptSymbol.variable(0),
-      ScriptSymbol.constant(0),
-      ScriptSymbol.predefine(preBool, 0),
-    ],
-  ));
-  draft.lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6))); // Halt
+  draft.inputs.add(
+    ScriptDraftValue(
+      name: 'In',
+      type: DataType.number,
+      value: numberToBytes(1.5),
+      spec: const ScriptInputSpec(
+        uiType: ScriptUiType.slider,
+        min: 0,
+        max: 10,
+        step: 0.5,
+      ),
+    ),
+  );
+  draft.outputs.add(
+    ScriptDraftValue(name: 'Out', type: DataType.number, size: 4),
+  );
+  draft.variables.add(
+    ScriptDraftValue(name: 'Var', type: DataType.integer, size: 4),
+  );
+  draft.constants.add(
+    ScriptDraftValue(
+      name: 'K',
+      type: DataType.number,
+      value: numberToBytes(42),
+    ),
+  );
+  draft.lines.add(
+    ScriptLine(
+      destinations: [ScriptSymbol.output(0)],
+      instruction: ScriptSymbol.instruction(catMath, 0), // Set
+      operands: [
+        ScriptSymbol.input(0),
+        ScriptSymbol.predefine(preMathOp, 0), // +
+        ScriptSymbol.constant(0),
+      ],
+    ),
+  );
+  draft.lines.add(
+    ScriptLine(
+      destinations: [ScriptSymbol.variable(0)],
+      instruction: ScriptSymbol.instruction(catLogic, 12), // Select
+      operands: [
+        ScriptSymbol.variable(0),
+        ScriptSymbol.constant(0),
+        ScriptSymbol.predefine(preBool, 0),
+      ],
+    ),
+  );
+  draft.lines.add(
+    ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)),
+  ); // Halt
   return draft;
 }
 

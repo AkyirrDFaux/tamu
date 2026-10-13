@@ -21,7 +21,13 @@ void main() {
   final geometry = [
     ...entry(DataType.enum_.value, 1, [3]), // Shape: Square
     ...entry(DataType.enum_.value, 2, [0]), // Operation: Replace
-    ...entry(DataType.matrix.value, 3, [2, 0, 3, 0, for (var i = 0; i < 24; i++) 0]), // identity 2x3
+    ...entry(DataType.matrix.value, 3, [
+      2,
+      0,
+      3,
+      0,
+      for (var i = 0; i < 24; i++) 0,
+    ]), // identity 2x3
     ...entry(DataType.number.value, 4, numberToBytes(4.0)), // Size
     ...entry(DataType.number.value, 5, numberToBytes(0.0)), // Fade
     ...entry(DataType.number.value, 6, numberToBytes(1.0)), // Alpha
@@ -49,7 +55,10 @@ void main() {
   test('editing one entry keeps the others intact', () {
     final parsed = parseKeyedDict(geometry)!;
     parsed[3] = KeyedEntry(
-        key: 4, meta: parsed[3].meta, value: numberToBytes(8.0));
+      key: 4,
+      meta: parsed[3].meta,
+      value: numberToBytes(8.0),
+    );
     final rebuilt = buildKeyedDict(parsed);
     final reparsed = parseKeyedDict(rebuilt)!;
     expect(numberFromBytes(reparsed[3].value), 8.0);

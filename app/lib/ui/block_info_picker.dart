@@ -7,13 +7,22 @@ import 'package:flutter/material.dart';
 
 import '../core/types.dart';
 import 'subscriptions_dialog.dart'
-    show BlockPicker, BlockSelection, FieldPicker, FieldSelection, KeyPicker,
-        fetchBlockSelections, fetchFieldSelections;
+    show
+        BlockPicker,
+        BlockSelection,
+        FieldPicker,
+        FieldSelection,
+        KeyPicker,
+        fetchBlockSelections,
+        fetchFieldSelections;
 import 'widgets.dart' show DialogBody;
 
 /// Shows the tiered BlockInfo picker and returns the 4-byte value, or null when cancelled.
-Future<List<int>?> pickBlockInfo(BuildContext context, int deviceId,
-    {List<int> current = const []}) {
+Future<List<int>?> pickBlockInfo(
+  BuildContext context,
+  int deviceId, {
+  List<int> current = const [],
+}) {
   return showDialog<List<int>>(
     context: context,
     builder: (_) => _BlockInfoDialog(deviceId: deviceId, current: current),
@@ -45,7 +54,8 @@ class _BlockInfoDialogState extends State<_BlockInfoDialog> {
     _load();
   }
 
-  int get _bi => widget.current.length >= 4 ? uint32FromBytes(widget.current) : 0;
+  int get _bi =>
+      widget.current.length >= 4 ? uint32FromBytes(widget.current) : 0;
 
   Future<void> _load() async {
     try {
@@ -83,7 +93,9 @@ class _BlockInfoDialogState extends State<_BlockInfoDialog> {
     if (!mounted) return;
     setState(() {
       _fields = fields;
-      _field = fields.where((e) => e.field == select).firstOrNull ?? fields.firstOrNull;
+      _field =
+          fields.where((e) => e.field == select).firstOrNull ??
+          fields.firstOrNull;
     });
   }
 
@@ -91,52 +103,67 @@ class _BlockInfoDialogState extends State<_BlockInfoDialog> {
   Widget build(BuildContext context) {
     final body = _loading
         ? const SizedBox(
-            height: 120, child: Center(child: CircularProgressIndicator()))
+            height: 120,
+            child: Center(child: CircularProgressIndicator()),
+          )
         : _error != null
-            ? Text('Could not load blocks: $_error')
-            : Column(mainAxisSize: MainAxisSize.min, children: [
-                BlockPicker(
-                  label: 'Block',
-                  hint: 'Pick a block',
-                  blocks: _blocks,
-                  value: _block,
-                  onChanged: (b) {
-                    if (b == null) return;
-                    setState(() {
-                      _block = b;
-                      _fields = [];
-                      _field = null;
-                    });
-                    _loadFields(b);
-                  },
-                ),
-                const SizedBox(height: 8),
-                FieldPicker(
-                  label: 'Field',
-                  fields: _fields,
-                  value: _field,
-                  onChanged: (f) => setState(() => _field = f),
-                ),
-                const SizedBox(height: 8),
-                KeyPicker(
-                  label: 'Key',
-                  value: _key,
-                  keys: _field?.keys ?? const [],
-                  onChanged: (k) => setState(() => _key = k),
-                ),
-              ]);
+        ? Text('Could not load blocks: $_error')
+        : Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              BlockPicker(
+                label: 'Block',
+                hint: 'Pick a block',
+                blocks: _blocks,
+                value: _block,
+                onChanged: (b) {
+                  if (b == null) return;
+                  setState(() {
+                    _block = b;
+                    _fields = [];
+                    _field = null;
+                  });
+                  _loadFields(b);
+                },
+              ),
+              const SizedBox(height: 8),
+              FieldPicker(
+                label: 'Field',
+                fields: _fields,
+                value: _field,
+                onChanged: (f) => setState(() => _field = f),
+              ),
+              const SizedBox(height: 8),
+              KeyPicker(
+                label: 'Key',
+                value: _key,
+                keys: _field?.keys ?? const [],
+                onChanged: (k) => setState(() => _key = k),
+              ),
+            ],
+          );
     return AlertDialog(
       title: const Text('BlockInfo'),
       content: DialogBody(maxWidth: 360, child: body),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
         FilledButton(
           onPressed: _block == null || _field == null
               ? null
               : () => Navigator.pop(
                   context,
-                  uint32ToBytes(makeBlockInfo(
-                      _block!.type, _block!.inst, _field!.field, _key))),
+                  uint32ToBytes(
+                    makeBlockInfo(
+                      _block!.type,
+                      _block!.inst,
+                      _field!.field,
+                      _key,
+                    ),
+                  ),
+                ),
           child: const Text('OK'),
         ),
       ],

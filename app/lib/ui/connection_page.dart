@@ -58,15 +58,17 @@ class _ConnectionPageState extends State<ConnectionPage>
   /// Autorefresh only runs while the Connection tab is visible.
   void _onTabChanged() async {
     final visible = ShellTabs.instance.index == 0;
-    await _manager.setAutoRefresh(visible && _autoInterval != null,
-        interval: _autoInterval);
+    await _manager.setAutoRefresh(
+      visible && _autoInterval != null,
+      interval: _autoInterval,
+    );
   }
 
   bool get _autoTargetIsCurrent =>
       AppSettings.instance.autoConnect &&
       _manager.connectedName != null &&
       (AppSettings.instance.autoConnectDeviceId == _manager.connectedId ||
-       AppSettings.instance.autoConnectDeviceId == _manager.connectedName);
+          AppSettings.instance.autoConnectDeviceId == _manager.connectedName);
 
   Future<void> _setAutoConnectTarget() async {
     final settings = AppSettings.instance;
@@ -101,8 +103,12 @@ class _ConnectionPageState extends State<ConnectionPage>
       settings.autoConnectDeviceId = isTarget ? '' : link.id;
     });
     if (!mounted) return;
-    showSnack(context,
-        isTarget ? 'Autoconnect disabled' : 'Autoconnect target set: ${link.name}');
+    showSnack(
+      context,
+      isTarget
+          ? 'Autoconnect disabled'
+          : 'Autoconnect target set: ${link.name}',
+    );
   }
 
   Future<void> _refreshOnce() async {
@@ -122,8 +128,7 @@ class _ConnectionPageState extends State<ConnectionPage>
   }
 
   void _selectAuto(Duration? interval) {
-    setState(() =>
-        _autoInterval = interval == Duration.zero ? null : interval);
+    setState(() => _autoInterval = interval == Duration.zero ? null : interval);
     _onTabChanged();
   }
 
@@ -146,10 +151,14 @@ class _ConnectionPageState extends State<ConnectionPage>
         const PopupMenuItem(value: LinkSource.ble, child: Text('BLE devices')),
         if (supportsUsb)
           const PopupMenuItem(
-              value: LinkSource.usb, child: Text('USB devices')),
+            value: LinkSource.usb,
+            child: Text('USB devices'),
+          ),
         if (supportsUsb)
           const PopupMenuItem(
-              value: LinkSource.all, child: Text('All devices')),
+            value: LinkSource.all,
+            child: Text('All devices'),
+          ),
       ],
     );
   }
@@ -192,8 +201,7 @@ class _ConnectionPageState extends State<ConnectionPage>
                 autoActive: _manager.autoRefresh,
                 refreshing: _refreshing,
                 error: _manager.refreshError,
-                selectedInterval:
-                    _manager.autoRefresh ? _autoInterval : null,
+                selectedInterval: _manager.autoRefresh ? _autoInterval : null,
                 onSelectAuto: _selectAuto,
               ),
               PopupMenuButton<DeviceSort>(
@@ -203,10 +211,13 @@ class _ConnectionPageState extends State<ConnectionPage>
                 onSelected: _manager.setSort,
                 itemBuilder: (_) => const [
                   PopupMenuItem(
-                      value: DeviceSort.signal, child: Text('Signal strength')),
+                    value: DeviceSort.signal,
+                    child: Text('Signal strength'),
+                  ),
                   PopupMenuItem(
-                      value: DeviceSort.alphabetical,
-                      child: Text('Alphabetical')),
+                    value: DeviceSort.alphabetical,
+                    child: Text('Alphabetical'),
+                  ),
                 ],
               ),
             ],
@@ -217,10 +228,13 @@ class _ConnectionPageState extends State<ConnectionPage>
               if (_manager.isConnecting)
                 ListTile(
                   leading: const SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(strokeWidth: 2)),
-                  title: Text('Connecting to ${_manager.connectingTarget ?? ''}'),
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  title: Text(
+                    'Connecting to ${_manager.connectingTarget ?? ''}',
+                  ),
                   subtitle: const Text('Establishing session...'),
                   trailing: IconButton(
                     icon: const Icon(Icons.close),
@@ -235,31 +249,36 @@ class _ConnectionPageState extends State<ConnectionPage>
                   // The device's REPORTED name (from the Register service), with
                   // the link as the subtitle - not two copies of the same text.
                   title: Text(
-                      DeviceDatabase.instance.byId(coreId)?.displayName ??
-                          _manager.connectedName ??
-                          ''),
+                    DeviceDatabase.instance.byId(coreId)?.displayName ??
+                        _manager.connectedName ??
+                        '',
+                  ),
                   subtitle: Text(_manager.connectedName ?? 'Connected'),
-                  trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                    IconButton(
-                      icon: Icon(
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: Icon(
                           _autoTargetIsCurrent
                               ? Icons.autorenew
                               : Icons.autorenew_outlined,
                           color: _autoTargetIsCurrent
                               ? Colors.greenAccent
-                              : null),
-                      tooltip: _autoTargetIsCurrent
-                          ? 'Autoconnect enabled for this device'
-                          : 'Autoconnect to this device from now on',
-                      onPressed: () => _setAutoConnectTarget(),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.link_off),
-                      tooltip: 'Disconnect',
-                      onPressed: () =>
-                          unawaited(_manager.disconnect(manual: true)),
-                    ),
-                  ]),
+                              : null,
+                        ),
+                        tooltip: _autoTargetIsCurrent
+                            ? 'Autoconnect enabled for this device'
+                            : 'Autoconnect to this device from now on',
+                        onPressed: () => _setAutoConnectTarget(),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.link_off),
+                        tooltip: 'Disconnect',
+                        onPressed: () =>
+                            unawaited(_manager.disconnect(manual: true)),
+                      ),
+                    ],
+                  ),
                 ),
               const Divider(height: 1),
               Expanded(
@@ -284,18 +303,25 @@ class _ConnectionPageState extends State<ConnectionPage>
       leading: Icon(isBle ? Icons.bluetooth : Icons.usb),
       title: Text(link.name),
       subtitle: Text(isBle ? 'MAC ${link.id}' : link.id),
-      trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-        if (isBle && link.rssi != null) ...[
-          Icon(Icons.signal_cellular_alt, size: 18, color: _rssiColor(link.rssi)),
-          const SizedBox(width: 4),
-          Text('${link.rssi} dBm'),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (isBle && link.rssi != null) ...[
+            Icon(
+              Icons.signal_cellular_alt,
+              size: 18,
+              color: _rssiColor(link.rssi),
+            ),
+            const SizedBox(width: 4),
+            Text('${link.rssi} dBm'),
+          ],
+          IconButton(
+            icon: Icon(_isAutoTarget(link) ? Icons.star : Icons.star_border),
+            tooltip: 'Set as autoconnect target',
+            onPressed: () => _toggleAutoConnectFor(link),
+          ),
         ],
-        IconButton(
-          icon: Icon(_isAutoTarget(link) ? Icons.star : Icons.star_border),
-          tooltip: 'Set as autoconnect target',
-          onPressed: () => _toggleAutoConnectFor(link),
-        ),
-      ]),
+      ),
       onTap: () async {
         if (_manager.isConnecting) return;
         // While connected, tapping a (different) device switches the session:

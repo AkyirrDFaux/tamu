@@ -25,7 +25,7 @@ Future<BackupDevice?> captureDevice(
   final scripts = <BackupScript>[];
   for (final file in files) {
     if (file.kind != 'Script') continue;
-    final slot = _scriptSlot(file.name);
+    final slot = scriptFileId(file.name);
     if (slot == null) continue;
     try {
       scripts.add(BackupScript.fromImage(slot, file.bytes));
@@ -40,29 +40,33 @@ Future<BackupDevice?> captureDevice(
   final providers = <BackupProviderSubscription>[];
   try {
     for (final s in await subClient.getRequesterSubscriptions()) {
-      requesters.add(BackupRequesterSubscription(
-        provider: idToString(s.providerAddr),
-        trigger: s.trigger.label,
-        periodMs: s.periodMs,
-        minTimeMs: s.minTimeMs,
-        deadzone: s.deadzone,
-        source: _blockRef(s.sourceReg),
-        target: _blockRef(s.targetReg),
-      ));
+      requesters.add(
+        BackupRequesterSubscription(
+          provider: idToString(s.providerAddr),
+          trigger: s.trigger.label,
+          periodMs: s.periodMs,
+          minTimeMs: s.minTimeMs,
+          deadzone: s.deadzone,
+          source: _blockRef(s.sourceReg),
+          target: _blockRef(s.targetReg),
+        ),
+      );
     }
   } catch (error) {
     AppDiagnostics.log('backup', 'requester subscriptions read failed: $error');
   }
   try {
     for (final s in await subClient.getProviderSubscriptions()) {
-      providers.add(BackupProviderSubscription(
-        requester: idToString(s.requesterAddr),
-        trigger: s.trigger.label,
-        periodMs: s.periodMs,
-        minTimeMs: s.minTimeMs,
-        deadzone: s.deadzone,
-        source: _blockRef(s.sourceReg),
-      ));
+      providers.add(
+        BackupProviderSubscription(
+          requester: idToString(s.requesterAddr),
+          trigger: s.trigger.label,
+          periodMs: s.periodMs,
+          minTimeMs: s.minTimeMs,
+          deadzone: s.deadzone,
+          source: _blockRef(s.sourceReg),
+        ),
+      );
     }
   } catch (error) {
     AppDiagnostics.log('backup', 'provider subscriptions read failed: $error');
@@ -114,17 +118,22 @@ Future<List<BackupFile>> _captureFiles(int deviceId, int maxFileBytes) async {
     // not always zeroed); capture each file once.
     if (!seen.add(name)) continue;
     if (record.size > maxFileBytes) {
-      AppDiagnostics.log('backup', 'skipping large file $name (${record.size} B)');
+      AppDiagnostics.log(
+        'backup',
+        'skipping large file $name (${record.size} B)',
+      );
       continue;
     }
     try {
       final bytes = await storage.readFile(name, size: record.size);
       if (bytes == null) continue;
-      files.add(BackupFile(
-        name: name,
-        kind: backupFileKind(name),
-        data: base64Encode(bytes),
-      ));
+      files.add(
+        BackupFile(
+          name: name,
+          kind: backupFileKind(name),
+          data: base64Encode(bytes),
+        ),
+      );
     } catch (error) {
       AppDiagnostics.log('backup', 'file $name read failed: $error');
     }

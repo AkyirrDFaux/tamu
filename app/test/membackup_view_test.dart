@@ -12,12 +12,20 @@ void main() {
   List<int> u16(int v) => [v & 0xFF, (v >> 8) & 0xFF];
 
   Future<void> pump(WidgetTester tester, String name, List<int> data) async {
-    await tester.pumpWidget(MaterialApp(
-      theme: buildTheme(),
-      home: Scaffold(body: MemoryBackupView(fileName: name, data: data)),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildTheme(),
+        home: Scaffold(
+          body: MemoryBackupView(fileName: name, data: data),
+        ),
+      ),
+    );
     await tester.pump();
-    expect(tester.takeException(), isNull, reason: '$name threw while rendering');
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: '$name threw while rendering',
+    );
   }
 
   testWidgets('.DT_ dynamic block table decodes entries', (tester) async {

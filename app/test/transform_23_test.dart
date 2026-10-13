@@ -31,7 +31,10 @@ void main() {
       ..offsetY = 3;
     final cells = t.toCells();
     expect(nearList(cells, [1, 0, 2, 0, 1, 3]), isTrue);
-    expect(nearList((Transform23()..fromCells(cells)).toCells(), cells), isTrue);
+    expect(
+      nearList((Transform23()..fromCells(cells)).toCells(), cells),
+      isTrue,
+    );
   });
 
   test('positive rotation is CCW in cells', () {
@@ -60,7 +63,7 @@ void main() {
     expect(nearList(t.toCells(), [1, 0, 0, 0, -1, 0]), isTrue);
   });
 
-test('compose/decompose round-trips for rotations and mirrors', () {
+  test('compose/decompose round-trips for rotations and mirrors', () {
     for (final deg in [0.0, 30.0, -45.0, 90.0, 180.0]) {
       for (final sx in [1.0, 2.0, 0.5]) {
         for (final sy in [1.0, 3.0]) {
@@ -76,11 +79,18 @@ test('compose/decompose round-trips for rotations and mirrors', () {
                 ..mirrorY = my;
               final cells = t.toCells();
               final t2 = Transform23()..fromCells(cells);
-              expect(t2.offsetX, closeTo(-1.5, 0.01),
-                  reason: 'offsetX deg=$deg s($sx,$sy) mirror($mx,$my)');
-              expect(nearList(t2.toCells(), cells, 0.05), isTrue,
-                  reason: 'cells round-trip deg=$deg s($sx,$sy) mirror($mx,$my)\n'
-                      '  in:  $cells\n  out: ${t2.toCells()}');
+              expect(
+                t2.offsetX,
+                closeTo(-1.5, 0.01),
+                reason: 'offsetX deg=$deg s($sx,$sy) mirror($mx,$my)',
+              );
+              expect(
+                nearList(t2.toCells(), cells, 0.05),
+                isTrue,
+                reason:
+                    'cells round-trip deg=$deg s($sx,$sy) mirror($mx,$my)\n'
+                    '  in:  $cells\n  out: ${t2.toCells()}',
+              );
             }
           }
         }
@@ -88,14 +98,16 @@ test('compose/decompose round-trips for rotations and mirrors', () {
     }
   });
 
-  test('decomposition stays within a valid rotation for mirrored skew-free matrices',
-      () {
-    // A reflection about y=x is [0 1; 1 0] (det -1) -> represents as Mirror X @ 90deg.
-    final t = Transform23()..fromCells([0, 1, 0, 1, 0, 0]);
-    expect(t.mirrorX, isTrue);
-    expect(t.rotation, closeTo(90, 1));
-    expect(nearList(t.toCells(), [0, 1, 0, 1, 0, 0], 0.001), isTrue);
-  });
+  test(
+    'decomposition stays within a valid rotation for mirrored skew-free matrices',
+    () {
+      // A reflection about y=x is [0 1; 1 0] (det -1) -> represents as Mirror X @ 90deg.
+      final t = Transform23()..fromCells([0, 1, 0, 1, 0, 0]);
+      expect(t.mirrorX, isTrue);
+      expect(t.rotation, closeTo(90, 1));
+      expect(nearList(t.toCells(), [0, 1, 0, 1, 0, 0], 0.001), isTrue);
+    },
+  );
 
   test('matrix wire round-trips through number encode', () {
     final t = Transform23()

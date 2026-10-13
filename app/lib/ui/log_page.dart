@@ -77,15 +77,19 @@ class _LogViewerPageState extends State<LogViewerPage>
   Future<List<int>?> _request() {
     final seamed = widget.logFetcher;
     if (seamed != null) return seamed(widget.deviceId);
-    return ConnectionManager.instance.request(widget.deviceId, ServiceType.logHandler, 1,
-        timeout: const Duration(seconds: 5));
+    return ConnectionManager.instance.request(
+      widget.deviceId,
+      ServiceType.logHandler,
+      1,
+      timeout: const Duration(seconds: 5),
+    );
   }
-
-
 
   Future<void> _fetch() async {
     if (_loading) return;
-    if (widget.logFetcher == null && !ConnectionManager.instance.isConnected) return;
+    if (widget.logFetcher == null && !ConnectionManager.instance.isConnected) {
+      return;
+    }
     setState(() => _loading = true);
     List<int>? reply;
     try {
@@ -106,7 +110,7 @@ class _LogViewerPageState extends State<LogViewerPage>
       } else {
         _logs = [
           for (var offset = 0; offset + 16 <= reply.length; offset += 16)
-            LogEntry.fromBytes(reply.sublist(offset, offset + 16))
+            LogEntry.fromBytes(reply.sublist(offset, offset + 16)),
         ];
         _deviceIds = (_logs!.map((l) => l.deviceId).toSet().toList())..sort();
         final groups = <int, List<LogEntry>>{};
@@ -119,17 +123,22 @@ class _LogViewerPageState extends State<LogViewerPage>
   }
 
   Future<void> _clearAll() async {
-    final confirmed = await confirmDialog(context,
-        title: 'Clear log database',
-        body: 'Remove all stored log entries from the core?',
-        confirmLabel: 'Clear');
+    final confirmed = await confirmDialog(
+      context,
+      title: 'Clear log database',
+      body: 'Remove all stored log entries from the core?',
+      confirmLabel: 'Clear',
+    );
     if (confirmed != true) return;
     // ClearReadLogs CID 2: count of oldest entries to drop; 0xFFFFFFFF = all.
     try {
       await ConnectionManager.instance.request(
-          widget.deviceId, ServiceType.logHandler, 2,
-          payload: [...uint32ToBytes(0xFFFFFFFF)],
-          timeout: const Duration(seconds: 5));
+        widget.deviceId,
+        ServiceType.logHandler,
+        2,
+        payload: [...uint32ToBytes(0xFFFFFFFF)],
+        timeout: const Duration(seconds: 5),
+      );
     } catch (_) {}
     await _fetch();
   }
@@ -138,7 +147,9 @@ class _LogViewerPageState extends State<LogViewerPage>
   /// that the transports/services log during a session - handy for bug reports.
   Future<void> _showDiagnostics() async {
     final events = AppDiagnostics.events;
-    final text = events.isEmpty ? 'No app diagnostics recorded' : AppDiagnostics.dump();
+    final text = events.isEmpty
+        ? 'No app diagnostics recorded'
+        : AppDiagnostics.dump();
     if (!mounted) return;
     await showDialog<void>(
       context: context,
@@ -148,8 +159,10 @@ class _LogViewerPageState extends State<LogViewerPage>
           maxWidth: 520,
           height: 360,
           child: SingleChildScrollView(
-            child: SelectableText(text,
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
+            child: SelectableText(
+              text,
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+            ),
           ),
         ),
         actions: [
@@ -163,8 +176,9 @@ class _LogViewerPageState extends State<LogViewerPage>
             child: const Text('Copy'),
           ),
           FilledButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Close')),
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
         ],
       ),
     );
@@ -190,8 +204,7 @@ class _LogViewerPageState extends State<LogViewerPage>
               icon: Badge(
                 isLabelVisible: _deviceFilter != null,
                 smallSize: 8,
-                child:
-                    const Icon(Icons.filter_alt_outlined),
+                child: const Icon(Icons.filter_alt_outlined),
               ),
               initialValue: _deviceFilter,
               onSelected: (id) => setState(() => _deviceFilter = id),
@@ -199,17 +212,21 @@ class _LogViewerPageState extends State<LogViewerPage>
                 const PopupMenuItem(value: null, child: Text('All devices')),
                 for (final id in devices)
                   PopupMenuItem(
-                      value: id, child: Text('Device ${idToString(id)}')),
+                    value: id,
+                    child: Text('Device ${idToString(id)}'),
+                  ),
               ],
             ),
           IconButton(
-              onPressed: _showDiagnostics,
-              tooltip: 'App diagnostics',
-              icon: const Icon(Icons.bug_report_outlined)),
+            onPressed: _showDiagnostics,
+            tooltip: 'App diagnostics',
+            icon: const Icon(Icons.bug_report_outlined),
+          ),
           IconButton(
-              onPressed: _clearAll,
-              tooltip: 'Clear database',
-              icon: const Icon(Icons.delete_sweep_outlined)),
+            onPressed: _clearAll,
+            tooltip: 'Clear database',
+            icon: const Icon(Icons.delete_sweep_outlined),
+          ),
           RefreshButton(
             onRefresh: _refreshNow,
             autoActive: autoRefreshActive,
@@ -232,9 +249,12 @@ class _LogViewerPageState extends State<LogViewerPage>
     final logs = _filtered;
     if (logs.isEmpty) {
       return Center(
-          child: Text(_logs == null || _logs!.isEmpty
+        child: Text(
+          _logs == null || _logs!.isEmpty
               ? 'No logs recorded'
-              : 'No logs match the filter'));
+              : 'No logs match the filter',
+        ),
+      );
     }
     // Group the entries by source device so each device reads as one section. The no-filter
     // case reuses the grouping computed when the log was read.
@@ -258,17 +278,24 @@ class _LogViewerPageState extends State<LogViewerPage>
         children.add(_logTile(l));
       }
     }
-    return Column(children: [
-      Expanded(
-        child: ListView(padding: const EdgeInsets.all(12), children: children),
-      ),
-      Padding(
-        padding: const EdgeInsets.all(6),
-        child: Text('${_logs!.length} entr${_logs!.length == 1 ? 'y' : 'ies'}'
-                ' from ${byDevice.length} device${byDevice.length == 1 ? '' : 's'}',
-            style: const TextStyle(fontSize: 11, color: Colors.white38)),
-      ),
-    ]);
+    return Column(
+      children: [
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.all(12),
+            children: children,
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.all(6),
+          child: Text(
+            '${_logs!.length} entr${_logs!.length == 1 ? 'y' : 'ies'}'
+            ' from ${byDevice.length} device${byDevice.length == 1 ? '' : 's'}',
+            style: const TextStyle(fontSize: 11, color: Colors.white38),
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _deviceHeader(int id, String? name, int count) {
@@ -276,12 +303,18 @@ class _LogViewerPageState extends State<LogViewerPage>
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 4, 4, 2),
       child: ListTile(
-        leading: Icon(deviceTypeIcon(device?.type ?? DeviceType.unknown),
-            color: kOrange),
-        title: Text(name ?? idToString(id),
-            style: const TextStyle(fontWeight: FontWeight.w600)),
-        subtitle: Text('$count entr${count == 1 ? 'y' : 'ies'}',
-            style: const TextStyle(fontSize: 10, color: Colors.white38)),
+        leading: Icon(
+          deviceTypeIcon(device?.type ?? DeviceType.unknown),
+          color: kOrange,
+        ),
+        title: Text(
+          name ?? idToString(id),
+          style: const TextStyle(fontWeight: FontWeight.w600),
+        ),
+        subtitle: Text(
+          '$count entr${count == 1 ? 'y' : 'ies'}',
+          style: const TextStyle(fontSize: 10, color: Colors.white38),
+        ),
       ),
     );
   }
@@ -296,20 +329,29 @@ class _LogViewerPageState extends State<LogViewerPage>
       child: ListTile(
         dense: true,
         leading: Icon(
-            log.isBlock ? Icons.widgets_outlined : Icons.settings_suggest,
-            size: 20,
-            color: accent),
-        title: Text(log.describe(),
-            style: TextStyle(
-                fontSize: 13, color: isError ? Colors.redAccent : Colors.white)),
+          log.isBlock ? Icons.widgets_outlined : Icons.settings_suggest,
+          size: 20,
+          color: accent,
+        ),
+        title: Text(
+          log.describe(),
+          style: TextStyle(
+            fontSize: 13,
+            color: isError ? Colors.redAccent : Colors.white,
+          ),
+        ),
         subtitle: Padding(
           padding: const EdgeInsets.only(top: 2),
-          child: Wrap(spacing: 6, runSpacing: 2, children: [
-            ChipLabel(log.isBlock ? 'Block' : 'Service', subtle: true),
-            ChipLabel(log.sourceName(), subtle: true),
-            ChipLabel('x${log.count}', subtle: true),
-            ChipLabel(formatUptimeMs(log.timestampMs), subtle: true),
-          ]),
+          child: Wrap(
+            spacing: 6,
+            runSpacing: 2,
+            children: [
+              ChipLabel(log.isBlock ? 'Block' : 'Service', subtle: true),
+              ChipLabel(log.sourceName(), subtle: true),
+              ChipLabel('x${log.count}', subtle: true),
+              ChipLabel(formatUptimeMs(log.timestampMs), subtle: true),
+            ],
+          ),
         ),
       ),
     );
@@ -325,20 +367,21 @@ class LogEntry {
   final int code;
   final int timestampMs;
 
-  LogEntry(
-      {required this.deviceId,
-      required this.count,
-      required this.source,
-      required this.code,
-      required this.timestampMs});
+  LogEntry({
+    required this.deviceId,
+    required this.count,
+    required this.source,
+    required this.code,
+    required this.timestampMs,
+  });
 
   factory LogEntry.fromBytes(List<int> bytes) => LogEntry(
-        deviceId: bytes[0] | (bytes[1] << 8),
-        count: bytes[2] | (bytes[3] << 8),
-        source: uint32FromBytes(bytes, 4),
-        code: uint32FromBytes(bytes, 8),
-        timestampMs: uint32FromBytes(bytes, 12),
-      );
+    deviceId: bytes[0] | (bytes[1] << 8),
+    count: bytes[2] | (bytes[3] << 8),
+    source: uint32FromBytes(bytes, 4),
+    code: uint32FromBytes(bytes, 8),
+    timestampMs: uint32FromBytes(bytes, 12),
+  );
 
   // Log Struct (Docs/Services/Log Handler.md): source = the whole block index (BlockInfo
   // type|instance|field|key, u32), code = the source-specific 32-bit code. A service log uses
@@ -374,7 +417,9 @@ class LogEntry {
           'Gyroscope initialization failed',
           'Gyroscope timed out',
         ];
-        return code < errors.length ? errors[code] : 'Acc/Gyr error ${codeText()}';
+        return code < errors.length
+            ? errors[code]
+            : 'Acc/Gyr error ${codeText()}';
       default:
         return '${sourceName()} reported code ${codeText()}';
     }
@@ -388,51 +433,80 @@ class LogEntry {
     switch (srv) {
       case ServiceType.device:
         switch (code) {
-          case 0: return 'Device started';
-          case 1: return 'Device did not respond to ping';
-          case 2: return 'Identify request failed';
-          case 3: return 'Time synchronization failed';
-          case 10: return 'Core discovery failed';
-          case 11: return 'Could not read device database';
-          case 12: return 'Could not write device database';
-          case 13: return 'Could not read the device database (all)';
+          case 0:
+            return 'Device started';
+          case 1:
+            return 'Device did not respond to ping';
+          case 2:
+            return 'Identify request failed';
+          case 3:
+            return 'Time synchronization failed';
+          case 10:
+            return 'Core discovery failed';
+          case 11:
+            return 'Could not read device database';
+          case 12:
+            return 'Could not write device database';
+          case 13:
+            return 'Could not read the device database (all)';
         }
         return 'Device service error ${codeText()}';
       case ServiceType.register:
         switch (code) {
-          case 1: return 'Could not read register value';
-          case 2: return 'Could not write register value';
-          case 3: return 'Could not save registers to backup';
-          case 4: return 'Could not recall registers from backup';
-          case 0x10: return 'Could not create dynamic block';
-          case 0x11: return 'Could not delete dynamic block';
-          case 0x12: return 'Could not read block name';
-          case 0x13: return 'Could not set block name';
+          case 1:
+            return 'Could not read register value';
+          case 2:
+            return 'Could not write register value';
+          case 3:
+            return 'Could not save registers to backup';
+          case 4:
+            return 'Could not recall registers from backup';
+          case 0x10:
+            return 'Could not create dynamic block';
+          case 0x11:
+            return 'Could not delete dynamic block';
+          case 0x12:
+            return 'Could not read block name';
+          case 0x13:
+            return 'Could not set block name';
         }
         return 'Register error ${codeText()}';
       case ServiceType.storage:
         switch (code) {
-          case 0: return 'Filesystem format failed';
-          case 1: return 'Could not create file';
-          case 2: return 'Could not delete file';
-          case 3: return 'Could not resize file';
-          case 4: return 'Could not rename file';
-          case 5: return 'Could not read file';
-          case 6: return 'Could not write file';
+          case 0:
+            return 'Filesystem format failed';
+          case 1:
+            return 'Could not create file';
+          case 2:
+            return 'Could not delete file';
+          case 3:
+            return 'Could not resize file';
+          case 4:
+            return 'Could not rename file';
+          case 5:
+            return 'Could not read file';
+          case 6:
+            return 'Could not write file';
         }
         return 'Storage error ${codeText()}';
       case ServiceType.subscriptions:
         switch (code) {
-          case 1: return 'Could not change subscription';
-          case 2: return 'Could not read provider subscriptions';
-          case 3: return 'Could not read requester subscriptions';
-          case 4: return 'Could not set requester subscription';
+          case 1:
+            return 'Could not change subscription';
+          case 2:
+            return 'Could not read provider subscriptions';
+          case 3:
+            return 'Could not read requester subscriptions';
+          case 4:
+            return 'Could not set requester subscription';
         }
         return 'Subscription error ${codeText()}';
       case ServiceType.logHandler:
         switch (code) {
-          case 1: return 'Could not read logs';
-          case 2: return 'Could not clear logs';
+          case 1:
+            return 'Could not read logs';
+          case 2:
+            return 'Could not clear logs';
         }
         return 'Log handler error ${codeText()}';
       default:
@@ -440,5 +514,6 @@ class LogEntry {
     }
   }
 
-  String codeText() => '0x${code.toRadixString(16).padLeft(4, '0').toUpperCase()}';
+  String codeText() =>
+      '0x${code.toRadixString(16).padLeft(4, '0').toUpperCase()}';
 }

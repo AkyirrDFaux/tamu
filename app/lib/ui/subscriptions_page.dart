@@ -6,7 +6,11 @@ import 'package:tamuapp/core/device_db.dart';
 import 'package:tamuapp/core/register_client.dart';
 import 'package:tamuapp/core/subscription_client.dart';
 import 'package:tamuapp/core/types.dart'
-    show Capability, ProviderSubscription, RequesterSubscription, blockInfoLabel;
+    show
+        Capability,
+        ProviderSubscription,
+        RequesterSubscription,
+        blockInfoLabel;
 import 'subscriptions_dialog.dart' show SubscriptionDialog;
 import 'widgets.dart' show showSnack;
 
@@ -24,7 +28,8 @@ class SubscriptionsPage extends StatefulWidget {
   State<SubscriptionsPage> createState() => _SubscriptionsPageState();
 }
 
-class _SubscriptionsPageState extends State<SubscriptionsPage> with SingleTickerProviderStateMixin {
+class _SubscriptionsPageState extends State<SubscriptionsPage>
+    with SingleTickerProviderStateMixin {
   late final TabController _tabController;
   late final SubscriptionClient _client;
   late final RegisterClient _regClient;
@@ -82,7 +87,9 @@ class _SubscriptionsPageState extends State<SubscriptionsPage> with SingleTicker
         bottom: TabBar(
           controller: _tabController,
           labelColor: theme.colorScheme.onPrimary,
-          unselectedLabelColor: theme.colorScheme.onPrimary.withValues(alpha: 0.7),
+          unselectedLabelColor: theme.colorScheme.onPrimary.withValues(
+            alpha: 0.7,
+          ),
           indicatorColor: theme.colorScheme.onPrimary,
           tabs: const [
             Tab(text: 'Provider (incoming)'),
@@ -100,22 +107,26 @@ class _SubscriptionsPageState extends State<SubscriptionsPage> with SingleTicker
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-              ? Center(child: Text('Error: $_error', style: TextStyle(color: theme.colorScheme.error)))
-              : TabBarView(
-                  controller: _tabController,
-                  children: [
-                    _buildProviderTab(),
-                    _buildRequesterTab(),
-                  ],
-                ),
+          ? Center(
+              child: Text(
+                'Error: $_error',
+                style: TextStyle(color: theme.colorScheme.error),
+              ),
+            )
+          : TabBarView(
+              controller: _tabController,
+              children: [_buildProviderTab(), _buildRequesterTab()],
+            ),
     );
   }
 
   Widget _buildProviderTab() {
     final db = DeviceDatabase.instance;
     final device = db.byId(widget.deviceId);
-    final hasProviderCapability = device?.capabilities != null && (device!.capabilities & Capability.subscriptionProvide) != 0;
-    
+    final hasProviderCapability =
+        device?.capabilities != null &&
+        (device!.capabilities & Capability.subscriptionProvide) != 0;
+
     if (!hasProviderCapability) {
       return const Center(
         child: Padding(
@@ -129,9 +140,14 @@ class _SubscriptionsPageState extends State<SubscriptionsPage> with SingleTicker
         ),
       );
     }
-    
+
     if (_providerSubs.isEmpty) {
-      return const Center(child: Text('No provider subscriptions', style: TextStyle(color: Colors.white54)));
+      return const Center(
+        child: Text(
+          'No provider subscriptions',
+          style: TextStyle(color: Colors.white54),
+        ),
+      );
     }
     return ListView.builder(
       padding: const EdgeInsets.all(8),
@@ -145,7 +161,9 @@ class _SubscriptionsPageState extends State<SubscriptionsPage> with SingleTicker
       margin: const EdgeInsets.symmetric(vertical: 4),
       child: ExpansionTile(
         title: Text('Sub #${sub.index}'),
-        subtitle: Text('Requester: ${sub.requesterAddr} → Source: ${_formatBlockInfo(sub.sourceReg)}'),
+        subtitle: Text(
+          'Requester: ${sub.requesterAddr} → Source: ${_formatBlockInfo(sub.sourceReg)}',
+        ),
         children: [
           Padding(
             padding: const EdgeInsets.all(16),
@@ -160,8 +178,14 @@ class _SubscriptionsPageState extends State<SubscriptionsPage> with SingleTicker
                 // "time ago" delta (Docs/Services/Subscriptions.md:43).
                 _detailRow('Last Sent', '${sub.lastSentMs} ms (uptime)'),
                 _detailRow('Requester Addr', '${sub.requesterAddr}'),
-                _detailRow('TRID', '0x${sub.trid.toRadixString(16).padLeft(4, '0')}'),
-                _detailRow('Hash', '0x${sub.hash.toRadixString(16).padLeft(8, '0')}'),
+                _detailRow(
+                  'TRID',
+                  '0x${sub.trid.toRadixString(16).padLeft(4, '0')}',
+                ),
+                _detailRow(
+                  'Hash',
+                  '0x${sub.hash.toRadixString(16).padLeft(8, '0')}',
+                ),
               ],
             ),
           ),
@@ -170,12 +194,13 @@ class _SubscriptionsPageState extends State<SubscriptionsPage> with SingleTicker
     );
   }
 
-Widget _buildRequesterTab() {
+  Widget _buildRequesterTab() {
     // The requester side is offered when the device advertises the Subscriptions Request
     // capability (a requester need not be a core).
     final device = DeviceDatabase.instance.byId(widget.deviceId);
     final canRequest =
-        device != null && (device.capabilities & Capability.subscriptionRequest) != 0;
+        device != null &&
+        (device.capabilities & Capability.subscriptionRequest) != 0;
     if (!canRequest) {
       return const Center(
         child: Padding(
@@ -192,11 +217,17 @@ Widget _buildRequesterTab() {
     final listChildren = <Widget>[
       Expanded(
         child: _requesterSubs.isEmpty
-            ? const Center(child: Text('No requester subscriptions', style: TextStyle(color: Colors.white54)))
+            ? const Center(
+                child: Text(
+                  'No requester subscriptions',
+                  style: TextStyle(color: Colors.white54),
+                ),
+              )
             : ListView.builder(
                 padding: const EdgeInsets.all(8),
                 itemCount: _requesterSubs.length,
-                itemBuilder: (context, i) => _buildRequesterTile(_requesterSubs[i]),
+                itemBuilder: (context, i) =>
+                    _buildRequesterTile(_requesterSubs[i]),
               ),
       ),
       Padding(
@@ -228,8 +259,12 @@ Widget _buildRequesterTab() {
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 4),
       child: ExpansionTile(
-        title: Text('Sub #${sub.index} (TRID: 0x${sub.trid.toRadixString(16).padLeft(4, '0')})'),
-        subtitle: Text('Target: ${_formatBlockInfo(sub.targetReg)} ← Source: ${_formatBlockInfo(sub.sourceReg)}'),
+        title: Text(
+          'Sub #${sub.index} (TRID: 0x${sub.trid.toRadixString(16).padLeft(4, '0')})',
+        ),
+        subtitle: Text(
+          'Target: ${_formatBlockInfo(sub.targetReg)} ← Source: ${_formatBlockInfo(sub.sourceReg)}',
+        ),
         trailing: IconButton(
           icon: const Icon(Icons.delete, color: Colors.red),
           onPressed: () => _deleteRequesterSubscription(sub.index),
@@ -264,8 +299,13 @@ Widget _buildRequesterTab() {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(width: 120, child: Text(label, style: const TextStyle(color: Colors.white54))),
-          Expanded(child: Text(value, style: const TextStyle(fontFamily: 'monospace'))),
+          SizedBox(
+            width: 120,
+            child: Text(label, style: const TextStyle(color: Colors.white54)),
+          ),
+          Expanded(
+            child: Text(value, style: const TextStyle(fontFamily: 'monospace')),
+          ),
         ],
       ),
     );

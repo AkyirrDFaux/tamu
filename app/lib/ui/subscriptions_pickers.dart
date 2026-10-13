@@ -42,10 +42,14 @@ class BlockPicker extends StatelessWidget {
         border: const OutlineInputBorder(),
       ),
       isExpanded: true,
-      items: blocks.map((opt) => DropdownMenuItem(
-        value: opt,
-        child: Text(opt.label, overflow: TextOverflow.ellipsis),
-      )).toList(),
+      items: blocks
+          .map(
+            (opt) => DropdownMenuItem(
+              value: opt,
+              child: Text(opt.label, overflow: TextOverflow.ellipsis),
+            ),
+          )
+          .toList(),
       onChanged: onChanged,
       menuMaxHeight: 300,
     );
@@ -86,10 +90,17 @@ class FieldPicker extends StatelessWidget {
         border: const OutlineInputBorder(),
       ),
       isExpanded: true,
-      items: fields.map((opt) => DropdownMenuItem(
-        value: opt,
-        child: Text('${opt.name}  (${opt.keyed ? "keyed" : opt.meta.dataType.name})', overflow: TextOverflow.ellipsis),
-      )).toList(),
+      items: fields
+          .map(
+            (opt) => DropdownMenuItem(
+              value: opt,
+              child: Text(
+                '${opt.name}  (${opt.keyed ? "keyed" : opt.meta.dataType.name})',
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          )
+          .toList(),
       onChanged: onChanged,
       menuMaxHeight: 300,
     );
@@ -115,7 +126,9 @@ class KeyPicker extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // Always include the current value so an existing entry never asserts the dropdown.
-    final effective = <int>[...(keys.isEmpty ? const [0] : keys)];
+    final effective = <int>[
+      ...(keys.isEmpty ? const [0] : keys),
+    ];
     if (!effective.contains(value)) effective.add(value);
     effective.sort();
     return DropdownButtonFormField<int>(
@@ -172,10 +185,17 @@ class ProviderPicker extends StatelessWidget {
         border: const OutlineInputBorder(),
       ),
       isExpanded: true,
-      items: devices.map((d) => DropdownMenuItem(
-        value: d.id,
-        child: Text('${d.displayName} (ID: ${d.id})', overflow: TextOverflow.ellipsis),
-      )).toList(),
+      items: devices
+          .map(
+            (d) => DropdownMenuItem(
+              value: d.id,
+              child: Text(
+                '${d.displayName} (ID: ${d.id})',
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          )
+          .toList(),
       onChanged: onChanged,
     );
   }
@@ -210,7 +230,9 @@ class NumberField extends StatelessWidget {
       },
       validator: (v) {
         final parsed = int.tryParse(v ?? '');
-        if (parsed == null || parsed < min) return 'Enter a valid number (min $min)';
+        if (parsed == null || parsed < min) {
+          return 'Enter a valid number (min $min)';
+        }
         return null;
       },
     );

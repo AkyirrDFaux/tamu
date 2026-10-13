@@ -8,15 +8,19 @@ import 'package:tamuapp/core/types.dart';
 void main() {
   test('block registry matches the documented schemas', () {
     // Fan output: Frequency, Duty.
-    expect(blockInfoFor(BlockType.pwm)!.fields.map((f) => f.name),
-        ['Frequency', 'Duty']);
+    expect(blockInfoFor(BlockType.pwm)!.fields.map((f) => f.name), [
+      'Frequency',
+      'Duty',
+    ]);
 
     // Button: Button raw state.
     expect(blockInfoFor(BlockType.button)!.fields.length, 1);
     expect(blockInfoFor(BlockType.button)!.fields[0].name, 'Button Raw State');
 
     // LED: LEDState.
-    expect(blockInfoFor(BlockType.led)!.fields.map((f) => f.name), ['LED State']);
+    expect(blockInfoFor(BlockType.led)!.fields.map((f) => f.name), [
+      'LED State',
+    ]);
 
     // LED-Button: Button (0), LEDState (3) with 1-2 reserved.
     final ledButton = blockInfoFor(BlockType.ledButton)!;

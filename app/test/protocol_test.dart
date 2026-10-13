@@ -26,7 +26,11 @@ void main() {
       expect(parsed.idTarget, 0x0002);
       expect(parsed.srvTarget, frame.srvTarget);
       expect(parsed.srvSource, frame.srvSource);
-      expect(parsed.payload, [1, 2, 3], reason: 'the wire payload is not padded');
+      expect(parsed.payload, [
+        1,
+        2,
+        3,
+      ], reason: 'the wire payload is not padded');
     });
 
     test('a 116-byte payload fits (max payload size)', () {
@@ -66,18 +70,18 @@ void main() {
     test('stream parser reassembles concatenated frames', () {
       final parser = PacketStreamParser();
       final a = PacketFrame.single(
-              targetId: 2,
-              srvTarget: makeService(ServiceType.register, 2),
-              srvSource: makeService(ServiceType.register, 7),
-              response: true,
-              payload: [9, 9])
-          .toBytes();
+        targetId: 2,
+        srvTarget: makeService(ServiceType.register, 2),
+        srvSource: makeService(ServiceType.register, 7),
+        response: true,
+        payload: [9, 9],
+      ).toBytes();
       final b = PacketFrame.single(
-              targetId: 2,
-              srvTarget: makeService(ServiceType.device, 8),
-              srvSource: makeService(ServiceType.device, 8),
-              response: true)
-          .toBytes();
+        targetId: 2,
+        srvTarget: makeService(ServiceType.device, 8),
+        srvSource: makeService(ServiceType.device, 8),
+        response: true,
+      ).toBytes();
 
       // Feed split across chunk boundaries.
       final all = [...a, ...b];
@@ -85,7 +89,10 @@ void main() {
       expect(frames, isEmpty);
       frames = parser.feed(all.sublist(10));
       expect(frames.length, 2);
-      expect(frames[0].payload, [9, 9], reason: 'the wire payload is not padded');
+      expect(frames[0].payload, [
+        9,
+        9,
+      ], reason: 'the wire payload is not padded');
       expect(frames[1].payload, isEmpty);
     });
   });
@@ -112,9 +119,18 @@ void main() {
   group('BLE framing', () {
     test('length-prefixed chunks round-trip', () {
       final parser = BleLengthParser();
-      final chunks = BleLengthParser.chunkOutgoing(
-          [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-          mtu: 13);
+      final chunks = BleLengthParser.chunkOutgoing([
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+      ], mtu: 13);
       // MTU 13: total per write <= mtu - 3 -> payload <= 8 bytes per chunk.
       expect(chunks.length, 2);
       Uint8List assembled = Uint8List(0);

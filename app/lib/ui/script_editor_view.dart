@@ -11,40 +11,55 @@ extension on _ScriptEditorPageState {
       margin: const EdgeInsets.fromLTRB(8, 8, 8, 4),
       child: Padding(
         padding: const EdgeInsets.all(12),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Icon(Icons.circle, size: 12, color: scriptStateColor(_state)),
-            const SizedBox(width: 8),
-            Text(ScriptState.label(_state), style: const TextStyle(fontWeight: FontWeight.w600)),
-            const Spacer(),
-            Text(_callDepth > 0
-                ? 'IC $_instructionCounter · depth $_callDepth'
-                : 'IC $_instructionCounter',
-                style: const TextStyle(color: Colors.white54)),
-          ]),
-          if (_errorCode != 0 || _errorInstruction != 0)
-            Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: Text('Error $_errorCode ${_errorLocation()}',
-                  style: const TextStyle(color: Colors.redAccent)),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.circle, size: 12, color: scriptStateColor(_state)),
+                const SizedBox(width: 8),
+                Text(
+                  ScriptState.label(_state),
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const Spacer(),
+                Text(
+                  _callDepth > 0
+                      ? 'IC $_instructionCounter · depth $_callDepth'
+                      : 'IC $_instructionCounter',
+                  style: const TextStyle(color: Colors.white54),
+                ),
+              ],
             ),
-          const SizedBox(height: 10),
-          ScriptControlBar(
-            state: _state,
-            onStart: () => _control(ScriptAction.start),
-            onPauseToggle: () => _control(_state == ScriptState.paused
-                ? ScriptAction.resume
-                : ScriptAction.pause),
-            onStop: () => _control(ScriptAction.stop, reset: true),
-            onRestart: () => _control(ScriptAction.start, reset: true),
-            extra: [
-              OutlinedButton.icon(
+            if (_errorCode != 0 || _errorInstruction != 0)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  'Error $_errorCode ${_errorLocation()}',
+                  style: const TextStyle(color: Colors.redAccent),
+                ),
+              ),
+            const SizedBox(height: 10),
+            ScriptControlBar(
+              state: _state,
+              onStart: () => _control(ScriptAction.start),
+              onPauseToggle: () => _control(
+                _state == ScriptState.paused
+                    ? ScriptAction.resume
+                    : ScriptAction.pause,
+              ),
+              onStop: () => _control(ScriptAction.stop, reset: true),
+              onRestart: () => _control(ScriptAction.start, reset: true),
+              extra: [
+                OutlinedButton.icon(
                   onPressed: _moveToLine,
                   icon: const Icon(Icons.alt_route, size: 18),
-                  label: const Text('Move to line')),
-            ],
-          ),
-        ]),
+                  label: const Text('Move to line'),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -72,9 +87,13 @@ extension on _ScriptEditorPageState {
           decoration: const InputDecoration(labelText: 'Line index'),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
           FilledButton(
-            onPressed: () => Navigator.pop(context, int.tryParse(controller.text.trim())),
+            onPressed: () =>
+                Navigator.pop(context, int.tryParse(controller.text.trim())),
             child: const Text('OK'),
           ),
         ],
@@ -93,7 +112,9 @@ extension on _ScriptEditorPageState {
       child: const ListTile(
         leading: Icon(Icons.info_outline, color: kOrange),
         title: Text('Stored script'),
-        subtitle: Text('Not loaded. Edit and upload; load it from the Scripts page to run.'),
+        subtitle: Text(
+          'Not loaded. Edit and upload; load it from the Scripts page to run.',
+        ),
       ),
     );
   }
@@ -103,59 +124,68 @@ extension on _ScriptEditorPageState {
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: Padding(
         padding: const EdgeInsets.all(12),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('Function', style: TextStyle(color: kOrange, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 8),
-          TextFormField(
-            initialValue: draft.functionName,
-            maxLength: 23,
-            decoration: const InputDecoration(labelText: 'Function name'),
-            onChanged: (v) {
-              draft.functionName = v;
-              _touch();
-            },
-          ),
-          SwitchListTile(
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Load on boot'),
-            value: draft.properties & ScriptProperties.loadOnBoot != 0,
-            onChanged: (v) {
-              draft.properties = v
-                  ? draft.properties | ScriptProperties.loadOnBoot
-                  : draft.properties & ~ScriptProperties.loadOnBoot;
-              _touch();
-            },
-          ),
-          SwitchListTile(
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Run on load'),
-            value: draft.properties & ScriptProperties.runOnLoad != 0,
-            onChanged: (v) {
-              draft.properties = v
-                  ? draft.properties | ScriptProperties.runOnLoad
-                  : draft.properties & ~ScriptProperties.runOnLoad;
-              _touch();
-            },
-          ),
-          SwitchListTile(
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Function library'),
-            subtitle: const Text('The file is a function library, not a script',
-                style: TextStyle(fontSize: 11, color: Colors.white54)),
-            value: draft.properties & ScriptProperties.functionLibrary != 0,
-            onChanged: (v) {
-              draft.properties = v
-                  ? draft.properties | ScriptProperties.functionLibrary
-                  : draft.properties & ~ScriptProperties.functionLibrary;
-              _touch();
-            },
-          ),
-          // The slot a load-on-boot script loads into (Properties bits 8-15).
-          if (draft.properties & ScriptProperties.loadOnBoot != 0) _bootSlotField(draft),
-        ]),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Function',
+              style: TextStyle(color: kOrange, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            TextFormField(
+              initialValue: draft.functionName,
+              maxLength: 23,
+              decoration: const InputDecoration(labelText: 'Function name'),
+              onChanged: (v) {
+                draft.functionName = v;
+                _touch();
+              },
+            ),
+            SwitchListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Load on boot'),
+              value: draft.properties & ScriptProperties.loadOnBoot != 0,
+              onChanged: (v) {
+                draft.properties = v
+                    ? draft.properties | ScriptProperties.loadOnBoot
+                    : draft.properties & ~ScriptProperties.loadOnBoot;
+                _touch();
+              },
+            ),
+            SwitchListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Run on load'),
+              value: draft.properties & ScriptProperties.runOnLoad != 0,
+              onChanged: (v) {
+                draft.properties = v
+                    ? draft.properties | ScriptProperties.runOnLoad
+                    : draft.properties & ~ScriptProperties.runOnLoad;
+                _touch();
+              },
+            ),
+            SwitchListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Function library'),
+              subtitle: const Text(
+                'The file is a function library, not a script',
+                style: TextStyle(fontSize: 11, color: Colors.white54),
+              ),
+              value: draft.properties & ScriptProperties.functionLibrary != 0,
+              onChanged: (v) {
+                draft.properties = v
+                    ? draft.properties | ScriptProperties.functionLibrary
+                    : draft.properties & ~ScriptProperties.functionLibrary;
+                _touch();
+              },
+            ),
+            // The slot a load-on-boot script loads into (Properties bits 8-15).
+            if (draft.properties & ScriptProperties.loadOnBoot != 0)
+              _bootSlotField(draft),
+          ],
+        ),
       ),
     );
   }
@@ -188,26 +218,46 @@ extension on _ScriptEditorPageState {
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: Padding(
         padding: const EdgeInsets.all(12),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Text(title, style: const TextStyle(color: kOrange, fontWeight: FontWeight.w600)),
-            const SizedBox(width: 6),
-            Text('(${list.length})', style: const TextStyle(color: Colors.white54, fontSize: 12)),
-            const Spacer(),
-            IconButton(
-              visualDensity: VisualDensity.compact,
-              icon: const Icon(Icons.add, size: 20),
-              tooltip: 'Add $title',
-              onPressed: () => _addValue(category),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: kOrange,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  '(${list.length})',
+                  style: const TextStyle(color: Colors.white54, fontSize: 12),
+                ),
+                const Spacer(),
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.add, size: 20),
+                  tooltip: 'Add $title',
+                  onPressed: () => _addValue(category),
+                ),
+              ],
             ),
-          ]),
-          for (var i = 0; i < list.length; i++) _valueRow(category, i, list[i], live),
-        ]),
+            for (var i = 0; i < list.length; i++)
+              _valueRow(category, i, list[i], live),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _valueRow(ScriptValueCategory category, int index, ScriptDraftValue v, List<String>? live) {
+  Widget _valueRow(
+    ScriptValueCategory category,
+    int index,
+    ScriptDraftValue v,
+    List<String>? live,
+  ) {
     final liveText = live != null && index < live.length ? live[index] : null;
     return ListTile(
       dense: true,
@@ -218,20 +268,33 @@ extension on _ScriptEditorPageState {
         '${category == ScriptValueCategory.input ? ' · ${ScriptUiType.label(v.spec.uiType)}' : ''}',
         style: const TextStyle(fontSize: 11, color: Colors.white54),
       ),
-      trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-        if (liveText != null)
-          Text(liveText, style: const TextStyle(fontFamily: 'monospace', color: Colors.white70)),
-        IconButton(
-          visualDensity: VisualDensity.compact,
-          icon: const Icon(Icons.edit, size: 18),
-          onPressed: () => _editValue(category, index),
-        ),
-        IconButton(
-          visualDensity: VisualDensity.compact,
-          icon: const Icon(Icons.remove_circle_outline, size: 18, color: Colors.redAccent),
-          onPressed: () => _removeValue(category, index),
-        ),
-      ]),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (liveText != null)
+            Text(
+              liveText,
+              style: const TextStyle(
+                fontFamily: 'monospace',
+                color: Colors.white70,
+              ),
+            ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.edit, size: 18),
+            onPressed: () => _editValue(category, index),
+          ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(
+              Icons.remove_circle_outline,
+              size: 18,
+              color: Colors.redAccent,
+            ),
+            onPressed: () => _removeValue(category, index),
+          ),
+        ],
+      ),
       onTap: () => _editValue(category, index),
     );
   }
@@ -305,63 +368,81 @@ extension on _ScriptEditorPageState {
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: Padding(
         padding: const EdgeInsets.all(12),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            const Text('Instructions',
-                style: TextStyle(color: kOrange, fontWeight: FontWeight.w600)),
-            const SizedBox(width: 6),
-            Text('(${lines.length} lines)',
-                style: const TextStyle(color: Colors.white54, fontSize: 12)),
-            const Spacer(),
-            IconButton(
-              visualDensity: VisualDensity.compact,
-              icon: const Icon(Icons.add, size: 20),
-              tooltip: 'Add line',
-              onPressed: () => _rebuild(() {
-                lines.add(ScriptLine(instruction: ScriptSymbol.instruction(catMath, 0)));
-                _dirty = true;
-              }),
-            ),
-          ]),
-          // Scope: edit the main program or a function's body. The app lays a body out at
-          // assembly (Docs/Services/Script.md "Functions and Macros").
-          DropdownButton<int>(
-            isExpanded: true,
-            value: scope,
-            items: [
-              const DropdownMenuItem(value: -1, child: Text('Main program')),
-              for (var i = 0; i < draft.functions.length; i++)
-                DropdownMenuItem(
-                  value: i,
-                  enabled: draft.functions[i].hasBody,
-                  child: Text('${draft.functions[i].kind.label} · '
-                      '${draft.functions[i].name.isEmpty ? '#$i' : draft.functions[i].name}'),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Text(
+                  'Instructions',
+                  style: TextStyle(color: kOrange, fontWeight: FontWeight.w600),
                 ),
-            ],
-            onChanged: (v) => _rebuild(() => _activeFunction = (v ?? -1) < 0 ? null : v),
-          ),
-          const SizedBox(height: 4),
-          _legend(),
-          if (lines.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 8),
-              child: Text('No instructions yet. Add a line to start the program.',
-                  style: TextStyle(color: Colors.white54)),
-            )
-          else
-            ReorderableListView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              buildDefaultDragHandles: false,
-              itemCount: lines.length,
-              onReorderItem: (oldIndex, newIndex) => _rebuild(() {
-                final line = lines.removeAt(oldIndex);
-                lines.insert(newIndex, line);
-                _dirty = true;
-              }),
-              itemBuilder: (context, i) => _lineEditor(draft, i, depths[i]),
+                const SizedBox(width: 6),
+                Text(
+                  '(${lines.length} lines)',
+                  style: const TextStyle(color: Colors.white54, fontSize: 12),
+                ),
+                const Spacer(),
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.add, size: 20),
+                  tooltip: 'Add line',
+                  onPressed: () => _rebuild(() {
+                    lines.add(
+                      ScriptLine(
+                        instruction: ScriptSymbol.instruction(catMath, 0),
+                      ),
+                    );
+                    _dirty = true;
+                  }),
+                ),
+              ],
             ),
-        ]),
+            // Scope: edit the main program or a function's body. The app lays a body out at
+            // assembly (Docs/Services/Script.md "Functions and Macros").
+            DropdownButton<int>(
+              isExpanded: true,
+              value: scope,
+              items: [
+                const DropdownMenuItem(value: -1, child: Text('Main program')),
+                for (var i = 0; i < draft.functions.length; i++)
+                  DropdownMenuItem(
+                    value: i,
+                    enabled: draft.functions[i].hasBody,
+                    child: Text(
+                      '${draft.functions[i].kind.label} · '
+                      '${draft.functions[i].name.isEmpty ? '#$i' : draft.functions[i].name}',
+                    ),
+                  ),
+              ],
+              onChanged: (v) =>
+                  _rebuild(() => _activeFunction = (v ?? -1) < 0 ? null : v),
+            ),
+            const SizedBox(height: 4),
+            _legend(),
+            if (lines.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  'No instructions yet. Add a line to start the program.',
+                  style: TextStyle(color: Colors.white54),
+                ),
+              )
+            else
+              ReorderableListView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                buildDefaultDragHandles: false,
+                itemCount: lines.length,
+                onReorderItem: (oldIndex, newIndex) => _rebuild(() {
+                  final line = lines.removeAt(oldIndex);
+                  lines.insert(newIndex, line);
+                  _dirty = true;
+                }),
+                itemBuilder: (context, i) => _lineEditor(draft, i, depths[i]),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -374,66 +455,84 @@ extension on _ScriptEditorPageState {
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: Padding(
         padding: const EdgeInsets.all(12),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            const Text('Functions & macros',
-                style: TextStyle(color: kOrange, fontWeight: FontWeight.w600)),
-            const SizedBox(width: 6),
-            Text('(${draft.functions.length})',
-                style: const TextStyle(color: Colors.white54, fontSize: 12)),
-            const Spacer(),
-            IconButton(
-              visualDensity: VisualDensity.compact,
-              icon: const Icon(Icons.add, size: 20),
-              tooltip: 'Add function',
-              onPressed: _addFunction,
-            ),
-          ]),
-          if (draft.functions.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 8),
-              child: Text(
-                  'No functions. A local function or macro is expanded into a Flow Call plus a '
-                  'body; a global function is linked at load.',
-                  style: TextStyle(color: Colors.white54, fontSize: 12)),
-            ),
-          for (var i = 0; i < draft.functions.length; i++)
-            ListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              title: Text(draft.functions[i].name.isEmpty
-                  ? '#$i'
-                  : draft.functions[i].name),
-              subtitle: Text(
-                draft.functions[i].isGlobal
-                    ? 'Global · ${scriptFileName(draft.functions[i].globalFileId)} · '
-                        'mem ${draft.functions[i].globalMemOffset}, '
-                        'instr ${draft.functions[i].globalInstrOffset}'
-                    : '${draft.functions[i].kind.label} · '
-                        '${draft.functions[i].body.length} lines',
-                style: const TextStyle(fontSize: 11, color: Colors.white54),
-              ),
-              trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                if (draft.functions[i].hasBody)
-                  IconButton(
-                    visualDensity: VisualDensity.compact,
-                    tooltip: 'Edit body',
-                    icon: const Icon(Icons.edit_note, size: 18),
-                    onPressed: () => _rebuild(() => _activeFunction = i),
-                  ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Text(
+                  'Functions & macros',
+                  style: TextStyle(color: kOrange, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  '(${draft.functions.length})',
+                  style: const TextStyle(color: Colors.white54, fontSize: 12),
+                ),
+                const Spacer(),
                 IconButton(
                   visualDensity: VisualDensity.compact,
-                  icon: const Icon(Icons.remove_circle_outline,
-                      size: 18, color: Colors.redAccent),
-                  onPressed: () => _rebuild(() {
-                    draft.functions.removeAt(i);
-                    if (_activeFunction == i) _activeFunction = null;
-                    _dirty = true;
-                  }),
+                  icon: const Icon(Icons.add, size: 20),
+                  tooltip: 'Add function',
+                  onPressed: _addFunction,
                 ),
-              ]),
+              ],
             ),
-        ]),
+            if (draft.functions.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  'No functions. A local function or macro is expanded into a Flow Call plus a '
+                  'body; a global function is linked at load.',
+                  style: TextStyle(color: Colors.white54, fontSize: 12),
+                ),
+              ),
+            for (var i = 0; i < draft.functions.length; i++)
+              ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                title: Text(
+                  draft.functions[i].name.isEmpty
+                      ? '#$i'
+                      : draft.functions[i].name,
+                ),
+                subtitle: Text(
+                  draft.functions[i].isGlobal
+                      ? 'Global · ${scriptFileName(draft.functions[i].globalFileId)} · '
+                            'mem ${draft.functions[i].globalMemOffset}, '
+                            'instr ${draft.functions[i].globalInstrOffset}'
+                      : '${draft.functions[i].kind.label} · '
+                            '${draft.functions[i].body.length} lines',
+                  style: const TextStyle(fontSize: 11, color: Colors.white54),
+                ),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (draft.functions[i].hasBody)
+                      IconButton(
+                        visualDensity: VisualDensity.compact,
+                        tooltip: 'Edit body',
+                        icon: const Icon(Icons.edit_note, size: 18),
+                        onPressed: () => _rebuild(() => _activeFunction = i),
+                      ),
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
+                      icon: const Icon(
+                        Icons.remove_circle_outline,
+                        size: 18,
+                        color: Colors.redAccent,
+                      ),
+                      onPressed: () => _rebuild(() {
+                        draft.functions.removeAt(i);
+                        if (_activeFunction == i) _activeFunction = null;
+                        _dirty = true;
+                      }),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -451,62 +550,76 @@ extension on _ScriptEditorPageState {
         builder: (context, setLocal) => AlertDialog(
           title: const Text('Add function'),
           content: SingleChildScrollView(
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              TextField(
-                controller: nameController,
-                autofocus: true,
-                decoration: const InputDecoration(labelText: 'Name'),
-              ),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<ScriptFunctionKind>(
-                initialValue: kind,
-                decoration: const InputDecoration(labelText: 'Kind'),
-                items: [
-                  for (final k in ScriptFunctionKind.values)
-                    DropdownMenuItem(value: k, child: Text(k.label)),
-                ],
-                onChanged: (v) => setLocal(() => kind = v ?? ScriptFunctionKind.local),
-              ),
-              if (kind == ScriptFunctionKind.global) ...[
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameController,
+                  autofocus: true,
+                  decoration: const InputDecoration(labelText: 'Name'),
+                ),
                 const SizedBox(height: 8),
-                TextField(
-                  controller: fileController,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                      labelText: 'Library file id (SCR_XXX, decimal)'),
+                DropdownButtonFormField<ScriptFunctionKind>(
+                  initialValue: kind,
+                  decoration: const InputDecoration(labelText: 'Kind'),
+                  items: [
+                    for (final k in ScriptFunctionKind.values)
+                      DropdownMenuItem(value: k, child: Text(k.label)),
+                  ],
+                  onChanged: (v) =>
+                      setLocal(() => kind = v ?? ScriptFunctionKind.local),
                 ),
-                TextField(
-                  controller: memController,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: 'Memory-space offset'),
-                ),
-                TextField(
-                  controller: instrController,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: 'Instruction-space offset'),
-                ),
+                if (kind == ScriptFunctionKind.global) ...[
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: fileController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Library file id (SCR_XXX, decimal)',
+                    ),
+                  ),
+                  TextField(
+                    controller: memController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Memory-space offset',
+                    ),
+                  ),
+                  TextField(
+                    controller: instrController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Instruction-space offset',
+                    ),
+                  ),
+                ],
               ],
-            ]),
+            ),
           ),
           actions: [
             TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('Cancel')),
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
             FilledButton(
-                onPressed: () => Navigator.pop(context, true), child: const Text('Add')),
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Add'),
+            ),
           ],
         ),
       ),
     );
     if (result != true || !mounted) return;
     _rebuild(() {
-      draft.functions.add(ScriptFunction(
-        name: nameController.text.trim(),
-        kind: kind,
-        globalFileId: int.tryParse(fileController.text.trim()) ?? 0,
-        globalMemOffset: int.tryParse(memController.text.trim()) ?? 0,
-        globalInstrOffset: int.tryParse(instrController.text.trim()) ?? 0,
-      ));
+      draft.functions.add(
+        ScriptFunction(
+          name: nameController.text.trim(),
+          kind: kind,
+          globalFileId: int.tryParse(fileController.text.trim()) ?? 0,
+          globalMemOffset: int.tryParse(memController.text.trim()) ?? 0,
+          globalInstrOffset: int.tryParse(instrController.text.trim()) ?? 0,
+        ),
+      );
       if (kind != ScriptFunctionKind.global) {
         _activeFunction = draft.functions.length - 1;
       }
@@ -531,11 +644,15 @@ extension on _ScriptEditorPageState {
                 ListTile(
                   dense: true,
                   leading: const Icon(Icons.call_made, size: 18),
-                  title: Text(draft.functions[i].name.isEmpty
-                      ? '#$i'
-                      : draft.functions[i].name),
-                  subtitle: Text(draft.functions[i].kind.label,
-                      style: const TextStyle(fontSize: 11, color: Colors.white54)),
+                  title: Text(
+                    draft.functions[i].name.isEmpty
+                        ? '#$i'
+                        : draft.functions[i].name,
+                  ),
+                  subtitle: Text(
+                    draft.functions[i].kind.label,
+                    style: const TextStyle(fontSize: 11, color: Colors.white54),
+                  ),
                   onTap: () => Navigator.pop(context, i),
                 ),
             ],
@@ -543,10 +660,11 @@ extension on _ScriptEditorPageState {
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
         ],
       ),
     );
   }
-
 }

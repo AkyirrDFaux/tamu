@@ -21,23 +21,34 @@ class BackupInputSpec {
   final double max;
   final double step;
 
-  const BackupInputSpec({this.style = 'Auto', this.min = 0, this.max = 0, this.step = 0});
+  const BackupInputSpec({
+    this.style = 'Auto',
+    this.min = 0,
+    this.max = 0,
+    this.step = 0,
+  });
 
-  Map<String, dynamic> toJson() => {'style': style, 'min': min, 'max': max, 'step': step};
+  Map<String, dynamic> toJson() => {
+    'style': style,
+    'min': min,
+    'max': max,
+    'step': step,
+  };
 
   static BackupInputSpec fromJson(Map<String, dynamic> json) => BackupInputSpec(
-        style: json['style'] as String? ?? 'Auto',
-        min: (json['min'] as num?)?.toDouble() ?? 0,
-        max: (json['max'] as num?)?.toDouble() ?? 0,
-        step: (json['step'] as num?)?.toDouble() ?? 0,
-      );
+    style: json['style'] as String? ?? 'Auto',
+    min: (json['min'] as num?)?.toDouble() ?? 0,
+    max: (json['max'] as num?)?.toDouble() ?? 0,
+    step: (json['step'] as num?)?.toDouble() ?? 0,
+  );
 }
 
 class BackupScriptValue {
   final String name;
   final String type; // data type word
   final int size;
-  final Object? value; // input default / constant value (semantic; null when unused)
+  final Object?
+  value; // input default / constant value (semantic; null when unused)
   final BackupInputSpec? ui; // inputs only
 
   const BackupScriptValue({
@@ -49,14 +60,15 @@ class BackupScriptValue {
   });
 
   Map<String, dynamic> toJson() => {
-        'name': name,
-        'type': type,
-        'size': size,
-        if (value != null) 'value': value,
-        if (ui != null) 'ui': ui!.toJson(),
-      };
+    'name': name,
+    'type': type,
+    'size': size,
+    if (value != null) 'value': value,
+    if (ui != null) 'ui': ui!.toJson(),
+  };
 
-  static BackupScriptValue fromJson(Map<String, dynamic> json) => BackupScriptValue(
+  static BackupScriptValue fromJson(Map<String, dynamic> json) =>
+      BackupScriptValue(
         name: json['name'] as String? ?? '',
         type: json['type'] as String? ?? 'Number',
         size: (json['size'] as num?)?.toInt() ?? 4,
@@ -82,18 +94,18 @@ class BackupSymbol {
   });
 
   Map<String, dynamic> toJson() => {
-        'kind': kind,
-        if (subtype != null) 'subtype': subtype,
-        if (category != null) 'category': category,
-        'value': value,
-      };
+    'kind': kind,
+    if (subtype != null) 'subtype': subtype,
+    if (category != null) 'category': category,
+    'value': value,
+  };
 
   static BackupSymbol fromJson(Map<String, dynamic> json) => BackupSymbol(
-        kind: json['kind'] as String? ?? 'undefined',
-        value: (json['value'] as num?)?.toInt() ?? 0,
-        subtype: json['subtype'] as String?,
-        category: json['category'] as String?,
-      );
+    kind: json['kind'] as String? ?? 'undefined',
+    value: (json['value'] as num?)?.toInt() ?? 0,
+    subtype: json['subtype'] as String?,
+    category: json['category'] as String?,
+  );
 
   static BackupSymbol of(ScriptSymbol s) {
     switch (s.type) {
@@ -109,14 +121,16 @@ class BackupSymbol {
         return const BackupSymbol(kind: 'endline');
       case symPredefine:
         return BackupSymbol(
-            kind: 'predefine',
-            subtype: ScriptSymbol.predefineName(s.subtype),
-            value: s.value);
+          kind: 'predefine',
+          subtype: ScriptSymbol.predefineName(s.subtype),
+          value: s.value,
+        );
       case symInstruction:
         return BackupSymbol(
-            kind: 'instruction',
-            category: ScriptInstructionDef.categoryName(s.subtype),
-            value: s.value);
+          kind: 'instruction',
+          category: ScriptInstructionDef.categoryName(s.subtype),
+          value: s.value,
+        );
       default:
         return BackupSymbol(kind: 'undefined', value: s.value);
     }
@@ -162,37 +176,39 @@ class BackupLine {
   });
 
   Map<String, dynamic> toJson() => {
-        'destinations': [for (final d in destinations) d.toJson()],
-        'instruction': instruction.toJson(),
-        'operands': [for (final o in operands) o.toJson()],
-        if (functionTarget != null) 'function': functionTarget,
-      };
+    'destinations': [for (final d in destinations) d.toJson()],
+    'instruction': instruction.toJson(),
+    'operands': [for (final o in operands) o.toJson()],
+    if (functionTarget != null) 'function': functionTarget,
+  };
 
   static BackupLine fromJson(Map<String, dynamic> json) => BackupLine(
-        destinations: (json['destinations'] as List? ?? [])
-            .map((e) => BackupSymbol.fromJson(e as Map<String, dynamic>))
-            .toList(),
-        instruction: BackupSymbol.fromJson(
-            (json['instruction'] as Map<String, dynamic>?) ?? const {'kind': 'instruction'}),
-        operands: (json['operands'] as List? ?? [])
-            .map((e) => BackupSymbol.fromJson(e as Map<String, dynamic>))
-            .toList(),
-        functionTarget: (json['function'] as num?)?.toInt(),
-      );
+    destinations: (json['destinations'] as List? ?? [])
+        .map((e) => BackupSymbol.fromJson(e as Map<String, dynamic>))
+        .toList(),
+    instruction: BackupSymbol.fromJson(
+      (json['instruction'] as Map<String, dynamic>?) ??
+          const {'kind': 'instruction'},
+    ),
+    operands: (json['operands'] as List? ?? [])
+        .map((e) => BackupSymbol.fromJson(e as Map<String, dynamic>))
+        .toList(),
+    functionTarget: (json['function'] as num?)?.toInt(),
+  );
 
   static BackupLine of(ScriptLine l) => BackupLine(
-        destinations: [for (final d in l.destinations) BackupSymbol.of(d)],
-        instruction: BackupSymbol.of(l.instruction),
-        operands: [for (final o in l.operands) BackupSymbol.of(o)],
-        functionTarget: l.functionTarget,
-      );
+    destinations: [for (final d in l.destinations) BackupSymbol.of(d)],
+    instruction: BackupSymbol.of(l.instruction),
+    operands: [for (final o in l.operands) BackupSymbol.of(o)],
+    functionTarget: l.functionTarget,
+  );
 
   ScriptLine toLine() => ScriptLine(
-        destinations: [for (final d in destinations) d.toSymbol()],
-        instruction: instruction.toSymbol(),
-        operands: [for (final o in operands) o.toSymbol()],
-        functionTarget: functionTarget,
-      );
+    destinations: [for (final d in destinations) d.toSymbol()],
+    instruction: instruction.toSymbol(),
+    operands: [for (final o in operands) o.toSymbol()],
+    functionTarget: functionTarget,
+  );
 }
 
 /// A referenced global function's reservation record (Docs/Services/Script.md "File Blocks": a
@@ -210,10 +226,10 @@ class BackupFunctionReservation {
   });
 
   Map<String, dynamic> toJson() => {
-        'library': library,
-        'memoryOffset': memoryOffset,
-        'instructionOffset': instructionOffset,
-      };
+    'library': library,
+    'memoryOffset': memoryOffset,
+    'instructionOffset': instructionOffset,
+  };
 
   static BackupFunctionReservation fromJson(Map<String, dynamic> json) =>
       BackupFunctionReservation(
@@ -224,7 +240,7 @@ class BackupFunctionReservation {
 
   /// Reads the semantic fields from a raw 16-byte reservation record.
   static BackupFunctionReservation of(List<int> record) {
-    int u16(int at) => at + 1 < record.length ? record[at] | (record[at + 1] << 8) : 0;
+    int u16(int at) => at + 1 < record.length ? u16FromBytes(record, at) : 0;
     return BackupFunctionReservation(
       library: u16(0),
       memoryOffset: u16(2),
@@ -234,10 +250,10 @@ class BackupFunctionReservation {
 
   /// The 16-byte record this reservation encodes to (Docs "File Blocks").
   List<int> toRecord() => encodeFunctionReservation(
-        fileId: library,
-        memOffset: memoryOffset,
-        instrOffset: instructionOffset,
-      );
+    fileId: library,
+    memOffset: memoryOffset,
+    instrOffset: instructionOffset,
+  );
 }
 
 /// One declared function (Docs/Services/Script.md "Functions and Macros"): a local/macro body
@@ -262,49 +278,49 @@ class BackupFunction {
   bool get isGlobal => kind == 'Global';
 
   Map<String, dynamic> toJson() => {
-        'name': name,
-        'kind': kind,
-        if (!isGlobal) 'body': [for (final l in body) l.toJson()],
-        if (isGlobal) 'library': library,
-        if (isGlobal) 'memoryOffset': memoryOffset,
-        if (isGlobal) 'instructionOffset': instructionOffset,
-      };
+    'name': name,
+    'kind': kind,
+    if (!isGlobal) 'body': [for (final l in body) l.toJson()],
+    if (isGlobal) 'library': library,
+    if (isGlobal) 'memoryOffset': memoryOffset,
+    if (isGlobal) 'instructionOffset': instructionOffset,
+  };
 
   static BackupFunction fromJson(Map<String, dynamic> json) => BackupFunction(
-        name: json['name'] as String? ?? '',
-        kind: json['kind'] as String? ?? 'Local',
-        body: (json['body'] as List? ?? [])
-            .map((e) => BackupLine.fromJson(e as Map<String, dynamic>))
-            .toList(),
-        library: (json['library'] as num?)?.toInt() ?? 0,
-        memoryOffset: (json['memoryOffset'] as num?)?.toInt() ?? 0,
-        instructionOffset: (json['instructionOffset'] as num?)?.toInt() ?? 0,
-      );
+    name: json['name'] as String? ?? '',
+    kind: json['kind'] as String? ?? 'Local',
+    body: (json['body'] as List? ?? [])
+        .map((e) => BackupLine.fromJson(e as Map<String, dynamic>))
+        .toList(),
+    library: (json['library'] as num?)?.toInt() ?? 0,
+    memoryOffset: (json['memoryOffset'] as num?)?.toInt() ?? 0,
+    instructionOffset: (json['instructionOffset'] as num?)?.toInt() ?? 0,
+  );
 
   static BackupFunction of(ScriptFunction f) => BackupFunction(
-        name: f.name,
-        kind: f.kind.label,
-        body: [for (final l in f.body) BackupLine.of(l)],
-        library: f.globalFileId,
-        memoryOffset: f.globalMemOffset,
-        instructionOffset: f.globalInstrOffset,
-      );
+    name: f.name,
+    kind: f.kind.label,
+    body: [for (final l in f.body) BackupLine.of(l)],
+    library: f.globalFileId,
+    memoryOffset: f.globalMemOffset,
+    instructionOffset: f.globalInstrOffset,
+  );
 
   ScriptFunction toFunction() => ScriptFunction(
-        name: name,
-        kind: _functionKind(kind),
-        body: [for (final l in body) l.toLine()],
-        globalFileId: library,
-        globalMemOffset: memoryOffset,
-        globalInstrOffset: instructionOffset,
-      );
+    name: name,
+    kind: _functionKind(kind),
+    body: [for (final l in body) l.toLine()],
+    globalFileId: library,
+    globalMemOffset: memoryOffset,
+    globalInstrOffset: instructionOffset,
+  );
 }
 
 ScriptFunctionKind _functionKind(String word) => switch (word) {
-      'Macro' => ScriptFunctionKind.macro,
-      'Global' => ScriptFunctionKind.global,
-      _ => ScriptFunctionKind.local,
-    };
+  'Macro' => ScriptFunctionKind.macro,
+  'Global' => ScriptFunctionKind.global,
+  _ => ScriptFunctionKind.local,
+};
 
 int _predefineSubtype(String? name) {
   for (final (value, label) in scriptPredefineSubtypes) {
@@ -320,7 +336,18 @@ int _category(String? name) {
   return catService;
 }
 
-const List<String> _propertyWords = ['Load on boot', 'Run on load', 'Function library'];
+const List<String> _propertyWords = [
+  'Load on boot',
+  'Run on load',
+  'Function library',
+];
+
+/// The Properties bits matching [_propertyWords] by index (ScriptProperties owns the values).
+const List<int> _propertyBits = [
+  ScriptProperties.loadOnBoot,
+  ScriptProperties.runOnLoad,
+  ScriptProperties.functionLibrary,
+];
 
 class BackupScript {
   final int slot; // SCR file id (0..4095), or -1 when unknown
@@ -356,38 +383,42 @@ class BackupScript {
   });
 
   Map<String, dynamic> toJson() => {
-        'slot': slot,
-        'function': functionName,
-        'properties': properties,
-        'inputs': [for (final v in inputs) v.toJson()],
-        'outputs': [for (final v in outputs) v.toJson()],
-        'variables': [for (final v in variables) v.toJson()],
-        'constants': [for (final v in constants) v.toJson()],
-        'lines': [for (final l in lines) l.toJson()],
-        if (functions.isNotEmpty)
-          'functions': [for (final f in functions) f.toJson()],
-        if (functionReservations.isNotEmpty)
-          'functionReservations': [for (final r in functionReservations) r.toJson()],
-      };
+    'slot': slot,
+    'function': functionName,
+    'properties': properties,
+    'inputs': [for (final v in inputs) v.toJson()],
+    'outputs': [for (final v in outputs) v.toJson()],
+    'variables': [for (final v in variables) v.toJson()],
+    'constants': [for (final v in constants) v.toJson()],
+    'lines': [for (final l in lines) l.toJson()],
+    if (functions.isNotEmpty)
+      'functions': [for (final f in functions) f.toJson()],
+    if (functionReservations.isNotEmpty)
+      'functionReservations': [
+        for (final r in functionReservations) r.toJson(),
+      ],
+  };
 
   static BackupScript fromJson(Map<String, dynamic> json) => BackupScript(
-        slot: (json['slot'] as num?)?.toInt() ?? -1,
-        functionName: json['function'] as String? ?? '',
-        properties: (json['properties'] as List?)?.cast<String>() ?? const [],
-        inputs: _values(json['inputs']),
-        outputs: _values(json['outputs']),
-        variables: _values(json['variables']),
-        constants: _values(json['constants']),
-        lines: (json['lines'] as List? ?? [])
-            .map((e) => BackupLine.fromJson(e as Map<String, dynamic>))
-            .toList(),
-        functions: (json['functions'] as List? ?? [])
-            .map((e) => BackupFunction.fromJson(e as Map<String, dynamic>))
-            .toList(),
-        functionReservations: (json['functionReservations'] as List? ?? [])
-            .map((e) => BackupFunctionReservation.fromJson(e as Map<String, dynamic>))
-            .toList(),
-      );
+    slot: (json['slot'] as num?)?.toInt() ?? -1,
+    functionName: json['function'] as String? ?? '',
+    properties: (json['properties'] as List?)?.cast<String>() ?? const [],
+    inputs: _values(json['inputs']),
+    outputs: _values(json['outputs']),
+    variables: _values(json['variables']),
+    constants: _values(json['constants']),
+    lines: (json['lines'] as List? ?? [])
+        .map((e) => BackupLine.fromJson(e as Map<String, dynamic>))
+        .toList(),
+    functions: (json['functions'] as List? ?? [])
+        .map((e) => BackupFunction.fromJson(e as Map<String, dynamic>))
+        .toList(),
+    functionReservations: (json['functionReservations'] as List? ?? [])
+        .map(
+          (e) => BackupFunctionReservation.fromJson(e as Map<String, dynamic>),
+        )
+        .toList(),
+  );
 
   static List<BackupScriptValue> _values(Object? raw) => (raw as List? ?? [])
       .map((e) => BackupScriptValue.fromJson(e as Map<String, dynamic>))
@@ -412,7 +443,8 @@ class BackupScript {
                   style: ScriptUiType.label(v.spec.uiType),
                   min: v.spec.min,
                   max: v.spec.max,
-                  step: v.spec.step)
+                  step: v.spec.step,
+                )
               : null,
         );
     return BackupScript(
@@ -420,7 +452,7 @@ class BackupScript {
       functionName: draft.functionName,
       properties: [
         for (var i = 0; i < _propertyWords.length; i++)
-          if (draft.properties & (1 << i) != 0) _propertyWords[i],
+          if (draft.properties & _propertyBits[i] != 0) _propertyWords[i],
       ],
       inputs: [for (final v in draft.inputs) value(v, isInput: true)],
       outputs: [for (final v in draft.outputs) value(v, isInput: false)],
@@ -429,7 +461,8 @@ class BackupScript {
       lines: [for (final l in draft.lines) BackupLine.of(l)],
       functions: [for (final f in draft.functions) BackupFunction.of(f)],
       functionReservations: [
-        for (final r in draft.functionReservations) BackupFunctionReservation.of(r)
+        for (final r in draft.functionReservations)
+          BackupFunctionReservation.of(r),
       ],
     );
   }
@@ -450,13 +483,14 @@ class BackupScript {
                 uiType: _uiStyle(v.ui!.style),
                 min: v.ui!.min,
                 max: v.ui!.max,
-                step: v.ui!.step),
+                step: v.ui!.step,
+              ),
       );
     }
 
     var props = 0;
     for (var i = 0; i < _propertyWords.length; i++) {
-      if (properties.contains(_propertyWords[i])) props |= 1 << i;
+      if (properties.contains(_propertyWords[i])) props |= _propertyBits[i];
     }
     // The Properties word also declares the slot (bits 8-15). The boot load reads it to know
     // where an on-boot file goes; without it every file declares slot 0 and they collide.
@@ -470,7 +504,9 @@ class BackupScript {
       constants: [for (final v in constants) value(v)],
       lines: [for (final l in lines) l.toLine()],
       functions: [for (final f in functions) f.toFunction()],
-      functionReservations: [for (final r in functionReservations) r.toRecord()],
+      functionReservations: [
+        for (final r in functionReservations) r.toRecord(),
+      ],
     );
   }
 }

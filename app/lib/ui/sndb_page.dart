@@ -16,8 +16,7 @@ class SndbPage extends StatefulWidget {
   State<SndbPage> createState() => _SndbPageState();
 }
 
-class _SndbPageState extends State<SndbPage>
-    with AutoRefreshMixin<SndbPage> {
+class _SndbPageState extends State<SndbPage> with AutoRefreshMixin<SndbPage> {
   final _db = DeviceDatabase.instance;
   List<(int, String)>? _entries;
   String? _error;
@@ -31,8 +30,6 @@ class _SndbPageState extends State<SndbPage>
 
   @override
   Future<void> onAutoRefresh() => _refresh();
-
-
 
   Future<void> _refresh() async {
     if (!ConnectionManager.instance.isConnected || _refreshing) return;
@@ -58,28 +55,35 @@ class _SndbPageState extends State<SndbPage>
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Assign device ID'),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          TextField(
-            controller: snController,
-            decoration:
-                const InputDecoration(labelText: 'Serial number (28 hex chars)'),
-            maxLength: 28,
-          ),
-          TextField(
-            controller: idController,
-            decoration:
-                const InputDecoration(labelText: 'Short ID (decimal)'),
-            keyboardType: TextInputType.number,
-            maxLength: 5,
-          ),
-        ]),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: snController,
+              decoration: const InputDecoration(
+                labelText: 'Serial number (28 hex chars)',
+              ),
+              maxLength: 28,
+            ),
+            TextField(
+              controller: idController,
+              decoration: const InputDecoration(
+                labelText: 'Short ID (decimal)',
+              ),
+              keyboardType: TextInputType.number,
+              maxLength: 5,
+            ),
+          ],
+        ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel')),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
           FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Write')),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Write'),
+          ),
         ],
       ),
     );
@@ -100,7 +104,7 @@ class _SndbPageState extends State<SndbPage>
     }
     final snBytes = [
       for (var i = 0; i < 14; i++)
-        int.parse(hex.substring(i * 2, i * 2 + 2), radix: 16)
+        int.parse(hex.substring(i * 2, i * 2 + 2), radix: 16),
     ];
     final success = await _db.sndbWrite(snBytes, id);
     _snack(success ? 'Registry updated' : 'Write failed');
@@ -108,14 +112,16 @@ class _SndbPageState extends State<SndbPage>
   }
 
   Future<void> _removeEntry(int id, String snHex) async {
-    final confirmed = await confirmDialog(context,
-        title: 'Remove ${idToString(id)}?',
-        body: 'The registry entry is tombstoned and the ID becomes reusable.',
-        confirmLabel: 'Remove');
+    final confirmed = await confirmDialog(
+      context,
+      title: 'Remove ${idToString(id)}?',
+      body: 'The registry entry is tombstoned and the ID becomes reusable.',
+      confirmLabel: 'Remove',
+    );
     if (confirmed != true) return;
     final sn = [
       for (var i = 0; i < snHex.length; i += 2)
-        int.parse(snHex.substring(i, i + 2), radix: 16)
+        int.parse(snHex.substring(i, i + 2), radix: 16),
     ];
     final ok = await _db.sndbDelete(sn);
     _snack(ok ? 'Entry removed' : 'Delete failed');
@@ -134,9 +140,10 @@ class _SndbPageState extends State<SndbPage>
         title: const Text('SN Database'),
         actions: [
           IconButton(
-              onPressed: _assignId,
-              tooltip: 'Assign / update an entry',
-              icon: const Icon(Icons.person_add_alt_1_outlined)),
+            onPressed: _assignId,
+            tooltip: 'Assign / update an entry',
+            icon: const Icon(Icons.person_add_alt_1_outlined),
+          ),
           RefreshButton(
             onRefresh: _refresh,
             autoActive: autoRefreshActive,
@@ -166,18 +173,25 @@ class _SndbPageState extends State<SndbPage>
         return ListTile(
           dense: true,
           leading: Text(idToString(id)),
-          title: Text(entry?.displayName ?? '(unknown device)',
-              style: const TextStyle(fontSize: 13)),
-          subtitle: Text(sn,
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
-          trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-            IconButton(
-              icon: const Icon(Icons.delete_outline, size: 18),
-              tooltip: 'Remove from registry',
-              onPressed: () => _removeEntry(id, sn),
-            ),
-            if (entry != null) Icon(deviceTypeIcon(entry.type), size: 18),
-          ]),
+          title: Text(
+            entry?.displayName ?? '(unknown device)',
+            style: const TextStyle(fontSize: 13),
+          ),
+          subtitle: Text(
+            sn,
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+          ),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.delete_outline, size: 18),
+                tooltip: 'Remove from registry',
+                onPressed: () => _removeEntry(id, sn),
+              ),
+              if (entry != null) Icon(deviceTypeIcon(entry.type), size: 18),
+            ],
+          ),
         );
       },
     );

@@ -58,7 +58,11 @@ class _DevicesPageState extends State<DevicesPage>
       case _DeviceSort.id:
         devices.sort((a, b) => a.id.compareTo(b.id));
       case _DeviceSort.name:
-        devices.sort((a, b) => a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()));
+        devices.sort(
+          (a, b) => a.displayName.toLowerCase().compareTo(
+            b.displayName.toLowerCase(),
+          ),
+        );
       case _DeviceSort.deviceType:
         devices.sort((a, b) => a.type.value.compareTo(b.type.value));
     }
@@ -77,7 +81,9 @@ class _DevicesPageState extends State<DevicesPage>
 
   Widget _viewMenu() {
     return PopupMenuButton<_ViewMode>(
-      icon: Icon(_mode == _ViewMode.list ? Icons.view_list : Icons.account_tree),
+      icon: Icon(
+        _mode == _ViewMode.list ? Icons.view_list : Icons.account_tree,
+      ),
       tooltip: 'View',
       initialValue: _mode,
       onSelected: (mode) => setState(() => _mode = mode),
@@ -146,9 +152,12 @@ class _DevicesPageState extends State<DevicesPage>
       leading: Icon(deviceTypeIcon(device.type)),
       title: Text(device.displayName + (device.stale ? ' (stale)' : '')),
       subtitle: Text('${idToString(device.id)} - ${device.type.label}'),
-      trailing: device.isCore ? const Icon(Icons.star, color: kOrange, size: 18) : null,
-      onTap: () => Navigator.of(context).push(MaterialPageRoute(
-          builder: (_) => DeviceViewPage(deviceId: device.id))),
+      trailing: device.isCore
+          ? const Icon(Icons.star, color: kOrange, size: 18)
+          : null,
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => DeviceViewPage(deviceId: device.id)),
+      ),
     );
   }
 
@@ -179,7 +188,9 @@ class _DevicesPageState extends State<DevicesPage>
               PopupMenuItem(value: _DeviceSort.id, child: Text('Sort: ID')),
               PopupMenuItem(value: _DeviceSort.name, child: Text('Sort: Name')),
               PopupMenuItem(
-                  value: _DeviceSort.deviceType, child: Text('Sort: Type')),
+                value: _DeviceSort.deviceType,
+                child: Text('Sort: Type'),
+              ),
             ],
           ),
         ],
@@ -193,7 +204,9 @@ class _DevicesPageState extends State<DevicesPage>
         _netFilter = nets.isNotEmpty ? nets.first : null;
       } else {
         final index = nets.indexOf(_netFilter!);
-        _netFilter = index >= 0 && index < nets.length - 1 ? nets[index + 1] : null;
+        _netFilter = index >= 0 && index < nets.length - 1
+            ? nets[index + 1]
+            : null;
       }
     });
   }
@@ -203,8 +216,7 @@ class _DevicesPageState extends State<DevicesPage>
       if (_typeFilter == null) {
         _typeFilter = types.isNotEmpty ? types.first : null;
       } else {
-        final index =
-            types.indexWhere((t) => t.value == _typeFilter!.value);
+        final index = types.indexWhere((t) => t.value == _typeFilter!.value);
         _typeFilter = index >= 0 && index < types.length - 1
             ? types[index + 1]
             : null;
@@ -237,8 +249,9 @@ class GraphView extends StatelessWidget {
           children: [
             if (cores.isEmpty)
               const Text('No core discovered')
-            else
-              ...[for (final core in cores) _deviceBlock(context, core)],
+            else ...[
+              for (final core in cores) _deviceBlock(context, core),
+            ],
             if (nodes.isNotEmpty) ...[
               const SizedBox(height: 32),
               for (var i = 0; i < nodes.length; i += 3)
@@ -261,8 +274,11 @@ class GraphView extends StatelessWidget {
       color: kSurfaceAlt,
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: () => Navigator.of(context).push(MaterialPageRoute(
-            builder: (_) => DeviceViewPage(deviceId: device.id))),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => DeviceViewPage(deviceId: device.id),
+          ),
+        ),
         child: Container(
           width: 160,
           padding: const EdgeInsets.all(12),
@@ -271,10 +287,15 @@ class GraphView extends StatelessWidget {
             children: [
               Icon(deviceTypeIcon(device.type), color: kOrange),
               const SizedBox(height: 6),
-              Text(device.displayName,
-                  maxLines: 1, overflow: TextOverflow.ellipsis),
-              Text('${idToString(device.id)} - ${device.type.label}',
-                  style: Theme.of(context).textTheme.bodySmall),
+              Text(
+                device.displayName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              Text(
+                '${idToString(device.id)} - ${device.type.label}',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
             ],
           ),
         ),

@@ -37,8 +37,9 @@ void main() {
   test('USB links are refused on a BLE-only platform', () async {
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     addTearDown(() => debugDefaultTargetPlatformOverride = null);
-    final error = await ConnectionManager.instance.connectTo(const DiscoveredLink(
-        id: '/dev/ttyACM1', type: LinkType.usb, name: 'USB'));
+    final error = await ConnectionManager.instance.connectTo(
+      const DiscoveredLink(id: '/dev/ttyACM1', type: LinkType.usb, name: 'USB'),
+    );
     expect(error, isNotNull);
     expect(error, contains('USB is not supported'));
   });
@@ -51,35 +52,45 @@ void main() {
     expect(readPlatformFile(path), [0, 1, 2, 255]);
   });
 
-  testWidgets('DialogBody shrinks to the available dialog width',
-      (tester) async {
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: Center(
-          child: SizedBox(
-            width: 280,
-            child: DialogBody(maxWidth: 520, child: const Text('body')),
+  testWidgets('DialogBody shrinks to the available dialog width', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 280,
+              child: DialogBody(maxWidth: 520, child: const Text('body')),
+            ),
           ),
         ),
       ),
-    ));
+    );
     expect(
-        tester.getSize(find.byType(DialogBody)).width, lessThanOrEqualTo(280));
+      tester.getSize(find.byType(DialogBody)).width,
+      lessThanOrEqualTo(280),
+    );
   });
 
-  testWidgets('shell uses the compact drawer layout on a phone width',
-      (tester) async {
+  testWidgets('shell uses the compact drawer layout on a phone width', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(400, 800);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     late bool compact;
-    await tester.pumpWidget(MaterialApp(
-      home: Builder(builder: (context) {
-        compact = ShellLayout.isCompact(context);
-        return const SizedBox.shrink();
-      }),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) {
+            compact = ShellLayout.isCompact(context);
+            return const SizedBox.shrink();
+          },
+        ),
+      ),
+    );
     expect(compact, isTrue);
   });
 }

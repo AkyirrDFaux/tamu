@@ -11,7 +11,6 @@
 /// and items can be synced to a different device/block when compatible.
 library;
 
-
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -83,12 +82,6 @@ BackupBlockRef _blockRef(int blockInfo) {
     key: registerKeyName(type, field, key),
     keyIndex: key,
   );
-}
-
-int? _scriptSlot(String fileName) {
-  final upper = fileName.toUpperCase();
-  if (!upper.startsWith('SCR_')) return null;
-  return int.tryParse(upper.substring(4), radix: 16);
 }
 
 // ---------------------------------------------------------------------------
@@ -165,23 +158,27 @@ Future<List<VisitedBlock>?> walkDeviceBlocks(RegisterClient reg) async {
         for (final key in (keys.isEmpty ? const [0] : keys)) {
           final read = await reg.readDynamicField(dyn, field, key);
           if (read == null) continue;
-          visited.add(VisitedField(
-            field: field,
-            key: key,
-            fieldName: 'Field $field',
-            keyName: 'Key $key',
-            meta: read.meta,
-            value: read.value,
-          ));
+          visited.add(
+            VisitedField(
+              field: field,
+              key: key,
+              fieldName: 'Field $field',
+              keyName: 'Key $key',
+              meta: read.meta,
+              value: read.value,
+            ),
+          );
         }
       }
-      out.add(VisitedBlock(
-        type: b.meta.type,
-        instance: b.inst,
-        name: b.name,
-        isDynamic: true,
-        fields: visited,
-      ));
+      out.add(
+        VisitedBlock(
+          type: b.meta.type,
+          instance: b.inst,
+          name: b.name,
+          isDynamic: true,
+          fields: visited,
+        ),
+      );
     } else if (type == systemBlockTypeValue) {
       final visited = <VisitedField>[];
       for (var field = 0; field < systemFieldCount; field++) {
@@ -189,46 +186,54 @@ Future<List<VisitedBlock>?> walkDeviceBlocks(RegisterClient reg) async {
         for (final key in keys.keys) {
           final read = await reg.readField(field, key);
           if (read == null) continue;
-          visited.add(VisitedField(
-            field: field,
-            key: key,
-            fieldName: systemFieldName(field),
-            keyName: systemKeyName(field, key),
-            meta: read.meta,
-            value: read.value,
-          ));
+          visited.add(
+            VisitedField(
+              field: field,
+              key: key,
+              fieldName: systemFieldName(field),
+              keyName: systemKeyName(field, key),
+              meta: read.meta,
+              value: read.value,
+            ),
+          );
         }
       }
-      out.add(VisitedBlock(
-        type: systemBlockTypeValue,
-        instance: 0,
-        name: 'System',
-        isDynamic: false,
-        fields: visited,
-      ));
+      out.add(
+        VisitedBlock(
+          type: systemBlockTypeValue,
+          instance: 0,
+          name: 'System',
+          isDynamic: false,
+          fields: visited,
+        ),
+      );
     } else {
       final visited = <VisitedField>[];
       for (var field = 0; field < b.meta.size; field++) {
         final read = await reg.readBlockField(type, b.inst, field, 0);
         if (read == null) continue;
         final info = _staticFieldInfo(type, field);
-        visited.add(VisitedField(
-          field: field,
-          key: 0,
-          fieldName: info?.name ?? 'Field $field',
-          keyName: 'Key 0',
-          meta: read.meta,
-          info: info,
-          value: read.value,
-        ));
+        visited.add(
+          VisitedField(
+            field: field,
+            key: 0,
+            fieldName: info?.name ?? 'Field $field',
+            keyName: 'Key 0',
+            meta: read.meta,
+            info: info,
+            value: read.value,
+          ),
+        );
       }
-      out.add(VisitedBlock(
-        type: type,
-        instance: b.inst,
-        name: b.name,
-        isDynamic: false,
-        fields: visited,
-      ));
+      out.add(
+        VisitedBlock(
+          type: type,
+          instance: b.inst,
+          name: b.name,
+          isDynamic: false,
+          fields: visited,
+        ),
+      );
     }
   }
   return out;
@@ -236,46 +241,46 @@ Future<List<VisitedBlock>?> walkDeviceBlocks(RegisterClient reg) async {
 
 /// Capture side of the shared walk: a walked block as the semantic backup model.
 BackupBlock backupBlockFromVisited(VisitedBlock b) => BackupBlock(
-      type: blockTypeWord(b.type),
-      typeIndex: b.type,
-      instance: b.instance,
-      name: b.name,
-      isDynamic: b.isDynamic,
-      entries: [
-        for (final f in b.fields)
-          BackupEntry(
-            field: f.fieldName,
-            fieldIndex: f.field,
-            key: f.keyName,
-            keyIndex: f.key,
-            type: dataTypeWord(f.meta.dataType),
-            flags: flagWords(f.meta.flags),
-            unit: f.info?.unit,
-            value: encodeSemantic(f.meta.dataType, f.value, info: f.info),
-            size: f.value.length,
-          ),
-      ],
-    );
+  type: blockTypeWord(b.type),
+  typeIndex: b.type,
+  instance: b.instance,
+  name: b.name,
+  isDynamic: b.isDynamic,
+  entries: [
+    for (final f in b.fields)
+      BackupEntry(
+        field: f.fieldName,
+        fieldIndex: f.field,
+        key: f.keyName,
+        keyIndex: f.key,
+        type: dataTypeWord(f.meta.dataType),
+        flags: flagWords(f.meta.flags),
+        unit: f.info?.unit,
+        value: encodeSemantic(f.meta.dataType, f.value, info: f.info),
+        size: f.value.length,
+      ),
+  ],
+);
 
 /// Restore side of the shared walk: a walked block as the live snapshot model. It agrees
 /// with [backupBlockFromVisited] on every field/key address and name by construction.
 LiveBlock liveBlockFromVisited(VisitedBlock b) => LiveBlock(
-      type: b.type,
-      instance: b.instance,
-      name: b.name,
-      isDynamic: b.isDynamic,
-      entries: [
-        for (final f in b.fields)
-          LiveEntry(
-            field: f.field,
-            key: f.key,
-            fieldName: f.fieldName,
-            keyName: f.keyName,
-            meta: f.meta,
-            info: f.info,
-          ),
-      ],
-    );
+  type: b.type,
+  instance: b.instance,
+  name: b.name,
+  isDynamic: b.isDynamic,
+  entries: [
+    for (final f in b.fields)
+      LiveEntry(
+        field: f.field,
+        key: f.key,
+        fieldName: f.fieldName,
+        keyName: f.keyName,
+        meta: f.meta,
+        info: f.info,
+      ),
+  ],
+);
 
 // ---------------------------------------------------------------------------
 // Capture

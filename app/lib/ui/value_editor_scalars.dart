@@ -1,10 +1,10 @@
 part of 'value_editor.dart';
 
 /// Serial number: 14 bytes entered as 28 hex characters.
-Future<List<int>?> _editSerialNumber(
-    BuildContext context, List<int> current) {
+Future<List<int>?> _editSerialNumber(BuildContext context, List<int> current) {
   final controller = TextEditingController(
-      text: current.length >= 14 ? serialNumberToHex(current) : '');
+    text: current.length >= 14 ? serialNumberToHex(current) : '',
+  );
   return showDialog<List<int>>(
     context: context,
     builder: (context) => AlertDialog(
@@ -16,7 +16,9 @@ Future<List<int>?> _editSerialNumber(
       ),
       actions: [
         TextButton(
-            onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
         FilledButton(
           onPressed: () {
             final hex = controller.text.trim().toUpperCase();
@@ -27,7 +29,7 @@ Future<List<int>?> _editSerialNumber(
             }
             Navigator.pop(context, [
               for (var i = 0; i < 28; i += 2)
-                int.parse(hex.substring(i, i + 2), radix: 16)
+                int.parse(hex.substring(i, i + 2), radix: 16),
             ]);
           },
           child: const Text('OK'),
@@ -46,7 +48,9 @@ String formatValue(DataType type, List<int> bytes) {
     case DataType.number:
       if (bytes.length < 4) return '-';
       final v = numberFromBytes(bytes);
-      return v == v.roundToDouble() ? v.toStringAsFixed(1) : v.toStringAsFixed(3);
+      return v == v.roundToDouble()
+          ? v.toStringAsFixed(1)
+          : v.toStringAsFixed(3);
     case DataType.bool_:
       if (bytes.isEmpty) return '-';
       return bytes[0] != 0 ? 'true' : 'false';
@@ -69,7 +73,9 @@ String formatValue(DataType type, List<int> bytes) {
       return DeviceType.fromValue(bytes[0] | (bytes[1] << 8)).label;
     case DataType.id:
       if (bytes.length >= 2) return idToString(bytes[0] | (bytes[1] << 8));
-      if (bytes.length == 1) return bytes[0].toString(); // 1-byte Id (System NetID)
+      if (bytes.length == 1) {
+        return bytes[0].toString(); // 1-byte Id (System NetID)
+      }
       return '-';
     case DataType.colour:
       if (bytes.length < 4) return '-';
@@ -92,7 +98,10 @@ String formatValue(DataType type, List<int> bytes) {
       }
       String cell(int r, int c) =>
           _num3(numberFromBytes(bytes, 4 + (r * w + c) * 4));
-      return [for (var r = 0; r < h; r++) '[${[for (var c = 0; c < w; c++) cell(r, c)].join(' ')}]'].join(' ');
+      return [
+        for (var r = 0; r < h; r++)
+          '[${[for (var c = 0; c < w; c++) cell(r, c)].join(' ')}]',
+      ].join(' ');
     case DataType.none:
       // Placeholder/deleted slot.
       return '∅';
@@ -115,8 +124,9 @@ Future<List<int>?> _editRational(
   double? max,
   double? step,
 }) {
-  final controller =
-      TextEditingController(text: initial?.toStringAsFixed(2) ?? '');
+  final controller = TextEditingController(
+    text: initial?.toStringAsFixed(2) ?? '',
+  );
   var sliderValue = (initial ?? (min ?? 0))
       .clamp(min ?? double.negativeInfinity, max ?? double.infinity)
       .toDouble();
@@ -126,42 +136,58 @@ Future<List<int>?> _editRational(
     builder: (context) => StatefulBuilder(
       builder: (context, setState) => AlertDialog(
         title: Text(unit == null ? title : '$title [$unit]'),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          TextField(
-            controller: controller,
-            autofocus: true,
-            keyboardType: TextInputType.number,
-            decoration: InputDecoration(suffixText: unit),
-            onChanged: (text) {
-              final v = double.tryParse(text);
-              if (v != null && hasRange) setState(() => sliderValue = v);
-            },
-          ),
-          if (hasRange) ...[
-            Slider(
-              value: sliderValue.clamp(min, max),
-              min: min,
-              max: max,
-              divisions: step != null && max > min
-                  ? ((max - min) / step).round().clamp(1, 1000)
-                  : null,
-              label: sliderValue.toStringAsFixed(step != null && step < 1 ? 1 : 0),
-              onChanged: (v) {
-                setState(() {
-                  sliderValue = v;
-                  controller.text = v.toStringAsFixed(2);
-                });
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: controller,
+              autofocus: true,
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(suffixText: unit),
+              onChanged: (text) {
+                final v = double.tryParse(text);
+                if (v != null && hasRange) setState(() => sliderValue = v);
               },
             ),
-            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-              Text(min.toStringAsFixed(0), style: const TextStyle(fontSize: 11)),
-              Text(max.toStringAsFixed(0), style: const TextStyle(fontSize: 11)),
-            ]),
+            if (hasRange) ...[
+              Slider(
+                value: sliderValue.clamp(min, max),
+                min: min,
+                max: max,
+                divisions: step != null && max > min
+                    ? ((max - min) / step).round().clamp(1, 1000)
+                    : null,
+                label: sliderValue.toStringAsFixed(
+                  step != null && step < 1 ? 1 : 0,
+                ),
+                onChanged: (v) {
+                  setState(() {
+                    sliderValue = v;
+                    controller.text = v.toStringAsFixed(2);
+                  });
+                },
+              ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    min.toStringAsFixed(0),
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                  Text(
+                    max.toStringAsFixed(0),
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                ],
+              ),
+            ],
           ],
-        ]),
+        ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
           FilledButton(
             onPressed: () {
               final v = double.tryParse(controller.text);
@@ -176,7 +202,10 @@ Future<List<int>?> _editRational(
 }
 
 Future<List<int>?> _editBool(
-    BuildContext context, String title, List<int> current) {
+  BuildContext context,
+  String title,
+  List<int> current,
+) {
   var value = current.isNotEmpty && current[0] != 0;
   return showDialog<List<int>>(
     context: context,
@@ -190,11 +219,13 @@ Future<List<int>?> _editBool(
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
           FilledButton(
-              onPressed: () =>
-                  Navigator.pop(context, [value ? 1 : 0]),
-              child: const Text('OK')),
+            onPressed: () => Navigator.pop(context, [value ? 1 : 0]),
+            child: const Text('OK'),
+          ),
         ],
       ),
     ),
@@ -202,30 +233,39 @@ Future<List<int>?> _editBool(
 }
 
 Future<List<int>?> _editEnum(
-    BuildContext context, FieldInfo? info, List<int> current) {
+  BuildContext context,
+  FieldInfo? info,
+  List<int> current,
+) {
   final options = info?.enumValues;
   final valueSize = current.isNotEmpty ? current.length : 4;
   if (options == null || options.isEmpty) {
     // No known labels: enter the numeric value directly.
     final currentRaw = bytesToInt(current);
-    final controller =
-        TextEditingController(text: currentRaw?.toString() ?? '');
+    final controller = TextEditingController(
+      text: currentRaw?.toString() ?? '',
+    );
     return showDialog<List<int>>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Enum value (number)'),
-        content:
-            TextField(controller: controller, autofocus: true,
-                keyboardType: TextInputType.number),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+        ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel')),
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
           FilledButton(
             onPressed: () {
               final v = int.tryParse(controller.text.trim());
               Navigator.pop(
-                  context, v == null ? null : intToBytes(v, valueSize));
+                context,
+                v == null ? null : intToBytes(v, valueSize),
+              );
             },
             child: const Text('OK'),
           ),
@@ -241,15 +281,14 @@ Future<List<int>?> _editEnum(
       children: [
         RadioGroup<int>(
           groupValue: currentRaw,
-          onChanged: (value) =>
-              Navigator.pop(context, value == null ? null : intToBytes(value, valueSize)),
+          onChanged: (value) => Navigator.pop(
+            context,
+            value == null ? null : intToBytes(value, valueSize),
+          ),
           child: Column(
             children: [
               for (final entry in options.entries)
-                RadioListTile<int>(
-                  title: Text(entry.value),
-                  value: entry.key,
-                ),
+                RadioListTile<int>(title: Text(entry.value), value: entry.key),
             ],
           ),
         ),
@@ -259,7 +298,10 @@ Future<List<int>?> _editEnum(
 }
 
 Future<List<int>?> _editDevType(
-    BuildContext context, String title, List<int> current) {
+  BuildContext context,
+  String title,
+  List<int> current,
+) {
   final currentValue = current.length >= 2
       ? DeviceType.fromValue(current[0] | (current[1] << 8))
       : DeviceType.unknown;
@@ -270,15 +312,14 @@ Future<List<int>?> _editDevType(
       children: [
         RadioGroup<DeviceType>(
           groupValue: currentValue,
-          onChanged: (value) => Navigator.pop(context,
-              value == null ? null : [value.value & 0xFF, value.value >> 8]),
+          onChanged: (value) => Navigator.pop(
+            context,
+            value == null ? null : [value.value & 0xFF, value.value >> 8],
+          ),
           child: Column(
             children: [
               for (final type in DeviceType.values)
-                RadioListTile<DeviceType>(
-                  title: Text(type.label),
-                  value: type,
-                ),
+                RadioListTile<DeviceType>(title: Text(type.label), value: type),
             ],
           ),
         ),
@@ -286,4 +327,3 @@ Future<List<int>?> _editDevType(
     ),
   );
 }
-

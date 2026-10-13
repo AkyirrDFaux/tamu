@@ -41,24 +41,38 @@ int _signExtend32(int raw) => (raw & 0x80000000) != 0 ? raw - 0x100000000 : raw;
 
 /// Number: 16.16 SIGNED fixed point.
 double numberFromBytes(List<int> bytes, [int offset = 0]) {
-  final raw = bytes[offset] | (bytes[offset + 1] << 8) |
-          (bytes[offset + 2] << 16) | (bytes[offset + 3] << 24);
+  final raw =
+      bytes[offset] |
+      (bytes[offset + 1] << 8) |
+      (bytes[offset + 2] << 16) |
+      (bytes[offset + 3] << 24);
   return _signExtend32(raw) / 65536.0;
 }
 
 Uint8List numberToBytes(double value) {
   final raw = (value * 65536.0).round() & 0xFFFFFFFF;
-  return Uint8List(4)..[0] = raw & 0xFF..[1] = (raw >> 8) & 0xFF
-    ..[2] = (raw >> 16) & 0xFF..[3] = (raw >> 24) & 0xFF;
+  return Uint8List(4)
+    ..[0] = raw & 0xFF
+    ..[1] = (raw >> 8) & 0xFF
+    ..[2] = (raw >> 16) & 0xFF
+    ..[3] = (raw >> 24) & 0xFF;
 }
 
-int int32FromBytes(List<int> bytes, [int offset = 0]) =>
-    _signExtend32(bytes[offset] | (bytes[offset + 1] << 8) |
-        (bytes[offset + 2] << 16) | (bytes[offset + 3] << 24));
+int int32FromBytes(List<int> bytes, [int offset = 0]) => _signExtend32(
+  bytes[offset] |
+      (bytes[offset + 1] << 8) |
+      (bytes[offset + 2] << 16) |
+      (bytes[offset + 3] << 24),
+);
+
+int u16FromBytes(List<int> bytes, [int offset = 0]) =>
+    bytes[offset] | (bytes[offset + 1] << 8);
 
 int uint32FromBytes(List<int> bytes, [int offset = 0]) =>
-    bytes[offset] | (bytes[offset + 1] << 8) |
-    (bytes[offset + 2] << 16) | (bytes[offset + 3] << 24);
+    bytes[offset] |
+    (bytes[offset + 1] << 8) |
+    (bytes[offset + 2] << 16) |
+    (bytes[offset + 3] << 24);
 
 Uint8List uint32ToBytes(int value) {
   final v = value & 0xFFFFFFFF;
@@ -83,7 +97,10 @@ String formatSoftwareVersion(List<int> bytes) {
 /// Packs a BlockInfo into its 32-bit register index: type (10 bit) | instance
 /// (6 bit) | field (8 bit) | key (8 bit).
 int makeBlockInfo(int type, int inst, int field, int key) =>
-    ((type & 0x3FF) << 22) | ((inst & 0x3F) << 16) | ((field & 0xFF) << 8) | (key & 0xFF);
+    ((type & 0x3FF) << 22) |
+    ((inst & 0x3F) << 16) |
+    ((field & 0xFF) << 8) |
+    (key & 0xFF);
 
 int blockInfoType(int blockInfo) => (blockInfo >> 22) & 0x3FF;
 int blockInfoInstance(int blockInfo) => (blockInfo >> 16) & 0x3F;
@@ -134,11 +151,11 @@ enum DeviceType {
   }
 
   String get label => switch (this) {
-        DeviceType.unknown => 'Unknown',
-        DeviceType.tamuV20A => 'Tamu v2.0A',
-        DeviceType.valuV20 => 'Valu v2.0',
-        DeviceType.dualAnalogSensor => 'DAS v0.1',
-      };
+    DeviceType.unknown => 'Unknown',
+    DeviceType.tamuV20A => 'Tamu v2.0A',
+    DeviceType.valuV20 => 'Valu v2.0',
+    DeviceType.dualAnalogSensor => 'DAS v0.1',
+  };
 }
 
 enum DataType {
@@ -157,10 +174,14 @@ enum DataType {
   enum_(0x0C),
   uint32(0x0E), // Unsigned 32-bit (firmware DataType::Uint32)
   devType(0x0F), // alias to enum (firmware DataType::DevType)
-  blockInfo(0x10), // register pointer type|inst|field|key (firmware DataType::BlockInfo)
+  blockInfo(
+    0x10,
+  ), // register pointer type|inst|field|key (firmware DataType::BlockInfo)
   char(0x11), // one character, an element of a string (firmware DataType::Char)
   name(0x12), // 16-character reusable name (firmware DataType::Name)
-  unknownKeyed(0x100), // generic dictionary marker (firmware DataType::UnknownKeyed)
+  unknownKeyed(
+    0x100,
+  ), // generic dictionary marker (firmware DataType::UnknownKeyed)
   geometry(0x101), // dictionary marker (firmware DataType::Geometry = 0x101)
   texture(0x102); // dictionary marker (firmware DataType::Texture = 0x102)
 
@@ -173,60 +194,43 @@ enum DataType {
     }
     return DataType.none;
   }
+
+  /// Canonical, human-readable name (Docs/App/Backup.md: the storage format describes
+  /// types "in words"). Used by the semantic backup format.
+  String get word => switch (this) {
+    DataType.none => 'None',
+    DataType.undefined => 'Undefined',
+    DataType.sn => 'Serial number',
+    DataType.id => 'ID',
+    DataType.bool_ => 'Bool',
+    DataType.integer => 'Index',
+    DataType.number => 'Number',
+    DataType.vector => 'Vector',
+    DataType.matrix => 'Matrix',
+    DataType.colour => 'Colour',
+    DataType.text => 'Text',
+    DataType.filename => 'Filename',
+    DataType.enum_ => 'Enum',
+    DataType.uint32 => 'Uint32',
+    DataType.devType => 'Device type',
+    DataType.blockInfo => 'BlockInfo',
+    DataType.char => 'Char',
+    DataType.name => 'Name',
+    DataType.unknownKeyed => 'Dictionary marker',
+    DataType.geometry => 'Geometry dict',
+    DataType.texture => 'Texture dict',
+  };
 }
 
-/// Canonical, human-readable name of a data type (Docs/App/Backup.md: the storage
-/// format describes types "in words"). Used by the semantic backup format.
-String dataTypeWord(DataType type) => switch (type) {
-      DataType.none => 'None',
-      DataType.undefined => 'Undefined',
-      DataType.sn => 'Serial number',
-      DataType.id => 'ID',
-      DataType.bool_ => 'Bool',
-      DataType.integer => 'Index',
-      DataType.number => 'Number',
-      DataType.vector => 'Vector',
-      DataType.matrix => 'Matrix',
-      DataType.colour => 'Colour',
-      DataType.text => 'Text',
-      DataType.filename => 'Filename',
-      DataType.enum_ => 'Enum',
-      DataType.uint32 => 'Uint32',
-      DataType.devType => 'Device type',
-      DataType.blockInfo => 'BlockInfo',
-      DataType.char => 'Char',
-      DataType.name => 'Name',
-      DataType.unknownKeyed => 'Dictionary marker',
-      DataType.geometry => 'Geometry dict',
-      DataType.texture => 'Texture dict',
-    };
+/// Canonical, human-readable name of a data type.
+String dataTypeWord(DataType type) => type.word;
 
 /// Parses a [dataTypeWord] back to its data type (null when unknown).
 DataType? dataTypeFromWord(String word) {
-  const words = <String, DataType>{
-    'None': DataType.none,
-    'Undefined': DataType.undefined,
-    'Serial number': DataType.sn,
-    'ID': DataType.id,
-    'Bool': DataType.bool_,
-    'Index': DataType.integer,
-    'Number': DataType.number,
-    'Vector': DataType.vector,
-    'Matrix': DataType.matrix,
-    'Colour': DataType.colour,
-    'Text': DataType.text,
-    'Filename': DataType.filename,
-    'Enum': DataType.enum_,
-    'Uint32': DataType.uint32,
-    'Device type': DataType.devType,
-    'BlockInfo': DataType.blockInfo,
-    'Char': DataType.char,
-    'Name': DataType.name,
-    'Dictionary marker': DataType.unknownKeyed,
-    'Geometry dict': DataType.geometry,
-    'Texture dict': DataType.texture,
-  };
-  return words[word];
+  for (final type in DataType.values) {
+    if (type.word == word) return type;
+  }
+  return null;
 }
 
 /// The System block is type 0 instance 0 in the Register service; it shares the numeric
@@ -281,19 +285,19 @@ enum BlockType {
   }
 
   String get label => switch (this) {
-        BlockType.none => 'None',
-        BlockType.undefined => 'Undefined',
-        BlockType.ledButton => 'LED/Button',
-        BlockType.pwm => 'PWM',
-        BlockType.accGyr => 'Acc/Gyr',
-        BlockType.vysiDisplay => 'LED Display',
-        BlockType.deleted => 'Deleted',
-        BlockType.resistiveMeasure => 'Resistive Measure',
-        BlockType.button => 'Button',
-        BlockType.led => 'LED',
-        BlockType.script => 'Script',
-        BlockType.dynamic => 'Dynamic',
-      };
+    BlockType.none => 'None',
+    BlockType.undefined => 'Undefined',
+    BlockType.ledButton => 'LED/Button',
+    BlockType.pwm => 'PWM',
+    BlockType.accGyr => 'Acc/Gyr',
+    BlockType.vysiDisplay => 'LED Display',
+    BlockType.deleted => 'Deleted',
+    BlockType.resistiveMeasure => 'Resistive Measure',
+    BlockType.button => 'Button',
+    BlockType.led => 'LED',
+    BlockType.script => 'Script',
+    BlockType.dynamic => 'Dynamic',
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -349,11 +353,11 @@ bool isStaticRegistryType(int type) =>
 /// The static-registry `(type, inst)` list a `.SV` layout is computed from: every non-System
 /// block, in enumeration order.
 List<({int type, int inst})> staticRegistryOf(
-        List<({int type, int inst, ValueInfo meta, String name})?>? blocks) =>
-    [
-      for (final b in blocks ?? const [])
-        if (b != null && isStaticRegistryType(b.type)) (type: b.type, inst: b.inst),
-    ];
+  List<({int type, int inst, ValueInfo meta, String name})?>? blocks,
+) => [
+  for (final b in blocks ?? const [])
+    if (b != null && isStaticRegistryType(b.type)) (type: b.type, inst: b.inst),
+];
 
 /// A static block type's persistent fields, in field order, as read from the device
 /// (Register CID 1 field list + CID 2 per-field ValueInfo). `type` is the wire DataType
@@ -413,12 +417,17 @@ class Capability {
 /// One type, on the wire and internally. The key is not part of it - it travels in the
 /// request's/reply's BlockInfo, or in a table entry's Field&Key.
 class ValueInfo {
-  final int type;   // DataType (10 bits)
-  final int size;   // value length in bytes
-  final int flags;  // ValueFlags bits
-  final int key;    // carried separately, not on the wire
+  final int type; // DataType (10 bits)
+  final int size; // value length in bytes
+  final int flags; // ValueFlags bits
+  final int key; // carried separately, not on the wire
 
-  const ValueInfo({required this.type, this.size = 0, this.flags = 0, this.key = 0});
+  const ValueInfo({
+    required this.type,
+    this.size = 0,
+    this.flags = 0,
+    this.key = 0,
+  });
 
   DataType get dataType => DataType.fromValue(type);
   BlockType get blockType => BlockType.fromValue(type);
@@ -432,7 +441,8 @@ class ValueInfo {
     ..[2] = size
     ..[3] = flags;
 
-  static ValueInfo fromBytes(List<int> bytes, [int offset = 0, int key = 0]) => ValueInfo(
+  static ValueInfo fromBytes(List<int> bytes, [int offset = 0, int key = 0]) =>
+      ValueInfo(
         type: bytes[offset] | (bytes[offset + 1] << 8),
         size: bytes[offset + 2],
         flags: bytes[offset + 3],
@@ -529,7 +539,11 @@ class SubscriptionTable {
     final buf = <int>[];
     buf.addAll(uint32ToBytes(sourceReg));
     buf.add(trigger.value);
-    buf.addAll([minTimeMs & 0xFF, (minTimeMs >> 8) & 0xFF, (minTimeMs >> 16) & 0xFF]);
+    buf.addAll([
+      minTimeMs & 0xFF,
+      (minTimeMs >> 8) & 0xFF,
+      (minTimeMs >> 16) & 0xFF,
+    ]);
     buf.addAll(uint32ToBytes(periodMs));
     buf.addAll(numberToBytes(deadzone));
     return buf;
@@ -564,9 +578,9 @@ class ProviderSubscription {
 
   static ProviderSubscription fromBytes(int index, List<int> bytes) {
     int offset = 0;
-    final requesterAddr = bytes[offset] | (bytes[offset + 1] << 8);
+    final requesterAddr = u16FromBytes(bytes, offset);
     offset += 2;
-    final trid = bytes[offset] | (bytes[offset + 1] << 8);
+    final trid = u16FromBytes(bytes, offset);
     offset += 2;
     final table = SubscriptionTable.fromBytes(bytes, offset);
     offset += 16;
@@ -618,23 +632,28 @@ class RequesterSubscription {
     double deadzone = 0,
     this.timeout = 0,
   }) : table = SubscriptionTable(
-          sourceReg: sourceReg,
-          trigger: trigger,
-          minTimeMs: minTimeMs,
-          periodMs: periodMs,
-          deadzone: deadzone,
-        );
+         sourceReg: sourceReg,
+         trigger: trigger,
+         minTimeMs: minTimeMs,
+         periodMs: periodMs,
+         deadzone: deadzone,
+       );
 
   /// A cancel marker: trigger None tells the device to delete the entry with `trid`.
   factory RequesterSubscription.cancel(int trid) => RequesterSubscription._(
-        index: 0,
-        providerAddr: 0,
-        trid: trid,
-        table: const SubscriptionTable(
-            sourceReg: 0, trigger: TriggerType.none, minTimeMs: 0, periodMs: 0, deadzone: 0),
-        targetReg: 0,
-        timeout: 0,
-      );
+    index: 0,
+    providerAddr: 0,
+    trid: trid,
+    table: const SubscriptionTable(
+      sourceReg: 0,
+      trigger: TriggerType.none,
+      minTimeMs: 0,
+      periodMs: 0,
+      deadzone: 0,
+    ),
+    targetReg: 0,
+    timeout: 0,
+  );
 
   int get sourceReg => table.sourceReg;
   TriggerType get trigger => table.trigger;
@@ -644,9 +663,9 @@ class RequesterSubscription {
 
   static RequesterSubscription fromBytes(int index, List<int> bytes) {
     int offset = 0;
-    final providerAddr = bytes[offset] | (bytes[offset + 1] << 8);
+    final providerAddr = u16FromBytes(bytes, offset);
     offset += 2;
-    final trid = bytes[offset] | (bytes[offset + 1] << 8);
+    final trid = u16FromBytes(bytes, offset);
     offset += 2;
     final table = SubscriptionTable.fromBytes(bytes, offset);
     offset += 16;

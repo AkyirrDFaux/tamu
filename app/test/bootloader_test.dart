@@ -71,7 +71,10 @@ void main() {
   });
 
   test('identify response matches the firmware KAT', () {
-    final f = Bootloader.encodeIdentifyResponse(0x2A0000, 'Tamu core v2.0A'.codeUnits);
+    final f = Bootloader.encodeIdentifyResponse(
+      0x2A0000,
+      'Tamu core v2.0A'.codeUnits,
+    );
     expect(f.length, Bootloader.dataSize);
     expect(
       hex(f),
@@ -84,28 +87,39 @@ void main() {
   });
 
   test('every single-bit flip is rejected', () {
-    final payload = List<int>.generate(Bootloader.payloadSize, (i) => i * 3 + 1);
+    final payload = List<int>.generate(
+      Bootloader.payloadSize,
+      (i) => i * 3 + 1,
+    );
     final f = Bootloader.encodeWrite(0x100, payload);
     for (var i = 0; i < f.length; i++) {
       for (var bit = 0; bit < 8; bit++) {
         final bad = List<int>.from(f);
         bad[i] ^= 1 << bit;
-        expect(Bootloader.decode(bad), Bootloader.invalid,
-            reason: 'byte $i bit $bit');
+        expect(
+          Bootloader.decode(bad),
+          Bootloader.invalid,
+          reason: 'byte $i bit $bit',
+        );
       }
     }
   });
 
   test('structural rejections', () {
-    final f = Bootloader.encodeWrite(0, List<int>.filled(Bootloader.payloadSize, 0));
+    final f = Bootloader.encodeWrite(
+      0,
+      List<int>.filled(Bootloader.payloadSize, 0),
+    );
     final noPad = List<int>.from(f)..[1] |= 0x10; // padding bit set
     expect(Bootloader.decode(noPad), Bootloader.invalid);
     final noStart = List<int>.from(f)..[0] = 0;
     expect(Bootloader.decode(noStart), Bootloader.invalid);
     final noEnd = List<int>.from(f)..[Bootloader.dataSize - 1] = 0;
     expect(Bootloader.decode(noEnd), Bootloader.invalid);
-    expect(Bootloader.decode(f.sublist(0, Bootloader.readRequestSize)),
-        Bootloader.invalid);
+    expect(
+      Bootloader.decode(f.sublist(0, Bootloader.readRequestSize)),
+      Bootloader.invalid,
+    );
     expect(Bootloader.decode(const []), Bootloader.invalid);
   });
 }

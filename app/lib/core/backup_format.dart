@@ -47,28 +47,28 @@ class BackupEntry {
   bool get readOnly => flags.contains('Read Only');
 
   Map<String, dynamic> toJson() => {
-        'field': field,
-        'fieldIndex': fieldIndex,
-        'key': key,
-        'keyIndex': keyIndex,
-        'type': type,
-        if (flags.isNotEmpty) 'flags': flags,
-        if (unit != null && unit!.isNotEmpty) 'unit': unit,
-        'value': value,
-        'size': size,
-      };
+    'field': field,
+    'fieldIndex': fieldIndex,
+    'key': key,
+    'keyIndex': keyIndex,
+    'type': type,
+    if (flags.isNotEmpty) 'flags': flags,
+    if (unit != null && unit!.isNotEmpty) 'unit': unit,
+    'value': value,
+    'size': size,
+  };
 
   static BackupEntry fromJson(Map<String, dynamic> json) => BackupEntry(
-        field: json['field'] as String? ?? 'Field ${json['fieldIndex']}',
-        fieldIndex: (json['fieldIndex'] as num?)?.toInt() ?? 0,
-        key: json['key'] as String? ?? 'Key ${json['keyIndex']}',
-        keyIndex: (json['keyIndex'] as num?)?.toInt() ?? 0,
-        type: json['type'] as String? ?? 'Undefined',
-        flags: (json['flags'] as List?)?.cast<String>() ?? const [],
-        unit: json['unit'] as String?,
-        value: json['value'],
-        size: (json['size'] as num?)?.toInt() ?? 0,
-      );
+    field: json['field'] as String? ?? 'Field ${json['fieldIndex']}',
+    fieldIndex: (json['fieldIndex'] as num?)?.toInt() ?? 0,
+    key: json['key'] as String? ?? 'Key ${json['keyIndex']}',
+    keyIndex: (json['keyIndex'] as num?)?.toInt() ?? 0,
+    type: json['type'] as String? ?? 'Undefined',
+    flags: (json['flags'] as List?)?.cast<String>() ?? const [],
+    unit: json['unit'] as String?,
+    value: json['value'],
+    size: (json['size'] as num?)?.toInt() ?? 0,
+  );
 }
 
 class BackupBlock {
@@ -89,24 +89,24 @@ class BackupBlock {
   });
 
   Map<String, dynamic> toJson() => {
-        'type': type,
-        'typeIndex': typeIndex,
-        'instance': instance,
-        'name': name,
-        if (isDynamic) 'dynamic': true,
-        'entries': [for (final e in entries) e.toJson()],
-      };
+    'type': type,
+    'typeIndex': typeIndex,
+    'instance': instance,
+    'name': name,
+    if (isDynamic) 'dynamic': true,
+    'entries': [for (final e in entries) e.toJson()],
+  };
 
   static BackupBlock fromJson(Map<String, dynamic> json) => BackupBlock(
-        type: json['type'] as String? ?? 'Undefined',
-        typeIndex: (json['typeIndex'] as num?)?.toInt() ?? 0,
-        instance: (json['instance'] as num?)?.toInt() ?? 0,
-        name: json['name'] as String? ?? '',
-        isDynamic: json['dynamic'] == true,
-        entries: (json['entries'] as List? ?? [])
-            .map((e) => BackupEntry.fromJson(e as Map<String, dynamic>))
-            .toList(),
-      );
+    type: json['type'] as String? ?? 'Undefined',
+    typeIndex: (json['typeIndex'] as num?)?.toInt() ?? 0,
+    instance: (json['instance'] as num?)?.toInt() ?? 0,
+    name: json['name'] as String? ?? '',
+    isDynamic: json['dynamic'] == true,
+    entries: (json['entries'] as List? ?? [])
+        .map((e) => BackupEntry.fromJson(e as Map<String, dynamic>))
+        .toList(),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -134,24 +134,24 @@ class BackupBlockRef {
   });
 
   Map<String, dynamic> toJson() => {
-        'block': block,
-        'typeIndex': typeIndex,
-        'instance': instance,
-        'field': field,
-        'fieldIndex': fieldIndex,
-        'key': key,
-        'keyIndex': keyIndex,
-      };
+    'block': block,
+    'typeIndex': typeIndex,
+    'instance': instance,
+    'field': field,
+    'fieldIndex': fieldIndex,
+    'key': key,
+    'keyIndex': keyIndex,
+  };
 
   static BackupBlockRef fromJson(Map<String, dynamic> json) => BackupBlockRef(
-        block: json['block'] as String? ?? 'Undefined',
-        typeIndex: (json['typeIndex'] as num?)?.toInt() ?? 0,
-        instance: (json['instance'] as num?)?.toInt() ?? 0,
-        field: json['field'] as String? ?? 'Field ${json['fieldIndex']}',
-        fieldIndex: (json['fieldIndex'] as num?)?.toInt() ?? 0,
-        key: json['key'] as String? ?? 'Key ${json['keyIndex']}',
-        keyIndex: (json['keyIndex'] as num?)?.toInt() ?? 0,
-      );
+    block: json['block'] as String? ?? 'Undefined',
+    typeIndex: (json['typeIndex'] as num?)?.toInt() ?? 0,
+    instance: (json['instance'] as num?)?.toInt() ?? 0,
+    field: json['field'] as String? ?? 'Field ${json['fieldIndex']}',
+    fieldIndex: (json['fieldIndex'] as num?)?.toInt() ?? 0,
+    key: json['key'] as String? ?? 'Key ${json['keyIndex']}',
+    keyIndex: (json['keyIndex'] as num?)?.toInt() ?? 0,
+  );
 }
 
 /// Requester-side subscription (what the device asked to receive).
@@ -175,14 +175,14 @@ class BackupRequesterSubscription {
   });
 
   Map<String, dynamic> toJson() => {
-        'provider': provider,
-        'trigger': trigger,
-        'periodMs': periodMs,
-        'minTimeMs': minTimeMs,
-        'deadzone': deadzone,
-        'source': source.toJson(),
-        'target': target.toJson(),
-      };
+    'provider': provider,
+    'trigger': trigger,
+    'periodMs': periodMs,
+    'minTimeMs': minTimeMs,
+    'deadzone': deadzone,
+    'source': source.toJson(),
+    'target': target.toJson(),
+  };
 
   static BackupRequesterSubscription fromJson(Map<String, dynamic> json) =>
       BackupRequesterSubscription(
@@ -215,13 +215,13 @@ class BackupProviderSubscription {
   });
 
   Map<String, dynamic> toJson() => {
-        'requester': requester,
-        'trigger': trigger,
-        'periodMs': periodMs,
-        'minTimeMs': minTimeMs,
-        'deadzone': deadzone,
-        'source': source.toJson(),
-      };
+    'requester': requester,
+    'trigger': trigger,
+    'periodMs': periodMs,
+    'minTimeMs': minTimeMs,
+    'deadzone': deadzone,
+    'source': source.toJson(),
+  };
 
   static BackupProviderSubscription fromJson(Map<String, dynamic> json) =>
       BackupProviderSubscription(
@@ -247,9 +247,9 @@ class BackupSndbEntry {
   Map<String, dynamic> toJson() => {'serial': serial, 'address': address};
 
   static BackupSndbEntry fromJson(Map<String, dynamic> json) => BackupSndbEntry(
-        serial: json['serial'] as String? ?? '',
-        address: json['address'] as String? ?? '0.0',
-      );
+    serial: json['serial'] as String? ?? '',
+    address: json['address'] as String? ?? '0.0',
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -268,10 +268,10 @@ class BackupFile {
   Map<String, dynamic> toJson() => {'name': name, 'kind': kind, 'data': data};
 
   static BackupFile fromJson(Map<String, dynamic> json) => BackupFile(
-        name: json['name'] as String? ?? '',
-        kind: json['kind'] as String? ?? 'Binary',
-        data: json['data'] as String? ?? '',
-      );
+    name: json['name'] as String? ?? '',
+    kind: json['kind'] as String? ?? 'Binary',
+    data: json['data'] as String? ?? '',
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -312,25 +312,25 @@ class BackupDevice {
   String get address => idToString(id);
 
   Map<String, dynamic> toJson() => {
-        'app': 'tamuapp',
-        'format': format,
-        'semantic': true,
-        if (created != null) 'created': created,
-        'type': type,
-        'typeId': typeId,
-        'id': id,
-        'address': address,
-        'name': name,
-        'serial': serial,
-        'blocks': [for (final b in blocks) b.toJson()],
-        'scripts': [for (final s in scripts) s.toJson()],
-        'subscriptions': {
-          'requester': [for (final s in requesterSubscriptions) s.toJson()],
-          'provider': [for (final s in providerSubscriptions) s.toJson()],
-        },
-        'sndb': [for (final s in sndb) s.toJson()],
-        'files': [for (final f in files) f.toJson()],
-      };
+    'app': 'tamuapp',
+    'format': format,
+    'semantic': true,
+    if (created != null) 'created': created,
+    'type': type,
+    'typeId': typeId,
+    'id': id,
+    'address': address,
+    'name': name,
+    'serial': serial,
+    'blocks': [for (final b in blocks) b.toJson()],
+    'scripts': [for (final s in scripts) s.toJson()],
+    'subscriptions': {
+      'requester': [for (final s in requesterSubscriptions) s.toJson()],
+      'provider': [for (final s in providerSubscriptions) s.toJson()],
+    },
+    'sndb': [for (final s in sndb) s.toJson()],
+    'files': [for (final f in files) f.toJson()],
+  };
 
   static BackupDevice fromJson(Map<String, dynamic> json) {
     // Development phase: no pre-release archives ship, so only the current
@@ -343,7 +343,9 @@ class BackupDevice {
       created: json['created'] as String?,
       type: json['type'] as String? ?? 'Unknown',
       typeId: (json['typeId'] as num?)?.toInt() ?? 0,
-      id: (json['id'] as num?)?.toInt() ?? _parseAddress(json['address'] as String?),
+      id:
+          (json['id'] as num?)?.toInt() ??
+          _parseAddress(json['address'] as String?),
       name: json['name'] as String? ?? 'Device',
       serial: json['serial'] as String?,
       blocks: (json['blocks'] as List? ?? [])
@@ -353,10 +355,16 @@ class BackupDevice {
           .map((s) => BackupScript.fromJson(s as Map<String, dynamic>))
           .toList(),
       requesterSubscriptions: (subs['requester'] as List? ?? [])
-          .map((s) => BackupRequesterSubscription.fromJson(s as Map<String, dynamic>))
+          .map(
+            (s) =>
+                BackupRequesterSubscription.fromJson(s as Map<String, dynamic>),
+          )
           .toList(),
       providerSubscriptions: (subs['provider'] as List? ?? [])
-          .map((s) => BackupProviderSubscription.fromJson(s as Map<String, dynamic>))
+          .map(
+            (s) =>
+                BackupProviderSubscription.fromJson(s as Map<String, dynamic>),
+          )
           .toList(),
       sndb: (json['sndb'] as List? ?? [])
           .map((s) => BackupSndbEntry.fromJson(s as Map<String, dynamic>))

@@ -9,7 +9,12 @@ void main() {
       index: 0,
       providerAddr: 2,
       trid: 0xFA00,
-      targetReg: makeBlockInfo(dynamicTypeForIndex(0), dynamicInstanceForIndex(0), 0, 0),
+      targetReg: makeBlockInfo(
+        dynamicTypeForIndex(0),
+        dynamicInstanceForIndex(0),
+        0,
+        0,
+      ),
       sourceReg: makeBlockInfo(8, 0, 3, 0),
       trigger: TriggerType.deltaPeriodic,
       periodMs: 500,

@@ -15,30 +15,44 @@ void main() {
   List<int> u16(int v) => [v & 0xFF, (v >> 8) & 0xFF];
 
   List<int> u32(int v) => [
-        v & 0xFF,
-        (v >> 8) & 0xFF,
-        (v >> 16) & 0xFF,
-        (v >> 24) & 0xFF,
-      ];
+    v & 0xFF,
+    (v >> 8) & 0xFF,
+    (v >> 16) & 0xFF,
+    (v >> 24) & 0xFF,
+  ];
 
   Future<void> pump(WidgetTester tester, String name, List<int> data) async {
-    await tester.pumpWidget(MaterialApp(
-      theme: buildTheme(),
-      home: Scaffold(body: MemoryBackupView(fileName: name, data: data)),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildTheme(),
+        home: Scaffold(
+          body: MemoryBackupView(fileName: name, data: data),
+        ),
+      ),
+    );
     await tester.pump();
-    expect(tester.takeException(), isNull, reason: '$name threw while rendering');
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: '$name threw while rendering',
+    );
   }
 
-  testWidgets('.SV decodes a node System segment + static fields', (tester) async {
+  testWidgets('.SV decodes a node System segment + static fields', (
+    tester,
+  ) async {
     // A node (no NetID): System segment 16 B + one ResistiveMeasure (0x08, 12 B:
     // SamplingRate@16).
     final data = List<int>.filled(16 + 12, 0);
     data.setRange(0, 8, 'DAS v0.1'.codeUnits); // System Name @ 0
     data.setRange(16, 20, numberToBytes(10)); // 0x08 SamplingRate @ 16
     final blocks = <({int type, int inst, ValueInfo meta, String name})?>[
-      (type: BlockType.resistiveMeasure.value, inst: 0,
-          meta: ValueInfo(type: DataType.number.value, size: 4), name: 'Meas1'),
+      (
+        type: BlockType.resistiveMeasure.value,
+        inst: 0,
+        meta: ValueInfo(type: DataType.number.value, size: 4),
+        name: 'Meas1',
+      ),
     ];
     final staticFields = <int, List<({int field, int size, int type})>>{
       0x08: [
@@ -47,64 +61,80 @@ void main() {
         (field: 2, size: 4, type: DataType.number.value),
       ],
     };
-    await tester.pumpWidget(MaterialApp(
-      theme: buildTheme(),
-      home: Scaffold(
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildTheme(),
+        home: Scaffold(
           body: MemoryBackupView(
-              fileName: '.SV',
-              data: data,
-              blocks: blocks,
-              staticFields: staticFields,
-              hasNetId: false)),
-    ));
+            fileName: '.SV',
+            data: data,
+            blocks: blocks,
+            staticFields: staticFields,
+            hasNetId: false,
+          ),
+        ),
+      ),
+    );
     await tester.pump();
     expect(tester.takeException(), isNull, reason: '.SV threw');
   });
 
-  testWidgets('SUBREQ decodes requester entries (24 B: provider+trid+table+target)',
-      (tester) async {
-    // u8 count + 24 B per entry (the requester wire prefix minus the timeout):
-    // providerAddr u16, trid u16, subscription table (sourceReg u32, trigger u8,
-    // minTime u24, period u32, deadzone Number 16.16), targetReg u32.
-    final targetReg = makeBlockInfo(0, 0, 0, 0);
-    final sourceReg = makeBlockInfo(8, 0, 4, 0);
-    List<int> entry(int provider, int trid, double deadzone) => <int>[
-          provider & 0xFF, (provider >> 8) & 0xFF,
-          trid & 0xFF, (trid >> 8) & 0xFF,
-          ...u32(sourceReg),
-          TriggerType.deltaPeriodic.value,
-          100 & 0xFF, (100 >> 8) & 0xFF, (100 >> 16) & 0xFF, // minTime 100
-          ...u32(1000),
-          ...numberToBytes(deadzone),
-          ...u32(targetReg),
-        ];
-    // Two entries: a misaligned parser would read garbage from entry 2.
-    final data = <int>[2, ...entry(2, 0x1000, 0), ...entry(3, 0x1001, 1.5)];
-    await pump(tester, 'SUBREQ', data);
-  });
+  testWidgets(
+    'SUBREQ decodes requester entries (24 B: provider+trid+table+target)',
+    (tester) async {
+      // u8 count + 24 B per entry (the requester wire prefix minus the timeout):
+      // providerAddr u16, trid u16, subscription table (sourceReg u32, trigger u8,
+      // minTime u24, period u32, deadzone Number 16.16), targetReg u32.
+      final targetReg = makeBlockInfo(0, 0, 0, 0);
+      final sourceReg = makeBlockInfo(8, 0, 4, 0);
+      List<int> entry(int provider, int trid, double deadzone) => <int>[
+        provider & 0xFF, (provider >> 8) & 0xFF,
+        trid & 0xFF, (trid >> 8) & 0xFF,
+        ...u32(sourceReg),
+        TriggerType.deltaPeriodic.value,
+        100 & 0xFF, (100 >> 8) & 0xFF, (100 >> 16) & 0xFF, // minTime 100
+        ...u32(1000),
+        ...numberToBytes(deadzone),
+        ...u32(targetReg),
+      ];
+      // Two entries: a misaligned parser would read garbage from entry 2.
+      final data = <int>[2, ...entry(2, 0x1000, 0), ...entry(3, 0x1001, 1.5)];
+      await pump(tester, 'SUBREQ', data);
+    },
+  );
 
   testWidgets('.SNREG decodes the owning net into net.device', (tester) async {
     // 32-byte RegistryEntry (SNDB.h): u16 valid, u16 device, u8 net, 11 reserved, SN(14).
     // Local devices store net 0; other cores store their NetID with device 1.
     List<int> entry(int valid, int device, int net, List<int> sn) => <int>[
-          valid & 0xFF, (valid >> 8) & 0xFF,
-          device & 0xFF, (device >> 8) & 0xFF,
-          net & 0x3F,
-          ...List.filled(11, 0),
-          ...sn,
-          0, 0, // tail padding to 32 bytes
-        ];
+      valid & 0xFF, (valid >> 8) & 0xFF,
+      device & 0xFF, (device >> 8) & 0xFF,
+      net & 0x3F,
+      ...List.filled(11, 0),
+      ...sn,
+      0, 0, // tail padding to 32 bytes
+    ];
     final snA = List<int>.generate(14, (i) => i);
     final snB = List<int>.generate(14, (i) => 0x80 + i);
     // Device 5 on another core's net 3, then local device 2 (net 0).
-    final data = <int>[...entry(0x55AA, 5, 3, snA), ...entry(0x55AA, 2, 0, snB)];
+    final data = <int>[
+      ...entry(0x55AA, 5, 3, snA),
+      ...entry(0x55AA, 2, 0, snB),
+    ];
     expect(data.length, 64);
-    await tester.pumpWidget(MaterialApp(
-      theme: buildTheme(),
-      home: Scaffold(
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildTheme(),
+        home: Scaffold(
           body: FileViewPage(
-              deviceId: 1, name: '.SNREG', size: data.length, data: data)),
-    ));
+            deviceId: 1,
+            name: '.SNREG',
+            size: data.length,
+            data: data,
+          ),
+        ),
+      ),
+    );
     await tester.pump();
     expect(tester.takeException(), isNull, reason: '.SNREG threw');
     expect(find.text('3.5'), findsOneWidget); // other core: net 3, device 5
@@ -124,21 +154,32 @@ void main() {
     expect(storageFileType('.DV_0A   '), StorageFileType.dynamicValues);
   });
 
-  testWidgets('layout file uses the brightness limit + u8 width/height header',
-      (tester) async {
+  testWidgets('layout file uses the brightness limit + u8 width/height header', (
+    tester,
+  ) async {
     // Docs/Modules and blocks/LED display.md: u8 brightness limit (0-255 as a percentage),
     // u8 width, u8 height, then W*H u16 LE indexes.
     // An 11x10 grid = 3 + 110*2 = 223 bytes (the preloaded LAY_1 size).
     final data = <int>[
-      178, 11, 10,
+      178,
+      11,
+      10,
       for (var i = 0; i < 110; i++) ...u16(i == 0 ? 0 : 0xFFFF),
     ];
     expect(data.length, 223);
-    await tester.pumpWidget(MaterialApp(
-      theme: buildTheme(),
-      home: Scaffold(
-          body: FileViewPage(deviceId: 1, name: 'LAY_1', size: data.length, data: data)),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildTheme(),
+        home: Scaffold(
+          body: FileViewPage(
+            deviceId: 1,
+            name: 'LAY_1',
+            size: data.length,
+            data: data,
+          ),
+        ),
+      ),
+    );
     await tester.pump();
     expect(tester.takeException(), isNull);
     // Parsed as u8 x3 -> 11x10 with the 70% cap; the old 2-byte header would be invalid.
@@ -146,14 +187,24 @@ void main() {
     expect(find.text('-'), findsWidgets); // 0xFFFF = missing cells
   });
 
-  testWidgets('a layout header that overruns the file is rejected', (tester) async {
+  testWidgets('a layout header that overruns the file is rejected', (
+    tester,
+  ) async {
     // 11x10 announced, but only two index entries supplied.
     final data = <int>[178, 11, 10, 0, 0, 0, 0];
-    await tester.pumpWidget(MaterialApp(
-      theme: buildTheme(),
-      home: Scaffold(
-          body: FileViewPage(deviceId: 1, name: 'LAY_1', size: data.length, data: data)),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildTheme(),
+        home: Scaffold(
+          body: FileViewPage(
+            deviceId: 1,
+            name: 'LAY_1',
+            size: data.length,
+            data: data,
+          ),
+        ),
+      ),
+    );
     await tester.pump();
     expect(tester.takeException(), isNull);
     expect(find.text('Invalid layout header (11x10)'), findsOneWidget);
@@ -162,9 +213,12 @@ void main() {
   test('formatValue renders size-flexible vectors and IDs', () {
     // A Vector2 (8 bytes) must not be rejected as "too short".
     expect(
-        formatValue(DataType.vector,
-            [...numberToBytes(1.5), ...numberToBytes(-2.0)]),
-        '[1.500, -2]');
+      formatValue(DataType.vector, [
+        ...numberToBytes(1.5),
+        ...numberToBytes(-2.0),
+      ]),
+      '[1.500, -2]',
+    );
     final id = ((3 & 0x3F) << 10) | 7;
     expect(formatValue(DataType.id, [id & 0xFF, (id >> 8) & 0xFF]), '3.7');
   });
@@ -173,19 +227,27 @@ void main() {
     // A 4-character Name must render as text, not as YY.MM.DD.II.
     expect(formatSystemValue(DataType.name, 'DAS1'.codeUnits, 6, 0xFF), 'DAS1');
     // The version is packed YY:MM:DD:II (7+4+5+16), not four raw bytes.
-    expect(formatSystemValue(DataType.text, u32(0x33350001).toList(), 0, 2),
-        '25.9.21.1');
+    expect(
+      formatSystemValue(DataType.text, u32(0x33350001).toList(), 0, 2),
+      '25.9.21.1',
+    );
   });
 
   test('capabilities format human-readable', () {
     // Core|DynMem|AppInterface|SubscriptionRequest|Node
     const caps = (1 << 0) | (1 << 3) | (1 << 6) | (1 << 7) | (1 << 8);
-    expect(formatSystemValue(DataType.integer, u32(caps).toList(), 0, 1),
-        contains('Core'));
-    expect(formatSystemValue(DataType.integer, u32(caps).toList(), 0, 1),
-        contains('Node'));
-    expect(formatSystemValue(DataType.integer, u32(caps).toList(), 0, 1),
-        contains('SubReq'));
+    expect(
+      formatSystemValue(DataType.integer, u32(caps).toList(), 0, 1),
+      contains('Core'),
+    );
+    expect(
+      formatSystemValue(DataType.integer, u32(caps).toList(), 0, 1),
+      contains('Node'),
+    );
+    expect(
+      formatSystemValue(DataType.integer, u32(caps).toList(), 0, 1),
+      contains('SubReq'),
+    );
   });
 
   testWidgets('.DT_ dynamic block table renders', (tester) async {
@@ -210,36 +272,64 @@ void main() {
     await pump(tester, '.DT_02  ', [9, 1, 2]);
   });
 
-  testWidgets('.DV_ opens the value viewer (hex fallback without its table)', (tester) async {
+  testWidgets('.DV_ opens the value viewer (hex fallback without its table)', (
+    tester,
+  ) async {
     // The decoded `.DV_` view needs the sibling `.DT_` table (a device read); with no link
     // it falls back to hex rather than throwing.
     final data = [for (var i = 0; i < 24; i++) i];
-    await tester.pumpWidget(MaterialApp(
-      theme: buildTheme(),
-      home: Scaffold(
-          body:
-              FileViewPage(deviceId: 1, name: '.DV_00', size: data.length, data: data)),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildTheme(),
+        home: Scaffold(
+          body: FileViewPage(
+            deviceId: 1,
+            name: '.DV_00',
+            size: data.length,
+            data: data,
+          ),
+        ),
+      ),
+    );
     await tester.pump();
     expect(tester.takeException(), isNull);
   });
 
   testWidgets('FileViewPage renders formatted and raw hex', (tester) async {
     // `.SV` via the full page (formatted view).
-    await tester.pumpWidget(MaterialApp(
-      theme: buildTheme(),
-      home: Scaffold(body: FileViewPage(
-          deviceId: 1, name: '.SV', size: 16, data: [0xFF, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildTheme(),
+        home: Scaffold(
+          body: FileViewPage(
+            deviceId: 1,
+            name: '.SV',
+            size: 16,
+            data: [0xFF, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+          ),
+        ),
+      ),
+    );
     await tester.pump();
-    expect(tester.takeException(), isNull, reason: 'FileViewPage formatted threw');
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: 'FileViewPage formatted threw',
+    );
     // A binary file falls back to the raw hex table by default.
-    await tester.pumpWidget(MaterialApp(
-      theme: buildTheme(),
-      home: Scaffold(body: FileViewPage(
-          deviceId: 1, name: 'BIN.DAT', size: 48,
-          data: [for (var i = 0; i < 48; i++) i])),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildTheme(),
+        home: Scaffold(
+          body: FileViewPage(
+            deviceId: 1,
+            name: 'BIN.DAT',
+            size: 48,
+            data: [for (var i = 0; i < 48; i++) i],
+          ),
+        ),
+      ),
+    );
     await tester.pump();
     expect(tester.takeException(), isNull, reason: 'FileViewPage hex threw');
   });

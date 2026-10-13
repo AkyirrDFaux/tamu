@@ -34,7 +34,8 @@ const int systemNetIdOffset = 16;
 const int systemNetIdSize = 1;
 
 /// The System segment size in the `.SV` space for a device with/without a NetID field.
-int systemSegmentSize(bool hasNetId) => align4(systemNameSize + (hasNetId ? systemNetIdSize : 0));
+int systemSegmentSize(bool hasNetId) =>
+    align4(systemNameSize + (hasNetId ? systemNetIdSize : 0));
 
 /// The firmware's SUBREQ entry cap (Subscriptions.h).
 const int maxSubreqEntries = 16;
@@ -42,7 +43,7 @@ const int maxSubreqEntries = 16;
 /// Rounds `v` up to the next 4-byte boundary (the wire/backup alignment).
 int align4(int v) => (v + 3) & ~3;
 
-int _u16(List<int> b, int o) => o + 1 < b.length ? (b[o] | (b[o + 1] << 8)) : 0;
+int _u16(List<int> b, int o) => o + 1 < b.length ? u16FromBytes(b, o) : 0;
 
 /// Aligns a static-space offset to a value of `size` bytes (Docs/Services/Register.md "Memory
 /// with 32-bit alignment"): `1 -> 1`, `2 -> 2`, `>= 3 -> 4`.
@@ -99,8 +100,10 @@ class StaticSpaceLayout {
   /// out in ascending block-type order with their instances contiguous (Docs/Services/Register.md
   /// "System + Static memory blocks"); the System block (type 0) is the first segment.
   factory StaticSpaceLayout.fromRegistry(
-      List<({int type, int inst})> registry, StaticFieldLayout fields,
-      {bool hasNetId = true}) {
+    List<({int type, int inst})> registry,
+    StaticFieldLayout fields, {
+    bool hasNetId = true,
+  }) {
     final counts = <int, int>{};
     for (final r in registry) {
       counts[r.type] = (counts[r.type] ?? 0) + 1;
@@ -180,7 +183,10 @@ class BackupEntry {
 /// Decodes the static persistent space (`.SV`): the System block's fields, then every static
 /// block's persistent fields. [registry] is the device's static blocks in enumeration order.
 List<BackupEntry> decodeSv(
-    List<int> bytes, StaticSpaceLayout layout, List<({int type, int inst})> registry) {
+  List<int> bytes,
+  StaticSpaceLayout layout,
+  List<({int type, int inst})> registry,
+) {
   final out = <BackupEntry>[];
   // The System block is virtual (type 0, inst 0) and has no registry entry.
   final instances = <({int type, int inst})>[(type: 0, inst: 0), ...registry];
@@ -191,19 +197,24 @@ List<BackupEntry> decodeSv(
       final size = t.fieldSize[f.key]!;
       final offset = t.base + r.inst * t.stride + f.value;
       if (offset + size > bytes.length) continue; // truncated space
-      final key = (r.type == 0 && f.key == systemNetIdField) ? 0 : 0xFF;
-      out.add(BackupEntry(
-        blockType: r.type,
-        inst: r.inst,
-        field: f.key,
-        key: key,
-        meta: ValueInfo(
+      final key = (r.type == systemBlockTypeValue && f.key == systemNetIdField)
+          ? 0
+          : 0xFF;
+      out.add(
+        BackupEntry(
+          blockType: r.type,
+          inst: r.inst,
+          field: f.key,
+          key: key,
+          meta: ValueInfo(
             type: t.fieldType[f.key]!.value,
             flags: ValueFlags.persistent,
             key: key,
-            size: size),
-        value: Uint8List.fromList(bytes.sublist(offset, offset + size)),
-      ));
+            size: size,
+          ),
+          value: Uint8List.fromList(bytes.sublist(offset, offset + size)),
+        ),
+      );
     }
   }
   return out;
@@ -213,7 +224,13 @@ List<BackupEntry> decodeSv(
 /// size). This is the "direct file write" half of a per-field Save; null when the field is not a
 /// persistent static field or [value] is the wrong size.
 List<int>? svSaveField(
-    List<int> sv, StaticSpaceLayout layout, int blockType, int inst, int field, List<int> value) {
+  List<int> sv,
+  StaticSpaceLayout layout,
+  int blockType,
+  int inst,
+  int field,
+  List<int> value,
+) {
   final offset = layout.offsetOf(blockType, inst, field);
   final size = layout.sizeOf(blockType, field);
   if (offset == null || size == null || value.length != size) return null;
@@ -231,11 +248,18 @@ List<int>? svSaveField(
 ///
 /// Each persistent entry's bytes sit at its stored MemoryOffset in the DV space.
 List<int>? dvSaveField(
-    DynamicTable table, List<int> values, int field, int key, List<int> value) {
+  DynamicTable table,
+  List<int> values,
+  int field,
+  int key,
+  List<int> value,
+) {
   for (final e in table.entries) {
     if (!e.persistent) continue;
     if (e.field == field && e.key == key) {
-      if (value.length != e.size || e.offset + e.size > values.length) return null;
+      if (value.length != e.size || e.offset + e.size > values.length) {
+        return null;
+      }
       final out = List<int>.from(values);
       out.setRange(e.offset, e.offset + e.size, value);
       return out;
@@ -285,16 +309,18 @@ List<SubreqEntry> decodeSubreq(List<int> bytes) {
     c += 16;
     final targetReg = uint32FromBytes(bytes, c);
     c += 4;
-    out.add(SubreqEntry(
-      providerAddr: providerAddr,
-      trid: trid,
-      sourceReg: table.sourceReg,
-      trigger: table.trigger.value,
-      minTimeMs: table.minTimeMs,
-      periodMs: table.periodMs,
-      deadzone: table.deadzone,
-      targetReg: targetReg,
-    ));
+    out.add(
+      SubreqEntry(
+        providerAddr: providerAddr,
+        trid: trid,
+        sourceReg: table.sourceReg,
+        trigger: table.trigger.value,
+        minTimeMs: table.minTimeMs,
+        periodMs: table.periodMs,
+        deadzone: table.deadzone,
+        targetReg: targetReg,
+      ),
+    );
   }
   return out;
 }
@@ -317,7 +343,8 @@ class DynamicTableEntry {
     required this.size,
   });
 
-  ValueInfo get meta => ValueInfo(type: type, flags: flags, key: key, size: size);
+  ValueInfo get meta =>
+      ValueInfo(type: type, flags: flags, key: key, size: size);
   bool get persistent => flags & ValueFlags.persistent != 0;
 }
 
@@ -357,14 +384,16 @@ DynamicTable? decodeDynamicTable(List<int> bytes) {
     final fieldKey = _u16(bytes, c);
     final offset = _u16(bytes, c + 2);
     final info = ValueInfo.fromBytes(bytes, c + 4);
-    entries.add(DynamicTableEntry(
-      field: fieldKey >> 8,
-      key: fieldKey & 0xFF,
-      offset: offset,
-      type: info.type,
-      flags: info.flags,
-      size: info.size,
-    ));
+    entries.add(
+      DynamicTableEntry(
+        field: fieldKey >> 8,
+        key: fieldKey & 0xFF,
+        offset: offset,
+        type: info.type,
+        flags: info.flags,
+        size: info.size,
+      ),
+    );
     c += 8;
   }
   return DynamicTable(name: name, entries: entries);
@@ -375,20 +404,26 @@ DynamicTable? decodeDynamicTable(List<int> bytes) {
 /// Each persistent entry's bytes sit at its stored MemoryOffset in the DV space (the
 /// firmware requires the DV length to be exactly [DynamicTable.persistentSize]); a mismatch
 /// means the two files do not belong together, so nothing is returned.
-List<BackupEntry> decodeDynamicValues(int inst, DynamicTable table, List<int> values) {
+List<BackupEntry> decodeDynamicValues(
+  int inst,
+  DynamicTable table,
+  List<int> values,
+) {
   if (values.length != table.persistentSize) return const [];
   final out = <BackupEntry>[];
   for (final e in table.entries) {
     if (!e.persistent) continue;
     if (e.offset + e.size > values.length) continue;
-    out.add(BackupEntry(
-      blockType: dynamicTypeForIndex(inst),
-      inst: inst,
-      field: e.field,
-      key: e.key,
-      meta: e.meta,
-      value: Uint8List.fromList(values.sublist(e.offset, e.offset + e.size)),
-    ));
+    out.add(
+      BackupEntry(
+        blockType: dynamicTypeForIndex(inst),
+        inst: inst,
+        field: e.field,
+        key: e.key,
+        meta: e.meta,
+        value: Uint8List.fromList(values.sublist(e.offset, e.offset + e.size)),
+      ),
+    );
   }
   return out;
 }
@@ -405,6 +440,7 @@ typedef _DynamicKey = ({int inst, int field, int key});
 class DeviceBackup {
   final Map<_StaticKey, BackupEntry> _static;
   final Map<_DynamicKey, BackupEntry> _dynamic;
+
   /// slot -> decoded .DT_ table (retains volatile entries, which have no stored value).
   final Map<int, DynamicTable> _tables;
 
@@ -413,7 +449,8 @@ class DeviceBackup {
   /// An empty backup (nothing saved yet, or the files could not be read).
   static const DeviceBackup empty = DeviceBackup._({}, {}, {});
 
-  bool get hasAny => _static.isNotEmpty || _dynamic.isNotEmpty || _tables.isNotEmpty;
+  bool get hasAny =>
+      _static.isNotEmpty || _dynamic.isNotEmpty || _tables.isNotEmpty;
 
   /// The stored value of a static-block or System field, or null when not backed up.
   BackupEntry? staticField(int blockType, int inst, int field) =>
@@ -437,7 +474,10 @@ class DeviceBackup {
   List<int> dynamicKeysFor(int inst, int field) {
     final t = _tables[inst];
     if (t == null) return const [];
-    return (<int>{for (final e in t.entries) if (e.field == field) e.key}.toList())..sort();
+    return (<int>{
+      for (final e in t.entries)
+        if (e.field == field) e.key,
+    }.toList())..sort();
   }
 
   /// The table entry for a dynamic (field, key) - present for volatile entries too, which
@@ -465,8 +505,11 @@ class DeviceBackup {
   }) {
     final statics = <_StaticKey, BackupEntry>{};
     if (sv != null) {
-      final layout =
-          StaticSpaceLayout.fromRegistry(staticRegistry, staticFields, hasNetId: hasNetId);
+      final layout = StaticSpaceLayout.fromRegistry(
+        staticRegistry,
+        staticFields,
+        hasNetId: hasNetId,
+      );
       for (final e in decodeSv(sv, layout, staticRegistry)) {
         statics[(blockType: e.blockType, inst: e.inst, field: e.field)] = e;
       }
@@ -478,7 +521,11 @@ class DeviceBackup {
       final table = decodeDynamicTable(entry.value.table);
       if (table == null) continue;
       tables[entry.key] = table;
-      for (final v in decodeDynamicValues(entry.key, table, entry.value.values)) {
+      for (final v in decodeDynamicValues(
+        entry.key,
+        table,
+        entry.value.values,
+      )) {
         dynamics[(inst: v.inst, field: v.field, key: v.key)] = v;
       }
     }

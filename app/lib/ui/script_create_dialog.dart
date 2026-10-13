@@ -73,8 +73,10 @@ class _NewScriptDialogState extends State<_NewScriptDialog> {
     super.initState();
     // Default to the lowest free file id; the id space is SCR_XXX (4096), so a text field
     // beats a dropdown.
-    _idController.text =
-        widget.freeSlots.first.toRadixString(16).toUpperCase().padLeft(3, '0');
+    _idController.text = widget.freeSlots.first
+        .toRadixString(16)
+        .toUpperCase()
+        .padLeft(3, '0');
   }
 
   @override
@@ -105,8 +107,10 @@ class _NewScriptDialogState extends State<_NewScriptDialog> {
     setState(() => e.type = type);
   }
 
-  List<ValueInfo> _collect(List<_EntryDraft> drafts) =>
-      [for (final e in drafts) ValueInfo(type: e.type.value, size: defaultSizeForType(e.type))];
+  List<ValueInfo> _collect(List<_EntryDraft> drafts) => [
+    for (final e in drafts)
+      ValueInfo(type: e.type.value, size: defaultSizeForType(e.type)),
+  ];
 
   void _submit() {
     final id = _fileId;
@@ -148,8 +152,9 @@ class _NewScriptDialogState extends State<_NewScriptDialog> {
               autofocus: true,
               maxLength: 23,
               decoration: const InputDecoration(
-                  labelText: 'Function name',
-                  helperText: 'Shown in the app and on the script block'),
+                labelText: 'Function name',
+                helperText: 'Shown in the app and on the script block',
+              ),
             ),
             const SizedBox(height: 8),
             TextField(
@@ -181,8 +186,10 @@ class _NewScriptDialogState extends State<_NewScriptDialog> {
               dense: true,
               contentPadding: EdgeInsets.zero,
               title: const Text('Function library'),
-              subtitle: const Text('The file is a function library, not a script',
-                  style: TextStyle(fontSize: 11, color: Colors.white54)),
+              subtitle: const Text(
+                'The file is a function library, not a script',
+                style: TextStyle(fontSize: 11, color: Colors.white54),
+              ),
               value: _functionLibrary,
               onChanged: (v) => setState(() => _functionLibrary = v),
             ),
@@ -209,9 +216,14 @@ class _NewScriptDialogState extends State<_NewScriptDialog> {
         ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
         FilledButton(
-            onPressed: _fileId == null ? null : _submit, child: const Text('Create')),
+          onPressed: _fileId == null ? null : _submit,
+          child: const Text('Create'),
+        ),
       ],
     );
   }
@@ -222,16 +234,24 @@ class _NewScriptDialogState extends State<_NewScriptDialog> {
       children: [
         Padding(
           padding: const EdgeInsets.only(top: 8),
-          child: Row(children: [
-            Text(title, style: const TextStyle(color: kOrange, fontWeight: FontWeight.w600)),
-            const Spacer(),
-            IconButton(
-              visualDensity: VisualDensity.compact,
-              icon: const Icon(Icons.add, size: 18),
-              tooltip: 'Add $title',
-              onPressed: () => _addEntry(list, list.length),
-            ),
-          ]),
+          child: Row(
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  color: kOrange,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const Spacer(),
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.add, size: 18),
+                tooltip: 'Add $title',
+                onPressed: () => _addEntry(list, list.length),
+              ),
+            ],
+          ),
         ),
         for (var i = 0; i < list.length; i++) _entryRow(i, list),
       ],
@@ -242,31 +262,42 @@ class _NewScriptDialogState extends State<_NewScriptDialog> {
     final e = list[index];
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(children: [
-        const SizedBox(width: 24, child: Text('#', style: TextStyle(color: Colors.white38))),
-        Text('$index', style: const TextStyle(color: Colors.white54)),
-        const SizedBox(width: 8),
-        Expanded(
-          child: DropdownButtonFormField<DataType>(
-            initialValue: e.type,
-            isDense: true,
-            decoration: const InputDecoration(labelText: 'Type'),
-            items: [
-              for (final t in scriptValueTypes)
-                DropdownMenuItem(value: t, child: Text(dataTypeWord(t))),
-            ],
-            onChanged: (t) => _changeType(e, t),
+      child: Row(
+        children: [
+          const SizedBox(
+            width: 24,
+            child: Text('#', style: TextStyle(color: Colors.white38)),
           ),
-        ),
-        const SizedBox(width: 8),
-        Text('${defaultSizeForType(e.type)}B',
-            style: const TextStyle(color: Colors.white38, fontSize: 12)),
-        IconButton(
-          visualDensity: VisualDensity.compact,
-          icon: const Icon(Icons.remove_circle_outline, size: 18, color: Colors.redAccent),
-          onPressed: () => _removeEntry(list, index),
-        ),
-      ]),
+          Text('$index', style: const TextStyle(color: Colors.white54)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: DropdownButtonFormField<DataType>(
+              initialValue: e.type,
+              isDense: true,
+              decoration: const InputDecoration(labelText: 'Type'),
+              items: [
+                for (final t in scriptValueTypes)
+                  DropdownMenuItem(value: t, child: Text(dataTypeWord(t))),
+              ],
+              onChanged: (t) => _changeType(e, t),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            '${defaultSizeForType(e.type)}B',
+            style: const TextStyle(color: Colors.white38, fontSize: 12),
+          ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(
+              Icons.remove_circle_outline,
+              size: 18,
+              color: Colors.redAccent,
+            ),
+            onPressed: () => _removeEntry(list, index),
+          ),
+        ],
+      ),
     );
   }
 }

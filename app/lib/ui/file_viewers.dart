@@ -36,7 +36,9 @@ enum StorageFileType {
 StorageFileType storageFileType(String name) {
   final upper = normalizeFileName(name).toUpperCase();
   if (upper == '.SNREG') return StorageFileType.snreg;
-  if (upper == '.SV' || upper == '.SUBREQ' || upper == 'SUBREQ') return StorageFileType.backup;
+  if (upper == '.SV' || upper == '.SUBREQ' || upper == 'SUBREQ') {
+    return StorageFileType.backup;
+  }
   // Per-block dynamic persistence (Docs/Services/Register.md: .DT_XXX table / .DV_XXX values).
   if (upper.startsWith('.DT_')) return StorageFileType.dynamicTable;
   if (upper.startsWith('.DV_')) return StorageFileType.dynamicValues;
@@ -50,24 +52,24 @@ StorageFileType storageFileType(String name) {
 }
 
 IconData storageFileIcon(String name) => switch (storageFileType(name)) {
-      StorageFileType.snreg => Icons.badge_outlined,
-      StorageFileType.layout => Icons.grid_on_outlined,
-      StorageFileType.text => Icons.description_outlined,
-      StorageFileType.binary => Icons.insert_drive_file_outlined,
-      StorageFileType.dynamicTable => Icons.table_chart_outlined,
-      StorageFileType.dynamicValues => Icons.storage_outlined,
-      StorageFileType.backup => Icons.storage_outlined,
-    };
+  StorageFileType.snreg => Icons.badge_outlined,
+  StorageFileType.layout => Icons.grid_on_outlined,
+  StorageFileType.text => Icons.description_outlined,
+  StorageFileType.binary => Icons.insert_drive_file_outlined,
+  StorageFileType.dynamicTable => Icons.table_chart_outlined,
+  StorageFileType.dynamicValues => Icons.storage_outlined,
+  StorageFileType.backup => Icons.storage_outlined,
+};
 
 String fileTypeLabel(String name) => switch (storageFileType(name)) {
-      StorageFileType.snreg => 'Serial registry',
-      StorageFileType.layout => 'LED layout',
-      StorageFileType.text => 'Text',
-      StorageFileType.binary => 'Binary',
-      StorageFileType.dynamicTable => 'Dynamic block table',
-      StorageFileType.dynamicValues => 'Dynamic values',
-      StorageFileType.backup => 'Registry backup',
-    };
+  StorageFileType.snreg => 'Serial registry',
+  StorageFileType.layout => 'LED layout',
+  StorageFileType.text => 'Text',
+  StorageFileType.binary => 'Binary',
+  StorageFileType.dynamicTable => 'Dynamic block table',
+  StorageFileType.dynamicValues => 'Dynamic values',
+  StorageFileType.backup => 'Registry backup',
+};
 
 /// 32-bit hex formatting shared by the storage page rows and the backup decoder.
 String hex32(int value) =>
@@ -90,14 +92,15 @@ class FileViewPage extends StatefulWidget {
   /// when not supplied.
   final StaticFieldLayout staticFields;
 
-  const FileViewPage(
-      {super.key,
-      required this.deviceId,
-      required this.name,
-      required this.size,
-      required this.data,
-      this.blocks,
-      this.staticFields = const {}});
+  const FileViewPage({
+    super.key,
+    required this.deviceId,
+    required this.name,
+    required this.size,
+    required this.data,
+    this.blocks,
+    this.staticFields = const {},
+  });
 
   @override
   State<FileViewPage> createState() => _FileViewPageState();
@@ -107,7 +110,8 @@ class _FileViewPageState extends State<FileViewPage> {
   bool _showRaw = false;
   int _bytesPerLine = 16;
   StaticFieldLayout _staticFields = const {};
-  List<int>? _dvTable; // sibling `.DT_<hex2>` bytes, for the `.DV_` value viewer
+  List<int>?
+  _dvTable; // sibling `.DT_<hex2>` bytes, for the `.DV_` value viewer
 
   @override
   void initState() {
@@ -126,7 +130,9 @@ class _FileViewPageState extends State<FileViewPage> {
   }
 
   Future<void> _loadStaticFields() async {
-    final fields = await RegisterClient(deviceId: widget.deviceId).readStaticFieldLayout();
+    final fields = await RegisterClient(
+      deviceId: widget.deviceId,
+    ).readStaticFieldLayout();
     if (mounted) setState(() => _staticFields = fields);
   }
 
@@ -154,7 +160,8 @@ class _FileViewPageState extends State<FileViewPage> {
     if (data == null || data.isEmpty) return false;
     var printable = 0;
     for (final b in data) {
-      final isPrintable = (b >= 0x20 && b < 0x7F) ||
+      final isPrintable =
+          (b >= 0x20 && b < 0x7F) ||
           b == 0x0A || // \n
           b == 0x0D; // \r
       if (isPrintable) printable++;
@@ -163,9 +170,12 @@ class _FileViewPageState extends State<FileViewPage> {
   }
 
   Widget _mono(String text) => SingleChildScrollView(
-      padding: const EdgeInsets.all(12),
-      child: SelectableText(text,
-          style: const TextStyle(fontFamily: 'monospace', fontSize: 12)));
+    padding: const EdgeInsets.all(12),
+    child: SelectableText(
+      text,
+      style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+    ),
+  );
 
   /// Standard raw view: one lazily-built row per N bytes with offset, grouped hex and ASCII.
   /// Each row scrolls horizontally so 32/64-byte widths scroll sideways instead of overflowing.
@@ -183,31 +193,43 @@ class _FileViewPageState extends State<FileViewPage> {
         final chunk = data.sublist(off, end);
         final hex = [
           for (var i = 0; i < chunk.length; i++)
-            chunk[i].toRadixString(16).padLeft(2, '0')
+            chunk[i].toRadixString(16).padLeft(2, '0'),
         ].join(' ');
         final ascii = chunk
             .map((b) => (b >= 0x20 && b < 0x7F) ? String.fromCharCode(b) : '.')
             .join();
         return SingleChildScrollView(
           scrollDirection: Axis.horizontal,
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            SizedBox(
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
                 width: 82,
-                child: Text('0x${off.toRadixString(16).padLeft(8, '0')}',
-                    style: const TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 11,
-                        color: Colors.white38))),
-            const SizedBox(width: 8),
-            Text(hex,
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
-            const SizedBox(width: 12),
-            Text(ascii,
-                style: const TextStyle(
+                child: Text(
+                  '0x${off.toRadixString(16).padLeft(8, '0')}',
+                  style: const TextStyle(
                     fontFamily: 'monospace',
                     fontSize: 11,
-                    color: Colors.white54)),
-          ]),
+                    color: Colors.white38,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                hex,
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                ascii,
+                style: const TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 11,
+                  color: Colors.white54,
+                ),
+              ),
+            ],
+          ),
         );
       },
     );
@@ -228,23 +250,35 @@ class _FileViewPageState extends State<FileViewPage> {
       final id = (net << 10) | (device & 0x3FF);
       final removed = valid == 0x0000;
       final sn = serialNumberToHex(data.sublist(off + 16, off + 30));
-      rows.add(Padding(
-        padding: const EdgeInsets.symmetric(vertical: 2),
-        child: Row(children: [
-          SizedBox(
-              width: 88,
-              child: Text(removed ? 'id $id (removed)' : idToString(id),
+      rows.add(
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 2),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 88,
+                child: Text(
+                  removed ? 'id $id (removed)' : idToString(id),
                   style: TextStyle(
-                      color: removed ? Colors.white24 : kOrange,
-                      fontSize: 12))),
-          Expanded(
-              child: Text(sn,
+                    color: removed ? Colors.white24 : kOrange,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Text(
+                  sn,
                   style: TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 12,
-                      color: removed ? Colors.white24 : Colors.white70))),
-        ]),
-      ));
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                    color: removed ? Colors.white24 : Colors.white70,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
     }
     return ListView(padding: const EdgeInsets.all(12), children: rows);
   }
@@ -265,34 +299,44 @@ class _FileViewPageState extends State<FileViewPage> {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(12),
       scrollDirection: Axis.horizontal,
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('${w}x$h LEDs · limit $limit ($limitPct%)',
-            style: const TextStyle(color: Colors.white38, fontSize: 11)),
-        const SizedBox(height: 6),
-        for (var r = 0; r < h; r++)
-          Row(children: [
-            for (var c = 0; c < w; c++)
-              Container(
-                width: 44,
-                height: 22,
-                margin: const EdgeInsets.all(1),
-                color: kSurfaceAlt,
-                alignment: Alignment.center,
-                child: Text(() {
-                  final i = 3 + (r * w + c) * 2;
-                  final v = data[i] | (data[i + 1] << 8);
-                  return v == 0xFFFF ? '-' : '$v';
-                }(),
-                    style: TextStyle(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '${w}x$h LEDs · limit $limit ($limitPct%)',
+            style: const TextStyle(color: Colors.white38, fontSize: 11),
+          ),
+          const SizedBox(height: 6),
+          for (var r = 0; r < h; r++)
+            Row(
+              children: [
+                for (var c = 0; c < w; c++)
+                  Container(
+                    width: 44,
+                    height: 22,
+                    margin: const EdgeInsets.all(1),
+                    color: kSurfaceAlt,
+                    alignment: Alignment.center,
+                    child: Text(
+                      () {
+                        final i = 3 + (r * w + c) * 2;
+                        final v = data[i] | (data[i + 1] << 8);
+                        return v == 0xFFFF ? '-' : '$v';
+                      }(),
+                      style: TextStyle(
                         fontSize: 10,
                         color:
                             data[3 + (r * w + c) * 2] == 0xFF &&
-                                    data[3 + (r * w + c) * 2 + 1] == 0xFF
-                                ? Colors.white24
-                                : Colors.white)),
-              ),
-          ]),
-      ]),
+                                data[3 + (r * w + c) * 2 + 1] == 0xFF
+                            ? Colors.white24
+                            : Colors.white,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+        ],
+      ),
     );
   }
 
@@ -312,20 +356,25 @@ class _FileViewPageState extends State<FileViewPage> {
       Padding(
         padding: const EdgeInsets.only(left: 4, bottom: 6),
         child: Text(
-            '${table.name.isEmpty ? 'Block' : table.name}'
-            ' (${blockTypeLabel(dynamicTypeForIndex(inst))})',
-            style: const TextStyle(color: Colors.white38, fontSize: 11)),
+          '${table.name.isEmpty ? 'Block' : table.name}'
+          ' (${blockTypeLabel(dynamicTypeForIndex(inst))})',
+          style: const TextStyle(color: Colors.white38, fontSize: 11),
+        ),
       ),
       for (final e in entries)
         ListTile(
           dense: true,
           contentPadding: const EdgeInsets.only(left: 16, right: 12),
           title: Text(
-              'f${e.field}.k${e.key}: ${dataTypeLabel(e.meta.dataType)}  ${e.meta.size} B',
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+            'f${e.field}.k${e.key}: ${dataTypeLabel(e.meta.dataType)}  ${e.meta.size} B',
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+          ),
           subtitle: Text(
-              e.meta.dataType == DataType.none ? '∅' : formatValue(e.meta.dataType, e.value),
-              style: const TextStyle(fontSize: 12)),
+            e.meta.dataType == DataType.none
+                ? '∅'
+                : formatValue(e.meta.dataType, e.value),
+            style: const TextStyle(fontSize: 12),
+          ),
         ),
     ];
     return ListView(padding: const EdgeInsets.all(12), children: rows);
@@ -339,17 +388,19 @@ class _FileViewPageState extends State<FileViewPage> {
       case StorageFileType.layout:
         return _layoutView();
       case StorageFileType.dynamicTable:
-      case StorageFileType.backup: {
-        // The System segment is 20 B on a core (Name + NetID, padded) and 16 B on a node; the
-        // System block's field count (>= 8 includes NetID) tells them apart.
-        final hasNetId = hasNetIdFor(widget.blocks);
-        return MemoryBackupView(
+      case StorageFileType.backup:
+        {
+          // The System segment is 20 B on a core (Name + NetID, padded) and 16 B on a node; the
+          // System block's field count (>= 8 includes NetID) tells them apart.
+          final hasNetId = hasNetIdFor(widget.blocks);
+          return MemoryBackupView(
             fileName: widget.name,
             data: data,
             blocks: widget.blocks,
             staticFields: _staticFields,
-            hasNetId: hasNetId);
-      }
+            hasNetId: hasNetId,
+          );
+        }
       case StorageFileType.dynamicValues:
         // The persistent value space, decoded against its sibling `.DT_` table.
         return _dvView();
@@ -366,14 +417,17 @@ class _FileViewPageState extends State<FileViewPage> {
     final data = widget.data;
     if (data == null) {
       return Scaffold(
-          appBar: AppBar(title: Text(widget.name)),
-          body: const Center(child: Text('Read failed')));
+        appBar: AppBar(title: Text(widget.name)),
+        body: const Center(child: Text('Read failed')),
+      );
     }
     final raw = _showRaw || !_hasFormatted;
     return Scaffold(
       appBar: AppBar(
-        title: Text('${normalizeFileName(widget.name)}'
-            ' - ${fileTypeLabel(widget.name)} (${widget.size} B)'),
+        title: Text(
+          '${normalizeFileName(widget.name)}'
+          ' - ${fileTypeLabel(widget.name)} (${widget.size} B)',
+        ),
         actions: [
           if (_hasFormatted)
             IconButton(
@@ -424,13 +478,14 @@ class MemoryBackupView extends StatefulWidget {
   /// size in the `.SV` space.
   final bool hasNetId;
 
-  const MemoryBackupView(
-      {super.key,
-      required this.fileName,
-      required this.data,
-      this.blocks,
-      this.staticFields = const {},
-      this.hasNetId = true});
+  const MemoryBackupView({
+    super.key,
+    required this.fileName,
+    required this.data,
+    this.blocks,
+    this.staticFields = const {},
+    this.hasNetId = true,
+  });
 
   @override
   State<MemoryBackupView> createState() => _MemoryBackupViewState();
@@ -440,29 +495,40 @@ class _MemoryBackupViewState extends State<MemoryBackupView> {
   // Convenience accessors so the decoders below read as before.
   String get fileName => widget.fileName;
   List<int> get data => widget.data;
-  List<({int type, int inst, ValueInfo meta, String name})?>? get blocks => widget.blocks;
+  List<({int type, int inst, ValueInfo meta, String name})?>? get blocks =>
+      widget.blocks;
   StaticFieldLayout get staticFields => widget.staticFields;
   bool get hasNetId => widget.hasNetId;
 
   /// The `.SV` layout is computed once per opened file instead of on every rebuild.
   late final StaticSpaceLayout _svLayout = StaticSpaceLayout.fromRegistry(
-      staticRegistryOf(blocks), staticFields,
-      hasNetId: hasNetId);
+    staticRegistryOf(blocks),
+    staticFields,
+    hasNetId: hasNetId,
+  );
 
   Widget _blockCard(String title, String subtitle, List<Widget> children) {
     return Card(
       color: kSurfaceAlt,
       margin: const EdgeInsets.only(bottom: 6),
       clipBehavior: Clip.antiAlias,
-      child: Column(children: [
-        ListTile(
-          dense: true,
-          title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-          subtitle: Text(subtitle, style: const TextStyle(fontSize: 10)),
-        ),
-        if (children.isNotEmpty)
-          Material(color: Colors.black26, child: Column(children: children)),
-      ]),
+      child: Column(
+        children: [
+          ListTile(
+            dense: true,
+            title: Text(
+              title,
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            subtitle: Text(subtitle, style: const TextStyle(fontSize: 10)),
+          ),
+          if (children.isNotEmpty)
+            Material(
+              color: Colors.black26,
+              child: Column(children: children),
+            ),
+        ],
+      ),
     );
   }
 
@@ -489,23 +555,31 @@ class _MemoryBackupViewState extends State<MemoryBackupView> {
     final children = <Widget>[];
     for (final e in table.entries) {
       final flags = ValueFlags.describe(e.flags);
-      children.add(ListTile(
-        dense: true,
-        contentPadding: const EdgeInsets.only(left: 40, right: 12),
-        title: Text(
+      children.add(
+        ListTile(
+          dense: true,
+          contentPadding: const EdgeInsets.only(left: 40, right: 12),
+          title: Text(
             'f${e.field}.k${e.key}: ${dataTypeLabel(e.meta.dataType)}  ${e.size} B',
-            style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
-        subtitle: Text(flags.isEmpty ? '(no flags)' : flags.join(' · '),
-            style: const TextStyle(fontSize: 10, color: Colors.white38)),
-      ));
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+          ),
+          subtitle: Text(
+            flags.isEmpty ? '(no flags)' : flags.join(' · '),
+            style: const TextStyle(fontSize: 10, color: Colors.white38),
+          ),
+        ),
+      );
     }
     final idx = _dynamicIndex();
-    final typeLabel = idx == null ? '' : ' (${blockTypeLabel(dynamicTypeForIndex(idx))})';
+    final typeLabel = idx == null
+        ? ''
+        : ' (${blockTypeLabel(dynamicTypeForIndex(idx))})';
     return [
       _blockCard(
-          '${table.name.isEmpty ? 'Block' : table.name}$typeLabel',
-          '${table.entries.length} entries',
-          children)
+        '${table.name.isEmpty ? 'Block' : table.name}$typeLabel',
+        '${table.entries.length} entries',
+        children,
+      ),
     ];
   }
 
@@ -521,7 +595,9 @@ class _MemoryBackupViewState extends State<MemoryBackupView> {
       if (e.blockType == systemBlockTypeValue) {
         title = e.field == systemNameField
             ? 'System Name'
-            : (e.field == systemNetIdField ? 'NetID' : 'System field ${e.field}');
+            : (e.field == systemNetIdField
+                  ? 'NetID'
+                  : 'System field ${e.field}');
         subtitle = 'System block';
       } else {
         ({int type, int inst, ValueInfo meta, String name})? blk;
@@ -532,19 +608,31 @@ class _MemoryBackupViewState extends State<MemoryBackupView> {
           }
         }
         final info = blockInfoFor(BlockType.fromValue(e.blockType));
-        title = '${(blk?.name ?? 'Block ${e.blockType}').trim()}'
+        title =
+            '${(blk?.name ?? 'Block ${e.blockType}').trim()}'
             '${info?.field(e.field) == null ? '' : ' · ${info!.field(e.field)!.name}'}';
         subtitle = BlockType.fromValue(e.blockType).label;
       }
-      rows.add(ListTile(
-        dense: true,
-        contentPadding: const EdgeInsets.only(left: 16, right: 12),
-        title: Row(children: [
-          Expanded(child: Text('$title: ${_formatBytes(e.meta, e.value)}',
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
-        ]),
-        subtitle: Text(subtitle, style: const TextStyle(fontSize: 10, color: Colors.white38)),
-      ));
+      rows.add(
+        ListTile(
+          dense: true,
+          contentPadding: const EdgeInsets.only(left: 16, right: 12),
+          title: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '$title: ${_formatBytes(e.meta, e.value)}',
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                ),
+              ),
+            ],
+          ),
+          subtitle: Text(
+            subtitle,
+            style: const TextStyle(fontSize: 10, color: Colors.white38),
+          ),
+        ),
+      );
     }
     if (rows.isEmpty) return [const Text('(no entries)')];
     return rows;
@@ -569,15 +657,21 @@ class _MemoryBackupViewState extends State<MemoryBackupView> {
       final e = entries[i];
       final triggerLabel = TriggerType.fromValue(e.trigger).label;
       final dz = e.deadzone == 0 ? '' : '  ·  deadzone ${e.deadzone}';
-      rows.add(ListTile(
-        dense: true,
-        leading: const Icon(Icons.sync_alt, size: 20, color: kOrange),
-        title: Text('#${i + 1}  ${_regLabel(e.targetReg)}  <-  ${_regLabel(e.sourceReg)}',
-            style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
-        subtitle: Text('$triggerLabel  ·  every ${e.periodMs} ms  ·  '
+      rows.add(
+        ListTile(
+          dense: true,
+          leading: const Icon(Icons.sync_alt, size: 20, color: kOrange),
+          title: Text(
+            '#${i + 1}  ${_regLabel(e.targetReg)}  <-  ${_regLabel(e.sourceReg)}',
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+          ),
+          subtitle: Text(
+            '$triggerLabel  ·  every ${e.periodMs} ms  ·  '
             'min ${e.minTimeMs} ms$dz  ·  provider ${idToString(e.providerAddr)}',
-            style: const TextStyle(fontSize: 11)),
-      ));
+            style: const TextStyle(fontSize: 11),
+          ),
+        ),
+      );
     }
     return rows;
   }
@@ -586,15 +680,16 @@ class _MemoryBackupViewState extends State<MemoryBackupView> {
   Widget build(BuildContext context) {
     final upper = normalizeFileName(fileName).toUpperCase();
     final List<Widget> rows = switch (upper) {
-          '.SV' => _parseSv(),
-          '.SUBREQ' => _parseSubreq(),
-          'SUBREQ' => _parseSubreq(),
-          _ when upper.startsWith('.DT_') => _parseDynamicTable(),
-          _ => [const Text('(unknown registry file)')],
-        };
+      '.SV' => _parseSv(),
+      '.SUBREQ' => _parseSubreq(),
+      'SUBREQ' => _parseSubreq(),
+      _ when upper.startsWith('.DT_') => _parseDynamicTable(),
+      _ => [const Text('(unknown registry file)')],
+    };
     if (rows.isEmpty) return const Center(child: Text('(empty backup)'));
     return ListView(
-        padding: const EdgeInsets.all(12),
-        children: [for (final r in rows) r]);
+      padding: const EdgeInsets.all(12),
+      children: [for (final r in rows) r],
+    );
   }
 }

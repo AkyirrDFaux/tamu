@@ -17,9 +17,6 @@ export '../core/block_registry.dart' show FieldInfo;
 import '../core/types.dart';
 import 'widgets.dart';
 
-
-
-
 part 'value_editor_scalars.dart'; // Number/Bool/Enum/DevType/Serial editors
 part 'value_editor_containers.dart'; // Vector/Matrix/BlockInfo editors
 part 'value_editor_visual.dart'; // Colour and transform-matrix editors
@@ -77,18 +74,29 @@ Future<List<int>?> showValueEditor(
     case DataType.text:
     case DataType.name:
       return _editString(
-          context, info?.name ?? (type == DataType.name ? 'Name' : 'Text'),
-          String.fromCharCodes(current),
-          maxChars: type == DataType.name ? 16 : (info?.maxChars ?? 23));
+        context,
+        info?.name ?? (type == DataType.name ? 'Name' : 'Text'),
+        String.fromCharCodes(current),
+        maxChars: type == DataType.name ? 16 : (info?.maxChars ?? 23),
+      );
     case DataType.char:
-      return _editString(context, info?.name ?? 'Char', String.fromCharCodes(current),
-          maxChars: 1);
+      return _editString(
+        context,
+        info?.name ?? 'Char',
+        String.fromCharCodes(current),
+        maxChars: 1,
+      );
     case DataType.sn:
       return _editSerialNumber(context, current);
     case DataType.id:
       return _editNetAddr(context, current);
     case DataType.filename:
-      return _editString(context, info?.name ?? 'Filename', String.fromCharCodes(current), maxChars: 8);
+      return _editString(
+        context,
+        info?.name ?? 'Filename',
+        String.fromCharCodes(current),
+        maxChars: 8,
+      );
     case DataType.none:
       // Placeholder/deleted slot - nothing to edit.
       return null;
@@ -96,4 +104,3 @@ Future<List<int>?> showValueEditor(
       return _editHex(context, dataTypeLabel(type), current);
   }
 }
-

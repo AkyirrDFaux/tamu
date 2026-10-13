@@ -7,14 +7,19 @@ import 'package:tamuapp/core/script_draft.dart';
 import 'package:tamuapp/core/script_file.dart';
 import 'package:tamuapp/core/script_instructions.dart';
 import 'package:tamuapp/core/types.dart';
+
 void main() {
   test('instruction encode/decode round-trip', () {
     final lines = [
-      ScriptLine(destinations: [ScriptSymbol.output(0)], instruction: ScriptSymbol.instruction(catMath, 5), operands: [
-        ScriptSymbol.variable(0),
-        ScriptSymbol.input(0),
-      ]),
-      ScriptLine(instruction: ScriptSymbol.instruction(catTime, 0), operands: [ScriptSymbol.constant(0)]),
+      ScriptLine(
+        destinations: [ScriptSymbol.output(0)],
+        instruction: ScriptSymbol.instruction(catMath, 5),
+        operands: [ScriptSymbol.variable(0), ScriptSymbol.input(0)],
+      ),
+      ScriptLine(
+        instruction: ScriptSymbol.instruction(catTime, 0),
+        operands: [ScriptSymbol.constant(0)],
+      ),
     ];
     final bytes = encodeScriptLines(lines);
     final back = decodeScriptLines(bytes);
@@ -29,7 +34,9 @@ void main() {
 
   test('validity check reports missing destination and arity', () {
     final lines = [
-      ScriptLine(instruction: ScriptSymbol.instruction(catMath, 5)), // Modulo needs dest + 2 ops
+      ScriptLine(
+        instruction: ScriptSymbol.instruction(catMath, 5),
+      ), // Modulo needs dest + 2 ops
     ];
     final errors = validateScriptLines(lines, const ScriptValidationContext());
     expect(errors.any((e) => e.contains('needs a destination')), isTrue);
@@ -63,52 +70,79 @@ void main() {
 
   test('validity check rejects malformed expressions', () {
     ScriptLine set(List<ScriptSymbol> ops) => ScriptLine(
-          destinations: [ScriptSymbol.output(0)],
-          instruction: ScriptSymbol.instruction(catMath, 0),
-          operands: ops,
-        );
+      destinations: [ScriptSymbol.output(0)],
+      instruction: ScriptSymbol.instruction(catMath, 0),
+      operands: ops,
+    );
     const ctx = ScriptValidationContext();
     // Unbalanced "(".
     expect(
-        validateScriptLines([
-          set([
-            ScriptSymbol.predefine(preMathOp, mathOpOpenParen),
-            ScriptSymbol.variable(0),
-            ScriptSymbol.predefine(preMathOp, 0),
-            ScriptSymbol.variable(0),
-          ])
-        ], ctx),
-        isNotEmpty);
+      validateScriptLines([
+        set([
+          ScriptSymbol.predefine(preMathOp, mathOpOpenParen),
+          ScriptSymbol.variable(0),
+          ScriptSymbol.predefine(preMathOp, 0),
+          ScriptSymbol.variable(0),
+        ]),
+      ], ctx),
+      isNotEmpty,
+    );
     // Two values in a row.
     expect(
-        validateScriptLines([
-          set([ScriptSymbol.variable(0), ScriptSymbol.variable(0)])
-        ], ctx),
-        isNotEmpty);
+      validateScriptLines([
+        set([ScriptSymbol.variable(0), ScriptSymbol.variable(0)]),
+      ], ctx),
+      isNotEmpty,
+    );
     // Ends with an operator.
     expect(
-        validateScriptLines([
-          set([ScriptSymbol.variable(0), ScriptSymbol.predefine(preMathOp, 0)])
-        ], ctx),
-        isNotEmpty);
+      validateScriptLines([
+        set([ScriptSymbol.variable(0), ScriptSymbol.predefine(preMathOp, 0)]),
+      ], ctx),
+      isNotEmpty,
+    );
   });
 
   test('draft round-trips names, input specs and instructions', () {
-    final draft = ScriptDraft(functionName: 'Blink', properties: ScriptProperties.loadOnBoot)
-      ..inputs.add(ScriptDraftValue(
-          name: 'Speed',
-          type: DataType.number,
-          size: 4,
-          spec: const ScriptInputSpec(uiType: ScriptUiType.slider, min: 0, max: 10, step: 0.5)))
-      ..outputs.add(ScriptDraftValue(name: 'Flash', type: DataType.bool_, size: 1))
-      ..variables.add(ScriptDraftValue(name: 'T', type: DataType.number, size: 4))
-      ..constants.add(ScriptDraftValue(
-          name: 'Period', type: DataType.number, size: 4, value: numberToBytes(2.5)))
-      ..lines.add(ScriptLine(
-        destinations: [ScriptSymbol.output(0)],
-        instruction: ScriptSymbol.instruction(catTime, 0),
-        operands: [ScriptSymbol.constant(0)],
-      ));
+    final draft =
+        ScriptDraft(
+            functionName: 'Blink',
+            properties: ScriptProperties.loadOnBoot,
+          )
+          ..inputs.add(
+            ScriptDraftValue(
+              name: 'Speed',
+              type: DataType.number,
+              size: 4,
+              spec: const ScriptInputSpec(
+                uiType: ScriptUiType.slider,
+                min: 0,
+                max: 10,
+                step: 0.5,
+              ),
+            ),
+          )
+          ..outputs.add(
+            ScriptDraftValue(name: 'Flash', type: DataType.bool_, size: 1),
+          )
+          ..variables.add(
+            ScriptDraftValue(name: 'T', type: DataType.number, size: 4),
+          )
+          ..constants.add(
+            ScriptDraftValue(
+              name: 'Period',
+              type: DataType.number,
+              size: 4,
+              value: numberToBytes(2.5),
+            ),
+          )
+          ..lines.add(
+            ScriptLine(
+              destinations: [ScriptSymbol.output(0)],
+              instruction: ScriptSymbol.instruction(catTime, 0),
+              operands: [ScriptSymbol.constant(0)],
+            ),
+          );
 
     final parsed = ScriptFileData.parse(draft.toImage());
     expect(parsed.functionName, 'Blink');
@@ -127,9 +161,14 @@ void main() {
 
   test('type-driven UI styles and derived sizes', () {
     // Input styles are limited by the data type.
-    expect(uiStylesForType(DataType.bool_),
-        containsAll([ScriptUiType.toggle, ScriptUiType.button]));
-    expect(uiStylesForType(DataType.bool_), isNot(contains(ScriptUiType.slider)));
+    expect(
+      uiStylesForType(DataType.bool_),
+      containsAll([ScriptUiType.toggle, ScriptUiType.button]),
+    );
+    expect(
+      uiStylesForType(DataType.bool_),
+      isNot(contains(ScriptUiType.slider)),
+    );
     expect(uiStylesForType(DataType.number), contains(ScriptUiType.slider));
     expect(uiStylesForType(DataType.text), [ScriptUiType.auto]);
 
@@ -180,48 +219,91 @@ void main() {
   });
 
   test('all predefine subtypes and math ops are available', () {
-    expect(scriptPredefineSubtypes.map((e) => e.$1).toSet(),
-        {preState, preType, preIndex, preChar, preMathOp, preBool, preNumber});
-    expect(scriptPredefineMathOps.length, 22); // 18 operators + 2 parens + 4 functions
+    expect(scriptPredefineSubtypes.map((e) => e.$1).toSet(), {
+      preState,
+      preType,
+      preIndex,
+      preChar,
+      preMathOp,
+      preBool,
+      preNumber,
+    });
+    expect(
+      scriptPredefineMathOps.length,
+      22,
+    ); // 18 operators + 2 parens + 4 functions
     expect(scriptPredefineMathOps.map((e) => e.$1), containsAll(expressionOps));
     // Logic + comparison operators are present.
     for (final op in [6, 7, 8, 9, 12, 13, 14, 15, 16, 17, 4]) {
-      expect(scriptPredefineMathOps.any((e) => e.$1 == op), isTrue, reason: 'op $op');
+      expect(
+        scriptPredefineMathOps.any((e) => e.$1 == op),
+        isTrue,
+        reason: 'op $op',
+      );
     }
     // Functions + the Transform instruction.
     for (final op in [20, 21, 22, 23]) {
       expect(expressionFunctions.containsKey(op), isTrue);
     }
-    expect(scriptInstructions.any((d) => d.category == catMath && d.op == mathTransformOp), isTrue);
+    expect(
+      scriptInstructions.any(
+        (d) => d.category == catMath && d.op == mathTransformOp,
+      ),
+      isTrue,
+    );
   });
 
   test('prefix functions validate (unary and binary)', () {
     ScriptSymbol fn(int o) => ScriptSymbol.predefine(preMathOp, o);
     ScriptLine set(List<ScriptSymbol> ops) => ScriptLine(
-        destinations: [ScriptSymbol.output(0)],
-        instruction: ScriptSymbol.instruction(catMath, 0),
-        operands: ops);
+      destinations: [ScriptSymbol.output(0)],
+      instruction: ScriptSymbol.instruction(catMath, 0),
+      operands: ops,
+    );
     final ctx = ScriptValidationContext(outputTypes: [DataType.number.value]);
     // Set out = size v
-    expect(validateScriptLines([set([fn(22), ScriptSymbol.variable(0)])], ctx), isEmpty);
+    expect(
+      validateScriptLines([
+        set([fn(22), ScriptSymbol.variable(0)]),
+      ], ctx),
+      isEmpty,
+    );
     // Set out = dot a b
     expect(
-        validateScriptLines(
-            [set([fn(20), ScriptSymbol.variable(0), ScriptSymbol.variable(1)])], ctx),
-        isEmpty);
+      validateScriptLines([
+        set([fn(20), ScriptSymbol.variable(0), ScriptSymbol.variable(1)]),
+      ], ctx),
+      isEmpty,
+    );
     // Set out = size (missing operand) -> invalid
-    expect(validateScriptLines([set([fn(22)])], ctx), isNotEmpty);
+    expect(
+      validateScriptLines([
+        set([fn(22)]),
+      ], ctx),
+      isNotEmpty,
+    );
     // Set out = dot a (missing 2nd operand) -> invalid
-    expect(validateScriptLines([set([fn(20), ScriptSymbol.variable(0)])], ctx), isNotEmpty);
+    expect(
+      validateScriptLines([
+        set([fn(20), ScriptSymbol.variable(0)]),
+      ], ctx),
+      isNotEmpty,
+    );
   });
 
   test('the standalone logic instructions are gone (expression instead)', () {
     for (final op in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]) {
-      expect(scriptInstructions.any((d) => d.category == catLogic && d.op == op), isFalse,
-          reason: 'catLogic $op');
+      expect(
+        scriptInstructions.any((d) => d.category == catLogic && d.op == op),
+        isFalse,
+        reason: 'catLogic $op',
+      );
     }
     // Only Select remains in catLogic.
-    expect(scriptInstructions.where((d) => d.category == catLogic).single.op, 12);
+    expect(
+      scriptInstructions.where((d) => d.category == catLogic).single.op,
+      12,
+    );
   });
 
   test('If / While / Wait until take a boolean expression', () {
@@ -243,7 +325,12 @@ void main() {
     );
     final ctx = ScriptValidationContext(variableTypes: [DataType.number.value]);
     // A lone If is refused: block-end matching requires a matching End block.
-    expect(validateScriptLines([line], ctx).any((e) => e.contains('missing End block')), isTrue);
+    expect(
+      validateScriptLines([
+        line,
+      ], ctx).any((e) => e.contains('missing End block')),
+      isTrue,
+    );
     // Paired with its End block the boolean expression validates.
     final end = ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 2));
     expect(validateScriptLines([line, end], ctx), isEmpty);
@@ -251,10 +338,9 @@ void main() {
 
   test('block-end matching requires every If/While to be closed', () {
     ScriptLine block(int op) => ScriptLine(
-        instruction: ScriptSymbol.instruction(catFlow, op),
-        operands: op <= 1
-            ? [ScriptSymbol.predefine(preBool, 1)]
-            : const []);
+      instruction: ScriptSymbol.instruction(catFlow, op),
+      operands: op <= 1 ? [ScriptSymbol.predefine(preBool, 1)] : const [],
+    );
     final end = ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 2));
     const ctx = ScriptValidationContext();
 
@@ -266,50 +352,58 @@ void main() {
     final missing = validateScriptBlocks([block(0)]);
     expect(missing.single, contains('missing End block'));
     // An End block with no opener is refused too.
-    expect(validateScriptBlocks([end]).single, contains('no matching If/While'));
+    expect(
+      validateScriptBlocks([end]).single,
+      contains('no matching If/While'),
+    );
   });
 
-  test('the state verbs are separate Service instructions and op 3 is reserved', () {
-    ScriptInstructionDef? service(int op) {
-      for (final d in scriptInstructions) {
-        if (d.category == catService && d.op == op) return d;
+  test(
+    'the state verbs are separate Service instructions and op 3 is reserved',
+    () {
+      ScriptInstructionDef? service(int op) {
+        for (final d in scriptInstructions) {
+          if (d.category == catService && d.op == op) return d;
+        }
+        return null;
       }
-      return null;
-    }
 
-    // The retired "Script state" instruction (op 3) is gone.
-    expect(service(3), isNull);
-    // Start 9, Stop 10, Pause 11, Resume 12, Error 13, Report info 14.
-    expect(service(9)!.label, 'Start');
-    expect(service(10)!.label, 'Stop');
-    expect(service(11)!.label, 'Pause');
-    expect(service(12)!.label, 'Resume');
-    expect(service(13)!.label, 'Error');
-    expect(service(14)!.label, 'Report info');
-    // The state verbs are operand-free; Error carries its script-defined code.
-    for (final op in [9, 10, 11, 12, 14]) {
-      expect(service(op)!.destination, isFalse, reason: 'op $op');
-      expect(service(op)!.minOperands, 0, reason: 'op $op');
-      expect(service(op)!.maxOperands, 0, reason: 'op $op');
-    }
-    expect(service(13)!.operandRole(0), 'code');
-    expect(service(13)!.minOperands, 1);
+      // The retired "Script state" instruction (op 3) is gone.
+      expect(service(3), isNull);
+      // Start 9, Stop 10, Pause 11, Resume 12, Error 13, Report info 14.
+      expect(service(9)!.label, 'Start');
+      expect(service(10)!.label, 'Stop');
+      expect(service(11)!.label, 'Pause');
+      expect(service(12)!.label, 'Resume');
+      expect(service(13)!.label, 'Error');
+      expect(service(14)!.label, 'Report info');
+      // The state verbs are operand-free; Error carries its script-defined code.
+      for (final op in [9, 10, 11, 12, 14]) {
+        expect(service(op)!.destination, isFalse, reason: 'op $op');
+        expect(service(op)!.minOperands, 0, reason: 'op $op');
+        expect(service(op)!.maxOperands, 0, reason: 'op $op');
+      }
+      expect(service(13)!.operandRole(0), 'code');
+      expect(service(13)!.minOperands, 1);
 
-    // The CID 4 action enum is the app's command set: Start / Stop / Pause / Resume. There is
-    // no Error action (the Service Error instruction is not a CID 4 command).
-    expect(
+      // The CID 4 action enum is the app's command set: Start / Stop / Pause / Resume. There is
+      // no Error action (the Service Error instruction is not a CID 4 command).
+      expect(
         {
           ScriptAction.start,
           ScriptAction.stop,
           ScriptAction.pause,
           ScriptAction.resume,
         },
-        {9, 10, 11, 12});
-  });
+        {9, 10, 11, 12},
+      );
+    },
+  );
 
   test('Load script / Unload script validate like the management commands', () {
-    ScriptInstructionDef defFor(int op) =>
-        scriptInstructions.firstWhere((d) => d.category == catService && d.op == op);
+    ScriptInstructionDef defFor(int op) => scriptInstructions.firstWhere(
+      (d) => d.category == catService && d.op == op,
+    );
 
     // Load takes (file id, loaded id) and Unload the loaded id, like CIDs 1/2. Both are
     // external-facing, so their result code (0 = success) goes to a destination (Script.md).
@@ -320,69 +414,83 @@ void main() {
     expect(defFor(8).maxOperands, 1);
     expect(defFor(8).destination, isTrue);
 
-    final ctx = ScriptValidationContext(variableTypes: [DataType.integer.value]);
+    final ctx = ScriptValidationContext(
+      variableTypes: [DataType.integer.value],
+    );
     // Load(5, 5) -> v0: file 5 into slot 5.
     expect(
-        validateScriptLines([
-          ScriptLine(
-            destinations: [ScriptSymbol.variable(0)],
-            instruction: ScriptSymbol.instruction(catService, 7),
-            operands: [
-              ScriptSymbol.predefine(preIndex, 5),
-              ScriptSymbol.predefine(preIndex, 5),
-            ],
-          )
-        ], ctx),
-        isEmpty);
+      validateScriptLines([
+        ScriptLine(
+          destinations: [ScriptSymbol.variable(0)],
+          instruction: ScriptSymbol.instruction(catService, 7),
+          operands: [
+            ScriptSymbol.predefine(preIndex, 5),
+            ScriptSymbol.predefine(preIndex, 5),
+          ],
+        ),
+      ], ctx),
+      isEmpty,
+    );
     // Load with only the file id -> invalid (the caller must pick the slot).
     expect(
-        validateScriptLines([
-          ScriptLine(
-            destinations: [ScriptSymbol.variable(0)],
-            instruction: ScriptSymbol.instruction(catService, 7),
-            operands: [ScriptSymbol.predefine(preIndex, 5)],
-          )
-        ], ctx),
-        isNotEmpty);
+      validateScriptLines([
+        ScriptLine(
+          destinations: [ScriptSymbol.variable(0)],
+          instruction: ScriptSymbol.instruction(catService, 7),
+          operands: [ScriptSymbol.predefine(preIndex, 5)],
+        ),
+      ], ctx),
+      isNotEmpty,
+    );
     // Load without a destination -> invalid (the result code needs somewhere to go).
     expect(
-        validateScriptLines([
-          ScriptLine(
-            instruction: ScriptSymbol.instruction(catService, 7),
-            operands: [
-              ScriptSymbol.predefine(preIndex, 5),
-              ScriptSymbol.predefine(preIndex, 5),
-            ],
-          )
-        ], ctx),
-        isNotEmpty);
+      validateScriptLines([
+        ScriptLine(
+          instruction: ScriptSymbol.instruction(catService, 7),
+          operands: [
+            ScriptSymbol.predefine(preIndex, 5),
+            ScriptSymbol.predefine(preIndex, 5),
+          ],
+        ),
+      ], ctx),
+      isNotEmpty,
+    );
     // Unload(3) -> v0.
     expect(
-        validateScriptLines([
-          ScriptLine(
-            destinations: [ScriptSymbol.variable(0)],
-            instruction: ScriptSymbol.instruction(catService, 8),
-            operands: [ScriptSymbol.predefine(preIndex, 3)],
-          )
-        ], ctx),
-        isEmpty);
+      validateScriptLines([
+        ScriptLine(
+          destinations: [ScriptSymbol.variable(0)],
+          instruction: ScriptSymbol.instruction(catService, 8),
+          operands: [ScriptSymbol.predefine(preIndex, 3)],
+        ),
+      ], ctx),
+      isEmpty,
+    );
     // Unload with no operand -> invalid.
     expect(
-        validateScriptLines([
-          ScriptLine(
-            destinations: [ScriptSymbol.variable(0)],
-            instruction: ScriptSymbol.instruction(catService, 8),
-          )
-        ], ctx),
-        isNotEmpty);
+      validateScriptLines([
+        ScriptLine(
+          destinations: [ScriptSymbol.variable(0)],
+          instruction: ScriptSymbol.instruction(catService, 8),
+        ),
+      ], ctx),
+      isNotEmpty,
+    );
   });
 
-  test('Add/Subtract/Multiply/Divide/Negate are no longer instructions', () {    for (final op in [1, 2, 3, 4, 8]) {
-      expect(scriptInstructions.any((d) => d.category == catMath && d.op == op), isFalse);
+  test('Add/Subtract/Multiply/Divide/Negate are no longer instructions', () {
+    for (final op in [1, 2, 3, 4, 8]) {
+      expect(
+        scriptInstructions.any((d) => d.category == catMath && d.op == op),
+        isFalse,
+      );
     }
     // The ops that remain: Set(0), Modulo(5), Minimum(6), Maximum(7), Absolute(9), Limit(10).
     for (final op in [0, 5, 6, 7, 9, 10]) {
-      expect(scriptInstructions.any((d) => d.category == catMath && d.op == op), isTrue);
+      expect(
+        scriptInstructions.any((d) => d.category == catMath && d.op == op),
+        isTrue,
+      );
     }
   });
 
@@ -402,9 +510,13 @@ void main() {
       ],
     );
     final ctx = ScriptValidationContext(
-        variableTypes: [for (var i = 0; i < 4; i++) DataType.number.value]);
+      variableTypes: [for (var i = 0; i < 4; i++) DataType.number.value],
+    );
     expect(validateScriptLines([line], ctx), isEmpty);
-    expect(decodeScriptLines(encodeScriptLines([line])).single.operands.length, 7);
+    expect(
+      decodeScriptLines(encodeScriptLines([line])).single.operands.length,
+      7,
+    );
   });
 
   test('instructions expose operand/destination role hints', () {
@@ -413,7 +525,10 @@ void main() {
     // Limit: value, min, max
     expect(defFor(catMath, 10).operandRoles, ['value', 'min', 'max']);
     expect(defFor(catMath, 10).operandRole(2), 'max');
-    expect(defFor(catMath, 10).operandRole(9), isNull); // no hint beyond the list
+    expect(
+      defFor(catMath, 10).operandRole(9),
+      isNull,
+    ); // no hint beyond the list
     // Transform: rot, offset X/Y, scale X/Y, skew
     expect(defFor(catMath, 11).operandRoles.first, 'rot');
     expect(defFor(catMath, 11).operandRoles.length, 6);
@@ -421,7 +536,11 @@ void main() {
     expect(defFor(catMath, 0).destinationRole, 'result');
     expect(defFor(catService, 1).operandRole(0), 'register');
     expect(defFor(catService, 1).destinationRole, 'value');
-    expect(defFor(catLogic, 12).operandRoles, ['condition', 'if true', 'if false']);
+    expect(defFor(catLogic, 12).operandRoles, [
+      'condition',
+      'if true',
+      'if false',
+    ]);
     // Every role list is short (fits under the chip).
     for (final d in scriptInstructions) {
       for (final r in d.operandRoles) {
@@ -431,22 +550,32 @@ void main() {
   });
 
   test('Get time only accepts integer destinations', () {
-    final def = scriptInstructions.firstWhere((d) => d.category == catTime && d.op == 2);
+    final def = scriptInstructions.firstWhere(
+      (d) => d.category == catTime && d.op == 2,
+    );
     expect(def.integerDestination, isTrue);
-    ScriptLine getTime(ScriptSymbol dest) =>
-        ScriptLine(destinations: [dest], instruction: ScriptSymbol.instruction(catTime, 2));
+    ScriptLine getTime(ScriptSymbol dest) => ScriptLine(
+      destinations: [dest],
+      instruction: ScriptSymbol.instruction(catTime, 2),
+    );
 
     // Index / Uint32 destinations are accepted.
     for (final t in [DataType.integer, DataType.uint32]) {
       final ctx = ScriptValidationContext(variableTypes: [t.value]);
-      expect(validateScriptLines([getTime(ScriptSymbol.variable(0))], ctx), isEmpty,
-          reason: '${t.name} should be a valid Get time destination');
+      expect(
+        validateScriptLines([getTime(ScriptSymbol.variable(0))], ctx),
+        isEmpty,
+        reason: '${t.name} should be a valid Get time destination',
+      );
     }
     // A Number (its Q16.16 integer part overflows past ~32767 ms) and a Vector are rejected.
     for (final t in [DataType.number, DataType.vector]) {
       final ctx = ScriptValidationContext(variableTypes: [t.value]);
-      expect(validateScriptLines([getTime(ScriptSymbol.variable(0))], ctx), isNotEmpty,
-          reason: '${t.name} should be rejected as a Get time destination');
+      expect(
+        validateScriptLines([getTime(ScriptSymbol.variable(0))], ctx),
+        isNotEmpty,
+        reason: '${t.name} should be rejected as a Get time destination',
+      );
     }
     // Every other destination-capable instruction keeps the permissive default.
     for (final d in scriptInstructions.where((d) => d.destination)) {
@@ -457,23 +586,32 @@ void main() {
 
   test('BlockInfo and Number-literal symbols round-trip through the backup', () {
     final draft = ScriptDraft(functionName: 'Reg')
-      ..constants.add(ScriptDraftValue(
+      ..constants.add(
+        ScriptDraftValue(
           name: 'Target',
           type: DataType.blockInfo,
-          value: Uint8List.fromList(uint32ToBytes(makeBlockInfo(BlockType.pwm.value, 0, 1, 0)))))
-      ..lines.add(ScriptLine(
-        instruction: ScriptSymbol.instruction(catService, 2),
-        operands: [
-          ScriptSymbol.constant(0),
-          ScriptSymbol.predefine(preNumber, 128), // 0.5
-        ],
-      ));
+          value: Uint8List.fromList(
+            uint32ToBytes(makeBlockInfo(BlockType.pwm.value, 0, 1, 0)),
+          ),
+        ),
+      )
+      ..lines.add(
+        ScriptLine(
+          instruction: ScriptSymbol.instruction(catService, 2),
+          operands: [
+            ScriptSymbol.constant(0),
+            ScriptSymbol.predefine(preNumber, 128), // 0.5
+          ],
+        ),
+      );
     final parsed = ScriptFileData.parse(draft.toImage());
     expect(parsed.constants.single.dataType, DataType.blockInfo);
     final restored = ScriptDraft.fromFile(parsed);
     expect(restored.constants.single.type, DataType.blockInfo);
-    expect(uint32FromBytes(restored.constants.single.value),
-        makeBlockInfo(BlockType.pwm.value, 0, 1, 0));
+    expect(
+      uint32FromBytes(restored.constants.single.value),
+      makeBlockInfo(BlockType.pwm.value, 0, 1, 0),
+    );
     expect(restored.lines.single.operands.last.subtype, preNumber);
     expect(restored.lines.single.operands.last.value, 128);
 
@@ -483,8 +621,10 @@ void main() {
     expect(json['constants'][0]['type'], 'BlockInfo');
     final back = BackupScript.fromJson(json).toDraft();
     expect(back.constants.single.type, DataType.blockInfo);
-    expect(uint32FromBytes(back.constants.single.value),
-        makeBlockInfo(BlockType.pwm.value, 0, 1, 0));
+    expect(
+      uint32FromBytes(back.constants.single.value),
+      makeBlockInfo(BlockType.pwm.value, 0, 1, 0),
+    );
   });
 
   test('the CID 3 report record decodes its instruction encoding', () {
@@ -496,12 +636,20 @@ void main() {
     expect(ScriptReport.decodeInstruction(0), isNull);
     for (final (cat, op) in [(catMath, 5), (catFlow, 4), (catService, 9)]) {
       final encoded = 1 + ((cat << 8) | op);
-      expect(ScriptReport.decodeInstruction(encoded), (cat, op),
-          reason: 'encoding $encoded -> ($cat, $op)');
+      expect(
+        ScriptReport.decodeInstruction(encoded),
+        (cat, op),
+        reason: 'encoding $encoded -> ($cat, $op)',
+      );
     }
     // A 12-byte record names the fault.
     const bad = ScriptReport(
-        state: ScriptState.error, depth: 2, line: 7, instruction: 6, error: 3);
+      state: ScriptState.error,
+      depth: 2,
+      line: 7,
+      instruction: 6,
+      error: 3,
+    );
     expect(bad.hasError, isTrue);
     expect(ScriptReport.decodeInstruction(bad.instruction), (catMath, 5));
   });
@@ -516,7 +664,8 @@ void main() {
       ),
     ];
     final ctx = ScriptValidationContext(
-        variableTypes: [DataType.number.value, DataType.colour.value]);
+      variableTypes: [DataType.number.value, DataType.colour.value],
+    );
     final errors = validateScriptLines(bad, ctx);
     expect(errors.any((e) => e.contains('device address')), isTrue);
 
@@ -528,7 +677,9 @@ void main() {
       ),
     ];
     final ctxGood = ScriptValidationContext(
-        inputTypes: [DataType.id.value], variableTypes: [DataType.number.value]);
+      inputTypes: [DataType.id.value],
+      variableTypes: [DataType.number.value],
+    );
     expect(validateScriptLines(good, ctxGood), isEmpty);
   });
 }

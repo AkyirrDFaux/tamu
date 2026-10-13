@@ -7,6 +7,8 @@ library;
 
 import 'dart:typed_data';
 
+import 'types.dart';
+
 const int maxPayloadSize = 116;
 
 // Flag bitmasks.
@@ -14,9 +16,13 @@ const int flagReqAck = 1 << 0;
 const int flagStart = 1 << 1;
 const int flagStop = 1 << 2;
 const int flagType = 1 << 3; // 0 = request, 1 = response
-const int flagFrag = 1 << 4; // first 4 payload bytes = fragmentation info (u16 current + u16 total)
-const int flagSuccess = 1 << 5; // response: success; an optional payload after it carries detail
-const int flagFail = 1 << 6; // response: failure; an optional payload after it carries a reason
+const int flagFrag =
+    1 <<
+    4; // first 4 payload bytes = fragmentation info (u16 current + u16 total)
+const int flagSuccess =
+    1 << 5; // response: success; an optional payload after it carries detail
+const int flagFail =
+    1 << 6; // response: failure; an optional payload after it carries a reason
 
 /// Default priority byte (docs: Reserved(4) | Priority(4), 0 = highest, default 8).
 const int defaultPriority = 8;
@@ -76,14 +82,16 @@ int crc8(List<int> data) {
 
 /// Builds the 4-byte fragmentation info (u16 current fragment + u16 total fragments)
 /// that prefixes every FRAG-flagged packet's payload (Data Formats.md).
-Uint8List writeFragInfo(int current, int total) =>
-    Uint8List.fromList([current & 0xFF, (current >> 8) & 0xFF, total & 0xFF, (total >> 8) & 0xFF]);
+Uint8List writeFragInfo(int current, int total) => Uint8List.fromList([
+  current & 0xFF,
+  (current >> 8) & 0xFF,
+  total & 0xFF,
+  (total >> 8) & 0xFF,
+]);
 
 /// Parses the fragmentation info from the first 4 payload bytes of a FRAG packet.
-({int current, int total}) fragInfoOf(List<int> payload) => (
-      current: payload[0] | (payload[1] << 8),
-      total: payload[2] | (payload[3] << 8),
-    );
+({int current, int total}) fragInfoOf(List<int> payload) =>
+    (current: u16FromBytes(payload, 0), total: u16FromBytes(payload, 2));
 
 /// A single parsed packet frame.
 class PacketFrame {
@@ -119,8 +127,10 @@ class PacketFrame {
   /// Serialises the frame including the CRC8 header byte. PayloadLen is the exact payload
   /// byte count (no padding).
   Uint8List toBytes() {
-    assert(payload.length <= maxPayloadSize,
-        'payload ${payload.length} exceeds max $maxPayloadSize');
+    assert(
+      payload.length <= maxPayloadSize,
+      'payload ${payload.length} exceeds max $maxPayloadSize',
+    );
     final bytes = ByteData(12 + payload.length);
     bytes.setUint8(0, 0); // CRC placeholder, patched below
     bytes.setUint8(1, flags);
@@ -146,15 +156,16 @@ class PacketFrame {
     if (crc8(body) != data[offset]) {
       throw const FormatException('CRC mismatch');
     }
-    final payload =
-        len > 0 ? Uint8List.fromList(data.sublist(offset + 12, offset + 12 + len)) : Uint8List(0);
+    final payload = len > 0
+        ? Uint8List.fromList(data.sublist(offset + 12, offset + 12 + len))
+        : Uint8List(0);
     return PacketFrame(
       flags: data[offset + 1],
       priority: data[offset + 2],
-      idSource: data[offset + 4] | (data[offset + 5] << 8),
-      idTarget: data[offset + 6] | (data[offset + 7] << 8),
-      srvTarget: data[offset + 8] | (data[offset + 9] << 8),
-      srvSource: data[offset + 10] | (data[offset + 11] << 8),
+      idSource: u16FromBytes(data, offset + 4),
+      idTarget: u16FromBytes(data, offset + 6),
+      srvTarget: u16FromBytes(data, offset + 8),
+      srvSource: u16FromBytes(data, offset + 10),
       payload: payload,
     );
   }
@@ -171,7 +182,8 @@ class PacketFrame {
     bool requestFrag = false,
   }) {
     return PacketFrame(
-      flags: flagStart |
+      flags:
+          flagStart |
           flagStop |
           flagReqAck |
           (response ? flagType : 0) |

@@ -75,7 +75,13 @@ class _ShellPageState extends State<ShellPage> {
     Icons.settings,
   ];
 
-  static const _labels = ['Connection', 'Devices', 'Update', 'Backup', 'Settings'];
+  static const _labels = [
+    'Connection',
+    'Devices',
+    'Update',
+    'Backup',
+    'Settings',
+  ];
 
   void _select(int i) {
     setState(() {
@@ -91,12 +97,19 @@ class _ShellPageState extends State<ShellPage> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(Icons.developer_board,
-            size: iconSize, color: connected ? kOrange : Colors.white38),
+        Icon(
+          Icons.developer_board,
+          size: iconSize,
+          color: connected ? kOrange : Colors.white38,
+        ),
         if (withLabel)
-          Text(connected ? 'LINK' : 'OFF',
-              style: TextStyle(
-                  fontSize: 10, color: connected ? kOrange : Colors.white38)),
+          Text(
+            connected ? 'LINK' : 'OFF',
+            style: TextStyle(
+              fontSize: 10,
+              color: connected ? kOrange : Colors.white38,
+            ),
+          ),
       ],
     );
   }
@@ -137,19 +150,25 @@ class _ShellPageState extends State<ShellPage> {
                     ),
                     destinations: const [
                       NavigationRailDestination(
-                          icon: Icon(Icons.link), label: Text('Connection')),
+                        icon: Icon(Icons.link),
+                        label: Text('Connection'),
+                      ),
                       NavigationRailDestination(
-                          icon: Icon(Icons.device_hub),
-                          label: Text('Devices')),
+                        icon: Icon(Icons.device_hub),
+                        label: Text('Devices'),
+                      ),
                       NavigationRailDestination(
-                          icon: Icon(Icons.system_update_alt),
-                          label: Text('Update')),
+                        icon: Icon(Icons.system_update_alt),
+                        label: Text('Update'),
+                      ),
                       NavigationRailDestination(
-                          icon: Icon(Icons.settings_backup_restore),
-                          label: Text('Backup')),
+                        icon: Icon(Icons.settings_backup_restore),
+                        label: Text('Backup'),
+                      ),
                       NavigationRailDestination(
-                          icon: Icon(Icons.settings),
-                          label: Text('Settings')),
+                        icon: Icon(Icons.settings),
+                        label: Text('Settings'),
+                      ),
                     ],
                   ),
                 ),
@@ -169,23 +188,24 @@ class _ShellPageState extends State<ShellPage> {
               listenable: ConnectionManager.instance,
               builder: (context, _) => Padding(
                 padding: const EdgeInsets.fromLTRB(16, 20, 16, 12),
-                child: Row(children: [
-                  _linkBadge(iconSize: 30),
-                  const SizedBox(width: 12),
-                  Text(
-                    ConnectionManager.instance.isConnected
-                        ? 'Link established'
-                        : 'Not connected',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                ]),
+                child: Row(
+                  children: [
+                    _linkBadge(iconSize: 30),
+                    const SizedBox(width: 12),
+                    Text(
+                      ConnectionManager.instance.isConnected
+                          ? 'Link established'
+                          : 'Not connected',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ],
+                ),
               ),
             ),
             const Divider(height: 1),
             for (var i = 0; i < _pages.length; i++)
               ListTile(
-                leading:
-                    Icon(_icons[i], color: _index == i ? kOrange : null),
+                leading: Icon(_icons[i], color: _index == i ? kOrange : null),
                 title: Text(_labels[i]),
                 selected: _index == i,
                 onTap: () => _select(i),

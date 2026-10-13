@@ -34,12 +34,12 @@ class ScriptAction {
   static const resume = 12;
 
   static String label(int action) => switch (action) {
-        start => 'Start',
-        stop => 'Stop',
-        pause => 'Pause',
-        resume => 'Resume',
-        _ => 'Action $action',
-      };
+    start => 'Start',
+    stop => 'Stop',
+    pause => 'Pause',
+    resume => 'Resume',
+    _ => 'Action $action',
+  };
 }
 
 /// A CID 3 report record (Docs/Services/Script.md "Report Record"): `State (u8) | Depth (u8) |
@@ -101,8 +101,13 @@ class ScriptClient {
     Duration? timeout,
   }) async {
     try {
-      return await _link.request(deviceId, service, cid,
-          payload: payload, timeout: timeout ?? const Duration(seconds: 3));
+      return await _link.request(
+        deviceId,
+        service,
+        cid,
+        payload: payload,
+        timeout: timeout ?? const Duration(seconds: 3),
+      );
     } catch (error) {
       AppDiagnostics.log('script', 'request failed: $error');
       return null;
@@ -119,8 +124,13 @@ class ScriptClient {
     Duration? timeout,
   }) async {
     try {
-      final response = await _link.requestWithFlags(deviceId, service, cid,
-          payload: payload, timeout: timeout ?? const Duration(seconds: 3));
+      final response = await _link.requestWithFlags(
+        deviceId,
+        service,
+        cid,
+        payload: payload,
+        timeout: timeout ?? const Duration(seconds: 3),
+      );
       return response.ok; // success && !fail, matching the subscriptions client
     } catch (error) {
       AppDiagnostics.log('script', 'request failed: $error');
@@ -168,8 +178,11 @@ class ScriptClient {
   /// Success - the caller picked the slot, so it already knows it. The file id and the slot are
   /// independent: many files (SCR_XXX) exist, at most [maxScripts] load at once.
   Future<bool> load(int fileId, int loadedId) async {
-    return _requestOk(ServiceType.script, 1,
-        payload: [fileId & 0xFF, (fileId >> 8) & 0xFF, loadedId & 0xFF]);
+    return _requestOk(
+      ServiceType.script,
+      1,
+      payload: [fileId & 0xFF, (fileId >> 8) & 0xFF, loadedId & 0xFF],
+    );
   }
 
   /// CID 1: loads `SCR_<fileId>` into the lowest free slot - the request names no slot, so it
@@ -177,8 +190,11 @@ class ScriptClient {
   /// the lowest free one"; the request is then "Script File ID (uint16)"). The reply is Success
   /// only, so the caller learns which slot was chosen from the CID 0 slot map.
   Future<bool> loadLowestFree(int fileId) async {
-    return _requestOk(ServiceType.script, 1,
-        payload: [fileId & 0xFF, (fileId >> 8) & 0xFF]);
+    return _requestOk(
+      ServiceType.script,
+      1,
+      payload: [fileId & 0xFF, (fileId >> 8) & 0xFF],
+    );
   }
 
   /// CID 2: unloads a loaded script.
@@ -191,7 +207,11 @@ class ScriptClient {
   /// the offending instruction and the instruction-specific error code. Returns null when the
   /// device does not answer (fewer than the 4-byte base record).
   Future<ScriptReport?> readState(int loadedId) async {
-    final reply = await _request(ServiceType.script, 3, payload: [loadedId & 0xFF]);
+    final reply = await _request(
+      ServiceType.script,
+      3,
+      payload: [loadedId & 0xFF],
+    );
     if (reply == null || reply.length < 4) return null;
     final onError = reply.length >= 12;
     return ScriptReport(
@@ -220,8 +240,11 @@ class ScriptClient {
   /// CID 4: applies a [ScriptAction] to a loaded script (Docs CID 4: "Script ID, action ...
   /// drives start, stop, pause and resume; clears the error").
   Future<bool> setAction(int loadedId, int action) async {
-    return _requestOk(ServiceType.script, 4,
-        payload: [loadedId & 0xFF, action & 0xFF]);
+    return _requestOk(
+      ServiceType.script,
+      4,
+      payload: [loadedId & 0xFF, action & 0xFF],
+    );
   }
 
   /// CID 5: the variable RAM and the entire instruction-counter call stack (editor debug),
@@ -232,8 +255,13 @@ class ScriptClient {
   ///
   /// Returns null when the reply is too short to hold the depth byte and its stack entries.
   Future<({List<int> callStack, List<int> variables})?> readInternalState(
-      int loadedId) async {
-    final reply = await _request(ServiceType.script, 5, payload: [loadedId & 0xFF]);
+    int loadedId,
+  ) async {
+    final reply = await _request(
+      ServiceType.script,
+      5,
+      payload: [loadedId & 0xFF],
+    );
     if (reply == null) return null;
     // A fixed-size instruction-counter stack (one u16 per frame) precedes the variable RAM,
     // which is the remainder (Docs/Services/Script.md CID 5).
@@ -255,7 +283,11 @@ class ScriptClient {
   }
 
   /// CID 7: writes a variable (editor debug).
-  Future<bool> writeVariable(int loadedId, int variableId, List<int> value) async {
+  Future<bool> writeVariable(
+    int loadedId,
+    int variableId,
+    List<int> value,
+  ) async {
     final payload = <int>[loadedId & 0xFF, variableId & 0xFF, ...value];
     return _requestOk(ServiceType.script, 7, payload: payload);
   }
@@ -263,7 +295,11 @@ class ScriptClient {
   // ---- Register access (the Scripts range 0x3F4-0x3F7, addressed by the global slot) ----
 
   static Uint8List _bi(int inst, int field, int key) => blockInfoBytes(
-      scriptTypeForIndex(inst), scriptInstanceForIndex(inst), field, key);
+    scriptTypeForIndex(inst),
+    scriptInstanceForIndex(inst),
+    field,
+    key,
+  );
 
   /// The keys (entity indexes) of a script field: the block's Field&Key list (Register CID 0),
   /// filtered to that field.
@@ -271,7 +307,10 @@ class ScriptClient {
 
   Future<List<int>> enumerateKeys(int inst, int field) async {
     return (await _reg.enumerateKeys(
-            scriptTypeForIndex(inst), scriptInstanceForIndex(inst), field)) ??
+          scriptTypeForIndex(inst),
+          scriptInstanceForIndex(inst),
+          field,
+        )) ??
         const [];
   }
 
@@ -285,7 +324,9 @@ class ScriptClient {
     if (reply == null || reply.length < 8) return null;
     final meta = ValueInfo.fromBytes(reply, 4, key);
     return ScriptEntry(
-        meta: meta, value: RegisterClient.valueSlice(reply, meta.size));
+      meta: meta,
+      value: RegisterClient.valueSlice(reply, meta.size),
+    );
   }
 
   /// Reads the block meta of a loaded script (field 0xFF): snapshot name + field count.
@@ -302,9 +343,23 @@ class ScriptClient {
   }
 
   /// Writes one Register entry (CID 2), e.g. a script input (field 1) or variable (3).
-  Future<bool> writeEntry(int inst, int field, int key, ValueInfo meta, List<int> value) async {
-    final payload = <int>[..._bi(inst, field, key), ...meta.toBytes(), ...value];
-    final reply = await _request(ServiceType.register, RegisterCid.write, payload: payload);
+  Future<bool> writeEntry(
+    int inst,
+    int field,
+    int key,
+    ValueInfo meta,
+    List<int> value,
+  ) async {
+    final payload = <int>[
+      ..._bi(inst, field, key),
+      ...meta.toBytes(),
+      ...value,
+    ];
+    final reply = await _request(
+      ServiceType.register,
+      RegisterCid.write,
+      payload: payload,
+    );
     // A failure replies with a single 0xFF status; a success echoes the request payload
     // (BlockInfo + ValueInfo + value). The echoed BlockInfo starts with the key byte, so it
     // is not a reliable success flag (a successful key-0 write echoes 0x00 too).

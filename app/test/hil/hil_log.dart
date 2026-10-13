@@ -14,8 +14,7 @@ class HilLog {
   /// Absolute path of the file this run writes, resolved at construction.
   final String path;
 
-  HilLog()
-      : path = _resolvePath(DateTime.now());
+  HilLog() : path = _resolvePath(DateTime.now());
 
   static String _resolvePath(DateTime now) {
     final dir = Directory('test/hil/logs');

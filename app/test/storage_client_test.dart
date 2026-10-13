@@ -7,10 +7,10 @@ import 'package:tamuapp/core/types.dart';
 /// devices run the full multi-file filesystem) and the all-0xFF terminator.
 void main() {
   List<int> record(int offset, int size, String name) => [
-        ...uint32ToBytes(offset),
-        ...uint32ToBytes(size),
-        ...StorageClient.padName(name),
-      ];
+    ...uint32ToBytes(offset),
+    ...uint32ToBytes(size),
+    ...StorageClient.padName(name),
+  ];
 
   group('parseFileTable', () {
     final contents = [
@@ -30,7 +30,16 @@ void main() {
     test('an all-0xFF entry terminates the table', () {
       final withTail = [...contents, ...record(0x300, 1, 'C')];
       // Overwrite the tail record's first word-pair with the unwritten marker.
-      withTail.setAll(contents.length, [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+      withTail.setAll(contents.length, [
+        0xFF,
+        0xFF,
+        0xFF,
+        0xFF,
+        0xFF,
+        0xFF,
+        0xFF,
+        0xFF,
+      ]);
       final table = StorageClient.parseFileTable(withTail);
       expect(table.map((r) => r.name), ['A', 'B']);
     });
@@ -42,8 +51,16 @@ void main() {
 
   group('padName', () {
     test('pads a short name with NULs to the 8-byte wire field (B10)', () {
-      expect(StorageClient.padName('A'),
-          [0x41, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+      expect(StorageClient.padName('A'), [
+        0x41,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+      ]);
     });
 
     test('truncates an over-long name to 8 bytes', () {
@@ -55,7 +72,10 @@ void main() {
     // A reassembled CID-5 stream is [name (8)][content] per fragment (B12); the reassembly
     // layer has already removed the 4-byte frag info from each.
     final name = StorageClient.padName('A');
-    final full = List<int>.generate(StorageClient.fragmentContentMax, (i) => i & 0xFF);
+    final full = List<int>.generate(
+      StorageClient.fragmentContentMax,
+      (i) => i & 0xFF,
+    );
 
     test('single short fragment', () {
       expect(StorageClient.stripFragmentNames([...name, 1, 2, 3]), [1, 2, 3]);

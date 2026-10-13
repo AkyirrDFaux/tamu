@@ -27,9 +27,11 @@ class _SettingsPageState extends State<SettingsPage> {
           children: [
             const SectionHeader('Connection'),
             SwitchListTile(
-              title: Text(_settings.autoConnectDeviceId.isEmpty
-                  ? 'Autoconnect to specified device'
-                  : 'Autoconnect: ${_settings.autoConnectDeviceId}'),
+              title: Text(
+                _settings.autoConnectDeviceId.isEmpty
+                    ? 'Autoconnect to specified device'
+                    : 'Autoconnect: ${_settings.autoConnectDeviceId}',
+              ),
               value: _settings.autoConnect,
               onChanged: (value) => _settings.update(() {
                 _settings.autoConnect = value;
@@ -38,15 +40,19 @@ class _SettingsPageState extends State<SettingsPage> {
             ListTile(
               enabled: _settings.autoConnect,
               title: const Text('Autoconnect device'),
-              subtitle: Text(_settings.autoConnectDeviceId.isEmpty
-                  ? 'Set the target with the star button on the Connection page'
-                  : 'Target: ${_settings.autoConnectDeviceId}'),
+              subtitle: Text(
+                _settings.autoConnectDeviceId.isEmpty
+                    ? 'Set the target with the star button on the Connection page'
+                    : 'Target: ${_settings.autoConnectDeviceId}',
+              ),
               trailing: TextButton(
-                onPressed: _settings.autoConnect && _settings.autoConnectDeviceId.isNotEmpty
+                onPressed:
+                    _settings.autoConnect &&
+                        _settings.autoConnectDeviceId.isNotEmpty
                     ? () => _settings.update(() {
-                          _settings.autoConnect = false;
-                          _settings.autoConnectDeviceId = '';
-                        })
+                        _settings.autoConnect = false;
+                        _settings.autoConnectDeviceId = '';
+                      })
                     : null,
                 child: const Text('Clear'),
               ),
@@ -102,9 +108,14 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
             const Divider(),
             const SectionHeader('About'),
-            const ListTile(title: Text('App version'), trailing: Text(appVersion)),
+            const ListTile(
+              title: Text('App version'),
+              trailing: Text(appVersion),
+            ),
             ListTile(
-                title: const Text('App compile date'), trailing: Text(appBuildDate)),
+              title: const Text('App compile date'),
+              trailing: Text(appBuildDate),
+            ),
           ],
         ),
       ),

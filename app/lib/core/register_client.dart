@@ -43,10 +43,19 @@ class RegisterClient {
   Duration get _requestTimeout => const Duration(seconds: 2);
 
   /// Sends a request to the Register service and returns the reply payload.
-  Future<List<int>?> request(int cid, {List<int> payload = const [], Duration? timeout}) async {
+  Future<List<int>?> request(
+    int cid, {
+    List<int> payload = const [],
+    Duration? timeout,
+  }) async {
     try {
-      return await ConnectionManager.instance.request(deviceId, ServiceType.register, cid,
-          payload: payload, timeout: timeout ?? _requestTimeout);
+      return await ConnectionManager.instance.request(
+        deviceId,
+        ServiceType.register,
+        cid,
+        payload: payload,
+        timeout: timeout ?? _requestTimeout,
+      );
     } catch (error) {
       AppDiagnostics.log('register', 'request failed: $error');
       return null;
@@ -56,11 +65,19 @@ class RegisterClient {
   /// Like [request], but keeps the packet-level SUCCESS/FAIL flags alongside the payload.
   /// The flag-answering commands (dynamic create/set-name/delete, Save/Recall All) report
   /// their status there, not in a payload byte.
-  Future<PacketResponse?> requestWithFlags(int cid,
-      {List<int> payload = const [], Duration? timeout}) async {
+  Future<PacketResponse?> requestWithFlags(
+    int cid, {
+    List<int> payload = const [],
+    Duration? timeout,
+  }) async {
     try {
-      return await ConnectionManager.instance.requestWithFlags(deviceId, ServiceType.register, cid,
-          payload: payload, timeout: timeout ?? _requestTimeout);
+      return await ConnectionManager.instance.requestWithFlags(
+        deviceId,
+        ServiceType.register,
+        cid,
+        payload: payload,
+        timeout: timeout ?? _requestTimeout,
+      );
     } catch (error) {
       AppDiagnostics.log('register', 'request failed: $error');
       return null;
@@ -69,8 +86,13 @@ class RegisterClient {
 
   /// True when a flag-answering command replies FLAG_SUCCESS; a transport failure or a
   /// FLAG_FAIL reply is false.
-  Future<bool> _requestOk(int cid, {List<int> payload = const [], Duration? timeout}) async =>
-      (await requestWithFlags(cid, payload: payload, timeout: timeout))?.ok ?? false;
+  Future<bool> _requestOk(
+    int cid, {
+    List<int> payload = const [],
+    Duration? timeout,
+  }) async =>
+      (await requestWithFlags(cid, payload: payload, timeout: timeout))?.ok ??
+      false;
 
   /// Slices the value bytes after a ValueInfo header, clamped to the declared size
   /// (the reply may carry service-level padding past the value).
@@ -97,7 +119,8 @@ class RegisterClient {
   /// block, or field 0 key 0) is always *first*.
   static List<int> _streamWords(List<int> reply) {
     final words = <int>[
-      for (var i = 0; i + 1 < reply.length; i += 2) reply[i] | (reply[i + 1] << 8),
+      for (var i = 0; i + 1 < reply.length; i += 2)
+        reply[i] | (reply[i + 1] << 8),
     ];
     if (words.length > 1 && words.last == 0) words.removeLast();
     return words;
@@ -149,8 +172,10 @@ class RegisterClient {
   /// The instance indexes of a block type. Static and dynamic blocks are dense
   /// (`0..maxInstance`); scripts are sparse, so their slots come from the Script service
   /// (CID 0 lists the loaded file ids, which equal the loaded slots).
-  Future<List<int>?> enumerateInstanceIds(int blockType,
-      {List<int>? scriptSlots}) async {
+  Future<List<int>?> enumerateInstanceIds(
+    int blockType, {
+    List<int>? scriptSlots,
+  }) async {
     if (isScriptType(blockType)) return scriptSlots ?? const [];
     final types = await enumerateBlockTypes();
     if (types == null) return null;
@@ -176,15 +201,19 @@ class RegisterClient {
   final Map<int, List<int>> _fieldKeysCache = {};
 
   Future<List<int>?> enumerateFieldKeys(int blockType, int instance) async {
-    final typeInvariant = !isDynamicType(blockType) &&
+    final typeInvariant =
+        !isDynamicType(blockType) &&
         !isScriptType(blockType) &&
-        blockType != 0; // the System block's list is fixed too, but it is one instance
+        blockType !=
+            systemBlockTypeValue; // the System block's list is fixed too, but it is one instance
     if (typeInvariant && _fieldKeysCache.containsKey(blockType)) {
       return _fieldKeysCache[blockType];
     }
     final packed = ((blockType & 0x3FF) << 6) | (instance & 0x3F);
-    final reply = await request(RegisterCid.enumerateFields,
-        payload: [packed & 0xFF, (packed >> 8) & 0xFF, 0, 0]);
+    final reply = await request(
+      RegisterCid.enumerateFields,
+      payload: [packed & 0xFF, (packed >> 8) & 0xFF, 0, 0],
+    );
     if (reply == null) return null;
     final words = _streamWords(reply);
     if (typeInvariant) _fieldKeysCache[blockType] = words;
@@ -204,10 +233,17 @@ class RegisterClient {
   }
 
   /// The keys present at `field` of an instance (key 0 when that field is not keyed).
-  Future<List<int>?> enumerateKeys(int blockType, int instance, int field) async {
+  Future<List<int>?> enumerateKeys(
+    int blockType,
+    int instance,
+    int field,
+  ) async {
     final keys = await enumerateFieldKeys(blockType, instance);
     if (keys == null) return null;
-    return [for (final fk in keys) if ((fk >> 8) == field) fk & 0xFF];
+    return [
+      for (final fk in keys)
+        if ((fk >> 8) == field) fk & 0xFF,
+    ];
   }
 
   // ===== thin wrappers the call sites still use (the enumeration is two requests now) =====
@@ -218,19 +254,32 @@ class RegisterClient {
 
   /// The keys present at (instance, field). An unkeyed field reports `[0]`, which is what the
   /// call sites defaulted to for the old "no keys" reply.
-  Future<List<int>?> getBlockKeys(int blockType, int instance, int field) async =>
-      enumerateKeys(blockType, instance, field);
+  Future<List<int>?> getBlockKeys(
+    int blockType,
+    int instance,
+    int field,
+  ) async => enumerateKeys(blockType, instance, field);
 
   /// The distinct field indexes of a dynamic block (addressed by its global index).
   Future<List<int>?> getDynamicFields(int global) async =>
-      enumerateFieldIndexes(dynamicTypeForIndex(global), dynamicInstanceForIndex(global));
+      enumerateFieldIndexes(
+        dynamicTypeForIndex(global),
+        dynamicInstanceForIndex(global),
+      );
 
   /// The keys present at (global, field) of a dynamic block.
   Future<List<int>?> getDynamicKeys(int global, int field) async =>
-      enumerateKeys(dynamicTypeForIndex(global), dynamicInstanceForIndex(global), field);
+      enumerateKeys(
+        dynamicTypeForIndex(global),
+        dynamicInstanceForIndex(global),
+        field,
+      );
 
   /// Read block meta + name (CID 1).
-  Future<({ValueInfo meta, String name})?> readBlockMeta(int blockType, int instance) async {
+  Future<({ValueInfo meta, String name})?> readBlockMeta(
+    int blockType,
+    int instance,
+  ) async {
     // For block meta, we need type|inst|field=0xFF|key=0
     final payload = blockInfoBytes(blockType, instance, 0xFF, 0);
     final reply = await request(RegisterCid.read, payload: payload);
@@ -243,9 +292,17 @@ class RegisterClient {
   /// Read field value (CID 1) for system block (type=0, inst=0). The struct fields (0, 3, 4, 5)
   /// are read whole at key 0 (the struct position never goes on the wire) and the member the
   /// key selects is sliced out; the scalar fields (1, 2, 6, 7) return as-is.
-  Future<({ValueInfo meta, List<int> value})?> readField(int field, int key) async {
+  Future<({ValueInfo meta, List<int> value})?> readField(
+    int field,
+    int key,
+  ) async {
     final member = systemStructFields[field]?[key];
-    final payload = blockInfoBytes(0, 0, field, member != null ? 0 : key);
+    final payload = blockInfoBytes(
+      systemBlockTypeValue,
+      0,
+      field,
+      member != null ? 0 : key,
+    );
     final reply = await request(RegisterCid.read, payload: payload);
     if (reply == null || reply.length < 8) return null;
     final meta = ValueInfo.fromBytes(reply, 4);
@@ -257,7 +314,11 @@ class RegisterClient {
       }
       return (
         meta: ValueInfo(
-            type: member.type.value, size: member.size, flags: meta.flags, key: key),
+          type: member.type.value,
+          size: member.size,
+          flags: meta.flags,
+          key: key,
+        ),
         value: value,
       );
     }
@@ -265,7 +326,12 @@ class RegisterClient {
   }
 
   /// Read field value (CID 1) for a specific block type and instance.
-  Future<({ValueInfo meta, List<int> value})?> readBlockField(int blockType, int instance, int field, int key) async {
+  Future<({ValueInfo meta, List<int> value})?> readBlockField(
+    int blockType,
+    int instance,
+    int field,
+    int key,
+  ) async {
     final payload = blockInfoBytes(blockType, instance, field, key);
     final reply = await request(RegisterCid.read, payload: payload);
     if (reply == null || reply.length < 8) return null;
@@ -276,23 +342,37 @@ class RegisterClient {
 
   /// Write field value (CID 2) for a specific block type and instance (static/dynamic blocks).
   /// Payload: BlockInfo (4) + ValueInfo (4) + value
-  Future<List<int>?> writeBlockField(int blockType, int instance, int field, int key,
-          ValueInfo meta, List<int> value) =>
-      _writeDynamicValue(blockInfoBytes(blockType, instance, field, key), meta, value);
+  Future<List<int>?> writeBlockField(
+    int blockType,
+    int instance,
+    int field,
+    int key,
+    ValueInfo meta,
+    List<int> value,
+  ) => _writeDynamicValue(
+    blockInfoBytes(blockType, instance, field, key),
+    meta,
+    value,
+  );
 
   /// Reads all blocks (static + dynamic + loaded scripts) by enumerating types/instances.
   /// The System block (type 0, inst 0) is a virtual block not in the static registry.
   /// The banked dynamic (0x3F0-0x3F3) and script (0x3F4-0x3F7) ranges are handled separately.
-  Future<List<({int type, int inst, ValueInfo meta, String name})?>?> readBlocks(
-      {List<int>? scriptSlots}) async {
+  Future<List<({int type, int inst, ValueInfo meta, String name})?>?>
+  readBlocks({List<int>? scriptSlots}) async {
     final types = await enumerateBlockTypes();
     if (types == null) return null;
     final blocks = <({int type, int inst, ValueInfo meta, String name})?>[];
 
     // System block (type 0, inst 0): a virtual block not present in the static registry.
-    final sysBlock = await readBlockMeta(0, 0);
+    final sysBlock = await readBlockMeta(systemBlockTypeValue, 0);
     if (sysBlock != null) {
-      blocks.add((type: 0, inst: 0, meta: sysBlock.meta, name: 'System'));
+      blocks.add((
+        type: systemBlockTypeValue,
+        inst: 0,
+        meta: sysBlock.meta,
+        name: 'System',
+      ));
     }
 
     // Use the already-fetched type list; static instances are dense (0..maxInstance),
@@ -301,7 +381,12 @@ class RegisterClient {
       for (var inst = 0; inst <= t.maxInstance; inst++) {
         final block = await readBlockMeta(t.type, inst);
         if (block != null) {
-          blocks.add((type: t.type, inst: inst, meta: block.meta, name: block.name));
+          blocks.add((
+            type: t.type,
+            inst: inst,
+            meta: block.meta,
+            name: block.name,
+          ));
         }
       }
     }
@@ -311,15 +396,23 @@ class RegisterClient {
     // The type list carries every static type *and* the dynamic memory when it has instances;
     // only the script blocks are missing (the Script service owns their sparse slots).
     for (final t in types) {
-      if (t.type == 0) continue; // the System block is added above
+      if (t.type == systemBlockTypeValue) {
+        continue; // the System block is added above
+      }
       if (isDynamicType(t.type)) {
         // The banked range: iterate the global indices; a block's `inst` is its global index.
         for (var g = 0; g <= t.maxInstance; g++) {
-          final block =
-              await readBlockMeta(dynamicTypeForIndex(g), dynamicInstanceForIndex(g));
+          final block = await readBlockMeta(
+            dynamicTypeForIndex(g),
+            dynamicInstanceForIndex(g),
+          );
           if (block != null) {
-            blocks.add(
-                (type: dynamicTypeForIndex(g), inst: g, meta: block.meta, name: block.name));
+            blocks.add((
+              type: dynamicTypeForIndex(g),
+              inst: g,
+              meta: block.meta,
+              name: block.name,
+            ));
           }
         }
         continue;
@@ -328,11 +421,17 @@ class RegisterClient {
     }
     // Loaded scripts: addressed by their global slot (the Script service owns the file↔slot map).
     for (final slot in scriptSlots ?? const []) {
-      final block =
-          await readBlockMeta(scriptTypeForIndex(slot), scriptInstanceForIndex(slot));
+      final block = await readBlockMeta(
+        scriptTypeForIndex(slot),
+        scriptInstanceForIndex(slot),
+      );
       if (block != null) {
-        blocks.add(
-            (type: scriptTypeForIndex(slot), inst: slot, meta: block.meta, name: block.name));
+        blocks.add((
+          type: scriptTypeForIndex(slot),
+          inst: slot,
+          meta: block.meta,
+          name: block.name,
+        ));
       }
     }
 
@@ -347,7 +446,11 @@ class RegisterClient {
     final types = await enumerateBlockTypes();
     if (types == null) return out;
     for (final t in types) {
-      if (t.type == 0 || isDynamicType(t.type) || isScriptType(t.type)) continue;
+      if (t.type == systemBlockTypeValue ||
+          isDynamicType(t.type) ||
+          isScriptType(t.type)) {
+        continue;
+      }
       final fields = await enumerateFieldIndexes(t.type, 0) ?? const <int>[];
       final list = <({int field, int size, int type})>[];
       for (final f in fields) {
@@ -366,8 +469,13 @@ class RegisterClient {
   // ===========================================================================
 
   // A dynamic block is addressed by its global index (0..255); the bank type is derived.
-  static Uint8List _dynBi(int global, int field, [int key = 0]) => blockInfoBytes(
-      dynamicTypeForIndex(global), dynamicInstanceForIndex(global), field, key);
+  static Uint8List _dynBi(int global, int field, [int key = 0]) =>
+      blockInfoBytes(
+        dynamicTypeForIndex(global),
+        dynamicInstanceForIndex(global),
+        field,
+        key,
+      );
 
   /// Reads the dynamic block list (CID 0 Enum 1 for instances). None/Deleted
   /// blocks are hidden (their index stays reserved until a save compacts).
@@ -388,47 +496,85 @@ class RegisterClient {
 
   /// Reads one dynamic block's meta + name. The meta (type + field count) comes from the basic
   /// Read at field `0xFF`; the name comes from the Dynamic `Get Name` command (CID 0x12), which
-  /// returns the fixed 16-char name.
-  Future<DynBlock?> readDynamicBlockMeta(int block) async {
+  /// returns the fixed 16-char name. Pass `withName: false` to skip that second round trip when
+  /// only [DynBlock.meta] is needed.
+  Future<DynBlock?> readDynamicBlockMeta(
+    int block, {
+    bool withName = true,
+  }) async {
     final reply = await request(RegisterCid.read, payload: _dynBi(block, 0xFF));
     if (reply == null || reply.length < 8) return null;
     final meta = ValueInfo.fromBytes(reply, 4);
 
-    // The name is a fixed 16-char field (Docs "Dynamic Block Table"), read by CID 0x12.
-    final nameReply = await request(DynamicCid.getName,
-        payload: [block & 0xFF, (block >> 8) & 0xFF]);
-    final name = (nameReply != null && nameReply.length >= 16)
-        ? _blockName(nameReply)
-        : '';
+    var name = '';
+    if (withName) {
+      // The name is a fixed 16-char field (Docs "Dynamic Block Table"), read by CID 0x12.
+      final nameReply = await request(
+        DynamicCid.getName,
+        payload: [block & 0xFF, (block >> 8) & 0xFF],
+      );
+      if (nameReply != null && nameReply.length >= 16) {
+        name = _blockName(nameReply);
+      }
+    }
     return DynBlock(index: block, meta: meta, name: name);
   }
 
   /// Reads one dynamic entry's current value (CID 1) at (field, key).
-  Future<DynField?> readDynamicField(DynBlock block, int field, [int key = 0]) async {
-    final reply = await request(RegisterCid.read, payload: _dynBi(block.index, field, key));
+  Future<DynField?> readDynamicField(
+    DynBlock block,
+    int field, [
+    int key = 0,
+  ]) async {
+    final reply = await request(
+      RegisterCid.read,
+      payload: _dynBi(block.index, field, key),
+    );
     if (reply == null || reply.length < 8) return null;
     final meta = ValueInfo.fromBytes(reply, 4, key);
-    return DynField(index: field, meta: meta, value: valueSlice(reply, meta.size));
+    return DynField(
+      index: field,
+      meta: meta,
+      value: valueSlice(reply, meta.size),
+    );
   }
 
   /// Writes a dynamic entry (CID 2). Writing type Deleted marks it for deletion.
   Future<List<int>?> writeDynamicField(
-      DynBlock block, DynField field, List<int> newValue,
-      {DataType? newType, int? key}) async {
+    DynBlock block,
+    DynField field,
+    List<int> newValue, {
+    DataType? newType,
+    int? key,
+  }) async {
     final meta = ValueInfo(
       type: newType != null ? newType.value : field.meta.type,
       flags: field.meta.flags,
       key: key ?? field.meta.key,
       size: newValue.length,
     );
-    return _writeDynamicValue(_dynBi(block.index, field.index, key ?? field.meta.key), meta, newValue);
+    return _writeDynamicValue(
+      _dynBi(block.index, field.index, key ?? field.meta.key),
+      meta,
+      newValue,
+    );
   }
 
   /// Writes one (field, key) entry (CID 2), creating/updating it in the sorted table.
   /// Writing DataType.none deletes the entry (docs: "Setting the type to None deletes").
   Future<List<int>?> writeDynamicEntry(
-      DynBlock block, int field, int key, ValueInfo meta, List<int> value) async {
-    final sized = ValueInfo(type: meta.type, flags: meta.flags, key: key, size: value.length);
+    DynBlock block,
+    int field,
+    int key,
+    ValueInfo meta,
+    List<int> value,
+  ) async {
+    final sized = ValueInfo(
+      type: meta.type,
+      flags: meta.flags,
+      key: key,
+      size: value.length,
+    );
     return _writeDynamicValue(_dynBi(block.index, field, key), sized, value);
   }
 
@@ -443,18 +589,16 @@ class RegisterClient {
       final indices = await enumerateDynamicIndices() ?? const [];
       var maxLive = -1;
       for (final i in indices) {
-        final m = await readDynamicBlockMeta(i);
+        final m = await readDynamicBlockMeta(i, withName: false);
         if (m != null && m.meta.type != BlockType.none.value) maxLive = i;
       }
       target = maxLive + 1;
     }
-    final ok = await _requestOk(DynamicCid.create,
-        timeout: const Duration(seconds: 5),
-        payload: [
-          target & 0xFF,
-          (target >> 8) & 0xFF,
-          ...nameBytes,
-        ]);
+    final ok = await _requestOk(
+      DynamicCid.create,
+      timeout: const Duration(seconds: 5),
+      payload: [target & 0xFF, (target >> 8) & 0xFF, ...nameBytes],
+    );
     if (!ok) return null;
     invalidateBlockTypes();
     // The device no longer echoes the BlockIndex; the host already picked the target.
@@ -464,20 +608,27 @@ class RegisterClient {
   /// Sets a dynamic block's name through the Dynamic `Set Name` command (CID 0x13):
   /// `Index (uint16)` + the fixed 16-char name. [type] is a legacy block-type argument the
   /// command no longer carries (block deletion goes through [deleteDynamic]); it is ignored.
-  Future<bool> writeDynamicBlockMeta(DynBlock block, String name, BlockType? type) async {
+  Future<bool> writeDynamicBlockMeta(
+    DynBlock block,
+    String name,
+    BlockType? type,
+  ) async {
     final nameBytes = _padBlockName(name);
     // The command reports success through the packet SUCCESS flag, not a payload byte.
-    return _requestOk(DynamicCid.setName, payload: [
-      block.index & 0xFF,
-      (block.index >> 8) & 0xFF,
-      ...nameBytes,
-    ]);
+    return _requestOk(
+      DynamicCid.setName,
+      payload: [block.index & 0xFF, (block.index >> 8) & 0xFF, ...nameBytes],
+    );
   }
 
   /// Appends an entry to a dynamic block (CID 2), or fills the slot at `index`
   /// when given (a None placeholder keeps indexes stable).
-  Future<List<int>?> appendDynamicEntry(DynBlock block, ValueInfo meta, List<int> value,
-      {int? index}) async {
+  Future<List<int>?> appendDynamicEntry(
+    DynBlock block,
+    ValueInfo meta,
+    List<int> value, {
+    int? index,
+  }) async {
     final sizedMeta = ValueInfo(
       type: meta.type,
       flags: meta.flags,
@@ -485,14 +636,25 @@ class RegisterClient {
       size: value.length,
     );
     final fieldIdx = index ?? block.fieldCount;
-    return _writeDynamicValue(_dynBi(block.index, fieldIdx), sizedMeta, value,
-        timeout: const Duration(seconds: 4));
+    return _writeDynamicValue(
+      _dynBi(block.index, fieldIdx),
+      sizedMeta,
+      value,
+      timeout: const Duration(seconds: 4),
+    );
   }
 
-  Future<List<int>?> _writeDynamicValue(Uint8List bi, ValueInfo meta, List<int> value,
-      {Duration? timeout}) async {
-    final reply = await request(RegisterCid.write, payload: [...bi, ...meta.toBytes(), ...value],
-        timeout: timeout ?? const Duration(seconds: 4));
+  Future<List<int>?> _writeDynamicValue(
+    Uint8List bi,
+    ValueInfo meta,
+    List<int> value, {
+    Duration? timeout,
+  }) async {
+    final reply = await request(
+      RegisterCid.write,
+      payload: [...bi, ...meta.toBytes(), ...value],
+      timeout: timeout ?? const Duration(seconds: 4),
+    );
     if (reply == null || reply.length < 8) return null;
     final echoMeta = ValueInfo.fromBytes(reply, 4);
     return valueSlice(reply, echoMeta.size);
@@ -500,8 +662,13 @@ class RegisterClient {
 
   /// Sets the Read-only / Persistent flags of one (field, key) entry in place,
   /// preserving its type and value.
-  Future<List<int>?> setDynamicEntryFlags(DynBlock block, int field, int key,
-      {bool? readOnly, bool? persistent}) async {
+  Future<List<int>?> setDynamicEntryFlags(
+    DynBlock block,
+    int field,
+    int key, {
+    bool? readOnly,
+    bool? persistent,
+  }) async {
     final e = await readDynamicField(block, field, key);
     if (e == null) return null;
     final curRO = (e.meta.flags & ValueFlags.readOnly) != 0;
@@ -509,10 +676,17 @@ class RegisterClient {
     final newRO = readOnly ?? curRO;
     final newPer = persistent ?? curPer;
     if (newRO == curRO && newPer == curPer) return e.value;
-    final nf = (e.meta.flags & ~(ValueFlags.readOnly | ValueFlags.persistent)) |
-        (newRO ? ValueFlags.readOnly : 0) | (newPer ? ValueFlags.persistent : 0);
-    return writeDynamicEntry(block, field, key,
-        ValueInfo(type: e.meta.type, flags: nf, key: key, size: e.value.length), e.value);
+    final nf =
+        (e.meta.flags & ~(ValueFlags.readOnly | ValueFlags.persistent)) |
+        (newRO ? ValueFlags.readOnly : 0) |
+        (newPer ? ValueFlags.persistent : 0);
+    return writeDynamicEntry(
+      block,
+      field,
+      key,
+      ValueInfo(type: e.meta.type, flags: nf, key: key, size: e.value.length),
+      e.value,
+    );
   }
 
   /// Deletes a dynamic block (tombstone), a field, or a (field, key) entry.
@@ -523,24 +697,43 @@ class RegisterClient {
   Future<bool> deleteDynamic({required int block, int? field, int? key}) async {
     if (field == null) {
       // The command reports success through the packet SUCCESS flag, not a payload byte.
-      final ok = await _requestOk(DynamicCid.delete,
-          payload: [block & 0xFF, (block >> 8) & 0xFF]);
+      final ok = await _requestOk(
+        DynamicCid.delete,
+        payload: [block & 0xFF, (block >> 8) & 0xFF],
+      );
       if (ok) invalidateBlockTypes();
       return ok;
     }
     final dyn = DynBlock(
-        index: block, meta: ValueInfo(type: dynamicTypeForIndex(block)), name: '');
+      index: block,
+      meta: ValueInfo(type: dynamicTypeForIndex(block)),
+      name: '',
+    );
     if (key != null) {
       final e = await readDynamicField(dyn, field, key);
       if (e == null) return false;
-      return await writeDynamicField(dyn, e, const [], newType: DataType.none, key: key) !=
+      return await writeDynamicField(
+            dyn,
+            e,
+            const [],
+            newType: DataType.none,
+            key: key,
+          ) !=
           null;
     }
     // Delete every key at the field (nothing to delete is a success).
     var ok = true;
     for (final k in await getDynamicKeys(block, field) ?? const <int>[]) {
       final e = await readDynamicField(dyn, field, k);
-      if (e == null || await writeDynamicField(dyn, e, const [], newType: DataType.none, key: k) == null) {
+      if (e == null ||
+          await writeDynamicField(
+                dyn,
+                e,
+                const [],
+                newType: DataType.none,
+                key: k,
+              ) ==
+              null) {
         ok = false;
       }
     }
@@ -552,21 +745,27 @@ class RegisterClient {
   /// dynamic positions, then recreates them at positions 0..L-1 in the new order
   /// (tombstone slots are filled; leftover tombstones stay at the end).
   Future<bool> reorderDynamicBlocks(List<int> newOrder) async {
-    final live = <
-        ({
-          String name,
-          BlockType type,
-          List<({int field, int key, ValueInfo meta, List<int> value})> entries,
-        })>[];
+    final live =
+        <
+          ({
+            String name,
+            BlockType type,
+            List<({int field, int key, ValueInfo meta, List<int> value})>
+            entries,
+          })
+        >[];
     for (final i in newOrder) {
       final meta = await readDynamicBlockMeta(i);
       if (meta == null || meta.meta.type == BlockType.none.value) continue;
-      final entries = <({int field, int key, ValueInfo meta, List<int> value})>[];
+      final entries =
+          <({int field, int key, ValueInfo meta, List<int> value})>[];
       final block = DynBlock(index: i, meta: meta.meta, name: meta.name);
       for (final f in await getDynamicFields(i) ?? <int>[]) {
         for (final k in await getDynamicKeys(i, f) ?? <int>[0]) {
           final e = await readDynamicField(block, f, k);
-          if (e != null) entries.add((field: f, key: k, meta: e.meta, value: e.value));
+          if (e != null) {
+            entries.add((field: f, key: k, meta: e.meta, value: e.value));
+          }
         }
       }
       live.add((name: meta.name, type: meta.meta.blockType, entries: entries));
@@ -580,13 +779,15 @@ class RegisterClient {
       final idx = await createDynamicBlock(entry.name, index: pos);
       if (idx == null) return false;
       final b = DynBlock(
-          index: pos,
-          meta: ValueInfo(
-              type: dynamicTypeForIndex(pos), size: entry.entries.length),
-          name: entry.name);
+        index: pos,
+        meta: ValueInfo(
+          type: dynamicTypeForIndex(pos),
+          size: entry.entries.length,
+        ),
+        name: entry.name,
+      );
       for (final e in entry.entries) {
-        final ok = await writeDynamicEntry(
-            b, e.field, e.key, e.meta, e.value);
+        final ok = await writeDynamicEntry(b, e.field, e.key, e.meta, e.value);
         if (ok == null) return false;
       }
     }
@@ -601,7 +802,9 @@ class RegisterClient {
     for (final f in await getDynamicFields(block.index) ?? <int>[]) {
       for (final k in await getDynamicKeys(block.index, f) ?? <int>[0]) {
         final e = await readDynamicField(block, f, k);
-        if (e != null) all.add((field: f, key: k, meta: e.meta, value: e.value));
+        if (e != null) {
+          all.add((field: f, key: k, meta: e.meta, value: e.value));
+        }
       }
     }
     for (final f in await getDynamicFields(block.index) ?? <int>[]) {
@@ -624,10 +827,12 @@ class RegisterClient {
     final indices = await enumerateDynamicIndices() ?? const [];
     final live = <int>[];
     for (final i in indices) {
-      final m = await readDynamicBlockMeta(i);
+      final m = await readDynamicBlockMeta(i, withName: false);
       if (m != null && m.meta.type != BlockType.none.value) live.add(i);
     }
-    if (!live.contains(fromIndex) || toIndex < 0 || toIndex > live.length) return false;
+    if (!live.contains(fromIndex) || toIndex < 0 || toIndex > live.length) {
+      return false;
+    }
     live.remove(fromIndex);
     live.insert(toIndex, fromIndex);
     return reorderDynamicBlocks(live);
@@ -635,7 +840,11 @@ class RegisterClient {
 
   /// Re-numbers a field from [oldField] to [newField] (rewrites every entry at the new
   /// index and removes the old). Returns false when newField collides.
-  Future<bool> setDynamicFieldIndex(DynBlock block, int oldField, int newField) async {
+  Future<bool> setDynamicFieldIndex(
+    DynBlock block,
+    int oldField,
+    int newField,
+  ) async {
     if (oldField == newField) return true;
     final existing = await getDynamicFields(block.index) ?? <int>[];
     if (existing.contains(newField)) return false;
@@ -645,7 +854,8 @@ class RegisterClient {
       if (e != null) all.add((key: k, meta: e.meta, value: e.value));
     }
     for (final e in all) {
-      if (await writeDynamicEntry(block, newField, e.key, e.meta, e.value) == null) {
+      if (await writeDynamicEntry(block, newField, e.key, e.meta, e.value) ==
+          null) {
         return false;
       }
     }
@@ -662,14 +872,20 @@ class RegisterClient {
   Future<bool> saveAll() async {
     // Writing every dynamic block runs the 64-slot orphan cleanup (flash page erases), which
     // can exceed the default request timeout.
-    return _requestOk(RegisterCid.saveAll,
-        payload: const [], timeout: const Duration(seconds: 25));
+    return _requestOk(
+      RegisterCid.saveAll,
+      payload: const [],
+      timeout: const Duration(seconds: 25),
+    );
   }
 
   /// Recalls the whole device from its backup (CID 3 "Recall All"), the counterpart of
   /// [saveAll]. Partial recall is the app's job (register writes of the stored values).
   Future<bool> recallAll() async {
-    return _requestOk(RegisterCid.recallAll,
-        payload: const [], timeout: const Duration(seconds: 25));
+    return _requestOk(
+      RegisterCid.recallAll,
+      payload: const [],
+      timeout: const Duration(seconds: 25),
+    );
   }
 }

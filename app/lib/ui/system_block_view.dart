@@ -12,7 +12,12 @@ export '../core/system_schema.dart';
 /// Formats one system-block value (special-cases the device type enum, serial
 /// number, addresses, timestamps and the 4-byte software version). `field`/`key`
 /// let field-specific values (the capabilities bitmask under Device Type) decode.
-String formatSystemValue(DataType type, List<int> value, [int field = -1, int key = -1]) {
+String formatSystemValue(
+  DataType type,
+  List<int> value, [
+  int field = -1,
+  int key = -1,
+]) {
   // System-specific overrides first, then the shared scalar formatter for the rest.
   if (field == 8 && type == DataType.enum_ && value.isNotEmpty) {
     // App Active: 1-byte enum No / USB / BLE.

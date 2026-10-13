@@ -20,8 +20,10 @@ void main() {
     ).build();
 
     final parsed = ScriptFileData.parse(image);
-    expect(parsed.properties,
-        ScriptProperties.loadOnBoot | ScriptProperties.runOnLoad);
+    expect(
+      parsed.properties,
+      ScriptProperties.loadOnBoot | ScriptProperties.runOnLoad,
+    );
     expect(parsed.inputs.length, 1);
     expect(parsed.outputs.length, 1);
     expect(parsed.variables.length, 2);
@@ -36,7 +38,10 @@ void main() {
 
   test('script value info flags/type packing', () {
     final info = ValueInfo(
-        type: DataType.number.value, size: 4, flags: ValueFlags.readOnly);
+      type: DataType.number.value,
+      size: 4,
+      flags: ValueFlags.readOnly,
+    );
     final bytes = info.toBytes();
     final back = ValueInfo.fromBytes(bytes);
     expect(back.dataType, DataType.number);
@@ -58,7 +63,9 @@ void main() {
   test('header is a 16-bit Properties word + five counts + the four lengths', () {
     final image = ScriptFileBuilder(
       properties: scriptPropertiesWithSlot(
-          ScriptProperties.loadOnBoot | ScriptProperties.functionLibrary, 7),
+        ScriptProperties.loadOnBoot | ScriptProperties.functionLibrary,
+        7,
+      ),
       inputs: [ValueInfo(type: DataType.number.value, size: 4)],
       outputs: [ValueInfo(type: DataType.bool_.value, size: 1)],
       variables: [ValueInfo(type: DataType.number.value, size: 4)],
@@ -72,8 +79,10 @@ void main() {
     ).build();
 
     // Properties is a 16-bit little-endian word at bytes 0-1.
-    expect(image[0] | (image[1] << 8),
-        ScriptProperties.loadOnBoot | ScriptProperties.functionLibrary | (7 << 8));
+    expect(
+      image[0] | (image[1] << 8),
+      ScriptProperties.loadOnBoot | ScriptProperties.functionLibrary | (7 << 8),
+    );
     // Five uint8 counts (Input, Output, Variable, Constant, Function), then a padding byte.
     expect(image[2], 1);
     expect(image[3], 1);
@@ -83,11 +92,16 @@ void main() {
     expect(image[7], 0); // reserved padding
 
     final parsed = ScriptFileData.parse(image);
-    expect(parsed.properties & ScriptProperties.functionLibrary,
-        ScriptProperties.functionLibrary);
+    expect(
+      parsed.properties & ScriptProperties.functionLibrary,
+      ScriptProperties.functionLibrary,
+    );
     expect(scriptPropertiesSlot(parsed.properties), 7);
     expect(parsed.functionCount, 1);
-    expect(parsed.functionReservations, hasLength(scriptFunctionReservationSize));
+    expect(
+      parsed.functionReservations,
+      hasLength(scriptFunctionReservationSize),
+    );
     expect(parsed.functionReservations.first, 0);
     expect(parsed.functionReservations.last, scriptFunctionReservationSize - 1);
   });

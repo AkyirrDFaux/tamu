@@ -243,8 +243,9 @@ class StorageClient {
     var next = 0;
     var offset = 0;
     while (offset < bytes.length) {
-      final end =
-          (offset + dataMax > bytes.length) ? bytes.length : offset + dataMax;
+      final end = (offset + dataMax > bytes.length)
+          ? bytes.length
+          : offset + dataMax;
       final payload = <int>[
         ...writeFragInfo(next, 0xFFFF),
         ...padName(name), // every fragment carries the name

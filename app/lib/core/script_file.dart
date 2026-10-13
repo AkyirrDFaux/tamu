@@ -62,29 +62,34 @@ class ScriptUiType {
   static const swatch = 6;
 
   static String label(int uiType) => switch (uiType) {
-        auto => 'Auto',
-        number => 'Number field',
-        slider => 'Slider',
-        toggle => 'Toggle',
-        button => 'Button',
-        dropdown => 'Dropdown',
-        swatch => 'Swatch',
-        _ => 'Auto',
-      };
+    auto => 'Auto',
+    number => 'Number field',
+    slider => 'Slider',
+    toggle => 'Toggle',
+    button => 'Button',
+    dropdown => 'Dropdown',
+    swatch => 'Swatch',
+    _ => 'Auto',
+  };
 }
 
 /// The input UI styles that are meaningful for a data type (the editor only offers these).
 List<int> uiStylesForType(DataType type) => switch (type) {
-      DataType.bool_ => const [ScriptUiType.auto, ScriptUiType.toggle, ScriptUiType.button],
-      DataType.number ||
-      DataType.integer ||
-      DataType.uint32 =>
-        const [ScriptUiType.auto, ScriptUiType.number, ScriptUiType.slider],
-      DataType.enum_ || DataType.devType =>
-        const [ScriptUiType.auto, ScriptUiType.dropdown],
-      DataType.colour => const [ScriptUiType.auto, ScriptUiType.swatch],
-      _ => const [ScriptUiType.auto],
-    };
+  DataType.bool_ => const [
+    ScriptUiType.auto,
+    ScriptUiType.toggle,
+    ScriptUiType.button,
+  ],
+  DataType.number || DataType.integer || DataType.uint32 => const [
+    ScriptUiType.auto,
+    ScriptUiType.number,
+    ScriptUiType.slider,
+  ],
+  DataType.enum_ ||
+  DataType.devType => const [ScriptUiType.auto, ScriptUiType.dropdown],
+  DataType.colour => const [ScriptUiType.auto, ScriptUiType.swatch],
+  _ => const [ScriptUiType.auto],
+};
 
 /// Min/max/step limits only apply to the numeric input styles.
 bool uiStyleSupportsLimits(int uiType) =>
@@ -109,15 +114,19 @@ class ScriptInputSpec {
     this.options = const <String>[],
   });
 
-  ScriptInputSpec copyWith(
-          {int? uiType, double? min, double? max, double? step, List<String>? options}) =>
-      ScriptInputSpec(
-        uiType: uiType ?? this.uiType,
-        min: min ?? this.min,
-        max: max ?? this.max,
-        step: step ?? this.step,
-        options: options ?? this.options,
-      );
+  ScriptInputSpec copyWith({
+    int? uiType,
+    double? min,
+    double? max,
+    double? step,
+    List<String>? options,
+  }) => ScriptInputSpec(
+    uiType: uiType ?? this.uiType,
+    min: min ?? this.min,
+    max: max ?? this.max,
+    step: step ?? this.step,
+    options: options ?? this.options,
+  );
 }
 
 /// Register field categories of a loaded script (the Scripts range 0x3F4-0x3F7). Only Input and Output
@@ -149,16 +158,16 @@ class ScriptState {
   static const loadFailed = 7;
 
   static String label(int state) => switch (state) {
-        stopped => 'Stopped',
-        running => 'Running',
-        paused => 'Paused',
-        waiting => 'Waiting',
-        finished => 'Finished',
-        error => 'Error',
-        reservedNotReady => 'Reserved (not ready)',
-        loadFailed => 'Load failed',
-        _ => 'Unknown ($state)',
-      };
+    stopped => 'Stopped',
+    running => 'Running',
+    paused => 'Paused',
+    waiting => 'Waiting',
+    finished => 'Finished',
+    error => 'Error',
+    reservedNotReady => 'Reserved (not ready)',
+    loadFailed => 'Load failed',
+    _ => 'Unknown ($state)',
+  };
 }
 
 /// Properties bits (Docs/Services/Script.md "Properties").
@@ -198,22 +207,22 @@ enum ScriptFunctionKind {
   static const int _globalCode = 2;
 
   int get code => switch (this) {
-        local => _localCode,
-        macro => _macroCode,
-        global => _globalCode,
-      };
+    local => _localCode,
+    macro => _macroCode,
+    global => _globalCode,
+  };
 
   static ScriptFunctionKind fromCode(int code) => switch (code) {
-        _macroCode => macro,
-        _globalCode => global,
-        _ => local,
-      };
+    _macroCode => macro,
+    _globalCode => global,
+    _ => local,
+  };
 
   String get label => switch (this) {
-        local => 'Local',
-        macro => 'Macro',
-        global => 'Global',
-      };
+    local => 'Local',
+    macro => 'Macro',
+    global => 'Global',
+  };
 }
 
 /// One declared function (Docs/Services/Script.md "Functions and Macros").
@@ -243,13 +252,13 @@ class ScriptFunction {
   bool get hasBody => !isGlobal;
 
   ScriptFunction copy() => ScriptFunction(
-        name: name,
-        kind: kind,
-        body: [for (final l in body) l.clone()],
-        globalFileId: globalFileId,
-        globalMemOffset: globalMemOffset,
-        globalInstrOffset: globalInstrOffset,
-      );
+    name: name,
+    kind: kind,
+    body: [for (final l in body) l.clone()],
+    globalFileId: globalFileId,
+    globalMemOffset: globalMemOffset,
+    globalInstrOffset: globalInstrOffset,
+  );
 }
 
 /// A 16-byte function-reservation record for a referenced global function.
@@ -292,19 +301,19 @@ const List<DataType> scriptValueTypes = [
 /// A sensible byte size for a newly declared value of [type] (used as the default in the
 /// create-script dialog; the user can override it).
 int defaultSizeForType(DataType type) => switch (type) {
-      DataType.bool_ => 1,
-      DataType.enum_ => 1,
-      DataType.id || DataType.devType => 2,
-      DataType.number || DataType.integer || DataType.uint32 => 4,
-      DataType.colour => 4,
-      DataType.vector => 8,
-      DataType.matrix => 28, // 2x3 wire value: u16 h, u16 w + 6 Numbers
-      DataType.text => 16,
-      DataType.filename => 8,
-      DataType.sn => 14,
-      DataType.blockInfo => 4,
-      _ => 4,
-    };
+  DataType.bool_ => 1,
+  DataType.enum_ => 1,
+  DataType.id || DataType.devType => 2,
+  DataType.number || DataType.integer || DataType.uint32 => 4,
+  DataType.colour => 4,
+  DataType.vector => 8,
+  DataType.matrix => 28, // 2x3 wire value: u16 h, u16 w + 6 Numbers
+  DataType.text => 16,
+  DataType.filename => 8,
+  DataType.sn => 14,
+  DataType.blockInfo => 4,
+  _ => 4,
+};
 
 // Codec helpers come from types.dart: uint32ToBytes/uint32FromBytes and
 // numberToBytes/numberFromBytes (Q16.16).
@@ -400,7 +409,9 @@ class ScriptFileBuilder {
 
   /// Packs the function reservations, one record per entry padded/clamped to 16 bytes.
   Uint8List _functionBlob() {
-    final out = Uint8List(functionReservations.length * scriptFunctionReservationSize);
+    final out = Uint8List(
+      functionReservations.length * scriptFunctionReservationSize,
+    );
     var offset = 0;
     for (final record in functionReservations) {
       final n = record.length < scriptFunctionReservationSize
@@ -434,7 +445,9 @@ class ScriptFileBuilder {
     putNames(variableNames, variables.length);
     putNames(constantNames, constants.length);
     for (var i = 0; i < inputs.length; i++) {
-      final spec = i < inputSpecs.length ? inputSpecs[i] : const ScriptInputSpec();
+      final spec = i < inputSpecs.length
+          ? inputSpecs[i]
+          : const ScriptInputSpec();
       out.add(spec.uiType & 0xFF);
       out.addAll([0, 0, 0]);
       out.addAll(numberToBytes(spec.min));
@@ -443,7 +456,9 @@ class ScriptFileBuilder {
     }
     // v2: named enum choices, one label list per input (count 0 when unused).
     for (var i = 0; i < inputs.length; i++) {
-      final spec = i < inputSpecs.length ? inputSpecs[i] : const ScriptInputSpec();
+      final spec = i < inputSpecs.length
+          ? inputSpecs[i]
+          : const ScriptInputSpec();
       putNames(spec.options, spec.options.length);
     }
 
@@ -488,8 +503,11 @@ class ScriptFileBuilder {
     final funcBlob = _functionBlob();
     final ui = _uiInfo();
 
-    final metaLen = (inputs.length + outputs.length + variables.length + constants.length) * 4;
-    final total = scriptHeaderSize +
+    final metaLen =
+        (inputs.length + outputs.length + variables.length + constants.length) *
+        4;
+    final total =
+        scriptHeaderSize +
         metaLen +
         constBlob.length +
         defBlob.length +
@@ -583,7 +601,8 @@ class ScriptFileData {
   });
 
   /// Number of declared functions (the header's Function count).
-  int get functionCount => functionReservations.length ~/ scriptFunctionReservationSize;
+  int get functionCount =>
+      functionReservations.length ~/ scriptFunctionReservationSize;
 
   /// Value bytes of one constant.
   Uint8List constantValue(int index) =>
@@ -594,7 +613,9 @@ class ScriptFileData {
       unpackScriptValue(inputs, inputDefaults, index);
 
   String nameOf(List<String> names, int index, String prefix) =>
-      index < names.length && names[index].isNotEmpty ? names[index] : '$prefix $index';
+      index < names.length && names[index].isNotEmpty
+      ? names[index]
+      : '$prefix $index';
 
   /// Parses an image. Throws [FormatException] on a truncated/inconsistent file.
   static ScriptFileData parse(List<int> bytes) {
@@ -616,7 +637,14 @@ class ScriptFileData {
 
     final metaLen = (inCount + outCount + varCount + constCount) * 4;
     final funcLen = funcCount * scriptFunctionReservationSize;
-    final need = scriptHeaderSize + metaLen + constLen + defLen + funcLen + instrLen + uiLen;
+    final need =
+        scriptHeaderSize +
+        metaLen +
+        constLen +
+        defLen +
+        funcLen +
+        instrLen +
+        uiLen;
     if (need > bytes.length) {
       throw const FormatException('script file lengths exceed the file size');
     }
@@ -636,13 +664,21 @@ class ScriptFileData {
     final variables = readMetas(varCount);
     final constants = readMetas(constCount);
 
-    final constantValues = Uint8List.fromList(bytes.sublist(offset, offset + constLen));
+    final constantValues = Uint8List.fromList(
+      bytes.sublist(offset, offset + constLen),
+    );
     offset += constLen;
-    final inputDefaults = Uint8List.fromList(bytes.sublist(offset, offset + defLen));
+    final inputDefaults = Uint8List.fromList(
+      bytes.sublist(offset, offset + defLen),
+    );
     offset += defLen;
-    final functionReservations = Uint8List.fromList(bytes.sublist(offset, offset + funcLen));
+    final functionReservations = Uint8List.fromList(
+      bytes.sublist(offset, offset + funcLen),
+    );
     offset += funcLen;
-    final instructions = Uint8List.fromList(bytes.sublist(offset, offset + instrLen));
+    final instructions = Uint8List.fromList(
+      bytes.sublist(offset, offset + instrLen),
+    );
     offset += instrLen;
     final ui = bytes.sublist(offset, offset + uiLen);
     final info = _parseUiInfo(ui, inCount);
@@ -692,7 +728,7 @@ class _UiCursor {
 
   int u16() {
     if (pos + 2 > ui.length) return 0;
-    final v = ui[pos] | (ui[pos + 1] << 8);
+    final v = u16FromBytes(ui, pos);
     pos += 2;
     return v;
   }
@@ -717,7 +753,8 @@ class _UiCursor {
   List<ScriptFunction> functions,
   int functionMainLineCount,
   Map<int, int> mainCallTargets,
-}) _parseUiInfo(List<int> ui, int inputCount) {
+})
+_parseUiInfo(List<int> ui, int inputCount) {
   if (ui.isEmpty) {
     return (
       functionName: '',
@@ -736,7 +773,9 @@ class _UiCursor {
     // Unknown/older blob (UI info v1 is no longer supported): the first byte was the
     // function-name length in the pre-versioned layout, so recover the name if we can.
     final n = ui[0];
-    final name = (1 + n <= ui.length) ? String.fromCharCodes(ui.sublist(1, 1 + n)) : '';
+    final name = (1 + n <= ui.length)
+        ? String.fromCharCodes(ui.sublist(1, 1 + n))
+        : '';
     return (
       functionName: name,
       inputNames: const <String>[],
@@ -770,9 +809,12 @@ class _UiCursor {
       specs.add(ScriptInputSpec(uiType: uiType));
       continue;
     }
-    final min = numberFromBytes(ui, c.pos); c.pos += 4;
-    final max = numberFromBytes(ui, c.pos); c.pos += 4;
-    final step = numberFromBytes(ui, c.pos); c.pos += 4;
+    final min = numberFromBytes(ui, c.pos);
+    c.pos += 4;
+    final max = numberFromBytes(ui, c.pos);
+    c.pos += 4;
+    final step = numberFromBytes(ui, c.pos);
+    c.pos += 4;
     specs.add(ScriptInputSpec(uiType: uiType, min: min, max: max, step: step));
   }
 
@@ -805,13 +847,15 @@ class _UiCursor {
           final fileId = c.u32();
           final memOffset = c.u32();
           final instrOffset = c.u32();
-          functions.add(ScriptFunction(
-            name: name,
-            kind: kind,
-            globalFileId: fileId,
-            globalMemOffset: memOffset,
-            globalInstrOffset: instrOffset,
-          ));
+          functions.add(
+            ScriptFunction(
+              name: name,
+              kind: kind,
+              globalFileId: fileId,
+              globalMemOffset: memOffset,
+              globalInstrOffset: instrOffset,
+            ),
+          );
         } else {
           final lineCount = c.u16();
           final body = <ScriptLine>[];

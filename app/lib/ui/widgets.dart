@@ -45,7 +45,9 @@ mixin AutoRefreshMixin<T extends StatefulWidget> on State<T> {
     final tab = shellTabIndex;
     if (tab == null) return;
     if (ShellTabs.instance.index == tab) {
-      applyAuto(_autoInterval); // tab visible again: restore the remembered interval
+      applyAuto(
+        _autoInterval,
+      ); // tab visible again: restore the remembered interval
     } else {
       _autoTimer?.cancel(); // tab hidden: stop but keep the remembered interval
       _autoTimer = null;
@@ -57,8 +59,11 @@ mixin AutoRefreshMixin<T extends StatefulWidget> on State<T> {
   void applyAuto(Duration? interval) {
     _autoTimer?.cancel();
     _autoTimer = null;
-    setState(() =>
-        _autoInterval = (interval == null || interval == Duration.zero) ? null : interval);
+    setState(
+      () => _autoInterval = (interval == null || interval == Duration.zero)
+          ? null
+          : interval,
+    );
     if (_autoInterval != null) {
       _autoTimer = Timer.periodic(_autoInterval!, (_) => onAutoRefresh());
       onAutoRefreshStarted();
@@ -108,28 +113,33 @@ Future<(String, int?)?> promptBlockName(
     context: context,
     builder: (context) => AlertDialog(
       title: Text(title),
-      content: Column(mainAxisSize: MainAxisSize.min, children: [
-        TextField(
-          controller: nameController,
-          autofocus: true,
-          maxLength: 16,
-          decoration: const InputDecoration(labelText: 'Block name'),
-        ),
-        if (withIndex) ...[
-          const SizedBox(height: 8),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
           TextField(
-            controller: indexController,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-                labelText: 'Index (empty = append)',
-                helperText: 'Fills a deleted (None) slot when given'),
+            controller: nameController,
+            autofocus: true,
+            maxLength: 16,
+            decoration: const InputDecoration(labelText: 'Block name'),
           ),
+          if (withIndex) ...[
+            const SizedBox(height: 8),
+            TextField(
+              controller: indexController,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Index (empty = append)',
+                helperText: 'Fills a deleted (None) slot when given',
+              ),
+            ),
+          ],
         ],
-      ]),
+      ),
       actions: [
         TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel')),
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
         FilledButton(
           onPressed: () {
             final name = nameController.text.trim();
@@ -205,8 +215,10 @@ class SectionHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-      child: Text(text.toUpperCase(),
-          style: const TextStyle(color: kOrange, fontSize: 12, letterSpacing: 1)),
+      child: Text(
+        text.toUpperCase(),
+        style: const TextStyle(color: kOrange, fontSize: 12, letterSpacing: 1),
+      ),
     );
   }
 }
@@ -229,9 +241,13 @@ class InfoCard extends StatelessWidget {
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-              child: Text(title,
-                  style: const TextStyle(
-                      color: kOrange, fontWeight: FontWeight.w600)),
+              child: Text(
+                title,
+                style: const TextStyle(
+                  color: kOrange,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
             ),
             ...children,
           ],
@@ -252,13 +268,15 @@ class InfoRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
-      child: Row(children: [
-        SizedBox(
+      child: Row(
+        children: [
+          SizedBox(
             width: 140,
-            child:
-                Text(label, style: Theme.of(context).textTheme.bodySmall)),
-        Expanded(child: Text(value)),
-      ]),
+            child: Text(label, style: Theme.of(context).textTheme.bodySmall),
+          ),
+          Expanded(child: Text(value)),
+        ],
+      ),
     );
   }
 }
@@ -298,8 +316,12 @@ void showSnack(BuildContext context, String message) {
 }
 
 /// Cancel/Confirm alert shared by the destructive actions across pages.
-Future<bool> confirmDialog(BuildContext context,
-    {required String title, required String body, String confirmLabel = 'Confirm'}) async {
+Future<bool> confirmDialog(
+  BuildContext context, {
+  required String title,
+  required String body,
+  String confirmLabel = 'Confirm',
+}) async {
   return await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
@@ -307,11 +329,13 @@ Future<bool> confirmDialog(BuildContext context,
           content: Text(body),
           actions: [
             TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('Cancel')),
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
             FilledButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: Text(confirmLabel)),
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(confirmLabel),
+            ),
           ],
         ),
       ) ==
@@ -321,11 +345,11 @@ Future<bool> confirmDialog(BuildContext context,
 /// Rough device-type icons (Docs/App/Devices.md: "Use icons for rough device
 /// types").
 IconData deviceTypeIcon(DeviceType type) => switch (type) {
-      DeviceType.tamuV20A => Icons.developer_board,
-      DeviceType.valuV20 => Icons.usb,
-      DeviceType.dualAnalogSensor => Icons.sensors,
-      DeviceType.unknown => Icons.devices_other,
-    };
+  DeviceType.tamuV20A => Icons.developer_board,
+  DeviceType.valuV20 => Icons.usb,
+  DeviceType.dualAnalogSensor => Icons.sensors,
+  DeviceType.unknown => Icons.devices_other,
+};
 
 /// Small rounded label chip used across the memory pages.
 class ChipLabel extends StatelessWidget {
@@ -342,11 +366,14 @@ class ChipLabel extends StatelessWidget {
         color: subtle ? Colors.white.withAlpha(14) : kOrange.withAlpha(46),
         borderRadius: BorderRadius.circular(4),
       ),
-      child: Text(text,
-          style: TextStyle(
-              fontSize: 10,
-              color: subtle ? Colors.white54 : kOrange,
-              fontWeight: subtle ? FontWeight.w400 : FontWeight.w600)),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 10,
+          color: subtle ? Colors.white54 : kOrange,
+          fontWeight: subtle ? FontWeight.w400 : FontWeight.w600,
+        ),
+      ),
     );
   }
 }
@@ -400,16 +427,22 @@ class RefreshButton extends StatelessWidget {
               // dismissal, which pops null and must NOT change the setting.
               onPressed: () =>
                   Navigator.pop(context, interval ?? Duration.zero),
-              child: Row(children: [
-                Text(label),
-                const Spacer(),
-                if ((interval ?? Duration.zero) ==
-                    (selectedInterval ?? Duration.zero))
-                  const Padding(
+              child: Row(
+                children: [
+                  Text(label),
+                  const Spacer(),
+                  if ((interval ?? Duration.zero) ==
+                      (selectedInterval ?? Duration.zero))
+                    const Padding(
                       padding: EdgeInsets.only(left: 8),
-                      child:
-                          Icon(Icons.check, size: 16, color: Colors.greenAccent)),
-              ]),
+                      child: Icon(
+                        Icons.check,
+                        size: 16,
+                        color: Colors.greenAccent,
+                      ),
+                    ),
+                ],
+              ),
             ),
         ],
       ),
@@ -425,8 +458,8 @@ class RefreshButton extends StatelessWidget {
     final dotColor = error
         ? Colors.redAccent
         : autoActive
-            ? Colors.greenAccent
-            : Colors.transparent;
+        ? Colors.greenAccent
+        : Colors.transparent;
     return IconButton(
       tooltip: 'Refresh (hold for autorefresh)',
       onPressed: refreshing ? null : onRefresh,
@@ -438,7 +471,8 @@ class RefreshButton extends StatelessWidget {
               ? const SizedBox(
                   width: 18,
                   height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2))
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
               : const Icon(Icons.refresh),
           Positioned(
             right: -2,

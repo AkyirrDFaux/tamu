@@ -214,7 +214,9 @@ class UsbTransport implements Transport {
       } catch (error) {
         configError = error;
         AppDiagnostics.log(
-            'usb', 'config attempt ${attempt + 1} failed on $portName: $error');
+          'usb',
+          'config attempt ${attempt + 1} failed on $portName: $error',
+        );
         await Future<void>.delayed(const Duration(milliseconds: 300));
       }
     }
@@ -248,7 +250,9 @@ class UsbTransport implements Transport {
   @override
   Future<void> send(List<int> streamBytes) async {
     final port = _port;
-    if (port == null || !port.isOpen) throw const TransportException('Port closed');
+    if (port == null || !port.isOpen) {
+      throw const TransportException('Port closed');
+    }
     // Split into full USB link frames (max 60 bytes of stream per frame).
     for (var offset = 0; offset < streamBytes.length; offset += usbMaxPayload) {
       final end = (offset + usbMaxPayload).clamp(offset, streamBytes.length);
@@ -262,7 +266,9 @@ class UsbTransport implements Transport {
   /// (Docs/Services/Bootloader.md).
   void writeRaw(List<int> bytes) {
     final port = _port;
-    if (port == null || !port.isOpen) throw const TransportException('Port closed');
+    if (port == null || !port.isOpen) {
+      throw const TransportException('Port closed');
+    }
     port.write(Uint8List.fromList(bytes), timeout: 200);
   }
 
@@ -336,8 +342,9 @@ class BleTransport implements Transport {
 
   // One mapped stream: `.map(_parser.feed)` drives a single shared parser, so a
   // second subscribe must reuse it instead of feeding the parser twice.
-  late final Stream<Uint8List> _packetStream =
-      linkBytes.map(_parser.feed).where((bytes) => bytes.isNotEmpty);
+  late final Stream<Uint8List> _packetStream = linkBytes
+      .map(_parser.feed)
+      .where((bytes) => bytes.isNotEmpty);
 
   @override
   Stream<Uint8List> get packetStream => _packetStream;
@@ -382,13 +389,19 @@ class BleTransport implements Transport {
       throw const TransportException('App Interface service not found');
     }
     await UniversalBle.subscribeNotifications(
-        deviceId, appServiceUuid, appNotifyCharUuid);
+      deviceId,
+      appServiceUuid,
+      appNotifyCharUuid,
+    );
     // The value stream filters by CHARACTERISTIC id - passing the service uuid
     // here would silently drop every notification.
-    _notifySub = UniversalBle.characteristicValueStream(deviceId, appNotifyCharUuid)
-        .listen((value) {
-      if (!_closed) _linkController.add(value);
-    });
+    _notifySub =
+        UniversalBle.characteristicValueStream(
+          deviceId,
+          appNotifyCharUuid,
+        ).listen((value) {
+          if (!_closed) _linkController.add(value);
+        });
     // Surface a REMOTE link loss (device moved out of range, powered off, ...).
     // connectionStream emits false on disconnect; our own close() sets _closed
     // first so the teardown is never mistaken for a drop. The error propagates
@@ -409,8 +422,13 @@ class BleTransport implements Transport {
   @override
   Future<void> send(List<int> streamBytes) async {
     for (final chunk in BleLengthParser.chunkOutgoing(streamBytes, mtu: _mtu)) {
-      await UniversalBle.write(deviceId, appServiceUuid, appWriteCharUuid, chunk,
-          withoutResponse: chunk.length < _mtu - 8);
+      await UniversalBle.write(
+        deviceId,
+        appServiceUuid,
+        appWriteCharUuid,
+        chunk,
+        withoutResponse: chunk.length < _mtu - 8,
+      );
     }
   }
 

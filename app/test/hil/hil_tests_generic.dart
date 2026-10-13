@@ -14,8 +14,10 @@ import 'hil_api.dart';
 const HilPrereq _any = HilPrereq();
 
 /// The core, reachable through the app interface.
-const HilPrereq _core =
-    HilPrereq(isCore: true, capabilities: [Capability.appInterface]);
+const HilPrereq _core = HilPrereq(
+  isCore: true,
+  capabilities: [Capability.appInterface],
+);
 
 final List<HilTest> genericTests = [
   HilTest(
@@ -23,8 +25,11 @@ final List<HilTest> genericTests = [
     category: HilCategory.generic,
     prereq: _core,
     body: (ctx) async {
-      expect(await DeviceDatabase.instance.pingCore(), isTrue,
-          reason: 'the core answers a ping');
+      expect(
+        await DeviceDatabase.instance.pingCore(),
+        isTrue,
+        reason: 'the core answers a ping',
+      );
     },
   ),
   HilTest(
@@ -34,8 +39,11 @@ final List<HilTest> genericTests = [
     body: (ctx) async {
       for (final d in ctx.devices(_any)) {
         ctx.note('${d.label}: type 0x${d.type.value.toRadixString(16)}');
-        expect(d.type, isNot(DeviceType.unknown),
-            reason: 'device ${d.id} reports a known type');
+        expect(
+          d.type,
+          isNot(DeviceType.unknown),
+          reason: 'device ${d.id} reports a known type',
+        );
       }
     },
   ),
@@ -45,11 +53,20 @@ final List<HilTest> genericTests = [
     prereq: _any,
     body: (ctx) async {
       for (final d in ctx.devices(_any)) {
-        final types = await RegisterClient(deviceId: d.id).enumerateBlockTypes();
+        final types = await RegisterClient(
+          deviceId: d.id,
+        ).enumerateBlockTypes();
         expect(types, isNotNull, reason: 'device ${d.id} answers enumeration');
-        expect(types!, isNotEmpty,
-            reason: 'device ${d.id} has at least the System block');
-        expect(types.first.type, 0, reason: 'device ${d.id} System block leads');
+        expect(
+          types!,
+          isNotEmpty,
+          reason: 'device ${d.id} has at least the System block',
+        );
+        expect(
+          types.first.type,
+          0,
+          reason: 'device ${d.id} System block leads',
+        );
       }
     },
   ),
@@ -74,8 +91,11 @@ final List<HilTest> genericTests = [
       for (final d in ctx.devices(_any)) {
         final read = await RegisterClient(deviceId: d.id).readField(0, 2);
         expect(read, isNotNull, reason: 'device ${d.id} software version');
-        expect(read!.value.length, greaterThanOrEqualTo(4),
-            reason: 'device ${d.id} version is 32bit (YY:MM:DD:II)');
+        expect(
+          read!.value.length,
+          greaterThanOrEqualTo(4),
+          reason: 'device ${d.id} version is 32bit (YY:MM:DD:II)',
+        );
         final word = uint32FromBytes(read.value);
         ctx.note('${d.label}: version 0x${word.toRadixString(16)}');
         expect(word, isNot(0), reason: 'device ${d.id} version is stamped');
@@ -90,8 +110,11 @@ final List<HilTest> genericTests = [
       for (final d in ctx.devices(_any)) {
         final sn = await RegisterClient(deviceId: d.id).readField(1, 0xFF);
         expect(sn, isNotNull, reason: 'device ${d.id} serial number');
-        expect(sn!.value.length, greaterThanOrEqualTo(14),
-            reason: 'device ${d.id} serial number length');
+        expect(
+          sn!.value.length,
+          greaterThanOrEqualTo(14),
+          reason: 'device ${d.id} serial number length',
+        );
       }
     },
   ),
@@ -107,11 +130,17 @@ final List<HilTest> genericTests = [
         ctx.note('${d.label}: capability 0x${bits.toRadixString(16)}');
         expect(bits, isNot(0), reason: 'device ${d.id} capability is non-zero');
         if (d.isCore) {
-          expect(bits & Capability.core, isNot(0),
-              reason: 'device ${d.id} is a core, so it says so');
+          expect(
+            bits & Capability.core,
+            isNot(0),
+            reason: 'device ${d.id} is a core, so it says so',
+          );
         } else {
-          expect(bits & Capability.node, isNot(0),
-              reason: 'device ${d.id} is a node, so it says so');
+          expect(
+            bits & Capability.node,
+            isNot(0),
+            reason: 'device ${d.id} is a node, so it says so',
+          );
         }
       }
     },
@@ -124,8 +153,11 @@ final List<HilTest> genericTests = [
       for (final d in ctx.devices(_any)) {
         final read = await RegisterClient(deviceId: d.id).readField(0, 0);
         expect(read, isNotNull, reason: 'device ${d.id} device type');
-        expect(uint32FromBytes(read!.value), d.type.value,
-            reason: 'device ${d.id} type agrees with discovery');
+        expect(
+          uint32FromBytes(read!.value),
+          d.type.value,
+          reason: 'device ${d.id} type agrees with discovery',
+        );
       }
     },
   ),
@@ -137,9 +169,16 @@ final List<HilTest> genericTests = [
       for (final d in ctx.devices(_any)) {
         final read = await RegisterClient(deviceId: d.id).readField(6, 0xFF);
         expect(read, isNotNull, reason: 'device ${d.id} name');
-        expect(read!.value, isNotEmpty, reason: 'device ${d.id} name is non-empty');
-        expect(read.value.length, lessThanOrEqualTo(16),
-            reason: 'device ${d.id} name fits the 16-byte clamp');
+        expect(
+          read!.value,
+          isNotEmpty,
+          reason: 'device ${d.id} name is non-empty',
+        );
+        expect(
+          read.value.length,
+          lessThanOrEqualTo(16),
+          reason: 'device ${d.id} name fits the 16-byte clamp',
+        );
       }
     },
   ),
@@ -157,9 +196,16 @@ final List<HilTest> genericTests = [
         final u = uint32FromBytes(used!.value);
         final t = uint32FromBytes(total!.value);
         ctx.note('${d.label}: RAM $u/$t bytes');
-        expect(t, greaterThan(0), reason: 'device ${d.id} total RAM is non-zero');
-        expect(u, lessThanOrEqualTo(t),
-            reason: 'device ${d.id} used RAM fits in the total');
+        expect(
+          t,
+          greaterThan(0),
+          reason: 'device ${d.id} total RAM is non-zero',
+        );
+        expect(
+          u,
+          lessThanOrEqualTo(t),
+          reason: 'device ${d.id} used RAM fits in the total',
+        );
       }
     },
   ),
@@ -178,8 +224,11 @@ final List<HilTest> genericTests = [
         final a = uint32FromBytes(first!.value);
         final b = uint32FromBytes(second!.value);
         ctx.note('${d.label}: uptime $a -> $b ms');
-        expect(b, greaterThanOrEqualTo(a),
-            reason: 'device ${d.id} uptime is monotonic');
+        expect(
+          b,
+          greaterThanOrEqualTo(a),
+          reason: 'device ${d.id} uptime is monotonic',
+        );
       }
     },
   ),
@@ -204,8 +253,16 @@ final List<HilTest> genericTests = [
         expect(read, isNotNull, reason: 'device ${d.id} NetID');
         expect(read!.value, isNotEmpty, reason: 'device ${d.id} NetID is set');
         // NetID is documented uint8 (Docs/Services/System Block and Device Commands.md).
-        expect(read.value.length, 1, reason: 'device ${d.id} NetID is one byte');
-        expect(read.value.first, isNot(0), reason: 'device ${d.id} NetID is non-zero');
+        expect(
+          read.value.length,
+          1,
+          reason: 'device ${d.id} NetID is one byte',
+        );
+        expect(
+          read.value.first,
+          isNot(0),
+          reason: 'device ${d.id} NetID is non-zero',
+        );
         ctx.note('${d.label}: NetID ${read.value.first}');
       }
     },

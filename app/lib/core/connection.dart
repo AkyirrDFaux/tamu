@@ -147,8 +147,10 @@ class FragmentReassembler {
         }
       } else if (info.current != state.next || info.total != state.total) {
         discard(txId);
-        return FragmentAbort('fragment ${info.current}/${info.total} out of order '
-            '(expected ${state.next}/${state.total})');
+        return FragmentAbort(
+          'fragment ${info.current}/${info.total} out of order '
+          '(expected ${state.next}/${state.total})',
+        );
       }
       _frag[txId] = (next: info.current + 1, total: info.total);
       buffer.addAll(frame.payload.sublist(4));
@@ -234,19 +236,30 @@ class ConnectionManager extends ChangeNotifier {
       if (active != null && active.type == l.type && active.id == l.id) return;
       links.add(l);
     }
+
     if (source != LinkSource.usb) {
       for (final e in _bleEntries) {
-        addIfActive(DiscoveredLink(
-            id: e.deviceId, type: LinkType.ble, name: e.name, rssi: e.rssi));
+        addIfActive(
+          DiscoveredLink(
+            id: e.deviceId,
+            type: LinkType.ble,
+            name: e.name,
+            rssi: e.rssi,
+          ),
+        );
       }
     }
     if (source != LinkSource.ble) {
       for (final p in _usbEntries) {
-        addIfActive(DiscoveredLink(
+        addIfActive(
+          DiscoveredLink(
             id: p.portName,
             type: LinkType.usb,
-            name:
-                p.description?.isNotEmpty == true ? p.description! : p.portName));
+            name: p.description?.isNotEmpty == true
+                ? p.description!
+                : p.portName,
+          ),
+        );
       }
     }
     switch (sort) {
@@ -254,7 +267,8 @@ class ConnectionManager extends ChangeNotifier {
         links.sort((a, b) => (b.rssi ?? -999).compareTo(a.rssi ?? -999));
       case DeviceSort.alphabetical:
         links.sort(
-            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+          (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+        );
     }
     _linksCache = links;
     return links;
@@ -346,9 +360,13 @@ class ConnectionManager extends ChangeNotifier {
       });
       return;
     }
-    final target = discoveredLinks.where((l) =>
-        l.id == settings.autoConnectDeviceId ||
-        l.name == settings.autoConnectDeviceId).firstOrNull;
+    final target = discoveredLinks
+        .where(
+          (l) =>
+              l.id == settings.autoConnectDeviceId ||
+              l.name == settings.autoConnectDeviceId,
+        )
+        .firstOrNull;
     if (target == null) {
       _autoConnectRetry?.cancel();
       _autoConnectRetry = Timer(const Duration(seconds: 3), () {
@@ -441,11 +459,14 @@ class ConnectionManager extends ChangeNotifier {
               ..name = name
               ..lastSeen = DateTime.now();
           } else {
-            _bleEntries.add(BleScanEntry(
+            _bleEntries.add(
+              BleScanEntry(
                 deviceId: device.deviceId,
                 name: name,
                 rssi: device.rssi,
-                lastSeen: DateTime.now()));
+                lastSeen: DateTime.now(),
+              ),
+            );
           }
           _invalidateLinks();
           _notifySoon();
@@ -506,13 +527,14 @@ class ConnectionManager extends ChangeNotifier {
 
   /// A human-readable Bluetooth warning, or null while Bluetooth is usable
   /// (Android surfaces "Bluetooth is off" and permission problems).
-  Stream<String?> get bluetoothWarning =>
-      UniversalBle.availabilityStream.map((state) => switch (state) {
-            AvailabilityState.poweredOff => 'Bluetooth is off',
-            AvailabilityState.unauthorized => 'Bluetooth permission denied',
-            AvailabilityState.unsupported => 'Bluetooth is not supported',
-            _ => null,
-          });
+  Stream<String?> get bluetoothWarning => UniversalBle.availabilityStream.map(
+    (state) => switch (state) {
+      AvailabilityState.poweredOff => 'Bluetooth is off',
+      AvailabilityState.unauthorized => 'Bluetooth permission denied',
+      AvailabilityState.unsupported => 'Bluetooth is not supported',
+      _ => null,
+    },
+  );
 
   /// Re-requests the BLE runtime permissions, e.g. after the user returned from
   /// the system settings page.
@@ -592,8 +614,9 @@ class ConnectionManager extends ChangeNotifier {
     // must not be immediately undone by autoconnect: suppress it briefly so
     // the user stays disconnected (Docs/App/Settings.md).
     if (manual) {
-      _autoConnectSuppressedUntil =
-          DateTime.now().add(const Duration(seconds: 30));
+      _autoConnectSuppressedUntil = DateTime.now().add(
+        const Duration(seconds: 30),
+      );
     }
     await _detach();
     notifyListeners();
@@ -601,7 +624,10 @@ class ConnectionManager extends ChangeNotifier {
 
   Future<void> _detach() async {
     if (_transport != null) {
-      AppDiagnostics.log('link', 'disconnected from ${_transport!.displayName}');
+      AppDiagnostics.log(
+        'link',
+        'disconnected from ${_transport!.displayName}',
+      );
     }
     await _streamSub?.cancel();
     _streamSub = null;
@@ -653,7 +679,7 @@ class ConnectionManager extends ChangeNotifier {
       }
 
       if (!frame.isResponse) continue; // unsolicited requests ignored for now
-      
+
       // Responses echo the request's TRID (Docs "Transaction IDs"), so match on the full
       // 16-bit TRID field.
       final txId = frame.srvSource;
@@ -669,16 +695,15 @@ class ConnectionManager extends ChangeNotifier {
         case FragmentPending():
           _pending[txId] = completer;
         case FragmentComplete(:final payload, :final success, :final fail):
-          completer.complete(PacketResponse(
-            payload: payload,
-            success: success,
-            fail: fail,
-          ));
+          completer.complete(
+            PacketResponse(payload: payload, success: success, fail: fail),
+          );
         case FragmentAbort(:final reason):
           AppDiagnostics.log('link', 'fragment stream aborted: $reason');
           if (!completer.isCompleted) {
             completer.completeError(
-                TransportException('Fragment stream aborted: $reason'));
+              TransportException('Fragment stream aborted: $reason'),
+            );
           }
       }
     }
@@ -709,13 +734,15 @@ class ConnectionManager extends ChangeNotifier {
     Duration timeout = const Duration(seconds: 2),
     bool requestFrag = false,
     int? transactionId,
-  }) async =>
-      (await requestWithFlags(targetId, service, functionCid,
-              payload: payload,
-              timeout: timeout,
-              requestFrag: requestFrag,
-              transactionId: transactionId))
-          .payload;
+  }) async => (await requestWithFlags(
+    targetId,
+    service,
+    functionCid,
+    payload: payload,
+    timeout: timeout,
+    requestFrag: requestFrag,
+    transactionId: transactionId,
+  )).payload;
 
   /// Like [request], but returns the packet-level SUCCESS/FAIL flags alongside the
   /// payload so callers can tell an accepted write from a FAIL reply.
@@ -754,12 +781,16 @@ class ConnectionManager extends ChangeNotifier {
     _reassembler.begin(txId);
     try {
       await transport.send(frame.toBytes());
-      return await completer.future.timeout(timeout, onTimeout: () {
-        _pending.remove(txId);
-        _reassembler.discard(txId);
-        throw TransportException(
-            '${service.name} CID $functionCid request timed out');
-      });
+      return await completer.future.timeout(
+        timeout,
+        onTimeout: () {
+          _pending.remove(txId);
+          _reassembler.discard(txId);
+          throw TransportException(
+            '${service.name} CID $functionCid request timed out',
+          );
+        },
+      );
     } catch (error) {
       _pending.remove(txId);
       _reassembler.discard(txId);

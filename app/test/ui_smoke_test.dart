@@ -12,32 +12,51 @@ import 'package:tamuapp/ui/theme.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('ScriptEditorPage mounts and reports the load failure off-device',
-      (tester) async {
-    await tester.pumpWidget(MaterialApp(
-      theme: buildTheme(),
-      home: const ScriptEditorPage(deviceId: 1, fileId: 0, name: 'SCR_000', loaded: false),
-    ));
-    await tester.pump();
-    expect(tester.takeException(), isNull, reason: 'ScriptEditorPage threw while building');
-    // Its own widgets are reachable (the split methods are not dead code).
-    expect(find.byType(ScriptEditorPage), findsOneWidget);
-  });
+  testWidgets(
+    'ScriptEditorPage mounts and reports the load failure off-device',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildTheme(),
+          home: const ScriptEditorPage(
+            deviceId: 1,
+            fileId: 0,
+            name: 'SCR_000',
+            loaded: false,
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: 'ScriptEditorPage threw while building',
+      );
+      // Its own widgets are reachable (the split methods are not dead code).
+      expect(find.byType(ScriptEditorPage), findsOneWidget);
+    },
+  );
 
   testWidgets('SubscriptionDialog mounts and lays out', (tester) async {
-    await tester.pumpWidget(MaterialApp(
-      theme: buildTheme(),
-      home: Scaffold(
-        body: SubscriptionDialog(
-          client: SubscriptionClient(deviceId: 1),
-          regClient: RegisterClient(deviceId: 1),
-          currentSubs: const [],
-          onSaved: () async {},
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildTheme(),
+        home: Scaffold(
+          body: SubscriptionDialog(
+            client: SubscriptionClient(deviceId: 1),
+            regClient: RegisterClient(deviceId: 1),
+            currentSubs: const [],
+            onSaved: () async {},
+          ),
         ),
       ),
-    ));
+    );
     await tester.pump();
-    expect(tester.takeException(), isNull, reason: 'SubscriptionDialog threw while building');
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: 'SubscriptionDialog threw while building',
+    );
     expect(find.byType(SubscriptionDialog), findsOneWidget);
   });
 }

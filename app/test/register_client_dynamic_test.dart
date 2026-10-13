@@ -15,8 +15,11 @@ class _CapturingRegisterClient extends RegisterClient {
   final responses = <int, PacketResponse>{};
 
   @override
-  Future<PacketResponse?> requestWithFlags(int cid,
-      {List<int> payload = const [], Duration? timeout}) async {
+  Future<PacketResponse?> requestWithFlags(
+    int cid, {
+    List<int> payload = const [],
+    Duration? timeout,
+  }) async {
     calls.add((cid: cid, payload: List<int>.from(payload)));
     return responses[cid] ??
         const PacketResponse(payload: [], success: true, fail: false);
@@ -24,21 +27,24 @@ class _CapturingRegisterClient extends RegisterClient {
 }
 
 void main() {
-  test('create carries Index (uint16) little-endian + the padded 16-char name', () async {
-    final c = _CapturingRegisterClient();
+  test(
+    'create carries Index (uint16) little-endian + the padded 16-char name',
+    () async {
+      final c = _CapturingRegisterClient();
 
-    final assigned = await c.createDynamicBlock('Box', index: 0x1234);
-    // No BlockIndex echo: the host already picked the index.
-    expect(assigned, 0x1234);
+      final assigned = await c.createDynamicBlock('Box', index: 0x1234);
+      // No BlockIndex echo: the host already picked the index.
+      expect(assigned, 0x1234);
 
-    final call = c.calls.single;
-    expect(call.cid, DynamicCid.create);
-    expect(call.payload.length, 18); // Index(2) + Name(16)
-    expect(call.payload.sublist(0, 2), [0x34, 0x12]); // 0x1234 LE
-    expect(call.payload.sublist(2, 5), 'Box'.codeUnits);
-    // Name is null-padded to the fixed 16-char field.
-    expect(call.payload.sublist(5), List<int>.filled(13, 0x00));
-  });
+      final call = c.calls.single;
+      expect(call.cid, DynamicCid.create);
+      expect(call.payload.length, 18); // Index(2) + Name(16)
+      expect(call.payload.sublist(0, 2), [0x34, 0x12]); // 0x1234 LE
+      expect(call.payload.sublist(2, 5), 'Box'.codeUnits);
+      // Name is null-padded to the fixed 16-char field.
+      expect(call.payload.sublist(5), List<int>.filled(13, 0x00));
+    },
+  );
 
   test('create with a small index still writes the full uint16', () async {
     final c = _CapturingRegisterClient();
@@ -48,8 +54,11 @@ void main() {
 
   test('create returns null when the device fails the command', () async {
     final c = _CapturingRegisterClient();
-    c.responses[DynamicCid.create] =
-        const PacketResponse(payload: [], success: false, fail: true);
+    c.responses[DynamicCid.create] = const PacketResponse(
+      payload: [],
+      success: false,
+      fail: true,
+    );
     expect(await c.createDynamicBlock('Box', index: 0x1234), isNull);
   });
 
@@ -64,19 +73,29 @@ void main() {
 
   test('delete reports failure through the FLAG_FAIL reply', () async {
     final c = _CapturingRegisterClient();
-    c.responses[DynamicCid.delete] =
-        const PacketResponse(payload: [], success: false, fail: true);
+    c.responses[DynamicCid.delete] = const PacketResponse(
+      payload: [],
+      success: false,
+      fail: true,
+    );
     expect(await c.deleteDynamic(block: 0x1234), isFalse);
   });
 
-  test('set-name carries Index (uint16) little-endian + the padded name', () async {
-    final c = _CapturingRegisterClient();
-    final block = DynBlock(index: 0x1234, meta: ValueInfo(type: dynamicTypeBase), name: '');
+  test(
+    'set-name carries Index (uint16) little-endian + the padded name',
+    () async {
+      final c = _CapturingRegisterClient();
+      final block = DynBlock(
+        index: 0x1234,
+        meta: ValueInfo(type: dynamicTypeBase),
+        name: '',
+      );
 
-    expect(await c.writeDynamicBlockMeta(block, 'Renamed', null), isTrue);
-    final call = c.calls.single;
-    expect(call.cid, DynamicCid.setName);
-    expect(call.payload.sublist(0, 2), [0x34, 0x12]);
-    expect(call.payload.sublist(2, 9), 'Renamed'.codeUnits);
-  });
+      expect(await c.writeDynamicBlockMeta(block, 'Renamed', null), isTrue);
+      final call = c.calls.single;
+      expect(call.cid, DynamicCid.setName);
+      expect(call.payload.sublist(0, 2), [0x34, 0x12]);
+      expect(call.payload.sublist(2, 9), 'Renamed'.codeUnits);
+    },
+  );
 }

@@ -89,7 +89,8 @@ class HilDevice {
   String get label => '${type.label} #$id';
 
   @override
-  String toString() => '$label '
+  String toString() =>
+      '$label '
       '[caps 0x${capabilities.toRadixString(16)}; '
       'blocks ${blocks.map((b) => b.label).join(",")}'
       '${bootloader ? "; bootloader" : ""}]';
@@ -132,7 +133,8 @@ class HilRig {
   String? _unmetRigWide(HilPrereq prereq, List<HilDevice> candidates) {
     if (prereq.partner != null) {
       final needsPartner = candidates.every(
-          (d) => partnerFor(prereq.partner!, exclude: d) == null);
+        (d) => partnerFor(prereq.partner!, exclude: d) == null,
+      );
       if (needsPartner) return 'no partner device for $prereq';
     }
     if (prereq.peers > 0 && satisfying(prereq).length < prereq.peers) {
@@ -158,8 +160,7 @@ class HilRig {
   }
 
   /// A one-line inventory per device, for the log.
-  List<String> describe() =>
-      devices.map((d) => '  ${d.id}\t$d').toList();
+  List<String> describe() => devices.map((d) => '  ${d.id}\t$d').toList();
 }
 
 /// What a test body receives: the rig, the log and helpers to pick devices.

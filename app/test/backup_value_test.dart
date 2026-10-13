@@ -8,7 +8,12 @@ import 'package:tamuapp/core/render_dict.dart';
 import 'package:tamuapp/core/types.dart';
 
 void main() {
-  List<int> round(DataType type, List<int> bytes, {FieldInfo? info, int? size}) {
+  List<int> round(
+    DataType type,
+    List<int> bytes, {
+    FieldInfo? info,
+    int? size,
+  }) {
     final semantic = encodeSemantic(type, bytes, info: info);
     final back = decodeSemantic(type, semantic, info: info, size: size);
     expect(back, isNotNull, reason: 'decode failed for $type');
@@ -25,14 +30,20 @@ void main() {
     expect(encodeSemantic(DataType.integer, intToBytes(-7, 4)), -7);
     expect(int32FromBytes(round(DataType.integer, intToBytes(-7, 4))), -7);
 
-    expect(encodeSemantic(DataType.uint32, uint32ToBytes(4000000000)), 4000000000);
+    expect(
+      encodeSemantic(DataType.uint32, uint32ToBytes(4000000000)),
+      4000000000,
+    );
 
     expect(encodeSemantic(DataType.text, 'hello'.codeUnits), 'hello');
     expect(encodeSemantic(DataType.filename, 'VYSIV1'.codeUnits), 'VYSIV1');
   });
 
   test('enum and device type use words', () {
-    const sensors = FieldInfo('Sensor Type', enumValues: {3: 'LDR 10K', 5: 'NTC100K'});
+    const sensors = FieldInfo(
+      'Sensor Type',
+      enumValues: {3: 'LDR 10K', 5: 'NTC100K'},
+    );
     expect(encodeSemantic(DataType.enum_, [5], info: sensors), 'NTC100K');
     expect(round(DataType.enum_, [5], info: sensors, size: 1), [5]);
     expect(encodeSemantic(DataType.devType, [0x01, 0x00]), 'Tamu v2.0A');
@@ -70,21 +81,27 @@ void main() {
     expect((matSemantic['values'] as List).first, [1.5, 2.5, 3.5]);
     expect(decodeSemantic(DataType.matrix, matSemantic), matBytes);
 
-    expect(encodeSemantic(DataType.colour, [255, 0, 0, 128]),
-        {'r': 255, 'g': 0, 'b': 0, 'a': 128});
+    expect(encodeSemantic(DataType.colour, [255, 0, 0, 128]), {
+      'r': 255,
+      'g': 0,
+      'b': 0,
+      'a': 128,
+    });
     expect(round(DataType.colour, [255, 0, 0, 128]), [255, 0, 0, 128]);
   });
 
   test('dictionary encodes key/type names and round-trips', () {
     final dict = buildKeyedDict([
       KeyedEntry(
-          key: 1,
-          meta: ValueInfo(type: DataType.enum_.value, key: 1, size: 4),
-          value: intToBytes(1, 4)),
+        key: 1,
+        meta: ValueInfo(type: DataType.enum_.value, key: 1, size: 4),
+        value: intToBytes(1, 4),
+      ),
       KeyedEntry(
-          key: 4,
-          meta: ValueInfo(type: DataType.colour.value, key: 4, size: 4),
-          value: [255, 0, 0, 255]),
+        key: 4,
+        meta: ValueInfo(type: DataType.colour.value, key: 4, size: 4),
+        value: [255, 0, 0, 255],
+      ),
     ]);
     final semantic = encodeSemantic(DataType.texture, dict) as List;
     expect(semantic.first['key'], 'Type');
@@ -94,7 +111,8 @@ void main() {
   });
 
   test('flag words round-trip', () {
-    final flags = ValueFlags.readOnly | ValueFlags.persistent | ValueFlags.trigger;
+    final flags =
+        ValueFlags.readOnly | ValueFlags.persistent | ValueFlags.trigger;
     final words = flagWords(flags);
     expect(words, ['Read Only', 'Persistent', 'Trigger']);
     expect(flagsFromWords(words), flags);
@@ -146,21 +164,23 @@ void main() {
           minTimeMs: 50,
           deadzone: 0,
           source: const BackupBlockRef(
-              block: 'Resistive measurement',
-              typeIndex: 8,
-              instance: 0,
-              field: 'Measured Value',
-              fieldIndex: 3,
-              key: 'Key 0',
-              keyIndex: 0),
+            block: 'Resistive measurement',
+            typeIndex: 8,
+            instance: 0,
+            field: 'Measured Value',
+            fieldIndex: 3,
+            key: 'Key 0',
+            keyIndex: 0,
+          ),
           target: const BackupBlockRef(
-              block: 'Dynamic',
-              typeIndex: dynamicTypeBase,
-              instance: 0,
-              field: 'Field 0',
-              fieldIndex: 0,
-              key: 'Key 0',
-              keyIndex: 0),
+            block: 'Dynamic',
+            typeIndex: dynamicTypeBase,
+            instance: 0,
+            field: 'Field 0',
+            fieldIndex: 0,
+            key: 'Key 0',
+            keyIndex: 0,
+          ),
         ),
       ],
       sndb: [BackupSndbEntry(serial: 'BB' * 14, address: '0.2')],
@@ -170,17 +190,23 @@ void main() {
     final decoded = BackupDevice.fromJson(json);
     expect(decoded.name, 'Tamu');
     expect(decoded.blocks.single.entries.single.value, 25000.0);
-    expect(decoded.requesterSubscriptions.single.source.field, 'Measured Value');
+    expect(
+      decoded.requesterSubscriptions.single.source.field,
+      'Measured Value',
+    );
     expect(decoded.sndb.single.address, '0.2');
     expect(decoded.files.single.bytes, [1, 2, 3]);
     expect(json.containsKey('semantic'), isTrue);
   });
 
-  test('legacy numeric device JSON no longer throws (pre-release branch dropped)', () {
-    // Development phase: with no pre-release archives in the wild the legacy
-    // numeric-format rejection was removed, so the old format field is read as
-    // an ordinary device JSON instead of being refused.
-    final decoded = BackupDevice.fromJson({'format': 1, 'blocks': []});
-    expect(decoded.blocks, isEmpty);
-  });
+  test(
+    'legacy numeric device JSON no longer throws (pre-release branch dropped)',
+    () {
+      // Development phase: with no pre-release archives in the wild the legacy
+      // numeric-format rejection was removed, so the old format field is read as
+      // an ordinary device JSON instead of being refused.
+      final decoded = BackupDevice.fromJson({'format': 1, 'blocks': []});
+      expect(decoded.blocks, isEmpty);
+    },
+  );
 }

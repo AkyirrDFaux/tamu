@@ -45,7 +45,8 @@ class RegisterBackupView extends StatelessWidget {
   final List<({int type, int inst, ValueInfo meta, String name})?> blocks;
 
   /// Recalls one stored field into RAM. Null disables the per-field recall buttons.
-  final Future<void> Function(int blockType, int inst, int field, int key)? onRecall;
+  final Future<void> Function(int blockType, int inst, int field, int key)?
+  onRecall;
 
   final bool busy;
 
@@ -84,25 +85,27 @@ class RegisterBackupView extends StatelessWidget {
     return SingleChildScrollView(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(10, 10, 10, 24),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: children,
+        ),
       ),
     );
   }
 
   /// Static blocks persist their Persistent fields in the `.SV` space; the decoder already
   /// resolved each field's offset against this same block list.
-  List<_BackupRow> _staticRows(({int type, int inst, ValueInfo meta, String name}) b) {
+  List<_BackupRow> _staticRows(
+    ({int type, int inst, ValueInfo meta, String name}) b,
+  ) {
     final info = blockInfoFor(BlockType.fromValue(b.type));
     final rows = <_BackupRow>[];
     for (var f = 0; f < b.meta.size; f++) {
       final name = info?.field(f)?.name;
       final entry = backup.staticField(b.type, b.inst, f);
-      rows.add(_row(
-        label: name ?? 'Field $f',
-        entry: entry,
-        field: f,
-        key: 0xFF,
-      ));
+      rows.add(
+        _row(label: name ?? 'Field $f', entry: entry, field: f, key: 0xFF),
+      );
     }
     return rows;
   }
@@ -117,12 +120,14 @@ class RegisterBackupView extends StatelessWidget {
       final keys = systemFieldKeys[field];
       final key = keys == null || keys.isEmpty ? 0xFF : keys.keys.first;
       final entry = backup.staticField(0, 0, field);
-      rows.add(_row(
-        label: systemKeyName(field, key),
-        entry: entry,
-        field: field,
-        key: key,
-      ));
+      rows.add(
+        _row(
+          label: systemKeyName(field, key),
+          entry: entry,
+          field: field,
+          key: key,
+        ),
+      );
     }
     return rows;
   }
@@ -140,20 +145,22 @@ class RegisterBackupView extends StatelessWidget {
           stored: false,
           field: 0,
           key: 0,
-        )
+        ),
       ];
     }
     final rows = <_BackupRow>[];
     for (final f in backup.dynamicFieldsFor(inst)) {
       for (final k in backup.dynamicKeysFor(inst, f)) {
         final entry = backup.dynamicTableEntry(inst, f, k);
-        rows.add(_row(
-          label: 'Field $f, key $k',
-          entry: backup.dynamicField(inst, f, k),
-          field: f,
-          key: k,
-          notPersisted: entry != null && !entry.persistent,
-        ));
+        rows.add(
+          _row(
+            label: 'Field $f, key $k',
+            entry: backup.dynamicField(inst, f, k),
+            field: f,
+            key: k,
+            notPersisted: entry != null && !entry.persistent,
+          ),
+        );
       }
     }
     if (rows.isEmpty) {
@@ -165,7 +172,7 @@ class RegisterBackupView extends StatelessWidget {
           stored: false,
           field: 0,
           key: 0,
-        )
+        ),
       ];
     }
     return rows;
@@ -182,7 +189,9 @@ class RegisterBackupView extends StatelessWidget {
       return _BackupRow(
         label: label,
         value: notPersisted ? 'not persisted' : 'not backed up',
-        detail: notPersisted ? 'volatile entry (no stored value)' : 'no saved value',
+        detail: notPersisted
+            ? 'volatile entry (no stored value)'
+            : 'no saved value',
         stored: false,
         field: field,
         key: key,
@@ -198,55 +207,80 @@ class RegisterBackupView extends StatelessWidget {
     );
   }
 
-  Widget _card(({int type, int inst, ValueInfo meta, String name}) b, List<_BackupRow> rows) {
-    final typeLabel = b.type == 0 ? 'System' : BlockType.fromValue(b.type).label;
+  Widget _card(
+    ({int type, int inst, ValueInfo meta, String name}) b,
+    List<_BackupRow> rows,
+  ) {
+    final typeLabel = b.type == 0
+        ? 'System'
+        : BlockType.fromValue(b.type).label;
     return Card(
       color: kSurfaceAlt,
       margin: const EdgeInsets.only(bottom: 8),
       clipBehavior: Clip.antiAlias,
-      child: Column(children: [
-        ListTile(
-          dense: true,
-          title: Text(
-            '${b.name.isEmpty ? typeLabel : b.name}  ·  $typeLabel'
-            '${b.inst == 0 ? '' : ' [${b.inst}]'}',
-            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-          ),
-          subtitle: Text(
+      child: Column(
+        children: [
+          ListTile(
+            dense: true,
+            title: Text(
+              '${b.name.isEmpty ? typeLabel : b.name}  ·  $typeLabel'
+              '${b.inst == 0 ? '' : ' [${b.inst}]'}',
+              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+            ),
+            subtitle: Text(
               isScriptType(b.type)
                   ? 'scripts are not backed up'
-                  : (rows.isEmpty ? 'not backed up' : '${rows.where((r) => r.stored).length}'
-                      ' of ${rows.length} stored'),
-              style: const TextStyle(fontSize: 10)),
-        ),
-        if (rows.isNotEmpty)
-          Material(
-            color: Colors.black26,
-            child: Column(children: [
-              for (final r in rows)
-                ListTile(
-                  dense: true,
-                  contentPadding: const EdgeInsets.only(left: 16, right: 8),
-                  title: Text('${r.label}: ${r.value}',
-                      style: TextStyle(
+                  : (rows.isEmpty
+                        ? 'not backed up'
+                        : '${rows.where((r) => r.stored).length}'
+                              ' of ${rows.length} stored'),
+              style: const TextStyle(fontSize: 10),
+            ),
+          ),
+          if (rows.isNotEmpty)
+            Material(
+              color: Colors.black26,
+              child: Column(
+                children: [
+                  for (final r in rows)
+                    ListTile(
+                      dense: true,
+                      contentPadding: const EdgeInsets.only(left: 16, right: 8),
+                      title: Text(
+                        '${r.label}: ${r.value}',
+                        style: TextStyle(
                           fontFamily: 'monospace',
                           fontSize: 12,
-                          color: r.stored ? Colors.white : Colors.white38)),
-                  subtitle: Text(r.detail,
-                      style: const TextStyle(fontSize: 10, color: Colors.white38)),
-                  trailing: (r.stored && onRecall != null)
-                      ? IconButton(
-                          tooltip: 'Recall this value from backup',
-                          icon: const Icon(Icons.restore, size: 18),
-                          onPressed: busy
-                              ? null
-                              : () => onRecall!(b.type, b.inst, r.field, r.key),
-                        )
-                      : null,
-                ),
-            ]),
-          ),
-      ]),
+                          color: r.stored ? Colors.white : Colors.white38,
+                        ),
+                      ),
+                      subtitle: Text(
+                        r.detail,
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: Colors.white38,
+                        ),
+                      ),
+                      trailing: (r.stored && onRecall != null)
+                          ? IconButton(
+                              tooltip: 'Recall this value from backup',
+                              icon: const Icon(Icons.restore, size: 18),
+                              onPressed: busy
+                                  ? null
+                                  : () => onRecall!(
+                                      b.type,
+                                      b.inst,
+                                      r.field,
+                                      r.key,
+                                    ),
+                            )
+                          : null,
+                    ),
+                ],
+              ),
+            ),
+        ],
+      ),
     );
   }
 }

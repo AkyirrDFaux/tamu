@@ -20,6 +20,25 @@ class LiveEntry {
   bool get readOnly => meta.readOnly;
 }
 
+/// The live entry matching a semantic (field/key) address: by field/key NAME first, then by
+/// the raw field/key INDEX. Shared by [LiveDevice.resolveRef] and [RestorePlan._matchEntry] so
+/// the two cannot drift.
+LiveEntry? _matchLiveEntry(
+  List<LiveEntry> entries, {
+  required String fieldName,
+  required String keyName,
+  required int field,
+  required int key,
+}) {
+  for (final e in entries) {
+    if (e.fieldName == fieldName && e.keyName == keyName) return e;
+  }
+  for (final e in entries) {
+    if (e.field == field && e.key == key) return e;
+  }
+  return null;
+}
+
 class LiveBlock {
   final int type;
   final int instance;
@@ -82,16 +101,13 @@ class LiveDevice {
         .firstOrNull;
     block ??= blocks.where((b) => b.typeWord == ref.block).firstOrNull;
     if (block == null) return null;
-    LiveEntry? entry;
-    for (final e in block.entries) {
-      if (e.fieldName == ref.field && e.keyName == ref.key) {
-        entry = e;
-        break;
-      }
-    }
-    entry ??= block.entries
-        .where((e) => e.field == ref.fieldIndex && e.key == ref.keyIndex)
-        .firstOrNull;
+    final entry = _matchLiveEntry(
+      block.entries,
+      fieldName: ref.field,
+      keyName: ref.key,
+      field: ref.fieldIndex,
+      key: ref.keyIndex,
+    );
     if (entry == null) return null;
     return makeBlockInfo(block.type, block.instance, entry.field, entry.key);
   }
@@ -119,15 +135,20 @@ List<int>? resolveEntryBytes(BackupEntry source, LiveEntry target) {
   final sourceType = dataTypeFromWord(source.type);
   if (sourceType == null) return null;
   final targetType = target.meta.dataType;
-  final text = (sourceType == DataType.text ||
+  final text =
+      (sourceType == DataType.text ||
           sourceType == DataType.name ||
           sourceType == DataType.filename) &&
       (targetType == DataType.text ||
           targetType == DataType.name ||
           targetType == DataType.filename);
   if (!text && sourceType != targetType) return null;
-  return decodeSemantic(targetType, source.value,
-      info: target.info, size: target.meta.size);
+  return decodeSemantic(
+    targetType,
+    source.value,
+    info: target.info,
+    size: target.meta.size,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -151,8 +172,12 @@ class RestoreItem {
   LiveDevice? targetDevice;
   LiveBlock? targetBlock;
   LiveEntry? targetEntry;
-  int? targetRef; // resolved source/target register address for subscriptions
   String? issue;
+
+  /// The validated write payload computed during [RestorePlan.resolve] and reused at write
+  /// time; cleared whenever the plan re-resolves. The computation is deterministic, so caching
+  /// it cannot change the result.
+  List<int>? resolvedBytes;
 
   RestoreItem({
     required this.kind,
@@ -176,7 +201,8 @@ class RestorePlan {
   final List<LiveDevice> liveDevices;
   final List<RestoreItem> items;
   final Map<int, LiveDevice> deviceTargets; // source device id -> live device
-  final Map<String, LiveBlock> blockTargets; // "deviceId:type:instance" -> live block
+  final Map<String, LiveBlock>
+  blockTargets; // "deviceId:type:instance" -> live block
 
   RestorePlan({
     required this.devices,
@@ -201,7 +227,7 @@ class RestorePlan {
       item.targetDevice = deviceTargets[item.device.id];
       item.targetBlock = null;
       item.targetEntry = null;
-      item.targetRef = null;
+      item.resolvedBytes = null;
       item.issue = null;
       final target = item.targetDevice;
       if (target == null) {
@@ -226,8 +252,15 @@ class RestorePlan {
             item.issue = 'No matching entry';
           } else if (item.targetEntry!.readOnly) {
             item.issue = 'Read Only';
-          } else if (resolveEntryBytes(entry, item.targetEntry!) == null) {
-            item.issue = 'Incompatible value';
+          } else {
+            // Validate the value now and keep the bytes for the write, so `applyRestorePlan`
+            // does not recompute the same decode.
+            final bytes = resolveEntryBytes(entry, item.targetEntry!);
+            if (bytes == null) {
+              item.issue = 'Incompatible value';
+            } else {
+              item.resolvedBytes = bytes;
+            }
           }
         case RestoreKind.script:
           if (target.capabilities & Capability.scripts == 0) {
@@ -261,15 +294,13 @@ class RestorePlan {
     }
   }
 
-  LiveEntry? _matchEntry(BackupEntry entry, LiveBlock block) {
-    for (final e in block.entries) {
-      if (e.fieldName == entry.field && e.keyName == entry.key) return e;
-    }
-    for (final e in block.entries) {
-      if (e.field == entry.fieldIndex && e.key == entry.keyIndex) return e;
-    }
-    return null;
-  }
+  LiveEntry? _matchEntry(BackupEntry entry, LiveBlock block) => _matchLiveEntry(
+    block.entries,
+    fieldName: entry.field,
+    keyName: entry.key,
+    field: entry.fieldIndex,
+    key: entry.keyIndex,
+  );
 }
 
 /// The live device a source device restores into: serial first (exact identity), then the
@@ -280,22 +311,36 @@ LiveDevice? matchLiveDevice(BackupDevice source, List<LiveDevice> live) {
     if (bySerial != null) return bySerial;
   }
   return live.where((d) => d.id == source.id).firstOrNull ??
-      live.where((d) => d.name.toLowerCase() == source.name.toLowerCase()).firstOrNull ??
       live
-          .where((d) =>
-              d.blocks.any((b) => b.type == source.blocks.firstOrNull?.typeIndex))
+          .where((d) => d.name.toLowerCase() == source.name.toLowerCase())
+          .firstOrNull ??
+      live
+          .where(
+            (d) => d.blocks.any(
+              (b) => b.type == source.blocks.firstOrNull?.typeIndex,
+            ),
+          )
           .firstOrNull ??
       live.firstOrNull;
 }
 
-/// Builds a restore plan for [devices] against the currently known devices.
-Future<RestorePlan> buildRestorePlan(List<BackupDevice> devices) async {
+/// Walks every non-stale device into a live snapshot, in device order.
+///
+/// Sequential on purpose: the RS bus is half-duplex and the connection layer serialises
+/// requests, so concurrent reads would not overlap.
+Future<List<LiveDevice>> _readLiveDevices() async {
   final live = <LiveDevice>[];
   for (final device in DeviceDatabase.instance.all) {
     if (device.stale) continue;
     final snapshot = await readLiveDevice(device.id);
     if (snapshot != null) live.add(snapshot);
   }
+  return live;
+}
+
+/// Builds a restore plan for [devices] against the currently known devices.
+Future<RestorePlan> buildRestorePlan(List<BackupDevice> devices) async {
+  final live = await _readLiveDevices();
 
   final targets = <int, LiveDevice>{};
   for (final source in devices) {
@@ -307,25 +352,42 @@ Future<RestorePlan> buildRestorePlan(List<BackupDevice> devices) async {
   for (final device in devices) {
     for (final block in device.blocks) {
       for (final entry in block.entries) {
-        items.add(RestoreItem(
-            kind: RestoreKind.entry, device: device, block: block, entry: entry));
+        items.add(
+          RestoreItem(
+            kind: RestoreKind.entry,
+            device: device,
+            block: block,
+            entry: entry,
+          ),
+        );
       }
     }
     for (final script in device.scripts) {
-      items.add(RestoreItem(kind: RestoreKind.script, device: device, script: script));
+      items.add(
+        RestoreItem(kind: RestoreKind.script, device: device, script: script),
+      );
     }
     for (final sub in device.requesterSubscriptions) {
-      items.add(RestoreItem(
-          kind: RestoreKind.subscription, device: device, subscription: sub));
+      items.add(
+        RestoreItem(
+          kind: RestoreKind.subscription,
+          device: device,
+          subscription: sub,
+        ),
+      );
     }
     for (final sndb in device.sndb) {
-      items.add(RestoreItem(kind: RestoreKind.sndb, device: device, sndbEntry: sndb));
+      items.add(
+        RestoreItem(kind: RestoreKind.sndb, device: device, sndbEntry: sndb),
+      );
     }
     for (final file in device.files) {
       // Scripts are restored semantically (`RestoreKind.script`); restoring the raw
       // SCR_ file too would let it overwrite the rebuilt image.
       if (file.kind == 'Script') continue;
-      items.add(RestoreItem(kind: RestoreKind.file, device: device, file: file));
+      items.add(
+        RestoreItem(kind: RestoreKind.file, device: device, file: file),
+      );
     }
   }
 
@@ -361,35 +423,56 @@ Future<int> prepareDynamicBlocks(RestorePlan plan) async {
     for (final block in source.blocks) {
       if (!isDynamicType(block.typeIndex)) continue;
       if (target.findBlock(block) != null) continue;
-      final global = ((block.typeIndex - dynamicTypeBase) << 6) | block.instance;
+      final global =
+          ((block.typeIndex - dynamicTypeBase) << 6) | block.instance;
       final dyn = DynBlock(
-          index: global, meta: ValueInfo(type: block.typeIndex), name: block.name);
-      if (await reg.createDynamicBlock(block.name, index: global) == null) continue;
+        index: global,
+        meta: ValueInfo(type: block.typeIndex),
+        name: block.name,
+      );
+      if (await reg.createDynamicBlock(block.name, index: global) == null) {
+        continue;
+      }
       // Recreate the block's field/key structure. `appendDynamicEntry` writes through a
       // BlockInfo whose key is always 0, so it creates one entry per FIELD; a keyed entry
       // (the eyes have several keys per field) has to go through `writeDynamicEntry`, which
       // carries the key in its address.
       final seen = <String>{};
-      final entries = [...block.entries]..sort((a, b) => a.fieldIndex == b.fieldIndex
-          ? a.keyIndex.compareTo(b.keyIndex)
-          : a.fieldIndex.compareTo(b.fieldIndex));
+      final entries = [...block.entries]
+        ..sort(
+          (a, b) => a.fieldIndex == b.fieldIndex
+              ? a.keyIndex.compareTo(b.keyIndex)
+              : a.fieldIndex.compareTo(b.fieldIndex),
+        );
       for (final entry in entries) {
         if (!seen.add('${entry.fieldIndex}:${entry.keyIndex}')) continue;
         final type = dataTypeFromWord(entry.type);
         if (type == null) continue;
         final meta = ValueInfo(
-            type: type.value,
-            key: entry.keyIndex,
-            size: entry.size,
-            // The flags decide whether the value reaches the .DV persistent space (and so
-            // survives the boot recall): dropping them restores the structure but loses every
-            // value on the next reboot.
-            flags: flagsFromWords(entry.flags));
+          type: type.value,
+          key: entry.keyIndex,
+          size: entry.size,
+          // The flags decide whether the value reaches the .DV persistent space (and so
+          // survives the boot recall): dropping them restores the structure but loses every
+          // value on the next reboot.
+          flags: flagsFromWords(entry.flags),
+        );
         final zero = List<int>.filled(entry.size, 0);
         if (entry.keyIndex == 0) {
-          await reg.appendDynamicEntry(dyn, meta, zero, index: entry.fieldIndex);
+          await reg.appendDynamicEntry(
+            dyn,
+            meta,
+            zero,
+            index: entry.fieldIndex,
+          );
         } else {
-          await reg.writeDynamicEntry(dyn, entry.fieldIndex, entry.keyIndex, meta, zero);
+          await reg.writeDynamicEntry(
+            dyn,
+            entry.fieldIndex,
+            entry.keyIndex,
+            meta,
+            zero,
+          );
         }
       }
       created++;
@@ -397,12 +480,7 @@ Future<int> prepareDynamicBlocks(RestorePlan plan) async {
   }
   if (created == 0) return 0;
 
-  final live = <LiveDevice>[];
-  for (final device in DeviceDatabase.instance.all) {
-    if (device.stale) continue;
-    final snapshot = await readLiveDevice(device.id);
-    if (snapshot != null) live.add(snapshot);
-  }
+  final live = await _readLiveDevices();
   plan.liveDevices
     ..clear()
     ..addAll(live);
@@ -422,7 +500,8 @@ Future<int> prepareDynamicBlocks(RestorePlan plan) async {
 /// Applies the ready + selected items of [plan]. Returns the number of written
 /// items and failures.
 Future<({int written, int failed, List<String> failures})> applyRestorePlan(
-    RestorePlan plan) async {
+  RestorePlan plan,
+) async {
   // A dynamic block's values can only be written into a block that exists.
   await prepareDynamicBlocks(plan);
 
@@ -435,17 +514,6 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
   final subIndex = <int, int>{};
   final sndbWritten = <String>{};
 
-  void done(bool ok, RestoreItem item, String what) {
-    if (ok) {
-      written++;
-    } else {
-      failed++;
-      if (failures.length < 100) {
-        failures.add('${item.device.name}: ${item.kind.name} $what');
-      }
-    }
-  }
-
   // One item could not be written; record what it was so a run can be diagnosed.
   void failItem(RestoreItem item, String why) {
     failed++;
@@ -454,24 +522,33 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
     }
   }
 
+  void done(bool ok, RestoreItem item, String what) {
+    if (ok) {
+      written++;
+    } else {
+      failItem(item, what);
+    }
+  }
+
   String describe(RestoreItem i) => switch (i.kind) {
-        RestoreKind.entry => '${i.block?.name}/${i.entry?.field}[${i.entry?.key}]',
-        RestoreKind.script => 'script slot ${i.script?.slot}',
-        RestoreKind.subscription => 'from ${i.subscription?.provider}',
-        RestoreKind.sndb => 'sndb ${i.sndbEntry?.serial}',
-        RestoreKind.file => 'file ${i.file?.name}',
-      };
+    RestoreKind.entry => '${i.block?.name}/${i.entry?.field}[${i.entry?.key}]',
+    RestoreKind.script => 'script slot ${i.script?.slot}',
+    RestoreKind.subscription => 'from ${i.subscription?.provider}',
+    RestoreKind.sndb => 'sndb ${i.sndbEntry?.serial}',
+    RestoreKind.file => 'file ${i.file?.name}',
+  };
 
   // Files first: an entry may name one (the LED display's layout file name is only accepted
   // once the file exists), then the block entries, then the rest.
   int order(RestoreKind kind) => switch (kind) {
-        RestoreKind.file => 0,
-        RestoreKind.sndb => 1,
-        RestoreKind.script => 2,
-        RestoreKind.entry => 3,
-        RestoreKind.subscription => 4,
-      };
-  final ordered = [...plan.items]..sort((a, b) => order(a.kind).compareTo(order(b.kind)));
+    RestoreKind.file => 0,
+    RestoreKind.sndb => 1,
+    RestoreKind.script => 2,
+    RestoreKind.entry => 3,
+    RestoreKind.subscription => 4,
+  };
+  final ordered = [...plan.items]
+    ..sort((a, b) => order(a.kind).compareTo(order(b.kind)));
 
   for (final item in ordered) {
     if (!item.selected || !item.ready) continue;
@@ -479,8 +556,11 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
     switch (item.kind) {
       case RestoreKind.entry:
         final reg = register.putIfAbsent(
-            target.id, () => RegisterClient(deviceId: target.id));
-        final bytes = resolveEntryBytes(item.entry!, item.targetEntry!);
+          target.id,
+          () => RegisterClient(deviceId: target.id),
+        );
+        // The bytes were validated during resolve() and cached on the item.
+        final bytes = item.resolvedBytes;
         if (bytes == null) {
           failItem(item, describe(item));
           break;
@@ -494,38 +574,62 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
         final block = item.targetBlock!;
         if (block.isDynamic) {
           final dyn = DynBlock(
-              index: block.instance,
-              meta: ValueInfo(type: block.type),
-              name: block.name);
+            index: block.instance,
+            meta: ValueInfo(type: block.type),
+            name: block.name,
+          );
           done(
-              await reg.writeDynamicEntry(
-                      dyn, item.targetEntry!.field, item.targetEntry!.key, meta, bytes) !=
-                  null,
-              item,
-              describe(item));
+            await reg.writeDynamicEntry(
+                  dyn,
+                  item.targetEntry!.field,
+                  item.targetEntry!.key,
+                  meta,
+                  bytes,
+                ) !=
+                null,
+            item,
+            describe(item),
+          );
         } else {
           done(
-              await reg.writeBlockField(block.type, block.instance,
-                      item.targetEntry!.field, item.targetEntry!.key, meta, bytes) !=
-                  null,
-              item,
-              describe(item));
+            await reg.writeBlockField(
+                  block.type,
+                  block.instance,
+                  item.targetEntry!.field,
+                  item.targetEntry!.key,
+                  meta,
+                  bytes,
+                ) !=
+                null,
+            item,
+            describe(item),
+          );
         }
       case RestoreKind.script:
-        final store = storage
-            .putIfAbsent(target.id, () => StorageClient(deviceId: target.id));
+        final store = storage.putIfAbsent(
+          target.id,
+          () => StorageClient(deviceId: target.id),
+        );
         final slot = item.script!.slot;
         final name = scriptFileName(slot);
         try {
-          done(await store.writeFile(name, item.script!.toDraft().toImage()), item,
-              describe(item));
+          done(
+            await store.writeFile(name, item.script!.toDraft().toImage()),
+            item,
+            describe(item),
+          );
         } catch (error) {
-          AppDiagnostics.log('backup', 'script ${item.script!.functionName} failed: $error');
+          AppDiagnostics.log(
+            'backup',
+            'script ${item.script!.functionName} failed: $error',
+          );
           failItem(item, describe(item));
         }
       case RestoreKind.subscription:
         final sub = subscriptions.putIfAbsent(
-            target.id, () => SubscriptionClient(deviceId: target.id));
+          target.id,
+          () => SubscriptionClient(deviceId: target.id),
+        );
         final s = item.subscription!;
         final provider = idFromString(s.provider);
         final providerDev = provider == null
@@ -566,17 +670,28 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
         // A device is not an entry in its own SNDB (the firmware refuses it), so skip the
         // target's own row rather than counting it as a failure.
         if (id == null || id == target.id) break;
-        done(await DeviceDatabase.instance.sndbWrite(unhexBytes(e.serial), id), item,
-            describe(item));
+        done(
+          await DeviceDatabase.instance.sndbWrite(unhexBytes(e.serial), id),
+          item,
+          describe(item),
+        );
       case RestoreKind.file:
-        final store = storage
-            .putIfAbsent(target.id, () => StorageClient(deviceId: target.id));
+        final store = storage.putIfAbsent(
+          target.id,
+          () => StorageClient(deviceId: target.id),
+        );
         if (item.file!.name == '.TABLE') break;
         try {
-          done(await store.writeFile(item.file!.name, item.file!.bytes), item,
-              describe(item));
+          done(
+            await store.writeFile(item.file!.name, item.file!.bytes),
+            item,
+            describe(item),
+          );
         } catch (error) {
-          AppDiagnostics.log('backup', 'file ${item.file!.name} failed: $error');
+          AppDiagnostics.log(
+            'backup',
+            'file ${item.file!.name} failed: $error',
+          );
           failItem(item, describe(item));
         }
     }

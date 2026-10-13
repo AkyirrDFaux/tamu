@@ -46,17 +46,18 @@ const int scriptMaxCallDepth = 8;
 /// A 16-byte function-reservation record for a referenced global function. Re-exported from the
 /// format layer ([encodeFunctionReservation]) so callers of assembly find it here too.
 List<int> functionReservationFor(ScriptFunction f) => encodeFunctionReservation(
-      fileId: f.globalFileId,
-      memOffset: f.globalMemOffset,
-      instrOffset: f.globalInstrOffset,
-    );
+  fileId: f.globalFileId,
+  memOffset: f.globalMemOffset,
+  instrOffset: f.globalInstrOffset,
+);
 
 /// The `Call` operand for a local/macro body: a plain `Predefine/Index` line target, which the
 /// app resolves at assembly (main-program calls carry the combined absolute line index; a call
 /// inside a body carries the target's offset from that body's first line, which the firmware
 /// adds the body's base to at load). A local line target is always < 1024, so bit 15 is free to
 /// mark a global call. This one is well defined - the existing Jump/Call line-target operand.
-ScriptSymbol scriptLocalCallOperand(int line) => ScriptSymbol.predefine(preIndex, line);
+ScriptSymbol scriptLocalCallOperand(int line) =>
+    ScriptSymbol.predefine(preIndex, line);
 
 /// Bit 15 of a `Call` operand marks a linked global function (firmware `SCRIPT_CALL_GLOBAL_BIT`);
 /// the low 15 bits hold the reservation index. The line target of a local body never uses it.
@@ -76,7 +77,10 @@ int scriptGlobalCallOperandValue(int index) =>
 /// function's reservation index with bit 15 set, so the device resolves the real address at load
 /// (the app knows the interface at assembly and leaves only the address to be filled in).
 ScriptSymbol scriptGlobalCallOperand(int reservationIndex) =>
-    ScriptSymbol.predefine(preIndex, scriptGlobalCallOperandValue(reservationIndex));
+    ScriptSymbol.predefine(
+      preIndex,
+      scriptGlobalCallOperandValue(reservationIndex),
+    );
 
 /// The result of assembling a script's main program together with its functions.
 class ScriptAssembly {
@@ -157,7 +161,10 @@ ScriptAssembly assembleScriptProgram({
   }
 
   // 2. Cycle detection (a colouring DFS over the whole declared graph).
-  final color = List<int>.filled(functions.length, 0); // 0 white, 1 grey, 2 black
+  final color = List<int>.filled(
+    functions.length,
+    0,
+  ); // 0 white, 1 grey, 2 black
   var hasCycle = false;
   void visit(int node) {
     if (hasCycle || color[node] == 2) return;
@@ -200,7 +207,9 @@ ScriptAssembly assembleScriptProgram({
     if (frames > maxFrames) maxFrames = frames;
   }
   if (maxFrames > callDepthCap) {
-    errors.add('Call nesting $maxFrames exceeds the call-depth cap of $callDepthCap');
+    errors.add(
+      'Call nesting $maxFrames exceeds the call-depth cap of $callDepthCap',
+    );
   }
 
   if (errors.isNotEmpty) return ScriptAssembly(errors: errors);
@@ -238,11 +247,13 @@ ScriptAssembly assembleScriptProgram({
     reservationByFunction[i] = reservations.length;
     reservationFunctions.add(i);
     final f = functions[i];
-    reservations.add(encodeFunctionReservation(
-      fileId: f.globalFileId,
-      memOffset: f.globalMemOffset,
-      instrOffset: f.globalInstrOffset,
-    ));
+    reservations.add(
+      encodeFunctionReservation(
+        fileId: f.globalFileId,
+        memOffset: f.globalMemOffset,
+        instrOffset: f.globalInstrOffset,
+      ),
+    );
   }
 
   // 7. Rewrite each Call operand to the resolved address and splice the bodies in. A main-program
@@ -257,8 +268,9 @@ ScriptAssembly assembleScriptProgram({
     if (f.isGlobal) {
       operand = scriptGlobalCallOperand(reservationByFunction[target]!);
     } else {
-      final line =
-          enclosing == null ? starts[target] : starts[target] - starts[enclosing];
+      final line = enclosing == null
+          ? starts[target]
+          : starts[target] - starts[enclosing];
       operand = scriptLocalCallOperand(line);
     }
     if (out.operands.isEmpty) {
@@ -272,8 +284,7 @@ ScriptAssembly assembleScriptProgram({
   final lines = <ScriptLine>[
     for (final l in mainLines) rewrite(l, null),
     for (var i = 0; i < functions.length; i++)
-      if (starts[i] >= 0)
-        ...functions[i].body.map((l) => rewrite(l, i)),
+      if (starts[i] >= 0) ...functions[i].body.map((l) => rewrite(l, i)),
   ];
 
   return ScriptAssembly(
@@ -289,5 +300,4 @@ ScriptAssembly assembleScriptProgram({
 List<String> validateScriptFunctions({
   required List<ScriptLine> mainLines,
   List<ScriptFunction> functions = const [],
-}) =>
-    assembleScriptProgram(mainLines: mainLines, functions: functions).errors;
+}) => assembleScriptProgram(mainLines: mainLines, functions: functions).errors;

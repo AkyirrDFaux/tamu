@@ -23,14 +23,16 @@ class FieldInfo {
   /// Max character count for string fields (wire format limit).
   final int maxChars;
 
-  const FieldInfo(this.name,
-      {this.unit,
-      this.min,
-      this.max,
-      this.step,
-      this.enumValues,
-      this.transform = false,
-      this.maxChars = 23});
+  const FieldInfo(
+    this.name, {
+    this.unit,
+    this.min,
+    this.max,
+    this.step,
+    this.enumValues,
+    this.transform = false,
+    this.maxChars = 23,
+  });
 }
 
 class BlockInfo {
@@ -110,13 +112,9 @@ const Map<int, String> _gyroRanges = {
   4: '±2000 dps',
 };
 
-const _buttonFields = [
-  FieldInfo('Button Raw State'),
-];
+const _buttonFields = [FieldInfo('Button Raw State')];
 
-const _ledFields = [
-  FieldInfo('LED State'),
-];
+const _ledFields = [FieldInfo('LED State')];
 
 // LED-Button (Docs/Modules and blocks/Buttons & LEDS.md): Button raw state (0) and
 // LEDState (3); fields 1-2 are reserved so LEDState keeps its documented index.
@@ -165,8 +163,10 @@ const Map<BlockType, BlockInfo> _blockRegistry = {
   BlockType.pwm: BlockInfo('PWM output', _pwmFields),
   BlockType.accGyr: BlockInfo('Accelerometer/Gyroscope', _accGyrFields),
   BlockType.vysiDisplay: BlockInfo('LED Display', _vysiDisplayFields),
-  BlockType.resistiveMeasure:
-      BlockInfo('Resistive measurement', _resistiveMeasureFields),
+  BlockType.resistiveMeasure: BlockInfo(
+    'Resistive measurement',
+    _resistiveMeasureFields,
+  ),
 };
 
 /// Metadata for a block type, or null for unknown/dynamic types.

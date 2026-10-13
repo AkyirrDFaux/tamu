@@ -6,7 +6,12 @@ import 'package:tamuapp/core/types.dart';
 /// (the static `.SV` space, `Subscriptions.h` SUBREQ, `Memory.h` .DT_/.DV_).
 void main() {
   List<int> u16(int v) => [v & 0xFF, (v >> 8) & 0xFF];
-  List<int> u32(int v) => [v & 0xFF, (v >> 8) & 0xFF, (v >> 16) & 0xFF, (v >> 24) & 0xFF];
+  List<int> u32(int v) => [
+    v & 0xFF,
+    (v >> 8) & 0xFF,
+    (v >> 16) & 0xFF,
+    (v >> 24) & 0xFF,
+  ];
 
   /// The static blocks' persistent fields (the values the device reports via CID 1/2).
   final staticFields = <int, List<({int field, int size, int type})>>{
@@ -80,7 +85,10 @@ void main() {
       expect(layout.offsetOf(0x06, 0, 2), 48);
       expect(layout.offsetOf(0x06, 0, 3), 52);
       expect(layout.offsetOf(0x08, 0, 0), 60);
-      expect(layout.offsetOf(0x08, 0, 1), 64); // SensorType (1 B) follows the 4 B Number
+      expect(
+        layout.offsetOf(0x08, 0, 1),
+        64,
+      ); // SensorType (1 B) follows the 4 B Number
       expect(layout.offsetOf(0x08, 0, 2), 68); // FilterCoeff re-aligns to 4
       // A volatile field and an absent type have no offset.
       expect(layout.offsetOf(0x08, 0, 3), isNull);
@@ -88,10 +96,17 @@ void main() {
     });
 
     test('a node (no NetID) has a 16 B System segment and no NetID field', () {
-      final layout = StaticSpaceLayout.fromRegistry(registry, staticFields, hasNetId: false);
+      final layout = StaticSpaceLayout.fromRegistry(
+        registry,
+        staticFields,
+        hasNetId: false,
+      );
       expect(layout.offsetOf(0, 0, systemNameField), 0);
       expect(layout.offsetOf(0, 0, systemNetIdField), isNull);
-      expect(layout.offsetOf(0x06, 0, 1), 16); // the first static block starts at 16, not 20
+      expect(
+        layout.offsetOf(0x06, 0, 1),
+        16,
+      ); // the first static block starts at 16, not 20
       expect(layout.offsetOf(0x08, 0, 0), 56);
     });
 
@@ -124,14 +139,18 @@ void main() {
       final source = makeBlockInfo(8, 0, 4, 0);
       // provider(2) trid(2) source(4) trigger(1) min(3) period(4) deadzone(4) target(4)
       List<int> entry(int provider, int trid, double deadzone) => [
-            ...u16(provider), ...u16(trid),
-            ...u32(source),
-            1, 100, 0, 0, // trigger + uint24 minTime = 100
-            ...u32(1000),
-            ...numberToBytes(deadzone),
-            ...u32(target),
-          ];
-      final entries = decodeSubreq([2, ...entry(2, 0x1000, 0), ...entry(3, 0x1001, 1.5)]);
+        ...u16(provider), ...u16(trid),
+        ...u32(source),
+        1, 100, 0, 0, // trigger + uint24 minTime = 100
+        ...u32(1000),
+        ...numberToBytes(deadzone),
+        ...u32(target),
+      ];
+      final entries = decodeSubreq([
+        2,
+        ...entry(2, 0x1000, 0),
+        ...entry(3, 0x1001, 1.5),
+      ]);
       expect(entries, hasLength(2));
       expect(entries[0].providerAddr, 2);
       expect(entries[0].trid, 0x1000);
@@ -142,23 +161,25 @@ void main() {
       expect(entries[1].deadzone, closeTo(1.5, 1e-4));
     });
 
-    test('an implausible count decodes to nothing rather than reading garbage', () {
-      expect(decodeSubreq([200, 1, 2, 3]), isEmpty);
-      expect(decodeSubreq(const []), isEmpty);
-      expect(decodeSubreq([0]), isEmpty);
-    });
+    test(
+      'an implausible count decodes to nothing rather than reading garbage',
+      () {
+        expect(decodeSubreq([200, 1, 2, 3]), isEmpty);
+        expect(decodeSubreq(const []), isEmpty);
+        expect(decodeSubreq([0]), isEmpty);
+      },
+    );
   });
 
   group('.DT_ / .DV_', () {
-    DynamicTable table() => decodeDynamicTable(dynamicTable(
-          'Box',
-          [
-            // fieldKey, type, size, flags
-            ((0 << 8) | 0, DataType.number.value, 4, ValueFlags.persistent),
-            ((1 << 8) | 0, DataType.number.value, 4, 0), // volatile
-            ((2 << 8) | 3, DataType.number.value, 2, ValueFlags.persistent),
-          ],
-        ))!;
+    DynamicTable table() => decodeDynamicTable(
+      dynamicTable('Box', [
+        // fieldKey, type, size, flags
+        ((0 << 8) | 0, DataType.number.value, 4, ValueFlags.persistent),
+        ((1 << 8) | 0, DataType.number.value, 4, 0), // volatile
+        ((2 << 8) | 3, DataType.number.value, 2, ValueFlags.persistent),
+      ]),
+    )!;
 
     test('the table decodes name and entries', () {
       final t = table();
@@ -172,27 +193,33 @@ void main() {
       expect(t.persistentSize, 6);
     });
 
-    test('values pair with the persistent entries in table order, skipping volatile', () {
-      final entries = decodeDynamicValues(0x0A, table(), [
-        ...numberToBytes(7),
-        0x34, 0x12, // 2-byte field 2/key 3
-      ]);
-      expect(entries, hasLength(2));
-      expect(entries[0].blockType, dynamicTypeForIndex(0x0A));
-      expect(entries[0].inst, 0x0A);
-      expect(entries[0].field, 0);
-      expect(entries[0].key, 0);
-      expect(entries[0].value, numberToBytes(7));
-      expect(entries[1].field, 2);
-      expect(entries[1].key, 3);
-      expect(entries[1].value, [0x34, 0x12]);
-    });
+    test(
+      'values pair with the persistent entries in table order, skipping volatile',
+      () {
+        final entries = decodeDynamicValues(0x0A, table(), [
+          ...numberToBytes(7),
+          0x34, 0x12, // 2-byte field 2/key 3
+        ]);
+        expect(entries, hasLength(2));
+        expect(entries[0].blockType, dynamicTypeForIndex(0x0A));
+        expect(entries[0].inst, 0x0A);
+        expect(entries[0].field, 0);
+        expect(entries[0].key, 0);
+        expect(entries[0].value, numberToBytes(7));
+        expect(entries[1].field, 2);
+        expect(entries[1].key, 3);
+        expect(entries[1].value, [0x34, 0x12]);
+      },
+    );
 
-    test('a DV length that does not match the persistent size yields nothing', () {
-      // Firmware rule: the DV length must equal the table's persistent size.
-      expect(decodeDynamicValues(0, table(), const []), isEmpty);
-      expect(decodeDynamicValues(0, table(), List.filled(8, 0)), isEmpty);
-    });
+    test(
+      'a DV length that does not match the persistent size yields nothing',
+      () {
+        // Firmware rule: the DV length must equal the table's persistent size.
+        expect(decodeDynamicValues(0, table(), const []), isEmpty);
+        expect(decodeDynamicValues(0, table(), List.filled(8, 0)), isEmpty);
+      },
+    );
 
     test('a corrupt or empty table decodes to null', () {
       expect(decodeDynamicTable(const []), isNull);
@@ -209,7 +236,10 @@ void main() {
       sv.setRange(0, 3, 'Eye'.codeUnits);
       sv.setRange(20, 24, numberToBytes(10));
       final backup = DeviceBackup.decode(
-          sv: sv, staticRegistry: registry, staticFields: staticFields);
+        sv: sv,
+        staticRegistry: registry,
+        staticFields: staticFields,
+      );
       expect(backup.hasAny, isTrue);
       expect(backup.staticField(0x08, 0, 0)?.value, numberToBytes(10));
       // The System block is virtual (type 0, inst 0) and carries Name/NetID.
@@ -223,32 +253,39 @@ void main() {
 
     test('a registry type with no persistent fields contributes nothing', () {
       final backup = DeviceBackup.decode(
-          sv: List.filled(20, 0), staticRegistry: const [(type: 0x03, inst: 0)]);
+        sv: List.filled(20, 0),
+        staticRegistry: const [(type: 0x03, inst: 0)],
+      );
       // LEDButton (0x03) has no persistent fields, so only the System fields are present.
       expect(backup.staticField(0x03, 0, 0), isNull);
       expect(backup.staticField(0, 0, systemNameField), isNotNull);
     });
 
-    test('the static classifier excludes the System, Script and Dynamic memories', () {
-      expect(isStaticRegistryType(systemBlockTypeValue), isFalse);
-      // The banked script range (0x3F4-0x3F7) and dynamic range (0x3F0-0x3F3).
-      expect(isStaticRegistryType(scriptTypeBase), isFalse);
-      expect(isStaticRegistryType(scriptTypeBase + 3), isFalse);
-      expect(isStaticRegistryType(dynamicTypeBase), isFalse);
-      expect(isStaticRegistryType(dynamicTypeBase + 3), isFalse);
-      expect(isStaticRegistryType(BlockType.pwm.value), isTrue);
-      expect(isStaticRegistryType(BlockType.resistiveMeasure.value), isTrue);
-    });
+    test(
+      'the static classifier excludes the System, Script and Dynamic memories',
+      () {
+        expect(isStaticRegistryType(systemBlockTypeValue), isFalse);
+        // The banked script range (0x3F4-0x3F7) and dynamic range (0x3F0-0x3F3).
+        expect(isStaticRegistryType(scriptTypeBase), isFalse);
+        expect(isStaticRegistryType(scriptTypeBase + 3), isFalse);
+        expect(isStaticRegistryType(dynamicTypeBase), isFalse);
+        expect(isStaticRegistryType(dynamicTypeBase + 3), isFalse);
+        expect(isStaticRegistryType(BlockType.pwm.value), isTrue);
+        expect(isStaticRegistryType(BlockType.resistiveMeasure.value), isTrue);
+      },
+    );
 
     test('dynamic entries are looked up by field and key', () {
-      final backup = DeviceBackup.decode(dynamic: {
-        3: (
-          table: dynamicTable('Box', [
-            ((0 << 8) | 1, DataType.number.value, 4, ValueFlags.persistent),
-          ]),
-          values: numberToBytes(42),
-        ),
-      });
+      final backup = DeviceBackup.decode(
+        dynamic: {
+          3: (
+            table: dynamicTable('Box', [
+              ((0 << 8) | 1, DataType.number.value, 4, ValueFlags.persistent),
+            ]),
+            values: numberToBytes(42),
+          ),
+        },
+      );
       expect(backup.dynamicField(3, 0, 1)?.value, numberToBytes(42));
       // The same field at another key is a different entry.
       expect(backup.dynamicField(3, 0, 0), isNull);
@@ -262,18 +299,23 @@ void main() {
       expect(DeviceBackup.empty.staticField(0, 0, 0), isNull);
       expect(DeviceBackup.empty.dynamicField(0, 0, 0), isNull);
       expect(DeviceBackup.decode().hasAny, isFalse);
-      expect(DeviceBackup.decode(sv: const [], dynamic: const {}).hasAny, isFalse);
+      expect(
+        DeviceBackup.decode(sv: const [], dynamic: const {}).hasAny,
+        isFalse,
+      );
     });
 
     test('a DV file that does not match its DT table contributes no values', () {
-      final backup = DeviceBackup.decode(dynamic: {
-        1: (
-          table: dynamicTable('Box', [
-            ((0 << 8) | 0, DataType.number.value, 4, ValueFlags.persistent),
-          ]),
-          values: const [1, 2], // wrong length
-        ),
-      });
+      final backup = DeviceBackup.decode(
+        dynamic: {
+          1: (
+            table: dynamicTable('Box', [
+              ((0 << 8) | 0, DataType.number.value, 4, ValueFlags.persistent),
+            ]),
+            values: const [1, 2], // wrong length
+          ),
+        },
+      );
       // No value can be trusted, but the stored *table* is still known, which is what lets
       // the Backup view say "not backed up" instead of showing the field as absent.
       expect(backup.dynamicField(1, 0, 0), isNull);
@@ -283,16 +325,18 @@ void main() {
   });
 
   group('DeviceBackup table structure (for the Backup view)', () {
-    DeviceBackup build() => DeviceBackup.decode(dynamic: {
-          2: (
-            table: dynamicTable('Panel', [
-              ((3 << 8) | 1, DataType.number.value, 4, ValueFlags.persistent),
-              ((3 << 8) | 2, DataType.number.value, 4, 0), // volatile
-              ((1 << 8) | 0, DataType.colour.value, 4, ValueFlags.persistent),
-            ]),
-            values: numberToBytes(5) + [1, 2, 3, 4],
-          ),
-        });
+    DeviceBackup build() => DeviceBackup.decode(
+      dynamic: {
+        2: (
+          table: dynamicTable('Panel', [
+            ((3 << 8) | 1, DataType.number.value, 4, ValueFlags.persistent),
+            ((3 << 8) | 2, DataType.number.value, 4, 0), // volatile
+            ((1 << 8) | 0, DataType.colour.value, 4, ValueFlags.persistent),
+          ]),
+          values: numberToBytes(5) + [1, 2, 3, 4],
+        ),
+      },
+    );
 
     test('fields and keys come from the stored table, ascending', () {
       final b = build();
@@ -336,8 +380,11 @@ void main() {
       expect(out.sublist(20, 24), numberToBytes(30)); // SamplingRate @ 20
       expect(out.sublist(0, 3), 'Eye'.codeUnits); // nothing else moved
       // The patched space still decodes.
-      final decoded = decodeSv(out, layout, registry)
-          .firstWhere((e) => e.blockType == 0x08 && e.field == 0);
+      final decoded = decodeSv(
+        out,
+        layout,
+        registry,
+      ).firstWhere((e) => e.blockType == 0x08 && e.field == 0);
       expect(decoded.value, numberToBytes(30));
 
       // A wrong size and a volatile/absent field are refused rather than written.
@@ -348,23 +395,42 @@ void main() {
     test('svSaveField grows a short space to reach the field', () {
       const registry = [(type: 0x08, inst: 0)];
       final layout = StaticSpaceLayout.fromRegistry(registry, staticFields);
-      final out = svSaveField(const <int>[], layout, 0x08, 0, 0, numberToBytes(7))!;
+      final out = svSaveField(
+        const <int>[],
+        layout,
+        0x08,
+        0,
+        0,
+        numberToBytes(7),
+      )!;
       expect(out.length, 20 + 4);
       expect(out.sublist(20, 24), numberToBytes(7));
     });
 
     test('dvSaveField patches one persistent entry at its table offset', () {
-      final table = decodeDynamicTable(dynamicTable('Box', [
-        ((0 << 8) | 0, DataType.number.value, 4, ValueFlags.persistent),
-        ((1 << 8) | 0, DataType.number.value, 2, ValueFlags.persistent),
-      ]))!;
+      final table = decodeDynamicTable(
+        dynamicTable('Box', [
+          ((0 << 8) | 0, DataType.number.value, 4, ValueFlags.persistent),
+          ((1 << 8) | 0, DataType.number.value, 2, ValueFlags.persistent),
+        ]),
+      )!;
       final values = <int>[...numberToBytes(1.0), 5, 6];
       final patched = dvSaveField(table, values, 1, 0, [7, 8])!;
-      expect(patched.length, values.length, reason: '.DV_ keeps its exact length');
-      expect(patched.sublist(0, 4), numberToBytes(1.0)); // the first entry is untouched
+      expect(
+        patched.length,
+        values.length,
+        reason: '.DV_ keeps its exact length',
+      );
+      expect(
+        patched.sublist(0, 4),
+        numberToBytes(1.0),
+      ); // the first entry is untouched
       expect(patched.sublist(4), [7, 8]);
       // The patched file still pairs with its table.
-      expect(decodeDynamicValues(0, table, patched).first.value, numberToBytes(1.0));
+      expect(
+        decodeDynamicValues(0, table, patched).first.value,
+        numberToBytes(1.0),
+      );
 
       // A wrong size and a non-persistent entry are refused rather than written.
       expect(dvSaveField(table, values, 1, 0, [1]), isNull);

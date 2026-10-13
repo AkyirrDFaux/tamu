@@ -48,8 +48,12 @@ String backupFileKind(String name) {
   final upper = name.replaceAll('\x00', '').trim().toUpperCase();
   if (upper.startsWith('SCR_')) return 'Script';
   if (upper == '.SNREG') return 'Serial registry';
-  if (upper == '.SV' || upper == '.SUBREQ' || upper == 'SUBREQ') return 'Registry backup';
-  if (upper.startsWith('.DV_') || upper.startsWith('.DT_')) return 'Registry backup';
+  if (upper == '.SV' || upper == '.SUBREQ' || upper == 'SUBREQ') {
+    return 'Registry backup';
+  }
+  if (upper.startsWith('.DV_') || upper.startsWith('.DT_')) {
+    return 'Registry backup';
+  }
   if (upper.startsWith('LAY') || upper.endsWith('.LAY')) return 'LED layout';
   if (upper.endsWith('.TXT') || upper.endsWith('.LOG')) return 'Text';
   return 'Binary';
@@ -59,14 +63,16 @@ String backupFileKind(String name) {
 // Semantic value codec
 // ---------------------------------------------------------------------------
 
-String hexBytes(List<int> bytes) =>
-    bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+/// Lower-case hex of [bytes] (the upper-case encoder is `serialNumberToHex` in types.dart).
+String hexBytes(List<int> bytes) => serialNumberToHex(bytes).toLowerCase();
+
+final _nonHex = RegExp(r'[^0-9a-fA-F]');
 
 List<int> unhexBytes(String hex) {
-  final clean = hex.replaceAll(RegExp(r'[^0-9a-fA-F]'), '');
+  final clean = hex.replaceAll(_nonHex, '');
   return [
     for (var i = 0; i + 1 < clean.length; i += 2)
-      int.parse(clean.substring(i, i + 2), radix: 16)
+      int.parse(clean.substring(i, i + 2), radix: 16),
   ];
 }
 
@@ -89,13 +95,17 @@ Object? encodeSemantic(DataType type, List<int> bytes, {FieldInfo? info}) {
       return bytes.length < 4 ? bytesToInt(bytes) : uint32FromBytes(bytes);
     case DataType.enum_:
       if (bytes.isEmpty) return null;
-      final raw = bytes.length < 4 ? bytesToInt(bytes)! : uint32FromBytes(bytes);
+      final raw = bytes.length < 4
+          ? bytesToInt(bytes)!
+          : uint32FromBytes(bytes);
       return info?.enumValues?[raw] ?? raw;
     case DataType.devType:
       if (bytes.length < 2) return null;
       return DeviceType.fromValue(bytes[0] | (bytes[1] << 8)).label;
     case DataType.sn:
-      return bytes.length >= 14 ? serialNumberToHex(bytes.sublist(0, 14)) : hexBytes(bytes);
+      return bytes.length >= 14
+          ? serialNumberToHex(bytes.sublist(0, 14))
+          : hexBytes(bytes);
     case DataType.id:
       if (bytes.length >= 2) return idToString(bytes[0] | (bytes[1] << 8));
       return bytes.isEmpty ? null : bytes[0];
@@ -120,7 +130,10 @@ Object? encodeSemantic(DataType type, List<int> bytes, {FieldInfo? info}) {
         'cols': w,
         'values': [
           for (var r = 0; r < h; r++)
-            [for (var c = 0; c < w; c++) numberFromBytes(bytes, 4 + (r * w + c) * 4)]
+            [
+              for (var c = 0; c < w; c++)
+                numberFromBytes(bytes, 4 + (r * w + c) * 4),
+            ],
         ],
       };
     case DataType.colour:
@@ -146,8 +159,12 @@ Object? encodeSemantic(DataType type, List<int> bytes, {FieldInfo? info}) {
 
 /// Decodes a semantic JSON [value] back into raw wire bytes for [type]. Returns
 /// null when the value is missing or incompatible with the requested type/size.
-List<int>? decodeSemantic(DataType type, Object? value,
-    {FieldInfo? info, int? size}) {
+List<int>? decodeSemantic(
+  DataType type,
+  Object? value, {
+  FieldInfo? info,
+  int? size,
+}) {
   switch (type) {
     case DataType.none:
       return const <int>[];
@@ -166,9 +183,9 @@ List<int>? decodeSemantic(DataType type, Object? value,
       final raw = _deviceTypeRaw(value);
       return raw == null ? null : [raw & 0xFF, (raw >> 8) & 0xFF];
     case DataType.sn:
-      return value is String && unhexBytes(value).length >= 14
-          ? unhexBytes(value).sublist(0, 14)
-          : null;
+      if (value is! String) return null;
+      final sn = unhexBytes(value);
+      return sn.length >= 14 ? sn.sublist(0, 14) : null;
     case DataType.id:
       return _idBytes(value, size);
     case DataType.text:
@@ -212,8 +229,12 @@ List<int>? decodeSemantic(DataType type, Object? value,
     case DataType.blockInfo:
       if (value is! Map) return null;
       final type = _blockTypeRaw(value['block']);
-      final inst = value['instance'], field = value['field'], key = value['key'];
-      if (type == null || inst is! num || field is! num || key is! num) return null;
+      final inst = value['instance'],
+          field = value['field'],
+          key = value['key'];
+      if (type == null || inst is! num || field is! num || key is! num) {
+        return null;
+      }
       // A banked block's semantic word is the service marker (`BlockType.dynamic`/`script`),
       // which is not a wire type: the wire needs the bank the global index selects, or the
       // firmware's block-range check rejects the address outright.
@@ -221,16 +242,21 @@ List<int>? decodeSemantic(DataType type, Object? value,
       final wire = type == BlockType.dynamic.value
           ? dynamicTypeForIndex(global)
           : type == BlockType.script.value
-              ? scriptTypeForIndex(global)
-              : type;
-      return uint32ToBytes(makeBlockInfo(wire, global, field.toInt(), key.toInt()));
+          ? scriptTypeForIndex(global)
+          : type;
+      return uint32ToBytes(
+        makeBlockInfo(wire, global, field.toInt(), key.toInt()),
+      );
     case DataType.undefined:
-      if (value is Map && value['hex'] is String) return unhexBytes(value['hex'] as String);
+      if (value is Map && value['hex'] is String) {
+        return unhexBytes(value['hex'] as String);
+      }
       return null;
   }
 }
 
-int? _enumRaw(Object? value, FieldInfo? info) => _rawFromWord(value, info?.enumValues);
+int? _enumRaw(Object? value, FieldInfo? info) =>
+    _rawFromWord(value, info?.enumValues);
 
 int? _deviceTypeRaw(Object? value) =>
     _rawFromWord(value, {for (final t in DeviceType.values) t.value: t.label});
@@ -239,7 +265,9 @@ int? _deviceTypeRaw(Object? value) =>
 /// (0x00) resolved explicitly (its word is "System", not the "None" tombstone).
 int? _blockTypeRaw(Object? value) {
   if (value is String && value == 'System') return systemBlockTypeValue;
-  return _rawFromWord(value, {for (final t in BlockType.values) t.value: t.label});
+  return _rawFromWord(value, {
+    for (final t in BlockType.values) t.value: t.label,
+  });
 }
 
 /// Shared prologue of the word -> raw-value lookups used when applying a semantic backup:
@@ -299,9 +327,12 @@ List<Map<String, dynamic>> encodeDictionary(int dictType, List<int> bytes) {
         'keyIndex': e.key,
         'type': dataTypeWord(e.meta.dataType),
         'flags': flagWords(e.meta.flags),
-        'value': encodeSemantic(e.meta.dataType, e.value,
-            info: renderKeyFieldInfo(dictType, e.key)),
-      }
+        'value': encodeSemantic(
+          e.meta.dataType,
+          e.value,
+          info: renderKeyFieldInfo(dictType, e.key),
+        ),
+      },
   ];
 }
 
@@ -314,17 +345,24 @@ List<int>? decodeDictionary(int dictType, Object? value) {
     final key = _dictKeyIndex(dictType, raw);
     final type = dataTypeFromWord(raw['type'] as String? ?? '');
     if (key == null || type == null) return null;
-    final bytes = decodeSemantic(type, raw['value'],
-        info: renderKeyFieldInfo(dictType, key));
+    final bytes = decodeSemantic(
+      type,
+      raw['value'],
+      info: renderKeyFieldInfo(dictType, key),
+    );
     if (bytes == null) return null;
-    entries.add(KeyedEntry(
+    entries.add(
+      KeyedEntry(
         key: key,
         meta: ValueInfo(
-            type: type.value,
-            flags: flagsFromWords((raw['flags'] as List?)?.cast<String>() ?? []),
-            key: key,
-            size: bytes.length),
-        value: bytes));
+          type: type.value,
+          flags: flagsFromWords((raw['flags'] as List?)?.cast<String>() ?? []),
+          key: key,
+          size: bytes.length,
+        ),
+        value: bytes,
+      ),
+    );
   }
   return buildKeyedDict(entries);
 }

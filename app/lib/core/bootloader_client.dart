@@ -125,10 +125,12 @@ abstract class BootloaderTransport {
 
 /// Core passthrough command IDs (Docs/Services/Bootloader.md "Core Bootloader Passthrough
 /// Commands (002x)"): the core relays the app's request onto its RSBus and echoes the reply.
-const int coreBootIdentify = 0x20; // request identification (response: app size + name)
+const int coreBootIdentify =
+    0x20; // request identification (response: app size + name)
 const int coreBootWrite =
     0x21; // send write packet      (request: offset + payload; response: last-written offset)
-const int coreBootRead = 0x22; // request read           (request: offset; response: offset + payload)
+const int coreBootRead =
+    0x22; // request read           (request: offset; response: offset + payload)
 
 /// The core's Device `0020/0021/0022` passthrough: the core relays each raw bootloader frame
 /// onto its RSBus, so the app reaches whatever node is in bootloader mode without knowing its
@@ -144,21 +146,37 @@ class PassthroughTransport implements BootloaderTransport {
   ConnectionManager get _link => ConnectionManager.instance;
 
   @override
-  Future<WriteAck> writeChunk(int offset, List<int> data, Duration timeout) async {
+  Future<WriteAck> writeChunk(
+    int offset,
+    List<int> data,
+    Duration timeout,
+  ) async {
     final payload = <int>[...uint32ToBytes(offset), ...data];
-    final reply = await _link.requestWithFlags(coreId, ServiceType.device, coreBootWrite,
-        payload: payload, timeout: timeout);
+    final reply = await _link.requestWithFlags(
+      coreId,
+      ServiceType.device,
+      coreBootWrite,
+      payload: payload,
+      timeout: timeout,
+    );
     // The core relays the node's write-response offset; the flag is SUCCESS only when it names
     // this chunk. A FAIL still carries the offset (the node's last successfully written one),
     // and a timeout carries none, so the client can retry or resynchronise.
-    final last = reply.payload.length >= 4 ? uint32FromBytes(reply.payload, 0) : null;
+    final last = reply.payload.length >= 4
+        ? uint32FromBytes(reply.payload, 0)
+        : null;
     return WriteAck(reply.ok, lastWrittenOffset: last);
   }
 
   @override
   Future<Uint8List?> readChunk(int offset, Duration timeout) async {
-    final reply = await _link.request(coreId, ServiceType.device, coreBootRead,
-        payload: uint32ToBytes(offset), timeout: timeout);
+    final reply = await _link.request(
+      coreId,
+      ServiceType.device,
+      coreBootRead,
+      payload: uint32ToBytes(offset),
+      timeout: timeout,
+    );
     if (reply.length < 4 + Bootloader.payloadSize) return null;
     return Uint8List.fromList(reply.sublist(4, 4 + Bootloader.payloadSize));
   }
@@ -166,8 +184,11 @@ class PassthroughTransport implements BootloaderTransport {
   @override
   Future<BootloaderIdentity?> identify(Duration timeout) async {
     final reply = await _link.requestWithFlags(
-        coreId, ServiceType.device, coreBootIdentify,
-        timeout: timeout);
+      coreId,
+      ServiceType.device,
+      coreBootIdentify,
+      timeout: timeout,
+    );
     if (!reply.ok || reply.payload.length < 4) return null;
     final appSize = uint32FromBytes(reply.payload, 0);
     final nameBytes = reply.payload.sublist(4);
@@ -176,7 +197,9 @@ class PassthroughTransport implements BootloaderTransport {
       n--;
     }
     return BootloaderIdentity(
-        appSize: appSize, name: String.fromCharCodes(nameBytes.sublist(0, n)));
+      appSize: appSize,
+      name: String.fromCharCodes(nameBytes.sublist(0, n)),
+    );
   }
 }
 
@@ -190,11 +213,17 @@ class DirectUsbTransport implements BootloaderTransport {
   DirectUsbTransport(this.usb);
 
   @override
-  Future<WriteAck> writeChunk(int offset, List<int> data, Duration timeout) async {
-    final reply = await _requestFrame(Bootloader.encodeWrite(offset, data),
-        command: Bootloader.cmdWriteResponse,
-        size: Bootloader.readRequestSize,
-        timeout: timeout);
+  Future<WriteAck> writeChunk(
+    int offset,
+    List<int> data,
+    Duration timeout,
+  ) async {
+    final reply = await _requestFrame(
+      Bootloader.encodeWrite(offset, data),
+      command: Bootloader.cmdWriteResponse,
+      size: Bootloader.readRequestSize,
+      timeout: timeout,
+    );
     if (reply == null) return const WriteAck(false);
     final last = Bootloader.offset(reply);
     return WriteAck(last == offset, lastWrittenOffset: last);
@@ -202,35 +231,47 @@ class DirectUsbTransport implements BootloaderTransport {
 
   @override
   Future<Uint8List?> readChunk(int offset, Duration timeout) async {
-    final reply = await _requestFrame(Bootloader.encodeReadRequest(offset),
-        command: Bootloader.cmdReadResponse,
-        size: Bootloader.dataSize,
-        matchOffset: offset,
-        timeout: timeout);
+    final reply = await _requestFrame(
+      Bootloader.encodeReadRequest(offset),
+      command: Bootloader.cmdReadResponse,
+      size: Bootloader.dataSize,
+      matchOffset: offset,
+      timeout: timeout,
+    );
     if (reply == null) return null;
-    return Uint8List.fromList(reply.sublist(
-        Bootloader.headerSize, Bootloader.headerSize + Bootloader.payloadSize));
+    return Uint8List.fromList(
+      reply.sublist(
+        Bootloader.headerSize,
+        Bootloader.headerSize + Bootloader.payloadSize,
+      ),
+    );
   }
 
   @override
   Future<BootloaderIdentity?> identify(Duration timeout) async {
-    final reply = await _requestFrame(Bootloader.encodeIdentifyRequest(),
-        command: Bootloader.cmdIdentifyResponse,
-        size: Bootloader.dataSize,
-        timeout: timeout);
+    final reply = await _requestFrame(
+      Bootloader.encodeIdentifyRequest(),
+      command: Bootloader.cmdIdentifyResponse,
+      size: Bootloader.dataSize,
+      timeout: timeout,
+    );
     if (reply == null) return null;
     return BootloaderIdentity(
-        appSize: Bootloader.appSize(reply), name: Bootloader.name(reply));
+      appSize: Bootloader.appSize(reply),
+      name: Bootloader.name(reply),
+    );
   }
 
   /// Writes [request] and waits for its response frame: a valid frame of [command] and
   /// [size], matched additionally on [matchOffset] when given (a late reply from a previous
   /// transaction at another offset is dropped rather than returned). Returns null on timeout.
-  Future<Uint8List?> _requestFrame(List<int> request,
-      {required int command,
-      required int size,
-      int? matchOffset,
-      required Duration timeout}) async {
+  Future<Uint8List?> _requestFrame(
+    List<int> request, {
+    required int command,
+    required int size,
+    int? matchOffset,
+    required Duration timeout,
+  }) async {
     final buffer = <int>[];
     final completer = Completer<Uint8List?>();
     final sub = usb.linkBytes.listen((chunk) {
@@ -339,8 +380,11 @@ class BootloaderClient {
     var ok = false;
     for (var attempt = 0; attempt < writeAttempts; attempt++) {
       try {
-        final ack =
-            await transport.writeChunk(offset, Bootloader.padPayload(data), timeout);
+        final ack = await transport.writeChunk(
+          offset,
+          Bootloader.padPayload(data),
+          timeout,
+        );
         ok = ack.accepted;
         final last = ack.lastWrittenOffset;
         // Reconcile against the device's acknowledged progress: a last-written offset that
@@ -388,7 +432,8 @@ class BootloaderClient {
     // anyway, but only after the whole pass had run and failed verification.
     if (maxImageSize != null && image.length > maxImageSize) {
       throw ArgumentError(
-          'image is ${image.length} bytes; the device app space is $maxImageSize');
+        'image is ${image.length} bytes; the device app space is $maxImageSize',
+      );
     }
     final chunks = _chunk(image);
     final total = chunks.length;
@@ -399,8 +444,13 @@ class BootloaderClient {
     for (var i = 0; i < total; i++) {
       await writeChunk(chunks[i].offset, chunks[i].data);
       writes++;
-      onProgress?.call(FlashProgress(
-          phase: FlashPhase.writing, completed: i + 1, total: total));
+      onProgress?.call(
+        FlashProgress(
+          phase: FlashPhase.writing,
+          completed: i + 1,
+          total: total,
+        ),
+      );
     }
 
     // 2. Verify the entire binary in one pass; correct mistakes and verify again until a
@@ -418,48 +468,59 @@ class BootloaderClient {
         } else if (!_sameBytes(data, chunks[i].data)) {
           mistakes.add(chunks[i]);
         }
-        onProgress?.call(FlashProgress(
+        onProgress?.call(
+          FlashProgress(
             phase: FlashPhase.verifying,
             completed: i + 1,
             total: total,
             round: pass,
-            mismatches: mistakes.length));
+            mismatches: mistakes.length,
+          ),
+        );
       }
 
       // Confirmed only when one pass read every chunk back identical in one go.
       if (mistakes.isEmpty && unread == 0) {
-        onProgress?.call(FlashProgress(
+        onProgress?.call(
+          FlashProgress(
             phase: FlashPhase.done,
             completed: total,
             total: total,
-            round: pass));
+            round: pass,
+          ),
+        );
         return FlashResult(
-            verified: true,
-            passes: pass,
-            corrections: corrections,
-            writes: writes,
-            reads: reads);
+          verified: true,
+          passes: pass,
+          corrections: corrections,
+          writes: writes,
+          reads: reads,
+        );
       }
 
       for (var i = 0; i < mistakes.length; i++) {
         await writeChunk(mistakes[i].offset, mistakes[i].data);
         writes++;
         corrections++;
-        onProgress?.call(FlashProgress(
+        onProgress?.call(
+          FlashProgress(
             phase: FlashPhase.correcting,
             completed: i + 1,
             total: mistakes.length,
             round: pass,
-            mismatches: mistakes.length));
+            mismatches: mistakes.length,
+          ),
+        );
       }
     }
 
     return FlashResult(
-        verified: false,
-        passes: maxPasses,
-        corrections: corrections,
-        writes: writes,
-        reads: reads);
+      verified: false,
+      passes: maxPasses,
+      corrections: corrections,
+      writes: writes,
+      reads: reads,
+    );
   }
 
   // --- helpers ---------------------------------------------------------------

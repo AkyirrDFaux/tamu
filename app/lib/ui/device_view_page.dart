@@ -51,8 +51,7 @@ class _DeviceViewPageState extends State<DeviceViewPage>
     }
   }
 
-  String _formatUptime(int? ms) =>
-      ms == null ? '-' : formatUptimeMs(ms);
+  String _formatUptime(int? ms) => ms == null ? '-' : formatUptimeMs(ms);
 
   @override
   Widget build(BuildContext context) {
@@ -63,11 +62,14 @@ class _DeviceViewPageState extends State<DeviceViewPage>
         appBar: AppBar(
           title: InkWell(
             onTap: () => setState(() => _renaming = true),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              Text(entry?.displayName ?? 'Device'),
-              const SizedBox(width: 6),
-              const Icon(Icons.edit, size: 16),
-            ]),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(entry?.displayName ?? 'Device'),
+                const SizedBox(width: 6),
+                const Icon(Icons.edit, size: 16),
+              ],
+            ),
           ),
           actions: [
             IconButton(
@@ -97,80 +99,136 @@ class _DeviceViewPageState extends State<DeviceViewPage>
                 children: [
                   if (_renaming) ...[
                     RenameField(
-                        currentName: entry.name, // rename flow edits the REPORTED name
-                        onDone: (name) async {
-                          setState(() => _renaming = false);
-                          if (name != null && name.isNotEmpty) {
-                            await _db.setName(widget.deviceId, name);
-                          }
-                        }),
+                      currentName:
+                          entry.name, // rename flow edits the REPORTED name
+                      onDone: (name) async {
+                        setState(() => _renaming = false);
+                        if (name != null && name.isNotEmpty) {
+                          await _db.setName(widget.deviceId, name);
+                        }
+                      },
+                    ),
                     const SizedBox(height: 12),
                   ],
-                  InfoCard(title: 'Device info', children: [
-                    InfoRow('ID', idToString(entry.id)),
-                    InfoRow('Net', '${entry.net}'),
-                    InfoRow('Device type', entry.type.label),
-                    InfoRow('Serial number', entry.serialNumber ?? '-'),
-                    InfoRow('Software version', entry.softwareVersion ?? '-'),
-                    InfoRow('Uptime', _formatUptime(entry.uptimeMs)),
-                    InfoRow('Avg loop time',
-                        entry.avgLoopTimeMs?.toStringAsFixed(2) ?? '-'),
-                    InfoRow('Max loop time',
-                        entry.maxLoopTimeMs?.toStringAsFixed(2) ?? '-'),
-                    InfoRow('Time offset',
+                  InfoCard(
+                    title: 'Device info',
+                    children: [
+                      InfoRow('ID', idToString(entry.id)),
+                      InfoRow('Net', '${entry.net}'),
+                      InfoRow('Device type', entry.type.label),
+                      InfoRow('Serial number', entry.serialNumber ?? '-'),
+                      InfoRow('Software version', entry.softwareVersion ?? '-'),
+                      InfoRow('Uptime', _formatUptime(entry.uptimeMs)),
+                      InfoRow(
+                        'Avg loop time',
+                        entry.avgLoopTimeMs?.toStringAsFixed(2) ?? '-',
+                      ),
+                      InfoRow(
+                        'Max loop time',
+                        entry.maxLoopTimeMs?.toStringAsFixed(2) ?? '-',
+                      ),
+                      InfoRow(
+                        'Time offset',
                         entry.timeOffsetMs == null
                             ? '-'
-                            : formatOffsetMs(entry.timeOffsetMs!)),
-                    InfoRow('Capabilities',
+                            : formatOffsetMs(entry.timeOffsetMs!),
+                      ),
+                      InfoRow(
+                        'Capabilities',
                         Capability.describe(entry.capabilities).isEmpty
                             ? '-'
-                            : Capability.describe(entry.capabilities).join(', ')),
-                  ]),
+                            : Capability.describe(
+                                entry.capabilities,
+                              ).join(', '),
+                      ),
+                    ],
+                  ),
                   const Divider(height: 24),
-                  InfoCard(title: 'Services', children: [
+                  InfoCard(
+                    title: 'Services',
+                    children: [
                       // Per Docs/App/Device view.md: hide unavailable services
                       // based on the device's capability field. Register (covers the
                       // System block, static blocks and dynamic/keyed memory), Storage
                       // and Logs are mandatory; SNDB is core-only.
                       // Router table awaits its firmware service.
-                      _serviceTile(context, Icons.table_chart, 'Register',
-                          () => RegisterPage(
-                              deviceId: widget.deviceId,
-                              hasDynamicMemory: entry.capabilities & Capability.dynamicMemory != 0)),
-                      _serviceTile(context, Icons.save_outlined, 'Storage',
-                          () => StoragePage(deviceId: widget.deviceId)),
+                      _serviceTile(
+                        context,
+                        Icons.table_chart,
+                        'Register',
+                        () => RegisterPage(
+                          deviceId: widget.deviceId,
+                          hasDynamicMemory:
+                              entry.capabilities & Capability.dynamicMemory !=
+                              0,
+                        ),
+                      ),
+                      _serviceTile(
+                        context,
+                        Icons.save_outlined,
+                        'Storage',
+                        () => StoragePage(deviceId: widget.deviceId),
+                      ),
                       if (entry.capabilities &
-                              (Capability.subscriptionRequest | Capability.subscriptionProvide) !=
+                              (Capability.subscriptionRequest |
+                                  Capability.subscriptionProvide) !=
                           0)
-                        _serviceTile(context, Icons.sync_alt, 'Subscriptions',
-                          () => SubscriptionsPage(deviceId: widget.deviceId, deviceName: entry.displayName)),
+                        _serviceTile(
+                          context,
+                          Icons.sync_alt,
+                          'Subscriptions',
+                          () => SubscriptionsPage(
+                            deviceId: widget.deviceId,
+                            deviceName: entry.displayName,
+                          ),
+                        ),
                       if (entry.capabilities & Capability.scripts != 0)
-                        _serviceTile(context, Icons.code, 'Scripts',
-                          () => ScriptsPage(deviceId: widget.deviceId, deviceName: entry.displayName)),
+                        _serviceTile(
+                          context,
+                          Icons.code,
+                          'Scripts',
+                          () => ScriptsPage(
+                            deviceId: widget.deviceId,
+                            deviceName: entry.displayName,
+                          ),
+                        ),
                       if (entry.isCore) ...[
-                        _serviceTile(context, Icons.format_list_numbered,
-                            'SN Database', () => const SndbPage()),
+                        _serviceTile(
+                          context,
+                          Icons.format_list_numbered,
+                          'SN Database',
+                          () => const SndbPage(),
+                        ),
                         // The log DATABASE lives on cores only (Docs/Services/
                         // Log Handler.md); non-core views get no logs entry.
-                        _serviceTile(context, Icons.article_outlined, 'Logs',
-                            () => LogViewerPage(deviceId: widget.deviceId)),
+                        _serviceTile(
+                          context,
+                          Icons.article_outlined,
+                          'Logs',
+                          () => LogViewerPage(deviceId: widget.deviceId),
+                        ),
                       ],
-                    ]),
+                    ],
+                  ),
                 ],
               ),
       ),
     );
   }
 
-  Widget _serviceTile(BuildContext context, IconData icon, String title,
-      Widget Function() page) {
+  Widget _serviceTile(
+    BuildContext context,
+    IconData icon,
+    String title,
+    Widget Function() page,
+  ) {
     return ListTile(
       dense: true,
       leading: Icon(icon),
       title: Text(title),
       trailing: const Icon(Icons.chevron_right),
-      onTap: () => Navigator.of(context)
-          .push(MaterialPageRoute(builder: (_) => page())),
+      onTap: () =>
+          Navigator.of(context).push(MaterialPageRoute(builder: (_) => page())),
     );
   }
 }
@@ -179,34 +237,43 @@ class RenameField extends StatefulWidget {
   final String currentName;
   final ValueChanged<String?> onDone;
 
-  const RenameField({super.key, required this.currentName, required this.onDone});
+  const RenameField({
+    super.key,
+    required this.currentName,
+    required this.onDone,
+  });
 
   @override
   State<RenameField> createState() => _RenameFieldState();
 }
 
 class _RenameFieldState extends State<RenameField> {
-  late final TextEditingController _controller =
-      TextEditingController(text: widget.currentName);
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.currentName,
+  );
 
   @override
   Widget build(BuildContext context) {
-    return Row(children: [
-      Expanded(
-        child: TextField(
-          controller: _controller,
-          autofocus: true,
-          maxLength: 16, // docs: the System Name field is 16 bytes
-          decoration: const InputDecoration(hintText: 'Device name'),
-          onSubmitted: widget.onDone,
+    return Row(
+      children: [
+        Expanded(
+          child: TextField(
+            controller: _controller,
+            autofocus: true,
+            maxLength: 16, // docs: the System Name field is 16 bytes
+            decoration: const InputDecoration(hintText: 'Device name'),
+            onSubmitted: widget.onDone,
+          ),
         ),
-      ),
-      IconButton(
+        IconButton(
           icon: const Icon(Icons.check, color: Colors.greenAccent),
-          onPressed: () => widget.onDone(_controller.text.trim())),
-      IconButton(
+          onPressed: () => widget.onDone(_controller.text.trim()),
+        ),
+        IconButton(
           icon: const Icon(Icons.close, color: Colors.redAccent),
-          onPressed: () => widget.onDone(null)),
-    ]);
+          onPressed: () => widget.onDone(null),
+        ),
+      ],
+    );
   }
 }

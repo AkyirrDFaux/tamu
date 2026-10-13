@@ -13,13 +13,13 @@ import 'value_editor.dart';
 import 'widgets.dart';
 
 Color scriptStateColor(int state) => switch (state) {
-      ScriptState.running => Colors.greenAccent,
-      ScriptState.paused => Colors.amberAccent,
-      ScriptState.waiting => Colors.lightBlueAccent,
-      ScriptState.finished => Colors.white54,
-      ScriptState.error => Colors.redAccent,
-      _ => Colors.white38,
-    };
+  ScriptState.running => Colors.greenAccent,
+  ScriptState.paused => Colors.amberAccent,
+  ScriptState.waiting => Colors.lightBlueAccent,
+  ScriptState.finished => Colors.white54,
+  ScriptState.error => Colors.redAccent,
+  _ => Colors.white38,
+};
 
 /// The Start/Pause/Stop/Restart control row shared by the Scripts list and the script editor.
 class ScriptControlBar extends StatelessWidget {
@@ -44,30 +44,35 @@ class ScriptControlBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Wrap(spacing: 8, children: [
-      OutlinedButton.icon(
-        onPressed: onStart,
-        icon: const Icon(Icons.play_arrow, size: 18),
-        label: const Text('Start'),
-      ),
-      OutlinedButton.icon(
-        onPressed: onPauseToggle,
-        icon: Icon(state == ScriptState.paused ? Icons.play_arrow : Icons.pause,
-            size: 18),
-        label: Text(state == ScriptState.paused ? 'Continue' : 'Pause'),
-      ),
-      OutlinedButton.icon(
-        onPressed: onStop,
-        icon: const Icon(Icons.stop, size: 18),
-        label: const Text('Stop'),
-      ),
-      OutlinedButton.icon(
-        onPressed: onRestart,
-        icon: const Icon(Icons.restart_alt, size: 18),
-        label: const Text('Restart'),
-      ),
-      ...extra,
-    ]);
+    return Wrap(
+      spacing: 8,
+      children: [
+        OutlinedButton.icon(
+          onPressed: onStart,
+          icon: const Icon(Icons.play_arrow, size: 18),
+          label: const Text('Start'),
+        ),
+        OutlinedButton.icon(
+          onPressed: onPauseToggle,
+          icon: Icon(
+            state == ScriptState.paused ? Icons.play_arrow : Icons.pause,
+            size: 18,
+          ),
+          label: Text(state == ScriptState.paused ? 'Continue' : 'Pause'),
+        ),
+        OutlinedButton.icon(
+          onPressed: onStop,
+          icon: const Icon(Icons.stop, size: 18),
+          label: const Text('Stop'),
+        ),
+        OutlinedButton.icon(
+          onPressed: onRestart,
+          icon: const Icon(Icons.restart_alt, size: 18),
+          label: const Text('Restart'),
+        ),
+        ...extra,
+      ],
+    );
   }
 }
 
@@ -122,7 +127,8 @@ class _ScriptIoSectionState extends State<ScriptIoSection> {
   @override
   void didUpdateWidget(covariant ScriptIoSection oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.revision != widget.revision || oldWidget.slot != widget.slot) {
+    if (oldWidget.revision != widget.revision ||
+        oldWidget.slot != widget.slot) {
       _load();
     }
   }
@@ -131,7 +137,9 @@ class _ScriptIoSectionState extends State<ScriptIoSection> {
     final keys = await widget.client.enumerateKeys(widget.slot, widget.field);
     final entries = <ScriptEntry?>[];
     for (final key in keys) {
-      entries.add(await widget.client.readEntry(widget.slot, widget.field, key));
+      entries.add(
+        await widget.client.readEntry(widget.slot, widget.field, key),
+      );
     }
     if (!mounted) return;
     setState(() {
@@ -141,13 +149,27 @@ class _ScriptIoSectionState extends State<ScriptIoSection> {
   }
 
   Future<void> _edit(int key, ScriptEntry entry) async {
-    final next = await showValueEditor(context, entry.meta.dataType, entry.value);
+    final next = await showValueEditor(
+      context,
+      entry.meta.dataType,
+      entry.value,
+    );
     if (next == null || !mounted) return;
     // Declare the actual value length (a shorter String is space-padded by the firmware);
     // the field's declared Size would make the device copy stale payload bytes.
     final meta = ValueInfo(
-        type: entry.meta.type, flags: entry.meta.flags, size: next.length, key: entry.meta.key);
-    final ok = await widget.client.writeEntry(widget.slot, widget.field, key, meta, next);
+      type: entry.meta.type,
+      flags: entry.meta.flags,
+      size: next.length,
+      key: entry.meta.key,
+    );
+    final ok = await widget.client.writeEntry(
+      widget.slot,
+      widget.field,
+      key,
+      meta,
+      next,
+    );
     if (!mounted) return;
     showSnack(context, ok ? '${widget.title} $key updated' : 'Write failed');
     widget.onChanged?.call();
@@ -161,14 +183,24 @@ class _ScriptIoSectionState extends State<ScriptIoSection> {
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-          child: Row(children: [
-            Icon(widget.icon, size: 16, color: kOrange),
-            const SizedBox(width: 6),
-            Text(widget.title,
-                style: const TextStyle(color: kOrange, fontWeight: FontWeight.w600)),
-            const SizedBox(width: 6),
-            Text('(${_entries.length})', style: const TextStyle(color: Colors.white54, fontSize: 12)),
-          ]),
+          child: Row(
+            children: [
+              Icon(widget.icon, size: 16, color: kOrange),
+              const SizedBox(width: 6),
+              Text(
+                widget.title,
+                style: const TextStyle(
+                  color: kOrange,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                '(${_entries.length})',
+                style: const TextStyle(color: Colors.white54, fontSize: 12),
+              ),
+            ],
+          ),
         ),
         for (var i = 0; i < _entries.length; i++)
           if (_entries[i] != null) _row(i, _entries[i]!),
@@ -178,28 +210,36 @@ class _ScriptIoSectionState extends State<ScriptIoSection> {
 
   ScriptInputSpec? _specFor(int index) {
     final specs = widget.specs;
-    if (widget.field != ScriptField.input || specs == null || index >= specs.length) return null;
+    if (widget.field != ScriptField.input ||
+        specs == null ||
+        index >= specs.length) {
+      return null;
+    }
     return specs[index];
   }
 
   /// The input's display name (falls back to the generic "Input N").
   String _nameFor(int index) =>
       index < widget.names.length && widget.names[index].isNotEmpty
-          ? widget.names[index]
-          : '${widget.title} $index';
+      ? widget.names[index]
+      : '${widget.title} $index';
 
   Widget _row(int index, ScriptEntry entry) {
     final spec = _specFor(index);
     if (widget.editable && spec != null) {
-      final isSlider = spec.uiType == ScriptUiType.slider &&
+      final isSlider =
+          spec.uiType == ScriptUiType.slider &&
           spec.max > spec.min &&
           entry.meta.dataType == DataType.number;
       final isToggle =
-          spec.uiType == ScriptUiType.toggle && entry.meta.dataType == DataType.bool_;
+          spec.uiType == ScriptUiType.toggle &&
+          entry.meta.dataType == DataType.bool_;
       final isButton =
-          spec.uiType == ScriptUiType.button && entry.meta.dataType == DataType.bool_;
+          spec.uiType == ScriptUiType.button &&
+          entry.meta.dataType == DataType.bool_;
       // A custom enum (dropdown, or auto with labels) is rendered by the control too.
-      final isEnum = entry.meta.dataType == DataType.enum_ &&
+      final isEnum =
+          entry.meta.dataType == DataType.enum_ &&
           (spec.uiType == ScriptUiType.dropdown ||
               (spec.uiType == ScriptUiType.auto && spec.options.isNotEmpty));
       if (isSlider || isToggle || isButton || isEnum) {
@@ -219,10 +259,14 @@ class _ScriptIoSectionState extends State<ScriptIoSection> {
       dense: true,
       contentPadding: const EdgeInsets.symmetric(horizontal: 24),
       title: Text(_nameFor(index)),
-      subtitle: Text(dataTypeLabel(entry.meta.dataType),
-          style: const TextStyle(fontSize: 10, color: Colors.white54)),
-      trailing: Text(label,
-          style: const TextStyle(fontFamily: 'monospace', color: Colors.white70)),
+      subtitle: Text(
+        dataTypeLabel(entry.meta.dataType),
+        style: const TextStyle(fontSize: 10, color: Colors.white54),
+      ),
+      trailing: Text(
+        label,
+        style: const TextStyle(fontFamily: 'monospace', color: Colors.white70),
+      ),
       onTap: widget.editable ? () => _edit(index, entry) : null,
     );
   }
@@ -272,14 +316,22 @@ class _ScriptInputControlState extends State<ScriptInputControl> {
 
   void _syncFromEntry() {
     final v = widget.entry.value;
-    _value = v.length >= 4 ? numberFromBytes(v) : (v.isNotEmpty ? v.first.toDouble() : 0);
+    _value = v.length >= 4
+        ? numberFromBytes(v)
+        : (v.isNotEmpty ? v.first.toDouble() : 0);
   }
 
-  bool get _bool => widget.entry.value.isNotEmpty && widget.entry.value.first != 0;
+  bool get _bool =>
+      widget.entry.value.isNotEmpty && widget.entry.value.first != 0;
 
   Future<void> _write(List<int> bytes) async {
-    final ok = await widget.client
-        .writeEntry(widget.slot, ScriptField.input, widget.inputIndex, widget.entry.meta, bytes);
+    final ok = await widget.client.writeEntry(
+      widget.slot,
+      ScriptField.input,
+      widget.inputIndex,
+      widget.entry.meta,
+      bytes,
+    );
     if (!mounted) return;
     if (!ok) showSnack(context, 'Write failed');
     widget.onChanged?.call();
@@ -291,30 +343,46 @@ class _ScriptInputControlState extends State<ScriptInputControl> {
       case ScriptUiType.slider:
         final min = widget.spec.min;
         final max = widget.spec.max;
-        final step = widget.spec.step > 0 ? widget.spec.step : (max - min) / 100;
+        final step = widget.spec.step > 0
+            ? widget.spec.step
+            : (max - min) / 100;
         final divisions = ((max - min) / step).round().clamp(1, 1000);
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              Expanded(
-                  child: Text(widget.title, style: const TextStyle(fontSize: 13))),
-              Text(_value.toStringAsFixed(2),
-                  style: const TextStyle(fontFamily: 'monospace', color: Colors.white70)),
-            ]),
-            Slider(
-              value: _value.clamp(min, max),
-              min: min,
-              max: max,
-              divisions: divisions,
-              onChangeStart: (_) => _dragging = true,
-              onChanged: (v) => setState(() => _value = v),
-              onChangeEnd: (v) {
-                _dragging = false;
-                _write(numberToBytes(v));
-              },
-            ),
-          ]),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      widget.title,
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                  ),
+                  Text(
+                    _value.toStringAsFixed(2),
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      color: Colors.white70,
+                    ),
+                  ),
+                ],
+              ),
+              Slider(
+                value: _value.clamp(min, max),
+                min: min,
+                max: max,
+                divisions: divisions,
+                onChangeStart: (_) => _dragging = true,
+                onChanged: (v) => setState(() => _value = v),
+                onChangeEnd: (v) {
+                  _dragging = false;
+                  _write(numberToBytes(v));
+                },
+              ),
+            ],
+          ),
         );
       case ScriptUiType.toggle:
         return SwitchListTile(
@@ -329,7 +397,10 @@ class _ScriptInputControlState extends State<ScriptInputControl> {
           dense: true,
           contentPadding: const EdgeInsets.symmetric(horizontal: 24),
           title: Text(widget.title, style: const TextStyle(fontSize: 13)),
-          trailing: FilledButton(onPressed: () => _write([1]), child: const Text('Press')),
+          trailing: FilledButton(
+            onPressed: () => _write([1]),
+            child: const Text('Press'),
+          ),
         );
       case ScriptUiType.dropdown:
       case ScriptUiType.auto:
@@ -343,8 +414,10 @@ class _ScriptInputControlState extends State<ScriptInputControl> {
               dense: true,
               contentPadding: const EdgeInsets.symmetric(horizontal: 24),
               title: Text(widget.title, style: const TextStyle(fontSize: 13)),
-              trailing: Text(_value.toStringAsFixed(0),
-                  style: const TextStyle(color: Colors.white70)),
+              trailing: Text(
+                _value.toStringAsFixed(0),
+                style: const TextStyle(color: Colors.white70),
+              ),
             );
           }
           return const SizedBox.shrink();

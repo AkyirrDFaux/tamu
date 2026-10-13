@@ -37,8 +37,11 @@ void main() {
   group('system schema', () {
     test('every System field has a name and at least one key', () {
       for (var field = 0; field < systemFieldCount; field++) {
-        expect(systemFieldName(field), isNot('Field $field'),
-            reason: 'field $field is unnamed');
+        expect(
+          systemFieldName(field),
+          isNot('Field $field'),
+          reason: 'field $field is unnamed',
+        );
         expect(systemKeysForField(field), isNotEmpty);
       }
     });
@@ -46,8 +49,11 @@ void main() {
     test('key names resolve for every declared key', () {
       for (final entry in systemFieldKeys.entries) {
         for (final key in entry.value.keys) {
-          expect(systemKeyName(entry.key, key), isNot('Key $key'),
-              reason: 'field ${entry.key} key $key is unnamed');
+          expect(
+            systemKeyName(entry.key, key),
+            isNot('Key $key'),
+            reason: 'field ${entry.key} key $key is unnamed',
+          );
         }
       }
     });

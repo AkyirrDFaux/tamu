@@ -82,7 +82,13 @@ class _ScriptSymbolPickerState extends State<ScriptSymbolPicker> {
     final t = draft.valueTypeOf(s);
     if (t == null) {
       return s.type == symPredefine &&
-          const {preIndex, preChar, preBool, preMathOp, preNumber}.contains(s.subtype);
+          const {
+            preIndex,
+            preChar,
+            preBool,
+            preMathOp,
+            preNumber,
+          }.contains(s.subtype);
     }
     return scriptTypeIsNumeric(t.value);
   }
@@ -105,7 +111,10 @@ class _ScriptSymbolPickerState extends State<ScriptSymbolPicker> {
   /// True when the instruction expects a line target (Jump/Call).
   bool get _targetOperand {
     final def = widget.def;
-    return def != null && !widget.destination && def.category == catFlow && (def.op == 3 || def.op == 4);
+    return def != null &&
+        !widget.destination &&
+        def.category == catFlow &&
+        (def.op == 3 || def.op == 4);
   }
 
   /// Instruction/position-aware recommendations shown before the category groups.
@@ -119,13 +128,17 @@ class _ScriptSymbolPickerState extends State<ScriptSymbolPicker> {
 
     void addVarsWhere(bool Function(DataType) test) {
       for (var i = 0; i < draft.variables.length; i++) {
-        if (test(draft.variables[i].type)) candidates.add(ScriptSymbol.variable(i));
+        if (test(draft.variables[i].type)) {
+          candidates.add(ScriptSymbol.variable(i));
+        }
       }
     }
 
     void addConstsWhere(bool Function(DataType) test) {
       for (var i = 0; i < draft.constants.length; i++) {
-        if (test(draft.constants[i].type)) candidates.add(ScriptSymbol.constant(i));
+        if (test(draft.constants[i].type)) {
+          candidates.add(ScriptSymbol.constant(i));
+        }
       }
     }
 
@@ -147,7 +160,9 @@ class _ScriptSymbolPickerState extends State<ScriptSymbolPicker> {
       if (_integerDestination) {
         addVarsWhere(isInteger);
         for (var i = 0; i < draft.outputs.length; i++) {
-          if (isInteger(draft.outputs[i].type)) candidates.add(ScriptSymbol.output(i));
+          if (isInteger(draft.outputs[i].type)) {
+            candidates.add(ScriptSymbol.output(i));
+          }
         }
       } else {
         addVarsWhere(any); // writable first
@@ -218,33 +233,77 @@ class _ScriptSymbolPickerState extends State<ScriptSymbolPicker> {
         xs.where((s) => _allowed(draft, s)).toList();
     if (widget.destination) {
       return [
-        ('Variables', filter([for (var i = 0; i < draft.variables.length; i++) ScriptSymbol.variable(i)])),
-        ('Outputs', filter([for (var i = 0; i < draft.outputs.length; i++) ScriptSymbol.output(i)])),
+        (
+          'Variables',
+          filter([
+            for (var i = 0; i < draft.variables.length; i++)
+              ScriptSymbol.variable(i),
+          ]),
+        ),
+        (
+          'Outputs',
+          filter([
+            for (var i = 0; i < draft.outputs.length; i++)
+              ScriptSymbol.output(i),
+          ]),
+        ),
       ];
     }
     if (_constantOnly) {
       return [
-        ('Constants', filter([for (var i = 0; i < draft.constants.length; i++) ScriptSymbol.constant(i)])),
+        (
+          'Constants',
+          filter([
+            for (var i = 0; i < draft.constants.length; i++)
+              ScriptSymbol.constant(i),
+          ]),
+        ),
       ];
     }
     if (widget.def?.expression == true) {
       // Infix expression: values plus inline operators / parentheses.
       return [
-        ('Values', filter([
-          for (var i = 0; i < draft.inputs.length; i++) ScriptSymbol.input(i),
-          for (var i = 0; i < draft.variables.length; i++) ScriptSymbol.variable(i),
-          for (var i = 0; i < draft.constants.length; i++) ScriptSymbol.constant(i),
-        ])),
-        ('Operators', [
-          for (final (op, _) in scriptPredefineMathOps)
-            if (expressionOps.contains(op)) ScriptSymbol.predefine(preMathOp, op),
-        ]),
+        (
+          'Values',
+          filter([
+            for (var i = 0; i < draft.inputs.length; i++) ScriptSymbol.input(i),
+            for (var i = 0; i < draft.variables.length; i++)
+              ScriptSymbol.variable(i),
+            for (var i = 0; i < draft.constants.length; i++)
+              ScriptSymbol.constant(i),
+          ]),
+        ),
+        (
+          'Operators',
+          [
+            for (final (op, _) in scriptPredefineMathOps)
+              if (expressionOps.contains(op))
+                ScriptSymbol.predefine(preMathOp, op),
+          ],
+        ),
       ];
     }
     return [
-      ('Inputs', filter([for (var i = 0; i < draft.inputs.length; i++) ScriptSymbol.input(i)])),
-      ('Variables', filter([for (var i = 0; i < draft.variables.length; i++) ScriptSymbol.variable(i)])),
-      ('Constants', filter([for (var i = 0; i < draft.constants.length; i++) ScriptSymbol.constant(i)])),
+      (
+        'Inputs',
+        filter([
+          for (var i = 0; i < draft.inputs.length; i++) ScriptSymbol.input(i),
+        ]),
+      ),
+      (
+        'Variables',
+        filter([
+          for (var i = 0; i < draft.variables.length; i++)
+            ScriptSymbol.variable(i),
+        ]),
+      ),
+      (
+        'Constants',
+        filter([
+          for (var i = 0; i < draft.constants.length; i++)
+            ScriptSymbol.constant(i),
+        ]),
+      ),
       ('Predefines', const []),
     ];
   }
@@ -254,7 +313,15 @@ class _ScriptSymbolPickerState extends State<ScriptSymbolPicker> {
     final def = widget.def;
     if (def != null && def.numeric) {
       return scriptPredefineSubtypes
-          .where((e) => const {preIndex, preChar, preBool, preMathOp, preNumber}.contains(e.$1))
+          .where(
+            (e) => const {
+              preIndex,
+              preChar,
+              preBool,
+              preMathOp,
+              preNumber,
+            }.contains(e.$1),
+          )
           .toList();
     }
     return scriptPredefineSubtypes;
@@ -266,163 +333,204 @@ class _ScriptSymbolPickerState extends State<ScriptSymbolPicker> {
     final groups = _groups(draft);
     final group = _group;
     return AlertDialog(
-      title: Row(children: [
-        if (group != null)
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            icon: const Icon(Icons.arrow_back, size: 18),
-            tooltip: 'Back to groups',
-            onPressed: () => setState(() => _group = null),
+      title: Row(
+        children: [
+          if (group != null)
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.arrow_back, size: 18),
+              tooltip: 'Back to groups',
+              onPressed: () => setState(() => _group = null),
+            ),
+          Expanded(
+            child: Text(
+              group == null
+                  ? (widget.destination ? 'Pick destination' : 'Pick operand')
+                  : groups[group].$1,
+            ),
           ),
-        Expanded(
-          child: Text(group == null
-              ? (widget.destination ? 'Pick destination' : 'Pick operand')
-              : groups[group].$1),
-        ),
-      ]),
+        ],
+      ),
       content: DialogBody(
         maxWidth: 360,
         height: 380,
-        child: Column(children: [
-          if (_hint != null)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Text(_hint!, style: const TextStyle(color: kOrange, fontSize: 12)),
+        child: Column(
+          children: [
+            if (_hint != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text(
+                  _hint!,
+                  style: const TextStyle(color: kOrange, fontSize: 12),
+                ),
+              ),
+            Expanded(
+              child: group == null
+                  ? _menu(draft, groups)
+                  : groups[group].$1 == 'Predefines'
+                  ? _predefineList()
+                  : _groupList(draft, groups[group].$2),
             ),
-          Expanded(
-            child: group == null
-                ? _menu(draft, groups)
-                : groups[group].$1 == 'Predefines'
-                    ? _predefineList()
-                    : _groupList(draft, groups[group].$2),
-          ),
-        ]),
+          ],
+        ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
       ],
     );
   }
 
   Widget _menu(ScriptDraft draft, List<(String, List<ScriptSymbol>)> groups) {
     final recs = _recommendations(draft);
-    return ListView(children: [
-      if (recs.isNotEmpty) ...[
-        _header('Recommended'),
-        for (final s in recs) _symbolTile(draft, s),
+    return ListView(
+      children: [
+        if (recs.isNotEmpty) ...[
+          _header('Recommended'),
+          for (final s in recs) _symbolTile(draft, s),
+        ],
+        _header('Groups'),
+        for (var i = 0; i < groups.length; i++)
+          ListTile(
+            dense: true,
+            leading: const Icon(Icons.folder_outlined, size: 18),
+            title: Text(groups[i].$1),
+            trailing: Text(
+              '${groups[i].$2.length}',
+              style: const TextStyle(color: Colors.white38, fontSize: 12),
+            ),
+            onTap: () => setState(() => _group = i),
+          ),
+        const Divider(),
+        ..._creationTiles(draft),
       ],
-      _header('Groups'),
-      for (var i = 0; i < groups.length; i++)
-        ListTile(
-          dense: true,
-          leading: const Icon(Icons.folder_outlined, size: 18),
-          title: Text(groups[i].$1),
-          trailing: Text('${groups[i].$2.length}',
-              style: const TextStyle(color: Colors.white38, fontSize: 12)),
-          onTap: () => setState(() => _group = i),
-        ),
-      const Divider(),
-      ..._creationTiles(draft),
-    ]);
+    );
   }
 
   Widget _groupList(ScriptDraft draft, List<ScriptSymbol> symbols) {
-    return ListView(children: [
-      if (symbols.isEmpty)
-        const Padding(
-          padding: EdgeInsets.all(12),
-          child: Text('None', style: TextStyle(color: Colors.white38)),
-        ),
-      for (final s in symbols) _symbolTile(draft, s),
-      const Divider(),
-      ..._creationTiles(draft),
-    ]);
+    return ListView(
+      children: [
+        if (symbols.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(12),
+            child: Text('None', style: TextStyle(color: Colors.white38)),
+          ),
+        for (final s in symbols) _symbolTile(draft, s),
+        const Divider(),
+        ..._creationTiles(draft),
+      ],
+    );
   }
 
   /// Predefine editor entry point: pick the subtype, then its value.
   Widget _predefineList() {
-    return ListView(children: [
-      for (final (subtype, name) in _predefineSubtypes)
-        ListTile(
-          dense: true,
-          title: Text(name),
-          trailing: const Icon(Icons.chevron_right, size: 18),
-          onTap: () async {
-            final s = await showDialog<ScriptSymbol>(
-              context: context,
-              builder: (_) => ScriptPredefineValueDialog(subtype: subtype),
-            );
-            if (s == null || !mounted) return;
-            Navigator.pop(context, s);
-          },
-        ),
-    ]);
-  }
-
-  List<Widget> _creationTiles(ScriptDraft draft) => [
-        if (!_constantOnly)
+    return ListView(
+      children: [
+        for (final (subtype, name) in _predefineSubtypes)
           ListTile(
             dense: true,
-            leading: const Icon(Icons.add, size: 18),
-            title: const Text('New variable'),
-            onTap: () {
-              draft.variables.add(ScriptDraftValue(type: DataType.number));
-              Navigator.pop(context, ScriptSymbol.variable(draft.variables.length - 1));
-            },
-          ),
-        if (_constantOnly)
-          ListTile(
-            dense: true,
-            leading: const Icon(Icons.add, size: 18),
-            title: const Text('New BlockInfo'),
-            subtitle: const Text('Register target (block/field/key)',
-                style: TextStyle(fontSize: 11, color: Colors.white54)),
-            onTap: () async {
-              final bytes = await pickBlockInfo(context, widget.deviceId);
-              if (bytes == null || !mounted) return;
-              draft.constants.add(ScriptDraftValue(
-                  name: 'Target',
-                  type: DataType.blockInfo,
-                  value: Uint8List.fromList(bytes)));
-              Navigator.pop(context, ScriptSymbol.constant(draft.constants.length - 1));
-            },
-          )
-        else if (!widget.destination)
-          ListTile(
-            dense: true,
-            leading: const Icon(Icons.add, size: 18),
-            title: const Text('New constant'),
-            onTap: () {
-              draft.constants.add(ScriptDraftValue(type: DataType.number));
-              Navigator.pop(context, ScriptSymbol.constant(draft.constants.length - 1));
-            },
-          ),
-        if (_numericOperand)
-          ListTile(
-            dense: true,
-            leading: const Icon(Icons.numbers, size: 18),
-            title: const Text('Literal…'),
-            subtitle: const Text('Inline number (no constant needed)',
-                style: TextStyle(fontSize: 11, color: Colors.white54)),
+            title: Text(name),
+            trailing: const Icon(Icons.chevron_right, size: 18),
             onTap: () async {
               final s = await showDialog<ScriptSymbol>(
-                  context: context, builder: (_) => const ScriptLiteralDialog());
+                context: context,
+                builder: (_) => ScriptPredefineValueDialog(subtype: subtype),
+              );
               if (s == null || !mounted) return;
               Navigator.pop(context, s);
             },
           ),
-      ];
+      ],
+    );
+  }
+
+  List<Widget> _creationTiles(ScriptDraft draft) => [
+    if (!_constantOnly)
+      ListTile(
+        dense: true,
+        leading: const Icon(Icons.add, size: 18),
+        title: const Text('New variable'),
+        onTap: () {
+          draft.variables.add(ScriptDraftValue(type: DataType.number));
+          Navigator.pop(
+            context,
+            ScriptSymbol.variable(draft.variables.length - 1),
+          );
+        },
+      ),
+    if (_constantOnly)
+      ListTile(
+        dense: true,
+        leading: const Icon(Icons.add, size: 18),
+        title: const Text('New BlockInfo'),
+        subtitle: const Text(
+          'Register target (block/field/key)',
+          style: TextStyle(fontSize: 11, color: Colors.white54),
+        ),
+        onTap: () async {
+          final bytes = await pickBlockInfo(context, widget.deviceId);
+          if (bytes == null || !mounted) return;
+          draft.constants.add(
+            ScriptDraftValue(
+              name: 'Target',
+              type: DataType.blockInfo,
+              value: Uint8List.fromList(bytes),
+            ),
+          );
+          Navigator.pop(
+            context,
+            ScriptSymbol.constant(draft.constants.length - 1),
+          );
+        },
+      )
+    else if (!widget.destination)
+      ListTile(
+        dense: true,
+        leading: const Icon(Icons.add, size: 18),
+        title: const Text('New constant'),
+        onTap: () {
+          draft.constants.add(ScriptDraftValue(type: DataType.number));
+          Navigator.pop(
+            context,
+            ScriptSymbol.constant(draft.constants.length - 1),
+          );
+        },
+      ),
+    if (_numericOperand)
+      ListTile(
+        dense: true,
+        leading: const Icon(Icons.numbers, size: 18),
+        title: const Text('Literal…'),
+        subtitle: const Text(
+          'Inline number (no constant needed)',
+          style: TextStyle(fontSize: 11, color: Colors.white54),
+        ),
+        onTap: () async {
+          final s = await showDialog<ScriptSymbol>(
+            context: context,
+            builder: (_) => const ScriptLiteralDialog(),
+          );
+          if (s == null || !mounted) return;
+          Navigator.pop(context, s);
+        },
+      ),
+  ];
 
   Widget _header(String text) => Padding(
-        padding: const EdgeInsets.only(top: 8, bottom: 2),
-        child: Text(text, style: const TextStyle(color: kOrange, fontWeight: FontWeight.w600)),
-      );
+    padding: const EdgeInsets.only(top: 8, bottom: 2),
+    child: Text(
+      text,
+      style: const TextStyle(color: kOrange, fontWeight: FontWeight.w600),
+    ),
+  );
 
   Widget _symbolTile(ScriptDraft draft, ScriptSymbol s) => ListTile(
-        dense: true,
-        title: Text(widget.nameOf(draft, s)),
-        onTap: () => Navigator.pop(context, s),
-      );
+    dense: true,
+    title: Text(widget.nameOf(draft, s)),
+    onTap: () => Navigator.pop(context, s),
+  );
 }
 
 /// Chooses a predefine's value for its subtype (Docs predefine subtypes: State, Type,
@@ -433,10 +541,12 @@ class ScriptPredefineValueDialog extends StatefulWidget {
   const ScriptPredefineValueDialog({super.key, required this.subtype});
 
   @override
-  State<ScriptPredefineValueDialog> createState() => _ScriptPredefineValueDialogState();
+  State<ScriptPredefineValueDialog> createState() =>
+      _ScriptPredefineValueDialogState();
 }
 
-class _ScriptPredefineValueDialogState extends State<ScriptPredefineValueDialog> {
+class _ScriptPredefineValueDialogState
+    extends State<ScriptPredefineValueDialog> {
   final _text = TextEditingController();
 
   @override
@@ -452,8 +562,12 @@ class _ScriptPredefineValueDialogState extends State<ScriptPredefineValueDialog>
   Widget build(BuildContext context) {
     final subtype = widget.subtype;
     final Widget body = switch (subtype) {
-      preState => _list([for (var s = 0; s <= 5; s++) (s, ScriptState.label(s))]),
-      preType => _list([for (final t in scriptValueTypes) (t.value, dataTypeLabel(t))]),
+      preState => _list([
+        for (var s = 0; s <= 5; s++) (s, ScriptState.label(s)),
+      ]),
+      preType => _list([
+        for (final t in scriptValueTypes) (t.value, dataTypeLabel(t)),
+      ]),
       preBool => _list(const [(0, 'false'), (1, 'true')]),
       preMathOp => _list(scriptPredefineMathOps),
       preIndex => _numberEntry(max: 0xFFFF, hint: '0..65535'),
@@ -465,79 +579,100 @@ class _ScriptPredefineValueDialogState extends State<ScriptPredefineValueDialog>
       title: Text('Predefine: ${ScriptSymbol.predefineName(subtype)}'),
       content: DialogBody(maxWidth: 320, height: 360, child: body),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
       ],
     );
   }
 
   Widget _list(List<(int, String)> items) => ListView(
-        children: [
-          for (final (value, label) in items)
-            ListTile(dense: true, title: Text(label), onTap: () => _pickValue(value)),
-        ],
-      );
+    children: [
+      for (final (value, label) in items)
+        ListTile(
+          dense: true,
+          title: Text(label),
+          onTap: () => _pickValue(value),
+        ),
+    ],
+  );
 
   Widget _numberEntry({required int max, String? hint}) {
-    return Column(mainAxisSize: MainAxisSize.min, children: [
-      TextField(
-        controller: _text,
-        autofocus: true,
-        keyboardType: TextInputType.number,
-        decoration: InputDecoration(labelText: 'Value', helperText: hint),
-      ),
-      const SizedBox(height: 12),
-      FilledButton(
-        onPressed: () {
-          final v = int.tryParse(_text.text.trim());
-          if (v == null || v < 0 || v > max) return;
-          _pickValue(v);
-        },
-        child: const Text('OK'),
-      ),
-    ]);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        TextField(
+          controller: _text,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          decoration: InputDecoration(labelText: 'Value', helperText: hint),
+        ),
+        const SizedBox(height: 12),
+        FilledButton(
+          onPressed: () {
+            final v = int.tryParse(_text.text.trim());
+            if (v == null || v < 0 || v > max) return;
+            _pickValue(v);
+          },
+          child: const Text('OK'),
+        ),
+      ],
+    );
   }
 
   Widget _charEntry() {
-    return Column(mainAxisSize: MainAxisSize.min, children: [
-      TextField(
-        controller: _text,
-        autofocus: true,
-        maxLength: 1,
-        decoration: const InputDecoration(labelText: 'Character'),
-      ),
-      const SizedBox(height: 12),
-      FilledButton(
-        onPressed: () {
-          if (_text.text.isEmpty) return;
-          _pickValue(_text.text.codeUnitAt(0) & 0xFF);
-        },
-        child: const Text('OK'),
-      ),
-    ]);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        TextField(
+          controller: _text,
+          autofocus: true,
+          maxLength: 1,
+          decoration: const InputDecoration(labelText: 'Character'),
+        ),
+        const SizedBox(height: 12),
+        FilledButton(
+          onPressed: () {
+            if (_text.text.isEmpty) return;
+            _pickValue(_text.text.codeUnitAt(0) & 0xFF);
+          },
+          child: const Text('OK'),
+        ),
+      ],
+    );
   }
 
   /// Number literal: a decimal value encoded as a 16-bit Q8.8 (step 1/256, range ±128).
   Widget _numberLiteralEntry() {
-    return Column(mainAxisSize: MainAxisSize.min, children: [
-      TextField(
-        controller: _text,
-        autofocus: true,
-        keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-        decoration: const InputDecoration(
-            labelText: 'Value', helperText: '-128..127.99 (e.g. 0.5, 2.25)'),
-      ),
-      const SizedBox(height: 12),
-      FilledButton(
-        onPressed: () {
-          final v = double.tryParse(_text.text.trim().replaceAll(',', '.'));
-          if (v == null) return;
-          final q = (v * 256).round();
-          if (q < -32768 || q > 32767) return;
-          _pickValue(q & 0xFFFF);
-        },
-        child: const Text('OK'),
-      ),
-    ]);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        TextField(
+          controller: _text,
+          autofocus: true,
+          keyboardType: const TextInputType.numberWithOptions(
+            decimal: true,
+            signed: true,
+          ),
+          decoration: const InputDecoration(
+            labelText: 'Value',
+            helperText: '-128..127.99 (e.g. 0.5, 2.25)',
+          ),
+        ),
+        const SizedBox(height: 12),
+        FilledButton(
+          onPressed: () {
+            final v = double.tryParse(_text.text.trim().replaceAll(',', '.'));
+            if (v == null) return;
+            final q = (v * 256).round();
+            if (q < -32768 || q > 32767) return;
+            _pickValue(q & 0xFFFF);
+          },
+          child: const Text('OK'),
+        ),
+      ],
+    );
   }
 }
 
@@ -577,19 +712,30 @@ class _ScriptLiteralDialogState extends State<ScriptLiteralDialog> {
       title: const Text('Literal'),
       content: DialogBody(
         maxWidth: 320,
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          TextField(
-            controller: _text,
-            autofocus: true,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-            decoration: const InputDecoration(
-                labelText: 'Value', helperText: 'Integer 0..65535, or a fraction like 0.5'),
-            onSubmitted: (_) => _submit(),
-          ),
-        ]),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _text,
+              autofocus: true,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+                signed: true,
+              ),
+              decoration: const InputDecoration(
+                labelText: 'Value',
+                helperText: 'Integer 0..65535, or a fraction like 0.5',
+              ),
+              onSubmitted: (_) => _submit(),
+            ),
+          ],
+        ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
         FilledButton(onPressed: _submit, child: const Text('OK')),
       ],
     );

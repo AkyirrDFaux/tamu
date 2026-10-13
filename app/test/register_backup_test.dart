@@ -17,11 +17,16 @@ class _CountingRegisterClient extends RegisterClient {
   int readBlocksCalls = 0;
 
   @override
-  Future<List<({int type, int inst, ValueInfo meta, String name})?>?> readBlocks(
-      {List<int>? scriptSlots}) async {
+  Future<List<({int type, int inst, ValueInfo meta, String name})?>?>
+  readBlocks({List<int>? scriptSlots}) async {
     readBlocksCalls++;
     return [
-      (type: 0, inst: 0, meta: const ValueInfo(type: 0, size: 9), name: 'System'),
+      (
+        type: 0,
+        inst: 0,
+        meta: const ValueInfo(type: 0, size: 9),
+        name: 'System',
+      ),
     ];
   }
 }
@@ -38,19 +43,19 @@ void main() {
       type: BlockType.resistiveMeasure.value,
       inst: 0,
       meta: ValueInfo(type: DataType.number.value, size: 2),
-      name: 'Meas'
+      name: 'Meas',
     ),
     (
       type: dynamicTypeBase, // a banked dynamic block
       inst: 3,
       meta: ValueInfo(type: DataType.number.value, size: 4),
-      name: 'Box'
+      name: 'Box',
     ),
     (
       type: scriptTypeBase, // a banked loaded script
       inst: 0,
       meta: ValueInfo(type: DataType.number.value, size: 1),
-      name: 'Eye'
+      name: 'Eye',
     ),
   ];
 
@@ -62,46 +67,61 @@ void main() {
     sv.setRange(0, 3, 'Eye'.codeUnits);
     sv.setRange(20, 24, numberToBytes(5));
     return DeviceBackup.decode(
-        sv: sv,
-        staticRegistry: const [(type: 0x08, inst: 0)],
-        staticFields: const {
-          0x08: [
-            (field: 0, size: 4, type: 0x06),
-            (field: 1, size: 1, type: 0x0C),
-            (field: 2, size: 4, type: 0x06),
+      sv: sv,
+      staticRegistry: const [(type: 0x08, inst: 0)],
+      staticFields: const {
+        0x08: [
+          (field: 0, size: 4, type: 0x06),
+          (field: 1, size: 1, type: 0x0C),
+          (field: 2, size: 4, type: 0x06),
+        ],
+      },
+      dynamic: {
+        3: (
+          table: <int>[
+            ...'Box'.codeUnits, ...List.filled(13, 0), // 16-byte name
+            ...u16(2), 0, 0, // entry_count + reserved padding
+            ...u16(0),
+            ...u16(0),
+            ...u16(DataType.number.value),
+            4,
+            ValueFlags.persistent,
+            ...u16(0x0100), ...u16(0), ...u16(DataType.number.value), 4, 0,
           ],
-        },
-        dynamic: {
-          3: (
-            table: <int>[
-              ...'Box'.codeUnits, ...List.filled(13, 0), // 16-byte name
-              ...u16(2), 0, 0, // entry_count + reserved padding
-              ...u16(0), ...u16(0), ...u16(DataType.number.value), 4, ValueFlags.persistent,
-              ...u16(0x0100), ...u16(0), ...u16(DataType.number.value), 4, 0,
-            ],
-            values: numberToBytes(42),
-          ),
-        },
-      );
+          values: numberToBytes(42),
+        ),
+      },
+    );
   }
 
-  Future<void> pump(WidgetTester tester, {DeviceBackup? b,
-      Future<void> Function(int, int, int, int)? onRecall}) async {
-    await tester.pumpWidget(MaterialApp(
-      theme: buildTheme(),
-      home: Scaffold(
-        body: RegisterBackupView(
-          backup: b ?? backup(),
-          blocks: blocks,
-          onRecall: onRecall,
+  Future<void> pump(
+    WidgetTester tester, {
+    DeviceBackup? b,
+    Future<void> Function(int, int, int, int)? onRecall,
+  }) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildTheme(),
+        home: Scaffold(
+          body: RegisterBackupView(
+            backup: b ?? backup(),
+            blocks: blocks,
+            onRecall: onRecall,
+          ),
         ),
       ),
-    ));
+    );
     await tester.pump();
-    expect(tester.takeException(), isNull, reason: 'the backup view threw while rendering');
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: 'the backup view threw while rendering',
+    );
   }
 
-  testWidgets('shows stored values and marks the ones that were never saved', (tester) async {
+  testWidgets('shows stored values and marks the ones that were never saved', (
+    tester,
+  ) async {
     await pump(tester);
     // Stored: the dynamic value, the static value and the System Name.
     expect(find.textContaining('42.0'), findsWidgets);
@@ -111,10 +131,13 @@ void main() {
     expect(find.textContaining('not backed up'), findsWidgets);
   });
 
-  testWidgets('a volatile dynamic entry is "not persisted", not "not backed up"', (tester) async {
-    await pump(tester);
-    expect(find.textContaining('not persisted'), findsOneWidget);
-  });
+  testWidgets(
+    'a volatile dynamic entry is "not persisted", not "not backed up"',
+    (tester) async {
+      await pump(tester);
+      expect(find.textContaining('not persisted'), findsOneWidget);
+    },
+  );
 
   testWidgets('a script block is reported as not backed up', (tester) async {
     await pump(tester);
@@ -127,11 +150,16 @@ void main() {
     expect(find.textContaining('not backed up'), findsWidgets);
   });
 
-  testWidgets('per-field recall is offered only for stored values', (tester) async {
+  testWidgets('per-field recall is offered only for stored values', (
+    tester,
+  ) async {
     final recalled = <(int, int, int, int)>[];
-    await pump(tester, onRecall: (bt, inst, field, key) async {
-      recalled.add((bt, inst, field, key));
-    });
+    await pump(
+      tester,
+      onRecall: (bt, inst, field, key) async {
+        recalled.add((bt, inst, field, key));
+      },
+    );
     final buttons = find.widgetWithIcon(IconButton, Icons.restore);
     // `.SV` is the whole static space, so every persistent field is present: System Name +
     // the 3 ResistiveMeasure fields + dynamic (0, 0) = 5 stored rows.
@@ -141,40 +169,64 @@ void main() {
     expect(recalled, [(dynamicTypeBase, 3, 0, 0)]);
   });
 
-  testWidgets('without a recall callback the rows are read-only', (tester) async {
+  testWidgets('without a recall callback the rows are read-only', (
+    tester,
+  ) async {
     await pump(tester);
     expect(find.widgetWithIcon(IconButton, Icons.restore), findsNothing);
   });
 
-  testWidgets('the 0.5 s auto-refresh re-reads values, not the topology', (tester) async {
+  testWidgets('the 0.5 s auto-refresh re-reads values, not the topology', (
+    tester,
+  ) async {
     // The documented auto-refresh is about *values*; re-enumerating types/instances/metas every
     // 0.5 s cost ~8-12 bus round-trips for topology that only changes on an explicit edit.
     final client = _CountingRegisterClient(deviceId: 1);
-    await tester.pumpWidget(MaterialApp(
-      theme: buildTheme(),
-      home: RegisterPage(deviceId: 1, isConnected: () => true, clientFactory: (_) => client),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildTheme(),
+        home: RegisterPage(
+          deviceId: 1,
+          isConnected: () => true,
+          clientFactory: (_) => client,
+        ),
+      ),
+    );
     await tester.pump(); // initState's first (full) refresh
-    expect(client.readBlocksCalls, 1, reason: 'the initial load reads the topology');
+    expect(
+      client.readBlocksCalls,
+      1,
+      reason: 'the initial load reads the topology',
+    );
 
     // Several auto-refresh ticks inside the topology interval must not re-enumerate.
     await tester.pump(const Duration(seconds: 2));
     await tester.pump(const Duration(seconds: 2));
-    expect(client.readBlocksCalls, 1,
-        reason: 'ticks inside the topology interval only re-read values');
+    expect(
+      client.readBlocksCalls,
+      1,
+      reason: 'ticks inside the topology interval only re-read values',
+    );
 
     // Past the interval the topology is refreshed again (so a block added elsewhere shows up).
     await tester.pump(const Duration(seconds: 6));
-    expect(client.readBlocksCalls, 2, reason: 'the topology is re-read periodically');
+    expect(
+      client.readBlocksCalls,
+      2,
+      reason: 'the topology is re-read periodically',
+    );
 
-    await tester.pumpWidget(const SizedBox()); // dispose (cancels the auto-refresh timer)
+    await tester.pumpWidget(
+      const SizedBox(),
+    ); // dispose (cancels the auto-refresh timer)
   });
 
-  testWidgets('the page toggles between the Current and Backup views', (tester) async {
-    await tester.pumpWidget(MaterialApp(
-      theme: buildTheme(),
-      home: const RegisterPage(deviceId: 1),
-    ));
+  testWidgets('the page toggles between the Current and Backup views', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(theme: buildTheme(), home: const RegisterPage(deviceId: 1)),
+    );
     await tester.pump();
     expect(tester.takeException(), isNull);
     // Current view: the appbar offers Save and the toggle reads "Current".

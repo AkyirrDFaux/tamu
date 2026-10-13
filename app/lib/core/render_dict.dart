@@ -37,11 +37,13 @@ List<KeyedEntry>? parseKeyedDict(List<int> fieldValue) {
     final key = fieldValue[offset + 1]; // Field&Key = (field << 8) | key
     final meta = ValueInfo.fromBytes(fieldValue, offset + 2, key);
     if (offset + 6 + meta.size > fieldValue.length) return null; // truncated
-    entries.add(KeyedEntry(
-      key: key,
-      meta: meta,
-      value: fieldValue.sublist(offset + 6, offset + 6 + meta.size),
-    ));
+    entries.add(
+      KeyedEntry(
+        key: key,
+        meta: meta,
+        value: fieldValue.sublist(offset + 6, offset + 6 + meta.size),
+      ),
+    );
     final aligned = (6 + meta.size + 3) & ~3;
     offset += aligned;
   }
@@ -53,7 +55,10 @@ List<KeyedEntry>? parseKeyedDict(List<int> fieldValue) {
 List<int> buildKeyedDict(List<KeyedEntry> entries) {
   final out = BytesBuilder();
   for (final e in entries) {
-    out.add([0, e.key & 0xFF]); // Field&Key (the field is the dict field, implicit here)
+    out.add([
+      0,
+      e.key & 0xFF,
+    ]); // Field&Key (the field is the dict field, implicit here)
     out.add(e.meta.toBytes());
     out.add(e.value);
     final aligned = (6 + e.value.length + 3) & ~3;
@@ -186,7 +191,8 @@ Set<int> textureKeysForType(int type) {
 /// Position keys (2x3 affine) open the transformation editor.
 FieldInfo renderKeyFieldInfo(int type, int key) {
   final name = renderDictKeyName(type, key);
-  final isPosition = (type == geometryDictType && key == 3) ||
+  final isPosition =
+      (type == geometryDictType && key == 3) ||
       (type == textureDictType && key == 2);
   Map<int, String>? enums;
   if (type == geometryDictType) {

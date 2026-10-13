@@ -27,8 +27,9 @@ Map<String, int> _firmwareDefines() {
     if (!file.existsSync()) continue;
     final defines = <String, int>{};
     final re = RegExp(
-        r'^#define\s+(SCRIPT_\w+|MAX_SCRIPTS)\s+(0x[0-9A-Fa-f]+|-?\d+)[uUlL]*',
-        multiLine: true);
+      r'^#define\s+(SCRIPT_\w+|MAX_SCRIPTS)\s+(0x[0-9A-Fa-f]+|-?\d+)[uUlL]*',
+      multiLine: true,
+    );
     for (final m in re.allMatches(file.readAsStringSync())) {
       final raw = m.group(2)!;
       defines[m.group(1)!] = raw.startsWith('0x')
@@ -45,13 +46,17 @@ Map<String, int> _firmwareDefines() {
 /// Handles both forms used in `Enums.h`: `enum class Name : uint16_t { ... }` and
 /// `enum Name : uint16_t { ... }`.
 Map<String, int> _firmwareEnum(String relativePath, String enumName) {
-  final candidates = ['../firmware/$relativePath', '../../firmware/$relativePath'];
+  final candidates = [
+    '../firmware/$relativePath',
+    '../../firmware/$relativePath',
+  ];
   for (final path in candidates) {
     final file = File(path);
     if (!file.existsSync()) continue;
     final source = file.readAsStringSync();
-    final header =
-        RegExp('\\benum\\s+(?:class\\s+)?$enumName\\b[^{]*\\{').firstMatch(source);
+    final header = RegExp(
+      '\\benum\\s+(?:class\\s+)?$enumName\\b[^{]*\\{',
+    ).firstMatch(source);
     if (header == null) continue;
     final open = header.end - 1;
     final close = source.indexOf('};', open);
@@ -90,16 +95,22 @@ void _expectEnumMatches(
   for (final entry in app.entries) {
     final target = norm(alias[entry.key] ?? entry.key);
     if (appOnly.contains(norm(entry.key))) continue;
-    expect(fwByName.containsKey(target), isTrue,
-        reason: 'firmware enum has no member for "${entry.key}"');
+    expect(
+      fwByName.containsKey(target),
+      isTrue,
+      reason: 'firmware enum has no member for "${entry.key}"',
+    );
     expect(fwByName[target], entry.value, reason: '"${entry.key}" value');
     seen.add(target);
   }
 
   for (final name in fwByName.keys) {
     if (seen.contains(name)) continue;
-    expect(firmwareOnly.contains(name), isTrue,
-        reason: 'app enum has no member for the firmware entry "$name"');
+    expect(
+      firmwareOnly.contains(name),
+      isTrue,
+      reason: 'app enum has no member for the firmware entry "$name"',
+    );
   }
 }
 
@@ -111,15 +122,20 @@ void _expectSameEnum(Map<int, String> app, Map<String, int> firmware) {
   final byName = {for (final e in firmware.entries) norm(e.key): e.value};
   for (final entry in app.entries) {
     final key = norm(entry.value);
-    expect(byName.containsKey(key), isTrue,
-        reason: 'firmware has no enum member for "${entry.value}"');
+    expect(
+      byName.containsKey(key),
+      isTrue,
+      reason: 'firmware has no enum member for "${entry.value}"',
+    );
     expect(byName[key], entry.key, reason: '${entry.value} numbering');
   }
 }
 
 void main() {
   final fw = _firmwareDefines();
-  final skipReason = fw.isEmpty ? 'firmware source not available next to the app' : null;
+  final skipReason = fw.isEmpty
+      ? 'firmware source not available next to the app'
+      : null;
 
   group('script encoding contract (app vs firmware)', () {
     test('the symbol-type enum matches', () {
@@ -178,12 +194,19 @@ void main() {
         23: 'FN_TRANSPOSE',
       };
       for (final entry in expected.entries) {
-        expect(fw['SCRIPT_MATHOP_${entry.value}'], entry.key,
-            reason: 'math op ${entry.key} (${entry.value})');
+        expect(
+          fw['SCRIPT_MATHOP_${entry.value}'],
+          entry.key,
+          reason: 'math op ${entry.key} (${entry.value})',
+        );
       }
       // And the editor must not offer anything outside that set.
       for (final op in expressionOps) {
-        expect(expected.containsKey(op), isTrue, reason: 'editor offers op $op');
+        expect(
+          expected.containsKey(op),
+          isTrue,
+          reason: 'editor offers op $op',
+        );
       }
     });
 
@@ -241,10 +264,16 @@ void main() {
         final table = tables[def.category];
         if (table == null) continue; // logic (Select) is checked below
         final (prefix, ops) = table;
-        expect(ops[def.op], isNotNull,
-            reason: '${def.label}: op ${def.op} has no firmware define');
-        expect(fw['$prefix${ops[def.op]}'], def.op,
-            reason: '${def.label}: $prefix${ops[def.op]}');
+        expect(
+          ops[def.op],
+          isNotNull,
+          reason: '${def.label}: op ${def.op} has no firmware define',
+        );
+        expect(
+          fw['$prefix${ops[def.op]}'],
+          def.op,
+          reason: '${def.label}: $prefix${ops[def.op]}',
+        );
       }
 
       expect(fw['SCRIPT_OP_LOGIC_SELECT'], 12);
@@ -259,7 +288,11 @@ void main() {
     test('the function-reservation + global-call encoding matches', () {
       // The reservation record layout is the spec's weak point; both sides isolate it. Guard the
       // byte positions the app writes against the record the firmware parses.
-      final r = encodeFunctionReservation(fileId: 0x1234, memOffset: 7, instrOffset: 9);
+      final r = encodeFunctionReservation(
+        fileId: 0x1234,
+        memOffset: 7,
+        instrOffset: 9,
+      );
       expect(r[0] | (r[1] << 8), 0x1234, reason: 'FileId at offset 0');
       expect(r[2] | (r[3] << 8), 7, reason: 'MemOffset at offset 2');
       expect(r[4] | (r[5] << 8), 9, reason: 'InstrOffset at offset 4');
@@ -286,14 +319,17 @@ void main() {
   }, skip: skipReason);
 
   group('core enum contract (app vs firmware)', () {
-    Map<String, int> names<T>(List<({String name, int value})> entries) =>
-        {for (final e in entries) e.name: e.value};
+    Map<String, int> names<T>(List<({String name, int value})> entries) => {
+      for (final e in entries) e.name: e.value,
+    };
 
     test('DeviceType matches', () {
       final fw = _firmwareEnum('src/Core/Types/Enums.h', 'DeviceType');
       if (fw.isEmpty) return;
       _expectEnumMatches(
-        names([for (final t in DeviceType.values) (name: t.name, value: t.value)]),
+        names([
+          for (final t in DeviceType.values) (name: t.name, value: t.value),
+        ]),
         fw,
       );
     });
@@ -302,7 +338,9 @@ void main() {
       final fw = _firmwareEnum('src/Core/Types/Enums.h', 'DataType');
       if (fw.isEmpty) return;
       _expectEnumMatches(
-        names([for (final t in DataType.values) (name: t.name, value: t.value)]),
+        names([
+          for (final t in DataType.values) (name: t.name, value: t.value),
+        ]),
         fw,
         // The app spells Index/Enum/Bool differently (Dart keywords).
         alias: const {'integer': 'Index'},
@@ -315,7 +353,9 @@ void main() {
       final fw = _firmwareEnum('src/Core/Types/Enums.h', 'BlockType');
       if (fw.isEmpty) return;
       _expectEnumMatches(
-        names([for (final t in BlockType.values) (name: t.name, value: t.value)]),
+        names([
+          for (final t in BlockType.values) (name: t.name, value: t.value),
+        ]),
         fw,
         alias: const {'vysiDisplay': 'Vysi1Display'},
         firmwareOnly: const {'system'},
@@ -330,7 +370,9 @@ void main() {
       final fw = _firmwareEnum('src/Core/Types/Enums.h', 'TriggerType');
       if (fw.isEmpty) return;
       _expectEnumMatches(
-        names([for (final t in TriggerType.values) (name: t.name, value: t.value)]),
+        names([
+          for (final t in TriggerType.values) (name: t.name, value: t.value),
+        ]),
         fw,
       );
     });
@@ -360,31 +402,40 @@ void main() {
         fw[m.group(1)!] = 1 << int.parse(m.group(2)!);
       }
       expect(fw, isNotEmpty);
-      _expectEnumMatches(const {
-        'core': Capability.core,
-        'router': Capability.router,
-        'dynamicMemory': Capability.dynamicMemory,
-        'scripts': Capability.scripts,
-        'appInterface': Capability.appInterface,
-        'subscriptionRequest': Capability.subscriptionRequest,
-        'node': Capability.node,
-        'subscriptionProvide': Capability.subscriptionProvide,
-      }, fw,
-          // The firmware namespace does not define bit 1; the app names it Router from
-          // Docs/Services/Router.md (the feature is not implemented).
-          appOnly: const {'router'});
+      _expectEnumMatches(
+        const {
+          'core': Capability.core,
+          'router': Capability.router,
+          'dynamicMemory': Capability.dynamicMemory,
+          'scripts': Capability.scripts,
+          'appInterface': Capability.appInterface,
+          'subscriptionRequest': Capability.subscriptionRequest,
+          'node': Capability.node,
+          'subscriptionProvide': Capability.subscriptionProvide,
+        },
+        fw,
+        // The firmware namespace does not define bit 1; the app names it Router from
+        // Docs/Services/Router.md (the feature is not implemented).
+        appOnly: const {'router'},
+      );
     });
   }, skip: skipReason);
 
   group('render dictionary contract (app vs firmware)', () {
     test('shape / operation / texture numbering matches Render.h', () {
       final render = _firmwareEnum('src/Blocks/Render.h', 'Geometries');
-      if (render.isEmpty) return; // firmware not available; the group below is skipped
+      if (render.isEmpty) {
+        return; // firmware not available; the group below is skipped
+      }
       _expectSameEnum(renderShapes, render);
-      _expectSameEnum(renderOperations,
-          _firmwareEnum('src/Blocks/Render.h', 'GeometryOperation'));
-      _expectSameEnum(renderTextures,
-          _firmwareEnum('src/Blocks/Render.h', 'Textures2D'));
+      _expectSameEnum(
+        renderOperations,
+        _firmwareEnum('src/Blocks/Render.h', 'GeometryOperation'),
+      );
+      _expectSameEnum(
+        renderTextures,
+        _firmwareEnum('src/Blocks/Render.h', 'Textures2D'),
+      );
     });
   }, skip: skipReason);
 }

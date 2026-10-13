@@ -66,15 +66,17 @@ class HilEnv {
 
   void recordLabeled(String label, HilOutcome outcome, [String? detail]) {
     results.add((label: label, outcome: outcome, detail: detail));
-    log.line('  ${_tick(outcome)}  $label'
-        '${detail == null ? '' : '  -- $detail'}');
+    log.line(
+      '  ${_tick(outcome)}  $label'
+      '${detail == null ? '' : '  -- $detail'}',
+    );
   }
 
   static String _tick(HilOutcome o) => switch (o) {
-        HilOutcome.pass => 'PASS',
-        HilOutcome.fail => 'FAIL',
-        HilOutcome.skip => 'SKIP',
-      };
+    HilOutcome.pass => 'PASS',
+    HilOutcome.fail => 'FAIL',
+    HilOutcome.skip => 'SKIP',
+  };
 
   /// Runs from `setUpAll`: connect, settle, scan.
   Future<void> connectAndScan() async {
@@ -94,7 +96,8 @@ class HilEnv {
       await _connectBle(mgr);
     } else {
       final err = await mgr.connectTo(
-          DiscoveredLink(id: target, type: LinkType.usb, name: 'Tamu core'));
+        DiscoveredLink(id: target, type: LinkType.usb, name: 'Tamu core'),
+      );
       if (err != null) {
         fatal = 'connect failed: $err';
         fail(fatal!);
@@ -163,7 +166,9 @@ class HilEnv {
       if (entry.stale) continue; // unreachable this sweep
       final blocks = <BlockType>[];
       try {
-        final types = await RegisterClient(deviceId: entry.id).enumerateBlockTypes();
+        final types = await RegisterClient(
+          deviceId: entry.id,
+        ).enumerateBlockTypes();
         for (final t in types ?? const <({int type, int maxInstance})>[]) {
           final block = BlockType.fromValue(t.type);
           if (block != BlockType.none &&
@@ -175,30 +180,37 @@ class HilEnv {
       } catch (_) {
         // A device that does not answer enumeration contributes no blocks.
       }
-      devices.add(HilDevice(
-        id: entry.id,
-        type: entry.type,
-        capabilities: entry.capabilities,
-        name: entry.name,
-        blocks: blocks,
-        bootloader: false,
-      ));
+      devices.add(
+        HilDevice(
+          id: entry.id,
+          type: entry.type,
+          capabilities: entry.capabilities,
+          name: entry.name,
+          blocks: blocks,
+          bootloader: false,
+        ),
+      );
     }
     // The declaration stands in for the scan with a placeholder device: the tests address the
     // core's passthrough, which reaches whatever is in update mode without naming it.
     if (bootloaderDeclared) {
-      devices.add(HilDevice(
-        id: 0,
-        type: DeviceType.unknown,
-        capabilities: 0,
-        name: 'a device in bootloader mode',
-        bootloader: true,
-      ));
+      devices.add(
+        HilDevice(
+          id: 0,
+          type: DeviceType.unknown,
+          capabilities: 0,
+          name: 'a device in bootloader mode',
+          bootloader: true,
+        ),
+      );
     }
 
     final wanted = deviceFilter;
     rig = HilRig(
-        wanted == null ? devices : devices.where((d) => wanted.contains(d.id)).toList());
+      wanted == null
+          ? devices
+          : devices.where((d) => wanted.contains(d.id)).toList(),
+    );
   }
 
   /// Runs from `tearDownAll`: write the log, disconnect.
@@ -220,8 +232,10 @@ class HilEnv {
         case HilOutcome.skip:
           skipped++;
       }
-      log.line('  ${_tick(r.outcome)}  ${r.label}'
-          '${r.detail == null ? '' : '  -- ${r.detail}'}');
+      log.line(
+        '  ${_tick(r.outcome)}  ${r.label}'
+        '${r.detail == null ? '' : '  -- ${r.detail}'}',
+      );
     }
     log.line('  total: $pass passed, $failed failed, $skipped skipped');
     log.write();

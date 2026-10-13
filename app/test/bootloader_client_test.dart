@@ -25,7 +25,11 @@ class FakeTransport implements BootloaderTransport {
   int _last = Bootloader.nothingWritten;
 
   @override
-  Future<WriteAck> writeChunk(int offset, List<int> data, Duration timeout) async {
+  Future<WriteAck> writeChunk(
+    int offset,
+    List<int> data,
+    Duration timeout,
+  ) async {
     writes++;
     // A rejected write is acknowledged with the device's (stale) last-written offset.
     if (rejectOnce.remove(offset)) {
@@ -82,19 +86,22 @@ void main() {
     expect(result.reads, 4);
   });
 
-  test('the write response lets a rejected chunk be retried immediately', () async {
-    // A rejected write is reported with a stale last-written offset, so the client retries it
-    // inside the write loop instead of waiting for the verify pass.
-    final t = FakeTransport()..rejectOnce.add(64);
-    final result = await _client(t).flash(_image(100));
+  test(
+    'the write response lets a rejected chunk be retried immediately',
+    () async {
+      // A rejected write is reported with a stale last-written offset, so the client retries it
+      // inside the write loop instead of waiting for the verify pass.
+      final t = FakeTransport()..rejectOnce.add(64);
+      final result = await _client(t).flash(_image(100));
 
-    expect(result.verified, isTrue);
-    expect(result.corrections, 0);
-    expect(result.passes, 1);
-    // 4 chunks issued, plus one retry of the rejected chunk.
-    expect(t.writes, 5);
-    expect(t.flash[64], isNotNull);
-  });
+      expect(result.verified, isTrue);
+      expect(result.corrections, 0);
+      expect(result.passes, 1);
+      // 4 chunks issued, plus one retry of the rejected chunk.
+      expect(t.writes, 5);
+      expect(t.flash[64], isNotNull);
+    },
+  );
 
   test('the passthrough catches a dropped write in the verify pass', () async {
     // The passthrough ACKs without a last-written offset, so a dropped write only shows up as
@@ -130,8 +137,10 @@ void main() {
 
   test('identify exposes the app size and name', () async {
     final t = FakeTransport()
-      ..identity =
-          const BootloaderIdentity(appSize: 0x2A0000, name: 'Tamu v2.0A');
+      ..identity = const BootloaderIdentity(
+        appSize: 0x2A0000,
+        name: 'Tamu v2.0A',
+      );
     final id = await _client(t).identify();
 
     expect(id, isNotNull);
@@ -144,16 +153,21 @@ void main() {
     expect(await _client(t).identify(), isNull);
   });
 
-  test('an image larger than the device app space is refused before writing', () async {
-    final t = FakeTransport();
-    await expectLater(_client(t).flash(_image(100), maxImageSize: 64),
-        throwsA(isA<ArgumentError>()));
-    expect(t.writes, 0); // nothing was written
+  test(
+    'an image larger than the device app space is refused before writing',
+    () async {
+      final t = FakeTransport();
+      await expectLater(
+        _client(t).flash(_image(100), maxImageSize: 64),
+        throwsA(isA<ArgumentError>()),
+      );
+      expect(t.writes, 0); // nothing was written
 
-    // The same image fits when the app space is large enough.
-    final ok = await _client(t).flash(_image(100), maxImageSize: 100);
-    expect(ok.verified, isTrue);
-  });
+      // The same image fits when the app space is large enough.
+      final ok = await _client(t).flash(_image(100), maxImageSize: 100);
+      expect(ok.verified, isTrue);
+    },
+  );
 
   // The passthrough CIDs are wire values shared with the firmware's Device.h; a remap on either
   // side would silently break every passthrough operation (the codec KATs pin the frame bytes,

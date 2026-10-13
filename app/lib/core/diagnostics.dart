@@ -25,14 +25,17 @@ class AppDiagnostics {
 
   // Fixed-size ring: `_start` is the oldest slot, `_count` the number of live
   // events (<= capacity). Appends are O(1); no list shifting.
-  static final List<DiagEvent?> _events = List<DiagEvent?>.filled(capacity, null);
+  static final List<DiagEvent?> _events = List<DiagEvent?>.filled(
+    capacity,
+    null,
+  );
   static int _start = 0;
   static int _count = 0;
 
   /// Recent events, oldest first.
   static List<DiagEvent> get events => List.unmodifiable([
-        for (var i = 0; i < _count; i++) _events[(_start + i) % capacity]!,
-      ]);
+    for (var i = 0; i < _count; i++) _events[(_start + i) % capacity]!,
+  ]);
 
   static void log(String source, String message) {
     final event = DiagEvent(DateTime.now(), source, message);

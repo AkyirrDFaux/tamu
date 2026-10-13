@@ -34,7 +34,10 @@ const HilPrereq _nodeProvider = HilPrereq(
 
 /// A node on the bus, paired with the core for the discovery/SNDB/TimeSync
 /// tests. The address of a node is assigned by the core's discover broadcast.
-const HilPrereq _node = HilPrereq(isCore: false, capabilities: [Capability.node]);
+const HilPrereq _node = HilPrereq(
+  isCore: false,
+  capabilities: [Capability.node],
+);
 
 /// The core as requester: it owns the requester table (only it advertises
 /// `subscriptionRequest`) and is the app-interface entry point, coupled to a
@@ -57,8 +60,12 @@ const HilPrereq _coreWithNode = HilPrereq(
 /// (field 0, key 0) of [type], initialised to [value] (or zeros). A dynamic
 /// entry is a writable register, so it makes a subscription target.
 Future<DynBlock> _scratchTarget(
-    RegisterClient reg, int index, DataType type, int size,
-    {List<int>? value}) async {
+  RegisterClient reg,
+  int index,
+  DataType type,
+  int size, {
+  List<int>? value,
+}) async {
   await reg.deleteDynamic(block: index);
   await reg.createDynamicBlock('SUBTGT', index: index);
   final block = DynBlock(
@@ -66,16 +73,24 @@ Future<DynBlock> _scratchTarget(
     meta: ValueInfo(type: dynamicTypeForIndex(index), size: 1),
     name: 'SUBTGT',
   );
-  await reg.writeDynamicEntry(block, 0, 0, ValueInfo(type: type.value, key: 0),
-      value ?? List<int>.filled(size, 0));
+  await reg.writeDynamicEntry(
+    block,
+    0,
+    0,
+    ValueInfo(type: type.value, key: 0),
+    value ?? List<int>.filled(size, 0),
+  );
   return block;
 }
 
 /// The BlockInfo of a dynamic block addressed by its global index (the bank type
 /// is derived from the index).
-int _dynReg(int global, int field, [int key = 0]) =>
-    makeBlockInfo(dynamicTypeForIndex(global), dynamicInstanceForIndex(global),
-        field, key);
+int _dynReg(int global, int field, [int key = 0]) => makeBlockInfo(
+  dynamicTypeForIndex(global),
+  dynamicInstanceForIndex(global),
+  field,
+  key,
+);
 
 /// Cancels every requester subscription on [client]: a deterministic start for a
 /// coupled test.
@@ -90,7 +105,9 @@ Future<void> _clearRequesterTable(SubscriptionClient client) async {
 /// Puts the requester table back the way [saved] recorded it, so a coupled test
 /// never leaves the device's subscriptions changed.
 Future<void> _restoreRequesterTable(
-    SubscriptionClient client, List<RequesterSubscription> saved) async {
+  SubscriptionClient client,
+  List<RequesterSubscription> saved,
+) async {
   await _clearRequesterTable(client);
   for (final s in saved) {
     await client.setRequesterSubscription(s.index, entry: s);
@@ -125,12 +142,21 @@ final List<HilTest> partnerTests = <HilTest>[
         target = t;
 
         // Node Meas1 (ResistiveMeasure inst 0) Measured Value = field 3.
-        final sourceReg = makeBlockInfo(BlockType.resistiveMeasure.value, 0, 3, 0);
+        final sourceReg = makeBlockInfo(
+          BlockType.resistiveMeasure.value,
+          0,
+          3,
+          0,
+        );
         final targetReg = _dynReg(_scrSubTgt, 0, 0);
 
         // Read the provider value directly so we can compare after the flow.
-        final direct =
-            await dasReg.readBlockField(BlockType.resistiveMeasure.value, 0, 3, 0);
+        final direct = await dasReg.readBlockField(
+          BlockType.resistiveMeasure.value,
+          0,
+          3,
+          0,
+        );
         final expected = direct == null ? 0.0 : numberFromBytes(direct.value);
         ctx.note('node Measured Value = $expected');
 
@@ -144,15 +170,22 @@ final List<HilTest> partnerTests = <HilTest>[
           periodMs: 200,
           minTimeMs: 50,
         );
-        expect(await client.setRequesterSubscription(0, entry: entry), isTrue,
-            reason: 'the core accepted the requester entry');
+        expect(
+          await client.setRequesterSubscription(0, entry: entry),
+          isTrue,
+          reason: 'the core accepted the requester entry',
+        );
 
         // The provider table on the node should now hold an entry.
         final provClient = SubscriptionClient(deviceId: node.id);
         await Future<void>.delayed(const Duration(milliseconds: 300));
         final provs = await provClient.getProviderSubscriptions();
         ctx.note('node provider entries: ${provs.length}');
-        expect(provs, isNotEmpty, reason: 'the node registered the provider entry');
+        expect(
+          provs,
+          isNotEmpty,
+          reason: 'the node registered the provider entry',
+        );
 
         await Future<void>.delayed(const Duration(milliseconds: 800));
         final applied = await reg.readDynamicField(t, 0, 0);
@@ -160,8 +193,11 @@ final List<HilTest> partnerTests = <HilTest>[
         ctx.note('core target value = $value');
         // The applied value must track the provider (non-zero for a connected
         // sensor). This is the assertion observed failing on the bench.
-        expect(value, isNot(0.0),
-            reason: 'the node Measured Value must reach the core target');
+        expect(
+          value,
+          isNot(0.0),
+          reason: 'the node Measured Value must reach the core target',
+        );
       } finally {
         if (target != null) await reg.deleteDynamic(block: target.index);
         if (saved != null) await _restoreRequesterTable(client, saved);
@@ -189,8 +225,13 @@ final List<HilTest> partnerTests = <HilTest>[
       try {
         saved = await client.getRequesterSubscriptions();
         await _clearRequesterTable(client);
-        final t = await _scratchTarget(reg, _scrSubTgt, DataType.number, 4,
-            value: numberToBytes(-1));
+        final t = await _scratchTarget(
+          reg,
+          _scrSubTgt,
+          DataType.number,
+          4,
+          value: numberToBytes(-1),
+        );
         target = t;
 
         // A *writable* source on the node: its ResistiveMeasure Filter
@@ -198,17 +239,27 @@ final List<HilTest> partnerTests = <HilTest>[
         // node's provider table. (Measured Value drifts with room light, and a
         // fire-and-forget delta push can leave the provider's last-sent hash
         // ahead of the value that reached the target.)
-        final sourceReg = makeBlockInfo(BlockType.resistiveMeasure.value, 0, 2, 0);
+        final sourceReg = makeBlockInfo(
+          BlockType.resistiveMeasure.value,
+          0,
+          2,
+          0,
+        );
         final targetReg = _dynReg(_scrSubTgt, 0, 0);
-        final before =
-            await dasReg.readBlockField(BlockType.resistiveMeasure.value, 0, 2, 0);
+        final before = await dasReg.readBlockField(
+          BlockType.resistiveMeasure.value,
+          0,
+          2,
+          0,
+        );
         expect(before, isNotNull, reason: 'node FilterCoeff readable');
         coeffBefore = before!.value;
         srcMeta = ValueInfo(
-            type: before.meta.type,
-            flags: before.meta.flags,
-            key: 0,
-            size: before.value.length);
+          type: before.meta.type,
+          flags: before.meta.flags,
+          key: 0,
+          size: before.value.length,
+        );
 
         final entry = RequesterSubscription(
           index: 0,
@@ -233,7 +284,11 @@ final List<HilTest> partnerTests = <HilTest>[
           await Future<void>.delayed(const Duration(milliseconds: 400));
           ready = registered(await provClient.getProviderSubscriptions());
         }
-        expect(ready, isTrue, reason: 'the node never received the provider entry');
+        expect(
+          ready,
+          isTrue,
+          reason: 'the node never received the provider entry',
+        );
 
         // Drive the source to a known value, retrying the nudge if a push went
         // missing.
@@ -241,15 +296,27 @@ final List<HilTest> partnerTests = <HilTest>[
         var sent = 0.0;
         for (var attempt = 0; attempt < 6 && !landed; attempt++) {
           sent = 0.2 + 0.1 * attempt;
-          await dasReg.writeBlockField(BlockType.resistiveMeasure.value, 0, 2, 0,
-              srcMeta, numberToBytes(sent));
+          await dasReg.writeBlockField(
+            BlockType.resistiveMeasure.value,
+            0,
+            2,
+            0,
+            srcMeta,
+            numberToBytes(sent),
+          );
           for (var i = 0; i < 8 && !landed; i++) {
             await Future<void>.delayed(const Duration(milliseconds: 200));
             final cur = await reg.readDynamicField(t, 0, 0);
-            landed = cur != null && (numberFromBytes(cur.value) - sent).abs() < 0.005;
+            landed =
+                cur != null &&
+                (numberFromBytes(cur.value) - sent).abs() < 0.005;
           }
         }
-        expect(landed, isTrue, reason: 'the pushed value never reached the target');
+        expect(
+          landed,
+          isTrue,
+          reason: 'the pushed value never reached the target',
+        );
 
         // The provider's Hash/Hashlike is the last SENT scalar for a Number, so it
         // must equal the raw value that reached the target - not an FNV hash (a
@@ -260,14 +327,26 @@ final List<HilTest> partnerTests = <HilTest>[
             .toList();
         final raw = (sent * 65536).round() & 0xFFFFFFFF;
         final hash = mine.isEmpty ? 0 : mine.first.hash;
-        ctx.note('node provider: sent=$sent hash=0x${hash.toRadixString(16)} '
-            'expected=0x${raw.toRadixString(16)}');
-        expect(hash, raw,
-            reason: 'the provider Hash must hold the last sent scalar, not a hash');
+        ctx.note(
+          'node provider: sent=$sent hash=0x${hash.toRadixString(16)} '
+          'expected=0x${raw.toRadixString(16)}',
+        );
+        expect(
+          hash,
+          raw,
+          reason:
+              'the provider Hash must hold the last sent scalar, not a hash',
+        );
       } finally {
         if (srcMeta != null && coeffBefore != null) {
-          await dasReg.writeBlockField(BlockType.resistiveMeasure.value, 0, 2, 0,
-              srcMeta, coeffBefore);
+          await dasReg.writeBlockField(
+            BlockType.resistiveMeasure.value,
+            0,
+            2,
+            0,
+            srcMeta,
+            coeffBefore,
+          );
         }
         if (target != null) await reg.deleteDynamic(block: target.index);
         if (saved != null) await _restoreRequesterTable(client, saved);
@@ -290,15 +369,24 @@ final List<HilTest> partnerTests = <HilTest>[
       final db = DeviceDatabase.instance;
       await db.refreshNetwork();
       final devices = db.all;
-      ctx.note('bus lists ${devices.length} device(s): '
-          '${devices.map((d) => idToString(d.id)).join(', ')}');
+      ctx.note(
+        'bus lists ${devices.length} device(s): '
+        '${devices.map((d) => idToString(d.id)).join(', ')}',
+      );
       for (final d in devices) {
-        expect(d.stale, isFalse,
-            reason: 'device ${idToString(d.id)} must answer after the discovery sweep');
+        expect(
+          d.stale,
+          isFalse,
+          reason:
+              'device ${idToString(d.id)} must answer after the discovery sweep',
+        );
       }
       expect(idNet(node.id), 0, reason: 'the node sits on the core local net');
-      expect(idDevice(node.id), greaterThan(0),
-          reason: 'the node holds an address assigned by the core');
+      expect(
+        idDevice(node.id),
+        greaterThan(0),
+        reason: 'the node holds an address assigned by the core',
+      );
     },
   ),
   HilTest(
@@ -318,19 +406,26 @@ final List<HilTest> partnerTests = <HilTest>[
       expect(coreEntry!.capabilities & Capability.core, isNot(0));
 
       final entries = await db.sndbEntries();
-      ctx.note('SNDB entries: '
-          '${entries.map((e) => '${idToString(e.$1)}=${e.$2}').join(', ')}');
+      ctx.note(
+        'SNDB entries: '
+        '${entries.map((e) => '${idToString(e.$1)}=${e.$2}').join(', ')}',
+      );
       // The core does not register itself; the SNDB lists the net's devices
       // (local devices with net 0, other cores with NetID.1), so no entry may be
       // the connected core.
       expect(
-          entries.any(
-              (e) => e.$1 == core.id || (idDevice(e.$1) == 1 && idNet(e.$1) != 0)),
-          isFalse,
-          reason: 'the core must not appear in its own SNDB');
+        entries.any(
+          (e) => e.$1 == core.id || (idDevice(e.$1) == 1 && idNet(e.$1) != 0),
+        ),
+        isFalse,
+        reason: 'the core must not appear in its own SNDB',
+      );
       // The partner node is a local device, stored with NetID 0.
-      expect(entries.any((e) => e.$1 == node.id), isTrue,
-          reason: 'the node must appear in the SNDB');
+      expect(
+        entries.any((e) => e.$1 == node.id),
+        isTrue,
+        reason: 'the node must appear in the SNDB',
+      );
 
       // TimeSync via Register uptime: both devices report a live clock.
       await db.refreshRuntime(core.id);
@@ -352,8 +447,10 @@ final List<HilTest> partnerTests = <HilTest>[
       final coreReg = RegisterClient(deviceId: core.id);
       final nodeReg = RegisterClient(deviceId: node.id);
       final ble = ConnectionManager.instance.source == LinkSource.ble;
-      ctx.note('core ${core.label} vs node ${node.label}'
-          '${ble ? ' (BLE link)' : ''}');
+      ctx.note(
+        'core ${core.label} vs node ${node.label}'
+        '${ble ? ' (BLE link)' : ''}',
+      );
 
       // Wait until the node's applied offset matches the raw core-node
       // difference, i.e. it has re-synced after the core clock restarted (the
@@ -387,8 +484,11 @@ final List<HilTest> partnerTests = <HilTest>[
       final c0Read = await coreReg.readField(3, 1);
       final dRead = await nodeReg.readField(3, 1);
       final c1Read = await coreReg.readField(3, 1);
-      expect(c0Read != null && dRead != null && c1Read != null, isTrue,
-          reason: 'the clock compare reads must answer');
+      expect(
+        c0Read != null && dRead != null && c1Read != null,
+        isTrue,
+        reason: 'the clock compare reads must answer',
+      );
       final c0 = uint32FromBytes(c0Read!.value);
       final d = uint32FromBytes(dRead!.value);
       final c1 = uint32FromBytes(c1Read!.value);
@@ -405,8 +505,11 @@ final List<HilTest> partnerTests = <HilTest>[
       // syncs; its internal RC drifts ~1%, so the residual depends on when the
       // last sync happened. 25 ms still catches a broken sync (orders of
       // magnitude out) while tolerating the cadence.
-      expect(diff.abs(), lessThan(25),
-          reason: 'the node clock must track the core (achieved ${diff}ms)');
+      expect(
+        diff.abs(),
+        lessThan(25),
+        reason: 'the node clock must track the core (achieved ${diff}ms)',
+      );
     },
   ),
 ];

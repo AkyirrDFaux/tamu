@@ -10,8 +10,14 @@ extension on _RegisterPageState {
   /// Constant) as a keyed list. Only `ScriptField.input` is editable; the header, outputs,
   /// variables and constants are read-only (variables are edited through the script file,
   /// not the Register view).
-  Widget _scriptFieldTile(int blockType, int inst, int cacheKey, int fieldIndex,
-      ({int type, int inst, ValueInfo meta, String name})? block, Key? cardKey) {
+  Widget _scriptFieldTile(
+    int blockType,
+    int inst,
+    int cacheKey,
+    int fieldIndex,
+    ({int type, int inst, ValueInfo meta, String name})? block,
+    Key? cardKey,
+  ) {
     // The Header category is script metadata and is intentionally not part of the
     // Register view.
     if (fieldIndex == ScriptField.header) return const SizedBox.shrink();
@@ -22,59 +28,106 @@ extension on _RegisterPageState {
       return ListTile(
         key: cardKey,
         dense: true,
-        title: Text(name, style: const TextStyle(fontSize: 13, color: Colors.white54)),
-        subtitle: const Text('None', style: TextStyle(fontSize: 10, color: Colors.white38)),
+        title: Text(
+          name,
+          style: const TextStyle(fontSize: 13, color: Colors.white54),
+        ),
+        subtitle: const Text(
+          'None',
+          style: TextStyle(fontSize: 10, color: Colors.white38),
+        ),
       );
     }
     final editableField = fieldIndex == ScriptField.input;
     return Column(
       children: [
         for (final key in keys)
-          Builder(builder: (context) {
-            final e = cache?[fieldIndex * 256 + key];
-            if (e == null) {
+          Builder(
+            builder: (context) {
+              final e = cache?[fieldIndex * 256 + key];
+              if (e == null) {
+                return ListTile(
+                  key: key == keys.first ? cardKey : null,
+                  dense: true,
+                  leading: const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  title: Text(
+                    '$name $key',
+                    style: const TextStyle(fontSize: 13, color: Colors.white38),
+                  ),
+                );
+              }
+              final editable = editableField && !e.meta.readOnly;
               return ListTile(
                 key: key == keys.first ? cardKey : null,
                 dense: true,
-                leading: const SizedBox(
-                    width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
-                title: Text('$name $key',
-                    style: const TextStyle(fontSize: 13, color: Colors.white38)),
+                title: Row(
+                  children: [
+                    SizedBox(
+                      width: 120,
+                      child: Text(
+                        '$name $key',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.white54,
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: Text(
+                        formatValue(e.meta.dataType, e.value),
+                        style: const TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                subtitle: Text(
+                  dataTypeLabel(e.meta.dataType) +
+                      (e.meta.readOnly ? ' · RO' : ''),
+                  style: const TextStyle(fontSize: 10),
+                ),
+                trailing: editable
+                    ? const Icon(Icons.edit, size: 16, color: Colors.white38)
+                    : null,
+                onTap: editable
+                    ? () => _editScriptEntry(
+                        blockType,
+                        inst,
+                        fieldIndex,
+                        key,
+                        e,
+                        block,
+                      )
+                    : null,
               );
-            }
-            final editable = editableField && !e.meta.readOnly;
-            return ListTile(
-              key: key == keys.first ? cardKey : null,
-              dense: true,
-              title: Row(children: [
-                SizedBox(
-                    width: 120,
-                    child: Text('$name $key',
-                        style: const TextStyle(fontSize: 12, color: Colors.white54))),
-                Expanded(
-                    child: Text(formatValue(e.meta.dataType, e.value),
-                        style: const TextStyle(fontFamily: 'monospace', fontSize: 13))),
-              ]),
-              subtitle: Text(
-                  dataTypeLabel(e.meta.dataType) + (e.meta.readOnly ? ' · RO' : ''),
-                  style: const TextStyle(fontSize: 10)),
-              trailing: editable ? const Icon(Icons.edit, size: 16, color: Colors.white38) : null,
-              onTap: editable
-                  ? () => _editScriptEntry(blockType, inst, fieldIndex, key, e, block)
-                  : null,
-            );
-          }),
+            },
+          ),
       ],
     );
   }
 
-  Widget _blockCard(BuildContext context, int blockIndex, ({int type, int inst, ValueInfo meta, String name})? block, {Key? cardKey, int? dragIndex}) {
+  Widget _blockCard(
+    BuildContext context,
+    int blockIndex,
+    ({int type, int inst, ValueInfo meta, String name})? block, {
+    Key? cardKey,
+    int? dragIndex,
+  }) {
     if (block == null) {
       return Card(
         color: kSurfaceAlt,
         child: ListTile(
           leading: const Icon(Icons.memory, color: kOrange),
-          title: const Text('System Block', style: TextStyle(fontWeight: FontWeight.w600)),
+          title: const Text(
+            'System Block',
+            style: TextStyle(fontWeight: FontWeight.w600),
+          ),
           subtitle: const Text('Loading...'),
         ),
       );
@@ -94,111 +147,183 @@ extension on _RegisterPageState {
       color: kSurfaceAlt,
       margin: EdgeInsets.zero,
       clipBehavior: Clip.antiAlias,
-      child: Column(children: [
-        ListTile(
-          leading: _editMode && isDynamic && dragIndex != null
-              ? Row(mainAxisSize: MainAxisSize.min, children: [
-                  ReorderableDragStartListener(
-                    index: dragIndex,
-                    child: const Icon(Icons.drag_handle, color: Colors.white38),
-                  ),
-                  const SizedBox(width: 8),
-                  Icon(isExpanded ? Icons.folder_open : Icons.folder, color: kOrange),
-                ])
-              : Icon(isExpanded ? Icons.folder_open : Icons.folder, color: kOrange),
-          title: Row(children: [
-            Expanded(
-                child: Text(block.name.isNotEmpty ? block.name : (isSystem ? 'System' : (isDynamic ? 'Dynamic #${block.inst}' : 'Block #${block.inst}')),
-                    style: const TextStyle(fontWeight: FontWeight.w600))),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-              decoration: BoxDecoration(
-                  color: Colors.white.withAlpha(20),
-                  borderRadius: BorderRadius.circular(4)),
-              child: Text(isSystem ? 'System' : '#${block.inst}',
-                  style: const TextStyle(fontSize: 10, color: Colors.white54)),
-            ),
-          ]),
-          subtitle: Padding(
-            padding: const EdgeInsets.only(top: 2),
-            child: Wrap(spacing: 6, runSpacing: 2, children: [
-              ChipLabel(isSystem ? 'System' : blockTypeLabel(block.meta.type)),
-              for (final flag in ValueFlags.describe(block.meta.flags)) ChipLabel(flag, subtle: flag != 'RO'),
-              if (!isScriptType(block.meta.type))
-                ChipLabel('${block.meta.size} fields', subtle: true),
-            ]),
-          ),
-          trailing: isDynamicType(block.meta.type)
-              ? PopupMenuButton<String>(
-                  tooltip: 'Block actions',
-                  onSelected: (action) {
-                    if (action == 'edit') {
-                      _editBlock(blockIndex, block);
-                    } else if (action == 'add') {
-                      _addEntry(blockIndex, block);
-                    } else if (action == 'move') {
-                      _moveBlock(block);
-                    } else if (action == 'delete') {
-                      _deleteBlock(blockIndex, block);
-                    }
-                  },
-                  itemBuilder: (_) => [
-                    const PopupMenuItem(value: 'edit', child: Text('Rename')),
-                    const PopupMenuItem(value: 'add', child: Text('Add field')),
-                    if (_editMode)
-                      const PopupMenuItem(value: 'move', child: Text('Move to index...')),
-                    const PopupMenuItem(value: 'delete', child: Text('Delete block')),
-                  ],
-                )
-              : null,
-          onTap: () async {
-            _rebuild(() {
-              isExpanded
-                  ? _expanded.remove(blockIndex)
-                  : _expanded.add(blockIndex);
-            });
-            if (_expanded.contains(blockIndex)) {
-              final block = _blockMetas?[blockIndex];
-              if (block != null) {
-                await _loadBlockFields(block.type, block.inst, block, forceRefresh: true);
-              }
-              if (mounted) _rebuild(() {});
-            }
-          },
-        ),
-        if (isExpanded)
-          Material(
-            color: Colors.black26,
-            child: Column(children: [
-              const Divider(height: 1),
-              if (block.meta.size > 0) ...[
-                if (_editMode && isDynamic)
-                  ReorderableListView(
-                    shrinkWrap: true,
-                    buildDefaultDragHandles: false,
+      child: Column(
+        children: [
+          ListTile(
+            leading: _editMode && isDynamic && dragIndex != null
+                ? Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      for (final (si, f)
-                          in (_dynamicFields[block.inst] ?? <int>[]).indexed)
-                        _fieldTile(block.type, block.inst, block, f,
-                            cardKey: ValueKey('fld-$f'), dragIndex: si),
+                      ReorderableDragStartListener(
+                        index: dragIndex,
+                        child: const Icon(
+                          Icons.drag_handle,
+                          color: Colors.white38,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Icon(
+                        isExpanded ? Icons.folder_open : Icons.folder,
+                        color: kOrange,
+                      ),
                     ],
-                    onReorderItem: (oldIndex, newIndex) =>
-                        _reorderFields(block, _dynamicFields[block.inst] ?? <int>[], oldIndex, newIndex),
                   )
-                else if (isDynamic)
-                  for (final f in (_dynamicFields[block.inst] ?? <int>[]))
-                    _fieldTile(block.type, block.inst, block, f)
-                else
-                  for (var f = 0; f < block.meta.size; f++)
-                    _fieldTile(block.type, block.inst, block, f),
+                : Icon(
+                    isExpanded ? Icons.folder_open : Icons.folder,
+                    color: kOrange,
+                  ),
+            title: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    block.name.isNotEmpty
+                        ? block.name
+                        : (isSystem
+                              ? 'System'
+                              : (isDynamic
+                                    ? 'Dynamic #${block.inst}'
+                                    : 'Block #${block.inst}')),
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 1,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withAlpha(20),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    isSystem ? 'System' : '#${block.inst}',
+                    style: const TextStyle(fontSize: 10, color: Colors.white54),
+                  ),
+                ),
               ],
-            ]),
+            ),
+            subtitle: Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 2,
+                children: [
+                  ChipLabel(
+                    isSystem ? 'System' : blockTypeLabel(block.meta.type),
+                  ),
+                  for (final flag in ValueFlags.describe(block.meta.flags))
+                    ChipLabel(flag, subtle: flag != 'RO'),
+                  if (!isScriptType(block.meta.type))
+                    ChipLabel('${block.meta.size} fields', subtle: true),
+                ],
+              ),
+            ),
+            trailing: isDynamicType(block.meta.type)
+                ? PopupMenuButton<String>(
+                    tooltip: 'Block actions',
+                    onSelected: (action) {
+                      if (action == 'edit') {
+                        _editBlock(blockIndex, block);
+                      } else if (action == 'add') {
+                        _addEntry(blockIndex, block);
+                      } else if (action == 'move') {
+                        _moveBlock(block);
+                      } else if (action == 'delete') {
+                        _deleteBlock(blockIndex, block);
+                      }
+                    },
+                    itemBuilder: (_) => [
+                      const PopupMenuItem(value: 'edit', child: Text('Rename')),
+                      const PopupMenuItem(
+                        value: 'add',
+                        child: Text('Add field'),
+                      ),
+                      if (_editMode)
+                        const PopupMenuItem(
+                          value: 'move',
+                          child: Text('Move to index...'),
+                        ),
+                      const PopupMenuItem(
+                        value: 'delete',
+                        child: Text('Delete block'),
+                      ),
+                    ],
+                  )
+                : null,
+            onTap: () async {
+              _rebuild(() {
+                isExpanded
+                    ? _expanded.remove(blockIndex)
+                    : _expanded.add(blockIndex);
+              });
+              if (_expanded.contains(blockIndex)) {
+                final block = _blockMetas?[blockIndex];
+                if (block != null) {
+                  await _loadBlockFields(
+                    block.type,
+                    block.inst,
+                    block,
+                    forceRefresh: true,
+                  );
+                }
+                if (mounted) _rebuild(() {});
+              }
+            },
           ),
-      ]),
+          if (isExpanded)
+            Material(
+              color: Colors.black26,
+              child: Column(
+                children: [
+                  const Divider(height: 1),
+                  if (block.meta.size > 0) ...[
+                    if (_editMode && isDynamic)
+                      ReorderableListView(
+                        shrinkWrap: true,
+                        buildDefaultDragHandles: false,
+                        children: [
+                          for (final (si, f)
+                              in (_dynamicFields[block.inst] ?? <int>[])
+                                  .indexed)
+                            _fieldTile(
+                              block.type,
+                              block.inst,
+                              block,
+                              f,
+                              cardKey: ValueKey('fld-$f'),
+                              dragIndex: si,
+                            ),
+                        ],
+                        onReorderItem: (oldIndex, newIndex) => _reorderFields(
+                          block,
+                          _dynamicFields[block.inst] ?? <int>[],
+                          oldIndex,
+                          newIndex,
+                        ),
+                      )
+                    else if (isDynamic)
+                      for (final f in (_dynamicFields[block.inst] ?? <int>[]))
+                        _fieldTile(block.type, block.inst, block, f)
+                    else
+                      for (var f = 0; f < block.meta.size; f++)
+                        _fieldTile(block.type, block.inst, block, f),
+                  ],
+                ],
+              ),
+            ),
+        ],
+      ),
     );
   }
 
-  Widget _fieldTile(int blockType, int inst, ({int type, int inst, ValueInfo meta, String name})? block, int fieldIndex, {Key? cardKey, int? dragIndex}) {
+  Widget _fieldTile(
+    int blockType,
+    int inst,
+    ({int type, int inst, ValueInfo meta, String name})? block,
+    int fieldIndex, {
+    Key? cardKey,
+    int? dragIndex,
+  }) {
     final cacheKey = (blockType << 8) | inst;
     final cache = _fieldCache[cacheKey];
     final field = cache?[fieldIndex];
@@ -206,7 +331,14 @@ extension on _RegisterPageState {
 
     // Loaded scripts (0x3F4-0x3F7): keyed entries per category field.
     if (isScriptType(blockType)) {
-      return _scriptFieldTile(blockType, inst, cacheKey, fieldIndex, block, cardKey);
+      return _scriptFieldTile(
+        blockType,
+        inst,
+        cacheKey,
+        fieldIndex,
+        block,
+        cardKey,
+      );
     }
 
     // Dynamic blocks: flat (field, key) entries. A field is a DICTIONARY when its
@@ -219,12 +351,18 @@ extension on _RegisterPageState {
       ];
       if (entries.every((e) => e.$2 == null)) {
         return ListTile(
-            key: cardKey,
-            dense: true,
-            leading: const SizedBox(
-                width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
-            title: const Text('...',
-                style: TextStyle(fontSize: 13, color: Colors.white38)));
+          key: cardKey,
+          dense: true,
+          leading: const SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          title: const Text(
+            '...',
+            style: TextStyle(fontSize: 13, color: Colors.white38),
+          ),
+        );
       }
       final head = entries.firstOrNull?.$2;
       final isDict = head != null && isRenderDictType(head.meta.type);
@@ -241,32 +379,50 @@ extension on _RegisterPageState {
           dense: true,
           leading: dragIndex != null
               ? ReorderableDragStartListener(
-                  index: dragIndex, child: const Icon(Icons.drag_handle, color: Colors.white38))
+                  index: dragIndex,
+                  child: const Icon(Icons.drag_handle, color: Colors.white38),
+                )
               : null,
-          title: Row(children: [
-            SizedBox(
+          title: Row(
+            children: [
+              SizedBox(
                 width: 120,
-                child: Text('Field $fieldIndex',
-                    style: const TextStyle(fontSize: 12, color: Colors.white54))),
-            if (head.meta.dataType == DataType.colour && head.value.length >= 4)
-              Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: Container(
-                  width: 14,
-                  height: 14,
-                  decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Color.fromARGB(
-                          head.value[3], head.value[0], head.value[1], head.value[2]),
-                      border: Border.all(color: Colors.white38)),
+                child: Text(
+                  'Field $fieldIndex',
+                  style: const TextStyle(fontSize: 12, color: Colors.white54),
                 ),
               ),
-            Expanded(
-                child: Text(_formatDynamicValue(head, false, 0, 0),
-                    style: const TextStyle(fontFamily: 'monospace', fontSize: 13))),
-          ]),
-          subtitle: Text(dataTypeLabel(head.meta.dataType) + _flagsSuffix(head.meta),
-              style: const TextStyle(fontSize: 10)),
+              if (head.meta.dataType == DataType.colour &&
+                  head.value.length >= 4)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Container(
+                    width: 14,
+                    height: 14,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Color.fromARGB(
+                        head.value[3],
+                        head.value[0],
+                        head.value[1],
+                        head.value[2],
+                      ),
+                      border: Border.all(color: Colors.white38),
+                    ),
+                  ),
+                ),
+              Expanded(
+                child: Text(
+                  _formatDynamicValue(head, false, 0, 0),
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+                ),
+              ),
+            ],
+          ),
+          subtitle: Text(
+            dataTypeLabel(head.meta.dataType) + _flagsSuffix(head.meta),
+            style: const TextStyle(fontSize: 10),
+          ),
           trailing: _editMode
               ? PopupMenuButton<String>(
                   icon: const Icon(Icons.more_vert, size: 16),
@@ -287,13 +443,31 @@ extension on _RegisterPageState {
                   },
                   itemBuilder: (_) => [
                     if (!head.meta.readOnly) ...[
-                      const PopupMenuItem(value: 'edit', child: Text('Edit value')),
-                      const PopupMenuItem(value: 'type', child: Text('Change type')),
-                      const PopupMenuItem(value: 'fidx', child: Text('Change field index')),
-                      const PopupMenuItem(value: 'addkey', child: Text('Add key')),
+                      const PopupMenuItem(
+                        value: 'edit',
+                        child: Text('Edit value'),
+                      ),
+                      const PopupMenuItem(
+                        value: 'type',
+                        child: Text('Change type'),
+                      ),
+                      const PopupMenuItem(
+                        value: 'fidx',
+                        child: Text('Change field index'),
+                      ),
+                      const PopupMenuItem(
+                        value: 'addkey',
+                        child: Text('Add key'),
+                      ),
                     ],
-                    const PopupMenuItem(value: 'flags', child: Text('Edit flags')),
-                    const PopupMenuItem(value: 'delete', child: Text('Delete field')),
+                    const PopupMenuItem(
+                      value: 'flags',
+                      child: Text('Edit flags'),
+                    ),
+                    const PopupMenuItem(
+                      value: 'delete',
+                      child: Text('Delete field'),
+                    ),
                   ],
                 )
               : null,
@@ -310,107 +484,194 @@ extension on _RegisterPageState {
         dense: true,
         leading: dragIndex != null
             ? ReorderableDragStartListener(
-                index: dragIndex, child: const Icon(Icons.drag_handle, color: Colors.white38))
+                index: dragIndex,
+                child: const Icon(Icons.drag_handle, color: Colors.white38),
+              )
             : null,
-        title: Row(children: [
-          SizedBox(
+        title: Row(
+          children: [
+            SizedBox(
               width: 120,
-              child: Text(isDict
-                  ? (dictType == geometryDictType ? 'Geometry' : 'Texture')
-                  : 'Field $fieldIndex',
-                  style: const TextStyle(fontSize: 12, color: Colors.white54))),
-          Expanded(
-              child: Text('[${extraKeys.length} keys]',
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 13))),
-          if (_editMode) ...[
-            IconButton(
-              tooltip: 'Add key to field $fieldIndex',
-              icon: const Icon(Icons.add, size: 18),
-              onPressed: () => _addDynamicEntry(blockType, inst, block, fieldIndex),
+              child: Text(
+                isDict
+                    ? (dictType == geometryDictType ? 'Geometry' : 'Texture')
+                    : 'Field $fieldIndex',
+                style: const TextStyle(fontSize: 12, color: Colors.white54),
+              ),
             ),
-            PopupMenuButton<String>(
-              tooltip: 'Field actions',
-              icon: const Icon(Icons.more_vert, size: 16),
-              onSelected: (action) {
-                if (action == 'type' && head != null && !head.meta.readOnly) {
-                  _changeDynamicType(blockType, inst, block, fieldIndex, 0);
-                } else if (action == 'fidx') {
-                  _changeFieldIndex(blockType, inst, block, fieldIndex);
-                } else if (action == 'delete') {
-                  _deleteField(blockType, inst, block, fieldIndex);
-                }
-              },
-              itemBuilder: (_) => [
-                if (head != null && !head.meta.readOnly)
-                  const PopupMenuItem(value: 'type', child: Text('Change type')),
-                const PopupMenuItem(value: 'fidx', child: Text('Change field index')),
-                const PopupMenuItem(value: 'delete', child: Text('Delete field')),
-              ],
+            Expanded(
+              child: Text(
+                '[${extraKeys.length} keys]',
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+              ),
             ),
+            if (_editMode) ...[
+              IconButton(
+                tooltip: 'Add key to field $fieldIndex',
+                icon: const Icon(Icons.add, size: 18),
+                onPressed: () =>
+                    _addDynamicEntry(blockType, inst, block, fieldIndex),
+              ),
+              PopupMenuButton<String>(
+                tooltip: 'Field actions',
+                icon: const Icon(Icons.more_vert, size: 16),
+                onSelected: (action) {
+                  if (action == 'type' && head != null && !head.meta.readOnly) {
+                    _changeDynamicType(blockType, inst, block, fieldIndex, 0);
+                  } else if (action == 'fidx') {
+                    _changeFieldIndex(blockType, inst, block, fieldIndex);
+                  } else if (action == 'delete') {
+                    _deleteField(blockType, inst, block, fieldIndex);
+                  }
+                },
+                itemBuilder: (_) => [
+                  if (head != null && !head.meta.readOnly)
+                    const PopupMenuItem(
+                      value: 'type',
+                      child: Text('Change type'),
+                    ),
+                  const PopupMenuItem(
+                    value: 'fidx',
+                    child: Text('Change field index'),
+                  ),
+                  const PopupMenuItem(
+                    value: 'delete',
+                    child: Text('Delete field'),
+                  ),
+                ],
+              ),
+            ],
           ],
-        ]),
+        ),
         children: <Widget>[
           for (final ek in extraKeys)
             ListTile(
               dense: true,
               contentPadding: const EdgeInsets.only(left: 56, right: 12),
-              title: Row(children: [
-                SizedBox(
+              title: Row(
+                children: [
+                  SizedBox(
                     width: 90,
-                    child: Text(isDict
-                        ? '${ek.key} · ${renderDictKeyName(dictType, ek.key)}'
-                        : 'key ${ek.key}',
-                        style: const TextStyle(fontSize: 11, color: Colors.white54))),
-                if (ek.e.meta.dataType == DataType.colour && ek.e.value.length >= 4)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: Container(
-                      width: 14,
-                      height: 14,
-                      decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Color.fromARGB(
-                              ek.e.value[3], ek.e.value[0], ek.e.value[1], ek.e.value[2]),
-                          border: Border.all(color: Colors.white38)),
+                    child: Text(
+                      isDict
+                          ? '${ek.key} · ${renderDictKeyName(dictType, ek.key)}'
+                          : 'key ${ek.key}',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: Colors.white54,
+                      ),
                     ),
                   ),
-                Expanded(
-                    child: Text(_formatDynamicValue(ek.e, isDict, dictType, ek.key),
-                        style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
-              ]),
-              subtitle: Text(dataTypeLabel(ek.e.meta.dataType) + _flagsSuffix(ek.e.meta),
-                  style: const TextStyle(fontSize: 10)),
+                  if (ek.e.meta.dataType == DataType.colour &&
+                      ek.e.value.length >= 4)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: Container(
+                        width: 14,
+                        height: 14,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Color.fromARGB(
+                            ek.e.value[3],
+                            ek.e.value[0],
+                            ek.e.value[1],
+                            ek.e.value[2],
+                          ),
+                          border: Border.all(color: Colors.white38),
+                        ),
+                      ),
+                    ),
+                  Expanded(
+                    child: Text(
+                      _formatDynamicValue(ek.e, isDict, dictType, ek.key),
+                      style: const TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              subtitle: Text(
+                dataTypeLabel(ek.e.meta.dataType) + _flagsSuffix(ek.e.meta),
+                style: const TextStyle(fontSize: 10),
+              ),
               trailing: PopupMenuButton<String>(
                 icon: const Icon(Icons.more_vert, size: 16),
                 onSelected: (action) {
                   if (action == 'edit' && !ek.e.meta.readOnly) {
-                    _editDynamicEntry(blockType, inst, block, fieldIndex, ek.key);
+                    _editDynamicEntry(
+                      blockType,
+                      inst,
+                      block,
+                      fieldIndex,
+                      ek.key,
+                    );
                   } else if (action == 'type' && !ek.e.meta.readOnly) {
-                    _changeDynamicType(blockType, inst, block, fieldIndex, ek.key);
+                    _changeDynamicType(
+                      blockType,
+                      inst,
+                      block,
+                      fieldIndex,
+                      ek.key,
+                    );
                   } else if (action == 'key' && !ek.e.meta.readOnly) {
-                    _changeDynamicKey(blockType, inst, block, fieldIndex, ek.key);
+                    _changeDynamicKey(
+                      blockType,
+                      inst,
+                      block,
+                      fieldIndex,
+                      ek.key,
+                    );
                   } else if (action == 'flags') {
                     _editEntryFlags(blockType, inst, block, fieldIndex, ek.key);
                   } else if (action == 'delete' && !ek.e.meta.readOnly) {
-                    _deleteDynamicEntry(blockType, inst, block, fieldIndex, ek.key);
+                    _deleteDynamicEntry(
+                      blockType,
+                      inst,
+                      block,
+                      fieldIndex,
+                      ek.key,
+                    );
                   }
                 },
                 itemBuilder: (_) => [
                   if (!ek.e.meta.readOnly) ...[
-                    const PopupMenuItem(value: 'edit', child: Text('Edit value')),
+                    const PopupMenuItem(
+                      value: 'edit',
+                      child: Text('Edit value'),
+                    ),
                     if (_editMode) ...[
-                      const PopupMenuItem(value: 'type', child: Text('Change type')),
-                      const PopupMenuItem(value: 'key', child: Text('Change key')),
+                      const PopupMenuItem(
+                        value: 'type',
+                        child: Text('Change type'),
+                      ),
+                      const PopupMenuItem(
+                        value: 'key',
+                        child: Text('Change key'),
+                      ),
                     ],
                   ],
                   if (_editMode)
-                    const PopupMenuItem(value: 'flags', child: Text('Edit flags')),
+                    const PopupMenuItem(
+                      value: 'flags',
+                      child: Text('Edit flags'),
+                    ),
                   if (!ek.e.meta.readOnly)
-                    const PopupMenuItem(value: 'delete', child: Text('Delete entry')),
+                    const PopupMenuItem(
+                      value: 'delete',
+                      child: Text('Delete entry'),
+                    ),
                 ],
               ),
               onTap: !ek.e.meta.readOnly
-                  ? () => _editDynamicEntry(blockType, inst, block, fieldIndex, ek.key)
+                  ? () => _editDynamicEntry(
+                      blockType,
+                      inst,
+                      block,
+                      fieldIndex,
+                      ek.key,
+                    )
                   : null,
             ),
         ],
@@ -419,13 +680,17 @@ extension on _RegisterPageState {
 
     if (field == null) {
       return const ListTile(
-          dense: true,
-          leading: SizedBox(
-              width: 14,
-              height: 14,
-              child: CircularProgressIndicator(strokeWidth: 2)),
-          title: Text('...',
-              style: TextStyle(fontSize: 13, color: Colors.white38)));
+        dense: true,
+        leading: SizedBox(
+          width: 14,
+          height: 14,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+        title: Text(
+          '...',
+          style: TextStyle(fontSize: 13, color: Colors.white38),
+        ),
+      );
     }
 
     final primaryFlags = ValueFlags.describe(field.meta.flags);
@@ -472,7 +737,8 @@ extension on _RegisterPageState {
     }
 
     // For system block, collect all keys for this field
-    List<({int key, ({ValueInfo meta, List<int> value})? field})> keyedEntries = [];
+    List<({int key, ({ValueInfo meta, List<int> value})? field})> keyedEntries =
+        [];
     if (isSystemField && cache != null) {
       final keys = systemKeysForField(fieldIndex);
       for (final key in keys) {
@@ -482,23 +748,36 @@ extension on _RegisterPageState {
           keyedEntries.add((key: key, field: extraField));
         }
       }
-      if (!keyedEntries.any((e) => e.key == systemKeysForField(fieldIndex).first)) {
-        keyedEntries.insert(0, (key: systemKeysForField(fieldIndex).first, field: field));
+      if (!keyedEntries.any(
+        (e) => e.key == systemKeysForField(fieldIndex).first,
+      )) {
+        keyedEntries.insert(0, (
+          key: systemKeysForField(fieldIndex).first,
+          field: field,
+        ));
       }
     }
 
     if (isSystemField && keyedEntries.length > 1) {
       return ExpansionTile(
         dense: true,
-        title: Row(children: [
-          SizedBox(
+        title: Row(
+          children: [
+            SizedBox(
               width: 120,
-              child: Text(systemFieldName(fieldIndex),
-                  style: const TextStyle(fontSize: 12, color: Colors.white54))),
-          Expanded(
-              child: Text('[${keyedEntries.length} fields]',
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 13))),
-        ]),
+              child: Text(
+                systemFieldName(fieldIndex),
+                style: const TextStyle(fontSize: 12, color: Colors.white54),
+              ),
+            ),
+            Expanded(
+              child: Text(
+                '[${keyedEntries.length} fields]',
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+              ),
+            ),
+          ],
+        ),
         children: keyedEntries.map((entry) {
           final key = entry.key;
           final f = entry.field;
@@ -506,28 +785,60 @@ extension on _RegisterPageState {
           return ListTile(
             dense: true,
             contentPadding: const EdgeInsets.only(left: 56, right: 12),
-            title: Row(children: [
-              SizedBox(width: 100, child: Text(systemStructMemberName(fieldIndex, key), style: const TextStyle(fontSize: 11, color: Colors.white54))),
-              Expanded(child: Text(formatSystemValue(f.meta.dataType, f.value, fieldIndex, key), style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
-              for (final flag in primaryFlags)
-                Padding(
-                  padding: const EdgeInsets.only(left: 4),
-                  child: Text(flag,
-                      style: TextStyle(
-                          fontSize: 8,
-                          fontWeight: FontWeight.w700,
-                          color: flag == 'RO' ? kOrange : Colors.white38)),
+            title: Row(
+              children: [
+                SizedBox(
+                  width: 100,
+                  child: Text(
+                    systemStructMemberName(fieldIndex, key),
+                    style: const TextStyle(fontSize: 11, color: Colors.white54),
+                  ),
                 ),
-            ]),
-            subtitle: Text('${dataTypeLabel(f.meta.dataType)} [member=${systemStructMemberName(fieldIndex, key)}]', style: const TextStyle(fontSize: 10)),
+                Expanded(
+                  child: Text(
+                    formatSystemValue(
+                      f.meta.dataType,
+                      f.value,
+                      fieldIndex,
+                      key,
+                    ),
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+                for (final flag in primaryFlags)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 4),
+                    child: Text(
+                      flag,
+                      style: TextStyle(
+                        fontSize: 8,
+                        fontWeight: FontWeight.w700,
+                        color: flag == 'RO' ? kOrange : Colors.white38,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            subtitle: Text(
+              '${dataTypeLabel(f.meta.dataType)} [member=${systemStructMemberName(fieldIndex, key)}]',
+              style: const TextStyle(fontSize: 10),
+            ),
             trailing: f.meta.readOnly
                 ? null
                 : PopupMenuButton<String>(
                     icon: const Icon(Icons.more_vert, size: 16),
                     onSelected: (action) {
                       if (action == 'edit') {
-                        _editValue(blockType, inst, block, fieldIndex,
-                            memberKey: key);
+                        _editValue(
+                          blockType,
+                          inst,
+                          block,
+                          fieldIndex,
+                          memberKey: key,
+                        );
                       } else if (action == 'save') {
                         _saveField(blockType, inst, block, fieldIndex);
                       } else if (action == 'recall') {
@@ -535,10 +846,19 @@ extension on _RegisterPageState {
                       }
                     },
                     itemBuilder: (_) => [
-                      const PopupMenuItem(value: 'edit', child: Text('Edit value')),
+                      const PopupMenuItem(
+                        value: 'edit',
+                        child: Text('Edit value'),
+                      ),
                       if (f.meta.persistent) ...[
-                        const PopupMenuItem(value: 'save', child: Text('Save to backup')),
-                        const PopupMenuItem(value: 'recall', child: Text('Recall from backup')),
+                        const PopupMenuItem(
+                          value: 'save',
+                          child: Text('Save to backup'),
+                        ),
+                        const PopupMenuItem(
+                          value: 'recall',
+                          child: Text('Recall from backup'),
+                        ),
                       ],
                     ],
                   ),
@@ -549,33 +869,55 @@ extension on _RegisterPageState {
 
     final fieldInfo = isSystemField
         ? null
-        : blockInfoFor(BlockType.fromValue(block?.meta.type ?? 0))?.field(fieldIndex);
+        : blockInfoFor(
+            BlockType.fromValue(block?.meta.type ?? 0),
+          )?.field(fieldIndex);
 
     return ListTile(
       dense: true,
       contentPadding: const EdgeInsets.only(left: 40, right: 12),
-      title: Row(children: [
-        SizedBox(
+      title: Row(
+        children: [
+          SizedBox(
             width: 120,
             child: Text(
-                isSystemField ? systemFieldName(fieldIndex) : (fieldInfo?.name ?? 'Field $fieldIndex'),
-                style: const TextStyle(fontSize: 12, color: Colors.white54))),
-        Expanded(
-            child: Text(
-                isSystemField ? formatSystemValue(field.meta.dataType, field.value, fieldIndex, systemKeysForField(fieldIndex).first) : displayValue(),
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 13))),
-        for (final flag in ValueFlags.describe(field.meta.flags))
-          Padding(
-            padding: const EdgeInsets.only(left: 4),
-            child: Text(flag,
-                style: TextStyle(
-                    fontSize: 9,
-                    fontWeight: FontWeight.w700,
-                    color: flag == 'RO' ? kOrange : Colors.white38)),
+              isSystemField
+                  ? systemFieldName(fieldIndex)
+                  : (fieldInfo?.name ?? 'Field $fieldIndex'),
+              style: const TextStyle(fontSize: 12, color: Colors.white54),
+            ),
           ),
-      ]),
-      subtitle: Text('${dataTypeLabel(field.meta.dataType)}${!isSystemField && fieldInfo?.unit != null ? ' [${fieldInfo!.unit}]' : ''}',
-          style: const TextStyle(fontSize: 11)),
+          Expanded(
+            child: Text(
+              isSystemField
+                  ? formatSystemValue(
+                      field.meta.dataType,
+                      field.value,
+                      fieldIndex,
+                      systemKeysForField(fieldIndex).first,
+                    )
+                  : displayValue(),
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+            ),
+          ),
+          for (final flag in ValueFlags.describe(field.meta.flags))
+            Padding(
+              padding: const EdgeInsets.only(left: 4),
+              child: Text(
+                flag,
+                style: TextStyle(
+                  fontSize: 9,
+                  fontWeight: FontWeight.w700,
+                  color: flag == 'RO' ? kOrange : Colors.white38,
+                ),
+              ),
+            ),
+        ],
+      ),
+      subtitle: Text(
+        '${dataTypeLabel(field.meta.dataType)}${!isSystemField && fieldInfo?.unit != null ? ' [${fieldInfo!.unit}]' : ''}',
+        style: const TextStyle(fontSize: 11),
+      ),
       trailing: field.meta.readOnly
           ? null
           : PopupMenuButton<String>(
@@ -593,13 +935,20 @@ extension on _RegisterPageState {
               itemBuilder: (_) => [
                 const PopupMenuItem(value: 'edit', child: Text('Edit value')),
                 if (field.meta.persistent) ...[
-                  const PopupMenuItem(value: 'save', child: Text('Save to backup')),
-                  const PopupMenuItem(value: 'recall', child: Text('Recall from backup')),
+                  const PopupMenuItem(
+                    value: 'save',
+                    child: Text('Save to backup'),
+                  ),
+                  const PopupMenuItem(
+                    value: 'recall',
+                    child: Text('Recall from backup'),
+                  ),
                 ],
               ],
             ),
-      onTap: (!field.meta.readOnly) ? () => _editValue(blockType, inst, block, fieldIndex) : null,
+      onTap: (!field.meta.readOnly)
+          ? () => _editValue(blockType, inst, block, fieldIndex)
+          : null,
     );
   }
-
 }

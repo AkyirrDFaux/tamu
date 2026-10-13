@@ -130,8 +130,10 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
       if (table == null) {
         throw const FormatException('Could not read the file table');
       }
-      final present = table.any((f) =>
-          normalizeFileName(f.name).toUpperCase() == _fileName.toUpperCase());
+      final present = table.any(
+        (f) =>
+            normalizeFileName(f.name).toUpperCase() == _fileName.toUpperCase(),
+      );
       ScriptDraft draft;
       if (!present) {
         draft = ScriptDraft(functionName: widget.name);
@@ -160,23 +162,33 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
   }
 
   Widget _loadErrorBody() => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            const Icon(Icons.error_outline, color: Colors.redAccent, size: 36),
-            const SizedBox(height: 8),
-            Text('Could not load $_fileName',
-                style: const TextStyle(fontWeight: FontWeight.w600)),
-            const SizedBox(height: 4),
-            Text(_loadError ?? '',
-                style: const TextStyle(color: Colors.white54, fontSize: 12),
-                textAlign: TextAlign.center),
-            const SizedBox(height: 12),
-            FilledButton.icon(
-                onPressed: _load, icon: const Icon(Icons.refresh), label: const Text('Retry')),
-          ]),
-        ),
-      );
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.error_outline, color: Colors.redAccent, size: 36),
+          const SizedBox(height: 8),
+          Text(
+            'Could not load $_fileName',
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _loadError ?? '',
+            style: const TextStyle(color: Colors.white54, fontSize: 12),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 12),
+          FilledButton.icon(
+            onPressed: _load,
+            icon: const Icon(Icons.refresh),
+            label: const Text('Retry'),
+          ),
+        ],
+      ),
+    ),
+  );
 
   Future<void> _refresh() async {
     final draft = _draft;
@@ -187,7 +199,10 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
         final values = <ScriptValueCategory, List<String>>{};
 
         // I/O live values come from the Register (the only script content it exposes).
-        for (final cat in const [ScriptValueCategory.input, ScriptValueCategory.output]) {
+        for (final cat in const [
+          ScriptValueCategory.input,
+          ScriptValueCategory.output,
+        ]) {
           final keys = await _client.enumerateKeys(_slot, cat.field);
           final list = <String>[];
           for (final key in keys) {
@@ -205,12 +220,17 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
           for (final v in draft.variables) {
             final size = v.size;
             final end = off + size;
-            varList.add(end <= ram.length ? formatValue(v.type, ram.sublist(off, end)) : '-');
+            varList.add(
+              end <= ram.length
+                  ? formatValue(v.type, ram.sublist(off, end))
+                  : '-',
+            );
             off += (size + 3) & ~3;
           }
           values[ScriptValueCategory.variable] = varList;
-          values[ScriptValueCategory.constant] =
-              [for (final c in draft.constants) formatValue(c.type, c.value)];
+          values[ScriptValueCategory.constant] = [
+            for (final c in draft.constants) formatValue(c.type, c.value),
+          ];
         }
 
         if (!mounted) return;
@@ -224,7 +244,9 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
           // The error is instruction-specific: keep the raw code and decode the instruction.
           _errorCode = st?.error ?? 0;
           _errorInstruction = st?.instruction ?? 0;
-          _statusText..clear()..addAll(values);
+          _statusText
+            ..clear()
+            ..addAll(values);
         });
       } catch (_) {
         if (!mounted) return;
@@ -258,10 +280,12 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
     });
     showSnack(context, ok ? 'Uploaded $_fileName' : 'Upload failed');
     if (ok && widget.loaded && mounted) {
-      final reload = await confirmDialog(context,
-          title: 'Apply live',
-          body: 'Reload the script to apply the changes on the device?',
-          confirmLabel: 'Reload');
+      final reload = await confirmDialog(
+        context,
+        title: 'Apply live',
+        body: 'Reload the script to apply the changes on the device?',
+        confirmLabel: 'Reload',
+      );
       if (reload) await _reloadLive();
     }
   }
@@ -275,7 +299,9 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
       // Assembly-time function checks: a cyclic call graph or nesting past the call-depth cap
       // (Docs/Services/Script.md "Functions and Macros").
       ...validateScriptFunctions(
-          mainLines: draft.lines, functions: draft.functions),
+        mainLines: draft.lines,
+        functions: draft.functions,
+      ),
     ];
     setState(() => _errors = errors);
     if (errors.isEmpty) return true;
@@ -284,10 +310,15 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Cannot upload'),
-        content: Text('${errors.length} problem(s):\n\n'
-            '${errors.map((e) => '• $e').join('\n')}'),
+        content: Text(
+          '${errors.length} problem(s):\n\n'
+          '${errors.map((e) => '• $e').join('\n')}',
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK')),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
         ],
       ),
     );
@@ -334,10 +365,15 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
     final errors = [
       ...validateScriptLines(draft.lines, draft.validationContext),
       ...validateScriptFunctions(
-          mainLines: draft.lines, functions: draft.functions),
+        mainLines: draft.lines,
+        functions: draft.functions,
+      ),
     ];
     setState(() => _errors = errors);
-    showSnack(context, errors.isEmpty ? 'Script is valid' : '${errors.length} problem(s) found');
+    showSnack(
+      context,
+      errors.isEmpty ? 'Script is valid' : '${errors.length} problem(s) found',
+    );
   }
 
   Future<void> _control(int action, {bool reset = false}) async {
@@ -359,79 +395,83 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
       canPop: !_dirty,
       onPopInvokedWithResult: (didPop, _) async {
         if (didPop) return;
-        final leave = await confirmDialog(context,
-            title: 'Discard changes',
-            body: 'This script has unsaved edits. Leave without uploading?',
-            confirmLabel: 'Discard');
+        final leave = await confirmDialog(
+          context,
+          title: 'Discard changes',
+          body: 'This script has unsaved edits. Leave without uploading?',
+          confirmLabel: 'Discard',
+        );
         if (leave && mounted) {
           setState(() => _dirty = false);
           if (context.mounted) Navigator.of(context).pop();
         }
       },
       child: Scaffold(
-      appBar: AppBar(
-        title: Text('Edit ${draft?.functionName.isNotEmpty == true ? draft!.functionName : widget.name}'),
-        actions: [
-          IconButton(
-            tooltip: 'Check validity',
-            icon: const Icon(Icons.rule),
-            onPressed: draft == null ? null : _check,
+        appBar: AppBar(
+          title: Text(
+            'Edit ${draft?.functionName.isNotEmpty == true ? draft!.functionName : widget.name}',
           ),
-          IconButton(
-            tooltip: 'Upload (write the file)',
-            icon: const Icon(Icons.upload_file),
-            onPressed: draft == null || _busy ? null : _save,
-          ),
-          if (widget.loaded)
+          actions: [
             IconButton(
-              tooltip: 'Update (reload live)',
-              icon: const Icon(Icons.sync),
-              onPressed: _busy ? null : () => _reloadLive(applyDraft: true),
+              tooltip: 'Check validity',
+              icon: const Icon(Icons.rule),
+              onPressed: draft == null ? null : _check,
             ),
-          if (widget.loaded)
             IconButton(
-              tooltip: 'Unload',
-              icon: const Icon(Icons.eject),
-              onPressed: _busy ? null : _unloadScript,
+              tooltip: 'Upload (write the file)',
+              icon: const Icon(Icons.upload_file),
+              onPressed: draft == null || _busy ? null : _save,
             ),
-          RefreshButton(
-            onRefresh: _refresh,
-            autoActive: autoRefreshActive,
-            refreshing: false,
-            error: _loadError != null || _refreshFailed,
-            selectedInterval: selectedInterval,
-            onSelectAuto: applyAuto,
-          ),
-        ],
-      ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _loadError != null
-              ? _loadErrorBody()
-              : draft == null
-                  ? const Center(child: CircularProgressIndicator())
-                  : ListView(
-              padding: const EdgeInsets.only(bottom: 24),
-              children: [
-                if (widget.loaded) _controlsCard(),
-                if (!widget.loaded) _storedNotice(),
-                _functionCard(draft),
-                _valueSection(draft, ScriptValueCategory.input),
-                _valueSection(draft, ScriptValueCategory.output),
-                _valueSection(draft, ScriptValueCategory.variable),
-                _valueSection(draft, ScriptValueCategory.constant),
-                _functionsCard(draft),
-                _instructionsCard(draft),
-                _validityCard(),
-              ],
+            if (widget.loaded)
+              IconButton(
+                tooltip: 'Update (reload live)',
+                icon: const Icon(Icons.sync),
+                onPressed: _busy ? null : () => _reloadLive(applyDraft: true),
+              ),
+            if (widget.loaded)
+              IconButton(
+                tooltip: 'Unload',
+                icon: const Icon(Icons.eject),
+                onPressed: _busy ? null : _unloadScript,
+              ),
+            RefreshButton(
+              onRefresh: _refresh,
+              autoActive: autoRefreshActive,
+              refreshing: false,
+              error: _loadError != null || _refreshFailed,
+              selectedInterval: selectedInterval,
+              onSelectAuto: applyAuto,
             ),
-      floatingActionButton: _dirty
-          ? FloatingActionButton.extended(
-              onPressed: _busy ? null : _save,
-              icon: const Icon(Icons.upload),
-              label: const Text('Upload'),
-            )
-          : null,
+          ],
+        ),
+        body: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : _loadError != null
+            ? _loadErrorBody()
+            : draft == null
+            ? const Center(child: CircularProgressIndicator())
+            : ListView(
+                padding: const EdgeInsets.only(bottom: 24),
+                children: [
+                  if (widget.loaded) _controlsCard(),
+                  if (!widget.loaded) _storedNotice(),
+                  _functionCard(draft),
+                  _valueSection(draft, ScriptValueCategory.input),
+                  _valueSection(draft, ScriptValueCategory.output),
+                  _valueSection(draft, ScriptValueCategory.variable),
+                  _valueSection(draft, ScriptValueCategory.constant),
+                  _functionsCard(draft),
+                  _instructionsCard(draft),
+                  _validityCard(),
+                ],
+              ),
+        floatingActionButton: _dirty
+            ? FloatingActionButton.extended(
+                onPressed: _busy ? null : _save,
+                icon: const Icon(Icons.upload),
+                label: const Text('Upload'),
+              )
+            : null,
       ),
     );
   }
@@ -445,7 +485,8 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
       final isEnd = d != null && d.category == catFlow && d.op == 2;
       if (isEnd && depth > 0) depth--;
       depths.add(depth);
-      final isOpen = d != null && d.category == catFlow && (d.op == 0 || d.op == 1);
+      final isOpen =
+          d != null && d.category == catFlow && (d.op == 0 || d.op == 1);
       if (isOpen) depth++;
     }
     return depths;
@@ -454,7 +495,8 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
   /// One line rendered as a readable Destination-Instruction-Operand row. Tapping a symbol
   /// changes it, tapping the instruction re-picks it, and the drag handle reorders lines.
 
-  static String _tagged(String tag, String name, bool full) => full ? '$tag $name' : name;
+  static String _tagged(String tag, String name, bool full) =>
+      full ? '$tag $name' : name;
 
   /// Predefine label; [full] keeps the `Kind:` prefix (the line chip drops it).
   String _predefineLabel(int subtype, int value, {bool full = true}) {
@@ -465,17 +507,23 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
         return _tagged('Type', dataTypeLabel(DataType.fromValue(value)), full);
       case preBool:
         return _tagged('Bool', value != 0 ? 'true' : 'false', full);
-      case preChar: {
-        final ch = value >= 32 && value < 127
-            ? String.fromCharCode(value)
-            : '\\x${value.toRadixString(16)}';
-        return full ? "Char: '$ch'" : ch;
-      }
-      case preMathOp: {
-        final op = scriptPredefineMathOps.firstWhere((e) => e.$1 == value,
-            orElse: () => (value, '?'));
-        return full ? '${_mathOpSymbol(value)} ${op.$2}' : _mathOpSymbol(value);
-      }
+      case preChar:
+        {
+          final ch = value >= 32 && value < 127
+              ? String.fromCharCode(value)
+              : '\\x${value.toRadixString(16)}';
+          return full ? "Char: '$ch'" : ch;
+        }
+      case preMathOp:
+        {
+          final op = scriptPredefineMathOps.firstWhere(
+            (e) => e.$1 == value,
+            orElse: () => (value, '?'),
+          );
+          return full
+              ? '${_mathOpSymbol(value)} ${op.$2}'
+              : _mathOpSymbol(value);
+        }
       case preNumber:
         return full
             ? 'Number: ${((value >= 32768 ? value - 65536 : value) / 256).toStringAsFixed(3)}'
@@ -495,36 +543,41 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
 
   /// Short symbol for a `Math op` predefine (used in expression labels).
   static String _mathOpSymbol(int op) => switch (op) {
-        0 => '+',
-        1 => '−',
-        2 => '×',
-        3 => '÷',
-        4 => '%',
-        5 => '^',
-        6 => 'AND',
-        7 => 'OR',
-        8 => 'XOR',
-        9 => 'NOT',
-        12 => '==',
-        13 => '!=',
-        14 => '<',
-        15 => '<=',
-        16 => '>',
-        17 => '>=',
-        18 => '(',
-        19 => ')',
-        20 => 'dot',
-        21 => 'cross',
-        22 => 'size',
-        23 => 'transpose',
-        _ => '?'
-      };
+    0 => '+',
+    1 => '−',
+    2 => '×',
+    3 => '÷',
+    4 => '%',
+    5 => '^',
+    6 => 'AND',
+    7 => 'OR',
+    8 => 'XOR',
+    9 => 'NOT',
+    12 => '==',
+    13 => '!=',
+    14 => '<',
+    15 => '<=',
+    16 => '>',
+    17 => '>=',
+    18 => '(',
+    19 => ')',
+    20 => 'dot',
+    21 => 'cross',
+    22 => 'size',
+    23 => 'transpose',
+    _ => '?',
+  };
 
-  String _named(List<ScriptDraftValue> list, int index) =>
-      index < list.length ? (list[index].name.isNotEmpty ? list[index].name : '#$index') : '?$index';
+  String _named(List<ScriptDraftValue> list, int index) => index < list.length
+      ? (list[index].name.isNotEmpty ? list[index].name : '#$index')
+      : '?$index';
 
-  Future<ScriptSymbol?> _pickSymbol(ScriptDraft draft,
-      {required bool destination, ScriptInstructionDef? def, int? operandIndex}) {
+  Future<ScriptSymbol?> _pickSymbol(
+    ScriptDraft draft, {
+    required bool destination,
+    ScriptInstructionDef? def,
+    int? operandIndex,
+  }) {
     return showDialog<ScriptSymbol>(
       context: context,
       builder: (_) => ScriptSymbolPicker(
@@ -549,17 +602,26 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: Padding(
         padding: const EdgeInsets.all(12),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(errors.isEmpty ? 'Valid' : '${errors.length} problem(s)',
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              errors.isEmpty ? 'Valid' : '${errors.length} problem(s)',
               style: TextStyle(
-                  color: errors.isEmpty ? Colors.greenAccent : Colors.redAccent,
-                  fontWeight: FontWeight.w600)),
-          for (final e in errors)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text('• $e', style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                color: errors.isEmpty ? Colors.greenAccent : Colors.redAccent,
+                fontWeight: FontWeight.w600,
+              ),
             ),
-        ]),
+            for (final e in errors)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  '• $e',
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }

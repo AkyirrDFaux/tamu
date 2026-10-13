@@ -47,7 +47,9 @@ class _UpdatePageState extends State<UpdatePage> {
         // Direct USB: the transport owns the per-write pacing (DirectUsbTransport's
         // writePacing); zero the client's own pacing so a write is not delayed twice.
         return BootloaderClient(
-            transport: DirectUsbTransport(t), writePacing: Duration.zero);
+          transport: DirectUsbTransport(t),
+          writePacing: Duration.zero,
+        );
       }
     }
     return BootloaderClient(coreId: coreId);
@@ -100,11 +102,15 @@ class _UpdatePageState extends State<UpdatePage> {
         _identity = id;
       });
       if (id != null) {
-        _addLog('Bootloader identified: ${id.name} - '
-            '${_formatBytes(id.appSize)} app space. Ready to update.');
+        _addLog(
+          'Bootloader identified: ${id.name} - '
+          '${_formatBytes(id.appSize)} app space. Ready to update.',
+        );
       } else {
-        _addLog('No bootloader reply. Put the target in bootloader mode '
-            '(hold its button while resetting/powering it on), then retry.');
+        _addLog(
+          'No bootloader reply. Put the target in bootloader mode '
+          '(hold its button while resetting/powering it on), then retry.',
+        );
       }
       return ok;
     } finally {
@@ -138,30 +144,43 @@ class _UpdatePageState extends State<UpdatePage> {
     try {
       final id = await client.identify();
       if (id == null) {
-        _addLog('No bootloader reply - aborting. Enter bootloader mode and retry.');
+        _addLog(
+          'No bootloader reply - aborting. Enter bootloader mode and retry.',
+        );
         return;
       }
       setState(() => _identity = id);
       if (image.length > id.appSize) {
-        _addLog('Image is ${_formatBytes(image.length)}, but ${id.name} has only '
-            '${_formatBytes(id.appSize)} of app space - aborting before writing.');
+        _addLog(
+          'Image is ${_formatBytes(image.length)}, but ${id.name} has only '
+          '${_formatBytes(id.appSize)} of app space - aborting before writing.',
+        );
         return;
       }
-      _addLog('Bootloader identified: ${id.name} '
-          '(${_formatBytes(id.appSize)} app space). Writing '
-          '${_formatBytes(image.length)}...');
-      final result =
-          await client.flash(image, maxImageSize: id.appSize, onProgress: (p) {
-        if (mounted) setState(() => _progress = p);
-      });
+      _addLog(
+        'Bootloader identified: ${id.name} '
+        '(${_formatBytes(id.appSize)} app space). Writing '
+        '${_formatBytes(image.length)}...',
+      );
+      final result = await client.flash(
+        image,
+        maxImageSize: id.appSize,
+        onProgress: (p) {
+          if (mounted) setState(() => _progress = p);
+        },
+      );
       setState(() => _result = result);
       if (result.verified) {
-        _addLog('Verified in ${result.passes} pass(es), '
-            '${result.corrections} correction(s). '
-            'Reset/power-cycle the device to run the new firmware.');
+        _addLog(
+          'Verified in ${result.passes} pass(es), '
+          '${result.corrections} correction(s). '
+          'Reset/power-cycle the device to run the new firmware.',
+        );
       } else {
-        _addLog('Not verified after ${result.passes} passes '
-            '(${result.corrections} corrections). Check the link and retry.');
+        _addLog(
+          'Not verified after ${result.passes} passes '
+          '(${result.corrections} corrections). Check the link and retry.',
+        );
       }
     } catch (error) {
       _addLog('Update failed: $error');
@@ -177,11 +196,11 @@ class _UpdatePageState extends State<UpdatePage> {
   }
 
   String _phaseLabel(FlashProgress p) => switch (p.phase) {
-        FlashPhase.writing => 'Writing',
-        FlashPhase.verifying => 'Verifying (pass ${p.round})',
-        FlashPhase.correcting => 'Correcting',
-        FlashPhase.done => 'Done',
-      };
+    FlashPhase.writing => 'Writing',
+    FlashPhase.verifying => 'Verifying (pass ${p.round})',
+    FlashPhase.correcting => 'Correcting',
+    FlashPhase.done => 'Done',
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -212,157 +231,197 @@ class _UpdatePageState extends State<UpdatePage> {
 
   // --- sections --------------------------------------------------------------
 
-  Widget _guideCard(BuildContext context) => InfoCard(title: 'How to update', children: [
-        _bullet(context, 'Choose the device\'s main binary (.bin) below.'),
-        _bullet(context,
-            'Put the target in bootloader mode: hold its button while resetting or '
-            'powering it on. The DAS shows its white LED; the core shows its red '
-            'notification LED.'),
-        _bullet(context,
-            'Tap Update. Writes are acknowledged by the target (it reports the last '
-            'successfully written chunk), then read back and corrected until verified.'),
-        _bullet(context,
-            'Reset/power-cycle the device to run the new firmware. A failed or '
-            'interrupted update is safe to retry.'),
-      ]);
+  Widget _guideCard(BuildContext context) => InfoCard(
+    title: 'How to update',
+    children: [
+      _bullet(context, 'Choose the device\'s main binary (.bin) below.'),
+      _bullet(
+        context,
+        'Put the target in bootloader mode: hold its button while resetting or '
+        'powering it on. The DAS shows its white LED; the core shows its red '
+        'notification LED.',
+      ),
+      _bullet(
+        context,
+        'Tap Update. Writes are acknowledged by the target (it reports the last '
+        'successfully written chunk), then read back and corrected until verified.',
+      ),
+      _bullet(
+        context,
+        'Reset/power-cycle the device to run the new firmware. A failed or '
+        'interrupted update is safe to retry.',
+      ),
+    ],
+  );
 
   Widget _targetCard(BuildContext context) {
     final core = _db.byId(coreId);
     final connected = _link.isConnected;
-    return InfoCard(title: 'Target', children: [
-      InfoRow('Link', connected ? 'Connected' : 'Not connected'),
-      InfoRow('Core', core?.displayName ?? 'Core 0.1'),
-      InfoRow('Bootloader probe', _probeOk == null
-          ? 'not checked'
-          : (_probeOk! ? 'answered' : 'no reply')),
-      if (_identity != null) ...[
-        InfoRow('Device', _identity!.name),
-        InfoRow('App space', _formatBytes(_identity!.appSize)),
-      ],
-      Padding(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-        child: Align(
-          alignment: Alignment.centerLeft,
-          child: OutlinedButton.icon(
-            icon: _probing
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2))
-                : const Icon(Icons.search),
-            label: const Text('Check for bootloader'),
-            onPressed: (_probing || _busy || !connected) ? null : _probe,
-          ),
+    return InfoCard(
+      title: 'Target',
+      children: [
+        InfoRow('Link', connected ? 'Connected' : 'Not connected'),
+        InfoRow('Core', core?.displayName ?? 'Core 0.1'),
+        InfoRow(
+          'Bootloader probe',
+          _probeOk == null
+              ? 'not checked'
+              : (_probeOk! ? 'answered' : 'no reply'),
         ),
-      ),
-      SwitchListTile(
-        dense: true,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-        title: const Text('Update the connected core directly (USB)'),
-        subtitle: const Text(
-            "Off: relay to a node on the core's bus. On: flash the core itself; "
-            "enter its bootloader by holding the button at reset."),
-        value: _directToCore,
-        onChanged: _busy ? null : (v) => setState(() => _directToCore = v),
-      ),
-    ]);
-  }
-
-  Widget _imageCard(BuildContext context) => InfoCard(title: 'Image', children: [
-        InfoRow('File', _fileName.isEmpty ? 'none chosen' : _fileName),
-        InfoRow('Size', _image == null ? '-' : _formatBytes(_image!.length)),
+        if (_identity != null) ...[
+          InfoRow('Device', _identity!.name),
+          InfoRow('App space', _formatBytes(_identity!.appSize)),
+        ],
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
           child: Align(
             alignment: Alignment.centerLeft,
             child: OutlinedButton.icon(
-              icon: const Icon(Icons.folder_open),
-              label: const Text('Choose file'),
-              onPressed: _busy ? null : _chooseFile,
+              icon: _probing
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.search),
+              label: const Text('Check for bootloader'),
+              onPressed: (_probing || _busy || !connected) ? null : _probe,
             ),
           ),
         ),
-      ]);
+        SwitchListTile(
+          dense: true,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+          title: const Text('Update the connected core directly (USB)'),
+          subtitle: const Text(
+            "Off: relay to a node on the core's bus. On: flash the core itself; "
+            "enter its bootloader by holding the button at reset.",
+          ),
+          value: _directToCore,
+          onChanged: _busy ? null : (v) => setState(() => _directToCore = v),
+        ),
+      ],
+    );
+  }
+
+  Widget _imageCard(BuildContext context) => InfoCard(
+    title: 'Image',
+    children: [
+      InfoRow('File', _fileName.isEmpty ? 'none chosen' : _fileName),
+      InfoRow('Size', _image == null ? '-' : _formatBytes(_image!.length)),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            icon: const Icon(Icons.folder_open),
+            label: const Text('Choose file'),
+            onPressed: _busy ? null : _chooseFile,
+          ),
+        ),
+      ),
+    ],
+  );
 
   Widget _actionCard(BuildContext context) {
     final p = _progress;
     final result = _result;
-    return InfoCard(title: 'Update', children: [
-      if (_busy) ...[
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-          child: LinearProgressIndicator(
-            value: p?.fraction.clamp(0.0, 1.0),
-            backgroundColor: kSurface,
-            color: kOrange,
+    return InfoCard(
+      title: 'Update',
+      children: [
+        if (_busy) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: LinearProgressIndicator(
+              value: p?.fraction.clamp(0.0, 1.0),
+              backgroundColor: kSurface,
+              color: kOrange,
+            ),
           ),
-        ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+            child: Text(
+              p == null
+                  ? 'Starting...'
+                  : '${_phaseLabel(p)}  ${p.completed}/${p.total}'
+                        '${p.mismatches > 0 ? '  ·  ${p.mismatches} to correct' : ''}',
+            ),
+          ),
+        ],
+        if (result != null && !_busy)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: Row(
+              children: [
+                Icon(
+                  result.verified ? Icons.check_circle : Icons.error,
+                  color: result.verified
+                      ? Colors.greenAccent
+                      : Colors.redAccent,
+                  size: 18,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    result.verified
+                        ? 'Verified: ${result.passes} pass(es), '
+                              '${result.corrections} correction(s)'
+                        : 'Not verified after ${result.passes} passes',
+                  ),
+                ),
+              ],
+            ),
+          ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
-          child: Text(p == null
-              ? 'Starting...'
-              : '${_phaseLabel(p)}  ${p.completed}/${p.total}'
-                  '${p.mismatches > 0 ? '  ·  ${p.mismatches} to correct' : ''}'),
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.icon(
+              icon: _busy
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.system_update_alt),
+              label: Text(_busy ? 'Updating...' : 'Update'),
+              onPressed: (_busy || _image == null || !_link.isConnected)
+                  ? null
+                  : _startUpdate,
+            ),
+          ),
         ),
       ],
-      if (result != null && !_busy)
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-          child: Row(children: [
-            Icon(result.verified ? Icons.check_circle : Icons.error,
-                color: result.verified ? Colors.greenAccent : Colors.redAccent,
-                size: 18),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(result.verified
-                  ? 'Verified: ${result.passes} pass(es), '
-                      '${result.corrections} correction(s)'
-                  : 'Not verified after ${result.passes} passes'),
-            ),
-          ]),
-        ),
-      Padding(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
-        child: Align(
-          alignment: Alignment.centerLeft,
-          child: FilledButton.icon(
-            icon: _busy
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2))
-                : const Icon(Icons.system_update_alt),
-            label: Text(_busy ? 'Updating...' : 'Update'),
-            onPressed: (_busy || _image == null || !_link.isConnected)
-                ? null
-                : _startUpdate,
-          ),
-        ),
-      ),
-    ]);
+    );
   }
 
-  Widget _logCard(BuildContext context) => InfoCard(title: 'Log', children: [
-        if (_log.isEmpty)
-          _bullet(context, 'Nothing yet.')
-        else
-          for (final line in _log)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 2, 16, 2),
-              child: Text(line, style: Theme.of(context).textTheme.bodySmall),
-            ),
-      ]);
+  Widget _logCard(BuildContext context) => InfoCard(
+    title: 'Log',
+    children: [
+      if (_log.isEmpty)
+        _bullet(context, 'Nothing yet.')
+      else
+        for (final line in _log)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 2, 16, 2),
+            child: Text(line, style: Theme.of(context).textTheme.bodySmall),
+          ),
+    ],
+  );
 
   // --- small helpers ---------------------------------------------------------
 
   Widget _bullet(BuildContext context, String text) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 3, 16, 3),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Padding(
-            padding: EdgeInsets.only(top: 5, right: 8),
-            child: Icon(Icons.circle, size: 6, color: kOrange),
-          ),
-          Expanded(child: Text(text)),
-        ]),
-      );
+    padding: const EdgeInsets.fromLTRB(16, 3, 16, 3),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Padding(
+          padding: EdgeInsets.only(top: 5, right: 8),
+          child: Icon(Icons.circle, size: 6, color: kOrange),
+        ),
+        Expanded(child: Text(text)),
+      ],
+    ),
+  );
 }

@@ -31,10 +31,10 @@ class DeviceEntry {
   DateTime lastSeen;
 
   DeviceEntry({required this.id})
-      : name = 'Device ${idToString(id)}',
-        type = DeviceType.unknown,
-        capabilities = 0,
-        lastSeen = DateTime.now();
+    : name = 'Device ${idToString(id)}',
+      type = DeviceType.unknown,
+      capabilities = 0,
+      lastSeen = DateTime.now();
 
   bool get isCore => id == coreId || capabilities & Capability.core != 0;
   int get net => idNet(id);
@@ -78,25 +78,39 @@ class DeviceDatabase extends ChangeNotifier {
     Duration timeout = const Duration(seconds: 2),
   }) async {
     try {
-      return await _link.request(targetId, service, cid,
-          payload: payload, timeout: timeout);
+      return await _link.request(
+        targetId,
+        service,
+        cid,
+        payload: payload,
+        timeout: timeout,
+      );
     } catch (error) {
-      AppDiagnostics.log('db',
-          'dev ${idToString(targetId)} $service/$cid failed: $error');
+      AppDiagnostics.log(
+        'db',
+        'dev ${idToString(targetId)} $service/$cid failed: $error',
+      );
       return null;
     }
   }
 
   /// Pings the connected device (ID 1).
   Future<bool> pingCore() async {
-    final reply = await _request(coreId, ServiceType.device, 1, timeout: const Duration(milliseconds: 800));
+    final reply = await _request(
+      coreId,
+      ServiceType.device,
+      1,
+      timeout: const Duration(milliseconds: 800),
+    );
     return reply != null;
   }
 
   /// Reads one System-block field through the shared Register client.
   Future<List<int>?> _registerRead(int targetId, int field, int key) async {
     final client = _regClients.putIfAbsent(
-        targetId, () => RegisterClient(deviceId: targetId));
+      targetId,
+      () => RegisterClient(deviceId: targetId),
+    );
     final read = await client.readField(field, key);
     return read?.value;
   }
@@ -108,7 +122,12 @@ class DeviceDatabase extends ChangeNotifier {
     final entry = _devices.putIfAbsent(id, () => DeviceEntry(id: id));
 
     // Check reachable via Ping 00.01
-    final ping = await _request(id, ServiceType.device, 1, timeout: const Duration(milliseconds: 800));
+    final ping = await _request(
+      id,
+      ServiceType.device,
+      1,
+      timeout: const Duration(milliseconds: 800),
+    );
     if (ping == null) {
       entry.stale = true;
       notifyListeners();
@@ -117,7 +136,9 @@ class DeviceDatabase extends ChangeNotifier {
     entry.stale = false;
     entry.lastSeen = DateTime.now();
 
-    final snReply = await _registerRead(id, 1, 0xFF);
+    // System fields are exposed as one entry per field at key 0 (the struct position is not
+    // on the wire; Docs/Services/System Block and Device Commands.md).
+    final snReply = await _registerRead(id, 1, 0);
     if (snReply != null && snReply.length >= 14) {
       entry.serialNumber = serialNumberToHex(snReply.sublist(0, 14));
     }
@@ -133,7 +154,7 @@ class DeviceDatabase extends ChangeNotifier {
     if (capReply != null && capReply.length >= 4) {
       entry.capabilities = uint32FromBytes(capReply);
     }
-    final nameReply = await _registerRead(id, 6, 0xFF);
+    final nameReply = await _registerRead(id, 6, 0);
     if (nameReply != null && nameReply.isNotEmpty) {
       entry.name = decodePaddedString(nameReply);
     }
@@ -154,8 +175,12 @@ class DeviceDatabase extends ChangeNotifier {
     }
     final loopAvg = await _registerRead(id, 3, 3);
     final loopMax = await _registerRead(id, 3, 4);
-    if (loopAvg != null && loopAvg.length >= 4) entry.avgLoopTimeMs = numberFromBytes(loopAvg, 0);
-    if (loopMax != null && loopMax.length >= 4) entry.maxLoopTimeMs = numberFromBytes(loopMax, 0);
+    if (loopAvg != null && loopAvg.length >= 4) {
+      entry.avgLoopTimeMs = numberFromBytes(loopAvg, 0);
+    }
+    if (loopMax != null && loopMax.length >= 4) {
+      entry.maxLoopTimeMs = numberFromBytes(loopMax, 0);
+    }
 
     if (id == coreId) {
       entry.timeOffsetMs = 0;
@@ -165,8 +190,12 @@ class DeviceDatabase extends ChangeNotifier {
       final coreBefore = await _registerRead(coreId, 3, 1);
       if (coreBefore != null && coreBefore.length >= 4) {
         final t0 = uint32FromBytes(coreBefore);
-        final syncReply = await _request(id, ServiceType.device, 3,
-            payload: uint32ToBytes(t0));
+        final syncReply = await _request(
+          id,
+          ServiceType.device,
+          3,
+          payload: uint32ToBytes(t0),
+        );
         if (syncReply != null && syncReply.length >= 12) {
           final t1 = uint32FromBytes(syncReply, 4);
           final t2 = uint32FromBytes(syncReply, 8);
@@ -186,9 +215,17 @@ class DeviceDatabase extends ChangeNotifier {
   /// Renames a device via Register System Name (Block 0 Field 6)
   Future<bool> setName(int id, String name) async {
     final bytes = name.codeUnits.take(16).toList();
-    final meta = ValueInfo(type: DataType.name.value, flags: ValueFlags.persistent, size: bytes.length);
+    final meta = ValueInfo(
+      type: DataType.name.value,
+      flags: ValueFlags.persistent,
+      size: bytes.length,
+    );
     // System block (type 0), field 6 (Name), single key 0xFF.
-    final payload = [...blockInfoBytes(0, 0, 6, 0xFF), ...meta.toBytes(), ...bytes];
+    final payload = [
+      ...blockInfoBytes(0, 0, 6, 0xFF),
+      ...meta.toBytes(),
+      ...bytes,
+    ];
     final reply = await _request(id, ServiceType.register, 2, payload: payload);
     if (reply == null) return false;
     final entry = _devices[id];
@@ -200,8 +237,12 @@ class DeviceDatabase extends ChangeNotifier {
   /// Asks a device to identify itself (Device service CID 2): blink its red LED
   /// fast for ~10 s (docs). Returns true when the device acknowledged.
   Future<bool> identify(int id, {bool on = true}) async {
-    final reply =
-        await _request(id, ServiceType.device, 2, payload: [on ? 1 : 0]);
+    final reply = await _request(
+      id,
+      ServiceType.device,
+      2,
+      payload: [on ? 1 : 0],
+    );
     return reply != null;
   }
 
@@ -238,8 +279,10 @@ class DeviceDatabase extends ChangeNotifier {
     notifyListeners();
 
     // Reachable devices at the start of this sweep (for lost/discovered events).
-    final reachableBefore =
-        _devices.entries.where((e) => !e.value.stale).map((e) => e.key).toSet();
+    final reachableBefore = _devices.entries
+        .where((e) => !e.value.stale)
+        .map((e) => e.key)
+        .toSet();
 
     try {
       for (final device in _devices.values) {
@@ -248,15 +291,23 @@ class DeviceDatabase extends ChangeNotifier {
 
       await refreshDevice(coreId);
 
-      final sndbReply = await _request(coreId, ServiceType.device, 0x13,
-          timeout: const Duration(seconds: 5));
+      final sndbReply = await _request(
+        coreId,
+        ServiceType.device,
+        0x13,
+        timeout: const Duration(seconds: 5),
+      );
       if (sndbReply == null) {
         throw Exception('SNDB read failed');
       }
       final parsed = _parseSndb(sndbReply);
       // ID 0 marks an unassigned entry; skip it so no phantom "device" is created
       // and no requests are fired at an invalid target.
-      final ids = <int>{coreId, for (final e in parsed) if (e.id != 0) e.id};
+      final ids = <int>{
+        coreId,
+        for (final e in parsed)
+          if (e.id != 0) e.id,
+      };
       for (final id in ids) {
         final known = _devices[id];
         if (known == null || known.serialNumber == null) {
@@ -264,8 +315,12 @@ class DeviceDatabase extends ChangeNotifier {
         } else {
           // Ping every known id: a device still present in the SNDB but offline must
           // fall through to the stale/lost notification, not be marked fresh.
-          final ping = await _request(id, ServiceType.device, 1,
-              timeout: const Duration(milliseconds: 800));
+          final ping = await _request(
+            id,
+            ServiceType.device,
+            1,
+            timeout: const Duration(milliseconds: 800),
+          );
           if (ping != null) {
             known.stale = false;
             known.lastSeen = DateTime.now();
@@ -281,7 +336,9 @@ class DeviceDatabase extends ChangeNotifier {
         if (!reachableBefore.contains(id)) {
           if (!entry.stale) {
             notifyAppEvent(
-                'Device discovered', '${entry.displayName} discovered');
+              'Device discovered',
+              '${entry.displayName} discovered',
+            );
           }
         } else if (entry.stale) {
           notifyAppEvent('Device lost', '${entry.displayName} lost');
@@ -297,25 +354,37 @@ class DeviceDatabase extends ChangeNotifier {
 
   /// SNDB Write per docs 00.12
   Future<bool> sndbWrite(List<int> sn, int id) async {
-    final reply = await _request(coreId, ServiceType.device, 0x12,
-        payload: [...sn, id & 0xFF, (id >> 8) & 0xFF],
-        timeout: const Duration(seconds: 3));
+    final reply = await _request(
+      coreId,
+      ServiceType.device,
+      0x12,
+      payload: [...sn, id & 0xFF, (id >> 8) & 0xFF],
+      timeout: const Duration(seconds: 3),
+    );
     return reply != null && reply.length >= 16;
   }
 
   /// SNDB Delete per docs 00.12 with ID 0
   Future<bool> sndbDelete(List<int> sn) async {
     if (sn.length < 14) return false;
-    final reply = await _request(coreId, ServiceType.device, 0x12,
-        payload: [...sn.take(14), 0, 0],
-        timeout: const Duration(seconds: 3));
+    final reply = await _request(
+      coreId,
+      ServiceType.device,
+      0x12,
+      payload: [...sn.take(14), 0, 0],
+      timeout: const Duration(seconds: 3),
+    );
     return reply != null && reply.length >= 16;
   }
 
   /// Full SNDB dump for the SNDB viewer: [id, serial hex] pairs.
   Future<List<(int, String)>> sndbEntries() async {
-    final reply = await _request(coreId, ServiceType.device, 0x13,
-        timeout: const Duration(seconds: 5));
+    final reply = await _request(
+      coreId,
+      ServiceType.device,
+      0x13,
+      timeout: const Duration(seconds: 5),
+    );
     if (reply == null) return const [];
     return [for (final e in _parseSndb(reply)) (e.id, e.serial)];
   }
@@ -324,14 +393,15 @@ class DeviceDatabase extends ChangeNotifier {
   /// little-endian. Every record is emitted (including id 0, the unassigned marker);
   /// callers filter as needed.
   static List<({int id, String serial})> _parseSndb(List<int> reply) => [
-        for (var offset = 0; offset + 16 <= reply.length; offset += 16)
-          (
-            id: reply[offset + 14] | (reply[offset + 15] << 8),
-            serial: serialNumberToHex(reply.sublist(offset, offset + 14)),
-          ),
-      ];
+    for (var offset = 0; offset + 16 <= reply.length; offset += 16)
+      (
+        id: reply[offset + 14] | (reply[offset + 15] << 8),
+        serial: serialNumberToHex(reply.sublist(offset, offset + 14)),
+      ),
+  ];
 }
 
 extension _SortExt<T> on Iterable<T> {
-  List<T> sortedBy(int Function(T) key) => toList()..sort((a, b) => key(a).compareTo(key(b)));
+  List<T> sortedBy(int Function(T) key) =>
+      toList()..sort((a, b) => key(a).compareTo(key(b)));
 }

@@ -67,15 +67,24 @@ final List<HilTest> bootloaderTests = <HilTest>[
       final boot = BootloaderClient(coreId: _relayCoreId(ctx));
       for (final _ in ctx.devices(_inBootloader)) {
         final id = await boot.identify();
-        expect(id, isNotNull,
-            reason: 'the device did not answer identify - '
-                'is it in bootloader mode (BOOTLOADER_FORCE)?');
+        expect(
+          id,
+          isNotNull,
+          reason:
+              'the device did not answer identify - '
+              'is it in bootloader mode (BOOTLOADER_FORCE)?',
+        );
         if (id == null) return;
-        ctx.note('the device: identified ${id.name} '
-            '(${id.appSize} byte app space)');
+        ctx.note(
+          'the device: identified ${id.name} '
+          '(${id.appSize} byte app space)',
+        );
         expect(id.name, isNotEmpty, reason: 'the device reports a name');
-        expect(id.appSize, greaterThan(0),
-            reason: 'the device reports a non-zero app space');
+        expect(
+          id.appSize,
+          greaterThan(0),
+          reason: 'the device reports a non-zero app space',
+        );
       }
     },
   ),
@@ -92,20 +101,32 @@ final List<HilTest> bootloaderTests = <HilTest>[
         if (id == null) return;
         if (id.appSize > _wholeImageLimit) {
           markTestSkipped(
-              'the device app space ${id.appSize} B exceeds the whole-image limit');
+            'the device app space ${id.appSize} B exceeds the whole-image limit',
+          );
           return;
         }
         final image = await _readImage(boot, id.appSize);
-        expect(image, isNotNull,
-            reason: 'the device app image did not read back completely');
+        expect(
+          image,
+          isNotNull,
+          reason: 'the device app image did not read back completely',
+        );
         if (image == null) return;
-        expect(image.length, _chunkCount(id.appSize) * Bootloader.payloadSize,
-            reason: 'the device app image has the expected length');
+        expect(
+          image.length,
+          _chunkCount(id.appSize) * Bootloader.payloadSize,
+          reason: 'the device app image has the expected length',
+        );
         // A programmed image: erased flash reads back all 0xFF.
-        expect(image.any((b) => b != 0xFF), isTrue,
-            reason: 'the device app space holds a programmed image');
-        ctx.note('the device: read ${image.length} bytes of a '
-            '${id.appSize} byte app space');
+        expect(
+          image.any((b) => b != 0xFF),
+          isTrue,
+          reason: 'the device app space holds a programmed image',
+        );
+        ctx.note(
+          'the device: read ${image.length} bytes of a '
+          '${id.appSize} byte app space',
+        );
       }
     },
   ),
@@ -122,7 +143,8 @@ final List<HilTest> bootloaderTests = <HilTest>[
         if (id == null) return;
         if (id.appSize > _wholeImageLimit) {
           markTestSkipped(
-              'the device app space ${id.appSize} B exceeds the whole-image limit');
+            'the device app space ${id.appSize} B exceeds the whole-image limit',
+          );
           return;
         }
         // Read the device's own image first: the round trip only ever writes
@@ -131,26 +153,35 @@ final List<HilTest> bootloaderTests = <HilTest>[
         final image = await _readImage(boot, id.appSize);
         if (image == null) {
           markTestSkipped(
-              'the device app image did not read back; refusing to write');
+            'the device app image did not read back; refusing to write',
+          );
           return;
         }
         final phases = <FlashPhase>[];
-        final result = await boot.flash(image,
-            maxImageSize: id.appSize,
-            onProgress: (p) {
-              if (phases.isEmpty || phases.last != p.phase) {
-                phases.add(p.phase);
-              }
-            });
-        expect(result.verified, isTrue,
-            reason: 'the device image not verified after ${result.passes} '
-                'passes (${result.corrections} corrections)');
+        final result = await boot.flash(
+          image,
+          maxImageSize: id.appSize,
+          onProgress: (p) {
+            if (phases.isEmpty || phases.last != p.phase) {
+              phases.add(p.phase);
+            }
+          },
+        );
+        expect(
+          result.verified,
+          isTrue,
+          reason:
+              'the device image not verified after ${result.passes} '
+              'passes (${result.corrections} corrections)',
+        );
         expect(phases, contains(FlashPhase.writing));
         expect(phases, contains(FlashPhase.verifying));
         expect(phases.last, FlashPhase.done);
-        ctx.note('the device: rewrote ${image.length} bytes, '
-            'passes=${result.passes} corrections=${result.corrections} '
-            'writes=${result.writes} reads=${result.reads}');
+        ctx.note(
+          'the device: rewrote ${image.length} bytes, '
+          'passes=${result.passes} corrections=${result.corrections} '
+          'writes=${result.writes} reads=${result.reads}',
+        );
       }
     },
   ),

@@ -60,7 +60,8 @@ const Map<int, Map<int, String>> systemStructMembers = {
 
 String systemFieldName(int field) => systemFieldNames[field] ?? 'Field $field';
 
-String systemKeyName(int field, int key) => systemFieldKeys[field]?[key] ?? 'Key $key';
+String systemKeyName(int field, int key) =>
+    systemFieldKeys[field]?[key] ?? 'Key $key';
 
 String systemStructMemberName(int field, int key) =>
     systemStructMembers[field]?[key] ?? 'Key $key';
@@ -114,7 +115,10 @@ int? systemStructOffset(int field, int key) {
 
 /// Whether the device has the System NetID field (a core): its System block reports >= 8
 /// fields. It changes the System segment size in the `.SV` space.
-bool hasNetIdFor(List<({int type, int inst, ValueInfo meta, String name})?>? blocks) =>
-    blocks?.any((b) =>
-        b != null && b.type == systemBlockTypeValue && b.meta.size >= 8) ??
+bool hasNetIdFor(
+  List<({int type, int inst, ValueInfo meta, String name})?>? blocks,
+) =>
+    blocks?.any(
+      (b) => b != null && b.type == systemBlockTypeValue && b.meta.size >= 8,
+    ) ??
     true;

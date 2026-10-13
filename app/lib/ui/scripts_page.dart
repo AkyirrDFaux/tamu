@@ -39,13 +39,18 @@ class ScriptsPage extends StatefulWidget {
   final int deviceId;
   final String deviceName;
 
-  const ScriptsPage({super.key, required this.deviceId, required this.deviceName});
+  const ScriptsPage({
+    super.key,
+    required this.deviceId,
+    required this.deviceName,
+  });
 
   @override
   State<ScriptsPage> createState() => _ScriptsPageState();
 }
 
-class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<ScriptsPage> {
+class _ScriptsPageState extends State<ScriptsPage>
+    with AutoRefreshMixin<ScriptsPage> {
   late final ScriptClient _client = ScriptClient(deviceId: widget.deviceId);
   late final StorageClient _storage = StorageClient(deviceId: widget.deviceId);
 
@@ -123,15 +128,17 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
           names = const [];
         }
       }
-      list.add(_LoadedScript(
-        slot: p.slot,
-        fileId: p.fileId,
-        name: display.isNotEmpty ? display : 'Script ${p.slot}',
-        state: report?.state ?? ScriptState.stopped,
-        instructionCounter: report?.line ?? 0,
-        inputSpecs: specs,
-        inputNames: names,
-      ));
+      list.add(
+        _LoadedScript(
+          slot: p.slot,
+          fileId: p.fileId,
+          name: display.isNotEmpty ? display : 'Script ${p.slot}',
+          state: report?.state ?? ScriptState.stopped,
+          instructionCounter: report?.line ?? 0,
+          inputSpecs: specs,
+          inputNames: names,
+        ),
+      );
     }
     if (!mounted) return;
     setState(() {
@@ -149,8 +156,9 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
     }
     setState(() {
       _available = table
-          .where((f) =>
-              normalizeFileName(f.name).toUpperCase().startsWith('SCR_'))
+          .where(
+            (f) => normalizeFileName(f.name).toUpperCase().startsWith('SCR_'),
+          )
           .toList();
     });
   }
@@ -160,11 +168,18 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
     _refresh();
   }
 
-  Future<void> _control(_LoadedScript s, int action, {bool reset = false}) async {
+  Future<void> _control(
+    _LoadedScript s,
+    int action, {
+    bool reset = false,
+  }) async {
     if (reset) await _client.moveToInstruction(s.slot, 0);
     final ok = await _client.setAction(s.slot, action);
     if (!mounted) return;
-    showSnack(context, ok ? '${s.name}: ${ScriptAction.label(action)}' : 'Command failed');
+    showSnack(
+      context,
+      ok ? '${s.name}: ${ScriptAction.label(action)}' : 'Command failed',
+    );
     await _loadLoaded();
   }
 
@@ -210,7 +225,10 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
       final id = scriptFileId(f.name);
       if (id != null) used.add(id);
     }
-    final free = [for (var i = 0; i < maxScriptFiles; i++) if (!used.contains(i)) i];
+    final free = [
+      for (var i = 0; i < maxScriptFiles; i++)
+        if (!used.contains(i)) i,
+    ];
     if (!mounted) return;
     if (free.isEmpty) {
       showSnack(context, 'No free script id');
@@ -236,11 +254,14 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
     await _loadAvailable();
   }
 
-  Future<void> _deleteFile(FileRecord file) async {    final name = normalizeFileName(file.name);
-    if (!await confirmDialog(context,
-        title: 'Delete script',
-        body: 'Delete $name from the device?',
-        confirmLabel: 'Delete')) {
+  Future<void> _deleteFile(FileRecord file) async {
+    final name = normalizeFileName(file.name);
+    if (!await confirmDialog(
+      context,
+      title: 'Delete script',
+      body: 'Delete $name from the device?',
+      confirmLabel: 'Delete',
+    )) {
       return;
     }
     final ok = await _storage.deleteFile(name);
@@ -271,8 +292,16 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
             padding: const EdgeInsets.all(12),
             child: SegmentedButton<bool>(
               segments: const [
-                ButtonSegment(value: true, label: Text('Loaded'), icon: Icon(Icons.play_circle_outline)),
-                ButtonSegment(value: false, label: Text('Available'), icon: Icon(Icons.folder_outlined)),
+                ButtonSegment(
+                  value: true,
+                  label: Text('Loaded'),
+                  icon: Icon(Icons.play_circle_outline),
+                ),
+                ButtonSegment(
+                  value: false,
+                  label: Text('Available'),
+                  icon: Icon(Icons.folder_outlined),
+                ),
               ],
               selected: {_showLoaded},
               onSelectionChanged: (s) => _setMode(s.first),
@@ -315,15 +344,21 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
       child: ExpansionTile(
         leading: Icon(Icons.circle, size: 12, color: scriptStateColor(s.state)),
         title: Text(s.name),
-        subtitle: Text('${s.fileName} · ${ScriptState.label(s.state)}'
-            '${s.instructionCounter > 0 ? ' · IC ${s.instructionCounter}' : ''}'),
+        subtitle: Text(
+          '${s.fileName} · ${ScriptState.label(s.state)}'
+          '${s.instructionCounter > 0 ? ' · IC ${s.instructionCounter}' : ''}',
+        ),
         childrenPadding: const EdgeInsets.only(bottom: 8),
         children: [
           ScriptControlBar(
             state: s.state,
             onStart: () => _control(s, ScriptAction.start),
-            onPauseToggle: () => _control(s,
-                s.state == ScriptState.paused ? ScriptAction.resume : ScriptAction.pause),
+            onPauseToggle: () => _control(
+              s,
+              s.state == ScriptState.paused
+                  ? ScriptAction.resume
+                  : ScriptAction.pause,
+            ),
             onStop: () => _control(s, ScriptAction.stop, reset: true),
             onRestart: () => _control(s, ScriptAction.start, reset: true),
             extra: [
@@ -333,7 +368,8 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
                 label: const Text('Unload'),
               ),
               TextButton.icon(
-                onPressed: () => _openEditor(s.fileId, s.name, true, slot: s.slot),
+                onPressed: () =>
+                    _openEditor(s.fileId, s.name, true, slot: s.slot),
                 icon: const Icon(Icons.edit_note, size: 18),
                 label: const Text('Open editor'),
               ),
@@ -390,25 +426,31 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
             leading: const Icon(Icons.description_outlined),
             title: Text(name),
             subtitle: Text('${file.size} bytes'),
-            trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-              IconButton(
-                tooltip: 'Open editor',
-                icon: const Icon(Icons.edit_note),
-                onPressed: () {
-                  final id = scriptFileId(name);
-                  if (id != null) _openEditor(id, name, false);
-                },
-              ),
-              TextButton.icon(
-                onPressed: () => _loadFile(file),
-                icon: const Icon(Icons.play_arrow, size: 18),
-                label: const Text('Load'),
-              ),
-              IconButton(
-                icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                onPressed: () => _deleteFile(file),
-              ),
-            ]),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  tooltip: 'Open editor',
+                  icon: const Icon(Icons.edit_note),
+                  onPressed: () {
+                    final id = scriptFileId(name);
+                    if (id != null) _openEditor(id, name, false);
+                  },
+                ),
+                TextButton.icon(
+                  onPressed: () => _loadFile(file),
+                  icon: const Icon(Icons.play_arrow, size: 18),
+                  label: const Text('Load'),
+                ),
+                IconButton(
+                  icon: const Icon(
+                    Icons.delete_outline,
+                    color: Colors.redAccent,
+                  ),
+                  onPressed: () => _deleteFile(file),
+                ),
+              ],
+            ),
           ),
         );
       },
@@ -416,14 +458,16 @@ class _ScriptsPageState extends State<ScriptsPage> with AutoRefreshMixin<Scripts
   }
 
   void _openEditor(int fileId, String name, bool loaded, {int? slot}) {
-    Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => ScriptEditorPage(
-        deviceId: widget.deviceId,
-        fileId: fileId,
-        name: name,
-        loaded: loaded,
-        slot: slot,
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ScriptEditorPage(
+          deviceId: widget.deviceId,
+          fileId: fileId,
+          name: name,
+          loaded: loaded,
+          slot: slot,
+        ),
       ),
-    ));
+    );
   }
 }

@@ -45,21 +45,17 @@ class Transform23 {
     final b = sx * c * k + sy * s;
     final cc = -sx * s;
     final d = -sx * s * k + sy * c;
-    return [
-      a,
-      b,
-      a * offsetX + b * offsetY,
-      cc,
-      d,
-      cc * offsetX + d * offsetY,
-    ];
+    return [a, b, a * offsetX + b * offsetY, cc, d, cc * offsetX + d * offsetY];
   }
 
   /// 2x3 wire bytes (header + six Numbers).
   List<int> toMatrix() => [
-        2, 0, 3, 0,
-        for (final v in toCells()) ...numberToBytes(v),
-      ];
+    2,
+    0,
+    3,
+    0,
+    for (final v in toCells()) ...numberToBytes(v),
+  ];
 
   /// Decomposes a 2x3 wire value (or plain six cells via [cells]) into fields.
   void fromMatrix(List<int> bytes) {
