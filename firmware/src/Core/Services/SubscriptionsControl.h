@@ -13,11 +13,9 @@ inline void SubscriptionsService::SubReply(const PacketFrame &Frame, const uint8
     PacketConstruct(&TxFrame, Frame.IdSrc, Frame.Cmd, Frame.Trid,
                     (uint8_t)(FLAG_TYPE | FLAG_START | FLAG_STOP | ExtraFlags), Payload, Len);
 #ifdef USE_APP_INTERFACE
-    if (Frame.IdSrc == 0xFFFE) {
-        AppInterface.Send(TxFrame);
-    } else {
-        DispatchPacket(TxFrame);
-    }
+    // The dispatcher's targeting rule routes an app-bound reply back over the app link, so the
+    // source address does not need to be inspected here.
+    DispatchPacket(TxFrame);
 #else
     SendAndVerifyPacket(TxFrame);
 #endif

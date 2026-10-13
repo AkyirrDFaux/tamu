@@ -23,7 +23,6 @@ void SubscriptionsRequestReRegister(uint16_t Addr);
 class DeviceService
 {
 public:
-    void Init();                           // resets the service-owned state (none to date)
     bool Handle(const PacketFrame &Frame); // CID dispatch; true if consumed
 
 #ifdef TYPE_CORE
@@ -627,8 +626,4 @@ bool DeviceService::Handle(const PacketFrame &Frame)
             break;
     }
     return true;
-}
-
-inline void DeviceService::Init()
-{
 }

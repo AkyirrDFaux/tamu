@@ -47,19 +47,19 @@ void DispatchPacket(const PacketFrame &Frame)
     if (AllCores || (NetQualifyLocal(Frame.IdTgt, DeviceStatus.NetId) == DeviceStatus.ShortAddress) ||
         (Frame.IdTgt == ADDR_BROADCAST))
     {
-        DeviceLog("DISP", "local interest IdTgt=%d IdSrc=%d Cmd=0x%04X Trid=0x%04X", Frame.IdTgt, Frame.IdSrc, Frame.Cmd, Frame.Trid);
         // A response echoes the request's TRID (Docs "Transaction IDs") and carries the
         // request's CMD, so GetServiceType names the replying service. A System reply
         // (0x0000-0x0FFF) therefore routes by CMD; the Subscriptions, App and Script ranges
         // route by the echoed TRID, which each owner allocated.
         ServiceType TargetSrv = GetServiceType(Frame.Cmd);
         uint8_t Cid = GetServiceCID(Frame.Cmd);
+        DeviceLog("DISP", "local interest IdTgt=%d IdSrc=%d Cmd=0x%04X Trid=0x%04X -> service=%d cid=%d",
+                  Frame.IdTgt, Frame.IdSrc, Frame.Cmd, Frame.Trid, TargetSrv, Cid);
         // Only the gated routing blocks below read this, so declare it under the same guard;
         // a target with none of them enabled (a DAS node) must not carry an unused local.
 #if defined(USE_SUB_REQUEST) || defined(USE_APP_INTERFACE) || defined(USE_SCRIPTS)
         bool IsResponse = (Frame.Flags & FLAG_TYPE) != 0;
 #endif
-        DeviceLog("DISP", "dispatching to service=%d cid=%d", TargetSrv, Cid);
 
         bool Handled = false;
 #ifdef USE_SUB_REQUEST
