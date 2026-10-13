@@ -88,9 +88,26 @@ inline bool RegisterService::RestoreDynamicBlock(uint16_t i) {
 
 // Rebuilds every slot from its DT/DV files. Per the docs each block keeps its own files, so
 // a slot with no DT file is tombstoned (it might still hold an in-session live block).
+//
+// The files are enumerated once instead of probing all 256 slots: each probe is a lookup in the
+// fixed 16 KB table, which makes a boot take seconds. What is on flash is the truth, so the
+// registry is cleared first and only the slots that actually have a DT file are rebuilt.
 inline bool RegisterService::DynamicRecallAll() {
-    for (uint16_t i = 0; i < MAX_DYNAMIC_BLOCKS; i++)
-        if (!RestoreDynamicBlock(i)) return false;
+    uint16_t Present[MAX_DYNAMIC_BLOCKS];
+    uint16_t PresentCount = 0;
+    Storage.ForEachFile([&](const char Name[8]) {
+        if (Name[2] != 'T') return; // the DT file is the block's existence marker
+        uint16_t Idx;
+        if (!ParseDynamicFileName(Name, &Idx)) return;
+        for (uint16_t k = 0; k < PresentCount; k++)
+            if (Present[k] == Idx) return;
+        if (PresentCount < MAX_DYNAMIC_BLOCKS)
+            Present[PresentCount++] = Idx;
+    });
+    for (uint16_t i = 0; i < DynamicBlockRegistry.BlockCount; i++)
+        DynamicBlockRegistry.TombstoneBlock(i);
+    for (uint16_t k = 0; k < PresentCount; k++)
+        if (!RestoreDynamicBlock(Present[k])) return false;
     return true;
 }
 

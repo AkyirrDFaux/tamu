@@ -569,6 +569,24 @@ Future<int> prepareDynamicBlocks(RestorePlan plan) async {
   return created;
 }
 
+/// Persists the subscription tables a restore has just written.
+///
+/// A requester entry lives on the core and its provider entry on the node, and both are held in
+/// RAM until the device is told to save. Without this the tables are rebuilt in memory, work until
+/// the next power cycle, and then vanish: the core recalls its requester entries and points them
+/// at providers the nodes no longer carry, so nothing updates.
+Future<void> _persistSubscriptions(RestorePlan plan) async {
+  for (final source in plan.devices) {
+    final target = plan.deviceTargets[source.id];
+    if (target == null) continue;
+    if (source.requesterSubscriptions.isEmpty &&
+        source.providerSubscriptions.isEmpty) {
+      continue;
+    }
+    await RegisterClient(deviceId: target.id).saveAll();
+  }
+}
+
 /// Brings up the scripts a restore wrote.
 ///
 /// A restored script is only a stored file: the device runs what it loads, not what it holds. The
@@ -888,6 +906,7 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
     }
   }
   // Last, so the scripts read the values this restore has just written.
+  await _persistSubscriptions(plan);
   await _bringUpScripts(plan);
   return (written: written, failed: failed, failures: failures);
 }
