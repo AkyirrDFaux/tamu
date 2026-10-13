@@ -34,7 +34,6 @@ enum class EnumSrc : uint8_t { System, Static, Dynamic, Script };
 class RegisterService
 {
 public:
-    void Init();                           // resets service state; nothing calls it (boot relies on zero-init)
     bool Handle(const PacketFrame &Frame);  // CID dispatch; true if consumed
 
     // Generic BlockInfo access (shared with the Subscriptions and Script services).
@@ -151,12 +150,3 @@ inline bool RegisterSetByBlockInfo(uint32_t Bi, const ValueInfo &Meta, const uin
 #include "Core/Services/RegisterWrite.h"
 #include "Core/Services/RegisterPersist.h"
 #include "Core/Services/RegisterDispatch.h"
-
-// The service's own state reset. Left for the parent to wire into Main.
-inline void RegisterService::Init()
-{
-#ifdef TYPE_CORE
-    NetId = 0;
-#endif
-    memset(SysValueBuf, 0, sizeof(SysValueBuf));
-}

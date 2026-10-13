@@ -35,7 +35,6 @@ struct ExprParser;
 class ScriptService
 {
 public:
-    void Init();                           // resets the script registry and tick; nothing calls it
     bool Handle(const PacketFrame &Frame); // management CID dispatch; true if consumed
 
     // Called directly across the tree: the Dispatcher (HandleResponse), the device main loops
@@ -143,16 +142,6 @@ private:
 
 // One instance per binary, in Core/Services/.
 ScriptService Script;
-
-inline void ScriptService::Init()
-{
-    memset(ActiveMask, 0, sizeof(ActiveMask));
-    TickCount = 0;
-    // Reset every slot to its default-constructed state (same values as the member
-    // initialisers; an untouched LoadedScript holds no allocations).
-    for (uint16_t i = 0; i < MAX_SCRIPTS; i++)
-        Registry[i] = LoadedScript();
-}
 
 #include "Core/Services/ScriptProgram.h"
 #include "Core/Services/ScriptVm.h"

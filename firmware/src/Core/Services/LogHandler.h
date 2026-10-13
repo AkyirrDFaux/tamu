@@ -10,7 +10,6 @@
 class LogHandlerService
 {
 public:
-    void Init();                           // resets log state; nothing calls it (boot relies on zero-init)
     bool Handle(const PacketFrame &Frame); // CID dispatch; true if consumed
 
 private:
@@ -32,14 +31,6 @@ private:
 
 // One instance per binary, in Core/Services/.
 LogHandlerService LogHandler;
-
-inline void LogHandlerService::Init()
-{
-#ifdef TYPE_CORE
-    Clock = 0;
-    memset(Order, 0, sizeof(Order));
-#endif
-}
 
 #ifdef TYPE_CORE
 inline int LogHandlerService::LogSeqSlotCompare(const void *Left, const void *Right)

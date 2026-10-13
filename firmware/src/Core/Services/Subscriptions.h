@@ -16,7 +16,6 @@
 class SubscriptionsService
 {
 public:
-    void Init();                           // resets service state; nothing calls it (boot relies on zero-init)
     bool Handle(const PacketFrame &Frame); // CID dispatch; true if consumed
     void Tick(uint32_t NowMs);             // main-loop trigger evaluation + expiry
 
@@ -107,18 +106,6 @@ SubscriptionsService Subscriptions;
 #ifdef USE_SUB_REQUEST
 inline void SubscriptionsRequestReRegister(uint16_t Addr) { Subscriptions.RequestReRegister(Addr); }
 #endif
-
-inline void SubscriptionsService::Init()
-{
-#ifdef USE_SUB_PROVIDE
-    for (int i = 0; i < MAX_PROVIDER_SUBS; i++) ProviderTable[i] = ProviderEntry{};
-#endif
-#ifdef USE_SUB_REQUEST
-    for (int i = 0; i < MAX_REQUESTER_SUBS; i++) RequesterTable[i] = RequesterEntry{};
-    for (uint8_t i = 0; i < KReRegisterMax; i++) ReRegisterPending[i] = 0;
-    ReRegisterCount = 0;
-#endif
-}
 
 // True for the high-priority triggers (confirmation and edge detection).
 inline bool SubscriptionsService::SubscriptionsHighPriority(TriggerType Trigger)
