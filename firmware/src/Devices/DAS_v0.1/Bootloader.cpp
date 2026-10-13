@@ -33,7 +33,11 @@
 // The upload tool reads that option (scripts/das_app_upload.py); this constant is the
 // bootloader's matching copy.
 #define APP_BASE 0x800u
-#define APP_LIMIT 0x3E00u
+// The uploadable area is the whole app region, storage included: [0x800, 0x4000). The storage
+// occupies the last 512 B of it at 0x3E00, and the app's binary stops short of that
+// (scripts/das_app_upload.py strips the .fixed_data reservation), so a normal update never
+// writes the storage - but a full-width image is still accepted.
+#define APP_LIMIT 0x4000u
 
 // The flash controller programs/erases through the 0x08000000 alias; the CPU reads/executes
 // through 0x00000000 (see Devices/DAS_v0.1/Storage.h).

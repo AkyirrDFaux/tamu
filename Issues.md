@@ -7,6 +7,10 @@ Item codes: **A** = doc-fix rulings, **B** = code-fix items (both from the 2026-
 
 ## A. Doc fixes still open
 
+**A71 The DAS bootloader's identify reports only [0x800, 0x3E00).** The uploadable area is the
+whole app region, storage included: [0x800, 0x4000), 14336 B. The app's binary carries no
+`.fixed_data` storage reservation. The bootloader doc's size statement needs the same correction.
+
 **A70 A file with a semantic form is not archived as a binary.** The backup now stores a `SCR_XXX`
 script only in its semantic form; the file is rebuilt on restore. The archive-format docs do not
 state that rule.
