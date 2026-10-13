@@ -452,11 +452,15 @@ final List<HilTest> partnerTests = <HilTest>[
         '${ble ? ' (BLE link)' : ''}',
       );
 
-      // Wait until the node's applied offset matches the raw core-node
-      // difference, i.e. it has re-synced after the core clock restarted (the
-      // HIL connection can reset it). Bounded to fit the runner per-test
-      // timeout; USB converges in seconds, BLE is reported, not gated.
-      final deadline = DateTime.now().add(Duration(seconds: ble ? 20 : 80));
+      // Wait until the node's applied offset matches the raw core-node difference, i.e. it has
+      // re-synced after the core clock restarted (the HIL connection can reset it).
+      //
+      // The node syncs on its own 60-75 s cadence plus up to 15 s jitter, so a deadline near that
+      // period fails whenever the wait starts just after a sync (observed on the bench: an 80 s
+      // deadline timed out, then the same test passed in 10 s on the next run). Bound it past the
+      // worst case (90 s) and keep the runner's per-test timeout above this one; USB converges in
+      // seconds, BLE is reported, not gated.
+      final deadline = DateTime.now().add(Duration(seconds: ble ? 20 : 100));
       var converged = false;
       while (DateTime.now().isBefore(deadline)) {
         final coreRead = await coreReg.readField(3, 0);

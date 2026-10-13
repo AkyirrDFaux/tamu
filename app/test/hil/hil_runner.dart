@@ -112,7 +112,7 @@ void main() {
           rethrow;
         }
       },
-      timeout: const Timeout(Duration(minutes: 2)),
+      timeout: const Timeout(Duration(minutes: 3)),
     );
   }
 }
