@@ -16,7 +16,7 @@
 class SubscriptionsService
 {
 public:
-    void Init();                           // resets the service state
+    void Init();                           // resets service state; nothing calls it (boot relies on zero-init)
     bool Handle(const PacketFrame &Frame); // CID dispatch; true if consumed
     void Tick(uint32_t NowMs);             // main-loop trigger evaluation + expiry
 

@@ -34,7 +34,7 @@ enum class EnumSrc : uint8_t { System, Static, Dynamic, Script };
 class RegisterService
 {
 public:
-    void Init();                            // resets the service's own state
+    void Init();                           // resets service state; nothing calls it (boot relies on zero-init)
     bool Handle(const PacketFrame &Frame);  // CID dispatch; true if consumed
 
     // Generic BlockInfo access (shared with the Subscriptions and Script services).

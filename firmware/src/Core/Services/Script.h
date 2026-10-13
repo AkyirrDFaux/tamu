@@ -35,7 +35,7 @@ struct ExprParser;
 class ScriptService
 {
 public:
-    void Init();                           // resets the loaded-script registry and tick
+    void Init();                           // resets the script registry and tick; nothing calls it
     bool Handle(const PacketFrame &Frame); // management CID dispatch; true if consumed
 
     // Called directly across the tree: the Dispatcher (HandleResponse), the device main loops

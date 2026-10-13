@@ -10,7 +10,7 @@
 class LogHandlerService
 {
 public:
-    void Init();
+    void Init();                           // resets log state; nothing calls it (boot relies on zero-init)
     bool Handle(const PacketFrame &Frame); // CID dispatch; true if consumed
 
 private:
