@@ -35,7 +35,7 @@ bool AppUsbSilent();
 // Outgoing stream ring: serialized frames waiting to be flushed to the app links.
 // A synchronous service reply (e.g. Storage Read File, which streams a whole
 // file in one handler) can legitimately burst well past a small ring before
-// AppInterfacePump drains it. 8 KiB absorbs a full 4 KiB file read (~4.5 KB of
+// AppInterface.Pump() drains it. 8 KiB absorbs a full 4 KiB file read (~4.5 KB of
 // wire frames) with headroom; larger reads would still truncate, so the app reads
 // files in 4 KiB slices.
 #define APP_TX_RING_SIZE 8192

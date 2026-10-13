@@ -266,19 +266,6 @@ struct DynamicBlockDescriptor
         return Count;
     }
 
-    // Keys present at `field`.
-    uint16_t ListKeys(uint8_t Field, uint8_t *Keys, uint16_t Cap)
-    {
-        uint16_t Count = 0;
-        uint16_t i = FindEntry(MakeFieldKey(Field, 0));
-        for (; i < EntryCount && FieldOf(Table[i].FieldKey) == Field; i++)
-        {
-            if (Count < Cap) Keys[Count] = KeyOf(Table[i].FieldKey);
-            Count++;
-        }
-        return Count;
-    }
-
     // Frees all owned allocations and resets the block to a tombstone-like empty state.
     void Release()
     {

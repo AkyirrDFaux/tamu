@@ -8,7 +8,7 @@
 
 // ===== CID 4/5: Save/Recall for Static =====
 //
-// The static memory's persistent half is one flat space (the board's `staticPer`, Docs/Services/
+// The static memory's persistent half is one flat space (the board's `StaticPer`, Docs/Services/
 // Register.md "Persistence"), mirrored 1:1 to `.SV`. The space already holds the live System
 // fields and every static block's persistent half, so a save is a single copy out and a recall a
 // single copy in; targeted saves/recalls are the app's job (a direct file write at the field's

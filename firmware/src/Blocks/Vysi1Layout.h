@@ -72,7 +72,7 @@ struct Vysi1Volatile
 struct Vysi1Persistent
 {
     Matrix<2, 3> Offset = IdentityAffine23(); // 2x3 transformation, offset 0 (28 B: u16 height + u16 width + 6 Numbers)
-    int32_t RenderBlock = -1; // Signed index into dynamic_block_registry; -1 = none, offset 28
+    int32_t RenderBlock = -1; // Signed index into DynamicBlockRegistry; -1 = none, offset 28
     // Layout File Name: plain 8-char storage file name, space padded. Defaults to the
     // preloaded "LAY_1" file (identical to the compiled-in layout); a blank name means
     // the built-in default layout. Written via trigger, which loads the layout file

@@ -54,7 +54,11 @@ void DispatchPacket(const PacketFrame &Frame)
         // route by the echoed TRID, which each owner allocated.
         ServiceType TargetSrv = GetServiceType(Frame.Cmd);
         uint8_t Cid = GetServiceCID(Frame.Cmd);
+        // Only the gated routing blocks below read this, so declare it under the same guard;
+        // a target with none of them enabled (a DAS node) must not carry an unused local.
+#if defined(USE_SUB_REQUEST) || defined(USE_APP_INTERFACE) || defined(USE_SCRIPTS)
         bool IsResponse = (Frame.Flags & FLAG_TYPE) != 0;
+#endif
         DeviceLog("DISP", "dispatching to service=%d cid=%d", TargetSrv, Cid);
 
         bool Handled = false;

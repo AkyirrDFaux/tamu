@@ -216,6 +216,6 @@ int main(void)
             else PinLow(VALU_LED_PORT, VALU_LED_PIN);
         }
 
-        Sleep(5); // short heartbeat; the USB link is polled by AppInterfacePump each iteration
+        Sleep(5); // short heartbeat; the USB link is polled by AppInterface.Pump() each iteration
     }
 }

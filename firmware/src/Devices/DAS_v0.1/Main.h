@@ -88,7 +88,7 @@ const StaticBlockDescriptor StaticBlockRegistry[] = {
 };
 const size_t StaticBlockNum = sizeof(StaticBlockRegistry) / sizeof(StaticBlockDescriptor);
 
-// The Subscriptions instance the main loop calls, pulled after the board's staticPer above.
+// The Subscriptions instance the main loop calls, pulled after the board's StaticPer above.
 #include "Core/Services/Subscriptions.h"
 
 // DAS device implementations (drive the actual pins); included after the block instances.

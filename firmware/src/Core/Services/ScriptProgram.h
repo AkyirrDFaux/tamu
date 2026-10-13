@@ -524,22 +524,6 @@ inline void ScriptService::Unload(uint16_t Slot) {
     MaskSet(Slot, false);
 }
 
-// The whole slot map, in slot order, one uint16 file id per slot (0xFFFF for an empty slot);
-// each id is two little-endian bytes. A load-failed slot still holds its reservation, so it
-// appears with its file id too. Returns the slot count written.
-inline uint16_t ScriptService::ListFiles(uint8_t *Out, uint16_t Max) {
-    // The WHOLE slot map, in slot order: one uint16 file id per slot, 0xFFFF for an empty
-    // (unreserved) slot, so the stream length gives the device's slot count and the app need
-    // not assume 256 (Docs/Services/Script.md CID 0).
-    uint16_t Slots = (MAX_SCRIPTS < Max) ? MAX_SCRIPTS : Max;
-    for (uint16_t i = 0; i < Slots; i++) {
-        uint16_t Id = ScriptSlotReserved(Registry[i]) ? Registry[i].FileId : 0xFFFF;
-        Out[2 * i] = (uint8_t)(Id & 0xFF);
-        Out[2 * i + 1] = (uint8_t)(Id >> 8);
-    }
-    return Slots;
-}
-
 inline uint8_t ScriptService::KeyCount(uint16_t Slot, uint8_t Field) {
     LoadedScript *Script = Active(Slot);
     if (!Script) return 0;

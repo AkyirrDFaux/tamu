@@ -136,7 +136,11 @@ private:
 // One instance per binary.
 RegisterService Register;
 
-// Temporary forwarders still used by the Subscriptions service (removed when it self-wires).
+// BlockInfo-access forwarders for the services that cannot name `Register` directly: the
+// Script VM (ScriptExec.h) is parsed inside Script.h, and Register.h includes Script.h
+// before this instance exists, so a circular include keeps the member form out of its
+// reach. The Subscriptions service shares the same path. Pointing these three at the
+// member methods was tried and reverted: the script translation unit cannot see `Register`.
 inline bool RegisterResolveByBlockInfo(uint32_t Bi, FieldResult &Fr) { return Register.RegisterResolveByBlockInfo(Bi, Fr); }
 inline bool RegisterGetByBlockInfo(uint32_t Bi, ValueInfo &Meta, uint8_t *Vbuf, uint8_t &Vsz) { return Register.RegisterGetByBlockInfo(Bi, Meta, Vbuf, Vsz); }
 inline bool RegisterSetByBlockInfo(uint32_t Bi, const ValueInfo &Meta, const uint8_t *Val, uint16_t Vlen) { return Register.RegisterSetByBlockInfo(Bi, Meta, Val, Vlen); }

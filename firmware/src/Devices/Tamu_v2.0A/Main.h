@@ -99,7 +99,7 @@ const StaticBlockDescriptor StaticBlockRegistry[] = {
 const size_t StaticBlockNum = sizeof(StaticBlockRegistry) / sizeof(StaticBlockDescriptor);
 
 // The Subscriptions instance the main loop calls. Pulled here (not at the top) because
-// Subscriptions.h includes Register.h, whose split files name the board's staticPer above.
+// Subscriptions.h includes Register.h, whose split files name the board's StaticPer above.
 #include "Core/Services/Subscriptions.h"
 
 #include "PWM.h"

@@ -27,8 +27,8 @@ inline void SerialNumberToString(const SerialNumber &Sn, char *Buffer, size_t Bu
 // device-type and capability constants and the serial-number getter; omitting any of them
 // fails the build (undefined reference).
 // Define them in the device's Main.h, e.g.:
-//   extern const DeviceType kDeviceType = DeviceType::Tamu_v2_0A;
-//   extern const uint32_t kCapabilities = 0;
+//   extern const DeviceType KDeviceType = DeviceType::Tamu_v2_0A;
+//   extern const uint32_t KCapabilities = 0;
 //   const SerialNumber& GetSerialNumber() { ... }
 extern const DeviceType KDeviceType;
 extern const uint32_t KCapabilities;

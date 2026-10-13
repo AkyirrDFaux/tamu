@@ -1,4 +1,4 @@
-// Host-side test for Crc8 (Core/Functions/Packet.h) - the wire checksum.
+// Host-side test for Crc8 (Core/Functions/Crc8.h) - the wire checksum.
 //
 // OPTIMIZE_SPEED gives Crc8 two shapes: a 256-byte lookup table (speed) and an eight-iteration
 // bit loop (size). run.sh builds this file both ways and every assertion here must hold for
@@ -6,7 +6,7 @@
 //
 // The reference implementation below is deliberately independent: it does *not* share the
 // firmware's step function, it keeps the CRC in a shift register with the documented
-// parameters (poly 0x07, init 0x00, no reflection, no final xor) from Specs/Data Formats.md.
+// parameters (poly 0x07, init 0x00, no reflection, no final xor) from Docs/Data Formats.md.
 // That also pins the parameters themselves, not just the equivalence of the two shapes.
 
 #include <cstdint>

@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-// Wire checksum (Specs/Data Formats.md): CRC-8, poly 0x07, init 0x00, no reflection, no final
+// Wire checksum (Docs/Data Formats.md): CRC-8, poly 0x07, init 0x00, no reflection, no final
 // xor. Kept out of Packet.h so it stays host-testable on its own (see test/native/crc_test.cpp)
 // - Packet.h pulls in the device status the frame carries.
 //

@@ -73,7 +73,6 @@ private:
     // service) and returns false, so every refusal in Load() logs exactly once.
     bool LoadRefused(uint32_t Code);
     void Unload(uint16_t Slot);
-    uint16_t ListFiles(uint8_t *Out, uint16_t Max);
     bool SetVariable(uint16_t Slot, uint8_t VarId, const uint8_t *Val, uint16_t Vlen);
 
     // ===== ScriptVm.h: value model =====

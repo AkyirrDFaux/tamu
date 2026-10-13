@@ -9,7 +9,7 @@
 // ===== CID 2: Read helpers =====
 
 // Fills the value bytes for one System-block field (type 0, inst 0). The descriptor comes from
-// System_Entries (the metadata is unified) and the caller has already resolved the entry, so this
+// SystemSchema (the metadata is unified) and the caller has already resolved the entry, so this
 // only synthesises the value. The struct fields (0, 3, 4, 5) fill the whole struct; the struct
 // position is not on the wire.
 inline bool RegisterService::SystemFillValue(uint8_t Field, uint8_t *Vbuf) {

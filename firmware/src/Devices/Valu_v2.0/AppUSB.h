@@ -12,7 +12,7 @@
 // (crc8-first wire layout, see PacketToWire).
 //
 // Unlike the ESP32 core (AppUSBTick/AppUSBStartTask on FreeRTOS), there is no RTOS here:
-// AppInterfacePump (the main loop) calls AppUSBTick() every iteration, which pumps TinyUSB and
+// AppInterface.Pump() (the main loop) calls AppUSBTick() every iteration, which pumps TinyUSB and
 // drains the CDC receive buffer into the shared RX queue. The USB interrupt only services
 // TinyUSB (tud_int_handler), never these framers, so no locking is needed
 // (APP_INTERFACE_SINGLE_THREADED).
@@ -251,7 +251,7 @@ struct WireStreamParser
 static WireStreamParser WireParser;
 
 // Handles one validated link-frame payload: parses the contained packet stream and queues
-// complete packets for dispatch by AppInterfacePump.
+// complete packets for dispatch by AppInterface.Pump().
 static void AppRxStream(const uint8_t *Data, uint16_t Len)
 {
     for (uint16_t i = 0; i < Len; i++)
@@ -269,7 +269,7 @@ static void AppRxStream(const uint8_t *Data, uint16_t Len)
 }
 
 // ---------------------------------------------------------------------------
-// App Interface hooks (called from AppInterfacePump in the main loop)
+// App Interface hooks (called from AppInterface.Pump() in the main loop)
 // ---------------------------------------------------------------------------
 
 // Brings the controller up. Called once from the device main().
@@ -319,11 +319,11 @@ void AppUSBSend(const uint8_t *Data, uint16_t Len)
 }
 
 // No BLE link on this board (Docs/Devices.md lists USB only as the App interface). The core's
-// AppInterfacePump calls these unconditionally, so they are no-ops.
+// AppInterface.Pump() calls these unconditionally, so they are no-ops.
 bool AppBLEActive() { return false; }
 void AppBLETick() {}
 
-// Called from AppInterfacePump every main-loop iteration: pumps TinyUSB and drains the CDC
+// Called from AppInterface.Pump() every main-loop iteration: pumps TinyUSB and drains the CDC
 // receive buffer into the shared RX queue. This is the no-OS replacement for the core's
 // AppLinkTask.
 void AppUSBTick()
