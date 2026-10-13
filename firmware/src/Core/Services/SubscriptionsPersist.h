@@ -174,8 +174,13 @@ inline void SubscriptionsService::RequesterInitCheck(uint32_t NowMs) {
         if (!Entry->Active) continue;
         uint32_t Interval;
         if (Entry->LastValueMs == 0) {
-            if (NowMs - Entry->RegisteredAtMs > SUB_INIT_WINDOW_MS) continue; // gave up
-            Interval = SUB_RETRY_MS;
+            // Keep trying after the initial window, at the keepalive rate. The provider table is
+            // RAM-only and the only re-push is driven by address assignment, which does not happen
+            // for a node that comes back already addressed - so giving up for good left every
+            // subscription dead after a power cycle until the app re-applied the setup.
+            Interval = (NowMs - Entry->RegisteredAtMs > SUB_INIT_WINDOW_MS)
+                           ? SUB_KEEPALIVE_MS
+                           : SUB_RETRY_MS;
         } else {
             Interval = SUB_KEEPALIVE_MS;
         }
