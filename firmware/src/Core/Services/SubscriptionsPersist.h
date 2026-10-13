@@ -101,10 +101,9 @@ inline void SubscriptionsService::RegisterRequesterProvider(RequesterEntry* Entr
     // Remote provider: send the subscription table (0401, fire and forget).
     uint8_t Payload[SUB_TABLE_WIRE_SIZE];
     memcpy(Payload, &Entry->Sub, SUB_TABLE_WIRE_SIZE);
-    PacketFrame Req;
-    PacketConstruct(&Req, Entry->ProviderAddr, MakeService(ServiceType::Subscriptions, (uint8_t)SubCid::Change),
+    PacketConstruct(&TxFrame, Entry->ProviderAddr, MakeService(ServiceType::Subscriptions, (uint8_t)SubCid::Change),
                     Entry->Trid, FLAG_START | FLAG_STOP, Payload, SUB_TABLE_WIRE_SIZE);
-    SendAndVerifyPacket(Req);
+    SendAndVerifyPacket(TxFrame);
 }
 
 inline void SubscriptionsService::ReRegister() {

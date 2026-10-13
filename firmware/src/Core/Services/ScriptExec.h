@@ -337,10 +337,9 @@ inline bool ScriptService::OperandBlockInfo(LoadedScript *Script, const uint8_t 
 
 inline void ScriptService::SendRegisterRequest(LoadedScript *Script, uint16_t Addr, uint8_t Cid,
                                       const uint8_t *Payload, uint16_t Len) {
-    PacketFrame Req;
-    PacketConstruct(&Req, Addr, MakeService(ServiceType::Register, Cid), Script->Trid,
+    PacketConstruct(&TxFrame, Addr, MakeService(ServiceType::Register, Cid), Script->Trid,
                     FLAG_REQACK | FLAG_START | FLAG_STOP, Payload, Len);
-    SendAndVerifyPacket(Req);
+    SendAndVerifyPacket(TxFrame);
 }
 
 // Writes an external-facing instruction's result code into its destination (0 = success). The

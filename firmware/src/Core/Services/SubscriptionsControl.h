@@ -34,10 +34,9 @@ inline void SubscriptionsService::SubscriptionsCancelProvider(uint16_t ProviderA
         return;
     }
 #endif
-    PacketFrame Cancel;
-    PacketConstruct(&Cancel, ProviderAddr, MakeService(ServiceType::Subscriptions, (uint8_t)SubCid::Change), Trid,
+    PacketConstruct(&TxFrame, ProviderAddr, MakeService(ServiceType::Subscriptions, (uint8_t)SubCid::Change), Trid,
                     FLAG_START | FLAG_STOP, nullptr, 0);
-    SendAndVerifyPacket(Cancel);
+    SendAndVerifyPacket(TxFrame);
 }
 #endif
 

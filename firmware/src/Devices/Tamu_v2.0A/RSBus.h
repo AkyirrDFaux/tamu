@@ -77,19 +77,21 @@ static void RS485WaitForSilence(uint8_t Priority)
 // count RS485_RETRIES with random backoff.
 bool SendAndVerifyPacket(const PacketFrame &Data)
 {
-    // 1. Create a working copy
-    PacketFrame TxFrame = Data;
+    // 1. A working copy, deliberately LOCAL: it frees the caller's frame as soon as we return,
+    // and it lets the CRC be finalised here (the input is const). It must not reuse the shared
+    // TxFrame, whose name it used to shadow.
+    PacketFrame Work = Data;
 
     // 2. Finalize CRC (Calculated over all fields starting at flags)
-    uint16_t CrcLen = 11 + PayloadBytes(TxFrame);
-    TxFrame.Crc8 = Crc8(&TxFrame.Flags, CrcLen);
+    uint16_t CrcLen = 11 + PayloadBytes(Work);
+    Work.Crc8 = Crc8(&Work.Flags, CrcLen);
 
     // 3. Prepare for transmission: the frame is header + payload bytes, max 128 total.
     // The 0xAA sync byte is sent separately (not part of the frame).
-    size_t PacketSize = 12 + PayloadBytes(TxFrame);
+    size_t PacketSize = 12 + PayloadBytes(Work);
     static_assert(MAX_PAYLOAD_SIZE <= 116, "RSBus TX buffer assumes a 116-byte Payload");
     uint8_t TxBuffer[128];
-    memcpy(TxBuffer, &TxFrame, PacketSize);
+    memcpy(TxBuffer, &Work, PacketSize);
 
     const size_t CHUNK = 16;               // ~1.4 ms of line time per chunk
     uint8_t RxChunk[CHUNK];

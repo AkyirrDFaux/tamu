@@ -81,11 +81,10 @@ inline void SubscriptionsService::ApplyRequesterValue(RequesterEntry *Entry, con
     // Confirmation: the requester sends the hash of the received value (docs CID 0: the
     // confirmation is a request, no FLAG_TYPE), at the trigger's high priority.
     uint32_t Hash = Fnv1a(Val, Vlen);
-    PacketFrame Reply;
-    PacketConstruct(&Reply, Entry->ProviderAddr, MakeService(ServiceType::Subscriptions, (uint8_t)SubCid::ValueUpdate),
+    PacketConstruct(&TxFrame, Entry->ProviderAddr, MakeService(ServiceType::Subscriptions, (uint8_t)SubCid::ValueUpdate),
                     Entry->Trid, FLAG_START | FLAG_STOP, (const uint8_t *)&Hash, sizeof(Hash),
                     PRIORITY_SUB_HIGH);
-    SendAndVerifyPacket(Reply);
+    SendAndVerifyPacket(TxFrame);
 }
 
 inline void SubscriptionsService::HandleRequesterValueUpdate(const PacketFrame &Frame) {
@@ -98,10 +97,9 @@ inline void SubscriptionsService::HandleRequesterValueUpdate(const PacketFrame &
         // Cancel it here, for its TRID, back to the sender. Nothing happens in the normal case,
         // and if this cancel is lost too the orphan simply announces itself again on its next
         // period, so the table converges on its own.
-        PacketFrame Cancel;
-        PacketConstruct(&Cancel, Frame.IdSrc, MakeService(ServiceType::Subscriptions, (uint8_t)SubCid::Change),
+        PacketConstruct(&TxFrame, Frame.IdSrc, MakeService(ServiceType::Subscriptions, (uint8_t)SubCid::Change),
                         Frame.Trid, FLAG_START | FLAG_STOP, nullptr, 0);
-        SendAndVerifyPacket(Cancel);
+        SendAndVerifyPacket(TxFrame);
         return;
     }
     // Docs: the value update is "sent as response packet, request is confirmation IF NEEDED" -
