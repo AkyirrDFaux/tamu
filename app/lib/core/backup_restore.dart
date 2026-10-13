@@ -523,7 +523,6 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
   final register = <int, RegisterClient>{};
   final storage = <int, StorageClient>{};
   final subscriptions = <int, SubscriptionClient>{};
-  final subIndex = <int, int>{};
   final sndbWritten = <String>{};
   // One write per distinct (provider, source, target): an archive can carry the same
   // subscription twice (a device that already held a duplicate captures it), and writing both
@@ -691,12 +690,20 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
                   e.targetReg == targetReg,
             )
             .firstOrNull;
-        final next = subIndex[target.id] ?? 0;
-        final index = match?.index ?? next;
+        // A TRID the device does not already use. It keys requester entries by TRID, so a blind
+        // local counter collides with the entries the device carries and the writes then
+        // overwrite one another - a restore silently replaces subscriptions instead of adding
+        // them, and the replaced ones look like subscriptions that never update.
+        final usedTrids = mine.map((e) => e.trid).toSet();
+        var freeTrid = tridSubBase;
+        while (usedTrids.contains(freeTrid) && freeTrid < tridSubMax) {
+          freeTrid++;
+        }
+        final index = match?.index ?? mine.length;
         final entry = RequesterSubscription(
           index: index,
           providerAddr: provider,
-          trid: match?.trid ?? tridSubBase + next,
+          trid: match?.trid ?? freeTrid,
           targetReg: targetReg,
           sourceReg: source,
           trigger: TriggerType.fromWord(s.trigger) ?? TriggerType.periodic,
@@ -705,8 +712,6 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
           deadzone: s.deadzone,
         );
         final ok = await sub.setRequesterSubscription(index, entry: entry);
-        // Only a fresh entry consumes a slot; a reused one keeps its own index.
-        if (ok && match == null) subIndex[target.id] = next + 1;
 
         // A subscription has two sides: the node that sends must carry a provider entry with the
         // SAME TRID, or the requester table points at a source that never arrives. The device
