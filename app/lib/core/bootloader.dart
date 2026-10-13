@@ -50,7 +50,6 @@ class Bootloader {
   static const int headerSize = 6; // start + control + offset
   static const int readRequestSize = 7; // header + end
   static const int dataSize = 39; // header + payload + end
-  static const int maxFrameSize = dataSize;
 
   /// Even parity over the command (3 bits), the offset and the payload (bytes 2..len-2).
   static int parity(List<int> frame) {

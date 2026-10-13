@@ -187,12 +187,6 @@ class RegisterClient {
     return const [];
   }
 
-  /// How many instances a block type has (0 when the type has none).
-  Future<int?> getInstanceCount(int blockType, {List<int>? scriptSlots}) async {
-    final ids = await enumerateInstanceIds(blockType, scriptSlots: scriptSlots);
-    return ids?.length;
-  }
-
   /// The block instance's fields and keys (CID 0, packed `(type << 6) | instance`), as a
   /// stream of `Field&Key` words (field in the high byte, key in the low), ascending.
   ///
@@ -247,10 +241,6 @@ class RegisterClient {
   }
 
   // ===== thin wrappers the call sites still use (the enumeration is two requests now) =====
-
-  /// The number of distinct fields in a block instance.
-  Future<int?> getFieldCount(int blockType, int instance) async =>
-      (await enumerateFieldIndexes(blockType, instance))?.length;
 
   /// The keys present at (instance, field). An unkeyed field reports `[0]`, which is what the
   /// call sites defaulted to for the old "no keys" reply.

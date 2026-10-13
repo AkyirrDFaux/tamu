@@ -34,8 +34,6 @@
 ///   first line (the firmware adds the body's base at load).
 library;
 
-import 'dart:typed_data';
-
 import 'script_file.dart';
 import 'script_instructions.dart';
 
@@ -115,8 +113,6 @@ class ScriptAssembly {
   /// True when any function at all is declared (drives whether the UI blob carries a function
   /// block).
   bool get hasFunctions => lines.length != mainLineCount;
-
-  Uint8List get instructionBytes => encodeScriptLines(lines);
 }
 
 /// Assembles [mainLines] with [functions] into a flat program.
