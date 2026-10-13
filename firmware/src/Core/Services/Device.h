@@ -393,12 +393,10 @@ bool DeviceService::Handle(const PacketFrame &Frame)
 
     if (IsResponse)
     {
-        // The System/Log TRID is an incrementing counter, so a reply no longer carries the
-        // request's CID; tell the replies apart by payload length. Only device-originated
-        // requests' replies reach here - Core-discover = SN(14)+uptime(4) (18 B), Discover
-        // = SN(14)+addr(2) (16 B), TimeSync = the exact 12-byte triple; app-originated
-        // replies route to the app by their TRID instead.
-        if (PayloadBytes(Frame) >= 18) // Core-discover response
+        // A reply echoes the request's CID and TRID, so the CID identifies the operation the
+        // way the request side does. Only device-originated requests' replies reach here;
+        // app-originated replies route to the app by their TRID instead.
+        if (Cid == 0x10) // Core-discover response
         {
 #ifdef TYPE_CORE
             // Another core answered Core discover: store it as its NetID.1 (Docs: "Other
@@ -415,7 +413,7 @@ bool DeviceService::Handle(const PacketFrame &Frame)
             CoreTimeSync.HandleDiscoverResponse(Frame);
 #endif
         }
-        else if (PayloadBytes(Frame) == sizeof(AssignPayload)) // Discover (assign) response
+        else if (Cid == 0) // Discover (assign) response
         {
 #ifdef TYPE_CORE
             // A core is never assigned. The reply's source is the assigning core: if it
@@ -434,7 +432,7 @@ bool DeviceService::Handle(const PacketFrame &Frame)
                 DeviceStatus.NetId = (uint8_t)((Assign->NewAddr >> 10) & 0x3F);
             }
         }
-        else if (PayloadBytes(Frame) == 12) // Time sync response per docs 00.03 (exact triple)
+        else if (Cid == 3) // Time sync response per docs 00.03
         {
             // TimeSync is synchronized-device initiated: the INITIATOR (a node syncing to
             // a core, or a core syncing to the longest-running core) applies the offset to
@@ -520,10 +518,9 @@ bool DeviceService::Handle(const PacketFrame &Frame)
                 }
             }
 
-            // Reply with SN(14) + assigned address(2). The request/reply flag and the
-            // 16-byte payload length tell it apart from the other Device-service replies.
-            // The reply echoes the request's TRID (its high byte is the Device service),
-            // per "responses echo the request's TRID".
+            // Reply with SN(14) + assigned address(2). The reply echoes the request's CID and
+            // TRID (per "responses echo the request's TRID"), which is how the requester tells
+            // it apart from the other Device-service replies.
             AssignPayload ResponseData;
             ResponseData.Sn = *IncomingSn;
             // Local devices are stored with net 0; the core's NetID is added here so the
