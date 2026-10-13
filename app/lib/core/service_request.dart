@@ -36,3 +36,33 @@ Future<List<int>?> serviceRequest(
     return null;
   }
 }
+
+/// Sibling of [serviceRequest] that keeps the packet-level SUCCESS/FAIL flags, for the commands
+/// that report their status in the frame rather than in a payload byte.
+Future<PacketResponse?> serviceRequestWithFlags(
+  int targetId,
+  ServiceType service,
+  int cid, {
+  List<int> payload = const [],
+  Duration? timeout,
+  Duration defaultTimeout = const Duration(seconds: 3),
+  bool requestFrag = false,
+  required String tag,
+}) async {
+  try {
+    return await ConnectionManager.instance.requestWithFlags(
+      targetId,
+      service,
+      cid,
+      payload: payload,
+      timeout: timeout ?? defaultTimeout,
+      requestFrag: requestFrag,
+    );
+  } catch (error) {
+    AppDiagnostics.log(
+      tag,
+      'dev ${idToString(targetId)} $service/$cid failed: $error',
+    );
+    return null;
+  }
+}

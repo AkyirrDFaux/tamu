@@ -5,7 +5,6 @@ library;
 import 'dart:typed_data';
 
 import 'connection.dart';
-import 'diagnostics.dart';
 import 'protocol.dart';
 import 'register_client.dart';
 import 'script_file.dart';
@@ -93,8 +92,6 @@ class ScriptClient {
 
   ScriptClient({required this.deviceId});
 
-  ConnectionManager get _link => ConnectionManager.instance;
-
   Future<List<int>?> _request(
     ServiceType service,
     int cid, {
@@ -117,21 +114,17 @@ class ScriptClient {
     int cid, {
     List<int> payload = const [],
     Duration? timeout,
-  }) async {
-    try {
-      final response = await _link.requestWithFlags(
+  }) async =>
+      // response.ok is success && !fail, matching the subscriptions client
+      (await serviceRequestWithFlags(
         deviceId,
         service,
         cid,
         payload: payload,
-        timeout: timeout ?? const Duration(seconds: 3),
-      );
-      return response.ok; // success && !fail, matching the subscriptions client
-    } catch (error) {
-      AppDiagnostics.log('script', 'request failed: $error');
-      return false;
-    }
-  }
+        timeout: timeout,
+        tag: 'script',
+      ))?.ok ??
+      false;
 
   // ---- Management commands (0x0500-0x0507) ----
 

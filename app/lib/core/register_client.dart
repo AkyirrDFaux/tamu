@@ -6,7 +6,6 @@ library;
 import 'dart:typed_data';
 
 import 'connection.dart';
-import 'diagnostics.dart';
 import 'protocol.dart';
 import 'service_request.dart';
 import 'system_schema.dart';
@@ -65,20 +64,15 @@ class RegisterClient {
     int cid, {
     List<int> payload = const [],
     Duration? timeout,
-  }) async {
-    try {
-      return await ConnectionManager.instance.requestWithFlags(
-        deviceId,
-        ServiceType.register,
-        cid,
-        payload: payload,
-        timeout: timeout ?? _requestTimeout,
-      );
-    } catch (error) {
-      AppDiagnostics.log('register', 'request failed: $error');
-      return null;
-    }
-  }
+  }) => serviceRequestWithFlags(
+    deviceId,
+    ServiceType.register,
+    cid,
+    payload: payload,
+    timeout: timeout,
+    defaultTimeout: _requestTimeout,
+    tag: 'register',
+  );
 
   /// True when a flag-answering command replies FLAG_SUCCESS; a transport failure or a
   /// FLAG_FAIL reply is false.

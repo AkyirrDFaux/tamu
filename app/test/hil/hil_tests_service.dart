@@ -148,10 +148,12 @@ final List<HilTest> serviceTests = <HilTest>[
           reason: 'DeviceType reply carries ValueInfo + value',
         );
 
-        // System SN (type 0, inst 0, field 1, key 0xFF): a 14-byte value.
+        // System SN (type 0, inst 0, field 1, key 0): a 14-byte value. The specification exposes
+        // the System struct as a whole at key 0 (the firmware answers 0xFF as well, but 0 is the
+        // specified key and the app uses it).
         final sn = await reg.request(
           RegisterCid.read,
-          payload: blockInfoBytes(0, 0, 1, 0xFF),
+          payload: blockInfoBytes(0, 0, 1, 0),
         );
         expect(sn, isNotNull, reason: 'device ${d.id} reads the SN');
         expect(
