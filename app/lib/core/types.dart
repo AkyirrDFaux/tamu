@@ -230,6 +230,11 @@ DataType? dataTypeFromWord(String word) {
   for (final type in DataType.values) {
     if (type.word == word) return type;
   }
+  // A setup may spell a variable-length string generically ("String") for both the 16-character
+  // Name field and a text field. Every string-shaped type is interchangeable on the way in - the
+  // live target's own type decides the encoding (see `resolveEntryBytes`) - so accept it as text
+  // rather than refusing the entry as an incompatible value.
+  if (word == 'String') return DataType.text;
   return null;
 }
 

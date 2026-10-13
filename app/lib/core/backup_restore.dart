@@ -398,6 +398,11 @@ Future<RestorePlan> buildRestorePlan(List<BackupDevice> devices) async {
   for (final device in devices) {
     for (final block in device.blocks) {
       for (final entry in block.entries) {
+        // A reserved placeholder carries neither a type nor a value, so there is nothing to
+        // write; planning it would report it as an unready item on every restore forever.
+        if (entry.value == null && dataTypeFromWord(entry.type) == DataType.none) {
+          continue;
+        }
         items.add(
           RestoreItem(
             kind: RestoreKind.entry,
