@@ -83,7 +83,7 @@ bool OnPWMDutyChange(const StaticBlockDescriptor &Block, uint16_t Index, const v
     if (Duty > Period) Duty = Period;
     TIM1->CH1CVR = (uint16_t)Duty;
 
-    auto *Fan = static_cast<PWMVolatile *>(Block.VolatileData);
-    Fan->Duty = NewDuty;
+    auto *Fan = static_cast<PWMPersistent *>(Block.PersistentData);
+    Fan->PWMDuty = NewDuty;
     return true;
 }

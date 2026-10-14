@@ -7,6 +7,11 @@ Item codes: **A** = doc-fix rulings, **B** = code-fix items (both from the 2026-
 
 ## A. Doc fixes still open
 
+**A72 The Duty field is not marked persistent in the doc.** `Docs/Modules and Blocks/Generic System
+Blocks.md:8` lists the fan output's Duty as `TR`; the firmware now makes it trigger **and**
+persistent, because a fan running at a duty has to come back up at it like the frequency. The Flags
+column should read `TR, P` (the block header, `Blocks/PWM.h:5`, carries the change).
+
 **A71 The DAS bootloader's identify reports only [0x800, 0x3E00).** The uploadable area is the
 whole app region, storage included: [0x800, 0x4000), 14336 B. The app's binary carries no
 `.fixed_data` storage reservation. The bootloader doc's size statement needs the same correction.
@@ -100,6 +105,20 @@ wrapped 0 into a single 64-byte fragment, so a corrupt size reads as a complete 
 **B24 Boot restores dynamic blocks with an O(256 x table-capacity) scan.** `Dispatcher.h:167` probes
 all 256 slots and every probe walks all 1024 table records (`StorageBlockFS.h:94`). Not a data-loss
 defect, but it is the cost behind the slow boot and it interacts with any retry added for B7/B8.
+
+**B25 The persistent mirror has no length or version migration.** Making the fan Duty persistent
+grew `StaticPer` by 8 B and every deployed device then refuses its `.SV` at boot:
+`RegisterPersist.h:32` answers a short read by leaving the defaults, which is the right call (it
+must not clobber the stored settings) but it is silent and total - the device comes up on default
+settings **including a random NetID** (`Main.h:179`), so it splits from its nodes. Measured
+2026-10-14: after that change the core took net 18, then 26, while both DAS stayed on 39; the rig
+was recovered by writing `.SV` byte 16 (the `.SV` is `StaticPersistent` 1:1 and the NetID sits
+after the 16-char Name) and rebooting. Any change to the persistent space's layout or size does
+this - a field's `ValuePersistent` flag, a struct member, a block instance - so the mirror needs a
+length/version field, or the space must be append-only with the existing fields' offsets fixed.
+It compounds with the stored-NetID rule: `StaticSaveAll` (`RegisterPersist.h:24`) takes the LIVE
+net, so the stored one cannot be set through the app at all and only a direct write at the field's
+offset reaches it.
 
 
 **B1 Router and branch broadcast are documented and unimplemented.** - **scope settled**: after the beta. The rig has no multi-bus device to test a tree topology on. `RSBus and Packets.md:3-7` and

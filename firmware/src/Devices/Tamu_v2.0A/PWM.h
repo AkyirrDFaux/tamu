@@ -74,6 +74,12 @@ void SetupFanPWM() {
     };
 
     ledc_timer_config(&Timer2);
+
+    // The channels are up; put each fan on the DUTY THE RECALL RESTORED. It goes through the same
+    // applier a write uses, so the % -> LEDC conversion and the clamping stay in one place (the
+    // field stores the clamped value, so a read-back always matches what the fan is running).
+    OnPWMDutyChange(StaticBlockRegistry[1], 1, &StaticPer.Fan[0].PWMDuty, sizeof(uint32_t));
+    OnPWMDutyChange(StaticBlockRegistry[2], 1, &StaticPer.Fan[1].PWMDuty, sizeof(uint32_t));
 }
 
 // Reconfigures the fan PWM frequency (stored in the block) on the timer matching the given block.
@@ -136,8 +142,8 @@ bool OnPWMDutyChange(const StaticBlockDescriptor &Block, uint16_t Index, const v
     // the field would claim a duty the fan is not running.
     if (Applied)
     {
-        auto *Fan = static_cast<PWMVolatile *>(Block.VolatileData);
-        Fan->Duty = NewDuty;
+        auto *Fan = static_cast<PWMPersistent *>(Block.PersistentData);
+        Fan->PWMDuty = NewDuty;
     }
     return Applied;
 }
