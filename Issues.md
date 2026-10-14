@@ -141,6 +141,8 @@ all 256 slots and every probe walks all 1024 table records (`StorageBlockFS.h:94
 defect, but it is the cost behind the slow boot and it interacts with any retry added for B7/B8.
 
 
+**B26 The provider-restore path keys an entry to the archive's literal requester address.** *(Open - the archive was corrected to the measured addresses so it works today, but the code still trusts it.)* `backup_restore.dart:1005` resolves `s.requester` with `idFromString()` without remapping it through the source->live device match the way `source` is remapped on the next line. Restoring an archive whose addresses predate the rig's NetID therefore keys the provider entry to an address no device has - the archive said `0.1` while the rig runs `39.1`, and the archive's own device files carry a third value (51), so it cannot be remapped from the address alone. Fix: take the requester device from the matching requester-side subscription (same target device + same source ref), whose owner the plan already knows.
+
 **B1 Router and branch broadcast are documented and unimplemented.** - **scope settled**: after the beta. The rig has no multi-bus device to test a tree topology on. `RSBus and Packets.md:3-7` and
 `Data Formats.md:37` (`0x3FE`) describe a router tree; `Dispatcher.h:36-40` says the multi-bus topology
 is not implemented and `Docs/Services/Router.md` is a stub.
