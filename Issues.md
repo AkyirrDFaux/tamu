@@ -86,7 +86,13 @@ link instead of the requester, and `SubscriptionsControl.h:190` accepts any TRID
 whose TRID is out of `0x1000-0x1FFF` looks healthy but never writes its target. The project's own
 HIL tests use `0xFA00`/`0xFC00` (`hil_tests_partner.dart:166`), which is this hole.
 
-**B21 The DAS file table holds 4 records and never reuses holes.** `StorageDefs.h:35` gives the DAS a
+**B21 The DAS file table holds 4 records and never reuses holes.** *(Resolved 2026-10-14 in `77e3fa8`.
+Hole reuse turns out to be impossible on this medium, so the "never reuses holes" half is a
+consequence of flash, not a defect: flash only clears bits and neither backend can program over a
+record's bytes without erasing its page - on the DAS the erase page IS the whole table, which an
+attempt that reused 0x00 slots measured on the board (every create failed, nothing written; the
+read-back stopped it corrupting anything). The fix is capacity: the DAS table is now 2 pages, 8
+records, and a device picks the size up at its next format or table move.)* `StorageDefs.h:35` gives the DAS a
 1-page (64 B) table = 4 records; `GetEndOfFiletable` (`StorageBlockFS.h:113`) accepts only 0xFFFFFFFF
 so invalidation holes are never reused, and the app's create-temp-then-rename needs 5 records. The
 measured "16 B writes, 48 B fails" is therefore a *record* limit, not a size limit.
