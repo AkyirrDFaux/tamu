@@ -115,19 +115,39 @@ inline bool StorageService::Handle(const PacketFrame &Frame)
                     // Docs 03.05: "maximum 64 byte stream fragment". The name travels in EVERY
                     // fragment (B12): each fragment is [frag info][name echo (8)][content].
                     uint16_t ContentCap = MAX_FRAG_WORD_BYTES;
-                    uint16_t TotalFrags = (uint16_t)((TotalContent + ContentCap - 1) / ContentCap);
-                    if (TotalFrags == 0) TotalFrags = 1;
+                    // Counted without the `+ Cap - 1` form: an untrusted FileSize near 0xFFFFFFFF
+                    // overflows it, and the uint16 cast then wraps the total. The app is handed a
+                    // fragment count matching neither the file nor this loop, ContentOff runs past
+                    // the end, and ContentLen underflows into a large read of whatever is beyond
+                    // the file. A size the wire's fragment count cannot express is a failed read,
+                    // never a silently truncated one.
+                    uint32_t Frags = TotalContent / ContentCap + ((TotalContent % ContentCap) ? 1u : 0u);
+                    if (Frags > 0xFFFFu) {
+                        DeviceLog("STORAGE", "read '%.8s': %u bytes needs %u fragments", Name,
+                                  (unsigned)TotalContent, (unsigned)Frags);
+                        SendResponse(Frame, nullptr, 0, FLAG_FAIL);
+                        break;
+                    }
+                    uint16_t TotalFrags = (uint16_t)(Frags == 0 ? 1 : Frags);
+                    bool ReadOk = true;
                     for (uint16_t Frag = 0; Frag < TotalFrags; Frag++) {
                         memcpy(TxFrame.Payload + 4, Name, 8);
                         uint32_t ContentOff = (uint32_t)Frag * ContentCap;
                         uint16_t ContentLen = (TotalContent - ContentOff > ContentCap)
                                                    ? ContentCap
                                                    : (uint16_t)(TotalContent - ContentOff);
-                        if (ContentLen) {
-                            StorageFlashRead(FileOffset + ContentOff, TxFrame.Payload + 12, ContentLen);
+                        // This frame is reused for every fragment, so an unchecked short read would
+                        // answer with whatever the previous fragment left in the payload - a wrong
+                        // result with no error signal. A failed read is a failure.
+                        if (ContentLen &&
+                            StorageFlashRead(FileOffset + ContentOff, TxFrame.Payload + 12, ContentLen) != ContentLen) {
+                            DeviceLog("STORAGE", "read '%.8s' failed at offset %u", Name, (unsigned)ContentOff);
+                            ReadOk = false;
+                            break;
                         }
                         SendFragFragment(Frame, Frag, TotalFrags, (uint16_t)(8 + ContentLen));
                     }
+                    if (!ReadOk) SendResponse(Frame, nullptr, 0, FLAG_FAIL);
                 } else {
                     DeviceLog("STORAGE", "read '%.8s' failed", Name);
                     SendResponse(Frame, nullptr, 0, FLAG_FAIL);
