@@ -53,6 +53,22 @@ bool isSubscriptionTable(String name) {
   return upper == '.SUBREQ' || upper == 'SUBREQ';
 }
 
+/// True when [name] is one of the device's own persistence files.
+///
+/// A dotted name is the device's private persistent state, never user data, so it is never carried
+/// as a raw file: the firmware writes the static persistent mirror (`.SV`), the SNDB (`.SNREG`) and
+/// each dynamic block's `.DT_xx` table / `.DV_xx` values itself, and rebuilds the filesystem's own
+/// `.TABLE` on demand. The restore rebuilds this state semantically, so archiving a raw copy would
+/// let a foreign device's persistent space be written over a target.
+bool isDevicePersistence(String name) {
+  final upper = name.replaceAll('\x00', '').trim().toUpperCase();
+  return upper == '.SV' ||
+      upper == '.SNREG' ||
+      upper == '.TABLE' ||
+      upper.startsWith('.DT_') ||
+      upper.startsWith('.DV_');
+}
+
 String backupFileKind(String name) {
   final upper = name.replaceAll('\x00', '').trim().toUpperCase();
   if (upper.startsWith('SCR_')) return 'Script';

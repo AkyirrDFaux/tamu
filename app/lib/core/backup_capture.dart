@@ -43,9 +43,15 @@ Future<BackupDevice?> captureDevice(
       AppDiagnostics.log('backup', 'script ${file.name} parse failed: $error');
     }
   }
+  // Keep only files that have no semantic form. Device-owned persistence (a dotted name - `.SV`,
+  // `.SNREG`, `.DT_xx`/`.DV_xx`, `.TABLE`) is dropped too: the firmware writes it itself and the
+  // restore rebuilds it semantically, so a raw copy would let a foreign device's persistent space
+  // be written over a target. LAY_1 and user files have no semantic form and are still archived.
   files.removeWhere(
     (f) =>
-        semanticallyArchived.contains(f.name) || isSubscriptionTable(f.name),
+        semanticallyArchived.contains(f.name) ||
+        isSubscriptionTable(f.name) ||
+        isDevicePersistence(f.name),
   );
 
   // Subscriptions (requester is restorable; provider is informational).

@@ -126,6 +126,23 @@ void main() {
     expect(backupFileKind('whatever'), 'Binary');
   });
 
+  test('device-owned persistence is never carried as a raw file', () {
+    // A dotted name is the device's own persistent state: the firmware writes it and the restore
+    // rebuilds it semantically, so the capture must drop it (including the padded file-table form).
+    expect(isDevicePersistence('.SV'), isTrue);
+    expect(isDevicePersistence('.SNREG   '), isTrue);
+    expect(isDevicePersistence('.TABLE  '), isTrue);
+    expect(isDevicePersistence('.DT_0A'), isTrue);
+    expect(isDevicePersistence('.DV_ff'), isTrue);
+    // User files and the semantic LED layout have no semantic form and are still archived.
+    expect(isDevicePersistence('LAY1'), isFalse);
+    expect(isDevicePersistence('notes.txt'), isFalse);
+    expect(isDevicePersistence('SCR_000'), isFalse);
+    // The subscription table has its own semantic form and its own predicate.
+    expect(isDevicePersistence('.SUBREQ'), isFalse);
+    expect(isSubscriptionTable('.SUBREQ'), isTrue);
+  });
+
   test('device JSON round-trips semantically with all sections', () {
     final device = BackupDevice(
       created: '2026-09-22T00:00:00Z',
