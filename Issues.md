@@ -43,7 +43,7 @@ Measured 2026-10-14 over USB: 20000 B round-trips intact and the core's `.TABLE`
 enumerates 41 files including every `SCR_*`. Reaching the same over BLE needs the BLE tick to run
 during a stream, or a bounded reply size the app honours.
 
-**B12 A failed flash read inside the read handler sends the previous fragment's bytes as content.**
+**B12 A failed flash read inside the read handler sends the previous fragment's bytes as content.** *(Fixed in `1ba7a02`: a short read fails the read instead of sending the reused frame's bytes.)*
 `Storage.h:126` discards `StorageFlashRead`'s result and sends `ContentLen` bytes from the shared
 `TxFrame`, so a partial read becomes a wrong result with no error signal.
 
@@ -51,15 +51,15 @@ during a stream, or a bounded reply size the app honours.
 out-of-order/lost fragment or one past the file's end advances `WriteSeq` without writing, and the
 app advances its offset on any valid reply, so data is silently lost or written at the wrong offset.
 
-**B14 The restore's result contract hides dropped items.** `backup_restore.dart:703` skips any
+**B14 The restore's result contract hides dropped items.** *(Fixed in `7866b63`: every planned item now accounts for itself.)* `backup_restore.dart:703` skips any
 unready item before `done()`/`failItem()`, so it is counted in neither `written` nor `failed`:
 `failed 0` cannot distinguish a dropped entry from a successful one.
 
-**B15 Save All is issued only to devices that carried subscriptions.** `backup_restore.dart:578`
+**B15 Save All is issued only to devices that carried subscriptions.** *(Fixed in `7866b63`: Save All goes to every device the restore wrote.)* `backup_restore.dart:578`
 skips a device with no subscription entries, so values restored to a subscription-less device stay
 in RAM and are lost at the next power cycle while the restore reports success.
 
-**B16 Helper failures are counted as success.** The provider-side install
+**B16 Helper failures are counted as success.** *(Fixed in `7866b63`/`bfa7a3e`: helper failures land in the failure count, and the provider half is confirmed by a read-back.)* The provider-side install
 (`backup_restore.dart:864`), the dynamic-entry create (`:517`) and the script load
 (`:599`) all log a failure and continue; the item is still counted written.
 
@@ -68,7 +68,7 @@ in RAM and are lost at the next power cycle while the restore reports success.
 be written over a target's persistent space - the opposite of the rule the same function's comment
 states ("A file is archived only when it has no semantic form").
 
-**B18 The subscription re-registration chain.** `Main.h:191` re-registers at boot *before the bus
+**B18 The subscription re-registration chain.** *(Boot-order half fixed in `8bf61c1` - the re-registration runs after the 500 ms bus window; presence half in `ReRegisterForNode` (LastValueMs cleared, the fast window keyed to unserved), fixed in `6cd1f1a`.)* `Main.h:191` re-registers at boot *before the bus
 is ever polled*, so those sends are guaranteed lost; the only other trigger is address assignment
 (`Device.h:536`), which never fires for a node that returns already addressed; the retry cadence
 then collapses from 100 ms to 60 s after 10 s of uptime and `LastValueMs` is never cleared, so a
@@ -77,11 +77,11 @@ missing. Measured 2026-10-14: the stored provider addresses are *not* stale (all
 matching the live NetID 39, the `.SV` NetId byte 39 and both nodes' addresses), so the addresses are
 not the cause.
 
-**B19 An unrelated set rewrites `.SUBREQ` from the post-expiry table.** `SubscriptionsControl.h:219`
+**B19 An unrelated set rewrites `.SUBREQ` from the post-expiry table.** *(Fixed in `6cd1f1a`: the set saves with KeepFileEntries, so an expired entry survives and an empty table does not delete the file.)* `SubscriptionsControl.h:219`
 saves on every set, so an entry dropped by a lease timeout is persisted by the next unrelated set -
 defeating the expiry fix - and if the timeout removed the last entry the save deletes the file.
 
-**B20 TRIDs are not range-checked.** `Dispatcher.h:80` routes a TRID >= `TRID_APP_BASE` to the app
+**B20 TRIDs are not range-checked.** *(Fixed in `6cd1f1a`: a requester TRID outside the subscription range is refused.)* `Dispatcher.h:80` routes a TRID >= `TRID_APP_BASE` to the app
 link instead of the requester, and `SubscriptionsControl.h:190` accepts any TRID, so a subscription
 whose TRID is out of `0x1000-0x1FFF` looks healthy but never writes its target. The project's own
 HIL tests use `0xFA00`/`0xFC00` (`hil_tests_partner.dart:166`), which is this hole.
@@ -98,11 +98,11 @@ by the restore, which skips every `kind == 'Script'` file (`backup_capture.dart:
 `backup_restore.dart:441`); and "Include device files" off silently drops all scripts, which are
 captured only from the file list.
 
-**B23 The read handler's fragment-count arithmetic overflows for an untrusted file size.**
+**B23 The read handler's fragment-count arithmetic overflows for an untrusted file size.** *(Fixed in `1ba7a02`: the count is computed without the overflow and an inexpressible size fails the read.)*
 `Storage.h:114` narrows `(TotalContent + ContentCap - 1) / ContentCap` to uint16 and turns a
 wrapped 0 into a single 64-byte fragment, so a corrupt size reads as a complete short file.
 
-**B24 Boot restores dynamic blocks with an O(256 x table-capacity) scan.** `Dispatcher.h:167` probes
+**B24 Boot restores dynamic blocks with an O(256 x table-capacity) scan.** *(Fixed in `c728acf` (the recall enumerates the DT/DV files) and `3b12ed7` (the table is staged: 4 flash calls per scan, not 1024); the block measured 8.907 s -> 0.067 s.)* `Dispatcher.h:167` probes
 all 256 slots and every probe walks all 1024 table records (`StorageBlockFS.h:94`). Not a data-loss
 defect, but it is the cost behind the slow boot and it interacts with any retry added for B7/B8.
 
