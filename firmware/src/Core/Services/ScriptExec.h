@@ -535,7 +535,10 @@ inline bool ScriptService::ContainerElement(LoadedScript *Script, const uint8_t 
     if (!Resolve(Script, Sym[0], Sym[1], SymVal(Sym), Scratch, &Data, &Size, &Dtype)) return false;
     switch (Dtype) {
         case (uint16_t)DataType::Vector:
-            if (Index < 0 || (uint32_t)(Index + 1) * 4 > Size) return false;
+            // Test the magnitude before doing arithmetic on it: Index is a signed 32-bit operand, so
+            // Index+1 can overflow and the x4 product can wrap, and either one lets a huge index
+            // through to the pointer below.
+            if (Index < 0 || (uint32_t)Index >= Size / 4) return false;
             *Elem = Data + (size_t)Index * 4;
             *ElemSize = 4;
             *ElemType = (uint16_t)DataType::Number;

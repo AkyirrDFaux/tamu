@@ -51,8 +51,13 @@ inline void SubscriptionsService::StreamSubscriptionTable(const PacketFrame &Fra
                                     bool (*Occupied)(const uint8_t *)) {
     uint8_t Count = 0;
     for (uint16_t i = 0; i < Max; i++) if (Occupied(Table + (size_t)i * Stride)) Count++;
-    uint16_t Total = (uint16_t)((uint16_t)Count * EntrySize);
-    uint16_t Frags = (uint16_t)((Total + MAX_FRAG_CONTENT_SIZE - 1) / MAX_FRAG_CONTENT_SIZE);
+    // Sized from the per-fragment packing, not the byte total: the loop below fills each fragment
+    // with whole entries and stops before one would straddle the boundary, so 32-byte entries pack
+    // three per fragment and ceil(Total/Capacity) under-counts the fragments the table needs, which
+    // silently drops the tail of the reply.
+    uint16_t PerFrag = (uint16_t)(MAX_FRAG_CONTENT_SIZE / EntrySize);
+    if (PerFrag == 0) PerFrag = 1;
+    uint16_t Frags = (uint16_t)((Count + PerFrag - 1) / PerFrag);
     if (Frags == 0) Frags = 1;
 
     uint16_t Idx = 0;

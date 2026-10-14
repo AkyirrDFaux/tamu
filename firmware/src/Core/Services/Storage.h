@@ -186,7 +186,14 @@ inline bool StorageService::Handle(const PacketFrame &Frame)
                 }
             }
             uint32_t FileOffset, FileSize;
-            if (ContentLen > 64) ContentLen = 64; // docs: "maximum 64 byte stream fragment"
+            // A fragment over the documented stream limit is refused, not clipped: the ack carries
+            // the sequence and the app advances by what it sent, so a clipped write leaves this
+            // offset behind and every later fragment lands short of where it belongs.
+            if (ContentLen > 64) {
+                DeviceLog("STORAGE", "write '%.8s' fragment %u over the stream limit", Name, (unsigned)ContentLen);
+                SendResponse(Frame, nullptr, 0, FLAG_FAIL);
+                break;
+            }
             if (!Storage.GetFileInfo((const char *)Name, &FileOffset, &FileSize)) {
                 DeviceLog("STORAGE", "write stream target '%.8s' missing", Name);
                 SendResponse(Frame, nullptr, 0, FLAG_FAIL);

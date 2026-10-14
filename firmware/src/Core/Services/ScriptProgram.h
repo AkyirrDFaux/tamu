@@ -206,7 +206,10 @@ inline bool ScriptService::Load(uint16_t FileId, uint16_t Slot) {
     // defaults and the instructions.
     uint32_t Entries = (uint32_t)(Script->InCount + Script->OutCount + Script->VarCount + Script->ConstCount);
     uint32_t FuncLen = (uint32_t)Script->FuncCount * SCRIPT_FUNC_RESERVATION_SIZE;
-    uint32_t Need = SCRIPT_HEADER_SIZE + Entries * 4 + ConstLen + DefLen + FuncLen + Script->InstrLen + UiLen;
+    // Accumulated in 64-bit: the four header-supplied lengths are untrusted, and a wrapped sum
+    // passes the check below while the blob offsets derived from it run off the buffer.
+    uint64_t Need = (uint64_t)SCRIPT_HEADER_SIZE + (uint64_t)Entries * 4 + ConstLen + DefLen + FuncLen +
+                    Script->InstrLen + UiLen;
     if (Need > Got || Need > Size) { free(Buf); return LoadRefused(SCRIPT_ERR_BOUNDS); }
 
     // Script-file blob offsets (the same block walk the header parser mirrors).

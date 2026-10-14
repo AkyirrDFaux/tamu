@@ -274,7 +274,10 @@ public:
         uint32_t Capacity = TableCapacity();
         if (Capacity == 0) return false;
 
-        uint32_t NewSize = FileTableSize; // fixed per device (STORAGE_TABLE_SIZE)
+        // Always the current geometry, not the size the live table happens to carry: a device
+        // formatted by an older build keeps its smaller table through every move, so the capacity
+        // increase never reaches it.
+        uint32_t NewSize = STORAGE_TABLE_SIZE;
 
         uint32_t NewOffset = FindSpace(NewSize);
         if (NewOffset == 0) return false; // Out of space
