@@ -26,9 +26,11 @@ inline void SubscriptionsService::SubReply(const PacketFrame &Frame, const uint8
 // entry; remote: send 0401 with an empty payload = None/cancel). Requester-only: the provider
 // side never cancels anything, so the DAS does not compile it.
 inline void SubscriptionsService::SubscriptionsCancelProvider(uint16_t ProviderAddr, uint16_t Trid) {
+    // Re-qualified against the current net at use, like every other provider-address use: the
+    // caller passes the address as stored, which carries the net it was set under.
+    ProviderAddr = MakeId(DeviceStatus.NetId, (uint16_t)(ProviderAddr & 0x3FF));
 #ifdef USE_SUB_PROVIDE
-    uint8_t Net = (uint8_t)((DeviceStatus.ShortAddress >> 10) & 0x3F);
-    if (NetQualifyLocal(ProviderAddr, Net) == DeviceStatus.ShortAddress) {
+    if (ProviderAddr == DeviceStatus.ShortAddress) {
         ProviderEntry* Provider = ProviderFindByTrid(Trid);
         if (Provider) ProviderClearEntry(Provider);
         return;
@@ -103,7 +105,7 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
         RequesterEntry* Entry = RequesterFindByTrid((uint16_t)Frame.Trid);
         // Stale reply after the entry was retargeted to a different provider: drop it. A
         // cancelled entry no longer resolves, so it falls through to the orphan handling.
-        if (Entry && Frame.IdSrc != Entry->ProviderAddr) return true;
+        if (Entry && Frame.IdSrc != RequesterProviderAddr(*Entry)) return true;
         HandleRequesterValueUpdate(Frame);
         return true;
     }
@@ -178,6 +180,15 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
         }
 
         case (uint8_t)SubCid::RequesterSet: { // Set subscription (requester). Trigger None = cancel.
+            // A subscription is identified by a Subscriptions TRID (0x1000-0x1FFF) and both this
+            // entry and the dispatcher route its value updates by that range, so an out-of-range
+            // TRID would register an entry that looks healthy but never writes its target - at or
+            // above TRID_APP_BASE the value update goes to the app link instead. Reject it here,
+            // where the entry is accepted, rather than storing something that can never work.
+            if (Frame.Trid < TRID_SUB_BASE || Frame.Trid > TRID_SUB_MAX) {
+                SubReply(Frame, nullptr, 0, FLAG_FAIL);
+                break;
+            }
             if (PayloadBytes(Frame) < 2 + 2 + SUB_TABLE_WIRE_SIZE + 4 + 4) {
                 SubReply(Frame, nullptr, 0, FLAG_FAIL);
                 break;
@@ -192,6 +203,8 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
                 if (Entry) {
                     uint16_t Provider = Entry->ProviderAddr;
                     RequesterRemove(Entry);
+                    // An explicit cancel is what persists a removal, so this save writes the table
+                    // alone and may drop the file once the last entry is gone.
                     SaveRequesterTable();
                     SubscriptionsCancelProvider(Provider, Frame.Trid);
                 }
@@ -213,10 +226,13 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
             Entry->Sub = Table;
             Entry->TargetReg = TargetReg;
             Entry->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
-            Entry->RegisteredAtMs = DeviceStatus.UptimeMs;
             Entry->LastRegisteredMs = 0;
             Entry->LastValueMs = 0;
-            SaveRequesterTable();
+            // This set persists its own entry, but must not rewrite the file from the live table:
+            // an entry another subscription lost to a lease expiry is not a deliberate removal, so
+            // it has to survive in `.SUBREQ` for the next boot (and an empty table must not delete
+            // the file at all).
+            SaveRequesterTable(true);
 
             // Respond first (the app waits on the transaction ID), then register the provider
             // side (same-device or 0401 to the remote provider).

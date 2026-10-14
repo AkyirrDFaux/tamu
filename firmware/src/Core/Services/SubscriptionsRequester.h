@@ -20,6 +20,15 @@ inline RequesterEntry* SubscriptionsService::RequesterFindByTrid(uint16_t Trid) 
     return SubTableFindByTrid(RequesterTable, Trid, RequesterOccupied);
 }
 
+// The entry's provider address, re-qualified against the core's CURRENT net. The entry stores
+// the address as it was net-qualified when the subscription was set (the wire form matches the
+// provider's id_src); trusting that frozen net would keep sending the re-registration into the
+// net the setup was written under after a net change, so the device field is re-qualified at
+// every use instead.
+inline uint16_t SubscriptionsService::RequesterProviderAddr(const RequesterEntry &Entry) {
+    return MakeId(DeviceStatus.NetId, (uint16_t)(Entry.ProviderAddr & 0x3FF));
+}
+
 inline void SubscriptionsService::RequesterClearEntry(RequesterEntry* Entry) {
     *Entry = RequesterEntry{};
 }

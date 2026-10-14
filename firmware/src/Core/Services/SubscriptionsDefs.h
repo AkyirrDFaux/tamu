@@ -109,13 +109,11 @@ struct RequesterEntry {
     bool Active = false;
     // Initialization tracking (transient): the entry is "initialized" once a value update
     // arrives; until then the requester re-sends the registration (CID 1) to wake the provider.
-    uint32_t RegisteredAtMs = 0;   // start of the initialization window (set/boot)
     uint32_t LastRegisteredMs = 0; // last re-registration sent
-    uint32_t LastValueMs = 0;      // uptime of the last received value (0 = never)
+    uint32_t LastValueMs = 0;      // uptime of the last received value (0 = never served)
 };
 
-#define SUB_RETRY_MS          100   // re-registration interval while un-initialized
-#define SUB_INIT_WINDOW_MS    10000 // give up re-registering after this long
+#define SUB_RETRY_MS          100   // re-registration interval while no value has arrived
 #define SUB_KEEPALIVE_MS      60000 // renew the provider's 120 s lease once values flow
 
 // The wire prefix of the entry IS the struct prefix, so serialization is a plain copy of the

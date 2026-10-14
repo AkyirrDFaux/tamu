@@ -15,7 +15,14 @@
 // Docs: "recalls values from a file, which is a 1:1 copy of the table except timeout value."
 // Entry: the requester wire prefix minus the timeout = providerAddr(2) + trid(2) + table(16)
 // + targetReg(4) = 24 B, so it is copied whole.
-inline void SubscriptionsService::SaveRequesterTable() {
+//
+// `KeepFileEntries` is what a save driven by an unrelated change (a set, which persists only its
+// own entry) passes: the file then keeps the entries it already holds that the live table no
+// longer does. A lease expiry drops an entry from the table but must not lose it from the saved
+// setup - the expiry is a FAILURE (no value ever arrived), not a removal - so the entry stays in
+// `.SUBREQ` and the next boot restores it. Only a deliberate cancel or Save All rewrites the file
+// from the table alone, and only those may remove the file when the table empties.
+inline void SubscriptionsService::SaveRequesterTable(bool KeepFileEntries) {
     uint8_t Buf[1 + MAX_REQUESTER_SUBS * REQUESTER_FILE_ENTRY_SIZE];
     // Count and copy in one walk (the count byte is filled in last).
     uint16_t Off = 1;
@@ -27,11 +34,32 @@ inline void SubscriptionsService::SaveRequesterTable() {
         Off += REQUESTER_FILE_ENTRY_SIZE;
         Count++;
     }
-    // No subscriptions: remove the file rather than leaving an empty one behind (the app's
+
+    if (KeepFileEntries) {
+        uint8_t File[1 + MAX_REQUESTER_SUBS * REQUESTER_FILE_ENTRY_SIZE];
+        uint16_t Len = Storage.ReadFromFile(SubscriptionsRequesterFile, 0, sizeof(File), (char *)File);
+        if (Len >= 1 && File[0] <= MAX_REQUESTER_SUBS &&
+            Len >= (uint16_t)(1 + (uint16_t)File[0] * REQUESTER_FILE_ENTRY_SIZE)) {
+            for (uint8_t i = 0; i < File[0] && Count < MAX_REQUESTER_SUBS; i++) {
+                const uint8_t *Entry = File + 1 + (size_t)i * REQUESTER_FILE_ENTRY_SIZE;
+                // Still in the live table: already copied above. A carried-over entry is appended;
+                // the table proper is TRID-sorted but the file's order is only a restore input
+                // (RequesterUpsert re-sorts on load).
+                if (RequesterFindByTrid(LoadUnaligned<uint16_t>(Entry + 2))) continue;
+                memcpy(Buf + Off, Entry, REQUESTER_FILE_ENTRY_SIZE);
+                Off += REQUESTER_FILE_ENTRY_SIZE;
+                Count++;
+            }
+        }
+    }
+
+    // No subscriptions at all: remove the file rather than leaving an empty one behind (the app's
     // file list showed a `.SUBREQ` with nothing in it after the last cancel). Absence is the
     // same as an empty table on load. Drop a leftover staging file too, so an interrupted save
-    // cannot leave `.SUBREQ~` behind.
+    // cannot leave `.SUBREQ~` behind. A carry-over save only reaches here with an empty file,
+    // so there is nothing to write and no deliberate removal to persist.
     if (Count == 0) {
+        if (KeepFileEntries) return;
         Storage.DeleteFile(SubscriptionsRequesterFile);
         char Tmp[8];
         BackupTempName(SubscriptionsRequesterFile, Tmp);
@@ -88,7 +116,6 @@ inline void SubscriptionsService::LoadRequesterTable() {
         Off += REQUESTER_FILE_ENTRY_SIZE;
         Loaded++;
         Entry->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
-        Entry->RegisteredAtMs = DeviceStatus.UptimeMs;
         Entry->LastRegisteredMs = 0;
         Entry->LastValueMs = 0;
     }
@@ -102,12 +129,14 @@ inline void SubscriptionsService::LoadRequesterTable() {
 inline void SubscriptionsService::RegisterRequesterProvider(RequesterEntry* Entry) {
     if (!Entry || !Entry->Active) return;
 
+    // Re-qualified against the current net, not the net the entry was written under.
+    uint16_t ProviderAddr = RequesterProviderAddr(*Entry);
+
     Entry->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
     Entry->LastRegisteredMs = DeviceStatus.UptimeMs;
 
 #ifdef USE_SUB_PROVIDE
-    uint8_t Net = (uint8_t)((DeviceStatus.ShortAddress >> 10) & 0x3F);
-    if (NetQualifyLocal(Entry->ProviderAddr, Net) == DeviceStatus.ShortAddress) {
+    if (ProviderAddr == DeviceStatus.ShortAddress) {
         // Same-device provider: install it directly (shared with the wire paths).
         ProviderInstall(Entry->Trid, DeviceStatus.ShortAddress, Entry->Sub);
         return;
@@ -116,7 +145,7 @@ inline void SubscriptionsService::RegisterRequesterProvider(RequesterEntry* Entr
     // Remote provider: send the subscription table (0401, fire and forget).
     uint8_t Payload[SUB_TABLE_WIRE_SIZE];
     memcpy(Payload, &Entry->Sub, SUB_TABLE_WIRE_SIZE);
-    PacketConstruct(&TxFrame, Entry->ProviderAddr, MakeService(ServiceType::Subscriptions, (uint8_t)SubCid::Change),
+    PacketConstruct(&TxFrame, ProviderAddr, MakeService(ServiceType::Subscriptions, (uint8_t)SubCid::Change),
                     Entry->Trid, FLAG_START | FLAG_STOP, Payload, SUB_TABLE_WIRE_SIZE);
     SendAndVerifyPacket(TxFrame);
 }
@@ -137,8 +166,16 @@ inline void SubscriptionsService::ReRegister() {
 inline void SubscriptionsService::ReRegisterForNode(uint16_t Addr) {
     for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
         RequesterEntry &Entry = RequesterTable[i];
-        if (Entry.Active && Entry.ProviderAddr == Addr)
-            RegisterRequesterProvider(&Entry);
+        // Match on the node's device field: the stored address carries the net the subscription
+        // was set under, so comparing it whole would hide the node that just appeared after a net
+        // change. The stored address is re-qualified to the node's current one below.
+        if (!Entry.Active || (Entry.ProviderAddr & 0x3FF) != (Addr & 0x3FF)) continue;
+        Entry.ProviderAddr = Addr;
+        // The node has just appeared, so whatever it held is gone (its table is RAM-only): treat
+        // these entries as un-served again, so they re-enter the fast retry window for the node's
+        // whole start-up instead of sitting on the slow keepalive after a single push.
+        Entry.LastValueMs = 0;
+        RegisterRequesterProvider(&Entry);
     }
 }
 
@@ -168,22 +205,19 @@ inline void SubscriptionsService::SubscriptionsReRegisterPending() {
 // short retry interval; afterwards it renews the provider's 120 s lease on a slow keepalive
 // (a value update only travels provider -> requester, so the requester must renew the
 // provider explicitly - Docs "Timeout 120s, renewed with new request").
+//
+// The fast interval is keyed to the entry not being served, not to uptime: an un-served entry
+// (restored at boot, or whose node just re-appeared and had LastValueMs cleared) keeps retrying
+// until a value arrives, because its provider's table is RAM-only and may still be empty. The
+// old uptime-keyed window collapsed to 60 s ten seconds after boot, so a node that came back
+// later had no fast window left and its subscription stayed dead until the app re-applied the
+// setup. The cost is that a requester whose provider never answers retries at SUB_RETRY_MS
+// instead of once a minute; the entry still stops as soon as it is served.
 inline void SubscriptionsService::RequesterInitCheck(uint32_t NowMs) {
     for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
         RequesterEntry* Entry = &RequesterTable[i];
         if (!Entry->Active) continue;
-        uint32_t Interval;
-        if (Entry->LastValueMs == 0) {
-            // Keep trying after the initial window, at the keepalive rate. The provider table is
-            // RAM-only and the only re-push is driven by address assignment, which does not happen
-            // for a node that comes back already addressed - so giving up for good left every
-            // subscription dead after a power cycle until the app re-applied the setup.
-            Interval = (NowMs - Entry->RegisteredAtMs > SUB_INIT_WINDOW_MS)
-                           ? SUB_KEEPALIVE_MS
-                           : SUB_RETRY_MS;
-        } else {
-            Interval = SUB_KEEPALIVE_MS;
-        }
+        uint32_t Interval = (Entry->LastValueMs == 0) ? SUB_RETRY_MS : SUB_KEEPALIVE_MS;
         if (NowMs - Entry->LastRegisteredMs < Interval) continue;
         RegisterRequesterProvider(Entry);
     }

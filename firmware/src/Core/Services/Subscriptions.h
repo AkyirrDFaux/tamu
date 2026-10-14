@@ -69,13 +69,14 @@ private:
     static bool RequesterOccupied(const RequesterEntry &Entry);
     static bool RequesterEntryLive(const uint8_t *Entry);
     RequesterEntry* RequesterFindByTrid(uint16_t Trid);
+    uint16_t RequesterProviderAddr(const RequesterEntry &Entry);
     void RequesterClearEntry(RequesterEntry* Entry);
     void RequesterRemove(RequesterEntry* Entry);
     RequesterEntry* RequesterAlloc(uint16_t Trid);
     RequesterEntry* RequesterUpsert(uint16_t Trid);
     void ApplyRequesterValue(RequesterEntry *Entry, const uint8_t *Val, uint8_t Vlen, bool Confirm);
     void HandleRequesterValueUpdate(const PacketFrame &Frame);
-    void SaveRequesterTable();
+    void SaveRequesterTable(bool KeepFileEntries = false);
     void RegisterRequesterProvider(RequesterEntry* Entry);
     void SubscriptionsReRegisterPending();
     void RequesterInitCheck(uint32_t NowMs);
