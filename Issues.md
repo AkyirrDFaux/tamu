@@ -30,12 +30,13 @@ The 2026-10-14 audit of the storage system, the subscriptions service and the ba
 (carried out read-only; the entries below are that audit's findings, the systemic rule stated once:
 **a failed or partial read must never delete, overwrite, or produce a wrong result**).
 
-**B11 Whole-file reads are capped at ~5952 B by the 8 KiB app TX ring, so the core's `.TABLE`
-(16384 B) can never be read.** `AppInterface.h:41` sizes the ring at 8192; CID 5 streams the whole
-file in one handler call at 88 wire bytes per fragment, so 93 fragments fit and 96 do not, and the
-app's reassembler never completes (measured: 4096 B reads, 6144 B returns null). This is why every
-backup of the core has `scripts=0` and no layout files. Drain the ring during a stream, or let
-`Send` abort the read and report it - not a bus change.
+**B11 A reply larger than the ring still cannot complete over BLE.** `Send` now drains the ring
+during a stream through `TxFlush`, but that flush is USB-only: the BLE link paces itself in
+`AppBLETick` through `TxPeek`/`TxCommit` (a failed notify must not lose data), so a BLE session has
+no way to drain mid-stream and a whole-file read above ~5952 B still loses its tail fragments.
+Measured 2026-10-14 over USB: 20000 B round-trips intact and the core's `.TABLE` (16384 B) now
+enumerates 41 files including every `SCR_*`. Reaching the same over BLE needs the BLE tick to run
+during a stream, or a bounded reply size the app honours.
 
 **B12 A failed flash read inside the read handler sends the previous fragment's bytes as content.**
 `Storage.h:126` discards `StorageFlashRead`'s result and sends `ContentLen` bytes from the shared

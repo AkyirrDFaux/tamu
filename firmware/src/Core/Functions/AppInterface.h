@@ -34,10 +34,10 @@ bool AppUsbSilent();
 
 // Outgoing stream ring: serialized frames waiting to be flushed to the app links.
 // A synchronous service reply (e.g. Storage Read File, which streams a whole
-// file in one handler) can legitimately burst well past a small ring before
-// AppInterface.Pump() drains it. 8 KiB absorbs a full 4 KiB file read (~4.5 KB of
-// wire frames) with headroom; larger reads would still truncate, so the app reads
-// files in 4 KiB slices.
+// file in one handler) legitimately bursts well past a small ring before
+// AppInterface.Pump() drains it. Send() now drains the ring through TxFlush() when a frame does
+// not fit, so the ring no longer caps the size of a reply - it only has to absorb the burst
+// between two drains, and this keeps that burst cheap.
 #define APP_TX_RING_SIZE 8192
 
 // Inbound frame queue depth: frames parsed by the link readers, dispatched by the pump
@@ -69,6 +69,15 @@ public:
     uint16_t TxPeek(uint8_t *Dst, uint16_t Max);
     void TxCommit(uint16_t Count);
     uint16_t TxPop(uint8_t *Dst, uint16_t Max);
+
+    // Drains pending TX bytes to the active link.
+    //
+    // The RX dispatch loop runs one service handler to completion before Pump() flushes, so a
+    // handler that streams a whole file (one call emitting hundreds of fragments) legitimately
+    // bursts past the ring. Send() drains through this when a frame does not fit, which is what
+    // lets such a reply complete instead of being truncated. Called only from the app task: the
+    // sole caller of Send is the dispatcher, and the flush is the same work Pump() does.
+    void TxFlush();
     void TxFlushAll();
 
     bool Connected = false;    // an app is connected on either link (Doc requirement)
@@ -107,18 +116,26 @@ inline bool AppInterfaceService::Send(const PacketFrame &Frame)
     uint16_t Count = PacketWireSize(&Frame);
 
     bool Ok = false;
-    portENTER_CRITICAL(&TxMux);
-    uint16_t Used = (uint16_t)(TxHead - TxTail);
-    if (Count <= APP_TX_RING_SIZE - 1 - Used)
+    // Try to enqueue; on a full ring, drain and try once more. The retry is what carries a long
+    // stream: without it a reply larger than the ring loses its tail fragments and its STOP frame,
+    // and the app's reassembler never completes (a whole-file read then returns nothing).
+    for (int Attempt = 0; Attempt < 2 && !Ok; Attempt++)
     {
-        for (uint16_t i = 0; i < Count; i++)
+        if (Attempt)
+            TxFlush();
+        portENTER_CRITICAL(&TxMux);
+        uint16_t Used = (uint16_t)(TxHead - TxTail);
+        if (Count <= APP_TX_RING_SIZE - 1 - Used)
         {
-            TxRing[TxHead % APP_TX_RING_SIZE] = Wire[i];
-            TxHead = (uint16_t)(TxHead + 1);
+            for (uint16_t i = 0; i < Count; i++)
+            {
+                TxRing[TxHead % APP_TX_RING_SIZE] = Wire[i];
+                TxHead = (uint16_t)(TxHead + 1);
+            }
+            Ok = true;
         }
-        Ok = true;
+        portEXIT_CRITICAL(&TxMux);
     }
-    portEXIT_CRITICAL(&TxMux);
     if (!Ok)
         TxDropped = TxDropped + 1;
     return Ok;
@@ -147,6 +164,24 @@ inline void AppInterfaceService::TxCommit(uint16_t Count)
     portENTER_CRITICAL(&TxMux);
     TxTail = (uint16_t)(TxTail + Count);
     portEXIT_CRITICAL(&TxMux);
+}
+
+// Flushes as many 60-byte USB link frames as possible. AppUSBSend blocks briefly (bounded) until
+// the bytes are in the driver's TX buffer, so everything popped here is considered delivered.
+// When a BLE session is up and USB has been silent, the app has switched links (closed its USB
+// port, cable still plugged): skip USB so responses route to BLE.
+inline void AppInterfaceService::TxFlush()
+{
+    if (AppUSBActive() && TxRing && !(AppBLEActive() && AppUsbSilent()))
+    {
+        uint8_t Chunk[60];
+        uint16_t Count = TxPop(Chunk, sizeof(Chunk));
+        while (Count > 0)
+        {
+            AppUSBSend(Chunk, Count);
+            Count = TxPop(Chunk, sizeof(Chunk));
+        }
+    }
 }
 
 // Drops all pending TX data (called when an app session starts or ends: queued
@@ -220,21 +255,7 @@ void AppInterfaceService::Pump()
         RouteIn(Frame);
     }
 
-    // Flush as many 60-byte USB link frames as possible. AppUSBSend blocks briefly
-    // (bounded) until the bytes are in the driver's TX buffer, so everything popped
-    // here is considered delivered. When a BLE session is up and USB has been
-    // silent, the app has switched links (closed its USB port, cable still
-    // plugged): skip USB so responses route to BLE.
-    if (AppUSBActive() && TxRing && !(AppBLEActive() && AppUsbSilent()))
-    {
-        uint8_t Chunk[60];
-        uint16_t Count = TxPop(Chunk, sizeof(Chunk));
-        while (Count > 0)
-        {
-            AppUSBSend(Chunk, Count);
-            Count = TxPop(Chunk, sizeof(Chunk));
-        }
-    }
+    TxFlush();
 
     AppBLETick();
 }
