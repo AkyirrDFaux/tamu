@@ -30,25 +30,6 @@ The 2026-10-14 audit of the storage system, the subscriptions service and the ba
 (carried out read-only; the entries below are that audit's findings, the systemic rule stated once:
 **a failed or partial read must never delete, overwrite, or produce a wrong result**).
 
-**B7 `Storage.Init()` formats the whole partition when a read fails.** `StorageBlockFS.h:29` treats
-an unreadable table pointer as "no table" and calls `Format()`; `ValidateTable` (`:690`) also returns
-false on a failed 16-byte read of entry 0. One transient flash read error erases every saved file.
-Distinguish unreadable from empty (retry, or require the pointer *and* the table to read as empty).
-
-**B8 `StaticRecallAll` overwrites `.SV` with compiled-in defaults on a short or failed read.**
-`RegisterPersist.h:31` tests `Cnt < sizeof(StaticPer)` and calls `StaticSaveAll()`;
-`ReadBackupFile` returns 0 for absent *and* for a failed read. Check `FileExists` first and keep the
-stored space on a failed read (the same guard the dynamic recall already uses).
-
-**B9 Save All's cleanup deletes a block the recall chose to keep.** `RestoreDynamicBlock`
-(`RegisterPersist.h:81`) avoids the tombstone when an unloadable DT file exists but never marks the
-slot Present, so `CleanupDynamicFiles` (`MemoryDynamic.h:106`) classifies it stale and deletes the
-`.DT_`/`.DV_` files on the next Save All. A failed read still ends in a deletion.
-
-**B10 `StorageClient.writeFile` deletes the target before renaming.** `storage_client.dart:219`
-calls `deleteFile(name)` then `renameFile(temp, name)`; a failed rename destroys the original file
-(and any registry it held) with only a failed item reported.
-
 **B11 Whole-file reads are capped at ~5952 B by the 8 KiB app TX ring, so the core's `.TABLE`
 (16384 B) can never be read.** `AppInterface.h:41` sizes the ring at 8192; CID 5 streams the whole
 file in one handler call at 88 wire bytes per fragment, so 93 fragments fit and 96 do not, and the
