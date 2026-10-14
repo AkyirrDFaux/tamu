@@ -123,27 +123,31 @@ public:
         return true;
     }
 
-    // Finds the first non-written file record index (first slot with offset 0xFFFFFFFF).
-    // Returns false when a flash read fails; on success `*index` is that slot, or the
-    // capacity when the table is full. Invalidated (0x00) holes are never reused, so this
-    // is the append position.
+    // Finds the index a new record goes into: the first slot that is FREE - an unwritten
+    // 0xFFFFFFFF slot, or a 0x00 hole left by an invalidation. Reusing holes is what keeps the DAS
+    // usable: its table is one page of four records and a write spends two of them (the app creates
+    // a temporary file, then renames it), so with holes left unused a few writes fill the table and
+    // force a move. Returns false when a flash read fails; on success `*index` is that slot, or the
+    // capacity when the table is full. Entry 0 (the table itself) is never a file slot.
     bool GetEndOfFiletable(uint32_t *Index)
     {
         if (FileTableOffset == 0) { *Index = 0; return true; }
         uint32_t Capacity = TableCapacity();
-        for (uint32_t i = 0; i < Capacity; i++) {
+        for (uint32_t i = 1; i < Capacity; i++) {
             FileRecord Entry;
             if (!ReadTableEntry(i, &Entry))
                 return false;
-            if (Entry.Offset == 0xFFFFFFFF) { *Index = i; return true; }
+            if (FileSlotIsFree(Entry.Offset)) { *Index = i; return true; }
         }
         *Index = Capacity;
         return true;
     }
 
-    // Writes a new file record at the end of the table. If no space is available, the table
-    // is filtered and moved (MoveFiletable), then the write is retried.
-    bool WriteFileRecord(const FileRecord &NewRecord)
+    // Writes a new file record into the first free slot. If no space is available the table is
+    // filtered and moved (MoveFiletable), then the write is retried. `Index`, when passed, receives
+    // the slot the record landed in: with holes reused it is no longer necessarily the last record,
+    // and the callers that invalidate the superseded generations need to know which one they wrote.
+    bool WriteFileRecord(const FileRecord &NewRecord, uint32_t *Index = nullptr)
     {
         uint32_t Slot;
         if (!GetEndOfFiletable(&Slot))
@@ -156,8 +160,32 @@ public:
             if (Slot >= TableCapacity())
                 return false;
         }
-        return WriteTableBytes(FileTableOffset + Slot * TABLE_ENTRY_SIZE,
-                               &NewRecord, TABLE_ENTRY_SIZE);
+
+        // A reused hole still holds the invalidated record's size and name, and its offset word is
+        // programmed first, so writing the new record in one pass could leave a VALID offset paired
+        // with the previous file's size if power drops mid-write: a record that reads as a complete
+        // file over someone else's bytes. A fresh 0xFFFFFFFF slot has no record to inherit, so only
+        // the reuse takes the long way. Write the name and size with the offset held at 0x00 (the
+        // slot still reads as invalid), confirm they landed, then commit the offset word alone.
+        FileRecord Existing;
+        if (ReadTableEntry(Slot, &Existing) && Existing.Offset == 0x00000000) {
+            FileRecord Blank = NewRecord;
+            Blank.Offset = 0x00000000;
+            if (!WriteTableBytes(FileTableOffset + Slot * TABLE_ENTRY_SIZE, &Blank, TABLE_ENTRY_SIZE))
+                return false;
+            FileRecord Back;
+            if (!ReadTableEntry(Slot, &Back) || memcmp(&Back, &Blank, TABLE_ENTRY_SIZE) != 0)
+                return false; // a torn first step must not be promoted by the offset write
+            if (!WriteTableBytes(FileTableOffset + Slot * TABLE_ENTRY_SIZE,
+                                 &NewRecord.Offset, sizeof(NewRecord.Offset)))
+                return false;
+        } else if (!WriteTableBytes(FileTableOffset + Slot * TABLE_ENTRY_SIZE,
+                                    &NewRecord, TABLE_ENTRY_SIZE)) {
+            return false;
+        }
+
+        if (Index) *Index = Slot;
+        return true;
     }
 
     // Invalidates EVERY file record matching `name` in place by zeroing the offset word
@@ -251,19 +279,16 @@ public:
         // memcpy would copy its NUL terminator into the record (breaking later
         // 8-byte memcmp lookups and the app's file-type detection).
         PackName(NewName, Rec.Name);
-        if (!WriteFileRecord(Rec))
-            return false;
 
-        // The appended record sits at the current end; invalidate every OTHER valid
-        // record still carrying either name (the previous generation under each). If the
-        // end cannot be re-read the new record stays live and the old one is untouched
-        // (no data loss); report the failure.
+        // Invalidate every OTHER valid record still carrying either name (the previous generation
+        // under each), by the index the new record actually landed in - with holes reused it is not
+        // necessarily the last record any more.
         uint32_t Appended;
-        if (!GetEndOfFiletable(&Appended) || Appended == 0)
+        if (!WriteFileRecord(Rec, &Appended))
             return false;
         return InvalidateMatchingExcept(
             [&](const char *EntryName) { return NameMatch(EntryName, OldName) || NameMatch(EntryName, NewName); },
-            Appended - 1);
+            Appended);
     }
 
     // Moves the full table into a fresh area of the same, fixed size (B15). Finds a new
@@ -491,13 +516,11 @@ public:
             // would also remove the record just appended and orphan the data.
             FileRecord NewRecord = Entry;
             NewRecord.Size = NewSize;
-            if (!WriteFileRecord(NewRecord))
-                return false;
             uint32_t Appended;
-            if (!GetEndOfFiletable(&Appended) || Appended == 0)
+            if (!WriteFileRecord(NewRecord, &Appended))
                 return false;
             return InvalidateMatchingExcept([&](const char *EntryName) { return NameMatch(EntryName, Name); },
-                                            Appended - 1);
+                                            Appended);
         }
 
         // Enlargement: reject before scanning if the file's linear range would leave the data
@@ -523,15 +546,13 @@ public:
             // cannot relocate the table onto it (same rule as CreateFile).
             PendingOffset = TailOffset;
             PendingBlocks = TailBlocks;
-            bool Ok = WriteFileRecord(NewRecord);
+            uint32_t Appended;
+            bool Ok = WriteFileRecord(NewRecord, &Appended);
             PendingOffset = 0;
             PendingBlocks = 0;
             if (!Ok) return false;
-            uint32_t Appended;
-            if (!GetEndOfFiletable(&Appended) || Appended == 0)
-                return false;
             return InvalidateMatchingExcept([&](const char *EntryName) { return NameMatch(EntryName, Name); },
-                                            Appended - 1);
+                                            Appended);
         }
 
         // Extending in place is not possible.
@@ -667,6 +688,7 @@ private:
         return STORAGE_FLASH_SIZE;
     }
 
+#if STORAGE_TABLE_CHUNK > 1
     // The table is walked through a staging window. An esp_partition_read costs ~34 us of CALL
     // overhead whatever its length (measured on the rig: the 1024-record table read one record at
     // a time cost 34.8 ms per scan), and a scan happens on every file lookup and every
@@ -713,6 +735,24 @@ private:
         *Entry = TableCache[Idx - TableCacheBase];
         return true;
     }
+#else
+    // A device whose whole table is a handful of records stages nothing: the window would cost RAM
+    // it does not have and save no flash calls worth counting. Read and write straight through, so
+    // the call sites above are identical either way.
+    void DropTableCache() {}
+
+    bool WriteTableBytes(uint32_t Offset, const void *Data, uint32_t Size)
+    {
+        return StorageFlashWrite(Offset, Data, Size);
+    }
+
+    bool ReadTableEntry(uint32_t Idx, FileRecord *Entry)
+    {
+        if (FileTableOffset == 0 || Idx >= TableCapacity())
+            return false;
+        return StorageFlashRead(FileTableOffset + Idx * TABLE_ENTRY_SIZE, Entry, TABLE_ENTRY_SIZE) == TABLE_ENTRY_SIZE;
+    }
+#endif
 
     // True when any valid file record (or the pending reservation) covers the page at `offset`.
     bool BlockUsed(uint32_t Offset)

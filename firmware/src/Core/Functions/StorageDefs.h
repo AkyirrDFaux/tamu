@@ -92,16 +92,17 @@ static inline uint32_t ClampFileLength(uint32_t Offset, uint32_t Length, uint32_
 
 // File-table records a scan stages per flash read. An esp_partition_read costs ~34 us of CALL
 // overhead whatever its length (measured on the rig: the 1024-record Tamu table read one record
-// at a time cost 34.8 ms per scan), so a walk of the table must fetch records in bulk. Sized per
-// device like the table itself - the Tamu's 16 KB table stages in four reads, the DAS's single
-// page in one - and it lives in RAM, never on a stack.
+// at a time cost 34.8 ms per scan), so a walk of the Tamu's 16 KB table must fetch records in bulk
+// - it stages 256 per call. 1 means NO staging: the DAS's table is a single page of four records,
+// so a window would save no flash calls worth counting and its 64 B come out of a 2 KB budget the
+// .bss and stack already share. Sized per device, and it lives in RAM, never on a stack.
 #ifndef STORAGE_TABLE_CHUNK
 #if defined(BOARD_Tamu_v2_0A)
 #define STORAGE_TABLE_CHUNK 256
 #elif defined(BOARD_Valu_v2_0)
 #define STORAGE_TABLE_CHUNK 64
 #else
-#define STORAGE_TABLE_CHUNK 4
+#define STORAGE_TABLE_CHUNK 1
 #endif
 #endif
 
