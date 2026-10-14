@@ -20,12 +20,17 @@ class BackupInputSpec {
   final double min;
   final double max;
   final double step;
+  // The named choices a dropdown input offers. They live in the SCR_XXX image's UI blob, so with
+  // no field here they survive the file codec and die in the semantic form: a restore rebuilds the
+  // image with the style but no labels, and a dropdown then renders as nothing at all.
+  final List<String> options;
 
   const BackupInputSpec({
     this.style = 'Auto',
     this.min = 0,
     this.max = 0,
     this.step = 0,
+    this.options = const [],
   });
 
   Map<String, dynamic> toJson() => {
@@ -33,6 +38,8 @@ class BackupInputSpec {
     'min': min,
     'max': max,
     'step': step,
+    // Omitted when empty, so an archive that never carried choices is written exactly as before.
+    if (options.isNotEmpty) 'options': options,
   };
 
   static BackupInputSpec fromJson(Map<String, dynamic> json) => BackupInputSpec(
@@ -40,6 +47,7 @@ class BackupInputSpec {
     min: (json['min'] as num?)?.toDouble() ?? 0,
     max: (json['max'] as num?)?.toDouble() ?? 0,
     step: (json['step'] as num?)?.toDouble() ?? 0,
+    options: (json['options'] as List?)?.map((o) => '$o').toList() ?? const [],
   );
 }
 
@@ -444,6 +452,7 @@ class BackupScript {
                   min: v.spec.min,
                   max: v.spec.max,
                   step: v.spec.step,
+                  options: v.spec.options,
                 )
               : null,
         );
@@ -484,6 +493,7 @@ class BackupScript {
                 min: v.ui!.min,
                 max: v.ui!.max,
                 step: v.ui!.step,
+                options: v.ui!.options,
               ),
       );
     }
