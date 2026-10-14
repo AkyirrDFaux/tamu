@@ -30,7 +30,14 @@ inline void RegisterService::StaticRecallAll() {
     uint8_t Buf[sizeof(StaticPer)];
     uint16_t Cnt = ReadBackupFile(StaticValuesName(), Buf, sizeof(Buf));
     if (Cnt < sizeof(StaticPer)) {
-        // No (or short) backup: keep the compiled-in defaults, but persist them now so the
+        // Absent is not the same as unreadable. A short read of a PRESENT .SV is a failed read, and
+        // answering it by writing would replace the saved settings with the compiled-in defaults -
+        // so only a genuinely absent file is created here. The stored space is left untouched.
+        if (Storage.FileExists(StaticValuesName()) != 0xFFFFFFFF) {
+            DeviceLog("STORAGE", "static recall: .SV unreadable, left as it is");
+            return;
+        }
+        // No mirror at all: keep the compiled-in defaults, but persist them now so the
         // mirror exists with the right size for the app's read-modify-write partial saves (a
         // direct write to an absent `.SV` cannot succeed).
         StaticSaveAll();
@@ -79,6 +86,9 @@ inline bool RegisterService::RestoreDynamicBlock(uint16_t i) {
         char Tn[8];
         DynamicTableName(i, Tn);
         if (Storage.FileExists(Tn) != 0xFFFFFFFF) {
+            // Keep the files: the slot must also be spared by the next Save All's orphan cleanup,
+            // which would otherwise delete a block it could not read.
+            ProtectDynamicSlot(i);
             DeviceLog("STORAGE", "recall: slot %d has an unreadable DT, kept",
                       (int)i);
             return true;

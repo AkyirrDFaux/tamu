@@ -224,7 +224,12 @@ class StorageClient {
       await deleteFile(temp);
       return false;
     }
-    // Replace only once the new content is safely staged.
+    // Replace only once the new content is safely staged. Try the rename first: the device
+    // replaces an existing name atomically, so a failure leaves the original file untouched.
+    // Only when that is refused - a device with no spare table record cannot rename onto an
+    // existing name - is the name freed first, which is the one case where a failure here can
+    // cost the original.
+    if (await renameFile(temp, name)) return true;
     await deleteFile(name);
     if (!await renameFile(temp, name)) {
       await deleteFile(temp);

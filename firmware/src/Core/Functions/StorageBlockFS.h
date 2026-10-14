@@ -22,11 +22,31 @@ public:
             return;
         }
 
-        // An unreadable pointer (FindFiletable returns false) is treated like "no table":
-        // the location is unknown, so (re)format rather than trust a partial result.
-        if (!FindFiletable(&FileTableOffset))
+        // A read that FAILS is not the same as a table that is absent, and only the second may be
+        // answered with a format: erasing on a transient read error would destroy every saved file.
+        // Retry once, then leave storage disabled for this session rather than wipe the partition.
+        if (!FindFiletable(&FileTableOffset) && !FindFiletable(&FileTableOffset)) {
+            DeviceLog("STORAGE", "table pointer unreadable - NOT formatting");
             FileTableOffset = 0;
-        if (FileTableOffset == 0 || !ValidateTable()) {
+            FileTableSize = 0;
+            return;
+        }
+        if (FileTableOffset == 0) {
+            // No table has ever been written: formatting is correct and creates one.
+            Format();
+            return;
+        }
+        if (!ValidateTable()) {
+            // The pointer read, so the table it names is present but does not validate. Separate a
+            // failed read of entry 0 - which says nothing about whether the files are there - from
+            // a genuinely invalid table before erasing anything.
+            FileRecord Entry0;
+            if (StorageFlashRead(FileTableOffset, &Entry0, TABLE_ENTRY_SIZE) != TABLE_ENTRY_SIZE) {
+                DeviceLog("STORAGE", "table entry 0 unreadable - NOT formatting");
+                FileTableOffset = 0;
+                FileTableSize = 0;
+                return;
+            }
             Format();
         }
     }

@@ -87,6 +87,16 @@ static void DeleteDynamicBlockFiles(uint16_t Idx)
     Storage.DeleteFile(Tvn);
 }
 
+// Slots whose DT file exists but could not be loaded. A failed read is not an orphan, so the
+// cleanup must not delete files it could not read: the next Save All would make that loss
+// permanent. Cleared per boot (this is boot-time state, not persisted).
+static bool DynamicSlotUnreadable[MAX_DYNAMIC_BLOCKS];
+static void ProtectDynamicSlot(uint16_t Idx)
+{
+    if (Idx < MAX_DYNAMIC_BLOCKS)
+        DynamicSlotUnreadable[Idx] = true;
+}
+
 // Cleans orphaned DT/DV files for tombstoned or beyond-registry slots. Called before
 // every save. File cleanup never changes registry positions. Enumerates only the DT/DV files
 // that actually exist instead of probing all 256 slots (their name derives the index).
@@ -106,6 +116,8 @@ static void CleanupDynamicFiles()
         bool Live = (Idx < DynamicBlockRegistry.BlockCount &&
                      DynamicBlockRegistry.Blocks[Idx].Present);
         if (Live) return;
+        // Could not be read, which is not the same as not being there.
+        if (DynamicSlotUnreadable[Idx]) return;
         for (uint16_t k = 0; k < StaleCount; k++)
             if (Stale[k] == Idx) return; // .DT_ and .DV_ name the same slot
         if (StaleCount < MAX_DYNAMIC_BLOCKS)
