@@ -134,9 +134,11 @@ if (!AppInterface.Connected) { ESP_LOGI("INIT","b1 storage"); }
 if (!AppInterface.Connected) { ESP_LOGI("INIT","b2 backups"); }
     LoadAllBackups(); // restores name + net-id from .SV too
 Script.BootLoad();         // loads SCR_XXX scripts flagged load-on-boot (Docs/Services/Script.md)
-PreloadVysiLayout();       // Vysi v1.0 layout file -> storage as "LAY_1"
-Vysi1BootLayout(Display1); // apply the (restored) layout file to each display
-Vysi1BootLayout(Display2);
+// The Vysi layout is not touched at boot: the layout file and the LayoutFile field belong to the
+// setup. A restore writes both, and the field's write trigger loads the layout as it lands, so a
+// boot-time re-apply only duplicated that work - and a boot is not where the layout changes.
+// Without it the display keeps the compiled-in default, which is byte-identical to the LAY_1 the
+// firmware used to preload here.
 if (!AppInterface.Connected) { ESP_LOGI("INIT","b3 appif"); }
     AppInterface.Init();
 
