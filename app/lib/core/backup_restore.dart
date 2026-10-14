@@ -918,9 +918,24 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
           if (!installed) {
             AppDiagnostics.log(
               'backup',
-              'provider install failed on ${providerDev.name} trid ${entry.trid}',
+              'provider install got no reply on ${providerDev.name} '
+              'trid ${entry.trid}',
             );
-            failItem(item, 'provider install failed on ${providerDev.name}');
+          }
+          // The reply is NOT an acceptance signal for a provider change: the device applies the
+          // entry and then answers with the source's current value, and that reply is lost often
+          // enough that a missing one says nothing (a live rig showed a SUCCESS reply with no
+          // entry, and no reply with the entry installed). Read the node's provider table back
+          // and require the entry, so the item is counted only when the node really carries it -
+          // otherwise the requester points at a source that never sends.
+          final present = (await nodeSubs.getProviderSubscriptions()).any(
+            (e) => e.trid == entry.trid,
+          );
+          if (!present) {
+            failItem(
+              item,
+              'provider entry missing on ${providerDev.name} trid ${entry.trid}',
+            );
             break;
           }
           writtenDevices.add(providerDev.id);
