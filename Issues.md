@@ -26,6 +26,100 @@ for this window, so this is doc accuracy only.
 
 ## B. Code fixes still open (the document is the specification)
 
+The 2026-10-14 audit of the storage system, the subscriptions service and the backup/restore loop
+(carried out read-only; the entries below are that audit's findings, the systemic rule stated once:
+**a failed or partial read must never delete, overwrite, or produce a wrong result**).
+
+**B7 `Storage.Init()` formats the whole partition when a read fails.** `StorageBlockFS.h:29` treats
+an unreadable table pointer as "no table" and calls `Format()`; `ValidateTable` (`:690`) also returns
+false on a failed 16-byte read of entry 0. One transient flash read error erases every saved file.
+Distinguish unreadable from empty (retry, or require the pointer *and* the table to read as empty).
+
+**B8 `StaticRecallAll` overwrites `.SV` with compiled-in defaults on a short or failed read.**
+`RegisterPersist.h:31` tests `Cnt < sizeof(StaticPer)` and calls `StaticSaveAll()`;
+`ReadBackupFile` returns 0 for absent *and* for a failed read. Check `FileExists` first and keep the
+stored space on a failed read (the same guard the dynamic recall already uses).
+
+**B9 Save All's cleanup deletes a block the recall chose to keep.** `RestoreDynamicBlock`
+(`RegisterPersist.h:81`) avoids the tombstone when an unloadable DT file exists but never marks the
+slot Present, so `CleanupDynamicFiles` (`MemoryDynamic.h:106`) classifies it stale and deletes the
+`.DT_`/`.DV_` files on the next Save All. A failed read still ends in a deletion.
+
+**B10 `StorageClient.writeFile` deletes the target before renaming.** `storage_client.dart:219`
+calls `deleteFile(name)` then `renameFile(temp, name)`; a failed rename destroys the original file
+(and any registry it held) with only a failed item reported.
+
+**B11 Whole-file reads are capped at ~5952 B by the 8 KiB app TX ring, so the core's `.TABLE`
+(16384 B) can never be read.** `AppInterface.h:41` sizes the ring at 8192; CID 5 streams the whole
+file in one handler call at 88 wire bytes per fragment, so 93 fragments fit and 96 do not, and the
+app's reassembler never completes (measured: 4096 B reads, 6144 B returns null). This is why every
+backup of the core has `scripts=0` and no layout files. Drain the ring during a stream, or let
+`Send` abort the read and report it - not a bus change.
+
+**B12 A failed flash read inside the read handler sends the previous fragment's bytes as content.**
+`Storage.h:126` discards `StorageFlashRead`'s result and sends `ContentLen` bytes from the shared
+`TxFrame`, so a partial read becomes a wrong result with no error signal.
+
+**B13 The write handler acknowledges fragments it never wrote.** `Storage.h:161-182`: an
+out-of-order/lost fragment or one past the file's end advances `WriteSeq` without writing, and the
+app advances its offset on any valid reply, so data is silently lost or written at the wrong offset.
+
+**B14 The restore's result contract hides dropped items.** `backup_restore.dart:703` skips any
+unready item before `done()`/`failItem()`, so it is counted in neither `written` nor `failed`:
+`failed 0` cannot distinguish a dropped entry from a successful one.
+
+**B15 Save All is issued only to devices that carried subscriptions.** `backup_restore.dart:578`
+skips a device with no subscription entries, so values restored to a subscription-less device stay
+in RAM and are lost at the next power cycle while the restore reports success.
+
+**B16 Helper failures are counted as success.** The provider-side install
+(`backup_restore.dart:864`), the dynamic-entry create (`:517`) and the script load
+(`:599`) all log a failure and continue; the item is still counted written.
+
+**B17 `.SV`/`.DT_*`/`.DV_*` are captured and restored as raw files as well as semantically.**
+`backup_capture.dart:46` excludes only `Script` files and `.SUBREQ`, so a foreign static layout can
+be written over a target's persistent space - the opposite of the rule the same function's comment
+states ("A file is archived only when it has no semantic form").
+
+**B18 The subscription re-registration chain.** `Main.h:191` re-registers at boot *before the bus
+is ever polled*, so those sends are guaranteed lost; the only other trigger is address assignment
+(`Device.h:536`), which never fires for a node that returns already addressed; the retry cadence
+then collapses from 100 ms to 60 s after 10 s of uptime and `LastValueMs` is never cleared, so a
+node that reboots after receiving one value gets no fast window. A network/presence trigger is
+missing. Measured 2026-10-14: the stored provider addresses are *not* stale (all four carry net 39,
+matching the live NetID 39, the `.SV` NetId byte 39 and both nodes' addresses), so the addresses are
+not the cause.
+
+**B19 An unrelated set rewrites `.SUBREQ` from the post-expiry table.** `SubscriptionsControl.h:219`
+saves on every set, so an entry dropped by a lease timeout is persisted by the next unrelated set -
+defeating the expiry fix - and if the timeout removed the last entry the save deletes the file.
+
+**B20 TRIDs are not range-checked.** `Dispatcher.h:80` routes a TRID >= `TRID_APP_BASE` to the app
+link instead of the requester, and `SubscriptionsControl.h:190` accepts any TRID, so a subscription
+whose TRID is out of `0x1000-0x1FFF` looks healthy but never writes its target. The project's own
+HIL tests use `0xFA00`/`0xFC00` (`hil_tests_partner.dart:166`), which is this hole.
+
+**B21 The DAS file table holds 4 records and never reuses holes.** `StorageDefs.h:35` gives the DAS a
+1-page (64 B) table = 4 records; `GetEndOfFiletable` (`StorageBlockFS.h:113`) accepts only 0xFFFFFFFF
+so invalidation holes are never reused, and the app's create-temp-then-rename needs 5 records. The
+measured "16 B writes, 48 B fails" is therefore a *record* limit, not a size limit.
+
+**B22 Round-trip fidelity gaps in the archive.** Script dropdown choices are not in the semantic
+model (`backup_script.dart:18`); provider subscriptions are captured but never restored
+(`backup_format.dart:199`); a script whose image fails to parse is kept as a binary and then dropped
+by the restore, which skips every `kind == 'Script'` file (`backup_capture.dart:33`,
+`backup_restore.dart:441`); and "Include device files" off silently drops all scripts, which are
+captured only from the file list.
+
+**B23 The read handler's fragment-count arithmetic overflows for an untrusted file size.**
+`Storage.h:114` narrows `(TotalContent + ContentCap - 1) / ContentCap` to uint16 and turns a
+wrapped 0 into a single 64-byte fragment, so a corrupt size reads as a complete short file.
+
+**B24 Boot restores dynamic blocks with an O(256 x table-capacity) scan.** `Dispatcher.h:167` probes
+all 256 slots and every probe walks all 1024 table records (`StorageBlockFS.h:94`). Not a data-loss
+defect, but it is the cost behind the slow boot and it interacts with any retry added for B7/B8.
+
+
 **B1 Router and branch broadcast are documented and unimplemented.** - **scope settled**: after the beta. The rig has no multi-bus device to test a tree topology on. `RSBus and Packets.md:3-7` and
 `Data Formats.md:37` (`0x3FE`) describe a router tree; `Dispatcher.h:36-40` says the multi-bus topology
 is not implemented and `Docs/Services/Router.md` is a stub.
