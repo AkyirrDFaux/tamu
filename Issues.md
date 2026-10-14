@@ -111,6 +111,16 @@ by the restore, which skips every `kind == 'Script'` file (`backup_capture.dart:
 `backup_restore.dart:441`); and "Include device files" off silently drops all scripts, which are
 captured only from the file list.
 
+**Resolution (2026-10-14, `1ddb081`):** the codec now carries `options` in both directions and omits
+the key when empty, so every capture from here on keeps a dropdown's choices; a semantic round trip
+is covered by a test and the host suite is unchanged. The existing archive could not be repaired
+from its own content: `SCR_004`'s image (4676 B) holds the script, its variables and its names but
+no choice labels, so slot 4's options were already gone when the archive was captured and have to
+be re-authored in `1_Tamu_v2.0A.json`'s `inputs[].ui.options` (the images are a cache;
+`rebuild.dart` regenerates them). The other three parts of this entry - provider subscriptions
+captured but never restored, a script whose image fails to parse being dropped by the restore, and
+"Include device files" off dropping all scripts - are untouched and still open.
+
 **B23 The read handler's fragment-count arithmetic overflows for an untrusted file size.** *(Fixed in `1ba7a02`: the count is computed without the overflow and an inexpressible size fails the read.)*
 `Storage.h:114` narrows `(TotalContent + ContentCap - 1) / ContentCap` to uint16 and turns a
 wrapped 0 into a single 64-byte fragment, so a corrupt size reads as a complete short file.
