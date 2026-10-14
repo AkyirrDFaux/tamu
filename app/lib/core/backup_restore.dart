@@ -201,6 +201,11 @@ List<int>? resolveEntryBytes(BackupEntry source, LiveEntry target) {
 
 enum RestoreKind { entry, script, subscription, sndb, file }
 
+/// The issue text for an entry the restore skips BY DESIGN - a read-only register the device owns
+/// (its identity, its live readings). It is informational, not a lost item, so the apply never
+/// counts it as a failure; every other issue means an item the restore was asked to write.
+const readOnlyIssue = 'Read Only';
+
 /// A resolved restore target for one source item.
 class RestoreItem {
   final RestoreKind kind;
@@ -282,7 +287,7 @@ class RestorePlan {
         case RestoreKind.entry:
           final entry = item.entry!;
           if (entry.readOnly) {
-            item.issue = 'Read Only';
+            item.issue = readOnlyIssue;
             break;
           }
           final override = blockTargets[blockKey(item.device.id, item.block!)];
@@ -295,7 +300,7 @@ class RestorePlan {
           if (item.targetEntry == null) {
             item.issue = 'No matching entry';
           } else if (item.targetEntry!.readOnly) {
-            item.issue = 'Read Only';
+            item.issue = readOnlyIssue;
           } else {
             // Validate the value now and keep the bytes for the write, so `applyRestorePlan`
             // does not recompute the same decode.
@@ -530,21 +535,30 @@ Future<int> prepareDynamicBlocks(RestorePlan plan) async {
           flags: flagsFromWords(entry.flags),
         );
         final zero = List<int>.filled(entry.size, 0);
-        if (entry.keyIndex == 0) {
-          await reg.appendDynamicEntry(
-            dyn,
-            meta,
-            zero,
-            index: entry.fieldIndex,
+        final added = entry.keyIndex == 0
+            ? await reg.appendDynamicEntry(
+                dyn,
+                meta,
+                zero,
+                index: entry.fieldIndex,
+              )
+            : await reg.writeDynamicEntry(
+                dyn,
+                entry.fieldIndex,
+                entry.keyIndex,
+                meta,
+                zero,
+              );
+        if (added == null) {
+          // The entry the backup carries could not be created, so its value has no address to
+          // land at either; leaving the item unready makes the apply report it as a failure,
+          // instead of the failed create counting as a success and the entry vanishing.
+          AppDiagnostics.log(
+            'backup',
+            'dynamic entry ${block.name}/${entry.field}[${entry.key}] '
+            'not created',
           );
-        } else {
-          await reg.writeDynamicEntry(
-            dyn,
-            entry.fieldIndex,
-            entry.keyIndex,
-            meta,
-            zero,
-          );
+          continue;
         }
         created++;
       }
@@ -569,25 +583,20 @@ Future<int> prepareDynamicBlocks(RestorePlan plan) async {
   return created;
 }
 
-/// Persists the subscription tables a restore has just written.
+/// Saves every device a restore has written to.
 ///
-/// A requester entry lives on the core and its provider entry on the node, and both are held in
-/// RAM until the device is told to save. Without this the tables are rebuilt in memory, work until
-/// the next power cycle, and then vanish: the core recalls its requester entries and points them
-/// at providers the nodes no longer carry, so nothing updates.
-Future<void> _persistSubscriptions(RestorePlan plan) async {
-  for (final source in plan.devices) {
-    final target = plan.deviceTargets[source.id];
-    if (target == null) continue;
-    if (source.requesterSubscriptions.isEmpty &&
-        source.providerSubscriptions.isEmpty) {
-      continue;
-    }
-    await RegisterClient(deviceId: target.id).saveAll();
+/// A write sits in RAM until the device is told to save. Without this the whole run works until
+/// the next power cycle and then vanishes: the core recalls requester entries pointing at
+/// providers the nodes no longer carry, a node forgets the provider entry that fed one, and a
+/// device that carried no subscription entries at all loses every value it was just given. So
+/// every device the run touched is saved, not only the ones that carried subscription tables.
+Future<void> _persistWrites(Set<int> deviceIds) async {
+  for (final id in deviceIds) {
+    await RegisterClient(deviceId: id).saveAll();
   }
 }
 
-/// Brings up the scripts a restore wrote.
+/// Brings up the scripts a restore wrote and reports each one's outcome.
 ///
 /// A restored script is only a stored file: the device runs what it loads, not what it holds. The
 /// load-on-boot scripts come back at the next boot, but a function library is not one, so nothing
@@ -595,37 +604,53 @@ Future<void> _persistSubscriptions(RestorePlan plan) async {
 /// faulted earlier also STAYS in Error until it is explicitly started, and a restore does not
 /// reboot, so without this a restored rig sits with its automation dead while the restore reports
 /// success. Load the libraries first (their users link against them as they load), then start the
-/// ones marked to run on load.
-Future<int> _bringUpScripts(RestorePlan plan) async {
-  var started = 0;
-  for (final source in plan.devices) {
-    final target = plan.deviceTargets[source.id];
-    if (target == null || source.scripts.isEmpty) continue;
-    final client = ScriptClient(deviceId: target.id);
-    final libraries = source.scripts
-        .where((s) => s.properties.contains('Function library'))
+/// ones marked to run on load. The items are the scripts THIS run wrote, so a script the user left
+/// out is never loaded over whatever the device already holds; and a load that fails is returned
+/// with its reason, so the apply can count it rather than let the file write stand for a script
+/// that never runs.
+Future<List<({RestoreItem item, String? reason})>> _bringUpScripts(
+  List<RestoreItem> items,
+) async {
+  final byDevice = <int, List<RestoreItem>>{};
+  for (final item in items) {
+    byDevice.putIfAbsent(item.targetDevice!.id, () => []).add(item);
+  }
+  final results = <({RestoreItem item, String? reason})>[];
+  for (final group in byDevice.entries) {
+    final client = ScriptClient(deviceId: group.key);
+    final libraries = group.value
+        .where((i) => i.script!.properties.contains('Function library'))
         .toList();
     final ordered = [
       ...libraries,
-      ...source.scripts.where((s) => !libraries.contains(s)),
+      ...group.value.where((i) => !libraries.contains(i)),
     ];
-    for (final script in ordered) {
-      if (script.slot < 0) continue;
+    for (final item in ordered) {
+      final slot = item.script!.slot;
+      // A script whose slot is unknown was written but cannot be loaded; there is no slot to load
+      // it into, which is not a failure of the restore.
+      if (slot < 0) {
+        results.add((item: item, reason: null));
+        continue;
+      }
       // Unload and reload so the script links against the library as it now stands. A script the
       // device loaded at boot did so before the library was loaded, and a stale link leaves its
       // global-function calls dead while the script itself reports no error. The file id and the
       // loaded slot are independent; a restored file sits at its own slot.
-      if ((await client.loadedSlotMap()).containsKey(script.slot)) {
-        await client.unload(script.slot);
+      if ((await client.loadedSlotMap()).containsKey(slot)) {
+        await client.unload(slot);
       }
-      if (!await client.load(script.slot, script.slot)) continue;
-      if (script.properties.contains('Run on load')) {
-        await client.setAction(script.slot, ScriptAction.start);
-        started++;
+      if (!await client.load(slot, slot)) {
+        results.add((item: item, reason: 'script $slot would not load'));
+        continue;
       }
+      if (item.script!.properties.contains('Run on load')) {
+        await client.setAction(slot, ScriptAction.start);
+      }
+      results.add((item: item, reason: null));
     }
   }
-  return started;
+  return results;
 }
 
 /// Applies the ready + selected items of [plan]. Returns the number of written
@@ -643,6 +668,12 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
   final storage = <int, StorageClient>{};
   final subscriptions = <int, SubscriptionClient>{};
   final sndbWritten = <String>{};
+  // The devices this run has actually written to. A write sits in RAM until the device is told to
+  // save, so the run saves every device it touched at the end (B15).
+  final writtenDevices = <int>{};
+  // Script items whose FILE is written but whose outcome is decided by the load at the end: the
+  // load runs after the values are in place, so the item is counted only once it has loaded.
+  final scriptItems = <RestoreItem>[];
   // TRIDs this run has handed out. The table read can lag the writes made moments before it, so
   // trusting the read alone lets two items choose the same TRID and the second silently replaces
   // the first - which loses an entry when restoring onto a wiped device.
@@ -666,6 +697,7 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
   void done(bool ok, RestoreItem item, String what) {
     if (ok) {
       written++;
+      writtenDevices.add(item.targetDevice!.id);
     } else {
       failItem(item, what);
     }
@@ -701,7 +733,17 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
   // for that.)
 
   for (final item in ordered) {
-    if (!item.selected || !item.ready) continue;
+    // An unready item is never written, so if it is skipped here it is counted in neither
+    // `written` nor `failed` - a caller reading `failed 0` cannot tell it was dropped, which is
+    // how a restore reported success while losing entries. Only the by-design read-only skip is
+    // not a loss; every other issue means an item the restore was asked to write.
+    if (!item.ready) {
+      if (item.issue != readOnlyIssue) {
+        failItem(item, '${describe(item)}: ${item.issue}');
+      }
+      continue;
+    }
+    if (!item.selected) continue;
     final target = item.targetDevice!;
     switch (item.kind) {
       case RestoreKind.entry:
@@ -763,18 +805,23 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
         final slot = item.script!.slot;
         final name = scriptFileName(slot);
         try {
-          done(
-            await store.writeFile(name, item.script!.toDraft().toImage()),
-            item,
-            describe(item),
-          );
+          if (!await store.writeFile(name, item.script!.toDraft().toImage())) {
+            failItem(item, describe(item));
+            break;
+          }
         } catch (error) {
           AppDiagnostics.log(
             'backup',
             'script ${item.script!.functionName} failed: $error',
           );
           failItem(item, describe(item));
+          break;
         }
+        writtenDevices.add(target.id);
+        // The file is only half of a script: the device runs what it LOADS, and the load happens
+        // last, after the values are in place so the script reads them. Account for the item there,
+        // so a load that fails is reported instead of hidden behind the successful write.
+        scriptItems.add(item);
       case RestoreKind.subscription:
         final sub = subscriptions.putIfAbsent(
           target.id,
@@ -841,11 +888,18 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
           deadzone: s.deadzone,
         );
         final ok = await sub.setRequesterSubscription(index, entry: entry);
+        if (!ok) {
+          failItem(item, describe(item));
+          break;
+        }
+        writtenDevices.add(target.id);
 
         // A subscription has two sides: the node that sends must carry a provider entry with the
         // SAME TRID, or the requester table points at a source that never arrives. The device
-        // takes the requester's address from the packet source, so only the table is sent.
-        if (ok && providerDev != null) {
+        // takes the requester's address from the packet source, so only the table is sent. A
+        // provider entry that will not install leaves the requester pointing at a source that
+        // never sends, so the item is a failure - not a success hidden behind the requester write.
+        if (providerDev != null) {
           final nodeSubs = subscriptions.putIfAbsent(
             providerDev.id,
             () => SubscriptionClient(deviceId: providerDev.id),
@@ -866,9 +920,12 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
               'backup',
               'provider install failed on ${providerDev.name} trid ${entry.trid}',
             );
+            failItem(item, 'provider install failed on ${providerDev.name}');
+            break;
           }
+          writtenDevices.add(providerDev.id);
         }
-        done(ok, item, describe(item));
+        written++;
       case RestoreKind.sndb:
         final e = item.sndbEntry!;
         final key = '${e.serial}:${e.address}';
@@ -905,8 +962,15 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
         }
     }
   }
-  // Last, so the scripts read the values this restore has just written.
-  await _persistSubscriptions(plan);
-  await _bringUpScripts(plan);
+  // Every device this run wrote to is saved - the writes sit in RAM until then - and the scripts
+  // are loaded last, so they read the values the restore has just written.
+  await _persistWrites(writtenDevices);
+  for (final brought in await _bringUpScripts(scriptItems)) {
+    if (brought.reason == null) {
+      written++;
+    } else {
+      failItem(brought.item, brought.reason!);
+    }
+  }
   return (written: written, failed: failed, failures: failures);
 }
