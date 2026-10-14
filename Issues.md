@@ -117,9 +117,20 @@ is covered by a test and the host suite is unchanged. The existing archive could
 from its own content: `SCR_004`'s image (4676 B) holds the script, its variables and its names but
 no choice labels, so slot 4's options were already gone when the archive was captured and have to
 be re-authored in `1_Tamu_v2.0A.json`'s `inputs[].ui.options` (the images are a cache;
-`rebuild.dart` regenerates them). The other three parts of this entry - provider subscriptions
+'rebuild.dart' regenerates them). The other three parts of this entry - provider subscriptions
 captured but never restored, a script whose image fails to parse being dropped by the restore, and
 "Include device files" off dropping all scripts - are untouched and still open.
+
+**Second resolution (2026-10-14, `9a18b6c`), all three parts:** provider-side subscriptions are now
+planned and installed via CID 0x21 (ProviderSet), which takes the requester address from the payload
+and the TRID from the frame, unlike the 0x01 Change path that cannot name a remote requester;
+`restoresAsRawFile()` writes a Script file raw when no semantic script exists for its slot, so an
+unparsable image is no longer dropped; and "Include device files" off now governs only raw device
+files, never scripts. Host suite 230/1 (baseline 227/1). On the rig the plan grew by the four
+DAS provider entries - the fix is live - but each reported `Unknown subscription id`: the archive
+predates the recorded `trid`, so nothing can key an install. Same shape as the emote labels: that
+data exists only on the device, so the remedy is a fresh capture from the rig, after which the
+provider items should install instead of failing.
 
 **B23 The read handler's fragment-count arithmetic overflows for an untrusted file size.** *(Fixed in `1ba7a02`: the count is computed without the overflow and an inexpressible size fails the read.)*
 `Storage.h:114` narrows `(TotalContent + ContentCap - 1) / ContentCap` to uint16 and turns a
