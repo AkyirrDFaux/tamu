@@ -213,17 +213,25 @@ Future<List<VisitedBlock>?> walkDeviceBlocks(RegisterClient reg) async {
         ),
       );
     } else {
+      // Enumerate the block's real (field, key) pairs. The field indexes need not be contiguous:
+      // the LED/Button block carries field 0 and field 3 with 1-2 reserved and absent, so a
+      // `0..size-1` sweep stops at the first gap and silently drops every field past it. A
+      // captured LED State entry then has no live counterpart and the restore reports it as
+      // unmatched, while a fresh capture drops it altogether.
+      final fieldKeys = await reg.enumerateFieldKeys(type, b.inst) ?? const <int>[];
       final visited = <VisitedField>[];
-      for (var field = 0; field < b.meta.size; field++) {
-        final read = await reg.readBlockField(type, b.inst, field, 0);
+      for (final fk in fieldKeys) {
+        final field = fk >> 8;
+        final key = fk & 0xFF;
+        final read = await reg.readBlockField(type, b.inst, field, key);
         if (read == null) continue;
         final info = _staticFieldInfo(type, field);
         visited.add(
           VisitedField(
             field: field,
-            key: 0,
+            key: key,
             fieldName: info?.name ?? 'Field $field',
-            keyName: 'Key 0',
+            keyName: 'Key $key',
             meta: read.meta,
             info: info,
             value: read.value,

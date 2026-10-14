@@ -144,7 +144,14 @@ void main() {
       print('SAVE-ALL ${d.name}#${d.id} -> $saved');
     }
 
-    // Verify what landed on each device.
+    // Verify what landed on each device, collecting the tables the checks below need: a
+    // requester entry's TRID must exist as a provider entry on the node its provider address
+    // names (both halves, or the subscription never sends).
+    final requesterProviderNode = <int, int>{}; // trid -> provider node number
+    final providerTrids = <int, Set<int>>{}; // node number -> the trids it carries
+    final filesByDevice = <int, Set<String>>{};
+    final dynamicByDevice = <int, Set<String>>{};
+    final scriptErrors = <String>[];
     for (final d in env.rig.devices) {
       final reg = RegisterClient(deviceId: d.id);
       final st = StorageClient(deviceId: d.id);
@@ -154,11 +161,18 @@ void main() {
       final blocks = await reg.readDynamicBlocks();
       final req = await subs.getRequesterSubscriptions();
       final prov = await subs.getProviderSubscriptions();
+      filesByDevice[d.id] = (files?.map((f) => f.name).toSet()) ?? <String>{};
+      dynamicByDevice[d.id] = (blocks?.map((b) => b.name).toSet()) ?? <String>{};
+      providerTrids[idDevice(d.id)] = {for (final p in prov) p.trid};
+      for (final r in req) {
+        requesterProviderNode[r.trid] = idDevice(r.providerAddr);
+      }
       final states = <String>[];
       for (var slot = 0; slot < 12; slot++) {
         final r = await sc.readState(slot);
         if (r != null) {
           states.add('$slot:state=${r.state}${r.hasError ? " ERR" : ""}');
+          if (r.hasError) scriptErrors.add('${d.name} slot $slot');
         }
       }
       for (final r in req) {
@@ -186,6 +200,46 @@ void main() {
         'scripts=[${states.join(", ")}]',
       );
     }
-    expect(result.failed, 0, reason: 'every selected item must apply');
+    // The setup restore reports success whether or not the scenario ends up working, so these
+    // are the checks that separate "the writes landed" from "the rig runs the setup".
+
+    // 1. Every planned item accounts for itself: an unresolved item is reported as a failure
+    // carrying its reason, so `failed 0` can never describe a run that dropped something.
+    final unready = plan.items
+        .where((i) => !i.ready && i.issue != readOnlyIssue)
+        .length;
+    expect(
+      result.failed,
+      greaterThanOrEqualTo(unready),
+      reason: 'every unresolved item must be reported as a failure',
+    );
+
+    // 2. Both halves of every subscription: the node a requester entry names must carry a
+    // provider entry with the same TRID, or the requester points at a source that never sends.
+    for (final entry in requesterProviderNode.entries) {
+      expect(
+        providerTrids[entry.value] ?? const <int>{},
+        contains(entry.key),
+        reason:
+            'requester trid 0x${entry.key.toRadixString(16)} has no provider entry '
+            'on node ${entry.value}',
+      );
+    }
+
+    // 3. The scenario actually runs: every restored script loaded without an error, the layout
+    // file the display names landed, and the archive's dynamic blocks exist on their targets.
+    expect(scriptErrors, isEmpty, reason: 'restored scripts must load without error');
+    expect(filesByDevice[1] ?? const <String>{}, contains('LAY_1'));
+    for (final source in devices) {
+      final target = plan.deviceTargets[source.id];
+      if (target == null) continue;
+      for (final b in source.blocks.where((b) => isDynamicType(b.typeIndex))) {
+        expect(
+          dynamicByDevice[target.id] ?? const <String>{},
+          contains(b.name),
+          reason: 'dynamic block ${b.name} is missing on ${target.name}',
+        );
+      }
+    }
   }, timeout: const Timeout(Duration(minutes: 6)));
 }

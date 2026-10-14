@@ -928,9 +928,17 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
           // entry, and no reply with the entry installed). Read the node's provider table back
           // and require the entry, so the item is counted only when the node really carries it -
           // otherwise the requester points at a source that never sends.
-          final present = (await nodeSubs.getProviderSubscriptions()).any(
-            (e) => e.trid == entry.trid,
-          );
+          // A node that has just re-appeared carries no provider table until the core re-pushes
+          // it, so give the entry a moment before calling it missing.
+          var present = false;
+          for (var attempt = 0; attempt < 3 && !present; attempt++) {
+            if (attempt > 0) {
+              await Future<void>.delayed(const Duration(milliseconds: 300));
+            }
+            present = (await nodeSubs.getProviderSubscriptions()).any(
+              (e) => e.trid == entry.trid,
+            );
+          }
           if (!present) {
             failItem(
               item,
