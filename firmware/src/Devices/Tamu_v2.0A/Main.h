@@ -170,12 +170,11 @@ LED.Setup();
     PinHigh(LED_NOTIFICATION_PIN);
     PinModeInput(LED_NOTIFICATION_PIN);
 
-    // Re-apply every restored field whose effect is its write (the LED state, the fan PWM
-    // frequency, the IMU ranges, the display layout): a recall restores the RAM values but a boot
-    // runs no trigger, so each of those would otherwise sit unapplied until something wrote it
-    // again. This runs here, after the hardware setup above, because those triggers drive real
-    // peripherals - and it is what replaced the hand-written LED re-apply that used to sit here.
-    Register.ReplayFieldTriggers();
+    // Bring the LED button up on the value the block carries now (its volatile default after a
+    // boot - the field is a trigger, not a persistent one) so the pin matches the field from the
+    // start. This is the block's own bring-up, alongside the module setups above rather than a
+    // generic re-application of the fields the recall restored.
+    OnLEDStateChange(StaticBlockRegistry[0], 3, (const void *)&StaticVol.LedButton.LEDState, sizeof(bool));
 
     // Restored net-ID (LoadAllBackups), or a random one: 0 and 0x3F are not allowed.
     if (DeviceStatus.NetId == 0 || DeviceStatus.NetId >= 0x3F)

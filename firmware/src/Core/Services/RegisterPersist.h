@@ -26,32 +26,6 @@ inline bool RegisterService::StaticSaveAll() {
     return WriteBackupFile(StaticValuesName(), (const uint8_t *)&StaticPer, sizeof(StaticPer));
 }
 
-// A recall restores the RAM values but runs no trigger - the triggers are write callbacks, not
-// state - so a field whose effect IS the write would sit unapplied until something wrote it
-// again: the LED state, the fan PWM frequency, the IMU ranges, the display's layout file. Setting
-// each trigger-bearing field from its own restored value is what makes a boot reproduce the state
-// a write produces, and it is why no boot step has to patch such a field by hand.
-//
-// The caller runs this AFTER the board's hardware setup: these triggers drive real peripherals
-// (the PWM timer, the IMU over I2C, the LED pin) which are not up when the recall itself runs.
-inline void RegisterService::ReplayFieldTriggers() {
-    for (size_t b = 0; b < StaticBlockNum; b++) {
-        const StaticBlockDescriptor &Blk = StaticBlockRegistry[b];
-        if (Blk.Schema == nullptr) continue;
-        for (uint16_t e = 0; e < Blk.Schema->EntryCount; e++) {
-            const uint16_t Fk = Blk.Schema->Entries[e].FieldKey;
-            const uint8_t Field = FieldOf(Fk);
-            const uint8_t Key = KeyOf(Fk);
-            if (Blk.FindTrigger(Field, Key) == nullptr) continue;
-            const FieldResult Fr = Blk.Get(Field, Key);
-            if (Fr.Data == nullptr) continue;
-            // Set dispatches to the trigger when the field has one; a read-only trigger field is
-            // refused there, and a value the trigger rejects is left as the recall restored it.
-            Blk.Set(Field, Key, Fr.Data, Fr.Descriptor.Size, Fr.Descriptor);
-        }
-    }
-}
-
 inline void RegisterService::StaticRecallAll() {
     uint8_t Buf[sizeof(StaticPer)];
     uint16_t Cnt = ReadBackupFile(StaticValuesName(), Buf, sizeof(Buf));

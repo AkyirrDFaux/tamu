@@ -12,7 +12,17 @@ static int FanIndex(const StaticBlockDescriptor &Block)
 }
 
 // Configures LEDC timers and channels for both fans (25 kHz PWM on pins 6 and 10).
+// Brings both fan timers up on the FREQUENCY THE RECALL RESTORED, StaticPer.Fan[].PWMFreq being
+// a persistent field. Starting them on a constant instead left the stored value unused: the fan
+// only ever ran at the constant, and a restored frequency that differed from it was ignored.
+// A blank persistent space recalls 0, which is not a valid LEDC frequency, so that case keeps
+// the 25 kHz default intended for a device with nothing stored yet.
 void SetupFanPWM() {
+    uint32_t Freq0 = StaticPer.Fan[0].PWMFreq;
+    uint32_t Freq1 = StaticPer.Fan[1].PWMFreq;
+    if (Freq0 == 0) Freq0 = 25000;
+    if (Freq1 == 0) Freq1 = 25000;
+
     // Fan 1 (Timer 0, Channel 0, Pin 6)
     ledc_channel_config_t Chan1 = {
         .gpio_num = 6,
@@ -32,7 +42,7 @@ void SetupFanPWM() {
         .speed_mode = LEDC_LOW_SPEED_MODE,
         .duty_resolution = LEDC_TIMER_10_BIT,
         .timer_num = LEDC_TIMER_0,
-        .freq_hz = 25000,
+        .freq_hz = Freq0,
         .clk_cfg = LEDC_AUTO_CLK,
         .deconfigure = false
     };
@@ -58,7 +68,7 @@ void SetupFanPWM() {
         .speed_mode = LEDC_LOW_SPEED_MODE,
         .duty_resolution = LEDC_TIMER_10_BIT,
         .timer_num = LEDC_TIMER_1,
-        .freq_hz = 25000,
+        .freq_hz = Freq1,
         .clk_cfg = LEDC_AUTO_CLK,
         .deconfigure = false
     };

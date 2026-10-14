@@ -43,10 +43,6 @@ public:
 
     // Called by the boot path (Dispatcher.h's LoadAllBackups) until it self-wires.
     void StaticRecallAll();
-
-    // Re-applies every restored field whose effect is its write. The boot path calls this after
-    // the board's hardware setup; a recall alone leaves those effects unapplied.
-    void ReplayFieldTriggers();
 #ifdef USE_DYNAMIC_BLOCKS
     // The dynamic half of the boot recall: enumerate the DT/DV files once. Also the Recall
     // command's path (HandleSaveRecallAll), so it is shared rather than only reachable from CID 4.
