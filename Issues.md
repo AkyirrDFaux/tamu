@@ -106,28 +106,6 @@ wrapped 0 into a single 64-byte fragment, so a corrupt size reads as a complete 
 all 256 slots and every probe walks all 1024 table records (`StorageBlockFS.h:94`). Not a data-loss
 defect, but it is the cost behind the slow boot and it interacts with any retry added for B7/B8.
 
-**B25 The persistent mirror has no length or version migration.** Making the fan Duty persistent
-grew `StaticPer` by 8 B and every deployed device then refuses its `.SV` at boot:
-`RegisterPersist.h:32` answers a short read by leaving the defaults, which is the right call (it
-must not clobber the stored settings) but it is silent and total - the device comes up on default
-settings **including a random NetID** (`Main.h:179`), so it splits from its nodes. Measured
-2026-10-14: after that change the core took net 18, then 26, while both DAS stayed on 39; the rig
-was recovered by writing `.SV` byte 16 (the `.SV` is `StaticPersistent` 1:1 and the NetID sits
-after the 16-char Name) and rebooting. Any change to the persistent space's layout or size does
-this - a field's `ValuePersistent` flag, a struct member, a block instance - so the mirror needs a
-length/version field, or the space must be append-only with the existing fields' offsets fixed.
-It compounds with the stored-NetID rule: `StaticSaveAll` (`RegisterPersist.h:24`) takes the LIVE
-net, so the stored one cannot be set through the app at all and only a direct write at the field's
-offset reaches it.
-
-**Answer (2026-10-14): the `.SV` whole-space mirror is not wanted - the complication is the
-mirror's design, not the missing version field.** One flat image of the whole persistent space
-means every field's offset moves with any struct change, and the device cannot tell a short file
-from a corrupt one, so it defaults everything at once. Do not version the mirror; replace it with
-per-block persistence (the dynamic blocks' `.DT_xx`/`.DV_xx` shape: one file per block, keyed by
-type + instance), so a change to one block's layout cannot touch another's and a bad file defaults
-only that block. Not implemented - a design change of its own.
-
 
 **B1 Router and branch broadcast are documented and unimplemented.** - **scope settled**: after the beta. The rig has no multi-bus device to test a tree topology on. `RSBus and Packets.md:3-7` and
 `Data Formats.md:37` (`0x3FE`) describe a router tree; `Dispatcher.h:36-40` says the multi-bus topology
