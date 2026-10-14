@@ -47,7 +47,7 @@ during a stream, or a bounded reply size the app honours.
 `Storage.h:126` discards `StorageFlashRead`'s result and sends `ContentLen` bytes from the shared
 `TxFrame`, so a partial read becomes a wrong result with no error signal.
 
-**B13 The write handler acknowledges fragments it never wrote.** `Storage.h:161-182`: an
+**B13 The write handler acknowledges fragments it never wrote.** *(Fixed in `2008fd2`: every rejection - an unopened stream, a name change mid-stream, a missing target, an out-of-order fragment, a fragment past the end, a failed flash write - now replies `FLAG_FAIL` with a log, and the ack is only sent for a fragment that was actually written.)* `Storage.h:161-182`: an
 out-of-order/lost fragment or one past the file's end advances `WriteSeq` without writing, and the
 app advances its offset on any valid reply, so data is silently lost or written at the wrong offset.
 
@@ -63,7 +63,7 @@ in RAM and are lost at the next power cycle while the restore reports success.
 (`backup_restore.dart:864`), the dynamic-entry create (`:517`) and the script load
 (`:599`) all log a failure and continue; the item is still counted written.
 
-**B17 `.SV`/`.DT_*`/`.DV_*` are captured and restored as raw files as well as semantically.**
+**B17 `.SV`/`.DT_*`/`.DV_*` are captured and restored as raw files as well as semantically.** *(Fixed in `1362c43`: `isDevicePersistence()` excludes them from the file capture, so they travel semantically only.)*
 `backup_capture.dart:46` excludes only `Script` files and `.SUBREQ`, so a foreign static layout can
 be written over a target's persistent space - the opposite of the rule the same function's comment
 states ("A file is archived only when it has no semantic form").
