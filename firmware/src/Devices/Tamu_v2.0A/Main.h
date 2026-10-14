@@ -186,14 +186,11 @@ LED.Setup();
     // routing are net-qualified.
     DeviceStatus.ShortAddress = MakeId(DeviceStatus.NetId, 1);
 
-    // Re-register the provider side of any restored requester subscriptions now that we
-    // have our bus address (the provider table is non-persistent per the docs).
-    Subscriptions.ReRegister();
-
     // Core discover (docs, "Core functions"): broadcast to all cores (3F.1) from NetID.1. A
     // response carrying a MATCHING net within 500 ms means this net is claimed twice on the
     // bus -> normal boot is aborted (issue logged; the main loop blinks the error LED) while
-    // the core stays reachable via the app link to change the net-ID.
+    // the core stays reachable via the app link to change the net-ID. The net is settled before
+    // anything is pushed onto it.
     PacketFrame Cd;
     PacketConstruct(&Cd, ADDR_ALL_CORES,
                     MakeService(ServiceType::Device, 0x10),
@@ -212,18 +209,14 @@ LED.Setup();
         ESP_LOGE("CORE", "Net-ID %u collides with another core - normal boot aborted",
                  (unsigned)DeviceStatus.NetId);
 
+    // Re-register the provider side of any restored requester subscriptions now that the net is
+    // settled and we have our bus address (the provider table is non-persistent per the docs).
+    Subscriptions.ReRegister();
+
     // The SNDB lists the net's devices only: local devices with net 0, other cores with
     // their NetID.1. The core does not store itself - the app models the connected core as
     // id 1 - and the Discover handler ignores a request carrying our own serial, so a stray
     // self-discover cannot mint a bogus device ID.
-    //
-    // An earlier firmware registered the core as device 1 in its own SNDB; the registry is a
-    // persistent file, so a device that already carries that entry keeps it across reflashes.
-    // Drop any such stale self-entry (net 0 device 1, or our own NetID.1) on boot so the SNDB
-    // matches "A core does not store its own entry or its own NetID". Foreign-net and
-    // other-core entries are untouched.
-    SNDB::RemoveDevice(MakeId(0, 1));
-    SNDB::RemoveDevice(MakeId(DeviceStatus.NetId, 1));
 
     // Boot announcement (code 0): an informational log, not an error.
     ReportLog(MakeLog(false, (uint16_t)ServiceType::Device, 0, 0), PRIORITY_LOG);
