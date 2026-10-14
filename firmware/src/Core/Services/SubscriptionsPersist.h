@@ -214,12 +214,21 @@ inline void SubscriptionsService::SubscriptionsReRegisterPending() {
 // setup. The cost is that a requester whose provider never answers retries at SUB_RETRY_MS
 // instead of once a minute; the entry still stops as soon as it is served.
 inline void SubscriptionsService::RequesterInitCheck(uint32_t NowMs) {
-    for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
-        RequesterEntry* Entry = &RequesterTable[i];
+    // ONE re-registration per call, round-robin. The bus is half-duplex and a transmit is
+    // silence-gated then echo-verified, so re-registering every due entry in one pass put several
+    // blocking sends back to back with no bus service in between: at boot, with every restored
+    // entry unserved, a single loop iteration blocked for 607 ms (measured on the rig). That
+    // starves the very discovery it is waiting on - the nodes stayed unregistered with their
+    // error LED lit until the burst resolved. Rotating the cursor keeps each entry's own retry
+    // cadence and interleaves a full loop pass (ProcessBus included) between sends.
+    for (int n = 0; n < MAX_REQUESTER_SUBS; n++) {
+        if (++ReRegisterCursor >= MAX_REQUESTER_SUBS) ReRegisterCursor = 0;
+        RequesterEntry* Entry = &RequesterTable[ReRegisterCursor];
         if (!Entry->Active) continue;
         uint32_t Interval = (Entry->LastValueMs == 0) ? SUB_RETRY_MS : SUB_KEEPALIVE_MS;
         if (NowMs - Entry->LastRegisteredMs < Interval) continue;
         RegisterRequesterProvider(Entry);
+        return;
     }
 }
 #endif // USE_SUB_REQUEST

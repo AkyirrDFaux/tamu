@@ -65,6 +65,9 @@ private:
     static constexpr char SubscriptionsRequesterFile[8] = {'.','S','U','B','R','E','Q','\0'};
     uint16_t ReRegisterPending[KReRegisterMax];
     uint8_t ReRegisterCount = 0;
+    // Round-robin cursor for the unserved-entry re-registration: one entry per tick, so a send
+    // cannot put several blocking transmits back to back with no bus service between them.
+    uint8_t ReRegisterCursor = 0;
 
     static bool RequesterOccupied(const RequesterEntry &Entry);
     static bool RequesterEntryLive(const uint8_t *Entry);
