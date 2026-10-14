@@ -29,6 +29,12 @@ class SubscriptionClient {
   /// SubCid::Change (0x01): the requester installs/cancels a provider entry on a node. This is
   /// the install command - `ProviderSet` (0x21) is a different one and is not it.
   static const int _cidSetProvider = 0x01;
+  /// SubCid::ProviderSet (0x21): installs a FULL provider-table entry on a node, carrying the
+  /// requester's address in the payload (the payload is the 32-byte entry, and the TRID rides the
+  /// packet header). Change (0x01) is the requester's own install - its requester address is the
+  /// packet source, so the app cannot name a requester that is not on the link; ProviderSet is
+  /// what lets a restore rebuild a provider entry for a remote requester.
+  static const int _cidProviderSet = 0x21;
 
   /// Registers the client as the receiver of firmware-pushed subscription value
   /// updates (service Subscriptions CID 0). Must be called while connected; call
@@ -112,6 +118,20 @@ class SubscriptionClient {
       transactionId: entry.trid,
     );
     return reply != null;
+  }
+
+  /// CID 0x21 (ProviderSet): installs a full provider-table [entry] on the node, addressed by
+  /// its TRID (in the packet header) and its requester's address (in the payload). Unlike
+  /// [setProviderSubscriptionEntry], the requester's address is carried rather than taken from
+  /// the packet source, so the app can rebuild the entry a remote requester installed. The node
+  /// answers with the SUCCESS/FAIL flag, so `ok` is the acceptance signal.
+  Future<bool> setProviderTableEntry(ProviderSubscription entry) async {
+    final reply = await _request(
+      _cidProviderSet,
+      payload: entry.toBytes(),
+      transactionId: entry.trid,
+    );
+    return reply?.ok ?? false;
   }
 
   /// CID 0x10: Get requester subscriptions (device as requester - Tamu only)

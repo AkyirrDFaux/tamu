@@ -1,5 +1,29 @@
 part of 'backup.dart';
 
+/// True when a captured file's bytes are read from the device into the raw archive list.
+///
+/// A script file carries a semantic form and is read whatever the caller's "include device files"
+/// choice; a raw device file is read only when the caller asked for it.
+bool readCapturedFile(String name, {required bool includeFiles}) =>
+    includeFiles || backupFileKind(name) == 'Script';
+
+/// True when a captured file is dropped from the raw archive list.
+///
+/// A file the semantic pass already archived (a parsed script), the requester-subscription table
+/// and the device's own persistence files all have a semantic form, so a raw copy would only let a
+/// foreign device's bytes overwrite a target. "Include device files" off drops the raw device files
+/// too - but never a script: a parsed one is rebuilt from `RestoreKind.script`, and one whose image
+/// failed to parse keeps its bytes as the only copy.
+bool dropCapturedFile(
+  String name, {
+  required bool includeFiles,
+  required bool archivedSemantically,
+}) =>
+    archivedSemantically ||
+    isSubscriptionTable(name) ||
+    isDevicePersistence(name) ||
+    (!includeFiles && backupFileKind(name) != 'Script');
+
 Future<BackupDevice?> captureDevice(
   int deviceId, {
   bool includeFiles = true,
@@ -17,12 +41,11 @@ Future<BackupDevice?> captureDevice(
     }
   }
 
-  // A mutable copy: the semantic pass below drops entries, and `_captureFiles` returns a const
-  // list when the file table is empty, which cannot be modified.
+  // Scripts are semantic, so the file read always runs; the "include device files" option is
+  // applied below to the raw files only. A mutable copy: the semantic pass drops entries, and
+  // `_captureFiles` returns a const list when the file table is empty, which cannot be modified.
   final files = <BackupFile>[
-    ...includeFiles
-        ? await _captureFiles(deviceId, maxFileBytes)
-        : const <BackupFile>[],
+    ...await _captureFiles(deviceId, maxFileBytes, includeFiles: includeFiles),
   ];
 
   // Scripts: decode every SCR_XXX file into the semantic form and DROP the binary copy. A file is
@@ -48,10 +71,11 @@ Future<BackupDevice?> captureDevice(
   // restore rebuilds it semantically, so a raw copy would let a foreign device's persistent space
   // be written over a target. LAY_1 and user files have no semantic form and are still archived.
   files.removeWhere(
-    (f) =>
-        semanticallyArchived.contains(f.name) ||
-        isSubscriptionTable(f.name) ||
-        isDevicePersistence(f.name),
+    (f) => dropCapturedFile(
+      f.name,
+      includeFiles: includeFiles,
+      archivedSemantically: semanticallyArchived.contains(f.name),
+    ),
   );
 
   // Subscriptions (requester is restorable; provider is informational).
@@ -80,6 +104,7 @@ Future<BackupDevice?> captureDevice(
       providers.add(
         BackupProviderSubscription(
           requester: idToString(s.requesterAddr),
+          trid: s.trid,
           trigger: s.trigger.label,
           periodMs: s.periodMs,
           minTimeMs: s.minTimeMs,
@@ -125,7 +150,11 @@ Future<BackupDevice?> captureDevice(
   );
 }
 
-Future<List<BackupFile>> _captureFiles(int deviceId, int maxFileBytes) async {
+Future<List<BackupFile>> _captureFiles(
+  int deviceId,
+  int maxFileBytes, {
+  bool includeFiles = true,
+}) async {
   final storage = StorageClient(deviceId: deviceId);
   final table = await storage.readFileTable();
   if (table == null) return const [];
@@ -137,6 +166,9 @@ Future<List<BackupFile>> _captureFiles(int deviceId, int maxFileBytes) async {
     // The file table can hold several records with the same name (a stale record is
     // not always zeroed); capture each file once.
     if (!seen.add(name)) continue;
+    // A script is read whatever the file option says; a raw device file is not read when the
+    // caller did not ask for device files.
+    if (!readCapturedFile(name, includeFiles: includeFiles)) continue;
     if (record.size > maxFileBytes) {
       AppDiagnostics.log(
         'backup',

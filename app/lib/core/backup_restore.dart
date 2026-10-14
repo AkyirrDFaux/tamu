@@ -199,7 +199,21 @@ List<int>? resolveEntryBytes(BackupEntry source, LiveEntry target) {
 // Restore plan
 // ---------------------------------------------------------------------------
 
-enum RestoreKind { entry, script, subscription, sndb, file }
+enum RestoreKind { entry, script, subscription, provider, sndb, file }
+
+/// True when a backup file has no semantic form and must be written back from its raw bytes.
+///
+/// The requester-subscription table has its own semantic form (`RestoreKind.subscription`), and a
+/// Script file whose slot also carries a semantic script is rebuilt from `RestoreKind.script` -
+/// for both, the raw bytes are not the authoritative copy. Every other file is restored as-is,
+/// including a Script whose image failed to parse: it has no semantic form, so its bytes are the
+/// only copy and were being dropped.
+bool restoresAsRawFile(BackupDevice device, BackupFile file) {
+  if (isSubscriptionTable(file.name)) return false;
+  if (file.kind != 'Script') return true;
+  final slot = scriptFileId(file.name);
+  return slot == null || !device.scripts.any((s) => s.slot == slot);
+}
 
 /// The issue text for an entry the restore skips BY DESIGN - a read-only register the device owns
 /// (its identity, its live readings). It is informational, not a lost item, so the apply never
@@ -214,6 +228,7 @@ class RestoreItem {
   final BackupEntry? entry;
   final BackupScript? script;
   final BackupRequesterSubscription? subscription;
+  final BackupProviderSubscription? providerSubscription;
   final BackupSndbEntry? sndbEntry;
   final BackupFile? file;
 
@@ -235,6 +250,7 @@ class RestoreItem {
     this.entry,
     this.script,
     this.subscription,
+    this.providerSubscription,
     this.sndbEntry,
     this.file,
     this.selected = true,
@@ -332,6 +348,25 @@ class RestorePlan {
                 provider.resolveRef(s.source) == null ||
                 targetReg == null) {
               item.issue = 'Address not found';
+            }
+          }
+        case RestoreKind.provider:
+          // A provider entry is served BY the target device: the source register must exist on
+          // the device and the requester must be a real address. The live snapshot may predate a
+          // dynamic source the restore is about to create, so fall back to the archive's own map.
+          if (target.capabilities & Capability.subscriptionProvide == 0) {
+            item.issue = 'No provider support';
+          } else {
+            final s = item.providerSubscription!;
+            final source =
+                target.resolveRef(s.source) ??
+                archiveRefReg(item.device, s.source);
+            if (source == null || idFromString(s.requester) == null) {
+              item.issue = 'Address not found';
+            } else if (s.trid < tridSubBase || s.trid > tridSubMax) {
+              // An archive captured before the TRID was recorded carries 0, which no node can key
+              // a provider entry by; refuse rather than install an entry nothing can match.
+              item.issue = 'Unknown subscription id';
             }
           }
         case RestoreKind.sndb:
@@ -432,18 +467,28 @@ Future<RestorePlan> buildRestorePlan(List<BackupDevice> devices) async {
         ),
       );
     }
+    // The provider entries the device serves: installed by remote requesters, so a requester that
+    // is not part of the backup cannot re-register them - the restore rebuilds them itself.
+    for (final sub in device.providerSubscriptions) {
+      items.add(
+        RestoreItem(
+          kind: RestoreKind.provider,
+          device: device,
+          providerSubscription: sub,
+        ),
+      );
+    }
     for (final sndb in device.sndb) {
       items.add(
         RestoreItem(kind: RestoreKind.sndb, device: device, sndbEntry: sndb),
       );
     }
     for (final file in device.files) {
-      // A file is not restored when it has a semantic form. Scripts come back from
-      // `RestoreKind.script` and the requester-subscription table from
-      // `RestoreKind.subscription`; the device regenerates its own `.SUBREQ` when it saves.
-      // Restoring the raw file as well would let a stale binary overwrite what the semantic
-      // side just wrote.
-      if (file.kind == 'Script' || isSubscriptionTable(file.name)) continue;
+      // A file is skipped only when it has a semantic form: a Script rebuilt from
+      // `RestoreKind.script`, or the requester-subscription table from `RestoreKind.subscription`
+      // (the device regenerates its own `.SUBREQ` when it saves). A Script whose image failed to
+      // parse has no semantic form and is written back from its raw bytes.
+      if (!restoresAsRawFile(device, file)) continue;
       items.add(
         RestoreItem(kind: RestoreKind.file, device: device, file: file),
       );
@@ -707,6 +752,7 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
     RestoreKind.entry => '${i.block?.name}/${i.entry?.field}[${i.entry?.key}]',
     RestoreKind.script => 'script slot ${i.script?.slot}',
     RestoreKind.subscription => 'from ${i.subscription?.provider}',
+    RestoreKind.provider => 'serves ${i.providerSubscription?.requester}',
     RestoreKind.sndb => 'sndb ${i.sndbEntry?.serial}',
     RestoreKind.file => 'file ${i.file?.name}',
   };
@@ -719,6 +765,7 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
     RestoreKind.script => 2,
     RestoreKind.entry => 3,
     RestoreKind.subscription => 4,
+    RestoreKind.provider => 5,
   };
   final ordered = [...plan.items]
     ..sort((a, b) => order(a.kind).compareTo(order(b.kind)));
@@ -948,6 +995,49 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
           }
           writtenDevices.add(providerDev.id);
         }
+        written++;
+      case RestoreKind.provider:
+        final subs = subscriptions.putIfAbsent(
+          target.id,
+          () => SubscriptionClient(deviceId: target.id),
+        );
+        final s = item.providerSubscription!;
+        final requester = idFromString(s.requester);
+        final source =
+            target.resolveRef(s.source) ?? archiveRefReg(item.device, s.source);
+        if (requester == null ||
+            source == null ||
+            s.trid < tridSubBase ||
+            s.trid > tridSubMax) {
+          failItem(item, describe(item));
+          break;
+        }
+        // ProviderSet (0x21) carries the requester's address and takes the TRID from the packet
+        // header, so the entry a remote requester installed comes back on the node without that
+        // requester present to re-register it. The node answers with the SUCCESS/FAIL flag, so
+        // `ok` decides the item rather than a reply merely arriving.
+        final installed = await subs.setProviderTableEntry(
+          ProviderSubscription(
+            index: 0,
+            requesterAddr: requester,
+            trid: s.trid,
+            table: SubscriptionTable(
+              sourceReg: source,
+              trigger: TriggerType.fromWord(s.trigger) ?? TriggerType.periodic,
+              minTimeMs: s.minTimeMs,
+              periodMs: s.periodMs,
+              deadzone: s.deadzone,
+            ),
+            lastSentMs: 0,
+            hash: 0,
+            timeout: 0,
+          ),
+        );
+        if (!installed) {
+          failItem(item, describe(item));
+          break;
+        }
+        writtenDevices.add(target.id);
         written++;
       case RestoreKind.sndb:
         final e = item.sndbEntry!;

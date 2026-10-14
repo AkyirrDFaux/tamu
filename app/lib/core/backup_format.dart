@@ -196,9 +196,12 @@ class BackupRequesterSubscription {
       );
 }
 
-/// Provider-side subscription (informational: installed by a remote requester).
+/// Provider-side subscription (installed by a remote requester: the entry the device
+/// serves, which the restore rebuilds so a requester that is not present to re-register
+/// still finds the node sending).
 class BackupProviderSubscription {
   final String requester; // "net.device"
+  final int trid; // subscription identity; the provider table is keyed by it
   final String trigger;
   final int periodMs;
   final int minTimeMs;
@@ -207,6 +210,7 @@ class BackupProviderSubscription {
 
   const BackupProviderSubscription({
     required this.requester,
+    required this.trid,
     required this.trigger,
     required this.periodMs,
     required this.minTimeMs,
@@ -216,6 +220,7 @@ class BackupProviderSubscription {
 
   Map<String, dynamic> toJson() => {
     'requester': requester,
+    'trid': trid,
     'trigger': trigger,
     'periodMs': periodMs,
     'minTimeMs': minTimeMs,
@@ -226,6 +231,7 @@ class BackupProviderSubscription {
   static BackupProviderSubscription fromJson(Map<String, dynamic> json) =>
       BackupProviderSubscription(
         requester: json['requester'] as String? ?? '0.0',
+        trid: (json['trid'] as num?)?.toInt() ?? 0,
         trigger: json['trigger'] as String? ?? 'Periodic',
         periodMs: (json['periodMs'] as num?)?.toInt() ?? 0,
         minTimeMs: (json['minTimeMs'] as num?)?.toInt() ?? 0,
