@@ -91,7 +91,14 @@ HIL tests use `0xFA00`/`0xFC00` (`hil_tests_partner.dart:166`), which is this ho
 so invalidation holes are never reused, and the app's create-temp-then-rename needs 5 records. The
 measured "16 B writes, 48 B fails" is therefore a *record* limit, not a size limit.
 
-**B22 Round-trip fidelity gaps in the archive.** Script dropdown choices are not in the semantic
+**B22 Round-trip fidelity gaps in the archive.** *(Confirmed 2026-10-14: the dropdown option lists
+are in the file codec but not in the semantic model - `BackupInputSpec` carries only
+`style/min/max/step` (`backup_script.dart:18-44`), so `fromDraft` drops `options` (`:441-448`) and
+`toDraft` rebuilds it empty (`:480-487`). After a restore the input is still a `dropdown` with no
+labels, and `script_widgets.dart:410-424` renders nothing for that type. Fix: carry `options`
+through the semantic model like the other fields, then regenerate the archive's script blobs from
+it - a codec change plus a tamu-setup migration, since the current semantic form has no field to
+hold them.)* Script dropdown choices are not in the semantic
 model (`backup_script.dart:18`); provider subscriptions are captured but never restored
 (`backup_format.dart:199`); a script whose image fails to parse is kept as a binary and then dropped
 by the restore, which skips every `kind == 'Script'` file (`backup_capture.dart:33`,
