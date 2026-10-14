@@ -90,6 +90,21 @@ static inline uint32_t ClampFileLength(uint32_t Offset, uint32_t Length, uint32_
 // Number of 32-bit pointer slots in the first (pointer) page
 #define PTR_SLOTS (STORAGE_BLOCK_SIZE / 4)
 
+// File-table records a scan stages per flash read. An esp_partition_read costs ~34 us of CALL
+// overhead whatever its length (measured on the rig: the 1024-record Tamu table read one record
+// at a time cost 34.8 ms per scan), so a walk of the table must fetch records in bulk. Sized per
+// device like the table itself - the Tamu's 16 KB table stages in four reads, the DAS's single
+// page in one - and it lives in RAM, never on a stack.
+#ifndef STORAGE_TABLE_CHUNK
+#if defined(BOARD_Tamu_v2_0A)
+#define STORAGE_TABLE_CHUNK 256
+#elif defined(BOARD_Valu_v2_0)
+#define STORAGE_TABLE_CHUNK 64
+#else
+#define STORAGE_TABLE_CHUNK 4
+#endif
+#endif
+
 // File-table slot state (Docs/Services/Storage.md): offset 0x00 = invalidated entry,
 // 0xFFFFFFFF = unused slot, anything else = a real (page-aligned) flash offset.
 static inline bool FileSlotIsFree(uint32_t Offset)

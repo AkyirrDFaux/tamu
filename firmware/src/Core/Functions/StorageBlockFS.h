@@ -15,6 +15,7 @@ public:
     // Initializes flash access, recovers the file table and formats if none is valid.
     void Init()
     {
+        DropTableCache(); // no window may outlive the table this session started with
         if (!StorageFlashInit()) {
             DeviceLog("STORAGE", "Storage flash not available!");
             FileTableOffset = 0;
@@ -155,8 +156,8 @@ public:
             if (Slot >= TableCapacity())
                 return false;
         }
-        return StorageFlashWrite(FileTableOffset + Slot * TABLE_ENTRY_SIZE,
-                                  &NewRecord, TABLE_ENTRY_SIZE);
+        return WriteTableBytes(FileTableOffset + Slot * TABLE_ENTRY_SIZE,
+                               &NewRecord, TABLE_ENTRY_SIZE);
     }
 
     // Invalidates EVERY file record matching `name` in place by zeroing the offset word
@@ -176,7 +177,7 @@ public:
             if (FileSlotIsFree(Entry.Offset)) continue;
             if (!Matches(Entry.Name)) continue;
             uint32_t Zero = 0x00000000;
-            if (!StorageFlashWrite(FileTableOffset + i * TABLE_ENTRY_SIZE, &Zero, sizeof(Zero)))
+            if (!WriteTableBytes(FileTableOffset + i * TABLE_ENTRY_SIZE, &Zero, sizeof(Zero)))
                 return false;
         }
         return true; // already gone is fine
@@ -203,7 +204,7 @@ public:
                 return false;
             if (FileSlotIsFree(Entry.Offset)) continue;
             if (!Matches(Entry.Name)) continue;
-            if (!StorageFlashWrite(FileTableOffset + i * TABLE_ENTRY_SIZE,
+            if (!WriteTableBytes(FileTableOffset + i * TABLE_ENTRY_SIZE,
                                     &Zero, sizeof(Zero)))
                 return false;
         }
@@ -309,6 +310,7 @@ public:
         if (!WriteTablePointer(NewOffset))
             return false;
 
+        DropTableCache(); // the table lives elsewhere now
         FileTableOffset = NewOffset;
         FileTableSize = NewSize;
         DeviceLog("STORAGE", "Table moved to 0x%x (%d B)", (unsigned)NewOffset,
@@ -589,12 +591,13 @@ public:
         Entry0.Size = STORAGE_TABLE_SIZE;       // Fixed per-device table capacity
         memcpy(Entry0.Name, ".TABLE  ", 8);
 
-        if (StorageFlashWrite(STORAGE_BLOCK_SIZE, &Entry0, TABLE_ENTRY_SIZE) != true)
+        if (WriteTableBytes(STORAGE_BLOCK_SIZE, &Entry0, TABLE_ENTRY_SIZE) != true)
             return false;
 
         if (!WriteTablePointer(STORAGE_BLOCK_SIZE))
             return false;
 
+        DropTableCache();
         FileTableOffset = STORAGE_BLOCK_SIZE;
         FileTableSize = STORAGE_TABLE_SIZE;
         DeviceLog("STORAGE", "Formatted, storage ready (%d Bytes)", (int)DataEnd());
@@ -664,12 +667,51 @@ private:
         return STORAGE_FLASH_SIZE;
     }
 
-    // Reads a single table entry from the current table.
+    // The table is walked through a staging window. An esp_partition_read costs ~34 us of CALL
+    // overhead whatever its length (measured on the rig: the 1024-record table read one record at
+    // a time cost 34.8 ms per scan), and a scan happens on every file lookup and every
+    // allocation, so that overhead showed up as a stalled main loop. Staging STORAGE_TABLE_CHUNK
+    // records per flash call turns a scan into a handful of calls.
+    //
+    // A stale record can never be served: every write to the table region goes through
+    // WriteTableBytes below, which drops the window, so it only ever holds bytes read since the
+    // last table write. Init, Format and MoveFiletable drop it again where the table's address
+    // or length changes.
+    uint32_t TableCacheBase = 0xFFFFFFFF; // first staged index; 0xFFFFFFFF = nothing staged
+    FileRecord TableCache[STORAGE_TABLE_CHUNK];
+
+    void DropTableCache() { TableCacheBase = 0xFFFFFFFF; }
+
+    // The only way the current file table may be written: drop the window first, so no reader can
+    // be handed what the write has just replaced.
+    bool WriteTableBytes(uint32_t Offset, const void *Data, uint32_t Size)
+    {
+        DropTableCache();
+        return StorageFlashWrite(Offset, Data, Size);
+    }
+
+    // Reads a single table entry, staging a window of records per flash read: a scan costs one
+    // read per STORAGE_TABLE_CHUNK records rather than one per record.
     bool ReadTableEntry(uint32_t Idx, FileRecord *Entry)
     {
         if (FileTableOffset == 0 || Idx >= TableCapacity())
             return false;
-        return StorageFlashRead(FileTableOffset + Idx * TABLE_ENTRY_SIZE, Entry, TABLE_ENTRY_SIZE) == TABLE_ENTRY_SIZE;
+        if (TableCacheBase == 0xFFFFFFFF ||
+            Idx < TableCacheBase || Idx >= TableCacheBase + STORAGE_TABLE_CHUNK)
+        {
+            uint32_t Base = (Idx / STORAGE_TABLE_CHUNK) * STORAGE_TABLE_CHUNK;
+            uint32_t Count = TableCapacity() - Base;
+            if (Count > STORAGE_TABLE_CHUNK) Count = STORAGE_TABLE_CHUNK;
+            uint32_t Bytes = Count * TABLE_ENTRY_SIZE;
+            if (StorageFlashRead(FileTableOffset + Base * TABLE_ENTRY_SIZE, TableCache, Bytes) != Bytes)
+            {
+                TableCacheBase = 0xFFFFFFFF; // a failed read stages nothing
+                return false;
+            }
+            TableCacheBase = Base;
+        }
+        *Entry = TableCache[Idx - TableCacheBase];
+        return true;
     }
 
     // True when any valid file record (or the pending reservation) covers the page at `offset`.
@@ -717,6 +759,7 @@ private:
             Entry0.Size > DataEnd() - FileTableOffset)
             return false;
 
+        DropTableCache(); // the capacity follows the table length
         FileTableSize = Entry0.Size;
         return true;
     }
