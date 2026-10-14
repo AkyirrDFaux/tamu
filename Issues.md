@@ -148,7 +148,7 @@ local address on the net of the device the entry is installed on, and pass an ex
 unchanged; the matching requester-side subscription (same target device, same source ref) identifies
 the device where that is not enough.
 
-**B27 Script-file length validation wraps in uint32.** *(Fixed in `474489e`: the blob-size sum and every offset derived from it are now 64-bit, so a wrapped total can no longer pass the bounds check.)* `ScriptProgram.h:209-217` summed four header-supplied uint32 lengths, so a crafted `SCR_XXX` header passed `Need > Size` with the running offsets ~4 GB past the buffer.
+**B27 Script-file length validation wraps in uint32.** *(WITHDRAWN 2026-10-14 by the owner: a script file cannot approach the 32-bit limit, so the wrap is not reachable. The `474489e` change was reverted. Kept for the record - the sweep's other arithmetic findings were checked and stand.)* `ScriptProgram.h:209-217` summed four header-supplied uint32 lengths, so a crafted `SCR_XXX` header passed `Need > Size` with the running offsets ~4 GB past the buffer.
 
 **B28 ContainerElement's vector index overflows and bypasses the bounds check.** *(Fixed in `474489e`: the magnitude is tested against `Size / 4` before any arithmetic.)* `ScriptExec.h:538-539` did `(uint32_t)(Index + 1) * 4 > Size` on a signed operand, so `Index+1` overflowed and the x4 product wrapped for any index >= 2^30, reaching the pointer arithmetic below.
 
