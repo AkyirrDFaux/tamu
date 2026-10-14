@@ -26,7 +26,7 @@
 // usage bitmap in FindSpace (STORAGE_FLASH_SIZE / STORAGE_BLOCK_SIZE bits).
 #define STORAGE_MAX_BLOCKS ((STORAGE_FLASH_SIZE / STORAGE_BLOCK_SIZE) + 1)
 
-// Fixed file-table size, in pages, per device (Docs/Devices.md): 4 pages on Tamu v2.0A, 1 on
+// Fixed file-table size, in pages, per device (Docs/Devices.md): 4 pages on Tamu v2.0A, 2 on
 // the DAS, 2 on Valu v2.0. The table never grows or shrinks; it is moved only when full
 // (Storage.md "MoveFiletable"). Declared here rather than in Devices/<device>/Storage.h
 // because Main.cpp pulls Core headers in first, so the device header is seen too late to
@@ -38,7 +38,12 @@
 #elif defined(BOARD_Valu_v2_0)
 #define STORAGE_TABLE_PAGES 2
 #elif defined(BOARD_DAS_v0_1)
-#define STORAGE_TABLE_PAGES 1
+// Two pages, so 8 records: 4 was not enough - a write costs two records (the app creates a
+// temporary file, then renames it), so the table filled after a couple of writes and the next ones
+// failed (B21). The storage is 512 B, so this takes one 64-byte page off the data area. The table
+// size is read from entry 0, so a device that already carries a 4-record table keeps it until its
+// storage is formatted or the table moved.
+#define STORAGE_TABLE_PAGES 2
 #else
 #define STORAGE_TABLE_PAGES 1
 #endif
