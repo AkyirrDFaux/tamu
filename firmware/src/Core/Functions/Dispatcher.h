@@ -165,9 +165,10 @@ void LoadAllBackups()
     Register.StaticRecallAll();
 
 #ifdef USE_DYNAMIC_BLOCKS
-    // Per-block DT/DV files: load every live slot (absent file = tombstone/empty).
-    for (uint16_t i = 0; i < MAX_DYNAMIC_BLOCKS; i++)
-        Register.RestoreDynamicBlock(i);
+    // Per-block DT/DV files: enumerate them once (absent file = tombstone/empty). Probing every
+    // slot instead costs a file-table lookup per slot - the same pattern 274a04d fixed for the
+    // Recall command; the boot path was left on the probe and took seconds.
+    Register.DynamicRecallAll();
 #endif
 
 #ifdef USE_SUB_REQUEST
