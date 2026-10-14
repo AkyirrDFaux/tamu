@@ -171,34 +171,54 @@ inline bool StorageService::Handle(const PacketFrame &Frame)
                 WriteSeq = 0xFFFF;
                 WriteOff = 0;
             } else {
-                if (!WriteActive) break;
+                if (!WriteActive) {
+                    // A fragment of a stream that was never opened. Answering with the sequence
+                    // below would let the app advance over bytes no file ever received.
+                    DeviceLog("STORAGE", "write fragment with no stream open");
+                    SendResponse(Frame, nullptr, 0, FLAG_FAIL);
+                    break;
+                }
                 // The name is carried in every fragment and must not change mid-stream.
                 if (memcmp(WriteName, Name, 8) != 0) {
                     DeviceLog("STORAGE", "write stream name changed mid-stream");
+                    SendResponse(Frame, nullptr, 0, FLAG_FAIL);
                     break;
                 }
             }
             uint32_t FileOffset, FileSize;
             if (ContentLen > 64) ContentLen = 64; // docs: "maximum 64 byte stream fragment"
-            if (Storage.GetFileInfo((const char *)Name, &FileOffset, &FileSize)) {
-                if (Frag.Current == (uint16_t)(WriteSeq + 1)) {
-                    uint32_t Room = (WriteOff < FileSize) ? (FileSize - WriteOff) : 0;
-                    uint32_t Chunk = ContentLen;
-                    if (Chunk > Room) Chunk = Room;
-                    if (Chunk > 0) {
-                        if (!StorageFlashWrite(FileOffset + WriteOff, Contents, Chunk))
-                            DeviceLog("STORAGE", "write file '%.8s' flash write failed", Name);
-                        else {
-                            WriteOff += Chunk;
-                            WriteSeq = Frag.Current;
-                        }
-                    } else {
-                        WriteSeq = Frag.Current;
-                    }
-                }
-            } else {
+            if (!Storage.GetFileInfo((const char *)Name, &FileOffset, &FileSize)) {
                 DeviceLog("STORAGE", "write stream target '%.8s' missing", Name);
+                SendResponse(Frame, nullptr, 0, FLAG_FAIL);
+                break;
             }
+            // Every rejection above and below must be visible to the sender: the ack carries the
+            // sequence and the app advances its offset on a reply, so a fragment that is dropped
+            // silently but still acknowledged writes every LATER fragment at the wrong offset - a
+            // lost or out-of-order fragment turns into a corrupt file (B13).
+            if (Frag.Current != (uint16_t)(WriteSeq + 1)) {
+                DeviceLog("STORAGE", "write '%.8s' fragment %u out of order (want %u)", Name,
+                          (unsigned)Frag.Current, (unsigned)(uint16_t)(WriteSeq + 1));
+                SendResponse(Frame, nullptr, 0, FLAG_FAIL);
+                break;
+            }
+            // A fragment reaching past the end of the file is a size disagreement, not a short
+            // write: refuse it rather than clipping, because a clipped write advances this offset by
+            // less than the app's and every later fragment lands short of where it belongs.
+            if (ContentLen > (WriteOff < FileSize ? FileSize - WriteOff : 0)) {
+                DeviceLog("STORAGE", "write '%.8s' fragment past the end at %u", Name, (unsigned)WriteOff);
+                SendResponse(Frame, nullptr, 0, FLAG_FAIL);
+                break;
+            }
+            if (ContentLen > 0) {
+                if (!StorageFlashWrite(FileOffset + WriteOff, Contents, ContentLen)) {
+                    DeviceLog("STORAGE", "write file '%.8s' flash write failed", Name);
+                    SendResponse(Frame, nullptr, 0, FLAG_FAIL);
+                    break;
+                }
+                WriteOff += ContentLen;
+            }
+            WriteSeq = Frag.Current;
             if (Frame.Flags & FLAG_REQACK) {
                 uint8_t Ack[2] = {(uint8_t)(WriteSeq & 0xFF), (uint8_t)(WriteSeq >> 8)};
                 SendResponse(Frame, Ack, 2);
