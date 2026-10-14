@@ -64,7 +64,7 @@ Modules:
 - LED
 
 Page size: 64 bytes (fast mode)
-Table size: 1 page
+Table size: 2 pages
 Storage: 512 B
 Bootloader: 2 kB
 Clock re-sync interval: 60 s (+0-15 s jitter)
