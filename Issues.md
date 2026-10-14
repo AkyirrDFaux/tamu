@@ -141,7 +141,12 @@ all 256 slots and every probe walks all 1024 table records (`StorageBlockFS.h:94
 defect, but it is the cost behind the slow boot and it interacts with any retry added for B7/B8.
 
 
-**B26 The provider-restore path keys an entry to the archive's literal requester address.** *(Open - the archive was corrected to the measured addresses so it works today, but the code still trusts it.)* `backup_restore.dart:1005` resolves `s.requester` with `idFromString()` without remapping it through the source->live device match the way `source` is remapped on the next line. Restoring an archive whose addresses predate the rig's NetID therefore keys the provider entry to an address no device has - the archive said `0.1` while the rig runs `39.1`, and the archive's own device files carry a third value (51), so it cannot be remapped from the address alone. Fix: take the requester device from the matching requester-side subscription (same target device + same source ref), whose owner the plan already knows.
+**B26 The provider-restore path keys an entry to the archive's literal requester address.** *(Open - the archive was corrected to the measured addresses so it works today, but the code still trusts it.)* `backup_restore.dart:1005` resolves `s.requester` with `idFromString()` without remapping it through the source->live device match the way `source` is remapped on the next line. Restoring an archive whose addresses predate the rig's NetID therefore keys the provider entry to an address no device has - the archive said `0.1` while the rig runs `39.1`, and the archive's own device files carry a third value (51), so it cannot be remapped from the address alone. The model is LOCAL versus EXACT addressing, not a separate archive namespace: `0.N` is a LOCAL
+address meaning arc N on the local net, and `net.arc` is EXACT and needed only when a reference
+crosses a net boundary - a local address is preferable unless it goes cross-net. Fix: resolve a
+local address on the net of the device the entry is installed on, and pass an exact address through
+unchanged; the matching requester-side subscription (same target device, same source ref) identifies
+the device where that is not enough.
 
 **B27 Script-file length validation wraps in uint32.** *(Fixed in `474489e`: the blob-size sum and every offset derived from it are now 64-bit, so a wrapped total can no longer pass the bounds check.)* `ScriptProgram.h:209-217` summed four header-supplied uint32 lengths, so a crafted `SCR_XXX` header passed `Need > Size` with the running offsets ~4 GB past the buffer.
 
