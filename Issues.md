@@ -120,6 +120,14 @@ It compounds with the stored-NetID rule: `StaticSaveAll` (`RegisterPersist.h:24`
 net, so the stored one cannot be set through the app at all and only a direct write at the field's
 offset reaches it.
 
+**Answer (2026-10-14): the `.SV` whole-space mirror is not wanted - the complication is the
+mirror's design, not the missing version field.** One flat image of the whole persistent space
+means every field's offset moves with any struct change, and the device cannot tell a short file
+from a corrupt one, so it defaults everything at once. Do not version the mirror; replace it with
+per-block persistence (the dynamic blocks' `.DT_xx`/`.DV_xx` shape: one file per block, keyed by
+type + instance), so a change to one block's layout cannot touch another's and a bad file defaults
+only that block. Not implemented - a design change of its own.
+
 
 **B1 Router and branch broadcast are documented and unimplemented.** - **scope settled**: after the beta. The rig has no multi-bus device to test a tree topology on. `RSBus and Packets.md:3-7` and
 `Data Formats.md:37` (`0x3FE`) describe a router tree; `Dispatcher.h:36-40` says the multi-bus topology
