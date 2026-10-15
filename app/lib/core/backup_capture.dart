@@ -222,7 +222,7 @@ Uint8List buildBackupZip(List<BackupDevice> devices) {
     }
     _addJsonEntry(zip, name, const JsonEncoder().convert(device.toJson()));
   }
-  return Uint8List.fromList(ZipEncoder().encode(zip)!);
+  return Uint8List.fromList(ZipEncoder().encode(zip));
 }
 
 /// Parses a backup zip into its devices (one JSON per device).

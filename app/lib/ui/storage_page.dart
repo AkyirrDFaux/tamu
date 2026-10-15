@@ -124,10 +124,10 @@ class _StoragePageState extends State<StoragePage>
   /// Uploads a host file to the device (CID 7 write stream, Docs/App/Service
   /// views/Storage.md "Allow uploading ... files from the app host OS").
   Future<void> _uploadFile() async {
-    final result = await FilePicker.pickFiles(withData: true);
-    final file = result?.files.singleOrNull;
+    final result = await FilePicker.pickFiles();
+    final file = result.singleOrNull;
     if (file == null) return;
-    final bytes = file.bytes ?? readPlatformFile(file.path ?? '');
+    final bytes = await file.readAsBytes();
     if (bytes.isEmpty) {
       _snack('Empty file');
       return;

@@ -72,14 +72,13 @@ class _BackupPageState extends State<BackupPage> {
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['zip'],
-      withData: true,
     );
-    final file = result?.files.singleOrNull;
+    final file = result.singleOrNull;
     if (file == null) return;
     setState(() => _busy = true);
     List<BackupDevice> devices;
     try {
-      final bytes = file.bytes ?? readPlatformFile(file.path ?? '');
+      final bytes = await file.readAsBytes();
       devices = parseBackupZip(bytes);
     } catch (error) {
       _snack('Restore failed: $error');

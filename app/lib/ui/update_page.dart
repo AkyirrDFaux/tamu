@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import '../core/bootloader_client.dart';
 import '../core/connection.dart';
 import '../core/device_db.dart';
-import '../core/host_files.dart';
 import '../core/transport.dart';
 import 'theme.dart';
 import 'widgets.dart';
@@ -64,12 +63,12 @@ class _UpdatePageState extends State<UpdatePage> {
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['bin', 'img'],
-      withData: true,
     );
     if (!mounted) return;
-    final file = result?.files.singleOrNull;
+    final file = result.singleOrNull;
     if (file == null) return;
-    final bytes = file.bytes ?? readPlatformFile(file.path ?? '');
+    final bytes = await file.readAsBytes();
+    if (!mounted) return;
     if (bytes.isEmpty) {
       showSnack(context, 'That file is empty');
       return;

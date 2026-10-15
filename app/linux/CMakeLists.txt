@@ -113,6 +113,11 @@ endforeach(bundled_library)
 
 # Copy the native assets provided by the build.dart from all packages.
 set(NATIVE_ASSETS_DIR "${PROJECT_BUILD_DIR}native_assets/linux/")
+# A cold build produces no native-assets output directory when no package supplies any (the
+# tool only creates it when it has assets to copy), but the install rule below requires it to
+# exist - otherwise a clean build dies with "file INSTALL cannot find .../build/native_assets/
+# linux". Create it up front so a fresh build works; the tool still populates it when needed.
+file(MAKE_DIRECTORY "${NATIVE_ASSETS_DIR}")
 install(DIRECTORY "${NATIVE_ASSETS_DIR}"
    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
    COMPONENT Runtime)
