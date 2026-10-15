@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/device_db.dart';
 import '../core/types.dart';
+import 'formatters.dart';
 import 'log_page.dart';
 import 'register_page.dart';
 import 'scripts_page.dart';

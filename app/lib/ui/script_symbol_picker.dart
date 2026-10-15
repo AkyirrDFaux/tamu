@@ -10,9 +10,9 @@ import '../core/script_draft.dart';
 import '../core/script_file.dart';
 import '../core/script_instructions.dart';
 import '../core/types.dart';
+import 'formatters.dart';
 import 'block_info_picker.dart';
 import 'theme.dart';
-import 'value_editor.dart';
 import 'widgets.dart';
 
 class ScriptSymbolPicker extends StatefulWidget {

@@ -14,8 +14,8 @@ import '../core/block_registry.dart' show blockInfoFor;
 import '../core/device_backup.dart';
 import '../core/system_schema.dart' show systemFieldKeys, systemKeyName;
 import '../core/types.dart';
+import 'formatters.dart';
 import 'theme.dart' show kSurfaceAlt;
-import 'value_editor.dart' show dataTypeLabel, formatValue;
 import 'widgets.dart' show BlockScrollBody;
 
 /// Which set of values the Register page shows (docs Register.md appbar).

@@ -39,76 +39,7 @@ Future<List<int>?> _editSerialNumber(BuildContext context, List<int> current) {
   );
 }
 
-/// Human-readable data-type name (shared with the semantic backup format, so a label
-/// and a stored type word never drift apart).
-String dataTypeLabel(DataType type) => dataTypeWord(type);
-
-String formatValue(DataType type, List<int> bytes) {
-  switch (type) {
-    case DataType.number:
-      if (bytes.length < 4) return '-';
-      final v = numberFromBytes(bytes);
-      return v == v.roundToDouble()
-          ? v.toStringAsFixed(1)
-          : v.toStringAsFixed(3);
-    case DataType.bool_:
-      if (bytes.isEmpty) return '-';
-      return bytes[0] != 0 ? 'true' : 'false';
-    case DataType.uint32:
-      if (bytes.length < 4) return '-';
-      return uint32FromBytes(bytes).toString();
-    case DataType.integer:
-      if (bytes.isEmpty) return '-';
-      if (bytes.length < 4) {
-        // Short (1-3 byte) integer values, e.g. the uint8 edge counter.
-        return bytesToInt(bytes).toString();
-      }
-      return int32FromBytes(bytes).toString();
-    case DataType.text:
-    case DataType.name:
-    case DataType.char:
-      return bytes.isEmpty ? '-' : String.fromCharCodes(bytes).trimRight();
-    case DataType.devType:
-      if (bytes.length < 2) return '-';
-      return DeviceType.fromValue(bytes[0] | (bytes[1] << 8)).label;
-    case DataType.id:
-      if (bytes.length >= 2) return idToString(bytes[0] | (bytes[1] << 8));
-      if (bytes.length == 1) {
-        return bytes[0].toString(); // 1-byte Id (System NetID)
-      }
-      return '-';
-    case DataType.colour:
-      if (bytes.length < 4) return '-';
-      return '#${bytes.sublist(0, 4).map((b) => b.toRadixString(16).padLeft(2, '0')).join()}';
-    case DataType.sn:
-      if (bytes.length < 14) return '-';
-      return serialNumberToHex(bytes.sublist(0, 14));
-    case DataType.vector:
-      // Size-flexible: format however many 4-byte Numbers are present (Vector2/3/N).
-      if (bytes.length < 4) return '-';
-      final n = bytes.length ~/ 4;
-      return '[${List.generate(n, (i) => _num3(numberFromBytes(bytes, i * 4))).join(', ')}]';
-    case DataType.matrix:
-      // Matrix buffer: uint16 height, uint16 width, then height*width Numbers.
-      if (bytes.length < 8) return '-';
-      final h = bytes[0] | (bytes[1] << 8);
-      final w = bytes[2] | (bytes[3] << 8);
-      if (h * w * 4 + 4 > bytes.length || h == 0 || w == 0) {
-        return 'matrix ${h}x$w';
-      }
-      String cell(int r, int c) =>
-          _num3(numberFromBytes(bytes, 4 + (r * w + c) * 4));
-      return [
-        for (var r = 0; r < h; r++)
-          '[${[for (var c = 0; c < w; c++) cell(r, c)].join(' ')}]',
-      ].join(' ');
-    case DataType.none:
-      // Placeholder/deleted slot.
-      return '∅';
-    default:
-      return bytes.isEmpty ? '-' : _hex(bytes);
-  }
-}
+// Value formatting (dataTypeLabel, formatValue) lives in formatters.dart.
 
 // ---------------------------------------------------------------------------
 // Editors

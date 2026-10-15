@@ -71,32 +71,6 @@ mixin AutoRefreshMixin<T extends StatefulWidget> on State<T> {
   }
 }
 
-/// Formats a millisecond duration as `Hh Mm Ss` (shared by the Device view
-/// uptime and the Log entry timestamps).
-String formatUptimeMs(int ms) {
-  final seconds = ms ~/ 1000;
-  final h = seconds ~/ 3600;
-  final m = (seconds % 3600) ~/ 60;
-  final s = seconds % 60;
-  return '${h}h ${m}m ${s}s';
-}
-
-/// Formats a signed millisecond offset as `+hh:mm:ss.SSS` or `-hh:mm:ss.SSS`.
-String formatOffsetMs(int ms) {
-  final sign = ms >= 0 ? '+' : '-';
-  final abs = ms.abs();
-  final msPart = abs % 1000;
-  final totalSec = abs ~/ 1000;
-  final s = totalSec % 60;
-  final totalMin = totalSec ~/ 60;
-  final m = totalMin % 60;
-  final h = totalMin ~/ 60;
-  return '$sign${h.toString().padLeft(2, '0')}:'
-      '${m.toString().padLeft(2, '0')}:'
-      '${s.toString().padLeft(2, '0')}.'
-      '${msPart.toString().padLeft(3, '0')}';
-}
-
 /// Name (+ optional index) prompt for the dynamic-block create/edit flows. Dynamic
 /// blocks are always the Dynamic type, so no type picker is needed.
 /// With `withIndex` the user may pin the new block to an explicit index (filling a

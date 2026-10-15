@@ -15,6 +15,7 @@ import '../core/transform_23.dart';
 
 export '../core/block_registry.dart' show FieldInfo;
 import '../core/types.dart';
+import 'formatters.dart';
 import 'widgets.dart';
 
 part 'value_editor_scalars.dart'; // Number/Bool/Enum/DevType/Serial editors

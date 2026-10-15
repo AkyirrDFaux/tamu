@@ -16,41 +16,14 @@ import '../core/system_schema.dart' show hasNetIdFor;
 import '../core/register_client.dart';
 import '../core/types.dart';
 import 'theme.dart' show kOrange, kSurfaceAlt;
-import 'value_editor.dart' show dataTypeLabel, formatValue;
+import 'formatters.dart';
 
 // ---------------------------------------------------------------------------
 // Known file types (Docs/Services/Storage.md: "the viewer/editor of files
 // formats the files based on the file name")
 // ---------------------------------------------------------------------------
 
-enum StorageFileType {
-  snreg,
-  layout,
-  text,
-  binary,
-  dynamicTable,
-  dynamicValues,
-  backup,
-}
-
-StorageFileType storageFileType(String name) {
-  final upper = normalizeFileName(name).toUpperCase();
-  if (upper == '.SNREG') return StorageFileType.snreg;
-  if (upper == '.SV' || upper == '.SUBREQ' || upper == 'SUBREQ') {
-    return StorageFileType.backup;
-  }
-  // Per-block dynamic persistence (Docs/Services/Register.md: .DT_XXX table / .DV_XXX values).
-  if (upper.startsWith('.DT_')) return StorageFileType.dynamicTable;
-  if (upper.startsWith('.DV_')) return StorageFileType.dynamicValues;
-  if (upper.startsWith('LAY') || upper.endsWith('.LAY')) {
-    return StorageFileType.layout;
-  }
-  if (upper.endsWith('.TXT') || upper.endsWith('.LOG')) {
-    return StorageFileType.text;
-  }
-  return StorageFileType.binary;
-}
-
+/// The icon a stored file's type is shown with.
 IconData storageFileIcon(String name) => switch (storageFileType(name)) {
   StorageFileType.snreg => Icons.badge_outlined,
   StorageFileType.layout => Icons.grid_on_outlined,
@@ -60,20 +33,6 @@ IconData storageFileIcon(String name) => switch (storageFileType(name)) {
   StorageFileType.dynamicValues => Icons.storage_outlined,
   StorageFileType.backup => Icons.storage_outlined,
 };
-
-String fileTypeLabel(String name) => switch (storageFileType(name)) {
-  StorageFileType.snreg => 'Serial registry',
-  StorageFileType.layout => 'LED layout',
-  StorageFileType.text => 'Text',
-  StorageFileType.binary => 'Binary',
-  StorageFileType.dynamicTable => 'Dynamic block table',
-  StorageFileType.dynamicValues => 'Dynamic values',
-  StorageFileType.backup => 'Registry backup',
-};
-
-/// 32-bit hex formatting shared by the storage page rows and the backup decoder.
-String hex32(int value) =>
-    '0x${value.toRadixString(16).padLeft(8, '0').toUpperCase()}';
 
 /// Formatted preview of one file's content. Known types render decoded
 /// (SNREG registry, LAY LED-index grid, backup registries, text); a raw hex

@@ -2,9 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/types.dart';
 import 'package:tamuapp/ui/file_viewers.dart';
-import 'package:tamuapp/ui/system_block_view.dart';
 import 'package:tamuapp/ui/theme.dart';
-import 'package:tamuapp/ui/value_editor.dart' show formatValue;
+import 'package:tamuapp/ui/formatters.dart';
 
 /// Renders the `.SV` / SUBREQ decoders against synthetic bytes matching the
 /// firmware formats (StaticMemory.h / Subscriptions.h), and checks the

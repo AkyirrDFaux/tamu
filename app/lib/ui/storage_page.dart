@@ -9,6 +9,7 @@ import '../core/platform_caps.dart';
 import '../core/register_client.dart';
 import '../core/storage_client.dart';
 import '../core/types.dart';
+import 'formatters.dart';
 import 'theme.dart';
 import 'file_viewers.dart';
 import 'widgets.dart';

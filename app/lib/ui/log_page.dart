@@ -9,6 +9,7 @@ import '../core/device_db.dart';
 import '../core/diagnostics.dart';
 import '../core/protocol.dart';
 import '../core/types.dart';
+import 'formatters.dart';
 import 'theme.dart';
 import 'widgets.dart';
 

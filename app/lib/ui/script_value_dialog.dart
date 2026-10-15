@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import '../core/script_draft.dart';
 import '../core/script_file.dart';
 import '../core/types.dart';
+import 'formatters.dart';
 import 'block_info_picker.dart';
 import 'value_editor.dart';
 import 'widgets.dart';

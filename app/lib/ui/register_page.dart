@@ -19,9 +19,10 @@ import '../core/storage_client.dart'
     show FileRecord, StorageClient, normalizeFileName;
 import '../core/types.dart';
 import '../core/script_client.dart';
+import 'formatters.dart';
 import 'register_backup_view.dart';
 import 'theme.dart';
-import 'value_editor.dart' show dataTypeLabel, formatValue, showValueEditor;
+import 'value_editor.dart' show showValueEditor;
 import 'system_block_view.dart';
 import 'widgets.dart';
 

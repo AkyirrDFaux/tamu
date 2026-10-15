@@ -17,12 +17,12 @@ import '../core/script_functions.dart';
 import '../core/script_instructions.dart';
 import '../core/storage_client.dart';
 import '../core/types.dart';
+import 'formatters.dart';
 import 'script_instruction_picker.dart';
 import 'script_symbol_picker.dart';
 import 'script_value_dialog.dart';
 import 'script_widgets.dart';
 import 'theme.dart';
-import 'value_editor.dart';
 import 'widgets.dart';
 
 part 'script_editor_view.dart';

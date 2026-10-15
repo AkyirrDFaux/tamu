@@ -275,7 +275,7 @@ Future<List<int>?> _editTransformMatrix(
   // Raw cell controllers (a, b, tx, c, d, ty).
   final raw = List.generate(
     6,
-    (i) => TextEditingController(text: _num3(t.toCells()[i])),
+    (i) => TextEditingController(text: formatNumber3(t.toCells()[i])),
   );
 
   // Transform controllers + mirror flags.
@@ -289,12 +289,12 @@ Future<List<int>?> _editTransformMatrix(
     t.fromCells(cells.cast<double>());
     mirrorX = t.mirrorX;
     mirrorY = t.mirrorY;
-    tc['ox']!.text = _num3(t.offsetX);
-    tc['oy']!.text = _num3(t.offsetY);
-    tc['rot']!.text = _num3(t.rotation);
-    tc['sx']!.text = _num3(t.scaleX);
-    tc['sy']!.text = _num3(t.scaleY);
-    tc['skew']!.text = _num3(t.skew);
+    tc['ox']!.text = formatNumber3(t.offsetX);
+    tc['oy']!.text = formatNumber3(t.offsetY);
+    tc['rot']!.text = formatNumber3(t.rotation);
+    tc['sx']!.text = formatNumber3(t.scaleX);
+    tc['sy']!.text = formatNumber3(t.scaleY);
+    tc['skew']!.text = formatNumber3(t.skew);
   }
 
   void syncFromRaw() {
@@ -314,7 +314,7 @@ Future<List<int>?> _editTransformMatrix(
       ..mirrorY = mirrorY;
     final cells = t.toCells();
     for (var i = 0; i < 6; i++) {
-      raw[i].text = _num3(cells[i]);
+      raw[i].text = formatNumber3(cells[i]);
     }
   }
 
@@ -330,17 +330,17 @@ Future<List<int>?> _editTransformMatrix(
       ..mirrorY = false;
     final cells = t.toCells();
     for (var i = 0; i < 6; i++) {
-      raw[i].text = _num3(cells[i]);
+      raw[i].text = formatNumber3(cells[i]);
     }
     syncTc();
   }
 
-  tc['ox'] = TextEditingController(text: _num3(t.offsetX));
-  tc['oy'] = TextEditingController(text: _num3(t.offsetY));
-  tc['rot'] = TextEditingController(text: _num3(t.rotation));
-  tc['sx'] = TextEditingController(text: _num3(t.scaleX));
-  tc['sy'] = TextEditingController(text: _num3(t.scaleY));
-  tc['skew'] = TextEditingController(text: _num3(t.skew));
+  tc['ox'] = TextEditingController(text: formatNumber3(t.offsetX));
+  tc['oy'] = TextEditingController(text: formatNumber3(t.offsetY));
+  tc['rot'] = TextEditingController(text: formatNumber3(t.rotation));
+  tc['sx'] = TextEditingController(text: formatNumber3(t.scaleX));
+  tc['sy'] = TextEditingController(text: formatNumber3(t.scaleY));
+  tc['skew'] = TextEditingController(text: formatNumber3(t.skew));
 
   List<int> build() {
     final cells = raw.map((c) => double.tryParse(c.text)).toList();
@@ -629,12 +629,4 @@ Future<List<int>?> _editHex(
   );
 }
 
-// ---------------------------------------------------------------------------
-// Small formatting helpers
-// ---------------------------------------------------------------------------
-
-String _hex(List<int> bytes) =>
-    bytes.map((int b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
-
-String _num3(double v) =>
-    v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(3);
+// The shared number/hex formatters (formatNumber3, formatHexBytes) live in formatters.dart.

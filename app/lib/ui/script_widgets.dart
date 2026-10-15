@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import '../core/script_client.dart';
 import '../core/script_file.dart';
 import '../core/types.dart';
+import 'formatters.dart';
 import 'theme.dart';
 import 'value_editor.dart';
 import 'widgets.dart';
