@@ -21,6 +21,107 @@ this itself; `TAMU_HIL` overrides it, or set it to `ble` for the BLE path. `TAMU
 declares that a device is in bootloader mode for the bootloader category; the value is ignored, since
 bootloader frames carry no address.
 
+## App UX pass (2026-10-15) - phase 1 approved, phase 2 planned, phase 3 open
+
+Steering from Akyirr: streamline the UX, one consistent UI, and it must be understandable by a
+non-programmer. `Docs/App/General Info.md` already promises this ("human-readable interpretation,
+targeted at technically non-proficient users, while subtly displaying extra information for more
+advanced users"), so the work closes a spec-vs-code gap, it does not change direction.
+**Presentation only** - the five tabs and all seven service views stay; no feature, protocol or IA
+change. Reordering is explicitly deferred.
+
+Scope, measured on the tree: `app/lib/ui` is 34 files / 14 312 lines. `theme.dart` defines only
+`bodyLarge/Medium/Small` and five component themes, so every page styles itself - **151 `TextStyle()`
+literals** and **133 raw `Colors.*` references** outside the theme, 8 distinct `EdgeInsets.all` values
+(18x12, 5x16, 4x24, 2x8, one-offs at 1/3/6) and 4 corner radii (4/6/8/12). A shared layer already
+exists (`app/lib/ui/widgets.dart`, imported by 22 of 34 files) - adoption is the problem, not absence.
+
+**End-state rule, and the test of this phase:** no page styles itself (no raw `Colors.*`, no
+`Color(0x...)`, no `TextStyle(fontSize:)`, no bare `EdgeInsets`) and no situation is implemented
+twice. Styling lives in the theme and the shared widgets only.
+
+### Phase 1a - token layer (`ui/theme.dart`), first
+
+Spacing scale, radius scale, named text roles (the three body styles become roles and the missing
+title/label/headline roles are added), plus the absent component themes: input/TextField, Card,
+ListTile, Dialog, Chip, TabBar, Switch/Checkbox/Radio, IconButton, TextButton/OutlinedButton,
+Dropdown, Tooltip.
+
+### Phase 1b - one implementation per situation
+
+`ui/widgets.dart` is the home. Counts below are measured call sites today, not guesses.
+
+- `SectionHeader` - exists, used by **1** file (`settings_page.dart`); becomes the only section heading.
+- `InfoCard` / `InfoRow` - exists, used by **2** files; becomes the label:value row everywhere
+  (Device View, Update, every service view).
+- Already adopted, become the standard: `showSnack` 14 files, `DialogBody` 10, `RefreshButton` 9,
+  `ShellDrawerButton` 5.
+- New `TamuPage` - scaffold plus loading / empty / error states. Failure text is currently written
+  inline in about 10 files (`log_page.dart` alone carries 23 `'Could not ...'` strings).
+- New `StateMessage` - the only place an empty/error/loading state is rendered.
+- New `PageAppBar` + action set - refresh/autorefresh, identify, sort, view switch. Autorefresh
+  exists only in `connection_page.dart` + `widgets.dart`, yet `Docs/App/Devices.md` specifies it on
+  Devices and Device View too.
+- New `DeviceTile` - icon, name, id+type subtext, stale marker, badge; replaces the per-page rows in
+  Connection / Devices / SNDB / Backup.
+- New `showTamuDialog` - replaces **~35 hand-rolled `showDialog` call sites** across 15 files
+  (`register_page_edit.dart` 5; the two value-editor backends 6 + 6; `script_editor_view.dart` 4).
+- New `TaskProgress` - one phase/progress display for update / backup / restore / upload.
+- New picker shell over the four existing pickers (block info, symbol, instruction, subscription).
+- `formatters.dart` - one home for `idToString`, `dataTypeLabel`, `formatValue`, `fileTypeLabel`,
+  `formatSystemValue`, `formatCapabilities`, `formatUptimeMs`, `formatOffsetMs` (spread over three
+  files today, plus inline formatting elsewhere). No display formatting outside it.
+- **Value editing** - today a facade (`value_editor.dart`) over three backends plus a parallel script
+  implementation (`script_value_dialog.dart`, 318 lines): 1 770 lines doing one job. Target is one
+  entry point, with the script dialog as a caller.
+- **Viewers** - four near-parallel table/tree implementations (`file_viewers.dart` 695,
+  `log_page.dart` 519, `storage_page.dart` 444, `register_backup_view.dart` 279) and they hold the
+  tree's worst styling debt (`register_page_tiles.dart`: 23 `Colors.` / 29 `TextStyle()`). Target is
+  one viewer toolkit - table shell, hex/ASCII view, paging, row chips - on top of `formatters.dart`.
+
+### Phase 1c - roll the pages onto the library, worst-first
+
+1. Register cluster - 2 853 lines (page 886, tiles 954, edit 734, backup view 279)
+2. Script cluster - 3 645 lines (8 files)
+3. Value editor + `script_value_dialog.dart`
+4. Viewers - file, storage, log, register backup, SNDB, subscriptions
+5. Connection / Devices / Device View (list + graph), adopting `DeviceTile`
+6. Update / Backup / Settings - small, already mostly shared
+
+Same behaviour per page; one batch per cluster, stopped for Akyirr's review after each. Per batch:
+`dart format`, then `dart fix --apply --code=curly_braces_in_flow_control_structures`, then
+`dart format` again; `flutter analyze` clean; `flutter test --exclude-tags hil` green; `version.json`
+in the same commit. The agent can run the app gates in-tree (`app/.dart_tool` is writable, unlike the
+firmware's ESP-IDF tree), but it cannot run the GUI - so a batch ends with a build handed over plus a
+what-changed-where checklist, and the HIL suite for anything touching bus behaviour.
+
+### Phase 2 - vocabulary, now including localization
+
+One string layer (`ui/vocabulary.dart`) resolving every user-facing string: term -> user label, with
+the technical term as the secondary line (the spec's "subtly display extra information"). Current
+offenders: page titles `Register - 1.0`, `Storage - 1.0`, `SN Database`; labels `TRID`, `NetID`,
+`Serial number (28 hex chars)`, `BlockInfo`, `Entry flags (field 4)`, `Add dynamic block`, `SNDB 12`,
+`Sub #3`, `Matrix (2x3)`, `Raw`.
+
+Rules: name the thing the user acts on, not the firmware service; never a bare number without
+meaning; no `#3`, no hex without a plain form.
+
+**Localization rides on the same layer** (Akyirr, 2026-10-15). Nothing exists today - no `l10n.yaml`,
+no `lib/l10n/`, and no `flutter_localizations`/`intl` in `app/pubspec.yaml`. Intended shape: the
+catalogue is ARB via `flutter gen-l10n`, so the vocabulary table *is* the message catalogue instead of
+a second copy of it. English is the default locale; the "avoid unnecessary libraries" rule in
+`General Info.md` still stands, so the only additions are `flutter_localizations` + `intl` (required
+for ARB) and no third-party i18n package. Needs an approved `Docs/App/**` batch (page names, labels,
+locale rules) - Akyirr owns the wording, delivered as batches of four-at-a-time decisions.
+
+### Phase 3 - "the design should lead them" - open, deliberately deferred
+
+Held out of the plan until Akyirr picks it up. Candidate rules, to be applied per page during 1c when
+it lands: one primary action, visually dominant; prevent rather than report (disable what cannot
+work, reason on the control); default everything (prefill the likely value, remember the last
+choice); fewer choices (rare options collapse into the existing menus, no new tabs); no bare failures
+(what happened -> what to do). Per Akyirr, the service menu stays and shows everything.
+
 ## Script system (2026-10-11) - implemented; three items open
 
 The staged plan landed on both sides (the `SCR_XXX` header, the Service instruction set, the CID 3
@@ -51,8 +152,10 @@ Open:
 
 - **The update flow end to end on Android** (connect -> detect -> update app/bootloader) - the
   sequence the tester performs, and the last acceptance criterion. Tracked with `Issues.md` E20.
-- **The app interface pass** (`Docs/App/**`), waiting on Akyirr to pick or amend the ranked fix
-  order. The audit report lives at `~/.hermes/notes/tamu-ui-audit-2026-10-08.md`.
+- **The app interface pass** (`Docs/App/**`) - superseded by the "App UX pass (2026-10-15)"
+  section above. The older ranked fix order and its audit
+  (`~/.hermes/notes/tamu-ui-audit-2026-10-08.md`) are historical: phase 1 was approved 2026-10-15,
+  phase 2 is planned, phase 3 is open.
 - **Phase 5 - optimization + final verification**: DAS headroom (~94 % flash / ~99 % RAM), a final
   gate run, and the release checklist.
 
