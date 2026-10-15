@@ -246,7 +246,7 @@ public:
         // then the index table. Only this format is accepted - a file written to the older
         // 2-byte header fails here and the caller falls back to the built-in default.
         uint8_t Hdr[3];
-        if (StorageFlashRead(Off, Hdr, 3) != 3)
+        if (StorageFlash.Read(Off, Hdr, 3) != 3)
             return false;
         uint32_t Entries = (uint32_t)Hdr[1] * Hdr[2];
         if (Hdr[1] == 0 || Hdr[2] == 0 || Entries > MaxLayoutEntries ||
@@ -256,7 +256,7 @@ public:
         // Read into a scratch buffer and only commit to the display once the whole read
         // succeeded, so a failed read leaves the previous layout/state untouched.
         uint16_t Pending[MaxLayoutEntries];
-        if (StorageFlashRead(Off + 3, (void *)Pending, Entries * 2) != Entries * 2)
+        if (StorageFlash.Read(Off + 3, (void *)Pending, Entries * 2) != Entries * 2)
             return false;
         for (uint32_t i = 0; i < Entries; i++)
         {

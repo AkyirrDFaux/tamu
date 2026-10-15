@@ -140,7 +140,7 @@ inline bool StorageService::Handle(const PacketFrame &Frame)
                         // answer with whatever the previous fragment left in the payload - a wrong
                         // result with no error signal. A failed read is a failure.
                         if (ContentLen &&
-                            StorageFlashRead(FileOffset + ContentOff, TxFrame.Payload + 12, ContentLen) != ContentLen) {
+                            StorageFlash.Read(FileOffset + ContentOff, TxFrame.Payload + 12, ContentLen) != ContentLen) {
                             DeviceLog("STORAGE", "read '%.8s' failed at offset %u", Name, (unsigned)ContentOff);
                             ReadOk = false;
                             break;
@@ -218,7 +218,7 @@ inline bool StorageService::Handle(const PacketFrame &Frame)
                 break;
             }
             if (ContentLen > 0) {
-                if (!StorageFlashWrite(FileOffset + WriteOff, Contents, ContentLen)) {
+                if (!StorageFlash.Write(FileOffset + WriteOff, Contents, ContentLen)) {
                     DeviceLog("STORAGE", "write file '%.8s' flash write failed", Name);
                     SendResponse(Frame, nullptr, 0, FLAG_FAIL);
                     break;

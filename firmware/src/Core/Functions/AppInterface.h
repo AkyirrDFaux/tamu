@@ -166,10 +166,16 @@ inline void AppInterfaceService::TxCommit(uint16_t Count)
     portEXIT_CRITICAL(&TxMux);
 }
 
-// Flushes as many 60-byte USB link frames as possible. AppUSBSend blocks briefly (bounded) until
-// the bytes are in the driver's TX buffer, so everything popped here is considered delivered.
-// When a BLE session is up and USB has been silent, the app has switched links (closed its USB
-// port, cable still plugged): skip USB so responses route to BLE.
+// Drains pending TX bytes to the active link.
+//
+// USB is popped directly (AppUSBSend blocks briefly, so popped bytes are delivered). BLE is
+// drained by AppBLETick (TxPeek/TxCommit, one notification per call), so a BLE session cannot
+// drain the ring the way USB does: a whole-file reply that bursts past the ring inside one
+// handler would find it still full on Send()'s retry and lose its tail fragments. Pump the BLE
+// tick here until the ring has room for the next frame, or the link stops making progress (the
+// app is not reading - a failed notify leaves its bytes queued, so this then terminates).
+// Called only from the app task: the sole caller of Send is the dispatcher, and the flush is the
+// same work Pump() does.
 inline void AppInterfaceService::TxFlush()
 {
     if (AppUSBActive() && TxRing && !(AppBLEActive() && AppUsbSilent()))
@@ -180,6 +186,22 @@ inline void AppInterfaceService::TxFlush()
         {
             AppUSBSend(Chunk, Count);
             Count = TxPop(Chunk, sizeof(Chunk));
+        }
+        return;
+    }
+
+    // BLE link. Each iteration must drain at least one byte or the loop stops, so it is bounded
+    // by the ring size (a stalled/back-pressured app breaks out and lets Send() drop as before).
+    if (AppBLEActive() && TxRing)
+    {
+        for (;;)
+        {
+            uint16_t Used = (uint16_t)(TxHead - TxTail);
+            if (Used <= APP_TX_RING_SIZE - 256)
+                break; // room for any single frame
+            AppBLETick();
+            if ((uint16_t)(TxHead - TxTail) >= Used)
+                break; // no progress this tick: the link is not accepting notifications
         }
     }
 }

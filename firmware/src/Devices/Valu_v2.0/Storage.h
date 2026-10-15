@@ -51,7 +51,7 @@ static void StorageFlashRestore(uint32_t Old)
 }
 
 // Opens the flash controller and checks that the code does not overlap the storage region.
-bool StorageFlashInit()
+bool StorageFlashDevice::Init()
 {
     // The linker region is the app window [0x3000, 0xE000) (board_upload.maximum_size), so a
     // build that grows into storage fails to link. This runtime check is the belt-and-braces
@@ -68,7 +68,7 @@ bool StorageFlashInit()
 }
 
 // Reads `size` bytes from flash at `offset` into `data` (0x00000000 domain).
-uint32_t StorageFlashRead(uint32_t Offset, void *Data, uint32_t Size)
+uint32_t StorageFlashDevice::Read(uint32_t Offset, void *Data, uint32_t Size)
 {
     // Overflow-safe bound: `offset + size` could wrap for a huge size.
     if (Offset > STORAGE_FLASH_SIZE || Size > STORAGE_FLASH_SIZE - Offset)
@@ -80,7 +80,7 @@ uint32_t StorageFlashRead(uint32_t Offset, void *Data, uint32_t Size)
 // Writes `size` bytes from `data` to flash at `offset`. The target must be freshly erased:
 // flash only programs 1s to 0s, so a word is written as a read-modify-write that keeps the
 // surrounding (0xFF) bytes intact.
-bool StorageFlashWrite(uint32_t Offset, const void *Data, uint32_t Size)
+bool StorageFlashDevice::Write(uint32_t Offset, const void *Data, uint32_t Size)
 {
     if (Size == 0)
         return true;
@@ -125,7 +125,7 @@ bool StorageFlashWrite(uint32_t Offset, const void *Data, uint32_t Size)
 // erased page is verified by reading back its first word - a failed erase must not be reported
 // as success into table/file commits. The fast erase needs its own unlock (FLASH_Unlock_Fast,
 // CR_PAGE_ER is the fast-mode page erase keyed by MODEKEYR on the CH32V20x).
-bool StorageFlashErase(uint32_t Offset, uint32_t Size)
+bool StorageFlashDevice::Erase(uint32_t Offset, uint32_t Size)
 {
     if ((Offset & (FLASH_ERASE_PAGE_SIZE - 1)) || (Size & (FLASH_ERASE_PAGE_SIZE - 1)))
         return false;
@@ -165,7 +165,7 @@ bool StorageFlashErase(uint32_t Offset, uint32_t Size)
 }
 
 // Wipes the entire storage region, one fast page at a time (the whole region is page-aligned).
-bool StorageFlashFormat()
+bool StorageFlashDevice::Format()
 {
-    return StorageFlashErase(0, STORAGE_FLASH_SIZE);
+    return Erase(0, STORAGE_FLASH_SIZE);
 }

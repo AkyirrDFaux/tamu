@@ -21,3 +21,7 @@ Per part selection of synced items, can sync to different device/block/part if t
 
 The storage format is semantic (types, keys, enums, etc. are described in words), numbers are not used unless it's the literal value or index.
 This makes the system more resilient against small firmware updates (reordering, adding/removing of fields).
+
+A file is archived as a binary only when it has no semantic form: a `SCR_XXX` script is stored
+only as the semantic script and the file is rebuilt on restore, so a file that has a semantic
+form never also travels as raw bytes.

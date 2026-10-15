@@ -43,7 +43,7 @@ __attribute__((section(".fixed_data"), used))
 const uint8_t StorageFlashReservation[STORAGE_FLASH_SIZE] = {0xFF};
 
 // Opens the flash controller and checks that the code does not overlap the storage region.
-bool StorageFlashInit()
+bool StorageFlashDevice::Init()
 {
     // Reference the reservation so --gc-sections does not discard the pinned section.
     __asm__ volatile("" : : "r"(StorageFlashReservation));
@@ -66,7 +66,7 @@ bool StorageFlashInit()
 }
 
 // Reads `size` bytes from flash at `offset` into `data` (0x00000000 domain).
-uint32_t StorageFlashRead(uint32_t Offset, void *Data, uint32_t Size)
+uint32_t StorageFlashDevice::Read(uint32_t Offset, void *Data, uint32_t Size)
 {
     // Overflow-safe bound: `offset + size` could wrap for a huge size.
     if (Offset > STORAGE_FLASH_SIZE || Size > STORAGE_FLASH_SIZE - Offset)
@@ -78,7 +78,7 @@ uint32_t StorageFlashRead(uint32_t Offset, void *Data, uint32_t Size)
 // Writes `size` bytes from `data` to flash at `offset`. The target must be freshly erased:
 // flash only programs 1s to 0s, so a word is written as a read-modify-write that keeps the
 // surrounding (0xFF) bytes intact.
-bool StorageFlashWrite(uint32_t Offset, const void *Data, uint32_t Size)
+bool StorageFlashDevice::Write(uint32_t Offset, const void *Data, uint32_t Size)
 {
     if (Size == 0)
         return true;
@@ -121,7 +121,7 @@ bool StorageFlashWrite(uint32_t Offset, const void *Data, uint32_t Size)
 // no status, so each erased page is verified by reading back its first word - a failed erase
 // must not be reported as success into table/file commits. The BSY wait mirrors the SDK's
 // ROM_ERASE; the controller requires both standard and fast-mode unlocks.
-bool StorageFlashErase(uint32_t Offset, uint32_t Size)
+bool StorageFlashDevice::Erase(uint32_t Offset, uint32_t Size)
 {
     if ((Offset & (FLASH_ERASE_PAGE_SIZE - 1)) || (Size & (FLASH_ERASE_PAGE_SIZE - 1)))
         return false;
@@ -149,7 +149,7 @@ bool StorageFlashErase(uint32_t Offset, uint32_t Size)
 // Wipes the entire storage region. The region is small (512 B on the DAS), so it is erased
 // with the 64-byte CR_PAGE_ER pages (like every other storage op) - a coarse 1 KB CR_PER
 // sector erase would spill past the region on the 512 B layout.
-bool StorageFlashFormat()
+bool StorageFlashDevice::Format()
 {
-    return StorageFlashErase(0, STORAGE_FLASH_SIZE);
+    return Erase(0, STORAGE_FLASH_SIZE);
 }

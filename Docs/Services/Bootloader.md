@@ -38,7 +38,7 @@ Identify response packet:
 | Padding      | 4bit     | 0    |
 | Parity       | 1bit     | Even, covers command, size and name |
 | Command      | 3bit     | 0b001 |
-| App size     | uint32   | Size of the app space in bytes |
+| App size     | uint32   | Size of the uploadable app region in bytes - the whole app region, storage included |
 | Name         | char[32] | Device name, null-padded |
 | End Marker   | uint8    | 0xBC |
 

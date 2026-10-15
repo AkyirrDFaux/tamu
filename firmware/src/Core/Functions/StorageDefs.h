@@ -50,12 +50,21 @@
 #endif
 #define STORAGE_TABLE_SIZE (STORAGE_TABLE_PAGES * STORAGE_BLOCK_SIZE)
 
-// --- Flash access (implemented per device, see Devices/<device>/Storage.h) ---
-bool StorageFlashInit();                              // find/open the storage partition
-uint32_t StorageFlashRead(uint32_t Offset, void *Data, uint32_t Size);   // Reads `size` bytes from flash at `offset`; returns bytes actually read (0 on failure)
-bool StorageFlashWrite(uint32_t Offset, const void *Data, uint32_t Size); // Writes `size` bytes to flash at `offset`
-bool StorageFlashErase(uint32_t Offset, uint32_t Size);   // Erases `size` bytes of flash starting at `offset`
-bool StorageFlashFormat();                            // Wipes the entire storage region (per-device)
+// --- Flash access: the storage device backend (Docs/Services/Storage.md "Main Functions"),
+// implemented per device in Devices/<device>/Storage.h ---
+//
+// The doc names these Init/Read/Write/Erase/Format; as methods of their own class those generic
+// names do not collide with other services' free functions. One instance per binary.
+class StorageFlashDevice
+{
+public:
+    bool Init();                                                  // find/open the storage partition
+    uint32_t Read(uint32_t Offset, void *Data, uint32_t Size);    // returns bytes actually read (0 on failure)
+    bool Write(uint32_t Offset, const void *Data, uint32_t Size); // writes `Size` bytes to flash at `Offset`
+    bool Erase(uint32_t Offset, uint32_t Size);                   // erases `Size` bytes starting at `Offset`
+    bool Format();                                                // wipes the entire storage region (per-device)
+};
+StorageFlashDevice StorageFlash;
 
 // File record format (16 bytes, naturally 4-aligned, Docs/Services/Storage.md):
 // Offset is from flash start, Filesize in bytes, Name is 8 plain-text characters.

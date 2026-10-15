@@ -23,13 +23,10 @@ bootloader frames carry no address.
 
 ## Script system (2026-10-11) - implemented; three items open
 
-The staged plan landed on both sides: the 24-byte `SCR_XXX` header with the Function reservations
-block; the Function-library flag and the load-on-boot slot in Properties bits 8-15; the Service
-instruction set (`Start`/`Stop`/`Pause`/`Resume`/`Error`/`Report info`, opcode 3 retired); the CID 3
-report record; CID 5's fixed-size call stack plus variable RAM; the whole streamed CID 0 slot map
-with a lowest-free load; and local/macro/global functions with link-at-load. The extended Log struct
-- 32-bit source carrying the whole block index, 32-bit source-specific code - landed with it. Gate
-green; HIL 48/48 at the time, 55/55 after the later waves.
+The staged plan landed on both sides (the `SCR_XXX` header, the Service instruction set, the CID 3
+report record, CID 5's call stack, the streamed CID 0 slot map and local/macro/global functions with
+link-at-load, plus the extended Log struct); gate green, HIL 55/55 after the later waves. The detail
+is in the git history.
 
 Still open:
 
@@ -64,7 +61,8 @@ Open:
 - Router capability bit: reserve one for the router service so the documented capability can be set.
 - App Active enum: add `WiFi` (`Enums.h:34-38`) when that work starts. E10 dropped `LegacyBt` from
   the documents, so it is no longer listed as a planned state.
-- [ ] **Valu app works standalone but NOT when launched by the bootloader (open).** Verified
+- [ ] **Valu app works standalone but NOT when launched by the bootloader (open; candidate fix
+      applied, unverified).** Verified
       2026-10-07: the identical app image, ISP-flashed at 0x0 (no bootloader), runs and enumerates
       as `1a86:6001 "Valu v2.0"` and reaches its main loop; launched from the bootloader
       (`((void(*)())0x3000)()` from `JumpToApp`) it never reaches `main` - the LED stays dark and no
@@ -73,10 +71,14 @@ Open:
       does not finish. App-side attempts that did NOT fix it: (a) skipping the framework's
       `SystemInit` when the PLL is already up (`ValuClockInit` via the custom
       `startup_ch32v20x_D6.S`), (b) putting SYSCLK back on HSI before the jump (this one makes the
-      *bootloader* hang on SWS). Leading suspects now: the CPU state the bootloader leaves (its
+      *bootloader* hang on SWS). Leading suspects: the CPU state the bootloader leaves (its
       `mtvec` points into the bootloader, so an early app fault vectors into bootloader code; CSRs
-      `0xbc0`/`0x804`; a stale flash prefetch buffer). Next: try a hand-off that starts the app from
-      a reset-equivalent state, or debug the app's CRT on hardware (WCH-Link/SWD).
+      `0xbc0`/`0x804`; a stale flash prefetch buffer).
+      **Candidate applied 2026-10-15 (unverified - no hardware to confirm or revert):** `JumpToApp`
+      now tears the USBD controller down before the jump - disable + clear the `USB_LP_CAN1_RX0_IRQn`
+      in the PFIC, drop `EXTEN_USBD_PU_EN`, reset the peripheral - so the app is not entered with a
+      live, pending USB interrupt the moment its startup sets `mstatus.MIE`. This is the sweep
+      report's "parked Valu's likely root cause" (medium confidence). **Needs a bench run.**
       **This defect is what blocks on-board verification of the
       Valu app** (below): the app cannot be flashed until the bootloader can store it.
 - [ ] **Valu v2.0 application built (`[env:Valu_v2_0]`, `Devices/Valu_v2.0/`) - on-board
@@ -93,7 +95,7 @@ Open:
       recipe is copied from the bootloader (proven there), but the app re-enumerates as its own
       CDC device and that has not been confirmed. The three resistive channels use a placeholder
       reference resistor (Docs says "not defined") - see `Issues.md`.
-- [ ] **Valu v2.0 layout and USB facts (recorded so they need not be rediscovered).** Bootloader
+- **Valu v2.0 layout and USB facts** (recorded so they need not be rediscovered). Bootloader
       region is **12 KB at flash 0x0** - the 8 KB the design started from overflows by 2028 B once
       a working USB stack is linked - app at **0x3000**, storage reserved from **0xE000**. The
       board's USB is the **FSDEV/USBD controller on roothub port 0**; the USBFS/OTG path (port 1)
@@ -110,18 +112,12 @@ Open:
       so not urgent. Needs a per-field invalidation token: a per-field version array, or comparing
       the cached geometry inputs each frame and recomputing only the changed fields (host-checkable).
       **Deferred to the display/rig batch.**
-- [ ] **D5 - cross-script macro calls** (= `Issues.md` E4). `Script.md` names "Macro call" but gives no
-      opcode/boundary/argument rules. The VM runs one script per tick and wait state lives on the
-      callee, so it needs a `(script, line)` call stack and a tick loop that resumes the waiting
-      script. Proposal: a blocking `Call script` op, values via registers.
-      **Blocked on a docs decision.**
 - [ ] **Rig looks.** `Polygon`/`Star` after the `atan2` fix; a rounded `Square`/`Rectangle`
       (eye-only; the evaluation scene sets no `Rounding`). Needs the display rig.
-- [ ] **D4 - confirm the LED brightness-cap value** by eye. The layout brightness limit (178 = 70 %)
-      maps the register's 0-100 % linearly onto the physical ceiling (`Vysi1Render.h`); confirm the
-      top of the E15 curve looks right at the ceiling.
-- [ ] **DAS provider stale entries** (= `Issues.md` E23; low priority). Effectively solved by the 120 s
-      provider lease + orphan re-cancel; revisit only if a *confirmed* cancel is wanted.
+- **BLE large-reply drain (B11, fixed 2026-10-15).** `AppInterfaceService::TxFlush` now pumps the
+      BLE tick mid-stream (`TxPeek`/`TxCommit` in `AppBLETick`) when BLE is the active link, so a
+      reply larger than the TX ring can complete instead of losing its tail fragments. Builds +
+      native gate pass; **needs a rig run to confirm a whole-file read completes over BLE.**
 
 ## Decisions (locked)
 
@@ -199,5 +195,6 @@ Open:
   with a different debug key, so one must never be installed over an existing install or handed to
   anyone (agent builds are verification only). Java must be 21 - AGP 8.11 rejects Studio's JBR 25.
   `app/build/` holds Akyirr's artifacts, so an agent build fails at the copy step
-  (`Could not set file mode 664`). Flutter 3.44 warns that `build.gradle.kts` and three plugins
-  apply the Kotlin Gradle Plugin; a future Flutter will fail on that.
+  (`Could not set file mode 664`). Flutter 3.44 warns that `build.gradle.kts` and
+  `flutter_libserialport` still apply the Kotlin Gradle Plugin (universal_ble and file_picker
+  migrated to built-in Kotlin in the 2026-10-15 package bump); a future Flutter will fail on that.

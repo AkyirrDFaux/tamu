@@ -39,12 +39,12 @@ A file is handed to other functions to have data stored in it or read from it, a
 #### Main Functions (implement per device, preferably not exposed)
 - `bool Init()`
 	Finds and opens the storage partition. Returns true if successful.
-- `uint32_t Read(uint32_t Address, uint32_t Length, char* Buffer)`
-	Reads Length bytes directly from flash at Address, an offset from the start of the flash sector, into Buffer, which must hold at least Length bytes. Returns the number of bytes actually read.
-- `bool Write(uint32_t Address, uint32_t Length, char* Buffer)`
-	Writes Length bytes directly to flash, from Buffer to Address, an offset from the start of the flash sector. Only 1 to 0 transitions are possible. Returns true if successful.
-- `bool Erase(uint32_t Address, uint32_t Length = PAGE_SIZE)`
-	Erases the sectors starting at Address, for Length continuous bytes. Length must be page-aligned.
+- `uint32_t Read(uint32_t Offset, void* Data, uint32_t Size)`
+	Reads Size bytes directly from flash at Offset, an offset from the start of the flash sector, into Data, which must hold at least Size bytes. Returns the number of bytes actually read.
+- `bool Write(uint32_t Offset, const void* Data, uint32_t Size)`
+	Writes Size bytes directly to flash, from Data to Offset, an offset from the start of the flash sector. Only 1 to 0 transitions are possible. Returns true if successful.
+- `bool Erase(uint32_t Offset, uint32_t Size)`
+	Erases the sectors starting at Offset, for Size continuous bytes. Size must be page-aligned.
 - `bool Format()`
 	Wipes the entire storage system.
 #### Filesystem Utility Functions (filesystem only, universal)

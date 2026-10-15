@@ -26,7 +26,7 @@ Memory with 32-bit alignment, covering system, static and dynamic blocks. It is 
 | Scripts            | 0x3F4-0x3F7 | Instances 0-63 per type; global index 0-255 across the four banks |
 | Reserved           | 0x3F8-0x3FF |                 |
 ### System + Static Memory Blocks
-Basic flat memory, directly accessible internally by the device, with a compile-time layout. A write of a different type or length fails. `Name` and `Filename` are fixed-size character fields, typically 8, 16 or 24 bytes: a shorter value is null-padded at the end, and a longer one is cut off.
+Basic flat memory, directly accessible internally by the device, with a compile-time layout. A write of a different type fails; a write of a different length to a `Name` or `Filename` field does not - those are fixed-size character fields, typically 8, 16 or 24 bytes, where a shorter value is null-padded at the end and a longer one is cut off to fit the field (the write succeeds, clamped to the field width).
 
 Two memory sub-types are distinguished by the `Persistent` flag, and are kept separate so that saving to flash avoids long serialisation and deserialisation.
 

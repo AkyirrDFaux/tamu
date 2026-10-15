@@ -16,7 +16,7 @@ public:
     void Init()
     {
         DropTableCache(); // no window may outlive the table this session started with
-        if (!StorageFlashInit()) {
+        if (!StorageFlash.Init()) {
             DeviceLog("STORAGE", "Storage flash not available!");
             FileTableOffset = 0;
             FileTableSize = 0;
@@ -42,7 +42,7 @@ public:
             // failed read of entry 0 - which says nothing about whether the files are there - from
             // a genuinely invalid table before erasing anything.
             FileRecord Entry0;
-            if (StorageFlashRead(FileTableOffset, &Entry0, TABLE_ENTRY_SIZE) != TABLE_ENTRY_SIZE) {
+            if (StorageFlash.Read(FileTableOffset, &Entry0, TABLE_ENTRY_SIZE) != TABLE_ENTRY_SIZE) {
                 DeviceLog("STORAGE", "table entry 0 unreadable - NOT formatting");
                 FileTableOffset = 0;
                 FileTableSize = 0;
@@ -65,7 +65,7 @@ public:
         uint32_t Slot = 0;
         uint32_t Newest = 0;
         for (uint32_t i = 0; i < PTR_SLOTS; i++) {
-            if (StorageFlashRead(i * 4, &Slot, sizeof(Slot)) != sizeof(Slot))
+            if (StorageFlash.Read(i * 4, &Slot, sizeof(Slot)) != sizeof(Slot))
                 return false;
             // Track each valid slot (neither 0x00000000 nor 0xFFFFFFFF); later slots are newer.
             if (Slot != 0x00000000 && Slot != 0xFFFFFFFF)
@@ -83,7 +83,7 @@ public:
         uint32_t Slot = 0;
         uint32_t WriteSlot = PTR_SLOTS;
         for (uint32_t i = 0; i < PTR_SLOTS; i++) {
-            if (StorageFlashRead(i * 4, &Slot, sizeof(Slot)) != sizeof(Slot))
+            if (StorageFlash.Read(i * 4, &Slot, sizeof(Slot)) != sizeof(Slot))
                 return false;
             if (Slot == 0xFFFFFFFF) { // first unused slot
                 WriteSlot = i;
@@ -93,13 +93,13 @@ public:
 
         if (WriteSlot == PTR_SLOTS) {
             // Block is full, erase it and start fresh (erased flash is 0xFFFFFFFF = "unused").
-            if (!StorageFlashErase(0, STORAGE_BLOCK_SIZE))
+            if (!StorageFlash.Erase(0, STORAGE_BLOCK_SIZE))
                 return false;
-            return StorageFlashWrite(0, &NewOffset, sizeof(uint32_t));
+            return StorageFlash.Write(0, &NewOffset, sizeof(uint32_t));
         }
 
         // Write new offset to the found slot; older slots are left untouched (newest wins).
-        return StorageFlashWrite(WriteSlot * 4, &NewOffset, sizeof(uint32_t));
+        return StorageFlash.Write(WriteSlot * 4, &NewOffset, sizeof(uint32_t));
     }
 
     // Finds the NEWEST file record matching `name`. Returns false when a flash read fails
@@ -282,7 +282,7 @@ public:
         uint32_t NewOffset = FindSpace(NewSize);
         if (NewOffset == 0) return false; // Out of space
 
-        if (!StorageFlashErase(NewOffset, NewSize))
+        if (!StorageFlash.Erase(NewOffset, NewSize))
             return false;
 
         // Entry 0: self-describing table (points to its own location and length)
@@ -291,7 +291,7 @@ public:
         Entry0.Offset = NewOffset;
         Entry0.Size = NewSize;
         memcpy(Entry0.Name, ".TABLE  ", 8);
-        if (!StorageFlashWrite(NewOffset, &Entry0, TABLE_ENTRY_SIZE))
+        if (!StorageFlash.Write(NewOffset, &Entry0, TABLE_ENTRY_SIZE))
             return false;
 
         // Copy valid entries (dense, skipping holes); entry 0 is regenerated above.
@@ -304,7 +304,7 @@ public:
             if (!FileRecordIsValid(Entry.Offset)) continue;
             if (Dest * TABLE_ENTRY_SIZE >= NewSize)
                 return false;
-            if (!StorageFlashWrite(NewOffset + Dest * TABLE_ENTRY_SIZE, &Entry, TABLE_ENTRY_SIZE))
+            if (!StorageFlash.Write(NewOffset + Dest * TABLE_ENTRY_SIZE, &Entry, TABLE_ENTRY_SIZE))
                 return false;
             Dest++;
         }
@@ -445,7 +445,7 @@ public:
         if (DataOffset == 0) return false; // Out of space
 
         uint32_t DataBlocks = BlocksForSize(Size);
-        if (!StorageFlashErase(DataOffset, DataBlocks * STORAGE_BLOCK_SIZE))
+        if (!StorageFlash.Erase(DataOffset, DataBlocks * STORAGE_BLOCK_SIZE))
             return false;
 
         FileRecord NewRecord;
@@ -518,7 +518,7 @@ public:
             // Erase the newly-added tail pages (they are free, so erasing is safe).
             uint32_t TailOffset = Entry.Offset + CurrentBlocks * STORAGE_BLOCK_SIZE;
             uint32_t TailBlocks = NewBlocks - CurrentBlocks;
-            if (!StorageFlashErase(TailOffset, TailBlocks * STORAGE_BLOCK_SIZE))
+            if (!StorageFlash.Erase(TailOffset, TailBlocks * STORAGE_BLOCK_SIZE))
                 return false;
             FileRecord NewRecord = Entry;
             NewRecord.Size = NewSize;
@@ -550,7 +550,7 @@ public:
         if (Offset >= FileSize)
             return 0;
         Length = ClampFileLength(Offset, Length, FileSize);
-        return StorageFlashRead(FileOffset + Offset, Buffer, Length);
+        return StorageFlash.Read(FileOffset + Offset, Buffer, Length);
     }
 
     // Safer wrapper for writing to a file; offset is from file start. Writes are clamped to
@@ -563,7 +563,7 @@ public:
         if (Offset >= FileSize)
             return false;
         Length = ClampFileLength(Offset, Length, FileSize);
-        return StorageFlashWrite(FileOffset + Offset, Buffer, Length);
+        return StorageFlash.Write(FileOffset + Offset, Buffer, Length);
     }
 
     // Returns the file size if it exists, otherwise 0xFFFFFFFF. A read failure is also
@@ -583,7 +583,7 @@ public:
     // of the fixed per-device size (STORAGE_TABLE_SIZE) at the first data page (block 1).
     bool Format()
     {
-        if (!StorageFlashFormat()) {
+        if (!StorageFlash.Format()) {
             DeviceLog("STORAGE", "Format failed!");
             return false;
         }
@@ -690,7 +690,7 @@ private:
     bool WriteTableBytes(uint32_t Offset, const void *Data, uint32_t Size)
     {
         DropTableCache();
-        return StorageFlashWrite(Offset, Data, Size);
+        return StorageFlash.Write(Offset, Data, Size);
     }
 
     // Reads a single table entry, staging a window of records per flash read: a scan costs one
@@ -706,7 +706,7 @@ private:
             uint32_t Count = TableCapacity() - Base;
             if (Count > STORAGE_TABLE_CHUNK) Count = STORAGE_TABLE_CHUNK;
             uint32_t Bytes = Count * TABLE_ENTRY_SIZE;
-            if (StorageFlashRead(FileTableOffset + Base * TABLE_ENTRY_SIZE, TableCache, Bytes) != Bytes)
+            if (StorageFlash.Read(FileTableOffset + Base * TABLE_ENTRY_SIZE, TableCache, Bytes) != Bytes)
             {
                 TableCacheBase = 0xFFFFFFFF; // a failed read stages nothing
                 return false;
@@ -751,7 +751,7 @@ private:
         if (FileTableOffset == 0) return false;
 
         FileRecord Entry0;
-        if (StorageFlashRead(FileTableOffset, &Entry0, TABLE_ENTRY_SIZE) != TABLE_ENTRY_SIZE)
+        if (StorageFlash.Read(FileTableOffset, &Entry0, TABLE_ENTRY_SIZE) != TABLE_ENTRY_SIZE)
             return false;
 
         if (!FileRecordIsValid(Entry0.Offset) ||
