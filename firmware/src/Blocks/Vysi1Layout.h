@@ -48,7 +48,14 @@ inline void PreloadVysiLayout()
 
     if (!Storage.CreateFile(Lay1, sizeof(Buf)))
         return;
-    Storage.WriteToFile(Lay1, 0, sizeof(Buf), (const char *)Buf);
+    if (!Storage.WriteToFile(Lay1, 0, sizeof(Buf), (const char *)Buf))
+    {
+        // A half-written LAY_1 must not survive: the FileExists guard above would then skip it
+        // on every later boot and the display would run on a corrupt layout forever. Delete it
+        // so the next boot retries the preload.
+        Storage.DeleteFile(Lay1);
+        return;
+    }
 }
 
 // Identity 2x3 affine ([1 0 0; 0 1 0]), the default Offset transform.

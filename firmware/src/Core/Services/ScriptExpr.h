@@ -20,7 +20,7 @@
 // ---------------------------------------------------------------------------
 
 #define SCRIPT_EXPR_MAX_ELEMS 9 // covers Number, Vector2/3, Matrix2x3, Colour
-#define SCRIPT_EXPR_MAX_DEPTH 8 // paren/`^` nesting cap (keeps the VM stack bounded)
+#define SCRIPT_EXPR_MAX_DEPTH 8 // nesting cap over the whole grammar (parens, prefix ops, `^`); keeps the VM stack bounded
 
 struct ExprValue
 {
@@ -188,8 +188,6 @@ inline bool ScriptService::ExprApply(ExprValue &Lhs, const ExprValue &Rhs, uint8
 
 inline bool ScriptService::ExprPrimary(ExprParser *Parser, ExprValue &Out)
 {
-    if (Parser->Depth >= SCRIPT_EXPR_MAX_DEPTH) return false;
-    Parser->Depth++;
     bool Ok;
     if (ExprPeekOp(Parser) == SCRIPT_MATHOP_OPEN)
     {
@@ -211,7 +209,6 @@ inline bool ScriptService::ExprPrimary(ExprParser *Parser, ExprValue &Out)
     {
         Ok = false;
     }
-    Parser->Depth--;
     return Ok;
 }
 
@@ -265,7 +262,21 @@ inline bool ScriptService::ExprFnCross(const ExprValue &Lhs, const ExprValue &Rh
     return true;
 }
 
+// Depth-guarded entry for the recursive expression grammar. Every nesting step goes through here:
+// a prefix operator recurses via ExprUnary, the right-associative `^` via ExprBin, and a
+// parenthesised group via ExprPrimary -> ExprBin -> ExprUnary. Counting here (rather than only in
+// ExprPrimary) is what bounds a long prefix chain or `^` chain - those never touched ExprPrimary's
+// old counter, so only the per-line OpCount (up to 255) limited them.
 inline bool ScriptService::ExprUnary(ExprParser *Parser, ExprValue &Out)
+{
+    if (Parser->Depth >= SCRIPT_EXPR_MAX_DEPTH) return false;
+    Parser->Depth++;
+    bool Ok = ExprUnaryInner(Parser, Out);
+    Parser->Depth--;
+    return Ok;
+}
+
+inline bool ScriptService::ExprUnaryInner(ExprParser *Parser, ExprValue &Out)
 {
     uint8_t Op = ExprPeekOp(Parser);
     if (Op == SCRIPT_MATHOP_FN_SIZE || Op == SCRIPT_MATHOP_FN_TRANSPOSE)

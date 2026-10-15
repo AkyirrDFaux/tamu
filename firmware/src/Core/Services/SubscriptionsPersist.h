@@ -22,7 +22,7 @@
 // setup - the expiry is a FAILURE (no value ever arrived), not a removal - so the entry stays in
 // `.SUBREQ` and the next boot restores it. Only a deliberate cancel or Save All rewrites the file
 // from the table alone, and only those may remove the file when the table empties.
-inline void SubscriptionsService::SaveRequesterTable(bool KeepFileEntries) {
+inline bool SubscriptionsService::SaveRequesterTable(bool KeepFileEntries) {
     uint8_t Buf[1 + MAX_REQUESTER_SUBS * REQUESTER_FILE_ENTRY_SIZE];
     // Count and copy in one walk (the count byte is filled in last).
     uint16_t Off = 1;
@@ -38,8 +38,9 @@ inline void SubscriptionsService::SaveRequesterTable(bool KeepFileEntries) {
     if (KeepFileEntries) {
         uint8_t File[1 + MAX_REQUESTER_SUBS * REQUESTER_FILE_ENTRY_SIZE];
         uint16_t Len = Storage.ReadFromFile(SubscriptionsRequesterFile, 0, sizeof(File), (char *)File);
-        if (Len >= 1 && File[0] <= MAX_REQUESTER_SUBS &&
-            Len >= (uint16_t)(1 + (uint16_t)File[0] * REQUESTER_FILE_ENTRY_SIZE)) {
+        bool Valid = Len >= 1 && File[0] <= MAX_REQUESTER_SUBS &&
+                     Len >= (uint16_t)(1 + (uint16_t)File[0] * REQUESTER_FILE_ENTRY_SIZE);
+        if (Valid) {
             for (uint8_t i = 0; i < File[0] && Count < MAX_REQUESTER_SUBS; i++) {
                 const uint8_t *Entry = File + 1 + (size_t)i * REQUESTER_FILE_ENTRY_SIZE;
                 // Still in the live table: already copied above. A carried-over entry is appended;
@@ -50,6 +51,13 @@ inline void SubscriptionsService::SaveRequesterTable(bool KeepFileEntries) {
                 Off += REQUESTER_FILE_ENTRY_SIZE;
                 Count++;
             }
+        } else if (Storage.FileExists(SubscriptionsRequesterFile) != 0xFFFFFFFF) {
+            // A present-but-unreadable .SUBREQ is a failed read, not an absent file: the carry-over
+            // above could not run, so writing now would drop the lease-expired entries it exists to
+            // preserve. Same absence-vs-unreadable split RegisterPersist uses for .SV - leave the
+            // file as it is and report the save as failed.
+            DeviceLog("SUB", "requester save: .SUBREQ unreadable, left as it is");
+            return false;
         }
     }
 
@@ -59,12 +67,12 @@ inline void SubscriptionsService::SaveRequesterTable(bool KeepFileEntries) {
     // cannot leave `.SUBREQ~` behind. A carry-over save only reaches here with an empty file,
     // so there is nothing to write and no deliberate removal to persist.
     if (Count == 0) {
-        if (KeepFileEntries) return;
+        if (KeepFileEntries) return true;
         Storage.DeleteFile(SubscriptionsRequesterFile);
         char Tmp[8];
         BackupTempName(SubscriptionsRequesterFile, Tmp);
         Storage.DeleteFile(Tmp);
-        return;
+        return true;
     }
     Buf[0] = Count;
     // Skip the rewrite when the stored file already holds exactly these bytes. A set/cancel
@@ -81,10 +89,10 @@ inline void SubscriptionsService::SaveRequesterTable(bool KeepFileEntries) {
             uint16_t Got = (uint16_t)Storage.ReadFromFile(SubscriptionsRequesterFile, Pos, Want, (char *)Chunk);
             if (Got != Want || memcmp(Chunk, Buf + Pos, Want) != 0) { Same = false; break; }
         }
-        if (Same) return;
+        if (Same) return true;
     }
     // Shared atomic staging (copy to the "~" name, then rename).
-    WriteBackupFile(SubscriptionsRequesterFile, Buf, Off);
+    return WriteBackupFile(SubscriptionsRequesterFile, Buf, Off);
 }
 
 inline void SubscriptionsService::LoadRequesterTable() {

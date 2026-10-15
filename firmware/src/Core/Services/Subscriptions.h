@@ -79,7 +79,7 @@ private:
     RequesterEntry* RequesterUpsert(uint16_t Trid);
     void ApplyRequesterValue(RequesterEntry *Entry, const uint8_t *Val, uint8_t Vlen, bool Confirm);
     void HandleRequesterValueUpdate(const PacketFrame &Frame);
-    void SaveRequesterTable(bool KeepFileEntries = false);
+    bool SaveRequesterTable(bool KeepFileEntries = false); // false when a write failed
     void RegisterRequesterProvider(RequesterEntry* Entry);
     void SubscriptionsReRegisterPending();
     void RequesterInitCheck(uint32_t NowMs);

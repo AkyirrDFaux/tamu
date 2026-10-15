@@ -326,7 +326,14 @@ extern "C"
         // bootloader stays reachable even if this image is broken.
         const esp_partition_t *Factory = esp_partition_find_first(
             ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_FACTORY, nullptr);
-        if (Factory != nullptr) esp_ota_set_boot_partition(Factory);
+        if (Factory != nullptr) {
+            // A failed re-arm leaves the next reset booting THIS app instead of the bootloader,
+            // so the button-catch path is unreachable and an update can strand the device. Report
+            // it rather than discarding the esp_err_t.
+            esp_err_t ArmErr = esp_ota_set_boot_partition(Factory);
+            if (ArmErr != ESP_OK)
+                ESP_LOGE("BOOT", "factory boot re-arm failed: %d", (int)ArmErr);
+        }
 
         // 16 KB: LoadAllBackups places a MEMORY_BACKUP_CAP-sized buffer on this stack and
         // ProcessBus dispatches full request/response chains recursively beneath it.

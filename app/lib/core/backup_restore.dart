@@ -157,6 +157,25 @@ LiveDevice? providerDeviceFor(List<LiveDevice> live, String providerAddress) {
   return live.where((d) => idDevice(d.id) == node).firstOrNull;
 }
 
+/// The live device id an archive address names, or null.
+///
+/// Addressing is local or exact, not an archive-private space. `0.N` is LOCAL: it names arc N on
+/// the local net - the net the rig being restored onto actually runs - so one archive restores
+/// onto a rig of any NetID. A `net.arc` address is EXACT, and is what a reference crossing a net
+/// boundary has to use; it passes through unchanged. Local is the preferable form, so it must
+/// resolve even when the archive does not carry the device it names.
+int? resolveArchiveAddress(RestorePlan plan, String address) {
+  final id = idFromString(address);
+  if (id == null) return null;
+  if (idNet(id) != 0) return id;
+  // Net 0 is the local-net placeholder, never a real NetID: the System block's NetID trigger
+  // rejects 0 outright. The local net is the one the plan's targets are on.
+  final node = idDevice(id);
+  final local = plan.deviceTargets.values.firstOrNull;
+  if (node == 0 || local == null) return null;
+  return (idNet(local.id) << 10) | node;
+}
+
 /// Reads a live device's block/entry layout (metadata only, no values).
 Future<LiveDevice?> readLiveDevice(int deviceId) async {
   final entry = DeviceDatabase.instance.byId(deviceId);
@@ -199,7 +218,7 @@ List<int>? resolveEntryBytes(BackupEntry source, LiveEntry target) {
 // Restore plan
 // ---------------------------------------------------------------------------
 
-enum RestoreKind { entry, script, subscription, provider, sndb, file }
+enum RestoreKind { entry, script, subscription, sndb, file }
 
 /// True when a backup file has no semantic form and must be written back from its raw bytes.
 ///
@@ -228,7 +247,6 @@ class RestoreItem {
   final BackupEntry? entry;
   final BackupScript? script;
   final BackupRequesterSubscription? subscription;
-  final BackupProviderSubscription? providerSubscription;
   final BackupSndbEntry? sndbEntry;
   final BackupFile? file;
 
@@ -250,7 +268,6 @@ class RestoreItem {
     this.entry,
     this.script,
     this.subscription,
-    this.providerSubscription,
     this.sndbEntry,
     this.file,
     this.selected = true,
@@ -348,25 +365,6 @@ class RestorePlan {
                 provider.resolveRef(s.source) == null ||
                 targetReg == null) {
               item.issue = 'Address not found';
-            }
-          }
-        case RestoreKind.provider:
-          // A provider entry is served BY the target device: the source register must exist on
-          // the device and the requester must be a real address. The live snapshot may predate a
-          // dynamic source the restore is about to create, so fall back to the archive's own map.
-          if (target.capabilities & Capability.subscriptionProvide == 0) {
-            item.issue = 'No provider support';
-          } else {
-            final s = item.providerSubscription!;
-            final source =
-                target.resolveRef(s.source) ??
-                archiveRefReg(item.device, s.source);
-            if (source == null || idFromString(s.requester) == null) {
-              item.issue = 'Address not found';
-            } else if (s.trid < tridSubBase || s.trid > tridSubMax) {
-              // An archive captured before the TRID was recorded carries 0, which no node can key
-              // a provider entry by; refuse rather than install an entry nothing can match.
-              item.issue = 'Unknown subscription id';
             }
           }
         case RestoreKind.sndb:
@@ -467,17 +465,11 @@ Future<RestorePlan> buildRestorePlan(List<BackupDevice> devices) async {
         ),
       );
     }
-    // The provider entries the device serves: installed by remote requesters, so a requester that
-    // is not part of the backup cannot re-register them - the restore rebuilds them itself.
-    for (final sub in device.providerSubscriptions) {
-      items.add(
-        RestoreItem(
-          kind: RestoreKind.provider,
-          device: device,
-          providerSubscription: sub,
-        ),
-      );
-    }
+    // The provider entries the device serves are NOT restored: a provider entry is created by
+    // the requester that owns it, and the restored requester re-registers itself (CID 0x01 Change
+    // on the first tick after it is written, and again at boot), so the node's provider table is
+    // rebuilt by that mechanism. Writing it here as well duplicated the work and its read-back
+    // verification raced with the node's own table churn (B34).
     for (final sndb in device.sndb) {
       items.add(
         RestoreItem(kind: RestoreKind.sndb, device: device, sndbEntry: sndb),
@@ -752,7 +744,6 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
     RestoreKind.entry => '${i.block?.name}/${i.entry?.field}[${i.entry?.key}]',
     RestoreKind.script => 'script slot ${i.script?.slot}',
     RestoreKind.subscription => 'from ${i.subscription?.provider}',
-    RestoreKind.provider => 'serves ${i.providerSubscription?.requester}',
     RestoreKind.sndb => 'sndb ${i.sndbEntry?.serial}',
     RestoreKind.file => 'file ${i.file?.name}',
   };
@@ -765,7 +756,6 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
     RestoreKind.script => 2,
     RestoreKind.entry => 3,
     RestoreKind.subscription => 4,
-    RestoreKind.provider => 5,
   };
   final ordered = [...plan.items]
     ..sort((a, b) => order(a.kind).compareTo(order(b.kind)));
@@ -875,7 +865,13 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
           () => SubscriptionClient(deviceId: target.id),
         );
         final s = item.subscription!;
-        final provider = idFromString(s.provider); // the wire form, written back below
+        // The provider address is archive-side and follows the local-vs-exact model: a local
+        // `0.N` names arc N on the net this rig runs - net 0 is the placeholder and no device
+        // sits on it (`resolveArchiveAddress`) - while an exact `net.arc` passes through. It keys
+        // BOTH the requester entry's provider address and the provider entry's requester address,
+        // so a literal `0.2` here would install both against a provider on net 0. The provider
+        // DEVICE is still matched by node (ignoring the net), which is what resolves the provider.
+        final provider = resolveArchiveAddress(plan, s.provider);
         final providerDev = providerDeviceFor(plan.liveDevices, s.provider);
         final source = providerDev?.resolveRef(s.source);
         final targetReg =
@@ -936,104 +932,6 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
         );
         final ok = await sub.setRequesterSubscription(index, entry: entry);
         if (!ok) {
-          failItem(item, describe(item));
-          break;
-        }
-        writtenDevices.add(target.id);
-
-        // A subscription has two sides: the node that sends must carry a provider entry with the
-        // SAME TRID, or the requester table points at a source that never arrives. The device
-        // takes the requester's address from the packet source, so only the table is sent. A
-        // provider entry that will not install leaves the requester pointing at a source that
-        // never sends, so the item is a failure - not a success hidden behind the requester write.
-        if (providerDev != null) {
-          final nodeSubs = subscriptions.putIfAbsent(
-            providerDev.id,
-            () => SubscriptionClient(deviceId: providerDev.id),
-          );
-          final installed = await nodeSubs.setProviderSubscriptionEntry(
-            ProviderSubscription(
-              index: 0,
-              requesterAddr: provider,
-              trid: entry.trid,
-              table: entry.table,
-              lastSentMs: 0,
-              hash: 0,
-              timeout: 0,
-            ),
-          );
-          if (!installed) {
-            AppDiagnostics.log(
-              'backup',
-              'provider install got no reply on ${providerDev.name} '
-              'trid ${entry.trid}',
-            );
-          }
-          // The reply is NOT an acceptance signal for a provider change: the device applies the
-          // entry and then answers with the source's current value, and that reply is lost often
-          // enough that a missing one says nothing (a live rig showed a SUCCESS reply with no
-          // entry, and no reply with the entry installed). Read the node's provider table back
-          // and require the entry, so the item is counted only when the node really carries it -
-          // otherwise the requester points at a source that never sends.
-          // A node that has just re-appeared carries no provider table until the core re-pushes
-          // it, so give the entry a moment before calling it missing.
-          var present = false;
-          for (var attempt = 0; attempt < 3 && !present; attempt++) {
-            if (attempt > 0) {
-              await Future<void>.delayed(const Duration(milliseconds: 300));
-            }
-            present = (await nodeSubs.getProviderSubscriptions()).any(
-              (e) => e.trid == entry.trid,
-            );
-          }
-          if (!present) {
-            failItem(
-              item,
-              'provider entry missing on ${providerDev.name} trid ${entry.trid}',
-            );
-            break;
-          }
-          writtenDevices.add(providerDev.id);
-        }
-        written++;
-      case RestoreKind.provider:
-        final subs = subscriptions.putIfAbsent(
-          target.id,
-          () => SubscriptionClient(deviceId: target.id),
-        );
-        final s = item.providerSubscription!;
-        final requester = idFromString(s.requester);
-        final source =
-            target.resolveRef(s.source) ?? archiveRefReg(item.device, s.source);
-        if (requester == null ||
-            source == null ||
-            s.trid < tridSubBase ||
-            s.trid > tridSubMax) {
-          failItem(item, describe(item));
-          break;
-        }
-        // ProviderSet (0x21) carries the requester's address and takes the TRID from the packet
-        // header, so the entry a remote requester installed comes back on the node without that
-        // requester present to re-register it. The node answers with the SUCCESS/FAIL flag, so
-        // `ok` decides the item rather than a reply merely arriving.
-        final installed = await subs.setProviderTableEntry(
-          ProviderSubscription(
-            index: 0,
-            requesterAddr: requester,
-            trid: s.trid,
-            table: SubscriptionTable(
-              sourceReg: source,
-              trigger: TriggerType.fromWord(s.trigger) ?? TriggerType.periodic,
-              minTimeMs: s.minTimeMs,
-              periodMs: s.periodMs,
-              deadzone: s.deadzone,
-            ),
-            lastSentMs: 0,
-            hash: 0,
-            timeout: 0,
-          ),
-        );
-        if (!installed) {
           failItem(item, describe(item));
           break;
         }

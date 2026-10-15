@@ -470,7 +470,7 @@ inline uint8_t ScriptService::ExecService(LoadedScript *Script, const ScriptLine
             uint16_t Vtype = 0;
             if (!Resolve(Script, Opbase[8], Opbase[9], SymVal(Opbase + 8), Scratch, &Val, &Vsize, &Vtype))
                 return SCRIPT_ERR_OPERAND;
-            if (Vsize > 64) Vsize = 64;
+            if (Vsize > 64) return SCRIPT_ERR_OPERAND; // like the local Reg-write path: refuse, never shorten
             uint8_t Payload[8 + 64];
             memcpy(Payload, &Bi, 4);
             ValueInfo Wm = { (uint16_t)Vtype, Vsize, 0 };

@@ -77,8 +77,23 @@ static bool OnMeasFieldWrite(const StaticBlockDescriptor &Block, uint16_t Index,
     return false;
 }
 
+// Sensor Type is an enum, and the sample loop switches on it to pick the unit transform. A value
+// outside the documented range would fall through the loop's default branch and publish the
+// filtered raw count as whatever unit was asked for, so it is snapped to the last documented type
+// here (the same "stored equals applied" rule the rate/coefficient triggers follow).
+static bool OnMeasEnumWrite(const StaticBlockDescriptor &Block, uint16_t Index, const void *Data, uint16_t Len)
+{
+    auto *Persistent = static_cast<ResistiveMeasPersistent *>(Block.PersistentData);
+    if (Len != sizeof(uint8_t)) return false;
+    uint8_t Value = *static_cast<const uint8_t *>(Data);
+    if (Value > MeasNTC100K) Value = MeasNTC100K;
+    Persistent->SensorType = Value;
+    return true;
+}
+
 const BlockTrigger ResistiveMeasTriggers[] = {
     { MakeFieldKey(0, 0), OnMeasFieldWrite },
+    { MakeFieldKey(1, 0), OnMeasEnumWrite },
     { MakeFieldKey(2, 0), OnMeasFieldWrite },
 };
 

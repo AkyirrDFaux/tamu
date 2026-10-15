@@ -245,6 +245,107 @@ void main() {
     expect(plan.issueCount, 1);
   });
 
+  test('a relative archive address maps to the matched live address', () {
+    // B26: the archive addresses its devices in its own space (0.x) while the rig it restores
+    // onto runs another NetID. The core file is `0.1` in the archive and `39.1` on the rig.
+    final core = BackupDevice(
+      type: 'Tamu v2.0A',
+      typeId: 1,
+      id: idFromString('0.1')!,
+      name: 'Core',
+      blocks: const [],
+    );
+    final live = LiveDevice(id: idFromString('39.1')!, name: 'Core', blocks: const []);
+    final plan = RestorePlan(
+      devices: [core],
+      liveDevices: [live],
+      items: const [],
+      deviceTargets: {core.id: live},
+      blockTargets: const {},
+    );
+    expect(
+      core.address,
+      '0.1',
+      reason: 'the archive names the core in its own space',
+    );
+    expect(
+      resolveArchiveAddress(plan, '0.1'),
+      idFromString('39.1'),
+      reason: 'the relative address resolves to the matched live device',
+    );
+    // A string that names no archive device is a live address already and passes through.
+    expect(resolveArchiveAddress(plan, '39.1'), idFromString('39.1'));
+    expect(resolveArchiveAddress(plan, '39.2'), idFromString('39.2'));
+  });
+
+  test('B33: a requester subscription resolves its provider on the local net', () {
+    // The archive names the provider `0.2` - a LOCAL address meaning arc 2 on whatever net the
+    // rig runs. This rig is net 39, so the provider address the restore writes into BOTH the
+    // requester entry and the provider-entry payload must be 39.2, never the literal 0.2 (which
+    // keys to net 0, where no device sits). An exact `net.arc` is already wire-ready and passes
+    // through untouched. The archive otherwise cannot be remapped from the address alone.
+    const source = BackupBlockRef(
+      block: 'Resistive measurement',
+      typeIndex: 8,
+      instance: 0,
+      field: 'Measured Value',
+      fieldIndex: 3,
+      key: 'Key 0',
+      keyIndex: 0,
+    );
+    final requester = BackupDevice(
+      type: 'Tamu v2.0A',
+      typeId: 1,
+      id: idFromString('0.1')!,
+      name: 'Requester',
+      blocks: const [],
+      requesterSubscriptions: const [
+        BackupRequesterSubscription(
+          provider: '0.2',
+          trigger: 'Periodic',
+          periodMs: 1000,
+          minTimeMs: 100,
+          deadzone: 0.5,
+          source: source,
+          target: source,
+        ),
+      ],
+    );
+    final requesterLive = LiveDevice(
+      id: idFromString('39.1')!,
+      name: 'Requester',
+      blocks: const [],
+    );
+    final providerLive = LiveDevice(
+      id: idFromString('39.2')!,
+      name: 'Provider',
+      blocks: const [],
+    );
+    final plan = RestorePlan(
+      devices: [requester],
+      liveDevices: [requesterLive, providerLive],
+      items: const [],
+      deviceTargets: {requester.id: requesterLive},
+      blockTargets: const {},
+    );
+
+    // The key the restore used to write: provider arc 2 on net 0 - a provider no device holds.
+    expect(idFromString('0.2'), 2);
+
+    // The provider address the requester subscription carries is resolved onto the local net
+    // (39) - this is what keys the requester entry's provider address and the provider entry's
+    // requester address.
+    final provider = requester.requesterSubscriptions.single.provider;
+    expect(provider, '0.2');
+    expect(resolveArchiveAddress(plan, provider), idFromString('39.2'));
+    // An exact address is already wire-ready and passes through unchanged.
+    expect(resolveArchiveAddress(plan, '39.3'), idFromString('39.3'));
+
+    // The provider DEVICE lookup is unchanged: it matches by node and ignores the net, which is
+    // what resolves the provider device where a bare `0.2` names it.
+    expect(providerDeviceFor(plan.liveDevices, '0.2')?.id, idFromString('39.2'));
+  });
+
   test('backup zip is per device with no aggregate manifest', () {
     final zip = buildBackupZip([_device()]);
     final decoded = ZipDecoder().decodeBytes(zip);

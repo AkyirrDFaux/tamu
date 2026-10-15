@@ -205,15 +205,16 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
 
             RequesterEntry* Entry = RequesterFindByTrid(Frame.Trid);
             if (Table.Trigger == TriggerType::None) {
+                bool Saved = true;
                 if (Entry) {
                     uint16_t Provider = Entry->ProviderAddr;
                     RequesterRemove(Entry);
                     // An explicit cancel is what persists a removal, so this save writes the table
                     // alone and may drop the file once the last entry is gone.
-                    SaveRequesterTable();
+                    Saved = SaveRequesterTable();
                     SubscriptionsCancelProvider(Provider, Frame.Trid);
                 }
-                SubReply(Frame, nullptr, 0, FLAG_SUCCESS);
+                SubReply(Frame, nullptr, 0, Saved ? FLAG_SUCCESS : FLAG_FAIL);
                 break;
             }
 
@@ -237,11 +238,13 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
             // an entry another subscription lost to a lease expiry is not a deliberate removal, so
             // it has to survive in `.SUBREQ` for the next boot (and an empty table must not delete
             // the file at all).
-            SaveRequesterTable(true);
+            // Persist this set's own entry. The write result decides the reply below: a failed
+            // persistence must not read as a successful set.
+            bool Saved = SaveRequesterTable(true);
 
             // Respond first (the app waits on the transaction ID), then register the provider
             // side (same-device or 0401 to the remote provider).
-            SubReply(Frame, nullptr, 0, FLAG_SUCCESS);
+            SubReply(Frame, nullptr, 0, Saved ? FLAG_SUCCESS : FLAG_FAIL);
             RegisterRequesterProvider(Entry);
             break;
         }
@@ -253,8 +256,8 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
         }
 
         case (uint8_t)SubCid::RequesterSave: { // Save all subscriptions (requester).
-            SaveRequesterTable();
-            SubReply(Frame, nullptr, 0, FLAG_SUCCESS);
+            // A deliberate Save All writes the table alone; its result is the reply.
+            SubReply(Frame, nullptr, 0, SaveRequesterTable() ? FLAG_SUCCESS : FLAG_FAIL);
             break;
         }
 #endif // USE_SUB_REQUEST

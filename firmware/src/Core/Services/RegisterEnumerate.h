@@ -153,11 +153,6 @@ inline void RegisterService::SendTypeWordsStream(const PacketFrame &Frame) {
             }
 #ifdef USE_DYNAMIC_BLOCKS
             else if (DynamicBlockRegistry.BlockCount > 0) {
-                // Doc gap: Register.md "Block types" does not describe the banked dynamic
-                // range's **8.8** encoding (high byte = the owning bank type's low byte,
-                // 0xF0-0xF3; low byte = the highest occupied global index, 0..255), which
-                // differs from the normal 10.6 word. It lives only in this code; tracked in
-                // Issues.md. `count` includes exactly one such word.
                 uint16_t Highest = (uint16_t)(DynamicBlockRegistry.BlockCount - 1);
                 uint16_t BankType = BlockTypeRange::DynamicType((uint16_t)(Highest >> BlockTypeRange::BankShift));
                 Word = (uint16_t)((BankType << 8) | (Highest & 0xFF));

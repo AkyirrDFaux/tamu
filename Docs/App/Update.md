@@ -2,8 +2,9 @@ Update the firmware of the connected core or of a node on its bus (Bootloader se
 ### How to update
 - Choose the target's main binary (`.bin`, `.img`).
 - Put the target in bootloader mode (hold its button while resetting/powering it on).
-- Tap Update; writes are broadcast on the core's bus, then read back and corrected until
-  verified (the node gives no write acknowledgement, verification confirms the image).
+- Tap Update; writes are broadcast on the core's bus and each is acknowledged (the write
+  response returns the offset of the last successfully written chunk), then the image is read
+  back and corrected until verified.
 - Reset/power-cycle the device to run the new firmware. A failed update is safe to retry.
 ### Sections
 - **How to update** — the steps above.

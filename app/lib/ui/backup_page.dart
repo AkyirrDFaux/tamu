@@ -311,9 +311,6 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
     final subs = items
         .where((i) => i.kind == RestoreKind.subscription)
         .toList();
-    final provides = items
-        .where((i) => i.kind == RestoreKind.provider)
-        .toList();
     final sndb = items.where((i) => i.kind == RestoreKind.sndb).toList();
     final files = items.where((i) => i.kind == RestoreKind.file).toList();
     return Card(
@@ -329,7 +326,6 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
           for (final block in blocks) _blockSection(device, block),
           if (scripts.isNotEmpty) _group('Scripts', scripts),
           if (subs.isNotEmpty) _group('Subscriptions', subs),
-          if (provides.isNotEmpty) _group('Served subscriptions', provides),
           if (sndb.isNotEmpty) _group('SNDB', sndb),
           if (files.isNotEmpty) _group('Files', files),
         ],
@@ -455,9 +451,6 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
             '(${scriptFileName(item.script!.slot)})';
       case RestoreKind.subscription:
         return '${item.subscription!.trigger} from ${item.subscription!.provider}';
-      case RestoreKind.provider:
-        return '${item.providerSubscription!.trigger} to '
-            '${item.providerSubscription!.requester}';
       case RestoreKind.sndb:
         return 'SNDB ${item.sndbEntry!.address}';
       case RestoreKind.file:
@@ -478,9 +471,6 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
       case RestoreKind.subscription:
         final s = item.subscription!;
         return '${s.source.block} / ${s.source.field} -> ${s.target.block} / ${s.target.field}';
-      case RestoreKind.provider:
-        final p = item.providerSubscription!;
-        return '${p.source.block} / ${p.source.field}';
       case RestoreKind.sndb:
         return item.sndbEntry!.serial;
       case RestoreKind.file:

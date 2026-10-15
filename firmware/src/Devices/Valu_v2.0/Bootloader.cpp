@@ -60,6 +60,10 @@
 // line in Docs/Devices.md, not from an explicit address in the spec. If the storage region
 // is placed elsewhere, this constant (and only this constant) moves.
 #define APP_LIMIT 0xE000u
+// The uploadable window the app image occupies. Bounds are checked against the OFFSET, not the
+// computed address: `APP_BASE + Offset + PAYLOAD_SIZE` wraps near 2^32 and would let a huge
+// offset past APP_LIMIT (the same wrap-safe subtraction the Core bootloader uses).
+#define APP_SIZE (APP_LIMIT - APP_BASE)
 
 // The flash controller programs/erases through the 0x08000000 alias; the CPU reads and
 // executes through 0x00000000 (same aliasing as the DAS, Devices/DAS_v0.1/Storage.h).
@@ -404,7 +408,7 @@ static void SendReadResponse(uint32_t Offset)
     else
     {
         uint32_t Addr = APP_BASE + Offset;
-        if (Addr < APP_BASE || Addr + Bootloader::PAYLOAD_SIZE > APP_LIMIT)
+        if (Offset > APP_SIZE || APP_SIZE - Offset < Bootloader::PAYLOAD_SIZE)
             memset(Data, 0xFF, sizeof(Data));
         else
             memcpy(Data, (const void *)Addr, sizeof(Data));
@@ -500,7 +504,7 @@ static void HandleWrite(uint32_t Offset, const uint8_t *Payload)
 {
     uint32_t Addr = APP_BASE + Offset;
     bool Ok = (Offset & 31u) == 0; // 32-byte aligned per the doc
-    if (Ok) Ok = Addr >= APP_BASE && Addr + Bootloader::PAYLOAD_SIZE <= APP_LIMIT;
+    if (Ok) Ok = Offset <= APP_SIZE && APP_SIZE - Offset >= Bootloader::PAYLOAD_SIZE;
 
     // Erase the containing 4 KB sector on the first write into it, then the 128 32-byte
     // writes of the sector program into the freshly erased sector.
@@ -527,6 +531,22 @@ static void HandleWrite(uint32_t Offset, const uint8_t *Payload)
 static void JumpToApp(void)
 {
     __disable_irq();
+
+    // Tear the USBD controller down before handing over. The app's CRT zeroes RAM and
+    // AppUSBInit re-inits TinyUSB, but the vector we enabled in UsbConnect() would still be
+    // live - and pending - the moment the app's startup sets mstatus.MIE (before tusb_init
+    // runs), so its handler would execute against state the CRT had just cleared. Disable and
+    // clear the vector, drop the D+ pull-up, and reset the peripheral so the app starts from
+    // the same clean slate UsbHwInit() gave this bootloader.
+    // SEPARATE CHANGE (test-hook revertible): the root-cause candidate for "Valu never reaches
+    // main", at MEDIUM confidence - no hardware here to prove it.
+    NVIC_DisableIRQ(USB_LP_CAN1_RX0_IRQn);
+    NVIC_ClearPendingIRQ(USB_LP_CAN1_RX0_IRQn);
+    EXTEN->EXTEN_CTR &= ~EXTEN_USBD_PU_EN;
+    RCC->APB1PRSTR |= RCC_APB1Periph_USB;
+    for (volatile uint32_t i = 0; i < 200000u; i++) {} // ~1 ms at 144 MHz
+    RCC->APB1PRSTR &= ~RCC_APB1Periph_USB;
+
     // The app's own startup sets sp/gp/mtvec; a plain jump to its reset vector is enough (exactly
     // what the DAS bootloader does). The clock is deliberately LEFT RUNNING on the 144 MHz PLL -
     // the app's SystemInit wrapper (Devices/Valu_v2.0/System.h) detects that and skips the

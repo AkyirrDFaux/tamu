@@ -11,8 +11,8 @@ same data the Device commands expose.
 - Serial number
 - Software version
 - Uptime, average loop time, max loop time, time offset
-- Capabilities (the text labels the device reports: Core, Router, DynMem, Scripts, Files,
-  App, SubReq, SubProv, Node)
+- Capabilities (the text labels the app renders: Core, Router, DynMem, Scripts, App, SubReq,
+  SubProv, Node)
 ### Second section - Services
 Per services avaliable, hide unavaliable (based on capabilities device field), list of links to specialized viewer
 - [[App/Service Views/Register|Register]]

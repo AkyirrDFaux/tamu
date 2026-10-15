@@ -108,6 +108,10 @@ static void MeasuringUpdate(uint8_t Index, uint16_t Raw)
     }
 
     default:
+        // A Sensor Type outside the enum has no unit transform; report 0 rather than silently
+        // passing the filtered raw count off as the requested unit (the write trigger snaps such
+        // a value, so this is defence in depth).
+        In = N(0);
         break;
     }
 

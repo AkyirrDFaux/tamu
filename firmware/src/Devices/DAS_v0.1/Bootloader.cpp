@@ -38,6 +38,10 @@
 // (scripts/das_app_upload.py strips the .fixed_data reservation), so a normal update never
 // writes the storage - but a full-width image is still accepted.
 #define APP_LIMIT 0x4000u
+// The uploadable window the app image occupies. Bounds are checked against the OFFSET, not the
+// computed address: `APP_BASE + Offset + PAYLOAD_SIZE` wraps near 2^32 and would let a huge
+// offset past APP_LIMIT (the same wrap-safe subtraction the Core bootloader uses).
+#define APP_SIZE (APP_LIMIT - APP_BASE)
 
 // The flash controller programs/erases through the 0x08000000 alias; the CPU reads/executes
 // through 0x00000000 (see Devices/DAS_v0.1/Storage.h).
@@ -274,7 +278,7 @@ static void HandleWrite(uint32_t Offset, const uint8_t *Payload)
 {
     uint32_t Addr = APP_BASE + Offset;
     bool Ok = (Offset & 31u) == 0; // 32-byte aligned per the doc
-    if (Ok) Ok = Addr >= APP_BASE && Addr + Bootloader::PAYLOAD_SIZE <= APP_LIMIT;
+    if (Ok) Ok = Offset <= APP_SIZE && APP_SIZE - Offset >= Bootloader::PAYLOAD_SIZE;
 
     // Erase the 64-byte page on its first half; the second half programs the erased page.
     if (Ok && (Addr & 63u) == 0)
@@ -299,7 +303,7 @@ static void HandleRead(uint32_t Offset)
     static uint8_t Data[Bootloader::PAYLOAD_SIZE];
     static uint8_t Resp[Bootloader::DATA_SIZE];
     uint32_t Addr = APP_BASE + Offset;
-    if (Addr < APP_BASE || Addr + Bootloader::PAYLOAD_SIZE > APP_LIMIT)
+    if (Offset > APP_SIZE || APP_SIZE - Offset < Bootloader::PAYLOAD_SIZE)
         memset(Data, 0xFF, sizeof(Data));
     else
         memcpy(Data, (const void *)Addr, sizeof(Data));

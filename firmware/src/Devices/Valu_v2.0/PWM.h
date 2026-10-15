@@ -55,6 +55,12 @@ void SetupFanPWM()
     // TIM1 is an advanced timer: its outputs are only driven with the Main Output Enable bit.
     TIM_CtrlPWMOutputs(TIM1, ENABLE);
     TIM_Cmd(TIM1, ENABLE);
+
+    // Bring the fan up on the DUTY the recall restored, through the same applier a field write
+    // uses (the % -> compare-value conversion and the clamp stay in one place, and the field is
+    // committed there so a read-back matches what the fan runs). Without this the channel sat at
+    // TIM_Pulse = 0 after every power cycle while the block reported the stored duty.
+    OnPWMDutyChange(StaticBlockRegistry[1], 1, &StaticPer.Fan[0].PWMDuty, sizeof(uint32_t));
 }
 
 // Reconfigures the fan PWM frequency (stored in the block) on TIM1.
@@ -63,11 +69,17 @@ bool OnPWMFrequencyChange(const StaticBlockDescriptor &Block, uint16_t Index, co
     if (DataLen != sizeof(uint32_t)) return false;
     uint32_t NewFreq = *static_cast<const uint32_t *>(Data);
 
-    FanApplyPeriod(FanPeriodForFreq(NewFreq));
+    // FanPeriodForFreq clamps a frequency below the timer's 16-bit-period minimum, so the
+    // frequency the fan would then run differs from the request. Program the clamped value and
+    // store THAT value (stored == applied), and refuse the write when the clamp changed the
+    // request so the caller is not told a frequency the fan is not on.
+    const uint32_t MinFreq = (SystemCoreClock / (FAN_PWM_PERIOD_MAX + 1u));
+    uint32_t Applied = (NewFreq < MinFreq) ? MinFreq : NewFreq;
+    FanApplyPeriod(FanPeriodForFreq(Applied));
 
     auto *Fan = static_cast<PWMPersistent *>(Block.PersistentData);
-    Fan->PWMFreq = NewFreq;
-    return true;
+    Fan->PWMFreq = Applied;
+    return Applied == NewFreq;
 }
 
 // Clamps the new duty (0-100 %), converts it to the timer's compare value and applies it to

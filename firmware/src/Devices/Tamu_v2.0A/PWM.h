@@ -22,6 +22,11 @@ void SetupFanPWM() {
     uint32_t Freq1 = StaticPer.Fan[1].PWMFreq;
     if (Freq0 == 0) Freq0 = 25000;
     if (Freq1 == 0) Freq1 = 25000;
+    // Resolve the fallback into the stored field: the timers below are programmed with Freq0/Freq1,
+    // so a read-back of StaticPer.Fan[].PWMFreq must report the same frequency the fan runs. A blank
+    // space stored 0 (not a valid LEDC frequency) while the fan ran at 25 kHz.
+    StaticPer.Fan[0].PWMFreq = Freq0;
+    StaticPer.Fan[1].PWMFreq = Freq1;
 
     // Fan 1 (Timer 0, Channel 0, Pin 6)
     ledc_channel_config_t Chan1 = {
@@ -36,7 +41,7 @@ void SetupFanPWM() {
         .flags = {0},
         .deconfigure = false,
     };
-    ledc_channel_config(&Chan1);
+    esp_err_t E1 = ledc_channel_config(&Chan1);
 
     ledc_timer_config_t Timer1 = {
         .speed_mode = LEDC_LOW_SPEED_MODE,
@@ -47,7 +52,7 @@ void SetupFanPWM() {
         .deconfigure = false
     };
 
-    ledc_timer_config(&Timer1);
+    esp_err_t E2 = ledc_timer_config(&Timer1);
 
     // Fan 2 (Timer 1, Channel 1, Pin 10)
     ledc_channel_config_t Chan2 = {
@@ -62,7 +67,7 @@ void SetupFanPWM() {
         .flags = {0},
         .deconfigure = false,
     };
-    ledc_channel_config(&Chan2);
+    esp_err_t E3 = ledc_channel_config(&Chan2);
 
     ledc_timer_config_t Timer2 = {
         .speed_mode = LEDC_LOW_SPEED_MODE,
@@ -73,13 +78,22 @@ void SetupFanPWM() {
         .deconfigure = false
     };
 
-    ledc_timer_config(&Timer2);
+    esp_err_t E4 = ledc_timer_config(&Timer2);
+
+    // Every LEDC result is checked and reported: a silent failure here left the block carrying a
+    // frequency/duty the fan was not actually running (a rejected restored frequency left the fan
+    // off with no signal).
+    if (E1 != ESP_OK || E2 != ESP_OK || E3 != ESP_OK || E4 != ESP_OK)
+        DeviceLog("PWM", "fan LEDC setup: ch1=%d tmr1=%d ch2=%d tmr2=%d",
+                  (int)E1, (int)E2, (int)E3, (int)E4);
 
     // The channels are up; put each fan on the DUTY THE RECALL RESTORED. It goes through the same
     // applier a write uses, so the % -> LEDC conversion and the clamping stay in one place (the
     // field stores the clamped value, so a read-back always matches what the fan is running).
-    OnPWMDutyChange(StaticBlockRegistry[1], 1, &StaticPer.Fan[0].PWMDuty, sizeof(uint32_t));
-    OnPWMDutyChange(StaticBlockRegistry[2], 1, &StaticPer.Fan[1].PWMDuty, sizeof(uint32_t));
+    if (!OnPWMDutyChange(StaticBlockRegistry[1], 1, &StaticPer.Fan[0].PWMDuty, sizeof(uint32_t)))
+        DeviceLog("PWM", "fan 1 duty %u%% not applied", (unsigned)StaticPer.Fan[0].PWMDuty);
+    if (!OnPWMDutyChange(StaticBlockRegistry[2], 1, &StaticPer.Fan[1].PWMDuty, sizeof(uint32_t)))
+        DeviceLog("PWM", "fan 2 duty %u%% not applied", (unsigned)StaticPer.Fan[1].PWMDuty);
 }
 
 // Reconfigures the fan PWM frequency (stored in the block) on the timer matching the given block.

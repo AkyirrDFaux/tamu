@@ -108,6 +108,7 @@ private:
     bool ExprFnSize(const ExprValue &Lhs, ExprValue &Out);
     bool ExprFnCross(const ExprValue &Lhs, const ExprValue &Rhs, ExprValue &Out);
     bool ExprUnary(ExprParser *Parser, ExprValue &Out);
+    bool ExprUnaryInner(ExprParser *Parser, ExprValue &Out);
     bool ExprBin(ExprParser *Parser, ExprValue &Out, uint8_t MinPrec);
 
     // ===== ScriptExec.h: per-line instruction execution =====

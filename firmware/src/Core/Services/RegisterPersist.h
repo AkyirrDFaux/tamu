@@ -26,7 +26,7 @@ inline bool RegisterService::StaticSaveAll() {
     return WriteBackupFile(StaticValuesName(), (const uint8_t *)&StaticPer, sizeof(StaticPer));
 }
 
-inline void RegisterService::StaticRecallAll() {
+inline bool RegisterService::StaticRecallAll() {
     uint8_t Buf[sizeof(StaticPer)];
     uint16_t Cnt = ReadBackupFile(StaticValuesName(), Buf, sizeof(Buf));
     if (Cnt < sizeof(StaticPer)) {
@@ -35,13 +35,12 @@ inline void RegisterService::StaticRecallAll() {
         // so only a genuinely absent file is created here. The stored space is left untouched.
         if (Storage.FileExists(StaticValuesName()) != 0xFFFFFFFF) {
             DeviceLog("STORAGE", "static recall: .SV unreadable, left as it is");
-            return;
+            return false; // present but unreadable: the caller must not report Success
         }
         // No mirror at all: keep the compiled-in defaults, but persist them now so the
         // mirror exists with the right size for the app's read-modify-write partial saves (a
         // direct write to an absent `.SV` cannot succeed).
-        StaticSaveAll();
-        return;
+        return StaticSaveAll();
     }
 
     // Defensive: a present-but-erased mirror (0xFF) is not a valid saved space. The filesystem
@@ -51,8 +50,7 @@ inline void RegisterService::StaticRecallAll() {
     // values rather than clobbering the defaults and the Name with erased bytes.
     for (uint16_t i = 0; i < SYSTEM_NAME_LEN && i < Cnt; i++) {
         if (Buf[i] == 0xFF) {
-            StaticSaveAll();
-            return;
+            return StaticSaveAll();
         }
     }
 
@@ -60,6 +58,7 @@ inline void RegisterService::StaticRecallAll() {
 #ifdef TYPE_CORE
     DeviceStatus.NetId = StaticPer.System.NetId;
 #endif
+    return true;
 }
 
 #ifdef USE_DYNAMIC_BLOCKS
@@ -198,11 +197,12 @@ inline void RegisterService::HandleSaveRecallAll(const PacketFrame &Frame, bool 
         Ok &= DynamicSaveAll();
 #endif
     } else {
-        // A recall has no failure mode of its own: a field with no stored entry is simply left
-        // as it is (the doc's reply is Success). Only rebuilding a dynamic slot can fail.
-        StaticRecallAll();
+        // A recall's own failure mode is a present-but-unreadable store: a field with no stored
+        // entry is left as it is (the doc's reply is Success), but a failed READ of the store
+        // (static or a dynamic slot) is a real failure and must reach the reply.
+        Ok &= StaticRecallAll();
 #ifdef USE_DYNAMIC_BLOCKS
-        Ok = DynamicRecallAll();
+        Ok &= DynamicRecallAll();
 #endif
     }
     RespondStatus(Frame, Ok);

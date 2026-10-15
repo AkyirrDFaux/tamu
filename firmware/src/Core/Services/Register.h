@@ -42,7 +42,8 @@ public:
     bool RegisterSetByBlockInfo(uint32_t Bi, const ValueInfo &Meta, const uint8_t *Val, uint16_t Vlen);
 
     // Called by the boot path (Dispatcher.h's LoadAllBackups) until it self-wires.
-    void StaticRecallAll();
+    // Returns false when a present .SV could not be read (the values are left as they are).
+    bool StaticRecallAll();
 #ifdef USE_DYNAMIC_BLOCKS
     // The dynamic half of the boot recall: enumerate the DT/DV files once. Also the Recall
     // command's path (HandleSaveRecallAll), so it is shared rather than only reachable from CID 4.
