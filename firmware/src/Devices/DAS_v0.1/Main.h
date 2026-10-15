@@ -36,6 +36,11 @@ void LoadAllBackups();
 // assigned"). Nominal unchanged; RawRand() is the shared codebase PRNG.
 #define NODE_DISCOVER_INTERVAL_MS 500u
 #define NODE_DISCOVER_JITTER_MS   125u // +/-25%
+// How long to watch for the assignment reply after a discover broadcast. The core answers in
+// a few ms (its loop is bounded by the ~6 ms LED bit-bang), but its own CSMA silence wait can
+// stretch to 100 ms on a busy bus, so the window covers that. Only the before-beacon idle is
+// shortened; the jittered interval between beacons is unchanged.
+#define NODE_DISCOVER_REPLY_MS 100u
 
 // Device identity (mandatory, see Core/Functions/Device.h).
 extern const DeviceType KDeviceType = DeviceType::DualAnalogSensor;
@@ -157,6 +162,22 @@ int main(void)
                          FLAG_REQACK | FLAG_START | FLAG_STOP,
                          (const uint8_t *)&GetSerialNumber(), sizeof(SerialNumber));
         DispatchPacket(TxFrame);
+
+        // Watch for the reply before idling. A reply is only ever taken by ProcessBus(), so
+        // sleeping the whole interval first left an answer that had already arrived sitting
+        // unread for up to 625 ms - which is what made registration look slow, and cost a whole
+        // extra interval whenever a beacon or reply was lost. The raw clock keeps the window
+        // immune to a TimeSync correction landing mid-wait.
+        uint32_t SentAt = TimeFromBoot();
+        do
+        {
+            ProcessBus();
+        } while (DeviceStatus.ShortAddress == 0
+                 && (uint32_t)(TimeFromBoot() - SentAt) < NODE_DISCOVER_REPLY_MS);
+
+        if (DeviceStatus.ShortAddress != 0)
+            break;
+
         // Jittered repeat: uniform over [375, 625] ms (+/-25% around 500 ms).
         Sleep(NODE_DISCOVER_INTERVAL_MS - NODE_DISCOVER_JITTER_MS
               + (RawRand() % (2 * NODE_DISCOVER_JITTER_MS + 1)));

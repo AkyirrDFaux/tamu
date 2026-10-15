@@ -529,7 +529,8 @@ bool DeviceService::Handle(const PacketFrame &Frame)
                              Frame.Trid,    // echo the request TRID
                              FLAG_TYPE | FLAG_START | FLAG_STOP,
                              reinterpret_cast<const uint8_t *>(&ResponseData),
-                             sizeof(ResponseData));
+                             sizeof(ResponseData),
+                             PRIORITY_DISCOVER);
 
             DispatchPacket(TxFrame);
 

@@ -37,6 +37,7 @@
 // The subscription values are the ones already carried by the subscription entries.
 #define PRIORITY_ERROR    0  // Errors (highest)
 #define PRIORITY_TIMESYNC 1  // TimeSync packets
+#define PRIORITY_DISCOVER 3  // Device discovery: the assigned-ID reply
 #define PRIORITY_SUB_HIGH 4  // High-priority subscriptions
 //                                     8 = DEFAULT_PRIORITY ("Other")
 #define PRIORITY_SUB_LOW  12 // Low-priority subscriptions
