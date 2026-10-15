@@ -5,12 +5,9 @@
 
 part of 'script_editor_page.dart';
 
-// Category colours for script symbols, shared by the chip colouring and the legend.
-const Color _symInputColor = Color(0xFFFFD54F); // amber - inputs
-const Color _symOutputColor = Color(0xFFF06292); // pink - outputs
-const Color _symVariableColor = Color(0xFF64B5F6); // blue - variables
-const Color _symConstantColor = Color(0xFFBA68C8); // purple - constants
-const Color _symPredefineColor = Color(0xFF81C784); // green - predefines
+// Category colours for script symbols (kSymInput/kSymOutput/kSymVariable/
+// kSymConstant/kSymPredefine) live in theme.dart, shared by the chip colouring,
+// the legend and the symbol picker.
 
 extension on _ScriptEditorPageState {
   /// Adding destinations/operands is limited by the selected instruction. [depth] is the
@@ -191,11 +188,11 @@ extension on _ScriptEditorPageState {
 
   /// Category colour for a script symbol: I/O, variable, constant or predefine.
   Color _symbolColor(ScriptSymbol s) => switch (s.type) {
-    symInput => _symInputColor,
-    symOutput => _symOutputColor,
-    symVariable => _symVariableColor,
-    symConstant => _symConstantColor,
-    symPredefine => _symPredefineColor,
+    symInput => kSymInput,
+    symOutput => kSymOutput,
+    symVariable => kSymVariable,
+    symConstant => kSymConstant,
+    symPredefine => kSymPredefine,
     _ => Colors.white70,
   };
 
@@ -271,11 +268,11 @@ extension on _ScriptEditorPageState {
     spacing: 10,
     runSpacing: 4,
     children: [
-      _legendDot('Input', _symInputColor),
-      _legendDot('Output', _symOutputColor),
-      _legendDot('Variable', _symVariableColor),
-      _legendDot('Constant', _symConstantColor),
-      _legendDot('Predefine', _symPredefineColor),
+      _legendDot('Input', kSymInput),
+      _legendDot('Output', kSymOutput),
+      _legendDot('Variable', kSymVariable),
+      _legendDot('Constant', kSymConstant),
+      _legendDot('Predefine', kSymPredefine),
       _legendDot('Instruction', kOrange),
     ],
   );
